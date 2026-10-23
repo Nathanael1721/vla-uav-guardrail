@@ -36,6 +36,12 @@ flight builds its phrase with (demo/vla_mission.DetectorHint):
      thread; a tick costs a deque append), and writes what the builder
      reads: the front+down pair paired by sim stamp, the capture pose, the
      expert's box at that moment, the expert's command, the car's truth.
+  6. DART (2026-10-23, after ft_expert_01's 507 samples all read "straight
+     ahead "): --record-perturb knocks the executed command off on a seeded
+     schedule, off by default and the flight unchanged when off; a label
+     whose horizon overlaps a perturbation is dropped, the samples after it
+     kept; each run reports its phrases and turn histogram; --mirror
+     mirrors the train split against the codec's phrase vocabulary.
 
 No simulator, GPU or model. The mosaic test needs Pillow and SKIPs without
 it (GUARDRAIL_REQUIRE_PILLOW=1 turns that into a failure, as for the codec).
@@ -109,13 +115,16 @@ def _det_at_bearing(deg: float, w_frac: float = 0.12, W: int = 768, H: int = 432
 
 def _write_run(root: Path, tag: str, motion, *, seconds: float = 8.0, dt: float = 0.1,
                box=None, object_text: str = "a red car", jpeg=None, mode=None,
-               record_json: bool = True) -> Path:
+               record_json: bool = True, perturb=None) -> Path:
     """A recording as ExpertVLARecorder writes it: track.jsonl (one line per
     loop tick), captures.jsonl (one per front+down pair, on the same 10 Hz
     grid here so the label arithmetic is exact), frames/<sha256>.jpg and
     record.json. `motion(tau) -> (x, y, up, yaw)`; `box(k, t, yaw_at) ->
     dict | None` (default: a fresh box straight ahead, 0.3 s old); `jpeg(k)
-    -> (front_bytes, down_bytes)` (default: distinct fake bytes)."""
+    -> (front_bytes, down_bytes)` (default: distinct fake bytes);
+    `perturb(k) -> dict | None`: the tick's DART perturbation record, put
+    on the track line and the capture as the recorder does (default: no
+    such key at all, as an unperturbed recording)."""
     d = root / tag / "vla_record"
     (d / "frames").mkdir(parents=True, exist_ok=True)
     n = int(round(seconds / dt))
@@ -148,6 +157,8 @@ def _write_run(root: Path, tag: str, motion, *, seconds: float = 8.0, dt: float 
                      "front_wh": [256, 256], "down_wh": [256, 256], "pair_dt_s": 0.0,
                      "box": b, "tick": {"tick": k, "t": t, "mode": m}, "truth": [x + 15.0, y],
                      "object": object_text})
+        if perturb is not None:
+            track[-1]["perturb"] = caps[-1]["perturb"] = perturb(k)
     with (d / "track.jsonl").open("w", encoding="utf-8", newline="\n") as fh:
         for r in track:
             fh.write(json.dumps(r) + "\n")
@@ -949,6 +960,488 @@ def test_the_launcher_switch_records_to_c_through_a_junction():
     import follow_vlm as F
     a = F.build_arg_parser().parse_args(["--record-vla", r"demo\out\redcar_x\vla_record"])
     assert a.record_vla.endswith("vla_record")
+
+
+# =========================================================================== #
+# 6. DART: perturbing the expert, the overlap rule, the per-run report, mirror
+#
+# ft_expert_01 (2026-10-23, 0.953 within 30 m, 2826 captures) gave 507
+# samples, every one "straight ahead ": the expert keeps the car centred, so
+# the data never shows an off-centre car being brought back. The fix is
+# DART-style noise: knock the executed command off for a second now and
+# then, label only the expert's clean motion, keep what follows.
+# =========================================================================== #
+def _onsets(p, until_s=400.0):
+    p.state(until_s)
+    return [e for e in p.episodes if e["on_s"] <= until_s]
+
+
+def test_the_perturbation_schedule_is_seeded_and_in_the_asked_ranges():
+    R = _R()
+    a, b = R.Perturber(7), R.Perturber(7)
+    sa = [a.state(k * 0.1) for k in range(3000)]
+    sb = [b.state(k * 0.1) for k in range(3000)]
+    assert sa == sb, "the same seed must give the same perturbations"
+    assert sa != [R.Perturber(8).state(k * 0.1) for k in range(3000)]
+    eps = _onsets(a, 300.0)
+    assert len(eps) >= 300 / 8.0 - 1, len(eps)
+    assert 5.0 <= eps[0]["on_s"] <= 8.0, eps[0]           # never at the mission start
+    for e0, e1 in zip(eps, eps[1:]):
+        assert 5.0 <= e1["on_s"] - e0["on_s"] <= 8.0, (e0, e1)
+    for e in eps:
+        assert 1.0 <= e["off_s"] - e["on_s"] <= 1.5, e
+        assert 0.3 <= abs(e["yaw_rate"]) <= 0.5, e
+        assert e["speed_scale"] == 1.0, "no speed scaling unless asked"
+    assert {math.copysign(1, e["yaw_rate"]) for e in eps} == {1.0, -1.0}, "both signs"
+    on = sum(1 for s in sa if s["active"])
+    want = sum(round((e["off_s"] - e["on_s"]) / 0.1) for e in eps if e["off_s"] <= 300.0)
+    assert abs(on - want) <= len(eps) + 1, (on, want)
+    for s in sa:
+        assert (s["yaw_rate"] != 0.0) == s["active"] and (s["speed_scale"] == 1.0 or s["active"])
+    # The speed option draws the same schedule: an A/B changes one thing.
+    c = R.Perturber(7, speed_scale=(0.5, 1.0))
+    ec = _onsets(c, 300.0)
+    assert [(e["on_s"], e["off_s"], e["yaw_rate"]) for e in ec] == \
+        [(e["on_s"], e["off_s"], e["yaw_rate"]) for e in eps]
+    assert all(0.5 <= e["speed_scale"] <= 1.0 for e in ec) and len({e["speed_scale"] for e in ec}) > 3
+    # Asking late first does not change the early answers.
+    d = R.Perturber(7)
+    d.state(250.0)
+    assert [d.state(k * 0.1) for k in range(3000)] == sa
+
+
+def test_a_perturbation_offsets_the_yaw_rate_scales_the_speed_and_is_a_no_op_off():
+    from guardrail.models import Action4D
+    R = _R()
+    p = R.Perturber(7, speed_scale=(0.5, 1.0))
+    e = _onsets(p)[0]
+    a = Action4D(vx=3.0, vy=1.0, vz_up=0.2, yaw_rate=0.1)
+    out, rec = p.apply(a, e["on_s"] - 0.5)
+    assert out is a, "an inactive tick flies the expert's own command object"
+    assert rec == {"active": False, "yaw_rate": 0.0, "speed_scale": 1.0, "episode": None}, rec
+    out, rec = p.apply(a, e["on_s"] + 0.1)
+    assert math.isclose(out.yaw_rate, 0.1 + e["yaw_rate"]) and out.vz_up == 0.2
+    assert math.isclose(out.vx, 3.0 * e["speed_scale"]) and math.isclose(out.vy, e["speed_scale"])
+    assert rec["active"] and rec["episode"] == e["k"] and rec["yaw_rate"] == e["yaw_rate"]
+    out, rec = p.apply(a, e["off_s"] + 0.01)
+    assert out is a and not rec["active"]
+    s = p.summary()
+    assert s["ticks"] == 3 and s["active_ticks"] == 1 and s["seed"] == 7, s
+    assert s["yaw_rate_rad_s"] == [0.3, 0.5] and s["every_s"] == [5.0, 8.0], s
+    assert s["dur_s"] == [1.0, 1.5] and s["speed_scale"] == [0.5, 1.0]
+    assert s["episodes"][0]["on_s"] == e["on_s"] and "applied after the expert" in s["rule"]
+
+
+def test_the_stronger_knobs_replace_the_experts_yaw_or_widen_the_offset():
+    """--perturb-replace-yaw: during a perturbation only the offset turns the
+    aircraft (the expert's own yaw-rate command is dropped), so the bearing
+    drifts uncorrected; --perturb-yaw-rate LO,HI widens the offset. Both
+    off by default (the spec: an offset ADDED to the expert's command)."""
+    from guardrail.models import Action4D
+    R = _R()
+    p = R.Perturber(7, replace_yaw=True)
+    e = _onsets(p)[0]
+    a = Action4D(vx=3.0, vy=0.0, vz_up=0.0, yaw_rate=0.25)
+    out, rec = p.apply(a, e["on_s"] + 0.1)
+    assert out.yaw_rate == e["yaw_rate"] and rec["active"], (out, e)
+    assert p.apply(a, e["on_s"] - 0.1)[0] is a
+    assert p.summary()["replace_yaw"] is True and R.Perturber(7).summary()["replace_yaw"] is False
+    w = R.Perturber(7, yaw_rate=(0.6, 0.9))
+    assert all(0.6 <= abs(x["yaw_rate"]) <= 0.9 for x in _onsets(w))
+    # The same schedule (onsets, durations, signs): only the magnitude moves.
+    base = _onsets(R.Perturber(7))
+    assert [(x["on_s"], x["off_s"], x["yaw_rate"] > 0) for x in _onsets(w)] == \
+        [(x["on_s"], x["off_s"], x["yaw_rate"] > 0) for x in base]
+    import follow_vlm as F
+    a = F.build_arg_parser().parse_args([])
+    assert a.perturb_yaw_rate == (0.3, 0.5) and a.perturb_replace_yaw is False
+    b = F.build_arg_parser().parse_args(["--record-vla", "d", "--record-perturb",
+                                         "--perturb-yaw-rate", "0.6,0.9", "--perturb-replace-yaw"])
+    assert b.perturb_yaw_rate == (0.6, 0.9) and b.perturb_replace_yaw
+    for argv in (["--record-vla", "d", "--perturb-replace-yaw"],
+                 ["--record-vla", "d", "--perturb-yaw-rate", "0.6,0.9"],
+                 ["--record-vla", "d", "--record-perturb", "--perturb-yaw-rate", "0.9,0.6"],
+                 ["--record-vla", "d", "--record-perturb", "--perturb-yaw-rate", "a,b"]):
+        try:
+            F.main(argv)
+        except SystemExit as exc:
+            assert exc.code == 2, (argv, exc.code)
+        else:
+            raise AssertionError(f"{argv} was accepted")
+
+
+def _point_vehicle_recording(root: Path, tag: str, perturber, seconds=300.0, replace=False):
+    """The follow expert's yaw servo (follow_vlm: 1.2 x bearing, capped)
+    and a stand-off speed law on a point vehicle chasing a car down a gently
+    curving street, the Perturber on the executed command, written in the
+    recorder's format with the box at the true bearing."""
+    from guardrail.models import Action4D
+    dt = 0.1
+    d = root / tag / "vla_record"
+    (d / "frames").mkdir(parents=True)
+    x = y = yaw = 0.0
+    tx, ty, th = 16.0, 0.0, 0.0
+    track, caps = [], []
+    for k in range(int(seconds / dt)):
+        t, s = T0 + k * dt, k * dt
+        th += 0.05 * math.sin(s / 7.0) * dt
+        tx, ty = tx + 4.0 * math.cos(th) * dt, ty + 4.0 * math.sin(th) * dt
+        b = _wrap(math.atan2(ty - y, tx - x) - yaw)
+        v = max(0.0, min(5.0, 4.0 + 0.5 * (math.hypot(tx - x, ty - y) - 16.0)))
+        a = Action4D(vx=v * math.cos(yaw), vy=v * math.sin(yaw), vz_up=0.0,
+                     yaw_rate=max(-0.8, min(0.8, 1.2 * b)))
+        row = {"t": t, "x": x, "y": y, "up": 8.0, "yaw": yaw, "mode": "track"}
+        if perturber is not None:
+            a, row["perturb"] = perturber.apply(a, s)
+        track.append(row)
+        if abs(b) < math.radians(44):
+            fb, db = f"f{k}".encode(), f"d{k}".encode()
+            hf, hd = hashlib.sha256(fb).hexdigest(), hashlib.sha256(db).hexdigest()
+            (d / "frames" / f"{hf}.jpg").write_bytes(fb)
+            (d / "frames" / f"{hd}.jpg").write_bytes(db)
+            caps.append({"i": k, "t_capture": t, "pose": {"x": x, "y": y, "up": 8.0, "yaw_rad": yaw},
+                         "front_jpg_sha256": hf, "down_jpg_sha256": hd,
+                         "box": {"det": _det_at_bearing(math.degrees(b)), "t_box": t,
+                                 "yaw_box": yaw},
+                         "tick": {"mode": "track"}, "object": "a red car"})
+        yaw = _wrap(yaw + a.yaw_rate * dt)
+        x, y = x + a.vx * dt, y + a.vy * dt
+    for name, rows in (("track.jsonl", track), ("captures.jsonl", caps)):
+        with (d / name).open("w", encoding="utf-8", newline="\n") as fh:
+            for r in rows:
+                fh.write(json.dumps(r) + "\n")
+    (d / "record.json").write_text(json.dumps({"tag": tag, "object": "a red car"}),
+                                   encoding="utf-8")
+    return d
+
+
+def test_a_perturbed_expert_gives_turn_labels_and_the_stronger_knobs_side_phrases():
+    """Closed loop through the real Perturber and the real builder, on a
+    point vehicle (idealised: no yaw lag, no detector latency). The clean
+    expert centres the car: every label 'straight ahead ' with |dpsi| <
+    0.05 - ft_expert_01's 507 of 507. The spec's additive 0.3-0.5 rad/s
+    gives turn labels but the expert's 1.2 gain holds the bearing near or
+    under the 15 deg band, so few side phrases; dropping the expert's yaw
+    during the perturbation gives far more of both."""
+    B, R = _B(), _R()
+    with tempfile.TemporaryDirectory() as td:
+        td = Path(td)
+        got = {}
+        for name, p in (("clean", None), ("add", R.Perturber(101)),
+                        ("replace", R.Perturber(101, replace_yaw=True))):
+            run = _point_vehicle_recording(td, name, p)
+            st = B.build_dataset([run], td / f"ds_{name}", images=False)
+            got[name] = st["runs"][name]
+        c, a, r = got["clean"], got["add"], got["replace"]
+        assert c["phrase_counts"] == {C.STRAIGHT_AHEAD: c["samples"]}, c["phrase_counts"]
+        assert c["abs_dpsi_hist"] == {"0.00-0.05": c["samples"]}, c["abs_dpsi_hist"]
+
+        def turning(run):
+            return sum(n for band, n in run["abs_dpsi_hist"].items() if band != "0.00-0.05")
+
+        def side(run):
+            return sum(n for ph, n in run["phrase_counts"].items() if ph != C.STRAIGHT_AHEAD)
+
+        assert a["perturb"]["post_perturb_3s"] > 0 and turning(a) > 0.2 * a["samples"], a
+        assert side(r) > 3 * max(1, side(a)), (side(a), side(r))
+        assert r["phrase_counts"].get(C.FORWARD_LEFT) and r["phrase_counts"].get(C.FORWARD_RIGHT)
+        assert turning(r) > turning(a)
+
+
+def test_the_perturbation_is_off_unless_asked_and_the_flight_is_unchanged_when_off():
+    import follow_vlm as F
+    a = F.build_arg_parser().parse_args([])
+    assert a.record_perturb is False and a.perturb_speed is False
+    for argv in (["--record-perturb"], ["--record-vla", "x", "--perturb-speed"]):
+        try:
+            F.main(argv)
+        except SystemExit as exc:
+            assert exc.code == 2, (argv, exc.code)
+        else:
+            raise AssertionError(f"{argv} was accepted")
+    src = FOLLOW.read_text(encoding="utf-8")
+    # The Shield judges `flown_in`: the expert's `smooth`, replaced only by
+    # the perturber's output when there is one.
+    assert src.count("d = shield.filter(state, flown_in)") == 1, "the loop's Shield call moved"
+    assert "d = shield.filter(state, smooth)" not in src
+    tree = ast.parse(src)
+    fly = next(n for n in ast.walk(tree) if isinstance(n, ast.AsyncFunctionDef) and n.name == "fly")
+    parents = {c: n for n in ast.walk(fly) for c in ast.iter_child_nodes(n)}
+
+    def guarded(node, test):
+        p = node
+        while p in parents:
+            p = parents[p]
+            if isinstance(p, ast.If) and test(ast.unparse(p.test)):
+                return True
+        return False
+
+    flown = [n for n in ast.walk(fly) if isinstance(n, ast.Assign)
+             and any(isinstance(t, ast.Name) and t.id == "flown_in" for t in n.targets)
+             or isinstance(n, ast.Assign) and any(
+                 isinstance(t, ast.Tuple) and any(isinstance(e, ast.Name) and e.id == "flown_in"
+                                                  for e in t.elts) for t in n.targets)]
+    plain = [n for n in flown if isinstance(n.value, ast.Name) and n.value.id == "smooth"]
+    assert len(plain) == 1 and not guarded(plain[0], lambda s: "perturb" in s), plain
+    for n in flown:
+        if n not in plain:
+            assert guarded(n, lambda s: "perturber is not None" in s), f"line {n.lineno}"
+    uses = [n for n in ast.walk(fly) if isinstance(n, ast.Attribute)
+            and isinstance(n.value, ast.Name) and n.value.id == "perturber"]
+    assert uses, "the perturber is not wired in"
+    for u in uses:
+        assert guarded(u, lambda s: "perturber is not None" in s or "args.record_perturb" in s), \
+            f"line {u.lineno}: perturber.{u.attr} outside its guard"
+    made = [n for n in ast.walk(fly) if isinstance(n, ast.Assign)
+            and any(isinstance(t, ast.Name) and t.id == "perturber" for t in n.targets)
+            and not (isinstance(n.value, ast.Constant) and n.value.value is None)]
+    assert made and all(guarded(n, lambda s: "args.record_perturb" in s) for n in made)
+    # A row says "perturb" only on a perturbed flight.
+    rows = [n for n in ast.walk(fly) if isinstance(n, ast.Subscript)
+            and isinstance(n.slice, ast.Constant) and n.slice.value == "perturb"]
+    assert rows and all(guarded(n, lambda s: "is not None" in s) for n in rows), rows
+
+
+def test_the_recorder_keeps_the_perturbation_per_tick_and_per_capture():
+    from semantic_demo import SemanticObs
+    R = _R()
+    for perturbed in (False, True):
+        with tempfile.TemporaryDirectory() as td:
+            td = Path(td)
+            obs, g = SemanticObs(), _FakeGrounder()
+            pt = R.Perturber(3) if perturbed else None
+            rec = _recorder(td, obs, g, perturber=pt)
+            t0 = time.time()
+            rec.start(t0)
+            stamp0 = 13_000_000_000
+            for k in range(20):
+                t = time.time()
+                st = stamp0 + k * 100_000_000
+                obs.put_pose_full(t, float(k), 0.0, 8.0, 0.0, stamp=st)
+                pr = None
+                if pt is not None:
+                    pr = {"active": k >= 10, "yaw_rate": 0.4 if k >= 10 else 0.0,
+                          "speed_scale": 1.0, "episode": 0 if k >= 10 else None}
+                rec.note_tick(t, float(k), 0.0, 8.0, 0.0, mode="track", cmd=None, perturb=pr)
+                rec.put_down(_msg(st, "d"))
+                rec.put_front(_msg(st, "f"))
+                time.sleep(0.03)
+            time.sleep(0.15)
+            s = rec.stop()
+            d = td / "vla_record"
+            track = [json.loads(ln) for ln in (d / R.TRACK).read_text(encoding="utf-8").splitlines()]
+            caps = [json.loads(ln) for ln in (d / R.CAPTURES).read_text(encoding="utf-8").splitlines()]
+            r = json.loads((d / R.RECORD).read_text(encoding="utf-8"))
+            if not perturbed:
+                assert all("perturb" not in x for x in track + caps), "an unperturbed recording " \
+                    "has no perturb key"
+                assert r.get("perturb") is None and s.get("perturb") is None
+                continue
+            assert [x["perturb"]["active"] for x in track] == [k >= 10 for k in range(20)]
+            assert caps and all("perturb" in c for c in caps)
+            for c in caps:
+                assert c["perturb"] == c["tick"]["perturb"]
+            assert r["perturb"]["seed"] == 3 and s["perturb"]["seed"] == 3
+            assert R.record_summary(s)["perturb"]["seed"] == 3
+
+
+def _perturb_window(lo_k, hi_k):
+    return lambda k: ({"active": True, "yaw_rate": 0.4, "speed_scale": 1.0, "episode": 0}
+                      if lo_k <= k < hi_k else
+                      {"active": False, "yaw_rate": 0.0, "speed_scale": 1.0, "episode": None})
+
+
+def test_a_sample_whose_horizon_overlaps_a_perturbation_is_dropped_and_after_it_kept():
+    B = _B()
+    with tempfile.TemporaryDirectory() as td:
+        td = Path(td)
+        # Active on ticks 30..41: commands at t = 3.0 .. 4.1, clean again from 4.2.
+        run = _write_run(td, "runP", _straight(), seconds=8.0, perturb=_perturb_window(30, 42))
+        st = B.build_dataset([run], td / "ds", horizon_s=1.0, stride_s=0.0, images=False)
+        # Default margin 0.3 s after the last perturbed command (the vehicle's
+        # response): dropped when t < 4.2 + 0.3 and t + 1.0 > 3.0, so
+        # t = 2.1 .. 4.4 (24 captures); t = 2.0 ends exactly at the onset.
+        assert st["dropped"]["perturbed"] == 24, st["dropped"]
+        rows = [json.loads(ln) for ln in (td / "ds" / "samples.jsonl").read_text(
+            encoding="utf-8").splitlines()]
+        ts = sorted(round(r["t_capture"] - T0, 3) for r in rows)
+        assert 2.0 in ts and 4.5 in ts and not any(2.0 < t < 4.5 for t in ts), ts
+        for r in rows:
+            since = r["perturb"]["since_end_s"]
+            if r["t_capture"] - T0 >= 4.5 - 1e-9:
+                assert math.isclose(since, r["t_capture"] - T0 - 4.2, abs_tol=1e-6), r["perturb"]
+            else:
+                assert since is None, r["perturb"]
+        # Starting off-centre after it is the point: 4.5 .. 7.0 s (26), counted.
+        assert st["perturb"]["post_perturb_3s"] == 26, st["perturb"]
+        assert st["runs"]["runP"]["perturb"] == {"intervals": 1, "active_s": 1.2,
+                                                 "dropped": 24, "post_perturb_3s": 26}, \
+            st["runs"]["runP"]["perturb"]
+        assert st["args"]["perturb_margin_s"] == 0.3
+        # Margin 0: exactly the overlap rule, t = 2.1 .. 4.1 (21).
+        st0 = B.build_dataset([run], td / "ds0", horizon_s=1.0, stride_s=0.0, images=False,
+                              perturb_margin_s=0.0)
+        assert st0["dropped"]["perturbed"] == 21, st0["dropped"]
+        # An unperturbed recording loses nothing to the rule.
+        clean = _write_run(td, "runC", _straight(), seconds=8.0)
+        stc = B.build_dataset([clean], td / "dsc", horizon_s=1.0, stride_s=0.0, images=False)
+        assert "perturbed" not in stc["dropped"]
+        assert stc["runs"]["runC"]["perturb"] == {"intervals": 0, "active_s": 0.0, "dropped": 0,
+                                                  "post_perturb_3s": 0}
+
+
+def test_each_run_reports_its_phrases_and_its_turn_histogram():
+    B = _B()
+    with tempfile.TemporaryDirectory() as td:
+        td = Path(td)
+        a = _write_run(td, "runA", _straight())
+
+        def right(k, t, yaw_at):
+            return {"det": _det_at_bearing(30.0), "t_box": t - 0.1, "yaw_box": yaw_at(t - 0.1)}
+
+        b = _write_run(td, "runR", _turning(speed=4.0, rate=0.35), box=right)
+        st = B.build_dataset([a, b], td / "ds", horizon_s=1.0, stride_s=0.5, images=False)
+        ra, rr = st["runs"]["runA"], st["runs"]["runR"]
+        assert ra["phrase_counts"] == {C.STRAIGHT_AHEAD: ra["samples"]}, ra["phrase_counts"]
+        assert rr["phrase_counts"] == {C.FORWARD_RIGHT: rr["samples"]}, rr["phrase_counts"]
+        assert ra["abs_dpsi_hist"] == {"0.00-0.05": ra["samples"]}, ra["abs_dpsi_hist"]
+        assert rr["abs_dpsi_hist"] == {"0.30-0.50": rr["samples"]}, rr["abs_dpsi_hist"]
+        assert list(B.DPSI_BANDS)[0] == "0.00-0.05" and list(B.DPSI_BANDS)[-1] == "0.80-1.10"
+        assert st["abs_dpsi_hist"]["train"] == {"0.00-0.05": ra["samples"],
+                                                "0.30-0.50": rr["samples"]}
+
+
+def test_mirror_maps_the_vocabulary_onto_itself_and_matches_the_mirrored_bearing():
+    B = _B()
+    from vla_bridge import bearing_to_phrase
+    m = B.MIRROR_PHRASE
+    assert set(m) == set(C.PHRASES) and set(m.values()) == set(C.PHRASES)
+    for p in C.PHRASES:
+        assert m[m[p]] == p, p
+    assert m[C.STRAIGHT_AHEAD] == C.STRAIGHT_AHEAD and m[C.NO_HINT] == C.NO_HINT
+    assert (m[C.FORWARD_LEFT], m[C.LEFT], m[C.LEFT_REAR]) == (C.FORWARD_RIGHT, C.RIGHT, C.RIGHT_REAR)
+    # Against the bridge's own band chain over the whole circle (band edges
+    # and +-180 excluded: the chain wraps 180 to the left rear).
+    for k in range(1440):
+        deg = -179.9 + 0.25 * k
+        assert B.mirror_phrase(bearing_to_phrase(math.radians(deg))) == \
+            bearing_to_phrase(math.radians(-deg)), deg
+    try:
+        B.mirror_phrase("straight ahead")                  # no trailing space: not a phrase
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("an off-vocabulary phrase was mirrored")
+
+
+def test_a_mirrored_sample_negates_the_turn_mirrors_the_phrase_and_is_marked():
+    B = _B()
+    with tempfile.TemporaryDirectory() as td:
+        td = Path(td)
+
+        def right(k, t, yaw_at):
+            return {"det": _det_at_bearing(30.0), "t_box": t - 0.1, "yaw_box": yaw_at(t - 0.1)}
+
+        a = _write_run(td, "runR", _turning(speed=4.0, rate=0.35), box=right)
+        h = _write_run(td, "runH", _turning(speed=4.0, rate=0.35), box=right)
+        st = B.build_dataset([a, h], td / "ds", horizon_s=1.0, stride_s=0.5, images=False,
+                             holdout=["runH"], mirror=True)
+        rows = [json.loads(ln) for ln in (td / "ds" / "samples.jsonl").read_text(
+            encoding="utf-8").splitlines()]
+        src = {r["id"]: r for r in rows if not r["mirrored"]}
+        mir = [r for r in rows if r["mirrored"]]
+        n_real = sum(1 for r in src.values() if r["split"] == "train")
+        assert mir and len(mir) == n_real, (len(mir), n_real)
+        assert all(r["split"] == "train" and r["run"] == "runR" for r in mir), "hold-out stays real"
+        assert st["mirror"] == {"enabled": True, "samples": len(mir), "splits": ["train"]}
+        assert st["splits"]["train"] == 2 * n_real and st["splits"]["train_real"] == n_real
+        for r in mir:
+            s = src[r["mirror_of"]]
+            assert r["id"] == s["id"] + "/mirror"
+            assert s["phrase"] == C.FORWARD_RIGHT and r["phrase"] == C.FORWARD_LEFT
+            assert r["prompt"] == C.build_prompt(r["phrase"], r["object"])
+            assert r["prompt_sha256"] == C.prompt_sha256(r["prompt"])
+            assert r["label"]["dpsi_rad"] == -s["label"]["dpsi_rad"]
+            assert r["label"]["fwd_m"] == s["label"]["fwd_m"]
+            assert r["label"]["down_m"] == s["label"]["down_m"]
+            want = C.step_bins(s["label"]["fwd_m"], s["label"]["down_m"], -s["label"]["dpsi_rad"])
+            assert tuple(r["bins"]) == want and r["bins"][:2] == s["bins"][:2], (r["bins"], s["bins"])
+            assert s["bins"][2] > 49 > r["bins"][2]
+            p = C.parse_action(r["action_text"] + C.EOS_TEXT, require_eos=True)
+            assert p.parse_ok and list(p.bins) == r["bins"]
+            assert math.isclose(r["box"]["bearing_deg"], -s["box"]["bearing_deg"])
+            assert math.isclose(r["box"]["det"][0], s["box"]["det"][5] - s["box"]["det"][0])
+            assert r["mirror"] == "horizontal flip of the front-over-down mosaic"
+        assert all(r["mirrored"] is False for r in src.values())
+        assert st["phrase_counts"] == {C.FORWARD_RIGHT: len(src), C.FORWARD_LEFT: len(mir)}
+        assert st["phrase_counts_real"] == {C.FORWARD_RIGHT: len(src)}
+
+
+def test_the_mirrored_mosaic_is_the_source_flipped_left_to_right():
+    Image = _pil()
+    if Image is None:
+        print("      SKIP: Pillow is not installed (the VLA environment has it)")
+        return SKIP
+    from PIL import ImageOps
+    B = _B()
+
+    def jpeg(k):
+        out = []
+        for col in ((200, 40, 40 + k), (30, 160, 30)):
+            im = Image.new("RGB", (256, 256), col)
+            for y in range(0, 256, 4):
+                im.putpixel(((y * 5 + k) % 128, y), (255, 255, 0))     # left half only
+            buf = io.BytesIO()
+            im.save(buf, format="JPEG", quality=95)
+            out.append(buf.getvalue())
+        return tuple(out)
+
+    with tempfile.TemporaryDirectory() as td:
+        td = Path(td)
+        run = _write_run(td, "runM", _straight(), seconds=4.0, jpeg=jpeg)
+        B.build_dataset([run], td / "ds", horizon_s=1.0, stride_s=0.5, images=True, mirror=True)
+        rows = [json.loads(ln) for ln in (td / "ds" / "samples.jsonl").read_text(
+            encoding="utf-8").splitlines()]
+        src = {r["id"]: r for r in rows if not r["mirrored"]}
+        mir = [r for r in rows if r["mirrored"]]
+        assert mir
+        for r in mir:
+            s = src[r["mirror_of"]]
+            a = Image.open(td / "ds" / s["image"]).convert("RGB")
+            b = Image.open(td / "ds" / r["image"]).convert("RGB")
+            assert b.size == C.MOSAIC_SIZE
+            assert C.mosaic_sha256(ImageOps.mirror(a)) == r["mosaic_sha256"] == C.mosaic_sha256(b)
+            assert r["mosaic_sha256"] != s["mosaic_sha256"]
+
+
+def test_the_launcher_switch_perturbs_only_a_recording():
+    src = PS1.read_text(encoding="utf-8")
+    assert "[switch]$RecordPerturb" in src and "[switch]$PerturbSpeed" in src
+    lines = src.splitlines()
+    assert "[switch]$PerturbReplaceYaw" in src and "[string]$PerturbYawRate" in src
+    for flag, guard in (('"--record-perturb"', "if ($RecordPerturb)"),
+                        ('"--perturb-speed"', "if ($PerturbSpeed)"),
+                        ('"--perturb-replace-yaw"', "if ($PerturbReplaceYaw)"),
+                        ('"--perturb-yaw-rate"', "if ($PerturbYawRate)")):
+        assert src.count(flag) == 1, flag
+        fi = next(n for n, ln in enumerate(lines) if flag in ln)
+        gi = max(n for n, ln in enumerate(lines[:fi]) if ln.lstrip().startswith(guard))
+        vi = max(n for n, ln in enumerate(lines[:fi]) if ln.lstrip().startswith("if ($RecordVla)"))
+        assert vi < gi, f"{flag} is not inside the -RecordVla block"
+        for start in (gi, vi):
+            ind = len(lines[start]) - len(lines[start].lstrip())
+            for ln in lines[start + 1:fi + 1]:
+                assert not ln.strip() or len(ln) - len(ln.lstrip()) > ind, (flag, ln)
+    # Refused before the simulator starts: a perturbation needs a recording.
+    i = src.index("if ($RecordPerturb -and -not $RecordVla)")
+    assert i < src.index("if (-not $SkipSim) { Start-Sim }")
+    assert src.index("if ($PerturbSpeed -and -not $RecordPerturb)") < \
+        src.index("if (-not $SkipSim) { Start-Sim }")
+    assert src.index("($PerturbReplaceYaw -or $PerturbYawRate) -and -not $RecordPerturb") < \
+        src.index("if (-not $SkipSim) { Start-Sim }")
+    import follow_vlm as F
+    a = F.build_arg_parser().parse_args(["--record-vla", "d", "--record-perturb", "--perturb-speed"])
+    assert a.record_perturb and a.perturb_speed
 
 
 # --------------------------------------------------------------------------- #

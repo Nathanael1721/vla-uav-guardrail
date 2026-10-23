@@ -28,6 +28,20 @@
 #         -PolicyFile policies\follow_car_citylife_nfz.yaml -Seconds 300 `
 #         -Tag ft_expert_01 -RecordVla
 #
+# -RecordPerturb (with -RecordVla only) adds DART-style noise so the data
+# shows an off-centre car being brought back: every 5-8 s, for 1.0-1.5 s, a
+# +-0.3-0.5 rad/s yaw-rate offset on the executed command, before the Shield
+# (follow_vlm --record-perturb; -PerturbSpeed also scales the speed 0.5-1.0).
+# The schedule follows the seed: give each recording its own -Seed. The
+# expert's yaw servo fights an ADDED offset, so it gives turn labels but few
+# left/right phrases (vla_record.Perturber); -PerturbReplaceYaw (the offset
+# instead of the expert's yaw rate while it lasts) or -PerturbYawRate 0.6,0.9
+# push the car further off-centre.
+#
+#     .\scripts\run_citylife_follow.ps1 -Object "a red car" -LevelCar Car_10 `
+#         -PolicyFile policies\follow_car_citylife_nfz.yaml -Seconds 300 `
+#         -Tag ft_expert_p01 -RecordVla -RecordPerturb -Seed 101
+#
 # WARNING: like every demo script here, this restarts the simulator, which kills
 # any process holding Blocks.uproject - INCLUDING an editor you have open. Close
 # the editor first. The match is on the .uproject, not the process name, so
@@ -65,6 +79,13 @@ param(
     [switch]$NoPolicyHud,               # the old one-line HUD (A/B of the indicator's cost)
     [switch]$RecordVla,                 # record what AerialVLA would see (--record-vla),
                                         # to <OffloadRoot>\<Tag>\vla_record (see the header)
+    [switch]$RecordPerturb,             # with -RecordVla: DART noise on the executed command
+    [switch]$PerturbSpeed,              # with -RecordPerturb: also scale the speed 0.5-1.0
+    [switch]$PerturbReplaceYaw,         # with -RecordPerturb: the offset replaces the
+                                        # expert's yaw rate while it lasts (stronger)
+    [string]$PerturbYawRate = "",       # with -RecordPerturb: "LO,HI" rad/s (default 0.3,0.5)
+    [int]$Seed = 0,                     # follow_vlm --seed (0 = its default); the
+                                        # perturbation schedule follows it
     [switch]$KeepSim,                   # leave the simulator running afterwards
     [switch]$SkipSim
 )
@@ -142,6 +163,13 @@ if (-not (Test-Path $CityMap)) {
 }
 
 if ($SkipSim -and -not (Test-SimUp)) { throw "-SkipSim given but nothing on 8989" }
+# Refused here, before a simulator starts (follow_vlm refuses the same):
+# the perturbation exists only to be recorded as training data.
+if ($RecordPerturb -and -not $RecordVla) { throw "-RecordPerturb needs -RecordVla" }
+if ($PerturbSpeed -and -not $RecordPerturb) { throw "-PerturbSpeed needs -RecordPerturb" }
+if (($PerturbReplaceYaw -or $PerturbYawRate) -and -not $RecordPerturb) {
+    throw "-PerturbReplaceYaw and -PerturbYawRate need -RecordPerturb"
+}
 
 # Everything from here runs under try/finally: a -game simulator left running
 # keeps simulating. The one left up after the 2026-09-23 flights logged 12 349
@@ -350,7 +378,20 @@ if ($RecordVla) {
         }
     }
     $a += @("--record-vla", "demo\out\$Tag\vla_record")
+    if ($RecordPerturb) {
+        $a += @("--record-perturb")
+        if ($PerturbSpeed) {
+            $a += @("--perturb-speed")
+        }
+        if ($PerturbReplaceYaw) {
+            $a += @("--perturb-replace-yaw")
+        }
+        if ($PerturbYawRate) {
+            $a += @("--perturb-yaw-rate", $PerturbYawRate)
+        }
+    }
 }
+if ($Seed -ne 0) { $a += @("--seed", "$Seed") }
 & $Py @a
 $rc = $LASTEXITCODE
 }

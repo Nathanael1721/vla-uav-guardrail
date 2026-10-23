@@ -64,9 +64,10 @@
 #          --record-vla, and the step-label builder,
 #          tools/build_follow_dataset.py: the label arithmetic, the codec
 #          round trip, DetectorHint's phrase, the split by run, the
-#          recorder off by default and off the loop's path; its mosaic test
-#          SKIPs here and runs in the Pillow step, its flight-encoder test
-#          needs OpenCV and is lab-only).
+#          recorder off by default and off the loop's path, the DART
+#          perturbation and its label rule, the mirror; its two mosaic
+#          tests SKIP here and run in the Pillow step, its flight-encoder
+#          test needs OpenCV and is lab-only).
 #        The CityLife level, checked offline (the level itself is
 #          gitignored): test_citylife_*, test_drive_signals_dsl,
 #          test_ped_walk_plan, test_parked_cars.
@@ -264,10 +265,11 @@
 #          fails, not skips, if it does not import (since the review of V1a,
 #          P9; until then they ran on the lab machine only). Their protocol,
 #          parser and prompt tests run on every job, with Pillow blocked
-#          where it matters. The same for 1 of test_follow_dataset's 25 (the
-#          training mosaic, 2026-10-23); its test of the flight's own JPEG
-#          encoder needs OpenCV too, so it SKIPs in that step as well and
-#          runs on the lab machine only (25/25 there in vla-real).
+#          where it matters. The same for 2 of test_follow_dataset's 37 (the
+#          training mosaic and its mirror, 2026-10-23); its test of the
+#          flight's own JPEG encoder needs OpenCV too, so it SKIPs in that
+#          step as well and runs on the lab machine only (37/37 there in
+#          vla-real).
 #        - Opt-in wall clock: test_hold_transit's
 #          test_each_charge_bounds_what_its_call_costs (the hold-point
 #          search's charges against what each call costs on the machine)
@@ -599,8 +601,9 @@ jobs:
       # GUARDRAIL_REQUIRE_PILLOW=1 turns those tests' SKIP into a failure, so
       # a broken install cannot pass as an absent package. The two files'
       # other SKIP (the D:/models folders) stays a SKIP. test_follow_dataset
-      # (2026-10-23) runs here too, for its training mosaic (the PNG the
-      # trainer reads must be the server's mosaic); its OpenCV test SKIPs.
+      # (2026-10-23) runs here too, for its training mosaic and its mirror
+      # (the PNG the trainer reads must be the server's mosaic, or exactly its
+      # left-right flip); its OpenCV test SKIPs.
       - name: AerialVLA image tests (Pillow)
         if: matrix.python == '3.10'
         env:

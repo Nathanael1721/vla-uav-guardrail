@@ -4265,6 +4265,7 @@ async def fly(args) -> int:
     view_dir = None
     vla_rec = None              # --record-vla's writer (demo/vla_record.py)
     vla_record_stats = None     # ...its counts, for metrics.json
+    perturber = None            # --record-perturb's schedule (vla_record.Perturber)
     start_heading_err_deg = None
     nfz_hold_ticks = 0
     n_fence_aim = 0          # ticks the forward aim was moved out of a zone's band
@@ -4396,11 +4397,26 @@ async def fly(args) -> int:
             # pairing, encoding and writing are the recorder's thread. The
             # box source reads the Grounder (built further down) when each
             # capture is built, as a VLA flight's DetectorHint reads it.
-            from vla_record import ExpertVLARecorder, box_from_grounder
+            from vla_record import (PERTURB_SPEED_SCALE, ExpertVLARecorder, Perturber,
+                                    box_from_grounder)
+            if args.record_perturb:
+                # Its own RNG from --seed: the flight's global stream is not
+                # touched, so nothing else in it moves.
+                perturber = Perturber(args.seed, yaw_rate=args.perturb_yaw_rate,
+                                      speed_scale=(PERTURB_SPEED_SCALE
+                                                   if args.perturb_speed else None),
+                                      replace_yaw=args.perturb_replace_yaw)
+                lo, hi = args.perturb_yaw_rate
+                print(f"[vla-record] DART perturbation ON (seed {args.seed}): every "
+                      f"5-8 s, 1.0-1.5 s of +-{lo:g}-{hi:g} rad/s yaw rate"
+                      + (" INSTEAD of the expert's" if args.perturb_replace_yaw else "")
+                      + (" and 0.5-1.0 x speed" if args.perturb_speed else "")
+                      + ", after the controller, before the Shield")
             vla_rec = ExpertVLARecorder(args.record_vla, obs,
                                         lambda: box_from_grounder(
                                             grounder.latest() if grounder is not None else None),
-                                        tag=args.tag, object_text=args.object)
+                                        tag=args.tag, object_text=args.object,
+                                        perturber=perturber)
             client.subscribe(drone.sensors["VLAFront"]["scene_camera"],
                              lambda _, m: vla_rec.put_front(m))
             client.subscribe(drone.sensors["VLADown"]["scene_camera"],
@@ -6030,8 +6046,17 @@ async def fly(args) -> int:
             else:
                 shield.set_subject(None)
 
+            # --record-perturb (vla_record.Perturber): the EXECUTED command is
+            # knocked off for 1.0-1.5 s every 5-8 s, after the controller and
+            # its slew limiter (whose own state stays the expert's) and before
+            # the Shield, which judges and repairs what is actually sent.
+            # Without it the Shield judges `smooth`, as it always has.
+            flown_in = smooth
+            perturb_rec = None
+            if perturber is not None:
+                flown_in, perturb_rec = perturber.apply(smooth, time.time() - t0)
             _ta = time.time()
-            d = shield.filter(state, smooth)
+            d = shield.filter(state, flown_in)
             audit.log(tick, d)
             _ms_shield = (time.time() - _ta) * 1000
             pol = None
@@ -6152,6 +6177,10 @@ async def fly(args) -> int:
             stage_ms["kin"].append(_ms_kin)
             stage_ms["truth"].append(_ms_truth)
             stage_ms["shield"].append(_ms_shield)
+            if perturb_rec is not None:
+                # A perturbed flight's row says what was added: `smooth` is
+                # still the expert's command, `emitted` what flew.
+                rows[-1]["perturb"] = perturb_rec
             if vla_rec is not None:
                 # One deque append: the pose of this tick's kinematics read,
                 # the mode, what the controller asked and what flew. The
@@ -6159,7 +6188,7 @@ async def fly(args) -> int:
                 vla_rec.note_tick(_t_kin, state.x, state.y, state.up, yaw, mode=mode,
                                   cmd=e, asked=smooth, touched=d.touched,
                                   truth=(car.pos if car is not None else None),
-                                  obj=args.object, tick=tick)
+                                  obj=args.object, tick=tick, perturb=perturb_rec)
 
             _ta = time.time()
             cmd_times.append(_ta)
@@ -6808,6 +6837,17 @@ def _fine_timer_end(winmm) -> None:
 XY_FLAGS = ("--park-at",)
 
 
+def _rate_range(text: str) -> tuple[float, float]:
+    """'LO,HI' -> (lo, hi) rad/s, 0 < lo <= hi (--perturb-yaw-rate)."""
+    try:
+        lo, hi = (float(v) for v in str(text).split(","))
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"{text!r} is not LO,HI") from None
+    if not (0 < lo <= hi and math.isfinite(hi)):
+        raise argparse.ArgumentTypeError(f"{text!r}: need 0 < LO <= HI")
+    return lo, hi
+
+
 def parse_cli(ap: argparse.ArgumentParser, argv: list[str] | None = None):
     """ap.parse_args, with a negative first value of an XY_FLAGS option taken
     as that option's value."""
@@ -7218,6 +7258,27 @@ def build_arg_parser() -> argparse.ArgumentParser:
                          "the box, the command and the track, for tools/"
                          "build_follow_dataset.py. Off by default: the flight, its "
                          "scene and its records are then unchanged.")
+    ap.add_argument("--record-perturb", action="store_true",
+                    help="with --record-vla only: DART-style noise for the training "
+                         "data (vla_record.Perturber). Every 5-8 s, for 1.0-1.5 s, a "
+                         "yaw-rate offset of random sign and 0.3-0.5 rad/s is added to "
+                         "the EXECUTED command, after the controller and before the "
+                         "Shield (which still filters it), seeded by --seed and recorded "
+                         "per tick, so the recording shows the car off-centre and the "
+                         "expert bringing it back. The dataset builder drops every label "
+                         "that overlaps a perturbation. Off by default.")
+    ap.add_argument("--perturb-speed", action="store_true",
+                    help="with --record-perturb: each perturbation also scales the "
+                         "horizontal speed by 0.5-1.0")
+    ap.add_argument("--perturb-yaw-rate", type=_rate_range, default=(0.3, 0.5),
+                    metavar="LO,HI",
+                    help="with --record-perturb: the offset's magnitude range, rad/s "
+                         "(default 0.3,0.5; the expert's 1.2 gain holds an added 0.3-0.5 "
+                         "near the 15 deg phrase edge, vla_record.Perturber)")
+    ap.add_argument("--perturb-replace-yaw", action="store_true",
+                    help="with --record-perturb: while a perturbation lasts, only the "
+                         "offset turns the aircraft (the expert's own yaw-rate command is "
+                         "dropped), so the car drifts off-centre uncorrected")
     ap.add_argument("--record-hz", type=float, default=20.0,
                     help="frames per second the recorder writes, on its OWN "
                          "thread. Replaces --view-every, which tied recording "
@@ -7283,6 +7344,16 @@ def main(argv: list[str] | None = None) -> int:
         # which would also change where the flight writes.
         ap.error("--live-view needs --save-view: the window draws the frames "
                  "the recorder produces, and without it none are captured")
+    if args.record_perturb and not args.record_vla:
+        # A perturbed follow is worth flying only to record it: the noise is
+        # there so the training data shows a recovery (vla_record.Perturber).
+        ap.error("--record-perturb needs --record-vla: the perturbation exists only "
+                 "to be recorded as training data")
+    if args.perturb_speed and not args.record_perturb:
+        ap.error("--perturb-speed needs --record-perturb")
+    if not args.record_perturb and (args.perturb_replace_yaw
+                                    or args.perturb_yaw_rate != (0.3, 0.5)):
+        ap.error("--perturb-replace-yaw and --perturb-yaw-rate need --record-perturb")
     global LINEAR_BEARING
     LINEAR_BEARING = bool(args.linear_bearing)
     if args.coarse_timer:

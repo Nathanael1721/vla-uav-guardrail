@@ -37,7 +37,12 @@ module writes, at the cameras' 10 Hz:
     capture (the follow's mode, what it asked, what the Shield let fly), and
     the level car's truth - ANALYSIS ONLY, never a label or a phrase;
   * track.jsonl, every loop tick's pose: the expert's motion, from which
-    tools/build_follow_dataset.py makes the step labels.
+    tools/build_follow_dataset.py makes the step labels;
+  * with --record-perturb (DART, Perturber below), each tick's perturbation
+    of the executed command - on the track line and the capture as
+    `perturb` {active, yaw_rate, speed_scale, episode}, the schedule in
+    record.json - so the builder can keep only the expert's clean motion as
+    labels. An unperturbed recording has no `perturb` key anywhere.
 
 NEVER ON THE LOOP'S CRITICAL PATH
 
@@ -93,6 +98,123 @@ CAMERAS = {"front": "VLAFront", "down": "VLADown", "size": [256, 256], "fov_deg"
 AUTHOR = "follow_vlm"
 
 
+# --------------------------------------------------------------------------- #
+# DART: knock the expert off now and then (--record-perturb)
+# --------------------------------------------------------------------------- #
+# ft_expert_01 (2026-10-23: 0.953 within 30 m, 2826 captures, 0 drops) gave
+# 507 samples and every one said "straight ahead ": the expert keeps the car
+# centred, so the data never shows an off-centre car being brought back - no
+# turn labels, no left or right phrase. DART (Laskey et al., 2017, "DART:
+# Noise Injection for Robust Imitation Learning") injects noise into the
+# EXECUTED command while recording the expert, so the states it then has to
+# recover from are in the data, and labels only the expert's own clean
+# behaviour. tools/build_follow_dataset.py drops every sample whose label
+# horizon overlaps a perturbation and keeps those that start just after one.
+PERTURB_EVERY_S = (5.0, 8.0)       # onset to onset
+PERTURB_DUR_S = (1.0, 1.5)
+PERTURB_YAW_RATE = (0.3, 0.5)      # rad/s, random sign
+PERTURB_SPEED_SCALE = (0.5, 1.0)   # --perturb-speed only
+
+
+class Perturber:
+    """A seeded schedule of perturbations of the executed command, in mission
+    seconds: the first onset 5-8 s after the mission starts, then one every
+    5-8 s (onset to onset), each lasting 1.0-1.5 s with a yaw-rate offset of
+    random sign and 0.3-0.5 rad/s and, with `speed_scale` (the range, e.g.
+    (0.5, 1.0)), the horizontal velocity scaled by a draw from it. Episodes
+    are drawn in order from their own random.Random(seed) - the flight's
+    global RNG is not touched - and every episode draws the same numbers with
+    or without the speed option, so the two arms share one yaw schedule.
+    `apply(action, s)` is called once per tick AFTER the expert's controller
+    (and its slew limiter) and BEFORE the Shield, which still filters the
+    result; an inactive tick returns the expert's action object itself.
+
+    HOW FAR IT PUSHES (measured offline, 2026-10-23: the follow's 1.2 x
+    bearing yaw servo on a point vehicle, 600 s, seed 101, through the real
+    builder). The default ADDS the offset to the expert's yaw rate, and the
+    expert fights it while it lasts: its 1.2 gain holds the bearing near
+    offset / 1.2 = 14-24 deg, and by the end of the label margin it has
+    mostly decayed under the 15 deg edge of "straight ahead ". So: turn
+    labels (|dpsi| >= 0.05 rad on 276 of 782 samples, none clean) but few
+    side phrases (13 of 782; 62 with a 0.2 s yaw lag). `replace_yaw` drops
+    the expert's own yaw-rate command while a perturbation lasts, so only
+    the offset turns the aircraft and the bearing drifts uncorrected (122
+    side phrases of 782); a wider `yaw_rate` (0.6-0.9: 116) does about the
+    same. Both are options, recorded in the summary; the default is the
+    brief's additive 0.3-0.5 rad/s."""
+
+    def __init__(self, seed: int, *, every_s=PERTURB_EVERY_S, dur_s=PERTURB_DUR_S,
+                 yaw_rate=PERTURB_YAW_RATE, speed_scale=None, replace_yaw: bool = False):
+        import random
+        for name, (lo, hi) in (("every_s", every_s), ("dur_s", dur_s), ("yaw_rate", yaw_rate)):
+            if not (0 < lo <= hi):
+                raise ValueError(f"{name} must be 0 < lo <= hi, got {(lo, hi)!r}")
+        if not (dur_s[1] < every_s[0]):
+            raise ValueError("a perturbation must end before the next can start")
+        if speed_scale is not None and not (0 < speed_scale[0] <= speed_scale[1] <= 1.0):
+            raise ValueError(f"speed_scale must be within (0, 1], got {speed_scale!r}")
+        self.seed = int(seed)
+        self.every_s, self.dur_s = tuple(map(float, every_s)), tuple(map(float, dur_s))
+        self.yaw_rate = tuple(map(float, yaw_rate))
+        self.speed_scale = None if speed_scale is None else tuple(map(float, speed_scale))
+        self.replace_yaw = bool(replace_yaw)
+        self._rng = random.Random(self.seed)
+        self.episodes: list[dict] = []
+        self._max_s = 0.0
+        self.n_ticks = self.n_active = 0
+
+    def _draw_until(self, s: float) -> None:
+        while not self.episodes or self.episodes[-1]["on_s"] <= s:
+            prev = self.episodes[-1]["on_s"] if self.episodes else 0.0
+            r = self._rng
+            on = prev + r.uniform(*self.every_s)
+            dur = r.uniform(*self.dur_s)
+            sign = 1.0 if r.random() < 0.5 else -1.0
+            mag = r.uniform(*self.yaw_rate)
+            u = r.random()                                     # drawn either way
+            lo, hi = self.speed_scale or (1.0, 1.0)
+            self.episodes.append({"k": len(self.episodes), "on_s": on, "off_s": on + dur,
+                                  "yaw_rate": sign * mag, "speed_scale": lo + u * (hi - lo)})
+
+    def state(self, s: float) -> dict:
+        """{active, yaw_rate, speed_scale, episode} at mission second s."""
+        s = float(s)
+        self._max_s = max(self._max_s, s)
+        self._draw_until(s)
+        for e in reversed(self.episodes):
+            if e["on_s"] <= s:
+                if s < e["off_s"]:
+                    return {"active": True, "yaw_rate": e["yaw_rate"],
+                            "speed_scale": e["speed_scale"], "episode": e["k"]}
+                break
+        return {"active": False, "yaw_rate": 0.0, "speed_scale": 1.0, "episode": None}
+
+    def apply(self, action, s: float):
+        """(the action to send to the Shield, the tick's record)."""
+        st = self.state(s)
+        self.n_ticks += 1
+        if not st["active"]:
+            return action, st
+        self.n_active += 1
+        k = st["speed_scale"]
+        yaw = st["yaw_rate"] if self.replace_yaw else action.yaw_rate + st["yaw_rate"]
+        return type(action)(vx=action.vx * k, vy=action.vy * k, vz_up=action.vz_up,
+                            yaw_rate=yaw), st
+
+    def summary(self) -> dict:
+        return {"seed": self.seed, "every_s": list(self.every_s), "dur_s": list(self.dur_s),
+                "yaw_rate_rad_s": list(self.yaw_rate),
+                "speed_scale": None if self.speed_scale is None else list(self.speed_scale),
+                "replace_yaw": self.replace_yaw,
+                "ticks": self.n_ticks, "active_ticks": self.n_active,
+                "episodes": [dict(e) for e in self.episodes if e["on_s"] <= self._max_s],
+                "rule": ("applied after the expert's controller and slew limiter, before the "
+                         "Shield (which filters the result): "
+                         + ("yaw_rate = offset (the expert's yaw dropped)" if self.replace_yaw
+                            else "yaw_rate + offset")
+                         + ", vx and vy times speed_scale; times are mission seconds")}
+
+
 def box_from_grounder(g: dict | None) -> dict | None:
     """follow_vlm.Grounder.latest() -> the expert's box as a VLA flight's
     DetectorHint would read it, or None when there is no box: demo/
@@ -136,7 +258,8 @@ class ExpertVLARecorder:
                  sim_config: dict | None = None, encode: Callable[[dict], bytes | None] | None = None,
                  clock: Callable[[], float] = time.time, max_pair_dt_s: float = 0.25,
                  poll_s: float = 0.01, max_pending_ticks: int = 20000, saver_queue: int = 4000,
-                 flush_s: float = 1.0):
+                 flush_s: float = 1.0, perturber: Perturber | None = None):
+        self.perturber = perturber          # --record-perturb's schedule, for the records
         self.dir = Path(out_dir)
         self.dir.mkdir(parents=True, exist_ok=True)
         self.tag, self.object_text, self.expert = str(tag), str(object_text), expert
@@ -187,12 +310,16 @@ class ExpertVLARecorder:
 
     def note_tick(self, t: float, x: float, y: float, up: float, yaw: float, *, mode: str | None,
                   cmd=None, asked=None, touched: bool | None = None, truth=None,
-                  obj: str | None = None, tick: int | None = None) -> None:
+                  obj: str | None = None, tick: int | None = None,
+                  perturb: dict | None = None) -> None:
         """One mission tick: its pose (wall time `t` of the kinematics read,
         the loop's put_pose_full time), the follow's mode, the command that
         flew (`cmd`, the Shield's emitted action) and the one the controller
         asked for (`asked`), whether the Shield touched it, the subject's
-        truth (analysis only) and the object words in force."""
+        truth (analysis only), the object words in force and, on a perturbed
+        recording only, the tick's perturbation (Perturber.apply's record:
+        active, yaw_rate, speed_scale, episode) - absent otherwise, so an
+        unperturbed recording's lines are as before."""
         if not self.running:
             return
         row = {"tick": tick, "t": float(t), "x": float(x), "y": float(y), "up": float(up),
@@ -200,6 +327,11 @@ class ExpertVLARecorder:
                "asked": _act(asked), "touched": None if touched is None else bool(touched),
                "truth": None if truth is None else [float(truth[0]), float(truth[1])],
                "object": self.object_text if obj is None else obj}
+        if perturb is not None:
+            row["perturb"] = {"active": bool(perturb.get("active")),
+                              "yaw_rate": float(perturb.get("yaw_rate") or 0.0),
+                              "speed_scale": float(perturb.get("speed_scale") or 1.0),
+                              "episode": perturb.get("episode")}
         with self._lock:
             if len(self._ticks) >= self._max_ticks:
                 self.n_ticks_dropped += 1
@@ -272,10 +404,12 @@ class ExpertVLARecorder:
                 "capture_hz": (None if not span else round(self.n_captures / span, 3)),
                 "ticks": self.n_ticks, "ticks_dropped": self.n_ticks_dropped,
                 "frames": self.frames.stats(), "saver": self.saver.stats(),
-                "errors": list(self.errors), "n_errors": self.n_errors}
+                "errors": list(self.errors), "n_errors": self.n_errors,
+                **({} if self.perturber is None else {"perturb": self.perturber.summary()})}
 
     def record(self, st: dict | None = None) -> dict:
         return {"format": FORMAT, "tag": self.tag, "object": self.object_text,
+                **({} if self.perturber is None else {"perturb": self.perturber.summary()}),
                 "expert": self.expert, "author": AUTHOR, "t0": self.t0,
                 "t_start": self.t_start, "t_stop": self.t_stop,
                 "dir": str(self.dir.resolve()), "sim_config": self.sim_config,
@@ -374,6 +508,11 @@ class ExpertVLARecorder:
                           "asked": tick.get("asked"), "touched": tick.get("touched")}),
                 "truth": None if tick is None else tick.get("truth"),
                 "object": self.object_text if tick is None else tick.get("object")}
+        if tick is not None and "perturb" in tick:
+            # The perturbation of the tick in force at the capture (the
+            # builder reads track.jsonl for the label rule; this is for
+            # looking at a capture on its own).
+            line["tick"]["perturb"] = line["perturb"] = tick["perturb"]
         self._fh_caps.write(json.dumps(line) + "\n")
         self.n_captures += 1
 
@@ -386,8 +525,18 @@ def record_summary(st: dict | None) -> dict | None:
     keys = ("dir", "front_frames", "capture_attempts", "skipped_front_frames", "captures",
             "captures_with_box", "capture_failed", "capture_hz", "ticks", "ticks_dropped",
             "saver", "errors", "writer_alive_at_stop")
-    return {k: st.get(k) for k in keys}
+    out = {k: st.get(k) for k in keys}
+    if st.get("perturb") is not None:
+        # --record-perturb: the schedule's settings and counts; the episode
+        # list itself stays in record.json.
+        p = st["perturb"]
+        out["perturb"] = {**{k: v for k, v in p.items() if k != "episodes"},
+                          "episodes": len(p.get("episodes") or []),
+                          "active_s": round(sum(e["off_s"] - e["on_s"]
+                                                for e in p.get("episodes") or []), 3)}
+    return out
 
 
-__all__ = ["ExpertVLARecorder", "box_from_grounder", "record_summary", "FORMAT", "CAPTURES",
-           "TRACK", "RECORD", "FRAMES", "SCENE", "ROBOT_CONFIG", "CAMERAS", "AUTHOR"]
+__all__ = ["ExpertVLARecorder", "Perturber", "box_from_grounder", "record_summary", "FORMAT",
+           "CAPTURES", "TRACK", "RECORD", "FRAMES", "SCENE", "ROBOT_CONFIG", "CAMERAS", "AUTHOR",
+           "PERTURB_EVERY_S", "PERTURB_DUR_S", "PERTURB_YAW_RATE", "PERTURB_SPEED_SCALE"]
