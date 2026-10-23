@@ -1414,22 +1414,28 @@ def test_the_mirrored_mosaic_is_the_source_flipped_left_to_right():
             assert r["mosaic_sha256"] != s["mosaic_sha256"]
 
 
+def _FT():
+    if str(ROOT / "training") not in sys.path:
+        sys.path.insert(0, str(ROOT / "training"))
+    import finetune_aerialvla_follow as FT
+    return FT
+
+
+def _box_right(k, t, yaw_at):
+    return {"det": _det_at_bearing(30.0), "t_box": t - 0.1, "yaw_box": yaw_at(t - 0.1)}
+
+
 def test_the_builders_samples_are_what_the_trainer_reads():
     """The builder (FT-D) and the trainer (FT-T) were written apart; the
     first real dataset (follow_v2, 23 Oct) was refused whole by the trainer's
     dry run: 6051 of 6051 lines 'no_target' (the builder writes the answer as
     action_text). Every row, real, mirrored and held out, must load as the
     trainer's Sample with the builder's own prompt, text and bins."""
-    if str(ROOT / "training") not in sys.path:
-        sys.path.insert(0, str(ROOT / "training"))
-    import finetune_aerialvla_follow as FT
+    FT = _FT()
     B = _B()
+    right = _box_right
     with tempfile.TemporaryDirectory() as td:
         td = Path(td)
-
-        def right(k, t, yaw_at):
-            return {"det": _det_at_bearing(30.0), "t_box": t - 0.1, "yaw_box": yaw_at(t - 0.1)}
-
         a = _write_run(td, "runR", _turning(speed=4.0, rate=0.35), box=right)
         s = _write_run(td, "runS", _straight(speed=4.0))
         h = _write_run(td, "runH", _turning(speed=4.0, rate=0.35), box=right)
@@ -1446,9 +1452,20 @@ def test_the_builders_samples_are_what_the_trainer_reads():
             assert smp.prompt == r["prompt"] and smp.target == r["action_text"], r["id"]
             assert list(smp.bins) == r["bins"] and smp.run == r["run"], r["id"]
             assert smp.split == r["split"] and smp.phrase == r["phrase"], r["id"]
-        Image = _pil()
-        if Image is None:
-            return
+
+
+def test_a_dataset_built_with_mosaics_loads_whole_in_the_trainer():
+    """The same join with the images written: the trainer's loader (which
+    opens every mosaic) keeps every line the builder wrote."""
+    Image = _pil()
+    if Image is None:
+        print("      SKIP: Pillow is not installed (the VLA environment has it)")
+        return SKIP
+    FT = _FT()
+    B = _B()
+    right = _box_right
+    with tempfile.TemporaryDirectory() as td:
+        td = Path(td)
 
         def jpeg(k):
             out = []
@@ -1458,7 +1475,6 @@ def test_the_builders_samples_are_what_the_trainer_reads():
                 out.append(buf.getvalue())
             return tuple(out)
 
-        # With the mosaics written, the trainer's loader keeps every line.
         runs = [_write_run(td / "img", tag, motion, box=right, jpeg=jpeg)
                 for tag, motion in (("runR", _turning(speed=4.0, rate=0.35)),
                                     ("runH", _turning(speed=4.0, rate=0.35)))]
