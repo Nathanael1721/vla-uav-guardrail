@@ -95,6 +95,18 @@ TICK = 0.1
 SIM_CONFIG_DIR = str(ROOT / "demo" / "pas_config")
 SCENE = "scene_semantic.jsonc"
 ROBOT_CONFIG = ROOT / "demo" / "pas_config" / "robot_semantic_quad.jsonc"
+# --record-vla only (wave FT-D, 2026-10-23; demo/vla_record.py): the same
+# scene and airframe with AerialVLA's VLAFront / VLADown cameras added, so the
+# flight can be recorded as the model will see it. Without the flag the
+# follow loads SCENE, as before (flight_scene).
+SCENE_VLA_RECORD = "scene_semantic_vla.jsonc"
+
+
+def flight_scene(args) -> str:
+    """The scene a flight loads: SCENE, or SCENE_VLA_RECORD with
+    --record-vla (the variant robot config's FrontCamera, Chase and
+    DownCamera are robot_semantic_quad.jsonc's; tests/test_follow_dataset.py)."""
+    return SCENE_VLA_RECORD if getattr(args, "record_vla", None) else SCENE
 # The policy a flight flies when neither --policy nor --bundle is given: its
 # signed bundle (city_policy_choice), or this YAML under --dev-yaml.
 DEFAULT_POLICY = ROOT / "policies" / "follow_car.yaml"
@@ -4251,6 +4263,8 @@ async def fly(args) -> int:
     trail_stop_short = 0.0
     recorder = None
     view_dir = None
+    vla_rec = None              # --record-vla's writer (demo/vla_record.py)
+    vla_record_stats = None     # ...its counts, for metrics.json
     start_heading_err_deg = None
     nfz_hold_ticks = 0
     n_fence_aim = 0          # ticks the forward aim was moved out of a zone's band
@@ -4278,7 +4292,7 @@ async def fly(args) -> int:
         raise
     grounder = None
     try:
-        world = World(client, SCENE, delay_after_load_sec=2,
+        world = World(client, flight_scene(args), delay_after_load_sec=2,
                       sim_config_path=SIM_CONFIG_DIR)
 
         # MAKE THE SIMULATOR WINDOW SHOW THE SIMULATION.
@@ -4375,6 +4389,24 @@ async def fly(args) -> int:
             except Exception as exc:
                 print(f"[view] no Chase camera in this config "
                       f"({type(exc).__name__}: {exc})")
+
+        if args.record_vla:
+            # What AerialVLA would see (demo/vla_record.py): its two cameras,
+            # in this scene variant only. The callbacks store the message;
+            # pairing, encoding and writing are the recorder's thread. The
+            # box source reads the Grounder (built further down) when each
+            # capture is built, as a VLA flight's DetectorHint reads it.
+            from vla_record import ExpertVLARecorder, box_from_grounder
+            vla_rec = ExpertVLARecorder(args.record_vla, obs,
+                                        lambda: box_from_grounder(
+                                            grounder.latest() if grounder is not None else None),
+                                        tag=args.tag, object_text=args.object)
+            client.subscribe(drone.sensors["VLAFront"]["scene_camera"],
+                             lambda _, m: vla_rec.put_front(m))
+            client.subscribe(drone.sensors["VLADown"]["scene_camera"],
+                             lambda _, m: vla_rec.put_down(m))
+            print(f"[vla-record] AerialVLA's VLAFront/VLADown ({flight_scene(args)}) -> "
+                  f"{args.record_vla}")
 
         if not args.no_car:
             # Any FIXED route gets the two stops, not just --straight. The
@@ -4851,6 +4883,8 @@ async def fly(args) -> int:
                   f" after {waited:.0f} s: {start_gate}")
 
         t0, last_seen = time.time(), 0.0
+        if vla_rec is not None:
+            vla_rec.start(t0)           # only the mission's frames and ticks
         # Detector inferences made BEFORE the mission clock started (the start
         # gate can wait minutes). det_hz must not count them: it did, dividing
         # them by mission time only, and reported 6.9-7.5 Hz for flights whose
@@ -5126,7 +5160,8 @@ async def fly(args) -> int:
             # The full pose, into the ring get_front_capture reads: stamped
             # mid-RPC, and with the sim's own time_stamp when it has one.
             _qk = kin["pose"]["orientation"]
-            obs.put_pose_full(_ta + _ms_kin / 2000.0, p["x"], p["y"], -p["z"], yaw,
+            _t_kin = _ta + _ms_kin / 2000.0
+            obs.put_pose_full(_t_kin, p["x"], p["y"], -p["z"], yaw,
                               quat_pitch(_qk), quat_roll(_qk),
                               stamp=kin.get("time_stamp"))
             _ta = time.time()
@@ -6117,6 +6152,14 @@ async def fly(args) -> int:
             stage_ms["kin"].append(_ms_kin)
             stage_ms["truth"].append(_ms_truth)
             stage_ms["shield"].append(_ms_shield)
+            if vla_rec is not None:
+                # One deque append: the pose of this tick's kinematics read,
+                # the mode, what the controller asked and what flew. The
+                # car's truth goes in for analysis only (vla_record.py).
+                vla_rec.note_tick(_t_kin, state.x, state.y, state.up, yaw, mode=mode,
+                                  cmd=e, asked=smooth, touched=d.touched,
+                                  truth=(car.pos if car is not None else None),
+                                  obj=args.object, tick=tick)
 
             _ta = time.time()
             cmd_times.append(_ta)
@@ -6236,6 +6279,17 @@ async def fly(args) -> int:
                     fh.write(json.dumps(r) + "\n")
         except Exception as exc:
             print(f"[warn] could not write the flight log: {type(exc).__name__}: {exc}")
+        if vla_rec is not None:
+            # Bounded (the writer and FrameSaver are joined with a timeout):
+            # the recording never holds up the teardown.
+            try:
+                vla_record_stats = vla_rec.stop()
+                print(f"[vla-record] {vla_record_stats['captures']} captures "
+                      f"({vla_record_stats['skipped_front_frames']} front frames skipped, "
+                      f"{vla_record_stats['saver'].get('dropped')} JPEGs dropped), "
+                      f"{vla_record_stats['ticks']} ticks -> {args.record_vla}")
+            except Exception as exc:                                # noqa: BLE001
+                print(f"[warn] the VLA recording did not close: {type(exc).__name__}: {exc}")
         # The Dashboard row normally ends after final_report, at the end of
         # this function, with its exit code. It ended here with
         # "failed" if aborted else "ok", and `aborted` is set only by the
@@ -6588,6 +6642,14 @@ async def fly(args) -> int:
         # grant's six fields and stays so.
         "policy_source": policy_source,
     }
+    if vla_record_stats is not None:
+        # --record-vla only: which scene and robot config flew (the variant
+        # with AerialVLA's cameras) and what was recorded (record.json in the
+        # recording folder has the full counts).
+        from vla_record import record_summary
+        metrics["vla_record"] = {"scene": flight_scene(args),
+                                 "robot_config": "robot_semantic_quad_vla.jsonc",
+                                 **record_summary(vla_record_stats)}
     (out / "metrics.json").write_text(json.dumps(metrics, indent=1), encoding="utf-8")
 
     # --- WP4 artefacts -----------------------------------------------------
@@ -7148,6 +7210,14 @@ def build_arg_parser() -> argparse.ArgumentParser:
     ap.add_argument("--save-view", action="store_true",
                     help="record the third-person (Chase) camera to "
                          "demo/out/<tag>/tps/ for the demo video")
+    ap.add_argument("--record-vla", default=None, metavar="DIR",
+                    help="record what AerialVLA would see while this follow flies, "
+                         "as training data (demo/vla_record.py): the robot config "
+                         "gains AerialVLA's VLAFront/VLADown cameras (scene_semantic_"
+                         "vla.jsonc) and DIR gets every front+down pair with its pose, "
+                         "the box, the command and the track, for tools/"
+                         "build_follow_dataset.py. Off by default: the flight, its "
+                         "scene and its records are then unchanged.")
     ap.add_argument("--record-hz", type=float, default=20.0,
                     help="frames per second the recorder writes, on its OWN "
                          "thread. Replaces --view-every, which tied recording "

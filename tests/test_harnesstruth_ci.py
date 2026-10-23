@@ -667,6 +667,24 @@ def test_the_vla_flight_tests_run_in_ci():
         assert not any(p.startswith(("opencv", "pillow")) for p in _installed(j)), j
 
 
+def test_the_follow_dataset_test_runs_in_ci_and_its_mosaic_with_pillow():
+    """Wave FT-D (2026-10-23): the follow expert's AerialVLA recording
+    (demo/vla_record.py, follow_vlm --record-vla) and the step-label builder
+    (tools/build_follow_dataset.py). No simulator, GPU or model: synthetic
+    recordings, the real SemanticObs pose ring and VLAFrames with a fake
+    encoder. Its training-mosaic test needs Pillow, so it SKIPs in the loop
+    and runs in the 3.10 job's Pillow step, where GUARDRAIL_REQUIRE_PILLOW=1
+    makes a missing Pillow a failure; its flight-encoder test needs OpenCV,
+    which no job installs, and SKIPs everywhere but the lab."""
+    assert "test_follow_dataset.py" in _loop(), "not run in CI"
+    src = (ROOT / "tests" / "test_follow_dataset.py").read_text(encoding="utf-8")
+    assert "GUARDRAIL_REQUIRE_PILLOW" in src and "return SKIP" in src
+    runner = src.split('if __name__ == "__main__":', 1)[-1]
+    assert "== SKIP" in runner, "the runner does not count the SKIP"
+    steps = [s for s in _steps(_yaml(WF / "tests.yml")) if "pillow==" in str(s.get("run", ""))]
+    assert len(steps) == 1 and "tests/test_follow_dataset.py" in steps[0]["run"], steps
+
+
 def test_the_ardupilot_vla_pilot_test_runs_in_ci():
     """Wave V2b (2026-10-23): the ArduPilot rail's AerialVLA pilot
     (perception_node --pilot vla, to-do VLA-07) and its VLA cameras (VLA-03).

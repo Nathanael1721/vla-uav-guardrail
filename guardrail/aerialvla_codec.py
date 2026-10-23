@@ -611,6 +611,38 @@ def quantize(value: float, axis: str) -> int:
     return int((v - lo) / (hi - lo) * MAX_BIN)
 
 
+def step_bins(fwd_m: float, down_m: float, dpsi_rad: float) -> tuple[int, int, int]:
+    """A step in metres and radians -> its (forward, down, yaw) bins by
+    upstream's labelling rule (`quantize`: clip to the axis, then truncate).
+    The inverse direction of `bins_to_step`, for training labels
+    (tools/build_follow_dataset.py): a label made here and read back with
+    `parse_action(action_text(bins) + EOS_TEXT)` gives the same bins."""
+    return (quantize(fwd_m, "fwd_m"), quantize(down_m, "down_m"),
+            quantize(dpsi_rad, "dpsi_rad"))
+
+
+def action_text(bins, land: bool = False) -> str:
+    """(forward, down, yaw) bins -> the text the model is trained to emit:
+    upstream's label f"{fwd:02d} {down:02d} {yaw:02d}" (aerovla_dataset.py
+    __getitem__), zero-padded, plus " LAND" when `land`. The EOS token is
+    NOT part of it - the trainer appends the tokenizer's own end of sequence,
+    as upstream's collator does - so `parse_action(action_text(b) +
+    EOS_TEXT, require_eos=True)` is the server's reading of a training label.
+
+    THE ONE PLACE the training text is formed (wave FT, 2026-10-23): the old
+    training/finetune_aerialvla.py wrote unpadded bins from round() ("4 49
+    49" where upstream writes "04 49 49"), a text the strict reader refuses.
+    Refused here: anything but three integers in 0..98 (bools and floats
+    included - 1.0 would format as "1.0")."""
+    if not isinstance(bins, (tuple, list)) or len(bins) != 3:
+        raise ValueError(f"bins must be three integers, got {bins!r}")
+    for b in bins:
+        if not isinstance(b, int) or isinstance(b, bool) or not 0 <= b <= MAX_BIN:
+            raise ValueError(f"bin {b!r} is not an integer in 0..{MAX_BIN}")
+    f, d, y = bins
+    return f"{f:02d} {d:02d} {y:02d}" + (LAND_TEXT if land else "")
+
+
 def bin_interval(b: int, axis: str) -> tuple[float, float]:
     """The values truncation maps to bin b: [lo_edge, hi_edge) - except bin 98,
     which only the axis maximum itself reaches (returned as (hi, hi))."""
