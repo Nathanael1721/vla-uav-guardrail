@@ -59,6 +59,12 @@
 #         -PolicyFile policies\follow_car_citylife_nfz.yaml -Seconds 300 `
 #         -Tag ft_dagger_01 -RecordVla -RecordPerturbVla 127.0.0.1:8790 -Seed 201
 #
+# A checkpoint trained on a prev_front dataset (the mosaic's lower tile is the
+# front frame 1 s earlier) flies its windows with that tile, and its steps as
+# rates if it was flown so (vla_fly --vla-bottom-tile / --step-as-rate):
+# -PerturbVlaBottomTile prev_front [-PerturbVlaPrevDtS 1.0] -PerturbVlaStepAsRate 1.0.
+# follow_vlm refuses a server whose adapter was trained on another tile.
+#
 # WARNING: like every demo script here, this restarts the simulator, which kills
 # any process holding Blocks.uproject - INCLUDING an editor you have open. Close
 # the editor first. The match is on the .uproject, not the process name, so
@@ -106,7 +112,10 @@ param(
     [string]$PerturbVlaEvery = "",      # with -RecordPerturbVla: "LO,HI" s onset to onset (6,10)
     [string]$PerturbVlaDur = "",        # with -RecordPerturbVla: "LO,HI" s per window (2.5,4.0)
     [switch]$PerturbVlaAllowStandIn,    # with -RecordPerturbVla: a server that is not AerialVLA
-    [int]$Seed = 0,                     # follow_vlm --seed (0 = its default); the
+    [string]$PerturbVlaBottomTile = "", # with -RecordPerturbVla: "prev_front" (default down)
+    [double]$PerturbVlaPrevDtS = 0,     # with -PerturbVlaBottomTile prev_front: s earlier (1.0)
+    [double]$PerturbVlaStepAsRate = 0,  # with -RecordPerturbVla: steps as rates over H s (off)
+    [int]$Seed = 0,                   # follow_vlm --seed (0 = its default); the
                                         # perturbation schedule follows it
     [switch]$KeepSim,                   # leave the simulator running afterwards
     [switch]$SkipSim
@@ -198,6 +207,9 @@ if ($RecordPerturbVla -and $RecordPerturb) {
 }
 if (($PerturbVlaEvery -or $PerturbVlaDur -or $PerturbVlaAllowStandIn) -and -not $RecordPerturbVla) {
     throw "-PerturbVlaEvery, -PerturbVlaDur and -PerturbVlaAllowStandIn need -RecordPerturbVla"
+}
+if (($PerturbVlaBottomTile -or $PerturbVlaPrevDtS -or $PerturbVlaStepAsRate) -and -not $RecordPerturbVla) {
+    throw "-PerturbVlaBottomTile, -PerturbVlaPrevDtS and -PerturbVlaStepAsRate need -RecordPerturbVla"
 }
 if ($RecordPerturbVla) {
     # The VLA server must already listen: follow_vlm refuses a DAgger flight
@@ -447,6 +459,15 @@ if ($RecordVla) {
         }
         if ($PerturbVlaAllowStandIn) {
             $a += @("--perturb-vla-allow-stand-in")
+        }
+        if ($PerturbVlaBottomTile) {
+            $a += @("--perturb-vla-bottom-tile", $PerturbVlaBottomTile)
+        }
+        if ($PerturbVlaPrevDtS) {
+            $a += @("--perturb-vla-prev-dt-s", "$PerturbVlaPrevDtS")
+        }
+        if ($PerturbVlaStepAsRate) {
+            $a += @("--perturb-vla-step-as-rate", "$PerturbVlaStepAsRate")
         }
     }
 }

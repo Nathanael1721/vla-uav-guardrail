@@ -338,8 +338,12 @@ def adapter_identity(adapter: str | Path | None, digest: str | None) -> dict[str
     whole-model weights_sha256 covers base + adapter), its variant
     ("original" / "fine-tune" / "other") and, for a fine-tune, what it was
     trained from (the provenance file's parent adapter and digest, data and
-    epoch). None without an adapter. A flight records it from hello, so
-    which adapter flew is on file even where the weights cannot be read."""
+    epoch) and on (since 2026-10-24: the mosaic's lower tile, `bottom_tile`,
+    and the label horizon - None for a checkpoint from before, read as
+    "down"; a flight with another tile refuses to take off, demo/
+    vla_mission.bottom_tile_check). None without an adapter. A flight
+    records it from hello, so which adapter flew is on file even where the
+    weights cannot be read."""
     if not adapter:
         return None
     a = Path(adapter)
@@ -349,7 +353,8 @@ def adapter_identity(adapter: str | Path | None, digest: str | None) -> dict[str
         out["variant"] = "fine-tune"
         out["provenance"] = {k: prov.get(k) for k in (
             "id_root", "run", "epoch", "epoch_dir", "parent_adapter", "parent_adapter_sha256",
-            "base", "data", "samples_sha256", "precision", "created_utc")}
+            "base", "data", "samples_sha256", "precision", "created_utc", "bottom_tile",
+            "label_horizon_s")}
     elif a.name == Path(DEFAULT_ADAPTER).name and a.parent.name == Path(DEFAULT_ADAPTER).parent.name:
         out["variant"] = "original"
     else:

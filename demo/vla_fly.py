@@ -16,6 +16,9 @@ every 10 Hz tick through the Safety Shield, with honest records.
     # flies its step tracker smoothed unless --no-smooth (TrackerConfig)
     python demo/vla_fly.py --mission follow --cadence pipelined \\
         --vla-adapter D:/models/aerialvla-ft-follow/<run>/epoch<N> ...
+    # a checkpoint trained on a prev_front dataset, its steps flown as rates
+    python demo/vla_fly.py --mission follow --cadence pipelined \\
+        --vla-adapter ... --vla-bottom-tile prev_front --step-as-rate 1.0 ...
     # the whole flight path without the 7B model: the scripted server (its
     # identity is fake:scripted; the run is recorded as a stand-in, never a VLA)
     python demo/vla_fly.py --mission goto --vla-fake-output "96 48 49</s>" --tag vla_dry
@@ -73,6 +76,17 @@ training. `pipelined` sends the next image while a step is flown; with fast
 answers it applies each answer's turn and climb at the decision rate (the
 point-vehicle probe: 30 s of a constant 2-bin turn drifts -54.6 deg pipelined
 against -12.9 deg stop-and-go; docs/DESIGN-vla-pilot.md section 13).
+
+THE FOLLOW FINE-TUNE'S INPUT AND OUTPUT (2026-10-24, both off by default):
+--vla-bottom-tile prev_front puts the front frame --vla-prev-dt-s (1.0 s)
+earlier in the mosaic's lower tile instead of the down camera
+(vla_mission.VLAFrames; aerialvla_codec, THE MOSAIC'S LOWER TILE), and the
+flight is refused before take-off (exit 4) when the adapter hello announces
+was trained on another tile (vla_mission.bottom_tile_check; an adapter that
+records none is "down"). --step-as-rate H flies each step as a velocity,
+fwd/H and dpsi/H, until the next answer replaces it (vla_link.TrackerConfig,
+RATE EXECUTION). Both go into metrics.params; every request's record says
+its lower tile and every row its commanded rates.
 
 BEFORE TAKE-OFF: one warm-up inference on a live camera pair; a round trip
 over --warmup-max-latency-s (5 s), or no answer, refuses the flight (exit 4).
@@ -290,6 +304,15 @@ def build_arg_parser() -> argparse.ArgumentParser:
     ap.add_argument("--carry-s", type=float, default=DEFAULT_SMOOTH["carry_s"],
                     help="s: a step flown to its end while the next answer is pending keeps "
                          "its velocity, decaying to zero over this (default %(default)s)")
+    # RATE EXECUTION (guardrail/vla_link.TrackerConfig.rate_horizon_s; off by
+    # default): the follow fine-tune's label is the expert's displacement over
+    # its horizon (tools/build_follow_dataset.py --horizon-s), a velocity.
+    ap.add_argument("--step-as-rate", type=float, default=None, metavar="H",
+                    help="M3: fly each step as a velocity - fwd/H m/s along the heading, "
+                         "dpsi/H rad/s until the heading is reached - until the next answer "
+                         "replaces it (past 1.2 H the carry or the hold ends it), instead of "
+                         "an endpoint at the cruise speed. H = the dataset's --horizon-s "
+                         "(1.0). Default off")
     ap.add_argument("--arrive-radius-m", type=float, default=3.0)
     ap.add_argument("--arrive-grace-s", type=float, default=8.0)
     ap.add_argument("--overshoot-s", type=float, default=3.0,
@@ -343,6 +366,16 @@ def build_arg_parser() -> argparse.ArgumentParser:
                     help="the LoRA the started server loads instead of upstream's aero_vla - "
                          "a follow fine-tune's checkpoint (training/finetune_aerialvla_follow.py), "
                          "announced and recorded under its own id")
+    # THE LOWER TILE (guardrail/aerialvla_codec, BottomTile; 2026-10-24).
+    ap.add_argument("--vla-bottom-tile", choices=("down", "prev_front"), default="down",
+                    help="the mosaic's lower tile: 'down' (upstream's: the down camera) or "
+                         "'prev_front' (the front frame --vla-prev-dt-s earlier: a car's "
+                         "motion in one input). Must be the tile the adapter was trained on "
+                         "(its provenance, announced in hello): refused before take-off "
+                         "otherwise. Default down")
+    ap.add_argument("--vla-prev-dt-s", type=float, default=None,
+                    help="with --vla-bottom-tile prev_front: how many seconds earlier (default "
+                         "1.0; the frame nearest that, within 0.25 s, else no request)")
     ap.add_argument("--vla-fake-output", nargs="+", default=None,
                     help="start the scripted stand-in server instead of the model")
     ap.add_argument("--vla-fake-delay-s", type=float, default=0.3)
@@ -422,6 +455,24 @@ def resolve_args(args):
             raise ValueError(f"--{k.replace('_', '-')} must be a positive number")
     if not (math.isfinite(args.carry_s) and args.carry_s >= 0):
         raise ValueError("--carry-s must be 0 (no carry) or more")
+    # RATE EXECUTION: the follow fine-tune's (its labels are the expert's
+    # motion over a horizon); goto and approach fly upstream's step.
+    if args.step_as_rate is not None:
+        if m != "follow":
+            raise ValueError("--step-as-rate is the follow fine-tune's execution (its labels "
+                             "are the expert's motion over a horizon): goto and approach fly "
+                             "upstream's step")
+        if not (math.isfinite(args.step_as_rate) and args.step_as_rate > 0):
+            raise ValueError("--step-as-rate must be a positive number of seconds")
+    # THE LOWER TILE (aerialvla_codec.BottomTile), checked against the
+    # adapter's own after hello.
+    from guardrail.aerialvla_codec import bottom_tile
+    if args.vla_bottom_tile != "prev_front" and args.vla_prev_dt_s is not None:
+        raise ValueError("--vla-prev-dt-s is for --vla-bottom-tile prev_front")
+    try:
+        args.bottom_tile = bottom_tile(args.vla_bottom_tile, args.vla_prev_dt_s)
+    except ValueError as exc:
+        raise ValueError(f"--vla-bottom-tile / --vla-prev-dt-s: {exc}")
     if args.vla_adapter is not None and (args.vla_server or args.vla_fake_output):
         raise ValueError("--vla-adapter is the adapter of a server this flight STARTS: an "
                          "attached server flies whatever it was started with (its hello's "
@@ -558,7 +609,8 @@ def tracker_config(args, pilot_band, TrackerConfig):
     """The step tracker's configuration for this flight: upstream's
     execution for M1 / M2; the follow executor (turn while moving, the
     altitude held, steps anchored at the answer, LAND as arrival) and, unless
-    --no-smooth, its smoothing for M3."""
+    --no-smooth, its smoothing for M3; with --step-as-rate H (M3) each step
+    flown as a velocity over H (TrackerConfig, RATE EXECUTION)."""
     s = smooth_record(args)
     fe = args.follow_executor
     return TrackerConfig(cruise_mps=args.cruise_mps, speed_cap_mps=args.speed_cap_mps,
@@ -566,7 +618,8 @@ def tracker_config(args, pilot_band, TrackerConfig):
                          hold_altitude_m=args.cruise_alt if fe else None,
                          decision_timeout_s=args.decision_timeout_s, alt_band=pilot_band,
                          smooth_accel_mps2=s["accel_mps2"],
-                         smooth_yaw_accel_rps2=s["yaw_accel_rps2"], carry_s=s["carry_s"])
+                         smooth_yaw_accel_rps2=s["yaw_accel_rps2"], carry_s=s["carry_s"],
+                         rate_horizon_s=getattr(args, "step_as_rate", None))
 
 
 def attitude_fields(kin, FV) -> dict:
@@ -601,7 +654,8 @@ def check_args_report(args) -> dict:
             "goal_xy": list(args.goal) if args.goal else None,
             "start_xy": list(args.start_xy), "park_at": list(args.park_at) if args.park_at else None,
             "object": args.object, "shield": args.shield, "cadence": args.cadence,
-            "smooth": smooth_record(args),
+            "smooth": smooth_record(args), "step_as_rate_s": args.step_as_rate,
+            "bottom_tile": args.bottom_tile.as_dict(),
             "vla_server": args.vla_server, "vla_config": args.vla_config,
             "vla_adapter": args.vla_adapter,
             "vla_fake_output": args.vla_fake_output, "max_s": args.max_s,
@@ -1231,6 +1285,23 @@ async def _fly(args, holder: dict) -> int:
                          f"pass --allow-stand-in to fly a stand-in, recorded as one")
     print(f"[vla] hello: {identity_of(identity)}"
           + ("" if is_vla else f"  *** STAND-IN, not a VLA: {why_not}"))
+    # The lower tile the adapter was trained on must be this flight's
+    # (aerialvla_codec, THE MOSAIC'S LOWER TILE): refused before take-off.
+    tile_check = VM.bottom_tile_check(identity, args.bottom_tile, is_vla=is_vla)
+    if not tile_check["ok"]:
+        server.stop()
+        live.stop("failed", detail="the adapter's lower tile is not this flight's")
+        print(f"[vla] *** refused before take-off: {tile_check['why']} (--vla-bottom-tile "
+              f"{args.bottom_tile.mode}; the adapter's from {tile_check['source']})",
+              file=sys.stderr)
+        raise SystemExit(EXIT_REFUSED)
+    print(f"[vla] lower tile {args.bottom_tile.mode}"
+          + (f" (the front frame {args.bottom_tile.dt_s:g} s earlier)"
+             if args.bottom_tile.prev_front else "")
+          + (f", the adapter's ({tile_check['source']})" if tile_check["checked"]
+             else f" - {tile_check['source']}")
+          + (f"; steps flown as rates over {args.step_as_rate:g} s" if args.step_as_rate
+             else ""))
     weight_paths = None if (args.no_local_weights or not is_vla) else VM.local_weight_paths(identity)
 
     backend = saver = None
@@ -1240,7 +1311,7 @@ async def _fly(args, holder: dict) -> int:
                            clock=time.time)
         obs = SemanticObs()
         saver = VM.FrameSaver(out / "vla_frames")
-        frames = VM.VLAFrames(obs, saver=saver)
+        frames = VM.VLAFrames(obs, saver=saver, bottom_tile=args.bottom_tile)
         det_source = detector_hint = grounder = close_rule = None
         if args.mission == "goto":
             hint_src = VM.goto_hint_source(args.goal, args.arrive_radius_m)
@@ -1855,6 +1926,9 @@ async def _fly(args, holder: dict) -> int:
                               if args.mission == "follow" else None),
                    "tracker": {k: getattr(tcfg, k) for k in tcfg.__dataclass_fields__},
                    "smooth": smooth_record(args),
+                   "step_as_rate_s": args.step_as_rate,
+                   # the lower tile flown and the adapter's, as checked after hello
+                   "bottom_tile": tile_check,
                    "vla_adapter": args.vla_adapter,
                    "citymap": str(args.citymap), "seed": args.seed},
     }

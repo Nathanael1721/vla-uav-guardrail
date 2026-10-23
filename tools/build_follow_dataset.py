@@ -11,6 +11,10 @@ label is what the hand-written follow did next.
     # labels and stats only, no Pillow (CI, a quick look)
     python tools/build_follow_dataset.py demo/out/ft_expert_01 --out <dir> --no-images
 
+    # the lower tile as the FRONT frame 1 s earlier (THE LOWER TILE, below)
+    python tools/build_follow_dataset.py ... --bottom-tile prev_front --prev-dt-s 1.0 \\
+        --prev-tol-s 0.25 --out C:/Users/natha/vla_drone_offload/datasets/follow_v3_pf
+
 Each RUN_DIR is a flight folder (demo/out/<tag>, holding vla_record/) or the
 recording folder itself (the one holding captures.jsonl). Exit 0 when the
 dataset was written, 2 when it was refused (an unknown --holdout tag, two
@@ -99,6 +103,26 @@ pair, straight ahead and "" unchanged), the box's centre and bearing
 mirrored; marked `mirrored`, `mirror_of`. The hold-out split stays real.
 The object words are not mirrored ("a red car" has no side).
 
+THE LOWER TILE (--bottom-tile, 2026-10-24). "down" (the default) is the
+mosaic above: the capture's front over its down frame. "prev_front" puts,
+in the lower tile, the FRONT JPEG of the run's capture nearest t_capture -
+--prev-dt-s (1.0 s) within --prev-tol-s (0.25 s) - aerialvla_codec.
+pick_prev_front, the flight's own rule (vla_mission.VLAFrames) - so the
+pair shows the car's motion: the first fine-tuned follow
+(vla_follow_ft_01_20261024) could not tell a car stopped at a light from
+one pulling away, and held 0.0 m for ~6 s while it went from 9.8 to 27.6
+m. Every capture of the run whose front JPEG is on disk is a candidate,
+the ones that are no sample themselves (no box, a stale box) included: the
+flight's ring holds every frame. None within the tolerance: no sample
+("no_prev_front", after frame_missing - the flight builds no capture then,
+before any hint). The down JPEG is not needed. Each sample's `bottom_tile`
+says the mode, dt and tol, and, for prev_front, the earlier capture (its
+i, t_capture and front sha256) and the measured dt (dt_actual_s);
+stats.json gives the mode and the measured dt's spread, per run and in
+all. The trainer copies the mode into the checkpoint's provenance, and
+the flight refuses an adapter whose tile is not its own. The mirror flips
+the whole mosaic, so both tiles, each in place.
+
 WHAT IS LEFT OUT, AND SAID. Captures with no box, a stale box, or a CLOSE
 box (vla_mission.BoxClose at vla_fly's follow defaults: a VLA follow asks
 nothing then; --keep-close keeps them) - so the follow's memory and search
@@ -149,8 +173,9 @@ HINT_SOURCE = "detector"
 SAMPLES = "samples.jsonl"
 STATS = "stats.json"
 IMAGES = "images"
-DROP_ORDER = ("bad_record", "frame_missing", "no_box", "stale_box", "close_box", "mode",
-              "no_pose", "no_future_pose", "track_gap", "perturbed", "stride")
+DROP_ORDER = ("bad_record", "frame_missing", "no_prev_front", "no_box", "stale_box",
+              "close_box", "mode", "no_pose", "no_future_pose", "track_gap", "perturbed",
+              "stride")
 SMALL_FWD_M = 1.0
 # After the last perturbed tick's command, how long the motion is still not
 # the expert's own (module docstring, DART PERTURBATIONS).
@@ -430,16 +455,35 @@ def _write_png(img, path: Path) -> bool:
     return True
 
 
-def _mosaic(frames: Path, cap: dict):
+def _mosaic(frames: Path, front_sha: str, lower_sha: str, lower_what: str = "down"):
     """The server's path: the JPEG bytes as base64, decoded by the codec,
-    then the codec's mosaic (a missing down frame refused, as the flight's
-    server runs --missing-down refuse)."""
-    fb = (frames / f"{cap['front_jpg_sha256']}.jpg").read_bytes()
-    db = (frames / f"{cap['down_jpg_sha256']}.jpg").read_bytes()
+    then the codec's mosaic (a missing lower frame refused, as the flight's
+    server runs --missing-down refuse). `lower_sha`: the capture's down
+    JPEG, or with --bottom-tile prev_front the earlier capture's front JPEG
+    - what the flight sends in the down slot."""
+    fb = (frames / f"{front_sha}.jpg").read_bytes()
+    lb = (frames / f"{lower_sha}.jpg").read_bytes()
     front = C.decode_image_b64(base64.b64encode(fb).decode("ascii"), "front")
-    down = C.decode_image_b64(base64.b64encode(db).decode("ascii"), "down")
-    m, _info = C.build_mosaic(front, down, missing_down="refuse")
+    lower = C.decode_image_b64(base64.b64encode(lb).decode("ascii"), lower_what)
+    m, _info = C.build_mosaic(front, lower, missing_down="refuse")
     return m
+
+
+def prev_front_candidates(caps, frames: Path) -> tuple[list[float], list[dict]]:
+    """--bottom-tile prev_front: (capture times ascending, the captures) of
+    every capture of a run with a finite t_capture and its front JPEG on
+    disk - the frames the flight's ring would hold, samples or not."""
+    got = []
+    for c in caps:
+        try:
+            t = float(c["t_capture"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        h = c.get("front_jpg_sha256")
+        if math.isfinite(t) and h and (frames / f"{h}.jpg").is_file():
+            got.append((t, c))
+    got.sort(key=lambda tc: tc[0])
+    return [t for t, _c in got], [c for _t, c in got]
 
 
 def mirror_sample(s: dict, lab: dict, image: str | None, sha: str | None) -> dict:
@@ -484,7 +528,8 @@ def build_dataset(run_dirs, out_dir, *, horizon_s: float = DEFAULT_HORIZON_S,
                   max_gap_s: float = DEFAULT_MAX_GAP_S, keep_close: bool = False, modes=None,
                   bearing_gain: float = 1.0, images: bool = True, force: bool = False,
                   perturb_margin_s: float = DEFAULT_PERTURB_MARGIN_S, mirror: bool = False,
-                  log=None) -> dict:
+                  bottom_tile: str = C.BOTTOM_TILE_DOWN, prev_dt_s: float | None = None,
+                  prev_tol_s: float | None = None, log=None) -> dict:
     """Write samples.jsonl, stats.json (and images/) to out_dir; return the
     stats. Raises DatasetError for what main() refuses."""
     say = log or (lambda *_a, **_k: None)
@@ -492,6 +537,14 @@ def build_dataset(run_dirs, out_dir, *, horizon_s: float = DEFAULT_HORIZON_S,
             and perturb_margin_s >= 0):
         raise DatasetError("--horizon-s, --fresh-s and --max-gap-s must be positive and "
                            "--stride-s and --perturb-margin-s not negative")
+    if bottom_tile != C.BOTTOM_TILE_PREV_FRONT and (prev_dt_s is not None
+                                                    or prev_tol_s is not None):
+        raise DatasetError("--prev-dt-s / --prev-tol-s are for --bottom-tile prev_front: with "
+                           "'down' they would be recorded as if used")
+    try:
+        tile = C.bottom_tile(bottom_tile, prev_dt_s, prev_tol_s)
+    except ValueError as exc:
+        raise DatasetError(f"--bottom-tile / --prev-dt-s / --prev-tol-s: {exc}") from None
     out = Path(out_dir)
     if (out / SAMPLES).exists() and not force:
         raise DatasetError(f"{out / SAMPLES} exists; pass --force to rebuild it (images/ "
@@ -530,12 +583,16 @@ def build_dataset(run_dirs, out_dir, *, horizon_s: float = DEFAULT_HORIZON_S,
     run_stats: dict[str, dict] = {}
     n_written = n_reused = 0
     pose_dist, pose_dyaw = [], []
+    tile_dts: list[float] = []             # prev_front: the measured dt of every real sample
     for run in runs:
         tag, frames = run["tag"], run["dir"] / "frames"
         split = "holdout" if tag in holdout else "train"
         track = Track(run["track"], max_gap_s=max_gap_s)
         caps = sorted((c for c in run["captures"] if isinstance(c, dict)),
                       key=lambda c: (c.get("t_capture") is None, c.get("t_capture") or 0.0))
+        prev_t, prev_caps = (prev_front_candidates(caps, frames) if tile.prev_front
+                             else ([], []))
+        run_dts: list[float] = []
         objects = {c.get("object") or run["record"].get("object") for c in caps}
         objects.discard(None)
         for obj in objects:
@@ -561,10 +618,27 @@ def build_dataset(run_dirs, out_dir, *, horizon_s: float = DEFAULT_HORIZON_S,
                 dropped["bad_record"] += 1
                 continue
             hf, hd = cap.get("front_jpg_sha256"), cap.get("down_jpg_sha256")
-            if not (hf and hd and (frames / f"{hf}.jpg").is_file()
-                    and (frames / f"{hd}.jpg").is_file()):
-                dropped["frame_missing"] += 1
-                continue
+            if tile.prev_front:
+                # the lower tile: the run's front frame from dt earlier (THE
+                # LOWER TILE); the down JPEG is not used
+                if not (hf and (frames / f"{hf}.jpg").is_file()):
+                    dropped["frame_missing"] += 1
+                    continue
+                j = C.pick_prev_front(t, prev_t, tile.dt_s, tile.tol_s)
+                if j is None:
+                    dropped["no_prev_front"] += 1
+                    continue
+                prev = prev_caps[j]
+                lower_sha, lower_what = prev["front_jpg_sha256"], "prev_front"
+                tile_rec = {**tile.as_dict(), "dt_actual_s": round(t - prev_t[j], 6),
+                            "prev_i": prev.get("i"), "prev_t_capture": prev_t[j],
+                            "prev_front_jpg_sha256": lower_sha}
+            else:
+                if not (hf and hd and (frames / f"{hf}.jpg").is_file()
+                        and (frames / f"{hd}.jpg").is_file()):
+                    dropped["frame_missing"] += 1
+                    continue
+                lower_sha, lower_what, tile_rec = hd, "down", tile.as_dict()
             phrase, why, info = detector_phrase(cap, bridge, fresh_s=fresh_s, close=close)
             if why is not None:
                 dropped[why] += 1
@@ -592,8 +666,10 @@ def build_dataset(run_dirs, out_dir, *, horizon_s: float = DEFAULT_HORIZON_S,
             pose_dist.append(math.hypot(float(pose["x"]) - p0["x"], float(pose["y"]) - p0["y"]))
             pose_dyaw.append(abs(math.degrees(wrap_pi(float(pose["yaw_rad"]) - p0["yaw"]))))
             image = sha = None
+            if tile.prev_front:
+                run_dts.append(tile_rec["dt_actual_s"])
             if images:
-                m = _mosaic(frames, cap)
+                m = _mosaic(frames, hf, lower_sha, lower_what)
                 sha = C.mosaic_sha256(m)
                 image = f"{IMAGES}/{sha}.png"
                 if _write_png(m, out / image):
@@ -608,6 +684,8 @@ def build_dataset(run_dirs, out_dir, *, horizon_s: float = DEFAULT_HORIZON_S,
                 "pose": {k: float(pose[k]) for k in ("x", "y", "up", "yaw_rad")},
                 "image": image, "mosaic_sha256": sha,
                 "front_jpg_sha256": hf, "down_jpg_sha256": hd,
+                # what the mosaic's lower tile is (THE LOWER TILE)
+                "bottom_tile": tile_rec,
                 "phrase": phrase, "hint_source": HINT_SOURCE, "object": obj,
                 "prompt": prompt, "prompt_sha256": C.prompt_sha256(prompt),
                 "bins": list(bins), "action_text": C.action_text(bins),
@@ -650,6 +728,7 @@ def build_dataset(run_dirs, out_dir, *, horizon_s: float = DEFAULT_HORIZON_S,
         post = sum(1 for s in run_real if s["perturb"]["since_end_s"] is not None
                    and s["perturb"]["since_end_s"] <= POST_PERTURB_S + 1e-9)
         dropped_all.update(dropped)
+        tile_dts.extend(run_dts)
         rc = (run["record"].get("counts") or {})
         run_stats[tag] = {"dir": str(run["dir"]), "split": split,
                           "object": sorted(objects), "captures": len(caps),
@@ -664,6 +743,10 @@ def build_dataset(run_dirs, out_dir, *, horizon_s: float = DEFAULT_HORIZON_S,
                                       "dropped": dropped["perturbed"],
                                       "post_perturb_3s": post},
                           "bad_lines": run["bad_lines"],
+                          # prev_front: how much earlier each real sample's
+                          # lower tile really was (None with down)
+                          "bottom_tile_dt_actual_s": (_spread(run_dts) if tile.prev_front
+                                                      else None),
                           "recorder": {k: rc.get(k) for k in (
                               "captures", "skipped_front_frames", "capture_failed",
                               "capture_hz", "ticks_dropped", "saver") if k in rc},
@@ -682,7 +765,8 @@ def build_dataset(run_dirs, out_dir, *, horizon_s: float = DEFAULT_HORIZON_S,
                    keep_close=keep_close, modes=modes, bearing_gain=bearing_gain,
                    images=images, n_written=n_written, n_reused=n_reused,
                    pose_dist=pose_dist, pose_dyaw=pose_dyaw, run_dirs=run_dirs,
-                   perturb_margin_s=perturb_margin_s, mirror=mirror)
+                   perturb_margin_s=perturb_margin_s, mirror=mirror, tile=tile,
+                   tile_dts=tile_dts)
     (out / STATS).write_text(json.dumps(stats, indent=1, ensure_ascii=False), encoding="utf-8",
                              newline="\n")
     return stats
@@ -690,7 +774,9 @@ def build_dataset(run_dirs, out_dir, *, horizon_s: float = DEFAULT_HORIZON_S,
 
 def _stats(samples, run_stats, dropped_all, *, holdout, horizon_s, stride_s, fresh_s,
            max_gap_s, keep_close, modes, bearing_gain, images, n_written, n_reused,
-           pose_dist, pose_dyaw, run_dirs, perturb_margin_s, mirror) -> dict:
+           pose_dist, pose_dyaw, run_dirs, perturb_margin_s, mirror,
+           tile: "C.BottomTile | None" = None, tile_dts=()) -> dict:
+    tile = tile if tile is not None else C.BottomTile()
     # What the trainer sees (mirrored samples included): the splits, the
     # label histograms, the phrases. The quality figures below (rotate-only
     # band, small steps, clipping, distances) are over the REAL samples: a
@@ -715,15 +801,28 @@ def _stats(samples, run_stats, dropped_all, *, holdout, horizon_s, stride_s, fre
                  "stride_s": stride_s, "holdout": list(holdout), "fresh_s": fresh_s,
                  "max_gap_s": max_gap_s, "keep_close": keep_close,
                  "modes": sorted(modes) if modes else None, "bearing_gain": bearing_gain,
-                 "images": images, "perturb_margin_s": perturb_margin_s, "mirror": mirror},
+                 "images": images, "perturb_margin_s": perturb_margin_s, "mirror": mirror,
+                 "bottom_tile": tile.mode, "prev_dt_s": tile.dt_s, "prev_tol_s": tile.tol_s},
         "codec": {"num_bins": C.NUM_BINS, "ranges": {k: list(v) for k, v in C.RANGES.items()},
                   "quantize": "clip, then truncate into 99 bins (upstream _quantize_action; "
                               "aerialvla_codec.step_bins)",
                   "text": "aerialvla_codec.action_text: 'FF DD YY', zero-padded, no EOS - the "
                           "trainer appends the tokenizer's </s>",
                   "prompt_template": C.PROMPT_TEMPLATE,
-                  "mosaic": "aerialvla_codec.build_mosaic of the decoded JPEGs (front over "
-                            "down, 224x448), lossless PNG"},
+                  "mosaic": ("aerialvla_codec.build_mosaic of the decoded JPEGs (the capture's "
+                             f"front over the run's front frame {tile.dt_s:g} s earlier, "
+                             "224x448), lossless PNG" if tile.prev_front else
+                             "aerialvla_codec.build_mosaic of the decoded JPEGs (front over "
+                             "down, 224x448), lossless PNG")},
+        # The mosaic's lower tile (THE LOWER TILE): what the trainer copies
+        # into the checkpoint's provenance, and the flight must match.
+        "bottom_tile": {**tile.as_dict(),
+                        "dt_actual_s": _spread(tile_dts) if tile.prev_front else None,
+                        "no_prev_front": dropped_all["no_prev_front"],
+                        "rule": ("the front frame of the run's capture nearest t_capture - "
+                                 "dt_s within tol_s (aerialvla_codec.pick_prev_front); none: no "
+                                 "sample" if tile.prev_front else
+                                 "the capture's own down frame (upstream's)")},
         "splits": {"train": splits.get("train", 0), "holdout": splits.get("holdout", 0),
                    "train_real": sum(1 for s in real if s["split"] == "train")},
         "train_runs": sorted(t for t, r in run_stats.items() if r["split"] == "train"),
@@ -811,6 +910,16 @@ def main(argv: list[str] | None = None) -> int:
                          "flipped, dpsi negated, left/right phrases swapped), marked mirrored")
     ap.add_argument("--no-images", action="store_true",
                     help="labels and stats only: no mosaics, no Pillow")
+    ap.add_argument("--bottom-tile", choices=C.BOTTOM_TILE_MODES, default=C.BOTTOM_TILE_DOWN,
+                    help="the mosaic's lower tile: 'down' (the capture's down frame, "
+                         "upstream's) or 'prev_front' (the run's front frame --prev-dt-s "
+                         "earlier; module docstring, THE LOWER TILE). Default %(default)s")
+    ap.add_argument("--prev-dt-s", type=float, default=None,
+                    help=f"prev_front: how many seconds earlier (default "
+                         f"{C.DEFAULT_PREV_DT_S:g})")
+    ap.add_argument("--prev-tol-s", type=float, default=None,
+                    help=f"prev_front: the earlier frame within this of t - dt, else no sample "
+                         f"(default {C.DEFAULT_PREV_TOL_S:g})")
     ap.add_argument("--force", action="store_true", help="rebuild an existing dataset")
     a = ap.parse_args(argv)
     holdout = [t for grp in (a.holdout or []) for t in grp]
@@ -819,7 +928,9 @@ def main(argv: list[str] | None = None) -> int:
                            holdout=holdout, fresh_s=a.fresh_s, max_gap_s=a.max_gap_s,
                            keep_close=a.keep_close, modes=a.modes, bearing_gain=a.bearing_gain,
                            images=not a.no_images, force=a.force,
-                           perturb_margin_s=a.perturb_margin_s, mirror=a.mirror, log=print)
+                           perturb_margin_s=a.perturb_margin_s, mirror=a.mirror,
+                           bottom_tile=a.bottom_tile, prev_dt_s=a.prev_dt_s,
+                           prev_tol_s=a.prev_tol_s, log=print)
     except DatasetError as exc:
         print(f"[dataset] *** refused: {exc}", file=sys.stderr)
         return 2
@@ -827,6 +938,14 @@ def main(argv: list[str] | None = None) -> int:
     print(f"[dataset] {st['splits']['train']} train ({st['splits']['train_real']} real, "
           f"{st['mirror']['samples']} mirrored) / {st['splits']['holdout']} hold-out "
           f"samples -> {a.out}")
+    bt = st["bottom_tile"]
+    if bt["mode"] == C.BOTTOM_TILE_PREV_FRONT:
+        sp = bt["dt_actual_s"] or {}
+        print(f"[dataset] lower tile prev_front: the front frame {bt['dt_s']:g} s earlier "
+              f"(within {bt['tol_s']:g} s); measured dt p50 {sp.get('p50')} s, min "
+              f"{sp.get('min')}, max {sp.get('max')}; no earlier frame {bt['no_prev_front']}")
+    else:
+        print("[dataset] lower tile down (the capture's down frame)")
     print(f"[dataset] dropped: {st['dropped']}")
     print(f"[dataset] phrases: {st['phrase_counts']}")
     print(f"[dataset] |dpsi| (train): {st['abs_dpsi_hist']['train']}")

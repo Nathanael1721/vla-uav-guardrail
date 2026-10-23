@@ -78,6 +78,14 @@
 #          launcher flags, and the builder's rule on its records; on a stub
 #          client with a fake clock and on the loopback fake server with the
 #          real protocol-v2 client and threads; nothing SKIPs).
+#          test_vla_prev_front_rate (the follow fine-tune's two fixes of
+#          2026-10-24: the mosaic's lower tile as the front frame 1 s
+#          earlier - one rule in the codec for the builder and the flight's
+#          VLAFrames, the trainer's provenance, the refusal before take-off
+#          in vla_fly and the DAgger recorder - and a step flown as a rate
+#          over its label horizon, StepTracker's --step-as-rate; its two
+#          mosaic / evaluation tests SKIP here and run in the Pillow step,
+#          its training-loop test needs torch and is lab-only).
 #        The CityLife level, checked offline (the level itself is
 #          gitignored): test_citylife_*, test_drive_signals_dsl,
 #          test_ped_walk_plan, test_parked_cars.
@@ -284,7 +292,11 @@
 #          training mosaic and its mirror, 2026-10-23); its test of the
 #          flight's own JPEG encoder needs OpenCV too, so it SKIPs in that
 #          step as well and runs on the lab machine only (37/37 there in
-#          vla-real).
+#          vla-real). And for 2 of test_vla_prev_front_rate's 24 (the
+#          prev_front mosaic and its mirror, the evaluation tool's prev_front
+#          requests through the server's core, 2026-10-24); its training
+#          loop on a CPU stand-in needs torch, so it SKIPs in that step too
+#          (24/24 in vla-real).
 #        - Opt-in wall clock: test_hold_transit's
 #          test_each_charge_bounds_what_its_call_costs (the hold-point
 #          search's charges against what each call costs on the machine)
@@ -568,6 +580,7 @@ jobs:
               tests/test_pas_vla.py \
               tests/test_follow_dataset.py \
               tests/test_vla_dagger.py \
+              tests/test_vla_prev_front_rate.py \
               tests/test_citylife_peds.py \
               tests/test_citylife_routes.py \
               tests/test_citylife_signal_lamps.py \
@@ -621,7 +634,9 @@ jobs:
       # other SKIP (the D:/models folders) stays a SKIP. test_follow_dataset
       # (2026-10-23) runs here too, for its training mosaic and its mirror
       # (the PNG the trainer reads must be the server's mosaic, or exactly its
-      # left-right flip); its OpenCV test SKIPs.
+      # left-right flip); its OpenCV test SKIPs. test_vla_prev_front_rate
+      # (2026-10-24) for its prev_front mosaic, its mirror and the evaluation
+      # tool's prev_front requests; its torch test SKIPs.
       - name: AerialVLA image tests (Pillow)
         if: matrix.python == '3.10'
         env:
@@ -630,7 +645,7 @@ jobs:
         run: |
           python -m pip install --target "$RUNNER_TEMP/pillow" pillow==12.2.0
           fail=0
-          for img in tests/test_aerialvla_codec.py tests/test_vla_server.py tests/test_follow_dataset.py; do
+          for img in tests/test_aerialvla_codec.py tests/test_vla_server.py tests/test_follow_dataset.py tests/test_vla_prev_front_rate.py; do
             echo "::group::$img (with Pillow)"
             if ! PYTHONPATH="$RUNNER_TEMP/pillow" python "$img"; then
               echo "::error file=$img::$img failed with Pillow installed"
