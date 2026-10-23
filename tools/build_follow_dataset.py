@@ -66,6 +66,30 @@ fwd > 0: a step upstream would not fly as labelled. The follow's executor
 (TrackerConfig turn_while_moving) turns while moving, so they are KEPT, and
 stats.json counts them (rotate_only_band).
 
+DART PERTURBATIONS (follow_vlm --record-perturb, 2026-10-23). The first
+recording, ft_expert_01, gave 507 samples and all 507 said "straight
+ahead ": the expert keeps the car centred, so nothing showed an off-centre
+car being brought back. A perturbed recording knocks the executed command
+off for 1.0-1.5 s every 5-8 s (demo/vla_record.Perturber) and marks each
+tick in track.jsonl. Here a sample whose label horizon [t, t+h] overlaps a
+perturbation - from its first perturbed tick to the first clean one, plus
+--perturb-margin-s (0.3 s: the last perturbed command is flown for up to
+0.3 s, move_by_velocity's duration, and the airframe answers with a lag) -
+is dropped ("perturbed"): the label must be the expert's clean motion.
+Samples that START after one are kept - the car off-centre, the expert
+correcting is the point - each with `perturb.since_end_s`, and stats.json
+counts those within 3 s (post_perturb_3s) and gives every run's phrase
+counts and |dpsi| histogram, so the effect is visible run by run.
+
+MIRROR (--mirror). Each TRAIN sample also gives a mirrored one: the mosaic
+flipped left to right (both tiles span the width, so each is flipped in
+place - the world mirrored about the aircraft's long axis), dpsi negated
+and re-quantized by the same rule, the phrase mirrored (MIRROR_PHRASE:
+forward-left <-> forward-right, to your left <-> to your right, the rear
+pair, straight ahead and "" unchanged), the box's centre and bearing
+mirrored; marked `mirrored`, `mirror_of`. The hold-out split stays real.
+The object words are not mirrored ("a red car" has no side).
+
 WHAT IS LEFT OUT, AND SAID. Captures with no box, a stale box, or a CLOSE
 box (vla_mission.BoxClose at vla_fly's follow defaults: a VLA follow asks
 nothing then; --keep-close keeps them) - so the follow's memory and search
@@ -117,8 +141,43 @@ SAMPLES = "samples.jsonl"
 STATS = "stats.json"
 IMAGES = "images"
 DROP_ORDER = ("bad_record", "frame_missing", "no_box", "stale_box", "close_box", "mode",
-              "no_pose", "no_future_pose", "track_gap", "stride")
+              "no_pose", "no_future_pose", "track_gap", "perturbed", "stride")
 SMALL_FWD_M = 1.0
+# After the last perturbed tick's command, how long the motion is still not
+# the expert's own (module docstring, DART PERTURBATIONS).
+DEFAULT_PERTURB_MARGIN_S = 0.3
+POST_PERTURB_S = 3.0
+# |dpsi| bands for the per-run turn histogram (rad per label horizon).
+DPSI_BANDS = {"0.00-0.05": (0.0, 0.05), "0.05-0.10": (0.05, 0.10), "0.10-0.20": (0.10, 0.20),
+              "0.20-0.30": (0.20, 0.30), "0.30-0.50": (0.30, 0.50), "0.50-0.80": (0.50, 0.80),
+              "0.80-1.10": (0.80, math.inf)}
+# The compass vocabulary mirrored left to right (aerialvla_codec.PHRASES).
+MIRROR_PHRASE = {C.STRAIGHT_AHEAD: C.STRAIGHT_AHEAD, C.NO_HINT: C.NO_HINT,
+                 C.FORWARD_LEFT: C.FORWARD_RIGHT, C.FORWARD_RIGHT: C.FORWARD_LEFT,
+                 C.LEFT: C.RIGHT, C.RIGHT: C.LEFT,
+                 C.LEFT_REAR: C.RIGHT_REAR, C.RIGHT_REAR: C.LEFT_REAR}
+assert set(MIRROR_PHRASE) == set(C.PHRASES) == set(MIRROR_PHRASE.values())
+MIRROR_NOTE = "horizontal flip of the front-over-down mosaic"
+
+
+def mirror_phrase(phrase: str) -> str:
+    """The phrase for the mirrored world; refuses anything off-vocabulary."""
+    if phrase not in MIRROR_PHRASE:
+        raise ValueError(f"{phrase!r} is not one of the 8 vocabulary strings")
+    return MIRROR_PHRASE[phrase]
+
+
+def dpsi_band(v: float) -> str:
+    a = abs(float(v))
+    for name, (lo, hi) in DPSI_BANDS.items():
+        if lo <= a < hi:
+            return name
+    return list(DPSI_BANDS)[-1]
+
+
+def _dpsi_hist(samples) -> dict:
+    c = Counter(dpsi_band(s["label"]["dpsi_rad"]) for s in samples)
+    return {name: c[name] for name in DPSI_BANDS if c[name]}
 
 
 class DatasetError(ValueError):
@@ -135,6 +194,7 @@ class Track:
 
     def __init__(self, rows, max_gap_s: float = DEFAULT_MAX_GAP_S):
         by_t: dict[float, dict] = {}
+        active: dict[float, bool | None] = {}
         for r in rows:
             try:
                 p = {k: float(r[k]) for k in ("t", "x", "y", "up", "yaw")}
@@ -142,9 +202,39 @@ class Track:
                 continue
             if all(math.isfinite(v) for v in p.values()):
                 by_t[p["t"]] = p                      # a repeated time keeps the last
+                pr = r.get("perturb")
+                active[p["t"]] = None if pr is None else bool(pr.get("active"))
         self.rows = [by_t[t] for t in sorted(by_t)]
         self.t = [r["t"] for r in self.rows]
         self.max_gap_s = float(max_gap_s)
+        # --record-perturb: [t_on, t_off) of each perturbation, from the
+        # first perturbed tick to the first clean one after it (the track's
+        # end if the flight ended inside one).
+        self.perturb_intervals: list[tuple[float, float]] = []
+        on = None
+        for t in self.t:
+            if active[t] and on is None:
+                on = t
+            elif not active[t] and on is not None:
+                self.perturb_intervals.append((on, t))
+                on = None
+        if on is not None:
+            self.perturb_intervals.append((on, self.t[-1]))
+
+    def perturbed(self, t: float, horizon_s: float, margin_s: float) -> bool:
+        """Does the label horizon [t, t + horizon_s] overlap a perturbation,
+        counting `margin_s` after its last perturbed command as perturbed?
+        A horizon that ends exactly at an onset, or starts exactly at
+        t_off + margin, does not (1e-6 s of slack for wall-clock floats)."""
+        eps = 1e-6
+        return any(t < off + margin_s - eps and t + horizon_s > on + eps
+                   for on, off in self.perturb_intervals)
+
+    def since_perturb_end(self, t: float) -> float | None:
+        """Seconds from the end of the last perturbation that ended at or
+        before t; None when none has."""
+        ends = [off for _on, off in self.perturb_intervals if off <= t + 1e-6]
+        return None if not ends else t - max(ends)
 
     def locate(self, t: float) -> tuple[dict | None, str | None]:
         """(pose, None) or (None, why): "no_pose" before the track,
@@ -343,6 +433,40 @@ def _mosaic(frames: Path, cap: dict):
     return m
 
 
+def mirror_sample(s: dict, lab: dict, image: str | None, sha: str | None) -> dict:
+    """The left-right mirror of sample `s` (module docstring, MIRROR): the
+    turn negated and re-quantized by upstream's rule from the unrounded
+    label, forward and down unchanged, the phrase mirrored and the prompt
+    rebuilt by the codec, the box centre and bearing mirrored. `image` /
+    `sha`: the flipped mosaic's (None without images). The pose, the
+    expert's command and the analysis are the source capture's."""
+    flip = {"low": "high", "high": "low", None: None}
+    mlab = dict(lab["label"], dpsi_rad=-lab["label"]["dpsi_rad"])
+    mraw = dict(lab["raw"], dpsi_rad=-lab["raw"]["dpsi_rad"])
+    bins = C.step_bins(mlab["fwd_m"], mlab["down_m"], mlab["dpsi_rad"])
+    step = C.bins_to_step(bins)
+    phrase = mirror_phrase(s["phrase"])
+    prompt = C.build_prompt(phrase, s["object"])
+    box = dict(s["box"])
+    det = box.get("det")
+    if det is not None:
+        det = list(det)
+        det[0] = float(det[5]) - float(det[0])
+        box["det"] = det
+    for k in ("bearing_deg", "yaw_correction_deg"):
+        if box.get(k) is not None:
+            box[k] = -box[k]
+    return {**s, "id": s["id"] + "/mirror", "image": image, "mosaic_sha256": sha,
+            "phrase": phrase, "prompt": prompt, "prompt_sha256": C.prompt_sha256(prompt),
+            "bins": list(bins), "action_text": C.action_text(bins),
+            "label": {k: round(v, 6) for k, v in mlab.items()},
+            "label_raw": {k: round(v, 6) for k, v in mraw.items()},
+            "clipped": dict(s["clipped"], dpsi_rad=flip[s["clipped"]["dpsi_rad"]]),
+            "step_decoded": {k: round(v, 6) for k, v in step.to_dict().items()},
+            "rotate_only": step.rotate_only, "box": box,
+            "mirrored": True, "mirror_of": s["id"], "mirror": MIRROR_NOTE}
+
+
 # --------------------------------------------------------------------------- #
 # The dataset
 # --------------------------------------------------------------------------- #
@@ -350,13 +474,15 @@ def build_dataset(run_dirs, out_dir, *, horizon_s: float = DEFAULT_HORIZON_S,
                   stride_s: float = DEFAULT_STRIDE_S, holdout=(), fresh_s: float = DEFAULT_FRESH_S,
                   max_gap_s: float = DEFAULT_MAX_GAP_S, keep_close: bool = False, modes=None,
                   bearing_gain: float = 1.0, images: bool = True, force: bool = False,
+                  perturb_margin_s: float = DEFAULT_PERTURB_MARGIN_S, mirror: bool = False,
                   log=None) -> dict:
     """Write samples.jsonl, stats.json (and images/) to out_dir; return the
     stats. Raises DatasetError for what main() refuses."""
     say = log or (lambda *_a, **_k: None)
-    if not (horizon_s > 0 and stride_s >= 0 and fresh_s > 0 and max_gap_s > 0):
+    if not (horizon_s > 0 and stride_s >= 0 and fresh_s > 0 and max_gap_s > 0
+            and perturb_margin_s >= 0):
         raise DatasetError("--horizon-s, --fresh-s and --max-gap-s must be positive and "
-                           "--stride-s not negative")
+                           "--stride-s and --perturb-margin-s not negative")
     out = Path(out_dir)
     if (out / SAMPLES).exists() and not force:
         raise DatasetError(f"{out / SAMPLES} exists; pass --force to rebuild it (images/ "
@@ -442,6 +568,10 @@ def build_dataset(run_dirs, out_dir, *, horizon_s: float = DEFAULT_HORIZON_S,
             if lab["reason"] is not None:
                 dropped[lab["reason"]] += 1
                 continue
+            if track.perturbed(t, horizon_s, perturb_margin_s):
+                # The label must be the expert's clean motion (DART).
+                dropped["perturbed"] += 1
+                continue
             if last_t is not None and t - last_t < stride_s - 1e-9:
                 dropped["stride"] += 1
                 continue
@@ -490,14 +620,40 @@ def build_dataset(run_dirs, out_dir, *, horizon_s: float = DEFAULT_HORIZON_S,
                              "subject_dist_m": (None if not truth else round(math.hypot(
                                  float(truth[0]) - float(pose["x"]),
                                  float(truth[1]) - float(pose["y"])), 3))},
+                "perturb": {"since_end_s": (None if (se := track.since_perturb_end(t)) is None
+                                            else round(se, 4))},
+                "mirrored": False,
             })
             n_run += 1
+            if mirror and split == "train":
+                mimage = msha = None
+                if images:
+                    from PIL import ImageOps
+                    mm = ImageOps.mirror(m)
+                    msha = C.mosaic_sha256(mm)
+                    mimage = f"{IMAGES}/{msha}.png"
+                    if _write_png(mm, out / mimage):
+                        n_written += 1
+                    else:
+                        n_reused += 1
+                samples.append(mirror_sample(samples[-1], lab, mimage, msha))
+        run_real = [s for s in samples if s["run"] == tag and not s["mirrored"]]
+        post = sum(1 for s in run_real if s["perturb"]["since_end_s"] is not None
+                   and s["perturb"]["since_end_s"] <= POST_PERTURB_S + 1e-9)
         dropped_all.update(dropped)
         rc = (run["record"].get("counts") or {})
         run_stats[tag] = {"dir": str(run["dir"]), "split": split,
                           "object": sorted(objects), "captures": len(caps),
                           "track_ticks": len(track.rows), "samples": n_run,
                           "dropped": {k: dropped[k] for k in DROP_ORDER if dropped[k]},
+                          # What the run teaches, at a glance (real samples).
+                          "phrase_counts": dict(Counter(s["phrase"] for s in run_real)),
+                          "abs_dpsi_hist": _dpsi_hist(run_real),
+                          "perturb": {"intervals": len(track.perturb_intervals),
+                                      "active_s": round(sum(off - on for on, off
+                                                            in track.perturb_intervals), 3),
+                                      "dropped": dropped["perturbed"],
+                                      "post_perturb_3s": post},
                           "bad_lines": run["bad_lines"],
                           "recorder": {k: rc.get(k) for k in (
                               "captures", "skipped_front_frames", "capture_failed",
@@ -505,6 +661,9 @@ def build_dataset(run_dirs, out_dir, *, horizon_s: float = DEFAULT_HORIZON_S,
                           "has_record_json": bool(run["record"])}
         say(f"[run] {tag:28s} {split:7s} captures {len(caps):5d} -> samples {n_run:5d}  "
             f"dropped {dict(run_stats[tag]['dropped'])}")
+        say(f"[run] {'':28s} phrases {run_stats[tag]['phrase_counts']}  |dpsi| "
+            f"{run_stats[tag]['abs_dpsi_hist']}  perturbations "
+            f"{len(track.perturb_intervals)}, samples after one (<= 3 s) {post}")
 
     with (out / SAMPLES).open("w", encoding="utf-8", newline="\n") as fh:
         for s in samples:
@@ -513,7 +672,8 @@ def build_dataset(run_dirs, out_dir, *, horizon_s: float = DEFAULT_HORIZON_S,
                    stride_s=stride_s, fresh_s=fresh_s, max_gap_s=max_gap_s,
                    keep_close=keep_close, modes=modes, bearing_gain=bearing_gain,
                    images=images, n_written=n_written, n_reused=n_reused,
-                   pose_dist=pose_dist, pose_dyaw=pose_dyaw, run_dirs=run_dirs)
+                   pose_dist=pose_dist, pose_dyaw=pose_dyaw, run_dirs=run_dirs,
+                   perturb_margin_s=perturb_margin_s, mirror=mirror)
     (out / STATS).write_text(json.dumps(stats, indent=1, ensure_ascii=False), encoding="utf-8",
                              newline="\n")
     return stats
@@ -521,17 +681,24 @@ def build_dataset(run_dirs, out_dir, *, horizon_s: float = DEFAULT_HORIZON_S,
 
 def _stats(samples, run_stats, dropped_all, *, holdout, horizon_s, stride_s, fresh_s,
            max_gap_s, keep_close, modes, bearing_gain, images, n_written, n_reused,
-           pose_dist, pose_dyaw, run_dirs) -> dict:
+           pose_dist, pose_dyaw, run_dirs, perturb_margin_s, mirror) -> dict:
+    # What the trainer sees (mirrored samples included): the splits, the
+    # label histograms, the phrases. The quality figures below (rotate-only
+    # band, small steps, clipping, distances) are over the REAL samples: a
+    # mirror would only count each one twice.
+    real = [s for s in samples if not s["mirrored"]]
     splits = Counter(s["split"] for s in samples)
-    hist = {}
+    hist, dhist = {}, {}
     for name, sel in (("train", "train"), ("holdout", "holdout"), ("all", None)):
         ss = [s for s in samples if sel is None or s["split"] == sel]
         hist[name] = {axis: _hist(s["bins"][i] for s in ss) for i, axis in enumerate(C.AXES)}
-    band = [s for s in samples if s["rotate_only"]]
+        dhist[name] = _dpsi_hist(ss)
+    band = [s for s in real if s["rotate_only"]]
     with_fwd = [s for s in band if s["bins"][0] > 0]
-    clipped = {axis: {"low": sum(1 for s in samples if s["clipped"][axis] == "low"),
-                      "high": sum(1 for s in samples if s["clipped"][axis] == "high")}
+    clipped = {axis: {"low": sum(1 for s in real if s["clipped"][axis] == "low"),
+                      "high": sum(1 for s in real if s["clipped"][axis] == "high")}
                for axis in C.AXES}
+    mirrored = [s for s in samples if s["mirrored"]]
     return {
         "format": FORMAT, "tool": "tools/build_follow_dataset.py",
         "built_utc": _dt.datetime.now(_dt.timezone.utc).isoformat(timespec="seconds"),
@@ -539,7 +706,7 @@ def _stats(samples, run_stats, dropped_all, *, holdout, horizon_s, stride_s, fre
                  "stride_s": stride_s, "holdout": list(holdout), "fresh_s": fresh_s,
                  "max_gap_s": max_gap_s, "keep_close": keep_close,
                  "modes": sorted(modes) if modes else None, "bearing_gain": bearing_gain,
-                 "images": images},
+                 "images": images, "perturb_margin_s": perturb_margin_s, "mirror": mirror},
         "codec": {"num_bins": C.NUM_BINS, "ranges": {k: list(v) for k, v in C.RANGES.items()},
                   "quantize": "clip, then truncate into 99 bins (upstream _quantize_action; "
                               "aerialvla_codec.step_bins)",
@@ -548,29 +715,43 @@ def _stats(samples, run_stats, dropped_all, *, holdout, horizon_s, stride_s, fre
                   "prompt_template": C.PROMPT_TEMPLATE,
                   "mosaic": "aerialvla_codec.build_mosaic of the decoded JPEGs (front over "
                             "down, 224x448), lossless PNG"},
-        "splits": {"train": splits.get("train", 0), "holdout": splits.get("holdout", 0)},
+        "splits": {"train": splits.get("train", 0), "holdout": splits.get("holdout", 0),
+                   "train_real": sum(1 for s in real if s["split"] == "train")},
         "train_runs": sorted(t for t, r in run_stats.items() if r["split"] == "train"),
         "holdout_runs": sorted(t for t, r in run_stats.items() if r["split"] == "holdout"),
         "runs": run_stats,
         "dropped": {k: dropped_all[k] for k in DROP_ORDER if dropped_all[k]},
         "label_hist": hist,
-        "label_spread": {axis: _spread(s["label"][axis] for s in samples) for axis in C.AXES},
+        "abs_dpsi_hist": dhist,
+        "label_spread": {axis: _spread(s["label"][axis] for s in real) for axis in C.AXES},
         "phrase_counts": dict(Counter(s["phrase"] for s in samples)),
-        "by_mode": dict(Counter(s["expert"]["mode"] for s in samples)),
-        "shield_touched": sum(1 for s in samples if s["expert"].get("touched")),
+        "phrase_counts_real": dict(Counter(s["phrase"] for s in real)),
+        "mirror": {"enabled": bool(mirror), "samples": len(mirrored),
+                   "splits": ["train"] if mirror else []},
+        "perturb": {
+            "margin_s": perturb_margin_s,
+            "intervals": sum(r["perturb"]["intervals"] for r in run_stats.values()),
+            "dropped": dropped_all["perturbed"],
+            "post_perturb_3s": sum(r["perturb"]["post_perturb_3s"] for r in run_stats.values()),
+            "note": ("a sample whose label horizon overlaps a perturbation (its first perturbed "
+                     "tick to the first clean one, plus margin_s) is dropped: the label is the "
+                     "expert's clean motion; samples starting after one are kept "
+                     "(post_perturb_3s: within 3 s of its end)")},
+        "by_mode": dict(Counter(s["expert"]["mode"] for s in real)),
+        "shield_touched": sum(1 for s in real if s["expert"].get("touched")),
         "rotate_only_band": {
             "n": len(band), "with_fwd": len(with_fwd),
-            "frac": round(len(band) / len(samples), 4) if samples else None,
+            "frac": round(len(band) / len(real), 4) if real else None,
             "note": ("labels whose decoded |dpsi| reaches 0.25 rad: upstream's executor only "
                      "rotates on such a step, so with fwd > 0 they teach a step upstream would "
                      "not fly as labelled. Kept: the follow's executor (TrackerConfig "
                      "turn_while_moving) turns while moving.")},
-        "small_fwd": {"lt_1m": sum(1 for s in samples if s["label"]["fwd_m"] < SMALL_FWD_M),
-                      "zero_bin": sum(1 for s in samples if s["bins"][0] == 0),
+        "small_fwd": {"lt_1m": sum(1 for s in real if s["label"]["fwd_m"] < SMALL_FWD_M),
+                      "zero_bin": sum(1 for s in real if s["bins"][0] == 0),
                       "note": "the expert standing off close: kept"},
         "clipped": clipped,
-        "subject_dist_m": _spread(s["analysis"]["subject_dist_m"] for s in samples),
-        "box_age_s": _spread(s["box"]["age_s"] for s in samples),
+        "subject_dist_m": _spread(s["analysis"]["subject_dist_m"] for s in real),
+        "box_age_s": _spread(s["box"]["age_s"] for s in real),
         "pose_check": {"capture_vs_track_m": _spread(pose_dist),
                        "capture_vs_track_yaw_deg": _spread(pose_dyaw),
                        "note": "the capture's pose (the loop's pose ring at the frame's sim "
@@ -612,6 +793,13 @@ def main(argv: list[str] | None = None) -> int:
                     help="keep only captures the expert flew in these modes (e.g. track)")
     ap.add_argument("--bearing-gain", type=float, default=1.0,
                     help="VLABridge gain (1.0 honest; recorded)")
+    ap.add_argument("--perturb-margin-s", type=float, default=DEFAULT_PERTURB_MARGIN_S,
+                    help="a perturbed recording: after a perturbation's last perturbed tick, "
+                         "this long still counts as perturbed for the label rule (default "
+                         "%(default)s; 0 = the bare overlap rule)")
+    ap.add_argument("--mirror", action="store_true",
+                    help="add a left-right mirrored copy of every TRAIN sample (the mosaic "
+                         "flipped, dpsi negated, left/right phrases swapped), marked mirrored")
     ap.add_argument("--no-images", action="store_true",
                     help="labels and stats only: no mosaics, no Pillow")
     ap.add_argument("--force", action="store_true", help="rebuild an existing dataset")
@@ -621,15 +809,21 @@ def main(argv: list[str] | None = None) -> int:
         st = build_dataset(a.runs, a.out, horizon_s=a.horizon_s, stride_s=a.stride_s,
                            holdout=holdout, fresh_s=a.fresh_s, max_gap_s=a.max_gap_s,
                            keep_close=a.keep_close, modes=a.modes, bearing_gain=a.bearing_gain,
-                           images=not a.no_images, force=a.force, log=print)
+                           images=not a.no_images, force=a.force,
+                           perturb_margin_s=a.perturb_margin_s, mirror=a.mirror, log=print)
     except DatasetError as exc:
         print(f"[dataset] *** refused: {exc}", file=sys.stderr)
         return 2
     band = st["rotate_only_band"]
-    print(f"[dataset] {st['splits']['train']} train / {st['splits']['holdout']} hold-out "
+    print(f"[dataset] {st['splits']['train']} train ({st['splits']['train_real']} real, "
+          f"{st['mirror']['samples']} mirrored) / {st['splits']['holdout']} hold-out "
           f"samples -> {a.out}")
     print(f"[dataset] dropped: {st['dropped']}")
     print(f"[dataset] phrases: {st['phrase_counts']}")
+    print(f"[dataset] |dpsi| (train): {st['abs_dpsi_hist']['train']}")
+    print(f"[dataset] perturbations: {st['perturb']['intervals']}, labels dropped for one "
+          f"{st['perturb']['dropped']}, samples starting within 3 s after one "
+          f"{st['perturb']['post_perturb_3s']}")
     print(f"[dataset] rotate-only band (|dpsi| >= 0.25 rad): {band['n']}, of which with "
           f"fwd > 0: {band['with_fwd']} (kept; see stats.json)")
     print(f"[dataset] small steps (fwd < 1 m): {st['small_fwd']['lt_1m']}")
