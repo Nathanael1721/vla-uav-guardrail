@@ -1414,6 +1414,60 @@ def test_the_mirrored_mosaic_is_the_source_flipped_left_to_right():
             assert r["mosaic_sha256"] != s["mosaic_sha256"]
 
 
+def test_the_builders_samples_are_what_the_trainer_reads():
+    """The builder (FT-D) and the trainer (FT-T) were written apart; the
+    first real dataset (follow_v2, 23 Oct) was refused whole by the trainer's
+    dry run: 6051 of 6051 lines 'no_target' (the builder writes the answer as
+    action_text). Every row, real, mirrored and held out, must load as the
+    trainer's Sample with the builder's own prompt, text and bins."""
+    if str(ROOT / "training") not in sys.path:
+        sys.path.insert(0, str(ROOT / "training"))
+    import finetune_aerialvla_follow as FT
+    B = _B()
+    with tempfile.TemporaryDirectory() as td:
+        td = Path(td)
+
+        def right(k, t, yaw_at):
+            return {"det": _det_at_bearing(30.0), "t_box": t - 0.1, "yaw_box": yaw_at(t - 0.1)}
+
+        a = _write_run(td, "runR", _turning(speed=4.0, rate=0.35), box=right)
+        s = _write_run(td, "runS", _straight(speed=4.0))
+        h = _write_run(td, "runH", _turning(speed=4.0, rate=0.35), box=right)
+        B.build_dataset([a, s, h], td / "ds", horizon_s=1.0, stride_s=0.5, images=False,
+                        holdout=["runH"], mirror=True)
+        rows = [json.loads(ln) for ln in (td / "ds" / "samples.jsonl").read_text(
+            encoding="utf-8").splitlines()]
+        assert {r["split"] for r in rows} == {"train", "holdout"}
+        assert any(r["mirrored"] for r in rows) and any(r["phrase"] != C.STRAIGHT_AHEAD
+                                                         for r in rows)
+        for i, r in enumerate(rows):
+            r = dict(r, image="images/placeholder.png")        # images=False leaves it None
+            smp = FT.check_sample(r, td / "ds", i)
+            assert smp.prompt == r["prompt"] and smp.target == r["action_text"], r["id"]
+            assert list(smp.bins) == r["bins"] and smp.run == r["run"], r["id"]
+            assert smp.split == r["split"] and smp.phrase == r["phrase"], r["id"]
+        Image = _pil()
+        if Image is None:
+            return
+
+        def jpeg(k):
+            out = []
+            for col in ((200, 40, 40 + k % 200), (30, 160, 30)):
+                buf = io.BytesIO()
+                Image.new("RGB", (256, 256), col).save(buf, format="JPEG", quality=90)
+                out.append(buf.getvalue())
+            return tuple(out)
+
+        # With the mosaics written, the trainer's loader keeps every line.
+        runs = [_write_run(td / "img", tag, motion, box=right, jpeg=jpeg)
+                for tag, motion in (("runR", _turning(speed=4.0, rate=0.35)),
+                                    ("runH", _turning(speed=4.0, rate=0.35)))]
+        B.build_dataset(runs, td / "ds_img", horizon_s=1.0, stride_s=0.5, images=True,
+                        holdout=["runH"], mirror=True)
+        kept, rep = FT.load_samples(td / "ds_img", check_images=True)
+        assert rep["kept"] == rep["lines"] == len(kept) > 0 and not rep["dropped"], rep
+
+
 def test_the_launcher_switch_perturbs_only_a_recording():
     src = PS1.read_text(encoding="utf-8")
     assert "[switch]$RecordPerturb" in src and "[switch]$PerturbSpeed" in src

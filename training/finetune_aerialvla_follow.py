@@ -59,7 +59,7 @@ DATASET/samples.jsonl, one JSON object per sample, at least:
   prompt  the exact prompt text (must re-build from its phrase and object
           with aerialvla_codec.build_prompt; csp off)
   target  the exact answer text "FF DD YY" (or "FF DD YY LAND"), without EOS
-          (also read: target_text, label_text)
+          (also read: target_text, label_text, action_text - the builder's)
   run     the run tag (also run_tag)
   split   "train", or a held-out split ("holdout", "val", "eval", "test")
 optional and checked when present: phrase, object (must equal the prompt's),
@@ -129,7 +129,9 @@ IGNORE_INDEX = -100
 TRAIN_SPLIT = "train"
 HOLDOUT_SPLITS = ("holdout", "val", "eval", "test")
 IMAGE_KEYS = ("image", "image_path", "mosaic", "mosaic_path")
-TARGET_KEYS = ("target", "target_text", "label_text")
+# action_text: what tools/build_follow_dataset.py writes (the first real
+# dataset was refused whole without it, 23 Oct).
+TARGET_KEYS = ("target", "target_text", "label_text", "action_text")
 RUN_KEYS = ("run", "run_tag")
 SHA_KEYS = ("image_sha256", "mosaic_sha256")
 RUN_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
