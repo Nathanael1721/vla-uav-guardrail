@@ -1411,6 +1411,12 @@ async def _fly(args, holder: dict) -> int:
                    {"reached_goal": None}) or {"reached_goal": None}
     mission_s = rows[-1]["t"] if rows else None
     n_touched = sum(1 for r in rows if r.get("touched"))
+    # M3: the follow's score from the level car's truth rows; its two KPI
+    # keys go to the TOP of metrics, where guardrail/kpi.py reads them
+    # (review of d6e7123, P1-1). A score that could not be computed is no
+    # score: follow_scored False, so kpi says "not measurable", never success.
+    fscores = (guard("follow_scores", lambda: VM.follow_scores(rows), None)
+               if args.mission == "follow" else None)
     metrics = {
         "tag": args.tag, "rail": "projectairsim-simple_flight", "level": "CityLife_Day",
         "scene": SCENES[args.mission], "ticks": len(rows), "mission_s": mission_s,
@@ -1434,8 +1440,9 @@ async def _fly(args, holder: dict) -> int:
             "level_car": args.level_car,
             "monitor": monitor.summary() if monitor is not None else None}),
         **scores,
-        "follow": (guard("follow_scores", lambda: {
-            **VM.follow_scores(rows), "level_car": args.level_car,
+        **(VM.follow_kpi_fields(fscores) if args.mission == "follow" else {}),
+        "follow": (guard("follow_record", lambda: {
+            **(fscores or {}), "level_car": args.level_car,
             "truth_period_s": LEVEL_TRUTH_PERIOD_S,
             "truth_errors": list(level_truth_errors),
             "level_stats": level_car.stats() if level_car is not None else None})

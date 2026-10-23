@@ -1297,16 +1297,206 @@ def test_a_close_box_holds_the_follows_horizontal_motion_before_the_shield():
 
 
 def test_follow_scores_read_the_level_car_truth_rows_only():
+    """follow_scores reads each row's subject_dist_m (the level car's truth,
+    for scoring only). Since the review of d6e7123 (P1-1) "scored" has
+    follow_vlm's meaning (follow_vlm.follow_scored): the truth on at least
+    FOLLOW_TRUTH_MIN_COVERAGE of the ticks - 3 of 4 here is not scored, though
+    the share within 30 m of the ticks that have it is still reported."""
     rows = [{"t": 0.0, "x": 0, "y": 0}, {"t": 0.1, "x": 0, "y": 0, "subject_dist_m": 12.0},
             {"t": 0.2, "x": 0, "y": 0, "subject_dist_m": 45.0},
             {"t": 0.3, "x": 0, "y": 0, "subject_dist_m": 20.0}]
     s = VM.follow_scores(rows)
-    assert s["follow_scored"] and s["ticks_scored"] == 3 and s["ticks"] == 4
-    assert s["frac_within"] == round(2 / 3, 3) and s["within_m"] == 30.0
+    assert not s["follow_scored"] and s["ticks_scored"] == 3 and s["ticks"] == 4
+    assert s["truth_coverage"] == 0.75
+    assert s["frac_within"] == s["frac_within_30m"] == round(2 / 3, 3) and s["within_m"] == 30.0
     assert (s["dist_min_m"], s["dist_median_m"], s["dist_max_m"]) == (12.0, 20.0, 45.0)
     assert s["dist_start_m"] == 12.0 and s["dist_end_m"] == 20.0
+    assert VM.follow_scores(rows[1:])["follow_scored"] is True
     assert VM.follow_scores([{"t": 0.0}]) == {"follow_scored": False, "ticks_scored": 0,
-                                               "ticks": 1}
+                                               "ticks": 1, "truth_coverage": 0.0,
+                                               "frac_within_30m": None}
+    assert VM.follow_scores([])["follow_scored"] is False
+
+
+class _FixedBackend:
+    """A backend whose every act() is the same tick (MissionLoop needs act,
+    last_tick, tracker and last_link_failure; `counts` like RemoteVLABackend's
+    when `requests` is given)."""
+
+    def __init__(self, action=None, author="none", reason="no_decision", seq=None,
+                 requests=None):
+        self.tracker = None
+        self.last_link_failure = None
+        self.tick_ = Tick(action or Action4D(), author, reason, seq, None if seq is None else 0.2)
+        self.last_tick = None
+        if requests is not None:
+            from collections import Counter
+            self.counts = Counter(requests=requests) if requests else Counter()
+
+    def act(self, state):
+        self.last_tick = self.tick_
+        return self.tick_.action
+
+
+def _follow_rows(dist_of, n=60, box=(384.0, 200.0, 30.0, 20.0, 0.3, 768, 432, 0.5)):
+    """`n` rows of a follow through the real MissionLoop and the real Shield
+    over the CityLife policy (a hovering backend at the mission start), each
+    given subject_dist_m = dist_of(k) as vla_fly adds it after loop.tick
+    (None: no truth on that tick)."""
+    from guardrail.replay import rail_shield
+    from guardrail.shield import LOOKAHEAD_DT_S, LOOKAHEAD_S
+    shield = rail_shield(load_policy(POLICY), lookahead_s=LOOKAHEAD_S, dt=LOOKAHEAD_DT_S)
+    sim = _Sim()
+    mon = VM.MissionMonitor(VM.MonitorConfig(mission="follow", max_s=600.0, lost_timeout_s=90.0),
+                            sim.clock())
+    loop = VM.MissionLoop(_FixedBackend(), shield, mon, mission="follow",
+                          det_source=lambda: (box, sim.clock() - 0.2), clock=sim.clock)
+    rows = []
+    for k in range(n):
+        res = loop.tick(sim.state())
+        d = dist_of(k)
+        if d is not None:
+            res.row["subject_xy"] = [50.0, -18.0]
+            res.row["subject_dist_m"] = d
+        rows.append(res.row)
+        sim.step(res.flown)
+    return rows
+
+
+def test_a_follow_publishes_its_score_where_kpi_and_the_dashboard_read_it():
+    """Review of d6e7123, P1-1: vla_fly put the follow's score under
+    metrics["follow"] only; guardrail/kpi.py reads frac_within_30m and
+    follow_scored at the TOP of metrics (kpi.compute), found neither and
+    applied no follow test, so all nine VLA follows of 23 Oct wrote kpi.json
+    with mission_success true - #2 and #3 with 0.0 of their ticks within
+    30 m. follow_kpi_fields lifts the two, with follow_vlm's meaning: a
+    subject kept beyond 30 m fails kpi's own 5 % rule (follow_proxy), one kept
+    close succeeds, and truth on too few ticks is not scored (mission_success
+    None, follow_not_scored). tools/build_dashboard.py reads the same key."""
+    import follow_vlm as FV
+    import build_dashboard as BD
+    assert VM.FOLLOW_TRUTH_MIN_COVERAGE == FV.FOLLOW_TRUTH_MIN_COVERAGE
+    policy = load_policy(POLICY)
+    manifest = VM.manifest_for(policy.policy_hash, REAL_MODEL, 7, CFG / "scene_vla_det.jsonc")
+    cases = (("near", lambda k: 12.0, True, None),
+             ("far", lambda k: 45.0, False, "follow_proxy"),
+             ("thin", lambda k: 12.0 if k % 10 else None, None, "follow_not_scored"))
+    for name, dist_of, want, reason in cases:
+        rows = _follow_rows(dist_of)
+        fs = VM.follow_scores(rows)
+        top = VM.follow_kpi_fields(fs)
+        assert set(top) == {"frac_within_30m", "follow_scored"}, top
+        metrics = {"tag": f"vla_follow_{name}", "shield": "on", "nfz_s": 0.0,
+                   "alt_violation_s": 0.0, "end_reason": "timeout", "aborted": None,
+                   "mission": {"kind": "follow"}, **top, "follow": fs}
+        out = _tmp() / f"vla_follow_{name}"
+        out.mkdir()
+        k = VM.finish_run(out, rows, metrics, manifest, policy)
+        assert k["mission_success"] is want, (name, k["mission_success"], k["mission_fail_reasons"])
+        if reason is None:
+            assert k["mission_fail_reasons"] == [], (name, k["mission_fail_reasons"])
+        else:
+            assert reason in k["mission_fail_reasons"], (name, k["mission_fail_reasons"])
+        assert k["mission_goal_status"] == "undeclared"
+        stored = json.loads((out / "metrics.json").read_text(encoding="utf-8"))
+        assert stored["frac_within_30m"] == fs["frac_within_30m"]
+        assert stored["follow_scored"] is fs["follow_scored"]
+        assert BD.flight_record(ROOT, out)["frac_within_30m"] == fs["frac_within_30m"], name
+    # The share kpi reads is the one follow_vlm writes: within 30 m over the
+    # ticks with truth, rounded as follow_vlm rounds it.
+    assert VM.follow_kpi_fields(VM.follow_scores(_follow_rows(lambda k: 12.0 if k < 15 else 45.0,
+                                                              n=20))) == {
+        "frac_within_30m": 0.75, "follow_scored": True}
+
+
+def _flown_follow_as_d6e7123_recorded_it(name: str, dist_of) -> tuple[Path, list[dict]]:
+    """A follow run folder written the way vla_fly wrote it at d6e7123: the
+    follow's score only under metrics["follow"] (its old keys), the policy
+    source a YAML path, kpi.json from VM.finish_run over those metrics."""
+    policy = load_policy(POLICY)
+    rows = _follow_rows(dist_of)
+    d = [r["subject_dist_m"] for r in rows if r.get("subject_dist_m") is not None]
+    old_follow = {"follow_scored": bool(d), "ticks_scored": len(d), "ticks": len(rows),
+                  "within_m": 30.0, "frac_within": round(sum(x <= 30 for x in d) / len(d), 3),
+                  "level_car": "Car_10"}
+    out = _tmp() / name
+    out.mkdir()
+    metrics = {"tag": name, "shield": "on", "nfz_s": 0.0, "alt_violation_s": 0.0,
+               "end_reason": "timeout", "aborted": None, "interrupted": False,
+               "mission": {"kind": "follow", "level_car": "Car_10"}, "reached_goal": None,
+               "follow": old_follow, "params": {"cadence": "pipelined"},
+               "policy_source": {"kind": "yaml", "path": str(POLICY),
+                                 "loaded_policy_hash": policy.policy_hash,
+                                 "signature": "unsigned"}}
+    manifest = VM.manifest_for(policy.policy_hash, REAL_MODEL, 7, CFG / "scene_vla_det.jsonc")
+    VM.write_jsonl(out / "flight_log.jsonl", rows)
+    VM.finish_run(out, rows, metrics, manifest, policy)
+    return out, rows
+
+
+def test_the_rescore_tool_gives_a_flown_follow_the_kpi_it_should_have_had():
+    """tools/rescore_vla_follow.py: the nine follows flown on 23 Oct carry
+    the P1-1 records (kpi.json mission_success true for a subject 45 m away).
+    The tool re-reads each run's flight_log.jsonl, publishes the follow's
+    score at the top of metrics.json (follow_vlm's meaning), recomputes
+    kpi.json against the run's own policy (its hash checked) and refuses to
+    write unless the stored P0 figures come back unchanged; the superseded
+    values are kept under `rescore`. A dry run writes nothing; a second run
+    changes nothing; a run that is not a follow is refused."""
+    import rescore_vla_follow as RS
+    out, rows = _flown_follow_as_d6e7123_recorded_it("vla_follow_redcar_far", lambda k: 45.0)
+    k_old = json.loads((out / "kpi.json").read_text(encoding="utf-8"))
+    assert k_old["mission_success"] is True                   # the record P1-1 is about
+    before = {p.name: p.read_bytes() for p in out.iterdir() if p.is_file()}
+    rep = RS.rescore(out, write=False, rebundle=False)
+    assert rep["status"] == "would_change" and rep["kpi"]["mission_success"] == [True, False], rep
+    assert {p.name: p.read_bytes() for p in out.iterdir() if p.is_file()} == before
+    rep = RS.rescore(out, rebundle=False)
+    assert rep["status"] == "rescored", rep
+    k = json.loads((out / "kpi.json").read_text(encoding="utf-8"))
+    m = json.loads((out / "metrics.json").read_text(encoding="utf-8"))
+    assert k["mission_success"] is False and "follow_proxy" in k["mission_fail_reasons"]
+    assert m["frac_within_30m"] == 0.0 and m["follow_scored"] is True
+    assert m["follow"]["frac_within_30m"] == 0.0 and m["follow"]["truth_coverage"] == 1.0
+    assert m["follow"]["level_car"] == "Car_10"               # what the flight recorded stays
+    for f in ("p0_violation_escape_rate", "p0_escapes", "p0_violation_ticks"):
+        assert k[f] == k_old[f], f
+    sup = m["rescore"]
+    assert sup["tool"] == "tools/rescore_vla_follow.py" and "P1-1" in sup["why"]
+    assert sup["superseded"]["kpi"]["mission_success"] is True
+    assert sup["superseded"]["metrics"]["frac_within_30m"] is None
+    assert k["rescore"]["superseded"]["mission_success"] is True
+    assert b"\r\n" not in (out / "metrics.json").read_bytes()
+    assert RS.rescore(out, rebundle=False)["status"] == "unchanged"
+    near, _ = _flown_follow_as_d6e7123_recorded_it("vla_follow_redcar_near", lambda k: 12.0)
+    rep = RS.rescore(near, rebundle=False)
+    assert rep["status"] == "rescored" and rep["kpi"]["mission_success"] == [True, True], rep
+    goto, _ = _flown_follow_as_d6e7123_recorded_it("vla_goto_x", lambda k: 12.0)
+    m = json.loads((goto / "metrics.json").read_text(encoding="utf-8"))
+    m["mission"]["kind"] = "goto"
+    VM.write_json(goto / "metrics.json", m)
+    assert RS.rescore(goto, rebundle=False)["status"] == "refused"
+    # Another policy than the run's: refused, nothing written.
+    other = ROOT / "policies" / "follow_car_citylife.yaml"
+    before = (near / "kpi.json").read_bytes()
+    assert RS.rescore(near, policy_path=other, rebundle=False)["status"] == "refused"
+    assert (near / "kpi.json").read_bytes() == before
+    # The replay bundle is re-written over the re-scored records and still
+    # re-derives them; the as-flown bundle is kept beside it.
+    from guardrail.replay import write_replay
+    b, _ = _flown_follow_as_d6e7123_recorded_it("vla_follow_redcar_b", lambda k: 45.0)
+    write_replay(b, load_policy(POLICY), b / "vla_follow_redcar_b.replay.tar.gz",
+                 changelog="VLA flight vla_follow_redcar_b")
+    import contextlib
+    import io
+    with contextlib.redirect_stdout(io.StringIO()) as said:
+        assert RS.main([str(b), "--dry-run"]) == 0
+        assert RS.main([str(goto)]) == 1                         # refused: exit 1
+    assert '"would_change"' in said.getvalue() and '"refused"' in said.getvalue()
+    rep = RS.rescore(b)
+    assert rep["status"] == "rescored" and rep["replay"]["verified"], rep
+    assert rep["replay"]["as_flown_kept"] == "vla_follow_redcar_b.replay.tar.gz.pre-rescore"
+    assert (b / "vla_follow_redcar_b.replay.tar.gz.pre-rescore").is_file()
 
 
 def test_the_follow_cli_defaults_to_the_red_car_of_the_city_follow():

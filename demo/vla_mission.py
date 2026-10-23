@@ -1964,13 +1964,26 @@ def finish_run(out: str | Path, rows: list[dict], metrics: dict, manifest: dict,
     the rows, graded by guardrail/manifest.is_kpi_grade), as every rail does,
     and return the KPIs. flight_log.jsonl is written by the flight first (a
     teardown that hangs must not cost it); here only if it is missing."""
-    from guardrail import kpi as kpi_mod
-    from guardrail.manifest import is_kpi_grade
     out = Path(out)
     if not (out / "flight_log.jsonl").exists():
         write_jsonl(out / "flight_log.jsonl", rows)
     write_json(out / "metrics.json", metrics)
     write_json(out / "manifest.json", manifest)
+    kpis = run_kpis(rows, metrics, manifest, policy)
+    write_json(out / "kpi.json", kpis)
+    metrics["kpi_grade"] = kpis["kpi_grade"]
+    metrics["p0_violation_escape_rate"] = kpis.get("p0_violation_escape_rate")
+    write_json(out / "metrics.json", metrics)
+    return kpis
+
+
+def run_kpis(rows: list[dict], metrics: dict, manifest: dict, policy) -> dict:
+    """kpi.json's content: guardrail/kpi.py over the rows and metrics, graded
+    by guardrail/manifest.is_kpi_grade, with the run's own records beside it
+    - what finish_run writes, and what tools/rescore_vla_follow.py recomputes
+    for a run flown before a records fix."""
+    from guardrail import kpi as kpi_mod
+    from guardrail.manifest import is_kpi_grade
     kpis = kpi_mod.compute(rows, kpi_mod.rule_priorities(policy), metrics)
     graded, reasons = is_kpi_grade(manifest, metrics)
     kpis.update({"kpi_grade": graded, "kpi_grade_reasons": reasons, "manifest": manifest,
@@ -1980,10 +1993,6 @@ def finish_run(out: str | Path, rows: list[dict], metrics: dict, manifest: dict,
                  "interrupted": metrics.get("interrupted"),
                  "pilot_alt_band": metrics.get("pilot_alt_band"),
                  "cadence": (metrics.get("params") or {}).get("cadence")})
-    write_json(out / "kpi.json", kpis)
-    metrics["kpi_grade"] = graded
-    metrics["p0_violation_escape_rate"] = kpis.get("p0_violation_escape_rate")
-    write_json(out / "metrics.json", metrics)
     return kpis
 
 
@@ -2008,21 +2017,56 @@ def mission_scores(mission: str, rows: list[dict], *, goal_xy=None, arrive_radiu
     return out
 
 
+# The share of the ticks the subject's truth must cover for a follow to count
+# as SCORED: follow_vlm.FOLLOW_TRUTH_MIN_COVERAGE (perception_node's
+# TRUTH_MIN_COVERAGE), so the three rails answer "was this follow measured?"
+# the same way (tests/test_vla_fly.py checks the two constants agree).
+FOLLOW_TRUTH_MIN_COVERAGE = 0.95
+
+
 def follow_scores(rows: list[dict], *, within_m: float = 30.0) -> dict:
     """How closely a follow kept to the moving subject, from each row's
     `subject_dist_m` (the level car's simulator position against the
     aircraft's: ground truth for SCORING only - it never reaches the phrase,
     the VLA or a stop rule). The same "within 30 m" share the city follow
-    reports (follow_vlm frac_within_30m), so the two are comparable."""
+    reports (follow_vlm frac_within_30m), so the two are comparable.
+
+    WITH follow_vlm's MEANING (review of d6e7123, P1-1): `frac_within_30m`
+    is the share of the ticks that HAVE the truth, rounded to 3 places, None
+    without any; `follow_scored` is follow_vlm.follow_scored's rule - the
+    truth on at least FOLLOW_TRUTH_MIN_COVERAGE of the ticks - so a follow
+    whose truth polling failed for a stretch is not called measured.
+    `frac_within` (the name of d6e7123) is kept beside it. follow_kpi_fields
+    lifts the two keys guardrail/kpi.py reads to the top of metrics."""
     d = [r["subject_dist_m"] for r in rows if r.get("subject_dist_m") is not None]
+    n = len(rows)
+    coverage = round(len(d) / n, 4) if n else 0.0
+    scored = n > 0 and len(d) >= FOLLOW_TRUTH_MIN_COVERAGE * n
     if not d:
-        return {"follow_scored": False, "ticks_scored": 0, "ticks": len(rows)}
-    return {"follow_scored": True, "ticks_scored": len(d), "ticks": len(rows),
-            "within_m": within_m,
-            "frac_within": round(sum(1 for x in d if x <= within_m) / len(d), 3),
+        return {"follow_scored": False, "ticks_scored": 0, "ticks": n,
+                "truth_coverage": coverage, "frac_within_30m": None}
+    frac = round(sum(1 for x in d if x <= within_m) / len(d), 3)
+    return {"follow_scored": bool(scored), "ticks_scored": len(d), "ticks": n,
+            "truth_coverage": coverage, "within_m": within_m,
+            "frac_within": frac,
+            "frac_within_30m": frac if within_m == 30.0 else None,
             "dist_min_m": round(min(d), 2), "dist_median_m": round(statistics.median(d), 2),
             "dist_max_m": round(max(d), 2), "dist_start_m": round(d[0], 2),
             "dist_end_m": round(d[-1], 2)}
+
+
+def follow_kpi_fields(scores: dict | None) -> dict:
+    """The follow's score where guardrail/kpi.py, tools/kpi_report.py and
+    tools/build_dashboard.py read it - the TOP of metrics.json, as
+    follow_vlm and perception_node write it: `frac_within_30m` (kpi fails a
+    follow under FOLLOW_MIN_FRAC, "follow_proxy") and `follow_scored` (False
+    makes mission_success None, "follow_not_scored"). Until the review of
+    d6e7123 (P1-1) they sat only under metrics["follow"], kpi applied no
+    follow test, and every VLA follow's kpi.json said mission_success true -
+    two of them with 0.0 of their ticks within 30 m."""
+    s = scores if isinstance(scores, dict) else {}
+    return {"frac_within_30m": s.get("frac_within_30m"),
+            "follow_scored": bool(s.get("follow_scored"))}
 
 
 def land_record(rows: list[dict], records: list[dict], goal_xy=None) -> dict:
