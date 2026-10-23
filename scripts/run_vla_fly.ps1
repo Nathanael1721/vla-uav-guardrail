@@ -9,6 +9,8 @@
 #     .\scripts\run_vla_fly.ps1 -Mission goto -Seconds 240 -Tag vla_goto_02
 #     .\scripts\run_vla_fly.ps1 -Mission goto -Goal 43,100        # beside the city NFZ
 #     .\scripts\run_vla_fly.ps1 -Mission approach -Tag vla_appr_01   # the parked orange car
+#     .\scripts\run_vla_fly.ps1 -Mission follow -Seconds 240 -Tag vla_follow_01 `
+#         -Cadence pipelined -CruiseMps 2.5 -SpeedCapMps 3   # chase the level's red car (Car_10)
 #     .\scripts\run_vla_fly.ps1 -Mission goto -Precision nf4      # the low-VRAM option
 #     .\scripts\run_vla_fly.ps1 -Mission goto -Shield off -Tag vla_goto_off   # control arm
 #     .\scripts\run_vla_fly.ps1 -VlaServer 127.0.0.1:8790         # attach to a running server
@@ -41,7 +43,7 @@
 # open. Close the editor first (the script refuses while one is open).
 
 param(
-    [ValidateSet("goto", "approach")][string]$Mission = "goto",
+    [ValidateSet("goto", "approach", "follow")][string]$Mission = "goto",
     [int]$Seconds      = 180,
     [string]$Tag       = "",
     [ValidateSet("bf16", "nf4")][string]$Precision = "bf16",
@@ -50,6 +52,9 @@ param(
     [string[]]$ParkAt  = @(),           # M2: where the scenario car parks (default 48,12)
     [ValidateSet("", "on", "off")][string]$Shield = "",
     [ValidateSet("stop_and_go", "pipelined")][string]$Cadence = "stop_and_go",
+    [string]$LevelCar  = "",            # M3 follow: the level's car, truth for scoring (default Car_10)
+    [double]$CruiseMps = 0,             # step tracker cruise speed (0 = vla_fly's default, 1 m/s)
+    [double]$SpeedCapMps = 0,           # step tracker speed cap (0 = vla_fly's default, 2 m/s)
     [string]$VlaServer = "",            # host:port: attach instead of starting one
     [string[]]$FakeOutput = @(),        # the scripted stand-in (no GPU; never a VLA run)
     [string]$PolicyFile = "",           # default policies\vla_goto_citylife.yaml
@@ -139,6 +144,9 @@ function Get-VlaFlyArgs {
     if ($Object) { $a += @("--object", $Object) }
     if (@($ParkAt).Count -gt 0) { $a += @("--park-at", (ConvertTo-XYArg $ParkAt "-ParkAt")) }
     if ($Shield) { $a += @("--shield", $Shield) }
+    if ($LevelCar) { $a += @("--level-car", $LevelCar) }
+    if ($CruiseMps -gt 0) { $a += @("--cruise-mps", "$CruiseMps") }
+    if ($SpeedCapMps -gt 0) { $a += @("--speed-cap-mps", "$SpeedCapMps") }
     if ($VlaServer) {
         $a += @("--vla-server", $VlaServer)
     } elseif ($FakeOutput -and @($FakeOutput).Count -gt 0) {

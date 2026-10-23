@@ -64,7 +64,11 @@ from guardrail.vla_link import (                                      # noqa: E4
     check_identity, goal_hint, phrase_for_bearing, wrap_pi,
 )
 
-MISSIONS = ("goto", "approach")
+MISSIONS = ("goto", "approach", "follow")
+# The missions whose phrase comes from OWL-ViT's box (vla_bridge): an approach
+# ends when the box is large; a follow keeps chasing a moving subject (the
+# level's car) until the time limit or the subject is lost.
+DETECTOR_MISSIONS = ("approach", "follow")
 
 # --------------------------------------------------------------------------- #
 # CityLife geometry, chosen on the level's own maps
@@ -483,6 +487,8 @@ class MissionMonitor:
         self.t_server_exit: float | None = None
         self.events: list[dict] = []
         self.ticks_inside = 0
+        # follow: ticks with a fresh box at least close_box_frac wide
+        self.ticks_close_box = 0
         self.link_failure_kinds: Counter = Counter()
         self._last_failure_key = None
 
@@ -588,8 +594,12 @@ class MissionMonitor:
             if fresh:
                 self._t_last_box = now
                 frac = box_fraction(det)
+                # A follow chases a moving subject: a large box is the point,
+                # not the end (counted, never a stop rule).
                 if frac is not None and frac >= cfg.close_box_frac:
-                    return self._end("close_box", now)
+                    if cfg.mission == "approach":
+                        return self._end("close_box", now)
+                    self.ticks_close_box += 1
             since = self._t_last_box if self._t_last_box is not None else self._t_ref
             if now - since >= cfg.lost_timeout_s:
                 return self._end("target_lost", now)
@@ -607,6 +617,7 @@ class MissionMonitor:
                 "t_server_exit_s": (None if self.t_server_exit is None
                                     else round(self.t_server_exit - self.t0, 3)),
                 "ticks_inside_arrive_radius": self.ticks_inside,
+                "ticks_close_box": self.ticks_close_box,
                 "ever_inside_arrive_radius": self._ever_inside,
                 "min_goal_dist_m": (None if self.min_goal_dist_m is None
                                     else round(self.min_goal_dist_m, 2)),
@@ -747,8 +758,8 @@ class MissionLoop:
             raise ValueError(f"mission {mission!r}")
         if mission == "goto" and goal_xy is None:
             raise ValueError("a goto mission needs goal_xy")
-        if mission == "approach" and det_source is None:
-            raise ValueError("an approach mission needs det_source")
+        if mission in DETECTOR_MISSIONS and det_source is None:
+            raise ValueError(f"a {mission} mission needs det_source")
         self.backend, self.shield, self.monitor = backend, shield, monitor
         self.mission, self.shield_on = mission, bool(shield_on)
         self.goal_xy = None if goal_xy is None else (float(goal_xy[0]), float(goal_xy[1]))
@@ -1812,6 +1823,23 @@ def mission_scores(mission: str, rows: list[dict], *, goal_xy=None, arrive_radiu
                 f"{key}_dist_min_m": round(min(d), 2), "reached_radius_m": radius,
                 "reached_goal": bool(d[-1] <= radius)})
     return out
+
+
+def follow_scores(rows: list[dict], *, within_m: float = 30.0) -> dict:
+    """How closely a follow kept to the moving subject, from each row's
+    `subject_dist_m` (the level car's simulator position against the
+    aircraft's: ground truth for SCORING only - it never reaches the phrase,
+    the VLA or a stop rule). The same "within 30 m" share the city follow
+    reports (follow_vlm frac_within_30m), so the two are comparable."""
+    d = [r["subject_dist_m"] for r in rows if r.get("subject_dist_m") is not None]
+    if not d:
+        return {"follow_scored": False, "ticks_scored": 0, "ticks": len(rows)}
+    return {"follow_scored": True, "ticks_scored": len(d), "ticks": len(rows),
+            "within_m": within_m,
+            "frac_within": round(sum(1 for x in d if x <= within_m) / len(d), 3),
+            "dist_min_m": round(min(d), 2), "dist_median_m": round(statistics.median(d), 2),
+            "dist_max_m": round(max(d), 2), "dist_start_m": round(d[0], 2),
+            "dist_end_m": round(d[-1], 2)}
 
 
 def land_record(rows: list[dict], records: list[dict], goal_xy=None) -> dict:

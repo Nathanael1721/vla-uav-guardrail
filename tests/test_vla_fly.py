@@ -342,7 +342,7 @@ def test_the_approach_ends_on_a_large_box_or_a_lost_target_and_the_mission_time(
     m = VM.MissionMonitor(VM.MonitorConfig(mission="goto", max_s=2.0), 0.0)
     assert m.update(1.9, FAR, _tick(), goal_xy=(99.0, 0.0)) is None
     assert m.update(2.0, FAR, _tick(), goal_xy=(99.0, 0.0)) == "timeout"
-    for bad in ({"mission": "follow"}, {"max_s": 0}, {"close_box_frac": 1.2},
+    for bad in ({"mission": "circle"}, {"max_s": 0}, {"close_box_frac": 1.2},
                 {"dead_timeout_s": float("nan")}):
         try:
             VM.MonitorConfig(**bad)
@@ -1081,6 +1081,70 @@ def test_every_server_start_names_its_whole_configuration():
     assert vla_fly.parse_cli(ap, ["--vla-precision", "nf4"]).vla_config == \
         {"precision": "nf4", "attn": "sdpa", "merge": False}
     assert VM.parse_addr("127.0.0.1:8790") == ("127.0.0.1", 8790)
+
+
+def test_a_follow_chases_on_a_large_box_and_ends_only_when_lost_or_on_time():
+    """M3 follow (2026-10-23, the user's "follow the red car as the previous
+    test"): the phrase comes from OWL-ViT's box as in M2, but a large box is
+    the point of a follow, not its end - counted, never a stop rule; a lost
+    subject and the time limit still end it."""
+    cfg = VM.MonitorConfig(mission="follow", max_s=100.0, close_box_frac=0.15,
+                           lost_timeout_s=4.0, det_fresh_s=1.0)
+    big = (384.0, 200.0, 130.0, 60.0, 0.2, 768, 432, 0.5)
+    m = VM.MissionMonitor(cfg, 0.0)
+    for k in range(10):
+        assert m.update(1.0 + 0.1 * k, FAR, _tick(), det=big, det_age_s=0.3) is None
+    assert m.ticks_close_box == 10 and m.summary()["ticks_close_box"] == 10
+    assert m.update(5.9, FAR, _tick(), det=None) == "target_lost"
+    m = VM.MissionMonitor(VM.MonitorConfig(mission="follow", max_s=2.0, lost_timeout_s=90.0), 0.0)
+    assert m.update(2.0, FAR, _tick(), det=big, det_age_s=0.2) == "timeout"
+    # The follow needs the detector, as M2 does.
+    try:
+        VM.MissionLoop(object(), object(), m, mission="follow")
+    except ValueError as exc:
+        assert "det_source" in str(exc)
+    else:
+        raise AssertionError("a follow without a det_source was accepted")
+
+
+def test_follow_scores_read_the_level_car_truth_rows_only():
+    rows = [{"t": 0.0, "x": 0, "y": 0}, {"t": 0.1, "x": 0, "y": 0, "subject_dist_m": 12.0},
+            {"t": 0.2, "x": 0, "y": 0, "subject_dist_m": 45.0},
+            {"t": 0.3, "x": 0, "y": 0, "subject_dist_m": 20.0}]
+    s = VM.follow_scores(rows)
+    assert s["follow_scored"] and s["ticks_scored"] == 3 and s["ticks"] == 4
+    assert s["frac_within"] == round(2 / 3, 3) and s["within_m"] == 30.0
+    assert (s["dist_min_m"], s["dist_median_m"], s["dist_max_m"]) == (12.0, 20.0, 45.0)
+    assert s["dist_start_m"] == 12.0 and s["dist_end_m"] == 20.0
+    assert VM.follow_scores([{"t": 0.0}]) == {"follow_scored": False, "ticks_scored": 0,
+                                               "ticks": 1}
+
+
+def test_the_follow_cli_defaults_to_the_red_car_of_the_city_follow():
+    ap = vla_fly.build_arg_parser()
+    a = vla_fly.parse_cli(ap, ["--mission", "follow"])
+    assert a.object == "a red car" and a.level_car == "Car_10" and a.park_at is None
+    assert a.lost_timeout_s == 90.0 and a.start_heading == "street"
+    assert a.monitor.mission == "follow" and a.monitor.lost_timeout_s == 90.0
+    assert vla_fly.SCENES["follow"] == vla_fly.SCENES["approach"]      # the detector camera
+    a = vla_fly.parse_cli(ap, ["--mission", "follow", "--level-car", "Car_3",
+                               "--object", "a white van", "--lost-timeout-s", "30"])
+    assert (a.level_car, a.object, a.lost_timeout_s) == ("Car_3", "a white van", 30.0)
+    assert vla_fly.parse_cli(ap, ["--mission", "approach"]).lost_timeout_s == 15.0
+    import contextlib
+    import io
+    for bad in (["--mission", "follow", "--park-at", "1,2"],
+                ["--mission", "follow", "--no-park"],
+                ["--mission", "follow", "--goal", "1,2"],
+                ["--mission", "goto", "--level-car", "Car_10"],
+                ["--mission", "approach", "--level-car", "Car_10"]):
+        try:
+            with contextlib.redirect_stderr(io.StringIO()):
+                vla_fly.parse_cli(ap, bad)
+        except SystemExit as exc:
+            assert exc.code == 2, bad
+            continue
+        raise AssertionError(f"accepted {bad}")
 
 
 def test_the_cli_refuses_what_cannot_fly_honestly_and_reads_negative_xy():

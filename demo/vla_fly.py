@@ -101,7 +101,18 @@ import vla_mission as VM                                             # noqa: E40
 
 TICK = 0.1
 SIM_CONFIG_DIR = ROOT / "demo" / "pas_config"
-SCENES = {"goto": "scene_vla.jsonc", "approach": "scene_vla_det.jsonc"}
+SCENES = {"goto": "scene_vla.jsonc", "approach": "scene_vla_det.jsonc",
+          "follow": "scene_vla_det.jsonc"}
+# M3 follow's subject: the level's red car of the city follow flights
+# (run_citylife_follow.ps1 -Object "a red car" -LevelCar Car_10).
+DEFAULT_FOLLOW_OBJECT = "a red car"
+DEFAULT_LEVEL_CAR = "Car_10"
+# The level car's pose poll, at most this often (an RPC on the loop thread;
+# follow_vlm's --level-truth-period is 0.1 s, a follow scores at 2 Hz).
+LEVEL_TRUTH_PERIOD_S = 0.5
+# A follow waits for a car the level drives around a loop, out of view for
+# long spells; an approach's parked car is in view from the start.
+LOST_TIMEOUT_S = {"goto": 15.0, "approach": 15.0, "follow": 90.0}
 DEFAULT_POLICY = ROOT / "policies" / "vla_goto_citylife.yaml"
 DEFAULT_CITYMAP = ROOT / "demo" / "out" / "citymap_citylife" / "occ_day.npz"
 CAMERAS = {"front": "VLAFront", "down": "VLADown", "detector": "FrontCamera", "chase": "Chase"}
@@ -203,13 +214,19 @@ def build_arg_parser() -> argparse.ArgumentParser:
                     help=f"M2: park the scenario car here (default {VM.DEFAULT_PARK_XY}); "
                          f"truth for scoring only")
     ap.add_argument("--no-park", action="store_true", help="M2: do not place the scenario car")
+    ap.add_argument("--level-car", default=None,
+                    help=f"M3 follow: the car the LEVEL drives that is the subject, read from "
+                         f"the simulator for SCORING only (subject_dist_m per row; never the "
+                         f"phrase, the VLA or a stop rule). Default {DEFAULT_LEVEL_CAR}")
     ap.add_argument("--arrive-radius-m", type=float, default=3.0)
     ap.add_argument("--arrive-grace-s", type=float, default=8.0)
     ap.add_argument("--overshoot-s", type=float, default=3.0,
                     help="M1: after arriving, the goal behind and receding this long ends "
                          "the mission arrived_overshoot")
     ap.add_argument("--close-box-frac", type=float, default=0.15)
-    ap.add_argument("--lost-timeout-s", type=float, default=15.0)
+    ap.add_argument("--lost-timeout-s", type=float, default=None,
+                    help="no fresh box this long ends a detector mission (default "
+                         "15 s for approach, 90 s for follow)")
     ap.add_argument("--det-fresh-s", type=float, default=1.0)
     ap.add_argument("--approach-radius-m", type=float, default=10.0)
     ap.add_argument("--dead-timeout-s", type=float, default=10.0)
@@ -303,7 +320,28 @@ def resolve_args(args):
     honestly. ValueError says why."""
     m = args.mission
     args.tag = args.tag or f"vla_{m}"
-    if m == "goto":
+    if args.lost_timeout_s is None:
+        args.lost_timeout_s = LOST_TIMEOUT_S[m]
+    if m != "follow" and args.level_car is not None:
+        raise ValueError("--level-car is for --mission follow")
+    if m == "follow":
+        # M3: chase the level's moving car. The phrase comes from OWL-ViT's box
+        # (as M2's); the subject's truth is the level car, read for scoring.
+        if args.park_at is not None or args.no_park:
+            raise ValueError("--park-at / --no-park are for --mission approach: a follow's "
+                             "subject is a car the level drives (--level-car)")
+        if args.goal is not None:
+            raise ValueError("--goal is for --mission goto: a follow's hint comes from the "
+                             "detector box, never from a position")
+        if args.start_heading == "goal":
+            raise ValueError("--start-heading goal is for --mission goto")
+        args.object = DEFAULT_FOLLOW_OBJECT if args.object is None else args.object
+        if not args.object.strip():
+            raise ValueError("a follow needs --object words: they are OWL-ViT's query")
+        args.level_car = args.level_car or DEFAULT_LEVEL_CAR
+        args.park_at = None
+        args.start_heading = args.start_heading or "street"
+    elif m == "goto":
         if args.park_at is not None or args.no_park:
             raise ValueError("--park-at / --no-park are for --mission approach")
         args.goal = tuple(args.goal) if args.goal is not None else VM.DEFAULT_GOAL_XY
@@ -822,6 +860,8 @@ async def _fly(args, holder: dict) -> int:
     landing_info = {"enabled": bool(args.land_site)}
     pre_mission: dict = {}
     car = car_truth = None
+    level_car = None
+    level_truth_errors: list[str] = []
     aborted = abort_landing = None
     interrupted = False
     refused = None
@@ -864,9 +904,18 @@ async def _fly(args, holder: dict) -> int:
                       lambda _, m: frames.put_front(m))
         sim.subscribe(drone.sensors[CAMERAS["down"]]["scene_camera"],
                       lambda _, m: frames.put_down(m))
-        if args.mission == "approach":
+        if args.mission in VM.DETECTOR_MISSIONS:
             sim.subscribe(drone.sensors[CAMERAS["detector"]]["scene_camera"],
                           lambda _, m: obs.put_front(m))
+            # OWL-ViT loads in its own thread from here, beside the warm-up
+            # and the take-off (2026-10-23): a follow's subject, the level's
+            # car, starts driving when the scene loads, and loading the
+            # detector only after the transfer cost the first ~30 s of it.
+            grounder = FV.Grounder(obs, args.object, thresh=args.det_thresh,
+                                   log_path=out / "detections.jsonl",
+                                   colour_min=args.colour_min, lock=None)
+            grounder_box["g"] = grounder
+            grounder.start()
         if args.save_view:
             try:
                 sim.subscribe(drone.sensors[CAMERAS["chase"]]["scene_camera"],
@@ -903,6 +952,22 @@ async def _fly(args, holder: dict) -> int:
             except Exception as exc:                               # noqa: BLE001
                 print(f"[car] *** could not park the scenario car ({type(exc).__name__}: {exc})")
                 car = None
+
+        # M3: the level's car, resolved before arming (refuses the flight if
+        # the tag is absent, as follow_vlm --level-car does). Truth for
+        # scoring only: polled at most every LEVEL_TRUTH_PERIOD_S.
+        if args.mission == "follow":
+            import level_actors
+            level_car = level_actors.LevelCar(world, args.level_car, desc=args.object,
+                                              min_period_s=LEVEL_TRUTH_PERIOD_S)
+            try:
+                level_car.spawn()
+            except Exception as exc:                               # noqa: BLE001
+                raise PreflightRefused("level_car_missing",
+                                       f"the level car {args.level_car} did not resolve "
+                                       f"({type(exc).__name__}: {exc})") from None
+            print(f"[car] following the level's {args.level_car} ({args.object!r}) at "
+                  f"({level_car.pos[0]:.1f}, {level_car.pos[1]:.1f}) - truth for scoring only")
 
         # ---- the warm-up gate: one inference on a live pair, before arming --
         warmup = await _warmup(args, drone, obs, frames, client, hint_src, State, quat_yaw,
@@ -956,12 +1021,8 @@ async def _fly(args, holder: dict) -> int:
                                                   "up": round(st1.up, 2),
                                                   "yaw_deg": round(st1.yaw_deg, 2)}})
 
-        if args.mission == "approach":
-            grounder = FV.Grounder(obs, args.object, thresh=args.det_thresh,
-                                   log_path=out / "detections.jsonl",
-                                   colour_min=args.colour_min, lock=None)
-            grounder_box["g"] = grounder
-            grounder.start()
+        if grounder is not None:
+            # Started with the cameras (above); its first inference, if not yet.
             live.beat(detail="loading the detector")
             for _ in range(600):
                 if grounder.latest()["seq"] > 0:
@@ -989,6 +1050,18 @@ async def _fly(args, holder: dict) -> int:
             cmd_times.append(time.time())
             await drone.move_by_velocity_async(e.vx, e.vy, -e.vz_up, duration=0.3,
                                                yaw_is_rate=True, yaw=e.yaw_rate)
+            if level_car is not None:
+                # Truth for SCORING only: the level car against the aircraft.
+                try:
+                    level_car.update(time.time() - t0)
+                    cx, cy = level_car.pos
+                    if math.isfinite(cx) and math.isfinite(cy):
+                        res.row["subject_xy"] = [round(cx, 2), round(cy, 2)]
+                        res.row["subject_dist_m"] = round(math.hypot(state.x - cx,
+                                                                     state.y - cy), 2)
+                except Exception as exc:                       # noqa: BLE001
+                    if len(level_truth_errors) < 20:
+                        level_truth_errors.append(f"{type(exc).__name__}: {exc}")
             rows.append(res.row)
             traj.append({"x": state.x, "y": state.y, "up": state.up,
                          "touched": bool(res.hud_decision.touched)})
@@ -1005,7 +1078,7 @@ async def _fly(args, holder: dict) -> int:
                     except Exception as exc:                       # noqa: BLE001
                         pind_error = f"{type(exc).__name__}: {exc}"
                 det = None
-                if args.mission == "approach" and res.row.get("det") is not None:
+                if args.mission in VM.DETECTOR_MISSIONS and res.row.get("det") is not None:
                     det = det_source()[0]
                 recorder.set_hud({**res.hud, "policy": pol}, det)
             live.beat(progress=min(1.0, res.row["t"] / max(1e-6, args.max_s)),
@@ -1184,10 +1257,17 @@ async def _fly(args, holder: dict) -> int:
             "hint_source": hint_src.kind, "hint": hint_src.stats(),
             "detector_hint": detector_hint.stats() if detector_hint is not None else None,
             "park_at": list(args.park_at) if args.park_at else None,
-            "bearing_gain": args.bearing_gain if args.mission == "approach" else None,
-            "detector": FV.DETECTOR_ID if args.mission == "approach" else None,
+            "bearing_gain": args.bearing_gain if args.mission in VM.DETECTOR_MISSIONS else None,
+            "detector": FV.DETECTOR_ID if args.mission in VM.DETECTOR_MISSIONS else None,
+            "level_car": args.level_car,
             "monitor": monitor.summary() if monitor is not None else None}),
         **scores,
+        "follow": (guard("follow_scores", lambda: {
+            **VM.follow_scores(rows), "level_car": args.level_car,
+            "truth_period_s": LEVEL_TRUTH_PERIOD_S,
+            "truth_errors": list(level_truth_errors),
+            "level_stats": level_car.stats() if level_car is not None else None})
+                   if args.mission == "follow" else None),
         "land": guard("land", lambda: VM.land_record(rows, records, goal)),
         "pre_mission": pre_mission,
         "warmup": warmup,
