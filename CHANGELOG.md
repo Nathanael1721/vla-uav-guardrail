@@ -16,6 +16,55 @@ shipped change and recorded as one.
 
 ## [Unreleased]
 
+### 2026-10-23 (flown) — AerialVLA flies the drone: a goal reached and landed by the model, and the red car chased then lost
+
+The first two flights piloted by AerialVLA (OpenVLA-7B + the original
+adapter, bf16, on the RTX 4090) behind the Shield, on the CityLife
+simple_flight rail with the signed `vla-goto-citylife` bundle. Not KPI-grade
+(the simple_flight rail is none of the grant's topologies). The memory that
+blocked them was freed by the user.
+
+#### Flown
+- **M1 GOTO** (`demo/out/vla_goto_01_20261023`, stop-and-go cadence): from
+  the mission start (42, -18) AerialVLA flew 58 m up the street on the
+  goal-derived phrase and answered LAND itself, with the empty phrase ("you
+  have arrived"), 0.85 m from the goal (43, 40); closest approach 0.23 m,
+  reached_goal true. 14 decisions, capture-to-answer latency p50 1.0125 s;
+  0.9895 of the mission ticks authored by the VLA; 0 Shield interventions; 0
+  collisions in the mission. The Dashboard now counts 1 VLA flight of 100.
+- **M3 follow, the red car** (`demo/out/vla_follow_redcar_01_20261023`,
+  240 s, pipelined cadence at 2.5 m/s, labelled): OWL-ViT's box gives only
+  the direction phrase, AerialVLA flies, the level's Car_10 (the earlier city
+  follows' red car) is truth for scoring only. The drone waited about 45 s for
+  the car to come round its loop, then chased it 111 m up the street and came
+  within 0.66 m (horizontally, flying over it) at 70 s; the car then pulled
+  away at about 3 m/s against the drone's 1.8 m/s and turned off the street,
+  the box was lost and the mission ended target_lost. Within 30 m of the car
+  for 0.348 of the flight (the hand-written controller's 19 Oct flight:
+  0.963); median distance 58 m. The box pointed within 10 deg of the car's
+  bearing on 0.72 of the ticks with a box (150 of 151 at 40-60 s, 200 of 200
+  at 80-100 s, 99 of 251 after the turn); at times it sat on something in line
+  with the car, such as a road arrow. Shield: P0 escape 0.0, 0.0 s in the
+  no-fly zone, 177 corrected ticks (altitude band 111 - AerialVLA kept asking
+  for 2-4 m descents - no-fly-zone frontage 64, building clearance 26).
+
+#### Added
+- **`demo/vla_fly.py --mission follow`**: M2's detector phrase without M2's
+  stop on a large box; ends on the time limit, a lost subject (90 s default)
+  or a VLA failure; `--level-car` (default Car_10) scored as `subject_dist_m`
+  per row and `metrics.follow` (the same within-30-m share as follow_vlm).
+  OWL-ViT now loads beside the warm-up and the take-off.
+
+#### Tests
+- The CI list runs 115 test files, 0 failing.
+
+#### Not done
+- Following a moving car is far weaker than the hand-written controller:
+  the policy's 3 m/s speed cap is at the car's speed, a rotation step stops
+  translation, and nothing re-acquires the car after a turn. No Shield-off
+  control arm was flown, so these flights show the Shield acting, not its
+  margin over none.
+
 ### 2026-10-23 (later) — AerialVLA in the pilot slot of the ArduPilot rail and of the ROS 2 rail; none flown
 
 Wave V2, branches b and c, each reviewed, fixed and re-reviewed (the ROS 2
