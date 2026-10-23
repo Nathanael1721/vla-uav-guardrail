@@ -18,6 +18,16 @@
 # The truth is then that ONE car (by tag), so the tracking score has a single
 # subject and its null cannot saturate the way forty pedestrians did.
 #
+# RECORDING IT FOR AERIALVLA (-RecordVla, wave FT-D 2026-10-23): the same
+# flight, with AerialVLA's two cameras added to the airframe and every
+# front+down pair written with its pose, the box, the command and the track
+# (demo/vla_record.py), to C: through a junction like the frames; then
+# python tools\build_follow_dataset.py demo\out\<Tag> ... --out <dataset>:
+#
+#     .\scripts\run_citylife_follow.ps1 -Object "a red car" -LevelCar Car_10 `
+#         -PolicyFile policies\follow_car_citylife_nfz.yaml -Seconds 300 `
+#         -Tag ft_expert_01 -RecordVla
+#
 # WARNING: like every demo script here, this restarts the simulator, which kills
 # any process holding Blocks.uproject - INCLUDING an editor you have open. Close
 # the editor first. The match is on the .uproject, not the process name, so
@@ -53,6 +63,8 @@ param(
                                         # development run) even when its signed
                                         # bundle is in bundles\
     [switch]$NoPolicyHud,               # the old one-line HUD (A/B of the indicator's cost)
+    [switch]$RecordVla,                 # record what AerialVLA would see (--record-vla),
+                                        # to <OffloadRoot>\<Tag>\vla_record (see the header)
     [switch]$KeepSim,                   # leave the simulator running afterwards
     [switch]$SkipSim
 )
@@ -307,6 +319,37 @@ if ($OffloadRoot) {
                            "and move the folder's contents to $viewDest, or fly under a new -Tag.")
         }
     }
+}
+# -RecordVla: demo\out\<Tag>\vla_record, a junction to <OffloadRoot>\<Tag>\
+# vla_record (D: is nearly full; a front+down pair is about 50 KB, 10 a second,
+# ~150 MB for a 300 s flight). The recorder rewrites its three files and keeps
+# frames\ (content-addressed), so a reused tag needs nothing cleared here.
+if ($RecordVla) {
+    $recLink = Join-Path $Root "demo\out\$Tag\vla_record"
+    if ($OffloadRoot) {
+        $recDest = Join-Path $OffloadRoot "$Tag\vla_record"
+        $rec = Get-Item -Force -LiteralPath $recLink -ErrorAction SilentlyContinue
+        if (-not $rec) {
+            New-Item -ItemType Directory -Force (Split-Path $recLink) | Out-Null
+            New-Item -ItemType Directory -Force $recDest | Out-Null
+            New-Item -ItemType Junction -Path $recLink -Target $recDest | Out-Null
+            Say "VLA recording -> $recDest (junction)"
+        } elseif ($rec.LinkType) {
+            $recTarget = @($rec.Target)[0]
+            if (-not [IO.Path]::IsPathRooted($recTarget)) {
+                $recTarget = Join-Path (Split-Path $recLink) $recTarget
+            }
+            if (-not (Test-Path -LiteralPath $recTarget)) {
+                New-Item -ItemType Directory -Force $recTarget | Out-Null
+            }
+            Say "VLA recording -> $recTarget (junction)"
+        } else {
+            Write-Warning ("$recLink is a real folder, so this recording writes to " +
+                           "$(Split-Path -Qualifier $recLink), not to $recDest. To keep D: free, " +
+                           "stop this run (Ctrl+C) and move the folder to $recDest, or fly under a new -Tag.")
+        }
+    }
+    $a += @("--record-vla", "demo\out\$Tag\vla_record")
 }
 & $Py @a
 $rc = $LASTEXITCODE
