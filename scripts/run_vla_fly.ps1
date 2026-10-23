@@ -64,7 +64,7 @@ param(
     [int]$SimHeight    = 540,
     # Frames go to C: through a junction (run_citylife_follow.ps1 says why);
     # empty string = write under demo\out.
-    [string]$OffloadRoot = "C:\Users\natha\vla_drone_offload\demo_out",
+    [string]$OffloadRoot = "D:\vla_drone_offload\demo_out",   # outside OneDrive; C: filled up on 23 Oct
     [switch]$KeepSim,
     [switch]$SkipSim,
     # Print the flight's arguments, one per line, and exit: nothing is

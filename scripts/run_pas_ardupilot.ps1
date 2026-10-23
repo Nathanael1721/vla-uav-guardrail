@@ -73,7 +73,7 @@ param(
     [int]$SimHeight  = 540,
     [switch]$SaveView,                  # -Step node: record the demo video (--save-view)
     # Frames go to C: through a junction, as run_citylife_follow.ps1; "" = under demo\out.
-    [string]$OffloadRoot = "C:\Users\natha\vla_drone_offload\demo_out",
+    [string]$OffloadRoot = "D:\vla_drone_offload\demo_out",   # outside OneDrive; C: filled up on 23 Oct
     [switch]$Mavros,                    # -Step sitl: also start MAVROS 2 in WSL (dev)
     [switch]$VlaCameras,                # -Step scene: render AerialVLA's VLAFront/VLADown for an attaching --pilot vla node
     [switch]$SkipSim,

@@ -70,7 +70,7 @@ param(
                                         # no junction planner, no landing site)
     # Frames go to C: through a junction: D: is nearly full, and a flight's
     # frames are 1-2 GB. Empty string = write under demo\out as before.
-    [string]$OffloadRoot = "C:\Users\natha\vla_drone_offload\demo_out",
+    [string]$OffloadRoot = "D:\vla_drone_offload\demo_out",   # outside OneDrive; C: filled up on 23 Oct
     [string]$PolicyFile = "",          # override the rule set, e.g.
                                         # policies\follow_car_citylife_nfz.yaml
     [switch]$DevYaml,                   # fly the policy YAML itself (unsigned, a
