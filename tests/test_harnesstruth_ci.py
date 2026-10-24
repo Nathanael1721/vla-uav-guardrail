@@ -762,6 +762,22 @@ def test_the_follow_hint_modes_test_runs_in_ci():
     assert "return SKIP" not in src and "images=True" not in src and "images=False" in src
     for dep in ("import cv2", "from PIL", "import PIL", "socket", "8790"):
         assert dep not in src, dep
+
+
+def test_the_ceiling_flight_test_runs_in_ci():
+    """The follow fine-tune's ceiling flight (2026-10-24): the follow expert
+    held to a VLA's decision rate (demo/decide_rate.py, follow_vlm
+    --decide-every-s / --decide-delay-s, run_citylife_follow.ps1
+    -DecideEveryS / -DecideDelayS). Synthetic ticks only: no simulator, GPU,
+    model, network, OpenCV or Pillow, so nothing in it may SKIP; its runner
+    counts a SKIP all the same. main() is asked only to refuse, with fly()
+    stubbed, so a refusal that regressed cannot start a flight in CI."""
+    assert "test_follow_decide_rate.py" in _loop(), "not run in CI"
+    src = (ROOT / "tests" / "test_follow_decide_rate.py").read_text(encoding="utf-8")
+    assert "real, F.fly = F.fly, _no_flight" in src, "main() is asked without fly() stubbed"
+    assert "return SKIP" not in src, "nothing in it may SKIP"
+    for banned in ("import cv2", "from PIL", "import socket", "8790"):
+        assert banned not in src, banned
     runner = src.split('if __name__ == "__main__":', 1)[-1]
     assert "== SKIP" in runner, "the runner does not count the SKIP"
 

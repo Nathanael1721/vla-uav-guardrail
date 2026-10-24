@@ -4267,6 +4267,8 @@ async def fly(args) -> int:
     vla_record_stats = None     # ...its counts, for metrics.json
     perturber = None            # --record-perturb's schedule (vla_record.Perturber), or
                                 # --record-perturb-vla's (vla_dagger.VLAPerturber)
+    decider = None              # --decide-every-s's hold of the executed command
+                                # (decide_rate.DecideRate); never with a perturber
     start_heading_err_deg = None
     nfz_hold_ticks = 0
     n_fence_aim = 0          # ticks the forward aim was moved out of a zone's band
@@ -4295,6 +4297,13 @@ async def fly(args) -> int:
         except vla_dagger.DaggerRefused as exc:
             raise SystemExit(f"[vla-dagger] *** refused: {exc}") from None
         print(f"[vla-dagger] {perturber.describe()}")
+    if args.decide_every_s is not None:
+        # The CEILING flight (demo/decide_rate.py): the expert may act only at
+        # a VLA's rate - every P s its own command from D s before, held in
+        # between. It runs on the mission clock, so nothing here needs the sim.
+        from decide_rate import DecideRate
+        decider = DecideRate(args.decide_every_s, args.decide_delay_s or 0.0)
+        print(f"[decide] {decider.describe()}")
     client = ProjectAirSimClient()
     # The Dashboard heartbeat starts here, at the first slow step (the
     # connect), and ends at the very end of this function with the exit code
@@ -6079,6 +6088,13 @@ async def fly(args) -> int:
             if perturber is not None:
                 flown_in, perturb_rec = perturber.apply(smooth, time.time() - t0,
                                                         pose=(state.x, state.y, state.up, yaw))
+            # --decide-every-s (decide_rate.DecideRate), the same place and never
+            # with a perturber: what flies is a zero-order hold of the expert's
+            # own `smooth`, a decision every P s carrying its command from D s
+            # before. The controller and its limiter run on, on their own state.
+            decide_rec = None
+            if decider is not None:
+                flown_in, decide_rec = decider.apply(smooth, time.time() - t0)
             _ta = time.time()
             d = shield.filter(state, flown_in)
             audit.log(tick, d)
@@ -6205,6 +6221,12 @@ async def fly(args) -> int:
                 # A perturbed flight's row says what was added: `smooth` is
                 # still the expert's command, `emitted` what flew.
                 rows[-1]["perturb"] = perturb_rec
+            if decide_rec is not None:
+                # A held flight's row says which decision flew: its index,
+                # whether this tick held it, its age and the age of the
+                # expert's command it carries (`smooth` is still the expert's
+                # command of this tick, `emitted` what flew).
+                rows[-1]["decide"] = decide_rec
             if vla_rec is not None:
                 # One deque append: the pose of this tick's kinematics read,
                 # the mode, what the controller asked and what flew. The
@@ -6713,6 +6735,12 @@ async def fly(args) -> int:
         metrics["vla_record"] = {"scene": flight_scene(args),
                                  "robot_config": "robot_semantic_quad_vla.jsonc",
                                  **record_summary(vla_record_stats)}
+    if decider is not None:
+        # --decide-every-s only: the rate the expert was held to. Every score
+        # above (frac_within_30m, track_truth's) is computed as on any flight,
+        # so it reads against the expert's own figures directly.
+        metrics["decide_rate"] = decider.summary()
+        print(decider.summary_line())
     (out / "metrics.json").write_text(json.dumps(metrics, indent=1), encoding="utf-8")
 
     # --- WP4 artefacts -----------------------------------------------------
@@ -7352,6 +7380,20 @@ def build_arg_parser() -> argparse.ArgumentParser:
     ap.add_argument("--perturb-vla-step-as-rate", type=float, default=None, metavar="H",
                     help="with --record-perturb-vla: the windows fly each step as a velocity "
                          "over H seconds (vla_fly --step-as-rate; default off: an endpoint)")
+    ap.add_argument("--decide-every-s", type=float, default=None, metavar="P",
+                    help="the CEILING flight (demo/decide_rate.py): hold this follow to a "
+                         "VLA's decision rate. The EXECUTED command, after the controller and "
+                         "its slew limiter and before the Shield (which still filters it), "
+                         "becomes a zero-order hold of the expert's own command: a decision "
+                         "every P mission seconds (on the grid k*P), held in between, all four "
+                         "axes; the controller runs every tick as usual. Recorded per tick "
+                         "(`decide`) and in metrics.json (`decide_rate`); the follow score is "
+                         "computed as on any flight. Not with --record-vla, --record-perturb or "
+                         "--record-perturb-vla. Off by default.")
+    ap.add_argument("--decide-delay-s", type=float, default=None, metavar="D",
+                    help="with --decide-every-s: each decision carries the expert's command "
+                         "from D seconds before it (a VLA's capture-to-answer latency; a hover "
+                         "until a command is that old). Default 0")
     ap.add_argument("--record-hz", type=float, default=20.0,
                     help="frames per second the recorder writes, on its OWN "
                          "thread. Replaces --view-every, which tied recording "
@@ -7417,6 +7459,22 @@ def main(argv: list[str] | None = None) -> int:
         # which would also change where the flight writes.
         ap.error("--live-view needs --save-view: the window draws the frames "
                  "the recorder produces, and without it none are captured")
+    if args.decide_every_s is not None:
+        # The ceiling flight (demo/decide_rate.py) measures the expert held to
+        # a VLA's rate, and nothing else may replace the command it executes.
+        if args.record_perturb or args.record_perturb_vla is not None:
+            ap.error("--decide-every-s and --record-perturb / --record-perturb-vla: the "
+                     "ceiling flight holds the expert's own command, one replacement at a time")
+        if args.record_vla:
+            ap.error("--decide-every-s and --record-vla: a ceiling flight is a measurement, and "
+                     "its held commands must not become training labels")
+        from decide_rate import check_args as decide_check
+        why = decide_check(args.decide_every_s,
+                           0.0 if args.decide_delay_s is None else args.decide_delay_s)
+        if why is not None:
+            ap.error(why)
+    elif args.decide_delay_s is not None:
+        ap.error("--decide-delay-s needs --decide-every-s")
     if args.record_perturb and not args.record_vla:
         # A perturbed follow is worth flying only to record it: the noise is
         # there so the training data shows a recovery (vla_record.Perturber).
