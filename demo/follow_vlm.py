@@ -32,6 +32,14 @@ below, so the manifest's model field reads none:hand-written-controller
 vision-language-action", which the front page repeated, review of
 2026-10-19; tracker card ARCH-21).
 
+Except with --vla-hierarchy HOST:PORT (demo/vla_hierarchy.py, 2026-10-25):
+then a fine-tuned AerialVLA decides the INTENT at its own rate and this
+controller executes it at 10 Hz - with the subject locked the controller
+flies with its stand-off at the VLA's desired range, with it lost the VLA's
+step tracker flies the search, a LAND holds, an answer 1.5 s old hands
+everything back to the controller - and the manifest and metrics["pilot"]
+name that model. Off by default; without it the flight is unchanged.
+
 What the controller does
 ------------------------
     horizontal box offset  -> yaw rate      (turn to centre the target)
@@ -98,15 +106,18 @@ ROBOT_CONFIG = ROOT / "demo" / "pas_config" / "robot_semantic_quad.jsonc"
 # --record-vla only (wave FT-D, 2026-10-23; demo/vla_record.py): the same
 # scene and airframe with AerialVLA's VLAFront / VLADown cameras added, so the
 # flight can be recorded as the model will see it. Without the flag the
-# follow loads SCENE, as before (flight_scene).
+# follow loads SCENE, as before (flight_scene). --vla-hierarchy loads it too:
+# the VLA asks with those cameras, and nothing is recorded.
 SCENE_VLA_RECORD = "scene_semantic_vla.jsonc"
 
 
 def flight_scene(args) -> str:
     """The scene a flight loads: SCENE, or SCENE_VLA_RECORD with
-    --record-vla (the variant robot config's FrontCamera, Chase and
-    DownCamera are robot_semantic_quad.jsonc's; tests/test_follow_dataset.py)."""
-    return SCENE_VLA_RECORD if getattr(args, "record_vla", None) else SCENE
+    --record-vla or --vla-hierarchy (the variant robot config's FrontCamera,
+    Chase and DownCamera are robot_semantic_quad.jsonc's;
+    tests/test_follow_dataset.py)."""
+    return (SCENE_VLA_RECORD if getattr(args, "record_vla", None)
+            or getattr(args, "vla_hierarchy", None) else SCENE)
 # The policy a flight flies when neither --policy nor --bundle is given: its
 # signed bundle (city_policy_choice), or this YAML under --dev-yaml.
 DEFAULT_POLICY = ROOT / "policies" / "follow_car.yaml"
@@ -4310,6 +4321,9 @@ async def fly(args) -> int:
                                 # --record-perturb-vla's (vla_dagger.VLAPerturber)
     decider = None              # --decide-every-s's hold of the executed command
                                 # (decide_rate.DecideRate); never with a perturber
+    hierarchy = None            # --vla-hierarchy's VLA intent layer
+                                # (vla_hierarchy.VLAHierarchy); never with either
+    hierarchy_stats = None      # ...its summary at stop, for metrics.json
     start_heading_err_deg = None
     nfz_hold_ticks = 0
     n_fence_aim = 0          # ticks the forward aim was moved out of a zone's band
@@ -4346,6 +4360,27 @@ async def fly(args) -> int:
         from decide_rate import DecideRate
         decider = DecideRate(args.decide_every_s, args.decide_delay_s or 0.0)
         print(f"[decide] {decider.describe()}")
+    if args.vla_hierarchy:
+        # HIERARCHICAL CONTROL (demo/vla_hierarchy.py): AerialVLA decides the
+        # intent at its own rate, this controller executes it. Its server must
+        # answer hello HERE, as AerialVLA with the adapter's tile and speed
+        # words, before the simulator is touched. Nothing runs yet - its query
+        # thread starts with the mission clock.
+        import vla_hierarchy
+        try:
+            hierarchy = vla_hierarchy.make_vla_hierarchy(
+                args.vla_hierarchy, obs=obs,
+                box_source=lambda: grounder.latest() if grounder is not None else None,
+                policy=policy, object_text=lambda: args.object, cruise_alt=args.cruise_alt,
+                record_dir=out / vla_hierarchy.STEPS_DIR, s_range=args.vla_hierarchy_range,
+                allow_stand_in=args.vla_hierarchy_allow_stand_in,
+                bottom_tile=args.vla_hierarchy_bottom_tile,
+                prev_dt_s=args.vla_hierarchy_prev_dt_s,
+                step_as_rate=args.vla_hierarchy_step_as_rate,
+                speed_words=args.vla_hierarchy_speed_words, log=print)
+        except vla_hierarchy.HierarchyRefused as exc:
+            raise SystemExit(f"[vla-hierarchy] *** refused: {exc}") from None
+        print(f"[vla-hierarchy] {hierarchy.describe()}")
     client = ProjectAirSimClient()
     # The Dashboard heartbeat starts here, at the first slow step (the
     # connect), and ends at the very end of this function with the exit code
@@ -4495,6 +4530,16 @@ async def fly(args) -> int:
                              lambda _, m: vla_rec.put_down(m))
             print(f"[vla-record] AerialVLA's VLAFront/VLADown ({flight_scene(args)}) -> "
                   f"{args.record_vla}")
+        if hierarchy is not None:
+            # --vla-hierarchy: the VLA asks with its own two cameras (this scene
+            # variant, flight_scene). The callbacks store the message; pairing
+            # and encoding happen on its query thread when it builds a request.
+            client.subscribe(drone.sensors["VLAFront"]["scene_camera"],
+                             lambda _, m: hierarchy.put_front(m))
+            client.subscribe(drone.sensors["VLADown"]["scene_camera"],
+                             lambda _, m: hierarchy.put_down(m))
+            print(f"[vla-hierarchy] AerialVLA's VLAFront/VLADown ({flight_scene(args)}), "
+                  f"nothing recorded")
 
         if not args.no_car:
             # Any FIXED route gets the two stops, not just --straight. The
@@ -4973,6 +5018,8 @@ async def fly(args) -> int:
         t0, last_seen = time.time(), 0.0
         if vla_rec is not None:
             vla_rec.start(t0)           # only the mission's frames and ticks
+        if hierarchy is not None:
+            hierarchy.start(t0)         # asked continuously from the mission's first tick
         # Detector inferences made BEFORE the mission clock started (the start
         # gate can wait minutes). det_hz must not count them: it did, dividing
         # them by mission time only, and reported 6.9-7.5 Hz for flights whose
@@ -5550,6 +5597,21 @@ async def fly(args) -> int:
 
             est_obs = (estimator.observe(time.time(), state.x, state.y, yaw)
                        if estimator is not None else None)
+
+            # --vla-hierarchy (vla_hierarchy.VLAHierarchy.plan): this tick's
+            # intent, from the answers its query thread collected. Locked is
+            # the controller's own lock - the condition of its `track` branch
+            # just below. The stand-off it returns is this tick's want_range,
+            # which every arm reads: the VLA's desired range in FOLLOW, the one
+            # in force on HOLD and SEARCH, _stand_off()'s on a fallback (each
+            # reached at 2 m/s, never a jump). Without the flag want_range is
+            # _stand_off()'s, as always.
+            if hierarchy is not None:
+                want_range = hierarchy.plan(
+                    time.time() - t0,
+                    locked=(est_obs is not None
+                            or (det is not None and age < args.det_max_age and reacq is None)),
+                    pose=(state.x, state.y, state.up, yaw), default_m=_stand_off())
 
             if est_obs is not None:
                 # SERVO ON THE ESTIMATE, NOT ON THE LAST BOX.
@@ -6137,6 +6199,19 @@ async def fly(args) -> int:
             decide_rec = None
             if decider is not None:
                 flown_in, decide_rec = decider.apply(smooth, time.time() - t0)
+            # --vla-hierarchy (vla_hierarchy.VLAHierarchy.apply), the same place
+            # and never with a perturber or the hold: on a SEARCH tick (and a
+            # HOLD without the lock) the VLA's step tracker flies, on this pose;
+            # on every other tick the controller's own `smooth`, its stand-off
+            # already the VLA's in FOLLOW. The Shield judges whatever flies.
+            hier_rec = None
+            if hierarchy is not None:
+                flown_in, hier_rec = hierarchy.apply(smooth, time.time() - t0,
+                                                     pose=(state.x, state.y, state.up, yaw))
+                if hier_rec.get("vla_flown"):
+                    # the video says who flew this tick
+                    mode_label = ("VLA SEARCHING" if hier_rec.get("authority") == "vla_search"
+                                  else "VLA HOLDING")
             _ta = time.time()
             d = shield.filter(state, flown_in)
             audit.log(tick, d)
@@ -6269,6 +6344,11 @@ async def fly(args) -> int:
                 # expert's command it carries (`smooth` is still the expert's
                 # command of this tick, `emitted` what flew).
                 rows[-1]["decide"] = decide_rec
+            if hier_rec is not None:
+                # A hierarchical flight's row says who flew and why: the
+                # authority, the VLA's intent and answer age, the stand-off
+                # (`smooth` is still the controller's command, `emitted` what flew).
+                rows[-1]["hierarchy"] = hier_rec
             if vla_rec is not None:
                 # One deque append: the pose of this tick's kinematics read,
                 # the mode, what the controller asked and what flew. The
@@ -6417,6 +6497,15 @@ async def fly(args) -> int:
                 perturber.stop()
             except Exception as exc:                                # noqa: BLE001
                 print(f"[warn] the VLA perturber did not close: {type(exc).__name__}: {exc}")
+        if hierarchy is not None:
+            # --vla-hierarchy: bounded (its thread and link are joined with a
+            # timeout), and on every way out, a flight that failed before its
+            # mission clock included.
+            try:
+                hierarchy_stats = hierarchy.stop()
+                print(hierarchy.summary_line(hierarchy_stats))
+            except Exception as exc:                                # noqa: BLE001
+                print(f"[warn] the VLA hierarchy did not close: {type(exc).__name__}: {exc}")
         # The Dashboard row normally ends after final_report, at the end of
         # this function, with its exit code. It ended here with
         # "failed" if aborted else "ok", and `aborted` is set only by the
@@ -6783,14 +6872,35 @@ async def fly(args) -> int:
         # so it reads against the expert's own figures directly.
         metrics["decide_rate"] = decider.summary()
         print(decider.summary_line())
+    if hierarchy is not None:
+        # --vla-hierarchy only: who flew each tick and why, the VLA's intents,
+        # the stand-off it set, its answers and the server (identity and
+        # adapter), with the scene variant that gave it its cameras. The
+        # follow score above is computed as on any flight. The VLA decided,
+        # so metrics["pilot"] names it (kind vla, or stub for a stand-in).
+        if hierarchy_stats is not None:
+            metrics["vla_hierarchy"] = {"scene": flight_scene(args),
+                                        "robot_config": "robot_semantic_quad_vla.jsonc",
+                                        **hierarchy_stats}
+        try:
+            metrics["pilot"] = hierarchy.pilot_entry(detector=metrics["pilot"].get("detector"))
+        except Exception as exc:                                    # noqa: BLE001
+            # metrics.json must still be written; the record says it is wrong.
+            metrics["pilot"]["hierarchy_error"] = f"{type(exc).__name__}: {exc}"
+            print(f"[warn] the hierarchy's pilot record failed: {type(exc).__name__}: {exc}")
     (out / "metrics.json").write_text(json.dumps(metrics, indent=1), encoding="utf-8")
 
     # --- WP4 artefacts -----------------------------------------------------
     # The grant requires a six-field determinism manifest per episode, and states
     # that contractual KPI numbers may only come from a run that has one. Ours had
     # none, so nothing measured here was reportable on the grant's own terms.
-    # NO_VLA, not the detector: see flight_manifest.
+    # NO_VLA, not the detector: see flight_manifest. A hierarchical flight's
+    # VLA decided, so its manifest carries the server's reported digest
+    # (vla_hierarchy.VLAHierarchy.manifest) and the scene that flew.
     manifest = flight_manifest(policy.policy_hash, args.seed)
+    if hierarchy is not None:
+        manifest = hierarchy.manifest(policy.policy_hash, args.seed,
+                                      ROOT / "demo" / "pas_config" / flight_scene(args))
     (out / "manifest.json").write_text(json.dumps(manifest, indent=1), encoding="utf-8")
 
     kpis = kpi_mod.compute(rows, kpi_mod.rule_priorities(policy), metrics)
@@ -7441,6 +7551,46 @@ def build_arg_parser() -> argparse.ArgumentParser:
                     help="with --decide-every-s: each decision carries the expert's command "
                          "from D seconds before it (a VLA's capture-to-answer latency; a hover "
                          "until a command is that old). Default 0")
+    ap.add_argument("--vla-hierarchy", default=None, metavar="HOST:PORT",
+                    help="HIERARCHICAL control (demo/vla_hierarchy.py): AerialVLA, served by a "
+                         "running demo/vla_server_v2.py at HOST:PORT, is asked continuously "
+                         "with the VLAFront/VLADown pair (this scene's variant with them, no "
+                         "recording) and DetectorHint's phrase for this follow's box, and each "
+                         "answer sets the intent this controller executes at 10 Hz: with the "
+                         "subject locked the controller flies as always with its stand-off at "
+                         "the VLA's desired range (--vla-hierarchy-range, moved at most 2 m/s); "
+                         "with it lost the VLA's step tracker (vla_fly's follow config) flies "
+                         "the search; a LAND holds at the stand-off in force; an answer older "
+                         "than 1.5 s hands everything back to the controller's own behaviour. "
+                         "After the controller and its slew limiter, before the Shield (which "
+                         "still filters every command); recorded per tick (`hierarchy`) and in "
+                         "metrics.json (`vla_hierarchy`); the follow score is computed as on "
+                         "any flight. The server must answer hello as AerialVLA before the "
+                         "simulator is touched. Not with --record-vla, --record-perturb, "
+                         "--record-perturb-vla or --decide-every-s. Off by default.")
+    ap.add_argument("--vla-hierarchy-range", type=_rate_range, default=(12.0, 22.0),
+                    metavar="NEAR,FAR",
+                    help="with --vla-hierarchy: the stand-off the VLA may ask for, metres: NEAR "
+                         "at its longest step (fwd 5 m), FAR at a zero step, linear between and "
+                         "clamped (default 12,22)")
+    ap.add_argument("--vla-hierarchy-allow-stand-in", action="store_true",
+                    help="with --vla-hierarchy: a server that is not AerialVLA (the scripted "
+                         "stand-in: a plumbing dry run, recorded as one)")
+    ap.add_argument("--vla-hierarchy-bottom-tile", choices=("down", "prev_front"),
+                    default="down",
+                    help="with --vla-hierarchy: the mosaic's lower tile it asks with (vla_fly "
+                         "--vla-bottom-tile). Must be the tile the served adapter was trained "
+                         "on, or the flight is refused (default down)")
+    ap.add_argument("--vla-hierarchy-prev-dt-s", type=float, default=None,
+                    help="with --vla-hierarchy-bottom-tile prev_front: how many seconds earlier "
+                         "(vla_fly --vla-prev-dt-s; default 1.0)")
+    ap.add_argument("--vla-hierarchy-step-as-rate", type=float, default=None, metavar="H",
+                    help="with --vla-hierarchy: the search flies each step as a velocity over "
+                         "H seconds (vla_fly --step-as-rate; default off: an endpoint)")
+    ap.add_argument("--vla-hierarchy-speed-words", action="store_true",
+                    help="with --vla-hierarchy: ask with the aircraft's own speed as words "
+                         "after the object (vla_fly --vla-speed-words). Must be what the "
+                         "served adapter was trained with, or the flight is refused")
     ap.add_argument("--record-hz", type=float, default=20.0,
                     help="frames per second the recorder writes, on its OWN "
                          "thread. Replaces --view-every, which tied recording "
@@ -7522,6 +7672,34 @@ def main(argv: list[str] | None = None) -> int:
             ap.error(why)
     elif args.decide_delay_s is not None:
         ap.error("--decide-delay-s needs --decide-every-s")
+    if args.vla_hierarchy is not None:
+        # HIERARCHICAL CONTROL (demo/vla_hierarchy.py): the VLA's intent,
+        # executed by this controller. It owns the executed command with the
+        # controller, so nothing else may replace it, and its motion is not
+        # the expert's, so it is never recorded as training data.
+        if (args.record_perturb or args.record_perturb_vla is not None
+                or args.decide_every_s is not None):
+            ap.error("--vla-hierarchy and --record-perturb / --record-perturb-vla / "
+                     "--decide-every-s: one replacement of the executed command at a time")
+        if args.record_vla:
+            ap.error("--vla-hierarchy and --record-vla: a hierarchical flight flies the VLA's "
+                     "intent, not the expert's, and must not become training labels (it flies "
+                     "AerialVLA's cameras without a recording)")
+        from vla_hierarchy import check_args as hierarchy_check
+        why = hierarchy_check(args.vla_hierarchy, s_range=args.vla_hierarchy_range,
+                              bottom_tile=args.vla_hierarchy_bottom_tile,
+                              prev_dt_s=args.vla_hierarchy_prev_dt_s,
+                              step_as_rate=args.vla_hierarchy_step_as_rate,
+                              speed_words=args.vla_hierarchy_speed_words)
+        if why is not None:
+            ap.error(why)
+    elif (args.vla_hierarchy_range != (12.0, 22.0) or args.vla_hierarchy_allow_stand_in
+          or args.vla_hierarchy_bottom_tile != "down" or args.vla_hierarchy_prev_dt_s is not None
+          or args.vla_hierarchy_step_as_rate is not None or args.vla_hierarchy_speed_words):
+        ap.error("--vla-hierarchy-range, --vla-hierarchy-allow-stand-in, "
+                 "--vla-hierarchy-bottom-tile, --vla-hierarchy-prev-dt-s, "
+                 "--vla-hierarchy-step-as-rate and --vla-hierarchy-speed-words need "
+                 "--vla-hierarchy")
     if args.record_perturb and not args.record_vla:
         # A perturbed follow is worth flying only to record it: the noise is
         # there so the training data shows a recovery (vla_record.Perturber).

@@ -823,6 +823,27 @@ def test_the_follow_reacquire_test_runs_in_ci():
     assert "import cv2" not in src and "PIL" not in src and "return SKIP" not in src
 
 
+def test_the_hierarchy_test_runs_in_ci():
+    """Hierarchical control of the follow (2026-10-25): AerialVLA decides the
+    intent, the hand-written controller executes it (demo/vla_hierarchy.py,
+    follow_vlm --vla-hierarchy, run_citylife_follow.ps1 -VlaHierarchy). No
+    simulator, GPU or model: tests/test_vla_dagger.py's stub client on a fake
+    clock, and tests/vla_fake_server.py on an ephemeral loopback port (never
+    8790) with the real protocol-v2 client; main() is asked only to refuse,
+    with fly() stubbed. It needs neither OpenCV nor Pillow (a fake JPEG
+    encoder), so nothing in it may SKIP; its runner counts a SKIP all the
+    same."""
+    assert "test_vla_hierarchy.py" in _loop(), "not run in CI"
+    src = (ROOT / "tests" / "test_vla_hierarchy.py").read_text(encoding="utf-8")
+    assert "import vla_fake_server" in src and "assert srv.port != 8790" in src
+    addrs = re.findall(r'\bH\.make_vla_hierarchy\(\s*(f?"[^"]*")', src)
+    assert addrs and all(a.startswith('f"127.0.0.1:{') for a in addrs), addrs
+    assert "real, FV.fly = FV.fly, _no_flight" in src, "main() is asked without fly() stubbed"
+    assert "import cv2" not in src and "from PIL" not in src and "return SKIP" not in src
+    runner = src.split('if __name__ == "__main__":', 1)[-1]
+    assert "== SKIP" in runner, "the runner does not count the SKIP"
+
+
 def test_the_ardupilot_vla_pilot_test_runs_in_ci():
     """Wave V2b (2026-10-23): the ArduPilot rail's AerialVLA pilot
     (perception_node --pilot vla, to-do VLA-07) and its VLA cameras (VLA-03).
