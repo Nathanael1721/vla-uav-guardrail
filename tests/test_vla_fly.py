@@ -1628,7 +1628,7 @@ def test_the_follow_records_the_perception_it_applied():
     assert on == {"lock": True, "lock_gate": 0.12,
                   "identity": {"requested": True, "on": True, "error": None},
                   "start_gate": {"kind": "identity_reacquirer", "need": 5,
-                                 "max_range_m": 30.0}}, on
+                                 "max_range_m": 30.0, "gap_s": 3.0}}, on
     failed = vla_fly.follow_perception(a, False, "KeyError: 'depth_camera'")
     assert failed["start_gate"] == {"kind": "detector_hint", "n": 5, "width_frac": 0.04}
     assert failed["identity"] == {"requested": True, "on": False,
@@ -1651,9 +1651,12 @@ def test_the_follow_records_the_perception_it_applied():
     resets = [{"t": 20.0, "why": "stuck"}, {"t": 40.0, "why": "close_stall"},
               {"t": 50.0, "why": "stuck"}]
     m = vla_fly.follow_measured(box, resets, SimpleNamespace(n_close_hold=17))
+    # (what each judged frame decided, per attempt: tests/
+    # test_vla_follow_reacquire.py; none were judged here)
     assert m["acquisition"] == {"committed": True, "commits_s": [1.2, 6.0], "reacquires": 1,
                                 "lapses": [{"t": 5.0, "why": "lock: no held instance"}],
-                                "errors": []}, m
+                                "errors": [], "judged": 0, "outcomes": {}, "refused": {},
+                                "attempts": []}, m
     assert m["stuck_resets"] == 2 and m["close_stalls"] == 1 and m["close_hold_ticks"] == 17
     assert m["perception_resets"] == resets
     assert vla_fly.follow_measured(vla_fly.new_acquisition(None), [], None)["acquisition"] is None

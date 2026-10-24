@@ -56,8 +56,10 @@ THE MISSIONS (demo/vla_mission.py has the geometry and the stop rules)
                OWL-ViT's phrase as M2's. Which box is the car is follow_vlm's
                perception: TargetLock, the identity check with its strict lock
                and follow_vlm's Reacquirer as the start gate, re-acquiring at
-               once on a lapse from the last sighting (_acquire_step); without
-               identity the DetectorHint's gate (follow_perception). The
+               once on a lapse from the last sighting and, after a long loss,
+               on the start gate's evidence again, a pass allowed gaps of
+               --acquire-gap-s (_acquire_step); without identity the
+               DetectorHint's gate (follow_perception). The
                Shield pinning the aircraft or a close box with no request
                resets that perception (_perception_reset). The level car's
                pose scores the run (frac_within_30m at the top of metrics, as
@@ -286,6 +288,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
     ap.add_argument("--acquire-max-range-m", type=float, default=30.0,
                     help="M3 with identity: the start gate / re-acquisition accepts a subject "
                          "this close (run_citylife_follow.ps1 -StartMaxRange 30)")
+    ap.add_argument("--acquire-gap-s", type=float, default=ACQUIRE_GAP_S,
+                    help="M3 with identity: while the start gate's moving test applies (the "
+                         "start, a long loss), a pass of sightings survives inferences with "
+                         "no acceptable candidate this long (follow_vlm.Reacquirer gap_s); "
+                         "0 = follow_vlm's rule, one empty frame ends it")
     ap.add_argument("--no-identity", action="store_true",
                     help="M3: no identity check on the detector's candidates (follow_vlm "
                          "--identity: physical size from depth, the street mask)")
@@ -512,6 +519,8 @@ def resolve_args(args):
         raise ValueError("--lock-gate must be in (0, 1): a fraction of the image width")
     if not (math.isfinite(args.acquire_max_range_m) and args.acquire_max_range_m > 0):
         raise ValueError("--acquire-max-range-m must be a positive number of metres")
+    if not (math.isfinite(args.acquire_gap_s) and args.acquire_gap_s >= 0):
+        raise ValueError("--acquire-gap-s must be 0 (follow_vlm's rule) or more seconds")
     if not (math.isfinite(args.close_stall_s) and args.close_stall_s >= 0):
         raise ValueError("--close-stall-s must be 0 (off) or more")
     if m == "follow" and not args.no_identity:
@@ -846,6 +855,21 @@ def _feed_pose(drone, obs, State, quat_yaw, FV):
 # follow_vlm --lapse-s's default, past TargetLock's 2 s hold: a committed
 # subject with no accepted box this long has lapsed (_acquire_step).
 LAPSE_S = 3.0
+# --acquire-gap-s's default: a pass of sightings at the start gate or after a
+# long loss survives what a committed subject survives before it lapses
+# (follow_vlm.Reacquirer gap_s). vla_follow_ft_07_r3_off (2026-10-24) never
+# took the car back: its two passes past the hovering aircraft were cut
+# after 7 and 9 OK inferences by gaps of ~2 s, short of the 10 in a row the
+# moving test needs at the ~2.2 Hz the detector ran while acquiring.
+ACQUIRE_GAP_S = LAPSE_S
+
+
+def make_acquirer(args, FV):
+    """The follow's start gate and re-acquisition with identity, one object
+    for the flight: follow_vlm's Reacquirer with --start-gate-n sightings,
+    --acquire-max-range-m and --acquire-gap-s (started by the caller)."""
+    return FV.Reacquirer(need=args.start_gate_n, max_range_m=args.acquire_max_range_m,
+                         gap_s=args.acquire_gap_s)
 
 
 def new_acquisition(acq, t0: float | None = None) -> dict:
@@ -855,10 +879,28 @@ def new_acquisition(acq, t0: float | None = None) -> dict:
     since the last commit - follow_vlm's no-estimator path: when it was last
     seen (`seen_t`) and last seen OK (`t_ok`), the map points of its held
     boxes (`hist`, for the measured speed), the last sighting (`last`: its
-    frame's capture time and place), the speeds."""
+    frame's capture time and place), the speeds. `attempts`: one record per
+    acquisition (the start gate, each lapse, each perception reset) with
+    what every judged frame decided (_open_attempt), `attempt` the open one."""
     return {"acq": acq, "committed": False, "last_seq": -1, "commits": [], "reacquires": 0,
             "lapses": [], "errors": [], "t0": t0, "seen_t": None, "t_ok": -math.inf,
-            "last_t_det": None, "hist": [], "last": None, "v": None, "v_prior": None}
+            "last_t_det": None, "hist": [], "last": None, "v": None, "v_prior": None,
+            "attempts": [], "attempt": None}
+
+
+def _open_attempt(acq_box: dict, kind: str, t) -> dict:
+    """A new acquisition attempt - "start" (the start gate), "lapse", or
+    "reset:<why>" (a perception reset) - from mission second `t`: the frames
+    it judged, what each decided (the Reacquirer's last_outcome: "committed"
+    or why not, so a pass that never got as far as a refusal is counted
+    too), the candidates' refusals (Reacquirer.refused), its best streak and
+    when it committed (None: never). vla_follow_ft_07_r3_off spent 600 s
+    acquiring and its metrics said only "reacquires 1"; this says why."""
+    att = {"t": t, "kind": kind, "judged": 0, "outcomes": {}, "refused": {},
+           "best_streak": 0, "committed_s": None}
+    acq_box.setdefault("attempts", []).append(att)
+    acq_box["attempt"] = att
+    return att
 
 
 def _acquire_step(grounder, acq_box: dict, args, clock=time.time) -> None:
@@ -880,6 +922,17 @@ def _acquire_step(grounder, acq_box: dict, args, clock=time.time) -> None:
       grounder.begin_reacquire()"): the Reacquirer anchored at the last
       sighting {t, P, v}, so the car is taken back within `need` frames
       wherever it could have driven since, without the motion test.
+    * A LONG loss: once the reach has grown past the Reacquirer's
+      reach_cap_m (60 m: 10 m + 3-12 m/s x 4-17 s, always inside memory_s +
+      search_s, 26 s, at the defaults) the anchor no longer says where the
+      car is, and the start gate's evidence is asked again - identity OK and
+      SEEN MOVING over 2 x need sightings, the pass allowed gaps of up to
+      --acquire-gap-s (make_acquirer). vla_follow_ft_07_r3_off (2026-10-24)
+      hovered 600 s acquiring while the car drove past twice: one or three
+      empty frames ended each pass short of the 10 sightings in a row.
+
+    Every judged frame is counted in the open attempt (_open_attempt): what
+    the Reacquirer decided and the candidates' refusals, for metrics.
 
     Until the review of d6e7123 (P2-3) the re-acquisition waited for
     memory_s + search_s (26 s) unseen, counted only once the Grounder had
@@ -898,16 +951,29 @@ def _acquire_step(grounder, acq_box: dict, args, clock=time.time) -> None:
     def mt(t):
         return round(t - t0, 3) if t0 is not None else round(t, 3)
     if not acq_box["committed"]:
+        att = acq_box.get("attempt") or _open_attempt(acq_box, "start", mt(now))
         if not (gw.get("t") and now - gw["t"] < 1.0):
+            att["outcomes"]["stale frame"] = att["outcomes"].get("stale frame", 0) + 1
             return
         ic = gw.get("inf_cap") or {}
         t_ic = ic.get("t_capture") or ic.get("t_cap") or now
         acq = acq_box["acq"]
-        if acq.step(gw.get("cands") or [], gw.get("cand_tiers") or [],
-                    gw.get("cand_feats") or [], t_ic):
+        before = dict(getattr(acq, "refused", None) or {})
+        got = acq.step(gw.get("cands") or [], gw.get("cand_tiers") or [],
+                       gw.get("cand_feats") or [], t_ic)
+        out = "committed" if got else (getattr(acq, "last_outcome", None) or "unknown")
+        att["judged"] += 1
+        att["outcomes"][out] = att["outcomes"].get(out, 0) + 1
+        for k, n in (getattr(acq, "refused", None) or {}).items():
+            if n != before.get(k, 0):
+                att["refused"][k] = att["refused"].get(k, 0) + n - before.get(k, 0)
+        att["best_streak"] = max(att["best_streak"], int(getattr(acq, "streak", 0) or 0))
+        if got:
             grounder.commit(acq.pick, yaw=(ic.get("pose") or {}).get("yaw"))
             acq_box["committed"] = True
             acq_box["commits"].append(mt(now))
+            att["committed_s"] = mt(now)
+            acq_box["attempt"] = None
             # The subject's memory moves to the committing sighting.
             P = (getattr(acq, "pick_feat", None) or {}).get("P")
             if acq_box["v"] is not None:
@@ -954,6 +1020,7 @@ def _acquire_step(grounder, acq_box: dict, args, clock=time.time) -> None:
     acq_box["lapses"].append({"t": mt(now), "why": why, "unseen_s": round(unseen, 2),
                               "P": None if anchor is None else [round(c, 2) for c in anchor["P"]],
                               "v": None if v is None else round(v, 2)})
+    _open_attempt(acq_box, "lapse", mt(now))
     print(f"[follow] subject lost ({why}): re-acquiring from its last sighting")
 
 
@@ -992,16 +1059,17 @@ def follow_perception(args, identity_on: bool, identity_error: str | None = None
                   --no-lock (refused with identity: resolve_args);
       identity    asked for (not --no-identity), on, and why not when it
                   was asked for and failed;
-      start_gate  identity on: follow_vlm's Reacquirer (need, range), the
-                  acquisition that seeds the strict lock; otherwise the
-                  DetectorHint's (n successive near boxes) unless
-                  --start-gate-n 0; else none."""
+      start_gate  identity on: follow_vlm's Reacquirer (need, range, the
+                  pass's gaps), the acquisition that seeds the strict lock;
+                  otherwise the DetectorHint's (n successive near boxes)
+                  unless --start-gate-n 0; else none."""
     requested = not args.no_identity
     on = bool(identity_on and requested)
     lock = on or not args.no_lock
     if on:
         gate = {"kind": "identity_reacquirer", "need": int(args.start_gate_n),
-                "max_range_m": float(args.acquire_max_range_m)}
+                "max_range_m": float(args.acquire_max_range_m),
+                "gap_s": float(args.acquire_gap_s)}
     elif args.start_gate_n > 0:
         gate = {"kind": "detector_hint", "n": int(args.start_gate_n),
                 "width_frac": float(args.start_gate_width)}
@@ -1034,13 +1102,25 @@ def follow_params(args, plan: dict | None) -> dict:
 def follow_measured(acq_box: dict, resets: list[dict], loop) -> dict:
     """The follow's measured perception outcomes for metrics["follow"], in
     mission seconds: the identity acquisition (None with identity off) -
-    commits, lapses and re-acquisitions - every perception reset (StuckWatch
+    commits, lapses and re-acquisitions, and every attempt with what each
+    judged frame decided (_open_attempt), summed over the flight in
+    `judged`, `outcomes` and `refused` - every perception reset (StuckWatch
     "stuck", CloseStall "close_stall") and the close-hold ticks."""
     acq = None
     if acq_box.get("acq") is not None:
+        atts = [dict(a, outcomes=dict(a["outcomes"]), refused=dict(a["refused"]))
+                for a in acq_box.get("attempts") or []]
+        outcomes: dict = {}
+        refused: dict = {}
+        for a in atts:
+            for total, part in ((outcomes, a["outcomes"]), (refused, a["refused"])):
+                for k, n in part.items():
+                    total[k] = total.get(k, 0) + n
         acq = {"committed": acq_box["committed"], "commits_s": list(acq_box["commits"]),
                "reacquires": acq_box["reacquires"], "lapses": list(acq_box["lapses"]),
-               "errors": list(acq_box["errors"])}
+               "errors": list(acq_box["errors"]),
+               "judged": sum(a["judged"] for a in atts), "outcomes": outcomes,
+               "refused": refused, "attempts": atts}
     return {"acquisition": acq, "perception_resets": list(resets),
             "stuck_resets": sum(1 for e in resets if e.get("why") == "stuck"),
             "close_stalls": sum(1 for e in resets if e.get("why") == "close_stall"),
@@ -1076,6 +1156,7 @@ def _perception_reset(why: str, now: float, t_mission: float, grounder, detector
             grounder.begin_reacquire()
             acq_box["acq"].start(None)
             acq_box["committed"] = False
+            _open_attempt(acq_box, f"reset:{why}", t_mission)
             ev["reacquiring"] = True
         except Exception as exc:                                   # noqa: BLE001
             errors.append(f"reacquire: {type(exc).__name__}: {exc}")
@@ -1517,7 +1598,7 @@ async def _fly(args, holder: dict) -> int:
                 # (identity tiers, range, motion) and commit() seeds the strict
                 # lock; until then there is no box, so no VLA request.
                 # resolve_args refuses --start-gate-n 0 with identity.
-                acq = FV.Reacquirer(need=args.start_gate_n, max_range_m=args.acquire_max_range_m)
+                acq = make_acquirer(args, FV)
                 acq.start(None)
                 acq_box = new_acquisition(acq)
                 grounder.begin_acquire()

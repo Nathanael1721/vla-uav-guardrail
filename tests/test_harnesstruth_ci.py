@@ -807,6 +807,22 @@ def test_the_speed_words_test_runs_in_ci():
     assert len(steps) == 1 and "tests/test_vla_speed_words.py" in steps[0]["run"], steps
 
 
+def test_the_follow_reacquire_test_runs_in_ci():
+    """The AerialVLA follow's re-acquisition after a long loss (2026-10-25):
+    follow_vlm.Reacquirer's opt-in pass gaps and vla_fly --acquire-gap-s,
+    replayed on the flight that never took the car back. No simulator, GPU,
+    model or network: its tests/fixtures/ slice of that flight's detections
+    (never demo/out, which a clean clone has not), follow_vlm's real
+    Reacquirer, Grounder state and strict lock; no Pillow or OpenCV, so
+    nothing may SKIP."""
+    assert "test_vla_follow_reacquire.py" in _loop(), "not run in CI"
+    src = (ROOT / "tests" / "test_vla_follow_reacquire.py").read_text(encoding="utf-8")
+    fx = ROOT / "tests" / "fixtures" / "vla_follow_ft_07_reacquire.slim.json"
+    assert fx.name in src and fx.is_file() and fx.stat().st_size < 100_000
+    assert "demo/out" not in src and '"out"' not in src
+    assert "import cv2" not in src and "PIL" not in src and "return SKIP" not in src
+
+
 def test_the_ardupilot_vla_pilot_test_runs_in_ci():
     """Wave V2b (2026-10-23): the ArduPilot rail's AerialVLA pilot
     (perception_node --pilot vla, to-do VLA-07) and its VLA cameras (VLA-03).

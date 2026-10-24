@@ -1421,6 +1421,30 @@ class Reacquirer:
     its place once `far_need` of them agree (each within step_m + v_r dt of
     the last) inside `far_window_s`. The search then closes the range, and the
     ordinary gate, at <= max_range_m, is what may commit to it.
+
+    A PASS MAY HAVE GAPS - opt-in, `gap_s` > 0; 0 (follow_vlm's) keeps the
+    rule above: an inference with nothing acceptable ends the streak. The
+    AerialVLA follow vla_follow_ft_07_r3_off (2026-10-24) lost the car at
+    39 s and never took it back although it drove past the hovering aircraft
+    twice, OK and 7-26 m away: at that flight's acquiring rate (~2.2 Hz) the
+    passes gave 7 + 5 and 9 + 3 OK inferences in a row, each run cut by one
+    to three frames with no car, and the moving test needs 2 x need = 10 in
+    a row - so it was never even asked, though the car had moved 5-11 m.
+    With gap_s, while the moving test applies (no anchor, or the reach past
+    reach_cap_m), a streak whose last pick is at most gap_s old survives an
+    inference with nothing acceptable: nothing is added to it, the next pick
+    must still lie within step_m + v_r dt of the last, and a gap never
+    counts as a sighting. The bar is unchanged (a gap's long step only
+    raises the jitter estimate), and a streak too short to be judged is not
+    marked static however long it spans. An anchored short loss is judged
+    as before.
+
+    `last_outcome` says what the last step() decided - "committed", or why
+    not: "no candidate", "none acceptable" (each candidate's reason is in
+    `refused`), "gap", "streak" (fewer than `need`), "short pass" (the
+    moving test cannot be asked yet), "not moving" (asked, below the bar),
+    "static" (the place just marked) - so a caller can count every refusal,
+    including the ones `refused` never sees.
     """
 
     def __init__(self, need: int = 4, max_range_m: float = 45.0,
@@ -1430,7 +1454,7 @@ class Reacquirer:
                  static_m: float = 3.0, static_after_s: float = 5.0,
                  static_ttl_s: float = 30.0, trace_max: int = 80,
                  motion_k: float = 3.0, static_after_min_s: float = 8.0,
-                 far_need: int = 3, far_window_s: float = 3.0):
+                 far_need: int = 3, far_window_s: float = 3.0, gap_s: float = 0.0):
         self.need = need
         self.max_range_m = max_range_m
         self.reach_base_m = reach_base_m
@@ -1447,6 +1471,8 @@ class Reacquirer:
         self.trace_max = trace_max
         self.far_need = far_need
         self.far_window_s = far_window_s
+        self.gap_s = float(gap_s)
+        self.last_outcome = None
         self.far: list = []             # candidates refused for range alone, (t, x, y)
         self.static: list = []          # places seen not to move, (x, y, t)
         self.anchor = None
@@ -1549,6 +1575,8 @@ class Reacquirer:
         self.n_candidates += len(cands)
         vr = self.v_reach()
         reach = self.reach_m(t_cap)
+        # nothing constrains the place: the moving test applies (below)
+        free = self.motion_m > 0 and (reach is None or reach > self.reach_cap_m)
         ok = []
         far = []
         for i, c in enumerate(cands):
@@ -1590,6 +1618,11 @@ class Reacquirer:
             self.far.append((float(t_cap), float(P[0]), float(P[1])))
             del self.far[:-20]
         if not ok:
+            if (self.gap_s > 0 and free and self.streak > 0 and self.pick_t is not None
+                    and t_cap - self.pick_t <= self.gap_s):
+                self.last_outcome = "gap"           # the pass goes on (class docstring)
+                return False
+            self.last_outcome = "none acceptable" if cands else "no candidate"
             self._reset_streak()
             return False
         cont = None
@@ -1621,16 +1654,24 @@ class Reacquirer:
         self.pick_t = t_cap
         self.best_streak = max(self.best_streak, self.streak)
         if self.streak < self.need:
+            self.last_outcome = "streak"
             return False
-        if self.motion_m > 0 and (reach is None or reach > self.reach_cap_m):
+        if free:
             moved = self.moved_m()
             if moved is None or moved < self.motion_bar_m():
-                if self.trace[-1][0] - self.trace[0][0] >= self.static_after_s:
+                # (with gaps a streak too short to judge may span
+                # static_after_s: no static place until it has been judged)
+                if (self.trace[-1][0] - self.trace[0][0] >= self.static_after_s
+                        and (moved is not None or self.gap_s <= 0)):
                     P = np.median(np.asarray([(q[1], q[2]) for q in self.trace]), axis=0)
                     self.static.append((float(P[0]), float(P[1]), float(t_cap)))
                     self._refuse("static")
                     self._reset_streak()
+                    self.last_outcome = "static"
+                else:
+                    self.last_outcome = "short pass" if moved is None else "not moving"
                 return False
+        self.last_outcome = "committed"
         return True
 
 
