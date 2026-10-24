@@ -99,6 +99,8 @@ param(
     [double]$CruiseAlt = 0,             # 0 = the default, 8 m (see below)
     [int]$SimWidth   = 960,
     [int]$SimHeight  = 540,
+    [int]$SimMaxFps  = 0,               # t.MaxFPS for the simulator (0 = uncapped, as before)
+    [switch]$SimOffscreen,             # -RenderOffscreen: no game window (the cameras still render)
     [switch]$NoTrail,                   # car mode: fly along the nose, as before 09-24
     [switch]$Identity,                  # --identity for a person mission too (see below)
     [switch]$NoIdentity,                # the pre-2026-09-29 selection (no identity
@@ -171,7 +173,10 @@ function Stop-OurGameSim {
 function Start-Sim {
     Stop-OurSim
     Start-Sleep -Seconds 4
-    Start-Process -FilePath $UE -ArgumentList "`"$Proj`"", $Map, '-game', '-windowed', "-ResX=$SimWidth", "-ResY=$SimHeight" | Out-Null
+    $ueArgs = @("`"$Proj`"", $Map, '-game', '-windowed', "-ResX=$SimWidth", "-ResY=$SimHeight")
+    if ($SimMaxFps -gt 0) { $ueArgs += "-ExecCmds=`"t.MaxFPS $SimMaxFps`"" }
+    if ($SimOffscreen) { $ueArgs += '-RenderOffscreen' }
+    Start-Process -FilePath $UE -ArgumentList $ueArgs | Out-Null
     Say "simulator starting on $Map ..."
     for ($i = 0; $i -lt 90; $i++) {
         Start-Sleep -Seconds 5

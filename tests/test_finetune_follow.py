@@ -368,6 +368,42 @@ def test_schedule_oversampling_subsets_and_run_names():
         raise AssertionError(f"run name {bad!r} accepted")
 
 
+def test_speed_changes_are_oversampled_against_the_same_runs_sample_a_second_earlier():
+    """Flight vla_follow_ft_05_pf_off_20261024 (24 Oct): the car pulled away
+    from 8 m and the model answered forward 0.0 at 2 Hz for about 7 s. The
+    samples where the expert's forward step changes by >= 1 m within 1 s (a
+    car stopping or pulling away) are a few per flight; --change-oversample
+    repeats them. The earlier sample is the same run's and the same mirror
+    side's nearest capture to t - 1 s (within 0.2 s); none -> not a change."""
+    root = _tmp()
+
+    def smp(i, t, fwd_bin, run="r1", mirror=False):
+        sid = f"{run}/{i}" + ("/mirror" if mirror else "")
+        return FT.check_sample(_rec(target=f"{fwd_bin:02d} 49 49", run=run, id=sid,
+                                    t_capture=t), root, i)
+
+    a = smp(0, 10.0, 0)           # hovering behind a stopped car
+    b = smp(1, 11.0, 0)           # still hovering: no change
+    c = smp(2, 12.0, 40)          # pulled away: fwd 0 -> ~2 m within 1 s
+    d = smp(3, 12.0, 40, mirror=True)   # its mirror: the mirror side has no 11.0 s -> no change
+    e = smp(4, 12.5, 40, run="r2")      # another run: nothing a second earlier
+    f = smp(5, 13.0, 41)          # steady at speed: no change
+    got = FT.oversample([a, b, c, d, e, f], 1, 3, change_oversample=3)
+    assert got.count(c) == 3 and got.count(f) == 1 and got.count(a) == 1
+    assert got.count(d) == 1 and got.count(e) == 1 and got.count(b) == 1
+    # default off: the list as recorded
+    assert FT.oversample([a, b, c], 1, 3) == [a, b, c]
+    # with turns as well, a sample is repeated by the larger of the two factors
+    t = smp(6, 14.0, 40)
+    t2 = FT.check_sample(_rec(target="40 49 55", run="r1", id="r1/7", t_capture=14.0), root, 7)
+    got = FT.oversample([f, t2], 2, 3, change_oversample=4)
+    assert got.count(t2) == 2 and got.count(f) == 1
+    assert t is not None
+    ap = FT.build_arg_parser()
+    args = ap.parse_args(["--data", "d", "--run", "x", "--change-oversample", "3"])
+    assert args.change_oversample == 3 and args.change_fwd_m == 1.0 and args.change_dt_s == 1.0
+
+
 def test_the_dry_run_validates_without_a_model():
     d = _tmp()
     (d / "images").mkdir()

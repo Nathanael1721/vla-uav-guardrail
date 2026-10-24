@@ -110,6 +110,7 @@ the server's own core at serving precision, and is the number to quote.
 from __future__ import annotations
 
 import argparse
+import bisect
 import csv
 import hashlib
 import json
@@ -715,16 +716,60 @@ def _write_json(path: Path, obj) -> None:
 # --------------------------------------------------------------------------- #
 # The run
 # --------------------------------------------------------------------------- #
-def oversample(train: list[Sample], turn_oversample: int, turn_bins: int) -> list[Sample]:
+def speed_changes(train: list[Sample], fwd_m: float = 1.0, dt_s: float = 1.0,
+                  tol_s: float = 0.2) -> set[int]:
+    """The idx of each sample whose forward step differs by at least `fwd_m`
+    from the same run's, same mirror side's sample nearest to t - `dt_s`
+    (within `tol_s`): the expert stopping behind a car or setting off after
+    it. A sample with no such earlier sample is not a change."""
+    def side(s):
+        return str(s.extra.get("id") or s.extra.get("sample_id") or "").endswith("/mirror")
+
+    by_key: dict = {}
+    for s in train:
+        t = s.extra.get("t_capture")
+        if isinstance(t, (int, float)):
+            by_key.setdefault((s.run, side(s)), []).append((float(t), s))
+    out = set()
+    for group in by_key.values():
+        group.sort(key=lambda p: p[0])
+        times = [p[0] for p in group]
+        for t, s in group:
+            i = bisect.bisect_left(times, t - dt_s)
+            near = [j for j in (i - 1, i) if 0 <= j < len(group)]
+            near = [j for j in near if abs(times[j] - (t - dt_s)) <= tol_s and group[j][1] is not s]
+            if not near:
+                continue
+            j = min(near, key=lambda k: abs(times[k] - (t - dt_s)))
+            f_now = C.bins_to_step(s.bins).fwd_m
+            f_then = C.bins_to_step(group[j][1].bins).fwd_m
+            if abs(f_now - f_then) >= fwd_m:
+                out.add(s.idx)
+    return out
+
+
+def oversample(train: list[Sample], turn_oversample: int, turn_bins: int,
+               change_oversample: int = 1, change_fwd_m: float = 1.0,
+               change_dt_s: float = 1.0) -> list[Sample]:
     """The training list with each sample whose yaw bin is at least
     `turn_bins` from the no-turn bin repeated `turn_oversample` times in all
     (1 = as recorded). The July campaign's run1 collapsed on straight-heavy
-    data (unlearned turning); this is the lever, recorded, default off."""
-    if turn_oversample <= 1:
+    data (unlearned turning); this is the lever, recorded, default off.
+    `change_oversample` does the same for the speed changes (speed_changes;
+    24 Oct: a car pulling away from 8 m got forward 0.0 for about 7 s); a
+    sample that is both is repeated by the larger factor."""
+    if turn_oversample <= 1 and change_oversample <= 1:
         return list(train)
+    changes = (speed_changes(train, change_fwd_m, change_dt_s)
+               if change_oversample > 1 else set())
     out = []
     for s in train:
-        out.extend([s] * (turn_oversample if abs(s.bins[2] - NO_TURN_BIN) >= turn_bins else 1))
+        k = 1
+        if turn_oversample > 1 and abs(s.bins[2] - NO_TURN_BIN) >= turn_bins:
+            k = max(k, turn_oversample)
+        if s.idx in changes:
+            k = max(k, change_oversample)
+        out.extend([s] * k)
     return out
 
 
@@ -769,7 +814,9 @@ def train(args, loader: Callable = None) -> int:
     if not held:
         raise SystemExit("[ft] no held-out samples: early stopping and the per-epoch "
                          "evaluation need a held-out run (tools/build_follow_dataset.py --holdout)")
-    train_list = oversample(tr, args.turn_oversample, args.turn_bins)
+    train_list = oversample(tr, args.turn_oversample, args.turn_bins,
+                            change_oversample=args.change_oversample,
+                            change_fwd_m=args.change_fwd_m, change_dt_s=args.change_dt_s)
     eval_set = heldout_subset(held, args.eval_max, args.seed)
     run_dir.mkdir(parents=True, exist_ok=True)
     print(f"[ft] data {report['file']}: {report['kept']} of {report['lines']} samples kept "
@@ -800,7 +847,8 @@ def train(args, loader: Callable = None) -> int:
         opt, lambda s: lr_at(s, total, warmup, args.min_lr_frac))
     hyper = {k: getattr(args, k) for k in (
         "epochs", "lr", "min_lr_frac", "warmup_frac", "weight_decay", "batch_size", "grad_accum",
-        "max_steps", "patience", "turn_oversample", "turn_bins", "eval_max", "seed",
+        "max_steps", "patience", "turn_oversample", "turn_bins", "change_oversample",
+        "change_fwd_m", "change_dt_s", "eval_max", "seed",
         "max_new_tokens", "attn")}
     hyper.update({"optimizer_steps_planned": total, "warmup_steps": warmup,
                   "grad_ckpt": not args.no_grad_ckpt, "lora": "the parent adapter's own config"})
@@ -1060,6 +1108,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
                     help="skip the parent adapter's evaluation before training (epoch 0)")
     ap.add_argument("--turn-oversample", type=int, default=1)
     ap.add_argument("--turn-bins", type=int, default=3)
+    ap.add_argument("--change-oversample", type=int, default=1,
+                    help="repeat each speed change (the forward step differs by --change-fwd-m "
+                         "from the same run's sample --change-dt-s earlier) this many times")
+    ap.add_argument("--change-fwd-m", type=float, default=1.0)
+    ap.add_argument("--change-dt-s", type=float, default=1.0)
     ap.add_argument("--max-new-tokens", type=int, default=12)
     ap.add_argument("--log-every", type=int, default=10)
     ap.add_argument("--seed", type=int, default=20261023)
@@ -1078,7 +1131,7 @@ def check_args(ap: argparse.ArgumentParser, args) -> None:
         ap.error(f"--run {args.run!r}: letters, digits, '.', '_', '-' (it becomes the server's "
                  f"model id {ID_ROOT}/<run>/epoch<N>)")
     for k in ("epochs", "batch_size", "grad_accum", "log_every", "turn_oversample",
-              "max_new_tokens"):
+              "change_oversample", "max_new_tokens"):
         if getattr(args, k) < 1:
             ap.error(f"--{k.replace('_', '-')} must be at least 1")
     for k in ("lr",):

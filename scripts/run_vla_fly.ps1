@@ -62,6 +62,11 @@ param(
     [int]$Port         = 8790,
     [int]$SimWidth     = 960,
     [int]$SimHeight    = 540,
+    # Cap the simulator's frame rate (t.MaxFPS; 0 = uncapped, as before). The
+    # uncapped game shares the GPU with the 7B server: generation took 0.72 s
+    # in flight against 0.233 s idle (24 Oct).
+    [int]$SimMaxFps    = 0,
+    [switch]$SimOffscreen,             # -RenderOffscreen: no game window (the cameras still render)
     # Frames go to C: through a junction (run_citylife_follow.ps1 says why);
     # empty string = write under demo\out.
     [string]$OffloadRoot = "D:\vla_drone_offload\demo_out",   # outside OneDrive; C: filled up on 23 Oct
@@ -207,7 +212,10 @@ function Stop-OurVlaServer {
 function Start-Sim {
     Stop-OurSim
     Start-Sleep -Seconds 4
-    Start-Process -FilePath $UE -ArgumentList "`"$Proj`"", $Map, '-game', '-windowed', "-ResX=$SimWidth", "-ResY=$SimHeight" | Out-Null
+    $ueArgs = @("`"$Proj`"", $Map, '-game', '-windowed', "-ResX=$SimWidth", "-ResY=$SimHeight")
+    if ($SimMaxFps -gt 0) { $ueArgs += "-ExecCmds=`"t.MaxFPS $SimMaxFps`"" }
+    if ($SimOffscreen) { $ueArgs += '-RenderOffscreen' }
+    Start-Process -FilePath $UE -ArgumentList $ueArgs | Out-Null
     Say "simulator starting on $Map ..."
     for ($i = 0; $i -lt 90; $i++) {
         Start-Sleep -Seconds 5
