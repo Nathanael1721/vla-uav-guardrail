@@ -176,6 +176,14 @@ class SemanticObs:
                 return out
         return dict(zip(keys, ring[-1]), src="ring-edge")
 
+    def pose_history(self):
+        """The ring's horizontal track, [(t_wall, x, y), ...] in the order it
+        was fed: what vla_mission.VLAFrames hands aerialvla_codec's
+        speed-words rule (speed_history, then own_speed) - the aircraft's
+        own speed at a capture, from the poses at or before it."""
+        with self.lock:
+            return [(r[0], r[1], r[2]) for r in self._pose_ring]
+
     def depth_near(self, stamp, t_cap, max_dt_s: float = 0.07):
         """(depth map, dt ms) for the depth frame nearest a front frame - by
         sim time_stamp when both carry one, else by arrival time - or

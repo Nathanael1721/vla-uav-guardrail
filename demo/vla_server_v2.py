@@ -341,7 +341,10 @@ def adapter_identity(adapter: str | Path | None, digest: str | None) -> dict[str
     epoch) and on (since 2026-10-24: the mosaic's lower tile, `bottom_tile`,
     and the label horizon - None for a checkpoint from before, read as
     "down"; a flight with another tile refuses to take off, demo/
-    vla_mission.bottom_tile_check). None without an adapter. A flight
+    vla_mission.bottom_tile_check; and the speed words its prompts ended
+    in, `speed_words` - None for off and for a checkpoint from before; a
+    flight that differs refuses to take off, vla_mission.
+    speed_words_check). None without an adapter. A flight
     records it from hello, so which adapter flew is on file even where the
     weights cannot be read."""
     if not adapter:
@@ -354,7 +357,7 @@ def adapter_identity(adapter: str | Path | None, digest: str | None) -> dict[str
         out["provenance"] = {k: prov.get(k) for k in (
             "id_root", "run", "epoch", "epoch_dir", "parent_adapter", "parent_adapter_sha256",
             "base", "data", "samples_sha256", "precision", "created_utc", "bottom_tile",
-            "label_horizon_s")}
+            "label_horizon_s", "speed_words")}
     elif a.name == Path(DEFAULT_ADAPTER).name and a.parent.name == Path(DEFAULT_ADAPTER).parent.name:
         out["variant"] = "original"
     else:

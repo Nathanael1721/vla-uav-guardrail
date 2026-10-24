@@ -1027,7 +1027,8 @@ def test_vla_fly_takes_the_tile_and_the_rate_and_records_both():
             continue
         raise AssertionError(f"accepted {bad}")
     src = inspect.getsource(VF._fly)
-    assert "VM.VLAFrames(obs, saver=saver, bottom_tile=args.bottom_tile)" in src
+    # (no closing parenthesis: the speed words follow, 2026-10-24)
+    assert "VM.VLAFrames(obs, saver=saver, bottom_tile=args.bottom_tile" in src
     assert '"step_as_rate_s": args.step_as_rate' in src
 
 

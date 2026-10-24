@@ -782,6 +782,31 @@ def test_the_ceiling_flight_test_runs_in_ci():
     assert "== SKIP" in runner, "the runner does not count the SKIP"
 
 
+def test_the_speed_words_test_runs_in_ci():
+    """The follow fine-tune's proprioception (2026-10-24): the aircraft's
+    own speed as words after the object (one codec rule for tools/
+    build_follow_dataset.py --speed-words and vla_mission.VLAFrames, the
+    trainer's provenance, the refusal before take-off in vla_fly and the
+    DAgger recorder either way). No simulator, GPU or model: synthetic
+    recordings, SemanticObs fed by hand, a stub client, tests/
+    vla_fake_server.py on an ephemeral port (never 8790), the server's core
+    with injected decoders. Its evaluation through the server's mosaic
+    needs Pillow and runs in the 3.10 job's Pillow step
+    (GUARDRAIL_REQUIRE_PILLOW=1); its training-loop test needs torch and
+    SKIPs on every job; the runner counts both."""
+    assert "test_vla_speed_words.py" in _loop(), "not run in CI"
+    src = (ROOT / "tests" / "test_vla_speed_words.py").read_text(encoding="utf-8")
+    assert "GUARDRAIL_REQUIRE_PILLOW" in src and "return SKIP" in src
+    assert "import vla_fake_server" in src and "assert srv.port != 8790" in src
+    addrs = re.findall(r'\bD\.make_vla_perturber\(\s*(f?"[^"]*")', src)
+    assert addrs and all(a.startswith('f"127.0.0.1:{') for a in addrs), addrs
+    assert "import cv2" not in src
+    runner = src.split('if __name__ == "__main__":', 1)[-1]
+    assert "== SKIP" in runner, "the runner does not count the SKIP"
+    steps = [s for s in _steps(_yaml(WF / "tests.yml")) if "pillow==" in str(s.get("run", ""))]
+    assert len(steps) == 1 and "tests/test_vla_speed_words.py" in steps[0]["run"], steps
+
+
 def test_the_ardupilot_vla_pilot_test_runs_in_ci():
     """Wave V2b (2026-10-23): the ArduPilot rail's AerialVLA pilot
     (perception_node --pilot vla, to-do VLA-07) and its VLA cameras (VLA-03).

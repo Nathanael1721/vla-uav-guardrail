@@ -567,6 +567,241 @@ def bottom_tile_mismatch(trained: BottomTile, given: BottomTile) -> str | None:
             f"given {_tile_words(given)}: an input it never saw")
 
 
+# --------------------------------------------------------------------------- #
+# The aircraft's own speed, in words, in the object slot (2026-10-24)
+# --------------------------------------------------------------------------- #
+# The prev_front follows (vla_follow_ft_05 / _06, decisions every ~0.45 s)
+# still answered "forward 0" for ~7 s when a car stopped ahead pulled away,
+# then chased 30-40 m behind. The expert flies at the target's speed; the
+# model sees one or two images and does NOT know its OWN speed, so "the car
+# stopped and we hover" and "the car moves and we fly at its speed" look
+# alike: in both the car holds its place in the frame. SPEED WORDS give the
+# model that proprioception as text, appended to the object words ("a red
+# car while flying fast"): the object slot is free text the server inserts
+# verbatim (validate_object), so the wire protocol, the prompt template
+# and the mosaic are unchanged. Words, not digits: four classes are as much
+# as a 99-bin step needs to tell standing from cruising, and a digit string
+# risks the coordinate refusal (coordinate_text). Upstream never trained on
+# them: a speed-words model is one of our fine-tunes, trained on a
+# speed-words dataset (tools/build_follow_dataset.py --speed-words), flown
+# with them (demo/vla_fly.py --vla-speed-words) and refused otherwise
+# (adapter_speed_words, speed_words_mismatch; demo/vla_mission.
+# speed_words_check). Off by default everywhere.
+#
+# THE RULE, one for both sides (own_speed): the horizontal ground speed is a
+# BACKWARD difference over SPEED_WORDS_WINDOW_S of the aircraft's own pose
+# history - the newest pose at or before the capture time (no older than
+# SPEED_WORDS_MAX_GAP_S) against the pose interpolated window_s before it -
+# never a pose after the capture: the flight cannot see one. The history is
+# speed_history's: finite (t, x, y) rows sorted by time, a repeated time
+# keeping the last (the builder's Track rule). The builder reads the run's
+# track.jsonl (every loop tick's pose, stamped with the wall time of its
+# kinematics read); the flight reads SemanticObs's pose ring, which the
+# loop feeds with the same reads on the same clock (put_pose_full), and the
+# capture time is VLAFrames' own on both sides (the recorder builds
+# captures.jsonl with VLAFrames). No history reaching window_s back, or the
+# newest pose stale: no speed - no sample (the builder's drop "no_speed")
+# and no request (VLAFrames counts no_speed).
+#
+# THE CLASSES (SPEED_CLASSES; upper bounds exclusive). Chosen from the
+# 0.5 s backward speed at every track tick of the 19 moving recordings
+# ft_expert_* / ft_dagger_* / ft_dagger_pf_* (2026-10-24, 71,500 ticks;
+# ft_expert_02, which never moved, left out): the distribution has a dense
+# peak at 2.0-2.3 m/s (the car's cruise), a second at 4.6-4.9 (the 5 m/s
+# cap, catching up) and sparse troughs at 1.0-1.5 and 2.5-3.0 m/s, so the
+# bounds sit in the troughs, where a sample flips class least:
+#   "while hovering"       below 0.5 m/s    11.7 % of ticks (standing, or nearly)
+#   "while flying slowly"  0.5 - 1.5         11.0 %  (starting, stopping)
+#   "while flying"         1.5 - 3.0         30.2 %  (the car's cruise)
+#   "while flying fast"    3.0 and above     47.1 %  (catching up)
+# A boundary at 2.0 m/s would cut the cruise peak in half (13 % of ticks
+# within 0.3 m/s of it) and make the words flicker at the commonest speed.
+SPEED_WORDS_RULE = "own_speed_words/1"
+SPEED_WORDS_WINDOW_S = 0.5
+SPEED_WORDS_MAX_GAP_S = 0.5
+SPEED_CLASSES: tuple[tuple[float, str], ...] = (
+    (0.5, "while hovering"),
+    (1.5, "while flying slowly"),
+    (3.0, "while flying"),
+    (math.inf, "while flying fast"),
+)
+SPEED_WORDS: tuple[str, ...] = tuple(w for _hi, w in SPEED_CLASSES)
+
+
+def own_speed_words(speed_mps: Any) -> str:
+    """The class words of a horizontal ground speed (m/s): the first class
+    whose upper bound is above it. ValueError for a negative or non-finite
+    speed."""
+    if not _finite_number(speed_mps) or float(speed_mps) < 0:
+        raise ValueError(f"a speed is a finite number of m/s, not negative; got {speed_mps!r}")
+    v = float(speed_mps)
+    for hi, words in SPEED_CLASSES:
+        if v < hi:
+            return words
+    raise AssertionError("the last class has no upper bound")      # pragma: no cover
+
+
+def speed_words_of(obj: Any) -> str | None:
+    """The class words `obj` ends with (after one space), or None."""
+    if not isinstance(obj, str):
+        return None
+    for words in sorted(SPEED_WORDS, key=len, reverse=True):
+        if obj.endswith(" " + words):
+            return words
+    return None
+
+
+def object_with_speed(object_text: str, speed_mps: Any) -> str:
+    """The object words with the speed's class words appended after one
+    space - "a red car" at 4.2 m/s -> "a red car while flying fast" - and
+    validated as the server validates them (CodecError). ValueError for an
+    object that already ends in speed words: they are appended once."""
+    validate_object(object_text)
+    if speed_words_of(object_text) is not None:
+        raise ValueError(f"{object_text!r} already ends in speed words: appended once")
+    return validate_object(f"{object_text} {own_speed_words(speed_mps)}")
+
+
+def speed_history(rows) -> list[tuple[float, float, float]]:
+    """(t, x, y) rows (tuples, or dicts with those keys) -> the history
+    own_speed reads: finite rows only, sorted by time, a repeated time
+    keeping the last one given."""
+    by_t: dict[float, tuple[float, float]] = {}
+    for r in rows:
+        try:
+            t, x, y = ((float(r["t"]), float(r["x"]), float(r["y"])) if isinstance(r, dict)
+                       else (float(r[0]), float(r[1]), float(r[2])))
+        except (KeyError, IndexError, TypeError, ValueError):
+            continue
+        if math.isfinite(t) and math.isfinite(x) and math.isfinite(y):
+            by_t[t] = (x, y)
+    return [(t, *by_t[t]) for t in sorted(by_t)]
+
+
+def own_speed(history, t_capture: float, window_s: float = SPEED_WORDS_WINDOW_S,
+              max_gap_s: float = SPEED_WORDS_MAX_GAP_S) -> dict | None:
+    """THE RULE (above): the aircraft's horizontal ground speed at a capture
+    from `history` (speed_history's: sorted, unique times), using only poses
+    at or before t_capture: {"speed_mps", "words", "window_s", "t_start",
+    "t_end"} - the newest such pose (t_end, within max_gap_s of t_capture)
+    against the pose interpolated at t_start = t_end - window_s - or None:
+    no pose at or before the capture, the newest too old, a history not
+    reaching t_start, or a gap wider than max_gap_s around t_start. 1e-9 s
+    of slack for clock floats."""
+    eps = 1e-9
+    tc, w = float(t_capture), float(window_s)
+    k = bisect.bisect_right(history, tc + eps, key=lambda r: r[0])
+    if k == 0:
+        return None
+    t1, x1, y1 = history[k - 1]
+    if tc - t1 > float(max_gap_s) + eps:
+        return None
+    t0 = t1 - w
+    j = bisect.bisect_right(history, t0 + eps, key=lambda r: r[0]) - 1
+    if j < 0:
+        return None
+    ta, xa, ya = history[j]
+    if abs(ta - t0) <= eps:
+        x0, y0 = xa, ya
+    else:
+        tb, xb, yb = history[j + 1]           # t_end > t0, so j + 1 <= k - 1: never future
+        if tb - ta > float(max_gap_s) + eps:
+            return None
+        f = (t0 - ta) / (tb - ta)
+        x0, y0 = xa + f * (xb - xa), ya + f * (yb - ya)
+    v = math.hypot(x1 - x0, y1 - y0) / w
+    return {"speed_mps": v, "words": own_speed_words(v), "window_s": w, "t_start": t0,
+            "t_end": t1}
+
+
+@dataclass(frozen=True)
+class SpeedWords:
+    """Speed words ON: the rule (SPEED_WORDS_RULE names the arithmetic and
+    the vocabulary), its window and its classes - all three part of the
+    input a model learned. Off is None, not an instance."""
+    rule: str = SPEED_WORDS_RULE
+    window_s: float = SPEED_WORDS_WINDOW_S
+    classes: tuple[tuple[float, str], ...] = SPEED_CLASSES
+
+    def __post_init__(self):
+        if self.rule != SPEED_WORDS_RULE:
+            raise ValueError(f"speed-words rule {self.rule!r} is not {SPEED_WORDS_RULE!r}, the "
+                             f"one this code computes")
+        if not _finite_number(self.window_s) or float(self.window_s) <= 0:
+            raise ValueError(f"speed-words window_s must be a positive number of seconds, got "
+                             f"{self.window_s!r}")
+
+    def as_dict(self) -> dict:
+        return {"rule": self.rule, "window_s": self.window_s,
+                "max_gap_s": SPEED_WORDS_MAX_GAP_S,
+                "classes": [[None if math.isinf(hi) else hi, words]
+                            for hi, words in self.classes]}
+
+
+def speed_words(on: bool = True) -> SpeedWords | None:
+    """The speed-words setting of a flag: SpeedWords() (this rule, its
+    window and classes) when on, None when off."""
+    return SpeedWords() if on else None
+
+
+def speed_words_from(rec: Any) -> SpeedWords | None:
+    """A recorded setting (a sample's or stats.json's `speed_words`, a
+    provenance file's) -> SpeedWords, or None for None / {} - off: every
+    dataset and adapter from before 2026-10-24, and upstream's. The window
+    defaults to the rule's; recorded classes are read (an upper bound None
+    is unbounded) and must be well formed. max_gap_s is sampling slack, not
+    the input, and is ignored. ValueError otherwise."""
+    if rec is None or rec == {}:
+        return None
+    if not isinstance(rec, dict):
+        raise ValueError(f"a speed-words record is an object, got {type(rec).__name__}")
+    classes = SPEED_CLASSES
+    if rec.get("classes") is not None:
+        try:
+            classes = tuple((math.inf if hi is None else float(hi), str(words))
+                            for hi, words in rec["classes"])
+        except (TypeError, ValueError):
+            raise ValueError(f"speed-words classes {rec['classes']!r} are not [[bound, words], "
+                             f"...]") from None
+    return SpeedWords(rec.get("rule"), float(rec.get("window_s", SPEED_WORDS_WINDOW_S)),
+                      classes)
+
+
+def adapter_speed_words(identity: Any) -> tuple[SpeedWords | None, str]:
+    """(the speed words an identity's adapter was trained with, "announced")
+    from hello's `adapter.provenance.speed_words` (demo/vla_server_v2.
+    adapter_identity; training/finetune_aerialvla_follow.py copies it from
+    the dataset); (None, "absent") when the provenance has no such key -
+    upstream's adapter, a stand-in, a fine-tune or a server from before
+    2026-10-24: off. A key that is there and null is off, "announced".
+    ValueError for a field that is there and malformed."""
+    a = identity.get("adapter") if isinstance(identity, dict) else None
+    prov = a.get("provenance") if isinstance(a, dict) else None
+    if isinstance(prov, dict) and "speed_words" in prov:
+        return speed_words_from(prov["speed_words"]), "announced"
+    return None, "absent"
+
+
+def _speed_words_text(s: SpeedWords | None) -> str:
+    return ("no speed words" if s is None else
+            f"speed words ({s.rule}, a {s.window_s:g} s window, classes "
+            f"{[w for _hi, w in s.classes]})")
+
+
+def speed_words_mismatch(trained: SpeedWords | None, given: SpeedWords | None) -> str | None:
+    """Why a model trained with speed words `trained` (None: off) must not be
+    given `given`, or None when they agree: both off, or the same rule, a
+    window equal to the microsecond and the same classes."""
+    if trained is None and given is None:
+        return None
+    if (trained is not None and given is not None and trained.rule == given.rule
+            and abs(float(trained.window_s) - float(given.window_s)) <= 1e-6
+            and trained.classes == given.classes):
+        return None
+    return (f"the adapter was trained with {_speed_words_text(trained)} and would be given "
+            f"{_speed_words_text(given)}: a prompt it never saw")
+
+
 # The most pixels a wire frame may claim. The frames this protocol carries are
 # 400x225 (FrontCamera), 768x432 or 1280x720 at most, and upstream's are
 # 256x256; 4096x4096 leaves room for any camera here and stays far below

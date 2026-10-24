@@ -77,6 +77,14 @@ tracker; a server whose adapter was trained on another lower tile is refused
 before the simulator is touched (vla_mission.bottom_tile_check), and every
 window tick of a rate tracker records its commanded rates (`vla_rate`).
 
+THE SPEED WORDS (2026-10-24): follow_vlm --perturb-vla-speed-words is handed
+to vla_fly's parser as --vla-speed-words (follow_args), so a window's
+request carries the aircraft's own speed as words after the object exactly
+as vla_fly's does (VLAFrames with vla_fly's setting over this flight's pose
+ring; build_infer_fields appends them), and a server whose adapter was
+trained otherwise - with them or without - is refused before the simulator
+is touched (vla_mission.speed_words_check).
+
 THE HAND-OVER. An answer that arrives in the lead-in is PARKED (the newest
 wins; a link failure or a server error drops it, as the tracker drops a step
 on one) and taken at the window's first tick, anchored where the aircraft is
@@ -237,10 +245,10 @@ class WindowSchedule:
 
 def check_args(addr: str, every_s, dur_s, lead_s: float = VLA_LEAD_S, *,
                bottom_tile: str = "down", prev_dt_s: float | None = None,
-               step_as_rate: float | None = None) -> str | None:
+               step_as_rate: float | None = None, speed_words: bool = False) -> str | None:
     """Why follow_vlm should refuse --record-perturb-vla with these, or None.
-    The lower tile and the rate are vla_fly's own flags: vla_fly's parser
-    judges them (follow_args)."""
+    The lower tile, the rate and the speed words are vla_fly's own flags:
+    vla_fly's parser judges them (follow_args)."""
     try:
         VM.parse_addr(addr)
     except ValueError as exc:
@@ -251,7 +259,7 @@ def check_args(addr: str, every_s, dur_s, lead_s: float = VLA_LEAD_S, *,
         return f"--perturb-vla-every / --perturb-vla-dur: {exc}"
     try:
         follow_args("a red car", cruise_alt=10.0, bottom_tile=bottom_tile, prev_dt_s=prev_dt_s,
-                    step_as_rate=step_as_rate)
+                    step_as_rate=step_as_rate, speed_words=speed_words)
     except DaggerRefused as exc:
         return (f"--perturb-vla-bottom-tile / --perturb-vla-prev-dt-s / "
                 f"--perturb-vla-step-as-rate: {exc}")
@@ -264,13 +272,15 @@ def check_args(addr: str, every_s, dur_s, lead_s: float = VLA_LEAD_S, *,
 def follow_args(object_text: str, *, cruise_alt: float,
                 cruise_mps: float = FOLLOW_CRUISE_MPS,
                 speed_cap_mps: float = FOLLOW_SPEED_CAP_MPS, bottom_tile: str = "down",
-                prev_dt_s: float | None = None, step_as_rate: float | None = None):
+                prev_dt_s: float | None = None, step_as_rate: float | None = None,
+                speed_words: bool = False):
     """(vla_fly's resolved arguments for a pipelined follow, the argv): its
     own parser and resolve_args, so every default the follow mission applies
     - the tracker's, the hint's, the link's, the lower tile (--vla-bottom-tile
-    / --vla-prev-dt-s) and the rate execution (--step-as-rate) - is
-    vla_fly's. The tile and rate flags go into the argv only when set, so a
-    default DAgger recording's argv is as it was."""
+    / --vla-prev-dt-s), the rate execution (--step-as-rate) and the speed
+    words (--vla-speed-words) - is vla_fly's. The tile, rate and speed-words
+    flags go into the argv only when set, so a default DAgger recording's
+    argv is as it was."""
     import vla_fly as VF
     from guardrail.aerialvla_codec import BOTTOM_TILE_MODES
     if bottom_tile not in BOTTOM_TILE_MODES:
@@ -284,6 +294,8 @@ def follow_args(object_text: str, *, cruise_alt: float,
         argv += ["--vla-prev-dt-s", repr(float(prev_dt_s))]
     if step_as_rate is not None:
         argv += ["--step-as-rate", repr(float(step_as_rate))]
+    if speed_words:
+        argv += ["--vla-speed-words"]
     try:
         return VF.resolve_args(VF.build_arg_parser().parse_args(argv)), argv
     except ValueError as exc:
@@ -883,6 +895,7 @@ class VLAPerturber:
         e, d = self.schedule.every_s, self.schedule.dur_s
         c = self.cfg
         tile = getattr(self.frames, "tile", None)
+        sw = getattr(self.frames, "speed_words", None)
         return (f"AerialVLA {sv['identity'].get('id')} at {self.address}"
                 + ("" if self.is_vla else f" (*** STAND-IN, not a VLA: {self.why_not})")
                 + f" flies {d[0]:g}-{d[1]:g} s every {e[0]:g}-{e[1]:g} s (seed {self.seed}), "
@@ -891,6 +904,8 @@ class VLAPerturber:
                 + (f", steps as rates over {c.rate_horizon_s:g} s" if c.rate_horizon_s else "")
                 + (f", lower tile the front frame {tile.dt_s:g} s earlier"
                    if tile is not None and tile.prev_front else "")
+                + (f", its own speed as words ({sw.window_s:g} s window)" if sw is not None
+                   else "")
                 + ", after the controller, before the Shield")
 
 
@@ -913,21 +928,23 @@ def make_vla_perturber(addr: str, *, seed: int, obs, box_source: Callable[[], di
                        cruise_mps: float = FOLLOW_CRUISE_MPS,
                        speed_cap_mps: float = FOLLOW_SPEED_CAP_MPS,
                        bottom_tile: str = "down", prev_dt_s: float | None = None,
-                       step_as_rate: float | None = None,
+                       step_as_rate: float | None = None, speed_words: bool = False,
                        log: Callable[[str], Any] | None = None) -> VLAPerturber:
     """The --record-perturb-vla perturber of a follow_vlm flight: vla_fly's
     follow configuration (follow_args, with vla_fly's --vla-bottom-tile /
-    --vla-prev-dt-s / --step-as-rate when given), hello and the identity
-    check (connect_server; DaggerRefused), the lower tile the adapter was
-    trained on against this one (vla_mission.bottom_tile_check, vla_fly's
-    refusal; DaggerRefused), the VLA cameras' own VLAFrames over the
-    flight's pose ring (`obs`) with vla_fly's tile, DetectorHint over
+    --vla-prev-dt-s / --step-as-rate / --vla-speed-words when given), hello
+    and the identity check (connect_server; DaggerRefused), the lower tile
+    and the speed words the adapter was trained with against this flight's
+    (vla_mission.bottom_tile_check / speed_words_check, vla_fly's refusals;
+    DaggerRefused), the VLA cameras' own VLAFrames over the flight's pose
+    ring (`obs`) with vla_fly's tile and speed words, DetectorHint over
     `box_source` (follow_vlm.Grounder.latest). Nothing is started: start(t0)
     does that (the recorder calls it when the mission clock starts)."""
     obj0 = object_text() if callable(object_text) else object_text
     vargs, argv = follow_args(obj0, cruise_alt=cruise_alt, cruise_mps=cruise_mps,
                               speed_cap_mps=speed_cap_mps, bottom_tile=bottom_tile,
-                              prev_dt_s=prev_dt_s, step_as_rate=step_as_rate)
+                              prev_dt_s=prev_dt_s, step_as_rate=step_as_rate,
+                              speed_words=speed_words)
     try:
         WindowSchedule(seed, every_s, dur_s, lead_s)
     except ValueError as exc:
@@ -942,8 +959,15 @@ def make_vla_perturber(addr: str, *, seed: int, obs, box_source: Callable[[], di
         raise DaggerRefused(f"the server at {addr}: {tile_check['why']} (the adapter's lower "
                             f"tile from {tile_check['source']}; --perturb-vla-bottom-tile "
                             f"{vargs.bottom_tile.mode})")
+    sw_check = VM.speed_words_check(identity, vargs.speed_words, is_vla=is_vla)
+    if not sw_check["ok"]:
+        client.close()
+        raise DaggerRefused(f"the server at {addr}: {sw_check['why']} (the adapter's speed "
+                            f"words from {sw_check['source']}; --perturb-vla-speed-words "
+                            f"{'on' if vargs.speed_words else 'off'})")
     try:
-        frames = VM.VLAFrames(obs, encode=encode, bottom_tile=vargs.bottom_tile)
+        frames = VM.VLAFrames(obs, encode=encode, bottom_tile=vargs.bottom_tile,
+                              speed_words=vargs.speed_words)
         return VLAPerturber(
             seed, client=client, get_capture=frames.capture,
             latest_box=latest_box_from(box_source), object_text=object_text,
@@ -958,7 +982,7 @@ def make_vla_perturber(addr: str, *, seed: int, obs, box_source: Callable[[], di
                              "close": [vargs.close_bottom_frac, vargs.close_width_frac],
                              "start_gate": None, "forget_at_lead_in": True},
                     "tracker": asdict(tcfg), "step_as_rate_s": vargs.step_as_rate,
-                    "bottom_tile": tile_check},
+                    "bottom_tile": tile_check, "speed_words": sw_check},
             frames=frames, record_dir=record_dir, log=log)
     except BaseException:
         client.close()

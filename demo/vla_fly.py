@@ -19,6 +19,9 @@ every 10 Hz tick through the Safety Shield, with honest records.
     # a checkpoint trained on a prev_front dataset, its steps flown as rates
     python demo/vla_fly.py --mission follow --cadence pipelined \\
         --vla-adapter ... --vla-bottom-tile prev_front --step-as-rate 1.0 ...
+    # ... and on a --speed-words dataset: its own speed as words in the prompt
+    python demo/vla_fly.py ... --vla-bottom-tile prev_front --step-as-rate 1.0 \\
+        --vla-speed-words ...
     # the whole flight path without the 7B model: the scripted server (its
     # identity is fake:scripted; the run is recorded as a stand-in, never a VLA)
     python demo/vla_fly.py --mission goto --vla-fake-output "96 48 49</s>" --tag vla_dry
@@ -86,7 +89,15 @@ was trained on another tile (vla_mission.bottom_tile_check; an adapter that
 records none is "down"). --step-as-rate H flies each step as a velocity,
 fwd/H and dpsi/H, until the next answer replaces it (vla_link.TrackerConfig,
 RATE EXECUTION). Both go into metrics.params; every request's record says
-its lower tile and every row its commanded rates.
+its lower tile and every row its commanded rates. --vla-speed-words
+appends the aircraft's own horizontal speed as words to the object ("a red
+car while flying fast"; aerialvla_codec, THE AIRCRAFT'S OWN SPEED: a 0.5 s
+backward difference of the pose ring at or before the capture, four
+classes - the dataset builder's --speed-words rule), refused before
+take-off (exit 4) when the adapter's provenance says otherwise either way
+(vla_mission.speed_words_check; an adapter that records none is off);
+every request's record says its speed and words (vla_steps.jsonl
+`own_speed`), metrics.params the check.
 
 BEFORE TAKE-OFF: one warm-up inference on a live camera pair; a round trip
 over --warmup-max-latency-s (5 s), or no answer, refuses the flight (exit 4).
@@ -376,6 +387,13 @@ def build_arg_parser() -> argparse.ArgumentParser:
     ap.add_argument("--vla-prev-dt-s", type=float, default=None,
                     help="with --vla-bottom-tile prev_front: how many seconds earlier (default "
                          "1.0; the frame nearest that, within 0.25 s, else no request)")
+    # SPEED WORDS (guardrail/aerialvla_codec, SpeedWords; 2026-10-24).
+    ap.add_argument("--vla-speed-words", action="store_true",
+                    help="append the aircraft's own horizontal speed as words to the object "
+                         "('a red car while flying fast': a 0.5 s backward difference of the "
+                         "pose ring at or before each capture, four classes). Must be what the "
+                         "adapter was trained with (its provenance, announced in hello): "
+                         "refused before take-off otherwise, either way. Default off")
     ap.add_argument("--vla-fake-output", nargs="+", default=None,
                     help="start the scripted stand-in server instead of the model")
     ap.add_argument("--vla-fake-delay-s", type=float, default=0.3)
@@ -473,6 +491,10 @@ def resolve_args(args):
         args.bottom_tile = bottom_tile(args.vla_bottom_tile, args.vla_prev_dt_s)
     except ValueError as exc:
         raise ValueError(f"--vla-bottom-tile / --vla-prev-dt-s: {exc}")
+    # SPEED WORDS (aerialvla_codec.SpeedWords, None = off), checked against
+    # the adapter's own after hello.
+    from guardrail.aerialvla_codec import speed_words
+    args.speed_words = speed_words(bool(args.vla_speed_words))
     if args.vla_adapter is not None and (args.vla_server or args.vla_fake_output):
         raise ValueError("--vla-adapter is the adapter of a server this flight STARTS: an "
                          "attached server flies whatever it was started with (its hello's "
@@ -656,6 +678,7 @@ def check_args_report(args) -> dict:
             "object": args.object, "shield": args.shield, "cadence": args.cadence,
             "smooth": smooth_record(args), "step_as_rate_s": args.step_as_rate,
             "bottom_tile": args.bottom_tile.as_dict(),
+            "speed_words": None if args.speed_words is None else args.speed_words.as_dict(),
             "vla_server": args.vla_server, "vla_config": args.vla_config,
             "vla_adapter": args.vla_adapter,
             "vla_fake_output": args.vla_fake_output, "max_s": args.max_s,
@@ -1295,6 +1318,21 @@ async def _fly(args, holder: dict) -> int:
               f"{args.bottom_tile.mode}; the adapter's from {tile_check['source']})",
               file=sys.stderr)
         raise SystemExit(EXIT_REFUSED)
+    # The speed words the adapter was trained with must be this flight's,
+    # either way round (aerialvla_codec, THE AIRCRAFT'S OWN SPEED): refused
+    # before take-off.
+    sw_check = VM.speed_words_check(identity, args.speed_words, is_vla=is_vla)
+    if not sw_check["ok"]:
+        server.stop()
+        live.stop("failed", detail="the adapter's speed words are not this flight's")
+        print(f"[vla] *** refused before take-off: {sw_check['why']} (--vla-speed-words "
+              f"{'on' if args.speed_words else 'off'}; the adapter's from "
+              f"{sw_check['source']})", file=sys.stderr)
+        raise SystemExit(EXIT_REFUSED)
+    print(f"[vla] speed words {'on' if args.speed_words else 'off'}"
+          + (f" ({args.speed_words.window_s:g} s window)" if args.speed_words else "")
+          + (f", the adapter's ({sw_check['source']})" if sw_check["checked"]
+             else f" - {sw_check['source']}"))
     print(f"[vla] lower tile {args.bottom_tile.mode}"
           + (f" (the front frame {args.bottom_tile.dt_s:g} s earlier)"
              if args.bottom_tile.prev_front else "")
@@ -1311,7 +1349,8 @@ async def _fly(args, holder: dict) -> int:
                            clock=time.time)
         obs = SemanticObs()
         saver = VM.FrameSaver(out / "vla_frames")
-        frames = VM.VLAFrames(obs, saver=saver, bottom_tile=args.bottom_tile)
+        frames = VM.VLAFrames(obs, saver=saver, bottom_tile=args.bottom_tile,
+                              speed_words=args.speed_words)
         det_source = detector_hint = grounder = close_rule = None
         if args.mission == "goto":
             hint_src = VM.goto_hint_source(args.goal, args.arrive_radius_m)
@@ -1930,6 +1969,8 @@ async def _fly(args, holder: dict) -> int:
                    "step_as_rate_s": args.step_as_rate,
                    # the lower tile flown and the adapter's, as checked after hello
                    "bottom_tile": tile_check,
+                   # the speed words sent and the adapter's, as checked after hello
+                   "speed_words": sw_check,
                    "vla_adapter": args.vla_adapter,
                    "citymap": str(args.citymap), "seed": args.seed},
     }

@@ -63,7 +63,10 @@
 # front frame 1 s earlier) flies its windows with that tile, and its steps as
 # rates if it was flown so (vla_fly --vla-bottom-tile / --step-as-rate):
 # -PerturbVlaBottomTile prev_front [-PerturbVlaPrevDtS 1.0] -PerturbVlaStepAsRate 1.0.
-# follow_vlm refuses a server whose adapter was trained on another tile.
+# follow_vlm refuses a server whose adapter was trained on another tile. One
+# trained on a --speed-words dataset asks with the aircraft's own speed as
+# words after the object (vla_fly --vla-speed-words): -PerturbVlaSpeedWords;
+# follow_vlm refuses a server whose adapter was trained otherwise.
 #
 # THE CEILING FLIGHT (-DecideEveryS P [-DecideDelayS D], 2026-10-24): the same
 # expert follow, but what it executes is held to a VLA's decision rate - every
@@ -130,6 +133,7 @@ param(
     [string]$PerturbVlaBottomTile = "", # with -RecordPerturbVla: "prev_front" (default down)
     [double]$PerturbVlaPrevDtS = 0,     # with -PerturbVlaBottomTile prev_front: s earlier (1.0)
     [double]$PerturbVlaStepAsRate = 0,  # with -RecordPerturbVla: steps as rates over H s (off)
+    [switch]$PerturbVlaSpeedWords,      # with -RecordPerturbVla: own speed as words (off)
     [double]$DecideEveryS = 0,          # the ceiling flight: a decision every P s (off)
     [double]$DecideDelayS = 0,          # with -DecideEveryS: each carries the command from D s before
     [int]$Seed = 0,                  # follow_vlm --seed (0 = its default); the
@@ -230,6 +234,9 @@ if (($PerturbVlaEvery -or $PerturbVlaDur -or $PerturbVlaAllowStandIn) -and -not 
 }
 if (($PerturbVlaBottomTile -or $PerturbVlaPrevDtS -or $PerturbVlaStepAsRate) -and -not $RecordPerturbVla) {
     throw "-PerturbVlaBottomTile, -PerturbVlaPrevDtS and -PerturbVlaStepAsRate need -RecordPerturbVla"
+}
+if ($PerturbVlaSpeedWords -and -not $RecordPerturbVla) {
+    throw "-PerturbVlaSpeedWords needs -RecordPerturbVla"
 }
 # The ceiling flight (see the header), refused as follow_vlm refuses it. The
 # bounds are follow_vlm's (demo/decide_rate.py): a 0 typed on purpose is not
@@ -506,6 +513,9 @@ if ($RecordVla) {
         }
         if ($PerturbVlaStepAsRate) {
             $a += @("--perturb-vla-step-as-rate", "$PerturbVlaStepAsRate")
+        }
+        if ($PerturbVlaSpeedWords) {
+            $a += @("--perturb-vla-speed-words")
         }
     }
 }
