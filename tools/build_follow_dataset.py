@@ -20,6 +20,9 @@ label is what the hand-written follow did next.
     python tools/build_follow_dataset.py ... --hint-modes fresh,memory,search \\
         --close-bottom-frac 1.0 --close-width-frac 0.25
 
+    # the aircraft's own speed as words after the object (SPEED WORDS, below)
+    python tools/build_follow_dataset.py ... --speed-words
+
 Each RUN_DIR is a flight folder (demo/out/<tag>, holding vla_record/) or the
 recording folder itself (the one holding captures.jsonl). Exit 0 when the
 dataset was written, 2 when it was refused (an unknown --holdout tag, two
@@ -172,6 +175,31 @@ phrase, so a dataset for it is built with the same values. stats.json
 (`args`, `hints.close_rule`) and every sample (`close_rule`) record the rule;
 --keep-close turns it off (recorded as None).
 
+SPEED WORDS (--speed-words, 2026-10-24). The prev_front follows
+vla_follow_ft_05 / _06 still answered "forward 0" for ~7 s when a car
+stopped ahead pulled away: the model cannot tell "the car stopped, I hover"
+from "the car moves, I fly at its speed", because it does not know its own
+speed. With --speed-words each sample's object words end in the class words
+of the aircraft's horizontal ground speed at the capture ("a red car while
+flying fast"), by the codec's one rule (aerialvla_codec.own_speed over the
+run's track.jsonl poses at or before t_capture - a backward difference over
+SPEED_WORDS_WINDOW_S, 0.5 s; never a later pose - and SPEED_CLASSES), the
+rule vla_mission.VLAFrames applies to the flight's pose ring. A capture whose
+history does not reach 0.5 s back (a run's first half second, a stall) is no
+sample ("no_speed": the flight builds no capture then). It is judged after
+the label, so every other reason counts exactly as in the same build
+without the words and no_speed is the samples they cost (the recorder
+captures on for ~20 s after the track's last tick, during the landing:
+those stay "no_future_pose"). Each sample records `own_speed` (speed_mps,
+words, window, the base object words); the prompt and `object` carry the
+words; the phrase, the label and the mosaic are unchanged; the mirror keeps
+the words (a speed has no side). stats.json gives the setting
+(`speed_words`, the trainer's provenance and the flight's check read it)
+and the class histogram in all, per split, per run and per label-fwd band,
+and per class the label spread (`speed`). Off (the default) nothing of this
+is written, stats.json's `speed_words` is null, and every sample is as
+before.
+
 WHAT IS LEFT OUT, AND SAID. Captures with no box, a stale box (unless a
 memory or search hint is asked for), or a CLOSE box (THE CLOSE RULE;
 --keep-close keeps them); captures whose
@@ -232,7 +260,12 @@ STATS = "stats.json"
 IMAGES = "images"
 DROP_ORDER = ("bad_record", "frame_missing", "no_prev_front", "no_box", "stale_box",
               "close_box", "no_hint", "hint_kind", "mode", "no_pose", "no_future_pose",
-              "track_gap", "perturbed", "stride")
+              "track_gap", "no_speed", "perturbed", "stride")
+# Label-fwd bands (m per label horizon) for the speed-words tables (SPEED
+# WORDS): does "while hovering" come with a large forward label, the car
+# pulling away?
+FWD_BANDS = {"0.0-0.5": (0.0, 0.5), "0.5-1.5": (0.5, 1.5), "1.5-2.5": (1.5, 2.5),
+             "2.5-3.5": (2.5, 3.5), "3.5-5.0": (3.5, math.inf)}
 SMALL_FWD_M = 1.0
 # After the last perturbed tick's command, how long the motion is still not
 # the expert's own (module docstring, DART PERTURBATIONS).
@@ -269,6 +302,20 @@ def dpsi_band(v: float) -> str:
 def _dpsi_hist(samples) -> dict:
     c = Counter(dpsi_band(s["label"]["dpsi_rad"]) for s in samples)
     return {name: c[name] for name in DPSI_BANDS if c[name]}
+
+
+def fwd_band(v: float) -> str:
+    a = float(v)
+    for name, (lo, hi) in FWD_BANDS.items():
+        if lo <= a < hi:
+            return name
+    return list(FWD_BANDS)[0 if a < 0 else -1]
+
+
+def _speed_hist(samples) -> dict:
+    """{speed words: n} in SPEED_CLASSES order, the classes present only."""
+    c = Counter((s.get("own_speed") or {}).get("words") for s in samples)
+    return {w: c[w] for w in C.SPEED_WORDS if c[w]}
 
 
 class DatasetError(ValueError):
@@ -580,6 +627,34 @@ def _hint_stats(samples, real, *, hint_modes, fresh_s, memory_s, search_s, close
     }
 
 
+def _speed_stats(samples, real, run_stats, sw: "C.SpeedWords | None", no_speed: int) -> dict | None:
+    """stats.json's `speed` (SPEED WORDS): the class histogram in all (and
+    over the real samples), per split, per run and per label-fwd band (the
+    words x fwd table), per class the label spread, and the measured speed's
+    spread; None with speed words off."""
+    if sw is None:
+        return None
+    by_class = {w: [s for s in real if s["own_speed"]["words"] == w] for w in C.SPEED_WORDS}
+    return {
+        "setting": sw.as_dict(), "no_speed": no_speed,
+        "by_class": _speed_hist(samples), "by_class_real": _speed_hist(real),
+        "by_split": {sp: _speed_hist(s for s in samples if s["split"] == sp)
+                     for sp in ("train", "holdout")},
+        "by_run": {tag: r["speed_words"] for tag, r in run_stats.items()},
+        # the words x label-fwd table over the real samples: rows are fwd bands
+        "by_fwd_band": {b: _speed_hist(s for s in real if fwd_band(s["label"]["fwd_m"]) == b)
+                        for b in FWD_BANDS},
+        "label_by_class": {w: {"n": len(v), **{ax: _spread(s["label"][ax] for s in v)
+                                               for ax in C.AXES}}
+                           for w, v in by_class.items() if v},
+        "speed_mps": _spread(s["own_speed"]["speed_mps"] for s in real),
+        "rule": ("aerialvla_codec.own_speed over the run's track.jsonl poses at or before "
+                 "t_capture: the newest against the pose window_s before it (a backward "
+                 "difference), then SPEED_CLASSES; the flight's VLAFrames applies it to the "
+                 "pose ring. No history reaching window_s back: no sample (no_speed)"),
+    }
+
+
 def _write_png(img, path: Path) -> bool:
     """Write the mosaic losslessly unless it is there; True when written."""
     if path.exists():
@@ -673,14 +748,17 @@ def build_dataset(run_dirs, out_dir, *, horizon_s: float = DEFAULT_HORIZON_S,
                   prev_tol_s: float | None = None, hint_modes=DEFAULT_HINT_MODES,
                   memory_s: float | None = None, search_s: float | None = None,
                   close_bottom_frac: float | None = None,
-                  close_width_frac: float | None = None, log=None) -> dict:
+                  close_width_frac: float | None = None, speed_words: bool = False,
+                  log=None) -> dict:
     """Write samples.jsonl, stats.json (and images/) to out_dir; return the
     stats. Raises DatasetError for what main() refuses. `hint_modes`: the
     hint kinds kept (MEMORY AND SEARCH; "fresh,memory,search" or names);
     memory_s / search_s (None: vla_fly's 6 / 20) only with memory or
     search in it; the close fractions (None: BoxClose's 0.92 / 0.25) not
-    with keep_close."""
+    with keep_close. `speed_words`: the aircraft's own speed as words after
+    the object (SPEED WORDS)."""
     say = log or (lambda *_a, **_k: None)
+    sw = C.speed_words(bool(speed_words))
     if not (horizon_s > 0 and stride_s >= 0 and fresh_s > 0 and max_gap_s > 0
             and perturb_margin_s >= 0):
         raise DatasetError("--horizon-s, --fresh-s and --max-gap-s must be positive and "
@@ -765,6 +843,9 @@ def build_dataset(run_dirs, out_dir, *, horizon_s: float = DEFAULT_HORIZON_S,
                       key=lambda c: (c.get("t_capture") is None, c.get("t_capture") or 0.0))
         prev_t, prev_caps = (prev_front_candidates(caps, frames) if tile.prev_front
                              else ([], []))
+        # SPEED WORDS: the codec's history of the loop's poses (the flight's
+        # VLAFrames reads its pose ring the same way)
+        hist = C.speed_history(track.rows) if sw is not None else []
         run_dts: list[float] = []
         objects = {c.get("object") or run["record"].get("object") for c in caps}
         objects.discard(None)
@@ -774,6 +855,9 @@ def build_dataset(run_dirs, out_dir, *, horizon_s: float = DEFAULT_HORIZON_S,
             except C.CodecError as exc:
                 raise DatasetError(f"run {tag}: its object words {obj!r} cannot go in a "
                                    f"prompt ({exc})") from None
+            if sw is not None and C.speed_words_of(obj) is not None:
+                raise DatasetError(f"run {tag}: its object words {obj!r} already end in speed "
+                                   f"words; --speed-words appends them")
         bridge = make_bridge(next(iter(objects), "a red car"), bearing_gain)
         dropped: Counter = Counter()
         n_run = 0
@@ -834,6 +918,16 @@ def build_dataset(run_dirs, out_dir, *, horizon_s: float = DEFAULT_HORIZON_S,
             if lab["reason"] is not None:
                 dropped[lab["reason"]] += 1
                 continue
+            own = None
+            if sw is not None:
+                # SPEED WORDS: the aircraft's speed from its poses at or
+                # before the capture (none: no capture in flight either).
+                # Judged after the label, so every other drop counts as
+                # without the words and no_speed is what they cost.
+                own = C.own_speed(hist, t, sw.window_s)
+                if own is None:
+                    dropped["no_speed"] += 1
+                    continue
             if track.perturbed(t, horizon_s, perturb_margin_s):
                 # The label must be the expert's clean motion (DART).
                 dropped["perturbed"] += 1
@@ -843,6 +937,9 @@ def build_dataset(run_dirs, out_dir, *, horizon_s: float = DEFAULT_HORIZON_S,
                 continue
             last_t = t
             bins = lab["bins"]
+            obj_base = obj
+            if own is not None:
+                obj = C.object_with_speed(obj_base, own["speed_mps"])
             prompt = C.build_prompt(phrase, obj)
             step = C.bins_to_step(bins)
             p0 = lab["p0"]
@@ -902,6 +999,14 @@ def build_dataset(run_dirs, out_dir, *, horizon_s: float = DEFAULT_HORIZON_S,
                                             else round(se, 4))},
                 "mirrored": False,
             })
+            if own is not None:
+                # SPEED WORDS: the speed the object's words say (the mirror
+                # keeps them: a speed has no side). Unrounded: a speed
+                # rounded onto a class bound would read as the next class.
+                samples[-1]["own_speed"] = {
+                    "speed_mps": own["speed_mps"], "words": own["words"],
+                    "window_s": own["window_s"], "t_start": round(own["t_start"], 6),
+                    "t_end": round(own["t_end"], 6), "object_base": obj_base}
             n_run += 1
             if mirror and split == "train":
                 mimage = msha = None
@@ -943,6 +1048,9 @@ def build_dataset(run_dirs, out_dir, *, horizon_s: float = DEFAULT_HORIZON_S,
                               "captures", "skipped_front_frames", "capture_failed",
                               "capture_hz", "ticks_dropped", "saver") if k in rc},
                           "has_record_json": bool(run["record"])}
+        if sw is not None:
+            # SPEED WORDS: the run's classes (real samples)
+            run_stats[tag]["speed_words"] = _speed_hist(run_real)
         say(f"[run] {tag:28s} {split:7s} captures {len(caps):5d} -> samples {n_run:5d}  "
             f"dropped {dict(run_stats[tag]['dropped'])}")
         say(f"[run] {'':28s} phrases {run_stats[tag]['phrase_counts']}  |dpsi| "
@@ -950,6 +1058,8 @@ def build_dataset(run_dirs, out_dir, *, horizon_s: float = DEFAULT_HORIZON_S,
             f"{len(track.perturb_intervals)}, samples after one (<= 3 s) {post}")
         if emulate:
             say(f"[run] {'':28s} hint kinds {run_stats[tag]['hint_kinds']}")
+        if sw is not None:
+            say(f"[run] {'':28s} speed words {run_stats[tag]['speed_words']}")
 
     with (out / SAMPLES).open("w", encoding="utf-8", newline="\n") as fh:
         for s in samples:
@@ -962,7 +1072,7 @@ def build_dataset(run_dirs, out_dir, *, horizon_s: float = DEFAULT_HORIZON_S,
                    perturb_margin_s=perturb_margin_s, mirror=mirror, tile=tile,
                    tile_dts=tile_dts, hint_modes=hint_modes,
                    memory_s=memory_s if emulate else None,
-                   search_s=search_s if emulate else None, close=close)
+                   search_s=search_s if emulate else None, close=close, speed_words=sw)
     (out / STATS).write_text(json.dumps(stats, indent=1, ensure_ascii=False), encoding="utf-8",
                              newline="\n")
     return stats
@@ -972,7 +1082,8 @@ def _stats(samples, run_stats, dropped_all, *, holdout, horizon_s, stride_s, fre
            max_gap_s, keep_close, modes, bearing_gain, images, n_written, n_reused,
            pose_dist, pose_dyaw, run_dirs, perturb_margin_s, mirror,
            tile: "C.BottomTile | None" = None, tile_dts=(), hint_modes=DEFAULT_HINT_MODES,
-           memory_s=None, search_s=None, close=None) -> dict:
+           memory_s=None, search_s=None, close=None,
+           speed_words: "C.SpeedWords | None" = None) -> dict:
     tile = tile if tile is not None else C.BottomTile()
     emulate = bool(set(hint_modes) - {"fresh"})
     # What the trainer sees (mirrored samples included): the splits, the
@@ -1003,7 +1114,8 @@ def _stats(samples, run_stats, dropped_all, *, holdout, horizon_s, stride_s, fre
                  "bottom_tile": tile.mode, "prev_dt_s": tile.dt_s, "prev_tol_s": tile.tol_s,
                  "hint_modes": list(hint_modes), "memory_s": memory_s, "search_s": search_s,
                  "close_bottom_frac": None if close is None else close.bottom_frac,
-                 "close_width_frac": None if close is None else close.width_frac},
+                 "close_width_frac": None if close is None else close.width_frac,
+                 "speed_words": speed_words is not None},
         "codec": {"num_bins": C.NUM_BINS, "ranges": {k: list(v) for k, v in C.RANGES.items()},
                   "quantize": "clip, then truncate into 99 bins (upstream _quantize_action; "
                               "aerialvla_codec.step_bins)",
@@ -1024,6 +1136,11 @@ def _stats(samples, run_stats, dropped_all, *, holdout, horizon_s, stride_s, fre
                                  "dt_s within tol_s (aerialvla_codec.pick_prev_front); none: no "
                                  "sample" if tile.prev_front else
                                  "the capture's own down frame (upstream's)")},
+        # SPEED WORDS: the setting the trainer copies into the checkpoint's
+        # provenance and the flight must match (null: off), and its tables
+        "speed_words": None if speed_words is None else speed_words.as_dict(),
+        "speed": _speed_stats(samples, real, run_stats, speed_words,
+                              dropped_all["no_speed"]),
         "splits": {"train": splits.get("train", 0), "holdout": splits.get("holdout", 0),
                    "train_real": sum(1 for s in real if s["split"] == "train")},
         "train_runs": sorted(t for t, r in run_stats.items() if r["split"] == "train"),
@@ -1082,7 +1199,10 @@ def _stats(samples, run_stats, dropped_all, *, holdout, horizon_s, stride_s, fre
             "The phrase is computed by demo/vla_mission.follow_hint_step (DetectorHint's rule) "
             "from the recorded box.",
             "analysis.truth_xy / subject_dist_m (the level car) are for diagnosis only.",
-        ],
+        ] + ([f"Speed words: each object ends in the class words of the aircraft's own speed "
+              f"(aerialvla_codec.own_speed over the track at or before the capture, a "
+              f"{speed_words.window_s:g} s backward difference); see `speed`."]
+             if speed_words is not None else []),
     }
 
 
@@ -1146,6 +1266,11 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--prev-tol-s", type=float, default=None,
                     help=f"prev_front: the earlier frame within this of t - dt, else no sample "
                          f"(default {C.DEFAULT_PREV_TOL_S:g})")
+    ap.add_argument("--speed-words", action="store_true",
+                    help=f"append the aircraft's own speed as words to the object "
+                         f"('a red car while flying fast'; module docstring, SPEED WORDS): "
+                         f"{C.SPEED_WORDS_WINDOW_S:g} s backward difference of the track at or "
+                         f"before the capture, classes {', '.join(C.SPEED_WORDS)}. Default off")
     ap.add_argument("--force", action="store_true", help="rebuild an existing dataset")
     a = ap.parse_args(argv)
     holdout = [t for grp in (a.holdout or []) for t in grp]
@@ -1159,7 +1284,8 @@ def main(argv: list[str] | None = None) -> int:
                            prev_tol_s=a.prev_tol_s, hint_modes=a.hint_modes,
                            memory_s=a.memory_s, search_s=a.search_s,
                            close_bottom_frac=a.close_bottom_frac,
-                           close_width_frac=a.close_width_frac, log=print)
+                           close_width_frac=a.close_width_frac, speed_words=a.speed_words,
+                           log=print)
     except DatasetError as exc:
         print(f"[dataset] *** refused: {exc}", file=sys.stderr)
         return 2
@@ -1179,6 +1305,12 @@ def main(argv: list[str] | None = None) -> int:
     print(f"[dataset] hint kinds {','.join(hs['modes'])} (memory_s {hs['memory_s']}, search_s "
           f"{hs['search_s']}), close rule {hs['close_rule']}: real samples by kind "
           f"{hs['by_kind_real']}")
+    if st["speed"] is not None:
+        sp = st["speed"]
+        print(f"[dataset] speed words ({sp['setting']['window_s']:g} s window): real samples by "
+              f"class {sp['by_class_real']}, no history {sp['no_speed']}")
+        for fb, h in sp["by_fwd_band"].items():
+            print(f"[dataset]   label fwd {fb} m: {h}")
     print(f"[dataset] dropped: {st['dropped']}")
     print(f"[dataset] phrases: {st['phrase_counts']}")
     print(f"[dataset] |dpsi| (train): {st['abs_dpsi_hist']['train']}")

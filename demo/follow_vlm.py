@@ -4293,7 +4293,8 @@ async def fly(args) -> int:
                 dur_s=args.perturb_vla_dur, allow_stand_in=args.perturb_vla_allow_stand_in,
                 bottom_tile=args.perturb_vla_bottom_tile,
                 prev_dt_s=args.perturb_vla_prev_dt_s,
-                step_as_rate=args.perturb_vla_step_as_rate, log=print)
+                step_as_rate=args.perturb_vla_step_as_rate,
+                speed_words=args.perturb_vla_speed_words, log=print)
         except vla_dagger.DaggerRefused as exc:
             raise SystemExit(f"[vla-dagger] *** refused: {exc}") from None
         print(f"[vla-dagger] {perturber.describe()}")
@@ -7380,6 +7381,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
     ap.add_argument("--perturb-vla-step-as-rate", type=float, default=None, metavar="H",
                     help="with --record-perturb-vla: the windows fly each step as a velocity "
                          "over H seconds (vla_fly --step-as-rate; default off: an endpoint)")
+    ap.add_argument("--perturb-vla-speed-words", action="store_true",
+                    help="with --record-perturb-vla: the windows ask with the aircraft's own "
+                         "speed as words after the object (vla_fly --vla-speed-words). Must be "
+                         "what the served adapter was trained with, or the recording is "
+                         "refused (default off)")
     ap.add_argument("--decide-every-s", type=float, default=None, metavar="P",
                     help="the CEILING flight (demo/decide_rate.py): hold this follow to a "
                          "VLA's decision rate. The EXECUTED command, after the controller and "
@@ -7498,7 +7504,8 @@ def main(argv: list[str] | None = None) -> int:
         why = check_args(args.record_perturb_vla, args.perturb_vla_every, args.perturb_vla_dur,
                          bottom_tile=args.perturb_vla_bottom_tile,
                          prev_dt_s=args.perturb_vla_prev_dt_s,
-                         step_as_rate=args.perturb_vla_step_as_rate)
+                         step_as_rate=args.perturb_vla_step_as_rate,
+                         speed_words=args.perturb_vla_speed_words)
         if why is not None:
             ap.error(why)
     elif (args.perturb_vla_every != (6.0, 10.0) or args.perturb_vla_dur != (2.5, 4.0)
@@ -7506,9 +7513,10 @@ def main(argv: list[str] | None = None) -> int:
         ap.error("--perturb-vla-every, --perturb-vla-dur and --perturb-vla-allow-stand-in "
                  "need --record-perturb-vla")
     elif (args.perturb_vla_bottom_tile != "down" or args.perturb_vla_prev_dt_s is not None
-          or args.perturb_vla_step_as_rate is not None):
-        ap.error("--perturb-vla-bottom-tile, --perturb-vla-prev-dt-s and "
-                 "--perturb-vla-step-as-rate need --record-perturb-vla")
+          or args.perturb_vla_step_as_rate is not None or args.perturb_vla_speed_words):
+        ap.error("--perturb-vla-bottom-tile, --perturb-vla-prev-dt-s, "
+                 "--perturb-vla-step-as-rate and --perturb-vla-speed-words need "
+                 "--record-perturb-vla")
     global LINEAR_BEARING
     LINEAR_BEARING = bool(args.linear_bearing)
     if args.coarse_timer:

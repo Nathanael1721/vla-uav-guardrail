@@ -100,6 +100,18 @@
 #          sample-and-hold on synthetic command sequences, the refusals, the
 #          records, the follow score unchanged, the launcher flags; synthetic
 #          ticks only, nothing SKIPs).
+#          test_vla_speed_words (the follow fine-tune's proprioception of
+#          2026-10-24: the aircraft's own speed as words after the object -
+#          one rule in the codec, a 0.5 s backward difference of the poses
+#          at or before the capture and four classes, for
+#          tools/build_follow_dataset.py --speed-words and the flight's
+#          VLAFrames, the same words for the same pose history, the mirror
+#          and the stats, the trainer's provenance and its refusal of a
+#          mixed dataset, the refusal before take-off in vla_fly and the
+#          DAgger recorder either way, the round trip through the server's
+#          parser; its evaluation through the server's mosaic SKIPs here
+#          and runs in the Pillow step, its training-loop test needs torch
+#          and is lab-only).
 #        The CityLife level, checked offline (the level itself is
 #          gitignored): test_citylife_*, test_drive_signals_dsl,
 #          test_ped_walk_plan, test_parked_cars.
@@ -310,7 +322,10 @@
 #          prev_front mosaic and its mirror, the evaluation tool's prev_front
 #          requests through the server's core, 2026-10-24); its training
 #          loop on a CPU stand-in needs torch, so it SKIPs in that step too
-#          (24/24 in vla-real).
+#          (24/24 in vla-real). The same for 1 of test_vla_speed_words' 17
+#          (the evaluation of a speed-words dataset through the server's
+#          mosaic and prompt, 2026-10-24); its training loop needs torch and
+#          SKIPs in that step too (17/17 in vla-real).
 #        - Opt-in wall clock: test_hold_transit's
 #          test_each_charge_bounds_what_its_call_costs (the hold-point
 #          search's charges against what each call costs on the machine)
@@ -597,6 +612,7 @@ jobs:
               tests/test_vla_prev_front_rate.py \
               tests/test_follow_hint_modes.py \
               tests/test_follow_decide_rate.py \
+              tests/test_vla_speed_words.py \
               tests/test_citylife_peds.py \
               tests/test_citylife_routes.py \
               tests/test_citylife_signal_lamps.py \
@@ -652,7 +668,9 @@ jobs:
       # (the PNG the trainer reads must be the server's mosaic, or exactly its
       # left-right flip); its OpenCV test SKIPs. test_vla_prev_front_rate
       # (2026-10-24) for its prev_front mosaic, its mirror and the evaluation
-      # tool's prev_front requests; its torch test SKIPs.
+      # tool's prev_front requests; its torch test SKIPs. test_vla_speed_words
+      # (2026-10-24) for the evaluation of a speed-words dataset through the
+      # server's mosaic; its torch test SKIPs.
       - name: AerialVLA image tests (Pillow)
         if: matrix.python == '3.10'
         env:
@@ -661,7 +679,7 @@ jobs:
         run: |
           python -m pip install --target "$RUNNER_TEMP/pillow" pillow==12.2.0
           fail=0
-          for img in tests/test_aerialvla_codec.py tests/test_vla_server.py tests/test_follow_dataset.py tests/test_vla_prev_front_rate.py; do
+          for img in tests/test_aerialvla_codec.py tests/test_vla_server.py tests/test_follow_dataset.py tests/test_vla_prev_front_rate.py tests/test_vla_speed_words.py; do
             echo "::group::$img (with Pillow)"
             if ! PYTHONPATH="$RUNNER_TEMP/pillow" python "$img"; then
               echo "::error file=$img::$img failed with Pillow installed"

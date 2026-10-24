@@ -306,12 +306,20 @@ class Capture:
     NOT the down camera - aerialvla_codec's prev_front lower tile, the front
     frame from dt_s earlier (demo/vla_mission.VLAFrames): {"mode", "dt_s",
     "tol_s", "dt_actual_s", ...}. It goes into the request's record as
-    `bottom_tile`; None is the down camera, as always before."""
+    `bottom_tile`; None is the down camera, as always before.
+
+    `own_speed` (optional; 2026-10-24): the aircraft's own horizontal speed
+    at the capture by aerialvla_codec's speed-words rule (demo/vla_mission.
+    VLAFrames with speed words on): {"speed_mps", "words", "window_s",
+    "t_start", "t_end", ...}. build_infer_fields then appends the words to
+    the object text (aerialvla_codec.object_with_speed) and the record says
+    so (`own_speed`); None is no speed words, as always before."""
     t_capture: float
     pose: Pose
     front_jpg: bytes
     down_jpg: bytes | None = None
     lower: dict | None = field(default=None, compare=False)
+    own_speed: dict | None = field(default=None, compare=False)
 
     def __post_init__(self):
         _finite(self.t_capture, "t_capture")
@@ -493,13 +501,30 @@ def build_infer_fields(capture: Capture, hint: Hint, object_text: str,
 
     csp_mode "off" sends no CSP text (the prompt is then byte-identical to
     AerialVLA's template); "csp" and "neutral" need the text (the neutral
-    arm is the length-matched filler, the null of tools/prefix_eval.py)."""
+    arm is the length-matched filler, the null of tools/prefix_eval.py).
+
+    A capture with `own_speed` (speed words on) sends `object_text` with its
+    speed's class words appended - aerialvla_codec.object_with_speed, the
+    rule the dataset builder applied, so the server builds the prompt the
+    model was trained on - and the record's `object` is what was sent, its
+    `own_speed` the speed, the words and the base object words (a replay
+    of the record asks the same prompt). Without it the object is sent as
+    given, as always before."""
     if not isinstance(capture, Capture):
         raise TypeError("capture must be a Capture")
     if not isinstance(hint, Hint):
         raise TypeError("hint must be a Hint")
     if not isinstance(object_text, str):
         raise TypeError("object_text must be a string")
+    own_speed = None
+    if capture.own_speed is not None:
+        # the codec only here: the default path never imports it
+        from .aerialvla_codec import object_with_speed
+        own_speed = {**capture.own_speed, "object_base": object_text}
+        object_text = object_with_speed(object_text, capture.own_speed["speed_mps"])
+        if object_text != f"{own_speed['object_base']} {own_speed['words']}":
+            raise ValueError(f"the capture's speed words {own_speed['words']!r} are not the "
+                             f"rule's for {own_speed['speed_mps']!r} m/s")
     if csp_mode not in CSP_MODES:
         raise ValueError(f"csp_mode {csp_mode!r} is not one of {CSP_MODES}")
     if csp_mode == "off" and csp_text is not None:
@@ -533,6 +558,9 @@ def build_infer_fields(capture: Capture, hint: Hint, object_text: str,
         # the down slot is the front frame from dt_s earlier (Capture.lower):
         # the record says so, and the measured dt; the wire cannot
         meta["bottom_tile"] = dict(capture.lower)
+    if own_speed is not None:
+        # the speed the object's words say (Capture.own_speed)
+        meta["own_speed"] = own_speed
     return fields, meta
 
 

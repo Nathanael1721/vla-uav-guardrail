@@ -39,6 +39,15 @@ printed. Not refused: the parent adapter (upstream's, "down") on a
 prev_front dataset is the baseline, labelled - its numbers are what it says
 to inputs it never saw.
 
+THE SPEED WORDS (2026-10-24). A --speed-words dataset's object words end in
+the aircraft's own speed class ("a red car while flying fast"); the request
+carries the sample's object as it is, so the server builds the sample's
+prompt byte for byte (prompt_sha256 checked as for every sample). The
+dataset's setting (finetune_aerialvla_follow.dataset_speed_words) is
+recorded and each adapter's own (its provenance) checked against it
+(`speed_words_check`, "ok" or why not; printed, not refused - the baseline
+never saw speed words).
+
 WHAT IS SCORED: finetune_aerialvla_follow.score_outputs - parse-ok rate,
 exact-bin accuracy per axis, step MAE (m / rad), turn-sign agreement, LAND.
 And the same split by the sample's hint kind (`metrics_by_hint_kind`:
@@ -197,6 +206,19 @@ def tile_check(identity: dict | None, dataset_tile: dict) -> str:
     return "ok" if why is None else why
 
 
+def speed_words_check(identity: dict | None, dataset_setting: dict | None) -> str:
+    """"ok", or why the adapter `identity` announces was not trained with
+    the dataset's speed words (aerialvla_codec.adapter_speed_words: no
+    recorded setting is off; `dataset_setting` None is off)."""
+    try:
+        trained, _src = C.adapter_speed_words(identity)
+        given = C.speed_words_from(dataset_setting)
+    except ValueError as exc:
+        return f"a speed-words record is malformed ({exc})"
+    why = C.speed_words_mismatch(trained, given)
+    return "ok" if why is None else why
+
+
 def socket_send(addr: str):
     from vla_server_v2 import V2Client
     host, port = addr.rsplit(":", 1)
@@ -339,6 +361,7 @@ def main(argv: list[str] | None = None) -> int:
     samples, report = FT.load_samples(Path(args.data))
     try:
         dtile = FT.dataset_bottom_tile(Path(args.data), samples)
+        dsw = FT.dataset_speed_words(Path(args.data), samples)
     except FT.DataError as exc:
         raise SystemExit(f"[eval] refused: {exc}") from None
     split = set(args.split)
@@ -373,9 +396,14 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"[eval] *** {name}: {r['bottom_tile_check']} (the dataset's lower tile "
                       f"is {dtile['mode']}): its numbers are for inputs it never saw",
                       flush=True)
+            r["speed_words_check"] = speed_words_check(r.get("identity"), dsw["setting"])
+            if r["speed_words_check"] != "ok":
+                print(f"[eval] *** {name}: {r['speed_words_check']}: its numbers are for "
+                      f"prompts it never saw", flush=True)
     res = {"schema": SCHEMA,
            "created_utc": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-           "data": report, "bottom_tile": dtile, "splits": sorted(split), "n": len(chosen),
+           "data": report, "bottom_tile": dtile, "speed_words": dsw, "splits": sorted(split),
+           "n": len(chosen),
            "adapter_path": Path(args.adapter).as_posix(), "adapter": res_a,
            "baseline_path": None if res_b is None else Path(args.baseline).as_posix(),
            "baseline": res_b,

@@ -80,12 +80,28 @@ checkpoint's provenance file - the file the server announces in hello, so a
 flight with another tile is refused before take-off (demo/vla_mission.
 bottom_tile_check).
 
+SPEED WORDS (2026-10-24; aerialvla_codec, THE AIRCRAFT'S OWN SPEED). A
+dataset built with --speed-words ends every object in the class words of
+the aircraft's own speed ("a red car while flying fast") and records the
+setting in stats.json (`speed_words`) and each sample (`own_speed`: the
+speed, its words, the base object words). dataset_speed_words reads it (a
+dataset without it is off), checks every sample's words against its object
+and against the codec's classes for its speed, and refuses a dataset whose
+samples mix speed words and none, mix windows, or disagree with its
+stats.json; the trainer copies the setting into every checkpoint's
+provenance (`speed_words`, null when off), so a flight that does not send
+the same words is refused before take-off (demo/vla_mission.
+speed_words_check). The prompt the trainer encodes is the sample's, byte
+for byte the one the server builds from the phrase and the full object
+words (the dry run's server parity).
+
 THE RUN (outputs under --out-root, default D:/models/aerialvla-ft-follow)
 -------------------------------------------------------------------------
   <run>/epoch<N>/            the adapter (save_pretrained) and the provenance
                              file aerialvla_ft_provenance.json (the server's id
-                             and `adapter` block come from it, the lower tile
-                             and the label horizon included) - nothing else:
+                             and `adapter` block come from it, the lower tile,
+                             the label horizon and the speed words
+                             included) - nothing else:
                              the server's digest covers every file here, so
                              write no other file into it
   <run>/heldout_eval_epoch<N>.json   that epoch's held-out answers and metrics
@@ -252,7 +268,7 @@ def check_sample(rec: Any, root: Path, idx: int) -> Sample:
     if sha is not None and not (isinstance(sha, str) and re.fullmatch(r"[0-9a-f]{64}", sha)):
         raise SampleError("bad_image_sha256", f"{sha!r}")
     extra = {k: rec[k] for k in ("pose", "t_capture", "id", "sample_id", "bottom_tile",
-                                 "hint_kind") if k in rec}
+                                 "hint_kind", "own_speed") if k in rec}
     return Sample(idx=idx, image=path, prompt=prompt, target=target, run=run, split=split,
                   phrase=phrase, object=obj, bins=p.bins, land=p.land, image_sha256=sha,
                   extra=extra)
@@ -368,6 +384,79 @@ def dataset_bottom_tile(data: Path, samples: list[Sample]) -> dict:
     source = ("stats.json" if st_tile is not None else "samples" if marked else
               "absent (a dataset from before 2026-10-24): down")
     return {**tile.as_dict(), "source": source, "label_horizon_s": horizon}
+
+
+def _sample_speed_words(s: Sample) -> float | None:
+    """A sample's speed-words window (its `own_speed` record checked against
+    its object words and the codec's classes), or None for a sample without
+    them; DataError for one whose words do not add up."""
+    rec = s.extra.get("own_speed")
+    if rec is None:
+        if C.speed_words_of(s.object) is not None:
+            raise DataError(f"sample {s.idx}: its object {s.object!r} ends in speed words but "
+                            f"it carries no own_speed record (tools/build_follow_dataset.py "
+                            f"--speed-words writes both)")
+        return None
+    try:
+        words = rec["words"]
+        want = C.own_speed_words(rec["speed_mps"])
+        window = float(rec.get("window_s", C.SPEED_WORDS_WINDOW_S))
+    except (KeyError, TypeError, ValueError) as exc:
+        raise DataError(f"sample {s.idx}: its own_speed record is malformed ({exc!r})") from None
+    if words != want:
+        raise DataError(f"sample {s.idx}: own_speed says {words!r} for {rec['speed_mps']!r} m/s, "
+                        f"the codec's classes say {want!r}")
+    if C.speed_words_of(s.object) != words:
+        raise DataError(f"sample {s.idx}: its object {s.object!r} does not end in its speed "
+                        f"words {words!r}")
+    base = rec.get("object_base")
+    if base is not None and s.object != f"{base} {words}":
+        raise DataError(f"sample {s.idx}: its object {s.object!r} is not {base!r} + its speed "
+                        f"words")
+    return window
+
+
+def dataset_speed_words(data: Path, samples: list[Sample]) -> dict:
+    """The speed words the dataset's prompts carry (module docstring, SPEED
+    WORDS): {"setting": aerialvla_codec.SpeedWords.as_dict() or None (off),
+    "source"}. Read from stats.json beside samples.jsonl (its `speed_words`
+    key; null = off) and checked against every sample (_sample_speed_words):
+    the samples must all carry them or none, with one window, and agree with
+    stats.json, or DataError. Neither says: off (every dataset from before
+    2026-10-24)."""
+    stats_p = samples_file(data).parent / "stats.json"
+    st_known, st_sw = False, None
+    if stats_p.is_file():
+        try:
+            st = json.loads(stats_p.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            raise DataError(f"{stats_p}: unreadable ({exc}), so its speed words are unknown") \
+                from None
+        if isinstance(st, dict) and "speed_words" in st:
+            st_known = True
+            try:
+                st_sw = C.speed_words_from(st["speed_words"])
+            except ValueError as exc:
+                raise DataError(f"{stats_p}: its speed words are malformed ({exc})") from None
+    windows = Counter(_sample_speed_words(s) for s in samples)
+    if len(windows) > 1:
+        on = sum(n for w, n in windows.items() if w is not None)
+        raise DataError(f"the samples mix speed-words modes ({on} with, {windows.get(None, 0)} "
+                        f"without; windows {sorted(w for w in windows if w is not None)}): one "
+                        f"model learns one prompt (tools/build_follow_dataset.py --speed-words)")
+    w = next(iter(windows), None)
+    try:
+        s_sw = None if w is None else C.SpeedWords(window_s=w)
+    except ValueError as exc:
+        raise DataError(f"the samples' speed words are malformed ({exc})") from None
+    if st_known and samples and C.speed_words_mismatch(st_sw, s_sw) is not None:
+        raise DataError(f"stats.json says {'no speed words' if st_sw is None else st_sw.as_dict()}"
+                        f", the samples say {'none' if s_sw is None else s_sw.as_dict()}: "
+                        f"rebuild the dataset")
+    sw = st_sw if st_known else s_sw
+    source = ("stats.json" if st_known else "samples" if s_sw is not None else
+              "absent (a dataset from before 2026-10-24): off")
+    return {"setting": None if sw is None else sw.as_dict(), "source": source}
 
 
 def turn_class(yaw_bin: int) -> int:
@@ -664,18 +753,23 @@ def git_commit() -> str | None:
 def provenance(*, run: str, epoch: int, parent_adapter: str, parent_sha256: str | None,
                base: str, data_report: dict, split_info: dict, precision: str, hyper: dict,
                metrics: dict | None, step: int, bottom_tile: dict | None = None,
-               label_horizon_s: float | None = None) -> dict:
+               label_horizon_s: float | None = None, speed_words: dict | None = None) -> dict:
     """aerialvla_codec.ADAPTER_PROVENANCE_FILE's content: what the server
     reads to announce the checkpoint (id_root, run, epoch_dir) and what the
     identity's `adapter.provenance` repeats (parent adapter and its digest,
-    base, data and its sha256, precision, the lower tile and the label
-    horizon). `bottom_tile`: dataset_bottom_tile's ({mode, dt_s, tol_s}
-    kept); None records "down"."""
+    base, data and its sha256, precision, the lower tile, the label horizon
+    and the speed words). `bottom_tile`: dataset_bottom_tile's ({mode, dt_s,
+    tol_s} kept); None records "down". `speed_words`: dataset_speed_words'
+    setting; None records off (null)."""
     tile = C.bottom_tile_from(bottom_tile).as_dict()
+    sw = C.speed_words_from(speed_words)
     return {"schema": SCHEMA, "id_root": ID_ROOT, "run": run, "epoch": int(epoch),
             # the mosaic's lower tile this adapter learned: a flight with
             # another is refused (demo/vla_mission.bottom_tile_check)
             "bottom_tile": tile, "label_horizon_s": label_horizon_s,
+            # the speed words its prompts ended in (null: none): a flight
+            # that differs is refused (demo/vla_mission.speed_words_check)
+            "speed_words": None if sw is None else sw.as_dict(),
             "epoch_dir": f"epoch{int(epoch)}", "optimizer_step": int(step),
             "parent_adapter": Path(parent_adapter).as_posix(),
             "parent_adapter_sha256": parent_sha256, "base": Path(base).as_posix(),
@@ -807,6 +901,7 @@ def train(args, loader: Callable = None) -> int:
     tr, held, sinfo = split_samples(samples, args.holdout_splits)
     try:
         tile = dataset_bottom_tile(Path(args.data), samples)
+        sw = dataset_speed_words(Path(args.data), samples)
     except DataError as exc:
         raise SystemExit(f"[ft] refused: {exc}") from None
     if not tr:
@@ -825,8 +920,10 @@ def train(args, loader: Callable = None) -> int:
           f"{sinfo['held_out_runs']}, evaluating {len(eval_set)}", flush=True)
     print(f"[ft] lower tile {tile['mode']}"
           + (f" (the front frame {tile['dt_s']:g} s earlier)" if tile["dt_s"] else "")
-          + f" from {tile['source']}; label horizon {tile['label_horizon_s']} s - both go "
-            f"into every checkpoint's provenance", flush=True)
+          + f" from {tile['source']}; label horizon {tile['label_horizon_s']} s; speed words "
+            + (f"on ({sw['setting']['window_s']:g} s window)" if sw["setting"] else "off")
+            + f" from {sw['source']} - all three go into every checkpoint's provenance",
+          flush=True)
 
     parent_sha = weights_digest([Path(args.adapter)])
     device = args.device
@@ -853,7 +950,7 @@ def train(args, loader: Callable = None) -> int:
     hyper.update({"optimizer_steps_planned": total, "warmup_steps": warmup,
                   "grad_ckpt": not args.no_grad_ckpt, "lora": "the parent adapter's own config"})
     runrec = {"schema": SCHEMA, "run": args.run, "created_utc": _utc(), "argv": sys.argv[1:],
-              "data": report, "split": sinfo, "bottom_tile": tile,
+              "data": report, "split": sinfo, "bottom_tile": tile, "speed_words": sw,
               "train_stats": data_stats(tr),
               "held_out_stats": data_stats(held), "parent_adapter": args.adapter,
               "parent_adapter_sha256": parent_sha, "base": args.base,
@@ -941,7 +1038,7 @@ def train(args, loader: Callable = None) -> int:
                 run=args.run, epoch=epoch, parent_adapter=args.adapter, parent_sha256=parent_sha,
                 base=args.base, data_report=report, split_info=sinfo, precision=args.precision,
                 hyper=hyper, metrics=metrics, step=step, bottom_tile=tile,
-                label_horizon_s=tile["label_horizon_s"]))
+                label_horizon_s=tile["label_horizon_s"], speed_words=sw["setting"]))
         _prov(None)
         ev = do_eval(epoch, step)
         m = ev["metrics"]
@@ -1027,6 +1124,7 @@ def dry_run(args) -> int:
     try:
         tr, held, sinfo = split_samples(samples, args.holdout_splits)
         rep["bottom_tile"] = dataset_bottom_tile(Path(args.data), samples)
+        rep["speed_words"] = dataset_speed_words(Path(args.data), samples)
     except DataError as exc:
         rep["refused"] = str(exc)
         text = json.dumps(rep, indent=1, default=str)

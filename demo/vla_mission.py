@@ -1512,7 +1512,18 @@ class VLAFrames:
     (counted no_prev_front), never the down frame; the down camera is not
     needed at all. The Capture says so (`lower`: mode, dt, the measured
     dt_actual_s, the earlier frame's stamp), and so do the request's record
-    (vla_steps.jsonl `bottom_tile`), the log line and stats()."""
+    (vla_steps.jsonl `bottom_tile`), the log line and stats().
+
+    SPEED WORDS (`speed_words`, aerialvla_codec.SpeedWords; 2026-10-24; off
+    by default). Each capture also carries the aircraft's own horizontal
+    speed at its capture time - aerialvla_codec.own_speed over the pose
+    ring (`obs.pose_history()`, the loop's put_pose_full reads) at or
+    before that time, a backward difference over the setting's window: the
+    dataset builder's rule over track.jsonl - as `own_speed` (speed, class
+    words, window); build_infer_fields appends the words to the object. No
+    history reaching the window back (the first half second, a stalled
+    loop): NO REQUEST this tick (counted no_speed). The log line and
+    stats() say the speed and the words."""
 
     # prev_front: frames kept beyond dt + tol (s of arrival time)
     RING_MARGIN_S = 0.5
@@ -1520,13 +1531,18 @@ class VLAFrames:
     def __init__(self, obs, encode: Callable[[dict], bytes | None] | None = None,
                  saver: FrameSaver | None = None, clock: Callable[[], float] = time.time,
                  max_pair_dt_s: float = 0.25, max_log: int = 20000,
-                 bottom_tile: "C.BottomTile | None" = None):
+                 bottom_tile: "C.BottomTile | None" = None,
+                 speed_words: "C.SpeedWords | None" = None):
         self.obs = obs
         self.encode = encode or jpeg_from_msg
         self.saver = saver
         self.clock = clock
         self.max_pair_dt_s = float(max_pair_dt_s)
         self.tile = bottom_tile if bottom_tile is not None else C.BottomTile()
+        if speed_words is not None and not callable(getattr(obs, "pose_history", None)):
+            raise ValueError("speed words need the pose ring's history (obs.pose_history(), "
+                             "semantic_demo.SemanticObs)")
+        self.speed_words = speed_words
         self._lock = threading.Lock()
         self._front: tuple[dict, float] | None = None
         self._down: tuple[dict, float] | None = None
@@ -1618,12 +1634,25 @@ class VLAFrames:
                 self.counts["down_unpaired"] += 1
                 return None
             t_cap, basis = self._capture_time(fmsg, t_arr)
+        own = None
+        if self.speed_words is not None:
+            # the aircraft's own speed from the ring at or before the capture
+            # (class docstring, SPEED WORDS); none, no request
+            got = C.own_speed(C.speed_history(self.obs.pose_history()), t_cap,
+                              self.speed_words.window_s)
+            if got is None:
+                self.counts["no_speed"] += 1
+                return None
+            own = {"speed_mps": got["speed_mps"], "words": got["words"],
+                   "window_s": got["window_s"], "t_start": round(got["t_start"], 4),
+                   "t_end": round(got["t_end"], 4), "rule": self.speed_words.rule}
         front, down = self.encode(fmsg), self.encode(dmsg)
         if not front or not down:
             self.counts["decode_failed"] += 1
             return None
         cap = Capture(float(t_cap), Pose(float(pose["x"]), float(pose["y"]), float(pose["up"]),
-                                         float(pose["yaw"])), front, down, lower=lower)
+                                         float(pose["yaw"])), front, down, lower=lower,
+                      own_speed=own)
         self.counts["captures"] += 1
         rec = {"t_capture": round(cap.t_capture, 4), "t_arrival": round(t_arr, 4),
                "stamp_ns": stamp, "down_stamp_ns": ds,
@@ -1634,6 +1663,8 @@ class VLAFrames:
                "down_wh": [dmsg.get("width"), dmsg.get("height")]}
         if lower is not None:
             rec["bottom_tile"] = dict(lower)
+        if own is not None:
+            rec["own_speed"] = dict(own)
         self._built = {"cap": cap, "rec": rec}
         return cap
 
@@ -1649,8 +1680,11 @@ class VLAFrames:
             "front_wh": [None, None], "down_wh": [None, None], "pair_dt_s": None}
         if built:
             self._built = None
-        elif capture.lower is not None:
-            rec["bottom_tile"] = dict(capture.lower)
+        else:
+            if capture.lower is not None:
+                rec["bottom_tile"] = dict(capture.lower)
+            if capture.own_speed is not None:
+                rec["own_speed"] = dict(capture.own_speed)
         front, down = capture.front_jpg, capture.down_jpg
         if self.saver is not None:
             self.saver.save(front)
@@ -1685,6 +1719,13 @@ class VLAFrames:
             # the lower tile and how much earlier the sent frames really were
             out["bottom_tile"] = {**self.tile.as_dict(), "dt_actual_s": spread(
                 [(r.get("bottom_tile") or {}).get("dt_actual_s") for r in self.log])}
+        if self.speed_words is not None:
+            # the setting and what the sent captures' words said
+            words = Counter((r.get("own_speed") or {}).get("words") for r in self.log)
+            out["speed_words"] = {**self.speed_words.as_dict(),
+                                  "words": {w: words[w] for w in C.SPEED_WORDS if words[w]},
+                                  "speed_mps": spread([(r.get("own_speed") or {}).get("speed_mps")
+                                                       for r in self.log])}
         return out
 
 
@@ -2005,6 +2046,64 @@ def bottom_tile_check(identity: dict | None, flight: "C.BottomTile", *, is_vla: 
 
 
 # --------------------------------------------------------------------------- #
+# The speed words the adapter was trained with, against the flight's
+# (2026-10-24)
+# --------------------------------------------------------------------------- #
+def adapter_speed_words(identity: dict | None, read_local: bool = True
+                        ) -> tuple["C.SpeedWords | None", str]:
+    """(the speed words the server's adapter was trained with - None: off -,
+    where that was read): aerialvla_codec.adapter_speed_words from hello
+    ("announced", or "absent" = off). A server from before the field
+    announces a provenance block WITHOUT the key: then, with `read_local`,
+    the adapter's own provenance file is read here when its path is
+    readable ("local provenance file"), as adapter_tile does - a
+    speed-words checkpoint served by an old server must not pass as off.
+    ValueError for a malformed field."""
+    sw, src = C.adapter_speed_words(identity)
+    if src == "announced" or not read_local:
+        return sw, src
+    a = identity.get("adapter") if isinstance(identity, dict) else None
+    prov = a.get("provenance") if isinstance(a, dict) else None
+    if isinstance(prov, dict) and a.get("path"):
+        try:
+            p = json.loads((Path(str(a["path"])) / C.ADAPTER_PROVENANCE_FILE).read_text(
+                encoding="utf-8"))
+        except (OSError, ValueError):
+            p = None
+        if isinstance(p, dict) and "speed_words" in p:
+            return C.speed_words_from(p["speed_words"]), "local provenance file"
+    return sw, src
+
+
+def speed_words_check(identity: dict | None, flight: "C.SpeedWords | None", *,
+                      is_vla: bool = True, read_local: bool = True) -> dict:
+    """Does this flight send the speed words the server's adapter was
+    trained with (both none, or the same rule, window and classes)?
+    {flight, adapter, source, checked, ok, why}: `ok` False (with `why`)
+    refuses the flight before take-off (demo/vla_fly.py, demo/
+    vla_dagger.py) - a model is never asked in a prompt it never saw, either
+    way round. A stand-in (not is_vla) is not checked, and says so; an
+    adapter that records none is off."""
+    rec = {"flight": None if flight is None else flight.as_dict(), "adapter": None,
+           "source": None, "checked": False, "ok": True, "why": None}
+    if not is_vla:
+        rec["source"] = "not checked: a stand-in, not a VLA (it reads no prompt)"
+        return rec
+    rec["checked"] = True
+    try:
+        sw, src = adapter_speed_words(identity, read_local=read_local)
+    except ValueError as exc:
+        rec.update({"ok": False, "why": f"the adapter's recorded speed words are malformed "
+                                        f"({exc})"})
+        return rec
+    rec.update({"adapter": None if sw is None else sw.as_dict(), "source": src})
+    why = C.speed_words_mismatch(sw, flight)
+    if why is not None:
+        rec.update({"ok": False, "why": why})
+    return rec
+
+
+# --------------------------------------------------------------------------- #
 # The warm-up gate: one inference on a live frame pair before arming
 # --------------------------------------------------------------------------- #
 def warmup_hint(mission: str, hint_source: Callable[[Capture], Hint | None] | None,
@@ -2035,13 +2134,16 @@ def warmup_infer(client, capture: Capture, hint: Hint, object_text: str,
     timeout), and `timeout_s` in the record is the one the client reports in
     force (LinkResult.timeout_s). Until then the record said 60 s for the
     first request while the socket gave up at 10 s."""
-    fields, _ = build_infer_fields(capture, hint, object_text)
+    fields, meta = build_infer_fields(capture, hint, object_text)
+    # `object`: what was sent (with speed words, the words included)
     out: dict[str, Any] = {"phrase": hint.phrase, "hint_source": hint.source,
-                           "object": object_text, "seq": None, "answered": False,
+                           "object": fields["object"], "seq": None, "answered": False,
                            "kind": None, "rtt_s": None, "latency_server_s": None,
                            "latency_client_s": None, "failure": None, "detail": None,
                            "raw_text": None, "error": None, "timeout_s": float(timeout_s),
                            "client_timeout_s": getattr(client, "response_timeout_s", None)}
+    if "own_speed" in meta:
+        out["own_speed"] = meta["own_speed"]
     seq = client.submit(fields, response_timeout_s=float(timeout_s))
     if seq is None:
         out.update(failure="not_sent", detail="the client refused to send (busy or backing off)")

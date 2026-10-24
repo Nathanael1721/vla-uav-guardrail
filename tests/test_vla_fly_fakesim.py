@@ -697,6 +697,43 @@ def test_a_prev_front_follow_flown_as_rates_sends_the_earlier_front_and_records_
     assert all(r["vla_rate"] is None for r in rows if r["author_reason"] != "rate")
 
 
+def test_a_speed_words_follow_sends_its_own_speed_after_the_object_and_records_it():
+    """2026-10-24 through fly(): --vla-speed-words. Every request's object is
+    the follow's object words plus the class words of the aircraft's own
+    speed from the pose ring at or before its capture (vla_steps.jsonl
+    `object`, `own_speed`: the rule's words for its speed, the base words),
+    the warm-up's too, VLAFrames' stats count the words, and params record
+    the check (a stand-in reads no prompt: not checked)."""
+    why = _missing()
+    if why:
+        print(f"      ({why})")
+        return SKIP
+    import level_actors
+    from guardrail import aerialvla_codec as C
+    code, out, said = _fly(["--mission", "follow", "--tag", "fakesim_sw", "--max-s", "10",
+                            "--no-transfer", "--no-land-site", "--no-save-view",
+                            "--cadence", "pipelined", "--vla-fake-output", "58 49 49</s>",
+                            "--vla-speed-words"],
+                           grounder=_GrowingBox,
+                           patch={(level_actors, "LevelCar"): _LevelCar})
+    assert code == 0, said[-3000:]
+    m = _metrics(out)
+    sw = m["params"]["speed_words"]
+    assert sw["flight"] == C.SpeedWords().as_dict(), sw
+    assert sw["checked"] is False and "stand-in" in sw["source"], sw
+    recs = [json.loads(x) for x in (out / "vla_steps.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert recs
+    for r in recs:
+        os_ = r["own_speed"]
+        assert os_["words"] == C.own_speed_words(os_["speed_mps"]), os_
+        assert os_["object_base"] == "a red car" and os_["window_s"] == 0.5
+        assert r["object"] == f"a red car {os_['words']}", r["object"]
+        assert os_["t_end"] <= r["t_capture"] + 1e-3, "a pose after the capture"
+    fc = m["frames"]["capture"]["speed_words"]
+    assert sum(fc["words"].values()) >= len(recs), fc
+    assert "speed words on" in said
+
+
 def test_a_fault_in_the_records_still_leaves_metrics_and_the_manifest():
     """P3-12: pilot_entry raising after a real flight - metrics.json is
     still written, with the error in records_errors, the manifest and the
