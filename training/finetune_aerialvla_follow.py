@@ -64,8 +64,10 @@ DATASET/samples.jsonl, one JSON object per sample, at least:
   split   "train", or a held-out split ("holdout", "val", "eval", "test")
 optional and checked when present: phrase, object (must equal the prompt's),
 bins (must equal the target's), image_sha256 / mosaic_sha256 (the mosaic's
-raw RGB bytes, aerialvla_codec.mosaic_sha256), pose, t_capture. A sample that
-fails a check is dropped and counted by reason; a run found in both train and
+raw RGB bytes, aerialvla_codec.mosaic_sha256), pose, t_capture; carried
+unchecked: hint_kind (tools/build_follow_dataset.py --hint-modes: "fresh",
+"memory" or "search"; tools/eval_vla_adapter.py splits its held-out metrics
+by it). A sample that fails a check is dropped and counted by reason; a run found in both train and
 a held-out split refuses the dataset (hold-out runs never in train).
 
 THE LOWER TILE (2026-10-24; aerialvla_codec, THE MOSAIC'S LOWER TILE). The
@@ -248,8 +250,8 @@ def check_sample(rec: Any, root: Path, idx: int) -> Sample:
     sha = _first(rec, SHA_KEYS)
     if sha is not None and not (isinstance(sha, str) and re.fullmatch(r"[0-9a-f]{64}", sha)):
         raise SampleError("bad_image_sha256", f"{sha!r}")
-    extra = {k: rec[k] for k in ("pose", "t_capture", "id", "sample_id", "bottom_tile")
-             if k in rec}
+    extra = {k: rec[k] for k in ("pose", "t_capture", "id", "sample_id", "bottom_tile",
+                                 "hint_kind") if k in rec}
     return Sample(idx=idx, image=path, prompt=prompt, target=target, run=run, split=split,
                   phrase=phrase, object=obj, bins=p.bins, land=p.land, image_sha256=sha,
                   extra=extra)

@@ -748,6 +748,24 @@ def test_the_prev_front_tile_and_rate_execution_test_runs_in_ci():
     assert len(steps) == 1 and "tests/test_vla_prev_front_rate.py" in steps[0]["run"], steps
 
 
+def test_the_follow_hint_modes_test_runs_in_ci():
+    """The follow dataset's memory and search samples and its close rule
+    (2026-10-24): one hint rule (vla_mission.follow_hint_step) for the
+    flight's DetectorHint and tools/build_follow_dataset.py --hint-modes /
+    --close-bottom-frac, the mirror, the stats per kind, the default
+    unchanged, the trainer's reading and the evaluation tool's per-kind
+    metrics. Synthetic recordings with no images: no simulator, GPU, model,
+    Pillow, OpenCV or socket, so nothing in it may SKIP; its runner counts
+    a SKIP all the same."""
+    assert "test_follow_hint_modes.py" in _loop(), "not run in CI"
+    src = (ROOT / "tests" / "test_follow_hint_modes.py").read_text(encoding="utf-8")
+    assert "return SKIP" not in src and "images=True" not in src and "images=False" in src
+    for dep in ("import cv2", "from PIL", "import PIL", "socket", "8790"):
+        assert dep not in src, dep
+    runner = src.split('if __name__ == "__main__":', 1)[-1]
+    assert "== SKIP" in runner, "the runner does not count the SKIP"
+
+
 def test_the_ardupilot_vla_pilot_test_runs_in_ci():
     """Wave V2b (2026-10-23): the ArduPilot rail's AerialVLA pilot
     (perception_node --pilot vla, to-do VLA-07) and its VLA cameras (VLA-03).

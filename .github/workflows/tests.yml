@@ -86,6 +86,13 @@
 #          over its label horizon, StepTracker's --step-as-rate; its two
 #          mosaic / evaluation tests SKIP here and run in the Pillow step,
 #          its training-loop test needs torch and is lab-only).
+#          test_follow_hint_modes (the follow dataset's memory and search
+#          samples and its close rule, 2026-10-24: one hint rule,
+#          vla_mission.follow_hint_step, for the flight's DetectorHint and
+#          tools/build_follow_dataset.py --hint-modes / --close-bottom-frac,
+#          the mirror and stats per kind, the default unchanged, the
+#          trainer's reading and the evaluation's per-kind metrics; on
+#          synthetic recordings with no images, so nothing SKIPs).
 #        The CityLife level, checked offline (the level itself is
 #          gitignored): test_citylife_*, test_drive_signals_dsl,
 #          test_ped_walk_plan, test_parked_cars.
@@ -581,6 +588,7 @@ jobs:
               tests/test_follow_dataset.py \
               tests/test_vla_dagger.py \
               tests/test_vla_prev_front_rate.py \
+              tests/test_follow_hint_modes.py \
               tests/test_citylife_peds.py \
               tests/test_citylife_routes.py \
               tests/test_citylife_signal_lamps.py \

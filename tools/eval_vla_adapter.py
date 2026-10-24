@@ -41,6 +41,10 @@ to inputs it never saw.
 
 WHAT IS SCORED: finetune_aerialvla_follow.score_outputs - parse-ok rate,
 exact-bin accuracy per axis, step MAE (m / rad), turn-sign agreement, LAND.
+And the same split by the sample's hint kind (`metrics_by_hint_kind`:
+"fresh", "memory", "search" - tools/build_follow_dataset.py --hint-modes;
+a dataset built before 2026-10-24 records none and holds fresh hints only),
+so an adapter's answers with the car out of view are scored apart.
 
 WHICH ADAPTER ANSWERED. A running server's hello must carry the `adapter`
 block (demo/vla_server_v2.adapter_identity) whose sha256 equals the digest of
@@ -135,10 +139,27 @@ def run_requests(samples: list, send: Callable[[dict], dict],
             if resp.get("prompt_sha256") != C.prompt_sha256(s.prompt):
                 fid["prompt_sha256_mismatch"] += 1
         outs.append({"idx": s.idx, "run": s.run, "phrase": s.phrase, "target": s.target,
-                     "raw_text": raw})
+                     "hint_kind": hint_kind(s), "raw_text": raw})
         if (k + 1) % 50 == 0:
             log(f"[eval] {k + 1}/{len(samples)} ({time.time() - t0:.0f} s)")
     return FT.score_outputs((o["target"], o["raw_text"]) for o in outs), outs, fid
+
+
+def hint_kind(s: "FT.Sample") -> str:
+    """The sample's hint kind; a dataset from before --hint-modes records
+    none and holds fresh hints only."""
+    return s.extra.get("hint_kind") or "fresh"
+
+
+def metrics_by_hint_kind(outs: list[dict]) -> dict:
+    """score_outputs per hint kind ("fresh" when an output carries none),
+    in the builder's order, the kinds present only."""
+    groups: dict[str, list[dict]] = {}
+    for o in outs:
+        groups.setdefault(o.get("hint_kind") or "fresh", []).append(o)
+    order = ("fresh", "memory", "search")
+    kinds = [k for k in order if k in groups] + sorted(k for k in groups if k not in order)
+    return {k: FT.score_outputs((o["target"], o["raw_text"]) for o in groups[k]) for k in kinds}
 
 
 def local_adapter_digest(adapter: str | Path) -> str | None:
@@ -195,7 +216,8 @@ def evaluate_server(addr: str, adapter: str, samples: list, trust: bool = False)
     finally:
         cli.close()
     return {"how": f"server {addr}", "identity": _ident(ident), "adapter_check": why or "ok",
-            "metrics": m, "fidelity": fid, "outputs": outs}
+            "metrics": m, "metrics_by_hint_kind": metrics_by_hint_kind(outs), "fidelity": fid,
+            "outputs": outs}
 
 
 def evaluate_in_process(adapter: str, samples: list, *, base: str, precision: str, attn: str,
@@ -223,7 +245,8 @@ def evaluate_in_process(adapter: str, samples: list, *, base: str, precision: st
             pass
     return {"how": f"in process {precision}/{attn}/{'merged' if merge else 'unmerged'}",
             "identity": _ident(ident), "adapter_check": "ok (built here)", "metrics": m,
-            "fidelity": fid, "outputs": outs}
+            "metrics_by_hint_kind": metrics_by_hint_kind(outs), "fidelity": fid,
+            "outputs": outs}
 
 
 def evaluate_fake(outputs: list[str], samples: list) -> dict:
@@ -233,7 +256,8 @@ def evaluate_fake(outputs: list[str], samples: list) -> dict:
     core = S.V2Server(S.ScriptedModel(outputs), dict(S.FAKE_IDENTITY), missing_down="refuse")
     m, outs, fid = run_requests(samples, lambda r: core.handle_request(r)[0])
     return {"how": "scripted stand-in (NOT a model)", "identity": _ident(S.FAKE_IDENTITY),
-            "adapter_check": "none: a stand-in", "metrics": m, "fidelity": fid, "outputs": outs}
+            "adapter_check": "none: a stand-in", "metrics": m,
+            "metrics_by_hint_kind": metrics_by_hint_kind(outs), "fidelity": fid, "outputs": outs}
 
 
 def _ident(ident: dict | None) -> dict | None:
@@ -364,6 +388,12 @@ def main(argv: list[str] | None = None) -> int:
             if r is not None:
                 r.pop("outputs", None)
     print(table(res))
+    for name, r in (("adapter", res_a), ("baseline", res_b)):
+        if r is not None and len(r["metrics_by_hint_kind"]) > 1:
+            print(f"[eval] {name} by hint kind: " + "; ".join(
+                f"{k} n {m['n']}, exact all {m['exact_bin_rate']['all']}, step_mae_norm "
+                f"{m['step_mae_norm']}, turn-sign agree {m['turn_sign_agree']}"
+                for k, m in r["metrics_by_hint_kind"].items()))
     for name, r in (("adapter", res_a), ("baseline", res_b)):
         if r is not None:
             f = r["fidelity"]

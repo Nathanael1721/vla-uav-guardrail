@@ -15,6 +15,11 @@ label is what the hand-written follow did next.
     python tools/build_follow_dataset.py ... --bottom-tile prev_front --prev-dt-s 1.0 \\
         --prev-tol-s 0.25 --out C:/Users/natha/vla_drone_offload/datasets/follow_v3_pf
 
+    # also the follow's memory and search hints, with the flight's close rule
+    # (MEMORY AND SEARCH, THE CLOSE RULE, below)
+    python tools/build_follow_dataset.py ... --hint-modes fresh,memory,search \\
+        --close-bottom-frac 1.0 --close-width-frac 0.25
+
 Each RUN_DIR is a flight folder (demo/out/<tag>, holding vla_record/) or the
 recording folder itself (the one holding captures.jsonl). Exit 0 when the
 dataset was written, 2 when it was refused (an unknown --holdout tag, two
@@ -25,7 +30,9 @@ WHAT A SAMPLE IS (wave FT-D, 2026-10-23; the brief's section FT-D)
 
 For every recorded capture with a FRESH box - the expert's box no older than
 --fresh-s (1 s) at the capture, DetectorHint's rule, the only kind of hint a
-VLA follow sends on a live sighting - one sample:
+VLA follow sends on a live sighting - one sample (with --hint-modes, also
+the captures a follow sends its memory or search hint on: MEMORY AND
+SEARCH, below):
 
   image   the codec's 224x448 front-over-down mosaic (aerialvla_codec.
           build_mosaic) of the capture's two JPEGs, decoded exactly as the
@@ -35,7 +42,8 @@ VLA follow sends on a live sighting - one sample:
           server's: the phrase is what demo/vla_mission.DetectorHint sends
           for that box (vla_bridge's pinhole bearing, rotated by the turn
           between the box's frame and the capture, through VLABridge at
-          --bearing-gain 1: computed BY DetectorHint here, not re-written),
+          --bearing-gain 1: computed by vla_mission.follow_hint_step, the
+          rule DetectorHint itself calls, not re-written),
           the object words the run's --object ("a red car"; inert for
           AerialVLA, docs/FINDING-what-drives-aerialvla.md, carried so the
           prompt keeps its trained shape);
@@ -123,10 +131,50 @@ all. The trainer copies the mode into the checkpoint's provenance, and
 the flight refuses an adapter whose tile is not its own. The mirror flips
 the whole mosaic, so both tiles, each in place.
 
-WHAT IS LEFT OUT, AND SAID. Captures with no box, a stale box, or a CLOSE
-box (vla_mission.BoxClose at vla_fly's follow defaults: a VLA follow asks
-nothing then; --keep-close keeps them) - so the follow's memory and search
-hints (DetectorHint memory_s / search_s) are not represented; captures whose
+MEMORY AND SEARCH (--hint-modes, 2026-10-24). Fresh boxes only (the
+default) leave out every state a follow is in once it has lost the car,
+and a VLA follow keeps asking there: DetectorHint sends, with no fresh box,
+the remembered sighting's phrase (its world bearing re-read against the
+current heading) for memory_s, then a quarter turn toward the side it was
+last seen on for search_s, then nothing. Flight vla_follow_ft_03_pf_20261024
+(adapter follow_v3_pf_r1/epoch1) overshot a car stopped ahead, the car left
+the bottom of the frame, the hint went to memory then search, and the model
+- which had never seen a frame without the car - answered "forward 4.85 m"
+for 30 s, away from it. --hint-modes fresh,memory,search runs the flight's
+rule, vla_mission.follow_hint_step (DetectorHint calls the same function),
+over each run's well-formed captures in time order, carrying the
+remembered sighting from one to the next, with --memory-s / --search-s
+(default vla_fly's --follow-memory-s 6 / --follow-search-s 20) and
+--fresh-s: a capture whose hint is of a kind asked for is a sample, labelled
+as every other (the expert's motion over the horizon - its own recovery,
+and after a DAgger window the recovery from where the model led it; the
+perturbed-window drop applies unchanged); one the flight would send nothing
+for (no sighting yet, or past memory_s + search_s) is dropped "no_hint", one
+of a kind left out "hint_kind". Each sample says its `hint_kind` and the
+emulated state (`hint`: the box at the capture - fresh, stale or none - the
+bearing the phrase was looked up with, and for memory / search the time
+since the sighting and its bearing relative to the heading); stats.json
+counts the kinds in all, per split and per run, and gives each kind's
+phrases, box states, label spread and post-perturbation count (`hints`).
+Not emulated: the flight asks once per decision (~1 Hz) and remembers the
+sighting of its last request, the rule here runs on every capture (10 Hz),
+so the sighting it remembers can be up to one decision period more recent;
+the start gate (a follow with identity gates in the Reacquirer, before any
+box is published); a perception reset's forget() (the expert has none).
+
+THE CLOSE RULE (--close-bottom-frac / --close-width-frac). A close box
+(vla_mission.BoxClose) is no request in flight - DetectorHint returns
+nothing and the rail holds the horizontal motion - so it is no sample here
+("close_box"); its sighting is still remembered, as in flight. The default
+is BoxClose's own (0.92, 0.25); the follow flies --close-bottom-frac 1.0,
+under which a box near (not at) the bottom edge is a request with its
+phrase, so a dataset for it is built with the same values. stats.json
+(`args`, `hints.close_rule`) and every sample (`close_rule`) record the rule;
+--keep-close turns it off (recorded as None).
+
+WHAT IS LEFT OUT, AND SAID. Captures with no box, a stale box (unless a
+memory or search hint is asked for), or a CLOSE box (THE CLOSE RULE;
+--keep-close keeps them); captures whose
 horizon runs past the end of the track or across a gap in it (a loop stall
 longer than --max-gap-s); captures whose JPEG FrameSaver dropped. Every drop
 is counted by reason, per run and in total. LAND is never labelled: the
@@ -155,7 +203,7 @@ for _p in (ROOT, ROOT / "demo"):
         sys.path.insert(0, str(_p))
 
 from guardrail import aerialvla_codec as C                          # noqa: E402
-from guardrail.vla_link import Capture, Pose, wrap_pi                 # noqa: E402
+from guardrail.vla_link import wrap_pi                                # noqa: E402
 
 FORMAT = "aerialvla-follow-steps/1"
 DEFAULT_HORIZON_S = 1.0
@@ -163,6 +211,15 @@ DEFAULT_STRIDE_S = 0.5
 # DetectorHint's freshness (vla_fly --det-fresh-s, DETECTION_STALE_S of the
 # ArduPilot rail): a box older than this at the capture is no request.
 DEFAULT_FRESH_S = 1.0
+# vla_fly's follow hint: --follow-memory-s, --follow-search-s (MEMORY AND
+# SEARCH), and BoxClose's own close rule (--close-bottom-frac,
+# --close-width-frac; the follow flies 1.0 / 0.25).
+DEFAULT_MEMORY_S = 6.0
+DEFAULT_SEARCH_S = 20.0
+DEFAULT_CLOSE_BOTTOM_FRAC = 0.92
+DEFAULT_CLOSE_WIDTH_FRAC = 0.25
+HINT_MODES = ("fresh", "memory", "search")       # vla_mission.HINT_KINDS
+DEFAULT_HINT_MODES = ("fresh",)
 # A loop tick every 0.1 s; a stall longer than this between two ticks leaves
 # no pose to interpolate (metrics cmd_interval shows such stalls).
 DEFAULT_MAX_GAP_S = 0.5
@@ -174,8 +231,8 @@ SAMPLES = "samples.jsonl"
 STATS = "stats.json"
 IMAGES = "images"
 DROP_ORDER = ("bad_record", "frame_missing", "no_prev_front", "no_box", "stale_box",
-              "close_box", "mode", "no_pose", "no_future_pose", "track_gap", "perturbed",
-              "stride")
+              "close_box", "no_hint", "hint_kind", "mode", "no_pose", "no_future_pose",
+              "track_gap", "perturbed", "stride")
 SMALL_FWD_M = 1.0
 # After the last perturbed tick's command, how long the motion is still not
 # the expert's own (module docstring, DART PERTURBATIONS).
@@ -345,46 +402,78 @@ def make_bridge(object_text: str = "a red car", bearing_gain: float = 1.0):
     return VLABridge(object_text, hfov_deg=DETECTOR_HFOV_DEG, bearing_gain=bearing_gain)
 
 
-def default_close_rule():
-    """vla_fly's follow close rule (--close-bottom-frac 0.92,
-    --close-width-frac 0.25): a VLA follow sends no request on such a box."""
+def close_rule(bottom_frac: float = DEFAULT_CLOSE_BOTTOM_FRAC,
+               width_frac: float = DEFAULT_CLOSE_WIDTH_FRAC):
+    """vla_mission.BoxClose (THE CLOSE RULE): a VLA follow sends no request
+    on such a box."""
     import vla_mission as VM
-    return VM.BoxClose(0.92, 0.25)
+    return VM.BoxClose(float(bottom_frac), float(width_frac))
+
+
+def default_close_rule():
+    """vla_fly's follow close rule at BoxClose's defaults (--close-bottom-frac
+    0.92, --close-width-frac 0.25): a VLA follow sends no request on such a
+    box."""
+    return close_rule(DEFAULT_CLOSE_BOTTOM_FRAC, DEFAULT_CLOSE_WIDTH_FRAC)
+
+
+def parse_hint_modes(modes) -> tuple[str, ...]:
+    """--hint-modes ("fresh,memory,search", or a sequence of the names) ->
+    the kinds asked for, in HINT_MODES order; refuses an unknown kind or
+    none at all."""
+    if isinstance(modes, str):
+        modes = [m for m in modes.replace(" ", ",").split(",") if m]
+    got = [str(m) for m in (modes or ())]
+    bad = sorted(set(got) - set(HINT_MODES))
+    if bad or not got:
+        raise DatasetError(f"--hint-modes {','.join(got) or '(none)'}: give one or more of "
+                           f"{', '.join(HINT_MODES)}, comma-separated"
+                           + (f" ({', '.join(bad)} is no hint kind)" if bad else ""))
+    return tuple(m for m in HINT_MODES if m in got)
+
+
+def hint_step(cap: dict, seen, bridge, *, fresh_s: float = DEFAULT_FRESH_S,
+              memory_s: float = 0.0, search_s: float = 0.0, close=None):
+    """vla_mission.follow_hint_step for a recorded capture: its box (the
+    recorder's box_from_grounder, vla_fly's latest_box reading), its time
+    and heading, the sighting remembered so far."""
+    import vla_mission as VM
+    box = cap.get("box") or {}
+    return VM.follow_hint_step((box.get("det"), box.get("t_box"), box.get("yaw_box")),
+                               float(cap["t_capture"]), float(cap["pose"]["yaw_rad"]), seen,
+                               bridge, fresh_s=fresh_s, memory_s=memory_s, search_s=search_s,
+                               close=close)
+
+
+def hint_drop(step, modes, emulate: bool) -> str | None:
+    """Why a capture whose hint is `step` is no sample, or None. A close box:
+    "close_box". No request: with memory or search asked for, "no_hint";
+    fresh boxes only (no emulation), the box's state - "no_box" /
+    "stale_box", the reasons before --hint-modes. A kind not asked for:
+    "hint_kind"."""
+    if step.kind == "close":
+        return "close_box"
+    if step.kind is None:
+        return "no_hint" if emulate else ("no_box" if step.box == "none" else "stale_box")
+    return None if step.kind in modes else "hint_kind"
 
 
 def detector_phrase(cap: dict, bridge, fresh_s: float = DEFAULT_FRESH_S, close=None):
     """(phrase, None, info) for a capture whose box a VLA follow would send,
     else (None, why, info), why one of "no_box", "stale_box", "close_box" -
-    DetectorHint's order. The phrase itself comes from a DetectorHint fed
-    this box and a Capture at this pose and time (no memory, no search, no
-    start gate: a fresh box only), so it is the flight's arithmetic, not a
-    copy of it. info: the box's age at the capture, its measured bearing and
-    the yaw correction (degrees)."""
-    import vla_mission as VM
-    from vla_bridge import bearing_from_box
-    box = cap.get("box") or {}
-    det, t_box, yaw_box = box.get("det"), box.get("t_box"), box.get("yaw_box")
-    info = {"age_s": None, "bearing_deg": None, "yaw_correction_deg": None}
-    if det is None or t_box is None:
-        return None, "no_box", info
-    t_cap = float(cap["t_capture"])
-    age = t_cap - float(t_box)
-    info["age_s"] = age
-    if age > fresh_s:
-        return None, "stale_box", info
-    pose = cap["pose"]
-    info["bearing_deg"] = math.degrees(bearing_from_box(det, bridge.hfov_deg))
-    if yaw_box is not None:
-        info["yaw_correction_deg"] = math.degrees(wrap_pi(float(pose["yaw_rad"]) - float(yaw_box)))
-    if close is not None and close(det):
-        return None, "close_box", info
-    hint = VM.DetectorHint(lambda: (det, t_box, yaw_box, box.get("t_published")), bridge,
-                           fresh_s=fresh_s, close=close)
-    h = hint(Capture(t_cap, Pose(float(pose["x"]), float(pose["y"]), float(pose["up"]),
-                                 float(pose["yaw_rad"])), b"\xff\xd8", None))
-    if h is None:                          # cannot happen: the checks above are its own
-        raise AssertionError(f"DetectorHint sent nothing for a fresh box: {box!r}")
-    return h.phrase, None, info
+    DetectorHint's order. The phrase is vla_mission.follow_hint_step's for
+    this box and a capture at this pose and time with no sighting
+    remembered, no memory, no search (a fresh box only) - the flight's
+    arithmetic, not a copy of it. info: the box's age at the capture, its
+    measured bearing and the yaw correction (degrees)."""
+    st = hint_step(cap, None, bridge, fresh_s=fresh_s, close=close)
+    info = {"age_s": st.age_s,
+            "bearing_deg": (None if st.measured_bearing_rad is None
+                            else math.degrees(st.measured_bearing_rad)),
+            "yaw_correction_deg": (None if st.yaw_correction_rad is None
+                                   else math.degrees(st.yaw_correction_rad))}
+    why = hint_drop(st, ("fresh",), emulate=False)
+    return (st.phrase if why is None else None), why, info
 
 
 # --------------------------------------------------------------------------- #
@@ -445,6 +534,52 @@ def _hist(bins) -> dict:
     return {str(k): c[k] for k in sorted(c)}
 
 
+def _round(v, nd: int):
+    return None if v is None else round(float(v), nd)
+
+
+def _deg(rad):
+    """Radians -> degrees to 3 decimals, None kept."""
+    return None if rad is None else round(math.degrees(float(rad)), 3)
+
+
+def _kinds(samples) -> dict:
+    """{hint kind: n} in HINT_MODES order, the kinds present only."""
+    c = Counter(s.get("hint_kind") for s in samples)
+    return {k: c[k] for k in HINT_MODES if c[k]}
+
+
+def _hint_stats(samples, real, *, hint_modes, fresh_s, memory_s, search_s, close) -> dict:
+    """stats.json's `hints` (MEMORY AND SEARCH): the rule's settings and,
+    per kind, the samples (all, real, per split), and over the real ones
+    their phrases, box states, label spread and |dpsi| histogram, and how
+    many start within 3 s after a perturbation (DART / DAgger)."""
+    by_kind = {k: [s for s in real if s.get("hint_kind") == k] for k in HINT_MODES}
+    by_kind = {k: v for k, v in by_kind.items() if v}
+    return {
+        "modes": list(hint_modes), "fresh_s": fresh_s, "memory_s": memory_s,
+        "search_s": search_s, "close_rule": None if close is None else close.as_dict(),
+        "by_kind": _kinds(samples), "by_kind_real": _kinds(real),
+        "by_split": {sp: _kinds(s for s in samples if s["split"] == sp)
+                     for sp in ("train", "holdout")},
+        "box_state": {k: dict(Counter(s["hint"]["box"] for s in v)) for k, v in by_kind.items()},
+        "phrases_by_kind": {k: dict(Counter(s["phrase"] for s in v)) for k, v in by_kind.items()},
+        "label_by_kind": {k: {"n": len(v),
+                              **{ax: _spread(s["label"][ax] for s in v) for ax in C.AXES},
+                              "abs_dpsi_hist": _dpsi_hist(v)} for k, v in by_kind.items()},
+        "post_perturb_3s_by_kind": _kinds(
+            s for s in real if s["perturb"]["since_end_s"] is not None
+            and s["perturb"]["since_end_s"] <= POST_PERTURB_S + 1e-9),
+        "rule": ("vla_mission.follow_hint_step - DetectorHint's decision - over each run's "
+                 "well-formed captures in time order, the sighting carried from one to the "
+                 "next; a capture is a sample when its hint's kind is in `modes`"),
+        "not_emulated": ("the flight decides once per request (~1 Hz) and remembers the "
+                         "sighting of its last request, this rule runs on every capture "
+                         "(10 Hz): the sighting remembered here can be up to one decision "
+                         "period more recent; no start gate, no perception reset"),
+    }
+
+
 def _write_png(img, path: Path) -> bool:
     """Write the mosaic losslessly unless it is there; True when written."""
     if path.exists():
@@ -490,9 +625,11 @@ def mirror_sample(s: dict, lab: dict, image: str | None, sha: str | None) -> dic
     """The left-right mirror of sample `s` (module docstring, MIRROR): the
     turn negated and re-quantized by upstream's rule from the unrounded
     label, forward and down unchanged, the phrase mirrored and the prompt
-    rebuilt by the codec, the box centre and bearing mirrored. `image` /
-    `sha`: the flipped mosaic's (None without images). The pose, the
-    expert's command and the analysis are the source capture's."""
+    rebuilt by the codec (a memory or search phrase too: the search's
+    quarter turn is directional), the box centre and bearing and the hint's
+    body-frame bearings mirrored, its kind kept. `image` / `sha`: the
+    flipped mosaic's (None without images). The pose, the expert's command
+    and the analysis are the source capture's."""
     flip = {"low": "high", "high": "low", None: None}
     mlab = dict(lab["label"], dpsi_rad=-lab["label"]["dpsi_rad"])
     mraw = dict(lab["raw"], dpsi_rad=-lab["raw"]["dpsi_rad"])
@@ -509,6 +646,10 @@ def mirror_sample(s: dict, lab: dict, image: str | None, sha: str | None) -> dic
     for k in ("bearing_deg", "yaw_correction_deg"):
         if box.get(k) is not None:
             box[k] = -box[k]
+    hint = dict(s["hint"])
+    for k in ("bearing_deg", "seen_rel_deg"):
+        if hint.get(k) is not None:
+            hint[k] = -hint[k]
     return {**s, "id": s["id"] + "/mirror", "image": image, "mosaic_sha256": sha,
             "phrase": phrase, "prompt": prompt, "prompt_sha256": C.prompt_sha256(prompt),
             "bins": list(bins), "action_text": C.action_text(bins),
@@ -516,7 +657,7 @@ def mirror_sample(s: dict, lab: dict, image: str | None, sha: str | None) -> dic
             "label_raw": {k: round(v, 6) for k, v in mraw.items()},
             "clipped": dict(s["clipped"], dpsi_rad=flip[s["clipped"]["dpsi_rad"]]),
             "step_decoded": {k: round(v, 6) for k, v in step.to_dict().items()},
-            "rotate_only": step.rotate_only, "box": box,
+            "rotate_only": step.rotate_only, "box": box, "hint": hint,
             "mirrored": True, "mirror_of": s["id"], "mirror": MIRROR_NOTE}
 
 
@@ -529,9 +670,16 @@ def build_dataset(run_dirs, out_dir, *, horizon_s: float = DEFAULT_HORIZON_S,
                   bearing_gain: float = 1.0, images: bool = True, force: bool = False,
                   perturb_margin_s: float = DEFAULT_PERTURB_MARGIN_S, mirror: bool = False,
                   bottom_tile: str = C.BOTTOM_TILE_DOWN, prev_dt_s: float | None = None,
-                  prev_tol_s: float | None = None, log=None) -> dict:
+                  prev_tol_s: float | None = None, hint_modes=DEFAULT_HINT_MODES,
+                  memory_s: float | None = None, search_s: float | None = None,
+                  close_bottom_frac: float | None = None,
+                  close_width_frac: float | None = None, log=None) -> dict:
     """Write samples.jsonl, stats.json (and images/) to out_dir; return the
-    stats. Raises DatasetError for what main() refuses."""
+    stats. Raises DatasetError for what main() refuses. `hint_modes`: the
+    hint kinds kept (MEMORY AND SEARCH; "fresh,memory,search" or names);
+    memory_s / search_s (None: vla_fly's 6 / 20) only with memory or
+    search in it; the close fractions (None: BoxClose's 0.92 / 0.25) not
+    with keep_close."""
     say = log or (lambda *_a, **_k: None)
     if not (horizon_s > 0 and stride_s >= 0 and fresh_s > 0 and max_gap_s > 0
             and perturb_margin_s >= 0):
@@ -545,6 +693,30 @@ def build_dataset(run_dirs, out_dir, *, horizon_s: float = DEFAULT_HORIZON_S,
         tile = C.bottom_tile(bottom_tile, prev_dt_s, prev_tol_s)
     except ValueError as exc:
         raise DatasetError(f"--bottom-tile / --prev-dt-s / --prev-tol-s: {exc}") from None
+    hint_modes = parse_hint_modes(hint_modes)
+    # The memory / search emulation runs only when one of them is asked for;
+    # fresh boxes only is the rule before --hint-modes, drop reasons and all.
+    emulate = bool(set(hint_modes) - {"fresh"})
+    if not emulate and (memory_s is not None or search_s is not None):
+        raise DatasetError("--memory-s / --search-s are for --hint-modes with memory or search: "
+                           "with fresh boxes only they would be recorded as if used")
+    if emulate:
+        memory_s = DEFAULT_MEMORY_S if memory_s is None else float(memory_s)
+        search_s = DEFAULT_SEARCH_S if search_s is None else float(search_s)
+        if not (memory_s >= 0 and search_s >= 0
+                and math.isfinite(memory_s) and math.isfinite(search_s)):
+            raise DatasetError("--memory-s and --search-s must not be negative")
+    if keep_close and (close_bottom_frac is not None or close_width_frac is not None):
+        raise DatasetError("--close-bottom-frac / --close-width-frac set the close rule "
+                           "--keep-close turns off: they would be recorded as if used")
+    close = None
+    if not keep_close:
+        cb = DEFAULT_CLOSE_BOTTOM_FRAC if close_bottom_frac is None else float(close_bottom_frac)
+        cw = DEFAULT_CLOSE_WIDTH_FRAC if close_width_frac is None else float(close_width_frac)
+        if not (0 < cb <= 1 and 0 < cw <= 1):
+            raise DatasetError("--close-bottom-frac and --close-width-frac must be in (0, 1] "
+                               "(vla_fly's own check)")
+        close = close_rule(cb, cw)
     out = Path(out_dir)
     if (out / SAMPLES).exists() and not force:
         raise DatasetError(f"{out / SAMPLES} exists; pass --force to rebuild it (images/ "
@@ -575,8 +747,9 @@ def build_dataset(run_dirs, out_dir, *, horizon_s: float = DEFAULT_HORIZON_S,
     out.mkdir(parents=True, exist_ok=True)
     if images:
         (out / IMAGES).mkdir(exist_ok=True)
-    close = None if keep_close else default_close_rule()
     modes = set(modes) if modes else None
+    # the rule's memory and search spans (0: M2's rule, fresh boxes only)
+    mem_s, srch_s = (memory_s, search_s) if emulate else (0.0, 0.0)
 
     samples: list[dict] = []
     dropped_all: Counter = Counter()
@@ -605,6 +778,7 @@ def build_dataset(run_dirs, out_dir, *, horizon_s: float = DEFAULT_HORIZON_S,
         dropped: Counter = Counter()
         n_run = 0
         last_t = None
+        seen = None                        # the hint rule's sighting: none at a run's start
         for cap in caps:
             try:
                 t = float(cap["t_capture"])
@@ -617,6 +791,14 @@ def build_dataset(run_dirs, out_dir, *, horizon_s: float = DEFAULT_HORIZON_S,
             except (KeyError, TypeError, ValueError):
                 dropped["bad_record"] += 1
                 continue
+            # The flight's hint rule on this capture, the sighting carried
+            # from the run's previous captures (MEMORY AND SEARCH) - decided
+            # for every well-formed capture, sample or not, as the flight's
+            # hint follows the box stream; the drop it implies is counted
+            # below, after the frames, in the order the reasons always had.
+            hstep = hint_step(cap, seen, bridge, fresh_s=fresh_s, memory_s=mem_s,
+                              search_s=srch_s, close=close)
+            seen = hstep.seen
             hf, hd = cap.get("front_jpg_sha256"), cap.get("down_jpg_sha256")
             if tile.prev_front:
                 # the lower tile: the run's front frame from dt earlier (THE
@@ -639,10 +821,11 @@ def build_dataset(run_dirs, out_dir, *, horizon_s: float = DEFAULT_HORIZON_S,
                     dropped["frame_missing"] += 1
                     continue
                 lower_sha, lower_what, tile_rec = hd, "down", tile.as_dict()
-            phrase, why, info = detector_phrase(cap, bridge, fresh_s=fresh_s, close=close)
+            why = hint_drop(hstep, hint_modes, emulate)
             if why is not None:
                 dropped[why] += 1
                 continue
+            phrase = hstep.phrase
             tick = cap.get("tick") or {}
             if modes is not None and tick.get("mode") not in modes:
                 dropped["mode"] += 1
@@ -694,11 +877,19 @@ def build_dataset(run_dirs, out_dir, *, horizon_s: float = DEFAULT_HORIZON_S,
                 "clipped": lab["clipped"],
                 "step_decoded": {k: round(v, 6) for k, v in step.to_dict().items()},
                 "rotate_only": step.rotate_only, "horizon_s": horizon_s,
-                "box": {"det": box.get("det"), "age_s": round(info["age_s"], 4),
-                        "bearing_deg": round(info["bearing_deg"], 3),
-                        "yaw_correction_deg": (None if info["yaw_correction_deg"] is None
-                                               else round(info["yaw_correction_deg"], 3)),
+                # the recorded box (a memory or search sample's: stale, or
+                # none; its bearing only for a fresh one)
+                "box": {"det": box.get("det"), "age_s": _round(hstep.age_s, 4),
+                        "bearing_deg": _deg(hstep.measured_bearing_rad),
+                        "yaw_correction_deg": _deg(hstep.yaw_correction_rad),
                         "seq": box.get("seq"), "tier": box.get("tier")},
+                # the hint the flight would send here (MEMORY AND SEARCH)
+                "hint_kind": hstep.kind,
+                "hint": {"kind": hstep.kind, "box": hstep.box,
+                         "bearing_deg": _deg(hstep.bearing_rad),
+                         "since_seen_s": _round(hstep.since_seen_s, 4),
+                         "seen_rel_deg": _deg(hstep.seen_rel_rad)},
+                "close_rule": None if close is None else close.as_dict(),
                 "expert": {"mode": tick.get("mode"), "author": tick.get("author"),
                            "cmd": tick.get("cmd"), "asked": tick.get("asked"),
                            "touched": tick.get("touched")},
@@ -736,6 +927,7 @@ def build_dataset(run_dirs, out_dir, *, horizon_s: float = DEFAULT_HORIZON_S,
                           "dropped": {k: dropped[k] for k in DROP_ORDER if dropped[k]},
                           # What the run teaches, at a glance (real samples).
                           "phrase_counts": dict(Counter(s["phrase"] for s in run_real)),
+                          "hint_kinds": _kinds(run_real),
                           "abs_dpsi_hist": _dpsi_hist(run_real),
                           "perturb": {"intervals": len(track.perturb_intervals),
                                       "active_s": round(sum(off - on for on, off
@@ -756,6 +948,8 @@ def build_dataset(run_dirs, out_dir, *, horizon_s: float = DEFAULT_HORIZON_S,
         say(f"[run] {'':28s} phrases {run_stats[tag]['phrase_counts']}  |dpsi| "
             f"{run_stats[tag]['abs_dpsi_hist']}  perturbations "
             f"{len(track.perturb_intervals)}, samples after one (<= 3 s) {post}")
+        if emulate:
+            say(f"[run] {'':28s} hint kinds {run_stats[tag]['hint_kinds']}")
 
     with (out / SAMPLES).open("w", encoding="utf-8", newline="\n") as fh:
         for s in samples:
@@ -766,7 +960,9 @@ def build_dataset(run_dirs, out_dir, *, horizon_s: float = DEFAULT_HORIZON_S,
                    images=images, n_written=n_written, n_reused=n_reused,
                    pose_dist=pose_dist, pose_dyaw=pose_dyaw, run_dirs=run_dirs,
                    perturb_margin_s=perturb_margin_s, mirror=mirror, tile=tile,
-                   tile_dts=tile_dts)
+                   tile_dts=tile_dts, hint_modes=hint_modes,
+                   memory_s=memory_s if emulate else None,
+                   search_s=search_s if emulate else None, close=close)
     (out / STATS).write_text(json.dumps(stats, indent=1, ensure_ascii=False), encoding="utf-8",
                              newline="\n")
     return stats
@@ -775,8 +971,10 @@ def build_dataset(run_dirs, out_dir, *, horizon_s: float = DEFAULT_HORIZON_S,
 def _stats(samples, run_stats, dropped_all, *, holdout, horizon_s, stride_s, fresh_s,
            max_gap_s, keep_close, modes, bearing_gain, images, n_written, n_reused,
            pose_dist, pose_dyaw, run_dirs, perturb_margin_s, mirror,
-           tile: "C.BottomTile | None" = None, tile_dts=()) -> dict:
+           tile: "C.BottomTile | None" = None, tile_dts=(), hint_modes=DEFAULT_HINT_MODES,
+           memory_s=None, search_s=None, close=None) -> dict:
     tile = tile if tile is not None else C.BottomTile()
+    emulate = bool(set(hint_modes) - {"fresh"})
     # What the trainer sees (mirrored samples included): the splits, the
     # label histograms, the phrases. The quality figures below (rotate-only
     # band, small steps, clipping, distances) are over the REAL samples: a
@@ -802,7 +1000,10 @@ def _stats(samples, run_stats, dropped_all, *, holdout, horizon_s, stride_s, fre
                  "max_gap_s": max_gap_s, "keep_close": keep_close,
                  "modes": sorted(modes) if modes else None, "bearing_gain": bearing_gain,
                  "images": images, "perturb_margin_s": perturb_margin_s, "mirror": mirror,
-                 "bottom_tile": tile.mode, "prev_dt_s": tile.dt_s, "prev_tol_s": tile.tol_s},
+                 "bottom_tile": tile.mode, "prev_dt_s": tile.dt_s, "prev_tol_s": tile.tol_s,
+                 "hint_modes": list(hint_modes), "memory_s": memory_s, "search_s": search_s,
+                 "close_bottom_frac": None if close is None else close.bottom_frac,
+                 "close_width_frac": None if close is None else close.width_frac},
         "codec": {"num_bins": C.NUM_BINS, "ranges": {k: list(v) for k, v in C.RANGES.items()},
                   "quantize": "clip, then truncate into 99 bins (upstream _quantize_action; "
                               "aerialvla_codec.step_bins)",
@@ -834,6 +1035,9 @@ def _stats(samples, run_stats, dropped_all, *, holdout, horizon_s, stride_s, fre
         "label_spread": {axis: _spread(s["label"][axis] for s in real) for axis in C.AXES},
         "phrase_counts": dict(Counter(s["phrase"] for s in samples)),
         "phrase_counts_real": dict(Counter(s["phrase"] for s in real)),
+        # the hint kinds (MEMORY AND SEARCH) and the close rule
+        "hints": _hint_stats(samples, real, hint_modes=hint_modes, fresh_s=fresh_s,
+                             memory_s=memory_s, search_s=search_s, close=close),
         "mirror": {"enabled": bool(mirror), "samples": len(mirrored),
                    "splits": ["train"] if mirror else []},
         "perturb": {
@@ -859,7 +1063,8 @@ def _stats(samples, run_stats, dropped_all, *, holdout, horizon_s, stride_s, fre
                       "note": "the expert standing off close: kept"},
         "clipped": clipped,
         "subject_dist_m": _spread(s["analysis"]["subject_dist_m"] for s in real),
-        "box_age_s": _spread(s["box"]["age_s"] for s in real),
+        # the fresh boxes' (a memory sample's stale box is no hint's age)
+        "box_age_s": _spread(s["box"]["age_s"] for s in real if s["hint_kind"] == "fresh"),
         "pose_check": {"capture_vs_track_m": _spread(pose_dist),
                        "capture_vs_track_yaw_deg": _spread(pose_dyaw),
                        "note": "the capture's pose (the loop's pose ring at the frame's sim "
@@ -868,9 +1073,14 @@ def _stats(samples, run_stats, dropped_all, *, holdout, horizon_s, stride_s, fre
         "images": ({"dir": IMAGES, "written": n_written, "reused": n_reused}
                    if images else None),
         "notes": [
-            "Fresh-box captures only: the follow's memory and search hints are not represented.",
+            (f"Hint kinds {', '.join(hint_modes)}: each capture's hint is the flight's rule "
+             f"(vla_mission.follow_hint_step) carried over the run's captures in order, "
+             f"memory_s {memory_s:g}, search_s {search_s:g}; see hints.not_emulated."
+             if emulate else
+             "Fresh-box captures only: the follow's memory and search hints are not represented."),
             "LAND is never labelled: the expert never arrives.",
-            "The phrase is computed by demo/vla_mission.DetectorHint from the recorded box.",
+            "The phrase is computed by demo/vla_mission.follow_hint_step (DetectorHint's rule) "
+            "from the recorded box.",
             "analysis.truth_xy / subject_dist_m (the level car) are for diagnosis only.",
         ],
     }
@@ -897,6 +1107,22 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--keep-close", action="store_true",
                     help="keep captures whose box counts as close (a VLA follow sends no "
                          "request on them)")
+    ap.add_argument("--close-bottom-frac", type=float, default=None,
+                    help=f"the close rule: a box whose bottom edge is this low (fraction of "
+                         f"the image height) is no request (default "
+                         f"{DEFAULT_CLOSE_BOTTOM_FRAC:g}; the follow flies 1.0)")
+    ap.add_argument("--close-width-frac", type=float, default=None,
+                    help=f"the close rule: a box at least this wide is no request (default "
+                         f"{DEFAULT_CLOSE_WIDTH_FRAC:g})")
+    ap.add_argument("--hint-modes", default=",".join(DEFAULT_HINT_MODES),
+                    help="the hint kinds kept, comma-separated: fresh, memory, search "
+                         "(module docstring, MEMORY AND SEARCH; default %(default)s)")
+    ap.add_argument("--memory-s", type=float, default=None,
+                    help=f"with memory or search: the hint's memory span (default "
+                         f"{DEFAULT_MEMORY_S:g}, vla_fly's --follow-memory-s)")
+    ap.add_argument("--search-s", type=float, default=None,
+                    help=f"with memory or search: the hint's search span (default "
+                         f"{DEFAULT_SEARCH_S:g}, vla_fly's --follow-search-s)")
     ap.add_argument("--modes", nargs="+", default=None,
                     help="keep only captures the expert flew in these modes (e.g. track)")
     ap.add_argument("--bearing-gain", type=float, default=1.0,
@@ -930,7 +1156,10 @@ def main(argv: list[str] | None = None) -> int:
                            images=not a.no_images, force=a.force,
                            perturb_margin_s=a.perturb_margin_s, mirror=a.mirror,
                            bottom_tile=a.bottom_tile, prev_dt_s=a.prev_dt_s,
-                           prev_tol_s=a.prev_tol_s, log=print)
+                           prev_tol_s=a.prev_tol_s, hint_modes=a.hint_modes,
+                           memory_s=a.memory_s, search_s=a.search_s,
+                           close_bottom_frac=a.close_bottom_frac,
+                           close_width_frac=a.close_width_frac, log=print)
     except DatasetError as exc:
         print(f"[dataset] *** refused: {exc}", file=sys.stderr)
         return 2
@@ -946,6 +1175,10 @@ def main(argv: list[str] | None = None) -> int:
               f"{sp.get('min')}, max {sp.get('max')}; no earlier frame {bt['no_prev_front']}")
     else:
         print("[dataset] lower tile down (the capture's down frame)")
+    hs = st["hints"]
+    print(f"[dataset] hint kinds {','.join(hs['modes'])} (memory_s {hs['memory_s']}, search_s "
+          f"{hs['search_s']}), close rule {hs['close_rule']}: real samples by kind "
+          f"{hs['by_kind_real']}")
     print(f"[dataset] dropped: {st['dropped']}")
     print(f"[dataset] phrases: {st['phrase_counts']}")
     print(f"[dataset] |dpsi| (train): {st['abs_dpsi_hist']['train']}")
