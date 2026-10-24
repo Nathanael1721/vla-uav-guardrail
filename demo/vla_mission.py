@@ -264,6 +264,104 @@ def unpack_box(got) -> tuple[Any, float | None, float | None, float | None]:
     return det, t_box, yaw, t_pub
 
 
+# The kinds of hint a follow sends (Hint.kind): a fresh box's bearing, the
+# remembered sighting's, the search turn. "close" and None send nothing.
+HINT_KINDS = ("fresh", "memory", "search")
+
+
+@dataclass(frozen=True)
+class HintStep:
+    """One decision of the follow's hint rule (follow_hint_step).
+
+    kind     "fresh" / "memory" / "search": a request with `phrase`;
+             "close": a fresh close box, no request; None: no request.
+    box      the detector's box at the capture: "fresh", "stale" or "none".
+    phrase   the compass phrase (VLABridge.phrase_for_bearing of
+             bearing_rad) when kind is one of HINT_KINDS, else None.
+    bearing_rad  the body-frame bearing the phrase was (or, close, would
+             have been) looked up with: the box's, rotated by the turn since
+             its frame; the sighting's re-read against the heading; the
+             search's quarter turn. None when nothing was looked up.
+    seen     the remembered sighting after this step: (world bearing, wall
+             time of its frame), or None.
+    age_s    the box's age at the capture (None without a box).
+    measured_bearing_rad, yaw_correction_rad  a fresh box's bearing on its
+             own frame and the turn since (None otherwise, and the turn
+             None too when the frame's heading is unknown).
+    since_seen_s, seen_rel_rad  memory / search: the time since the
+             sighting's frame and its bearing relative to the current
+             heading (None otherwise)."""
+    kind: str | None
+    box: str
+    phrase: str | None = None
+    bearing_rad: float | None = None
+    seen: tuple[float, float] | None = None
+    age_s: float | None = None
+    measured_bearing_rad: float | None = None
+    yaw_correction_rad: float | None = None
+    since_seen_s: float | None = None
+    seen_rel_rad: float | None = None
+
+
+def follow_hint_step(box, t_capture: float, yaw_capture: float,
+                     seen: tuple[float, float] | None, bridge, *, fresh_s: float,
+                     memory_s: float = 0.0, search_s: float = 0.0,
+                     close: "BoxClose | None" = None) -> HintStep:
+    """THE hint rule of a detector mission (DetectorHint's decision, once the
+    start gate is open), pure but for the bridge's phrase counter:
+    `box` = (det, t_box, yaw_box) as unpack_box gives them (det None: no
+    box), the VLA capture's wall time and heading, the sighting remembered
+    so far (`seen`, a previous step's), the bridge that turns a bearing into
+    a phrase. DetectorHint calls it on every request; tools/
+    build_follow_dataset.py calls it over a recording's captures, carrying
+    `seen` from one to the next, so the dataset's phrases and kinds are the
+    flight's by construction.
+
+      FRESH (age <= fresh_s): the box's bearing (vla_bridge.bearing_from_box)
+        rotated by (heading at the capture - heading at its frame) before
+        the band lookup (P2-6, DetectorHint's docstring); the sighting is
+        remembered in the world frame (only when the frame's heading is
+        known). A close box (`close`, BoxClose) is remembered too, and sends
+        nothing ("close").
+      NO FRESH BOX: with a sighting and memory_s or search_s set, its world
+        bearing re-read against the current heading while the time since
+        its frame is at most memory_s ("memory"); then, up to memory_s +
+        search_s, a quarter turn toward the side that re-read gives now
+        ("search"); else nothing. Both 0: M2's rule (no fresh box, no
+        request)."""
+    from vla_bridge import bearing_from_box
+    det, t_box, yaw_box = box
+    t_capture, yaw_capture = float(t_capture), float(yaw_capture)
+    age = None if det is None or t_box is None else t_capture - float(t_box)
+    if age is None or age > fresh_s:
+        state = "none" if age is None else "stale"
+        if seen is None or (memory_s <= 0 and search_s <= 0):
+            return HintStep(None, state, seen=seen, age_s=age)
+        world, t_seen = seen
+        since = t_capture - t_seen
+        rel = wrap_pi(world - yaw_capture)
+        if since <= memory_s:
+            kind, bearing = "memory", rel
+        elif since <= memory_s + search_s:
+            # Toward the side it was last seen on: a quarter turn's phrase
+            # ("to your right " / "to your left "), the band AerialVLA turns on.
+            kind, bearing = "search", (math.pi / 2 if rel >= 0 else -math.pi / 2)
+        else:
+            return HintStep(None, state, seen=seen, age_s=age)
+        return HintStep(kind, state, bridge.phrase_for_bearing(bearing), bearing, seen, age,
+                        since_seen_s=since, seen_rel_rad=rel)
+    measured = bearing = bearing_from_box(det, bridge.hfov_deg)
+    corr = None
+    if yaw_box is not None:
+        corr = wrap_pi(yaw_capture - float(yaw_box))
+        bearing -= corr
+        seen = (wrap_pi(float(yaw_box) + bearing + corr), float(t_box))
+    if close is not None and close(det):
+        return HintStep("close", "fresh", None, bearing, seen, age, measured, corr)
+    return HintStep("fresh", "fresh", bridge.phrase_for_bearing(bearing), bearing, seen, age,
+                    measured, corr)
+
+
 class DetectorHint:
     """M2: the compass phrase of the newest FRESH OWL-ViT box, through
     demo/vla_bridge.VLABridge (box centre -> pinhole bearing -> the training
@@ -324,6 +422,8 @@ class DetectorHint:
         self.set_start_gate(start_gate)
         self._seen: tuple[float, float] | None = None     # (world bearing, t of its frame)
         self.last_kind: str | None = None
+        # The last call's follow_hint_step (None when gated or not yet called).
+        self.last_step: HintStep | None = None
         self.kinds: Counter = Counter()
         self.n_close = 0
         self.n_stale = 0
@@ -362,11 +462,11 @@ class DetectorHint:
                 and float(t_box) <= self._ignore_until)
 
     def __call__(self, capture: Capture) -> Hint | None:
-        from vla_bridge import bearing_from_box
         det, t_box, yaw_box, t_pub = unpack_box(self.latest())
         self.last_yaw_correction_rad = None
         self.last_detector_latency_s = None
         self.last_kind = None
+        self.last_step = None
         if det is not None and self.box_ignored(t_box):
             # The box a reset dropped, still published (fresh for fresh_s,
             # kept by the Grounder up to its drop_after): no box at all.
@@ -375,56 +475,65 @@ class DetectorHint:
         if det is None or t_box is None:
             self.n_none += 1
             self.last_box_age_s = None
-            if not self.gate_open:
-                self._gate_streak = 0
-                return self._gated()
-            return self._remembered(capture)
-        age = float(capture.t_capture) - float(t_box)
-        self.last_box_age_s = age
-        if t_pub is not None:
-            self.last_detector_latency_s = float(t_pub) - float(t_box)
-        if age > self.fresh_s:
-            self.n_stale += 1
-            if not self.gate_open:
-                self._gate_streak = 0
-                return self._gated()
-            return self._remembered(capture)
-        if not self.gate_open:
-            n, wf = self.start_gate
-            frac = box_fraction(det)
-            if frac is None or frac < wf:
-                self._gate_streak = 0
-            elif self._gate_last_t != float(t_box):
-                self._gate_streak += 1
-                self._gate_last_t = float(t_box)
-            if self._gate_streak < n:
-                return self._gated()
-            self.gate_open, self.gate_open_t = True, float(capture.t_capture)
-        bearing = bearing_from_box(det, self.bridge.hfov_deg)
-        if yaw_box is None:
-            self.n_no_yaw += 1
         else:
-            corr = wrap_pi(float(capture.pose.yaw_rad) - float(yaw_box))
-            self.last_yaw_correction_rad = corr
-            bearing -= corr
-            self._seen = (wrap_pi(float(yaw_box) + bearing + corr), float(t_box))
-        if self.close is not None and self.close(det):
+            self.last_box_age_s = float(capture.t_capture) - float(t_box)
+            if t_pub is not None:
+                self.last_detector_latency_s = float(t_pub) - float(t_box)
+            if self.last_box_age_s > self.fresh_s:
+                self.n_stale += 1
+        if not self.gate_open and not self._gate_opens(det, t_box, capture):
+            return self._gated()
+        # The decision itself - fresh, close, memory, search or nothing, the
+        # phrase and the sighting kept - is follow_hint_step's, the one rule
+        # tools/build_follow_dataset.py emulates over a recording.
+        step = follow_hint_step((det, t_box, yaw_box), capture.t_capture, capture.pose.yaw_rad,
+                                self._seen, self.bridge, fresh_s=self.fresh_s,
+                                memory_s=self.memory_s, search_s=self.search_s, close=self.close)
+        self.last_step = step
+        self._seen = step.seen
+        if step.box == "fresh":
+            if yaw_box is None:
+                self.n_no_yaw += 1
+            else:
+                self.last_yaw_correction_rad = step.yaw_correction_rad
+        if step.kind == "close":
             # The subject is close (leaving the view below, or large): no new
             # step toward it - the rail holds the horizontal motion meanwhile
             # (MissionLoop, follow).
             self.n_close += 1
             self.last_kind = "close"
             return None
-        phrase = self.bridge.phrase_for_bearing(bearing)
+        if step.kind is None:
+            return None
         self.n_hints += 1
-        self.last_kind = "fresh"
-        self.kinds["fresh"] += 1
-        self._ages.append(age)
-        if self.last_yaw_correction_rad is not None:
-            self._corr.append(abs(math.degrees(self.last_yaw_correction_rad)))
-        if self.last_detector_latency_s is not None:
-            self._lat.append(self.last_detector_latency_s)
-        return self._hint(phrase, "fresh")
+        self.last_kind = step.kind
+        self.kinds[step.kind] += 1
+        if step.kind == "fresh":
+            self._ages.append(step.age_s)
+            if self.last_yaw_correction_rad is not None:
+                self._corr.append(abs(math.degrees(self.last_yaw_correction_rad)))
+            if self.last_detector_latency_s is not None:
+                self._lat.append(self.last_detector_latency_s)
+        return self._hint(step.phrase, step.kind)
+
+    def _gate_opens(self, det, t_box, capture: Capture) -> bool:
+        """The start gate, while closed: does this call open it? No box or a
+        stale one restarts the streak; a fresh box at least width_frac wide
+        from a NEW detector frame extends it; n in a row open the gate."""
+        if det is None or t_box is None or self.last_box_age_s > self.fresh_s:
+            self._gate_streak = 0
+            return False
+        n, wf = self.start_gate
+        frac = box_fraction(det)
+        if frac is None or frac < wf:
+            self._gate_streak = 0
+        elif self._gate_last_t != float(t_box):
+            self._gate_streak += 1
+            self._gate_last_t = float(t_box)
+        if self._gate_streak < n:
+            return False
+        self.gate_open, self.gate_open_t = True, float(capture.t_capture)
+        return True
 
     def _hint(self, phrase: str, kind: str) -> Hint:
         return Hint(phrase, "detector", kind if self.record_kind else None)
@@ -447,27 +556,6 @@ class DetectorHint:
         self.n_gated += 1
         self.last_kind = "gated"
         return None
-
-    def _remembered(self, capture: Capture) -> Hint | None:
-        """No fresh box: the follow's memory, then its search, else None."""
-        if self._seen is None or (self.memory_s <= 0 and self.search_s <= 0):
-            return None
-        world, t_seen = self._seen
-        since = float(capture.t_capture) - t_seen
-        rel = wrap_pi(world - float(capture.pose.yaw_rad))
-        if since <= self.memory_s:
-            kind, bearing = "memory", rel
-        elif since <= self.memory_s + self.search_s:
-            # Toward the side it was last seen on: a quarter turn's phrase
-            # ("to your right " / "to your left "), the band AerialVLA turns on.
-            kind, bearing = "search", (math.pi / 2 if rel >= 0 else -math.pi / 2)
-        else:
-            return None
-        phrase = self.bridge.phrase_for_bearing(bearing)
-        self.n_hints += 1
-        self.last_kind = kind
-        self.kinds[kind] += 1
-        return self._hint(phrase, kind)
 
     def stats(self, t0: float | None = None) -> dict:
         """The counts and spreads. With `t0` (the mission start, wall time)
