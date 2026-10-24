@@ -16,6 +16,63 @@ shipped change and recorded as one.
 
 ## [Unreleased]
 
+### 2026-10-24 (later) — the VLA's decision rate, not its training, is what keeps it behind: ceiling flights, the renderer's share of the GPU, faster VLA flights
+
+The fine-tuned follows kept losing the car, so the question was asked
+directly: how well does the hand-written follow itself do when it must act
+at the VLA's rate? Badly - and the slowness was mostly the simulator's
+renderer sharing the GPU. Still not as good as the hand-written follow; the
+third model is training.
+
+#### Found
+- **Ceiling flights** (`follow_vlm --decide-every-s P --decide-delay-s D`,
+  merge a92f338: the expert's own command, D s old, held for P s): within 30 m
+  on 0.122 of the ticks at P 1.0 / D 0.8 (the VLA's rate at the time; it
+  overshot onto the car, minimum 0.5 m, and saw it on 16 % of the ticks),
+  0.908 at 0.5 / 0.4, 0.956 at 0.3 / 0.3, against 0.963 at full rate. The VLA
+  flights (0.158-0.238 from the first acquisition) were no worse than the
+  expert held to their rate.
+- **The renderer, not the model, made the VLA slow.** Alone the merged bf16
+  server answers in 235 ms (generation 0.233 s, 9 tokens). Pinged through an
+  expert flight it took 625-713 ms from the moment the simulator moved the
+  camera; with the aircraft hovering in four simulator configurations it
+  stayed at 230-242 ms. OWL-ViT is not the cause: alone it takes 30.5 ms
+  (fp32), and the server stays at 248 ms beside it.
+  `-SimOffscreen` (`-RenderOffscreen`) with `-SimMaxFps 30` (`t.MaxFPS`)
+  brought the chase-phase latency to 370-397 ms with the expert's own score
+  0.945 (commit 0a352b5; both switches default off).
+
+#### Flown (from the first acquisition, within 30 m)
+- **follow_v3_pf_r1/epoch1** (r2, the prev_front tile; its training stopped at
+  epoch 2 step 1320 when the session ended - held-out epoch 1: forward step
+  error 0.340 m, turn error 0.0173 rad): `vla_follow_ft_03_pf` 0.173 (it
+  overshot a stopped car, which left the bottom of the frame, then flew on
+  with no car in view), `vla_follow_ft_04_pf_fps30` 0.148,
+  `vla_follow_ft_05_pf_off` 0.125 (capture-to-answer p50 0.43 s, decisions
+  every 0.4-0.5 s: it answered forward 0.0 for about 7 s while the car pulled
+  away from 8 m).
+- **follow_v2_r1/epoch4** (r1) offscreen: `vla_follow_ft_06_r1_off` 0.169
+  (latency p50 0.46 s); it chased for about 190 s with three re-acquisitions
+  but mostly 30-40 m behind.
+
+#### Added
+- **Memory and search samples** (merge 564901c): one hint rule,
+  `vla_mission.follow_hint_step`, for the flight's DetectorHint and
+  `build_follow_dataset.py --hint-modes fresh,memory,search`, plus the
+  flight's close rule (`--close-bottom-frac 1.0`). They add few samples: the
+  expert rarely loses the car, and no capture shows the car behind the
+  aircraft.
+- **Five DAgger flights with r2** (ft_dagger_pf_1-5): within 30 m on 0.844,
+  0.807, 0.808, 0.788 and 0.813; 52, 54, 53, 52 and 53 windows.
+- **Dataset follow_v4_pf_hm** (19 recordings): 18570 train (9285 real) and
+  1641 held-out samples (ft_expert_p03, ft_dagger_03, ft_dagger_pf_3); 309
+  memory and 22 search samples.
+- **Speed-change oversampling** (`--change-oversample N`, 0a352b5): 2370 of
+  the 18570 train samples change the forward step by 1 m or more within 1 s.
+  Training follow_v4_r3 (from r2, 3 epochs, changes x3, turns x2) is in
+  progress.
+- Videos of every flight above in `docs/video/` (`*_small.mp4`).
+
 ### 2026-10-24 — AerialVLA fine-tuned on the hand-written follow: held-out step error 2.47 m to 0.36 m, the first fine-tuned flights still lose the car, DAgger and a temporal tile next
 
 The user's goal: the VLA-piloted follow as good as, or better than, the
