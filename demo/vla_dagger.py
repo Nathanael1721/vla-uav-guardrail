@@ -341,14 +341,18 @@ def latest_box_from(source: Callable[[], dict | None]) -> Callable[[], tuple]:
 # --------------------------------------------------------------------------- #
 def connect_server(addr: str, *, allow_stand_in: bool = False,
                    response_timeout_s: float = 10.0, late_reply_wait_s: float = 0.0,
-                   connect_timeout_s: float = 2.0) -> tuple[RemoteVLA, dict, bool, str | None]:
+                   connect_timeout_s: float = 2.0,
+                   stand_in_flag: str = "--perturb-vla-allow-stand-in"
+                   ) -> tuple[RemoteVLA, dict, bool, str | None]:
     """(the connected client, the hello's model identity, is it AerialVLA,
     why not). The identity is read first on a probe connection, so the
     flight's client is built strict exactly when it is a VLA (vla_fly's
     rule: strict_identity=is_vla) and pins it with its own hello. Refused
     (DaggerRefused) when nothing answers hello, or when the server is not
     AerialVLA (vla_mission.identity_is_vla: the scripted stand-in, a fake:
-    id, a repeated-digit digest) unless `allow_stand_in`."""
+    id, a repeated-digit digest) unless `allow_stand_in`; the refusal names
+    `stand_in_flag`, the caller's flag that allows one (demo/vla_hierarchy.py
+    has its own)."""
     try:
         host, port = VM.parse_addr(addr)
     except ValueError as exc:
@@ -365,7 +369,7 @@ def connect_server(addr: str, *, allow_stand_in: bool = False,
     is_vla, why_not = VM.identity_is_vla(identity)
     if not is_vla and not allow_stand_in:
         raise DaggerRefused(f"the server at {addr} is not AerialVLA ({why_not}); "
-                            f"--perturb-vla-allow-stand-in flies a stand-in, recorded as one")
+                            f"{stand_in_flag} flies a stand-in, recorded as one")
     client = RemoteVLA(host, port, connect_timeout_s=connect_timeout_s,
                        response_timeout_s=response_timeout_s, strict_identity=is_vla,
                        late_reply_wait_s=late_reply_wait_s, clock=time.time)

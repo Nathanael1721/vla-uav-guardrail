@@ -81,6 +81,27 @@
 #         -PolicyFile policies\follow_car_citylife_nfz.yaml -Seconds 420 `
 #         -Tag ceiling_p10_d08 -DecideEveryS 1.0 -DecideDelayS 0.8
 #
+# HIERARCHICAL CONTROL (-VlaHierarchy HOST:PORT, 2026-10-25): the fine-tuned
+# AerialVLA decides the follow's intent at its own rate and this controller
+# executes it at 10 Hz (follow_vlm --vla-hierarchy, demo/vla_hierarchy.py).
+# With the car locked the controller flies as always, its stand-off at the
+# VLA's desired range (22 m at a zero step to 12 m at a 5 m step,
+# -VlaHierarchyRange "NEAR,FAR"); with the car lost the VLA's step tracker
+# flies the search; a LAND holds; an answer older than 1.5 s hands everything
+# back to the controller. The Shield filters every command. The airframe
+# gets AerialVLA's two cameras and nothing is recorded. Start the server
+# first (this script refuses to start the simulator when nothing listens on
+# HOST:PORT); the tile, rate and speed-words flags are the served adapter's,
+# as for -RecordPerturbVla. Not with -RecordVla, -RecordPerturb,
+# -RecordPerturbVla or -DecideEveryS:
+#
+#     python demo\vla_server_v2.py serve --precision bf16 --attn sdpa --merge `
+#         --missing-down refuse --adapter D:\models\aerialvla-ft-follow\follow_v4_r3\epoch1
+#     .\scripts\run_citylife_follow.ps1 -Object "a red car" -LevelCar Car_10 `
+#         -PolicyFile policies\follow_car_citylife_nfz.yaml -Seconds 420 `
+#         -Tag hier_v4r3_01 -VlaHierarchy 127.0.0.1:8790 -VlaHierarchyBottomTile prev_front `
+#         -VlaHierarchyStepAsRate 1.0 -SimOffscreen -SimMaxFps 30
+#
 # WARNING: like every demo script here, this restarts the simulator, which kills
 # any process holding Blocks.uproject - INCLUDING an editor you have open. Close
 # the editor first. The match is on the .uproject, not the process name, so
@@ -136,6 +157,14 @@ param(
     [switch]$PerturbVlaSpeedWords,      # with -RecordPerturbVla: own speed as words (off)
     [double]$DecideEveryS = 0,          # the ceiling flight: a decision every P s (off)
     [double]$DecideDelayS = 0,          # with -DecideEveryS: each carries the command from D s before
+    [string]$VlaHierarchy = "",         # HOST:PORT of a running AerialVLA server that decides
+                                        # the follow's intent (hierarchical control; see the header)
+    [string]$VlaHierarchyBottomTile = "", # with -VlaHierarchy: "prev_front" (default down)
+    [double]$VlaHierarchyPrevDtS = 0,   # with -VlaHierarchyBottomTile prev_front: s earlier (1.0)
+    [double]$VlaHierarchyStepAsRate = 0, # with -VlaHierarchy: the search's steps as rates over H s (off)
+    [switch]$VlaHierarchySpeedWords,    # with -VlaHierarchy: own speed as words (off)
+    [string]$VlaHierarchyRange = "",    # with -VlaHierarchy: "NEAR,FAR" stand-off metres (12,22)
+    [switch]$VlaHierarchyAllowStandIn,  # with -VlaHierarchy: a server that is not AerialVLA
     [int]$Seed = 0,                  # follow_vlm --seed (0 = its default); the
                                         # perturbation schedule follows it
     [switch]$KeepSim,                   # leave the simulator running afterwards
@@ -272,6 +301,35 @@ if ($RecordPerturbVla) {
                "--missing-down refuse --adapter D:\models\aerialvla-ft-follow\<run>\epoch<N>")
     }
     Say "VLA server listening on $RecordPerturbVla (follow_vlm checks its hello)"
+}
+# Hierarchical control (see the header), refused as follow_vlm refuses it:
+# one replacement of the executed command at a time, and never training data.
+if (($VlaHierarchyBottomTile -or $VlaHierarchyPrevDtS -or $VlaHierarchyStepAsRate -or
+     $VlaHierarchySpeedWords -or $VlaHierarchyRange -or $VlaHierarchyAllowStandIn) -and -not $VlaHierarchy) {
+    throw ("-VlaHierarchyBottomTile, -VlaHierarchyPrevDtS, -VlaHierarchyStepAsRate, " +
+           "-VlaHierarchySpeedWords, -VlaHierarchyRange and -VlaHierarchyAllowStandIn need -VlaHierarchy")
+}
+if ($VlaHierarchy -and ($RecordPerturb -or $RecordPerturbVla -or $DecideEveryS)) {
+    throw "-VlaHierarchy and -RecordPerturb / -RecordPerturbVla / -DecideEveryS: one replacement of the executed command at a time"
+}
+if ($VlaHierarchy -and $RecordVla) {
+    throw "-VlaHierarchy and -RecordVla: a hierarchical flight flies the VLA's intent, not training data"
+}
+if ($VlaHierarchy) {
+    # The VLA server must already listen: follow_vlm refuses a server that
+    # does not answer hello, but only after a simulator has been started.
+    $i = $VlaHierarchy.LastIndexOf(':')
+    $hierPort = 0
+    if ($i -lt 1 -or -not [int]::TryParse($VlaHierarchy.Substring($i + 1), [ref]$hierPort)) {
+        throw "-VlaHierarchy $VlaHierarchy is not HOST:PORT"
+    }
+    $hierHost = $VlaHierarchy.Substring(0, $i)
+    if (-not (Test-NetConnection $hierHost -Port $hierPort -WarningAction SilentlyContinue).TcpTestSucceeded) {
+        throw ("nothing listens on ${VlaHierarchy}: start the VLA server first (vla-real env), " +
+               "e.g. python demo\vla_server_v2.py serve --precision bf16 --attn sdpa --merge " +
+               "--missing-down refuse --adapter D:\models\aerialvla-ft-follow\<run>\epoch<N>")
+    }
+    Say "VLA server listening on $VlaHierarchy (follow_vlm checks its hello)"
 }
 
 # Everything from here runs under try/finally: a -game simulator left running
@@ -527,6 +585,30 @@ if ($DecideEveryS) {
         $a += @("--decide-delay-s", "$DecideDelayS")
     }
 }
+# Hierarchical control (see the header): the VLA decides the intent, this
+# controller executes it. Refused above with a recording or another mode.
+if ($VlaHierarchy) {
+    $a += @("--vla-hierarchy", $VlaHierarchy)
+    if ($VlaHierarchyBottomTile) {
+        $a += @("--vla-hierarchy-bottom-tile", $VlaHierarchyBottomTile)
+    }
+    if ($VlaHierarchyPrevDtS) {
+        $a += @("--vla-hierarchy-prev-dt-s", "$VlaHierarchyPrevDtS")
+    }
+    if ($VlaHierarchyStepAsRate) {
+        $a += @("--vla-hierarchy-step-as-rate", "$VlaHierarchyStepAsRate")
+    }
+    if ($VlaHierarchySpeedWords) {
+        $a += @("--vla-hierarchy-speed-words")
+    }
+    # An unquoted -VlaHierarchyRange 12,22 binds to a [string] as "12 22".
+    if ($VlaHierarchyRange) {
+        $a += @("--vla-hierarchy-range", ($VlaHierarchyRange.Trim() -replace '\s+', ','))
+    }
+    if ($VlaHierarchyAllowStandIn) {
+        $a += @("--vla-hierarchy-allow-stand-in")
+    }
+}
 if ($Seed -ne 0) { $a += @("--seed", "$Seed") }
 & $Py @a
 $rc = $LASTEXITCODE
@@ -553,7 +635,7 @@ if ($rc -ne 0 -or -not (Test-Path $metrics)) {
 }
 
 Say "done. Read the result from the artefact, not the screen:"
-Write-Host "    demo\out\$Tag\metrics.json     -> det_hz, frac_on_target (+ _chance), instance_score, start_gate, stage_ms_median, collisions, off_map_ticks, trail, decide_rate (a ceiling flight)"
+Write-Host "    demo\out\$Tag\metrics.json     -> det_hz, frac_on_target (+ _chance), instance_score, start_gate, stage_ms_median, collisions, off_map_ticks, trail, decide_rate (a ceiling flight), vla_hierarchy (a hierarchical flight)"
 Write-Host "    demo\out\$Tag\kpi.json         -> p0_violation_escape_rate must be 0.0"
 Write-Host "  then build the video:"
 Write-Host "    python tools\make_demo_video.py --tag $Tag --height 720"
