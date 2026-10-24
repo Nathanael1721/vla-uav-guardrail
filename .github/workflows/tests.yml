@@ -112,6 +112,15 @@
 #          parser; its evaluation through the server's mosaic SKIPs here
 #          and runs in the Pillow step, its training-loop test needs torch
 #          and is lab-only).
+#          test_vla_follow_reacquire (the AerialVLA follow's re-acquisition
+#          after a long loss, 2026-10-25: follow_vlm.Reacquirer's opt-in
+#          pass gaps and vla_fly --acquire-gap-s, replayed through
+#          vla_fly._acquire_step on a tests/fixtures/ slice of the flight
+#          that never took the car back, vla_follow_ft_07_r3_off - as
+#          flown and fixed, closed through the real Grounder state and
+#          strict lock; the rule on synthetic sightings, follow_vlm's own
+#          rule unchanged; every judged frame counted in metrics; nothing
+#          SKIPs).
 #        The CityLife level, checked offline (the level itself is
 #          gitignored): test_citylife_*, test_drive_signals_dsl,
 #          test_ped_walk_plan, test_parked_cars.
@@ -613,6 +622,7 @@ jobs:
               tests/test_follow_hint_modes.py \
               tests/test_follow_decide_rate.py \
               tests/test_vla_speed_words.py \
+              tests/test_vla_follow_reacquire.py \
               tests/test_citylife_peds.py \
               tests/test_citylife_routes.py \
               tests/test_citylife_signal_lamps.py \
