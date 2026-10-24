@@ -16,6 +16,47 @@ shipped change and recorded as one.
 
 ## [Unreleased]
 
+### 2026-10-25 — r3 and r4 flown fast, the follow re-acquires a car that comes back, the own-speed words copy themselves; the user chooses hierarchical control
+
+Two more models flown in the fast simulator configuration, one perception
+bug fixed, and one input idea measured and rejected. The best end-to-end
+VLA follow is still r1's 0.238; the user chose to put AerialVLA at the top
+of a hierarchy over the hand-written controller next.
+
+#### Flown (from the first acquisition, within 30 m; -SimOffscreen -SimMaxFps 30)
+- **follow_v4_r3/epoch1** (r3: follow_v4_pf_hm, speed changes x3, from r2;
+  held-out forward step error 0.221 m against r2's 0.387 on the same set):
+  `vla_follow_ft_07_r3_off` 0.085 - it closed from 54 m to 21.5 m at about
+  4.7 m/s, slowed and turned too little at a corner and lost the car, then
+  never took it back (see Fixed).
+- **follow_v5_r4/epoch1** (r4: the own-speed words, from r3; held-out 0.214 m):
+  `vla_follow_ft_08_r4` 0.044 - four re-acquisitions, but with the aircraft
+  hovering the prompt read "while hovering" and the model answered about
+  0.4 m forward while the car pulled away from 27 m to 69 m.
+
+#### Found
+- **The own-speed words teach "keep doing what you are doing".** 85 % of the
+  "while hovering" samples in follow_v5_pf_hm_sw are labelled as staying, and
+  in flight the words held the hover (the copycat problem of behaviour
+  cloning with proprioception). The words stay in the code, off by default
+  (merge 834288b).
+
+#### Fixed
+- **A car that comes back after a long loss is taken back** (merge 6d37457):
+  in `vla_follow_ft_07_r3_off` the detector found the car again at about
+  288 s (identity "ok", 9-10 m, score up to 0.67) but the start gate's "seen
+  moving" test needs 10 sightings in a row and one empty frame at 2.2 Hz
+  reset the streak, without recording a refusal. `vla_fly --acquire-gap-s`
+  (default 3 s) lets the streak survive short misses (an opt-in
+  `follow_vlm.Reacquirer(gap_s=)`, unchanged for follow_vlm), and every
+  judged frame's outcome is counted; replayed on that flight's detections it
+  re-commits at 287.1 s.
+
+#### Decided
+- **Hierarchical control next** (the user, 25 Oct): AerialVLA at about 2 Hz
+  sets the intent - mode, the following distance, and the search flight -
+  and the hand-written 10 Hz controller flies the pursuit.
+
 ### 2026-10-24 (later) — the VLA's decision rate, not its training, is what keeps it behind: ceiling flights, the renderer's share of the GPU, faster VLA flights
 
 The fine-tuned follows kept losing the car, so the question was asked
