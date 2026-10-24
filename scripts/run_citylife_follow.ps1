@@ -65,6 +65,19 @@
 # -PerturbVlaBottomTile prev_front [-PerturbVlaPrevDtS 1.0] -PerturbVlaStepAsRate 1.0.
 # follow_vlm refuses a server whose adapter was trained on another tile.
 #
+# THE CEILING FLIGHT (-DecideEveryS P [-DecideDelayS D], 2026-10-24): the same
+# expert follow, but what it executes is held to a VLA's decision rate - every
+# P s its own command from D s before, held in between, after its controller
+# and before the Shield (follow_vlm --decide-every-s / --decide-delay-s,
+# demo/decide_rate.py). Its frac_within_30m reads against the expert's 0.963:
+# near it, a better-trained VLA can close the gap; far below it, the decision
+# rate is the bottleneck. Not with -RecordVla, -RecordPerturb or
+# -RecordPerturbVla:
+#
+#     .\scripts\run_citylife_follow.ps1 -Object "a red car" -LevelCar Car_10 `
+#         -PolicyFile policies\follow_car_citylife_nfz.yaml -Seconds 420 `
+#         -Tag ceiling_p10_d08 -DecideEveryS 1.0 -DecideDelayS 0.8
+#
 # WARNING: like every demo script here, this restarts the simulator, which kills
 # any process holding Blocks.uproject - INCLUDING an editor you have open. Close
 # the editor first. The match is on the .uproject, not the process name, so
@@ -115,7 +128,9 @@ param(
     [string]$PerturbVlaBottomTile = "", # with -RecordPerturbVla: "prev_front" (default down)
     [double]$PerturbVlaPrevDtS = 0,     # with -PerturbVlaBottomTile prev_front: s earlier (1.0)
     [double]$PerturbVlaStepAsRate = 0,  # with -RecordPerturbVla: steps as rates over H s (off)
-    [int]$Seed = 0,                   # follow_vlm --seed (0 = its default); the
+    [double]$DecideEveryS = 0,          # the ceiling flight: a decision every P s (off)
+    [double]$DecideDelayS = 0,          # with -DecideEveryS: each carries the command from D s before
+    [int]$Seed = 0,                  # follow_vlm --seed (0 = its default); the
                                         # perturbation schedule follows it
     [switch]$KeepSim,                   # leave the simulator running afterwards
     [switch]$SkipSim
@@ -210,6 +225,24 @@ if (($PerturbVlaEvery -or $PerturbVlaDur -or $PerturbVlaAllowStandIn) -and -not 
 }
 if (($PerturbVlaBottomTile -or $PerturbVlaPrevDtS -or $PerturbVlaStepAsRate) -and -not $RecordPerturbVla) {
     throw "-PerturbVlaBottomTile, -PerturbVlaPrevDtS and -PerturbVlaStepAsRate need -RecordPerturbVla"
+}
+# The ceiling flight (see the header), refused as follow_vlm refuses it. The
+# bounds are follow_vlm's (demo/decide_rate.py): a 0 typed on purpose is not
+# taken for "off", nor 800 (milliseconds) for seconds.
+if ($PSBoundParameters.ContainsKey('DecideEveryS') -and -not ($DecideEveryS -gt 0 -and $DecideEveryS -le 10)) {
+    throw "-DecideEveryS is the seconds between decisions: more than 0, at most 10"
+}
+if ($PSBoundParameters.ContainsKey('DecideDelayS') -and -not ($DecideDelayS -ge 0 -and $DecideDelayS -le 10)) {
+    throw "-DecideDelayS is seconds: 0 to 10"
+}
+if ($PSBoundParameters.ContainsKey('DecideDelayS') -and -not $DecideEveryS) {
+    throw "-DecideDelayS needs -DecideEveryS"
+}
+if ($DecideEveryS -and ($RecordPerturb -or $RecordPerturbVla)) {
+    throw "-DecideEveryS and -RecordPerturb / -RecordPerturbVla: one replacement of the command at a time"
+}
+if ($DecideEveryS -and $RecordVla) {
+    throw "-DecideEveryS and -RecordVla: a ceiling flight is a measurement, not training data"
 }
 if ($RecordPerturbVla) {
     # The VLA server must already listen: follow_vlm refuses a DAgger flight
@@ -471,6 +504,14 @@ if ($RecordVla) {
         }
     }
 }
+# The ceiling flight (see the header): the executed command held to a VLA's
+# decision rate. Refused above with a recording or a perturbation.
+if ($DecideEveryS) {
+    $a += @("--decide-every-s", "$DecideEveryS")
+    if ($DecideDelayS) {
+        $a += @("--decide-delay-s", "$DecideDelayS")
+    }
+}
 if ($Seed -ne 0) { $a += @("--seed", "$Seed") }
 & $Py @a
 $rc = $LASTEXITCODE
@@ -497,7 +538,7 @@ if ($rc -ne 0 -or -not (Test-Path $metrics)) {
 }
 
 Say "done. Read the result from the artefact, not the screen:"
-Write-Host "    demo\out\$Tag\metrics.json     -> det_hz, frac_on_target (+ _chance), instance_score, start_gate, stage_ms_median, collisions, off_map_ticks, trail"
+Write-Host "    demo\out\$Tag\metrics.json     -> det_hz, frac_on_target (+ _chance), instance_score, start_gate, stage_ms_median, collisions, off_map_ticks, trail, decide_rate (a ceiling flight)"
 Write-Host "    demo\out\$Tag\kpi.json         -> p0_violation_escape_rate must be 0.0"
 Write-Host "  then build the video:"
 Write-Host "    python tools\make_demo_video.py --tag $Tag --height 720"

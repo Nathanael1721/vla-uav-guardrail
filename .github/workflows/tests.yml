@@ -86,6 +86,13 @@
 #          over its label horizon, StepTracker's --step-as-rate; its two
 #          mosaic / evaluation tests SKIP here and run in the Pillow step,
 #          its training-loop test needs torch and is lab-only).
+#          test_follow_decide_rate (the follow fine-tune's ceiling flight of
+#          2026-10-24: the follow expert held to a VLA's decision rate,
+#          demo/decide_rate.py and follow_vlm --decide-every-s /
+#          --decide-delay-s - off by default and off the loop's path, the
+#          sample-and-hold on synthetic command sequences, the refusals, the
+#          records, the follow score unchanged, the launcher flags; synthetic
+#          ticks only, nothing SKIPs).
 #        The CityLife level, checked offline (the level itself is
 #          gitignored): test_citylife_*, test_drive_signals_dsl,
 #          test_ped_walk_plan, test_parked_cars.
@@ -581,6 +588,7 @@ jobs:
               tests/test_follow_dataset.py \
               tests/test_vla_dagger.py \
               tests/test_vla_prev_front_rate.py \
+              tests/test_follow_decide_rate.py \
               tests/test_citylife_peds.py \
               tests/test_citylife_routes.py \
               tests/test_citylife_signal_lamps.py \

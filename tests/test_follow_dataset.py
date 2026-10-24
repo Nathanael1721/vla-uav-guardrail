@@ -1183,9 +1183,12 @@ def test_the_perturbation_is_off_unless_asked_and_the_flight_is_unchanged_when_o
                                                   for e in t.elts) for t in n.targets)]
     plain = [n for n in flown if isinstance(n.value, ast.Name) and n.value.id == "smooth"]
     assert len(plain) == 1 and not guarded(plain[0], lambda s: "perturb" in s), plain
+    # ...or by --decide-every-s's hold (demo/decide_rate.py), refused with a
+    # perturbation and pinned in tests/test_follow_decide_rate.py.
     for n in flown:
         if n not in plain:
-            assert guarded(n, lambda s: "perturber is not None" in s), f"line {n.lineno}"
+            assert guarded(n, lambda s: "perturber is not None" in s
+                           or "decider is not None" in s), f"line {n.lineno}"
     uses = [n for n in ast.walk(fly) if isinstance(n, ast.Attribute)
             and isinstance(n.value, ast.Name) and n.value.id == "perturber"]
     assert uses, "the perturber is not wired in"
