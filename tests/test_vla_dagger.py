@@ -335,7 +335,7 @@ def test_the_flight_is_unchanged_when_off_and_the_shield_filters_what_flies():
             assert "flown_in" not in names and "perturb_rec" not in names, n.lineno
     # The server is asked hello before the simulator is touched.
     i_vla = src.index("vla_dagger.make_vla_perturber(")
-    assert i_vla < src.index("client = ProjectAirSimClient()")
+    assert i_vla < src.index("client = ProjectAirSimClient(address=args.sim_address)")
     # The DART perturbation's interface takes the pose and ignores it.
     R = __import__("vla_record")
     p = R.Perturber(3)

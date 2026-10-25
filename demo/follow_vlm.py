@@ -4381,7 +4381,9 @@ async def fly(args) -> int:
         except vla_hierarchy.HierarchyRefused as exc:
             raise SystemExit(f"[vla-hierarchy] *** refused: {exc}") from None
         print(f"[vla-hierarchy] {hierarchy.describe()}")
-    client = ProjectAirSimClient()
+    # --sim-address: the simulator on another machine (the Jetson Orin
+    # running this controller against the desktop's Project AirSim).
+    client = ProjectAirSimClient(address=args.sim_address)
     # The Dashboard heartbeat starts here, at the first slow step (the
     # connect), and ends at the very end of this function with the exit code
     # of final_report. A run refused earlier (the SystemExits above) leaves
@@ -7072,6 +7074,10 @@ def parse_cli(ap: argparse.ArgumentParser, argv: list[str] | None = None):
 
 def build_arg_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser()
+    ap.add_argument("--sim-address", default="127.0.0.1",
+                    help="host of the Project AirSim server (topics 8989, services 8990); "
+                         "another machine's address when this controller runs on the "
+                         "Jetson Orin and the simulator on the desktop")
     ap.add_argument("--object", default="a white car",
                     help="what to follow, in words. This is the only thing that "
                          "tells the drone what its target is.")

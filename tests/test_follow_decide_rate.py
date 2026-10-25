@@ -190,7 +190,7 @@ def test_off_by_default_and_the_flight_unchanged_when_off():
             and isinstance(n.slice, ast.Constant) and n.slice.value == "decide_rate"]
     assert mets and all(guarded(n, lambda s: "decider is not None" in s) for n in mets)
     # Built before the simulator is touched, like the DAgger perturber.
-    assert built[0].lineno < src[:src.index("client = ProjectAirSimClient()")].count("\n") + 1
+    assert built[0].lineno < src[:src.index("client = ProjectAirSimClient(address=args.sim_address)")].count("\n") + 1
 
 
 # =========================================================================== #

@@ -233,7 +233,7 @@ def test_off_by_default_and_the_flight_unchanged_when_off():
     for u in uses:
         assert guarded(u, on), f"line {u.lineno}: hierarchy.{u.attr} outside its guard"
     # Built (hello asked) before the simulator is touched.
-    assert built[0].lineno < src[:src.index("client = ProjectAirSimClient()")].count("\n") + 1
+    assert built[0].lineno < src[:src.index("client = ProjectAirSimClient(address=args.sim_address)")].count("\n") + 1
     # ONE apply(), on the controller's `smooth`, after the perturbers' and the
     # hold's call sites and before the one Shield call, its result the Shield's input.
     calls = _calls(fly, "hierarchy", "apply")
