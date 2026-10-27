@@ -4377,7 +4377,8 @@ async def fly(args) -> int:
                 bottom_tile=args.vla_hierarchy_bottom_tile,
                 prev_dt_s=args.vla_hierarchy_prev_dt_s,
                 step_as_rate=args.vla_hierarchy_step_as_rate,
-                speed_words=args.vla_hierarchy_speed_words, log=print)
+                speed_words=args.vla_hierarchy_speed_words,
+                front_source=args.vla_hierarchy_front_source, log=print)
         except vla_hierarchy.HierarchyRefused as exc:
             raise SystemExit(f"[vla-hierarchy] *** refused: {exc}") from None
         print(f"[vla-hierarchy] {hierarchy.describe()}")
@@ -4459,8 +4460,17 @@ async def fly(args) -> int:
         except Exception as exc:
             print(f"[collide] *** could not subscribe to collision_info "
                   f"({type(exc).__name__}: {exc}) - contacts will NOT be counted")
-        client.subscribe(drone.sensors["FrontCamera"]["scene_camera"],
-                         lambda _, m: obs.put_front(m))
+        # --vla-hierarchy-front-source detector: this camera's frame is also
+        # the hierarchy's front frame, from this one subscription (a pointer
+        # each, nothing decoded in the callback).
+        det_front = (args.vla_hierarchy is not None
+                     and args.vla_hierarchy_front_source == "detector")
+
+        def _front_frame(_, m):
+            obs.put_front(m)
+            if det_front and hierarchy is not None:
+                hierarchy.put_front(m)
+        client.subscribe(drone.sensors["FrontCamera"]["scene_camera"], _front_frame)
         client.subscribe(drone.sensors["DownCamera"]["scene_camera"],
                          lambda _, m: obs.put_down(m))
         # Range signal. Optional by design: an older robot config has no depth
@@ -4536,11 +4546,16 @@ async def fly(args) -> int:
             # --vla-hierarchy: the VLA asks with its own two cameras (this scene
             # variant, flight_scene). The callbacks store the message; pairing
             # and encoding happen on its query thread when it builds a request.
-            client.subscribe(drone.sensors["VLAFront"]["scene_camera"],
-                             lambda _, m: hierarchy.put_front(m))
+            # With --vla-hierarchy-front-source detector the front frame is
+            # FrontCamera's (fed above), VLAFront is not subscribed.
+            if args.vla_hierarchy_front_source != "detector":
+                client.subscribe(drone.sensors["VLAFront"]["scene_camera"],
+                                 lambda _, m: hierarchy.put_front(m))
             client.subscribe(drone.sensors["VLADown"]["scene_camera"],
                              lambda _, m: hierarchy.put_down(m))
-            print(f"[vla-hierarchy] AerialVLA's VLAFront/VLADown ({flight_scene(args)}), "
+            front = ("FrontCamera" if args.vla_hierarchy_front_source == "detector"
+                     else "VLAFront")
+            print(f"[vla-hierarchy] front {front}, down VLADown ({flight_scene(args)}), "
                   f"nothing recorded")
 
         if not args.no_car:
@@ -7597,6 +7612,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
                     help="with --vla-hierarchy: ask with the aircraft's own speed as words "
                          "after the object (vla_fly --vla-speed-words). Must be what the "
                          "served adapter was trained with, or the flight is refused")
+    ap.add_argument("--vla-hierarchy-front-source", choices=("vla", "detector"), default="vla",
+                    help="with --vla-hierarchy: the request's front frame, VLAFront (default) "
+                         "or this flight's FrontCamera (768x432, -20 deg) for a foreign "
+                         "server that reads it (vla_fly --vla-front-source). Must be the "
+                         "camera the server reads, or the flight is refused")
     ap.add_argument("--record-hz", type=float, default=20.0,
                     help="frames per second the recorder writes, on its OWN "
                          "thread. Replaces --view-every, which tied recording "
@@ -7696,16 +7716,18 @@ def main(argv: list[str] | None = None) -> int:
                               bottom_tile=args.vla_hierarchy_bottom_tile,
                               prev_dt_s=args.vla_hierarchy_prev_dt_s,
                               step_as_rate=args.vla_hierarchy_step_as_rate,
-                              speed_words=args.vla_hierarchy_speed_words)
+                              speed_words=args.vla_hierarchy_speed_words,
+                              front_source=args.vla_hierarchy_front_source)
         if why is not None:
             ap.error(why)
     elif (args.vla_hierarchy_range != (12.0, 22.0) or args.vla_hierarchy_allow_stand_in
           or args.vla_hierarchy_bottom_tile != "down" or args.vla_hierarchy_prev_dt_s is not None
-          or args.vla_hierarchy_step_as_rate is not None or args.vla_hierarchy_speed_words):
+          or args.vla_hierarchy_step_as_rate is not None or args.vla_hierarchy_speed_words
+          or args.vla_hierarchy_front_source != "vla"):
         ap.error("--vla-hierarchy-range, --vla-hierarchy-allow-stand-in, "
                  "--vla-hierarchy-bottom-tile, --vla-hierarchy-prev-dt-s, "
-                 "--vla-hierarchy-step-as-rate and --vla-hierarchy-speed-words need "
-                 "--vla-hierarchy")
+                 "--vla-hierarchy-step-as-rate, --vla-hierarchy-speed-words and "
+                 "--vla-hierarchy-front-source need --vla-hierarchy")
     if args.record_perturb and not args.record_vla:
         # A perturbed follow is worth flying only to record it: the noise is
         # there so the training data shows a recovery (vla_record.Perturber).

@@ -133,6 +133,23 @@
 #          on a stub client with a fake clock and on the loopback fake
 #          server with the real protocol-v2 client and threads; nothing
 #          SKIPs).
+#          test_vla_foreign (foreign drone VLAs behind protocol v2,
+#          2026-10-27: demo/vla_server_foreign.py serving DroneCATS and
+#          RaceVLA to the same clients - both native-to-step mappings on
+#          synthetic native outputs (DroneCATS go / rotate / think /
+#          finished and the paper's executor, a pitched camera; RaceVLA's
+#          OpenVLA tokens un-normalised with a small fake
+#          dataset_statistics.json), the clipping and the nearest-bin step
+#          text through the strict reader, DroneCATS's own prompt,
+#          camera_aux and history (reset on hello and a gap, per
+#          connection), the real protocol-v2 client against the server on
+#          an ephemeral loopback port with scripted models, the identity
+#          and the allow-list (vla_mission's pilot id, tools/todo.py's
+#          family, the lower tile "none", speed words off, the front
+#          camera, vla_fly --vla-front-source), the module importing without
+#          pydantic, and tools/bench_foreign_vla.py; no model, GPU or
+#          Pillow; its one check of the real prompt files SKIPs where the
+#          D:/models download is absent).
 #        The CityLife level, checked offline (the level itself is
 #          gitignored): test_citylife_*, test_drive_signals_dsl,
 #          test_ped_walk_plan, test_parked_cars.
@@ -636,6 +653,7 @@ jobs:
               tests/test_vla_speed_words.py \
               tests/test_vla_follow_reacquire.py \
               tests/test_vla_hierarchy.py \
+              tests/test_vla_foreign.py \
               tests/test_citylife_peds.py \
               tests/test_citylife_routes.py \
               tests/test_citylife_signal_lamps.py \

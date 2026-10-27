@@ -109,12 +109,36 @@ def adapter_variant(model_id) -> str | None:
     return None
 
 
+# Foreign drone VLAs served behind the same protocol (demo/vla_server_foreign.py,
+# 2026-10-27), allowed BY FAMILY: the server announces "<family>/<name>@<sha8>"
+# ("dronecats/DroneCATS-Cosmos3-Edge-2B@1a2b3c4d") and the pilot side records
+# "<family>:<name>" (demo/vla_mission.model_id_for). A flight of one is a VLA
+# flight of THAT family (vla_family), never AerialVLA's. guardrail/
+# aerialvla_codec.py FOREIGN_FAMILIES and foreign_family, copied (stdlib only,
+# as above); tests/test_vla_foreign.py holds the copy equal to the codec's.
+FOREIGN_FAMILIES = ("dronecats", "racevla")
+
+
+def foreign_family(model_id) -> str | None:
+    """The allow-listed foreign family of a server or pilot-side id, or None
+    (aerialvla_codec.foreign_family)."""
+    if not isinstance(model_id, str) or not model_id.strip():
+        return None
+    ident = model_id.strip().split("@", 1)[0]
+    for sep in ("/", ":"):
+        fam, s, name = ident.partition(sep)
+        if s and fam in FOREIGN_FAMILIES:
+            ok = name and not any(c in name for c in "/\\:@") and name == name.strip()
+            return fam if ok else None
+    return None
+
+
 def classify_pilot(vla_model_hash) -> str:
     """vla_model_hash -> none | stub | detector | vla | unknown | missing.
 
-    Only an id on the allow-list (OpenVLA, AerialVLA and its adapter) is a
-    VLA. 65 of the 99 manifests in demo/out on 2026-10-21 record the OWL-ViT
-    DETECTOR here (google/owlvit-base-patch32@...), 24 the StubVLA and 10
+    Only an id on the allow-list (OpenVLA, AerialVLA and its adapter, the
+    foreign families of FOREIGN_FAMILIES) is a VLA. 65 of the 99 manifests
+    in demo/out on 2026-10-21 record the OWL-ViT DETECTOR here (google/owlvit-base-patch32@...), 24 the StubVLA and 10
     none:hand-written-controller; none of them is a VLA flight, and a
     dashboard that counted "anything not none" would report 89.
 
@@ -136,7 +160,8 @@ def classify_pilot(vla_model_hash) -> str:
         return "stub"
     if "owlvit" in low or "owl-vit" in low or "owlv2" in low:
         return "detector"
-    if adapter_variant(s) is not None or any(p.search(ident) for p in VLA_ALLOW):
+    if (adapter_variant(s) is not None or foreign_family(s) is not None
+            or any(p.search(ident) for p in VLA_ALLOW)):
         return "vla"
     return "unknown"
 
@@ -387,13 +412,21 @@ def vla_evidence(run: Path, metrics: dict | None = None, kpi: dict | None = None
     # Which adapter answered (original / fine-tune / None), from the server's
     # own id: a fine-tune's flight is a VLA flight, recorded as the fine-tune.
     ev["adapter"] = adapter_variant(ev["model_id"])
+    # Which model family answered (aerialvla / openvla / a foreign family):
+    # a foreign model's flight is recorded as itself.
+    ev["family"] = vla_family(ev["model_id"])
     return ev
 
 
 def vla_family(model_id) -> str | None:
     """"aerialvla" (the AerialVLA adapter, on whatever base), "openvla" (the
-    OpenVLA base alone) or None. AerialVLA is checked first: its ids name
-    the base as well ("aerialvla:openvla-7b+aero_vla")."""
+    OpenVLA base alone), a foreign family ("dronecats", "racevla":
+    foreign_family) or None. The foreign families are checked first (their
+    ids are allow-listed by family), then AerialVLA: its ids name the base as
+    well ("aerialvla:openvla-7b+aero_vla")."""
+    fam = foreign_family(model_id)
+    if fam is not None:
+        return fam
     s = str(model_id or "").split("@", 1)[0]
     if VLA_ALLOW[1].search(s) or VLA_ALLOW[2].search(s):
         return "aerialvla"

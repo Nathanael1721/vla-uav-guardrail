@@ -1935,14 +1935,15 @@ class VLAServer:
                 "hello_wait_s": (None if self.t_hello is None or self.t_start is None
                                  else round(self.t_hello - self.t_start, 1)),
                 "exit_code": self.exit_code, "stop": self.stop_how,
-                "identity": {k: h.get(k) for k in ("id", "base", "weights_sha256", "precision",
-                                                    "attn", "merged", "agreement", "adapter")},
+                "identity": {k: h.get(k) for k in IDENTITY_RECORD_KEYS},
                 "max_new_tokens": h.get("max_new_tokens"),
                 "libraries": h.get("libraries"), "weight_files": h.get("weight_files")}
 
 
 def identity_is_vla(identity: dict | None) -> tuple[bool, str | None]:
-    """(a real AerialVLA identity?, why not). The brief's six fields
+    """(a real VLA identity?, why not): AerialVLA, one of our fine-tunes, or
+    an allow-listed foreign model (aerialvla_codec.FOREIGN_FAMILIES, served
+    by demo/vla_server_foreign.py). The brief's six fields
     (vla_link.check_identity) and a weights digest that is not one repeated
     digit (tools/todo.py weights_digest_ok: the test stand-ins report
     "0" * 64). The scripted stand-in (id fake:scripted, digest None) is not,
@@ -1963,19 +1964,38 @@ def identity_is_vla(identity: dict | None) -> tuple[bool, str | None]:
 
 
 def model_id_for(identity: dict | None) -> str:
-    """The pilot side's model id for a real AerialVLA identity: MODEL_ID
+    """The pilot side's model id for a real VLA identity: MODEL_ID
     ("aerialvla:openvla-7b+aero_vla") for upstream's adapter, and for a
     follow fine-tune (the server's id "aerialvla-ft-follow/<run>/<epoch>@...",
     aerialvla_codec.adapter_variant) "aerialvla:openvla-7b+aerialvla-ft-
     follow/<run>/<epoch>". Until the follow fine-tune (2026-10-23) every
     real identity was recorded under MODEL_ID, so a fine-tune would have
     flown under upstream's adapter name with the fine-tune's digest beside
-    it: the digest was honest, the name was not."""
-    from guardrail.aerialvla_codec import adapter_variant
+    it: the digest was honest, the name was not. A foreign model
+    (aerialvla_codec.foreign_pilot_id, 2026-10-27) is "<family>:<name>"
+    ("dronecats:DroneCATS-Cosmos3-Edge-2B"), never MODEL_ID."""
+    from guardrail.aerialvla_codec import adapter_variant, foreign_pilot_id
     sid = str((identity or {}).get("id") or "")
+    foreign = foreign_pilot_id(sid)
+    if foreign is not None:
+        return foreign
     if adapter_variant(sid) == "fine-tune":
         return f"aerialvla:openvla-7b+{sid.split('@', 1)[0]}"
     return MODEL_ID
+
+
+def model_words(identity: dict | None) -> str:
+    """How a console line names the server's model: "AerialVLA", or a
+    foreign model by its family ("the foreign VLA dronecats")."""
+    fam = C.foreign_family(identity.get("id") if isinstance(identity, dict) else None)
+    return "AerialVLA" if fam is None else f"the foreign VLA {fam}"
+
+
+# The identity keys a record keeps of the server's hello: the brief's six, the
+# measured agreement, the adapter block, and a foreign model's variant and
+# declared inputs (aerialvla_codec.foreign_block).
+IDENTITY_RECORD_KEYS = ("id", "base", "weights_sha256", "precision", "attn", "merged",
+                        "agreement", "adapter", "variant", "foreign")
 
 
 def local_weight_paths(identity: dict | None) -> list[str] | None:
@@ -2033,6 +2053,22 @@ def bottom_tile_check(identity: dict | None, flight: "C.BottomTile", *, is_vla: 
         rec["source"] = "not checked: a stand-in, not a VLA (it reads no image)"
         return rec
     rec["checked"] = True
+    # A foreign model (aerialvla_codec, FOREIGN DRONE VLAS) declares
+    # bottom_tile "none": it flies the default down tile, which its server
+    # ignores, and is refused prev_front (foreign_tile_mismatch).
+    try:
+        blk = C.foreign_block(identity)
+    except ValueError as exc:
+        rec.update({"ok": False, "why": f"the foreign model's declared inputs are malformed "
+                                        f"({exc})"})
+        return rec
+    if blk is not None:
+        rec["source"] = (f"foreign model ({blk['family']}): bottom_tile "
+                         f"{C.FOREIGN_TILE_NONE!r}, the server ignores the lower tile")
+        why = C.foreign_tile_mismatch(flight)
+        if why is not None:
+            rec.update({"ok": False, "why": why})
+        return rec
     try:
         tile, src = adapter_tile(identity, read_local=read_local)
     except ValueError as exc:
@@ -2091,6 +2127,20 @@ def speed_words_check(identity: dict | None, flight: "C.SpeedWords | None", *,
         return rec
     rec["checked"] = True
     try:
+        blk = C.foreign_block(identity)
+    except ValueError as exc:
+        rec.update({"ok": False, "why": f"the foreign model's declared inputs are malformed "
+                                        f"({exc})"})
+        return rec
+    if blk is not None:
+        # a foreign model declares speed words off (aerialvla_codec, FOREIGN
+        # DRONE VLAS): its command is built from the object words
+        rec["source"] = f"foreign model ({blk['family']}): speed words off, declared"
+        why = C.foreign_speed_words_mismatch(flight)
+        if why is not None:
+            rec.update({"ok": False, "why": why})
+        return rec
+    try:
         sw, src = adapter_speed_words(identity, read_local=read_local)
     except ValueError as exc:
         rec.update({"ok": False, "why": f"the adapter's recorded speed words are malformed "
@@ -2098,6 +2148,36 @@ def speed_words_check(identity: dict | None, flight: "C.SpeedWords | None", *,
         return rec
     rec.update({"adapter": None if sw is None else sw.as_dict(), "source": src})
     why = C.speed_words_mismatch(sw, flight)
+    if why is not None:
+        rec.update({"ok": False, "why": why})
+    return rec
+
+
+# --------------------------------------------------------------------------- #
+# The front camera the server reads, against the flight's (2026-10-27)
+# --------------------------------------------------------------------------- #
+def front_source_check(identity: dict | None, source: str, *, is_vla: bool = True) -> dict:
+    """Does this flight send the front camera the server reads
+    (aerialvla_codec.front_source_mismatch)? {flight, server, checked, ok,
+    why, source}: `ok` False refuses the flight before take-off
+    (demo/vla_fly.py --vla-front-source). AerialVLA and its fine-tunes read
+    VLAFront; a foreign server declares the camera its intrinsics assume. A
+    stand-in (not is_vla) is not checked, and says so."""
+    rec = {"flight": source, "server": None, "checked": False, "ok": True, "why": None,
+           "source": None}
+    if not is_vla:
+        rec["source"] = "not checked: a stand-in, not a VLA (it reads no image)"
+        return rec
+    rec["checked"] = True
+    try:
+        blk = C.foreign_block(identity)
+        why = C.front_source_mismatch(identity, source)
+    except ValueError as exc:
+        rec.update({"ok": False, "why": str(exc)})
+        return rec
+    rec["server"] = blk["front_source"] if blk is not None else C.DEFAULT_FRONT_SOURCE
+    rec["source"] = ("the foreign model's declared camera" if blk is not None
+                     else "AerialVLA's training camera (VLAFront)")
     if why is not None:
         rec.update({"ok": False, "why": why})
     return rec
@@ -2440,9 +2520,11 @@ def pilot_entry(identity: dict | None, stats: dict, records: list[dict], rows: l
     _pilot_stats reads: "pilot/vla" with decisions_accepted and
     ticks_by_author), the summary, the server record and `extra`.
 
-    A real AerialVLA identity (identity_is_vla) is kind "vla" with the
-    server's weights_sha256 as `reported_digest` (and the local weight files
-    when they are readable here, so the two digests are compared). Anything
+    A real VLA identity (identity_is_vla: AerialVLA, a fine-tune, or an
+    allow-listed foreign model under its own id, model_id_for) is kind "vla"
+    with the server's weights_sha256 as `reported_digest` (and the local
+    weight files when they are readable here, so the two digests are
+    compared). Anything
     else - the scripted stand-in - is kind "stub" under its own id, which
     the dashboard never counts as a VLA."""
     from guardrail.manifest import pilot_record
@@ -2454,9 +2536,7 @@ def pilot_entry(identity: dict | None, stats: dict, records: list[dict], rows: l
         sid = str((identity or {}).get("id") or "unknown")
         rec = pilot_record(sid if sid.startswith("fake:") else f"fake:{sid}", "stub")
         rec["not_a_vla_because"] = why
-    rec["server_identity"] = {k: (identity or {}).get(k) for k in
-                              ("id", "base", "weights_sha256", "precision", "attn", "merged",
-                               "agreement", "adapter")}
+    rec["server_identity"] = {k: (identity or {}).get(k) for k in IDENTITY_RECORD_KEYS}
     rec["vla"] = stats
     rec["summary"] = pilot_summary(stats, records, rows)
     rec["server"] = server

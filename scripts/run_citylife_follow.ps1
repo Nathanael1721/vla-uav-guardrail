@@ -163,6 +163,8 @@ param(
     [double]$VlaHierarchyPrevDtS = 0,   # with -VlaHierarchyBottomTile prev_front: s earlier (1.0)
     [double]$VlaHierarchyStepAsRate = 0, # with -VlaHierarchy: the search's steps as rates over H s (off)
     [switch]$VlaHierarchySpeedWords,    # with -VlaHierarchy: own speed as words (off)
+    [string]$VlaHierarchyFrontSource = "", # with -VlaHierarchy: "detector" sends FrontCamera
+                                        # (a foreign server that reads it; default VLAFront)
     [string]$VlaHierarchyRange = "",    # with -VlaHierarchy: "NEAR,FAR" stand-off metres (12,22)
     [switch]$VlaHierarchyAllowStandIn,  # with -VlaHierarchy: a server that is not AerialVLA
     [int]$Seed = 0,                  # follow_vlm --seed (0 = its default); the
@@ -305,9 +307,11 @@ if ($RecordPerturbVla) {
 # Hierarchical control (see the header), refused as follow_vlm refuses it:
 # one replacement of the executed command at a time, and never training data.
 if (($VlaHierarchyBottomTile -or $VlaHierarchyPrevDtS -or $VlaHierarchyStepAsRate -or
-     $VlaHierarchySpeedWords -or $VlaHierarchyRange -or $VlaHierarchyAllowStandIn) -and -not $VlaHierarchy) {
+     $VlaHierarchySpeedWords -or $VlaHierarchyRange -or $VlaHierarchyAllowStandIn -or
+     $VlaHierarchyFrontSource) -and -not $VlaHierarchy) {
     throw ("-VlaHierarchyBottomTile, -VlaHierarchyPrevDtS, -VlaHierarchyStepAsRate, " +
-           "-VlaHierarchySpeedWords, -VlaHierarchyRange and -VlaHierarchyAllowStandIn need -VlaHierarchy")
+           "-VlaHierarchySpeedWords, -VlaHierarchyRange, -VlaHierarchyAllowStandIn and " +
+           "-VlaHierarchyFrontSource need -VlaHierarchy")
 }
 if ($VlaHierarchy -and ($RecordPerturb -or $RecordPerturbVla -or $DecideEveryS)) {
     throw "-VlaHierarchy and -RecordPerturb / -RecordPerturbVla / -DecideEveryS: one replacement of the executed command at a time"
@@ -607,6 +611,9 @@ if ($VlaHierarchy) {
     }
     if ($VlaHierarchyAllowStandIn) {
         $a += @("--vla-hierarchy-allow-stand-in")
+    }
+    if ($VlaHierarchyFrontSource) {
+        $a += @("--vla-hierarchy-front-source", $VlaHierarchyFrontSource)
     }
 }
 if ($Seed -ne 0) { $a += @("--seed", "$Seed") }

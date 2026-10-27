@@ -900,7 +900,7 @@ class VLAPerturber:
         c = self.cfg
         tile = getattr(self.frames, "tile", None)
         sw = getattr(self.frames, "speed_words", None)
-        return (f"AerialVLA {sv['identity'].get('id')} at {self.address}"
+        return (f"{VM.model_words(self.identity)} {sv['identity'].get('id')} at {self.address}"
                 + ("" if self.is_vla else f" (*** STAND-IN, not a VLA: {self.why_not})")
                 + f" flies {d[0]:g}-{d[1]:g} s every {e[0]:g}-{e[1]:g} s (seed {self.seed}), "
                 f"asked from {self.schedule.lead_s:g} s before: vla_fly's follow tracker at "
@@ -969,6 +969,13 @@ def make_vla_perturber(addr: str, *, seed: int, obs, box_source: Callable[[], di
         raise DaggerRefused(f"the server at {addr}: {sw_check['why']} (the adapter's speed "
                             f"words from {sw_check['source']}; --perturb-vla-speed-words "
                             f"{'on' if vargs.speed_words else 'off'})")
+    # The windows ask with VLAFront: a foreign server whose intrinsics assume
+    # another camera is refused (vla_mission.front_source_check).
+    front_check = VM.front_source_check(identity, "vla", is_vla=is_vla)
+    if not front_check["ok"]:
+        client.close()
+        raise DaggerRefused(f"the server at {addr}: {front_check['why']} (the recorder sends "
+                            f"VLAFront)")
     try:
         frames = VM.VLAFrames(obs, encode=encode, bottom_tile=vargs.bottom_tile,
                               speed_words=vargs.speed_words)
@@ -986,7 +993,8 @@ def make_vla_perturber(addr: str, *, seed: int, obs, box_source: Callable[[], di
                              "close": [vargs.close_bottom_frac, vargs.close_width_frac],
                              "start_gate": None, "forget_at_lead_in": True},
                     "tracker": asdict(tcfg), "step_as_rate_s": vargs.step_as_rate,
-                    "bottom_tile": tile_check, "speed_words": sw_check},
+                    "bottom_tile": tile_check, "speed_words": sw_check,
+                    "front_source": front_check},
             frames=frames, record_dir=record_dir, log=log)
     except BaseException:
         client.close()

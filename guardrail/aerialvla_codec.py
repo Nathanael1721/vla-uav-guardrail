@@ -1163,6 +1163,167 @@ def adapter_variant(model_id: Any) -> str | None:
     return None
 
 
+# --------------------------------------------------------------------------- #
+# Foreign drone VLAs behind the same protocol (2026-10-27)
+# --------------------------------------------------------------------------- #
+# The comparison the user asked for: every downloadable drone VLA flown on our
+# red-car follow through the same harness, scenario, scoring and Shield as the
+# fine-tuned AeroVLA. demo/vla_server_foreign.py serves each one behind
+# protocol v2: it builds the model's OWN input from the request and converts
+# its native action into the step text "FF DD YY" (or LAND) by a documented
+# mapping, so every client reads the answer unchanged. Its hello names the
+# model ITSELF:
+#     "<family>/<name>@<first 8 hex of weights_sha256>"
+#     ("dronecats/DroneCATS-Cosmos3-Edge-2B@1a2b3c4d", "racevla/drone6_all@...")
+# with `variant` "foreign" and a `foreign` block that declares what the model
+# reads of a request (foreign_block):
+#   * bottom_tile "none": the server ignores the mosaic's lower tile (one
+#     front frame is the model's input). The client sends its default, the
+#     down camera, and the server drops it; a prev_front flight would claim
+#     an input the model never reads and is refused (foreign_tile_mismatch;
+#     demo/vla_mission.bottom_tile_check).
+#   * speed_words None: off. The object words become the model's own command
+#     ("go to the red car"); speed words appended to them would be a command
+#     it never saw, refused either way round (vla_mission.speed_words_check).
+#   * front_source "vla" | "detector": the camera whose frames the server's
+#     intrinsics assume (FRONT_SOURCES). DroneCATS turns a pixel and a depth
+#     into a bearing and an elevation, so the field of view and the pitch
+#     must be the flight's: vla_mission.front_source_check refuses a flight
+#     whose --vla-front-source is another camera.
+# The pilot side records a foreign model as "<family>:<name>"
+# (foreign_pilot_id; vla_mission.model_id_for), never under AerialVLA's
+# MODEL_ID, and tools/todo.py (a stdlib copy of FOREIGN_FAMILIES and
+# foreign_family) counts its flight as a VLA flight of that family. An
+# allow-list, not a pattern: a family is added here after its server's
+# mapping is written and tested (tests/test_vla_foreign.py).
+FOREIGN_VARIANT = "foreign"
+FOREIGN_FAMILIES = ("dronecats", "racevla")
+FOREIGN_TILE_NONE = "none"
+# The front cameras a flight can send (demo/pas_config/robot_vla_quad_det.
+# jsonc): VLAFront, AerialVLA's training camera (256x256, level), and the
+# detector's FrontCamera (768x432, pitched 20 deg down: rpy-deg "0 -20.0 0").
+# Both 90 deg horizontal field of view; pitch_deg + = up, as the config writes it.
+FRONT_SOURCES: dict[str, dict[str, Any]] = {
+    "vla": {"camera": "VLAFront", "hfov_deg": 90.0, "pitch_deg": 0.0},
+    "detector": {"camera": "FrontCamera", "hfov_deg": 90.0, "pitch_deg": -20.0},
+}
+DEFAULT_FRONT_SOURCE = "vla"
+
+
+def _foreign_parts(model_id: Any) -> tuple[str, str] | None:
+    """(family, name) of a foreign id in either form - the server's
+    "<family>/<name>@<sha8>" or the pilot side's "<family>:<name>[@...]" -
+    or None. The name is one plain path segment, non-empty."""
+    if not isinstance(model_id, str) or not model_id.strip():
+        return None
+    ident = model_id.strip().split("@", 1)[0]
+    for sep in ("/", ":"):
+        fam, s, name = ident.partition(sep)
+        if s and fam in FOREIGN_FAMILIES:
+            if name and not any(c in name for c in "/\\:@") and name == name.strip():
+                return fam, name
+            return None
+    return None
+
+
+def foreign_family(model_id: Any) -> str | None:
+    """The allow-listed foreign family a model id names ("dronecats",
+    "racevla"), or None: a `fake:` stand-in, AerialVLA's own ids, anything
+    not on FOREIGN_FAMILIES."""
+    parts = _foreign_parts(model_id)
+    return parts[0] if parts else None
+
+
+def foreign_pilot_id(model_id: Any) -> str | None:
+    """The pilot side's id of a foreign server id: "dronecats/<name>@<sha8>"
+    -> "dronecats:<name>" (demo/vla_mission.model_id_for); None for an id
+    that is not foreign."""
+    parts = _foreign_parts(model_id)
+    return f"{parts[0]}:{parts[1]}" if parts else None
+
+
+def foreign_block(identity: Any) -> dict | None:
+    """The validated `foreign` block of a foreign model's identity, or None
+    for an identity that does not claim to be one (no `variant` "foreign",
+    no allow-listed family in its id). ValueError for one that claims it and
+    does not declare its inputs exactly: the family of its id, bottom_tile
+    "none", speed_words null (the key present), and a front_source of
+    FRONT_SOURCES whose camera facts are the block's `camera`."""
+    if not isinstance(identity, dict):
+        return None
+    fam = foreign_family(identity.get("id"))
+    claims = identity.get("variant") == FOREIGN_VARIANT
+    if fam is None and not claims:
+        return None
+    if fam is None:
+        raise ValueError(f"variant {FOREIGN_VARIANT!r} with id {identity.get('id')!r}: not one of "
+                         f"the allow-listed families {list(FOREIGN_FAMILIES)}")
+    if not claims:
+        raise ValueError(f"id {identity.get('id')!r} names the foreign family {fam!r} without "
+                         f"variant {FOREIGN_VARIANT!r}")
+    blk = identity.get("foreign")
+    if not isinstance(blk, dict):
+        raise ValueError("a foreign identity carries no `foreign` block: what the model reads of "
+                         "a request is not declared")
+    if blk.get("family") != fam:
+        raise ValueError(f"the foreign block's family {blk.get('family')!r} is not the id's "
+                         f"{fam!r}")
+    if blk.get("bottom_tile") != FOREIGN_TILE_NONE:
+        raise ValueError(f"a foreign model's bottom_tile is {FOREIGN_TILE_NONE!r} (one front "
+                         f"frame), not {blk.get('bottom_tile')!r}")
+    if "speed_words" not in blk or blk["speed_words"] is not None:
+        raise ValueError("a foreign model declares speed_words null (off)")
+    src = blk.get("front_source")
+    if src not in FRONT_SOURCES:
+        raise ValueError(f"front_source {src!r} is not one of {list(FRONT_SOURCES)}")
+    if blk.get("camera") != FRONT_SOURCES[src]:
+        raise ValueError(f"the declared camera {blk.get('camera')!r} is not front_source "
+                         f"{src!r}'s {FRONT_SOURCES[src]!r}")
+    return blk
+
+
+def foreign_tile_mismatch(given: BottomTile) -> str | None:
+    """Why a foreign model (bottom_tile "none") must not be flown with the
+    lower tile `given`, or None. THE RULE: "none" flies with the client's
+    default tile, the down camera, which the server receives and ignores;
+    prev_front would say the model sees the car's motion, and it never reads
+    that tile."""
+    if given.mode == BOTTOM_TILE_DOWN:
+        return None
+    return (f"the foreign model reads one front frame (bottom_tile {FOREIGN_TILE_NONE!r}) and "
+            f"would be given {_tile_words(given)}: an input it never reads; fly the default "
+            f"'down' tile, which the server ignores")
+
+
+def foreign_speed_words_mismatch(given: SpeedWords | None) -> str | None:
+    """Why a foreign model (speed words off) must not be flown with `given`,
+    or None when the flight sends none."""
+    if given is None:
+        return None
+    return (f"the foreign model's command is built from the object words, which would end in "
+            f"{_speed_words_text(given)}: a command it never saw")
+
+
+def front_source_mismatch(identity: Any, source: str) -> str | None:
+    """Why a flight sending the front camera `source` (FRONT_SOURCES) must
+    not fly this server, or None. A foreign server declares the camera its
+    intrinsics assume (foreign_block's front_source), and only that one
+    agrees. Any other server - AerialVLA, a fine-tune - reads VLAFront, the
+    training camera; the detector's frame would be an input it never saw.
+    ValueError for an unknown source or a malformed foreign block."""
+    if source not in FRONT_SOURCES:
+        raise ValueError(f"front source {source!r} is not one of {list(FRONT_SOURCES)}")
+    blk = foreign_block(identity)
+    want = blk["front_source"] if blk is not None else DEFAULT_FRONT_SOURCE
+    if source == want:
+        return None
+    who = (f"the foreign server's intrinsics assume {FRONT_SOURCES[want]['camera']}"
+           if blk is not None else
+           f"this model reads {FRONT_SOURCES[want]['camera']}, its training camera")
+    return (f"{who} ({want!r}), and the flight would send {FRONT_SOURCES[source]['camera']} "
+            f"({source!r})")
+
+
 def _is_coordinate_name(key: str) -> bool:
     k = key.lower()
     return k in COORDINATE_FIELD_NAMES or "target" in k or "goal" in k

@@ -579,6 +579,13 @@ class InferReply:
     image_sha256: str | None
     model: dict | None
     extra_keys: tuple[str, ...] = ()
+    # A foreign model's server (demo/vla_server_foreign.py) answers the step
+    # text its mapping made, and beside it the model's NATIVE output, the
+    # mapping applied and the timing (keys outside protocol v2, listed in
+    # extra_keys): kept here, as sent, so the request's record carries them.
+    # None for every other server.
+    native: dict | None = None
+    mapping: dict | None = None
 
     @property
     def kind(self) -> str:
@@ -744,7 +751,9 @@ def parse_infer_response(raw: Any, sent: dict, identity: dict | None = None) -> 
                            f"{identity_of(raw['model'])}, hello announced {identity_of(identity)}")
     return InferReply(True, None, raw["raw_text"], bins, step, raw["land"],
                       raw["parse_ok"], lat, raw["prompt_sha256"], raw["image_sha256"],
-                      raw["model"], extra)
+                      raw["model"], extra,
+                      native=raw.get("native") if isinstance(raw.get("native"), dict) else None,
+                      mapping=raw.get("mapping") if isinstance(raw.get("mapping"), dict) else None)
 
 
 @dataclass(frozen=True)
@@ -1228,6 +1237,11 @@ def make_record(meta: dict, result: LinkResult) -> dict:
     })
     if rep.extra_keys:
         rec["reply_unknown_keys"] = list(rep.extra_keys)
+    if rep.native is not None:
+        # a foreign model's own output and how it became this step
+        # (InferReply.native): no silent conversion
+        rec["native"] = rep.native
+        rec["mapping"] = rep.mapping
     return rec
 
 

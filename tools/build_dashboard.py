@@ -338,6 +338,9 @@ def _evidence_summary(tag: str, ev: dict) -> dict:
         # original / fine-tune (tools/todo.py adapter_variant): which AerialVLA
         # adapter answered, so a fine-tune's flight never reads as upstream's
         "adapter": ev.get("adapter"),
+        # the model family that answered (tools/todo.py vla_family): a foreign
+        # model's flight (dronecats, racevla) never reads as AerialVLA's
+        "family": ev.get("family"),
         "digests_seen": len(ev.get("digests") or []),
         **{k: ev.get(k) or 0 for k in ("parse_fail", "server_error", "link_failure", "no_digest",
                                        "requests", "vla_ticks")},

@@ -674,6 +674,12 @@ class VLABridge:
             self._not_ready(f"the server's identity is not AerialVLA ({self.why_not_vla}); "
                             f"--allow-stand-in flies a stand-in, recorded as one")
             return
+        # This node sends VLAFront: a foreign server whose intrinsics assume
+        # another camera is not flown (vla_mission.front_source_check).
+        front = VM.front_source_check(self.hello, "vla", is_vla=self.is_vla)
+        if not front["ok"]:
+            self._not_ready(f"{front['why']} (this node sends VLAFront)")
+            return
         self.client = RemoteVLA(cfg.host, cfg.port, response_timeout_s=cfg.decision_timeout_s,
                                 strict_identity=self.is_vla,
                                 late_reply_wait_s=cfg.late_reply_wait_s, clock=self.clock)

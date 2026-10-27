@@ -390,6 +390,27 @@ def test_m2_asks_only_on_a_fresh_box_and_ends_on_its_size():
     assert rows[-1]["box_frac"] >= 0.15 and rows[-1]["det"] is not None
 
 
+def test_the_detector_camera_is_the_front_image_with_vla_front_source_detector():
+    """--vla-front-source detector (2026-10-27): the detector's FrontCamera
+    frame (768x432) goes in the request's front slot from the one
+    subscription that also feeds OWL-ViT, the down frame is paired as
+    always, and the params record the choice (a stand-in: not checked)."""
+    why = _missing()
+    if why:
+        print(f"      ({why})")
+        return SKIP
+    code, out, said = _fly(["--mission", "approach", "--tag", "fakesim_detfront", "--max-s", "20",
+                            "--no-transfer", "--no-land-site", "--vla-front-source", "detector",
+                            "--vla-fake-output", "96 48 49</s>"], grounder=_GrowingBox)
+    assert code == 0, said[-3000:]
+    m = _metrics(out)
+    fs = m["params"]["front_source"]
+    assert fs["flight"] == "detector" and fs["checked"] is False, fs
+    caps = [json.loads(x) for x in (out / "vla_captures.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert caps and all(c["front_wh"] == [768, 432] and c["down_wh"] == [256, 256] for c in caps)
+    assert "front image FrontCamera" in said, said[-2000:]
+
+
 def test_a_server_killed_mid_mission_hovers_then_lands_and_exits_3():
     why = _missing()
     if why:

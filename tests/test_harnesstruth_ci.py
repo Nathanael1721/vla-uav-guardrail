@@ -844,6 +844,25 @@ def test_the_hierarchy_test_runs_in_ci():
     assert "== SKIP" in runner, "the runner does not count the SKIP"
 
 
+def test_the_foreign_vla_test_runs_in_ci():
+    """Foreign drone VLAs behind protocol v2 (2026-10-27): demo/vla_server_foreign.py
+    serving DroneCATS and RaceVLA to the AeroVLA clients, the native-to-step
+    mappings and the allow-list that records them as themselves. No model,
+    GPU or Pillow: scripted native outputs, a stand-in frame decoder, the
+    real protocol-v2 client on an ephemeral loopback port (never 8790). Its
+    one check of the downloaded prompt files SKIPs where D:/models is
+    absent, printing why, and its runner counts the SKIP."""
+    assert "test_vla_foreign.py" in _loop(), "not run in CI"
+    src = (ROOT / "tests" / "test_vla_foreign.py").read_text(encoding="utf-8")
+    assert "assert port != 8790" in src and 'F.make_tcp_server(core, "127.0.0.1", 0)' in src
+    assert "RemoteVLA(" in src and "strict_identity=True" in src, "the real client is not used"
+    assert "import cv2" not in src and "from PIL" not in src and "import torch" not in src
+    skips = src.count("return SKIP")
+    assert skips == 1 and 'print("SKIP: the DroneCATS download' in src, skips
+    runner = src.split('if __name__ == "__main__":', 1)[-1]
+    assert "== SKIP" in runner, "the runner does not count the SKIP"
+
+
 def test_the_ardupilot_vla_pilot_test_runs_in_ci():
     """Wave V2b (2026-10-23): the ArduPilot rail's AerialVLA pilot
     (perception_node --pilot vla, to-do VLA-07) and its VLA cameras (VLA-03).

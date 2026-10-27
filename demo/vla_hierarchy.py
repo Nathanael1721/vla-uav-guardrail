@@ -249,7 +249,7 @@ class StandOff:
 
 def check_args(addr: str, *, s_range=S_RANGE_M, bottom_tile: str = "down",
                prev_dt_s: float | None = None, step_as_rate: float | None = None,
-               speed_words: bool = False) -> str | None:
+               speed_words: bool = False, front_source: str = "vla") -> str | None:
     """Why follow_vlm should refuse --vla-hierarchy with these, or None. The
     lower tile, the rate and the speed words are vla_fly's own flags:
     vla_fly's parser judges them (vla_dagger.follow_args)."""
@@ -260,6 +260,8 @@ def check_args(addr: str, *, s_range=S_RANGE_M, bottom_tile: str = "down",
     why = check_range(s_range)
     if why is not None:
         return f"--vla-hierarchy-range: {why}"
+    if front_source not in ("vla", "detector"):
+        return f"--vla-hierarchy-front-source {front_source!r} is not vla or detector"
     try:
         VD.follow_args("a red car", cruise_alt=10.0, bottom_tile=bottom_tile,
                        prev_dt_s=prev_dt_s, step_as_rate=step_as_rate, speed_words=speed_words)
@@ -640,7 +642,7 @@ class VLAHierarchy(VD.VLAPerturber):
         near, far = self.s_range
         tile = getattr(self.frames, "tile", None)
         sw = getattr(self.frames, "speed_words", None)
-        return (f"AerialVLA {sv['identity'].get('id')} at {self.address}"
+        return (f"{VM.model_words(self.identity)} {sv['identity'].get('id')} at {self.address}"
                 + ("" if self.is_vla else f" (*** STAND-IN, not a VLA: {self.why_not})")
                 + f" decides the intent continuously (pipelined, held {self.expiry_s:g} s): "
                 f"FOLLOW sets the controller's stand-off ({far:g} m at fwd 0 to {near:g} m at "
@@ -706,6 +708,7 @@ def make_vla_hierarchy(addr: str, *, obs, box_source: Callable[[], dict | None],
                        speed_cap_mps: float = VD.FOLLOW_SPEED_CAP_MPS,
                        bottom_tile: str = "down", prev_dt_s: float | None = None,
                        step_as_rate: float | None = None, speed_words: bool = False,
+                       front_source: str = "vla",
                        log: Callable[[str], Any] | None = None) -> VLAHierarchy:
     """The --vla-hierarchy layer of a follow_vlm flight: vla_fly's follow
     configuration (vla_dagger.follow_args, with vla_fly's --vla-bottom-tile /
@@ -714,7 +717,11 @@ def make_vla_hierarchy(addr: str, *, obs, box_source: Callable[[], dict | None],
     the speed words the adapter was trained with against this flight's
     (vla_mission.bottom_tile_check / speed_words_check), the VLA cameras' own
     VLAFrames over the flight's pose ring (`obs`), DetectorHint over
-    `box_source` (follow_vlm.Grounder.latest). HierarchyRefused for each
+    `box_source` (follow_vlm.Grounder.latest). `front_source` (follow_vlm
+    --vla-hierarchy-front-source; aerialvla_codec.FRONT_SOURCES): the camera
+    follow_vlm feeds put_front with - VLAFront, or the detector's
+    FrontCamera for a foreign server that reads it - checked against the
+    server's (vla_mission.front_source_check). HierarchyRefused for each
     refusal. Nothing is started: start(t0) does that, with the mission clock."""
     why = check_range(s_range)
     if why is not None:
@@ -744,10 +751,18 @@ def make_vla_hierarchy(addr: str, *, obs, box_source: Callable[[], dict | None],
         raise HierarchyRefused(f"the server at {addr}: {sw_check['why']} (the adapter's speed "
                                f"words from {sw_check['source']}; --vla-hierarchy-speed-words "
                                f"{'on' if vargs.speed_words else 'off'})")
+    # The camera follow_vlm feeds this layer with must be the one the server
+    # reads (vla_mission.front_source_check): AerialVLA reads VLAFront, a
+    # foreign server declares its own.
+    front_check = VM.front_source_check(identity, front_source, is_vla=is_vla)
+    if not front_check["ok"]:
+        client.close()
+        raise HierarchyRefused(f"the server at {addr}: {front_check['why']} "
+                               f"(--vla-hierarchy-front-source {front_source})")
     try:
         frames = VM.VLAFrames(obs, encode=encode, bottom_tile=vargs.bottom_tile,
                               speed_words=vargs.speed_words)
-        return VLAHierarchy(
+        hier = VLAHierarchy(
             client=client, get_capture=frames.capture,
             latest_box=VD.latest_box_from(box_source), object_text=object_text,
             tracker_config=tcfg, policy=VM.pilot_alt_config(True, policy)[0], s_range=s_range,
@@ -761,8 +776,11 @@ def make_vla_hierarchy(addr: str, *, obs, box_source: Callable[[], dict | None],
                              "close": [vargs.close_bottom_frac, vargs.close_width_frac],
                              "start_gate": None},
                     "tracker": asdict(tcfg), "step_as_rate_s": vargs.step_as_rate,
-                    "bottom_tile": tile_check, "speed_words": sw_check},
+                    "bottom_tile": tile_check, "speed_words": sw_check,
+                    "front_source": front_check},
             frames=frames, record_dir=record_dir, log=log)
+        hier.front_source = front_source
+        return hier
     except BaseException:
         client.close()
         raise

@@ -4155,6 +4155,13 @@ def _vla_bring_up(args, out: Path, VM, srv, policy, shield_on: bool, grounder, h
                          f"pass --allow-stand-in to fly a stand-in, recorded as one")
     print(f"[vla]    hello: {identity_of(identity)}"
           + ("" if is_vla else f"  *** STAND-IN, not a VLA: {why_not}"))
+    # This rail sends VLAFront: a foreign server (demo/vla_server_foreign.py)
+    # whose intrinsics assume another camera is refused
+    # (vla_mission.front_source_check).
+    front_check = VM.front_source_check(identity, "vla", is_vla=is_vla)
+    if not front_check["ok"]:
+        raise SystemExit(f"[vla]    *** refused before take-off: {front_check['why']} (this "
+                         f"rail sends VLAFront)")
     # The GPU's memory with the model loaded (review of 4a0da6d, P2-7).
     gpu = {"at_hello": gpu_memory(run_cmd)}
     weight_paths = (None if (args.no_local_weights or not is_vla)

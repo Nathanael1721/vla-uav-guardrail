@@ -25,6 +25,11 @@ every 10 Hz tick through the Safety Shield, with honest records.
     # the whole flight path without the 7B model: the scripted server (its
     # identity is fake:scripted; the run is recorded as a stand-in, never a VLA)
     python demo/vla_fly.py --mission goto --vla-fake-output "96 48 49</s>" --tag vla_dry
+    # a foreign drone VLA behind demo/vla_server_foreign.py (attached; it is
+    # recorded as itself, dronecats:... / racevla:...), the detector's frames
+    # as its front image when its server was started --front-source detector
+    python demo/vla_fly.py --mission follow --cadence pipelined \\
+        --vla-server 127.0.0.1:8791 --vla-front-source detector ...
 
 WHY A NEW SCRIPT AND NOT `follow_vlm.py --pilot vla`
 
@@ -100,6 +105,18 @@ take-off (exit 4) when the adapter's provenance says otherwise either way
 (vla_mission.speed_words_check; an adapter that records none is off);
 every request's record says its speed and words (vla_steps.jsonl
 `own_speed`), metrics.params the check.
+
+THE FRONT IMAGE (2026-10-27, default unchanged): --vla-front-source vla
+sends VLAFront (256x256, AerialVLA's training camera); detector sends the
+detector's FrontCamera frame (768x432, 90 deg, pitched -20 deg; approach and
+follow only, the scenes that have it) for a foreign model that wants a
+larger image (DroneCATS: at most 640 px wide, the paper's 640x360 at 90
+deg; its server downscales). The camera's field of view and pitch are the
+server's intrinsics, so the flight is refused before take-off (exit 4)
+unless the server reads that camera: AerialVLA and its fine-tunes read
+VLAFront, a foreign server declares its own (vla_mission.
+front_source_check). metrics.params says which, and VLAFrames' stats the
+sizes sent.
 
 BEFORE TAKE-OFF: one warm-up inference on a live camera pair; a round trip
 over --warmup-max-latency-s (5 s), or no answer, refuses the flight (exit 4).
@@ -401,6 +418,13 @@ def build_arg_parser() -> argparse.ArgumentParser:
                          "pose ring at or before each capture, four classes). Must be what the "
                          "adapter was trained with (its provenance, announced in hello): "
                          "refused before take-off otherwise, either way. Default off")
+    # THE FRONT IMAGE (aerialvla_codec.FRONT_SOURCES; 2026-10-27).
+    ap.add_argument("--vla-front-source", choices=("vla", "detector"), default="vla",
+                    help="the request's front frame: 'vla' (VLAFront, 256x256, AerialVLA's "
+                         "training camera) or 'detector' (the detector's FrontCamera, "
+                         "768x432, pitched -20 deg; approach / follow) for a foreign model "
+                         "that wants a larger image. Must be the camera the server reads "
+                         "(hello): refused before take-off otherwise. Default vla")
     ap.add_argument("--vla-fake-output", nargs="+", default=None,
                     help="start the scripted stand-in server instead of the model")
     ap.add_argument("--vla-fake-delay-s", type=float, default=0.3)
@@ -450,6 +474,12 @@ def parse_cli(ap: argparse.ArgumentParser, argv: list[str] | None = None):
         return resolve_args(args)
     except ValueError as exc:
         ap.error(str(exc))
+
+
+def front_camera(args) -> str:
+    """The camera whose frames go in the request's front slot
+    (--vla-front-source): VLAFront, or the detector's FrontCamera."""
+    return CAMERAS["detector"] if args.vla_front_source == "detector" else CAMERAS["front"]
 
 
 def resolve_args(args):
@@ -502,6 +532,13 @@ def resolve_args(args):
     # the adapter's own after hello.
     from guardrail.aerialvla_codec import speed_words
     args.speed_words = speed_words(bool(args.vla_speed_words))
+    # THE FRONT IMAGE: the detector's camera exists in the approach and
+    # follow scenes only (robot_vla_quad_det.jsonc); checked against the
+    # server's after hello.
+    if args.vla_front_source == "detector" and m not in VM.DETECTOR_MISSIONS:
+        raise ValueError(f"--vla-front-source detector sends the detector's camera "
+                         f"({CAMERAS['detector']}), which only the "
+                         f"{'/'.join(VM.DETECTOR_MISSIONS)} scenes have")
     if args.vla_adapter is not None and (args.vla_server or args.vla_fake_output):
         raise ValueError("--vla-adapter is the adapter of a server this flight STARTS: an "
                          "attached server flies whatever it was started with (its hello's "
@@ -1410,6 +1447,19 @@ async def _fly(args, holder: dict) -> int:
               f"{'on' if args.speed_words else 'off'}; the adapter's from "
               f"{sw_check['source']})", file=sys.stderr)
         raise SystemExit(EXIT_REFUSED)
+    # The front camera the server reads must be the one this flight sends
+    # (--vla-front-source; vla_mission.front_source_check): refused before
+    # take-off.
+    front_check = VM.front_source_check(identity, args.vla_front_source, is_vla=is_vla)
+    if not front_check["ok"]:
+        server.stop()
+        live.stop("failed", detail="the server reads another front camera")
+        print(f"[vla] *** refused before take-off: {front_check['why']} (--vla-front-source "
+              f"{args.vla_front_source})", file=sys.stderr)
+        raise SystemExit(EXIT_REFUSED)
+    print(f"[vla] front image {front_camera(args)} (--vla-front-source {args.vla_front_source})"
+          + (f", the server's ({front_check['source']})" if front_check["checked"]
+             else f" - {front_check['source']}"))
     print(f"[vla] speed words {'on' if args.speed_words else 'off'}"
           + (f" ({args.speed_words.window_s:g} s window)" if args.speed_words else "")
           + (f", the adapter's ({sw_check['source']})" if sw_check["checked"]
@@ -1548,13 +1598,22 @@ async def _fly(args, holder: dict) -> int:
             collisions_subscribed = True
         except Exception as exc:                                   # noqa: BLE001
             print(f"[collide] *** not subscribed ({type(exc).__name__}): contacts NOT counted")
-        sim.subscribe(drone.sensors[CAMERAS["front"]]["scene_camera"],
-                      lambda _, m: frames.put_front(m))
+        # --vla-front-source detector: the detector's frame is also the
+        # request's front frame, from ONE subscription feeding both (a
+        # pointer each, nothing decoded in the callback); VLAFront is then
+        # not subscribed. The down frame is paired and sent as always.
+        detector_front = args.vla_front_source == "detector"
+        if not detector_front:
+            sim.subscribe(drone.sensors[CAMERAS["front"]]["scene_camera"],
+                          lambda _, m: frames.put_front(m))
         sim.subscribe(drone.sensors[CAMERAS["down"]]["scene_camera"],
                       lambda _, m: frames.put_down(m))
         if args.mission in VM.DETECTOR_MISSIONS:
-            sim.subscribe(drone.sensors[CAMERAS["detector"]]["scene_camera"],
-                          lambda _, m: obs.put_front(m))
+            def _detector_frame(_, m):
+                obs.put_front(m)
+                if detector_front:
+                    frames.put_front(m)
+            sim.subscribe(drone.sensors[CAMERAS["detector"]]["scene_camera"], _detector_frame)
             # OWL-ViT loads in its own thread from here, beside the warm-up
             # and the take-off (2026-10-23): a follow's subject, the level's
             # car, starts driving when the scene loads, and loading the
@@ -2052,6 +2111,8 @@ async def _fly(args, holder: dict) -> int:
                    "bottom_tile": tile_check,
                    # the speed words sent and the adapter's, as checked after hello
                    "speed_words": sw_check,
+                   # the front camera sent and the server's, as checked after hello
+                   "front_source": front_check,
                    "vla_adapter": args.vla_adapter,
                    "citymap": str(args.citymap), "seed": args.seed},
     }
