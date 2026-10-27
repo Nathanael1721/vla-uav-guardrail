@@ -16,6 +16,59 @@ shipped change and recorded as one.
 
 ## [Unreleased]
 
+### 2026-10-27 (Jetson) — the hand-written follow runs on the Jetson Orin Nano against the desktop's simulator: within 30 m on 0.957 of its ticks
+
+The user paused the VLA training and asked for the hand-written follow
+(OWL-ViT + the identity lock + the 10 Hz controller + the Shield) to run on
+the Jetson Orin Nano, with Project AirSim staying on the desktop. It does,
+over a direct 1 Gb/s cable, and its second flight scores as the desktop does.
+
+#### Added
+- `follow_vlm --sim-address` (default 127.0.0.1, commit 77c2245): the
+  simulator on another machine (topics 8989, services 8990).
+- `deploy/orin/` (7f9df26, 63f9072): `sync_follow_controller.ps1` sends HEAD
+  (git archive, so the gitignored private signing key stays), the follow's
+  signed bundles and the whole CityLife map folder over SSH;
+  `start_sim_for_jetson.ps1` starts only the simulator and prints the address
+  it listens on; `run_follow_controller.sh` runs follow_vlm with
+  run_citylife_follow.ps1's car-mode arguments after checking the simulator's
+  ports and the map files.
+- `make_demo_video.py --layout pip` (63f9072): the drone's view at full size,
+  the chase view small bottom-left - the user's layout for test videos.
+- The hierarchical follow (`follow_vlm --vla-hierarchy`, merge 1e4b144, the
+  user's decision of 25 Oct): AerialVLA sets the mode, the stand-off (22 m at
+  fwd 0 to 12 m at fwd 5) and flies the search; the controller flies the
+  pursuit. Not flown: both attempts ran out of Windows commit memory.
+
+#### Set up (the Jetson)
+- Orin Nano Super developer kit, JetPack 6.2.3 (L4T R36.5), Python 3.10.12,
+  CUDA 12.6; torch 2.8.0 with CUDA from NVIDIA's Jetson index (no 2.6 build
+  exists for JetPack 6), the desktop's pins otherwise (transformers 4.40.1,
+  numpy 1.26.4), the Project AirSim client at the desktop's commit fa404d0.
+  OWL-ViT forward on the Jetson: 192 ms fp32, 58 ms fp16.
+- Cable: desktop 10.42.0.1, Jetson 10.42.0.2 (192.168.50.x would have
+  collided with the Jetson's Wi-Fi), 909 Mbit/s and under 1 ms measured;
+  UnrealEditor's existing inbound rule lets the Jetson reach 8989-8990.
+
+#### Flown (the controller on the Jetson, within 30 m from the start gate)
+- `orin_follow_01` (25 W): 1.0 - but with occ_day.npz as the only map file,
+  so ObstacleClearance was inert, with no street mask, junction planner or
+  landing site, and the detector at 1.87 Hz, which follow_vlm flags as
+  unrepresentative. Kept, labelled degraded.
+- `orin_follow_02` (MAXN_SUPER, the whole map folder): 0.957, detector
+  2.18 Hz, P0 escape rate 0.0, mission success; no contact in the mission (one
+  before the start gate and one in the landing descent). Desktop reference
+  citylife_redcar_nfz_motion2_20261019: 0.963. Data and the comparison index
+  in D:\vla_drone_offload\jetson_runs.
+
+#### Found
+- **The 7B server's commit is the GPU's backing, not RAM in use**: after
+  loading, 17.3 GB private against 1.4 GB working set with 14.1 GB on the GPU
+  (WDDM on a GeForce card). With the desktop's other programs (41.2 GB commit
+  without the server) a flight with the server, Unreal and OWL-ViT passed the
+  70.7-74.3 GB commit limit: the hierarchical flights failed with "paging
+  file is too small" and a CUDA launch error.
+
 ### 2026-10-27 — two published drone VLAs, DroneCATS and RaceVLA, can fly the same follow behind the Shield; not yet flown
 
 To compare our fine-tuned AerialVLA with drone VLAs that other groups have
