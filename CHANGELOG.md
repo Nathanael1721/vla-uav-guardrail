@@ -16,6 +16,66 @@ shipped change and recorded as one.
 
 ## [Unreleased]
 
+### 2026-10-27 (flown) — nine follows in one configuration: the original AerialVLA adapter at the top of the hierarchy 0.987, the hand-written follow 0.954 and 0.980, DroneCATS 0.939; the fine-tunes below the original
+
+Every model we have, flown once each in the same configuration: the red car
+Car_10, policy `follow_car_citylife_nfz`, 420 s, `-SimOffscreen -SimMaxFps 30`,
+after a restart of the desktop (48 GB of commit free). The hierarchical and
+hand-written flights are scored as follow_vlm scores them (from the start
+gate's acquisition), the end-to-end ones from the first acquisition
+(`after_acquire`), so all start counting when the car is first locked.
+
+#### Flown (within 30 m; one flight each)
+| Pilot | Within 30 m | Mean distance | Car out of view | Stand-off p50 | Decision latency p50 | Collisions |
+|---|---|---|---|---|---|---|
+| Hand-written follow (OWL-ViT + controller), `cmp_manual` | 0.954 | 21.1 m | 0.003 | - | - | 0 |
+| Hand-written follow, as the hierarchy's fallback only (see Limits), `cmp_hier_fixed12` | 0.980 | 20.8 m | 0.006 | - | - | 0 |
+| AerialVLA original (aero_vla), hierarchical, `cmp_hier_aerovla` | 0.987 | 20.5 m | 0.143 | 12.4 m | 0.49 s | 0 |
+| DroneCATS-2B, hierarchical, `cmp_hier_dronecats` | 0.939 | 21.7 m | 0.009 | 16.4 m | 1.45 s | 0 |
+| AerialVLA r1, hierarchical, `cmp_hier_r1` | 0.884 | 22.8 m | 0.026 | 16.4 m | 0.48 s | 0 |
+| AerialVLA r3, hierarchical, `cmp_hier_r3` | 0.869 | 22.8 m | 0.044 | 16.5 m | 0.66 s | 0 |
+| RaceVLA-7B, hierarchical, `cmp_hier_racevla` | 0.719 | 27.5 m | 0.033 | 21.6 m | 0.40 s | 0 |
+| AerialVLA original, end-to-end, `cmp_e2e_aerovla` | 0.539 | - | - | - | 0.46 s | 0 |
+| DroneCATS-2B, end-to-end, `cmp_e2e_dronecats` | 0.132 | - | - | - | 1.02 s | 0 |
+| RaceVLA-7B, end-to-end, `cmp_e2e_racevla` | 0.099 | - | - | - | 0.42 s | 0 |
+
+#### Found
+- **In the hierarchy the VLA's effect is the stand-off it asks for.** In all
+  five hierarchical flights the intent was FOLLOW on most ticks and the VLA
+  never flew a search (`vla_flown_share` 0.0), so the controller flew every
+  pursuit. The score follows the stand-off: 12.4 m gave 0.987, a steady
+  16.4 m (DroneCATS, pinned by its 3 m cap) 0.939, about 16.4 m varying
+  between 12 m and 22 m (r1, r3) 0.884 and 0.869, and 21.6 m (RaceVLA) 0.719.
+  At 12.4 m the car left the frame on 0.143 of the ticks and still stayed
+  within 30 m.
+- **The original adapter follows better than our fine-tunes in this
+  configuration.** End to end, aero_vla flew 0.86-0.96 of the ticks itself for
+  about 100 s after the first acquisition, 10-14 m behind a car driving 2-3
+  m/s, then lost it: 0.539, against 0.238 for the best fine-tune so far (r1).
+  In the hierarchy it asked for the closest stand-off; r1 and r3 asked for
+  farther and more variable ones.
+- **The hand-written follow's own spread is about 0.03**: 0.954 and 0.980 in
+  two flights of the same configuration. AerialVLA's 0.987 is inside that
+  spread: equal to the hand-written follow, not shown better by one flight.
+- **DroneCATS end to end** closed in, lost the car at a turn about 10 s after
+  the first acquisition, answered `finished` twice (held, no landing), then
+  turned left 90 deg at a time; its `think` answers took up to 9.3 s. After
+  the car was lost the flight hovered, as every end-to-end follow does.
+- **RaceVLA's forward commands stayed under 0.3 m/s**, so the car pulled
+  away end to end and its hierarchy stand-off sat near the far end.
+- **Bench (no simulator)**: DroneCATS p50 1.12 s at 256x256 and 1.00 s at the
+  detector's size, its server 10.1 GB of commit; RaceVLA in nf4 0.33 s.
+
+#### Limits
+- One flight per pilot. The control flight meant to fly a scripted 12 m
+  stand-off parsed none of its 31518 scripted answers (the runner passed the
+  scripted text to Start-Process unquoted, which split it at its spaces), so
+  the controller flew it alone as the fallback: it is a second hand-written
+  flight, not the control. Whether a fixed 12 m stand-off alone gives
+  AerialVLA's 0.987 is not measured yet.
+- All pilots here are zero-shot or our earlier fine-tunes; none was trained on
+  these flights.
+
 ### 2026-10-27 (Jetson) — the hand-written follow runs on the Jetson Orin Nano against the desktop's simulator: within 30 m on 0.957 of its ticks
 
 The user paused the VLA training and asked for the hand-written follow
