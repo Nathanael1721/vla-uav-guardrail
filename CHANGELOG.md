@@ -16,6 +16,56 @@ shipped change and recorded as one.
 
 ## [Unreleased]
 
+### 2026-10-27 — two published drone VLAs, DroneCATS and RaceVLA, can fly the same follow behind the Shield; not yet flown
+
+To compare our fine-tuned AerialVLA with drone VLAs that other groups have
+published, two of them now sit behind the same protocol v2 server interface
+(merge 62a65d4). Nothing in this entry has run a real model or the simulator
+yet: the weights are downloaded, the conversion of each model's output is
+written from its own sources and tested with scripted outputs.
+
+#### Added
+- **`demo/vla_server_foreign.py`**: DroneCATS-Cosmos3-Edge-2B (NAVER, OpenMDW-1.1,
+  transformers >= 5.18, the separate `dronecats` env) and RaceVLA drone6_all
+  (a merged OpenVLA-7B, the `vla-real` env) behind protocol v2. Each gets its
+  own input (DroneCATS: its prompt files verbatim, `camera_aux` intrinsics,
+  the last 5 actions as history; RaceVLA: its OpenVLA prompt, a grey frame as
+  its T265's) and a documented conversion of its output into the AerialVLA
+  step text: DroneCATS's `go(point, depth)` through the camera geometry and the
+  paper's executor (altitude held under 0.15 of the horizontal, 3 m cap,
+  x0.6 under 5 m), `rotate`, `think` (hold) and `finished` (LAND); RaceVLA's
+  velocities through its robot's own scales (forward x1.875, climb x0.5, yaw
+  x1.5 rad/s) over a 1 s horizon, its lateral velocity dropped and recorded.
+  Every reply, server log line and client record keeps the model's own
+  output (`native`) and the conversion applied (`mapping`).
+- **Recorded as themselves**: the two families are allow-listed
+  (`aerialvla_codec.FOREIGN_FAMILIES`), a flight records
+  `dronecats:DroneCATS-Cosmos3-Edge-2B` or `racevla:drone6_all`, never
+  AerialVLA's name, and the dashboard counts it as a VLA flight of that
+  family. The weights' sha256 is in hello; the scripted stand-in
+  (`fake:<family>-scripted`) is never counted as a VLA.
+- **The front image**: `vla_fly --vla-front-source detector` and
+  `follow_vlm --vla-hierarchy-front-source detector` (launcher
+  `-VlaHierarchyFrontSource`) send the detector's FrontCamera frame
+  (768x432, 90 deg, pitched -20 deg) to a server that reads it; the default
+  stays VLAFront. A flight is refused before take-off when the camera sent is
+  not the server's, and so is a foreign model with `prev_front` or the
+  own-speed words, which its prompt has no place for.
+- **`tools/bench_foreign_vla.py`**: latency p50/p95 and a histogram of the
+  model's outputs and the resulting steps; `tests/test_vla_foreign.py`
+  (48 tests, in CI).
+
+#### Limits
+- RaceVLA's whole action range gives at most 0.52 m/s forward, so it cannot
+  keep up with the car end to end; DroneCATS's 3 m cap keeps its hierarchy
+  stand-off at 16 m or more. Both are zero-shot here: neither was trained on
+  CityLife or on following a car.
+- Not available as weights: CosFly-VLA and CognitiveDrone.
+
+#### Tests
+- `tests/test_vla_foreign.py` 48/48; `test_vla_fly.py` 62/62;
+  `test_vla_hierarchy.py` 17/17; `test_harnesstruth_ci.py` 35/35.
+
 ### 2026-10-25 — r3 and r4 flown fast, the follow re-acquires a car that comes back, the own-speed words copy themselves; the user chooses hierarchical control
 
 Two more models flown in the fast simulator configuration, one perception
