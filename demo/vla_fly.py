@@ -383,6 +383,10 @@ def build_arg_parser() -> argparse.ArgumentParser:
     # -- the VLA server -----------------------------------------------------
     ap.add_argument("--vla-server", default=None, metavar="HOST:PORT",
                     help="attach to a running server instead of starting one")
+    ap.add_argument("--sim-address", default="127.0.0.1",
+                    help="host of the Project AirSim server (topics 8989, services 8990); "
+                         "another machine's address when this flight runs on the Jetson "
+                         "Orin and the simulator on the desktop (follow_vlm --sim-address)")
     ap.add_argument("--vla-port", type=int, default=8790)
     ap.add_argument("--vla-python", default=None,
                     help=f"the server's interpreter (default {VM.VLA_REAL_PYTHON} when it "
@@ -1528,7 +1532,9 @@ async def _fly(args, holder: dict) -> int:
             raise SystemExit(f"[vla] *** the link failed before take-off: {exc}")
         if identity_of(client.identity) != identity_of(identity):
             raise SystemExit("[vla] *** the pinned identity is not the hello's")
-        sim = ProjectAirSimClient()
+        # --sim-address: the simulator on another machine (the Jetson Orin
+        # flying against the desktop's Project AirSim).
+        sim = ProjectAirSimClient(address=args.sim_address)
         sim.connect()
     except BaseException as exc:
         # Everything between the hello and the simulator: close what opened,

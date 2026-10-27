@@ -2492,6 +2492,21 @@ def test_the_launcher_assembles_the_arguments_the_flight_parses():
                                                                               r.stderr[-800:])
 
 
+def test_the_simulator_address_reaches_the_simulator_client():
+    """--sim-address (2026-10-28, follow_vlm's since 77c2245): a flight run on
+    the Jetson Orin reaches the desktop's Project AirSim. The default is this
+    machine, as before, and the one simulator client of the flight is built
+    with the parsed address - not a second, hard-coded one."""
+    ap = vla_fly.build_arg_parser()
+    assert vla_fly.parse_cli(ap, ["--mission", "goto"]).sim_address == "127.0.0.1"
+    a = vla_fly.parse_cli(ap, ["--mission", "follow", "--sim-address", "10.42.0.1",
+                               "--vla-server", "10.42.0.1:8790"])
+    assert a.sim_address == "10.42.0.1" and a.vla_server == "10.42.0.1:8790"
+    src = (ROOT / "demo" / "vla_fly.py").read_text(encoding="utf-8")
+    assert src.count("ProjectAirSimClient(") == 1
+    assert "sim = ProjectAirSimClient(address=args.sim_address)" in src
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     failed = skipped = 0
