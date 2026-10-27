@@ -5,13 +5,15 @@
 # Nano). The arguments are run_vla_fly.ps1's for the red-car follow, so a
 # Jetson flight compares with the desktop's cmp2_e2e_* flights.
 #
-#   SIM=10.42.0.1 VLA=10.42.0.1:8790 TAG=orin_e2e_aerovla bash deploy/orin/run_vla_fly.sh
+#   SIM=10.42.0.1 VLA=127.0.0.1:8790 TAG=orin_e2e_aerovla bash deploy/orin/run_vla_fly.sh
 #
 # On the desktop first: the simulator (deploy/orin/start_sim_for_jetson.ps1)
-# and the server listening on the cable (--host 0.0.0.0), with inbound TCP
-# 8989-8990 and the server's port allowed. Environment knobs:
+# and the VLA server on its usual 127.0.0.1 port, carried to the Jetson by an
+# SSH reverse tunnel the desktop opens (outbound only, no firewall change):
+#   ssh -o BatchMode=yes -N -R 8790:127.0.0.1:8790 nathan@10.42.0.2
+# so the Jetson reaches the server at its own 127.0.0.1:8790. Environment knobs:
 #   SIM        the desktop's address (required)
-#   VLA        the server, HOST:PORT (required)
+#   VLA        the server, HOST:PORT as the Jetson sees it (required)
 #   TAG        the run folder under demo/out/ (default orin_e2e_<date>)
 #   SECONDS_   mission length in s (default 420)
 #   BUNDLE     the signed policy bundle (default the NFZ follow's)
@@ -41,8 +43,8 @@ for host, port, what in ((sim, 8989, "simulator"), (sim, 8990, "simulator"),
     try:
         s.connect((host, port))
     except OSError as exc:
-        sys.exit(f"*** {what} {host}:{port} unreachable ({exc}): is it up, listening on the "
-                 f"cable (--host 0.0.0.0), and does the desktop firewall allow it?")
+        sys.exit(f"*** {what} {host}:{port} unreachable ({exc}): is it up, and for the "
+                 f"server is the desktop's reverse tunnel (ssh -N -R) open?")
     finally:
         s.close()
 print(f"==> simulator {sim} (8989, 8990) and VLA server {vla_host}:{vla_port} reachable")
