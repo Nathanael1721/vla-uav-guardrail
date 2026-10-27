@@ -24,7 +24,7 @@ sys.path.insert(0, str(ROOT / "demo"))
 
 import numpy as np                                          # noqa: E402
 
-from two_view import pil_to_bgr, side_by_side               # noqa: E402
+from two_view import picture_in_picture, pil_to_bgr, side_by_side   # noqa: E402
 
 
 def _img(h, w, v=128):
@@ -63,6 +63,29 @@ def test_height_argument_scales_both_panels():
     out = side_by_side(_img(1080, 1920), _img(720, 1280), height=540)
     assert out.shape[0] == 540
     assert out.shape[1] == 960 + 960
+
+
+def test_picture_in_picture_keeps_the_drone_view_whole_and_insets_the_chase_bottom_left():
+    """The user's layout (27 Oct): the drone's view at full size, the chase
+    view small in the bottom-left corner - the corner the HUD leaves free
+    (telemetry top-left, the policy panel top-right, the map bottom-right)."""
+    main, chase = _img(540, 960, 10), _img(540, 960, 200)
+    out = picture_in_picture(main, chase, frac=0.33, margin=12, border=2)
+    assert out.shape == (540, 960, 3), out.shape
+    w = int(960 * 0.33)
+    h = int(round(w * 540 / 960))
+    # inside the inset: the chase view; its border; the drone view elsewhere
+    assert (out[540 - 12 - h // 2, 12 + w // 2] == 200).all()
+    assert (out[540 - 12 - h - 1, 12 + w // 2] == 255).all()          # top border
+    assert (out[20, 20] == 10).all() and (out[540 - 20, 960 - 20] == 10).all()
+    assert (out[20, 960 - 20] == 10).all()
+    assert (main == 10).all(), "the input frame is not drawn on"
+    # a missing panel: the other alone, as side_by_side does
+    assert picture_in_picture(main, None).shape == main.shape
+    assert picture_in_picture(None, chase).shape == chase.shape
+    assert picture_in_picture(None, None) is None
+    # height scales the result like side_by_side's height
+    assert picture_in_picture(main, chase, height=720).shape == (720, 1280, 3)
 
 
 def test_pil_conversion_swaps_the_channel_order():

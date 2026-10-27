@@ -28,7 +28,8 @@ cd "$ROOT"
 # shellcheck disable=SC1091
 source "$VENV/bin/activate"
 
-for f in "$POLICY" demo/out/citymap_citylife/occ_day.npz; do
+for f in "$POLICY" demo/out/citymap_citylife/occ_day.npz demo/out/citymap_citylife/street.npz \
+         demo/out/citymap_citylife/occ_day_flightband_6to14.npz; do
     [ -f "$f" ] || { echo "*** missing $f (deploy/orin/sync_follow_controller.ps1 copies it)"; exit 2; }
 done
 python - "$SIM" <<'EOF'

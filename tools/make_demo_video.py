@@ -38,7 +38,7 @@ sys.path.insert(0, str(ROOT / "demo"))
 # The SAME layout the live window uses (demo/two_view.py). Two
 # open-coded copies would drift, and the drift would only show up
 # when someone compared a live screenshot against the video.
-from two_view import side_by_side                        # noqa: E402
+from two_view import picture_in_picture, side_by_side    # noqa: E402
 
 
 def _by_index(paths: list[str]) -> dict[int, str]:
@@ -89,6 +89,9 @@ def main(argv=None) -> int:
                          "recording 1.35x fast while claiming to be real time.")
     ap.add_argument("--out", default=None)
     ap.add_argument("--height", type=int, default=720)
+    ap.add_argument("--layout", choices=("side", "pip"), default="side",
+                    help="side: drone view | chase view (default); pip: the drone view "
+                         "at full size, the chase view small bottom-left")
     args = ap.parse_args(argv)
 
     base = ROOT / "demo" / "out" / args.tag / "view"
@@ -169,6 +172,8 @@ def main(argv=None) -> int:
     def panel_at(pa, pb):
         a = load(pa, args.height) if pa else None
         b = load(pb, args.height) if pb else None
+        if args.layout == "pip":
+            return picture_in_picture(a, b)
         return side_by_side(a, b)
 
     first = None

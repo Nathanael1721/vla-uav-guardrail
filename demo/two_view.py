@@ -51,6 +51,43 @@ def side_by_side(left, right, height: Optional[int] = None):
     return np.hstack([a, b])
 
 
+def picture_in_picture(main, inset, height: Optional[int] = None, frac: float = 0.33,
+                       margin: int = 12, border: int = 2):
+    """The drone's view at full size with the chase view inset, `frac` of its
+    width, in the BOTTOM-LEFT corner - the corner the HUD leaves free
+    (telemetry top-left, the policy panel top-right, the map bottom-right).
+    The user's layout for test videos (27 Oct): one view to watch, the other
+    for context. A white `border` frames the inset. Like side_by_side, either
+    may be None (the other alone) and `height` scales the result; the input
+    arrays are not drawn on."""
+    import cv2
+
+    def fit(im):
+        if im is None or height is None:
+            return im
+        s = height / im.shape[0]
+        return cv2.resize(im, (max(1, int(im.shape[1] * s)), height))
+
+    a, b = fit(main), fit(inset)
+    if a is None and b is None:
+        return None
+    if a is None:
+        return b
+    if b is None:
+        return a
+    out = a.copy()
+    H, W = out.shape[:2]
+    w = max(1, int(W * frac))
+    h = max(1, int(round(w * b.shape[0] / b.shape[1])))
+    small = cv2.resize(b, (w, h), interpolation=cv2.INTER_AREA)
+    y0, x0 = H - margin - h, margin
+    if y0 - border < 0 or x0 + w + border > W:
+        return out
+    out[y0 - border:y0 + h + border, x0 - border:x0 + w + border] = 255
+    out[y0:y0 + h, x0:x0 + w] = small
+    return out
+
+
 def pil_to_bgr(im):
     """PIL RGB -> OpenCV BGR, or None."""
     import cv2
