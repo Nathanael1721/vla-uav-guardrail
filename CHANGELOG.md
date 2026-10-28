@@ -16,6 +16,70 @@ shipped change and recorded as one.
 
 ## [Unreleased]
 
+### 2026-10-29 — a learned model flies ArduPilot for the first time, the perception rail flies over MAVROS 2 and is stamped dev, a drifting BRAKE is taken back, MAVROS's clock and text were never received
+
+Continuing the grant's open obligations: the audit's final-delivery items
+that no rail had flown (ARCH-18 the perception rail with its VLA pilot and
+`--link mavros`, ARCH-20 / ARCH-02 a learned model on ArduPilot).
+
+#### Flown (Project AirSim CityLife, ArduPilot SITL Copter 4.5.7 in WSL)
+| Flight | Pilot and link | Ticks | Ended | P0 escapes | Ticks in a P0 margin | Mean / max time to safe | ArduPilot real-time factor |
+|---|---|---|---|---|---|---|---|
+| `pas_vla_goto_01` | AerialVLA bf16, goto (50, -78), pymavlink | 1000 | the FSM's RTL | 0 | 110 | 5.501 / 9.4 s | 0.972 |
+| `pas_vla_goto_02` (after the reclaim below) | the same | 1792 | max_s, closest 5.51 m to the goal | 0 | 51 | 1.155 / 1.6 s | 0.965 |
+| `pas_vla_approach_01` | AerialVLA nf4, approach of the red car, pymavlink | 84 | close_box at 10.23 m | 0 | 0 | - | 0.949 |
+| `pas_dev_mavros_01` | the servo follow, MAVROS 2 in WSL | 1192 | max_s | 0 | 37 | 1.849 / 2.499 s | not read (below) |
+| `pas_dev_mavros_02` (after the QoS fix) | the same | 195 | the FSM's RTL (G4, N-in-T) | 0 | 0 | - | 0.968 |
+The VLA flights are the first in this project where ArduPilot, not Project
+AirSim's simple_flight, flew a learned model's commands; every tick went
+through the Shield and the escalation FSM. On goto_02 AerialVLA authored
+0.8828 of the ticks (29 decisions, p50 1.15 s). The MAVROS flights ran the
+node in a new WSL environment (`~/venv-pas`: ROS 2 Jazzy's rclpy and
+MAVROS, torch 2.6 CUDA, transformers 4.40.1, the projectairsim client),
+where OWL-ViT ran at 8.12-9.009 Hz. `pas_dev_mavros_02` is the first run
+stamped with the grant's `dev` label; it is not KPI-grade because a dev
+run needs the PI's written waiver and the tree was dirty.
+
+#### Fixed
+- **A BRAKE that drifts** (`demo/pas_ardupilot/perception_node.py`,
+  `guardrail/response.HOLD_RECLAIM_MAX`, b2a2181): on goto_01 the FSM's
+  Loiter was handed to ArduCopter BRAKE with its stop predicted legal, and
+  BRAKE let the aircraft creep about 0.1 m/s into the 3 m building margin,
+  0.36 m deep, with nothing flown, until the FSM sent it home. Such a hold
+  is now taken back into GUIDED and flown as the Shield's answer to a stop
+  when its position goes illegal on a hard rule after being legal in BRAKE;
+  it stays in GUIDED until a forced hand-over or the end of the Loiter, at
+  most 3 times per Loiter. Closed loop (BRAKE climbing 0.15 m/s under a
+  7.5 m ceiling): 27 of 120 ticks unsafe and no RTL, against 92 and an RTL
+  before. On goto_02 it fired once (BRAKE 0.01 m into bld-clearance).
+- **MAVROS's clock and text** (`demo/pas_ardupilot/mavros_link.py`,
+  659b103): /mavros/time_reference and /mavros/statustext/recv were
+  subscribed reliably while MAVROS publishes them best effort, so on
+  pas_dev_mavros_01 the real-time factor read None and no STATUSTEXT
+  arrived (MAVROS's own log: "incompatible QoS. No messages will be sent").
+  Both use the sensor profile now; the test checks every subscription's
+  QoS.
+
+#### Found
+- A learned pilot on ArduPilot spends much of its time held: goto_01
+  and goto_02 had 79 and 159 repaired ticks; AerialVLA stops and goes
+  (0.13-0.16 decisions per second) and its steps run it towards the
+  building margins of the street it flies down.
+- The 2 goto flights differ in more than the reclaim (the model's path
+  is not the same twice), so their two time-to-safe figures are one
+  flight each, not a measured effect; the closed-loop test is the
+  controlled comparison.
+
+#### Tests
+- test_own_velocity_forecast 28/28 (a new drifting-BRAKE test),
+  test_pas_ardupilot 148/149 (1 skip), test_pas_vla 28/29 (1 skip),
+  test_railvideo_recording 10/21 (11 skip).
+
+#### Limits
+- None of these runs is KPI-grade: pymavlink is no grant topology, a dev
+  run needs the PI's waiver, and the tree was dirty (an untracked file).
+  The hil topology needs Docker on the Jetson (installed with sudo).
+
 ### 2026-10-28 (night) — DroneCATS 2B on the Jetson Orin Nano itself: it fits in int4 but answers in 9.6 s and, beside the detector, timed out 34 times in 36; Jetson runs now record their commit and their two hosts; a CSP from every city flight; an independent paraphrase test
 
 The user asked to try DroneCATS 2B on the Jetson and check the result, to
