@@ -946,8 +946,8 @@ def test_dronecats_nf4_needs_bitsandbytes_and_quantises_only_the_language_layers
             self.quant_type, self.skip = quant_type, modules_to_not_convert
 
     class FakeInt4:
-        def __init__(self, group_size):
-            self.group_size = group_size
+        def __init__(self, group_size, int4_packing_format):
+            self.group_size, self.packing = group_size, int4_packing_format
 
     fake_tf.TorchAoConfig = FakeAo
     fake_ao = types.ModuleType("torchao")
@@ -964,6 +964,7 @@ def test_dronecats_nf4_needs_bitsandbytes_and_quantises_only_the_language_layers
         F.DroneCATSModel("w", attn="sdpa", device="cpu", precision="int4")
         ao = seen["kw"]["quantization_config"]
         assert isinstance(ao, FakeAo) and ao.quant_type.group_size == 128, vars(ao)
+        assert ao.quant_type.packing == "tile_packed_to_4d", vars(ao.quant_type)
         assert ao.skip == ["visual", "projector", "lm_head"], ao.skip
         F.DroneCATSModel("w", attn="sdpa", device="cpu", precision="nf4")
         q = seen["kw"]["quantization_config"].kw

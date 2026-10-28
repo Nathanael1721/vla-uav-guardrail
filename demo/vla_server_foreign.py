@@ -815,6 +815,10 @@ class ScriptedForeignModel:
 # output head); the language layers are quantised.
 DRONECATS_NF4_SKIP = ("visual", "projector", "lm_head")
 DRONECATS_INT4_GROUP = 128
+# torchao >= 0.15 (transformers 5.20's minimum): its default int4 packing needs
+# fbgemm-gpu-genai, which has no Jetson build; tile_packed_to_4d is torch's own
+# tinygemm kernel (checked on the Orin Nano, torch 2.8 / torchao 0.15)
+DRONECATS_INT4_PACKING = "tile_packed_to_4d"
 # the package each quantised precision needs, checked before a model loads
 PRECISION_PACKAGE = {"nf4": "bitsandbytes", "int4": "torchao"}
 
@@ -862,7 +866,8 @@ class DroneCATSModel:
             from torchao.quantization import Int4WeightOnlyConfig
             from transformers import TorchAoConfig
             kw["quantization_config"] = TorchAoConfig(
-                Int4WeightOnlyConfig(group_size=DRONECATS_INT4_GROUP),
+                Int4WeightOnlyConfig(group_size=DRONECATS_INT4_GROUP,
+                                     int4_packing_format=DRONECATS_INT4_PACKING),
                 modules_to_not_convert=list(DRONECATS_NF4_SKIP))
         self.model = Cosmos3EdgeForConditionalGeneration.from_pretrained(
             str(weights_dir), **kw).eval()
