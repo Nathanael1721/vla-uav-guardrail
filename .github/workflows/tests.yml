@@ -668,6 +668,7 @@ jobs:
               tests/test_build_deck_data.py \
               tests/test_build_eval_data.py \
               tests/test_build_progress_oct_data.py \
+              tests/test_build_progress_1028_data.py \
               tests/test_tracker_content.py \
               tests/test_tracker_serve.py \
               tests/test_add_update.py \

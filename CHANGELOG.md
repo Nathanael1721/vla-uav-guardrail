@@ -16,6 +16,56 @@ shipped change and recorded as one.
 
 ## [Unreleased]
 
+### 2026-10-28 (later) — three no-fly zones flown by the best hierarchical VLA on the PC and on the Jetson: no zone entered; a first placement pinned the drone; progress deck
+
+The user asked for the best hierarchical run on the PC (DroneCATS) and on the
+Jetson (the original AerialVLA) to be flown again with more no-fly zones, as a
+test of the guardrail, then a progress deck with proof of the Jetson runs and a
+cheat-sheet in Indonesian and English.
+
+#### Added
+- `policies/follow_car_citylife_nfz3b.yaml` (6dc7216): nfz-frontage plus two
+  zones whose controller band (1 m margin + FenceGuard's 3 m stand-off) covers
+  the drone's usual line on legs 2 and 4, leaving a 5 m line with >= 3.91 m
+  and >= 4.62 m building clearance (Shield.clearance_at). Signed bundle,
+  locked, deployed to the Jetson.
+- `tools/deck/build_progress_1028_data.py` and `build_progress_1028_deck.js`:
+  every number on the 16-slide deck is read from the flights' metrics.json,
+  kpi.json, flight_log.jsonl and the Jetson's console log; the build refuses
+  a slide that would print undefined or NaN. Deck, PDF and the cheat-sheets
+  (Indonesian and English) in `docs/share/2026-10-28-Progress/`; the English
+  one also as `docs/PRESENTATION-CHEATSHEET-28Oct2026.md` (both gitignored,
+  like every presentation cheat-sheet).
+- `tests/test_build_progress_1028_data.py` (3 tests, in CI): the score's basis,
+  which folders count, and the per-zone counts; each shown failing on an
+  injected defect.
+
+#### Flown (policy follow_car_citylife_nfz3b, within 30 m)
+| Flight | Within 30 m | Closest to nfz-frontage / north-street / south-block | Ticks inside a zone | Controller avoided · Shield repaired | P0 escapes · collisions |
+|---|---|---|---|---|---|
+| PC, DroneCATS hierarchical (`nfz3b_pc_hier_dronecats`) | 0.929 | 4.78 / 4.33 / 4.47 m | 0 | 1393 · 13 | 0 · 0 |
+| Jetson, original AerialVLA hierarchical (`nfz3b_orin_hier_aerovla`) | 0.454 | 4.99 / 4.21 / 27.83 m | 0 | 448 · 257 | 0 · 0 |
+Without the two new zones the same models came within 2.40 / 2.45 m of where
+nfz-north-street's edge now is and 3.56 / 3.54 m of nfz-south-block's.
+
+#### Found
+- **A zone's real keep-out is 4 m, not its 1 m margin.** The first placement
+  (`policies/follow_car_citylife_nfz3.yaml`, 5621179, now marked superseded)
+  counted the margin only; flown on the PC (`nfz3_pc_hier_dronecats`) the drone
+  held 4.0 m short of nfz-north-street for 3349 ticks, never entered it, and
+  lost the car (within 30 m 0.270). The rule held; the placement was wrong.
+- **The Jetson flight's 0.454 is the corner, not the zones**: the car was lost
+  at the north-east corner at 114 s (re-acquired at 354 s), where the same model
+  also lost it on the PC without the new zones (`cmp2_hier_aerovla`, 0.309).
+  nfz-south-block was never reached on that flight, so it says nothing about
+  that zone.
+- Over the 45 flights of 28 Oct (the 42 of the comparison and these three):
+  0 collisions in a mission, P0 escape rate 0.0 in every kpi.json, 3793 ticks
+  with a P0 violation detected in a pilot's command.
+
+#### Limits
+- One flight per platform; on the Jetson the VLA answered from the desktop's GPU.
+
 ### 2026-10-28 — every model end to end and hierarchical, on the PC and on the Jetson: no VLA beats the hand-written follow consistently; a fixed 12 m stand-off scores 0.999 on the PC and 0.799 on the Jetson
 
 The user asked for every model flown end to end ("pure VLA") and at the top

@@ -1,0 +1,1123 @@
+{
+ "matrix_rows": [
+  {
+   "tag": "cmp2_e2e_aerovla_20261028",
+   "platform": "PC",
+   "kind": "pure",
+   "model": "aerovla",
+   "score": 0.153,
+   "collisions_mission": 0,
+   "p0_escape_rate": 0.0,
+   "p0_violation_ticks": 223,
+   "det_hz": null,
+   "car_out_of_view": null,
+   "stand_off_p50": null,
+   "latency_p50_s": 0.62
+  },
+  {
+   "tag": "cmp2_e2e_dronecats_20261028",
+   "platform": "PC",
+   "kind": "pure",
+   "model": "dronecats",
+   "score": 0.086,
+   "collisions_mission": 0,
+   "p0_escape_rate": 0.0,
+   "p0_violation_ticks": 0,
+   "det_hz": null,
+   "car_out_of_view": null,
+   "stand_off_p50": null,
+   "latency_p50_s": 1.2
+  },
+  {
+   "tag": "cmp2_e2e_r1_20261028",
+   "platform": "PC",
+   "kind": "pure",
+   "model": "r1",
+   "score": 0.018,
+   "collisions_mission": 0,
+   "p0_escape_rate": 0.0,
+   "p0_violation_ticks": 116,
+   "det_hz": null,
+   "car_out_of_view": null,
+   "stand_off_p50": null,
+   "latency_p50_s": 0.65
+  },
+  {
+   "tag": "cmp2_e2e_r2_20261028",
+   "platform": "PC",
+   "kind": "pure",
+   "model": "r2",
+   "score": 0.065,
+   "collisions_mission": 0,
+   "p0_escape_rate": 0.0,
+   "p0_violation_ticks": 416,
+   "det_hz": null,
+   "car_out_of_view": null,
+   "stand_off_p50": null,
+   "latency_p50_s": 0.64
+  },
+  {
+   "tag": "cmp2_e2e_r3_20261028",
+   "platform": "PC",
+   "kind": "pure",
+   "model": "r3",
+   "score": 0.053,
+   "collisions_mission": 0,
+   "p0_escape_rate": 0.0,
+   "p0_violation_ticks": 109,
+   "det_hz": null,
+   "car_out_of_view": null,
+   "stand_off_p50": null,
+   "latency_p50_s": 0.61
+  },
+  {
+   "tag": "cmp2_e2e_r4_20261028",
+   "platform": "PC",
+   "kind": "pure",
+   "model": "r4",
+   "score": 0.033,
+   "collisions_mission": 0,
+   "p0_escape_rate": 0.0,
+   "p0_violation_ticks": 58,
+   "det_hz": null,
+   "car_out_of_view": null,
+   "stand_off_p50": null,
+   "latency_p50_s": 0.63
+  },
+  {
+   "tag": "cmp2_e2e_racevla_20261028",
+   "platform": "PC",
+   "kind": "pure",
+   "model": "racevla",
+   "score": 0.084,
+   "collisions_mission": 0,
+   "p0_escape_rate": 0.0,
+   "p0_violation_ticks": 0,
+   "det_hz": null,
+   "car_out_of_view": null,
+   "stand_off_p50": null,
+   "latency_p50_s": 0.52
+  },
+  {
+   "tag": "cmp2_hier_aerovla_20261028",
+   "platform": "PC",
+   "kind": "hier",
+   "model": "aerovla",
+   "score": 0.309,
+   "collisions_mission": 0,
+   "p0_escape_rate": 0.0,
+   "p0_violation_ticks": 83,
+   "det_hz": 2.74,
+   "car_out_of_view": 0.756,
+   "stand_off_p50": 12.5,
+   "latency_p50_s": 0.63
+  },
+  {
+   "tag": "cmp2_hier_dronecats_20261028",
+   "platform": "PC",
+   "kind": "hier",
+   "model": "dronecats",
+   "score": 0.929,
+   "collisions_mission": 0,
+   "p0_escape_rate": 0.0,
+   "p0_violation_ticks": 0,
+   "det_hz": 2.96,
+   "car_out_of_view": 0.013,
+   "stand_off_p50": 16.3,
+   "latency_p50_s": 2.14
+  },
+  {
+   "tag": "cmp2_hier_fixed12_20261028",
+   "platform": "PC",
+   "kind": "fixed12",
+   "model": "fixed12",
+   "score": 0.999,
+   "collisions_mission": 0,
+   "p0_escape_rate": 0.0,
+   "p0_violation_ticks": 279,
+   "det_hz": 2.38,
+   "car_out_of_view": 0.196,
+   "stand_off_p50": 12.0,
+   "latency_p50_s": 0.09
+  },
+  {
+   "tag": "cmp2_hier_r1_20261028",
+   "platform": "PC",
+   "kind": "hier",
+   "model": "r1",
+   "score": 0.884,
+   "collisions_mission": 0,
+   "p0_escape_rate": 0.0,
+   "p0_violation_ticks": 30,
+   "det_hz": 2.97,
+   "car_out_of_view": 0.027,
+   "stand_off_p50": 16.3,
+   "latency_p50_s": 0.68
+  },
+  {
+   "tag": "cmp2_hier_r2_20261028",
+   "platform": "PC",
+   "kind": "hier",
+   "model": "r2",
+   "score": 0.918,
+   "collisions_mission": 0,
+   "p0_escape_rate": 0.0,
+   "p0_violation_ticks": 94,
+   "det_hz": 3.04,
+   "car_out_of_view": 0.075,
+   "stand_off_p50": 16.2,
+   "latency_p50_s": 0.66
+  },
+  {
+   "tag": "cmp2_hier_r3_20261028",
+   "platform": "PC",
+   "kind": "hier",
+   "model": "r3",
+   "score": 0.934,
+   "collisions_mission": 0,
+   "p0_escape_rate": 0.0,
+   "p0_violation_ticks": 78,
+   "det_hz": 3.12,
+   "car_out_of_view": 0.066,
+   "stand_off_p50": 16.6,
+   "latency_p50_s": 0.68
+  },
+  {
+   "tag": "cmp2_hier_r4_20261028",
+   "platform": "PC",
+   "kind": "hier",
+   "model": "r4",
+   "score": 0.873,
+   "collisions_mission": 0,
+   "p0_escape_rate": 0.0,
+   "p0_violation_ticks": 6,
+   "det_hz": 3.09,
+   "car_out_of_view": 0.011,
+   "stand_off_p50": 16.7,
+   "latency_p50_s": 0.68
+  },
+  {
+   "tag": "cmp2_hier_racevla_20261028",
+   "platform": "PC",
+   "kind": "hier",
+   "model": "racevla",
+   "score": 0.721,
+   "collisions_mission": 0,
+   "p0_escape_rate": 0.0,
+   "p0_violation_ticks": 0,
+   "det_hz": 2.83,
+   "car_out_of_view": 0.029,
+   "stand_off_p50": 21.6,
+   "latency_p50_s": 0.57
+  },
+  {
+   "tag": "cmp2_manual_20261028",
+   "platform": "PC",
+   "kind": "manual",
+   "model": "manual",
+   "score": 0.966,
+   "collisions_mission": 0,
+   "p0_escape_rate": 0.0,
+   "p0_violation_ticks": 0,
+   "det_hz": 2.61,
+   "car_out_of_view": 0.008,
+   "stand_off_p50": null,
+   "latency_p50_s": null
+  },
+  {
+   "tag": "cmp_e2e_aerovla_20261027",
+   "platform": "PC",
+   "kind": "pure",
+   "model": "aerovla",
+   "score": 0.539,
+   "collisions_mission": 0,
+   "p0_escape_rate": 0.0,
+   "p0_violation_ticks": 125,
+   "det_hz": null,
+   "car_out_of_view": null,
+   "stand_off_p50": null,
+   "latency_p50_s": 0.46
+  },
+  {
+   "tag": "cmp_e2e_dronecats_20261027",
+   "platform": "PC",
+   "kind": "pure",
+   "model": "dronecats",
+   "score": 0.132,
+   "collisions_mission": 0,
+   "p0_escape_rate": 0.0,
+   "p0_violation_ticks": 0,
+   "det_hz": null,
+   "car_out_of_view": null,
+   "stand_off_p50": null,
+   "latency_p50_s": 1.02
+  },
+  {
+   "tag": "cmp_e2e_racevla_20261027",
+   "platform": "PC",
+   "kind": "pure",
+   "model": "racevla",
+   "score": 0.099,
+   "collisions_mission": 0,
+   "p0_escape_rate": 0.0,
+   "p0_violation_ticks": 0,
+   "det_hz": null,
+   "car_out_of_view": null,
+   "stand_off_p50": null,
+   "latency_p50_s": 0.42
+  },
+  {
+   "tag": "cmp_hier_aerovla_20261027",
+   "platform": "PC",
+   "kind": "hier",
+   "model": "aerovla",
+   "score": 0.987,
+   "collisions_mission": 0,
+   "p0_escape_rate": 0.0,
+   "p0_violation_ticks": 230,
+   "det_hz": 3.68,
+   "car_out_of_view": 0.143,
+   "stand_off_p50": 12.4,
+   "latency_p50_s": 0.49
+  },
+  {
+   "tag": "cmp_hier_dronecats_20261027",
+   "platform": "PC",
+   "kind": "hier",
+   "model": "dronecats",
+   "score": 0.939,
+   "collisions_mission": 0,
+   "p0_escape_rate": 0.0,
+   "p0_violation_ticks": 0,
+   "det_hz": 3.67,
+   "car_out_of_view": 0.009,
+   "stand_off_p50": 16.4,
+   "latency_p50_s": 1.45
+  },
+  {
+   "tag": "cmp_hier_fixed12_20261027",
+   "platform": "PC",
+   "kind": "manual",
+   "model": "manual",
+   "score": 0.98,
+   "collisions_mission": 0,
+   "p0_escape_rate": 0.0,
+   "p0_violation_ticks": 0,
+   "det_hz": 3.24,
+   "car_out_of_view": 0.006,
+   "stand_off_p50": null,
+   "latency_p50_s": 0.08
+  },
+  {
+   "tag": "cmp_hier_r1_20261027",
+   "platform": "PC",
+   "kind": "hier",
+   "model": "r1",
+   "score": 0.884,
+   "collisions_mission": 0,
+   "p0_escape_rate": 0.0,
+   "p0_violation_ticks": 28,
+   "det_hz": 3.63,
+   "car_out_of_view": 0.026,
+   "stand_off_p50": 16.4,
+   "latency_p50_s": 0.48
+  },
+  {
+   "tag": "cmp_hier_r3_20261027",
+   "platform": "PC",
+   "kind": "hier",
+   "model": "r3",
+   "score": 0.869,
+   "collisions_mission": 0,
+   "p0_escape_rate": 0.0,
+   "p0_violation_ticks": 46,
+   "det_hz": 3.08,
+   "car_out_of_view": 0.044,
+   "stand_off_p50": 16.5,
+   "latency_p50_s": 0.66
+  },
+  {
+   "tag": "cmp_hier_racevla_20261027",
+   "platform": "PC",
+   "kind": "hier",
+   "model": "racevla",
+   "score": 0.719,
+   "collisions_mission": 0,
+   "p0_escape_rate": 0.0,
+   "p0_violation_ticks": 0,
+   "det_hz": 3.75,
+   "car_out_of_view": 0.033,
+   "stand_off_p50": 21.6,
+   "latency_p50_s": 0.4
+  },
+  {
+   "tag": "cmp_manual_20261027",
+   "platform": "PC",
+   "kind": "manual",
+   "model": "manual",
+   "score": 0.954,
+   "collisions_mission": 0,
+   "p0_escape_rate": 0.0,
+   "p0_violation_ticks": 0,
+   "det_hz": 3.69,
+   "car_out_of_view": 0.003,
+   "stand_off_p50": null,
+   "latency_p50_s": null
+  },
+  {
+   "tag": "orin_e2e_aerovla_20261028",
+   "platform": "Jetson",
+   "kind": "pure",
+   "model": "aerovla",
+   "score": 0.102,
+   "collisions_mission": 0,
+   "p0_escape_rate": 0.0,
+   "p0_violation_ticks": 47,
+   "det_hz": null,
+   "car_out_of_view": null,
+   "stand_off_p50": null,
+   "latency_p50_s": 0.6
+  },
+  {
+   "tag": "orin_e2e_dronecats_20261028",
+   "platform": "Jetson",
+   "kind": "pure",
+   "model": "dronecats",
+   "score": 0.076,
+   "collisions_mission": 0,
+   "p0_escape_rate": 0.0,
+   "p0_violation_ticks": 0,
+   "det_hz": null,
+   "car_out_of_view": null,
+   "stand_off_p50": null,
+   "latency_p50_s": 0.78
+  },
+  {
+   "tag": "orin_e2e_r1_20261028",
+   "platform": "Jetson",
+   "kind": "pure",
+   "model": "r1",
+   "score": 0.113,
+   "collisions_mission": 0,
+   "p0_escape_rate": 0.0,
+   "p0_violation_ticks": 401,
+   "det_hz": null,
+   "car_out_of_view": null,
+   "stand_off_p50": null,
+   "latency_p50_s": 0.58
+  },
+  {
+   "tag": "orin_e2e_r2_20261028",
+   "platform": "Jetson",
+   "kind": "pure",
+   "model": "r2",
+   "score": 0.017,
+   "collisions_mission": 0,
+   "p0_escape_rate": 0.0,
+   "p0_violation_ticks": 173,
+   "det_hz": null,
+   "car_out_of_view": null,
+   "stand_off_p50": null,
+   "latency_p50_s": 0.58
+  },
+  {
+   "tag": "orin_e2e_r3_20261028",
+   "platform": "Jetson",
+   "kind": "pure",
+   "model": "r3",
+   "score": 0.076,
+   "collisions_mission": 0,
+   "p0_escape_rate": 0.0,
+   "p0_violation_ticks": 66,
+   "det_hz": null,
+   "car_out_of_view": null,
+   "stand_off_p50": null,
+   "latency_p50_s": 0.39
+  },
+  {
+   "tag": "orin_e2e_r4_20261028",
+   "platform": "Jetson",
+   "kind": "pure",
+   "model": "r4",
+   "score": 0.077,
+   "collisions_mission": 0,
+   "p0_escape_rate": 0.0,
+   "p0_violation_ticks": 269,
+   "det_hz": null,
+   "car_out_of_view": null,
+   "stand_off_p50": null,
+   "latency_p50_s": 0.46
+  },
+  {
+   "tag": "orin_e2e_racevla_20261028",
+   "platform": "Jetson",
+   "kind": "pure",
+   "model": "racevla",
+   "score": 0.083,
+   "collisions_mission": 0,
+   "p0_escape_rate": 0.0,
+   "p0_violation_ticks": 0,
+   "det_hz": null,
+   "car_out_of_view": null,
+   "stand_off_p50": null,
+   "latency_p50_s": 0.51
+  },
+  {
+   "tag": "orin_hier_aerovla_20261028",
+   "platform": "Jetson",
+   "kind": "hier",
+   "model": "aerovla",
+   "score": 0.989,
+   "collisions_mission": 0,
+   "p0_escape_rate": 0.0,
+   "p0_violation_ticks": 264,
+   "det_hz": 2.16,
+   "car_out_of_view": 0.184,
+   "stand_off_p50": 12.5,
+   "latency_p50_s": 0.63
+  },
+  {
+   "tag": "orin_hier_dronecats_20261028",
+   "platform": "Jetson",
+   "kind": "hier",
+   "model": "dronecats",
+   "score": 0.969,
+   "collisions_mission": 0,
+   "p0_escape_rate": 0.0,
+   "p0_violation_ticks": 0,
+   "det_hz": 2.29,
+   "car_out_of_view": 0.006,
+   "stand_off_p50": 16.4,
+   "latency_p50_s": 1.24
+  },
+  {
+   "tag": "orin_hier_fixed12_20261028",
+   "platform": "Jetson",
+   "kind": "fixed12",
+   "model": "fixed12",
+   "score": 0.799,
+   "collisions_mission": 0,
+   "p0_escape_rate": 0.0,
+   "p0_violation_ticks": 350,
+   "det_hz": 1.88,
+   "car_out_of_view": 0.375,
+   "stand_off_p50": 12.0,
+   "latency_p50_s": 0.1
+  },
+  {
+   "tag": "orin_hier_r1_20261028",
+   "platform": "Jetson",
+   "kind": "hier",
+   "model": "r1",
+   "score": 0.89,
+   "collisions_mission": 0,
+   "p0_escape_rate": 0.0,
+   "p0_violation_ticks": 6,
+   "det_hz": 2.18,
+   "car_out_of_view": 0.014,
+   "stand_off_p50": 16.4,
+   "latency_p50_s": 0.62
+  },
+  {
+   "tag": "orin_hier_r2_20261028",
+   "platform": "Jetson",
+   "kind": "hier",
+   "model": "r2",
+   "score": 0.924,
+   "collisions_mission": 0,
+   "p0_escape_rate": 0.0,
+   "p0_violation_ticks": 103,
+   "det_hz": 2.2,
+   "car_out_of_view": 0.09,
+   "stand_off_p50": 16.0,
+   "latency_p50_s": 0.52
+  },
+  {
+   "tag": "orin_hier_r3_20261028",
+   "platform": "Jetson",
+   "kind": "hier",
+   "model": "r3",
+   "score": 0.876,
+   "collisions_mission": 0,
+   "p0_escape_rate": 0.0,
+   "p0_violation_ticks": 31,
+   "det_hz": 2.21,
+   "car_out_of_view": 0.033,
+   "stand_off_p50": 16.6,
+   "latency_p50_s": 0.62
+  },
+  {
+   "tag": "orin_hier_r4_20261028",
+   "platform": "Jetson",
+   "kind": "hier",
+   "model": "r4",
+   "score": 0.882,
+   "collisions_mission": 0,
+   "p0_escape_rate": 0.0,
+   "p0_violation_ticks": 5,
+   "det_hz": 2.13,
+   "car_out_of_view": 0.016,
+   "stand_off_p50": 16.6,
+   "latency_p50_s": 0.49
+  },
+  {
+   "tag": "orin_hier_racevla_20261028",
+   "platform": "Jetson",
+   "kind": "hier",
+   "model": "racevla",
+   "score": 0.704,
+   "collisions_mission": 0,
+   "p0_escape_rate": 0.0,
+   "p0_violation_ticks": 4,
+   "det_hz": 2.28,
+   "car_out_of_view": 0.039,
+   "stand_off_p50": 21.6,
+   "latency_p50_s": 0.51
+  },
+  {
+   "tag": "orin_manual_20261028",
+   "platform": "Jetson",
+   "kind": "manual",
+   "model": "manual",
+   "score": 0.976,
+   "collisions_mission": 0,
+   "p0_escape_rate": 0.0,
+   "p0_violation_ticks": 2,
+   "det_hz": 2.25,
+   "car_out_of_view": 0.009,
+   "stand_off_p50": null,
+   "latency_p50_s": null
+  }
+ ],
+ "ranking": {
+  "PC pure": [
+   [
+    "AerialVLA (original)",
+    0.346,
+    [
+     0.153,
+     0.539
+    ]
+   ],
+   [
+    "DroneCATS-2B",
+    0.109,
+    [
+     0.086,
+     0.132
+    ]
+   ],
+   [
+    "RaceVLA-7B",
+    0.091,
+    [
+     0.084,
+     0.099
+    ]
+   ],
+   [
+    "AerialVLA FT r2",
+    0.065,
+    [
+     0.065
+    ]
+   ],
+   [
+    "AerialVLA FT r3",
+    0.053,
+    [
+     0.053
+    ]
+   ],
+   [
+    "AerialVLA FT r4",
+    0.033,
+    [
+     0.033
+    ]
+   ],
+   [
+    "AerialVLA FT r1",
+    0.018,
+    [
+     0.018
+    ]
+   ]
+  ],
+  "PC hier": [
+   [
+    "DroneCATS-2B",
+    0.934,
+    [
+     0.929,
+     0.939
+    ]
+   ],
+   [
+    "AerialVLA FT r2",
+    0.918,
+    [
+     0.918
+    ]
+   ],
+   [
+    "AerialVLA FT r3",
+    0.901,
+    [
+     0.934,
+     0.869
+    ]
+   ],
+   [
+    "AerialVLA FT r1",
+    0.884,
+    [
+     0.884,
+     0.884
+    ]
+   ],
+   [
+    "AerialVLA FT r4",
+    0.873,
+    [
+     0.873
+    ]
+   ],
+   [
+    "RaceVLA-7B",
+    0.72,
+    [
+     0.721,
+     0.719
+    ]
+   ],
+   [
+    "AerialVLA (original)",
+    0.648,
+    [
+     0.309,
+     0.987
+    ]
+   ]
+  ],
+  "Jetson pure": [
+   [
+    "AerialVLA FT r1",
+    0.113,
+    [
+     0.113
+    ]
+   ],
+   [
+    "AerialVLA (original)",
+    0.102,
+    [
+     0.102
+    ]
+   ],
+   [
+    "RaceVLA-7B",
+    0.083,
+    [
+     0.083
+    ]
+   ],
+   [
+    "AerialVLA FT r4",
+    0.077,
+    [
+     0.077
+    ]
+   ],
+   [
+    "DroneCATS-2B",
+    0.076,
+    [
+     0.076
+    ]
+   ],
+   [
+    "AerialVLA FT r3",
+    0.076,
+    [
+     0.076
+    ]
+   ],
+   [
+    "AerialVLA FT r2",
+    0.017,
+    [
+     0.017
+    ]
+   ]
+  ],
+  "Jetson hier": [
+   [
+    "AerialVLA (original)",
+    0.989,
+    [
+     0.989
+    ]
+   ],
+   [
+    "DroneCATS-2B",
+    0.969,
+    [
+     0.969
+    ]
+   ],
+   [
+    "AerialVLA FT r2",
+    0.924,
+    [
+     0.924
+    ]
+   ],
+   [
+    "AerialVLA FT r1",
+    0.89,
+    [
+     0.89
+    ]
+   ],
+   [
+    "AerialVLA FT r4",
+    0.882,
+    [
+     0.882
+    ]
+   ],
+   [
+    "AerialVLA FT r3",
+    0.876,
+    [
+     0.876
+    ]
+   ],
+   [
+    "RaceVLA-7B",
+    0.704,
+    [
+     0.704
+    ]
+   ]
+  ]
+ },
+ "baseline": {
+  "PC": [
+   0.966,
+   0.98,
+   0.954
+  ],
+  "Jetson": [
+   0.976
+  ]
+ },
+ "fixed12": {
+  "PC": [
+   0.999
+  ],
+  "Jetson": [
+   0.799
+  ]
+ },
+ "det_hz_manual": {
+  "PC": [
+   2.61,
+   3.24,
+   3.69
+  ],
+  "Jetson": [
+   2.25
+  ]
+ },
+ "safety": {
+  "flights": 45,
+  "mission_collisions": 0,
+  "p0_escape_rates": [
+   "0.0"
+  ],
+  "p0_violation_ticks": 3793
+ },
+ "nfz": {
+  "PC": {
+   "tag": "nfz3b_pc_hier_dronecats_20261028",
+   "model": "dronecats",
+   "name": "DroneCATS-2B",
+   "within30": 0.929,
+   "sep_mean_m": 22.0,
+   "car_out_of_view": 0.02,
+   "collisions_mission": 0,
+   "nfz_entered": false,
+   "nfz_s": 0.0,
+   "fence_aim_ticks": 577,
+   "nfz_hold_ticks": 62,
+   "hud_counts": {
+    "ticks": 4267,
+    "repaired": 13,
+    "braked": 0,
+    "held": 32,
+    "avoided": 1393,
+    "p0_escapes": 0
+   },
+   "hud_banner_ticks": {
+    "ok": 2241,
+    "near": 281,
+    "avoid": 1526,
+    "hold": 192,
+    "watch": 0,
+    "act": 27,
+    "breach": 0,
+    "brake": 0
+   },
+   "p0_escape_rate": 0.0,
+   "p0_violation_ticks": 0,
+   "mission_success": true,
+   "stand_off_p50": 16.3,
+   "authority": {
+    "controller_follow": 0.6974,
+    "vla_search": 0.0,
+    "hold": 0.0338,
+    "controller_fallback": 0.2688
+   },
+   "zones": {
+    "nfz-frontage": {
+     "drone_min_dist_m": 4.78,
+     "drone_ticks_inside": 0,
+     "drone_ticks_in_margin": 0,
+     "drone_ticks_within_12m": 344,
+     "car_ticks_inside": 0,
+     "car_ticks_in_margin": 197,
+     "ticks": 4200
+    },
+    "nfz-north-street": {
+     "drone_min_dist_m": 4.33,
+     "drone_ticks_inside": 0,
+     "drone_ticks_in_margin": 0,
+     "drone_ticks_within_12m": 480,
+     "car_ticks_inside": 0,
+     "car_ticks_in_margin": 0,
+     "ticks": 4200
+    },
+    "nfz-south-block": {
+     "drone_min_dist_m": 4.47,
+     "drone_ticks_inside": 0,
+     "drone_ticks_in_margin": 0,
+     "drone_ticks_within_12m": 121,
+     "car_ticks_inside": 0,
+     "car_ticks_in_margin": 0,
+     "ticks": 4200
+    }
+   },
+   "baseline": {
+    "tag": "cmp2_hier_dronecats_20261028",
+    "within30": 0.929,
+    "zones": {
+     "nfz-frontage": {
+      "drone_min_dist_m": 4.72,
+      "drone_ticks_inside": 0,
+      "drone_ticks_in_margin": 0,
+      "drone_ticks_within_12m": 344,
+      "car_ticks_inside": 0,
+      "car_ticks_in_margin": 202,
+      "ticks": 4200
+     },
+     "nfz-north-street": {
+      "drone_min_dist_m": 2.4,
+      "drone_ticks_inside": 0,
+      "drone_ticks_in_margin": 0,
+      "drone_ticks_within_12m": 437,
+      "car_ticks_inside": 0,
+      "car_ticks_in_margin": 0,
+      "ticks": 4200
+     },
+     "nfz-south-block": {
+      "drone_min_dist_m": 3.56,
+      "drone_ticks_inside": 0,
+      "drone_ticks_in_margin": 0,
+      "drone_ticks_within_12m": 119,
+      "car_ticks_inside": 0,
+      "car_ticks_in_margin": 0,
+      "ticks": 4200
+     }
+    }
+   }
+  },
+  "Jetson": {
+   "tag": "nfz3b_orin_hier_aerovla_20261028",
+   "model": "aerovla",
+   "name": "AerialVLA (original)",
+   "within30": 0.454,
+   "sep_mean_m": 87.3,
+   "car_out_of_view": 0.676,
+   "collisions_mission": 0,
+   "nfz_entered": false,
+   "nfz_s": 0.0,
+   "fence_aim_ticks": 207,
+   "nfz_hold_ticks": 21,
+   "hud_counts": {
+    "ticks": 4219,
+    "repaired": 257,
+    "braked": 0,
+    "held": 5,
+    "avoided": 448,
+    "p0_escapes": 0
+   },
+   "hud_banner_ticks": {
+    "ok": 2911,
+    "near": 155,
+    "avoid": 409,
+    "hold": 33,
+    "watch": 0,
+    "act": 711,
+    "breach": 0,
+    "brake": 0
+   },
+   "p0_escape_rate": 0.0,
+   "p0_violation_ticks": 151,
+   "mission_success": true,
+   "stand_off_p50": 12.4,
+   "authority": {
+    "controller_follow": 0.4062,
+    "vla_search": 0.0576,
+    "hold": 0.0,
+    "controller_fallback": 0.5362
+   },
+   "zones": {
+    "nfz-frontage": {
+     "drone_min_dist_m": 4.99,
+     "drone_ticks_inside": 0,
+     "drone_ticks_in_margin": 0,
+     "drone_ticks_within_12m": 158,
+     "car_ticks_inside": 0,
+     "car_ticks_in_margin": 192,
+     "ticks": 4183
+    },
+    "nfz-north-street": {
+     "drone_min_dist_m": 4.21,
+     "drone_ticks_inside": 0,
+     "drone_ticks_in_margin": 0,
+     "drone_ticks_within_12m": 152,
+     "car_ticks_inside": 0,
+     "car_ticks_in_margin": 0,
+     "ticks": 4183
+    },
+    "nfz-south-block": {
+     "drone_min_dist_m": 27.83,
+     "drone_ticks_inside": 0,
+     "drone_ticks_in_margin": 0,
+     "drone_ticks_within_12m": 0,
+     "car_ticks_inside": 0,
+     "car_ticks_in_margin": 0,
+     "ticks": 4183
+    }
+   },
+   "baseline": {
+    "tag": "orin_hier_aerovla_20261028",
+    "within30": 0.989,
+    "zones": {
+     "nfz-frontage": {
+      "drone_min_dist_m": 4.87,
+      "drone_ticks_inside": 0,
+      "drone_ticks_in_margin": 0,
+      "drone_ticks_within_12m": 322,
+      "car_ticks_inside": 0,
+      "car_ticks_in_margin": 192,
+      "ticks": 4199
+     },
+     "nfz-north-street": {
+      "drone_min_dist_m": 2.45,
+      "drone_ticks_inside": 0,
+      "drone_ticks_in_margin": 0,
+      "drone_ticks_within_12m": 526,
+      "car_ticks_inside": 0,
+      "car_ticks_in_margin": 0,
+      "ticks": 4199
+     },
+     "nfz-south-block": {
+      "drone_min_dist_m": 3.54,
+      "drone_ticks_inside": 0,
+      "drone_ticks_in_margin": 0,
+      "drone_ticks_within_12m": 165,
+      "car_ticks_inside": 0,
+      "car_ticks_in_margin": 0,
+      "ticks": 4199
+     }
+    }
+   }
+  },
+  "first_attempt": {
+   "tag": "nfz3_pc_hier_dronecats_20261028",
+   "policy": "follow_car_citylife_nfz3.yaml",
+   "within30": 0.27,
+   "nfz_entered": false,
+   "nfz_hold_ticks": 3349,
+   "hud_counts": {
+    "ticks": 4246,
+    "repaired": 196,
+    "braked": 0,
+    "held": 3326,
+    "avoided": 306,
+    "p0_escapes": 0
+   },
+   "p0_escape_rate": 0.0,
+   "collisions_mission": 0,
+   "zones": {
+    "nfz-frontage": {
+     "drone_min_dist_m": 4.8,
+     "drone_ticks_inside": 0,
+     "drone_ticks_in_margin": 0,
+     "drone_ticks_within_12m": 169,
+     "car_ticks_inside": 0,
+     "car_ticks_in_margin": 197,
+     "ticks": 4167
+    },
+    "nfz-north-street": {
+     "drone_min_dist_m": 4.0,
+     "drone_ticks_inside": 0,
+     "drone_ticks_in_margin": 0,
+     "drone_ticks_within_12m": 3428,
+     "car_ticks_inside": 0,
+     "car_ticks_in_margin": 398,
+     "ticks": 4167
+    },
+    "nfz-south-block": {
+     "drone_min_dist_m": 109.63,
+     "drone_ticks_inside": 0,
+     "drone_ticks_in_margin": 0,
+     "drone_ticks_within_12m": 0,
+     "car_ticks_inside": 90,
+     "car_ticks_in_margin": 11,
+     "ticks": 4167
+    }
+   }
+  }
+ },
+ "jetson": {
+  "facts": {
+   "model": "NVIDIA Jetson Orin Nano Engineering Reference Developer Kit Super",
+   "l4t": "# R36 (release), REVISION: 5.0, GCID: 43688277, BOARD: generic, EABI: aarch64, DATE: Fri Jan 16 03:50:45 UTC 2026",
+   "power_mode": "NV Power Mode: MAXN_SUPER",
+   "kernel": "5.15.185-tegra",
+   "python": "3.10.12",
+   "deployed_commit": "5621179f3b1c6343a11da7a217b494fa02040dea",
+   "mem_total_gb": "7.4",
+   "cuda": "2.8.0 True Orin"
+  },
+  "evidence_log": "demo/out/orin_hier_aerovla_20261028/console.log",
+  "evidence_lines": [
+   "==> simulator reachable at 10.42.0.1 (8989, 8990)",
+   "06:57:03:346 [INFO] Connecting to simulation server at 10.42.0.1",
+   "[vla-hierarchy] AerialVLA aerialvla-lora/aero_vla@196f2f32 at 127.0.0.1:8790 decides the intent continuously (pipelined, held 1.5 s): FOLLOW sets the ",
+   "[grounder] google/owlvit-base-patch32 loaded in 4s (VRAM 0.61 GB)",
+   "[start] subject acquired after 213 s ..."
+  ]
+ },
+ "figures": {
+  "nfz3_map": "docs/share/2026-10-28-Progress/_build/nfz3_map.png",
+  "nfz_frame_pc": "docs/share/2026-10-28-Progress/_build/nfz_frame_pc.jpg",
+  "nfz_frame_pc_t": 91.1,
+  "nfz_frame_jetson": "docs/share/2026-10-28-Progress/_build/nfz_frame_jetson.jpg",
+  "nfz_frame_jetson_t": 85.0
+ }
+}
