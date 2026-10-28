@@ -778,12 +778,15 @@ def test_with_the_search_off_the_cell_flies_the_old_hold_below_the_floor():
     lib, cell = next(_family("three-simultaneous-violations"))
     orig = SW.Shield
     try:
-        SW.Shield = functools.partial(orig, hold_points=False)
+        # c77c77d's recovery law too ("lookahead"; the default since
+        # 2026-10-29 recovers at the climb cap).
+        SW.Shield = functools.partial(orig, hold_points=False, recovery_law="lookahead")
         ex = SW.run_episode(cell.spec, lib.defaults, 0).extra
     finally:
         SW.Shield = orig
     assert ex["autopilot_hold_model"] == "in_place", ex["autopilot_hold_model"]
-    assert ex == SW.run_episode(cell.spec, lib.defaults, 0, autopilot_hold="in_place").extra
+    assert ex == SW.run_episode(cell.spec, lib.defaults, 0, autopilot_hold="in_place",
+                                recovery="lookahead").extra
     assert ex["autopilot_p0_flown_ticks"] == 78, ex["autopilot_p0_flown_ticks"]
     assert ex["hold_points_moved"] == 0 and ex["hold_points_illegal"] >= 1, ex["hold_points"]
     assert ex["hold_points"][0]["breaks"] == ["alt-band"]
@@ -864,7 +867,9 @@ def test_in_place_holds_fly_c77c77ds_rows_exactly():
     """Review of T1c, P8: "identical when off" rested on two counters of one
     cell. Every row of every cell the hold points change, flown in place,
     must be c77c77d's - the flight every rail still flies - so a drift in the
-    off mode fails here, not in a later comparison."""
+    off mode fails here, not in a later comparison. On c77c77d's recovery
+    law ("lookahead"): since 2026-10-29 the default recovers at the climb
+    cap, a change of the Shield's own (WP3-17)."""
     import sweep_scenarios as SW
     from guardrail.scenario_spec import Library
     lib = Library(ROOT / "experiments" / "scenarios.yaml")
@@ -872,7 +877,8 @@ def test_in_place_holds_fly_c77c77ds_rows_exactly():
     got = {}
     for sid in sorted({k.split("@")[0] for k in C77_IN_PLACE_DIGESTS}):
         for cell in fams[sid].cells():
-            run = SW.run_episode(cell.spec, lib.defaults, 0, autopilot_hold="in_place")
+            run = SW.run_episode(cell.spec, lib.defaults, 0, autopilot_hold="in_place",
+                                 recovery="lookahead")
             got[cell.episode_id] = (_row_digest(run.rows), len(run.rows))
     assert set(got) == set(C77_IN_PLACE_DIGESTS), sorted(set(got) ^ set(C77_IN_PLACE_DIGESTS))
     bad = {k: (got[k], v) for k, v in C77_IN_PLACE_DIGESTS.items() if got[k] != v}
@@ -1014,20 +1020,26 @@ def test_a_bundle_from_before_the_hold_points_is_reflown_in_place():
     bundle that names its hold flies that one; the schema written is /3
     since the merge with the vehicle-response arm (2026-10-21; /2 on this
     branch before it), and a /2 or /3 bundle that does not say which hold
-    it flew is refused rather than guessed. Shown since C2 (2026-10-21) on
+    it flew is refused rather than guessed. Since 2026-10-29 the schema is
+    /4, which also names the recovery law (arm.recovery); every older
+    bundle re-flies on "lookahead", the law it flew. Shown since C2 (2026-10-21) on
     three-simultaneous-violations, the library's moved hold (78 autopilot
     P0 ticks in place, 19 moved): the opens-on-vehicle cell no longer holds."""
     import copy
     import json
     import sweep_scenarios as SW
     lib, cell = next(_family("three-simultaneous-violations"))
-    here = SW.run_episode(cell.spec, lib.defaults, 0, autopilot_hold="in_place")
+    # Every /1-/3 bundle flew the recovery law of its day, "lookahead"
+    # (arm.recovery and the /4 schema since 2026-10-29, WP3-17).
+    here = SW.run_episode(cell.spec, lib.defaults, 0, autopilot_hold="in_place",
+                          recovery="lookahead")
     ex = json.loads(json.dumps(SW.episode_extras(cell.spec, lib.defaults, 0, here,
                                                  autopilot_hold="in_place")))
-    assert ex["extras_schema"] == SW.EXTRAS_SCHEMA == "sweep-episode-extras/3"
+    assert ex["extras_schema"] == SW.EXTRAS_SCHEMA == "sweep-episode-extras/4"
+    assert ex["arm"]["recovery"] == "lookahead", ex["arm"]
     old = copy.deepcopy(ex)
     old["extras_schema"] = "sweep-episode-extras/1"
-    del old["arm"]["autopilot_hold"]
+    del old["arm"]["autopilot_hold"], old["arm"]["recovery"]
     again = SW.rerun_from_extras(old)
     assert _row_digest(again.rows) == _row_digest(here.rows)
     assert again.extra["autopilot_hold_model"] == "in_place"
@@ -1038,12 +1050,32 @@ def test_a_bundle_from_before_the_hold_points_is_reflown_in_place():
     # This branch's own /2 bundles named their hold and no vehicle: read so.
     ours = copy.deepcopy(ex)
     ours["extras_schema"] = "sweep-episode-extras/2"
-    del ours["arm"]["response"]
+    del ours["arm"]["response"], ours["arm"]["recovery"]
     assert _row_digest(SW.rerun_from_extras(ours).rows) == _row_digest(here.rows)
-    for schema in ("sweep-episode-extras/2", "sweep-episode-extras/3"):
+    merged = copy.deepcopy(ex)
+    merged["extras_schema"] = "sweep-episode-extras/3"
+    del merged["arm"]["recovery"]
+    assert _row_digest(SW.rerun_from_extras(merged).rows) == _row_digest(here.rows)
+    # A /4 bundle that does not say which law it flew, and an older one that
+    # names a law no harness of its schema wrote, are refused.
+    for schema, drop in (("sweep-episode-extras/4", True), ("sweep-episode-extras/3", False)):
+        odd = copy.deepcopy(ex)
+        odd["extras_schema"] = schema
+        if drop:
+            del odd["arm"]["recovery"]
+        try:
+            SW.rerun_from_extras(odd)
+        except ValueError as e:
+            assert "recovery" in str(e), e
+        else:
+            raise AssertionError(f"a {schema} bundle was re-flown on a guessed recovery law")
+    for schema in ("sweep-episode-extras/2", "sweep-episode-extras/3",
+                   "sweep-episode-extras/4"):
         unnamed = copy.deepcopy(ex)
         unnamed["extras_schema"] = schema
         del unnamed["arm"]["autopilot_hold"]
+        if schema != SW.EXTRAS_SCHEMA:
+            del unnamed["arm"]["recovery"]
         try:
             SW.rerun_from_extras(unnamed)
         except ValueError as e:

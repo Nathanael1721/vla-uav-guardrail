@@ -604,10 +604,13 @@ LEGACY_GRANT = {
 
 
 def _moved(pins: dict, forecast: str) -> list[str]:
+    # The pins are the old flights, so on the old recovery law: since
+    # 2026-10-29 the default recovers at the climb cap (WP3-17), which moves
+    # altitude-floor-recovery.
     moved = []
     for sid, (final, reps) in pins.items():
         run = S.run_episode(_with(BY_ID[sid], escalation=False), DEFAULTS, 0,
-                            forecast=forecast)
+                            forecast=forecast, recovery="lookahead")
         got = (run.extra["final"]["x"], run.extra["final"]["y"], run.extra["final"]["up"])
         n = sum(len(r["repairs"]) for r in run.rows)
         if got != final or n != reps:
@@ -780,16 +783,25 @@ def test_the_non_wedged_standoff_still_completes():
 
 def test_a_recovery_from_below_the_floor_actually_enters_the_band():
     """REGRESSION, found by the sweep on its first run (AltitudeFix aimed at the
-    floor exactly and converged on it from below for ever)."""
+    floor exactly and converged on it from below for ever: 9.99973 m after
+    30 s, still unsafe). Since 2026-10-29 the recovery climbs at the 2 m/s
+    cap (WP3-17): with this exact integrator it arrives at 9.999999999999996
+    m in 3.5 s, inside the band to the monitors' 1e-9 m and legal, where the
+    climb stops; under the old law it crossed at 0.3 m/s. So "entered" is
+    the Shield's own band, and the recovery must be done by 4 s."""
     sh = Shield(load_policy(ROOT / "policies" / "sim_demo_policy.yaml"),
                 lookahead_s=3.0, dt=0.5)
     st = State(x=-30, y=-30, up=3.0)
-    for _ in range(300):
+    t_in = None
+    for k in range(300):
         d = sh.filter(st, Action4D(vx=3.0))
         st = State(x=st.x + d.emitted.vx * 0.1, y=st.y,
                    up=st.up + d.emitted.vz_up * 0.1)
-    assert st.up > 10.0, f"never entered the band: settled at {st.up:.5f} m"
+        if t_in is None and not sh.state_is_unsafe(st):
+            t_in = 0.1 * (k + 1)
+    assert st.up >= 10.0 - 1e-9, f"never entered the band: settled at {st.up:.5f} m"
     assert not sh.state_is_unsafe(st), "still an unsafe position at the end"
+    assert t_in is not None and t_in <= 4.0, f"inside the band only after {t_in} s"
 
 
 def test_the_recovery_is_measured_as_a_finite_time_to_safe():

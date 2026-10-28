@@ -982,10 +982,13 @@ def test_a_crawl_out_of_a_breach_is_floored_with_nothing_else_wrong():
     Each is floored now, still with no violation reported (nothing was
     violated: the FSM reads the tick as clean), and the emitted action is
     the same with and without the yaw breach. An escape already faster than
-    the floor still passes untouched."""
+    the floor still passes untouched. Since 2026-10-29 the altitude floor is
+    the climb cap held to the band (Shield._recovery_vz): 1.5 m/s here
+    (2-6 m band, 1 m margin, 3 s lookahead), so a 1.0 m/s climb is a crawl
+    too and 1.6 m/s is the fast escape."""
     cases = (
         ("altitude", make_shield, State(x=-30.0, y=-30.0, up=0.5), "vz_up",
-         (1e-6, 0.05, 0.2), 0.5, "AltitudeFix", 1.0),
+         (1e-6, 0.05, 0.2, 1.0), 1.5, "AltitudeFix", 1.6),
         ("zone", make_shield, State(x=22.0, y=15.0, up=4.0), "vx",
          (0.11, 0.15), 2.0, "GeofenceEscape", 3.0),
         ("stand-off", _standoff_ring_shield, State(x=9.0, y=0.0, up=9.0), "vx",
@@ -1041,11 +1044,12 @@ def test_the_floor_does_not_reshape_a_legal_action_for_another_rule():
     """The escape floor runs the operators of the rules the POSITION breaks
     (and the caps), not the whole stack: on the 8 Oct follow (ticks 777-780)
     the aircraft climbed out from under the floor at 1.8 m/s, already faster
-    than AltitudeFix's floor, and a full chain had StandoffHold's radial
-    reading take the closing speed off an action whose forecast never entered
-    the ring. Here: under the floor, climbing fast enough, flying past a
-    pedestrian 10.5 m abeam - the forecast's closest approach - while the
-    radial reading (16 m, closing 2.3 m/s, 5 s) says 4.7 m."""
+    than AltitudeFix's floor then (the band in one lookahead), and a full
+    chain had StandoffHold's radial reading take the closing speed off an
+    action whose forecast never entered the ring. Here: under the floor,
+    climbing at the 2 m/s cap (AltitudeFix's floor since 2026-10-29), flying
+    past a pedestrian 10.5 m abeam - the forecast's closest approach - while
+    the radial reading (16 m, closing 2.3 m/s, 5 s) says 4.7 m."""
     from guardrail.models import (AltitudeEnvelope, KinematicEnvelope, Policy,
                                   SubjectStandoff)
     pol = Policy(policy_id="floor-scope", constraints=[
@@ -1056,7 +1060,7 @@ def test_the_floor_does_not_reshape_a_legal_action_for_another_rule():
                           climb_rate_max_mps=2.0, yaw_rate_max_dps=45.0)])
     sh = Shield(pol)
     sh.set_subject(0.0, 0.0, "pedestrian")
-    st, a = State(x=-12.0, y=10.5, up=3.0), Action4D(vx=3.0, vz_up=1.8)
+    st, a = State(x=-12.0, y=10.5, up=3.0), Action4D(vx=3.0, vz_up=2.0)
     assert [v.rule_id for v in sh.state_is_unsafe(st)] == ["alt"]
     assert not sh._check(st, a)
     d = sh.filter(st, a)
@@ -1065,6 +1069,36 @@ def test_the_floor_does_not_reshape_a_legal_action_for_another_rule():
     d = sh.filter(st, slow)
     assert [r.operator for r in d.repairs] == ["AltitudeFix"], d.repairs
     assert (d.emitted.vx, d.emitted.vy) == (slow.vx, slow.vy) and d.emitted.vz_up >= 0.5
+
+
+def test_a_deep_recovery_climbs_at_the_cap_whatever_the_lookahead():
+    """REGRESSION (WP3-17, 2026-10-29). AltitudeFix sized a recovery's climb
+    to reach the band in one lookahead, (aim - up) / L: a P controller with
+    time constant L, so the last 2 L metres took L ln(2 L) seconds and a
+    longer forecast recovered more slowly. altitude-recovery-depth measured
+    11.7 s from 0.5 m under the 10 m floor at L = 5 s (7.6 s at 3 s). Flown
+    here with perfect tracking of the emitted climb, at 10 Hz: the recovery
+    now climbs at the 2 m/s cap until it is inside, 9.5 m in 4.8 s, at
+    either lookahead, and a climb so fast its endpoint would pass the
+    ceiling is held to the ceiling (no recovery repair)."""
+    pol_path = Path(__file__).resolve().parents[1] / "policies" / "sim_demo_policy.yaml"
+    for L in (3.0, 5.0):
+        sh = Shield(load_policy(pol_path), lookahead_s=L, dt=0.5)
+        up, t = 0.5, 0.0
+        while up < 10.0:
+            d = sh.filter(State(x=-30.0, y=-30.0, up=up), Action4D(vx=3.0))
+            assert d.emitted.vz_up >= 2.0 - 1e-9 or up > 9.0, (L, up, d.emitted.vz_up)
+            assert not d.emitted_violations, (L, up, d.emitted_violations)
+            up += d.emitted.vz_up * 0.1
+            t += 0.1
+            assert t < 30.0, (L, up)
+        assert t <= 4.8 + 1e-6, f"L = {L}: inside the band after {t:.1f} s (old law {7.6 if L == 3 else 11.7} s)"
+    # The narrow 2-6 m band: from 1.5 m the cap's 2 m/s would end the 3 s
+    # forecast at 7.5 m, so the climb is held to (6 - 1.5) / 3 = 1.5 m/s.
+    d = make_shield().filter(State(x=-30.0, y=-30.0, up=1.5), Action4D(vz_up=5.0))
+    assert abs(d.emitted.vz_up - 1.5) < 1e-9, d.emitted
+    fix = [r for r in d.repairs if r.operator == "AltitudeFix"]
+    assert fix and not fix[0].recovery and "ceiling" in fix[0].detail, d.repairs
 
 
 # ------------------------------- 50-rule speed and the sliding window (WP3-23)

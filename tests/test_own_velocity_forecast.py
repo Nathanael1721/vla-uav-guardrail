@@ -109,8 +109,11 @@ def _identity_lines(name: str, n: int, *, escalation: bool, velocity: str = "non
     kw = {}
     if velocity == "ignored":
         kw["velocity_response"] = None
+    # recovery_law "lookahead": the altitude recovery c77c77d flew. Since
+    # 2026-10-29 the default recovers at the climb cap (WP3-17), a change of
+    # the Shield's own, not of the velocity this proof is about.
     sh = Shield(pol, lookahead_s=5.0, dt=0.1, obstacle_map=smap,
-                escalation=escalation, **kw)
+                escalation=escalation, recovery_law="lookahead", **kw)
     rng = random.Random(f"{IDENTITY_SEED}:{name}:{escalation}")
     out = []
     t = 0.0

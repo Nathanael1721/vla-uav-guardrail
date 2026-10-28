@@ -34,7 +34,9 @@ scenarios:
       (G1 at 0 s, G7 at 12.3 s): AltitudeFix sizes the climb to arrive in one
       LOOKAHEAD, so a longer lookahead climbs more gently (see
       altitude-recovery-depth for the arithmetic). Still one recovery, no
-      fail-safe, and the purpose holds.
+      fail-safe, and the purpose holds. Since 2026-10-29 the recovery climbs
+      at the policy's 2 m/s cap (the Shield's recovery_law "cap", WP3-17):
+      7 m to the floor in 3.6 s, 36 repairs (103 before).
     mission:
       start_pose: { x: -30.0, y: -30.0, up: 3.0 }
       pilot: { type: constant, action: { vx: 3.0 } }
@@ -93,7 +95,17 @@ scenarios:
       5 s illegal; see altitude-floor-recovery). Since X6's progress test
       (2026-10-09) they take G1 then G7 and recover in 7.6, 6.8 and 7.8 s;
       re-measured 2026-10-11 on both theta readings and both onset limits,
-      and their markers were removed then. Still open from the 30 m cell:
+      and their markers were removed then. THE LAW SINCE 2026-10-29 (WP3-17,
+      the Shield's recovery_law "cap"): the recovery climbs or descends at
+      the 2 m/s cap, held only so its lookahead endpoint stays a margin
+      short of the far edge, and never slower than the old law; the
+      one-lookahead tail is gone. Time to safe = D / 2 for D metres outside
+      the band, plus a tick: 4.8, 4.1, 2.1 and 0.3 s from the floor cells,
+      0.3, 2.1 and 5.1 s from the ceiling cells (11.7, 10.9, 8.0, 2.1, 2.1,
+      8.0, 11.9 s on the old law, which `--recovery-law lookahead` still
+      flies and every bundle from before that date re-flies on). The gate is
+      the deepest cell's 10 m at the cap, 5.0 s, plus two ticks: still
+      implementation-derived, now from the cap, not from the forecast. Still open from the 30 m cell:
       ArduPilot's RTL entered above RTL_ALT (15 m) returns at its current
       altitude, so an RTL from above the 20 m ceiling would reach home
       still above it; whether a ceiling breach should make RTL descend
@@ -112,8 +124,9 @@ scenarios:
       ended_safe: { equals: true }
       time_to_safe_episodes: { equals: 1 }
       time_to_safe_censored: { max: 0 }
-      # The recovery law's bound at L = 5 s (description); 8.0 at L = 3 s.
-      # Implementation-derived: the grant sets no time-to-safe target.
-      mean_time_to_safe_s: "<=12.1"
+      # The recovery law's bound (description): 10 m at the 2 m/s cap plus
+      # two ticks, at either forecast; 12.1 at L = 5 s on the old law until
+      # 2026-10-29. Implementation-derived: the grant sets no time-to-safe target.
+      mean_time_to_safe_s: "<=5.2"
     expected_outcome: success
     expected_failsafe: false

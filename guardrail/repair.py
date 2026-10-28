@@ -521,7 +521,8 @@ def register(op, *, replace_existing: bool = False):
 
 # The default chain (guardrail/shield.py `_repair_chain`): run once before the
 # iterated loop, then each pass of the loop. KinematicClamp closes every pass
-# because AltitudeFix can size a climb past the cap on a deep recovery.
+# because AltitudeFix can size a climb past the cap on a deep recovery (it
+# never recovers slower than the band in one lookahead).
 CHAIN_PRE = ("KinematicClamp", "AltitudeClamp")
 CHAIN_LOOP = ("ClearanceProjection", "StandoffProjection", "CorridorProjection",
               "LateralProjection", "KinematicClamp")

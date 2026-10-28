@@ -152,10 +152,13 @@ def test_the_ideal_vehicle_flies_exactly_what_it_flew_before():
     what these episodes flew at c77c77d (before the arm, IDEAL_AT_C77):
     nfz-head-on held 20.6 m from the fence; failsafe-rtl-zone's modelled RTL
     ended 6.0 m from its zone; wind-gusts drew the same seeded gusts; and
-    each ends where it ended then, after as many ticks and repairs."""
+    each ends where it ended then, after as many ticks and repairs. On
+    c77c77d's recovery law ("lookahead"; the default recovers at the climb
+    cap since 2026-10-29, which moves altitude-recovery-depth)."""
     for sid, (ticks, final, rep_rows, reps, dist) in IDEAL_AT_C77.items():
-        a = S.run_episode(_spec(sid), LIBRARY.defaults, 1001)
-        b = S.run_episode(_spec(sid), LIBRARY.defaults, 1001, response="ideal")
+        a = S.run_episode(_spec(sid), LIBRARY.defaults, 1001, recovery="lookahead")
+        b = S.run_episode(_spec(sid), LIBRARY.defaults, 1001, response="ideal",
+                          recovery="lookahead")
         assert json.dumps(a.rows, default=str) == json.dumps(b.rows, default=str), sid
         assert not any("vehicle_v" in r or "vehicle_violations" in r for r in a.rows), sid
         assert a.extra["vehicle_response"] == {"arm": "ideal", "params": None,
@@ -482,7 +485,7 @@ def test_a_rerun_refuses_a_bundle_flown_on_other_response_parameters():
     # the ideal vehicle.
     old = json.loads(json.dumps(ex))
     del old["vehicle_response"]
-    del old["arm"]["response"]
+    del old["arm"]["response"], old["arm"]["recovery"]
     old["extras_schema"] = "sweep-episode-extras/1"
     assert not any("vehicle_v" in r for r in S.rerun_from_extras(old).rows)
 
@@ -500,7 +503,8 @@ def test_an_arm_bundle_is_a_schema_a_reader_without_the_arm_refuses():
     harness still reads the arm branch's own "/1" and "/2" bundles as they
     were flown (the ideal vehicle; the named one, held in place), and a
     bundle whose schema and keys disagree is refused rather than re-flown on
-    either."""
+    either. Since 2026-10-29 every bundle is "/4" and also names the
+    recovery law; the older ones carry none and flew "lookahead"."""
     import copy
     spec = _spec("nfz-head-on-control")
     pre_arm_reads = ("sweep-episode-extras/1",)                 # c77c77d's
@@ -522,9 +526,9 @@ def test_an_arm_bundle_is_a_schema_a_reader_without_the_arm_refuses():
                         ("ideal", "sweep-episode-extras/1")):
         theirs = copy.deepcopy(ex[arm])
         theirs["extras_schema"] = schema
-        del theirs["arm"]["autopilot_hold"]
+        del theirs["arm"]["autopilot_hold"], theirs["arm"]["recovery"]
         flown = S.run_episode(spec, LIBRARY.defaults, 0, response=arm,
-                              autopilot_hold="in_place")
+                              autopilot_hold="in_place", recovery="lookahead")
         again = S.rerun_from_extras(theirs)
         assert [r["x"] for r in again.rows] == [r["x"] for r in flown.rows], arm
         assert again.extra["vehicle_response"]["arm"] == arm
@@ -541,7 +545,7 @@ def test_an_arm_bundle_is_a_schema_a_reader_without_the_arm_refuses():
     nameless = json.loads(json.dumps(ex["ardupilot"]))
     del nameless["arm"]["response"]
     assert "arm.response" in _refused(lambda: S.rerun_from_extras(nameless))
-    unknown = dict(ex["ideal"], extras_schema="sweep-episode-extras/4")
+    unknown = dict(ex["ideal"], extras_schema="sweep-episode-extras/5")
     assert "schema" in _refused(lambda: S.rerun_from_extras(unknown))
 
 

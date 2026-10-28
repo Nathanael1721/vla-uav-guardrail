@@ -346,6 +346,11 @@ _CLEAR_DECEL_MPS2 = 3.0
 # of being treated as a one-way pipeline whose last stage is never re-repaired.
 _REPAIR_PASSES = 3
 
+# How a recovery from outside an altitude band climbs (Shield's recovery_law):
+# "cap" at the climb cap (since 2026-10-29), "lookahead" the band in one
+# lookahead (before; an exponential approach, WP3-17).
+RECOVERY_LAWS = ("cap", "lookahead")
+
 # Length of the sliding window of recent ticks. Safety Shield page, node
 # architecture: "Sliding-window buffer - last 50 actions + predicted
 # trajectory", feeding the violation checker. 50 ticks is 5 s at the 10 Hz
@@ -1028,7 +1033,7 @@ class Shield:
                  segment_check: bool = False, repair_order: tuple | None = None,
                  hold_points: bool = True, land_site_ok=None,
                  velocity_response: "_response.VelocityResponse | None" = _response.ARDUCOPTER_GUIDED,
-                 pipe_clock=None):
+                 pipe_clock=None, recovery_law: str = "cap"):
         """obstacle_map: None, or {"occ": uint8 NxN (1 = blocked), "res": float,
         "ox": float, "oy": float} — the same occupancy grid the global planner
         uses. A policy YAML cannot carry an 80x80 grid, so obstacle_clearance
@@ -1118,7 +1123,20 @@ class Shield:
         delayed tick re-applies a setpoint already absorbed into the measured
         velocity. Read only for a state with a measured velocity: the rule
         clock, the sliding window, N-in-T and every decision without a
-        velocity are untouched by it."""
+        velocity are untouched by it.
+
+        recovery_law: how fast AltitudeFix and CorridorAltitudeFix recover
+        from OUTSIDE an altitude band (RECOVERY_LAWS). "cap" (the default
+        since 2026-10-29): at the smallest kinematic climb cap, held to the
+        band's far edge, and never slower than the band in one lookahead
+        (_recovery_vz). "lookahead": the law before that date, exactly - the
+        band in one lookahead, which approaches it as an exponential with
+        time constant L; kept so a bundle flown with it re-flies bit for bit
+        and so the two can be compared (WP3-17)."""
+        if recovery_law not in RECOVERY_LAWS:
+            raise ValueError(f"recovery_law must be one of {RECOVERY_LAWS}, "
+                             f"got {recovery_law!r}")
+        self.recovery_law = recovery_law
         if repair_mode not in _repair.REPAIR_MODES:
             raise ValueError(f"repair_mode must be one of {_repair.REPAIR_MODES}, "
                              f"got {repair_mode!r}")
@@ -3176,17 +3194,94 @@ class Shield:
         """
         return min(1.0, (hi - lo) / 4.0)
 
+    def _recovery_vz(self, up: float, lo: float, hi: float, L: float) -> float:
+        """The vertical rate a recovery from OUTSIDE the band [lo, hi] flies:
+        the smallest climb cap among the kinematic rules in force, held to
+        the rate whose lookahead endpoint stays a re-entry margin short of
+        the far edge, and never slower than reaching the aim (a margin
+        inside the near edge) in one lookahead.
+
+        Until 2026-10-29 the rate was the last of these alone, (aim - up) /
+        L. That makes every recovery a P controller with time constant L:
+        from D metres short of the aim it covers the last 2 L metres in
+        L ln(2 L) seconds, 11.5 s of the 11.9 s the 30 m cell of
+        altitude-recovery-depth took at the grant's 5 s lookahead, against
+        about 5.5 s at the 2 m/s cap (experiments/templates/
+        altitude_envelope.yaml). A longer forecast then recovered more
+        slowly, which no rule asks for. With no kinematic rule there is no
+        cap to fly at and the one-lookahead rate stays."""
+        m = self._reentry_margin(lo, hi)
+        caps = [k.climb_rate_max_mps for k in self._kins]
+        if up < lo:
+            law = (lo + m - up) / L
+            return law if not caps else max(law, min(min(caps), (hi - m - up) / L))
+        law = (hi - m - up) / L
+        return law if not caps else min(law, max(-min(caps), (lo + m - up) / L))
+
     def _repair_altitude(self, state: State, a: Action4D, repairs: list[Repair]) -> Action4D:
         """Project vz so the lookahead endpoint lands inside the band.
 
         Two cases that look alike and are not:
 
-          * ALREADY outside - aim a margin INSIDE the band, so the recovery
-            actually arrives. See _reentry_margin.
+          * ALREADY outside - recover at the climb cap (_recovery_vz), aiming
+            a margin INSIDE the band so the recovery actually arrives (see
+            _reentry_margin). A command already recovering faster flies as
+            it is; a slower one, even one whose endpoint is legal, is made
+            to recover at the cap - a repair that only ever leaves faster.
           * inside and about to overshoot - aim at the boundary exactly. There
             is nothing to recover from, and pulling further in would fight a
             legal cruise that happens to sit near the edge of its own envelope.
+
+        recovery_law="lookahead" runs _repair_altitude_lookahead instead.
         """
+        if self.recovery_law == "lookahead":
+            return self._repair_altitude_lookahead(state, a, repairs)
+        vz = a.vz_up
+        L = self.lookahead_s
+        for env in self._alts:
+            end_up = state.up + vz * L
+            above, below = state.up > env.alt_max_m, state.up < env.alt_min_m
+            if above or below:
+                rec = self._recovery_vz(state.up, env.alt_min_m, env.alt_max_m, L)
+                # At least `rec` towards the band, and never so fast that the
+                # endpoint passes the far edge (that clamp is no recovery).
+                if above:
+                    far, new = (env.alt_min_m - state.up) / L, min(vz, rec)
+                    new = max(new, far)
+                else:
+                    far, new = (env.alt_max_m - state.up) / L, max(vz, rec)
+                    new = min(new, far)
+                if abs(new - vz) > 1e-9:
+                    to_far = new == far and new != rec
+                    edge = (f"ceiling {env.alt_max_m}m" if above != to_far
+                            else f"floor {env.alt_min_m}m")
+                    repairs.append(Repair(operator="AltitudeFix",
+                                          detail=f"vz {vz:.2f} -> {new:.2f} ({edge})",
+                                          magnitude_m=abs(new - vz) * L, axis="vertical",
+                                          recovery=not to_far))
+                    vz = new
+            elif end_up > env.alt_max_m:
+                new = (env.alt_max_m - state.up) / L
+                repairs.append(Repair(operator="AltitudeFix",
+                                      detail=f"vz {vz:.2f} -> {new:.2f} (ceiling {env.alt_max_m}m)",
+                                      magnitude_m=end_up - env.alt_max_m, axis="vertical",
+                                      recovery=False))
+                vz = new
+            elif end_up < env.alt_min_m:
+                new = (env.alt_min_m - state.up) / L
+                repairs.append(Repair(operator="AltitudeFix",
+                                      detail=f"vz {vz:.2f} -> {new:.2f} (floor {env.alt_min_m}m)",
+                                      magnitude_m=env.alt_min_m - end_up, axis="vertical",
+                                      recovery=False))
+                vz = new
+        return Action4D(vx=a.vx, vy=a.vy, vz_up=vz, yaw_rate=a.yaw_rate)
+
+    def _repair_altitude_lookahead(self, state: State, a: Action4D,
+                                   repairs: list[Repair]) -> Action4D:
+        """_repair_altitude as it was until 2026-10-29 (recovery_law
+        "lookahead"), kept line for line so a bundle flown with it re-flies
+        bit for bit: outside the band, aim a margin inside and reach it in
+        one lookahead, and only when the lookahead endpoint is outside."""
         vz = a.vz_up
         L = self.lookahead_s
         for env in self._alts:
@@ -3996,24 +4091,50 @@ class Shield:
             # Altitude first: it is independent of the lateral geometry and its
             # repair is a straight projection, exactly as for AltitudeEnvelope.
             end_up = state.up + a.vz_up * L
-            if end_up > c.altitude_ceiling_m or end_up < c.altitude_floor_m:
-                # Aim a margin inside when already outside, for the same reason
-                # AltitudeFix does - see Shield._reentry_margin. Targeting the
-                # edge converges on it without ever crossing.
-                m = self._reentry_margin(c.altitude_floor_m, c.altitude_ceiling_m)
-                if end_up > c.altitude_ceiling_m:
-                    tgt = c.altitude_ceiling_m - (
-                        m if state.up > c.altitude_ceiling_m else 0.0)
-                else:
-                    tgt = c.altitude_floor_m + (
-                        m if state.up < c.altitude_floor_m else 0.0)
+            lo, hi = c.altitude_floor_m, c.altitude_ceiling_m
+            band = f"(band [{lo}, {hi}]m)"
+            if self.recovery_law == "lookahead":
+                if end_up > c.altitude_ceiling_m or end_up < c.altitude_floor_m:
+                    # The law until 2026-10-29, line for line: aim a margin
+                    # inside when already outside (Shield._reentry_margin)
+                    # and get there in one lookahead.
+                    m = self._reentry_margin(c.altitude_floor_m, c.altitude_ceiling_m)
+                    if end_up > c.altitude_ceiling_m:
+                        tgt = c.altitude_ceiling_m - (
+                            m if state.up > c.altitude_ceiling_m else 0.0)
+                    else:
+                        tgt = c.altitude_floor_m + (
+                            m if state.up < c.altitude_floor_m else 0.0)
+                    new = (tgt - state.up) / L
+                    outside = not (c.altitude_floor_m <= state.up <= c.altitude_ceiling_m)
+                    repairs.append(Repair(
+                        operator="CorridorAltitudeFix",
+                        detail=f"{c.id}: vz {a.vz_up:.2f} -> {new:.2f} (band "
+                               f"[{c.altitude_floor_m}, {c.altitude_ceiling_m}]m)",
+                        magnitude_m=abs(end_up - tgt), axis="vertical", recovery=outside))
+                    a = Action4D(vx=a.vx, vy=a.vy, vz_up=new, yaw_rate=a.yaw_rate)
+            elif state.up > hi or state.up < lo:
+                # Already outside: recover as AltitudeFix does, at the climb
+                # cap and aiming a margin inside (Shield._recovery_vz, which
+                # sees Shield._reentry_margin); never past the far edge.
+                rec = self._recovery_vz(state.up, lo, hi, L)
+                far = ((lo if state.up > hi else hi) - state.up) / L
+                new = (max(min(a.vz_up, rec), far) if state.up > hi
+                       else min(max(a.vz_up, rec), far))
+                if abs(new - a.vz_up) > 1e-9:
+                    repairs.append(Repair(
+                        operator="CorridorAltitudeFix",
+                        detail=f"{c.id}: vz {a.vz_up:.2f} -> {new:.2f} {band}",
+                        magnitude_m=abs(new - a.vz_up) * L, axis="vertical",
+                        recovery=not (new == far and new != rec)))
+                    a = Action4D(vx=a.vx, vy=a.vy, vz_up=new, yaw_rate=a.yaw_rate)
+            elif end_up > hi or end_up < lo:
+                tgt = hi if end_up > hi else lo
                 new = (tgt - state.up) / L
-                outside = not (c.altitude_floor_m <= state.up <= c.altitude_ceiling_m)
                 repairs.append(Repair(
                     operator="CorridorAltitudeFix",
-                    detail=f"{c.id}: vz {a.vz_up:.2f} -> {new:.2f} (band "
-                           f"[{c.altitude_floor_m}, {c.altitude_ceiling_m}]m)",
-                    magnitude_m=abs(end_up - tgt), axis="vertical", recovery=outside))
+                    detail=f"{c.id}: vz {a.vz_up:.2f} -> {new:.2f} {band}",
+                    magnitude_m=abs(end_up - tgt), axis="vertical", recovery=False))
                 a = Action4D(vx=a.vx, vy=a.vy, vz_up=new, yaw_rate=a.yaw_rate)
 
             d, (ux, uy) = self._corridor_geom(c, state.x, state.y)
@@ -5304,9 +5425,9 @@ class Shield:
                 # into a fence, so the chain is iterated to a fixed point. Running
                 # it once as a pipeline leaves whatever the LAST operator produced
                 # un-repaired, which is exactly what the P0 guard then brakes on -
-                # every tick, forever. The caps close each pass: AltitudeFix sizes
-                # vz to reach the band in one lookahead, which can overshoot the
-                # climb cap on a deep recovery.
+                # every tick, forever. The caps close each pass: AltitudeFix
+                # never recovers slower than the band in one lookahead, which
+                # can overshoot the climb cap on a deep recovery.
                 loop = self._stack(_repair.CHAIN_LOOP)
                 for k in range(1, _REPAIR_PASSES + 1):
                     ctx.pass_no = k
@@ -5518,7 +5639,9 @@ class Shield:
         min(2.0, cap) - to the cap itself for a zone whose window opened on
         the aircraft (`_opened_on`) - StandoffRecover and ClearanceFix to the rate that
         clears the ring in one lookahead (0.5 m/s at least), AltitudeFix and
-        the corridor operators to the band in one lookahead. But the floors
+        CorridorAltitudeFix to the climb cap (_recovery_vz; the band in one
+        lookahead until 2026-10-29), CorridorReturn to the corridor in one
+        lookahead. But the floors
         live in the repair chain, and until 2026-10-19 the chain ran only
         when SOME rule was violated. So the escape speed from a P0 breach
         depended on whether an unrelated rule happened to be broken: 1 m

@@ -93,7 +93,7 @@ both sides and the measurements.
 
 | operator | axis | magnitude_m |
 |---|---|---|
-| AltitudeFix, CorridorAltitudeFix | vertical | the altitude error at the lookahead end |
+| AltitudeFix, CorridorAltitudeFix | vertical | the altitude error at the lookahead end; for a recovery from outside the band (recovery_law "cap", since 2026-10-29), how far the repair moved the lookahead endpoint, \|Δvz\| L, which is the same number whenever the old law's rate is the one flown |
 | GeofenceSlide | lateral | the deepest forecast pose inside the zone's margin ring |
 | ClearanceFix | lateral | the deepest forecast incursion into the clearance ring |
 | StandoffHold | lateral | the forecast's closest approach inside the ring (`ring - d_min`; until 2026-10-08 a straight-line range through the subject, up to 11.0 m into a 5 m ring) |
@@ -144,8 +144,9 @@ From such a position an action can be legal and still too slow: the monitors
 forgive a recovery on its trend (a zone or ring left at more than 0.1 m/s, any
 climb back toward a band, any forecast gain inside a clearance ring), while
 the repairs floor its speed (GeofenceEscape min(2.0, cap), StandoffRecover
-and ClearanceFix 0.5 m/s at least, AltitudeFix and CorridorReturn the gap in
-one lookahead; docs/FINDING-repairs-must-floor-the-escape.md). Until
+and ClearanceFix 0.5 m/s at least, CorridorReturn the gap in one lookahead,
+AltitudeFix and CorridorAltitudeFix the climb cap - see "Recovering at the
+climb cap" below; docs/FINDING-repairs-must-floor-the-escape.md). Until
 2026-10-19 the floors ran only when some rule was violated, so the same crawl
 passed untouched alone and left at the floor beside an unrelated breach. In
 `repair_mode="chain"` an action that breaks nothing enforced (nothing, or
@@ -167,6 +168,41 @@ repairs and no enforced violation (the FSM reads the tick as clean), and
 still flies as commanded (the altitude, corridor-band and clearance monitors
 accept any gain); raising those trend tests to the reference's 0.1 m/s is a
 monitor change pinned by tests/test_check_contract.py, left open.
+
+#### Recovering at the climb cap (2026-10-29, WP3-17)
+
+Until this date AltitudeFix (and CorridorAltitudeFix) sized a recovery from
+outside the band to reach a re-entry margin inside it in one lookahead,
+(aim - up) / L. That is a P controller with time constant L: from D metres
+short of the aim the climb runs at the cap only until D = 2 L, then decays,
+and the last 2 L metres take L ln(2 L) seconds - 11.5 of the 11.9 s the
+30 m cell of altitude-recovery-depth took at the grant's 5 s lookahead. A
+longer forecast therefore recovered more slowly, which nothing in the grant
+asks for. It was the largest share of the library's mean time to safe
+(4.31 s over 37 recoveries, against the reference sweep's 2.0 s): the
+altitude family's 8 recoveries averaged 8.1 s.
+
+The recovery now flies the smallest kinematic climb cap in force
+(`Shield._recovery_vz`), held only so its lookahead endpoint stays a
+re-entry margin short of the FAR edge, and never slower than the old law. A
+command already recovering faster flies as it is; a slower one, even one
+whose endpoint is legal, is made to recover at the cap - the floors'
+principle, "a legal action is only ever made to leave faster". Recoveries
+stay exempt from theta, so the FSM reads them as before; their
+`magnitude_m` is how far the repair moved the lookahead endpoint. With no
+kinematic rule there is no cap to fly at and the old law stays.
+
+| altitude-recovery-depth cell (grant forecast) | old law | at the cap |
+|---|---|---|
+| 0.5 / 2 / 6 / 9.5 m (floor 10 m) | 11.7 / 10.9 / 8.0 / 2.1 s | 4.8 / 4.1 / 2.1 / 0.3 s |
+| 20.5 / 24 / 30 m (ceiling 20 m) | 2.1 / 8.0 / 11.9 s | 0.3 / 2.1 / 5.1 s |
+| altitude-floor-recovery (from 3 m) | 10.3 s, 103 repairs | 3.6 s, 36 repairs |
+
+The old law is kept, line for line, as `Shield(recovery_law="lookahead")`:
+the velocity identity proof (tests/test_own_velocity_forecast.py) and the
+c77c77d row digests fly it, and the harness re-flies every bundle from
+before this date on it (bundle extras schema /4 names `arm.recovery`;
+`--recovery-law lookahead` flies a comparison run).
 
 What the PI reference does here is narrower. Its `safety_shield/shield.py`
 skips projection only when the WORST violation's action is `RTL` or `land`,

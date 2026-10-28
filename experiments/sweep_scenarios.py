@@ -331,8 +331,8 @@ from guardrail.scenario_spec import (FORECAST_ARMS,                # noqa: E402
                                      check_comparison_arms, check_forecast_arms,
                                      check_response_arms, expand,
                                      legacy_pins_read_as_before, load_profile)
-from guardrail.shield import (LOOKAHEAD_DT_S, LOOKAHEAD_S, Shield,  # noqa: E402
-                              recurrence_active)
+from guardrail.shield import (LOOKAHEAD_DT_S, LOOKAHEAD_S, RECOVERY_LAWS,  # noqa: E402
+                              Shield, recurrence_active)
 
 LIB = ROOT / "experiments" / "scenarios.yaml"
 PROFILES = ROOT / "experiments" / "profiles"
@@ -379,6 +379,13 @@ AP_HOLD_REACHED_M = 0.05
 # any rail; `--autopilot-hold in_place` gives the ones the rails match.
 AUTOPILOT_HOLD_MODELS = ("moved_points", "in_place")
 DEFAULT_AUTOPILOT_HOLD = "moved_points"
+# How the Shield recovers from outside an altitude band (Shield's
+# recovery_law, guardrail.shield.RECOVERY_LAWS), recorded per episode
+# (`recovery_law`, also in episode_start) and in a bundle's `arm.recovery`:
+#   cap        at the climb cap (since 2026-10-29, WP3-17). The default.
+#   lookahead  the band in one lookahead, every bundle flown before that
+#              date (an exponential approach with time constant L).
+DEFAULT_RECOVERY_LAW = "cap"
 
 # The wind model (module docstring, "THE WIND MODEL"). PSC_POSXY_P's default
 # (POSCONTROL_POS_XY_P, AC_PosControl.cpp at Copter-4.5.7), and the strongest
@@ -1280,16 +1287,18 @@ def _as_defaults(d) -> Defaults:
 def run_episode(sc, defaults=None, seed: int = 0, arm: dict | None = None, *,
                 forecast: str = "grant", wind_model: str = DEFAULT_WIND_MODEL,
                 autopilot_hold: str = DEFAULT_AUTOPILOT_HOLD,
-                response: str = DEFAULT_RESPONSE_ARM) -> EpisodeRun:
+                response: str = DEFAULT_RESPONSE_ARM,
+                recovery: str = DEFAULT_RECOVERY_LAW) -> EpisodeRun:
     """One headless episode. `arm` (paraphrase / prefix record) is RECORDED in
     the episode_start event and changes nothing else: no headless pilot reads
     text. `forecast` (forecast_for), `wind_model` (WIND_MODELS),
-    `autopilot_hold` (AUTOPILOT_HOLD_MODELS) and `response` (RESPONSE_ARMS,
-    response_for) DO change the flight. Flown by EpisodeRunner without a
-    pause, so a stepped episode and this one share one integrator."""
+    `autopilot_hold` (AUTOPILOT_HOLD_MODELS), `response` (RESPONSE_ARMS,
+    response_for) and `recovery` (the Shield's recovery_law, RECOVERY_LAWS)
+    DO change the flight. Flown by EpisodeRunner without a pause, so a
+    stepped episode and this one share one integrator."""
     return EpisodeRunner(sc, defaults, seed, arm, forecast=forecast,
                          wind_model=wind_model, autopilot_hold=autopilot_hold,
-                         response=response).finish()
+                         response=response, recovery=recovery).finish()
 
 
 class EpisodeRunner:
@@ -1327,10 +1336,11 @@ class EpisodeRunner:
     def __init__(self, sc, defaults=None, seed: int = 0, arm: dict | None = None, *,
                  forecast: str = "grant", wind_model: str = DEFAULT_WIND_MODEL,
                  autopilot_hold: str = DEFAULT_AUTOPILOT_HOLD,
-                 response: str = DEFAULT_RESPONSE_ARM):
+                 response: str = DEFAULT_RESPONSE_ARM,
+                 recovery: str = DEFAULT_RECOVERY_LAW):
         self._box: dict[str, Any] = {}
         self._gen = _episode(sc, defaults, seed, arm, self._box, forecast, wind_model,
-                             autopilot_hold, response)
+                             autopilot_hold, response, recovery)
         self.result: EpisodeRun | None = None
         self.error: BaseException | None = None
         self._failed_t: float | None = None     # the tick that raised
@@ -1416,7 +1426,8 @@ class EpisodeRunner:
 def _episode(sc, defaults, seed: int, arm: dict | None, box: dict,
              forecast: str = "grant", wind_model: str = DEFAULT_WIND_MODEL,
              autopilot_hold: str = DEFAULT_AUTOPILOT_HOLD,
-             response: str = DEFAULT_RESPONSE_ARM):
+             response: str = DEFAULT_RESPONSE_ARM,
+             recovery: str = DEFAULT_RECOVERY_LAW):
     """The integrator behind run_episode and EpisodeRunner: a generator that
     yields (tick, t) at the start of every tick, before that tick's scheduled
     events are applied, and returns the EpisodeRun. `box` receives the
@@ -1433,6 +1444,12 @@ def _episode(sc, defaults, seed: int, arm: dict | None, box: dict,
     if autopilot_hold not in AUTOPILOT_HOLD_MODELS:
         raise ValueError(f"autopilot hold model {autopilot_hold!r}: one of "
                          f"{list(AUTOPILOT_HOLD_MODELS)}")
+    if recovery not in RECOVERY_LAWS:
+        raise ValueError(f"recovery law {recovery!r}: one of {list(RECOVERY_LAWS)}")
+    # Every Shield of the episode on the same recovery law; passed only when
+    # it is not the default, as the hold model is below, so a caller's own
+    # Shield factory keeps its own.
+    rec_kw = {} if recovery == DEFAULT_RECOVERY_LAW else {"recovery_law": recovery}
     # The vehicle the commands are flown on (module docstring, "THE VEHICLE
     # RESPONSE"). `rsp` is None for the ideal vehicle, and then nothing below
     # differs from the integrator as it was before the arm existed: every
@@ -1485,11 +1502,13 @@ def _episode(sc, defaults, seed: int, arm: dict | None, box: dict,
     # functools.partial) keeps its own hold_points.
     shield = Shield(policy, lookahead_s=look, dt=step, now=clock, escalation=esc,
                     **({} if autopilot_hold == DEFAULT_AUTOPILOT_HOLD
-                       else {"hold_points": False}))
+                       else {"hold_points": False}), **rec_kw)
     # What the modelled autopilot flies for the FSM's Loiter / Land
     # (AUTOPILOT_HOLD_MODELS), as this Shield will plan it; None with no FSM.
     hold_model = (("moved_points" if getattr(shield, "hold_points", True) else "in_place")
                   if esc else None)
+    # The recovery law the flying Shield holds (a caller's factory may set it).
+    recovery_law = getattr(shield, "recovery_law", recovery)
 
     stress = spec.stress
     # Ground truth under degraded perception comes from a SECOND Shield kept in
@@ -1498,12 +1517,12 @@ def _episode(sc, defaults, seed: int, arm: dict | None, box: dict,
     # the oracle's queries into its sliding window (`history`), which the
     # Shield keeps for its own decisions.
     oracle = (Shield(spec.policy.load(ROOT), lookahead_s=look, dt=step, now=clock,
-                     escalation=False)
+                     escalation=False, **rec_kw)
               if stress.degrades_perception else None)
     # When the autopilot flies (LOITER / RTL / LAND), what it flew is checked
     # by a third Shield, never by the flying one (whose FSM it would feed).
     checker = (Shield(spec.policy.load(ROOT), lookahead_s=look, dt=step, now=clock,
-                      escalation=False) if esc else None)
+                      escalation=False, **rec_kw) if esc else None)
     # Under the vehicle-response arm only: a fourth Shield, kept in step like
     # the others, that judges the velocity the AIRFRAME flew over each tick
     # at the true position (`true_p0_vehicle_ticks`). The true-state P0 count
@@ -1516,7 +1535,7 @@ def _episode(sc, defaults, seed: int, arm: dict | None, box: dict,
     # the command, so the ideal episode builds, keys and steps exactly what
     # it did.
     vjudge = (Shield(spec.policy.load(ROOT), lookahead_s=look, dt=step, now=clock,
-                     escalation=False) if rsp is not None else None)
+                     escalation=False, **rec_kw) if rsp is not None else None)
     rng_gps = random.Random(f"{seed}:gps")
     rng_wind = random.Random(f"{seed}:wind")
     rng_jit = random.Random(f"{seed}:jitter")
@@ -1575,7 +1594,8 @@ def _episode(sc, defaults, seed: int, arm: dict | None, box: dict,
         "vehicle_response": rsp_rec,
         "wind_mps": [round(wind[0], 3), round(wind[1], 3)],
         "lint_warnings": lint_warnings,
-        "autopilot_hold_model": hold_model}]
+        "autopilot_hold_model": hold_model,
+        "recovery_law": recovery_law}]
     es = _EventState(shields=shields)
     st = m.start
     prev_st = st
@@ -2239,6 +2259,9 @@ def _episode(sc, defaults, seed: int, arm: dict | None, box: dict,
         # (AUTOPILOT_HOLD_MODELS): "moved_points" is modelled, flown by no
         # rail; "in_place" is what the rails fly. None with no FSM.
         "autopilot_hold_model": hold_model,
+        # How the Shield recovered from outside an altitude band
+        # (DEFAULT_RECOVERY_LAW): "cap" since 2026-10-29, "lookahead" before.
+        "recovery_law": recovery_law,
         "terminated_s": terminated_s,
         # Events the scenario expected the Shield to refuse: None when there
         # were none, else whether every one was refused (and nothing else).
@@ -2412,9 +2435,14 @@ def manifest_extras(arm: dict | None) -> dict | None:
 #     flown ideal) under the bundle's id; both refuse "/3". A headline bundle
 #     cannot stay "/1" as it did on the T1b branch: its autopilot flies the
 #     moved hold points, which no reader of "/1" models.
-EXTRAS_SCHEMA = "sweep-episode-extras/3"
+# /4  since 2026-10-29 (WP3-17): every bundle also names `arm.recovery`, the
+#     Shield's recovery law (DEFAULT_RECOVERY_LAW). Every /1-/3 bundle was
+#     flown before the law had a name, on "lookahead", and is re-flown so; a
+#     /3 reader would re-fly a /4 bundle on "lookahead" under its id, so it
+#     refuses "/4".
+EXTRAS_SCHEMA = "sweep-episode-extras/4"
 READABLE_EXTRAS_SCHEMAS = ("sweep-episode-extras/1", "sweep-episode-extras/2",
-                           EXTRAS_SCHEMA)
+                           "sweep-episode-extras/3", EXTRAS_SCHEMA)
 EXTRAS_SCHEMAS_READ = READABLE_EXTRAS_SCHEMAS       # the T1b branch's name
 
 
@@ -2465,7 +2493,8 @@ def episode_extras(spec: ScenarioSpec, defaults, seed: int, run: EpisodeRun, *,
                    arm: dict | None = None, forecast: str = "grant",
                    wind_model: str = DEFAULT_WIND_MODEL, episode=None,
                    autopilot_hold: str = DEFAULT_AUTOPILOT_HOLD,
-                   response: str = DEFAULT_RESPONSE_ARM) -> dict:
+                   response: str = DEFAULT_RESPONSE_ARM,
+                   recovery: str = DEFAULT_RECOVERY_LAW) -> dict:
     """The keys that make an episode bundle self-contained (manifest_extras.json,
     beside the grant's six-field manifest): the expanded ScenarioSpec cell
     with every parameter bound, its events, the library defaults it relied
@@ -2481,9 +2510,11 @@ def episode_extras(spec: ScenarioSpec, defaults, seed: int, run: EpisodeRun, *,
     a reader having to know when the arm appeared. A bundle written before
     2026-10-19 has neither key and was flown on the ideal vehicle (the only
     one there was); rerun_from_extras reads it so. `arm.autopilot_hold` is
-    written on every bundle too. Every bundle is EXTRAS_SCHEMA ("/3", which
-    has the history): a reader that knows only one of the two keys refuses
-    it rather than re-fly it on the ideal vehicle or with the wrong hold."""
+    written on every bundle too, and since 2026-10-29 `arm.recovery` (the
+    Shield's recovery law; the run's own `recovery_law` when it has one).
+    Every bundle is EXTRAS_SCHEMA ("/4", which has the history): a reader
+    that does not know a key refuses it rather than re-fly it on the ideal
+    vehicle, with the wrong hold or on the wrong recovery law."""
     dfl = _as_defaults(defaults)
     out: dict[str, Any] = {
         "extras_schema": EXTRAS_SCHEMA,
@@ -2491,7 +2522,8 @@ def episode_extras(spec: ScenarioSpec, defaults, seed: int, run: EpisodeRun, *,
         "template": spec.template,
         "random_seed": int(seed),
         "arm": {"record": arm, "forecast": forecast, "wind_model": wind_model,
-                "autopilot_hold": autopilot_hold, "response": response},
+                "autopilot_hold": autopilot_hold, "response": response,
+                "recovery": run.extra.get("recovery_law") or recovery},
         "forecast": run.extra.get("forecast") or forecast_for(spec, dfl, forecast),
         "wind_model": wind_model,
         "vehicle_response": run.extra.get("vehicle_response") or response_for(response),
@@ -2528,7 +2560,10 @@ def rerun_from_extras(extras: dict, root: Path | None = None) -> EpisodeRun:
           ideal vehicle; one naming a non-ideal `arm.response` is the
           response arm's, held in place (that branch had no hold points); one
           naming both or neither is refused, never guessed;
-      /3  names both, or is refused."""
+      /3  names both, or is refused.
+    /1-/3 were flown on the "lookahead" recovery law (one naming
+    `arm.recovery` contradicts itself and is refused); /4 names its law, or
+    is refused."""
     schema = extras.get("extras_schema")
     if schema not in READABLE_EXTRAS_SCHEMAS:
         raise ValueError(f"manifest_extras schema {schema!r}, this harness reads "
@@ -2561,6 +2596,16 @@ def rerun_from_extras(extras: dict, root: Path | None = None) -> EpisodeRun:
         if rsp_named is None:
             raise ValueError(f"manifest_extras schema {schema!r} names no "
                              f"arm.response: which vehicle flew it is unknown")
+    recovery = arm.get("recovery")
+    if schema == EXTRAS_SCHEMA:
+        if recovery is None:
+            raise ValueError(f"manifest_extras schema {schema!r} names no arm.recovery: "
+                             f"which recovery law was flown is unknown")
+    elif recovery is not None:
+        raise ValueError(f"manifest_extras schema {schema!r} predates arm.recovery but "
+                         f"names {recovery!r}: no harness wrote that under {schema!r}")
+    else:
+        recovery = "lookahead"
     response = rsp_named or DEFAULT_RESPONSE_ARM
     # A bundle written before 2026-10-19 may carry pins that name no gates,
     # which the spec now refuses; read as they were written (they decide
@@ -2604,7 +2649,7 @@ def rerun_from_extras(extras: dict, root: Path | None = None) -> EpisodeRun:
                            int(extras["random_seed"]), arm=arm.get("record"),
                            forecast=arm.get("forecast", "grant"),
                            wind_model=arm.get("wind_model", DEFAULT_WIND_MODEL),
-                           autopilot_hold=hold, response=response)
+                           autopilot_hold=hold, response=response, recovery=recovery)
     finally:
         if tmp is not None:
             tmp.cleanup()
@@ -3979,7 +4024,8 @@ def published_view(doc: dict) -> dict:
 
 def comparison_tag(forecast_arms, response_arms,
                    wind_model: str = DEFAULT_WIND_MODEL,
-                   autopilot_hold: str = DEFAULT_AUTOPILOT_HOLD) -> str | None:
+                   autopilot_hold: str = DEFAULT_AUTOPILOT_HOLD,
+                   recovery: str = DEFAULT_RECOVERY_LAW) -> str | None:
     """The comparison configuration(s) a run flies, as the labels its KPI rows
     carry ("forecast-3s", "response-ardupilot", "wind-open_loop", joined by
     "_"), or None for a run of the headline configuration alone. It names the
@@ -3987,12 +4033,15 @@ def comparison_tag(forecast_arms, response_arms,
     the hold points, 2026-10-21) is a run whose modelled autopilot holds
     where the aircraft is (`--autopilot-hold in_place`): its rows carry it
     as the run's `autopilot_hold_model`, not in their key, and until then
-    such a run wrote into stress_<profile> beside the headline bundles."""
+    such a run wrote into stress_<profile> beside the headline bundles.
+    "recovery-lookahead" (2026-10-29) is a run on the Shield's old recovery
+    law (`--recovery-law lookahead`), carried the same way (`recovery_law`)."""
     tags = ([f"forecast-{a}" for a in forecast_arms if a != "grant"]
             + ([f"wind-{wind_model}"] if wind_model != DEFAULT_WIND_MODEL else [])
             + [f"response-{a}" for a in response_arms if a != DEFAULT_RESPONSE_ARM]
             + ([f"hold-{autopilot_hold}"] if autopilot_hold != DEFAULT_AUTOPILOT_HOLD
-               else []))
+               else [])
+            + ([f"recovery-{recovery}"] if recovery != DEFAULT_RECOVERY_LAW else []))
     return "_".join(tags) or None
 
 
@@ -4130,13 +4179,19 @@ def main(argv: list[str] | None = None) -> int:
                     help="ideal (always) and optionally ardupilot, the labelled "
                          "comparison flown on the measured ArduPilot vehicle "
                          "response (default: the profile's, else ideal)")
+    ap.add_argument("--recovery-law", choices=RECOVERY_LAWS, default=DEFAULT_RECOVERY_LAW,
+                    help="how the Shield recovers from outside an altitude band: cap "
+                         "(at the climb cap, the default since 2026-10-29) or "
+                         "lookahead (the band in one lookahead, the law before; "
+                         "for comparison)")
     args = ap.parse_args(argv)
 
     if args.publish and (args.out or args.profile or args.only or args.seed is not None
                          or args.forecast_arms is not None
                          or args.wind_model != DEFAULT_WIND_MODEL
                          or args.autopilot_hold != DEFAULT_AUTOPILOT_HOLD
-                         or args.response_arms is not None):
+                         or args.response_arms is not None
+                         or args.recovery_law != DEFAULT_RECOVERY_LAW):
         # The published file is the WHOLE library on its declared seeds; a
         # partial or profiled run written there would replace it with less.
         # The response arm is not published either: docs/data/
@@ -4144,7 +4199,7 @@ def main(argv: list[str] | None = None) -> int:
         # would need a CHANGELOG entry for a comparison nobody asked to ship.
         print("REFUSED: --publish writes the full library run; it takes no "
               "--out, --profile, --only, --seed, --forecast-arms, --wind-model "
-              "--autopilot-hold or --response-arms")
+              "--autopilot-hold, --response-arms or --recovery-law")
         return 2
 
     t_run = time.perf_counter()
@@ -4179,6 +4234,11 @@ def main(argv: list[str] | None = None) -> int:
         print("REFUSED: --autopilot-hold chooses the headless harness's modelled "
               "autopilot; the SITL rail flies ArduPilot's own hold")
         return 2
+    if args.backend == "sitl" and args.recovery_law != DEFAULT_RECOVERY_LAW:
+        # Likewise: the rail's node builds its own Shield, on the default law.
+        print("REFUSED: --recovery-law chooses the headless harness's Shield; the "
+              "SITL rail flies the node's own Shield")
+        return 2
     if args.backend == "sitl" and any(a != "ideal" for a in eff_rsp):
         # The rail flies ArduPilot itself: its vehicle response is the real
         # one, and a modelled one on top would fly the response twice.
@@ -4192,6 +4252,8 @@ def main(argv: list[str] | None = None) -> int:
     # (AUTOPILOT_HOLD_MODELS; review of T1c, P3).
     info["autopilot_hold_model"] = args.autopilot_hold
     info["autopilot_hold_model_flown_by_a_rail"] = args.autopilot_hold == "in_place"
+    # The Shield's recovery law behind every recovery of this run (WP3-17).
+    info["recovery_law"] = args.recovery_law
     tag = profile.profile if profile else None
     # A run that flies a comparison configuration gets its own default folder
     # (run_folder), outside the stress_* glob the KPI report reads; --publish
@@ -4199,7 +4261,7 @@ def main(argv: list[str] | None = None) -> int:
     # published run, and that folder is outside the glob already).
     cmp_tag = None if args.publish else comparison_tag(
         fc_arms if fc_arms is not None else (profile.forecast_arms if profile else ["grant"]),
-        eff_rsp, args.wind_model, args.autopilot_hold)
+        eff_rsp, args.wind_model, args.autopilot_hold, args.recovery_law)
     out = results_path(args.out, args.publish, tag, cmp_tag)
     runs = Path(args.runs) if args.runs else run_folder(tag, cmp_tag)
     stamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H-%M-%SZ")
@@ -4286,7 +4348,7 @@ def main(argv: list[str] | None = None) -> int:
                 run = run_episode(spec, lib.defaults, ep.seed, arm=arm_record,
                                   forecast=ep.forecast, wind_model=args.wind_model,
                                   autopilot_hold=args.autopilot_hold,
-                                  response=ep.response)
+                                  response=ep.response, recovery=args.recovery_law)
                 rows, extra, policy = run.rows, run.extra, run.policy
                 events, hash0 = run.events, run.policy_hash_start
                 sim_s, wall_s, consumed = run.sim_s, run.wall_s, run.seed_consumed
@@ -4359,7 +4421,8 @@ def main(argv: list[str] | None = None) -> int:
                                             arm=arm_record, forecast=ep.forecast,
                                             wind_model=args.wind_model, episode=ep,
                                             autopilot_hold=args.autopilot_hold,
-                                            response=ep.response)}
+                                            response=ep.response,
+                                            recovery=args.recovery_law)}
             write_bundle(ep_dir, manifest, _json_safe({
                 **common, "status": status, "gates_failed": bad,
                 "kpi_grade": grade, "kpi_grade_reasons": why_not,
