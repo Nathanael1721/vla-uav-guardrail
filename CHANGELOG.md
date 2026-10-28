@@ -16,6 +16,68 @@ shipped change and recorded as one.
 
 ## [Unreleased]
 
+### 2026-10-28 — every model end to end and hierarchical, on the PC and on the Jetson: no VLA beats the hand-written follow consistently; a fixed 12 m stand-off scores 0.999 on the PC and 0.799 on the Jetson
+
+The user asked for every model flown end to end ("pure VLA") and at the top
+of the hierarchy, on the PC and with the flight client on the Jetson Orin
+Nano, with a video for each. 32 flights on 28 Oct (16 on the PC, 16 on the
+Jetson) plus the 10 of 27 Oct: 42 flights, 0 collisions in any mission and a
+P0 escape rate of 0.0 in every kpi.json. Same configuration as 27 Oct (Car_10,
+`follow_car_citylife_nfz`, 420 s, offscreen simulator at 30 FPS); end-to-end
+flights scored from the first acquisition, the others from the start gate.
+
+#### Added
+- `vla_fly --sim-address` (default 127.0.0.1, fe171ab) and
+  `deploy/orin/run_vla_fly.sh`: the end-to-end follow runs on the Jetson
+  against the desktop's simulator. The VLA server stays on the desktop's GPU
+  (the 7B models do not fit the Orin Nano's 8 GB; DroneCATS needs
+  transformers >= 5.18, the Jetson has 4.40.1) and is reached over an SSH
+  reverse tunnel the desktop opens (9900ab5), not a firewall opening.
+
+#### Flown (within 30 m; PC runs of 27 and 28 Oct, Jetson runs of 28 Oct)
+| Pilot | PC end to end | PC hierarchical | Jetson end to end | Jetson hierarchical |
+|---|---|---|---|---|
+| Hand-written follow (no VLA) | - | 0.966, 0.954, 0.980 | - | 0.976 |
+| Hand-written follow, fixed 12 m stand-off (scripted stand-in, no VLA) | - | 0.999 | - | 0.799 |
+| AerialVLA original (aero_vla) | 0.539, 0.153 | 0.987, 0.309 | 0.102 | 0.989 |
+| AerialVLA r1 | 0.018 | 0.884, 0.884 | 0.113 | 0.890 |
+| AerialVLA r2 | 0.065 | 0.918 | 0.017 | 0.924 |
+| AerialVLA r3 | 0.053 | 0.869, 0.934 | 0.076 | 0.876 |
+| AerialVLA r4 | 0.033 | 0.873 | 0.077 | 0.882 |
+| DroneCATS-2B | 0.132, 0.086 | 0.939, 0.929 | 0.076 | 0.969 |
+| RaceVLA-7B | 0.099, 0.084 | 0.719, 0.721 | 0.083 | 0.704 |
+
+#### Found
+- **No VLA beats the hand-written follow consistently.** Its four flights
+  scored 0.954-0.980. The steadiest VLA is DroneCATS at the top of the
+  hierarchy (0.929, 0.939, 0.969); the original AerialVLA there scored 0.987,
+  0.309 and 0.989.
+- **A close stand-off is fast but brittle.** The scripted 12 m stand-off
+  scored 0.999 on the PC and 0.799 on the Jetson (car out of view on 0.375 of
+  the ticks, detector 1.88 Hz); the original AerialVLA, which always asks for
+  about 12.4 m, lost the car at a corner in `cmp2_hier_aerovla` (0.309). The
+  fine-tunes' 16-17 m stand-offs score 0.87-0.93 and never fell apart.
+- **End to end every model loses the car** (0.017-0.539): once the car
+  leaves the frame at a turn, nothing brings it back, and the score depends
+  on when that happens (the original AerialVLA: 0.539 and 0.153 in two PC
+  flights).
+- **The Jetson flies the hand-written follow as well as the PC** (0.976)
+  with OWL-ViT at about 2.2 Hz against about 3 Hz on the PC. On the Jetson
+  the car was first locked within seconds of take-off instead of after about
+  210 s on the PC (the simulator starts before the flight there), so its
+  flights follow a different part of the car's route.
+
+#### Limits
+- One to three flights per configuration; the original AerialVLA and the
+  fixed stand-off show how much one flight can differ from the next.
+- On the Jetson only the flight client runs on the Orin; every VLA answered
+  from the desktop's GPU.
+
+#### Fixed (the runs, not the code)
+- D: reached 0 bytes during the PC flights and killed one run (renamed
+  `cmp2_e2e_r1_20261028_aborted`, re-flown); the 27 Oct frames were moved to
+  `C:\vla_drone_offload` and new runs write there.
+
 ### 2026-10-27 (flown) — nine follows in one configuration: the original AerialVLA adapter at the top of the hierarchy 0.987, the hand-written follow 0.954 and 0.980, DroneCATS 0.939; the fine-tunes below the original
 
 Every model we have, flown once each in the same configuration: the red car
