@@ -175,7 +175,10 @@ fact("von_carry", "3.3 m", [src(`${VON}/flight_log.jsonl`, (rows) => {
 }, "3.3")], { needsFlightData: true });
 fact("von_depth", "1.0 m", [src(`${VON}/flight_log.jsonl`, (rows) => Math.max(...rows.filter((r) => r.flown).map((r) => r.unsafe_depth_m || 0)).toFixed(1), "1.0")], { needsFlightData: true });
 fact("von_forecast", "2.70 m to 4.64 m", [src(`${VON}/flight_log.jsonl`, "forecast 2.70->4.64m")], { needsFlightData: true });
-fact("shield_cv", "constant-velocity", [src("guardrail/shield.py", "Constant-velocity forecast")]);
+// The 14 Oct flight's forecast held the commanded velocity. Since 20 Oct
+// (6987366) a State with a measured velocity is forecast from it as well, and
+// _predict's docstring keeps the commanded-velocity case in these words.
+fact("shield_cv", "constant-velocity", [src("guardrail/shield.py", "held from t = 0 for a State without a measured velocity, as it always")]);
 // The subject on the perception rail (CHANGELOG, 14 Oct): the truth was right,
 // the detector was not on the car, and the rail has no start gate.
 fact("truth_track", "0.52-0.54 m", [src(CL, "follow_vlm's validated Car_10 track (median 0.52-0.54 m)")]);
