@@ -131,6 +131,42 @@ first attempt; it now counts the growth room of a system-managed pagefile.
   replays to 4418ae0's decisions; on the new law it departs at tick 219)
   and test_build_deck_data (the September deck's altitude-curve model is
   of the old law; `tools/build_deck_data.py`).
+- The same list on the lab checkout, with the flight logs and
+  node_modules: three files fail, none from this work, and are left open
+  (below).
+
+#### Added (report)
+- **The final report's outline and evidence map** (X-01,
+  `docs/FINAL-REPORT-outline.md`, a7a0d9a): the report's sections, the
+  locked-KPI table with the best evidence so far, the deviations register
+  (WP2-16 recorded there: the multi-scale geometry is derived from the IR
+  when a policy is compiled or loaded, and the bundle carries the IR, not
+  the scales), the VLA measurement set with the repeats above, the PI's
+  open decisions, the plan to 2026-11-30, and the 136 obligations with
+  their evidence (61 DONE, 71 PARTIAL, 2 MISSING, 2 DRIFT). An outline,
+  not the report: section 5's KPI numbers come only from a `hil` run.
+
+#### Fixed (deck)
+- **The explainer deck's build had refused since 20 Oct**
+  (`tools/deck/build_explainer_deck.js`, f28c429): 6987366 rewrote
+  `Shield._predict`'s docstring for the own-velocity forecast and took the
+  phrase the `shield_cv` fact checks with it. The fact is about the 14 Oct
+  flight, whose forecast held the commanded velocity; it now checks the
+  docstring's words for that case. 147 facts, 0 mismatched.
+
+#### Found (tests left failing)
+- test_build_progress_oct_data: `docs/data/progress_oct.json` changed on
+  22 Oct (33447d7) after the October progress pack was built, so the
+  pack's build stamp no longer matches; rebuilding means rebuilding a
+  delivered pack.
+- test_explainer_deck: the explainer pack folder (gitignored) holds
+  SPEAKER-SCRIPT.md and .pdf, added on 14 Oct after the builder wrote its
+  README, which does not list them.
+- test_track_truth: on `orin_hier_aerovla_20261028` the detector's median
+  error is 4.0 px against the centre null's 3.3, with the car in frame on
+  100 % of rows (rounded); that is outside the test's centre-tie tolerance (5 % + 0.1 px)
+  and fits none of its four known shapes. The tolerance is not widened to
+  fit it.
 
 #### Limits
 - The follows fly simple_flight, outside the ArduPilot architecture: they
