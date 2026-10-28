@@ -24,7 +24,7 @@ flight, and the CSP re-issued per generation), WP3-07 (the FSM's edges,
 Land among them) and WP3-08 (one flight per breach action).
 
 #### Flown (the ROS 2 rail, `sitl/run_ros2_demo.sh on`: ArduPilot SITL Copter in WSL, mavlink-router, MAVROS 2, the VLA stub; topology `dev`)
-Every flight carries the signed `fase3-sim-demo` bundle (one polygon fence
+All 9 flights carry the signed `fase3-sim-demo` bundle (one polygon fence
 `nfz-square`, the 10-20 m band, a 4 m/s speed cap) and serves the REST
 hot-apply API on 127.0.0.1 (`--hotapply-port`). A client
 (stdlib `urllib`, in the session's scratchpad) sent each event at a fixed
@@ -48,7 +48,7 @@ one generation (0 to 4) with its own policy hash, and each wrote that
 generation's `policy_g<N>.json` and `csp_g<N>.json`: the CSP of generation
 0 does not name `nfz-hot-1`, those of 1-4 do (WP2-15). Receipt to swap,
 against the grant's 50 ms: 0.444-4.443 ms over the 12 events, 0.66-1.035
-ms for the six single spawns. The rail re-published the fences and uploaded
+ms for the six single spawns, 18 events in all. The rail re-published the fences and uploaded
 them to ArduPilot's GeoFence backstop after every event (5 uploads per
 hot-apply flight; the zone switched off was taken out of the upload).
 P0 escape rate 0.0 on every flight but the hard `monitor_only` one.
@@ -84,9 +84,14 @@ P0 escape rate 0.0 on every flight but the hard `monitor_only` one.
 - The first RTL attempt sent `"rtl"` and was refused with 422 (the DSL's
   value is `RTL`); its flight flew to the target with no event. The re-fly
   wrote into the same folder (Windows names are case-insensitive) and the
-  runner moved the refused flight into `ros2_action_rtl_01/_previous`.
+  runner moved the refused flight into `ros2_action_rtl_01/_previous`; the
+  folder's client log holds both attempts' requests, in order.
 
 #### Changed
+- `docs/FINAL-REPORT-outline.md`: WP2-15, WP3-12 and WP3-08 move to DONE
+  on these flights, WP1-15, WP4-03 and WP3-07 gain them as evidence; the
+  map of the 136 obligations reads 64 DONE, 68 PARTIAL, 2 MISSING, 2 DRIFT
+  (61 and 71 before).
 - `~/venv-ros` (WSL) gained fastapi 0.162.0 and uvicorn 0.54.0, the
   pyproject `api` extra that `sitl/setup_ros2.sh` installs; the Shield
   node refused `--hotapply-port` without them.
