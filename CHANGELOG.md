@@ -16,6 +16,101 @@ shipped change and recorded as one.
 
 ## [Unreleased]
 
+### 2026-10-28 (night) — DroneCATS 2B on the Jetson Orin Nano itself: it fits in int4 but answers in 9.6 s and, beside the detector, timed out 34 times in 36; Jetson runs now record their commit and their two hosts; a CSP from every city flight; an independent paraphrase test
+
+The user asked to try DroneCATS 2B on the Jetson and check the result, to
+keep working on the grant's open obligations, and to move the flight data
+off C:.
+
+#### Added
+- **DroneCATS quantised** (`demo/vla_server_foreign.py`, 17c3ab8, 892dc1b,
+  f30bc28): `--precision nf4` (bitsandbytes) and `--precision int4` (torchao
+  int4 weight-only, group 128, `tile_packed_to_4d`: torch's own tinygemm
+  kernel). Both quantise the language layers and keep the vision encoder,
+  projector and lm_head in bf16. Each is refused before a model loads when
+  its package is missing. The PyPI bitsandbytes aarch64 wheel has no sm_87
+  kernels ("named symbol not found at line 74 in ops.cu" on the Orin), so
+  int4 is the Jetson's. The client accepts int4 in a server identity
+  (`guardrail/vla_link.PRECISIONS`, 8f83f93).
+- **`follow_vlm --vla-hierarchy-expiry-s`** (471f0f7, default 1.5): how long
+  an answer's intent holds, for a model slower than 1.5 s per decision;
+  recorded in the hierarchy's config.
+- **Where a run really ran** (65240f5, 87cc412, de1238a): the manifest's
+  topology is `projectairsim-remote-sim` when `--sim-address` is not
+  loopback (follow_vlm, its hierarchy, vla_fly; `guardrail.manifest.
+  projectairsim_topology`), and `deploy/orin/sync_follow_controller.ps1`
+  now sends a git bundle and checks HEAD out on the Jetson (`-Ssh`/`-Scp`
+  take Git for Windows' client). Every Jetson flight of 27-28 Oct recorded
+  `projectairsim-single-host` and `unversioned`; the first flight after the
+  fix recorded `8f83f9391adb` and `projectairsim-remote-sim`. Runs already
+  on disk keep their labels.
+- **An episode record and a CSP from every city flight** (f6ee433, audit
+  WP2-11): `follow_vlm.city_episode` writes events.jsonl (episode_start to
+  mission_end), policy_g0.json and csp_g0.json, compiled for the follow's
+  mission at the Shield's own horizon, with no rule clock (the city Shield
+  has none); every flight-log row carries the episode id, so the replay
+  bundle binds its log and refuses an episode that never ended.
+  `tests/test_city_episode.py` (new, in CI) 3/3.
+- **Paraphraser** (fb2cb49, audit WP2-13 / WP4-10 / ARCH-23): a
+  with/without/having phrase after the object and any noun after a place
+  preposition are read as narrowings. A new held-out set,
+  `heldout_2026_10_28`, 40 probes written by an independent author (an
+  agent given only the 17 source texts and the probe format, with no access
+  to the validator, its tests, the design doc or the earlier sets).
+
+#### Measured
+| | result |
+|---|---|
+| DroneCATS bf16 on the Orin Nano | does not fit: the 4.6 GB allocation fails even with nothing else of ours running |
+| DroneCATS int4 on the Orin Nano, alone | loads in about 11 s, uses about 3.1 GB, one decision p50 9.57 s (prefill of 1779 prompt tokens + 30 new tokens); PC bf16 0.76 s |
+| Same 40 frames, Jetson int4 against PC bf16 | the same action kind on 35/40, identical step text on 11/40, 30/40 steps within 2 bins, go point median 18.8 px apart |
+| Why int4 is slow there (one 2048x6144 layer, 1779 rows) | int4 tinygemm 46.8 ms, bf16 9.9 ms, int8 weight-only 7.7 ms; one row: 0.45, 0.42, 1.94 ms |
+| Paraphrase validator on heldout_2026_10_28 | meaning changes accepted 2/20, faithful refused 5/20, the same before and after this change |
+| Paraphrase validator, dev and regression sets | heldout_2026_10_21b 4/12 -> 0/12 (dev now); stored 112/112, mutants 3979/3979, review 0/28, first held-out 0/30: unchanged |
+
+#### Flown
+| Flight | Within 30 m | VLA decisions | Who flew | P0 escapes |
+|---|---|---|---|---|
+| Jetson, everything on the board: OWL-ViT, the controller, the Shield and DroneCATS int4 (`orin_onboard_hier_dronecats_int4_20261028`) | 0.959 | 36 asked: 34 timed out after 10 s, 2 answered (8.8-9.6 s), no intent set on any tick | the controller on all 4192 ticks (`controller_fallback`, no answer) | 0 |
+On that flight the Jetson peaked at 7278 of 7607 MB of RAM with 3026 MB in
+swap; the detector ran at 2.04 Hz (2.18 Hz with the controller alone, 27 Oct).
+
+#### Found
+- **The 0.959 is the controller's, not DroneCATS's.** The model fits on the
+  Orin Nano but does not decide: beside the detector the board swaps, its
+  answers pass the 10 s decision timeout, and the hierarchy falls back on
+  every tick. A VLA that runs fully on the Jetson and steers needs the AGX
+  Orin (64 GB) the lab has received, or a smaller or faster model.
+- **The 5 Oct audit's provenance finding was right**: Jetson runs could not
+  name their code. Fixed above for every later run.
+- The independent paraphrase set found two kinds of change the validator
+  does not read (a limit narrowed to one component, "horizontal speed"; a
+  time zone added to a schedule) and five faithful wordings it refuses
+  (merged equal limits, "respectively", spelled-out numbers, "someone",
+  "in front of you"). Recorded, not tuned on.
+
+#### Moved
+- WSL off D: (the user added a 1 TB disk, E:): Ubuntu by export and import,
+  18.6 GB (its old disk image was 633 GB for 19 GB of files), every file's
+  size and every /home, /root, /etc, /opt and /usr/local file's sha256
+  checked; Ubuntu-22.04 by `wsl --manage --move`. The Ubuntu backup tar is
+  kept on E:.
+- `C:\vla_drone_offload` (73.6 GB, 444,881 files: 25 run frame folders,
+  the Jetson runs, the full videos) copied to `D:\vla_drone_offload`,
+  checked folder by folder (count and bytes, 0 differences), and the 25
+  `demo\out\<tag>\view` junctions re-pointed to D:. The C: copy is kept
+  until the user says otherwise.
+
+#### Tests
+- test_vla_foreign 49/49, test_city_episode 3/3 (new), test_paraphraser
+  87/87, test_manifest 67/67, test_vla_link 35/35, test_vla_hierarchy
+  17/17, test_vla_fly 63/63, test_build_dashboard 20/20, test_kpi_report
+  40/40.
+
+#### Limits
+- One Jetson flight. The PC side of that flight ran a working tree with an
+  untracked file, so PC runs still record `-dirty`.
+
 ### 2026-10-28 (later) — three no-fly zones flown by the best hierarchical VLA on the PC and on the Jetson: no zone entered; a first placement pinned the drone; progress deck
 
 The user asked for the best hierarchical run on the PC (DroneCATS) and on the
