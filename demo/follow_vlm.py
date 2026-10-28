@@ -80,7 +80,7 @@ from guardrail.manifest import (                                    # noqa: E402
     DEV_YAML_FLAG, NO_VLA, build_manifest, flight_bundle_path, flight_policy_choice,
     is_kpi_grade, model_hash, pilot_record,
 )
-from guardrail.replay import verify_replay, write_replay           # noqa: E402
+from guardrail.replay import EpisodeRecord, verify_replay, write_replay  # noqa: E402
 from guardrail.shield import LOOKAHEAD_DT_S, LOOKAHEAD_S           # noqa: E402
 from guardrail.models import (                                      # noqa: E402
     Action4D, AltitudeEnvelope, ObstacleClearance, SubjectStandoff,
@@ -3810,6 +3810,41 @@ def flight_manifest(policy_hash: str, seed: int, sim_address: str | None = None)
                           topology=projectairsim_topology(sim_address))
 
 
+def city_episode(out: Path, policy, lookahead_s: float, start_xy, object_text: str,
+                 cruise_alt: float, speed_max: float) -> EpisodeRecord:
+    """The city rail's episode record (guardrail.replay.EpisodeRecord), as the
+    SITL and perception rails write theirs: events.jsonl from episode_start to
+    mission_end, policy_g0.json and the typed CSP csp_g0.json. Until
+    2026-10-28 a city flight wrote no CSP at all (audit card WP2-11).
+
+    The mission context is the perception rail's follow mission
+    (pas_ardupilot.perception_node.follow_mission): "follow <object>", start
+    and target proxy both the position at the mission clock's start, since
+    where the subject will be is not known before the flight and ground truth
+    may not stand in for it; cruise height and the controller's speed cap.
+    The CSP is compiled at the Shield's own forecast horizon (`lookahead_s`).
+    No rule clock: this rail's Shield has none, so the record says
+    {"kind": "none"} (every scheduled rule in force), which is what flew.
+    `rotate=False`: the flight has already written into `out` (fly() clears
+    the previous flight's episode files itself, CITY_EPISODE_FILES)."""
+    from guardrail.compiler import Mission
+    sx, sy = float(start_xy[0]), float(start_xy[1])
+    mission = Mission(task_text=f"follow {object_text}", target_x=sx, target_y=sy,
+                      cruise_alt_m=float(cruise_alt), speed_pref_mps=float(speed_max),
+                      start_x=sx, start_y=sy)
+    rec = EpisodeRecord(out, policy, mission, lookahead_s=float(lookahead_s), rotate=False)
+    rec.event("mission", task_text=mission.task_text, start=[round(sx, 2), round(sy, 2)],
+              target_proxy="start", cruise_alt_m=mission.cruise_alt_m,
+              speed_pref_mps=mission.speed_pref_mps)
+    return rec
+
+
+# The episode files a re-used tag must not inherit (fly() removes them before
+# take-off, with the flight log and the detections).
+CITY_EPISODE_FILES = ("events.jsonl", "policy_g*.json", "csp_g*.json",
+                      "costmap_csp_g*.npz", "costmap_csp_g*.json")
+
+
 def pilot_entry() -> dict:
     """metrics["pilot"]: what flew (no VLA: a hand-written controller) and the
     detector that steered it, with its HF revision. A missing HF cache must
@@ -4074,6 +4109,10 @@ async def fly(args) -> int:
     for f in ("flight_log.jsonl", "detections.jsonl"):
         if (out / f).exists():
             (out / f).unlink()
+    for pattern in CITY_EPISODE_FILES:
+        for f in out.glob(pattern):
+            f.unlink()
+    episode = None              # the episode record, from the mission clock's start
 
     # A stand-off rule naming a class no phrase can ever produce is inert: it is
     # hashed, audited, and never fires. That is exactly how the 10 m pedestrian
@@ -5038,6 +5077,19 @@ async def fly(args) -> int:
                   f" after {waited:.0f} s: {start_gate}")
 
         t0, last_seen = time.time(), 0.0
+        # The episode record and its CSP, from where the mission starts. A
+        # record that cannot be written must not cost the flight: it is said,
+        # and the flight log then carries no episode id.
+        try:
+            _p0 = drone.get_ground_truth_kinematics()["pose"]["position"]
+            episode = city_episode(out, policy, shield.lookahead_s, (_p0["x"], _p0["y"]),
+                                   args.object, args.cruise_alt, args.speed_max)
+            _g0 = episode.generations[0]
+            print(f"[episode] {episode.episode_id}: policy_g0.json, "
+                  f"{'csp_g0.json' if _g0['csp'] else '*** no CSP (see events.jsonl)'}")
+        except Exception as exc:                                    # noqa: BLE001
+            episode = None
+            print(f"[episode] *** not recorded: {type(exc).__name__}: {exc}")
         if vla_rec is not None:
             vla_rec.start(t0)           # only the mission's frames and ticks
         if hierarchy is not None:
@@ -6278,6 +6330,7 @@ async def fly(args) -> int:
             traj.append({"x": state.x, "y": state.y, "up": state.up,
                          "touched": d.touched})
             rows.append({
+                **({} if episode is None else {"episode_id": episode.episode_id}),
                 "t": round(time.time() - t0, 3), "tick": tick,
                 "x": state.x, "y": state.y, "up": state.up, "psi": yaw,
                 "det_seq": g["seq"], "det_age_s": round(min(age, 99), 3),
@@ -6448,6 +6501,8 @@ async def fly(args) -> int:
         # The mission window closes here, plus the last command's 0.3 s: what
         # the simulator reports after that is the descent and the landing.
         t_mission_end = time.time() + 0.3
+        if episode is not None:
+            episode.end("the mission window closed", t=round(t_mission_end - t0, 3))
         live.beat(progress=1.0, phase="landing", detail="mission over; landing")   # memory only
         grounder.stop()
         _hud_live = recorder is not None and pind is not None and pind_error is None
