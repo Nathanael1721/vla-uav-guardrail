@@ -371,6 +371,17 @@
       "locked_on": "2026-10-28",
       "policy_hash": "sha256:79d406d092cca554bcd1fc82a314b136a0c52c45b192081e83f471cc77d715d2"
     },
+    "follow-car-citylife-nfz3b@0.1.0": {
+      "file": "follow_car_citylife_nfz3b.yaml",
+      "hash_scheme": "sha256-canonical-v3",
+      "legacy_hashes": {
+        "legacy16-exclude-none": "sha256:02144ba6f52c32e5",
+        "legacy16-include-defaults": "sha256:e3318dd5f4bf46a5",
+        "legacy16-valid-time": "sha256:20435bff747bf904"
+      },
+      "locked_on": "2026-10-28",
+      "policy_hash": "sha256:02144ba6f52c32e5ba3433fb688c25a5cc44dbbb617fde9acc4a8471aec78b1b"
+    },
     "follow-car-citylife-nfz@0.1.0": {
       "file": "follow_car_citylife_nfz.yaml",
       "legacy_hashes": {

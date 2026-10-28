@@ -1,3 +1,9 @@
+# SUPERSEDED by follow_car_citylife_nfz3b.yaml (2026-10-28). Kept unchanged so
+# the one flight that flew it, nfz3_pc_hier_dronecats_20261028, still resolves
+# to the policy it flew. Its nfz-north-street left no corridor beside the
+# controller's 4 m band (margin + FenceGuard stand-off): the drone held short
+# of it for 3349 ticks and lost the car. See nfz3b's header.
+#
 # The CityLife red-car mission with THREE no-fly zones, one on each of three
 # legs of the car's loop: a guardrail test for the hierarchical VLA follows.
 #
