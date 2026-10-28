@@ -739,10 +739,11 @@ class FakePub:
 
 class FakeNode:
     def __init__(self):
-        self.subs, self.pubs, self.clients = {}, {}, {}
+        self.subs, self.pubs, self.clients, self.sub_qos = {}, {}, {}, {}
 
     def create_subscription(self, typ, topic, cb, qos):
         self.subs[topic] = cb
+        self.sub_qos[topic] = qos
 
     def create_publisher(self, typ, topic, qos):
         self.pubs[topic] = FakePub()
@@ -788,7 +789,7 @@ FAKE_MSGS = SimpleNamespace(
     RCIn=object, OverrideRCIn=SimpleNamespace, Waypoint=SimpleNamespace,
     SetMode=_SRV, CommandBool=_SRV, CommandTOL=_SRV, StreamRate=_SRV,
     GetParameters=_SRV, VehicleInfoGet=_SRV, WaypointPush=_SRV, WaypointPull=_SRV,
-    qos_sensor=None)
+    qos_sensor="qos_sensor")
 FAKE_RCLPY = SimpleNamespace(ok=lambda: True, spin_once=lambda node, timeout_sec=0: None,
                              spin_until_future_complete=lambda node, fut, timeout_sec=None: None)
 
@@ -912,6 +913,11 @@ def test_mavros_reads_the_whole_fence_not_the_first_parameter_to_appear():
 
 def test_mavros_records_the_autopilot_s_own_clock_text_and_landing():
     link, node = _mavros()
+    # MAVROS publishes these best effort: a reliable subscription receives
+    # nothing ("incompatible QoS" in its log, pas_dev_mavros_01).
+    for topic in ("/mavros/time_reference", "/mavros/statustext/recv",
+                  "/mavros/global_position/global", "/mavros/local_position/pose"):
+        assert node.sub_qos.get(topic) == "qos_sensor", (topic, node.sub_qos.get(topic))
     assert link.snap.time_boot_ms is None
     node.subs["/mavros/time_reference"](SimpleNamespace(
         time_ref=SimpleNamespace(sec=1_790_000_000, nanosec=250_000_000)))

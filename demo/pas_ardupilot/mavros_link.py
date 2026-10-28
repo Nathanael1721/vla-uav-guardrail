@@ -208,10 +208,15 @@ class MavrosLink:
         node.create_subscription(m.RCOut, "/mavros/rc/out", self._on_rc_out, 10)
         node.create_subscription(m.ExtendedState, "/mavros/extended_state",
                                  self._on_ext, 10)
+        # Best effort, as MAVROS publishes these two: a reliable subscription
+        # is "incompatible QoS" and receives nothing. On the first live MAVROS
+        # run (pas_dev_mavros_01, 2026-10-28) both were, so ArduPilot's
+        # real-time factor read None and no STATUSTEXT arrived; MAVROS's own
+        # log said so, the node did not.
         node.create_subscription(m.StatusText, "/mavros/statustext/recv",
-                                 self._on_text, 10)
+                                 self._on_text, m.qos_sensor)
         node.create_subscription(m.TimeReference, "/mavros/time_reference",
-                                 self._on_time_ref, 10)
+                                 self._on_time_ref, m.qos_sensor)
         node.create_subscription(m.RCIn, "/mavros/rc/in", self._on_rc_in, 10)
         self.pub_sp = node.create_publisher(m.PositionTarget, TOPIC_SETPOINT, 10)
         self.pub_raw = node.create_publisher(m.Float32MultiArray, TOPIC_RAW_ACTION, 10)
