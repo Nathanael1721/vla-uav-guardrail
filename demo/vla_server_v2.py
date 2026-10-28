@@ -1015,7 +1015,7 @@ class V2Client:
 # --------------------------------------------------------------------------- #
 def library_versions() -> dict[str, Any]:
     out: dict[str, Any] = {"python": sys.version.split()[0]}
-    for name in ("torch", "transformers", "peft", "bitsandbytes", "accelerate", "PIL"):
+    for name in ("torch", "transformers", "peft", "bitsandbytes", "torchao", "accelerate", "PIL"):
         try:
             mod = __import__(name)
             out[name] = getattr(mod, "__version__", None)

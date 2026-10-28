@@ -892,6 +892,29 @@ def test_dronecats_nf4_needs_bitsandbytes_and_quantises_only_the_language_layers
             assert says in err.getvalue(), (present, err.getvalue())
     finally:
         F.bitsandbytes_available = real_check
+    real_pkg = F.package_available
+    try:
+        for present, says in ((False, "torchao"), (True, "no such folder")):
+            F.package_available = lambda name, present=present: present
+            err = io.StringIO()
+            try:
+                with contextlib.redirect_stderr(err):
+                    F.main(argv[:-1] + ["int4"])
+                raise AssertionError(f"accepted int4 with torchao={present}")
+            except SystemExit as exc:
+                assert exc.code not in (0, None)
+            assert says in err.getvalue(), (present, err.getvalue())
+        err = io.StringIO()
+        try:
+            with contextlib.redirect_stderr(err):
+                F.main(["serve", "--model", "racevla", "--weights", "x", "--port", "1",
+                        "--precision", "int4"])
+            raise AssertionError("accepted int4 for racevla")
+        except SystemExit as exc:
+            assert exc.code not in (0, None)
+        assert "DroneCATS's only" in err.getvalue(), err.getvalue()
+    finally:
+        F.package_available = real_pkg
 
     seen: dict = {}
 
@@ -917,11 +940,31 @@ def test_dronecats_nf4_needs_bitsandbytes_and_quantises_only_the_language_layers
     fake_tf.AutoProcessor = FakeProcessor
     fake_tf.Cosmos3EdgeForConditionalGeneration = FakeModel
     fake_tf.BitsAndBytesConfig = FakeBnb
+
+    class FakeAo:
+        def __init__(self, quant_type, modules_to_not_convert=None):
+            self.quant_type, self.skip = quant_type, modules_to_not_convert
+
+    class FakeInt4:
+        def __init__(self, group_size):
+            self.group_size = group_size
+
+    fake_tf.TorchAoConfig = FakeAo
+    fake_ao = types.ModuleType("torchao")
+    fake_ao_q = types.ModuleType("torchao.quantization")
+    fake_ao_q.Int4WeightOnlyConfig = FakeInt4
+    fake_ao.quantization = fake_ao_q
     fake_torch = types.ModuleType("torch")
     fake_torch.bfloat16 = "bf16"
-    saved = {k: sys.modules.get(k) for k in ("torch", "transformers")}
+    names = ("torch", "transformers", "torchao", "torchao.quantization")
+    saved = {k: sys.modules.get(k) for k in names}
     sys.modules["torch"], sys.modules["transformers"] = fake_torch, fake_tf
+    sys.modules["torchao"], sys.modules["torchao.quantization"] = fake_ao, fake_ao_q
     try:
+        F.DroneCATSModel("w", attn="sdpa", device="cpu", precision="int4")
+        ao = seen["kw"]["quantization_config"]
+        assert isinstance(ao, FakeAo) and ao.quant_type.group_size == 128, vars(ao)
+        assert ao.skip == ["visual", "projector", "lm_head"], ao.skip
         F.DroneCATSModel("w", attn="sdpa", device="cpu", precision="nf4")
         q = seen["kw"]["quantization_config"].kw
         assert q["load_in_4bit"] is True and q["bnb_4bit_quant_type"] == "nf4", q

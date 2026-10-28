@@ -171,9 +171,10 @@ is guardrail.manifest.weights_digest over the shards
 model.safetensors.index.json names, plus RaceVLA's dataset_statistics.json
 (it changes every action), cached in vla_server_v2's sidecar; hello's
 `weight_files` lists them, so a flight on this host compares the digests.
-precision bf16 or nf4 (bitsandbytes 4-bit; DroneCATS keeps its vision
-encoder, projector and lm_head in bf16, and the PC's dronecats env has no
-bitsandbytes, so nf4 DroneCATS is the Jetson's), attn sdpa or eager (RaceVLA's server.py:19 uses
+precision bf16, nf4 (bitsandbytes 4-bit) or int4 (torchao int4 weight-only,
+DroneCATS only: the Orin's choice, as the PyPI bitsandbytes wheel has no
+sm_87 kernels); quantised DroneCATS keeps its vision encoder, projector and
+lm_head in bf16. attn sdpa or eager (RaceVLA's server.py:19 uses
 flash_attention_2, not installed here). The scripted stand-in is
 "fake:<family>-scripted" with no digest: never a VLA.
 
@@ -813,12 +814,19 @@ class ScriptedForeignModel:
 # DroneCATS nf4: the modules kept in bf16 (the vision encoder, its projector, the
 # output head); the language layers are quantised.
 DRONECATS_NF4_SKIP = ("visual", "projector", "lm_head")
+DRONECATS_INT4_GROUP = 128
+# the package each quantised precision needs, checked before a model loads
+PRECISION_PACKAGE = {"nf4": "bitsandbytes", "int4": "torchao"}
+
+
+def package_available(name: str) -> bool:
+    """`name` is importable here (checked before a model is loaded)."""
+    import importlib.util
+    return importlib.util.find_spec(name) is not None
 
 
 def bitsandbytes_available() -> bool:
-    """bitsandbytes is importable here (checked before a model is loaded)."""
-    import importlib.util
-    return importlib.util.find_spec("bitsandbytes") is not None
+    return package_available("bitsandbytes")
 
 
 def _sync(torch, device: str) -> None:
@@ -829,10 +837,12 @@ def _sync(torch, device: str) -> None:
 class DroneCATSModel:
     """Cosmos3EdgeForConditionalGeneration + its processor (the card's
     loading code; transformers>=5.18, the dronecats env). bf16 is the card's
-    precision; nf4 (bitsandbytes 4-bit, compute bf16) quantises the language
-    layers only - the vision encoder, the projector and lm_head stay bf16
-    (DRONECATS_NF4_SKIP) - so the 2B model fits beside the detector on an
-    8 GB Jetson."""
+    precision. nf4 (bitsandbytes 4-bit, compute bf16) and int4 (torchao
+    int4 weight-only, group 128: the kernel is in torch itself, so it runs on
+    the Orin, where the PyPI bitsandbytes wheel has no sm_87 kernels) quantise
+    the language layers only - the vision encoder, the projector and lm_head
+    stay bf16 (DRONECATS_NF4_SKIP) - so the 2B model fits beside the detector
+    on an 8 GB Jetson."""
 
     def __init__(self, weights_dir: str | Path, *, attn: str, device: str = "cuda:0",
                  precision: str = "bf16"):
@@ -848,6 +858,12 @@ class DroneCATSModel:
             kw["quantization_config"] = BitsAndBytesConfig(
                 load_in_4bit=True, bnb_4bit_compute_dtype=torch.bfloat16,
                 bnb_4bit_quant_type="nf4", llm_int8_skip_modules=list(DRONECATS_NF4_SKIP))
+        elif precision == "int4":
+            from torchao.quantization import Int4WeightOnlyConfig
+            from transformers import TorchAoConfig
+            kw["quantization_config"] = TorchAoConfig(
+                Int4WeightOnlyConfig(group_size=DRONECATS_INT4_GROUP),
+                modules_to_not_convert=list(DRONECATS_NF4_SKIP))
         self.model = Cosmos3EdgeForConditionalGeneration.from_pretrained(
             str(weights_dir), **kw).eval()
         self.timing = {"load_total_s": time.perf_counter() - t0}
@@ -1227,9 +1243,10 @@ def build_arg_parser() -> tuple[argparse.ArgumentParser, argparse.ArgumentParser
     p.add_argument("--host", default=C.DEFAULT_HOST)
     p.add_argument("--log", default=None, help="JSONL of every request and answer (default "
                    "demo/out/vla_server_foreign/<model>_<utc>.jsonl)")
-    p.add_argument("--precision", choices=("bf16", "nf4"), default="bf16",
-                   help="bf16 (both) or nf4 (bitsandbytes 4-bit; DroneCATS keeps its vision "
-                        "encoder, projector and lm_head in bf16)")
+    p.add_argument("--precision", choices=("bf16", "nf4", "int4"), default="bf16",
+                   help="bf16 (both), nf4 (bitsandbytes 4-bit) or int4 (torchao int4 "
+                        "weight-only, DroneCATS only); quantised DroneCATS keeps its vision "
+                        "encoder, projector and lm_head in bf16")
     p.add_argument("--attn", choices=S.ATTNS, default="sdpa")
     p.add_argument("--device", default="cuda:0")
     p.add_argument("--front-source", choices=tuple(C.FRONT_SOURCES), default=C.DEFAULT_FRONT_SOURCE,
@@ -1263,9 +1280,16 @@ def build_arg_parser() -> tuple[argparse.ArgumentParser, argparse.ArgumentParser
 def main(argv=None) -> int:
     ap, p = build_arg_parser()
     args = ap.parse_args(argv)
-    if args.precision == "nf4" and not args.fake_native and not bitsandbytes_available():
-        p.error("--precision nf4 needs bitsandbytes in this Python environment (the PC's "
-                "dronecats env has none; the Jetson's vla-dronecats-env has it)")
+    if args.precision == "int4" and args.model != "dronecats":
+        p.error("--precision int4 (torchao) is DroneCATS's only: RaceVLA's OpenVLA loader "
+                "takes bf16 or nf4")
+    need = PRECISION_PACKAGE.get(args.precision)
+    available = bitsandbytes_available() if need == "bitsandbytes" else (
+        need is None or package_available(need))
+    if need and not args.fake_native and not available:
+        p.error(f"--precision {args.precision} needs {need} in this Python environment (the "
+                f"PC's dronecats env has neither; on the Jetson use --precision int4: its "
+                f"PyPI bitsandbytes wheel has no sm_87 kernels)")
     for k in ("horizon_s", "history_gap_s"):
         v = getattr(args, k)
         if not (math.isfinite(v) and v > 0):
