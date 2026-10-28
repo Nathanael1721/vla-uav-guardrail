@@ -789,8 +789,9 @@ def test_refused_with_the_other_modes_alone_or_with_a_bad_address_or_range():
     assert H.check_args(NO_PORT) is None
     assert H.check_args(NO_PORT, bottom_tile="prev_front", step_as_rate=1.0) is None
     for kw in ({"s_range": (22.0, 12.0)}, {"s_range": (12.0, 12.0)}, {"bottom_tile": "side"},
-               {"step_as_rate": -1.0}):
+               {"step_as_rate": -1.0}, {"expiry_s": 0.0}, {"expiry_s": float("nan")}):
         assert H.check_args(NO_PORT, **kw), kw
+    assert H.check_args(NO_PORT, expiry_s=12.0) is None
     for addr in ("nohost", "127.0.0.1:x"):
         assert "--vla-hierarchy" in H.check_args(addr), addr
     for argv, says in (
@@ -805,6 +806,9 @@ def test_refused_with_the_other_modes_alone_or_with_a_bad_address_or_range():
             (["--vla-hierarchy-step-as-rate", "1.0"], "need --vla-hierarchy"),
             (["--vla-hierarchy-speed-words"], "need --vla-hierarchy"),
             (["--vla-hierarchy-allow-stand-in"], "need --vla-hierarchy"),
+            (["--vla-hierarchy-expiry-s", "12"], "need --vla-hierarchy"),
+            (["--vla-hierarchy", NO_PORT, "--vla-hierarchy-expiry-s", "-1"],
+             "--vla-hierarchy-expiry-s"),
             (["--vla-hierarchy", "nohost"], "host:port"),
             (["--vla-hierarchy", NO_PORT, "--vla-hierarchy-range", "15,15"], "NEAR < FAR"),
             (["--vla-hierarchy", NO_PORT, "--vla-hierarchy-range", "22,12"], "LO <= HI"),
@@ -822,6 +826,10 @@ def test_refused_with_the_other_modes_alone_or_with_a_bad_address_or_range():
     assert a.vla_hierarchy_range == (10.0, 25.0) and a.vla_hierarchy_step_as_rate == 1.0
     assert a.vla_hierarchy_bottom_tile == "prev_front" and a.vla_hierarchy_prev_dt_s == 1.0
     assert a.vla_hierarchy_speed_words and a.vla_hierarchy_allow_stand_in
+    assert a.vla_hierarchy_expiry_s == 1.5
+    b = FV.build_arg_parser().parse_args(["--vla-hierarchy", NO_PORT,
+                                          "--vla-hierarchy-expiry-s", "12"])
+    assert b.vla_hierarchy_expiry_s == 12.0
 
 
 def test_the_server_must_be_aerialvla_with_the_adapters_tile_and_speed_words():
@@ -850,6 +858,13 @@ def test_the_server_must_be_aerialvla_with_the_adapters_tile_and_speed_words():
             sv = h.summary()["server"]
             assert sv["is_vla"] is False and sv["why_not_vla"], sv
             assert "STAND-IN" in h.describe()
+            assert h.expiry_s == H.EXPIRY_S == 1.5
+        finally:
+            h.stop()
+        h = H.make_vla_hierarchy(f"127.0.0.1:{srv.port}", allow_stand_in=True, expiry_s=12.0,
+                                 **kw)
+        try:
+            assert h.expiry_s == 12.0 and "held 12 s" in h.describe(), h.describe()
         finally:
             h.stop()
     # The adapter's lower tile and speed words, against the flight's.

@@ -4378,7 +4378,8 @@ async def fly(args) -> int:
                 prev_dt_s=args.vla_hierarchy_prev_dt_s,
                 step_as_rate=args.vla_hierarchy_step_as_rate,
                 speed_words=args.vla_hierarchy_speed_words,
-                front_source=args.vla_hierarchy_front_source, log=print)
+                front_source=args.vla_hierarchy_front_source,
+                expiry_s=args.vla_hierarchy_expiry_s, log=print)
         except vla_hierarchy.HierarchyRefused as exc:
             raise SystemExit(f"[vla-hierarchy] *** refused: {exc}") from None
         print(f"[vla-hierarchy] {hierarchy.describe()}")
@@ -7617,6 +7618,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
                          "or this flight's FrontCamera (768x432, -20 deg) for a foreign "
                          "server that reads it (vla_fly --vla-front-source). Must be the "
                          "camera the server reads, or the flight is refused")
+    ap.add_argument("--vla-hierarchy-expiry-s", type=float, default=1.5, metavar="S",
+                    help="with --vla-hierarchy: how long an answer's intent holds before the "
+                         "controller takes over again (default 1.5). Raise it only for a model "
+                         "slower than that per decision (DroneCATS int4 on the Orin Nano, about "
+                         "9.6 s); the flight records the value")
     ap.add_argument("--record-hz", type=float, default=20.0,
                     help="frames per second the recorder writes, on its OWN "
                          "thread. Replaces --view-every, which tied recording "
@@ -7717,17 +7723,20 @@ def main(argv: list[str] | None = None) -> int:
                               prev_dt_s=args.vla_hierarchy_prev_dt_s,
                               step_as_rate=args.vla_hierarchy_step_as_rate,
                               speed_words=args.vla_hierarchy_speed_words,
-                              front_source=args.vla_hierarchy_front_source)
+                              front_source=args.vla_hierarchy_front_source,
+                              expiry_s=args.vla_hierarchy_expiry_s)
         if why is not None:
             ap.error(why)
     elif (args.vla_hierarchy_range != (12.0, 22.0) or args.vla_hierarchy_allow_stand_in
           or args.vla_hierarchy_bottom_tile != "down" or args.vla_hierarchy_prev_dt_s is not None
           or args.vla_hierarchy_step_as_rate is not None or args.vla_hierarchy_speed_words
-          or args.vla_hierarchy_front_source != "vla"):
+          or args.vla_hierarchy_front_source != "vla"
+          or args.vla_hierarchy_expiry_s != 1.5):
         ap.error("--vla-hierarchy-range, --vla-hierarchy-allow-stand-in, "
                  "--vla-hierarchy-bottom-tile, --vla-hierarchy-prev-dt-s, "
-                 "--vla-hierarchy-step-as-rate, --vla-hierarchy-speed-words and "
-                 "--vla-hierarchy-front-source need --vla-hierarchy")
+                 "--vla-hierarchy-step-as-rate, --vla-hierarchy-speed-words, "
+                 "--vla-hierarchy-front-source and --vla-hierarchy-expiry-s need "
+                 "--vla-hierarchy")
     if args.record_perturb and not args.record_vla:
         # A perturbed follow is worth flying only to record it: the noise is
         # there so the training data shows a recovery (vla_record.Perturber).

@@ -249,7 +249,8 @@ class StandOff:
 
 def check_args(addr: str, *, s_range=S_RANGE_M, bottom_tile: str = "down",
                prev_dt_s: float | None = None, step_as_rate: float | None = None,
-               speed_words: bool = False, front_source: str = "vla") -> str | None:
+               speed_words: bool = False, front_source: str = "vla",
+               expiry_s: float = EXPIRY_S) -> str | None:
     """Why follow_vlm should refuse --vla-hierarchy with these, or None. The
     lower tile, the rate and the speed words are vla_fly's own flags:
     vla_fly's parser judges them (vla_dagger.follow_args)."""
@@ -262,6 +263,8 @@ def check_args(addr: str, *, s_range=S_RANGE_M, bottom_tile: str = "down",
         return f"--vla-hierarchy-range: {why}"
     if front_source not in ("vla", "detector"):
         return f"--vla-hierarchy-front-source {front_source!r} is not vla or detector"
+    if not (isinstance(expiry_s, (int, float)) and math.isfinite(expiry_s) and expiry_s > 0):
+        return f"--vla-hierarchy-expiry-s must be a positive number of seconds, got {expiry_s!r}"
     try:
         VD.follow_args("a red car", cruise_alt=10.0, bottom_tile=bottom_tile,
                        prev_dt_s=prev_dt_s, step_as_rate=step_as_rate, speed_words=speed_words)
@@ -708,7 +711,7 @@ def make_vla_hierarchy(addr: str, *, obs, box_source: Callable[[], dict | None],
                        speed_cap_mps: float = VD.FOLLOW_SPEED_CAP_MPS,
                        bottom_tile: str = "down", prev_dt_s: float | None = None,
                        step_as_rate: float | None = None, speed_words: bool = False,
-                       front_source: str = "vla",
+                       front_source: str = "vla", expiry_s: float = EXPIRY_S,
                        log: Callable[[str], Any] | None = None) -> VLAHierarchy:
     """The --vla-hierarchy layer of a follow_vlm flight: vla_fly's follow
     configuration (vla_dagger.follow_args, with vla_fly's --vla-bottom-tile /
@@ -721,8 +724,11 @@ def make_vla_hierarchy(addr: str, *, obs, box_source: Callable[[], dict | None],
     --vla-hierarchy-front-source; aerialvla_codec.FRONT_SOURCES): the camera
     follow_vlm feeds put_front with - VLAFront, or the detector's
     FrontCamera for a foreign server that reads it - checked against the
-    server's (vla_mission.front_source_check). HierarchyRefused for each
-    refusal. Nothing is started: start(t0) does that, with the mission clock."""
+    server's (vla_mission.front_source_check). `expiry_s` (follow_vlm
+    --vla-hierarchy-expiry-s): how long an answer's intent holds; raise it only
+    for a model slower than EXPIRY_S per decision (DroneCATS int4 on the Orin
+    Nano, ~9.6 s), and the record says so. HierarchyRefused for each refusal.
+    Nothing is started: start(t0) does that, with the mission clock."""
     why = check_range(s_range)
     if why is not None:
         raise HierarchyRefused(why)
@@ -766,7 +772,7 @@ def make_vla_hierarchy(addr: str, *, obs, box_source: Callable[[], dict | None],
             client=client, get_capture=frames.capture,
             latest_box=VD.latest_box_from(box_source), object_text=object_text,
             tracker_config=tcfg, policy=VM.pilot_alt_config(True, policy)[0], s_range=s_range,
-            **VD.follow_hint_config(vargs), identity=identity, address=addr, is_vla=is_vla,
+            expiry_s=expiry_s, **VD.follow_hint_config(vargs), identity=identity, address=addr, is_vla=is_vla,
             why_not=why_not,
             config={"vla_fly_argv": argv, "cadence": vargs.cadence,
                     "decision_timeout_s": vargs.decision_timeout_s,
