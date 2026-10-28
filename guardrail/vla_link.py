@@ -193,7 +193,11 @@ ANSWER_TEXT_RE = re.compile(r"([0-9]{2}) ([0-9]{2}) ([0-9]{2})( LAND)?(?:</s>)?"
 # 7c7cc50, P9). hello may carry serving facts beside these; only these six
 # are compared.
 IDENTITY_FIELDS = ("id", "base", "weights_sha256", "precision", "attn", "merged")
-PRECISIONS = ("nf4", "bf16")
+# int4: torchao int4 weight-only, the precision DroneCATS runs in on the
+# Orin Nano (demo/vla_server_foreign.py --precision int4; the PyPI
+# bitsandbytes wheel has no sm_87 kernels there). AerialVLA's own server
+# (demo/vla_server_v2.py) still serves nf4 or bf16 only.
+PRECISIONS = ("nf4", "bf16", "int4")
 ATTN_IMPLS = ("eager", "sdpa")
 # |dpsi| at or above this: rotate only (plus altitude), no horizontal move.
 ROTATE_ONLY_RAD = 0.25
@@ -607,7 +611,7 @@ def _is_hex64(v) -> bool:
 def check_identity(model: Any) -> None:
     """Raise ValueError unless `model` is the brief's model identity: id and
     base non-empty strings, weights_sha256 64 lowercase hex digits, precision
-    nf4 or bf16, attn eager or sdpa, merged true or false. Other keys (the
+    nf4, bf16 or int4 (PRECISIONS), attn eager or sdpa, merged true or false. Other keys (the
     serving facts a hello may add) are allowed."""
     if not isinstance(model, dict):
         raise ValueError(f"the model identity is not an object: {model!r}")

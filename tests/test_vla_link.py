@@ -1156,6 +1156,10 @@ def test_the_model_identity_is_checked_and_may_not_change_mid_run():
                 assert srv.requests == [] and c.identity is None, name
             finally:
                 c.close()
+    # int4 (torchao, DroneCATS on the Orin Nano) is an identity's precision;
+    # fp8 above is still refused.
+    from guardrail.vla_link import check_identity
+    check_identity(dict(good, precision="int4"))
     # Serving facts beside the identity are kept; answers are compared on the
     # identity's own fields.
     with F.FakeVLAServer(step, model=dict(good, serving={"max_new_tokens": 12})) as srv:
