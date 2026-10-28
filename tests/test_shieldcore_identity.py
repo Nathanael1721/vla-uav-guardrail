@@ -73,8 +73,10 @@ def _replay_decisions():
     if got is None:
         return None
     pol, rows, smap, src = got
+    # 4418ae0 recovered on the one-lookahead law (WP3-17 made the climb cap
+    # the default on 2026-10-29), so the identity is flown on that law.
     sh = FL.rail_shield(pol, lookahead_s=FL.LOOKAHEAD_S, dt=FL.LOOKAHEAD_DT_S,
-                        obstacle_map=smap)
+                        obstacle_map=smap, recovery_law="lookahead")
     touched, clean = {}, []
     for r in rows:
         st = State(x=r["x"], y=r["y"], up=r["up"], yaw_deg=r["yaw_deg"])

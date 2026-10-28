@@ -31,6 +31,11 @@ millimetres, the same model's account of the old rule is trustworthy. If it does
 not, the script REFUSES to write the file rather than shipping a curve nobody
 checked. The check is the whole point; without it this would just be a nicer
 place to keep a made-up number.
+
+Both curves are of the one-lookahead recovery law. Since 2026-10-29 the
+Shield recovers at the climb cap by default (WP3-17, `recovery_law="cap"`),
+so the cross-check flies `recovery_law="lookahead"`, the law this study
+models; the September deck's curve is unchanged.
 """
 from __future__ import annotations
 
@@ -90,8 +95,9 @@ def altitude_study() -> dict:
     after = _simulate(True, env.alt_min_m, env.alt_max_m,
                       kin.climb_rate_max_mps, lookahead)
 
-    # Cross-check the model of the CURRENT rule against the real Shield.
-    sh = Shield(policy, lookahead_s=lookahead, dt=0.5)
+    # Cross-check the model of the CURRENT rule against the real Shield, on
+    # the recovery law the model is of (see the module docstring).
+    sh = Shield(policy, lookahead_s=lookahead, dt=0.5, recovery_law="lookahead")
     st = State(x=-30.0, y=-30.0, up=START_UP)
     live = [st.up]
     for _ in range(TICKS):
