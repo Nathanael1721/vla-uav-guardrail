@@ -62,7 +62,9 @@ rm -f /tmp/vla-drone.bundle DEPLOYED_COMMIT
 echo "checkout: `$(git rev-parse --short=12 HEAD)"
 git status --porcelain | head -20
 "@
-$remote -replace "`r", "" | & $Ssh $JetsonHost "bash -s"
+# One argument, not stdin: PowerShell ends every piped line with CRLF, and
+# bash then reads "head -20".
+& $Ssh $JetsonHost ($remote -replace "`r", "")
 if ($LASTEXITCODE -ne 0) { throw "checkout on the Jetson failed" }
 foreach ($e in $extras) {
     & $Scp $e "${JetsonHost}:$Dest/$e"
