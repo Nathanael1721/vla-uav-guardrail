@@ -68,7 +68,8 @@ def grid(ax, x0, y0, widths, rows, rh, header_rows=1, aligns=None, bold_cells=()
             if isinstance(cell, tuple):
                 ax.text(tx, y + rh * 0.38, cell[0], ha=al, va="center", fontsize=fontsize, color=col,
                         fontweight="bold" if bold else "normal")
-                ax.text(tx, y + rh * 0.74, cell[1], ha=al, va="center", fontsize=fontsize - 3, color=GREY)
+                ax.text(tx, y + rh * 0.74, cell[1], ha=al, va="center", fontsize=fontsize - 3,
+                        color=TINT2 if head else GREY)
             else:
                 ax.text(tx, y + rh / 2, cell, ha=al, va="center", fontsize=fontsize, color=col,
                         fontweight="bold" if bold else "normal")
@@ -102,7 +103,8 @@ def summary():
     body += [["DroneCATS-2B + 3 no-fly zones", "-", f3(N["PC"]["within30"]), "-", "-"],
              ["AerialVLA (original) + 3 no-fly zones", "-", "-", "-", f3(N["Jetson"]["within30"])],
              ["First zone try (DroneCATS-2B)", "-", f3(N["first_attempt"]["within30"]), "-", "-"]]
-    head = [["Pilot", "PC · Pure VLA", "PC · Hierarchical", "Jetson · Pure VLA", "Jetson · Hierarchical"]]
+    head = [["Pilot", "PC · Pure VLA", "PC · Hierarchical", ("Jetson · Pure VLA", "VLA model on the PC's GPU"),
+             ("Jetson · Hierarchical", "VLA model on the PC's GPU")]]
     rows = head + body
     # best VLA per column (rows 3..9 = VLAs), by mean
     bold, colr = set(), {}
@@ -122,7 +124,7 @@ def summary():
                      f"{D['safety']['flights']} flights, 27-28 Oct 2026 · score = share of time within 30 m of the car "
                      f"(1.000 = always) · several runs: average, runs below")
     widths = [4.6, 2.6, 2.6, 2.6, 2.6]
-    rh = [0.52] + [(8.2 - 1.75 - 0.52) / len(body)] * len(body)
+    rh = [0.66] + [(8.1 - 1.75 - 0.66) / len(body)] * len(body)
     y = 1.75
     for i, row in enumerate(rows):
         y = grid(ax, 0.6, y, widths, [row], rh[i], header_rows=1 if i == 0 else 0,
@@ -132,11 +134,12 @@ def summary():
         if i in (2, 9):
             ax.plot([0.6, 0.6 + sum(widths)], [y, y], color=TEAL, lw=2)
     s = D["safety"]
-    ax.text(0.6, 8.5, f"All {s['flights']} flights: {s['mission_collisions']} collisions in a mission · P0 escape rate "
+    ax.text(0.6, 8.4, f"All {s['flights']} flights: {s['mission_collisions']} collisions in a mission · P0 escape rate "
             f"{' / '.join(s['p0_escape_rates'])} in every flight · {s['p0_violation_ticks']} rule-breaking commands caught by the guardrail.",
             fontsize=11, color=TEAL_DK, fontweight="bold")
-    ax.text(0.6, 8.85, "Teal = best VLA in the column (by average). Pure VLA scored from the first lock on the car; "
-            "the others from the start gate's lock. On the Jetson the VLA model answers from the PC's GPU.",
+    ax.text(0.6, 8.68, "Jetson columns: OWL-ViT, our controller and the guardrail run on the Jetson; every VLA model answers from the PC's GPU over the cable (none fits the Jetson's 8 GB). The 'Our controller' rows run fully on the Jetson.", fontsize=9.5, color=GREY)
+    ax.text(0.6, 8.88, "Teal = best VLA in the column (by average). Pure VLA scored from the first lock on the car; "
+            "the others from the start gate's lock.",
             fontsize=9.5, color=LGREY)
     fig.savefig(OUT / "summary.png", dpi=150)
     plt.close(fig)
@@ -161,6 +164,15 @@ def _row(ax, x0, y, widths, row, rh, i, bold, colr):
     return y + rh
 
 
+def computer(plat: str, kind: str) -> str:
+    """Where the flight's software ran. On the Jetson only the flight client
+    runs on the board: a VLA, or the fixed-12 m scripted stand-in, answers
+    from the PC."""
+    if plat != "Jetson":
+        return "PC"
+    return {"manual": "Jetson", "fixed12": "Jetson + PC stand-in"}.get(kind, "Jetson + VLA on PC")
+
+
 def all_flights():
     order_kind = {"manual": 0, "fixed12": 1, "pure": 2, "hier": 3}
     order_model = {m: i for i, m in enumerate(["manual", "fixed12", "aerovla", "r1", "r2", "r3", "r4", "dronecats", "racevla"])}
@@ -171,7 +183,7 @@ def all_flights():
         if r["tag"] == "cmp_hier_fixed12_20261027":
             note = "1 zone · 12 m test, flew as controller"
         rows.append((r["platform"], date, order_kind[r["kind"]], order_model.get(r["model"], 9), r["tag"],
-                     [r["platform"], date, MODE[r["kind"]], NAMES.get(r["model"], r["model"]), note,
+                     [computer(r["platform"], r["kind"]), date, MODE[r["kind"]], NAMES.get(r["model"], r["model"]), note,
                       f3(r["score"]), str(r["collisions_mission"]), str(r["p0_escape_rate"])]))
     N = D["nfz"]
     for key, plat, note in (("first_attempt", "PC", "3 zones, first try (held at zone edge)"),
@@ -179,20 +191,22 @@ def all_flights():
         e = N[key]
         model = "dronecats" if key != "Jetson" else "aerovla"
         rows.append((plat, "28 Oct", 4, order_model[model], e["tag"],
-                     [plat, "28 Oct", "Hierarchical", NAMES[model], note, f3(e["within30"]),
+                     [computer(plat, "hier"), "28 Oct", "Hierarchical", NAMES[model], note, f3(e["within30"]),
                       str(e["collisions_mission"]), str(e["p0_escape_rate"])]))
     rows.sort(key=lambda t: (t[0] != "PC", t[2], t[3], t[1]))
     head = ["#", "Computer", "Date", "Mode", "Pilot", "No-fly zones", "Score", "Collisions", "P0 escape"]
     numbered = [[str(i + 1)] + r[5] for i, r in enumerate(rows)]
     half = (len(numbered) + 1) // 2
-    widths = [0.55, 1.2, 1.05, 2.15, 2.5, 3.65, 1.1, 1.2, 1.2]
+    widths = [0.5, 2.05, 0.95, 1.95, 2.3, 3.3, 1.0, 1.15, 1.1]
     for part, chunk in ((1, numbered[:half]), (2, numbered[half:])):
         fig, ax = canvas(f"All {len(numbered)} Flights ({part}/2)",
                          "Every flight of the comparison and the guardrail test · score = share of time within 30 m of the car")
         y = grid(ax, 0.6, 1.7, widths, [head] + chunk, 0.29, fontsize=10,
                  aligns=["center", "left", "left", "left", "left", "left", "center", "center", "center"])
-        ax.text(0.6, y + 0.32, "Pure VLA scored from the first lock on the car; the others from the start gate's lock. "
-                "On the Jetson the VLA model answers from the PC's GPU.", fontsize=9.5, color=LGREY)
+        ax.text(0.6, y + 0.3, "Jetson + VLA on PC: OWL-ViT, our controller and the guardrail on the Jetson, the VLA model on the PC's GPU "
+                "(none fits the Jetson's 8 GB). Jetson alone: everything on the Jetson.", fontsize=9.5, color=GREY)
+        ax.text(0.6, y + 0.52, "Pure VLA scored from the first lock on the car; the others from the start gate's lock. "
+                "PC stand-in: a scripted answer, no model.", fontsize=9.5, color=LGREY)
         fig.savefig(OUT / f"all_flights_{part}.png", dpi=150)
         plt.close(fig)
     return len(numbered)

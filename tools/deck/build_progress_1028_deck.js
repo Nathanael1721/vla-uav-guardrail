@@ -27,7 +27,8 @@ const REPO = path.resolve(__dirname, "../..");
 const PY = "C:/Users/natha/.conda/envs/vla-real/python.exe";
 const D = JSON.parse(fs.readFileSync(path.join(REPO, "docs/data/progress_1028.json"), "utf8"));
 const SHARE = path.join(REPO, "docs/share/2026-10-28-Progress");
-const OUT = path.join(SHARE, "VLA-Drone-Progress-28Oct2026.pptx");
+// DECK_NAME: write beside an open copy (PowerPoint locks the file it has open).
+const OUT = path.join(SHARE, process.env.DECK_NAME || "VLA-Drone-Progress-28Oct2026.pptx");
 const { TEAL, TEAL_DK, TEAL_TINT, TEAL_TINT2, BLACK, INK, GREY, LGREY, WHITE, LINE, FF, CHARCOAL } = T;
 
 const f2 = (v) => (v == null ? "-" : Number(v).toFixed(2));
@@ -129,7 +130,7 @@ async function main() {
       ["Our controller (baseline)", "OWL-ViT 153M", "Rules, no VLA"],
     ], { y: 1.75, colFrac: [0.42, 0.2, 0.38], rh: 0.48, fontSize: 12 });
     TEXT.push("AerialVLA FT r1, r2, r3, r4");
-    H.source(s, "Each VLA flew both modes on the PC and on the Jetson; the controller flew alone as the baseline.", 4.85);
+    H.source(s, "Each VLA flew both modes on the PC, then with the flight software on the Jetson (the VLA model still on the PC's GPU). The controller flew alone as the baseline.", 4.85);
   }
 
   /* 5 · JETSON SETUP */
@@ -163,14 +164,20 @@ async function main() {
   /* 6 · TOP 3 PER SCENARIO */
   {
     const s = content("Results", "Top 3 per Scenario");
-    const grid = [["PC pure", 0.55, 1.62], ["PC hier", 5.05, 1.62], ["Jetson pure", 0.55, 3.38], ["Jetson hier", 5.05, 3.38]];
+    // Where each group ran, said above its tables: on the Jetson only the
+    // flight client runs on the board; every VLA answers from the PC's GPU.
+    const band = (y, strong, rest) => say(s, [{ text: strong, options: { bold: true, color: TEAL } },
+      { text: rest, options: { color: GREY } }], { x: 0.55, y, w: 8.9, h: 0.26, fontSize: 10, fontFace: FF });
+    band(1.5, "ON THE PC  ", "everything on the PC");
+    band(3.22, "ON THE JETSON  ", "detector, controller and guardrail on the Jetson · the VLA model answers from the PC's GPU");
+    const grid = [["PC pure", 0.55, 1.78], ["PC hier", 5.05, 1.78], ["Jetson pure", 0.55, 3.5], ["Jetson hier", 5.05, 3.5]];
     const label = { "PC pure": "PC · Pure VLA", "PC hier": "PC · Hierarchical", "Jetson pure": "Jetson · Pure VLA", "Jetson hier": "Jetson · Hierarchical" };
     for (const [k, x, y] of grid) {
       const rows = [[label[k], "Score"], ...rank[k].slice(0, 3).map(([n, m, runs]) => [n, runs.length > 1 ? `${f3(m)} (n=${runs.length})` : f3(m)])];
-      H.table(s, rows, { x, y, w: 4.4, colFrac: [0.62, 0.38], rh: 0.36, fontSize: 10.5, emph: [[1, 1]] });
+      H.table(s, rows, { x, y, w: 4.4, colFrac: [0.62, 0.38], rh: 0.34, fontSize: 10.5, emph: [[1, 1]] });
       TEXT.push(...rows.flat());
     }
-    H.source(s, `Our controller: PC ${base.PC.map(f3).join(" / ")}, Jetson ${base.Jetson.map(f3).join(" / ")}. Score = share of time within 30 m; n = flights.`, 4.9);
+    H.source(s, `Our controller (no VLA, fully on each computer): PC ${base.PC.map(f3).join(" / ")}, Jetson ${base.Jetson.map(f3).join(" / ")}. Score = share of time within 30 m; n = flights.`, 4.93);
   }
 
   /* 7 · HIERARCHICAL vs CONTROLLER (bars) */
@@ -183,7 +190,7 @@ async function main() {
     const names = { aerovla: "AerialVLA (original)", r1: "FT r1", r2: "FT r2", r3: "FT r3", r4: "FT r4", dronecats: "DroneCATS-2B", racevla: "RaceVLA-7B" };
     Object.entries(byModel).sort((a, b) => mean([...b[1].PC, ...b[1].Jetson]) - mean([...a[1].PC, ...a[1].Jetson]))
       .forEach(([m, v]) => items.push([names[m], v.PC, v.Jetson, false]));
-    const x0 = 2.55, wMax = 5.6, y0 = 1.62, rowH = 0.42;
+    const x0 = 2.55, wMax = 5.6, y0 = 1.74, rowH = 0.4;
     items.forEach(([n, pc, jt, hi], i) => {
       const y = y0 + i * rowH;
       say(s, n, { x: 0.55, y, w: 1.95, h: rowH, fontSize: 10.5, color: hi ? TEAL : INK, bold: hi, fontFace: FF, valign: "middle" });
@@ -194,11 +201,11 @@ async function main() {
         say(s, f3(v), { x: x0 + wMax * v + 0.05, y: y + dy - 0.04, w: 0.6, h: 0.22, fontSize: 8.5, color: GREY, fontFace: FF });
       });
     });
-    s.addShape(pres.shapes.RECTANGLE, { x: 7.0, y: 5.0, w: 0.16, h: 0.12, fill: { color: TEAL }, line: { color: TEAL } });
-    say(s, "PC", { x: 7.2, y: 4.93, w: 0.5, h: 0.25, fontSize: 9, color: GREY, fontFace: FF });
-    s.addShape(pres.shapes.RECTANGLE, { x: 7.7, y: 5.0, w: 0.16, h: 0.12, fill: { color: "E08A1E" }, line: { color: "E08A1E" } });
-    say(s, "Jetson", { x: 7.9, y: 4.93, w: 0.8, h: 0.25, fontSize: 9, color: GREY, fontFace: FF });
-    H.source(s, "Mean score of 1-3 flights each; bar length = share of time within 30 m.", 4.95);
+    s.addShape(pres.shapes.RECTANGLE, { x: 6.0, y: 1.52, w: 0.16, h: 0.12, fill: { color: TEAL }, line: { color: TEAL } });
+    say(s, "PC", { x: 6.2, y: 1.45, w: 0.4, h: 0.25, fontSize: 9, color: GREY, fontFace: FF });
+    s.addShape(pres.shapes.RECTANGLE, { x: 6.65, y: 1.52, w: 0.16, h: 0.12, fill: { color: "E08A1E" }, line: { color: "E08A1E" } });
+    say(s, "Jetson (VLA model on PC GPU)", { x: 6.85, y: 1.45, w: 2.35, h: 0.25, fontSize: 9, color: GREY, fontFace: FF });
+    H.source(s, "Mean score of 1-3 flights each; bar length = share of time within 30 m. Our controller has no VLA: it ran fully on each computer.", 4.95);
   }
 
   /* 8 · WHAT WE LEARNED */
@@ -239,13 +246,13 @@ async function main() {
     const s = content("Guardrail test", "Result: Zones Never Entered");
     const P = N.PC, Jt = N.Jetson;
     const zid = ["nfz-frontage", "nfz-north-street", "nfz-south-block"];
-    const rows = [["", `PC · ${P.name}`, `Jetson · ${Jt.name}`]];
+    const rows = [["", `PC · ${P.name}`, `Jetson · ${Jt.name} on PC GPU`]];
     zid.forEach((z) => rows.push([z + " (closest, m)", f2(P.zones[z].drone_min_dist_m), f2(Jt.zones[z].drone_min_dist_m)]));
     rows.push(["Ticks inside any zone", String(zid.reduce((a, z) => a + P.zones[z].drone_ticks_inside, 0)), String(zid.reduce((a, z) => a + Jt.zones[z].drone_ticks_inside, 0))]);
     rows.push(["Score (within 30 m)", f3(P.within30), f3(Jt.within30)]);
     rows.push(["Same model, no new zones", f3(P.baseline.within30), f3(Jt.baseline.within30)]);
     rows.push(["Collisions · P0 escapes", `${P.collisions_mission} · ${P.p0_escape_rate}`, `${Jt.collisions_mission} · ${Jt.p0_escape_rate}`]);
-    H.table(s, rows, { y: 1.6, colFrac: [0.4, 0.3, 0.3], rh: 0.36, fontSize: 10.5 });
+    H.table(s, rows, { y: 1.6, colFrac: [0.34, 0.27, 0.39], rh: 0.36, fontSize: 10.5 });
     TEXT.push(...rows.flat());
     const sameCorner = D.matrix_rows.find((r) => r.tag === "cmp2_hier_aerovla_20261028");
     say(s, `Jetson score: the car was lost at the north-east corner, before leg 4. The same model lost it there without the new zones too (${f3(sameCorner.score)}, PC).`,
