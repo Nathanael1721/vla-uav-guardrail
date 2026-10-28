@@ -999,6 +999,12 @@ def test_the_city_rail_files_no_vla_and_records_its_detector_as_the_pilots():
     import follow_vlm as fv
     from guardrail.manifest import NO_VLA
     m = fv.flight_manifest("sha256:deadbeefdeadbeef", 42)
+    assert m["topology"] == "projectairsim-single-host", m
+    for addr in ("127.0.0.1", "localhost", "::1"):
+        assert fv.flight_manifest("sha256:deadbeefdeadbeef", 42, addr)["topology"] ==             "projectairsim-single-host", addr
+    remote = fv.flight_manifest("sha256:deadbeefdeadbeef", 42, "10.42.0.1")
+    assert remote["topology"] == "projectairsim-remote-sim", remote
+    assert len(remote) == 6, remote
     assert m["vla_model_hash"] == NO_VLA, m
     assert fv.DETECTOR_ID not in json.dumps(m), m
     assert len(m) == 6, "the manifest stays the grant's six fields"

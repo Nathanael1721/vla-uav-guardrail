@@ -80,6 +80,21 @@ LEGACY_TOPOLOGY_LABELS = {"canonical-hil": TOPOLOGY_DEV}
 
 # Our functional rails, which are none of the three.
 TOPOLOGY_PROJECTAIRSIM = "projectairsim-single-host"
+# The same Project AirSim rail with the simulator on ANOTHER host: the Shield,
+# the controller and the pilot run where this process runs (the Jetson Orin
+# against the desktop's simulator, --sim-address), the simulator elsewhere.
+# Until 2026-10-28 these runs were stamped single-host. Not the grant's hil:
+# no ArduPilot, no MAVROS (hil needs both, check_topology_evidence).
+TOPOLOGY_PROJECTAIRSIM_REMOTE = "projectairsim-remote-sim"
+LOOPBACK_ADDRESSES = ("127.0.0.1", "localhost", "::1")
+
+
+def projectairsim_topology(sim_address: str | None) -> str:
+    """The Project AirSim rail's label for a simulator at `sim_address`:
+    single-host on loopback (or none given), remote-sim otherwise."""
+    if sim_address is None or str(sim_address).strip().lower() in LOOPBACK_ADDRESSES:
+        return TOPOLOGY_PROJECTAIRSIM
+    return TOPOLOGY_PROJECTAIRSIM_REMOTE
 # ArduPilot SITL driven straight over pymavlink (sitl/run_sitl_demo.py). Real
 # flight code and a real MAVLink path, but not even the grant's dev topology,
 # which runs MAVROS 2. Naming it separately keeps the difference from being

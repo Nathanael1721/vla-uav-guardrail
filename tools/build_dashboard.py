@@ -100,7 +100,8 @@ VIDEO_EXT = (".mp4", ".webm")
 # normalize_topology: a stored "canonical-hil" is the desktop dev rail)
 TOPO_NORMAL = {"canonical-hil": "dev"}
 TOPO_RAIL = {"projectairsim-ardupilot-pymavlink": "pas_ap", "projectairsim-ardupilot-mavros": "pas_ap",
-             "projectairsim-single-host": "airsim", "ardupilot-sitl-pymavlink": "sitl",
+             "projectairsim-single-host": "airsim", "projectairsim-remote-sim": "airsim",
+             "ardupilot-sitl-pymavlink": "sitl",
              "dev": "sitl", "canonical-hil": "sitl", "hil": "hil", "headless-kinematic": "headless"}
 GRANT = "kuanting-vla-uav-guardrail/docs/02-implementation/"
 

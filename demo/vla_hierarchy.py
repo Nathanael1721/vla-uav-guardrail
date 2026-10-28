@@ -662,13 +662,16 @@ class VLAHierarchy(VD.VLAPerturber):
                   "command")
 
     # ---- the flight's manifest and pilot record ----------------------------
-    def manifest(self, policy_hash: str, seed: int, scene_path) -> dict:
+    def manifest(self, policy_hash: str, seed: int, scene_path,
+                 sim_address: str | None = None) -> dict:
         """The six-field manifest of a hierarchical flight: the VLA decides,
         so vla_model_hash is the server's reported digest
         (vla_mission.manifest_for), or the stand-in's id - never
-        none:hand-written-controller."""
+        none:hand-written-controller. `sim_address` picks the topology label
+        (guardrail.manifest.projectairsim_topology)."""
         return VM.manifest_for(policy_hash, self.identity, seed, scene_path,
-                               weight_paths=VM.local_weight_paths(self.identity))
+                               weight_paths=VM.local_weight_paths(self.identity),
+                               sim_address=sim_address)
 
     def pilot_entry(self, detector: dict | None = None) -> dict:
         """metrics["pilot"]: guardrail.manifest.pilot_record for the model that

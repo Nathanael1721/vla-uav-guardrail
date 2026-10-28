@@ -123,6 +123,7 @@ RAIL = {
     "dev": "ros2-mavros-sitl",
     "ardupilot-sitl-pymavlink": "sitl-pymavlink",
     "projectairsim-single-host": "airsim",
+    "projectairsim-remote-sim": "airsim",       # the same rail, simulator on another host
     "headless-kinematic": "headless-kinematic",
 }
 

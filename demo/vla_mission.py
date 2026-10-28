@@ -2545,18 +2545,21 @@ def pilot_entry(identity: dict | None, stats: dict, records: list[dict], rows: l
 
 
 def manifest_for(policy_hash: str, identity: dict | None, seed: int, scene_path: str | Path,
-                 weight_paths: list[str] | None = None) -> dict:
+                 weight_paths: list[str] | None = None, sim_address: str | None = None) -> dict:
     """The six-field manifest: vla_model_hash from the server's reported
-    digest (guardrail/manifest.resolve_vla_hash), or the stand-in's id."""
-    from guardrail.manifest import build_manifest
+    digest (guardrail/manifest.resolve_vla_hash), or the stand-in's id; the
+    topology from where the simulator runs (`sim_address`,
+    guardrail.manifest.projectairsim_topology)."""
+    from guardrail.manifest import build_manifest, projectairsim_topology
+    topology = projectairsim_topology(sim_address)
     ok, _ = identity_is_vla(identity)
     if ok:
         return build_manifest(policy_hash, model_id_for(identity), seed, scene_path=scene_path,
-                              weight_paths=weight_paths,
+                              weight_paths=weight_paths, topology=topology,
                               reported_digest=identity["weights_sha256"])
     sid = str((identity or {}).get("id") or "unknown")
     return build_manifest(policy_hash, sid if sid.startswith("fake:") else f"fake:{sid}", seed,
-                          scene_path=scene_path)
+                          scene_path=scene_path, topology=topology)
 
 
 # Project AirSim capture image types, as the robot configs here use them.

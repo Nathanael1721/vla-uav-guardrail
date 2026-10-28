@@ -3792,7 +3792,7 @@ def shield_lookahead_record(shield) -> dict:
             "escalation_fsm": getattr(shield, "fsm", None) is not None}
 
 
-def flight_manifest(policy_hash: str, seed: int) -> dict:
+def flight_manifest(policy_hash: str, seed: int, sim_address: str | None = None) -> dict:
     """The WP4 six-field manifest for this rail.
 
     No VLA flies here - the hand-written servo below does - so the model field
@@ -3801,9 +3801,13 @@ def flight_manifest(policy_hash: str, seed: int) -> dict:
     ("google/owlvit-base-patch32@cbc355fb..." on citylife_redcar_nfz_20261013),
     which the grant defines as the hash of the VLA's weights (audit card
     X-16; guardrail/manifest.py NO_VLA). The detector is recorded under its
-    own key in `pilot_entry()`."""
+    own key in `pilot_entry()`. `sim_address` (--sim-address) picks the
+    topology label: single-host on loopback, remote-sim when the simulator
+    runs on another machine (guardrail.manifest.projectairsim_topology)."""
+    from guardrail.manifest import projectairsim_topology
     return build_manifest(policy_hash=policy_hash, model_id=NO_VLA, seed=seed,
-                          scene_path=str(ROOT / "demo" / "pas_config" / SCENE))
+                          scene_path=str(ROOT / "demo" / "pas_config" / SCENE),
+                          topology=projectairsim_topology(sim_address))
 
 
 def pilot_entry() -> dict:
@@ -6915,10 +6919,11 @@ async def fly(args) -> int:
     # NO_VLA, not the detector: see flight_manifest. A hierarchical flight's
     # VLA decided, so its manifest carries the server's reported digest
     # (vla_hierarchy.VLAHierarchy.manifest) and the scene that flew.
-    manifest = flight_manifest(policy.policy_hash, args.seed)
+    manifest = flight_manifest(policy.policy_hash, args.seed, args.sim_address)
     if hierarchy is not None:
         manifest = hierarchy.manifest(policy.policy_hash, args.seed,
-                                      ROOT / "demo" / "pas_config" / flight_scene(args))
+                                      ROOT / "demo" / "pas_config" / flight_scene(args),
+                                      sim_address=args.sim_address)
     (out / "manifest.json").write_text(json.dumps(manifest, indent=1), encoding="utf-8")
 
     kpis = kpi_mod.compute(rows, kpi_mod.rule_priorities(policy), metrics)

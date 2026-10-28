@@ -2137,7 +2137,7 @@ async def _fly(args, holder: dict) -> int:
                                        "flight path, it is NOT a VLA flight")
     manifest = guard("manifest", lambda: VM.manifest_for(
         policy.policy_hash, identity, args.seed, SIM_CONFIG_DIR / SCENES[args.mission],
-        weight_paths))
+        weight_paths, sim_address=args.sim_address))
     kpis = {}
     if manifest is not None:
         kpis = guard("finish_run", lambda: VM.finish_run(out, rows, metrics, manifest, policy),
