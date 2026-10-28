@@ -59,7 +59,7 @@ nfz-north-street's edge now is and 3.56 / 3.54 m of nfz-south-block's.
   also lost it on the PC without the new zones (`cmp2_hier_aerovla`, 0.309).
   nfz-south-block was never reached on that flight, so it says nothing about
   that zone.
-- Over the 45 flights of 28 Oct (the 42 of the comparison and these three):
+- Over the 45 flights of 27-28 Oct (the 42 of the comparison and these three):
   0 collisions in a mission, P0 escape rate 0.0 in every kpi.json, 3793 ticks
   with a P0 violation detected in a pilot's command.
 
