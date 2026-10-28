@@ -16,6 +16,92 @@ shipped change and recorded as one.
 
 ## [Unreleased]
 
+### 2026-10-29 (REST) — the grant's hot-apply channel drives a flying ArduPilot: a no-fly zone spawned, rotated, moved and switched off over REST, the Shield acting on it; one flight per breach action
+
+The audit's open items that needed a flying SITL + MAVROS run and no
+simulator: WP1-15, WP3-12, WP4-03 and WP2-15 (a REST hot-apply into a
+flight, and the CSP re-issued per generation), WP3-07 (the FSM's edges,
+Land among them) and WP3-08 (one flight per breach action).
+
+#### Flown (the ROS 2 rail, `sitl/run_ros2_demo.sh on`: ArduPilot SITL Copter in WSL, mavlink-router, MAVROS 2, the VLA stub; topology `dev`)
+Every flight carries the signed `fase3-sim-demo` bundle (one polygon fence
+`nfz-square`, the 10-20 m band, a 4 m/s speed cap) and serves the REST
+hot-apply API on 127.0.0.1 (`--hotapply-port`). A client
+(stdlib `urllib`, in the session's scratchpad) sent each event at a fixed
+time after `mission_start`; every request and answer is in
+`<tag>.client.jsonl` beside the run's own records.
+
+| Flight | Mission | Events over REST (mission time) | What the Shield and the FSM did | Ended |
+|---|---|---|---|---|
+| `ros2_hotapply_01` | to (30, 30), 6 m/s | spawn `nfz-hot-1` 1.1 s, rotate 15 deg 4.1 s, translate 7.1 s, switch off 12.1 s | X1 Normal->Brake and G3 ->Loiter at 0.1-0.2 s on `nfz-square` (repair 8.14 m against theta 2 m), before any event; Loiter 30 s, G5 ->RTL, G9 home reached | 30.3 s, the FSM |
+| `ros2_hotapply_02` | to (0, 30), 6 m/s | the same, with the zone across this path | G1 ->Brake at 0.1 s (the speed cap repaired); G3 ->Loiter at 1.1 s on `nfz-hot-1` (repair 2.90 m); no recovery, as the 6 m/s ask kept the cap repaired; G5, G9 | 34.6 s, the FSM |
+| `ros2_hotapply_03` | to (0, 30), 3.5 m/s | the same | X1 ->Brake at 1.16 s and G3 ->Loiter at 1.26 s on `nfz-hot-1` (repair 3.00 m); after the switch-off, **G8 Loiter->Normal** at 14.2 s (hard rules cleared 2.05 s); flew on | 22.0 s, target reached, landed |
+| `ros2_action_land_01` | to (0, 30), 3.5 m/s | spawn a zone whose `violation_action` is `land`, 1.0 s | **G12 Normal->Land** at 1.23 s, LAND | 41.3 s, the FSM |
+| `ros2_action_rtl_01` | the same | a zone with `RTL` | **G11 Normal->RTL** at 1.15 s; G9 home reached at 1.21 s | 1.2 s, the FSM |
+| `ros2_action_loiter_01` | the same | a zone with `loiter` | **X4 Normal->Loiter** at 1.15 s; G5 ->RTL at 31.2 s, G9 | 34.5 s, the FSM |
+| `ros2_action_brake_01` | the same | a zone with `brake` | **X1 Normal->Brake** at 1.13 s (the rule asks for brake); braked on all 889 ticks that followed, never escalated | 90.0 s, the time cap |
+| `ros2_action_monitor_only_01` | the same | a HARD P0 zone with `monitor_only` | no repair; flown through: 1.2 s inside the zone, P0 escape rate 0.582418 | 9.2 s, target reached |
+| `ros2_action_monitor_only_soft_01` | the same | a SOFT P2 zone with `monitor_only` | no repair; flown through: 1.2 s inside the zone, P0 escape rate 0.0 | 9.2 s, target reached |
+
+All four events of each hot-apply flight were accepted (HTTP 200), each
+one generation (0 to 4) with its own policy hash, and each wrote that
+generation's `policy_g<N>.json` and `csp_g<N>.json`: the CSP of generation
+0 does not name `nfz-hot-1`, those of 1-4 do (WP2-15). Receipt to swap,
+against the grant's 50 ms: 0.444-4.443 ms over the 12 events, 0.66-1.035
+ms for the six single spawns. The rail re-published the fences and uploaded
+them to ArduPilot's GeoFence backstop after every event (5 uploads per
+hot-apply flight; the zone switched off was taken out of the upload).
+P0 escape rate 0.0 on every flight but the hard `monitor_only` one.
+
+#### Found
+- A hard P0 rule whose action is `monitor_only` is accepted over REST and
+  then flown through, and its ticks count as P0 escapes (0.582418 on
+  `ros2_action_monitor_only_01`). That is the Shield's stated design
+  (`guardrail/shield.py`: a P0 monitor_only rule "shows up in the escape
+  count, which is the honest place for it"); the same zone as a soft P2
+  rule escapes nothing. Whether the API should refuse a hard
+  `monitor_only` zone is a policy question, not settled here.
+- On the first flight the FSM had left Normal on the static fence within
+  0.2 s of `mission_start`, so the hot-applied zone was never flown
+  against; at 6 m/s the speed cap is repaired every tick and blocks G8.
+  The flights that show the Shield acting on a REST zone are the 3.5 m/s
+  ones.
+- `ros2_action_rtl_01` reached "home" 0.06 s after RTL began, 1 s into the
+  mission, because the aircraft was still within the home radius.
+- `ros2_action_land_01` counts 35 s outside the altitude band: the
+  autopilot's LAND descends through the 10 m floor. Those ticks are
+  autopilot-flown, so they are outside the P0 rate.
+- **G10 (Land -> landed) never fired.** On `ros2_action_land_01` the
+  aircraft was on the ground from 25.9 s (0.27 m, then -0.09 m), but the
+  FSM stayed in Land, not terminal, and the mission ended on the node's
+  40 s fail-safe grace at 41.3 s. The node reads `landed` from
+  /mavros/extended_state; whether that topic reached it is not recorded
+  (the bag does not carry it). Open.
+- A `brake` rule holds the aircraft in Brake for as long as it is
+  violated: one onset, so N-in-T (G2) never counts three, and the zone
+  never clears, so G7 never fires; `ros2_action_brake_01` braked until the
+  90 s time cap.
+- The first RTL attempt sent `"rtl"` and was refused with 422 (the DSL's
+  value is `RTL`); its flight flew to the target with no event. The re-fly
+  wrote into the same folder (Windows names are case-insensitive) and the
+  runner moved the refused flight into `ros2_action_rtl_01/_previous`.
+
+#### Changed
+- `~/venv-ros` (WSL) gained fastapi 0.162.0 and uvicorn 0.54.0, the
+  pyproject `api` extra that `sitl/setup_ros2.sh` installs; the Shield
+  node refused `--hotapply-port` without them.
+
+#### Limits
+- `dev` topology, a dirty tree (`e5b2e51-dirty`: an untracked document)
+  and no PI waiver: none of this is KPI-grade.
+- The events came from a scripted client, not the harness's gRPC
+  `HotApply` (WP4-03 asks for the harness); `corridor_swap` was not flown
+  (the flown policy has no corridor); the perception rail still has no
+  hot-apply listener.
+- Edges flown here: G1, G3, G5, G8, G9, G11, G12, X1, X4. Not flown on
+  this rail: G2, G4, G6, G7, G10, X2, X3, X5, X6, X7; Land was reached
+  directly (G12), not through RTL (G6).
+
 ### 2026-10-29 (later) — a recovery from outside the altitude band climbs at the cap: the library's mean time to safe 4.31 to 3.14 s; a bundle's changelog is a diff against its previous version; the IR migration register; the follow comparison repeated to five flights
 
 Continuing the grant's open obligations (the audit's WP3-17, X-10, WP1-22 /

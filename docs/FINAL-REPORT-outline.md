@@ -14,7 +14,7 @@ NTUT AIoT Lab · outline v0, 2026-10-29
 
 Every status below is the contract audit's (136 obligations, first done
 2026-10-05, refreshed 2026-10-28, with the 28-29 Oct work applied):
-**61 DONE, 71 PARTIAL, 2 MISSING, 2 DRIFT.** DONE means the code or the
+**64 DONE, 68 PARTIAL, 2 MISSING, 2 DRIFT.** DONE means the code or the
 artefact the grant names exists and was checked; it never means KPI-grade.
 
 ## 1. Summary (to write last)
@@ -52,7 +52,7 @@ code_revision. Every stored run is refused today.
 | Mission success rate (WP4-08) | tracked | 0.603 headless library | `hil` run |
 | Per-paraphrase robustness (WP4-09) | outcome stability across paraphrases | paraphrase arms in the harness; validator on an independent held-out set: 2/20 false accepts, 5/20 false refusals | a text-reading pilot (G3 ruling) |
 | Monitor tick ≤ 100 ms at 10 Hz; geometry query ≤ 5 ms at ~50 rules x 50 poses (WP3-13) | budget | Orin Nano city flights: tick work p50 22 ms / p95 61-63 ms, 15-25 of ~4200 ticks over 100 ms; desktop check 0.45-0.87 ms at 50 rules | 50 x 50 profile on the Orin |
-| DSL acceptance: schema pass 100 %, golden 100 %, cold start ≤ 1 s, hot-apply ≤ 50 ms, query ≤ 5 ms (WP1-19) | budget | desktop cold start p95 376 ms; no hot-apply number published | Orin bench |
+| DSL acceptance: schema pass 100 %, golden 100 %, cold start ≤ 1 s, hot-apply ≤ 50 ms, query ≤ 5 ms (WP1-19) | budget | desktop cold start p95 376 ms; hot-apply receipt to swap 0.444-4.443 ms over 18 REST events in flight (desktop WSL, ROS 2 rail, 29 Oct) | Orin bench |
 | Policy load round-trip (WP1-17) | 100 % | round-trip 29/29, tamper 29/29, negative 35/35 refused, nulls 0/29 (docs/data/wp1_roundtrip.json) | - (DONE) |
 | Bundle replayability (WP1-18) | load the bundle whose hash matches | replay bundle per run; headless re-fly bit-for-bit (tools/rerun_episode.py) | a clean-tree `hil` run |
 | Prefix-token budget (WP2-02) | budget respected, CSPBudgetExceeded on overflow | docs/data/csp_kpis.json; tests/test_csp.py | - (DONE) |
@@ -99,25 +99,27 @@ the subsections are written from.
 - 4.2 WP2 Prefix Compiler: 19 obligations. The CSP model, schema, budget,
   coverage, filtering, relevance explanations, adapters, templates and
   their tests are DONE; every city follow writes its CSP since 28 Oct
-  (WP2-11). Open: no flown VLA has read the CSP (WP2-01), so the CSP on/off
+  (WP2-11), and a flown REST hot-apply re-issues it per generation (WP2-15,
+  29 Oct). Open: no flown VLA has read the CSP (WP2-01), so the CSP on/off
   effectiveness delta (WP2-09, WP4-15) is unmeasured and the "Prefix
-  Compiler complete" gate (WP2-18) waits on both; the CSP re-issued by a
-  flown hot-apply (WP2-15); the paraphraser's held-out false accepts
+  Compiler complete" gate (WP2-18) waits on both; the paraphraser's held-out false accepts
   (WP2-13); the PI's acceptance of multi-scale geometry derived at load
   rather than shipped in the bundle (WP2-16); the correction
   note's delivery to ITRI (WP2-12); Python 3.11+ (WP2-19).
 - 4.3 WP3 Safety Shield: 24 obligations. The ROS 2 node, monitor / filter /
   projection, the 5 s / 0.1 s lookahead, the MAVLink adapter, the GeoFence
-  backstop, the audit record and the single evaluation path are DONE.
+  backstop, the audit record and the single evaluation path are DONE, and
+  since 29 Oct so are the REST listener driven during a flight (WP3-12) and
+  one flown zone per breach action (WP3-08), on the ROS 2 rail with MAVROS.
   Open: the theta basis and whether PathRepair goes on by default (WP3-06),
-  an FSM run firing every edge including Land (WP3-07), one policy per
-  breach action on SITL (WP3-08), a REST hot-apply during a flight
-  (WP3-12), the Orin tick profile (WP3-13), and the KPIs of section 2
+  the FSM edges not yet flown, among them G10 after a landing (WP3-07),
+  the Orin tick profile (WP3-13), and the KPIs of section 2
   (WP3-14 to WP3-17, WP3-20).
 - 4.4 WP4 Stress Testing: 21 obligations. The scenario library, the KPI
   report generator, the per-step exporters, the smoke set and the audit
   aggregation are DONE. Open: the event families driven into a flying
-  SITL + MAVROS run (WP4-03), the library on the ArduPilot and `hil` rails
+  SITL + MAVROS run by the harness (WP4-03; on 29 Oct a scripted client
+  drove dynamic_nfz and time_window_switch events), the library on the ArduPilot and `hil` rails
   (WP4-04), the gRPC harness driving an episode (WP4-05), CI smoke per build
   and the nightly (WP4-06), the perception-stress scenarios (WP4-16,
   WP4-18), the final demo gate (WP4-19), the KPI report itself (WP4-17),
@@ -217,11 +219,13 @@ final-demo scenarios (6 Oct, Q2).
 
 1. `hil`: Docker on the Jetson (user, sudo), then the runbook's bring-up and
    a first KPI-grade episode.
-2. The sim items that need no PI ruling: a REST hot-apply in a flying
-   SITL + MAVROS run (WP1-15, WP3-12, WP4-03, WP2-15); one FSM run firing
-   every edge including Land (WP3-07); one policy per breach action
-   (WP3-08); Mission Planner on a PAS + ArduPilot run (ARCH-10); the VLA
-   pilot over MAVROS 2 (ARCH-18, ARCH-20); SROS 2 on one run (X-15).
+2. The sim items that need no PI ruling: corridor_swap over REST and the
+   harness driving the events into a flight (WP1-15, WP4-03); the FSM
+   edges not yet flown and G10 after a landing (WP3-07); Mission Planner on
+   a PAS + ArduPilot run (ARCH-10); the VLA pilot over MAVROS 2 (ARCH-18,
+   ARCH-20: needs the VLA server reachable from WSL); SROS 2 on one run
+   (X-15). Done 29 Oct: REST hot-apply in flight (WP3-12, WP2-15), one
+   flown zone per breach action (WP3-08).
 3. Code: distance_envelope (WP1-07). Done 29 Oct: recoveries at the climb
    cap (WP3-17, library 4.308 to 3.135 s), the bundle changelog as a diff
    (X-10), the IR migration register (WP1-22, X-09), the WP2-16 deviation
@@ -254,7 +258,7 @@ applied; regenerate it before the report is written.
 | WP1-12 | priority P0/P1/P2 | DONE | guardrail/shield.py relaxation by priority; escalation uses priority (CHANGELOG 2026-10-07) | Priority does not arbitrate between two hard rules (documented). |
 | WP1-13 | scope + layer fields and the layered merge regulation>site>mission | DONE | guardrail/models.py merge_layers/load_layered, locked_by (CHANGELOG 2026-10-07, 2026-10-19); tests/test_policy_dsl_grant_form.py | No flown run has used a layered policy. |
 | WP1-14 | Units and frames: WGS84 lat/lon canonical, AGL default, ENU/NED computed lazily | DONE | WGS84 canonical stored form (CHANGELOG 2026-10-07 Changed; PI-DECISIONS-2026-10-06 Part C deviation 1) | None. |
-| WP1-15 | Mid-flight hot-apply (dynamic_nfz, time_window_switch, corridor_swap) with generation bump and hash re-derive, via a REST endpoint | PARTIAL | guardrail/api.py REST + --hotapply-port on both SITL rails with mTLS (CHANGELOG 2026-10-13); tests/test_api.py, tests/test_railinputs_hotapply.py; 'Nothing here has flown' | Drive a dynamic_nfz / time_window_switch / corridor_swap over REST into a flying SITL+MAVROS run; lift the dynamic_nfz file hold (C-16); add a listener to perception_node. |
+| WP1-15 | Mid-flight hot-apply (dynamic_nfz, time_window_switch, corridor_swap) with generation bump and hash re-derive, via a REST endpoint | PARTIAL | guardrail/api.py REST + --hotapply-port on both SITL rails with mTLS (CHANGELOG 2026-10-13); tests/test_api.py, tests/test_railinputs_hotapply.py; 'Nothing here has flown'; 29 Oct: REST hot-apply into flying ArduPilot SITL + MAVROS 2 (ROS 2 rail, dev): a dynamic_nfz spawned, rotated, translated and switched off (time_window_switch) mid-flight, generations 0-4, receipt to swap 0.444-4.443 ms against 50 ms; on ros2_hotapply_03 the Shield and the FSM stopped the aircraft short of the REST zone (X1, G3), released it after the switch-off (G8), and it reached the target | corridor_swap over REST in flight (the flown policy has no corridor); a listener on the perception rail; lift the dynamic_nfz file hold (C-16). |
 | WP1-16 | Ingest outputs: JSON Schema export, KML/GeoJSON converter, ingest CLI | DONE | policies/policy_dsl.schema.json; tools/geo_to_policy.py; tests/test_geo_to_policy.py | Polygons with holes refused (minor). |
 | WP1-17 | WP1 KPI: policy load round-trip | DONE | tools/wp1_roundtrip_kpi.py -> docs/data/wp1_roundtrip.json: round-trip 29/29, tamper 29/29, negative 35/35, nulls 0/29; tests/test_wp1_roundtrip_kpi.py | None. |
 | WP1-18 | WP1 KPI: bundle replayability (load the bundle whose policy_hash matches, never 'the latest') | PARTIAL | replay bundle per run (e.g. nfz3b_pc_hier_dronecats_20261028.replay.tar.gz); headless re-fly bit-for-bit (tools/rerun_episode.py); but all 45 flights of 27-28 Oct are code_revision '-dirty' (PC) or 'unversioned' (Jetson) in manifest.json | no hil run exists: the KPI gate (is_kpi_grade) refuses every stored run; fly KPI runs from a clean checkout on the Orin (git, not git archive) and keep their bundles in the tracked store. |
@@ -268,7 +272,7 @@ applied; regenerate it before the report is written.
 
 ### WP2 - Prefix Compiler (CSP)
 
-19 items: 11 DONE, 8 PARTIAL.
+19 items: 12 DONE, 7 PARTIAL.
 
 | ID | Obligation | Status | Evidence | Open |
 |---|---|---|---|---|
@@ -286,7 +290,7 @@ applied; regenerate it before the report is written.
 | WP2-12 | Claims made about WP2 in delivered reports vs what the code does | PARTIAL | tools/check_claims.py (0 live claims in tracked files); docs/CORRECTION-2026-10-06-mid-evaluation-and-deck.md row A5 | Record that the correction note reached ITRI (PI said yes on 6 Oct; sending not recorded). |
 | WP2-13 | Paraphraser (Q3 Aug-Oct deliverable, separate service fed by the templated NL); per-paraphrase robustness is WP4's KPI | PARTIAL | guardrail/paraphraser.py, experiments/paraphrases/ 112 stored paraphrases; validator false accepts 0/30 dev, 4/12 on a fresh held-out set (CHANGELOG 2026-10-22); 4 LLM-authored sets stale since C8, pinned; validator tightened 28 Oct (fb2cb49); on an independent held-out set (heldout_2026_10_28, written by an author with no access to the validator) 2/20 false accepts and 5/20 false refusals, before and after | Close the held-out false accepts; re-author the 4 stale sets; the KPI use is WP4-09. |
 | WP2-14 | Tests for the prefix compiler acceptance KPIs | DONE | tests/test_csp.py test_kpi_budget_*, test_kpi_p0_coverage_*, test_kpi_p0_overflow_raises_*, test_kpi_every_rule_* (99/99) | None. |
-| WP2-15 | CSP re-issued when the policy generation changes (hot-apply). Grant: CSP is a function of 'policy bundle ( policy_hash + generation )'; Overview: 'policy_hash everywhere' | PARTIAL | sitl/ros2_shield_node.py writes csp_g<N>.json per generation; dynamic_nfz compiles (CHANGELOG 2026-10-12); stored ros2fix_on_dyn_nfz (7 Oct) lacks generation 1's CSP; not re-flown | Re-fly one hot-apply run on the ROS 2 rail to show the re-issued CSP. |
+| WP2-15 | CSP re-issued when the policy generation changes (hot-apply). Grant: CSP is a function of 'policy bundle ( policy_hash + generation )'; Overview: 'policy_hash everywhere' | DONE | sitl/ros2_shield_node.py writes csp_g<N>.json per generation; dynamic_nfz compiles (CHANGELOG 2026-10-12); stored ros2fix_on_dyn_nfz (7 Oct) lacks generation 1's CSP; not re-flown; 29 Oct: ros2_hotapply_01-03 wrote csp_g0..csp_g4, one per generation; g0 does not name the REST zone, g1-g4 do, each with its generation's policy_hash | KPI-grade needs hil. |
 | WP2-16 | Locked design choice: multi-scale geometry - 'The Prefix Compiler picks the scale, never re-computes' (P0Entry.geometry_ref, e.g. 'coarse:...@v0.3.0/g0') | PARTIAL | guardrail/ir.py multiscale geometry + geometry_ref in the CSP; computed at load, the bundle does not carry the polygons; the compiler reads the scales from guardrail/ir.py and never re-computes them (since 8 Oct); recorded deviation (outline section 7): the scales are derived at load from the IR, not shipped in the bundle | The PI accepts the derived-at-load reading, or the bundle ships the scales. |
 | WP2-17 | Locked design choice: the CSP's action sets are in body frame (vx, vy, vz, yaw_rate); the Shield converts to local-NED before MAVLink emit | DONE | body-frame actions at the ROS 2 boundary, conversion in sitl/mavlink_adapter_node.py (CHANGELOG 2026-10-07); tests/test_mavlink_adapter.py | City rail's StepTracker emits world-frame actions (not a grant rail). |
 | WP2-18 | Final-delivery scope: 'Prefix Compiler (full)' scheduled Q2 May-Jul (Overview.txt:170); final gate requires 'Prefix Compiler ... complete' (Grant overview.txt:102-103) | PARTIAL | every compiler part built and tested (WP2-02..08, 10, 14); effect never shown: no VLA has read a CSP in flight | Close WP2-01 + WP2-09 (CSP on/off delta) for the final 'Prefix Compiler complete' gate. |
@@ -294,7 +298,7 @@ applied; regenerate it before the report is written.
 
 ### WP3 - Safety Shield
 
-24 items: 14 DONE, 10 PARTIAL.
+24 items: 16 DONE, 8 PARTIAL.
 
 | ID | Obligation | Status | Evidence | Open |
 |---|---|---|---|---|
@@ -304,12 +308,12 @@ applied; regenerate it before the report is written.
 | WP3-04 | Action input frame is body frame (vx, vy, vz, yaw_rate); body->local-NED conversion happens after projection, in the MAVLink adapter | DONE | body frame end to end at the ROS 2 boundary (CHANGELOG 2026-10-07; demo/out/ros2fix_on_dyn_yaw) | None. |
 | WP3-05 | Lookahead horizon 5 s at 10 Hz = 50 future poses; time-window boundary checked at t-ε and t+ε | DONE | guardrail.shield LOOKAHEAD_S 5 s / LOOKAHEAD_DT_S 0.1 s on ROS 2 + PAS rails and the harness (CHANGELOG 2026-10-07, -13); window-edge checks | City rail (all 45 flights 27-28 Oct, Jetson metrics shield_lookahead grant:false) still flies 3 s / 0.5 s until subject velocity is wired (C-09): do not quote those as grant-forecast evidence. |
 | WP3-06 | Repair operators in priority order: AltitudeClamp -> LateralProjection (SDF) -> PathRepair; conservative cap θ (2.0 m lateral / 0.5 m vertical) above which projection is abandoned for fail-safe; pluggable Protocol | PARTIAL | guardrail/repair.py RepairOperator Protocol, PathRepair (off by default), theta applied with escalation (CHANGELOG 2026-10-07, -13); tests/test_shieldcore_repair.py | PI ruling on the theta basis (12/21 Oct Q1, unanswered); decide whether PathRepair goes on by default. |
-| WP3-07 | Escalation FSM Normal -> Brake -> Loiter -> RTL -> Land with N-in-T (3 in 5 s), θ, T_recover = 2 s, YAML-overridable; drives SET_MODE GUIDED/LOITER/RTL/LAND | PARTIAL | guardrail/fsm.py (tests/test_fsm.py 114/114), wired to Shield and rails; flown on PAS+ArduPilot: Brake, Loiter (as BRAKE), RTL via X7 (pas_ap_close_on 13 Oct, pas_ap_video_on_20261014, pas_ap_ovf_on_20261021); hold points headless only | Fly one SITL+MAVROS scenario firing every edge incl. Land; fly a moved hold point (C-03); PI rulings on LOITER-as-BRAKE, N-in-T for slow pilots (21 Oct #7), rubric. |
-| WP3-08 | Shield acts on the rule's violation_action (monitor_only, project_fix, brake, loiter, RTL, land); hard vs soft constraints; P0/P1/P2 priority | PARTIAL | dispatch on all six actions in guardrail/shield.py; experiments/templates/failsafe_escalation.yaml headless; no flown policy uses loiter/RTL/land/monitor_only actions | Fly one policy per breach action (direct RTL/Land/Loiter, monitor_only soft rule) on SITL. |
+| WP3-07 | Escalation FSM Normal -> Brake -> Loiter -> RTL -> Land with N-in-T (3 in 5 s), θ, T_recover = 2 s, YAML-overridable; drives SET_MODE GUIDED/LOITER/RTL/LAND | PARTIAL | guardrail/fsm.py (tests/test_fsm.py 114/114), wired to Shield and rails; flown on PAS+ArduPilot: Brake, Loiter (as BRAKE), RTL via X7 (pas_ap_close_on 13 Oct, pas_ap_video_on_20261014, pas_ap_ovf_on_20261021); hold points headless only; 29 Oct, ROS 2 rail + MAVROS: edges G1, G3, G5, G8, G9, G11, G12, X1, X4 flown (ros2_hotapply_01-03, ros2_action_*_01); Land reached directly (G12) | Fly G2, G4, G6, G7, G10, X2, X3, X5-X7; G10 never fired after a landing (ros2_action_land_01, open); a moved hold point (C-03); PI rulings (LOITER-as-BRAKE, N-in-T for slow pilots, rubric). |
+| WP3-08 | Shield acts on the rule's violation_action (monitor_only, project_fix, brake, loiter, RTL, land); hard vs soft constraints; P0/P1/P2 priority | DONE | dispatch on all six actions in guardrail/shield.py; experiments/templates/failsafe_escalation.yaml headless; no flown policy uses loiter/RTL/land/monitor_only actions; 29 Oct, ROS 2 rail + MAVROS, one REST-spawned zone per action: land (G12 -> LAND), RTL (G11), loiter (X4), brake (X1, held), project_fix (ros2_hotapply_03), monitor_only as a soft P2 rule (flown through, P0 0.0) and as a hard P0 rule (counted as escapes, by design) | One zone per action on the flown policy, not one policy file per action; KPI-grade needs hil. |
 | WP3-09 | MAVLink adapter ROS 2 node: single body->local-NED boundary; SET_POSITION_TARGET_LOCAL_NED; MISSION_ITEM_INT; SET_MODE for FSM | DONE | sitl/mavlink_adapter_node.py, SET_MODE via ModeRequests; flown 7 Oct (ros2fix2_*) | PAS rail uses in-process pymavlink (acceptable). |
 | WP3-10 | ArduPilot GeoFence (FENCE_ENABLE, FENCE_TYPE, FENCE_ACTION) configured as the last-line backstop that fires only if the Shield fails | DONE | sitl/fence/guardrail_fence.parm; fence fired with the Shield off (ros2fix2_off_fence); PAS rail uploads zones before arming (CHANGELOG 2026-10-13), 0 breaches | None. |
 | WP3-11 | Per-violation-tick JSONL audit record (Pydantic v2) with ts, policy_hash, generation, monitor_tick, raw_action, violations (boundary_intersect_at_s), repair_attempts (result/magnitude_m/iterations), emitted_action, fsm_state_before/after; rotated per mission | DONE | guardrail/audit.py AuditRecord (Pydantic v2) with generation, fsm_state_before/after, boundary_intersect_at_s, per-operator results and iterations (audit.py:243-262; CHANGELOG 2026-10-13); policies/audit_record.schema.json; one file per episode | File is audit.jsonl, not the grant's shield_audit.jsonl name (cosmetic; WP4-05). |
-| WP3-12 | Hot-apply listener (REST callback) bumps policy generation mid-flight | PARTIAL | --hotapply-port on sitl/ros2_shield_node.py and sitl/run_sitl_demo.py (CHANGELOG 2026-10-13); perception_node has no listener; never driven during a flight | Inject an NFZ over REST during a SITL flight (same run as WP1-15). |
+| WP3-12 | Hot-apply listener (REST callback) bumps policy generation mid-flight | DONE | --hotapply-port on sitl/ros2_shield_node.py and sitl/run_sitl_demo.py (CHANGELOG 2026-10-13); perception_node has no listener; never driven during a flight; 29 Oct: REST hot-apply into flying ArduPilot SITL + MAVROS 2 (ROS 2 rail, dev): a dynamic_nfz spawned, rotated, translated and switched off (time_window_switch) mid-flight, generations 0-4, receipt to swap 0.444-4.443 ms against 50 ms; on ros2_hotapply_03 the Shield and the FSM stopped the aircraft short of the REST zone (X1, G3), released it after the switch-off (G8), and it reached the target | KPI-grade needs hil. |
 | WP3-13 | Monitor tick budget ≤100 ms end-to-end at 10 Hz; geometry query budget ≤5 ms with ~50 rules x 50 poses | PARTIAL | Orin Nano city flights (D:/vla_drone_offload/jetson_runs/orin_follow_02, orin_hier_dronecats_20261028): tick work p50 22 ms / p95 61-63 ms, 15-25 of ~4200 ticks over 100 ms (max 277 ms); Shield p50 2.5 / p95 6-9 ms; desktop _check 0.45-0.87 ms at 50 rules | Profile 50 rules x 50 poses on the Orin with tools/profile_shield_tick.py; explain the >100 ms ticks; log VLA-to-setpoint latency on a hil run. |
 | WP3-14 | P0 violation escape rate, target 0 (hard limit), on the canonical KPI configuration | PARTIAL | 0 P0 escapes: harness library 179 Shield-on episodes (CHANGELOG 2026-10-22), every kpi.json of the 45 flights 27-28 Oct, PAS+ArduPilot Shield-on flights 12-21 Oct; none KPI-grade | no hil run exists: the KPI gate (is_kpi_grade) refuses every stored run; ROS 2/MAVROS rail not re-flown since 7 Oct. Run the hil campaign. |
 | WP3-15 | Fail-safe trigger correctness (reference target ≥99%: triggered when expected, not when not expected) | PARTIAL | guardrail/fsm.py score_failsafe_triggers with nulls; docs/data/scenario_sweep.json (22 Oct): library 144/170 = 0.847, nightly 544/714 = 0.762, never-trigger null 0.941 (CHANGELOG 2026-10-22, PI-DECISIONS-2026-10-21 #2) | Below the locked >=0.99 and below its null. Needs PI rubric + theta basis (Q1/Q2, unanswered since 12 Oct), then fix the X1>G3>G5 / G1>G3>G4 false triggers and re-score; then KPI-grade on hil. |
@@ -331,7 +335,7 @@ applied; regenerate it before the report is written.
 |---|---|---|---|---|
 | WP4-01 | Every reported KPI must come from a Stress Testing run in the canonical HIL topology | PARTIAL | dev label + KPI gate refuse non-hil runs; Orin Nano Super connected (nathan@10.42.0.2) but only the city follow controller ran on it (CHANGELOG 2026-10-27 Jetson); harness never run through SITL/MAVROS; docker images never built | no hil run exists: the KPI gate (is_kpi_grade) refuses every stored run. Bring up the hil rail (SITL+MAVROS on desktop, Shield+pilot on Orin), run nightly, kpi_report. PI never answered the dated fallback (21 Oct #4). |
 | WP4-02 | Scenario library: declarative YAML (one file per template) validated by Pydantic ScenarioSpec, with templates dynamic_nfz_movement / time_window_switch / radius_scaling / corridor_swap, events, parameter_sweep, expected_kpis | DONE | guardrail/scenario_spec.py ScenarioSpec/ScenarioEvent, experiments/templates/ 16 files, parameter sweeps; tests/test_scenario_spec.py | Headless only (WP4-04). |
-| WP4-03 | Harness drives dynamic_nfz, time_window_switch and corridor_swap mid-flight via the Policy DSL REST hot-apply endpoint; events spawn/translate/rotate fence, activate/deactivate rule, swap corridor, scale radius | PARTIAL | every event type mid-flight in the headless harness; gRPC HotApply forwards to a bound REST endpoint (CHANGELOG 2026-10-13); never through a flying rail | Drive the event families through REST into SITL+MAVROS flights. |
+| WP4-03 | Harness drives dynamic_nfz, time_window_switch and corridor_swap mid-flight via the Policy DSL REST hot-apply endpoint; events spawn/translate/rotate fence, activate/deactivate rule, swap corridor, scale radius | PARTIAL | every event type mid-flight in the headless harness; gRPC HotApply forwards to a bound REST endpoint (CHANGELOG 2026-10-13); never through a flying rail; 29 Oct: REST hot-apply into flying ArduPilot SITL + MAVROS 2 (ROS 2 rail, dev): a dynamic_nfz spawned, rotated, translated and switched off (time_window_switch) mid-flight, generations 0-4, receipt to swap 0.444-4.443 ms against 50 ms; on ros2_hotapply_03 the Shield and the FSM stopped the aircraft short of the REST zone (X1, G3), released it after the switch-off (G8), and it reached the target | Drive the events from the harness (gRPC HotApply), not a scripted client; corridor_swap; KPI-grade needs hil. |
 | WP4-04 | Harness runs scenarios on the simulation rails (Gazebo Harmonic functional sweeps, KPI-grade runs in HIL) and emits an episode bundle per episode | PARTIAL | headless harness + modelled ArduPilot response arm (CHANGELOG 2026-10-21); --backend sitl scores rail files but flies stub missions without events; no stored sitl-backend run | Run the scenario library through ArduPilot SITL (+Gazebo for functional sweeps) and on hil, with an episode bundle each. |
 | WP4-05 | RPC harness: Python service + gRPC stubs over mTLS (StartSession, InjectPolicy, HotApply, StartEpisode, IssueTask, EmitEvent, EndEpisode, streams) | PARTIAL | guardrail/harness_service.py + guardrail/protos/harness.proto, all 10 RPCs over mTLS; tests/test_harness_service.py 56/56 (run 2026-10-28); headless only | Drive a simulator/hil episode through it; write the grant's file names (policy_bundle.tar.gz, episode.bag2/, shield_audit.jsonl). |
 | WP4-06 | Smoke (~50 scenarios x 1 seed per build), Nightly KPI (~200 x 3 seeds, HIL, sim_speedup 1.0), Broad sweep (~3000 x 5); sweep config YAML per profile; CI smoke pipeline | PARTIAL | smoke/nightly/broad profiles defined; smoke + nightly run headless (CHANGELOG 2026-10-22); master is 214 commits ahead of myfork/master, so CI has not run since ~13 Oct; nightly.yml cannot fire from master | Push (or set the default branch) so CI smoke runs per build; nightly at sim_speedup 1.0 on hil; broad never run. |
