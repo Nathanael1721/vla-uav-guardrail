@@ -197,6 +197,7 @@ kinematic rule there is no cap to fly at and the old law stays.
 | 0.5 / 2 / 6 / 9.5 m (floor 10 m) | 11.7 / 10.9 / 8.0 / 2.1 s | 4.8 / 4.1 / 2.1 / 0.3 s |
 | 20.5 / 24 / 30 m (ceiling 20 m) | 2.1 / 8.0 / 11.9 s | 0.3 / 2.1 / 5.1 s |
 | altitude-floor-recovery (from 3 m) | 10.3 s, 103 repairs | 3.6 s, 36 repairs |
+| the library (published sweep, 37 recoveries) | mean 4.308 s, max 11.9 s | mean 3.135 s, max 6.7 s |
 
 The old law is kept, line for line, as `Shield(recovery_law="lookahead")`:
 the velocity identity proof (tests/test_own_velocity_forecast.py) and the

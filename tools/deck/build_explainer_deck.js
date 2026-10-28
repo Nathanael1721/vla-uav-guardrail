@@ -267,7 +267,10 @@ fact("lib_opened_eps", "7", [src(SW, (o) => o._true_state.episodes_window_opened
 fact("lib_opened_inside", "3-13", [src(SW, (o) => { const t = o._true_state.window_opened_on_ticks_inside_polygon; return `${Math.min(...t)}-${Math.max(...t)}`; }, "3-13")]);
 fact("lib_opened_tts", "2.8 s", [src(SW, (o) => o._true_state.window_opened_on_max_time_to_safe_s, 2.8)]);
 fact("lib_controls", "1", [src(SW, (o) => o._rollup._controls_shield_off.episodes, 1)]);
-fact("lib_p0_null", "0.234", [src(SW, (o) => Math.round(all(o).null_passthrough_p0_escape_rate * 1000) / 1000, 0.234)]);
+// Republished 29 Oct (WP3-17): recoveries from outside the altitude band fly
+// at the climb cap, so the library's mean time to safe, its repair magnitude
+// and the null's escape rate moved (CHANGELOG 2026-10-29, later).
+fact("lib_p0_null", "0.225", [src(SW, (o) => Math.round(all(o).null_passthrough_p0_escape_rate * 1000) / 1000, 0.225)]);
 fact("failsafe", "0.848", [src(SW, (o) => Math.round(all(o).failsafe_labelled_episodes.failsafe_trigger_correctness * 1000) / 1000, 0.848)]);
 fact("failsafe_frac", "145/171", [src(SW, (o) => { const f = all(o).failsafe_labelled_episodes; return `${f.scored - f.false_triggers - f.missed_triggers}/${f.scored}`; }, "145/171")]);
 fact("failsafe_false", "25", [src(SW, (o) => all(o).failsafe_labelled_episodes.false_triggers, 25)]);
@@ -275,8 +278,8 @@ fact("failsafe_missed", "1", [src(SW, (o) => all(o).failsafe_labelled_episodes.m
 fact("failsafe_null", "0.942", [src(SW, (o) => all(o).failsafe_labelled_episodes.null_never_trigger.toFixed(3), "0.942")]);
 fact("failsafe_g3", "22", [src(SW, (o) => Object.entries(o._failsafe_labels.triggers_by_edge.false).filter(([k]) => k.includes("G3")).reduce((a, [, n]) => a + n, 0), 22)]);
 fact("mission", "0.603", [src(SW, (o) => all(o).mission_success_rate.toFixed(3), "0.603")]);
-fact("repair_mag", "6.92 m/s", [src(SW, (o) => all(o).mean_repair_magnitude_mps.toFixed(2), "6.92")]);
-fact("tts", "4.31 s", [src(SW, (o) => all(o).mean_time_to_safe_s.toFixed(2), "4.31")]);
+fact("repair_mag", "7.11 m/s", [src(SW, (o) => all(o).mean_repair_magnitude_mps.toFixed(2), "7.11")]);
+fact("tts", "3.13 s", [src(SW, (o) => all(o).mean_time_to_safe_s.toFixed(2), "3.13")]);
 
 // Components (progress_oct.json is regenerated from the code by build_progress_oct_data.py).
 fact("wp1_rt", "29/29", [src(PO, (o) => `${o.wp1.round_trip_passed}/${o.wp1.policies}`, "29/29")]);
