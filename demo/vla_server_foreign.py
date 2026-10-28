@@ -171,8 +171,9 @@ is guardrail.manifest.weights_digest over the shards
 model.safetensors.index.json names, plus RaceVLA's dataset_statistics.json
 (it changes every action), cached in vla_server_v2's sidecar; hello's
 `weight_files` lists them, so a flight on this host compares the digests.
-precision bf16 (DroneCATS: bf16 only, its env has no bitsandbytes; RaceVLA
-nf4 too), attn sdpa or eager (RaceVLA's server.py:19 uses
+precision bf16 or nf4 (bitsandbytes 4-bit; DroneCATS keeps its vision
+encoder, projector and lm_head in bf16, and the PC's dronecats env has no
+bitsandbytes, so nf4 DroneCATS is the Jetson's), attn sdpa or eager (RaceVLA's server.py:19 uses
 flash_attention_2, not installed here). The scripted stand-in is
 "fake:<family>-scripted" with no digest: never a VLA.
 
@@ -809,6 +810,17 @@ class ScriptedForeignModel:
                 "model_s": dt, "new_tokens": None, "prompt_tokens": None}
 
 
+# DroneCATS nf4: the modules kept in bf16 (the vision encoder, its projector, the
+# output head); the language layers are quantised.
+DRONECATS_NF4_SKIP = ("visual", "projector", "lm_head")
+
+
+def bitsandbytes_available() -> bool:
+    """bitsandbytes is importable here (checked before a model is loaded)."""
+    import importlib.util
+    return importlib.util.find_spec("bitsandbytes") is not None
+
+
 def _sync(torch, device: str) -> None:
     if str(device).startswith("cuda"):
         torch.cuda.synchronize()
@@ -816,17 +828,28 @@ def _sync(torch, device: str) -> None:
 
 class DroneCATSModel:
     """Cosmos3EdgeForConditionalGeneration + its processor (the card's
-    loading code; transformers>=5.18, the dronecats env). bf16 only."""
+    loading code; transformers>=5.18, the dronecats env). bf16 is the card's
+    precision; nf4 (bitsandbytes 4-bit, compute bf16) quantises the language
+    layers only - the vision encoder, the projector and lm_head stay bf16
+    (DRONECATS_NF4_SKIP) - so the 2B model fits beside the detector on an
+    8 GB Jetson."""
 
-    def __init__(self, weights_dir: str | Path, *, attn: str, device: str = "cuda:0"):
+    def __init__(self, weights_dir: str | Path, *, attn: str, device: str = "cuda:0",
+                 precision: str = "bf16"):
         import torch
         from transformers import AutoProcessor, Cosmos3EdgeForConditionalGeneration
         self.torch, self.device = torch, device
         t0 = time.perf_counter()
         self.processor = AutoProcessor.from_pretrained(str(weights_dir))
+        kw: dict[str, Any] = dict(dtype=torch.bfloat16, device_map={"": device},
+                                  attn_implementation=attn)
+        if precision == "nf4":
+            from transformers import BitsAndBytesConfig
+            kw["quantization_config"] = BitsAndBytesConfig(
+                load_in_4bit=True, bnb_4bit_compute_dtype=torch.bfloat16,
+                bnb_4bit_quant_type="nf4", llm_int8_skip_modules=list(DRONECATS_NF4_SKIP))
         self.model = Cosmos3EdgeForConditionalGeneration.from_pretrained(
-            str(weights_dir), dtype=torch.bfloat16, device_map={"": device},
-            attn_implementation=attn).eval()
+            str(weights_dir), **kw).eval()
         self.timing = {"load_total_s": time.perf_counter() - t0}
 
     def generate(self, image, inputs: dict) -> dict:
@@ -1148,7 +1171,8 @@ def build_real(args, family, weights: Path):
                          f"named weight is missing or unreadable (a download still running?); "
                          f"refusing to serve an unidentified model")
     if args.model == "dronecats":
-        model = DroneCATSModel(weights, attn=args.attn, device=args.device)
+        model = DroneCATSModel(weights, attn=args.attn, device=args.device,
+                               precision=args.precision)
     else:
         model = RaceVLAModel(weights, precision=args.precision, attn=args.attn,
                              device=args.device)
@@ -1204,7 +1228,8 @@ def build_arg_parser() -> tuple[argparse.ArgumentParser, argparse.ArgumentParser
     p.add_argument("--log", default=None, help="JSONL of every request and answer (default "
                    "demo/out/vla_server_foreign/<model>_<utc>.jsonl)")
     p.add_argument("--precision", choices=("bf16", "nf4"), default="bf16",
-                   help="bf16 (both; DroneCATS bf16 only) or nf4 (RaceVLA)")
+                   help="bf16 (both) or nf4 (bitsandbytes 4-bit; DroneCATS keeps its vision "
+                        "encoder, projector and lm_head in bf16)")
     p.add_argument("--attn", choices=S.ATTNS, default="sdpa")
     p.add_argument("--device", default="cuda:0")
     p.add_argument("--front-source", choices=tuple(C.FRONT_SOURCES), default=C.DEFAULT_FRONT_SOURCE,
@@ -1238,9 +1263,9 @@ def build_arg_parser() -> tuple[argparse.ArgumentParser, argparse.ArgumentParser
 def main(argv=None) -> int:
     ap, p = build_arg_parser()
     args = ap.parse_args(argv)
-    if args.model == "dronecats" and args.precision != "bf16":
-        p.error("--precision nf4 is RaceVLA's only: the dronecats env has no bitsandbytes, and "
-                "DroneCATS's card loads bf16")
+    if args.precision == "nf4" and not args.fake_native and not bitsandbytes_available():
+        p.error("--precision nf4 needs bitsandbytes in this Python environment (the PC's "
+                "dronecats env has none; the Jetson's vla-dronecats-env has it)")
     for k in ("horizon_s", "history_gap_s"):
         v = getattr(args, k)
         if not (math.isfinite(v) and v > 0):

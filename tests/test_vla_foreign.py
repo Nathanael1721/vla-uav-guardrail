@@ -872,6 +872,72 @@ def test_the_serve_cli_refuses_a_missing_port_and_an_unknown_model():
         assert "error" in err.getvalue(), (argv, err.getvalue())
 
 
+def test_dronecats_nf4_needs_bitsandbytes_and_quantises_only_the_language_layers():
+    import contextlib
+    import io
+    import types
+    argv = ["serve", "--model", "dronecats", "--weights", "x", "--port", "1",
+            "--precision", "nf4"]
+    real_check = F.bitsandbytes_available
+    try:
+        for present, says in ((False, "bitsandbytes"), (True, "no such folder")):
+            F.bitsandbytes_available = lambda present=present: present
+            err = io.StringIO()
+            try:
+                with contextlib.redirect_stderr(err):
+                    F.main(argv)
+                raise AssertionError(f"accepted {argv} with bitsandbytes={present}")
+            except SystemExit as exc:
+                assert exc.code not in (0, None)
+            assert says in err.getvalue(), (present, err.getvalue())
+    finally:
+        F.bitsandbytes_available = real_check
+
+    seen: dict = {}
+
+    class FakeBnb:
+        def __init__(self, **kw):
+            self.kw = kw
+
+    class FakeModel:
+        @classmethod
+        def from_pretrained(cls, path, **kw):
+            seen["kw"] = kw
+            return cls()
+
+        def eval(self):
+            return self
+
+    class FakeProcessor:
+        @classmethod
+        def from_pretrained(cls, path):
+            return cls()
+
+    fake_tf = types.ModuleType("transformers")
+    fake_tf.AutoProcessor = FakeProcessor
+    fake_tf.Cosmos3EdgeForConditionalGeneration = FakeModel
+    fake_tf.BitsAndBytesConfig = FakeBnb
+    fake_torch = types.ModuleType("torch")
+    fake_torch.bfloat16 = "bf16"
+    saved = {k: sys.modules.get(k) for k in ("torch", "transformers")}
+    sys.modules["torch"], sys.modules["transformers"] = fake_torch, fake_tf
+    try:
+        F.DroneCATSModel("w", attn="sdpa", device="cpu", precision="nf4")
+        q = seen["kw"]["quantization_config"].kw
+        assert q["load_in_4bit"] is True and q["bnb_4bit_quant_type"] == "nf4", q
+        assert q["bnb_4bit_compute_dtype"] == "bf16", q
+        assert q["llm_int8_skip_modules"] == ["visual", "projector", "lm_head"], q
+        assert seen["kw"]["dtype"] == "bf16"
+        F.DroneCATSModel("w", attn="sdpa", device="cpu", precision="bf16")
+        assert "quantization_config" not in seen["kw"], seen["kw"]
+    finally:
+        for k, v in saved.items():
+            if v is None:
+                sys.modules.pop(k, None)
+            else:
+                sys.modules[k] = v
+
+
 def test_the_weight_files_are_the_index_shards_plus_racevlas_statistics():
     with tempfile.TemporaryDirectory() as d:
         d = Path(d)
