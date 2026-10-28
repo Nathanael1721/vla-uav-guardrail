@@ -236,8 +236,10 @@ field by field against the current store, validator, probe file and place regist
 | first held-out probes: faithful paraphrases refused | **2/30** | 2/30 | - |
 | 2026-10-21 probes, written before the A14 change (dev): meaning changes accepted | **0/22** | 21/22 | - |
 | 2026-10-21 probes: faithful paraphrases refused | **1/22** | 1/22 | - |
-| held-out probes written after the A14 change: meaning changes accepted | **4/12** | - | - |
-| held-out probes after A14: faithful paraphrases refused | **2/12** | - | - |
+| probes written after the A14 change (dev since 2026-10-28): meaning changes accepted | **0/12** | 4/12 | - |
+| probes after A14: faithful paraphrases refused | **2/12** | 2/12 | - |
+| independent held-out probes (2026-10-28): meaning changes accepted | **2/20** | 2/20 | - |
+| independent held-out probes: faithful paraphrases refused | **5/20** | 5/20 | - |
 
 **The nulls, scored on both halves.** A null that refused everything would "catch"
 every mutant, so each null is scored on the stored paraphrases too:
@@ -262,7 +264,7 @@ them (`negate-verb`, `negate-modal`, `post-prohibit`, `permission`, `exception`,
 re-authored and new items then showed 5 more (from old and new classes alike).
 Each was fixed in the validator. A class nobody wrote is still not measured.
 
-**What the probe numbers mean.** `probes.json` holds four sets.
+**What the probe numbers mean.** `probes.json` holds five sets.
 
 * **Review set (dev).** 58 probes written by the independent reviewer. The validator
   was tuned on them, so 0/28 is a regression floor, not an estimate. Three of the
@@ -303,9 +305,23 @@ Each was fixed in the validator. A class nobody wrote is still not measured.
   reproduced). So 2 of the 3 faithful refusals across the two 2026-10-21 sets are
   near-identical candidates - a probe-authoring issue (a faithful probe must be a
   different wording), not a limit of the validator - and the third is the colour
-  slot's, which predates A14. This is the closest thing here to an honest
-  false-accept rate after A14. It comes from the same author as the code, so it
-  is not independent of the code's blind spots.
+  slot's, which predates A14. It comes from the same author as the code, so it
+  is not independent of the code's blind spots. On 2026-10-28 the validator was
+  tuned on its four accepted meaning changes (below), so its 0/12 since then is
+  a dev figure.
+* **`heldout_2026_10_28` (held out, independent).** 40 probes written on
+  2026-10-28 by a separate agent that was given only the 17 source texts and the
+  probe format - no access to the validator, its tests, this document or the
+  earlier sets. Never used to tune the validator; measured once against the
+  validator before the 2026-10-28 change and once after: 2 of 20 meaning changes
+  accepted and 5 of 20 faithful refused, both times, so that change neither
+  helped nor hurt on it. This is the closest thing here to an honest estimate.
+  The two accepted: "horizontal speed" for "speed" (a limit narrowed to one
+  component) and a schedule given a time zone ("07:30-17:30 UTC"). The five
+  refused: two rule lists that merge equal limits or pair them with
+  "respectively", spelled-out numbers ("ten and twenty metres"), "Follow someone."
+  for "follow a person", and "120 metres in front of you" for "120 m ahead". The
+  misses were read for this paragraph, not tuned on.
 
 **What the A14 change reads** (`guardrail/paraphraser.py`, `_narrowings`). For each
 object the extractor finds, in its own clause: a word between a determiner and the
@@ -315,7 +331,12 @@ right after the noun ("who is running"), unless all it says is a colour; a
 participle right after the noun ("a person WEARING a hat"), unless it is a
 participle of position that only introduces a slot already compared ("the waypoint
 SITTING 120 m ahead"); and a place phrase after the noun with a place noun from a
-closed list ("pedestrians in the STREET"). A qualifier the source lacks is a
+closed list ("pedestrians in the STREET") and, since 2026-10-28, with any noun after
+the preposition and its determiner ("a person near the FOUNTAIN", "a person in
+UNIFORM"; not the idioms "at all times", "in force", "in sight"); and a `with`,
+`without` or `having` phrase after the noun ("a red car WITH a dented door"),
+unless all it introduces is a quantity, coordinate or direction already compared.
+A qualifier the source lacks is a
 narrowing, one the source had and the candidate dropped is a widening, and both
 are refused. A descent-only rate limit ("descend under 2 m/s") is now a different
 quantity from the compiler's "climb rate", which caps climb and descent alike;
@@ -344,10 +365,10 @@ Each has a test.
 lexical guard, not an entailment model:
 
 * It only sees the slot kinds in the table. Since 2026-10-21 it also reads the
-  narrowings listed above, but only in the positions and closed word lists
-  described there: a `with` or `in` phrase, a place noun the list lacks, or a
-  qualifier further from the noun still passes (4/12 on the set held out from that
-  change).
+  narrowings listed above, and since 2026-10-28 a `with` phrase and any noun after
+  a place preposition right after the object, but only in those positions: a
+  qualifier further from the noun, or a limit narrowed to one component of the
+  quantity ("horizontal speed"), still passes (2/20 on the independent set).
 * Synonyms are a closed table. For example car ≡ automobile but car ≠ vehicle,
   "stick with" is not a follow verb, and "whichever car you are following" is still
   read as the wildcard (a missed narrowing).

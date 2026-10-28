@@ -1,8 +1,8 @@
 {
   "schema": "guardrail.paraphrases.validation/1",
   "store_digest": "2b2b5788d9a021cc",
-  "validator_digest": "16537ea2ab2a216c",
-  "probes_digest": "1c18c11e5fb9cf51",
+  "validator_digest": "e30e7e756cfbc522",
+  "probes_digest": "b661d35cd2263ea0",
   "places_source": "guardrail.compiler.PLACES",
   "command": "python -m guardrail.paraphraser validate",
   "sources": 14,
@@ -165,20 +165,33 @@
       ]
     },
     "heldout_2026_10_21b": {
-      "status": "HELD-OUT - written on 2026-10-21 AFTER the A14 change and never used to tune it: measured once, after. Its words were chosen outside the change's closed lists (narrowing adjectives, place nouns), to estimate how far the lexical rules reach beyond the probes they were written beside. Same author as the code, so not independent of its blind spots.",
+      "status": "DEV since 2026-10-28 - written on 2026-10-21 AFTER the A14 change and measured once then (below); its four accepted meaning changes ('with' phrases, a place noun outside the list, 'in uniform') were then the target of the 2026-10-28 change (att:, loc: for any noun), so its 0/12 after that change is a dev figure. Same author as the code, so not independent of its blind spots.",
       "meaning_changing": 12,
-      "false_accepts": 4,
+      "false_accepts": 0,
       "faithful": 12,
       "false_refusals": 2,
-      "false_accept_texts": [
-        "follow a red car with a dented door",
-        "follow a person near the fountain",
-        "Keep altitude between 6 m and 14 m. Stay at least 3 m from any building, at least 5 m from anything you are following and at least 10 m from pedestrians with strollers. Speed at most 5 m/s, climb rate below 2 m/s, turn rate below 45 deg/s.",
-        "follow a person in uniform"
-      ],
+      "false_accept_texts": [],
       "false_refusal_texts": [
         "follow a car coloured red",
         "Stay inside corridor 'corridor-survey-route' - within 20 m of its centerline and between 10 m and 20 m. Keep out of zone 'nfz-school' (in force Mon-Fri 07:30-17:30). Speed at or below 4 m/s, climb rate below 2 m/s, turn rate below 45 deg/s."
+      ]
+    },
+    "heldout_2026_10_28": {
+      "status": "HELD-OUT - 40 probes written on 2026-10-28 by an independent author (a separate agent given only the 17 source texts and the probe format, with no access to the validator, its tests, its design doc or the earlier probe sets), never used to tune it, and measured once against the validator before and after the 2026-10-28 change: the same result both times. The misses were then read for the design doc, not tuned on.",
+      "meaning_changing": 20,
+      "false_accepts": 2,
+      "faithful": 20,
+      "false_refusals": 5,
+      "false_accept_texts": [
+        "Stay between 5 m and 80 m altitude and never fly into zone 'nfz-school-yard', which is in force Monday to Friday 07:30-17:30. Keep horizontal speed at or below 12 m/s, climb rate below 4 m/s and turn rate below 60 deg/s.",
+        "Stay inside corridor 'corridor-survey-route', within 20 m of its centerline and between 10 m and 20 m. Never enter zone 'nfz-school', which is in force Mon-Fri 07:30-17:30 UTC. Keep your speed to 4 m/s or less, your climb rate under 2 m/s and your turn rate under 45 deg/s."
+      ],
+      "false_refusal_texts": [
+        "Fly at an altitude between 4 m and 10 m. Maintain at least 10 m of separation from any pedestrian, and at least 5 m from any building as well as from anything you are following. Keep speed to 3 m/s or less, climb rate under 1.5 m/s and turn rate under 45 deg/s.",
+        "Keep your altitude between 6 m and 14 m. Do not get closer than 3 m to any building, 5 m to anything you are following or 10 m to any pedestrian. Your speed must not exceed 5 m/s, and climb rate and turn rate must stay below 2 m/s and 45 deg/s respectively.",
+        "Head for the waypoint that lies 120 metres in front of you, flying at cruise altitude.",
+        "Follow someone.",
+        "Fly at an altitude of between ten and twenty metres. Speed is capped at four metres per second, climb rate must stay below two metres per second and turn rate below forty-five degrees per second. Never get closer than ten metres to any pedestrian, or closer than five metres to anything you are following."
       ]
     }
   },

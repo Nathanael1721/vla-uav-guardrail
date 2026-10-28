@@ -1211,7 +1211,13 @@ def test_probe_rates_are_measured_and_not_zero():
     the novelty floor as near-identical to its source (0.09 < 0.15) - as is
     heldout_2026_10_21's one refused faithful probe. 2 of those 3 are a
     probe-authoring issue, not a validator limit (review of 3660383, P6; the
-    reasons are pinned below). Pinned so the design doc's numbers cannot drift
+    reasons are pinned below). On 2026-10-28 the validator was tuned on
+    heldout_2026_10_21b's four (a 'with' phrase, any noun after a place
+    preposition), so its 0/12 is a dev figure now; heldout_2026_10_28, 40
+    probes by an independent author (an agent with no access to the
+    validator or the earlier sets), measured once before and once after that
+    change, scored 2/20 false accepts and 5/20 false refusals both times - the
+    honest estimate. Pinned so the design doc's numbers cannot drift
     from the code; if a change moves them, update the doc, and say whether the
     held-out set was looked at."""
     rep = _live_report()
@@ -1225,8 +1231,11 @@ def test_probe_rates_are_measured_and_not_zero():
     new, after = pr["heldout_2026_10_21"], pr["heldout_2026_10_21b"]
     assert (new["false_accepts"], new["meaning_changing"]) == (0, 22), new
     assert (new["false_refusals"], new["faithful"]) == (1, 22), new
-    assert (after["false_accepts"], after["meaning_changing"]) == (4, 12), after
+    assert (after["false_accepts"], after["meaning_changing"]) == (0, 12), after
     assert (after["false_refusals"], after["faithful"]) == (2, 12), after
+    ind = pr["heldout_2026_10_28"]
+    assert (ind["false_accepts"], ind["meaning_changing"]) == (2, 20), ind
+    assert (ind["false_refusals"], ind["faithful"]) == (5, 20), ind
     # WHY each faithful 2026-10-21 probe is refused, as the doc words it: the
     # novelty floor (near-identical candidates) for two, the colour slot for
     # 'a car coloured red' (A14's participle reading beside it).

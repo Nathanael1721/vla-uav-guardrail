@@ -998,9 +998,17 @@ def _colour_target(ctoks: list[str], i: int, reg: dict) -> int | None:
 #               ("the car you are following") is consumed by the object;
 #   ptc:<word>  a participle right after the noun ("a person WEARING a hat",
 #               "a red car DRIVING", "pedestrians WALKING toward you");
-#   loc:<noun>  a place phrase right after the noun, read only with a place
-#               noun from a closed list ("pedestrians in the STREET", "areas
-#               near the SCHOOL"), so "at all times" or "in force" is not one.
+#   loc:<noun>  a place phrase right after the noun: a place noun from a
+#               closed list ("pedestrians in the STREET", "areas near the
+#               SCHOOL"), and since 2026-10-28 any noun after the preposition
+#               ("a person near the FOUNTAIN", "a person in UNIFORM") except
+#               the idioms of _NOT_A_PLACE, so "at all times" or "in force" is
+#               not one;
+#   att:<word>  since 2026-10-28, a with-phrase right after the noun ("a red
+#               car WITH a dented door", "pedestrians WITH dogs"), unless all it
+#               introduces is a slot the comparison already reads (a quantity,
+#               a coordinate, a direction: "keep away from buildings, with
+#               5 m to spare").
 # A candidate whose qualifiers differ from the source's - one added (a
 # narrowing) or one dropped (a widening) - is refused. Like every slot here it
 # is lexical, not an entailment model: a narrowing in words these lists do not
@@ -1033,6 +1041,22 @@ _PLACE_NOUNS = frozenset({
     "downtown", "school", "campus", "garden", "field", "bridge", "station", "market",
     "neighbourhood", "neighborhood", "district", "square", "village", "harbour",
     "harbor", "port", "airport", "mall", "playground", "stadium"})
+# After a locative preposition, words that do not start a place phrase: "at
+# all times", "in force", "in any case", "at least 10 m". A noun not listed
+# here, after the preposition and any determiner, is read as a place or a
+# condition that narrows the object (loc:<noun>, 2026-10-28: the held-out set
+# heldout_2026_10_21b's "near the fountain" and "in uniform" passed because
+# only _PLACE_NOUNS were read).
+_NOT_A_PLACE = frozenset({
+    "all", "times", "time", "force", "effect", "any", "case", "least", "most",
+    "once", "general", "particular", "total", "advance", "order", "addition",
+    "practice", "principle", "short", "brief", "full", "every", "each", "flight",
+    "the", "a", "an", "its", "their", "this", "that", "these", "those", "your",
+    "one", "both", "either", "front", "line", "accordance", "compliance",
+    # "keep the red car in sight / in view": keeping it seen, not a narrower car
+    "sight", "view"})
+# With-phrases that narrow ("with a dented door"); see att:<word> above.
+_ATTRIBUTIVE_PREP = frozenset({"with", "without", "having"})
 # -ing / -ed words that are not a participle describing the noun.
 _NOT_PARTICIPLE = frozenset({"during", "including", "excluding", "regarding",
                              "concerning", "according", "notwithstanding", "anything",
@@ -1105,6 +1129,16 @@ def _narrowings(ctoks: list[str], i: int, reg: dict) -> list[str]:
                 if noun in _PLACE_NOUNS:
                     out.append(f"loc:{noun}")
                     break
+                if x in _DETERMINERS:
+                    continue
+                if x not in _NOT_A_PLACE and re.fullmatch(r"[a-z]{3,}", x):
+                    out.append(f"loc:{x}")
+                break
+        elif t in _ATTRIBUTIVE_PREP:
+            nxt = ctoks[i + 2:i + 5]
+            if not any(x in reg and reg[x][0] in ("q", "coord", "dir") for x in nxt):
+                word = next((x for x in nxt if x not in _DETERMINERS and x not in reg), "")
+                out.append(f"att:{t}:{word}")
     return out
 
 
