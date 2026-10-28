@@ -21,7 +21,8 @@
 #          test_policy_hash, test_policy_dsl_grant_form, test_replay_identity,
 #          test_replay, test_geo_to_policy, test_wp1_roundtrip_kpi.
 #        WP2, the Prefix Compiler and the Paraphraser: test_csp,
-#          test_prefix_eval, test_paraphraser, test_real_vla_prompt.
+#          test_prefix_eval, test_paraphraser, test_real_vla_prompt,
+#          test_city_episode (the city follow's episode record and CSP).
 #        WP3, the Shield and the escalation FSM: test_shield,
 #          test_shield_events, test_corridor, test_clearance,
 #          test_check_contract, test_guardrail_coverage, test_frame_contract,
