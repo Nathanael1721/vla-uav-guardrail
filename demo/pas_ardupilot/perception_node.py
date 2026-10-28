@@ -4586,6 +4586,19 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
     hold_deferred_since = None
     hold_why = None
     forced_handovers: dict = {}
+    # A Loiter flown as BRAKE taken back into GUIDED when BRAKE let the
+    # position go illegal (guardrail.response.HOLD_RECLAIM_MAX): this Loiter's
+    # count and the episode's.
+    hold_reclaims_loiter = n_hold_reclaims = 0
+    # A reclaimed hold stays in GUIDED: BRAKE already drifted once in this
+    # Loiter, so the plan does not hand it back; only a forced hand-over does
+    # (the stream, the link, the deferral cap), or the Loiter ends.
+    hold_reclaimed = False
+    # Was the position legal at some tick since BRAKE got the hold? Only a
+    # drift INTO a rule is reclaimed: a hold handed to BRAKE while still
+    # illegal (a forced hand-over: the stream or the link could not be
+    # trusted, or the deferral cap) stays with BRAKE and the FSM.
+    brake_was_legal = False
     # When this node last sent a setpoint (rail clock): a deferred hold is
     # flown by the stream, so a gap in it hands the hold to BRAKE.
     t_last_sent = None
@@ -5478,6 +5491,9 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
                             plan = vresp.hold_plan(shield, st_sh)
                             hold_plans.append({"t": round(now, 3), "tick": len(rows) + 1,
                                                "at": "loiter entry", **plan})
+                        if fsm_out.set_mode == "LOITER":
+                            hold_reclaims_loiter, hold_reclaimed = 0, False
+                            brake_was_legal = False
                         if plan is not None and plan["choice"] == "guided":
                             hold_deferred = True
                             hold_deferred_since = now
@@ -5515,8 +5531,11 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
                                                   is not None else now),
                                 stream_gap_s=(None if t_last_sent is None
                                               else clock() - t_last_sent))
-                            if plan["choice"] == "brake" or forced:
-                                hold_deferred, hold_why = False, None
+                            if (plan["choice"] == "brake" and not hold_reclaimed) or forced:
+                                hold_deferred, hold_why, hold_reclaimed = False, None, False
+                                # legal where BRAKE takes the hold: a later
+                                # illegal position is a drift into the rule
+                                brake_was_legal = not shield.stop_breaks(st_sh)
                                 if forced:
                                     forced_handovers[forced] = forced_handovers.get(forced, 0) + 1
                                     plan = dict(plan, choice="brake", forced=forced,
@@ -5533,6 +5552,46 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
                                 print(f"[hold]   LOITER handed to {ap_mode}: {plan['why']}")
                             else:
                                 hold_why = vresp.hold_banner_reason(plan)
+                        elif (not hold_deferred and own_v and hold_ap_mode == "BRAKE"
+                              and fsm.state == FSMState.LOITER and mode == hold_ap_mode
+                              and hold_reclaims_loiter < vresp.HOLD_RECLAIM_MAX
+                              and (brake_was_legal or not shield.stop_breaks(st_sh))):
+                            # A BRAKE THAT DRIFTS (guardrail.response.
+                            # HOLD_RECLAIM_MAX): the hold was handed to BRAKE
+                            # with its stop predicted legal, and the position
+                            # has gone illegal on a hard rule since it was
+                            # legal in BRAKE. Back into GUIDED, flown as the
+                            # Shield's answer to a stop, until a forced
+                            # hand-over or the end of the Loiter.
+                            drifted = shield.stop_breaks(st_sh)
+                            if not drifted:
+                                brake_was_legal = True
+                            if drifted and brake_was_legal:
+                                brake_was_legal = False
+                                hold_reclaims_loiter += 1
+                                n_hold_reclaims += 1
+                                hold_deferred, hold_deferred_since = True, now
+                                hold_reclaimed = True
+                                plan = vresp.hold_plan(shield, st_sh)
+                                hold_why = "BRAKE DRIFTED INTO " + ", ".join(drifted)
+                                hold_plans.append({"t": round(now, 3), "tick": len(rows) + 1,
+                                                   "at": "reclaim", "drifted_into": drifted,
+                                                   "unsafe_depth_m": unsafe_depth, **plan})
+                                ap_mode = asks.ask("GUIDED")
+                                sent = link.request_mode(ap_mode)
+                                hold_note = ("reclaim", ap_mode)
+                                rec.event("hold_reclaimed", t=now, drifted_into=drifted,
+                                          unsafe_depth_m=unsafe_depth,
+                                          reclaim=hold_reclaims_loiter, sent=bool(sent))
+                                rec.event("mode_request", t=now, mode="GUIDED",
+                                          autopilot_mode=ap_mode,
+                                          why="BRAKE let the position go illegal on "
+                                              + ", ".join(drifted) + ": the hold taken back "
+                                              "into GUIDED", sent=bool(sent))
+                                print(f"[hold]   BRAKE drifted into {', '.join(drifted)} "
+                                      f"({unsafe_depth:.2f} m): the Loiter taken back into "
+                                      f"GUIDED through the Shield "
+                                      f"({hold_reclaims_loiter}/{vresp.HOLD_RECLAIM_MAX})")
                         if hold_deferred and fsm.state != FSMState.LOITER:
                             hold_deferred, hold_why = False, None
                         if fsm_out.state in FAILSAFE_STATES and failsafe_t is None:
@@ -6230,6 +6289,8 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
                                     "guided_hold_ticks": n_hold_guided,
                                     "stop_advised_ticks": n_stop_advised,
                                     "forced_handovers": forced_handovers,
+                                    "reclaims": n_hold_reclaims,
+                                    "reclaim_max": vresp.HOLD_RECLAIM_MAX,
                                     "handover_mps": vresp.HOLD_HANDOVER_MPS,
                                     "defer_max_s": vresp.HOLD_DEFER_MAX_S,
                                     "stream_gap_s": vresp.HOLD_STREAM_GAP_S,

@@ -414,6 +414,27 @@ HOLD_HANDOVER_MPS = 0.5
 HOLD_STREAM_GAP_S = 0.3
 HOLD_DEFER_MAX_S = 3.0
 
+# A BRAKE THAT DRIFTS (2026-10-28). The hand-over above trusts BRAKE once its
+# predicted stop ends legal, and nothing looked at the aircraft after that. On
+# pas_vla_goto_01 (AerialVLA on ArduPilot SITL) the Loiter was handed to BRAKE
+# with its stop predicted legal, and BRAKE then let the aircraft creep about
+# 0.1 m/s into the 3 m building margin, 0.36 m deep at most, with nothing being
+# flown: the FSM saw the position illegal for 5 s with no recovery and sent it
+# home (X6, RTL), and the episode's time to safe was 5.5 s against the grant's
+# 2.0 s reference. Now a Loiter flown as BRAKE whose POSITION becomes illegal
+# on a hard rule (`Shield.stop_breaks`: a stop here breaks it) is taken back
+# into GUIDED and flown as the Shield's answer to a stop - the recovery its
+# stop point needs - as a deferred hold is. It is NOT handed back to BRAKE by
+# the plan (BRAKE already drifted once in this Loiter, and a first build that
+# did hand it back at the first legal tick used its reclaims up in 0.7 s on a
+# steady drift: more, shorter unsafe episodes, no less time unsafe); only a
+# forced hand-over (hold_forced_handover: the stream, the link, the deferral
+# cap) gives it to BRAKE again, and otherwise the Loiter ends by the FSM's own
+# recovery (G8, hard rules clear for T_recover). At most HOLD_RECLAIM_MAX
+# times per Loiter, so a BRAKE that keeps drifting is left to the FSM's own
+# escalation (X6 / X7). The FSM's states and edges are not touched.
+HOLD_RECLAIM_MAX = 3
+
 
 def hold_forced_handover(*, deferred_s: float, stream_gap_s: float | None,
                          defer_max_s: float = HOLD_DEFER_MAX_S,

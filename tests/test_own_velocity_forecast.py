@@ -1159,6 +1159,72 @@ def test_the_ardupilot_rail_holds_in_guided_until_brake_would_stop_legal():
     _assert_stop_advice_on_record(rows, run)
 
 
+def test_a_brake_that_drifts_is_taken_back_into_guided():
+    """A BRAKE THAT DRIFTS (2026-10-28): on pas_vla_goto_01 BRAKE let the
+    aircraft creep 0.36 m into the building margin with nothing flown, and the
+    FSM sent it home after 5 s. Here BRAKE climbs 0.15 m/s: the Loiter is
+    handed to BRAKE below the 7.5 m ceiling and BRAKE drifts above it; the rail
+    takes the Loiter back into GUIDED (the plan's `reclaim`, the autopilot
+    asked for GUIDED), flies the Shield's answer to a stop - a descent - and
+    keeps it there until a forced hand-over (here the deferral cap), at most
+    HOLD_RECLAIM_MAX times per Loiter. With reclaims off (HOLD_RECLAIM_MAX 0,
+    the code before) the position stays illegal until the FSM sends the
+    aircraft home (RTL); with them it is illegal for under half as many ticks
+    and no RTL is needed. A first build handed the reclaimed hold back to BRAKE
+    at the first legal tick: its reclaims went in 0.7 s and the ticks unsafe
+    did not fall (95 against 92)."""
+    from guardrail import response as R
+    T = _pas()
+    VelLink = _vel_link(T)
+
+    class DriftLink(VelLink):
+        DRIFT = 0.15
+
+        def pump(self):
+            t = self.clock.t
+            last = getattr(self, "_t_drift", t)
+            if self.snap.mode == "BRAKE":
+                self.up += self.DRIFT * (t - last)
+            self._t_drift = t
+            return super().pump()
+
+        def velocity(self):
+            if self.snap.mode == "BRAKE":
+                return (0.0, 0.0, self.DRIFT), "local_velocity"
+            return super().velocity()
+
+    rc, run, link = T._fly("on", link_cls=DriftLink, policy=HOLD_POLICY, max_s="12")
+    rows, m = T._rows(run), T._json(run, "metrics.json")
+    sc = m["hold"]["stop_clear"]
+    assert sc["reclaim_max"] == R.HOLD_RECLAIM_MAX and 1 <= sc["reclaims"], sc["reclaims"]
+    rec = [p for p in sc["plans"] if p["at"] == "reclaim"]
+    assert len(rec) == sc["reclaims"] and rec[0]["drifted_into"] == ["alt-ceiling"], rec[:1]
+    assert rec[0]["unsafe_depth_m"] > 0, rec[0]
+    k = next(i for i, r in enumerate(rows) if r["t"] >= rec[0]["t"] - 1e-6)
+    assert rows[k]["autopilot_set_mode"] == "GUIDED" and rows[k]["fsm_state_after"] == "Loiter"
+    assert "GUIDED" in link.requested[link.requested.index("BRAKE"):], link.requested
+    after = [r for r in rows[k:k + 15] if r["hold_deferred"]]
+    assert after and all(r["stop_advised"] for r in after), "flown as the Shield's stop"
+    assert any(r["flown_action"]["vz_up"] < 0 for r in after), "the stop descends"
+    events = [json.loads(l) for l in (run / "events.jsonl").read_text().splitlines() if l.strip()]
+    assert sum(e["kind"] == "hold_reclaimed" for e in events) == sc["reclaims"]
+    unsafe_with = sum(bool(r["unsafe"]) for r in rows)
+    assert "RTL" not in link.requested, link.requested
+    assert sc["forced_handovers"].get("deferral_cap", 0) >= 1, sc["forced_handovers"]
+
+    real = R.HOLD_RECLAIM_MAX
+    try:
+        R.HOLD_RECLAIM_MAX = 0
+        rc, run0, link0 = T._fly("on", link_cls=DriftLink, policy=HOLD_POLICY, max_s="12")
+    finally:
+        R.HOLD_RECLAIM_MAX = real
+    rows0, m0 = T._rows(run0), T._json(run0, "metrics.json")
+    assert m0["hold"]["stop_clear"]["reclaims"] == 0
+    unsafe_without = sum(bool(r["unsafe"]) for r in rows0)
+    assert "RTL" in link0.requested, link0.requested
+    assert 2 * unsafe_with < unsafe_without, (unsafe_with, unsafe_without)
+
+
 def test_a_deferred_hold_goes_to_brake_when_the_stream_cannot_be_trusted():
     """A DEFERRED HOLD IS FLOWN BY THE NODE'S STREAM (2026-10-20 review):
     while the Loiter is held in GUIDED nothing but the node's setpoints stops
