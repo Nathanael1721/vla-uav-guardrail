@@ -16,6 +16,128 @@ shipped change and recorded as one.
 
 ## [Unreleased]
 
+### 2026-10-29 (later) — a recovery from outside the altitude band climbs at the cap: the library's mean time to safe 4.31 to 3.14 s; a bundle's changelog is a diff against its previous version; the IR migration register; the follow comparison repeated to five flights
+
+Continuing the grant's open obligations (the audit's WP3-17, X-10, WP1-22 /
+X-09) and the user's request to repeat the follow comparison 3-5 times.
+
+#### Changed
+- **The Shield recovers at the climb cap** (WP3-17, `guardrail/shield.py`
+  `Shield(recovery_law="cap")`, the default; 5c98142). A position outside
+  an altitude band used to be brought back in one lookahead,
+  vz = (aim - up) / L: a P controller with time constant L, whose last 2 L
+  metres take L ln(2 L) seconds, so at the grant's 5 s forecast a recovery
+  slowed to a crawl near the band edge. It now flies the smallest kinematic
+  climb cap in force, held only so its lookahead endpoint stays a re-entry
+  margin short of the far edge, and never slower than the old law. Recoveries
+  stay exempt from theta. The altitude cells (headless library, grant
+  forecast):
+
+  | Cell | old law | at the cap |
+  |---|---|---|
+  | altitude-recovery-depth, floor 10 m: from 0.5 / 2 / 6 / 9.5 m | 11.7 / 10.9 / 8.0 / 2.1 s | 4.8 / 4.1 / 2.1 / 0.3 s |
+  | altitude-recovery-depth, ceiling 20 m: from 20.5 / 24 / 30 m | 2.1 / 8.0 / 11.9 s | 0.3 / 2.1 / 5.1 s |
+  | altitude-floor-recovery, from 3 m | 10.3 s, 103 repairs | 3.6 s, 36 repairs |
+
+  altitude-recovery-depth's gate moves from "<=12.1" to "<=5.2" (the 10 m
+  deepest cell at 2 m/s plus two ticks); it is still implementation-derived.
+  The old law is kept line for line as `recovery_law="lookahead"`: the
+  velocity identity proof and the c77c77d row digests fly it, and so does
+  every bundle from before this change (bundle extras schema
+  `sweep-episode-extras/4` records `arm.recovery`; /1 to /3 re-fly on the
+  old law). `experiments/sweep_scenarios.py --recovery-law lookahead` flies
+  the comparison; the flag is refused with `--publish` and on the sitl
+  backend.
+- **docs/data/scenario_sweep.json republished** on the cap law (the
+  library, 180 episodes; d9ba810, clean tree). Counts unchanged: 140 pass,
+  22 tracked, 0 fail, 18 known failures; P0 escape 0.0. What moved:
+
+  | Shield-on rollup | before | now |
+  |---|---|---|
+  | mean time to safe (37 recoveries, 3 censored) | 4.308 s | 3.135 s |
+  | max time to safe | 11.9 s (altitude-recovery-depth, 30 m) | 6.7 s (radius-scaling-grow-deep) |
+  | P0 violation ticks | 10,947 | 10,521 |
+  | mean repair magnitude | 6.919 m/s | 7.114 m/s |
+  | AltitudeClamp repair ticks / mean | 664 / 0.83 m/s | 238 / 2.38 m/s |
+  | null passthrough P0 escape rate | 0.234356 | 0.225236 |
+  | fail-safe, distinct flights | 105/125 = 0.84 | 105/124 = 0.846774 |
+
+  The repair magnitude rises because a recovery is now one large repair
+  over a few ticks instead of many small ones; the null's rate falls
+  because its denominator, the violation ticks, shrank. The
+  three-simultaneous-violations family (known failures) recovers 0.1-0.2 s
+  sooner and now flies one KPI signature instead of two, so the
+  distinct-flight count drops by one; the per-episode fail-safe score is
+  145/171 = 0.847953 as before. The explainer deck's facts follow (`tools/deck/build_explainer_deck.js`:
+  time to safe 3.13 s, repair magnitude 7.11 m/s, null 0.225); the deck
+  file already shared is not rebuilt.
+
+#### Added
+- **A bundle's changelog is a diff against its previous version** (X-10,
+  `guardrail/bundle.py`, 895b5a0). `python -m guardrail.bundle <policy> -o
+  <out> --previous <bundle.tar.gz | policy file>` writes `changelog_diff` into the
+  manifest (the previous policy_id, version and policy_hash; the rules
+  added, removed and changed, with the changed fields; the policy-level
+  fields that changed) and, in place of the default "initial", a changelog
+  text made from it. A previous bundle that does not verify is refused.
+- **The IR migration register** (WP1-22, X-09, `docs/IR-MIGRATIONS.md`,
+  7c02284): one row per IR-shape change after the Q1 freeze, from `git log`
+  of `guardrail/models.py` and the lock, with the version, whether a stored
+  hash moved, and the migration. It records one deviation: `locked_by`
+  (2026-10-19, 2385f84) added 11 fields without raising
+  `IR_SCHEMA_VERSION` from 2.1.0, by this project's additive rule, where the
+  grant asks for a bump on every change. Open with the PI.
+
+#### Fixed
+- **The CI workflow's header** (`.github/workflows/tests.yml`, d9ba810)
+  names `tests/test_city_episode.py` under WP2; test_harnesstruth_ci had
+  failed on it since f6ee433 added the file to the run list only.
+
+#### Flown (Project AirSim CityLife, simple_flight, PC)
+Twelve more follows of the red car, `demo/out/rep3_*`, `rep4_*`,
+`rep5_*_20261029`, in the configuration of 27-28 Oct, bring the
+hand-written follow, DroneCATS hierarchical and AerialVLA hierarchical to
+five flights each. All twelve: 0 mission collisions, P0 escape 0.0.
+
+| Setup | Flights 27-29 Oct | Mean (sample std) |
+|---|---|---|
+| hand-written follow (no VLA) | 0.966, 0.954, 0.976, 0.983, 0.980 | 0.972 (0.012) |
+| DroneCATS-2B, hierarchical | 0.929, 0.939, 0.928, 0.940, 0.931 | 0.933 (0.006) |
+| AerialVLA original, hierarchical | 0.987, 0.309, 0.999, 0.996, 0.979 | 0.854 (0.305) |
+| AerialVLA FT r1, hierarchical | 0.884, 0.884, 0.879 | 0.882 (0.003) |
+| AerialVLA FT r3, hierarchical | 0.934, 0.869, 0.887 | 0.897 (0.034) |
+
+The commit-headroom guard of the runner had skipped seven of these on the
+first attempt; it now counts the growth room of a system-managed pagefile.
+
+#### Found
+- AerialVLA hierarchical is the best VLA setup in four flights of five
+  (0.979-0.999, a stand-off of about 12.4 m) and the worst in one: on
+  `cmp2_hier_aerovla` (0.309) the detector had no box on the car for 2,921
+  of 4,169 ticks after a corner. It is the detector losing the car, not the
+  VLA's latency: answers arrived in 0.49-0.63 s (p50) on every flight.
+- With the car locked, the VLA's only lever is the stand-off, and the score
+  falls with it; the VLA's own search flew 0-11 % of the ticks. Training the
+  stand-off cannot beat a fixed 12 m controller on this score.
+- The hand-written follow spreads 0.954-0.983 over five flights: one flight
+  is not a ranking.
+
+#### Tests
+- The per-build list (.github/workflows/tests.yml) on this branch: 128
+  files, 3,214 checks passed and 173 skipped (tracker data, node_modules,
+  flight logs and GPUs its checkout lacks), 0 failed after the two fixes
+  that follow. Both were identity proofs of the old law and now fly
+  `recovery_law="lookahead"`: test_shieldcore_identity (the 8 Oct flight
+  replays to 4418ae0's decisions; on the new law it departs at tick 219)
+  and test_build_deck_data (the September deck's altitude-curve model is
+  of the old law; `tools/build_deck_data.py`).
+
+#### Limits
+- The follows fly simple_flight, outside the ArduPilot architecture: they
+  are a comparison of models, not KPI evidence. The library is the headless
+  harness with a modelled autopilot; the reference sweep's 2.0 s belongs to
+  a dynamic-NFZ sweep, and the library's 3.135 s is still above it.
+
 ### 2026-10-29 — a learned model flies ArduPilot for the first time, the perception rail flies over MAVROS 2 and is stamped dev, a drifting BRAKE is taken back, MAVROS's clock and text were never received
 
 Continuing the grant's open obligations: the audit's final-delivery items
