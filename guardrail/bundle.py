@@ -596,10 +596,73 @@ def _ir_for(policy: Policy, ir_form: str) -> tuple[bytes, str, str]:
     raise ValueError(f"ir_form must be one of {IR_FORMS}, not {ir_form!r}")
 
 
+def policy_diff(previous: Policy, policy: Policy) -> dict[str, Any]:
+    """What changed from `previous` to `policy`, rule by rule (grant, Policy
+    DSL page: the bundle's changelog is "a diff against the previous
+    version"; audit item X-10). Rules are matched by id: `added` and
+    `removed` list ids, `changed` maps an id kept on both sides to the
+    fields whose values differ (its `type` among them when the rule was
+    replaced by another type under the same id), and `policy_fields` names
+    the policy-level fields that differ (version, generation, layers_merged,
+    origin - not the rules, not issued_at). `against` names the previous version exactly,
+    by its policy_hash. Deterministic: every list sorted."""
+    def rules(p: Policy) -> dict[str, dict]:
+        return {c.id: c.model_dump(mode="json") for c in p.constraints}
+
+    old, new = rules(previous), rules(policy)
+    changed = {}
+    for rid in sorted(old.keys() & new.keys()):
+        a, b = old[rid], new[rid]
+        fields = sorted(k for k in a.keys() | b.keys() if a.get(k) != b.get(k))
+        if fields:
+            changed[rid] = fields
+    pa = previous.model_dump(mode="json", exclude={"constraints", "issued_at"})
+    pb = policy.model_dump(mode="json", exclude={"constraints", "issued_at"})
+    return {
+        "against": {"policy_id": previous.policy_id, "version": previous.version,
+                    "policy_hash": previous.policy_hash},
+        "added": sorted(new.keys() - old.keys()),
+        "removed": sorted(old.keys() - new.keys()),
+        "changed": changed,
+        "policy_fields": sorted(k for k in pa.keys() | pb.keys() if pa.get(k) != pb.get(k)),
+    }
+
+
+def diff_text(diff: dict[str, Any]) -> str:
+    """One line a person reads for a policy_diff: what was added, removed and
+    changed against which version."""
+    a = diff["against"]
+    parts = [f"against {a['policy_id']} {a['version']} ({a['policy_hash'][:12]})"]
+    if diff["added"]:
+        parts.append("added " + ", ".join(diff["added"]))
+    if diff["removed"]:
+        parts.append("removed " + ", ".join(diff["removed"]))
+    for rid, fields in diff["changed"].items():
+        parts.append(f"changed {rid} ({', '.join(fields)})")
+    if diff["policy_fields"]:
+        parts.append("policy " + ", ".join(diff["policy_fields"]))
+    if len(parts) == 1:
+        parts.append("no rule changed")
+    return "; ".join(parts)
+
+
+def _previous_policy(previous) -> Policy | None:
+    """`previous` as a Policy: None, a Policy, a bundle (.tar.gz, read with
+    the signature checks load_bundle makes) or a policy YAML/JSON file."""
+    if previous is None or isinstance(previous, Policy):
+        return previous
+    p = Path(previous)
+    if p.name.endswith(".tar.gz"):
+        return load_bundle(p)
+    from guardrail import load_policy
+    return load_policy(p, runtime=False)
+
+
 def manifest_for(policy: Policy, changelog: str = "initial", *,
                  issued_at: str | None = None,
                  signed_by: str | None = None,
-                 ir_form: str = "ours") -> dict[str, Any]:
+                 ir_form: str = "ours",
+                 previous: Policy | None = None) -> dict[str, Any]:
     """The bundle's identity card: the grant's six fields, plus how the hash was
     made (`hash_scheme`, `ir_schema_version`) and, for a published bundle, when
     it was issued. `issued_at=None` leaves the key out (a replay bundle embeds a
@@ -618,7 +681,14 @@ def manifest_for(policy: Policy, changelog: str = "initial", *,
     A reference-form bundle also carries `reference_delta`, the record that
     rebuilds this project's policy from the reference's document exactly
     (Policy.from_reference). No stored hash moves: `policy_hash` of a bundle
-    in this project's form is what it was."""
+    in this project's form is what it was.
+
+    THE CHANGELOG AS A DIFF (2026-10-29, X-10). With `previous` (the version
+    this one replaces) the manifest also carries `changelog_diff`
+    (policy_diff), signed with the rest, and a default `changelog` of
+    "initial" is replaced by its one-line reading (diff_text); a changelog
+    written by hand is kept beside it. Without `previous` the manifest is
+    exactly what it was, so no stored bundle changes."""
     _, digest, scheme = _ir_for(policy, ir_form)
     ref = policy.reference_hash()
     m = {
@@ -632,6 +702,11 @@ def manifest_for(policy: Policy, changelog: str = "initial", *,
         "signed_by": signed_by or UNSIGNED,
         "changelog": changelog,
     }
+    if previous is not None:
+        diff = policy_diff(previous, policy)
+        m["changelog_diff"] = diff
+        if changelog == "initial":
+            m["changelog"] = diff_text(diff)
     if ref is None:
         m["reference_problems"] = policy.reference_problems()
     if ir_form == "reference":
@@ -672,8 +747,12 @@ def _read(tar: tarfile.TarFile, name: str) -> bytes:
 
 def write_bundle(policy: Policy, out_path: str | Path,
                  changelog: str = "initial", *, issued_at=None,
-                 signer="auto", ir_form: str = "ours") -> Path:
+                 signer="auto", ir_form: str = "ours", previous=None) -> Path:
     """Write a tar.gz containing the canonical IR, the manifest and the signature.
+
+    `previous`: the version this bundle replaces (a Policy, a bundle path,
+    read with load_bundle's checks, or a policy file), recorded in the
+    manifest as `changelog_diff` (manifest_for); None, no diff.
 
     `ir.json` is `policy.canonical_bytes()` - the bytes `policy_hash` digests,
     not a prettier rendering of them - so `sha256(ir.json)` IS the hash.
@@ -702,7 +781,7 @@ def write_bundle(policy: Policy, out_path: str | Path,
     ir_bytes, digest, _ = _ir_for(policy, ir_form)
     manifest = manifest_for(policy, changelog, issued_at=_issued_at(issued_at),
                             signed_by=sgn.identity if sgn else UNSIGNED,
-                            ir_form=ir_form)
+                            ir_form=ir_form, previous=_previous_policy(previous))
     manifest_bytes = json.dumps(manifest, indent=2, sort_keys=True).encode()
     signature = signature_text(digest, sgn, manifest_bytes)
 
@@ -1755,6 +1834,9 @@ def _main(argv: list[str] | None = None) -> int:
     ap.add_argument("--ir-form", choices=IR_FORMS, default="ours",
                     help="'reference': ship the reference implementation's IR "
                          "and hash, so its loader reads the bundle")
+    ap.add_argument("--previous", default=None,
+                    help="the bundle (or policy file) this version replaces: the "
+                         "manifest records the diff against it (changelog_diff)")
     args = ap.parse_args(argv[1:] if cmd == "merge" else argv)
 
     if cmd == "merge":
@@ -1780,11 +1862,13 @@ def _main(argv: list[str] | None = None) -> int:
     signer = None if args.unsigned else (args.key or "auto")
     try:
         p = write_bundle(pol, out, args.changelog, issued_at=args.issued_at,
-                         signer=signer, ir_form=args.ir_form)
+                         signer=signer, ir_form=args.ir_form, previous=args.previous)
     except ValueError as exc:
         print(f"REFUSED  {exc}")
         return 2
     chk = check_bundle(p)               # never ship one that will not reload
+    if chk.manifest.get("changelog_diff") is not None:
+        print(f"  changelog   {chk.manifest['changelog']}")
     print(f"{p}  {p.stat().st_size} bytes")
     print(f"  policy_id   {chk.policy.policy_id}")
     print(f"  version     {chk.policy.version}  generation {chk.policy.generation}")

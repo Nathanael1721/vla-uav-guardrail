@@ -156,6 +156,87 @@ def test_a_bundle_round_trips_to_an_identical_policy():
     assert len(got.constraints) == len(pol.constraints)
 
 
+def _next_version(pol, edit):
+    """`pol` re-validated as version 9.9.9 with its rules passed through
+    `edit(list of rule dicts) -> list of rule dicts`."""
+    d = pol.model_dump(mode="json")
+    d["version"] = "9.9.9"
+    d["constraints"] = edit([dict(c) for c in d["constraints"]])
+    return type(pol).model_validate(d)
+
+
+def test_the_changelog_is_a_diff_against_the_previous_version():
+    """X-10 (grant, Policy DSL page): the bundle's changelog is "a diff
+    against the previous version". Until 2026-10-29 it was free text
+    ("initial" by default). With `previous` the manifest carries
+    `changelog_diff` - rules added, removed and changed by id, with the
+    fields that changed, against the previous version's policy_hash - signed
+    with the rest of the manifest, and the default text becomes its reading.
+    Without it the manifest is exactly what it was."""
+    prev = load_policy(DEMO)
+    ids = [c.id for c in prev.constraints]
+    assert {"alt-band", "kin-caps", "nfz-square"} <= set(ids), ids
+
+    def edit(rules):
+        out = []
+        for r in rules:
+            if r["id"] == "nfz-square":
+                continue                                     # removed
+            if r["id"] == "alt-band":
+                r["alt_max_m"] = 25.0                        # changed
+            out.append(r)
+        out.append({"id": "alt-low", "type": "altitude_envelope",   # added
+                    "constraint_type": "hard", "alt_min_m": 5.0, "alt_max_m": 30.0})
+        return out
+
+    new = _next_version(prev, edit)
+    assert B.manifest_for(new) == B.manifest_for(new, previous=None)
+    assert "changelog_diff" not in B.manifest_for(new)
+    path = write_bundle(new, _tmp(), signer=None, issued_at=ISSUED, previous=prev)
+    chk = check_bundle(path)
+    diff = chk.manifest["changelog_diff"]
+    assert diff["against"] == {"policy_id": prev.policy_id, "version": prev.version,
+                               "policy_hash": prev.policy_hash}, diff["against"]
+    assert diff["added"] == ["alt-low"] and diff["removed"] == ["nfz-square"], diff
+    assert diff["changed"] == {"alt-band": ["alt_max_m"]}, diff["changed"]
+    assert diff["policy_fields"] == ["version"], diff["policy_fields"]
+    text = chk.manifest["changelog"]
+    assert text.startswith(f"against {prev.policy_id} {prev.version}"), text
+    assert "added alt-low" in text and "removed nfz-square" in text, text
+    assert "changed alt-band (alt_max_m)" in text, text
+    assert load_bundle(path, require_signature=False).policy_hash == new.policy_hash
+
+    # A hand-written changelog is kept beside the diff; a previous version
+    # given as its policy file reads the same; the same policy diffs empty.
+    m = B.manifest_for(new, "raised the ceiling", previous=load_policy(DEMO))
+    assert m["changelog"] == "raised the ceiling" and m["changelog_diff"] == diff
+    assert B._previous_policy(DEMO).policy_hash == prev.policy_hash
+    same = B.policy_diff(prev, prev)
+    assert (same["added"], same["removed"], same["changed"], same["policy_fields"]) == \
+        ([], [], {}, []), same
+    assert B.diff_text(same).endswith("no rule changed")
+    # A rule replaced by another type under the same id names `type`.
+    swapped = _next_version(prev, lambda rs: [
+        {"id": "kin-caps", "type": "altitude_envelope", "constraint_type": "hard",
+         "alt_min_m": 1.0, "alt_max_m": 200.0}
+        if r["id"] == "kin-caps" else r for r in rs])
+    assert "type" in B.policy_diff(prev, swapped)["changed"]["kin-caps"]
+
+
+def test_a_previous_version_that_does_not_verify_is_refused():
+    """The previous version named by a bundle path is read with load_bundle's
+    signature checks: an unsigned one is refused, not diffed against."""
+    prev = load_policy(DEMO)
+    old = _unsigned(prev, "old.tar.gz")
+    new = _next_version(prev, lambda rs: rs)
+    try:
+        write_bundle(new, _tmp(), signer=None, issued_at=ISSUED, previous=old)
+    except ValueError as exc:
+        assert "sign" in str(exc).lower(), exc
+    else:
+        raise AssertionError("an unsigned previous bundle was diffed against")
+
+
 def test_the_bundle_carries_the_three_named_members():
     """The reference implementation's container layout. The container alone
     did not make the bundles exchangeable (the IRs differ); the cross-load is
