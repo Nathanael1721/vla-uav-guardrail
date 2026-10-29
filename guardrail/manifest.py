@@ -1575,3 +1575,39 @@ def resolve_run_policy(manifest: dict, candidates) -> tuple[Any, str | None,
         if form is not None:
             return pol, form, label
     return None, None, None
+
+
+def resolve_run_generation_chain(run_dir, recorded: str | None, candidates) -> str | None:
+    """A label for a run whose policy changed in flight over REST, or None.
+
+    Such a run (the 29 Oct ROS 2 rail flights: a zone spawned, rotated, moved,
+    switched off) records the LAST generation's hash, which no policy file or
+    lock recipe rebuilds: the events came from a client, not a file. The run
+    writes every generation's policy as policy_g<N>.json. It resolves when
+    policy_g0.json resolves to a candidate (resolve_run_policy: it started
+    from a known policy) and one of its own generations hashes to `recorded`.
+    The chain is read without the flight loaders' runtime gate (a REST zone
+    is a dynamic_nfz, which a policy FILE may not fly, C-16)."""
+    if not recorded:
+        return None
+    from guardrail.models import policy_from_raw
+    run_dir = Path(run_dir)
+
+    def gen(f: Path) -> int:
+        tail = f.stem[len("policy_g"):]
+        return int(tail) if tail.isdigit() else -1
+    gens = sorted(run_dir.glob("policy_g*.json"), key=gen)
+    if not gens or gens[0].name != "policy_g0.json":
+        return None
+    try:
+        chain = [policy_from_raw(json.loads(f.read_text(encoding="utf-8")), source=f.name,
+                                 runtime=False) for f in gens]
+    except Exception:                                          # noqa: BLE001
+        return None
+    base, _, label = resolve_run_policy({"policy_hash": chain[0].policy_hash}, candidates)
+    if base is None:
+        return None
+    for f, pol in zip(gens, chain):
+        if pol.matches_hash(recorded):
+            return f"{label} -> {f.stem} (generations recorded by the run)"
+    return None

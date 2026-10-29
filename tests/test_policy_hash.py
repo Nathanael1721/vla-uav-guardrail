@@ -42,7 +42,7 @@ from guardrail.bundle import (LOCK_PATH, SCHEMA_PATH, check_lock,   # noqa: E402
                               derive, ir_schema_drift, load_lock, lock_key,
                               policy_candidates, policy_json_schema,
                               update_lock)
-from guardrail.manifest import resolve_run_policy                   # noqa: E402
+from guardrail.manifest import resolve_run_generation_chain, resolve_run_policy  # noqa: E402
 from guardrail.models import (HASH_SCHEME, PRIOR_SCHEME_V2,         # noqa: E402
                               AltitudeEnvelope, Constraint, Corridor,
                               KinematicEnvelope, ObstacleClearance, Policy,
@@ -233,9 +233,12 @@ def test_every_stored_manifest_resolves_to_a_policy():
         man = json.loads(Path(m).read_text(encoding="utf-8"))
         before += man.get("policy_hash") in old_index
         pol, form, label = resolve_run_policy(man, cands)
-        if pol is None:
+        if pol is None and resolve_run_generation_chain(Path(m).parent, man.get("policy_hash"),
+                                                        cands) is None:
             unmatched.append(Path(m).parent.name)
         else:
+            # a run whose policy changed over REST in flight resolves through
+            # its own policy_g<N>.json chain (guardrail.manifest, 30 Oct)
             after += 1
     assert not unmatched, f"stored runs that match no policy: {unmatched}"
     assert before < after, (before, after)

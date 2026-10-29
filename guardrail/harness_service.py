@@ -1963,7 +1963,8 @@ class Harness:
                         "fsm": run.extra.get("fsm")},
             "kpi": res, "harness": harness})
         S.write_bundle(ep_dir, manifest, kpi_doc, run.events,
-                       run.rows if e.keep_log else None, self._extras(e, spec, run))
+                       run.rows if e.keep_log else None, self._extras(e, spec, run),
+                       audit=run.audit)
         # What produced this bundle, so the same episode can be asked for again.
         with open(ep_dir / "harness_request.json", "w", encoding="utf-8", newline="\n") as fh:
             fh.write(json.dumps(_json_safe({

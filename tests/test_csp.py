@@ -249,6 +249,51 @@ def test_the_committed_schema_has_not_drifted_from_the_model():
             f"regenerate with `python -m guardrail.compiler schema {p.relative_to(ROOT).as_posix()}`")
 
 
+# The spec's worked CSP example (Prefix Compiler PDF p2), verbatim but for the
+# ellipsis in its hash and the en dash, as the page prints them.
+SPEC_EXAMPLE = {
+    "csp_version": "1.0", "policy_hash": "sha256:9d31a4...", "generation": 0,
+    "issued_at": "2026-04-28T09:01:12Z", "mission_id": "demo-mission-014", "lookahead_s": 5.0,
+    "P0_constraints": [
+        {"id": "nfz-school-yard", "type": "polygon_fence",
+         "geometry_ref": "coarse:nfz-school-yard@v0.3.0/g0", "violation_action": "RTL"},
+        {"id": "corridor-river-east", "type": "corridor",
+         "geometry_ref": "fine:corridor-river-east@v0.3.0/g0", "violation_action": "project_fix"}],
+    "P1_summary": "altitude limited to 5–120m AGL; cruise speed  12 m/s.",
+    "allowed_action_set": {"vx_range_mps": [-12, 12], "vy_range_mps": [-12, 12],
+                           "vz_range_mps": [-3, 3], "yaw_rate_max_dps": 45,
+                           "altitude_band_m_agl": [30, 80]},
+    "forbidden_action_set": {"no_translate_into_polygons": ["nfz-school-yard"]},
+    "natural_language_prompt": ("Never enter the school-yard polygon. Stay inside the river-east "
+                                "corridor between 30 m and 80 m altitude. Keep speed at or below "
+                                "12 m/s."),
+    "relevance_explanations": {
+        "nfz-school-yard": "mission target is within 200m of polygon",
+        "corridor-river-east": "mission has scope=mission and references this corridor"},
+}
+
+
+def test_the_specs_own_worked_example_validates():
+    """Until 2026-10-29 policy_id and selection (our additions) were required,
+    so the model and csp.schema.json refused the spec's own example."""
+    _need()
+    csp = C.CSP.model_validate(SPEC_EXAMPLE)
+    assert csp.policy_id is None and csp.selection is None
+    try:
+        import jsonschema
+    except ImportError:
+        return _skip("jsonschema not installed: the model accepted the example, the exported "
+                     "schema was not checked")
+    jsonschema.validate(SPEC_EXAMPLE, C.csp_schema())
+    # and the schema still refuses a CSP with a locked field missing
+    bad = {k: v for k, v in SPEC_EXAMPLE.items() if k != "natural_language_prompt"}
+    try:
+        jsonschema.validate(bad, C.csp_schema())
+    except jsonschema.ValidationError:
+        return
+    raise AssertionError("the schema accepted a CSP without natural_language_prompt")
+
+
 def test_the_csp_round_trips_through_json():
     _need()
     csp = ConstraintCompiler(load_policy(PED)).compile_csp(_mission(), now=MONDAY_0800)
@@ -2420,6 +2465,13 @@ def test_the_cost_map_export_round_trips_and_refuses_tampering():
     back = K.load_cost_map(js, pol)
     assert back.ref == cm.ref and np.array_equal(back.cost, cm.cost)
     assert all(np.array_equal(a, b) for a, b in zip(back.layers, cm.layers))
+    # since 2026-10-29 the adapter also writes the header as a .yaml file, the
+    # same document, and the loader reads it as it reads the JSON
+    ym = d / "mix.yaml"
+    assert ym.is_file() and b"\r\n" not in ym.read_bytes()
+    assert _yaml.safe_load(ym.read_text(encoding="utf-8")) == json.loads(text)
+    back_y = K.load_cost_map(ym, pol)
+    assert back_y.ref == cm.ref and np.array_equal(back_y.cost, cm.cost)
     doc = json.loads(js.read_text(encoding="utf-8"))
     doc["cost_map"]["resolution_m"] = 4.0
     (d / "edited.json").write_text(json.dumps(doc), encoding="utf-8")

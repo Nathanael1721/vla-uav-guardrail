@@ -131,7 +131,8 @@ from guardrail.bundle import (HAVE_CRYPTO, IR_NAME, SCHEMA_PATH,       # noqa: E
                               policy_json_schema, verifier_name,
                               write_bundle)
 from guardrail.fsm import canonical_action                          # noqa: E402
-from guardrail.manifest import code_revision, resolve_run_policy     # noqa: E402
+from guardrail.manifest import (code_revision, resolve_run_generation_chain,  # noqa: E402
+                               resolve_run_policy)
 from guardrail.models import (HASH_SCHEME, REFERENCE_FORM,           # noqa: E402
                               load_policy, policy_from_raw)
 
@@ -457,6 +458,12 @@ def _set_aside(root: Path, cands) -> list[dict]:
     return out
 
 
+def run_generation_chain(run_dir: Path, recorded: str | None, cands) -> str | None:
+    """guardrail.manifest.resolve_run_generation_chain (moved there 30 Oct so
+    tests/test_policy_hash.py resolves the same runs the census does)."""
+    return resolve_run_generation_chain(run_dir, recorded, cands)
+
+
 def stored_run_census(root: Path) -> dict:
     mans = sorted(glob.glob(str(root / "demo" / "out" / "*" / "manifest.json")))
     if not mans:
@@ -480,7 +487,12 @@ def stored_run_census(root: Path) -> dict:
         before += was
         pol, form, label = resolve_run_policy(man, cands)
         if pol is None:
-            unmatched.append({"run": tag, "policy_hash": h})
+            chained = run_generation_chain(Path(m).parent, h, cands)
+            if chained is None:
+                unmatched.append({"run": tag, "policy_hash": h})
+            else:
+                form, label = "run-recorded generation", chained
+                forms[form] += 1
         else:
             forms[form] += 1
         if tag in mavros5:
@@ -498,7 +510,10 @@ def stored_run_census(root: Path) -> dict:
             "after_means": ("guardrail.manifest.resolve_run_policy over "
                             "guardrail.bundle.policy_candidates(): the 64-hex "
                             "hash, every legacy 16-hex form, and the hot-applied "
-                            "derivations in policies/policy.lock.json")}
+                            "derivations in policies/policy.lock.json; then, for a "
+                            "run whose policy changed over REST in flight, its own "
+                            "policy_g<N>.json chain from a resolvable g0 "
+                            "(run_generation_chain)")}
 
 
 # --------------------------------------------------------------------------- #

@@ -420,6 +420,31 @@ class AuditLogger:
             self.path.write_text("", encoding="utf-8")
 
     @classmethod
+    def in_memory(cls, policy: "str | object", *,
+                  episode_id: str | None = None) -> "AuditLogger":
+        """A logger with no file: `record()` and `line()` build the validated
+        records and the caller keeps them (the Stress Testing harness packs
+        them into its episode bundle as shield_audit.jsonl, Stress Testing:
+        "aggregated into the episode bundle ... at episode end"). `log()`
+        refuses: there is nowhere to write."""
+        self = cls.__new__(cls)
+        self.path = None
+        self._policy = None if isinstance(policy, str) else policy
+        self._static_hash = policy if isinstance(policy, str) else None
+        self.episode_id = episode_id
+        self._n = 0
+        return self
+
+    @staticmethod
+    def line(rec: "AuditRecord") -> dict:
+        """The JSON object `log()` writes for `rec` (decision_kind dropped when
+        it is None, as every record before that field existed)."""
+        out = rec.model_dump(by_alias=True)
+        if out.get("decision_kind") is None:
+            out.pop("decision_kind", None)
+        return out
+
+    @classmethod
     def for_episode(cls, directory: str | Path, policy: "str | object",
                     episode_id: str) -> "AuditLogger":
         """A fresh `audit_<episode_id>.jsonl` in `directory`, one per episode."""
@@ -562,14 +587,14 @@ class AuditLogger:
         `kind` tags a decision the rail flew instead of the tick's filter()
         decision (AuditRecord.decision_kind), always written.
         The record is validated (AuditRecord) before it is written."""
+        if self.path is None:
+            raise RuntimeError("an in-memory AuditLogger has no file: keep record() / line()")
         rec = self.record(tick, decision, fsm_record, kind=kind)
         if rec is None:
             return
-        line = rec.model_dump(by_alias=True)
-        if line.get("decision_kind") is None:
-            # Absent means the tick's filter() decision: every record without
-            # a kind is written exactly as before the field existed.
-            line.pop("decision_kind", None)
+        # Absent decision_kind means the tick's filter() decision: every record
+        # without a kind is written exactly as before the field existed.
+        line = self.line(rec)
         with self.path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(line) + "\n")
         self._n += 1

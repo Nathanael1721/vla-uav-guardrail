@@ -1272,6 +1272,11 @@ class EpisodeRun:
     priorities: dict = field(default_factory=dict)
     # Where the policy came from (guardrail.bundle.load_for_flight's record).
     policy_source: dict = field(default_factory=dict)
+    # The flying Shield's audit records (guardrail.audit.AuditRecord, one per
+    # tick with a violation or an FSM event), the lines a rail writes to
+    # audit.jsonl; write_bundle packs them as shield_audit.jsonl (audit card
+    # WP4-20: until 2026-10-29 the harness bundles carried none).
+    audit: list = field(default_factory=list)
 
 
 def _as_spec(sc) -> ScenarioSpec:
@@ -1503,6 +1508,9 @@ def _episode(sc, defaults, seed: int, arm: dict | None, box: dict,
     shield = Shield(policy, lookahead_s=look, dt=step, now=clock, escalation=esc,
                     **({} if autopilot_hold == DEFAULT_AUTOPILOT_HOLD
                        else {"hold_points": False}), **rec_kw)
+    from guardrail.audit import AuditLogger
+    auditor = AuditLogger.in_memory(shield.policy)
+    audit: list[dict] = []
     # What the modelled autopilot flies for the FSM's Loiter / Land
     # (AUTOPILOT_HOLD_MODELS), as this Shield will plan it; None with no FSM.
     hold_model = (("moved_points" if getattr(shield, "hold_points", True) else "in_place")
@@ -1770,6 +1778,9 @@ def _episode(sc, defaults, seed: int, arm: dict | None, box: dict,
                 # (G6, G9, X5), so an RTL is never re-entered today.
                 rtl_watch.reset()
         d = shield.filter(seen, raw, t=t_now, **flags)
+        a_rec = auditor.record(i, d)
+        if a_rec is not None:
+            audit.append(auditor.line(a_rec))
         if esc and d.set_mode:
             if rsp is not None and d.set_mode == "RTL" and ap_mode != "RTL":
                 # The arm's RTL return altitude, captured on entry as
@@ -2299,7 +2310,7 @@ def _episode(sc, defaults, seed: int, arm: dict | None, box: dict,
                       seed_consumed=stress.consumes_seed,
                       shield_window=shield.history,
                       priorities=dict(priorities, **K.rule_priorities(shield.policy)),
-                      policy_source=source)
+                      policy_source=source, audit=audit)
 
 
 def run_headless(sc, defaults=None, seed: int = 0) -> tuple[list[dict], dict]:
@@ -3923,7 +3934,12 @@ def episode_manifest(base: dict, policy_hash: str, seed: int,
 
 
 def write_bundle(ep_dir: Path, manifest: dict, kpi_doc: dict, events: list[dict],
-                 rows: list[dict] | None, extras: dict | None = None) -> None:
+                 rows: list[dict] | None, extras: dict | None = None,
+                 audit: list[dict] | None = None) -> None:
+    """The episode bundle. `audit` (EpisodeRun.audit) is written as
+    shield_audit.jsonl, the grant's name for the Shield's audit log in a
+    bundle (Stress Testing), even when it is empty: an empty file says the
+    Shield logged nothing, a missing one would say nobody looked."""
     ep_dir.mkdir(parents=True, exist_ok=True)
     (ep_dir / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n",
                                           encoding="utf-8")
@@ -3939,6 +3955,9 @@ def write_bundle(ep_dir: Path, manifest: dict, kpi_doc: dict, events: list[dict]
         (ep_dir / "flight_log.jsonl").write_text(
             "".join(json.dumps(_json_safe(r), allow_nan=False) + "\n" for r in rows),
             encoding="utf-8")
+    if audit is not None:
+        (ep_dir / "shield_audit.jsonl").write_text(
+            "".join(json.dumps(_json_safe(a)) + "\n" for a in audit), encoding="utf-8")
 
 
 def _show(p: Path) -> str:
@@ -4432,7 +4451,7 @@ def main(argv: list[str] | None = None) -> int:
                             "shield": "on" if spec.shield else "off",
                             "fsm": extra.get("fsm")},
                 "kpi": res}), events, rows if args.keep_logs else None,
-                _json_safe(full_extras))
+                _json_safe(full_extras), audit=run.audit)
             bundle = _show(ep_dir)
 
         item = {**common, "status": status, "gates_failed": bad, "kpi": res,

@@ -2536,6 +2536,34 @@ def test_a_runner_whose_episode_raised_fails_fast_instead_of_hanging():
     assert isinstance(r.error, ValueError), repr(r.error)
 
 
+
+def test_the_episode_bundle_carries_the_shields_audit():
+    """Audit card WP4-20 (review of 29 Oct): the Stress Testing harness's
+    bundles carried no Shield audit; only the flight rails packed audit.jsonl.
+    The headless episode now keeps the flying Shield's audit records
+    (EpisodeRun.audit, the lines a rail writes) and write_bundle packs them as
+    shield_audit.jsonl. Each line validates as an AuditRecord, carries the
+    episode's policy hash, and a head-on NFZ episode logs its violations."""
+    from guardrail.audit import AuditRecord
+    run = S.run_episode(BY_ID["nfz-head-on"], DEFAULTS, 0)
+    assert run.audit, "a head-on NFZ episode logged no audit record"
+    for line in run.audit:
+        AuditRecord.model_validate(line)
+    assert {a["policy_hash"] for a in run.audit} <= {
+        run.policy_hash_start, run.policy.policy_hash}
+    assert any(a["violations"] for a in run.audit)
+    d = Path(tempfile.mkdtemp())
+    try:
+        S.write_bundle(d / "ep", {"m": 1}, {"k": 1}, run.events, None, audit=run.audit)
+        lines = (d / "ep" / "shield_audit.jsonl").read_text(encoding="utf-8").splitlines()
+        assert len(lines) == len(run.audit)
+        assert json.loads(lines[0]) == json.loads(json.dumps(run.audit[0]))
+        # no audit given: no file (a caller that has none says nothing)
+        S.write_bundle(d / "ep2", {"m": 1}, {"k": 1}, run.events, None)
+        assert not (d / "ep2" / "shield_audit.jsonl").exists()
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
 if __name__ == "__main__":
     # A test that cannot run on this host returns SKIP, counted apart, never
     # as a pass (follow-up #84; the pattern of tests/test_bundle.py).

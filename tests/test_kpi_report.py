@@ -820,7 +820,12 @@ def test_the_delivered_ros2_runs_roll_up_with_ped_off_corrected():
     if not (ROOT / "demo" / "out" / "ros2_ped_off" / "flight_log.jsonl").is_file():
         print("      SKIP: demo/out/ros2_* absent")
         return SKIP
-    rep = KR.build_report(["demo/out/ros2_*"], [], 10, True, "cmd")
+    # the five delivered runs by name: since 29 Oct demo/out also holds the
+    # ROS 2 rail's REST hot-apply and breach-action flights (ros2_hotapply_*,
+    # ros2_action_*), which a ros2_* glob picked up
+    five = ("ros2_shield_on", "ros2_shield_off", "ros2_shield_on_dynamic", "ros2_ped_on",
+            "ros2_ped_off")
+    rep = KR.build_report([f"demo/out/{t}" for t in five], [], 10, True, "cmd")
     eps = {e["id"]: e for e in rep["episodes"]}
     assert len(eps) == 5, sorted(eps)
     assert eps["ros2_ped_off"]["time_to_safe_episodes"] == 1, eps["ros2_ped_off"]

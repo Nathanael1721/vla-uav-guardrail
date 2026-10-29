@@ -1167,10 +1167,13 @@ class CostMap:
         return None if ij is None else float(self.cost[ij])
 
     def save(self, stem: str | Path) -> tuple[Path, Path]:
-        """Write `<stem>.npz` (the cost grid and the layer masks) and
-        `<stem>.json` (the header, LF). The header names the npz by file name
-        and carries the SHA-256 of every array, so `load_cost_map` refuses a
-        grid that is not the one this header describes."""
+        """Write `<stem>.npz` (the cost grid and the layer masks) and the
+        header twice, LF: `<stem>.json` and `<stem>.yaml` (the same document;
+        the grant's output table names the cost-map adapter "Python function
+        (emits YAML)", Prefix Compiler PDF p5, and until 2026-10-29 only the
+        JSON was written). The header names the npz by file name and carries
+        the SHA-256 of every array, so `load_cost_map` (either file) refuses a
+        grid that is not the one this header describes. Returns (npz, json)."""
         stem = Path(stem)
         stem.parent.mkdir(parents=True, exist_ok=True)
         npz, js = stem.with_name(stem.name + ".npz"), stem.with_name(stem.name + ".json")
@@ -1180,6 +1183,8 @@ class CostMap:
         doc["npz"] = npz.name
         with open(js, "w", encoding="utf-8", newline="\n") as fh:
             fh.write(json.dumps(doc, indent=2, sort_keys=True) + "\n")
+        with open(stem.with_name(stem.name + ".yaml"), "w", encoding="utf-8", newline="\n") as fh:
+            fh.write(yaml.safe_dump(doc, sort_keys=True, default_flow_style=None))
         return npz, js
 
 
@@ -1199,7 +1204,8 @@ def load_cost_map(json_path: str | Path, policy: Policy | None = None, *,
     that CSP names: the same policy and generation is not enough, two maps
     of one generation differ by clock, height, subject or zone age."""
     js = Path(json_path)
-    doc = json.loads(js.read_text(encoding="utf-8"))
+    text = js.read_text(encoding="utf-8")
+    doc = yaml.safe_load(text) if js.suffix in (".yaml", ".yml") else json.loads(text)
     npz_name = doc.pop("npz", None)
     if not npz_name:
         raise ValueError(f"{js.name}: no npz named in the header")

@@ -30,6 +30,12 @@ than trusted:
                out is listed with why. It also says where `issued_at` came
                from (the caller, the clock, or the wall clock).
 
+Both are OPTIONAL in the model (None by default) and the compiler always fills
+them: until 2026-10-29 they were required, so the exported csp.schema.json
+refused the spec's own worked example (PDF p2), which has neither. A CSP
+without them is a valid CSP that cannot be audited rule by rule; nothing in
+this repository writes one.
+
 TWO HASHES
 
   csp_hash          - the whole CSP, `issued_at` included: names one issued CSP
@@ -260,9 +266,10 @@ class CSP(_Strict):
 
     relevance_explanations: dict[str, str]   # rule_id -> mission-context fact
 
-    # --- additions (see module docstring) ---
-    policy_id: str
-    selection: Selection
+    # --- additions (see module docstring): optional, so the spec's own worked
+    # example validates; compile_csp always fills both ---
+    policy_id: str | None = None
+    selection: Selection | None = None
 
 
 class CSPUnenforcedRules(Exception):

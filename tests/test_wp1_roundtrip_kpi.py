@@ -503,6 +503,39 @@ def test_a_run_set_aside_is_listed_not_dropped():
                                 "resolves": False, "form": None}], sr["set_aside"]
 
 
+def test_a_rest_flown_run_resolves_through_its_own_generation_chain():
+    """The 29 Oct ROS 2 rail flights changed their policy over REST in flight;
+    their manifests record the last generation's hash, which no policy file
+    or lock recipe rebuilds. They resolve through their own policy_g<N>.json
+    chain, and only from a g0 that is a known policy."""
+    from guardrail.bundle import policy_candidates
+    from guardrail.models import policy_from_raw
+    cands = policy_candidates()
+    base = load_policy(ROOT / "policies" / "sim_demo_policy.yaml", runtime=False)
+    g0 = {"policy_id": base.policy_id, "version": base.version, "generation": 0,
+          "constraints": [c.model_dump(mode="json", exclude_none=True) for c in base.constraints]}
+    if policy_from_raw(g0, runtime=False).policy_hash != base.policy_hash:
+        return SKIP                      # the dump form drifted from the run writer's
+    g1 = json.loads(json.dumps(g0))
+    g1["generation"] = 1
+    g1["constraints"][0]["margin_m"] = float(g1["constraints"][0].get("margin_m", 0.0)) + 2.0
+    h1 = policy_from_raw(g1, runtime=False).policy_hash
+    d = Path(tempfile.mkdtemp())
+    try:
+        (d / "policy_g0.json").write_text(json.dumps(g0), encoding="utf-8")
+        (d / "policy_g1.json").write_text(json.dumps(g1), encoding="utf-8")
+        label = W.run_generation_chain(d, h1, cands)
+        assert label and "policy_g1" in label and "sim_demo_policy" in label, label
+        assert W.run_generation_chain(d, "sha256:" + "0" * 64, cands) is None
+        # a g0 that is no known policy resolves nothing, whatever the chain holds
+        g0b = json.loads(json.dumps(g0))
+        g0b["constraints"][0]["margin_m"] = 77.0
+        (d / "policy_g0.json").write_text(json.dumps(g0b), encoding="utf-8")
+        assert W.run_generation_chain(d, h1, cands) is None
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+
 def test_the_stored_run_census_finds_every_run():
     sr = W.stored_run_census(ROOT)
     if not sr.get("n"):

@@ -176,9 +176,10 @@ EPISODE_FILES = {
 # One policy IR and one CSP per policy generation, by generation number.
 GENERATION_RE = re.compile(r"^(policy|csp)_g(\d+)\.json$")
 # The cost map a generation's CSP names (ConstraintCompiler.write_csp writes it
-# as costmap_<csp stem>.npz + .json). Kept out of GENERATION_RE on purpose, as
-# the compiler keeps it out of the csp_g*.json pattern.
-COSTMAP_RE = re.compile(r"^costmap_csp_g(\d+)\.(npz|json)$")
+# as costmap_<csp stem>.npz + .json, and since 2026-10-29 the same header as
+# .yaml). Kept out of GENERATION_RE on purpose, as the compiler keeps it out of
+# the csp_g*.json pattern. The .yaml is bundled when present, never required.
+COSTMAP_RE = re.compile(r"^costmap_csp_g(\d+)\.(npz|json|yaml)$")
 # The rosbag2 directory. rosbag2 writes metadata.yaml when the recording is
 # CLOSED, so a bag without it is still open (or crashed) and is not bundled.
 BAG_DIR = "bag"
@@ -195,7 +196,7 @@ STALE_PATTERNS = ("audit.jsonl", "events.jsonl", "adapter_log.jsonl",
                   "policy_g*.json", "csp_g*.json",
                   # Since 2026-10-11: a re-run without --cost-map must not
                   # leave the previous flight's map beside its own CSP.
-                  "costmap_csp_g*.npz", "costmap_csp_g*.json",
+                  "costmap_csp_g*.npz", "costmap_csp_g*.json", "costmap_csp_g*.yaml",
                   "flight_log.jsonl", "metrics.json", "kpi.json",
                   "manifest.json", "report.md", "prompt.yaml",
                   "trajectory.json", "trajectory.png", "*.replay.tar.gz")
