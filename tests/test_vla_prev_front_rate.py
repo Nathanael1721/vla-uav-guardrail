@@ -893,6 +893,41 @@ def test_the_rates_are_capped_and_the_turn_stops_at_the_target_heading():
     assert k.action.yaw_rate <= 0.6 * 0.1 + 1e-9, "the slew limit on the output too"
 
 
+def test_rate_yaw_flies_the_yaw_rate_itself_with_no_target_heading():
+    """TrackerConfig.rate_yaw "rate" (29 Oct, ntut_v2_01): a model answering 10
+    times a second whose label is the expert's yaw-rate command x H asks for
+    0.02-0.2 rad a step. Under "heading" (the default) a small dpsi lies inside
+    yaw_tol_rad and is never flown, and one already flown since the capture
+    turns nothing; under "rate" dpsi / H is flown as the yaw rate, capped,
+    until the next answer, with the speed unscaled by any heading error."""
+    cap = Pose(0.0, 0.0, 10.0, 0.0)
+    small = Step(2.0, 0.0, 0.02)                               # 0.04 rad/s at H = 0.5
+    th = StepTracker(TrackerConfig(**FOLLOW, rate_horizon_s=0.5))
+    th.accept(Decision.of(1, 0.0, cap, small), 0.0, pose_now=cap)
+    assert th.tick(0.0, cap).action.yaw_rate == 0.0, "inside the 0.05 rad tolerance"
+    tr = StepTracker(TrackerConfig(**FOLLOW, rate_horizon_s=0.5, rate_yaw="rate"))
+    tr.accept(Decision.of(1, 0.0, cap, small), 0.0, pose_now=cap)
+    k = tr.tick(0.0, cap)
+    assert math.isclose(k.action.yaw_rate, 0.04) and k.reason == "rate"
+    assert tr.last_rate["heading_reached"] is None
+    # already turned past psi_capture + dpsi since the capture: still the rate
+    tr.accept(Decision.of(2, 0.1, cap, Step(2.0, 0.0, 0.1)), 0.1,
+              pose_now=Pose(0.4, 0.0, 10.0, 0.3))
+    k = tr.tick(0.1, Pose(0.4, 0.0, 10.0, 0.3))
+    assert math.isclose(k.action.yaw_rate, 0.2), k.action
+    assert math.isclose(math.hypot(k.action.vx, k.action.vy), 4.0), "no cos(heading error)"
+    # capped as any rate step
+    tr.accept(Decision.of(3, 0.2, cap, Step(1.0, 0.0, 1.0)), 0.2, pose_now=cap)
+    assert abs(tr.tick(0.2, cap).action.yaw_rate) <= tr.cfg.yaw_rate_cap_rad_s + 1e-9
+    # validated: a known mode, and only with a rate horizon
+    for bad in (dict(rate_horizon_s=0.5, rate_yaw="spin"), dict(rate_yaw="rate")):
+        try:
+            TrackerConfig(**bad)
+        except ValueError:
+            continue
+        raise AssertionError(f"accepted {bad}")
+
+
 def test_the_next_answer_replaces_the_rate_and_past_h_the_carry_or_hold_ends_it():
     cfg = TrackerConfig(**FOLLOW, rate_horizon_s=1.0, carry_s=1.0)
     p = Pose(0.0, 0.0, 10.0, 0.0)

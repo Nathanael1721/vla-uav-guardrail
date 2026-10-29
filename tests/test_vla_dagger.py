@@ -907,6 +907,23 @@ def test_the_builder_drops_labels_over_vla_flown_ticks_and_keeps_the_recovery():
 # --------------------------------------------------------------------------- #
 # runner
 # --------------------------------------------------------------------------- #
+
+def test_the_windows_can_fly_the_yaw_rate_itself():
+    """--perturb-vla-rate-yaw rate (29 Oct): DAgger windows of a model whose
+    label is a yaw-rate command x H (ntutvla) fly vla_fly --rate-yaw rate; the
+    default argv is unchanged, and the mode needs a rate step."""
+    D = _D()
+    _, argv0 = D.follow_args("a red car", cruise_alt=8.0, step_as_rate=0.5)
+    assert "--rate-yaw" not in argv0
+    vargs, argv = D.follow_args("a red car", cruise_alt=8.0, step_as_rate=0.5, rate_yaw="rate")
+    assert argv[-2:] == ["--rate-yaw", "rate"]
+    cfg = D.follow_tracker_config(vargs)
+    assert cfg.rate_yaw == "rate" and cfg.rate_horizon_s == 0.5
+    why = D.check_args("127.0.0.1:8794", (9.0, 13.0), (3.0, 6.0), rate_yaw="rate")
+    assert why and "rate" in why, why
+    assert D.check_args("127.0.0.1:8794", (9.0, 13.0), (3.0, 6.0), step_as_rate=0.5,
+                        rate_yaw="rate") is None
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     failed = skipped = 0

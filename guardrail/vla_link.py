@@ -196,8 +196,11 @@ IDENTITY_FIELDS = ("id", "base", "weights_sha256", "precision", "attn", "merged"
 # int4: torchao int4 weight-only, the precision DroneCATS runs in on the
 # Orin Nano (demo/vla_server_foreign.py --precision int4; the PyPI
 # bitsandbytes wheel has no sm_87 kernels there). AerialVLA's own server
-# (demo/vla_server_v2.py) still serves nf4 or bf16 only.
-PRECISIONS = ("nf4", "bf16", "int4")
+# (demo/vla_server_v2.py) still serves nf4 or bf16 only. fp16: the lab's own
+# NTUT-VLA (frozen OWL-ViT backbone in fp16, training/ntutvla; 2026-10-29).
+PRECISIONS = ("nf4", "bf16", "int4", "fp16")
+# TrackerConfig.rate_yaw: how a rate step's dpsi is flown.
+RATE_YAW_MODES = ("heading", "rate")
 ATTN_IMPLS = ("eager", "sdpa")
 # |dpsi| at or above this: rotate only (plus altitude), no horizontal move.
 ROTATE_ONLY_RAD = 0.25
@@ -611,7 +614,7 @@ def _is_hex64(v) -> bool:
 def check_identity(model: Any) -> None:
     """Raise ValueError unless `model` is the brief's model identity: id and
     base non-empty strings, weights_sha256 64 lowercase hex digits, precision
-    nf4, bf16 or int4 (PRECISIONS), attn eager or sdpa, merged true or false. Other keys (the
+    nf4, bf16, int4 or fp16 (PRECISIONS), attn eager or sdpa, merged true or false. Other keys (the
     serving facts a hello may add) are allowed."""
     if not isinstance(model, dict):
         raise ValueError(f"the model identity is not an object: {model!r}")
@@ -1491,6 +1494,17 @@ class TrackerConfig:
     # limits, for the rail's row).
     rate_horizon_s: float | None = None
     rate_overrun_frac: float = 0.2
+    # How a rate step's dpsi is flown. "heading" (the default, above): a
+    # target heading psi_capture + dpsi, turned to at dpsi / H and then held,
+    # within yaw_tol_rad. "rate": dpsi / H is the YAW RATE itself, flown until
+    # the next answer replaces it, with no target and no tolerance - the
+    # meaning of a label that is the expert's yaw-rate command x H
+    # (training/ntutvla/build_labels.py). Found 29 Oct (ntut_v2_01): a model
+    # that answers 10 times a second asks for 0.02-0.2 rad per step; under
+    # "heading" most of that lies inside the 0.05 rad tolerance or was
+    # already flown since the capture, so the aircraft flew a 110 deg turn of
+    # the car with a yaw rate of 0.00.
+    rate_yaw: str = "heading"
 
     @property
     def smoothing(self) -> bool:
@@ -1513,6 +1527,10 @@ class TrackerConfig:
         if self.rate_horizon_s is not None and _finite(self.rate_horizon_s,
                                                        "rate_horizon_s") <= 0:
             raise ValueError("rate_horizon_s must be positive, or None for the endpoint")
+        if self.rate_yaw not in RATE_YAW_MODES:
+            raise ValueError(f"rate_yaw must be one of {RATE_YAW_MODES}, got {self.rate_yaw!r}")
+        if self.rate_yaw != "heading" and self.rate_horizon_s is None:
+            raise ValueError("rate_yaw 'rate' flies a rate step: it needs rate_horizon_s")
         if self.hold_altitude_m is not None:
             _finite(self.hold_altitude_m, "hold_altitude_m")
         if self.cruise_mps > self.speed_cap_mps:
@@ -2004,9 +2022,18 @@ class StepTracker:
         turn_while_moving), its yaw rate until the heading reaches psi_t."""
         cfg, r = self.cfg, c.rate
         speed = r["speed_mps"]
+        want = r["yaw_rate_rps"]
+        if cfg.rate_yaw == "rate":
+            # the yaw rate itself until replaced: no target heading, so no
+            # heading error to scale the speed by and nothing to reach
+            self.counts["rate_ticks"] += 1
+            self._rate = {"horizon_s": r["horizon_s"], "speed_mps": speed, "yaw_rate_rps": want,
+                          "heading_reached": None}
+            return Tick(Action4D(vx=speed * math.cos(pose.yaw_rad),
+                                 vy=speed * math.sin(pose.yaw_rad), vz_up=vz, yaw_rate=want),
+                        "vla_step", "rate", seq, age)
         if cfg.turn_while_moving:
             speed *= max(0.0, math.cos(e_psi))
-        want = r["yaw_rate_rps"]
         # at the target heading, or past it the way the step turns: no turn
         # (a pipelined answer whose turn was flown since its capture)
         reached = abs(e_psi) <= cfg.yaw_tol_rad or want * e_psi <= 0.0

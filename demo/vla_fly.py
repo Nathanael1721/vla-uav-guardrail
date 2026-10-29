@@ -348,6 +348,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
                          "replaces it (past 1.2 H the carry or the hold ends it), instead of "
                          "an endpoint at the cruise speed. H = the dataset's --horizon-s "
                          "(1.0). Default off")
+    ap.add_argument("--rate-yaw", choices=("heading", "rate"), default="heading",
+                    help="with --step-as-rate: 'heading' (default) turns to psi_capture + dpsi "
+                         "at dpsi/H and holds it; 'rate' flies dpsi/H as the yaw rate until the "
+                         "next answer (a model whose label is a yaw-rate command x H, ntutvla; "
+                         "guardrail/vla_link.TrackerConfig.rate_yaw)")
     ap.add_argument("--arrive-radius-m", type=float, default=3.0)
     ap.add_argument("--arrive-grace-s", type=float, default=8.0)
     ap.add_argument("--overshoot-s", type=float, default=3.0,
@@ -523,6 +528,8 @@ def resolve_args(args):
                              "upstream's step")
         if not (math.isfinite(args.step_as_rate) and args.step_as_rate > 0):
             raise ValueError("--step-as-rate must be a positive number of seconds")
+    if getattr(args, "rate_yaw", "heading") != "heading" and args.step_as_rate is None:
+        raise ValueError("--rate-yaw rate flies a rate step: it needs --step-as-rate")
     # THE LOWER TILE (aerialvla_codec.BottomTile), checked against the
     # adapter's own after hello.
     from guardrail.aerialvla_codec import bottom_tile
@@ -691,7 +698,8 @@ def tracker_config(args, pilot_band, TrackerConfig):
                          decision_timeout_s=args.decision_timeout_s, alt_band=pilot_band,
                          smooth_accel_mps2=s["accel_mps2"],
                          smooth_yaw_accel_rps2=s["yaw_accel_rps2"], carry_s=s["carry_s"],
-                         rate_horizon_s=getattr(args, "step_as_rate", None))
+                         rate_horizon_s=getattr(args, "step_as_rate", None),
+                         rate_yaw=getattr(args, "rate_yaw", "heading"))
 
 
 def attitude_fields(kin, FV) -> dict:
@@ -727,6 +735,7 @@ def check_args_report(args) -> dict:
             "start_xy": list(args.start_xy), "park_at": list(args.park_at) if args.park_at else None,
             "object": args.object, "shield": args.shield, "cadence": args.cadence,
             "smooth": smooth_record(args), "step_as_rate_s": args.step_as_rate,
+            "rate_yaw": getattr(args, "rate_yaw", "heading"),
             "bottom_tile": args.bottom_tile.as_dict(),
             "speed_words": None if args.speed_words is None else args.speed_words.as_dict(),
             "vla_server": args.vla_server, "vla_config": args.vla_config,

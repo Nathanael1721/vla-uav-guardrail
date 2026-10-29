@@ -4392,7 +4392,8 @@ async def fly(args) -> int:
                 bottom_tile=args.perturb_vla_bottom_tile,
                 prev_dt_s=args.perturb_vla_prev_dt_s,
                 step_as_rate=args.perturb_vla_step_as_rate,
-                speed_words=args.perturb_vla_speed_words, log=print)
+                speed_words=args.perturb_vla_speed_words,
+                rate_yaw=args.perturb_vla_rate_yaw, log=print)
         except vla_dagger.DaggerRefused as exc:
             raise SystemExit(f"[vla-dagger] *** refused: {exc}") from None
         print(f"[vla-dagger] {perturber.describe()}")
@@ -7614,6 +7615,10 @@ def build_arg_parser() -> argparse.ArgumentParser:
     ap.add_argument("--perturb-vla-step-as-rate", type=float, default=None, metavar="H",
                     help="with --record-perturb-vla: the windows fly each step as a velocity "
                          "over H seconds (vla_fly --step-as-rate; default off: an endpoint)")
+    ap.add_argument("--perturb-vla-rate-yaw", choices=("heading", "rate"), default="heading",
+                    help="with --perturb-vla-step-as-rate: how a window flies the step's dpsi "
+                         "(vla_fly --rate-yaw; 'rate' for a model whose label is a yaw-rate "
+                         "command x H, ntutvla)")
     ap.add_argument("--perturb-vla-speed-words", action="store_true",
                     help="with --record-perturb-vla: the windows ask with the aircraft's own "
                          "speed as words after the object (vla_fly --vla-speed-words). Must be "
@@ -7821,7 +7826,8 @@ def main(argv: list[str] | None = None) -> int:
                          bottom_tile=args.perturb_vla_bottom_tile,
                          prev_dt_s=args.perturb_vla_prev_dt_s,
                          step_as_rate=args.perturb_vla_step_as_rate,
-                         speed_words=args.perturb_vla_speed_words)
+                         speed_words=args.perturb_vla_speed_words,
+                         rate_yaw=args.perturb_vla_rate_yaw)
         if why is not None:
             ap.error(why)
     elif (args.perturb_vla_every != (6.0, 10.0) or args.perturb_vla_dur != (2.5, 4.0)
@@ -7829,10 +7835,11 @@ def main(argv: list[str] | None = None) -> int:
         ap.error("--perturb-vla-every, --perturb-vla-dur and --perturb-vla-allow-stand-in "
                  "need --record-perturb-vla")
     elif (args.perturb_vla_bottom_tile != "down" or args.perturb_vla_prev_dt_s is not None
-          or args.perturb_vla_step_as_rate is not None or args.perturb_vla_speed_words):
+          or args.perturb_vla_step_as_rate is not None or args.perturb_vla_speed_words
+          or args.perturb_vla_rate_yaw != "heading"):
         ap.error("--perturb-vla-bottom-tile, --perturb-vla-prev-dt-s, "
-                 "--perturb-vla-step-as-rate and --perturb-vla-speed-words need "
-                 "--record-perturb-vla")
+                 "--perturb-vla-step-as-rate, --perturb-vla-rate-yaw and "
+                 "--perturb-vla-speed-words need --record-perturb-vla")
     global LINEAR_BEARING
     LINEAR_BEARING = bool(args.linear_bearing)
     if args.coarse_timer:

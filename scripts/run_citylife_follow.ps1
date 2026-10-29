@@ -155,6 +155,7 @@ param(
     [double]$PerturbVlaPrevDtS = 0,     # with -PerturbVlaBottomTile prev_front: s earlier (1.0)
     [double]$PerturbVlaStepAsRate = 0,  # with -RecordPerturbVla: steps as rates over H s (off)
     [switch]$PerturbVlaSpeedWords,      # with -RecordPerturbVla: own speed as words (off)
+    [string]$PerturbVlaRateYaw = "",    # with -PerturbVlaStepAsRate: "rate" flies dpsi/H as the yaw rate (ntutvla)
     [double]$DecideEveryS = 0,          # the ceiling flight: a decision every P s (off)
     [double]$DecideDelayS = 0,          # with -DecideEveryS: each carries the command from D s before
     [string]$VlaHierarchy = "",         # HOST:PORT of a running AerialVLA server that decides
@@ -268,6 +269,9 @@ if (($PerturbVlaBottomTile -or $PerturbVlaPrevDtS -or $PerturbVlaStepAsRate) -an
 }
 if ($PerturbVlaSpeedWords -and -not $RecordPerturbVla) {
     throw "-PerturbVlaSpeedWords needs -RecordPerturbVla"
+}
+if ($PerturbVlaRateYaw -and -not $PerturbVlaStepAsRate) {
+    throw "-PerturbVlaRateYaw needs -PerturbVlaStepAsRate"
 }
 # The ceiling flight (see the header), refused as follow_vlm refuses it. The
 # bounds are follow_vlm's (demo/decide_rate.py): a 0 typed on purpose is not
@@ -575,6 +579,9 @@ if ($RecordVla) {
         }
         if ($PerturbVlaStepAsRate) {
             $a += @("--perturb-vla-step-as-rate", "$PerturbVlaStepAsRate")
+        }
+        if ($PerturbVlaRateYaw) {
+            $a += @("--perturb-vla-rate-yaw", "$PerturbVlaRateYaw")
         }
         if ($PerturbVlaSpeedWords) {
             $a += @("--perturb-vla-speed-words")

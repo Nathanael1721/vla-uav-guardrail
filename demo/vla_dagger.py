@@ -245,7 +245,8 @@ class WindowSchedule:
 
 def check_args(addr: str, every_s, dur_s, lead_s: float = VLA_LEAD_S, *,
                bottom_tile: str = "down", prev_dt_s: float | None = None,
-               step_as_rate: float | None = None, speed_words: bool = False) -> str | None:
+               step_as_rate: float | None = None, speed_words: bool = False,
+               rate_yaw: str = "heading") -> str | None:
     """Why follow_vlm should refuse --record-perturb-vla with these, or None.
     The lower tile, the rate and the speed words are vla_fly's own flags:
     vla_fly's parser judges them (follow_args)."""
@@ -259,10 +260,10 @@ def check_args(addr: str, every_s, dur_s, lead_s: float = VLA_LEAD_S, *,
         return f"--perturb-vla-every / --perturb-vla-dur: {exc}"
     try:
         follow_args("a red car", cruise_alt=10.0, bottom_tile=bottom_tile, prev_dt_s=prev_dt_s,
-                    step_as_rate=step_as_rate, speed_words=speed_words)
+                    step_as_rate=step_as_rate, speed_words=speed_words, rate_yaw=rate_yaw)
     except DaggerRefused as exc:
         return (f"--perturb-vla-bottom-tile / --perturb-vla-prev-dt-s / "
-                f"--perturb-vla-step-as-rate: {exc}")
+                f"--perturb-vla-step-as-rate / --perturb-vla-rate-yaw: {exc}")
     return None
 
 
@@ -273,7 +274,7 @@ def follow_args(object_text: str, *, cruise_alt: float,
                 cruise_mps: float = FOLLOW_CRUISE_MPS,
                 speed_cap_mps: float = FOLLOW_SPEED_CAP_MPS, bottom_tile: str = "down",
                 prev_dt_s: float | None = None, step_as_rate: float | None = None,
-                speed_words: bool = False):
+                speed_words: bool = False, rate_yaw: str = "heading"):
     """(vla_fly's resolved arguments for a pipelined follow, the argv): its
     own parser and resolve_args, so every default the follow mission applies
     - the tracker's, the hint's, the link's, the lower tile (--vla-bottom-tile
@@ -296,6 +297,9 @@ def follow_args(object_text: str, *, cruise_alt: float,
         argv += ["--step-as-rate", repr(float(step_as_rate))]
     if speed_words:
         argv += ["--vla-speed-words"]
+    if rate_yaw != "heading":
+        # vla_fly --rate-yaw (TrackerConfig.rate_yaw): the yaw rate itself
+        argv += ["--rate-yaw", str(rate_yaw)]
     try:
         return VF.resolve_args(VF.build_arg_parser().parse_args(argv)), argv
     except ValueError as exc:
@@ -933,6 +937,7 @@ def make_vla_perturber(addr: str, *, seed: int, obs, box_source: Callable[[], di
                        speed_cap_mps: float = FOLLOW_SPEED_CAP_MPS,
                        bottom_tile: str = "down", prev_dt_s: float | None = None,
                        step_as_rate: float | None = None, speed_words: bool = False,
+                       rate_yaw: str = "heading",
                        log: Callable[[str], Any] | None = None) -> VLAPerturber:
     """The --record-perturb-vla perturber of a follow_vlm flight: vla_fly's
     follow configuration (follow_args, with vla_fly's --vla-bottom-tile /
@@ -948,7 +953,7 @@ def make_vla_perturber(addr: str, *, seed: int, obs, box_source: Callable[[], di
     vargs, argv = follow_args(obj0, cruise_alt=cruise_alt, cruise_mps=cruise_mps,
                               speed_cap_mps=speed_cap_mps, bottom_tile=bottom_tile,
                               prev_dt_s=prev_dt_s, step_as_rate=step_as_rate,
-                              speed_words=speed_words)
+                              speed_words=speed_words, rate_yaw=rate_yaw)
     try:
         WindowSchedule(seed, every_s, dur_s, lead_s)
     except ValueError as exc:
