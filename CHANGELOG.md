@@ -16,6 +16,128 @@ shipped change and recorded as one.
 
 ## [Unreleased]
 
+### 2026-10-29 (night) — an independent review re-states 27 of the 64 "DONE" items; the lab's own VLA (NTUT-VLA) is built, served, flown and given five more recordings; a rate step's turn was never flown; three review findings fixed
+
+#### Retracted
+- **The outline's "64 DONE" (docs/FINAL-REPORT-outline.md, committed
+  earlier on 29 Oct).** Four independent reviewers, one per area, checked each of the 64 items then marked
+  DONE against the grant's own wording, not against our evidence notes:
+  35 held, 27 did not, and 2 were unclear. Each of those 29 is now PARTIAL or
+  DRIFT, with the reviewer's reason in Appendix A; three of them (WP2-04,
+  WP2-07, WP4-20) were fixed the same night (below). The outline now reads
+  **38 DONE, 83 PARTIAL, 13 DRIFT, 2 MISSING** of 136. The 13 DRIFT items
+  are listed in its section 7. Among them: the repair operators act in a
+  world frame, not the VLA's body frame (WP3-04, ARCH-04); more than one
+  rule-evaluation path (WP3-22, X-13); policies are metre-canonical, not
+  WGS84 (WP1-14); the 20 July gate was missed (WP1-21, WP3-01); and G1
+  passed 100 days late over SIM_AirSim, not HIL_* (ARCH-15). Among the
+  PARTIAL items: no VLA has emitted a 10 Hz setpoint into ArduPilot
+  (ARCH-01, ARCH-21); the city rail flies a 3 s lookahead, not 5 s
+  (WP3-05); the smoke matrix has never run on a build (WP3-19, WP4-14).
+
+#### Fixed
+- **WP2-04: the CSP schema refused the spec's own worked example.**
+  `policy_id` and `selection` (our two additions) are now optional; the
+  compiler still fills both. `guardrail/csp.schema.json` is regenerated, and
+  `tests/test_csp.py::test_the_specs_own_worked_example_validates` checks the
+  example against the model and the exported schema.
+- **WP2-07: the cost-map adapter "emits YAML".** `CostMap.save` also writes
+  the header as `<stem>.yaml`, the same document; `load_cost_map` reads
+  either.
+- **WP1-17 / WP1-18: the stored-run census failed on the 9 REST-flown runs
+  of 29 Oct.** Their manifests record the last generation's hash, which no
+  policy file or lock recipe rebuilds. `tools/wp1_roundtrip_kpi.py
+  run_generation_chain` resolves such a run through its own
+  `policy_g<N>.json` chain, and only from a `policy_g0.json` that is a known
+  policy. The census is 219/219.
+
+- **WP4-20: the Stress Testing harness's bundles carried no Shield
+  audit.** The headless episode now keeps the flying Shield's audit records
+  (`EpisodeRun.audit`, `guardrail.audit.AuditLogger.in_memory`). At episode
+  end `write_bundle` packs them as `shield_audit.jsonl`, the grant's name, in
+  both the sweep's bundles and the gRPC EndEpisode's
+  (`tests/test_sweep.py::test_the_episode_bundle_carries_the_shields_audit`).
+- **A rate step's turn was never flown at 10 Hz.** vla_fly's rate
+  executor (`--step-as-rate`) reads dpsi as a target heading (capture
+  heading + dpsi) and holds it within 0.05 rad. A model that answers ten
+  times a second asks for 0.02-0.2 rad per step, which lies inside the
+  tolerance or was already flown since the capture. On ntut_v2_01 the car's
+  bearing swept from -2 to -110 deg at a corner while the aircraft flew a yaw
+  rate of 0.00. `vla_fly --rate-yaw rate` (`TrackerConfig.rate_yaw`; the
+  default `heading` is unchanged) flies dpsi/H as the yaw rate until the next
+  answer. DAgger windows take the same with `follow_vlm
+  --perturb-vla-rate-yaw` and `run_citylife_follow.ps1 -PerturbVlaRateYaw`.
+
+#### Added
+- **NTUT-VLA, the lab's own small VLA** (`training/ntutvla/`,
+  docs/DESIGN-ntutvla.md). Frozen OWL-ViT B/32 (the detector's own
+  weights) grounds the object words in the VLAFront frame; an 8-slot
+  history of those maps plus the aircraft's own motion feeds a trained head
+  of 1,678,505 parameters, which answers a step over 0.5 s. No detector box,
+  compass hint or hand-written servo is an input. Served by
+  `demo/vla_server_foreign.py --model ntutvla` (family `ntutvla` added to
+  `aerialvla_codec.FOREIGN_FAMILIES` and its `tools/todo.py` copy; `fp16` added
+  to `vla_link.PRECISIONS`). Model time is 10.3 ms p50 on the RTX 4090.
+  Replaying hold-out `ft_expert_03` through the server reproduces the
+  offline numbers (dpsi MAE 0.0027, correlation 0.994).
+- **On the Jetson Orin Nano** (MAXN_SUPER): v1 answers in 48.4 ms p50 (52.0 ms
+  p95), 19.1 decisions per second over 600 hold-out captures replayed on
+  the board, with the PC's accuracy (dpsi correlation 0.989). That is the
+  first learned model here to meet the grant's 10 Hz on an Orin (ARCH-03),
+  measured for the server alone, not in a flight.
+- `training/ntutvla/build_cache.py` (backbone maps of every capture and its
+  mirror, 5.3 ms per frame pair), `build_labels.py` (labels from the
+  expert's asked command) and `train.py` (`--motion-dropout`).
+- tests/test_ntutvla.py (19 tests), on CI; a rate-yaw test in
+  tests/test_vla_prev_front_rate.py and one in tests/test_vla_dagger.py.
+
+#### Found
+- **Labels from achieved motion make a slow pilot.** v0's labels were the
+  expert's displacement over 0.5 s, and vla_fly flies a step as a velocity
+  command. The airframe lags, so the model asked for less than the expert
+  did: ntut_v0b_01 fell from 9 m to 47 m behind the car in 50 s. v1 learns
+  the expert's ASKED command (54,814 training samples against 30,091, since
+  DART and DAgger captures keep their label).
+- **A copycat head.** v0, with its own motion zeroed on the hold-out:
+  forward MAE 0.0675 to 1.1158 m. With half the training samples' motion
+  dropped (v0b) it is 0.085; for v1 the motion proprio changes nothing, and
+  without vision its dpsi correlation falls to 0.23.
+
+#### Recorded (training data; the hand-written follow with `--record-vla`)
+- `ntut_dagger_02`, `_03`, `_04`: v1 flies 3-6 s windows every 9-13 s and the
+  expert relabels; `ntut_dart_01`, `_02`: the executed yaw replaced by
+  0.6-0.9 rad/s for 1.0-1.5 s every 5-8 s, at 0.5-1.0 x speed. 12,164
+  captures. `ntut_dagger_01` aborted on a simulator ConnectionReset before its
+  first tick and recorded nothing. v2 trains on all 24 recordings: 66,974
+  training samples.
+
+#### Flown (CityLife, Car_10, vla_fly e2e, 420 s, Shield on; `-SimOffscreen -SimMaxFps 30`)
+| flight | within 30 m after acquisition | P0 escapes |
+|---|---|---|
+| ntut_v0b_01 | 0.161 | 0.0 |
+| ntut_v1_01 | 0.291 | 0.0 |
+| ntut_v1_search600_01 | 0.031: not comparable, the start gate acquired a false seed at 3.6 s | 0.0 |
+| ntut_v2_01, _02, _03 | 0.243, 0.208, 0.185 (mean 0.212) | 0.0 |
+| ntut_v2_rate_01, _02 (`--rate-yaw rate`) | 0.355, 0.253 (mean 0.304); the car followed up to 119 s after acquisition, against 38-64 s without | 0.0 |
+| ntut_v2_rate_03 (`--rate-yaw rate`) | 0.0: not comparable, a false seed at 2.4 s | 0.0 |
+
+On the same scenario the 28 Oct pure-VLA flights scored 0.153 (AerialVLA)
+and 0.086 (DroneCATS); the hand-written follow scored 0.972 over n=5. Every
+pure VLA loses the car within about a minute, at a corner.
+
+#### Tests
+- Every file `.github/workflows/tests.yml` names, on the lab checkout: 129
+  files, 3,348 passed, 60 skipped. 3 fail, the known lab-only ones
+  (test_build_progress_oct_data, test_explainer_deck, test_track_truth;
+  2026-10-29 later, Found). That run found three regressions, now fixed:
+  test_replay (the new .yaml cost-map header was not moved aside on a
+  re-run), test_policy_hash and test_kpi_report (the nine REST-flown runs).
+
+#### Limits
+- At most three valid flights per model; not a ranking. simple_flight on the city
+  rail: outside the ArduPilot architecture, not KPI-grade.
+- Trained on the red car in one level; language generalisation untested.
+
 ### 2026-10-29 (REST) — the grant's hot-apply channel drives a flying ArduPilot: a no-fly zone spawned, rotated, moved and switched off over REST, the Shield acting on it; one flight per breach action
 
 The audit's open items that needed a flying SITL + MAVROS run and no
