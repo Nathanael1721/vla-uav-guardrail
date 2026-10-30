@@ -26,6 +26,13 @@ VLA-flown capture keeps its label: the expert's answer in the state the
 perturbation led to, which is the point of DART and DAgger. v0 dropped
 22,390 such samples.
 
+--max-truth-dist M leaves out a capture whose subject (the recording's
+truth, the level car) is more than M from the aircraft: a demonstration
+only while the expert is with its subject. A teacher (follow_vlm
+--teacher-truth) can still be held off a keep-out while the car drives away
+(aiot_tch_w01: 51 s within the fence's "near" band at 30-60 m), and that
+hover is no lesson for a follow.
+
 Each sample also carries `expert_est`, the expert's own estimate of its
 locked subject at that tick (the flight log's est_xy, when served), so the
 trainer can drop a sample whose target memory is on something else
@@ -84,12 +91,13 @@ def expert_estimates(rec: Path) -> dict:
 
 
 def run_samples(tag: str, rec: Path, frame_ok: np.ndarray, rows_of: dict, split: str,
-                horizon_s: float, exclude_modes=()) -> tuple[list[dict], dict]:
+                horizon_s: float, exclude_modes=(), max_truth_dist: float = 0.0
+                ) -> tuple[list[dict], dict]:
     caps = sorted((json.loads(l) for l in (rec / "captures.jsonl").read_text(
         encoding="utf-8").splitlines() if l.strip()), key=lambda c: c["t_capture"])
     est = expert_estimates(rec)
     out, why = [], {"no_frame": 0, "no_tick": 0, "before_acquire": 0, "excluded_mode": 0,
-                    "kept": 0}
+                    "far_from_subject": 0, "kept": 0}
     acquired = False
     for c in caps:
         box = c.get("box")
@@ -108,6 +116,11 @@ def run_samples(tag: str, rec: Path, frame_ok: np.ndarray, rows_of: dict, split:
             continue
         if tick.get("mode") in exclude_modes:
             why["excluded_mode"] += 1
+            continue
+        tr = c.get("truth")
+        if (max_truth_dist > 0 and tr
+                and math.hypot(tr[0] - c["pose"]["x"], tr[1] - c["pose"]["y"]) > max_truth_dist):
+            why["far_from_subject"] += 1
             continue
         a = tick["asked"]
         yaw = float(c["pose"]["yaw_rad"])
@@ -135,6 +148,9 @@ def main(argv=None) -> int:
                     help="cached run tags (default every run in --cache)")
     ap.add_argument("--holdout", nargs="*", default=[])
     ap.add_argument("--horizon-s", type=float, default=core.LABEL_HORIZON_S)
+    ap.add_argument("--max-truth-dist", type=float, default=0.0,
+                    help="leave out captures whose subject (the recording's truth) is more "
+                         "than this far from the aircraft (0: keep all)")
     ap.add_argument("--exclude-modes", nargs="*", default=[],
                     help="expert modes whose ticks are no sample, e.g. plan: the follow's "
                          "street-map planner after it lost the car flies on knowledge no "
@@ -157,7 +173,7 @@ def main(argv=None) -> int:
             rec = ROOT / rec
         split = "holdout" if tag in args.holdout else "train"
         s, why = run_samples(tag, rec, meta["frame_ok"], rows_of, split, args.horizon_s,
-                             tuple(args.exclude_modes))
+                             tuple(args.exclude_modes), args.max_truth_dist)
         allx += s
         d = np.array([x["label_raw"]["dpsi_rad"] for x in s]) if s else np.zeros(0)
         stats[tag] = {**why, "split": split,
@@ -173,6 +189,7 @@ def main(argv=None) -> int:
     n_tr = sum(1 for x in allx if x["split"] == "train")
     summary = {"n_train": n_tr, "n_holdout": len(allx) - n_tr, "horizon_s": args.horizon_s,
                "exclude_modes": list(args.exclude_modes),
+               "max_truth_dist": args.max_truth_dist,
                "label": "expert asked command x horizon (module docstring)", "runs": stats,
                "samples_sha256": hashlib.sha256(p.read_bytes()).hexdigest()}
     (out / "stats.json").write_text(json.dumps(summary, indent=1) + "\n", encoding="utf-8")

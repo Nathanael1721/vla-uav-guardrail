@@ -343,6 +343,12 @@ RETRACTIONS: dict[str, str] = {
     "frac_on_target` no longer measures anything": "09-22",
     "lanes sit 350 cm": "09-22",
     "names are load-bearing": "09-2x",
+    "\"false start-gate seeds\"": "not a sentence: a label two AIOT-VLA flights carried; "
+                                  "both re-scored as correct acquisitions "
+                                  "(docs/DESIGN-aiotvla.md, CHANGELOG 2026-10-30)",
+    "outline's \"64 done\"": "not a sentence: a count in the report outline, re-derived by "
+                             "the 29 Oct independent review (docs/FINAL-REPORT-outline.md "
+                             "Appendix A)",
     "paint is set per instance": "09-2x",
     "cars sat within 4 m": "09-2x",
     "31 of 516": "0.5.1",

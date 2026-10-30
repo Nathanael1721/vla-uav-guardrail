@@ -220,7 +220,7 @@ def test_command_labels_are_the_experts_asked_command_over_the_horizon():
     s, why = run_samples("r", d, np.ones(3, bool), {0: 0, 1: 1, 2: 2}, "train", 0.5)
     # capture 0: before the first fresh box; capture 2: no expert tick
     assert why == {"no_frame": 0, "no_tick": 1, "before_acquire": 1, "excluded_mode": 0,
-                   "kept": 1}, why
+                   "far_from_subject": 0, "kept": 1}, why
     # an expert mode left out (--exclude-modes plan) is no sample
     s3, why3 = run_samples("r", d, np.ones(3, bool), {0: 0, 1: 1, 2: 2}, "train", 0.5,
                            exclude_modes=("track",))
@@ -703,6 +703,24 @@ def test_a_sample_carries_the_experts_own_estimate():
     s, _ = run_samples("r", rec, np.ones(2, bool), {0: 0, 1: 1}, "train", 0.5)
     assert s[0]["expert_est"] == [20.0, 1.0]
     assert s[1]["expert_est"] is None                  # an estimate not served is none
+
+
+def test_a_capture_far_from_its_subject_can_be_left_out():
+    import tempfile
+    from training.aiotvla.build_labels import run_samples
+    d = Path(tempfile.mkdtemp())
+    asked = {"vx": 2.0, "vy": 0.0, "vz_up": 0.0, "yaw_rate": 0.0}
+    box = {"det": [384.0, 216.0, 40.0, 20.0, 0.2, 768, 432], "t_box": 5.0}
+    caps = [{"i": k, "t_capture": 5.0 + 0.1 * k, "pose": {"x": 0, "y": 0, "up": 8, "yaw_rad": 0.0},
+             "box": box, "truth": [tx, 0.0],
+             "tick": {"mode": "track", "cmd": asked, "asked": asked}}
+            for k, tx in enumerate((20.0, 50.0))]
+    _write_record(d, caps)
+    keep_all, _ = run_samples("r", d, np.ones(2, bool), {0: 0, 1: 1}, "train", 0.5)
+    near, why = run_samples("r", d, np.ones(2, bool), {0: 0, 1: 1}, "train", 0.5,
+                            max_truth_dist=35.0)
+    assert len(keep_all) == 2 and len(near) == 1 and why["far_from_subject"] == 1
+    assert near[0]["i"] == 0
 
 
 def test_a_memory_off_the_experts_subject_is_found():
