@@ -1019,8 +1019,7 @@ class AIOTVLAModel:
         self.np, self.torch, self.NC, self.device = np, torch, NC, device
         t0 = time.perf_counter()
         ck = torch.load(Path(weights_dir) / "head.pt", map_location=device, weights_only=False)
-        mine = {"HIST_OFFSETS_S": NC.HIST_OFFSETS_S, "PCA_DIM": NC.PCA_DIM,
-                "LABEL_HORIZON_S": NC.LABEL_HORIZON_S,
+        mine = {"PCA_DIM": NC.PCA_DIM, "LABEL_HORIZON_S": NC.LABEL_HORIZON_S,
                 "GRIDS": {a: [float(NC.GRIDS[a][0]), float(NC.GRIDS[a][-1]), len(NC.GRIDS[a])]
                           for a in NC.AXES}}
         theirs = {k: ck["core"][k] for k in mine}
@@ -1030,11 +1029,16 @@ class AIOTVLAModel:
             raise SystemExit(f"{weights_dir}/head.pt was trained with other core constants "
                              f"({theirs}) than this checkout's ({mine})")
         self.horizon_s = float(ck["core"]["LABEL_HORIZON_S"])
-        self.bb = OwlBackbone(device=device)
+        # the camera it was trained on (training/aiotvla/train.py; a checkpoint
+        # from before 30 Oct was trained on VLAFront)
+        self.front_source = ck.get("front_source", "vla")
+        offsets = tuple(float(o) for o in ck["core"]["HIST_OFFSETS_S"])
+        tol = float(ck["core"].get("HIST_TOL_S", NC.HIST_TOL_S))
+        self.bb = OwlBackbone(ck.get("backbone") or "google/owlvit-base-patch32", device=device)
         self.bb.set_pca(ck["pca_mean"], ck["pca_comps"])
         self.head = AIOTVLAHead(HeadConfig(**ck["config"])).to(device).eval()
         self.head.load_state_dict(ck["state_dict"])
-        self.ring = NC.Ring()
+        self.ring = NC.Ring(offsets=offsets, tol=tol)
         self.checkpoint = {"epoch": ck.get("epoch"), "holdout": ck.get("holdout"),
                            "data": {k: ck["data"][k] for k in ("samples_sha256", "n_train",
                                                               "n_holdout")},
@@ -1323,6 +1327,10 @@ def build_real(args, family, weights: Path):
                                precision=args.precision)
     elif args.model == "aiotvla":
         model = AIOTVLAModel(weights, device=args.device)
+        if model.front_source != args.front_source:
+            raise SystemExit(f"--front-source {args.front_source}: {weights}/head.pt was trained "
+                             f"on the {model.front_source!r} camera (vla_fly --vla-front-source "
+                             f"{model.front_source})")
         if abs(model.horizon_s - family.horizon_s) > 1e-9:
             raise SystemExit(f"--horizon-s {family.horizon_s:g}: the checkpoint's label horizon "
                              f"is {model.horizon_s:g} s (fly with --step-as-rate "

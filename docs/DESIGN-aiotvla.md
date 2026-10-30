@@ -146,12 +146,11 @@ the session scratchpad's `ourvla/fly_ntut.ps1`.
 |---|---|---|---|---|---|---|
 | ntut_v0b_01 | v0b | 0.161 | 39 s after acquisition | 813 | 0.091 s | 0.0 |
 | ntut_v1_01 | v1 | 0.291 | 64 s after acquisition | 792 | 0.088 s | 0.0 |
-| ntut_v1_search600_01 | v1, `--follow-search-s 600` | 0.031 (not comparable: the start gate acquired at 3.6 s, a false seed; the aircraft chased it north and lost it) | - | 590 | 0.094 s | 0.0 |
+| ntut_v1_search600_01 | v1, `--follow-search-s 600` | 0.031 (early start: the car began 29 m away and drove off; acquired at 62 m, 3.6 s; never caught) | - | 590 | 0.094 s | 0.0 |
 | ntut_v2_01 / 02 / 03 | v2 (+5 recordings) | 0.243 / 0.208 / 0.185, mean 0.212 | 61 / 41 / 38 s after acquisition | 631 / 771 / 692 | 0.090-0.098 s | 0.0 |
-| ntut_v2_rate_01 / 02 | v2, `--rate-yaw rate` | 0.355 / 0.253, mean 0.304 | 119 / 62 s after acquisition | 1254 / 619 | 0.089 s | 0.0 |
-| ntut_v2_rate_03 | v2, `--rate-yaw rate` | 0.0 (not comparable: false start-gate seed at 2.4 s) | - | 495 | 0.091 s | 0.0 |
+| ntut_v2_rate_01 / 02 / 03 | v2, `--rate-yaw rate` | 0.355 / 0.253 / 0.0, mean 0.203 (03: early start, the car began 34 m away and drove off; acquired at 60 m, never caught) | 119 / 62 s after acquisition / - | 1254 / 619 / 495 | 0.089-0.091 s | 0.0 |
 | cmp2_e2e_aerovla_20261028 | AerialVLA 7B | 0.153 | 30 s after acquisition | 74 | 0.620 s | 0.0 |
-| cmp2_e2e_dronecats_20261028 | DroneCATS 2B | 0.086 (start gate at 4.0 s) | - | 13 | 1.200 s | 0.0 |
+| cmp2_e2e_dronecats_20261028 | DroneCATS 2B | 0.086 (early start: acquired at 61 m, 4.0 s) | - | 13 | 1.200 s | 0.0 |
 | hand-written follow (rep3-5 + cmp, n=5) | - | 0.972 mean | - | - | - | 0.0 |
 
 **The turn that was never flown.** Through v2 the aircraft held a yaw
@@ -167,14 +166,21 @@ is the meaning of AIOT-VLA's label. With it the same v2 weights turned at
 corners, followed the car for up to 119 s after acquisition, and scored
 0.355 and 0.253.
 
-**False start-gate seeds.** Two of the nine AIOT-VLA flights were not comparable:
-vla_fly's start gate acquired something other than Car_10 within the first
-3 s (the 28 Oct DroneCATS e2e flight did the same at 4.0 s), and the score
-is counted from that acquisition. This is the client's gate, not the
-model, but it decides the flight.
+**Two kinds of start (corrected 30 Oct).** An earlier version of this
+document called two flights (ntut_v1_search600_01, ntut_v2_rate_03)
+"false start-gate seeds" and left them out. That was wrong. The level car
+drives from the moment the scene loads, so where it is at take-off depends
+on how long the simulator took to start. In those two flights, and in the
+28 Oct DroneCATS and r1 e2e flights, the car began 15-34 m away and was
+driving off. vla_fly's start gate (`--acquire-max-range-m 60`, the
+matrix's setting) committed to it correctly, at about 60 m. The other
+flights started with the car about 200 m away; the gate waited for it to come round and committed at
+15-17 m. A late start begins the chase close behind the car. An early
+start begins it 60 m behind a car that is driving away at up to the
+drone's own speed cap, and no pure VLA has closed that gap.
 
-v2 with `--rate-yaw rate` is the best pure VLA flown on this scenario, but
-n=2 is not a ranking. Every pure VLA, ours included, loses the car within about a
+v2 with `--rate-yaw rate` scored 0.355 and 0.253 on late starts and 0.0 on
+an early start (mean 0.203, n=3); it is not a ranking. Every pure VLA, ours included, loses the car within about a
 minute, at a corner. After `--follow-search-s` (20 s) without a detection,
 vla_fly stops asking the VLA and hovers, so no pure VLA gets a second
 chance. The next data are DAgger recordings with v1 as the learner (the

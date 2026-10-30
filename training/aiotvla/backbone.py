@@ -14,26 +14,44 @@ The frame is resized to 768 x 768 and normalised as OWL-ViT's processor
 does, but on the GPU (pixels()); a 256 x 256 VLAFront capture is up-sampled
 (6/6 probe frames put the arg-max patch of "a red car" on the detector's
 box, 2026-10-29).
+
+OWLv2 (google/owlv2-base-patch16-ensemble, 30 Oct): its processor pads the
+frame to a square (bottom and right, grey 0.5) and resizes it to 960 x 960;
+pixels() does the same on the GPU. Its 60 x 60 patch grid is pooled to the
+head's 24 x 24 (core.GRID_SIDE): the logits by max (the best patch in each
+cell keeps its score), the class embeddings by mean. OWL-ViT B/32's grid is
+already 24 x 24.
 """
 from __future__ import annotations
 
 import numpy as np
 
 MODEL_ID = "google/owlvit-base-patch32"
+OWLV2_ID = "google/owlv2-base-patch16-ensemble"
+BACKBONES = (MODEL_ID, OWLV2_ID)
+GRID_OUT = 24
 
 
 class OwlBackbone:
     def __init__(self, model_id: str = MODEL_ID, device: str = "cuda", half: bool = True,
                  local_files_only: bool = True):
         import torch
-        from transformers import OwlViTForObjectDetection, OwlViTProcessor
+        if model_id not in BACKBONES:
+            raise ValueError(f"backbone {model_id!r} is not one of {BACKBONES}")
         self.torch = torch
         self.model_id = model_id
+        self.v2 = model_id == OWLV2_ID
+        self.size = 960 if self.v2 else 768
         self.device = device
         self.dtype = torch.float16 if (half and device.startswith("cuda")) else torch.float32
-        self.proc = OwlViTProcessor.from_pretrained(model_id, local_files_only=local_files_only)
-        m = OwlViTForObjectDetection.from_pretrained(model_id, local_files_only=local_files_only)
+        if self.v2:
+            from transformers import Owlv2ForObjectDetection as M, Owlv2Processor as P
+        else:
+            from transformers import OwlViTForObjectDetection as M, OwlViTProcessor as P
+        self.proc = P.from_pretrained(model_id, local_files_only=local_files_only)
+        m = M.from_pretrained(model_id, local_files_only=local_files_only)
         self.model = m.to(device=device, dtype=self.dtype).eval()
+        self._core = m.owlv2 if self.v2 else m.owlvit
         self._text: dict[str, "torch.Tensor"] = {}
         ip = self.proc.image_processor
         self._mean = torch.tensor(ip.image_mean, device=device).view(1, 3, 1, 1)
@@ -49,7 +67,7 @@ class OwlBackbone:
         if todo:
             t = self.proc(text=[todo], return_tensors="pt")
             with torch.no_grad():
-                e = self.model.owlvit.get_text_features(
+                e = self._core.get_text_features(
                     input_ids=t["input_ids"].to(self.device),
                     attention_mask=t["attention_mask"].to(self.device))
             for p, v in zip(todo, e):
@@ -69,7 +87,12 @@ class OwlBackbone:
         x = x.to(self.device).permute(0, 3, 1, 2).float()
         if flip:
             x = torch.flip(x, dims=[3])
-        x = torch.nn.functional.interpolate(x, size=(768, 768), mode="bicubic",
+        if self.v2:
+            # OWLv2's processor: pad bottom/right to a square with grey 0.5
+            _, _, h, w = x.shape
+            side = max(h, w)
+            x = torch.nn.functional.pad(x, (0, side - w, 0, side - h), value=127.5)
+        x = torch.nn.functional.interpolate(x, size=(self.size, self.size), mode="bicubic",
                                             align_corners=False).clamp_(0.0, 255.0) / 255.0
         x = (x - self._mean) / self._std
         return x.to(self.dtype)
@@ -93,8 +116,18 @@ class OwlBackbone:
         qm = torch.ones(qe.shape[:2], device=self.device, dtype=torch.long)
         with torch.no_grad():
             logits, cls = self.model.class_predictor(feats, qe, qm)
-        g = logits.float().permute(0, 2, 1).cpu().numpy()
-        cls = cls.float()
+        logits, cls = logits.float(), cls.float()
+        n = int(round(logits.shape[1] ** 0.5))
+        if n != GRID_OUT:
+            # OWLv2's 60 x 60 grid to the head's 24 x 24 (module docstring)
+            F = torch.nn.functional
+            lg = logits.permute(0, 2, 1).reshape(b, -1, n, n)
+            logits = F.adaptive_max_pool2d(lg, GRID_OUT).reshape(b, -1, GRID_OUT ** 2)
+            logits = logits.permute(0, 2, 1)
+            c = cls.permute(0, 2, 1).reshape(b, -1, n, n)
+            cls = F.adaptive_avg_pool2d(c, GRID_OUT).reshape(b, -1, GRID_OUT ** 2)
+            cls = cls.permute(0, 2, 1)
+        g = logits.permute(0, 2, 1).cpu().numpy()
         a = None
         if self.pca_mean is not None:
             a = ((cls - self.pca_mean) @ self.pca_comps.T).cpu().numpy()

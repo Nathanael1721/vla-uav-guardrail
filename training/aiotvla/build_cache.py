@@ -141,7 +141,12 @@ def cache_run(bb, rec: Path, out: Path, pca_sha: str, batch: int) -> dict:
     np.savez(out / "meta.npz", t=t, poses=poses, vel=vel, yaw_rate=yr, vel_ok=ok,
              frame_ok=frame_ok, i=np.array([c["i"] for c in caps]),
              front_sha=np.array([c["front_jpg_sha256"] for c in caps]))
+    rj = rec / "record.json"
+    front_source = (json.loads(rj.read_text(encoding="utf-8")).get("front_source", "vla")
+                    if rj.exists() else "vla")
     info = {"tag": run_tag(rec), "object": caps[0].get("object") if caps else None, "n": n,
+            "front_source": front_source,
+            "front_wh": caps[0].get("front_wh") if caps else None,
             "frames_missing": int(n - frame_ok.sum()),
             "backbone": bb.model_id, "dtype": str(bb.dtype), "vocab": list(core.VOCAB),
             "pca_sha256": pca_sha, "seconds": round(secs, 1),
@@ -158,12 +163,15 @@ def main(argv=None) -> int:
     ap.add_argument("--batch", type=int, default=48)
     ap.add_argument("--device", default="cuda")
     ap.add_argument("--force", action="store_true")
+    ap.add_argument("--backbone", default="google/owlvit-base-patch32",
+                    help="google/owlvit-base-patch32 (default) or "
+                         "google/owlv2-base-patch16-ensemble (training/aiotvla/backbone.py)")
     args = ap.parse_args(argv)
     from training.aiotvla.backbone import OwlBackbone
     root = Path(args.cache)
     root.mkdir(parents=True, exist_ok=True)
     recs = [record_dir(Path(r)) for r in args.runs]
-    bb = OwlBackbone(device=args.device)
+    bb = OwlBackbone(args.backbone, device=args.device)
     pca = root / "pca.npz"
     if not pca.exists():
         fit_and_save_pca(bb, recs, pca, args.pca_frames)

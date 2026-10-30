@@ -271,8 +271,12 @@ class ExpertVLARecorder:
                  sim_config: dict | None = None, encode: Callable[[dict], bytes | None] | None = None,
                  clock: Callable[[], float] = time.time, max_pair_dt_s: float = 0.25,
                  poll_s: float = 0.01, max_pending_ticks: int = 20000, saver_queue: int = 4000,
-                 flush_s: float = 1.0, perturber: Perturber | None = None):
+                 flush_s: float = 1.0, perturber: Perturber | None = None,
+                 front_source: str = "vla"):
         self.perturber = perturber          # --record-perturb's schedule, for the records
+        # The camera put_front is fed from (follow_vlm --record-vla-front-source):
+        # "vla" VLAFront, "detector" the detector's FrontCamera.
+        self.front_source = str(front_source)
         # --record-perturb-vla's perturber asks AerialVLA with these cameras.
         self._tee = perturber if callable(getattr(perturber, "put_front", None)) else None
         self.dir = Path(out_dir)
@@ -448,7 +452,9 @@ class ExpertVLARecorder:
                 "expert": self.expert, "author": AUTHOR, "t0": self.t0,
                 "t_start": self.t_start, "t_stop": self.t_stop,
                 "dir": str(self.dir.resolve()), "sim_config": self.sim_config,
-                "cameras": dict(CAMERAS),
+                "cameras": (dict(CAMERAS) if self.front_source == "vla"
+                            else {**CAMERAS, "front": "FrontCamera"}),
+                "front_source": self.front_source,
                 "detector": {"camera": "FrontCamera", "hfov_deg": 90.0,
                              "box_rule": "vla_fly latest_box (demo/vla_record.box_from_grounder)"},
                 "files": {"captures": CAPTURES, "track": TRACK, "frames": FRAMES + "/"},

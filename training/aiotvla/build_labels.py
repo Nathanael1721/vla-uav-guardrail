@@ -60,10 +60,11 @@ def box_bearing_deg(det) -> float:
 
 
 def run_samples(tag: str, rec: Path, frame_ok: np.ndarray, rows_of: dict, split: str,
-                horizon_s: float) -> tuple[list[dict], dict]:
+                horizon_s: float, exclude_modes=()) -> tuple[list[dict], dict]:
     caps = sorted((json.loads(l) for l in (rec / "captures.jsonl").read_text(
         encoding="utf-8").splitlines() if l.strip()), key=lambda c: c["t_capture"])
-    out, why = [], {"no_frame": 0, "no_tick": 0, "before_acquire": 0, "kept": 0}
+    out, why = [], {"no_frame": 0, "no_tick": 0, "before_acquire": 0, "excluded_mode": 0,
+                    "kept": 0}
     acquired = False
     for c in caps:
         box = c.get("box")
@@ -79,6 +80,9 @@ def run_samples(tag: str, rec: Path, frame_ok: np.ndarray, rows_of: dict, split:
             continue
         if not acquired:
             why["before_acquire"] += 1
+            continue
+        if tick.get("mode") in exclude_modes:
+            why["excluded_mode"] += 1
             continue
         a = tick["asked"]
         yaw = float(c["pose"]["yaw_rad"])
@@ -104,6 +108,10 @@ def main(argv=None) -> int:
                     help="cached run tags (default every run in --cache)")
     ap.add_argument("--holdout", nargs="*", default=[])
     ap.add_argument("--horizon-s", type=float, default=core.LABEL_HORIZON_S)
+    ap.add_argument("--exclude-modes", nargs="*", default=[],
+                    help="expert modes whose ticks are no sample, e.g. plan: the follow's "
+                         "street-map planner after it lost the car flies on knowledge no "
+                         "frame shows (30 Oct, aiot_rec_d04: 3,066 of its 4,660 ticks)")
     args = ap.parse_args(argv)
     cache = Path(args.cache)
     runs = args.runs or sorted(p.name for p in cache.iterdir() if (p / "info.json").exists())
@@ -121,7 +129,8 @@ def main(argv=None) -> int:
         if not rec.is_absolute():
             rec = ROOT / rec
         split = "holdout" if tag in args.holdout else "train"
-        s, why = run_samples(tag, rec, meta["frame_ok"], rows_of, split, args.horizon_s)
+        s, why = run_samples(tag, rec, meta["frame_ok"], rows_of, split, args.horizon_s,
+                             tuple(args.exclude_modes))
         allx += s
         d = np.array([x["label_raw"]["dpsi_rad"] for x in s]) if s else np.zeros(0)
         stats[tag] = {**why, "split": split,
@@ -136,6 +145,7 @@ def main(argv=None) -> int:
             fh.write(json.dumps(x) + "\n")
     n_tr = sum(1 for x in allx if x["split"] == "train")
     summary = {"n_train": n_tr, "n_holdout": len(allx) - n_tr, "horizon_s": args.horizon_s,
+               "exclude_modes": list(args.exclude_modes),
                "label": "expert asked command x horizon (module docstring)", "runs": stats,
                "samples_sha256": hashlib.sha256(p.read_bytes()).hexdigest()}
     (out / "stats.json").write_text(json.dumps(summary, indent=1) + "\n", encoding="utf-8")

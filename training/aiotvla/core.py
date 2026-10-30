@@ -41,6 +41,10 @@ from dataclasses import dataclass
 import numpy as np
 
 HIST_OFFSETS_S = (0.0, 0.2, 0.4, 0.7, 1.0, 1.4, 1.9, 2.5)
+# v3 on (30 Oct): a longer memory, so a car that left the frame at a corner
+# a few seconds ago is still in the input. A checkpoint carries the offsets
+# it was trained with; the server's Ring takes them from it.
+LONG_HIST_OFFSETS_S = (0.0, 0.2, 0.4, 0.7, 1.0, 1.5, 2.0, 3.0, 4.0, 5.5)
 HIST_TOL_S = 0.15
 VEL_DT_S = 0.2
 VEL_MAX_DT_S = 0.6
@@ -110,18 +114,19 @@ def velocities(t: np.ndarray, poses: np.ndarray) -> tuple[np.ndarray, np.ndarray
     return v, yr, ok
 
 
-def history_indices(t: np.ndarray, i: int) -> list[int]:
+def history_indices(t: np.ndarray, i: int, offsets=HIST_OFFSETS_S,
+                    tol: float = HIST_TOL_S) -> list[int]:
     """For capture i of a time-sorted capture list: the index of the capture
-    nearest to t_i - offset for each HIST_OFFSETS_S, never newer than i, or
-    -1 when none is within HIST_TOL_S."""
+    nearest to t_i - offset for each of `offsets`, never newer than i, or -1
+    when none is within `tol`."""
     out = []
-    for off in HIST_OFFSETS_S:
+    for off in offsets:
         if off == 0.0:
             out.append(i)
             continue
         want = t[i] - off
         k = int(np.searchsorted(t, want, side="left"))
-        best, bd = -1, HIST_TOL_S
+        best, bd = -1, tol
         for c in (k - 1, k):
             if 0 <= c <= i:
                 d = abs(t[c] - want)
@@ -211,8 +216,10 @@ class Ring:
     capture older than the last, or more than RING_GAP_S after it, starts a
     new history (a new flight, a stall): push() returns why."""
 
-    def __init__(self, maxlen: int = RING_MAXLEN, gap_s: float = RING_GAP_S):
+    def __init__(self, maxlen: int = RING_MAXLEN, gap_s: float = RING_GAP_S,
+                 offsets=HIST_OFFSETS_S, tol: float = HIST_TOL_S):
         self.maxlen, self.gap_s = int(maxlen), float(gap_s)
+        self.offsets, self.tol = tuple(float(o) for o in offsets), float(tol)
         self.t: list[float] = []
         self.poses: list[tuple] = []
         self.g: list[np.ndarray] = []
@@ -247,7 +254,7 @@ class Ring:
         t = np.asarray(self.t)
         poses = np.asarray(self.poses, dtype=np.float64)
         i = len(t) - 1
-        idx = history_indices(t, i)
+        idx = history_indices(t, i, self.offsets, self.tol)
         vel = np.zeros((len(t), 3))
         yr = np.zeros(len(t))
         for j in set(j for j in idx if j >= 0):

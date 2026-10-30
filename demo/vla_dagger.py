@@ -246,7 +246,7 @@ class WindowSchedule:
 def check_args(addr: str, every_s, dur_s, lead_s: float = VLA_LEAD_S, *,
                bottom_tile: str = "down", prev_dt_s: float | None = None,
                step_as_rate: float | None = None, speed_words: bool = False,
-               rate_yaw: str = "heading") -> str | None:
+               rate_yaw: str = "heading", front_source: str = "vla") -> str | None:
     """Why follow_vlm should refuse --record-perturb-vla with these, or None.
     The lower tile, the rate and the speed words are vla_fly's own flags:
     vla_fly's parser judges them (follow_args)."""
@@ -260,7 +260,8 @@ def check_args(addr: str, every_s, dur_s, lead_s: float = VLA_LEAD_S, *,
         return f"--perturb-vla-every / --perturb-vla-dur: {exc}"
     try:
         follow_args("a red car", cruise_alt=10.0, bottom_tile=bottom_tile, prev_dt_s=prev_dt_s,
-                    step_as_rate=step_as_rate, speed_words=speed_words, rate_yaw=rate_yaw)
+                    step_as_rate=step_as_rate, speed_words=speed_words, rate_yaw=rate_yaw,
+                    front_source=front_source)
     except DaggerRefused as exc:
         return (f"--perturb-vla-bottom-tile / --perturb-vla-prev-dt-s / "
                 f"--perturb-vla-step-as-rate / --perturb-vla-rate-yaw: {exc}")
@@ -274,7 +275,8 @@ def follow_args(object_text: str, *, cruise_alt: float,
                 cruise_mps: float = FOLLOW_CRUISE_MPS,
                 speed_cap_mps: float = FOLLOW_SPEED_CAP_MPS, bottom_tile: str = "down",
                 prev_dt_s: float | None = None, step_as_rate: float | None = None,
-                speed_words: bool = False, rate_yaw: str = "heading"):
+                speed_words: bool = False, rate_yaw: str = "heading",
+                front_source: str = "vla"):
     """(vla_fly's resolved arguments for a pipelined follow, the argv): its
     own parser and resolve_args, so every default the follow mission applies
     - the tracker's, the hint's, the link's, the lower tile (--vla-bottom-tile
@@ -300,6 +302,10 @@ def follow_args(object_text: str, *, cruise_alt: float,
     if rate_yaw != "heading":
         # vla_fly --rate-yaw (TrackerConfig.rate_yaw): the yaw rate itself
         argv += ["--rate-yaw", str(rate_yaw)]
+    if front_source != "vla":
+        # vla_fly --vla-front-source: the windows ask with the recorder's front
+        # frame (follow_vlm --record-vla-front-source)
+        argv += ["--vla-front-source", str(front_source)]
     try:
         return VF.resolve_args(VF.build_arg_parser().parse_args(argv)), argv
     except ValueError as exc:
@@ -937,7 +943,7 @@ def make_vla_perturber(addr: str, *, seed: int, obs, box_source: Callable[[], di
                        speed_cap_mps: float = FOLLOW_SPEED_CAP_MPS,
                        bottom_tile: str = "down", prev_dt_s: float | None = None,
                        step_as_rate: float | None = None, speed_words: bool = False,
-                       rate_yaw: str = "heading",
+                       rate_yaw: str = "heading", front_source: str = "vla",
                        log: Callable[[str], Any] | None = None) -> VLAPerturber:
     """The --record-perturb-vla perturber of a follow_vlm flight: vla_fly's
     follow configuration (follow_args, with vla_fly's --vla-bottom-tile /
@@ -953,7 +959,8 @@ def make_vla_perturber(addr: str, *, seed: int, obs, box_source: Callable[[], di
     vargs, argv = follow_args(obj0, cruise_alt=cruise_alt, cruise_mps=cruise_mps,
                               speed_cap_mps=speed_cap_mps, bottom_tile=bottom_tile,
                               prev_dt_s=prev_dt_s, step_as_rate=step_as_rate,
-                              speed_words=speed_words, rate_yaw=rate_yaw)
+                              speed_words=speed_words, rate_yaw=rate_yaw,
+                              front_source=front_source)
     try:
         WindowSchedule(seed, every_s, dur_s, lead_s)
     except ValueError as exc:
@@ -974,13 +981,15 @@ def make_vla_perturber(addr: str, *, seed: int, obs, box_source: Callable[[], di
         raise DaggerRefused(f"the server at {addr}: {sw_check['why']} (the adapter's speed "
                             f"words from {sw_check['source']}; --perturb-vla-speed-words "
                             f"{'on' if vargs.speed_words else 'off'})")
-    # The windows ask with VLAFront: a foreign server whose intrinsics assume
-    # another camera is refused (vla_mission.front_source_check).
-    front_check = VM.front_source_check(identity, "vla", is_vla=is_vla)
+    # The windows ask with the recorder's front frame (VLAFront, or with
+    # --record-vla-front-source detector the FrontCamera): a foreign server
+    # whose intrinsics assume another camera is refused
+    # (vla_mission.front_source_check).
+    front_check = VM.front_source_check(identity, front_source, is_vla=is_vla)
     if not front_check["ok"]:
         client.close()
         raise DaggerRefused(f"the server at {addr}: {front_check['why']} (the recorder sends "
-                            f"VLAFront)")
+                            f"{'FrontCamera' if front_source == 'detector' else 'VLAFront'})")
     try:
         frames = VM.VLAFrames(obs, encode=encode, bottom_tile=vargs.bottom_tile,
                               speed_words=vargs.speed_words)

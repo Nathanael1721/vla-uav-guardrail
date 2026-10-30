@@ -141,6 +141,7 @@ param(
     [switch]$NoPolicyHud,               # the old one-line HUD (A/B of the indicator's cost)
     [switch]$RecordVla,                 # record what AerialVLA would see (--record-vla),
                                         # to <OffloadRoot>\<Tag>\vla_record (see the header)
+    [string]$RecordVlaFrontSource = "", # with -RecordVla: "detector" records FrontCamera as the front frame (AIOT-VLA)
     [switch]$RecordPerturb,             # with -RecordVla: DART noise on the executed command
     [switch]$PerturbSpeed,              # with -RecordPerturb: also scale the speed 0.5-1.0
     [switch]$PerturbReplaceYaw,         # with -RecordPerturb: the offset replaces the
@@ -253,6 +254,7 @@ if ($SkipSim -and -not (Test-SimUp)) { throw "-SkipSim given but nothing on 8989
 # Refused here, before a simulator starts (follow_vlm refuses the same):
 # the perturbation exists only to be recorded as training data.
 if ($RecordPerturb -and -not $RecordVla) { throw "-RecordPerturb needs -RecordVla" }
+if ($RecordVlaFrontSource -and -not $RecordVla) { throw "-RecordVlaFrontSource needs -RecordVla" }
 if ($PerturbSpeed -and -not $RecordPerturb) { throw "-PerturbSpeed needs -RecordPerturb" }
 if (($PerturbReplaceYaw -or $PerturbYawRate) -and -not $RecordPerturb) {
     throw "-PerturbReplaceYaw and -PerturbYawRate need -RecordPerturb"
@@ -547,6 +549,9 @@ if ($RecordVla) {
         }
     }
     $a += @("--record-vla", "demo\out\$Tag\vla_record")
+    if ($RecordVlaFrontSource) {
+        $a += @("--record-vla-front-source", $RecordVlaFrontSource)
+    }
     if ($RecordPerturb) {
         $a += @("--record-perturb")
         if ($PerturbSpeed) {

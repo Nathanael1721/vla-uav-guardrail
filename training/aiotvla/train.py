@@ -69,11 +69,15 @@ class Data:
     """Every run's maps in one table (row n = a zero frame for empty slots)
     and every sample's history rows, proprio and targets."""
 
-    def __init__(self, labels: Path, cache: Path, device: str):
+    def __init__(self, labels: Path, cache: Path, device: str, offsets=core.HIST_OFFSETS_S,
+                 runs: list[str] | None = None):
         import torch
         self.torch = torch
         samples = [json.loads(l) for l in (labels / "samples.jsonl").read_text(
             encoding="utf-8").splitlines() if l.strip()]
+        if runs is not None:
+            keep = set(runs)
+            samples = [s for s in samples if s["run"] in keep]
         runs = sorted({s["run"] for s in samples})
         G, Gm, A, Am = [], [], [], []
         offset, self.run_info = 0, {}
@@ -91,7 +95,9 @@ class Data:
             rows_of[r] = {int(i): k for k, i in enumerate(meta["i"])}
             meta_of[r] = meta
             self.run_info[r] = {"offset": offset, "n": int(info["n"]), "object": info["object"],
-                                "pca_sha256": info["pca_sha256"]}
+                                "pca_sha256": info["pca_sha256"],
+                                "front_source": info.get("front_source", "vla"),
+                                "front_wh": info.get("front_wh")}
             offset += int(info["n"])
         zero_g = np.zeros((1, core.N_PATCHES), np.float16)
         zero_a = np.zeros((1, core.N_PATCHES, core.PCA_DIM), np.float16)
@@ -110,7 +116,8 @@ class Data:
             if k is None or not ok[k]:
                 skipped += 1
                 continue
-            idx = [j if (j >= 0 and ok[j]) else -1 for j in core.history_indices(meta["t"], k)]
+            idx = [j if (j >= 0 and ok[j]) else -1
+                   for j in core.history_indices(meta["t"], k, offsets)]
             p = core.proprio(meta["poses"], meta["vel"], meta["yaw_rate"], idx)
             off = self.run_info[r]["offset"]
             hist.append([off + j if j >= 0 else self.zero_row for j in idx])
@@ -226,6 +233,10 @@ def main(argv=None) -> int:
     ap.add_argument("--seed", type=int, default=20261029)
     ap.add_argument("--device", default="cuda")
     ap.add_argument("--init", default=None, help="a head.pt to start from (a DAgger round)")
+    ap.add_argument("--long-history", action="store_true",
+                    help="core.LONG_HIST_OFFSETS_S (10 slots, 5.5 s) instead of the 8-slot 2.5 s")
+    ap.add_argument("--runs", nargs="*", default=None,
+                    help="train and hold out on these runs only (default every run labelled)")
     ap.add_argument("--motion-dropout", type=float, default=0.0,
                     help="share of training samples whose motion proprio (MOTION_FIELDS, every "
                          "slot) is zeroed")
@@ -236,15 +247,26 @@ def main(argv=None) -> int:
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
     t0 = time.time()
-    data = Data(Path(args.labels), Path(args.cache), args.device)
+    offsets = core.LONG_HIST_OFFSETS_S if args.long_history else core.HIST_OFFSETS_S
+    data = Data(Path(args.labels), Path(args.cache), args.device, offsets, args.runs)
+    backbones = {json.loads((Path(args.cache) / r / "info.json").read_text(
+        encoding="utf-8"))["backbone"] for r in data.run_info}
+    if len(backbones) != 1:
+        raise SystemExit(f"the runs were cached with {sorted(backbones)}: one backbone only")
+    backbone = next(iter(backbones))
     pcas = {v["pca_sha256"] for v in data.run_info.values()}
     if len(pcas) != 1:
         raise SystemExit(f"the runs were cached with {len(pcas)} different PCAs: re-cache them")
+    fronts = {(v["front_source"], tuple(v["front_wh"] or ())) for v in data.run_info.values()}
+    if len(fronts) != 1:
+        raise SystemExit(f"the runs were recorded with different front cameras {sorted(fronts)}: "
+                         f"train on one (--runs)")
+    front_source, front_wh = next(iter(fronts))
     tr = torch.nonzero(data.train).squeeze(1)
     ho = torch.nonzero(~data.train).squeeze(1)
     print(f"[data] {len(tr)} train / {len(ho)} hold-out samples, {len(data.run_info)} runs, "
           f"{data.skipped} skipped, loaded in {time.time() - t0:.1f} s")
-    cfg = HeadConfig()
+    cfg = HeadConfig(n_slots=len(offsets))
     head = AIOTVLAHead(cfg).to(args.device)
     if args.init:
         ck = torch.load(args.init, map_location=args.device)
@@ -310,14 +332,15 @@ def main(argv=None) -> int:
             torch.save({"state_dict": head.state_dict(), "config": cfg.to_dict(),
                         "pca_mean": pca["mean"], "pca_comps": pca["comps"],
                         "pca_sha256": next(iter(pcas)),
-                        "core": {"HIST_OFFSETS_S": core.HIST_OFFSETS_S,
+                        "front_source": front_source, "front_wh": list(front_wh),
+                        "core": {"HIST_OFFSETS_S": tuple(offsets),
                                  "HIST_TOL_S": core.HIST_TOL_S, "VEL_DT_S": core.VEL_DT_S,
                                  "VEL_MAX_DT_S": core.VEL_MAX_DT_S, "PCA_DIM": core.PCA_DIM,
                                  "VOCAB": core.VOCAB,
                                  "GRIDS": {a: [float(core.GRIDS[a][0]), float(core.GRIDS[a][-1]),
                                                len(core.GRIDS[a])] for a in core.AXES},
                                  "LABEL_HORIZON_S": core.LABEL_HORIZON_S},
-                        "backbone": "google/owlvit-base-patch32",
+                        "backbone": backbone,
                         "data": {"labels": Path(args.labels).as_posix(),
                                  "samples_sha256": data.samples_sha256,
                                  "runs": data.run_info, "n_train": int(len(tr)),

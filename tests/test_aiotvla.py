@@ -219,7 +219,12 @@ def test_command_labels_are_the_experts_asked_command_over_the_horizon():
     _write_record(d, caps)
     s, why = run_samples("r", d, np.ones(3, bool), {0: 0, 1: 1, 2: 2}, "train", 0.5)
     # capture 0: before the first fresh box; capture 2: no expert tick
-    assert why == {"no_frame": 0, "no_tick": 1, "before_acquire": 1, "kept": 1}, why
+    assert why == {"no_frame": 0, "no_tick": 1, "before_acquire": 1, "excluded_mode": 0,
+                   "kept": 1}, why
+    # an expert mode left out (--exclude-modes plan) is no sample
+    s3, why3 = run_samples("r", d, np.ones(3, bool), {0: 0, 1: 1, 2: 2}, "train", 0.5,
+                           exclude_modes=("track",))
+    assert not s3 and why3["excluded_mode"] == 1, why3
     lab = s[0]["label_raw"]
     assert math.isclose(lab["fwd_m"], 1.5, abs_tol=1e-9)          # 3 m/s east, heading east
     assert math.isclose(lab["down_m"], -0.2, abs_tol=1e-9)

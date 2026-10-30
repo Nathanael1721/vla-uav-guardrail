@@ -4393,7 +4393,8 @@ async def fly(args) -> int:
                 prev_dt_s=args.perturb_vla_prev_dt_s,
                 step_as_rate=args.perturb_vla_step_as_rate,
                 speed_words=args.perturb_vla_speed_words,
-                rate_yaw=args.perturb_vla_rate_yaw, log=print)
+                rate_yaw=args.perturb_vla_rate_yaw,
+                front_source=args.record_vla_front_source, log=print)
         except vla_dagger.DaggerRefused as exc:
             raise SystemExit(f"[vla-dagger] *** refused: {exc}") from None
         print(f"[vla-dagger] {perturber.describe()}")
@@ -4510,11 +4511,16 @@ async def fly(args) -> int:
         # each, nothing decoded in the callback).
         det_front = (args.vla_hierarchy is not None
                      and args.vla_hierarchy_front_source == "detector")
+        # --record-vla-front-source detector: the recorder's front frame is
+        # this camera's too (filled below, once the recorder exists).
+        rec_front: list = []
 
         def _front_frame(_, m):
             obs.put_front(m)
             if det_front and hierarchy is not None:
                 hierarchy.put_front(m)
+            if rec_front:
+                rec_front[0].put_front(m)
         client.subscribe(drone.sensors["FrontCamera"]["scene_camera"], _front_frame)
         client.subscribe(drone.sensors["DownCamera"]["scene_camera"],
                          lambda _, m: obs.put_down(m))
@@ -4580,12 +4586,18 @@ async def fly(args) -> int:
                                         lambda: box_from_grounder(
                                             grounder.latest() if grounder is not None else None),
                                         tag=args.tag, object_text=args.object,
-                                        perturber=perturber)
-            client.subscribe(drone.sensors["VLAFront"]["scene_camera"],
-                             lambda _, m: vla_rec.put_front(m))
+                                        perturber=perturber,
+                                        front_source=args.record_vla_front_source)
+            if args.record_vla_front_source == "detector":
+                rec_front.append(vla_rec)
+            else:
+                client.subscribe(drone.sensors["VLAFront"]["scene_camera"],
+                                 lambda _, m: vla_rec.put_front(m))
             client.subscribe(drone.sensors["VLADown"]["scene_camera"],
                              lambda _, m: vla_rec.put_down(m))
-            print(f"[vla-record] AerialVLA's VLAFront/VLADown ({flight_scene(args)}) -> "
+            front = ("FrontCamera" if args.record_vla_front_source == "detector"
+                     else "VLAFront")
+            print(f"[vla-record] front {front}, down VLADown ({flight_scene(args)}) -> "
                   f"{args.record_vla}")
         if hierarchy is not None:
             # --vla-hierarchy: the VLA asks with its own two cameras (this scene
@@ -7556,6 +7568,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
                          "the box, the command and the track, for tools/"
                          "build_follow_dataset.py. Off by default: the flight, its "
                          "scene and its records are then unchanged.")
+    ap.add_argument("--record-vla-front-source", choices=("vla", "detector"), default="vla",
+                    help="with --record-vla: the front frame recorded (and asked with in "
+                         "--record-perturb-vla windows): 'vla' (default) AerialVLA's VLAFront "
+                         "256x256, level; 'detector' this follow's FrontCamera 768x432, pitched "
+                         "-20 deg - one subscription feeding the detector and the recorder, as "
+                         "vla_fly --vla-front-source detector sends it (AIOT-VLA)")
     ap.add_argument("--record-perturb", action="store_true",
                     help="with --record-vla only: DART-style noise for the training "
                          "data (vla_record.Perturber). Every 5-8 s, for 1.0-1.5 s, a "
@@ -7807,6 +7825,8 @@ def main(argv: list[str] | None = None) -> int:
         # there so the training data shows a recovery (vla_record.Perturber).
         ap.error("--record-perturb needs --record-vla: the perturbation exists only "
                  "to be recorded as training data")
+    if args.record_vla_front_source != "vla" and not args.record_vla:
+        ap.error("--record-vla-front-source needs --record-vla")
     if args.perturb_speed and not args.record_perturb:
         ap.error("--perturb-speed needs --record-perturb")
     if not args.record_perturb and (args.perturb_replace_yaw
@@ -7827,7 +7847,8 @@ def main(argv: list[str] | None = None) -> int:
                          prev_dt_s=args.perturb_vla_prev_dt_s,
                          step_as_rate=args.perturb_vla_step_as_rate,
                          speed_words=args.perturb_vla_speed_words,
-                         rate_yaw=args.perturb_vla_rate_yaw)
+                         rate_yaw=args.perturb_vla_rate_yaw,
+                         front_source=args.record_vla_front_source)
         if why is not None:
             ap.error(why)
     elif (args.perturb_vla_every != (6.0, 10.0) or args.perturb_vla_dur != (2.5, 4.0)
