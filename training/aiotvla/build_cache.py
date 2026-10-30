@@ -10,6 +10,9 @@ or the recording folder itself. Per run, <cache>/<tag>/ gets
                   every VOCAB phrase, of the frame and of the frame flipped
                   left-right (the mirror is the flipped frame's own maps)
   A.npy  Am.npy   (N, 576, PCA_DIM) float16: the appearance maps
+  B.npy  Bm.npy   (N, len(core.VOCAB), 4) float16: the backbone's own box
+                  (cx, cy, w, h) at each phrase's best patch, of the frame
+                  and of its mirror (backbone.maps with_boxes; 30 Oct)
   meta.npz        t (capture time), poses (x, y, up, yaw), vel, yaw_rate,
                   vel_ok (core.velocities), frame_ok (False where the
                   recording lost the JPEG: its maps stay zero and the trainer
@@ -106,10 +109,11 @@ def cache_run(bb, rec: Path, out: Path, pca_sha: str, batch: int) -> dict:
     n = len(caps)
     out.mkdir(parents=True, exist_ok=True)
     V, P = len(core.VOCAB), core.PCA_DIM
+    shapes = {"G": (n, V, core.N_PATCHES), "Gm": (n, V, core.N_PATCHES),
+              "A": (n, core.N_PATCHES, P), "Am": (n, core.N_PATCHES, P),
+              "B": (n, V, 4), "Bm": (n, V, 4)}
     arrs = {k: np.lib.format.open_memmap(out / f"{k}.npy", mode="w+", dtype=np.float16,
-                                         shape=(n, V, core.N_PATCHES) if k.startswith("G")
-                                         else (n, core.N_PATCHES, P))
-            for k in ("G", "Gm", "A", "Am")}
+                                         shape=shp) for k, shp in shapes.items()}
     t0 = time.time()
     paths = [rec / "frames" / (c["front_jpg_sha256"] + ".jpg") for c in caps]
     pool = ThreadPoolExecutor(max_workers=8)
@@ -124,12 +128,14 @@ def cache_run(bb, rec: Path, out: Path, pca_sha: str, batch: int) -> dict:
         frame_ok[rows] = True
         if not ims:
             continue
-        g, a = bb.maps(ims, list(core.VOCAB))
-        gm, am = bb.maps(ims, list(core.VOCAB), flip=True)
+        g, a, bx = bb.maps(ims, list(core.VOCAB), with_boxes=True)
+        gm, am, bxm = bb.maps(ims, list(core.VOCAB), flip=True, with_boxes=True)
         arrs["G"][rows] = g
         arrs["A"][rows] = a
         arrs["Gm"][rows] = gm
         arrs["Am"][rows] = am
+        arrs["B"][rows] = bx
+        arrs["Bm"][rows] = bxm
     pool.shutdown()
     for a in arrs.values():
         a.flush()
@@ -145,7 +151,7 @@ def cache_run(bb, rec: Path, out: Path, pca_sha: str, batch: int) -> dict:
     front_source = (json.loads(rj.read_text(encoding="utf-8")).get("front_source", "vla")
                     if rj.exists() else "vla")
     info = {"tag": run_tag(rec), "object": caps[0].get("object") if caps else None, "n": n,
-            "front_source": front_source,
+            "front_source": front_source, "boxes": True,
             "front_wh": caps[0].get("front_wh") if caps else None,
             "frames_missing": int(n - frame_ok.sum()),
             "backbone": bb.model_id, "dtype": str(bb.dtype), "vocab": list(core.VOCAB),

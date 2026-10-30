@@ -16,6 +16,106 @@ shipped change and recorded as one.
 
 ## [Unreleased]
 
+### 2026-10-30 — NTUT-VLA becomes AIOT-VLA and moves to the FrontCamera; 18 new training recordings, four models flown three times each (best mean 0.265; v3, v4 and v6 all lost the car at the same corner); four grounders compared on the car's true position; the "false start-gate seeds" retracted
+
+#### Retracted
+- **"False start-gate seeds" (CHANGELOG 2026-10-29 (night), Flown; the
+  design doc).** Two AIOT-VLA flights (ntut_v1_search600_01,
+  ntut_v2_rate_03) were called not comparable because vla_fly's start gate
+  had "acquired something other than Car_10". Both were correct
+  acquisitions. The level car drives from the moment the scene loads, and
+  in those flights it began 29-34 m away and drove off; the gate
+  (`--acquire-max-range-m 60`) committed to it at about 60 m. The same
+  happened in the 28 Oct DroneCATS and r1 e2e flights (car 15-22 m away at
+  take-off, acquired at 61 m). With those flights counted, v2 with
+  `--rate-yaw rate` scored 0.355, 0.253 and 0.0: mean 0.203 over 3 flights,
+  not 0.304 over 2.
+
+#### Found
+- **The VLA flights started under a harder gate than the hand-written
+  follow.** The hand-written follow's start gate accepts a car within 30 m
+  (its metrics: max_range_m 30.0, 24-44 candidates refused as too far in
+  every flight of 27-29 Oct). The matrix flew every pure-VLA flight with
+  `--acquire-max-range-m 60`, so a VLA could be asked to chase a car 60 m
+  away and leaving. AIOT-VLA's evaluation flights from v3 on use vla_fly's
+  own default, 30 m, the hand-written follow's gate. Earlier VLA scores
+  (the 27-28 Oct matrix, NTUT-VLA v0-v2) were flown at 60 m.
+
+#### Changed
+- **NTUT-VLA is renamed AIOT-VLA** (`training/aiotvla`, family `aiotvla`,
+  tests/test_aiotvla.py, docs/DESIGN-aiotvla.md), for the lab's identity.
+  `ntutvla` stays in the codec's allow-list as a legacy family, so the
+  29-30 Oct flights (`demo/out/ntut_*`) still classify as this model's; no
+  server serves it.
+
+#### Added
+- `follow_vlm --record-vla-front-source detector`
+  (`run_citylife_follow.ps1 -RecordVlaFrontSource detector`): the recorder
+  and its DAgger windows take the detector's FrontCamera (768x432, pitched
+  -20 deg) as the front frame, as `vla_fly --vla-front-source detector`
+  sends it.
+- AIOT-VLA: a longer memory (`train --long-history`: 10 slots back to 5.5 s);
+  a checkpoint carries its history, front camera and backbone, and the
+  server refuses a `--front-source` the checkpoint was not trained on;
+  OWLv2 B/16 as a backbone option (pooled to the 24x24 grid);
+  `build_labels --exclude-modes` (the follow's street-map planner ticks,
+  which fly on knowledge no frame shows).
+- AIOT-VLA box features (`train --box-features`, `HeadConfig.n_stats` 8):
+  OWL-ViT's own box (cx, cy, w, h) at the phrase's best patch, cached
+  (`B.npy`) and fed per slot; the server's Ring computes the same. Its
+  width falls with range (median 0.072 at 15-20 m, 0.045 at 30-40 m).
+- `train --onpolicy-weight`: a loss weight for captures whose executed
+  command was not the expert's.
+
+#### Recorded (training data, all on the FrontCamera, 600 s each, `aiot_rec_*`)
+- R1: 2 clean expert, 4 strong DART. R2: 6 DAgger, v3 flying 4-8 s windows
+  (about 46 % of the ticks). R3: 6 DAgger, v4 flying 15-25 s windows. 18
+  recordings, 84,067 captures.
+- Grounders on 571 FrontCamera frames, against the car's TRUE position
+  projected into the frame (a hit: within 3 deg of bearing and 12 % of the
+  height):
+
+| backbone | hit rate | bearing error p50 | model time |
+|---|---|---|---|
+| OWL-ViT B/32 (in use) | 0.751 | 2.2 deg | 32 ms |
+| OWLv2 B/16 | 0.690 | 1.5 deg | 139 ms |
+| Grounding DINO tiny | 0.800 | 0.5 deg | 141 ms |
+| Grounding DINO base | 0.797 | 0.5 deg | 171 ms |
+
+#### Flown (AIOT-VLA, `vla_fly` e2e, FrontCamera, `--rate-yaw rate`, start gate 30 m, 420 s, Shield on)
+| model | data | within 30 m after acquisition | mean |
+|---|---|---|---|
+| v3 | R1, 19,211 samples | 0.279, 0.172, 0.307 | 0.253 |
+| v4 | R1+R2, 46,071 | 0.230, 0.264, 0.298 | 0.264 |
+| v5 | R1+R2+R3, 64,874, on-policy x2 | 0.211, 0.189, 0.191 | 0.197 |
+| v6 | as v4, with box features | 0.258, 0.269, 0.268 | 0.265 |
+
+Every flight started late (the car 14-19 m away at acquisition), P0
+escapes 0.0 in all 12. One more v3 flight at the old 60 m gate
+(aiot_v3_01) started early and scored 0.0. The hand-written follow
+scores 0.972 (n=5) on the same scenario and gate.
+
+#### Found
+- **AIOT-VLA loses the car at one corner.** All nine flights of v3, v4 and
+  v6 lost it 60-63 s after acquisition, at the same place: the aircraft
+  near (52, 106), the car turning at (80, 120). v5's three flights lost it
+  sooner, 39-40 s after acquisition, on the straight before (the aircraft
+  at (44, 53), the car at (44, 82)). The hand-written follow takes that stretch
+  at 4.4-4.7 m/s, 20-22 m behind. AIOT-VLA slows to 1.1-1.9 m/s, with
+  Shield repairs, while the car keeps 3.5 m/s. When the car turns, it stops
+  28 m back, sets off late, and the Shield holds it off a roadside tree.
+  Offline, on the clean hold-out flight, v4 has no speed bias by range
+  (30-40 m: label 4.06 m/s, prediction 4.05 m/s). The states it fails in
+  are states the expert never reaches.
+- **Long DAgger windows hurt.** In 15-25 s windows v4 lost the car often;
+  up to 3,855 of a recording's ticks were the expert's planner afterwards
+  and were left out. v5, trained with them, lost the car sooner.
+
+#### Limits
+- Not the >0.9 the work aims at: the best mean is 0.265, against 0.972
+  for the hand-written follow. Three flights per model; one level, one
+  car, one route; simple_flight on the city rail, not KPI-grade.
+
 ### 2026-10-29 (night) — an independent review re-states 27 of the 64 "DONE" items; the lab's own VLA (NTUT-VLA) is built, served, flown and given five more recordings; a rate step's turn was never flown; three review findings fixed
 
 #### Retracted

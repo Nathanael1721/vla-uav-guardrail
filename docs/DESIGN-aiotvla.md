@@ -5,7 +5,7 @@ Named NTUT-VLA until 30 Oct 2026 (package `training/ntutvla`, family
 keep their tags (`demo/out/ntut_*`) and their records' family `ntutvla`,
 which the codec still classifies as this model's.
 
-Status: v2, 2026-10-30. Code in `training/aiotvla/`, served by
+Status: v6, 2026-10-30. Code in `training/aiotvla/`, served by
 `demo/vla_server_foreign.py --model aiotvla`, tested by `tests/test_aiotvla.py`.
 
 ## Why build one
@@ -203,6 +203,93 @@ recordings: 66,974 training samples. The DAgger windows were flown in the
 are the expert's own commands either way. `--perturb-vla-rate-yaw rate`
 (follow_vlm, run_citylife_follow.ps1 `-PerturbVlaRateYaw`) flies the next
 round's windows the way the model is flown.
+
+## v3 and on: the FrontCamera, a longer memory, the hand-written follow's start gate (30 Oct)
+
+**Why the FrontCamera.** In the v2 flights the model's own estimate of the
+car's bearing (its auxiliary output) read -5 deg while the truth was
+-20 deg at the corners it lost, and its turn followed that. v3 on reads the
+detector's FrontCamera (768x432, pitched -20 deg, the frame the hand-written
+follow's detector reads), recorded with `follow_vlm --record-vla-front-source
+detector` and sent with `vla_fly --vla-front-source detector`. v2 and earlier
+read VLAFront (256x256, level). The history grew to 10 slots back to 5.5 s
+(`train --long-history`).
+
+**Which grounder.** On 571 recorded FrontCamera frames with the car in view,
+the car's TRUE position was projected into the frame (pose, 90 deg HFOV,
+pitch -20 deg; the scratchpad's `aiot/eval_backbones.py`), so the
+reference is not the expert's own OWL-ViT detector. A hit is a peak within
+3 deg of bearing and 12 % of the frame height:
+
+| backbone | hit rate | bearing error p50 / p90 | model time (RTX 4090) |
+|---|---|---|---|
+| OWL-ViT B/32 (in use) | 0.751 | 2.2 / 3.5 deg | 32 ms |
+| OWLv2 B/16 | 0.690 | 1.5 / 4.4 deg | 139 ms |
+| Grounding DINO tiny | 0.800 | 0.5 / 3.0 deg | 141 ms |
+| Grounding DINO base | 0.797 | 0.5 / 3.1 deg | 171 ms |
+
+Grounding DINO is the most precise but over four times slower. OWL-ViT's
+2.2 deg median is mostly its 3.75 deg patch grid. OWL-ViT stays; OWLv2 is
+wired in as an option (`build_cache --backbone`).
+
+**The start gate.** The hand-written follow's start gate accepts a car
+within 30 m: every flight of 27-29 Oct records max_range_m 30.0 and refused
+24-44 candidates as too far. The matrix flew every pure-VLA flight at
+`--acquire-max-range-m 60`, which lets a flight begin 60 m behind a car
+that is driving away. From v3 on, AIOT-VLA flies vla_fly's default,
+30 m, the hand-written follow's gate. aiot_v3_01 was flown at 60 m: early
+start, acquired at 62.7 m, score 0.0.
+
+**Data.** Batch R1 (6 recordings of 600 s on the FrontCamera: 2 clean
+expert, 4 strong DART) and batch R2 (6 DAgger, v3 flying 4-8 s windows,
+about 46 % of the ticks): 56,005 captures. The planner ticks of the
+hand-written follow (`plan` mode, its street-map search after it lost the
+car; 3,066 of 4,660 ticks in aiot_rec_d04, where DART knocked it off for
+good) are left out (`build_labels --exclude-modes plan`).
+
+| flight | model, data | within 30 m after acquisition (all late starts) | car lost |
+|---|---|---|---|
+| aiot_v3g_01 / 02 / 03 | v3, R1 (19,211 samples) | 0.279 / 0.172 / 0.307, mean 0.253 | 62-64 s after acquisition |
+| aiot_v4_01 / 02 / 03 | v4, R1+R2 (46,071) | 0.230 / 0.264 / 0.298, mean 0.264 | 62-63 s after acquisition |
+
+All six flights lost the car at the same place: the aircraft near (52, 106),
+the car turning at (80, 120), beside a roadside tree. The hand-written
+follow passes that corner 21-24 m behind the car, already in the
+intersection. AIOT-VLA arrives about 30 m behind and 15 m short of it,
+because when the car stops at the light before the corner it stops too,
+about 30 m back, where the expert closes to about 20 m. The car then turns
+behind the tree. Offline, on the hold-out expert flight, v4 has no speed bias
+by range (at 30-40 m: label 4.06 m/s, prediction 4.05 m/s). The expert
+never stands 30 m behind a stopped car, so the model has no label for it.
+That is the covariate shift DAgger exists for; batch R3 lets v4 fly 15-25 s
+windows (about 70 % of the ticks).
+
+| flight | model, data | within 30 m after acquisition (all late starts) | car lost |
+|---|---|---|---|
+| aiot_v5_01 / 02 / 03 | v5, R1+R2+R3 (64,874), on-policy samples x2 | 0.211 / 0.189 / 0.191, mean 0.197 | 39-40 s after acquisition, earlier, on the straight before the light (aircraft (44, 53)) |
+| aiot_v6_01 / 02 / 03 | v6, R1+R2 (as v4) + the backbone's box per slot | 0.258 / 0.269 / 0.268, mean 0.265 | 60-63 s after acquisition, the same corner |
+
+**R3 made it worse.** In 15-25 s windows v4 often lost the car, and the
+expert's labels after that are search; 3,855 of aiot_rec_h06's 4,660 ticks
+were planner ticks and were left out. v5, trained on it with the on-policy
+samples weighted x2, lost the car sooner.
+
+**Box features.** OWL-ViT's own box at the phrase's best patch (cx, cy, w,
+h) now enters each slot (`train --box-features`, `HeadConfig.n_stats` 8). Its
+width falls with range: median 0.072 at 15-20 m, 0.057 at 20-25 m, 0.049 at
+25-30 m, 0.045 at 30-40 m (aiot_rec_e02; 1/width against true range,
+correlation 0.6). On v4's data it gave the same mean as v4 but three
+flights within 0.011 of each other.
+
+**What still fails, at the one corner.** aiot_v6_01, set against the clean
+expert flight aiot_rec_e02 at the same place:
+- Expert: 4.4-4.7 m/s, 20-22 m behind, no Shield repair. AIOT-VLA: slows
+  to 1.1-1.9 m/s while the car keeps 3.5 m/s, with the Shield repairing
+  four times, so the gap opens from 20 m to 35 m.
+- When the car turns at the intersection, the expert speeds up to
+  4.4-4.7 m/s and cuts the corner. AIOT-VLA stops (0.1 m/s) 28 m back.
+- AIOT-VLA then heads for the corner late, the Shield holds it off the
+  roadside tree there, and the car is gone.
 
 ## Limits
 

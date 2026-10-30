@@ -1038,7 +1038,8 @@ class AIOTVLAModel:
         self.bb.set_pca(ck["pca_mean"], ck["pca_comps"])
         self.head = AIOTVLAHead(HeadConfig(**ck["config"])).to(device).eval()
         self.head.load_state_dict(ck["state_dict"])
-        self.ring = NC.Ring(offsets=offsets, tol=tol)
+        self.with_box = int(ck["config"].get("n_stats", 4)) == 8
+        self.ring = NC.Ring(offsets=offsets, tol=tol, with_box=self.with_box)
         self.checkpoint = {"epoch": ck.get("epoch"), "holdout": ck.get("holdout"),
                            "data": {k: ck["data"][k] for k in ("samples_sha256", "n_train",
                                                               "n_holdout")},
@@ -1048,10 +1049,13 @@ class AIOTVLAModel:
     def generate(self, image, inputs: dict) -> dict:
         np, torch, NC = self.np, self.torch, self.NC
         t0 = time.perf_counter()
-        g, a = self.bb.maps([np.asarray(image)], [inputs["instruction"]])
+        out = self.bb.maps([np.asarray(image)], [inputs["instruction"]],
+                           with_boxes=self.with_box)
+        g, a = out[0], out[1]
+        box = out[2][0, 0] if self.with_box else None
         _sync(torch, self.device)
         t1 = time.perf_counter()
-        why = self.ring.push(inputs["t_capture"], inputs["pose"], g[0, 0], a[0])
+        why = self.ring.push(inputs["t_capture"], inputs["pose"], g[0, 0], a[0], box)
         s = self.ring.slots()
         dev = self.device
         x = [torch.from_numpy(s[k]).unsqueeze(0).to(dev) for k in ("g", "a", "stats", "proprio")]

@@ -248,6 +248,27 @@ def test_command_labels_never_ask_to_fly_backwards():
     assert s[0]["label_raw"]["fwd_m"] == 0.0     # the step format has no reverse
 
 
+def test_ring_box_features_follow_their_capture():
+    """with_box (HeadConfig.n_stats 8): each slot's stats end with the box of
+    the capture in that slot, as the trainer stacks B[h]; an empty slot is
+    all zeros."""
+    t, poses = _track(n=12)
+    r = core.Ring(offsets=core.LONG_HIST_OFFSETS_S, with_box=True)
+    g, a = np.zeros(core.N_PATCHES), np.zeros((core.N_PATCHES, core.PCA_DIM))
+    boxes = [np.array([0.1 * i, 0.5, 0.02 * i, 0.03], np.float32) for i in range(len(t))]
+    for i in range(len(t)):
+        r.push(t[i], {"x": poses[i, 0], "y": poses[i, 1], "up": poses[i, 2],
+                      "yaw_rad": poses[i, 3]}, g, a, boxes[i])
+    s = r.slots()
+    assert s["stats"].shape == (len(core.LONG_HIST_OFFSETS_S), 8)
+    for k, j in enumerate(s["idx"]):
+        if j >= 0:
+            assert np.allclose(s["stats"][k, 4:], boxes[j])
+        else:
+            assert not s["stats"][k].any()
+    assert core.Ring().slots.__func__ is core.Ring.slots      # default: 4 stats
+
+
 # ------------------------------------------------------------- 3. the trainer
 
 def test_batched_grounding_stats_and_decode_equal_core():

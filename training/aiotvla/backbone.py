@@ -98,24 +98,35 @@ class OwlBackbone:
         return x.to(self.dtype)
 
     def _feats(self, images, flip: bool = False):
+        """(patch features (B, N, D), the same as a (B, h, w, D) feature map)."""
         torch = self.torch
         px = self.pixels(images, flip=flip)
         with torch.no_grad():
             fm = self.model.image_embedder(pixel_values=px)[0]
         b, h, w, d = fm.shape
-        return fm.reshape(b, h * w, d)
+        return fm.reshape(b, h * w, d), fm
 
-    def maps(self, images, phrases, with_class: bool = False, flip: bool = False):
+    def maps(self, images, phrases, with_class: bool = False, flip: bool = False,
+             with_boxes: bool = False):
         """(G (B, Q, 576) float32, A (B, 576, P) float32 or None before a PCA
-        is set[, class embeds (B, 576, 512) when with_class])."""
+        is set[, class embeds (B, 576, 512) when with_class][, boxes (B, Q, 4)
+        when with_boxes]). A box is the model's own box head (cx, cy, w, h,
+        normalised to the square it was fed) at the phrase's best patch on
+        the model's native grid: its size is the car's range, its change the
+        car pulling away or closing in (2026-10-30, aiot_v5_01)."""
         torch = self.torch
-        feats = self._feats(images, flip=flip)
+        feats, fmap = self._feats(images, flip=flip)
         q = self.text_embeds(phrases)
         b = feats.shape[0]
         qe = q.unsqueeze(0).expand(b, -1, -1)
         qm = torch.ones(qe.shape[:2], device=self.device, dtype=torch.long)
         with torch.no_grad():
             logits, cls = self.model.class_predictor(feats, qe, qm)
+            boxes = None
+            if with_boxes:
+                pb = self.model.box_predictor(feats, fmap).float()          # (B, N, 4)
+                best = logits.float().argmax(dim=1)                          # (B, Q)
+                boxes = torch.gather(pb, 1, best.unsqueeze(-1).expand(-1, -1, 4))
         logits, cls = logits.float(), cls.float()
         n = int(round(logits.shape[1] ** 0.5))
         if n != GRID_OUT:
@@ -134,6 +145,8 @@ class OwlBackbone:
         out = (g, a)
         if with_class:
             out = out + (cls.cpu().numpy(),)
+        if with_boxes:
+            out = out + (boxes.cpu().numpy(),)
         return out
 
     # -- the appearance projection ---------------------------------------------- #

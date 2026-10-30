@@ -217,9 +217,13 @@ class Ring:
     new history (a new flight, a stall): push() returns why."""
 
     def __init__(self, maxlen: int = RING_MAXLEN, gap_s: float = RING_GAP_S,
-                 offsets=HIST_OFFSETS_S, tol: float = HIST_TOL_S):
+                 offsets=HIST_OFFSETS_S, tol: float = HIST_TOL_S, with_box: bool = False):
         self.maxlen, self.gap_s = int(maxlen), float(gap_s)
         self.offsets, self.tol = tuple(float(o) for o in offsets), float(tol)
+        # the head's stats are grounding_stats (4) and, with_box, the
+        # backbone's box (cx, cy, w, h) of the capture (4): HeadConfig.n_stats
+        self.with_box = bool(with_box)
+        self.b: list[np.ndarray] = []
         self.t: list[float] = []
         self.poses: list[tuple] = []
         self.g: list[np.ndarray] = []
@@ -229,9 +233,10 @@ class Ring:
         return len(self.t)
 
     def clear(self) -> None:
-        self.t, self.poses, self.g, self.a = [], [], [], []
+        self.t, self.poses, self.g, self.a, self.b = [], [], [], [], []
 
-    def push(self, t: float, pose: dict, g: np.ndarray, a: np.ndarray) -> str | None:
+    def push(self, t: float, pose: dict, g: np.ndarray, a: np.ndarray,
+             box: np.ndarray | None = None) -> str | None:
         why = None
         if self.t:
             if t < self.t[-1]:
@@ -245,8 +250,9 @@ class Ring:
         self.poses.append((p.x, p.y, p.up, p.yaw))
         self.g.append(np.asarray(g, dtype=np.float32))
         self.a.append(np.asarray(a, dtype=np.float32))
+        self.b.append(np.zeros(4, np.float32) if box is None else np.asarray(box, np.float32))
         if len(self.t) > self.maxlen:
-            for lst in (self.t, self.poses, self.g, self.a):
+            for lst in (self.t, self.poses, self.g, self.a, self.b):
                 del lst[0]
         return why
 
@@ -265,8 +271,13 @@ class Ring:
         for s, j in enumerate(idx):
             if j >= 0:
                 g[s], a[s] = self.g[j], self.a[j]
-        stats = np.stack([grounding_stats(g[s]) if idx[s] >= 0 else np.zeros(4, np.float32)
-                          for s in range(k)])
+        ns = 8 if self.with_box else 4
+        stats = np.zeros((k, ns), np.float32)
+        for s, j in enumerate(idx):
+            if j >= 0:
+                stats[s, :4] = grounding_stats(g[s])
+                if self.with_box:
+                    stats[s, 4:] = self.b[j]
         valid = np.array([j >= 0 for j in idx])
         return {"g": g, "a": a, "stats": stats, "proprio": proprio(poses, vel, yr, idx),
                 "valid": valid, "idx": idx, "n_valid": int(valid.sum())}

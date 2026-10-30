@@ -30,6 +30,8 @@ class HeadConfig:
     n_layers: int = 2
     n_heads: int = 4
     dropout: float = 0.1
+    # 4: core.grounding_stats; 8: and the backbone's box (cx, cy, w, h)
+    n_stats: int = 4
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -44,7 +46,7 @@ class SlotEncoder(nn.Module):
             nn.Conv2d(48, 64, 3, stride=2, padding=1), nn.GELU(),      # 12 x 12
             nn.Conv2d(64, 96, 3, stride=2, padding=1), nn.GELU(),      # 6 x 6
         )
-        self.proj = nn.Linear(96 * 36 + 4 + core.PROPRIO_DIM, cfg.d_model)
+        self.proj = nn.Linear(96 * 36 + cfg.n_stats + core.PROPRIO_DIM, cfg.d_model)
         self.norm = nn.LayerNorm(cfg.d_model)
 
     def forward(self, g, a, stats, pr):
@@ -54,8 +56,8 @@ class SlotEncoder(nn.Module):
         x = torch.cat([((g + G_SHIFT) / G_SCALE).reshape(n, 1, s, s),
                        a.permute(0, 2, 1).reshape(n, -1, s, s)], dim=1)
         h = self.conv(x).flatten(1)
-        st = torch.stack([stats[:, 0], stats[:, 1], (stats[:, 2] + G_SHIFT) / G_SCALE,
-                          stats[:, 3]], dim=1)
+        st = torch.cat([torch.stack([stats[:, 0], stats[:, 1], (stats[:, 2] + G_SHIFT) / G_SCALE,
+                                     stats[:, 3]], dim=1), stats[:, 4:]], dim=1)
         return self.norm(self.proj(torch.cat([h, st, pr], dim=1)))
 
 

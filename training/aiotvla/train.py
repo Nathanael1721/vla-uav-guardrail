@@ -70,7 +70,8 @@ class Data:
     and every sample's history rows, proprio and targets."""
 
     def __init__(self, labels: Path, cache: Path, device: str, offsets=core.HIST_OFFSETS_S,
-                 runs: list[str] | None = None):
+                 runs: list[str] | None = None, onpolicy_weight: float = 1.0,
+                 boxes: bool = False):
         import torch
         self.torch = torch
         samples = [json.loads(l) for l in (labels / "samples.jsonl").read_text(
@@ -79,7 +80,8 @@ class Data:
             keep = set(runs)
             samples = [s for s in samples if s["run"] in keep]
         runs = sorted({s["run"] for s in samples})
-        G, Gm, A, Am = [], [], [], []
+        G, Gm, A, Am, B, Bm = [], [], [], [], [], []
+        self.boxes = bool(boxes)
         offset, self.run_info = 0, {}
         rows_of = {}
         meta_of = {}
@@ -92,6 +94,11 @@ class Data:
             Gm.append(np.load(d / "Gm.npy", mmap_mode="r")[:, vi, :].astype(np.float16))
             A.append(np.asarray(np.load(d / "A.npy", mmap_mode="r")))
             Am.append(np.asarray(np.load(d / "Am.npy", mmap_mode="r")))
+            if self.boxes:
+                if not (d / "B.npy").exists():
+                    raise SystemExit(f"{d}: no B.npy - re-cache the run (build_cache --force)")
+                B.append(np.load(d / "B.npy", mmap_mode="r")[:, vi, :].astype(np.float16))
+                Bm.append(np.load(d / "Bm.npy", mmap_mode="r")[:, vi, :].astype(np.float16))
             rows_of[r] = {int(i): k for k, i in enumerate(meta["i"])}
             meta_of[r] = meta
             self.run_info[r] = {"offset": offset, "n": int(info["n"]), "object": info["object"],
@@ -105,6 +112,10 @@ class Data:
         self.Gm = torch.from_numpy(np.concatenate(Gm + [zero_g])).to(device)
         self.A = torch.from_numpy(np.concatenate(A + [zero_a])).to(device)
         self.Am = torch.from_numpy(np.concatenate(Am + [zero_a])).to(device)
+        if self.boxes:
+            zero_b = np.zeros((1, 4), np.float16)
+            self.B = torch.from_numpy(np.concatenate(B + [zero_b])).to(device)
+            self.Bm = torch.from_numpy(np.concatenate(Bm + [zero_b])).to(device)
         self.zero_row = offset
         hist, pr, prm, tgt, aux, split, w, lab, ids = [], [], [], [], [], [], [], [], []
         skipped = 0
@@ -129,7 +140,11 @@ class Data:
             brg = math.radians(s["box"]["bearing_deg"]) if vis else 0.0
             aux.append([1.0 if vis else 0.0, brg])
             split.append(s["split"] == "train")
-            w.append(1.0 + 2.0 * min(abs(L["dpsi_rad"]) / 0.15, 1.0))
+            # a capture whose executed command was not the expert's (a DART
+            # offset or a VLA-flown DAgger window): a state the expert alone
+            # would not have reached, weighted by --onpolicy-weight
+            w.append((1.0 + 2.0 * min(abs(L["dpsi_rad"]) / 0.15, 1.0))
+                     * (onpolicy_weight if s.get("executed_differs") else 1.0))
             ids.append(s["id"])
         self.skipped = skipped
         self.hist = torch.tensor(hist, dtype=torch.long, device=device)
@@ -161,6 +176,11 @@ class Data:
         a = torch.where(mirror.view(-1, 1, 1, 1), self.Am[h], self.A[h]).float()
         b, k = h.shape
         st = torch_grounding_stats(torch, g.reshape(b * k, -1)).reshape(b, k, 4)
+        if self.boxes:
+            box = torch.where(m3, self.Bm[h], self.B[h]).float()
+            st = torch.cat([st, box], dim=2)
+        # an empty slot's stats are zero, as the server's Ring gives them
+        st = st * (h != self.zero_row).unsqueeze(-1).to(st.dtype)
         pr = torch.where(m3, self.prm[idx], self.pr[idx])
         valid = h != self.zero_row
         lab = self.lab[idx].clone()
@@ -233,6 +253,12 @@ def main(argv=None) -> int:
     ap.add_argument("--seed", type=int, default=20261029)
     ap.add_argument("--device", default="cuda")
     ap.add_argument("--init", default=None, help="a head.pt to start from (a DAgger round)")
+    ap.add_argument("--onpolicy-weight", type=float, default=1.0,
+                    help="loss weight x this for captures whose executed command was not the "
+                         "expert's (build_labels executed_differs: DART, DAgger windows)")
+    ap.add_argument("--box-features", action="store_true",
+                    help="feed the backbone's box (cx, cy, w, h) per slot (HeadConfig.n_stats 8; "
+                         "the cache needs B.npy)")
     ap.add_argument("--long-history", action="store_true",
                     help="core.LONG_HIST_OFFSETS_S (10 slots, 5.5 s) instead of the 8-slot 2.5 s")
     ap.add_argument("--runs", nargs="*", default=None,
@@ -248,7 +274,8 @@ def main(argv=None) -> int:
     out.mkdir(parents=True, exist_ok=True)
     t0 = time.time()
     offsets = core.LONG_HIST_OFFSETS_S if args.long_history else core.HIST_OFFSETS_S
-    data = Data(Path(args.labels), Path(args.cache), args.device, offsets, args.runs)
+    data = Data(Path(args.labels), Path(args.cache), args.device, offsets, args.runs,
+                args.onpolicy_weight, args.box_features)
     backbones = {json.loads((Path(args.cache) / r / "info.json").read_text(
         encoding="utf-8"))["backbone"] for r in data.run_info}
     if len(backbones) != 1:
@@ -266,7 +293,7 @@ def main(argv=None) -> int:
     ho = torch.nonzero(~data.train).squeeze(1)
     print(f"[data] {len(tr)} train / {len(ho)} hold-out samples, {len(data.run_info)} runs, "
           f"{data.skipped} skipped, loaded in {time.time() - t0:.1f} s")
-    cfg = HeadConfig(n_slots=len(offsets))
+    cfg = HeadConfig(n_slots=len(offsets), n_stats=8 if args.box_features else 4)
     head = AIOTVLAHead(cfg).to(args.device)
     if args.init:
         ck = torch.load(args.init, map_location=args.device)
