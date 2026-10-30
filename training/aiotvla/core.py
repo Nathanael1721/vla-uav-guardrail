@@ -334,11 +334,17 @@ MEM_CONTRAST_MIN = 0.0
 # A checkpoint records the table it was trained with (memory_constants) and
 # the server reads the contrast phrases from it, so an entry added here does
 # not change what an older checkpoint grounds.
+# Chosen on the 31 Oct recordings against each target's truth (scratchpad
+# aiot/contrast_eval2.py; the box at the best patch within 3 deg of the
+# truth = a hit): "a white car" 0.957 of hits pass the logit alone and 0.752
+# of the frames without the car, 0.629 and 0.155 with these; "a box truck"
+# 0.874 / 0.890 alone, 0.743 / 0.161 (not against "a white car": the trucks
+# are white); "a black car" 0.883 / 0.706 alone, 0.653 / 0.059.
 CONTRAST = {
     "a red car": ("a white car", "a blue car"),
-    "a white car": ("a red car", "a blue car", "a black car", "a box truck"),
-    "a black car": ("a red car", "a white car", "a blue car"),
-    "a box truck": ("a red car", "a white car", "a blue car", "a black car"),
+    "a white car": ("a blue car", "a black car", "a box truck"),
+    "a black car": ("a red car", "a blue car"),
+    "a box truck": ("a red car", "a blue car", "a black car"),
 }
 MEM_RANGE_M = (3.0, 70.0)
 MEM_MIN_DEPRESSION_RAD = math.radians(2.0)
