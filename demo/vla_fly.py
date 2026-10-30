@@ -310,6 +310,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
                          "start, a long loss), a pass of sightings survives inferences with "
                          "no acceptable candidate this long (follow_vlm.Reacquirer gap_s); "
                          "0 = follow_vlm's rule, one empty frame ends it")
+    ap.add_argument("--gate-truth", action="store_true",
+                    help="M3: the detector the start gate and re-acquisition judge is fed the "
+                         "level car's TRUE position (follow_vlm --teacher-truth's box), for "
+                         "targets the hand-written detector cannot find (a white or a black "
+                         "car, 30 Oct). The VLA flies on its own perception; metrics.json "
+                         "params.follow.gate_truth says so")
     ap.add_argument("--no-identity", action="store_true",
                     help="M3: no identity check on the detector's candidates (follow_vlm "
                          "--identity: physical size from depth, the street mask)")
@@ -1146,7 +1152,8 @@ def follow_params(args, plan: dict | None) -> dict:
             "identity": None if plan is None else dict(plan["identity"]),
             "start_gate": None if plan is None else plan["start_gate"],
             "lapse_s": LAPSE_S, "stuck_reset": not args.no_stuck_reset,
-            "close_stall_s": args.close_stall_s}
+            "close_stall_s": args.close_stall_s,
+            "gate_truth": bool(getattr(args, "gate_truth", False))}
 
 
 def follow_measured(acq_box: dict, resets: list[dict], loop) -> dict:
@@ -1570,6 +1577,7 @@ async def _fly(args, holder: dict) -> int:
     pre_mission: dict = {}
     car = car_truth = None
     level_car = None
+    gate_truth_box: dict = {}
     level_truth_errors: list[str] = []
     resets: list[dict] = []                    # perception resets (stuck, close_stall)
     identity_rec: dict = {"on": False, "hash": None}
@@ -1660,10 +1668,18 @@ async def _fly(args, holder: dict) -> int:
                     detector_hint.set_start_gate((gate["n"], gate["width_frac"]))
             identity_rec["on"] = id_cfg is not None
             identity_rec["hash"] = None if id_cfg is None else id_cfg["hash"]
+            # --gate-truth: the box is the level car's true position, from the
+            # level car resolved below (gate_truth_box holds its truth function)
+            teacher = None
+            if getattr(args, "gate_truth", False):
+                teacher = (lambda t_cap: gate_truth_box["f"](t_cap)
+                           if "f" in gate_truth_box else None)
             grounder = FV.Grounder(obs, args.object, thresh=args.det_thresh,
                                    log_path=out / "detections.jsonl",
                                    colour_min=args.colour_min, lock=det_lock,
-                                   identity=id_cfg)
+                                   identity=id_cfg, teacher=teacher,
+                                   teacher_dims=(FV.subject_width(args.object)[0],
+                                                 FV.subject_height_m(args.object)))
             grounder_box["g"] = grounder
             grounder.start()
             if id_cfg is not None:
@@ -1734,6 +1750,14 @@ async def _fly(args, holder: dict) -> int:
                                        f"({type(exc).__name__}: {exc})") from None
             print(f"[car] following the level's {args.level_car} ({args.object!r}) at "
                   f"({level_car.pos[0]:.1f}, {level_car.pos[1]:.1f}) - truth for scoring only")
+            if getattr(args, "gate_truth", False):
+                # the start gate's box on the level car's true position (with
+                # several tags, the nearest the scorer last found; the first
+                # before the loop)
+                gate_truth_box["f"] = FV.teacher_truth_fn(level_car)
+                print(f"[gate] --gate-truth: the start gate and re-acquisition judge "
+                      f"{args.level_car}'s TRUE position; the VLA flies on its own "
+                      f"perception")
 
         # ---- the warm-up gate: one inference on a live pair, before arming --
         warmup = await _warmup(args, drone, obs, frames, client, hint_src, State, quat_yaw,

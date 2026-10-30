@@ -124,6 +124,21 @@ def test_the_height_follows_the_noun_and_the_flag_needs_a_level_car():
     assert '"--teacher-truth draws the subject' in src and '"teacher_truth": (' in src
 
 
+def test_vla_fly_can_gate_on_the_truth_and_says_so():
+    """vla_fly --gate-truth: the start gate's detector is the teacher's box
+    (for targets the hand-written detector cannot find); params.follow
+    records it, and it is off by default."""
+    import vla_fly as VF
+    ap = VF.build_arg_parser()
+    on = ap.parse_args(["--mission", "follow", "--gate-truth"])
+    off = ap.parse_args(["--mission", "follow"])
+    assert on.gate_truth and not off.gate_truth
+    for a in (on, off):
+        a.follow_executor = True
+    assert VF.follow_params(on, None)["gate_truth"] is True
+    assert VF.follow_params(off, None)["gate_truth"] is False
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     failed = 0
