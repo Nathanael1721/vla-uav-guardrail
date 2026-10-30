@@ -5,7 +5,8 @@ Named NTUT-VLA until 30 Oct 2026 (package `training/ntutvla`, family
 keep their tags (`demo/out/ntut_*`) and their records' family `ntutvla`,
 which the codec still classifies as this model's.
 
-Status: v7, 2026-10-30 (mean 0.968 within 30 m after acquisition, 3 flights).
+Status: v8, 2026-10-31 (within 30 m after acquisition, 3 flights each: the red
+car 0.978, a white car 0.907, a box truck 0.615, a black car 0.104).
 Code in `training/aiotvla/`, served by `demo/vla_server_foreign.py --model
 aiotvla`, tested by `tests/test_aiotvla.py` and `tests/test_vla_lateral_step.py`.
 
@@ -388,17 +389,110 @@ servo, no detector box from the flight's own detector and no compass hint is
 an input. The memory is a classical filter inside the VLA package (the server),
 fed only by the backbone's own box of the object words and the capture pose.
 
+## v8: other targets by their words (30-31 Oct)
+
+**The teacher.** The hand-written follow is AIOT-VLA's expert, and it is a
+red-car follow. Flown on the level's white car (Car_22) it stayed within 30 m
+on 0.182 of its ticks and spent 0.609 of them lost in its planner; on the black
+car (Car_07), 0.069 and 0.784. "A white car" also grounds on white facades.
+A model cannot learn a target from a teacher that does not follow it, so the
+other targets' labels come from a PRIVILEGED teacher, `follow_vlm
+--teacher-truth`: each detector frame's boxes are replaced by one box drawn
+where the level car truly is (its ground point and a point its class height
+above it, through the capture's camera), with its true range and bearing as
+identity's features. Everything after the detector - the estimator, the
+stand-off and yaw laws, the fence, the Shield - flies as in any follow. Its
+flights are never follow results (metrics.json `teacher_truth`). The student
+never sees the truth: its inputs are the frames, the object words and the
+pose, as before.
+
+| recording (600 s) | target | kind | teacher within 30 m |
+|---|---|---|---|
+| aiot_tch_w01 / w02 | a white car (Car_22) | teacher | 0.865 / 0.878 |
+| aiot_tch_w03 / w04 | a white car | teacher + DART | 0.901 / 0.905 |
+| aiot_tch_k01 | a black car (Car_07) | teacher | 0.695 |
+| aiot_tch_t01 / t02 | a box truck (Car_00) | teacher | 0.797 / 0.808 |
+| aiot_tch_t03 / t04 | a box truck | teacher + DART | 0.630 / 0.677 |
+| aiot_teach_smoke1 (180 s) | a white car | teacher | 0.997 |
+
+The black car drives at 4.83 m/s (p50; p90 5.61), above the aircraft's 5 m/s
+policy cap, so even the teacher falls 30-70 m behind; the white car drives at
+3.73 m/s and the red car at 3.20. One black recording was made; slowing Car_07
+is a level change for the user to decide.
+
+**Which phrases to contrast.** On those recordings, against each target's
+truth (a hit: the box at the phrase's best patch within 3 deg of it; the
+frames without the target in view are few, because the teacher keeps it in
+view, so the second column is rough):
+
+| phrase | logit alone: hits / frames without it | contrast phrases | with them |
+|---|---|---|---|
+| a white car | 0.957 / 0.752 | a blue car, a black car, a box truck | 0.629 / 0.155 |
+| a box truck | 0.874 / 0.890 | a red car, a blue car, a black car | 0.743 / 0.161 |
+| a black car | 0.883 / 0.706 | a red car, a blue car | 0.653 / 0.059 |
+| a red car | 0.958 / 0.219 | a white car, a blue car (v7's) | 0.950 / 0.026 |
+
+The box truck is not contrasted against "a white car": the trucks are white.
+A checkpoint records the table it trained with, and the server grounds that.
+
+**Training.** v8 = v7's recipe on 22 runs (the 12 red-car recordings of v7 and
+the 10 teacher recordings above), with the object words' OWL-ViT text
+embedding as one more token (`train --text`), and samples whose target
+memory is more than 15 m from the expert's own estimate of its subject left
+out (`--memory-agree-m 15`: 6,754 of them, the memory on another white car or
+truck or a facade). 74,688 training and 13,563 hold-out samples (aiot_rec_e02,
+aiot_tch_w02, aiot_tch_t02); 1,827,730 parameters. Hold-out: fwd_m MAE 0.062 m,
+dpsi_rad 0.0049 rad, right_m 0.033 m (correlation 0.971).
+
+**The start gate for the new targets.** vla_fly's start gate runs the
+hand-written detector, which does not find the white or the black car. The
+new targets' flights use `vla_fly --gate-truth`: the gate judges the teacher's
+box of the level car, so the flight starts when the target is within 30 m and
+in view. From then on the VLA flies on its own perception. The red car keeps
+the detector gate.
+
+**Flown.** `vla_fly` e2e, 420 s, start gate 30 m, Shield on, three flights per
+target. The headline is the share of the ticks after acquisition within 30 m
+of the instance acquired (the candidate nearest at acquisition), so a drift
+onto another truck lowers it; beside it, any candidate and the run's intended
+tag:
+
+| target (`--level-car`) | acquired, per flight | mean | any | intended |
+|---|---|---|---|---|
+| a red car (Car_10; detector gate) | 0.986, 0.972, 0.977 | 0.978 | 0.978 | 0.978 |
+| a white car (Car_22, Car_15) | 0.958, 0.874, 0.889 | 0.907 | 0.913 | 0.907 |
+| a box truck (Car_00, Car_23, Car_14) | 0.634, 0.560, 0.651 | 0.615 | 0.649 | 0.000 |
+| a black car (Car_07) | 0.042, 0.133, 0.137 | 0.104 | 0.104 | 0.104 |
+
+P0 escapes 0.0 in all twelve. The white car was Car_22 in all three flights.
+The box truck was Car_23 in all three (the nearest truck when the gate
+passed). On the red car v8 does as well as v7 (0.968) or better.
+
+What holds the other two back:
+- **The box truck follows its teacher's slack.** The teacher held the truck
+  23-27 m behind at the median against its 15.8 m stand-off, and v8 holds
+  26.9-28.1 m, so 35-44 % of the ticks are over 30 m. Car_23 drove at 3.79 m/s,
+  slower than the teacher's Car_00 (4.19): not speed. The next teacher
+  recordings for the trucks use a tighter stand-off (`-ObjectWidthM 3`, 11.9 m)
+  and DAgger windows.
+- **The black car is not learned.** One recording of a car faster than the
+  aircraft. In aiot_v8k_01 it drove south and stopped behind the aircraft, and
+  v8 flew north along the route the other targets take: the route is what the
+  data teaches when one phrase has one recording.
+
 ## Limits
 
 - Offline accuracy is not closed-loop skill. The recordings are mostly
   straight chasing, with 69 search samples in 34,510, so the model has
   seen very little of a car lost at a corner. That is the failure the
   matrix found.
-- Trained on one target (the red car) in one level. Language
-  generalisation is untested; the other targets' recordings (a white car, a
-  black car, a box truck) are the next step, and the level has two white
-  cars and three box trucks, so those phrases are ambiguous by construction
-  (`vla_fly --level-car` takes all of them).
+- One level. v8 follows the red car and a white car; a box truck and a
+  black car not yet (v8 section). The level has two white cars and three box
+  trucks, so those phrases are ambiguous by construction (`vla_fly
+  --level-car` takes all of them). A person is not a target yet: `vla_fly`
+  has no pedestrian truth.
+- The other targets' labels come from a privileged teacher, and their
+  flights start on a truth gate; the student never sees the truth.
 - Behaviour cloning compounds its own errors. DAgger rounds with this model
   as the learner are the next step (`follow_vlm --record-perturb-vla`
   accepts the aiotvla server as a foreign family).

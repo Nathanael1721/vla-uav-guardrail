@@ -16,6 +16,69 @@ shipped change and recorded as one.
 
 ## [Unreleased]
 
+### 2026-10-31 — AIOT-VLA v8 follows other targets by their words: a white car 0.907 within 30 m, the red car 0.978; a box truck 0.615 and a black car 0.104 do not yet
+
+#### Added
+- **AIOT-VLA v8**: one model for several targets. v7's recipe on 22 runs (v7's
+  12 red-car recordings and 10 teacher recordings of a white car, a black car
+  and a box truck), with the object words' OWL-ViT text embedding as one more
+  token (`train --text`, `<cache>/text.npz`), the cache re-built with six
+  phrases (`D:/vla_drone_offload/aiotvla/cache_v8`, v7's PCA), and samples whose
+  target memory is more than 15 m from the expert's own estimate left out
+  (`--memory-agree-m 15`: 6,754). 74,688 training and 13,563 hold-out samples
+  (aiot_rec_e02, aiot_tch_w02, aiot_tch_t02); 1,827,730 parameters; hold-out
+  fwd_m MAE 0.062 m, dpsi_rad 0.0049 rad, right_m 0.033 m.
+- **Contrast phrases for the new targets** (`training/aiotvla/core.py`
+  CONTRAST), chosen on the teacher recordings against each target's truth:
+  "a white car" against a blue car, a black car and a box truck (0.629 of the
+  hits pass, 0.155 of the frames without it; 0.957 and 0.752 on the logit
+  alone); "a box truck" against a red, a blue and a black car (0.743, 0.161;
+  not against "a white car": the trucks are white); "a black car" against a
+  red and a blue car (0.653, 0.059). "a red car" keeps v7's two.
+- **`vla_fly --gate-truth`**: the start gate and re-acquisition judge the
+  teacher's box of the level car, for targets the hand-written detector cannot
+  find; the VLA flies on its own perception (`params.follow.gate_truth`). The
+  new targets' flights use it; the red car keeps the detector gate.
+- Teacher recordings (`follow_vlm --teacher-truth`, 600 s): a white car
+  (aiot_tch_w01-w04: 0.865, 0.878, 0.901, 0.905 within 30 m), a black car
+  (aiot_tch_k01: 0.695), a box truck (aiot_tch_t01-t04: 0.797, 0.808, 0.630,
+  0.677). w03, w04, t03, t04 with DART.
+
+#### Flown (AIOT-VLA v8, `vla_fly` e2e, 420 s, start gate 30 m, Shield on; three flights each)
+Headline: within 30 m of the instance it acquired (the candidate nearest at
+acquisition). Also: within 30 m of any car the phrase names, and of the run's
+intended tag.
+
+| target (`--level-car`) | acquired | mean | any | intended |
+|---|---|---|---|---|
+| a red car (Car_10; detector gate) | 0.986, 0.972, 0.977 | 0.978 | 0.978 | 0.978 |
+| a white car (Car_22, Car_15) | 0.958, 0.874, 0.889 | 0.907 | 0.913 | 0.907 |
+| a box truck (Car_00, Car_23, Car_14) | 0.634, 0.560, 0.651 | 0.615 | 0.649 | 0.000 |
+| a black car (Car_07) | 0.042, 0.133, 0.137 | 0.104 | 0.104 | 0.104 |
+
+P0 escapes 0.0 in all 12. The white car was acquired as Car_22 in all three
+flights; the box truck as Car_23 (the intended Car_00 never came within 30 m
+first). On the red car v8 is v7's equal or better (v7: 0.968).
+
+#### Found
+- **The box truck follows its teacher's slack.** The teacher held the truck
+  23-27 m behind at the median against a 15.8 m stand-off, and v8 holds it
+  26.9-28.1 m behind, so 35-44 % of its ticks are over 30 m, with 72-200
+  Shield repair ticks a flight. Car_23 drove at 3.79 m/s (p50) in those flights, the
+  teacher's Car_00 at 4.19: not a speed problem.
+- **The black car is not learned.** One recording, of a car faster than the
+  aircraft (4.83 m/s p50 against the 5 m/s cap). In aiot_v8k_01 the black car
+  drove south and stopped behind the aircraft, and v8 flew north
+  along the route every other target takes. Slowing Car_07 is a level change
+  for the user to decide.
+
+#### Limits
+- One level; three flights per target; the white car and the box truck are
+  ambiguous phrases in this level and are scored against every candidate.
+- The new targets' start gate is the truth (`--gate-truth`); after it the
+  model flies on its own perception.
+- Not KPI-grade (simple_flight on the city rail, no hil).
+
 ### 2026-10-30 (night) — the hand-written follow cannot teach a white or a black car (0.182 and 0.069 within 30 m); a privileged teacher (`follow_vlm --teacher-truth`) follows the white car at 0.997 and records the other targets' training labels
 
 #### Found
