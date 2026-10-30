@@ -115,6 +115,8 @@ param(
     [double]$TruthPeriod = 0.5,         # s between pose polls; see the note below
     [string]$Tag     = "citylife_follow",
     [string]$LevelCar = "",             # e.g. Car_10: follow a car the level drives
+    [switch]$TeacherTruth,              # --teacher-truth: TRAINING LABELS ONLY - the level
+                                        # car's true position replaces the detector's boxes
     [double]$ObjectWidthM = 0,          # >0: --object-width-m (the stand-off of a level
                                         # vehicle is --want-width 0.16 of this width;
                                         # 0: from the words, a box truck's 6 m = 23.7 m)
@@ -449,6 +451,7 @@ if ($LevelCar) {
     $a += @("--level-car", $LevelCar, "--want-width", "0.16")
     # the 4 m car calibration for any level vehicle (-ObjectWidthM 4): 15.8 m
     if ($ObjectWidthM -gt 0) { $a += @("--object-width-m", "$ObjectWidthM") }
+    if ($TeacherTruth) { $a += @("--teacher-truth") }
     # Only a NEAR car is a start: acquired at 140 m it was 16 px, driving away
     # at 3.2 m/s from an aircraft capped at 4 m/s, and was never closed on.
     # The car passes the start point once a lap, so the gate waits for that.

@@ -332,6 +332,45 @@ SUBJECT_WIDTH_M = {
 }
 SUBJECT_WIDTH_DEFAULT = 4.0
 
+# The subject's HEIGHT by policy class, metres: only --teacher-truth reads it
+# (the box it draws from the subject's true ground point up to this height).
+SUBJECT_HEIGHT_M = {"pedestrian": 1.7, "cyclist": 1.7, "motorcycle": 1.4, "car": 1.5,
+                    "van": 2.0, "truck": 3.2, "bus": 3.2}
+SUBJECT_HEIGHT_DEFAULT = 1.5
+
+
+def subject_height_m(query: str) -> float:
+    """The --teacher-truth box's height for the words (subject_width's class)."""
+    return SUBJECT_HEIGHT_M.get(subject_width(query)[1], SUBJECT_HEIGHT_DEFAULT)
+
+
+def teacher_truth_fn(car, max_ahead_s: float = 1.0):
+    """f(t_capture) -> (north, east) of `car` (a level car, .pos) at that
+    moment, for --teacher-truth: its last polled position carried forward at
+    the velocity of its last two DIFFERENT polls (the level is polled at most
+    every --level-truth-period, 0.5 s: 2 m stale at 4 m/s), at most
+    `max_ahead_s` ahead; None before the first poll. Called from the
+    detector's thread only (its history is that thread's)."""
+    hist = []
+
+    def f(t_cap=None):
+        pos = getattr(car, "pos", None)
+        if pos is None:
+            return None
+        now = time.time()
+        p = (float(pos[0]), float(pos[1]))
+        if not hist or hist[-1][1:] != p:
+            hist.append((now, p[0], p[1]))
+            del hist[:-2]
+        tq = now if t_cap is None else float(t_cap)
+        if len(hist) == 2 and 0.05 < hist[1][0] - hist[0][0] < 3.0:
+            dt0 = hist[1][0] - hist[0][0]
+            vx, vy = (hist[1][1] - hist[0][1]) / dt0, (hist[1][2] - hist[0][2]) / dt0
+            dt = min(max(tq - hist[1][0], -0.5), max_ahead_s)
+            return hist[1][1] + vx * dt, hist[1][2] + vy * dt
+        return hist[-1][1], hist[-1][2]
+    return f
+
 # HOW FAST THE SUBJECT CAN POSSIBLY BE GOING, by policy class, m/s.
 #
 # The estimator is a constant-velocity filter and knows nothing about what it
@@ -3145,7 +3184,18 @@ class Grounder:
                  jump_frac: float = 0.35, log_path: Path | None = None,
                  colour_min: float = 0.10, lock: "TargetLock | None" = None,
                  colour_mask: bool = True, legacy_sat: bool = False,
-                 identity: dict | None = None, negatives: list | None = None):
+                 identity: dict | None = None, negatives: list | None = None,
+                 teacher=None, teacher_dims: tuple = (4.0, 1.5)):
+        # --teacher-truth (teacher_truth_fn; 2026-10-30): a TEACHER for
+        # training labels, never a follow result. Each frame's candidates are
+        # replaced by ONE box drawn where the subject TRULY is (_teacher_box)
+        # - through walls, every frame it is in the field of view - with its
+        # true range and bearing as its identity features. The model still
+        # runs (the detector's cadence and load as in a real flight); its
+        # boxes are not used. None: every behaviour below exactly.
+        self.teacher = teacher
+        self.teacher_dims = (float(teacher_dims[0]), float(teacher_dims[1]))
+        self.n_teacher = {"in_frame": 0, "out_of_frame": 0, "no_truth": 0, "no_pose": 0}
         # NEGATIVE PHRASES (negative_suppress; 2026-10-21). Asked beside the
         # subject phrase in the same forward pass; a box that scores higher
         # for one of them than for the subject is no candidate. None or []
@@ -3488,8 +3538,22 @@ class Grounder:
                     if self.colour is not None and cm < self.colour_min:
                         continue              # right shape, wrong colour
                     cands.append((cx, cy, x1 - x0, y1 - y0, s, W, H, cm))
+            teacher_feat = None
+            if self.teacher is not None:
+                tb = self._teacher_box(cap_pose, t_capture, W, H)
+                cands = [tb[0]] if tb is not None else []
+                teacher_feat = tb[1] if tb is not None else None
             id_all, tiers, feats, det_tier, det_feat, lock_why = [], [], [], None, None, None
-            if cands and self.identity is not None:
+            if cands and self.teacher is not None:
+                # THE box, with its true range and bearing (identity's feature
+                # names, which the start gate, the re-acquirer and the
+                # estimator read); no lock: there is no other box. While
+                # acquiring the caller's gate judges it as any candidate.
+                tiers, feats = ["ok"], [teacher_feat]
+                id_all = [(cands[0], "ok", ["teacher: truth"], teacher_feat)]
+                if not acquiring:
+                    det, det_tier, det_feat = cands[0], "ok", teacher_feat
+            elif cands and self.identity is not None:
                 # Every candidate described and judged, and the HARD ones out.
                 ranked = []
                 for c in cands:
@@ -3543,6 +3607,8 @@ class Grounder:
             # box's window has no reason to hold it.
             det_range = (None if det is None or dep is None
                          else range_from_depth(dep, det))
+            if self.teacher is not None and det is not None:
+                det_range = teacher_feat["rng_h"]        # not the depth of a wall
             with self._lock:
                 # A retarget that landed inside this inference: nothing of it may
                 # be published - not the box, and not the candidate list either,
@@ -3662,6 +3728,44 @@ class Grounder:
                                  for c, tier, why, f in id_all]
                 with self.log_path.open("a", encoding="utf-8") as fh:
                     fh.write(json.dumps(rec) + "\n")
+
+    def _teacher_box(self, pose, t_cap, W: int, H: int):
+        """(8-tuple candidate, features) of the subject's TRUE position in this
+        frame (--teacher-truth), or None: no capture pose, no truth yet, or
+        outside the field of view. The box spans the subject's ground point
+        and the point teacher_dims[1] above it through the capture's camera
+        (camera_model.world_to_pixel: the mount, pitch and roll), teacher_dims[0]
+        wide at its slant range; score and colour 1. The features are what
+        identity's would be for a perfect measurement: P (north, east), rng_h,
+        r (slant), bearing (world azimuth to the subject)."""
+        if pose is None or pose.get("up") is None:
+            self.n_teacher["no_pose"] += 1
+            return None
+        p = self.teacher(t_cap)
+        if p is None:
+            self.n_teacher["no_truth"] += 1
+            return None
+        hfov = (self.identity or {}).get("hfov", CAMERA_HFOV_DEG)
+        width_m, height_m = self.teacher_dims
+        cam = (pose["x"], pose["y"], pose["up"])
+        att = (pose["yaw"], pose.get("pitch") or 0.0, pose.get("roll") or 0.0)
+        bot = _cam.world_to_pixel(p[0], p[1], 0.0, *cam, W, H, hfov, *att)
+        top = _cam.world_to_pixel(p[0], p[1], height_m, *cam, W, H, hfov, *att)
+        if bot is None or top is None:
+            self.n_teacher["out_of_frame"] += 1
+            return None
+        cx = (bot[0] + top[0]) / 2.0
+        y0, y1 = top[1], bot[1]
+        if not (0.0 <= cx < W) or y1 < 0.0 or y0 >= H:
+            self.n_teacher["out_of_frame"] += 1
+            return None
+        rng_h = math.hypot(p[0] - cam[0], p[1] - cam[1])
+        slant = math.hypot(rng_h, cam[2] - height_m / 2.0)
+        w = _cam.focal_px(W, hfov) * width_m / max(slant, 1.0)
+        self.n_teacher["in_frame"] += 1
+        feat = {"P": (float(p[0]), float(p[1])), "rng_h": rng_h, "r": slant,
+                "bearing": math.atan2(p[1] - cam[1], p[0] - cam[0])}
+        return (cx, (y0 + y1) / 2.0, w, y1 - y0, 1.0, W, H, 1.0), feat
 
     def _judge(self, c, dep, pose, W, H):
         """(tier, reasons, features) of one candidate. No capture pose, no
@@ -4156,6 +4260,11 @@ async def fly(args) -> int:
             "--pedestrians and --level-peds both place pedestrians in the "
             "truth, from two sources that do not know about each other. Pick "
             "one: the client's baked figures, or the level's own.")
+    # --teacher-truth draws the subject where it truly is: only a level car
+    # (one tagged actor) says where that is.
+    if args.teacher_truth and not args.level_car:
+        raise SystemExit("--teacher-truth draws the subject's TRUE position, which only "
+                         "a --level-car gives")
     # A car the LEVEL drives replaces the client's scripted one; with both, the
     # truth row would describe one car and the camera would be looking at two.
     if args.level_car:
@@ -4918,12 +5027,21 @@ async def fly(args) -> int:
                 planner = None
                 print(f"[search] *** junction planner unavailable "
                       f"({type(exc).__name__}: {exc}); scanning in place")
+        teacher = None
+        if args.teacher_truth:
+            teacher = teacher_truth_fn(car)
+            print(f"[teacher] --teacher-truth: the detector's boxes are replaced by "
+                  f"{args.level_car}'s TRUE position ({args.object_width_m:.1f} m wide, "
+                  f"{subject_height_m(args.object):.1f} m tall). A TEACHER for training "
+                  f"labels: this flight is not a follow result.")
         grounder = Grounder(obs, args.object, thresh=args.det_thresh,
                             log_path=out / "detections.jsonl",
                             colour_min=args.colour_min, lock=lock,
                             colour_mask=args.colour_mask,
                             legacy_sat=args.colour_legacy_sat,
-                            identity=id_cfg)
+                            identity=id_cfg, teacher=teacher,
+                            teacher_dims=(args.object_width_m,
+                                          subject_height_m(args.object)))
         grounder.start()
         live.beat(detail="loading the detector")                            # memory only
         for _ in range(600):                      # wait for the detector to load
@@ -6732,6 +6850,10 @@ async def fly(args) -> int:
     metrics = {
         "tag": args.tag, "ticks": len(traj), "object": args.object,
         "detector": DETECTOR_ID,
+        # --teacher-truth: the boxes were the subject's TRUE position, so the
+        # follow numbers below are a teacher's, never a follow result
+        "teacher_truth": (dict(grounder.n_teacher, level_car=args.level_car)
+                          if args.teacher_truth else None),
         # What flew: no VLA - a hand-written controller - and the detector
         # that steered it (the manifest's vla_model_hash says NO_VLA).
         "pilot": pilot_entry(),
@@ -7281,6 +7403,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
                     help="take the SUBJECT car from the level: the actor tag of "
                          "one car the level drives (e.g. Car_10). Needs "
                          "--no-car. Scored against that one instance.")
+    ap.add_argument("--teacher-truth", action="store_true",
+                    help="TRAINING LABELS ONLY: replace the detector's boxes by the "
+                         "--level-car's TRUE position projected into each frame "
+                         "(Grounder._teacher_box); the controller, the fence and the "
+                         "Shield fly as always. Never a follow result: metrics.json "
+                         "says teacher_truth.")
     ap.add_argument("--presence-gates-control", action="store_true",
                     help="a detection the presence verdict calls ABSENT "
                          "(implausible size, wall-sized, wrong colour) may not "

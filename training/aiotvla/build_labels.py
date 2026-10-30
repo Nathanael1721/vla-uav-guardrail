@@ -26,6 +26,11 @@ VLA-flown capture keeps its label: the expert's answer in the state the
 perturbation led to, which is the point of DART and DAgger. v0 dropped
 22,390 such samples.
 
+Each sample also carries `expert_est`, the expert's own estimate of its
+locked subject at that tick (the flight log's est_xy, when served), so the
+trainer can drop a sample whose target memory is on something else
+(train --memory-agree-m: a second white car, another box truck).
+
 A capture is a sample when its frame exists, it has an expert tick, and the
 expert has acquired the car (the first capture with a box no older than
 FRESH_S; before it the expert waits at its start gate, a behaviour vla_fly
@@ -62,10 +67,27 @@ def box_bearing_deg(det) -> float:
                                   * math.tan(math.radians(HFOV_DEG / 2.0))))
 
 
+def expert_estimates(rec: Path) -> dict:
+    """{tick: [x, y]} of the expert's served estimate (flight_log.jsonl next
+    to the recording; {} when there is none)."""
+    fl = rec.parent / "flight_log.jsonl"
+    out = {}
+    if not fl.exists():
+        return out
+    for l in fl.read_text(encoding="utf-8").splitlines():
+        if not l.strip():
+            continue
+        r = json.loads(l)
+        if r.get("est_xy") and (r.get("est") or {}).get("served") and "tick" in r:
+            out[int(r["tick"])] = [float(r["est_xy"][0]), float(r["est_xy"][1])]
+    return out
+
+
 def run_samples(tag: str, rec: Path, frame_ok: np.ndarray, rows_of: dict, split: str,
                 horizon_s: float, exclude_modes=()) -> tuple[list[dict], dict]:
     caps = sorted((json.loads(l) for l in (rec / "captures.jsonl").read_text(
         encoding="utf-8").splitlines() if l.strip()), key=lambda c: c["t_capture"])
+    est = expert_estimates(rec)
     out, why = [], {"no_frame": 0, "no_tick": 0, "before_acquire": 0, "excluded_mode": 0,
                     "kept": 0}
     acquired = False
@@ -98,7 +120,8 @@ def run_samples(tag: str, rec: Path, frame_ok: np.ndarray, rows_of: dict, split:
              "v_right": v_right,
              "mode": tick.get("mode"), "hint_kind": "fresh" if fresh else None,
              "box": {"bearing_deg": box_bearing_deg(box["det"])} if fresh else None,
-             "executed_differs": tick.get("cmd") != a}
+             "executed_differs": tick.get("cmd") != a,
+             "expert_est": est.get(int(tick["tick"])) if "tick" in tick else None}
         out.append(s)
         why["kept"] += 1
     return out, why

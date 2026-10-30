@@ -683,6 +683,41 @@ def test_command_labels_carry_the_lateral_component():
     assert core.mirror_label(lab)["right_m"] == 0.6 and core.mirror_label(lab)["fwd_m"] == 1.0
 
 
+def test_a_sample_carries_the_experts_own_estimate():
+    import json
+    import tempfile
+    from training.aiotvla.build_labels import run_samples
+    d = Path(tempfile.mkdtemp())
+    rec = d / "vla_record"
+    rec.mkdir()
+    asked = {"vx": 2.0, "vy": 0.0, "vz_up": 0.0, "yaw_rate": 0.0}
+    box = {"det": [384.0, 216.0, 40.0, 20.0, 0.2, 768, 432], "t_box": 5.0}
+    _write_record(rec, [
+        {"i": 0, "t_capture": 5.0, "pose": {"x": 0, "y": 0, "up": 8, "yaw_rad": 0.0}, "box": box,
+         "tick": {"tick": 41, "mode": "track", "cmd": asked, "asked": asked}},
+        {"i": 1, "t_capture": 5.1, "pose": {"x": 0, "y": 0, "up": 8, "yaw_rad": 0.0}, "box": box,
+         "tick": {"tick": 42, "mode": "track", "cmd": asked, "asked": asked}}])
+    with open(d / "flight_log.jsonl", "w", encoding="utf-8") as fh:
+        fh.write(json.dumps({"tick": 41, "est_xy": [20.0, 1.0], "est": {"served": True}}) + "\n")
+        fh.write(json.dumps({"tick": 42, "est_xy": [21.0, 1.0], "est": {"served": False}}) + "\n")
+    s, _ = run_samples("r", rec, np.ones(2, bool), {0: 0, 1: 1}, "train", 0.5)
+    assert s[0]["expert_est"] == [20.0, 1.0]
+    assert s[1]["expert_est"] is None                  # an estimate not served is none
+
+
+def test_a_memory_off_the_experts_subject_is_found():
+    from training.aiotvla.train import memory_disagrees
+    m = np.zeros(core.MEM_DIM, np.float32)
+    m[core.MEM_FIELDS.index("valid")] = 1.0
+    m[core.MEM_FIELDS.index("fwd")] = 20.0 / 30.0
+    m[core.MEM_FIELDS.index("right")] = 3.0 / 30.0
+    pose = (100.0, 50.0, 8.0, math.pi / 2)             # heading east: (20 fwd, 3 right) = (97, 70)
+    assert not memory_disagrees(m, pose, (97.5, 70.0), 15.0)
+    assert memory_disagrees(m, pose, (80.0, 70.0), 15.0)
+    m[core.MEM_FIELDS.index("valid")] = 0.0            # no track: nothing to disagree with
+    assert not memory_disagrees(m, pose, (0.0, 0.0), 15.0)
+
+
 def test_the_family_maps_right_m_into_a_lateral_step():
     F, C = _server_parts()
     fam = F.AIOTVLAFamily(horizon_s=0.5)

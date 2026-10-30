@@ -75,6 +75,20 @@ def torch_grounding_stats(torch, g):
     return torch.stack([col, row, top[:, 0], top[:, 0] - top[:, 1]], dim=1)
 
 
+def memory_disagrees(m: np.ndarray, pose, est_xy, max_m: float) -> bool:
+    """Is a valid memory (core.MEM_FIELDS row) more than max_m from the
+    expert's own estimate `est_xy` (world x, y)? The memory is in the body
+    frame of `pose` (x, y, up, yaw)."""
+    if m[core.MEM_FIELDS.index("valid")] < 0.5:
+        return False
+    px, py, _, yaw = (float(v) for v in pose)
+    fw = float(m[core.MEM_FIELDS.index("fwd")]) * 30.0
+    rt = float(m[core.MEM_FIELDS.index("right")]) * 30.0
+    wx = px + fw * math.cos(yaw) - rt * math.sin(yaw)
+    wy = py + fw * math.sin(yaw) + rt * math.cos(yaw)
+    return math.hypot(wx - est_xy[0], wy - est_xy[1]) > max_m
+
+
 def run_memory_of(d: Path, info: dict, meta, vi: int, start: int) -> np.ndarray:
     """core.run_memory over one cached run (`d`) for its vocab's phrase vi
     (info.json "vocab"): its box (B.npy), best-patch logit and contrast
@@ -111,7 +125,7 @@ class Data:
     def __init__(self, labels: Path, cache: Path, device: str, offsets=core.HIST_OFFSETS_S,
                  runs: list[str] | None = None, onpolicy_weight: float = 1.0,
                  boxes: bool = False, axes=core.AXES, memory: bool = False,
-                 text: bool = False):
+                 text: bool = False, memory_agree_m: float = 0.0):
         import torch
         self.torch = torch
         self.axes = tuple(axes)
@@ -137,6 +151,7 @@ class Data:
         offset, self.run_info = 0, {}
         rows_of = {}
         meta_of = {}
+        M_of = {}
         for r in runs:
             d = cache / r
             info = json.loads((d / "info.json").read_text(encoding="utf-8"))
@@ -159,6 +174,7 @@ class Data:
             meta_of[r] = meta
             if self.memory:
                 M.append(run_memory_of(d, info, meta, vi, rows_of[r].get(first_i[r], 0)))
+                M_of[r] = M[-1]
             self.run_info[r] = {"offset": offset, "n": int(info["n"]), "object": info["object"],
                                 "pca_sha256": info["pca_sha256"],
                                 "front_source": info.get("front_source", "vla"),
@@ -182,6 +198,7 @@ class Data:
         hist, pr, prm, tgt, aux, split, w, lab, ids, mrows, trows = ([], [], [], [], [], [], [],
                                                                      [], [], [], [])
         skipped = 0
+        self.disagree = 0
         for s in samples:
             r = s["run"]
             meta = meta_of[r]
@@ -189,6 +206,12 @@ class Data:
             ok = meta["frame_ok"]
             if k is None or not ok[k]:
                 skipped += 1
+                continue
+            if (self.memory and memory_agree_m > 0 and s.get("expert_est")
+                    and memory_disagrees(M_of[r][k], meta["poses"][k], s["expert_est"],
+                                         memory_agree_m)):
+                # the memory is on something other than the expert's subject
+                self.disagree += 1
                 continue
             idx = [j if (j >= 0 and ok[j]) else -1
                    for j in core.history_indices(meta["t"], k, offsets)]
@@ -355,6 +378,9 @@ def main(argv=None) -> int:
                     help="feed the target memory's MEM_FIELDS (core MEMORY; the cache needs B.npy)")
     ap.add_argument("--memory-dropout", type=float, default=0.1,
                     help="with --memory: share of training samples whose memory is zeroed")
+    ap.add_argument("--memory-agree-m", type=float, default=0.0,
+                    help="with --memory: drop a sample whose valid memory is more than this "
+                         "from the expert's own estimate (build_labels expert_est; 0: keep all)")
     ap.add_argument("--text", action="store_true",
                     help="feed the run's object words as the backbone's text embedding "
                          "(<cache>/text.npz; HeadConfig.n_text)")
@@ -368,7 +394,8 @@ def main(argv=None) -> int:
     offsets = core.LONG_HIST_OFFSETS_S if args.long_history else core.HIST_OFFSETS_S
     axes = core.LATERAL_AXES if args.lateral else core.AXES
     data = Data(Path(args.labels), Path(args.cache), args.device, offsets, args.runs,
-                args.onpolicy_weight, args.box_features, axes, args.memory, args.text)
+                args.onpolicy_weight, args.box_features, axes, args.memory, args.text,
+                args.memory_agree_m)
     backbones = {json.loads((Path(args.cache) / r / "info.json").read_text(
         encoding="utf-8"))["backbone"] for r in data.run_info}
     if len(backbones) != 1:
@@ -385,7 +412,8 @@ def main(argv=None) -> int:
     tr = torch.nonzero(data.train).squeeze(1)
     ho = torch.nonzero(~data.train).squeeze(1)
     print(f"[data] {len(tr)} train / {len(ho)} hold-out samples, {len(data.run_info)} runs, "
-          f"{data.skipped} skipped, loaded in {time.time() - t0:.1f} s")
+          f"{data.skipped} skipped, {data.disagree} dropped (memory off the expert's subject), "
+          f"loaded in {time.time() - t0:.1f} s")
     cfg = HeadConfig(n_slots=len(offsets), n_stats=8 if args.box_features else 4, axes=axes,
                      n_mem=core.MEM_DIM if args.memory else 0,
                      n_text=int(data.T.shape[1]) if args.text else 0)

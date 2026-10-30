@@ -16,6 +16,64 @@ shipped change and recorded as one.
 
 ## [Unreleased]
 
+### 2026-10-30 (night) — the hand-written follow cannot teach a white or a black car (0.182 and 0.069 within 30 m); a privileged teacher (`follow_vlm --teacher-truth`) follows the white car at 0.997 and records the other targets' training labels
+
+#### Found
+- **The hand-written follow is a red-car follow.** Flown as AIOT-VLA's expert
+  on the level's white car (aiot_rec_w01, Car_22, "a white car") and its
+  black car (aiot_rec_k01, Car_07, "a black car"), 600 s each:
+
+  | recording | within 30 m of the car | median distance | ticks in its planner (lost) |
+  |---|---|---|---|
+  | aiot_rec_w01, white | 0.182 | 123.6 m | 0.609 |
+  | aiot_rec_k01, black | 0.069 | 166.6 m | 0.784 |
+  | aiot_rec_e01, red (for comparison) | 0.973 | - | 0.000 |
+
+  On the white car it had no box on 15.6 % of the inferences in the first
+  150 s after acquisition (0 % on the red car), most of them because its
+  candidates were refused as off the street: "a white car" also grounds on
+  white facades. It fell behind on every
+  dropout, lost the car at a corner 60 m back, and then followed other white
+  objects 130-160 m from it. The car was not too fast: Car_22 drove at 3.73
+  m/s (p50, gap-limited), Car_10 at 3.20. A model cannot learn a target
+  from a teacher that does not follow it, so the two recordings and a
+  partial box-truck one (aiot_rec_t01, stopped) are kept but not trained on.
+- **Two targets are ambiguous by construction** (Environment Builder's fleet
+  list of 23 Sep): the level drives two white cars (Car_22 on loop A,
+  Car_15 on B) and three box trucks (Car_00 and Car_23 on A, Car_14 on B);
+  only Car_07 is black. Loops A and B both pass the start point.
+
+#### Added
+- **`follow_vlm --teacher-truth`** (`run_citylife_follow.ps1 -TeacherTruth`):
+  a privileged teacher for TRAINING LABELS only. Each detector frame's
+  candidates are replaced by one box drawn where the `--level-car` truly is
+  (`Grounder._teacher_box`: its ground point and a point
+  `subject_height_m` above it through the capture's camera, the class width
+  at its slant range), with its true range and bearing as identity's
+  features, so the start gate, the re-acquirer and `estimator_measurement`
+  get a perfect measurement; the true position is carried forward between
+  the level's 0.5 s polls (`teacher_truth_fn`). The detector still runs,
+  so its cadence and load are a real flight's. The controller, the fence and
+  the Shield fly as always. metrics.json carries `teacher_truth` (the box
+  counts); such a flight is never a follow result. Refused without
+  `--level-car`. `tests/test_follow_teacher.py` (5 tests, in CI).
+- `build_labels`: every sample carries `expert_est`, the expert's own
+  estimate of its subject at that tick (the flight log's served `est_xy`);
+  `train --memory-agree-m M` drops a sample whose target memory is more than
+  M from it (the memory on another truck or another white car). On the 18
+  red-car recordings the memory is within 2.9 m of the expert's estimate at
+  the median, more than 15 m away on 4.3 % of the samples.
+
+#### Flown
+- aiot_teach_smoke1 (`--teacher-truth`, Car_22, "a white car", 180 s): within
+  30 m on 0.997 of the ticks, median 20.1 m, every tick in track; the
+  teacher's estimate within 0.61 m of the truth at the median.
+
+#### Limits
+- A teacher sees through walls: its labels keep chasing a car the camera
+  cannot see. The student's target memory is what has to bridge those
+  stretches; whether it does is the next flights' question.
+
 ### 2026-10-30 (evening) — AIOT-VLA v7 follows the red car as closely as the hand-written follow: a lateral step and a target memory take it from 0.265 to a mean of 0.968 within 30 m after acquisition (3 flights); protocol v2 gains a lateral step; groundwork for other targets
 
 #### Found
