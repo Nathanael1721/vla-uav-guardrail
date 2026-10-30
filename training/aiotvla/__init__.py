@@ -1,4 +1,4 @@
-"""NTUT-VLA: the lab's own small vision-language-action model for the follow.
+"""AIOT-VLA: the lab's own small vision-language-action model for the follow.
 
 A frozen open-vocabulary vision-language backbone (OWL-ViT B/32, the same
 weights the flight's detector already loads) turns the front frame and the
@@ -15,8 +15,8 @@ language reaches the action only through the backbone's grounding.
     model.py        the trained head (torch)
     build_cache.py  backbone features for every capture of a recording
     train.py        behaviour cloning on the follow expert's recordings
-    serve           demo/vla_server_foreign.py --model ntutvla
+    serve           demo/vla_server_foreign.py --model aiotvla
 
-Design notes, numbers and limits: docs/DESIGN-ntutvla.md.
+Design notes, numbers and limits: docs/DESIGN-aiotvla.md.
 """
 VERSION = "0.1.0"

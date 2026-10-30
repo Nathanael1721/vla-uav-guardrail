@@ -910,7 +910,7 @@ def test_the_builder_drops_labels_over_vla_flown_ticks_and_keeps_the_recovery():
 
 def test_the_windows_can_fly_the_yaw_rate_itself():
     """--perturb-vla-rate-yaw rate (29 Oct): DAgger windows of a model whose
-    label is a yaw-rate command x H (ntutvla) fly vla_fly --rate-yaw rate; the
+    label is a yaw-rate command x H (aiotvla) fly vla_fly --rate-yaw rate; the
     default argv is unchanged, and the mode needs a rate step."""
     D = _D()
     _, argv0 = D.follow_args("a red car", cruise_alt=8.0, step_as_rate=0.5)

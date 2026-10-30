@@ -1,7 +1,7 @@
-"""NTUT-VLA labels from the expert's COMMAND, not from its motion.
+"""AIOT-VLA labels from the expert's COMMAND, not from its motion.
 
-    python -m training.ntutvla.build_labels --cache D:/vla_drone_offload/ntutvla/cache \\
-        --out D:/vla_drone_offload/ntutvla/labels_cmd_v1 --holdout ft_expert_03 ft_dagger_pf_5
+    python -m training.aiotvla.build_labels --cache D:/vla_drone_offload/aiotvla/cache \\
+        --out D:/vla_drone_offload/aiotvla/labels_cmd_v1 --holdout ft_expert_03 ft_dagger_pf_5
 
 WHY (the first closed-loop flight, ntut_v0b_01, 29 Oct). v0's labels were
 tools/build_follow_dataset's: the expert's DISPLACEMENT over the next 0.5 s.
@@ -45,7 +45,7 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from training.ntutvla import core                                   # noqa: E402
+from training.aiotvla import core                                   # noqa: E402
 
 FRESH_S = 1.0
 HFOV_DEG = 90.0          # the detector's FrontCamera, whose frame the box is in

@@ -227,9 +227,10 @@ def _import_codec():
 C = _import_codec()
 import vla_server_v2 as S                                            # noqa: E402
 
-FAMILIES = C.FOREIGN_FAMILIES
+# the families this server serves: not a legacy name (aerialvla_codec)
+FAMILIES = tuple(f for f in C.FOREIGN_FAMILIES if f not in C.LEGACY_FOREIGN_FAMILIES)
 MAPPING_RULES = {"dronecats": "dronecats_go_rotate/1", "racevla": "racevla_velocity/1",
-                 "ntutvla": "ntutvla_step/1"}
+                 "aiotvla": "aiotvla_step/1"}
 QUANTIZE_RULE = ("nearest bin, round((v - lo) / (hi - lo) * 98), after clipping to the codec's "
                  "range; the client decodes the bin's lower edge, so the flown step is within "
                  "half a bin of the requested one")
@@ -239,7 +240,7 @@ NATIVE_OUTPUT = {
                   '{"action":"think"}, {"action":"finished"}'),
     "racevla": ("7 OpenVLA action tokens -> 7 un-normalised floats; vx, vy, vz = a[0..2], "
                 "delta_yaw = a[5] (server.py:43-50)"),
-    "ntutvla": ("three distributions over its own grids (training/ntutvla/core.GRIDS), "
+    "aiotvla": ("three distributions over its own grids (training/aiotvla/core.GRIDS), "
                 "decoded to fwd_m, down_m, dpsi_rad over the label horizon (core.decode), "
                 "plus visible_p and bearing_rad (training signals, not flown)"),
 }
@@ -258,9 +259,9 @@ UPSTREAM = {
                 "license": None, "paper": "arXiv 2503.02572",
                 "code": ("github.com/SerValera/RaceVLA@46f7e27a206d3bf7adb247ba8cda586377a8172a "
                          "server/server.py, drone/vla_ws/src/vlm_drone/scripts/drone.py")},
-    "ntutvla": {"model": "NTUT-VLA (this repository: training/ntutvla)", "revision": None,
+    "aiotvla": {"model": "AIOT-VLA (this repository: training/aiotvla)", "revision": None,
                 "base_model": "google/owlvit-base-patch32 (frozen) + a trained head",
-                "license": None, "paper": None, "code": "training/ntutvla"},
+                "license": None, "paper": None, "code": "training/aiotvla"},
 }
 HISTORY_GAP_S = 5.0
 MAX_HISTORY = 5                  # the user prompt: "Your last 5 actions"
@@ -789,15 +790,15 @@ class RaceVLAFamily:
                 "n_bins": self.n_bins}
 
 
-class NTUTVLAFamily:
-    """The lab's own model (training/ntutvla): its input is the VLAFront frame
+class AIOTVLAFamily:
+    """The lab's own model (training/aiotvla): its input is the VLAFront frame
     as sent (256 x 256, no resize), the object words as the phrase its
     backbone grounds, and the capture's time and pose (its history ring and
-    proprio, kept by NTUTVLAModel). Its answer is already a step over the
-    label horizon, so the mapping is the identity (rule ntutvla_step/1); the
+    proprio, kept by AIOTVLAModel). Its answer is already a step over the
+    label horizon, so the mapping is the identity (rule aiotvla_step/1); the
     compass phrase, the hint source and the down frame are ignored, as for
     the other foreign families."""
-    name = "ntutvla"
+    name = "aiotvla"
     history = False           # the model keeps its own ring of frames, not of actions
 
     def __init__(self, horizon_s: float):
@@ -1000,8 +1001,8 @@ class RaceVLAModel:
                 "model_s": time.perf_counter() - t0}
 
 
-class NTUTVLAModel:
-    """training/ntutvla: the frozen OWL-ViT backbone and the trained head of
+class AIOTVLAModel:
+    """training/aiotvla: the frozen OWL-ViT backbone and the trained head of
     <weights>/head.pt. generate() grounds the object words in the frame,
     pushes the maps into its history ring (core.Ring: one flight at a time,
     reset on a gap or a time that runs backwards) and answers the head's
@@ -1012,9 +1013,9 @@ class NTUTVLAModel:
     def __init__(self, weights_dir: str | Path, *, device: str = "cuda:0"):
         import numpy as np
         import torch
-        from training.ntutvla import core as NC
-        from training.ntutvla.backbone import OwlBackbone
-        from training.ntutvla.model import HeadConfig, NTUTVLAHead
+        from training.aiotvla import core as NC
+        from training.aiotvla.backbone import OwlBackbone
+        from training.aiotvla.model import HeadConfig, AIOTVLAHead
         self.np, self.torch, self.NC, self.device = np, torch, NC, device
         t0 = time.perf_counter()
         ck = torch.load(Path(weights_dir) / "head.pt", map_location=device, weights_only=False)
@@ -1031,7 +1032,7 @@ class NTUTVLAModel:
         self.horizon_s = float(ck["core"]["LABEL_HORIZON_S"])
         self.bb = OwlBackbone(device=device)
         self.bb.set_pca(ck["pca_mean"], ck["pca_comps"])
-        self.head = NTUTVLAHead(HeadConfig(**ck["config"])).to(device).eval()
+        self.head = AIOTVLAHead(HeadConfig(**ck["config"])).to(device).eval()
         self.head.load_state_dict(ck["state_dict"])
         self.ring = NC.Ring()
         self.checkpoint = {"epoch": ck.get("epoch"), "holdout": ck.get("holdout"),
@@ -1073,7 +1074,7 @@ def weight_files(family: str, weights_dir: str | Path) -> list[Path]:
     """What weights_sha256 covers: the shards model.safetensors.index.json
     names (vla_server_v2.base_weight_files), and for RaceVLA its
     dataset_statistics.json, which changes every action."""
-    if family == "ntutvla":
+    if family == "aiotvla":
         return [Path(weights_dir) / "head.pt"]
     files = S.base_weight_files(weights_dir)
     if family == "racevla":
@@ -1294,10 +1295,10 @@ def _name_of(family: str, weights_dir: Path) -> str:
 
 
 def build_family(args, weights: Path):
-    if args.model == "ntutvla":
+    if args.model == "aiotvla":
         if not (weights / "head.pt").is_file():
-            raise OSError(f"no head.pt in {weights} (python -m training.ntutvla.train --out)")
-        return NTUTVLAFamily(horizon_s=args.horizon_s)
+            raise OSError(f"no head.pt in {weights} (python -m training.aiotvla.train --out)")
+        return AIOTVLAFamily(horizon_s=args.horizon_s)
     if args.model == "dronecats":
         return DroneCATSFamily.from_dir(
             weights, command=args.command or DRONECATS_COMMAND, executor=args.go_executor,
@@ -1320,8 +1321,8 @@ def build_real(args, family, weights: Path):
     if args.model == "dronecats":
         model = DroneCATSModel(weights, attn=args.attn, device=args.device,
                                precision=args.precision)
-    elif args.model == "ntutvla":
-        model = NTUTVLAModel(weights, device=args.device)
+    elif args.model == "aiotvla":
+        model = AIOTVLAModel(weights, device=args.device)
         if abs(model.horizon_s - family.horizon_s) > 1e-9:
             raise SystemExit(f"--horizon-s {family.horizon_s:g}: the checkpoint's label horizon "
                              f"is {model.horizon_s:g} s (fly with --step-as-rate "
@@ -1385,8 +1386,8 @@ def build_arg_parser() -> tuple[argparse.ArgumentParser, argparse.ArgumentParser
     p.add_argument("--precision", choices=("bf16", "nf4", "int4", "fp16"), default=None,
                    help="bf16 (both), nf4 (bitsandbytes 4-bit) or int4 (torchao int4 "
                         "weight-only, DroneCATS only); quantised DroneCATS keeps its vision "
-                        "encoder, projector and lm_head in bf16; ntutvla is fp16 only "
-                        "(default bf16, ntutvla fp16)")
+                        "encoder, projector and lm_head in bf16; aiotvla is fp16 only "
+                        "(default bf16, aiotvla fp16)")
     p.add_argument("--attn", choices=S.ATTNS, default="sdpa")
     p.add_argument("--device", default="cuda:0")
     p.add_argument("--front-source", choices=tuple(C.FRONT_SOURCES), default=C.DEFAULT_FRONT_SOURCE,
@@ -1406,7 +1407,7 @@ def build_arg_parser() -> tuple[argparse.ArgumentParser, argparse.ArgumentParser
                    help="RaceVLA: the dataset_statistics.json key (default its only one)")
     p.add_argument("--horizon-s", type=float, default=1.0,
                    help="RaceVLA: the velocities' step horizon (fly with --step-as-rate H); "
-                        "ntutvla: must be its checkpoint's label horizon (0.5)")
+                        "aiotvla: must be its checkpoint's label horizon (0.5)")
     p.add_argument("--keep-color", action="store_true",
                    help="RaceVLA: send the frame in colour (default grey, as its T265)")
     p.add_argument("--digest-sidecar", default=str(S.SIDECAR_DEFAULT))
@@ -1422,11 +1423,11 @@ def main(argv=None) -> int:
     ap, p = build_arg_parser()
     args = ap.parse_args(argv)
     if args.precision is None:
-        args.precision = "fp16" if args.model == "ntutvla" else "bf16"
-    if (args.precision == "fp16") != (args.model == "ntutvla"):
-        p.error(f"--precision {args.precision}: ntutvla runs fp16 only, and fp16 is ntutvla's only")
-    if args.fake_native and args.model == "ntutvla":
-        p.error("--fake-native: no scripted stand-in for ntutvla (use vla_server_v2 --fake-output)")
+        args.precision = "fp16" if args.model == "aiotvla" else "bf16"
+    if (args.precision == "fp16") != (args.model == "aiotvla"):
+        p.error(f"--precision {args.precision}: aiotvla runs fp16 only, and fp16 is aiotvla's only")
+    if args.fake_native and args.model == "aiotvla":
+        p.error("--fake-native: no scripted stand-in for aiotvla (use vla_server_v2 --fake-output)")
     if args.precision == "int4" and args.model != "dronecats":
         p.error("--precision int4 (torchao) is DroneCATS's only: RaceVLA's OpenVLA loader "
                 "takes bf16 or nf4")

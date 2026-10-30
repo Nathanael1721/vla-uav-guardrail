@@ -1,7 +1,12 @@
-# NTUT-VLA: the lab's own small VLA (design, v0)
+# AIOT-VLA: the lab's own small VLA
 
-Status: v2, 2026-10-30. Code in `training/ntutvla/`, served by
-`demo/vla_server_foreign.py --model ntutvla`, tested by `tests/test_ntutvla.py`.
+Named NTUT-VLA until 30 Oct 2026 (package `training/ntutvla`, family
+`ntutvla`); renamed for the AIoT Lab. The flights flown under the old name
+keep their tags (`demo/out/ntut_*`) and their records' family `ntutvla`,
+which the codec still classifies as this model's.
+
+Status: v2, 2026-10-30. Code in `training/aiotvla/`, served by
+`demo/vla_server_foreign.py --model aiotvla`, tested by `tests/test_aiotvla.py`.
 
 ## Why build one
 
@@ -57,7 +62,7 @@ flights only.
 Shared code: `core.py` (stdlib + numpy) holds the history picking, the
 backward-only velocity, the proprio, the label grids, soft targets,
 decoding and the mirror. The trainer and the server's `core.Ring` both call
-it, and `tests/test_ntutvla.py` checks that the ring's slot inputs equal the
+it, and `tests/test_aiotvla.py` checks that the ring's slot inputs equal the
 trainer's for the same captures.
 
 ## Data and labels
@@ -70,7 +75,7 @@ trainer's for the same captures.
   over the next 0.5 s. It drops perturbed and VLA-flown horizons, which
   leaves 30,091 training and 4,419 hold-out samples (hold-out runs
   `ft_expert_03`, `ft_dagger_pf_5`).
-- v1 labels: `python -m training.ntutvla.build_labels`, the expert's
+- v1 labels: `python -m training.aiotvla.build_labels`, the expert's
   ASKED command at the capture's tick, in step units over H = 0.5 s
   (fwd = forward speed x H, dpsi = yaw rate x H, down = -climb x H). Why:
   vla_fly flies a step as a velocity command, and the airframe lags its
@@ -128,7 +133,7 @@ model time 48.4 ms p50, 52.0 ms p95, 71.5 ms max, round trip 52.3 ms, i.e.
 board). Its answers match the PC's: dpsi correlation with the command
 labels 0.989, dpsi MAE 0.0039. That figure is the server alone. A flight
 with vla_fly's own detector on the same board has not been flown. Logs:
-D:/vla_drone_offload/jetson_runs/ntutvla_latency_20261029.
+D:/vla_drone_offload/jetson_runs/aiotvla_latency_20261029.
 
 ## Closed loop (CityLife, Car_10, vla_fly e2e, 420 s, Shield on)
 
@@ -158,11 +163,11 @@ tolerance. A model answering 10 times a second asks for 0.02-0.2 rad per
 step, and most of that lies inside the tolerance or was already flown since
 the capture. `vla_fly --rate-yaw rate` (TrackerConfig.rate_yaw, default
 unchanged) flies dpsi/H as the yaw rate itself until the next answer. That
-is the meaning of NTUT-VLA's label. With it the same v2 weights turned at
+is the meaning of AIOT-VLA's label. With it the same v2 weights turned at
 corners, followed the car for up to 119 s after acquisition, and scored
 0.355 and 0.253.
 
-**False start-gate seeds.** Two of the nine NTUT-VLA flights were not comparable:
+**False start-gate seeds.** Two of the nine AIOT-VLA flights were not comparable:
 vla_fly's start gate acquired something other than Car_10 within the first
 3 s (the 28 Oct DroneCATS e2e flight did the same at 4.0 s), and the score
 is counted from that acquisition. This is the client's gate, not the
@@ -203,7 +208,7 @@ round's windows the way the model is flown.
   generalisation is untested.
 - Behaviour cloning compounds its own errors. DAgger rounds with this model
   as the learner are the next step (`follow_vlm --record-perturb-vla`
-  accepts the ntutvla server as a foreign family).
+  accepts the aiotvla server as a foreign family).
 - The step format has no lateral axis (AerialVLA's codec). The model turns
   and moves forward; it cannot strafe.
 - Not KPI-grade: the sim is simple_flight on the city rail, and no hil

@@ -197,7 +197,7 @@ IDENTITY_FIELDS = ("id", "base", "weights_sha256", "precision", "attn", "merged"
 # Orin Nano (demo/vla_server_foreign.py --precision int4; the PyPI
 # bitsandbytes wheel has no sm_87 kernels there). AerialVLA's own server
 # (demo/vla_server_v2.py) still serves nf4 or bf16 only. fp16: the lab's own
-# NTUT-VLA (frozen OWL-ViT backbone in fp16, training/ntutvla; 2026-10-29).
+# AIOT-VLA (frozen OWL-ViT backbone in fp16, training/aiotvla; 2026-10-29).
 PRECISIONS = ("nf4", "bf16", "int4", "fp16")
 # TrackerConfig.rate_yaw: how a rate step's dpsi is flown.
 RATE_YAW_MODES = ("heading", "rate")
@@ -1499,7 +1499,7 @@ class TrackerConfig:
     # within yaw_tol_rad. "rate": dpsi / H is the YAW RATE itself, flown until
     # the next answer replaces it, with no target and no tolerance - the
     # meaning of a label that is the expert's yaw-rate command x H
-    # (training/ntutvla/build_labels.py). Found 29 Oct (ntut_v2_01): a model
+    # (training/aiotvla/build_labels.py). Found 29 Oct (ntut_v2_01): a model
     # that answers 10 times a second asks for 0.02-0.2 rad per step; under
     # "heading" most of that lies inside the 0.05 rad tolerance or was
     # already flown since the capture, so the aircraft flew a 110 deg turn of

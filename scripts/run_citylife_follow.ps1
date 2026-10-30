@@ -155,7 +155,7 @@ param(
     [double]$PerturbVlaPrevDtS = 0,     # with -PerturbVlaBottomTile prev_front: s earlier (1.0)
     [double]$PerturbVlaStepAsRate = 0,  # with -RecordPerturbVla: steps as rates over H s (off)
     [switch]$PerturbVlaSpeedWords,      # with -RecordPerturbVla: own speed as words (off)
-    [string]$PerturbVlaRateYaw = "",    # with -PerturbVlaStepAsRate: "rate" flies dpsi/H as the yaw rate (ntutvla)
+    [string]$PerturbVlaRateYaw = "",    # with -PerturbVlaStepAsRate: "rate" flies dpsi/H as the yaw rate (aiotvla)
     [double]$DecideEveryS = 0,          # the ceiling flight: a decision every P s (off)
     [double]$DecideDelayS = 0,          # with -DecideEveryS: each carries the command from D s before
     [string]$VlaHierarchy = "",         # HOST:PORT of a running AerialVLA server that decides

@@ -1,4 +1,4 @@
-"""The parts of NTUT-VLA that training and serving must compute identically.
+"""The parts of AIOT-VLA that training and serving must compute identically.
 
 Stdlib + numpy only (no torch), so the server's request path and the tests
 run it without a GPU.
@@ -11,7 +11,7 @@ yaw_rad = heading from North, clockwise seen from above (the recordings'
 HISTORY. One decision reads HIST_OFFSETS_S: the newest capture and the
 captures nearest to t - offset (within HIST_TOL_S); a slot with no capture
 in tolerance is empty (valid 0, its maps zero). The server keeps the same
-ring (demo/vla_server_foreign.py, NTUTVLAModel) and picks the same way.
+ring (demo/vla_server_foreign.py, AIOTVLAModel) and picks the same way.
 
 PROPRIO. Per capture: velocity from a BACKWARD difference only (the newest
 capture has no future pose at serve time, so training must not use one

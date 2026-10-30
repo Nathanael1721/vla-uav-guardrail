@@ -1,8 +1,8 @@
 """Backbone maps for every capture of the follow expert's recordings.
 
     # the vla-real env (torch, transformers 4.40.1); OWL-ViT from the HF cache
-    python -m training.ntutvla.build_cache demo/out/ft_expert_01 demo/out/ft_dagger_01 \\
-        --cache D:/vla_drone_offload/ntutvla/cache
+    python -m training.aiotvla.build_cache demo/out/ft_expert_01 demo/out/ft_dagger_01 \\
+        --cache D:/vla_drone_offload/aiotvla/cache
 
 Each RUN_DIR is a flight folder holding vla_record/ (follow_vlm --record-vla)
 or the recording folder itself. Per run, <cache>/<tag>/ gets
@@ -36,7 +36,7 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from training.ntutvla import core                                   # noqa: E402
+from training.aiotvla import core                                   # noqa: E402
 
 
 def record_dir(run: Path) -> Path:
@@ -67,7 +67,7 @@ def file_sha(p: Path) -> str:
 
 
 def fit_and_save_pca(bb, recs: list[Path], out: Path, n_frames: int) -> None:
-    from training.ntutvla.backbone import fit_pca
+    from training.aiotvla.backbone import fit_pca
     frames = []
     for rec in recs:
         caps = load_captures(rec)
@@ -159,7 +159,7 @@ def main(argv=None) -> int:
     ap.add_argument("--device", default="cuda")
     ap.add_argument("--force", action="store_true")
     args = ap.parse_args(argv)
-    from training.ntutvla.backbone import OwlBackbone
+    from training.aiotvla.backbone import OwlBackbone
     root = Path(args.cache)
     root.mkdir(parents=True, exist_ok=True)
     recs = [record_dir(Path(r)) for r in args.runs]

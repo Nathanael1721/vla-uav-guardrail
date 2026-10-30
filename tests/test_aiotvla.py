@@ -1,10 +1,10 @@
 """
-training/ntutvla - the lab's own VLA: what training and serving must compute
+training/aiotvla - the lab's own VLA: what training and serving must compute
 identically, and its place behind protocol v2 (demo/vla_server_foreign.py).
 
 Run either way:
-    pytest tests/test_ntutvla.py -v
-    python tests/test_ntutvla.py
+    pytest tests/test_aiotvla.py -v
+    python tests/test_aiotvla.py
 
 No test loads OWL-ViT or touches a GPU. torch is used where it is installed
 (the head's shapes, the batched grounding stats) and those tests SKIP
@@ -21,7 +21,7 @@ without it. What is tested:
   4. The head: output shapes, an all-empty history but the newest slot.
   5. The server family: its step passes the codec's reader unchanged, a
      malformed answer is parse_ok false, the identity is an allow-listed
-     foreign one (ntutvla/<name>@<sha8>) and tools/todo.py's copy agrees.
+     foreign one (aiotvla/<name>@<sha8>) and tools/todo.py's copy agrees.
 """
 from __future__ import annotations
 
@@ -36,7 +36,7 @@ for _p in (ROOT, ROOT / "demo", ROOT / "tools"):
     if str(_p) not in sys.path:
         sys.path.insert(0, str(_p))
 
-from training.ntutvla import core                                   # noqa: E402
+from training.aiotvla import core                                   # noqa: E402
 
 SKIP = "SKIP"
 
@@ -202,7 +202,7 @@ def _write_record(d: Path, caps: list[dict]) -> None:
 
 def test_command_labels_are_the_experts_asked_command_over_the_horizon():
     import tempfile
-    from training.ntutvla.build_labels import run_samples
+    from training.aiotvla.build_labels import run_samples
     d = Path(tempfile.mkdtemp())
     yaw = math.pi / 2                                    # heading east
     asked = {"vx": 0.0, "vy": 3.0, "vz_up": 0.4, "yaw_rate": -0.3}
@@ -233,7 +233,7 @@ def test_command_labels_are_the_experts_asked_command_over_the_horizon():
 
 def test_command_labels_never_ask_to_fly_backwards():
     import tempfile
-    from training.ntutvla.build_labels import run_samples
+    from training.aiotvla.build_labels import run_samples
     d = Path(tempfile.mkdtemp())
     back = {"vx": -2.0, "vy": 0.0, "vz_up": 0.0, "yaw_rate": 0.0}  # heading north, moving south
     box = {"det": [384.0, 216.0, 40.0, 20.0, 0.2, 768, 432], "t_box": 5.0}
@@ -249,7 +249,7 @@ def test_batched_grounding_stats_and_decode_equal_core():
     torch = _torch()
     if torch is None:
         return SKIP
-    from training.ntutvla.train import decode_batch, torch_grounding_stats
+    from training.aiotvla.train import decode_batch, torch_grounding_stats
     rng = np.random.default_rng(1)
     g = rng.normal(-6, 2, (5, core.N_PATCHES)).astype(np.float32)
     got = torch_grounding_stats(torch, torch.from_numpy(g)).numpy()
@@ -271,8 +271,8 @@ def test_head_shapes_and_an_empty_history():
     torch = _torch()
     if torch is None:
         return SKIP
-    from training.ntutvla.model import NTUTVLAHead
-    head = NTUTVLAHead().eval()
+    from training.aiotvla.model import AIOTVLAHead
+    head = AIOTVLAHead().eval()
     k = len(core.HIST_OFFSETS_S)
     b = 3
     g = torch.randn(b, k, core.N_PATCHES)
@@ -305,7 +305,7 @@ def _server_parts():
 
 def test_family_step_passes_the_codec_reader():
     F, C = _server_parts()
-    fam = F.NTUTVLAFamily(horizon_s=0.5)
+    fam = F.AIOTVLAFamily(horizon_s=0.5)
     nat = fam.parse({"raw": {"fwd_m": 1.23, "down_m": -0.05, "dpsi_rad": -0.31,
                              "visible_p": 0.9, "bearing_rad": -0.2}})
     assert nat["ok"]
@@ -322,13 +322,13 @@ def test_family_step_passes_the_codec_reader():
 
 def test_family_refuses_a_malformed_answer():
     F, _ = _server_parts()
-    fam = F.NTUTVLAFamily(horizon_s=0.5)
+    fam = F.AIOTVLAFamily(horizon_s=0.5)
     for raw in (None, {"fwd_m": 1.0, "down_m": 0.0}, {"fwd_m": float("nan"), "down_m": 0.0,
                                                        "dpsi_rad": 0.0}, [1, 2, 3]):
         nat = fam.parse({"raw": raw})
         assert not nat["ok"] and nat["reason"], raw
     try:
-        F.NTUTVLAFamily(horizon_s=0.0)
+        F.AIOTVLAFamily(horizon_s=0.0)
     except ValueError:
         pass
     else:
@@ -337,7 +337,7 @@ def test_family_refuses_a_malformed_answer():
 
 def test_family_inputs_carry_the_object_words_time_and_pose():
     F, _ = _server_parts()
-    fam = F.NTUTVLAFamily(horizon_s=0.5)
+    fam = F.AIOTVLAFamily(horizon_s=0.5)
     req = {"object": "a red car", "t_capture": 12.5,
            "pose": {"x": 1.0, "y": 2.0, "up": 8.0, "yaw_rad": 0.1}, "phrase": "straight ahead "}
     ins = fam.inputs(req, F.intrinsics(256, 256, 90.0), [])
@@ -348,19 +348,36 @@ def test_family_inputs_carry_the_object_words_time_and_pose():
 def test_identity_is_an_allow_listed_foreign_family():
     F, C = _server_parts()
     import todo as T
-    assert "ntutvla" in C.FOREIGN_FAMILIES and T.FOREIGN_FAMILIES == C.FOREIGN_FAMILIES
-    ident = F.foreign_identity("ntutvla", name="v0", folder="v0", revision=None,
+    assert "aiotvla" in C.FOREIGN_FAMILIES and T.FOREIGN_FAMILIES == C.FOREIGN_FAMILIES
+    ident = F.foreign_identity("aiotvla", name="v0", folder="v0", revision=None,
                                digest="ab" * 32, precision="fp16", attn="sdpa",
                                front_source="vla", facts={"horizon_s": 0.5})
     blk = C.foreign_block(ident)
-    assert blk["family"] == "ntutvla" and blk["front_source"] == "vla"
-    assert ident["id"] == "ntutvla/v0@abababab"
-    assert C.foreign_pilot_id(ident["id"]) == "ntutvla:v0"
-    assert C.foreign_family("ntutvla:v0") == "ntutvla"
-    assert F.weight_files("ntutvla", "D:/m/v0") == [Path("D:/m/v0") / "head.pt"]
+    assert blk["family"] == "aiotvla" and blk["front_source"] == "vla"
+    assert ident["id"] == "aiotvla/v0@abababab"
+    assert C.foreign_pilot_id(ident["id"]) == "aiotvla:v0"
+    assert C.foreign_family("aiotvla:v0") == "aiotvla"
+    assert F.weight_files("aiotvla", "D:/m/v0") == [Path("D:/m/v0") / "head.pt"]
 
 
-def test_the_server_answers_a_scripted_ntutvla_step():
+def test_the_former_name_still_classifies_but_is_not_served():
+    """Renamed NTUT-VLA -> AIOT-VLA on 30 Oct: the 29-30 Oct flights recorded
+    "ntutvla:<name>", which must still count as this model's VLA flights; no
+    server may announce the old name."""
+    F, C = _server_parts()
+    import todo as T
+    assert C.foreign_family("ntutvla:v2") == "ntutvla" and "ntutvla" in T.FOREIGN_FAMILIES
+    assert "ntutvla" in C.LEGACY_FOREIGN_FAMILIES and "ntutvla" not in F.FAMILIES
+    assert "aiotvla" in F.FAMILIES
+    try:
+        F.foreign_identity("ntutvla", name="v2", folder="v2", revision=None, digest="ab" * 32,
+                           precision="fp16", attn="sdpa", front_source="vla")
+    except ValueError:
+        return
+    raise AssertionError("a server identity under the former name was built")
+
+
+def test_the_server_answers_a_scripted_aiotvla_step():
     F, C = _server_parts()
     import base64
 
@@ -372,10 +389,10 @@ def test_the_server_answers_a_scripted_ntutvla_step():
                             "bearing_rad": 0.1, "slots_valid": 1, "history_reset": None},
                     "model_s": 0.02, "pre_s": 0.01, "gen_s": 0.01}
 
-    ident = F.foreign_identity("ntutvla", name="v0", folder="v0", revision=None,
+    ident = F.foreign_identity("aiotvla", name="v0", folder="v0", revision=None,
                                digest="cd" * 32, precision="fp16", attn="sdpa",
                                front_source="vla")
-    srv = F.ForeignServer(F.NTUTVLAFamily(horizon_s=0.5), Scripted(), ident, None,
+    srv = F.ForeignServer(F.AIOTVLAFamily(horizon_s=0.5), Scripted(), ident, None,
                           decode_front=lambda req: type("I", (), {"size": (256, 256)})(),
                           hash_fn=lambda img: "0" * 64, prepare=lambda img: (img, {}))
     req = {"v": 2, "op": "infer", "seq": 3, "t_capture": 50.0,
@@ -387,8 +404,8 @@ def test_the_server_answers_a_scripted_ntutvla_step():
     assert resp["ok"] and resp["parse_ok"] and not stop, resp.get("error")
     want = F.encode_step(0.8, 0.0, 0.12)["text"]
     assert resp["raw_text"] == want
-    assert resp["mapping"]["rule"] == "ntutvla_step/1"
-    assert resp["native"]["family"] == "ntutvla"
+    assert resp["mapping"]["rule"] == "aiotvla_step/1"
+    assert resp["native"]["family"] == "aiotvla"
     assert resp["native"]["ignored"]["phrase"] == "straight ahead "
 
 

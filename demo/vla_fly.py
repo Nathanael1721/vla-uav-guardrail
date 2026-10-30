@@ -351,7 +351,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     ap.add_argument("--rate-yaw", choices=("heading", "rate"), default="heading",
                     help="with --step-as-rate: 'heading' (default) turns to psi_capture + dpsi "
                          "at dpsi/H and holds it; 'rate' flies dpsi/H as the yaw rate until the "
-                         "next answer (a model whose label is a yaw-rate command x H, ntutvla; "
+                         "next answer (a model whose label is a yaw-rate command x H, aiotvla; "
                          "guardrail/vla_link.TrackerConfig.rate_yaw)")
     ap.add_argument("--arrive-radius-m", type=float, default=3.0)
     ap.add_argument("--arrive-grace-s", type=float, default=8.0)

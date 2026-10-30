@@ -7618,7 +7618,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     ap.add_argument("--perturb-vla-rate-yaw", choices=("heading", "rate"), default="heading",
                     help="with --perturb-vla-step-as-rate: how a window flies the step's dpsi "
                          "(vla_fly --rate-yaw; 'rate' for a model whose label is a yaw-rate "
-                         "command x H, ntutvla)")
+                         "command x H, aiotvla)")
     ap.add_argument("--perturb-vla-speed-words", action="store_true",
                     help="with --record-perturb-vla: the windows ask with the aircraft's own "
                          "speed as words after the object (vla_fly --vla-speed-words). Must be "

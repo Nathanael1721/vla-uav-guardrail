@@ -1195,11 +1195,15 @@ def adapter_variant(model_id: Any) -> str | None:
 # MODEL_ID, and tools/todo.py (a stdlib copy of FOREIGN_FAMILIES and
 # foreign_family) counts its flight as a VLA flight of that family. An
 # allow-list, not a pattern: a family is added here after its server's
-# mapping is written and tested (tests/test_vla_foreign.py). "ntutvla" is the
-# lab's own model (training/ntutvla, 2026-10-29): "foreign" here means "not
+# mapping is written and tested (tests/test_vla_foreign.py). "aiotvla" is the
+# lab's own model (training/aiotvla, 2026-10-29): "foreign" here means "not
 # AerialVLA's MODEL_ID", served by the same server and checked the same way.
+# "ntutvla" is the same model's name until 30 Oct: no server announces it any
+# more (demo/vla_server_foreign.FAMILIES), and it stays here so the flights of
+# 29-30 Oct (demo/out/ntut_*) still classify as that model's.
 FOREIGN_VARIANT = "foreign"
-FOREIGN_FAMILIES = ("dronecats", "racevla", "ntutvla")
+FOREIGN_FAMILIES = ("dronecats", "racevla", "aiotvla", "ntutvla")
+LEGACY_FOREIGN_FAMILIES = ("ntutvla",)
 FOREIGN_TILE_NONE = "none"
 # The front cameras a flight can send (demo/pas_config/robot_vla_quad_det.
 # jsonc): VLAFront, AerialVLA's training camera (256x256, level), and the

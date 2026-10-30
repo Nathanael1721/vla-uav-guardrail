@@ -1,4 +1,4 @@
-"""The trained part of NTUT-VLA: a small temporal head over the backbone's maps.
+"""The trained part of AIOT-VLA: a small temporal head over the backbone's maps.
 
 Per history slot (core.HIST_OFFSETS_S): the instruction's grounding map
 (1 x 24 x 24, scaled), the appearance map (PCA_DIM x 24 x 24), the four
@@ -59,7 +59,7 @@ class SlotEncoder(nn.Module):
         return self.norm(self.proj(torch.cat([h, st, pr], dim=1)))
 
 
-class NTUTVLAHead(nn.Module):
+class AIOTVLAHead(nn.Module):
     def __init__(self, cfg: HeadConfig | None = None):
         super().__init__()
         self.cfg = cfg = cfg or HeadConfig()

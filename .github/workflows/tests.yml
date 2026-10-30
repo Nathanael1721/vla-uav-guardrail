@@ -151,11 +151,11 @@
 #          pydantic, and tools/bench_foreign_vla.py; no model, GPU or
 #          Pillow; its one check of the real prompt files SKIPs where the
 #          D:/models download is absent).
-#          test_ntutvla (the lab's own VLA, 2026-10-29: training/ntutvla's
+#          test_aiotvla (the lab's own VLA, 2026-10-29: training/aiotvla's
 #          history slots, backward-only velocity, proprio, mirror, soft
 #          targets and decode, the server's history ring equal to the
 #          trainer's inputs, the command labels, the head's shapes, and the
-#          ntutvla family behind protocol v2; no OWL-ViT and no GPU, the
+#          aiotvla family behind protocol v2; no OWL-ViT and no GPU, the
 #          torch checks SKIP without torch).
 #        The CityLife level, checked offline (the level itself is
 #          gitignored): test_citylife_*, test_drive_signals_dsl,
@@ -661,7 +661,7 @@ jobs:
               tests/test_vla_follow_reacquire.py \
               tests/test_vla_hierarchy.py \
               tests/test_vla_foreign.py \
-              tests/test_ntutvla.py \
+              tests/test_aiotvla.py \
               tests/test_citylife_peds.py \
               tests/test_citylife_routes.py \
               tests/test_citylife_signal_lamps.py \

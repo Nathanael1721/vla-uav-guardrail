@@ -116,7 +116,7 @@ def adapter_variant(model_id) -> str | None:
 # flight of THAT family (vla_family), never AerialVLA's. guardrail/
 # aerialvla_codec.py FOREIGN_FAMILIES and foreign_family, copied (stdlib only,
 # as above); tests/test_vla_foreign.py holds the copy equal to the codec's.
-FOREIGN_FAMILIES = ("dronecats", "racevla", "ntutvla")
+FOREIGN_FAMILIES = ("dronecats", "racevla", "aiotvla", "ntutvla")
 
 
 def foreign_family(model_id) -> str | None:

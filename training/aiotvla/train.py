@@ -1,13 +1,13 @@
-"""Behaviour cloning of NTUT-VLA's head on the follow expert's recordings.
+"""Behaviour cloning of AIOT-VLA's head on the follow expert's recordings.
 
     # labels: the expert's motion over 0.5 s (tools/build_follow_dataset.py,
     # --no-images: this trainer reads its own cache, not the mosaics)
-    python tools/build_follow_dataset.py <runs> --out D:/vla_drone_offload/ntutvla/labels_v0 \\
+    python tools/build_follow_dataset.py <runs> --out D:/vla_drone_offload/aiotvla/labels_v0 \\
         --no-images --horizon-s 0.5 --stride-s 0.1 --hint-modes fresh,memory,search \\
         --holdout ft_expert_03 ft_dagger_pf_5
-    # backbone maps: python -m training.ntutvla.build_cache <runs> --cache <cache>
-    python -m training.ntutvla.train --labels D:/vla_drone_offload/ntutvla/labels_v0 \\
-        --cache D:/vla_drone_offload/ntutvla/cache --out D:/models/ntutvla/v0
+    # backbone maps: python -m training.aiotvla.build_cache <runs> --cache <cache>
+    python -m training.aiotvla.train --labels D:/vla_drone_offload/aiotvla/labels_v0 \\
+        --cache D:/vla_drone_offload/aiotvla/cache --out D:/models/aiotvla/v0
 
 A sample is one labelled capture of build_follow_dataset (its `label_raw`,
 the expert's clean motion; DART and DAgger windows already dropped there).
@@ -39,7 +39,7 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from training.ntutvla import core                                   # noqa: E402
+from training.aiotvla import core                                   # noqa: E402
 
 AXIS_WEIGHT = {"fwd_m": 1.0, "down_m": 0.5, "dpsi_rad": 2.0}
 # The proprio fields that carry the aircraft's own recent motion. --motion-
@@ -231,7 +231,7 @@ def main(argv=None) -> int:
                          "slot) is zeroed")
     args = ap.parse_args(argv)
     import torch
-    from training.ntutvla.model import HeadConfig, NTUTVLAHead, n_params
+    from training.aiotvla.model import HeadConfig, AIOTVLAHead, n_params
     torch.manual_seed(args.seed)
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
@@ -245,7 +245,7 @@ def main(argv=None) -> int:
     print(f"[data] {len(tr)} train / {len(ho)} hold-out samples, {len(data.run_info)} runs, "
           f"{data.skipped} skipped, loaded in {time.time() - t0:.1f} s")
     cfg = HeadConfig()
-    head = NTUTVLAHead(cfg).to(args.device)
+    head = AIOTVLAHead(cfg).to(args.device)
     if args.init:
         ck = torch.load(args.init, map_location=args.device)
         head.load_state_dict(ck["state_dict"])
