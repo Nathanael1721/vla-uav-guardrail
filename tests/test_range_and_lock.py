@@ -1359,14 +1359,30 @@ def test_an_unmeasured_follow_is_not_scored_and_kpi_says_so():
     assert "follow_not_scored" in k["mission_fail_reasons"], k
 
 
-def test_a_level_car_is_truth_for_a_car_only():
-    """The start-up check accepted van/truck/bus for --level-car, but truth
-    exists only for 'car' (a van is NOT the car, pinned above), so 'a red
-    van' flew a follow with an empty truth on every tick."""
+def test_a_level_car_is_truth_for_the_vehicle_it_is_named_as():
+    """The start-up check accepted van/truck/bus for --level-car while truth
+    existed only for 'car', so 'a red van' flew a follow with an empty truth on
+    every tick. Since 31 Oct a LEVEL car (a tag) is truth for any vehicle class
+    it is named as - Car_00 is a box truck - and the scripted car still only
+    for 'car' (pinned above); a bus, which the level does not drive, and a
+    person are still refused."""
     import follow_vlm as fv
     assert fv.level_car_refusal(["a red car"]) is None
-    assert fv.level_car_refusal(["a red van"]) == ("a red van", "van")
-    assert fv.level_car_refusal(["a red car", "a white truck"]) == ("a white truck", "truck")
+    assert fv.level_car_refusal(["a red van"]) is None
+    assert fv.level_car_refusal(["a red car", "a white truck"]) is None
+    assert fv.level_car_refusal(["a box truck"]) is None
+    assert fv.level_car_refusal(["a city bus"]) == ("a city bus", "bus")
+
+    class _Level:
+        tag, pos = "Car_00", (5.0, 6.0)
+
+    class _Scripted:
+        pos = (5.0, 6.0)
+
+    assert fv.subject_truth_pts("truck", _Level(), None) == [[5.0, 6.0]]
+    assert fv.subject_truth_names("truck", _Level(), None) == ["Car_00"]
+    assert fv.subject_truth_pts("truck", _Scripted(), None) == []
+    assert fv.subject_truth_pts("bus", _Level(), None) == []
     # a retarget may go to a pedestrian (fly() requires their truth itself)...
     assert fv.level_car_refusal(["a red car", "a person"]) is None
     # ...but the level car is not truth for a pedestrian SUBJECT from the start

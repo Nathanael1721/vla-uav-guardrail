@@ -1718,8 +1718,14 @@ async def _fly(args, holder: dict) -> int:
         # scoring only: polled at most every LEVEL_TRUTH_PERIOD_S.
         if args.mission == "follow":
             import level_actors
-            level_car = level_actors.LevelCar(world, args.level_car, desc=args.object,
-                                              min_period_s=LEVEL_TRUTH_PERIOD_S)
+            # "Car_00,Car_23,Car_14": every level car the phrase names, scored
+            # against the nearest (level_actors.LevelCars; 31 Oct)
+            tags = [t.strip() for t in str(args.level_car).split(",") if t.strip()]
+            level_car = (level_actors.LevelCars(world, tags, desc=args.object,
+                                                min_period_s=LEVEL_TRUTH_PERIOD_S)
+                         if len(tags) > 1 else
+                         level_actors.LevelCar(world, args.level_car, desc=args.object,
+                                               min_period_s=LEVEL_TRUTH_PERIOD_S))
             try:
                 level_car.spawn()
             except Exception as exc:                               # noqa: BLE001
@@ -1828,6 +1834,14 @@ async def _fly(args, holder: dict) -> int:
                 # Truth for SCORING only: the level car against the aircraft.
                 try:
                     level_car.update(time.time() - t0)
+                    if hasattr(level_car, "nearest"):
+                        # several candidates: the nearest is the subject's truth,
+                        # every candidate's distance is kept for the scorer
+                        near = level_car.nearest(state.x, state.y)
+                        res.row["subject_tag"] = near[0] if near else None
+                        res.row["subject_dists"] = {
+                            t: round(math.hypot(state.x - fx, state.y - fy), 2)
+                            for t, fx, fy in level_car.positions()}
                     cx, cy = level_car.pos
                     if math.isfinite(cx) and math.isfinite(cy):
                         res.row["subject_xy"] = [round(cx, 2), round(cy, 2)]

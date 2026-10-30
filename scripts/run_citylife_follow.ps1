@@ -115,6 +115,9 @@ param(
     [double]$TruthPeriod = 0.5,         # s between pose polls; see the note below
     [string]$Tag     = "citylife_follow",
     [string]$LevelCar = "",             # e.g. Car_10: follow a car the level drives
+    [double]$ObjectWidthM = 0,          # >0: --object-width-m (the stand-off of a level
+                                        # vehicle is --want-width 0.16 of this width;
+                                        # 0: from the words, a box truck's 6 m = 23.7 m)
     [int]$StartWhenSeen = 5,            # consecutive plausible boxes before t0; 0 = off
     [double]$StartTimeout = 330,        # red lights lengthen the car's lap (2026-09-29)
     [double]$StartMaxRange = 30,        # car mode: acquire only within this range.
@@ -444,6 +447,8 @@ if ($LevelCar) {
     # A car: 0.16 of frame width is the calibration made for a 4 m car (15.8 m
     # stand-off), and the subject's truth is the one tag.
     $a += @("--level-car", $LevelCar, "--want-width", "0.16")
+    # the 4 m car calibration for any level vehicle (-ObjectWidthM 4): 15.8 m
+    if ($ObjectWidthM -gt 0) { $a += @("--object-width-m", "$ObjectWidthM") }
     # Only a NEAR car is a start: acquired at 140 m it was 16 px, driving away
     # at 3.2 m/s from an aircraft capped at 4 m/s, and was never closed on.
     # The car passes the start point once a lap, so the gate waits for that.

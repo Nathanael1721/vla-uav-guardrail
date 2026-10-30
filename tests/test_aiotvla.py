@@ -435,6 +435,269 @@ def test_the_server_answers_a_scripted_aiotvla_step():
     assert resp["native"]["ignored"]["phrase"] == "straight ahead "
 
 
+# ------------------------------------------------- 6. v7: lateral and memory
+
+ASPECT = 432 / 768
+
+
+def _box_of(fwd, right, up=8.0, h=0.04, hfov=90.0, pitch=-20.0):
+    """The box (cx, cy, w, h) whose bottom-centre pixel images the ground
+    point (fwd, right) from a camera `up` m above it: box_measurement's
+    inverse, written from the projection side."""
+    k = math.tan(math.radians(hfov) / 2.0)
+    th = -math.radians(pitch)
+    z = fwd * math.cos(th) + up * math.sin(th)
+    y = -fwd * math.sin(th) + up * math.cos(th)
+    cx = 0.5 + (right / z) / (2.0 * k)
+    bottom = 0.5 + (y / z) / (2.0 * k * ASPECT)
+    return (cx, bottom - h / 2.0, 0.05, h)
+
+
+def test_box_measurement_is_the_pinhole_ground_point():
+    hfov, pitch = core.CAMERAS["detector"]
+    # the bottom edge on the optical axis: 8 m / tan(20 deg) ahead
+    m = core.box_measurement((0.5, 0.48, 0.05, 0.04), 8.0, ASPECT, hfov, pitch)
+    assert math.isclose(m[0], 8.0 / math.tan(math.radians(20.0)), rel_tol=1e-9)
+    assert abs(m[1]) < 1e-9
+    for fwd, right in ((15.0, 0.0), (22.0, -6.5), (40.0, 9.0), (6.0, 1.0)):
+        got = core.box_measurement(_box_of(fwd, right), 8.0, ASPECT, hfov, pitch)
+        assert math.isclose(got[0], fwd, abs_tol=1e-6) and math.isclose(got[1], right,
+                                                                       abs_tol=1e-6), got
+    # a ray at or above the horizon, a range outside MEM_RANGE_M, no altitude: no measurement
+    assert core.box_measurement((0.5, 0.05, 0.05, 0.04), 8.0, ASPECT, hfov, pitch) is None
+    assert core.box_measurement(_box_of(90.0, 0.0), 8.0, ASPECT, hfov, pitch) is None
+    assert core.box_measurement(_box_of(15.0, 0.0), 0.0, ASPECT, hfov, pitch) is None
+    assert core.box_measurement(None, 8.0, ASPECT, hfov, pitch) is None
+
+
+def _mem():
+    hfov, pitch = core.CAMERAS["detector"]
+    return core.TargetMemory(ASPECT, hfov, pitch)
+
+
+def _field(f, name):
+    return float(f[core.MEM_FIELDS.index(name)])
+
+
+def test_memory_confirms_a_track_only_with_two_agreeing_boxes():
+    mem = _mem()
+    pose = (0.0, 0.0, 8.0, 0.0)
+    f = mem.step(0.0, pose, _box_of(20.0, 2.0), -1.0, 0.5)
+    assert _field(f, "valid") == 0.0 and _field(f, "meas") == 1.0      # a candidate only
+    # a second box far from the first does not confirm; it is the new candidate
+    f = mem.step(0.13, pose, _box_of(45.0, -10.0), -1.0, 0.5)
+    assert _field(f, "valid") == 0.0
+    f = mem.step(0.26, pose, _box_of(45.5, -10.0), -1.0, 0.5)
+    assert _field(f, "valid") == 1.0 and _field(f, "accepted") == 1.0
+    assert math.isclose(_field(f, "fwd") * 30.0, 45.5, abs_tol=0.5)
+    # a box under the seed logit never starts a track
+    mem2 = _mem()
+    for i in range(4):
+        f = mem2.step(0.13 * i, pose, _box_of(20.0, 0.0), core.MEM_SEED_LOGIT - 0.2, 0.5)
+    assert _field(f, "valid") == 0.0 and _field(f, "meas") == 1.0
+
+
+def test_memory_tracks_gates_an_outlier_and_reseeds_on_agreeing_ones():
+    mem = _mem()
+    pose = (0.0, 0.0, 8.0, 0.0)
+    t = 0.0
+    for i in range(40):                                  # a car at 3 m/s ahead
+        t = 0.13 * i
+        f = mem.step(t, pose, _box_of(20.0 + 3.0 * t, 2.0), -1.0, 0.5)
+    assert _field(f, "valid") == 1.0
+    assert math.isclose(_field(f, "fwd") * 30.0, 20.0 + 3.0 * t, abs_tol=1.5)
+    assert math.isclose(_field(f, "v_fwd") * 5.0, 3.0, abs_tol=0.5)
+    assert math.isclose(_field(f, "range_rate") * 5.0, 3.0, abs_tol=0.6)
+    # one box on something else: gated out, the track kept
+    t += 0.13
+    f = mem.step(t, pose, _box_of(12.0, -15.0), -1.0, 0.5)
+    assert _field(f, "accepted") == 0.0 and _field(f, "valid") == 1.0
+    assert _field(f, "fwd") * 30.0 > 30.0
+    # MEM_RESEED_N agreeing boxes elsewhere: the track moves there
+    for _ in range(core.MEM_RESEED_N - 1):
+        t += 0.13
+        f = mem.step(t, pose, _box_of(12.0, -15.0), -1.0, 0.5)
+    assert _field(f, "accepted") == 1.0
+    assert math.isclose(_field(f, "fwd") * 30.0, 12.0, abs_tol=1.0)
+    assert math.isclose(_field(f, "right") * 30.0, -15.0, abs_tol=1.0)
+    # unseen: predicted on, then dropped after MEM_MAX_AGE_S
+    f = mem.step(t + 3.0, pose, None, None)
+    assert _field(f, "valid") == 1.0 and math.isclose(_field(f, "age"), 3.0 / core.MEM_MAX_AGE_S,
+                                                      abs_tol=1e-6)
+    f = mem.step(t + core.MEM_MAX_AGE_S + 0.5, pose, None, None)
+    assert _field(f, "valid") == 0.0
+
+
+def test_memory_needs_the_contrast_and_reads_in_the_body_frame():
+    mem = _mem()
+    yaw = math.pi / 2                                    # heading east
+    pose = (100.0, 50.0, 8.0, yaw)
+    for i in range(3):
+        f = mem.step(0.13 * i, pose, _box_of(20.0, 3.0), -1.0, core.MEM_CONTRAST_MIN - 0.1)
+    assert _field(f, "meas") == 0.0 and _field(f, "valid") == 0.0   # beaten by a contrast phrase
+    for i in range(3, 6):
+        f = mem.step(0.13 * i, pose, _box_of(20.0, 3.0), -1.0, 0.4)
+    assert _field(f, "valid") == 1.0
+    assert math.isclose(_field(f, "fwd") * 30.0, 20.0, abs_tol=0.3)
+    assert math.isclose(_field(f, "right") * 30.0, 3.0, abs_tol=0.3)
+    assert math.isclose(_field(f, "bearing"), math.atan2(3.0, 20.0), abs_tol=0.02)
+    assert math.isclose(_field(f, "contrast"), 0.4, abs_tol=1e-6)
+    # in the world: 20 m east and 3 m south of (100, 50)
+    assert np.allclose(mem.x[:2], (97.0, 70.0), atol=0.3)
+
+
+def test_mirror_memory_negates_exactly_the_right_handed_fields():
+    m = np.arange(1, core.MEM_DIM + 1, dtype=np.float32)
+    mm = core.mirror_memory(m)
+    for k, f in enumerate(core.MEM_FIELDS):
+        assert mm[k] == (-m[k] if f in core.MEM_NEGATE else m[k]), f
+    assert np.array_equal(core.mirror_memory(mm), m)
+    assert set(core.MEM_NEGATE) <= set(core.MEM_FIELDS)
+
+
+def test_run_memory_starts_at_the_first_sample_and_resets_on_a_gap():
+    hfov, pitch = core.CAMERAS["detector"]
+    n = 16
+    t = np.arange(n) * 0.13 + 100.0
+    t[10:] += 3.0                                        # a 3 s gap before row 10
+    poses = np.tile([0.0, 0.0, 8.0, 0.0], (n, 1))
+    boxes = np.array([_box_of(20.0, 0.0)] * n)
+    logits = np.full(n, -1.0)
+    ok = np.ones(n, bool)
+    ok[6] = False                                        # a lost frame: no measurement
+    M = core.run_memory(t, poses, boxes, logits, ok, 3, ASPECT, hfov, pitch, np.full(n, 0.5))
+    v = M[:, core.MEM_FIELDS.index("valid")]
+    assert not M[:3].any()                               # before the first sample
+    assert v[3] == 0.0 and v[4] == 1.0                   # a candidate, then confirmed
+    assert v[6] == 1.0 and M[6, core.MEM_FIELDS.index("meas")] == 0.0
+    assert v[10] == 0.0 and v[11] == 1.0                 # reset by the gap, as core.Ring
+
+
+def test_grounding_contrast_is_the_phrase_against_its_contrast_phrases():
+    g = np.full((3, core.N_PATCHES), -6.0)
+    g[0, 100], g[1, 100], g[2, 100] = -1.0, -1.5, -0.6   # "white" beats "red" at red's peak
+    assert math.isclose(core.grounding_contrast(g, 0, (1, 2)), -0.4, abs_tol=1e-9)
+    assert math.isclose(core.grounding_contrast(g, 0, (1,)), 0.5, abs_tol=1e-9)
+    assert core.grounding_contrast(g, 0, ()) is None
+    assert all(p in core.VOCAB for k, v in core.CONTRAST.items() for p in (k,) + tuple(v))
+
+
+def test_the_memory_camera_and_constants_are_the_codecs_and_json():
+    import json
+    from guardrail import aerialvla_codec as C
+    for src, (hfov, pitch) in core.CAMERAS.items():
+        assert C.FRONT_SOURCES[src]["hfov_deg"] == hfov
+        assert C.FRONT_SOURCES[src]["pitch_deg"] == pitch
+    mc = core.memory_constants()
+    assert json.loads(json.dumps(mc)) == mc
+    assert mc["fields"] == list(core.MEM_FIELDS) and "MEM_GATE_SIGMA" in mc
+
+
+def test_a_lateral_head_with_a_memory_token():
+    torch = _torch()
+    if torch is None:
+        return SKIP
+    from training.aiotvla.model import AIOTVLAHead, HeadConfig
+    cfg = HeadConfig(n_slots=len(core.LONG_HIST_OFFSETS_S), n_stats=8, axes=core.LATERAL_AXES,
+                     n_mem=core.MEM_DIM)
+    assert HeadConfig(**cfg.to_dict()) == cfg
+    head = AIOTVLAHead(cfg).eval()
+    b, k = 2, cfg.n_slots
+    x = (torch.randn(b, k, core.N_PATCHES), torch.randn(b, k, core.N_PATCHES, core.PCA_DIM),
+         torch.randn(b, k, 8), torch.randn(b, k, core.PROPRIO_DIM),
+         torch.ones(b, k, dtype=torch.bool))
+    mem = torch.randn(b, core.MEM_DIM)
+    with torch.no_grad():
+        logits, aux = head(*x, mem)
+        logits2, _ = head(*x, mem + 1.0)
+    assert set(logits) == set(core.LATERAL_AXES)
+    assert tuple(logits["right_m"].shape) == (b, len(core.GRIDS["right_m"]))
+    assert not torch.allclose(logits["fwd_m"], logits2["fwd_m"])       # the memory is read
+    try:
+        head(*x)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("a memory head answered without its memory")
+    # a v0-v6 config (no axes, no n_mem) is three axes and no memory token
+    old = HeadConfig(**{k2: v for k2, v in cfg.to_dict().items() if k2 not in ("axes", "n_mem")})
+    assert old.axes == core.AXES and old.n_mem == 0
+
+
+def test_vocab_only_grows_and_red_cars_contrast_is_v7s():
+    """A cache's row of a phrase is its index in that cache's vocab, and a v7
+    checkpoint grounds the contrast phrases it recorded: VOCAB is appended
+    to, and "a red car" keeps the two contrast phrases v7 was trained with."""
+    assert core.VOCAB[:4] == ("a red car", "a white car", "a blue car", "a person")
+    assert len(set(core.VOCAB)) == len(core.VOCAB)
+    assert core.CONTRAST["a red car"] == ("a white car", "a blue car")
+    for k, v in core.CONTRAST.items():
+        assert k in core.VOCAB and k not in v and set(v) <= set(core.VOCAB), k
+
+
+def test_a_head_with_a_text_token():
+    torch = _torch()
+    if torch is None:
+        return SKIP
+    from training.aiotvla.model import AIOTVLAHead, HeadConfig
+    cfg = HeadConfig(n_slots=2, n_stats=8, axes=core.LATERAL_AXES, n_mem=core.MEM_DIM,
+                     n_text=512)
+    head = AIOTVLAHead(cfg).eval()
+    b = 2
+    x = (torch.randn(b, 2, core.N_PATCHES), torch.randn(b, 2, core.N_PATCHES, core.PCA_DIM),
+         torch.randn(b, 2, 8), torch.randn(b, 2, core.PROPRIO_DIM),
+         torch.ones(b, 2, dtype=torch.bool), torch.randn(b, core.MEM_DIM))
+    t1 = torch.nn.functional.normalize(torch.randn(b, 512), dim=1)
+    t2 = torch.nn.functional.normalize(torch.randn(b, 512), dim=1)
+    with torch.no_grad():
+        l1, _ = head(*x, t1)
+        l2, _ = head(*x, t2)
+    assert not torch.allclose(l1["fwd_m"], l2["fwd_m"])              # the words are read
+    try:
+        head(*x)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("a text head answered without its text")
+    # without a memory token: the text goes in the txt slot, mem None
+    cfg2 = HeadConfig(n_slots=2, n_stats=8, n_text=512)
+    with torch.no_grad():
+        out, _ = AIOTVLAHead(cfg2).eval()(*x[:5], None, t1)
+    assert set(out) == set(core.AXES)
+    assert HeadConfig().n_text == 0
+
+
+def test_command_labels_carry_the_lateral_component():
+    import tempfile
+    from training.aiotvla.build_labels import run_samples
+    d = Path(tempfile.mkdtemp())
+    yaw = 0.0                                            # heading north: right is east (+y)
+    asked = {"vx": 2.0, "vy": -1.2, "vz_up": 0.0, "yaw_rate": 0.0}   # sliding left
+    box = {"det": [384.0, 216.0, 40.0, 20.0, 0.2, 768, 432], "t_box": 5.0}
+    _write_record(d, [{"i": 0, "t_capture": 5.0, "pose": {"x": 0, "y": 0, "up": 8, "yaw_rad": yaw},
+                       "box": box, "tick": {"mode": "track", "cmd": asked, "asked": asked}}])
+    s, _ = run_samples("r", d, np.ones(1, bool), {0: 0}, "train", 0.5)
+    lab = s[0]["label_raw"]
+    assert math.isclose(lab["fwd_m"], 1.0, abs_tol=1e-9)
+    assert math.isclose(lab["right_m"], -0.6, abs_tol=1e-9)
+    assert core.mirror_label(lab)["right_m"] == 0.6 and core.mirror_label(lab)["fwd_m"] == 1.0
+
+
+def test_the_family_maps_right_m_into_a_lateral_step():
+    F, C = _server_parts()
+    fam = F.AIOTVLAFamily(horizon_s=0.5)
+    nat = fam.parse({"raw": {"fwd_m": 0.9, "down_m": 0.0, "dpsi_rad": -0.03, "right_m": 0.7,
+                             "memory": {"valid": True}}})
+    m = fam.map(nat["action"], F.intrinsics(768, 432, 90.0))
+    assert m["right_m"] == 0.7 and m["geometry"]["memory"] == {"valid": True}
+    st = F.encode_step(m["fwd_m"], m["down_m"], m["dpsi_rad"], right_m=m["right_m"])
+    p = C.parse_action(st["text"], require_eos=True, lateral=True)
+    assert p.parse_ok and p.step.lateral
+    # a three-axis model's answer is a plain step, as before
+    nat3 = fam.parse({"raw": {"fwd_m": 0.9, "down_m": 0.0, "dpsi_rad": -0.03}})
+    assert "right_m" not in fam.map(nat3["action"], F.intrinsics(768, 432, 90.0))
+
+
 # --------------------------------------------------------------------- runner
 
 if __name__ == "__main__":

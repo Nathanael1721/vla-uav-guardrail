@@ -21,6 +21,14 @@ Writes <out>/head.pt (state dict, HeadConfig, the PCA, VOCAB, the core
 constants it was trained with, the data it saw), <out>/metrics.json (every
 epoch's hold-out numbers next to a constant baseline) and <out>/loss.csv.
 The checkpoint kept is the epoch with the lowest hold-out dpsi MAE.
+
+v7 (core LATERAL, MEMORY): --lateral also learns right_m (the label's
+sideways component); --memory feeds the target memory's MEM_FIELDS of the
+newest capture (core.run_memory over each run from its first sample, with
+the phrase's box, logit and CONTRAST), zeroed on --memory-dropout of the
+training samples so the head still reads the frames. v8: --text feeds the
+run's object words as the backbone's text embedding (<cache>/text.npz,
+build_cache), unit-norm, one more token.
 """
 from __future__ import annotations
 
@@ -41,7 +49,9 @@ if str(ROOT) not in sys.path:
 
 from training.aiotvla import core                                   # noqa: E402
 
-AXIS_WEIGHT = {"fwd_m": 1.0, "down_m": 0.5, "dpsi_rad": 2.0}
+AXIS_WEIGHT = {"fwd_m": 1.0, "down_m": 0.5, "dpsi_rad": 2.0, "right_m": 1.0}
+# the axes the mirror negates (core MIRROR)
+MIRROR_AXES = ("dpsi_rad", "right_m")
 # The proprio fields that carry the aircraft's own recent motion. --motion-
 # dropout zeroes them on a share of training samples: v0 (no dropout) read
 # its own yaw rate and speed so well that, with them zeroed on the hold-out,
@@ -65,30 +75,76 @@ def torch_grounding_stats(torch, g):
     return torch.stack([col, row, top[:, 0], top[:, 0] - top[:, 1]], dim=1)
 
 
+def run_memory_of(d: Path, info: dict, meta, vi: int, start: int) -> np.ndarray:
+    """core.run_memory over one cached run (`d`) for its vocab's phrase vi
+    (info.json "vocab"): its box (B.npy), best-patch logit and contrast
+    (G.npy, core.CONTRAST), from row `start`."""
+    if not (d / "B.npy").exists():
+        raise SystemExit(f"{d}: no B.npy - re-cache the run (build_cache --force)")
+    src = info.get("front_source", "vla")
+    if src not in core.CAMERAS or not info.get("front_wh"):
+        raise SystemExit(f"{d}: the memory needs a known camera; this run's is {src!r}")
+    hfov, pitch = core.CAMERAS[src]
+    w, h = info["front_wh"]
+    G = np.load(d / "G.npy", mmap_mode="r")
+    vocab = info.get("vocab", list(core.VOCAB))
+    miss = [p for p in core.CONTRAST.get(vocab[vi], ()) if p not in vocab]
+    if miss:
+        raise SystemExit(f"{d}: contrast phrases {miss} are not cached - re-cache the run "
+                         f"(build_cache --force) with this VOCAB")
+    neg = tuple(vocab.index(p) for p in core.CONTRAST.get(vocab[vi], ()))
+    logits = np.asarray(G[:, vi, :], dtype=np.float32).max(axis=1)
+    con = None
+    if neg:
+        g = np.asarray(G[:, (vi,) + neg, :], dtype=np.float32)
+        con = np.array([core.grounding_contrast(g[k], 0, tuple(range(1, len(neg) + 1)))
+                        for k in range(len(g))])
+    boxes = np.asarray(np.load(d / "B.npy", mmap_mode="r")[:, vi, :], dtype=np.float32)
+    return core.run_memory(meta["t"], meta["poses"], boxes, logits, meta["frame_ok"], start,
+                           h / w, hfov, pitch, con)
+
+
 class Data:
     """Every run's maps in one table (row n = a zero frame for empty slots)
     and every sample's history rows, proprio and targets."""
 
     def __init__(self, labels: Path, cache: Path, device: str, offsets=core.HIST_OFFSETS_S,
                  runs: list[str] | None = None, onpolicy_weight: float = 1.0,
-                 boxes: bool = False):
+                 boxes: bool = False, axes=core.AXES, memory: bool = False,
+                 text: bool = False):
         import torch
         self.torch = torch
+        self.axes = tuple(axes)
         samples = [json.loads(l) for l in (labels / "samples.jsonl").read_text(
             encoding="utf-8").splitlines() if l.strip()]
         if runs is not None:
             keep = set(runs)
             samples = [s for s in samples if s["run"] in keep]
         runs = sorted({s["run"] for s in samples})
-        G, Gm, A, Am, B, Bm = [], [], [], [], [], []
-        self.boxes = bool(boxes)
+        first_i = {}
+        for s in samples:
+            first_i[s["run"]] = min(first_i.get(s["run"], int(s["i"])), int(s["i"]))
+        G, Gm, A, Am, B, Bm, M = [], [], [], [], [], [], []
+        self.boxes, self.memory, self.text = bool(boxes), bool(memory), bool(text)
+        if self.text:
+            tz = np.load(cache / "text.npz")
+            phrases = [str(p) for p in tz["phrases"]]
+            emb = np.asarray(tz["embeds"], dtype=np.float32)
+            emb /= np.linalg.norm(emb, axis=1, keepdims=True)
+            self.T = torch.from_numpy(emb).to(device)
+            self.text_backbone = str(tz["backbone"])
+        text_row = {}
         offset, self.run_info = 0, {}
         rows_of = {}
         meta_of = {}
         for r in runs:
             d = cache / r
             info = json.loads((d / "info.json").read_text(encoding="utf-8"))
-            vi = core.VOCAB.index(info["object"])
+            vi = info.get("vocab", list(core.VOCAB)).index(info["object"])
+            if self.text:
+                if info["object"] not in phrases:
+                    raise SystemExit(f"{cache}/text.npz has no embedding of {info['object']!r}")
+                text_row[r] = phrases.index(info["object"])
             meta = np.load(d / "meta.npz")
             G.append(np.load(d / "G.npy", mmap_mode="r")[:, vi, :].astype(np.float16))
             Gm.append(np.load(d / "Gm.npy", mmap_mode="r")[:, vi, :].astype(np.float16))
@@ -101,6 +157,8 @@ class Data:
                 Bm.append(np.load(d / "Bm.npy", mmap_mode="r")[:, vi, :].astype(np.float16))
             rows_of[r] = {int(i): k for k, i in enumerate(meta["i"])}
             meta_of[r] = meta
+            if self.memory:
+                M.append(run_memory_of(d, info, meta, vi, rows_of[r].get(first_i[r], 0)))
             self.run_info[r] = {"offset": offset, "n": int(info["n"]), "object": info["object"],
                                 "pca_sha256": info["pca_sha256"],
                                 "front_source": info.get("front_source", "vla"),
@@ -116,8 +174,13 @@ class Data:
             zero_b = np.zeros((1, 4), np.float16)
             self.B = torch.from_numpy(np.concatenate(B + [zero_b])).to(device)
             self.Bm = torch.from_numpy(np.concatenate(Bm + [zero_b])).to(device)
+        if self.memory:
+            mem = np.concatenate(M + [np.zeros((1, core.MEM_DIM), np.float32)])
+            self.M = torch.from_numpy(mem).to(device)
+            self.Mm = torch.from_numpy(core.mirror_memory(mem)).to(device)
         self.zero_row = offset
-        hist, pr, prm, tgt, aux, split, w, lab, ids = [], [], [], [], [], [], [], [], []
+        hist, pr, prm, tgt, aux, split, w, lab, ids, mrows, trows = ([], [], [], [], [], [], [],
+                                                                     [], [], [], [])
         skipped = 0
         for s in samples:
             r = s["run"]
@@ -135,7 +198,12 @@ class Data:
             pr.append(p)
             prm.append(core.mirror_proprio(p))
             L = s["label_raw"]
-            lab.append([L["fwd_m"], L["down_m"], L["dpsi_rad"]])
+            if "right_m" in self.axes and "right_m" not in L:
+                raise SystemExit(f"{labels}: no right_m label (build_labels before 30 Oct): "
+                                 f"rebuild the labels for --lateral")
+            lab.append([L[ax] for ax in self.axes])
+            mrows.append(off + k)
+            trows.append(text_row.get(r, 0))
             vis = s.get("hint_kind") == "fresh" and s.get("box") is not None
             brg = math.radians(s["box"]["bearing_deg"]) if vis else 0.0
             aux.append([1.0 if vis else 0.0, brg])
@@ -154,9 +222,11 @@ class Data:
         self.aux = torch.tensor(aux, dtype=torch.float32, device=device)
         self.train = torch.tensor(split, dtype=torch.bool, device=device)
         self.w = torch.tensor(w, dtype=torch.float32, device=device)
+        self.mrow = torch.tensor(mrows, dtype=torch.long, device=device)
+        self.trow = torch.tensor(trows, dtype=torch.long, device=device)
         self.ids = ids
         self.grids = {ax: torch.tensor(core.GRIDS[ax], dtype=torch.float32, device=device)
-                      for ax in core.AXES}
+                      for ax in self.axes}
         self.samples_sha256 = hashlib.sha256((labels / "samples.jsonl").read_bytes()).hexdigest()
 
     def soft(self, values, ax):
@@ -184,16 +254,25 @@ class Data:
         pr = torch.where(m3, self.prm[idx], self.pr[idx])
         valid = h != self.zero_row
         lab = self.lab[idx].clone()
-        lab[:, 2] = torch.where(mirror, -lab[:, 2], lab[:, 2])
+        for c, ax in enumerate(self.axes):
+            if ax in MIRROR_AXES:
+                lab[:, c] = torch.where(mirror, -lab[:, c], lab[:, c])
         aux = self.aux[idx].clone()
         aux[:, 1] = torch.where(mirror, -aux[:, 1], aux[:, 1])
-        return (g, a, st, pr, valid), lab, aux
+        x = (g, a, st, pr, valid)
+        if self.memory:
+            mr = self.mrow[idx]
+            x = x + (torch.where(mirror.view(-1, 1), self.Mm[mr], self.M[mr]),)
+        if self.text:
+            x = x + (None,) * (not self.memory) + (self.T[self.trow[idx]],)
+        return x, lab, aux
 
 
 def decode_batch(torch, logits: dict, grids: dict, window: int = core.DECODE_WINDOW):
-    """core.decode for a batch: {axis: (B, n)} -> (B, 3) in AXES order."""
+    """core.decode for a batch: {axis: (B, n)} -> (B, len(grids)) in the
+    order of `grids` (the data's axes)."""
     out = []
-    for ax in core.AXES:
+    for ax in grids:
         p = torch.softmax(logits[ax].float(), dim=1)
         g = grids[ax]
         m = p.argmax(1)
@@ -222,13 +301,17 @@ def evaluate(head, data: Data, idx, bs: int = 1024) -> dict:
     p, l = torch.cat(preds), torch.cat(labs)
     vp, at = torch.cat(vis_p), torch.cat(aux_t)
     out = {"n": int(len(p))}
-    for c, ax in enumerate(core.AXES):
+    for c, ax in enumerate(data.axes):
         out[f"mae_{ax}"] = float((p[:, c] - l[:, c]).abs().mean())
-    turn = l[:, 2].abs() > 0.05
-    out["dpsi_sign_acc_turning"] = float(((p[turn, 2] > 0) == (l[turn, 2] > 0)).float().mean()) \
+    d = data.axes.index("dpsi_rad")
+    turn = l[:, d].abs() > 0.05
+    out["dpsi_sign_acc_turning"] = float(((p[turn, d] > 0) == (l[turn, d] > 0)).float().mean()) \
         if bool(turn.any()) else None
     out["n_turning"] = int(turn.sum())
-    out["dpsi_corr"] = float(torch.corrcoef(torch.stack([p[:, 2], l[:, 2]]))[0, 1])
+    out["dpsi_corr"] = float(torch.corrcoef(torch.stack([p[:, d], l[:, d]]))[0, 1])
+    if "right_m" in data.axes:
+        r = data.axes.index("right_m")
+        out["right_corr"] = float(torch.corrcoef(torch.stack([p[:, r], l[:, r]]))[0, 1])
     out["visible_acc"] = float(((vp > 0.5) == (at[:, 0] > 0.5)).float().mean())
     head.train()
     return out
@@ -238,7 +321,7 @@ def baseline(data: Data, tr_idx, ho_idx) -> dict:
     """The constant answer: the training labels' median per axis."""
     med = data.lab[tr_idx].median(dim=0).values
     l = data.lab[ho_idx]
-    return {f"mae_{ax}": float((l[:, c] - med[c]).abs().mean()) for c, ax in enumerate(core.AXES)}
+    return {f"mae_{ax}": float((l[:, c] - med[c]).abs().mean()) for c, ax in enumerate(data.axes)}
 
 
 def main(argv=None) -> int:
@@ -266,6 +349,15 @@ def main(argv=None) -> int:
     ap.add_argument("--motion-dropout", type=float, default=0.0,
                     help="share of training samples whose motion proprio (MOTION_FIELDS, every "
                          "slot) is zeroed")
+    ap.add_argument("--lateral", action="store_true",
+                    help="also learn right_m (core LATERAL_AXES; labels with right_m)")
+    ap.add_argument("--memory", action="store_true",
+                    help="feed the target memory's MEM_FIELDS (core MEMORY; the cache needs B.npy)")
+    ap.add_argument("--memory-dropout", type=float, default=0.1,
+                    help="with --memory: share of training samples whose memory is zeroed")
+    ap.add_argument("--text", action="store_true",
+                    help="feed the run's object words as the backbone's text embedding "
+                         "(<cache>/text.npz; HeadConfig.n_text)")
     args = ap.parse_args(argv)
     import torch
     from training.aiotvla.model import HeadConfig, AIOTVLAHead, n_params
@@ -274,8 +366,9 @@ def main(argv=None) -> int:
     out.mkdir(parents=True, exist_ok=True)
     t0 = time.time()
     offsets = core.LONG_HIST_OFFSETS_S if args.long_history else core.HIST_OFFSETS_S
+    axes = core.LATERAL_AXES if args.lateral else core.AXES
     data = Data(Path(args.labels), Path(args.cache), args.device, offsets, args.runs,
-                args.onpolicy_weight, args.box_features)
+                args.onpolicy_weight, args.box_features, axes, args.memory, args.text)
     backbones = {json.loads((Path(args.cache) / r / "info.json").read_text(
         encoding="utf-8"))["backbone"] for r in data.run_info}
     if len(backbones) != 1:
@@ -293,7 +386,9 @@ def main(argv=None) -> int:
     ho = torch.nonzero(~data.train).squeeze(1)
     print(f"[data] {len(tr)} train / {len(ho)} hold-out samples, {len(data.run_info)} runs, "
           f"{data.skipped} skipped, loaded in {time.time() - t0:.1f} s")
-    cfg = HeadConfig(n_slots=len(offsets), n_stats=8 if args.box_features else 4)
+    cfg = HeadConfig(n_slots=len(offsets), n_stats=8 if args.box_features else 4, axes=axes,
+                     n_mem=core.MEM_DIM if args.memory else 0,
+                     n_text=int(data.T.shape[1]) if args.text else 0)
     head = AIOTVLAHead(cfg).to(args.device)
     if args.init:
         ck = torch.load(args.init, map_location=args.device)
@@ -311,8 +406,8 @@ def main(argv=None) -> int:
     hist, best, step = [], None, 0
     loss_f = open(out / "loss.csv", "w", newline="")
     lw = csv.writer(loss_f)
-    lw.writerow(["step", "epoch", "loss", "ce_fwd", "ce_down", "ce_dpsi", "aux_vis", "aux_brg",
-                 "lr"])
+    lw.writerow(["step", "epoch", "loss"] + [f"ce_{a}" for a in axes] + ["aux_vis", "aux_brg",
+                                                                         "lr"])
     for ep in range(args.epochs):
         perm = tr[torch.randperm(len(tr), generator=gen).to(tr.device)]
         for k in range(0, len(perm), args.batch):
@@ -323,12 +418,16 @@ def main(argv=None) -> int:
                 drop = torch.rand(len(j), generator=gen).to(j.device) < args.motion_dropout
                 pr = x[3].clone()
                 pr[drop.nonzero().squeeze(1).unsqueeze(1), :, motion_cols] = 0.0
-                x = (x[0], x[1], x[2], pr, x[4])
+                x = (x[0], x[1], x[2], pr) + tuple(x[4:])
+            if args.memory and args.memory_dropout > 0:
+                keep = (torch.rand(len(j), generator=gen).to(j.device)
+                        >= args.memory_dropout).to(x[5].dtype)
+                x = tuple(x[:5]) + (x[5] * keep.unsqueeze(1),) + tuple(x[6:])
             logits, ax = head(*x)
             w = data.w[j]
             parts = {}
             loss = 0.0
-            for c, a in enumerate(core.AXES):
+            for c, a in enumerate(axes):
                 tgt = data.soft(lab[:, c], a)
                 ce = -(tgt * torch.log_softmax(logits[a], dim=1)).sum(1)
                 parts[a] = (ce * w).sum() / w.sum()
@@ -346,7 +445,7 @@ def main(argv=None) -> int:
             step += 1
             if step % 50 == 0:
                 lw.writerow([step, ep, round(float(loss), 5)] +
-                            [round(float(parts[a]), 5) for a in core.AXES] +
+                            [round(float(parts[a]), 5) for a in axes] +
                             [round(float(vis), 5), round(float(brg), 5),
                              sched.get_last_lr()[0]])
         ev = evaluate(head, data, ho)
@@ -365,8 +464,13 @@ def main(argv=None) -> int:
                                  "VEL_MAX_DT_S": core.VEL_MAX_DT_S, "PCA_DIM": core.PCA_DIM,
                                  "VOCAB": core.VOCAB,
                                  "GRIDS": {a: [float(core.GRIDS[a][0]), float(core.GRIDS[a][-1]),
-                                               len(core.GRIDS[a])] for a in core.AXES},
-                                 "LABEL_HORIZON_S": core.LABEL_HORIZON_S},
+                                               len(core.GRIDS[a])] for a in axes},
+                                 "AXES": list(axes),
+                                 "LABEL_HORIZON_S": core.LABEL_HORIZON_S,
+                                 **({"MEMORY": core.memory_constants()} if args.memory else {}),
+                                 **({"TEXT": {"backbone": data.text_backbone,
+                                              "dim": int(data.T.shape[1]), "unit_norm": True}}
+                                    if args.text else {})},
                         "backbone": backbone,
                         "data": {"labels": Path(args.labels).as_posix(),
                                  "samples_sha256": data.samples_sha256,

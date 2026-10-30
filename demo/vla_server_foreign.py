@@ -274,23 +274,29 @@ MAX_SESSIONS = 64                # connections whose history is kept
 def quantize_nearest(value: float, axis: str) -> int:
     """The bin whose lower edge (the client's decode) is nearest `value`,
     after clipping to the axis range (module docstring, THE STEP TEXT)."""
-    lo, hi = C.RANGES[axis]
+    lo, hi = C.axis_range(axis)
     v = min(max(float(value), lo), hi)
     return int(math.floor((v - lo) / (hi - lo) * C.MAX_BIN + 0.5))
 
 
-def encode_step(fwd_m: float, down_m: float, dpsi_rad: float, land: bool = False) -> dict:
+def encode_step(fwd_m: float, down_m: float, dpsi_rad: float, land: bool = False,
+                right_m: float | None = None) -> dict:
     """A continuous step in metres and radians -> {"text" (the step text with
     the EOS marker, what parse_action reads), "bins", "requested", "clipped"
     (the axes outside the codec's range), "flown" (the step the bins decode
-    to), "land"}. ValueError for a value that is not a finite number."""
+    to), "land"}. ValueError for a value that is not a finite number. With
+    right_m, a lateral step: four bins (codec RIGHT_RANGE), read with
+    parse_action(lateral=True)."""
     req = {"fwd_m": fwd_m, "down_m": down_m, "dpsi_rad": dpsi_rad}
+    if right_m is not None:
+        req["right_m"] = right_m
     for k, v in req.items():
         if not C._finite_number(v):
             raise ValueError(f"{k} {v!r} is not a finite number")
         req[k] = float(v)
-    clipped = [k for k in C.AXES if not C.RANGES[k][0] <= req[k] <= C.RANGES[k][1]]
-    bins = tuple(quantize_nearest(req[k], k) for k in C.AXES)
+    axes = C.LATERAL_AXES if right_m is not None else C.AXES
+    clipped = [k for k in axes if not C.axis_range(k)[0] <= req[k] <= C.axis_range(k)[1]]
+    bins = tuple(quantize_nearest(req[k], k) for k in axes)
     return {"text": C.action_text(bins, land=bool(land)) + C.EOS_TEXT, "bins": list(bins),
             "requested": req, "clipped": clipped, "flown": C.bins_to_step(bins).to_dict(),
             "land": bool(land)}
@@ -825,10 +831,15 @@ class AIOTVLAFamily:
 
     def map(self, action: dict, intr: dict, pitch_deg: float = 0.0) -> dict:
         geo = {k: action.get(k) for k in ("visible_p", "bearing_rad", "slots_valid",
-                                           "history_reset")}
-        return {"kind": "step", "fwd_m": float(action["fwd_m"]),
-                "down_m": float(action["down_m"]), "dpsi_rad": float(action["dpsi_rad"]),
-                "land": False, "geometry": {**geo, "horizon_s": self.horizon_s}}
+                                           "history_reset", "memory")}
+        out = {"kind": "step", "fwd_m": float(action["fwd_m"]),
+               "down_m": float(action["down_m"]), "dpsi_rad": float(action["dpsi_rad"]),
+               "land": False, "geometry": {**geo, "horizon_s": self.horizon_s}}
+        if action.get("right_m") is not None:
+            # a v7 checkpoint's lateral axis (training/aiotvla/core.py LATERAL):
+            # a lateral step, four bins
+            out["right_m"] = float(action["right_m"])
+        return out
 
     def mapping_params(self) -> dict:
         return {"horizon_s": self.horizon_s}
@@ -1007,7 +1018,13 @@ class AIOTVLAModel:
     pushes the maps into its history ring (core.Ring: one flight at a time,
     reset on a gap or a time that runs backwards) and answers the head's
     decoded step. The checkpoint's core constants must be this checkout's
-    (history offsets, grids, PCA size): refused otherwise."""
+    (history offsets, grids, PCA size): refused otherwise.
+
+    v7 (core LATERAL, MEMORY): the axes are the checkpoint's (a lateral one
+    answers right_m too); a checkpoint with a memory token grounds the
+    object words AND their core.CONTRAST phrases, and runs core.TargetMemory
+    over the requests (its box, logit and contrast), reset with the ring.
+    Its memory constants must be this checkout's."""
     precision, attn, merged = "fp16", "sdpa", False
 
     def __init__(self, weights_dir: str | Path, *, device: str = "cuda:0"):
@@ -1019,9 +1036,10 @@ class AIOTVLAModel:
         self.np, self.torch, self.NC, self.device = np, torch, NC, device
         t0 = time.perf_counter()
         ck = torch.load(Path(weights_dir) / "head.pt", map_location=device, weights_only=False)
+        self.axes = tuple(ck["core"].get("AXES", NC.AXES))
         mine = {"PCA_DIM": NC.PCA_DIM, "LABEL_HORIZON_S": NC.LABEL_HORIZON_S,
                 "GRIDS": {a: [float(NC.GRIDS[a][0]), float(NC.GRIDS[a][-1]), len(NC.GRIDS[a])]
-                          for a in NC.AXES}}
+                          for a in self.axes}}
         theirs = {k: ck["core"][k] for k in mine}
         if json.dumps(mine, sort_keys=True) != json.dumps(
                 {k: (list(v) if isinstance(v, tuple) else v) for k, v in theirs.items()},
@@ -1040,6 +1058,28 @@ class AIOTVLAModel:
         self.head.load_state_dict(ck["state_dict"])
         self.with_box = int(ck["config"].get("n_stats", 4)) == 8
         self.ring = NC.Ring(offsets=offsets, tol=tol, with_box=self.with_box)
+        self.memory = None
+        self.contrast = {}
+        if int(ck["config"].get("n_mem", 0)) > 0:
+            theirs_m = dict(ck["core"].get("MEMORY") or {})
+            # the contrast phrases are the checkpoint's own (core.CONTRAST may
+            # have grown since); every other memory constant must be this
+            # checkout's
+            self.contrast = {k: tuple(v) for k, v in theirs_m.pop("contrast", {}).items()}
+            mine_m = {k: v for k, v in NC.memory_constants().items() if k != "contrast"}
+            if json.dumps(theirs_m, sort_keys=True) != json.dumps(mine_m, sort_keys=True):
+                raise SystemExit(f"{weights_dir}/head.pt was trained with other memory "
+                                 f"constants ({theirs_m}) than this checkout's ({mine_m})")
+            if self.front_source not in NC.CAMERAS or not ck.get("front_wh"):
+                raise SystemExit(f"{weights_dir}/head.pt: the memory needs a known camera, "
+                                 f"not {self.front_source!r}")
+            hfov, pitch = NC.CAMERAS[self.front_source]
+            w, h = ck["front_wh"]
+            self.memory = NC.TargetMemory(h / w, hfov, pitch)
+        self.n_text = int(ck["config"].get("n_text", 0))
+        if self.n_text > 0 and (ck["core"].get("TEXT") or {}).get("backbone") != self.bb.model_id:
+            raise SystemExit(f"{weights_dir}/head.pt: its text embeddings are not this "
+                             f"backbone's ({self.bb.model_id})")
         self.checkpoint = {"epoch": ck.get("epoch"), "holdout": ck.get("holdout"),
                            "data": {k: ck["data"][k] for k in ("samples_sha256", "n_train",
                                                               "n_holdout")},
@@ -1049,28 +1089,52 @@ class AIOTVLAModel:
     def generate(self, image, inputs: dict) -> dict:
         np, torch, NC = self.np, self.torch, self.NC
         t0 = time.perf_counter()
-        out = self.bb.maps([np.asarray(image)], [inputs["instruction"]],
-                           with_boxes=self.with_box)
+        phrase = inputs["instruction"]
+        neg = self.contrast.get(phrase, ()) if self.memory is not None else ()
+        out = self.bb.maps([np.asarray(image)], [phrase, *neg],
+                           with_boxes=self.with_box or self.memory is not None)
         g, a = out[0], out[1]
-        box = out[2][0, 0] if self.with_box else None
+        box = out[2][0, 0] if (self.with_box or self.memory is not None) else None
         _sync(torch, self.device)
         t1 = time.perf_counter()
-        why = self.ring.push(inputs["t_capture"], inputs["pose"], g[0, 0], a[0], box)
+        pose = inputs["pose"]
+        why = self.ring.push(inputs["t_capture"], pose, g[0, 0], a[0],
+                             box if self.with_box else None)
         s = self.ring.slots()
         dev = self.device
         x = [torch.from_numpy(s[k]).unsqueeze(0).to(dev) for k in ("g", "a", "stats", "proprio")]
         valid = torch.from_numpy(s["valid"]).unsqueeze(0).to(dev)
+        mem_out = None
+        extra = []
+        if self.memory is not None:
+            if why:
+                self.memory.reset()
+            con = NC.grounding_contrast(g[0], 0, tuple(range(1, 1 + len(neg))))
+            mem_out = self.memory.step(float(inputs["t_capture"]),
+                                       (pose["x"], pose["y"], pose["up"], pose["yaw_rad"]),
+                                       box, float(np.max(g[0, 0])), con)
+            extra = [torch.from_numpy(mem_out).unsqueeze(0).to(dev)]
+        if self.n_text > 0:
+            e = self.bb.text_embeds([phrase]).float()
+            extra = (extra or [None]) + [e / e.norm(dim=1, keepdim=True)]
         with torch.inference_mode():
-            logits, aux = self.head(*x, valid)
-        probs = {ax: torch.softmax(logits[ax][0].float(), 0).cpu().numpy() for ax in NC.AXES}
+            logits, aux = self.head(*x, valid, *extra)
+        probs = {ax: torch.softmax(logits[ax][0].float(), 0).cpu().numpy() for ax in self.axes}
         aux = aux[0].float().cpu().numpy()
         _sync(torch, self.device)
         t2 = time.perf_counter()
-        raw = {ax: NC.decode(probs[ax], ax) for ax in NC.AXES}
+        raw = {ax: NC.decode(probs[ax], ax) for ax in self.axes}
         raw.update({"visible_p": float(1.0 / (1.0 + math.exp(-float(aux[0])))),
                     "bearing_rad": float(aux[1]) * 0.8, "slots_valid": s["n_valid"],
                     "history_reset": why,
-                    "peak_p": {ax: round(float(probs[ax].max()), 4) for ax in NC.AXES}})
+                    "peak_p": {ax: round(float(probs[ax].max()), 4) for ax in self.axes}})
+        if mem_out is not None:
+            m = dict(zip(NC.MEM_FIELDS, (float(v) for v in mem_out)))
+            raw["memory"] = {"valid": m["valid"] > 0.5, "accepted": m["accepted"] > 0.5,
+                             "range_m": round(m["range"] * 30.0, 2),
+                             "bearing_rad": round(m["bearing"], 4),
+                             "age_s": round(m["age"] * NC.MEM_MAX_AGE_S, 2),
+                             "meas": m["meas"] > 0.5, "contrast": round(m["contrast"], 3)}
         return {"raw": raw, "pre_s": t1 - t0, "gen_s": t2 - t1,
                 "model_s": time.perf_counter() - t0, "new_tokens": None, "prompt_tokens": None}
 
@@ -1245,9 +1309,11 @@ class ForeignServer(S.V2Server):
         mapping, raw_text, bins, step, land = None, "", None, None, False
         if nat["ok"]:
             m = self.family.map(nat["action"], intr, pitch_deg=self.camera["pitch_deg"])
-            st = encode_step(m["fwd_m"], m["down_m"], m["dpsi_rad"], land=m["land"])
+            lateral = m.get("right_m") is not None
+            st = encode_step(m["fwd_m"], m["down_m"], m["dpsi_rad"], land=m["land"],
+                             right_m=m.get("right_m"))
             # the AeroVLA server's own reading of the text this server answers
-            p = C.parse_action(st["text"], require_eos=True)
+            p = C.parse_action(st["text"], require_eos=True, lateral=lateral)
             if not p.parse_ok:                                     # pragma: no cover
                 raise AssertionError(f"the step text {st['text']!r} fails the reader: {p.reason}")
             raw_text, bins, step, land = st["text"], list(p.bins), p.step.to_dict(), p.land

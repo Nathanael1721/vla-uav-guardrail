@@ -15,6 +15,12 @@ in the units upstream trained and executes it with:
     dpsi_rad  heading change, radians, -1.1..1.1, positive clockwise (right)
     land      the model's own "I have arrived" token
 
+and, in a LATERAL step only (a fourth bin; never upstream's - AIOT-VLA v7,
+2026-10-30, whose expert slides sideways with the camera on the car on a
+third of its ticks):
+
+    right_m   displacement to the right of the new heading, metres, -2.5..2.5
+
 Upstream executes a step as: new heading = heading + dpsi; if |dpsi| >= 0.25
 rad rotate only (plus the altitude change); otherwise move fwd_m along the new
 heading and down_m vertically at 1.0 m/s; then hover 0.5 s
@@ -168,12 +174,18 @@ RESPONSE_FIELDS = ("v", "seq", "ok", "error", "raw_text", "bins", "step", "land"
                    "parse_ok", "latency_s", "t_capture", "pose", "prompt_sha256",
                    "image_sha256", "model")
 STEP_FIELDS = ("fwd_m", "down_m", "dpsi_rad")
+# A lateral step's fields (module docstring): upstream's three, then right_m.
+LATERAL_STEP_FIELDS = STEP_FIELDS + ("right_m",)
 
 # Upstream's action ranges (99 bins each; demo/aerialvla_demo.py NORM).
 FWD_RANGE_M = (0.0, 5.0)
 DOWN_RANGE_M = (-5.0, 5.0)
 DPSI_RANGE_RAD = (-1.1, 1.1)
 STEP_RANGES = (FWD_RANGE_M, DOWN_RANGE_M, DPSI_RANGE_RAD)
+# The fourth bin's range (guardrail/aerialvla_codec.RIGHT_RANGE): 99 bins, as
+# the others, so a bin is 0.051 m - 0.1 m/s flown as a rate over 0.5 s.
+RIGHT_RANGE_M = (-2.5, 2.5)
+LATERAL_STEP_RANGES = STEP_RANGES + (RIGHT_RANGE_M,)
 NUM_BINS = 99
 _RANGE_EPS = 1e-6
 
@@ -184,8 +196,9 @@ _RANGE_EPS = 1e-6
 # client re-reads the text because the brief's headline bug was a server-side
 # parser (ints[-3:]) that turned malformed LAND outputs into motion
 # ('00 49 494 49' -> a 5 m/s descent); a server still running one is refused
-# here, not flown (review of 7c7cc50, P3).
-ANSWER_TEXT_RE = re.compile(r"([0-9]{2}) ([0-9]{2}) ([0-9]{2})( LAND)?(?:</s>)?")
+# here, not flown (review of 7c7cc50, P3). A lateral step's text has a fourth
+# bin, "FF DD YY RR" (module docstring); group 4 is it, group 5 " LAND".
+ANSWER_TEXT_RE = re.compile(r"([0-9]{2}) ([0-9]{2}) ([0-9]{2})(?: ([0-9]{2}))?( LAND)?(?:</s>)?")
 
 # The model identity hello announces and every answer repeats (the brief). The
 # dashboard classifies VLA runs by weights_sha256, so a run whose identity has
@@ -278,29 +291,41 @@ class Pose:
 
 @dataclass(frozen=True)
 class Step:
-    """One AerialVLA step, upstream units (module docstring)."""
+    """One AerialVLA step, upstream units (module docstring). right_m is None
+    for upstream's step, a number for a lateral one."""
     fwd_m: float
     down_m: float
     dpsi_rad: float
+    right_m: float | None = None
 
     def __post_init__(self):
-        for k, (lo, hi) in zip(STEP_FIELDS, (FWD_RANGE_M, DOWN_RANGE_M, DPSI_RANGE_RAD)):
+        fields = LATERAL_STEP_FIELDS if self.lateral else STEP_FIELDS
+        for k, (lo, hi) in zip(fields, LATERAL_STEP_RANGES):
             v = _finite(getattr(self, k), f"step.{k}")
             if not lo - _RANGE_EPS <= v <= hi + _RANGE_EPS:
                 raise ValueError(f"step.{k} = {v} is outside AerialVLA's range [{lo}, {hi}]")
+
+    @property
+    def lateral(self) -> bool:
+        return self.right_m is not None
 
     @property
     def rotate_only(self) -> bool:
         return abs(self.dpsi_rad) >= ROTATE_ONLY_RAD
 
     def as_wire(self) -> dict:
-        return {"fwd_m": self.fwd_m, "down_m": self.down_m, "dpsi_rad": self.dpsi_rad}
+        d = {"fwd_m": self.fwd_m, "down_m": self.down_m, "dpsi_rad": self.dpsi_rad}
+        if self.lateral:
+            d["right_m"] = self.right_m
+        return d
 
     @classmethod
     def from_wire(cls, d: Any) -> "Step":
-        if not isinstance(d, dict) or set(d) != set(STEP_FIELDS):
-            raise ValueError(f"a step has exactly {STEP_FIELDS}, got {d!r}")
-        return cls(*(_finite(d[k], f"step.{k}") for k in STEP_FIELDS))
+        if not isinstance(d, dict) or set(d) not in (set(STEP_FIELDS), set(LATERAL_STEP_FIELDS)):
+            raise ValueError(f"a step has exactly {STEP_FIELDS} (and right_m, a lateral one), "
+                             f"got {d!r}")
+        fields = LATERAL_STEP_FIELDS if "right_m" in d else STEP_FIELDS
+        return cls(*(_finite(d[k], f"step.{k}") for k in fields))
 
 
 @dataclass(frozen=True)
@@ -648,21 +673,26 @@ def dequantize_bin(b: int, lo: float, hi: float) -> float:
     return b / (NUM_BINS - 1) * (hi - lo) + lo
 
 
-def _check_answer_text(text: str, bins: tuple[int, int, int], step: Step, land: bool) -> None:
+def _check_answer_text(text: str, bins: tuple[int, ...], step: Step, land: bool) -> None:
     """A parse_ok reply's raw_text must be the answer it claims (ANSWER_TEXT_RE
-    comment): three 2-digit bins equal to `bins`, " LAND" exactly when `land`,
-    and each step value within half a bin of its bin's value."""
+    comment): three 2-digit bins (four for a lateral step) equal to `bins`,
+    " LAND" exactly when `land`, and each step value within half a bin of its
+    bin's value."""
     m = ANSWER_TEXT_RE.fullmatch(text)
     if m is None:
         raise ProtocolError(f"parse_ok true, but raw_text {text!r} is not an answer (three "
                             f"2-digit bins, optional ' LAND', optional EOS): a parser that "
                             f"reads it as one is not trusted")
-    got = (int(m.group(1)), int(m.group(2)), int(m.group(3)))
+    got = tuple(int(g) for g in m.groups()[:4] if g is not None)
     if got != bins:
         raise ProtocolError(f"bins {list(bins)} are not raw_text {text!r}")
-    if (m.group(4) is not None) != land:
+    if len(bins) != (4 if step.lateral else 3):
+        raise ProtocolError(f"{len(bins)} bins for a {'lateral' if step.lateral else 'plain'} "
+                            f"step {step.as_wire()}")
+    if (m.group(5) is not None) != land:
         raise ProtocolError(f"land {land} but raw_text {text!r}")
-    for k, b, (lo, hi) in zip(STEP_FIELDS, bins, STEP_RANGES):
+    fields = LATERAL_STEP_FIELDS if step.lateral else STEP_FIELDS
+    for k, b, (lo, hi) in zip(fields, bins, LATERAL_STEP_RANGES):
         want, v = dequantize_bin(b, lo, hi), getattr(step, k)
         if abs(v - want) > 0.5 * (hi - lo) / (NUM_BINS - 1) + 1e-9:
             raise ProtocolError(f"step.{k} = {v} is not bin {b}'s value {want:.6g} "
@@ -714,10 +744,11 @@ def parse_infer_response(raw: Any, sent: dict, identity: dict | None = None) -> 
         raise ProtocolError("'raw_text' must be a string")
     bins = raw["bins"]
     if bins is not None:
-        if not (isinstance(bins, list) and len(bins) == 3
+        if not (isinstance(bins, list) and len(bins) in (3, 4)
                 and all(_is_int(b) and 0 <= b <= NUM_BINS - 1 for b in bins)):
-            raise ProtocolError(f"'bins' must be three integers 0..{NUM_BINS - 1}, got {bins!r}")
-        bins = (bins[0], bins[1], bins[2])
+            raise ProtocolError(f"'bins' must be three integers 0..{NUM_BINS - 1} (four for a "
+                                f"lateral step), got {bins!r}")
+        bins = tuple(bins)
     step = None
     if raw["step"] is not None:
         try:
@@ -1478,7 +1509,9 @@ class TrackerConfig:
     # replaces it:
     #   speed fwd_m / H along the BODY heading, at most speed_cap_mps
     #     (cruise_mps does not apply), scaled by cos(heading error) under
-    #     turn_while_moving, zero on a rotate-only step without it;
+    #     turn_while_moving, zero on a rotate-only step without it; a
+    #     lateral step also right_m / H to the right of the body heading,
+    #     the two capped together, as a vector, at speed_cap_mps;
     #   yaw rate dpsi_rad / H, at most yaw_rate_cap_rad_s, until the heading
     #     reaches psi_capture + dpsi (the anchor rules as for an endpoint;
     #     at or past it, zero - no turning back; never past it within one
@@ -1591,6 +1624,10 @@ class _Current:
     # TrackerConfig.rate_horizon_s: the step's speed and yaw rate, fixed when
     # it is accepted (None: the step is an endpoint)
     rate: dict | None = None
+    # the unit direction from the anchor to the endpoint (a plain step's is
+    # psi_t; a lateral step's is turned by atan2(right_m, fwd_m)): "never
+    # backwards" is measured along it
+    dir_t: tuple[float, float] | None = None
 
 
 _ZERO = Action4D()
@@ -1858,7 +1895,8 @@ class StepTracker:
     @property
     def last_rate(self) -> dict | None:
         """TrackerConfig RATE EXECUTION: the last tick's commanded
-        {horizon_s, speed_mps, yaw_rate_rps, heading_reached} when it flew a
+        {horizon_s, speed_mps, yaw_rate_rps, heading_reached} (and right_mps,
+        a lateral step) when it flew a
         step as a velocity (reason "rate"), before the smoothing; None after
         any other tick. For the rail's per-tick row (demo/vla_mission.
         MissionLoop, demo/vla_dagger.py): a Tick carries its action, author
@@ -1967,7 +2005,8 @@ class StepTracker:
             if not c.rotate_only:
                 dx, dy = c.x_t - pose.x, c.y_t - pose.y
                 dist = math.hypot(dx, dy)
-                along = dx * math.cos(c.psi_t) + dy * math.sin(c.psi_t)
+                ux, uy = c.dir_t or (math.cos(c.psi_t), math.sin(c.psi_t))
+                along = dx * ux + dy * uy
                 if dist > cfg.pos_tol_m and along > 0.0:
                     trans_done = False
                     # The approach: k_pos x d, or with the smoothing's
@@ -2022,18 +2061,26 @@ class StepTracker:
         turn_while_moving), its yaw rate until the heading reaches psi_t."""
         cfg, r = self.cfg, c.rate
         speed = r["speed_mps"]
+        side = r.get("right_mps")              # a lateral step's (None: a plain one)
         want = r["yaw_rate_rps"]
+        cy, sy = math.cos(pose.yaw_rad), math.sin(pose.yaw_rad)
         if cfg.rate_yaw == "rate":
             # the yaw rate itself until replaced: no target heading, so no
             # heading error to scale the speed by and nothing to reach
             self.counts["rate_ticks"] += 1
             self._rate = {"horizon_s": r["horizon_s"], "speed_mps": speed, "yaw_rate_rps": want,
                           "heading_reached": None}
-            return Tick(Action4D(vx=speed * math.cos(pose.yaw_rad),
-                                 vy=speed * math.sin(pose.yaw_rad), vz_up=vz, yaw_rate=want),
+            if side is not None:
+                # the body-frame velocity (forward, right) on the heading now
+                self._rate["right_mps"] = side
+                return Tick(Action4D(vx=speed * cy - side * sy, vy=speed * sy + side * cy,
+                                     vz_up=vz, yaw_rate=want), "vla_step", "rate", seq, age)
+            return Tick(Action4D(vx=speed * cy, vy=speed * sy, vz_up=vz, yaw_rate=want),
                         "vla_step", "rate", seq, age)
         if cfg.turn_while_moving:
             speed *= max(0.0, math.cos(e_psi))
+            if side is not None:
+                side *= max(0.0, math.cos(e_psi))
         # at the target heading, or past it the way the step turns: no turn
         # (a pipelined answer whose turn was flown since its capture)
         reached = abs(e_psi) <= cfg.yaw_tol_rad or want * e_psi <= 0.0
@@ -2046,6 +2093,10 @@ class StepTracker:
         self.counts["rate_ticks"] += 1
         self._rate = {"horizon_s": r["horizon_s"], "speed_mps": speed, "yaw_rate_rps": yaw_rate,
                       "heading_reached": reached}
+        if side is not None:
+            self._rate["right_mps"] = side
+            return Tick(Action4D(vx=speed * cy - side * sy, vy=speed * sy + side * cy,
+                                 vz_up=vz, yaw_rate=yaw_rate), "vla_step", "rate", seq, age)
         return Tick(Action4D(vx=speed * math.cos(pose.yaw_rad), vy=speed * math.sin(pose.yaw_rad),
                              vz_up=vz, yaw_rate=yaw_rate), "vla_step", "rate", seq, age)
 
@@ -2105,12 +2156,16 @@ class StepTracker:
         c.psi_t = wrap_pi(d.pose.yaw_rad + s.dpsi_rad)
         c.rotate_only = s.rotate_only and not cfg.turn_while_moving
         c.turn_moving = s.rotate_only and cfg.turn_while_moving
+        right = s.right_m or 0.0
         if c.rotate_only:
             c.x_t, c.y_t, dist_h = ax, ay, 0.0
         else:
-            c.x_t = ax + s.fwd_m * math.cos(c.psi_t)
-            c.y_t = ay + s.fwd_m * math.sin(c.psi_t)
-            dist_h = s.fwd_m
+            # a lateral step's endpoint is also right_m to the right of psi_t
+            c.x_t = ax + s.fwd_m * math.cos(c.psi_t) - right * math.sin(c.psi_t)
+            c.y_t = ay + s.fwd_m * math.sin(c.psi_t) + right * math.cos(c.psi_t)
+            dist_h = math.hypot(s.fwd_m, right)
+            if dist_h > 0.0:
+                c.dir_t = ((c.x_t - ax) / dist_h, (c.y_t - ay) / dist_h)
         c.up_raw = d.pose.up - s.down_m
         if cfg.hold_altitude_m is not None:
             c.up_held, c.alt_held = float(cfg.hold_altitude_m), True
@@ -2124,10 +2179,15 @@ class StepTracker:
             # RATE EXECUTION: the step's velocity, flown until replaced or
             # until H x (1 + overrun) after it is taken
             h = float(cfg.rate_horizon_s)
-            c.rate = {"horizon_s": h,
-                      "speed_mps": 0.0 if c.rotate_only else min(s.fwd_m / h, cfg.speed_cap_mps),
+            fwd, side = (0.0, 0.0) if c.rotate_only else (s.fwd_m / h, right / h)
+            # the speed cap on the horizontal velocity, as a vector (a plain
+            # step has side 0: min(fwd_m / H, cap) as before)
+            k = min(1.0, cfg.speed_cap_mps / max(math.hypot(fwd, side), 1e-12))
+            c.rate = {"horizon_s": h, "speed_mps": fwd * k,
                       "yaw_rate_rps": max(-cfg.yaw_rate_cap_rad_s,
                                           min(cfg.yaw_rate_cap_rad_s, s.dpsi_rad / h))}
+            if s.lateral:
+                c.rate["right_mps"] = side * k
             c.time_cap_s = min(cfg.time_cap_max_s, h * (1.0 + cfg.rate_overrun_frac))
 
     def _finish(self, c: _Current, now: float, end: str) -> None:

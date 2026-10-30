@@ -21,7 +21,9 @@ or the recording folder itself. Per run, <cache>/<tag>/ gets
   info.json       tag, object, N, backbone, vocab, the PCA's sha256, timing
 The PCA (<cache>/pca.npz) is fitted once, from frames spread over the runs
 given, before any run is cached (--pca-frames); every later run is projected
-on the same components, and the model checkpoint carries a copy.
+on the same components, and the model checkpoint carries a copy. The
+backbone's text embedding of every VOCAB phrase goes to <cache>/text.npz
+(train --text), rewritten when VOCAB grows.
 A run already cached with the same PCA is skipped unless --force.
 """
 from __future__ import annotations
@@ -184,6 +186,11 @@ def main(argv=None) -> int:
     z = np.load(pca)
     bb.set_pca(z["mean"], z["comps"])
     pca_sha = file_sha(pca)
+    tp = root / "text.npz"
+    if not tp.exists() or list(np.load(tp)["phrases"]) != list(core.VOCAB):
+        e = bb.text_embeds(list(core.VOCAB)).float().cpu().numpy()
+        np.savez(tp, phrases=np.array(core.VOCAB), embeds=e, backbone=bb.model_id)
+        print(f"[text] {len(core.VOCAB)} phrase embeddings -> {tp}")
     for rec in recs:
         tag = run_tag(rec)
         out = root / tag

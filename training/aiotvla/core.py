@@ -32,6 +32,22 @@ gives one of the peaks, not their mean.
 MIRROR. The world reflected about the aircraft's long axis: frames flipped
 left-right, every right-handed quantity negated (right offsets, headings,
 yaw rates, dpsi). fwd and down unchanged.
+
+LATERAL (v7, 30 Oct). The follow expert flies a holonomic aircraft: on 35 %
+of its ticks it slides sideways at about 1.3 m/s with the camera on the car
+(its fence's skirt and near modes), and v3-v6 dropped that component, so
+along a building they could only slow down. A v7 checkpoint also answers
+right_m = v_right * H over GRIDS["right_m"] (LATERAL_AXES), flown as a
+lateral step (guardrail/vla_link.py). Its axes are in its config.
+
+MEMORY (v7). Where the named object IS, kept between frames, so a car that
+turned out of the frame at a corner is still in the input (every v3/v4/v6
+flight lost it there): TargetMemory, a constant-velocity Kalman filter on the
+object's ground position, fed by box_measurement (the backbone's box at the
+phrase's best patch, its bottom edge on flat ground) and read out as
+MEM_FIELDS in the newest capture's body frame. The trainer runs it over each
+recording in capture order from the run's first sample; the server runs the
+same code over the requests of one flight.
 """
 from __future__ import annotations
 
@@ -53,15 +69,19 @@ N_PATCHES = GRID_SIDE * GRID_SIDE
 PCA_DIM = 8
 # The phrases whose grounding maps the cache stores. A flight's instruction
 # outside this list is grounded live by the same formula (backbone.ground).
-VOCAB = ("a red car", "a white car", "a blue car", "a person")
+# Appended only (31 Oct: the multi-target recordings), so a cache's row of a
+# phrase is its index in that cache's own info.json "vocab".
+VOCAB = ("a red car", "a white car", "a blue car", "a person", "a black car", "a box truck")
 LABEL_HORIZON_S = 0.5
 
 GRIDS = {
     "fwd_m": np.linspace(0.0, 3.0, 61),          # 0.05 m cells
     "down_m": np.linspace(-1.0, 1.0, 41),        # 0.05 m cells
     "dpsi_rad": np.linspace(-0.8, 0.8, 65),      # 0.025 rad cells
+    "right_m": np.linspace(-1.0, 1.0, 41),       # 0.05 m cells: +-2 m/s over 0.5 s (LATERAL)
 }
 AXES = ("fwd_m", "down_m", "dpsi_rad")
+LATERAL_AXES = AXES + ("right_m",)
 SOFT_SIGMA = 1.5
 DECODE_WINDOW = 3
 PROPRIO_FIELDS = ("rel_fwd", "rel_right", "rel_up", "rel_yaw", "v_fwd", "v_right", "v_up",
@@ -162,7 +182,10 @@ def mirror_proprio(pr: np.ndarray) -> np.ndarray:
 
 
 def mirror_label(label: dict) -> dict:
-    return {"fwd_m": label["fwd_m"], "down_m": label["down_m"], "dpsi_rad": -label["dpsi_rad"]}
+    out = {"fwd_m": label["fwd_m"], "down_m": label["down_m"], "dpsi_rad": -label["dpsi_rad"]}
+    if "right_m" in label:
+        out["right_m"] = -label["right_m"]
+    return out
 
 
 def soft_target(value: float, axis: str, sigma: float = SOFT_SIGMA) -> np.ndarray:
@@ -293,3 +316,277 @@ def mirror_map(m: np.ndarray) -> np.ndarray:
     if a.shape[-1] == N_PATCHES:
         return a.reshape(shp[:-1] + (GRID_SIDE, GRID_SIDE))[..., ::-1].reshape(shp)
     return a.reshape(shp[:-2] + (GRID_SIDE, GRID_SIDE, shp[-1]))[..., ::-1, :].reshape(shp)
+
+
+# ------------------------------------------------------------------ memory --
+# The cameras a front source names (guardrail/aerialvla_codec.FRONT_SOURCES;
+# a test keeps the two equal): horizontal field of view and mount pitch, deg.
+CAMERAS = {"detector": (90.0, -20.0)}
+MEM_LOGIT_MIN = -3.0        # a box is a measurement only above this patch logit
+                            # (cache_front: 0.958 of the boxes on the car pass, 0.22
+                            # of the frames without it in view)
+MEM_SEED_LOGIT = -2.5       # ... and starts a track only above this
+# ... and only when the phrase beats its CONTRAST phrases at that patch
+# (logit minus their best, > MEM_CONTRAST_MIN): OWL-ViT's "a red car" also
+# fires on the white and blue cars; with the contrast, 0.950 of the boxes on
+# the car pass and 0.026 of the frames without it in view (0.22 without).
+MEM_CONTRAST_MIN = 0.0
+# A checkpoint records the table it was trained with (memory_constants) and
+# the server reads the contrast phrases from it, so an entry added here does
+# not change what an older checkpoint grounds.
+CONTRAST = {
+    "a red car": ("a white car", "a blue car"),
+    "a white car": ("a red car", "a blue car", "a black car", "a box truck"),
+    "a black car": ("a red car", "a white car", "a blue car"),
+    "a box truck": ("a red car", "a white car", "a blue car", "a black car"),
+}
+MEM_RANGE_M = (3.0, 70.0)
+MEM_MIN_DEPRESSION_RAD = math.radians(2.0)
+MEM_RANGE_SIGMA = (0.5, 0.15)   # m: 0.5 + 0.15 x range (|err| p50 0.13-0.20 at 15-40 m)
+MEM_BEARING_SIGMA_RAD = math.radians(1.0)    # p50 0.4-0.5 deg on the car
+MEM_ACCEL_NOISE = 1.5       # m/s^2, demo/target_state.TargetState's
+MEM_GATE_SIGMA = 4.0
+MEM_CONFIRM_S = 1.0         # a second measurement within this, near the first, confirms
+MEM_CONFIRM_M = 6.0
+MEM_MAX_AGE_S = 8.0         # unseen this long: the track is dropped
+MEM_RESEED_N = 5            # this many gated-out measurements in a row that agree
+MEM_RESEED_SPREAD_M = 5.0   # (within this of each other) start a new track there
+MEM_V_MAX = 15.0            # m/s, a clamp on the estimate (a car, a person: less)
+MEM_FIELDS = ("valid", "age", "fwd", "right", "range", "bearing", "v_fwd", "v_right",
+              "range_rate", "sigma", "n_upd", "accepted", "meas", "meas_range",
+              "meas_bearing", "logit", "contrast")
+MEM_DIM = len(MEM_FIELDS)
+MEM_NEGATE = ("right", "bearing", "v_right", "meas_bearing")
+
+
+def box_measurement(box, up: float, aspect: float, hfov_deg: float, pitch_deg: float):
+    """(forward m, right m) of the ground point under a backbone box's bottom
+    edge, in the body frame (level, the capture's heading), or None.
+
+    `box` (cx, cy, w, h) in [0, 1] of the frame; `aspect` = frame height /
+    width; the camera pitched `pitch_deg` (negative: down) with `hfov_deg`;
+    flat ground `up` metres below it. Exact pinhole geometry: the ray through
+    the bottom-centre pixel, (x, y, 1) in the camera (x right, y down),
+    rotated by the pitch, meets the ground at t = up / its down component.
+    None for a ray within MEM_MIN_DEPRESSION_RAD of the horizon or above it,
+    or a range outside MEM_RANGE_M."""
+    if box is None or up is None or up <= 0.5:
+        return None
+    cx, cy, _, bh = (float(v) for v in box[:4])
+    if not (math.isfinite(cx) and math.isfinite(cy) and math.isfinite(bh)):
+        return None
+    k = math.tan(math.radians(hfov_deg) / 2.0)
+    x = (cx - 0.5) * 2.0 * k
+    y = (cy + bh / 2.0 - 0.5) * 2.0 * k * aspect
+    th = -math.radians(pitch_deg)
+    f = math.cos(th) - y * math.sin(th)
+    d = y * math.cos(th) + math.sin(th)
+    if d <= math.sin(MEM_MIN_DEPRESSION_RAD) * math.sqrt(x * x + y * y + 1.0):
+        return None
+    t = up / d
+    fwd, right = t * f, t * x
+    r = math.hypot(fwd, right)
+    if not MEM_RANGE_M[0] <= r <= MEM_RANGE_M[1]:
+        return None
+    return fwd, right
+
+
+class TargetMemory:
+    """MEMORY (module docstring): the object's world position and velocity
+    [x, y, vx, vy], updated with each capture's box and predicted between.
+
+    step(t, pose, box, logit, contrast) folds in one capture and returns its
+    MEM_FIELDS (numpy float32). A box is a measurement when its logit is
+    above MEM_LOGIT_MIN, its contrast above MEM_CONTRAST_MIN (None: no
+    contrast phrases, not checked) and box_measurement gives a ground
+    point. With no track, a
+    measurement above MEM_SEED_LOGIT is a candidate; a second within
+    MEM_CONFIRM_S and MEM_CONFIRM_M of it confirms a track (two false boxes
+    rarely agree). A confirmed track takes a measurement unless it is more
+    than MEM_GATE_SIGMA from the prediction (the Mahalanobis gate of
+    demo/target_state.TargetState, whose model, noise and sub-stepping this
+    copies); MEM_RESEED_N gated-out measurements in a row within
+    MEM_RESEED_SPREAD_M of each other replace the track (it was on the wrong
+    thing, or the object moved where the model did not go); a track unseen
+    for MEM_MAX_AGE_S is dropped. reset() forgets everything (a new flight,
+    a gap: core.Ring's rule)."""
+
+    def __init__(self, aspect: float, hfov_deg: float, pitch_deg: float):
+        self.aspect = float(aspect)
+        self.hfov_deg, self.pitch_deg = float(hfov_deg), float(pitch_deg)
+        self.reset()
+
+    def reset(self) -> None:
+        self.x = None               # posterior [x, y, vx, vy] at t_upd
+        self.P = None
+        self.t_upd = None
+        self.n_upd = 0
+        self.cand = None            # (t, wx, wy): an unconfirmed first measurement
+        self.rejected: list[tuple[float, float, float]] = []
+
+    # -- the filter (demo/target_state.TargetState's) --------------------------
+    @staticmethod
+    def _propagate(x, P, dt, q=MEM_ACCEL_NOISE, step_s=0.1):
+        n = max(1, int(math.ceil(dt / step_s - 1e-9)))
+        h = dt / n
+        F = np.array([[1, 0, h, 0], [0, 1, 0, h], [0, 0, 1, 0], [0, 0, 0, 1]], float)
+        q2, d2, d3, d4 = q * q, h * h, h ** 3, h ** 4
+        Q = q2 * np.array([[d4 / 4, 0, d3 / 2, 0], [0, d4 / 4, 0, d3 / 2],
+                           [d3 / 2, 0, d2, 0], [0, d3 / 2, 0, d2]], float)
+        for _ in range(n):
+            x, P = F @ x, F @ P @ F.T + Q
+        return x, P
+
+    @staticmethod
+    def _R(rng, th):
+        c, s = math.cos(th), math.sin(th)
+        J = np.array([[c, -rng * s], [s, rng * c]], float)
+        sr = MEM_RANGE_SIGMA[0] + MEM_RANGE_SIGMA[1] * rng
+        return J @ np.diag([sr * sr, MEM_BEARING_SIGMA_RAD ** 2]) @ J.T
+
+    def _predict(self, t):
+        dt = t - self.t_upd
+        return self._propagate(self.x, self.P, dt) if dt > 0 else (self.x.copy(), self.P.copy())
+
+    def _seed(self, t, z, R, v=(0.0, 0.0)):
+        self.x = np.array([z[0], z[1], v[0], v[1]], float)
+        self.P = np.diag([R[0, 0], R[1, 1], 4.0, 4.0])
+        self.t_upd, self.n_upd = t, 1
+        self.cand, self.rejected = None, []
+
+    def step(self, t: float, pose, box, logit, contrast=None) -> np.ndarray:
+        """pose (x, y, up, yaw): the capture's; box (cx, cy, w, h) or None;
+        logit the phrase's best patch logit (None with no frame); contrast
+        (grounding_contrast) or None."""
+        px, py, up, yaw = (float(v) for v in pose)
+        c, s = math.cos(yaw), math.sin(yaw)
+        meas = None
+        if (box is not None and logit is not None and logit > MEM_LOGIT_MIN
+                and (contrast is None or contrast > MEM_CONTRAST_MIN)):
+            meas = box_measurement(box, up, self.aspect, self.hfov_deg, self.pitch_deg)
+        accepted = False
+        if self.x is not None and t - self.t_upd > MEM_MAX_AGE_S:
+            self.reset()
+        if meas is not None:
+            fwd, right = meas
+            z = np.array([px + fwd * c - right * s, py + fwd * s + right * c])
+            R = self._R(math.hypot(fwd, right), yaw + math.atan2(right, fwd))
+            if self.x is None:
+                if (self.cand is not None and t - self.cand[0] <= MEM_CONFIRM_S
+                        and math.hypot(z[0] - self.cand[1], z[1] - self.cand[2]) <= MEM_CONFIRM_M):
+                    dt = max(t - self.cand[0], 1e-3)
+                    v = ((z[0] - self.cand[1]) / dt, (z[1] - self.cand[2]) / dt)
+                    if math.hypot(*v) > 5.0:          # two boxes 0.1 s apart: no speed yet
+                        v = (0.0, 0.0)
+                    self._seed(t, z, R, v)
+                    self.n_upd = 2
+                    accepted = True
+                elif logit > MEM_SEED_LOGIT:
+                    self.cand = (t, float(z[0]), float(z[1]))
+            else:
+                xp, Pp = self._predict(t)
+                H = np.array([[1, 0, 0, 0], [0, 1, 0, 0]], float)
+                y = z - H @ xp
+                S = H @ Pp @ H.T + R
+                Si = np.linalg.inv(S)
+                if float(y @ Si @ y) <= MEM_GATE_SIGMA ** 2:
+                    K = Pp @ H.T @ Si
+                    x = xp + K @ y
+                    P = (np.eye(4) - K @ H) @ Pp
+                    v = math.hypot(x[2], x[3])
+                    if v > MEM_V_MAX:
+                        x[2:] *= MEM_V_MAX / v
+                    self.x, self.P, self.t_upd = x, P, t
+                    self.n_upd += 1
+                    self.rejected = []
+                    accepted = True
+                else:
+                    self.rejected = (self.rejected + [(t, float(z[0]), float(z[1]))])[-MEM_RESEED_N:]
+                    if len(self.rejected) == MEM_RESEED_N:
+                        xs = [r[1] for r in self.rejected]
+                        ys = [r[2] for r in self.rejected]
+                        if (max(xs) - min(xs) <= MEM_RESEED_SPREAD_M
+                                and max(ys) - min(ys) <= MEM_RESEED_SPREAD_M):
+                            self._seed(t, z, R)
+                            accepted = True
+        return self.features(t, (px, py, up, yaw), meas, accepted, logit, contrast)
+
+    def features(self, t, pose, meas, accepted, logit, contrast=None) -> np.ndarray:
+        """MEM_FIELDS at time t in the body frame of `pose`: the track's
+        prediction (zeros with none), this capture's measurement (zeros with
+        none), its logit and contrast."""
+        px, py, _, yaw = pose
+        c, s = math.cos(yaw), math.sin(yaw)
+        out = np.zeros(MEM_DIM, np.float32)
+        if self.x is not None:
+            x, P = self._predict(t)
+            dx, dy = x[0] - px, x[1] - py
+            fwd, right = dx * c + dy * s, -dx * s + dy * c
+            r = math.hypot(dx, dy)
+            vf, vr = x[2] * c + x[3] * s, -x[2] * s + x[3] * c
+            out[:12] = (1.0, min(t - self.t_upd, MEM_MAX_AGE_S) / MEM_MAX_AGE_S, fwd / 30.0,
+                        right / 30.0, r / 30.0, math.atan2(right, fwd), vf / 5.0, vr / 5.0,
+                        ((x[2] * dx + x[3] * dy) / r if r > 1e-3 else 0.0) / 5.0,
+                        math.sqrt(max(P[0, 0] + P[1, 1], 0.0)) / 10.0,
+                        math.log1p(self.n_upd) / 5.0, 1.0 if accepted else 0.0)
+        if meas is not None:
+            out[12:15] = (1.0, math.hypot(*meas) / 30.0, math.atan2(meas[1], meas[0]))
+        out[15] = 0.0 if logit is None else (float(logit) + 6.0) / 3.0
+        out[16] = 0.0 if contrast is None else float(contrast)
+        return out
+
+
+def grounding_contrast(g_all: np.ndarray, k: int, negatives) -> float | None:
+    """The phrase's logit at its best patch minus the best of its contrast
+    phrases' logits there (CONTRAST). g_all (n_phrases, N_PATCHES): row k
+    the phrase's map, rows `negatives` its contrast phrases'. None with no
+    contrast phrases."""
+    if not negatives:
+        return None
+    g = np.asarray(g_all, dtype=np.float64)
+    p = int(g[k].argmax())
+    return float(g[k, p] - max(g[j, p] for j in negatives))
+
+
+def memory_constants() -> dict:
+    """The memory's constants, as a checkpoint records them (train.py) and the
+    server compares them (demo/vla_server_foreign.AIOTVLAModel refuses a
+    checkpoint trained with other ones, "contrast" apart: it grounds the
+    checkpoint's own contrast phrases), JSON-shaped."""
+    out = {"fields": list(MEM_FIELDS), "cameras": {k: list(v) for k, v in CAMERAS.items()},
+           "contrast": {k: list(v) for k, v in CONTRAST.items()}}
+    for k, v in sorted(globals().items()):
+        if k.startswith("MEM_") and k not in ("MEM_FIELDS", "MEM_NEGATE", "MEM_DIM"):
+            out[k] = list(v) if isinstance(v, tuple) else v
+    return out
+
+
+def mirror_memory(m: np.ndarray) -> np.ndarray:
+    out = np.array(m, copy=True)
+    for f in MEM_NEGATE:
+        out[..., MEM_FIELDS.index(f)] *= -1.0
+    return out
+
+
+def run_memory(t: np.ndarray, poses: np.ndarray, boxes: np.ndarray, logits: np.ndarray,
+               ok: np.ndarray, start: int, aspect: float, hfov_deg: float,
+               pitch_deg: float, contrasts: np.ndarray | None = None) -> np.ndarray:
+    """MEM_FIELDS of every capture of one recording (rows in capture order),
+    the memory started at row `start` (the run's first sample: the server's
+    starts at a flight's first request) and reset on a gap of more than
+    RING_GAP_S or a time that runs backwards, as core.Ring. Rows before
+    `start` carry zeros; a missing frame (ok False) is no measurement.
+    `contrasts` per row (grounding_contrast), or None for none."""
+    out = np.zeros((len(t), MEM_DIM), np.float32)
+    mem = TargetMemory(aspect, hfov_deg, pitch_deg)
+    t_prev = None
+    for i in range(int(start), len(t)):
+        if t_prev is not None and (t[i] < t_prev or t[i] - t_prev > RING_GAP_S):
+            mem.reset()
+        t_prev = float(t[i])
+        if ok[i]:
+            out[i] = mem.step(float(t[i]), poses[i], boxes[i], float(logits[i]),
+                              None if contrasts is None else float(contrasts[i]))
+        else:
+            out[i] = mem.step(float(t[i]), poses[i], None, None)
+    return out

@@ -16,6 +16,98 @@ shipped change and recorded as one.
 
 ## [Unreleased]
 
+### 2026-10-30 (evening) — AIOT-VLA v7 follows the red car as closely as the hand-written follow: a lateral step and a target memory take it from 0.265 to a mean of 0.968 within 30 m after acquisition (3 flights); protocol v2 gains a lateral step; groundwork for other targets
+
+#### Found
+- **The expert slides sideways; v3-v6 could not.** In the two clean expert
+  recordings (aiot_rec_e01, e02; 11,997 ticks) the hand-written follow's
+  commanded velocity has a sideways component above 0.5 m/s on 39 % of the
+  ticks (p90 1.4 m/s) with the camera on the car: its fence slides along
+  keep-outs ("skirt" mode, 21 % of the ticks, sideways p50 1.34 m/s,
+  forward 1.65 m/s) and approaches them ("near", 14 %). It backs up on
+  12 % (median -0.55 m/s). AIOT-VLA's labels kept the forward and yaw
+  components only, so beside a building its lesson was to slow down
+  without turning: aiot_v6_01 crept at 1.2 m/s along a building under the
+  Shield's building-clearance repairs while the car pulled away.
+- **A box's bottom edge is a good range.** On the 18 recordings (80,797
+  frames), OWL-ViT's box at the phrase's best patch is within 3 deg of the
+  car's true bearing on 0.897 of the frames with the car in view (p50
+  error 0.4-0.5 deg). The flat-ground point under its bottom edge is
+  11-12 % short at 15-25 m (the car's near end, not its centre).
+- **The phrase against its look-alikes.** "a red car" also fires on the white
+  and blue cars: a logit above -3.0 passes 0.958 of the boxes on the car and
+  0.220 of the frames without it. Requiring "a red car" to beat "a white car"
+  and "a blue car" at that patch keeps 0.950 and passes 0.026.
+
+#### Added
+- **A lateral step in protocol v2** (`guardrail/vla_link.py`,
+  `guardrail/aerialvla_codec.py`, `demo/vla_server_foreign.py`): a fourth
+  bin, `right_m` (-2.5..2.5 m), "FF DD YY RR". The server writes it
+  (`encode_step(right_m=)`), the codec reads it only when asked
+  (`parse_action(lateral=True)`; upstream's reader still refuses a fourth
+  group), the client checks text, bins and step against each other, and the
+  step tracker flies it as a body-frame velocity (fwd_m / H, right_m / H) on
+  the current heading, the pair capped at the speed cap as a vector, or as an
+  endpoint offset to the right. Upstream's three-bin step is unchanged.
+  `tests/test_vla_lateral_step.py` (10 tests, in CI).
+- **AIOT-VLA's target memory** (`training/aiotvla/core.py` TargetMemory): the
+  box's ground point fed to a constant-velocity Kalman filter on the
+  object's world position (demo/target_state.TargetState's model and gate),
+  started on two agreeing boxes, moved by five agreeing gated-out ones,
+  dropped after 8 s unseen, read out as 17 numbers in the body frame and fed
+  to the head as one more token (`train --memory`). Against the truth: p50 /
+  p90 position error 2.9-3.0 / 6.8-7.2 m on the clean expert recordings,
+  3.8 / 10.9 m over all 18.
+- `train --lateral`: the head also answers `right_m = v_right x H` (41
+  cells, +-2 m/s); `build_labels` writes it. The server answers a lateral
+  step for a lateral checkpoint and keeps a three-axis one's answers as
+  they were.
+- Groundwork for other targets (not yet trained or flown): VOCAB gains "a
+  black car" and "a box truck" (appended, so cached rows keep their
+  index); a checkpoint carries its contrast phrases and the server grounds
+  those; `train --text` feeds the object words as the backbone's text
+  embedding (`<cache>/text.npz`, `HeadConfig.n_text`).
+- `vla_fly --level-car Car_00,Car_23,Car_14`: several level cars one phrase
+  names (`level_actors.LevelCars`); the row's truth is the nearest
+  (`subject_dist_m`), with `subject_tag` and every candidate's distance
+  (`subject_dists`) for instance stability. The level has three box trucks
+  and two white cars (Environment Builder's fleet list of 23 Sep).
+- `run_citylife_follow.ps1 -ObjectWidthM`: the stand-off of a level vehicle
+  is 0.16 of the frame width on this width; 4 gives every vehicle the car's
+  15.8 m (a box truck's 6 m gave 23.7 m).
+
+#### Changed
+- **A level car is truth for the vehicle it is named as**
+  (`follow_vlm.LEVEL_CAR_CLASSES` car, van, truck; `car_is_truth_for`):
+  `--level-car Car_00 --object "a box truck"` was refused, since truth
+  existed only for "car". The scripted car is still truth only for "car";
+  a bus or a person behind a level car is still refused
+  (tests/test_range_and_lock.py).
+
+#### Flown (AIOT-VLA v7, `vla_fly` e2e, Car_10, 420 s, start gate 30 m, Shield on)
+| flight | within 30 m after acquisition | median distance | Shield repairs |
+|---|---|---|---|
+| aiot_v7_01 | 0.961 | 20.3 m | 9 ticks |
+| aiot_v7_02 | 0.983 | 19.8 m | 10 ticks |
+| aiot_v7_03 | 0.961 | 20.9 m | 33 ticks |
+
+Mean 0.968 against 0.972 for the hand-written follow (n=5) and 0.265 for v6.
+All three flights started late (the car 16-17 m away at acquisition), were
+flown by the model on 2,006-2,008 of their 2,015-2,016 ticks after it, and had
+the car within 30 m at the end of the mission; the farthest it got was
+31.4-32.2 m. All three passed the corner where every v3/v4/v6 flight lost the
+car, at most 25.4 m behind it there. P0 escapes 0.0. v7 = v6's
+recipe (labels R1+R2, 46,071 samples, box features, 10 slots, motion dropout
+0.5) with `--lateral --memory`; hold-out right_m MAE 0.037 m (constant
+baseline 0.252), dpsi MAE 0.0056 rad (v6 0.0062).
+
+#### Limits
+- One target (the red car), one level, one route; three flights. Not
+  KPI-grade (simple_flight on the city rail, no hil).
+- The memory is classical (a Kalman filter in the VLA package); the action
+  is the trained head's. Backing up is still not in the step (fwd_m >= 0).
+- Other targets: the code is ready, the recordings are not.
+
 ### 2026-10-30 — NTUT-VLA becomes AIOT-VLA and moves to the FrontCamera; 18 new training recordings, four models flown three times each (best mean 0.265; v3, v4 and v6 all lost the car at the same corner); four grounders compared on the car's true position; the "false start-gate seeds" retracted
 
 #### Retracted

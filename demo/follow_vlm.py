@@ -620,9 +620,20 @@ def subject_truth_pts(subject_class, car, people) -> list:
         # already refused.
         return ([[round(f.x, 2), round(f.y, 2)] for f in people.figures]
                 if people is not None else [])
-    if subject_class == "car" and car is not None:
+    if car is not None and car_is_truth_for(subject_class, car):
         return [[round(car.pos[0], 2), round(car.pos[1], 2)]]
     return []
+
+
+def car_is_truth_for(subject_class, car) -> bool:
+    """Is `car` the subject's truth? The scripted car only for "car" (a van is
+    not the scripted car, pinned in tests/test_range_and_lock.py). A LEVEL
+    car - one actor of the level named by its tag - for any vehicle class
+    the operator names it as (LEVEL_CAR_CLASSES): Car_00 is a box truck, and
+    "a box truck" behind --level-car Car_00 is scored against it (31 Oct,
+    the multi-target recordings)."""
+    return subject_class == "car" or (subject_class in LEVEL_CAR_CLASSES
+                                      and getattr(car, "tag", None) is not None)
 
 
 def subject_truth_names(subject_class, car, people):
@@ -637,7 +648,7 @@ def subject_truth_names(subject_class, car, people):
             return None
         names = [getattr(f, "name", None) for f in people.figures]
         return names if all(names) else None
-    if subject_class == "car" and car is not None:
+    if car is not None and car_is_truth_for(subject_class, car):
         tag = getattr(car, "tag", None)
         return [tag] if tag else None
     return None
@@ -695,18 +706,21 @@ def follow_scored(n_rows: int, n_truth: int) -> bool:
     return n_rows > 0 and n_truth >= FOLLOW_TRUTH_MIN_COVERAGE * n_rows
 
 
-# The classes a --level-car is ground truth for (subject_truth_pts).
-LEVEL_CAR_CLASSES = ("car",)
+# The classes a --level-car is ground truth for (subject_truth_pts,
+# car_is_truth_for): the vehicles the level drives (cars, the pickups and
+# SUVs the policy classes as van and car, the box trucks).
+LEVEL_CAR_CLASSES = ("car", "van", "truck")
 
 
 def level_car_refusal(phrases):
     """(phrase, class) of the first phrase a --level-car cannot score, or None.
 
-    The start-up check accepted car, van, truck and bus, but truth exists only
-    for "car" - a van is deliberately not the car (subject_truth_pts) - so
-    "a red van" behind a level car flew a follow with an empty truth on every
-    tick, frac_within_30m None, which kpi.json read as success. `phrases` is
-    the --object phrase first, then the retargets; a retarget may also go to a
+    The start-up check accepted car, van, truck and bus, but truth existed only
+    for "car", so "a red van" behind a level car flew a follow with an empty
+    truth on every tick, frac_within_30m None, which kpi.json read as success.
+    Since 31 Oct a level car is truth for every class in LEVEL_CAR_CLASSES
+    (car_is_truth_for); a bus or a person still is not. `phrases` is the
+    --object phrase first, then the retargets; a retarget may also go to a
     pedestrian, whose own truth source fly() has already required.
     """
     for i, ph in enumerate(phrases):
@@ -4157,7 +4171,7 @@ async def fly(args) -> int:
                 f"but {_bad[0]!r} selects the class {_bad[1]!r}, and that truth "
                 f"exists only for {', '.join(LEVEL_CAR_CLASSES)}. Every tick "
                 f"would log an empty truth and the follow would go unscored. "
-                f"Name it as a car (\"a red car\").")
+                f"Name it as a vehicle (\"a red car\", \"a box truck\").")
 
     # NOTE on ordering: both refusals below run AFTER fly() has unlinked the
     # tag's previous flight_log.jsonl and detections.jsonl. That unlink predates

@@ -219,6 +219,52 @@ class LevelCar:
         self.source.destroy()
 
 
+class LevelCars(LevelCar):
+    """SEVERAL cars the level drives that one phrase names (31 Oct: "a box
+    truck" is Car_00, Car_23 and Car_14; "a white car" Car_22 and Car_15).
+    Truth for an ambiguous phrase: `nearest(x, y)` is the candidate closest to
+    the aircraft, so a follow is scored against whichever of them it is with
+    ("within 30 m of a box truck"), and `positions()` lets the scorer ask
+    which one that is, tick by tick (instance stability: did it switch?).
+    `.pos` is the nearest to the last `nearest()` asked, else the first tag."""
+
+    def __init__(self, world, tags, desc: Optional[str] = None,
+                 min_period_s: float = 0.1):
+        tags = [t for t in tags if t]
+        if len(tags) < 2:
+            raise ValueError(f"LevelCars needs two or more tags, got {tags!r}")
+        self.tags = list(tags)
+        self.tag = ",".join(self.tags)
+        self.source = LevelActors(world, self.tags, kind="car", min_period_s=min_period_s)
+        self.pos = (0.0, 0.0)
+        self.heading = 0.0
+        self.actual_name = None
+        self.spec = _Spec(desc or self.tag)
+        self._near = 0
+
+    def _sync(self) -> None:
+        f = self.source.figures
+        if f:
+            k = min(self._near, len(f) - 1)
+            self.pos = (f[k].x, f[k].y)
+            self.heading = f[k].heading
+
+    def positions(self) -> list:
+        """[(tag, x, y)] of every candidate that resolved (LevelActors.resolve
+        drops a tag the level does not have), in tag order."""
+        return [(f.name, f.x, f.y) for f in self.source.figures]
+
+    def nearest(self, x: float, y: float):
+        """(tag, x, y, distance) of the candidate nearest (x, y), or None."""
+        best = None
+        for k, (t, fx, fy) in enumerate(self.positions()):
+            d = math.hypot(fx - x, fy - y)
+            if best is None or d < best[3]:
+                best, self._near = (t, fx, fy, d), k
+        self._sync()
+        return best
+
+
 @dataclass
 class _Spec:
     """The one field of `moving_car.CarSpec` the flight reads for a level car."""

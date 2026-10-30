@@ -156,7 +156,13 @@
 #          targets and decode, the server's history ring equal to the
 #          trainer's inputs, the command labels, the head's shapes, and the
 #          aiotvla family behind protocol v2; no OWL-ViT and no GPU, the
-#          torch checks SKIP without torch).
+#          torch checks SKIP without torch; v7, 30 Oct: the box's ground
+#          point, the target memory, the lateral head and labels).
+#          test_vla_lateral_step (protocol v2's lateral step, 2026-10-30: a
+#          fourth bin right_m on the wire, in the codec's reader only when
+#          asked, written by the server, checked by the client, flown as a
+#          body-frame velocity or an offset endpoint; upstream's step as
+#          before).
 #        The CityLife level, checked offline (the level itself is
 #          gitignored): test_citylife_*, test_drive_signals_dsl,
 #          test_ped_walk_plan, test_parked_cars.
@@ -662,6 +668,7 @@ jobs:
               tests/test_vla_hierarchy.py \
               tests/test_vla_foreign.py \
               tests/test_aiotvla.py \
+              tests/test_vla_lateral_step.py \
               tests/test_citylife_peds.py \
               tests/test_citylife_routes.py \
               tests/test_citylife_signal_lamps.py \

@@ -5,8 +5,9 @@ Named NTUT-VLA until 30 Oct 2026 (package `training/ntutvla`, family
 keep their tags (`demo/out/ntut_*`) and their records' family `ntutvla`,
 which the codec still classifies as this model's.
 
-Status: v6, 2026-10-30. Code in `training/aiotvla/`, served by
-`demo/vla_server_foreign.py --model aiotvla`, tested by `tests/test_aiotvla.py`.
+Status: v7, 2026-10-30 (mean 0.968 within 30 m after acquisition, 3 flights).
+Code in `training/aiotvla/`, served by `demo/vla_server_foreign.py --model
+aiotvla`, tested by `tests/test_aiotvla.py` and `tests/test_vla_lateral_step.py`.
 
 ## Why build one
 
@@ -291,6 +292,102 @@ expert flight aiot_rec_e02 at the same place:
 - AIOT-VLA then heads for the corner late, the Shield holds it off the
   roadside tree there, and the car is gone.
 
+## v7: a lateral axis and a target memory (30 Oct)
+
+**What the expert does that v3-v6 could not.** The hand-written follow flies a
+holonomic aircraft. In the two clean expert recordings (aiot_rec_e01, e02;
+11,997 ticks) its commanded velocity, in the body frame:
+
+| fence mode (its keep-out logic) | share of ticks | forward p50 | sideways p50 / p90 | bearing to the car p50 |
+|---|---|---|---|---|
+| clear | 65 % | 3.30 m/s | 0.01 / 0.84 m/s | 0.2 deg |
+| near | 14 % | 3.52 m/s | 0.80 / 1.20 m/s | 0.3 deg |
+| skirt | 21 % | 1.65 m/s | 1.34 / 1.66 m/s | 0.7 deg |
+
+On a third of its ticks it slides sideways at about 1.3 m/s with the camera on
+the car, and it backs up on 12 % (median -0.55 m/s). v3-v6's labels kept the
+forward and yaw components only, so along a building their lesson was "slow
+down, do not turn": aiot_v6_01 crept along a building at 1.2 m/s with the
+Shield's building-clearance repairs (`bld-clearance`, 3.0 m) while the car
+pulled away. Its yaw rate never exceeded the executor's 0.5 rad/s cap that
+the expert itself never reaches (max 0.44 rad/s).
+
+**The lateral step.** Protocol v2 gains a LATERAL step: a fourth bin,
+`right_m` (-2.5..2.5 m, 99 bins), written by the server
+(`encode_step(right_m=)`), read by the codec only when asked
+(`parse_action(lateral=True)`), checked by the client against the text and
+bins, and flown by the step tracker as a body-frame velocity (fwd_m / H,
+right_m / H) on the heading at each tick, the pair capped at the speed cap
+as a vector (`guardrail/vla_link.py`; `tests/test_vla_lateral_step.py`).
+Upstream's three-bin step is unchanged and AerialVLA's reader still refuses a
+fourth group. A v7 checkpoint answers `right_m = v_right x H` over a 41-cell
+grid (-1..1 m, +-2 m/s). Backing up is still not represented (`fwd_m` >= 0).
+
+**The target memory.** Every v3/v4/v6 flight lost the car where it turned out
+of the frame. v7 keeps an estimate of where it is:
+
+```
+OWL-ViT box at the phrase's best patch (cx, cy, w, h)
+  -> ground point under its bottom edge (pinhole, pitch -20 deg, flat ground)
+  -> constant-velocity Kalman filter on the car's world position
+     (demo/target_state.TargetState's model; gate 4 sigma; a track starts on
+      two agreeing boxes; five agreeing gated-out boxes move it; dropped after
+      8 s unseen)
+  -> 17 numbers in the newest capture's body frame (core.MEM_FIELDS)
+  -> one more token for the head's transformer
+```
+
+A box counts only when OWL-ViT's logit is above -3.0 AND "a red car" beats its
+contrast phrases ("a white car", "a blue car") at that patch. Against the
+car's true position on the 18 recordings (80,797 frames):
+
+| measure | value |
+|---|---|
+| boxes within 3 deg of the true bearing (car in frame) | 0.897 |
+| bearing error of those, p50 | 0.4-0.5 deg |
+| range error from the bottom edge, p50, 15-25 m | -11 to -12 % (the car's near end, not its centre) |
+| frames without the car in view that pass the logit alone / with the contrast | 0.220 / 0.026 |
+| memory position error, clean expert flights, p50 / p90 | 2.9-3.0 / 6.8-7.2 m |
+| memory position error, all 18, p50 / p90 (share > 15 m) | 3.8 / 10.9 m (0.050) |
+
+Where the long DAgger windows lost the car for minutes (aiot_rec_h01, h06), the
+memory says "no track" most of the time (valid 0.28 in h06) rather than track
+something else.
+
+**Training.** v7 = v6's recipe (labels R1+R2, 46,071 samples, box features, 10
+slots, motion dropout 0.5) with `--lateral --memory` (memory zeroed on 10 % of
+the samples). 1,728,658 parameters. Hold-out (aiot_rec_e02):
+
+| | v6 | v7 | constant baseline |
+|---|---|---|---|
+| fwd_m MAE | 0.072 m | 0.076 m | 0.765 m |
+| dpsi_rad MAE | 0.0062 rad | 0.0056 rad | 0.0198 rad |
+| right_m MAE (corr) | - | 0.037 m (0.974) | 0.252 m |
+
+**Flown.** `vla_fly` e2e, CityLife, Car_10, 420 s, start gate 30 m, Shield on,
+`--step-as-rate 0.5 --rate-yaw rate --vla-front-source detector` (the v7
+checkpoint answers lateral steps):
+
+| flight | within 30 m after acquisition | median distance after | farthest | Shield repair ticks |
+|---|---|---|---|---|
+| aiot_v7_01 | 0.961 | 20.3 m | 31.8 m | 9 |
+| aiot_v7_02 | 0.983 | 19.8 m | 31.4 m | 10 |
+| aiot_v7_03 | 0.961 | 20.9 m | 32.2 m | 33 |
+
+Mean 0.968, against 0.972 for the hand-written follow (n=5) on the same
+scenario and gate, and 0.265 for v6. All three started late (the car 16-17 m
+away at acquisition), the model flew 2,006-2,008 of the 2,015-2,016 ticks
+after acquisition, and all three passed the corner every v3/v4/v6 flight lost
+the car at (at most 25.4 m behind it there) and had it within 30 m at the end
+of the mission. It slid sideways
+above 0.5 m/s on 40 % of the ticks of aiot_v7_01 (the expert: 39 %). P0
+escapes 0.0.
+
+**What v7 is, and is not.** The action is the trained head's: no hand-written
+servo, no detector box from the flight's own detector and no compass hint is
+an input. The memory is a classical filter inside the VLA package (the server),
+fed only by the backbone's own box of the object words and the capture pose.
+
 ## Limits
 
 - Offline accuracy is not closed-loop skill. The recordings are mostly
@@ -298,11 +395,15 @@ expert flight aiot_rec_e02 at the same place:
   seen very little of a car lost at a corner. That is the failure the
   matrix found.
 - Trained on one target (the red car) in one level. Language
-  generalisation is untested.
+  generalisation is untested; the other targets' recordings (a white car, a
+  black car, a box truck) are the next step, and the level has two white
+  cars and three box trucks, so those phrases are ambiguous by construction
+  (`vla_fly --level-car` takes all of them).
 - Behaviour cloning compounds its own errors. DAgger rounds with this model
   as the learner are the next step (`follow_vlm --record-perturb-vla`
   accepts the aiotvla server as a foreign family).
-- The step format has no lateral axis (AerialVLA's codec). The model turns
-  and moves forward; it cannot strafe.
+- Up to v6 the step had no lateral axis (AerialVLA's codec). v7 answers
+  protocol v2's lateral step (a fourth bin); backing up is still not in the
+  step (fwd_m >= 0).
 - Not KPI-grade: the sim is simple_flight on the city rail, and no hil
   topology is used.

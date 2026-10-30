@@ -9,6 +9,11 @@ token) and three heads answer distributions over core.GRIDS (fwd_m, down_m,
 dpsi_rad), plus two auxiliary outputs used only as training signals: is the
 target in the newest frame (visible) and its bearing (from the expert's
 detector box; neither is ever an input).
+
+v7 (30 Oct, core LATERAL and MEMORY): HeadConfig.axes may add right_m (a
+fourth head), and with n_mem > 0 the newest capture's core.MEM_FIELDS (the
+target memory's estimate) is one more token beside the slots. A checkpoint
+without either (v0-v6) loads as before: the defaults are theirs.
 """
 from __future__ import annotations
 
@@ -32,9 +37,24 @@ class HeadConfig:
     dropout: float = 0.1
     # 4: core.grounding_stats; 8: and the backbone's box (cx, cy, w, h)
     n_stats: int = 4
+    # the answered axes (core.AXES; core.LATERAL_AXES adds right_m) and the
+    # memory token's input size (core.MEM_DIM; 0: no memory token)
+    axes: tuple = core.AXES
+    n_mem: int = 0
+    # v8: the instruction's text embedding (the backbone's, 512; 0: none) as
+    # one more token, so one head can follow a car, a truck or a person
+    n_text: int = 0
+
+    def __post_init__(self):
+        self.axes = tuple(self.axes)
+        bad = [a for a in self.axes if a not in core.GRIDS]
+        if bad:
+            raise ValueError(f"axes {bad} have no core.GRIDS")
 
     def to_dict(self) -> dict:
-        return asdict(self)
+        d = asdict(self)
+        d["axes"] = list(self.axes)
+        return d
 
 
 class SlotEncoder(nn.Module):
@@ -74,20 +94,47 @@ class AIOTVLAHead(nn.Module):
         self.tr = nn.TransformerEncoder(layer, cfg.n_layers)
         self.out_norm = nn.LayerNorm(cfg.d_model)
         self.heads = nn.ModuleDict({ax: nn.Linear(cfg.d_model, len(core.GRIDS[ax]))
-                                    for ax in core.AXES})
+                                    for ax in cfg.axes})
         self.aux = nn.Linear(cfg.d_model, 2)          # visible logit, bearing (rad / 0.8)
+        if cfg.n_mem > 0:
+            self.mem = nn.Sequential(nn.Linear(cfg.n_mem, cfg.d_model), nn.GELU(),
+                                     nn.Linear(cfg.d_model, cfg.d_model),
+                                     nn.LayerNorm(cfg.d_model))
+            self.mem_emb = nn.Parameter(torch.zeros(1, 1, cfg.d_model))
+            nn.init.normal_(self.mem_emb, std=0.02)
+        if cfg.n_text > 0:
+            self.txt = nn.Sequential(nn.Linear(cfg.n_text, cfg.d_model),
+                                     nn.LayerNorm(cfg.d_model))
+            self.txt_emb = nn.Parameter(torch.zeros(1, 1, cfg.d_model))
+            nn.init.normal_(self.txt_emb, std=0.02)
         nn.init.normal_(self.slot_emb, std=0.02)
         nn.init.normal_(self.summary, std=0.02)
 
-    def forward(self, g, a, stats, pr, valid):
+    def forward(self, g, a, stats, pr, valid, mem=None, txt=None):
         """g (B, K, 576), a (B, K, 576, P), stats (B, K, 4), pr (B, K, PD),
-        valid (B, K) bool -> ({axis: logits}, aux (B, 2))."""
+        valid (B, K) bool[, mem (B, n_mem): with n_mem > 0][, txt (B, n_text):
+        with n_text > 0, the unit-norm text embedding] ->
+        ({axis: logits}, aux (B, 2))."""
         b, k = g.shape[:2]
         tok = self.enc(g.reshape(b * k, -1), a.reshape(b * k, a.shape[2], a.shape[3]),
                        stats.reshape(b * k, -1), pr.reshape(b * k, -1)).reshape(b, k, -1)
         tok = tok * valid.unsqueeze(-1).to(tok.dtype)
         x = torch.cat([self.summary.expand(b, -1, -1), tok], dim=1) + self.slot_emb
         pad = torch.cat([torch.zeros(b, 1, dtype=torch.bool, device=g.device), ~valid], dim=1)
+        if self.cfg.n_mem > 0:
+            if mem is None:
+                raise ValueError("this head reads the target memory: pass mem")
+            m = self.mem(mem.to(x.dtype)).unsqueeze(1) + self.mem_emb
+            x = torch.cat([x[:, :1], m, x[:, 1:]], dim=1)
+            pad = torch.cat([pad[:, :1], torch.zeros(b, 1, dtype=torch.bool, device=g.device),
+                             pad[:, 1:]], dim=1)
+        if self.cfg.n_text > 0:
+            if txt is None:
+                raise ValueError("this head reads the instruction's text embedding: pass txt")
+            tt = self.txt(txt.to(x.dtype)).unsqueeze(1) + self.txt_emb
+            x = torch.cat([x[:, :1], tt, x[:, 1:]], dim=1)
+            pad = torch.cat([pad[:, :1], torch.zeros(b, 1, dtype=torch.bool, device=g.device),
+                             pad[:, 1:]], dim=1)
         h = self.out_norm(self.tr(x, src_key_padding_mask=pad)[:, 0])
         return {ax: hd(h) for ax, hd in self.heads.items()}, self.aux(h)
 

@@ -16,6 +16,9 @@ flown rate equals the expert's command:
     fwd_m    = max(v_forward, 0) * H    v_forward: (vx, vy) on the capture's heading
     down_m   = -vz_up * H
     dpsi_rad = yaw_rate * H             (+ clockwise, as the codec)
+    right_m  = v_right * H              v_right: (vx, vy) on the capture's right
+                                        (core LATERAL; a v7 head learns it, older
+                                        heads read the first three only)
 
 `asked` is the expert's own command before any perturbation (a DART offset
 or a DAgger window replaced only the EXECUTED `cmd`). So every perturbed or
@@ -87,11 +90,12 @@ def run_samples(tag: str, rec: Path, frame_ok: np.ndarray, rows_of: dict, split:
         a = tick["asked"]
         yaw = float(c["pose"]["yaw_rad"])
         v_fwd = a["vx"] * math.cos(yaw) + a["vy"] * math.sin(yaw)
+        v_right = -a["vx"] * math.sin(yaw) + a["vy"] * math.cos(yaw)
         lab = {"fwd_m": max(v_fwd, 0.0) * horizon_s, "down_m": -a["vz_up"] * horizon_s,
-               "dpsi_rad": a["yaw_rate"] * horizon_s}
+               "dpsi_rad": a["yaw_rate"] * horizon_s, "right_m": v_right * horizon_s}
         s = {"id": f"{tag}/{c['i']}", "run": tag, "split": split, "i": int(c["i"]),
              "t_capture": c["t_capture"], "label_raw": lab, "label_kind": "expert_asked",
-             "v_right": -a["vx"] * math.sin(yaw) + a["vy"] * math.cos(yaw),
+             "v_right": v_right,
              "mode": tick.get("mode"), "hint_kind": "fresh" if fresh else None,
              "box": {"bearing_deg": box_bearing_deg(box["det"])} if fresh else None,
              "executed_differs": tick.get("cmd") != a}

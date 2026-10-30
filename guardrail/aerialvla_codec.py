@@ -118,6 +118,18 @@ RANGES: dict[str, tuple[float, float]] = {
     "down_m": (-5.0, 5.0),      # vertical displacement, + = down (NED)
     "dpsi_rad": (-1.1, 1.1),    # heading change, + = clockwise seen from above
 }
+# A LATERAL step's fourth bin (guardrail/vla_link module docstring, 30 Oct):
+# the displacement to the right of the new heading, + = right. Never
+# upstream's: its reader (parse_action without lateral=True) refuses a fourth
+# group. Kept out of RANGES, which is upstream's action space and is iterated
+# as such.
+RIGHT_RANGE = (-2.5, 2.5)
+LATERAL_AXES = AXES + ("right_m",)
+
+
+def axis_range(axis: str) -> tuple[float, float]:
+    """RANGES[axis], or RIGHT_RANGE for a lateral step's right_m."""
+    return RIGHT_RANGE if axis == "right_m" else RANGES[axis]
 
 # The upstream step executor's constants (AirVLNSimulatorClientTool_AerialVLA.py
 # move_path, lines 340-347): a step whose |dpsi| reaches YAW_ONLY_THRESHOLD_RAD
@@ -865,14 +877,23 @@ LAND_TEXT = " LAND"
 # digits, and the 4 Aug ablation holds an output with a CJK character inside a
 # bin ('9\u8fd0 48 60').
 _ACTION_RE = re.compile(r"([0-9]{2}) ([0-9]{2}) ([0-9]{2})( LAND)?")
+# A lateral step's text (RIGHT_RANGE): four groups, "FF DD YY RR".
+_ACTION4_RE = re.compile(r"([0-9]{2}) ([0-9]{2}) ([0-9]{2}) ([0-9]{2})( LAND)?")
 
 
 @dataclass(frozen=True)
 class Step:
-    """One AerialVLA decision, in upstream units: metres and radians PER STEP."""
+    """One AerialVLA decision, in upstream units: metres and radians PER STEP.
+    right_m: None for upstream's step; a lateral step's sideways
+    displacement (RIGHT_RANGE)."""
     fwd_m: float
     down_m: float
     dpsi_rad: float
+    right_m: float | None = None
+
+    @property
+    def lateral(self) -> bool:
+        return self.right_m is not None
 
     @property
     def rotate_only(self) -> bool:
@@ -887,10 +908,16 @@ class Step:
         aerialvla_wrapper_ui.py:195); here that is reported, not decided -
         `land` is the LAND token alone."""
         return (abs(self.fwd_m) < STEP_EPSILON and abs(self.down_m) < STEP_EPSILON
-                and abs(self.dpsi_rad) < STEP_EPSILON)
+                and abs(self.dpsi_rad) < STEP_EPSILON
+                and abs(self.right_m or 0.0) < STEP_EPSILON)
 
     def to_dict(self) -> dict[str, float]:
-        return asdict(self)
+        """Upstream's three axes; right_m too only for a lateral step (the
+        wire's step has exactly the fields its kind has)."""
+        d = asdict(self)
+        if self.right_m is None:
+            del d["right_m"]
+        return d
 
 
 @dataclass(frozen=True)
@@ -899,7 +926,7 @@ class ParsedAction:
     land False: the client HOLDS ZERO and counts the failure."""
     parse_ok: bool
     text: str
-    bins: tuple[int, int, int] | None
+    bins: tuple[int, ...] | None          # three; four for a lateral step
     step: Step | None
     land: bool
     eos: bool
@@ -916,7 +943,7 @@ def _fail(text: str, reason: str, eos: bool = False) -> ParsedAction:
     return ParsedAction(False, text, None, None, False, eos, reason)
 
 
-def parse_action(text: Any, require_eos: bool = False) -> ParsedAction:
+def parse_action(text: Any, require_eos: bool = False, lateral: bool = False) -> ParsedAction:
     """Read the model's GENERATED text - the continuation after the prompt,
     decoded from the new tokens only - and accept exactly
 
@@ -935,7 +962,11 @@ def parse_action(text: Any, require_eos: bool = False) -> ParsedAction:
     Decoding new tokens only matters: `decode(full).split("Action:")[-1]`
     keeps the prompt's own trailing space (' 00 49 49</s>'), which this reader
     refuses; `generated_from_decoded` strips exactly that space for texts that
-    were cut that way (the 4 Aug ablation's failure rows)."""
+    were cut that way (the 4 Aug ablation's failure rows).
+
+    lateral=True reads a lateral step's text instead: exactly FOUR groups
+    "FF DD YY RR" (RIGHT_RANGE; a foreign family that answers one, never
+    upstream's model), and three groups are refused."""
     if not isinstance(text, str):
         return _fail(str(text), f"not text ({type(text).__name__})")
     body, eos = text, False
@@ -943,17 +974,19 @@ def parse_action(text: Any, require_eos: bool = False) -> ParsedAction:
         body, eos = body[: -len(EOS_TEXT)], True
     if require_eos and not eos:
         return _fail(text, "no EOS marker: generation stopped at max_new_tokens", eos)
-    m = _ACTION_RE.fullmatch(body)
+    m = (_ACTION4_RE if lateral else _ACTION_RE).fullmatch(body)
     if m is None:
-        return _fail(text, _why_malformed(body), eos)
-    bins = (int(m.group(1)), int(m.group(2)), int(m.group(3)))
+        return _fail(text, _why_malformed(body, 4 if lateral else 3), eos)
+    n = 4 if lateral else 3
+    bins = tuple(int(m.group(k)) for k in range(1, n + 1))
     over = [b for b in bins if b > MAX_BIN]
     if over:
         return _fail(text, f"bin {over[0]} is outside 00..{MAX_BIN:02d}", eos)
-    return ParsedAction(True, text, bins, bins_to_step(bins), m.group(4) is not None, eos, None)
+    return ParsedAction(True, text, bins, bins_to_step(bins), m.group(n + 1) is not None, eos,
+                        None)
 
 
-def _why_malformed(body: str) -> str:
+def _why_malformed(body: str, n_bins: int = 3) -> str:
     if not body:
         return "empty"
     if not body.strip():
@@ -966,8 +999,8 @@ def _why_malformed(body: str) -> str:
         return f"non-digit token in {body!r}"
     if any(len(g) != 2 for g in digits):
         return f"a bin is not two digits in {body!r}"
-    if len(digits) != 3:
-        return f"{len(digits)} bins, not 3, in {body!r}"
+    if len(digits) != n_bins:
+        return f"{len(digits)} bins, not {n_bins}, in {body!r}"
     return f"malformed: {body!r}"
 
 
@@ -985,14 +1018,14 @@ def dequantize(b: int, axis: str) -> float:
     upstream's own decoder (module docstring, "The inverse of truncation")."""
     if not isinstance(b, int) or isinstance(b, bool) or not 0 <= b <= MAX_BIN:
         raise ValueError(f"bin {b!r} is not an integer in 0..{MAX_BIN}")
-    lo, hi = RANGES[axis]
+    lo, hi = axis_range(axis)
     return b / MAX_BIN * (hi - lo) + lo
 
 
 def quantize(value: float, axis: str) -> int:
     """Upstream's `_quantize_action`: clip to the axis range, then
     int(norm * 98) - truncation toward the lower edge."""
-    lo, hi = RANGES[axis]
+    lo, hi = axis_range(axis)
     v = min(max(float(value), lo), hi)
     return int((v - lo) / (hi - lo) * MAX_BIN)
 
@@ -1019,20 +1052,20 @@ def action_text(bins, land: bool = False) -> str:
     training/finetune_aerialvla.py wrote unpadded bins from round() ("4 49
     49" where upstream writes "04 49 49"), a text the strict reader refuses.
     Refused here: anything but three integers in 0..98 (bools and floats
-    included - 1.0 would format as "1.0")."""
-    if not isinstance(bins, (tuple, list)) or len(bins) != 3:
-        raise ValueError(f"bins must be three integers, got {bins!r}")
+    included - 1.0 would format as "1.0"). Four are a lateral step's
+    "FF DD YY RR" (RIGHT_RANGE)."""
+    if not isinstance(bins, (tuple, list)) or len(bins) not in (3, 4):
+        raise ValueError(f"bins must be three integers (four, a lateral step), got {bins!r}")
     for b in bins:
         if not isinstance(b, int) or isinstance(b, bool) or not 0 <= b <= MAX_BIN:
             raise ValueError(f"bin {b!r} is not an integer in 0..{MAX_BIN}")
-    f, d, y = bins
-    return f"{f:02d} {d:02d} {y:02d}" + (LAND_TEXT if land else "")
+    return " ".join(f"{b:02d}" for b in bins) + (LAND_TEXT if land else "")
 
 
 def bin_interval(b: int, axis: str) -> tuple[float, float]:
     """The values truncation maps to bin b: [lo_edge, hi_edge) - except bin 98,
     which only the axis maximum itself reaches (returned as (hi, hi))."""
-    lo, hi = RANGES[axis]
+    lo, hi = axis_range(axis)
     w = (hi - lo) / MAX_BIN
     if b == MAX_BIN:
         return (hi, hi)
@@ -1041,10 +1074,12 @@ def bin_interval(b: int, axis: str) -> tuple[float, float]:
 
 
 def bins_to_step(bins) -> Step:
-    """(forward, down, yaw) bins -> Step in metres and radians per step."""
-    f, d, y = bins
+    """(forward, down, yaw) bins -> Step in metres and radians per step; a
+    fourth bin is a lateral step's right_m (RIGHT_RANGE)."""
+    f, d, y = bins[:3]
     return Step(fwd_m=dequantize(f, "fwd_m"), down_m=dequantize(d, "down_m"),
-                dpsi_rad=dequantize(y, "dpsi_rad"))
+                dpsi_rad=dequantize(y, "dpsi_rad"),
+                right_m=dequantize(bins[3], "right_m") if len(bins) == 4 else None)
 
 
 def legacy_last_three_ints(text: str) -> dict[str, Any]:
