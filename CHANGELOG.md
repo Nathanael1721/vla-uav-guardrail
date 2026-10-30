@@ -16,6 +16,51 @@ shipped change and recorded as one.
 
 ## [Unreleased]
 
+### 2026-10-31 (morning) — AIOT-VLA v9: a box truck 0.901 within 30 m after a tighter teacher and DAgger windows; the red car 0.956; a white car 0.811 over six flights, one of them lost where the car stopped
+
+#### Recorded (teacher, `follow_vlm --teacher-truth`, 600 s)
+- Box trucks with a tighter stand-off (`-ObjectWidthM 3`: 11.9 m): aiot_tch_t05
+  (Car_00) 0.846 within 30 m, t06 (Car_23) 0.971; with DART t07 0.710, t08
+  0.827; with v8 flying DAgger windows t09 (Car_23, 1,774 of 4,749 captures)
+  0.962, t10 (Car_00) 0.745. The teacher's median distance is now 19.6-22.5 m
+  (23-27 m before).
+- The white car with v8 flying DAgger windows: aiot_tch_w05 0.895 (2,262 of
+  4,873 captures), w06 0.960.
+
+#### Added
+- AIOT-VLA v9: v8's recipe on 26 runs (the red car's 12, the white car's 7, the
+  black car's 1, the tighter trucks' 6; the trucks at 15.8 m, t01-t04, left
+  out). 92,153 training and 13,770 hold-out samples (aiot_rec_e02,
+  aiot_tch_w02, aiot_tch_t05), 7,926 dropped as the memory off the expert's
+  subject; hold-out fwd_m MAE 0.064 m, dpsi_rad 0.0043 rad, right_m 0.026 m
+  (correlation 0.987). Weights D:/models/aiotvla/v9.
+
+#### Flown (AIOT-VLA v9; as v8's flights)
+| target | within 30 m of the instance acquired, per flight | mean | v8 |
+|---|---|---|---|
+| a box truck (Car_23 each time) | 0.913, 0.837, 0.952 | 0.901 | 0.615 |
+| a white car (Car_22 each time) | 0.282, 0.937, 0.884, 0.896, 0.938, 0.927 | 0.811 | 0.907 (3 flights) |
+| a red car (Car_10) | 0.938, 0.967, 0.963 | 0.956 | 0.978 |
+
+P0 escapes 0.0 in all twelve. Not flown: the black car (no new recording).
+
+#### Found
+- **Where the car stops, the aircraft can arrive on top of it.** In
+  aiot_v9w_01 the white car stopped and v9 flew to within 0.5 m of it, below
+  the camera's view; it drifted toward the other white car (Car_15) and lost
+  both, and when the gate's subject lapsed vla_fly stopped asking the model
+  (hold, then hover) for the rest of the mission. Every white-car flight of
+  v8 and of v9 came within 0-1.4 m of the car at least once; v9 came within
+  8 m of the trucks on 21-25 % of the ticks. The step has no reverse (fwd_m
+  >= 0), while the expert backs off on 12 % of its ticks.
+- The tighter teacher and the DAgger windows fixed the box truck (0.615 to
+  0.901); on the red car v9 is below v8 (0.956 against 0.978), still above
+  0.9 in every flight.
+
+#### Limits
+- Three to six flights per target, one level; the new targets start on a truth
+  gate; not KPI-grade.
+
 ### 2026-10-31 — AIOT-VLA v8 follows other targets by their words: a white car 0.907 within 30 m, the red car 0.978; a box truck 0.615 and a black car 0.104 do not yet
 
 #### Added

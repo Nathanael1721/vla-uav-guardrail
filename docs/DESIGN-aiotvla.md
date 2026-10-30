@@ -5,8 +5,9 @@ Named NTUT-VLA until 30 Oct 2026 (package `training/ntutvla`, family
 keep their tags (`demo/out/ntut_*`) and their records' family `ntutvla`,
 which the codec still classifies as this model's.
 
-Status: v8, 2026-10-31 (within 30 m after acquisition, 3 flights each: the red
-car 0.978, a white car 0.907, a box truck 0.615, a black car 0.104).
+Status: v9, 2026-10-31 (within 30 m after acquisition: the red car 0.956, a box
+truck 0.901, a white car 0.811 over six flights; v8: red 0.978, white 0.907,
+truck 0.615, black car 0.104).
 Code in `training/aiotvla/`, served by `demo/vla_server_foreign.py --model
 aiotvla`, tested by `tests/test_aiotvla.py` and `tests/test_vla_lateral_step.py`.
 
@@ -480,14 +481,38 @@ What holds the other two back:
   v8 flew north along the route the other targets take: the route is what the
   data teaches when one phrase has one recording.
 
+## v9: a closer teacher for the trucks, and DAgger windows (31 Oct)
+
+The box truck copied its teacher's slack, so the trucks were recorded again
+with a tighter stand-off (`run_citylife_follow.ps1 -ObjectWidthM 3`: 11.9 m;
+the teacher's median distance 19.6-22.5 m, from 23-27 m), on Car_00 and on
+Car_23, clean, with DART, and with v8 flying DAgger windows (aiot_tch_t05-t10).
+The white car got two DAgger recordings (w05, w06). v9 is v8's recipe on 26
+runs (the trucks at 15.8 m, t01-t04, left out): 92,153 training samples,
+hold-out dpsi_rad MAE 0.0043 rad, right_m 0.026 m.
+
+| target | v9, within 30 m of the instance acquired | mean | v8 |
+|---|---|---|---|
+| a box truck (Car_23 each time) | 0.913, 0.837, 0.952 | 0.901 | 0.615 |
+| a white car (Car_22 each time) | 0.282, 0.937, 0.884, 0.896, 0.938, 0.927 | 0.811 | 0.907 (3 flights) |
+| a red car | 0.938, 0.967, 0.963 | 0.956 | 0.978 |
+
+**Where the car stops.** In the 0.282 flight the white car stopped and v9 flew
+to within 0.5 m of it, out of the camera's view; it drifted toward the other
+white car, lost both, and when the gate's subject lapsed vla_fly stopped asking
+the model (hold, then hover) for the rest of the mission. Every white-car
+flight of v8 and v9 came within 0-1.4 m of the car at least once. The step has
+no reverse (fwd_m >= 0), while the expert backs off on 12 % of its ticks: a
+backward axis is the next change to the step.
+
 ## Limits
 
 - Offline accuracy is not closed-loop skill. The recordings are mostly
   straight chasing, with 69 search samples in 34,510, so the model has
   seen very little of a car lost at a corner. That is the failure the
   matrix found.
-- One level. v8 follows the red car and a white car; a box truck and a
-  black car not yet (v8 section). The level has two white cars and three box
+- One level. v9 follows the red car, a box truck and (five flights in six)
+  a white car; the black car is not learned (v8, v9 sections). The level has two white cars and three box
   trucks, so those phrases are ambiguous by construction (`vla_fly
   --level-car` takes all of them). A person is not a target yet: `vla_fly`
   has no pedestrian truth.
