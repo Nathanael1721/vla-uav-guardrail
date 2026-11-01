@@ -169,7 +169,7 @@
 #          estimator, the truth carried forward between polls; training
 #          labels only).
 #        The CityLife level, checked offline (the level itself is
-#          gitignored): test_citylife_*, test_drive_signals_dsl,
+#          gitignored): test_citylife_*, test_car_speed, test_drive_signals_dsl,
 #          test_ped_walk_plan, test_parked_cars.
 #        Deployment and environments: test_deploy_configs, test_env_pins.
 #        Documents and the tools that build them: test_public_docs,
@@ -680,6 +680,7 @@ jobs:
               tests/test_citylife_signal_lamps.py \
               tests/test_citylife_signals.py \
               tests/test_citylife_traffic_model.py \
+              tests/test_car_speed.py \
               tests/test_drive_signals_dsl.py \
               tests/test_ped_walk_plan.py \
               tests/test_parked_cars.py \

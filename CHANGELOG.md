@@ -16,6 +16,43 @@ shipped change and recorded as one.
 
 ## [Unreleased]
 
+### 2026-11-01 — a temporary level change: Car_07, the only black car, slowed from 560 to 320 cm/s so the AIOT-VLA black-car recordings have a car the aircraft can keep up with; to be put back afterwards
+
+#### Changed
+- `CityLife_Day` (the gitignored level): Car_07's `SpeedCmS` 560 → 320 cm/s,
+  the same as Car_10. At 560 cm/s Car_07 (loop B) drove at a median 4.83 m/s,
+  p90 5.61 m/s (aiot_tch_k01), above the aircraft's 5 m/s policy cap, and even
+  the privileged teacher fed the car's true position stayed within 30 m on only
+  0.695 of its ticks. The other 23 cars read back unchanged. Only
+  `CityLife_Day.umap` was rewritten (the editor log saved one package). The
+  level as it was: `PASBlocks/_backup/2026-11-01_pre_car07_speed/`.
+- **Temporary.** Car_07 goes back to 560 cm/s once the AIOT-VLA black-car
+  recordings and evaluation flights are done
+  (`python -m tools.citylife_mcp.car_speed Car_07 560`), with its own entry.
+  Black-car numbers from before 2026-11-01 (v8 0.104, the teacher's 0.695) were
+  flown at 560 cm/s and are not comparable with later ones.
+- Loop B shares three junctions with loop A ((4100, -4100), (4100, 4100),
+  (12300, -4100)), and loop B's cars now queue behind Car_07. Flights on Car_10
+  while this change stands are therefore not flown in exactly the traffic of the
+  0.963 / 0.972 baselines. The size of that effect is not measured.
+
+#### Added
+- `tools/citylife_mcp/car_speed.py`: prints every CityLife car's `SpeedCmS`, or
+  sets one car's and saves the level. It fails unless the read-back matches, no
+  other car changed and the `.umap`'s file date moved, because `save_assets` can
+  return True while the file stays locked. Top speeds read on 2026-11-01, before
+  the change (cm/s): Car_00 420, Car_01 480, Car_02 390, Car_03 530, Car_04 450,
+  Car_05 505, Car_06 410, Car_07 560, Car_08 460, Car_09 540, Car_10 320,
+  Car_11 575, Car_12 430, Car_13 495, Car_14 385, Car_15 520, Car_16 415,
+  Car_17 530, Car_18 470, Car_19 395, Car_20 555, Car_21 440, Car_22 505,
+  Car_23 380.
+
+#### Tests
+- `tests/test_car_speed.py` (5 checks, added to tests.yml): a fake editor stands
+  in for the endpoint. A save that never reaches the disk fails, a set the editor
+  ignores fails, an unknown car is refused before anything is written, and the
+  substituted editor script parses. With the two checks removed, 2 of the 5 fail.
+
 ### 2026-10-31 (morning) — AIOT-VLA v9: a box truck 0.901 within 30 m after a tighter teacher and DAgger windows; the red car 0.956; a white car 0.811 over six flights, one of them lost where the car stopped
 
 #### Recorded (teacher, `follow_vlm --teacher-truth`, 600 s)
