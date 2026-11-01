@@ -5,9 +5,12 @@ Named NTUT-VLA until 30 Oct 2026 (package `training/ntutvla`, family
 keep their tags (`demo/out/ntut_*`) and their records' family `ntutvla`,
 which the codec still classifies as this model's.
 
-Status: v9, 2026-10-31 (within 30 m after acquisition: the red car 0.956, a box
-truck 0.901, a white car 0.811 over six flights; v8: red 0.978, white 0.907,
-truck 0.615, black car 0.104).
+Status: v10b, 2026-11-01 (within 30 m after acquisition, three flights each:
+a white car 0.926, a box truck 0.843, the red car 0.944 and 0.985 with a third
+flight lost to a simulator camera stall). v10, with a person's data as well:
+the black car 0.940 / 0.261 / 0.855 when it starts ahead and driving away
+(on a slowed level), a person 0.25-0.37 on the one acquired. v9: red 0.956,
+truck 0.901, white 0.811; v8: red 0.978, white 0.907.
 Code in `training/aiotvla/`, served by `demo/vla_server_foreign.py --model
 aiotvla`, tested by `tests/test_aiotvla.py` and `tests/test_vla_lateral_step.py`.
 
@@ -505,17 +508,80 @@ flight of v8 and v9 came within 0-1.4 m of the car at least once. The step has
 no reverse (fwd_m >= 0), while the expert backs off on 12 % of its ticks: a
 backward axis is the next change to the step.
 
+## v10: the black car and a person (1 Nov)
+
+**Data.** The level's black car (Car_07) drove faster than the aircraft's
+5 m/s cap, so it was slowed to 320 cm/s for one window (Environment Builder,
+CHANGELOG 2026-11-01; restored afterwards). In that window: six teacher
+recordings of the black car (two plain, two DART, two with v9 flying DAgger
+windows; within 30 m on 0.933-1.000 of their ticks) and six of a person.
+For the person, `--level-car Ped_17` makes ONE figure the level walks the
+teacher's subject and the truth (`level_actors.kind_of_tags`, CHANGELOG
+2026-11-01 afternoon); each run follows a different figure that walks into
+the start camera's view within 30 m. The person teacher holds 12 m and keeps
+its person on 0.801-0.993 of its ticks (1.000, 1.000 and 0.981 over the
+first 420 s of the three plain runs; each lost its person between 488 and
+507 s, in p02 while the building fence held the aircraft back).
+
+**v10** is v9's recipe on all 38 runs; **v10b** the same without the person
+runs (a control, below).
+
+**Flown** (vla_fly e2e, `--gate-truth` for every target but the red car; the
+black and person flights with Car_07 slowed):
+
+| target | v10 | v10b | v9 |
+|---|---|---|---|
+| black car, start heading 90 | 0.140, 0.079, 0.144 | - | - |
+| black car, start heading 270 | 0.940, 0.261, 0.855 | - | - |
+| a person (the figure acquired) | 0.334, 0.252, 0.371 | - | - |
+| box truck | 0.509, 0.751, 0.940 | 0.738, 0.824, 0.968 | 0.913, 0.837, 0.952 |
+| white car | 0.888, 0.900, 0.258 | 0.912, 0.908, 0.959 | 0.811 (6 flights) |
+| red car | 0.861, 0.421*, 0.955 | 0.944, 0.985, 0.202* | 0.938, 0.967, 0.963 |
+
+\* the simulator's camera stream stopped for 10.9 and 8.7 s with the car 20-25 m
+ahead, and the car drove out of reach (CHANGELOG 2026-11-01 evening).
+
+**The person data costs the vehicles.** Without it (v10b) the white car is
+above 0.9 in all three flights and the trucks closer to v9; with it (v10,
+about a sixth of the samples, a 12 m stand-off at walking pace) both fall.
+v10b is the model to fly for vehicles; a person needs more than these
+recordings (below).
+
+**The black car's start.** Loop B runs against the follow's start heading:
+at 90 the car is acquired ahead driving toward the aircraft and passes under
+it, and v10 lost it in all three (in aiot_v10k_01 the memory reseeded onto
+something moving ahead, most likely another car).
+Facing 270 the black car starts as every other target's car does, ahead and
+driving away.
+
+**A person.** v10 stays among people (within 30 m of some figure on
+0.95-1.00 of the ticks) but not with one: the nearest figure changes 37-54
+times a flight. The target memory is position-only, and on the pavements
+figures pass within a few metres of each other; following one person needs
+an appearance cue in the memory.
+
+**Where the car stops** (every vehicle target): v10 closes into the
+camera's 6.9 m blind spot, the truth gate's subject lapses, vla_fly stops
+asking after its 26 s memory and search, and a car that drives off without
+re-entering the view is lost (aiot_v10kw_02, aiot_v10t_01). The step has no
+reverse.
+
+**The stand-off rules did not run.** vla_fly gives the Shield no subject, so
+the policy's subject stand-offs (10 m for a pedestrian, 5 m for anything)
+are inert in every VLA flight; against the truth, the white-car and truck
+flights of v9 and v10 came within 0.1-3.9 m of their car.
+
 ## Limits
 
 - Offline accuracy is not closed-loop skill. The recordings are mostly
   straight chasing, with 69 search samples in 34,510, so the model has
   seen very little of a car lost at a corner. That is the failure the
   matrix found.
-- One level. v9 follows the red car, a box truck and (five flights in six)
-  a white car; the black car is not learned (v8, v9 sections). The level has two white cars and three box
-  trucks, so those phrases are ambiguous by construction (`vla_fly
-  --level-car` takes all of them). A person is not a target yet: `vla_fly`
-  has no pedestrian truth.
+- One level. v10b follows the red car, the white car and a box truck; the
+  black car only when it starts ahead and driving away, flown on a slowed
+  level (v10 section); a person it stays near but does not keep. The level
+  has two white cars and three box trucks, so those phrases are ambiguous by
+  construction (`vla_fly --level-car` takes all of them).
 - The other targets' labels come from a privileged teacher, and their
   flights start on a truth gate; the student never sees the truth.
 - Behaviour cloning compounds its own errors. DAgger rounds with this model
@@ -523,6 +589,9 @@ backward axis is the next change to the step.
   accepts the aiotvla server as a foreign family).
 - Up to v6 the step had no lateral axis (AerialVLA's codec). v7 answers
   protocol v2's lateral step (a fourth bin); backing up is still not in the
-  step (fwd_m >= 0).
+  step (fwd_m >= 0), and that is where the vehicle flights are lost: closing
+  into the camera's blind spot behind a stopped car.
+- vla_fly gives the Shield no subject, so the policy's subject stand-offs
+  never run in a VLA flight (v10 section).
 - Not KPI-grade: the sim is simple_flight on the city rail, and no hil
   topology is used.

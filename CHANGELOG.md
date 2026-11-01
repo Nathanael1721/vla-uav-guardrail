@@ -16,6 +16,125 @@ shipped change and recorded as one.
 
 ## [Unreleased]
 
+### 2026-11-01 (evening) — AIOT-VLA v10 and v10b: the black car 0.940 / 0.261 / 0.855 within 30 m when it starts ahead and driving away (0.08-0.14 head-on); a person 0.25-0.37 on the one acquired; without the person data (v10b) the white car 0.926; VLA flights never ran the subject stand-off rules
+
+All black-car and person runs below were flown while Car_07 was slowed to
+320 cm/s (the 2026-11-01 temporary level change; each run's
+`demo/out/<tag>/level_conditions.json` and the summary rows say "Car_07 slowed
+(2026-11-01 temporary change)"). Loop B shares three junctions with loop A and
+pedestrians wait for gaps in traffic, so these numbers are not to be compared
+with flights on the restored level without saying so.
+
+#### Added
+- `--level-car Ped_04`: ONE figure the level walks as the subject
+  (c31f1f7). `level_actors.kind_of_tags` tells a figure's tag from a car's
+  and refuses a mix; `LevelCar` / `LevelCars` carry the kind. In
+  `follow_vlm` a level figure is truth for the pedestrian class only, outranks
+  a crowd truth, and every phrase must name a person
+  (`level_car_refusal(kind="pedestrian")`); `vla_fly` builds the kind from
+  its tags. `run_citylife_follow.ps1 -LevelPed Ped_17 [-TeacherTruth]` flies
+  the person mission against that tag, without polling the other 39.
+
+#### Recorded (teacher, `follow_vlm --teacher-truth`, 600 s; Car_07 slowed)
+- The black car (Car_07 at a median 3.20 m/s, from 4.83): aiot_tch_k02 and
+  k03 within 30 m on 1.000 of their ticks (median 16.8 and 16.6 m; the same
+  teacher at 560 cm/s: 0.695), DART k04 0.959 and k05 0.983, DAgger windows
+  flown by v9 k06 0.952 (1,785 of 4,722 captures) and k07 0.933.
+- A person (one figure per run, chosen because it walks into the start
+  camera's view within 30 m 34-145 s after the level starts): aiot_tch_p00
+  (150 s smoke run, Ped_17: acquired after 15 s at 22.1 m, never inside
+  10 m), p01 Ped_17 0.832, p02 Ped_21 0.845, p03 Ped_12 0.801, DART p04
+  Ped_09 0.889, p05 Ped_16 0.993, p06 Ped_15 0.855. Over the first 420 s
+  (a flight's length) p01-p03 are 1.000, 1.000 and 0.981: each lost its
+  person between 488 and 507 s (p02 while the building fence held the
+  aircraft back and the person walked on; p01 when the person left the
+  frame 12 m away and the search never found it again).
+
+#### Added (model)
+- AIOT-VLA v10: v9's recipe on 38 runs (v9's 26 + the black car's six + the
+  person's six). 131,082 training and 21,698 hold-out samples (aiot_rec_e02,
+  aiot_tch_w02, aiot_tch_t05, aiot_tch_k03, aiot_tch_p02), 17,736 dropped as
+  the memory off the expert's subject; best epoch 13, hold-out fwd_m MAE
+  0.099 m, dpsi_rad 0.0139 rad, right_m 0.045 m (correlation 0.944). The
+  hold-out now holds a black and a person run, so these are not v9's set.
+  Weights D:/models/aiotvla/v10.
+
+#### Flown (AIOT-VLA v10, vla_fly e2e, `--gate-truth`; Car_07 slowed)
+| target | start heading | within 30 m of the instance acquired, per flight | mean |
+|---|---|---|---|
+| a black car (Car_07) | 90 (the follow's usual) | 0.140, 0.079, 0.144 | 0.121 |
+| a black car (Car_07) | 270 | 0.940, 0.261, 0.855 | 0.685 |
+| a person (24 figures, Ped_00-Ped_23) | 90 | 0.334, 0.252, 0.371 | 0.319 |
+
+The person flights were within 30 m of SOME person on 1.000, 0.950 and
+0.997 of their ticks; with 24 figures on the same pavements that column says
+little, so the table scores the figure acquired.
+
+#### Added (control)
+- AIOT-VLA v10b: v10 without the six person runs (32 runs, 111,722 training
+  and 17,740 hold-out samples; v9's hold-out plus aiot_tch_k03), to see
+  whether the person data is what cost v10 the vehicles. Best epoch 15,
+  hold-out fwd_m MAE 0.054 m, dpsi_rad 0.0042 rad, right_m 0.023 m
+  (correlation 0.988; v9 0.064, 0.0043, 0.026). Weights D:/models/aiotvla/v10b.
+
+#### Flown (the restored level, Car_07 back at 560 cm/s; as v9's flights)
+| target | v10, per flight | mean | v10b, per flight | mean | v9 |
+|---|---|---|---|---|---|
+| a box truck (Car_23 each time) | 0.509, 0.751, 0.940 | 0.733 | 0.738, 0.824, 0.968 | 0.843 | 0.901 |
+| a white car (Car_22 each time) | 0.888, 0.900, 0.258 | 0.682 | 0.912, 0.908, 0.959 | 0.926 | 0.811 (6 flights) |
+| a red car (Car_10) | 0.861, 0.421*, 0.955 | 0.746 | 0.944, 0.985, 0.202* | 0.710 | 0.956 |
+
+\* the simulator's camera stream stopped for 10.9 s (aiot_v10r_02) and 8.7 s
+(aiot_v10br_03) while the car was 20-25 m ahead: no frame reached the
+detector or the VLA, the step tracker held, and the car drove out of reach.
+Without those two flights the red car is 0.861 and 0.955 for v10, 0.944 and
+0.985 for v10b.
+
+With the person data out, the white car rises to 0.926 (all three above 0.9)
+and the trucks to 0.843; on the red car v10b's two unstalled flights are
+v9's level. The person data, about a sixth of v10's samples at a 12 m
+stand-off and a walking pace, costs the vehicles (three flights a target:
+an indication, not a measurement of the size). Against the truth, v10's red flights came
+within 0.3, 9.5 and 10.4 m of the car (17 %, 4 % and 0 % of the ticks within
+10 m; v9's: never within 10 m); v10b's within 10.4, 4.3 and 10.0 m. P0
+escapes 0.0 in every flight, with the stand-off rules not running (below).
+
+#### Found
+- **VLA flights never ran the subject stand-off rules.** `guardrail/shield.py`
+  `_check_standoff` is inert without a subject (`set_subject`), and
+  `demo/vla_fly.py` never sets one, so `standoff-pedestrian` (10 m, P0) and
+  `standoff-any` (5 m, P0) did not run in any VLA flight; their "P0 escapes
+  0.0" says nothing about stand-off. Against the truth, v9's white-car and
+  truck flights came within 0.1-3.9 m of their car and spent 10-29 % of their
+  ticks within 10 m; v9's red-car flights never closer than 10.4 m; v10's
+  person flights within 1.0-5.4 m of the person acquired.
+- **The black car comes head-on.** Loop B runs the opposite way to the
+  follow's start heading: at 90 the black car is acquired 17-20 m ahead
+  driving TOWARD the aircraft (about -3.5 m/s along the heading) and passes under
+  it, while every red, white and truck flight acquires its car ahead and
+  driving away. In aiot_v10k_01 the memory coasted the car behind-right for
+  3 s, then reseeded on something 20 m ahead moving east at about 3.7 m/s
+  (most likely another car), and v10 chased it east at 5 m/s; the gate then
+  lapsed and vla_fly never asked again.
+  Facing 270 the black car starts as the others do.
+- **Where the car stops, the gate lapses.** In aiot_v10kw_02 the black car
+  stopped and v10 closed to 7.4 m, inside the camera's 6.9 m blind spot at 8 m;
+  the truth gate lapsed, the aircraft hovered 30 s, and when the car drove on
+  it was re-acquired 27 m behind and lost at the next corner. The step has no
+  reverse.
+- **A person is not one person.** v10 stays among people but changes the
+  nearest figure 37-54 times per flight; the target memory is position-only,
+  and figures pass within a few metres of each other on the pavements.
+- **The simulator's camera stream stalls.** In 4 of the 39 v9, v10 and v10b
+  flights the detector produced nothing for 7.5-10.9 s (aiot_v9w_04,
+  aiot_v10kw_01, aiot_v10r_02, aiot_v10br_03; in aiot_v10br_03 the VLA's
+  frames stopped for the same 9.5 s), while the pose and the 10 Hz loop ran
+  on; two of them lost the car to it. The cause is not found.
+
+#### Limits
+- Three flights per target and start, one level, the new targets on a truth
+  gate; not KPI-grade.
+
 ### 2026-11-01 (afternoon) — the temporary level change ends: Car_07, the black car, back at 560 cm/s after the AIOT-VLA black-car and person work
 
 #### Changed
