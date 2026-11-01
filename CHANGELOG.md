@@ -16,6 +16,136 @@ shipped change and recorded as one.
 
 ## [Unreleased]
 
+### 2026-11-01 (late) — the VLA follow's subject stand-off now runs: vla_fly gives the Shield the perception's subject every tick, with its velocity, and says INERT when it has none; every earlier VLA flight was flown with the stand-off inert
+
+#### Fixed
+- **`demo/vla_fly.py` never called `Shield.set_subject`**, so the follow
+  policy's `standoff-pedestrian` (10 m, P0) and `standoff-any` (5 m, P0)
+  were inert in every VLA follow flown (AerialVLA, DroneCATS, AIOT-VLA
+  v7-v10b; PC and Jetson; the evening entry below, "Found"). Every mission
+  tick now sets the Shield's subject before the Shield judges the command
+  (`shield_subject`): the follow's perception, never the level car's truth -
+  the last held box's map point (`follow_vlm.Grounder`'s identity features,
+  from its own capture's depth and pose), carried from its capture to now
+  at the velocity measured from the held boxes over 2 s
+  (`measured_velocity`, `follow_vlm.measured_speed` as a vector, capped at
+  the class's top speed), with the class the object words select
+  (`follow_vlm.subject_width`: "a red car" a car, "a person" a pedestrian)
+  and that velocity (`set_subject(velocity=...)`). None while the subject is
+  not committed (acquiring, lapsed, reset) and once it is unseen for more
+  than `LAPSE_S` (3 s) - checked by the feed itself as well, because the
+  follow's lapse runs only when a detector frame arrives and the camera
+  stream stalled for 7.5-10.9 s in 4 of 39 flights. Cleared when the
+  mission ends. Each row carries `shield_subject` and `shield_subject_v`.
+- **Inert, said out loud.** `subject_feed` decides at the mission start
+  whether there is a perception subject to feed: none with `--gate-truth`
+  (the client's box is the level car's TRUE position, so a stand-off from it
+  would be an oracle; AIOT-VLA itself steers on its own OWL-ViT and ignores
+  the hint, `vla_server_foreign.AIOTVLAFamily`), none with the identity off
+  (no box is placed on the map) or on a mission with no subject. Then, and
+  whenever binding rules never had a subject (the feed on, the subject never
+  acquired), the console says `[standoff] *** standoff-any INERT: <why>` at
+  the start and in the report; `metrics.json` `subject_standoff` records the
+  rules, the ones that bind this class, the source, the ticks with a subject
+  (and with its velocity), `inert` and `inert_why`, the stand-off violation
+  ticks and repairs. The HUD's stand-off row reads INERT instead of "no
+  target", and its OK banner "rules satisfied; STAND-OFF INERT (no subject)"
+  instead of "all rules satisfied".
+- `tests/test_vla_fly_fakesim.py` (lab-only; SKIPs in CI) had stale fakes:
+  its `ProjectAirSimClient` took no `address` since fe171ab (`--sim-address`)
+  and its `_LevelCar` no `kind` since c31f1f7, so its flights failed in the
+  lab. 14/14 again in vla-real; its follow flies `follow_car_citylife_nfz.yaml`
+  now and checks the INERT record and console lines end to end.
+
+#### Found (what the flights loaded, and what said so)
+- 113 of the 116 VLA flights in `demo/out` were follows on the signed
+  `follow-car-citylife-nfz` bundle with both stand-offs; 2 follows and 1
+  goto flew `vla-goto-citylife`, which has none.
+- Nothing marked the rules as not run. The HUD row said "idle, no target"
+  under a banner reading "GUARDRAIL ACTIVE - all rules satisfied" (4,015 of
+  aiot_v10br_01's 4,290 HUD ticks); `audit.jsonl` logs violating ticks only
+  (aiot_v10br_01: 23, nfz-frontage 15 and bld-clearance 8); `kpi.json`'s
+  `violations_by_type` had no stand-off key and its P0 escape rate read 0.0.
+- Against the level car's truth, the 110 follows with truth rows were within 5 m of
+  their subject on 11,049 of 342,042 ticks after the first VLA decision
+  (3.2 %), within 10 m on 33,452 (9.8 %), and as close as 0.02 m
+  (aiot_v10bw_02).
+- Earlier VLA results are unchanged as follow scores. They were flown with
+  the subject stand-off inert, and their "P0 escapes 0.0" covers the zone,
+  clearance, altitude and speed rules only.
+
+#### Decided: the grant's 5 s / 0.1 s forecast stays, with the subject's velocity
+`tools/replay_standoff_feed.py` replays the logged commands of every
+identity-on VLA follow through the Shield with the subject this feed gives
+(rebuilt from `detections.jsonl` and `metrics.follow` and handed to
+`vla_fly.shield_subject` itself), open loop. 65 flights with a perception
+subject, 179,155 ticks from the first acquisition, a subject fed on 53,866
+(0.301):
+
+| forecast | stand-off repair ticks | flights over 5 % | worst flight | median speed cut | at truth < 10 m | other rules' repair ticks |
+|---|---|---|---|---|---|---|
+| 5 s / 0.1 s, subject held still | 16,317 (0.0911) | 36 | 0.455 | 3.98 m/s | 578 | 6,181 |
+| 5 s / 0.1 s, velocity given (flown) | 2,057 (0.0115) | 4 | 0.068 | 2.25 m/s | 516 | 6,346 |
+| 3 s / 0.5 s, held still | 2,359 (0.0132) | 6 | 0.188 | 3.22 m/s | 552 | 9,505 |
+| 3 s / 0.5 s, velocity given | 1,023 (0.0057) | 0 | 0.044 | 1.95 m/s | 423 | 9,499 |
+
+Held still, the grant's forecast repairs the command on 9.1 % of the ticks
+and would end the follow (follow_vlm's own replay of 19 Oct: 44 %); given
+the subject's velocity, on 1.1 %. The 3 s / 0.5 s forecast is not needed once the
+velocity is given: it halves the stand-off repairs again but changes every
+rule's forecast, and on the same ticks the other rules' repairs rose by
+half. The 39 `--gate-truth` flights, replayed as a what-if with their truth
+box (vla_fly feeds none): 5.2 % of 140,418 ticks with the velocity, 19.6 %
+held still.
+
+#### Flown (AIOT-VLA v10b on the red car, real perception, Car_10; restored level)
+| flight | within 30 m from the first acquisition | ticks with a subject, from the acquisition | subject against the truth, median | stand-off violation ticks | StandoffHold repairs | closest to the car (truth) | P0 escapes |
+|---|---|---|---|---|---|---|---|
+| aiot_v10bs_01 | 0.969 | 2,090 of 2,090 | 1.74 m | 18 | 18 | 11.19 m | 0.0 |
+| aiot_v10bs_02 | 0.960 | 1,944 of 1,944 | 1.81 m | 56 | 54 | 10.60 m | 0.0 |
+| aiot_v10bs_03 | 0.955 | 1,974 of 1,974 | 1.80 m | 29 | 32 | 11.86 m | 0.0 |
+
+The same model and scenario before this change (aiot_v10br_01-03): 0.944,
+0.985 and 0.202, the last lost to an 8.7 s camera stall (none in these
+three). Flown from 55faad0 (each manifest's `code_revision`, clean): the
+worktree's `vla_fly` with the main checkout's simulator, obstacle map and
+signed bundle, Unreal's editor closed, a PIP video each
+(`docs/video/aiot_v10bs_0N_pip_small.mp4`, local). The stand-off acted where
+the aircraft closed on a car stopped ahead: in aiot_v10bs_02 at 230.5 s,
+the subject 18 m ahead and the command 4.9 m/s, StandoffHold cut it to 1.5
+and then 0.1-0.5 m/s while the car stood (truth 19.0 m, then 14.9 m at
+232.0 s). None of the three came within 10 m of the car by the truth, so
+the 5 m ring itself was never reached (aiot_v10br_02 came to 4.3 m with
+no stand-off judged), and the car stayed outside the camera's 6.9 m blind
+spot. Whether the hold is what spares these flights v10's stopped-car loss
+(aiot_v10kw_02 closed to 7.4 m and lost the car) three flights do not show:
+v10b's other two red flights came no closer than 10.0 m without it. The HUD's stand-off row showed the separation the
+Shield judged ("28 m", OK) and the pedestrian row "n/a (car)". In
+aiot_v10bs_02 a 0.1 s building-clearance violation at the aircraft's own
+position (230.6 s: a street tree during the VLA's acceleration, before any
+stand-off repair) put BREACH on the HUD for 15 ticks; nothing escaped.
+Three flights: an indication, not a measure of the change's effect on the
+score.
+
+#### Limits
+- The camera's blind spot (0.86 x altitude, 6.9 m at 8 m) is wider than the
+  5 m ring. In the replay the truth was within 5 m on 834 ticks; a subject
+  was fed on 177 of them and placed within 5 m on 129. The feed coasts a
+  lost subject only until the follow's own lapse (3 s), so the 5 m rule acts
+  mostly through the forecast while the car is still seen; a car already
+  under the aircraft is mostly not judged.
+- `--gate-truth` flights (the white car, the box truck, the black car, the
+  person) still fly with the stand-off inert, now said so; a person has not
+  been followed on perception, so the 10 m rule has not bound in flight.
+- The replay is open loop: the logged commands at the logged poses, the
+  aircraft's velocity from pose differences.
+
+#### Tests
+- New `tests/test_vla_standoff_feed.py` (11/11; on 1dd6c24 3/11: the three
+  that pin the Shield's own behaviour pass, the 8 on vla_fly and the HUD
+  fail), in the tests.yml loop. The whole loop, 133 files, exits 0 in the
+  worktree under vla-real (44 skip the parts that need the lab's data).
+
 ### 2026-11-01 (evening) — AIOT-VLA v10 and v10b: the black car 0.940 / 0.261 / 0.855 within 30 m when it starts ahead and driving away (0.08-0.14 head-on); a person 0.25-0.37 on the one acquired; without the person data (v10b) the white car 0.926; VLA flights never ran the subject stand-off rules
 
 All black-car and person runs below were flown while Car_07 was slowed to
@@ -104,7 +234,8 @@ escapes 0.0 in every flight, with the stand-off rules not running (below).
   `_check_standoff` is inert without a subject (`set_subject`), and
   `demo/vla_fly.py` never sets one, so `standoff-pedestrian` (10 m, P0) and
   `standoff-any` (5 m, P0) did not run in any VLA flight; their "P0 escapes
-  0.0" says nothing about stand-off. Against the truth, v9's white-car and
+  0.0" says nothing about stand-off (fixed in the "late" entry above).
+  Against the truth, v9's white-car and
   truck flights came within 0.1-3.9 m of their car and spent 10-29 % of their
   ticks within 10 m; v9's red-car flights never closer than 10.4 m; v10's
   person flights within 1.0-5.4 m of the person acquired.
