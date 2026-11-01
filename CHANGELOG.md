@@ -16,6 +16,26 @@ shipped change and recorded as one.
 
 ## [Unreleased]
 
+### 2026-11-01 (afternoon) — the temporary level change ends: Car_07, the black car, back at 560 cm/s after the AIOT-VLA black-car and person work
+
+#### Changed
+- `CityLife_Day` (the gitignored level): Car_07's `SpeedCmS` 320 → 560 cm/s,
+  its value before the morning's change. All 24 cars read back equal to the
+  list in the 2026-11-01 entry below (Car_07 560, Car_10 320). The editor log
+  saved one package, `/Game/CityLife/Maps/CityLife_Day`, and the `.umap`'s
+  file date moved. The slowed level is kept at
+  `PASBlocks/_backup/2026-11-01_pre_car07_restore/`. The re-saved file is not
+  byte-identical to the level before the morning's change (a re-save never
+  is); the speeds are what match.
+- Flown while Car_07 was slowed, and tagged "Car_07 slowed (2026-11-01
+  temporary change)" in `summary.jsonl` and in each run's
+  `demo/out/<tag>/level_conditions.json`: six black-car recordings (k02-k07),
+  one person smoke run (p00), six person recordings (p01-p06) and nine AIOT-VLA
+  v10 evaluation flights (v10k_01-03, v10p_01-03, v10kw_01-03). Their scores
+  are not comparable with flights on the level as it is now.
+- Flights from here on, including the v10 regression on the red car, the white
+  car and the box truck, fly on the level as it was before 2026-11-01.
+
 ### 2026-11-01 — a temporary level change: Car_07, the only black car, slowed from 560 to 320 cm/s so the AIOT-VLA black-car recordings have a car the aircraft can keep up with; to be put back afterwards
 
 #### Changed

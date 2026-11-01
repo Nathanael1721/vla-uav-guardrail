@@ -10,7 +10,8 @@ file stays locked (it did once after the disk ran full).
 
 2026-11-01: Car_07, the only black car (loop B), set from its old value to 320
 (Car_10's speed) for the AIOT-VLA black-car recordings, because it drove faster
-than the aircraft's 5 m/s cap. TEMPORARY: put the old value back afterwards.
+than the aircraft's 5 m/s cap. Put back to 560 the same afternoon, after the
+black-car and person work.
 """
 import json
 import os
