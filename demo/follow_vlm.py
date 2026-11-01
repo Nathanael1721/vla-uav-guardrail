@@ -651,6 +651,11 @@ def subject_truth_pts(subject_class, car, people) -> list:
     project already flew once, and folding them in here would score it correct.
     """
     if subject_class == "pedestrian":
+        # ONE figure the level walks, named by its tag (--level-car Ped_04,
+        # 1 Nov): the instance, as for a level car - the operator named a
+        # person, not the crowd
+        if car is not None and car_is_truth_for(subject_class, car):
+            return [[round(car.pos[0], 2), round(car.pos[1], 2)]]
         # `people is None` is the DEFAULT (--pedestrians 0), and also what
         # happens when the building mask or the baked GLB pack is missing. The
         # flight then logs truth.pts == [] on every tick, the whole phase scores
@@ -670,9 +675,13 @@ def car_is_truth_for(subject_class, car) -> bool:
     car - one actor of the level named by its tag - for any vehicle class
     the operator names it as (LEVEL_CAR_CLASSES): Car_00 is a box truck, and
     "a box truck" behind --level-car Car_00 is scored against it (31 Oct,
-    the multi-target recordings)."""
-    return subject_class == "car" or (subject_class in LEVEL_CAR_CLASSES
-                                      and getattr(car, "tag", None) is not None)
+    the multi-target recordings). A level PEDESTRIAN (kind "pedestrian",
+    --level-car Ped_04; 1 Nov) is truth for the pedestrian class only, and
+    never for a vehicle."""
+    tagged = getattr(car, "tag", None) is not None
+    if getattr(car, "kind", "car") == "pedestrian":
+        return subject_class == "pedestrian" and tagged
+    return subject_class == "car" or (subject_class in LEVEL_CAR_CLASSES and tagged)
 
 
 def subject_truth_names(subject_class, car, people):
@@ -683,6 +692,8 @@ def subject_truth_names(subject_class, car, people):
     `track_truth.instance_rows` ask "is the box on the one it locked".
     """
     if subject_class == "pedestrian":
+        if car is not None and car_is_truth_for(subject_class, car):
+            return [car.tag]
         if people is None:
             return None
         names = [getattr(f, "name", None) for f in people.figures]
@@ -751,7 +762,7 @@ def follow_scored(n_rows: int, n_truth: int) -> bool:
 LEVEL_CAR_CLASSES = ("car", "van", "truck")
 
 
-def level_car_refusal(phrases):
+def level_car_refusal(phrases, kind: str = "car"):
     """(phrase, class) of the first phrase a --level-car cannot score, or None.
 
     The start-up check accepted car, van, truck and bus, but truth existed only
@@ -761,9 +772,17 @@ def level_car_refusal(phrases):
     (car_is_truth_for); a bus or a person still is not. `phrases` is the
     --object phrase first, then the retargets; a retarget may also go to a
     pedestrian, whose own truth source fly() has already required.
+
+    `kind` "pedestrian" (--level-car Ped_04, level_actors.kind_of_tags): the
+    level figure is truth for the pedestrian class only, so every phrase,
+    retargets included, must name a person.
     """
     for i, ph in enumerate(phrases):
         cls = subject_width(ph)[1]
+        if kind == "pedestrian":
+            if cls == "pedestrian":
+                continue
+            return ph, cls
         if cls in LEVEL_CAR_CLASSES or (i > 0 and cls == "pedestrian"):
             continue
         return ph, cls
@@ -4244,9 +4263,19 @@ async def fly(args) -> int:
     # flight says nothing about it. Same shape as the inert stand-off rule
     # below - the artefact looks complete and measures nothing - so it gets the
     # same treatment, a start-up refusal where it is cheap and loud.
+    # --level-car Ped_04: ONE figure the level walks is the subject and its
+    # truth (1 Nov, AIOT-VLA's person target); a tag mixing kinds is refused
+    level_kind = None
+    if args.level_car:
+        import level_actors
+        try:
+            level_kind = level_actors.kind_of_tags([args.level_car], args.level_ped_prefix)
+        except ValueError as exc:
+            raise SystemExit(f"--level-car {args.level_car}: {exc}") from None
     _phrases = [args.object] + [ph for _, ph in retargets]
     _ped_phrases = [ph for ph in _phrases if subject_width(ph)[1] == "pedestrian"]
-    if _ped_phrases and args.pedestrians <= 0 and args.level_peds <= 0:
+    if (_ped_phrases and args.pedestrians <= 0 and args.level_peds <= 0
+            and level_kind != "pedestrian"):
         raise SystemExit(
             f"{_ped_phrases[0]!r} selects the pedestrian class, but "
             f"--pedestrians is {args.pedestrians} and --level-peds is "
@@ -4273,14 +4302,18 @@ async def fly(args) -> int:
                 "--level-car takes the subject from the level, so the client "
                 "must not drive one of its own: pass --no-car and leave "
                 "--traffic at 0.")
-        _bad = level_car_refusal([args.object] + [ph for _, ph in retargets])
+        _bad = level_car_refusal([args.object] + [ph for _, ph in retargets],
+                                 kind=level_kind)
         if _bad is not None:
+            _for, _as = ((("pedestrian",), "a person (\"a person\")")
+                         if level_kind == "pedestrian" else
+                         (LEVEL_CAR_CLASSES, "a vehicle (\"a red car\", \"a box truck\")"))
             raise SystemExit(
                 f"--level-car {args.level_car} is the subject's ground truth, "
                 f"but {_bad[0]!r} selects the class {_bad[1]!r}, and that truth "
-                f"exists only for {', '.join(LEVEL_CAR_CLASSES)}. Every tick "
+                f"exists only for {', '.join(_for)}. Every tick "
                 f"would log an empty truth and the follow would go unscored. "
-                f"Name it as a vehicle (\"a red car\", \"a box truck\").")
+                f"Name it as {_as}.")
 
     # NOTE on ordering: both refusals below run AFTER fly() has unlinked the
     # tag's previous flight_log.jsonl and detections.jsonl. That unlink predates
@@ -4846,10 +4879,13 @@ async def fly(args) -> int:
         # point, so the car mission is scored against one instance - a street
         # full of other cars cannot saturate the null the way forty
         # pedestrians did (docs/FINDING-crowd-pedestrians-and-traffic.md).
+        # A figure (--level-car Ped_04, level_kind "pedestrian") the same way,
+        # as one person rather than the crowd.
         if args.level_car:
             import level_actors
             car = level_actors.LevelCar(world, args.level_car, desc=args.object,
-                                        min_period_s=args.level_truth_period)
+                                        min_period_s=args.level_truth_period,
+                                        kind=level_kind)
             car.spawn()               # refuses the flight if the tag is absent
 
         # Scenery. Spawned once and, for all but a couple of them, never touched

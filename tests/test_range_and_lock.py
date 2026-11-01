@@ -1390,6 +1390,38 @@ def test_a_level_car_is_truth_for_the_vehicle_it_is_named_as():
     assert fv.level_car_refusal(["a yellow taxi"]) is None      # taxi is a car
 
 
+def test_a_level_figure_is_truth_for_a_person_and_only_for_a_person():
+    """--level-car Ped_04 (1 Nov, AIOT-VLA's person target): one figure the
+    level walks is THE subject, scored as one instance like a level car, and
+    it outranks a crowd truth (--level-peds) for the pedestrian class. It is
+    never truth for a vehicle, and a car tag is not truth for a person."""
+    import follow_vlm as fv
+
+    class _Ped:
+        tag, pos, kind = "Ped_04", (31.5, -10.5), "pedestrian"
+
+    class _LevelCar:
+        tag, pos, kind = "Car_10", (5.0, 6.0), "car"
+
+    crowd = _People((1.0, 2.0), (3.0, 4.0))
+    assert fv.subject_truth_pts("pedestrian", _Ped(), None) == [[31.5, -10.5]]
+    assert fv.subject_truth_pts("pedestrian", _Ped(), crowd) == [[31.5, -10.5]]
+    assert fv.subject_truth_names("pedestrian", _Ped(), crowd) == ["Ped_04"]
+    assert fv.subject_truth_pts("car", _Ped(), None) == []
+    assert fv.subject_truth_pts("truck", _Ped(), None) == []
+    assert fv.subject_truth_names("car", _Ped(), None) is None
+    # a level CAR is still no truth for a person: the crowd's, or nothing
+    assert fv.subject_truth_pts("pedestrian", _LevelCar(), None) == []
+    assert fv.subject_truth_pts("pedestrian", _LevelCar(), crowd) == [[1.0, 2.0], [3.0, 4.0]]
+    assert fv.subject_truth_pts("car", _LevelCar(), None) == [[5.0, 6.0]]
+    # the start-up check: every phrase must name a person behind a figure
+    assert fv.level_car_refusal(["a person"], kind="pedestrian") is None
+    assert fv.level_car_refusal(["a pedestrian", "a person"], kind="pedestrian") is None
+    assert fv.level_car_refusal(["a red car"], kind="pedestrian") == ("a red car", "car")
+    assert fv.level_car_refusal(["a person", "a box truck"], kind="pedestrian") == \
+        ("a box truck", "truck")
+
+
 def test_det_hit_rate_counts_the_mission_inferences_only():
     """det_hit_rate divided by every inference since the detector loaded, the
     start gate's included; in identity mode each gate inference is a miss, so

@@ -172,6 +172,35 @@ def test_a_level_car_keeps_its_last_position_through_a_nan():
     assert car.stats()["nan_reads"] == 1
 
 
+def test_a_tag_says_which_kind_of_subject_it_is():
+    """--level-car Ped_04 is a figure the level walks (AIOT-VLA's person
+    target), Car_10 a car; one phrase cannot name both kinds at once."""
+    assert LA.kind_of_tags(["Ped_04"]) == "pedestrian"
+    assert LA.kind_of_tags(["Ped_04", "Ped_11"]) == "pedestrian"
+    assert LA.kind_of_tags(["Car_10"]) == "car"
+    assert LA.kind_of_tags(["Car_00", "Car_23"]) == "car"
+    assert LA.kind_of_tags(["P04"], ped_prefix="P") == "pedestrian"
+    try:
+        LA.kind_of_tags(["Car_10", "Ped_04"])
+    except ValueError as e:
+        assert "Car_10" in str(e) and "Ped_04" in str(e)
+    else:
+        raise AssertionError("a car and a figure were accepted as one subject")
+
+
+def test_a_level_figure_is_one_subject_like_a_level_car():
+    w = FakeWorld({"Ped_04": (31.5, -10.5, 0.0), "Ped_11": (50.5, -31.5, 0.0)})
+    ped = LA.LevelCar(w, "Ped_04", desc="a person", kind="pedestrian")
+    assert ped.spawn() == 1
+    assert ped.kind == "pedestrian" and ped.pos == (31.5, -10.5)
+    assert ped.stats()["kind"] == "pedestrian" and ped.stats()["tag"] == "Ped_04"
+    peds = LA.LevelCars(w, ["Ped_04", "Ped_11"], desc="a person", kind="pedestrian")
+    peds.spawn()
+    assert peds.kind == "pedestrian"
+    assert peds.nearest(50.0, -30.0)[0] == "Ped_11"
+    assert LA.LevelCar(w, "Car_10").kind == "car"       # the default is unchanged
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     failed = 0

@@ -115,8 +115,12 @@ param(
     [double]$TruthPeriod = 0.5,         # s between pose polls; see the note below
     [string]$Tag     = "citylife_follow",
     [string]$LevelCar = "",             # e.g. Car_10: follow a car the level drives
+    [string]$LevelPed = "",             # e.g. Ped_04: follow ONE figure the level walks,
+                                        # the person mission scored against that tag
+                                        # (no crowd truth: -LevelPeds is ignored)
     [switch]$TeacherTruth,              # --teacher-truth: TRAINING LABELS ONLY - the level
-                                        # car's true position replaces the detector's boxes
+                                        # car's (or -LevelPed's) true position replaces the
+                                        # detector's boxes
     [double]$ObjectWidthM = 0,          # >0: --object-width-m (the stand-off of a level
                                         # vehicle is --want-width 0.16 of this width;
                                         # 0: from the words, a box truck's 6 m = 23.7 m)
@@ -256,6 +260,15 @@ if (-not (Test-Path $CityMap)) {
 }
 
 if ($SkipSim -and -not (Test-SimUp)) { throw "-SkipSim given but nothing on 8989" }
+# One subject: a car the level drives, or one figure it walks (follow_vlm
+# --level-car takes either tag; level_actors.kind_of_tags tells them apart).
+if ($LevelPed -and $LevelCar) { throw "-LevelPed and -LevelCar: one subject at a time" }
+if ($TeacherTruth -and -not ($LevelCar -or $LevelPed)) {
+    throw "-TeacherTruth draws a level subject's true position: give -LevelCar or -LevelPed"
+}
+# The subject's own tag is its truth; polling the other 39 figures as well would
+# cost the control loop a game-thread round trip per name for nothing.
+if ($LevelPed) { $LevelPeds = 0 }
 # Refused here, before a simulator starts (follow_vlm refuses the same):
 # the perturbation exists only to be recorded as training data.
 if ($RecordPerturb -and -not $RecordVla) { throw "-RecordPerturb needs -RecordVla" }
@@ -354,7 +367,11 @@ if ($VlaHierarchy) {
 try {
 if (-not $SkipSim) { Start-Sim }
 
-Say "following `"$Object`" for ${Seconds}s against $LevelPeds level pedestrians"
+if ($LevelPed) {
+    Say "following `"$Object`" for ${Seconds}s: the level's $LevelPed"
+} else {
+    Say "following `"$Object`" for ${Seconds}s against $LevelPeds level pedestrians"
+}
 
 # --det-thresh 0.008 is the value every recorded pedestrian flight used. It
 # matters here too: OWL-ViT scored the crowd figures 0.05-0.11 at 10 m, no
@@ -466,6 +483,14 @@ if ($LevelCar) {
     $a += @("--speed-max", "5.0")
 } else {
     $a += @("--want-range", "$WantRange")
+    if ($LevelPed) {
+        # One figure as THE subject (AIOT-VLA's person target, 1 Nov): its tag
+        # is the truth, and only a near start counts, as for a car. The width
+        # stays the words' prior (0.5 m): the teacher draws a person-sized box.
+        $a += @("--level-car", $LevelPed, "--start-max-range-m", "$StartMaxRange")
+        if ($ObjectWidthM -gt 0) { $a += @("--object-width-m", "$ObjectWidthM") }
+        if ($TeacherTruth) { $a += @("--teacher-truth") }
+    }
 }
 # A metrics.json left by an EARLIER flight under this tag would otherwise be
 # what the closing lines point at when this one fails before writing its own.

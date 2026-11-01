@@ -180,12 +180,17 @@ class LevelCar:
 
     `actual_name` is None for the same reason the env-actor car's is: there is
     nothing here for the client to teleport or destroy.
+
+    `kind` "pedestrian" (1 Nov: AIOT-VLA's person target): ONE figure the
+    level walks, Ped_04, as THE subject - the same single-instance truth, for
+    a person. `kind_of_tags` says which a tag is.
     """
 
     def __init__(self, world, tag: str, desc: Optional[str] = None,
-                 min_period_s: float = 0.1):
+                 min_period_s: float = 0.1, kind: str = "car"):
         self.tag = tag
-        self.source = LevelActors(world, [tag], kind="car",
+        self.kind = kind
+        self.source = LevelActors(world, [tag], kind=kind,
                                   min_period_s=min_period_s)
         self.pos = (0.0, 0.0)
         self.heading = 0.0
@@ -229,13 +234,14 @@ class LevelCars(LevelCar):
     `.pos` is the nearest to the last `nearest()` asked, else the first tag."""
 
     def __init__(self, world, tags, desc: Optional[str] = None,
-                 min_period_s: float = 0.1):
+                 min_period_s: float = 0.1, kind: str = "car"):
         tags = [t for t in tags if t]
         if len(tags) < 2:
             raise ValueError(f"LevelCars needs two or more tags, got {tags!r}")
         self.tags = list(tags)
         self.tag = ",".join(self.tags)
-        self.source = LevelActors(world, self.tags, kind="car", min_period_s=min_period_s)
+        self.kind = kind
+        self.source = LevelActors(world, self.tags, kind=kind, min_period_s=min_period_s)
         self.pos = (0.0, 0.0)
         self.heading = 0.0
         self.actual_name = None
@@ -274,3 +280,16 @@ class _Spec:
 def names(prefix: str, count: int, start: int = 0) -> List[str]:
     """`Ped_00 … Ped_15`, the tag convention the level uses."""
     return [f"{prefix}{i:02d}" for i in range(start, start + count)]
+
+
+def kind_of_tags(tags, ped_prefix: str = "Ped_") -> str:
+    """"pedestrian" when every tag is a figure's (`ped_prefix`, the level's
+    Ped_00..Ped_39), "car" when none is. A mix is refused: one phrase names
+    one kind of subject, and the truth would describe two."""
+    tags = [t for t in tags if t]
+    peds = [t.startswith(ped_prefix) for t in tags]
+    if tags and all(peds):
+        return "pedestrian"
+    if not any(peds):
+        return "car"
+    raise ValueError(f"the tags {tags!r} mix pedestrians ({ped_prefix}..) and cars")

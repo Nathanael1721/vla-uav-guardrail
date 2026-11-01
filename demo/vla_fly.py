@@ -1737,11 +1737,16 @@ async def _fly(args, holder: dict) -> int:
             # "Car_00,Car_23,Car_14": every level car the phrase names, scored
             # against the nearest (level_actors.LevelCars; 31 Oct)
             tags = [t.strip() for t in str(args.level_car).split(",") if t.strip()]
+            # "Ped_04,Ped_11": figures the level walks, for "a person" (1 Nov)
+            try:
+                kind = level_actors.kind_of_tags(tags)
+            except ValueError as exc:
+                raise PreflightRefused("level_car_mixed", str(exc)) from None
             level_car = (level_actors.LevelCars(world, tags, desc=args.object,
-                                                min_period_s=LEVEL_TRUTH_PERIOD_S)
+                                                min_period_s=LEVEL_TRUTH_PERIOD_S, kind=kind)
                          if len(tags) > 1 else
                          level_actors.LevelCar(world, args.level_car, desc=args.object,
-                                               min_period_s=LEVEL_TRUTH_PERIOD_S))
+                                               min_period_s=LEVEL_TRUTH_PERIOD_S, kind=kind))
             try:
                 level_car.spawn()
             except Exception as exc:                               # noqa: BLE001
