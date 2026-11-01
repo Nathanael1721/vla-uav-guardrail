@@ -70,6 +70,12 @@ THE MISSIONS (demo/vla_mission.py has the geometry and the stop rules)
                pose scores the run (frac_within_30m at the top of metrics, as
                follow_vlm's) and reaches nothing else. Ends on the target
                lost, nothing ever asked (subject_not_acquired), or time.
+               The Shield's subject, for the policy's stand-off rules, is
+               that perception's: the held box's map point carried at its
+               measured velocity (shield_subject), None when there is none;
+               with --gate-truth or no identity there is none to give, and
+               the stand-off is reported INERT (subject_feed; until
+               2026-11-01 no VLA flight gave the Shield a subject).
 
 Either way the VLA's steps go StepTracker -> Shield.filter ->
 move_by_velocity, LAND becomes the controlled landing, and a dead, slow or
@@ -129,8 +135,10 @@ server's answer, its model identity, what the tracker made of it),
 vla_frames/ (every request's JPEGs by SHA-256, for tools/vla_replay_gate.py),
 vla_captures.jsonl, flight_log.jsonl (per tick: author vla_step / hold /
 hover / none, the decision's phrase, hint source and step, the Shield's
-decision), metrics.json ("pilot": pilot_record kind vla with the server's
-reported digest and RemoteVLABackend.stats under "vla"), manifest.json,
+decision and the subject it was given: shield_subject, shield_subject_v),
+metrics.json ("pilot": pilot_record kind vla with the server's reported
+digest and RemoteVLABackend.stats under "vla"; "subject_standoff":
+subject_standoff_record, `inert` when the stand-off never ran), manifest.json,
 kpi.json, audit.jsonl, the replay bundle, view/ (the video frames and the
 HUD: phrase, step, authorship, decision age) and vla_server_stdout.log.
 """
@@ -920,6 +928,167 @@ LAPSE_S = 3.0
 ACQUIRE_GAP_S = LAPSE_S
 
 
+# THE SUBJECT THE SHIELD IS TOLD ABOUT (subject_feed, shield_subject).
+#
+# Until 2026-11-01 this flight never called Shield.set_subject, so every
+# SubjectStandoff of the follow policies - follow_car_citylife_nfz.yaml's
+# standoff-pedestrian (10 m) and standoff-any (5 m), both P0 - was inert in
+# every VLA follow flown (AerialVLA, DroneCATS, AIOT-VLA v7-v10; PC and
+# Jetson), and nothing said so: the HUD's stand-off rows read "idle, no
+# target" under a banner reading OK, the audit records only violating ticks,
+# and kpi.json's P0 escape rate of 0.0 counted no stand-off tick at all.
+# Against the level car's truth, those flights were within 5 m of their car
+# on 3.2 % of the VLA's ticks (11,049 of 342,042 over 110 flights), as close
+# as 0.02 m.
+#
+# The position is the follow's PERCEPTION, never the level car's truth
+# (scoring only): the held box's map point from its own capture's depth and
+# pose (follow_vlm.Grounder's identity features), as _acquire_step keeps it,
+# carried from its capture to now at the velocity measured from the held
+# boxes (measured_velocity). With --gate-truth the Grounder's box IS the
+# truth, so nothing is fed and the stand-off is reported inert; with the
+# identity off no box is placed on the map (no depth range), likewise.
+SUBJECT_SOURCE = ("the held box's map point (follow_vlm.Grounder identity features: "
+                  "its capture's depth and pose), carried to now at the velocity "
+                  "measured from the held boxes")
+# The subject's velocity goes to the Shield (set_subject(velocity=...)), so
+# its stand-off forecast moves the subject too. Decided 2026-11-01 on 65
+# logged VLA follows replayed with this feed (tools/replay_standoff_feed.py,
+# 179,155 ticks from the first acquisition): at the grant's 5 s / 0.1 s a
+# subject held still drew a stand-off repair on 9.1 % of the ticks (36
+# flights over 5 %, the worst 45.5 %, a median 4.0 m/s cut; follow_vlm's own
+# replay: 44 %), one given its velocity on 1.1 % (none over 6.8 %).
+SUBJECT_VELOCITY_TO_SHIELD = True
+
+
+def measured_velocity(hist, span_s: float = 2.0, min_span_s: float = 1.0):
+    """The subject's ground velocity (vx, vy), m/s, from the displacement of
+    its held boxes' map points over the last `span_s`: follow_vlm.
+    measured_speed's measurement as a vector (`hist`: its (t, x, y) list,
+    oldest first). None until `min_span_s` of history exists."""
+    if not hist:
+        return None
+    t1, x1, y1 = hist[-1]
+    old = [h for h in hist if t1 - h[0] <= span_s]
+    t0_, x0, y0 = old[0]
+    if t1 - t0_ < min_span_s:
+        return None
+    return (x1 - x0) / (t1 - t0_), (y1 - y0) / (t1 - t0_)
+
+
+def shield_subject(acq_box: dict, now: float, vmax: float | None = None):
+    """Where the follow's perception places its subject at wall time `now`,
+    for Shield.set_subject: (x, y, velocity or None), or None when there is
+    none to give - the subject not committed (acquiring, lapsed, reset), no
+    sighting placed on the map, or unseen for more than LAPSE_S (checked
+    here as well as by _acquire_step's lapse, which runs only when a new
+    detector frame arrives: a stalled camera stream would otherwise leave a
+    stale position in force, the case set_subject's docstring forbids).
+
+    The last held box's map point is carried from its capture time to `now`
+    at the measured velocity (capped at `vmax`, the class's top speed), as
+    follow_vlm's estimator predicts its own; with no velocity yet (the first
+    second after a commit) the point is given as it is."""
+    if not acq_box.get("committed"):
+        return None
+    last, seen = acq_box.get("last"), acq_box.get("seen_t")
+    if last is None or seen is None or now - seen > LAPSE_S:
+        return None
+    x, y = last["P"]
+    v = acq_box.get("vxy")
+    if v is not None:
+        s = math.hypot(v[0], v[1])
+        if vmax is not None and s > vmax:
+            v = (v[0] * vmax / s, v[1] * vmax / s)
+        age = max(0.0, now - float(last["t"]))
+        x, y = x + v[0] * age, y + v[1] * age
+    return float(x), float(y), v
+
+
+def subject_feed(standoffs, mission: str, subject_class: str | None, *,
+                 gate_truth: bool, identity_on: bool | None) -> dict:
+    """Whether this flight can tell the Shield where its subject is, decided
+    once the perception is set up (`identity_on` None: not set up yet, the
+    flight ended before it): `standoffs` are the policy's SubjectStandoff
+    rules. `on` False with rules present means they are INERT for the whole
+    flight, and `why_not` says why. `binding` are the rules that apply to
+    `subject_class` (SubjectStandoff.binds); the others are not applicable
+    to this subject (a pedestrian rule on a car) rather than inert."""
+    rules = [so.id for so in standoffs]
+    why = None
+    if not rules:
+        why = "the policy has no subject stand-off"
+    elif mission != "follow":
+        why = f"the {mission} mission has no subject"
+    elif gate_truth:
+        why = ("--gate-truth: the Grounder's box is the level car's TRUE position; "
+               "a stand-off from it would be an oracle")
+    elif identity_on is None:
+        why = "the follow's perception was never set up"
+    elif not identity_on:
+        why = "the identity is off: no held box is placed on the map (no depth range)"
+    return {"rules": rules, "subject_class": subject_class,
+            "binding": [so.id for so in standoffs if so.binds(subject_class)],
+            "on": why is None, "why_not": why,
+            "source": SUBJECT_SOURCE if why is None else None,
+            "velocity_to_shield": SUBJECT_VELOCITY_TO_SHIELD if why is None else None}
+
+
+STANDOFF_OPERATORS = ("StandoffHold", "StandoffRecover")
+
+
+def subject_standoff_record(feed: dict, rows: list[dict]) -> dict:
+    """metrics["subject_standoff"]: subject_feed's decision and what the
+    stand-off rules could do in this flight, counted from the rows (each
+    carries the subject the Shield was given: `shield_subject`, None when
+    there was none). `inert` is the flag the console's INERT line and a
+    reader of a "P0 escapes 0.0" need: rules that bind this subject, a
+    flight that flew, and not one tick with a subject - whether the feed
+    was off (`why_not`) or the subject was never acquired. `inert_why`
+    says which."""
+    n = len(rows)
+    fed = sum(1 for r in rows if r.get("shield_subject") is not None)
+    ids = set(feed["rules"])
+    ops = {k: 0 for k in STANDOFF_OPERATORS}
+    viol = 0
+    for r in rows:
+        viol += any(v.get("rule_id") in ids for v in r.get("violations") or [])
+        for p in r.get("repairs") or []:
+            if p.get("operator") in ops:
+                ops[p["operator"]] += 1
+    inert = bool(feed["binding"]) and n > 0 and fed == 0
+    why = None
+    if inert:
+        why = feed["why_not"] or "the subject was never acquired: no tick had one to give"
+    return {**feed, "ticks": n, "ticks_fed": fed,
+            "frac_fed": round(fed / n, 4) if n else None,
+            "ticks_fed_with_velocity": sum(1 for r in rows
+                                           if r.get("shield_subject_v") is not None),
+            "inert": inert, "inert_why": why,
+            "inert_rules": list(feed["binding"]) if inert else [],
+            "not_applicable": [i for i in feed["rules"] if i not in feed["binding"]],
+            "violation_ticks": viol, "repairs": ops}
+
+
+def inert_line(rec: dict) -> str | None:
+    """The console's warning for a subject_standoff_record (or a
+    subject_feed decision, before the flight) whose binding rules cannot or
+    did not run, as the obstacle map's "ObstacleClearance is INERT"; None
+    when there is nothing to warn about."""
+    if not rec.get("binding"):
+        return None
+    if "inert" in rec:
+        if not rec["inert"]:
+            return None
+        why = rec["inert_why"]
+    elif rec["on"]:
+        return None
+    else:
+        why = rec["why_not"]
+    return (f"[standoff] *** {', '.join(rec['binding'])} INERT: {why} "
+            f"(the Shield is given no subject; zero stand-off violations mean nothing)")
+
+
 def make_acquirer(args, FV):
     """The follow's start gate and re-acquisition with identity, one object
     for the flight: follow_vlm's Reacquirer with --start-gate-n sightings,
@@ -935,13 +1104,14 @@ def new_acquisition(acq, t0: float | None = None) -> dict:
     since the last commit - follow_vlm's no-estimator path: when it was last
     seen (`seen_t`) and last seen OK (`t_ok`), the map points of its held
     boxes (`hist`, for the measured speed), the last sighting (`last`: its
-    frame's capture time and place), the speeds. `attempts`: one record per
+    frame's capture time and place), the speeds, and the velocity `vxy`
+    (measured_velocity; shield_subject carries the sighting at it). `attempts`: one record per
     acquisition (the start gate, each lapse, each perception reset) with
     what every judged frame decided (_open_attempt), `attempt` the open one."""
     return {"acq": acq, "committed": False, "last_seq": -1, "commits": [], "reacquires": 0,
             "lapses": [], "errors": [], "t0": t0, "seen_t": None, "t_ok": -math.inf,
             "last_t_det": None, "hist": [], "last": None, "v": None, "v_prior": None,
-            "attempts": [], "attempt": None}
+            "vxy": None, "attempts": [], "attempt": None}
 
 
 def _open_attempt(acq_box: dict, kind: str, t) -> dict:
@@ -1035,6 +1205,7 @@ def _acquire_step(grounder, acq_box: dict, args, clock=time.time) -> None:
             if acq_box["v"] is not None:
                 acq_box["v_prior"] = acq_box["v"]
             acq_box["v"] = None                 # a streak's ~3 m jitter is no speed
+            acq_box["vxy"] = None
             acq_box["hist"] = [] if P is None else [(now, float(P[0]), float(P[1]))]
             acq_box["last"] = (None if P is None else
                                {"t": float(t_ic), "P": (float(P[0]), float(P[1]))})
@@ -1059,6 +1230,7 @@ def _acquire_step(grounder, acq_box: dict, args, clock=time.time) -> None:
                 v = FV.measured_speed(hist)
                 if v is not None:
                     acq_box["v"] = v
+                acq_box["vxy"] = measured_velocity(hist)    # the Shield's (shield_subject)
                 acq_box["last"] = {"t": float(cap.get("t_capture") or cap.get("t_cap") or now),
                                    "P": (float(P[0]), float(P[1]))}
     unseen = now - (acq_box["seen_t"] if acq_box["seen_t"] is not None else now)
@@ -1334,7 +1506,7 @@ async def _fly(args, holder: dict) -> int:
     from guardrail import AuditLogger, State
     from guardrail.bundle import load_for_flight
     from guardrail.manifest import flight_bundle_path, flight_policy_choice
-    from guardrail.models import Action4D, AltitudeEnvelope, ObstacleClearance
+    from guardrail.models import Action4D, AltitudeEnvelope, ObstacleClearance, SubjectStandoff
     from guardrail.replay import rail_shield, verify_replay, write_replay
     from guardrail.shield import LOOKAHEAD_DT_S, LOOKAHEAD_S
     from guardrail.vla_backends import make_backend
@@ -1381,8 +1553,22 @@ async def _fly(args, holder: dict) -> int:
     # The grant's 5 s / 0.1 s forecast, no escalation FSM inside the Shield
     # (guardrail/replay.rail_shield, docs/DESIGN-shield-enforcement.md): this
     # rail flies `emitted`. follow_vlm's city default (3 s / 0.5 s) exists for
-    # its subject stand-off; there is no subject here.
+    # its subject stand-off against a subject held still. This flight gives
+    # the Shield its subject's velocity (SUBJECT_VELOCITY_TO_SHIELD), which
+    # on the logged VLA follows took the grant forecast's stand-off repairs
+    # from 9.1 % of ticks to 1.1 %; 3 s / 0.5 s would change every rule's
+    # forecast to save the rest (on the same replay the other rules' repairs
+    # rose by half), so the grant's stays (CHANGELOG 2026-11-01 "late").
     shield = rail_shield(policy, lookahead_s=LOOKAHEAD_S, dt=LOOKAHEAD_DT_S, obstacle_map=smap)
+    # The subject stand-off: who the subject is (the object words' policy
+    # class, follow_vlm.subject_width) and whether its position can be fed
+    # (subject_feed; decided again once the identity is set up).
+    standoffs = policy.by_type(SubjectStandoff)
+    subject_class = FV.subject_width(args.object)[1]
+    subject_vmax = FV.SUBJECT_VMAX_MPS.get(subject_class)
+    gate_truth = bool(getattr(args, "gate_truth", False))
+    feed = subject_feed(standoffs, args.mission, subject_class, gate_truth=gate_truth,
+                        identity_on=None)
     audit = AuditLogger(out / "audit.jsonl", policy)
     street = None
     sm = Path(args.citymap).parent / "street.npz"
@@ -1824,6 +2010,18 @@ async def _fly(args, holder: dict) -> int:
                     break
                 await asyncio.sleep(0.5)
 
+        # The subject stand-off, decided now that the perception is set up
+        # (subject_feed): fed every tick from here, or INERT and said so.
+        feed = subject_feed(standoffs, args.mission, subject_class, gate_truth=gate_truth,
+                            identity_on=bool(identity_rec["on"]))
+        if inert_line(feed):
+            print(inert_line(feed))
+        elif feed["binding"]:
+            print(f"[standoff] {', '.join(feed['binding'])} ({subject_class or 'unclassified'}) "
+                  f"fed from the perception: {feed['source']}")
+        if pind is not None:
+            pind.subject_inert = None if feed["on"] else feed["why_not"]
+
         # ---- the mission: AerialVLA flies ---------------------------------
         t0 = time.time()
         acq_box["t0"] = t0                     # its records in mission seconds
@@ -1852,9 +2050,25 @@ async def _fly(args, holder: dict) -> int:
                     if len(acq_box["errors"]) < 20:
                         acq_box["errors"].append(f"{type(exc).__name__}: {exc}")
             off_map = shield.off_map(state.x, state.y) if shield.has_obstacle_map else None
+            # The subject the Shield judges this tick's stand-off against: the
+            # follow's perception (shield_subject), never the level car's
+            # truth, and None the moment there is none - set_subject's
+            # docstring: a stale position is "both wrong and unfalsifiable".
+            subj = (shield_subject(acq_box, time.time(), vmax=subject_vmax) if feed["on"]
+                    else None)
+            subj_v = None if subj is None or not SUBJECT_VELOCITY_TO_SHIELD else subj[2]
+            if subj is None:
+                shield.set_subject(None)
+            else:
+                shield.set_subject(subj[0], subj[1], subject_class, velocity=subj_v)
             # the attitude, so the motion compares with follow_vlm's rows
             # (tools/compare_motion.py tilt and pitch/roll rates)
-            res = loop.tick(state, extra_row={"off_map": off_map, **attitude_fields(kin, FV)})
+            res = loop.tick(state, extra_row={
+                "off_map": off_map, **attitude_fields(kin, FV),
+                "shield_subject": (None if subj is None else
+                                   [round(subj[0], 2), round(subj[1], 2)]),
+                "shield_subject_v": (None if subj_v is None else
+                                     [round(subj_v[0], 2), round(subj_v[1], 2)])})
             e = res.flown
             cmd_times.append(time.time())
             await drone.move_by_velocity_async(e.vx, e.vy, -e.vz_up, duration=0.3,
@@ -1907,6 +2121,9 @@ async def _fly(args, holder: dict) -> int:
                         # With the Shield off: no repair, the flown action,
                         # the shadow's violations as escapes (P1-1).
                         pol = pind.update(res.row["t"], res.hud_decision, state,
+                                          subject_xy=None if subj is None else subj[:2],
+                                          subject_class=subject_class,
+                                          est_xy=None if subj is None else subj[:2],
                                           clearance_m=(shield.clearance_at(state.x, state.y)
                                                        if shield.has_obstacle_map else None),
                                           off_map=bool(off_map), yaw_rad=yaw)
@@ -1934,6 +2151,7 @@ async def _fly(args, holder: dict) -> int:
                 deadline = now
             await asyncio.sleep(max(0.0, deadline - now))
         t_mission_end = time.time() + 0.3
+        shield.set_subject(None)               # the landing is not the follow's
         await drone.move_by_velocity_async(0.0, 0.0, 0.0, duration=0.5)
         # Read before close(): stats() rates decisions over the time since the
         # first act(), and neither the close nor a minute of landing belongs
@@ -2128,6 +2346,11 @@ async def _fly(args, holder: dict) -> int:
         "pilot_alt_band": pilot_alt_band,
         "shield_lookahead": guard("shield_lookahead", lambda: FV.shield_lookahead_record(shield)),
         "shield_velocity_source": "ground-truth kinematics (Project AirSim), not an EKF",
+        # The subject stand-off: where the Shield's subject came from, on how
+        # many ticks it had one, and `inert` when the binding rules never ran
+        # (subject_standoff_record; until 2026-11-01 they never did).
+        "subject_standoff": guard("subject_standoff",
+                                  lambda: subject_standoff_record(feed, rows)),
         # Ticks on which the Shield corrected what FLEW; with the Shield off
         # nothing it decided flew, and its would-be corrections are the
         # shadow's (P1-1).
@@ -2234,6 +2457,14 @@ async def _fly(args, holder: dict) -> int:
               f"{kpis.get('p0_violation_escape_rate')}; interventions {metrics['interventions']}"
               + ("" if shield_on else f" (shadow {metrics['shadow_interventions']})")
               + f"; nfz_s {metrics['nfz_s']}")
+        ss = metrics.get("subject_standoff") or {}
+        if inert_line(ss):
+            print(inert_line(ss))
+        elif ss.get("binding"):
+            print(f"[report] stand-off {', '.join(ss['binding'])}: a subject on "
+                  f"{ss['ticks_fed']} of {ss['ticks']} ticks ({ss['ticks_fed_with_velocity']} "
+                  f"with its velocity); violated on {ss['violation_ticks']}, repairs "
+                  f"{ss['repairs']}")
         print(f"[report] manifest vla_model_hash {(manifest or {}).get('vla_model_hash')}")
         if not is_vla:
             print("[report] *** a STAND-IN answered: not a VLA flight ***")

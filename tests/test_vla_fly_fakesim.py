@@ -122,7 +122,9 @@ def fake_projectairsim(veh: _Vehicle) -> types.ModuleType:
     import numpy as np
 
     class ProjectAirSimClient:
-        def __init__(self):
+        def __init__(self, address=None):
+            # vla_fly --sim-address (fe171ab) passes the simulator's address
+            self.address = address
             self.subs, self._stop = {}, False
 
         def connect(self):
@@ -610,8 +612,9 @@ class _LevelCar:
     """level_actors.LevelCar stand-in: the level's car 12 m ahead of the
     spawn, standing (truth for scoring only)."""
 
-    def __init__(self, world, tag, desc=None, min_period_s=0.1):
-        self.tag, self.pos = tag, (35.0, -8.0)
+    def __init__(self, world, tag, desc=None, min_period_s=0.1, kind="car"):
+        # `kind` since c31f1f7 (a level pedestrian as the subject)
+        self.tag, self.pos, self.kind = tag, (35.0, -8.0), kind
 
     def spawn(self):
         return 1
@@ -631,14 +634,18 @@ def test_a_follow_whose_identity_fails_flies_the_detector_gate_and_says_so():
     there agreeing with mission.detector_hint's; the score at the top of
     metrics where kpi reads it (P1-1); measured outcomes in metrics.follow
     (P3); the hint kind on every request (P2-2); sim_config saying the depth
-    stream was not read (P3)."""
+    stream was not read (P3); and (2026-11-01) the policy's stand-off
+    reported INERT, with no subject given to the Shield on any tick."""
     why = _missing()
     if why:
         print(f"      ({why})")
         return SKIP
     import level_actors
+    # The follow flights' policy (scripts\run_vla_fly.ps1 -PolicyFile), with
+    # its two subject stand-offs (2026-11-01).
     code, out, said = _fly(["--mission", "follow", "--tag", "fakesim_follow", "--max-s", "12",
                             "--no-transfer", "--no-land-site", "--no-save-view",
+                            "--policy", str(ROOT / "policies" / "follow_car_citylife_nfz.yaml"),
                             "--cadence", "pipelined", "--vla-fake-output", "96 48 49</s>"],
                            grounder=_GrowingBox,
                            patch={(level_actors, "LevelCar"): _LevelCar})
@@ -675,6 +682,17 @@ def test_a_follow_whose_identity_fails_flies_the_detector_gate_and_says_so():
     mo = m["motion"]
     assert mo["attitude_recorded"] is True and mo["ticks"] == len(rows), mo
     assert mo["cmd_accel_max"] <= 2.5 + 1e-6 or any(r["touched"] for r in rows), mo
+    # 2026-11-01: with the identity off no box is placed on the map, so the
+    # Shield is given no subject - and the flight says so, in the console
+    # (before and after) and in metrics, rather than letting the policy's
+    # stand-off read as a pass (tests/test_vla_standoff_feed.py).
+    ss = m["subject_standoff"]
+    assert ss["rules"] == ["standoff-pedestrian", "standoff-any"], ss
+    assert ss["binding"] == ["standoff-any"] and ss["subject_class"] == "car", ss
+    assert ss["inert"] and not ss["on"] and "identity is off" in ss["inert_why"], ss
+    assert ss["ticks"] == len(rows) and ss["ticks_fed"] == 0 and ss["violation_ticks"] == 0
+    assert all("shield_subject" in r and r["shield_subject"] is None for r in rows)
+    assert said.count("[standoff] *** standoff-any INERT") == 2, said[-3000:]
 
 
 def test_a_prev_front_follow_flown_as_rates_sends_the_earlier_front_and_records_it():

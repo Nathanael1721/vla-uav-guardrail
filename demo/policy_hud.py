@@ -38,6 +38,10 @@ WHAT THE STATUSES MEAN (shown per rule), lowest to highest rank:
           in, or a rule outside its time window (or switched off by a
           time_window_switch). Shown, not hidden, because "the 10 m pedestrian
           rule did nothing on a car flight" is a fact a reviewer should see.
+          A stand-off whose flight feeds the Shield no subject at all
+          (`subject_inert` set: demo/vla_fly.py with --gate-truth or the
+          identity off) reads INERT, not "no target": a target lost for a
+          moment and a rule that never ran are different facts.
   OK      bound and satisfied with room to spare.
   NEAR    inside the rule's own soft margin (`soft_margin_m` in the policy),
           within the controller's brake distance of a no-fly zone, or off the
@@ -245,6 +249,9 @@ class PolicyIndicator:
         self.banner_ticks = {k: 0 for k in SEVERITY if k != "idle"}
         self.trail: deque = deque(maxlen=trail_n)
         self.base_map = base_map          # see render_base_map()
+        # Why this flight gives the Shield no subject at all, or None (the
+        # module docstring, "idle"): its stand-off rows then read INERT.
+        self.subject_inert: str | None = None
 
     def _sync(self, status: list[dict]) -> None:
         """Rows follow the Shield's rule set: a hot-applied dynamic zone, switch
@@ -362,7 +369,8 @@ class PolicyIndicator:
                 state_, value, bound = "idle", "not in force", False
             elif rv.kind == "subject_standoff":
                 if subject_xy is None:
-                    state_, value, bound = "idle", "no target", False
+                    state_, bound = "idle", False
+                    value = "INERT" if self.subject_inert else "no target"
                 elif st["value"] is None:
                     # The rule does not bind this subject (SubjectStandoff.binds).
                     state_, value, bound = "idle", f"n/a ({subject_class})", False
@@ -446,7 +454,9 @@ class PolicyIndicator:
         if not self.trail or math.hypot(state.x - self.trail[-1][0],
                                         state.y - self.trail[-1][1]) > 0.5:
             self.trail.append((state.x, state.y))
-        level, text = ("ok", "GUARDRAIL ACTIVE - all rules satisfied")
+        # "All rules satisfied" is not true of a rule that never runs.
+        level, text = ("ok", "GUARDRAIL ACTIVE - all rules satisfied" if not self.subject_inert
+                       else "GUARDRAIL ACTIVE - rules satisfied; STAND-OFF INERT (no subject)")
         if self._banner is not None and t < self._banner[3]:
             level, text = self._banner[1], self._banner[2]
         self.banner_ticks[level] += 1

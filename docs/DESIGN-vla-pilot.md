@@ -437,7 +437,13 @@ Infrastructure is imported from
 `follow_vlm` (heartbeat, collision topic, landing, Grounder, recorder), so a
 fix there reaches here. The Shield is the grant's 5 s / 0.1 s forecast
 without an FSM inside it (`guardrail/replay.rail_shield`): this rail flies
-`emitted`, and has no subject stand-off that made follow_vlm keep 3 s / 0.5 s.
+`emitted`. follow_vlm keeps 3 s / 0.5 s because its stand-off subject is
+held still; since 2026-11-01 the follow here gives the Shield its subject
+WITH the subject's velocity (`vla_fly.shield_subject`), which on a replay of
+65 logged VLA follows took the grant forecast's stand-off repairs from 9.1 %
+of ticks to 1.1 % (`tools/replay_standoff_feed.py`), so the grant's forecast
+stays. Before that date no VLA flight gave the Shield a subject at all: the
+follow policy's stand-offs were inert (CHANGELOG 2026-11-01 "late").
 
 ### The missions
 

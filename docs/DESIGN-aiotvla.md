@@ -566,10 +566,14 @@ asking after its 26 s memory and search, and a car that drives off without
 re-entering the view is lost (aiot_v10kw_02, aiot_v10t_01). The step has no
 reverse.
 
-**The stand-off rules did not run.** vla_fly gives the Shield no subject, so
+**The stand-off rules did not run.** vla_fly gave the Shield no subject, so
 the policy's subject stand-offs (10 m for a pedestrian, 5 m for anything)
-are inert in every VLA flight; against the truth, the white-car and truck
-flights of v9 and v10 came within 0.1-3.9 m of their car.
+were inert in every VLA flight up to v10b; against the truth, the white-car and truck
+flights of v9 and v10 came within 0.1-3.9 m of their car. Their follow
+scores stand; their "P0 escapes 0.0" does not cover the stand-off. Since
+2026-11-01 (CHANGELOG "late") vla_fly feeds the perception's subject every
+tick; a `--gate-truth` flight still has none to feed (its client-side box is
+the truth) and says INERT.
 
 ## Limits
 
@@ -591,7 +595,10 @@ flights of v9 and v10 came within 0.1-3.9 m of their car.
   protocol v2's lateral step (a fourth bin); backing up is still not in the
   step (fwd_m >= 0), and that is where the vehicle flights are lost: closing
   into the camera's blind spot behind a stopped car.
-- vla_fly gives the Shield no subject, so the policy's subject stand-offs
-  never run in a VLA flight (v10 section).
+- Every flight listed here was flown with the policy's subject stand-offs
+  inert (v10 section). Since 2026-11-01 vla_fly feeds the perception's
+  subject on a red-car follow; the `--gate-truth` targets (white car, box
+  truck, black car, person) still have none and are reported INERT, and the
+  camera's 6.9 m blind spot is wider than the 5 m ring.
 - Not KPI-grade: the sim is simple_flight on the city rail, and no hil
   topology is used.

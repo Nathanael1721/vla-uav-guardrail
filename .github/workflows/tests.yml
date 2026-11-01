@@ -168,6 +168,13 @@
 #          its features a perfect measurement for the start gate and the
 #          estimator, the truth carried forward between polls; training
 #          labels only).
+#          test_vla_standoff_feed (the VLA follow's subject stand-off,
+#          2026-11-01: vla_fly gives the Shield the perception's subject
+#          every tick - the held box's map point at its measured velocity,
+#          None when there is none, never the level car's truth - and says
+#          INERT in the console, metrics.subject_standoff and the HUD when
+#          it cannot (--gate-truth, no identity); the real Shield on the
+#          flown policy at the grant's forecast; nothing SKIPs).
 #        The CityLife level, checked offline (the level itself is
 #          gitignored): test_citylife_*, test_car_speed, test_drive_signals_dsl,
 #          test_ped_walk_plan, test_parked_cars.
@@ -675,6 +682,7 @@ jobs:
               tests/test_aiotvla.py \
               tests/test_vla_lateral_step.py \
               tests/test_follow_teacher.py \
+              tests/test_vla_standoff_feed.py \
               tests/test_citylife_peds.py \
               tests/test_citylife_routes.py \
               tests/test_citylife_signal_lamps.py \
