@@ -901,6 +901,39 @@ def test_a_zone_spawned_on_top_puts_the_aircraft_inside_and_it_gets_out():
     assert res["time_to_safe_episodes"] >= 1 and res["time_to_safe_censored"] == 0
 
 
+def test_the_spawn_on_top_escape_does_not_depend_on_the_rings_vertex_order():
+    """dyn-nfz-spawn-on-top@size_m=40: the zone lands centred on the aircraft,
+    so every edge is an exact tie for the way out. The same zone flown with
+    its ring stored from each start vertex, both windings (past the model's
+    canonical ordering), flies the same episode, and leaves through the edge
+    ahead in the 5.3 s it took before the canonical ring order of 2026-11-02
+    made the escape take a side edge and end in Loiter (fixed 2026-11-03,
+    guardrail/shield.py escape_direction)."""
+    spec = _cell("dyn-nfz-spawn-on-top", size_m=40, variant=0)
+    orig = S._spawn_zone
+    flights = []
+    try:
+        for rev in (False, True):
+            for k in range(4):
+                def spawn(payload, i, st, heading, _k=k, _rev=rev):
+                    z = orig(payload, i, st, heading)
+                    pts = list(z.vertices)[::-1] if _rev else list(z.vertices)
+                    pts = pts[_k:] + pts[:_k]
+                    object.__setattr__(z, "vertices", pts)
+                    return z
+                S._spawn_zone = spawn
+                run = S.run_episode(spec, DEFAULTS, 0)
+                flights.append(([(round(r["x"], 6), round(r["y"], 6)) for r in run.rows],
+                                _kpi(spec, run.rows, run.extra, run.policy)))
+    finally:
+        S._spawn_zone = orig
+    poses = [f[0] for f in flights]
+    assert all(p == poses[0] for p in poses[1:]), "the escape depends on the ring's order"
+    res = flights[0][1]
+    assert res["time_to_safe_censored"] == 0 and res["breaches"] == 0, res
+    assert res["max_time_to_safe_s"] <= 5.5, res["max_time_to_safe_s"]
+
+
 def test_an_event_the_shield_refuses_errors_the_episode_unless_expected():
     """An event the Shield refuses (here: translating a policy polygon_fence,
     which is locked at mission start) is an error, never a silently skipped
@@ -2171,7 +2204,15 @@ def test_what_the_autopilot_flew_through_is_counted_apart_and_reported():
     12.3 m deeper through it before it leaves, which is a traversal, not an
     exit - so G6 lands the aircraft where it is, inside the zone, and the
     autopilot's P0 ticks are LAND's (counted apart, by mode). The RTL
-    through the zone this test needs is flown with the watch silenced."""
+    through the zone this test needs is flown with the watch silenced.
+    Re-pinned 2026-11-03: the cell's zone lands EXACTLY centred on the
+    aircraft, and which edge its escape took was the ring's vertex order's
+    choice; the Shield now breaks that tie toward the commanded heading
+    (shield.escape_direction), so the pilot's forward command leaves through
+    the edge ahead and no FSM edge is taken. An escape the forward command
+    does not already fly, which this test was written on (the ring order's
+    choice was not the edge ahead), is recreated by spawning the same zone
+    0.5 m to the side: no tie, and the nearest edge is the side one."""
     from guardrail.fsm import FSMConfig
 
     class NoProgressTest(S.Shield):
@@ -2181,7 +2222,23 @@ def test_what_the_autopilot_flew_through_is_counted_apart_and_reported():
             super().__init__(policy, *a, escalation=escalation, **k)
 
     spec = _cell("dyn-nfz-spawn-on-top", size_m=20, variant=0)
-    default = S.run_episode(spec, DEFAULTS, 0)
+    centred = S.run_episode(spec, DEFAULTS, 0)
+    assert not (centred.extra.get("fsm") or {}).get("transitions"), \
+        "the centred spawn's forward command should already be the way out"
+    orig_spawn = S._spawn_zone
+
+    def beside(payload, k, st, heading):
+        z = orig_spawn(payload, k, st, heading)
+        sx, sy = -heading[1] * 0.5, heading[0] * 0.5          # 0.5 m to the left
+        object.__setattr__(z, "vertices", [type(v)(x=v.x + sx, y=v.y + sy)
+                                           for v in z.vertices])
+        return z
+    S._spawn_zone = beside
+    try:
+        default = S.run_episode(spec, DEFAULTS, 0)
+    except BaseException:
+        S._spawn_zone = orig_spawn
+        raise
     got = ">".join(t["edge"] for t in (default.extra.get("fsm") or {}).get("transitions") or [])
     assert got == "G1>G7", f"the shipped X6 should leave this exit alone: {got!r}"
     real = S.Shield
@@ -2200,6 +2257,7 @@ def test_what_the_autopilot_flew_through_is_counted_apart_and_reported():
             S.RP.RTLWatch.assess = assess
     finally:
         S.Shield = real
+        S._spawn_zone = orig_spawn
     wx = watched.extra
     assert [t["edge"] for t in wx["fsm"]["transitions"]] == ["G1", "X6", "G6"], wx["fsm"]
     assert "crosses dyn-nfz" in " ".join(wx["rtl_failures"][0]["reasons"]), wx["rtl_failures"]

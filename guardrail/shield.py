@@ -113,6 +113,7 @@ from . import repair as _repair
 from . import response as _response
 from .geometry import nearest_on_polyline, point_in_fence, push_out_direction
 from .ir import FENCE_TYPES, FenceRecord, PolicyIR, anchor_reach, compile_fence, is_fence
+from .projection import ring_order
 from .models import (
     DAYS,
     DEFAULT_LAYER,
@@ -444,6 +445,90 @@ class RuleClock:
         if x is None:
             return True
         return cls._base(rule, x.replace(second=0, microsecond=0)) is not False
+
+
+# --------------------------------------------------------------------------- #
+# The way out of a zone, whatever order its vertices are stored in
+# --------------------------------------------------------------------------- #
+#
+# geometry.push_out_direction takes the nearest point of the zone's boundary
+# from shapely's `project`, which returns the FIRST nearest point along the
+# ring. Where two or more edges are exactly as near - the middle of a square,
+# a point on its diagonal's bisector - that is decided by where the ring
+# starts and which way it winds, not by the zone. Since IR schema 3.0.0
+# (2026-11-02) every ring is stored in canonical order (positive winding,
+# smallest point first), which moved that choice: the library cell
+# dyn-nfz-spawn-on-top@size_m=40 (a 40 m zone spawned centred ON the
+# aircraft) took a side edge where it had taken the forward one, the pilot's
+# forward command stopped counting as escaping, and the episode ended in
+# Loiter with the escape incomplete.
+#
+# The Shield's answer must depend on the zone, not on how it is written. So
+# every escape direction the Shield uses comes from `escape_direction`: the
+# same direction as push_out_direction wherever the nearest boundary point is
+# unique (bit for bit: push_out_direction's own result is returned), and in an
+# exact tie (nearest points within _TIE_M of each other in distance, in
+# different directions) the tied direction most aligned with the heading the
+# caller judges - the commanded velocity, relative to a moving zone - so a
+# command already leaving through one of the equally near edges is escaping.
+# With no heading (a hover), or two tied directions equally aligned with it,
+# the first of them along the ring in its CANONICAL order (positive winding,
+# smallest point first: projection.ring_order, recomputed here from the
+# coordinates, so a ring stored in any other order answers the same). That is
+# the choice the canonical rings have made since 2026-11-02 for a hover in a
+# tie (tests/test_hold_points.py pins one), now a property of the zone and not
+# of its storage. Once the aircraft has moved off the tie the nearest point is
+# unique again, so no memory is needed.
+
+# Two boundary points whose distances differ by less than this are a tie: far
+# above the rounding of the distances (about 1e-14 m at the library's 200 m
+# coordinates), far below anything a position can be measured to.
+_TIE_M = 1e-9
+
+
+def escape_direction(x: float, y: float, poly, vx: float = 0.0,
+                     vy: float = 0.0) -> tuple[float, float]:
+    """The unit vector from (x, y) towards the nearest way OUT of `poly`
+    (inside it) or away from it (outside), as geometry.push_out_direction,
+    with an exact tie between equally near boundary points broken by the
+    heading (vx, vy) and then by the ring's canonical order - never by the
+    order the ring is stored in (block comment above)."""
+    base = push_out_direction(x, y, poly)
+    pts = [(float(px), float(py)) for px, py in list(poly.exterior.coords)[:-1]]
+    if len(pts) < 3:
+        return base
+    pts = [pts[i] for i in ring_order(pts)]
+    ring = pts + pts[:1]
+    best = math.inf
+    near: list[tuple[float, float, float]] = []
+    for (ax, ay), (bx, by) in zip(ring, ring[1:]):
+        ex, ey = bx - ax, by - ay
+        L2 = ex * ex + ey * ey
+        s = 0.0 if L2 <= 0.0 else max(0.0, min(1.0, ((x - ax) * ex + (y - ay) * ey) / L2))
+        nx, ny = ax + s * ex, ay + s * ey
+        d = math.hypot(x - nx, y - ny)
+        near.append((d, nx, ny))
+        if d < best:
+            best = d
+    if best < 1e-9:
+        return base                       # on the boundary: push_out_direction's own fallback
+    inside = poly.contains(Point(x, y))
+    dirs: list[tuple[float, float]] = []
+    for d, nx, ny in near:
+        if d > best + _TIE_M:
+            continue
+        ux, uy = (nx - x) / d, (ny - y) / d
+        if not inside:
+            ux, uy = -ux, -uy
+        if all(ux * px + uy * py < 1.0 - 1e-12 for px, py in dirs):
+            dirs.append((ux, uy))
+    if len(dirs) < 2:
+        return base                       # one nearest point (or one direction): no tie
+    h = math.hypot(vx, vy)
+    if h > 1e-9 and math.isfinite(h):
+        top = max(ux * vx + uy * vy for ux, uy in dirs) / h
+        dirs = [(ux, uy) for ux, uy in dirs if (ux * vx + uy * vy) / h >= top - 1e-9]
+    return dirs[0]                        # the first along the canonical ring
 
 
 def _sanitise(a: Action4D) -> tuple[Action4D, list[str]]:
@@ -2314,9 +2399,9 @@ class Shield:
             if rec is None or not point_in_fence(
                     state.x, state.y, state.up, f, rec.polygon, rec.buffered):
                 continue
-            ox, oy = push_out_direction(state.x, state.y, rec.polygon)
             mv = self._motion_of(f)
             ex, ey = (a.vx - mv[0], a.vy - mv[1]) if mv else (a.vx, a.vy)
+            ox, oy = escape_direction(state.x, state.y, rec.polygon, a.vx, a.vy)
             n += int(ex * ox + ey * oy < -1e-9)
         return n
 
@@ -2720,7 +2805,7 @@ class Shield:
             if alive is True or alive(0.0):
                 if f.id not in self._opened_on:
                     return None               # inside a zone in force it flew into
-                ox, oy = push_out_direction(state.x, state.y, poly)
+                ox, oy = escape_direction(state.x, state.y, poly, action.vx, action.vy)
             else:
                 t_open = self._opening_imposed(f, ring, state)
                 if t_open is None:
@@ -2728,7 +2813,7 @@ class Shield:
                 px, py = state.x + action.vx * t_open, state.y + action.vy * t_open
                 if not point_in_fence(px, py, state.up + action.vz_up * t_open, f, poly, ring):
                     return None               # over the cap: walked as before
-                ox, oy = push_out_direction(px, py, poly)
+                ox, oy = escape_direction(px, py, poly, action.vx, action.vy)
             if action.vx * ox + action.vy * oy <= 0.1:
                 return None                   # not leaving it: that zone's violation
             t_exit = self._ring_exit_time(ring, state, action, h)
@@ -2802,11 +2887,14 @@ class Shield:
             poses = list(self._predict(state, action))
         if (alive is True or alive(0.0)) and point_in_fence(
                 state.x, state.y, state.up, f, poly, buffered):
-            ox, oy = push_out_direction(state.x, state.y, poly)
             # Escaping is judged RELATIVE to a moving zone: leaving at 1 m/s a
-            # zone that follows at 2 m/s is not leaving it.
+            # zone that follows at 2 m/s is not leaving it. Where two edges
+            # are exactly as near (the zone's middle), the way out is the one
+            # the command is heading for (escape_direction), not whichever the
+            # ring's vertex order lists first.
             ex, ey = ((action.vx - mv[0], action.vy - mv[1]) if mv
                       else (action.vx, action.vy))
+            ox, oy = escape_direction(state.x, state.y, poly, action.vx, action.vy)
             escaping = (ex * ox + ey * oy) > 0.1
             if not escaping:
                 return [Violation(
@@ -2833,7 +2921,7 @@ class Shield:
             p_open = next((p for t, p in poses if abs(t - t_open) < 1e-9), None)
             if p_open is not None and point_in_fence(p_open.x, p_open.y, p_open.up,
                                                      f, poly, buffered):
-                ox, oy = push_out_direction(p_open.x, p_open.y, poly)
+                ox, oy = escape_direction(p_open.x, p_open.y, poly, action.vx, action.vy)
                 if action.vx * ox + action.vy * oy > 0.1:
                     return []      # leaving, as the inside rule asks once it opens
                 return [Violation(
@@ -3648,7 +3736,10 @@ class Shield:
             mv = self._motion_of(f)
             zx, zy = (mv[0], mv[1]) if mv else (0.0, 0.0)
             if point_in_fence(state.x, state.y, state.up, f, poly, ring):
-                ox, oy = push_out_direction(state.x, state.y, poly)
+                # The way out the check reads (_check_fence): an exact tie
+                # between equally near edges goes to the one the current
+                # command is heading for (escape_direction).
+                ox, oy = escape_direction(state.x, state.y, poly, vx, vy)
                 # A window opening on the aircraft sooner than it can leave
                 # (_opening_imposed): the way out is read where the current
                 # velocity puts it when the zone comes into force, as
@@ -3658,8 +3749,8 @@ class Shield:
                 # into a 2 m/s one.
                 t_open = None if mv else self._opening_imposed(f, ring, state)
                 if t_open is not None:
-                    ox, oy = push_out_direction(state.x + vx * t_open,
-                                                state.y + vy * t_open, poly)
+                    ox, oy = escape_direction(state.x + vx * t_open,
+                                              state.y + vy * t_open, poly, vx, vy)
                 # ... and its escape leaves at the CAP, not the in-force 2.0
                 # m/s floor below: before the opening (t_open) and after it,
                 # until the aircraft is out of the ring (`_opened_on`, kept by
@@ -3801,7 +3892,9 @@ class Shield:
             if not hit:
                 continue
 
-            ox, oy = push_out_direction(state.x, state.y, poly)   # unit "away from zone"
+            # unit "away from zone"; a tie between equally near edges is
+            # broken by the commanded heading (escape_direction)
+            ox, oy = escape_direction(state.x, state.y, poly, vx, vy)
             into = -((vx - zx) * ox + (vy - zy) * oy)             # speed INTO the zone
             if into > 0:
                 vx += ox * into                                   # cancel it
@@ -6015,7 +6108,8 @@ class Shield:
                 continue
             t_open = self._opening_imposed(f, r.buffered, st)
             dt = t_open or 0.0
-            ox, oy = push_out_direction(st.x + raw.vx * dt, st.y + raw.vy * dt, r.polygon)
+            ox, oy = escape_direction(st.x + raw.vx * dt, st.y + raw.vy * dt, r.polygon,
+                                      raw.vx, raw.vy)
             leaving = raw.vx * ox + raw.vy * oy
             if leaving >= floor - 1e-9:
                 continue
@@ -6081,7 +6175,8 @@ class Shield:
             return None
         r, st = inside[0]
         dt = self._opening_imposed(r.rule, r.buffered, st) or 0.0
-        ox, oy = push_out_direction(st.x + raw.vx * dt, st.y + raw.vy * dt, r.polygon)
+        ox, oy = escape_direction(st.x + raw.vx * dt, st.y + raw.vy * dt, r.polygon,
+                                  raw.vx, raw.vy)
         out_now = raw.vx * ox + raw.vy * oy
         if out_now <= 0.1:
             return None                     # not escaping that zone (the check agrees)
