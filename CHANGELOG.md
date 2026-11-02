@@ -57,6 +57,11 @@ shipped change and recorded as one.
 ### 2026-11-02 (evening) — the Gazebo Harmonic rail flies end-to-end, with its GeoFence on; the CI gates run per build on the lab machine; a video for every camera-less run
 
 #### Added
+- **`PHYSICS=gazebo` for the ROS 2 rail** (`sitl/run_ros2_demo.sh`,
+  `sitl/start_sitl.sh` `SITL_MODEL` / `SITL_EXTRA_DEFAULTS`): a headless
+  gz sim server and SITL on its JSON backend, so the Gazebo rail flies the
+  same MAVROS 2 rail as the built-in SITL (router, fence upload, bag). Every
+  ROS 2 run now writes `physics.json`.
 - **`tools/ci_local.py`: the CI pipeline, run per build on the lab machine**
   (WP4-06, WP4-14, WP3-19). GitHub runs `.github/workflows/tests.yml` only
   on a push, and nothing has been pushed since 14 Oct (1b95383), so no build
@@ -110,6 +115,24 @@ GeoFence backstop on (`FENCE_ENABLE 1`, `FENCE_ALT_MAX 30`):
 | `gazebo_shield_off_20261102` | off | 0.584 | 3.2 s | reached | - |
 | `gazebo_shield_on_dynamic_20261102` | on, NFZ hot-applied | 0.0 | 0.0 s | not reached | X1, G3, G5, RTL, home |
 
+Over MAVROS 2, the grant's `dev` topology (`PHYSICS=gazebo bash
+sitl/run_ros2_demo.sh on|off - --tag ...`, at 0207af0, clean tree): SITL
+-> mavlink-router -> MAVROS 2, the adapter uploading the zone as a fence
+polygon (4 items sent and read back), the bag recorded, `physics.json`
+naming Gazebo Sim 8.11.0 and the JSON model:
+
+| run (`demo/out/`) | Shield | P0 escape rate | inside the NFZ | target | what stopped it |
+|---|---|---|---|---|---|
+| `gazebo_ros2_shield_on_20261102` | on | 0.0 | 0.0 s | not reached | the FSM: X1, G3, G5, RTL |
+| `gazebo_ros2_shield_off_20261102` | off | 1.0 | 6.6 s | not reached | the GeoFence: "Fence Breached" 3.6 s into the mission, RTL |
+
+With the Shield off, the autopilot's own fence caught the aircraft, as the
+grant's backstop should; it still spent 6.6 s inside the zone, because a
+fence acts on the breach, not on the forecast. The node's start-up line
+"no upload reported by the adapter" is true when printed: the autopilot
+accepts the polygon only once its EKF has a position, 15 s after the
+publish here; the record (`fence_upload`, `report.md`) has the upload.
+
 Each folder holds its flight-log replay video (`<tag>_track.mp4`). Earlier
 the same day, before the fence fix, `gazebo_shield_on` flew with the
 GeoFence off (and recorded its clean tree as `-unknown`), and three test
@@ -129,11 +152,10 @@ Shield results match the table.
   proxy, reached the target in 25.6 s (`sitlfix_on_dyn`).
 
 #### Limits
-- The rail flies pymavlink, not MAVROS 2 (the grant's ARCH-16 asks for a
-  functional rail; the review asked for MAVROS 2 "ideally"), and the
-  pymavlink rail uploads no fence polygons: only the altitude fence backs it
-  up (the ROS 2 rail uploads the zones). Topology `ardupilot-sitl-pymavlink`,
-  so none of it is KPI-grade.
+- The pymavlink runs upload no fence polygons, so only the altitude fence
+  backs them up; the MAVROS 2 runs upload the zones. Topologies
+  `ardupilot-sitl-pymavlink` and `dev`: none of it is KPI-grade (the grant
+  takes KPIs from `hil`).
 - The mid-term gate it belonged to was 2026-07-20 (ARCH-16 is DRIFT: late).
 
 #### Changed
