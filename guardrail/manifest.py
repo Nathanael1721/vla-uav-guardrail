@@ -172,12 +172,21 @@ def code_revision(repo: str | Path | None = None) -> str:
             # whether the tree is clean" (-unknown). Until 2026-10-19 the
             # timeout fell through to the outer except, the candidate was
             # dropped, and the known HEAD came back as "unversioned".
-            try:
-                st = subprocess.run(["git", "-C", str(cand), "status", "--porcelain"],
-                                    capture_output=True, text=True, timeout=20)
-                dirty = bool(st.stdout.strip()) if st.returncode == 0 else None
-            except (OSError, subprocess.SubprocessError):
-                dirty = None
+            # A second, longer try (2026-11-02): from WSL, the first status
+            # on the OneDrive tree refreshes the whole index over /mnt/d and
+            # outlasted 20 s, so the first Gazebo rail run recorded a clean
+            # tree as "-unknown" while the next status took 2.4 s.
+            dirty = None
+            for status_timeout_s in (20, 90):
+                try:
+                    st = subprocess.run(["git", "-C", str(cand), "status", "--porcelain"],
+                                        capture_output=True, text=True,
+                                        timeout=status_timeout_s)
+                except (OSError, subprocess.SubprocessError):
+                    continue
+                if st.returncode == 0:
+                    dirty = bool(st.stdout.strip())
+                    break
             suffix = "-dirty" if dirty else ("" if dirty is False else "-unknown")
             return f"{rev}{suffix}"
         except (OSError, subprocess.SubprocessError):

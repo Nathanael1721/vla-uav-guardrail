@@ -42,6 +42,22 @@ shipped change and recorded as one.
   the loop.
 
 #### Fixed
+- **The Gazebo Harmonic rail ran with the ArduPilot GeoFence off**
+  (`sitl/run_gazebo_demo.sh`, WP3-10). It loaded only the stock copter and
+  gazebo-iris defaults, so its first end-to-end run read `FENCE_ENABLE 0`:
+  the last-line backstop behind the Shield was missing on this rail. It now
+  loads `sitl/fence/guardrail_fence.parm` as `sitl/start_sitl.sh` does
+  (`GUARDRAIL_FENCE=0` for the stock autopilot) and wipes the EEPROM at each
+  start (`SITL_WIPE=0` keeps it), so a fence polygon a previous flight left
+  is not armed from boot.
+- **A clean tree recorded as `-unknown` from WSL** (`guardrail/manifest.py`
+  `code_revision`, WP4-12). The first `git status` from WSL on the OneDrive
+  tree refreshes the whole index over `/mnt/d`, and on the first Gazebo run
+  it outlasted the 20 s timeout; the next one took 2.4 s. The status is now
+  asked twice (20 s, then 90 s), and only two failures say `-unknown`.
+  `tests/test_manifest.py` shows a first timeout followed by a clean read.
+
+#### Fixed
 - **The cheat-sheet called all 41 shielded flights "dev"** (ARCH-13, the
   independent review of 29 October). Only the 3 MAVROS 2 flights ran the
   grant's dev topology; the 34 Project AirSim and 4 pymavlink SITL flights

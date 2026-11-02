@@ -1158,6 +1158,46 @@ def test_a_status_timeout_keeps_the_known_head_as_unknown():
         _sh.rmtree(repo, ignore_errors=True)
 
 
+def test_a_status_that_times_out_once_is_asked_again_before_saying_unknown():
+    """From WSL the first `git status` on the OneDrive tree refreshes the
+    whole index over /mnt/d; on 2026-11-02 it outlasted 20 s and the first
+    Gazebo rail run recorded a clean tree as "-unknown". A second, longer
+    try reads the tree; only two failures in a row say "-unknown"."""
+    import shutil as _sh
+    import subprocess
+    import tempfile
+    from guardrail import manifest as M
+    if _sh.which("git") is None:
+        print("      SKIP: git is not installed")
+        return SKIP
+    repo = Path(tempfile.mkdtemp(prefix="rev_"))
+    (repo / "guardrail").mkdir()
+    (repo / "guardrail" / "shield.py").write_text("# sentinel\n", encoding="utf-8")
+    git = ["git", "-C", str(repo), "-c", "user.name=t", "-c", "user.email=t@t",
+           "-c", "commit.gpgsign=false"]
+    subprocess.run(git[:3] + ["init", "-q"], check=True)
+    subprocess.run(git + ["add", "guardrail/shield.py"], check=True)
+    subprocess.run(git + ["commit", "-q", "-m", "t"], check=True)
+    head = subprocess.run(git[:3] + ["rev-parse", "HEAD"], capture_output=True,
+                          text=True, check=True).stdout.strip()
+    real = M.subprocess.run
+    timeouts = []
+
+    def cold_then_warm(cmd, *a, **k):
+        if "status" in cmd:
+            timeouts.append(k.get("timeout"))
+            if len(timeouts) == 1:
+                raise subprocess.TimeoutExpired(cmd, k.get("timeout", 20))
+        return real(cmd, *a, **k)
+    try:
+        M.subprocess.run = cold_then_warm
+        assert M.code_revision(repo) == head[:12], M.code_revision(repo)
+        assert len(timeouts) == 2 and timeouts[1] > timeouts[0], timeouts
+    finally:
+        M.subprocess.run = real
+        _sh.rmtree(repo, ignore_errors=True)
+
+
 def test_an_untracked_file_makes_the_tree_dirty_and_the_reason_says_so():
     """`git status --porcelain` also lists untracked files git does not
     ignore. That is right for an untracked .py under guardrail/ (it changes

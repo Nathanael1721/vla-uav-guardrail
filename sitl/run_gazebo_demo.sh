@@ -36,11 +36,27 @@ nohup gz sim -s -r "$HOME/ardupilot_gazebo/worlds/iris_runway.sdf" \
 sleep 6
 
 echo "=== SITL with JSON backend (talks to gazebo plugin) ==="
+# The ArduPilot GeoFence backstop, loaded as sitl/start_sitl.sh loads it
+# (GUARDRAIL_FENCE=0 starts the stock autopilot), and the EEPROM wiped at each
+# start (SITL_WIPE=0 keeps it). Until 2026-11-02 this rail loaded neither: its
+# first run read FENCE_ENABLE 0, so the last-line backstop behind the Shield
+# was off on the Gazebo rail.
+DEFAULTS="$HOME/ardupilot/Tools/autotest/default_params/copter.parm,$HOME/ardupilot/Tools/autotest/default_params/gazebo-iris.parm"
+FENCE_PARM="$DIR/fence/guardrail_fence.parm"
+if [ "${GUARDRAIL_FENCE:-1}" = "1" ]; then
+  [ -f "$FENCE_PARM" ] || { echo "fence parm missing: $FENCE_PARM"; exit 1; }
+  DEFAULTS="$DEFAULTS,$FENCE_PARM"
+  echo "GeoFence backstop: $FENCE_PARM"
+else
+  echo "GeoFence backstop OFF (GUARDRAIL_FENCE=0)"
+fi
+WIPE=""
+[ "${SITL_WIPE:-1}" = "1" ] && WIPE="-w"
 mkdir -p "$HOME/sitl-run" && cd "$HOME/sitl-run"
 nohup bash -c "tail -f /dev/null | $HOME/ardupilot/build/sitl/bin/arducopter \
   --model JSON --speedup 1 \
-  --defaults $HOME/ardupilot/Tools/autotest/default_params/copter.parm,$HOME/ardupilot/Tools/autotest/default_params/gazebo-iris.parm \
-  --home -35.363261,149.165230,584,0 -I0" > ~/sitl-run/sitl.log 2>&1 &
+  --defaults '$DEFAULTS' \
+  --home -35.363261,149.165230,584,0 -I0 $WIPE" > ~/sitl-run/sitl.log 2>&1 &
 sleep 8
 
 echo "=== guardrail mission (pymavlink rail) ==="
