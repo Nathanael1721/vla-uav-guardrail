@@ -16,6 +16,46 @@ shipped change and recorded as one.
 
 ## [Unreleased]
 
+### 2026-11-02 — Policy DSL, IR and bundle to the grant: the freeze rule, required ConstraintBase fields, canonical rings, shipped multi-scale geometry, the two-hash contract
+
+#### Added
+- `guardrail/reference_convert.py` and `python -m guardrail.bundle export
+  POLICY --reference`: the reference implementation's form of what it can
+  hold, every other rule named with the reason (WP1-05). Every manifest
+  carries `reference_projection`; `check_bundle` recomputes it.
+- `multiscale.json` in every bundle, digest in the signed manifest; a
+  policy loaded from a bundle compiles its CSP from the shipped scales
+  (WP2-16).
+- Two negative-corpus cases for the geometry lint and one for a missing
+  `violation_action` (38 cases).
+
+#### Changed
+- The IR freeze rule (WP1-22 / X-09): any IR-shape change, additive ones
+  included, needs an `IR_SCHEMA_VERSION` bump and a row in
+  docs/IR-MIGRATIONS.md; 2.2.0 versions `locked_by` (2385f84).
+- IR schema 3.0.0 (WP1-01 / WP1-02): `constraint_type`, `priority`,
+  `violation_action` required; the grant's six actions only (`repair` read
+  as project_fix); rings stored in canonical order. All 32 shipped policies
+  raised their patch version; the lock's `migrated_from` is re-proved by
+  `check_lock`; 363/363 stored manifests and 8/8 stored bundles of the main
+  checkout still resolve (read-only check). REST rule bodies must state the
+  three fields.
+- The lint refuses a hard corridor buried in hard keep-out zones and two
+  hard corridors with no common point.
+
+#### Found
+- Ring order decided the Shield's escape in an exact tie: the sweep cell
+  dyn-nfz-spawn-on-top now passes a hold point at 15.6 s.
+
+#### Limits
+- `scope` is still optional (the grant requires it). The signer stays the
+  lab dev key (WP1-04 / X-10 pending).
+- UNFINISHED (session stopped at the usage limit): the WP1-04 swap-drill
+  test, docs/FINAL-REPORT-outline.md Appendix A rows, and the full
+  sequential test-list run (only parallel discovery runs were made; all
+  133 runners passed there except two load-sensitive timing tests that
+  pass alone).
+
 ### 2026-11-02 — the October deck's presenter cheat-sheet, committed
 
 #### Added
