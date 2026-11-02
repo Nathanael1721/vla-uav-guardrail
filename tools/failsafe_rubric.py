@@ -117,14 +117,33 @@ def e3_facts(spec, run, dt: float) -> dict:
             if not p:
                 continue
             err = math.hypot(r["x"] - p["x"], r["y"] - p["y"])
-            if err > margin and dist(r["x"], r["y"]) < err:
+            if err > margin and dist(r["x"], r["y"]) <= err:   # "within" that error: inclusive
                 worst = max(worst or 0.0, err)
         return {"holds": worst is not None, "kind": "frozen fix", "margin_m": margin,
                 "worst_error_m": None if worst is None else round(worst, 2),
                 "closest_true_m": round(closest, 2)}
+    # White noise and latency are judged against the mission's PLANNED route
+    # (start to target, as the scenario declares it), never against where a
+    # noisy flight happened to go: the flown closest approach depends on the
+    # noise draw, and a label belongs to the cell, not to a seed (rubric,
+    # section 3; amended 2026-11-03 after the nightly check flew
+    # gps-noise-beyond-margin latency 5 / 23.2 / sigma 1 on seed 1003 a few
+    # millimetres beyond its 3.0 m error while seeds 1001 and 1002 came to
+    # 2.7 m: same cell, two labels).
+    from shapely.geometry import LineString
+    import random as _random
+    m = SW._resolve_mission(spec, run.policy, _random.Random(0))
+    route_d = None
+    if m.target is not None:
+        route = LineString([(m.start.x, m.start.y), (m.target[0], m.target[1])])
+        route_d = min(poly.exterior.distance(route) if not poly.intersects(route) else 0.0
+                      for poly, _ in fences)
     err = max(3.0 * st.gps_noise_m, st.latency_ticks * dt * speed)
-    return {"holds": err > margin and closest < err, "kind": "noise/latency",
-            "error_m": round(err, 2), "margin_m": margin, "closest_true_m": round(closest, 2)}
+    near = route_d if route_d is not None else closest
+    return {"holds": err > margin and near <= err, "kind": "noise/latency",
+            "error_m": round(err, 2), "margin_m": margin,
+            "route_to_boundary_m": None if route_d is None else round(route_d, 2),
+            "closest_true_m": round(closest, 2)}
 
 
 def counterfactual(spec, lib, seed: int):

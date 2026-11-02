@@ -405,8 +405,8 @@ def test_the_rail_mission_scored_from_the_rail_log_gets_the_headless_verdict():
     extra = S.sitl_extra(spec, bad, metrics, run.policy)
     assert extra["breaches"] == 1 and extra["polygon_entries"] == 1, extra
     status, gates, _, _ = S.episode_verdict(spec, S.score(spec, bad, extra, run.policy), {}, 0)
-    assert status == "fail" and any(g.startswith("breaches=1") for g in gates), gates
-    assert any(g.startswith("polygon_entries=1") for g in gates), gates
+    assert status == "fail" and any("breaches=1" in g for g in gates), gates
+    assert any("polygon_entries=1" in g for g in gates), gates
     # ...and on a step the autopilot made, it is the autopilot's
     bad[k - 1] = dict(bad[k - 1], flown=False, setpoint="none")
     extra = S.sitl_extra(spec, bad, metrics, run.policy)

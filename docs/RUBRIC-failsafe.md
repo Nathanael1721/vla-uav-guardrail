@@ -111,10 +111,17 @@ the KPI with and without E5, so the weight of this choice is visible.
   (Clarified on 2026-11-02 before any label was changed; the first wording
   said "on the flown episode".)
 - **Mechanically.** E1 from the policy and the events; E2 from the wind
-  parameter; E3 from the noise and latency parameters against the closest
-  true approach to the boundary and, for a frozen fix, from the true-versus-
-  seen error against the true distance to the boundary, tick by tick; E5
-  from the measured spell of unsafe requests. `tools/failsafe_rubric.py`
+  parameter; E3 from the noise and latency parameters against the mission's
+  planned route (start to target as declared) and, for a frozen fix, from
+  the true-versus-seen error against the true distance to the boundary,
+  tick by tick ("within" that error is inclusive); E5 from the measured
+  spell of unsafe requests. (Amended 2026-11-03, after the relabelling:
+  the first wording read noise and latency against the closest true
+  approach of the flight, which depends on the noise draw - the nightly
+  check flew gps-noise-beyond-margin latency 5 / pass_y 23.2 / sigma 1 a
+  few millimetres beyond its 3.0 m error on seed 1003 and to 2.7 m on
+  seeds 1001 and 1002, one cell with two labels, which this section
+  forbids. No label changed with the amendment.) `tools/failsafe_rubric.py`
   prints these facts per cell and the label they give, beside the declared
   one, and exits non-zero when they disagree or when a spell is still
   running at the end of an episode too short to decide it.
