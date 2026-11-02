@@ -27,6 +27,19 @@ shipped change and recorded as one.
   the hil topology), the numbers to know, the slide timing and the questions to
   expect. Its numbers are the records as of 27 October; the later AIOT-VLA
   follow work and the vla_fly subject fix are not in it.
+- **`tools/ci_local.py`: the CI pipeline, run per build on the lab machine**
+  (WP4-06, WP4-14, WP3-19). GitHub runs `.github/workflows/tests.yml` only
+  on a push, and nothing has been pushed since 14 Oct (1b95383), so no build
+  since ran the smoke profile. This runs the workflow's three gates on this
+  machine: every file of its standalone loop, read from the workflow in the
+  loop's order (never a copy), then `tools/check_claims.py`, then
+  `experiments/sweep_scenarios.py --profile smoke`. Logs and smoke bundles go
+  to `ci-local/<revision>/` (gitignored); the build's summary goes to
+  `docs/data/ci_local/<revision>.json` (committed), with `-dirty` in the
+  name when the tree was not clean. A lock file refuses a second runner
+  while the first is alive, after a stopped runner kept writing into the
+  next run's results on 2 Nov. `tests/test_ci_local.py` (10 tests) runs in
+  the loop.
 
 #### Fixed
 - **The cheat-sheet called all 41 shielded flights "dev"** (ARCH-13, the

@@ -143,3 +143,6 @@ docs/PRESENTATION-CHEATSHEET-*.md
 # screenshots. The tracker code is tracked; its data stays on this machine.
 tracker/data/
 docs/img/tracker/
+# tools/ci_local.py's per-build logs and smoke bundles; its summaries are
+# committed under docs/data/ci_local/.
+ci-local/
