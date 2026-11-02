@@ -28,6 +28,16 @@ shipped change and recorded as one.
   expect. Its numbers are the records as of 27 October; the later AIOT-VLA
   follow work and the vla_fly subject fix are not in it.
 
+#### Fixed
+- **The cheat-sheet called all 41 shielded flights "dev"** (ARCH-13, the
+  independent review of 29 October). Only the 3 MAVROS 2 flights ran the
+  grant's dev topology; the 34 Project AirSim and 4 pymavlink SITL flights
+  ran our own functional rails, which `guardrail/manifest.py` labels
+  `projectairsim-single-host` and `ardupilot-sitl-pymavlink`, none of the
+  grant's three. The spoken lines now say "not KPI-grade" and
+  "functional-rail evidence", and the topology slide's line gives the 3 / 38
+  split.
+
 ### 2026-11-01 (late) — the VLA follow's subject stand-off now runs: vla_fly gives the Shield the perception's subject every tick, with its velocity, and says INERT when it has none; every earlier VLA flight was flown with the stand-off inert
 
 #### Fixed

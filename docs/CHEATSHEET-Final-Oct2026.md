@@ -5,7 +5,7 @@ Numbers first, then the timing, then the questions you will actually get.
 
 Every number below is from the repo's own records. If you only remember one
 rule, remember this one: **a safety number that is wrong is worse than one
-that is missing.** Say "dev evidence" before anyone asks.
+that is missing.** Say "not KPI-grade" before anyone asks.
 
 ---
 
@@ -146,7 +146,7 @@ late, compress slides 3 and 10; never cut 5, 6 or 8 — they carry the result.
    distractors, it refuses the zone. Then the control: one word and it
    fails to acquire at all.
 6. **Safety** — 0.0 against 0.63–0.67. Then the caveat before anyone else
-   says it: dev evidence, not contract KPIs.
+   says it: functional-rail evidence, not contract KPIs.
 7. **The finding** — 12 identical outputs; the language never reached the
    action. We replaced the pilot, not the goal, and changed zero lines of
    the Shield.
@@ -155,7 +155,9 @@ late, compress slides 3 and 10; never cut 5, 6 or 8 — they carry the result.
    flies. This is the current architecture.
 9. **Findings** — each card is a defect we found ourselves and a claim we
    retracted. "A check that cannot fail is not a check."
-10. **Topologies** — everything so far is dev; hil on the Orin is the KPI
+10. **Topologies** — of the 41 shielded flights, 3 ran the grant's dev
+    topology (SITL + MAVROS 2 on one desktop) and 38 ran our own functional
+    rails (Project AirSim, pymavlink SITL); hil on the Orin is the KPI
     configuration, and the first Orin step is done.
 11. **Remaining** — KPI campaign, perception on MAVROS 2, escalation hold at
     99 %, then the drone. Ordered by contribution to acceptance.
@@ -177,7 +179,9 @@ late, compress slides 3 and 10; never cut 5, 6 or 8 — they carry the result.
 **"Is 0.0 the contract KPI?"**
 > No, and we say so on the slide. The grant takes KPIs from the hil topology
 > — VLA and Shield on a Jetson Orin. Those runs happen before 30 November.
-> The 0.0 is dev-rail evidence across 41 shielded flights.
+> The 0.0 is functional-rail evidence across 41 shielded flights: 3 in the
+> grant's dev topology, 38 on our own rails (Project AirSim and pymavlink
+> SITL).
 
 **"Why did you drop AerialVLA in August?"**
 > Because its language input never reached its output. 108 controlled passes
