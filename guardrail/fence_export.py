@@ -44,10 +44,22 @@ policy)
 is the same at every instant ("clock-proof"). With `now` (the rule clock's
 reading, as Shield(now=...) takes it) every keep-out entry, exported or
 skipped, also carries `in_force_now`: whether the Shield holds the zone at
-that instant, read with the compiler's exact copy of the Shield's switch
-logic (guardrail.compiler._RuleClock). That is for a display or a record
-(which zones the Shield alone is holding right now); it is not a reason to
-upload anything.
+that instant, read with the Shield's own rule clock (guardrail/shield.py
+RuleClock.on; until 2026-11-03 the compiler's copy of it). That is for a
+display or a record (which zones the Shield alone is holding right now); it
+is not a reason to upload anything.
+
+WHAT THIS MODULE ASKS AND WHAT IT DOES NOT DECIDE (WP3-22, 2026-11-03)
+
+The question here is not the Shield's ("is this rule broken?") but the
+backstop's ("can a clockless 2-D fence hold this zone exactly?"), so the
+selection rules below stay here. What a rule's activity IS - its own window,
+the switches that turn it off, whether it is in force at `now` - is read
+from the one rule clock (RuleClock.has_window, .off_switches, .on), never
+re-derived from the fields. The zone geometry exported is the authored one
+(vertices, centre and radius), as the autopilot takes it; the clearance
+test of `defer_near` is the adapter's arrival margin on that exported shape,
+not a rule of the policy.
 
 `defer_near` is the other half of what the ROS adapter does: a zone the
 aircraft is inside, or within the fence margin of, is held back until it is
@@ -73,14 +85,21 @@ def zone_xy(p) -> tuple[float, float]:
     return float(p.x), float(p.y)
 
 
+def _rule_clock():
+    """THE rule clock class (guardrail/shield.py RuleClock): the one
+    implementation of "is this rule in force", which this module asks
+    instead of reading schedules and switches itself (WP3-22, 2026-11-03)."""
+    from .shield import RuleClock
+    return RuleClock
+
+
 def time_controls(rule, off_switches=()) -> list[str]:
     """What can switch `rule` off by the clock: its own time window
-    (`valid_time` with a recurrence; absent, or without one, means always)
-    and the ids of the time_window_switches that turn it off. [] = in force
-    for the whole flight."""
+    (`valid_time` with a recurrence; absent, or without one, means always:
+    RuleClock.has_window) and the ids of the time_window_switches that turn
+    it off (RuleClock.off_switches). [] = in force for the whole flight."""
     out = []
-    vt = getattr(rule, "valid_time", None)
-    if vt is not None and getattr(vt, "recurrence", None) is not None:
+    if _rule_clock().has_window(rule):
         out.append("it has a time window (valid_time)")
     if off_switches:
         out.append(f"time_window_switch {', '.join(sorted(off_switches))} can "
@@ -88,25 +107,11 @@ def time_controls(rule, off_switches=()) -> list[str]:
     return out
 
 
-def _off_switches(constraints) -> dict[str, list[str]]:
-    """Rule id -> the switches that can turn it OFF. A switch that holds its
-    target ON adds no off-time to it."""
-    out: dict[str, list[str]] = {}
-    for c in constraints:
-        if getattr(c, "type", "") == "time_window_switch" \
-                and getattr(c, "active", True) is False:
-            out.setdefault(c.target_id, []).append(c.id)
-    return out
-
-
-def _in_force(policy, now):
-    """rule -> bool at `now`, the Shield's own answer (compiler._RuleClock is
-    held to Shield.rule_status by tests/test_csp.py). Only for a real Policy;
-    a duck-typed stand-in has no schedule to read, and counts as in force."""
-    try:
-        from .compiler import _RuleClock
-        clock = _RuleClock(policy)
-    except Exception:                                   # noqa: BLE001
+def _in_force(clock, now):
+    """rule -> bool at `now`, the Shield's own answer (RuleClock.on, the clock
+    the Shield's monitor reads). A rule the clock cannot read (a duck-typed
+    stand-in missing a field) counts as in force."""
+    if clock is None:
         return lambda rule: True
 
     def on(rule) -> bool:
@@ -127,8 +132,8 @@ def iter_zones(policy, now=None, column_m: float | None = None
     off. `policy_zones` collects these; the ROS adapter walks them to hold a
     zone back in place, so its skip list keeps the policy's order."""
     constraints = list(getattr(policy, "constraints", []))
-    switched_off = _off_switches(constraints)
-    in_force = _in_force(policy, now) if now is not None else None
+    clock = _rule_clock()(constraints)
+    in_force = _in_force(clock, now) if now is not None else None
 
     def tag(entry: dict, rule) -> dict:
         if in_force is not None:
@@ -148,10 +153,10 @@ def iter_zones(policy, now=None, column_m: float | None = None
                 "one, and an autopilot fence would act on it - stricter than "
                 "the policy")}, c)
             continue
-        clock = time_controls(c, switched_off.get(c.id, ()))
-        if clock:
+        controls = time_controls(c, clock.off_switches(c.id))
+        if controls:
             yield "skipped", tag({"id": c.id, "time_controlled": True, "why": (
-                f"{'; '.join(clock)}: the autopilot fence has no clock and "
+                f"{'; '.join(controls)}: the autopilot fence has no clock and "
                 f"would enforce the zone while the policy has it off - "
                 f"stricter than the policy, so the Shield alone enforces it")}, c)
             continue

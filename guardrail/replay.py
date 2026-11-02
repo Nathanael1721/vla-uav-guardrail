@@ -1146,8 +1146,8 @@ def zone_dwell(shield, points, tick_s: float, *,
     rule-clock reading under that key (an ISO string or a datetime; since
     2026-10-12 both SITL rails record it, "clock" on each trajectory point),
     and a zone counts at a point only while it is in force at that reading,
-    decided by the Shield's own switch logic (guardrail.compiler._RuleClock,
-    held to Shield.rule_status by tests/test_csp.py) on the end-of-flight
+    decided by the Shield's own rule clock (`Shield.rule_clock`, the one
+    implementation, guardrail/shield.py RuleClock) on the end-of-flight
     rule set. Time inside a zone that was off is reported apart, as
     `nfz_off_by_clock_s`. Until that date the rails flew with no clock, so
     every zone was in force whenever the aircraft was in it; without
@@ -1195,8 +1195,9 @@ def zone_dwell(shield, points, tick_s: float, *,
     known = {r.rule.id for r in fences}
     rule_clock_on = None
     if clock_key is not None:
-        from .compiler import _RuleClock
-        rule_clock_on = _RuleClock(shield.policy).on
+        # The flight's Shield's own rule clock (Shield.rule_clock), the one
+        # implementation; until 2026-11-03 the compiler's copy of it.
+        rule_clock_on = shield.rule_clock.on
     by_zone: dict[str, int] = {}
     off_by_clock: dict[str, int] = {}
     # The same, in seconds, with point_s.

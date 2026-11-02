@@ -291,6 +291,161 @@ def _recurrence_edge_within(rec, t0, t1) -> bool:
     return False
 
 
+def _window_of(rule):
+    """A rule's own weekly schedule (models.Recurrence), or None when it has
+    none (no `valid_time`, or one without a recurrence: always in force). Read
+    by attribute, so a duck-typed rule without the field counts as always."""
+    vt = getattr(rule, "valid_time", None)
+    return None if vt is None else getattr(vt, "recurrence", None)
+
+
+_SWITCH = "time_window_switch"
+_SWAP = "corridor_swap"
+
+
+class RuleClock:
+    """THE rule clock: which rules are in force at an instant. The one
+    implementation in the system (grant, Safety Shield page, "Violation
+    checking": "there is exactly one rule-evaluation code path").
+
+    Built once per generation from the rule list (the Shield keeps one on its
+    runtime, `Shield.rule_clock`). Every reader asks this class:
+
+      * the Shield's per-pose schedule (`_Schedule`, both sides of each
+        forecast instant) asks `enforced`;
+      * the Prefix Compiler's time filter (compiler._RuleClock, a subclass
+        that adds only its own sampling and wording) asks `on`, `holders`
+        and `minute_on`;
+      * the autopilot fence export (guardrail/fence_export.py) asks
+        `off_switches`, `has_window` and `on`;
+      * the dwell count of every rail (guardrail/replay.zone_dwell) asks the
+        flight's Shield's own clock.
+
+    Until 2026-11-03 the compiler held a second copy of `on` ("the ~20
+    lines of rule logic only", kept equal to the Shield by tests/test_csp.py)
+    and the fence export a third reading of which switches turn a zone off
+    (the review of 29 Oct, card WP3-22 / X-13).
+
+    The semantics are the Shield's, to the microsecond (block comment above):
+
+      * no clock (x None) counts as in force ("absent means active");
+      * a corridor_swap holds while its own window holds, and switches its
+        target off meanwhile;
+      * of the time_window_switches on a rule whose windows hold at x, the
+        LAST in policy order decides (events accumulate in order); a switch
+        whose window cannot be read (no clock) turns a rule ON but never OFF.
+
+    A time_window_switch is an event, not geometry: `on` says whether it is
+    ACTING (its own window holds), `enforced` says False (the monitor never
+    judges a pose against it). Rules are read by attribute (`type`,
+    `valid_time`, `target_id`, `active`), so the duck-typed policies the
+    fence export accepts read the same way.
+    """
+    __slots__ = ("switches_on", "swaps_on", "timed", "recurrences")
+
+    def __init__(self, constraints):
+        cons = tuple(constraints)
+        sw: dict = {}
+        sp: dict = {}
+        for c in cons:
+            kind = getattr(c, "type", None)
+            if kind == _SWITCH:
+                sw.setdefault(c.target_id, []).append(c)
+            elif kind == _SWAP:
+                sp.setdefault(c.target_id, []).append(c)
+        # target id -> the switches / swaps acting on it, in policy order.
+        self.switches_on: dict = {k: tuple(v) for k, v in sw.items()}
+        self.swaps_on: dict = {k: tuple(v) for k, v in sp.items()}
+        # Ids whose in-force state can change with the clock, and every
+        # weekly schedule in the rule set (the tick's fast path, _Schedule).
+        timed = {c.id for c in cons if _window_of(c) is not None}
+        timed |= set(sw) | set(sp)
+        timed |= {c.id for c in cons if getattr(c, "type", None) == _SWAP}
+        self.timed = frozenset(timed)
+        self.recurrences = tuple(r for r in (_window_of(c) for c in cons) if r is not None)
+
+    @classmethod
+    def of(cls, policy) -> "RuleClock":
+        """The clock of `policy`'s rules (a Policy, or anything with a
+        `constraints` list)."""
+        return cls(getattr(policy, "constraints", ()) or ())
+
+    @staticmethod
+    def _base(rule, x):
+        """The rule's own window at instant x: True, False, or None when it
+        has a window and there is no clock to read it."""
+        rec = _window_of(rule)
+        if rec is None:
+            return True
+        if x is None:
+            return None
+        return recurrence_active(rec, x)
+
+    def on(self, rule, x) -> bool:
+        """Is `rule` in force at instant x (None: no clock)? For a switch or a
+        swap: is it acting (its own window holds or cannot be read)."""
+        kind = rule.type
+        if kind == _SWITCH or kind == _SWAP:
+            return self._base(rule, x) is not False
+        for sp in self.swaps_on.get(rule.id, ()):
+            if self._base(sp, x) is True:
+                return False
+        sws = self.switches_on.get(rule.id, ())
+        if sws:
+            if any(s.active and self._base(s, x) is None for s in sws):
+                return True
+            known = [s.active for s in sws if self._base(s, x) is True]
+            if known:
+                return known[-1]
+        return self._base(rule, x) is not False
+
+    def enforced(self, rule, x) -> bool:
+        """`on`, for the monitor: a time_window_switch is never judged as
+        geometry (it acts through its target)."""
+        if rule.type == _SWITCH:
+            return False
+        return self.on(rule, x)
+
+    def involved(self, rule) -> bool:
+        """Is `rule` a switch or a swap, or the target of one?"""
+        return (rule.type in (_SWITCH, _SWAP)
+                or rule.id in self.switches_on or rule.id in self.swaps_on)
+
+    def holders(self, rule, x) -> list[str]:
+        """The ids of the swaps and the switch holding `rule` OFF at x."""
+        out = [sp.id for sp in self.swaps_on.get(rule.id, ()) if self._base(sp, x) is True]
+        sws = [s for s in self.switches_on.get(rule.id, ()) if self._base(s, x) is True]
+        if sws and not sws[-1].active:
+            out.append(sws[-1].id)
+        return out
+
+    def off_switches(self, rule_id: str) -> list[str]:
+        """The ids of the time_window_switches that can turn `rule_id` OFF
+        (`active: false`), in policy order. A switch that only holds a rule
+        ON adds no off-time to it."""
+        return [s.id for s in self.switches_on.get(rule_id, ())
+                if getattr(s, "active", True) is False]
+
+    @staticmethod
+    def has_window(rule) -> bool:
+        """Does `rule` carry a weekly window of its own?"""
+        return _window_of(rule) is not None
+
+    @classmethod
+    def minute_on(cls, rule, x) -> bool:
+        """The rule's OWN window read at the start of x's minute: exactly
+        models.ConstraintBase.active_at's minute-grained answer (whole
+        minutes, inclusive end: a window ending 17:30 holds until 17:30:59),
+        which the Prefix Compiler's time filter has always used for a rule
+        no switch or swap touches - wider than `on` at a window's end, so a
+        CSP never leaves out a rule the Shield enforces. Read through
+        `_base`, so the one schedule reader answers it; None (no clock)
+        counts as in force."""
+        if x is None:
+            return True
+        return cls._base(rule, x.replace(second=0, microsecond=0)) is not False
+
+
 def _sanitise(a: Action4D) -> tuple[Action4D, list[str]]:
     """Force every channel finite, returning the names of the ones that were not.
 
@@ -693,8 +848,9 @@ class _Runtime:
     clear: tuple
     standoffs: tuple
     corridors: tuple            # corridors and corridor_swap rules
-    switches_on: dict           # target id -> time_window_switch rules, policy order
-    swaps_on: dict              # target id -> corridor_swap rules, policy order
+    clock: RuleClock            # THE rule clock of this generation's rules
+    switches_on: dict           # target id -> time_window_switch rules, policy order (clock's)
+    swaps_on: dict              # target id -> corridor_swap rules, policy order (clock's)
     eff: dict                   # rule id -> effective breach action
     hard: dict                  # rule id -> hard?
     timed: frozenset            # ids whose in-force state can change with time or events
@@ -705,19 +861,7 @@ class _Runtime:
 
 def _build_runtime(policy: Policy, prev: "_Runtime | None", anchors: dict) -> _Runtime:
     cons = tuple(policy.constraints)
-    switches_on: dict = {}
-    swaps_on: dict = {}
-    for c in cons:
-        if isinstance(c, TimeWindowSwitch):
-            switches_on.setdefault(c.target_id, []).append(c)
-        elif isinstance(c, CorridorSwap):
-            swaps_on.setdefault(c.target_id, []).append(c)
-    timed = {c.id for c in cons if c.valid_time is not None
-             and c.valid_time.recurrence is not None}
-    timed |= set(switches_on) | set(swaps_on)
-    timed |= {c.id for c in cons if isinstance(c, CorridorSwap)}
-    recs = tuple(c.valid_time.recurrence for c in cons
-                 if c.valid_time is not None and c.valid_time.recurrence is not None)
+    clock = RuleClock(cons)
     ir = PolicyIR.from_policy(policy, reuse=prev.ir if prev is not None else None)
     moving = frozenset(r.rule.id for r in ir.fences if r.moving)
     return _Runtime(
@@ -727,11 +871,10 @@ def _build_runtime(policy: Policy, prev: "_Runtime | None", anchors: dict) -> _R
         clear=tuple(c for c in cons if isinstance(c, ObstacleClearance)),
         standoffs=tuple(c for c in cons if isinstance(c, SubjectStandoff)),
         corridors=tuple(c for c in cons if isinstance(c, (Corridor, CorridorSwap))),
-        switches_on={k: tuple(v) for k, v in switches_on.items()},
-        swaps_on={k: tuple(v) for k, v in swaps_on.items()},
+        clock=clock, switches_on=clock.switches_on, swaps_on=clock.swaps_on,
         eff={c.id: _effective_action(c) for c in cons},
         hard={c.id: c.constraint_type == "hard" for c in cons},
-        timed=frozenset(timed), recurrences=recs,
+        timed=clock.timed, recurrences=clock.recurrences,
         anchors={k: v for k, v in anchors.items() if k in moving}, moving_ids=moving)
 
 
@@ -771,19 +914,11 @@ class _Schedule:
             self.const = not any(_recurrence_edge_within(r, lo, hi)
                                  for r in rt.recurrences)
 
-    @staticmethod
-    def _base(rule, x):
-        """The rule's own window at instant x: True, False, or None when it has
-        a window and there is no clock to read it."""
-        vt = rule.valid_time
-        if vt is None or vt.recurrence is None:
-            return True
-        if x is None:
-            return None
-        return recurrence_active(vt.recurrence, x)
-
     def on(self, rule, x) -> bool:
-        """Is `rule` enforced at instant x (switches and swaps applied)?
+        """Is `rule` enforced at instant x (switches and swaps applied)? The
+        runtime's RuleClock answers (`RuleClock.enforced`): the one rule
+        clock, which the Prefix Compiler, the fence export and the dwell
+        count read too.
 
         * A corridor_swap rule is enforced while its own window holds; the
           corridor it targets is replaced (off) while that window holds.
@@ -795,22 +930,7 @@ class _Schedule:
         * Unknown (no clock) counts as in force, for the same reason. A swap
           of unknown window therefore enforces both corridors, the stricter
           reading."""
-        rt = self.rt
-        if isinstance(rule, TimeWindowSwitch):
-            return False                       # an event, not a geometric rule
-        if isinstance(rule, CorridorSwap):
-            return self._base(rule, x) is not False
-        for sp in rt.swaps_on.get(rule.id, ()):
-            if self._base(sp, x) is True:
-                return False
-        sws = rt.switches_on.get(rule.id, ())
-        if sws:
-            if any(sw.active and self._base(sw, x) is None for sw in sws):
-                return True
-            known = [sw.active for sw in sws if self._base(sw, x) is True]
-            if known:
-                return known[-1]
-        return self._base(rule, x) is not False
+        return self.rt.clock.enforced(rule, x)
 
     def in_force(self, rule, tau: float) -> bool:
         if self.when is None:
@@ -1584,6 +1704,16 @@ class Shield:
     def ir(self) -> PolicyIR:
         """The compiled fence IR the monitor is querying (read-only view)."""
         return self._ir
+
+    @property
+    def rule_clock(self) -> RuleClock:
+        """The rule clock of the rule set the monitor is enforcing (this
+        generation's; read-only): the one implementation of "is this rule in
+        force at that instant", for a reader that needs the answer at an
+        instant of its own (guardrail/replay.zone_dwell reads each logged
+        point's clock reading through it)."""
+        tick = self._tick_ctx()
+        return tick.rt.clock if tick is not None else self._rt.clock
 
     @property
     def mission_started(self) -> bool:

@@ -120,7 +120,7 @@ from .models import (DAYS, RUNTIME_TYPES, AltitudeEnvelope, CircleFence, Corrido
                      CorridorSwap, DynamicNFZ, KinematicEnvelope,
                      ObstacleClearance, Policy, PolygonFence, SubjectStandoff,
                      TimeWindowSwitch)
-from .shield import recurrence_active
+from .shield import RuleClock
 
 # Keep-OUT zones and keep-IN tubes. CircleFence is a PolygonFence (its vertices
 # are the derived 32-gon); DynamicNFZ and CorridorSwap are not subclasses of
@@ -519,17 +519,23 @@ def _activity(rule, now: datetime | None, lookahead_s: float) -> dict:
 
     Recurrence is minute-grained, so the window is sampled at `now` and at
     every minute boundary up to its end - exactly the instants at which a
-    schedule can change state. The test is the rule's own active_at, the same
-    one the Shield uses, so the CSP and the Shield cannot disagree about when a
-    rule is on. No clock means in force (models.py: "absent means active").
+    schedule can change state. Each instant is read by THE rule clock
+    (guardrail/shield.py RuleClock.minute_on): the rule's own window at the
+    start of that minute, which is models.ConstraintBase.active_at's answer
+    to the microsecond (tests/test_shieldcore_onepath.py holds the two equal
+    over every minute of a week) and wider than the Shield's at a window's
+    end, so the CSP never leaves out a rule the Shield enforces. Until
+    2026-11-03 this called `active_at` itself, a second reader of the
+    schedule beside the Shield's. No clock means in force (models.py:
+    "absent means active").
     """
     if now is None or rule.valid_time is None:
         return {"now": True, "any": True, "on": False, "off": False}
     end = now + timedelta(seconds=lookahead_s)
-    states = [rule.active_at(now)]
+    states = [RuleClock.minute_on(rule, now)]
     t = now.replace(second=0, microsecond=0) + timedelta(minutes=1)
     while t <= end:
-        states.append(rule.active_at(t))
+        states.append(RuleClock.minute_on(rule, t))
         t += timedelta(minutes=1)
     later = states[1:]
     return {"now": states[0], "any": any(states),
@@ -546,79 +552,33 @@ _SWITCH_PAD_S = 1.0
 _JUST_AFTER = timedelta(microseconds=1)
 
 
-class _RuleClock:
-    """Which rules are in force at an instant, with time_window_switch and
-    corridor_swap applied EXACTLY as the Shield applies them
-    (guardrail/shield.py `_Schedule.on`, the same `recurrence_active`, to the
-    microsecond).
+class _RuleClock(RuleClock):
+    """The Prefix Compiler's view of THE rule clock (guardrail/shield.py
+    RuleClock, the Shield's own): which rules are in force at an instant,
+    time_window_switch and corridor_swap applied exactly as the Shield
+    applies them, to the microsecond. `on`, `holders` and `involved` are the
+    Shield's methods, inherited, not copied; this class adds only what the
+    compiler asks that the Shield does not - the sampling of a lookahead
+    window (`activity`) and the wording of who acts on a rule
+    (`acted_on_text`).
 
-    Why a second implementation of `on` and not a call into the Shield: the
-    Shield's schedule hangs off its per-generation runtime (fence index,
-    anchors, FSM) and is private. This is the ~20 lines of rule logic only,
-    and tests/test_csp.py holds it to the Shield's own answer
-    (`Shield.rule_status(...)["in_force"]`) at every instant around every edge
-    of a policy built to have them. If they ever disagree the test names the
-    rule and the instant.
+    Until 2026-11-03 this was a second implementation of `on` ("the ~20
+    lines of rule logic only"), held to the Shield's answer by
+    tests/test_csp.py; the review of 29 Oct counted it as a second
+    rule-evaluation path (card WP3-22 / X-13).
 
     Used only for rules a switch or swap touches (and for those events
     themselves). Every other rule keeps `_activity`'s minute-grained test,
     unchanged since 2026-10-06, so no stored CSP moves. That test is the
-    conservative one for a rule's OWN window (models.Recurrence.active_at keeps
-    a window ending 17:30 open until 17:30:59; the Shield closes it at
-    17:30:00) - but it is NOT conservative for a switch that turns a rule OFF,
-    which it would hold off 59 s longer than the Shield: a rule the Shield
-    enforces would be missing from the CSP. Hence the exact clock here.
+    conservative one for a rule's OWN window (it keeps a window ending 17:30
+    open until 17:30:59; the Shield closes it at 17:30:00) - but it is NOT
+    conservative for a switch that turns a rule OFF, which it would hold off
+    59 s longer than the Shield: a rule the Shield enforces would be missing
+    from the CSP. Hence the exact clock here.
     """
 
     def __init__(self, policy: Policy):
-        self.sw: dict[str, list] = {}
-        self.sp: dict[str, list] = {}
-        for c in policy.constraints:
-            if isinstance(c, TimeWindowSwitch):
-                self.sw.setdefault(c.target_id, []).append(c)
-            elif isinstance(c, CorridorSwap):
-                self.sp.setdefault(c.target_id, []).append(c)
-
-    def involved(self, rule) -> bool:
-        return (isinstance(rule, (TimeWindowSwitch, CorridorSwap))
-                or rule.id in self.sw or rule.id in self.sp)
-
-    @staticmethod
-    def _base(rule, x):
-        """The rule's own window at x: True, False, or None (it has a window
-        and there is no clock). shield._Schedule._base, verbatim."""
-        vt = rule.valid_time
-        if vt is None or vt.recurrence is None:
-            return True
-        if x is None:
-            return None
-        return recurrence_active(vt.recurrence, x)
-
-    def on(self, rule, x) -> bool:
-        """Is `rule` in force at instant x (None: no clock)?
-
-        A time_window_switch is "in force" while its own window holds (it then
-        acts); the Shield never enforces it as geometry. Everything else is
-        shield._Schedule.on: a corridor_swap holds while its window holds and
-        switches its target off meanwhile; of the switches on a rule that are
-        in force, the last in policy order decides; a switch whose window
-        cannot be read turns a rule ON but never OFF; no clock counts as in
-        force."""
-        if isinstance(rule, TimeWindowSwitch):
-            return self._base(rule, x) is not False
-        if isinstance(rule, CorridorSwap):
-            return self._base(rule, x) is not False
-        for sp in self.sp.get(rule.id, ()):
-            if self._base(sp, x) is True:
-                return False
-        sws = self.sw.get(rule.id, ())
-        if sws:
-            if any(s.active and self._base(s, x) is None for s in sws):
-                return True
-            known = [s.active for s in sws if self._base(s, x) is True]
-            if known:
-                return known[-1]
-        return self._base(rule, x) is not False
+        super().__init__(policy.constraints)
 
     def acted_on_text(self, rule) -> str | None:
         """Every switch and swap that acts on `rule`, with its window, in
@@ -627,18 +587,10 @@ class _RuleClock:
         window: a switch target read "always" there although a switch turns
         it off for part of the week (found in review, 2026-10-08)."""
         parts = [f"switched {'on' if s.active else 'off'} by {s.id} "
-                 f"({window_text(s) or 'always'})" for s in self.sw.get(rule.id, ())]
+                 f"({window_text(s) or 'always'})" for s in self.switches_on.get(rule.id, ())]
         parts += [f"replaced by {sp.id} ({window_text(sp) or 'always'})"
-                  for sp in self.sp.get(rule.id, ())]
+                  for sp in self.swaps_on.get(rule.id, ())]
         return "; ".join(parts) or None
-
-    def holders(self, rule, x) -> list[str]:
-        """The ids of the switches and swaps holding `rule` OFF at x."""
-        out = [sp.id for sp in self.sp.get(rule.id, ()) if self._base(sp, x) is True]
-        sws = [s for s in self.sw.get(rule.id, ()) if self._base(s, x) is True]
-        if sws and not sws[-1].active:
-            out.append(sws[-1].id)
-        return out
 
     def activity(self, rule, now: datetime | None, lookahead_s: float) -> dict:
         """`_activity`'s answer, from exact instants.
@@ -885,7 +837,7 @@ def _in_force_sets(rules: list, clock: "_RuleClock", now: datetime,
     def on(r, x) -> bool:
         if clock.involved(r):
             return now - pad <= x <= end + pad and clock.on(r, x)
-        return now <= x <= end and r.active_at(x)
+        return now <= x <= end and RuleClock.minute_on(r, x)
     return [(x, frozenset(r.id for r in rules if on(r, x)))
             for x in [now] + sorted(ts - {now})]
 
@@ -1970,13 +1922,13 @@ def _opening_outcome(policy: Policy, z) -> str:
 
 def _timed_zones(policy: Policy) -> list:
     """Hard, enforced keep-out zones whose being in force can change with
-    time: their own weekly window, or a time_window_switch aimed at them."""
-    switched = {c.target_id for c in policy.constraints if isinstance(c, TimeWindowSwitch)}
+    time: their own weekly window, or a time_window_switch aimed at them -
+    read from THE rule clock's structure (guardrail/shield.py RuleClock)."""
+    clock = RuleClock.of(policy)
     return [c for c in policy.constraints
             if isinstance(c, _ZONES) and c.constraint_type == "hard"
             and c.violation_action != "monitor_only"
-            and ((c.valid_time is not None and c.valid_time.recurrence is not None)
-                 or c.id in switched)]
+            and (clock.has_window(c) or c.id in clock.switches_on)]
 
 
 def _ring_of(zone):
@@ -2005,7 +1957,7 @@ def _exits_for(policy: Policy, zone, ring):
     always = [_ring_of(z) for z in policy.constraints
               if isinstance(z, _ZONES) and z is not zone and z.constraint_type == "hard"
               and z.violation_action != "monitor_only" and z.id not in timed
-              and (z.valid_time is None or z.valid_time.recurrence is None)]
+              and not RuleClock.has_window(z)]
     minx, miny, maxx, maxy = ring.bounds
     pad = max(maxx - minx, maxy - miny) + 1.0
     world = box(minx - pad, miny - pad, maxx + pad, maxy + pad)
