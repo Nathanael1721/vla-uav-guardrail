@@ -133,6 +133,15 @@ fence acts on the breach, not on the forecast. The node's start-up line
 accepts the polygon only once its EKF has a position, 15 s after the
 publish here; the record (`fence_upload`, `report.md`) has the upload.
 
+Under SROS 2 (X-15), the built-in SITL physics, at 02dca27:
+`ros2_sros2_shield_on_20261102` (`SROS2=1 bash sitl/run_ros2_demo.sh on`),
+every ROS 2 process in its own enclave under `ROS_SECURITY_STRATEGY=Enforce`,
+the keystore made by `tools/sros2_setup.sh` from a lab CA generated in WSL
+(`gen-pki --out ~/harness_pki`); the run's `hil_evidence.ros2_security`
+records the enclave and an identity and permissions CA fingerprint equal to
+that CA's. `tools/sros2_check.sh` passed 6/6 first. P0 escape rate 0.0,
+0.0 s inside the zone; the target was not reached, as above.
+
 Each folder holds its flight-log replay video (`<tag>_track.mp4`). Earlier
 the same day, before the fence fix, `gazebo_shield_on` flew with the
 GeoFence off (and recorded its clean tree as `-unknown`), and three test
@@ -157,6 +166,16 @@ Shield results match the table.
   `ardupilot-sitl-pymavlink` and `dev`: none of it is KPI-grade (the grant
   takes KPIs from `hil`).
 - The mid-term gate it belonged to was 2026-07-20 (ARCH-16 is DRIFT: late).
+- SROS 2: the enclaves still carry sros2's default permissions (every topic
+  of the domain); per-topic permissions are not written. The lab CA this
+  keystore came from was generated in WSL today; the gRPC harness on Windows
+  holds its own, so "one root CA" holds only where the harness reads
+  `~/harness_pki`.
+- Every WSL SITL run today recorded `ardupilot_pin_ok` false: the nested
+  `pymavlink` submodule is at `ec06837a`, not the commit Copter-4.5.7
+  records, as found on 2026-10-06 (`docs/DESIGN-python-versions.md`). The
+  binary is 4.5.7 (`2a3dc4b7`) built against headers from that newer
+  generator.
 
 #### Changed
 - `docs/FINAL-REPORT-outline.md`: ARCH-16 (the Gazebo functional rail) goes
