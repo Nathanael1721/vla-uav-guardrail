@@ -27,47 +27,6 @@ shipped change and recorded as one.
   the hil topology), the numbers to know, the slide timing and the questions to
   expect. Its numbers are the records as of 27 October; the later AIOT-VLA
   follow work and the vla_fly subject fix are not in it.
-- **`tools/ci_local.py`: the CI pipeline, run per build on the lab machine**
-  (WP4-06, WP4-14, WP3-19). GitHub runs `.github/workflows/tests.yml` only
-  on a push, and nothing has been pushed since 14 Oct (1b95383), so no build
-  since ran the smoke profile. This runs the workflow's three gates on this
-  machine: every file of its standalone loop, read from the workflow in the
-  loop's order (never a copy), then `tools/check_claims.py`, then
-  `experiments/sweep_scenarios.py --profile smoke`. Logs and smoke bundles go
-  to `ci-local/<revision>/` (gitignored); the build's summary goes to
-  `docs/data/ci_local/<revision>.json` (committed), with `-dirty` in the
-  name when the tree was not clean. A lock file refuses a second runner
-  while the first is alive, after a stopped runner kept writing into the
-  next run's results on 2 Nov. `tests/test_ci_local.py` (10 tests) runs in
-  the loop.
-
-#### Fixed
-- **The Gazebo Harmonic rail ran with the ArduPilot GeoFence off**
-  (`sitl/run_gazebo_demo.sh`, WP3-10). It loaded only the stock copter and
-  gazebo-iris defaults, so its first end-to-end run read `FENCE_ENABLE 0`:
-  the last-line backstop behind the Shield was missing on this rail. It now
-  loads `sitl/fence/guardrail_fence.parm` as `sitl/start_sitl.sh` does
-  (`GUARDRAIL_FENCE=0` for the stock autopilot) and wipes the EEPROM at each
-  start (`SITL_WIPE=0` keeps it), so a fence polygon a previous flight left
-  is not armed from boot.
-- **A clean tree recorded as `-unknown` from WSL** (`guardrail/manifest.py`
-  `code_revision`, WP4-12). The first `git status` from WSL on the OneDrive
-  tree refreshes the whole index over `/mnt/d`, and on the first Gazebo run
-  it outlasted the 20 s timeout; the next one took 2.4 s. The status is now
-  asked twice (20 s, then 90 s), and only two failures say `-unknown`.
-  `tests/test_manifest.py` shows a first timeout followed by a clean read.
-
-#### Added
-- **`tools/render_track_video.py`: a video for every camera-less SITL run.**
-  The pymavlink, ROS 2 and Gazebo rails leave numbers and a trajectory.png,
-  no video. This replays `flight_log.jsonl` tick by tick: the policy's zones
-  (by generation) and altitude band, the mission target, the track, the
-  pilot's command against what the Shield emitted, the FSM state and the edge
-  that changed it, the forecast violations and the repairs. Every frame says
-  it is a replay of the flight log, not a camera recording. Recording the
-  Gazebo GUI was tried and does not work here: WSLg windows capture black
-  through gdigrab, and the default GUI has no video-recorder service.
-  `tests/test_render_track_video.py` (5 tests) runs in the CI loop.
 
 #### Fixed
 - **The cheat-sheet called all 41 shielded flights "dev"** (ARCH-13, the
@@ -94,6 +53,93 @@ shipped change and recorded as one.
     items follow the grant with best practice;
   - the signer and the public-repository question are still open, and
     nothing is pushed meanwhile.
+
+### 2026-11-02 (evening) — the Gazebo Harmonic rail flies end-to-end, with its GeoFence on; the CI gates run per build on the lab machine; a video for every camera-less run
+
+#### Added
+- **`tools/ci_local.py`: the CI pipeline, run per build on the lab machine**
+  (WP4-06, WP4-14, WP3-19). GitHub runs `.github/workflows/tests.yml` only
+  on a push, and nothing has been pushed since 14 Oct (1b95383), so no build
+  since ran the smoke profile. This runs the workflow's three gates on this
+  machine: every file of its standalone loop, read from the workflow in the
+  loop's order (never a copy), then `tools/check_claims.py`, then
+  `experiments/sweep_scenarios.py --profile smoke`. Logs and smoke bundles go
+  to `ci-local/<revision>/` (gitignored); the build's summary goes to
+  `docs/data/ci_local/<revision>.json` (committed), with `-dirty` in the
+  name when the tree was not clean. A lock file refuses a second runner
+  while the first is alive, after a stopped runner kept writing into the
+  next run's results on 2 Nov. `tests/test_ci_local.py` (10 tests) runs in
+  the loop.
+- **`tools/render_track_video.py`: a video for every camera-less SITL run.**
+  The pymavlink, ROS 2 and Gazebo rails leave numbers and a trajectory.png,
+  no video. This replays `flight_log.jsonl` tick by tick: the policy's zones
+  (by generation) and altitude band, the mission target, the track, the
+  pilot's command against what the Shield emitted, the FSM state and the edge
+  that changed it, the forecast violations and the repairs. Every frame says
+  it is a replay of the flight log, not a camera recording. Recording the
+  Gazebo GUI was tried and does not work here: WSLg windows capture black
+  through gdigrab, and the default GUI has no video-recorder service.
+  `tests/test_render_track_video.py` (5 tests) runs in the CI loop.
+
+#### Fixed
+- **The Gazebo Harmonic rail ran with the ArduPilot GeoFence off**
+  (`sitl/run_gazebo_demo.sh`, WP3-10). It loaded only the stock copter and
+  gazebo-iris defaults, so its first end-to-end run read `FENCE_ENABLE 0`:
+  the last-line backstop behind the Shield was missing on this rail. It now
+  loads `sitl/fence/guardrail_fence.parm` as `sitl/start_sitl.sh` does
+  (`GUARDRAIL_FENCE=0` for the stock autopilot) and wipes the EEPROM at each
+  start (`SITL_WIPE=0` keeps it), so a fence polygon a previous flight left
+  is not armed from boot.
+- **A clean tree recorded as `-unknown` from WSL** (`guardrail/manifest.py`
+  `code_revision`, WP4-12). The first `git status` from WSL on the OneDrive
+  tree refreshes the whole index over `/mnt/d`, and on the first Gazebo run
+  it outlasted the 20 s timeout; the next one took 2.4 s. The status is now
+  asked twice (20 s, then 90 s), and only two failures say `-unknown`.
+  `tests/test_manifest.py` shows a first timeout followed by a clean read.
+
+#### Flown (Gazebo Harmonic, WSL Ubuntu 24.04; not KPI-grade)
+Gazebo Sim 8.14 (headless server) with ArduCopter 4.5.7 SITL on the JSON
+backend and the ardupilot_gazebo plugin, flown by `sitl/run_sitl_demo.py` over
+pymavlink at e74eae3 (clean tree, Python 3.12.3), policy `fase3-sim-demo`
+from its signed bundle, command "fly to the northeast pad at 6 m/s", the
+GeoFence backstop on (`FENCE_ENABLE 1`, `FENCE_ALT_MAX 30`):
+
+| run (`demo/out/`) | Shield | P0 escape rate | inside the NFZ | target | FSM |
+|---|---|---|---|---|---|
+| `gazebo_shield_on_20261102` | on | 0.0 | 0.0 s | not reached | X1, G3, G5 (Loiter timeout), RTL, home |
+| `gazebo_shield_off_20261102` | off | 0.584 | 3.2 s | reached | - |
+| `gazebo_shield_on_dynamic_20261102` | on, NFZ hot-applied | 0.0 | 0.0 s | not reached | X1, G3, G5, RTL, home |
+
+Each folder holds its flight-log replay video (`<tag>_track.mp4`). Earlier
+the same day, before the fence fix, `gazebo_shield_on` flew with the
+GeoFence off (and recorded its clean tree as `-unknown`), and three test
+flights (`_20261102b` to `_20261102e`) were spent on recording the GUI; their
+Shield results match the table.
+
+#### Found
+- **With the Shield on, the Gazebo mission never leaves home.** The target
+  (30, 30) sits behind `nfz-square` (7..23 m), head-on from home. On the
+  first tick the pilot's 6 m/s command forecasts 8.13 m into the zone; the
+  GeofenceSlide repair is over theta (2.0 m), so the FSM goes Normal ->
+  Brake (X1) -> Loiter (G3) on ticks 1-2, holds for the 30 s Loiter timeout
+  (G5) and sends the aircraft home, where it already is. Safe, and the
+  false trigger the fail-safe correctness KPI counts (WP3-15; the
+  headless library's X1>G3>G5 group). For comparison only: on 2026-10-07
+  the same rail, with the zone hot-applied at 8 s and theta on the velocity
+  proxy, reached the target in 25.6 s (`sitlfix_on_dyn`).
+
+#### Limits
+- The rail flies pymavlink, not MAVROS 2 (the grant's ARCH-16 asks for a
+  functional rail; the review asked for MAVROS 2 "ideally"), and the
+  pymavlink rail uploads no fence polygons: only the altitude fence backs it
+  up (the ROS 2 rail uploads the zones). Topology `ardupilot-sitl-pymavlink`,
+  so none of it is KPI-grade.
+- The mid-term gate it belonged to was 2026-07-20 (ARCH-16 is DRIFT: late).
+
+#### Changed
+- `docs/FINAL-REPORT-outline.md`: ARCH-16 (the Gazebo functional rail) goes
+  from MISSING to DRIFT (it exists, 105 days after its gate); ARCH-17 and
+  WP3-01 cite it. 40 DONE, 81 PARTIAL, 14 DRIFT, 1 MISSING.
 
 ### 2026-11-01 (late) — the VLA follow's subject stand-off now runs: vla_fly gives the Shield the perception's subject every tick, with its velocity, and says INERT when it has none; every earlier VLA flight was flown with the stand-off inert
 
