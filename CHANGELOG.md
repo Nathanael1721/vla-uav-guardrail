@@ -161,6 +161,16 @@ records the enclave and an identity and permissions CA fingerprint equal to
 that CA's. `tools/sros2_check.sh` passed 6/6 first. P0 escape rate 0.0,
 0.0 s inside the zone; the target was not reached, as above.
 
+Simulator stressors (X-14), pymavlink rail, built-in physics, at 7c5547c,
+set by `--sim-param` at mission start and read back: wind 8 m/s from 225
+deg (toward the zone), turbulence 2 - Shield on P0 0.0, 0.0 s in the zone
+(`sitl_wind8_shield_on_20261102`), Shield off P0 0.6, 3.6 s in the zone
+(`sitl_wind8_shield_off_20261102`); GPS disabled - Shield on P0 0.0
+(`sitl_gpsloss_shield_on_20261102`). With the Shield on the aircraft held
+near home in every run (the first-tick escalation above), so these runs show
+the stressor plumbing works and the Shield-off control fails; they do not
+yet test a Shield flying a mission through wind. Re-fly after the WP3-15 fix.
+
 Each folder holds its flight-log replay video (`<tag>_track.mp4`). Earlier
 the same day, before the fence fix, `gazebo_shield_on` flew with the
 GeoFence off (and recorded its clean tree as `-unknown`), and three test
