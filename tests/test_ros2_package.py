@@ -510,6 +510,47 @@ def test_the_live_check_counts_a_refusal_only_in_the_security_layers_words():
                    "heard_zero:heard_nothing"}, (got, cp.stderr)
 
 
+def test_check_7_counts_a_refused_publisher_only_in_the_security_layers_words():
+    """tools/sros2_check.sh check 7 (X-15, 2026-11-03): a publisher the
+    per-topic permissions do not grant is refused only if the probe's node
+    came up, no PROBE line was printed, Fast DDS's access control named THAT
+    topic and rclpy failed the publisher - the text recorded in WSL Jazzy on
+    2026-11-03. A probe refused at start-up, one refused on another topic,
+    one that died otherwise and one that published all fail it."""
+    if _bash() is None:
+        print("      SKIP: no bash on this host")
+        return SKIP
+    import subprocess
+    src = (ROOT / "tools" / "sros2_check.sh").read_text(encoding="utf-8")
+    start, end = "# --- verdict helpers", "# --- end of the verdict helpers ---"
+    helpers = src.split(start, 1)[1].split("\n", 1)[1].split(end, 1)[0]
+    assert 'publisher_refused "$WORK/pub7a.txt" /shield/setpoint' in src
+    assert 'publisher_refused "$WORK/pub7b.txt" /vla/action_4d' in src
+    refused = ("NODE-UP node=vla_stub\n"
+               "\x1b[37;1m2026-11-03 04:19:39.936 \x1b[31;1m[\x1b[37;1mSECURITY\x1b[31;1m Error] "
+               "\x1b[37mrt/shield/setpoint topic not found in allow rule. "
+               "(./src/cpp/security/accesscontrol/Permissions.cpp:1192)\x1b[34;1m -> Function "
+               "\x1b[36mcheck_create_datawriter\x1b[m\n"
+               "rclpy._rclpy_pybind11.RCLError: Failed to create publisher: create_publisher() "
+               "could not create data writer, at ./src/publisher.cpp:275\n")
+    cases = {
+        "refused": refused,
+        "other_topic": refused.replace("rt/shield/setpoint", "rt/rosout"),
+        "no_node": refused.replace("NODE-UP node=vla_stub\n", ""),
+        "published": "NODE-UP node=vla_stub\nPROBE role=pub node=vla_stub enclave=/guardrail/"
+                     "vla_stub received=0 sent=30\n",
+        "died": "NODE-UP node=vla_stub\nModuleNotFoundError: No module named 'std_msgs'\n",
+    }
+    d = _tmp("sros2_pub_")
+    for name, text in cases.items():
+        (d / f"{name}.txt").write_text(text, encoding="utf-8", newline="\n")
+    loop = "".join(f'publisher_refused "{(d / n).as_posix()}.txt" /shield/setpoint '
+                   f'&& echo "{n}"\n' for n in cases)
+    cp = subprocess.run([_bash(), "-c", helpers + "\n" + loop], capture_output=True,
+                        text=True, timeout=60)
+    assert set(cp.stdout.split()) == {"refused"}, (cp.stdout, cp.stderr)
+
+
 def test_a_flight_records_sros2_only_when_it_is_on():
     """guardrail.manifest.ros2_security_evidence, which the Shield node puts
     in hil_evidence: None with security off (the record is what it was), and
