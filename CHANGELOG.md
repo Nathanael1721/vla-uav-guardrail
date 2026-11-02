@@ -177,6 +177,9 @@ Audit WP2-13, WP4-10, ARCH-23. The work went in five steps:
   the paraphrases in flight; that needs a text-reading VLA (WP4-09).
 - **No person has read the stored paraphrases yet**, the 32 new ones
   included.
+- **Unfinished when the session ended.** All five steps of the protocol are
+  done and committed. Open are the items above, and the adjectival
+  "following" false refusal (validator not changed).
 
 ### 2026-11-02 — the October deck's presenter cheat-sheet, committed
 
