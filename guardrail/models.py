@@ -1129,6 +1129,16 @@ class Policy(BaseModel):
     origin: Origin | None = None
     constraints: list[Constraint]
 
+    # The multi-scale geometry a bundle shipped with this policy (WP2-16,
+    # guardrail/ir.py "The bundle ships them"): {rule id: {scale: [[x, y]]}},
+    # set by guardrail.bundle.check_bundle once verified; None for a policy
+    # loaded from YAML. Not a field: never in the IR, the hash or the schema.
+    _shipped_multiscale: dict | None = PrivateAttr(default=None)
+
+    @property
+    def shipped_multiscale(self) -> dict | None:
+        return self._shipped_multiscale
+
     @model_validator(mode="before")
     @classmethod
     def _project(cls, data):

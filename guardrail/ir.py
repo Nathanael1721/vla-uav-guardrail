@@ -96,6 +96,23 @@ Compiler reads them from here (guardrail/compiler.py `multiscale_geometry` is
 this class) - the grant's "The Prefix Compiler picks the scale, never
 re-computes". Until then the compiler computed its own hull beside this one.
 
+THE BUNDLE SHIPS THEM (2026-11-02, WP2-16). The grant: "the policy bundle's
+IR already carries pre-computed multi-scale polygons (Policy DSL ingest
+produces them)". Until this date the bundle carried the IR only, and every
+reader recomputed the scales at load (a recorded deviation). Now
+`write_bundle` writes `multiscale.json` (`multiscale_document`, computed here
+at ingest), its SHA-256 in the signed manifest; `check_bundle` verifies the
+digest and that the shipped scales describe the bundle's policy
+(guardrail.bundle.multiscale_problems: fine IS the IR's vertices, bbox IS
+their bounds, coarse is convex and contains them - checks, not a
+recomputation), and hands them on with the policy (`Policy.shipped_multiscale`).
+A PolicyIR built from such a policy takes each zone's coarse and bbox from
+the bundle and computes nothing (`multiscale_source` says which); a zone the
+bundle does not describe - one hot-applied later - is computed here, as the
+grant's hot path "re-derives the affected spatial-index entries". A policy
+loaded from YAML, or a bundle written before 2026-11-02, still has its
+scales computed at load.
+
 NOT HERE YET (honest list)
 
   * Stand-off rings and the obstacle distance field are not indexed: a stand-off
@@ -219,6 +236,47 @@ def compile_fence(index: int, fence, ring: list[Pt] | None = None,
                        moving=moving, centre=centre, radius=radius)
 
 
+def _shipped_scales(shipped: dict | None, rule_id: str, fine: list[Pt],
+                    scales: tuple[str, ...]) -> dict | None:
+    """One rule's scales from a bundle's multiscale.json `rules`, as tuples,
+    when the bundle describes exactly this geometry - its fine scale IS the
+    rule's vertices - and holds every scale asked for; else None (the scales
+    are computed). A zone changed or added after the bundle was issued (a
+    hot-apply) therefore never reads geometry it does not have."""
+    if not shipped:
+        return None
+    ent = shipped.get(rule_id)
+    if not isinstance(ent, dict) or any(s not in ent for s in scales):
+        return None
+    try:
+        got = {s: [(float(x), float(y)) for x, y in ent[s]] for s in scales}
+    except (TypeError, ValueError):
+        return None
+    return got if got["fine"] == fine else None
+
+
+MULTISCALE_FORMAT = "guardrail-multiscale/1"
+
+
+def multiscale_document(policy: Policy) -> dict:
+    """The multi-scale geometry of `policy` as a bundle ships it
+    (`multiscale.json`): every zone's fine / coarse / bbox and every tube's
+    fine scale, in the policy's local metres (x North, y East of its frame
+    origin), computed here - at ingest - and nowhere else. The frame origin
+    is recorded so a reader can place the metres; the policy hash and
+    generation tie the document to the one policy it describes."""
+    ir = PolicyIR.from_policy(policy)
+    fo = policy.frame_origin
+    return {"format": MULTISCALE_FORMAT, "policy_id": policy.policy_id,
+            "version": policy.version, "generation": policy.generation,
+            "policy_hash": policy.policy_hash,
+            "frame": "local metres: x North, y East of the frame origin",
+            "frame_origin": None if fo is None else [fo[0], fo[1]],
+            "coarse_max_vertices": COARSE_MAX_VERTICES,
+            "rules": {rid: {s: [[x, y] for x, y in pts] for s, pts in sc.items()}
+                      for rid, sc in ir.multiscale.items()}}
+
+
 # Padding (metres) on a box computed from a moving zone's anchor geometry
 # rather than from its polygon at the tick's time. The two differ only by
 # floating-point rounding (rebuilding a translated ring, buffering it again):
@@ -265,7 +323,7 @@ class PolicyIR:
 
     def __init__(self, records: list[FenceRecord], policy_id: str = "",
                  generation: int = 0, policy_hash: str = "", version: str = "",
-                 tubes: Iterable = ()):
+                 tubes: Iterable = (), shipped: dict | None = None):
         self.fences: list[FenceRecord] = list(records)
         self.policy_id = policy_id
         self.generation = generation
@@ -280,17 +338,30 @@ class PolicyIR:
         self._tree = (_STRtree([r.buffered for r in self._static])
                       if _STRtree is not None and self._static else None)
         self.tubes = tuple(tubes)
+        self._shipped = shipped
         self.multiscale: dict[str, dict[str, list[Pt]]] = {}
+        # Per rule: "bundle" when its scales came from a bundle's
+        # multiscale.json (see the module docstring), "ingest" when computed.
+        self.multiscale_source: dict[str, str] = {}
         for r in self.fences:
             fine = [(float(v.x), float(v.y)) for v in r.rule.vertices]
+            got = _shipped_scales(shipped, r.rule.id, fine, ("fine", "coarse", "bbox"))
+            if got is not None:
+                self.multiscale[r.rule.id] = got
+                self.multiscale_source[r.rule.id] = "bundle"
+                continue
             minx, miny, maxx, maxy = r.polygon.bounds if not r.polygon.is_empty \
                 else (math.nan,) * 4
             self.multiscale[r.rule.id] = {
                 "fine": fine,
                 "coarse": list(r.coarse) if r.coarse else coarse_ring(fine),
                 "bbox": [(minx, miny), (maxx, miny), (maxx, maxy), (minx, maxy)]}
+            self.multiscale_source[r.rule.id] = "ingest"
         for c in self.tubes:
-            self.multiscale[c.id] = {"fine": [(float(x), float(y)) for x, y in c.points()]}
+            fine = [(float(x), float(y)) for x, y in c.points()]
+            got = _shipped_scales(shipped, c.id, fine, ("fine",))
+            self.multiscale[c.id] = got if got is not None else {"fine": fine}
+            self.multiscale_source[c.id] = "bundle" if got is not None else "ingest"
 
     # ------------------------------------------------------------ building
 
@@ -299,7 +370,12 @@ class PolicyIR:
         """Compile every zone of `policy`. With `reuse`, a record whose rule
         object is unchanged is kept (re-indexed if a zone before it was
         removed) instead of re-buffered: the grant's hot path "re-derives the
-        affected spatial-index entries", not the whole bundle."""
+        affected spatial-index entries", not the whole bundle.
+
+        A policy loaded from a bundle that ships its scales
+        (`policy.shipped_multiscale`) gets them from there: a zone the bundle
+        describes is compiled without a coarse ring of its own."""
+        shipped = getattr(policy, "shipped_multiscale", None)
         old = {id(r.rule): r for r in reuse.fences} if reuse is not None else {}
         recs = []
         for i, f in enumerate(c for c in policy.constraints if is_fence(c)):
@@ -307,11 +383,14 @@ class PolicyIR:
             if r is not None and r.rule is f:
                 recs.append(r if r.index == i else replace(r, index=i))
             else:
-                recs.append(compile_fence(i, f))
+                fine = [(float(v.x), float(v.y)) for v in f.vertices]
+                has = _shipped_scales(shipped, f.id, fine, ("fine", "coarse", "bbox"))
+                recs.append(compile_fence(i, f, multiscale=has is None))
         return cls(recs, policy_id=policy.policy_id, generation=policy.generation,
                    policy_hash=policy.policy_hash, version=policy.version,
                    tubes=[c for c in policy.constraints
-                          if getattr(c, "type", None) in TUBE_TYPES])
+                          if getattr(c, "type", None) in TUBE_TYPES],
+                   shipped=shipped)
 
     @classmethod
     def from_fences(cls, fences: Iterable[PolygonFence]) -> "PolicyIR":
@@ -326,10 +405,11 @@ class PolicyIR:
         recs = self.fences + [compile_fence(len(self.fences), fence)]
         if policy is None:
             return PolicyIR(recs, self.policy_id, self.generation, self.policy_hash,
-                            self.version, self.tubes)
+                            self.version, self.tubes, shipped=self._shipped)
         return PolicyIR(recs, policy.policy_id, policy.generation, policy.policy_hash,
                         policy.version, [c for c in policy.constraints
-                                         if getattr(c, "type", None) in TUBE_TYPES])
+                                         if getattr(c, "type", None) in TUBE_TYPES],
+                        shipped=self._shipped)
 
     def is_current_for(self, policy: Policy) -> bool:
         """Was this IR compiled from `policy` as it stands now?"""

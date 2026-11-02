@@ -450,8 +450,11 @@ _IR_CACHE_MAX = 64
 
 
 def compiled_ir(policy: Policy) -> PolicyIR:
-    """The PolicyIR compiled from `policy`, memoised by its hash."""
-    key = policy.policy_hash
+    """The PolicyIR compiled from `policy`, memoised by its hash - and by
+    whether its multi-scale geometry came with it from a bundle
+    (`policy.shipped_multiscale`, WP2-16): a policy loaded from a bundle reads
+    the bundle's scales, and is never served an IR that computed its own."""
+    key = (policy.policy_hash, policy.shipped_multiscale is not None)
     hit = _IR_CACHE.get(key)
     if hit is not None and hit.is_current_for(policy):
         return hit

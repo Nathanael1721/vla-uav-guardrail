@@ -142,6 +142,9 @@ ROOT = Path(__file__).resolve().parents[1]
 IR_NAME = "ir.json"
 MANIFEST_NAME = "manifest.json"
 SIGNATURE_NAME = "signature.txt"
+# The multi-scale geometry (WP2-16; guardrail/ir.py "The bundle ships them"),
+# since 2026-11-02. Optional on read: a bundle written before has none.
+MULTISCALE_NAME = "multiscale.json"
 
 # The reference's placeholder identity. Bundles written before 2026-10-06 carry
 # it; they still load (integrity intact) but report signature "unsigned".
@@ -662,7 +665,8 @@ def manifest_for(policy: Policy, changelog: str = "initial", *,
                  issued_at: str | None = None,
                  signed_by: str | None = None,
                  ir_form: str = "ours",
-                 previous: Policy | None = None) -> dict[str, Any]:
+                 previous: Policy | None = None,
+                 multiscale_sha256: str | None = None) -> dict[str, Any]:
     """The bundle's identity card: the grant's six fields, plus how the hash was
     made (`hash_scheme`, `ir_schema_version`) and, for a published bundle, when
     it was issued. `issued_at=None` leaves the key out (a replay bundle embeds a
@@ -688,7 +692,12 @@ def manifest_for(policy: Policy, changelog: str = "initial", *,
     (policy_diff), signed with the rest, and a default `changelog` of
     "initial" is replaced by its one-line reading (diff_text); a changelog
     written by hand is kept beside it. Without `previous` the manifest is
-    exactly what it was, so no stored bundle changes."""
+    exactly what it was, so no stored bundle changes.
+
+    THE MULTI-SCALE GEOMETRY (2026-11-02, WP2-16). `multiscale_sha256` is the
+    digest of the bundle's multiscale.json, so the signature over the
+    manifest covers the shipped scales too; absent on every manifest whose
+    bundle ships none (replay bundles, and every bundle before that date)."""
     _, digest, scheme = _ir_for(policy, ir_form)
     ref = policy.reference_hash()
     m = {
@@ -713,6 +722,8 @@ def manifest_for(policy: Policy, changelog: str = "initial", *,
         m["reference_delta"] = policy.reference_delta()
     if issued_at is not None:
         m["issued_at"] = issued_at
+    if multiscale_sha256 is not None:
+        m["multiscale_sha256"] = multiscale_sha256
     return m
 
 
@@ -779,9 +790,14 @@ def write_bundle(policy: Policy, out_path: str | Path,
                 f"the document it carries")
         issued_at = policy.issued_at
     ir_bytes, digest, _ = _ir_for(policy, ir_form)
+    # The scales are computed once, here at ingest, by the IR (the only place
+    # that computes them) and shipped; readers verify, never recompute.
+    from .ir import multiscale_document                 # lazy: shapely
+    ms_bytes = canonical_json(multiscale_document(policy))
     manifest = manifest_for(policy, changelog, issued_at=_issued_at(issued_at),
                             signed_by=sgn.identity if sgn else UNSIGNED,
-                            ir_form=ir_form, previous=_previous_policy(previous))
+                            ir_form=ir_form, previous=_previous_policy(previous),
+                            multiscale_sha256="sha256:" + hashlib.sha256(ms_bytes).hexdigest())
     manifest_bytes = json.dumps(manifest, indent=2, sort_keys=True).encode()
     signature = signature_text(digest, sgn, manifest_bytes)
 
@@ -807,6 +823,7 @@ def write_bundle(policy: Policy, out_path: str | Path,
                 _add(tar, IR_NAME, ir_bytes)
                 _add(tar, MANIFEST_NAME, manifest_bytes)
                 _add(tar, SIGNATURE_NAME, signature)
+                _add(tar, MULTISCALE_NAME, ms_bytes)
     return out
 
 
@@ -889,6 +906,10 @@ def check_bundle(path: str | Path,
         ir_bytes = _read(tar, IR_NAME)
         manifest_bytes = _read(tar, MANIFEST_NAME)
         sig_text = _read(tar, SIGNATURE_NAME).decode()
+        try:
+            ms_bytes = _read(tar, MULTISCALE_NAME)
+        except ValueError:
+            ms_bytes = None
     manifest = json.loads(manifest_bytes)
     declared = manifest.get("policy_hash")
 
@@ -984,6 +1005,7 @@ def check_bundle(path: str | Path,
 
     hashes, source = _verify_both_hashes(p.name, manifest, ir_bytes, policy, form,
                                          declared)
+    _attach_multiscale(p.name, manifest, ms_bytes, policy, source, form)
 
     sig_hash, signed_by, sig_hex = parse_signature(sig_text)
     if sig_hash != declared:
@@ -1003,6 +1025,105 @@ def check_bundle(path: str | Path,
     return BundleCheck(path=p, policy=policy, manifest=manifest, hash_form=form,
                        signature=status, signed_by=signed_by, detail=detail,
                        hashes=hashes, source_policy=source)
+
+
+def multiscale_problems(doc, policy: Policy) -> list[str]:
+    """Why a bundle's multiscale.json does not describe `policy`, or [].
+
+    Checks, not a recomputation (so a reader needs no shapely and no
+    agreement with the writer's GEOS build): the document names this policy
+    (hash, generation); every zone and tube of the policy has an entry and
+    nothing else does; a zone's fine scale IS its vertices and a tube's IS its
+    centerline, float for float; a zone's bbox IS the bounding rectangle of
+    those vertices; its coarse ring is convex and contains every vertex
+    (boundary included), so - being convex - it contains the whole zone. A
+    coarse ring that cut a corner would tell the model a smaller zone than
+    the Shield enforces."""
+    from .models import _dist_to_ring, _point_in_ring
+    from .ir import FENCE_TYPES, MULTISCALE_FORMAT, TUBE_TYPES
+    out: list[str] = []
+    if not isinstance(doc, dict) or doc.get("format") != MULTISCALE_FORMAT:
+        return [f"not a {MULTISCALE_FORMAT} document"]
+    if doc.get("policy_hash") != policy.policy_hash or \
+            doc.get("generation") != policy.generation:
+        return [f"it describes {doc.get('policy_hash')} g{doc.get('generation')}, not "
+                f"this policy ({policy.policy_hash} g{policy.generation})"]
+    rules = doc.get("rules")
+    if not isinstance(rules, dict):
+        return ["no `rules` mapping"]
+    want = {c.id: c for c in policy.constraints if c.type in FENCE_TYPES + TUBE_TYPES}
+    for rid in sorted(set(rules) ^ set(want)):
+        out.append(f"{rid}: " + ("no entry" if rid in want else "no such zone or tube"))
+
+    def pts(v):
+        return [(float(x), float(y)) for x, y in v]
+    for rid in sorted(set(rules) & set(want)):
+        c, ent = want[rid], rules[rid]
+        try:
+            if c.type in TUBE_TYPES:
+                if set(ent) != {"fine"} or pts(ent["fine"]) != [tuple(p) for p in c.points()]:
+                    out.append(f"{rid}: the fine scale is not the centerline")
+                continue
+            if set(ent) != {"fine", "coarse", "bbox"}:
+                out.append(f"{rid}: scales {sorted(ent)}, not fine / coarse / bbox")
+                continue
+            fine = pts(ent["fine"])
+            if fine != [(float(v.x), float(v.y)) for v in c.vertices]:
+                out.append(f"{rid}: the fine scale is not the zone's vertices")
+                continue
+            xs, ys = [p[0] for p in fine], [p[1] for p in fine]
+            box = [(min(xs), min(ys)), (max(xs), min(ys)), (max(xs), max(ys)),
+                   (min(xs), max(ys))]
+            if pts(ent["bbox"]) != box:
+                out.append(f"{rid}: the bbox is not the vertices' bounding rectangle")
+            coarse = pts(ent["coarse"])
+            n = len(coarse)
+            turns = [(coarse[(i + 1) % n][0] - coarse[i][0]) * (coarse[(i + 2) % n][1] - coarse[i][1])
+                     - (coarse[(i + 1) % n][1] - coarse[i][1]) * (coarse[(i + 2) % n][0] - coarse[i][0])
+                     for i in range(n)] if n >= 3 else []
+            if n < 3 or not (all(t >= -1e-9 for t in turns) or all(t <= 1e-9 for t in turns)):
+                out.append(f"{rid}: the coarse ring is not convex")
+            # inside or on it; 1 micrometre allows the float rounding of a
+            # minimum rotated rectangle's corners
+            elif not all(_point_in_ring(x, y, coarse) or _dist_to_ring(x, y, coarse) <= 1e-6
+                         for x, y in fine):
+                out.append(f"{rid}: the coarse ring does not contain the zone")
+        except (TypeError, ValueError, KeyError):
+            out.append(f"{rid}: unreadable entry")
+    return out
+
+
+def _attach_multiscale(name: str, manifest: dict, ms_bytes: bytes | None,
+                       policy: Policy, source: Policy | None, form: str) -> None:
+    """Verify a bundle's multiscale.json and hand it on with the policy it
+    describes (`Policy.shipped_multiscale`), or refuse. A member the manifest
+    does not name is unsigned content, and is refused too. A reference-form
+    bundle whose delta was dropped describes a source policy nothing here
+    rebuilds: its digest is still verified, and the geometry is not used
+    (such a bundle is an exchange format, refused for flight)."""
+    rec = manifest.get("multiscale_sha256")
+    if rec is None:
+        if ms_bytes is not None:
+            raise ValueError(f"{name}: carries {MULTISCALE_NAME} but the manifest "
+                             f"names no digest for it; unsigned geometry is refused")
+        return
+    if ms_bytes is None:
+        raise ValueError(f"{name}: the manifest names {MULTISCALE_NAME} "
+                         f"({str(rec)[:23]}...) but the bundle has none")
+    got = "sha256:" + hashlib.sha256(ms_bytes).hexdigest()
+    if got != rec:
+        raise ValueError(f"{name}: {MULTISCALE_NAME} hashes to {got}, the manifest "
+                         f"says {rec}: edited after issue")
+    doc = json.loads(ms_bytes)
+    target = source if (source is not None and isinstance(doc, dict)
+                        and doc.get("policy_hash") == source.policy_hash) else policy
+    if form == REFERENCE_FORM and source is None:
+        return
+    bad = multiscale_problems(doc, target)
+    if bad:
+        raise ValueError(f"{name}: {MULTISCALE_NAME} does not describe the policy "
+                         f"in this bundle: " + "; ".join(bad[:5]))
+    target._shipped_multiscale = doc["rules"]
 
 
 def _verify_both_hashes(name: str, manifest: dict, ir_bytes: bytes, policy: Policy,
