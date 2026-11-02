@@ -3913,12 +3913,28 @@ def servo(det, img_w: int, yaw_gain: float, want_w_frac: float,
 # docs/DESIGN-shield-enforcement.md asks of any demo that flies `emitted`);
 # the default stays what every city flight flew until the Shield forecasts a
 # moving subject (the loop's set_subject call says where its velocity goes).
-def flight_shield(policy, obstacle_map, grant_forecast: bool = False):
-    """The flight's Shield: 3 s / 0.5 s with the escalation FSM on (every
-    recorded city flight), or the grant's 5 s / 0.1 s with it off."""
+#
+# 2026-11-03: the loop now passes the subject's velocity (the estimator's own
+# vx, vy) to set_subject, as vla_fly has since 2026-11-01, where 65 replayed
+# flights put the grant forecast's stand-off repairs at 1.1 % of ticks with
+# the velocity given against 9.1 % held still (CHANGELOG 2026-11-01 late,
+# "Decided"). So the grant's 5 s / 0.1 s, with the escalation FSM, is this
+# rail's default (WP3-05). `legacy_forecast` builds the 3 s / 0.5 s every city
+# flight before 2026-11-03 flew; `grant_forecast` the grant forecast with the
+# FSM off, as the --grant-forecast runs before then flew.
+def flight_shield(policy, obstacle_map, grant_forecast: bool = False,
+                  legacy_forecast: bool = False):
+    """The flight's Shield: the grant's 5 s / 0.1 s with the escalation FSM
+    (the default since 2026-11-03), 3 s / 0.5 s with the FSM (legacy), or the
+    grant's forecast with the FSM off (--grant-forecast)."""
+    if legacy_forecast and grant_forecast:
+        raise ValueError("--legacy-forecast and --grant-forecast are two different "
+                         "Shields; give one")
+    if legacy_forecast:
+        return Shield(policy, lookahead_s=3.0, dt=0.5, obstacle_map=obstacle_map)
     if grant_forecast:
         return Shield(policy, obstacle_map=obstacle_map, escalation=False)
-    return Shield(policy, lookahead_s=3.0, dt=0.5, obstacle_map=obstacle_map)
+    return Shield(policy, obstacle_map=obstacle_map)
 
 
 def shield_lookahead_record(shield) -> dict:
@@ -4379,12 +4395,13 @@ async def fly(args) -> int:
     if policy.by_type(ObstacleClearance) and cmap is not None:
         smap = {"occ": cmap["occ"], "res": cmap["res"],
                 "ox": cmap["ox"], "oy": cmap["oy"]}
-    # 3 s / 0.5 s unless --grant-forecast; see flight_shield for why the grant's
-    # 5 s / 0.1 s is not yet this rail's default. Recorded either way
+    # The grant's 5 s / 0.1 s with the escalation FSM unless --legacy-forecast
+    # or --grant-forecast; see flight_shield. Recorded either way
     # (metrics/kpi "shield_lookahead").
-    shield = flight_shield(policy, smap, grant_forecast=args.grant_forecast)
+    shield = flight_shield(policy, smap, grant_forecast=args.grant_forecast,
+                           legacy_forecast=args.legacy_forecast)
     print(f"[shield] forecast {shield.lookahead_s:g} s at {shield.dt:g} s "
-          f"({'the grant forecast, escalation FSM off' if args.grant_forecast else 'NOT the grant 5 s / 0.1 s: the city rail default, see --grant-forecast'})")
+          f"({'the grant forecast, escalation FSM off' if args.grant_forecast else '3 s / 0.5 s, the city rail before 2026-11-03' if args.legacy_forecast else 'the grant forecast, escalation FSM on'})")
     clr = policy.by_type(ObstacleClearance)
 
     # Where the roads are, which is a different question from where the
@@ -6427,12 +6444,15 @@ async def fly(args) -> int:
             # The estimator's state is [x, y, vx, vy], so the subject's own
             # velocity is float(estimator.x[2]), float(estimator.x[3]), from
             # the same bearing-and-range estimate as the position (no ground
-            # truth). When set_subject accepts a velocity, it is passed in the
-            # call just below, and --grant-forecast can then become the default
-            # after a flight.
+            # truth). Since 2026-11-03 it is passed (set_subject's velocity=),
+            # so the grant's 5 s forecast carries the subject along instead of
+            # holding it still; a non-finite estimate gives no velocity.
             if estimator is not None and estimator.x is not None and est_obs is not None:
+                svx, svy = float(estimator.x[2]), float(estimator.x[3])
                 shield.set_subject(float(estimator.x[0]), float(estimator.x[1]),
-                                   subject_class)
+                                   subject_class,
+                                   velocity=((svx, svy) if math.isfinite(svx)
+                                             and math.isfinite(svy) else None))
             else:
                 shield.set_subject(None)
 
@@ -7929,14 +7949,15 @@ def build_arg_parser() -> argparse.ArgumentParser:
                          "stand-off (0.126 for 0.16 on a 4 m car: 12.5 m "
                          "against 15.83 m before).")
     ap.add_argument("--grant-forecast", action="store_true",
-                    help="build the Shield with the grant's 5 s / 0.1 s "
-                         "forecast (escalation FSM off, as the demo flies "
-                         "`emitted`) instead of this rail's 3 s / 0.5 s. NOT "
-                         "the default: SubjectStandoff forecasts against a "
-                         "subject held still, so 5 s of the aircraft's own "
-                         "speed reaches the car's ring from following "
-                         "distance - replayed on citylife_redcar_nfz_20261013 "
-                         "it held 44%% of ticks, median 3.7 m/s cut.")
+                    help="the grant's 5 s / 0.1 s forecast with the escalation "
+                         "FSM OFF, as the --grant-forecast runs before "
+                         "2026-11-03 flew (the default is the same forecast "
+                         "with the FSM on)")
+    ap.add_argument("--legacy-forecast", action="store_true",
+                    help="the 3 s / 0.5 s forecast every city flight before "
+                         "2026-11-03 flew, with the escalation FSM; the default "
+                         "is the grant's 5 s / 0.1 s now that the subject's "
+                         "velocity reaches the Shield")
     return ap
 
 

@@ -1550,16 +1550,27 @@ def test_a_level_crowd_is_polled_only_while_a_pedestrian_is_followed():
 
 def test_the_city_shield_records_the_forecast_it_flew():
     """The city rail flew 3 s / 0.5 s and no artefact said so; the record is
-    read from the Shield itself. --grant-forecast builds the grant's 5 s /
-    0.1 s with the escalation FSM off."""
+    read from the Shield itself. Since 2026-11-03 the default is the grant's
+    5 s / 0.1 s with the escalation FSM (WP3-05); --legacy-forecast builds the
+    3 s / 0.5 s every earlier city flight flew, --grant-forecast the grant's
+    forecast with the FSM off, and asking for both is refused."""
     import follow_vlm as fv
     from guardrail import load_policy
     pol = load_policy(ROOT / "policies" / "follow_car_citylife_nfz.yaml")
     rec = fv.shield_lookahead_record(fv.flight_shield(pol, None))
+    assert rec == {"horizon_s": 5.0, "dt_s": 0.1, "poses": 50, "grant": True,
+                   "escalation_fsm": True}, rec
+    rec = fv.shield_lookahead_record(fv.flight_shield(pol, None, legacy_forecast=True))
     assert rec == {"horizon_s": 3.0, "dt_s": 0.5, "poses": 6, "grant": False,
                    "escalation_fsm": True}, rec
     rec = fv.shield_lookahead_record(fv.flight_shield(pol, None, grant_forecast=True))
     assert rec["grant"] and rec["poses"] == 50 and not rec["escalation_fsm"], rec
+    try:
+        fv.flight_shield(pol, None, grant_forecast=True, legacy_forecast=True)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("two forecasts at once were accepted")
 
 
 def test_the_loop_timing_shows_the_stall_the_median_hid():

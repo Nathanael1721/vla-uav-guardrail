@@ -524,7 +524,8 @@ def test_the_help_renders_and_lists_the_motion_flags():
                  "--yaw-accel-max", "--guard-release-accel", "--guard-engage-accel",
                  "--guard-lat-accel", "--catchup-mps", "--yaw-los-ff",
                  "--yaw-los-ff-min-range",
-                 "--legacy-tick-pose", "--legacy-servo-width", "--grant-forecast"):
+                 "--legacy-tick-pose", "--legacy-servo-width", "--grant-forecast",
+                 "--legacy-forecast"):
         assert flag in r.stdout, flag
 
 
