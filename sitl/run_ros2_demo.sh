@@ -5,7 +5,8 @@
 #        (GeoFence backstop)                    +--> Mission Planner (Windows, udp 14550)
 #   vla_stub --/vla/action_4d--> safety_shield --/shield/setpoint--> mavlink_adapter
 #            --/mavros/setpoint_raw/local--> MAVROS 2
-#   ros2 bag record of the grant's topics into demo/out/<tag>/bag
+#   ros2 bag record of the grant's topics into demo/out/<tag>/bag: actions,
+#   mode changes, MAVROS's sensor topics and raw MAVLink (see the command)
 #
 # Usage (WSL):  bash run_ros2_demo.sh [on|off] [--dynamic | -] [extra args ...]
 #               VLA=bridge bash run_ros2_demo.sh on - --vla-server HOST:PORT [...]
@@ -226,11 +227,31 @@ if [ "${BAG:-1}" = "1" ]; then
     mkdir -p "$OUT/_previous"
     mv "$OUT/bag" "$OUT/_previous/bag-$(date -u +%Y%m%dT%H%M%SZ)"
   fi
+  # The grant's episode bag (Stress Testing, "Episode bundle": "rosbag2
+  # capture: sensors, actions, MAVLink, mode changes"; ARCH-22). Actions: the
+  # VLA's, the Shield's and what MAVROS was sent (/mavros/setpoint_raw/local,
+  # which tools/export_episodes.py reads as each step's `executed`). Mode
+  # changes: /mavros/state, /mavros/extended_state, the Shield's mode
+  # requests and the autopilot's status text. Sensors (since 2026-11-02): the
+  # pose, velocity, IMU, GPS fix and relative altitude, altitude, battery and
+  # home that MAVROS reports, and the two camera topics the VLA bridge reads
+  # (nothing publishes them on the SITL-only rail; recorded when present).
+  # Raw MAVLink (since 2026-11-02): MAVROS 2's own link to its router, both
+  # directions - /uas1/mavlink_source (from the autopilot) and
+  # /uas1/mavlink_sink (to it, SET_POSITION_TARGET_LOCAL_NED among them), as
+  # mavros_msgs/Mavlink. Keep deploy/docker/entrypoint.sh's BAG_TOPICS equal
+  # (tests/test_deploy_configs.py).
   nohup "${ENC_BAG[@]}" ros2 bag record -s mcap -o "$OUT/bag" \
     /vla/action_4d /vla/identity /shield/setpoint /shield/intercept \
     /shield/mode_request /shield/fences /mavlink_adapter/status \
     /mavros/setpoint_raw/local /mavros/setpoint_raw/target_local \
     /mavros/state /mavros/local_position/pose \
+    /mavros/extended_state /mavros/statustext/recv \
+    /mavros/local_position/velocity_local /mavros/imu/data \
+    /mavros/global_position/global /mavros/global_position/rel_alt \
+    /mavros/altitude /mavros/battery /mavros/home_position/home \
+    /camera/front/image_raw /camera/down/image_raw \
+    /uas1/mavlink_source /uas1/mavlink_sink \
     > ~/sitl-run/bag.log 2>&1 &
   BAG_PID=$!
   sleep 2

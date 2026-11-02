@@ -680,7 +680,9 @@ def _native_nodes() -> set[str]:
 
 
 def _topics(text: str) -> list[str]:
-    return re.findall(r"(?<![\w$])(/[a-z_]+(?:/[a-z_0-9]+)+)", text)
+    # A first segment may hold digits (/uas1/mavlink_source, 2026-11-02): the
+    # old pattern did not see those topics in either list.
+    return re.findall(r"(?<![\w$])(/[a-z_][a-z_0-9]*(?:/[a-z_0-9]+)+)", text)
 
 
 def test_the_mission_starts_every_node_the_native_rail_starts():
