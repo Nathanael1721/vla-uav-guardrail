@@ -1446,6 +1446,39 @@ def test_the_pas_planner_routes_around_every_static_zone_and_leaves_moving_ones(
     assert [z.id for z in A.planning_zones(pol)] == ["poly", "circ", "dyn"]
 
 
+def _sitl_function(name):
+    """One function of sitl/run_sitl_demo.py, run on its own (the module
+    imports pymavlink and connects at main())."""
+    src = (SITL / "run_sitl_demo.py").read_text(encoding="utf-8")
+    fn = next(n for n in ast.parse(src).body if isinstance(n, ast.FunctionDef) and n.name == name)
+    ns = {}
+    exec(compile(ast.Module(body=[fn], type_ignores=[]), "run_sitl_demo.py", "exec"), ns)
+    return ns[name]
+
+
+def test_sim_stressors_are_only_the_simulators_own_parameters():
+    """X-14: a stressor changes the simulated world, never the firmware under
+    test, and a value that is not a finite number is refused."""
+    parse = _sitl_function("parse_sim_params")
+    assert parse(None) == {}
+    assert parse(["sim_wind_spd=6", "SIM_WIND_DIR=225", "SIM_GPS_DISABLE=1"]) == {
+        "SIM_WIND_SPD": 6.0, "SIM_WIND_DIR": 225.0, "SIM_GPS_DISABLE": 1.0}
+    for bad in ("FENCE_ENABLE=0", "WPNAV_SPEED=2000", "SIM_WIND_SPD", "SIM_=1",
+                "SIM_WIND_SPD=fast", "SIM_WIND_SPD=nan", "SIM_WIND_SPD=inf"):
+        try:
+            parse([bad])
+        except ValueError:
+            continue
+        raise AssertionError(f"accepted {bad!r}")
+
+
+def test_a_stressor_that_does_not_read_back_stops_the_run():
+    src = (SITL / "run_sitl_demo.py").read_text(encoding="utf-8")
+    assert '"sim_stressors": sim_stressors' in src, "metrics.json must record the stressors"
+    tail = src.split("sim_stressors = []", 1)[1][:1500]
+    assert "did not read back as" in tail and "raise SystemExit" in tail
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     failed = 0

@@ -170,6 +170,31 @@ def theta_horizon(arg: str | None = "auto") -> float | None:
     return h
 
 
+def parse_sim_params(items: list[str] | None) -> dict[str, float]:
+    """`--sim-param NAME=VALUE` (repeatable): the simulator's own stressors.
+
+    Only SITL's SIM_* parameters are accepted (wind SIM_WIND_SPD / _DIR /
+    _TURB, GPS SIM_GPS_DISABLE / SIM_GPS_GLITCH_X ...): they change the
+    simulated world, never the firmware under test, which is what the
+    stressor runs of X-14 need (until 2026-11-02 wind and GPS loss acted on
+    the headless kinematic model only). Anything else is refused here."""
+    out: dict[str, float] = {}
+    for it in items or []:
+        name, sep, val = it.partition("=")
+        name = name.strip().upper()
+        if not sep or not name.startswith("SIM_") or not name[4:]:
+            raise ValueError(f"--sim-param {it!r}: give SIM_<NAME>=<number>; only the "
+                             f"simulator's SIM_* parameters are stressors")
+        try:
+            v = float(val)
+        except ValueError:
+            raise ValueError(f"--sim-param {it!r}: {val!r} is not a number") from None
+        if v != v or v in (float("inf"), float("-inf")):
+            raise ValueError(f"--sim-param {it!r}: not a finite number")
+        out[name] = v
+    return out
+
+
 def theta_basis(horizon_s: float | None) -> dict:
     """How theta's repair magnitude was measured on this run (metrics.json
     `fsm.theta_basis`; guardrail.kpi reads `horizon_s` back from it). The
@@ -461,8 +486,15 @@ def main() -> int:
     ap.add_argument("--hotapply-server-cert", default=None, metavar="NAME")
     ap.add_argument("--hotapply-client", action="append", default=None,
                     metavar="CN", help="client common name allowed in (repeat)")
+    ap.add_argument("--sim-param", action="append", default=None, metavar="SIM_NAME=VALUE",
+                    help="a simulator stressor set at mission start and read back "
+                         "(repeat), e.g. SIM_WIND_SPD=6 SIM_WIND_DIR=225 SIM_GPS_DISABLE=1")
     ap.add_argument("--tag", default=None)
     args = ap.parse_args()
+    try:
+        sim_params = parse_sim_params(args.sim_param)
+    except ValueError as e:
+        ap.error(str(e))
 
     shield_on = args.shield == "on"
     theta_h = theta_horizon(args.theta_horizon_s)
@@ -586,6 +618,19 @@ def main() -> int:
     # two rails record it (mavlink_adapter_node.ModeRequests).
     asks = ModeRequests(args.hold_mode)
     link.prepare(mission.cruise_alt_m)
+    # Simulator stressors (X-14), after take-off: a GPS loss before arming
+    # would only keep the EKF from arming. Each is read back; one that does
+    # not read back as set is refused rather than flown as if it applied.
+    sim_stressors = []
+    for name, want in sim_params.items():
+        got = link.set_param(name, want)
+        ok = got is not None and abs(got - want) <= 1e-3 * max(1.0, abs(want))
+        sim_stressors.append({"param": name, "set": want, "read_back": got, "applied": ok})
+        rec.event("sim_stressor", param=name, set=want, read_back=got, applied=ok)
+        print(f"[stress]   {name} = {want} (read back {got})")
+        if not ok:
+            raise SystemExit(f"[stress]   {name} did not read back as {want} (got {got}): "
+                             f"the stressor would not be what the record says")
     print(f"[flight]   shield={'ON' if shield_on else 'OFF'} — mission start")
 
     traj: list[dict] = []
@@ -887,6 +932,7 @@ def main() -> int:
             "shield_velocity_ticks": shield.n_velocity_ticks,
             "velocity_nonfinite": shield.n_velocity_nonfinite},
         "autopilot_fence": ap_fence,
+        "sim_stressors": sim_stressors,
         "shield": args.shield,
         "reached": reached,
         "frac_within_30m": 1.0 if reached else 0.0,
