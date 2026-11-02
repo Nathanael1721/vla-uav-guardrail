@@ -112,6 +112,7 @@ from pydantic import BaseModel, Field, ValidationError
 
 from .models import (DEFAULT_LAYER, IR2_RULE_DEFAULTS, XY, CorridorSwap, DynamicNFZ,
                      TimeWindowSwitch)
+from .projection import local_metres
 from .shield import (HOT_APPLICABLE, HotApplyRefused, LockedRuleClass, RuleIdConflict,
                      Shield, UnknownRule)
 
@@ -175,7 +176,10 @@ def _points(shield: Shield, pts: Any) -> list[dict]:
             # retryable UNAVAILABLE for a forwarded body).
             try:
                 lat, lon = float(p["lat"]), float(p["lon"])
-                x, y = proj.to_local(lat, lon)
+                # The policy's own view of the point (rounded to the
+                # micrometre, IR schema 3.1.0), so a zone sent in lat/lon is
+                # the same metres it would be if the policy were reloaded.
+                x, y = local_metres((proj.origin_lat, proj.origin_lon), lat, lon)
             except (TypeError, ValueError, OverflowError):
                 raise ApiError(422, f"point {p!r}: lat/lon must be numbers") from None
             out.append({"x": x, "y": y, "lat": lat, "lon": lon})

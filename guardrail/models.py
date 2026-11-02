@@ -63,17 +63,21 @@ COORDINATES
 
 WGS84 is canonical (grant: "WGS84 latitude / longitude is canonical ... the DSL
 itself never carries projected coordinates"). A geographic point keeps lat/lon in
-the IR and its hash; x/y (metres, x = North, y = East) are added at load for the
-Shield - see guardrail/projection.py. A policy written in metres is the legacy
-form and keeps loading, and hashing, exactly as before. Altitude is metres above
-ground by default; `altitude_ref: MSL` is declarable and refused for flight
-(the Shield has no ground-elevation source).
+the IR and its hash; its x/y (metres, x = North, y = East of the policy's frame
+origin) are a view, computed when the Shield or the compiler first reads them
+and cached per origin (XY; guardrail/projection.py) - since IR schema 3.1.0
+(2026-11-03), not at load. Every shipped policy states its `origin` and writes
+its points in lat/lon since that date (tools/convert_policies_wgs84.py). A policy
+written in metres is the legacy form and keeps loading, and hashing, exactly as
+before. Altitude is metres above ground by default; `altitude_ref: MSL` is
+declarable and refused for flight (the Shield has no ground-elevation source).
 
 docs/DESIGN-policy-dsl-grant-form.md records the decisions and what still
 differs from the reference implementation.
 """
 from __future__ import annotations
 
+import functools
 import hashlib
 import json
 import math
@@ -84,11 +88,13 @@ from pathlib import Path
 from typing import Annotated, Any, ClassVar, Literal, Union
 
 import yaml
-from pydantic import (BaseModel, ConfigDict, Field, PrivateAttr, field_validator,
-                      model_serializer, model_validator)
+from pydantic import (BaseModel, ConfigDict, Field, PrivateAttr, ValidationInfo,
+                      field_validator, model_serializer, model_validator)
 
 from .fsm import action_strength, canonical_action
-from .projection import LocalProjection, derive_frame_origin, project_raw, ring_order
+from .projection import (CONSISTENCY_TOL_M, LocalProjection, check_ring,
+                         derive_frame_origin, local_metres, project_raw,
+                         projection_for, quantize_m, ring_order)
 
 
 # --------------------------------------------------------------------------- #
@@ -433,41 +439,154 @@ class ConstraintBase(BaseModel):
         return self.valid_time.active_at(when)
 
 
-class XY(BaseModel):
-    """A point. x = metres North, y = metres East of the policy's frame origin.
+# Serialisation contexts of a point (XY._serialise). STORED: what the canonical
+# IR holds - a WGS84 point as lat/lon only. ERA: a WGS84 point with the
+# UNROUNDED metres hash scheme v2 and the 16-hex eras stored for it (prior and
+# legacy hash forms only). No context: lat/lon plus the local view, the shape
+# every consumer of a dump has always seen.
+_STORED = {"points": "stored"}
+_ERA = {"points": "era"}
 
-    A point authored in WGS84 also keeps `lat` / `lon`: those are what the
-    canonical IR stores and hashes, and x/y are derived from them at load
-    (guardrail/projection.py). A metre point leaves lat/lon absent."""
+
+class XY(BaseModel):
+    """A point: WGS84 `lat` / `lon` (canonical), or local metres `x` / `y`
+    (x = North, y = East of the policy's frame origin; the legacy form).
+
+    A WGS84 point stores lat/lon only: they are what the canonical IR holds and
+    hashes, and the grant forbids the DSL to carry projected coordinates. Its
+    `x` / `y` are a VIEW, computed the first time something reads them (the
+    Shield, the compiler) from the frame origin the point is bound to - its
+    policy's, bound when the policy validates (Policy._bind_frame) - and
+    cached per origin (projection.local_metres, rounded to the micrometre).
+    Until 2026-11-03 (IR schema 3.1.0) x/y were required fields, filled in for
+    every point when the policy loaded.
+
+    A WGS84 point validated on its own (a rule outside any policy) has no
+    frame yet: reading its x/y raises, unless it was given metres beside
+    lat/lon (a REST body pre-projected in the policy's frame, a dump), which
+    it then keeps as its view until a policy binds it. A model_dump writes
+    the view beside lat/lon (as every dump did before 3.1.0); the canonical IR
+    does not (`_STORED`).
+
+    `x` and `y` are model fields AND are read through the properties set on
+    the class below: the field holds the metres of a metre point (or the
+    given view of an unbound WGS84 point), the property answers for both."""
     model_config = _IR_CONFIG
-    x: float
-    y: float
+    x: float | None = None
+    y: float | None = None
     lat: float | None = Field(default=None, ge=-90.0, le=90.0)
     lon: float | None = Field(default=None, ge=-180.0, le=180.0)
-
-    @model_validator(mode="before")
-    @classmethod
-    def _projected_first(cls, data):
-        if isinstance(data, dict) and ("x" not in data or "y" not in data):
-            has_lat, has_lon = data.get("lat") is not None, data.get("lon") is not None
-            if has_lat != has_lon:
-                raise ValueError(f"point {data}: lat and lon come as a pair")
-            if has_lat:
-                raise ValueError(
-                    f"point {data} reached the model without being projected. "
-                    f"Geographic points are projected by the Policy (it knows the "
-                    f"frame origin): validate the whole policy, not a single rule.")
-        return data
+    # The frame origin (lat, lon) a WGS84 point is placed in; None until a
+    # policy (or a validation context with a "frame") binds it.
+    _frame: tuple[float, float] | None = PrivateAttr(default=None)
 
     @model_validator(mode="after")
-    def _pair(self) -> "XY":
+    def _pair(self, info: ValidationInfo) -> "XY":
         if (self.lat is None) != (self.lon is None):
             raise ValueError("lat and lon come as a pair")
+        sx, sy = self.__dict__.get("x"), self.__dict__.get("y")
+        if (sx is None) != (sy is None):
+            raise ValueError("x and y come as a pair")
+        if self.lat is None and sx is None:
+            raise ValueError("a point is {x, y} metres or {lat, lon}")
+        ctx = info.context if isinstance(info.context, dict) else None
+        frame = ctx.get("frame") if ctx else None
+        if frame is not None and self.lat is not None:
+            self._bind(tuple(frame))
         return self
+
+    def _bind(self, frame: tuple[float, float]) -> None:
+        """Place this WGS84 point in the frame of `frame` (lat, lon). Metres it
+        was given beside lat/lon are checked against that frame (1 um) and
+        dropped: from here on its x/y are the frame's view."""
+        if self.lat is None:
+            return
+        sx, sy = self.__dict__.get("x"), self.__dict__.get("y")
+        if sx is not None:
+            x, y = projection_for(*frame).to_local(self.lat, self.lon)
+            dx, dy = abs(sx - x), abs(sy - y)
+            if dx > CONSISTENCY_TOL_M or dy > CONSISTENCY_TOL_M:
+                raise ValueError(
+                    f"point ({self.lat}, {self.lon}) carries x/y that disagree by "
+                    f"({dx:.3g}, {dy:.3g}) m with its policy's frame; one point "
+                    f"cannot mix frames")
+            self.__dict__["x"] = self.__dict__["y"] = None
+        self._frame = (float(frame[0]), float(frame[1]))
+
+    def _view(self) -> tuple[float, float] | None:
+        """(x, y) of this point in its frame, or None for an unbound WGS84
+        point that was given no metres."""
+        if self.lat is None:
+            return (self.__dict__["x"], self.__dict__["y"])
+        priv = self.__pydantic_private__
+        frame = priv.get("_frame") if priv else None
+        if frame is not None:
+            return local_metres(frame, self.lat, self.lon)
+        sx = self.__dict__.get("x")
+        return None if sx is None else (sx, self.__dict__["y"])
+
+    def local(self, origin: tuple[float, float] | None = None) -> tuple[float, float]:
+        """(x North, y East) metres of this point in the frame of `origin`
+        (lat, lon), default the frame it is bound to: the lazily computed,
+        per-origin cached view (projection.local_metres). A metre point is
+        in its policy's frame only, so it refuses another origin."""
+        if origin is None:
+            v = self._view()
+            if v is None:
+                raise ValueError(_UNBOUND)
+            return v
+        if self.lat is None:
+            raise ValueError("a metre point has no WGS84 position, so it cannot be "
+                             "placed in another frame")
+        return local_metres((float(origin[0]), float(origin[1])), self.lat, self.lon)
+
+    @model_serializer(mode="wrap")
+    def _serialise(self, handler, info):
+        out = handler(self)
+        if self.lat is None or not isinstance(out, dict):
+            return out
+        ctx = info.context if isinstance(info.context, dict) else None
+        how = ctx.get("points") if ctx else None
+        out.pop("x", None)
+        out.pop("y", None)
+        if how == "stored":
+            return out
+        if how == "era":
+            frame = (self.__pydantic_private__ or {}).get("_frame")
+            if frame is not None:
+                x, y = projection_for(*frame).to_local(self.lat, self.lon)
+                return {**out, "x": x, "y": y}
+        v = self._view()
+        if v is not None:
+            out["x"], out["y"] = v
+        return out
 
     @property
     def geographic(self) -> bool:
         return self.lat is not None
+
+
+_UNBOUND = ("a WGS84 point that no policy has placed: its metres depend on the "
+            "policy's frame origin. Validate the whole policy (or pass "
+            "context={'frame': (lat, lon)}), or give x/y beside lat/lon")
+
+
+def _coord(i: int, name: str) -> property:
+    def get(self: XY) -> float:
+        v = self._view()
+        if v is None:
+            raise ValueError(f"{name}: " + _UNBOUND)
+        return v[i]
+    return property(get, doc=f"{'North' if i == 0 else 'East'} metres in the "
+                             f"point's frame (stored, or the WGS84 point's view)")
+
+
+# The read side of x / y (see XY's docstring). Set after the class is built:
+# pydantic keeps field values in the instance __dict__, and a property on the
+# class takes precedence over it, so `point.x` is answered here while
+# validation and serialisation read the field.
+XY.x = _coord(0, "x")
+XY.y = _coord(1, "y")
 
 
 def _orient(a, b, c) -> float:
@@ -701,12 +820,18 @@ class PolygonFence(_Banded, _CanonicalRing, ConstraintBase):
 
     @model_validator(mode="after")
     def _simple_polygon(self) -> "PolygonFence":
-        why = polygon_problem(self.ring())
+        # A circle_fence's polygon is derived (a regular 32-gon about its
+        # centre): never self-intersecting, and for a WGS84 centre not
+        # placed until its policy binds it (CircleFence.vertices).
+        if self.type == "circle_fence":
+            return self
+        try:
+            why = polygon_problem(check_ring(self.vertices))
+        except ValueError as e:
+            why = str(e)
         if why:
             raise ValueError(f"{self.id}: {why}")
-        # A circle_fence's vertices are derived and not part of the IR.
-        if self.type != "circle_fence":
-            self._canonicalise_ring()
+        self._canonicalise_ring()
         return self
 
     def ring(self) -> list[tuple[float, float]]:
@@ -747,6 +872,10 @@ class CircleFence(PolygonFence):
             raise ValueError(f"{data.get('id', '?')}: a circle_fence's polygon is "
                              f"derived from center + radius_m; do not write vertices")
         c, r = data.get("center"), data.get("radius_m")
+        if (c.get("lat") if isinstance(c, dict) else getattr(c, "lat", None)) is not None:
+            # A WGS84 centre: the polygon is derived where the centre is
+            # placed, when it is first read (CircleFence.vertices below).
+            return data
         try:
             cx = float(c["x"] if isinstance(c, dict) else c.x)
             cy = float(c["y"] if isinstance(c, dict) else c.y)
@@ -760,6 +889,31 @@ class CircleFence(PolygonFence):
         verts = [{"x": cx + big * math.cos(2 * math.pi * k / n),
                   "y": cy + big * math.sin(2 * math.pi * k / n)} for k in range(n)]
         return {**data, "vertices": verts}
+
+
+@functools.lru_cache(maxsize=4096)
+def _circle_ring(cx: float, cy: float, r: float, n: int) -> tuple:
+    """The circumscribing n-gon of a circle as metre points, exactly the
+    arithmetic of CircleFence._post_normalise. Cached: a WGS84 circle's
+    polygon is derived from its centre's view when first read."""
+    big = r / math.cos(math.pi / n)
+    return tuple(XY(x=cx + big * math.cos(2 * math.pi * k / n),
+                    y=cy + big * math.sin(2 * math.pi * k / n)) for k in range(n))
+
+
+def _circle_vertices(self: CircleFence) -> list:
+    v = self.__dict__.get("vertices")
+    if v or self.center.lat is None:
+        return v                     # a metre centre: derived at validation
+    return list(_circle_ring(self.center.x, self.center.y, float(self.radius_m),
+                             self.SEGMENTS))
+
+
+# The read side of a circle's `vertices` (the field is excluded from the IR;
+# see XY for the pattern): a WGS84 centre's polygon is derived lazily, in the
+# frame the centre is placed in.
+CircleFence.vertices = property(_circle_vertices,
+                                doc="The derived 32-gon (metre points, policy frame)")
 
 
 class AltitudeEnvelope(ConstraintBase):
@@ -978,7 +1132,10 @@ class DynamicNFZ(_Banded, _CanonicalRing, ConstraintBase):
     @model_validator(mode="after")
     def _checks(self) -> "DynamicNFZ":
         self._check_band()
-        why = polygon_problem([(v.x, v.y) for v in self.vertices])
+        try:
+            why = polygon_problem(check_ring(self.vertices))
+        except ValueError as e:
+            why = str(e)
         if why:
             raise ValueError(f"{self.id}: {why}")
         # Canonical order (see PolygonFence). ring_at rotates about the vertex
@@ -1134,6 +1291,10 @@ class Policy(BaseModel):
     # set by guardrail.bundle.check_bundle once verified; None for a policy
     # loaded from YAML. Not a field: never in the IR, the hash or the schema.
     _shipped_multiscale: dict | None = PrivateAttr(default=None)
+    # The frame origin every WGS84 point of this policy was bound to when it
+    # validated (_bind_frame): the stated origin, else the derived one.
+    # Not a field: never in the IR, the hash or the schema.
+    _frame_origin: tuple[float, float] | None = PrivateAttr(default=None)
 
     @property
     def shipped_multiscale(self) -> dict | None:
@@ -1142,9 +1303,30 @@ class Policy(BaseModel):
     @model_validator(mode="before")
     @classmethod
     def _project(cls, data):
-        # Geographic points gain x/y here, once, for the whole policy: only the
-        # policy knows its frame origin.
+        # The frames are checked here, for the whole policy (only the policy
+        # knows its frame origin). Nothing is projected: a WGS84 point's
+        # metres are derived when first read (XY; projection.project_raw).
         return project_raw(data) if isinstance(data, dict) else data
+
+    @model_validator(mode="after")
+    def _bind_frame(self) -> "Policy":
+        # Every WGS84 point is placed in this policy's frame - bound, not
+        # projected: the projection runs when the Shield or the compiler
+        # first reads the point's x / y (WP1-14: "ENU / NED projection is
+        # computed lazily by the Prefix Compiler and Safety Shield").
+        if not self.is_geographic:
+            self._frame_origin = None
+            return self
+        if self.origin is not None:
+            fo = (self.origin.lat, self.origin.lon)
+        else:
+            fo = derive_frame_origin([c.model_dump(mode="json", context=_STORED)
+                                      for c in self.constraints])
+        self._frame_origin = fo
+        for pts in _rule_points(self, all_points=True):
+            for v in pts:
+                v._bind(fo)
+        return self
 
     @field_validator("issued_at", mode="before")
     @classmethod
@@ -1182,7 +1364,10 @@ class Policy(BaseModel):
         first geographic rule). None for a policy written only in metres."""
         if self.origin is not None:
             return (self.origin.lat, self.origin.lon)
-        return derive_frame_origin([c.model_dump() for c in self.constraints])
+        if self._frame_origin is not None:
+            return self._frame_origin
+        return derive_frame_origin([c.model_dump(mode="json", context=_STORED)
+                                    for c in self.constraints])
 
     def projection(self) -> LocalProjection | None:
         o = self.frame_origin
@@ -1223,11 +1408,11 @@ class Policy(BaseModel):
         projected coordinates (hash scheme v3, 2026-10-06). A metre point is
         stored as {x, y}, so every metre policy's bytes are what they were.
         """
-        dump = self.model_dump(mode="json", exclude_none=True)
-        # The walk is skipped for a metre policy: it would change nothing, and
-        # the audit logger hashes once per record (it doubled the 50-rule hash
-        # time, 0.26 -> 0.52 ms, before this shortcut).
-        return _geo_canonical(dump) if self.is_geographic else dump
+        # _STORED: a WGS84 point dumps as lat/lon only (XY._serialise), so no
+        # point is projected to be hashed. (Until 3.1.0 the dump carried x/y
+        # and a walk, _geo_canonical, dropped them again: it doubled the
+        # 50-rule hash time, 0.26 -> 0.52 ms.)
+        return self.model_dump(mode="json", exclude_none=True, context=_STORED)
 
     def canonical_bytes(self) -> bytes:
         """The exact bytes `policy_hash` digests - and the bytes a bundle ships
@@ -1284,20 +1469,23 @@ class Policy(BaseModel):
         if not self.is_geographic:
             return {}
         # v2 was one day's scheme (2026-10-06), so its IR is the 2.x shape.
-        dump = _metric_view(self._ir2_dump(mode="json", exclude_none=True))
+        dump = _metric_view(self._ir2_dump(mode="json", exclude_none=True,
+                                           context=_ERA))
         return {PRIOR_SCHEME_V2: "sha256:" + hashlib.sha256(canonical_json(dump)).hexdigest()}
 
     def _ir2_dump(self, *, mode: str = "json", exclude_none: bool = True,
-                  repair: bool = True) -> dict:
+                  repair: bool = True, context: dict | None = None) -> dict:
         """This policy's dump as IR schema 2.x stored it: every polygon ring in
         the order it was GIVEN (3.0.0 stores it canonically) and, with
         `repair`, the grant's project_fix spelt `repair` (3.0.0 stores only
         the grant's six). Every form recorded before 2026-11-02 digests this
-        view, not the current IR."""
-        d = self.model_dump(mode=mode, exclude_none=exclude_none)
+        view, not the current IR. `context` is the points' serialisation
+        context (_STORED, _ERA; XY._serialise)."""
+        d = self.model_dump(mode=mode, exclude_none=exclude_none, context=context)
         for c, rd in zip(self.constraints, d["constraints"]):
             if isinstance(c, _CanonicalRing) and "vertices" in rd:
-                rd["vertices"] = [v.model_dump(mode=mode, exclude_none=exclude_none)
+                rd["vertices"] = [v.model_dump(mode=mode, exclude_none=exclude_none,
+                                               context=context)
                                   for v in c.given_vertices()]
             if repair and rd.get("violation_action") == "project_fix":
                 rd["violation_action"] = "repair"
@@ -1326,13 +1514,35 @@ class Policy(BaseModel):
         cur = self.policy_hash
         out: dict[str, str] = {}
         for name, rep in ((IR2_FORM, True), (IR2_FORM_AS_WRITTEN, False)):
-            dump = self._ir2_dump(mode="json", exclude_none=True, repair=rep)
-            if self.is_geographic:
-                dump = _geo_canonical(dump)
+            dump = self._ir2_dump(mode="json", exclude_none=True, repair=rep,
+                                  context=_STORED)
             h = "sha256:" + hashlib.sha256(canonical_json(dump)).hexdigest()
             if h != cur and h not in out.values():
                 out[name] = h
         return out
+
+    def metre_form(self) -> "Policy":
+        """This policy as it reads written in local metres about its frame
+        origin, with no `origin`: every WGS84 point replaced by its local view
+        {x, y} (micrometre-rounded; XY), every ring in the order it was given,
+        everything else unchanged.
+
+        It is the form every shipped policy was written in until 2026-11-03.
+        tools/convert_policies_wgs84.py wrote each one's lat/lon from its metres
+        about a stated origin, and proves for each that the metre form of the
+        converted file IS the old file's IR - the same canonical bytes, so the
+        same policy_hash, legacy forms and IR 2.x forms. The lock reads an old
+        version back through it (bundle.rewind; `migrated_from` with the
+        frame migration), so a run flown under the metre version still
+        resolves to the file it flew. A policy with an `origin` and no point
+        at all (a stand-off or clearance policy) has the form without the
+        origin. Raises for a policy with neither: it is in metres already."""
+        if not self.is_geographic and self.origin is None:
+            raise ValueError(f"{self.policy_id}: no WGS84 point and no origin; the "
+                             f"policy is written in metres already")
+        d = self._ir2_dump(mode="json", exclude_none=True, repair=False)
+        d.pop("origin", None)
+        return Policy.model_validate(_metric_view(d))
 
     def hash_form(self, recorded: str | None) -> str | None:
         """Which identity form `recorded` is for THIS policy, or None.
@@ -2091,7 +2301,15 @@ _REFERENCE_DEFAULTED = ("scope", "layer", "altitude_ref")
 # that spelt `repair`, or wrote a ring in another order, has a new hash: a
 # major version, as 2.0.0 was. Old hashes resolve through Policy.ir2_hashes
 # and the lock's `migrated_from` (docs/IR-MIGRATIONS.md).
-IR_SCHEMA_VERSION = "3.0.0"
+#
+# 3.1.0 (2026-11-03, WP1-14): a point's `x` / `y` are optional (they were
+# required): a WGS84 point stores lat/lon only and its metres are a view,
+# computed when first read from the frame its policy binds it to (XY). Every
+# 3.0.0 document still validates and no stored hash moves (the canonical form
+# held lat/lon only for a WGS84 point already). The shipped policies were
+# converted to WGS84 in the same release - a content change, so each raised
+# its version (bundle.FRAME_FORM, tools/convert_policies_wgs84.py).
+IR_SCHEMA_VERSION = "3.1.0"
 
 # The schema eras the old 16-hex hash went through, by which None-valued keys
 # `model_dump()` emitted as null in each. Derived from `git log -- guardrail/
@@ -2204,7 +2422,9 @@ def _legacy16(policy: "Policy", keep_null: frozenset[str]) -> str:
     and the IR is the 2.x one (`Policy._ir2_dump`: rings as given, `repair`),
     because no legacy era knew IR 3.0.0.
     """
-    dump = _prune_nulls(_metric_view(policy._ir2_dump(mode="python", exclude_none=False)),
+    # _ERA: a WGS84 point's UNROUNDED metres, what those eras stored.
+    dump = _prune_nulls(_metric_view(policy._ir2_dump(mode="python", exclude_none=False,
+                                                      context=_ERA)),
                         keep_null)
     canon = json.dumps(dump, sort_keys=True, separators=(",", ":"))
     return "sha256:" + hashlib.sha256(canon.encode()).hexdigest()[:16]

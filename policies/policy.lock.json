@@ -300,8 +300,8 @@
       "XY": {
         "lat": "<absent>",
         "lon": "<absent>",
-        "x": "<required>",
-        "y": "<required>"
+        "x": "<absent>",
+        "y": "<absent>"
       }
     },
     "locked_on": "2026-10-06",
@@ -353,14 +353,25 @@
         "on": "2026-11-02",
         "to": "3.0.0",
         "why": "WP1-01 / WP1-02 (2026-11-02): constraint_type, priority and violation_action are required on every rule (they defaulted to hard / P0 / repair); violation_action holds the grant's six only - `repair` is read as project_fix and never stored; polygon rings (polygon_fence, dynamic_nfz) are stored in canonical order (positive winding over the stored pairs, smallest pair first). Every shipped policy's hash moved, so each raised its patch version; its new entry names the old one in migrated_from, and check_lock re-proves that the old hash is reproduced (Policy.ir2_hashes)."
+      },
+      {
+        "changes": [
+          "XY.x: default '<required>' -> '<absent>'; every policy that omits it changes meaning",
+          "XY.y: default '<required>' -> '<absent>'; every policy that omits it changes meaning"
+        ],
+        "from": "3.0.0",
+        "on": "2026-11-03",
+        "to": "3.1.0",
+        "why": "WP1-14 (2026-11-03): x / y are optional on a point, not required - a WGS84 point stores lat/lon only and its metres are a view computed when first read, from the frame origin its policy binds it to (models.XY, projection.local_metres). Every 3.0.0 document still validates; a required field made optional changes the meaning of no document that states it, and the canonical form held a WGS84 point as lat/lon only already, so no stored hash moved (all 32 policy files hash as under 3.0.0)."
       }
     ],
     "previous_versions": [
       "2.0.0",
       "2.1.0",
-      "2.2.0"
+      "2.2.0",
+      "3.0.0"
     ],
-    "version": "3.0.0"
+    "version": "3.1.0"
   },
   "policies": {
     "corridor-survey@0.1.0": {

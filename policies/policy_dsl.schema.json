@@ -3732,12 +3732,28 @@
           "title": "Lon"
         },
         "x": {
-          "title": "X",
-          "type": "number"
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "X"
         },
         "y": {
-          "title": "Y",
-          "type": "number"
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Y"
         }
       },
       "title": "XY",
@@ -4895,12 +4911,28 @@
           "title": "Lon"
         },
         "x": {
-          "title": "X",
-          "type": "number"
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "X"
         },
         "y": {
-          "title": "Y",
-          "type": "number"
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Y"
         }
       },
       "title": "XY",
@@ -5040,5 +5072,5 @@
     "$ref": "#/$defs/CanonicalIR"
   },
   "x-hash-scheme": "sha256-canonical-v3",
-  "x-ir-schema-version": "3.0.0"
+  "x-ir-schema-version": "3.1.0"
 }

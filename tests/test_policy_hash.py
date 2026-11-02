@@ -92,8 +92,11 @@ def _era_dump(node):
 def _old_policy_hash(pol) -> str:
     """The pre-2026-10-06 property body, verbatim, over that era's dump. That
     era's model held the IR 2.x shape (rings as written, `repair`), which is
-    what `_ir2_dump` gives back since IR schema 3.0.0."""
-    canon = json.dumps(_era_dump(pol._ir2_dump(mode="python", exclude_none=False)),
+    what `_ir2_dump` gives back since IR schema 3.0.0. A WGS84 point held the
+    UNROUNDED projection of its day; since IR schema 3.1.0 the "era" context
+    gives it (a plain dump gives the view, rounded to the micrometre)."""
+    canon = json.dumps(_era_dump(pol._ir2_dump(mode="python", exclude_none=False,
+                                               context={"points": "era"})),
                        sort_keys=True, separators=(",", ":"))
     return "sha256:" + hashlib.sha256(canon.encode()).hexdigest()[:16]
 
