@@ -143,8 +143,9 @@ Interpretations of terms the grant uses but does not define:
     p3 says the first operator with "magnitude <= threshold wins", and p4
     escalates only when the change is "> threshold". The diagram's
     "magnitude < theta" is the one place that says otherwise.
-    Where the metres come from is an OPEN QUESTION for the PI, and the
-    default stays where the grant's own example points until he answers.
+    Where the metres come from was a question for the PI; it is DECIDED
+    (2026-11-02, the PI delegated it as "best practice / follow the grant"):
+    reading A, each repair's forecast depth in metres, the default below.
     The default (horizon_s=None) reads each operator's own `magnitude_m`
     (`magnitude_from_repairs`): the depth of the forecast it corrected. The
     grant's audit example logs LateralProjection with "magnitude_m": 0.7
@@ -304,13 +305,13 @@ CONTROL_PERIOD_S = 0.1
 # period. SELECTABLE, NOT THE DEFAULT. The default is the per-operator
 # `magnitude_m` (horizon_s=None, DEFAULT_THETA_HORIZON_S), the reading the
 # grant's audit example (p5: magnitude_m 0.7 for a 1.53 m/s change) and the
-# PI reference support, until the PI says otherwise. Under the 4-5 m/s caps
-# of every shipped policy this reading caps nothing (at most 1.0 m per
-# period against theta 2.0 m).
+# PI reference support; decided 2026-11-02 (best practice, delegated by the
+# PI). Under the 4-5 m/s caps of every shipped policy this reading caps
+# nothing (at most 1.0 m per period against theta 2.0 m).
 THETA_HORIZON_S = CONTROL_PERIOD_S
 # The basis every Shield and rail uses unless told otherwise: None, each
-# repair's own magnitude_m. Changing it is a PI decision, recorded in the
-# design doc when it is made.
+# repair's own magnitude_m - reading A, DECIDED 2026-11-02 (docs/DESIGN-
+# escalation-fsm.md, "2026-11-02: the delegated decisions").
 DEFAULT_THETA_HORIZON_S: float | None = None
 # X6's progress test: a position that is illegal for T but whose illegal depth
 # falls at least this fast (shown at two standard errors of a least-squares
@@ -340,8 +341,9 @@ X7_MIN_RISE_M = 0.5
 # spell under 1 s into one onset, and one-tick violations every 0.3-0.9 s for
 # 30 s then never left Brake.) It must leave room for N onsets in T,
 # (N - 1) x onset_clear_s <= T, or N-in-T could never fire; FSMConfig refuses
-# a config that breaks that. Pending the PI (design doc, "Questions for the
-# PI").
+# a config that breaks that. Kept as best practice on 2026-11-02 (the PI
+# delegated the N-in-T questions); a pilot slower than 10 Hz scales T
+# instead (FSMConfig.for_decision_period).
 ONSET_CLEAR_S = 1.0
 # Hold points (module docstring, "WHERE Loiter holds and Land lands"). A
 # Loiter whose hold point the aircraft should have reached - travel_s after
@@ -2253,7 +2255,7 @@ def tick_input_from_decision(t: float, decision: Any, policy: Any,
                        change |dv| over one 0.1 s control period
                        (`magnitude_from_actions`), measured from the CLAMPED
                        raw action. Selectable (`--theta-horizon-s 0.1`),
-                       pending the PI; under every shipped envelope it can
+                       not the decided basis; under every shipped envelope it can
                        never exceed theta.
       horizon_s=h      the same |dv| proxy at another horizon (analysis).
 
@@ -2484,7 +2486,7 @@ def _main(argv: Sequence[str] | None = None) -> int:
     rp.add_argument("run_dir", nargs="+")
     rp.add_argument("--horizon", type=float, default=None,
                     help=f"|dv| horizon (s); {THETA_HORIZON_S:g} is the one-period "
-                         "reading (one control period; selectable, pending the PI); "
+                         "reading (one control period; selectable, not the decided basis); "
                          "omit for per-operator magnitude_m, the default basis")
     rp.add_argument("--policy", default=None,
                     help="the policy the run flew: resolves hard/soft, priority and "
