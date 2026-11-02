@@ -53,6 +53,10 @@ from guardrail.models import State                                 # noqa: E402
 from guardrail.projection import LocalProjection, project_raw      # noqa: E402
 from guardrail.shield import Shield                                # noqa: E402
 
+# The three ConstraintBase fields the grant requires (IR schema 3.0.0, 2026-11-02),
+# at the values they defaulted to before (repair = project_fix).
+HARD_P0 = {"constraint_type": "hard", "priority": "P0", "violation_action": "project_fix"}
+
 DEMO = ROOT / "policies" / "sim_demo_policy.yaml"
 WGS84 = ROOT / "policies" / "wgs84_taipei.yaml"
 PED = ROOT / "policies" / "sitl_pedestrian.yaml"
@@ -185,7 +189,8 @@ def test_the_changelog_is_a_diff_against_the_previous_version():
             if r["id"] == "alt-band":
                 r["alt_max_m"] = 25.0                        # changed
             out.append(r)
-        out.append({"id": "alt-low", "type": "altitude_envelope",   # added
+        out.append({"id": "alt-low", "type": "altitude_envelope",
+                    "priority": "P0", "violation_action": "project_fix",   # added
                     "constraint_type": "hard", "alt_min_m": 5.0, "alt_max_m": 30.0})
         return out
 
@@ -217,7 +222,8 @@ def test_the_changelog_is_a_diff_against_the_previous_version():
     assert B.diff_text(same).endswith("no rule changed")
     # A rule replaced by another type under the same id names `type`.
     swapped = _next_version(prev, lambda rs: [
-        {"id": "kin-caps", "type": "altitude_envelope", "constraint_type": "hard",
+        {"id": "kin-caps", "type": "altitude_envelope",
+         "priority": "P0", "violation_action": "project_fix", "constraint_type": "hard",
          "alt_min_m": 1.0, "alt_max_m": 200.0}
         if r["id"] == "kin-caps" else r for r in rs])
     assert "type" in B.policy_diff(prev, swapped)["changed"]["kin-caps"]
@@ -238,12 +244,138 @@ def test_a_previous_version_that_does_not_verify_is_refused():
 
 
 def test_the_bundle_carries_the_three_named_members():
-    """The reference implementation's container layout. The container alone
-    did not make the bundles exchangeable (the IRs differ); the cross-load is
-    tested in tests/test_policy_dsl_grant_form.py."""
+    """The reference implementation's container layout, plus (since
+    2026-11-02, WP2-16) the multi-scale geometry, which the reference's
+    loader ignores. The container alone did not make the bundles
+    exchangeable (the IRs differ); the cross-load is tested in
+    tests/test_policy_dsl_grant_form.py."""
     with tarfile.open(_unsigned(load_policy(DEMO)), "r:gz") as tar:
         names = sorted(tar.getnames())
-    assert names == ["ir.json", "manifest.json", "signature.txt"], names
+    assert names == ["ir.json", "manifest.json", "multiscale.json", "signature.txt"], names
+
+
+def _ms(bundle: Path) -> dict:
+    return json.loads(_members(bundle)[B.MULTISCALE_NAME])
+
+
+def test_the_bundle_ships_the_multiscale_geometry_and_the_compiler_reads_it():
+    """WP2-16, the grant's locked choice: "the policy bundle's IR already
+    carries pre-computed multi-scale polygons (Policy DSL ingest produces
+    them). The Prefix Compiler picks the scale, never re-computes." Until
+    2026-11-02 the bundle carried the IR only and every reader recomputed the
+    scales at load (failed then: no multiscale.json, no digest). Now the
+    scales are computed once, at ingest, shipped under the signed manifest,
+    and a policy loaded from the bundle compiles its CSP with the coarse-ring
+    computation switched OFF - which a policy loaded from YAML cannot."""
+    import guardrail.compiler as K
+    import guardrail.ir as IRM
+    from guardrail.compiler import Mission
+    survey = ROOT / "policies" / "corridor_survey.yaml"
+    pol = load_policy(survey)
+    b = _unsigned(pol)
+    m = _members(b)
+    man = json.loads(m[MANIFEST_NAME])
+    assert man["multiscale_sha256"] == "sha256:" + hashlib.sha256(m[B.MULTISCALE_NAME]).hexdigest()
+    doc = json.loads(m[B.MULTISCALE_NAME])
+    assert doc["policy_hash"] == pol.policy_hash and doc["format"] == IRM.MULTISCALE_FORMAT
+    assert set(doc["rules"]) == {c.id for c in pol.constraints
+                                 if c.type in IRM.FENCE_TYPES + IRM.TUBE_TYPES}
+    loaded = check_bundle(b).policy
+    assert loaded.shipped_multiscale == doc["rules"]
+    mission = Mission(task_text="survey", target_x=60.0, target_y=60.0,
+                      cruise_alt_m=15.0, speed_pref_mps=4.0)
+    now = datetime(2026, 11, 2, 9, 0)                    # a Monday, school hours
+    real = IRM.coarse_ring
+
+    def refuse(*a, **k):
+        raise AssertionError("the coarse scale was recomputed")
+    K._IR_CACHE.clear()
+    IRM.coarse_ring = refuse
+    try:
+        csp = ConstraintCompiler(loaded).compile_csp(mission, now=now)
+        ir = K.compiled_ir(loaded)
+        assert set(ir.multiscale_source.values()) == {"bundle"}, ir.multiscale_source
+        refs = [p.geometry_ref for p in csp.P0_constraints if not p.geometry_ref.startswith("param:")]
+        assert refs, csp.P0_constraints
+        for ref in refs:
+            scale, rest = ref.split(":", 1)
+            rid = rest.rsplit("@v", 1)[0]
+            assert K.resolve_geometry_ref(loaded, ref) == \
+                [tuple(p) for p in doc["rules"][rid][scale]], ref
+        try:
+            K._IR_CACHE.clear()
+            ConstraintCompiler(load_policy(survey)).compile_csp(mission, now=now)
+        except AssertionError:
+            pass                                    # YAML: computed at load
+        else:
+            raise AssertionError("the YAML path never computed a coarse ring: "
+                                 "this test proves nothing")
+    finally:
+        IRM.coarse_ring = real
+        K._IR_CACHE.clear()
+
+
+def test_shipped_geometry_that_does_not_describe_the_policy_is_refused():
+    """The shipped scales are covered by the signature (their digest is in the
+    manifest) and checked against the policy - without recomputing them: the
+    fine scale is the zone, the bbox its bounds, the coarse ring convex and
+    containing it. Each forgery below keeps the digest consistent, as someone
+    without the signing key could on an unsigned bundle."""
+    pol = load_policy(ROOT / "policies" / "corridor_survey.yaml")
+    b = _unsigned(pol)
+    doc = _ms(b)
+    zid = next(c.id for c in pol.constraints if c.type == "polygon_fence")
+    fine = doc["rules"][zid]["fine"]
+
+    def forged(edit, name):
+        d = json.loads(json.dumps(doc))
+        edit(d)
+        ms = json.dumps(d, sort_keys=True, separators=(",", ":")).encode()
+        mm = _members(b)
+        man = json.loads(mm[MANIFEST_NAME])
+        man["multiscale_sha256"] = "sha256:" + hashlib.sha256(ms).hexdigest()
+        return _repack(b, _tmp(name), {B.MULTISCALE_NAME: ms,
+                                       MANIFEST_NAME: json.dumps(man, indent=2,
+                                                                 sort_keys=True).encode()})
+    cx = sum(p[0] for p in fine) / len(fine)
+    cy = sum(p[1] for p in fine) / len(fine)
+    cases = {
+        "does not contain": lambda d: d["rules"][zid].__setitem__(
+            "coarse", [[cx + 0.5 * (x - cx), cy + 0.5 * (y - cy)] for x, y in fine]),
+        "not convex": lambda d: d["rules"][zid].__setitem__(
+            "coarse", [[cx, cy]] + d["rules"][zid]["coarse"]),
+        "not the zone's vertices": lambda d: d["rules"][zid]["fine"][0].__setitem__(0, 99.0),
+        "bounding rectangle": lambda d: d["rules"][zid]["bbox"][2].__setitem__(0, 1e6),
+        "no entry": lambda d: d["rules"].pop(zid),
+        "no such zone": lambda d: d["rules"].__setitem__("ghost", {"fine": [[0, 0]]}),
+        "describes": lambda d: d.__setitem__("generation", 7),
+    }
+    for word, edit in cases.items():
+        try:
+            check_bundle(forged(edit, "f.tar.gz"))
+        except ValueError as e:
+            assert word in str(e), (word, str(e)[:300])
+        else:
+            raise AssertionError(f"forged shipped geometry accepted: {word}")
+    # An edit that does not recompute the digest, and a member the manifest
+    # does not name.
+    bad = json.dumps({**doc, "generation": 9}).encode()
+    try:
+        check_bundle(_repack(b, _tmp("e.tar.gz"), {B.MULTISCALE_NAME: bad}))
+    except ValueError as e:
+        assert "edited after issue" in str(e), e
+    else:
+        raise AssertionError("an edited multiscale.json was accepted")
+    old = _members(b)
+    man = json.loads(old[MANIFEST_NAME])
+    del man["multiscale_sha256"]
+    try:
+        check_bundle(_repack(b, _tmp("u.tar.gz"), {MANIFEST_NAME: json.dumps(
+            man, indent=2, sort_keys=True).encode()}))
+    except ValueError as e:
+        assert "unsigned geometry" in str(e), e
+    else:
+        raise AssertionError("geometry the manifest does not cover was accepted")
 
 
 def test_ir_json_is_exactly_the_bytes_the_hash_digests():
@@ -415,7 +547,7 @@ def test_a_hot_applied_rule_is_carried_into_the_next_bundle():
 
     sh = Shield(pol, lookahead_s=3.0, dt=0.5)
     sh.hot_apply(PolygonFence(
-        id="nfz-dynamic", type="polygon_fence",
+        id="nfz-dynamic", type="polygon_fence", **HARD_P0,
         vertices=[XY(x=-25, y=-25), XY(x=-15, y=-25),
                   XY(x=-15, y=-15), XY(x=-25, y=-15)], margin_m=1.0))
 
@@ -500,9 +632,15 @@ def test_a_consistent_forgery_without_the_key_is_refused():
     # Consistent means every record of the hash: since 2026-10-08 the
     # manifest also names it in `hashes` (and check_bundle verifies that).
     man["hashes"]["sha256-canonical-v3"] = h
+    # ...and since 2026-11-02 the shipped multi-scale geometry names it too,
+    # its digest in the manifest.
+    ms = json.loads(m[B.MULTISCALE_NAME])
+    ms["policy_hash"] = h
+    ms_b = json.dumps(ms, sort_keys=True, separators=(",", ":")).encode()
+    man["multiscale_sha256"] = "sha256:" + hashlib.sha256(ms_b).hexdigest()
     old_sig = m[SIGNATURE_NAME].decode().splitlines()[1]
     bad = _repack(p, _tmp("forged.tar.gz"), {
-        IR_NAME: ir_b,
+        IR_NAME: ir_b, B.MULTISCALE_NAME: ms_b,
         MANIFEST_NAME: json.dumps(man, indent=2, sort_keys=True).encode(),
         SIGNATURE_NAME: f"{h} {signer.identity}\n{old_sig}\n".encode()})
     try:
@@ -1006,7 +1144,7 @@ def test_geographic_coordinates_without_an_origin_get_the_references_frame_never
 
     Shown failing on the pre-fix code: the policy was refused."""
     raw = {"policy_id": "p", "constraints": [
-        {"id": "f", "type": "polygon_fence",
+        {"id": "f", "type": "polygon_fence", **HARD_P0,
          "vertices": [{"lat": 25.0, "lon": 121.0}, {"lat": 25.1, "lon": 121.0},
                       {"lat": 25.1, "lon": 121.1}]}]}
     out = project_raw(raw)
@@ -1016,7 +1154,7 @@ def test_geographic_coordinates_without_an_origin_get_the_references_frame_never
     pol = Policy.model_validate(raw)
     assert pol.frame_origin == ((25.0 + 25.1 + 25.1) / 3, (121.0 + 121.0 + 121.1) / 3)
     corridor_only = {"policy_id": "p", "constraints": [
-        {"id": "c", "type": "corridor", "width_m": 10,
+        {"id": "c", "type": "corridor", **HARD_P0, "width_m": 10,
          "centerline": [{"lat": 25.0, "lon": 121.0}, {"lat": 25.0, "lon": 121.001}]}]}
     assert Policy.model_validate(corridor_only).frame_origin == (25.0, 121.0005), \
         "with no polygon the reference would use (0, 0); this uses the first geometry"
@@ -1025,7 +1163,7 @@ def test_geographic_coordinates_without_an_origin_get_the_references_frame_never
 def test_mixing_frames_in_one_point_is_refused():
     raw = {"policy_id": "p", "origin": {"lat": 25.0, "lon": 121.0},
            "constraints": [
-               {"id": "f", "type": "polygon_fence",
+               {"id": "f", "type": "polygon_fence", **HARD_P0,
                 "vertices": [{"lat": 25.0, "lon": 121.0, "x": 1.0, "y": 2.0}]}]}
     try:
         project_raw(raw)

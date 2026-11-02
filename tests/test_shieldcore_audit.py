@@ -40,6 +40,10 @@ from guardrail.frames import to_body                                    # noqa: 
 from guardrail.models import Action4D, Policy, State                    # noqa: E402
 from guardrail.shield import Shield                                     # noqa: E402
 
+# The three ConstraintBase fields the grant requires (IR schema 3.0.0, 2026-11-02),
+# at the values they defaulted to before (repair = project_fix).
+HARD_P0 = {"constraint_type": "hard", "priority": "P0", "violation_action": "project_fix"}
+
 DEMO = ROOT / "policies" / "demo_policy.yaml"
 FIXTURES = ROOT / "tests" / "fixtures"
 FIX_AUDIT = FIXTURES / "pas_ap_20261008_audit.short.jsonl"
@@ -116,7 +120,7 @@ def test_a_violation_a_window_edge_causes_is_time_window():
     violation is the grant's time-window category; the same flight an hour
     later, the zone already in force, is geometric."""
     pol = Policy.model_validate({"policy_id": "tw", "constraints": [
-        {"id": "school", "type": "polygon_fence", "margin_m": 1.0,
+        {"id": "school", "type": "polygon_fence", **HARD_P0, "margin_m": 1.0,
          "valid_time": {"recurrence": {"start_time": "07:30", "end_time": "17:30"}},
          "vertices": [{"x": 10, "y": -10}, {"x": 30, "y": -10}, {"x": 30, "y": 10},
                       {"x": 10, "y": 10}]}]})

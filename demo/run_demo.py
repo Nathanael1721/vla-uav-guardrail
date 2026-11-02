@@ -101,6 +101,7 @@ class RateLimiter:
 DYNAMIC_AT_S = 8.0
 DYNAMIC_FENCE = PolygonFence(
     id="nfz-dynamic", type="polygon_fence",
+    constraint_type="hard", priority="P0", violation_action="project_fix",
     vertices=[XY(x=23, y=6), XY(x=31, y=6), XY(x=31, y=14), XY(x=23, y=14)],
     margin_m=1.0,
 )

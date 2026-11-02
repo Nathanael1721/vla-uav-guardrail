@@ -8,6 +8,9 @@ layers_merged: [regulation]
 constraints:
   - id: alt
     type: altitude_envelope
+    constraint_type: hard
+    priority: P0
+    violation_action: project_fix
     layer: mission
     alt_min_m: 5
     alt_max_m: 30

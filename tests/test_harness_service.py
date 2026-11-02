@@ -84,6 +84,10 @@ import sweep_scenarios as S                                       # noqa: E402
 from guardrail import harness_service as H                       # noqa: E402
 from guardrail.scenario_spec import Episode, Library             # noqa: E402
 
+# The three ConstraintBase fields the grant requires (IR schema 3.0.0, 2026-11-02),
+# at the values they defaulted to before (repair = project_fix).
+HARD_P0 = {"constraint_type": "hard", "priority": "P0", "violation_action": "project_fix"}
+
 SKIP = "SKIP"
 _TMP: list[Path] = []
 
@@ -203,7 +207,7 @@ expected_kpis:
   P0_escape_rate: 0
 """
 # The zone hot-applied across OPEN's path (x 10..20 straddles y = -20).
-ZONE = {"type": "dynamic_nfz", "id": "nfz-hot",
+ZONE = {"type": "dynamic_nfz", **HARD_P0, "id": "nfz-hot",
         "vertices": [{"x": 10, "y": -30}, {"x": 20, "y": -30},
                      {"x": 20, "y": -10}, {"x": 10, "y": -10}]}
 OPEN_WITH_EVENT = OPEN + """
@@ -248,11 +252,11 @@ TOLD = OPEN.replace("pilot: {type: goto, speed: 4.0}",
 CLOCKED = OPEN.replace("pilot: {type: goto, speed: 4.0}",
                        "pilot: {type: goto, speed: 4.0}\n  clock_start: '2026-10-05T10:00:00'")
 # A switch that turns the hot zone off, and the same switch on Tuesdays only.
-SW_OFF = {"type": "time_window_switch", "id": "sw1", "target_id": "nfz-hot", "active": False}
+SW_OFF = {"type": "time_window_switch", **HARD_P0, "id": "sw1", "target_id": "nfz-hot", "active": False}
 SW_OFF_TUE = dict(SW_OFF, valid_time={"recurrence": {"days": ["Tue"], "start_time": "09:00",
                                                      "end_time": "11:00"}})
 # A zone far off OPEN's path (it changes nothing the aircraft does).
-FAR = {"type": "dynamic_nfz", "id": "nfz-far",
+FAR = {"type": "dynamic_nfz", **HARD_P0, "id": "nfz-far",
        "vertices": [{"x": 100, "y": 100}, {"x": 110, "y": 100},
                     {"x": 110, "y": 110}, {"x": 100, "y": 110}]}
 
@@ -776,7 +780,9 @@ def test_a_hot_applied_corridor_swap_flies_as_the_library_scenario_writes_it():
     import yaml
     raw = dict(Library(S.LIB).raw("corridor-swap-shifted"))
     (written_ev,) = raw.pop("events")
-    body = {"type": "corridor_swap", **written_ev["payload"]}
+    # a REST rule body states the three fields (IR schema 3.0.0); the runner
+    # writes the same values for the event it applies
+    body = {"type": "corridor_swap", **HARD_P0, **written_ev["payload"]}
     with _server() as srv, _client(srv, insecure=True) as c:
         ref = c.start_episode(scenario_id="corridor-swap-shifted", keep_flight_log=True)
         written = c.end_episode(ref.episode_id)
@@ -827,7 +833,7 @@ def test_hot_apply_refusals_carry_the_rest_endpoints_codes_and_queue_nothing():
         fence = dict(ZONE, type="polygon_fence")
         cases = [
             (fence, "INVALID_ARGUMENT", "locked"),
-            ({"type": "time_window_switch", "target_id": "no-such-rule", "active": False},
+            ({"type": "time_window_switch", **HARD_P0, "target_id": "no-such-rule", "active": False},
              "NOT_FOUND", "no-such-rule"),
             (dict(ZONE, layer="regulation"), "INVALID_ARGUMENT", "layer"),
             (dict(ZONE, valid_time={"recurrence": {"days": ["Mon"]}}), "UNIMPLEMENTED",
@@ -844,7 +850,7 @@ def test_hot_apply_refusals_carry_the_rest_endpoints_codes_and_queue_nothing():
         assert ok.validated_generation == 1, ok
         code, why = _refused(c.hot_apply, eid, 4.0, ZONE)
         assert code == "ALREADY_EXISTS" and "nfz-hot" in why, (code, why)
-        sw = c.hot_apply(eid, 5.0, {"type": "time_window_switch", "target_id": "nfz-hot",
+        sw = c.hot_apply(eid, 5.0, {"type": "time_window_switch", **HARD_P0, "target_id": "nfz-hot",
                                     "active": False})
         assert sw.validated_generation == 2 and json.loads(
             sw.scenario_event_json)["type"] == "deactivate_rule", sw
@@ -865,7 +871,7 @@ def test_a_lat_lon_that_is_not_a_number_is_invalid_argument_not_internal():
     framed = OPEN.replace("policies/sim_demo_policy.yaml", "policies/wgs84_taipei.yaml")
     eid = h.start_episode(scenario_yaml=framed)["episode_id"]
     for bad in ("abc", None):
-        body = {"type": "dynamic_nfz", "id": "g", "vertices": [
+        body = {"type": "dynamic_nfz", **HARD_P0, "id": "g", "vertices": [
             {"lat": bad, "lon": 121.56}, {"lat": 25.041, "lon": 121.56},
             {"lat": 25.041, "lon": 121.561}]}
         code, why = _h_refused(h.hot_apply, eid, 3.0, body)
@@ -876,7 +882,7 @@ def test_a_lat_lon_that_is_not_a_number_is_invalid_argument_not_internal():
     with _server() as srv, _client(srv, insecure=True) as c:
         eid = c.start_episode(scenario_yaml=framed).episode_id
         code, why = _refused(c.hot_apply, eid, 3.0, {
-            "type": "dynamic_nfz", "id": "g", "vertices": [
+            "type": "dynamic_nfz", **HARD_P0, "id": "g", "vertices": [
                 {"lat": "abc", "lon": 121.56}, {"lat": 25.041, "lon": 121.56},
                 {"lat": 25.041, "lon": 121.561}]})
         assert code == "INVALID_ARGUMENT", (code, why)

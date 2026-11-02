@@ -17,6 +17,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from guardrail import Action4D, Shield, State, load_policy
 
+# The three ConstraintBase fields the grant requires (IR schema 3.0.0, 2026-11-02),
+# at the values they defaulted to before (repair = project_fix).
+HARD_P0 = {"constraint_type": "hard", "priority": "P0", "violation_action": "project_fix"}
+
 POLICY_PATH = Path(__file__).resolve().parents[1] / "policies" / "demo_policy.yaml"
 
 
@@ -203,7 +207,7 @@ def test_hot_apply_dynamic_nfz():
 
     gen0, hash0 = s.policy.generation, s.policy.policy_hash
     s.hot_apply(DynamicNFZ(
-        id="nfz-dynamic", type="dynamic_nfz",
+        id="nfz-dynamic", type="dynamic_nfz", **HARD_P0,
         vertices=[XY(x=-15, y=-24), XY(x=-8, y=-24), XY(x=-8, y=-16), XY(x=-15, y=-16)],
     ))
     assert s.policy.generation == gen0 + 1
@@ -225,7 +229,7 @@ def test_a_polygon_fence_is_locked_once_the_mission_starts():
     from guardrail.shield import LockedRuleClass, as_dynamic_nfz
 
     def fence():
-        return PolygonFence(id="nfz-late", type="polygon_fence",
+        return PolygonFence(id="nfz-late", type="polygon_fence", **HARD_P0,
                             vertices=[XY(x=-15, y=-24), XY(x=-8, y=-24),
                                       XY(x=-8, y=-16), XY(x=-15, y=-16)])
     s = make_shield()
@@ -261,9 +265,10 @@ def _standoff_shield(min_range_m=10.0, subject_class="pedestrian"):
     """
     from guardrail.models import KinematicEnvelope, Policy, SubjectStandoff
     pol = Policy(policy_id="standoff", version="0.1.0", constraints=[
-        SubjectStandoff(id="ped-standoff", type="subject_standoff",
+        SubjectStandoff(id="ped-standoff", type="subject_standoff", **HARD_P0,
                         subject_class=subject_class, min_range_m=min_range_m),
-        KinematicEnvelope(id="kin", type="kinematic_envelope", priority="P1",
+        KinematicEnvelope(id="kin", type="kinematic_envelope",
+                          constraint_type="hard", violation_action="project_fix", priority="P1",
                           speed_max_mps=5.0, climb_rate_max_mps=2.0,
                           yaw_rate_max_dps=45.0),
     ])
@@ -429,8 +434,8 @@ def test_a_non_finite_subject_escalates_no_harder_than_the_rule():
     def shield(**kw):
         return Shield(Policy(policy_id="nan-subject", constraints=[
             SubjectStandoff(id="so", type="subject_standoff", subject_class="*",
-                            min_range_m=10.0, **kw),
-            KinematicEnvelope(id="kin", type="kinematic_envelope", speed_max_mps=5.0,
+                            min_range_m=10.0, **{**HARD_P0, **kw}),
+            KinematicEnvelope(id="kin", type="kinematic_envelope", **HARD_P0, speed_max_mps=5.0,
                               climb_rate_max_mps=2.0, yaw_rate_max_dps=45.0)]))
 
     def fly(sh, nan_at, n=80):
@@ -469,9 +474,9 @@ def _car_standoff_shield():
     as follow_car_citylife.yaml holds it, and its 5 m/s cap."""
     from guardrail.models import KinematicEnvelope, Policy, SubjectStandoff
     return Shield(Policy(policy_id="car-follow", constraints=[
-        SubjectStandoff(id="car-standoff", type="subject_standoff", subject_class="car",
+        SubjectStandoff(id="car-standoff", type="subject_standoff", **HARD_P0, subject_class="car",
                         min_range_m=5.0),
-        KinematicEnvelope(id="kin", type="kinematic_envelope", speed_max_mps=5.0,
+        KinematicEnvelope(id="kin", type="kinematic_envelope", **HARD_P0, speed_max_mps=5.0,
                           climb_rate_max_mps=2.0, yaw_rate_max_dps=45.0)]))
 
 
@@ -665,13 +670,14 @@ def test_unsafe_depth_measures_how_far_the_position_is_from_legal():
     soft and monitor_only rules do not count."""
     from guardrail.models import Policy
     pol = Policy.model_validate({"policy_id": "depth", "constraints": [
-        {"id": "nfz", "type": "polygon_fence", "margin_m": 1.0,
+        {"id": "nfz", "type": "polygon_fence", **HARD_P0, "margin_m": 1.0,
          "vertices": [{"x": 0, "y": 0}, {"x": 20, "y": 0}, {"x": 20, "y": 20},
                       {"x": 0, "y": 20}]},
-        {"id": "band", "type": "altitude_envelope", "alt_min_m": 10.0, "alt_max_m": 30.0},
-        {"id": "soft-band", "type": "altitude_envelope", "alt_min_m": 12.0,
+        {"id": "band", "type": "altitude_envelope", **HARD_P0, "alt_min_m": 10.0, "alt_max_m": 30.0},
+        {"id": "soft-band", "type": "altitude_envelope",
+         "violation_action": "project_fix", "alt_min_m": 12.0,
          "alt_max_m": 30.0, "constraint_type": "soft", "priority": "P2"},
-        {"id": "ring", "type": "subject_standoff", "subject_class": "*",
+        {"id": "ring", "type": "subject_standoff", **HARD_P0, "subject_class": "*",
          "min_range_m": 5.0}]})
     sh = Shield(pol)
     assert sh.unsafe_depth(State(x=-30, y=-30, up=15)) == 0.0
@@ -697,14 +703,16 @@ def test_applied_caps_leave_out_only_the_soft_caps_the_chain_gave_up():
 
     def pol(speed_prio):
         return Policy.model_validate({"policy_id": "soft", "constraints": [
-            {"id": "hard-band", "type": "altitude_envelope", "alt_min_m": 0,
+            {"id": "hard-band", "type": "altitude_envelope", **HARD_P0, "alt_min_m": 0,
              "alt_max_m": 10},
-            {"id": "soft-high", "type": "altitude_envelope", "alt_min_m": 20,
+            {"id": "soft-high", "type": "altitude_envelope",
+             "violation_action": "project_fix", "alt_min_m": 20,
              "alt_max_m": 30, "constraint_type": "soft", "priority": "P2"},
-            {"id": "soft-speed", "type": "kinematic_envelope", "speed_max_mps": 2.0,
+            {"id": "soft-speed", "type": "kinematic_envelope",
+             "violation_action": "project_fix", "speed_max_mps": 2.0,
              "climb_rate_max_mps": 2.0, "yaw_rate_max_dps": 45.0,
              "constraint_type": "soft", "priority": speed_prio},
-            {"id": "nfz", "type": "polygon_fence", "margin_m": 1.0,
+            {"id": "nfz", "type": "polygon_fence", **HARD_P0, "margin_m": 1.0,
              "vertices": [{"x": 7, "y": 7}, {"x": 23, "y": 7}, {"x": 23, "y": 23},
                           {"x": 7, "y": 23}]}]})
     st, fast = State(x=0, y=15, up=8), Action4D(vx=4.0)
@@ -727,7 +735,7 @@ def test_unsafe_depth_off_a_corridor_is_the_excess_over_its_half_width():
     altitude error outside its band."""
     from guardrail.models import Policy
     sh = Shield(Policy.model_validate({"policy_id": "c", "constraints": [
-        {"id": "lane", "type": "corridor", "width_m": 10,
+        {"id": "lane", "type": "corridor", **HARD_P0, "width_m": 10,
          "centerline": [{"x": -50, "y": 0}, {"x": 50, "y": 0}],
          "altitude_floor_m": 5, "altitude_ceiling_m": 30}]}))
     assert sh.unsafe_depth(State(x=0, y=4.0, up=10)) == 0.0
@@ -748,12 +756,12 @@ def test_a_best_effort_recovery_never_deepens_the_ring_it_is_inside():
     along the zone's face."""
     from guardrail.models import Policy
     pol = Policy.model_validate({"policy_id": "conflict", "constraints": [
-        {"id": "nfz", "type": "polygon_fence", "margin_m": 1.0,
+        {"id": "nfz", "type": "polygon_fence", **HARD_P0, "margin_m": 1.0,
          "vertices": [{"x": 0, "y": 0}, {"x": 20, "y": 0}, {"x": 20, "y": 20},
                       {"x": 0, "y": 20}]},
-        {"id": "ring", "type": "subject_standoff", "subject_class": "*",
+        {"id": "ring", "type": "subject_standoff", **HARD_P0, "subject_class": "*",
          "min_range_m": 10.0},
-        {"id": "kin", "type": "kinematic_envelope", "speed_max_mps": 4.0,
+        {"id": "kin", "type": "kinematic_envelope", **HARD_P0, "speed_max_mps": 4.0,
          "climb_rate_max_mps": 2.0, "yaw_rate_max_dps": 45.0}]})
     sh = Shield(pol, escalation=False)
     st = State(x=18.5, y=10.0, up=10.0)          # x North: the zone's north face is x = 20
@@ -779,10 +787,10 @@ def test_a_best_effort_recovery_never_heads_deeper_into_the_zone_it_is_inside():
     at 4 m/s; it now slides along the zone's face."""
     from guardrail.models import Policy
     pol = Policy.model_validate({"policy_id": "conflict", "constraints": [
-        {"id": "nfz", "type": "polygon_fence", "margin_m": 1.0, "vertices": _SQ20},
-        {"id": "ring", "type": "subject_standoff", "subject_class": "*",
+        {"id": "nfz", "type": "polygon_fence", **HARD_P0, "margin_m": 1.0, "vertices": _SQ20},
+        {"id": "ring", "type": "subject_standoff", **HARD_P0, "subject_class": "*",
          "min_range_m": 10.0},
-        {"id": "kin", "type": "kinematic_envelope", "speed_max_mps": 4.0,
+        {"id": "kin", "type": "kinematic_envelope", **HARD_P0, "speed_max_mps": 4.0,
          "climb_rate_max_mps": 2.0, "yaw_rate_max_dps": 45.0}]})
     st = State(x=18.5, y=10.0, up=10.0)          # the zone's north face is x = 20
     for raw in (Action4D(vx=-2.0), Action4D(vx=-3.0, vy=-1.0), Action4D(vx=-2.0, vy=0.5)):
@@ -805,7 +813,7 @@ def test_deepens_counts_hard_enforced_rules_and_a_moving_zone_relative_to_it():
     from guardrail.models import Policy
 
     def zone(**kw):
-        z = {"id": "nfz", "type": "polygon_fence", "margin_m": 1.0, "vertices": _SQ20}
+        z = {"id": "nfz", "type": "polygon_fence", **HARD_P0, "margin_m": 1.0, "vertices": _SQ20}
         z.update(kw)
         return Policy.model_validate({"policy_id": "z", "constraints": [z]})
     st = State(x=18.5, y=10.0, up=10.0)
@@ -817,7 +825,7 @@ def test_deepens_counts_hard_enforced_rules_and_a_moving_zone_relative_to_it():
         sh = Shield(zone(**kw), escalation=False)
         assert sh._deepens(st, Action4D(vx=-2.0)) == 0, kw
     moving = Shield(Policy.model_validate({"policy_id": "mv", "constraints": [
-        {"id": "dyn", "type": "dynamic_nfz", "margin_m": 1.0, "vertices": _SQ20,
+        {"id": "dyn", "type": "dynamic_nfz", **HARD_P0, "margin_m": 1.0, "vertices": _SQ20,
          "motion": {"vx_mps": 3.0}}]}), escalation=False)
     assert [moving._deepens(st, Action4D(vx=v)) for v in (-2.0, 2.0, 4.0)] == [1, 1, 0]
     # Not inside: nothing to deepen.
@@ -957,9 +965,9 @@ def _wall_shield():
     occ = np.zeros((80, 80), np.uint8)
     occ[int(round((10.0 + 80.0) / 2.0)):, :] = 1
     pol = Policy(policy_id="clr-crawl", constraints=[
-        ObstacleClearance(id="clr", type="obstacle_clearance",
+        ObstacleClearance(id="clr", type="obstacle_clearance", **HARD_P0,
                           min_clearance_m=6.0, soft_margin_m=2.0),
-        KinematicEnvelope(id="kin", type="kinematic_envelope", speed_max_mps=4.0,
+        KinematicEnvelope(id="kin", type="kinematic_envelope", **HARD_P0, speed_max_mps=4.0,
                           climb_rate_max_mps=2.0, yaw_rate_max_dps=45.0)])
     return Shield(pol, lookahead_s=3.0, dt=0.5,
                   obstacle_map={"occ": occ, "res": 2.0, "ox": -80.0, "oy": -80.0})
@@ -1025,7 +1033,7 @@ def test_a_crawl_out_of_a_breach_is_floored_with_nothing_else_wrong():
     from guardrail.models import KinematicEnvelope
     pol = load_policy(POLICY_PATH)
     pol.constraints.append(KinematicEnvelope(
-        id="yaw-watch", type="kinematic_envelope", violation_action="monitor_only",
+        id="yaw-watch", type="kinematic_envelope", constraint_type="hard", priority="P0", violation_action="monitor_only",
         speed_max_mps=20.0, climb_rate_max_mps=10.0, yaw_rate_max_dps=10.0))
     sh = Shield(pol, lookahead_s=3.0, dt=0.5)
     st = State(x=22.0, y=15.0, up=4.0)
@@ -1053,10 +1061,10 @@ def test_the_floor_does_not_reshape_a_legal_action_for_another_rule():
     from guardrail.models import (AltitudeEnvelope, KinematicEnvelope, Policy,
                                   SubjectStandoff)
     pol = Policy(policy_id="floor-scope", constraints=[
-        AltitudeEnvelope(id="alt", type="altitude_envelope", alt_min_m=6.0, alt_max_m=40.0),
-        SubjectStandoff(id="ped", type="subject_standoff", subject_class="pedestrian",
+        AltitudeEnvelope(id="alt", type="altitude_envelope", **HARD_P0, alt_min_m=6.0, alt_max_m=40.0),
+        SubjectStandoff(id="ped", type="subject_standoff", **HARD_P0, subject_class="pedestrian",
                         min_range_m=10.0),
-        KinematicEnvelope(id="kin", type="kinematic_envelope", speed_max_mps=5.0,
+        KinematicEnvelope(id="kin", type="kinematic_envelope", **HARD_P0, speed_max_mps=5.0,
                           climb_rate_max_mps=2.0, yaw_rate_max_dps=45.0)])
     sh = Shield(pol)
     sh.set_subject(0.0, 0.0, "pedestrian")
@@ -1276,13 +1284,13 @@ def test_history_records_the_brake_and_rescue_branches_too():
     """filter() has four return paths. A window filled only by the passthrough
     would go silent exactly on the ticks worth looking back at."""
     from guardrail.models import KinematicEnvelope, Policy, PolygonFence
-    caps = KinematicEnvelope(id="kin", type="kinematic_envelope", speed_max_mps=4.0,
+    caps = KinematicEnvelope(id="kin", type="kinematic_envelope", **HARD_P0, speed_max_mps=4.0,
                              climb_rate_max_mps=2.0, yaw_rate_max_dps=60.0)
     two = Policy(policy_id="two", constraints=[
         caps,
-        PolygonFence(id="A", type="polygon_fence", margin_m=1.0, vertices=[
+        PolygonFence(id="A", type="polygon_fence", **HARD_P0, margin_m=1.0, vertices=[
             {"x": 6, "y": -5}, {"x": 20, "y": -5}, {"x": 20, "y": 5}, {"x": 6, "y": 5}]),
-        PolygonFence(id="B", type="polygon_fence", margin_m=1.0, vertices=[
+        PolygonFence(id="B", type="polygon_fence", **HARD_P0, margin_m=1.0, vertices=[
             {"x": -3, "y": -16}, {"x": 3, "y": -16}, {"x": 3, "y": -10}, {"x": -3, "y": -10}]),
     ])
     s = Shield(two)
@@ -1290,9 +1298,9 @@ def test_history_records_the_brake_and_rescue_branches_too():
     assert d.braked and s.history[-1].decision is d
     overlap = Policy(policy_id="ov", constraints=[
         caps,
-        PolygonFence(id="a", type="polygon_fence", margin_m=2.0, vertices=[
+        PolygonFence(id="a", type="polygon_fence", **HARD_P0, margin_m=2.0, vertices=[
             {"x": 0, "y": 0}, {"x": 20, "y": 0}, {"x": 20, "y": 20}, {"x": 0, "y": 20}]),
-        PolygonFence(id="b", type="polygon_fence", margin_m=1.0, vertices=[
+        PolygonFence(id="b", type="polygon_fence", **HARD_P0, margin_m=1.0, vertices=[
             {"x": 15, "y": 5}, {"x": 35, "y": 5}, {"x": 35, "y": 25}, {"x": 15, "y": 25}]),
     ])
     s = Shield(overlap)
@@ -1362,12 +1370,13 @@ def _zone_policy(**kw):
     """demo_policy's square zone (7..23 m, 1 m margin) plus a speed cap, with
     the zone's fields overridden by `kw`."""
     from guardrail.models import Policy
-    zone = {"id": "nfz", "type": "polygon_fence", "margin_m": 1.0,
+    zone = {"id": "nfz", "type": "polygon_fence", **HARD_P0, "margin_m": 1.0,
             "vertices": [{"x": 7, "y": 7}, {"x": 23, "y": 7},
                          {"x": 23, "y": 23}, {"x": 7, "y": 23}]}
     zone.update(kw)
     return Policy.model_validate({"policy_id": "zone", "constraints": [
-        zone, {"id": "kin", "type": "kinematic_envelope", "priority": "P1",
+        zone, {"id": "kin", "type": "kinematic_envelope",
+               "constraint_type": "hard", "violation_action": "project_fix", "priority": "P1",
                "speed_max_mps": 4.0, "climb_rate_max_mps": 2.0,
                "yaw_rate_max_dps": 45.0}]})
 
@@ -1471,10 +1480,10 @@ def test_theta_is_measured_from_the_caps_the_chain_applied_this_tick():
     against on that tick. (The default basis, each repair's magnitude_m,
     needs no caps; it is checked here too.)"""
     from guardrail.models import Policy
-    zone = {"id": "nfz", "type": "polygon_fence", "margin_m": 1.0,
+    zone = {"id": "nfz", "type": "polygon_fence", **HARD_P0, "margin_m": 1.0,
             "vertices": [{"x": 7, "y": 7}, {"x": 23, "y": 7},
                          {"x": 23, "y": 23}, {"x": 7, "y": 23}]}
-    kin = {"id": "kin", "type": "kinematic_envelope", "speed_max_mps": 4.0,
+    kin = {"id": "kin", "type": "kinematic_envelope", **HARD_P0, "speed_max_mps": 4.0,
            "climb_rate_max_mps": 2.0, "yaw_rate_max_dps": 45.0}
     st, fast = State(x=0, y=15, up=4), Action4D(vx=6.0)
     watched = Policy.model_validate({"policy_id": "mo", "constraints": [
@@ -1515,7 +1524,7 @@ def test_theta_still_escalates_a_setpoint_change_beyond_it():
     why it is not the default.) The default basis escalates it too."""
     from guardrail.models import Policy
     pol = Policy.model_validate({"policy_id": "zone-uncapped", "constraints": [
-        {"id": "nfz", "type": "polygon_fence", "margin_m": 1.0,
+        {"id": "nfz", "type": "polygon_fence", **HARD_P0, "margin_m": 1.0,
          "vertices": [{"x": 7, "y": 7}, {"x": 23, "y": 7},
                       {"x": 23, "y": 23}, {"x": 7, "y": 23}]}]})
     assert Shield(pol).filter(State(x=0, y=15, up=4), Action4D(vx=30.0)).fsm_edge == "X1"
@@ -1619,10 +1628,12 @@ def test_a_soft_rule_is_capped_at_brake():
 def _soft_conflict(p_high="P2", p_mid="P1"):
     from guardrail.models import Policy
     return Policy.model_validate({"policy_id": "soft", "constraints": [
-        {"id": "hard-band", "type": "altitude_envelope", "alt_min_m": 0, "alt_max_m": 10},
-        {"id": "soft-high", "type": "altitude_envelope", "alt_min_m": 20,
+        {"id": "hard-band", "type": "altitude_envelope", **HARD_P0, "alt_min_m": 0, "alt_max_m": 10},
+        {"id": "soft-high", "type": "altitude_envelope",
+         "violation_action": "project_fix", "alt_min_m": 20,
          "alt_max_m": 30, "constraint_type": "soft", "priority": p_high},
-        {"id": "soft-mid", "type": "altitude_envelope", "alt_min_m": 3,
+        {"id": "soft-mid", "type": "altitude_envelope",
+         "violation_action": "project_fix", "alt_min_m": 3,
          "alt_max_m": 8, "constraint_type": "soft", "priority": p_mid}]})
 
 
@@ -1653,10 +1664,12 @@ def test_the_lower_priority_soft_rule_goes_first_when_either_would_do():
 
     def pol(p_low, p_up):
         return Policy.model_validate({"policy_id": "s", "constraints": [
-            {"id": "hard-band", "type": "altitude_envelope", "alt_min_m": 0, "alt_max_m": 10},
-            {"id": "soft-low", "type": "altitude_envelope", "alt_min_m": 0, "alt_max_m": 5,
+            {"id": "hard-band", "type": "altitude_envelope", **HARD_P0, "alt_min_m": 0, "alt_max_m": 10},
+            {"id": "soft-low", "type": "altitude_envelope",
+             "violation_action": "project_fix", "alt_min_m": 0, "alt_max_m": 5,
              "constraint_type": "soft", "priority": p_low},
-            {"id": "soft-up", "type": "altitude_envelope", "alt_min_m": 7, "alt_max_m": 10,
+            {"id": "soft-up", "type": "altitude_envelope",
+             "violation_action": "project_fix", "alt_min_m": 7, "alt_max_m": 10,
              "constraint_type": "soft", "priority": p_up}]})
     st, a = State(x=0, y=0, up=6), Action4D(vx=1.0)
     d = Shield(pol("P2", "P1")).filter(st, a)
@@ -1686,8 +1699,8 @@ def test_a_hard_rule_is_never_given_up():
     Shield's best-effort recovery is streamed, not a stop."""
     from guardrail.models import Policy
     pol = Policy.model_validate({"policy_id": "hard", "constraints": [
-        {"id": "low", "type": "altitude_envelope", "alt_min_m": 0, "alt_max_m": 10},
-        {"id": "lane", "type": "corridor", "width_m": 20,
+        {"id": "low", "type": "altitude_envelope", **HARD_P0, "alt_min_m": 0, "alt_max_m": 10},
+        {"id": "lane", "type": "corridor", **HARD_P0, "width_m": 20,
          "centerline": [{"x": -50, "y": 0}, {"x": 50, "y": 0}],
          "altitude_floor_m": 20, "altitude_ceiling_m": 30}]})
     d = Shield(pol).filter(State(x=0, y=0, up=5), Action4D(vx=1.0))
@@ -1733,7 +1746,7 @@ def test_escalation_off_keeps_the_decision_as_it_was():
 def _windowed(end="17:30", start="07:30"):
     from guardrail.models import Policy
     return Policy.model_validate({"policy_id": "w", "constraints": [{
-        "id": "yard", "type": "polygon_fence", "margin_m": 0.0,
+        "id": "yard", "type": "polygon_fence", **HARD_P0, "margin_m": 0.0,
         "vertices": [{"x": -5, "y": -5}, {"x": 5, "y": -5}, {"x": 5, "y": 5},
                      {"x": -5, "y": 5}],
         "valid_time": {"recurrence": {"days": ["Mon", "Tue", "Wed", "Thu", "Fri"],
@@ -1785,7 +1798,7 @@ def test_rules_the_shield_cannot_enforce_are_refused_at_construction():
     must not then fly it with the rule silently ignored."""
     from guardrail.models import Policy
     pol = Policy.model_validate({"policy_id": "x", "constraints": [
-        {"id": "people", "type": "distance_envelope", "object_class": "people",
+        {"id": "people", "type": "distance_envelope", **HARD_P0, "object_class": "people",
          "min_distance_m": 10}]})
     try:
         Shield(pol)
@@ -1794,7 +1807,7 @@ def test_rules_the_shield_cannot_enforce_are_refused_at_construction():
     else:
         raise AssertionError("a distance_envelope policy was accepted")
     msl = Policy.model_validate({"policy_id": "x", "constraints": [
-        {"id": "band", "type": "altitude_envelope", "alt_min_m": 0, "alt_max_m": 50,
+        {"id": "band", "type": "altitude_envelope", **HARD_P0, "alt_min_m": 0, "alt_max_m": 50,
          "altitude_ref": "MSL"}]})
     try:
         Shield(msl)
@@ -1833,7 +1846,7 @@ def test_a_window_past_midnight_ends_at_midnight_when_the_next_day_is_not_listed
     from datetime import datetime
     from guardrail.models import Policy
     pol = Policy.model_validate({"policy_id": "n", "constraints": [
-        {"id": "nfz-night", "type": "polygon_fence", "margin_m": 0.0,
+        {"id": "nfz-night", "type": "polygon_fence", **HARD_P0, "margin_m": 0.0,
          "vertices": [{"x": 10, "y": -5}, {"x": 20, "y": -5}, {"x": 20, "y": 5},
                       {"x": 10, "y": 5}],
          "valid_time": {"recurrence": {"days": ["Mon"], "start_time": "22:00",
@@ -1852,7 +1865,7 @@ def test_a_cap_that_comes_into_force_later_is_broken_then_not_now():
     from datetime import datetime
     from guardrail.models import Policy
     pol = Policy.model_validate({"policy_id": "k", "constraints": [
-        {"id": "kin-noon", "type": "kinematic_envelope", "speed_max_mps": 2.0,
+        {"id": "kin-noon", "type": "kinematic_envelope", **HARD_P0, "speed_max_mps": 2.0,
          "climb_rate_max_mps": 2.0, "yaw_rate_max_dps": 45.0,
          "valid_time": {"recurrence": {"start_time": "12:00", "end_time": "13:00"}}}]})
     for when, at in ((datetime(2026, 10, 7, 11, 59, 58), 2.0),
@@ -1870,13 +1883,15 @@ def test_relaxed_lists_only_the_soft_rules_the_flown_action_breaks():
     one rule the flown action still breaks."""
     from guardrail.models import Policy
     pol = Policy.model_validate({"policy_id": "r", "constraints": [
-        {"id": "hard-band", "type": "altitude_envelope", "alt_min_m": 0, "alt_max_m": 10},
-        {"id": "hard-kin", "type": "kinematic_envelope", "speed_max_mps": 1.5,
+        {"id": "hard-band", "type": "altitude_envelope", **HARD_P0, "alt_min_m": 0, "alt_max_m": 10},
+        {"id": "hard-kin", "type": "kinematic_envelope", **HARD_P0, "speed_max_mps": 1.5,
          "climb_rate_max_mps": 2.0, "yaw_rate_max_dps": 45.0},
-        {"id": "soft-kin", "type": "kinematic_envelope", "speed_max_mps": 2.0,
+        {"id": "soft-kin", "type": "kinematic_envelope",
+         "violation_action": "project_fix", "speed_max_mps": 2.0,
          "climb_rate_max_mps": 2.0, "yaw_rate_max_dps": 45.0,
          "constraint_type": "soft", "priority": "P2"},
-        {"id": "soft-high", "type": "altitude_envelope", "alt_min_m": 20,
+        {"id": "soft-high", "type": "altitude_envelope",
+         "violation_action": "project_fix", "alt_min_m": 20,
          "alt_max_m": 30, "constraint_type": "soft", "priority": "P1"}]})
     d = Shield(pol).filter(State(x=0, y=0, up=8), Action4D(vx=3.0))
     assert sorted(v.rule_id for v in d.violations) == ["hard-kin", "soft-high", "soft-kin"]

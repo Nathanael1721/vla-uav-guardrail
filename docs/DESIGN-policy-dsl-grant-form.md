@@ -367,6 +367,39 @@ rule type it lacks); the source policy is rebuilt and verified from 3/3
 reference-form bundles of the reference's own documents. No stored hash
 moved: `policy_hash` of a bundle in this project's form is what it was.
 
+**The two-hash contract (2026-11-02, WP1-05).** The reference's Phase-1 DSL
+holds two rule types, WGS84 vertices only, no margin ring and no schedule, so
+it can hold 0 of the 32 shipped policies whole; the whole-policy form above
+converts nothing this project flies. Best practice is to say exactly what
+does convert, and to hash that:
+
+| Hash | Over | Where |
+|---|---|---|
+| `sha256-canonical-v3` (this project's) | the WHOLE policy's canonical IR | `policy_hash`, `hashes`; every run, CSP and audit record |
+| `reference-policy-dsl-0.1`, whole | the reference's document of the whole policy - only when it can hold it all (`Policy.reference_ir`) | `hashes`, else null with `reference_problems` |
+| `reference-policy-dsl-0.1`, projection | the reference's document of the rules it CAN hold (`guardrail/reference_convert.py`, `to_reference`) | `reference_projection`: its `policy_hash`, the `rules` it holds, every rule `omitted` with the reason, what is `not_carried` (origin, layers_merged, locked_by), and `complete` |
+
+The projection's hash identifies a WEAKER policy (only the rules the
+reference can enforce) and never stands for the whole: the record names every
+rule left out. When nothing is left out (`complete`), the projection IS the
+whole-policy reference form, byte for byte, and its hash is `hashes`'
+reference entry. `check_bundle` recomputes the record from the policy it
+rebuilds and refuses a manifest that claims more. The manifest's projection is
+exact-only, in the policy's own frame; `python -m guardrail.bundle export
+POLICY --reference [--origin LAT,LON] [--conservative]` writes the document
+for a reader, where `--origin` anchors metre vertices and `--conservative`
+folds a margin ring into the vertices (mitred, checked to cover the ring the
+Shield enforces) and drops a schedule (always in force: stricter), each
+recorded as such.
+
+Measured 2026-11-02: exact projections are non-empty for 31 of the 32 shipped
+policies (each holds its altitude envelope; corridor_survey has none: a
+corridor, a scheduled metre fence and kinematic caps), 0 complete; with `--origin` and
+`--conservative`, 1 to 6 rules each. The reference implementation's own
+`ingest_file`, in its own 3.11 environment (read-only), computes the same
+hash for 63 of 63 projection documents (both modes). PI acceptance of this
+contract is the open question (12 Oct Q8).
+
 What still differs, precisely:
 
 1. **The IR and its hash.** The reference hashes its authored document (grant

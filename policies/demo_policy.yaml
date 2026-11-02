@@ -1,7 +1,7 @@
 # Demo policy — mini version of the grant's "Worked DSL example".
 # Local frame: x = meters North of start, y = meters East. Altitude = m above ground.
 policy_id: fase3-demo
-version: 0.1.0
+version: 0.1.1
 
 constraints:
   # Square no-fly zone centered on (15, 15), 16 m per side.
@@ -9,7 +9,7 @@ constraints:
     type: polygon_fence
     constraint_type: hard
     priority: P0
-    violation_action: repair
+    violation_action: project_fix
     vertices:
       - { x: 7,  y: 7 }
       - { x: 23, y: 7 }
@@ -24,7 +24,7 @@ constraints:
     type: altitude_envelope
     constraint_type: hard
     priority: P0
-    violation_action: repair
+    violation_action: project_fix
     alt_min_m: 2
     alt_max_m: 6
 
@@ -33,7 +33,7 @@ constraints:
     type: kinematic_envelope
     constraint_type: hard
     priority: P1
-    violation_action: repair
+    violation_action: project_fix
     speed_max_mps: 4.0
     climb_rate_max_mps: 2.0
     yaw_rate_max_dps: 45.0

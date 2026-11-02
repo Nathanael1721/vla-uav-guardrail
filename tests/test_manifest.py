@@ -28,6 +28,10 @@ from guardrail.manifest import (MAX_HEADING_ERR_DEG, MIN_DET_HZ,      # noqa: E4
                                 build_manifest, is_kpi_grade,
                                 normalize_topology, sim_speedup_from_scene)
 
+# The three ConstraintBase fields the grant requires (IR schema 3.0.0, 2026-11-02),
+# at the values they defaulted to before (repair = project_fix).
+HARD_P0 = {"constraint_type": "hard", "priority": "P0", "violation_action": "project_fix"}
+
 SCENE = ROOT / "demo" / "pas_config" / "scene_semantic.jsonc"
 GOOD_METRICS = {"det_hz": 4.5, "start_heading_err_deg": 1.5}
 # A test that cannot run here returns SKIP, and the runner below counts it as
@@ -1266,7 +1270,7 @@ def test_an_audit_record_after_a_hot_apply_carries_the_new_policy_hash():
 
     al.log(1, sh.filter(State(x=-20, y=-20, up=4), Action4D(vx=8)))
     zone = PolygonFence(
-        id="nfz-hot", type="polygon_fence",
+        id="nfz-hot", type="polygon_fence", **HARD_P0,
         vertices=[{"x": -25, "y": -25}, {"x": -15, "y": -25},
                   {"x": -15, "y": -15}, {"x": -25, "y": -15}])
     # After the first tick a Shield that enforces the grant's mid-flight

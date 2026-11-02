@@ -6,6 +6,9 @@ version: 0.1.0
 constraints:
   - id: kin
     type: kinematic_envelope
+    constraint_type: hard
+    priority: P0
+    violation_action: project_fix
     speed_max_mps: fast
     climb_rate_max_mps: 2
     yaw_rate_max_dps: 45

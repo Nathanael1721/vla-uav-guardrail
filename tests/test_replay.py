@@ -43,6 +43,10 @@ from guardrail.replay import (EPISODE, INDEX_NAME,             # noqa: E402
                               _SIGNED_BY, _digest,
                               read_replay, verify_replay, write_replay)
 
+# The three ConstraintBase fields the grant requires (IR schema 3.0.0, 2026-11-02),
+# at the values they defaulted to before (repair = project_fix).
+HARD_P0 = {"constraint_type": "hard", "priority": "P0", "violation_action": "project_fix"}
+
 RUN = ROOT / "demo" / "out" / "retarget_demo2"
 POLICY_FILE = ROOT / "policies" / "follow_pedestrian.yaml"
 
@@ -695,7 +699,7 @@ def _episode(d: Path, hot: bool = True, mission: bool = True,
             # The rails' own call: a dynamic_nfz where the Shield enforces
             # the grant's mid-flight update model, the polygon_fence where not.
             rec.apply_zone(shield, PolygonFence(
-                id="nfz-dynamic", type="polygon_fence",
+                id="nfz-dynamic", type="polygon_fence", **HARD_P0,
                 vertices=[XY(x=23, y=6), XY(x=31, y=6), XY(x=31, y=14),
                           XY(x=23, y=14)], margin_m=1.0), t=tick * 0.1)
         st = State(x=2.0 + 0.4 * tick, y=2.0 + 0.4 * tick, up=15.0)
@@ -1187,7 +1191,7 @@ def test_a_zone_applied_after_mission_start_goes_in_as_the_grant_allows():
     rec = EpisodeRecord(d / "ep", policy, None)
     sh = S.Shield(policy)
     sh.filter(State(x=0.0, y=0.0, up=15.0), Action4D(vx=1.0))   # mission started
-    fence = PolygonFence(id="nfz-late", type="polygon_fence", margin_m=1.0,
+    fence = PolygonFence(id="nfz-late", type="polygon_fence", **HARD_P0, margin_m=1.0,
                          vertices=[XY(x=40, y=-5), XY(x=50, y=-5),
                                    XY(x=50, y=5), XY(x=40, y=5)])
     rule = rec.apply_zone(sh, fence, t=1.0)
@@ -1531,7 +1535,7 @@ def test_each_generations_csp_and_cost_map_share_one_clock_reading():
     rec = EpisodeRecord(run, policy, m, lookahead_s=3.0, clock=clock, cost_map=True)
     shield = Shield(policy, lookahead_s=3.0, dt=0.5)
     rec.apply_zone(shield, PolygonFence(
-        id="nfz-dynamic", type="polygon_fence",
+        id="nfz-dynamic", type="polygon_fence", **HARD_P0,
         vertices=[XY(x=23, y=6), XY(x=31, y=6), XY(x=31, y=14), XY(x=23, y=14)],
         margin_m=1.0), t=2.0)
     assert clock.calls == 2, f"{clock.calls} clock readings for two generations"
@@ -1563,13 +1567,13 @@ def _dwell_policy():
     test below shows they now do."""
     from guardrail.models import Policy
     return Policy.model_validate({"policy_id": "dwell", "constraints": [
-        {"id": "sq", "type": "polygon_fence", "vertices": _SQ, "margin_m": 2.0,
+        {"id": "sq", "type": "polygon_fence", **HARD_P0, "vertices": _SQ, "margin_m": 2.0,
          "altitude_floor_m": 0, "altitude_ceiling_m": 50},
-        {"id": "circ", "type": "circle_fence", "center": {"x": 40, "y": 0},
+        {"id": "circ", "type": "circle_fence", **HARD_P0, "center": {"x": 40, "y": 0},
          "radius_m": 5},
-        {"id": "dyn", "type": "dynamic_nfz", "vertices": [
+        {"id": "dyn", "type": "dynamic_nfz", **HARD_P0, "vertices": [
             {"x": 20, "y": 20}, {"x": 30, "y": 20}, {"x": 30, "y": 30}, {"x": 20, "y": 30}]},
-        {"id": "mov", "type": "dynamic_nfz", "motion": {"vx_mps": 1.0}, "vertices": [
+        {"id": "mov", "type": "dynamic_nfz", **HARD_P0, "motion": {"vx_mps": 1.0}, "vertices": [
             {"x": 60, "y": 60}, {"x": 70, "y": 60}, {"x": 70, "y": 70}, {"x": 60, "y": 70}]},
     ]})
 
@@ -1620,7 +1624,7 @@ def test_zone_dwell_counts_a_hot_applied_zone_only_once_it_is_live():
     sh = Shield(load_policy(SIM_POLICY), escalation=False)
     sh.filter(State(x=-50, y=-50, up=15), Action4D())          # mission started
     sh.hot_apply(as_dynamic_nfz(PolygonFence(
-        id="nfz-dynamic", type="polygon_fence",
+        id="nfz-dynamic", type="polygon_fence", **HARD_P0,
         vertices=[XY(x=23, y=6), XY(x=31, y=6), XY(x=31, y=14), XY(x=23, y=14)],
         margin_m=1.0)))
     pts = [{"t": t, "x": 27.0, "y": 10.0, "up": 15.0} for t in (7.0, 7.9, 8.0, 8.1)]

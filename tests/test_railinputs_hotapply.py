@@ -41,7 +41,10 @@ from guardrail.replay import EpisodeRecord, rail_shield              # noqa: E40
 
 POLICY = ROOT / "policies" / "sim_demo_policy.yaml"
 SKIP = "SKIP"
-ZONE = {"id": "nfz-rest", "vertices": [{"x": 40, "y": 40}, {"x": 50, "y": 40},
+# A POST /dynamic_nfz body states the three ConstraintBase fields (IR schema 3.0.0).
+ZONE = {"id": "nfz-rest", "constraint_type": "hard", "priority": "P0",
+        "violation_action": "project_fix",
+        "vertices": [{"x": 40, "y": 40}, {"x": 50, "y": 40},
                                        {"x": 50, "y": 50}, {"x": 40, "y": 50}]}
 
 
@@ -223,7 +226,7 @@ def test_the_pymavlink_rail_takes_a_hot_apply_between_two_ticks():
             real_sleep(dt)
             if not sent and R.time.time() >= 3.0:
                 sent.append(httpx.post(f"http://127.0.0.1:{port}/dynamic_nfz",
-                                       json={"id": "nfz-rest", "vertices": [
+                                       json={**ZONE, "id": "nfz-rest", "vertices": [
                                            {"x": 24, "y": 24}, {"x": 28, "y": 24},
                                            {"x": 28, "y": 28}, {"x": 24, "y": 28}]},
                                        timeout=10))

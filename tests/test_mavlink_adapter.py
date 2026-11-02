@@ -28,6 +28,10 @@ from guardrail.frames import from_body, to_local_ned                # noqa: E402
 from guardrail.models import PolygonFence, XY                       # noqa: E402
 from guardrail.projection import LocalProjection                    # noqa: E402
 
+# The three ConstraintBase fields the grant requires (IR schema 3.0.0, 2026-11-02),
+# at the values they defaulted to before (repair = project_fix).
+HARD_P0 = {"constraint_type": "hard", "priority": "P0", "violation_action": "project_fix"}
+
 POLICY = ROOT / "policies" / "sim_demo_policy.yaml"
 PARM = ROOT / "sitl" / "fence" / "guardrail_fence.parm"
 HOME = (-35.363261, 149.165230)        # sitl/start_sitl.sh --home
@@ -118,7 +122,7 @@ def test_a_malformed_or_non_finite_setpoint_is_refused_not_flown():
 def test_policy_fences_export_the_no_fly_zone_and_say_what_they_skip():
     pol = load_policy(POLICY)
     pol.constraints.append(PolygonFence(
-        id="nfz-high", type="polygon_fence", altitude_floor_m=40.0,
+        id="nfz-high", type="polygon_fence", **HARD_P0, altitude_floor_m=40.0,
         vertices=[XY(x=50, y=50), XY(x=60, y=50), XY(x=60, y=60)]))
     fences, skipped = A.policy_fences(pol, column_m=30.0)
     assert [f["id"] for f in fences] == ["nfz-square"], fences
@@ -244,7 +248,7 @@ def test_a_real_circle_fence_reaches_the_autopilot_as_a_circle():
     # `except Exception: return` guard turned any construction error into a
     # silent PASS (review of 613aa50, 2026-10-19).
     from guardrail.models import CircleFence
-    c = CircleFence(id="nfz-disc", type="circle_fence", center=XY(x=40, y=40),
+    c = CircleFence(id="nfz-disc", type="circle_fence", **HARD_P0, center=XY(x=40, y=40),
                     radius_m=8.0)
     pol = load_policy(POLICY)
     pol.constraints.append(c)
@@ -451,7 +455,7 @@ def test_the_ros_node_hands_the_fsm_the_depth_and_the_caps_the_shield_applied():
     from guardrail.fsm import EscalationFSM, TickInput
     from guardrail.models import Policy
     sh = Shield(Policy.model_validate({"policy_id": "r", "constraints": [
-        {"id": "band", "type": "altitude_envelope", "alt_min_m": 0, "alt_max_m": 30}]}),
+        {"id": "band", "type": "altitude_envelope", **HARD_P0, "alt_min_m": 0, "alt_max_m": 30}]}),
         escalation=False)
     st, a = State(x=0.0, y=0.0, up=10.0), Action4D(vx=1.0)
     d = sh.filter(st, a)
@@ -508,18 +512,18 @@ def _timed_policy():
     from guardrail.models import Policy
 
     def zone(zid, dx, **kw):
-        return {"id": zid, "type": "polygon_fence", **kw,
+        return {"id": zid, "type": "polygon_fence", **HARD_P0, **kw,
                 "vertices": [{"x": v["x"] + dx, "y": v["y"]} for v in _SQ]}
     return Policy.model_validate({"policy_id": "timed", "constraints": [
         zone("yard", 0, valid_time={"recurrence": {"start_time": "07:30",
                                                    "end_time": "17:30"}}),
         zone("always", 20, valid_time={}),            # a window that is "always"
         zone("held", 40),
-        {"id": "sw-off", "type": "time_window_switch", "target_id": "held",
+        {"id": "sw-off", "type": "time_window_switch", **HARD_P0, "target_id": "held",
          "active": False, "valid_time": {"recurrence": {"start_time": "08:00",
                                                         "end_time": "08:30"}}},
         zone("on", 60),
-        {"id": "sw-on", "type": "time_window_switch", "target_id": "on", "active": True},
+        {"id": "sw-on", "type": "time_window_switch", **HARD_P0, "target_id": "on", "active": True},
         zone("plain", 80),
     ]})
 
@@ -547,11 +551,11 @@ def test_a_switch_hot_applied_mid_flight_takes_its_zone_off_the_next_export():
     from guardrail.models import Action4D, Policy, State, TimeWindowSwitch
     from guardrail.shield import Shield
     pol = Policy.model_validate({"policy_id": "hot", "constraints": [
-        {"id": "plain", "type": "polygon_fence", "vertices": _SQ}]})
+        {"id": "plain", "type": "polygon_fence", **HARD_P0, "vertices": _SQ}]})
     assert [f["id"] for f in A.policy_fences(pol, column_m=30.0)[0]] == ["plain"]
     sh = Shield(pol, escalation=False)
     sh.filter(State(x=-50, y=-50, up=10), Action4D())
-    sh.hot_apply(TimeWindowSwitch(id="sw", type="time_window_switch",
+    sh.hot_apply(TimeWindowSwitch(id="sw", type="time_window_switch", **HARD_P0,
                                   target_id="plain", active=False))
     fences, skipped = A.policy_fences(sh.policy, column_m=30.0)
     assert fences == [] and skipped[0]["id"] == "plain" and "sw" in skipped[0]["why"]

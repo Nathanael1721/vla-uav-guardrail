@@ -40,6 +40,10 @@ from guardrail.shield import (HotApplyRefused, LayerRelaxation,        # noqa: E
                               LockedRuleClass, RuleIdConflict, UnknownRule,
                               as_dynamic_nfz)
 
+# The three ConstraintBase fields the grant requires (IR schema 3.0.0, 2026-11-02),
+# at the values they defaulted to before (repair = project_fix).
+HARD_P0 = {"constraint_type": "hard", "priority": "P0", "violation_action": "project_fix"}
+
 DEMO = ROOT / "policies" / "demo_policy.yaml"
 
 
@@ -49,7 +53,7 @@ def _sq(cx, cy, half):
 
 
 def _zone(zid="dyn", cx=-12.0, cy=-20.0, half=4.0, margin=0.0, motion=None, **kw):
-    data = {"id": zid, "type": "dynamic_nfz", "vertices": _sq(cx, cy, half),
+    data = {"id": zid, "type": "dynamic_nfz", **HARD_P0, "vertices": _sq(cx, cy, half),
             "margin_m": margin, **kw}
     if motion is not None:
         data["motion"] = motion
@@ -69,8 +73,14 @@ def _ring(sh, zid, st=State(x=0.0, y=0.0, up=4.0)):
 
 
 def _close(a, b, tol=1e-9):
-    return len(a) == len(b) and all(abs(p[0] - q[0]) < tol and abs(p[1] - q[1]) < tol
-                                    for p, q in zip(a, b))
+    """The same ring, vertex for vertex, from ANY starting vertex: since IR
+    schema 3.0.0 a zone's ring is stored in canonical order (positive winding,
+    smallest point first), so an edited zone may start elsewhere than the
+    list it was computed from. The winding is still compared."""
+    def same(x, y):
+        return all(abs(p[0] - q[0]) < tol and abs(p[1] - q[1]) < tol for p, q in zip(x, y))
+    a, b = list(a), list(b)
+    return len(a) == len(b) and any(same(a[k:] + a[:k], b) for k in range(len(a) or 1))
 
 
 # ------------------------------------------------------------------ dynamic_nfz
@@ -232,7 +242,7 @@ def test_a_turning_zone_is_seen_where_it_turns_to():
     bar about 3 s from now, when it has turned 90 deg. The swept box must
     cover the disc the bar turns in, not only where it is."""
     bar = DynamicNFZ.model_validate({
-        "id": "bar", "type": "dynamic_nfz", "margin_m": 0.0,
+        "id": "bar", "type": "dynamic_nfz", **HARD_P0, "margin_m": 0.0,
         "vertices": [{"x": -1, "y": -20}, {"x": 1, "y": -20},
                      {"x": 1, "y": 20}, {"x": -1, "y": 20}],
         "motion": {"yaw_rate_dps": 30.0}})
@@ -336,7 +346,7 @@ def test_a_switch_turns_a_rule_off_and_back_on():
     assert len(standing) == 1 and standing[0].active is True, standing
     _raises(UnknownRule, sh.set_rule_active, "nope", False)
     _raises(HotApplyRefused, sh.hot_apply, TimeWindowSwitch(
-        id="sw2", type="time_window_switch", target_id=standing[0].id, active=False))
+        id="sw2", type="time_window_switch", **HARD_P0, target_id=standing[0].id, active=False))
 
 
 def test_a_scheduled_switch_follows_the_clock_and_fails_safe_without_one():
@@ -344,7 +354,7 @@ def test_a_scheduled_switch_follows_the_clock_and_fails_safe_without_one():
     With no clock the window cannot be read, and nothing that cannot establish
     "this rule is off now" may switch it off - so the zone stays on."""
     sw = TimeWindowSwitch.model_validate({
-        "id": "lunch", "type": "time_window_switch", "target_id": "nfz-square",
+        "id": "lunch", "type": "time_window_switch", **HARD_P0, "target_id": "nfz-square",
         "active": False, "valid_time": {"recurrence": {
             "start_time": "12:00", "end_time": "13:00"}}})
     st, a = State(x=0, y=15, up=4), Action4D(vx=1.3)
@@ -362,14 +372,14 @@ def test_a_scheduled_switch_follows_the_clock_and_fails_safe_without_one():
 
 def _lanes():
     return Policy.model_validate({"policy_id": "lanes", "constraints": [
-        {"id": "lane-a", "type": "corridor", "width_m": 10,
+        {"id": "lane-a", "type": "corridor", **HARD_P0, "width_m": 10,
          "centerline": [{"x": -100, "y": 0}, {"x": 100, "y": 0}],
          "altitude_floor_m": 0, "altitude_ceiling_m": 50}]})
 
 
 def _swap(sid, cy):
     return CorridorSwap.model_validate({
-        "id": sid, "type": "corridor_swap", "target_id": "lane-a", "width_m": 10,
+        "id": sid, "type": "corridor_swap", **HARD_P0, "target_id": "lane-a", "width_m": 10,
         "centerline": [{"x": -100, "y": cy}, {"x": 100, "y": cy}],
         "altitude_floor_m": 0, "altitude_ceiling_m": 50})
 
@@ -395,11 +405,11 @@ def test_declared_events_are_enforced_from_the_policy():
     """dynamic_nfz, time_window_switch and corridor_swap written IN the policy
     are enforced from the first tick (the zone moves from the first tick)."""
     pol = Policy.model_validate({"policy_id": "decl", "constraints": [
-        {"id": "lane-a", "type": "corridor", "width_m": 10,
+        {"id": "lane-a", "type": "corridor", **HARD_P0, "width_m": 10,
          "centerline": [{"x": -100, "y": 0}, {"x": 100, "y": 0}]},
-        {"id": "nfz", "type": "polygon_fence", "margin_m": 0, "vertices": _sq(50, 0, 3)},
-        {"id": "off", "type": "time_window_switch", "target_id": "nfz", "active": False},
-        {"id": "drift", "type": "dynamic_nfz", "margin_m": 0, "vertices": _sq(0, 3, 1),
+        {"id": "nfz", "type": "polygon_fence", **HARD_P0, "margin_m": 0, "vertices": _sq(50, 0, 3)},
+        {"id": "off", "type": "time_window_switch", **HARD_P0, "target_id": "nfz", "active": False},
+        {"id": "drift", "type": "dynamic_nfz", **HARD_P0, "margin_m": 0, "vertices": _sq(0, 3, 1),
          "motion": {"vx_mps": 1.0}}]})
     sh = Shield(pol)
     d = sh.filter(State(x=44, y=0, up=5), Action4D(vx=3.0), t=0.0)
@@ -486,7 +496,7 @@ def test_an_event_the_shield_would_not_enforce_is_refused():
     _raises(HotApplyRefused, lanes.hot_apply, swap)
     assert lanes.policy.generation == 0 and lanes.events == []
     pre = Shield(load_policy(DEMO))                 # before the first tick
-    fence = PolygonFence.model_validate({"id": "pf", "type": "polygon_fence",
+    fence = PolygonFence.model_validate({"id": "pf", "type": "polygon_fence", **HARD_P0,
                                          "altitude_ref": "MSL", "vertices": _sq(-40, -40, 3)})
     _raises(HotApplyRefused, pre.hot_apply, fence)
     assert pre.policy.generation == 0 and all(c.id != "pf" for c in pre.policy.constraints)
@@ -676,16 +686,17 @@ def _layered(extra_reg=(), extra_mis=()):
     the Shield edits the policy it is given."""
     from guardrail.models import merge_layers
     reg = Policy.model_validate({"policy_id": "reg", "version": "0.1.0", "constraints": [
-        {"id": "nfz-airport", "type": "polygon_fence", "layer": "regulation",
+        {"id": "nfz-airport", "type": "polygon_fence", **HARD_P0, "layer": "regulation",
          "vertices": _SQ},
-        {"id": "nfz-park", "type": "polygon_fence", "layer": "regulation",
+        {"id": "nfz-park", "type": "polygon_fence",
+         "violation_action": "project_fix", "layer": "regulation",
          "constraint_type": "soft", "priority": "P2",
          "vertices": [{"x": -40, "y": 7}, {"x": -30, "y": 7}, {"x": -30, "y": 23},
                       {"x": -40, "y": 23}]},
         *extra_reg]})
     mis = Policy.model_validate({"policy_id": "mis", "version": "0.1.0", "constraints": [
-        {"id": "alt", "type": "altitude_envelope", "alt_min_m": 2, "alt_max_m": 40},
-        {"id": "nfz-mission", "type": "polygon_fence",
+        {"id": "alt", "type": "altitude_envelope", **HARD_P0, "alt_min_m": 2, "alt_max_m": 40},
+        {"id": "nfz-mission", "type": "polygon_fence", **HARD_P0,
          "vertices": [{"x": 50, "y": 7}, {"x": 60, "y": 7}, {"x": 60, "y": 23},
                       {"x": 50, "y": 23}]},
         *extra_mis]})
@@ -700,7 +711,7 @@ def test_a_switch_may_not_turn_off_a_hard_rule_of_another_layer():
     e = _raises(LayerRelaxation, sh.set_rule_active, "nfz-airport", False)
     assert "hard regulation-layer rule" in str(e)
     _raises(LayerRelaxation, sh.hot_apply, TimeWindowSwitch(
-        id="sw", type="time_window_switch", target_id="nfz-airport", active=False))
+        id="sw", type="time_window_switch", **HARD_P0, target_id="nfz-airport", active=False))
     assert sh.policy.generation == g and sh.events == []          # nothing applied
     d = sh.filter(st, a)
     assert [v.rule_id for v in d.violations] == ["nfz-airport"]   # still enforced
@@ -725,7 +736,7 @@ def test_a_tightened_lower_rule_stays_locked_to_its_lower_layer():
     switch-off, the mission expire and the wide swap all applied."""
     from guardrail.models import merge_layers
     big = [{"x": 6, "y": 6}, {"x": 24, "y": 6}, {"x": 24, "y": 24}, {"x": 6, "y": 24}]
-    pol = _layered(extra_mis=[{"id": "nfz-airport", "type": "polygon_fence",
+    pol = _layered(extra_mis=[{"id": "nfz-airport", "type": "polygon_fence", **HARD_P0,
                                "vertices": big}])
     airport = next(c for c in pol.constraints if c.id == "nfz-airport")
     assert (airport.effective_layer, airport.locked_by) == ("mission", ["regulation"])
@@ -741,18 +752,18 @@ def test_a_tightened_lower_rule_stays_locked_to_its_lower_layer():
     assert [v.rule_id for v in d.violations] == ["nfz-airport"] and d.repairs
     assert sh.set_rule_active("nfz-airport", True)["op"] == "switch_on"   # holding it on
     # A re-declared regulation zone may not be expired from the mission layer...
-    tfr = {"id": "tfr", "type": "dynamic_nfz", "vertices": _SQ}
+    tfr = {"id": "tfr", "type": "dynamic_nfz", **HARD_P0, "vertices": _SQ}
     reg = Policy.model_validate({"policy_id": "reg", "version": "0.1.0", "constraints": [
         {**tfr, "layer": "regulation"}]})
     mis = Policy.model_validate({"policy_id": "mis", "version": "0.1.0", "constraints": [
-        tfr, {"id": "alt", "type": "altitude_envelope", "alt_min_m": 2, "alt_max_m": 40}]})
+        tfr, {"id": "alt", "type": "altitude_envelope", **HARD_P0, "alt_min_m": 2, "alt_max_m": 40}]})
     sh = Shield(merge_layers([reg, mis]))
     sh.filter(State(x=0, y=15, up=4), Action4D())
     _raises(LayerRelaxation, sh.expire_nfz, "tfr")
     _raises(LayerRelaxation, sh.scale_nfz, "tfr", 0.1)
     assert sh.policy.generation == 0
     # ...nor a re-declared regulation corridor swapped wide from it.
-    lane = {"id": "lane", "type": "corridor", "width_m": 20,
+    lane = {"id": "lane", "type": "corridor", **HARD_P0, "width_m": 20,
             "centerline": [{"x": -100, "y": 0}, {"x": 100, "y": 0}],
             "altitude_floor_m": 5, "altitude_ceiling_m": 30}
     reg = Policy.model_validate({"policy_id": "reg", "version": "0.1.0", "constraints": [
@@ -762,13 +773,13 @@ def test_a_tightened_lower_rule_stays_locked_to_its_lower_layer():
     sh = Shield(merge_layers([reg, mis]))
     sh.filter(State(x=0, y=0, up=10), Action4D())
     wide = CorridorSwap.model_validate({
-        "id": "wide", "type": "corridor_swap", "target_id": "lane", "width_m": 500,
+        "id": "wide", "type": "corridor_swap", **HARD_P0, "target_id": "lane", "width_m": 500,
         "centerline": [{"x": -100, "y": 0}, {"x": 100, "y": 0}],
         "altitude_floor_m": 0, "altitude_ceiling_m": 300})
     e = _raises(LayerRelaxation, sh.hot_apply, wide)
     assert "overriding a hard regulation-layer copy" in str(e), str(e)
     narrow = CorridorSwap.model_validate({
-        "id": "narrow", "type": "corridor_swap", "target_id": "lane", "width_m": 10,
+        "id": "narrow", "type": "corridor_swap", **HARD_P0, "target_id": "lane", "width_m": 10,
         "centerline": [{"x": -50, "y": 0}, {"x": 50, "y": 0}],
         "altitude_floor_m": 8, "altitude_ceiling_m": 25})
     assert sh.hot_apply(narrow)["op"] == "swap"
@@ -777,7 +788,7 @@ def test_a_tightened_lower_rule_stays_locked_to_its_lower_layer():
 def test_a_switch_may_not_override_another_layers_switch_holding_a_rule_on():
     """The last switch in force decides, so appending a mission switch-off
     after a regulation switch that holds the rule on would overrule it."""
-    sh = Shield(_layered(extra_reg=[{"id": "hold", "type": "time_window_switch",
+    sh = Shield(_layered(extra_reg=[{"id": "hold", "type": "time_window_switch", **HARD_P0,
                                      "layer": "regulation", "target_id": "nfz-mission",
                                      "active": True}]))
     e = _raises(LayerRelaxation, sh.set_rule_active, "nfz-mission", False)
@@ -791,11 +802,11 @@ def test_a_swap_may_not_loosen_a_hard_corridor_of_another_layer():
     accepted and enforced."""
     from guardrail.models import merge_layers
     reg = Policy.model_validate({"policy_id": "reg", "version": "0.1.0", "constraints": [
-        {"id": "lane", "type": "corridor", "layer": "regulation", "width_m": 20,
+        {"id": "lane", "type": "corridor", **HARD_P0, "layer": "regulation", "width_m": 20,
          "centerline": [{"x": -100, "y": 0}, {"x": 100, "y": 0}],
          "altitude_floor_m": 5, "altitude_ceiling_m": 30}]})
     mis = Policy.model_validate({"policy_id": "mis", "version": "0.1.0", "constraints": [
-        {"id": "alt", "type": "altitude_envelope", "alt_min_m": 2, "alt_max_m": 40}]})
+        {"id": "alt", "type": "altitude_envelope", **HARD_P0, "alt_min_m": 2, "alt_max_m": 40}]})
     sh = Shield(merge_layers([reg, mis]))
     sh.filter(State(x=0, y=0, up=10), Action4D())
     wide = CorridorSwap.model_validate({
@@ -808,7 +819,7 @@ def test_a_swap_may_not_loosen_a_hard_corridor_of_another_layer():
     d = sh.filter(State(x=0, y=300, up=10), Action4D(vy=1.0))
     assert "lane" in {v.rule_id for v in d.violations}           # the original holds
     narrow = CorridorSwap.model_validate({
-        "id": "narrow", "type": "corridor_swap", "target_id": "lane", "width_m": 10,
+        "id": "narrow", "type": "corridor_swap", **HARD_P0, "target_id": "lane", "width_m": 10,
         "centerline": [{"x": -50, "y": 0}, {"x": 50, "y": 0}],
         "altitude_floor_m": 8, "altitude_ceiling_m": 25})
     assert sh.hot_apply(narrow)["op"] == "swap"
@@ -822,9 +833,9 @@ def test_a_zone_of_another_layer_cannot_be_moved_reshaped_or_expired():
     the regulation layer (Python API, layer=) goes through."""
     from guardrail.models import merge_layers
     reg = Policy.model_validate({"policy_id": "reg", "version": "0.1.0", "constraints": [
-        {"id": "tfr", "type": "dynamic_nfz", "layer": "regulation", "vertices": _SQ}]})
+        {"id": "tfr", "type": "dynamic_nfz", **HARD_P0, "layer": "regulation", "vertices": _SQ}]})
     mis = Policy.model_validate({"policy_id": "mis", "version": "0.1.0", "constraints": [
-        {"id": "alt", "type": "altitude_envelope", "alt_min_m": 2, "alt_max_m": 40}]})
+        {"id": "alt", "type": "altitude_envelope", **HARD_P0, "alt_min_m": 2, "alt_max_m": 40}]})
     sh = Shield(merge_layers([reg, mis]))
     sh.filter(State(x=0, y=15, up=4), Action4D())
     for fn, args in ((sh.translate_nfz, ("tfr", 100.0, 0.0)), (sh.scale_nfz, ("tfr", 0.1)),
@@ -842,7 +853,7 @@ def test_the_last_switch_in_force_decides():
     is in force."""
     def sw(sid, active, start):
         return TimeWindowSwitch.model_validate({
-            "id": sid, "type": "time_window_switch", "target_id": "nfz-square",
+            "id": sid, "type": "time_window_switch", **HARD_P0, "target_id": "nfz-square",
             "active": active, "valid_time": {"recurrence": {
                 "start_time": start, "end_time": "12:00"}}})
     st = State(x=15, y=15, up=4)
@@ -894,7 +905,7 @@ def test_reset_episode_lifts_the_mission_start_lock():
     """Mission start is the first tick of an EPISODE: after reset_episode() a
     polygon_fence is part of the next mission's start policy again."""
     from guardrail.models import PolygonFence
-    pf = PolygonFence.model_validate({"id": "pf", "type": "polygon_fence",
+    pf = PolygonFence.model_validate({"id": "pf", "type": "polygon_fence", **HARD_P0,
                                       "vertices": _sq(-60.0, -60.0, 3.0)})
     sh = Shield(load_policy(DEMO))
     sh.filter(State(x=-20, y=-20, up=4), Action4D())

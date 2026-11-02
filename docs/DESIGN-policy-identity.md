@@ -86,6 +86,15 @@ constraint type is seen the day it joins the `Constraint` union. A model the
 lock has not pinned yet is reported until `lock --update` pins it; that adds
 the pin and never rewrites an existing one.
 
+**Superseded on 2026-11-02 (WP1-22 / X-09, the grant's freeze rule).** The
+additive exception above is gone: any difference from the pin - a new
+None-default field and a new model included - is reported until
+`IR_SCHEMA_VERSION` is raised, and `lock --update` then re-pins the schema and
+appends what changed to `ir_schema.migrations`. docs/IR-MIGRATIONS.md has the
+rule and a row per version; 2.2.0 versions the 2026-10-19 `locked_by` change.
+The None-omission itself stays: it is what keeps such a bump from moving any
+stored hash.
+
 A useful accident: for the None-free schema of July and August, the old 16-hex
 hash and the new 64-hex hash are the same SHA-256 over the same bytes. The old
 hash is literally the first 16 hex digits of the new one

@@ -50,6 +50,10 @@ from guardrail.fsm import (HOLD_ARRIVAL_SLACK_S, HOLD_MIN_REPLAN_S,  # noqa: E40
 from guardrail.models import Action4D, DynamicNFZ, Policy, State  # noqa: E402
 from guardrail.shield import Shield  # noqa: E402
 
+# The three ConstraintBase fields the grant requires (IR schema 3.0.0, 2026-11-02),
+# at the values they defaulted to before (repair = project_fix).
+HARD_P0 = {"constraint_type": "hard", "priority": "P0", "violation_action": "project_fix"}
+
 S = FSMState
 SURVEY = ROOT / "policies" / "corridor_survey.yaml"
 DEMO = ROOT / "policies" / "sim_demo_policy.yaml"
@@ -307,7 +311,7 @@ def test_a_look_ahead_view_answers_as_a_shield_whose_clock_is_later():
 
 def test_a_look_ahead_view_ages_moving_zones_and_advances_a_moving_subject():
     pol = load_policy(DEMO)
-    zone = DynamicNFZ(id="mover", type="dynamic_nfz",
+    zone = DynamicNFZ(id="mover", type="dynamic_nfz", **HARD_P0,
                       vertices=[{"x": 40, "y": -2}, {"x": 44, "y": -2},
                                             {"x": 44, "y": 2}, {"x": 40, "y": 2}],
                       altitude_floor_m=0, altitude_ceiling_m=100, margin_m=0.5,
@@ -411,7 +415,7 @@ def _closing_bar(half_len: float, speed: float) -> Shield:
     """Review of T1c, P2: the demo policy, the aircraft at (0, 0, 15) - legal
     now - and a 2 m-wide DynamicNFZ bar at x 3-5, `half_len` m either side
     of y = 0, closing from the east at `speed` m/s (margin 0.5)."""
-    bar = DynamicNFZ(id="bar", type="dynamic_nfz",
+    bar = DynamicNFZ(id="bar", type="dynamic_nfz", **HARD_P0,
                      vertices=[{"x": 3, "y": -half_len}, {"x": 5, "y": -half_len},
                                {"x": 5, "y": half_len}, {"x": 3, "y": half_len}],
                      altitude_floor_m=0, altitude_ceiling_m=100, margin_m=0.5,

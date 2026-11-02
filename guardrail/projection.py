@@ -124,6 +124,28 @@ def _mean(pts: list[tuple[float, float]]) -> tuple[float, float]:
     return (sum(p[0] for p in pts) / len(pts), sum(p[1] for p in pts) / len(pts))
 
 
+def ring_order(keys: list[tuple[float, float]]) -> list[int]:
+    """The index order that puts a ring of stored coordinate pairs into its
+    canonical order (models.canonical_ring_order, IR schema 3.0.0): positive
+    signed area over the pairs, starting at the lexicographically smallest
+    pair (on ties, the smallest rotation). A ring of fewer than three
+    points, or with no area, keeps its order."""
+    n = len(keys)
+    idx = list(range(n))
+    if n < 3:
+        return idx
+    area2 = sum(keys[i][0] * keys[(i + 1) % n][1] - keys[(i + 1) % n][0] * keys[i][1]
+                for i in range(n))
+    if area2 == 0:
+        return idx
+    if area2 < 0:
+        idx = idx[::-1]
+    ks = [keys[i] for i in idx]
+    low = min(ks)
+    best = min((i for i, k in enumerate(ks) if k == low), key=lambda i: ks[i:] + ks[:i])
+    return idx[best:] + idx[:best]
+
+
 def derive_frame_origin(rules) -> tuple[float, float] | None:
     """The local frame's origin for a policy that does not state one.
 
@@ -134,14 +156,21 @@ def derive_frame_origin(rules) -> tuple[float, float] | None:
 
     `rules` is the constraints list, authored (raw YAML, `geometry:` blocks and
     all) or dumped from the model; both give the same answer, because each rule
-    type has exactly one point collection and its order is kept."""
+    type has exactly one point collection.
+
+    The fence's vertices are averaged in their CANONICAL ring order (ring_order;
+    since IR schema 3.0.0 the IR stores that order), so the origin - to the
+    last bit - does not depend on the order the ring was written in, and a
+    policy reloaded from its bundle lands on the same metres. For a ring
+    already in canonical order, which every reference document is, this is
+    the reference's own sum, term for term."""
     if not isinstance(rules, list):
         return None
     for r in rules:
         if isinstance(r, dict) and r.get("type") == "polygon_fence":
             pts = geo_points(r)
             if pts:
-                return _mean(pts)
+                return _mean([pts[i] for i in ring_order(pts)])
     for r in rules:
         pts = geo_points(r)
         if pts:

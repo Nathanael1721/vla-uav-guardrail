@@ -29,6 +29,10 @@ sys.path.insert(0, str(ROOT / "demo"))
 from guardrail import load_policy                                # noqa: E402
 from follow_vlm import FenceGuard                                # noqa: E402
 
+# The three ConstraintBase fields the grant requires (IR schema 3.0.0, 2026-11-02),
+# at the values they defaulted to before (repair = project_fix).
+HARD_P0 = {"constraint_type": "hard", "priority": "P0", "violation_action": "project_fix"}
+
 GAP = ROOT / "policies" / "follow_car_gap.yaml"      # fence x 26..42, gap x 43..50
 FULL = ROOT / "policies" / "follow_car_nfz.yaml"     # fence x 26..54, no gap
 
@@ -337,7 +341,7 @@ def test_a_zone_hot_applied_mid_flight_is_seen_by_the_guard():
     assert g.gate(10.0, -40.0, *NORTH)[0] == 1.0             # clear road ahead
     sh.filter(State(x=10.0, y=-40.0, up=10.0), Action4D())
     sh.hot_apply(DynamicNFZ.model_validate({
-        "id": "spawned", "type": "dynamic_nfz", "margin_m": 1.0,
+        "id": "spawned", "type": "dynamic_nfz", **HARD_P0, "margin_m": 1.0,
         "vertices": [{"x": 5, "y": -34}, {"x": 15, "y": -34},
                      {"x": 15, "y": -30}, {"x": 5, "y": -30}]}))
     scale, dist, _ = g.gate(10.0, -40.0, *NORTH)
@@ -352,7 +356,7 @@ def test_a_zone_outside_its_window_is_not_a_reason_to_brake():
     from guardrail import Shield
     from guardrail.models import Policy
     pol = Policy.model_validate({"policy_id": "w", "constraints": [{
-        "id": "yard", "type": "polygon_fence", "margin_m": 1.0,
+        "id": "yard", "type": "polygon_fence", **HARD_P0, "margin_m": 1.0,
         "vertices": [{"x": 5, "y": -34}, {"x": 15, "y": -34},
                      {"x": 15, "y": -30}, {"x": 5, "y": -30}],
         "valid_time": {"recurrence": {"start_time": "07:30", "end_time": "17:30"}}}]})

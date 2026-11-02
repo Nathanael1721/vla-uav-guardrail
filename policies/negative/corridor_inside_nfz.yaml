@@ -1,0 +1,31 @@
+# NEGATIVE CORPUS - tools/wp1_roundtrip_kpi.py: load_policy() must refuse this.
+# defect: a hard corridor (y -10..10 m, 10-20 m high) lying wholly inside a hard no-fly zone that covers 0-100 m
+# currently: refused
+# why: every point the corridor allows is a point the zone forbids, so every flight violates a hard rule (grant lint: conflicting hard rules); loaded clean until 2026-11-02, when the lint covered altitude bands only
+policy_id: neg-corridor-in-nfz
+version: 0.1.0
+constraints:
+  - id: route
+    type: corridor
+    constraint_type: hard
+    priority: P0
+    violation_action: project_fix
+    centerline:
+      - {x: 0, y: 0}
+      - {x: 100, y: 0}
+    width_m: 20
+    altitude_floor_m: 10
+    altitude_ceiling_m: 20
+  - id: nfz-site
+    type: polygon_fence
+    constraint_type: hard
+    priority: P0
+    violation_action: project_fix
+    vertices:
+      - {x: -20, y: -20}
+      - {x: 120, y: -20}
+      - {x: 120, y: 120}
+      - {x: -20, y: 120}
+    altitude_floor_m: 0
+    altitude_ceiling_m: 100
+    margin_m: 0

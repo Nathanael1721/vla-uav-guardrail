@@ -4947,7 +4947,11 @@ class Shield:
             sid = switch_id or f"switch-{rule_id}-g{self.policy.generation + 1}"
             # The default layer stays implicit, so the switch (and the policy
             # hash) is the one this method wrote before it took a layer.
+            # constraint_type / priority / violation_action are required since
+            # IR schema 3.0.0; these are the values they defaulted to.
             sw = TimeWindowSwitch(id=sid, type="time_window_switch",
+                                  constraint_type="hard", priority="P0",
+                                  violation_action="project_fix",
                                   target_id=rule_id, active=bool(active),
                                   layer=None if layer == DEFAULT_LAYER else layer)
             return self._switch(sw, t)

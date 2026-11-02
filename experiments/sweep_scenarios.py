@@ -1167,6 +1167,9 @@ def apply_event(ev, es: _EventState, st: State, heading: tuple[float, float],
             sw = TimeWindowSwitch.model_validate({
                 "id": p.get("id") or f"sw-{rid}-{'on' if active else 'off'}",
                 "type": "time_window_switch", "target_id": rid, "active": active,
+                # required since IR schema 3.0.0; the values they defaulted to
+                "constraint_type": "hard", "priority": "P0",
+                "violation_action": "project_fix",
                 "valid_time": win})
             out = run_all(lambda s: s.hot_apply(sw, t))
             out["window"] = win["recurrence"]
@@ -1178,7 +1181,10 @@ def apply_event(ev, es: _EventState, st: State, heading: tuple[float, float],
               else {"x": float(v[0]), "y": float(v[1])} for v in p["centerline"]]
         data = {"id": p.get("id") or f"swap-{p['target_id']}", "type": "corridor_swap",
                 "target_id": p["target_id"], "centerline": cl,
-                "width_m": float(p["width_m"])}
+                "width_m": float(p["width_m"]),
+                # required since IR schema 3.0.0; the values they defaulted to
+                "constraint_type": "hard", "priority": "P0",
+                "violation_action": "project_fix"}
         for k in ("altitude_floor_m", "altitude_ceiling_m"):
             if k in p:
                 data[k] = float(p[k])

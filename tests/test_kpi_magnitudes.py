@@ -55,6 +55,10 @@ sys.path.insert(0, str(ROOT))
 
 from guardrail import kpi as K                                     # noqa: E402
 
+# The three ConstraintBase fields the grant requires (IR schema 3.0.0, 2026-11-02),
+# at the values they defaulted to before (repair = project_fix).
+HARD_P0 = {"constraint_type": "hard", "priority": "P0", "violation_action": "project_fix"}
+
 A0 = {"vx": 0.0, "vy": 0.0, "vz_up": 0.0, "yaw_rate": 0.0}
 
 SKIP = "SKIP"
@@ -742,10 +746,12 @@ def test_a_run_is_judged_on_the_theta_basis_it_flew():
     import tempfile
     from guardrail.models import Policy
     pol = Policy.model_validate({"policy_id": "k", "constraints": [
-        {"id": "nfz", "type": "polygon_fence", "margin_m": 1.0, "priority": "P0",
+        {"id": "nfz", "type": "polygon_fence",
+         "constraint_type": "hard", "violation_action": "project_fix", "margin_m": 1.0, "priority": "P0",
          "vertices": [{"x": 7, "y": 7}, {"x": 23, "y": 7}, {"x": 23, "y": 23},
                       {"x": 7, "y": 23}]},
-        {"id": "kin", "type": "kinematic_envelope", "speed_max_mps": 4.0,
+        {"id": "kin", "type": "kinematic_envelope",
+         "constraint_type": "hard", "violation_action": "project_fix", "speed_max_mps": 4.0,
          "climb_rate_max_mps": 2.0, "yaw_rate_max_dps": 45.0, "priority": "P1"}]})
     row = _row(0.0, raw={"vx": 6.0}, em={"vx": 0.0, "vy": 4.0})
     row["violations"] = [{"rule_id": "nfz", "category": "geofence"},
@@ -1540,9 +1546,9 @@ def test_compiler_kpis_come_from_the_coverage_report_with_null_and_baseline():
 # that clash with no clock: coverage_report lists the file under
 # `altitude_conflict` (tests/test_csp.py, DAY_NIGHT, holds the same pair).
 _DAY_NIGHT = {"policy_id": "day-night", "version": "0.1.0", "constraints": [
-    {"id": "day-band", "type": "altitude_envelope", "alt_min_m": 10, "alt_max_m": 30,
+    {"id": "day-band", "type": "altitude_envelope", **HARD_P0, "alt_min_m": 10, "alt_max_m": 30,
      "valid_time": {"recurrence": {"start_time": "08:00", "end_time": "17:59"}}},
-    {"id": "night-band", "type": "altitude_envelope", "alt_min_m": 40,
+    {"id": "night-band", "type": "altitude_envelope", **HARD_P0, "alt_min_m": 40,
      "alt_max_m": 60,
      "valid_time": {"recurrence": {"start_time": "18:00", "end_time": "07:59"}}}]}
 

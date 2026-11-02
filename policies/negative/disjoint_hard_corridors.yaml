@@ -1,0 +1,29 @@
+# NEGATIVE CORPUS - tools/wp1_roundtrip_kpi.py: load_policy() must refuse this.
+# defect: two hard corridors, always in force, 100 m apart with no point in common
+# currently: refused
+# why: the Shield holds the vehicle inside every active corridor at once, so no flight can satisfy both (grant lint: conflicting hard rules); loaded clean until 2026-11-02, when the lint compared corridor bands only
+policy_id: neg-disjoint-corridors
+version: 0.1.0
+constraints:
+  - id: route-south
+    type: corridor
+    constraint_type: hard
+    priority: P0
+    violation_action: project_fix
+    centerline:
+      - {x: 0, y: 0}
+      - {x: 100, y: 0}
+    width_m: 20
+    altitude_floor_m: 10
+    altitude_ceiling_m: 40
+  - id: route-north
+    type: corridor
+    constraint_type: hard
+    priority: P0
+    violation_action: project_fix
+    centerline:
+      - {x: 0, y: 100}
+      - {x: 100, y: 100}
+    width_m: 20
+    altitude_floor_m: 10
+    altitude_ceiling_m: 40

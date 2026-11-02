@@ -124,9 +124,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from .models import (HASH_SCHEME, IR_SCHEMA_VERSION, PRIOR_SCHEME_V2,
+from .models import (HASH_SCHEME, IR2_FORMS, IR_SCHEMA_VERSION, PRIOR_SCHEME_V2, SHORT_FORM,
                      REFERENCE_FORM, Policy, _prune_nulls, canonical_json,
-                     load_policy)
+                     ir2_rule_view, load_policy)
 
 try:                                    # optional: see "VERIFYING EVERYWHERE"
     from cryptography.exceptions import InvalidSignature
@@ -142,6 +142,9 @@ ROOT = Path(__file__).resolve().parents[1]
 IR_NAME = "ir.json"
 MANIFEST_NAME = "manifest.json"
 SIGNATURE_NAME = "signature.txt"
+# The multi-scale geometry (WP2-16; guardrail/ir.py "The bundle ships them"),
+# since 2026-11-02. Optional on read: a bundle written before has none.
+MULTISCALE_NAME = "multiscale.json"
 
 # The reference's placeholder identity. Bundles written before 2026-10-06 carry
 # it; they still load (integrity intact) but report signature "unsigned".
@@ -662,7 +665,8 @@ def manifest_for(policy: Policy, changelog: str = "initial", *,
                  issued_at: str | None = None,
                  signed_by: str | None = None,
                  ir_form: str = "ours",
-                 previous: Policy | None = None) -> dict[str, Any]:
+                 previous: Policy | None = None,
+                 multiscale_sha256: str | None = None) -> dict[str, Any]:
     """The bundle's identity card: the grant's six fields, plus how the hash was
     made (`hash_scheme`, `ir_schema_version`) and, for a published bundle, when
     it was issued. `issued_at=None` leaves the key out (a replay bundle embeds a
@@ -688,7 +692,20 @@ def manifest_for(policy: Policy, changelog: str = "initial", *,
     (policy_diff), signed with the rest, and a default `changelog` of
     "initial" is replaced by its one-line reading (diff_text); a changelog
     written by hand is kept beside it. Without `previous` the manifest is
-    exactly what it was, so no stored bundle changes."""
+    exactly what it was, so no stored bundle changes.
+
+    THE REFERENCE PROJECTION (2026-11-02, WP1-05). `reference_projection`
+    is the second hash of the two-hash contract for every policy: the
+    reference implementation's policy_hash of the document its Phase-1 DSL
+    can hold - the policy's exactly-convertible rules
+    (reference_convert.to_reference) - with the rules it holds, those left
+    out and why, and `complete` when that document is the whole policy
+    (then its hash is hashes[REFERENCE_FORM]). check_bundle recomputes it.
+
+    THE MULTI-SCALE GEOMETRY (2026-11-02, WP2-16). `multiscale_sha256` is the
+    digest of the bundle's multiscale.json, so the signature over the
+    manifest covers the shipped scales too; absent on every manifest whose
+    bundle ships none (replay bundles, and every bundle before that date)."""
     _, digest, scheme = _ir_for(policy, ir_form)
     ref = policy.reference_hash()
     m = {
@@ -709,10 +726,18 @@ def manifest_for(policy: Policy, changelog: str = "initial", *,
             m["changelog"] = diff_text(diff)
     if ref is None:
         m["reference_problems"] = policy.reference_problems()
+    # The reference's hash over what it CAN represent (WP1-05, the two-hash
+    # contract; guardrail/reference_convert.py). Exact conversion only, in
+    # the policy's own frame: the record names every rule left out and why,
+    # and says whether the projection is the whole policy (`complete`).
+    from .reference_convert import to_reference
+    m["reference_projection"] = to_reference(policy).record()
     if ir_form == "reference":
         m["reference_delta"] = policy.reference_delta()
     if issued_at is not None:
         m["issued_at"] = issued_at
+    if multiscale_sha256 is not None:
+        m["multiscale_sha256"] = multiscale_sha256
     return m
 
 
@@ -779,9 +804,14 @@ def write_bundle(policy: Policy, out_path: str | Path,
                 f"the document it carries")
         issued_at = policy.issued_at
     ir_bytes, digest, _ = _ir_for(policy, ir_form)
+    # The scales are computed once, here at ingest, by the IR (the only place
+    # that computes them) and shipped; readers verify, never recompute.
+    from .ir import multiscale_document                 # lazy: shapely
+    ms_bytes = canonical_json(multiscale_document(policy))
     manifest = manifest_for(policy, changelog, issued_at=_issued_at(issued_at),
                             signed_by=sgn.identity if sgn else UNSIGNED,
-                            ir_form=ir_form, previous=_previous_policy(previous))
+                            ir_form=ir_form, previous=_previous_policy(previous),
+                            multiscale_sha256="sha256:" + hashlib.sha256(ms_bytes).hexdigest())
     manifest_bytes = json.dumps(manifest, indent=2, sort_keys=True).encode()
     signature = signature_text(digest, sgn, manifest_bytes)
 
@@ -807,6 +837,7 @@ def write_bundle(policy: Policy, out_path: str | Path,
                 _add(tar, IR_NAME, ir_bytes)
                 _add(tar, MANIFEST_NAME, manifest_bytes)
                 _add(tar, SIGNATURE_NAME, signature)
+                _add(tar, MULTISCALE_NAME, ms_bytes)
     return out
 
 
@@ -889,6 +920,10 @@ def check_bundle(path: str | Path,
         ir_bytes = _read(tar, IR_NAME)
         manifest_bytes = _read(tar, MANIFEST_NAME)
         sig_text = _read(tar, SIGNATURE_NAME).decode()
+        try:
+            ms_bytes = _read(tar, MULTISCALE_NAME)
+        except ValueError:
+            ms_bytes = None
     manifest = json.loads(manifest_bytes)
     declared = manifest.get("policy_hash")
 
@@ -911,9 +946,17 @@ def check_bundle(path: str | Path,
         # The bytes are what was hashed. Now prove the OBJECT is too: an IR
         # whose bytes are fine can still rebuild into a different policy (a
         # non-canonical encoding, a coerced value).
+        ir2 = {h: n for n, h in policy.ir2_hashes().items()}
         if policy.policy_hash == declared:
             form = HASH_SCHEME
-        elif policy.reference_hash() == declared:
+        elif declared in ir2:
+            # A bundle written under IR schema 2.x (before 2026-11-02): its
+            # ir.json spells project_fix `repair` and keeps rings as written.
+            # `declared` is the SHA-256 of the archived bytes (checked above)
+            # AND of the 2.x view of the policy rebuilt from them, so the two
+            # byte strings are the same, as for the reference form below.
+            form = ir2[declared]
+        elif declared in (policy.reference_hash(), policy.reference_hash(given=True)):
             # The reference implementation's bundle (WP1-05). `declared` is
             # the SHA-256 of the archived bytes (checked just above) AND of
             # canonical_json(reference_ir()), the document rebuilt from the
@@ -931,7 +974,12 @@ def check_bundle(path: str | Path,
     else:
         # A bundle written before 2026-10-06: 16-hex hash over the old dump.
         form = policy.hash_form(declared)
-        if form in (HASH_SCHEME, PRIOR_SCHEME_V2, REFERENCE_FORM):
+        if form == SHORT_FORM:
+            raise ValueError(
+                f"{p.name}: the manifest declares {declared}, the 16-hex display "
+                f"form of the policy's hash; no bundle format records it, so the "
+                f"bundle was not written by this code. Refusing.")
+        if form in (HASH_SCHEME, PRIOR_SCHEME_V2, REFERENCE_FORM, *IR2_FORMS):
             # Same policy, different bytes: someone re-serialised ir.json. The
             # object is right but the artefact no longer is what was hashed and
             # signed, and a reader checking it with sha256sum would be told no.
@@ -949,8 +997,13 @@ def check_bundle(path: str | Path,
         # unseen. The v2 branch catches that by hashing the bytes; here the
         # archived content must equal what the policy dumps back to (null
         # meaning absent on both sides, as in every legacy form).
-        if _prune_nulls(json.loads(ir_bytes), frozenset()) != \
-                _prune_nulls(policy.model_dump(mode="json"), frozenset()):
+        # Both sides in the IR 3.0.0 view: the archived 2.x rules spell
+        # `repair` and keep rings as written (models.ir2_rule_view).
+        archived = _prune_nulls(json.loads(ir_bytes), frozenset())
+        if isinstance(archived, dict) and isinstance(archived.get("constraints"), list):
+            archived["constraints"] = [ir2_rule_view(r) if isinstance(r, dict) else r
+                                       for r in archived["constraints"]]
+        if archived != _prune_nulls(policy.model_dump(mode="json"), frozenset()):
             raise ValueError(
                 f"{p.name}: ir.json carries content its policy does not "
                 f"represent (an unknown key, or a value the model coerced). "
@@ -966,6 +1019,8 @@ def check_bundle(path: str | Path,
 
     hashes, source = _verify_both_hashes(p.name, manifest, ir_bytes, policy, form,
                                          declared)
+    _attach_multiscale(p.name, manifest, ms_bytes, policy, source, form)
+    _verify_projection(p.name, manifest, source or policy, hashes)
 
     sig_hash, signed_by, sig_hex = parse_signature(sig_text)
     if sig_hash != declared:
@@ -985,6 +1040,127 @@ def check_bundle(path: str | Path,
     return BundleCheck(path=p, policy=policy, manifest=manifest, hash_form=form,
                        signature=status, signed_by=signed_by, detail=detail,
                        hashes=hashes, source_policy=source)
+
+
+def multiscale_problems(doc, policy: Policy) -> list[str]:
+    """Why a bundle's multiscale.json does not describe `policy`, or [].
+
+    Checks, not a recomputation (so a reader needs no shapely and no
+    agreement with the writer's GEOS build): the document names this policy
+    (hash, generation); every zone and tube of the policy has an entry and
+    nothing else does; a zone's fine scale IS its vertices and a tube's IS its
+    centerline, float for float; a zone's bbox IS the bounding rectangle of
+    those vertices; its coarse ring is convex and contains every vertex
+    (boundary included), so - being convex - it contains the whole zone. A
+    coarse ring that cut a corner would tell the model a smaller zone than
+    the Shield enforces."""
+    from .models import _dist_to_ring, _point_in_ring
+    from .ir import FENCE_TYPES, MULTISCALE_FORMAT, TUBE_TYPES
+    out: list[str] = []
+    if not isinstance(doc, dict) or doc.get("format") != MULTISCALE_FORMAT:
+        return [f"not a {MULTISCALE_FORMAT} document"]
+    if doc.get("policy_hash") != policy.policy_hash or \
+            doc.get("generation") != policy.generation:
+        return [f"it describes {doc.get('policy_hash')} g{doc.get('generation')}, not "
+                f"this policy ({policy.policy_hash} g{policy.generation})"]
+    rules = doc.get("rules")
+    if not isinstance(rules, dict):
+        return ["no `rules` mapping"]
+    want = {c.id: c for c in policy.constraints if c.type in FENCE_TYPES + TUBE_TYPES}
+    for rid in sorted(set(rules) ^ set(want)):
+        out.append(f"{rid}: " + ("no entry" if rid in want else "no such zone or tube"))
+
+    def pts(v):
+        return [(float(x), float(y)) for x, y in v]
+    for rid in sorted(set(rules) & set(want)):
+        c, ent = want[rid], rules[rid]
+        try:
+            if c.type in TUBE_TYPES:
+                if set(ent) != {"fine"} or pts(ent["fine"]) != [tuple(p) for p in c.points()]:
+                    out.append(f"{rid}: the fine scale is not the centerline")
+                continue
+            if set(ent) != {"fine", "coarse", "bbox"}:
+                out.append(f"{rid}: scales {sorted(ent)}, not fine / coarse / bbox")
+                continue
+            fine = pts(ent["fine"])
+            if fine != [(float(v.x), float(v.y)) for v in c.vertices]:
+                out.append(f"{rid}: the fine scale is not the zone's vertices")
+                continue
+            xs, ys = [p[0] for p in fine], [p[1] for p in fine]
+            box = [(min(xs), min(ys)), (max(xs), min(ys)), (max(xs), max(ys)),
+                   (min(xs), max(ys))]
+            if pts(ent["bbox"]) != box:
+                out.append(f"{rid}: the bbox is not the vertices' bounding rectangle")
+            coarse = pts(ent["coarse"])
+            n = len(coarse)
+            turns = [(coarse[(i + 1) % n][0] - coarse[i][0]) * (coarse[(i + 2) % n][1] - coarse[i][1])
+                     - (coarse[(i + 1) % n][1] - coarse[i][1]) * (coarse[(i + 2) % n][0] - coarse[i][0])
+                     for i in range(n)] if n >= 3 else []
+            if n < 3 or not (all(t >= -1e-9 for t in turns) or all(t <= 1e-9 for t in turns)):
+                out.append(f"{rid}: the coarse ring is not convex")
+            # inside or on it; 1 micrometre allows the float rounding of a
+            # minimum rotated rectangle's corners
+            elif not all(_point_in_ring(x, y, coarse) or _dist_to_ring(x, y, coarse) <= 1e-6
+                         for x, y in fine):
+                out.append(f"{rid}: the coarse ring does not contain the zone")
+        except (TypeError, ValueError, KeyError):
+            out.append(f"{rid}: unreadable entry")
+    return out
+
+
+def _verify_projection(name: str, manifest: dict, policy: Policy, hashes: dict) -> None:
+    """The manifest's `reference_projection` (manifest_for) is what the
+    converter gives for the policy this bundle flies, exactly; and when it
+    claims to be the whole policy, its hash is the reference form's. Absent on
+    a bundle written before 2026-11-02."""
+    rec = manifest.get("reference_projection")
+    if rec is None:
+        return
+    from .reference_convert import to_reference
+    want = to_reference(policy).record()
+    if rec != want:
+        diff = sorted(k for k in set(rec) | set(want) if rec.get(k) != want.get(k)) \
+            if isinstance(rec, dict) else ["(not a mapping)"]
+        raise ValueError(f"{name}: the manifest's reference_projection does not "
+                         f"describe the policy in this bundle (differs in {diff})")
+    if want["complete"] and REFERENCE_FORM in hashes and \
+            hashes[REFERENCE_FORM] not in (None, want["policy_hash"]):
+        raise ValueError(f"{name}: the complete reference projection hashes to "
+                         f"{want['policy_hash']}, the manifest's reference form to "
+                         f"{hashes[REFERENCE_FORM]}")
+
+
+def _attach_multiscale(name: str, manifest: dict, ms_bytes: bytes | None,
+                       policy: Policy, source: Policy | None, form: str) -> None:
+    """Verify a bundle's multiscale.json and hand it on with the policy it
+    describes (`Policy.shipped_multiscale`), or refuse. A member the manifest
+    does not name is unsigned content, and is refused too. A reference-form
+    bundle whose delta was dropped describes a source policy nothing here
+    rebuilds: its digest is still verified, and the geometry is not used
+    (such a bundle is an exchange format, refused for flight)."""
+    rec = manifest.get("multiscale_sha256")
+    if rec is None:
+        if ms_bytes is not None:
+            raise ValueError(f"{name}: carries {MULTISCALE_NAME} but the manifest "
+                             f"names no digest for it; unsigned geometry is refused")
+        return
+    if ms_bytes is None:
+        raise ValueError(f"{name}: the manifest names {MULTISCALE_NAME} "
+                         f"({str(rec)[:23]}...) but the bundle has none")
+    got = "sha256:" + hashlib.sha256(ms_bytes).hexdigest()
+    if got != rec:
+        raise ValueError(f"{name}: {MULTISCALE_NAME} hashes to {got}, the manifest "
+                         f"says {rec}: edited after issue")
+    doc = json.loads(ms_bytes)
+    target = source if (source is not None and isinstance(doc, dict)
+                        and doc.get("policy_hash") == source.policy_hash) else policy
+    if form == REFERENCE_FORM and source is None:
+        return
+    bad = multiscale_problems(doc, target)
+    if bad:
+        raise ValueError(f"{name}: {MULTISCALE_NAME} does not describe the policy "
+                         f"in this bundle: " + "; ".join(bad[:5]))
+    target._shipped_multiscale = doc["rules"]
 
 
 def _verify_both_hashes(name: str, manifest: dict, ir_bytes: bytes, policy: Policy,
@@ -1031,13 +1207,14 @@ def _verify_both_hashes(name: str, manifest: dict, ir_bytes: bytes, policy: Poli
         except ValueError as exc:
             raise ValueError(f"{name}: reference_delta does not rebuild a policy "
                              f"from this document: {str(exc).splitlines()[0]}") from None
-        if source.policy_hash != rec[HASH_SCHEME]:
+        # Written under IR 2.x, the record names the source's 2.x hash.
+        if source.hash_form(rec[HASH_SCHEME]) not in (HASH_SCHEME, *IR2_FORMS):
             raise ValueError(
                 f"{name}: hashes[{HASH_SCHEME}] is {rec[HASH_SCHEME]}, but the "
                 f"policy rebuilt from the reference document and its delta "
                 f"hashes to {source.policy_hash}")
-        return {HASH_SCHEME: source.policy_hash, REFERENCE_FORM: declared}, source
-    if form != HASH_SCHEME:
+        return {HASH_SCHEME: rec[HASH_SCHEME], REFERENCE_FORM: declared}, source
+    if form not in (HASH_SCHEME, *IR2_FORMS):
         raise ValueError(f"{name}: a {form} bundle cannot carry the 2026-10-08 "
                          f"`hashes` record; it was written before that form "
                          f"existed, so the record was added afterwards")
@@ -1045,6 +1222,10 @@ def _verify_both_hashes(name: str, manifest: dict, ir_bytes: bytes, policy: Poli
         raise ValueError(f"{name}: hashes[{HASH_SCHEME}] is {rec[HASH_SCHEME]}, "
                          f"but the bundle's policy_hash is {declared}")
     ref = policy.reference_hash()
+    if form in IR2_FORMS and rec[REFERENCE_FORM] is not None and \
+            rec[REFERENCE_FORM] == policy.reference_hash(given=True):
+        # An IR 2.x bundle recorded the reference hash of its rings as written.
+        ref = rec[REFERENCE_FORM]
     if rec[REFERENCE_FORM] != ref:
         raise ValueError(
             f"{name}: hashes[{REFERENCE_FORM}] is {rec[REFERENCE_FORM]}, but the "
@@ -1196,7 +1377,85 @@ def _entry(policy: Policy) -> dict:
     and are under the lock's top-level `hash_scheme` (v2) - see its `_doc`."""
     return {"policy_hash": policy.policy_hash,
             "hash_scheme": HASH_SCHEME,
+            "ir_schema_version": IR_SCHEMA_VERSION,
             "legacy_hashes": policy.legacy_hashes()}
+
+
+# --------------------------------------------------------------------------- #
+# Migrations: an IR schema change that moves a policy's hash (IR 3.0.0)
+# --------------------------------------------------------------------------- #
+#
+# The lock never rewrites an entry, and an id@version names one content hash
+# forever. So when an IR change moves a policy's canonical bytes without
+# changing what it says (3.0.0: `repair` stored as project_fix, rings in
+# canonical order), the file RAISES its version and the new id@version is
+# locked beside the old one, with `migrated_from: <old id@version>`. The old
+# entry keeps the hash every run, bundle and manifest of that time recorded.
+#
+# The claim is checked, not trusted: the file's policy, put back at the old
+# version (`as_version`), must reproduce the old entry's recorded hash under
+# an IR 2.x form (models.Policy.ir2_hashes) or a prior scheme, and its legacy
+# 16-hex forms. That is how "old hashes still resolve" holds for every
+# migrated policy: `policy_candidates` offers the rewound policy too, so
+# `guardrail.manifest.resolve_run_policy` finds a run flown under the old
+# version, and a lock `derived` recipe based on it still rebuilds.
+
+MIGRATION_FORMS = (PRIOR_SCHEME_V2, *IR2_FORMS)
+
+
+def as_version(policy: Policy, version: str) -> Policy:
+    """`policy` with another `version` and nothing else changed (its rules,
+    with the ring order they were given, are shared)."""
+    return policy.model_copy(update={"version": version})
+
+
+def _pin_for(ent: dict, fname: str) -> dict | None:
+    """The pin a lock entry holds for one file: the entry itself, or the
+    file's own pin inside a shared entry; None when it pins another file."""
+    if "shared_by_files" in ent:
+        return (ent.get("shared_by_files") or {}).get(fname)
+    return ent if ent.get("file") == fname and "policy_hash" in ent else None
+
+
+def migration_problem(pol: Policy, old_key: str, pin: dict | None) -> str | None:
+    """Why `pol` is NOT the content locked as `old_key` (`pin`), migrated to
+    the current IR - or None when it is: put back at the old version it
+    reproduces the old recorded hash under a migration form, and the old
+    legacy forms."""
+    if pin is None:
+        return f"{old_key} pins no hash for this file"
+    pid, _, ver = old_key.rpartition("@")
+    if pid != pol.policy_id:
+        return f"{old_key} is another policy id than {pol.policy_id}"
+    old = as_version(pol, ver)
+    form = old.hash_form(pin.get("policy_hash"))
+    if form not in MIGRATION_FORMS:
+        return (f"rewound to {ver} it does not reproduce {old_key}'s hash "
+                f"{str(pin.get('policy_hash'))[:23]}... under any migration form "
+                f"(got {form or 'no form'})")
+    later = (pin.get("hashes") or {}).get(HASH_SCHEME)
+    if later is not None and old.hash_form(later) not in MIGRATION_FORMS:
+        return f"rewound to {ver} it does not reproduce {old_key}'s {HASH_SCHEME} hash"
+    if pin.get("legacy_hashes") is not None and pin["legacy_hashes"] != old.legacy_hashes():
+        return f"rewound to {ver} it does not reproduce {old_key}'s legacy hashes"
+    return None
+
+
+def _migration_source(pol: Policy, fname: str, entries: dict, key: str) -> tuple | None:
+    """(old key, form) of the lock entry this file's content migrates, or None.
+    The highest old version that reproduces wins."""
+    found = []
+    for k, e in entries.items():
+        if k == key:
+            continue
+        pin = _pin_for(e, fname)
+        if pin is not None and migration_problem(pol, k, pin) is None:
+            ver = k.rpartition("@")[2]
+            found.append((_semver_key(ver), k, as_version(pol, ver).hash_form(pin["policy_hash"])))
+    if not found:
+        return None
+    _, k, form = max(found)
+    return k, form
 
 
 def load_lock(path: str | Path | None = None) -> dict:
@@ -1244,15 +1503,21 @@ def _new_form_msg(name: str, key: str, ent: dict, pol: Policy) -> str:
 
 
 def ir_schema_drift(locked: dict, current: dict | None = None) -> list[str]:
-    """How today's IR schema differs from the pinned one, in ways that matter.
+    """Every way today's IR schema differs from the pinned one. Empty = the
+    shape is the pinned shape.
 
-    Allowed silently: a NEW field defaulting to None ("<absent>") - the one
-    change that cannot move any stored hash, because the canonical form omits
-    it. Everything else is reported: a new field with a value default (every
-    policy's canonical bytes grow), a changed default (every policy that omits
-    the field now means something else), a removed field or model - and a
-    model nobody has pinned yet (UNPINNED_MODEL), because a pin that never
-    sees a model cannot notice when that model's defaults change later.
+    THE FREEZE RULE (grant, Policy DSL page, R6: the IR shape freezes at the
+    end of Q1 and "every later IR-shape change carries a semver bump and a
+    migration note"). Since 2026-11-02 every difference is reported, and
+    `check_lock` refuses it until IR_SCHEMA_VERSION is raised and the lock
+    re-pinned (`update_lock`): a removed model or field, a changed default
+    (every policy that omits the field now means something else), a new
+    field with a value default (it enters every canonical IR and moves every
+    hash) - and, the change this rule tightened, a NEW field defaulting to
+    None ("<absent>") or a new MODEL. Those two move no stored hash (the
+    canonical form omits None, and no existing policy uses a new type), and
+    until 2026-11-02 they passed unbumped under this project's own rule; the
+    grant makes no such exception, and `locked_by` (2385f84) went in that way.
     """
     from .models import ir_schema_defaults
     cur = ir_schema_defaults() if current is None else current
@@ -1265,26 +1530,70 @@ def ir_schema_drift(locked: dict, current: dict | None = None) -> list[str]:
         for name, was in sorted(fields.items()):
             if name not in now:
                 out.append(f"{model}.{name}: removed (was {was!r})")
+            elif now[name] != was and now[name] == "<required>":
+                out.append(f"{model}.{name}: default {was!r} -> '<required>'; "
+                           f"every policy that omits it is refused")
             elif now[name] != was:
                 out.append(f"{model}.{name}: default {was!r} -> {now[name]!r}; "
                            f"every policy that omits it changes meaning")
         for name in sorted(set(now) - set(fields)):
             if now[name] != "<absent>":
                 out.append(f"{model}.{name}: new field with default "
-                           f"{now[name]!r} - it would enter every canonical IR "
-                           f"and move every hash; default it to None")
-    # A new MODEL (a new constraint type) is additive: no existing policy uses
-    # it, so no stored hash moves. But until it is pinned, its defaults can
-    # change unseen - the review of 2026-10-06 found exactly that hole behind
-    # a hand-written class list. So it is reported until `lock --update`
-    # pins it, which adds the pin and never rewrites an existing one.
+                           f"{now[name]!r} - it enters every canonical IR "
+                           f"and moves every hash")
+            else:
+                out.append(f"{model}.{name}: {NEW_ABSENT_FIELD} (moves no "
+                           f"stored hash, but is an IR-shape change)")
+    # A new MODEL (a new constraint type) moves no stored hash either. But until
+    # it is pinned its defaults can change unseen - the review of 2026-10-06
+    # found exactly that hole behind a hand-written class list.
     for model in sorted(set(cur) - set(locked)):
-        out.append(f"{model}: {UNPINNED_MODEL} - run `python -m guardrail.bundle "
-                   f"lock --update` (additive: no stored hash moves)")
+        out.append(f"{model}: {UNPINNED_MODEL}")
     return out
 
 
 UNPINNED_MODEL = "in the IR schema but not pinned"
+NEW_ABSENT_FIELD = "new field defaulting to None"
+
+
+def _semver_key(v: str | None) -> tuple:
+    """(major, minor, patch) of a plain semver string; () when unreadable."""
+    try:
+        parts = tuple(int(x) for x in str(v).split("-")[0].split("+")[0].split("."))
+    except ValueError:
+        return ()
+    return parts if len(parts) == 3 else ()
+
+
+def ir_schema_problems(lock: dict, current: dict | None = None) -> list[str]:
+    """What check_lock says about the IR schema pin (the freeze rule; see
+    ir_schema_drift). The pin names the version it was made under
+    (`ir_schema.version`); the code names its own (IR_SCHEMA_VERSION).
+
+      same version, same shape        clean;
+      same version, another shape     every difference, each one an IR-shape
+                                      change made without a version bump;
+      a higher version                not yet re-pinned: `lock --update`
+                                      records the change and re-pins;
+      a lower or unreadable version   refused (a version never goes back)."""
+    irs = lock.get("ir_schema") or {}
+    pinned = irs.get("defaults")
+    if pinned is None:
+        return ["the lock does not pin the IR schema (ir_schema.defaults)"]
+    drift = ir_schema_drift(pinned, current)
+    have, want = irs.get("version"), IR_SCHEMA_VERSION
+    if have == want:
+        return [f"IR schema: {x} - an IR-shape change needs a semver bump of "
+                f"IR_SCHEMA_VERSION (still {want}) and a row in "
+                f"docs/IR-MIGRATIONS.md, then `python -m guardrail.bundle lock "
+                f"--update`" for x in drift]
+    if not _semver_key(want) or not _semver_key(have) or \
+            _semver_key(want) <= _semver_key(have):
+        return [f"IR schema: IR_SCHEMA_VERSION {want} is not above the pinned "
+                f"{have}; a schema version never goes back"]
+    return [f"IR schema: IR_SCHEMA_VERSION is {want}, the lock pins {have} - run "
+            f"`python -m guardrail.bundle lock --update` to record the change "
+            f"({len(drift)} difference(s)) and re-pin"]
 
 
 def _previously(ent: dict) -> set[str]:
@@ -1313,11 +1622,7 @@ def check_lock(policies_dir: str | Path | None = None,
         # project keeps finding. Say it.
         problems.append("the lock pins no policies (missing or empty "
                         "policies/policy.lock.json)")
-    pinned = (lock.get("ir_schema") or {}).get("defaults")
-    if pinned is None:
-        problems.append("the lock does not pin the IR schema (ir_schema.defaults)")
-    else:
-        problems += [f"IR schema: {x}" for x in ir_schema_drift(pinned)]
+    problems += ir_schema_problems(lock)
     seen_shared: dict[str, set[str]] = {}
     seen_key: dict[str, str] = {}             # file name -> the id@version it claims
     for f in _policy_files(policies_dir):
@@ -1367,6 +1672,12 @@ def check_lock(policies_dir: str | Path | None = None,
                 f"locked to {str(ent.get('policy_hash'))[:23]}..., the file now "
                 f"hashes to {pol.policy_hash[:23]}.... Raise `version:` and "
                 f"lock the new one.")
+        # A migrated entry's claim is checked, not trusted (see "Migrations").
+        mf = ent.get("migrated_from")
+        if mf is not None:
+            why = migration_problem(pol, mf, _pin_for(entries.get(mf) or {}, f.name))
+            if why:
+                problems.append(f"{f.name}: {key} says migrated_from {mf}, but {why}")
     for key, ent in entries.items():
         if "shared_by_files" in ent:
             missing = set(ent["shared_by_files"]) - seen_shared.get(key, set())
@@ -1394,38 +1705,42 @@ def update_lock(policies_dir: str | Path | None = None,
     Returns what was added. Refuses (ValueError) while check_lock reports a
     content change under an existing version, because "updating" that would
     be exactly the silent re-fingerprinting the lock exists to stop.
+
+    The IR schema pin is re-pinned only under a HIGHER IR_SCHEMA_VERSION (the
+    freeze rule, ir_schema_problems). The re-pin replaces `defaults` with
+    today's schema and appends to `ir_schema.migrations` what changed (the
+    ir_schema_drift lines, from -> to, the day), so every earlier pin can be
+    read back from the current one; `previous_versions` keeps the old label.
+    A shape change under the SAME version is refused here, as check_lock
+    reports it: until 2026-11-02 this function pinned a new None-default
+    field or a new model without a bump.
     """
     p = Path(path) if path else LOCK_PATH
     lock = load_lock(p)
     entries = lock.setdefault("policies", {})
     day = locked_on or datetime.now(timezone.utc).strftime("%Y-%m-%d")
     added: list[str] = []
-    # A new IR model (a new constraint type) is pinned here, the first time it
-    # is seen. An existing model's pin is never touched: changing what an
-    # omitted field means is a schema bump, not an update.
-    pinned = (lock.get("ir_schema") or {}).get("defaults")
-    if pinned is not None:
+    irs = lock.get("ir_schema") or {}
+    if irs.get("defaults") is not None:
         from .models import ir_schema_defaults
-        for model, fields in sorted(ir_schema_defaults().items()):
-            if model not in pinned:
-                pinned[model] = fields
-                added.append(f"ir_schema:{model}")
-                continue
-            # A NEW field whose omission means "absent" is the one change
-            # ir_schema_drift allows unannounced; recording it here keeps the
-            # pin a complete list of the model's fields, so a later change to
-            # its default is reported as a change. Existing pins are never
-            # altered.
-            for name, val in sorted(fields.items()):
-                if name not in pinned[model] and val == "<absent>":
-                    pinned[model][name] = val
-                    added.append(f"ir_schema:{model}.{name}")
-        irs = lock["ir_schema"]
-        if irs.get("version") != IR_SCHEMA_VERSION:
-            # The pin's label follows the schema it now pins; the old label is
-            # kept, as every other lock record is.
+        cur = ir_schema_defaults()
+        drift = ir_schema_drift(irs["defaults"], cur)
+        if irs.get("version") == IR_SCHEMA_VERSION:
+            if drift:
+                raise ValueError(
+                    "lock not updated: the IR shape changed without a version "
+                    f"bump (IR_SCHEMA_VERSION is still {IR_SCHEMA_VERSION}):\n  "
+                    + "\n  ".join(drift))
+        else:
+            bad = ir_schema_problems(lock, cur)
+            if bad and "lock --update" not in bad[0]:
+                raise ValueError("lock not updated: " + bad[0])
+            irs.setdefault("migrations", []).append(
+                {"from": irs.get("version"), "to": IR_SCHEMA_VERSION, "on": day,
+                 "changes": drift})
             irs.setdefault("previous_versions", []).append(irs.get("version"))
             irs["version"] = IR_SCHEMA_VERSION
+            irs["defaults"] = cur
             added.append(f"ir_schema:version {IR_SCHEMA_VERSION}")
     for f in _policy_files(policies_dir):
         pol = load_policy(f, runtime=False)
@@ -1450,6 +1765,14 @@ def update_lock(policies_dir: str | Path | None = None,
                      and f.name in (e.get("shared_by_files") or {}))
         if was:
             entries[key]["previously"] = was[0] if len(was) == 1 else was
+        # The same content under a raised version after an IR change that
+        # moved its hash (see "Migrations"): the new entry names the old one,
+        # and check_lock re-proves the link on every run.
+        src = _migration_source(pol, f.name, entries, key)
+        if src is not None:
+            entries[key]["migrated_from"] = src[0]
+            entries[key]["migration"] = {"ir_schema_version": IR_SCHEMA_VERSION,
+                                         "old_hash_form": src[1]}
         added.append(key)
     still = [x for x in check_lock(policies_dir, lock)
              if "not in the lock" not in x]
@@ -1460,14 +1783,24 @@ def update_lock(policies_dir: str | Path | None = None,
     return added
 
 
-def derive(base: Policy, hot_apply: list[dict], generations: int | None = None) -> Policy:
+def derive(base: Policy, hot_apply: list[dict], generations: int | None = None,
+           *, ir_schema_version: str | None = None) -> Policy:
     """Rebuild a hot-applied policy exactly as Shield.hot_apply produces it:
-    each rule appended, generation bumped once per rule."""
+    each rule appended, generation bumped once per rule.
+
+    `ir_schema_version` is the IR schema the recipe was recorded under; None
+    (every recipe in the lock before 2026-11-02) means 2.x. A 2.x recipe may
+    omit constraint_type / priority / violation_action, which then meant
+    hard / P0 / repair (models.IR2_RULE_DEFAULTS); those are filled in, so
+    the rule is rebuilt as it flew. Under 3.0.0 a recipe states them."""
     from pydantic import TypeAdapter
-    from .models import Constraint
+    from .models import IR2_RULE_DEFAULTS, Constraint
+    ir2 = _semver_key(ir_schema_version or "2.0.0") < (3, 0, 0)
     pol = base.model_copy(deep=True)
     ta = TypeAdapter(Constraint)
     for raw in hot_apply:
+        if ir2 and isinstance(raw, dict):
+            raw = {**IR2_RULE_DEFAULTS, **raw}
         pol.constraints.append(ta.validate_python(raw))
         pol.generation += 1
     if generations is not None and pol.generation != base.generation + generations:
@@ -1485,8 +1818,15 @@ def policy_candidates(policies_dir: str | Path | None = None,
     change, which no file on disk produces - the dynamic NFZ runs. The lock's
     `derived` list says how to rebuild those, so they verify instead of being
     written off as unmatched.
+
+    A file whose lock entry says `migrated_from` (an IR change moved its hash,
+    so its version was raised; see "Migrations") is also offered at each
+    older version of that chain, labelled "<file> as <id@version>": a run
+    flown under the old version resolves to it, under the IR 2.x form its
+    hash was recorded in, and a recipe based on the old version rebuilds.
     """
     lock = load_lock() if lock is None else lock
+    entries = lock.get("policies") or {}
     out: list[tuple[str, Policy]] = []
     by_key: dict[str, Policy] = {}
     for f in _policy_files(policies_dir):
@@ -1496,12 +1836,21 @@ def policy_candidates(policies_dir: str | Path | None = None,
             continue
         out.append((f.name, pol))
         by_key.setdefault(lock_key(pol), pol)
+        ent, seen = entries.get(lock_key(pol)), set()
+        while ent and ent.get("migrated_from") and ent["migrated_from"] not in seen:
+            old_key = ent["migrated_from"]
+            seen.add(old_key)
+            old = as_version(pol, old_key.rpartition("@")[2])
+            out.append((f"{f.name} as {old_key}", old))
+            by_key.setdefault(old_key, old)
+            ent = entries.get(old_key)
     for d in lock.get("derived") or []:
         base = by_key.get(d.get("base"))
         if base is None:
             continue
         out.append((d["name"], derive(base, d.get("hot_apply") or [],
-                                      d.get("generations"))))
+                                      d.get("generations"),
+                                      ir_schema_version=d.get("ir_schema_version"))))
     return out
 
 
@@ -1713,6 +2062,7 @@ def _main(argv: list[str] | None = None) -> int:
         python -m guardrail.bundle verify bundles/wgs84-taipei-demo-v0.1.0.tar.gz
         python -m guardrail.bundle merge reg.yaml site.yaml mission.yaml -o out.tar.gz
         python -m guardrail.bundle export POLICY [--origin LAT,LON] [-o out.yaml]
+        python -m guardrail.bundle export POLICY --reference [--conservative]
         python -m guardrail.bundle schema          # policies/policy_dsl.schema.json
         python -m guardrail.bundle lock [--update] # policies/policy.lock.json
         python -m guardrail.bundle keygen          # lab dev key, once per lab
@@ -1796,9 +2146,42 @@ def _main(argv: list[str] | None = None) -> int:
         ap.add_argument("--origin", default=None,
                         help="LAT,LON of the local frame's (0, 0), for a metre "
                              "policy that states no origin")
+        ap.add_argument("--reference", action="store_true",
+                        help="write the PI's reference implementation's form of "
+                             "what it can represent (guardrail/reference_convert"
+                             ".py) and say what it left out")
+        ap.add_argument("--conservative", action="store_true",
+                        help="with --reference: fold margin rings into the "
+                             "vertices and drop schedules (stricter), recorded")
         a = ap.parse_args(argv[1:])
         pol = load_policy(a.policy, runtime=False)
         org = tuple(float(v) for v in a.origin.split(",")) if a.origin else None
+        if a.reference:
+            from .reference_convert import to_reference
+            conv = to_reference(pol, origin=org, conservative=a.conservative)
+            rec = conv.record()
+            for rid, why in rec["omitted"].items():
+                print(f"# not converted  {rid}: {why}", file=sys.stderr)
+            for rid, how in {**rec["conservative"], **rec["reworded"]}.items():
+                print(f"# converted      {rid}: {how}", file=sys.stderr)
+            for f, why in rec["not_carried"].items():
+                print(f"# not carried    {f}: {why}", file=sys.stderr)
+            if conv.doc is None:
+                print("REFUSED  no rule of this policy is in the reference's DSL; "
+                      "a reference document needs at least one")
+                return 2
+            print(f"# reference policy_hash {rec['policy_hash']} over "
+                  f"{len(rec['rules'])} of {len(pol.constraints)} rules "
+                  f"({'complete' if rec['complete'] else 'a projection'}); this "
+                  f"project's hash of the whole policy {pol.policy_hash}",
+                  file=sys.stderr)
+            text = _yaml.safe_dump(conv.doc, sort_keys=False, allow_unicode=False)
+            if a.out:
+                Path(a.out).write_text(text, encoding="utf-8", newline="\n")
+                print(f"{a.out}  reference form of {pol.policy_id} v{pol.version}")
+            else:
+                print(text, end="")
+            return 0
         try:
             doc = pol.to_grant_form(origin=org)
         except ValueError as exc:

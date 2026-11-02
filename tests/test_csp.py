@@ -68,6 +68,10 @@ except ImportError as e:                                           # noqa: BLE00
     _IMPORT_ERROR = e
 from guardrail.compiler import ConstraintCompiler, Mission         # noqa: E402
 
+# The three ConstraintBase fields the grant requires (IR schema 3.0.0, 2026-11-02),
+# at the values they defaulted to before (repair = project_fix).
+HARD_P0 = {"constraint_type": "hard", "priority": "P0", "violation_action": "project_fix"}
+
 POLICIES = sorted((ROOT / "policies").glob("*.yaml"))
 SURVEY = ROOT / "policies" / "corridor_survey.yaml"
 PED = ROOT / "policies" / "sitl_pedestrian.yaml"
@@ -111,19 +115,26 @@ def _sq(x0, y0, x1, y1):
 MIX = {
     "policy_id": "mix-for-budget",
     "constraints": [
-        {"id": "nfz-on-path", "type": "polygon_fence", "priority": "P0",
+        {"id": "nfz-on-path", "type": "polygon_fence",
+         "constraint_type": "hard", "violation_action": "project_fix", "priority": "P0",
          "vertices": _sq(40, -5, 50, 5)},
-        {"id": "alt-band", "type": "altitude_envelope", "priority": "P0",
+        {"id": "alt-band", "type": "altitude_envelope",
+         "constraint_type": "hard", "violation_action": "project_fix", "priority": "P0",
          "alt_min_m": 5, "alt_max_m": 50},
-        {"id": "kin-caps", "type": "kinematic_envelope", "priority": "P1",
+        {"id": "kin-caps", "type": "kinematic_envelope",
+         "constraint_type": "hard", "violation_action": "project_fix", "priority": "P1",
          "speed_max_mps": 5, "climb_rate_max_mps": 2, "yaw_rate_max_dps": 45},
-        {"id": "nfz-near-p1", "type": "polygon_fence", "priority": "P1",
+        {"id": "nfz-near-p1", "type": "polygon_fence",
+         "constraint_type": "hard", "violation_action": "project_fix", "priority": "P1",
          "vertices": _sq(60, 8, 70, 18)},
-        {"id": "nfz-far-p1", "type": "polygon_fence", "priority": "P1",
+        {"id": "nfz-far-p1", "type": "polygon_fence",
+         "constraint_type": "hard", "violation_action": "project_fix", "priority": "P1",
          "vertices": _sq(60, 120, 70, 130)},
         {"id": "keep-off-buildings", "type": "obstacle_clearance",
+         "constraint_type": "hard", "violation_action": "project_fix",
          "priority": "P2", "min_clearance_m": 3},
-        {"id": "standoff-any", "type": "subject_standoff", "priority": "P2",
+        {"id": "standoff-any", "type": "subject_standoff",
+         "constraint_type": "hard", "violation_action": "project_fix", "priority": "P2",
          "min_range_m": 5},
     ],
 }
@@ -366,7 +377,7 @@ def test_every_schedule_shape_reads_unambiguously():
 
     def fence(days, start="00:00", end="23:59"):
         return Policy.model_validate({"policy_id": "w", "constraints": [
-            {"id": "z", "type": "polygon_fence", "vertices": _sq(0, 0, 1, 1),
+            {"id": "z", "type": "polygon_fence", **HARD_P0, "vertices": _sq(0, 0, 1, 1),
              "valid_time": {"recurrence": {"days": days, "start_time": start,
                                            "end_time": end}}}]}).constraints[0]
     week = ["Mon", "Tue", "Wed", "Thu", "Fri"]
@@ -385,8 +396,8 @@ def test_duplicate_rule_ids_are_refused_not_merged():
     into a single row and the other would disappear from the record."""
     _need()
     pol = Policy.model_validate({"policy_id": "dup", "constraints": [
-        {"id": "a", "type": "polygon_fence", "vertices": _sq(10, 10, 20, 20)},
-        {"id": "a", "type": "altitude_envelope", "alt_min_m": 5, "alt_max_m": 50}]})
+        {"id": "a", "type": "polygon_fence", **HARD_P0, "vertices": _sq(10, 10, 20, 20)},
+        {"id": "a", "type": "altitude_envelope", **HARD_P0, "alt_min_m": 5, "alt_max_m": 50}]})
     try:
         ConstraintCompiler(pol).compile_csp(_mission(), now=None)
     except ValueError as e:
@@ -439,7 +450,7 @@ def test_the_region_filter_measures_to_the_margin_ring():
 
     def pol(margin):
         return Policy.model_validate({"policy_id": "ring", "constraints": [
-            {"id": "z", "type": "polygon_fence", "vertices": _sq(260, 0, 270, 10),
+            {"id": "z", "type": "polygon_fence", **HARD_P0, "vertices": _sq(260, 0, 270, 10),
              "margin_m": margin}]})
     wide = ConstraintCompiler(pol(15.0)).compile_csp(_mission(), now=None)
     assert wide.selection.region["x_max"] == 250.0, wide.selection.region
@@ -454,7 +465,8 @@ def test_reach_uses_the_tightest_hard_speed_cap_else_the_requested_speed():
     _need()
 
     def pol(*caps):
-        cs = [{"id": f"k{i}", "type": "kinematic_envelope", "priority": "P1",
+        cs = [{"id": f"k{i}", "type": "kinematic_envelope",
+               "violation_action": "project_fix", "priority": "P1",
                "constraint_type": ct, "speed_max_mps": v, "climb_rate_max_mps": 1,
                "yaw_rate_max_dps": 30} for i, (v, ct) in enumerate(caps)]
         return Policy.model_validate({"policy_id": "reach", "constraints": cs})
@@ -464,7 +476,7 @@ def test_reach_uses_the_tightest_hard_speed_cap_else_the_requested_speed():
     assert ConstraintCompiler(pol((2.0, "soft"))).compile_csp(
         m, now=None).selection.reach_m == 20.0
     assert ConstraintCompiler(Policy.model_validate({"policy_id": "none", "constraints": [
-        {"id": "z", "type": "polygon_fence", "vertices": _sq(0, 0, 1, 1)}]})).compile_csp(
+        {"id": "z", "type": "polygon_fence", **HARD_P0, "vertices": _sq(0, 0, 1, 1)}]})).compile_csp(
         m, now=None).selection.reach_m == 20.0
 
 
@@ -472,11 +484,14 @@ def test_a_soft_rule_is_graded_below_the_same_hard_rule():
     """'hard >> soft' (PDF p4): soft severity is halved (SOFT_FACTOR)."""
     _need()
     pol = Policy.model_validate({"policy_id": "soft", "constraints": [
-        {"id": "hard-p1", "type": "polygon_fence", "priority": "P1",
+        {"id": "hard-p1", "type": "polygon_fence",
+         "constraint_type": "hard", "violation_action": "project_fix", "priority": "P1",
          "vertices": _sq(10, 10, 12, 12)},
-        {"id": "soft-p1", "type": "polygon_fence", "priority": "P1",
+        {"id": "soft-p1", "type": "polygon_fence",
+         "violation_action": "project_fix", "priority": "P1",
          "constraint_type": "soft", "vertices": _sq(10, 10, 12, 12)},
-        {"id": "soft-p0", "type": "polygon_fence", "constraint_type": "soft",
+        {"id": "soft-p0", "type": "polygon_fence",
+         "priority": "P0", "violation_action": "project_fix", "constraint_type": "soft",
          "vertices": _sq(10, 10, 12, 12)}]})
     csp = ConstraintCompiler(pol).compile_csp(_mission(), now=None)
     assert _row(csp, "hard-p1").severity == 0.6
@@ -490,7 +505,8 @@ def test_a_windowed_p1_rule_keeps_its_window_in_the_summary():
     there would repeat the defect the sentences had."""
     _need()
     pol = Policy.model_validate({"policy_id": "p1win", "constraints": [
-        {"id": "zq", "type": "polygon_fence", "priority": "P1",
+        {"id": "zq", "type": "polygon_fence",
+         "constraint_type": "hard", "violation_action": "project_fix", "priority": "P1",
          "vertices": _sq(10, 10, 12, 12),
          "valid_time": {"recurrence": {"days": ["Mon", "Tue", "Wed", "Thu", "Fri"],
                                        "start_time": "07:30", "end_time": "17:30"}}}]})
@@ -514,8 +530,8 @@ def test_a_far_fence_is_filtered_by_region_but_a_far_corridor_never_is():
     it as 'far away' would hide exactly the case where the mission is outside."""
     _need()
     pol = Policy.model_validate({"policy_id": "far", "constraints": [
-        {"id": "nfz-far", "type": "polygon_fence", "vertices": _sq(5000, 5000, 5010, 5010)},
-        {"id": "corr-far", "type": "corridor",
+        {"id": "nfz-far", "type": "polygon_fence", **HARD_P0, "vertices": _sq(5000, 5000, 5010, 5010)},
+        {"id": "corr-far", "type": "corridor", **HARD_P0,
          "centerline": [{"x": 4000, "y": 0}, {"x": 4100, "y": 0}], "width_m": 20},
     ]})
     csp = ConstraintCompiler(pol).compile_csp(_mission(), now=None)
@@ -641,10 +657,12 @@ def test_truncation_is_a_strict_prefix_by_risk_not_skip_and_continue():
     (risk 0.6, long sentence) does not fit; the P2 zone (risk 0.45, short) would."""
     _need()
     pol = Policy.model_validate({"policy_id": "prefix", "constraints": [
-        {"id": "p0z", "type": "polygon_fence", "vertices": _sq(40, -5, 50, 5)},
-        {"id": "kin", "type": "kinematic_envelope", "priority": "P1",
+        {"id": "p0z", "type": "polygon_fence", **HARD_P0, "vertices": _sq(40, -5, 50, 5)},
+        {"id": "kin", "type": "kinematic_envelope",
+         "constraint_type": "hard", "violation_action": "project_fix", "priority": "P1",
          "speed_max_mps": 5, "climb_rate_max_mps": 2, "yaw_rate_max_dps": 45},
-        {"id": "zq", "type": "polygon_fence", "priority": "P2",
+        {"id": "zq", "type": "polygon_fence",
+         "constraint_type": "hard", "violation_action": "project_fix", "priority": "P2",
          "vertices": _sq(20, -2, 22, 2)}]})
     m = _mission(**MIX_MISSION)
     big, p0, rest = _order_without_budget(pol, m)
@@ -939,7 +957,8 @@ def test_the_coverage_function_can_say_zero():
     no_text = csp.model_copy(update={"natural_language_prompt": ""})
     assert K.p0_coverage(no_text, pol)["coverage"] == 0.0, "the scorer ignores the prompt text"
     none = Policy.model_validate({"policy_id": "p1-only", "constraints": [
-        {"id": "k", "type": "kinematic_envelope", "priority": "P1",
+        {"id": "k", "type": "kinematic_envelope",
+         "constraint_type": "hard", "violation_action": "project_fix", "priority": "P1",
          "speed_max_mps": 3, "climb_rate_max_mps": 1, "yaw_rate_max_dps": 30}]})
     got = K.p0_coverage(ConstraintCompiler(none).compile_csp(_mission(), now=None), none)
     assert got["coverage"] is None and got["n_p0_in_scope"] == 0, \
@@ -1232,14 +1251,14 @@ def test_a_rule_the_shield_does_not_enforce_is_refused_by_name():
     from guardrail.models import GRANT_TYPES, RUNTIME_TYPES
     assert set(GRANT_TYPES) - RUNTIME_TYPES == {"distance_envelope"}, \
         "a type joined or left RUNTIME_TYPES: update this test"
-    base = [{"id": "fence", "type": "polygon_fence",
+    base = [{"id": "fence", "type": "polygon_fence", **HARD_P0,
              "vertices": [{"x": 10, "y": 10}, {"x": 20, "y": 10}, {"x": 20, "y": 20}],
              "altitude_floor_m": 0, "altitude_ceiling_m": 100}]
     cases = {
-        "distance_envelope": ({"id": "r-de", "type": "distance_envelope",
+        "distance_envelope": ({"id": "r-de", "type": "distance_envelope", **HARD_P0,
                                "object_class": "people", "min_distance_m": 5.0},
                               {"r-de": "distance_envelope"}),
-        "MSL": ({"id": "r-msl", "type": "altitude_envelope", "alt_min_m": 5,
+        "MSL": ({"id": "r-msl", "type": "altitude_envelope", **HARD_P0, "alt_min_m": 5,
                  "alt_max_m": 90, "altitude_ref": "MSL"},
                 {"r-msl": "altitude_envelope with altitude_ref MSL"}),
     }
@@ -1272,10 +1291,11 @@ def test_the_kpi_report_lists_a_file_with_an_unenforced_rule_and_carries_on():
     # A time_window_switch was the example until 2026-10-08, when it became
     # flyable; distance_envelope is the one declarable-only type left.
     people = {"policy_id": "p-people", "version": "0.1.0", "constraints": [
-        {"id": "fence", "type": "polygon_fence", "priority": "P0",
+        {"id": "fence", "type": "polygon_fence",
+         "constraint_type": "hard", "violation_action": "project_fix", "priority": "P0",
          "vertices": [{"x": 10, "y": 10}, {"x": 20, "y": 10}, {"x": 20, "y": 20}],
          "altitude_floor_m": 0, "altitude_ceiling_m": 100},
-        {"id": "people", "type": "distance_envelope", "object_class": "people",
+        {"id": "people", "type": "distance_envelope", **HARD_P0, "object_class": "people",
          "min_distance_m": 5.0}]}
     (d / "people.yaml").write_text(yaml.safe_dump(people, sort_keys=False), encoding="utf-8")
     rep = K.coverage_report(d)
@@ -1301,7 +1321,7 @@ def test_a_circle_fence_compiles_as_the_keep_out_zone_it_is():
     _need()
     from guardrail.models import CircleFence
     pol = Policy.model_validate({"policy_id": "circle", "constraints": [
-        {"id": "disc", "type": "circle_fence", "center": {"x": 15.0, "y": 15.0},
+        {"id": "disc", "type": "circle_fence", **HARD_P0, "center": {"x": 15.0, "y": 15.0},
          "radius_m": 4.0, "altitude_floor_m": 0, "altitude_ceiling_m": 100}]})
     rule = pol.constraints[0]
     assert isinstance(rule, CircleFence), type(rule)
@@ -1402,9 +1422,11 @@ def test_a_soft_rule_says_so_which_the_old_text_did_not():
     does change for any soft-rule policy."""
     _need()
     pol = Policy.model_validate({"policy_id": "soft", "constraints": [
-        {"id": "z", "type": "polygon_fence", "constraint_type": "soft",
+        {"id": "z", "type": "polygon_fence",
+         "priority": "P0", "violation_action": "project_fix", "constraint_type": "soft",
          "vertices": _sq(0, 0, 1, 1)},
-        {"id": "k", "type": "kinematic_envelope", "constraint_type": "soft",
+        {"id": "k", "type": "kinematic_envelope",
+         "priority": "P0", "violation_action": "project_fix", "constraint_type": "soft",
          "speed_max_mps": 3, "climb_rate_max_mps": 1, "yaw_rate_max_dps": 30}]})
     z, k = pol.constraints
     assert K.render_sentence(z) == "Never enter zone 'z' (soft limit)."
@@ -1468,8 +1490,8 @@ def test_coarse_geometry_always_contains_the_fine_polygon():
     ell = [{"x": 0, "y": 0}, {"x": 30, "y": 0}, {"x": 30, "y": 10},
            {"x": 10, "y": 10}, {"x": 10, "y": 30}, {"x": 0, "y": 30}]
     extra = Policy.model_validate({"policy_id": "shapes", "constraints": [
-        {"id": "ring12", "type": "polygon_fence", "vertices": ring12},
-        {"id": "ell", "type": "polygon_fence", "vertices": ell}]})
+        {"id": "ring12", "type": "polygon_fence", **HARD_P0, "vertices": ring12},
+        {"id": "ell", "type": "polygon_fence", **HARD_P0, "vertices": ell}]})
     n = 0
     for pol in [load_policy(p) for p in POLICIES] + [extra]:
         geo = K.multiscale_geometry(pol)
@@ -1490,7 +1512,7 @@ def test_geometry_ref_resolves_and_refuses_a_stale_generation():
     csp = ConstraintCompiler(pol).compile_csp(_mission(), now=MONDAY_0800)
     p0 = {p.id: p for p in csp.P0_constraints}
     ref = p0["nfz-school"].geometry_ref
-    assert ref in ("coarse:nfz-school@v0.1.0/g0", "fine:nfz-school@v0.1.0/g0"), ref
+    assert ref in ("coarse:nfz-school@v0.1.1/g0", "fine:nfz-school@v0.1.1/g0"), ref  # 0.1.1 since IR 3.0.0
     pts = K.resolve_geometry_ref(pol, ref)
     assert len(pts) >= 3
     assert p0["corridor-survey-route"].geometry_ref.startswith("fine:"), \
@@ -1511,7 +1533,7 @@ def test_scale_is_fine_near_the_path_and_coarse_far_from_it():
     assert refs["nfz-on-path"].startswith("fine:"), refs
     assert refs["alt-band"].startswith("param:"), refs
     far = Policy.model_validate({"policy_id": "far-p0", "constraints": [
-        {"id": "nfz-far", "type": "polygon_fence", "vertices": _sq(30, 150, 40, 160)}]})
+        {"id": "nfz-far", "type": "polygon_fence", **HARD_P0, "vertices": _sq(30, 150, 40, 160)}]})
     csp2 = ConstraintCompiler(far).compile_csp(_mission(**MIX_MISSION), now=None)
     assert csp2.P0_constraints[0].geometry_ref.startswith("coarse:"), csp2.P0_constraints
 
@@ -1542,7 +1564,7 @@ def test_a_missing_cap_is_none_never_zero():
     """A zero speed range would read as 'hover only'; no rule means no bound."""
     _need()
     pol = Policy.model_validate({"policy_id": "fence-only", "constraints": [
-        {"id": "z", "type": "polygon_fence", "vertices": _sq(10, 10, 20, 20)}]})
+        {"id": "z", "type": "polygon_fence", **HARD_P0, "vertices": _sq(10, 10, 20, 20)}]})
     a = ConstraintCompiler(pol).compile_csp(_mission(), now=None).allowed_action_set
     assert a.vx_range_mps is None and a.vz_range_mps is None, a
     assert a.yaw_rate_max_dps is None and a.altitude_band_m_agl is None, a
@@ -1562,12 +1584,13 @@ def test_a_corridor_altitude_band_bounds_the_action_set():
     assert "altitude" in v, v
     # The spec's worked example (prefix-compiler.md): a 5-120 m envelope and a
     # 30-80 m corridor give altitude_band_m_agl [30, 80].
-    river = {"id": "corridor-river-east", "type": "corridor", "altitude_floor_m": 30,
+    river = {"id": "corridor-river-east", "type": "corridor", **HARD_P0, "altitude_floor_m": 30,
              "altitude_ceiling_m": 80, "width_m": 40,
              "centerline": [{"x": 0, "y": 0}, {"x": 100, "y": 0}]}
     spec = Policy.model_validate({"policy_id": "spec-example", "constraints": [
         river,
-        {"id": "alt", "type": "altitude_envelope", "priority": "P1",
+        {"id": "alt", "type": "altitude_envelope",
+         "constraint_type": "hard", "violation_action": "project_fix", "priority": "P1",
          "alt_min_m": 5, "alt_max_m": 120}]})
     band = ConstraintCompiler(spec).compile_csp(_mission(), now=None).allowed_action_set
     assert band.altitude_band_m_agl == (30.0, 80.0), band
@@ -1575,7 +1598,7 @@ def test_a_corridor_altitude_band_bounds_the_action_set():
     # bands that cannot all hold are a policy conflict, said out loud
     clash = Policy.model_validate({"policy_id": "clash", "constraints": [
         river,
-        {"id": "low", "type": "altitude_envelope", "alt_min_m": 5, "alt_max_m": 20}]})
+        {"id": "low", "type": "altitude_envelope", **HARD_P0, "alt_min_m": 5, "alt_max_m": 20}]})
     try:
         ConstraintCompiler(clash).compile_csp(_mission(), now=None)
     except ValueError as e:
@@ -1586,9 +1609,9 @@ def test_a_corridor_altitude_band_bounds_the_action_set():
 
 # A day band and a night band: no height in common, never in force together.
 DAY_NIGHT = {"policy_id": "day-night", "version": "0.1.0", "constraints": [
-    {"id": "day-band", "type": "altitude_envelope", "alt_min_m": 10, "alt_max_m": 30,
+    {"id": "day-band", "type": "altitude_envelope", **HARD_P0, "alt_min_m": 10, "alt_max_m": 30,
      "valid_time": {"recurrence": {"start_time": "08:00", "end_time": "17:59"}}},
-    {"id": "night-band", "type": "altitude_envelope", "alt_min_m": 40,
+    {"id": "night-band", "type": "altitude_envelope", **HARD_P0, "alt_min_m": 40,
      "alt_max_m": 60,
      "valid_time": {"recurrence": {"start_time": "18:00", "end_time": "07:59"}}}]}
 
@@ -1709,10 +1732,10 @@ def test_a_window_that_starts_in_a_gap_between_bands_still_publishes_a_band():
     right."""
     _need()
     gap = Policy.model_validate({"policy_id": "gap", "version": "0.1.0", "constraints": [
-        {"id": "early-band", "type": "altitude_envelope", "alt_min_m": 10,
+        {"id": "early-band", "type": "altitude_envelope", **HARD_P0, "alt_min_m": 10,
          "alt_max_m": 30,
          "valid_time": {"recurrence": {"start_time": "07:59", "end_time": "08:00"}}},
-        {"id": "late-band", "type": "altitude_envelope", "alt_min_m": 40,
+        {"id": "late-band", "type": "altitude_envelope", **HARD_P0, "alt_min_m": 40,
          "alt_max_m": 60,
          "valid_time": {"recurrence": {"start_time": "08:01", "end_time": "08:30"}}}]})
     assert gap.lint() == [] and gap.flight_problems() == []
@@ -1735,12 +1758,12 @@ def test_several_envelopes_intersect_to_the_tightest_bounds():
     intersection: the smallest of each cap and the overlap of the bands."""
     _need()
     pol = Policy.model_validate({"policy_id": "two-each", "constraints": [
-        {"id": "k1", "type": "kinematic_envelope", "speed_max_mps": 5,
+        {"id": "k1", "type": "kinematic_envelope", **HARD_P0, "speed_max_mps": 5,
          "climb_rate_max_mps": 3, "yaw_rate_max_dps": 30},
-        {"id": "k2", "type": "kinematic_envelope", "speed_max_mps": 8,
+        {"id": "k2", "type": "kinematic_envelope", **HARD_P0, "speed_max_mps": 8,
          "climb_rate_max_mps": 1, "yaw_rate_max_dps": 60},
-        {"id": "a1", "type": "altitude_envelope", "alt_min_m": 5, "alt_max_m": 50},
-        {"id": "a2", "type": "altitude_envelope", "alt_min_m": 10, "alt_max_m": 80}]})
+        {"id": "a1", "type": "altitude_envelope", **HARD_P0, "alt_min_m": 5, "alt_max_m": 50},
+        {"id": "a2", "type": "altitude_envelope", **HARD_P0, "alt_min_m": 10, "alt_max_m": 80}]})
     a = ConstraintCompiler(pol).compile_csp(_mission(), now=None).allowed_action_set
     assert a.vx_range_mps == (-5.0, 5.0) and a.horizontal_speed_max_mps == 5.0, a
     assert a.vz_range_mps == (-1.0, 1.0) and a.yaw_rate_max_dps == 30.0, a
@@ -2084,25 +2107,33 @@ def _weekdays(start, end, days=("Mon", "Tue", "Wed", "Thu", "Fri")):
 HOT = {
     "policy_id": "hot-apply-mix",
     "constraints": [
-        {"id": "fence-a", "type": "polygon_fence", "priority": "P0",
+        {"id": "fence-a", "type": "polygon_fence",
+         "constraint_type": "hard", "violation_action": "project_fix", "priority": "P0",
          "vertices": _sq(40, -25, 50, -15), "valid_time": _weekdays("07:30", "17:30")},
-        {"id": "fence-b", "type": "polygon_fence", "priority": "P0",
+        {"id": "fence-b", "type": "polygon_fence",
+         "constraint_type": "hard", "violation_action": "project_fix", "priority": "P0",
          "vertices": _sq(60, 20, 70, 30)},
-        {"id": "corr-main", "type": "corridor", "priority": "P0",
+        {"id": "corr-main", "type": "corridor",
+         "constraint_type": "hard", "violation_action": "project_fix", "priority": "P0",
          "centerline": [{"x": 0, "y": 0}, {"x": 100, "y": 0}], "width_m": 40,
          "altitude_floor_m": 5, "altitude_ceiling_m": 60},
-        {"id": "dyn", "type": "dynamic_nfz", "priority": "P0",
+        {"id": "dyn", "type": "dynamic_nfz",
+         "constraint_type": "hard", "violation_action": "project_fix", "priority": "P0",
          "vertices": _sq(20, 30, 30, 40),
          "motion": {"vx_mps": 2.0, "vy_mps": 0.0, "yaw_rate_dps": 0.0}},
-        {"id": "dyn-still", "type": "dynamic_nfz", "priority": "P1",
+        {"id": "dyn-still", "type": "dynamic_nfz",
+         "constraint_type": "hard", "violation_action": "project_fix", "priority": "P1",
          "vertices": _sq(-400, -400, -390, -390)},
-        {"id": "sw-a-off", "type": "time_window_switch", "priority": "P0",
+        {"id": "sw-a-off", "type": "time_window_switch",
+         "constraint_type": "hard", "violation_action": "project_fix", "priority": "P0",
          "target_id": "fence-a", "active": False,
          "valid_time": _weekdays("12:00", "13:00", ("Mon",))},
-        {"id": "sw-b-off", "type": "time_window_switch", "priority": "P1",
+        {"id": "sw-b-off", "type": "time_window_switch",
+         "constraint_type": "hard", "violation_action": "project_fix", "priority": "P1",
          "target_id": "fence-b", "active": False,
          "valid_time": _weekdays("08:00", "08:30", ("Mon",))},
-        {"id": "swap-main", "type": "corridor_swap", "priority": "P0",
+        {"id": "swap-main", "type": "corridor_swap",
+         "constraint_type": "hard", "violation_action": "project_fix", "priority": "P0",
          "target_id": "corr-main",
          "centerline": [{"x": 0, "y": 0}, {"x": 100, "y": 10}], "width_m": 30,
          "altitude_floor_m": 10, "altitude_ceiling_m": 50,
@@ -2250,7 +2281,7 @@ def test_without_a_clock_a_switch_applies_only_where_the_shield_applies_it():
     rule off (the Shield's rule); a switch with no window always applies."""
     _need()
     raw = json.loads(json.dumps(HOT))
-    raw["constraints"].append({"id": "sw-a-always", "type": "time_window_switch",
+    raw["constraints"].append({"id": "sw-a-always", "type": "time_window_switch", **HARD_P0,
                                "target_id": "fence-a", "active": False})
     from guardrail.models import policy_from_raw
     pol = policy_from_raw(raw, runtime=False)
@@ -2314,7 +2345,7 @@ def test_the_new_sentences_are_bounded_by_the_table_counter():
     _need()
     pol = _hot()
     disc = Policy.model_validate({"policy_id": "c", "constraints": [
-        {"id": "disc", "type": "circle_fence", "center": {"x": 1, "y": 1},
+        {"id": "disc", "type": "circle_fence", **HARD_P0, "center": {"x": 1, "y": 1},
          "radius_m": 4.5}]})
     texts = [K.render_sentence(c) for c in pol.constraints + disc.constraints]
     texts += [K.render_summary(c) for c in pol.constraints + disc.constraints]
@@ -2411,10 +2442,10 @@ def test_standoff_and_clearance_are_drawn_only_with_their_inputs():
     stand-off test and distance field."""
     _need()
     pol = Policy.model_validate({"policy_id": "so", "constraints": [
-        {"id": "fence", "type": "polygon_fence", "vertices": _sq(30, 30, 40, 40)},
-        {"id": "keep-off", "type": "obstacle_clearance", "min_clearance_m": 4.0},
-        {"id": "standoff", "type": "subject_standoff", "min_range_m": 10.0},
-        {"id": "ped-only", "type": "subject_standoff", "subject_class": "pedestrian",
+        {"id": "fence", "type": "polygon_fence", **HARD_P0, "vertices": _sq(30, 30, 40, 40)},
+        {"id": "keep-off", "type": "obstacle_clearance", **HARD_P0, "min_clearance_m": 4.0},
+        {"id": "standoff", "type": "subject_standoff", **HARD_P0, "min_range_m": 10.0},
+        {"id": "ped-only", "type": "subject_standoff", **HARD_P0, "subject_class": "pedestrian",
          "min_range_m": 20.0}]})
     bare = K.rasterise_cost_map(pol)
     whys = {d["id"]: d["why"] for d in bare.header["not_drawn"]}
@@ -2580,7 +2611,7 @@ def test_a_dynamic_zone_names_only_the_motion_it_has():
     from guardrail.models import policy_from_raw
 
     def zone(zid, x0, motion):
-        r = {"id": zid, "type": "dynamic_nfz", "vertices": _sq(x0, 50, x0 + 10, 60)}
+        r = {"id": zid, "type": "dynamic_nfz", **HARD_P0, "vertices": _sq(x0, 50, x0 + 10, 60)}
         if motion is not None:
             r["motion"] = motion
         return r
@@ -2711,7 +2742,7 @@ def test_a_keep_out_zone_is_drawn_with_its_margin_ring():
     from shapely.geometry import Polygon as SPoly
     from guardrail.shield import Shield
     pol = Policy.model_validate({"policy_id": "ring", "constraints": [
-        {"id": "z", "type": "polygon_fence", "vertices": _sq(0, 0, 20, 20), "margin_m": 8.0}]})
+        {"id": "z", "type": "polygon_fence", **HARD_P0, "vertices": _sq(0, 0, 20, 20), "margin_m": 8.0}]})
     cm = K.rasterise_cost_map(pol, altitude_m=15.0, resolution_m=5.0)
     sh = Shield(pol, escalation=False)
     poly = SPoly([(0, 0), (20, 0), (20, 20), (0, 20)])
@@ -2755,12 +2786,13 @@ def _two_switches(first_active: bool):
     """fence-s switched by two overlapping switches of opposite sense; the
     one LATER in policy order decides while both hold (Shield._Schedule)."""
     from guardrail.models import policy_from_raw
-    a = {"id": "sw-wide", "type": "time_window_switch", "target_id": "fence-s",
+    a = {"id": "sw-wide", "type": "time_window_switch", **HARD_P0, "target_id": "fence-s",
          "active": first_active, "valid_time": _weekdays("08:00", "09:00", ("Mon",))}
-    b = {"id": "sw-narrow", "type": "time_window_switch", "target_id": "fence-s",
+    b = {"id": "sw-narrow", "type": "time_window_switch", **HARD_P0, "target_id": "fence-s",
          "active": not first_active, "valid_time": _weekdays("08:30", "08:45", ("Mon",))}
     return policy_from_raw({"policy_id": "two-switches", "constraints": [
-        {"id": "fence-s", "type": "polygon_fence", "priority": "P0",
+        {"id": "fence-s", "type": "polygon_fence",
+         "constraint_type": "hard", "violation_action": "project_fix", "priority": "P0",
          "vertices": _sq(40, -5, 50, 5)}, a, b]}, runtime=False)
 
 
@@ -2805,9 +2837,9 @@ def test_a_moving_zone_far_from_the_path_is_never_filtered_by_region():
     from guardrail.models import policy_from_raw
     far = _sq(500, 500, 510, 510)
     pol = policy_from_raw({"policy_id": "far-zones", "constraints": [
-        {"id": "far-moving", "type": "dynamic_nfz", "vertices": far,
+        {"id": "far-moving", "type": "dynamic_nfz", **HARD_P0, "vertices": far,
          "motion": {"vx_mps": 2.0, "vy_mps": 0.0, "yaw_rate_dps": 0.0}},
-        {"id": "far-still", "type": "dynamic_nfz", "vertices": far}]}, runtime=False)
+        {"id": "far-still", "type": "dynamic_nfz", **HARD_P0, "vertices": far}]}, runtime=False)
     csp = ConstraintCompiler(pol).compile_csp(_mission(tx=100.0, ty=0.0), now=None,
                                               budget_tokens=1000)
     dec = {r.id: r.decision for r in csp.selection.rules}
@@ -2823,8 +2855,8 @@ def test_a_runtime_type_with_no_place_in_the_by_type_order_raises():
     _need()
     from guardrail.models import RUNTIME_TYPES
     pol = Policy.model_validate({"policy_id": "stub", "constraints": [
-        {"id": "f", "type": "polygon_fence", "vertices": _sq(0, 0, 5, 5)},
-        {"id": "people", "type": "distance_envelope", "object_class": "people",
+        {"id": "f", "type": "polygon_fence", **HARD_P0, "vertices": _sq(0, 0, 5, 5)},
+        {"id": "people", "type": "distance_envelope", **HARD_P0, "object_class": "people",
          "min_distance_m": 10.0}]})
     saved = K.RUNTIME_TYPES
     K.RUNTIME_TYPES = frozenset(RUNTIME_TYPES | {"distance_envelope"})

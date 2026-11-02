@@ -818,9 +818,11 @@ def typical_fifty_rule_raw() -> dict:
                                "start_time": "07:30", "end_time": "17:30"}}
     nights = {"recurrence": {"start_time": "22:00", "end_time": "06:00"}}
     rules = [
-        {"id": "alt-band", "type": "altitude_envelope", "priority": "P0",
+        {"id": "alt-band", "type": "altitude_envelope",
+         "constraint_type": "hard", "violation_action": "project_fix", "priority": "P0",
          "alt_min_m": 5.0, "alt_max_m": 120.0},
-        {"id": "kin-caps", "type": "kinematic_envelope", "priority": "P1",
+        {"id": "kin-caps", "type": "kinematic_envelope",
+         "constraint_type": "hard", "violation_action": "project_fix", "priority": "P1",
          "speed_max_mps": 12.0, "climb_rate_max_mps": 4.0, "yaw_rate_max_dps": 60.0},
     ]
     # 32 polygon fences, an 8 x 4 block grid 60 m apart, north-east of the
@@ -828,6 +830,7 @@ def typical_fifty_rule_raw() -> dict:
     for k in range(32):
         r_, c_ = divmod(k, 8)
         fence = {"id": f"nfz-{k:02d}", "type": "polygon_fence",
+                 "constraint_type": "hard", "violation_action": "project_fix",
                  "priority": "P0" if k % 4 else "P1",
                  "vertices": ring(60.0 + 60.0 * r_, 60.0 + 60.0 * c_,
                                   10.0 + (k % 5) * 2.0, 6 + k % 7),
@@ -840,27 +843,33 @@ def typical_fifty_rule_raw() -> dict:
     # 10 circle fences in a row south of the grid.
     for k in range(10):
         rules.append({"id": f"disc-{k}", "type": "circle_fence", "priority": "P0",
+                      "constraint_type": "hard", "violation_action": "project_fix",
                       "center": ll(-80.0, 40.0 + 45.0 * k),
                       "radius_m": 8.0 + k, "altitude_ceiling_m": 120.0,
                       "margin_m": 1.5, **({"valid_time": nights} if k % 2 else {})})
     # Two keep-in corridors, one by day and one by night (never in force
     # together: the lint compares hard corridor bands that can be).
-    rules.append({"id": "corridor-day", "type": "corridor", "priority": "P1",
+    rules.append({"id": "corridor-day", "type": "corridor",
+                  "constraint_type": "hard", "violation_action": "project_fix", "priority": "P1",
                   "centerline": [ll(0.0, 0.0), ll(30.0, 30.0), ll(30.0, 520.0),
                                  ll(300.0, 520.0)],
                   "width_m": 30.0, "altitude_floor_m": 5.0, "altitude_ceiling_m": 120.0,
                   "valid_time": weekdays})
-    rules.append({"id": "corridor-night", "type": "corridor", "priority": "P1",
+    rules.append({"id": "corridor-night", "type": "corridor",
+                  "constraint_type": "hard", "violation_action": "project_fix", "priority": "P1",
                   "centerline": [ll(0.0, 0.0), ll(-40.0, 0.0), ll(-40.0, 520.0)],
                   "width_m": 24.0, "altitude_floor_m": 5.0, "altitude_ceiling_m": 60.0,
                   "valid_time": nights})
-    rules.append({"id": "clearance", "type": "obstacle_clearance", "priority": "P0",
+    rules.append({"id": "clearance", "type": "obstacle_clearance",
+                  "constraint_type": "hard", "violation_action": "project_fix", "priority": "P0",
                   "min_clearance_m": 3.0, "soft_margin_m": 2.0})
-    rules.append({"id": "standoff-ped", "type": "subject_standoff", "priority": "P0",
+    rules.append({"id": "standoff-ped", "type": "subject_standoff",
+                  "constraint_type": "hard", "violation_action": "project_fix", "priority": "P0",
                   "subject_class": "pedestrian", "min_range_m": 10.0})
     # Two switches holding two fences on at night as well.
     for k in (0, 3):
         rules.append({"id": f"night-hold-{k:02d}", "type": "time_window_switch",
+                      "constraint_type": "hard", "violation_action": "project_fix",
                       "priority": "P1", "target_id": f"nfz-{k:02d}", "active": True,
                       "valid_time": nights})
     return {"policy_id": "wp1-cold-start-typical", "version": "1.0.0",

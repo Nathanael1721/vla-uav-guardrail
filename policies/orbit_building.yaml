@@ -36,7 +36,7 @@
 # The usual spawn at (35, -20) is 40.3 m from the centroid, so the aircraft
 # starts essentially ON the ring and the transit does not eat the flight window.
 policy_id: orbit-building
-version: 0.1.0
+version: 0.1.1
 constraints:
   # The orbit radius and this rule interact directly: an orbit inside the
   # clearance ring is an unflyable policy, and that is checked above rather than
@@ -45,7 +45,7 @@ constraints:
     type: obstacle_clearance
     constraint_type: hard
     priority: P0
-    violation_action: repair
+    violation_action: project_fix
     min_clearance_m: 5.0
     soft_margin_m: 2.0
 
@@ -65,7 +65,7 @@ constraints:
     type: altitude_envelope
     constraint_type: hard
     priority: P0
-    violation_action: repair
+    violation_action: project_fix
     alt_min_m: 12
     alt_max_m: 28
 
@@ -73,7 +73,7 @@ constraints:
     type: kinematic_envelope
     constraint_type: hard
     priority: P1
-    violation_action: repair
+    violation_action: project_fix
     speed_max_mps: 5.0
     climb_rate_max_mps: 2.0
     # CORRECTED 2026-09-08: this said "compared against a rad/s value, so it

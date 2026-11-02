@@ -58,6 +58,10 @@ from guardrail.models import (Action4D, AltitudeEnvelope,            # noqa: E40
 from guardrail.shield import Shield, as_dynamic_nfz                 # noqa: E402
 from legacy_fence_loop import LegacyFenceShield                     # noqa: E402
 
+# The three ConstraintBase fields the grant requires (IR schema 3.0.0, 2026-11-02),
+# at the values they defaulted to before (repair = project_fix).
+HARD_P0 = {"constraint_type": "hard", "priority": "P0", "violation_action": "project_fix"}
+
 POLICIES = sorted((ROOT / "policies").glob("*.yaml"))
 CITYMAP = ROOT / "demo" / "out" / "citymap" / "occ_day.npz"
 
@@ -78,13 +82,13 @@ def _square(fid, x0, y0, side, margin=1.0, floor=0.0, ceil=120.0, **kw):
                                   {"x": x0 + side, "y": y0 + side},
                                   {"x": x0, "y": y0 + side}],
                         altitude_floor_m=floor, altitude_ceiling_m=ceil,
-                        margin_m=margin, **kw)
+                        margin_m=margin, **{**HARD_P0, **kw})
 
 
 def _caps(speed=4.0):
-    return [KinematicEnvelope(id="kin", type="kinematic_envelope", speed_max_mps=speed,
+    return [KinematicEnvelope(id="kin", type="kinematic_envelope", **HARD_P0, speed_max_mps=speed,
                               climb_rate_max_mps=2.0, yaw_rate_max_dps=60.0),
-            AltitudeEnvelope(id="alt", type="altitude_envelope",
+            AltitudeEnvelope(id="alt", type="altitude_envelope", **HARD_P0,
                              alt_min_m=2.0, alt_max_m=40.0)]
 
 
@@ -551,10 +555,10 @@ def test_a_slide_that_turns_into_a_second_fence_is_still_repaired():
     set is re-queried whenever the velocity changes inside the repair loop."""
     pol = Policy(policy_id="two", constraints=[
         *_caps(),
-        PolygonFence(id="A", type="polygon_fence",
+        PolygonFence(id="A", type="polygon_fence", **HARD_P0,
                      vertices=[{"x": 6, "y": -5}, {"x": 20, "y": -5},
                                {"x": 20, "y": 5}, {"x": 6, "y": 5}], margin_m=1.0),
-        PolygonFence(id="B", type="polygon_fence",
+        PolygonFence(id="B", type="polygon_fence", **HARD_P0,
                      vertices=[{"x": -3, "y": -16}, {"x": 3, "y": -16},
                                {"x": 3, "y": -10}, {"x": -3, "y": -10}], margin_m=1.0),
     ])
@@ -673,7 +677,7 @@ def test_a_geometry_ref_names_one_scale_of_one_generation():
 
 def test_a_circle_fence_compiles_to_a_ring_that_holds_the_whole_disc():
     from guardrail.models import CircleFence
-    c = CircleFence.model_validate({"id": "disc", "type": "circle_fence",
+    c = CircleFence.model_validate({"id": "disc", "type": "circle_fence", **HARD_P0,
                                     "center": {"x": 10.0, "y": -5.0}, "radius_m": 20.0,
                                     "margin_m": 0.0})
     ir = PolicyIR.from_policy(Policy(policy_id="c", constraints=[c]))
@@ -692,7 +696,7 @@ def test_a_moving_zone_is_left_out_of_the_tree_and_always_returned():
     """The tree holds where a zone was compiled; a moving zone will be
     elsewhere, so a box query must never drop it."""
     from guardrail.models import DynamicNFZ
-    z = DynamicNFZ.model_validate({"id": "mv", "type": "dynamic_nfz",
+    z = DynamicNFZ.model_validate({"id": "mv", "type": "dynamic_nfz", **HARD_P0,
                                    "vertices": [{"x": 0, "y": 0}, {"x": 4, "y": 0},
                                                 {"x": 4, "y": 4}],
                                    "motion": {"vx_mps": 1.0}})

@@ -3,14 +3,14 @@
 # (Physical obstacle avoidance is the OTHER team's layer; the Guardrail only
 # enforces policy constraints.)
 policy_id: fase3-sim-demo
-version: 0.1.1
+version: 0.1.2
 
 constraints:
   - id: nfz-square
     type: polygon_fence
     constraint_type: hard
     priority: P0
-    violation_action: repair
+    violation_action: project_fix
     vertices:
       - { x: 7,  y: 7 }
       - { x: 23, y: 7 }
@@ -24,7 +24,7 @@ constraints:
     type: altitude_envelope
     constraint_type: hard
     priority: P0
-    violation_action: repair
+    violation_action: project_fix
     alt_min_m: 10
     alt_max_m: 20
 
@@ -32,7 +32,7 @@ constraints:
     type: kinematic_envelope
     constraint_type: hard
     priority: P1
-    violation_action: repair
+    violation_action: project_fix
     speed_max_mps: 4.0
     climb_rate_max_mps: 2.0
     yaw_rate_max_dps: 45.0
