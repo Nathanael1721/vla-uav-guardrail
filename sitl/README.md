@@ -165,12 +165,16 @@ the CSP files; it flies anyway and records why in `events.jsonl`
 `generation`, `shield_ms`, the FSM state, the episode id, and `flown`: false
 on a tick the autopilot held the aircraft and nothing was sent),
 `policy_g<N>.json` and `csp_g<N>.json` for every policy generation,
-`audit.jsonl` (each record with the episode id, its log row's tick number and
-the rail's own escalation-FSM verdict: the rails build the Shield without an
-FSM of its own), `events.jsonl` (ending with `mission_end`),
+`shield_audit.jsonl` (`audit.jsonl` before 2026-11-02; each record with the
+episode id, its log row's tick number and the rail's own escalation-FSM
+verdict: the rails build the Shield without an FSM of its own; record
+version 4, the grant's audit fields with the grant's content), `events.jsonl`
+(ending with `mission_end`),
 `adapter_log.jsonl` (ROS rail), `metrics.json` (incl. the autopilot's fence
 parameters as read back), `manifest.json`, `kpi.json`, `report.md`,
-`trajectory.png`, `bag/` (ROS rail) and `<tag>.replay.tar.gz`, which carries
+`trajectory.png`, `bag/` (ROS rail: actions, mode changes, MAVROS's sensor
+topics and raw MAVLink, `/uas1/mavlink_source` and `/uas1/mavlink_sink`) and
+`<tag>.replay.tar.gz`, which carries
 all of it. Starting a new episode in a used tag moves EVERY earlier file to
 `_previous/<stamp>/` first, and the bundle refuses records that carry another
 episode's id or an episode that never ended.

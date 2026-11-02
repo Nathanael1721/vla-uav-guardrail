@@ -186,7 +186,8 @@ python demo/follow_vlm.py \
 ```
 
 Results land in `demo/out/<tag>/`: `kpi.json`, `metrics.json`, the per-tick
-`flight_log.jsonl`, the Shield's `audit.jsonl`, and a replay bundle that
+`flight_log.jsonl`, the Shield's `shield_audit.jsonl` (`audit.jsonl` in a run
+before 2026-11-02), and a replay bundle that
 re-derives its own KPIs.
 
 ```bash

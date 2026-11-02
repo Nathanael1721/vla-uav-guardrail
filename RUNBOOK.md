@@ -42,7 +42,7 @@ rule-ignorant) through the Guardrail by default.
 `--shield off` = watch it violate · `--shield on` = watch it get caught ·
 `--dynamic` = no-fly zone appears mid-flight.
 
-Results always land in `demo/out/<tag>/` → `trajectory.png`, `report.md`, `audit.jsonl`.
+Results always land in `demo/out/<tag>/` → `trajectory.png`, `report.md`, `shield_audit.jsonl` (`audit.jsonl` before 2026-11-02).
 
 ---
 

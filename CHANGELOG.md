@@ -16,6 +16,179 @@ shipped change and recorded as one.
 
 ## [Unreleased]
 
+### 2026-11-02 — the audit and episode records in the grant's words: the grant's audit field names carry the grant's content (record version 4, shield_audit.jsonl); the harness bundle carries policy_bundle.tar.gz; an exported step's `executed` is what MAVROS was sent, read from the rosbag2; the ROS 2 rail's bag records MAVROS's sensors and raw MAVLink
+
+The independent review of 29 Oct found three of the grant's audit field
+names carrying this project's content and the file under another name
+(WP3-11), the exporter's `executed` inferred rather than read (WP4-13), the
+harness bundle without the grant's file names (WP4-05) and the bag without
+sensors or MAVLink (ARCH-22). The PI: follow the grant.
+
+#### Changed
+- **Audit record version 4** (`guardrail/audit.py`, WP3-11). The grant's ten
+  fields (Safety Shield page, "Audit log") are written first, in the
+  grant's order, with the grant's content:
+  - `raw_action` / `emitted_action` are the grant's body frame `{vx, vy, vz,
+    yaw_rate}` (vx forward, vy right, vz up; `frames.to_body` at the tick's
+    heading), converted when the record is written; null only for a
+    decision built by hand without a heading. The world-frame actions
+    (`vz_up`) are `raw_action_world` / `emitted_action_world`.
+  - A violation's `category` is the grant's (geometric / envelope /
+    time-window; `contract`, a non-finite command zeroed, stays this
+    project's extension). Ours (geofence, altitude, ...) is `rule_category`;
+    `grant_category` is gone.
+  - `repair_attempts` is the operator list the grant's example shows: every
+    repair operator tried, in order, with result (ok / skip / fail /
+    fallback / relaxed), the reason a skip skipped, `magnitude_m` and
+    `iterations` (the pass it ran in), plus our `run`, `axis` and `repairs`.
+    The repair records it held are `repair_results`; `repair_passes` is
+    unchanged.
+  The model refuses a world-frame action under the grant's name, a
+  version-3 key beside it, and the old `grant_category`. The schema
+  (`policies/audit_record.schema.json`) is regenerated.
+- **`shield_audit.jsonl`**, the grant's file name, is what every rail writes
+  (the ROS 2 node, the pymavlink rail, the ArduPilot rail, `vla_fly`, the
+  demos; `guardrail.audit.AUDIT_FILE`); the per-episode logger writes
+  `shield_audit_<id>.jsonl`. `guardrail/replay.py` packs and reads either
+  name, moves a stale one of either name aside when an episode starts, and
+  refuses a run folder holding both (it could tell neither which was the
+  episode's nor check both).
+- **The exporter's `executed` comes from the rosbag2** (`tools/
+  export_episodes.py`, WP4-13). With a run's bag, read with `rosbags` (pure
+  Python, no ROS, optional like pyarrow), each step's `executed` is the
+  `mavros_msgs/PositionTarget` on `/mavros/setpoint_raw/local` logged in the
+  tick's window (the `mission_start` event's wall clock plus the row's `t`),
+  converted back from the adapter's ENU packing to the world frame; a tick
+  with no message executed nothing. The flight log's verdict rides beside it
+  (`executed_flight_log`), with the message's log time and lag
+  (`executed_bag`). The join is used only when at least half of the ticks
+  where both say something was sent carry the same command (within the
+  adapter's heading slack); otherwise, and with no bag, no `rosbags` or a
+  headless episode, `executed` stays the flight log's verdict and every step
+  says so (`executed_from` "flight_log", `executed_fallback` the reason), as
+  does the episode record (`executed`). The observation gains the pose
+  MAVROS reported nearest the tick and the clock its bag time is on. Each
+  audit record is read through `upgrade_record`, so the world-frame actions,
+  both categories and the repairs made are read under their version-4 names
+  whatever version wrote them. Export schema `vlaguard.episode_export/2`: a
+  step's violation carries the grant's `category` and ours as
+  `rule_category` (until now `category` was ours).
+- **The ROS 2 rail's bag** (`sitl/run_ros2_demo.sh`, ARCH-22) also records
+  MAVROS's velocity, IMU, GPS fix, relative altitude, altitude, battery,
+  home, extended state and status text, the two camera topics the VLA bridge
+  reads, and MAVROS 2's raw MAVLink both ways (`/uas1/mavlink_source` from
+  the autopilot, `/uas1/mavlink_sink` to it). `deploy/docker/entrypoint.sh`'s
+  `BAG_TOPICS` is kept equal (outside sitl/, by the test that compares them).
+- `guardrail/repair.py` (another stream's file): one docstring paragraph,
+  which said `repair_attempts` lists the repair records.
+
+#### Added
+- **`policy_bundle.tar.gz`** in every gRPC harness bundle
+  (`guardrail/harness_service.py write_policy_bundle`, WP4-05): the injected
+  policy file byte for byte, the canonical IR of generation 0 and of the last
+  generation (each only where its number and hash are the ones the episode
+  recorded), and `policy_bundle.json` with every generation's time, event,
+  rule and policy_hash and every member's SHA-256. Deterministic. `kpi.json`
+  `harness.bundle_files` names the grant's three files and which this
+  backend writes; `episode.bag2/` is not written (no ROS 2 graph on the
+  headless path), and it says so.
+- `guardrail.audit`: `AUDIT_FILE`, `LEGACY_AUDIT_FILE`, `GRANT_FIELDS`,
+  `audit_path` / `audit_files` (the new name first, a stored run's old one
+  after it), `operator_attempts`, `is_version_4`.
+
+#### Fixed
+- **The exporter never read a headless bundle's audit.** It looked for
+  `audit.jsonl` / `audit_<id>.jsonl`, and the harness has written
+  `shield_audit.jsonl` since 30 Oct, so those steps took their policy state
+  from the generation timeline and their labels without the record's
+  priority and grant category. Now joined (270 of 270 records on the test's
+  hot-apply flight).
+- **The observation's bag time on the ROS 2 rail was the take-off time
+  early.** Its rows count `t` from `mission_start`; the exporter added it to
+  the `episode_start` clock (37.9 s earlier on ros2_hotapply_01). The
+  `mission_start` event's wall clock is used where the event is at t 0.
+- `tests/test_deploy_configs.py`'s topic pattern did not see a topic whose
+  first segment holds a digit, so `/uas1/...` would have escaped the
+  comparison of the two bag lists.
+
+#### Found
+- All 294 stored audit files under the main checkout's `demo/out` (71,064
+  records: 22,123 of version 1, 1,836 of version 2, 47,105 of version 3)
+  read into version 4, and upgrading twice changes nothing. 48,941 carry an
+  operator list; the rest predate version 2 and read `repair_attempts` null
+  (not recorded), never empty.
+- The 19 stored ROS 2 runs with a bag: on every one, the bag's
+  `/mavros/setpoint_raw/local` count equals the flight log's ticks that sent
+  something (ros2_action_brake_01 899 of 899, ros2_hotapply_01 2 of 2,
+  ros2if_on_dyn_yaw 244 of 244), so their bags can serve the new
+  `executed`. `/mavros/setpoint_raw/target_local` (the autopilot's report of
+  its target) holds 0 messages in all 19. None has a sensor topic beyond the
+  pose, or raw MAVLink.
+- `tests/test_wp4outputs_harness.py::test_an_idle_session_expires_and_frees_its_slot`
+  fails on this machine this evening, on this branch and on 7bfd6dc alike:
+  `start_episode` took 0.20-0.55 s against the test's 0.3 s session TTL (it
+  passed in the afternoon baseline). Timing under load, not this change.
+
+#### Limits
+- **The rosbag2 path has not run on a real bag.** `rosbags` is not in
+  vla-real (nor any env here) and was not installed: the round trip through
+  a rosbag2 written and read with `rosbags`
+  (`test_a_real_rosbag2_is_read_with_rosbags`) SKIPs, and the join, the frame
+  conversion, the agreement gate and the fallbacks are tested through a
+  stand-in for `read_bag`. The `rosbags` calls are written to its 0.10+ API
+  without being run. Commands below.
+- The new bag topics are not flown. `/uas1/mavlink_source` and
+  `/uas1/mavlink_sink` are MAVROS 2's router link as its source names them;
+  no run on this rail has listed them. The camera topics are empty on the
+  SITL-only rail.
+- No flown run has written a version-4 audit record yet; the rails write it
+  in their tests. The Shield still repairs in the world frame (WP3-04): the
+  body frame is a conversion when the record is written.
+- `AuditRecord` keeps the world-frame actions and `rule_category` optional,
+  so the grant's own example validates; the writer writes them on every
+  record.
+- `policy_bundle.tar.gz` holds the first and the last generation's IR; with
+  two or more hot-applies the ones between are named by hash only (the
+  headless runner keeps no copy), and the index says `complete: false`.
+- A ROS 2 rail run keeps its bag as `bag/`, not the grant's
+  `episode.bag2/`; replay re-scores from `flight_log.jsonl`, not the bag.
+- Every rail but the ROS 2 one has no bag, so its exported `executed` is the
+  labelled fallback.
+- The tutorials and older design notes still name `audit.jsonl`
+  (historical walkthroughs, not edited).
+
+#### Tests
+- `tests/test_shieldcore_audit.py` 16/16 (12 before; new: the grant's example
+  validates and the writer's first ten fields are the grant's, a world-frame
+  action under the grant's name is refused, a version-3 record reads with
+  the grant's names and upgrades once, the file name and the stored-run
+  fallback). `tests/test_wp4outputs_exporters.py` 31/38, 7 SKIP (6 pyarrow, 1
+  rosbags; new: executed from the bag, the fallback's five cases, a replay
+  bundle's bag, the heading formula, a version-4 audit's world-frame
+  actions). `tests/test_harness_service.py` 57/57 (new: the policy bundle).
+  `tests/test_replay.py` 41/61 (20 SKIP need demo/out; new: two audit file
+  names refused). The bag topics: `tests/test_ros2_package.py` 15/15,
+  `tests/test_deploy_configs.py` 62/62.
+- The bag tests fail when the join needs 100 % agreement, north and east are
+  swapped, the episode-start clock is used, or `executed` is left as the
+  log's (mutations run once, 2 Nov).
+
+#### To verify the bag path (WSL, or a clone of vla-real)
+```bash
+# WSL, in the rail's venv (it has the guardrail's dependencies)
+cd "/mnt/d/OneDrive/College/S2-TaipeiTech/Lab/VLA Drone"
+~/venv-ros/bin/pip install "rosbags>=0.10"
+~/venv-ros/bin/python tests/test_wp4outputs_exporters.py      # the rosbags test no longer SKIPs
+for r in ros2_action_brake_01 ros2_hotapply_03 ros2if_on_dyn_yaw; do
+  ~/venv-ros/bin/python tools/export_episodes.py "demo/out/$r" --out "/tmp/exp_$r" --format jsonl
+  ~/venv-ros/bin/python -c "import json,sys; e=json.loads(open(sys.argv[1]).readline()); print(e['executed'])" "/tmp/exp_$r/episodes.jsonl"
+done
+```
+On Windows without touching vla-real: `conda create -n vla-rosbags --clone
+vla-real`, then `pip install "rosbags>=0.10"` in it and the same two
+commands with its python. Each episode's `executed` should say `"from":
+"bag"` with `agree` close to `comparable`.
+
 ### 2026-11-02 — the October deck's presenter cheat-sheet, committed
 
 #### Added
