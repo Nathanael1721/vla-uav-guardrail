@@ -96,6 +96,23 @@ verify_pin() {
     echo "$dirty"
     fail=1
   fi
+  # The build stamp ties the binary to the tree it was compiled from: HEAD and
+  # every submodule commit, written by the build step below. Without it a
+  # binary built before a submodule reset passed this check: on 2026-11-02 the
+  # nested pymavlink was reset to the pin, the rebuild failed (no dronecan
+  # package), and the old binary - built against the newer generator's
+  # headers, with the same 8-hex banner - read "PIN OK".
+  local stamp="$AP_DIR/build/sitl/guardrail_build_stamp.txt" want
+  want="$(printf 'head %s\n%s\n' "$head" "$(printf '%s\n' "$all_subs" | sed 's/ (.*)$//')")"
+  if [ ! -f "$stamp" ]; then
+    echo "PIN FAIL: no build stamp ($stamp): the binary was not built by this"
+    echo "          script, so the submodule state it was compiled against is unknown"
+    fail=1
+  elif [ "$(cat "$stamp")" != "$want" ]; then
+    echo "PIN FAIL: the binary was built from another tree than the checkout's"
+    echo "          (build stamp differs: a commit or submodule moved since the build)"
+    fail=1
+  fi
   bin="$AP_DIR/build/sitl/bin/arducopter"
   if [ ! -x "$bin" ]; then
     echo "PIN FAIL: $bin missing (not built)"
@@ -170,7 +187,7 @@ fi
 # until this step re-runs), and fastapi / uvicorn (pyproject's `api` extra, at
 # the versions vla-drone runs) let run_sitl_demo.py serve --hotapply-port.
 ~/venv-ap/bin/pip install -q "empy==3.3.4" "pexpect==4.9.0" "future==1.0.0" \
-  "pymavlink==2.4.49" "MAVProxy==1.8.74" \
+  "pymavlink==2.4.49" "MAVProxy==1.8.74" "dronecan==1.0.27" \
   "pydantic==2.13.4" "pyyaml==6.0.3" "shapely==2.1.2" "numpy==2.4.6" "jinja2==3.1.6" \
   "fastapi==0.139.0" "uvicorn==0.50.2"
 echo "venv ready"
@@ -181,6 +198,9 @@ source ~/venv-ap/bin/activate
 
 echo "=== [4/5] build copter (this is the long part) ==="
 ./waf copter -j"$(nproc)" 2>&1 | tail -5
+# Only after a successful build (set -e and pipefail stop the script above).
+{ printf 'head %s\n' "$(git rev-parse HEAD)"
+  git submodule status --recursive | sed 's/ (.*)$//'; } > build/sitl/guardrail_build_stamp.txt
 
 echo "=== [5/5] verify the build is the pinned firmware ==="
 ls -la build/sitl/bin/arducopter

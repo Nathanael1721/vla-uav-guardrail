@@ -603,13 +603,34 @@ def _stub_venv(home):
     os.chmod(b / "pip", 0o755)
 
 
-def _write_binary(ap, tag=None):
-    """The fake build output; tag=None writes a binary with no version banner."""
+def _write_stamp(ap):
+    """The build stamp setup_sitl.sh writes after a successful build: HEAD and
+    every submodule commit, the describe suffix dropped. Read raw: _g strips
+    the leading space git puts before an in-sync submodule."""
+    git = ["git", "-C", str(ap), "-c", "protocol.file.allow=always"]
+    head = subprocess.run(git + ["rev-parse", "HEAD"], capture_output=True, text=True,
+                          check=True).stdout.strip()
+    # Not check=True: a fixture whose submodules cannot be listed (a gitlink
+    # with no .gitmodules entry) still gets a stamp, and --verify must fail it
+    # on the listing itself.
+    subs = subprocess.run(git + ["submodule", "status", "--recursive"], capture_output=True,
+                          text=True).stdout
+    lines = [re.sub(r" \(.*\)$", "", ln) for ln in subs.splitlines()]
+    s = ap / "build" / "sitl" / "guardrail_build_stamp.txt"
+    s.parent.mkdir(parents=True, exist_ok=True)
+    s.write_bytes(("head " + head + "\n" + "".join(ln + "\n" for ln in lines)).encode())
+
+
+def _write_binary(ap, tag=None, stamp=True):
+    """The fake build output; tag=None writes a binary with no version banner.
+    stamp=False leaves out the build stamp, as a binary built by hand would."""
     b = ap / "build" / "sitl" / "bin" / "arducopter"
     b.parent.mkdir(parents=True, exist_ok=True)
     banner = b"ArduCopter V4.5.7 (" + tag.encode() + b")" if tag else b"no banner here"
     b.write_bytes(b"#!/bin/sh\n\x00\x7fELF junk\x00" + banner + b"\x00tail")
     os.chmod(b, 0o755)
+    if stamp:
+        _write_stamp(ap)
 
 
 def _fixture(banner_sha8=None, binary=True, banner=True):
@@ -797,6 +818,30 @@ def test_verify_refuses_a_missing_build_and_a_missing_checkout():
     empty = _home()                                   # no ~/ardupilot at all
     rc, out = _verify(empty, sha)
     assert rc == 1 and "not a git checkout" in out, out
+
+
+def test_verify_refuses_a_binary_without_a_build_stamp():
+    """A binary the script did not build: the banner can match while the
+    submodules it was compiled against are unknown (2026-11-02: a pymavlink
+    reset, a failed rebuild, and the old binary read PIN OK)."""
+    if not _need_bash():
+        return
+    home, ap, sha = _fixture(binary=False)
+    _write_binary(ap, sha[:8], stamp=False)
+    rc, out = _verify(home, sha)
+    assert rc == 1 and "no build stamp" in out and "PIN OK" not in out, out
+
+
+def test_verify_refuses_a_binary_built_before_the_tree_moved():
+    if not _need_bash():
+        return
+    home, ap, sha = _fixture()
+    rc, out = _verify(home, sha)
+    assert rc == 0 and "PIN OK" in out, "control run failed: " + out
+    s = ap / "build" / "sitl" / "guardrail_build_stamp.txt"
+    s.write_bytes(s.read_bytes().replace(b"head " + sha.encode(), b"head " + b"0" * 40))
+    rc, out = _verify(home, sha)
+    assert rc == 1 and "build stamp differs" in out and "PIN OK" not in out, out
 
 
 def test_verify_refuses_a_binary_with_no_version_banner():

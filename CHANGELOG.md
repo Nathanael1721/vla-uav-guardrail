@@ -101,6 +101,25 @@ shipped change and recorded as one.
   it outlasted the 20 s timeout; the next one took 2.4 s. The status is now
   asked twice (20 s, then 90 s), and only two failures say `-unknown`.
   `tests/test_manifest.py` shows a first timeout followed by a clean read.
+- **The WSL ArduPilot tree is at its pin again, and `--verify` can no longer
+  pass a binary it did not build** (`sitl/setup_sitl.sh`, ARCH-31). The
+  nested `pymavlink` had sat at `ec06837a` since the master clone (found
+  2026-10-06), so every WSL SITL run recorded `ardupilot_pin_ok` false. A
+  re-run of the setup reset it to `8ba67079`, the commit Copter-4.5.7
+  records, and its rebuild failed: the venv had no `dronecan`, which
+  ArduPilot's own prerequisites install. The setup still exited and
+  `--verify` then printed PIN OK for the OLD binary, whose banner is the
+  same 8 hex digits. Two fixes: `dronecan==1.0.27` joins the pinned venv
+  packages, and a successful build writes
+  `build/sitl/guardrail_build_stamp.txt` (HEAD and every submodule
+  commit), which `--verify` now requires to equal the checkout, so a binary
+  built by hand or before a submodule moved fails ("no build stamp", "build
+  stamp differs"; two tests in `tests/test_env_pins.py`, 41/41). The rebuild
+  then passed, and measured what 2026-10-06 could not: waf regenerated the
+  MAVLink headers with the pinned generator, found them unchanged and
+  relinked nothing, so the binary on disk (2026-09-18) is the pinned build.
+  `setup_sitl.sh --verify`: PIN OK. Runs flown before this fix keep their
+  `ardupilot_pin_ok` false.
 
 #### Flown (Gazebo Harmonic, WSL Ubuntu 24.04; not KPI-grade)
 Gazebo Sim 8.14 (headless server) with ArduCopter 4.5.7 SITL on the JSON
