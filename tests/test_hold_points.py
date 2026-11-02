@@ -1109,13 +1109,20 @@ def test_three_simultaneous_climbs_out_and_is_sent_home_by_the_loiter_timeout():
     a fail-safe the label does not expect, which the 300-tick run hid by
     ending 0.2 s before it. The family flies 400 ticks and is pinned on its
     two labels; if G5 moved or stopped firing, this test (and the pin's
-    FIXED or fail verdict) says so."""
+    FIXED or fail verdict) says so.
+
+    Since 2026-11-02 the fail-safe rubric (docs/RUBRIC-failsafe.md) answers
+    the question the pin asked: the pilot asks for repairs over theta for the
+    whole run (E5), so the timeout's RTL is the fail-safe the label now
+    expects, the outcome label is RTL_triggered, and the pin came off. The
+    flight itself is unchanged and still pinned here."""
     import sweep_scenarios as SW
     from guardrail.fsm import FSMConfig
     lib, cell = next(_family("three-simultaneous-violations"))
     assert cell.spec.ticks == 400, cell.spec.ticks
-    assert cell.spec.expect == "known_failure", cell.spec.expect
-    assert set(cell.spec.known_failure_fails) == {"outcome", "failsafe"}
+    assert cell.spec.expect == "pass", cell.spec.expect
+    assert (cell.spec.expected_failsafe, cell.spec.failsafe_clause,
+            cell.spec.expected_outcome) == (True, "E5", "RTL_triggered")
     run = SW.run_episode(cell.spec, lib.defaults, 0)
     ex = run.extra
     tr = ex["fsm"]["transitions"]

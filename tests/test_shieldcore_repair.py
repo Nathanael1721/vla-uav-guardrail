@@ -432,7 +432,9 @@ def _wedge(flags):
     orig = S.Shield
     S.Shield = functools.partial(Shield, **flags)
     try:
-        spec = TS._with(TS.BY_ID["standoff-wedge"], escalation=False)
+        # At its own 30 s (the library flies it 50 s since 2026-11-02).
+        spec = TS._with(TS.BY_ID["standoff-wedge"], escalation=False,
+                        ticks=TS.LEGACY_TICKS["standoff-wedge"])
         rows, extra = S.run_headless(spec, TS.DEFAULTS, 0)
     finally:
         S.Shield = orig
