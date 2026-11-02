@@ -43,9 +43,9 @@ and the bridge gets 15 s after each stop signal to write its records. Never
 both: one publisher on /vla/action_4d. The bridge runs in the VLA slot's enclave,
 <root>/vla_stub: an enclave of its own would make every keystore built before
 it refuse SROS2=1 until rebuilt (sros2_prepare checks every enclave in
-sitl/sros2_enclaves.txt), and the permissions tools/sros2_setup.sh grants are
-per enclave, not per topic, so the slot's identity is the bridge's whole
-permission.
+sitl/sros2_enclaves.txt). Since 2026-11-03 the slot's permissions are per
+topic (sitl/sros2_policy.xml, profiles vla_stub and vla_bridge): either may
+publish /vla/action_4d and /vla/identity and nothing else of the rail's.
 
 MISSION STYLE (2026-11-03, WP3-09). `style:=mission` flies the grant's
 pre-planned waypoint mission instead of live setpoints: the Shield process

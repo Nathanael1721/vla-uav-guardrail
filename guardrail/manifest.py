@@ -976,7 +976,17 @@ def ros2_security_evidence(environ=None) -> dict[str, Any] | None:
     CA, so a reader can check "same root CA" from the record alone. Under
     Enforce, rcl refuses a node whose files are missing before it exists
     (tools/sros2_check.sh, check 3), so a flown Enforce run that records
-    files_present True is what was flown."""
+    files_present True is what was flown.
+
+    Since 2026-11-03 (X-15) it also records the enclave's signed permissions:
+    `permissions_sha256` (of permissions.p7s, the file the DDS security
+    plugin loads) and `permissions_scope` - "allow_all" when they still grant
+    every topic (sros2's create_enclave default, `<topic>rt/*</topic>`),
+    "per_topic" when they are a policy's narrower grant
+    (sitl/sros2_policy.xml through tools/sros2_setup.sh), None when the file
+    cannot be read as permissions. The p7s is S/MIME clear-signed, so the
+    granted topics are readable without verifying it; tools/sros2_check.sh
+    check 8 verifies it against the CA."""
     env = os.environ if environ is None else environ
     if str(env.get("ROS_SECURITY_ENABLE", "")).lower() != "true":
         return None
@@ -994,10 +1004,29 @@ def ros2_security_evidence(environ=None) -> dict[str, Any] | None:
         out["files_present"] = all((d / f).exists() for f in files)
         out["identity_ca_sha256"] = _pem_sha256_fingerprint(d / "identity_ca.cert.pem")
         out["permissions_ca_sha256"] = _pem_sha256_fingerprint(d / "permissions_ca.cert.pem")
+        out.update(_permissions_scope(d / "permissions.p7s"))
     else:
         out["files_present"] = None
         out["identity_ca_sha256"] = out["permissions_ca_sha256"] = None
+        out["permissions_sha256"] = out["permissions_scope"] = None
     return out
+
+
+def _permissions_scope(p7s: Path) -> dict[str, Any]:
+    """`permissions_sha256` and `permissions_scope` of an enclave's
+    permissions.p7s (ros2_security_evidence)."""
+    try:
+        data = p7s.read_bytes()
+    except OSError:
+        return {"permissions_sha256": None, "permissions_scope": None}
+    if b"<grant" not in data:
+        scope = None
+    elif b"<topic>rt/*</topic>" in data:
+        scope = "allow_all"
+    else:
+        scope = "per_topic"
+    return {"permissions_sha256": hashlib.sha256(data).hexdigest(),
+            "permissions_scope": scope}
 
 
 # ArduPilot SITL binaries and launchers, MAVROS, and MAVLink routers, by the

@@ -541,7 +541,19 @@ def test_a_flight_records_sros2_only_when_it_is_on():
                   "enclave": "/guardrail/safety_shield",
                   "enclave_source": "ROS_SECURITY_ENCLAVE_OVERRIDE",
                   "files_present": True, "identity_ca_sha256": want,
-                  "permissions_ca_sha256": want}, ev
+                  "permissions_ca_sha256": want,
+                  "permissions_sha256": hashlib.sha256(b"x").hexdigest(),
+                  "permissions_scope": None}, ev
+    # The permissions' scope (X-15): sros2's allow-all default, or a policy's
+    # per-topic grant, read from the clear-signed p7s.
+    grant = ("<dds><permissions><grant name='/guardrail/safety_shield'><allow_rule><publish>"
+             "<topics><topic>{}</topic></topics></publish></allow_rule></grant></permissions></dds>")
+    (d / "permissions.p7s").write_text(grant.format("rt/*"))
+    on = {"ROS_SECURITY_ENABLE": "true", "ROS_SECURITY_KEYSTORE": str(ks),
+          "ROS_SECURITY_ENCLAVE_OVERRIDE": "/guardrail/safety_shield"}
+    assert ros2_security_evidence(on)["permissions_scope"] == "allow_all"
+    (d / "permissions.p7s").write_text(grant.format("rt/shield/setpoint"))
+    assert ros2_security_evidence(on)["permissions_scope"] == "per_topic"
     (d / "permissions.p7s").unlink()
     assert ros2_security_evidence({"ROS_SECURITY_ENABLE": "true", "ROS_SECURITY_KEYSTORE": str(ks),
                                    "ROS_SECURITY_ENCLAVE_OVERRIDE": "/guardrail/safety_shield"}

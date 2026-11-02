@@ -2,6 +2,7 @@
 # SROS 2 keystore and enclaves for the dev graph, seeded with the harness CA.
 #
 #   bash tools/sros2_setup.sh --pki <harness_pki folder> [--keystore DIR] [--dry-run]
+#   bash tools/sros2_setup.sh --pki <harness_pki folder> --permissions-only [--keystore DIR]
 #
 # WHAT THE GRANT ASKS FOR
 #
@@ -45,6 +46,11 @@
 #                    chmod is not enforced) is refused unless --allow-mnt.
 #   --dry-run        print the commands, run none.
 #   --force          seed a keystore that already holds another CA key.
+#   --permissions-only
+#                    re-sign only the permissions of an existing keystore from
+#                    the policy (steps 3, 4b and 5): no CA copied, no keystore
+#                    or enclave created, no key replaced.
+#   --policy FILE    the access-control policy (default sitl/sros2_policy.xml).
 #
 # WHAT IT DOES
 #
@@ -66,6 +72,14 @@
 #      sitl/ros2_ws/src/safety_shield/launch/guardrail_rail.launch.py and
 #      sitl/run_ros2_demo.sh): the Shield node, the MAVLink adapter, the VLA
 #      stub, MAVROS and the rail's bag recorder.
+#   4b. (2026-11-03, X-15) `ros2 security create_permission` for each enclave
+#      from sitl/sros2_policy.xml: the enclave's permissions narrowed from
+#      sros2's allow-all default to the topics and services its process uses
+#      (the Shield alone publishes /shield/setpoint, the VLA slot alone
+#      /vla/action_4d, MAVROS its own mavros/* and uas1/*, ...), signed by the
+#      keystore's permissions CA (the lab CA) as permissions.p7s. Then each
+#      signed file is verified against the lab CA and refused if it still
+#      grants every topic (rt/*).
 #   5. `openssl verify -CAfile <pki>/ca.cert.pem` on every enclave
 #      certificate.
 #   6. Prints how to run the rail with it (SROS2=1 bash sitl/run_ros2_demo.sh)
@@ -73,10 +87,12 @@
 #
 # WHAT IT DOES NOT DO
 #
-#   * Write permissions narrower than sros2's default. create_enclave grants
-#     the enclave every topic; topic-level permissions (the Shield may
-#     publish /shield/setpoint, the VLA only /vla/action_4d, ...) are a policy
-#     XML per enclave, still to be written.
+#   * Grant anything the policy does not name: since 2026-11-03 step 4b
+#     replaces create_enclave's allow-all permissions with the policy's
+#     (before that date this script left every enclave free to publish any
+#     topic). A node that starts a new publisher, subscription or service
+#     client must be added to sitl/sros2_policy.xml first, or Enforce refuses
+#     it at creation.
 #   * Start any node with its enclave: sitl/run_ros2_demo.sh does that under
 #     SROS2=1 (sitl/sros2_env.sh; the launch file's enclave_root:= gives each
 #     of its three nodes its own ROS_SECURITY_ENCLAVE_OVERRIDE).
@@ -92,6 +108,8 @@ KEYSTORE="${HOME}/sros2_keystore"
 DRY=0
 FORCE=0
 ALLOW_MNT=0
+PERMS_ONLY=0
+POLICY="$(cd "$(dirname "$0")/.." && pwd)/sitl/sros2_policy.xml"
 # The rail's ROS 2 processes, as enclave paths: one list for this script,
 # sitl/sros2_env.sh and the tests.
 ENCLAVE_LIST="$(cd "$(dirname "$0")/.." && pwd)/sitl/sros2_enclaves.txt"
@@ -111,6 +129,8 @@ while [ $# -gt 0 ]; do
     --dry-run) DRY=1; shift ;;
     --force) FORCE=1; shift ;;
     --allow-mnt) ALLOW_MNT=1; shift ;;
+    --permissions-only) PERMS_ONLY=1; shift ;;
+    --policy) POLICY="${2:?--policy needs a file}"; shift 2 ;;
     -h|--help) usage ;;
     *) echo "unknown argument: $1" >&2; usage ;;
   esac
@@ -134,6 +154,7 @@ fingerprint() {
 }
 
 [ -n "$PKI" ] || die "--pki is required: the folder gen-pki wrote (ca.cert.pem, ca.key.pem)"
+[ -f "$POLICY" ] || die "no access-control policy at $POLICY"
 CA_CERT="$PKI/ca.cert.pem"
 CA_KEY="$PKI/ca.key.pem"
 case "$KEYSTORE" in
@@ -158,10 +179,15 @@ else
   echo "(dry run: nothing is read, written or started)"
 fi
 
+if [ "$PERMS_ONLY" -eq 1 ] && [ "$DRY" -eq 0 ]; then
+  [ -f "$KEYSTORE/enclaves/governance.p7s" ] || die "--permissions-only needs an existing keystore at $KEYSTORE"
+fi
+
 # 1. seed the keystore with the lab CA, in BOTH roles: create_keystore keeps a
 # CA only when identity_ca.* and permissions_ca.* are all there (sros2 0.13.6
 # _keystore.create_keystore: "Create new CA if one doesn't already exist").
 umask 077
+if [ "$PERMS_ONLY" -eq 0 ]; then
 run mkdir -p "$KEYSTORE/public" "$KEYSTORE/private"
 run cp "$CA_CERT" "$KEYSTORE/public/ca.cert.pem"
 run cp "$CA_KEY" "$KEYSTORE/private/ca.key.pem"
@@ -178,6 +204,7 @@ if [ "$DRY" -eq 0 ] && [ -f "$KEYSTORE/enclaves/governance.p7s" ]; then
 else
   run ros2 security create_keystore "$KEYSTORE"
 fi
+fi  # PERMS_ONLY
 
 # 3. did sros2 keep the lab CA?
 for which in identity_ca permissions_ca; do
@@ -202,8 +229,30 @@ else
 fi
 
 # 4. one enclave per process of the dev graph
+if [ "$PERMS_ONLY" -eq 0 ]; then
+  for enclave in "${ENCLAVES[@]}"; do
+    run ros2 security create_enclave "$KEYSTORE" "$enclave"
+  done
+fi
+
+# 4b. each enclave's permissions from the policy, signed by the permissions CA
+echo "access-control policy $POLICY"
 for enclave in "${ENCLAVES[@]}"; do
-  run ros2 security create_enclave "$KEYSTORE" "$enclave"
+  grep -q "<enclave path=\"$enclave\">" "$POLICY" || die "$POLICY has no enclave $enclave"
+  run ros2 security create_permission "$KEYSTORE" "$enclave" "$POLICY"
+done
+for enclave in "${ENCLAVES[@]}"; do
+  p7s="$KEYSTORE/enclaves$enclave/permissions.p7s"
+  if [ "$DRY" -eq 1 ]; then
+    echo "+ check: $p7s verifies against $CA_CERT and grants no rt/*"
+    continue
+  fi
+  signed="$(openssl smime -verify -in "$p7s" -CAfile "$CA_CERT" 2>/dev/null)" \
+    || die "$p7s does not verify against the lab CA"
+  if printf '%s' "$signed" | grep -q "<topic>rt/\*</topic>"; then
+    die "$p7s still grants every topic (rt/*): the policy was not applied"
+  fi
+  echo "  $enclave: permissions from the policy, signed by the lab CA ($(printf '%s' "$signed" | grep -c '<topic>') topic rule(s))"
 done
 
 # 5. every enclave certificate chains to the lab CA

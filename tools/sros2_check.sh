@@ -10,7 +10,7 @@
 # (~/venv-ros/bin/python, or --python / $GUARDRAIL_PYTHON). Each check prints
 # PASS or FAIL; the exit code is 0 only when every check passes.
 #
-# WHY SIX CHECKS. "Security enabled" is a set of environment variables; that
+# WHY EIGHT CHECKS. "Security enabled" is a set of environment variables; that
 # they are set proves nothing about the graph. Two secured nodes talking
 # shows the keystore works, not that it is enforced - an unsecured graph
 # talks too. So the checks are mostly about who CANNOT join:
@@ -40,6 +40,19 @@
 #                and the chain vla_stub -> safety_shield -> mavlink_adapter
 #                carries messages under Enforce; the launch ends when the
 #                Shield stand-in exits, as the rail does.
+#   7 refused    (2026-11-03, X-15) per-topic permissions, live: a process in
+#                the VLA's enclave that tries to PUBLISH /shield/setpoint, and
+#                one in the Shield's enclave that tries to publish
+#                /vla/action_4d, each start their node and are refused when
+#                they create the publisher, in the security layer's words;
+#                an adapter-enclave subscriber on /shield/setpoint meanwhile
+#                hears nothing. (Check 2 is the control: the Shield's own
+#                enclave publishes /shield/setpoint and is heard.)
+#   8 policy     every enclave's signed permissions (permissions.p7s, as
+#                verified against the CA) grant no blanket rt/* - sros2's
+#                allow-all default is gone - and exactly one enclave may
+#                publish /shield/setpoint (the Shield's) and exactly one
+#                /vla/action_4d (the VLA slot's).
 #
 # The security variables are set inside this script only; the calling shell
 # is not changed.
@@ -92,6 +105,9 @@ out_topic = sys.argv[5] if len(sys.argv) > 5 else None
 got = sent = 0
 rclpy.init()
 node = Node(name)
+# The node joined the graph (identity and governance accepted): a failure
+# after this line is a permission on one topic, not the enclave's refusal.
+print(f"NODE-UP node={name}", flush=True)
 pub = None
 if role in ("pub", "relay"):
     pub = node.create_publisher(Float32MultiArray, out_topic or topic, 10)
@@ -137,6 +153,19 @@ received() { sed -n 's/.*received=\([0-9]*\).*/\1/p' | tail -1; }
 # missing count for 0).
 SEC_REFUSAL='security files|RCLError.*secur|SECURITY ERROR'
 refused_by_security() { ! grep -q '^PROBE' "$1" && grep -qiE "$SEC_REFUSAL" "$1"; }
+# What the security layer says when a node that started is refused one
+# PUBLISHER by its permissions (2026-11-03 under Jazzy / Fast DDS:
+# "[SECURITY Error] rt/shield/setpoint topic not found in allow rule.
+# (Permissions.cpp) -> Function check_create_datawriter", then rclpy's
+# "RCLError: Failed to create publisher: create_publisher() could not create
+# data writer"). Check 7 counts a refusal only with the node up (NODE-UP), no
+# PROBE line, the security layer's words naming the topic AND rclpy's failed
+# publisher: a probe that died for another reason fails the check.
+PUB_REFUSAL='topic not found in allow rule'
+publisher_refused() {  # FILE TOPIC
+  grep -q '^NODE-UP' "$1" && ! grep -q '^PROBE' "$1" \
+    && grep -q "rt$2 $PUB_REFUSAL" "$1" && grep -q 'Failed to create publisher' "$1"
+}
 # The probe output in FILE says it heard nothing: its PROBE line says
 # received=0, or the security layer refused it at start-up.
 heard_nothing() {
@@ -294,10 +323,71 @@ else
   fail "6 launch (exit $rc6): $(grep -i -m3 -E 'error|security' "$WORK/launch.txt" | cut -c1-160 | tr '\n' ' ')"
 fi
 
+# 7 refused -------------------------------------------------------------------
+# A secured listener on the Shield's topic, then the VLA's enclave trying to
+# publish there, and the Shield's enclave trying to publish the VLA's topic.
+ROS_SECURITY_ENCLAVE_OVERRIDE=/guardrail/mavlink_adapter probe sub mavlink_adapter /shield/setpoint "$SECS" > "$WORK/ctl7.txt" &
+CTL=$!
+sleep 1
+ROS_SECURITY_ENCLAVE_OVERRIDE=/guardrail/vla_stub probe pub vla_stub /shield/setpoint 3 > "$WORK/pub7a.txt"
+rc7a=$?
+ROS_SECURITY_ENCLAVE_OVERRIDE=/guardrail/safety_shield probe pub safety_shield /vla/action_4d 3 > "$WORK/pub7b.txt"
+rc7b=$?
+wait "$CTL" 2>/dev/null
+c7="$(received < "$WORK/ctl7.txt")"
+if publisher_refused "$WORK/pub7a.txt" /shield/setpoint \
+    && publisher_refused "$WORK/pub7b.txt" /vla/action_4d \
+    && grep -q '^PROBE' "$WORK/ctl7.txt" && [ "${c7:-1}" -eq 0 ]; then
+  pass "7 refused: /guardrail/vla_stub publishing /shield/setpoint (exit $rc7a) and /guardrail/safety_shield publishing /vla/action_4d (exit $rc7b) were refused at the publisher, their nodes up: \"$(grep -m1 -o "rt/[a-z_/0-9]* $PUB_REFUSAL" "$WORK/pub7a.txt")\", \"$(grep -m1 -o "rt/[a-z_/0-9]* $PUB_REFUSAL" "$WORK/pub7b.txt")\"; the adapter heard 0 on /shield/setpoint"
+else
+  fail "7 refused: vla_stub->/shield/setpoint exit $rc7a ($(grep -E '^(NODE-UP|PROBE)' "$WORK/pub7a.txt" | tr '\n' ' ')$(tail -2 "$WORK/pub7a.txt" | tr '\n' ' ' | cut -c1-160)); safety_shield->/vla/action_4d exit $rc7b ($(grep -E '^(NODE-UP|PROBE)' "$WORK/pub7b.txt" | tr '\n' ' ')); adapter heard ${c7:-?}"
+fi
+
+# 8 policy --------------------------------------------------------------------
+# The signed permissions themselves: verified against the CA, parsed, and
+# matched against the two flight-critical topics with DDS's fnmatch rule.
+CA8="$KEYSTORE/public/ca.cert.pem"
+[ -n "$PKI" ] && CA8="$PKI/ca.cert.pem"
+: > "$WORK/perm8.txt"
+ok8=1
+while IFS= read -r enc; do
+  if openssl smime -verify -in "$KEYSTORE/enclaves$enc/permissions.p7s" -CAfile "$CA8" \
+      -out "$WORK/perm8$(echo "$enc" | tr '/' '_').xml" 2>/dev/null; then
+    echo "$enc $WORK/perm8$(echo "$enc" | tr '/' '_').xml" >> "$WORK/perm8.txt"
+  else
+    ok8=0; echo "      $enc/permissions.p7s does not verify against $CA8"
+  fi
+done < <(sros2_enclaves)
+v8="$("$PY" - "$WORK/perm8.txt" <<'PY'
+import fnmatch, sys, xml.etree.ElementTree as ET
+blanket, pubs = [], {}
+for line in open(sys.argv[1]):
+    enc, path = line.split()
+    text = open(path, encoding="utf-8", errors="replace").read()
+    xml = text[text.find("<dds"):text.rfind("</dds>") + 6]
+    root = ET.fromstring(xml)
+    pats = [t.text for r in root.iter("allow_rule") for p in r.iter("publish")
+            for t in p.iter("topic")]
+    if "rt/*" in pats:
+        blanket.append(enc)
+    pubs[enc] = pats
+def who(topic):
+    return sorted(e for e, ps in pubs.items() if any(fnmatch.fnmatchcase(topic, p) for p in ps))
+sp, va = who("rt/shield/setpoint"), who("rt/vla/action_4d")
+ok = not blanket and sp == ["/guardrail/safety_shield"] and va == ["/guardrail/vla_stub"]
+print(("OK" if ok else "BAD") + f" blanket={blanket or '-'} shield_setpoint={sp} vla_action_4d={va} enclaves={len(pubs)}")
+PY
+)"
+if [ "$ok8" = 1 ] && [ "${v8%% *}" = "OK" ]; then
+  pass "8 policy: ${v8#OK }"
+else
+  fail "8 policy: $v8"
+fi
+
 echo
 if [ "$FAILS" -eq 0 ]; then
-  echo "SROS 2 enforced on the rail's graph: 6/6 checks passed"
+  echo "SROS 2 enforced on the rail's graph: 8/8 checks passed"
 else
-  echo "$FAILS of 6 checks FAILED"
+  echo "$FAILS of 8 checks FAILED"
 fi
 [ "$FAILS" -eq 0 ]

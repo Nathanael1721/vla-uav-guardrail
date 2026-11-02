@@ -10,6 +10,10 @@ flown:** no SITL flight has run with `SROS2=1` (the lead flies; command at the e
 The default, `SROS2=0`, changes nothing.
 **Card:** X-15 (docs/DESIGN-harness-grpc.md, whose "SROS 2 is not enabled" status
 line was brought up to date on 2026-10-20 after the branch review).
+**Update 2026-11-03:** per-enclave, per-topic permissions (`sitl/sros2_policy.xml`,
+section "Per-topic permissions" below) replace sros2's allow-all default; the check
+has eight checks (8/8 in WSL); flown with `SROS2=1` (first on 2026-11-02 with the
+allow-all permissions, again on 2026-11-03 with the policy's).
 
 ## What the grant asks for
 
@@ -95,11 +99,69 @@ fingerprints of the identity and permissions CA in OpenSSL's format, which a rea
 compares with the fingerprint `gen-pki` printed for the lab CA. With security off
 nothing is added, so a run without SROS 2 records what it always did.
 
-**Not changed:** sros2's default permissions. `create_enclave` grants each enclave
-every topic of the domain; per-enclave policies (the Shield alone publishes
-`/shield/setpoint`, the VLA alone `/vla/action_4d`) are permissions XML still to be
-written. The governance and permissions are signed for the `ROS_DOMAIN_ID` in force
-when the keystore was made (0 when unset): fly on the same domain.
+**Changed on 2026-11-03:** sros2's default permissions. `create_enclave` grants
+each enclave every topic of the domain; since this date `tools/sros2_setup.sh` replaces
+them with the policy's (next section). The governance and permissions are signed for
+the `ROS_DOMAIN_ID` in force when the keystore was made (0 when unset): fly on the
+same domain.
+
+## Per-topic permissions (2026-11-03)
+
+Until this date any process of the rail could publish any topic: Enforce kept out a
+process with no enclave or another CA, but the VLA's enclave could publish
+`/shield/setpoint` and fly around the Shield. `sitl/sros2_policy.xml` is an sros2
+access-control policy with one entry per enclave of `sitl/sros2_enclaves.txt`, each
+holding a profile per node that runs in it, with exactly the interfaces the node
+creates:
+
+| Enclave | Publishes | Notes |
+|---|---|---|
+| `/guardrail/safety_shield` | `/shield/setpoint`, `/shield/mode_request`, `/shield/fences`, `/shield/intercept`; for the mission-style node also `/shield/mission`, `/shield/mission_update` | the only publisher of `/shield/setpoint`; calls only the MAVROS services it uses (set_mode, arming, takeoff, stream rate, the parameter get/set, vehicle_info_get) |
+| `/guardrail/vla_stub` | `/vla/action_4d`, `/vla/identity` | the only publisher of `/vla/action_4d`; the stub and the AerialVLA bridge share it |
+| `/guardrail/mavlink_adapter` | `/mavros/setpoint_raw/local`, `/mavlink_adapter/status` | calls set_mode, geofence push / pull, mission push / pull |
+| `/guardrail/mavros` | `/mavros/*`, `/uas1/*`, `/tf`, `/tf_static`, `/diagnostics` | wildcards over MAVROS's own namespaces (and its services `/mavros/*`, `/mavros_node/*`, `/mavros_router/*`) |
+| `/guardrail/bag_recorder` | `/events/write_split` | subscribes the recorded topics and `/parameter_events` (an rclcpp node's time source subscribes to it: without it the recorder died at start on the first flight, `sros2_policy_on_20261103`) |
+
+Every node also publishes `/rosout` and `/parameter_events` and serves its own
+parameter and type-description services (`~/*`). sros2 turns each enclave's profiles
+into DDS permissions (`rt/<topic>`, `rq/<service>Request`, `rr/<service>Reply`;
+anything not granted is DENY). `bash tools/sros2_setup.sh --pki <lab PKI>
+--permissions-only` re-signs an existing keystore from the policy with the keystore's
+permissions CA (the lab CA): `ros2 security create_permission` per enclave, each
+signed file then verified against the lab CA and refused if it still grants `rt/*`. A
+full setup (no `--permissions-only`) does the same after creating the enclaves.
+
+Run on 2026-11-03 against the keystore the 2 November flight used (backed up first as
+`~/sros2_keystore.before-policy-20261102T201841Z.tar.gz` in WSL), then
+`tools/sros2_check.sh --pki ~/harness_pki`:
+
+```
+PASS  1 keystore: 5 enclaves, governance and permissions signed by and certificates chaining to the lab CA
+PASS  2 secured: /guardrail/safety_shield -> /guardrail/mavlink_adapter, 48 messages under Enforce
+PASS  3 enforced: a process with no enclave was refused (exit 1: rclpy._rclpy_pybind11.RCLError: error creating node: couldn't find all security files!, ...)
+PASS  4 sealed: an unsecured process started and heard 0 messages; the secured control heard 58
+PASS  5 one root: the same enclave name under another CA heard 0 messages; the lab-CA control heard 56
+PASS  6 launch: three nodes in their own enclaves, vla_stub -> safety_shield (77) -> mavlink_adapter (77) under Enforce; the launch ended with the Shield (exit 0)
+PASS  7 refused: /guardrail/vla_stub publishing /shield/setpoint (exit 1) and /guardrail/safety_shield publishing /vla/action_4d (exit 1) were refused at the publisher, their nodes up: "rt/shield/setpoint topic not found in allow rule", "rt/vla/action_4d topic not found in allow rule"; the adapter heard 0 on /shield/setpoint
+PASS  8 policy: blanket=- shield_setpoint=['/guardrail/safety_shield'] vla_action_4d=['/guardrail/vla_stub'] enclaves=5
+
+SROS 2 enforced on the rail's graph: 8/8 checks passed
+```
+
+Check 7 is the refusal live: the probe's node joins the graph (it prints `NODE-UP`),
+then creating the forbidden publisher fails in Fast DDS's access control
+(`[SECURITY Error] rt/shield/setpoint topic not found in allow rule ... ->
+check_create_datawriter`, then rclpy's `RCLError: Failed to create publisher`), while
+the same probe in the Shield's enclave publishes `/shield/setpoint` and is heard (check
+2). Check 8 reads the signed files themselves: no enclave keeps `rt/*`, and matching
+the publish grants with DDS's own fnmatch rule, only the Shield's enclave may publish
+`/shield/setpoint` and only the VLA slot's `/vla/action_4d`. A flown run records each
+process's `permissions_scope` (`per_topic` or `allow_all`) and the SHA-256 of its
+`permissions.p7s` in `hil_evidence.ros2_security` (guardrail.manifest).
+
+A node that adds a publisher, subscription or service client must be added to the
+policy and the keystore re-signed, or Enforce refuses it when it creates the
+interface.
 
 ## The live check, run 2026-10-19 (`tools/sros2_check.sh`)
 
@@ -175,9 +237,8 @@ there (check 4).
 
 ## What this does not give you
 
-- **A flight.** The SITL + MAVROS rail has not flown with `SROS2=1`; MAVROS under
-  Enforce is untested here (it is one rclcpp process, so one override covers its nodes).
-- **Topic-level permissions** (above).
+- **A flight** (as of 2026-10-19; flown since, on 2026-11-02 with the allow-all
+  permissions and on 2026-11-03 with the per-topic ones: CHANGELOG).
 - **The Orin.** The keystore is per host; the Orin's ROS 2 container needs enclaves
   signed by the lab CA. The CA key stays on the desktop: create the Orin's enclaves in
   the desktop keystore and copy only those enclave folders (with the public CA
