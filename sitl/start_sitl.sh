@@ -21,7 +21,10 @@ DIR="$(cd "$(dirname "$0")" && pwd)"
 FENCE_PARM="$DIR/fence/guardrail_fence.parm"
 [ -x "$BIN" ] || { echo "SITL binary missing - run setup_sitl.sh first"; exit 1; }
 
-DEFAULTS="$PARM"
+# SITL_MODEL=JSON with SITL_EXTRA_DEFAULTS=<gazebo-iris.parm> flies Gazebo's
+# physics instead of SITL's built-in quad (run_ros2_demo.sh PHYSICS=gazebo).
+MODEL="${SITL_MODEL:-quad}"
+DEFAULTS="$PARM${SITL_EXTRA_DEFAULTS:+,$SITL_EXTRA_DEFAULTS}"
 if [ "${GUARDRAIL_FENCE:-1}" = "1" ]; then
   [ -f "$FENCE_PARM" ] || { echo "fence parm missing: $FENCE_PARM"; exit 1; }
   DEFAULTS="$PARM,$FENCE_PARM"
@@ -36,6 +39,6 @@ mkdir -p "$HOME/sitl-run"
 cd "$HOME/sitl-run"          # eeprom.bin / logs live here, not in the repo
 # tail -f /dev/null keeps stdin open forever: SITL's console exits on stdin
 # EOF, which kills headless/background runs otherwise (learned the hard way).
-tail -f /dev/null | "$BIN" --model quad --speedup 1 --defaults "$DEFAULTS" \
+tail -f /dev/null | "$BIN" --model "$MODEL" --speedup 1 --defaults "$DEFAULTS" \
      --home -35.363261,149.165230,584,0 -I0 "${WIPE[@]}" \
      --serial0 tcp:0 --serial2 "udpclient:127.0.0.1:${SITL_ROUTER_PORT:-14550}"

@@ -55,6 +55,10 @@
 #                      (sitl/ros2_ws/src/safety_shield/launch/guardrail_rail.launch.py);
 #                      0 = plain background processes
 #   GUARDRAIL_FENCE=1  load the ArduPilot GeoFence backstop (start_sitl.sh)
+#   PHYSICS=sitl       gazebo = Gazebo Harmonic's physics (a headless gz sim
+#                      server, iris_runway) behind SITL's JSON backend: the
+#                      grant's functional Gazebo rail (ARCH-16) over MAVROS 2.
+#                      The run writes physics.json beside its records.
 #   GCS_HOST           Mission Planner's address (default: the Windows host)
 #   VLA=stub           bridge = AerialVLA in the VLA slot (THE VLA SLOT above);
 #                      it runs in the slot's SROS 2 enclave, vla_stub
@@ -132,6 +136,7 @@ cleanup() {
   pkill -9 -f "[m]avproxy.py --master=udpin"   2> /dev/null || true
   pkill -9 -f "[m]avlink-routerd"              2> /dev/null || true
   pkill -9 -f "[a]rducopter"                   2> /dev/null || true
+  pkill -9 -f "gz si[m] -s -r"                 2> /dev/null || true
 }
 trap cleanup EXIT
 
@@ -196,7 +201,24 @@ ARDUPILOT_PIN_OK=0
 printf '%s\n' "$VERIFY" | grep -qx 'PIN OK' && ARDUPILOT_PIN_OK=1
 export ARDUPILOT_VERSION ARDUPILOT_PIN_OK
 
-echo "=== fresh SITL ==="
+PHYSICS="${PHYSICS:-sitl}"
+case "$PHYSICS" in
+  sitl) ;;
+  gazebo)
+    GZ_WORLD="$HOME/ardupilot_gazebo/worlds/iris_runway.sdf"
+    GZ_IRIS_PARM="$HOME/ardupilot/Tools/autotest/default_params/gazebo-iris.parm"
+    [ -f "$GZ_WORLD" ] || { echo "PHYSICS=gazebo: $GZ_WORLD missing (sitl/setup_gazebo.sh)"; exit 1; }
+    export GZ_SIM_SYSTEM_PLUGIN_PATH="$HOME/ardupilot_gazebo/build:${GZ_SIM_SYSTEM_PLUGIN_PATH:-}"
+    export GZ_SIM_RESOURCE_PATH="$HOME/ardupilot_gazebo/models:$HOME/ardupilot_gazebo/worlds:${GZ_SIM_RESOURCE_PATH:-}"
+    echo "=== gz sim (headless server, $GZ_WORLD) ==="
+    nohup gz sim -s -r "$GZ_WORLD" > ~/sitl-run/gz.log 2>&1 &
+    sleep 6
+    export SITL_MODEL=JSON SITL_EXTRA_DEFAULTS="$GZ_IRIS_PARM"
+    ;;
+  *) echo "PHYSICS must be sitl or gazebo, got '$PHYSICS'"; exit 1 ;;
+esac
+
+echo "=== fresh SITL ($PHYSICS physics) ==="
 nohup bash "$DIR/start_sitl.sh" > ~/sitl-run/sitl.log 2>&1 &
 sleep 8
 
@@ -270,6 +292,13 @@ fi
 
 echo "=== close the bag, re-pack the replay bundle with it ==="
 stop_bag
+if [ "$PHYSICS" = "gazebo" ]; then
+  printf '{"physics": "gazebo-harmonic", "gz_sim": "%s", "world": "%s", "sitl_model": "JSON", "extra_defaults": "%s"}\n' \
+    "$(gz sim --version 2> /dev/null | head -1 | sed 's/.*version //')" "$GZ_WORLD" "$GZ_IRIS_PARM" \
+    > "$OUT/physics.json"
+else
+  printf '{"physics": "ardupilot-sitl-builtin", "sitl_model": "quad"}\n' > "$OUT/physics.json"
+fi
 cd "$ROOT"
 "$PY" -m guardrail.replay pack "$OUT" || echo "[replay] re-pack FAILED (see above)"
 
