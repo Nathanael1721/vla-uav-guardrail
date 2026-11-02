@@ -27,3 +27,4 @@ scenarios:
       all_actions_finite: { equals: true }
     expected_outcome: success
     expected_failsafe: false
+    failsafe_clause: N1

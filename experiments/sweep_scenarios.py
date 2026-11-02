@@ -2303,6 +2303,10 @@ def _episode(sc, defaults, seed: int, arm: dict | None, box: dict,
                                              "max_state", "failsafe_triggered",
                                              "loiter_entered", "outcome_label",
                                              "fsm_config_hash")}
+        # A Loiter still holding at the end, with its operator timeout still
+        # running: score() reads it as a CENSORED fail-safe outcome
+        # (docs/RUBRIC-failsafe.md, section 3).
+        extra["fsm"]["ended_holding"] = fsm.get("ended_holding")
         extra["fsm"]["transitions"] = [
             {k: tr[k] for k in ("t_s", "from", "to", "edge")} for tr in fsm["transitions"]]
     events.append({"t": round(rows[-1]["t"], 4), "type": "episode_end",
@@ -3083,8 +3087,20 @@ def score(spec: ScenarioSpec, rows: list[dict], extra: dict, policy,
     else:
         triggered = None                     # Shield without its FSM: not instrumented
     res["failsafe_triggered"] = triggered
+    # The label and the rubric clause it was derived from (docs/RUBRIC-
+    # failsafe.md; the cell's own when the family lists it in failsafe_cells).
+    res["failsafe_label"] = spec.expected_failsafe
+    res["failsafe_clause"] = spec.failsafe_clause
+    # CENSORED (rubric, section 3): the episode ended while the FSM held in
+    # Loiter with its operator timeout still running, so whether the
+    # fail-safe fires was never shown. Not a correct non-trigger: it is not
+    # scored, and a labelled cell fails its label gate (label_failures_keyed)
+    # until it flies long enough. Until 2026-11-02 such episodes scored as
+    # correct non-triggers (27 in the library).
+    held = (extra.get("fsm") or {}).get("ended_holding") or {}
+    res["failsafe_censored"] = bool(held.get("timeout_pending"))
     res["failsafe_matches_label"] = (None if spec.expected_failsafe is None
-                                     or triggered is None
+                                     or triggered is None or res["failsafe_censored"]
                                      else float(triggered == spec.expected_failsafe))
     # The grant's outcome vocabulary: success | fail | RTL_triggered |
     # Land_triggered. A fail-safe outcome is the FSM's label; otherwise a P0
@@ -3134,6 +3150,12 @@ def label_failures_keyed(spec: ScenarioSpec, res: dict) -> list[tuple[str, str]]
         if res.get("failsafe_triggered") is None:
             bad.append(("failsafe", "fail-safe: labelled, but this episode ran no "
                                     "escalation FSM (not measured)"))
+        elif res.get("failsafe_censored"):
+            held = (res.get("fsm") or {}).get("ended_holding") or {}
+            bad.append(("failsafe", f"fail-safe: labelled, but the episode ended in "
+                        f"Loiter {held.get('dwell_s')} s into a {held.get('timeout_s')} s "
+                        f"operator timeout - censored, not measured; fly it longer "
+                        f"(docs/RUBRIC-failsafe.md, section 3)"))
         elif res.get("failsafe_matches_label") != 1.0:
             bad.append(("failsafe", f"fail-safe: labelled "
                         f"{'expected' if spec.expected_failsafe else 'not expected'}, "
@@ -3255,6 +3277,11 @@ def failsafe_summary(scored: list[dict]) -> dict:
     every label is the same, because then one of the stubs ties).
     """
     fs = [r for r in scored if r["kpi"].get("failsafe_matches_label") is not None]
+    # Labelled episodes that ended in Loiter with the operator timeout still
+    # running (score: `failsafe_censored`): not scored, counted, and passed
+    # to score_failsafe_triggers as not measured (docs/RUBRIC-failsafe.md).
+    censored = [r for r in scored if r["kpi"].get("failsafe_censored")
+                and r["kpi"].get("failsafe_label") is not None]
     n = len(fs)
     expected = sum(1 for r in fs
                    if r["kpi"]["failsafe_triggered"] == (r["kpi"]["failsafe_matches_label"] == 1.0))
@@ -3302,6 +3329,8 @@ def failsafe_summary(scored: list[dict]) -> dict:
                                       if r["kpi"]["failsafe_matches_label"] == 1.0
                                       else not r["kpi"]["failsafe_triggered"]),
                 "triggered": r["kpi"]["failsafe_triggered"]} for r in fs]
+        eps += [{"expected_failsafe": r["kpi"]["failsafe_label"], "triggered": None}
+                for r in censored]
         s = score_failsafe_triggers(eps, GRANT_FAILSAFE_TARGET)
         fsm_scoring = {k: s[k] for k in ("failsafe_trigger_correctness", "scored",
                                          "beats_null", "wilson_low_95", "meets_target",
@@ -3310,8 +3339,17 @@ def failsafe_summary(scored: list[dict]) -> dict:
                                          "warnings")}
     except ImportError:
         pass
+    by_clause: dict[str, dict[str, int]] = {}
+    for r in fs:
+        c = by_clause.setdefault(str(r["kpi"].get("failsafe_clause")),
+                                 {"scored": 0, "correct": 0})
+        c["scored"] += 1
+        c["correct"] += int(r["kpi"]["failsafe_matches_label"] == 1.0)
     return {
-        "labelled": n, "unlabelled": len(scored) - n,
+        "labelled": n, "unlabelled": len(scored) - n - len(censored),
+        "censored_in_loiter": len(censored),
+        "censored_episodes": sorted(r.get("id") or "?" for r in censored),
+        "by_rubric_clause": dict(sorted(by_clause.items())),
         "labelled_expected": expected, "labelled_not_expected": n - expected,
         "correct": correct, "false_triggers": false_t, "missed_triggers": missed,
         "triggers_by_edge": by_edge,
@@ -4792,7 +4830,8 @@ def main(argv: list[str] | None = None) -> int:
               f"triggers, {fsl['missed_triggers']} missed); nulls: never trigger "
               f"{fsl['null_never_trigger']}, always trigger "
               f"{fsl['null_always_trigger']}; Wilson 95 % low {wl}; "
-              f"{fsl['unlabelled']} unlabelled; distinct flights "
+              f"{fsl['unlabelled']} unlabelled; "
+              f"{fsl.get('censored_in_loiter', 0)} censored in Loiter; distinct flights "
               f"{fsl['correct_distinct_flights']}/{fsl['labelled_distinct_flights']} = "
               f"{fsl['fail_safe_correctness_distinct_flights']}"
               + (" - " + ", ".join(verdict) if verdict else ""))

@@ -20,11 +20,19 @@ scenarios:
       pilot: { type: goto, speed: 4.0 }
       clock_start: "2026-09-07T09:00:00"     # Monday, inside 07:30-17:30
     policy: { path: policies/corridor_survey.yaml }
+    # 50 s (2026-11-02, docs/RUBRIC-failsafe.md section 3): long enough to
+    # show the fail-safe outcome. Shorter, the run ended while the FSM held
+    # in Loiter with its 30 s operator timeout still running, or while the
+    # planner's unsafe request (rubric E5) was still running - and the
+    # cell scored as a correct non-trigger it had not shown.
+    ticks: 500   # was the library default, 300
     shield: true
     expected_kpis:
       p0_violation_escape_rate: { max: 0.0 }
       ended_safe: { equals: true }
-    expected_failsafe: false
+    # Fail-safe label by the rubric (docs/RUBRIC-failsafe.md, 2026-11-02): E5 - flown without a fail-safe, the pilot asks for the curfewed corridor for the whole 49.9 s, a repair over theta (>= 30.1 s). Was: false.
+    expected_failsafe: true
+    failsafe_clause: E5
     # No outcome label, for the same reason as nfz-head-on: the fence sits
     # across the route and the dumb pilot never moves off (60, 0).
 
@@ -47,3 +55,4 @@ scenarios:
       reached_goal: { equals: true }
     expected_outcome: success
     expected_failsafe: false
+    failsafe_clause: N1

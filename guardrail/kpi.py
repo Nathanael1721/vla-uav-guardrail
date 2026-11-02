@@ -86,7 +86,7 @@ WHAT THE LOG HAS TO SAY, AND WHAT HAPPENS WHEN IT DOES NOT (2026-10-06 review)
     per-operator `magnitude_m` / `axis` (the default basis), or - when the
     run recorded the one-period reading in metrics.json - from the setpoint
     change |dv| x that horizon (guardrail/fsm.py THETA_HORIZON_S; selectable,
-    pending the PI; docs/DESIGN-escalation-fsm.md). A tick that cannot be
+    not the basis decided on 2026-11-02; docs/DESIGN-escalation-fsm.md). A tick that cannot be
     sized on its basis leaves the rate resting on the re-check alone
     (`repair_success_basis`, `repair_theta_unchecked_ticks`).
     `theta_proxy_sensitivity()` shows how the answer moves with the horizon.

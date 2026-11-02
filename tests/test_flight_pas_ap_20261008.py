@@ -129,14 +129,14 @@ def _subject(sh, row):
         sh.set_subject(s[0], s[1], "vehicle")
 
 
-def _replay(pol, rows, smap, horizon_s, **shield_kw):
+def _replay(pol, rows, smap, horizon_s, fsm_config=None, **shield_kw):
     """Every tick through the Shield and the rail's FSM, as perception_node.py
     steps them. Returns (P0 escape ticks, FSM edge counts, ticks over theta).
     Counterfactual after the first divergence: the logged trajectory is the
     one the flight's own FSM produced (LOITER sank the aircraft)."""
     sh = rail_shield(pol, lookahead_s=LOOKAHEAD_S, dt=LOOKAHEAD_DT_S, obstacle_map=smap,
                      **shield_kw)
-    fsm = F.EscalationFSM()
+    fsm = F.EscalationFSM(fsm_config)
     p0 = {c.id for c in pol.constraints if c.priority == "P0"}
     escapes, edges, over = [], Counter(), 0
     for r in rows:
@@ -192,12 +192,23 @@ def test_brake_to_loiter_on_the_replayed_flight_before_and_after():
     pol, rows, smap, _ = got
     flown = Counter(r["fsm_edge"] for r in rows if r.get("fsm_edge"))
     assert flown == {"X1": 7, "G3": 8, "G8": 7, "G1": 3, "G7": 2}, flown
-    before = F.replay_rows(rows, horizon_s=None, policy=pol)
+    # The FSM the flight flew: its Loiter law until 2026-11-02 (FSMConfig
+    # loiter_clear "violation_free", loiter_x67 "request").
+    old = F.FSMConfig(loiter_clear="violation_free", loiter_x67="request")
+    before = F.replay_rows(rows, horizon_s=None, policy=pol, config=old)
     assert before["edge_counts_counterfactual"] == dict(sorted(flown.items())), before
     assert before["repaired_over_theta"] == 23, before["repaired_over_theta"]
-    escapes, edges, over = _replay(pol, rows, smap, F.DEFAULT_THETA_HORIZON_S)
+    escapes, edges, over = _replay(pol, rows, smap, F.DEFAULT_THETA_HORIZON_S, old)
     assert not escapes and edges["G3"] == 2 and edges["G2"] == 0 and over == 19, \
         (escapes, edges, over)
+    # Today's Loiter law on the same log: in the first Loiter the logged
+    # aircraft - flown by the old ArduCopter LOITER, which sank 1.4-1.8 m/s -
+    # goes below the policy's floor while its request is clean, and X6 / X7
+    # now judge the held aircraft's position: home (RTL) instead of G8.
+    now = F.replay_rows(rows, horizon_s=None, policy=pol)
+    assert now["edge_counts_counterfactual"] == {"G3": 1, "X1": 1, "X6": 1}, now
+    escapes, edges, over = _replay(pol, rows, smap, F.DEFAULT_THETA_HORIZON_S)
+    assert not escapes and edges["G3"] == 1 and edges["X7"] == 1, (escapes, edges, over)
     escapes, edges, over = _replay(pol, rows, smap, F.THETA_HORIZON_S)
     assert edges["G2"] + edges["G3"] == 0 and over == 0, (edges, over)
     assert not escapes and set(edges) <= {"G1", "G7"}, edges

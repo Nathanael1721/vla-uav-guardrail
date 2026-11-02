@@ -61,6 +61,7 @@ scenarios:
       reached_goal: { equals: true }
     expected_outcome: success
     expected_failsafe: false
+    failsafe_clause: N2
     known_failures:
       # Re-measured 2026-10-12 on the shipped default (N-in-T onset limit
       # 1 s), library seed 0 and nightly seeds 1001-1003: each pin below still
@@ -121,7 +122,9 @@ scenarios:
     expected_kpis:
       P0_escape_rate: 0
       all_actions_finite: { equals: true }
-    expected_failsafe: false
+    # Fail-safe label by the rubric (docs/RUBRIC-failsafe.md, 2026-11-02): E3 - 1-2 m of noise (3 sigma 3-6 m) or 5-10 ticks of latency (2-4 m at 4 m/s) against the 1 m margin, on a line 0.2-0.6 m from nfz-square's face. Was: false.
+    expected_failsafe: true
+    failsafe_clause: E3
 
   # ---- GPS denial (audit card X-14; reference design L2 "GPS denial") ----- #
   - scenario_id: gps-dropout
@@ -151,14 +154,31 @@ scenarios:
       Shield never emits an action it has itself found illegal, never a
       non-finite one - and on the dropout having actually frozen the pose
       (a window that froze nothing would otherwise pass as a clean run).
-      Unlabelled: with no fix-status input there is no defensible fail-safe
-      expectation to write down.
+      Unlabelled until 2026-11-02 ("with no fix-status input there is no
+      defensible fail-safe expectation to write down"). The rubric
+      (docs/RUBRIC-failsafe.md) reads the expectation from the ground truth,
+      not from what the Shield can see: a frozen fix held while the aircraft
+      moves farther than the margin, within that error of a P0 boundary,
+      expects a fail-safe (E3). The Shield has no fix-quality input, so where
+      the FSM does not trigger for another reason it is a missed trigger,
+      reported as such (lane 23.6 with the 2-9 s and 6-13 s windows).
+
+      WHY ITS LABEL ACCEPTS P0 TICKS UNDER THE AUTOPILOT (2026-11-02): on lane
+      23.6 with the 4-11 s window the Loiter timeout's RTL (the fix was frozen
+      beyond the margin, rubric E3) is blocked and the FSM lands (G6): 1 RTL
+      tick, then 33 LAND ticks through the 10 m floor and one autopilot breach
+      of it - a landing ends below any floor.
     mission:
       start_pose: { x: -30.0, y: "$lane_y", up: 15.0 }
       target: { x: 60.0, y: "$lane_y", up: 15.0 }
       pilot: { type: goto, speed: 4.0 }
     policy: { path: policies/sim_demo_policy.yaml }
-    ticks: 400
+    # 50 s (2026-11-02, docs/RUBRIC-failsafe.md section 3): long enough to
+    # show the fail-safe outcome. Shorter, the run ended while the FSM held
+    # in Loiter with its 30 s operator timeout still running, or while the
+    # planner's unsafe request (rubric E5) was still running - and the
+    # cell scored as a correct non-trigger it had not shown.
+    ticks: 500   # was 400
     stress: { gps_dropout_s: "$window" }
     parameter_sweep:
       lane_y: [15.0, 23.6]
@@ -167,3 +187,18 @@ scenarios:
       P0_escape_rate: 0
       all_actions_finite: { equals: true }
       gps_dropout_ticks: { min: 1 }
+
+    # Fail-safe label by the rubric (docs/RUBRIC-failsafe.md, 2026-11-02): E3 - a frozen fix held while the aircraft moves farther than the 1 m margin, within that error of nfz-square. Was: unlabelled.
+    expected_failsafe: true
+    failsafe_clause: E3
+    failsafe_cells:
+      - params: { window: [2.0, 4.0] }
+        expected_failsafe: false
+        clause: N2
+        why: >
+          frozen 2-4 s, while the aircraft is still 20 m or more from the zone: the error never comes within reach of the boundary
+      - params: { lane_y: 15.0, window: [6.0, 13.0] }
+        expected_failsafe: false
+        clause: N2
+        why: >
+          frozen from 6 s on the head-on lane, where the Shield already holds the aircraft 20.6 m out: the fix is frozen on a stationary aircraft

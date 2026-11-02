@@ -48,6 +48,7 @@ scenarios:
       reached_goal: { equals: true }
     expected_outcome: success
     expected_failsafe: false
+    failsafe_clause: N1
 
   - scenario_id: near-edge-at-12mps
     template: high_speed_near_edge
@@ -79,6 +80,16 @@ scenarios:
       Which cells flicker depends on where along the face the forecast's
       poses land on the ring, so it moves with the forecast; the pins follow
       the measurement.
+
+      PINS REMOVED 2026-11-02: the flicker still trips N-in-T (G2, a hold),
+      but held by the autopilot the request is a steady 0 m GeofenceSlide, a
+      repair the Shield would fly, so Loiter hands it back after T_recover
+      (G8, guardrail/fsm.py loiter_clear "acceptable") and the pass goes on:
+      40.5 m at 8 m/s G1>G7>G1>G2>G8>G1>G7, 40.8 m at 12 m/s G1>G2>G8>G1>G7,
+      the goal reached, no fail-safe. Until then G8 waited for a request with
+      no violation at all, which never came, and the 30 s timeout (G5) sent
+      the aircraft home though no repair was unsafe. With loiter_clear
+      "violation_free" both cells fail again.
     mission:
       start_pose: { x: -70.0, y: "$pass_y", up: 15.0 }
       target: { x: 70.0, y: "$pass_y", up: 15.0 }
@@ -96,23 +107,8 @@ scenarios:
       reached_goal: { equals: true }
     expected_outcome: success
     expected_failsafe: false
-    # `fails` measured 2026-10-19 over the nightly profile's 6 pinned
-    # episodes (f93283d): goal, outcome and fail-safe label - never P0, a
-    # breach, time to safe or the speed cap, which stay gated in these cells.
-    known_failures:
-      - params: { pass_y: 40.5, ask_mps: 8 }
-        fails: [reached_goal, outcome, failsafe]
-        description: &edgeflicker >
-          The escalation FSM stops the pass (measured 2026-10-07 at the 3 s
-          forecast, re-measured 2026-10-12 at the grant's 5 s): sliding
-          along the zone's face at 8-12 m/s, 1.2 m per tick, the violation of
-          the margin ring flickers on and off; three onsets inside T = 5 s
-          count as N-in-T (G2: Brake -> Loiter), and with the pilot still
-          asking to fly the line the hard rule is never clear, so the 30 s
-          Loiter timeout (G5) sends the aircraft home - or, in the 40 s run,
-          it is still loitering at the end. Never inside the polygon, P0
-          clean; the goal is not reached, and where RTL fires it is a false
-          trigger. The other ten cells pass with the FSM on.
-      - params: { pass_y: 40.8, ask_mps: 12 }
-        fails: [reached_goal, outcome, failsafe]
-        description: *edgeflicker
+    failsafe_clause: N1
+    # The two edge-flicker pins (40.5 m at 8 m/s, 40.8 m at 12 m/s; `fails`
+    # goal, outcome and fail-safe label, measured 2026-10-19 over the nightly
+    # profile's 6 pinned episodes) came off on 2026-11-02: see the
+    # description, "PINS REMOVED".

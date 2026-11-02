@@ -30,6 +30,7 @@ scenarios:
       reached_goal: { equals: true }
     expected_outcome: success
     expected_failsafe: false
+    failsafe_clause: N1
 
   - scenario_id: standoff-reclassified
     template: subject_standoff
@@ -63,6 +64,13 @@ scenarios:
       from 5 m to 10 m. Both rules come from policies/sitl_pedestrian.yaml
       exactly as it already shipped - nothing was added for this scenario, which
       is the point: the capability was in the schema the whole time.
+
+      WHY ITS LABEL ACCEPTS P0 TICKS UNDER THE AUTOPILOT (2026-11-02): the
+      Loiter timeout's RTL (rubric E5) flies straight home past the
+      pedestrian, its forecast inside the 10 m ring on 4 RTL ticks, and the
+      aircraft passes inside the ring once (an autopilot breach): the modelled
+      RTL, like ArduPilot's, knows nothing of a stand-off, and
+      guardrail/rtl_path.py judges zones and the band only.
     mission:
       start_pose: { x: 0.0, y: 0.0, up: 15.0 }
       # The pilot's goal sits 6 m from the subject and it NEVER changes its mind.
@@ -78,7 +86,12 @@ scenarios:
         reclassify:
           - { at_s: 10.0, class: pedestrian }
     policy: { path: policies/sitl_pedestrian.yaml }
-    ticks: 400
+    # 50 s (2026-11-02, docs/RUBRIC-failsafe.md section 3): long enough to
+    # show the fail-safe outcome. Shorter, the run ended while the FSM held
+    # in Loiter with its 30 s operator timeout still running, or while the
+    # planner's unsafe request (rubric E5) was still running - and the
+    # cell scored as a correct non-trigger it had not shown.
+    ticks: 500   # was 400
     shield: true
     expected_kpis:
       p0_violation_escape_rate: { max: 0.0 }
@@ -97,16 +110,21 @@ scenarios:
       subject_class_final: { equals: pedestrian }
     # The goal is inside the 10 m ring once the label flips, so NOT reaching it
     # is the rule working: an arrival would be the breach.
-    expected_outcome: fail
-    expected_failsafe: false
+    expected_outcome: RTL_triggered   # was fail: the fail-safe it expects (E5) ends in RTL
+    # Fail-safe label by the rubric (docs/RUBRIC-failsafe.md, 2026-11-02): E5 - flown without a fail-safe, once the subject is a pedestrian the pilot's request into its ring is over theta for 33.4 s (>= 30.1 s). Was: false.
+    expected_failsafe: true
+    failsafe_clause: E5
 
   - scenario_id: standoff-wedge
     template: subject_standoff
     expect: known_failure
     # What the wedge fails, measured 2026-10-19 on the smoke run and all three
     # nightly seeds (f93283d): the goal and the outcome label. The P0 gate and
-    # the 10 m ring are not pinned - an escape or a closer pass is new.
-    known_failure_fails: [reached_goal, outcome]
+    # the 10 m ring are not pinned - an escape or a closer pass is new. Since
+    # 2026-11-02 the outcome label is the rubric's (RTL_triggered, E5: the
+    # pilot asks through the ring for the whole run) and the FSM's Loiter
+    # timeout meets it, so only the goal is pinned.
+    known_failure_fails: [reached_goal]
     description: >
       THE OPEN DEFECT, pinned here so it stops living only in a document.
       The subject sits exactly on the route, so every direction that makes
@@ -122,13 +140,21 @@ scenarios:
       pilot: { type: goto, speed: 4.0 }
       subject: { x: 20.0, y: 0.0, class: pedestrian }
     policy: { path: policies/sitl_pedestrian.yaml }
+    # 50 s (2026-11-02, docs/RUBRIC-failsafe.md section 3): long enough to
+    # show the fail-safe outcome. Shorter, the run ended while the FSM held
+    # in Loiter with its 30 s operator timeout still running, or while the
+    # planner's unsafe request (rubric E5) was still running - and the
+    # cell scored as a correct non-trigger it had not shown.
+    ticks: 500   # was the library default, 300
     shield: true
     expected_kpis:
       p0_violation_escape_rate: { max: 0.0 }
       min_range_to_subject: { min: 9.99 }
       reached_goal: { equals: true }
-    expected_outcome: success
-    expected_failsafe: false
+    expected_outcome: RTL_triggered   # was success: the fail-safe it expects (E5) ends in RTL
+    # Fail-safe label by the rubric (docs/RUBRIC-failsafe.md, 2026-11-02): E5 - flown without a fail-safe, the pilot asks through the subject's ring for the whole 49.9 s, a repair over theta (>= 30.1 s). Was: false.
+    expected_failsafe: true
+    failsafe_clause: E5
 
   # ---- the old library's rule types, at many geometries ------------------- #
   - scenario_id: standoff-approach-angles
@@ -172,17 +198,22 @@ scenarios:
       reached_goal: { equals: true }
     expected_outcome: success
     expected_failsafe: false
+    failsafe_clause: N1
     # `fails` measured 2026-10-19 over the nightly profile's 9 pinned
     # episodes (f93283d): goal, outcome and fail-safe label.
     known_failures:
       - params: { offset_m: 7, subject_class: pedestrian }
         fails: [reached_goal, outcome, failsafe]
         description: >
-          False fail-safe through N-in-T and the Loiter timeout (measured
-          2026-10-07, all three nightly variants): taking the aircraft round a
-          pedestrian ring that crosses the route, the violation of the ring
-          flickers on and off, three onsets inside T = 5 s count as N-in-T
-          (G2: Brake -> Loiter), ArduPilot's LOITER holds the aircraft while
-          the pilot keeps asking to fly through the ring, and the operator's
-          30 s Loiter timeout (G5) sends it home. Never unsafe, P0 clean; the
-          goal is not reached and RTL fires though the repair was holding.
+          False fail-safe through theta and the Loiter timeout (re-measured
+          2026-11-02; until 2026-10-12 it came through N-in-T flicker): the
+          pedestrian's 10 m ring crosses the route, and the first forecast
+          that meets it reaches more than theta into it, so the FSM abandons
+          projection on tick 0 (X1, then G3: Loiter). The autopilot holds the
+          aircraft where the deep request stays deep, and the operator's
+          30 s timeout (G5) sends it home. Flown without a fail-safe, the
+          projection takes the aircraft round the ring and its requests are
+          over theta for 1.5 s only (rubric N1): the escalation, not the
+          pilot, made the unsafe request persist. Never unsafe, P0 clean. The
+          decided theta basis (each repair's forecast depth) is what fires;
+          docs/RUBRIC-failsafe.md section 5.

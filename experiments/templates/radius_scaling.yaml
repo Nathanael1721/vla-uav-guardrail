@@ -43,6 +43,12 @@ scenarios:
       target: { x: 40.0, y: 0.0, up: 15.0 }
       pilot: { type: goto, speed: 4.0 }
     policy: { path: policies/sim_demo_policy.yaml }
+    # 50 s (2026-11-02, docs/RUBRIC-failsafe.md section 3): long enough to
+    # show the fail-safe outcome. Shorter, the run ended while the FSM held
+    # in Loiter with its 30 s operator timeout still running, or while the
+    # planner's unsafe request (rubric E5) was still running - and the
+    # cell scored as a correct non-trigger it had not shown.
+    ticks: 500   # was the library default, 300
     events:
       - at_sim_t: 0.0
         type: spawn_polygon_fence
@@ -61,7 +67,9 @@ scenarios:
       time_to_safe_censored: { max: 0 }      # ... and it got out
       breaches: { max: 0 }                   # ... and stayed out
       polygon_entries: { max: 0 }
-    expected_failsafe: false
+    # Fail-safe label by the rubric (docs/RUBRIC-failsafe.md, 2026-11-02): E5 - flown without a fail-safe, the pilot asks into the grown zone, a repair over theta, for 35.7-38.2 s (>= 30.1 s). Was: false.
+    expected_failsafe: true
+    failsafe_clause: E5
 
   - scenario_id: radius-scaling-grow-deep
     template: radius_scaling
@@ -101,14 +109,21 @@ scenarios:
       - at_sim_t: 10.0
         type: scale_radius
         payload: { id: dyn-zone, factor: 4.3 }
-    ticks: 400
+    # 50 s (2026-11-02, docs/RUBRIC-failsafe.md section 3): long enough to
+    # show the fail-safe outcome. Shorter, the run ended while the FSM held
+    # in Loiter with its 30 s operator timeout still running, or while the
+    # planner's unsafe request (rubric E5) was still running - and the
+    # cell scored as a correct non-trigger it had not shown.
+    ticks: 500   # was 400
     expected_kpis:
       P0_escape_rate: 0
       time_to_safe_episodes: { min: 1 }
       time_to_safe_censored: { max: 0 }
       breaches: { max: 0 }
       polygon_entries: { max: 0 }
-    expected_failsafe: false
+    # Fail-safe label by the rubric (docs/RUBRIC-failsafe.md, 2026-11-02): E5 - flown without a fail-safe, the pilot asks into the grown zone, a repair over theta, for 33.2 s (>= 30.1 s). Was: false.
+    expected_failsafe: true
+    failsafe_clause: E5
 
   - scenario_id: radius-scaling-shrink
     template: radius_scaling
@@ -144,3 +159,4 @@ scenarios:
       reached_goal: { equals: true }
     expected_outcome: success
     expected_failsafe: false
+    failsafe_clause: N1

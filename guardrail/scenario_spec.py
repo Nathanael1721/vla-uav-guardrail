@@ -304,6 +304,7 @@ GRANT_KPI_ALIASES = {
 # are not counted as different scenarios.
 BEHAVIOUR_EXCLUDED = ("scenario_id", "template", "description", "expected_kpis",
                       "expected_outcome", "expected_failsafe", "expect",
+                      "failsafe_clause", "failsafe_cells",
                       "known_failures", "known_failure_fails",
                       "parameter_sweep", "parameter_sample",
                       # Arms: what the pilot is SHOWN. No headless pilot reads
@@ -897,6 +898,59 @@ class KnownFailureCell(_Strict):
         return True
 
 
+# The fail-safe rubric's clauses (docs/RUBRIC-failsafe.md, 2026-11-02): E1-E5
+# say a fail-safe (RTL / Land) is expected, N1-N5 say it is not. Every label in
+# the library names the clause it was derived from (`failsafe_clause`, and per
+# cell `failsafe_cells`), so a label can be traced to its reason and re-derived.
+RUBRIC_EXPECTED = ("E1", "E2", "E3", "E4", "E5")
+RUBRIC_NOT_EXPECTED = ("N1", "N2", "N3", "N4", "N5")
+RUBRIC_CLAUSES = RUBRIC_EXPECTED + RUBRIC_NOT_EXPECTED
+
+
+def _check_clause(clause: str | None, expected: bool | None, where: str) -> None:
+    if clause is None:
+        return
+    if expected is None:
+        raise ValueError(f"{where}: failsafe clause {clause} without a fail-safe label")
+    if (clause in RUBRIC_EXPECTED) != bool(expected):
+        raise ValueError(f"{where}: clause {clause} says a fail-safe is "
+                         f"{'' if clause in RUBRIC_EXPECTED else 'not '}expected, but "
+                         f"the label is expected_failsafe: {expected}")
+
+
+class FailsafeCell(_Strict):
+    """One parameter cell of a family whose fail-safe label differs from the
+    family's, with the rubric clause that makes it differ
+    (docs/RUBRIC-failsafe.md, section 3: "per cell").
+
+    A family is one design swept over parameters, and the rubric's clauses can
+    hold in some cells only: a zone spawned 3 m ahead puts the planner's
+    forecast more than theta into it (E5 once that persists past the Loiter
+    timeout), one spawned 30 m ahead does not (N1). `params` names the cell as
+    a known-failure pin does (`variant` included for a sampled family), but
+    never `random_seed`: a label is a property of the scenario, not of a seed.
+    The cell's spec carries the label (Family.cells), so every reader - the
+    sweep's scoring, its label gates, the KPI report - sees one label per cell.
+    """
+    params: dict[str, Any] = Field(min_length=1)
+    expected_failsafe: bool
+    clause: Literal[RUBRIC_CLAUSES]
+    expected_outcome: Literal[OUTCOMES] | None = None
+    why: str = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def _coherent(self) -> "FailsafeCell":
+        if "random_seed" in self.params:
+            raise ValueError("failsafe_cells: a label belongs to the cell, not to a "
+                             "seed (random_seed is not allowed in params)")
+        _check_clause(self.clause, self.expected_failsafe, f"failsafe_cells {self.params}")
+        return self
+
+    def matches(self, cell_params: dict[str, Any]) -> bool:
+        return all(k in cell_params and cell_params[k] == v
+                   for k, v in self.params.items())
+
+
 class ParaphraseSpec(_Strict):
     """Fly this scenario's instruction in K paraphrased wordings as well as the
     canonical one (grant WP4: "per-paraphrase robustness"; the reference
@@ -967,6 +1021,11 @@ class ScenarioSpec(_Strict):
     # ---- ours (see the module docstring for why each exists) ---------------
     expected_outcome: Literal[OUTCOMES] | None = None
     expected_failsafe: bool | None = None
+    # The rubric clause behind expected_failsafe (docs/RUBRIC-failsafe.md;
+    # RUBRIC_CLAUSES), and the cells whose label differs, each with its own
+    # clause (FailsafeCell). Labels only: nothing here changes what is flown.
+    failsafe_clause: Literal[RUBRIC_CLAUSES] | None = None
+    failsafe_cells: list[FailsafeCell] = Field(default_factory=list)
     expect: Literal["pass", "known_failure", "tracked"] = "pass"
     # The gates `expect: known_failure` is expected to fail (KnownFailureCell,
     # `fails`, says why the list exists); required with it, refused without.
@@ -1003,6 +1062,10 @@ class ScenarioSpec(_Strict):
                 and not self.mission.task_prompt):
             raise ValueError(f"{self.scenario_id}: paraphrase.source task_prompt, but "
                              f"the mission has no task_prompt")
+        _check_clause(self.failsafe_clause, self.expected_failsafe, self.scenario_id)
+        if self.failsafe_cells and self.expected_failsafe is None:
+            raise ValueError(f"{self.scenario_id}: failsafe_cells need a family "
+                             f"label (expected_failsafe) to differ from")
         if (self.expected_outcome in ("RTL_triggered", "Land_triggered")
                 and not (self.shield and self.escalation)):
             raise ValueError(f"{self.scenario_id}: expected_outcome "
@@ -1276,6 +1339,17 @@ class Family:
                 raise ValueError(f"{self.scenario_id}: known_failures pin names "
                                  f"{sorted(stray)}, which this scenario does not "
                                  f"sweep or sample - it could never match a cell")
+        for fc in raw.get("failsafe_cells") or []:
+            keys = set((fc or {}).get("params") or {})
+            if "random_seed" in keys:
+                raise ValueError(f"{self.scenario_id}: failsafe_cells: a label belongs "
+                                 f"to the cell, not to a seed (random_seed is not "
+                                 f"allowed in params)")
+            stray = keys - declared - ({"variant"} if self.sample else set())
+            if stray:
+                raise ValueError(f"{self.scenario_id}: failsafe_cells entry names "
+                                 f"{sorted(stray)}, which this scenario does not "
+                                 f"sweep or sample - it could never match a cell")
         # Validated at LOAD, as the grant requires: build the first cell now so a
         # broken family fails before any episode runs, not halfway through one.
         self.first = self.cells()[0]
@@ -1316,6 +1390,21 @@ class Family:
                 if self.sample:
                     id_parts["variant"] = k
                     params["variant"] = k
+                # A cell whose fail-safe label differs from the family's
+                # (FailsafeCell): its spec carries the cell's label, outcome
+                # and clause. Two entries matching one cell are refused - the
+                # label would depend on their order.
+                hits = [fc for fc in spec.failsafe_cells if fc.matches(params)]
+                if len(hits) > 1:
+                    raise ValueError(f"{self.scenario_id}: {len(hits)} failsafe_cells "
+                                     f"entries match the cell {params}")
+                if hits:
+                    fc = hits[0]
+                    upd = {"expected_failsafe": fc.expected_failsafe,
+                           "failsafe_clause": fc.clause}
+                    if fc.expected_outcome is not None:
+                        upd["expected_outcome"] = fc.expected_outcome
+                    spec = spec.model_copy(update=upd)
                 out.append(Cell(episode_id=_episode_id(self.scenario_id, id_parts),
                                 scenario_id=self.scenario_id, params=params,
                                 spec=spec))

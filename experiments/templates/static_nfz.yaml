@@ -31,6 +31,7 @@ scenarios:
       p0_violation_escape_rate: { max: 0.0 }
       time_to_safe_episodes: { max: 0 }
     expected_failsafe: false
+    failsafe_clause: N1
     # No outcome label: the dumb pilot aims through the zone and the Shield
     # holds it at the edge (final x = -5.6, goal never reached). That is the
     # same "repaired action, no sensible trajectory" gap as standoff-wedge; this
@@ -56,6 +57,20 @@ scenarios:
   # ---- the SITL rail's own mission, headless (2026-10-07) ----------------- #
   - scenario_id: rail-mission-stub-vla
     template: static_nfz
+    expect: known_failure
+    # A false fail-safe since the run flies past the Loiter timeout
+    # (2026-11-02; at 300 ticks it ended 0.1 s before G5 and read as a
+    # correct non-trigger). The stub's first command from the pad sends the
+    # 5 s forecast 8.1 m into nfz-square's margin ring, over theta on the
+    # decided basis, so the FSM abandons projection on tick 0 (X1, G3), the
+    # autopilot holds at the pad where the request stays 8 m deep, and the
+    # 30 s timeout (G5) sends it home - the same edges the Gazebo Harmonic +
+    # ArduCopter SITL flight of this mission flew (demo/out/gazebo_shield_on,
+    # master 70ab5e8: X1 tick 1, G3 tick 2, G5 at 30.2 s). Flown without a
+    # fail-safe, the projection takes the stub round the zone and its
+    # requests are over theta for 10.9 s only (rubric N1). Only the label is
+    # pinned: P0, breaches, polygon entries and time to safe stay gated.
+    known_failure_fails: [failsafe]
     description: >
       The mission the ArduPilot SITL + MAVROS 2 rail flies
       (sitl/ros2_shield_node.py: "fly to the northeast pad at 6 m/s", StubVLA
@@ -68,9 +83,17 @@ scenarios:
       target: { x: 30.0, y: 30.0, up: 15.0 }
       pilot: { type: stub_vla, speed: 6.0 }
     policy: { path: policies/sim_demo_policy.yaml }
+    # 50 s (2026-11-02, docs/RUBRIC-failsafe.md section 3): long enough to
+    # show the fail-safe outcome. Shorter, the run ended while the FSM held
+    # in Loiter with its 30 s operator timeout still running, or while the
+    # planner's unsafe request (rubric E5) was still running - and the
+    # cell scored as a correct non-trigger it had not shown.
+    ticks: 500   # was the library default, 300
     expected_kpis:
       P0_escape_rate: 0
       time_to_safe_episodes: { max: 0 }
       breaches: { max: 0 }
       polygon_entries: { max: 0 }
+    # Rubric (docs/RUBRIC-failsafe.md, 2026-11-02): N1 - flown without a fail-safe, the projection takes the stub round the zone: its requests are over theta for 10.9 s, then repairable (N1).
     expected_failsafe: false
+    failsafe_clause: N1

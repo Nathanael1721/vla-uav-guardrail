@@ -36,7 +36,8 @@
 #          The DSL's lint warnings: test_window_lead_lint; a window opening
 #          on the aircraft sooner than it can leave: test_window_opens_on.
 #        WP4, the stress harness and its outputs: test_scenario_spec,
-#          test_sweep, test_kpi_magnitudes, test_kpi_report,
+#          test_sweep, test_failsafe_rubric (the fail-safe labels and
+#          docs/RUBRIC-failsafe.md), test_kpi_magnitudes, test_kpi_report,
 #          test_harness_service, test_harnesstruth_*, test_wp4outputs_*.
 #        The flying rails: test_railinputs_*, test_flight_pas_ap_20261008 (on
 #          its tests/fixtures/ copy of the 8 Oct flight), test_pas_ardupilot,
@@ -583,6 +584,7 @@ jobs:
           for t in \
               tests/test_scenario_spec.py \
               tests/test_sweep.py \
+              tests/test_failsafe_rubric.py \
               tests/test_shield.py \
               tests/test_shield_events.py \
               tests/test_ir.py \

@@ -20,6 +20,19 @@ template: corridor_swap
 scenarios:
   - scenario_id: corridor-swap-shifted
     template: corridor_swap
+    expect: known_failure
+    # Since the run flies past the Loiter timeout (2026-11-02, 500 ticks):
+    # the pilot keeps asking out of the swapped corridor (a repair over
+    # theta, rubric E5), G5 sends the aircraft home at the timeout - the
+    # expected fail-safe - and the modelled RTL flies the straight leg to the
+    # launch point (5, 0), which lies OUTSIDE the swapped corridor (y 2-22).
+    # The episode ends 11.9 m outside it, so the corridor gates fail.
+    # guardrail/rtl_path.py RTLWatch judges the leg home against P0 zones
+    # and the altitude band, not against a keep-in corridor, so it never
+    # reports this "blocked path" (G6, RTL -> Land). Measured on the library
+    # (seed 0); the same RTL flies with the FSM as it was before 2026-11-02
+    # once the run is this long. P0, breaches and the label stay gated.
+    known_failure_fails: [time_to_safe_censored, final_offset_from_corridor]
     description: >
       Flying down the survey corridor's first leg (centreline y = 0, 40 m
       wide), the route is swapped at 5 s for a parallel one, centreline y =
@@ -33,6 +46,12 @@ scenarios:
       pilot: { type: goto, speed: 4.0 }
       clock_start: "2026-09-05T09:00:00"
     policy: { path: policies/corridor_survey.yaml }
+    # 50 s (2026-11-02, docs/RUBRIC-failsafe.md section 3): long enough to
+    # show the fail-safe outcome. Shorter, the run ended while the FSM held
+    # in Loiter with its 30 s operator timeout still running, or while the
+    # planner's unsafe request (rubric E5) was still running - and the
+    # cell scored as a correct non-trigger it had not shown.
+    ticks: 500   # was the library default, 300
     events:
       - at_sim_t: 5.0
         type: swap_corridor
@@ -49,7 +68,9 @@ scenarios:
       time_to_safe_censored: { max: 0 }      # ... and it got in
       breaches: { max: 0 }                   # ... and stayed in
       final_offset_from_corridor: { max: 10.001 }
-    expected_failsafe: false
+    # Fail-safe label by the rubric (docs/RUBRIC-failsafe.md, 2026-11-02): E5 - flown without a fail-safe, the pilot asks out of the swapped corridor, a repair over theta, for 40.9 s (>= 30.1 s). Was: false.
+    expected_failsafe: true
+    failsafe_clause: E5
 
   - scenario_id: corridor-swap-narrowed
     template: corridor_swap
@@ -59,11 +80,22 @@ scenarios:
       is swapped for one 10 m wide on the same centreline. Before the swap
       the old half-width (20 m) binds; after it the aircraft must be brought
       back inside 5 m and held there against a pilot still pulling out.
+
+      WHY ITS LABEL ACCEPTS P0 TICKS UNDER THE AUTOPILOT (2026-11-02): the
+      Loiter timeout's RTL (rubric E5) flies the straight leg home, its
+      forecast crossing the narrowed corridor's wall on 4-8 RTL ticks; it ends
+      inside the corridor.
     mission:
       start_pose: { x: 30.0, y: 0.0, up: 15.0 }
       pilot: { type: constant, action: { vy: "$ask_mps" } }
       clock_start: "2026-09-05T09:00:00"
     policy: { path: policies/corridor_survey.yaml }
+    # 50 s (2026-11-02, docs/RUBRIC-failsafe.md section 3): long enough to
+    # show the fail-safe outcome. Shorter, the run ended while the FSM held
+    # in Loiter with its 30 s operator timeout still running, or while the
+    # planner's unsafe request (rubric E5) was still running - and the
+    # cell scored as a correct non-trigger it had not shown.
+    ticks: 500   # was the library default, 300
     events:
       - at_sim_t: 3.0
         type: swap_corridor
@@ -81,4 +113,6 @@ scenarios:
       time_to_safe_censored: { max: 0 }
       breaches: { max: 0 }
       final_offset_from_corridor: { max: 5.001 }
-    expected_failsafe: false
+    # Fail-safe label by the rubric (docs/RUBRIC-failsafe.md, 2026-11-02): E5 - flown without a fail-safe, the pilot asks out of the narrowed corridor, a repair over theta, for 44.9-46.9 s (>= 30.1 s). Was: false.
+    expected_failsafe: true
+    failsafe_clause: E5

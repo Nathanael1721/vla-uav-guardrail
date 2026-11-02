@@ -28,6 +28,7 @@ scenarios:
       reached_goal: { equals: true }
     expected_outcome: success
     expected_failsafe: false
+    failsafe_clause: N1
 
   - scenario_id: corridor-drift-out
     template: corridor_keep_in
@@ -44,6 +45,7 @@ scenarios:
       max_offset_from_corridor: { max: 20.001 }
     expected_outcome: success
     expected_failsafe: false
+    failsafe_clause: N1
 
   - scenario_id: corridor-drift-angles
     template: corridor_keep_in
@@ -52,11 +54,23 @@ scenarios:
       scenario clock the curfew fence is always in force, so the north-east
       headings also run into it at the corridor's corner: a keep-in and a
       keep-out rule repairing against each other.
+
+      WHY ITS LABEL ACCEPTS P0 TICKS UNDER THE AUTOPILOT (2026-11-02): once
+      the Loiter timeout sends the drifting pilot home (the fail-safe the
+      rubric expects, E5), the modelled RTL flies the straight leg to the
+      launch point and on a tick its 5 s forecast crosses the corridor's wall
+      (1 RTL tick at 4 m/s, -30 deg, in the library); never an entry.
     mission:
       start_pose: { x: 30.0, y: 0.0, up: 15.0 }
       pilot: { type: constant, action: { vx: 0.0, vy: "$ask_mps" } }
       rotate_deg: "$drift_deg"
     policy: { path: policies/corridor_survey.yaml }
+    # 2026-11-02 (docs/RUBRIC-failsafe.md section 3): long enough to
+    # show the fail-safe outcome. Shorter, the run ended while the FSM held
+    # in Loiter with its 30 s operator timeout still running, or while the
+    # planner's unsafe request (rubric E5) was still running - and the
+    # cell scored as a correct non-trigger it had not shown.
+    ticks: 700   # was the library default, 300; 70 s: on the flight without a fail-safe, ask 8 m/s at -30 deg starts its unsafe request at 35.3 s
     parameter_sweep:
       drift_deg: [-60, -30, 0, 30, 60, 150]
       ask_mps: [4, 8]
@@ -65,8 +79,17 @@ scenarios:
       time_to_safe_episodes: { max: 0 }
       breaches: { max: 0 }
       max_offset_from_corridor: { max: 20.001 }
-    expected_outcome: success
-    expected_failsafe: false
+    expected_outcome: RTL_triggered   # was success: the fail-safe it expects (E5) ends in RTL
+    # Fail-safe label by the rubric (docs/RUBRIC-failsafe.md, 2026-11-02): E5 - flown without a fail-safe, a pilot drifting out of the corridor at an angle keeps asking for a repair over theta for 34.7-65.0 s (>= 30.1 s). Was: false.
+    expected_failsafe: true
+    failsafe_clause: E5
+    failsafe_cells:
+      - params: { drift_deg: 0 }
+        expected_failsafe: false
+        clause: N1
+        expected_outcome: success
+        why: >
+          drifting along the corridor's axis, nothing to repair (no unsafe request)
     # The 2026-10-06 pins on (-30, 4) and (60, *) are gone (2026-10-07). They
     # recorded a Shield Brake at the corridor's end caps as a false fail-safe,
     # when "triggered" meant "the Shield braked". With the escalation FSM the

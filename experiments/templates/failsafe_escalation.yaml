@@ -54,6 +54,7 @@ scenarios:
       polygon_entries: { max: 0 }
     expected_outcome: RTL_triggered
     expected_failsafe: true
+    failsafe_clause: E1
 
   - scenario_id: failsafe-land-zone
     template: failsafe_escalation
@@ -88,6 +89,7 @@ scenarios:
       polygon_entries: { max: 0 }
     expected_outcome: Land_triggered
     expected_failsafe: true
+    failsafe_clause: E1
 
   - scenario_id: failsafe-loiter-timeout
     template: failsafe_escalation
@@ -115,6 +117,7 @@ scenarios:
       polygon_entries: { max: 0 }
     expected_outcome: RTL_triggered
     expected_failsafe: true
+    failsafe_clause: E5
 
   # ---- the hand-over made answerable to P0 (2026-10-12) ------------------ #
   # The FSM's RTL -> Land edge, "RTL fails (battery / blocked path)" (Safety
@@ -164,6 +167,7 @@ scenarios:
       rtl_failed_ticks: { min: 1 }
     expected_outcome: Land_triggered
     expected_failsafe: true
+    failsafe_clause: E1
 
   - scenario_id: failsafe-low-battery
     template: failsafe_escalation
@@ -200,3 +204,4 @@ scenarios:
       rtl_failed_ticks: { min: 1 }
     expected_outcome: Land_triggered
     expected_failsafe: true
+    failsafe_clause: E1
