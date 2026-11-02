@@ -1,11 +1,13 @@
 # The Paraphraser - free-form wordings, frozen, validated, and logged by id
 
 **Date:** 2026-10-06 (built, then reworked the same day after an independent review)
-**Status:** built as an in-process module with a CLI. `guardrail/paraphraser.py`,
-`experiments/paraphrases/` (14 sets, 112 paraphrases, plus `probes.json` and
-`validation_report.json`), `tests/test_paraphraser.py` (82/82). No pilot reads these
-paraphrases in flight yet, so the per-paraphrase robustness KPI is still unmeasured
-(see "What this does not give you").
+**Status:** built as an in-process module with a CLI; since 2026-11-02 also a separate
+gRPC service (`guardrail/paraphraser_service.py`, `tests/test_paraphraser_service.py`).
+`guardrail/paraphraser.py`, `experiments/paraphrases/` (14 sets, 112 paraphrases, the
+four C8 sets re-authored 2026-11-02, plus `probes.json`, `heldout_2026_11_02/` and
+`validation_report.json`), `tests/test_paraphraser.py` (103/103 on 2026-11-02). No
+pilot reads these paraphrases in flight yet, so the per-paraphrase robustness KPI is
+still unmeasured (see "What this does not give you").
 **Cards:** WP2-13, WP4-10, ARCH-23. The Q3 window for this deliverable closes 2026-10-31.
 
 ## What the grant asks for
@@ -27,10 +29,18 @@ Its recommendation (`docs/05-recommendation/recommendation.md:44`) pairs the
 per-paraphrase robustness KPI rollup".
 
 **What this build is, against that.** It is a separate *module* with its own store,
-validator, CLI and tests, fed only from the compiler's templated text. It is **not**
-a separate *service*: there is no process boundary, no RPC and no mTLS. Any runner
-imports it. Whether that counts as the grant's "separate service" is a question for
-the PI.
+validator, CLI and tests, fed only from the compiler's templated text. Until
+2026-11-02 it was **not** a separate *service*: there was no process boundary, no RPC
+and no mTLS, and any runner imported it. Since then `guardrail/paraphraser_service.py`
+serves it over gRPC (`guardrail/protos/paraphraser.proto`: `Paraphrase`, `Validate`,
+`GetStatus`) in the harness's own pattern: mutual TLS from the control plane's lab CA
+(`python -m guardrail.harness_service gen-pki`) with a client common-name allow-list
+(default `harness-client`, the orchestrator), plaintext on a loopback address only.
+Templated NL in, paraphrases out: each has passed `validate()` against the text sent
+(checked again before the reply goes), and the reply names the validator and store
+digests and the candidates refused on the way. The stress harness still draws its
+paraphrase arms in-process; binding it to the service is a change in
+`guardrail/harness_service.py`.
 
 The grant does not say how many paraphrases to make, how to seed the choice, or
 what to log. Where it is silent, this design copies the Stress Testing contract
@@ -133,7 +143,14 @@ This module serves both.
 Where each one is used today is not frozen into the files (it went stale within a
 day the first time); `stale` computes it.
 
-**Four sets stale since 2026-10-21 (open item C8).** The class stand-off sentence
+**Four sets stale from 2026-10-21 (open item C8) until 2026-11-02.** On 2026-11-02 the
+four were re-authored for the new sentence: 32 paraphrases written by Claude
+(claude-opus-5-5) as a coding agent, keyed on compile_csp's text and serving
+build_prompt's order by rule set, each file's provenance naming the set it
+replaces and saying the author had just tuned the validator. One of the 32 was
+refused on the first pass ("The following limits apply": an adjectival
+"following" read as the follow action) and reworded; `stale` now lists 0 texts
+without a set, of 21. What follows describes the period they were stale. The class stand-off sentence
 said "Keep at least 10 m away from any pedestrian", but the rule binds only the
 followed subject while it is classified pedestrian (`models.SubjectStandoff.binds`);
 it now says "Keep at least 10 m away from the pedestrian you are following"
@@ -194,7 +211,7 @@ candidate in which one was dropped, changed or added:
 | bound | "at least 10 m" → "at most 10 m"; read through every negation in the clause by parity ("should not fly at an altitude no lower than 6 m" is a ceiling) |
 | a ruling after the number | "a speed below 4 m/s is not allowed" (the cap became a floor); "an altitude between 10 m and 20 m is forbidden" |
 | what a number limits | speed and climb swapped; "max vertical speed 4 m/s" for "speed at or below 4 m/s" (kinematic attributes must now be equal, not merely included) |
-| named zone, corridor, place, coordinate | 'nfz-square' dropped or renamed; "north-east pad"; (40, 40) → (40, 30) |
+| named zone, corridor, place, coordinate | 'nfz-square' dropped or renamed; "north-west pad" ("north-east pad" and "the pad in the northeast" name the registry's "northeast pad" since 2026-11-02); (40, 40) → (40, 30) |
 | place role | "past the northeast pad", "a spot far away from the northeast pad" |
 | zone polarity | keep-out → stay-inside; "It is not forbidden to enter zone 'nfz-square'"; "do not avoid restricted areas"; "inside or near corridor ..." |
 | time window | "(in force Mon-Fri 07:30-17:30)" dropped, moved to another rule, or inverted with "except" |
@@ -229,29 +246,33 @@ field by field against the current store, validator, probe file and place regist
 |---|---|---|---|
 | stored paraphrases accepted | 112/112 | 96/96 (one of them unfaithful) | - |
 | identity "paraphrase" refused | 14/14 sources | 12/12 | an exact-copy check catches these, but also accepts "Never enter" → "Do not enter", which the novelty floor refuses |
-| generated mutants refused | **3979/3979** (24 classes) | 1721/1721 (11 classes) | see below |
+| generated mutants refused | **3977/3977** (24 classes; 3979 before the 2026-11-02 re-authoring) | 1721/1721 (11 classes) | see below |
 | review probes (dev set): meaning changes accepted | **0/28** | 17/28 | - |
-| review probes: faithful paraphrases refused | **3/30** | 13/30 | - |
+| review probes: faithful paraphrases refused | **2/30** (3/30 until 2026-11-02) | 13/30 | - |
 | first held-out probes (dev since 2026-10-21): meaning changes accepted | **0/30** | 11/30, then 5/30 | - |
 | first held-out probes: faithful paraphrases refused | **2/30** | 2/30 | - |
 | 2026-10-21 probes, written before the A14 change (dev): meaning changes accepted | **0/22** | 21/22 | - |
 | 2026-10-21 probes: faithful paraphrases refused | **1/22** | 1/22 | - |
 | probes written after the A14 change (dev since 2026-10-28): meaning changes accepted | **0/12** | 4/12 | - |
 | probes after A14: faithful paraphrases refused | **2/12** | 2/12 | - |
-| independent held-out probes (2026-10-28): meaning changes accepted | **2/20** | 2/20 | - |
-| independent held-out probes: faithful paraphrases refused | **5/20** | 5/20 | - |
+| independent probes (2026-10-28; dev since 2026-11-02): meaning changes accepted | **1/20** | 2/20 | - |
+| independent probes (2026-10-28): faithful paraphrases refused | **0/20** | 5/20 | - |
+| probes of 2026-11-02 (held out for the first round of that day's fixes, dev after the second): meaning changes accepted | **0/50** | 1/50, then 1/50 (held out) | - |
+| probes of 2026-11-02: faithful paraphrases refused | **3/44** | 18/44, then 14/44 (held out) | - |
 
 **The nulls, scored on both halves.** A null that refused everything would "catch"
 every mutant, so each null is scored on the stored paraphrases too:
 
 | null validator (compared with the source, as `validate` is) | stored accepted | mutants refused |
 |---|---|---|
-| accept anything but an exact copy | 112/112 | 0/3979 |
-| digits multiset unchanged | 110/112 | 816/3979 |
-| sets of digits, units, ids and about 30 slot words unchanged | 51/112 | 3472/3979 |
+| accept anything but an exact copy | 112/112 | 0/3977 |
+| digits multiset unchanged | 106/112 | 987/3977 |
+| sets of digits, units, ids and about 30 slot words unchanged | 57/112 | 3317/3977 |
 
-The word-bag null catches 87 % of the mutants, but only by refusing 54 % of the
-faithful paraphrases. The validator does both halves.
+(Since the 2026-11-02 re-authoring of the four C8 sets; before it 112, 110 and 51
+stored accepted, 0, 816 and 3472 of 3979 mutants refused.) The word-bag null
+catches 83 % of the mutants, but only by refusing 49 % of the faithful
+paraphrases. The validator does both halves.
 
 **What the 3979/3979 means.** It means recall on the 24 mutation classes `mutants()`
 generates, and nothing more. The first build reported 1721/1721 while the review's
@@ -264,7 +285,10 @@ them (`negate-verb`, `negate-modal`, `post-prohibit`, `permission`, `exception`,
 re-authored and new items then showed 5 more (from old and new classes alike).
 Each was fixed in the validator. A class nobody wrote is still not measured.
 
-**What the probe numbers mean.** `probes.json` holds five sets.
+**What the probe numbers mean.** `probes.json` holds five sets, and
+`heldout_2026_11_02/probes.json` a sixth (`load_probes` reads a set kept in a
+folder of its own, so the commit adding it could predate any reading of the
+validator).
 
 * **Review set (dev).** 58 probes written by the independent reviewer. The validator
   was tuned on them, so 0/28 is a regression floor, not an estimate. Three of the
@@ -321,7 +345,30 @@ Each was fixed in the validator. A class nobody wrote is still not measured.
   refused: two rule lists that merge equal limits or pair them with
   "respectively", spelled-out numbers ("ten and twenty metres"), "Follow someone."
   for "follow a person", and "120 metres in front of you" for "120 m ahead". The
-  misses were read for this paragraph, not tuned on.
+  misses were read for this paragraph, not tuned on - until 2026-11-02, when
+  the validator was tuned on all seven by mechanism, so the set is a dev set
+  now (1/20, 0/20). Read case by case, the five refusals were: one distance
+  shared by two subjects, a "respectively" list, a negation carried across
+  ", or" (the spelled-out-numbers probe), "someone", and a relative clause
+  that only restated the position ("that lies 120 metres in front of you").
+  The one meaning change still accepted, "under 3 m/s" for "at or below 3
+  m/s", was refused before only because of the merged distance in the same
+  candidate. The validator reads strict and non-strict bounds alike by design
+  (the stored set and the 2026-11-02 probes do too), so that label is a
+  disagreement about what counts as the same rule, not a missed slot.
+* **`heldout_2026_11_02` (held out once, dev now).** 94 probes (50 meaning
+  changes, 44 faithful) over 17 sources: the 14 current renderings, with the
+  post-C8 wording, and 3 policy fixtures the store never paraphrased. They
+  were written by Claude, the agent that then fixed the validator, *before* it
+  read this module, its tests or this document, and committed (f366913)
+  before any measurement (README beside the set). Measured three times:
+  before any change (1/50, 18/44); after the fixes drawn from
+  heldout_2026_10_28 alone, with only this set's counts seen (1/50, 14/44, the
+  held-out figure); and after its own misses were fixed by mechanism (0/50,
+  3/44, a dev figure). The three refused: two near-identical candidates
+  (novelty 0.13 and 0.14, under the floor) and zones folded into a range,
+  "'nfz-edge-1' through 'nfz-edge-4'", refused on purpose because two ids are
+  no longer named. Not independent of the code: same author.
 
 **What the A14 change reads** (`guardrail/paraphraser.py`, `_narrowings`). For each
 object the extractor finds, in its own clause: a word between a determiner and the
@@ -367,14 +414,28 @@ lexical guard, not an entailment model:
 * It only sees the slot kinds in the table. Since 2026-10-21 it also reads the
   narrowings listed above, and since 2026-10-28 a `with` phrase and any noun after
   a place preposition right after the object, but only in those positions: a
-  qualifier further from the noun, or a limit narrowed to one component of the
-  quantity ("horizontal speed"), still passes (2/20 on the independent set).
+  qualifier further from the noun still passes. Since 2026-11-02 it also reads a
+  limit narrowed to one speed component ("horizontal speed"), a time zone on a
+  window, a count on the object ("two people"), a "respectively" list (both ways
+  round; a list that does not pair up is refused), one distance shared by two
+  subjects, a list of zones that states its ruling once, the C8 stand-off said as
+  a condition ("when the thing you are following is a pedestrian"), a topic
+  picked up by "it" in the same sentence, and a negation carried across ", or" -
+  each from a miss on heldout_2026_10_28 or heldout_2026_11_02, or from the
+  mutation test on the re-authored sets.
+* Strict and non-strict bounds read alike: "under 3 m/s" is the same rule as "at or
+  below 3 m/s", and "never within 5 m" as "at least 5 m". On a continuous quantity
+  the Shield enforces, the difference is one value; heldout_2026_10_28's author
+  labels it a meaning change (its one accepted probe), the stored set and the
+  2026-11-02 probes do not. A decision for this document, not a missed slot.
 * Synonyms are a closed table. For example car ≡ automobile but car ≠ vehicle,
-  "stick with" is not a follow verb, and "whichever car you are following" is still
-  read as the wildcard (a missed narrowing).
-* A double negation across clauses, a "respectively" list, or a pronoun whose zone
-  is in another sentence can be misread. The validator refuses the candidate in the
-  first case and accepts it in the worst case.
+  "stick with" is not a follow verb, "someone" is a person (since 2026-11-02), and
+  "whichever car you are following" is still read as the wildcard (a missed
+  narrowing). An adjectival "following" ("The following limits apply") is read as
+  the follow action, a false refusal (found re-authoring the C8 sets, open).
+* A double negation across clauses, or a pronoun whose zone is in another sentence,
+  can be misread. The validator refuses the candidate in the first case and accepts
+  it in the worst case.
 * A bare metres band in a sentence with a stay-inside corridor is read as that
   corridor's altitude band. This is domain knowledge taken from
   `templates/sentence/corridor.j2`.
@@ -460,7 +521,14 @@ for arm in arms:
 python -m guardrail.paraphraser validate     # store -> validation_report.json
 python -m guardrail.paraphraser show "fly to the east pad at 3 m/s" --n 3 --seed 0
 python -m guardrail.paraphraser stale        # every in-scope text and the set that serves it
-python tests/test_paraphraser.py             # 82/82
+python tests/test_paraphraser.py             # 103/103 (2026-11-02)
+
+# the separate service (gRPC; mutual TLS with the harness lab PKI, or loopback plaintext)
+python -m guardrail.paraphraser_service serve --pki <dir>        # or --insecure (loopback)
+python -m guardrail.paraphraser_service paraphrase --addr 127.0.0.1:50061 --insecure \
+    --n 3 --seed 1001 "Stay between 10 m and 20 m altitude. ..."
+python -m guardrail.paraphraser_service validate --addr ... --insecure SOURCE CANDIDATE
+python tests/test_paraphraser_service.py     # 8/8 (2026-11-02)
 ```
 
 If the compiler's templated NL changes, or `scenarios.yaml` gains a policy, a clock

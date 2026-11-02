@@ -1,60 +1,60 @@
 {
   "schema": "guardrail.paraphrases.validation/1",
-  "store_digest": "2b2b5788d9a021cc",
-  "validator_digest": "e30e7e756cfbc522",
-  "probes_digest": "b661d35cd2263ea0",
+  "store_digest": "3f096fceb3c27e56",
+  "validator_digest": "07e219bd3bb3842c",
+  "probes_digest": "5e0eaadaf68aa096",
   "places_source": "guardrail.compiler.PLACES",
   "command": "python -m guardrail.paraphraser validate",
   "sources": 14,
   "paraphrases": 112,
   "accepted": 112,
   "identity_null_refused": 14,
-  "mutants": 3979,
-  "mutants_refused": 3979,
+  "mutants": 3977,
+  "mutants_refused": 3977,
   "mutants_by_class": {
     "bound": {
-      "generated": 278,
-      "refused": 278
+      "generated": 284,
+      "refused": 284
     },
     "colour-rebind": {
       "generated": 8,
       "refused": 8
     },
     "conditional": {
-      "generated": 244,
-      "refused": 244
+      "generated": 253,
+      "refused": 253
     },
     "drop-sentence": {
+      "generated": 195,
+      "refused": 195
+    },
+    "exception": {
+      "generated": 253,
+      "refused": 253
+    },
+    "hedge": {
+      "generated": 253,
+      "refused": 253
+    },
+    "narrow": {
+      "generated": 20,
+      "refused": 20
+    },
+    "negate-modal": {
+      "generated": 33,
+      "refused": 33
+    },
+    "negate-verb": {
       "generated": 187,
       "refused": 187
     },
-    "exception": {
-      "generated": 244,
-      "refused": 244
-    },
-    "hedge": {
-      "generated": 244,
-      "refused": 244
-    },
-    "narrow": {
-      "generated": 17,
-      "refused": 17
-    },
-    "negate-modal": {
-      "generated": 44,
-      "refused": 44
-    },
-    "negate-verb": {
-      "generated": 190,
-      "refused": 190
-    },
     "negation": {
-      "generated": 84,
-      "refused": 84
+      "generated": 80,
+      "refused": 80
     },
     "number": {
-      "generated": 526,
-      "refused": 526
+      "generated": 519,
+      "refused": 519
     },
     "number-word": {
       "generated": 4,
@@ -69,32 +69,32 @@
       "refused": 13
     },
     "phase": {
-      "generated": 200,
-      "refused": 200
+      "generated": 213,
+      "refused": 213
     },
     "place-role": {
       "generated": 7,
       "refused": 7
     },
     "polarity": {
-      "generated": 24,
-      "refused": 24
+      "generated": 25,
+      "refused": 25
     },
     "post-prohibit": {
-      "generated": 439,
-      "refused": 439
+      "generated": 430,
+      "refused": 430
     },
     "swap": {
-      "generated": 368,
-      "refused": 368
+      "generated": 357,
+      "refused": 357
     },
     "unit": {
-      "generated": 586,
-      "refused": 586
+      "generated": 576,
+      "refused": 576
     },
     "vertical": {
-      "generated": 56,
-      "refused": 56
+      "generated": 51,
+      "refused": 51
     },
     "widen": {
       "generated": 8,
@@ -117,13 +117,13 @@
       "note": "Accepts anything that is not word-for-word the source."
     },
     "digits_multiset": {
-      "stored_accepted": 110,
-      "mutants_refused": 816,
+      "stored_accepted": 106,
+      "mutants_refused": 987,
       "note": "Accepts when the multiset of digit strings is unchanged."
     },
     "slot_word_bag": {
-      "stored_accepted": 51,
-      "mutants_refused": 3472,
+      "stored_accepted": 57,
+      "mutants_refused": 3317,
       "note": "Accepts when the SETS of digits, units, quoted ids and a fixed list of"
     }
   },
@@ -133,12 +133,11 @@
       "meaning_changing": 28,
       "false_accepts": 0,
       "faithful": 30,
-      "false_refusals": 3,
+      "false_refusals": 2,
       "false_accept_texts": [],
       "false_refusal_texts": [
         "go to the point x=40, y=40 at 6 m/s, altitude 20",
-        "follow someone walking",
-        "fly to the pad in the northeast at 6 m/s"
+        "follow someone walking"
       ]
     },
     "heldout_2026_10_06": {
@@ -177,21 +176,27 @@
       ]
     },
     "heldout_2026_10_28": {
-      "status": "HELD-OUT - 40 probes written on 2026-10-28 by an independent author (a separate agent given only the 17 source texts and the probe format, with no access to the validator, its tests, its design doc or the earlier probe sets), never used to tune it, and measured once against the validator before and after the 2026-10-28 change: the same result both times. The misses were then read for the design doc, not tuned on.",
+      "status": "DEV since 2026-11-02 - 40 probes written on 2026-10-28 by an independent author (a separate agent given only the 17 source texts and the probe format, with no access to the validator, its tests, its design doc or the earlier probe sets) and held out until 2026-11-02: measured once before and once after the 2026-10-28 change, the same result both times. On 2026-11-02 the validator was tuned on its seven misses, by mechanism (a speed component, a time zone on the window, one distance for two subjects, 'respectively', a relative clause that only restates the position, 'someone', a negation across ', or'), so its figures since are dev figures, not estimates. The one meaning change it still accepts ('under 3 m/s' for 'at or below 3 m/s') was refused before only for an unrelated reason, the merged distance; the validator reads strict and non-strict bounds alike by design (docs/DESIGN-paraphraser.md).",
       "meaning_changing": 20,
-      "false_accepts": 2,
+      "false_accepts": 1,
       "faithful": 20,
-      "false_refusals": 5,
+      "false_refusals": 0,
       "false_accept_texts": [
-        "Stay between 5 m and 80 m altitude and never fly into zone 'nfz-school-yard', which is in force Monday to Friday 07:30-17:30. Keep horizontal speed at or below 12 m/s, climb rate below 4 m/s and turn rate below 60 deg/s.",
-        "Stay inside corridor 'corridor-survey-route', within 20 m of its centerline and between 10 m and 20 m. Never enter zone 'nfz-school', which is in force Mon-Fri 07:30-17:30 UTC. Keep your speed to 4 m/s or less, your climb rate under 2 m/s and your turn rate under 45 deg/s."
+        "Keep altitude between 4 m and 10 m. Stay at least 5 m from any building and from anything you are following, and at least 10 m from any pedestrian. Keep speed under 3 m/s, climb rate under 1.5 m/s and turn rate under 45 deg/s."
       ],
+      "false_refusal_texts": []
+    },
+    "heldout_2026_11_02": {
+      "status": "DEV since 2026-11-02 - 94 probes (50 meaning changes, 44 faithful) written on 2026-11-02 by Claude (Anthropic model, claude-opus-5-5) acting as the agent that then fixes the validator, BEFORE it read guardrail/paraphraser.py, its tests, docs/DESIGN-paraphraser.md, any stored paraphrase or any earlier probe candidate, and committed (f366913) before the first measurement. Not independent of the fixer: same author, written knowing the validator would be fixed next. Held out for the heldout_2026_10_28 fixes (measured_after_heldout_2026_10_28_fixes); its own misses were then read and fixed by mechanism the same day, so its later figures are dev figures, not estimates.",
+      "meaning_changing": 50,
+      "false_accepts": 0,
+      "faithful": 44,
+      "false_refusals": 3,
+      "false_accept_texts": [],
       "false_refusal_texts": [
-        "Fly at an altitude between 4 m and 10 m. Maintain at least 10 m of separation from any pedestrian, and at least 5 m from any building as well as from anything you are following. Keep speed to 3 m/s or less, climb rate under 1.5 m/s and turn rate under 45 deg/s.",
-        "Keep your altitude between 6 m and 14 m. Do not get closer than 3 m to any building, 5 m to anything you are following or 10 m to any pedestrian. Your speed must not exceed 5 m/s, and climb rate and turn rate must stay below 2 m/s and 45 deg/s respectively.",
-        "Head for the waypoint that lies 120 metres in front of you, flying at cruise altitude.",
-        "Follow someone.",
-        "Fly at an altitude of between ten and twenty metres. Speed is capped at four metres per second, climb rate must stay below two metres per second and turn rate below forty-five degrees per second. Never get closer than ten metres to any pedestrian, or closer than five metres to anything you are following."
+        "Keep between 6 and 14 m altitude and at least 3 m from any building. Maintain at least 5 m from anything you are following and at least 10 m from the pedestrian you are following. Do not enter zone 'nfz-frontage'. Keep speed at or below 5 m/s, climb rate below 2 m/s and turn rate below 45 deg/s.",
+        "Stay 10 to 20 m high. Keep at least 5 m from anything you are following and at least 10 m from the pedestrian you are following. Keep speed at or below 4 m/s, climb rate below 2 m/s and turn rate below 45 deg/s.",
+        "Fly at 35-55 m, never closer than 5 m to a building. Zones 'nfz-edge-1' through 'nfz-edge-4' are all off-limits. Max speed 4 m/s, climb below 2 m/s, turn below 45 deg/s."
       ]
     }
   },
@@ -236,54 +241,54 @@
       "source_key": "csp_follow_car_citylife",
       "file": "csp_follow_car_citylife.json",
       "kind": "csp_nl",
-      "source_text": "Stay between 6 m and 14 m altitude. Keep at least 3 m from any building. Keep at least 5 m away from anything you are following. Keep at least 10 m away from any pedestrian. Keep speed at or below 5 m/s, climb rate below 2 m/s and turn rate below 45 deg/s.",
+      "source_text": "Stay between 6 m and 14 m altitude. Keep at least 3 m from any building. Keep at least 5 m away from anything you are following. Keep at least 10 m away from the pedestrian you are following. Keep speed at or below 5 m/s, climb rate below 2 m/s and turn rate below 45 deg/s.",
       "n": 8,
       "accepted": 8,
       "refused": [],
       "identity_refused": true,
       "novelty": {
-        "min": 0.789,
-        "median": 0.825,
-        "max": 0.895
+        "min": 0.328,
+        "median": 0.6,
+        "max": 0.783
       },
-      "mutants": 463,
-      "mutants_refused": 463,
+      "mutants": 482,
+      "mutants_refused": 482,
       "survivors": []
     },
     {
       "source_key": "csp_follow_car_citylife_nfz",
       "file": "csp_follow_car_citylife_nfz.json",
       "kind": "csp_nl",
-      "source_text": "Stay between 6 m and 14 m altitude. Keep at least 3 m from any building. Keep at least 5 m away from anything you are following. Keep at least 10 m away from any pedestrian. Never enter zone 'nfz-frontage'. Keep speed at or below 5 m/s, climb rate below 2 m/s and turn rate below 45 deg/s.",
+      "source_text": "Stay between 6 m and 14 m altitude. Keep at least 3 m from any building. Keep at least 5 m away from anything you are following. Keep at least 10 m away from the pedestrian you are following. Never enter zone 'nfz-frontage'. Keep speed at or below 5 m/s, climb rate below 2 m/s and turn rate below 45 deg/s.",
       "n": 8,
       "accepted": 8,
       "refused": [],
       "identity_refused": true,
       "novelty": {
-        "min": 0.758,
-        "median": 0.903,
-        "max": 0.928
+        "min": 0.366,
+        "median": 0.662,
+        "max": 0.815
       },
-      "mutants": 517,
-      "mutants_refused": 517,
+      "mutants": 513,
+      "mutants_refused": 513,
       "survivors": []
     },
     {
       "source_key": "csp_follow_pedestrian",
       "file": "csp_follow_pedestrian.json",
       "kind": "csp_nl",
-      "source_text": "Stay between 4 m and 10 m altitude. Keep at least 5 m from any building. Keep at least 5 m away from anything you are following. Keep at least 10 m away from any pedestrian. Keep speed at or below 3 m/s, climb rate below 1.5 m/s and turn rate below 45 deg/s.",
+      "source_text": "Stay between 4 m and 10 m altitude. Keep at least 5 m from any building. Keep at least 5 m away from anything you are following. Keep at least 10 m away from the pedestrian you are following. Keep speed at or below 3 m/s, climb rate below 1.5 m/s and turn rate below 45 deg/s.",
       "n": 8,
       "accepted": 8,
       "refused": [],
       "identity_refused": true,
       "novelty": {
-        "min": 0.596,
-        "median": 0.846,
-        "max": 0.877
+        "min": 0.467,
+        "median": 0.64,
+        "max": 0.8
       },
-      "mutants": 463,
-      "mutants_refused": 463,
+      "mutants": 441,
+      "mutants_refused": 441,
       "survivors": []
     },
     {
@@ -308,18 +313,18 @@
       "source_key": "csp_sitl_pedestrian",
       "file": "csp_sitl_pedestrian.json",
       "kind": "csp_nl",
-      "source_text": "Stay between 10 m and 20 m altitude. Keep at least 5 m away from anything you are following. Keep at least 10 m away from any pedestrian. Keep speed at or below 4 m/s, climb rate below 2 m/s and turn rate below 45 deg/s.",
+      "source_text": "Stay between 10 m and 20 m altitude. Keep at least 5 m away from anything you are following. Keep at least 10 m away from the pedestrian you are following. Keep speed at or below 4 m/s, climb rate below 2 m/s and turn rate below 45 deg/s.",
       "n": 8,
       "accepted": 8,
       "refused": [],
       "identity_refused": true,
       "novelty": {
-        "min": 0.51,
-        "median": 0.87,
-        "max": 0.898
+        "min": 0.322,
+        "median": 0.558,
+        "max": 0.904
       },
-      "mutants": 440,
-      "mutants_refused": 440,
+      "mutants": 445,
+      "mutants_refused": 445,
       "survivors": []
     },
     {

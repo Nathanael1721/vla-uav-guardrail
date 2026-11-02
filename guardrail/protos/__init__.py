@@ -8,7 +8,10 @@ root after changing the .proto:
         guardrail/protos/harness.proto
 
 tests/test_harness_service.py regenerates them into a temporary folder and
-fails if the committed files differ. Nothing imports this package unless the
+fails if the committed files differ. paraphraser_pb2.py and
+paraphraser_pb2_grpc.py are the Paraphraser service's (paraphraser.proto,
+guardrail/paraphraser_service.py, since 2026-11-02), generated and checked the
+same way by tests/test_paraphraser_service.py. Nothing imports this package unless the
 gRPC harness is used (guardrail/harness_service.py imports it lazily), so the
 Shield still imports where grpcio and protobuf are absent.
 """

@@ -1,0 +1,99 @@
+// The Paraphraser service.
+//
+// Grant, Prefix Compiler page, "Templated NL adapter": the compiler's prompt is
+// "Always-emitted, templated, never free-form. Free-form paraphrasing is the
+// paraphraser's job (Q3 deliverable, separate service); the Prefix Compiler
+// emits the canonical templated form so the paraphraser has a clean source."
+// The reference data-flow page puts the "Paraphraser service" in the control
+// plane, beside the orchestrator, which "issue[s] tasks (and paraphrased
+// variants) to the VLA"; that plane is "gRPC + mTLS".
+//
+// Templated NL in, validated paraphrases out: every paraphrase in a reply has
+// passed guardrail.paraphraser.validate against the text sent, and the reply
+// names the validator (validator_digest) and the stored set (store_digest) it
+// came from.
+//
+// Implementation: guardrail/paraphraser_service.py. Generated stubs, committed
+// (regenerate after any change here, from the repository root):
+//
+//   python -m grpc_tools.protoc -I . --python_out=. --grpc_python_out=. \
+//       guardrail/protos/paraphraser.proto
+//
+// grpcio-tools 1.84.0 writes protobuf gencode 7.35.1, as for harness.proto.
+
+syntax = "proto3";
+
+package guardrail.paraphraser.v1;
+
+service Paraphraser {
+  // n validated paraphrases of `text`, chosen by `seed` (the run's
+  // random_seed): the same (text, n, seed, backend) gives the same reply.
+  rpc Paraphrase(ParaphraseRequest) returns (ParaphraseReply);
+  // The validator alone: is `candidate` a faithful, different wording of
+  // `source`? For a client that authors its own candidates (an LLM run).
+  rpc Validate(ValidateRequest) returns (Verdict);
+  // Which validator and which stored set this server answers with.
+  rpc GetStatus(StatusRequest) returns (Status);
+}
+
+message ParaphraseRequest {
+  string text = 1;               // the templated NL (or a mission text)
+  uint32 n = 2;                  // how many; never padded, never short
+  int64 seed = 3;
+  string backend = 4;            // "auto" (default), "stored", "template", "llm:<id>"
+  bool include_canonical = 5;    // also return the source as the identity arm
+}
+
+message ParaphraseRecord {
+  string paraphrase_id = 1;
+  string source_id = 2;
+  string backend = 3;            // which backend served it ("identity" for the canonical arm)
+  int32 index = 4;               // its index in that backend's own set
+  int64 seed = 5;
+  string text = 6;
+  string text_sha256 = 7;
+  string source_sha256 = 8;
+  double novelty = 9;
+  string fallback_from = 10;     // "stored" when "auto" fell back to the template bank
+}
+
+message Refusal {
+  string backend = 1;
+  int32 index = 2;
+  string text = 3;
+  repeated string reasons = 4;
+}
+
+message ParaphraseReply {
+  string source_id = 1;
+  string source_text = 2;        // the text as normalised
+  repeated ParaphraseRecord paraphrases = 3;
+  ParaphraseRecord canonical = 4;    // set only when include_canonical
+  repeated Refusal refusals = 5;     // candidates the validator refused on the way
+  string validator_digest = 6;
+  string store_digest = 7;
+}
+
+message ValidateRequest {
+  string source = 1;
+  string candidate = 2;
+}
+
+message Verdict {
+  bool ok = 1;
+  repeated string reasons = 2;
+  double novelty = 3;
+  double length_ratio = 4;
+  string validator_digest = 5;
+}
+
+message StatusRequest {}
+
+message Status {
+  string validator_digest = 1;
+  string store_digest = 2;
+  uint32 stored_sources = 3;
+  uint32 stored_paraphrases = 4;
+  repeated string backends = 5;
+  string places_source = 6;
+}

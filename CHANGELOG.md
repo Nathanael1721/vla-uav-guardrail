@@ -55,6 +55,170 @@ shipped change and recorded as one.
   sequential test-list run (only parallel discovery runs were made; all
   133 runners passed there except two load-sensitive timing tests that
   pass alone).
+### 2026-11-02 — the Paraphraser becomes a separate gRPC service; a new probe set written before the validator was read; the validator's held-out misses fixed by mechanism; the four C8 sets re-authored
+
+Audit WP2-13, WP4-10, ARCH-23. The work went in five steps:
+
+1. A new probe set was written and committed (f366913) before the validator
+   was read.
+2. The misses on heldout_2026_10_28 were fixed by mechanism (1e79168).
+3. Those fixes were measured on the new set: the held-out figure.
+4. The new set's own misses were fixed (7f76691).
+5. The stale sets were re-authored (b05cfbb) and the service added (01df1b1).
+
+#### Added
+- **`guardrail/paraphraser_service.py`: the Paraphraser as a separate
+  service.** The grant calls it a "separate service" (Prefix Compiler page),
+  in a control plane that is "gRPC + mTLS" (data-flow page). The service
+  follows `harness_service.py`'s pattern:
+  - a plain-Python core;
+  - a servicer onto committed stubs (`guardrail/protos/paraphraser.proto`:
+    `Paraphrase`, `Validate`, `GetStatus`);
+  - mutual TLS from the harness lab PKI, with a client common-name allow-list
+    (default `harness-client`); plaintext is allowed on loopback only;
+  - a client, and a CLI (`serve`, `paraphrase`, `validate`, `status`).
+
+  Templated NL goes in and validated paraphrases come out. Each paraphrase
+  has passed `validate()` against the text sent, and is checked again before
+  the reply goes. The reply carries the validator and store digests and the
+  candidates refused on the way. The paraphraser's errors arrive as gRPC
+  codes: an unknown source is NOT_FOUND, n beyond the set is OUT_OF_RANGE, a
+  protected prompt is FAILED_PRECONDITION. No new dependency: the stubs use
+  the harness extra's grpcio, protobuf and grpcio-tools 1.84.0 (gencode
+  7.35.1). `tests/test_paraphraser_service.py` 8/8 checks five things:
+  - the service returns the same ids over the wire as in process;
+  - the error codes;
+  - the stale-stub check;
+  - plaintext is refused off loopback;
+  - an off-list client is PERMISSION_DENIED, and a client with no
+    certificate is refused at the handshake.
+
+  The file is in the CI loop and its header, and in the two harness jobs'
+  `no_skip`.
+- **`experiments/paraphrases/heldout_2026_11_02/`: 94 probes** (50 meaning
+  changes, 44 faithful) over 17 sources: the 14 current renderings, with the
+  post-C8 wording, plus 3 policy fixtures the store never paraphrased.
+  - **Who and when.** Written by Claude (claude-opus-5-5), the agent that
+    then fixed the validator, before it read the validator, its tests, the
+    design doc or any earlier probe. Committed before any measurement.
+  - **README.** It records what the author had read and the labelling rule.
+    The rule counts a stricter rule as a change too, and avoids
+    strict-versus-non-strict swaps.
+  - **Loading.** `load_probes` reads a set kept in a folder of its own.
+- **Tests for every mechanism below.** Each uses wordings of its own and
+  failed before its fix. `tests/test_paraphraser.py` 103/103.
+
+#### Fixed
+- **The mechanisms behind heldout_2026_10_28's seven misses** (1e79168):
+  - two meaning changes it accepted:
+    - a limit on one speed component ("horizontal speed");
+    - a time zone on the window ("07:30-17:30 UTC");
+  - five faithful wordings it refused:
+    - one distance shared by two subjects ("from any building as well as
+      from anything you are following", or "..., and from ...");
+    - a "respectively" list (read both ways round; one that does not pair up
+      is refused);
+    - a relative clause that only restates the position ("the waypoint that
+      lies 120 m ahead");
+    - "someone" for "a person";
+    - a negation carried across ", or".
+- **The mechanisms behind heldout_2026_11_02's misses** (7f76691):
+  - one meaning change it accepted: a count on the object ("follow two
+    people");
+  - faithful wordings it refused:
+    - "20 m either side of the centerline" (read as a target);
+    - the C8 stand-off said as a condition ("when the thing you are following
+      is a pedestrian", "if it is a pedestrian, ...") and a topic picked up by
+      "it";
+    - "a pedestrian you follow";
+    - zone lists that state their ruling once ("Keep out of zones 'a', 'b'
+      and 'c'");
+    - "fly at 35-55 m";
+    - compass spellings of a registry place ("north-east pad", "the pad in
+      the northeast");
+    - a go-to verb with "at cruise altitude" before "to".
+- **Two gaps the mutation test found on the re-authored sets** (b05cfbb):
+  - "fly at 12 m to 28 m distance" was read as an altitude. That bug came
+    from the step before.
+  - "stay outside 3 m/s or less" passed as a 3 m/s cap.
+
+#### Changed
+- **The four sets stale since C8 are re-authored** (b05cfbb):
+  csp_sitl_pedestrian, csp_follow_car_citylife, csp_follow_pedestrian and
+  csp_follow_car_citylife_nfz.
+  - **What was written.** 32 new paraphrases by Claude (claude-opus-5-5),
+    keyed on compile_csp's current text. Each file's provenance names the
+    set it replaces and says the author was validator-aware.
+  - **Checked.** All 32 pass against both renderings, and `stale` lists 0
+    texts without a set, of 21.
+  - **Test changes.** `STALE_SINCE_C8` is empty. Two store tests now accept
+    the new provenance and the four revision notes left.
+- **Decision reversed: "north-east pad" names the registry's "northeast
+  pad".** It was refused as a renamed place, and a test pinned that. It is
+  the same pad to a reader; another compass point is still refused.
+- **`docs/data/progress_oct.json`: the paraphraser section now says 3977
+  mutants, not 3979.** `tests/test_build_progress_oct_data.py` requires that
+  section to equal the live validation report. The re-authored sets yield 2
+  fewer mutants. The October deck as sent on 27 October is unchanged; a
+  rebuild would print 3977/3977. The other sections were not regenerated:
+  `--verify` needs flight output that a worktree does not have.
+- `docs/DESIGN-paraphraser.md` and `docs/FINAL-REPORT-outline.md` (Appendix A
+  and section 4.2) say all of the above. **WP2-13 is DONE**: the separate
+  service fed by the templated NL now exists, and the KPI is WP4-09.
+  **WP4-10 and ARCH-23 stay PARTIAL**: nothing issues the paraphrases to a
+  VLA, and the service landed after the Aug-Oct window. The totals are 41
+  DONE and 80 PARTIAL. The WP2 and WP4 section counts in Appendix A were
+  behind their tables (11/8, 3/17) and now match them (13/6, 4/16).
+
+#### Found
+| Probe set | false accepts | false refusals |
+|---|---|---|
+| heldout_2026_10_28 (held out until today) | 2/20 -> 1/20 (dev now) | 5/20 -> 0/20 |
+| heldout_2026_11_02, before any change | 1/50 | 18/44 |
+| heldout_2026_11_02, after the 10_28 fixes only (**held-out figure**) | 1/50 | 14/44 |
+| heldout_2026_11_02, after its own fixes (dev) | 0/50 | 3/44 |
+| review_2026_10_06 (dev) | 0/28 | 3/30 -> 2/30 |
+| heldout_2026_10_06, _10_21, _10_21b (dev) | 0/30, 0/22, 0/12 | 2/30, 1/22, 2/12, unchanged |
+| stored paraphrases accepted; mutants refused | 112/112; 3977/3977 | - |
+
+- **heldout_2026_10_28's one remaining accept is a labelling disagreement,
+  not a missed slot.** The probe offers "under 3 m/s" for "at or below
+  3 m/s". Before today it was refused, but only because of the merged
+  distance in the same candidate. The validator reads strict and non-strict
+  bounds alike by design, and so do the stored set and the new probes.
+- **heldout_2026_11_02's three refusals are all intended.** Two candidates
+  are near-identical, below the novelty floor. The third folds zones into a
+  range ("'nfz-edge-1' through 'nfz-edge-4'"), which is refused on purpose:
+  two ids are no longer named.
+- **Re-authoring found an open false refusal.** "The following limits apply"
+  reads its adjectival "following" as the follow action. One of the 32 was
+  reworded around it; the validator is not changed for it.
+- **The full CI list ran here (vla-real, the worktree): 134 files, one
+  failure**, `tests/test_wp4outputs_harness.py`
+  `test_an_idle_session_expires_and_frees_its_slot`. It is a wall-clock
+  test: a 0.3 s idle TTL kept alive by calls 0.15 s apart. It failed 2 of 3
+  runs on this branch and 2 of 4 on the base commit 2290aff (exported with
+  `git archive`), so it is a timing flake on this machine, not this change.
+  The deck, tracker and replay tests SKIP in a worktree, as expected.
+
+#### Limits
+- **No held-out estimate exists for the validator as it now stands.**
+  heldout_2026_10_28 was tuned on today and is a dev set. heldout_2026_11_02
+  was held out only for the first round of fixes; its own misses were then
+  tuned on. Its author also wrote the fixes, so it was never independent of
+  the code. The next honest number needs a set written by someone else, after
+  this commit.
+- **The stress harness does not use the service yet.** It is the reference
+  design's orchestrator, and it still draws paraphrase arms in-process
+  (`harness_service.py` imports `guardrail.paraphraser`). Binding it to the
+  service is a change in that module, not made here.
+- **The per-paraphrase robustness KPI is still unmeasured.** No pilot reads
+  the paraphrases in flight; that needs a text-reading VLA (WP4-09).
+- **No person has read the stored paraphrases yet**, the 32 new ones
+  included.
+- **Unfinished when the session ended.** All five steps of the protocol are
+  done and committed. Open are the items above, and the adjectival
+  "following" false refusal (validator not changed).
 
 ### 2026-11-02 — the October deck's presenter cheat-sheet, committed
 

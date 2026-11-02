@@ -338,6 +338,7 @@ _FOLLOWER = (r"(?:that\s+|which\s+|who\s+|whom\s+)?(?:you|it|we|the\s+drone|"
              rf"the\s+aircraft)(?:'re|'s|\s+are|\s+is)?\s+(?:currently\s+|now\s+)?"
              rf"{_FOLLOW_V}\b")
 _FOLLOWED_AS = r"(?:followed|tracked|tailed|pursued)"
+_FOLLOWED_DET = r"(?:the|an?|any|whichever)"
 _OBJECTS = [
     # The stand-off rule's subject is a wildcard: the compiler renders
     # `subject_class: "*"` as "anything you are following"
@@ -347,13 +348,16 @@ _OBJECTS = [
     # right on a car mission, wrong the day the same policy is flown behind a
     # person - so a named class is its own slot, matched first, and only a
     # class-free phrase is the wildcard.
+    # "the", and since 2026-11-02 "a" / "any" too: "at least 10 m from a
+    # pedestrian you follow" is the same followed-class rule
+    # (heldout_2026_11_02 read it as every pedestrian plus a follow verb).
     ("followed_person",
-     rf"(?:anyone|whoever|the\s+(?:person|pedestrian|individual|human|man|woman))"
+     rf"(?:anyone|whoever|{_FOLLOWED_DET}\s+(?:person|pedestrian|individual|human|man|woman))"
      rf"\s+{_FOLLOWER}|{_FOLLOWED_AS}\s+(?:person|pedestrian|individual)\b"),
     ("followed_car",
-     rf"the\s+(?:car|automobile)\s+{_FOLLOWER}|{_FOLLOWED_AS}\s+(?:car|automobile)\b"),
+     rf"{_FOLLOWED_DET}\s+(?:car|automobile)\s+{_FOLLOWER}|{_FOLLOWED_AS}\s+(?:car|automobile)\b"),
     ("followed_vehicle",
-     rf"the\s+vehicle\s+{_FOLLOWER}|{_FOLLOWED_AS}\s+vehicle\b"),
+     rf"{_FOLLOWED_DET}\s+vehicle\s+{_FOLLOWER}|{_FOLLOWED_AS}\s+vehicle\b"),
     ("followed",
      rf"(?:anything|whatever|everything|what|whichever\s+\w+|"
      rf"the\s+(?:thing|object|one|subject|target))\s+{_FOLLOWER}"
@@ -368,7 +372,11 @@ _OBJECTS = [
     ("pedestrian",
      r"pedestrians?\b|(?:people|persons|anyone|someone|somebody|anybody|nobody|"
      r"person)\s+(?:on\s+foot|walking)\b|walkers?\b"),
-    ("person", r"persons?\b|people\b|individuals?\b|humans?\b"),
+    # "someone" is a person (heldout_2026_10_28 refused "Follow someone." for
+    # "follow a person", 2026-11-02); "someone walking" is matched above as a
+    # pedestrian, and "anyone you are following" as the followed person.
+    ("person", r"persons?\b|people\b|individuals?\b|humans?\b|some(?:one|body)\b|"
+               r"any(?:one|body)\b"),
     ("building", r"buildings?\b|structures?\b"),
     ("car", r"cars?\b|automobiles?\b"),
     ("vehicle", r"vehicles?\b"),
@@ -421,13 +429,15 @@ _DIRECTION_RES = [(c, re.compile(rf"\b(?:{p})\b")) for c, p in _DIRECTIONS]
 
 _ACTIONS = [
     # "fly at 6 m/s to the pad" is the same goto as "fly to the pad at 6 m/s":
-    # a quantity (already a placeholder here) may sit between verb and "to".
+    # a quantity (already a placeholder here) may sit between verb and "to" -
+    # and since 2026-11-02 a named reference, commas and all ("Make your way,
+    # at cruise altitude, to the waypoint"; heldout_2026_11_02).
     ("goto",
      r"(?:fly|go|head|travel|proceed|move|make\s+(?:your|its)\s+way|get|navigate|"
      r"cruise|transit|take\s+(?:yourself|the\s+(?:drone|aircraft))|"
      r"bring\s+(?:yourself|the\s+(?:drone|aircraft)))(?:\s+(?:(?:over|on|across|"
-     r"directly)\s+)?(?:to|towards?|for)\b|(?=\s+(?:at\s+)?⟦q\d+⟧\s+(?:(?:over|on|"
-     r"across|directly)\s+)?(?:to|towards?|for)\b))|\breach(?:es|ing)?\b|"
+     r"directly)\s+)?(?:to|towards?|for)\b|(?=\s*,?\s*(?:at\s+)?⟦(?:q|ref)\d+⟧\s*,?\s*"
+     r"(?:(?:over|on|across|directly)\s+)?(?:to|towards?|for)\b))|\breach(?:es|ing)?\b|"
      r"\barrive\s+at\b|\bdestination\b"),
     ("stop", r"stop(?:s|ped|ping)?\b|halt(?:s|ed|ing)?\b"),
     ("follow",
@@ -469,7 +479,11 @@ _MIN_AFTER = [("or", "more"), ("or", "higher"), ("or", "above"), ("or", "greater
 _MAX_AFTER = [("or", "less"), ("or", "lower"), ("or", "below"), ("or", "under"),
               ("or", "slower"), ("or", "fewer"), ("max",), ("maximum",),
               ("at", "most"), ("at", "the", "most"), ("at", "maximum"),
-              ("at", "the", "maximum"), ("tops",), ("top",)]
+              ("at", "the", "maximum"), ("tops",), ("top",),
+              # "20 m either side of the centerline": how far off the line it
+              # may go, a tolerance (heldout_2026_11_02 read it as a target)
+              ("either", "side"), ("each", "side"), ("on", "either", "side"),
+              ("on", "each", "side"), ("to", "either", "side")]
 _NOUN_MIN = {"buffer", "gap", "margin", "berth", "cushion", "clearance",
              "clearances", "separation", "standoff", "spacing", "distance"}
 _VERTICAL_CUES = {"above", "below", "over", "under", "beneath"}
@@ -488,6 +502,14 @@ _RESET = {"stay", "stays", "keep", "keeps", "remain", "remains", "hold", "holds"
           "fly", "cruise", "go", "ensure", "make", "give", "leave", "leaving"}
 _ARTICLES = {"a", "an", "the", "any", "every", "all", "its", "your", "each"}
 _SEPS = {",", "or", "nor", "and"}
+# All a clause of a zone list may say besides its ids ("..., 'nfz-b' or
+# 'nfz-c'"; see extract_slots).
+_ID_LIST_WORDS = _ARTICLES | {"zone", "zones", "area", "areas", "or", "and", ",", "also",
+                              "both", "either"}
+# All a clause may say to only add a subject to the distance before it ("...,
+# and also from anything you are following"; see extract_slots).
+_ELLIPSIS_WORDS = _ARTICLES | {"from", "of", "to", "away", "also", "too", "as", "well",
+                               "both", "likewise", "similarly"}
 
 # What a quantity limits. Filtered by unit: an altitude word next to a m/s
 # number says nothing about that number.
@@ -503,6 +525,15 @@ _ATTRS = {
 }
 _ATTR_RES = {k: re.compile(v) for k, v in _ATTRS.items()}
 _SPEED_NOUN = re.compile(r"\b(?:speeds?|velocity|airspeed|groundspeed|pace)\b")
+# One component of the speed: the compiler's speed cap is on the whole speed,
+# so "horizontal speed at or below 12 m/s" leaves the vertical part free - a
+# narrowed limit (heldout_2026_10_28 accepted it, 2026-11-02). "forward" and
+# "sideways" are direction slots, which a CSP source does not have, so they are
+# refused there already.
+_SPEED_COMPONENT = re.compile(
+    r"\b(?:horizontal|lateral|longitudinal|transverse|translational|planar|"
+    r"cross[- ]?track|along[- ]?track|in[- ]plane)\s+(?:air\s*|ground\s*)?"
+    r"(?:speeds?|velocit(?:y|ies)|pace)\b")
 _UNIT_TAGS = {
     "m": {"altitude", "lateral", "offset"}, "ft": {"altitude", "lateral", "offset"},
     "km": {"altitude", "lateral", "offset"},
@@ -566,6 +597,29 @@ _DAY_ONE = re.compile(rf"\b(?P<a>{_DAY})s?\b|\b(?P<grp>weekdays?|weekends?)\b")
 _TIME = re.compile(r"\b(?P<h>[01]?\d|2[0-3])(?::(?P<m>[0-5]\d))?\s*(?P<ap>a\.?m\.?|p\.?m\.?)"
                    r"(?![a-z])|\b(?P<h2>[01]?\d|2[0-3]):(?P<m2>[0-5]\d)\b")
 _INVERT = re.compile(r"\b(?:except|excluding|other\s+than|apart\s+from|but\s+not)\b")
+# A time zone named on a window. The compiler's window is on the policy's own
+# clock and names no zone, so "07:30-17:30 UTC" moves it (eight hours, in
+# Taipei): heldout_2026_10_28 accepted it (2026-11-02). Any explicit zone is a
+# slot, compared like the days and times; "local time" names none.
+_TZ = re.compile(
+    r"\b(?P<z>utc|gmt|zulu)(?:\s*(?P<off>[+-]\s*\d{1,2}(?::?\d\d)?))?(?![\w:])"
+    r"|\b(?P<abbr>cst|cdt|est|edt|mst|mdt|pst|pdt|cet|cest|eet|eest|bst|jst|kst|"
+    r"hkt|sgt|aest|aedt|nzst|nzdt)\b"
+    r"|\b(?P<city>(?:taipei|taiwan|tokyo|japan|beijing|china|hong\s+kong|singapore|"
+    r"london|paris|berlin|new\s+york|pacific|eastern|central|mountain|atlantic|"
+    r"greenwich))\s+(?:standard\s+|daylight\s+)?time\b")
+
+
+def _timezones(t: str) -> list[str]:
+    out = []
+    for m in _TZ.finditer(t):
+        if m.group("z"):
+            z = "utc" if m.group("z") in ("utc", "gmt", "zulu") else m.group("z")
+            off = re.sub(r"\s+", "", m.group("off") or "")
+            out.append(z + off)
+        else:
+            out.append(re.sub(r"\s+", " ", m.group("abbr") or m.group("city")))
+    return sorted(out)
 
 # Softeners. A hard rule reworded as "try to stay below 4 m/s" or "ideally
 # above 10 m" is a different rule: the Shield will still enforce it, but the
@@ -712,6 +766,7 @@ class Slots:
     refs: set = field(default_factory=set)             # named references ("cruise altitude")
     neg_refs: set = field(default_factory=set)
     inverted_schedule: bool = False
+    timezones: list = field(default_factory=list)      # "utc", "utc+8", "pst", ... (_TZ)
     hedges: list = field(default_factory=list)
     conditions: list = field(default_factory=list)     # "if", "unless", "sched:while", ...
     overrides: list = field(default_factory=list)      # "ignore", "optional", ...
@@ -750,6 +805,27 @@ def _places() -> list[str]:
                         e, _PLACES_FALLBACK)
         _places_cache = sorted(names, key=len, reverse=True)
     return _places_cache
+
+
+_COMPASS_FORMS = {"northeast": r"north[- ]?east", "northwest": r"north[- ]?west",
+                  "southeast": r"south[- ]?east", "southwest": r"south[- ]?west",
+                  "north": "north", "south": "south", "east": "east", "west": "west"}
+
+
+def _place_pattern(name: str) -> str:
+    """A registry name in the words a paraphrase uses for it. "northeast pad"
+    is also "the north-east pad", "the north east pad", "the northeastern pad"
+    and "the pad in / at the northeast (corner)" (2026-11-02:
+    heldout_2026_11_02 and the review set refused these). Another compass
+    point is another place, and the longest names are matched first, so "the
+    pad in the north" is the north pad, not part of the northeast one."""
+    words = name.split()
+    if len(words) >= 2 and words[0] in _COMPASS_FORMS:
+        comp = _COMPASS_FORMS[words[0]] + r"(?:ern)?"
+        rest = r"\s+".join(re.escape(w) for w in words[1:])
+        return (rf"\b(?:{comp}\s+{rest}|{rest}\s+(?:in|on|at|to)\s+the\s+{comp}"
+                rf"(?:\s+(?:corner|side|end|part|edge))?)\b")
+    return rf"\b{re.escape(name)}\b"
 
 
 _PLACE_RELATIVE = {"from", "near", "past", "beside", "beyond", "around", "behind",
@@ -1029,6 +1105,13 @@ _NARROW_ADJ = frozenset(_SHADES | {
     "first", "second", "third", "last", "next", "lead", "leading", "other",
     "nearest", "closest", "farthest", "furthest", "sports", "police", "delivery",
     "electric", "private", "public", "residential", "commercial"})
+# A count on the object: "follow two people" is not "follow a person"
+# (heldout_2026_11_02 accepted it, 2026-11-02). Read with or without a
+# determiner; digits are quantities and are compared as such.
+_COUNT_WORDS = frozenset({
+    "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "both",
+    "several", "multiple", "many", "few", "couple", "pair", "dozen", "dozens",
+    "group", "groups", "crowd", "numerous", "various"})
 _RELATIVIZERS = frozenset({"who", "that", "which", "whom", "whose"})
 _COLOUR_CLAUSE = frozenset({"is", "are", "was", "were", "be", "being", "coloured",
                             "colored", "painted", "'s"})
@@ -1071,6 +1154,24 @@ _NOT_PARTICIPLE = frozenset({"during", "including", "excluding", "regarding",
 # faithful by construction. "a person STANDING on the sidewalk" is not one.
 _POSITION_PARTICIPLES = frozenset({"located", "sitting", "situated", "positioned",
                                    "lying", "placed", "set"})
+# The same for a relative clause (2026-11-02: heldout_2026_10_28 refused "the
+# waypoint that lies 120 metres in front of you" as a narrowed waypoint): when
+# all the clause says, through a copula or a verb of position, is a slot the
+# comparison already reads, it restates where the object is. "a person who is
+# waving" or "the waypoint that is marked" still narrow.
+_POSITION_VERBS = frozenset(_POSITION_PARTICIPLES | {
+    "is", "are", "'s", "was", "lies", "lie", "sits", "sit", "stands", "stand",
+    "directly", "exactly", "just", "currently", "now"})
+
+
+def _restates_position(after: list[str], reg: dict) -> bool:
+    """`after` is the relative clause after its relativizer."""
+    for x in after:
+        if x in reg:
+            return reg[x][0] in ("q", "coord", "place", "dir", "ref")
+        if x not in _POSITION_VERBS:
+            return False
+    return False
 
 
 def _superlative(w: str) -> bool:
@@ -1104,7 +1205,8 @@ def _narrowings(ctoks: list[str], i: int, reg: dict) -> list[str]:
     if det:
         out += [f"mod:{m}" for m in mods if m not in _NEUTRAL_MODS]
     else:
-        out += [f"mod:{m}" for m in mods if m in _NARROW_ADJ or _superlative(m)]
+        out += [f"mod:{m}" for m in mods if m in _NARROW_ADJ or m in _COUNT_WORDS
+                or _superlative(m)]
     # after the noun
     if i + 1 < len(ctoks):
         t = ctoks[i + 1]
@@ -1113,7 +1215,9 @@ def _narrowings(ctoks: list[str], i: int, reg: dict) -> list[str]:
         if t in _RELATIVIZERS:
             content = [x for x in ctoks[i + 2:i + 7]
                        if not (x in reg and reg[x][0] == "col") and x not in _COLOUR_CLAUSE]
-            if content:
+            if _restates_position(ctoks[i + 2:i + 7], reg):
+                pass
+            elif content:
                 word = content[0] if content[0] not in reg else reg[content[0]][0]
                 out.append(f"rel:{word}")
         elif (re.fullmatch(r"[a-z]{3,}(?:ing|ed)", t) and t not in _NOT_PARTICIPLE
@@ -1142,6 +1246,50 @@ def _narrowings(ctoks: list[str], i: int, reg: dict) -> list[str]:
     return out
 
 
+# The C8 stand-off said as what it means: "at least 10 m when the thing you are
+# following is a pedestrian", "if it is a pedestrian, stay 10 m away". The
+# followed-class rule binds the followed subject WHILE it carries the class
+# (models.SubjectStandoff.binds), so the condition is the class, not a new
+# rule; heldout_2026_11_02 refused both forms (2026-11-02). The condition is
+# rewritten to the template's own noun phrase ("from the pedestrian you are
+# following") before anything else is read, so every slot check then applies
+# to it as usual - a condition on another class, or on something that is not
+# the followed subject, is left alone and refused as a condition.
+_FOLLOW_CLAUSE = r"(?:\s+(?:that\s+|which\s+)?you(?:'re|\s+are)?\s+(?:following|tracking|follow|track))"
+_CLASS_COND = re.compile(
+    rf"\b(?:when|if|whenever|while)\s+(?P<subj>(?:it|that|the\s+(?:thing|one|object)|"
+    rf"what(?:ever)?){_FOLLOW_CLAUSE}?|(?:the|your)\s+(?:subject|target)){_FOLLOW_CLAUSE}?"
+    rf"\s+is\s+an?\s+(?P<cls>pedestrian|person|car|automobile|vehicle)\b(?P<comma>\s*,)?")
+_CLAUSE_END = re.compile(r"[.;!?](?!\d)")
+
+
+def _class_conditions(t: str) -> str:
+    pos = 0
+    while True:
+        m = _CLASS_COND.search(t, pos)
+        if m is None:
+            return t
+        subj = m.group("subj")
+        named = (re.search(r"\b(?:subject|target)\b", subj)
+                 or re.search(_FOLLOW_CLAUSE + "$", subj))
+        # a bare "it" / "that" / "the thing" must point back at the subject
+        # being followed, named shortly before
+        if not named and not re.search(r"\b(?:follow|track)\w*", t[max(0, m.start() - 120):m.start()]):
+            pos = m.end()
+            continue
+        noun = {"automobile": "car"}.get(m.group("cls"), m.group("cls"))
+        phrase = f"from the {noun} you are following"
+        if m.group("comma"):
+            # condition first: "if it is a pedestrian, stay 10 m away" ->
+            # "stay 10 m away from the pedestrian you are following"
+            e = _CLAUSE_END.search(t, m.end())
+            e = e.start() if e else len(t)
+            t = t[:m.start()] + t[m.end():e].strip() + " " + phrase + t[e:]
+        else:
+            t = t[:m.start()] + phrase + t[m.end():]
+        pos = m.start()
+
+
 def _negated_before(ctoks: list[str], i: int, reg: dict) -> bool:
     """An action or direction under a negation in its own clause: "do not
     follow", "never track", "stop following", "do not fly forward"."""
@@ -1157,13 +1305,14 @@ def extract_slots(text: str, known_ids: Iterable[str] = ()) -> Slots:
 
     `known_ids` are identifiers from the source: in a paraphrase they count
     whether or not they kept their quotes ("the nfz-square zone")."""
-    t = _norm(text)
+    t = _class_conditions(_norm(text))
     slots = Slots()
     slots.words = re.findall(r"[a-z0-9]+(?:['.\-][a-z0-9]+)*", t)
     slots.hedges = [m.group(0) for m in _HEDGE.finditer(t)]
     slots.conditions = _conditions(t)
     slots.overrides = [re.sub(r"\s+", " ", m.group(0)) for m in _OVERRIDE.finditer(t)]
     slots.soft = len(_SOFT.findall(t))
+    slots.timezones = _timezones(t)
     reg: dict[str, Any] = {}
 
     def put(kind: str, payload: Any) -> str:
@@ -1178,7 +1327,7 @@ def extract_slots(text: str, known_ids: Iterable[str] = ()) -> Slots:
     t = _QUOTED_ID.sub(lambda m: put("id", m.group("id")), t)
     # 2. named places (the compiler resolves them by substring)
     for name in _places():
-        t = re.sub(rf"\b{re.escape(name)}\b", lambda m, n=name: put("place", n), t)
+        t = re.sub(_place_pattern(name), lambda m, n=name: put("place", n), t)
     # 3. coordinates
     t = _COORD_PAREN.sub(lambda m: put("coord", (float(m.group("x")),
                                                   float(m.group("y")))), t)
@@ -1242,9 +1391,12 @@ def extract_slots(text: str, known_ids: Iterable[str] = ()) -> Slots:
     chunks.append({"toks": cur, "sent": sent, "brk": None})
 
     prev_q: dict | None = None
+    ph_q: dict[str, list[int]] = {}                    # quantity placeholder -> its Quantity indices
     last_ids: tuple | None = None                      # (sentence, ids) of the last id clause
     sched: list[tuple[int, str, str]] = []             # (sentence, kind, value)
     ids_in: dict[int, set] = {}
+    id_chunks: dict[int, dict] = {}                    # clause -> its ids, ruling, bare?
+    topic: dict | None = None                          # "Whatever you are following, ..."
     pending_band: list[tuple[int, int]] = []           # (quantity index, sentence)
     for ci, ch in enumerate(chunks):
         ctoks = ch["toks"]
@@ -1282,6 +1434,9 @@ def extract_slots(text: str, known_ids: Iterable[str] = ()) -> Slots:
                 pol = pol or _chunk_polarity(ctoks, reg, len(restricted_at))
                 slots.ids.setdefault(payload, []).append(pol)
                 slots.id_sents.add(ch["sent"])
+                id_chunks[ci] = {"sent": ch["sent"], "ids": chunk_ids, "pol": pol,
+                                 "bare": all(reg.get(x, ("",))[0] == "id" or x in _ID_LIST_WORDS
+                                             for x in ctoks)}
             elif kind == "place":
                 # "to the pad" vs "away from / past / near the pad": the same
                 # name in a different role is a different destination
@@ -1335,6 +1490,8 @@ def extract_slots(text: str, known_ids: Iterable[str] = ()) -> Slots:
             if kind == "range":
                 lo, hi, unit = payload
                 tags = _tags(W, A, unit, reg, None)
+                if not tags and unit in ("m", "ft") and _flown_at(W, A, reg):
+                    tags = frozenset({"altitude"})
                 # "between 10 m and 20 m is forbidden" names the band to stay OUT of
                 if _range_inverted(W) != (trail == "prohibit"):
                     slots.quantities.append(Quantity(lo, unit, "max", tags))
@@ -1367,15 +1524,89 @@ def extract_slots(text: str, known_ids: Iterable[str] = ()) -> Slots:
                 # "altitude at least 10 m and at most 20 m": the second limit
                 # carries the first one's attribute when it adds no word of its own
                 tags = prev_q["tags"]
-            slots.quantities.append(Quantity(value, unit, bound, tags, negated))
+            if not tags and unit in ("m", "ft") and _flown_at(W[cut + 1:], A, reg):
+                tags = frozenset({"altitude"})
+            # "Whatever you are following, keep at least 5 m away from it": the
+            # distance is kept from the clause's topic (2026-11-02)
+            if (unit in ("m", "ft", "km") and topic is not None
+                    and topic["sent"] == ch["sent"]
+                    and not any(x.startswith("obj:") for x in tags)
+                    and set(_plain(W[cut + 1:] + _head(A), reg)) & {"it", "them"}):
+                tags = frozenset(set(tags) | {"obj:" + o for o in topic["objs"]})
+            # "at least 5 m from any building as well as from anything you are
+            # following": one distance kept from two subjects is two rules, one
+            # per subject (heldout_2026_10_28 refused it as one rule with a
+            # merged subject, 2026-11-02). A subject the source does not have
+            # is then an added rule, refused as such.
+            objs = sorted(x for x in tags if x.startswith("obj:"))
+            ph_q[ctoks[p]] = []
+            for o in (objs if len(objs) > 1 else [None]):
+                qtags = tags if o is None else frozenset(set(tags) - set(objs) | {o})
+                ph_q[ctoks[p]].append(len(slots.quantities))
+                slots.quantities.append(Quantity(value, unit, bound, qtags, negated))
             prev_q = {"bound": bound, "negated": negated, "chunk": ci,
-                      "sent": ch["sent"], "tags": tags, "unit": unit}
+                      "sent": ch["sent"], "tags": tags, "unit": unit, "value": value}
+        # a clause that is nothing but an object is a topic for the pronoun of
+        # a later clause in its sentence ("Whatever you are following, ...")
+        if not qpos:
+            objs_here = [reg[x][1] for x in ctoks if reg.get(x, ("",))[0] == "obj"]
+            if objs_here and all(x in _ARTICLES or reg.get(x, ("",))[0] == "obj"
+                                 for x in ctoks):
+                topic = {"sent": ch["sent"], "objs": objs_here}
+        # "... at least 5 m from any building, and (also) from anything you are
+        # following": a clause with no number of its own that only names a
+        # further subject for the distance just stated (2026-11-02).
+        if (not qpos and prev_q is not None and prev_q.get("value") is not None
+                and prev_q["sent"] == ch["sent"] and prev_q["bound"] in ("min", "max")
+                and all(not chunks[k]["toks"] for k in range(prev_q["chunk"] + 1, ci))
+                and chunks[ci - 1]["brk"] in (",", "and")
+                and any(x.startswith("obj:") for x in prev_q["tags"])):
+            more = [reg[tk][1] for tk in ctoks if reg.get(tk, ("",))[0] == "obj"]
+            plain = _plain(ctoks, reg)
+            if (more and len(more) + len(plain) == len(ctoks)
+                    and set(plain) & {"from", "of", "to"}
+                    and set(plain) <= _ELLIPSIS_WORDS):
+                keep = frozenset(x for x in prev_q["tags"] if not x.startswith("obj:"))
+                for o in more:
+                    slots.quantities.append(Quantity(prev_q["value"], prev_q["unit"],
+                                                     prev_q["bound"], keep | {"obj:" + o},
+                                                     prev_q["negated"]))
+                prev_q = {**prev_q, "chunk": ci}
 
     # The compiler's corridor sentence ends "... and between 10 m and 20 m"
     # with no attribute word (templates/sentence/corridor.j2: those are the
     # corridor's altitude floor and ceiling). A bare metres band in the same
     # sentence as a stay-inside id is read as that altitude band - on both
     # sides - unless its own clause speaks of distance.
+    # A list of zones split by commas or "and" ("Keep out of zones 'a', 'b'
+    # and 'c'", "Zones 'a', 'b' and 'c' are no-go areas") states its ruling
+    # once, in one clause; the other clauses are bare ids. Each bare clause
+    # takes the ruling of the list it belongs to: the nearest clause of the
+    # same sentence, back first, then forward, through other bare ones
+    # (2026-11-02: heldout_2026_11_02 refused every folded list). A list
+    # member ruled otherwise ("..., but 'c' may be crossed") is not bare.
+    for ci, info in id_chunks.items():
+        if not info["bare"]:
+            continue
+        donor = None
+        for step in (-1, 1):
+            k = ci + step
+            while donor is None and 0 <= k < len(chunks):
+                if not chunks[k]["toks"]:
+                    k += step
+                    continue
+                other = id_chunks.get(k)
+                if other is None or other["sent"] != info["sent"]:
+                    break
+                if not other["bare"]:
+                    donor = other["pol"]
+                k += step
+            if donor is not None:
+                break
+        if donor is not None:
+            for zid in info["ids"]:
+                slots.ids[zid].append(donor)
+
     keep_in_sents = {sent for sent, ids in ids_in.items()
                      if any(_polarity_kind(slots.ids[i]) == "keep_in" for i in ids)}
     for qi, sent in pending_band:
@@ -1384,6 +1615,8 @@ def extract_slots(text: str, known_ids: Iterable[str] = ()) -> Slots:
                 q = slots.quantities[k]
                 slots.quantities[k] = Quantity(q.value, q.unit, q.bound,
                                                frozenset({"altitude"}), q.negated)
+
+    _respectively(chunks, reg, slots, ph_q)
 
     # A window belongs to the rule named in its sentence - or, for a follow-up
     # sentence ("This applies Mon-Fri ..."), the one named just before it.
@@ -1399,6 +1632,103 @@ def extract_slots(text: str, known_ids: Iterable[str] = ()) -> Slots:
         slots.schedule.append(("days", ",".join(d for d in _DAY_ORDER if d in days), key))
     slots.schedule.sort(key=lambda x: (x[0], x[1], sorted(x[2])))
     return slots
+
+
+def _attr_mentions(span: list[str], reg: dict) -> list[str]:
+    """The attributes and subjects named in `span`, in order: "climb rate and
+    turn rate" -> ["climb", "turn"]; "buildings and pedestrians" ->
+    ["obj:building", "obj:pedestrian"]. Cue words are not attributes."""
+    out: list[str] = []
+    i = 0
+    while i < len(span):
+        x = span[i]
+        if x in reg:
+            if reg[x][0] == "obj":
+                out.append("obj:" + reg[x][1])
+        elif x not in _CUE_WORDS:
+            hit = next((k for k, rx in _ATTR_RES.items() if rx.search(x)), None)
+            if hit:
+                out.append(hit)
+                # "climb rate", "vertical speed": one attribute (as in _tags)
+                if (hit in ("climb", "turn") and i + 1 < len(span)
+                        and re.fullmatch(r"speeds?|velocit(?:y|ies)|rates?", span[i + 1])):
+                    i += 1
+        i += 1
+    return out
+
+
+def _respectively(chunks: list[dict], reg: dict, slots: Slots,
+                  ph_q: dict[str, list[int]]) -> None:
+    """"climb rate and turn rate below 2 m/s and 45 deg/s respectively": pair
+    the attributes with the values in order (2026-11-02; heldout_2026_10_28
+    refused it, the 2 m/s having no attribute word of its own). Read both
+    ways round - attributes then values, or values then the subjects they are
+    kept from. A pairing that does not match the source is a changed rule,
+    refused by the quantity match; a count that does not pair up (three
+    attributes, two values) cannot be read, and its values are marked so that
+    they match nothing (fail closed)."""
+    sents: dict[int, list[str]] = {}
+    for ch in chunks:
+        toks = sents.setdefault(ch["sent"], [])
+        toks.extend(ch["toks"])
+        if ch["brk"] and ch["brk"] not in _SENT_BREAK:
+            toks.append(ch["brk"])
+    drop: set[int] = set()
+    vals_ok = _SEPS | _CUE_WORDS | {"respectively"}
+
+    def values_before(toks: list[str], j: int) -> tuple[list[str], int]:
+        vals = []
+        while j >= 0:
+            x = toks[j]
+            if x in ph_q:
+                vals.append(x)
+            elif x in reg or x not in vals_ok:
+                break
+            j -= 1
+        return vals[::-1], j
+
+    for toks in sents.values():
+        for r, tk in enumerate(toks):
+            if tk != "respectively":
+                continue
+            vals, j = values_before(toks, r - 1)
+            if len(vals) >= 2:
+                # attributes first: back to the previous number, or the start
+                k = j
+                while k >= 0 and not (toks[k] in reg and reg[toks[k]][0] in ("q", "range")):
+                    k -= 1
+                attrs = _attr_mentions(toks[k + 1:j + 1], reg)
+            else:
+                # values first: "5 m and 10 m from X and Y, respectively"
+                j = r - 1
+                objs = []
+                while j >= 0 and (toks[j] in _SEPS or toks[j] in _ARTICLES
+                                  or reg.get(toks[j], ("",))[0] == "obj"):
+                    if toks[j] in reg:
+                        objs.append("obj:" + reg[toks[j]][1])
+                    j -= 1
+                while j >= 0 and toks[j] in ("from", "of", "to", "away", "clear", "apart"):
+                    j -= 1
+                vals, _ = values_before(toks, j)
+                attrs = objs[::-1]
+            if len(vals) < 2:
+                continue
+            paired = len(attrs) == len(vals)
+            for ph, attr in zip(vals, attrs if paired else [None] * len(vals)):
+                idxs = ph_q[ph]
+                q = slots.quantities[idxs[0]]
+                keep = {x for x in q.tags if x not in _PAIRED_TAGS and not x.startswith("obj:")}
+                new = keep | ({attr} if paired else {"unpaired"})
+                slots.quantities[idxs[0]] = Quantity(q.value, q.unit, q.bound,
+                                                     frozenset(new), q.negated)
+                drop.update(idxs[1:])
+    if drop:
+        slots.quantities = [q for k, q in enumerate(slots.quantities) if k not in drop]
+
+
+# The tags a "respectively" pairing replaces.
+_PAIRED_TAGS = frozenset({"speed", "climb", "turn", "altitude", "lateral", "offset",
+                          "component", "descent"})
 
 
 def _day_key(word: str) -> str:
@@ -1448,6 +1778,24 @@ def _plain(tokens: list[str], reg: dict) -> list[str]:
     return [t for t in tokens if t not in reg]
 
 
+_FLY_VERBS = {"fly", "flying", "flies", "cruise", "cruising", "operate", "operating",
+              "hover", "hovering", "stay", "remain", "keep", "hold", "travel", "travelling"}
+
+
+def _flown_at(W: list[str], A: list[str], reg: dict) -> bool:
+    """"Fly at 35-55 m", "cruise at 12 to 28 m": metres with no attribute
+    word, right after "<flight verb> at", are the height flown at
+    (heldout_2026_11_02 refused "Fly at 35-55 m", 2026-11-02) - unless the
+    words after the number say what else they are ("12 m to 28 m distance",
+    "away"), or name an object.)"""
+    p = _plain(W, reg)
+    after = _head(A)
+    if (set(_plain(after, reg)) & (_DISTANCE_WORDS | _NOUN_MIN)
+            or any(reg.get(x, ("",))[0] == "obj" for x in after)):
+        return False
+    return len(p) >= 2 and p[-1] == "at" and p[-2] in _FLY_VERBS
+
+
 def _head(A: list[str]) -> list[str]:
     """The words after a quantity that still belong to it: up to the first
     list "or"/"nor" (but not "or less" / "or more", which are its cue)."""
@@ -1489,8 +1837,13 @@ def _bound(W: list[str], A: list[str], prev_q: dict | None, ci: int,
         # "never drop below 10 m or rise above 20 m": a negation carries across
         # an "or" inside one clause, and nowhere else - after a comma, "climb
         # slower than 2 m/s" is a new instruction, not the old one negated.
-        if (not negated and prev_q is not None and prev_q["chunk"] == ci
-                and prev_q["negated"] and _list_ors(W)
+        # A clause that STARTS with that "or" ("Never come closer than 10 m to
+        # X, or closer than 5 m to Y") is the same list after a comma
+        # (heldout_2026_10_28 read it as a ceiling, 2026-11-02).
+        same_list = (prev_q is not None and (
+            prev_q["chunk"] == ci
+            or (prev_q["chunk"] == ci - 1 and W[:1] == ["or"])))
+        if (not negated and same_list and prev_q["negated"] and _list_ors(W)
                 and not (set(W) & _RESET)):
             negated = True
         if negated:
@@ -1506,7 +1859,11 @@ def _bound(W: list[str], A: list[str], prev_q: dict | None, ci: int,
             for i, _, _c in _find_cues(head, cues_)]
     if hits:
         pol = min(hits)[1]
-        if tail_neg:
+        # "stay outside 3 m/s or less": what the bound allows is the place
+        # NOT to be, so the limit is its other side (the mutation test's
+        # "polarity:'stick to'" passed on the re-authored set, 2026-11-02)
+        outside = bool(set(W[cut + 1:][-2:]) & {"outside", "beyond"})
+        if tail_neg != outside:
             pol = "max" if pol == "min" else "min"
         return pol, tail_neg, None
     if adjacent and prev_q["bound"] in ("min", "max"):
@@ -1575,6 +1932,9 @@ def _tags(W: list[str], A: list[str], unit: str | None, reg: dict,
         if "climb" in found and re.search(r"\b(?:descen\w*|sink\w*)", text) and not \
                 re.search(r"\b(?:climb\w*|ascen\w*|ris(?:e|es|ing)|vertical\w*)", text):
             found.add("descent")
+        # Likewise a speed limit on one component only ("horizontal speed").
+        if "speed" in found and _SPEED_COMPONENT.search(text):
+            found.add("component")
         return found
 
     # "120 m ahead", "forward 120 m": a distance along a direction, not a
@@ -1661,6 +2021,10 @@ def _q_ok(s: Quantity, c: Quantity) -> bool:
         return False
     if ("descent" in s.tags) != ("descent" in c.tags):
         return False                    # descent only vs the whole vertical cap
+    if ("component" in s.tags) != ("component" in c.tags):
+        return False                    # one speed component vs the whole speed
+    if "unpaired" in s.tags or "unpaired" in c.tags:
+        return False                    # a "respectively" list that does not pair up
     if ({t for t in s.tags if t.startswith("obj:")}
             != {t for t in c.tags if t.startswith("obj:")}):
         return False
@@ -1829,6 +2193,8 @@ def validate(source: str, candidate: str) -> Verdict:
         reasons.append(f"schedule: {_sched(s)} became {_sched(c)}")
     if c.inverted_schedule and not s.inverted_schedule:
         reasons.append("schedule: the window was inverted ('except' / 'other than')")
+    if s.timezones != c.timezones:
+        reasons.append(f"schedule: time zone {s.timezones} became {c.timezones}")
     if c.hedges and not s.hedges:
         reasons.append(f"modality: a hard rule was softened ({', '.join(c.hedges)})")
     # A condition that restates the source's own window is the window; any
@@ -2936,6 +3302,18 @@ def load_probes(store_dir: str | Path | None = None) -> dict:
     doc = json.loads(f.read_text(encoding="utf-8"))
     if doc.get("schema") != PROBES_SCHEMA:
         raise StoreIntegrityError(f"{f.name}: unknown schema {doc.get('schema')!r}")
+    # A set kept in a folder of its own (experiments/paraphrases/<set>/
+    # probes.json, with the README that says how it was written) is scored
+    # with the rest. It lives apart so that the commit adding it can predate
+    # any reading of the validator (heldout_2026_11_02).
+    for sub in sorted(d.glob("*/probes.json")):
+        extra = json.loads(sub.read_text(encoding="utf-8"))
+        if extra.get("schema") != PROBES_SCHEMA:
+            raise StoreIntegrityError(f"{sub}: unknown schema {extra.get('schema')!r}")
+        for name, pset in (extra.get("sets") or {}).items():
+            if name in doc["sets"]:
+                raise StoreIntegrityError(f"{sub}: probe set {name!r} is also in {f.name}")
+            doc["sets"][name] = pset
     return doc
 
 

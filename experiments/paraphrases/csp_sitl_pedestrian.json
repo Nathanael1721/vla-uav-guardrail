@@ -2,89 +2,92 @@
   "schema": "guardrail.paraphrases/1",
   "source_key": "csp_sitl_pedestrian",
   "kind": "csp_nl",
-  "source_text": "Stay between 10 m and 20 m altitude. Keep at least 5 m away from anything you are following. Keep at least 10 m away from any pedestrian. Keep speed at or below 4 m/s, climb rate below 2 m/s and turn rate below 45 deg/s.",
-  "source_id": "src-ddadac0b29572443",
-  "source_sha256": "ddadac0b2957244361a4e01c02163e25b7d1f55c548cbcfc4105f3117c1bb917",
+  "source_text": "Stay between 10 m and 20 m altitude. Keep at least 5 m away from anything you are following. Keep at least 10 m away from the pedestrian you are following. Keep speed at or below 4 m/s, climb rate below 2 m/s and turn rate below 45 deg/s.",
+  "source_id": "src-216133281f9fa2fb",
+  "source_sha256": "216133281f9fa2fb24587177b25b0d93c62d511202001b2580845e68a0c412c9",
   "backend": "stored",
   "origin": {
     "renderer": "guardrail.compiler.ConstraintCompiler.compile_csp natural_language_prompt, compile_csp(now=None)",
     "also_serves": "build_prompt's rendering of the same rule set (matched by rule set, StoredBackend.lookup)",
     "policy": "policies/sitl_pedestrian.yaml",
     "policy_hash": "sha256:68a4efd102869f5cf4819b4a2d67e3ee84579a8160b72ecc6d27856d2a2c1259",
-    "frozen": "2026-10-06"
+    "frozen": "2026-11-02"
   },
   "provenance": {
-    "generator": "claude-opus-5-5 (agent, 2026-10-06)",
-    "prompt": "You are writing free-form paraphrases for the Paraphraser service of the\nconstrained-VLA guardrail (ITRI ICL subcontract; WP4 per-paraphrase robustness).\n\nSource (csp_nl): \"Stay between 10 m and 20 m altitude. Keep speed at or below 4 m/s, climb rate below 2 m/s and turn rate below 45 deg/s. Keep at least 10 m away from any pedestrian. Keep at least 5 m away from anything you are following.\"\n\nWrite K=8 paraphrases of the source. Make them genuinely varied in\nvocabulary, word order, politeness, verbosity and indirect phrasing. Each paraphrase is one or more complete sentences.\n\nEvery paraphrase must keep every mission slot: the target object and its\ncolour, every number with its unit, its bound (at least / at most / between /\nat) and the thing it limits, every named zone, corridor or place (identifiers\nverbatim), whether a zone is to be kept out of or stayed inside, the direction\nwords, and the action (fly to / follow / avoid). Do not add a rule, number,\nobject, zone or direction the source does not contain, and do not drop one.\nReturn one paraphrase per line.",
-    "task_instruction": "Generate the free-form set yourself now (you are an LLM): for every instruction used in experiments/scenarios.yaml and the city follow missions (grep demo/ and scripts/ for the instruction strings), write K=8 genuinely varied free-form paraphrases (vocabulary, word order, politeness, verbosity, indirect phrasing), store them with provenance {generator: \"claude-opus-5-5 (agent, 2026-10-06)\", prompt: <the exact instruction you followed>, date}, and run the validator over them.",
-    "date": "2026-10-06",
+    "generator": "claude-opus-5-5 (agent, 2026-11-02)",
+    "prompt": "You are writing free-form paraphrases for the Paraphraser service of the\nconstrained-VLA guardrail (ITRI ICL subcontract; WP4 per-paraphrase robustness).\n\nSource (csp_nl): \"Stay between 10 m and 20 m altitude. Keep at least 5 m away from anything you are following. Keep at least 10 m away from the pedestrian you are following. Keep speed at or below 4 m/s, climb rate below 2 m/s and turn rate below 45 deg/s.\"\n\nWrite K=8 paraphrases of the source. Make them genuinely varied in\nvocabulary, word order, politeness, verbosity and indirect phrasing. Each paraphrase is one or more complete sentences.\n\nEvery paraphrase must keep every mission slot: the target object and its\ncolour, every number with its unit, its bound (at least / at most / between /\nat) and the thing it limits, every named zone, corridor or place (identifiers\nverbatim), whether a zone is to be kept out of or stayed inside, the direction\nwords, and the action (fly to / follow / avoid). Do not add a rule, number,\nobject, zone or direction the source does not contain, and do not drop one.\nReturn one paraphrase per line.",
+    "task_instruction": "Re-author the 4 stale sets (read what \"stale since C8\" means in the CHANGELOG first). Validate them, and record who wrote them and how.",
+    "date": "2026-11-02",
     "seed": null,
-    "note": "written in-session by the agent, which has no sampling seed to record; seeds apply to the DRAW from this set (paraphrase(..., seed)), not to its authoring. 10 of the 96 were rewritten after review: 1 refused by the validator (an added 'find' action), 2 for too little variety, and 7 that narrowed the stand-off wildcard 'anything you are following' to a person, car or vehicle, refused once the validator was taught that narrowing (docs/DESIGN-paraphraser.md).",
-    "generated_from": "Stay between 10 m and 20 m altitude. Keep speed at or below 4 m/s, climb rate below 2 m/s and turn rate below 45 deg/s. Keep at least 10 m away from any pedestrian. Keep at least 5 m away from anything you are following.",
-    "rekeyed": "2026-10-06: re-keyed from build_prompt's rendering (rule-type order) to compile_csp's (risk order, Prefix Compiler PDF p3) - the same sentences; the texts were not re-generated. Ids were re-derived with the text in the key."
+    "note": "written in-session by Claude (Anthropic model claude-opus-5-5) as a coding agent, which has no sampling seed to record; seeds apply to the DRAW from this set, not to its authoring. Re-authored because C8 (2026-10-21) changed the source sentence from 'any pedestrian' to 'the pedestrian you are following' (the rule binds only the followed subject, models.SubjectStandoff.binds); the 2026-10-06 set for the old text is in git history. The author had just tuned the validator, so the set is validator-aware: every item keeps the followed-pedestrian binding and the source's strict / non-strict bounds, and all 8 were accepted against both renderings (compile_csp and build_prompt order). Of the 32 written across the four sets, 1 was refused on the first pass and reworded before freezing: csp_sitl_pedestrian[3] began 'The following limits apply', and the validator reads that adjectival 'following' as the follow action (a false refusal, left open); it begins 'These limits apply' now. Not yet read by a person.",
+    "replaces": {
+      "source_text": "Stay between 10 m and 20 m altitude. Keep at least 5 m away from anything you are following. Keep at least 10 m away from any pedestrian. Keep speed at or below 4 m/s, climb rate below 2 m/s and turn rate below 45 deg/s.",
+      "generator": "claude-opus-5-5 (agent, 2026-10-06)",
+      "date": "2026-10-06"
+    }
   },
   "paraphrases": [
     {
       "index": 0,
-      "paraphrase_id": "pp-e49a84dd2225d826",
-      "text": "Fly between 10 m and 20 m up. Max speed 4 m/s, climb under 2 m/s, turn under 45 deg/s. Keep 10 m or more from pedestrians and at least 5 m from your target.",
-      "text_sha256": "d85ce2dcbccd1f751afdb0a259b631cd85d727190cea7d85097e3657e72eab10",
+      "paraphrase_id": "pp-be554d328d762a65",
+      "text": "Fly between 10 m and 20 m up. At least 5 m from your target, at least 10 m from the pedestrian you are following. Max speed 4 m/s, climb under 2 m/s, turn under 45 deg/s.",
+      "text_sha256": "62faaf318f7be12623e95efe32cb27812fb884c62d5ae5a1c3b8b4aaaa66b1b6",
       "form": "sentences",
       "style": "terse"
     },
     {
       "index": 1,
-      "paraphrase_id": "pp-54dfd506b99a639e",
-      "text": "Please keep your altitude between 10 m and 20 m. Please don't fly faster than 4 m/s, and keep your climb rate under 2 m/s and your turn rate under 45 deg/s. Please also stay at least 10 m away from any pedestrian and at least 5 m away from whatever you are following.",
-      "text_sha256": "e5d0e155b467f61d5162c7a0b74b6d7c64a4666119babc7e053c0c1df27c39fa",
+      "paraphrase_id": "pp-142c5738770fff9d",
+      "text": "Please keep your altitude between 10 m and 20 m. Please stay at least 5 m away from whatever you are following, and at least 10 m away from the pedestrian you are following. Please don't fly faster than 4 m/s, and keep your climb rate under 2 m/s and your turn rate under 45 deg/s.",
+      "text_sha256": "9eae2a59420aad7ae9d47f0887c88f51a5df3a57801cc98d89dd73d640032cf7",
       "form": "sentences",
       "style": "polite"
     },
     {
       "index": 2,
-      "paraphrase_id": "pp-d4616b32967abdef",
-      "text": "People on foot get a 10 m buffer at minimum, and the target you are following gets at least 5 m. Altitude stays inside 10 m to 20 m. Speed stays at or below 4 m/s, with climb rate below 2 m/s and turn rate below 45 deg/s.",
-      "text_sha256": "018d3dd587d03e342a6c20411a6187b2f4262680e2f7b789f8041e530fe719dd",
+      "paraphrase_id": "pp-c83c068c585b11ed",
+      "text": "Speed stays at or below 4 m/s, climb rate below 2 m/s and turn rate below 45 deg/s. The pedestrian you are following gets a buffer of at least 10 m, and whatever you follow gets at least 5 m. Altitude stays inside 10 m to 20 m.",
+      "text_sha256": "07214f327458ff4fc718b0431cbd4643235b9bd11ccdf76702030035187a3b4d",
       "form": "sentences",
       "style": "reordered"
     },
     {
       "index": 3,
-      "paraphrase_id": "pp-b03ee16b3bbbc662",
-      "text": "These limits apply: altitude between 10 m and 20 m; speed not above 4 m/s; climb rate below 2 m/s; turn rate below 45 deg/s; a minimum separation of 10 m from any pedestrian; and a minimum separation of 5 m from the tracked subject.",
-      "text_sha256": "cf22a855481b5750276d0956534f6a046fc05d6b8f0dbcafbafee5b0e16e19e8",
+      "paraphrase_id": "pp-098af75c23f4867f",
+      "text": "These limits apply: altitude between 10 m and 20 m; a minimum separation of 5 m from the tracked subject; a minimum separation of 10 m from the followed pedestrian; speed not above 4 m/s; climb rate below 2 m/s; turn rate below 45 deg/s.",
+      "text_sha256": "6ca5b9eba8b774e8f27f783ff651c8a05ba32bca30614d310de5959b65680ab7",
       "form": "sentences",
       "style": "formal"
     },
     {
       "index": 4,
-      "paraphrase_id": "pp-fe141ea830d0f57b",
-      "text": "Keep it between 10 m and 20 m high, don't let your speed go over 4 m/s, climb slower than 2 m/s, turn slower than 45 deg/s, give pedestrians at least 10 m, and give whatever you're tracking at least 5 m.",
-      "text_sha256": "739270060f9dbb975bfdd0f64cb2a9ec0e04c3b9f19f5c2ce37042aea3503b35",
+      "paraphrase_id": "pp-0def1a85222b64f2",
+      "text": "Keep it between 10 m and 20 m high, give whatever you're tracking at least 5 m, give the pedestrian you're tracking at least 10 m, don't let your speed go over 4 m/s, climb slower than 2 m/s and turn slower than 45 deg/s.",
+      "text_sha256": "7dfa8c62b3d57c658512fa5b50afaaebd3344e5c4716cae6b5f60e46099c4156",
       "form": "sentences",
       "style": "casual"
     },
     {
       "index": 5,
-      "paraphrase_id": "pp-303da87a96322836",
-      "text": "During this flight the drone should hold an altitude no lower than 10 m and no higher than 20 m. Its speed should never exceed 4 m/s, its climb rate should stay under 2 m/s, and its turn rate should stay under 45 deg/s. It should never come closer than 10 m to a pedestrian, nor closer than 5 m to the subject it is following.",
-      "text_sha256": "d3bbb049f028882be4036674f36c78d23a786530ce93d33a2e35827460ee1df3",
+      "paraphrase_id": "pp-44aceeff402862bb",
+      "text": "During this flight the drone should hold an altitude no lower than 10 m and no higher than 20 m. It should never come closer than 5 m to the subject it is following, nor closer than 10 m to the pedestrian it is following. Its speed should never exceed 4 m/s, its climb rate should stay under 2 m/s, and its turn rate should stay under 45 deg/s.",
+      "text_sha256": "1ba375d7e08bd544b78c0baeaa0ccd6ba886d9827df6769f2c6f66adf903556d",
       "form": "sentences",
       "style": "verbose, negated"
     },
     {
       "index": 6,
-      "paraphrase_id": "pp-0e4e059a55f4f9a9",
-      "text": "What's needed from you is to stay between 10 m and 20 m in altitude and move no faster than 4 m/s, climbing slower than 2 m/s and turning slower than 45 deg/s. Pedestrians need a gap of at least 10 m, and what you are following needs at least 5 m.",
-      "text_sha256": "dbadec0e08b2dffa55c565f5fe86ff73b116d5aec805c920307819f17327d48c",
+      "paraphrase_id": "pp-feef0911cc6ee551",
+      "text": "What's needed from you is to stay between 10 m and 20 m in altitude, to leave at least 5 m between yourself and whatever you are following, and at least 10 m if the subject you are following is a pedestrian. Move no faster than 4 m/s, climbing slower than 2 m/s and turning slower than 45 deg/s.",
+      "text_sha256": "b75d85d1ed7073c4f07ee8f37b57093a26aaca3c327af49b42bd461e4b92a04f",
       "form": "sentences",
       "style": "indirect"
     },
     {
       "index": 7,
-      "paraphrase_id": "pp-da5b2acbcb109176",
-      "text": "Altitude: 10 m to 20 m. Speed: 4 m/s maximum. Climb rate: under 2 m/s. Turn rate: under 45 deg/s. Pedestrians: 10 m minimum distance. Followed target: 5 m minimum distance.",
-      "text_sha256": "7d1dd513581797760c04f03a393ecd43822ecbe92672f9d4a019f4c167d252bc",
+      "paraphrase_id": "pp-9a4289f9f7b00b84",
+      "text": "Altitude: 10 m to 20 m. Followed target: 5 m minimum distance. Followed pedestrian: 10 m minimum distance. Speed: 4 m/s maximum. Climb rate: under 2 m/s. Turn rate: under 45 deg/s.",
+      "text_sha256": "54f3d4dee18723227b1710d1c78b111b3dd1fa429a64c8b612a4e1bd48027564",
       "form": "sentences",
       "style": "checklist"
     }
