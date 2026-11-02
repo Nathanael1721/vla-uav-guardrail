@@ -1090,7 +1090,7 @@
       }
     },
     "heldout_2026_10_28": {
-      "status": "HELD-OUT - 40 probes written on 2026-10-28 by an independent author (a separate agent given only the 17 source texts and the probe format, with no access to the validator, its tests, its design doc or the earlier probe sets), never used to tune it, and measured once against the validator before and after the 2026-10-28 change: the same result both times. The misses were then read for the design doc, not tuned on.",
+      "status": "DEV since 2026-11-02 - 40 probes written on 2026-10-28 by an independent author (a separate agent given only the 17 source texts and the probe format, with no access to the validator, its tests, its design doc or the earlier probe sets) and held out until 2026-11-02: measured once before and once after the 2026-10-28 change, the same result both times. On 2026-11-02 the validator was tuned on its seven misses, by mechanism (a speed component, a time zone on the window, one distance for two subjects, 'respectively', a relative clause that only restates the position, 'someone', a negation across ', or'), so its figures since are dev figures, not estimates. The one meaning change it still accepts ('under 3 m/s' for 'at or below 3 m/s') was refused before only for an unrelated reason, the merged distance; the validator reads strict and non-strict bounds alike by design (docs/DESIGN-paraphraser.md).",
       "measured_once": {
         "before_2026_10_28_change": {
           "false_accepts": "2/20",
@@ -1102,6 +1102,11 @@
           "false_refusals": "5/20",
           "validator": "validator_digest e30e7e756cfbc522"
         }
+      },
+      "measured_after_tuning_2026_11_02": {
+        "false_accepts": "1/20",
+        "false_refusals": "0/20",
+        "validator": "validator_digest e9a4d62c3a094ff3"
       },
       "probes": [
         {

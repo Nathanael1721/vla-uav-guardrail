@@ -368,7 +368,11 @@ _OBJECTS = [
     ("pedestrian",
      r"pedestrians?\b|(?:people|persons|anyone|someone|somebody|anybody|nobody|"
      r"person)\s+(?:on\s+foot|walking)\b|walkers?\b"),
-    ("person", r"persons?\b|people\b|individuals?\b|humans?\b"),
+    # "someone" is a person (heldout_2026_10_28 refused "Follow someone." for
+    # "follow a person", 2026-11-02); "someone walking" is matched above as a
+    # pedestrian, and "anyone you are following" as the followed person.
+    ("person", r"persons?\b|people\b|individuals?\b|humans?\b|some(?:one|body)\b|"
+               r"any(?:one|body)\b"),
     ("building", r"buildings?\b|structures?\b"),
     ("car", r"cars?\b|automobiles?\b"),
     ("vehicle", r"vehicles?\b"),
@@ -488,6 +492,10 @@ _RESET = {"stay", "stays", "keep", "keeps", "remain", "remains", "hold", "holds"
           "fly", "cruise", "go", "ensure", "make", "give", "leave", "leaving"}
 _ARTICLES = {"a", "an", "the", "any", "every", "all", "its", "your", "each"}
 _SEPS = {",", "or", "nor", "and"}
+# All a clause may say to only add a subject to the distance before it ("...,
+# and also from anything you are following"; see extract_slots).
+_ELLIPSIS_WORDS = _ARTICLES | {"from", "of", "to", "away", "also", "too", "as", "well",
+                               "both", "likewise", "similarly"}
 
 # What a quantity limits. Filtered by unit: an altitude word next to a m/s
 # number says nothing about that number.
@@ -503,6 +511,15 @@ _ATTRS = {
 }
 _ATTR_RES = {k: re.compile(v) for k, v in _ATTRS.items()}
 _SPEED_NOUN = re.compile(r"\b(?:speeds?|velocity|airspeed|groundspeed|pace)\b")
+# One component of the speed: the compiler's speed cap is on the whole speed,
+# so "horizontal speed at or below 12 m/s" leaves the vertical part free - a
+# narrowed limit (heldout_2026_10_28 accepted it, 2026-11-02). "forward" and
+# "sideways" are direction slots, which a CSP source does not have, so they are
+# refused there already.
+_SPEED_COMPONENT = re.compile(
+    r"\b(?:horizontal|lateral|longitudinal|transverse|translational|planar|"
+    r"cross[- ]?track|along[- ]?track|in[- ]plane)\s+(?:air\s*|ground\s*)?"
+    r"(?:speeds?|velocit(?:y|ies)|pace)\b")
 _UNIT_TAGS = {
     "m": {"altitude", "lateral", "offset"}, "ft": {"altitude", "lateral", "offset"},
     "km": {"altitude", "lateral", "offset"},
@@ -566,6 +583,29 @@ _DAY_ONE = re.compile(rf"\b(?P<a>{_DAY})s?\b|\b(?P<grp>weekdays?|weekends?)\b")
 _TIME = re.compile(r"\b(?P<h>[01]?\d|2[0-3])(?::(?P<m>[0-5]\d))?\s*(?P<ap>a\.?m\.?|p\.?m\.?)"
                    r"(?![a-z])|\b(?P<h2>[01]?\d|2[0-3]):(?P<m2>[0-5]\d)\b")
 _INVERT = re.compile(r"\b(?:except|excluding|other\s+than|apart\s+from|but\s+not)\b")
+# A time zone named on a window. The compiler's window is on the policy's own
+# clock and names no zone, so "07:30-17:30 UTC" moves it (eight hours, in
+# Taipei): heldout_2026_10_28 accepted it (2026-11-02). Any explicit zone is a
+# slot, compared like the days and times; "local time" names none.
+_TZ = re.compile(
+    r"\b(?P<z>utc|gmt|zulu)(?:\s*(?P<off>[+-]\s*\d{1,2}(?::?\d\d)?))?(?![\w:])"
+    r"|\b(?P<abbr>cst|cdt|est|edt|mst|mdt|pst|pdt|cet|cest|eet|eest|bst|jst|kst|"
+    r"hkt|sgt|aest|aedt|nzst|nzdt)\b"
+    r"|\b(?P<city>(?:taipei|taiwan|tokyo|japan|beijing|china|hong\s+kong|singapore|"
+    r"london|paris|berlin|new\s+york|pacific|eastern|central|mountain|atlantic|"
+    r"greenwich))\s+(?:standard\s+|daylight\s+)?time\b")
+
+
+def _timezones(t: str) -> list[str]:
+    out = []
+    for m in _TZ.finditer(t):
+        if m.group("z"):
+            z = "utc" if m.group("z") in ("utc", "gmt", "zulu") else m.group("z")
+            off = re.sub(r"\s+", "", m.group("off") or "")
+            out.append(z + off)
+        else:
+            out.append(re.sub(r"\s+", " ", m.group("abbr") or m.group("city")))
+    return sorted(out)
 
 # Softeners. A hard rule reworded as "try to stay below 4 m/s" or "ideally
 # above 10 m" is a different rule: the Shield will still enforce it, but the
@@ -712,6 +752,7 @@ class Slots:
     refs: set = field(default_factory=set)             # named references ("cruise altitude")
     neg_refs: set = field(default_factory=set)
     inverted_schedule: bool = False
+    timezones: list = field(default_factory=list)      # "utc", "utc+8", "pst", ... (_TZ)
     hedges: list = field(default_factory=list)
     conditions: list = field(default_factory=list)     # "if", "unless", "sched:while", ...
     overrides: list = field(default_factory=list)      # "ignore", "optional", ...
@@ -1071,6 +1112,24 @@ _NOT_PARTICIPLE = frozenset({"during", "including", "excluding", "regarding",
 # faithful by construction. "a person STANDING on the sidewalk" is not one.
 _POSITION_PARTICIPLES = frozenset({"located", "sitting", "situated", "positioned",
                                    "lying", "placed", "set"})
+# The same for a relative clause (2026-11-02: heldout_2026_10_28 refused "the
+# waypoint that lies 120 metres in front of you" as a narrowed waypoint): when
+# all the clause says, through a copula or a verb of position, is a slot the
+# comparison already reads, it restates where the object is. "a person who is
+# waving" or "the waypoint that is marked" still narrow.
+_POSITION_VERBS = frozenset(_POSITION_PARTICIPLES | {
+    "is", "are", "'s", "was", "lies", "lie", "sits", "sit", "stands", "stand",
+    "directly", "exactly", "just", "currently", "now"})
+
+
+def _restates_position(after: list[str], reg: dict) -> bool:
+    """`after` is the relative clause after its relativizer."""
+    for x in after:
+        if x in reg:
+            return reg[x][0] in ("q", "coord", "place", "dir", "ref")
+        if x not in _POSITION_VERBS:
+            return False
+    return False
 
 
 def _superlative(w: str) -> bool:
@@ -1113,7 +1172,9 @@ def _narrowings(ctoks: list[str], i: int, reg: dict) -> list[str]:
         if t in _RELATIVIZERS:
             content = [x for x in ctoks[i + 2:i + 7]
                        if not (x in reg and reg[x][0] == "col") and x not in _COLOUR_CLAUSE]
-            if content:
+            if _restates_position(ctoks[i + 2:i + 7], reg):
+                pass
+            elif content:
                 word = content[0] if content[0] not in reg else reg[content[0]][0]
                 out.append(f"rel:{word}")
         elif (re.fullmatch(r"[a-z]{3,}(?:ing|ed)", t) and t not in _NOT_PARTICIPLE
@@ -1164,6 +1225,7 @@ def extract_slots(text: str, known_ids: Iterable[str] = ()) -> Slots:
     slots.conditions = _conditions(t)
     slots.overrides = [re.sub(r"\s+", " ", m.group(0)) for m in _OVERRIDE.finditer(t)]
     slots.soft = len(_SOFT.findall(t))
+    slots.timezones = _timezones(t)
     reg: dict[str, Any] = {}
 
     def put(kind: str, payload: Any) -> str:
@@ -1242,6 +1304,7 @@ def extract_slots(text: str, known_ids: Iterable[str] = ()) -> Slots:
     chunks.append({"toks": cur, "sent": sent, "brk": None})
 
     prev_q: dict | None = None
+    ph_q: dict[str, list[int]] = {}                    # quantity placeholder -> its Quantity indices
     last_ids: tuple | None = None                      # (sentence, ids) of the last id clause
     sched: list[tuple[int, str, str]] = []             # (sentence, kind, value)
     ids_in: dict[int, set] = {}
@@ -1367,9 +1430,38 @@ def extract_slots(text: str, known_ids: Iterable[str] = ()) -> Slots:
                 # "altitude at least 10 m and at most 20 m": the second limit
                 # carries the first one's attribute when it adds no word of its own
                 tags = prev_q["tags"]
-            slots.quantities.append(Quantity(value, unit, bound, tags, negated))
+            # "at least 5 m from any building as well as from anything you are
+            # following": one distance kept from two subjects is two rules, one
+            # per subject (heldout_2026_10_28 refused it as one rule with a
+            # merged subject, 2026-11-02). A subject the source does not have
+            # is then an added rule, refused as such.
+            objs = sorted(x for x in tags if x.startswith("obj:"))
+            ph_q[ctoks[p]] = []
+            for o in (objs if len(objs) > 1 else [None]):
+                qtags = tags if o is None else frozenset(set(tags) - set(objs) | {o})
+                ph_q[ctoks[p]].append(len(slots.quantities))
+                slots.quantities.append(Quantity(value, unit, bound, qtags, negated))
             prev_q = {"bound": bound, "negated": negated, "chunk": ci,
-                      "sent": ch["sent"], "tags": tags, "unit": unit}
+                      "sent": ch["sent"], "tags": tags, "unit": unit, "value": value}
+        # "... at least 5 m from any building, and (also) from anything you are
+        # following": a clause with no number of its own that only names a
+        # further subject for the distance just stated (2026-11-02).
+        if (not qpos and prev_q is not None and prev_q.get("value") is not None
+                and prev_q["sent"] == ch["sent"] and prev_q["bound"] in ("min", "max")
+                and all(not chunks[k]["toks"] for k in range(prev_q["chunk"] + 1, ci))
+                and chunks[ci - 1]["brk"] in (",", "and")
+                and any(x.startswith("obj:") for x in prev_q["tags"])):
+            more = [reg[tk][1] for tk in ctoks if reg.get(tk, ("",))[0] == "obj"]
+            plain = _plain(ctoks, reg)
+            if (more and len(more) + len(plain) == len(ctoks)
+                    and set(plain) & {"from", "of", "to"}
+                    and set(plain) <= _ELLIPSIS_WORDS):
+                keep = frozenset(x for x in prev_q["tags"] if not x.startswith("obj:"))
+                for o in more:
+                    slots.quantities.append(Quantity(prev_q["value"], prev_q["unit"],
+                                                     prev_q["bound"], keep | {"obj:" + o},
+                                                     prev_q["negated"]))
+                prev_q = {**prev_q, "chunk": ci}
 
     # The compiler's corridor sentence ends "... and between 10 m and 20 m"
     # with no attribute word (templates/sentence/corridor.j2: those are the
@@ -1385,6 +1477,8 @@ def extract_slots(text: str, known_ids: Iterable[str] = ()) -> Slots:
                 slots.quantities[k] = Quantity(q.value, q.unit, q.bound,
                                                frozenset({"altitude"}), q.negated)
 
+    _respectively(chunks, reg, slots, ph_q)
+
     # A window belongs to the rule named in its sentence - or, for a follow-up
     # sentence ("This applies Mon-Fri ..."), the one named just before it.
     days_by: dict[tuple, set] = {}
@@ -1399,6 +1493,103 @@ def extract_slots(text: str, known_ids: Iterable[str] = ()) -> Slots:
         slots.schedule.append(("days", ",".join(d for d in _DAY_ORDER if d in days), key))
     slots.schedule.sort(key=lambda x: (x[0], x[1], sorted(x[2])))
     return slots
+
+
+def _attr_mentions(span: list[str], reg: dict) -> list[str]:
+    """The attributes and subjects named in `span`, in order: "climb rate and
+    turn rate" -> ["climb", "turn"]; "buildings and pedestrians" ->
+    ["obj:building", "obj:pedestrian"]. Cue words are not attributes."""
+    out: list[str] = []
+    i = 0
+    while i < len(span):
+        x = span[i]
+        if x in reg:
+            if reg[x][0] == "obj":
+                out.append("obj:" + reg[x][1])
+        elif x not in _CUE_WORDS:
+            hit = next((k for k, rx in _ATTR_RES.items() if rx.search(x)), None)
+            if hit:
+                out.append(hit)
+                # "climb rate", "vertical speed": one attribute (as in _tags)
+                if (hit in ("climb", "turn") and i + 1 < len(span)
+                        and re.fullmatch(r"speeds?|velocit(?:y|ies)|rates?", span[i + 1])):
+                    i += 1
+        i += 1
+    return out
+
+
+def _respectively(chunks: list[dict], reg: dict, slots: Slots,
+                  ph_q: dict[str, list[int]]) -> None:
+    """"climb rate and turn rate below 2 m/s and 45 deg/s respectively": pair
+    the attributes with the values in order (2026-11-02; heldout_2026_10_28
+    refused it, the 2 m/s having no attribute word of its own). Read both
+    ways round - attributes then values, or values then the subjects they are
+    kept from. A pairing that does not match the source is a changed rule,
+    refused by the quantity match; a count that does not pair up (three
+    attributes, two values) cannot be read, and its values are marked so that
+    they match nothing (fail closed)."""
+    sents: dict[int, list[str]] = {}
+    for ch in chunks:
+        toks = sents.setdefault(ch["sent"], [])
+        toks.extend(ch["toks"])
+        if ch["brk"] and ch["brk"] not in _SENT_BREAK:
+            toks.append(ch["brk"])
+    drop: set[int] = set()
+    vals_ok = _SEPS | _CUE_WORDS | {"respectively"}
+
+    def values_before(toks: list[str], j: int) -> tuple[list[str], int]:
+        vals = []
+        while j >= 0:
+            x = toks[j]
+            if x in ph_q:
+                vals.append(x)
+            elif x in reg or x not in vals_ok:
+                break
+            j -= 1
+        return vals[::-1], j
+
+    for toks in sents.values():
+        for r, tk in enumerate(toks):
+            if tk != "respectively":
+                continue
+            vals, j = values_before(toks, r - 1)
+            if len(vals) >= 2:
+                # attributes first: back to the previous number, or the start
+                k = j
+                while k >= 0 and not (toks[k] in reg and reg[toks[k]][0] in ("q", "range")):
+                    k -= 1
+                attrs = _attr_mentions(toks[k + 1:j + 1], reg)
+            else:
+                # values first: "5 m and 10 m from X and Y, respectively"
+                j = r - 1
+                objs = []
+                while j >= 0 and (toks[j] in _SEPS or toks[j] in _ARTICLES
+                                  or reg.get(toks[j], ("",))[0] == "obj"):
+                    if toks[j] in reg:
+                        objs.append("obj:" + reg[toks[j]][1])
+                    j -= 1
+                while j >= 0 and toks[j] in ("from", "of", "to", "away", "clear", "apart"):
+                    j -= 1
+                vals, _ = values_before(toks, j)
+                attrs = objs[::-1]
+            if len(vals) < 2:
+                continue
+            paired = len(attrs) == len(vals)
+            for ph, attr in zip(vals, attrs if paired else [None] * len(vals)):
+                idxs = ph_q[ph]
+                q = slots.quantities[idxs[0]]
+                keep = {x for x in q.tags if x not in _PAIRED_TAGS and not x.startswith("obj:")}
+                new = keep | ({attr} if paired else {"unpaired"})
+                slots.quantities[idxs[0]] = Quantity(q.value, q.unit, q.bound,
+                                                     frozenset(new), q.negated)
+                drop.update(idxs[1:])
+    if drop:
+        slots.quantities = [q for k, q in enumerate(slots.quantities) if k not in drop]
+
+
+# The tags a "respectively" pairing replaces.
+_PAIRED_TAGS = frozenset({"speed", "climb", "turn", "altitude", "lateral", "offset",
+                          "component", "descent"})
 
 
 def _day_key(word: str) -> str:
@@ -1489,8 +1680,13 @@ def _bound(W: list[str], A: list[str], prev_q: dict | None, ci: int,
         # "never drop below 10 m or rise above 20 m": a negation carries across
         # an "or" inside one clause, and nowhere else - after a comma, "climb
         # slower than 2 m/s" is a new instruction, not the old one negated.
-        if (not negated and prev_q is not None and prev_q["chunk"] == ci
-                and prev_q["negated"] and _list_ors(W)
+        # A clause that STARTS with that "or" ("Never come closer than 10 m to
+        # X, or closer than 5 m to Y") is the same list after a comma
+        # (heldout_2026_10_28 read it as a ceiling, 2026-11-02).
+        same_list = (prev_q is not None and (
+            prev_q["chunk"] == ci
+            or (prev_q["chunk"] == ci - 1 and W[:1] == ["or"])))
+        if (not negated and same_list and prev_q["negated"] and _list_ors(W)
                 and not (set(W) & _RESET)):
             negated = True
         if negated:
@@ -1575,6 +1771,9 @@ def _tags(W: list[str], A: list[str], unit: str | None, reg: dict,
         if "climb" in found and re.search(r"\b(?:descen\w*|sink\w*)", text) and not \
                 re.search(r"\b(?:climb\w*|ascen\w*|ris(?:e|es|ing)|vertical\w*)", text):
             found.add("descent")
+        # Likewise a speed limit on one component only ("horizontal speed").
+        if "speed" in found and _SPEED_COMPONENT.search(text):
+            found.add("component")
         return found
 
     # "120 m ahead", "forward 120 m": a distance along a direction, not a
@@ -1661,6 +1860,10 @@ def _q_ok(s: Quantity, c: Quantity) -> bool:
         return False
     if ("descent" in s.tags) != ("descent" in c.tags):
         return False                    # descent only vs the whole vertical cap
+    if ("component" in s.tags) != ("component" in c.tags):
+        return False                    # one speed component vs the whole speed
+    if "unpaired" in s.tags or "unpaired" in c.tags:
+        return False                    # a "respectively" list that does not pair up
     if ({t for t in s.tags if t.startswith("obj:")}
             != {t for t in c.tags if t.startswith("obj:")}):
         return False
@@ -1829,6 +2032,8 @@ def validate(source: str, candidate: str) -> Verdict:
         reasons.append(f"schedule: {_sched(s)} became {_sched(c)}")
     if c.inverted_schedule and not s.inverted_schedule:
         reasons.append("schedule: the window was inverted ('except' / 'other than')")
+    if s.timezones != c.timezones:
+        reasons.append(f"schedule: time zone {s.timezones} became {c.timezones}")
     if c.hedges and not s.hedges:
         reasons.append(f"modality: a hard rule was softened ({', '.join(c.hedges)})")
     # A condition that restates the source's own window is the window; any
@@ -2936,6 +3141,18 @@ def load_probes(store_dir: str | Path | None = None) -> dict:
     doc = json.loads(f.read_text(encoding="utf-8"))
     if doc.get("schema") != PROBES_SCHEMA:
         raise StoreIntegrityError(f"{f.name}: unknown schema {doc.get('schema')!r}")
+    # A set kept in a folder of its own (experiments/paraphrases/<set>/
+    # probes.json, with the README that says how it was written) is scored
+    # with the rest. It lives apart so that the commit adding it can predate
+    # any reading of the validator (heldout_2026_11_02).
+    for sub in sorted(d.glob("*/probes.json")):
+        extra = json.loads(sub.read_text(encoding="utf-8"))
+        if extra.get("schema") != PROBES_SCHEMA:
+            raise StoreIntegrityError(f"{sub}: unknown schema {extra.get('schema')!r}")
+        for name, pset in (extra.get("sets") or {}).items():
+            if name in doc["sets"]:
+                raise StoreIntegrityError(f"{sub}: probe set {name!r} is also in {f.name}")
+            doc["sets"][name] = pset
     return doc
 
 

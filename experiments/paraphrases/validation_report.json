@@ -1,8 +1,8 @@
 {
   "schema": "guardrail.paraphrases.validation/1",
   "store_digest": "2b2b5788d9a021cc",
-  "validator_digest": "e30e7e756cfbc522",
-  "probes_digest": "b661d35cd2263ea0",
+  "validator_digest": "e9a4d62c3a094ff3",
+  "probes_digest": "48669f676cb69dc3",
   "places_source": "guardrail.compiler.PLACES",
   "command": "python -m guardrail.paraphraser validate",
   "sources": 14,
@@ -177,21 +177,40 @@
       ]
     },
     "heldout_2026_10_28": {
-      "status": "HELD-OUT - 40 probes written on 2026-10-28 by an independent author (a separate agent given only the 17 source texts and the probe format, with no access to the validator, its tests, its design doc or the earlier probe sets), never used to tune it, and measured once against the validator before and after the 2026-10-28 change: the same result both times. The misses were then read for the design doc, not tuned on.",
+      "status": "DEV since 2026-11-02 - 40 probes written on 2026-10-28 by an independent author (a separate agent given only the 17 source texts and the probe format, with no access to the validator, its tests, its design doc or the earlier probe sets) and held out until 2026-11-02: measured once before and once after the 2026-10-28 change, the same result both times. On 2026-11-02 the validator was tuned on its seven misses, by mechanism (a speed component, a time zone on the window, one distance for two subjects, 'respectively', a relative clause that only restates the position, 'someone', a negation across ', or'), so its figures since are dev figures, not estimates. The one meaning change it still accepts ('under 3 m/s' for 'at or below 3 m/s') was refused before only for an unrelated reason, the merged distance; the validator reads strict and non-strict bounds alike by design (docs/DESIGN-paraphraser.md).",
       "meaning_changing": 20,
-      "false_accepts": 2,
+      "false_accepts": 1,
       "faithful": 20,
-      "false_refusals": 5,
+      "false_refusals": 0,
       "false_accept_texts": [
-        "Stay between 5 m and 80 m altitude and never fly into zone 'nfz-school-yard', which is in force Monday to Friday 07:30-17:30. Keep horizontal speed at or below 12 m/s, climb rate below 4 m/s and turn rate below 60 deg/s.",
-        "Stay inside corridor 'corridor-survey-route', within 20 m of its centerline and between 10 m and 20 m. Never enter zone 'nfz-school', which is in force Mon-Fri 07:30-17:30 UTC. Keep your speed to 4 m/s or less, your climb rate under 2 m/s and your turn rate under 45 deg/s."
+        "Keep altitude between 4 m and 10 m. Stay at least 5 m from any building and from anything you are following, and at least 10 m from any pedestrian. Keep speed under 3 m/s, climb rate under 1.5 m/s and turn rate under 45 deg/s."
+      ],
+      "false_refusal_texts": []
+    },
+    "heldout_2026_11_02": {
+      "status": "HELD-OUT - 94 probes (50 meaning changes, 44 faithful) written on 2026-11-02 by Claude (Anthropic model, claude-opus-5-5) acting as the agent that then fixes the validator, BEFORE it read guardrail/paraphraser.py, its tests, docs/DESIGN-paraphraser.md, any stored paraphrase or any earlier probe candidate. Committed before the first measurement. Not independent of the fixer: same author, written knowing the validator would be fixed next.",
+      "meaning_changing": 50,
+      "false_accepts": 1,
+      "faithful": 44,
+      "false_refusals": 14,
+      "false_accept_texts": [
+        "follow two people"
       ],
       "false_refusal_texts": [
-        "Fly at an altitude between 4 m and 10 m. Maintain at least 10 m of separation from any pedestrian, and at least 5 m from any building as well as from anything you are following. Keep speed to 3 m/s or less, climb rate under 1.5 m/s and turn rate under 45 deg/s.",
-        "Keep your altitude between 6 m and 14 m. Do not get closer than 3 m to any building, 5 m to anything you are following or 10 m to any pedestrian. Your speed must not exceed 5 m/s, and climb rate and turn rate must stay below 2 m/s and 45 deg/s respectively.",
-        "Head for the waypoint that lies 120 metres in front of you, flying at cruise altitude.",
-        "Follow someone.",
-        "Fly at an altitude of between ten and twenty metres. Speed is capped at four metres per second, climb rate must stay below two metres per second and turn rate below forty-five degrees per second. Never get closer than ten metres to any pedestrian, or closer than five metres to anything you are following."
+        "Fly within corridor 'corridor-survey-route' (20 m either side of the centerline, 10-20 m altitude). Keep out of zone 'nfz-school' Mon-Fri 07:30-17:30. Speed ≤ 4 m/s, climb rate < 2 m/s, turn rate < 45 deg/s.",
+        "Fly between 6 and 14 m altitude. Stay at least 3 m clear of every building. Keep a gap of at least 5 m from whatever you are following, and at least 10 m when the thing you are following is a pedestrian. Do not exceed 5 m/s; keep climb rate under 2 m/s and turn rate under 45 deg/s.",
+        "Zone 'nfz-frontage' is off-limits. Hold altitude between 6 m and 14 m and keep at least 3 m from buildings. Stay at least 5 m from anything you follow and at least 10 m from a pedestrian you follow. Speed must not exceed 5 m/s; climb rate must stay below 2 m/s and turn rate below 45 deg/s.",
+        "Keep between 6 and 14 m altitude and at least 3 m from any building. Maintain at least 5 m from anything you are following and at least 10 m from the pedestrian you are following. Do not enter zone 'nfz-frontage'. Keep speed at or below 5 m/s, climb rate below 2 m/s and turn rate below 45 deg/s.",
+        "Keep 10-20 m altitude. Whatever you are following, stay 5 m or more away from it; if it is a pedestrian, stay 10 m or more away. Speed at most 4 m/s, climb rate under 2 m/s, turn rate under 45 deg/s.",
+        "Stay 10 to 20 m high. Keep at least 5 m from anything you are following and at least 10 m from the pedestrian you are following. Keep speed at or below 4 m/s, climb rate below 2 m/s and turn rate below 45 deg/s.",
+        "Stay between 35 and 55 m altitude, keep at least 5 m from any building, and never enter zones 'nfz-edge-1', 'nfz-edge-2', 'nfz-edge-3' or 'nfz-edge-4'. Keep speed at or below 4 m/s, climb rate below 2 m/s and turn rate below 45 deg/s.",
+        "Fly at 35-55 m, never closer than 5 m to a building. Zones 'nfz-edge-1' through 'nfz-edge-4' are all off-limits. Max speed 4 m/s, climb below 2 m/s, turn below 45 deg/s.",
+        "Never enter zone 'nfz-edge-4', 'nfz-edge-3', 'nfz-edge-2' or 'nfz-edge-1'. Stay between 35 m and 55 m altitude and keep at least 5 m from any building. Keep speed at or below 4 m/s, climb rate below 2 m/s and turn rate below 45 deg/s.",
+        "Stay out of zones 'nfz-frontage', 'nfz-north-street' and 'nfz-south-block'. Fly between 6 m and 14 m altitude, at least 3 m from any building, at least 5 m from anything you are following and at least 10 m from the pedestrian you are following. Keep speed at or below 5 m/s, climb rate below 2 m/s and turn rate below 45 deg/s.",
+        "Stay between 6 m and 14 m altitude and at least 3 m from any building. Keep at least 5 m from anything you are following and at least 10 m from the pedestrian you are following. Zones 'nfz-frontage', 'nfz-north-street' and 'nfz-south-block' are no-go areas. Do not exceed 5 m/s; climb rate below 2 m/s, turn rate below 45 deg/s.",
+        "head to the pad in the northeast at 6 m/s",
+        "Fly over to the north-east pad at a speed of 6 metres per second.",
+        "Fly at cruise altitude to the waypoint 120 m straight ahead."
       ]
     }
   },

@@ -1217,7 +1217,13 @@ def test_probe_rates_are_measured_and_not_zero():
     probes by an independent author (an agent with no access to the
     validator or the earlier sets), measured once before and once after that
     change, scored 2/20 false accepts and 5/20 false refusals both times - the
-    honest estimate. Pinned so the design doc's numbers cannot drift
+    honest estimate until 2026-11-02, when the validator was tuned on its
+    seven misses by mechanism, so it is a dev set now (1/20, 0/20; the one
+    meaning change left is 'under 3 m/s' for 'at or below 3 m/s', which the
+    validator reads alike by design). heldout_2026_11_02, 94 probes written
+    and committed before the validator was read, is the held-out figure for
+    those seven fixes: 1/50 false accepts, 14/44 false refusals (18/44
+    before). Pinned so the design doc's numbers cannot drift
     from the code; if a change moves them, update the doc, and say whether the
     held-out set was looked at."""
     rep = _live_report()
@@ -1234,8 +1240,11 @@ def test_probe_rates_are_measured_and_not_zero():
     assert (after["false_accepts"], after["meaning_changing"]) == (0, 12), after
     assert (after["false_refusals"], after["faithful"]) == (2, 12), after
     ind = pr["heldout_2026_10_28"]
-    assert (ind["false_accepts"], ind["meaning_changing"]) == (2, 20), ind
-    assert (ind["false_refusals"], ind["faithful"]) == (5, 20), ind
+    assert (ind["false_accepts"], ind["meaning_changing"]) == (1, 20), ind
+    assert (ind["false_refusals"], ind["faithful"]) == (0, 20), ind
+    fresh = pr["heldout_2026_11_02"]
+    assert (fresh["false_accepts"], fresh["meaning_changing"]) == (1, 50), fresh
+    assert (fresh["false_refusals"], fresh["faithful"]) == (14, 44), fresh
     # WHY each faithful 2026-10-21 probe is refused, as the doc words it: the
     # novelty floor (near-identical candidates) for two, the colour slot for
     # 'a car coloured red' (A14's participle reading beside it).
@@ -1296,6 +1305,147 @@ def test_accepts_what_only_restates_a14():
     # "climb or descend": the "or" joins one vertical rate, it does not split it
     assert P._list_ors(["climb", "or", "descend", "at", "under"]) == []
     assert P._list_ors(["building", "or", "within"]) == [1]
+
+
+# --------------------------------------------------------------------------- #
+# 2026-11-02: the mechanisms behind heldout_2026_10_28's seven misses. Each
+# test uses wordings of its own, not the probes', so it pins the mechanism and
+# not the case; each failed before its fix.
+# --------------------------------------------------------------------------- #
+
+# the compiler's current renderings (post-C8 stand-off wording)
+CSP_SITL = ("Stay between 10 m and 20 m altitude. Keep at least 5 m away from anything you "
+            "are following. Keep at least 10 m away from the pedestrian you are following. "
+            "Keep speed at or below 4 m/s, climb rate below 2 m/s and turn rate below 45 deg/s.")
+CSP_FOLLOW_PED = ("Stay between 4 m and 10 m altitude. Keep at least 5 m from any building. "
+                  "Keep at least 5 m away from anything you are following. Keep at least 10 m "
+                  "away from the pedestrian you are following. Keep speed at or below 3 m/s, "
+                  "climb rate below 1.5 m/s and turn rate below 45 deg/s.")
+CSP_SURVEY = ("Stay inside corridor 'corridor-survey-route', within 20 m of its centerline and "
+              "between 10 m and 20 m. Never enter zone 'nfz-school' (in force Mon-Fri "
+              "07:30-17:30). Keep speed at or below 4 m/s, climb rate below 2 m/s and turn "
+              "rate below 45 deg/s.")
+SURVEY_REST = (" Speed at most 4 m/s, climb rate under 2 m/s, turn rate under 45 deg/s.")
+
+
+def test_a_speed_component_is_not_the_speed():
+    """heldout_2026_10_28 accepted "horizontal speed" for "speed". The
+    compiler's speed cap is on the whole speed; a cap on one component of it
+    (horizontal, lateral, longitudinal) leaves the others free."""
+    for comp in ("horizontal speed", "lateral velocity", "longitudinal speed",
+                 "transverse speed"):
+        _refused(CSP_DEMO, "Do not enter zone 'nfz-square'. Hold altitude between 10 m "
+                 f"and 20 m. Keep your {comp} at most 4 m/s, climb rate under 2 m/s and "
+                 "turn rate under 45 deg/s.", "quantity")
+    _accepted(CSP_DEMO, "Do not enter zone 'nfz-square'. Hold altitude between 10 m and "
+              "20 m. Keep your speed at most 4 m/s, climb rate under 2 m/s and turn rate "
+              "under 45 deg/s.")
+
+
+def test_a_time_zone_on_the_window_is_a_new_window():
+    """heldout_2026_10_28 accepted "07:30-17:30 UTC". The compiler's window is
+    on the policy's own clock; naming a time zone moves it (UTC is eight hours
+    off Taipei's)."""
+    for tz in ("GMT", "UTC+8", "Tokyo time", "PST"):
+        _refused(CSP_SURVEY, "Remain inside corridor 'corridor-survey-route', no more than "
+                 "20 m off its centerline and between 10 m and 20 m. Zone 'nfz-school' is "
+                 f"off-limits Mon-Fri 07:30-17:30 {tz}." + SURVEY_REST, "schedule")
+    _accepted(CSP_SURVEY, "Remain inside corridor 'corridor-survey-route', no more than "
+              "20 m off its centerline and between 10 m and 20 m. Zone 'nfz-school' is "
+              "off-limits Mon-Fri 07:30-17:30." + SURVEY_REST)
+
+
+def test_one_distance_shared_by_two_subjects():
+    """heldout_2026_10_28 refused "at least 5 m from any building as well as
+    from anything you are following" for two 5 m rules. One distance given to
+    two subjects is the two rules; it may not quietly add a third subject."""
+    head = "Hold altitude between 4 m and 10 m. Keep at least 5 m from any building "
+    tail = (", and at least 10 m from the pedestrian you are following. Speed at most "
+            "3 m/s, climb under 1.5 m/s, turn under 45 deg/s.")
+    for join in ("as well as from anything you are following",
+                 "and from anything you are following",
+                 "and also from anything you are following"):
+        _accepted(CSP_FOLLOW_PED, head + join + tail)
+    # the shared distance names a subject the source never had
+    _refused(CSP_FOLLOW_PED, head + "and from any pedestrian, as well as from anything "
+             "you are following" + tail, "quantity")
+    # and it may not drop one of the two
+    _refused(CSP_FOLLOW_PED, head + tail, "quantity")
+
+
+def test_respectively_pairs_attributes_with_values_in_order():
+    """heldout_2026_10_28 refused "climb rate and turn rate must stay below
+    2 m/s and 45 deg/s respectively": the 2 m/s had no attribute word of its
+    own. "respectively" pairs the attributes with the values in order - and a
+    wrong pairing is a changed rule."""
+    base = ("Do not enter zone 'nfz-square'. Hold altitude between 10 m and 20 m. "
+            "Speed at most 4 m/s. ")
+    _accepted(CSP_DEMO, base + "Keep climb rate and turn rate below 2 m/s and 45 deg/s "
+              "respectively.")
+    _accepted(CSP_DEMO, "Do not enter zone 'nfz-square'. Hold altitude between 10 m and "
+              "20 m. Speed must not exceed 4 m/s, and the climb and turn rates must stay "
+              "under 2 m/s and 45 deg/s, respectively.")
+    # swapped: the climb rate would be 45 deg/s, which is not a climb rate
+    _refused(CSP_DEMO, base + "Keep turn rate and climb rate below 2 m/s and 45 deg/s "
+             "respectively.", "quantity")
+    # swapped between two rates of the same unit
+    _refused(CSP_DEMO, "Do not enter zone 'nfz-square'. Hold altitude between 10 m and "
+             "20 m. Keep speed and climb rate at most 2 m/s and 4 m/s respectively, and "
+             "turn rate under 45 deg/s.", "quantity")
+    # values first, then the subjects they are kept from
+    rest = " Fly between 10 and 20 m up; speed at most 4 m/s, climb under 2 m/s, turn under 45 deg/s."
+    subjects = "from anything you are following and the pedestrian you are following"
+    _accepted(CSP_SITL, f"Keep at least 5 m and 10 m {subjects}, respectively." + rest)
+    _refused(CSP_SITL, f"Keep at least 10 m and 5 m {subjects}, respectively." + rest,
+             "quantity")
+    # two values, one subject: cannot be paired, so refused rather than guessed
+    _refused(CSP_SITL, "Keep at least 5 m and 10 m from anything you are following, "
+             "respectively." + rest, "quantity")
+
+
+def test_a_relative_clause_that_only_restates_the_position():
+    """heldout_2026_10_28 refused "the waypoint that lies 120 metres in front
+    of you" as a narrowed waypoint. A relative clause whose verb only places
+    the object ("that is", "which lies", "that sits") before a slot the
+    comparison already reads restates it, like the participle of position
+    ("the waypoint sitting 120 m ahead") already did."""
+    for rel in ("which lies 120 m ahead", "that is 120 m ahead",
+                "that sits 120 metres straight ahead"):
+        _accepted(TASK_WP, f"At cruise altitude, head for the waypoint {rel}.")
+    # a clause that says anything else still narrows
+    _refused(TASK_WP, "At cruise altitude, head for the waypoint that is marked, "
+             "120 m ahead.", "object")
+    _refused("follow a person", "follow a person who is waving", "object")
+
+
+def test_someone_is_a_person():
+    """heldout_2026_10_28 refused "Follow someone." for "follow a person"."""
+    for who in ("someone", "somebody", "anyone"):
+        _accepted("follow a person", f"go after {who}")
+    # "someone walking" stays a pedestrian (the review set's ruling)
+    _refused("follow a person", "follow someone walking", "object")
+    _refused("follow a red car", "follow someone", "object")
+
+
+def test_a_negation_carries_across_a_comma_or():
+    """heldout_2026_10_28 refused "Never get closer than ten metres to any
+    pedestrian, or closer than five metres to anything you are following":
+    the second limit, after ", or", was read without the "Never". A negation
+    still does not carry across a bare comma."""
+    _accepted(CSP_SITL, "Fly between 10 and 20 m up. Never come closer than 10 m to the "
+              "pedestrian you are following, or closer than 5 m to anything you are "
+              "following. Speed at most 4 m/s, climb under 2 m/s, turn under 45 deg/s.")
+    # carried, so "farther than" becomes a ceiling - a changed rule
+    _refused(CSP_SITL, "Fly between 10 and 20 m up. Never come closer than 10 m to the "
+             "pedestrian you are following, or farther than 5 m from anything you are "
+             "following. Speed at most 4 m/s, climb under 2 m/s, turn under 45 deg/s.",
+             "quantity")
+    # no "or": a new instruction, not negated
+    _refused(CSP_SITL, "Fly between 10 and 20 m up. Never come closer than 10 m to the "
+             "pedestrian you are following, closer than 5 m to anything you are "
+             "following. Speed at most 4 m/s, climb under 2 m/s, turn under 45 deg/s.",
+             "quantity")
+
 
 
 def test_parser_preview_reads_the_altitude_of_every_paraphrase():
