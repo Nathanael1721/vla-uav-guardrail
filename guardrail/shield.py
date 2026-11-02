@@ -1436,10 +1436,11 @@ class _Tick:
         (Safety Shield page). The IR's STRtree holds the static zones: a
         moving zone has no fixed envelope, so until 2026-11-03 it was left out
         of the tree, returned by every query, and tested one by one. Here the
-        moving zones are RE-INDEXED PER TICK: an STRtree over each one's reach
-        box from its anchor geometry, built once per tick and horizon on the
-        first query (no polygon is built for it), and queried with the
-        forecast's box. The query box is padded by _INDEX_PAD_M, so the tree
+        moving zones are RE-INDEXED PER TICK: the IR's moving-zone R-tree
+        (PolicyIR.moving_index), an STRtree over each one's reach box from its
+        anchor geometry, built once per tick and horizon on the first query
+        (no polygon is built for it), and queried with the forecast's box.
+        The query box is padded by _INDEX_PAD_M, so the tree
         returns a superset of the zones whose box meets it; the caller still
         asks the exact question (Shield._reach), so the zones judged are the
         ones the one-by-one test judged. None for a non-finite `box` (every
@@ -1447,24 +1448,14 @@ class _Tick:
         if not all(math.isfinite(v) for v in box):
             return None
         key = ("moving_tree", id(ir), horizon)
-        hit = self._swept.get(key)
-        if hit is None:
-            recs = [r for r in ir.fences if r.moving]
-            tree, idx = None, []
-            if recs:
-                a = np.array([self.anchor_box(r, horizon) for r in recs], dtype=np.float64)
-                ok = np.isfinite(a).all(axis=1)          # a NaN box meets nothing
-                idx = [r.index for r, k in zip(recs, ok) if k]
-                a = a[ok]
-                if len(a):
-                    tree = shapely.STRtree(shapely.box(a[:, 0], a[:, 1], a[:, 2], a[:, 3]))
-            hit = self._swept[key] = (tree, idx)
-        tree, idx = hit
-        if tree is None:
-            return set()
+        index = self._swept.get(key)
+        if index is None:
+            # The IR's moving-zone R-tree at this tick (ir.PolicyIR.
+            # moving_index), each zone aged as `anchor_box` ages it.
+            index = self._swept[key] = ir.moving_index(
+                lambda r: self._age(r.rule), horizon)
         p = _INDEX_PAD_M
-        q = shapely.box(box[0] - p, box[1] - p, box[2] + p, box[3] + p)
-        return {idx[int(i)] for i in tree.query(q)}
+        return index.query(box[0] - p, box[1] - p, box[2] + p, box[3] + p)
 
 
 def _to_zone_frame(p: State, tau: float, mv) -> tuple[float, float]:
