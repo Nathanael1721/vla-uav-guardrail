@@ -117,6 +117,12 @@ Audit WP2-13, WP4-10, ARCH-23. The work went in five steps:
 - **Decision reversed: "north-east pad" names the registry's "northeast
   pad".** It was refused as a renamed place, and a test pinned that. It is
   the same pad to a reader; another compass point is still refused.
+- **`docs/data/progress_oct.json`: the paraphraser section now says 3977
+  mutants, not 3979.** `tests/test_build_progress_oct_data.py` requires that
+  section to equal the live validation report. The re-authored sets yield 2
+  fewer mutants. The October deck as sent on 27 October is unchanged; a
+  rebuild would print 3977/3977. The other sections were not regenerated:
+  `--verify` needs flight output that a worktree does not have.
 - `docs/DESIGN-paraphraser.md` and `docs/FINAL-REPORT-outline.md` (Appendix A
   and section 4.2) say all of the above. **WP2-13 is DONE**: the separate
   service fed by the templated NL now exists, and the KPI is WP4-09.
@@ -148,6 +154,13 @@ Audit WP2-13, WP4-10, ARCH-23. The work went in five steps:
 - **Re-authoring found an open false refusal.** "The following limits apply"
   reads its adjectival "following" as the follow action. One of the 32 was
   reworded around it; the validator is not changed for it.
+- **The full CI list ran here (vla-real, the worktree): 134 files, one
+  failure**, `tests/test_wp4outputs_harness.py`
+  `test_an_idle_session_expires_and_frees_its_slot`. It is a wall-clock
+  test: a 0.3 s idle TTL kept alive by calls 0.15 s apart. It failed 2 of 3
+  runs on this branch and 2 of 4 on the base commit 2290aff (exported with
+  `git archive`), so it is a timing flake on this machine, not this change.
+  The deck, tracker and replay tests SKIP in a worktree, as expected.
 
 #### Limits
 - **No held-out estimate exists for the validator as it now stands.**
