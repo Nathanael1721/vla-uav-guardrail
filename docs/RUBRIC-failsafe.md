@@ -54,13 +54,17 @@ edges or its outcome.
 
 **Not expected**, stated so that no reader has to infer it:
 
-- **N1** A planner whose requests the Shield repairs within theta, however
-  long it persists and however often its forecast re-touches a margin ring.
-  Brake is the grant's state for "violation, repairable, magnitude < theta"
-  and has no timeout; p1 reserves the fail-safe for an unsafe repair.
-- **N2** Position error within the margin: the margin was sized for it.
-  N-in-T onsets that exist only in the Shield's noisy view of the position
-  are not a planner fighting the Shield.
+- **N1** A planner the Shield can keep flying: its requests are clean or
+  repaired within theta, however long it persists and however often its
+  forecast re-touches a margin ring, and any spell of unsafe requests ends
+  (clean, or repairable within theta) before the operator timeout on the
+  flight without a fail-safe - the negation of E5. Brake is the grant's
+  state for "violation, repairable, magnitude < theta" and has no timeout;
+  p1 reserves the fail-safe for an unsafe repair.
+- **N2** Position error within the margin (the margin was sized for it), or
+  beyond it only where no hard P0 boundary is within that error - the
+  negation of E3. N-in-T onsets that exist only in the Shield's noisy view
+  of the position are not a planner fighting the Shield.
 - **N3** A disturbance within the hold authority.
 - **N4** A constraint imposed on the aircraft - a zone spawned, moved or
   grown over it, a window opening on it, a stand-off ring reclassified - that
