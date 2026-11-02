@@ -88,6 +88,7 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "sitl"))
 
 from guardrail import AuditLogger, State                               # noqa: E402
+from guardrail.audit import AUDIT_FILE                                 # noqa: E402
 from guardrail.bundle import load_for_flight                           # noqa: E402
 from guardrail.compiler import ConstraintCompiler                      # noqa: E402
 from guardrail.fsm import (DEFAULT_THETA_HORIZON_S, FAILSAFE_STATES,  # noqa: E402
@@ -527,7 +528,7 @@ def main() -> int:
     # The POLICY, not a snapshot of its hash. This rail hot-applies a fence
     # mid-flight, and AuditLogger reads the hash live so records written after
     # that carry the generation that was actually in force.
-    audit = AuditLogger(out / "audit.jsonl", policy,
+    audit = AuditLogger(out / AUDIT_FILE, policy,
                         episode_id=str(rec.episode_id))
     # The REST hot-apply API on this Shield, started on the pad so a listener
     # that cannot start stops the run before take-off. The mission loop holds

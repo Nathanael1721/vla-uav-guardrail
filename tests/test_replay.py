@@ -668,26 +668,31 @@ SIM_POLICY = ROOT / "policies" / "sim_demo_policy.yaml"
 
 def _episode(d: Path, hot: bool = True, mission: bool = True,
              stale_audit: bool = False, finish: bool = True, ids: bool = True,
-             cost_map: bool = False):
+             cost_map: bool = False, audit_name: str | None = None,
+             stale_name: str | None = None):
     """A short synthetic flight written the way the SITL rails write one:
-    EpisodeRecord first, then the audit logger, rows with the per-tick
-    fields (and the episode id), a hot-applied fence half way, and the
-    mission_end event. No simulator."""
-    from guardrail.audit import AuditLogger
+    EpisodeRecord first, then the audit logger (shield_audit.jsonl, the
+    rails' file since 2026-11-02; `audit_name` audit.jsonl for a run stored
+    before), rows with the per-tick fields (and the episode id), a
+    hot-applied fence half way, and the mission_end event. No simulator.
+    `stale_audit` leaves an older flight's audit log (`stale_name`, by
+    default the same name) in the folder first."""
+    from guardrail.audit import AUDIT_FILE, AuditLogger
     from guardrail.compiler import ConstraintCompiler
     from guardrail.models import Action4D, PolygonFence, State, XY
     from guardrail.replay import EpisodeRecord, episode_row_fields
     from guardrail.shield import Shield
+    audit_name = audit_name or AUDIT_FILE
     run = d / "ep"
     run.mkdir(parents=True, exist_ok=True)
     if stale_audit:
-        (run / "audit.jsonl").write_text('{"policy_hash": "sha256:old"}\n',
-                                         encoding="utf-8")
+        (run / (stale_name or audit_name)).write_text('{"policy_hash": "sha256:old"}\n',
+                                                      encoding="utf-8")
     policy = load_policy(SIM_POLICY)
     m = (ConstraintCompiler(policy).parse_command("fly to the northeast pad at 6 m/s")
          if mission else None)
     rec = EpisodeRecord(run, policy, m, lookahead_s=3.0, cost_map=cost_map)
-    audit = AuditLogger(run / "audit.jsonl", policy)
+    audit = AuditLogger(run / audit_name, policy)
     shield = Shield(policy, lookahead_s=3.0, dt=0.5)
     rows = []
     for tick in range(40):
@@ -818,16 +823,50 @@ def test_a_stale_audit_is_moved_aside_never_appended_to():
     """WP4-20: AuditLogger appends, and ros2_shield_on/audit.jsonl held three
     dates of flights. The new episode starts a fresh file; the old one is
     kept under _previous/, not deleted."""
+    from guardrail.audit import AUDIT_FILE, LEGACY_AUDIT_FILE
+    # The rails' file (shield_audit.jsonl), and a stored run's audit.jsonl;
+    # and an older flight's audit.jsonl left beside a new flight's
+    # shield_audit.jsonl, which must not be packed as this episode's.
+    for name, stale in ((AUDIT_FILE, AUDIT_FILE), (LEGACY_AUDIT_FILE, LEGACY_AUDIT_FILE),
+                        (AUDIT_FILE, LEGACY_AUDIT_FILE)):
+        d = _tmp()
+        run, policy, rec, _ = _episode(d, stale_audit=True, audit_name=name,
+                                       stale_name=stale)
+        hashes = {json.loads(l)["policy_hash"] for l in
+                  (run / name).read_text(encoding="utf-8").splitlines()}
+        assert "sha256:old" not in hashes, hashes
+        kept = list((run / "_previous").rglob(stale))
+        assert len(kept) == 1 and "sha256:old" in kept[0].read_text(encoding="utf-8")
+        assert stale in rec.moved and not (name != stale and (run / stale).exists())
+        path = write_replay(run, policy, d / "r.tar.gz", signer=None)
+        assert verify_replay(path)[0]
+        got = read_replay(path)
+        assert got["audit"] and all(a.get("policy_hash") != "sha256:old"
+                                    for a in got["audit"]), name
+        assert got["index"]["members"].keys() >= {"episode/" + name}
+        assert "episode/" + ({AUDIT_FILE, LEGACY_AUDIT_FILE} - {name}).pop() \
+            not in got["index"]["members"]
+        shutil.rmtree(d, ignore_errors=True)
+
+
+def test_a_run_holding_both_audit_file_names_is_refused():
+    """One audit log per episode. A folder holding shield_audit.jsonl AND an
+    audit.jsonl written after the episode started cannot say which is this
+    episode's; packing both would check one and carry the other unchecked."""
+    from guardrail.audit import LEGACY_AUDIT_FILE
     d = _tmp()
-    run, policy, rec, _ = _episode(d, stale_audit=True)
-    hashes = {json.loads(l)["policy_hash"] for l in
-              (run / "audit.jsonl").read_text(encoding="utf-8").splitlines()}
-    assert "sha256:old" not in hashes, hashes
-    kept = list((run / "_previous").rglob("audit.jsonl"))
-    assert len(kept) == 1 and "sha256:old" in kept[0].read_text(encoding="utf-8")
-    assert "audit.jsonl" in rec.moved
-    path = write_replay(run, policy, d / "r.tar.gz", signer=None)
-    assert verify_replay(path)[0]
+    run, policy, rec, _ = _episode(d, hot=False)
+    _scored(run, policy, rec)
+    (run / LEGACY_AUDIT_FILE).write_text(
+        json.dumps({"tick": 1, "policy_hash": policy.policy_hash}) + "\n", encoding="utf-8")
+    try:
+        write_replay(run, policy, d / "both.tar.gz", signer=None)
+    except ValueError as exc:
+        assert "shield_audit.jsonl and audit.jsonl" in str(exc), exc
+    else:
+        raise AssertionError("a run with two audit logs was bundled")
+    (run / LEGACY_AUDIT_FILE).unlink()
+    assert verify_replay(write_replay(run, policy, d / "one.tar.gz", signer=None))[0]
     shutil.rmtree(d, ignore_errors=True)
 
 
@@ -1061,19 +1100,19 @@ def test_audit_records_from_another_episode_are_refused():
     assert any("audit.jsonl" in p_ and "not this episode" in p_
                for p_ in problems), problems
     # The logger the rails build writes the id into every record.
-    from guardrail.audit import AuditLogger
+    from guardrail.audit import AUDIT_FILE, AuditLogger
     from guardrail.models import Action4D, State
     from guardrail.replay import rail_shield
     sh = rail_shield(policy, lookahead_s=5.0, dt=0.1)
-    AuditLogger(run / "audit.jsonl", policy, episode_id=str(rec.episode_id)).log(
+    AuditLogger(run / AUDIT_FILE, policy, episode_id=str(rec.episode_id)).log(
         41, sh.filter(State(x=4.0, y=15.0, up=15.0), Action4D(vx=6.0)))
-    last = json.loads((run / "audit.jsonl").read_text(
+    last = json.loads((run / AUDIT_FILE).read_text(
         encoding="utf-8").splitlines()[-1])
     assert last["episode_id"] == str(rec.episode_id), last
     # Through the writer and the verifier.
     path = write_replay(run, policy, d / "ok.tar.gz", signer=None)
     assert verify_replay(path)[0]
-    with (run / "audit.jsonl").open("a", encoding="utf-8") as f:
+    with (run / AUDIT_FILE).open("a", encoding="utf-8") as f:
         f.write(json.dumps({"tick": 99, "policy_hash": policy.policy_hash,
                             "episode_id": str(rec.episode_id + 7)}))
         f.write(chr(10))

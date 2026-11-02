@@ -22,7 +22,8 @@ Outputs per run, under demo/out/<tag>/:
                        stub/BC pilots do not read text)
     trajectory.png     top-down plot: NFZ, path, start/target
     report.md          KPI summary (NFZ entry seconds, shield stats)
-    audit.jsonl        Shield audit log (only when shield=on)
+    shield_audit.jsonl Shield audit log (only when shield=on; audit.jsonl
+                       until 2026-11-02)
 
 No simulator, no run: this script needs AirSim (Blocks) and has no stub mode.
 tests/test_sitl_rails.py flies main() against a stand-in for the airsim
@@ -50,6 +51,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from guardrail import AuditLogger, Shield, State, load_policy          # noqa: E402
+from guardrail.audit import AUDIT_FILE                                # noqa: E402
 from guardrail.compiler import ConstraintCompiler                      # noqa: E402
 from guardrail.geometry import fence_polygon                           # noqa: E402
 from guardrail.models import PolygonFence, XY                          # noqa: E402
@@ -189,7 +191,7 @@ def main() -> int:
     else:
         vla = StubVLA(mission)
     shield = Shield(policy, lookahead_s=3.0, dt=0.5)
-    audit = AuditLogger(out / "audit.jsonl", policy)   # the POLICY, so a hot-applied rule restamps the hash
+    audit = AuditLogger(out / AUDIT_FILE, policy)   # the POLICY, so a hot-applied rule restamps the hash
 
     if args.api:
         from guardrail.api import serve_in_background

@@ -77,8 +77,11 @@ own audit log was appended across flights instead of belonging to one
                      rail asked for one (`EpisodeRecord(cost_map=True)`, since
                      2026-10-11); a CSP naming a map the bundle does not carry,
                      or a map that is not the one named, is refused;
-  audit.jsonl        the Shield's audit log for this episode only (a stale
+  shield_audit.jsonl the Shield's audit log for this episode only (a stale
                      one is moved to _previous/ first, never appended to);
+                     the grant's file name since 2026-11-02, `audit.jsonl`
+                     before, and a stored run's audit.jsonl is still packed
+                     and read;
   events.jsonl       hot-applies, mode changes, fence uploads, FSM
                      transitions, in order;
   bag/               the rosbag2 recording, when the rail recorded one and it
@@ -166,7 +169,9 @@ EPISODE_FILES = {
     "metrics.json": False,
     "kpi.json": False,
     "manifest.json": False,
-    # Since 2026-10-06: see "WHAT AN EPISODE HOLDS" above.
+    # Since 2026-10-06: see "WHAT AN EPISODE HOLDS" above. The grant's name
+    # since 2026-11-02; the old one for a run stored before then.
+    "shield_audit.jsonl": False,
     "audit.jsonl": False,
     "events.jsonl": False,
     "prompt.yaml": False,
@@ -192,7 +197,7 @@ BAG_LEAD_S = 600.0
 # Until 2026-10-07 only the first five were moved, so a re-run that crashed
 # before writing its own log left the previous flight's log, metrics, KPI
 # table and manifest to be bundled with the new episode's events and bag.
-STALE_PATTERNS = ("audit.jsonl", "events.jsonl", "adapter_log.jsonl",
+STALE_PATTERNS = ("shield_audit.jsonl", "audit.jsonl", "events.jsonl", "adapter_log.jsonl",
                   "policy_g*.json", "csp_g*.json",
                   # Since 2026-10-11: a re-run without --cost-map must not
                   # leave the previous flight's map beside its own CSP.
@@ -389,6 +394,15 @@ def _json_or_none(data: bytes | None) -> dict | None:
     return doc if isinstance(doc, dict) else None
 
 
+def _audit_member(members: dict) -> tuple[str, bytes | None]:
+    """(file name, bytes) of an episode's audit log among a bundle's members:
+    shield_audit.jsonl, else (a run stored before 2026-11-02) audit.jsonl."""
+    for name in ("shield_audit.jsonl", "audit.jsonl"):
+        if EPISODE + name in members:
+            return name, members[EPISODE + name]
+    return "shield_audit.jsonl", None
+
+
 def unbound_policy_hashes(records: list[dict], policies: dict) -> list[str]:
     """Policy hashes named by log or audit records that no archived
     generation has, under any hash form it knows."""
@@ -504,7 +518,8 @@ def episode_binding(events: list[dict], rows: list[dict],
              if isinstance(r, dict) and r.get("episode_id") is not None}
     a_foreign = sorted(i for i in a_ids if i != str(start))
     if a_foreign:
-        problems.append(f"audit.jsonl names episode(s) {', '.join(a_foreign)}, "
+        problems.append(f"the audit log (shield_audit.jsonl, or a stored run's "
+                        f"audit.jsonl) names episode(s) {', '.join(a_foreign)}, "
                         f"not this episode ({start}): records from another "
                         f"flight")
     for label, doc in (("metrics.json", metrics), ("kpi.json", kpi)):
@@ -564,6 +579,15 @@ def write_replay(run_dir: str | Path, policy: Policy, out_path: str | Path,
             f"{run}: flight_log.jsonl holds no rows; nothing was recorded, so "
             f"there is nothing to replay (a run that recorded no tick is not a "
             f"perfect run)")
+    # One audit log per episode: the grant's name, or a stored run's old one.
+    # Both means something wrote one after the episode started (a stale log
+    # is moved to _previous/ when it starts), and which is this episode's
+    # cannot be told; packing both would check only one of them.
+    if EPISODE + "shield_audit.jsonl" in members and EPISODE + "audit.jsonl" in members:
+        raise ValueError(
+            f"{run.name} holds both shield_audit.jsonl and audit.jsonl: an "
+            f"episode has one audit log, so which is this episode's cannot be "
+            f"told")
 
     # Every policy generation the episode recorded, and its CSP. Checked
     # HERE as well as on read: a bundle is not written around an episode
@@ -581,7 +605,7 @@ def write_replay(run_dir: str | Path, policy: Policy, out_path: str | Path,
                 f"not the last generation the episode recorded "
                 f"(g{last.generation}, {last.policy_hash})")
         for label, data in (("flight_log.jsonl", members.get(EPISODE + "flight_log.jsonl")),
-                            ("audit.jsonl", members.get(EPISODE + "audit.jsonl"))):
+                            _audit_member(members)):
             stray = unbound_policy_hashes(_jsonl(data), gen_policies)
             if stray:
                 raise ValueError(
@@ -598,7 +622,7 @@ def write_replay(run_dir: str | Path, policy: Policy, out_path: str | Path,
         _json_or_none(members.get(EPISODE + "metrics.json")),
         _json_or_none(members.get(EPISODE + "kpi.json")),
         log_mtime_ns=log_file.stat().st_mtime_ns,
-        audit=_jsonl(members.get(EPISODE + "audit.jsonl")))
+        audit=_jsonl(_audit_member(members)[1]))
     if ep_problems:
         raise ValueError(f"{run.name}: not one finished episode: "
                          + "; ".join(ep_problems))
@@ -797,7 +821,7 @@ def read_replay(path: str | Path,
             "metrics": _json(EPISODE + "metrics.json", {}),
             "kpi": _json(EPISODE + "kpi.json"),
             "manifest": _json(EPISODE + "manifest.json"),
-            "audit": _jsonl(blobs.get(EPISODE + "audit.jsonl")),
+            "audit": _jsonl(_audit_member(blobs)[1]),
             "events": _jsonl(blobs.get(EPISODE + "events.jsonl")),
             "generation_policies": gen_policies,
             "generation_problems": gen_problems,
@@ -1403,7 +1427,7 @@ class EpisodeRecord:
     """One flight's directory: fresh audit, every generation, the event list.
 
         rec = EpisodeRecord(out, policy, mission, lookahead_s=5.0)
-        audit = AuditLogger(out / "audit.jsonl", policy)   # after rec: fresh
+        audit = AuditLogger(out / AUDIT_FILE, policy)   # after rec: fresh
         ...
         row.update(episode_row_fields(shield, state, policy, rec.episode_id))
         rec.apply_zone(shield, fence, t=now)        # hot-apply + generation

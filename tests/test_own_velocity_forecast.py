@@ -1103,7 +1103,8 @@ constraints:
 
 
 def _audit(run):
-    return [json.loads(l) for l in (run / "audit.jsonl").read_text().splitlines() if l.strip()]
+    from guardrail.audit import AUDIT_FILE
+    return [json.loads(l) for l in (run / AUDIT_FILE).read_text().splitlines() if l.strip()]
 
 
 def _assert_stop_advice_on_record(rows, run):

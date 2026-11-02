@@ -73,6 +73,7 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "demo"))
 
 from guardrail import AuditLogger, Shield, State, load_policy       # noqa: E402
+from guardrail.audit import AUDIT_FILE                             # noqa: E402
 from guardrail import kpi as kpi_mod                                # noqa: E402
 from guardrail.bundle import load_for_flight                        # noqa: E402
 from guardrail.compiler import join_negative_xy                     # noqa: E402
@@ -4405,7 +4406,7 @@ async def fly(args) -> int:
                        min_clearance_m=(clr[0].min_clearance_m if clr else 5.0),
                        street_mask=street, shield=shield)
 
-    audit = AuditLogger(out / "audit.jsonl", policy)   # the POLICY, so a hot-applied rule restamps the hash
+    audit = AuditLogger(out / AUDIT_FILE, policy)   # the POLICY, so a hot-applied rule restamps the hash
 
     # On-screen policy indicator (demo/policy_hud.py): the rules in force, the
     # aircraft's distance to each limit and a banner whenever the Shield acts -
