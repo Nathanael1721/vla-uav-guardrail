@@ -38,6 +38,22 @@ shipped change and recorded as one.
   "functional-rail evidence", and the topology slide's line gives the 3 / 38
   split.
 
+#### Changed
+- **The researcher's answers of 2 November** are recorded in
+  `docs/FINAL-REPORT-outline.md` (sections 7-9 and Appendix A):
+  - the WP2 and WP4 correction notes were sent to ITRI, so WP2-12 and WP4-21
+    are DONE (40 DONE, 81 PARTIAL, 13 DRIFT, 2 MISSING);
+  - the report states a one-person team (ARCH-24; it stays DRIFT, because
+    the grant names five people);
+  - the work stops at the hil topology, because the drone cannot carry an
+    AGX Orin or run a large VLA, so `flight` (ARCH-14) still needs the PI's
+    written waiver;
+  - theta is forecast depth in metres, the shipped default; the rubric, the
+    IR bump, the two-hash contract, the multi-scale bundle and the DRIFT
+    items follow the grant with best practice;
+  - the signer and the public-repository question are still open, and
+    nothing is pushed meanwhile.
+
 ### 2026-11-01 (late) — the VLA follow's subject stand-off now runs: vla_fly gives the Shield the perception's subject every tick, with its velocity, and says INERT when it has none; every earlier VLA flight was flown with the stand-off inert
 
 #### Fixed

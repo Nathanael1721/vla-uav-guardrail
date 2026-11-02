@@ -18,7 +18,8 @@ re-checked: on 29 Oct four independent reviewers held each of the 64 items
 then marked DONE against the grant's own wording, and 27 of them did not
 meet it (2 more were unclear). Those are re-stated as PARTIAL or DRIFT, each
 with what the review found; three of them (WP2-04, WP2-07, WP4-20) were
-fixed the same night. **38 DONE, 83 PARTIAL, 13 DRIFT, 2 MISSING.** DONE means the code
+fixed the same night. On 2 Nov the WP2 and WP4 correction notes were
+confirmed sent (WP2-12, WP4-21). **40 DONE, 81 PARTIAL, 13 DRIFT, 2 MISSING.** DONE means the code
 or the artefact the grant names exists and matches the grant's words; it
 never means KPI-grade.
 
@@ -226,7 +227,7 @@ Each deviation, the grant text it departs from, and its state:
 | X-05, ARCH-25 | observations reach the VLA at ≥ 10 Hz | the detector runs 2-9 Hz depending on host; a VLA decision takes 0.5-1.2 s on the desktop GPU (9.6 s for DroneCATS int4 on the Orin Nano) | G3 ruling (12 / 21 Oct, Q3) |
 | ARCH-08 | AP_DDS migration (Q3, optional) | not done; MAVROS 2 is the bridge | deferred: one sentence in the report |
 | ARCH-16, ARCH-17 | Gazebo Harmonic functional rail at mid-term | not built | overdue; state actual dates |
-| ARCH-24 | 1 PI + 4 Master students | one team (ours) | PI decides how the report states staffing |
+| ARCH-24 | 1 PI + 4 Master students | one developer (git log) | decided 2 Nov: the report states a one-person team |
 
 ## 8. Findings and corrections
 
@@ -235,17 +236,31 @@ retracted and where: docs/FINDING-five-defects-found-by-audit.md,
 docs/FINDING-the-kpi-was-never-measured.md,
 docs/FINDING-the-kpi-report-that-scored-every-rule-as-p0.md, and the
 `#### Retracted` entries of CHANGELOG.md. The correction notes for WP2 and
-WP4 (WP2-12, WP4-21) were approved by the PI on 6 Oct; their delivery to
-ITRI is not recorded.
+WP4 (WP2-12, WP4-21) were approved by the PI on 6 Oct and have been sent
+to ITRI (confirmed by the researcher on 2 Nov).
 
 ## 9. Decisions needed from the PI
 
-Open since 12 / 21 Oct (docs/PI-DECISIONS-2026-10-21-questions.md): the
-theta basis for repair success (Q1); the fail-safe rubric (Q2); a sub-10 Hz
-pilot (G3, Q3); the dated `hil` fallback (#4); the signer and CA (Q5); the
-`flight` topology waiver (Q7); N-in-T for slow pilots (#7); the
-two-hash contract with the reference implementation (Q8); the five
-final-demo scenarios (6 Oct, Q2).
+Settled on 2 Nov (the researcher, with the PI's standing instruction of
+6 Oct to follow the grant and use best practice where it is silent):
+
+- theta basis: forecast depth in metres, the shipped default (Q1);
+- fail-safe rubric, IR bump on every shape change (WP1-22), two-hash
+  contract (WP1-05), multi-scale geometry in the bundle (WP2-16), the DRIFT
+  items: best practice, conforming to the grant rather than asking for
+  waivers;
+- Python: the version every environment supports, otherwise the best one
+  with the reason recorded (WP1-25, X-06);
+- the five final-demo scenarios: after the VLA and the system are mature;
+- staffing (ARCH-24): stated as a one-person team;
+- the WP2 / WP4 correction notes (WP2-12, WP4-21): sent to ITRI;
+- `hil` fallback date: as soon as the AGX Orin is installed. The work
+  stops at `hil`: the drone cannot carry an AGX Orin or run a large VLA, so
+  the `flight` topology (ARCH-14) still needs the PI's written waiver.
+
+Still open: the bundle signer and CA (Q5, to be confirmed); the public
+repository against "code will not be published" (to be confirmed; nothing
+is pushed meanwhile); the `flight` waiver above.
 
 ## 10. Plan to 2026-11-30
 
@@ -319,7 +334,7 @@ applied; regenerate it before the report is written.
 | WP2-09 | Effectiveness evaluation CLI: offline replay (violating-candidate rate before/after, repair magnitude, token utilisation) + A/B prefix on/off in stress runs | PARTIAL | tools/prefix_eval.py + harness prefix on/off key (CHANGELOG 2026-10-07, 'not yet run on the model'); tests/test_prefix_eval.py | Run prefix_eval on logged VLA tuples with and without the CSP; needs WP2-01 first. |
 | WP2-10 | CSP carries policy_hash + generation; stateless/deterministic | DONE | guardrail/csp.py policy_hash, generation, issued_at; test_the_csp_hash_is_stable_across_processes_and_hash_seeds | None. |
 | WP2-11 | CSP emitted with each flight's artefacts (policy_hash-everywhere invariant) | DONE | demo/follow_vlm.py city_episode: every city follow writes events.jsonl, policy_g0.json and csp_g0.json (f6ee433); tests/test_city_episode.py 3/3 | - |
-| WP2-12 | Claims made about WP2 in delivered reports vs what the code does | PARTIAL | tools/check_claims.py (0 live claims in tracked files); docs/CORRECTION-2026-10-06-mid-evaluation-and-deck.md row A5 | Record that the correction note reached ITRI (PI said yes on 6 Oct; sending not recorded). |
+| WP2-12 | Claims made about WP2 in delivered reports vs what the code does | DONE | tools/check_claims.py (0 live claims in tracked files); docs/CORRECTION-2026-10-06-mid-evaluation-and-deck.md row A5; the correction note was sent to ITRI (researcher, 2 Nov) | - |
 | WP2-13 | Paraphraser (Q3 Aug-Oct deliverable, separate service fed by the templated NL); per-paraphrase robustness is WP4's KPI | PARTIAL | guardrail/paraphraser.py, experiments/paraphrases/ 112 stored paraphrases; validator false accepts 0/30 dev, 4/12 on a fresh held-out set (CHANGELOG 2026-10-22); 4 LLM-authored sets stale since C8, pinned; validator tightened 28 Oct (fb2cb49); on an independent held-out set (heldout_2026_10_28, written by an author with no access to the validator) 2/20 false accepts and 5/20 false refusals, before and after | Close the held-out false accepts; re-author the 4 stale sets; the KPI use is WP4-09. |
 | WP2-14 | Tests for the prefix compiler acceptance KPIs | DONE | tests/test_csp.py test_kpi_budget_*, test_kpi_p0_coverage_*, test_kpi_p0_overflow_raises_*, test_kpi_every_rule_* (99/99) | None. |
 | WP2-15 | CSP re-issued when the policy generation changes (hot-apply). Grant: CSP is a function of 'policy bundle ( policy_hash + generation )'; Overview: 'policy_hash everywhere' | DONE | sitl/ros2_shield_node.py writes csp_g<N>.json per generation; dynamic_nfz compiles (CHANGELOG 2026-10-12); stored ros2fix_on_dyn_nfz (7 Oct) lacks generation 1's CSP; not re-flown; 29 Oct: ros2_hotapply_01-03 wrote csp_g0..csp_g4, one per generation; g0 does not name the REST zone, g1-g4 do, each with its generation's policy_hash | KPI-grade needs hil. |
@@ -376,7 +391,7 @@ applied; regenerate it before the report is written.
 | WP4-09 | Per-paraphrase robustness, a WP4-owned KPI: mission outcome stability across paraphrased task prompts | PARTIAL | paraphrase arms in the harness (CHANGELOG 2026-10-07); no text-reading pilot has flown them (AerialVLA reads a fixed phrase vocabulary) | Pick the KPI pilot (G3 ruling) and fly each family x paraphrases; record outcome stability. |
 | WP4-10 | Paraphraser: a separate service (Q3, Aug-Oct deliverable) that turns the Prefix Compiler's templated NL into free-form paraphrases issued to the VLA | PARTIAL | same artefact as WP2-13 (stored set + validator); validator tightened 28 Oct (fb2cb49); on an independent held-out set (heldout_2026_10_28, written by an author with no access to the validator) 2/20 false accepts and 5/20 false refusals, before and after | Same as WP2-13. |
 | WP4-11 | Every episode produces a self-contained bundle replayable bit-for-bit: manifest.json, policy_bundle (incl. all hot-apply generations), episode.bag2 (rosbag2), shield_audit.jsonl, harness_events.jsonl, kpi.json; Q4 reports Q3 runs 'replayed for reproducibility' | PARTIAL | headless episodes re-fly bit-for-bit (tools/rerun_episode.py, CHANGELOG 2026-10-13); ROS 2 bundles hold rosbag2/audit/events; simulator/SITL episodes re-score only | No KPI-grade episode bundle; Q4 replay-for-reproducibility of Q3 runs not done. |
-| WP4-12 | Six-field manifest per episode (code_revision, vla_model_hash, policy_hash, random_seed, sim_speedup, topology); sim_speedup=1.0 mandatory for KPI-bearing runs | PARTIAL | six-field manifest on every run (guardrail/manifest.py); but 27-28 Oct manifests read code_revision '...-dirty' (PC, e.g. demo/out/nfz3b_pc_hier_dronecats_20261028) and 'unversioned' (Jetson, git-archive sync), and Jetson runs say topology 'projectairsim-single-host'; since 28 Oct the Jetson is a git checkout (deploy/orin/sync_follow_controller.ps1 ships a git bundle), so code_revision resolves there; a remote simulator is stamped projectairsim-remote-sim (guardrail/manifest.py) | Fly the deliverable runs from a clean tree: every run since 27 Oct records '-dirty' (an untracked file under docs/). |
+| WP4-12 | Six-field manifest per episode (code_revision, vla_model_hash, policy_hash, random_seed, sim_speedup, topology); sim_speedup=1.0 mandatory for KPI-bearing runs | PARTIAL | six-field manifest on every run (guardrail/manifest.py); but 27-28 Oct manifests read code_revision '...-dirty' (PC, e.g. demo/out/nfz3b_pc_hier_dronecats_20261028) and 'unversioned' (Jetson, git-archive sync), and Jetson runs say topology 'projectairsim-single-host'; since 28 Oct the Jetson is a git checkout (deploy/orin/sync_follow_controller.ps1 ships a git bundle), so code_revision resolves there; a remote simulator is stamped projectairsim-remote-sim (guardrail/manifest.py) | Fly the deliverable runs from a clean tree. The untracked file that made every run since 27 Oct '-dirty' was committed on 2 Nov (e9a08d6); runs flown before that keep their '-dirty' stamp. |
 | WP4-13 | Per-step record (observation, policy_state with policy_hash+generation, planner_output, post_repair, executed, outcome); auto-labels violation_type and risk_level; exporters (rosbag2 -> JSONL/Parquet), both episode-based and step-based | DRIFT | tools/export_episodes.py JSONL + Parquet with read-back check (CHANGELOG 2026-10-21); tests/test_wp4outputs_exporters.py | the exporter reads flight_log/audit, not rosbag2; action.executed is inferred, not what MAVROS published (independent review against the grant's wording, 29 Oct) |
 | WP4-14 | Every release runs, in Stress Testing's smoke set: high-speed near-edge, sudden hot-applied NFZ, time-window switch instant, three simultaneous violations, GPS noise/latency (Safety Shield page) | PARTIAL | smoke profile carries all five Shield stressors (experiments/profiles/smoke.yaml); tests/test_sweep.py | configured in smoke.yaml but never run per release or build (independent review against the grant's wording, 29 Oct) |
 | WP4-15 | A scenario can be flagged for A/B; the harness runs it with Prefix on/off on the same seed and the KPI report shows the delta (Prefix Compiler page) | PARTIAL | prefix on/off key in the harness (CHANGELOG 2026-10-07); pilot ignores text, no delta measured | Measure the A/B delta with a CSP-reading VLA (with WP2-01/WP2-09). |
@@ -385,7 +400,7 @@ applied; regenerate it before the report is written.
 | WP4-18 | Perception-stress scenarios on Project AirSim (Stress Testing page: 'Project AirSim for perception stress'; reference dual-rail.md:16 'Texture / lighting / shadow stressors', :70 lighting, weather, novel textures, dynamic actors) | PARTIAL | dynamic actors only (40 pedestrians, traffic, signals in CityLife); experiments/templates/sensor_degradation.yaml headless | Add lighting/night/weather/texture stressors on Project AirSim with a per-scenario perception metric. |
 | WP4-19 | Final demo gate (reference recommendation.md:33): all four components exercised by a non-trivial scenario from the Stress Testing scenario suite | PARTIAL | VLA (AerialVLA/DroneCATS) + signed DSL bundle + Shield flown together on CityLife (45 flights 27-28 Oct, 0 P0 escapes); no CSP, not a suite scenario, not on ArduPilot | One suite scenario with all four components (DSL, CSP-reading VLA, Shield, Stress Testing); PI to confirm the 5 final-demo scenarios (6 Oct Q2). |
 | WP4-20 | Shield audit JSONL aggregated into the episode bundle by the harness at episode end (Safety Shield page, Audit log section) | DONE | guardrail/replay.py EPISODE_FILES audit.jsonl packed per episode (CHANGELOG 2026-10-07); 30 Oct: the headless episode keeps the flying Shield's audit records (EpisodeRun.audit, AuditLogger.in_memory) and write_bundle packs them as shield_audit.jsonl at episode end, the sweep's and the gRPC EndEpisode's bundles alike (tests/test_sweep.py::test_the_episode_bundle_carries_the_shields_audit) | None. |
-| WP4-21 | WP4 status as reported to the PI/ITRI versus the grant's WP4 outputs (scenario library, KPI rollups, replay harness; 7-row output table on the Stress Testing page) | PARTIAL | WP4-built claim corrected (tools/check_claims.py; CORRECTION-2026-10-06 row A8) | Record that the correction reached ITRI. |
+| WP4-21 | WP4 status as reported to the PI/ITRI versus the grant's WP4 outputs (scenario library, KPI rollups, replay harness; 7-row output table on the Stress Testing page) | DONE | WP4-built claim corrected (tools/check_claims.py; CORRECTION-2026-10-06 row A8); the correction was sent to ITRI (researcher, 2 Nov) | - |
 
 ### Architecture and topologies
 
@@ -405,8 +420,8 @@ applied; regenerate it before the report is written.
 | ARCH-10 | Mission Planner via mavlink-router fan-out, parallel to MAVROS | PARTIAL | mavlink-router fans out to UDP 14550, 19.0 Hz measured by sitl/gcs_listen.py (CHANGELOG 2026-10-08); DESIGN-projectairsim-ardupilot.md:425 'Mission Planner's display was not recorded' | Open Mission Planner on a PAS+ArduPilot run and keep a screenshot/recording (the PI asked for this connection). |
 | ARCH-11 | dev topology: everything on one desktop | PARTIAL | SITL+MAVROS dev rail flown 7 Oct (last time); Gazebo absent; no container image built (numpy ResolutionImpossible, CHANGELOG 2026-10-19); 29 Oct: the dev rail re-flown on today's code, PAS+ArduPilot with MAVROS 2 in WSL; pas_dev_mavros_02 is the first run stamped dev (real-time factor 0.968) | Gazebo (ARCH-16); build the images (C-17). |
 | ARCH-12 | hil topology: desktop runs sims + MAVROS + GCS, Jetson Orin runs VLA + Shield (canonical KPI config) | PARTIAL | Orin Nano Super (JetPack 6.2.3) runs the follow controller incl. the Shield against the desktop's Project AirSim over 10.42.0.x (orin_follow_02 0.957; 16 Jetson flights 28 Oct); every VLA answered from the desktop GPU; no MAVROS/ArduPilot on that path; deploy/ images never built | Run the grant's hil: SITL+MAVROS+GCS on the desktop, Shield (+stub now, VLA on the AGX Orin) on the Orin, per docs/RUNBOOK-orin-hil.md; then the KPI campaign. |
-| ARCH-13 | Topology field and the claim about which configuration yields contractual KPIs | PARTIAL | labels are dev/hil/flight; hil/flight only on evidence (CHANGELOG 2026-10-06/-07); tools/check_claims.py | the label rule is right, but no hil run exists, the 28 Oct Orin manifest nfz3b_orin_hier_aerovla_20261028 says single-host/unversioned, and the untracked Final-Oct cheat-sheet calls 38 non-dev flights 'dev' (independent review against the grant's wording, 29 Oct) |
-| ARCH-14 | flight topology: Orin companion with real ArduPilot autopilot; final demos | PARTIAL | deploy/topologies/flight.env + compose override defined (CHANGELOG 2026-10-07); no drone | Flight topology on the drone, or a written waiver (12 Oct Q7, unanswered). |
+| ARCH-13 | Topology field and the claim about which configuration yields contractual KPIs | PARTIAL | labels are dev/hil/flight; hil/flight only on evidence (CHANGELOG 2026-10-06/-07); tools/check_claims.py | the label rule is right, but no hil run exists, the 28 Oct Orin manifest nfz3b_orin_hier_aerovla_20261028 says single-host/unversioned, (independent review against the grant's wording, 29 Oct). The Final-Oct cheat-sheet is committed and gives the 3 dev / 38 functional-rail split (2 Nov). |
+| ARCH-14 | flight topology: Orin companion with real ArduPilot autopilot; final demos | PARTIAL | deploy/topologies/flight.env + compose override defined (CHANGELOG 2026-10-07); no drone | Decided 2 Nov: the work stops at hil (the drone cannot carry an AGX Orin or run a large VLA); the written PI waiver for flight is still needed. |
 | ARCH-15 | HIL bridge adapter (Q1, CRITICAL) and its 2026-06-30 fallback gate G1 | DRIFT | Gate G1 passed 2026-10-08 (demo/out/g1_20261008_223259/g1_verdict.md) and again 2026-10-13 (g1_20261013_203404) | G1 passed on 2026-10-08, 100 days after its 2026-06-30 gate, over SIM_AirSim JSON, not HIL_*; the gate's own rule fired; a PI ruling is needed (independent review against the grant's wording, 29 Oct) |
 | ARCH-16 | Functional rail (Gazebo Harmonic) demoable end-to-end at mid-term | MISSING | sitl/setup_gazebo.sh and sitl/run_gazebo_demo.sh exist; no demo/out gazebo run, no Gazebo entry in CHANGELOG after 5 Oct | Run the Gazebo Harmonic rail in WSL (ideally over MAVROS 2), keep artefacts + video; mid-term gate item, overdue. |
 | ARCH-17 | Mid-term delivery 2026-07-20 (DSL+IR, Shield ROS 2 node with one projection operator, Gazebo rail) | PARTIAL | DSL+IR (IR late, 6 Oct) and Shield node exist; Gazebo rail missing | Close ARCH-16 and state actual dates in the final report. |
@@ -416,7 +431,7 @@ applied; regenerate it before the report is written.
 | ARCH-21 | Constrained-VLA evidence on the perception rail and in current demos | PARTIAL | VLA-piloted flights behind the Shield with the Shield acting: vla_follow_redcar_01_20261023 (177 corrected ticks), nfz3b_pc_hier_dronecats / nfz3b_orin_hier_aerovla 28 Oct (13 / 257 repairs, 0 zone ticks, 0 P0 escapes) | no flight shows a VLA's 10 Hz 4-D action repaired by the Shield on the PAS+ArduPilot rail; the cited hierarchical flights were 0-6% VLA-flown, on simple_flight (independent review against the grant's wording, 29 Oct) |
 | ARCH-22 | rosbag2 capture for the determinism and replay contract (L3) | PARTIAL | rosbag2 recorded on the ROS 2 rail (sitl/run_ros2_demo.sh, demo/out/ros2fix2_on_fsm/bag) | a bag exists on the ROS 2 rail only, without sensor topics or raw MAVLink, and replay reads flight_log, not the bag (independent review against the grant's wording, 29 Oct) |
 | ARCH-23 | Q3 paraphraser deliverable (Aug-Oct) | PARTIAL | same artefact as WP2-13; validator tightened 28 Oct (fb2cb49); on an independent held-out set (heldout_2026_10_28, written by an author with no access to the validator) 2/20 false accepts and 5/20 false refusals, before and after | Same as WP2-13. |
-| ARCH-24 | 1 PI + 4 Master students (2 ArduPilot/MAVLink, 2 VLA fine-tuning/prompting) | DRIFT | one developer (git log); PI-DECISIONS-2026-10-06 Q4.9 asked how to state it | PI decides how the final report states staffing. |
+| ARCH-24 | 1 PI + 4 Master students (2 ArduPilot/MAVLink, 2 VLA fine-tuning/prompting) | DRIFT | one developer (git log); PI-DECISIONS-2026-10-06 Q4.9 asked how to state it | Decided 2 Nov: the final report states a one-person team. Stays DRIFT: the grant names five people. |
 | ARCH-25 | Observation (Camera / IMU / GPS) reaches the VLA at >=10 Hz (Architecture constraints diagram; ref layer-requirements L2/L5 'Surface obs at >=10 Hz') | PARTIAL | detector 2.18-2.48 Hz on the Jetson flights, ~3 Hz on the PC; VLA frames at its decision rate (~2 Hz); 30 Oct: the lab's own AIOT-VLA (training/aiotvla, docs/DESIGN-aiotvla.md; named NTUT-VLA until 30 Oct) answers in 48.4 ms p50 on the Orin Nano Super (19.1 decisions/s over 600 replayed captures, the server alone) and 10.3 ms on the RTX 4090; on the city rail its requests go every 0.1 s (capture gap p50 0.13 s) | Frames reach the VLA at about 7.5 Hz on the city rail (capture gap 0.13 s), below 10 Hz; a faster capture path. |
 | ARCH-26 | 10 Hz Shield monitor budget validated by Orin profiling; Rust hot-path as Q3 fallback (Overview page, locked cross-cutting decisions) | PARTIAL | tools/profile_shield_tick.py ready; Orin Nano city flights logged Shield p50 2.5 / p95 6-9 / max 261 ms; profiler not run on the Orin, no Python-vs-Rust go/no-go | Run the profiler on the Orin and record the Rust decision. |
 | ARCH-27 | Implementation language Python + Pydantic v2 throughout (Overview page, locked cross-cutting decision) | DONE | Python + Pydantic v2 throughout (guardrail/, pyproject.toml) | 3.11+ version is X-06. |
