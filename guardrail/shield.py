@@ -91,6 +91,21 @@ ENFORCEMENT (2026-10-07; docs/DESIGN-shield-enforcement.md has the whole story)
     behind constructor flags, all off by default. A moving zone's polygon is
     built only when its anchor box meets the forecast (guardrail/ir.py
     `anchor_reach`).
+  * ONE RULE-EVALUATION CODE PATH and the grant's node architecture
+    (2026-11-03, cards WP3-22 / X-13 / WP3-23). This module is the violation
+    checker library every reader calls: the rule clock (RuleClock: windows,
+    switches, swaps), the per-position verdicts (zone_breached,
+    corridor_breached, the band tests, ZoneRuler) and the way out of a zone
+    (escape_direction, invariant to the ring's vertex order). The Prefix
+    Compiler, the fence export, the RTL hand-over, the dwell count and the
+    city controller's FenceGuard ask these instead of keeping their own
+    (tests/test_shieldcore_onepath.py fails if a second one appears). Each
+    filter() tick admits its action and the action's predicted trajectory
+    into the sliding-window buffer (SlidingWindow, the last 50) before
+    anything is checked, and the checker reads the trajectory from there.
+    Static zones are queried through the IR's STRtree; moving dynamic_nfz
+    zones through an STRtree of their reach boxes rebuilt per tick
+    (_Tick.moving_near).
 """
 from __future__ import annotations
 
@@ -690,6 +705,13 @@ RECOVERY_LAWS = ("cap", "lookahead")
 # monitor rate, the same span as the grant's lookahead.
 HISTORY_LEN = 50
 
+# Padding (metres) of the forecast box queried against the per-tick R-tree
+# of moving zones (_Tick.moving_near): the tree's answer is then a superset of
+# the zones whose reach box meets the forecast's, boundary contacts included,
+# and the exact test (Shield._reach) decides. A larger pad costs only an
+# exact test that was not needed, never an answer.
+_INDEX_PAD_M = 1e-6
+
 
 def _dedupe(repairs: list["Repair"]) -> list["Repair"]:
     """One audit line per distinct fix — the repair chain is iterated, so the
@@ -982,10 +1004,20 @@ class RuleClearance(NamedTuple):
 
 
 class TickRecord(NamedTuple):
-    """One entry of the Shield's sliding window: where the vehicle was and what
-    the Shield decided. The predicted trajectory the spec puts beside it is
-    recomputable from these (`Shield.forecast(rec.state, rec.decision.emitted,
-    pipe=rec.pipe)`), so it is not paid for on every tick.
+    """One entry of the Shield's sliding window: where the vehicle was, the
+    action it was given (`decision.raw`), the predicted trajectory the
+    violation checker judged that action on (`trajectory`), and what the
+    Shield decided.
+
+    `trajectory` (since 2026-11-03, WP3-23): the forecast of `decision.raw`
+    from `state`, as (t, pose) pairs over the lookahead - the poses the
+    checker read from the buffer (SlidingWindow). A pose has x, y, up and
+    yaw_deg. For a state with a measured velocity it holds two poses per grid
+    time, the own-velocity one then the commanded one, exactly as the rules
+    walked them (Shield._predict). Until that date the buffer kept no
+    trajectory: it was "recomputable", and the checker never read the buffer.
+    The forecast of the EMITTED action is still recomputable on demand
+    (`Shield.forecast(rec.state, rec.decision.emitted, pipe=rec.pipe)`).
 
     `elapsed_ms` is how long that `filter()` call took, wall clock. The grant
     budgets the monitor at 100 ms per tick (Safety Shield page) and no flight
@@ -1003,6 +1035,93 @@ class TickRecord(NamedTuple):
     decision: ShieldDecision
     elapsed_ms: float
     pipe: tuple | None = None
+    trajectory: tuple | None = None
+
+
+class _Admitted(NamedTuple):
+    """The action the current tick admitted into the buffer, with its
+    predicted trajectory, before the decision on it is made."""
+    tick: Any
+    state: Any
+    action: Any
+    key: tuple
+    trajectory: tuple
+
+
+class SlidingWindow:
+    """The Shield node's sliding-window buffer (grant, Safety Shield page,
+    node architecture: Action subscriber -> "Sliding-window buffer: last 50
+    actions + predicted trajectory" -> Violation checker).
+
+    Each filter() tick ADMITS the action it was given, with the predicted
+    trajectory of that action from the decision state, before anything is
+    checked (`admit`). The checker then READS that trajectory from here: the
+    Shield's forecast (`Shield._predict`) of the admitted (state, action) on
+    the admitting tick is the buffer's, so the geometric, envelope and
+    time-window rules all walk the poses the buffer holds (`trajectory_for`).
+    When the decision is made the entry is closed into a TickRecord
+    (`close`) and kept with the last HISTORY_LEN - 1 before it, oldest first
+    (`records`, the Shield's `history`).
+
+    What reads the older entries: `Shield.history` (the HUD, the audit and
+    episode writers, the sweep). No rule of this DSL reads PAST actions, so
+    the checker reads the newest entry only; the other 49 are what a rule
+    over recent actions (an oscillation rule, say) would read.
+
+    Only the tick that admitted an entry can read its trajectory, and only
+    for that (state, action): `advise()` and the look-ahead views admit
+    nothing and forecast as before; a repair candidate is another action
+    and is forecast as before. The forecast is a pure function of (state,
+    action) on a tick, so reading it from here or computing it again gives
+    the same poses: every decision is unchanged (tests/test_shieldcore_
+    onepath.py; the library sweep and the identity tests)."""
+    __slots__ = ("_records", "_head")
+
+    def __init__(self, maxlen: int = HISTORY_LEN):
+        self._records: deque[TickRecord] = deque(maxlen=maxlen)
+        self._head: _Admitted | None = None
+
+    @staticmethod
+    def _key(action) -> tuple:
+        return (action.vx, action.vy, action.vz_up, action.yaw_rate)
+
+    def admit(self, tick, state, action, trajectory) -> None:
+        """The action subscriber's hand-over: `action` from `state` on
+        `tick`, with its predicted trajectory."""
+        self._head = _Admitted(tick, state, action, self._key(action), tuple(trajectory))
+
+    @property
+    def head(self) -> "_Admitted | None":
+        """The entry admitted on the current tick and not yet closed."""
+        return self._head
+
+    def trajectory_for(self, tick, state, action) -> tuple | None:
+        """The admitted trajectory, when (tick, state, action) is the
+        admitted entry's; else None (the caller forecasts it)."""
+        h = self._head
+        if h is None or h.tick is not tick or h.state is not state:
+            return None
+        if action is not h.action and self._key(action) != h.key:
+            return None
+        return h.trajectory
+
+    def close(self, state, decision, elapsed_ms: float, pipe) -> TickRecord:
+        """The decision on the admitted entry: kept as a TickRecord."""
+        h, self._head = self._head, None
+        rec = TickRecord(state, decision, elapsed_ms, pipe,
+                         h.trajectory if h is not None else None)
+        self._records.append(rec)
+        return rec
+
+    def clear(self) -> None:
+        self._records.clear()
+        self._head = None
+
+    def records(self) -> tuple[TickRecord, ...]:
+        return tuple(self._records)
+
+    def __len__(self) -> int:
+        return len(self._records)
 
 
 def _effective_action(c) -> str:
@@ -1309,6 +1428,44 @@ class _Tick:
             b = self._swept[key] = anchor_reach(rec, self._age(rec.rule), horizon)
         return b
 
+    def moving_near(self, ir: PolicyIR, box: tuple, horizon: float) -> set | None:
+        """The indices of the MOVING zones whose reach over `horizon` from
+        this tick (`anchor_box`, ir.anchor_reach) meets `box`, from an R-tree.
+
+        The grant's geometry queries "hit the IR's R-tree spatial index"
+        (Safety Shield page). The IR's STRtree holds the static zones: a
+        moving zone has no fixed envelope, so until 2026-11-03 it was left out
+        of the tree, returned by every query, and tested one by one. Here the
+        moving zones are RE-INDEXED PER TICK: an STRtree over each one's reach
+        box from its anchor geometry, built once per tick and horizon on the
+        first query (no polygon is built for it), and queried with the
+        forecast's box. The query box is padded by _INDEX_PAD_M, so the tree
+        returns a superset of the zones whose box meets it; the caller still
+        asks the exact question (Shield._reach), so the zones judged are the
+        ones the one-by-one test judged. None for a non-finite `box` (every
+        moving zone is then looked at, as the static query does)."""
+        if not all(math.isfinite(v) for v in box):
+            return None
+        key = ("moving_tree", id(ir), horizon)
+        hit = self._swept.get(key)
+        if hit is None:
+            recs = [r for r in ir.fences if r.moving]
+            tree, idx = None, []
+            if recs:
+                a = np.array([self.anchor_box(r, horizon) for r in recs], dtype=np.float64)
+                ok = np.isfinite(a).all(axis=1)          # a NaN box meets nothing
+                idx = [r.index for r, k in zip(recs, ok) if k]
+                a = a[ok]
+                if len(a):
+                    tree = shapely.STRtree(shapely.box(a[:, 0], a[:, 1], a[:, 2], a[:, 3]))
+            hit = self._swept[key] = (tree, idx)
+        tree, idx = hit
+        if tree is None:
+            return set()
+        p = _INDEX_PAD_M
+        q = shapely.box(box[0] - p, box[1] - p, box[2] + p, box[3] + p)
+        return {idx[int(i)] for i in tree.query(q)}
+
 
 def _to_zone_frame(p: State, tau: float, mv) -> tuple[float, float]:
     """A forecast pose at time tau, in the frame of a moving zone at the tick's
@@ -1510,8 +1667,10 @@ class Shield:
         dyn = {c.id: None for c in policy.constraints if isinstance(c, DynamicNFZ)}
         self._anchors: dict = dyn
         self._rt = _build_runtime(policy, None, dyn)
-        # The last HISTORY_LEN ticks, oldest first; see `history`.
-        self._window: deque[TickRecord] = deque(maxlen=HISTORY_LEN)
+        # The sliding-window buffer: the last HISTORY_LEN ticks' actions and
+        # predicted trajectories, oldest first, which the checker reads (see
+        # SlidingWindow and `history`).
+        self._buffer = SlidingWindow(HISTORY_LEN)
         # Monitor clock (seconds): the `t` of each filter() tick, or the tick
         # count x MONITOR_PERIOD_S when the caller passes none.
         self._ticks = 0
@@ -1795,6 +1954,22 @@ class Shield:
             return (-inf, -inf, inf, inf), horizon
         return (min(xs), min(ys), max(xs), max(ys)), horizon
 
+    def _moving_near(self, ir: PolicyIR, tick: "_Tick | None", box: tuple,
+                     horizon: float) -> set | None:
+        """The moving zones the forecast in `box` can meet within `horizon`,
+        from this tick's R-tree of moving zones (`_Tick.moving_near`): a
+        superset of the ones `_reach` keeps, which still decides. None - look
+        at every moving zone, as before 2026-11-03 - without a tick or a
+        moving zone, for a non-finite box, and for a subclass that answers
+        reach its own way (`_reach` / `_may_reach` overridden: the identity
+        tests' nulls judge every moving zone, and must keep doing so)."""
+        if tick is None or not tick.rt.moving_ids:
+            return None
+        cls = type(self)
+        if cls._reach is not Shield._reach or cls._may_reach is not Shield._may_reach:
+            return None
+        return tick.moving_near(ir, box, horizon)
+
     def _may_reach(self, rec: FenceRecord, box: tuple, horizon: float) -> bool:
         """Can the forecast in `box` meet `rec` within `horizon`? Always True
         for a static zone (the STRtree already answered); for a moving one,
@@ -1852,15 +2027,18 @@ class Shield:
     @property
     def history(self) -> tuple[TickRecord, ...]:
         """The sliding window: the last HISTORY_LEN ticks through `filter()`,
-        oldest first.
+        oldest first, each with the action given, the predicted trajectory
+        the checker judged it on, and the decision (TickRecord).
 
-        The grant's node design puts this buffer in front of the checker. No
-        rule in this DSL reads past actions yet, so today it is a record, not
-        an input - it lets a caller (the HUD, an audit writer, a future
-        oscillation rule) see what the Shield did over the last 5 s without
-        keeping a second copy that could disagree with it. Every return path of
-        `filter()` appends, the brake and rescue branches included."""
-        return tuple(self._window)
+        The grant's node design puts this buffer in front of the checker, and
+        since 2026-11-03 it is there: each tick's action and its predicted
+        trajectory are admitted to the buffer first and the checker reads the
+        trajectory from it (SlidingWindow). No rule in this DSL reads PAST
+        actions, so the older entries are a record - for the HUD, an audit
+        writer, a future oscillation rule - without a second copy that could
+        disagree with it. Every return path of `filter()` closes its entry,
+        the brake and rescue branches included."""
+        return self._buffer.records()
 
     @property
     def applied_caps(self) -> "_fsm.KinematicCaps | None":
@@ -2020,7 +2198,21 @@ class Shield:
         rule uses a much shorter, braking-distance-sized one (see
         `_clear_horizon_s`). The final sample always lands exactly ON the
         horizon, so a horizon that is not a whole number of `dt` still gets its
-        endpoint checked."""
+        endpoint checked.
+
+        THE BUFFER IS THE CHECKER'S INPUT (2026-11-03, WP3-23). On the tick
+        that admitted an action into the sliding-window buffer
+        (SlidingWindow.admit, in filter()), the forecast of that action from
+        that state is the buffer's trajectory: it is yielded from there, not
+        computed again, so every rule that judges the action walks the
+        poses the buffer holds. Any other forecast (a repair candidate, a
+        stop, another horizon, the own-velocity path alone, a look-ahead
+        view) is computed as before."""
+        if horizon_s is None and not own_only:
+            held = self._buffer.trajectory_for(self._tick_ctx(), state, action)
+            if held is not None:
+                yield from held
+                return
         horizon = self.lookahead_s if horizon_s is None else horizon_s
         t = 0.0
         # UNITS. State.yaw_deg is degrees; Action4D.yaw_rate is RADIANS per
@@ -3412,8 +3604,13 @@ class Shield:
             else:
                 near = self._fence_candidates(ir, state, poses)
                 box, horizon = self._forecast_box(state, poses)
+            # The static zones come from the IR's R-tree (`near`), the moving
+            # ones from this tick's (`moving`, None: every one is looked at).
+            moving = self._moving_near(ir, tick, box, horizon)
             for r in recs:
                 if r.index not in near:
+                    continue
+                if r.moving and moving is not None and r.index not in moving:
                     continue
                 r = self._reach(r, tick, box, horizon)
                 if r is not None:
@@ -3786,7 +3983,7 @@ class Shield:
         # fence outside the current forecast's box is exactly the old loop's
         # `if not hit: continue`, decided without the per-pose tests.
         ir = self._ir
-        near_for = poses = near = box = horizon = None
+        near_for = poses = near = box = horizon = moving = None
         # A zone the aircraft's momentum already carries it into is repaired
         # from the stop point, on that state's own forecast (_committed); it
         # is relevant by construction, so the candidate test is not asked.
@@ -3806,6 +4003,7 @@ class Shield:
                     poses = list(self._predict(outer, probe))
                 near = self._fence_candidates(ir, outer, poses)
                 box, horizon = self._forecast_box(outer, poses)
+                moving = self._moving_near(ir, tick, box, horizon)   # this tick's R-tree
                 near_for = (vx, vy)
             st = self._rule_state(rec.rule, outer) if com is not None else outer
             if st is not outer:
@@ -3816,6 +4014,8 @@ class Shield:
             else:
                 state, fposes = outer, poses
                 if rec.index not in near:
+                    continue
+                if rec.moving and moving is not None and rec.index not in moving:
                     continue
                 rec = self._reach(rec, tick, box, horizon)
             if rec is None:
@@ -5524,6 +5724,13 @@ class Shield:
                 else:
                     self.n_velocity_set_aside += 1
             self._forget_left_openings(dstate)
+            # The action subscriber -> the sliding-window buffer -> the
+            # violation checker (grant node architecture): the action (made
+            # finite, as _decide makes it) and its predicted trajectory from
+            # the decision state go into the buffer first, and every rule
+            # that judges this action reads that trajectory (_predict).
+            admitted, _ = _sanitise(raw)
+            self._buffer.admit(tick, dstate, admitted, self._predict(dstate, admitted))
             decision = self._decide(dstate, raw)
             # Zones this tick saw opening on the aircraft: their escape flies
             # at the cap on every later tick until the aircraft is out of the
@@ -5537,7 +5744,7 @@ class Shield:
             pipe = (tuple(self.pipe()) if self._velocity_of(dstate) is not None
                     else None)
         elapsed_ms = (time.perf_counter() - t0) * 1e3
-        self._window.append(TickRecord(dstate.model_copy(), decision, elapsed_ms, pipe))
+        self._buffer.close(dstate.model_copy(), decision, elapsed_ms, pipe)
         return decision
 
     def _decision_state(self, tick: _Tick, state: State) -> State:
@@ -5651,7 +5858,7 @@ class Shield:
                 self.fsm.reset()
             self._fsm_fault = None
             self._last_caps = None
-            self._window.clear()
+            self._buffer.clear()
             self._flown.clear()
             self._opened_on.clear()
             rt = self._rt

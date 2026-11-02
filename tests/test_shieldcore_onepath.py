@@ -296,6 +296,153 @@ def test_the_scan_finds_a_second_evaluator_when_there_is_one():
         _TREES = saved
 
 
+# ------------------------------------------ WP3-23: the buffer is the input
+
+def _fenced():
+    return Policy.model_validate({"policy_id": "buf", "constraints": [
+        {"id": "box", "type": "polygon_fence", **HARD_P0, "margin_m": 1.0,
+         "vertices": _sq(20, -5, 30, 5)}]})
+
+
+def test_the_checker_reads_the_trajectory_the_buffer_holds():
+    """Grant node architecture: action -> sliding-window buffer (last 50
+    actions + predicted trajectory) -> violation checker. A buffer whose
+    admitted trajectory is moved 1 km away blinds the checker to a zone the
+    real forecast runs into - so the checker reads the buffer, not a forecast
+    of its own. The null: with the buffer untouched the zone is seen."""
+    st, a = State(x=0.0, y=0.0, up=10.0), Action4D(vx=6.0)       # 6 m/s at the box
+    sh = Shield(_fenced(), escalation=False)
+    d = sh.filter(st, a, t=0.0)
+    assert [v.rule_id for v in d.violations] == ["box"], d.violations
+    orig = SH.SlidingWindow.admit
+
+    def far(self, tick, state, action, trajectory):
+        moved = [(t, p._replace(x=p.x + 1000.0)) for t, p in trajectory]
+        return orig(self, tick, state, action, moved)
+    SH.SlidingWindow.admit = far
+    try:
+        blind = Shield(_fenced(), escalation=False).filter(st, a, t=0.0)
+    finally:
+        SH.SlidingWindow.admit = orig
+    assert blind.violations == [], "the checker forecast the action itself"
+
+
+def test_the_buffer_keeps_the_last_50_actions_with_their_trajectories():
+    sh = Shield(_fenced(), escalation=False)
+    x = -40.0
+    for k in range(60):
+        sh.filter(State(x=x, y=float(k % 3), up=10.0), Action4D(vx=2.0, vy=0.1 * k), t=0.1 * k)
+        x += 0.2
+    hist = sh.history
+    assert len(hist) == SH.HISTORY_LEN == 50
+    assert [round(r.decision.raw.vy, 9) for r in hist] == [round(0.1 * k, 9) for k in range(10, 60)]
+    for rec in (hist[0], hist[-1]):
+        want = sh.forecast(rec.state, rec.decision.raw)
+        got = rec.trajectory
+        assert got is not None and len(got) == len(want) == 51, (len(got or ()), len(want))
+        assert all(abs(t1 - t2) < 1e-12 and (p.x, p.y, p.up) == (q.x, q.y, q.up)
+                   for (t1, p), (t2, q) in zip(got, want))
+        assert got[0][0] == 0.0 and abs(got[-1][0] - sh.lookahead_s) < 1e-9
+    n = len(sh.history)
+    sh.advise(State(x=0.0, y=0.0, up=10.0), Action4D(vx=1.0))     # admits nothing
+    assert len(sh.history) == n and sh._buffer.head is None
+    sh.reset_episode()
+    assert sh.history == () and sh._buffer.head is None
+
+
+# ---------------------------------- WP3-23: moving zones in a per-tick R-tree
+
+def _moving_load():
+    import bench_shield_50rules as B
+    data = B.fifty_rule_policy().model_dump(mode="json", exclude_none=True)
+    for i, c in enumerate(data["constraints"]):
+        if c["type"] == "polygon_fence":
+            c.update(type="dynamic_nfz",
+                     motion={"vx_mps": 1.0 - 0.05 * (i % 7), "vy_mps": 0.3 * (i % 3 - 1),
+                             "yaw_rate_dps": 6.0 * (i % 4 == 0)})
+    return Policy.model_validate(data), B
+
+
+def test_moving_zones_are_queried_through_an_rtree_rebuilt_per_tick():
+    """The tick's R-tree over the moving zones' reach boxes returns exactly
+    the zones whose box meets the query (boundary contact included), for
+    random boxes and for boxes that touch a reach box edge to edge; it is
+    built once per tick and horizon."""
+    import random
+    from guardrail.ir import anchor_reach
+    pol, _ = _moving_load()
+    sh = Shield(pol, escalation=False)
+    sh.filter(State(x=0.0, y=0.0, up=10.0), Action4D(), t=0.0)
+    rng = random.Random(5)
+    n_hit = 0
+    for k in range(1, 40):
+        t = 2.5 * k
+        sh.filter(State(x=0.0, y=0.0, up=10.0), Action4D(), t=t)
+        tick = sh._new_tick(None)
+        moving = [r for r in sh.ir.fences if r.moving]
+        assert len(moving) == 48
+        horizon = 5.0
+        boxes = {r.index: anchor_reach(r, tick._age(r.rule), horizon) for r in moving}
+        queries = []
+        for _ in range(25):
+            x0, y0 = rng.uniform(-60, 360), rng.uniform(-60, 260)
+            queries.append((x0, y0, x0 + rng.uniform(0, 30), y0 + rng.uniform(0, 30)))
+        for b in list(boxes.values())[:5]:                  # edge to edge
+            queries.append((b[2], b[3], b[2] + 3.0, b[3] + 3.0))
+        for q in queries:
+            got = tick.moving_near(sh.ir, q, horizon)
+            want = {i for i, b in boxes.items()
+                    if b[0] <= q[2] and b[2] >= q[0] and b[1] <= q[3] and b[3] >= q[1]}
+            assert want <= got, (t, q, sorted(want - got))
+            # The pad may add a zone only within _INDEX_PAD_M of the box.
+            for i in got - want:
+                b = boxes[i]
+                gap = max(b[0] - q[2], q[0] - b[2], b[1] - q[3], q[1] - b[3])
+                assert gap <= SH._INDEX_PAD_M, (i, gap)
+            n_hit += len(want)
+        assert ("moving_tree", id(sh.ir), horizon) in tick._swept
+    assert n_hit > 50, n_hit
+    tick = sh._new_tick(None)
+    assert tick.moving_near(sh.ir, (math.nan, 0.0, 1.0, 1.0), 5.0) is None
+
+
+def test_the_moving_rtree_changes_no_decision_and_prunes_the_rest():
+    """The 50-rule load with 48 moving zones (translating and turning), aged
+    0-90 s: every _check and filter() decision equals the one from a Shield
+    that looks at every moving zone one by one (the index switched off), and
+    the index leaves most zones unasked."""
+    pol, B = _moving_load()
+
+    class NoIndex(Shield):
+        def _moving_near(self, ir, tick, box, horizon):
+            return None
+
+    import random
+    rng = random.Random(9)
+    pairs = B.samples("near", 150, 21) + B.samples("grid", 150, 22)
+    rng.shuffle(pairs)
+    fast, slow = Shield(pol.model_copy(deep=True)), NoIndex(pol.model_copy(deep=True))
+    asked = {"fast": 0, "slow": 0}
+    for name, sh in (("fast", fast), ("slow", slow)):
+        orig = sh._reach
+
+        def counted(rec, tick, box, horizon, _o=orig, _n=name):
+            if rec.moving:
+                asked[_n] += 1
+            return _o(rec, tick, box, horizon)
+        sh._reach = counted
+    for k, (st, a) in enumerate(pairs):
+        t = 90.0 * k / len(pairs)
+        if k % 3 == 0:
+            da, db = fast.filter(st, a, t=t), slow.filter(st, a, t=t)
+            assert da.model_dump() == db.model_dump(), k
+        else:
+            va = [v.model_dump() for v in fast._check(st, a)]
+            vb = [v.model_dump() for v in slow._check(st, a)]
+            assert va == vb, (k, va, vb)
+    assert asked["fast"] < asked["slow"] / 4, asked
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     failed = 0
