@@ -490,6 +490,17 @@ def test_g8_hands_back_a_request_the_shield_would_fly():
     assert edges == [(32.0, "G5")], edges
 
 
+def test_the_old_loiter_law_hashes_as_every_earlier_record_did():
+    """The two Loiter-law fields enter fsm_config_hash only when they differ
+    from the law earlier records were written under: a config on that law
+    hashes as 7bfd6dc's default did, and today's default has its own hash."""
+    old = FSMConfig(loiter_clear="violation_free", loiter_x67="request")
+    assert old.digest.startswith("sha256:5ae67785"), old.digest
+    assert FSMConfig().digest != old.digest
+    assert FSMConfig(loiter_clear="violation_free").digest not in (old.digest,
+                                                                   FSMConfig().digest)
+
+
 def test_g8_does_not_hand_back_an_unsafe_repair_or_a_loiter_rule():
     """What Loiter must keep holding: a request over theta, one no operator
     converged on (the conservative cap, p4), and a rule whose action is

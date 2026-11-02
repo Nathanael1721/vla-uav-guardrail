@@ -88,6 +88,14 @@ HOLD_POINT_FIELDS = ("hold_point", "hold_legal", "hold_needed", "hold_chosen")
 # left out (`--regenerate`), so the proof is still about the velocity and
 # still on c77c77d. `generation` stays in.
 IDENTITY_FIELDS_OUT = ("policy_hash",)
+# The Loiter law of 2026-11-02 (guardrail/fsm.py FSMConfig loiter_clear,
+# loiter_x67) is a change of the FSM's own, not of the velocity: the FSM
+# streams fly the law c77c77d had (`C77_LOITER_LAW`, whose config hashes as
+# c77c77d's did: FSMConfig.digest), and the one record field that came with
+# the new law is left out: `cleared_loiter_s` (Loiter's own clock, on ticks
+# that start in Loiter).
+C77_LOITER_LAW = dict(loiter_clear="violation_free", loiter_x67="request")
+LOITER_LAW_FIELDS = ("cleared_loiter_s",)
 
 
 def _city_map():
@@ -112,8 +120,10 @@ def _identity_lines(name: str, n: int, *, escalation: bool, velocity: str = "non
     # recovery_law "lookahead": the altitude recovery c77c77d flew. Since
     # 2026-10-29 the default recovers at the climb cap (WP3-17), a change of
     # the Shield's own, not of the velocity this proof is about.
+    from guardrail.fsm import FSMConfig
     sh = Shield(pol, lookahead_s=5.0, dt=0.1, obstacle_map=smap,
-                escalation=escalation, recovery_law="lookahead", **kw)
+                escalation=FSMConfig(**C77_LOITER_LAW) if escalation else False,
+                recovery_law="lookahead", **kw)
     rng = random.Random(f"{IDENTITY_SEED}:{name}:{escalation}")
     out = []
     t = 0.0
@@ -140,7 +150,7 @@ def _identity_lines(name: str, n: int, *, escalation: bool, velocity: str = "non
         for k in IDENTITY_FIELDS_OUT:
             dump.pop(k, None)
         if isinstance(dump.get("fsm_record"), dict):
-            for k in HOLD_POINT_FIELDS:
+            for k in HOLD_POINT_FIELDS + LOITER_LAW_FIELDS:
                 dump["fsm_record"].pop(k, None)
         out.append(json.dumps(dump, sort_keys=True, separators=(",", ":")))
     return out

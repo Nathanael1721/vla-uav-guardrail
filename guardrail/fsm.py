@@ -443,6 +443,9 @@ LOITER_CLEAR_MODES = ("acceptable", "violation_free")
 # exists for Brake, where a request that already escapes is the pilot leaving
 # on its own - in Loiter nobody flies the request).
 LOITER_X67_MODES = ("position", "request")
+# The Loiter law until 2026-11-02, which every earlier audit record and
+# config hash was written under (FSMConfig.digest leaves these values out).
+LEGACY_LOITER_LAW = {"loiter_clear": "violation_free", "loiter_x67": "request"}
 
 # Every edge this FSM can take: id -> (from, to, source, label). The design
 # doc's transition table lists the same ids, and tests/test_fsm.py drives
@@ -1224,10 +1227,19 @@ class FSMConfig:
         a trigger count can be traced to the N / T / theta that produced it.
         All 64 hex digits, as policy_hash now keeps (models.py), and over the
         canonical (float) values, so `T: 5` and `T: 5.0` hash the same.
-        Computed once per (frozen) config: the Shield writes it every tick."""
+        Computed once per (frozen) config: the Shield writes it every tick.
+
+        The Loiter law's two fields (2026-11-02) enter the hash only when they
+        differ from the law every earlier record was written under
+        (LEGACY_LOITER_LAW): a config on that law hashes exactly as before
+        (the default thresholds of 7bfd6dc: `sha256:5ae67785...`), so an old
+        record still names the behaviour it flew, and today's default law
+        has a hash of its own."""
         d = self.__dict__.get("_digest")
         if d is None:
-            blob = json.dumps(self.to_dict(), sort_keys=True, separators=(",", ":"))
+            fields = {k: v for k, v in self.to_dict().items()
+                      if LEGACY_LOITER_LAW.get(k, object()) != v}
+            blob = json.dumps(fields, sort_keys=True, separators=(",", ":"))
             d = "sha256:" + hashlib.sha256(blob.encode("utf-8")).hexdigest()
             object.__setattr__(self, "_digest", d)
         return d
