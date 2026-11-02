@@ -2,6 +2,8 @@
 # Gazebo Harmonic rail: gz physics world + ArduPilot SITL (JSON backend) +
 # Guardrail demo over pymavlink.
 # Usage (WSL):  bash run_gazebo_demo.sh [on|off] [--dynamic]
+# GAZEBO_TAG_SUFFIX=_20261102 appends to the run's tag, so a re-flight
+# writes its own demo/out folder instead of moving the last one to _previous/.
 #
 # pipefail (2026-10-19): the mission is piped through grep, and without it the
 # script's exit status was grep's - 0 for a mission that refused its policy,
@@ -62,7 +64,7 @@ sleep 8
 echo "=== guardrail mission (pymavlink rail) ==="
 cd "$DIR/.."                  # the repository root, found from this script
 ~/venv-ap/bin/python sitl/run_sitl_demo.py --shield "$SHIELD" $DYN \
-  --tag "gazebo_shield_${SHIELD}$( [ -n "$DYN" ] && echo _dynamic )" 2>&1 \
+  --tag "gazebo_shield_${SHIELD}$( [ -n "$DYN" ] && echo _dynamic )${GAZEBO_TAG_SUFFIX:-}" 2>&1 \
   | { grep -v "EOF on TCP" || true; }   # a fully filtered output is not a failure
 
 echo "=== done (cleanup runs via trap) ==="
