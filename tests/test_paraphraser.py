@@ -315,7 +315,9 @@ def test_refuses_a_negated_action_or_direction():
 
 def test_refuses_a_changed_place_coordinate_or_place_role():
     _refused(TASK_PAD, "head over to the north pad, cruising at 6 m/s", "place")
-    _refused(TASK_PAD, "head over to the north-east pad, cruising at 6 m/s", "place")
+    # "north-east pad" was refused here until 2026-11-02; it names the same pad
+    # (test_a_named_place_in_other_words). Another compass point does not.
+    _refused(TASK_PAD, "head over to the north-west pad, cruising at 6 m/s", "place")
     _refused(TASK_XY, "head to (40, 30) at 6 m/s, holding altitude 20", "coordinate")
     _refused(TASK_XY, "head to (40, 40) at 6 m/s, holding altitude 25", "quantity")
     _refused(TASK_PAD, "fly to a spot far away from the northeast pad at 6 m/s", "place")
@@ -1221,11 +1223,15 @@ def test_probe_rates_are_measured_and_not_zero():
     seven misses by mechanism, so it is a dev set now (1/20, 0/20; the one
     meaning change left is 'under 3 m/s' for 'at or below 3 m/s', which the
     validator reads alike by design). heldout_2026_11_02, 94 probes written
-    and committed before the validator was read, is the held-out figure for
+    and committed before the validator was read, was the held-out figure for
     those seven fixes: 1/50 false accepts, 14/44 false refusals (18/44
-    before). Pinned so the design doc's numbers cannot drift
-    from the code; if a change moves them, update the doc, and say whether the
-    held-out set was looked at."""
+    before). Its own misses were then fixed by mechanism the same day, so it
+    is a dev set too (0/50, 3/44: two near-identical candidates the novelty
+    floor refuses, and zones folded into a range "'nfz-edge-1' through
+    'nfz-edge-4'", refused on purpose). The review set's "the pad in the
+    northeast" is accepted since (2/30). Pinned so the design doc's numbers
+    cannot drift from the code; if a change moves them, update the doc, and
+    say whether the held-out set was looked at."""
     rep = _live_report()
     pr = rep["probes"]
     assert isinstance(pr, dict), pr
@@ -1233,7 +1239,7 @@ def test_probe_rates_are_measured_and_not_zero():
     assert (held["false_accepts"], held["meaning_changing"]) == (0, 30), held
     assert (held["false_refusals"], held["faithful"]) == (2, 30), held
     assert (rev["false_accepts"], rev["meaning_changing"]) == (0, 28), rev
-    assert (rev["false_refusals"], rev["faithful"]) == (3, 30), rev
+    assert (rev["false_refusals"], rev["faithful"]) == (2, 30), rev
     new, after = pr["heldout_2026_10_21"], pr["heldout_2026_10_21b"]
     assert (new["false_accepts"], new["meaning_changing"]) == (0, 22), new
     assert (new["false_refusals"], new["faithful"]) == (1, 22), new
@@ -1243,8 +1249,8 @@ def test_probe_rates_are_measured_and_not_zero():
     assert (ind["false_accepts"], ind["meaning_changing"]) == (1, 20), ind
     assert (ind["false_refusals"], ind["faithful"]) == (0, 20), ind
     fresh = pr["heldout_2026_11_02"]
-    assert (fresh["false_accepts"], fresh["meaning_changing"]) == (1, 50), fresh
-    assert (fresh["false_refusals"], fresh["faithful"]) == (14, 44), fresh
+    assert (fresh["false_accepts"], fresh["meaning_changing"]) == (0, 50), fresh
+    assert (fresh["false_refusals"], fresh["faithful"]) == (3, 44), fresh
     # WHY each faithful 2026-10-21 probe is refused, as the doc words it: the
     # novelty floor (near-identical candidates) for two, the colour slot for
     # 'a car coloured red' (A14's participle reading beside it).
@@ -1446,6 +1452,123 @@ def test_a_negation_carries_across_a_comma_or():
              "following. Speed at most 4 m/s, climb under 2 m/s, turn under 45 deg/s.",
              "quantity")
 
+
+# --------------------------------------------------------------------------- #
+# 2026-11-02: the mechanisms behind heldout_2026_11_02's misses (a dev set
+# from here on). Wordings of the tests' own; each failed before its fix.
+# --------------------------------------------------------------------------- #
+
+CSP_NFZ3 = ("Stay between 6 m and 14 m altitude. Keep at least 3 m from any building. Keep at "
+            "least 5 m away from anything you are following. Keep at least 10 m away from the "
+            "pedestrian you are following. Never enter zone 'nfz-frontage'. Never enter zone "
+            "'nfz-north-street'. Never enter zone 'nfz-south-block'. Keep speed at or below "
+            "5 m/s, climb rate below 2 m/s and turn rate below 45 deg/s.")
+NFZ3_REST = (" Hold altitude between 6 m and 14 m, at least 3 m from any building, at least "
+             "5 m from anything you are following and at least 10 m from the pedestrian you "
+             "are following. Max speed 5 m/s, climb under 2 m/s, turn under 45 deg/s.")
+CSP_CITY = ("Stay between 6 m and 14 m altitude. Keep at least 3 m from any building. Keep at "
+            "least 5 m away from anything you are following. Keep at least 10 m away from the "
+            "pedestrian you are following. Keep speed at or below 5 m/s, climb rate below "
+            "2 m/s and turn rate below 45 deg/s.")
+CITY_HEAD = ("Hold altitude between 6 m and 14 m and keep at least 3 m from any building. ")
+CITY_TAIL = (" Max speed 5 m/s, climb under 2 m/s, turn under 45 deg/s.")
+
+
+def test_a_count_on_the_object_is_a_narrowing():
+    """heldout_2026_11_02 accepted "follow two people" for "follow a person":
+    the count was not a slot."""
+    for cand in ("track two people", "follow three persons", "follow both people",
+                 "follow several people", "follow a pair of people"):
+        _refused("follow a person", cand, "object")
+    _refused(TASK_CAR, "follow two red cars", "object")
+    _accepted("follow a person", "track one person")
+
+
+def test_either_side_of_the_centerline_is_a_tolerance():
+    """heldout_2026_11_02 refused "20 m either side of the centerline": with
+    no comparative before the number it was read as a target, but "either
+    side" says how far off the line may be."""
+    for side in ("either side of", "on each side of"):
+        _accepted(CSP_SURVEY, "Fly only within corridor 'corridor-survey-route', "
+                  f"20 m {side} its centerline, at 10 m to 20 m altitude. Zone 'nfz-school' "
+                  "is off-limits Mon-Fri 07:30-17:30." + SURVEY_REST)
+    _refused(CSP_SURVEY, "Fly only within corridor 'corridor-survey-route', 10 m either side "
+             "of its centerline, at 10 m to 20 m altitude. Zone 'nfz-school' is off-limits "
+             "Mon-Fri 07:30-17:30." + SURVEY_REST, "quantity")
+
+
+def test_the_class_stand_off_said_as_a_condition_on_the_subject():
+    """heldout_2026_11_02 refused the C8 rule worded as what it means: a
+    stand-off that applies when the subject being followed is a pedestrian.
+    Said of anything else, or of every pedestrian, it is still refused."""
+    for clause in ("and at least 10 m if the subject you are following is a pedestrian",
+                   "and, when what you are following is a pedestrian, at least 10 m"):
+        _accepted(CSP_CITY, CITY_HEAD + "Keep at least 5 m from anything you are following, "
+                  + clause + "." + CITY_TAIL)
+    _accepted(CSP_CITY, CITY_HEAD + "Whatever you are following, keep at least 5 m away from "
+              "it; if it is a pedestrian, keep at least 10 m away." + CITY_TAIL)
+    _refused(CSP_CITY, CITY_HEAD + "Keep at least 5 m from anything you are following, and "
+             "at least 10 m if the subject you are following is a car." + CITY_TAIL, "quantity")
+    _refused(CSP_CITY, CITY_HEAD + "Keep at least 5 m from anything you are following, and "
+             "at least 10 m from pedestrians." + CITY_TAIL, "quantity")
+
+
+def test_a_followed_class_with_an_indefinite_article():
+    """heldout_2026_11_02 refused "at least 10 m from a pedestrian you
+    follow": only "the <class> you are following" was read as the followed
+    subject's class, so "a pedestrian" became every pedestrian and "follow" a
+    mission verb."""
+    for who in ("a pedestrian you follow", "any pedestrian you are tracking"):
+        _accepted(CSP_CITY, CITY_HEAD + "Stay at least 5 m from whatever you follow and at "
+                  f"least 10 m from {who}." + CITY_TAIL)
+    _refused(CSP_CITY, CITY_HEAD + "Stay at least 5 m from whatever you follow and at least "
+             "10 m from a pedestrian." + CITY_TAIL, "quantity")
+
+
+def test_a_list_of_zones_shares_its_ruling():
+    """heldout_2026_11_02 refused every folded zone list: a list split by
+    commas or "and" gave the ruling to one clause and left the other ids with
+    none. The ids of a list take the ruling of the list, before or after."""
+    for zones in ("Keep out of zones 'nfz-south-block', 'nfz-frontage' and 'nfz-north-street'.",
+                  "Zones 'nfz-north-street', 'nfz-frontage' and 'nfz-south-block' are all "
+                  "forbidden.",
+                  "Never fly into 'nfz-frontage', 'nfz-north-street', or 'nfz-south-block'."):
+        _accepted(CSP_NFZ3, zones + NFZ3_REST)
+    # a list member that is ruled otherwise is still read as ruled otherwise
+    _refused(CSP_NFZ3, "Keep out of zones 'nfz-frontage' and 'nfz-north-street'; zone "
+             "'nfz-south-block' may be crossed." + NFZ3_REST, "polarity")
+    _refused(CSP_NFZ3, "Keep out of zones 'nfz-frontage' and 'nfz-north-street'." + NFZ3_REST,
+             "zone")
+
+
+def test_fly_at_a_band_of_metres_is_an_altitude():
+    """heldout_2026_11_02 refused "Fly at 35-55 m": a metres band after "fly
+    at" with no attribute word is the altitude it is flown at."""
+    src = ("Stay between 12 m and 28 m altitude. Keep at least 5 m from any building. "
+           "Keep speed at or below 5 m/s, climb rate below 2 m/s and turn rate below 45 deg/s.")
+    rest = " Keep 5 m or more from every building; speed at most 5 m/s, climb under 2 m/s, turn under 45 deg/s."
+    for band in ("Fly at 12-28 m.", "Cruise at 12 to 28 m."):
+        _accepted(src, band + rest)
+    _refused(src, "Fly at 12-20 m." + rest, "quantity")
+
+
+def test_a_named_place_in_other_words():
+    """heldout_2026_11_02 refused "the north-east pad" and "the pad in the
+    northeast" for the registry's "northeast pad"."""
+    for pad in ("the north-east pad", "the north east pad", "the pad in the northeast",
+                "the pad at the north-east corner"):
+        _accepted(TASK_PAD, f"head to {pad} at 6 m/s")
+    _refused(TASK_PAD, "head to the pad in the northwest at 6 m/s", "place")
+    _refused(TASK_PAD, "head to the pad in the north at 6 m/s", "place")
+
+
+def test_go_to_with_the_altitude_before_the_destination():
+    """heldout_2026_11_02 refused "Fly at cruise altitude to the waypoint ...":
+    the go-to verb allowed a number between itself and "to", not a named
+    reference."""
+    for cand in ("Fly at cruise altitude to the waypoint 120 m straight ahead.",
+                 "Make your way, at cruise altitude, to the waypoint 120 m ahead."):
+        _accepted(TASK_WP, cand)
 
 
 def test_parser_preview_reads_the_altitude_of_every_paraphrase():

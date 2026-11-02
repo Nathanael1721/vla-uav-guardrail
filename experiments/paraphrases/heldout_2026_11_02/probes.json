@@ -3,7 +3,7 @@
   "what": "Hand-written (source, candidate, meaning_changed) triples in the format of experiments/paraphrases/probes.json, kept in their own file so that the commit that adds them predates any reading of the validator. See README.md beside this file for how the set was written.",
   "sets": {
     "heldout_2026_11_02": {
-      "status": "HELD-OUT - 94 probes (50 meaning changes, 44 faithful) written on 2026-11-02 by Claude (Anthropic model, claude-opus-5-5) acting as the agent that then fixes the validator, BEFORE it read guardrail/paraphraser.py, its tests, docs/DESIGN-paraphraser.md, any stored paraphrase or any earlier probe candidate. Committed before the first measurement. Not independent of the fixer: same author, written knowing the validator would be fixed next.",
+      "status": "DEV since 2026-11-02 - 94 probes (50 meaning changes, 44 faithful) written on 2026-11-02 by Claude (Anthropic model, claude-opus-5-5) acting as the agent that then fixes the validator, BEFORE it read guardrail/paraphraser.py, its tests, docs/DESIGN-paraphraser.md, any stored paraphrase or any earlier probe candidate, and committed (f366913) before the first measurement. Not independent of the fixer: same author, written knowing the validator would be fixed next. Held out for the heldout_2026_10_28 fixes (measured_after_heldout_2026_10_28_fixes); its own misses were then read and fixed by mechanism the same day, so its later figures are dev figures, not estimates.",
       "measured_before_changes": {
         "false_accepts": "1/50",
         "false_refusals": "18/44",
@@ -14,6 +14,12 @@
         "false_refusals": "14/44",
         "validator": "validator_digest e9a4d62c3a094ff3",
         "note": "the held-out figure: those seven fixes were written from heldout_2026_10_28's misses alone; only this set's counts had been looked at, not which probes failed"
+      },
+      "measured_after_tuning_2026_11_02": {
+        "false_accepts": "0/50",
+        "false_refusals": "3/44",
+        "validator": "validator_digest 66242dc1da839af8",
+        "note": "dev figure. The three refused: two near-identical candidates (novelty 0.13 and 0.14 < 0.15, the floor refuses them as not a different wording) and zones folded into a range ('nfz-edge-1' through 'nfz-edge-4'), refused on purpose because two ids are no longer named"
       },
       "source_keys": [
         "csp_corridor_survey",
