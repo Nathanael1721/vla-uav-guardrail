@@ -55,6 +55,26 @@ def _have_fixture() -> bool:
     return (RUN / "flight_log.jsonl").is_file() and POLICY_FILE.is_file()
 
 
+_FLOWN: list = []
+
+
+def _flown_policy():
+    """The policy retarget_demo2 FLEW, not today's file. Since IR schema 3.0.0
+    (2026-11-02) follow_pedestrian.yaml is version 0.1.1 with another hash;
+    the run's own manifest names the old content, which
+    guardrail.bundle.policy_candidates() still reconstructs from the lock
+    (`migrated_from`). Loading today's file made every bundle here refuse to
+    bind ("flown under sha256:083fbd16..., but the policy passed here hashes
+    to ...")."""
+    if not _FLOWN:
+        from guardrail.manifest import resolve_run_policy
+        man = json.loads((RUN / "manifest.json").read_text(encoding="utf-8"))
+        pol, form, label = resolve_run_policy(man, B.policy_candidates())
+        assert pol is not None, f"no candidate policy resolves {man.get('policy_hash')}"
+        _FLOWN.append(pol)
+    return _FLOWN[0]
+
+
 def _tmp() -> Path:
     return Path(tempfile.mkdtemp(prefix="replay_"))
 
@@ -127,7 +147,7 @@ def test_a_bundle_round_trips_to_the_same_policy_and_episode():
     if not _have_fixture():
         return SKIP
     d = _tmp()
-    policy = load_policy(POLICY_FILE)
+    policy = _flown_policy()
     path = write_replay(RUN, policy, d / "r.tar.gz", signer=None)
     got = read_replay(path)
     assert got["policy"].policy_hash == policy.policy_hash
@@ -145,7 +165,7 @@ def test_the_same_episode_and_policy_produce_the_same_bytes():
     if not _have_fixture():
         return SKIP
     d = _tmp()
-    policy = load_policy(POLICY_FILE)
+    policy = _flown_policy()
     a = write_replay(RUN, policy, d / "a.tar.gz", signer=SIGNER).read_bytes()
     b = write_replay(RUN, policy, d / "b_different_name.tar.gz",
                      signer=SIGNER).read_bytes()
@@ -166,7 +186,7 @@ def test_it_refuses_a_policy_that_did_not_govern_the_episode():
         return SKIP
     d = _tmp()
     try:
-        write_replay(other, load_policy(POLICY_FILE), d / "wrong.tar.gz",
+        write_replay(other, _flown_policy(), d / "wrong.tar.gz",
                      signer=None)
     except ValueError as exc:
         assert "flown under policy" in str(exc), exc
@@ -179,7 +199,7 @@ def test_one_flipped_byte_in_the_log_is_caught_and_named():
     if not _have_fixture():
         return SKIP
     d = _tmp()
-    good = write_replay(RUN, load_policy(POLICY_FILE), d / "good.tar.gz",
+    good = write_replay(RUN, _flown_policy(), d / "good.tar.gz",
                         signer=None)
     with tarfile.open(good, "r:gz") as tar:
         log = tar.extractfile(EPISODE + "flight_log.jsonl").read()
@@ -199,7 +219,7 @@ def test_rewriting_the_index_without_the_signature_is_caught():
     if not _have_fixture():
         return SKIP
     d = _tmp()
-    good = write_replay(RUN, load_policy(POLICY_FILE), d / "good.tar.gz",
+    good = write_replay(RUN, _flown_policy(), d / "good.tar.gz",
                         signer=None)
     with tarfile.open(good, "r:gz") as tar:
         index = json.loads(tar.extractfile(INDEX_NAME).read())
@@ -231,7 +251,7 @@ def test_a_CONSISTENT_forgery_passes_a_KEYLESS_bundle_but_never_silently():
     if not _have_fixture():
         return SKIP
     d = _tmp()
-    good = write_replay(RUN, load_policy(POLICY_FILE), d / "good.tar.gz",
+    good = write_replay(RUN, _flown_policy(), d / "good.tar.gz",
                         signer=None)
     with tarfile.open(good, "r:gz") as tar:
         index = json.loads(tar.extractfile(INDEX_NAME).read())
@@ -264,7 +284,7 @@ def test_a_CONSISTENT_forgery_of_a_SIGNED_bundle_is_refused():
     if not _have_fixture():
         return SKIP
     d = _tmp()
-    good = write_replay(RUN, load_policy(POLICY_FILE), d / "good.tar.gz",
+    good = write_replay(RUN, _flown_policy(), d / "good.tar.gz",
                         signer=SIGNER)
     assert verify_replay(good, TRUST) == (True, []), verify_replay(good, TRUST)
     with tarfile.open(good, "r:gz") as tar:
@@ -299,7 +319,7 @@ def test_stripping_the_signature_to_the_placeholder_is_reported_not_passed():
     if not _have_fixture():
         return SKIP
     d = _tmp()
-    good = write_replay(RUN, load_policy(POLICY_FILE), d / "good.tar.gz",
+    good = write_replay(RUN, _flown_policy(), d / "good.tar.gz",
                         signer=SIGNER)
     with tarfile.open(good, "r:gz") as tar:
         first = tar.extractfile(SIGNATURE_NAME).read().decode().splitlines()[0]
@@ -319,7 +339,7 @@ def test_stripping_the_signature_but_keeping_the_signer_is_refused():
     if not _have_fixture():
         return SKIP
     d = _tmp()
-    good = write_replay(RUN, load_policy(POLICY_FILE), d / "good.tar.gz",
+    good = write_replay(RUN, _flown_policy(), d / "good.tar.gz",
                         signer=SIGNER)
     with tarfile.open(good, "r:gz") as tar:
         first = tar.extractfile(SIGNATURE_NAME).read().decode().splitlines()[0]
@@ -345,7 +365,7 @@ def test_without_cryptography_a_signed_bundle_is_still_checked():
     if not _have_fixture():
         return SKIP
     d = _tmp()
-    good = write_replay(RUN, load_policy(POLICY_FILE), d / "good.tar.gz",
+    good = write_replay(RUN, _flown_policy(), d / "good.tar.gz",
                         signer=SIGNER)
     with tarfile.open(good, "r:gz") as tar:
         sig_lines = tar.extractfile(SIGNATURE_NAME).read().decode().splitlines()
@@ -385,7 +405,7 @@ def test_an_index_naming_another_policy_than_the_archived_ir_is_refused():
     if not _have_fixture():
         return SKIP
     d = _tmp()
-    good = write_replay(RUN, load_policy(POLICY_FILE), d / "good.tar.gz",
+    good = write_replay(RUN, _flown_policy(), d / "good.tar.gz",
                         signer=None)
     with tarfile.open(good, "r:gz") as tar:
         index = json.loads(tar.extractfile(INDEX_NAME).read())
@@ -429,14 +449,14 @@ def test_the_index_records_which_hash_form_the_episode_carried():
     if not _have_fixture():
         return SKIP
     d = _tmp()
-    path = write_replay(RUN, load_policy(POLICY_FILE), d / "r.tar.gz",
+    path = write_replay(RUN, _flown_policy(), d / "r.tar.gz",
                         signer=None, policy_source={"kind": "yaml",
                                                     "signature": "unsigned"})
     idx = read_replay(path)["index"]
     flown = json.loads((RUN / "manifest.json").read_text(encoding="utf-8"))["policy_hash"]
     assert idx["flown_policy_hash"] == flown
     assert idx["flown_hash_form"] == "legacy16-include-defaults", idx
-    assert idx["policy_hash"] == load_policy(POLICY_FILE).policy_hash
+    assert idx["policy_hash"] == _flown_policy().policy_hash
     assert len(idx["policy_hash"]) == len("sha256:") + 64
     assert idx["policy_source"]["signature"] == "unsigned"
     shutil.rmtree(d, ignore_errors=True)
@@ -449,7 +469,7 @@ def test_an_undeclared_member_is_refused():
     if not _have_fixture():
         return SKIP
     d = _tmp()
-    good = write_replay(RUN, load_policy(POLICY_FILE), d / "good.tar.gz",
+    good = write_replay(RUN, _flown_policy(), d / "good.tar.gz",
                         signer=None)
     bad = _rewrite_many(good, d / "extra.tar.gz",
                         {"episode/SECRET_note.txt": b"covered by nothing\n"})
@@ -467,7 +487,7 @@ def test_a_bundle_whose_index_omits_the_log_says_so():
     if not _have_fixture():
         return SKIP
     d = _tmp()
-    good = write_replay(RUN, load_policy(POLICY_FILE), d / "good.tar.gz",
+    good = write_replay(RUN, _flown_policy(), d / "good.tar.gz",
                         signer=None)
     with tarfile.open(good, "r:gz") as tar:
         index = json.loads(tar.extractfile(INDEX_NAME).read())
@@ -498,7 +518,7 @@ def test_every_verified_field_is_a_field_something_actually_produces():
     rows = [json.loads(x) for x in (RUN / "flight_log.jsonl").read_text(
         encoding="utf-8").splitlines() if x.strip()]
     metrics = json.loads((RUN / "metrics.json").read_text(encoding="utf-8"))
-    fresh = compute(rows, rule_priorities(load_policy(POLICY_FILE)), metrics)
+    fresh = compute(rows, rule_priorities(_flown_policy()), metrics)
     missing = [f for f in VERIFIED_KPI_FIELDS
                if f not in stored and f not in fresh]
     assert not missing, f"names nothing produces: {missing}"
@@ -513,7 +533,7 @@ def test_a_tampered_failsafe_figure_is_caught():
     if not _have_fixture() or not (RUN / "kpi.json").is_file():
         return SKIP
     d = _tmp()
-    good = write_replay(RUN, load_policy(POLICY_FILE), d / "good.tar.gz",
+    good = write_replay(RUN, _flown_policy(), d / "good.tar.gz",
                         signer=None)
     with tarfile.open(good, "r:gz") as tar:
         index = json.loads(tar.extractfile(INDEX_NAME).read())
@@ -548,7 +568,7 @@ def test_a_scored_run_without_a_manifest_is_refused():
     for f in ("flight_log.jsonl", "metrics.json", "kpi.json"):
         shutil.copy(RUN / f, run / f)
     try:
-        write_replay(run, load_policy(POLICY_FILE), d / "x.tar.gz",
+        write_replay(run, _flown_policy(), d / "x.tar.gz",
                      signer=None)
     except ValueError as exc:
         assert "nothing binds" in str(exc), exc
@@ -566,7 +586,7 @@ def test_an_unbound_episode_bundles_but_says_the_binding_is_unverified():
     run = d / "unbound"
     run.mkdir()
     shutil.copy(RUN / "flight_log.jsonl", run / "flight_log.jsonl")
-    path = write_replay(run, load_policy(POLICY_FILE), d / "u.tar.gz",
+    path = write_replay(run, _flown_policy(), d / "u.tar.gz",
                         signer=None)
     got = read_replay(path)
     assert got["index"]["policy_binding"] == "unverified", got["index"]
@@ -581,7 +601,7 @@ def test_a_bundle_re_derives_its_own_kpis():
     if not _have_fixture() or not (RUN / "kpi.json").is_file():
         return SKIP
     d = _tmp()
-    path = write_replay(RUN, load_policy(POLICY_FILE), d / "r.tar.gz",
+    path = write_replay(RUN, _flown_policy(), d / "r.tar.gz",
                         signer=SIGNER)
     ok, why = verify_replay(path, TRUST)
     assert ok, why
@@ -596,7 +616,7 @@ def test_an_episode_with_no_log_is_refused_rather_than_packaged_empty():
     d = _tmp()
     (d / "empty_run").mkdir()
     try:
-        write_replay(d / "empty_run", load_policy(POLICY_FILE), d / "r.tar.gz",
+        write_replay(d / "empty_run", _flown_policy(), d / "r.tar.gz",
                      signer=None)
     except ValueError as exc:
         assert "nothing to replay" in str(exc), exc
@@ -653,7 +673,7 @@ def test_an_unscored_episode_bundles_and_says_so_instead_of_passing_quietly():
     run = d / "unscored"
     run.mkdir()
     shutil.copy(RUN / "flight_log.jsonl", run / "flight_log.jsonl")
-    path = write_replay(run, load_policy(POLICY_FILE), d / "r.tar.gz",
+    path = write_replay(run, _flown_policy(), d / "r.tar.gz",
                         signer=None)
     ok, why = verify_replay(path)
     # any(), not why[0]: an unscored episode now also reports that its policy
