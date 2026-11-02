@@ -223,7 +223,9 @@ class _Clearance(HookOperator):
     def inert(self, sh):
         if not sh._clear:
             return "no obstacle_clearance rule in force"
-        if not sh.has_obstacle_map:
+        # Each clearance rule on its own map (Shield._field_for): the obstacle
+        # map, or the road map of a distance_envelope over roads (2026-11-03).
+        if not any(sh._field_for(c) is not None for c in sh._clear):
             return "no obstacle map: obstacle_clearance is inert"
         return None
 

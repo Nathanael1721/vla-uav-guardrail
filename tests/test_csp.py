@@ -1245,19 +1245,26 @@ def test_a_rule_the_shield_does_not_enforce_is_refused_by_name():
     Since 2026-10-08 the three hot-apply types render (they are enforced, and
     have templates) and only distance_envelope is left - plus an MSL height,
     named the same way: a Policy built directly reached the compiler without
-    the loaders' MSL refusal, and compiled."""
+    the loaders' MSL refusal, and compiled.
+
+    Since 2026-11-03 (WP1-07) distance_envelope renders too (it is enforced,
+    and has templates); no grant type is left out of RUNTIME_TYPES, and an
+    MSL height is the case that remains - the CSP does not render one, even
+    where the Shield is given a ground to enforce it (X-11)."""
     _need()
     from guardrail.csp import CSPUnenforcedRules
     from guardrail.models import GRANT_TYPES, RUNTIME_TYPES
-    assert set(GRANT_TYPES) - RUNTIME_TYPES == {"distance_envelope"}, \
+    assert set(GRANT_TYPES) - RUNTIME_TYPES == set(), \
         "a type joined or left RUNTIME_TYPES: update this test"
     base = [{"id": "fence", "type": "polygon_fence", **HARD_P0,
              "vertices": [{"x": 10, "y": 10}, {"x": 20, "y": 10}, {"x": 20, "y": 20}],
              "altitude_floor_m": 0, "altitude_ceiling_m": 100}]
+    de = Policy.model_validate({"policy_id": "p-de", "constraints": base + [
+        {"id": "r-de", "type": "distance_envelope", **HARD_P0, "object_class": "people",
+         "min_distance_m": 5.0}]})
+    assert "Keep at least 5 m from the person you are following." in \
+        ConstraintCompiler(de).compile_csp(_mission(), now=None).natural_language_prompt
     cases = {
-        "distance_envelope": ({"id": "r-de", "type": "distance_envelope", **HARD_P0,
-                               "object_class": "people", "min_distance_m": 5.0},
-                              {"r-de": "distance_envelope"}),
         "MSL": ({"id": "r-msl", "type": "altitude_envelope", **HARD_P0, "alt_min_m": 5,
                  "alt_max_m": 90, "altitude_ref": "MSL"},
                 {"r-msl": "altitude_envelope with altitude_ref MSL"}),
@@ -1289,14 +1296,15 @@ def test_the_kpi_report_lists_a_file_with_an_unenforced_rule_and_carries_on():
     (d / "mix.yaml").write_text(yaml.safe_dump(MIX, sort_keys=False), encoding="utf-8")
     alone = K.coverage_report(d)["totals"]
     # A time_window_switch was the example until 2026-10-08, when it became
-    # flyable; distance_envelope is the one declarable-only type left.
+    # flyable; then distance_envelope until 2026-11-03 (WP1-07). No
+    # declarable-only type is left: an MSL height with no ground is the case.
     people = {"policy_id": "p-people", "version": "0.1.0", "constraints": [
         {"id": "fence", "type": "polygon_fence",
          "constraint_type": "hard", "violation_action": "project_fix", "priority": "P0",
          "vertices": [{"x": 10, "y": 10}, {"x": 20, "y": 10}, {"x": 20, "y": 20}],
          "altitude_floor_m": 0, "altitude_ceiling_m": 100},
-        {"id": "people", "type": "distance_envelope", **HARD_P0, "object_class": "people",
-         "min_distance_m": 5.0}]}
+        {"id": "people", "type": "altitude_envelope", **HARD_P0, "alt_min_m": 600,
+         "alt_max_m": 700, "altitude_ref": "MSL"}]}
     (d / "people.yaml").write_text(yaml.safe_dump(people, sort_keys=False), encoding="utf-8")
     rep = K.coverage_report(d)
     t = rep["totals"]
@@ -1304,7 +1312,7 @@ def test_the_kpi_report_lists_a_file_with_an_unenforced_rule_and_carries_on():
     assert t["n_not_flyable"] == 1, t
     bad = rep["not_flyable"][0]
     assert bad["policy_id"] == "p-people" and len(bad["problems"]) == 1, bad
-    assert bad["problems"][0].startswith("people: distance_envelope"), bad
+    assert bad["problems"][0].startswith("people: altitude_ref MSL"), bad
     for k in ("n_p0_in_scope", "n_p0_covered", "p0_coverage", "baseline_n_p0_covered"):
         assert t[k] == alone[k], (k, t[k], alone[k])
 
@@ -2859,13 +2867,16 @@ def test_a_runtime_type_with_no_place_in_the_by_type_order_raises():
     _by_type_order raises (the review's mutation M10, removing the raise,
     passed every other test: today every runtime type has its place)."""
     _need()
-    from guardrail.models import RUNTIME_TYPES
     pol = Policy.model_validate({"policy_id": "stub", "constraints": [
         {"id": "f", "type": "polygon_fence", **HARD_P0, "vertices": _sq(0, 0, 5, 5)},
         {"id": "people", "type": "distance_envelope", **HARD_P0, "object_class": "people",
          "min_distance_m": 10.0}]})
-    saved = K.RUNTIME_TYPES
-    K.RUNTIME_TYPES = frozenset(RUNTIME_TYPES | {"distance_envelope"})
+    # distance_envelope has its place since it became a runtime type
+    # (2026-11-03, WP1-07); the test takes the place away instead of
+    # adding the type, the same mutation from the other side.
+    assert len(ConstraintCompiler(pol)._sentences()) == 2
+    saved = K.DistanceEnvelope
+    K.DistanceEnvelope = type("NotARuleType", (), {})
     try:
         ConstraintCompiler(pol)._sentences()
     except RuntimeError as e:
@@ -2873,7 +2884,7 @@ def test_a_runtime_type_with_no_place_in_the_by_type_order_raises():
     else:
         raise AssertionError("a runtime type with no place in the order was dropped silently")
     finally:
-        K.RUNTIME_TYPES = saved
+        K.DistanceEnvelope = saved
     assert len(ConstraintCompiler(_hot())._sentences()) == len(HOT["constraints"])
 
 

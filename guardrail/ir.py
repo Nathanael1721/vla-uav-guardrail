@@ -366,7 +366,8 @@ class PolicyIR:
     # ------------------------------------------------------------ building
 
     @classmethod
-    def from_policy(cls, policy: Policy, reuse: "PolicyIR | None" = None) -> "PolicyIR":
+    def from_policy(cls, policy: Policy, reuse: "PolicyIR | None" = None,
+                    rules: list | None = None) -> "PolicyIR":
         """Compile every zone of `policy`. With `reuse`, a record whose rule
         object is unchanged is kept (re-indexed if a zone before it was
         removed) instead of re-buffered: the grant's hot path "re-derives the
@@ -374,11 +375,18 @@ class PolicyIR:
 
         A policy loaded from a bundle that ships its scales
         (`policy.shipped_multiscale`) gets them from there: a zone the bundle
-        describes is compiled without a coarse ring of its own."""
+        describes is compiled without a coarse ring of its own.
+
+        `rules` (since 2026-11-03): the rules to compile in place of
+        `policy.constraints`, one per rule and in its order - the Shield's
+        runtime view, where an MSL band is the AGL band over its ground
+        (guardrail/terrain.py). The identity (id, version, generation, hash)
+        is the policy's, as declared."""
         shipped = getattr(policy, "shipped_multiscale", None)
         old = {id(r.rule): r for r in reuse.fences} if reuse is not None else {}
         recs = []
-        for i, f in enumerate(c for c in policy.constraints if is_fence(c)):
+        cons = policy.constraints if rules is None else rules
+        for i, f in enumerate(c for c in cons if is_fence(c)):
             r = old.get(id(f))
             if r is not None and r.rule is f:
                 recs.append(r if r.index == i else replace(r, index=i))
@@ -388,7 +396,7 @@ class PolicyIR:
                 recs.append(compile_fence(i, f, multiscale=has is None))
         return cls(recs, policy_id=policy.policy_id, generation=policy.generation,
                    policy_hash=policy.policy_hash, version=policy.version,
-                   tubes=[c for c in policy.constraints
+                   tubes=[c for c in cons
                           if getattr(c, "type", None) in TUBE_TYPES],
                    shipped=shipped)
 

@@ -84,7 +84,7 @@ from guardrail.manifest import (                                    # noqa: E402
 from guardrail.replay import EpisodeRecord, verify_replay, write_replay  # noqa: E402
 from guardrail.shield import LOOKAHEAD_DT_S, LOOKAHEAD_S           # noqa: E402
 from guardrail.models import (                                      # noqa: E402
-    Action4D, AltitudeEnvelope, ObstacleClearance, SubjectStandoff,
+    Action4D, AltitudeEnvelope, DistanceEnvelope, ObstacleClearance, SubjectStandoff,
 )
 
 import city_planner                                                 # noqa: E402
@@ -2205,7 +2205,9 @@ class FenceGuard:
                  street_mask: dict | None = None, shield=None):
         if shield is None:
             from guardrail.shield import Shield
-            shield = Shield(policy, escalation=False)
+            # Read for its rule geometry, never flown: a distance_envelope's
+            # maps are the flight Shield's business (require_maps).
+            shield = Shield(policy, escalation=False, require_maps=False)
         self.shield = shield
         self._keepout_key = None
         self._keepout = None
@@ -3923,18 +3925,21 @@ def servo(det, img_w: int, yaw_gain: float, want_w_frac: float,
 # flight before 2026-11-03 flew; `grant_forecast` the grant forecast with the
 # FSM off, as the --grant-forecast runs before then flew.
 def flight_shield(policy, obstacle_map, grant_forecast: bool = False,
-                  legacy_forecast: bool = False):
+                  legacy_forecast: bool = False, road_map: dict | None = None):
     """The flight's Shield: the grant's 5 s / 0.1 s with the escalation FSM
     (the default since 2026-11-03), 3 s / 0.5 s with the FSM (legacy), or the
-    grant's forecast with the FSM off (--grant-forecast)."""
+    grant's forecast with the FSM off (--grant-forecast). `road_map`: the
+    street mask, for a distance_envelope over roads (WP1-07)."""
     if legacy_forecast and grant_forecast:
         raise ValueError("--legacy-forecast and --grant-forecast are two different "
                          "Shields; give one")
     if legacy_forecast:
-        return Shield(policy, lookahead_s=3.0, dt=0.5, obstacle_map=obstacle_map)
+        return Shield(policy, lookahead_s=3.0, dt=0.5, obstacle_map=obstacle_map,
+                      road_map=road_map)
     if grant_forecast:
-        return Shield(policy, obstacle_map=obstacle_map, escalation=False)
-    return Shield(policy, obstacle_map=obstacle_map)
+        return Shield(policy, obstacle_map=obstacle_map, escalation=False,
+                      road_map=road_map)
+    return Shield(policy, obstacle_map=obstacle_map, road_map=road_map)
 
 
 def shield_lookahead_record(shield) -> dict:
@@ -4392,14 +4397,25 @@ async def fly(args) -> int:
             cmap = None
 
     smap = None
-    if policy.by_type(ObstacleClearance) and cmap is not None:
+    # A distance_envelope (WP1-07, 2026-11-03) is measured on the obstacle map
+    # (buildings) or the street mask (roads); the Shield refuses one whose map
+    # is missing, so a policy that needs a map this run lacks stops here.
+    envelope = {c.object_class for c in policy.by_type(DistanceEnvelope)}
+    if (policy.by_type(ObstacleClearance) or "buildings" in envelope) and cmap is not None:
         smap = {"occ": cmap["occ"], "res": cmap["res"],
                 "ox": cmap["ox"], "oy": cmap["oy"]}
+    rmap = None
+    if "roads" in envelope:
+        _rm = Path(args.citymap).parent / "street.npz"
+        if _rm.is_file():
+            from build_street_mask import load_street
+            _st = load_street(_rm)
+            rmap = {"occ": _st["street"], "res": _st["res"], "ox": _st["ox"], "oy": _st["oy"]}
     # The grant's 5 s / 0.1 s with the escalation FSM unless --legacy-forecast
     # or --grant-forecast; see flight_shield. Recorded either way
     # (metrics/kpi "shield_lookahead").
     shield = flight_shield(policy, smap, grant_forecast=args.grant_forecast,
-                           legacy_forecast=args.legacy_forecast)
+                           legacy_forecast=args.legacy_forecast, road_map=rmap)
     print(f"[shield] forecast {shield.lookahead_s:g} s at {shield.dt:g} s "
           f"({'the grant forecast, escalation FSM off' if args.grant_forecast else '3 s / 0.5 s, the city rail before 2026-11-03' if args.legacy_forecast else 'the grant forecast, escalation FSM on'})")
     clr = policy.by_type(ObstacleClearance)

@@ -11,20 +11,21 @@ declarable here, plus two of this project's own:
     altitude_envelope   min/max height
     kinematic_envelope  speed / climb-rate / turn-rate caps
     distance_envelope   min distance to a typed object class (people, buildings,
-                        roads)                                     [declarable]
+                        roads); enforced since 2026-11-03 through the
+                        clearance / stand-off runtime (DistanceEnvelope)
     dynamic_nfz         polygon with motion, injected mid-flight
     time_window_switch  switches a referenced rule on/off
     corridor_swap       replaces an active corridor with another
     obstacle_clearance  (ours) min distance from MAPPED buildings
     subject_standoff    (ours) min distance from the tracked subject
 
-[declarable] means the DSL validates, hashes, bundles and exports the rule, and
-the flight loaders do not accept it yet (RUNTIME_TYPES). Such a policy is
-refused by the flight loaders (`load_policy`, `load_layered`,
-`bundle.load_bundle`, `bundle.load_for_flight`) unless the caller asks
-for the declaration only (`runtime=False`): a rule the Shield silently ignores
-is worse than a refusal. So is an MSL altitude (the Shield has no
-ground-elevation source), and a geographic policy whose frame is derived
+A type outside RUNTIME_TYPES would be declarable only: the DSL validates,
+hashes, bundles and exports it, and the flight loaders (`load_policy`,
+`load_layered`, `bundle.load_bundle`, `bundle.load_for_flight`) refuse it
+unless the caller asks for the declaration only (`runtime=False`): a rule the
+Shield silently ignores is worse than a refusal. Since 2026-11-03 no type is
+(distance_envelope was the last). Refused too: an MSL altitude (the Shield has
+no ground-elevation source), and a geographic policy whose frame is derived
 rather than stated (the ArduPilot SITL rail puts the vehicle's start, its
 home, at the frame origin).
 `Policy.flight_problems()` says what and why. The Shield has enforced
@@ -33,8 +34,8 @@ dynamic_nfz, time_window_switch and corridor_swap since 2026-10-07
 them too (guardrail/templates/), so a policy declaring a switch or a swap
 flies. A policy FILE declaring a dynamic_nfz is still refused for flight
 (FLIGHT_HELD_TYPES): the Shield enforces it and the rails count it, but
-offline analysis and the BC features would not. Only distance_envelope is
-left declarable-only.
+offline analysis and the BC features would not. distance_envelope, the last
+declarable-only type, flies since 2026-11-03.
 
 Every rule may carry `valid_time`, a recurring schedule; that is a FIELD, as in
 the grant's ConstraintBase, not a class.
@@ -1087,13 +1088,70 @@ class Corridor(_Tube, ConstraintBase):
 class DistanceEnvelope(ConstraintBase):
     """Grant: "Min distance to typed object class (people, buildings, roads)".
 
-    DECLARABLE ONLY. The Shield has no map of people or roads; mapped buildings
-    are covered by obstacle_clearance and the followed subject by
-    subject_standoff. A policy carrying this rule is refused by the flight
-    loaders rather than flown with the rule silently ignored."""
+    Enforced since 2026-11-03 (WP1-07); until then declarable only, and
+    refused by the flight loaders. The Shield enforces it through the runtime
+    it already has for each class (`runtime_rule`), under the rule's own id,
+    priority, breach action and schedule:
+
+      buildings  the clearance runtime over the OBSTACLE map
+                 (Shield(obstacle_map=...)): obstacle_clearance's check and
+                 repair, at min_distance_m;
+      roads      the same runtime over a ROAD map (Shield(road_map=...), the
+                 street mask demo/build_street_mask.py writes): distance to
+                 the nearest road cell;
+      people     the stand-off runtime: min_distance_m from the tracked
+                 subject whenever perception classifies it as a person
+                 (PEOPLE_CLASSES), whatever it is told to follow.
+
+    What it does NOT see, stated rather than implied: the Shield knows one
+    subject (Shield.set_subject), so a person who is not the tracked subject
+    is outside this rule; and buildings and roads exist only where the maps
+    cover (off the map is unknown, Shield.off_map). A Shield is never built
+    over a buildings or roads envelope without its map (refused at
+    construction), so the rule is never inert where it claims to hold."""
     type: Literal["distance_envelope"]
     object_class: Literal["people", "buildings", "roads"]
     min_distance_m: float = Field(gt=0)
+
+    def runtime_rule(self) -> "ConstraintBase":
+        """The rule the Shield enforces in this one's place (see the class
+        docstring): same id, constraint_type, priority, violation_action,
+        scope, layer, merge provenance and schedule."""
+        base = dict(id=self.id, constraint_type=self.constraint_type,
+                    priority=self.priority, violation_action=self.violation_action,
+                    scope=self.scope, layer=self.layer, locked_by=self.locked_by,
+                    valid_time=self.valid_time)
+        if self.object_class == "people":
+            return PeopleStandoff(type="subject_standoff", subject_class="people",
+                                  min_range_m=self.min_distance_m, **base)
+        cls = RoadClearance if self.object_class == "roads" else EnvelopeClearance
+        return cls(type="obstacle_clearance", min_clearance_m=self.min_distance_m, **base)
+
+
+# Subject classes perception reports for a person (demo/follow_vlm.py and the
+# PAS rail say "pedestrian"; the COCO detectors "person").
+PEOPLE_CLASSES: frozenset[str] = frozenset({"pedestrian", "person", "people", "human"})
+
+
+class EnvelopeClearance(ObstacleClearance):
+    """The clearance runtime of a distance_envelope (DistanceEnvelope.
+    runtime_rule; not an IR type, never in a policy). `MAP` names the map
+    the Shield measures it on: buildings = the obstacle map."""
+    MAP: ClassVar[str] = "buildings"
+
+
+class RoadClearance(EnvelopeClearance):
+    """A distance_envelope over `roads`: measured on the Shield's road map."""
+    MAP: ClassVar[str] = "roads"
+
+
+class PeopleStandoff(SubjectStandoff):
+    """The stand-off runtime of a distance_envelope over `people`: binds
+    whenever the tracked subject is classified as a person (PEOPLE_CLASSES).
+    Not an IR type, never in a policy."""
+
+    def binds(self, subject_class: str | None) -> bool:
+        return subject_class is not None and subject_class.lower() in PEOPLE_CLASSES
 
 
 class Motion(BaseModel):
@@ -1215,13 +1273,15 @@ Constraint = Annotated[
 # tests/test_policy_dsl_grant_form.py). The Shield has enforced dynamic_nfz,
 # time_window_switch and corridor_swap since 2026-10-07; they joined this set
 # on 2026-10-08, in the change that gave the compiler their templates
-# (sentence, summary, reason). distance_envelope stays out: nothing enforces
-# it. An MSL altitude is refused separately, by name (unenforced_rules).
+# (sentence, summary, reason). distance_envelope joined on 2026-11-03 (WP1-07):
+# the Shield enforces it through its clearance and stand-off runtime
+# (DistanceEnvelope.runtime_rule) and the compiler renders it. An MSL altitude
+# is refused separately, by name (unenforced_rules).
 # A flight may carry every type here except those in FLIGHT_HELD_TYPES.
 RUNTIME_TYPES: frozenset[str] = frozenset({
     "polygon_fence", "circle_fence", "altitude_envelope", "kinematic_envelope",
     "obstacle_clearance", "subject_standoff", "corridor",
-    "dynamic_nfz", "time_window_switch", "corridor_swap"})
+    "dynamic_nfz", "time_window_switch", "corridor_swap", "distance_envelope"})
 # Runtime types the flight loaders still refuse in a policy FILE, with why
 # (Policy.unmeasured_rules). Not a gap in the Shield, which enforces them,
 # nor in the compiler, which renders them: a gap in what the flight rails
@@ -1802,18 +1862,24 @@ class Policy(BaseModel):
     # What the runtime can and cannot do with this policy
     # ------------------------------------------------------------------ #
 
-    def unenforced_rules(self) -> list[str]:
+    def unenforced_rules(self, ground=None) -> list[str]:
         """Rules the Safety Shield would NOT enforce, with the reason. A flight
-        loader refuses a policy for which this is non-empty."""
+        loader refuses a policy for which this is non-empty.
+
+        An MSL height (X-11) is an OPT-IN: enforced since 2026-11-03 when the
+        caller names the ground it flies over (`ground`, guardrail/terrain.py
+        FlatGround - the rail's stated elevation) and passes the same to the
+        Shield; refused, as before, when it names none."""
         out: list[str] = []
         for c in self.constraints:
             if c.type not in RUNTIME_TYPES:
                 out.append(f"{c.id}: {c.type} is declarable in the DSL but the "
                            f"Safety Shield does not enforce it")
             if getattr(c, "altitude_ref", None) == "MSL":
-                out.append(f"{c.id}: altitude_ref MSL - the Shield measures height "
-                           f"above ground and has no ground-elevation source to "
-                           f"convert mean-sea-level heights")
+                from .terrain import ground_problem
+                why = ground_problem(ground)
+                if why:
+                    out.append(f"{c.id}: altitude_ref MSL - {why}")
         return out
 
     def frame_problem(self) -> str | None:
@@ -1852,12 +1918,12 @@ class Policy(BaseModel):
                 f"{FLIGHT_HELD_TYPES[c.type]}"
                 for c in self.constraints if c.type in FLIGHT_HELD_TYPES]
 
-    def flight_problems(self) -> list[str]:
+    def flight_problems(self, ground=None) -> list[str]:
         """Everything that keeps this policy off a flight rail: unenforced
         rules, rules the rails would not measure, and an unplaceable frame.
-        Empty = flyable as written."""
+        Empty = flyable as written. `ground`: see unenforced_rules."""
         frame = self.frame_problem()
-        return (self.unenforced_rules() + self.unmeasured_rules()
+        return (self.unenforced_rules(ground) + self.unmeasured_rules()
                 + ([frame] if frame else []))
 
     def start_conflicts(self) -> list[str]:
@@ -2670,17 +2736,18 @@ def merge_layers(policies: list[Policy], *, policy_id: str | None = None,
 
 
 def load_layered(paths: list[str | Path], *, policy_id: str | None = None,
-                 version: str | None = None, runtime: bool = True) -> Policy:
+                 version: str | None = None, runtime: bool = True,
+                 ground=None) -> Policy:
     """Load several policy files and merge them (see merge_layers). Each file
     is validated on its own except for cross-layer references, which are
-    resolved on the merged policy."""
+    resolved on the merged policy. `ground`: see load_policy."""
     layers = []
     for p in paths:
         raw = parse_policy_text(Path(p).read_text(encoding="utf-8"), str(p))
         layers.append(Policy.model_validate(raw))
     merged = merge_layers(layers, policy_id=policy_id, version=version)
     if runtime:
-        _refuse_unenforced(merged, " + ".join(str(p) for p in paths))
+        _refuse_unenforced(merged, " + ".join(str(p) for p in paths), ground)
     return merged
 
 
@@ -2723,8 +2790,8 @@ def parse_policy_text(text: str, source: str = "<policy>"):
         raise ValueError(f"{source}: not valid YAML/JSON ({exc})") from None
 
 
-def _refuse_unenforced(pol: Policy, source: str) -> None:
-    gaps = pol.flight_problems()
+def _refuse_unenforced(pol: Policy, source: str, ground=None) -> None:
+    gaps = pol.flight_problems(ground)
     if gaps:
         raise ValueError(
             f"{source}: the Safety Shield cannot enforce this policy as written, "
@@ -2734,20 +2801,22 @@ def _refuse_unenforced(pol: Policy, source: str) -> None:
               "(bundle, schema, export).")
 
 
-def policy_from_raw(raw, *, source: str = "<policy>", runtime: bool = True) -> Policy:
+def policy_from_raw(raw, *, source: str = "<policy>", runtime: bool = True,
+                    ground=None) -> Policy:
     """Raw document -> validated, linted Policy. The single DSL entry point
-    behind load_policy, the REST ingest and the GeoJSON converter."""
+    behind load_policy, the REST ingest and the GeoJSON converter. `ground`:
+    see load_policy."""
     pol = Policy.model_validate(raw)
     problems = pol.lint()
     if problems:
         raise ValueError(f"{source}: the policy does not pass the DSL lint:\n  - "
                          + "\n  - ".join(problems))
     if runtime:
-        _refuse_unenforced(pol, source)
+        _refuse_unenforced(pol, source, ground)
     return pol
 
 
-def load_policy(path: str | Path, *, runtime: bool = True) -> Policy:
+def load_policy(path: str | Path, *, runtime: bool = True, ground=None) -> Policy:
     """YAML/JSON file -> validated Policy. Any schema error raises here, loudly,
     BEFORE flight — never mid-air.
 
@@ -2761,6 +2830,13 @@ def load_policy(path: str | Path, *, runtime: bool = True) -> Policy:
     written, for bundling, schema checks, export and the grant's own
     documents.
 
+    `ground` (X-11, since 2026-11-03): the ground-elevation source the rail
+    flies over (guardrail/terrain.py, e.g. terrain.SITL_CMAC). With one, an
+    MSL height is flyable - the caller gives the same ground to the Shield,
+    which enforces the MSL band as the AGL band over it; without one (the
+    default) an MSL height is refused, as it always was. MSL is the grant's
+    opt-in, and so is this.
+
     `issued_at` is part of the document when written (grant worked example,
     reference PolicyDoc) and so of its hash. Until 2026-10-06 it was refused
     here and kept only in the bundle manifest; a policy that does not write it
@@ -2768,4 +2844,4 @@ def load_policy(path: str | Path, *, runtime: bool = True) -> Policy:
     """
     p = Path(path)
     raw = parse_policy_text(p.read_text(encoding="utf-8"), str(p))
-    return policy_from_raw(raw, source=str(p), runtime=runtime)
+    return policy_from_raw(raw, source=str(p), runtime=runtime, ground=ground)

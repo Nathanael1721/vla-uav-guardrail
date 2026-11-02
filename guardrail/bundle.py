@@ -1256,7 +1256,7 @@ def _verify_both_hashes(name: str, manifest: dict, ir_bytes: bytes, policy: Poli
     return {HASH_SCHEME: declared, REFERENCE_FORM: ref}, None
 
 
-def _refuse_for_flight(chk: BundleCheck, name: str) -> None:
+def _refuse_for_flight(chk: BundleCheck, name: str, ground=None) -> None:
     """What no flight loader accepts from a bundle, whatever its signature.
 
     1. A rule the Shield would not enforce as written (models.
@@ -1282,14 +1282,14 @@ def _refuse_for_flight(chk: BundleCheck, name: str) -> None:
             f"{str(chk.manifest.get('policy_hash'))[:23]}..., so a run could not "
             f"be traced back to it. Write the bundle with this code (`python -m "
             f"guardrail.bundle POLICY`, either --ir-form) to fly it.")
-    _refuse_unenforced(chk.flight_policy, name)
+    _refuse_unenforced(chk.flight_policy, name, ground)
 
 
 def load_bundle(path: str | Path, *, require_signature: bool = True,
                 trust_store: str | Path | dict | None = None,
-                runtime: bool = True) -> Policy:
+                runtime: bool = True, ground=None) -> Policy:
     """Load a bundle, rebuild the Policy, and REFUSE it if it is not the policy
-    that was issued.
+    that was issued. `ground`: the MSL opt-in (models.load_policy).
 
     Rebuilding from the canonical IR is not re-parsing the DSL: the IR is the
     post-validation single source of truth, which is the whole point of
@@ -1319,7 +1319,7 @@ def load_bundle(path: str | Path, *, require_signature: bool = True,
     """
     chk = check_bundle(path, trust_store)
     if runtime:
-        _refuse_for_flight(chk, Path(path).name)
+        _refuse_for_flight(chk, Path(path).name, ground)
     if require_signature and not chk.verified:
         raise BundleSignatureError(
             f"{Path(path).name}: signature {chk.signature}: {chk.detail}. "
@@ -1331,8 +1331,8 @@ def load_bundle(path: str | Path, *, require_signature: bool = True,
 def load_for_flight(bundle: str | Path | None = None,
                     yaml_path: str | Path | None = None, *,
                     allow_unverified: bool = False,
-                    trust_store: str | Path | dict | None = None
-                    ) -> tuple[Policy, dict]:
+                    trust_store: str | Path | dict | None = None,
+                    ground=None) -> tuple[Policy, dict]:
     """The one way a flight entry point gets its policy: `(policy, source)`.
 
     Audit cards ARCH-29 / WP3-21: every flight script built its rules straight
@@ -1355,6 +1355,10 @@ def load_for_flight(bundle: str | Path | None = None,
     it only requests, a soft rule's action capped at brake) and a start
     inside a hard keep-out zone (`Policy.runtime_notes`), so a run never reads
     as having honoured something it did not.
+
+    `ground` (X-11, 2026-11-03): the ground-elevation source the rail flies
+    over (guardrail/terrain.py); with one an MSL height is flyable (the
+    caller gives the Shield the same), and the record names it (`ground`).
     """
     from .manifest import policy_source_record
     if bundle and yaml_path:
@@ -1362,7 +1366,7 @@ def load_for_flight(bundle: str | Path | None = None,
                          "run with two candidate policies cannot say which flew")
     if bundle:
         chk = check_bundle(bundle, trust_store)
-        _refuse_for_flight(chk, Path(bundle).name)
+        _refuse_for_flight(chk, Path(bundle).name, ground)
         if not chk.verified and not allow_unverified:
             raise BundleSignatureError(
                 f"{Path(bundle).name}: signature {chk.signature}: {chk.detail}. "
@@ -1375,8 +1379,10 @@ def load_for_flight(bundle: str | Path | None = None,
     else:
         if yaml_path is None:
             raise ValueError("no policy given: pass a bundle or a YAML file")
-        pol = load_policy(yaml_path)
+        pol = load_policy(yaml_path, ground=ground)
         rec = policy_source_record("yaml", str(yaml_path), pol.policy_hash)
+    if ground is not None:
+        rec["ground"] = ground.record()
     notes = pol.runtime_notes()
     if notes:
         rec["runtime_notes"] = notes

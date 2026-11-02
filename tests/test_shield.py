@@ -1795,17 +1795,23 @@ def test_the_default_end_of_day_is_the_end_of_the_day():
 
 def test_rules_the_shield_cannot_enforce_are_refused_at_construction():
     """A Policy built directly skips the flight loaders' gate; the Shield
-    must not then fly it with the rule silently ignored."""
+    must not then fly it with the rule silently ignored.
+
+    The distance_envelope case changed on 2026-11-03 (WP1-07): the type is
+    enforced now, and what the Shield refuses is one it could not measure -
+    over buildings with no obstacle map (tests/test_distance_envelope_msl.py
+    has every class). An MSL band is refused without a ground (X-11)."""
     from guardrail.models import Policy
     pol = Policy.model_validate({"policy_id": "x", "constraints": [
-        {"id": "people", "type": "distance_envelope", **HARD_P0, "object_class": "people",
-         "min_distance_m": 10}]})
+        {"id": "people", "type": "distance_envelope", **HARD_P0,
+         "object_class": "buildings", "min_distance_m": 10}]})
     try:
         Shield(pol)
     except ValueError as e:
-        assert "people" in str(e) and "distance_envelope" in str(e)
+        assert "people" in str(e) and "distance_envelope" in str(e) \
+            and "obstacle_map" in str(e), str(e)
     else:
-        raise AssertionError("a distance_envelope policy was accepted")
+        raise AssertionError("a distance_envelope over buildings with no map was accepted")
     msl = Policy.model_validate({"policy_id": "x", "constraints": [
         {"id": "band", "type": "altitude_envelope", **HARD_P0, "alt_min_m": 0, "alt_max_m": 50,
          "altitude_ref": "MSL"}]})

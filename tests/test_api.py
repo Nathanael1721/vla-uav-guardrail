@@ -157,7 +157,11 @@ def test_a_lat_lon_zone_lands_in_the_policys_own_frame():
     z = sh.policy.constraints[-1]
     assert res["applied"] == "geo" and z.vertices[0].lat == o[0] + 0.001
     assert 100 < z.vertices[0].x < 125 and 90 < z.vertices[0].y < 115     # ~111 m N, ~101 m E
-    metres = _flying(DEMO)
+    # A policy written in metres with no origin has no frame for a lat/lon
+    # point. Every shipped file states an origin since 2026-11-03 (WP1-14);
+    # demo_policy's metre form is the policy as it was.
+    metres = Shield(load_policy(DEMO).metre_form())
+    metres.filter(State(x=-20, y=-20, up=4), Action4D())
     assert _err(A.apply_dynamic_nfz, metres, {**HARD_P0, "id": "geo", "vertices": [
         {"lat": 25.0, "lon": 121.5}, {"lat": 25.001, "lon": 121.5},
         {"lat": 25.001, "lon": 121.501}]}).status == 422

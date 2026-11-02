@@ -57,7 +57,9 @@ def test_every_rule_of_the_policy_gets_a_row_in_policy_order():
     pol = load_policy(NFZ)
     snap = PolicyIndicator(pol).update(0.0, _dec(), State(x=44, y=0, up=8))
     assert [r["id"] for r in snap["rows"]] == [c.id for c in pol.constraints]
-    assert snap["policy"] == "follow-car-citylife-nfz v0.1.0"
+    # The file's own version (0.1.0 until IR 3.0.0, 0.1.2 since the WGS84
+    # conversion of 2026-11-03): the panel prints what was loaded.
+    assert snap["policy"] == f"follow-car-citylife-nfz v{pol.version}"
 
 
 def test_rule_labels_carry_the_policy_numbers():

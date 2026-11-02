@@ -117,7 +117,7 @@ from .csp import (CSP, CSP_VERSION, AllowedActionSet, CSPBudgetExceeded,
 from .geometry import nearest_on_polyline, point_in_fence
 from .ir import PolicyIR, is_moving
 from .models import (DAYS, RUNTIME_TYPES, AltitudeEnvelope, CircleFence, Corridor,
-                     CorridorSwap, DynamicNFZ, KinematicEnvelope,
+                     CorridorSwap, DistanceEnvelope, DynamicNFZ, KinematicEnvelope,
                      ObstacleClearance, Policy, PolygonFence, SubjectStandoff,
                      TimeWindowSwitch)
 from .shield import recurrence_active
@@ -812,6 +812,11 @@ def _relevance(rule, act: dict, ctx: _Ctx) -> str:
                  "ok": m.speed_pref_mps <= rule.speed_max_mps}
     elif isinstance(rule, ObstacleClearance):
         facts = {"length": math.hypot(tx - sx, ty - sy)}
+    elif isinstance(rule, DistanceEnvelope):
+        # WP1-07 (2026-11-03): the grant's class, enforced through the
+        # clearance runtime (buildings, roads) or the stand-off one (people).
+        facts = {"length": math.hypot(tx - sx, ty - sy), "cls": rule.object_class,
+                 "follow": bool(_FOLLOW_WORDS.search(m.task_text))}
     elif isinstance(rule, SubjectStandoff):
         # A class-specific stand-off binds to the ONE subject being followed,
         # and only while perception classifies it as that class
@@ -1379,7 +1384,10 @@ def rasterise_cost_map(policy: Policy, *, now: datetime | None = None,
     res = float(resolution_m)
     if not (res > 0 and math.isfinite(res)):
         raise ValueError(f"resolution_m must be a positive number, got {resolution_m!r}")
-    sh = Shield(policy, now=(lambda: now) if now is not None else None, escalation=False)
+    # A status-only Shield (in_force): a distance_envelope's map is not needed
+    # to ask the clock (require_maps, 2026-11-03).
+    sh = Shield(policy, now=(lambda: now) if now is not None else None, escalation=False,
+                require_maps=False)
     up = float(altitude_m) if altitude_m is not None else 0.0
     status = {r["id"]: r for r in sh.rule_status(State(x=0.0, y=0.0, up=up))}
 
@@ -1414,6 +1422,18 @@ def rasterise_cost_map(policy: Policy, *, now: datetime | None = None,
         if not in_force(c):
             not_in_force.append(c.id)
             continue
+        if isinstance(c, DistanceEnvelope):
+            # WP1-07 (2026-11-03): drawn as the Shield enforces it, through
+            # its runtime rule (buildings: the clearance layer; people: the
+            # stand-off disc), under its own id. Roads are measured on the
+            # Shield's road map, which this map is not given.
+            if c.object_class == "roads":
+                not_drawn.append({"id": c.id, "type": c.type,
+                                  "why": "distance to roads: measured on the "
+                                         "Shield's road map (Shield(road_map=...)), "
+                                         "which the cost map is not given"})
+                continue
+            c = c.runtime_rule()
         if isinstance(c, _ZONES):
             if not in_band(c):
                 out_of_band.append(c.id)
@@ -1634,7 +1654,7 @@ def cost_map_agreement(cm: CostMap, policy: Policy, *, n_points: int = 2000,
         raise ValueError("the Shield moves every authored zone on one clock; a map "
                          "with different ages per zone cannot be scored against it")
     sh = Shield(policy, now=(lambda: now) if now is not None else None,
-                escalation=False, obstacle_map=obstacle_map)
+                escalation=False, obstacle_map=obstacle_map, require_maps=False)
     alt = hdr.get("altitude_m")
     up = float(alt) if alt is not None else None
     age = ages.pop() if ages else 0.0
@@ -1823,7 +1843,7 @@ def _by_type_order(policy: Policy) -> list:
     out: list = []
     for cls in (PolygonFence, DynamicNFZ, Corridor, CorridorSwap, AltitudeEnvelope,
                 KinematicEnvelope, ObstacleClearance, SubjectStandoff,
-                TimeWindowSwitch):
+                DistanceEnvelope, TimeWindowSwitch):
         out += policy.by_type(cls)
     left = [c.id for c in policy.constraints
             if c.type in RUNTIME_TYPES and all(c is not o for o in out)]
