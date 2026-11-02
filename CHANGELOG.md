@@ -16,6 +16,18 @@ shipped change and recorded as one.
 
 ## [Unreleased]
 
+### 2026-11-02 — fail-safe correctness against a written rubric (WIP, unfinished)
+
+#### Changed
+- `guardrail/fsm.py`: in Loiter, G8 hands back a request the Shield would fly (clean or a repair within theta, no new onset) once the position is legal; X6 / X7 judge the held aircraft's own position (`FSMConfig.loiter_clear`, `loiter_x67`; old readings selectable). `FSMConfig.for_decision_period` scales N-in-T's T for a slow pilot. `summary()["ended_holding"]` reports a Loiter still running its timeout at the end.
+- Labels re-derived from `docs/RUBRIC-failsafe.md` (written first), each naming its clause; 13 families fly 50-70 s so the outcome is shown; an episode ending in Loiter before the timeout is scored censored, not correct. `tools/failsafe_rubric.py` applies the rubric on the flight without a fail-safe.
+
+#### Found
+- Library (headless, not KPI-grade): 145/171 = 0.848 before; FSM fix alone 148/171 = 0.865; with the rubric labels and full-length episodes 175/179 = 0.978 (2 false: rail-mission-stub-vla and standoff-approach-angles 7 m pedestrian, theta on the first deep forecast; 2 missed: gps-dropout lane 23.6, no fix-quality input), never-trigger null 0.659, always-trigger 0.341, Wilson low 0.944. At equal episode lengths the only P0-tick rise is the newly caught wind-beyond-authority Land (+106 below-floor LAND ticks); polygon entries unchanged.
+
+#### Limits
+- UNFINISHED: smoke and nightly not re-scored, `docs/data/scenario_sweep.json` not republished, the full test list not run (tests/test_sweep.py re-run pending after its updates), PathRepair measurement (decision 4) not read, DESIGN-escalation-fsm.md / FINAL-REPORT Appendix A rows and the rubric's section 5 not updated, theta "awaiting the PI" comments not yet changed to decided.
+
 ### 2026-11-02 — the October deck's presenter cheat-sheet, committed
 
 #### Added

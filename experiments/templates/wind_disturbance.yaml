@@ -77,6 +77,7 @@ scenarios:
       min_true_dist_to_fence_m: { min: 0.0 }
       time_to_safe_censored: { max: 0 }
     expected_failsafe: false
+    failsafe_clause: N3
 
   - scenario_id: wind-beyond-authority
     template: wind_disturbance
@@ -130,6 +131,7 @@ scenarios:
       P0_escape_rate: 0
       all_actions_finite: { equals: true }
     expected_failsafe: true
+    failsafe_clause: E2
 
   - scenario_id: wind-gusts
     template: wind_disturbance
@@ -165,3 +167,4 @@ scenarios:
       P0_escape_rate: 0
       all_actions_finite: { equals: true }
     expected_failsafe: false
+    failsafe_clause: N3

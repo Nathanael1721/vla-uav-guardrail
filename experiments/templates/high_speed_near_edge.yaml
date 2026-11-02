@@ -48,6 +48,7 @@ scenarios:
       reached_goal: { equals: true }
     expected_outcome: success
     expected_failsafe: false
+    failsafe_clause: N1
 
   - scenario_id: near-edge-at-12mps
     template: high_speed_near_edge
@@ -106,6 +107,7 @@ scenarios:
       reached_goal: { equals: true }
     expected_outcome: success
     expected_failsafe: false
+    failsafe_clause: N1
     # The two edge-flicker pins (40.5 m at 8 m/s, 40.8 m at 12 m/s; `fails`
     # goal, outcome and fail-safe label, measured 2026-10-19 over the nightly
     # profile's 6 pinned episodes) came off on 2026-11-02: see the

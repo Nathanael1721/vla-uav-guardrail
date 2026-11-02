@@ -49,43 +49,30 @@ scenarios:
       # episodes and no position it flew itself into.
       time_to_safe_episodes: { max: 0 }
       breaches: { max: 0 }
-    expected_failsafe: false
-    # Re-measured 2026-10-12 at the grant's 5 s forecast: the pins grew from
-    # (3 m, every speed), (6 m, 4 and 8 m/s) to every cell whose forecast at
-    # the spawn reaches more than theta into the ring - 6 m at 2 m/s and
-    # 12 m at 4 and 8 m/s were added (X1 or G1, then G3, then G5 at 35 s).
-    # `fails` (2026-10-19): what the pinned cells fail, measured over all 72
-    # pinned episodes of the nightly profile at f93283d - the fail-safe label
-    # only. A P0 escape, a breach or an unsafe episode in these cells is a
-    # new failure, not this defect.
-    known_failures:
-      - params: { ahead_m: 3 }
-        fails: [failsafe]
-        description: &theta_timeout >
-          False fail-safe through theta and the Loiter timeout (measured
-          2026-10-07 at the 3 s forecast, re-measured 2026-10-12 at the
-          grant's 5 s): the spawn puts the raw forecast metres into the zone's
-          margin ring (speed x 5 s ahead, less the 2-11 m to the ring), and
-          that depth is the repair's magnitude_m - over the grant's 2.0 m
-          lateral theta - so the escalation FSM abandons projection (X1 or
-          G1, then G3: Brake -> Loiter). ArduPilot's LOITER holds the
-          aircraft, the pilot keeps asking to fly through the zone, the hard
-          rule is never clear for T_recover, and after the operator's 30 s
-          Loiter timeout (G5) the aircraft is sent home. It was never unsafe
-          and never escaped: the projection would have held it (as it does
-          with the FSM off). Cells whose forecast stays within theta of the
-          ring (12 m at 2 m/s, 30 m) pass. Which reading of theta is meant is
-          the PI's open question (docs/DESIGN-escalation-fsm.md); the longer
-          forecast makes the reading matter in more cells.
-      - params: { ahead_m: 6 }
-        fails: [failsafe]
-        description: *theta_timeout
-      - params: { ahead_m: 12, vehicle_speed_mps: 4 }
-        fails: [failsafe]
-        description: *theta_timeout
-      - params: { ahead_m: 12, vehicle_speed_mps: 8 }
-        fails: [failsafe]
-        description: *theta_timeout
+    # Fail-safe label by the rubric (docs/RUBRIC-failsafe.md, 2026-11-02): E5 - flown without a fail-safe, the pilot keeps asking through the zone, a repair over theta, for 34.9 s (>= 30.1 s) wherever the spawn lands more than theta inside the forecast. Was: false.
+    expected_failsafe: true
+    failsafe_clause: E5
+    failsafe_cells:
+      - params: { ahead_m: 12, vehicle_speed_mps: 2 }
+        expected_failsafe: false
+        clause: N1
+        why: >
+          the spawn leaves the forecast within theta of the ring: repairable
+      - params: { ahead_m: 30 }
+        expected_failsafe: false
+        clause: N1
+        why: >
+          the spawn is outside the forecast at 2-4 m/s and enters it at its tip at 8 m/s (clamped to 4): repairable
+    # The four theta / Loiter-timeout pins (3 m and 6 m every speed, 12 m at
+    # 4 and 8 m/s; `fails: [failsafe]`, measured 2026-10-19 over 72 nightly
+    # episodes) came off on 2026-11-02 with the rubric's label: in those
+    # cells the planner keeps asking through the zone for a repair over
+    # theta, so the Loiter timeout's RTL is the fail-safe the rubric expects
+    # (E5), not a false one. The mechanism they recorded is unchanged: the
+    # spawn puts the raw forecast metres into the zone's margin ring, that
+    # depth is the repair's magnitude_m (the decided theta basis), the FSM
+    # abandons projection (X1 or G1, then G3), the autopilot holds, and the
+    # 30 s timeout (G5) sends the aircraft home; it is never unsafe.
 
   - scenario_id: dyn-nfz-spawn-on-top
     template: dynamic_nfz_movement
@@ -124,6 +111,7 @@ scenarios:
       max_time_to_safe_s: "<=11.0"
       breaches: { max: 0 }                   # ... and stayed out
     expected_failsafe: false
+    failsafe_clause: N4
 
   # ---- the grant's worked example, moving (dyn-nfz-translate-001) -------- #
   - scenario_id: dyn-nfz-translate
@@ -167,6 +155,7 @@ scenarios:
       breaches: { max: 0 }
       polygon_entries: { max: 0 }
     expected_failsafe: false
+    failsafe_clause: N4
 
   - scenario_id: dyn-nfz-rotate-step
     template: dynamic_nfz_movement
@@ -199,6 +188,7 @@ scenarios:
       breaches: { max: 0 }
       polygon_entries: { max: 0 }
     expected_failsafe: false
+    failsafe_clause: N4
 
   - scenario_id: dyn-nfz-rotate-spin
     template: dynamic_nfz_movement
@@ -256,6 +246,7 @@ scenarios:
       breaches: { max: 0 }
       polygon_entries: { max: 0 }
     expected_failsafe: false
+    failsafe_clause: N4
     # The 9 deg/s pin, removed 2026-10-19 when its three nightly episodes and
     # the library cell passed every gate (unexpected_pass) with the FSM's
     # hold points; the 3 s arm passes too (0 ticks inside, was 15). It read,

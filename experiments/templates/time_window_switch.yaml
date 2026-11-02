@@ -70,6 +70,7 @@ scenarios:
       breaches: { max: 0 }
     expected_outcome: success
     expected_failsafe: false
+    failsafe_clause: N1
 
   - scenario_id: time-window-opens-on-vehicle
     template: time_window_switch
@@ -188,6 +189,7 @@ scenarios:
       breaches: { max: 0 }
       ended_safe: { equals: true }
     expected_failsafe: false
+    failsafe_clause: N4
     # No known_failures since 2026-10-21 (C2; the description above): the
     # three cells were pinned on the Shield's P0 counter at max 0.01 from
     # 2026-10-19 (2 escapes over 262-274 Shield ticks, 0.0073-0.0076, seeds
@@ -243,6 +245,7 @@ scenarios:
       breaches: { max: 0 }
       ended_safe: { equals: true }
     expected_failsafe: false
+    failsafe_clause: N4
 
   - scenario_id: time-window-opens-ahead
     template: time_window_switch
@@ -263,6 +266,12 @@ scenarios:
       pilot: { type: goto, speed: 4.0 }
       clock_start: "$clock"
     policy: { path: policies/corridor_survey.yaml }
+    # 50 s (2026-11-02, docs/RUBRIC-failsafe.md section 3): long enough to
+    # show the fail-safe outcome. Shorter, the run ended while the FSM held
+    # in Loiter with its 30 s operator timeout still running, or while the
+    # planner's unsafe request (rubric E5) was still running - and the
+    # cell scored as a correct non-trigger it had not shown.
+    ticks: 500   # was the library default, 300
     parameter_sweep:
       clock: ["2026-09-07T07:29:51", "2026-09-07T07:29:52"]
     expected_kpis:
@@ -272,7 +281,9 @@ scenarios:
       polygon_entries: { max: 0 }
       breaches: { max: 0 }
       switch_conservative_nfz-school: { equals: true }
-    expected_failsafe: false
+    # Fail-safe label by the rubric (docs/RUBRIC-failsafe.md, 2026-11-02): E5 - flown without a fail-safe, the pilot asks into the zone that opened ahead, a repair over theta, for 45.9-46.9 s (>= 30.1 s). Was: false.
+    expected_failsafe: true
+    failsafe_clause: E5
 
   # ---- time_window_switch as an EVENT (Stress Testing: "the harness drives
   # dynamic_nfz, time_window_switch, and corridor_swap events") ----------- #
@@ -312,6 +323,7 @@ scenarios:
       breaches: { max: 0 }
     expected_outcome: success
     expected_failsafe: false
+    failsafe_clause: N1
 
   - scenario_id: rule-deactivated-mid-run
     template: time_window_switch
@@ -338,6 +350,7 @@ scenarios:
       breaches: { max: 0 }
     expected_outcome: success
     expected_failsafe: false
+    failsafe_clause: N1
 
   - scenario_id: rule-activated-mid-run
     template: time_window_switch
@@ -352,6 +365,12 @@ scenarios:
       pilot: { type: goto, speed: 4.0 }
       clock_start: "2026-09-07T23:00:00"
     policy: { path: policies/corridor_survey.yaml }
+    # 50 s (2026-11-02, docs/RUBRIC-failsafe.md section 3): long enough to
+    # show the fail-safe outcome. Shorter, the run ended while the FSM held
+    # in Loiter with its 30 s operator timeout still running, or while the
+    # planner's unsafe request (rubric E5) was still running - and the
+    # cell scored as a correct non-trigger it had not shown.
+    ticks: 500   # was the library default, 300
     events:
       - at_sim_t: "$at"
         type: activate_rule
@@ -365,4 +384,6 @@ scenarios:
       time_to_safe_episodes: { max: 0 }
       polygon_entries: { max: 0 }
       breaches: { max: 0 }
-    expected_failsafe: false
+    # Fail-safe label by the rubric (docs/RUBRIC-failsafe.md, 2026-11-02): E5 - flown without a fail-safe, the pilot asks into the activated zone, a repair over theta, for 45.9-47.3 s (>= 30.1 s). Was: false.
+    expected_failsafe: true
+    failsafe_clause: E5

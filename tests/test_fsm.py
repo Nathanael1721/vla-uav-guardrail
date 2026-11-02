@@ -609,6 +609,33 @@ def test_loiter_holds_t_recover_and_a_new_onset_restarts_its_clock():
     assert edges == ["G4"], edges
 
 
+def test_n_in_t_for_a_slow_pilot_scales_t_with_its_decision_period():
+    """Decided 2026-11-02 (PI-DECISIONS of 21 Oct #7, option b). A pilot that
+    decides every 3 s and re-violates on every decision starts one onset per
+    3 s: under the grant's T = 5 s it never has three in T, and stays in
+    Brake. FSMConfig.for_decision_period(3.0) gives T = 13.5 s, and the
+    third onset (6 s) is G2. A 10 Hz pilot keeps the grant's thresholds and
+    hash exactly."""
+    assert FSMConfig.for_decision_period(0.1) == FSMConfig()
+    assert FSMConfig.for_decision_period(0.1).digest == FSMConfig().digest
+    slow = FSMConfig.for_decision_period(3.0)
+    assert slow.window_s == 13.5 and slow.n_violations == 3 and slow.digest != FSMConfig().digest
+
+    def fly(cfg):
+        f = EscalationFSM(cfg)
+        edges = []
+        for i, t in enumerate(clock(100)):
+            # violated for the first second of every 3 s decision, then clean
+            o = f.tick(t, "repaired", [hit()], SMALL) if (i % 30) < 10 else f.tick(t)
+            if o.edge:
+                edges.append((round(t, 1), o.edge))
+        return edges
+    assert ("G2" not in [e for _, e in fly(FSMConfig())]), fly(FSMConfig())
+    assert (6.0, "G2") in fly(slow), fly(slow)
+    for bad in (0, -1.0, float("nan"), True):
+        raises(ValueError, FSMConfig.for_decision_period, bad)
+
+
 def test_x6_a_position_illegal_for_t_reaches_rtl_not_a_permanent_brake():
     """A recovery that re-checks clean every tick is trusted (G1), exempt from
     theta, and one onset however long it lasts. Without X6 nothing could ever

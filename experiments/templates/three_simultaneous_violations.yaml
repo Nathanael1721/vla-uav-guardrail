@@ -14,16 +14,13 @@ scenarios:
   # ---- Shield matrix: "Three simultaneous violations" -------------------- #
   - scenario_id: three-simultaneous-violations
     template: three_simultaneous_violations
-    expect: known_failure
-    # What the family fails, re-measured 2026-10-20 at 400 ticks over the
-    # library (6 cells, both forecast arms), the smoke cell and all 54
-    # nightly episodes: the two labels, nothing else - the false fail-safe
-    # now comes from the Loiter timeout (G5), see the description. P0,
-    # finite actions, the single climb-out, the breach count and the safe end
-    # stay gated. (The marker came off on 2026-10-19, when every cell passed
-    # at 300 ticks; that pass held only because the 30 s run ended 0.2 s
-    # before G5. Review of T1c, P1.)
-    known_failure_fails: [outcome, failsafe]
+    # The known-failure marker (`known_failure_fails: [outcome, failsafe]`,
+    # re-measured 2026-10-20 over the library, the smoke cell and all 54
+    # nightly episodes) came off on 2026-11-02 with the rubric's labels: the
+    # pilot asks for a repair over theta for the whole run (E5), so the
+    # Loiter timeout's RTL is the expected fail-safe and RTL_triggered the
+    # expected outcome. P0, finite actions, the single climb-out, the breach
+    # count and the safe end stay gated, as before.
     # 40 s, past the operator-defined Loiter timeout (G5, 30 s, ours), so the
     # labels are judged on what the FSM does next and not on where the run
     # happens to stop. The library default (300 ticks) ended these episodes
@@ -59,6 +56,13 @@ scenarios:
       pass cannot come back by accident. Whether a pilot that asks for an
       illegal action for 30 s SHOULD be sent home - the label, or our 30 s
       timeout - is a question for the PI (docs/DESIGN-hold-points.md).
+      ANSWERED 2026-11-02 by the fail-safe rubric the PI delegated
+      (docs/RUBRIC-failsafe.md): it should. Flown without a fail-safe, the
+      pilot's requests are repairs over theta for the whole run (clause E5:
+      an unsafe repair that persists past the operator timeout), so the
+      timeout's RTL is the fail-safe the grant asks for ("trigger fail-safe
+      (RTL / Land) when repair is unsafe", p1) and the labels are now
+      RTL_triggered, fail-safe expected; the known-failure marker came off.
       The variant-2 forecast-tunnelling record (2026-10-06) is kept below as
       a comment.
     mission:
@@ -79,8 +83,10 @@ scenarios:
       time_to_safe_censored: { max: 0 }
       breaches: { max: 0 }
       ended_safe: { equals: true }
-    expected_outcome: success
-    expected_failsafe: false
+    expected_outcome: RTL_triggered   # was success: the fail-safe it expects (E5) ends in RTL
+    # Fail-safe label by the rubric (docs/RUBRIC-failsafe.md, 2026-11-02): E5 - flown without a fail-safe, the pilot's 3 m/s descent below the floor and 8-11 m/s into the zone are repairs over theta for the whole 39.9 s (>= 30.1 s). Was: false.
+    expected_failsafe: true
+    failsafe_clause: E5
     # The 2026-10-06 cell pin, removed 2026-10-19 with the family marker (its
     # 18 nightly episodes passed every gate at 300 ticks). The family marker
     # is back since 2026-10-20 (G5, above); this pin is not: the tunnelling

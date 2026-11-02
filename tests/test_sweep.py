@@ -81,7 +81,15 @@ def _cell(sid, **params):
 
 
 def _with(spec: ScenarioSpec, **changes) -> ScenarioSpec:
-    """A copy of a spec with nested fields replaced ('mission.clock_start')."""
+    """A copy of a spec with nested fields replaced ('mission.clock_start').
+
+    Since 2026-11-02 every library label names its rubric clause
+    (docs/RUBRIC-failsafe.md), and a clause that contradicts its label is
+    refused: a test that writes a fail-safe label by hand drops the clause
+    (and the cell labels) unless it gives one, and a test that turns the
+    Shield or its FSM off drops a fail-safe OUTCOME label (RTL_triggered /
+    Land_triggered), which nothing could then produce."""
+    changes = _relabel_safely(spec.model_dump(mode="json", by_alias=True), changes)
     d = spec.model_dump(mode="json", by_alias=True)
     for path, value in changes.items():
         node = d
@@ -90,6 +98,26 @@ def _with(spec: ScenarioSpec, **changes) -> ScenarioSpec:
             node = node[k]
         node[keys[-1]] = value
     return ScenarioSpec.model_validate(d)
+
+
+def _relabel_safely(current: dict, changes: dict) -> dict:
+    """_with's and _raw's label rules (see _with)."""
+    out = dict(changes)
+    if "expected_failsafe" in out and "failsafe_clause" not in out:
+        out["failsafe_clause"] = None
+        out.setdefault("failsafe_cells", [])
+    if (out.get("escalation") is False or out.get("shield") is False) \
+            and current.get("expected_outcome") in ("RTL_triggered", "Land_triggered") \
+            and "expected_outcome" not in out:
+        out["expected_outcome"] = None
+    return out
+
+
+# The 13 original scenarios' own lengths, where they changed on 2026-11-02
+# (docs/RUBRIC-failsafe.md section 3: these four now fly 50 s so the Loiter
+# timeout's outcome is shown). The identity pins below are those flights.
+LEGACY_TICKS = {"altitude-ceiling-hold": 300, "corridor-curfew-in-hours": 300,
+                "standoff-reclassified": 400, "standoff-wedge": 300}
 
 
 def _kpi(spec, rows, extra, policy=None):
@@ -256,7 +284,8 @@ def test_the_rail_mission_goes_to_the_node_with_its_target_speed_seed_and_cap():
     cmd = S.build_sitl_cmd(spec, "sweep_t", seed=1002, defaults=DEFAULTS)
     val = {cmd[i]: cmd[i + 1] for i in range(5, len(cmd) - 1) if cmd[i].startswith("--")}
     assert val["--seed"] == "1002" and val["--target"] == "30,30", val
-    assert val["--speed"] == "6" and val["--max-s"] == "30", val
+    # 50 s since 2026-11-02 (it flies past the Loiter timeout).
+    assert val["--speed"] == "6" and val["--max-s"] == "50", val
     assert {a for a in cmd[5:] if a.startswith("--")} <= _argparse_flags(ROOT / S.SITL_NODE)
     # A rotation about the start turns only the target, and the turned target
     # is what the node is given.
@@ -350,7 +379,9 @@ def test_the_rail_mission_scored_from_the_rail_log_gets_the_headless_verdict():
     run = S.run_episode(spec, DEFAULTS, 0)
     res = S.score(spec, run.rows, run.extra, run.policy, run.priorities)
     headless = S.episode_verdict(spec, res, {}, 0)
-    assert headless[0] == "pass", headless
+    # A known failure since 2026-11-02: past the Loiter timeout the FSM sends
+    # it home, a false fail-safe by the rubric (N1), pinned on the label only.
+    assert headless[0] == "known_failure", headless
     rows = _as_rail_rows(run.rows)
     # what main() scored before: nothing measured, a FAIL for a clean flight
     old = S.score(spec, rows, {"seed_applied": True}, run.policy)
@@ -398,8 +429,10 @@ def test_a_rail_log_under_a_clock_switched_policy_measures_no_breach():
     scored as a breach the flight made. sitl_refusal refuses a scenario
     clock, not a timed policy, so nothing kept such a flight out. Breaches
     are now left out for it too ("not measured", never 0). Shown failing
-    before the fix (breaches 1 under the timed policy)."""
-    spec = BY_ID["rail-mission-stub-vla"]
+    before the fix (breaches 1 under the timed policy). Flown at its old
+    30 s (the library flies it 50 s since 2026-11-02), where it ends in
+    Loiter with no fail-safe outcome - what the outcome checks below need."""
+    spec = _with(BY_ID["rail-mission-stub-vla"], ticks=300)
     run = S.run_episode(spec, DEFAULTS, 0)
     rows = _as_rail_rows(run.rows)
     timed = load_policy(ROOT / "policies" / "corridor_survey.yaml")
@@ -475,7 +508,10 @@ def test_run_sitl_reads_this_launchs_log_and_metrics_and_scores_them():
             S.subprocess.run = fake_run
             got_rows, extra = S.run_sitl(spec, "sweep_test", 0, DEFAULTS)
             res = S.score(spec, got_rows, extra, run.policy)
-            assert S.episode_verdict(spec, res, {}, 0)[0] == "pass", res.get("breaches")
+            # the headless verdict (a known failure since 2026-11-02)
+            want = S.episode_verdict(spec, S.score(spec, run.rows, run.extra, run.policy,
+                                                   run.priorities), {}, 0)[0]
+            assert S.episode_verdict(spec, res, {}, 0)[0] == want, res.get("breaches")
             stale["on"] = True
             try:
                 S.run_sitl(spec, "sweep_test", 0, DEFAULTS)
@@ -609,8 +645,9 @@ def _moved(pins: dict, forecast: str) -> list[str]:
     # altitude-floor-recovery.
     moved = []
     for sid, (final, reps) in pins.items():
-        run = S.run_episode(_with(BY_ID[sid], escalation=False), DEFAULTS, 0,
-                            forecast=forecast, recovery="lookahead")
+        run = S.run_episode(_with(BY_ID[sid], escalation=False,
+                                  ticks=LEGACY_TICKS.get(sid, BY_ID[sid].ticks)),
+                            DEFAULTS, 0, forecast=forecast, recovery="lookahead")
         got = (run.extra["final"]["x"], run.extra["final"]["y"], run.extra["final"]["up"])
         n = sum(len(r["repairs"]) for r in run.rows)
         if got != final or n != reps:
@@ -668,11 +705,16 @@ def test_the_13_original_scenarios_under_the_fsm_take_the_edges_measured():
     """Pinned so a change in the FSM or in the harness's hand-over cannot move
     these silently. A pinned edge that changes is a finding to re-measure,
     not a number to edit. LEGACY_FSM on the 3 s comparison arm (it was
-    measured there), LEGACY_FSM_GRANT at the grant's forecast."""
+    measured there), LEGACY_FSM_GRANT at the grant's forecast. Flown at
+    their own lengths (LEGACY_TICKS); at the library's 50 s since 2026-11-02
+    the four that end in Loiter there go on to the timeout (G5, G9), which
+    the sweep itself scores."""
     moved = []
     for pins, fc in ((LEGACY_FSM, "3s"), (LEGACY_FSM_GRANT, "grant")):
         for sid, chain in pins.items():
-            run = S.run_episode(BY_ID[sid], DEFAULTS, 0, forecast=fc)
+            spec = (_with(BY_ID[sid], ticks=LEGACY_TICKS[sid]) if sid in LEGACY_TICKS
+                    else BY_ID[sid])
+            run = S.run_episode(spec, DEFAULTS, 0, forecast=fc)
             got = ">".join(t["edge"] for t in ((run.extra.get("fsm") or {})
                                                 .get("transitions") or []))
             if got != chain:
@@ -1265,7 +1307,7 @@ RAW = yaml.safe_load((ROOT / "experiments" / "scenarios.yaml").read_text(encodin
 def _raw(sid, **changes):
     """A family as written, from whichever template file holds it."""
     fam = copy.deepcopy(LIBRARY.raw(sid))
-    fam.update(changes)
+    fam.update(_relabel_safely(fam, changes))
     return fam
 
 
@@ -1329,13 +1371,20 @@ def test_a_new_failure_in_a_pinned_cell_is_a_failure_not_the_old_defect():
     fires (review of T1c, P1). Its two cells are back among the cases. The
     two label pins of near-edge-at-12mps were further cover until
     2026-11-02, when Loiter began handing back a request the Shield would fly
-    (G8) and both cells passed; their pins came off."""
-    cases = (("three-simultaneous-violations", {"start_up": 3.0, "ask_mps": 11,
-                                                "variant": 0}),
-             ("three-simultaneous-violations", {"start_up": 3.0, "ask_mps": 8,
-                                                "variant": 2}),
-             ("dyn-nfz-spawn-ahead", {"ahead_m": 3, "vehicle_speed_mps": 4,
-                                      "variant": 0}),
+    (G8) and both cells passed; their pins came off.
+
+    Since 2026-11-02 the fail-safe rubric (docs/RUBRIC-failsafe.md) labels
+    three-simultaneous-violations and dyn-nfz-spawn-ahead's theta cells as
+    expecting the fail-safe they fly, and both pins came off. The cases are
+    the pins the library still carries: the rail mission's false fail-safe
+    (a whole-scenario pin on the label), standoff-approach-angles' 7 m
+    pedestrian cell (a cell pin on the goal, outcome and label), the
+    corridor-swap-shifted RTL that ends outside the swapped corridor (two
+    corridor gates) and the standoff wedge (the goal)."""
+    cases = (("rail-mission-stub-vla", {}),
+             ("standoff-approach-angles", {"offset_m": 7, "subject_class": "pedestrian",
+                                           "variant": 0}),
+             ("corridor-swap-shifted", {}),
              ("standoff-wedge", {}))
     for sid, params in cases:
         spec, res, cell = _scored_cell(sid, **params)
@@ -1595,7 +1644,9 @@ def test_an_only_cell_id_is_matched_against_the_profiles_own_cells():
         doc = json.loads(out.read_text(encoding="utf-8"))
     assert rc == 0, rc
     assert [r["id"] for r in doc["results"]] == [cell] * 3, [r["id"] for r in doc["results"]]
-    assert {r["status"] for r in doc["results"]} == {"known_failure"}
+    # The family's pin came off on 2026-11-02 with the rubric's labels (E5:
+    # the Loiter timeout's RTL is the expected fail-safe): every seed passes.
+    assert {r["status"] for r in doc["results"]} == {"pass"}
 
 
 def test_two_cells_that_fly_the_same_episode_refuse_the_run():
@@ -1822,13 +1873,23 @@ def test_failsafe_triggered_is_the_fsm_entering_rtl_or_land_not_a_brake():
     """REGRESSION (follow-up #118). `failsafe_triggered` was "any row braked",
     so every Shield brake was scored as the grant's fail-safe. The ceiling hold
     brakes and loiters (theta exceeded) and never reaches RTL / Land: not a
-    fail-safe trigger. With the FSM off nothing can be said: None, not False."""
-    spec = BY_ID["altitude-ceiling-hold"]
+    fail-safe trigger. With the FSM off nothing can be said: None, not False.
+    (2026-11-02: flown at its old 30 s, the hold ends in Loiter 0.1 s before
+    the operator timeout - not a trigger, and since then CENSORED, not a
+    correct non-trigger; at the library's 50 s the timeout sends it home,
+    the fail-safe the rubric expects, E5.)"""
+    spec = _with(BY_ID["altitude-ceiling-hold"], ticks=300)
     run = S.run_episode(spec, DEFAULTS, 0)
     assert any(r["setpoint"] == "brake" for r in run.rows), "the scenario no longer brakes"
     assert "Loiter" in run.extra["fsm"]["visited"]
     res = S.score(spec, run.rows, run.extra, run.policy, run.priorities)
-    assert res["failsafe_triggered"] is False and res["failsafe_matches_label"] == 1.0
+    assert res["failsafe_triggered"] is False and res["failsafe_censored"] is True
+    assert res["failsafe_matches_label"] is None
+    full = BY_ID["altitude-ceiling-hold"]
+    rf = S.run_episode(full, DEFAULTS, 0)
+    resf = S.score(full, rf.rows, rf.extra, rf.policy, rf.priorities)
+    assert resf["failsafe_triggered"] is True and resf["failsafe_matches_label"] == 1.0
+    assert full.failsafe_clause == "E5"
     off = _with(spec, escalation=False)
     r2 = S.run_episode(off, DEFAULTS, 0)
     res2 = S.score(off, r2.rows, r2.extra, r2.policy, r2.priorities)
@@ -2080,7 +2141,9 @@ def test_the_failsafe_trigger_is_the_fsms_verdict_never_a_braked_row():
     flight whose Shield brakes for 231 ticks while the FSM never leaves
     Brake / Loiter is NOT a fail-safe trigger, and a flight the FSM sends to
     RTL (G5, the Loiter timeout) without one braked row IS one."""
-    spec = _cell("corridor-drift-angles", ask_mps=4, drift_deg=60)
+    # At its old 30 s (the library flies it 70 s since 2026-11-02, where the
+    # Loiter timeout sends it home).
+    spec = _with(_cell("corridor-drift-angles", ask_mps=4, drift_deg=60), ticks=300)
     run = S.run_episode(spec, DEFAULTS, 0)
     assert any(r.get("braked") for r in run.rows), "the Shield no longer brakes here"
     assert run.extra["fsm"]["failsafe_triggered"] is False, run.extra["fsm"]

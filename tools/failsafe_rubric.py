@@ -1,0 +1,239 @@
+"""Apply the fail-safe rubric (docs/RUBRIC-failsafe.md) to the scenario library,
+cell by cell, and compare it with the labels the library declares.
+
+    python tools/failsafe_rubric.py                      # the library, seed 0
+    python tools/failsafe_rubric.py --profile nightly    # a profile's cells and seeds
+    python tools/failsafe_rubric.py --only dyn-nfz-spawn-ahead --json out.json
+
+For every Shield-on, FSM-on episode (the grant's 5 s forecast, the ideal
+vehicle, the canonical wording) it flies the cell's COUNTERFACTUAL - the same
+episode with no fail-safe, the Shield's projection flown every tick
+(`counterfactual`) - and prints the clause facts the rubric reads on that
+flight, so no fact can depend on where the FSM's hold, RTL or landing took
+the aircraft - never the FSM's state, edges or outcome:
+
+  E1  a hard rule whose violation_action is RTL / land was violated by the
+      planner's request (the Shield's decision, every tick);
+  E2  the steady wind exceeds the hold authority (AP_HOLD_AUTHORITY_MPS);
+  E3  the position the Shield acts on is wrong by more than the margin of the
+      hard P0 polygon fences while the aircraft is within that error of one:
+      noise (3 sigma) or latency (ticks x dt x the planned speed, capped)
+      against the closest true approach to a fence, or - for a frozen fix -
+      tick by tick, |true - seen| against the true distance to the fence;
+  E5  the longest unbroken spell of planner requests the Shield may not fly
+      (a hard rule's repair over theta or not converged, or a hard `loiter`
+      rule violated), against loiter_timeout_s + one control period. Read
+      from the Shield's decision at the state it was given: the TRUE state
+      unless the cell degrades perception (then flagged `seen`).
+
+The derived label is "expected" when any E clause holds. A cell whose
+declared label differs is listed; the exit code is 1 if any does, 0 if none,
+2 if nothing was judged. The FSM's own trigger is printed beside it for the
+reader, and read by nothing here.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import math
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(ROOT / "experiments"))
+
+import sweep_scenarios as SW                                      # noqa: E402
+from guardrail import fsm as F                                    # noqa: E402
+from guardrail import shield as SH                                # noqa: E402
+from guardrail.scenario_spec import Library, expand               # noqa: E402
+
+
+def unsafe_request(rec: dict) -> bool:
+    """The rubric's E5 tick: what the FSM's G3 calls an untrusted repair of a
+    hard rule (over theta or not converged, not the legal stop a `brake`
+    rule asks for), or a violated hard `loiter` rule. Read from the decision
+    record's own fields (outcome, theta_exceeded, the violated rules), which
+    do not depend on the FSM's state."""
+    vios = [v for v in rec.get("violations") or []
+            if v.get("effective_action") != "monitor_only"]
+    hard = [v for v in vios if v.get("constraint_type") == "hard"]
+    if not hard:
+        return False
+    if any(v.get("effective_action") == "loiter" for v in hard):
+        return True
+    untrusted = rec.get("outcome") == "blocked" or bool(rec.get("theta_exceeded"))
+    projected = [v for v in hard if v.get("effective_action") == "project_fix"
+                 and not v.get("kinematic")]
+    strongest = (rec.get("governing_rule") or {}).get("effective_action")
+    stop_rule = strongest == "brake" and not (rec.get("flags") or {}).get("stop_illegal")
+    return bool(untrusted and projected and not stop_rule)
+
+
+def demands_failsafe(rec: dict) -> bool:
+    """The rubric's E1 tick: a hard rule asking for RTL or Land is violated."""
+    return any(v.get("constraint_type") == "hard"
+               and v.get("effective_action") in ("RTL", "land")
+               for v in rec.get("violations") or [])
+
+
+def _fences(policy):
+    """Hard P0 polygon fences of the policy as loaded (shapely polygons and
+    their margins). Hot-applied zones are not here: E3 is judged on cells
+    whose fences are the policy's own (the sensor families)."""
+    from shapely.geometry import Polygon
+    out = []
+    for c in getattr(policy, "constraints", None) or []:
+        if getattr(c, "type", None) != "polygon_fence":
+            continue
+        if getattr(c, "constraint_type", "hard") != "hard" or getattr(c, "priority", "P0") != "P0":
+            continue
+        verts = [(v.x, v.y) for v in c.vertices]
+        out.append((Polygon(verts), float(getattr(c, "margin_m", 0.0) or 0.0)))
+    return out
+
+
+def e3_facts(spec, run, dt: float) -> dict:
+    st = spec.stress
+    fences = _fences(run.policy)
+    if not fences or not st.degrades_perception:
+        return {"holds": False, "why": "no degraded perception" if fences else "no P0 fence"}
+    from shapely.geometry import Point
+    margin = min(m for _, m in fences)
+
+    def dist(x, y):
+        return min(poly.exterior.distance(Point(x, y)) if not poly.contains(Point(x, y))
+                   else 0.0 for poly, _ in fences)
+
+    caps = F.KinematicCaps.from_policy(run.policy)
+    speed = float(spec.mission.pilot.speed or 4.0)
+    if caps is not None:
+        speed = min(speed, caps.speed_max_mps)
+    closest = min(dist(r["x"], r["y"]) for r in run.rows)
+    if st.gps_dropout_s is not None:
+        worst = None
+        for r in run.rows:
+            p = r.get("perceived")
+            if not p:
+                continue
+            err = math.hypot(r["x"] - p["x"], r["y"] - p["y"])
+            if err > margin and dist(r["x"], r["y"]) < err:
+                worst = max(worst or 0.0, err)
+        return {"holds": worst is not None, "kind": "frozen fix", "margin_m": margin,
+                "worst_error_m": None if worst is None else round(worst, 2),
+                "closest_true_m": round(closest, 2)}
+    err = max(3.0 * st.gps_noise_m, st.latency_ticks * dt * speed)
+    return {"holds": err > margin and closest < err, "kind": "noise/latency",
+            "error_m": round(err, 2), "margin_m": margin, "closest_true_m": round(closest, 2)}
+
+
+def counterfactual(spec, lib, seed: int):
+    """The cell flown WITHOUT a fail-safe: the Shield projects every tick and
+    its action is flown (spec.escalation False), so where the aircraft goes
+    cannot depend on the FSM's holds, RTLs or landings. The flying Shield
+    still carries an FSM, only so that each tick's decision record (outcome,
+    theta, the violated rules, stop_illegal) is computed exactly as the real
+    Shield computes it; the harness never reads its verdict (Shield._escalate
+    builds `emitted` before the FSM sees it). Returns (run, records)."""
+    log: list[dict] = []
+    orig_cls, orig_filter = SW.Shield, SH.Shield.filter
+    made = [0]
+
+    def factory(*a, **k):
+        made[0] += 1
+        if made[0] == 1:                      # the flying Shield (_episode builds it first)
+            k["escalation"] = True
+        return orig_cls(*a, **k)
+
+    def rec_filter(self, *a, **k):
+        d = orig_filter(self, *a, **k)
+        if getattr(self, "fsm", None) is not None:
+            log.append(getattr(d, "fsm_record", None) or {})
+        return d
+
+    SW.Shield, SH.Shield.filter = factory, rec_filter
+    try:
+        run = SW.run_episode(spec.model_copy(update={"escalation": False}),
+                             lib.defaults, seed)
+    finally:
+        SW.Shield, SH.Shield.filter = orig_cls, orig_filter
+    return run, log
+
+
+def judge(e, lib, timeout_s: float, with_fsm: bool = True) -> dict:
+    spec = e.cell.spec
+    run, log = counterfactual(spec, lib, e.seed)
+    flown = SW.run_episode(spec, lib.defaults, e.seed) if with_fsm else None
+    dt = float(spec.dt or lib.defaults.dt)
+    best = cur = 0
+    for rec in log:
+        cur = cur + 1 if unsafe_request(rec) else 0
+        best = max(best, cur)
+    spell = round((best - 1) * dt, 1) if best else 0.0
+    need = timeout_s + F.CONTROL_PERIOD_S
+    e1 = any(demands_failsafe(r) for r in log)
+    e2 = spec.stress.wind_speed_mps > SW.AP_HOLD_AUTHORITY_MPS
+    e3 = e3_facts(spec, run, dt)
+    e5 = spell >= need - 1e-9
+    # A spell still running when the episode ends, shorter than the timeout:
+    # E5 is undecided, and the family must fly longer (rubric, section 3).
+    tail = round((cur - 1) * dt, 1) if cur else 0.0
+    e5_censored = bool(cur) and tail < need - 1e-9
+    held = [c for c, h in (("E1", e1), ("E2", e2), ("E3", e3["holds"]), ("E5", e5)) if h]
+    fsm = (flown.extra.get("fsm") or {}) if flown is not None else {}
+    return {"episode": e.cell.episode_id, "seed": e.seed,
+            "declared": spec.expected_failsafe, "clause": spec.failsafe_clause,
+            "derived": bool(held), "clauses_held": held,
+            "e5_spell_s": spell, "e5_need_s": round(need, 1), "e5_censored": e5_censored,
+            "e5_judged_at": "seen" if spec.stress.degrades_perception else "true",
+            "e3": e3, "wind_mps": spec.stress.wind_speed_mps,
+            "episode_s": round(len(run.rows) * dt, 1),
+            "fsm_triggered": fsm.get("failsafe_triggered"),
+            "fsm_edges": " > ".join(t["edge"] for t in fsm.get("transitions", []))}
+
+
+def main(argv=None) -> int:
+    ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    ap.add_argument("--profile", default=None)
+    ap.add_argument("--only", nargs="*")
+    ap.add_argument("--json", default=None, help="write every cell's facts here")
+    ap.add_argument("--no-fsm", action="store_true",
+                    help="skip the flight WITH the FSM (printed for the reader only)")
+    args = ap.parse_args(argv)
+    prof = SW._resolve_profile(args.profile)
+    lib = Library(ROOT / (prof.library if prof else "experiments/scenarios.yaml"))
+    eps, _ = expand(lib, prof, None, args.only)
+    eps = [e for e in eps if not e.comparison and e.prefix == "on"
+           and e.paraphrase_arm in (None, -1)
+           and e.cell.spec.shield and e.cell.spec.escalation]
+    timeout = F.FSMConfig().loiter_timeout_s
+    out, bad = [], []
+    for e in eps:
+        j = judge(e, lib, timeout, with_fsm=not args.no_fsm)
+        out.append(j)
+        mark = ""
+        if j["e5_censored"] and not j["derived"]:
+            mark = "CENSORED"
+            bad.append(j)
+        elif j["declared"] is None:
+            mark = "UNLABELLED" + (" (rubric: expected)" if j["derived"] else "")
+        elif j["declared"] != j["derived"]:
+            mark = "MISMATCH"
+            bad.append(j)
+        print(f"{mark:11} {j['episode'][:70]:70} s{j['seed']:<5} declared "
+              f"{str(j['declared']):5} {str(j['clause']):4} derived {str(j['derived']):5} "
+              f"{','.join(j['clauses_held']) or '-':8} E5 {j['e5_spell_s']:5.1f}/"
+              f"{j['e5_need_s']} ({j['e5_judged_at']}) ep {j['episode_s']:5.1f} s "
+              f"fsm {j['fsm_triggered']} {j['fsm_edges']}")
+        sys.stdout.flush()
+    if args.json:
+        Path(args.json).write_text(json.dumps(out, indent=1), encoding="utf-8")
+    print(f"\n{len(out)} cells judged, {len(bad)} declared labels disagree with the rubric "
+          f"or cannot be decided in the episode's length (CENSORED)")
+    if not out:
+        return 2
+    return 1 if bad else 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

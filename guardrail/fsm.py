@@ -1182,6 +1182,32 @@ class FSMConfig:
         return cls(**out)
 
     @classmethod
+    def for_decision_period(cls, period_s: float,
+                            base: "FSMConfig | None" = None) -> "FSMConfig":
+        """N-in-T's T for a pilot that decides every `period_s` seconds
+        (decided 2026-11-02, best practice, PI-DECISIONS of 21 Oct #7, option
+        b): T = max(T, N x period_s x 1.5); everything else is `base`'s.
+
+        A pilot deciding below 10 Hz holds each action for its decision
+        period (the 10 Hz stream repeats it), so it can START at most one new
+        violation per decision: N onsets need (N - 1) x period_s, and with
+        the grant's T = 5 s a pilot deciding every 3 s could never reach
+        N = 3 - it would stay in Brake and escalate only through X6 or the
+        Loiter timeout. The grant leaves N-in-T to "stress-run data" (p7)
+        and makes T "config-file overridable per mission profile" (p4); the
+        1.5 leaves room for a decision that lands late. A 10 Hz pilot keeps
+        the grant's 5 s exactly (0.1 x 3 x 1.5 = 0.45 s), so every scripted
+        harness pilot is unchanged. The run records the result in its
+        fsm_config_hash, as for any other threshold."""
+        if isinstance(period_s, bool) or not isinstance(period_s, (int, float)) \
+                or not math.isfinite(period_s) or period_s <= 0:
+            raise ValueError(f"decision period must be a finite number > 0 s, "
+                             f"got {period_s!r}")
+        base = base or cls()
+        window = max(base.window_s, base.n_violations * float(period_s) * 1.5)
+        return replace(base, window_s=window)
+
+    @classmethod
     def from_yaml(cls, path: str | Path, profile: str | None = None) -> "FSMConfig":
         import yaml  # local: keeps this module importable without PyYAML
         data = yaml.safe_load(Path(path).read_text(encoding="utf-8")) or {}
@@ -1465,6 +1491,20 @@ class EscalationFSM:
         """Per-episode facts the harness needs, including the KPI's `triggered`."""
         land = FSMState.LAND in self._visited
         rtl = FSMState.RTL in self._visited
+        # An episode that ends while the FSM holds in Loiter with its operator
+        # timeout still running has not shown whether the fail-safe fires
+        # (docs/RUBRIC-failsafe.md, section 3): a scorer must not read its
+        # "not triggered" as a correct non-trigger. Until 2026-11-02, 27
+        # library episodes ended so (two of them 0.1 s before G5).
+        ended_holding = None
+        if (self._state == FSMState.LOITER and not self._terminal
+                and self._t_last is not None and self._entered_at is not None):
+            dwell = self._t_last - self._entered_at
+            timeout = self.config.loiter_timeout_s
+            ended_holding = {"state": "Loiter", "dwell_s": round(dwell, 6),
+                             "timeout_s": timeout,
+                             "timeout_pending": (timeout is not None
+                                                 and dwell < timeout - EPS)}
         return {
             "ticks": self._n,
             "final_state": self._state.value,
@@ -1484,6 +1524,7 @@ class EscalationFSM:
             "holds": [dict(h) for h in self._holds],
             "holds_moved": sum(1 for h in self._holds if h["kind"] == "moved"),
             "holds_illegal": sum(1 for h in self._holds if not h["legal"]),
+            "ended_holding": ended_holding,
         }
 
     # ----------------------------------------------------------------- step

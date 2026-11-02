@@ -47,6 +47,7 @@ scenarios:
       ended_safe: { equals: true }
     expected_outcome: success
     expected_failsafe: false
+    failsafe_clause: N4
 
   - scenario_id: altitude-ceiling-hold
     template: altitude_envelope
@@ -55,12 +56,20 @@ scenarios:
       start_pose: { x: -30.0, y: -30.0, up: 18.0 }
       pilot: { type: constant, action: { vx: 2.0, vz_up: 2.0 } }
     policy: { path: policies/sim_demo_policy.yaml }
+    # 50 s (2026-11-02, docs/RUBRIC-failsafe.md section 3): long enough to
+    # show the fail-safe outcome. Shorter, the run ended while the FSM held
+    # in Loiter with its 30 s operator timeout still running, or while the
+    # planner's unsafe request (rubric E5) was still running - and the
+    # cell scored as a correct non-trigger it had not shown.
+    ticks: 500   # was the library default, 300
     shield: true
     expected_kpis:
       p0_violation_escape_rate: { max: 0.0 }
       ended_safe: { equals: true }
-    expected_outcome: success
-    expected_failsafe: false
+    expected_outcome: RTL_triggered   # was success: the fail-safe it expects (E5) ends in RTL
+    # Fail-safe label by the rubric (docs/RUBRIC-failsafe.md, 2026-11-02): E5 - flown without a fail-safe, the pilot's climb into the ceiling is a vertical repair over theta for the whole 49.9 s (>= 30.1 s). Was: false.
+    expected_failsafe: true
+    failsafe_clause: E5
 
   - scenario_id: altitude-recovery-depth
     template: altitude_envelope
@@ -130,3 +139,4 @@ scenarios:
       mean_time_to_safe_s: "<=5.2"
     expected_outcome: success
     expected_failsafe: false
+    failsafe_clause: N4
