@@ -44,10 +44,15 @@ WHAT EACH FIELD IS, WRITER BY WRITER (the part a reader must not assume)
 
   observation        a reference, never the image: the flight-log line and
                      the logged state (x, y, up, yaw); with a rosbag, the bag
-                     file, its topics and the episode-relative time - and,
-                     when the `mcap` reader is installed (it needs no ROS),
-                     the log time of the nearest message per topic. Without
-                     `mcap` that lookup prints SKIP and is left out.
+                     file, its topics and the tick's wall time on the bag's
+                     clock (`t_ns`: the mission_start event's wall clock plus
+                     the row's `t`, else the episode start's; `clock` says
+                     which) - and, read with `rosbags` (or, for the times
+                     alone, the `mcap` reader; neither needs ROS), the log
+                     time of the nearest message per topic and the pose
+                     MAVROS reported nearest the tick (`state`,
+                     /mavros/local_position/pose). Without either reader that
+                     lookup prints SKIP and is left out.
   policy_state       the row's own `policy_hash` / `generation` (every rail
                      since 2026-10-06), else the audit record joined to the
                      tick (below), else (headless) the generation in force
@@ -62,9 +67,17 @@ WHAT EACH FIELD IS, WRITER BY WRITER (the part a reader must not assume)
                      LOITER / RTL / LAND), so post_repair is that only on a
                      tick the Shield flew a repair through; elsewhere it is
                      None and `post_repair_source` says why.
-  executed           `flown_action` (the pymavlink rail); else the rail's
-                     verdict of what it streamed: `setpoint` "pass" -> the
-                     emitted action, "brake" -> zero, "none" / `flown`
+  executed           with a rosbag2 of the episode (the ROS 2 rail), what
+                     MAVROS was sent: the setpoint on /mavros/setpoint_raw/
+                     local logged in the tick's window, in the world frame
+                     (`executed_from` "bag"; "the rosbag2" below), None on a
+                     tick nothing was sent on. Otherwise the FALLBACK, from
+                     the flight log, said on every step (`executed_from`
+                     "flight_log", `executed_fallback` the reason: no bag,
+                     `rosbags` not installed, the join refused, a headless
+                     episode): `flown_action` (the pymavlink rail); else the
+                     rail's verdict of what it streamed: `setpoint` "pass" ->
+                     the emitted action, "brake" -> zero, "none" / `flown`
                      false -> None (the autopilot held the aircraft); else
                      the headless `emitted` (what flew). `executed_source`
                      names the case. The MAVLink adapter's own log
@@ -353,6 +366,9 @@ class Episode:
     shield: str | None = None
     bag: dict | None = None
     bag_messages: dict | None = None           # topic -> sorted log times (ns)
+    bag_data: "BagData | None" = None          # read with rosbags (read_bag)
+    bag_error: str | None = None               # why the bag was not read
+    executed: dict | None = None               # bag_execution's account, once built
     signature: dict | None = None
     notes: list[str] = field(default_factory=list)
     audit_join: dict | None = None              # join_audit's account, once built
@@ -433,6 +449,365 @@ def _episode_start_ns(events: list[dict]) -> int | None:
     return None
 
 
+# --------------------------------------------------------------------------- #
+# the rosbag2: what MAVROS was sent (2026-11-02)
+# --------------------------------------------------------------------------- #
+#
+# The grant's `action.executed` is "what MAVROS actually published". On the
+# ROS 2 rail that is the mavros_msgs/PositionTarget the MAVLink adapter
+# publishes on /mavros/setpoint_raw/local, which MAVROS sends to the
+# autopilot as SET_POSITION_TARGET_LOCAL_NED; sitl/run_ros2_demo.sh records it
+# in the run's bag. It is read with `rosbags` (pure Python, no ROS; optional,
+# like pyarrow): each message is placed on the flight-log tick whose window
+# holds its log time - from the tick's wall time (the mission_start event's
+# wall clock plus the row's `t`) less BAG_EARLY_S, up to the next tick's -
+# and converted back to the world frame (the adapter fills the message in ENU
+# for MAVROS: x east, y north, z up, yaw rate counter-clockwise;
+# sitl/mavlink_adapter_node.ned_to_mavros_enu).
+#
+# The join is trusted only when the bag agrees with the flight log: at least
+# BAG_AGREE_SHARE of the ticks where both say something was sent must carry
+# the same command within the adapter's heading slack (it rotates with the
+# pose it last read, the Shield with the pose of its tick). Otherwise - a
+# clock anchor off by more than a tick, another flight's bag - nothing is
+# taken from the bag and the episode says why. Where it is trusted, a tick
+# with no message in its window executed nothing (the adapter dropped it, or
+# nothing was published), whatever the log's verdict, and a tick whose
+# message differs from the log keeps the bag's: what MAVROS was sent. The
+# flight log's verdict rides beside it (`executed_flight_log`).
+#
+# Without a bag, without `rosbags`, or with the join refused, `executed` is
+# the flight log's verdict as before, and every step says so:
+# `executed_from` "flight_log" and `executed_fallback` the reason.
+
+SETPOINT_TOPIC = "/mavros/setpoint_raw/local"
+POSE_TOPIC = "/mavros/local_position/pose"
+ROSBAGS_INSTALL_HINT = ('pip install "rosbags>=0.10" (pure Python, no ROS; or run the '
+                        "exporter in WSL with it installed); it is optional, the "
+                        "flight-log fallback never needs it")
+# mavros_msgs/msg/PositionTarget (MAVROS 2), registered only for a bag that
+# does not carry the message's definition (a bag rosbag2 recorded on Jazzy
+# carries it, and that one is used).
+POSITION_TARGET_TYPE = "mavros_msgs/msg/PositionTarget"
+POSITION_TARGET_MSG = """\
+std_msgs/Header header
+uint8 coordinate_frame
+uint8 FRAME_LOCAL_NED = 1
+uint8 FRAME_LOCAL_OFFSET_NED = 7
+uint8 FRAME_BODY_NED = 8
+uint8 FRAME_BODY_OFFSET_NED = 9
+uint16 type_mask
+uint16 IGNORE_PX = 1
+uint16 IGNORE_PY = 2
+uint16 IGNORE_PZ = 4
+uint16 IGNORE_VX = 8
+uint16 IGNORE_VY = 16
+uint16 IGNORE_VZ = 32
+uint16 IGNORE_AFX = 64
+uint16 IGNORE_AFY = 128
+uint16 IGNORE_AFZ = 256
+uint16 FORCE = 512
+uint16 IGNORE_YAW = 1024
+uint16 IGNORE_YAW_RATE = 2048
+geometry_msgs/Point position
+geometry_msgs/Vector3 velocity
+geometry_msgs/Vector3 acceleration_or_force
+float32 yaw
+float32 yaw_rate
+"""
+FRAME_LOCAL_NED = 1
+IGNORE_VELOCITY = 8 | 16 | 32
+IGNORE_YAW_RATE = 2048
+BAG_EARLY_S = 0.02          # a message logged this much before its tick's time is still its
+BAG_AGREE_SHARE = 0.5
+BAG_POSE_WITHIN_S = 0.5     # the observation's pose: the nearest message within this
+
+
+@dataclass
+class BagData:
+    """What the exporter reads from a rosbag2 with `rosbags`."""
+    reader: str
+    times: dict = field(default_factory=dict)        # topic -> sorted log times (ns)
+    setpoints: list = field(default_factory=list)    # (log ns, PositionTarget fields)
+    poses: list = field(default_factory=list)        # (log ns, {x, y, up, yaw_deg})
+
+
+def have_rosbags() -> bool:
+    try:
+        import rosbags.highlevel                                 # noqa: F401
+    except ImportError:
+        return False
+    return True
+
+
+def _rosbags_version() -> str:
+    try:
+        from importlib.metadata import version
+        return f"rosbags {version('rosbags')}"
+    except Exception:                                            # noqa: BLE001
+        return "rosbags"
+
+
+def heading_deg_from_enu_quaternion(x: float, y: float, z: float, w: float) -> float:
+    """Heading clockwise from North, from a MAVROS ENU orientation: the
+    formula of sitl/mavlink_adapter_node.heading_deg_from_enu_quaternion
+    (tests/test_wp4outputs_exporters.py keeps the two equal)."""
+    yaw_enu = math.atan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z))
+    h = (90.0 - math.degrees(yaw_enu)) % 360.0
+    return 0.0 if h >= 360.0 else h
+
+
+def _deserialize(reader, raw: bytes, msgtype: str):
+    try:
+        return reader.deserialize(raw, msgtype)
+    except Exception:                                            # noqa: BLE001
+        store = getattr(reader, "typestore", None)
+        if msgtype != POSITION_TARGET_TYPE or store is None:
+            raise
+        from rosbags.typesys import get_types_from_msg
+        store.register(get_types_from_msg(POSITION_TARGET_MSG, POSITION_TARGET_TYPE))
+        return reader.deserialize(raw, msgtype)
+
+
+def read_bag(bag_dir: Path) -> BagData | None:
+    """Every topic's log times, the setpoints sent to MAVROS and the poses it
+    reported, read with `rosbags`; None when it is not installed. A bag it
+    cannot read raises."""
+    try:
+        from rosbags.highlevel import AnyReader
+    except ImportError:
+        return None
+    kw: dict = {}
+    try:
+        from rosbags.typesys import Stores, get_typestore
+        kw["default_typestore"] = get_typestore(getattr(Stores, "ROS2_JAZZY", None)
+                                                or Stores.LATEST)
+    except ImportError:
+        pass
+    data = BagData(reader=_rosbags_version())
+    try:
+        reader_cm = AnyReader([Path(bag_dir)], **kw)
+    except TypeError:                     # rosbags < 0.10: no default_typestore
+        reader_cm = AnyReader([Path(bag_dir)])
+    with reader_cm as reader:
+        for conn, ts, raw in reader.messages():
+            data.times.setdefault(conn.topic, []).append(int(ts))
+            if conn.topic == SETPOINT_TOPIC:
+                m = _deserialize(reader, raw, conn.msgtype)
+                data.setpoints.append((int(ts), {
+                    "coordinate_frame": int(m.coordinate_frame), "type_mask": int(m.type_mask),
+                    "velocity": [float(m.velocity.x), float(m.velocity.y), float(m.velocity.z)],
+                    "yaw_rate": float(m.yaw_rate),
+                    "stamp_ns": int(m.header.stamp.sec) * 1_000_000_000
+                    + int(m.header.stamp.nanosec)}))
+            elif conn.topic == POSE_TOPIC:
+                m = _deserialize(reader, raw, conn.msgtype)
+                p, q = m.pose.position, m.pose.orientation
+                # MAVROS ENU -> this project's x North, y East, up, as the
+                # Shield node reads the same topic.
+                data.poses.append((int(ts), {
+                    "x": float(p.y), "y": float(p.x), "up": float(p.z),
+                    "yaw_deg": heading_deg_from_enu_quaternion(q.x, q.y, q.z, q.w)}))
+    for v in data.times.values():
+        v.sort()
+    data.setpoints.sort(key=lambda x: x[0])
+    data.poses.sort(key=lambda x: x[0])
+    return data
+
+
+def _read_bag_into(ep: "Episode", bag_dir: Path) -> None:
+    """ep.bag_data (and the topics' message times) from `bag_dir`, or why not."""
+    try:
+        ep.bag_data = read_bag(bag_dir)
+    except Exception as e:                                       # noqa: BLE001
+        ep.bag_data = None
+        ep.bag_error = f"the bag could not be read with rosbags: {type(e).__name__}: {e}"
+        return
+    if ep.bag_data is None:
+        ep.bag_error = f"the bag was not read: `rosbags` is not installed ({ROSBAGS_INSTALL_HINT})"
+    else:
+        ep.bag_messages = ep.bag_data.times
+
+
+def setpoint_world(f: dict) -> tuple[dict | None, str | None]:
+    """A PositionTarget's command in this project's world frame (vx North, vy
+    East, vz_up, yaw_rate clockwise rad/s), undoing the adapter's ENU packing;
+    (None, why) when it is not a FRAME_LOCAL_NED velocity setpoint."""
+    if f.get("coordinate_frame") != FRAME_LOCAL_NED:
+        return None, (f"coordinate_frame {f.get('coordinate_frame')}, not "
+                      f"FRAME_LOCAL_NED (1): not converted")
+    if int(f.get("type_mask") or 0) & IGNORE_VELOCITY:
+        return None, (f"type_mask {f.get('type_mask')} ignores the velocity: not a "
+                      f"velocity setpoint")
+    east, north, up = f["velocity"]
+    yaw = None if int(f["type_mask"]) & IGNORE_YAW_RATE else -float(f["yaw_rate"])
+    return {"vx": north, "vy": east, "vz_up": up, "yaw_rate": yaw}, None
+
+
+def _iso_ns(s: Any) -> int | None:
+    from datetime import datetime, timezone
+    if not isinstance(s, str):
+        return None
+    try:
+        dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if dt.tzinfo is None:
+        return None
+    d = dt - datetime(1970, 1, 1, tzinfo=timezone.utc)
+    return (d.days * 86400 + d.seconds) * 1_000_000_000 + d.microseconds * 1000
+
+
+def mission_clock(events: list[dict]) -> tuple[int | None, str | None]:
+    """(wall ns at the flight log's t = 0, what it is). The ROS 2 rail's rows
+    count `t` from its `mission_start` event (t 0.0), written with its wall
+    clock (ms) after take-off; a rail without one counts from the episode
+    start (`episode_start` wall_ns)."""
+    for e in events:
+        if e.get("kind") == "mission_start" and e.get("t") in (0, 0.0):
+            ns = _iso_ns(e.get("wall"))
+            if ns is not None:
+                return ns, "mission_start event's wall clock (ms)"
+    ns = _episode_start_ns(events)
+    if ns is not None:
+        return ns, "episode_start wall_ns"
+    return None, None
+
+
+def _agrees(a: dict | None, b: dict | None) -> bool:
+    """Two world-frame commands the same within the adapter's heading slack:
+    horizontal within 0.1 m/s plus 10 % of the speed, vertical within 0.05
+    m/s, yaw rate within 0.01 rad/s (a float32 on the wire)."""
+    if a is None or b is None:
+        return False
+    try:
+        dvx = float(a["vx"]) - float(b["vx"])
+        dvy = float(a["vy"]) - float(b["vy"])
+        dvz = float(a["vz_up"]) - float(b["vz_up"])
+        speed = math.hypot(float(b["vx"]), float(b["vy"]))
+    except (TypeError, ValueError, KeyError):
+        return False
+    if not all(math.isfinite(x) for x in (dvx, dvy, dvz, speed)):
+        return False
+    ya, yb = a.get("yaw_rate"), b.get("yaw_rate")
+    yaw_ok = (ya is None or yb is None
+              or (isinstance(ya, (int, float)) and isinstance(yb, (int, float))
+                  and abs(float(ya) - float(yb)) <= 0.01))
+    return math.hypot(dvx, dvy) <= 0.1 + 0.1 * speed and abs(dvz) <= 0.05 and yaw_ok
+
+
+def join_bag_setpoints(rows: list[dict], setpoints: list, anchor_ns: int) -> list[dict | None]:
+    """Per row, the setpoint messages logged in its tick's window: from the
+    tick's wall time (anchor + t) less BAG_EARLY_S to the next tick's less
+    the same (the last tick: one median tick period). None for a row with no
+    numeric `t`; n 0 for a tick nothing was logged in; else the first
+    message's fields, its log time, its lag behind the tick and how many."""
+    from bisect import bisect_left
+    ns = []
+    for r in rows:
+        t = r.get("t")
+        ok = isinstance(t, (int, float)) and not isinstance(t, bool) and math.isfinite(float(t))
+        ns.append(anchor_ns + int(round(float(t) * 1e9)) if ok else None)
+    known = [x for x in ns if x is not None]
+    gaps = sorted(b - a for a, b in zip(known, known[1:]) if b > a)
+    period = gaps[len(gaps) // 2] if gaps else 100_000_000
+    early = int(BAG_EARLY_S * 1e9)
+    log = [ts for ts, _ in setpoints]
+    out: list[dict | None] = []
+    for i, x in enumerate(ns):
+        if x is None:
+            out.append(None)
+            continue
+        nxt = next((y for y in ns[i + 1:] if y is not None and y > x), x + period)
+        a, b = bisect_left(log, x - early), bisect_left(log, nxt - early)
+        if a == b:
+            out.append({"n": 0, "tick_ns": x})
+            continue
+        ts, f = setpoints[a]
+        out.append({"n": b - a, "tick_ns": x, "log_time_ns": ts,
+                    "lag_ms": round((ts - x) / 1e6, 3), "fields": f})
+    return out
+
+
+def bag_execution(ep: "Episode", flight_log: list[dict]) -> tuple[list | None, dict]:
+    """(per row: the bag's setpoint join, or None when the bag is not used;
+    the account the episode record carries). `flight_log` is each row's
+    `_actions`, the flight log's verdict the join is checked against."""
+    acct: dict[str, Any] = {"topic": SETPOINT_TOPIC}
+
+    def fallback(why: str):
+        acct.update({"from": "flight_log", "why": why})
+        return None, acct
+
+    if ep.kind == "headless":
+        return fallback("a headless episode: no ROS 2 graph and no MAVROS; executed is "
+                        "what the kinematic runner flew, from the flight log")
+    if ep.bag is None:
+        return fallback("no rosbag2 was recorded for this episode")
+    if ep.bag_data is None:
+        return fallback(ep.bag_error or "the bag was not read")
+    acct["reader"] = ep.bag_data.reader
+    sp = ep.bag_data.setpoints
+    acct["messages"] = len(sp)
+    if not sp:
+        return fallback(f"the bag holds no {SETPOINT_TOPIC} message")
+    anchor, clock = mission_clock(ep.events)
+    acct["clock"] = clock
+    if anchor is None:
+        return fallback("events.jsonl gives no wall clock to place the log's ticks on the bag's")
+    joined = join_bag_setpoints(ep.rows, sp, anchor)
+    comparable = agree = 0
+    for j, fl in zip(joined, flight_log):
+        if j and j.get("n") and fl.get("executed") is not None:
+            w, _ = setpoint_world(j["fields"])
+            if w is not None:
+                comparable += 1
+                agree += _agrees(w, fl["executed"])
+    acct.update(comparable=comparable, agree=agree)
+    if not comparable or agree < BAG_AGREE_SHARE * comparable:
+        return fallback(
+            f"the bag's setpoints do not line up with the flight log's ticks ({agree} of "
+            f"{comparable} comparable ticks agree, {BAG_AGREE_SHARE:.0%} needed): a clock "
+            f"anchor off by more than a tick, or another flight's bag; none is used")
+    used = [j for j in joined if j is not None]
+    acct.update({"from": "bag", "why": None,
+                 "ticks_with_message": sum(1 for j in used if j["n"]),
+                 "ticks_without_message": sum(1 for j in used if not j["n"]),
+                 "ticks_with_several": sum(1 for j in used if j["n"] > 1),
+                 "messages_on_no_tick": len(sp) - sum(j["n"] for j in used),
+                 "disagree_with_flight_log": comparable - agree})
+    return joined, acct
+
+
+def _executed_from_bag(act: dict, j: dict | None, why_not: str | None) -> dict:
+    """A step's action block with `executed` from the bag's join `j`, the
+    flight log's verdict beside it; or the fallback, labelled."""
+    if j is None:
+        act["executed_from"] = "flight_log"
+        act["executed_fallback"] = why_not or "this row has no t to place on the bag"
+        return act
+    fl_exe, fl_src = act["executed"], act["executed_source"]
+    if j["n"]:
+        w, why = setpoint_world(j["fields"])
+        act["executed"] = w
+        act["executed_source"] = f"bag:{SETPOINT_TOPIC}" + (f" ({why})" if why else "")
+        act["executed_bag"] = {"topic": SETPOINT_TOPIC, "log_time_ns": j["log_time_ns"],
+                               "lag_ms": j["lag_ms"], "messages_in_window": j["n"],
+                               "coordinate_frame": j["fields"].get("coordinate_frame"),
+                               "type_mask": j["fields"].get("type_mask")}
+    else:
+        act["executed"] = None
+        act["executed_source"] = (f"bag:{SETPOINT_TOPIC}: no message in this tick's window "
+                                  f"(nothing was sent to MAVROS)")
+        act["executed_bag"] = {"topic": SETPOINT_TOPIC, "log_time_ns": None, "lag_ms": None,
+                               "messages_in_window": 0}
+    act["executed_from"] = "bag"
+    act["executed_fallback"] = None
+    act["executed_flight_log"] = fl_exe
+    act["executed_flight_log_source"] = fl_src
+    return act
+
+
 def load_replay(path: Path, trust_store=None) -> Episode:
     from guardrail.replay import BAG_DIR, EPISODE, read_replay
     try:
@@ -466,15 +841,15 @@ def load_replay(path: Path, trust_store=None) -> Episode:
     if bag_files:
         meta = _bag_meta_text(bag_files.get("metadata.yaml", b"").decode("utf-8", "replace"))
         ep.bag = dict(meta, where=f"{ep.source}!{EPISODE}{BAG_DIR}/")
-        mcaps = {n: b for n, b in bag_files.items() if n.endswith(".mcap")}
-        if mcaps:
-            with tempfile.TemporaryDirectory(prefix="export-bag-") as td:
-                paths = []
-                for n, b in mcaps.items():
-                    q = Path(td) / Path(n).name
-                    q.write_bytes(b)
-                    paths.append(q)
-                ep.bag_messages = mcap_message_times(paths)
+        with tempfile.TemporaryDirectory(prefix="export-bag-") as td:
+            # A rosbag2 folder is flat: each file by its own name only, so
+            # no member name can place a file outside the folder.
+            for n, b in bag_files.items():
+                (Path(td) / Path(n).name).write_bytes(b)
+            _read_bag_into(ep, Path(td))
+            mcaps = sorted(Path(td).glob("*.mcap"))
+            if ep.bag_messages is None and mcaps:
+                ep.bag_messages = mcap_message_times(mcaps)
     ep.shield = _arm_of(ep.metrics, ep.events, {})
     return ep
 
@@ -555,8 +930,10 @@ def load_dir(run: Path) -> Episode:
         if (bag / "metadata.yaml").is_file():
             ep.bag = dict(_bag_meta_text((bag / "metadata.yaml").read_text(encoding="utf-8")),
                           where=_rel(bag) + "/")
+            _read_bag_into(ep, bag)
             mcaps = sorted(bag.glob("*.mcap"))
-            if mcaps:
+            if ep.bag_messages is None and mcaps:
+                # Without rosbags, the `mcap` reader still gives the times.
                 ep.bag_messages = mcap_message_times(mcaps)
     if not ep.priorities:
         ep.notes.append("no rule priorities resolved: every violated rule is labelled "
@@ -652,7 +1029,14 @@ def _actions(row: dict, audit: dict | None, shield: str | None,
             "post_repair_source": post_src, "executed_source": src}
 
 
-def _observation(ep: Episode, i: int, row: dict, start_ns: int | None) -> dict:
+def _nearest(times: list[int], x: int) -> int:
+    from bisect import bisect_left
+    k = bisect_left(times, x)
+    return min(times[max(0, k - 1):k + 1], key=lambda y: abs(y - x))
+
+
+def _observation(ep: Episode, i: int, row: dict, start_ns: int | None,
+                 clock: str | None = None) -> dict:
     obs = {"ref": f"{ep.source}#flight_log.jsonl:L{i + 1}",
            "state": {k: row.get(k) for k in ("x", "y", "up", "yaw_deg") if k in row}}
     if ep.bag:
@@ -660,12 +1044,17 @@ def _observation(ep: Episode, i: int, row: dict, start_ns: int | None) -> dict:
         t = row.get("t")
         if start_ns is not None and isinstance(t, (int, float)):
             b["t_ns"] = start_ns + int(round(float(t) * 1e9))
+            b["clock"] = clock
             if ep.bag_messages:
-                near = {}
-                for topic, times in ep.bag_messages.items():
-                    if times:
-                        near[topic] = min(times, key=lambda x: abs(x - b["t_ns"]))
-                b["nearest_message_ns"] = near
+                b["nearest_message_ns"] = {topic: _nearest(times, b["t_ns"])
+                                           for topic, times in ep.bag_messages.items()
+                                           if times}
+            poses = ep.bag_data.poses if ep.bag_data is not None else []
+            if poses:
+                k = _nearest([p[0] for p in poses], b["t_ns"])
+                if abs(k - b["t_ns"]) <= BAG_POSE_WITHIN_S * 1e9:
+                    pose = next(p for ts, p in poses if ts == k)
+                    b["state"] = {**pose, "topic": POSE_TOPIC, "log_time_ns": k}
         obs["bag"] = b
     return obs
 
@@ -850,9 +1239,17 @@ def _stop_advice(row: dict, rec: dict | None) -> dict | None:
 
 def build_steps(ep: Episode, outcome: str | None) -> list[dict]:
     by_tick, second, ep.audit_join = join_audit_records(ep.rows, ep.audit)
-    start_ns = _episode_start_ns(ep.events)
+    start_ns, clock = mission_clock(ep.events)
     start_gen = next((g for g in ep.generations if g.get("t") in (0, 0.0)), None) \
         or (ep.generations[0] if ep.generations else None)
+    # The flight log's verdict of each tick's action, then what the bag says
+    # MAVROS was sent, where a bag is read and its join is trusted.
+    advices = [_stop_advice(row, second.get(row.get("tick", i)))
+               for i, row in enumerate(ep.rows)]
+    acts = [_actions(row, by_tick.get(row.get("tick", i)), ep.shield,
+                     advised=bool(row.get("stop_advised")) or advices[i] is not None)
+            for i, row in enumerate(ep.rows)]
+    joined, ep.executed = bag_execution(ep, acts)
     steps = []
     for i, row in enumerate(ep.rows):
         tick = row.get("tick", i)
@@ -900,13 +1297,13 @@ def build_steps(ep: Episode, outcome: str | None) -> list[dict]:
             # The repairs made (repair_results; the grant's repair_attempts
             # lists the operators tried, skips included).
             reps = _first(audit, "repair_results", "repairs", default=[])
-        advice = _stop_advice(row, second.get(tick))
+        advice = advices[i]
         step = {
             "schema": SCHEMA, "episode": ep.key, "step": i, "tick": tick, "t": row.get("t"),
-            "observation": _observation(ep, i, row, start_ns),
+            "observation": _observation(ep, i, row, start_ns, clock),
             "policy_state": ps,
-            "action": _actions(row, audit, ep.shield,
-                               advised=bool(row.get("stop_advised")) or advice is not None),
+            "action": _executed_from_bag(acts[i], joined[i] if joined is not None else None,
+                                         ep.executed["why"] if joined is None else None),
             "outcome": outcome,
             "violation_type": sorted({x["violation_type"] for x in labelled}),
             "risk_level": risk,
@@ -954,6 +1351,9 @@ def build_episode(ep: Episode, steps: list[dict], outcome, outcome_src, success)
             "mission_success", "repair_count", "mean_repair_magnitude_mps",
             "mean_time_to_safe_s")} if table else None,
         "audit_join": ep.audit_join,
+        # Where each step's `executed` came from: the bag (what MAVROS was
+        # sent) or, labelled a fallback, the flight log's verdict; and why.
+        "executed": ep.executed,
         "adapter_log": ({"entries": len(ep.adapter),
                          "first_t": ep.adapter[0].get("t"), "last_t": ep.adapter[-1].get("t"),
                          "joined_per_step": False,
@@ -1236,8 +1636,12 @@ def main(argv: list[str] | None = None) -> int:
         print(f"{ep.source}: {ep.kind}, {len(steps)} steps, outcome {episode['outcome']}"
               + (f" ({'; '.join(ep.notes)})" if ep.notes else ""))
         if ep.bag and ep.bag_messages is None:
-            print(f"  SKIP nearest bag message: the `mcap` reader is not installed "
-                  f"(pip install mcap); observations name the bag and the time")
+            print(f"  SKIP nearest bag message: neither `rosbags` nor the `mcap` reader "
+                  f"is installed (pip install rosbags, or mcap); observations name the "
+                  f"bag and the time")
+        if ep.bag and ep.bag_data is None:
+            print(f"  SKIP executed from the bag: {ep.bag_error}; every step's executed "
+                  f"is the flight log's verdict, labelled a fallback")
     if args.format in ("both", "jsonl"):
         write_jsonl(out / "steps.jsonl", steps_all)
         write_jsonl(out / "episodes.jsonl", eps_all)
