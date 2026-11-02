@@ -694,6 +694,14 @@ def manifest_for(policy: Policy, changelog: str = "initial", *,
     written by hand is kept beside it. Without `previous` the manifest is
     exactly what it was, so no stored bundle changes.
 
+    THE REFERENCE PROJECTION (2026-11-02, WP1-05). `reference_projection`
+    is the second hash of the two-hash contract for every policy: the
+    reference implementation's policy_hash of the document its Phase-1 DSL
+    can hold - the policy's exactly-convertible rules
+    (reference_convert.to_reference) - with the rules it holds, those left
+    out and why, and `complete` when that document is the whole policy
+    (then its hash is hashes[REFERENCE_FORM]). check_bundle recomputes it.
+
     THE MULTI-SCALE GEOMETRY (2026-11-02, WP2-16). `multiscale_sha256` is the
     digest of the bundle's multiscale.json, so the signature over the
     manifest covers the shipped scales too; absent on every manifest whose
@@ -718,6 +726,12 @@ def manifest_for(policy: Policy, changelog: str = "initial", *,
             m["changelog"] = diff_text(diff)
     if ref is None:
         m["reference_problems"] = policy.reference_problems()
+    # The reference's hash over what it CAN represent (WP1-05, the two-hash
+    # contract; guardrail/reference_convert.py). Exact conversion only, in
+    # the policy's own frame: the record names every rule left out and why,
+    # and says whether the projection is the whole policy (`complete`).
+    from .reference_convert import to_reference
+    m["reference_projection"] = to_reference(policy).record()
     if ir_form == "reference":
         m["reference_delta"] = policy.reference_delta()
     if issued_at is not None:
@@ -1006,6 +1020,7 @@ def check_bundle(path: str | Path,
     hashes, source = _verify_both_hashes(p.name, manifest, ir_bytes, policy, form,
                                          declared)
     _attach_multiscale(p.name, manifest, ms_bytes, policy, source, form)
+    _verify_projection(p.name, manifest, source or policy, hashes)
 
     sig_hash, signed_by, sig_hex = parse_signature(sig_text)
     if sig_hash != declared:
@@ -1091,6 +1106,28 @@ def multiscale_problems(doc, policy: Policy) -> list[str]:
         except (TypeError, ValueError, KeyError):
             out.append(f"{rid}: unreadable entry")
     return out
+
+
+def _verify_projection(name: str, manifest: dict, policy: Policy, hashes: dict) -> None:
+    """The manifest's `reference_projection` (manifest_for) is what the
+    converter gives for the policy this bundle flies, exactly; and when it
+    claims to be the whole policy, its hash is the reference form's. Absent on
+    a bundle written before 2026-11-02."""
+    rec = manifest.get("reference_projection")
+    if rec is None:
+        return
+    from .reference_convert import to_reference
+    want = to_reference(policy).record()
+    if rec != want:
+        diff = sorted(k for k in set(rec) | set(want) if rec.get(k) != want.get(k)) \
+            if isinstance(rec, dict) else ["(not a mapping)"]
+        raise ValueError(f"{name}: the manifest's reference_projection does not "
+                         f"describe the policy in this bundle (differs in {diff})")
+    if want["complete"] and REFERENCE_FORM in hashes and \
+            hashes[REFERENCE_FORM] not in (None, want["policy_hash"]):
+        raise ValueError(f"{name}: the complete reference projection hashes to "
+                         f"{want['policy_hash']}, the manifest's reference form to "
+                         f"{hashes[REFERENCE_FORM]}")
 
 
 def _attach_multiscale(name: str, manifest: dict, ms_bytes: bytes | None,
@@ -2025,6 +2062,7 @@ def _main(argv: list[str] | None = None) -> int:
         python -m guardrail.bundle verify bundles/wgs84-taipei-demo-v0.1.0.tar.gz
         python -m guardrail.bundle merge reg.yaml site.yaml mission.yaml -o out.tar.gz
         python -m guardrail.bundle export POLICY [--origin LAT,LON] [-o out.yaml]
+        python -m guardrail.bundle export POLICY --reference [--conservative]
         python -m guardrail.bundle schema          # policies/policy_dsl.schema.json
         python -m guardrail.bundle lock [--update] # policies/policy.lock.json
         python -m guardrail.bundle keygen          # lab dev key, once per lab
@@ -2108,9 +2146,42 @@ def _main(argv: list[str] | None = None) -> int:
         ap.add_argument("--origin", default=None,
                         help="LAT,LON of the local frame's (0, 0), for a metre "
                              "policy that states no origin")
+        ap.add_argument("--reference", action="store_true",
+                        help="write the PI's reference implementation's form of "
+                             "what it can represent (guardrail/reference_convert"
+                             ".py) and say what it left out")
+        ap.add_argument("--conservative", action="store_true",
+                        help="with --reference: fold margin rings into the "
+                             "vertices and drop schedules (stricter), recorded")
         a = ap.parse_args(argv[1:])
         pol = load_policy(a.policy, runtime=False)
         org = tuple(float(v) for v in a.origin.split(",")) if a.origin else None
+        if a.reference:
+            from .reference_convert import to_reference
+            conv = to_reference(pol, origin=org, conservative=a.conservative)
+            rec = conv.record()
+            for rid, why in rec["omitted"].items():
+                print(f"# not converted  {rid}: {why}", file=sys.stderr)
+            for rid, how in {**rec["conservative"], **rec["reworded"]}.items():
+                print(f"# converted      {rid}: {how}", file=sys.stderr)
+            for f, why in rec["not_carried"].items():
+                print(f"# not carried    {f}: {why}", file=sys.stderr)
+            if conv.doc is None:
+                print("REFUSED  no rule of this policy is in the reference's DSL; "
+                      "a reference document needs at least one")
+                return 2
+            print(f"# reference policy_hash {rec['policy_hash']} over "
+                  f"{len(rec['rules'])} of {len(pol.constraints)} rules "
+                  f"({'complete' if rec['complete'] else 'a projection'}); this "
+                  f"project's hash of the whole policy {pol.policy_hash}",
+                  file=sys.stderr)
+            text = _yaml.safe_dump(conv.doc, sort_keys=False, allow_unicode=False)
+            if a.out:
+                Path(a.out).write_text(text, encoding="utf-8", newline="\n")
+                print(f"{a.out}  reference form of {pol.policy_id} v{pol.version}")
+            else:
+                print(text, end="")
+            return 0
         try:
             doc = pol.to_grant_form(origin=org)
         except ValueError as exc:

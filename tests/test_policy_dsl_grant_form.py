@@ -289,6 +289,117 @@ def test_a_policy_the_reference_cannot_represent_is_not_written_in_its_form():
         assert w in why, (w, why)
 
 
+def test_the_converter_writes_what_the_reference_can_hold_and_says_what_it_cannot():
+    """WP1-05, the two-hash contract. The reference's Phase-1 DSL holds 0 of
+    the shipped policies whole, so the whole-policy form converts nothing this
+    project flies. The converter writes the representable subset and accounts
+    for every rule: converted exactly, or left out with a reason. Its hash is
+    the reference's hash of THAT document - never of the whole policy unless
+    nothing was left out (`complete`), in which case it is the whole-policy
+    reference form, byte for byte."""
+    from guardrail.reference_convert import to_reference
+    shipped = sorted((ROOT / "policies").glob("*.yaml"))
+    with_projection = 0
+    for f in shipped:
+        pol = load_policy(f, runtime=False)
+        conv = to_reference(pol)
+        rec = conv.record()
+        accounted = set(rec["rules"]) | set(rec["omitted"])
+        assert accounted == {c.id for c in pol.constraints}, (f.name, accounted)
+        assert all(rec["omitted"].values()), f.name           # every omission says why
+        assert not conv.complete and pol.reference_hash() is None, f.name
+        assert pol.policy_hash != conv.reference_hash, "the two hashes are different forms"
+        with_projection += conv.doc is not None
+        for r in (conv.doc or {}).get("constraints", []):
+            assert r["type"] in ("polygon_fence", "altitude_envelope"), r
+    assert with_projection == len(shipped) - 1, with_projection   # corridor_survey: none
+    # A policy the reference can hold whole: the converter's document IS the
+    # whole-policy reference form, and its hash the reference hash.
+    sq = [{"lat": 25.0421, "lon": 121.5310}, {"lat": 25.0428, "lon": 121.5310},
+          {"lat": 25.0428, "lon": 121.5318}]
+    whole = policy_from_raw({"policy_id": "geo", "version": "0.1.0", "constraints": [
+        {"id": "f", "type": "polygon_fence", **HARD_P0, "vertices": sq, "margin_m": 0.0},
+        {"id": "alt", "type": "altitude_envelope", **HARD_P0, "alt_min_m": 5,
+         "alt_max_m": 90}]}, runtime=False)
+    conv = to_reference(whole)
+    assert conv.complete and conv.doc == whole.reference_ir()
+    assert conv.reference_hash == whole.reference_hash() is not None
+    # Nothing convertible: no document and no hash, never an invented one.
+    kin = policy_from_raw(_raw(constraints=[{**REG_KIN}]))
+    none = to_reference(kin)
+    assert none.doc is None and none.reference_hash is None and "kin" in none.omitted
+    # A metre fence needs a WGS84 anchor; a margin ring and a schedule are
+    # left out unless asked for, and then written stricter and recorded.
+    metre = policy_from_raw(_raw(constraints=[
+        _square("nfz", 10, 10, 20, margin_m=2.0),
+        {"id": "alt", "type": "altitude_envelope", **HARD_P0, "alt_min_m": 5,
+         "alt_max_m": 60, "valid_time": {"recurrence": {"days": ["Mon"]}}}]))
+    plain = to_reference(metre)
+    assert "no WGS84 anchor" in plain.omitted["nfz"] and "valid_time" in plain.omitted["alt"]
+    anchored = to_reference(metre, origin=(25.0, 121.5))
+    assert "margin_m 2" in anchored.omitted["nfz"]
+    loose = to_reference(metre, origin=(25.0, 121.5), conservative=True)
+    assert set(loose.conservative) == {"nfz", "alt"} and not loose.omitted
+    assert "always in force" in loose.conservative["alt"]
+    # The grown zone covers the zone the Shield enforces (polygon + margin).
+    from shapely.geometry import Polygon
+    from guardrail.geometry import keepout_area
+    from guardrail.projection import LocalProjection
+    pr = LocalProjection(25.0, 121.5)
+    ring = [pr.to_local(v["lat"], v["lon"])
+            for v in loose.doc["constraints"][0]["geometry"]["vertices"]]
+    assert Polygon(ring).buffer(1e-6).covers(keepout_area(metre.constraints[0]))
+    # The reference's own loader agrees on the hash, where its env exists.
+    if not _reference_available():
+        return SKIP
+    import wp1_roundtrip_kpi as W
+    import yaml
+    docs = {}
+    for f in shipped[:6] + [WGS84]:
+        c = to_reference(load_policy(f, runtime=False), origin=(25.0424, 121.5314),
+                         conservative=True)
+        if c.doc is not None:
+            p = _yaml(yaml.safe_dump(c.doc, sort_keys=False), f"{f.stem}.ref.yaml")
+            docs[str(p)] = c.reference_hash
+    got = W.run_reference(
+        "import json; from policy_dsl import ingest_file; "
+        f"print(json.dumps({{p: ingest_file(p).policy_hash for p in {list(docs)!r}}}))")
+    assert got.get("ok"), got
+    assert {p: got[p] for p in docs} == docs, got
+
+
+def test_every_manifest_carries_the_reference_projection_and_it_is_verified():
+    """The two-hash contract in the bundle: `hashes` names the whole policy
+    under both forms (the reference's null where it cannot hold it), and
+    since 2026-11-02 `reference_projection` names the reference's hash of
+    what it CAN hold, with the rules left out and why. check_bundle
+    recomputes it; a manifest that claims more is refused."""
+    from guardrail.reference_convert import to_reference
+    pol = load_policy(WGS84)
+    b = B.write_bundle(pol, _tmp("p.tar.gz"), signer=None)
+    chk = B.check_bundle(b)
+    rec = chk.manifest["reference_projection"]
+    assert rec == to_reference(pol).record()
+    assert rec["rules"] == ["envelope-default"] and not rec["complete"]
+    assert chk.manifest["hashes"][REFERENCE_FORM] is None
+    with tarfile.open(b, "r:gz") as tar:
+        m = {x.name: tar.extractfile(x).read() for x in tar.getmembers()}
+    for name, edit in (("more rules", lambda r: r["rules"].append("kin-caps")),
+                       ("another hash", lambda r: r.__setitem__("policy_hash", "sha256:" + "0" * 64)),
+                       ("complete", lambda r: r.__setitem__("complete", True)),
+                       ("a reason dropped", lambda r: r["omitted"].popitem())):
+        man = json.loads(m[B.MANIFEST_NAME])
+        edit(man["reference_projection"])
+        out = _tmp("f.tar.gz")
+        with tarfile.open(out, "w:gz") as tar:
+            for n, data in {**m, B.MANIFEST_NAME: json.dumps(
+                    man, indent=2, sort_keys=True).encode()}.items():
+                info = tarfile.TarInfo(n)
+                info.size = len(data)
+                tar.addfile(info, io.BytesIO(data))
+        _refused(lambda out=out: B.check_bundle(out), "reference_projection")
+
+
 # --------------------------------------------------------------------------- #
 # names and shapes
 # --------------------------------------------------------------------------- #
