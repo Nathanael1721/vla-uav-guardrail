@@ -26,7 +26,15 @@ shipped change and recorded as one.
   passed, and both failures came from the branches meeting (Fixed, below).
   The smoke profile on the merged code scored fail-safe trigger correctness
   0.934 against a never-trigger null of 0.885 (headless, not KPI-grade).
-  The fail-safe branch is not merged yet.
+  The fail-safe branch merged afterwards (f04bfd0); its library, smoke and
+  nightly figures (0.978 / 0.984 / 0.973) were scored before the WP1 branch's
+  canonical rings, so they are re-run on the merged code.
+- **The city rail flies the grant's 5 s / 0.1 s forecast by default**
+  (`demo/follow_vlm.py`, WP3-05). The loop now gives `Shield.set_subject`
+  the estimator's velocity, as vla_fly has since 1 Nov, so the forecast
+  carries the car along; the Shield keeps its escalation FSM.
+  `--legacy-forecast` flies the 3 s / 0.5 s of every earlier city flight,
+  `--grant-forecast` the grant forecast with the FSM off.
 - `tools/build_flight_bundles.py` signed the bundles of the new policy
   versions with the lab key: `fase3-sim-demo-v0.1.2`, and `v0.1.1` of
   corridor-survey, follow-car, follow-car-nfz, follow-car-citylife,
@@ -45,6 +53,37 @@ shipped change and recorded as one.
   `PHYSICS` switch of 2 November), which `tests/test_ros2_package.py`
   orders the SROS 2 check against; the line is back and the physics is
   printed on its own line.
+- `tests/test_replay.py` packed `retarget_demo2` with today's
+  `follow_pedestrian.yaml`, which since IR schema 3.0.0 is version 0.1.1 with
+  another hash, so 15 tests refused to bind. They now resolve the run's own
+  manifest hash through `policy_candidates()`, which reconstructs the
+  migrated 0.1.0 content: 61/61 in the lab checkout.
+
+#### Flown (Project AirSim CityLife, simple_flight, PC; not KPI-grade)
+Three hand-written follows of the red car (Car_10) on the new default, at
+051542e, in the 29 Oct comparison's configuration (policy
+`follow_car_citylife_nfz` 0.1.1 from its rebuilt bundle, 420 s, offscreen
+renderer at 30 fps): `fc5s_manual_r1_20261103` 0.980, `_r2_` 0.961, `_r3_`
+0.947 within 30 m (mean 0.963), against 0.972 (n=5) on 3 s / 0.5 s on 29 Oct.
+P0 escape 0.0, 0 mission collisions. Each has its PIP video
+(`docs/video/fc5s_manual_r*_20261103_pip_small.mp4`).
+
+#### Found
+- **These flights never challenge the Shield, at either forecast.** The
+  hand-written follow's own fence guard (`FenceGuard`: near / skirt / hold)
+  keeps the aircraft off the zones, so the Shield forecast no violation on any
+  tick of these three flights or of `rep3_manual_20261029` and
+  `nfz3b_pc_hier_dronecats_20261028`. The forecast change cost the follow
+  nothing measurable; it was not exercised against a zone here. The 5 s
+  Shield acting on this simulator is shown by vla_fly's flights, whose pilot
+  has no fence guard.
+- **The exporter's bag path ran on real bags** (the audit branch had not
+  installed `rosbags`): in a separate WSL venv with `rosbags` 0.10.11,
+  `tools/export_episodes.py` took `executed` from the bag on
+  `ros2_action_brake_01` (899 of 899 ticks agree with the flight log),
+  `ros2_hotapply_03` (89 of 89), `ros2if_on_dyn_yaw` (242 of 242) and
+  `ros2_sros2_shield_on_20261102` (2 of 2), and the rosbags round-trip tests
+  of `tests/test_wp4outputs_exporters.py` passed instead of skipping.
 
 ### 2026-11-02 — Policy DSL, IR and bundle to the grant: the freeze rule, required ConstraintBase fields, canonical rings, shipped multi-scale geometry, the two-hash contract
 
