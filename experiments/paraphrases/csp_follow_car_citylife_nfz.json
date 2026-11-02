@@ -2,92 +2,94 @@
   "schema": "guardrail.paraphrases/1",
   "source_key": "csp_follow_car_citylife_nfz",
   "kind": "csp_nl",
-  "source_text": "Stay between 6 m and 14 m altitude. Keep at least 3 m from any building. Keep at least 5 m away from anything you are following. Keep at least 10 m away from any pedestrian. Never enter zone 'nfz-frontage'. Keep speed at or below 5 m/s, climb rate below 2 m/s and turn rate below 45 deg/s.",
-  "source_id": "src-07dfe4c6b88b45fc",
-  "source_sha256": "07dfe4c6b88b45fc0e9f319a074b735209bee115c9b840fb3516b8bc2cf83e64",
+  "source_text": "Stay between 6 m and 14 m altitude. Keep at least 3 m from any building. Keep at least 5 m away from anything you are following. Keep at least 10 m away from the pedestrian you are following. Never enter zone 'nfz-frontage'. Keep speed at or below 5 m/s, climb rate below 2 m/s and turn rate below 45 deg/s.",
+  "source_id": "src-70ad14a6754ca838",
+  "source_sha256": "70ad14a6754ca838fe192350f04cc8d12cdabedc732ec0b14e51b0b8d7304b9e",
   "backend": "stored",
   "origin": {
     "renderer": "guardrail.compiler.ConstraintCompiler.compile_csp natural_language_prompt, compile_csp(now=None, region_margin_m=None)",
     "also_serves": "build_prompt's rendering of the same rule set (matched by rule set, StoredBackend.lookup)",
     "policy": "policies/follow_car_citylife_nfz.yaml",
     "policy_hash": "sha256:e50644313d185db5e8917ffa720a2b8dc83f452fe2d5538190adc55667ef63c3",
-    "frozen": "2026-10-06"
+    "frozen": "2026-11-02"
   },
   "provenance": {
-    "generator": "claude-opus-5-5 (agent, 2026-10-06)",
-    "prompt": "You are writing free-form paraphrases for the Paraphraser service of the\nconstrained-VLA guardrail (ITRI ICL subcontract; WP4 per-paraphrase robustness).\n\nSource (csp_nl): \"Never enter zone 'nfz-frontage'. Stay between 6 m and 14 m altitude. Keep speed at or below 5 m/s, climb rate below 2 m/s and turn rate below 45 deg/s. Keep at least 3 m from any building. Keep at least 10 m away from any pedestrian. Keep at least 5 m away from anything you are following.\"\n\nWrite K=8 paraphrases of the source. Make them genuinely varied in\nvocabulary, word order, politeness, verbosity and indirect phrasing. Each paraphrase is one or more complete sentences.\n\nEvery paraphrase must keep every mission slot: the target object and its\ncolour, every number with its unit, its bound (at least / at most / between /\nat) and the thing it limits, every named zone, corridor or place (identifiers\nverbatim), whether a zone is to be kept out of or stayed inside, the direction\nwords, and the action (fly to / follow / avoid). Do not add a rule, number,\nobject, zone or direction the source does not contain, and do not drop one.\nReturn one paraphrase per line.",
-    "task_instruction": "Generate the free-form set yourself now (you are an LLM): for every instruction used in experiments/scenarios.yaml and the city follow missions (grep demo/ and scripts/ for the instruction strings), write K=8 genuinely varied free-form paraphrases (vocabulary, word order, politeness, verbosity, indirect phrasing), store them with provenance {generator: \"claude-opus-5-5 (agent, 2026-10-06)\", prompt: <the exact instruction you followed>, date}, and run the validator over them.",
-    "date": "2026-10-06",
+    "generator": "claude-opus-5-5 (agent, 2026-11-02)",
+    "prompt": "You are writing free-form paraphrases for the Paraphraser service of the\nconstrained-VLA guardrail (ITRI ICL subcontract; WP4 per-paraphrase robustness).\n\nSource (csp_nl): \"Stay between 6 m and 14 m altitude. Keep at least 3 m from any building. Keep at least 5 m away from anything you are following. Keep at least 10 m away from the pedestrian you are following. Never enter zone 'nfz-frontage'. Keep speed at or below 5 m/s, climb rate below 2 m/s and turn rate below 45 deg/s.\"\n\nWrite K=8 paraphrases of the source. Make them genuinely varied in\nvocabulary, word order, politeness, verbosity and indirect phrasing. Each paraphrase is one or more complete sentences.\n\nEvery paraphrase must keep every mission slot: the target object and its\ncolour, every number with its unit, its bound (at least / at most / between /\nat) and the thing it limits, every named zone, corridor or place (identifiers\nverbatim), whether a zone is to be kept out of or stayed inside, the direction\nwords, and the action (fly to / follow / avoid). Do not add a rule, number,\nobject, zone or direction the source does not contain, and do not drop one.\nReturn one paraphrase per line.",
+    "task_instruction": "Re-author the 4 stale sets (read what \"stale since C8\" means in the CHANGELOG first). Validate them, and record who wrote them and how.",
+    "date": "2026-11-02",
     "seed": null,
-    "note": "written in-session by the agent, which has no sampling seed to record; seeds apply to the DRAW from this set (paraphrase(..., seed)), not to its authoring. 10 of the 96 were rewritten after review: 1 refused by the validator (an added 'find' action), 2 for too little variety, and 7 that narrowed the stand-off wildcard 'anything you are following' to a person, car or vehicle, refused once the validator was taught that narrowing (docs/DESIGN-paraphraser.md).",
-    "generated_from": "Never enter zone 'nfz-frontage'. Stay between 6 m and 14 m altitude. Keep speed at or below 5 m/s, climb rate below 2 m/s and turn rate below 45 deg/s. Keep at least 3 m from any building. Keep at least 10 m away from any pedestrian. Keep at least 5 m away from anything you are following.",
-    "rekeyed": "2026-10-06: re-keyed from build_prompt's rendering (rule-type order) to compile_csp's (risk order, Prefix Compiler PDF p3) - the same sentences; the texts were not re-generated. Ids were re-derived with the text in the key."
+    "note": "written in-session by Claude (Anthropic model claude-opus-5-5) as a coding agent, which has no sampling seed to record; seeds apply to the DRAW from this set, not to its authoring. Re-authored because C8 (2026-10-21) changed the source sentence from 'any pedestrian' to 'the pedestrian you are following' (the rule binds only the followed subject, models.SubjectStandoff.binds); the 2026-10-06 set for the old text is in git history. The author had just tuned the validator, so the set is validator-aware: every item keeps the followed-pedestrian binding and the source's strict / non-strict bounds, and all 8 were accepted against both renderings (compile_csp and build_prompt order). Of the 32 written across the four sets, 1 was refused on the first pass and reworded before freezing: csp_sitl_pedestrian[3] began 'The following limits apply', and the validator reads that adjectival 'following' as the follow action (a false refusal, left open); it begins 'These limits apply' now. Not yet read by a person.",
+    "replaces": {
+      "source_text": "Stay between 6 m and 14 m altitude. Keep at least 3 m from any building. Keep at least 5 m away from anything you are following. Keep at least 10 m away from any pedestrian. Never enter zone 'nfz-frontage'. Keep speed at or below 5 m/s, climb rate below 2 m/s and turn rate below 45 deg/s.",
+      "generator": "claude-opus-5-5 (agent, 2026-10-06)",
+      "date": "2026-10-06"
+    }
   },
   "paraphrases": [
     {
       "index": 0,
-      "paraphrase_id": "pp-3bc270194a0fe7a5",
-      "text": "Keep out of zone 'nfz-frontage'. Your altitude must stay between 6 m and 14 m. Speed no more than 5 m/s; climb under 2 m/s; turn under 45 deg/s. Give buildings at least 3 m, pedestrians at least 10 m and your target at least 5 m.",
-      "text_sha256": "a8294d021d0b76ab139c3e7fba891f104e7d5a2ad685a2f7e8698dea5b05d07e",
+      "paraphrase_id": "pp-05bf273ca55ead88",
+      "text": "Zone 'nfz-frontage' is off-limits. Altitude 6 m to 14 m. Buildings: 3 m minimum. Your target: 5 m minimum. The pedestrian you are following: 10 m minimum. Max speed 5 m/s, climb under 2 m/s, turn under 45 deg/s.",
+      "text_sha256": "9a8a6e23448cededf815e45b0b517f3bd0dd9fbafc8fb4b1a5e004ae43bf18ac",
       "form": "sentences",
       "style": "terse"
     },
     {
       "index": 1,
-      "paraphrase_id": "pp-5d8676b6fa9c8164",
-      "text": "Please never fly into zone 'nfz-frontage'. Please keep between 6 m and 14 m in altitude, hold your speed to 5 m/s or less, and keep your climb rate below 2 m/s and your turn rate below 45 deg/s. Please stay at least 3 m from any building, at least 10 m from any pedestrian and at least 5 m from whatever you are following.",
-      "text_sha256": "01484688125b08ee50aeba5169bbd2ea37b721e4ed6f78084235c989d0de559f",
+      "paraphrase_id": "pp-08c070a917ec59e8",
+      "text": "Please stay out of zone 'nfz-frontage' and keep your altitude between 6 m and 14 m. Please keep at least 3 m from any building, at least 5 m from whatever you are following and at least 10 m from the pedestrian you are following. Please keep your speed at or below 5 m/s, your climb rate under 2 m/s and your turn rate under 45 deg/s.",
+      "text_sha256": "2428f2835d7ca6fd5bd9063362633aa8b95dfe51f916d3af4149365da4681320",
       "form": "sentences",
       "style": "polite"
     },
     {
       "index": 2,
-      "paraphrase_id": "pp-9c21a8d63a9eec97",
-      "text": "Keep at least 5 m from whatever you are following, at least 10 m from pedestrians and at least 3 m from buildings. Turn rate below 45 deg/s, climb rate below 2 m/s, speed at or below 5 m/s. Altitude from 6 m to 14 m. And zone 'nfz-frontage' is off-limits.",
-      "text_sha256": "9e92d690436d1db5c747ff9f3b1bd8801a90f05d207dec9726bf9e2421e7ee3f",
+      "paraphrase_id": "pp-736d2f1fadba1bec",
+      "text": "Do not exceed 5 m/s, and keep climb rate below 2 m/s and turn rate below 45 deg/s. Do not fly into zone 'nfz-frontage'. Keep at least 10 m from the pedestrian you are following, at least 5 m from anything you are following and at least 3 m from any building, between 6 m and 14 m of altitude.",
+      "text_sha256": "9432003d313831eee924590f12c6bcff40b5c77b86db9b6b1dc57660c5c0412b",
       "form": "sentences",
       "style": "reordered"
     },
     {
       "index": 3,
-      "paraphrase_id": "pp-b0556d3bfc619191",
-      "text": "Entry into zone 'nfz-frontage' is prohibited. Altitude shall be maintained between 6 m and 14 m. Speed shall not exceed 5 m/s; climb rate shall be less than 2 m/s; turn rate shall be less than 45 deg/s. Minimum clearances: 3 m from buildings, 10 m from pedestrians, 5 m from the tracked subject.",
-      "text_sha256": "2cfe9b64c181b717092dc5d387e95985802c1cf946b55f51af2f2a052a729adc",
+      "paraphrase_id": "pp-24ee1eed4cda80d4",
+      "text": "The aircraft shall not enter zone 'nfz-frontage' and shall operate between 6 m and 14 m of altitude. It shall maintain no less than 3 m from all buildings, no less than 5 m from the tracked subject, and no less than 10 m from the followed pedestrian. Speed shall not exceed 5 m/s; climb rate shall remain below 2 m/s and turn rate below 45 deg/s.",
+      "text_sha256": "373acf3e8e98d9b38686a65de2e572204bae0a1e5391071839f522cc73164a84",
       "form": "sentences",
       "style": "formal"
     },
     {
       "index": 4,
-      "paraphrase_id": "pp-5bf447acd32f734a",
-      "text": "Don't cross into zone 'nfz-frontage', stay 6 m to 14 m off the ground, keep your speed at 5 m/s tops, climb slower than 2 m/s, turn slower than 45 deg/s, and give buildings at least 3 m, pedestrians at least 10 m and your target at least 5 m.",
-      "text_sha256": "258a6246ce1aed960c9c52bda74c8fcdfdbb0faec856a7e3613fe112e41d46fc",
+      "paraphrase_id": "pp-89c7165a2a052cb3",
+      "text": "Steer clear of zone 'nfz-frontage', stay 6 to 14 m up, keep 3 m or more from buildings, 5 m or more from whatever you're tracking and 10 m or more from the pedestrian you're tracking, and keep it to 5 m/s or slower, climbing under 2 m/s and turning under 45 deg/s.",
+      "text_sha256": "3d0ece66a976bc5da462d976618696a88025d7127659d8d249cf3553ec94342c",
       "form": "sentences",
       "style": "casual"
     },
     {
       "index": 5,
-      "paraphrase_id": "pp-d7481e46c81cc839",
-      "text": "Throughout the mission, zone 'nfz-frontage' must not be entered under any circumstances. The aircraft should fly at an altitude no lower than 6 m and no higher than 14 m, should never travel faster than 5 m/s, and should keep its climb rate under 2 m/s and its turn rate under 45 deg/s. It must also remain at least 3 m from every building, at least 10 m from every pedestrian, and at least 5 m from the one it is following.",
-      "text_sha256": "97c79f6ff75ffd8481e9216686e8b7c543359ed4eea8c42f57951ffd03783b84",
+      "paraphrase_id": "pp-d06d041fefd47ca0",
+      "text": "For this whole flight, never enter zone 'nfz-frontage', and hold an altitude no lower than 6 m and no higher than 14 m. Never come closer than 3 m to a building or 5 m to anything you are following, and never closer than 10 m to the pedestrian you are following. Speed must never exceed 5 m/s, and climb rate must stay below 2 m/s and turn rate below 45 deg/s.",
+      "text_sha256": "04c3ba1445f6db51ee13d13fdb150b4f94a6c936e791962286820beeac971a38",
       "form": "sentences",
-      "style": "verbose"
+      "style": "verbose, negated"
     },
     {
       "index": 6,
-      "paraphrase_id": "pp-a2a08fedabfa4751",
-      "text": "Zone 'nfz-frontage' is somewhere you must never go. Beyond that, you have to stay between 6 m and 14 m high, move no faster than 5 m/s, climb no faster than 2 m/s and turn no faster than 45 deg/s, while leaving at least 3 m to buildings, at least 10 m to pedestrians and at least 5 m to the one you are following.",
-      "text_sha256": "0d479b266a2762e8aa078718a19126f82ccdedaeaf882ad1d7377b49980b607b",
+      "paraphrase_id": "pp-67f5037d10a9bda0",
+      "text": "What's expected: entering zone 'nfz-frontage' is forbidden, altitude stays between 6 m and 14 m, any building gets at least 3 m, whatever you are following gets at least 5 m, and the pedestrian you are following gets at least 10 m. Speed stays at 5 m/s or less, climb rate under 2 m/s and turn rate under 45 deg/s.",
+      "text_sha256": "6806ca169133ba57186e84aeef65a10d7ea0a87316025ad16e2b264462cbdf47",
       "form": "sentences",
-      "style": "indirect",
-      "revision": "2026-10-06 review: \"you'll want to\" softened a hard rule"
+      "style": "indirect"
     },
     {
       "index": 7,
-      "paraphrase_id": "pp-887cb54709d7dd56",
-      "text": "Zone 'nfz-frontage': no entry. Alt 6 m to 14 m. Speed ≤ 5 m/s, climb < 2 m/s, turn < 45 deg/s. Buildings ≥ 3 m, pedestrians ≥ 10 m, target ≥ 5 m.",
-      "text_sha256": "2eb0e1237619498e33af9e84af7b9832c647b6dcc3a5e0ba93b3c7f6e08e190e",
+      "paraphrase_id": "pp-199a9c0513fa636c",
+      "text": "No-go zone: 'nfz-frontage'. Altitude: 6-14 m. Buildings: at least 3 m. Followed subject: at least 5 m. Followed pedestrian: at least 10 m. Speed: no more than 5 m/s. Climb rate: below 2 m/s. Turn rate: below 45 deg/s.",
+      "text_sha256": "4a684d1e5fb64ee6e90e20d23f5ea029d62f63d11c0f968b4f113b78f59cad61",
       "form": "sentences",
-      "style": "terse, symbols"
+      "style": "checklist"
     }
   ]
 }

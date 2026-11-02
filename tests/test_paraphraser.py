@@ -530,7 +530,9 @@ def test_the_stored_corridor_paraphrase_the_review_flagged_is_gone():
     assert old not in texts
     revised = [i for e in P.load_store(STORE).values() for i in e.paraphrases
                if i.get("revision")]
-    assert len(revised) >= 6, "the re-authored items lost their revision notes"
+    # six until 2026-11-02; two of them were items of the C8 sets re-authored
+    # that day as whole new sets (the old texts and notes are in git history)
+    assert len(revised) >= 4, "the re-authored items lost their revision notes"
 
 
 # --------------------------------------------------------------------------- #
@@ -666,8 +668,16 @@ def test_store_sets_are_k8_with_full_provenance():
     for entry in P.load_store(STORE).values():
         assert len(entry.paraphrases) == P.K_DEFAULT, entry.source_key
         prov = entry.provenance
-        assert prov["generator"] == "claude-opus-5-5 (agent, 2026-10-06)"
-        assert prov["date"] == "2026-10-06"
+        if entry.source_key in C8_SETS:
+            # re-authored on 2026-11-02 for the post-C8 sentence; each names
+            # the set it replaces
+            assert prov["generator"] == "claude-opus-5-5 (agent, 2026-11-02)"
+            assert prov["date"] == "2026-11-02"
+            assert prov["replaces"]["date"] == "2026-10-06", entry.source_key
+            assert "any pedestrian" in prov["replaces"]["source_text"], entry.source_key
+        else:
+            assert prov["generator"] == "claude-opus-5-5 (agent, 2026-10-06)"
+            assert prov["date"] == "2026-10-06"
         # the prompt names the text the set was GENERATED from; a set re-keyed
         # to compile_csp's sentence order says so and must be the same rules
         gen = prov.get("generated_from", entry.source_text)
@@ -699,18 +709,15 @@ def test_every_instruction_in_scope_has_a_stored_set():
     Until 2026-10-06 this checked build_prompt's rendering only, and the stored
     backend raised UnknownSource for all six CSPs as compile_csp emits them.
 
-    STALE SINCE C8 (2026-10-21). The class-specific stand-off sentence now
-    says it binds the FOLLOWED subject ("Keep at least 10 m away from the
-    pedestrian you are following", templates/sentence/subject_standoff.j2),
-    where it said "any pedestrian". The four city / pedestrian policies that
-    carry one render a new text in both orders, and their stored sets were
-    written by an LLM agent (generator claude-opus-5-5, 2026-10-06), not by a
-    seeded generator, so they are NOT regenerated here: re-authoring them is
-    a new LLM run, validated and frozen with write_store. Until then exactly
-    these eight texts have no stored set (`python -m guardrail.paraphraser
-    stale` lists them; backend 'auto' falls back to the template bank, which
-    has the new sentence, and says so). Any OTHER missing text still fails
-    here, and so does this list once a set is re-authored."""
+    STALE SINCE C8 (2026-10-21) UNTIL 2026-11-02. The class-specific
+    stand-off sentence says it binds the FOLLOWED subject ("Keep at least 10 m
+    away from the pedestrian you are following",
+    templates/sentence/subject_standoff.j2), where it said "any pedestrian",
+    so the four city / pedestrian policies that carry one render new texts in
+    both orders. Their LLM-written sets were pinned here as stale (eight texts
+    with no stored set) until they were re-authored on 2026-11-02 (a new LLM
+    run, validated and frozen with write_store; see each file's provenance).
+    STALE_SINCE_C8 is empty since: every text in scope has a stored set."""
     be = P.StoredBackend(STORE)
     rows = P.default_sources()
     assert any("compile_csp" in r for _, _, o in rows for r in o["renderers"])
@@ -719,15 +726,21 @@ def test_every_instruction_in_scope_has_a_stored_set():
              and "away from the pedestrian you are following" in t]
     other = [(k, t) for k, t in missing if (k, t) not in stale]
     assert not other, "no stored set for: " + "; ".join(f"{k}: {t!r}" for k, t in other)
-    assert sorted({k for k, _ in stale}) == sorted(STALE_SINCE_C8) and len(stale) == 8, \
+    assert sorted({k for k, _ in stale}) == sorted(STALE_SINCE_C8), \
         ("the C8-stale list is out of date (a set re-authored? remove it from "
          f"STALE_SINCE_C8): {sorted(k for k, _ in stale)}")
+    for key in C8_SETS:
+        e = be.lookup(next(t for k, t, _ in rows if k == key))
+        assert e.provenance["date"] == "2026-11-02", (key, e.provenance["date"])
+        assert "the pedestrian you are following" in e.source_text, key
 
 
-# The four stored sets whose source text C8 (2026-10-21) changed; see
+# The four stored sets whose source text C8 (2026-10-21) changed. They were
+# stale until they were re-authored on 2026-11-02, so none is stale now; see
 # test_every_instruction_in_scope_has_a_stored_set.
-STALE_SINCE_C8 = ("csp_follow_car_citylife", "csp_follow_car_citylife_nfz",
-                  "csp_follow_pedestrian", "csp_sitl_pedestrian")
+C8_SETS = ("csp_follow_car_citylife", "csp_follow_car_citylife_nfz",
+           "csp_follow_pedestrian", "csp_sitl_pedestrian")
+STALE_SINCE_C8: tuple = ()
 
 
 def test_the_followed_pedestrian_stays_the_followed_one_c8():
@@ -751,7 +764,7 @@ def test_the_followed_pedestrian_stays_the_followed_one_c8():
                 "anything you are following", "the car you are following"):
         _refused(src, base.format(who=who), "quantity")
     rows = [(k, t) for k, t, o in P.default_sources()
-            if k in STALE_SINCE_C8 and "the pedestrian you are following" in t]
+            if k in C8_SETS and "the pedestrian you are following" in t]
     assert len(rows) == 8, [k for k, _ in rows]
     tb = P.TemplateBackend()
     for key, text in rows:
@@ -766,7 +779,8 @@ def test_the_followed_pedestrian_stays_the_followed_one_c8():
 
 def test_compile_csp_and_build_prompt_get_the_same_paraphrases():
     """One rule set, two sentence orders, one set of ids. (The rule sets C8
-    left without a stored set are skipped: STALE_SINCE_C8.)"""
+    left without a stored set were skipped until they were re-authored on
+    2026-11-02; STALE_SINCE_C8 is empty since.)"""
     rows = P.default_sources()
     by_rules = {}
     for key, text, o in rows:
@@ -1550,6 +1564,23 @@ def test_fly_at_a_band_of_metres_is_an_altitude():
     for band in ("Fly at 12-28 m.", "Cruise at 12 to 28 m."):
         _accepted(src, band + rest)
     _refused(src, "Fly at 12-20 m." + rest, "quantity")
+    # but not when the clause says what else the metres are (the mutation
+    # test's "swap:'altitude'" found this on the re-authored set, 2026-11-02)
+    for band in ("Fly at 12 m to 28 m distance.", "Fly at 12-28 m away."):
+        _refused(src, band + rest, "quantity")
+
+
+def test_outside_a_bound_is_the_other_side_of_it():
+    """"stay outside 3 m/s or less" excludes what "3 m/s or less" allows: a
+    floor, not the cap. The mutation test's "polarity:'stick to'" found it
+    accepted on the re-authored set (2026-11-02)."""
+    src = ("Stay between 4 m and 10 m altitude. Keep at least 5 m from any building. "
+           "Keep speed at or below 3 m/s, climb rate below 1.5 m/s and turn rate below 45 deg/s.")
+    head = "Hang between 4 and 10 m up, keep 5 m or more from buildings, and "
+    tail = ", climbing under 1.5 m/s and turning under 45 deg/s."
+    _accepted(src, head + "stick to 3 m/s or less" + tail)
+    for inv in ("stay outside 3 m/s or less", "keep outside of 3 m/s or lower"):
+        _refused(src, head + inv + tail, "quantity")
 
 
 def test_a_named_place_in_other_words():

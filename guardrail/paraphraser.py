@@ -1490,7 +1490,7 @@ def extract_slots(text: str, known_ids: Iterable[str] = ()) -> Slots:
             if kind == "range":
                 lo, hi, unit = payload
                 tags = _tags(W, A, unit, reg, None)
-                if not tags and unit in ("m", "ft") and _flown_at(W, reg):
+                if not tags and unit in ("m", "ft") and _flown_at(W, A, reg):
                     tags = frozenset({"altitude"})
                 # "between 10 m and 20 m is forbidden" names the band to stay OUT of
                 if _range_inverted(W) != (trail == "prohibit"):
@@ -1524,7 +1524,7 @@ def extract_slots(text: str, known_ids: Iterable[str] = ()) -> Slots:
                 # "altitude at least 10 m and at most 20 m": the second limit
                 # carries the first one's attribute when it adds no word of its own
                 tags = prev_q["tags"]
-            if not tags and unit in ("m", "ft") and _flown_at(W[cut + 1:], reg):
+            if not tags and unit in ("m", "ft") and _flown_at(W[cut + 1:], A, reg):
                 tags = frozenset({"altitude"})
             # "Whatever you are following, keep at least 5 m away from it": the
             # distance is kept from the clause's topic (2026-11-02)
@@ -1782,12 +1782,17 @@ _FLY_VERBS = {"fly", "flying", "flies", "cruise", "cruising", "operate", "operat
               "hover", "hovering", "stay", "remain", "keep", "hold", "travel", "travelling"}
 
 
-def _flown_at(W: list[str], reg: dict) -> bool:
+def _flown_at(W: list[str], A: list[str], reg: dict) -> bool:
     """"Fly at 35-55 m", "cruise at 12 to 28 m": metres with no attribute
     word, right after "<flight verb> at", are the height flown at
-    (heldout_2026_11_02 refused "Fly at 35-55 m", 2026-11-02). A distance
-    word or an object in the clause would have tagged the number already."""
+    (heldout_2026_11_02 refused "Fly at 35-55 m", 2026-11-02) - unless the
+    words after the number say what else they are ("12 m to 28 m distance",
+    "away"), or name an object.)"""
     p = _plain(W, reg)
+    after = _head(A)
+    if (set(_plain(after, reg)) & (_DISTANCE_WORDS | _NOUN_MIN)
+            or any(reg.get(x, ("",))[0] == "obj" for x in after)):
+        return False
     return len(p) >= 2 and p[-1] == "at" and p[-2] in _FLY_VERBS
 
 
@@ -1854,7 +1859,11 @@ def _bound(W: list[str], A: list[str], prev_q: dict | None, ci: int,
             for i, _, _c in _find_cues(head, cues_)]
     if hits:
         pol = min(hits)[1]
-        if tail_neg:
+        # "stay outside 3 m/s or less": what the bound allows is the place
+        # NOT to be, so the limit is its other side (the mutation test's
+        # "polarity:'stick to'" passed on the re-authored set, 2026-11-02)
+        outside = bool(set(W[cut + 1:][-2:]) & {"outside", "beyond"})
+        if tail_neg != outside:
             pol = "max" if pol == "min" else "min"
         return pol, tail_neg, None
     if adjacent and prev_q["bound"] in ("min", "max"):
