@@ -57,6 +57,18 @@ shipped change and recorded as one.
   asked twice (20 s, then 90 s), and only two failures say `-unknown`.
   `tests/test_manifest.py` shows a first timeout followed by a clean read.
 
+#### Added
+- **`tools/render_track_video.py`: a video for every camera-less SITL run.**
+  The pymavlink, ROS 2 and Gazebo rails leave numbers and a trajectory.png,
+  no video. This replays `flight_log.jsonl` tick by tick: the policy's zones
+  (by generation) and altitude band, the mission target, the track, the
+  pilot's command against what the Shield emitted, the FSM state and the edge
+  that changed it, the forecast violations and the repairs. Every frame says
+  it is a replay of the flight log, not a camera recording. Recording the
+  Gazebo GUI was tried and does not work here: WSLg windows capture black
+  through gdigrab, and the default GUI has no video-recorder service.
+  `tests/test_render_track_video.py` (5 tests) runs in the CI loop.
+
 #### Fixed
 - **The cheat-sheet called all 41 shielded flights "dev"** (ARCH-13, the
   independent review of 29 October). Only the 3 MAVROS 2 flights ran the

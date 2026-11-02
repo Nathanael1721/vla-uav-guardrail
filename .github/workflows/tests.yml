@@ -189,6 +189,7 @@
 #          test_todo (their real-data checks SKIP without tracker/data).
 #        The same gates run on the lab machine per build: test_ci_local
 #          (tools/ci_local.py reads this loop, never a copy of it).
+#        Videos of camera-less SITL runs: test_render_track_video.
 #      END OF THE LIST
 #
 #      Added 2026-10-13: the wave-A files (shieldcore, railinputs, wp4outputs,
@@ -709,7 +710,7 @@ jobs:
               tests/test_live_status.py \
               tests/test_todo.py \
               tests/test_encode_deliverable.py \
-              tests/test_make_demo_video.py \n              tests/test_ci_local.py; do
+              tests/test_make_demo_video.py \n              tests/test_ci_local.py \n              tests/test_render_track_video.py; do
             echo "::group::$t"
             python "$t" 2>&1 | tee "$out"
             rc=${PIPESTATUS[0]}
