@@ -404,6 +404,23 @@ def test_moving_zones_are_queried_through_an_rtree_rebuilt_per_tick():
     assert n_hit > 50, n_hit
     tick = sh._new_tick(None)
     assert tick.moving_near(sh.ir, (math.nan, 0.0, 1.0, 1.0), 5.0) is None
+    # The tree is the IR's (PolicyIR.moving_index), built once per tick and
+    # horizon however many queries the tick makes.
+    from guardrail.ir import PolicyIR
+    built = []
+    orig = PolicyIR.moving_index
+
+    def counted(self, age_of, horizon_s):
+        built.append(horizon_s)
+        return orig(self, age_of, horizon_s)
+    PolicyIR.moving_index = counted
+    try:
+        for q in queries:
+            tick.moving_near(sh.ir, q, 5.0)
+        tick.moving_near(sh.ir, queries[0], 3.0)
+    finally:
+        PolicyIR.moving_index = orig
+    assert built == [5.0, 3.0], built
 
 
 def test_the_moving_rtree_changes_no_decision_and_prunes_the_rest():
