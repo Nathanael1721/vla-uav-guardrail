@@ -7,9 +7,15 @@ version: 0.1.0
 constraints:
   - id: low
     type: altitude_envelope
+    constraint_type: hard
+    priority: P0
+    violation_action: project_fix
     alt_min_m: 10
     alt_max_m: 20
   - id: high
     type: altitude_envelope
+    constraint_type: hard
+    priority: P0
+    violation_action: project_fix
     alt_min_m: 30
     alt_max_m: 40

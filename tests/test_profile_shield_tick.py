@@ -49,6 +49,10 @@ from guardrail.models import (Action4D, PolygonFence, Policy,        # noqa: E40
                               State)
 from guardrail.shield import Shield                                 # noqa: E402
 
+# The three ConstraintBase fields the grant requires (IR schema 3.0.0, 2026-11-02),
+# at the values they defaulted to before (repair = project_fix).
+HARD_P0 = {"constraint_type": "hard", "priority": "P0", "violation_action": "project_fix"}
+
 SKIP = "SKIP"
 DEMO = ROOT / "policies" / "sim_demo_policy.yaml"
 PED = ROOT / "policies" / "sitl_pedestrian.yaml"
@@ -451,7 +455,7 @@ def test_design_load_has_exactly_fifty_rules_and_never_contains_the_path():
 
 def test_design_load_leaves_a_policy_that_already_has_fifty_rules_alone():
     pol = load_policy(DEMO)
-    extra = [PolygonFence(id=f"z{k}", type="polygon_fence",
+    extra = [PolygonFence(id=f"z{k}", type="polygon_fence", **HARD_P0,
                           vertices=[{"x": 500 + 30 * k, "y": 0}, {"x": 510 + 30 * k, "y": 0},
                                     {"x": 510 + 30 * k, "y": 10}])
              for k in range(60)]

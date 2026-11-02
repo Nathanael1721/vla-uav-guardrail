@@ -251,13 +251,24 @@ def test_a_post_nfz_payload_is_hot_applied_onto_its_base():
     assert pol.policy_hash != base.policy_hash
     assert (pol.constraints[-1].id, pol.constraints[-1].type) == ("nfz-landslide",
                                                                   "dynamic_nfz")
-    for route in (api.apply_legacy_nfz, api.apply_dynamic_nfz):     # POST /nfz, /dynamic_nfz
+    # POST /nfz's fixed body means hard / P0 / project_fix; a POST /dynamic_nfz
+    # body states them, as every rule does since IR schema 3.0.0.
+    stated = {**payload, "constraint_type": "hard", "priority": "P0",
+              "violation_action": "project_fix"}
+    for route, body in ((api.apply_legacy_nfz, payload), (api.apply_dynamic_nfz, stated)):
         live = Shield(load_policy(DEMO))
-        route(live, dict(payload))
+        route(live, dict(body))
         assert live.policy.policy_hash == pol.policy_hash, (route.__name__,
                                                              "ingest and the API disagree")
-    moving = G.ingest({**payload, "motion": {"vx_mps": 1.0}}, base)
+    assert G.ingest(stated, base).policy_hash == pol.policy_hash
+    moving = G.ingest({**stated, "motion": {"vx_mps": 1.0}}, base)
     assert moving.constraints[-1].motion.vx_mps == 1.0, "a POST /dynamic_nfz body"
+    try:
+        G.ingest({**payload, "motion": {"vx_mps": 1.0}}, base)
+    except ValueError as e:
+        assert "constraint_type" in str(e), e
+    else:
+        raise AssertionError("a POST /dynamic_nfz body without the three fields was ingested")
 
 
 def test_a_get_policy_body_ingests_to_the_same_policy():

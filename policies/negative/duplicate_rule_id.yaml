@@ -7,6 +7,9 @@ version: 0.1.0
 constraints:
   - id: nfz
     type: polygon_fence
+    constraint_type: hard
+    priority: P0
+    violation_action: project_fix
     vertices:
       - { x: 0, y: 0 }
       - { x: 10, y: 0 }
@@ -14,6 +17,8 @@ constraints:
       - { x: 0, y: 10 }
   - id: nfz
     type: altitude_envelope
+    constraint_type: hard
+    violation_action: project_fix
     priority: P2
     alt_min_m: 5
     alt_max_m: 30

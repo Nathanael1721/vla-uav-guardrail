@@ -681,7 +681,7 @@ def design_load_policy(policy, xy: list[tuple[float, float]],
     added = []
     for k, (gx, gy) in enumerate(chosen):
         added.append(PolygonFence(
-            id=f"design-load-{k:02d}", type="polygon_fence",
+            id=f"design-load-{k:02d}", type="polygon_fence", constraint_type="hard", priority="P0", violation_action="project_fix",
             vertices=[{"x": gx, "y": gy}, {"x": gx + LOAD_SIDE_M, "y": gy},
                       {"x": gx + LOAD_SIDE_M, "y": gy + LOAD_SIDE_M},
                       {"x": gx, "y": gy + LOAD_SIDE_M}],

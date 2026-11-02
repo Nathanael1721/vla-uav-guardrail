@@ -47,6 +47,10 @@ for _p in (ROOT, ROOT / "tests", ROOT / "experiments"):
 from guardrail.models import Action4D, Policy, State                    # noqa: E402
 from guardrail.shield import Shield                                     # noqa: E402
 
+# The three ConstraintBase fields the grant requires (IR schema 3.0.0, 2026-11-02),
+# at the values they defaulted to before (repair = project_fix).
+HARD_P0 = {"constraint_type": "hard", "priority": "P0", "violation_action": "project_fix"}
+
 DECISIONS = ROOT / "tests" / "fixtures" / "pas_ap_20261008_decisions_4418ae0.json"
 
 
@@ -221,7 +225,7 @@ def test_unsafe_depth_measures_a_moving_zone_where_it_has_moved_to():
     (x 10-20) that position is outside it, and the depth would read 0: the
     FSM's X6 would see no progress on a recovery that is working."""
     pol = Policy.model_validate({"policy_id": "mz", "constraints": [
-        {"id": "mz", "type": "dynamic_nfz", "margin_m": 1.0, "motion": {"vx_mps": 1.0},
+        {"id": "mz", "type": "dynamic_nfz", **HARD_P0, "margin_m": 1.0, "motion": {"vx_mps": 1.0},
          "vertices": [{"x": 10, "y": -5}, {"x": 20, "y": -5}, {"x": 20, "y": 5},
                       {"x": 10, "y": 5}]}]})
     sh = Shield(pol, escalation=False)
@@ -255,14 +259,14 @@ def _square(zid, x0, y0, side, window, days=None):
     rec = {"start_time": window[0], "end_time": window[1]}
     if days:
         rec["days"] = days
-    return {"id": zid, "type": "polygon_fence", "margin_m": 1.0,
+    return {"id": zid, "type": "polygon_fence", **HARD_P0, "margin_m": 1.0,
             "valid_time": {"recurrence": rec},
             "vertices": [{"x": x0, "y": y0}, {"x": x0 + side, "y": y0},
                          {"x": x0 + side, "y": y0 + side}, {"x": x0, "y": y0 + side}]}
 
 
 def _switch(sid, target, active, window):
-    return {"id": sid, "type": "time_window_switch", "target_id": target, "active": active,
+    return {"id": sid, "type": "time_window_switch", **HARD_P0, "target_id": target, "active": active,
             "valid_time": {"recurrence": {"start_time": window[0], "end_time": window[1]}}}
 
 
@@ -295,14 +299,14 @@ _MEMO_CASES = (
     # runs along the forecast to (7, 7) and turns North, so the forecast
     # leaves it after 2.5 s - after it was replaced. Nothing is broken.
     ("replaced by a swap beside a plain rule",
-     [{"id": "wide", "type": "corridor", "width_m": 200.0, "altitude_floor_m": 0,
+     [{"id": "wide", "type": "corridor", **HARD_P0, "width_m": 200.0, "altitude_floor_m": 0,
        "altitude_ceiling_m": 50, "centerline": [{"x": -50, "y": 0}, {"x": 50, "y": 0}],
        "valid_time": {"recurrence": {"start_time": "07:00", "end_time": "18:00"}}},
-      {"id": "target", "type": "corridor", "width_m": 1.0, "altitude_floor_m": 0,
+      {"id": "target", "type": "corridor", **HARD_P0, "width_m": 1.0, "altitude_floor_m": 0,
        "altitude_ceiling_m": 50,
        "centerline": [{"x": 0, "y": 0}, {"x": 7, "y": 7}, {"x": 7, "y": 30}],
        "valid_time": {"recurrence": {"start_time": "07:00", "end_time": "18:00"}}},
-      {"id": "swap", "type": "corridor_swap", "target_id": "target", "width_m": 200.0,
+      {"id": "swap", "type": "corridor_swap", **HARD_P0, "target_id": "target", "width_m": 200.0,
        "altitude_floor_m": 0, "altitude_ceiling_m": 50,
        "centerline": [{"x": -50, "y": 0}, {"x": 50, "y": 0}],
        "valid_time": {"recurrence": {"start_time": "12:00", "end_time": "12:01"}}}],

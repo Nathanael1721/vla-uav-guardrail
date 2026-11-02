@@ -458,6 +458,13 @@ _CARRIED = {
     "corridor_swap": {"id", "type", "target_id", "centerline", "width_m",
                       "altitude_floor_m", "altitude_ceiling_m", "valid_time"},
 }
+# The three ConstraintBase fields every rule states since IR schema 3.0.0. The
+# runner's switch and swap events do not carry them: apply_event writes them
+# at these values (what they defaulted to before), so a rule setting exactly
+# these is carried, and any other value is not.
+_RUNNER_WRITES = {kind: {"constraint_type": "hard", "priority": "P0",
+                         "violation_action": "project_fix"}
+                  for kind in ("time_window_switch", "corridor_swap")}
 
 
 def _window_of(rule) -> dict | None:
@@ -477,6 +484,8 @@ def scenario_event_from_rule(rule, at_sim_t: float) -> dict:
     if kind not in _CARRIED:
         raise HarnessError("INVALID_ARGUMENT", f"{kind!r} is not hot-applicable")
     set_fields = set(rule.model_dump(exclude_defaults=True, exclude_none=True))
+    set_fields -= {k for k, v in _RUNNER_WRITES.get(kind, {}).items()
+                   if getattr(rule, k, None) == v}
     vt = getattr(rule, "valid_time", None)
     if vt is not None and vt.recurrence is None:
         set_fields.discard("valid_time")                 # no recurrence = always

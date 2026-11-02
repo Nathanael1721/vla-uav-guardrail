@@ -29,6 +29,10 @@ from guardrail.shield import Repair, ShieldDecision, Violation  # noqa: E402
 from policy_hud import (PolicyIndicator, draw_policy_overlay,   # noqa: E402
                         draw_status_box, render_base_map, rule_view)
 
+# The three ConstraintBase fields the grant requires (IR schema 3.0.0, 2026-11-02),
+# at the values they defaulted to before (repair = project_fix).
+HARD_P0 = {"constraint_type": "hard", "priority": "P0", "violation_action": "project_fix"}
+
 NFZ = ROOT / "policies" / "follow_car_citylife_nfz.yaml"
 CITY = ROOT / "policies" / "follow_car_citylife.yaml"
 A0 = Action4D(vx=0.0, vy=3.0, vz_up=0.0, yaw_rate=0.0)
@@ -587,7 +591,7 @@ def test_a_circle_fence_is_drawn_and_judged_like_any_zone():
     row status beyond OK, nothing on the map."""
     from guardrail.models import Policy
     pol = Policy.model_validate({"policy_id": "c", "constraints": [
-        {"id": "disc", "type": "circle_fence", "center": {"x": 0, "y": 50},
+        {"id": "disc", "type": "circle_fence", **HARD_P0, "center": {"x": 0, "y": 50},
          "radius_m": 10, "margin_m": 1.0}]})
     ind = PolicyIndicator(pol)
     snap = ind.update(0.0, _dec(), State(x=0, y=45, up=8))
@@ -606,7 +610,7 @@ def test_a_hot_applied_zone_gets_a_row_and_leaves_with_it():
     n0 = len(ind.update(0.0, _dec(), st)["rows"])
     sh.filter(st, A0)
     sh.hot_apply(DynamicNFZ.model_validate({
-        "id": "landslide", "type": "dynamic_nfz", "margin_m": 0,
+        "id": "landslide", "type": "dynamic_nfz", **HARD_P0, "margin_m": 0,
         "vertices": [{"x": -3, "y": -3}, {"x": 3, "y": -3}, {"x": 3, "y": 3}, {"x": -3, "y": 3}]}))
     snap = ind.update(0.1, _dec(), st)
     assert len(snap["rows"]) == n0 + 1 and _row(snap, "landslide")["status"] == "breach"
@@ -625,7 +629,7 @@ def test_an_event_landing_mid_update_never_misaligns_a_row():
 
     def zone(zid, cx):
         return DynamicNFZ.model_validate({
-            "id": zid, "type": "dynamic_nfz", "margin_m": 0,
+            "id": zid, "type": "dynamic_nfz", **HARD_P0, "margin_m": 0,
             "vertices": [{"x": cx - 2, "y": -2}, {"x": cx + 2, "y": -2},
                          {"x": cx + 2, "y": 2}, {"x": cx - 2, "y": 2}]})
     sh = Shield(load_policy(NFZ))
@@ -654,7 +658,7 @@ def test_a_zone_outside_its_window_is_idle():
     from datetime import datetime
     from guardrail.models import Policy
     pol = Policy.model_validate({"policy_id": "w", "constraints": [{
-        "id": "yard", "type": "polygon_fence", "margin_m": 0,
+        "id": "yard", "type": "polygon_fence", **HARD_P0, "margin_m": 0,
         "vertices": [{"x": -5, "y": -5}, {"x": 5, "y": -5}, {"x": 5, "y": 5}, {"x": -5, "y": 5}],
         "valid_time": {"recurrence": {"start_time": "07:30", "end_time": "17:30"}}}]})
     for hhmm, status, drawn in (("12:00", "breach", ["yard"]), ("18:00", "idle", [])):
@@ -677,11 +681,12 @@ def test_a_zone_outside_its_window_is_idle():
 def _monitor_only_policy():
     from guardrail.models import Policy
     return Policy.model_validate({"policy_id": "m", "version": "0.1.0", "constraints": [
-        {"id": "nfz-watch", "type": "polygon_fence", "margin_m": 1.0,
+        {"id": "nfz-watch", "type": "polygon_fence", "constraint_type": "hard", "margin_m": 1.0,
          "violation_action": "monitor_only", "priority": "P1",
          "vertices": [{"x": 7, "y": 7}, {"x": 23, "y": 7}, {"x": 23, "y": 23},
                       {"x": 7, "y": 23}]},
-        {"id": "kin", "type": "kinematic_envelope", "priority": "P1", "speed_max_mps": 4.0,
+        {"id": "kin", "type": "kinematic_envelope",
+         "constraint_type": "hard", "violation_action": "project_fix", "priority": "P1", "speed_max_mps": 4.0,
          "climb_rate_max_mps": 2.0, "yaw_rate_max_dps": 45.0}]})
 
 

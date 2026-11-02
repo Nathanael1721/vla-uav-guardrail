@@ -81,15 +81,18 @@ def id_claimed_elsewhere(policy_id: str, out: str | Path) -> list[str]:
     return sorted(hits)
 
 
-def policy_yaml(policy_id: str, nfzs, band_lo: float, band_hi: float) -> str:
+def policy_yaml(policy_id: str, nfzs, band_lo: float, band_hi: float,
+                version: str = "0.1.0") -> str:
     """The generated policy's text: one 12 m keep-out square per leg, the
-    altitude band and the kinematic caps."""
-    lines = [f"policy_id: {policy_id}", "version: 0.1.0", "constraints:"]
+    altitude band and the kinematic caps. The breach action is the grant's
+    `project_fix` (IR schema 3.0.0; it was this repository's `repair` until
+    2026-11-02, when the shipped files moved to 0.1.1 under the same rules)."""
+    lines = [f"policy_id: {policy_id}", f"version: {version}", "constraints:"]
     for i, (xmn, xmx, ymn, ymx) in enumerate(nfzs):
         lines += [
             f"  - id: nfz-leg-{i+1}", "    type: polygon_fence",
             "    constraint_type: hard", "    priority: P0",
-            "    violation_action: repair", "    vertices:",
+            "    violation_action: project_fix", "    vertices:",
             f"      - {{x: {xmn:.1f}, y: {ymn:.1f}}}",
             f"      - {{x: {xmx:.1f}, y: {ymn:.1f}}}",
             f"      - {{x: {xmx:.1f}, y: {ymx:.1f}}}",
@@ -100,11 +103,11 @@ def policy_yaml(policy_id: str, nfzs, band_lo: float, band_hi: float) -> str:
     lines += [
         "  - id: alt-band", "    type: altitude_envelope",
         "    constraint_type: hard", "    priority: P0",
-        "    violation_action: repair",
+        "    violation_action: project_fix",
         f"    alt_min_m: {band_lo:.0f}", f"    alt_max_m: {band_hi:.0f}",
         "  - id: kin-caps", "    type: kinematic_envelope",
         "    constraint_type: hard", "    priority: P1",
-        "    violation_action: repair",
+        "    violation_action: project_fix",
         "    speed_max_mps: 4.0", "    climb_rate_max_mps: 2.0",
         "    yaw_rate_max_dps: 45.0",
     ]

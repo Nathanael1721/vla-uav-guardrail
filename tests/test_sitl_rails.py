@@ -65,7 +65,7 @@ def test_a_hot_applied_fence_restamps_the_audit_hash():
 
     audit.log(1, shield.filter(State(x=-20, y=-20, up=4), Action4D(vx=9)))
     applied = rec.apply_zone(shield, PolygonFence(
-        id="nfz-dynamic", type="polygon_fence",
+        id="nfz-dynamic", type="polygon_fence", **HARD_P0,
         vertices=[XY(x=-25, y=-25), XY(x=-15, y=-25),
                   XY(x=-15, y=-15), XY(x=-25, y=-15)], margin_m=1.0))
     assert applied.id == "nfz-dynamic" and policy.generation == 1
@@ -703,6 +703,10 @@ import dataclasses                                                    # noqa: E4
 import importlib.util                                                 # noqa: E402
 import types                                                          # noqa: E402
 
+# The three ConstraintBase fields the grant requires (IR schema 3.0.0, 2026-11-02),
+# at the values they defaulted to before (repair = project_fix).
+HARD_P0 = {"constraint_type": "hard", "priority": "P0", "violation_action": "project_fix"}
+
 DEMO = ROOT / "demo"
 
 
@@ -884,7 +888,7 @@ def test_run_demo_counts_time_inside_its_dynamic_zone_with_the_shield_off():
     def on_the_path(RD):
         RD.DYNAMIC_AT_S = 2.0
         RD.DYNAMIC_FENCE = PolygonFence(
-            id="nfz-dynamic", type="polygon_fence", margin_m=1.0,
+            id="nfz-dynamic", type="polygon_fence", **HARD_P0, margin_m=1.0,
             vertices=[XY(x=24, y=24), XY(x=28, y=24), XY(x=28, y=28), XY(x=24, y=28)])
     out, report = _fly_run_demo(["--shield", "off", "--dynamic"], on_the_path)
     by_zone = _report_value(report, "Time inside NFZ, by zone")
@@ -1067,7 +1071,7 @@ def _zone_on_the_path(at_s: float):
     def patch(R):
         R.DYNAMIC_AT_S = at_s
         R.DYNAMIC_FENCE = PolygonFence(
-            id="nfz-dynamic", type="polygon_fence", margin_m=1.0,
+            id="nfz-dynamic", type="polygon_fence", **HARD_P0, margin_m=1.0,
             vertices=[XY(x=24, y=24), XY(x=28, y=24), XY(x=28, y=28), XY(x=24, y=28)])
     return patch
 
@@ -1435,12 +1439,12 @@ def test_the_pas_planner_routes_around_every_static_zone_and_leaves_moving_ones(
     from guardrail.models import Policy
     sq = [{"x": 0, "y": 0}, {"x": 10, "y": 0}, {"x": 10, "y": 10}, {"x": 0, "y": 10}]
     pol = Policy.model_validate({"policy_id": "plan", "constraints": [
-        {"id": "poly", "type": "polygon_fence", "vertices": sq},
-        {"id": "circ", "type": "circle_fence", "center": {"x": 40, "y": 0},
+        {"id": "poly", "type": "polygon_fence", **HARD_P0, "vertices": sq},
+        {"id": "circ", "type": "circle_fence", **HARD_P0, "center": {"x": 40, "y": 0},
          "radius_m": 5},
-        {"id": "dyn", "type": "dynamic_nfz", "vertices": sq},
-        {"id": "mov", "type": "dynamic_nfz", "motion": {"vx_mps": 1.0}, "vertices": sq},
-        {"id": "alt", "type": "altitude_envelope", "alt_min_m": 10, "alt_max_m": 20},
+        {"id": "dyn", "type": "dynamic_nfz", **HARD_P0, "vertices": sq},
+        {"id": "mov", "type": "dynamic_nfz", **HARD_P0, "motion": {"vx_mps": 1.0}, "vertices": sq},
+        {"id": "alt", "type": "altitude_envelope", **HARD_P0, "alt_min_m": 10, "alt_max_m": 20},
     ]})
     A = _load(DEMO / "aerialvla_pas_demo.py", "aerialvla_pas_demo_unit")
     assert [z.id for z in A.planning_zones(pol)] == ["poly", "circ", "dyn"]

@@ -75,6 +75,10 @@ sys.path.insert(0, str(ROOT / "tools"))
 from guardrail import harness_service as H                       # noqa: E402
 from guardrail import load_policy                                  # noqa: E402
 
+# The three ConstraintBase fields the grant requires (IR schema 3.0.0, 2026-11-02),
+# at the values they defaulted to before (repair = project_fix).
+HARD_P0 = {"constraint_type": "hard", "priority": "P0", "violation_action": "project_fix"}
+
 SKIP = "SKIP"
 _TMP: list[Path] = []
 try:
@@ -101,7 +105,7 @@ policy: {path: policies/sim_demo_policy.yaml}
 expected_kpis:
   P0_escape_rate: 0
 """
-ZONE = {"type": "dynamic_nfz", "id": "nfz-hot",
+ZONE = {"type": "dynamic_nfz", **HARD_P0, "id": "nfz-hot",
         "vertices": [{"x": 10, "y": -30}, {"x": 20, "y": -30},
                      {"x": 20, "y": -10}, {"x": 10, "y": -10}]}
 JITTER = """
@@ -525,7 +529,7 @@ def test_a_session_hot_apply_is_posted_to_its_rest_endpoint():
         assert ack["policy_hash"] == ep.shield.policy.policy_hash != sim.policy_hash
         # the endpoint's refusals, as the REST endpoint means them
         assert _refused(h.hot_apply, "", 0.0, ZONE, session_id=s)[0] == "ALREADY_EXISTS"
-        sw = {"type": "time_window_switch", "id": "sw", "target_id": "no-such-rule",
+        sw = {"type": "time_window_switch", **HARD_P0, "id": "sw", "target_id": "no-such-rule",
               "active": False}
         assert _refused(h.hot_apply, "", 0.0, sw, session_id=s)[0] == "NOT_FOUND"
         locked = dict(ZONE, type="polygon_fence", id="pf")

@@ -85,6 +85,10 @@ import rerun_episode as RR                                         # noqa: E402
 from guardrail import harness_service as H                       # noqa: E402
 from guardrail import load_policy                                  # noqa: E402
 
+# The three ConstraintBase fields the grant requires (IR schema 3.0.0, 2026-11-02),
+# at the values they defaulted to before (repair = project_fix).
+HARD_P0 = {"constraint_type": "hard", "priority": "P0", "violation_action": "project_fix"}
+
 SKIP = "SKIP"
 _TMP: list[Path] = []
 A0 = {"vx": 0.0, "vy": 0.0, "vz_up": 0.0, "yaw_rate": 0.0}
@@ -122,7 +126,7 @@ stress: {start_jitter_m: 3.0}
 expected_kpis:
   P0_escape_rate: 0
 """
-ZONE = {"type": "dynamic_nfz", "id": "nfz-hot",
+ZONE = {"type": "dynamic_nfz", **HARD_P0, "id": "nfz-hot",
         "vertices": [{"x": 10, "y": -30}, {"x": 20, "y": -30},
                      {"x": 20, "y": -10}, {"x": 10, "y": -10}]}
 
@@ -463,7 +467,8 @@ def _tw_policy():
     with)."""
     from guardrail.models import Policy
     return Policy.model_validate({"policy_id": "tw", "constraints": [
-        {"id": "school", "type": "polygon_fence", "margin_m": 1.0, "priority": "P1",
+        {"id": "school", "type": "polygon_fence",
+         "constraint_type": "hard", "violation_action": "project_fix", "margin_m": 1.0, "priority": "P1",
          "valid_time": {"recurrence": {"start_time": "07:30", "end_time": "17:30"}},
          "vertices": [{"x": 10, "y": -10}, {"x": 30, "y": -10}, {"x": 30, "y": 10},
                       {"x": 10, "y": 10}]}]})
@@ -533,7 +538,7 @@ def test_an_appended_audit_joins_only_the_flight_that_flew():
     from guardrail.models import Policy
     root = _tmp("wp4_appended_")
     old_pol = Policy.model_validate({"policy_id": "old", "constraints": [
-        {"id": "old-zone", "type": "polygon_fence", "vertices": [
+        {"id": "old-zone", "type": "polygon_fence", **HARD_P0, "vertices": [
             {"x": 5, "y": -5}, {"x": 9, "y": -5}, {"x": 9, "y": 5}, {"x": 5, "y": 5}]}]})
     # the old flight's first command happens to equal the new one's: one
     # record in four matches, which is not enough to join a flight
@@ -1055,7 +1060,7 @@ def test_a_rerun_rebuilds_from_the_library_when_the_extras_are_absent():
     # a zone across the lane ahead of the aircraft (it starts at x -20, y 15,
     # eastbound at 4 m/s), spawned at 1 s: the flight cannot ignore it
     bundle = _fly(scenario_id="nfz-head-on", seed=1001, hot=[(1.0, {
-        "type": "dynamic_nfz", "id": "nfz-early",
+        "type": "dynamic_nfz", **HARD_P0, "id": "nfz-early",
         "vertices": [{"x": -12, "y": 5}, {"x": -8, "y": 5}, {"x": -8, "y": 25},
                      {"x": -12, "y": 25}]})])
     copy = _tmp("wp4_lib_") / bundle.name

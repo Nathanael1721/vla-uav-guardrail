@@ -30,14 +30,14 @@
 # inside the audit trail; a window that was not hashed would let the same policy
 # id mean two different things.
 policy_id: corridor-survey
-version: 0.1.0
+version: 0.1.1
 
 constraints:
   - id: corridor-survey-route
     type: corridor
     constraint_type: hard
     priority: P0
-    violation_action: repair
+    violation_action: project_fix
     centerline:
       - { x: 0.0,  y: 0.0 }
       - { x: 60.0, y: 0.0 }
@@ -50,7 +50,7 @@ constraints:
     type: polygon_fence
     constraint_type: hard
     priority: P0
-    violation_action: repair
+    violation_action: project_fix
     vertices:
       - { x: 50.0, y: 12.0 }
       - { x: 70.0, y: 12.0 }
@@ -69,7 +69,7 @@ constraints:
     type: kinematic_envelope
     constraint_type: hard
     priority: P1
-    violation_action: repair
+    violation_action: project_fix
     speed_max_mps: 4.0
     climb_rate_max_mps: 2.0
     yaw_rate_max_dps: 45.0

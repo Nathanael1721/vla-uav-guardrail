@@ -39,6 +39,10 @@ sys.path.insert(0, str(ROOT / "tools"))
 from guardrail import kpi as K, load_policy                        # noqa: E402
 import rescore_kpis as R                                           # noqa: E402
 
+# The three ConstraintBase fields the grant requires (IR schema 3.0.0, 2026-11-02),
+# at the values they defaulted to before (repair = project_fix).
+HARD_P0 = {"constraint_type": "hard", "priority": "P0", "violation_action": "project_fix"}
+
 PED = ROOT / "policies" / "sitl_pedestrian.yaml"
 A0 = {"vx": 0.0, "vy": 0.0, "vz_up": 0.0, "yaw_rate": 0.0}
 
@@ -1080,10 +1084,10 @@ def test_the_wp2_section_names_the_files_an_altitude_conflict_left_out():
     import yaml
     KR = _report_module()
     day_night = {"policy_id": "day-night", "version": "0.1.0", "constraints": [
-        {"id": "day-band", "type": "altitude_envelope", "alt_min_m": 10,
+        {"id": "day-band", "type": "altitude_envelope", **HARD_P0, "alt_min_m": 10,
          "alt_max_m": 30,
          "valid_time": {"recurrence": {"start_time": "08:00", "end_time": "17:59"}}},
-        {"id": "night-band", "type": "altitude_envelope", "alt_min_m": 40,
+        {"id": "night-band", "type": "altitude_envelope", **HARD_P0, "alt_min_m": 40,
          "alt_max_m": 60,
          "valid_time": {"recurrence": {"start_time": "18:00", "end_time": "07:59"}}}]}
     with tempfile.TemporaryDirectory() as td:

@@ -45,8 +45,10 @@ def random_policy(rng: random.Random) -> Policy:
     NFZ dropped somewhere near the direct path."""
     constraints = [
         AltitudeEnvelope(id="alt-band", type="altitude_envelope",
+                         constraint_type="hard", priority="P0", violation_action="project_fix",
                          alt_min_m=15, alt_max_m=25),
         KinematicEnvelope(id="kin", type="kinematic_envelope",
+                          constraint_type="hard", priority="P0", violation_action="project_fix",
                           speed_max_mps=4.0, climb_rate_max_mps=2.0,
                           yaw_rate_max_dps=45.0),
     ]
@@ -55,7 +57,7 @@ def random_policy(rng: random.Random) -> Policy:
         cy = rng.uniform(8, 30)
         half = rng.uniform(5, 10)
         constraints.append(PolygonFence(
-            id="nfz", type="polygon_fence",
+            id="nfz", type="polygon_fence", constraint_type="hard", priority="P0", violation_action="project_fix",
             vertices=[XY(x=cx - half, y=cy - half), XY(x=cx + half, y=cy - half),
                       XY(x=cx + half, y=cy + half), XY(x=cx - half, y=cy + half)],
             altitude_floor_m=0, altitude_ceiling_m=100, margin_m=1.0,

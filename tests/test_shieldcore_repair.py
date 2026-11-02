@@ -48,6 +48,10 @@ from guardrail.models import (Action4D, ObstacleClearance, Policy,      # noqa: 
                               State, SubjectStandoff)
 from guardrail.shield import Shield                                     # noqa: E402
 
+# The three ConstraintBase fields the grant requires (IR schema 3.0.0, 2026-11-02),
+# at the values they defaulted to before (repair = project_fix).
+HARD_P0 = {"constraint_type": "hard", "priority": "P0", "violation_action": "project_fix"}
+
 FIX_MAP = ROOT / "tests" / "fixtures" / "citylife_occ_flightband_6to14.npz"
 
 
@@ -269,9 +273,9 @@ def test_a_subclass_override_of_a_repair_hook_is_the_one_that_runs():
 
 def _square_policy(margin=1.0, extra=()):
     return Policy.model_validate({"policy_id": "sq", "constraints": [
-        {"id": "kin", "type": "kinematic_envelope", "speed_max_mps": 5.0,
+        {"id": "kin", "type": "kinematic_envelope", **HARD_P0, "speed_max_mps": 5.0,
          "climb_rate_max_mps": 3.0, "yaw_rate_max_dps": 90.0},
-        {"id": "sq", "type": "polygon_fence", "margin_m": margin,
+        {"id": "sq", "type": "polygon_fence", **HARD_P0, "margin_m": margin,
          "vertices": [{"x": 10, "y": -10}, {"x": 30, "y": -10}, {"x": 30, "y": 10},
                       {"x": 10, "y": 10}]}, *extra]})
 
@@ -312,7 +316,7 @@ def test_first_feasible_applies_the_first_operator_that_clears_a_shallow_clip():
         [("skip", "not a geofence violation (nfz-square)")] * 2, p1["attempts"]
 
 
-_ALT = {"id": "alt", "type": "altitude_envelope", "alt_min_m": 5.0, "alt_max_m": 50.0}
+_ALT = {"id": "alt", "type": "altitude_envelope", **HARD_P0, "alt_min_m": 5.0, "alt_max_m": 50.0}
 
 
 def test_first_feasible_targets_the_earliest_violation_first():
@@ -351,7 +355,7 @@ def test_first_feasible_holds_a_vertical_repair_to_the_vertical_theta():
     assert ff.braked and [r.operator for r in ff.repairs] == ["Brake"]
 
 
-_SQ2 = {"id": "sq2", "type": "polygon_fence", "margin_m": 1.0,
+_SQ2 = {"id": "sq2", "type": "polygon_fence", **HARD_P0, "margin_m": 1.0,
         "vertices": [{"x": -10, "y": 10}, {"x": 10, "y": 10}, {"x": 10, "y": 30},
                      {"x": -10, "y": 30}]}
 
@@ -379,7 +383,7 @@ def test_first_feasible_reads_theta_as_the_fsm_sums_it():
     d = sh.filter(State(x=-3.0, y=0.0, up=10.0), a)                 # the boundary
     assert not d.braked and [r.operator for r in d.repairs] == ["GeofenceSlide"] * 2
     assert F.magnitude_from_repairs(d.repairs).lateral_m <= 2.0 + 1e-9
-    ring = {"id": "ring", "type": "subject_standoff", "subject_class": "*", "min_range_m": 5.0}
+    ring = {"id": "ring", "type": "subject_standoff", **HARD_P0, "subject_class": "*", "min_range_m": 5.0}
     st, a = State(x=4.9, y=3.3, up=10.0), Action4D(vx=1.9, vy=2.3)
     for esc in (False, True):
         sh = Shield(_square_policy(extra=[ring]), escalation=esc, repair_mode="first_feasible")
@@ -506,7 +510,7 @@ def test_path_repair_never_takes_a_detour_that_breaks_another_rule():
     either near corner of the square would enter one within the horizon.
     PathRepair checks each candidate against every rule and takes none;
     the decision is the one made without it."""
-    flank = [{"id": f"flank-{n}", "type": "polygon_fence", "margin_m": 1.0,
+    flank = [{"id": f"flank-{n}", "type": "polygon_fence", **HARD_P0, "margin_m": 1.0,
               "vertices": [{"x": 4, "y": lo}, {"x": 8, "y": lo}, {"x": 8, "y": hi},
                            {"x": 4, "y": hi}]} for n, lo, hi in (("n", 3, 8), ("s", -8, -3))]
     st, a = State(x=3.0, y=0.0, up=10.0), Action4D(vx=2.0)
@@ -525,7 +529,7 @@ def test_path_repair_passes_a_ring_at_the_tangent_of_its_soft_margin():
     subject. With a soft margin under 1 m the circle is the ring + 1 m."""
     def wps(soft):
         pol = Policy.model_validate({"policy_id": "so", "constraints": [
-            {"id": "so", "type": "subject_standoff", "min_range_m": 10.0,
+            {"id": "so", "type": "subject_standoff", **HARD_P0, "min_range_m": 10.0,
              "soft_margin_m": soft, "subject_class": "*"}]})
         sh = Shield(pol, escalation=False)
         sh.set_subject(20.0, 0.0, "car")
@@ -542,7 +546,7 @@ def _wall_policy():
     """A wall 0.1 m thick with a 0.2 m margin: its ring is 0.5 m across,
     less than the 1.2 m a 12 m/s forecast covers per 0.1 s step."""
     return Policy.model_validate({"policy_id": "wall", "constraints": [
-        {"id": "wall", "type": "polygon_fence", "margin_m": 0.2,
+        {"id": "wall", "type": "polygon_fence", **HARD_P0, "margin_m": 0.2,
          "vertices": [{"x": 4.05, "y": -50}, {"x": 4.15, "y": -50}, {"x": 4.15, "y": 50},
                       {"x": 4.05, "y": 50}]}]})
 
@@ -566,7 +570,7 @@ def test_the_segment_check_catches_a_zone_thinner_than_one_step():
 
 def _wall(**extra):
     return Policy.model_validate({"policy_id": "wall", "constraints": [
-        {"id": "wall", "type": "polygon_fence", "margin_m": 0.2, **extra,
+        {"id": "wall", "type": "polygon_fence", **HARD_P0, "margin_m": 0.2, **extra,
          "vertices": [{"x": 4.05, "y": -50}, {"x": 4.15, "y": -50}, {"x": 4.15, "y": 50},
                       {"x": 4.05, "y": 50}]}]})
 
@@ -606,7 +610,7 @@ def test_the_segment_check_does_not_flag_a_forecast_inside_a_round_join():
     half-width / cos(pi/64) so it contains the true tube: no violation."""
     from shapely.geometry import LineString, Point
     pol = Policy.model_validate({"policy_id": "L", "constraints": [
-        {"id": "L", "type": "corridor", "width_m": 2.0, "altitude_floor_m": 0,
+        {"id": "L", "type": "corridor", **HARD_P0, "width_m": 2.0, "altitude_floor_m": 0,
          "altitude_ceiling_m": 50,
          "centerline": [{"x": 0, "y": 0}, {"x": 20, "y": 0}, {"x": 20, "y": 10}]}]})
     th = math.radians(-90.0 + 90.0 / 32.0)             # the middle of the first chord
@@ -624,7 +628,7 @@ def test_the_segment_check_catches_a_forecast_jumping_a_corridor_u_turn():
     """Two forecast poses on the two arms of a U, each inside its half-width;
     the straight line between them crosses 9 m of open air."""
     pol = Policy.model_validate({"policy_id": "u", "constraints": [
-        {"id": "u", "type": "corridor", "width_m": 2.0, "altitude_floor_m": 0,
+        {"id": "u", "type": "corridor", **HARD_P0, "width_m": 2.0, "altitude_floor_m": 0,
          "altitude_ceiling_m": 50,
          "centerline": [{"x": 0, "y": 0}, {"x": 20, "y": 0}, {"x": 20, "y": 10},
                         {"x": 0, "y": 10}]}]})

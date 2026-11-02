@@ -25,6 +25,10 @@ from guardrail.models import (KinematicEnvelope, ObstacleClearance,  # noqa: E40
                               Policy)
 from guardrail.shield import BRAKE                               # noqa: E402
 
+# The three ConstraintBase fields the grant requires (IR schema 3.0.0, 2026-11-02),
+# at the values they defaulted to before (repair = project_fix).
+HARD_P0 = {"constraint_type": "hard", "priority": "P0", "violation_action": "project_fix"}
+
 CITYMAP = ROOT / "demo" / "out" / "citymap" / "occ_day.npz"
 URBAN = ROOT / "policies" / "urban_clearance.yaml"
 
@@ -42,9 +46,9 @@ def _cj(y):                      # world y -> column index
 
 def _shield(occ, min_clearance=6.0, soft=2.0, cap=4.0):
     pol = Policy(policy_id="clr-test", constraints=[
-        ObstacleClearance(id="clr", type="obstacle_clearance",
+        ObstacleClearance(id="clr", type="obstacle_clearance", **HARD_P0,
                           min_clearance_m=min_clearance, soft_margin_m=soft),
-        KinematicEnvelope(id="kin", type="kinematic_envelope", speed_max_mps=cap,
+        KinematicEnvelope(id="kin", type="kinematic_envelope", **HARD_P0, speed_max_mps=cap,
                           climb_rate_max_mps=2.0, yaw_rate_max_dps=45.0)])
     return Shield(pol, lookahead_s=3.0, dt=0.5,
                   obstacle_map={"occ": occ, "res": RES, "ox": OX, "oy": OY})
@@ -284,13 +288,13 @@ def test_wedged_between_a_wall_and_a_zone_still_recovers():
     occ = np.zeros((N, N), np.uint8)
     occ[:, _cj(-16):_cj(-8) + 1] = 1                       # wall face at y = -8
     pol = Policy(policy_id="wedge", constraints=[
-        ObstacleClearance(id="clr", type="obstacle_clearance",
+        ObstacleClearance(id="clr", type="obstacle_clearance", **HARD_P0,
                           min_clearance_m=6.0, soft_margin_m=2.0),
-        PolygonFence(id="nfz", type="polygon_fence",
+        PolygonFence(id="nfz", type="polygon_fence", **HARD_P0,
                      vertices=[XY(x=-40, y=1), XY(x=40, y=1),
                                XY(x=40, y=40), XY(x=-40, y=40)],
                      altitude_floor_m=0, altitude_ceiling_m=60),
-        KinematicEnvelope(id="kin", type="kinematic_envelope", speed_max_mps=4.0,
+        KinematicEnvelope(id="kin", type="kinematic_envelope", **HARD_P0, speed_max_mps=4.0,
                           climb_rate_max_mps=2.0, yaw_rate_max_dps=45.0)])
     sh = Shield(pol, lookahead_s=3.0, dt=0.5,
                 obstacle_map={"occ": occ, "res": RES, "ox": OX, "oy": OY})

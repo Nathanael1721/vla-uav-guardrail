@@ -6,6 +6,9 @@ version: 0.1.0
 constraints:
   - id: disc
     type: circle_fence
+    constraint_type: hard
+    priority: P0
+    violation_action: project_fix
     geometry:
       center: { lat: 25.0421, lon: 121.5310 }
       radius_m: -5

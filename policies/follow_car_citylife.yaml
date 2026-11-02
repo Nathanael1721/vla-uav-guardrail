@@ -21,13 +21,13 @@
 # follow_pedestrian.yaml's two stand-offs, unchanged. Nothing is relaxed for a
 # person - if the subject were ever reported as a pedestrian, 10 m binds.
 policy_id: follow-car-citylife
-version: 0.1.0
+version: 0.1.1
 constraints:
   - id: standoff-pedestrian
     type: subject_standoff
     constraint_type: hard
     priority: P0
-    violation_action: repair
+    violation_action: project_fix
     subject_class: pedestrian
     min_range_m: 10.0
     soft_margin_m: 2.0
@@ -37,7 +37,7 @@ constraints:
     type: subject_standoff
     constraint_type: hard
     priority: P0
-    violation_action: repair
+    violation_action: project_fix
     subject_class: "*"
     min_range_m: 5.0
     soft_margin_m: 1.0
@@ -47,7 +47,7 @@ constraints:
     type: obstacle_clearance
     constraint_type: hard
     priority: P0
-    violation_action: repair
+    violation_action: project_fix
     min_clearance_m: 3.0
     soft_margin_m: 2.0
 
@@ -55,7 +55,7 @@ constraints:
     type: altitude_envelope
     constraint_type: hard
     priority: P0
-    violation_action: repair
+    violation_action: project_fix
     alt_min_m: 6
     alt_max_m: 14
 
@@ -65,7 +65,7 @@ constraints:
     type: kinematic_envelope
     constraint_type: hard
     priority: P1
-    violation_action: repair
+    violation_action: project_fix
     speed_max_mps: 5.0
     climb_rate_max_mps: 2.0
     yaw_rate_max_dps: 45.0

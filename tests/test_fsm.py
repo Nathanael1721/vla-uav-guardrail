@@ -49,6 +49,10 @@ from guardrail.fsm import (ACTIONS, EDGES, SETPOINTS, EscalationFSM,  # noqa: E4
                            rules_from_policy, score_failsafe_triggers,
                            tick_input_from_decision)
 
+# The three ConstraintBase fields the grant requires (IR schema 3.0.0, 2026-11-02),
+# at the values they defaulted to before (repair = project_fix).
+HARD_P0 = {"constraint_type": "hard", "priority": "P0", "violation_action": "project_fix"}
+
 S = FSMState
 SMALL = RepairMagnitude(0.5, 0.0)       # well inside theta
 BIG = RepairMagnitude(3.0, 0.0)         # lateral over theta (2.0 m)
@@ -798,7 +802,7 @@ def test_a_soft_brake_rule_beside_a_hard_nfz_never_loiters_with_the_real_shield(
     from guardrail.models import Policy
 
     def pol(env: bool):
-        cons = [{"id": "nfz", "type": "polygon_fence", "margin_m": 1.0,
+        cons = [{"id": "nfz", "type": "polygon_fence", **HARD_P0, "margin_m": 1.0,
                  "vertices": [{"x": 7, "y": 7}, {"x": 23, "y": 7},
                               {"x": 23, "y": 23}, {"x": 7, "y": 23}]}]
         if env:
@@ -831,7 +835,7 @@ def test_a_replay_without_unsafe_keeps_the_stop_rule_gate_only_on_a_clean_brake(
     from guardrail.fsm import tick_input_from_row
     from guardrail.models import Policy
     pol = Policy.model_validate({"policy_id": "p", "constraints": [
-        {"id": "nfz", "type": "polygon_fence", "margin_m": 1.0,
+        {"id": "nfz", "type": "polygon_fence", **HARD_P0, "margin_m": 1.0,
          "vertices": [{"x": 7, "y": 7}, {"x": 23, "y": 7},
                       {"x": 23, "y": 23}, {"x": 7, "y": 23}]},
         {"id": "envelope-default", "type": "altitude_envelope", "alt_min_m": 1,
@@ -1732,7 +1736,8 @@ def test_stop_illegal_counts_only_hard_enforced_rules():
     policy. A soft rule is capped at brake, so a stop that breaks only a soft
     rule is a response it already allows; monitor_only enforces nothing."""
     pol = SimpleNamespace(constraints=[
-        SimpleNamespace(id="nfz", violation_action="repair", constraint_type="hard", priority="P0"),
+        SimpleNamespace(id="nfz", violation_action="repair",
+                        constraint_type="hard", priority="P0"),
         SimpleNamespace(id="env", violation_action="brake", constraint_type="soft", priority="P1"),
         SimpleNamespace(id="watch", violation_action="monitor_only", constraint_type="hard",
                         priority="P2")])
@@ -2031,10 +2036,12 @@ def test_a_monitor_only_or_relaxed_rule_flown_as_commanded_is_not_a_failed_repai
     from guardrail.models import Policy
     from guardrail.shield import Repair, Violation
     pol = Policy.model_validate({"policy_id": "m", "constraints": [
-        {"id": "watch", "type": "polygon_fence", "violation_action": "monitor_only",
+        {"id": "watch", "type": "polygon_fence",
+         "constraint_type": "hard", "priority": "P0", "violation_action": "monitor_only",
          "vertices": [{"x": 0, "y": 0}, {"x": 5, "y": 0}, {"x": 5, "y": 5}]},
-        {"id": "hard-band", "type": "altitude_envelope", "alt_min_m": 0, "alt_max_m": 10},
-        {"id": "soft-high", "type": "altitude_envelope", "alt_min_m": 20,
+        {"id": "hard-band", "type": "altitude_envelope", **HARD_P0, "alt_min_m": 0, "alt_max_m": 10},
+        {"id": "soft-high", "type": "altitude_envelope",
+         "violation_action": "project_fix", "alt_min_m": 20,
          "alt_max_m": 30, "constraint_type": "soft", "priority": "P2"}]})
     v_watch = Violation(rule_id="watch", category="geofence", detail="", predicted_at_s=1.0)
     v_soft = Violation(rule_id="soft-high", category="altitude", detail="", predicted_at_s=0.0)

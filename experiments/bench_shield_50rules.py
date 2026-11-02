@@ -129,9 +129,11 @@ def fifty_rule_policy(with_fences: bool = True) -> Policy:
     the measurement too; samples fly between 5 and 30 m, so both kinds bind.
     """
     rules = [
-        KinematicEnvelope(id="kin", type="kinematic_envelope", speed_max_mps=5.0,
+        KinematicEnvelope(id="kin", type="kinematic_envelope",
+                          constraint_type="hard", priority="P0", violation_action="project_fix", speed_max_mps=5.0,
                           climb_rate_max_mps=3.0, yaw_rate_max_dps=90.0),
         AltitudeEnvelope(id="alt", type="altitude_envelope",
+                         constraint_type="hard", priority="P0", violation_action="project_fix",
                          alt_min_m=2.0, alt_max_m=60.0),
     ]
     if with_fences:
@@ -139,7 +141,7 @@ def fifty_rule_policy(with_fences: bool = True) -> Policy:
             for c in range(COLS):
                 x0, y0 = c * PITCH_M, r * PITCH_M
                 rules.append(PolygonFence(
-                    id=f"nfz-{r}-{c}", type="polygon_fence",
+                    id=f"nfz-{r}-{c}", type="polygon_fence", constraint_type="hard", priority="P0", violation_action="project_fix",
                     vertices=[{"x": x0, "y": y0}, {"x": x0 + SIDE_M, "y": y0},
                               {"x": x0 + SIDE_M, "y": y0 + SIDE_M},
                               {"x": x0, "y": y0 + SIDE_M}],
@@ -397,6 +399,7 @@ def main(argv=None) -> int:
             sh = _make(impl, pol, args.horizon, args.dt, now=now, flags=flags)
             ms_new.append((time.perf_counter() - t0) * 1e3)
             fence = PolygonFence(id=f"hot-{i}", type="polygon_fence",
+                                 constraint_type="hard", priority="P0", violation_action="project_fix",
                                  vertices=[{"x": -30, "y": -30}, {"x": -20, "y": -30},
                                            {"x": -20, "y": -20}, {"x": -30, "y": -20}])
             t0 = time.perf_counter()

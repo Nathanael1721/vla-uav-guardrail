@@ -7,6 +7,9 @@ version: 0.1.0
 constraints:
   - id: nfz-line
     type: polygon_fence
+    constraint_type: hard
+    priority: P0
+    violation_action: project_fix
     vertices:
       - { x: 0, y: 0 }
       - { x: 5, y: 0 }

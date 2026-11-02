@@ -25,7 +25,7 @@
 # be compared directly: a school-yard polygon near NTUT, with the same weekday
 # curfew the reference's worked example carries.
 policy_id: wgs84-taipei-demo
-version: 0.1.0
+version: 0.1.1
 
 origin:
   lat: 25.04245
@@ -36,7 +36,7 @@ constraints:
     type: polygon_fence
     constraint_type: hard
     priority: P0
-    violation_action: repair
+    violation_action: project_fix
     vertices:
       - { lat: 25.0421, lon: 121.5310 }
       - { lat: 25.0428, lon: 121.5310 }
@@ -55,7 +55,7 @@ constraints:
     type: altitude_envelope
     constraint_type: hard
     priority: P0
-    violation_action: repair
+    violation_action: project_fix
     alt_min_m: 5.0
     alt_max_m: 80.0
 
@@ -63,7 +63,7 @@ constraints:
     type: kinematic_envelope
     constraint_type: hard
     priority: P1
-    violation_action: repair
+    violation_action: project_fix
     speed_max_mps: 12.0
     climb_rate_max_mps: 4.0
     yaw_rate_max_dps: 60.0

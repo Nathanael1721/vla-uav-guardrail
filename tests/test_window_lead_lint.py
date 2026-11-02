@@ -38,6 +38,10 @@ from guardrail.compiler import (LINT_SPEED_MPS, ConstraintCompiler,  # noqa: E40
                                 Mission, time_window_lead_warnings)
 from guardrail.models import Policy  # noqa: E402
 
+# The three ConstraintBase fields the grant requires (IR schema 3.0.0, 2026-11-02),
+# at the values they defaulted to before (repair = project_fix).
+HARD_P0 = {"constraint_type": "hard", "priority": "P0", "violation_action": "project_fix"}
+
 SURVEY = ROOT / "policies" / "corridor_survey.yaml"
 MON_0729_58 = datetime(2026, 9, 7, 7, 29, 58)     # a Monday, 2 s before 07:30
 
@@ -264,7 +268,7 @@ def test_the_warning_says_what_the_shield_makes_of_the_opening():
         assert "cannot prove" in w, (caps, w)
     w = time_window_lead_warnings(_pol(big, _cap(4.0)))[0]
     assert "not as a P0 escape" in w and "cannot prove" not in w, w
-    moving = dict(big, type="dynamic_nfz", motion={"vx_mps": 0.5})
+    moving = dict(big, type="dynamic_nfz", **HARD_P0, motion={"vx_mps": 0.5})
     w = time_window_lead_warnings(_pol(moving, _cap(4.0)))[0]
     assert "a moving zone" in w and "scores those ticks as P0 escapes" in w, w
 

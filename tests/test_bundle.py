@@ -53,6 +53,10 @@ from guardrail.models import State                                 # noqa: E402
 from guardrail.projection import LocalProjection, project_raw      # noqa: E402
 from guardrail.shield import Shield                                # noqa: E402
 
+# The three ConstraintBase fields the grant requires (IR schema 3.0.0, 2026-11-02),
+# at the values they defaulted to before (repair = project_fix).
+HARD_P0 = {"constraint_type": "hard", "priority": "P0", "violation_action": "project_fix"}
+
 DEMO = ROOT / "policies" / "sim_demo_policy.yaml"
 WGS84 = ROOT / "policies" / "wgs84_taipei.yaml"
 PED = ROOT / "policies" / "sitl_pedestrian.yaml"
@@ -185,7 +189,8 @@ def test_the_changelog_is_a_diff_against_the_previous_version():
             if r["id"] == "alt-band":
                 r["alt_max_m"] = 25.0                        # changed
             out.append(r)
-        out.append({"id": "alt-low", "type": "altitude_envelope",   # added
+        out.append({"id": "alt-low", "type": "altitude_envelope",
+                    "priority": "P0", "violation_action": "project_fix",   # added
                     "constraint_type": "hard", "alt_min_m": 5.0, "alt_max_m": 30.0})
         return out
 
@@ -217,7 +222,8 @@ def test_the_changelog_is_a_diff_against_the_previous_version():
     assert B.diff_text(same).endswith("no rule changed")
     # A rule replaced by another type under the same id names `type`.
     swapped = _next_version(prev, lambda rs: [
-        {"id": "kin-caps", "type": "altitude_envelope", "constraint_type": "hard",
+        {"id": "kin-caps", "type": "altitude_envelope",
+         "priority": "P0", "violation_action": "project_fix", "constraint_type": "hard",
          "alt_min_m": 1.0, "alt_max_m": 200.0}
         if r["id"] == "kin-caps" else r for r in rs])
     assert "type" in B.policy_diff(prev, swapped)["changed"]["kin-caps"]
@@ -415,7 +421,7 @@ def test_a_hot_applied_rule_is_carried_into_the_next_bundle():
 
     sh = Shield(pol, lookahead_s=3.0, dt=0.5)
     sh.hot_apply(PolygonFence(
-        id="nfz-dynamic", type="polygon_fence",
+        id="nfz-dynamic", type="polygon_fence", **HARD_P0,
         vertices=[XY(x=-25, y=-25), XY(x=-15, y=-25),
                   XY(x=-15, y=-15), XY(x=-25, y=-15)], margin_m=1.0))
 
@@ -1006,7 +1012,7 @@ def test_geographic_coordinates_without_an_origin_get_the_references_frame_never
 
     Shown failing on the pre-fix code: the policy was refused."""
     raw = {"policy_id": "p", "constraints": [
-        {"id": "f", "type": "polygon_fence",
+        {"id": "f", "type": "polygon_fence", **HARD_P0,
          "vertices": [{"lat": 25.0, "lon": 121.0}, {"lat": 25.1, "lon": 121.0},
                       {"lat": 25.1, "lon": 121.1}]}]}
     out = project_raw(raw)
@@ -1016,7 +1022,7 @@ def test_geographic_coordinates_without_an_origin_get_the_references_frame_never
     pol = Policy.model_validate(raw)
     assert pol.frame_origin == ((25.0 + 25.1 + 25.1) / 3, (121.0 + 121.0 + 121.1) / 3)
     corridor_only = {"policy_id": "p", "constraints": [
-        {"id": "c", "type": "corridor", "width_m": 10,
+        {"id": "c", "type": "corridor", **HARD_P0, "width_m": 10,
          "centerline": [{"lat": 25.0, "lon": 121.0}, {"lat": 25.0, "lon": 121.001}]}]}
     assert Policy.model_validate(corridor_only).frame_origin == (25.0, 121.0005), \
         "with no polygon the reference would use (0, 0); this uses the first geometry"
@@ -1025,7 +1031,7 @@ def test_geographic_coordinates_without_an_origin_get_the_references_frame_never
 def test_mixing_frames_in_one_point_is_refused():
     raw = {"policy_id": "p", "origin": {"lat": 25.0, "lon": 121.0},
            "constraints": [
-               {"id": "f", "type": "polygon_fence",
+               {"id": "f", "type": "polygon_fence", **HARD_P0,
                 "vertices": [{"lat": 25.0, "lon": 121.0, "x": 1.0, "y": 2.0}]}]}
     try:
         project_raw(raw)

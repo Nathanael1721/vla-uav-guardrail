@@ -1,0 +1,16 @@
+# NEGATIVE CORPUS - tools/wp1_roundtrip_kpi.py: load_policy() must refuse this.
+# defect: a no-fly zone that says nothing about what a breach does (no violation_action)
+# currently: refused
+# why: the grant's ConstraintBase requires violation_action (and constraint_type, priority); until IR schema 3.0.0 (2026-11-02) it defaulted to `repair` here, a breach action its author never chose
+policy_id: neg-no-action
+version: 0.1.0
+constraints:
+  - id: nfz
+    type: polygon_fence
+    constraint_type: hard
+    priority: P0
+    vertices:
+      - {x: 10, y: 10}
+      - {x: 20, y: 10}
+      - {x: 20, y: 20}
+      - {x: 10, y: 20}

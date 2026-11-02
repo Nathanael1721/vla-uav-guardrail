@@ -2180,7 +2180,8 @@ def test_a_motion_swap_on_a_policy_zone_keeps_it_where_it_is():
         # it), so a second Shield built on the same object would start from
         # the first one's edit.
         return policy_from_raw({"policy_id": "drift", "constraints": [
-            {"id": "z", "type": "dynamic_nfz", "priority": "P0",
+            {"id": "z", "type": "dynamic_nfz",
+             "constraint_type": "hard", "violation_action": "project_fix", "priority": "P0",
              "vertices": [{"x": 100, "y": 0}, {"x": 110, "y": 0},
                           {"x": 110, "y": 10}, {"x": 100, "y": 10}],
              "motion": {"vx_mps": 1.0, "vy_mps": 0.0, "yaw_rate_dps": 0.0}}]},
@@ -2424,7 +2425,13 @@ def test_an_event_injected_between_ticks_flies_as_the_same_event_written_in():
     r.inject(spec.events[0].model_dump(mode="json"))     # a dict is validated
     live = r.finish()
     assert not _same_run(written, live), _same_run(written, live)
-    assert live.extra["harness_events"] == 1, live.extra["harness_events"]
+    # One injected event. (harness_events counts every event of the episode;
+    # since IR schema 3.0.0 stores a zone's ring in canonical order, this
+    # cell's escape from the zone spawned on the aircraft - an exact tie -
+    # also passes a hold point at 15.6 s, in both runs alike.)
+    spawned = [e for e in live.events if e.get("type") == "hot_apply"]
+    assert len(spawned) == 1, spawned
+    assert live.extra["harness_events"] == written.extra["harness_events"]
     null = S.run_episode(bare, DEFAULTS, 0)
     assert null.rows != written.rows, "the zone changed nothing: the test proves nothing"
 

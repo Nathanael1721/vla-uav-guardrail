@@ -84,11 +84,11 @@ from pathlib import Path
 from typing import Annotated, Any, ClassVar, Literal, Union
 
 import yaml
-from pydantic import (BaseModel, ConfigDict, Field, field_validator,
+from pydantic import (BaseModel, ConfigDict, Field, PrivateAttr, field_validator,
                       model_serializer, model_validator)
 
 from .fsm import action_strength, canonical_action
-from .projection import LocalProjection, derive_frame_origin, project_raw
+from .projection import LocalProjection, derive_frame_origin, project_raw, ring_order
 
 
 # --------------------------------------------------------------------------- #
@@ -154,10 +154,23 @@ DAYS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
 Scope = Literal["global", "mission", "segment", "waypoint"]
 Layer = Literal["regulation", "site", "mission"]
 AltitudeRef = Literal["AGL", "MSL"]
-# The grant's six, plus `repair`: this repository's spelling of project_fix
-# since July, kept so every stored policy (and its hash) stays as written.
-ViolationAction = Literal["repair", "monitor_only", "project_fix", "brake",
-                          "loiter", "RTL", "land"]
+# The grant's six, exactly (Policy DSL page, ConstraintBase). Until IR schema
+# 3.0.0 (2026-11-02) there was a seventh, `repair`: this repository's spelling
+# since July of what the grant calls project_fix - the Shield's projection
+# repair (guardrail/fsm.py has always read it as project_fix,
+# fsm.ACTION_ALIASES). It is still ACCEPTED on input and stored as
+# project_fix (LEGACY_ACTION_SPELLINGS), so every policy, bundle and log that
+# wrote it still loads; the IR never holds it. A run recorded before 3.0.0
+# carries the hash of the old spelling, which `Policy.ir2_hashes` reproduces.
+ViolationAction = Literal["monitor_only", "project_fix", "brake", "loiter", "RTL",
+                          "land"]
+LEGACY_ACTION_SPELLINGS: dict[str, str] = {"repair": "project_fix"}
+# What an omitted constraint_type / priority / violation_action MEANT under
+# IR schema 2.x, when they had defaults. Not a default any more: used only to
+# read a record written then that relied on them (guardrail.bundle.derive, the
+# lock's hot-apply recipes), so it is rebuilt exactly as it flew.
+IR2_RULE_DEFAULTS: dict[str, str] = {"constraint_type": "hard", "priority": "P0",
+                                     "violation_action": "repair"}
 
 # Merge precedence, lowest first (grant: "mission > site > regulation").
 LAYER_ORDER: tuple[str, ...] = ("regulation", "site", "mission")
@@ -321,17 +334,28 @@ def _normalise_rule(cls, data):
 class ConstraintBase(BaseModel):
     """The grant's ConstraintBase (Policy DSL page).
 
+    `constraint_type`, `priority` and `violation_action` are REQUIRED, as the
+    grant writes them (IR schema 3.0.0, 2026-11-02). Until then they defaulted
+    to hard / P0 / `repair`, so a rule that said nothing about how hard it was
+    or what a breach does was enforced as the strictest rule with a
+    projection repair - a safe guess, but a guess the policy's author never
+    made, and the reference implementation guesses differently (priority P1).
+    Every shipped policy already wrote all three; every rule built in code now
+    states them too.
+
     `scope` and `layer` were added on 2026-10-06. Absent means the grant's
     default ("mission" for both, `DEFAULT_SCOPE` / `DEFAULT_LAYER`) and stays
     absent in the IR, so a policy that does not write them hashes as before.
-    The Shield enforces every rule everywhere; a narrower `scope` (segment,
-    waypoint) is therefore enforced more widely than written, never less.
+    The grant gives `scope` no default either; it stays optional here (open:
+    docs/FINAL-REPORT-outline.md Appendix A, WP1-01). The Shield enforces every
+    rule everywhere; a narrower `scope` (segment, waypoint) is therefore
+    enforced more widely than written, never less.
     """
     model_config = _IR_CONFIG
     id: str = Field(min_length=1)
-    constraint_type: Literal["hard", "soft"] = "hard"
-    priority: Literal["P0", "P1", "P2"] = "P0"
-    violation_action: ViolationAction = "repair"
+    constraint_type: Literal["hard", "soft"]
+    priority: Literal["P0", "P1", "P2"]
+    violation_action: ViolationAction
     scope: Scope | None = None
     layer: Layer | None = None
     # Provenance a layer merge leaves behind: the LOWER layers that wrote a
@@ -370,12 +394,20 @@ class ConstraintBase(BaseModel):
     def _post_normalise(cls, data: dict) -> dict:
         return data
 
+    @field_validator("violation_action", mode="before")
+    @classmethod
+    def _legacy_spelling(cls, v):
+        # `repair` (this repository's spelling until IR 3.0.0) is read as the
+        # grant's project_fix, at this boundary, so nothing downstream - the
+        # IR, the CSP, the escalation FSM - ever sees the old name. Exact
+        # spelling only: any other unknown name is refused below.
+        return LEGACY_ACTION_SPELLINGS.get(v, v) if isinstance(v, str) else v
+
     @field_validator("violation_action")
     @classmethod
     def _known_to_the_fsm(cls, v: str) -> str:
         # Checked against the escalation FSM's own table so the two cannot
-        # drift apart; the value is STORED AS WRITTEN (`repair` stays `repair`)
-        # so the canonical IR, and every stored hash, are unchanged.
+        # drift apart.
         canonical_action(v)
         return v
 
@@ -533,6 +565,64 @@ def polygon_problem(pts) -> str | None:
     return None
 
 
+def _stored_pair(p) -> tuple[float, float]:
+    """The coordinates a point is STORED by: (lat, lon) for a WGS84 point,
+    (x, y) metres otherwise; from an XY or from a point dict."""
+    if isinstance(p, dict):
+        if p.get("lat") is not None and p.get("lon") is not None:
+            return (float(p["lat"]), float(p["lon"]))
+        return (float(p["x"]), float(p["y"]))
+    return (p.lat, p.lon) if p.geographic else (p.x, p.y)
+
+
+def canonical_ring_order(points: list) -> list:
+    """The same ring in its canonical order (IR schema 3.0.0, WP1-02): wound
+    with POSITIVE signed area over the stored coordinate pairs, starting at
+    the lexicographically smallest one. The grant's ingest pipeline names
+    "ring direction" under geometry normalisation; until 2026-11-02 the
+    direction was checked (polygon_problem) but kept as written, so the same
+    zone written clockwise, or from another vertex, had another policy_hash.
+
+    The stored pairs are (x = North, y = East) for a metre point and
+    (lat, lon) for a WGS84 one. Both put north first, and the local
+    projection scales each axis by a positive factor, so the winding is the
+    same in either; on a north-up map a positive ring runs clockwise. It is
+    what shapely's orient(..., sign=1.0) gives for these tuples, and the
+    order the grant's worked example and all three of the reference
+    implementation's documents already use, so their reference hashes do
+    not move.
+
+    Only the ORDER changes: the multiset of vertices is the same, so every
+    vertex mean (the derived frame origin, a dynamic_nfz's rotation centre)
+    and every vertex the Shield measures from are unchanged. A ring whose
+    points are not all in one frame, or with no area, is returned as given
+    (the validators refuse both). Where the smallest pair occurs more than
+    once (a doubled vertex), the smallest rotation as a whole wins."""
+    pts = list(points)
+    kinds = {(p.get("lat") is not None) if isinstance(p, dict) else p.geographic
+             for p in pts}
+    if len(kinds) != 1:
+        return pts
+    return [pts[i] for i in ring_order([_stored_pair(p) for p in pts])]
+
+
+class _CanonicalRing:
+    """Shared by the keep-out polygons: the ring is stored in its canonical
+    order (canonical_ring_order), and the order it was GIVEN in is kept
+    beside it, outside the IR (a pydantic private attribute, `_given_vertices`,
+    declared on each model), so the hash an IR 2.x artefact recorded for it
+    can still be reproduced (Policy.ir2_hashes)."""
+
+    def _canonicalise_ring(self) -> None:
+        self._given_vertices = list(self.vertices)
+        self.vertices = canonical_ring_order(self.vertices)
+
+    def given_vertices(self) -> list:
+        """The vertices in the order this rule was given them."""
+        return list(self._given_vertices if self._given_vertices is not None
+                    else self.vertices)
+
+
 def _point_in_ring(x: float, y: float, ring) -> bool:
     """Even-odd containment of (x, y) in a simple ring (boundary counts)."""
     inside = False
@@ -586,14 +676,20 @@ class _Banded:
             raise ValueError(f"{self.id}: ceiling must be > floor")
 
 
-class PolygonFence(_Banded, ConstraintBase):
-    """Keep-OUT no-fly zone. Violated when a (predicted) position is inside."""
+class PolygonFence(_Banded, _CanonicalRing, ConstraintBase):
+    """Keep-OUT no-fly zone. Violated when a (predicted) position is inside.
+
+    The ring is stored in its canonical order (canonical_ring_order, IR
+    schema 3.0.0): the same zone written in another direction or from
+    another vertex is the same IR and the same policy_hash."""
     type: Literal["polygon_fence"]
     vertices: list[XY] = Field(min_length=3)
     altitude_floor_m: float = 0.0
     altitude_ceiling_m: float = 1000.0
     margin_m: float = 1.0            # extra safety ring around the polygon
     altitude_ref: AltitudeRef | None = None
+
+    _given_vertices: list | None = PrivateAttr(default=None)
 
     GRANT_GEOMETRY: ClassVar[frozenset[str]] = _FENCE_GEOMETRY
     GRANT_DEFAULTS: ClassVar[dict[str, Any]] = _FENCE_GRANT_DEFAULTS
@@ -608,6 +704,9 @@ class PolygonFence(_Banded, ConstraintBase):
         why = polygon_problem(self.ring())
         if why:
             raise ValueError(f"{self.id}: {why}")
+        # A circle_fence's vertices are derived and not part of the IR.
+        if self.type != "circle_fence":
+            self._canonicalise_ring()
         return self
 
     def ring(self) -> list[tuple[float, float]]:
@@ -853,7 +952,7 @@ class Motion(BaseModel):
     yaw_rate_dps: float = 0.0
 
 
-class DynamicNFZ(_Banded, ConstraintBase):
+class DynamicNFZ(_Banded, _CanonicalRing, ConstraintBase):
     """Grant: hot-applicable "Polygon with motion (translate / rotate) injected
     mid-flight".
 
@@ -871,6 +970,8 @@ class DynamicNFZ(_Banded, ConstraintBase):
     altitude_ref: AltitudeRef | None = None
     motion: Motion | None = None         # absent = does not move once spawned
 
+    _given_vertices: list | None = PrivateAttr(default=None)
+
     GRANT_GEOMETRY: ClassVar[frozenset[str]] = _FENCE_GEOMETRY
     GRANT_DEFAULTS: ClassVar[dict[str, Any]] = _FENCE_GRANT_DEFAULTS
 
@@ -880,6 +981,9 @@ class DynamicNFZ(_Banded, ConstraintBase):
         why = polygon_problem([(v.x, v.y) for v in self.vertices])
         if why:
             raise ValueError(f"{self.id}: {why}")
+        # Canonical order (see PolygonFence). ring_at rotates about the vertex
+        # MEAN, which reordering does not move, so the motion is unchanged.
+        self._canonicalise_ring()
         return self
 
     def ring_at(self, t_s: float) -> list[tuple[float, float]]:
@@ -994,11 +1098,11 @@ GRANT_TYPES: tuple[str, ...] = (
     "time_window_switch", "corridor_swap")
 # Breach actions the Shield performs itself, whatever rail flies it. Since
 # 2026-10-07 the Shield dispatches on the rule's action (guardrail/shield.py,
-# ENFORCEMENT): repair / project_fix repair, monitor_only is recorded and never
+# ENFORCEMENT): project_fix repairs, monitor_only is recorded and never
 # repaired, brake skips projection and stops. Until then it repaired, then
-# braked, for every rule.
-SHIELD_ACTS_ON: frozenset[str] = frozenset({"repair", "project_fix", "monitor_only",
-                                            "brake"})
+# braked, for every rule. (`repair`, read as project_fix since IR 3.0.0, is
+# never stored, so it is not listed.)
+SHIELD_ACTS_ON: frozenset[str] = frozenset({"project_fix", "monitor_only", "brake"})
 # Mode-changing actions: the Shield skips projection and stops (where a stop
 # is legal) and its escalation FSM (guardrail/fsm.py) requests the mode. The
 # mode itself is flown only where the rail passes ShieldDecision.set_mode to an
@@ -1169,29 +1273,86 @@ class Policy(BaseModel):
         and v3 are the same bytes, so nothing is listed."""
         if not self.is_geographic:
             return {}
-        dump = _metric_view(self.model_dump(mode="json", exclude_none=True))
+        # v2 was one day's scheme (2026-10-06), so its IR is the 2.x shape.
+        dump = _metric_view(self._ir2_dump(mode="json", exclude_none=True))
         return {PRIOR_SCHEME_V2: "sha256:" + hashlib.sha256(canonical_json(dump)).hexdigest()}
+
+    def _ir2_dump(self, *, mode: str = "json", exclude_none: bool = True,
+                  repair: bool = True) -> dict:
+        """This policy's dump as IR schema 2.x stored it: every polygon ring in
+        the order it was GIVEN (3.0.0 stores it canonically) and, with
+        `repair`, the grant's project_fix spelt `repair` (3.0.0 stores only
+        the grant's six). Every form recorded before 2026-11-02 digests this
+        view, not the current IR."""
+        d = self.model_dump(mode=mode, exclude_none=exclude_none)
+        for c, rd in zip(self.constraints, d["constraints"]):
+            if isinstance(c, _CanonicalRing) and "vertices" in rd:
+                rd["vertices"] = [v.model_dump(mode=mode, exclude_none=exclude_none)
+                                  for v in c.given_vertices()]
+            if repair and rd.get("violation_action") == "project_fix":
+                rd["violation_action"] = "repair"
+        return d
+
+    def ir2_hashes(self) -> dict[str, str]:
+        """The full-length hashes an IR schema 2.x artefact recorded for this
+        policy, where they differ from the current one, keyed by form.
+
+        IR 3.0.0 (2026-11-02) moved the canonical bytes two ways: `repair` is
+        stored as project_fix, and polygon rings in canonical order. A run,
+        bundle or lock entry from before carries the hash of the old bytes.
+        Two forms are reproduced: IR2_FORM, every project_fix spelt `repair`
+        (what every policy of this repository wrote, and what the old default
+        meant), and IR2_FORM_AS_WRITTEN, project_fix kept (a grant-form
+        document that wrote it). A 2.x document that mixed both spellings in
+        one policy matches neither; none is known. Both use the ring order
+        the policy was given, so they reproduce the old hash for a policy
+        loaded from the old file or the old artefact, not for one rebuilt
+        from a 3.0.0 IR (whose given order is the canonical one).
+
+        Kept apart from `prior_hashes` on purpose: the lock treats a prior
+        SCHEME's hash as the same content under a newer encoding, but these
+        are another IR, so a policy file still at its old version is reported
+        as changed and must raise it (the lock's `migrated_from`)."""
+        cur = self.policy_hash
+        out: dict[str, str] = {}
+        for name, rep in ((IR2_FORM, True), (IR2_FORM_AS_WRITTEN, False)):
+            dump = self._ir2_dump(mode="json", exclude_none=True, repair=rep)
+            if self.is_geographic:
+                dump = _geo_canonical(dump)
+            h = "sha256:" + hashlib.sha256(canonical_json(dump)).hexdigest()
+            if h != cur and h not in out.values():
+                out[name] = h
+        return out
 
     def hash_form(self, recorded: str | None) -> str | None:
         """Which identity form `recorded` is for THIS policy, or None.
 
         Returns HASH_SCHEME for the current 64-hex hash, the scheme name of a
-        prior full-length form, the name of the legacy 16-hex form it matches,
-        or REFERENCE_FORM for the reference implementation's hash of the same
-        document. None means the recorded hash is not this policy under any
-        form we know - the caller must refuse, not guess.
+        prior full-length form, an IR 2.x form (`ir2_hashes`), the name of the
+        legacy 16-hex form it matches, or REFERENCE_FORM for the reference
+        implementation's hash of the same document (its rings in canonical
+        order, or as given). None means the recorded hash is not this policy
+        under any form we know - the caller must refuse, not guess.
         """
         if not recorded:
             return None
         if recorded == self.policy_hash:
             return HASH_SCHEME
+        if recorded == self.policy_hash_short:
+            # The display form, pinned by hand (a scenario's expected_hash).
+            # Until IR 3.0.0 it equalled legacy16-exclude-none for every metre
+            # policy and was recognised as that; the IR 2.x view now differs.
+            return SHORT_FORM
         for name, h in self.prior_hashes().items():
+            if recorded == h:
+                return name
+        for name, h in self.ir2_hashes().items():
             if recorded == h:
                 return name
         for name, h in self.legacy_hashes().items():
             if recorded == h:
                 return name
-        if recorded == self.reference_hash():
+        if recorded in (self.reference_hash(), self.reference_hash(given=True)):
             return REFERENCE_FORM
         return None
 
@@ -1234,14 +1395,17 @@ class Policy(BaseModel):
                            f"of the reference)")
         return why
 
-    def reference_ir(self) -> dict | None:
+    def reference_ir(self, given: bool = False) -> dict | None:
         """This policy exactly as the reference's `PolicyDoc.model_dump(mode=
         "json")` would hold it - the bytes its bundle ships and its hash covers -
         or None when the reference cannot represent it (`reference_problems`).
 
         Absent scope/layer/altitude_ref are written as the reference's defaults
-        ("mission", "mission", "AGL"), and `repair` in the grant's spelling
-        (`project_fix`), because that is what the reference stores for them."""
+        ("mission", "mission", "AGL"), because that is what the reference
+        stores for them. Rings are written in their canonical order (the IR's,
+        so the document is the same before and after a bundle); `given=True`
+        writes them in the order this policy was given them, which is what
+        the reference hashed for a document it read itself."""
         if self.reference_problems():
             return None
         rules = []
@@ -1251,8 +1415,9 @@ class Policy(BaseModel):
                  "layer": c.effective_layer,
                  "violation_action": canonical_action(c.violation_action)}
             if c.type == "polygon_fence":
+                ring = c.given_vertices() if given else c.vertices
                 r["geometry"] = {"vertices": [{"lat": v.lat, "lon": v.lon}
-                                              for v in c.vertices],
+                                              for v in ring],
                                  "altitude_floor_m": c.altitude_floor_m,
                                  "altitude_ceiling_m": c.altitude_ceiling_m,
                                  "altitude_ref": c.altitude_ref or "AGL"}
@@ -1264,7 +1429,7 @@ class Policy(BaseModel):
                 "generation": self.generation, "issued_at": self.issued_at,
                 "constraints": rules}
 
-    def reference_hash(self) -> str | None:
+    def reference_hash(self, given: bool = False) -> str | None:
         """The reference implementation's policy_hash for this document: its
         `policy_hash(doc.model_dump(mode="json"))` (policy_dsl/ir.py build_ir,
         vlaguard_common/hashing.py canonicalize) over the authored document as
@@ -1273,8 +1438,9 @@ class Policy(BaseModel):
         cannot hold the document at all (`reference_problems`); a hash of a
         document its loader would refuse is a number nobody can check, so none
         is invented. Checked against the reference's own loader, in its own
-        3.11 environment, by tools/wp1_roundtrip_kpi.py."""
-        ref = self.reference_ir()
+        3.11 environment, by tools/wp1_roundtrip_kpi.py. `given`: see
+        reference_ir."""
+        ref = self.reference_ir(given=given)
         if ref is None:
             return None
         return "sha256:" + hashlib.sha256(canonical_json(ref)).hexdigest()
@@ -1335,7 +1501,7 @@ class Policy(BaseModel):
             if "violation_action" in d:
                 r["violation_action"] = d["violation_action"]
         pol = cls.model_validate(out)
-        if pol.reference_ir() != doc:
+        if pol.reference_ir() != canonical_reference_doc(doc):
             raise ValueError("the reference delta does not round-trip: the policy "
                              "it rebuilds does not write back the archived "
                              "reference document")
@@ -1641,6 +1807,37 @@ def _geo_canonical(node):
     return node
 
 
+def canonical_reference_doc(doc):
+    """A reference-form document (PolicyDoc dump) with every polygon ring in
+    canonical order (canonical_ring_order): what `Policy.reference_ir()`
+    writes for the same policy, whatever order the document was written in."""
+    import copy
+    out = copy.deepcopy(doc)
+    for r in (out.get("constraints") or []) if isinstance(out, dict) else []:
+        geo = r.get("geometry") if isinstance(r, dict) else None
+        if isinstance(geo, dict) and isinstance(geo.get("vertices"), list) and \
+                all(isinstance(v, dict) and "lat" in v and "lon" in v
+                    for v in geo["vertices"]):
+            geo["vertices"] = canonical_ring_order(geo["vertices"])
+    return out
+
+
+def ir2_rule_view(rule: dict) -> dict:
+    """One rule of an archived IR (a bundle's ir.json, a policy_g<N>.json) as
+    IR schema 3.0.0 stores it: `repair` read as project_fix, a keep-out ring
+    in canonical order. For comparing an archived 2.x document with the
+    policy rebuilt from it (guardrail.bundle.check_bundle)."""
+    out = dict(rule)
+    va = out.get("violation_action")
+    if isinstance(va, str):
+        out["violation_action"] = LEGACY_ACTION_SPELLINGS.get(va, va)
+    if out.get("type") in ("polygon_fence", "dynamic_nfz") and \
+            isinstance(out.get("vertices"), list) and \
+            all(isinstance(v, dict) for v in out["vertices"]):
+        out["vertices"] = canonical_ring_order(out["vertices"])
+    return out
+
+
 def _metric_view(node):
     """Drop lat/lon from every point, keeping x/y: what the IR held before
     hash scheme v3 (and what every legacy era hashed)."""
@@ -1839,6 +2036,16 @@ def _geometry_conflicts(policy: Policy) -> list[str]:
 # hashed their projected metres. For every metre policy the bytes are the same.
 HASH_SCHEME = "sha256-canonical-v3"
 PRIOR_SCHEME_V2 = "sha256-canonical-v2"
+# The same v3 canonical bytes of the IR as schema 2.x held it (Policy.
+# ir2_hashes): rings as given and `repair` for project_fix, or project_fix as
+# written. Every hash recorded before 2026-11-02 is in one of these (or older)
+# forms.
+IR2_FORM = "sha256-canonical-v3/ir-2.x"
+IR2_FORM_AS_WRITTEN = "sha256-canonical-v3/ir-2.x-project_fix"
+IR2_FORMS = (IR2_FORM, IR2_FORM_AS_WRITTEN)
+# The first 16 hex of the current hash (Policy.policy_hash_short), recognised
+# as a hand-written pin; no artefact is written in it.
+SHORT_FORM = "sha256-canonical-v3/short16"
 # The reference implementation's hash of the same document (see reference_ir).
 REFERENCE_FORM = "reference-policy-dsl-0.1"
 # Fields the reference writes out when this project leaves them absent
@@ -1866,7 +2073,15 @@ _REFERENCE_DEFAULTED = ("scope", "layer", "altitude_ref")
 # through unbumped, because it moves no stored hash; that is this project's
 # rule, not the grant's, and `locked_by` (2385f84, 2026-10-19) went in under
 # it. 2.2.0 (2026-11-02) is that change, versioned: no field moved.
-IR_SCHEMA_VERSION = "2.2.0"
+#
+# 3.0.0 (2026-11-02, WP1-01 / WP1-02): constraint_type, priority and
+# violation_action are required (they defaulted to hard / P0 / `repair`);
+# violation_action holds the grant's six only (`repair` is read as
+# project_fix); polygon rings are stored in canonical order. Every policy
+# that spelt `repair`, or wrote a ring in another order, has a new hash: a
+# major version, as 2.0.0 was. Old hashes resolve through Policy.ir2_hashes
+# and the lock's `migrated_from` (docs/IR-MIGRATIONS.md).
+IR_SCHEMA_VERSION = "3.0.0"
 
 # The schema eras the old 16-hex hash went through, by which None-valued keys
 # `model_dump()` emitted as null in each. Derived from `git log -- guardrail/
@@ -1975,9 +2190,12 @@ def _legacy16(policy: "Policy", keep_null: frozenset[str]) -> str:
     The old code used json.dumps' default ensure_ascii=True and the Python-mode
     dump; both are reproduced exactly, because a form that is merely close
     verifies nothing. Fields added since are None for any policy those eras
-    could hold, so pruning drops them; points are taken as x/y, as stored then.
+    could hold, so pruning drops them; points are taken as x/y, as stored then;
+    and the IR is the 2.x one (`Policy._ir2_dump`: rings as given, `repair`),
+    because no legacy era knew IR 3.0.0.
     """
-    dump = _prune_nulls(_metric_view(policy.model_dump()), keep_null)
+    dump = _prune_nulls(_metric_view(policy._ir2_dump(mode="python", exclude_none=False)),
+                        keep_null)
     canon = json.dumps(dump, sort_keys=True, separators=(",", ":"))
     return "sha256:" + hashlib.sha256(canon.encode()).hexdigest()[:16]
 

@@ -49,8 +49,13 @@ from guardrail.models import (HASH_SCHEME, PRIOR_SCHEME_V2,         # noqa: E402
                               PolygonFence, SubjectStandoff, canonical_json,
                               ir_schema_defaults, load_policy)
 
+# The three ConstraintBase fields the grant requires (IR schema 3.0.0, 2026-11-02),
+# at the values they defaulted to before (repair = project_fix).
+HARD_P0 = {"constraint_type": "hard", "priority": "P0", "violation_action": "project_fix"}
+
 POLICIES = ROOT / "policies"
 DEMO = POLICIES / "sim_demo_policy.yaml"
+WGS84_YAML = POLICIES / "wgs84_taipei.yaml"
 PED = POLICIES / "sitl_pedestrian.yaml"
 SKIP = "SKIP"
 
@@ -85,8 +90,11 @@ def _era_dump(node):
 
 
 def _old_policy_hash(pol) -> str:
-    """The pre-2026-10-06 property body, verbatim, over that era's dump."""
-    canon = json.dumps(_era_dump(pol.model_dump()), sort_keys=True, separators=(",", ":"))
+    """The pre-2026-10-06 property body, verbatim, over that era's dump. That
+    era's model held the IR 2.x shape (rings as written, `repair`), which is
+    what `_ir2_dump` gives back since IR schema 3.0.0."""
+    canon = json.dumps(_era_dump(pol._ir2_dump(mode="python", exclude_none=False)),
+                       sort_keys=True, separators=(",", ":"))
     return "sha256:" + hashlib.sha256(canon.encode()).hexdigest()[:16]
 
 
@@ -151,19 +159,29 @@ def test_the_short_hash_is_the_july_hash():
     """For the None-free schema of July/August, old 16-hex and new 64-hex are
     the same SHA-256 over the same bytes, one truncated. For a geographic
     policy that holds for the v2 form (projected metres), which is what every
-    old era hashed; v3 stores lat/lon instead (2026-10-06)."""
+    old era hashed; v3 stores lat/lon instead (2026-10-06). Since IR schema
+    3.0.0 (2026-11-02) the bytes those eras hashed are the IR 2.x view
+    (`ir2_hashes`), and the July hash belongs to the file's OLD version: the
+    migrated file at its new version answers to it only when put back
+    (`as_version`, which is what the lock's `migrated_from` records)."""
+    from guardrail.bundle import as_version
+    from guardrail.models import IR2_FORM
     for f in _policy_files():
         pol = load_policy(f)
-        full = pol.prior_hashes().get(PRIOR_SCHEME_V2, pol.policy_hash)
+        full = (pol.prior_hashes().get(PRIOR_SCHEME_V2)
+                or pol.ir2_hashes().get(IR2_FORM, pol.policy_hash))
         assert full[:len("sha256:") + 16] == pol.legacy_hashes()["legacy16-exclude-none"], f.name
         assert pol.policy_hash.startswith(pol.policy_hash_short)
-        assert (pol.policy_hash_short == pol.legacy_hashes()["legacy16-exclude-none"]) \
-            == (not pol.is_geographic), f.name
     demo = load_policy(DEMO)
-    assert demo.policy_hash_short == JULY_SIM_DEMO, demo.policy_hash_short
-    assert demo.hash_form(JULY_SIM_DEMO) == "legacy16-exclude-none"
-    assert demo.hash_form(SEPT_SIM_DEMO) == "legacy16-include-defaults"
-    assert _old_policy_hash(demo) == SEPT_SIM_DEMO
+    assert demo.version == "0.1.2" and demo.hash_form(JULY_SIM_DEMO) is None, \
+        "the July hash is fase3-sim-demo@0.1.1's, not the migrated 0.1.2's"
+    old = as_version(demo, "0.1.1")
+    assert old.ir2_hashes()[IR2_FORM][:len("sha256:") + 16] == JULY_SIM_DEMO
+    assert old.hash_form(JULY_SIM_DEMO) == "legacy16-exclude-none"
+    assert old.hash_form(SEPT_SIM_DEMO) == "legacy16-include-defaults"
+    assert _old_policy_hash(old) == SEPT_SIM_DEMO
+    assert old.hash_form(load_lock()["policies"]["fase3-sim-demo@0.1.1"]["policy_hash"]) \
+        == IR2_FORM
     assert demo.hash_form(demo.policy_hash) == HASH_SCHEME
 
 
@@ -189,14 +207,28 @@ def test_a_hot_apply_still_restamps_the_hash():
 # --------------------------------------------------------------------------- #
 
 def test_the_dynamic_runs_rebuild_from_the_lock():
-    """No file on disk produces a mid-flight hash; the lock's recipe does."""
+    """No file on disk produces a mid-flight hash; the lock's recipe does. The
+    recipe's base is fase3-sim-demo@0.1.1, which sim_demo_policy.yaml left for
+    0.1.2 at IR schema 3.0.0: the base is the file put back at 0.1.1, and the
+    recipe - written under IR 2.x, its rule omits the three ConstraintBase
+    fields - is read with the 2.x defaults (derive, IR2_RULE_DEFAULTS)."""
+    from guardrail.bundle import as_version
+    from guardrail.models import IR2_FORM
     lock = load_lock()
     (d,) = [x for x in lock["derived"] if x["base"] == "fase3-sim-demo@0.1.1"]
-    pol = derive(load_policy(DEMO), d["hot_apply"], d["generations"])
+    pol = derive(as_version(load_policy(DEMO), "0.1.1"), d["hot_apply"], d["generations"])
     assert pol.generation == 1
     assert pol.hash_form(DYNAMIC_RUNS) == "legacy16-exclude-none"
-    assert pol.policy_hash == d["policy_hash"]
+    assert pol.hash_form(d["policy_hash"]) == IR2_FORM
     assert pol.legacy_hashes() == d["legacy_hashes"]
+    assert any(n == d["name"] and p.hash_form(DYNAMIC_RUNS) for n, p in policy_candidates())
+    # A recipe written under 3.0.0 must state the fields, as a policy must.
+    try:
+        derive(load_policy(DEMO), d["hot_apply"], ir_schema_version="3.0.0")
+    except ValueError as e:
+        assert "Field required" in str(e), e
+    else:
+        raise AssertionError("a 3.0.0 recipe without constraint_type was accepted")
 
 
 def test_the_lock_recipe_is_the_fence_the_rails_hot_apply():
@@ -254,14 +286,16 @@ def test_every_stored_manifest_resolves_to_a_policy():
 
 def _geo_policy(**rule_extra):
     """A policy the reference implementation can hold: WGS84 fence with no
-    margin ring, an altitude envelope; scope / layer / altitude_ref absent and
-    `repair` spelt this project's way, the two things its form writes out."""
+    margin ring, an altitude envelope; scope / layer / altitude_ref absent,
+    the things its form writes out. The breach action is written `repair`,
+    the spelling read as project_fix since IR schema 3.0.0."""
     sq = [{"lat": 25.0421, "lon": 121.5310}, {"lat": 25.0428, "lon": 121.5310},
           {"lat": 25.0428, "lon": 121.5318}]
+    rep = {**HARD_P0, "violation_action": "repair"}
     return Policy.model_validate({"policy_id": "geo", "version": "0.1.0", "constraints": [
-        {"id": "f", "type": "polygon_fence", "vertices": sq, "margin_m": 0.0,
+        {"id": "f", "type": "polygon_fence", **rep, "vertices": sq, "margin_m": 0.0,
          "altitude_floor_m": 0, "altitude_ceiling_m": 120, **rule_extra},
-        {"id": "alt", "type": "altitude_envelope", "alt_min_m": 5, "alt_max_m": 90,
+        {"id": "alt", "type": "altitude_envelope", **rep, "alt_min_m": 5, "alt_max_m": 90,
          "scope": "global"}]})
 
 
@@ -270,23 +304,26 @@ def test_the_reference_delta_rebuilds_the_source_exactly_and_nothing_else():
     (which its loader checks) and this project's hash of the SOURCE, rebuilt
     from the reference document plus `reference_delta`. The delta may only
     restore an absent default (scope, layer, altitude_ref) or a spelling
-    (repair); anything that would change what a rule means fails the round
-    trip (the rebuilt policy must write back the same reference document)."""
+    (repair, in a delta written before IR 3.0.0 - the IR no longer holds it);
+    anything that would change what a rule means fails the round trip (the
+    rebuilt policy must write back the same reference document)."""
     pol = _geo_policy()
+    assert {c.violation_action for c in pol.constraints} == {"project_fix"}
     doc = json.loads(json.dumps(pol.reference_ir()))
     delta = pol.reference_delta()
-    assert delta["rules"]["f"] == {"absent": ["scope", "layer", "altitude_ref"],
-                                   "violation_action": "repair"}, delta
-    assert delta["rules"]["alt"] == {"absent": ["layer", "altitude_ref"],
-                                     "violation_action": "repair"}, delta
+    assert delta["rules"]["f"] == {"absent": ["scope", "layer", "altitude_ref"]}, delta
+    assert delta["rules"]["alt"] == {"absent": ["layer", "altitude_ref"]}, delta
     back = Policy.from_reference(doc, delta)
     assert back.policy_hash == pol.policy_hash
+    # A delta written under IR 2.x carried the `repair` spelling; it still
+    # rebuilds the same policy.
+    old = {"rules": {k: {**v, "violation_action": "repair"} for k, v in delta["rules"].items()}}
+    assert Policy.from_reference(doc, old).policy_hash == pol.policy_hash
     assert Policy.model_validate(doc).policy_hash != pol.policy_hash, \
         "without the delta the document alone is a different policy (the third hash)"
     forged = [
         ("alt's written scope 'global' claimed absent (= mission)",
-         {"rules": {**delta["rules"], "alt": {"absent": ["scope", "layer", "altitude_ref"],
-                                              "violation_action": "repair"}}}),
+         {"rules": {**delta["rules"], "alt": {"absent": ["scope", "layer", "altitude_ref"]}}}),
         ("a breach action changed", {"rules": {**delta["rules"],
                                                "f": {**delta["rules"]["f"],
                                                      "violation_action": "brake"}}}),
@@ -361,18 +398,80 @@ def test_changing_content_without_a_version_bump_is_caught():
 def test_a_version_bump_is_locked_by_adding_never_by_rewriting():
     d = _copy_policies()
     f = d / DEMO.name
+    cur = load_policy(DEMO).version
     f.write_text(f.read_text(encoding="utf-8")
                  .replace("alt_max_m: 20", "alt_max_m: 25")
-                 .replace("version: 0.1.1", "version: 0.2.0"), encoding="utf-8")
+                 .replace(f"version: {cur}", "version: 0.2.0"), encoding="utf-8")
     lock_path = d / "lock.json"
     lock_path.write_text(LOCK_PATH.read_text(encoding="utf-8"), encoding="utf-8")
     problems = check_lock(d, load_lock(lock_path))
     assert any("fase3-sim-demo@0.2.0 is not in the lock" in x for x in problems), problems
     assert update_lock(d, lock_path, locked_on="2026-10-06") == ["fase3-sim-demo@0.2.0"]
     new = load_lock(lock_path)
-    assert new["policies"]["fase3-sim-demo@0.1.1"] == load_lock()["policies"]["fase3-sim-demo@0.1.1"], (
-        "the old entry was rewritten; stored runs flown under 0.1.1 lose their anchor")
+    key = f"fase3-sim-demo@{cur}"
+    assert new["policies"][key] == load_lock()["policies"][key], (
+        f"the old entry was rewritten; stored runs flown under {cur} lose their anchor")
+    assert "migrated_from" not in new["policies"]["fase3-sim-demo@0.2.0"], \
+        "a real content change was recorded as a migration"
     assert check_lock(d, new) == []
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def test_every_migrated_entry_reproduces_the_hash_it_replaces():
+    """IR schema 3.0.0 (2026-11-02) moved every shipped policy's hash (`repair`
+    stored as project_fix, rings in canonical order), so each file raised its
+    version and its new lock entry names the old one in `migrated_from`. The
+    claim is re-proved, not trusted: put back at the old version the file
+    reproduces the old entry's recorded hash and legacy hashes, and a run
+    recorded under the old version resolves to it (policy_candidates). A
+    forged or broken link is reported by check_lock."""
+    from guardrail.bundle import as_version
+    from guardrail.models import IR2_FORMS
+    lock = load_lock()
+    ents = lock["policies"]
+    cands = policy_candidates()
+    for f in _policy_files():
+        pol = load_policy(f, runtime=False)
+        ent = ents[lock_key(pol)]
+        assert ent.get("ir_schema_version") == "3.0.0", f.name
+        old_key = ent["migrated_from"]
+        assert old_key.rpartition("@")[2] < pol.version, (f.name, old_key)
+        old_ent = ents[old_key]
+        pin = old_ent["shared_by_files"][f.name] if "shared_by_files" in old_ent else old_ent
+        old = as_version(pol, old_key.rpartition("@")[2])
+        assert old.hash_form(pin["policy_hash"]) in (PRIOR_SCHEME_V2, *IR2_FORMS), f.name
+        assert old.legacy_hashes() == pin["legacy_hashes"], f.name
+        assert pol.hash_form(pin["policy_hash"]) is None, f"{f.name}: the old hash is not the new"
+        got, form, label = resolve_run_policy({"policy_hash": pin["policy_hash"]}, cands)
+        assert got is not None and label == f"{f.name} as {old_key}", (f.name, label)
+        short = pin["legacy_hashes"]["legacy16-exclude-none"]
+        assert resolve_run_policy({"policy_hash": short}, cands)[2] == f"{f.name} as {old_key}"
+    assert check_lock(POLICIES, lock) == []
+    # Broken links are caught: a hash the rewound file does not reproduce,
+    # and a migration claimed from another policy's entry.
+    key = lock_key(load_policy(DEMO))
+    bad = copy.deepcopy(lock)
+    bad["policies"][bad["policies"][key]["migrated_from"]]["policy_hash"] = "sha256:" + "0" * 64
+    assert any(key in x and "migrated_from" in x for x in check_lock(POLICIES, bad)), \
+        check_lock(POLICIES, bad)
+    forged = copy.deepcopy(lock)
+    forged["policies"][key]["migrated_from"] = "follow-car@0.1.0"
+    assert any(key in x and "migrated_from" in x for x in check_lock(POLICIES, forged)), \
+        check_lock(POLICIES, forged)
+
+
+def test_a_file_left_at_its_old_version_after_the_ir_change_is_caught():
+    """The lock's rule holds across an IR change: a policy whose canonical
+    bytes moved must raise its version. Put back at its old version, a
+    shipped file is reported as changed - not recorded as 'the same content
+    under a newer scheme', which is the treatment a prior hash SCHEME gets."""
+    d = _copy_policies()
+    f = d / DEMO.name
+    f.write_text(f.read_text(encoding="utf-8").replace("version: 0.1.2", "version: 0.1.1"),
+                 encoding="utf-8")
+    probs = check_lock(d)
+    assert any(DEMO.name in x and "content changed but version did not" in x
+               for x in probs), probs
     shutil.rmtree(d, ignore_errors=True)
 
 
@@ -392,19 +491,24 @@ def test_the_shared_identity_is_recorded_as_a_defect_not_hidden():
     src = (d / "random_scenario.yaml").read_text(encoding="utf-8")
     (d / "hard_99.yaml").write_text(src + "\n# a second copy\n", encoding="utf-8")
     problems = check_lock(d)
-    assert any("hard_99.yaml" in x and "own policy_id" in x for x in problems), problems
+    # Since IR schema 3.0.0 random_scenario.yaml is random-scenario@0.1.1, an
+    # entry of its own, so the second claimant meets the ordinary refusal.
+    assert any("hard_99.yaml" in x and ("own policy_id" in x or "must not share" in x)
+               for x in problems), problems
     shutil.rmtree(d, ignore_errors=True)
 
 
 def test_a_content_change_inside_the_shared_identity_is_still_caught():
-    """The file still under random-scenario@0.1.0 is pinned on its own, so the
-    old collision is not a blind spot: editing it without a version bump is
-    reported like any other content change (mutant M34). A file that moved to
-    its own identity is judged by that identity's entry."""
+    """Every file that shared random-scenario@0.1.0 is now judged by an entry
+    of its own (the hard_*/hp_* files since 2026-10-21, random_scenario.yaml
+    since it moved to 0.1.1 at IR schema 3.0.0), so editing one without a
+    version bump is reported like any other content change (mutant M34). The
+    shared entry still pins each file's old content."""
     d = _copy_policies()
-    for name, want in (("random_scenario.yaml", "content changed under random-scenario@0.1.0"),
+    for name, want in (("random_scenario.yaml", "content changed but version did not - "
+                                                "random-scenario@0.1.1"),
                        ("hard_3.yaml", "content changed but version did not - "
-                                       "random-scenario-hard-3@0.1.0")):
+                                       "random-scenario-hard-3@0.1.1")):
         f = d / name
         src = f.read_text(encoding="utf-8")
         assert "altitude_ceiling_m: 60\n" in src, src[:400]
@@ -462,7 +566,8 @@ def test_the_generator_gives_each_file_its_own_policy_id():
                 nfzs.append((v[0]["x"], v[1]["x"], v[0]["y"], v[2]["y"]))
             elif c["type"] == "altitude_envelope":
                 band = (c["alt_min_m"], c["alt_max_m"])
-        assert G.policy_yaml(doc["policy_id"], nfzs, *band) == \
+        # 0.1.1 since IR schema 3.0.0 (project_fix; the generator writes it)
+        assert G.policy_yaml(doc["policy_id"], nfzs, *band, version=doc["version"]) == \
             f.read_text(encoding="utf-8"), name
     # Read-only questions about policies/ itself (nothing is written):
     # regenerating a file is not a clash; a new file under a taken id is.
@@ -502,17 +607,20 @@ def test_a_file_that_left_a_shared_identity_must_be_locked_under_its_own():
     lock = load_lock()
     ents = lock["policies"]
     for name in GENERATED:
-        key = f"random-scenario-{name.replace('_', '-')}@0.1.0"
+        key = lock_key(load_policy(POLICIES / f"{name}.yaml", runtime=False))
+        assert key.startswith(f"random-scenario-{name.replace('_', '-')}@"), key
         assert ents[key]["file"] == f"{name}.yaml", key
         assert ents[key]["previously"] == "random-scenario@0.1.0", key
         assert f"{name}.yaml" in ents["random-scenario@0.1.0"]["shared_by_files"]
     assert check_lock(POLICIES, lock) == []
+    hard3 = lock_key(load_policy(POLICIES / "hard_3.yaml", runtime=False))
+    hp8 = lock_key(load_policy(POLICIES / "hp_8.yaml", runtime=False))
     no_ptr = copy.deepcopy(lock)
-    del no_ptr["policies"]["random-scenario-hard-3@0.1.0"]["previously"]
+    del no_ptr["policies"][hard3]["previously"]
     assert any("random-scenario@0.1.0" in x and "hard_3.yaml" in x and "no longer do" in x
                for x in check_lock(POLICIES, no_ptr)), check_lock(POLICIES, no_ptr)
     unlocked = copy.deepcopy(lock)
-    del unlocked["policies"]["random-scenario-hp-8@0.1.0"]
+    del unlocked["policies"][hp8]
     probs = check_lock(POLICIES, unlocked)
     assert any("hp_8.yaml" in x and "not in the lock" in x for x in probs), probs
     assert any("hp_8.yaml" in x and "no longer do" in x for x in probs), probs
@@ -521,15 +629,17 @@ def test_a_file_that_left_a_shared_identity_must_be_locked_under_its_own():
     try:
         before = copy.deepcopy(lock)
         for name in GENERATED:
-            del before["policies"][f"random-scenario-{name.replace('_', '-')}@0.1.0"]
+            del before["policies"][lock_key(load_policy(POLICIES / f"{name}.yaml",
+                                                        runtime=False))]
         lp = d / "lock.json"
         lp.write_text(json.dumps(before), encoding="utf-8")
         added = update_lock(d, lp, locked_on="2026-10-21")
         assert len(added) == len(GENERATED), added
         new = load_lock(lp)
         assert new["policies"]["random-scenario@0.1.0"] == lock["policies"]["random-scenario@0.1.0"]
-        assert new["policies"]["random-scenario-hp-42@0.1.0"]["previously"] == \
-            "random-scenario@0.1.0"
+        hp42 = lock_key(load_policy(POLICIES / "hp_42.yaml", runtime=False))
+        assert new["policies"][hp42]["previously"] == "random-scenario@0.1.0"
+        assert new["policies"][hp42]["migrated_from"] == "random-scenario-hp-42@0.1.0"
         assert check_lock(d, new) == []
     finally:
         shutil.rmtree(d, ignore_errors=True)
@@ -558,8 +668,14 @@ def test_a_prior_scheme_entry_must_record_the_current_form():
     d = _copy_policies()
     lock_path = d / "lock.json"
     lock = load_lock()
-    key = "wgs84-taipei-demo@0.1.0"
-    del lock["policies"][key]["hashes"]
+    # Since IR schema 3.0.0 wgs84_taipei.yaml is locked under the current
+    # scheme; a v2-era entry for it, as the lock held for 0.1.0, is rebuilt
+    # here so the mechanism keeps its test.
+    pol = load_policy(WGS84_YAML)
+    key = lock_key(pol)
+    lock["policies"][key] = {"file": WGS84_YAML.name, "locked_on": "2026-10-06",
+                             "policy_hash": pol.prior_hashes()[PRIOR_SCHEME_V2],
+                             "legacy_hashes": pol.legacy_hashes()}
     lock_path.write_text(json.dumps(lock), encoding="utf-8")
     problems = check_lock(d, load_lock(lock_path))
     assert any("wgs84_taipei.yaml" in x and "not yet recorded" in x for x in problems), problems

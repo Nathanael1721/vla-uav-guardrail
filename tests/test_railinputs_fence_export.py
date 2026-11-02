@@ -29,23 +29,27 @@ from guardrail.fence_export import (defer_near, iter_zones,          # noqa: E40
                                     policy_zones, zone_clearance_m)
 from guardrail.models import Policy                                  # noqa: E402
 
+# The three ConstraintBase fields the grant requires (IR schema 3.0.0, 2026-11-02),
+# at the values they defaulted to before (repair = project_fix).
+HARD_P0 = {"constraint_type": "hard", "priority": "P0", "violation_action": "project_fix"}
+
 POLICY = ROOT / "policies" / "sim_demo_policy.yaml"
 _SQ = [{"x": 0, "y": 0}, {"x": 10, "y": 0}, {"x": 10, "y": 10}, {"x": 0, "y": 10}]
 
 
 def _timed() -> Policy:
     def zone(zid, dx, **kw):
-        return {"id": zid, "type": "polygon_fence", **kw,
+        return {"id": zid, "type": "polygon_fence", **HARD_P0, **kw,
                 "vertices": [{"x": v["x"] + dx, "y": v["y"]} for v in _SQ]}
     return Policy.model_validate({"policy_id": "timed", "constraints": [
         zone("yard", 0, valid_time={"recurrence": {"start_time": "07:30",
                                                    "end_time": "17:30"}}),
         zone("held", 40),
-        {"id": "sw-off", "type": "time_window_switch", "target_id": "held",
+        {"id": "sw-off", "type": "time_window_switch", **HARD_P0, "target_id": "held",
          "active": False, "valid_time": {"recurrence": {"start_time": "08:00",
                                                         "end_time": "08:30"}}},
         zone("plain", 80),
-        {"id": "lane", "type": "corridor", "width_m": 5,
+        {"id": "lane", "type": "corridor", **HARD_P0, "width_m": 5,
          "centerline": [{"x": -50, "y": 0}, {"x": 50, "y": 0}]},
     ]})
 

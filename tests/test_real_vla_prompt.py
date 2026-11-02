@@ -77,6 +77,10 @@ from guardrail.models import (AltitudeEnvelope, Corridor,          # noqa: E402
                               KinematicEnvelope, Policy, PolygonFence,
                               State, SubjectStandoff)
 
+# The three ConstraintBase fields the grant requires (IR schema 3.0.0, 2026-11-02),
+# at the values they defaulted to before (repair = project_fix).
+HARD_P0 = {"constraint_type": "hard", "priority": "P0", "violation_action": "project_fix"}
+
 URBAN = ROOT / "policies" / "urban_demo_policy.yaml"       # the demo's default
 PED = ROOT / "policies" / "sitl_pedestrian.yaml"
 CORRIDOR = ROOT / "policies" / "corridor_survey.yaml"
@@ -148,7 +152,7 @@ def _nothing_in_region():
     policy file can no longer reach the prompt builder; this one can, and it
     still exercises the "no sentences" refusal."""
     return Policy.model_validate({"policy_id": "nothing-in-region", "constraints": [
-        {"id": "nfz-far", "type": "polygon_fence", "vertices": [
+        {"id": "nfz-far", "type": "polygon_fence", **HARD_P0, "vertices": [
             {"x": 9000, "y": 9000}, {"x": 9010, "y": 9000},
             {"x": 9010, "y": 9010}, {"x": 9000, "y": 9010}]}]})
 

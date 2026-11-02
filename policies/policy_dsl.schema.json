@@ -36,6 +36,21 @@
           }
         },
         {
+          "required": [
+            "constraint_type"
+          ]
+        },
+        {
+          "required": [
+            "priority"
+          ]
+        },
+        {
+          "required": [
+            "violation_action"
+          ]
+        },
+        {
           "anyOf": [
             {
               "required": [
@@ -117,7 +132,6 @@
           "title": "Altitude Ref"
         },
         "constraint_type": {
-          "default": "hard",
           "enum": [
             "hard",
             "soft"
@@ -168,7 +182,6 @@
           "title": "Locked By"
         },
         "priority": {
-          "default": "P0",
           "enum": [
             "P0",
             "P1",
@@ -212,9 +225,7 @@
           "default": null
         },
         "violation_action": {
-          "default": "repair",
           "enum": [
-            "repair",
             "monitor_only",
             "project_fix",
             "brake",
@@ -480,6 +491,21 @@
           }
         },
         {
+          "required": [
+            "constraint_type"
+          ]
+        },
+        {
+          "required": [
+            "priority"
+          ]
+        },
+        {
+          "required": [
+            "violation_action"
+          ]
+        },
+        {
           "anyOf": [
             {
               "required": [
@@ -575,7 +601,6 @@
           "description": "The grant's name for `center`; give one of the two."
         },
         "constraint_type": {
-          "default": "hard",
           "enum": [
             "hard",
             "soft"
@@ -685,7 +710,6 @@
           "type": "number"
         },
         "priority": {
-          "default": "P0",
           "enum": [
             "P0",
             "P1",
@@ -734,9 +758,7 @@
           "default": null
         },
         "violation_action": {
-          "default": "repair",
           "enum": [
-            "repair",
             "monitor_only",
             "project_fix",
             "brake",
@@ -834,6 +856,21 @@
           }
         },
         {
+          "required": [
+            "constraint_type"
+          ]
+        },
+        {
+          "required": [
+            "priority"
+          ]
+        },
+        {
+          "required": [
+            "violation_action"
+          ]
+        },
+        {
           "anyOf": [
             {
               "required": [
@@ -913,7 +950,6 @@
           "type": "array"
         },
         "constraint_type": {
-          "default": "hard",
           "enum": [
             "hard",
             "soft"
@@ -1010,7 +1046,6 @@
           "title": "Locked By"
         },
         "priority": {
-          "default": "P0",
           "enum": [
             "P0",
             "P1",
@@ -1054,9 +1089,7 @@
           "default": null
         },
         "violation_action": {
-          "default": "repair",
           "enum": [
-            "repair",
             "monitor_only",
             "project_fix",
             "brake",
@@ -1167,6 +1200,21 @@
           }
         },
         {
+          "required": [
+            "constraint_type"
+          ]
+        },
+        {
+          "required": [
+            "priority"
+          ]
+        },
+        {
+          "required": [
+            "violation_action"
+          ]
+        },
+        {
           "anyOf": [
             {
               "required": [
@@ -1260,7 +1308,6 @@
           "type": "array"
         },
         "constraint_type": {
-          "default": "hard",
           "enum": [
             "hard",
             "soft"
@@ -1357,7 +1404,6 @@
           "title": "Locked By"
         },
         "priority": {
-          "default": "P0",
           "enum": [
             "P0",
             "P1",
@@ -1411,9 +1457,7 @@
           "default": null
         },
         "violation_action": {
-          "default": "repair",
           "enum": [
-            "repair",
             "monitor_only",
             "project_fix",
             "brake",
@@ -1442,6 +1486,21 @@
       "allOf": [
         {
           "required": [
+            "constraint_type"
+          ]
+        },
+        {
+          "required": [
+            "priority"
+          ]
+        },
+        {
+          "required": [
+            "violation_action"
+          ]
+        },
+        {
+          "required": [
             "object_class"
           ]
         },
@@ -1454,7 +1513,6 @@
       "description": "Grant: \"Min distance to typed object class (people, buildings, roads)\".\n\nDECLARABLE ONLY. The Shield has no map of people or roads; mapped buildings\nare covered by obstacle_clearance and the followed subject by\nsubject_standoff. A policy carrying this rule is refused by the flight\nloaders rather than flown with the rule silently ignored.",
       "properties": {
         "constraint_type": {
-          "default": "hard",
           "enum": [
             "hard",
             "soft"
@@ -1519,7 +1577,6 @@
           "type": "string"
         },
         "priority": {
-          "default": "P0",
           "enum": [
             "P0",
             "P1",
@@ -1563,9 +1620,7 @@
           "default": null
         },
         "violation_action": {
-          "default": "repair",
           "enum": [
-            "repair",
             "monitor_only",
             "project_fix",
             "brake",
@@ -1648,6 +1703,21 @@
           }
         },
         {
+          "required": [
+            "constraint_type"
+          ]
+        },
+        {
+          "required": [
+            "priority"
+          ]
+        },
+        {
+          "required": [
+            "violation_action"
+          ]
+        },
+        {
           "anyOf": [
             {
               "required": [
@@ -1698,7 +1768,6 @@
           "title": "Altitude Ref"
         },
         "constraint_type": {
-          "default": "hard",
           "enum": [
             "hard",
             "soft"
@@ -1806,7 +1875,6 @@
           "default": null
         },
         "priority": {
-          "default": "P0",
           "enum": [
             "P0",
             "P1",
@@ -1858,9 +1926,7 @@
           "type": "array"
         },
         "violation_action": {
-          "default": "repair",
           "enum": [
-            "repair",
             "monitor_only",
             "project_fix",
             "brake",
@@ -1908,7 +1974,6 @@
           "title": "Altitude Ref"
         },
         "constraint_type": {
-          "default": "hard",
           "enum": [
             "hard",
             "soft"
@@ -1959,7 +2024,6 @@
           "title": "Locked By"
         },
         "priority": {
-          "default": "P0",
           "enum": [
             "P0",
             "P1",
@@ -2003,9 +2067,7 @@
           "default": null
         },
         "violation_action": {
-          "default": "repair",
           "enum": [
-            "repair",
             "monitor_only",
             "project_fix",
             "brake",
@@ -2019,6 +2081,9 @@
       },
       "required": [
         "id",
+        "constraint_type",
+        "priority",
+        "violation_action",
         "type",
         "alt_min_m",
         "alt_max_m"
@@ -2060,7 +2125,6 @@
           "$ref": "#/$defs/IR.XY"
         },
         "constraint_type": {
-          "default": "hard",
           "enum": [
             "hard",
             "soft"
@@ -2116,7 +2180,6 @@
           "type": "number"
         },
         "priority": {
-          "default": "P0",
           "enum": [
             "P0",
             "P1",
@@ -2165,9 +2228,7 @@
           "default": null
         },
         "violation_action": {
-          "default": "repair",
           "enum": [
-            "repair",
             "monitor_only",
             "project_fix",
             "brake",
@@ -2181,6 +2242,9 @@
       },
       "required": [
         "id",
+        "constraint_type",
+        "priority",
+        "violation_action",
         "type",
         "center",
         "radius_m"
@@ -2227,7 +2291,6 @@
           "type": "array"
         },
         "constraint_type": {
-          "default": "hard",
           "enum": [
             "hard",
             "soft"
@@ -2278,7 +2341,6 @@
           "title": "Locked By"
         },
         "priority": {
-          "default": "P0",
           "enum": [
             "P0",
             "P1",
@@ -2322,9 +2384,7 @@
           "default": null
         },
         "violation_action": {
-          "default": "repair",
           "enum": [
-            "repair",
             "monitor_only",
             "project_fix",
             "brake",
@@ -2343,6 +2403,9 @@
       },
       "required": [
         "id",
+        "constraint_type",
+        "priority",
+        "violation_action",
         "type",
         "centerline",
         "width_m"
@@ -2389,7 +2452,6 @@
           "type": "array"
         },
         "constraint_type": {
-          "default": "hard",
           "enum": [
             "hard",
             "soft"
@@ -2440,7 +2502,6 @@
           "title": "Locked By"
         },
         "priority": {
-          "default": "P0",
           "enum": [
             "P0",
             "P1",
@@ -2489,9 +2550,7 @@
           "default": null
         },
         "violation_action": {
-          "default": "repair",
           "enum": [
-            "repair",
             "monitor_only",
             "project_fix",
             "brake",
@@ -2510,6 +2569,9 @@
       },
       "required": [
         "id",
+        "constraint_type",
+        "priority",
+        "violation_action",
         "type",
         "target_id",
         "centerline",
@@ -2523,7 +2585,6 @@
       "description": "Grant: \"Min distance to typed object class (people, buildings, roads)\".\n\nDECLARABLE ONLY. The Shield has no map of people or roads; mapped buildings\nare covered by obstacle_clearance and the followed subject by\nsubject_standoff. A policy carrying this rule is refused by the flight\nloaders rather than flown with the rule silently ignored.",
       "properties": {
         "constraint_type": {
-          "default": "hard",
           "enum": [
             "hard",
             "soft"
@@ -2588,7 +2649,6 @@
           "type": "string"
         },
         "priority": {
-          "default": "P0",
           "enum": [
             "P0",
             "P1",
@@ -2632,9 +2692,7 @@
           "default": null
         },
         "violation_action": {
-          "default": "repair",
           "enum": [
-            "repair",
             "monitor_only",
             "project_fix",
             "brake",
@@ -2648,6 +2706,9 @@
       },
       "required": [
         "id",
+        "constraint_type",
+        "priority",
+        "violation_action",
         "type",
         "object_class",
         "min_distance_m"
@@ -2686,7 +2747,6 @@
           "title": "Altitude Ref"
         },
         "constraint_type": {
-          "default": "hard",
           "enum": [
             "hard",
             "soft"
@@ -2753,7 +2813,6 @@
           "default": null
         },
         "priority": {
-          "default": "P0",
           "enum": [
             "P0",
             "P1",
@@ -2805,9 +2864,7 @@
           "type": "array"
         },
         "violation_action": {
-          "default": "repair",
           "enum": [
-            "repair",
             "monitor_only",
             "project_fix",
             "brake",
@@ -2821,6 +2878,9 @@
       },
       "required": [
         "id",
+        "constraint_type",
+        "priority",
+        "violation_action",
         "type",
         "vertices"
       ],
@@ -2837,7 +2897,6 @@
           "type": "number"
         },
         "constraint_type": {
-          "default": "hard",
           "enum": [
             "hard",
             "soft"
@@ -2888,7 +2947,6 @@
           "title": "Locked By"
         },
         "priority": {
-          "default": "P0",
           "enum": [
             "P0",
             "P1",
@@ -2937,9 +2995,7 @@
           "default": null
         },
         "violation_action": {
-          "default": "repair",
           "enum": [
-            "repair",
             "monitor_only",
             "project_fix",
             "brake",
@@ -2958,6 +3014,9 @@
       },
       "required": [
         "id",
+        "constraint_type",
+        "priority",
+        "violation_action",
         "type",
         "speed_max_mps",
         "climb_rate_max_mps",
@@ -2994,7 +3053,6 @@
       "description": "Keep at least `min_clearance_m` away from every MAPPED obstacle\n(surveyed buildings in the city occupancy grid).\n\nUnlike the other three, this rule cannot be evaluated from the policy file\nalone \u2014 it needs the occupancy map, which is handed to the Shield at\nconstruction time (`Shield(..., obstacle_map=...)`). With no map the rule\nis INERT: it never fires and never raises. Distance is measured in the\nhorizontal plane only; buildings are treated as infinitely tall columns,\nwhich is the conservative reading of a 2-D occupancy grid.\n\nsoft_margin_m widens the band the repair operator tapers speed over\n([0, min_clearance_m + soft_margin_m]); it never raises a violation on its\nown \u2014 hence \"slows, does not block\".\n\nWith subject_standoff this is this project's half of the grant's\n`distance_envelope` (buildings and the followed subject); the grant's own\nclass is declarable below as DistanceEnvelope.",
       "properties": {
         "constraint_type": {
-          "default": "hard",
           "enum": [
             "hard",
             "soft"
@@ -3050,7 +3108,6 @@
           "type": "number"
         },
         "priority": {
-          "default": "P0",
           "enum": [
             "P0",
             "P1",
@@ -3100,9 +3157,7 @@
           "default": null
         },
         "violation_action": {
-          "default": "repair",
           "enum": [
-            "repair",
             "monitor_only",
             "project_fix",
             "brake",
@@ -3116,6 +3171,9 @@
       },
       "required": [
         "id",
+        "constraint_type",
+        "priority",
+        "violation_action",
         "type",
         "min_clearance_m"
       ],
@@ -3148,7 +3206,7 @@
     },
     "IR.PolygonFence": {
       "additionalProperties": false,
-      "description": "Keep-OUT no-fly zone. Violated when a (predicted) position is inside.",
+      "description": "Keep-OUT no-fly zone. Violated when a (predicted) position is inside.\n\nThe ring is stored in its canonical order (canonical_ring_order, IR\nschema 3.0.0): the same zone written in another direction or from\nanother vertex is the same IR and the same policy_hash.",
       "properties": {
         "altitude_ceiling_m": {
           "default": 1000.0,
@@ -3177,7 +3235,6 @@
           "title": "Altitude Ref"
         },
         "constraint_type": {
-          "default": "hard",
           "enum": [
             "hard",
             "soft"
@@ -3233,7 +3290,6 @@
           "type": "number"
         },
         "priority": {
-          "default": "P0",
           "enum": [
             "P0",
             "P1",
@@ -3285,9 +3341,7 @@
           "type": "array"
         },
         "violation_action": {
-          "default": "repair",
           "enum": [
-            "repair",
             "monitor_only",
             "project_fix",
             "brake",
@@ -3301,6 +3355,9 @@
       },
       "required": [
         "id",
+        "constraint_type",
+        "priority",
+        "violation_action",
         "type",
         "vertices"
       ],
@@ -3346,7 +3403,6 @@
       "description": "Keep at least `min_range_m` from the SUBJECT being followed.\n\nAsked for at the 2026-08-19 review: \"hold 10 m from a person, and different\npolicies for different objects\". Until now that was `--want-range`, a\ncommand-line flag on the controller - which meant it was not hashed into\n`policy_hash`, not written to the audit log, and not enforced by the Shield.\nIt was a setpoint the pilot was asked to aim for, not a rule it was held to,\nand the difference is the whole point of the project.\n\nLike ObstacleClearance this cannot be evaluated from the policy file alone:\nthe Shield has no idea where the subject is. The perception stack supplies it\nonce per tick through `Shield.set_subject()`. With no subject set the rule is\nINERT - it never fires and never raises - because a standoff rule with\nnothing to stand off from has no opinion, and inventing one would be worse\nthan silence.\n\n`subject_class` selects which rule applies to what: \"pedestrian\" binds only\nwhen the tracked subject is a pedestrian, \"*\" binds to anything. That is what\nmakes \"different policies for different objects\" expressible rather than a\nsingle global number.\n\nDistance is horizontal only, matching ObstacleClearance. Altitude is governed\nby AltitudeEnvelope, and mixing the two would make a rule that a legal climb\ncould violate.",
       "properties": {
         "constraint_type": {
-          "default": "hard",
           "enum": [
             "hard",
             "soft"
@@ -3402,7 +3458,6 @@
           "type": "number"
         },
         "priority": {
-          "default": "P0",
           "enum": [
             "P0",
             "P1",
@@ -3457,9 +3512,7 @@
           "default": null
         },
         "violation_action": {
-          "default": "repair",
           "enum": [
-            "repair",
             "monitor_only",
             "project_fix",
             "brake",
@@ -3473,6 +3526,9 @@
       },
       "required": [
         "id",
+        "constraint_type",
+        "priority",
+        "violation_action",
         "type",
         "min_range_m"
       ],
@@ -3488,7 +3544,6 @@
           "type": "boolean"
         },
         "constraint_type": {
-          "default": "hard",
           "enum": [
             "hard",
             "soft"
@@ -3539,7 +3594,6 @@
           "title": "Locked By"
         },
         "priority": {
-          "default": "P0",
           "enum": [
             "P0",
             "P1",
@@ -3588,9 +3642,7 @@
           "default": null
         },
         "violation_action": {
-          "default": "repair",
           "enum": [
-            "repair",
             "monitor_only",
             "project_fix",
             "brake",
@@ -3604,6 +3656,9 @@
       },
       "required": [
         "id",
+        "constraint_type",
+        "priority",
+        "violation_action",
         "type",
         "target_id",
         "active"
@@ -3716,6 +3771,21 @@
           }
         },
         {
+          "required": [
+            "constraint_type"
+          ]
+        },
+        {
+          "required": [
+            "priority"
+          ]
+        },
+        {
+          "required": [
+            "violation_action"
+          ]
+        },
+        {
           "anyOf": [
             {
               "required": [
@@ -3771,7 +3841,6 @@
           "type": "number"
         },
         "constraint_type": {
-          "default": "hard",
           "enum": [
             "hard",
             "soft"
@@ -3822,7 +3891,6 @@
           "title": "Locked By"
         },
         "priority": {
-          "default": "P0",
           "enum": [
             "P0",
             "P1",
@@ -3881,9 +3949,7 @@
           "default": null
         },
         "violation_action": {
-          "default": "repair",
           "enum": [
-            "repair",
             "monitor_only",
             "project_fix",
             "brake",
@@ -3935,6 +4001,21 @@
       "allOf": [
         {
           "required": [
+            "constraint_type"
+          ]
+        },
+        {
+          "required": [
+            "priority"
+          ]
+        },
+        {
+          "required": [
+            "violation_action"
+          ]
+        },
+        {
+          "required": [
             "min_clearance_m"
           ]
         }
@@ -3942,7 +4023,6 @@
       "description": "Keep at least `min_clearance_m` away from every MAPPED obstacle\n(surveyed buildings in the city occupancy grid).\n\nUnlike the other three, this rule cannot be evaluated from the policy file\nalone \u2014 it needs the occupancy map, which is handed to the Shield at\nconstruction time (`Shield(..., obstacle_map=...)`). With no map the rule\nis INERT: it never fires and never raises. Distance is measured in the\nhorizontal plane only; buildings are treated as infinitely tall columns,\nwhich is the conservative reading of a 2-D occupancy grid.\n\nsoft_margin_m widens the band the repair operator tapers speed over\n([0, min_clearance_m + soft_margin_m]); it never raises a violation on its\nown \u2014 hence \"slows, does not block\".\n\nWith subject_standoff this is this project's half of the grant's\n`distance_envelope` (buildings and the followed subject); the grant's own\nclass is declarable below as DistanceEnvelope.",
       "properties": {
         "constraint_type": {
-          "default": "hard",
           "enum": [
             "hard",
             "soft"
@@ -3998,7 +4078,6 @@
           "type": "number"
         },
         "priority": {
-          "default": "P0",
           "enum": [
             "P0",
             "P1",
@@ -4048,9 +4127,7 @@
           "default": null
         },
         "violation_action": {
-          "default": "repair",
           "enum": [
-            "repair",
             "monitor_only",
             "project_fix",
             "brake",
@@ -4157,6 +4234,21 @@
           }
         },
         {
+          "required": [
+            "constraint_type"
+          ]
+        },
+        {
+          "required": [
+            "priority"
+          ]
+        },
+        {
+          "required": [
+            "violation_action"
+          ]
+        },
+        {
           "anyOf": [
             {
               "required": [
@@ -4178,7 +4270,7 @@
           ]
         }
       ],
-      "description": "Keep-OUT no-fly zone. Violated when a (predicted) position is inside.",
+      "description": "Keep-OUT no-fly zone. Violated when a (predicted) position is inside.\n\nThe ring is stored in its canonical order (canonical_ring_order, IR\nschema 3.0.0): the same zone written in another direction or from\nanother vertex is the same IR and the same policy_hash.",
       "properties": {
         "altitude_ceiling_m": {
           "default": 1000.0,
@@ -4207,7 +4299,6 @@
           "title": "Altitude Ref"
         },
         "constraint_type": {
-          "default": "hard",
           "enum": [
             "hard",
             "soft"
@@ -4304,7 +4395,6 @@
           "type": "number"
         },
         "priority": {
-          "default": "P0",
           "enum": [
             "P0",
             "P1",
@@ -4356,9 +4446,7 @@
           "type": "array"
         },
         "violation_action": {
-          "default": "repair",
           "enum": [
-            "repair",
             "monitor_only",
             "project_fix",
             "brake",
@@ -4416,6 +4504,21 @@
       "allOf": [
         {
           "required": [
+            "constraint_type"
+          ]
+        },
+        {
+          "required": [
+            "priority"
+          ]
+        },
+        {
+          "required": [
+            "violation_action"
+          ]
+        },
+        {
+          "required": [
             "min_range_m"
           ]
         }
@@ -4423,7 +4526,6 @@
       "description": "Keep at least `min_range_m` from the SUBJECT being followed.\n\nAsked for at the 2026-08-19 review: \"hold 10 m from a person, and different\npolicies for different objects\". Until now that was `--want-range`, a\ncommand-line flag on the controller - which meant it was not hashed into\n`policy_hash`, not written to the audit log, and not enforced by the Shield.\nIt was a setpoint the pilot was asked to aim for, not a rule it was held to,\nand the difference is the whole point of the project.\n\nLike ObstacleClearance this cannot be evaluated from the policy file alone:\nthe Shield has no idea where the subject is. The perception stack supplies it\nonce per tick through `Shield.set_subject()`. With no subject set the rule is\nINERT - it never fires and never raises - because a standoff rule with\nnothing to stand off from has no opinion, and inventing one would be worse\nthan silence.\n\n`subject_class` selects which rule applies to what: \"pedestrian\" binds only\nwhen the tracked subject is a pedestrian, \"*\" binds to anything. That is what\nmakes \"different policies for different objects\" expressible rather than a\nsingle global number.\n\nDistance is horizontal only, matching ObstacleClearance. Altitude is governed\nby AltitudeEnvelope, and mixing the two would make a rule that a legal climb\ncould violate.",
       "properties": {
         "constraint_type": {
-          "default": "hard",
           "enum": [
             "hard",
             "soft"
@@ -4479,7 +4581,6 @@
           "type": "number"
         },
         "priority": {
-          "default": "P0",
           "enum": [
             "P0",
             "P1",
@@ -4534,9 +4635,7 @@
           "default": null
         },
         "violation_action": {
-          "default": "repair",
           "enum": [
-            "repair",
             "monitor_only",
             "project_fix",
             "brake",
@@ -4567,6 +4666,21 @@
           }
         },
         {
+          "required": [
+            "constraint_type"
+          ]
+        },
+        {
+          "required": [
+            "priority"
+          ]
+        },
+        {
+          "required": [
+            "violation_action"
+          ]
+        },
+        {
           "anyOf": [
             {
               "required": [
@@ -4593,7 +4707,6 @@
           "type": "boolean"
         },
         "constraint_type": {
-          "default": "hard",
           "enum": [
             "hard",
             "soft"
@@ -4644,7 +4757,6 @@
           "title": "Locked By"
         },
         "priority": {
-          "default": "P0",
           "enum": [
             "P0",
             "P1",
@@ -4698,9 +4810,7 @@
           "default": null
         },
         "violation_action": {
-          "default": "repair",
           "enum": [
-            "repair",
             "monitor_only",
             "project_fix",
             "brake",
@@ -4930,5 +5040,5 @@
     "$ref": "#/$defs/CanonicalIR"
   },
   "x-hash-scheme": "sha256-canonical-v3",
-  "x-ir-schema-version": "2.2.0"
+  "x-ir-schema-version": "3.0.0"
 }

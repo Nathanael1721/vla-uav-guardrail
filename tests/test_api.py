@@ -28,10 +28,15 @@ sys.path.insert(0, str(ROOT))
 from guardrail import Action4D, Shield, State, load_policy  # noqa: E402
 from guardrail import api as A                             # noqa: E402
 
+# The three ConstraintBase fields the grant requires (IR schema 3.0.0, 2026-11-02),
+# at the values they defaulted to before (repair = project_fix).
+HARD_P0 = {"constraint_type": "hard", "priority": "P0", "violation_action": "project_fix"}
+
 DEMO = ROOT / "policies" / "demo_policy.yaml"
 WGS = ROOT / "policies" / "wgs84_taipei.yaml"
 SKIP = "SKIP"
-ZONE = {"id": "nfz-landslide", "vertices": [{"x": -15, "y": -24}, {"x": -8, "y": -24},
+ZONE = {"id": "nfz-landslide", **HARD_P0,
+        "vertices": [{"x": -15, "y": -24}, {"x": -8, "y": -24},
                                             {"x": -8, "y": -16}, {"x": -15, "y": -16}],
         "altitude_floor_m": 0, "altitude_ceiling_m": 100, "margin_m": 1.0}
 
@@ -82,6 +87,34 @@ def test_the_legacy_nfz_body_now_spawns_a_dynamic_nfz():
         [(p["x"], p["y"]) for p in ZONE["vertices"]]
 
 
+def test_a_rule_body_must_state_the_three_constraintbase_fields():
+    """IR schema 3.0.0 (2026-11-02): a REST body that is a DSL rule states
+    constraint_type, priority and violation_action, as every rule must; until
+    then a body without them spawned a hard P0 zone (failed then: each body
+    below was accepted). The deprecated POST /nfz keeps its fixed 2026-07
+    body, which never had them, and spawns what it always meant."""
+    sh = _flying()
+    for field in ("constraint_type", "priority", "violation_action"):
+        body = {k: v for k, v in ZONE.items() if k != field}
+        e = _err(A.apply_dynamic_nfz, sh, body)
+        assert e.status == 422 and field in e.detail, (field, e.status, e.detail)
+        e = _err(A.apply_event, sh, {"type": "time_window_switch", "id": "sw",
+                                     "target_id": "nfz-square", "active": False,
+                                     **{k: v for k, v in HARD_P0.items() if k != field}})
+        assert e.status == 422 and field in e.detail, (field, e.status, e.detail)
+    assert sh.policy.generation == 0, "a refused body changed the policy"
+    legacy = {k: ZONE[k] for k in ("id", "vertices", "altitude_floor_m",
+                                   "altitude_ceiling_m", "margin_m")}
+    A.apply_legacy_nfz(sh, legacy)
+    z = sh.policy.constraints[-1]
+    assert (z.constraint_type, z.priority, z.violation_action) == ("hard", "P0", "project_fix")
+    # `repair` is still read, as the grant's project_fix.
+    A.apply_dynamic_nfz(sh, {**ZONE, "id": "old-spelling", "violation_action": "repair",
+                             "vertices": [{"x": 40, "y": 40}, {"x": 45, "y": 40},
+                                          {"x": 45, "y": 45}]})
+    assert sh.policy.constraints[-1].violation_action == "project_fix"
+
+
 def test_refusals_map_to_their_status():
     sh = _flying()
     A.apply_dynamic_nfz(sh, dict(ZONE))
@@ -107,7 +140,7 @@ def test_edits_switches_and_swaps_go_through_the_shield():
     assert A.apply_nfz_edit(sh, "nfz-landslide", {
         "op": "move", "vertices": [[0, 40], [4, 40], [4, 44]]})["op"] == "move"
     assert A.apply_nfz_expire(sh, "nfz-landslide")["op"] == "expire"
-    res = A.apply_time_window_switch(sh, {"target_id": "nfz-square", "active": False})
+    res = A.apply_time_window_switch(sh, {**HARD_P0, "target_id": "nfz-square", "active": False})
     assert res["op"] == "switch_off" and res["applied"].startswith("switch-nfz-square")
     assert not sh.filter(State(x=0, y=15, up=4), Action4D(vx=1.3)).touched
     assert sh.policy.generation == 7
@@ -118,14 +151,14 @@ def test_edits_switches_and_swaps_go_through_the_shield():
 def test_a_lat_lon_zone_lands_in_the_policys_own_frame():
     sh = _flying(WGS)
     o = sh.policy.frame_origin
-    res = A.apply_dynamic_nfz(sh, {"id": "geo", "margin_m": 0.0, "vertices": [
+    res = A.apply_dynamic_nfz(sh, {**HARD_P0, "id": "geo", "margin_m": 0.0, "vertices": [
         {"lat": o[0] + 0.001, "lon": o[1] + 0.001}, {"lat": o[0] + 0.002, "lon": o[1] + 0.001},
         {"lat": o[0] + 0.002, "lon": o[1] + 0.002}]})
     z = sh.policy.constraints[-1]
     assert res["applied"] == "geo" and z.vertices[0].lat == o[0] + 0.001
     assert 100 < z.vertices[0].x < 125 and 90 < z.vertices[0].y < 115     # ~111 m N, ~101 m E
     metres = _flying(DEMO)
-    assert _err(A.apply_dynamic_nfz, metres, {"id": "geo", "vertices": [
+    assert _err(A.apply_dynamic_nfz, metres, {**HARD_P0, "id": "geo", "vertices": [
         {"lat": 25.0, "lon": 121.5}, {"lat": 25.001, "lon": 121.5},
         {"lat": 25.001, "lon": 121.501}]}).status == 422
 
@@ -147,17 +180,17 @@ def test_a_lat_lon_that_is_not_a_number_is_a_422_not_a_crash():
     failing on 1b95383 (raw ValueError / TypeError / OverflowError)."""
     sh = _flying(WGS)
     for bad in ("abc", None, int(BIG)):
-        e = _err(A.apply_dynamic_nfz, sh, {"id": "g", "vertices": _geo_square(lat=bad)})
+        e = _err(A.apply_dynamic_nfz, sh, {**HARD_P0, "id": "g", "vertices": _geo_square(lat=bad)})
         assert e.status == 422 and "lat/lon must be numbers" in e.detail, e.detail
-        e = _err(A.apply_event, sh, {"type": "dynamic_nfz", "id": "g",
+        e = _err(A.apply_event, sh, {"type": "dynamic_nfz", **HARD_P0, "id": "g",
                                      "vertices": _geo_square(lon=bad)})
         assert e.status == 422, e.detail
-        e = _err(A.apply_corridor_swap, sh, {"id": "c", "target_id": "x", "width_m": 10,
+        e = _err(A.apply_corridor_swap, sh, {**HARD_P0, "id": "c", "target_id": "x", "width_m": 10,
                                              "centerline": _geo_square(lat=bad)[:2]})
         assert e.status == 422, e.detail
         e = _err(A.apply_nfz_edit, sh, "g", {"op": "move", "vertices": _geo_square(lat=bad)})
         assert e.status == 422, e.detail
-    A.apply_dynamic_nfz(sh, {"id": "g", "margin_m": 0.0, "vertices": _geo_square()})
+    A.apply_dynamic_nfz(sh, {**HARD_P0, "id": "g", "margin_m": 0.0, "vertices": _geo_square()})
     for edit in ({"op": "translate", "dx": int(BIG)}, {"op": "rotate", "angle_deg": int(BIG)},
                  {"op": "scale", "factor": int(BIG)}):
         assert _err(A.apply_nfz_edit, sh, "g", edit).status == 422, edit
@@ -169,11 +202,11 @@ def test_routes_answer_422_for_a_lat_lon_that_is_not_a_number():
     c = _client(sh)
     if c is None:
         return SKIP
-    body = {"id": "g", "vertices": _geo_square(lat="abc")}
+    body = {**HARD_P0, "id": "g", "vertices": _geo_square(lat="abc")}
     for path, b in (("/dynamic_nfz", body), ("/hot_apply", {**body, "type": "dynamic_nfz"}),
                     ("/corridor_swap", {"id": "c", "target_id": "x", "width_m": 10,
                                         "centerline": _geo_square(lat=None)[:2]}),
-                    ("/hot_apply", {"type": "corridor_swap", "id": "c", "target_id": "x",
+                    ("/hot_apply", {"type": "corridor_swap", **HARD_P0, "id": "c", "target_id": "x",
                                     "width_m": 10, "centerline": _geo_square(lat=None)[:2]})):
         r = c.post(path, json=b)
         assert r.status_code == 422, (path, r.status_code, r.text)
@@ -182,7 +215,7 @@ def test_routes_answer_422_for_a_lat_lon_that_is_not_a_number():
            '"lon": 121.56}, {"lat": 25.041, "lon": 121.561}]}' % BIG)
     r = c.post("/dynamic_nfz", content=raw, headers={"Content-Type": "application/json"})
     assert r.status_code == 422, (r.status_code, r.text[:200])
-    assert c.post("/dynamic_nfz", json={"id": "g", "margin_m": 0.0,
+    assert c.post("/dynamic_nfz", json={**HARD_P0, "id": "g", "margin_m": 0.0,
                                         "vertices": _geo_square()}).status_code == 200
     r = c.patch("/dynamic_nfz/g", content='{"op": "translate", "dx": %s}' % BIG,
                 headers={"Content-Type": "application/json"})
@@ -196,12 +229,12 @@ def _layered_shield(tighten: bool = False) -> Shield:
     tightening the grant allows), so the merged rule is the mission's copy."""
     from guardrail.models import Policy, merge_layers
     reg = Policy.model_validate({"policy_id": "reg", "version": "0.1.0", "constraints": [
-        {"id": "nfz-airport", "type": "polygon_fence", "layer": "regulation",
+        {"id": "nfz-airport", "type": "polygon_fence", **HARD_P0, "layer": "regulation",
          "vertices": [{"x": 7, "y": 7}, {"x": 23, "y": 7}, {"x": 23, "y": 23},
                       {"x": 7, "y": 23}]}]})
-    mis_rules = [{"id": "alt", "type": "altitude_envelope", "alt_min_m": 2, "alt_max_m": 6}]
+    mis_rules = [{"id": "alt", "type": "altitude_envelope", **HARD_P0, "alt_min_m": 2, "alt_max_m": 6}]
     if tighten:
-        mis_rules.append({"id": "nfz-airport", "type": "polygon_fence",
+        mis_rules.append({"id": "nfz-airport", "type": "polygon_fence", **HARD_P0,
                           "vertices": [{"x": 6, "y": 6}, {"x": 24, "y": 6},
                                        {"x": 24, "y": 24}, {"x": 6, "y": 24}]})
     mis = Policy.model_validate({"policy_id": "mis", "version": "0.1.0",
@@ -219,12 +252,12 @@ def test_a_rest_event_cannot_relax_another_layers_hard_rule_or_claim_a_layer():
     that claims the regulation layer for itself. Nothing is applied and the
     zone is still enforced."""
     sh = _layered_shield()
-    for body in ({"target_id": "nfz-airport", "active": False},
-                 {"target_id": "nfz-airport", "active": False, "layer": "mission"},
-                 {"target_id": "nfz-airport", "active": False, "layer": "regulation"}):
+    for body in ({**HARD_P0, "target_id": "nfz-airport", "active": False},
+                 {**HARD_P0, "target_id": "nfz-airport", "active": False, "layer": "mission"},
+                 {**HARD_P0, "target_id": "nfz-airport", "active": False, "layer": "regulation"}):
         e = _err(A.apply_time_window_switch, sh, dict(body))
         assert e.status == 422, (body, e.status, e.detail)
-    e = _err(A.apply_event, sh, {"type": "time_window_switch", "target_id": "nfz-airport",
+    e = _err(A.apply_event, sh, {"type": "time_window_switch", **HARD_P0, "target_id": "nfz-airport",
                                  "active": False, "layer": "regulation"})
     assert e.status == 422 and "layer 'regulation' refused" in e.detail
     e = _err(A.apply_dynamic_nfz, sh, {**ZONE, "layer": "site"})
@@ -242,7 +275,7 @@ def test_a_rest_switch_off_of_a_tightened_regulation_zone_is_refused():
     regulation copy it overrode (locked_by), so REST refuses with 422.
     Shown failing on 1b95383."""
     sh = _layered_shield(tighten=True)
-    e = _err(A.apply_time_window_switch, sh, {"target_id": "nfz-airport", "active": False})
+    e = _err(A.apply_time_window_switch, sh, {**HARD_P0, "target_id": "nfz-airport", "active": False})
     assert e.status == 422 and "regulation-layer" in e.detail, (e.status, e.detail)
     assert sh.policy.generation == 0 and sh.events == []
     d = sh.filter(State(x=0, y=15, up=4), Action4D(vx=4.0))
@@ -280,18 +313,18 @@ def test_routes_spawn_edit_expire_and_refuse_over_http():
 def test_routes_switch_swap_and_the_legacy_body():
     from guardrail.models import Policy
     pol = Policy.model_validate({"policy_id": "lanes", "constraints": [
-        {"id": "lane-a", "type": "corridor", "width_m": 10,
+        {"id": "lane-a", "type": "corridor", **HARD_P0, "width_m": 10,
          "centerline": [{"x": -100, "y": 0}, {"x": 100, "y": 0}]}]})
     sh = Shield(pol)
     c = _client(sh)
     if c is None:
         return SKIP
-    r = c.post("/corridor_swap", json={"id": "lane-b", "target_id": "lane-a", "width_m": 10,
+    r = c.post("/corridor_swap", json={**HARD_P0, "id": "lane-b", "target_id": "lane-a", "width_m": 10,
                                        "centerline": [{"x": -100, "y": 40}, {"x": 100, "y": 40}]})
     assert r.status_code == 200, r.text
     d = sh.filter(State(x=0, y=0, up=10), Action4D(vx=2.0))
     assert [v.rule_id for v in d.violations] == ["lane-b"]
-    r = c.post("/time_window_switch", json={"target_id": "lane-b", "active": False})
+    r = c.post("/time_window_switch", json={**HARD_P0, "target_id": "lane-b", "active": False})
     assert r.status_code == 422                     # a swap is an event, not a rule
     r = c.post("/nfz", json={**ZONE, "id": "old-style"})
     assert r.status_code == 200 and r.json()["type"] == "dynamic_nfz"
@@ -303,9 +336,9 @@ def test_routes_refuse_a_relaxation_across_layers():
     c = _client(sh)
     if c is None:
         return SKIP
-    r = c.post("/time_window_switch", json={"target_id": "nfz-airport", "active": False})
+    r = c.post("/time_window_switch", json={**HARD_P0, "target_id": "nfz-airport", "active": False})
     assert r.status_code == 422 and "hard regulation-layer rule" in r.json()["detail"], r.text
-    r = c.post("/hot_apply", json={"type": "time_window_switch", "target_id": "nfz-airport",
+    r = c.post("/hot_apply", json={"type": "time_window_switch", **HARD_P0, "target_id": "nfz-airport",
                                    "active": False, "layer": "regulation"})
     assert r.status_code == 422, r.text
     assert c.get("/health").json()["generation"] == 0

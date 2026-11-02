@@ -6,6 +6,8 @@ version: 0.1.0
 constraints:
   - id: alt
     type: altitude_envelope
+    constraint_type: hard
+    violation_action: project_fix
     priority: P5
     alt_min_m: 5
     alt_max_m: 30

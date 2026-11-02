@@ -48,6 +48,10 @@ from guardrail import load_policy                                      # noqa: E
 from guardrail.models import Action4D, ObstacleClearance, State        # noqa: E402
 from guardrail.shield import Shield                                    # noqa: E402
 
+# The three ConstraintBase fields the grant requires (IR schema 3.0.0, 2026-11-02),
+# at the values they defaulted to before (repair = project_fix).
+HARD_P0 = {"constraint_type": "hard", "priority": "P0", "violation_action": "project_fix"}
+
 FIXTURES = ROOT / "tests" / "fixtures"
 IDENTITY = FIXTURES / "own_velocity_identity_digests.json"
 CITY_MAP = FIXTURES / "citylife_occ_flightband_6to14.npz"
@@ -489,7 +493,7 @@ def test_from_an_illegal_position_the_decision_is_the_commanded_forecast_s():
 def _seg_policy(verts):
     from guardrail.models import Policy
     return Policy.model_validate({"policy_id": "seg", "constraints": [
-        {"id": "zone", "type": "polygon_fence", "margin_m": 0.0,
+        {"id": "zone", "type": "polygon_fence", **HARD_P0, "margin_m": 0.0,
          "vertices": [{"x": x, "y": y} for x, y in verts]}]})
 
 

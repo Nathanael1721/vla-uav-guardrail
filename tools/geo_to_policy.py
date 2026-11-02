@@ -87,8 +87,8 @@ sys.path.insert(0, str(ROOT))
 
 import yaml                                                         # noqa: E402
 
-from guardrail.models import (DynamicNFZ, Policy, load_policy,      # noqa: E402
-                              parse_policy_text, policy_from_raw)
+from guardrail.models import (IR2_RULE_DEFAULTS, DynamicNFZ, Policy,  # noqa: E402
+                              load_policy, parse_policy_text, policy_from_raw)
 from guardrail.projection import geo_points                         # noqa: E402
 
 DSL_PROPERTIES = ("priority", "constraint_type", "violation_action", "layer",
@@ -321,6 +321,9 @@ def _is_nfz_payload(obj) -> bool:
 # What a zone body may carry: a dynamic_nfz's own fields (POST /nfz's five
 # are a subset).
 _ZONE_PAYLOAD_KEYS = frozenset(DynamicNFZ.model_fields) - {"type"}
+# The 2026-07 POST /nfz body (guardrail/api.py NfzRequest).
+_LEGACY_NFZ_KEYS = frozenset({"id", "vertices", "altitude_floor_m", "altitude_ceiling_m",
+                              "margin_m"})
 
 
 def rules_from_payload(obj, defaults: dict | None = None) -> list[dict] | None:
@@ -338,6 +341,13 @@ def rules_from_payload(obj, defaults: dict | None = None) -> list[dict] | None:
         if extra:
             raise ConversionError(f"zone payload (POST /nfz, POST /dynamic_nfz) has "
                                   f"unknown keys {sorted(extra)}")
+        # As guardrail/api.py reads them since IR schema 3.0.0: a body with
+        # only the 2026-07 POST /nfz keys is that endpoint's fixed body and
+        # means hard / P0 / project_fix (apply_legacy_nfz); any other zone
+        # body is a POST /dynamic_nfz rule and states the three itself (the
+        # DSL refuses it otherwise).
+        if set(obj) <= _LEGACY_NFZ_KEYS:
+            return [{"type": "dynamic_nfz", **IR2_RULE_DEFAULTS, **obj}]
         return [{"type": "dynamic_nfz", **obj}]
     if isinstance(obj, dict) and "type" in obj and "constraints" not in obj:
         return [obj]                                    # one DSL rule (a patch)

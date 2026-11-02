@@ -1,11 +1,11 @@
 policy_id: poly-test
-version: 0.1.0
+version: 0.1.1
 constraints:
   - id: tri-nfz
     type: polygon_fence
     constraint_type: hard
     priority: P0
-    violation_action: repair
+    violation_action: project_fix
     vertices:
       - {x: 0, y: 0}
       - {x: 24, y: 0}
@@ -17,14 +17,14 @@ constraints:
     type: altitude_envelope
     constraint_type: hard
     priority: P0
-    violation_action: repair
+    violation_action: project_fix
     alt_min_m: 35
     alt_max_m: 55
   - id: kin
     type: kinematic_envelope
     constraint_type: hard
     priority: P1
-    violation_action: repair
+    violation_action: project_fix
     speed_max_mps: 4.0
     climb_rate_max_mps: 2.0
     yaw_rate_max_dps: 45.0

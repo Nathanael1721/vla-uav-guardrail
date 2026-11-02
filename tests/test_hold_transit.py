@@ -63,6 +63,10 @@ from guardrail import holdpoint as HP  # noqa: E402
 from guardrail.models import Action4D, DynamicNFZ, Policy, State  # noqa: E402
 from guardrail.shield import Shield  # noqa: E402
 
+# The three ConstraintBase fields the grant requires (IR schema 3.0.0, 2026-11-02),
+# at the values they defaulted to before (repair = project_fix).
+HARD_P0 = {"constraint_type": "hard", "priority": "P0", "violation_action": "project_fix"}
+
 DEMO = ROOT / "policies" / "sim_demo_policy.yaml"
 DENSE = 1000
 SKIP = "SKIP"
@@ -134,7 +138,7 @@ def _bar(x0: float, w: float, half: float, speed: float, margin: float = 0.5) ->
     """The re-review's setup: the demo policy, the aircraft at (0, 0, 15) -
     legal now - and a DynamicNFZ bar `w` m wide from x = x0, `half` m either
     side of y = 0, closing from the east at `speed` m/s."""
-    bar = DynamicNFZ(id="bar", type="dynamic_nfz",
+    bar = DynamicNFZ(id="bar", type="dynamic_nfz", **HARD_P0,
                      vertices=[{"x": x0, "y": -half}, {"x": x0 + w, "y": -half},
                                {"x": x0 + w, "y": half}, {"x": x0, "y": half}],
                      altitude_floor_m=0, altitude_ceiling_m=100, margin_m=margin,
@@ -218,7 +222,7 @@ def _leaving_a_moving_zone() -> tuple[Shield, State]:
     horizontal leg ended at 0.37 s, before the first, and went 0.72 m deeper
     into z0 than a stop at the start (3.00 against 2.28 m, at 0.19 s)."""
     def nfz(zid, pts, margin, vx, vy):
-        return DynamicNFZ(id=zid, type="dynamic_nfz",
+        return DynamicNFZ(id=zid, type="dynamic_nfz", **HARD_P0,
                           vertices=[{"x": x, "y": y} for x, y in pts],
                           altitude_floor_m=0, altitude_ceiling_m=100, margin_m=margin,
                           motion={"vx_mps": vx, "vy_mps": vy})
@@ -267,7 +271,7 @@ def test_a_turning_zone_and_a_walking_person_are_judged_where_they_will_be():
     pedestrian walking at 2 m/s onto a hovering aircraft: the plan leaves
     the 5 m ring clean, judged where the person will be."""
     st = State(x=3.0, y=7.0, up=15.0)
-    spin = DynamicNFZ(id="spin", type="dynamic_nfz",
+    spin = DynamicNFZ(id="spin", type="dynamic_nfz", **HARD_P0,
                       vertices=[{"x": -0.1, "y": 2.0}, {"x": 0.1, "y": 2.0},
                                 {"x": 0.1, "y": 12.0}, {"x": -0.1, "y": 12.0}],
                       altitude_floor_m=0, altitude_ceiling_m=100, margin_m=0.2,
@@ -330,7 +334,7 @@ def _fuzz_shield(rng: random.Random, thin: bool) -> tuple[Shield, State]:
         d = rng.uniform(0, 2 * math.pi)
         yaw = rng.choice([0.0, 0.0, rng.uniform(-20, 20)])
         sh.spawn_nfz(DynamicNFZ(
-            id=f"z{j}", type="dynamic_nfz",
+            id=f"z{j}", type="dynamic_nfz", **HARD_P0,
             vertices=[{"x": cx + c * x - s * y, "y": cy + s * x + c * y} for x, y in pts],
             altitude_floor_m=0, altitude_ceiling_m=100, margin_m=rng.choice([0.5, 1.0]),
             motion={"vx_mps": sp * math.cos(d), "vy_mps": sp * math.sin(d),
@@ -513,7 +517,7 @@ def _random_world(rng: random.Random, kind: str) -> Shield:
             c, s = math.cos(ang), math.sin(ang)
             sp, d = rng.choice([0.0, rng.uniform(1, 8)]), rng.uniform(0, 2 * math.pi)
             sh.spawn_nfz(DynamicNFZ(
-                id=f"z{j}", type="dynamic_nfz",
+                id=f"z{j}", type="dynamic_nfz", **HARD_P0,
                 vertices=[{"x": cx + c * x - s * y, "y": cy + s * x + c * y}
                           for x, y in ((-w / 2, -h / 2), (w / 2, -h / 2),
                                        (w / 2, h / 2), (-w / 2, h / 2))],
@@ -931,7 +935,7 @@ def test_the_start_of_a_turning_zone_being_left_is_bounded_between_poses():
     it, and the same code with ls = 0 accepted it (checked by mutation when
     the test was written). At the shipped 1 cm tolerance the claim holds
     either way; the test pins the bound, not a flight."""
-    zone = DynamicNFZ(id="z", type="dynamic_nfz", vertices=[
+    zone = DynamicNFZ(id="z", type="dynamic_nfz", **HARD_P0, vertices=[
         {"x": 2.396358572284961, "y": -5.098755250654967},
         {"x": 4.718608957224717, "y": -1.3929372773947586},
         {"x": 0.8331504836065773, "y": 1.0418848053771956},

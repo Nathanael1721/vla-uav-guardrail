@@ -74,6 +74,10 @@ from guardrail.vla_link import (PHRASES, VLA_STEPS_SCHEMA, Capture, Hint,  # noq
                                 Pose, RemoteVLA, TrackerConfig)
 import vla_fake_server as F                                          # noqa: E402
 
+# The three ConstraintBase fields the grant requires (IR schema 3.0.0, 2026-11-02),
+# at the values they defaulted to before (repair = project_fix).
+HARD_P0 = {"constraint_type": "hard", "priority": "P0", "violation_action": "project_fix"}
+
 SKIP = "SKIP"
 JPG = b"\xff\xd8\xff\xe0fake-jpeg\xff\xd9"
 GOAL, GOAL_UP = (25.0, 15.0), 12.0
@@ -420,7 +424,7 @@ def test_a_configured_band_is_never_widened_or_dropped_by_the_policy():
         raise AssertionError("a configured band outside the policy band was accepted")
     from guardrail.models import AltitudeEnvelope
     msl = SimpleNamespace(constraints=[AltitudeEnvelope(
-        id="msl_ceiling", type="altitude_envelope", alt_min_m=120, alt_max_m=300,
+        id="msl_ceiling", type="altitude_envelope", **HARD_P0, alt_min_m=120, alt_max_m=300,
         altitude_ref="MSL")])
     be = make_backend("aerovla", _mission(), msl, **kw)
     assert be.tracker.alt_band is None

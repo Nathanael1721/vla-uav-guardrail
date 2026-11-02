@@ -35,12 +35,16 @@ from guardrail.models import (Action4D, AltitudeEnvelope, Corridor,  # noqa: E40
                               Recurrence, State, ValidTime, XY)
 from guardrail.shield import Shield                                # noqa: E402
 
-KIN = KinematicEnvelope(id="k", type="kinematic_envelope", speed_max_mps=4.0,
+# The three ConstraintBase fields the grant requires (IR schema 3.0.0, 2026-11-02),
+# at the values they defaulted to before (repair = project_fix).
+HARD_P0 = {"constraint_type": "hard", "priority": "P0", "violation_action": "project_fix"}
+
+KIN = KinematicEnvelope(id="k", type="kinematic_envelope", **HARD_P0, speed_max_mps=4.0,
                         climb_rate_max_mps=2.0, yaw_rate_max_dps=45.0)
 
 
 def _corridor(**kw):
-    base = dict(id="c1", type="corridor",
+    base = dict(id="c1", type="corridor", **HARD_P0,
                 centerline=[XY(x=0, y=0), XY(x=100, y=0)],
                 width_m=20.0, altitude_floor_m=5.0, altitude_ceiling_m=25.0)
     base.update(kw)
@@ -290,7 +294,7 @@ MON_2300 = datetime(2026, 9, 7, 23, 0)
 
 def _weekday_fence():
     return PolygonFence(
-        id="nfz", type="polygon_fence",
+        id="nfz", type="polygon_fence", **HARD_P0,
         vertices=[XY(x=-5, y=-5), XY(x=5, y=-5), XY(x=5, y=5), XY(x=-5, y=5)],
         margin_m=1.0,
         valid_time=ValidTime(recurrence=Recurrence(
@@ -374,7 +378,7 @@ def test_valid_time_is_covered_by_the_policy_hash():
 
 def test_a_corridor_and_an_envelope_do_not_fight():
     """Both constrain altitude; the emitted action must satisfy both."""
-    env = AltitudeEnvelope(id="alt", type="altitude_envelope",
+    env = AltitudeEnvelope(id="alt", type="altitude_envelope", **HARD_P0,
                            alt_min_m=10.0, alt_max_m=20.0)
     sh = _shield(_corridor(), env, KIN)
     d = sh.filter(State(x=50, y=0, up=8), Action4D(vx=3))
