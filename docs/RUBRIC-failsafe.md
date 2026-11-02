@@ -50,7 +50,7 @@ edges or its outcome.
 | **E2 Control authority** | a disturbance the aircraft cannot reject acts toward a hard constraint: a steady wind beyond the hold authority (the harness's `AP_HOLD_AUTHORITY_MPS`, 6.4 m/s), so no setpoint the Shield or the autopilot can fly keeps the aircraft legal | p1 ("when repair is unsafe": no repair can hold it); the reason ArduPilot has RTL / LAND failsafes at all |
 | **E3 Position knowledge** | the position the Shield acts on is wrong by more than the policy's margin around a hard P0 boundary (`margin_m`) - white noise whose 3 sigma exceeds it, a state latency whose distance at the flown speed exceeds it, or a frozen fix held while the aircraft moves farther than it - while the aircraft is within that error of the boundary: the margin can no longer certify the P0 rule | the margin is sized for a position-error budget (experiments/templates/sensor_degradation.yaml); ArduPilot's EKF / GPS failsafes act when position knowledge is lost |
 | **E4 No legal continuation** | no action within the kinematic caps keeps or makes the aircraft legal at all (every exit is out of reach before the constraint binds, and stays so) | p1. No library cell is judged under it today; it is listed so a future scenario has a clause |
-| **E5 Unsafe repair that persists** | the planner keeps requesting, without a break, an action the Shield may not fly - a hard rule's repair over theta on the decided basis (each repair's forecast depth in metres; theta 2.0 m lateral / 0.5 m vertical) or one no operator converges on, or a violation of a hard rule whose action is `loiter` - for at least the operator's Loiter timeout plus one control period (`loiter_timeout_s` + 0.1 s = 30.1 s), judged at the true position on the flown episode from the Shield's decision on the request | p1 "trigger fail-safe (RTL / Land) when repair is unsafe"; p4 "Conservative cap. If ... > threshold, or no operator converges, the Shield abandons projection and triggers fail-safe", and "Loiter -> RTL: ... operator-defined timeout"; run-time assurance practice (a supervised function that stays untrusted past a bounded wait ends the mission) |
+| **E5 Unsafe repair that persists** | the planner keeps requesting, without a break, an action the Shield may not fly - a hard rule's repair over theta on the decided basis (each repair's forecast depth in metres; theta 2.0 m lateral / 0.5 m vertical) or one no operator converges on, or a violation of a hard rule whose action is `loiter` - for at least the operator's Loiter timeout plus one control period (`loiter_timeout_s` + 0.1 s = 30.1 s), judged from the Shield's decision on the request at the true position, on the episode **flown without a fail-safe** (the Shield's projection flown every tick; section 3) | p1 "trigger fail-safe (RTL / Land) when repair is unsafe"; p4 "Conservative cap. If ... > threshold, or no operator converges, the Shield abandons projection and triggers fail-safe", and "Loiter -> RTL: ... operator-defined timeout"; run-time assurance practice (a supervised function that stays untrusted past a bounded wait ends the mission) |
 
 **Not expected**, stated so that no reader has to infer it:
 
@@ -96,13 +96,24 @@ the KPI with and without E5, so the weight of this choice is visible.
 - **Per cell.** A family's label holds for every cell unless a cell is
   listed with its own label and clause (`failsafe_cells`). Every label names
   its clause (`failsafe_clause`), E1-E5 or N1-N5.
+- **On the flight without a fail-safe.** Where a clause reads the episode
+  (E1, E3's frozen fix and closest approach, E5), it reads the cell flown
+  with the escalation FSM's verdict ignored: the Shield's projection is
+  flown every tick, the aircraft is never held, sent home or landed. The
+  flight the FSM shaped cannot be the ground truth for its own label: a
+  Loiter that holds the aircraft beside a zone keeps the planner's request
+  deep in it, so on that flight E5 would hold BECAUSE the FSM held - and an
+  early RTL takes the aircraft away from the boundary E3 asks about.
+  (Clarified on 2026-11-02 before any label was changed; the first wording
+  said "on the flown episode".)
 - **Mechanically.** E1 from the policy and the events; E2 from the wind
-  parameter; E3 from the noise and latency parameters and, for a frozen fix,
-  from the flown episode's true-versus-seen error against the true distance
-  to the boundary; E5 from the measured spell of unsafe requests on the flown
-  episode. `tools/failsafe_rubric.py` prints these facts per cell and the
-  label they give, beside the declared one, and exits non-zero when they
-  disagree.
+  parameter; E3 from the noise and latency parameters against the closest
+  true approach to the boundary and, for a frozen fix, from the true-versus-
+  seen error against the true distance to the boundary, tick by tick; E5
+  from the measured spell of unsafe requests. `tools/failsafe_rubric.py`
+  prints these facts per cell and the label they give, beside the declared
+  one, and exits non-zero when they disagree or when a spell is still
+  running at the end of an episode too short to decide it.
 - **On the grant's configuration.** Labels are derived for the headline
   arm: the grant's 5 s / 0.1 s forecast on the ideal vehicle. The 3 s
   forecast and ArduPilot-response comparison arms are scored against the
