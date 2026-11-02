@@ -305,3 +305,45 @@ metres — authored lat/lon is projected by `load_policy` first).
   (`tools/build_deck_data.py` `bundle_facts`) or would refuse an unsigned
   scenario bundle (`guardrail/scenario_spec.py` `PolicyRef.load`); the change
   each needs is listed for their owners.
+
+## 10. The WGS84 conversion (2026-11-03, IR schema 3.1.0, WP1-14)
+
+Until this date 31 of the 32 policy files were written in local metres; the
+grant makes WGS84 canonical. Each was rewritten by
+`tools/convert_policies_wgs84.py` with a stated `origin` and every point in
+lat/lon - new content, so each raised its patch version, as section 4
+requires. What keeps every stored run traceable:
+
+* **The local view is exact.** A WGS84 point's metres are computed when first
+  read (`models.XY`), from its policy's frame, and rounded to the micrometre
+  (`projection.local_metres`). The projection is sub-metre over a mission's
+  area, so the rounding resolves nothing it could; it makes a converted
+  point give back exactly the metres it was written from (all 257, checked),
+  so the Shield's geometry is the same floats.
+* **The metre form is the old policy.** `Policy.metre_form()` writes the
+  converted policy back in metres about its origin, without the origin, rings
+  in the order given. At the old version its canonical bytes are the old
+  file's (checked per file by the tool), so it carries the old 64-hex hash,
+  IR 2.x forms and 16-hex forms.
+* **The lock links the two, and checks the link.** Each new entry says
+  `migrated_from: <id>@<metre version>` with `migration.old_hash_form`
+  `sha256-canonical-v3/local-metres` (`bundle.FRAME_FORM`). `bundle.rewind`
+  reads an old version back - the same content at that version (an IR change,
+  section 3) or the metre form at it (this one) - and `check_lock` re-proves
+  every link on every run. `policy_candidates` walks the chain step by step
+  (WGS84 -> metres at 3.0.0 -> metres at 2.x), so `resolve_run_policy` finds
+  a run flown under any of them, and the `derived` recipes rebuild on the
+  metre base they were written for.
+* **Earlier schemes of a WGS84 policy hash the unrounded metres.** v2 and the
+  16-hex eras stored projected metres; `prior_hashes` and `legacy_hashes`
+  compute them with the unrounded projection of their day (the "era" dump), so
+  `wgs84_taipei.yaml`'s old forms are unchanged. A pre-3.1.0 bundle of a WGS84
+  policy shipped unrounded multi-scale geometry; it is read within half a
+  micrometre of the rounded view.
+
+Measured: 362 of 372 stored manifests in the lab checkout resolve directly
+before and after, each to the same id@version and content; the other 10
+(ros2_hotapply_*, ros2_action_*, gazebo_shield_on_dynamic_20261102) changed
+their policy in flight and resolve through their own generation chain
+(`manifest.resolve_run_generation_chain`), 10 of 10 before and after. Every
+one of the 19 bundles there verifies.

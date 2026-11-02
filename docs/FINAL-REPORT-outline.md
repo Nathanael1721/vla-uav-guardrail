@@ -22,7 +22,10 @@ fixed the same night. On 2 Nov the WP2 and WP4 correction notes were
 confirmed sent (WP2-12, WP4-21), the Gazebo rail first flew end-to-end
 (ARCH-16, late: DRIFT), and the paraphraser became the separate service the
 grant names (WP2-13), and the audit record took the grant's field meanings
-(WP3-11). **42 DONE, 81 PARTIAL, 12 DRIFT, 1 MISSING.** DONE means the code
+(WP3-11). On 3 Nov every shipped policy became WGS84 with a lazy local
+view, distance_envelope was enforced and MSL given a ground source (WP1-14:
+DRIFT to PARTIAL; WP1-07, X-11 still PARTIAL, with less open).
+**42 DONE, 82 PARTIAL, 11 DRIFT, 1 MISSING.** DONE means the code
 or the artefact the grant names exists and matches the grant's words; it
 never means KPI-grade.
 
@@ -106,11 +109,15 @@ the subsections are written from.
   merge, ingest tools and the round-trip KPI are DONE. Not as the grant
   words them: ConstraintBase lets the grant's required fields default
   (WP1-01), the lint normalises no ring direction, takes no holes and checks
-  only altitude-band conflicts (WP1-02), policies are metre-canonical, not
-  WGS84 (WP1-14), and the 20 July gate was missed (WP1-21). Open: the
-  signing authority (WP1-04),
+  only altitude-band conflicts (WP1-02), and the 20 July gate was missed
+  (WP1-21). Since 3 Nov every shipped policy is stored and hashed in WGS84
+  with a lazily computed local view (WP1-14; a metre document still loads,
+  as the legacy read form) and distance_envelope is enforced for buildings,
+  roads and the tracked person (WP1-07). Open: the signing authority
+  (WP1-04),
   compatibility with the PI's reference implementation (WP1-05),
-  distance_envelope enforcement (WP1-07), a flown REST hot-apply (WP1-15),
+  distance_envelope for people other than the tracked subject (WP1-07), a
+  flown REST hot-apply (WP1-15),
   a KPI-grade replayable bundle (WP1-18), the CityLife bundles in the
   tracked store from a clean tree (WP1-20), the Orin benches (WP1-19), the
   PI's ruling on the one unbumped IR change in the migration register
@@ -222,14 +229,14 @@ Each deviation, the grant text it departs from, and its state:
 | Item | Grant | What we do | State |
 |---|---|---|---|
 | WP1-25, WP2-19, X-06 | Python 3.11+ | 3.10 (the Jetson's JetPack Python, and the AerialVLA stack) | PI said follow the grant (6 Oct): run the stack on 3.11+ in the Orin container, or a written acceptance |
-| WP1-14 | WGS84 canonical, AGL default, ENU/NED computed lazily | a WGS84 form exists, but 31 of 32 policies are written and hashed in local metres (the WGS84 one never flown); projection runs at load; MSL cannot fly | recorded deviation 1 (PI-DECISIONS-2026-10-06 Part C) understates it: re-state it, or convert the flown policies |
+| WP1-14 | WGS84 canonical, AGL default, ENU/NED computed lazily | since 3 Nov all 32 policies are stored and hashed in WGS84 with a stated origin, the local metres a lazy per-origin view (IR 3.1.0), MSL an opt-in with a ground; a metre document still loads (the legacy read form; also what REST, the Shield's zone edits and the harness's spawned zones write) | conformed for the stored policies (tools/convert_policies_wgs84.py, CHANGELOG 2026-11-03 (F)); deviation 1 now covers only the metre read form: convert metre input at ingest, or record it |
 | WP1-01 | ConstraintBase: constraint_type, scope, priority, violation_action required | they default (hard, absent, P0, 'repair', a seventh action value) | make them required, or a written waiver |
 | WP1-21, WP3-01, ARCH-15, ARCH-17 | dated gates: mid-term 2026-07-20, G1 2026-06-30 | IR committed 2026-10-06; ROS 2 Shield node from 2026-08-19/24; G1 passed 2026-10-08 over SIM_AirSim JSON, not HIL_* | state the actual dates; a PI ruling on G1's swap rule |
 | WP3-04, ARCH-04 | body-frame action, one body-to-NED boundary in the adapter, repairs in the VLA's frame | repairs act in a world (North/East) frame; the conversion is in the Shield node, the adapter and three more modules | re-frame the Shield, or a written acceptance |
 | WP3-11 | audit fields raw_action / emitted_action (body), category 'geometric', repair_attempts ok/skip, file shield_audit.jsonl | since 2 Nov (audit record version 4) the grant's names carry the grant's content; this project's world-frame actions, finer category and repair records are raw_action_world / emitted_action_world, rule_category and repair_results; every rail writes shield_audit.jsonl | closed 2026-11-02; stored runs keep audit.jsonl in versions 1-3, read through guardrail.audit.upgrade_record |
 | WP3-22, X-13 | exactly one rule-evaluation code path | the Shield's monitor plus compiler.action_violations / _RuleClock, fence_export, rtl_path and FenceGuard, kept equal by tests | fold them into the Shield's evaluator, or a written acceptance |
 | WP4-13 | exporters: rosbag2 to JSONL / Parquet, action.executed = what MAVROS published | since 2 Nov the exporter reads the run's rosbag2 (with `rosbags`) and takes action.executed from /mavros/setpoint_raw/local; without a bag (every rail but the ROS 2 one), without `rosbags` or headless it falls back to the flight log's verdict, labelled on every step | open: the bag path has not run on a real bag (`rosbags` is not in vla-real); run it on the 19 stored ROS 2 runs |
-| WP1-07 | distance_envelope to people, buildings, roads | buildings via obstacle_clearance, the followed subject via subject_standoff; distance_envelope declarable and refused by the flight loaders | open (code) |
+| WP1-07 | distance_envelope to people, buildings, roads | since 3 Nov enforced through the clearance runtime (buildings: obstacle map; roads: the street mask as a road map) and the stand-off runtime (people: the tracked subject while it is a person) | people other than the tracked subject: the Shield knows one subject - a perception feed of every person, or a recorded limit |
 | WP2-16 | multi-scale geometry, P0Entry.geometry_ref: "The Prefix Compiler picks the scale, never re-computes" | the fine / coarse / bbox scales are computed in one place (guardrail/ir.py) from the IR's polygons, deterministically, when the policy is compiled or loaded; the compiler reads them there and never re-computes them (since 8 Oct); the bundle carries the IR, not the scales | recorded deviation (29 Oct); PI to accept, or the bundle ships the scales |
 | WP1-22, X-09 | IR shape frozen at end of Q1, every later change version-bumped | every post-freeze IR change has a row in docs/IR-MIGRATIONS.md (29 Oct); one, `locked_by` (2385f84, 11 additive fields), kept 2.1.0 by the lock's additive rule | PI to accept the additive rule, or 2.2.0 at the next release |
 | X-05, ARCH-25 | observations reach the VLA at ≥ 10 Hz | the detector runs 2-9 Hz depending on host; a VLA decision takes 0.5-1.2 s on the desktop GPU (9.6 s for DroneCATS int4 on the Orin Nano) | G3 ruling (12 / 21 Oct, Q3) |
@@ -281,7 +288,8 @@ is pushed meanwhile); the `flight` waiver above.
    ARCH-20: needs the VLA server reachable from WSL); SROS 2 on one run
    (X-15). Done 29 Oct: REST hot-apply in flight (WP3-12, WP2-15), one
    flown zone per breach action (WP3-08).
-3. Code: distance_envelope (WP1-07). Done 29 Oct: recoveries at the climb
+3. Code: done 3 Nov: distance_envelope (WP1-07), WGS84 policies (WP1-14),
+   an MSL ground source (X-11). Done 29 Oct: recoveries at the climb
    cap (WP3-17, library 4.308 to 3.135 s), the bundle changelog as a diff
    (X-10), the IR migration register (WP1-22, X-09), the WP2-16 deviation
    recorded.
@@ -295,7 +303,7 @@ applied; regenerate it before the report is written.
 
 ### WP1 - Policy DSL and IR
 
-25 items: 12 DONE, 10 PARTIAL, 3 DRIFT.
+25 items: 12 DONE, 11 PARTIAL, 2 DRIFT.
 
 | ID | Obligation | Status | Evidence | Open |
 |---|---|---|---|---|
@@ -305,14 +313,14 @@ applied; regenerate it before the report is written.
 | WP1-04 | Signed policy bundle (hash + semver) as the deployable artefact | PARTIAL | guardrail/bundle.py Ed25519 (lab-dev key), 64-hex hash, policies/policy.lock.json; every rail incl. the city rail flies the signed bundle by default since 2026-10-22 (Jetson metrics policy_source kind=bundle) | Signing authority (lab CA vs ITRI CA) not named; swap the key in policies/keys/trusted_signers.json once named. |
 | WP1-05 | Bundle compatibility with the PI's reference implementation (a byte-identical match, claimed and retracted 7 Oct) | PARTIAL | docs/data/wp1_roundtrip.json: both hashes 29/29, reference loader reads ours 3/3, forged ref hash refused 29/29; the byte-identity claim retracted (CHANGELOG 2026-10-07) | Reference DSL can represent 0/29 shipped policies; PI to accept the two-hash contract (12 Oct Q8, unanswered) or a converter. |
 | WP1-06 | GeoFence classes: polygon_fence and circle_fence | DONE | circle_fence enforced (CHANGELOG 2026-10-07); sitl/fence/ export; PAS rail uploads clock-proof zones (CHANGELOG 2026-10-13, FENCE_TYPE 7); tests/test_railinputs_fence_export.py; ros2fix2_off_fence fence fired | None. |
-| WP1-07 | Envelopes: altitude, kinematic, and distance (minimum distance to typed object classes) | PARTIAL | guardrail/models.py:13-37: distance_envelope declarable only (nothing enforces it), MSL refused for flight (models.py:1424); obstacle_clearance/subject_standoff are our enforced equivalents | Enforce distance_envelope (map to clearance/standoff runtime, add roads class) and give MSL a ground-elevation source. |
+| WP1-07 | Envelopes: altitude, kinematic, and distance (minimum distance to typed object classes) | PARTIAL | since 3 Nov distance_envelope is enforced (models.RUNTIME_TYPES, shield.ENFORCED_TYPES) through the runtime of its class (models.DistanceEnvelope.runtime_rule): buildings = the clearance rule on the obstacle map, roads = the same on the road map (Shield(road_map=...), the street mask), people = a stand-off from the tracked subject while it is classified as a person; a buildings/roads envelope without its map is refused at construction; the compiler renders it; tests/test_distance_envelope_msl.py (each class decides as its runtime rule on the same map: 1296, 1845, 441 decisions, no difference); MSL has a ground source (X-11); CHANGELOG 2026-11-03 (F) | people other than the tracked subject are outside the rule (the Shield knows one subject); vla_fly and the PAS rail pass no road map (a roads envelope is refused there); no flight has carried a distance_envelope. |
 | WP1-08 | 3-D corridor (keep-in tube) | DONE | corridor implemented, tests/test_corridor.py (audit 5 Oct DONE) | Never flown on any rail; optional to fly corridor_survey once. |
 | WP1-09 | Time windows: valid_time recurrence on rules plus the time_window_switch event | DONE | valid_time + time_window_switch: guardrail/shield.py events, guardrail/compiler.py _RuleClock, templates; rule clock on all rails (CHANGELOG 2026-10-13); tests/test_shield_events.py, tests/test_railinputs_clock.py | No flight has declared a switch in a policy file; flight evidence belongs to WP1-15/WP4-03. |
 | WP1-10 | Breach actions: violation_action values monitor_only/project_fix/brake/loiter/RTL/land | DONE | guardrail/shield.py dispatch on violation_action + guardrail/fsm.py SET_MODE; tests/test_fsm.py 114/114 (run 2026-10-28); RTL flown via X7 on pas_ap_close_on (13 Oct) and pas_ap_video_on_20261014 | Per-action flight evidence is WP3-08. |
 | WP1-11 | constraint_type hard/soft | DONE | guardrail/shield.py soft rules capped at brake, relaxed lowest priority first (CHANGELOG 2026-10-07); tests/test_shield.py | PI Q9 (12 Oct) on soft semantics unanswered; no shipped policy uses a soft rule in flight. |
 | WP1-12 | priority P0/P1/P2 | DONE | guardrail/shield.py relaxation by priority; escalation uses priority (CHANGELOG 2026-10-07) | Priority does not arbitrate between two hard rules (documented). |
 | WP1-13 | scope + layer fields and the layered merge regulation>site>mission | DONE | guardrail/models.py merge_layers/load_layered, locked_by (CHANGELOG 2026-10-07, 2026-10-19); tests/test_policy_dsl_grant_form.py | No flown run has used a layered policy. |
-| WP1-14 | Units and frames: WGS84 lat/lon canonical, AGL default, ENU/NED computed lazily | DRIFT | WGS84 canonical stored form (CHANGELOG 2026-10-07 Changed; PI-DECISIONS-2026-10-06 Part C deviation 1) | 31 of 32 policies are written and hashed in local metres, the WGS84 one has never flown, projection runs at load not lazily, MSL cannot fly (independent review against the grant's wording, 29 Oct) |
+| WP1-14 | Units and frames: WGS84 lat/lon canonical, AGL default, ENU/NED computed lazily | PARTIAL | since 3 Nov all 32 policies state a WGS84 origin and write every point in lat/lon, which is what is stored and hashed; the 31 converted by tools/convert_policies_wgs84.py, each proved to enforce the same geometry (docs/data/wgs84_conversion.json: 257 points, round trip at most 5.5e-8 m against 1 um, the local view exact, the metre form = the old IR) and re-versioned with lock entries `migrated_from` the metre version (bundle.FRAME_FORM); the local metres are a view computed when the Shield or compiler first reads a point, cached per origin (IR schema 3.1.0, models.XY, projection.local_metres); AGL is the default and MSL an opt-in with a ground (X-11); library sweep unchanged (P0 escape 0.0); all 372 stored runs in the lab checkout resolve as before (362 directly, 10 through their generation chain) | a metre document still loads - the legacy read form that pre-3-Nov bundles, runs and lock recipes need, but also what the REST API, the Shield's own zone edits and the harness's spawned zones write, against "the DSL never carries projected coordinates": convert metre input at ingest; no simulator flight from a converted bundle yet. |
 | WP1-15 | Mid-flight hot-apply (dynamic_nfz, time_window_switch, corridor_swap) with generation bump and hash re-derive, via a REST endpoint | PARTIAL | guardrail/api.py REST + --hotapply-port on both SITL rails with mTLS (CHANGELOG 2026-10-13); tests/test_api.py, tests/test_railinputs_hotapply.py; 'Nothing here has flown'; 29 Oct: REST hot-apply into flying ArduPilot SITL + MAVROS 2 (ROS 2 rail, dev): a dynamic_nfz spawned, rotated, translated and switched off (time_window_switch) mid-flight, generations 0-4, receipt to swap 0.444-4.443 ms against 50 ms; on ros2_hotapply_03 the Shield and the FSM stopped the aircraft short of the REST zone (X1, G3), released it after the switch-off (G8), and it reached the target | corridor_swap over REST in flight (the flown policy has no corridor); a listener on the perception rail; lift the dynamic_nfz file hold (C-16). |
 | WP1-16 | Ingest outputs: JSON Schema export, KML/GeoJSON converter, ingest CLI | DONE | policies/policy_dsl.schema.json; tools/geo_to_policy.py; tests/test_geo_to_policy.py | Polygons with holes refused (minor). |
 | WP1-17 | WP1 KPI: policy load round-trip | DONE | tools/wp1_roundtrip_kpi.py -> docs/data/wp1_roundtrip.json: round-trip 29/29, tamper 29/29, negative 35/35, nulls 0/29; tests/test_wp1_roundtrip_kpi.py | None. |
@@ -464,7 +472,7 @@ applied; regenerate it before the report is written.
 | X-08 | One code base runs first-class in dev, hil and flight; promotion dev to hil to flight is a config flag (identical image) | PARTIAL | same as ARCH-28 | Same as ARCH-28. |
 | X-09 | R6 freeze gate: IR shape frozen at the end of Q1 (2026-04-30); every later IR-shape change carries a semver bump and a migration note | PARTIAL | same as WP1-22 (docs/IR-MIGRATIONS.md) | Same as WP1-22. |
 | X-10 | Bundle identity fields: policy_hash as a full SHA-256, signed_by (Lab or ITRI CA), changelog as a diff against the previous version, issued_at, layers_merged | PARTIAL | full SHA-256, issued_at, layers_merged, Ed25519 signed_by lab-dev key; since 29 Oct the changelog is a diff against the previous version (guardrail/bundle.py --previous, manifest changelog_diff, 895b5a0; tests/test_bundle.py) | CA name for signed_by (PI/ITRI, 12 Oct Q5). |
-| X-11 | MSL as an opt-in altitude reference on geometry primitives (altitude_ref AGL/MSL) | PARTIAL | altitude_ref AGL/MSL declarable (guardrail/models.py:156); MSL refused for flight (models.py:1424, no ground-elevation source); MSL hot-apply refused (CHANGELOG 2026-10-19) | Give the Shield a ground-elevation source so an MSL rule can fly. |
+| X-11 | MSL as an opt-in altitude reference on geometry primitives (altitude_ref AGL/MSL) | PARTIAL | since 3 Nov the Shield takes a ground-elevation source (Shield(ground=...), guardrail/terrain.py FlatGround: the SITL home's 584 m, the PAS scenes' 40 m, scene_ground) and enforces an MSL band as the AGL band over it; the loaders accept MSL only with `ground=` (the opt-in), hot-apply follows the Shield's ground, a non-flat ground is refused; MSL over 584 m decides as the AGL policy shifted by 584 m (756 decisions, no difference, tests/test_distance_envelope_msl.py); CHANGELOG 2026-11-03 (F) | flat ground only (no DEM); no rail passes a ground yet; the CSP still refuses an MSL rule (compile_csp CSPUnenforcedRules), so a rail that compiles one records the refusal. |
 | X-12 | Hybrid hot-update rule: only dynamic_nfz, time_window_switch and corridor_swap may change mid-flight; polygon_fence and the envelopes stay locked from mission start | DONE | hot-apply of a fixed polygon fence after take-off refused; only the three classes hot-apply (guardrail/api.py; CHANGELOG 2026-10-07); tests/test_api.py, tests/test_shield_events.py | None. |
 | X-13 | Single rule-evaluation code path (the checker reuses the IR and nothing else evaluates rules) | DRIFT | Shield.rule_status is the one checker; HUD and FenceGuard read it (CHANGELOG 2026-10-07) | as WP3-22: compiler.action_violations is a second rule evaluator (tools/prefix_eval uses it) (independent review against the grant's wording, 29 Oct) |
 | X-14 | Dynamic-actor stressors in parameter sweeps: wind (and GPS denial) | PARTIAL | wind, gusts, GPS dropout stressors with a closed-loop ArduCopter wind model (CHANGELOG 2026-10-06, -13); experiments/templates/wind_disturbance.yaml | wind and GPS stressors act on the headless kinematic model only; no simulator run applies them (independent review against the grant's wording, 29 Oct) |
