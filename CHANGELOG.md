@@ -16,17 +16,120 @@ shipped change and recorded as one.
 
 ## [Unreleased]
 
-### 2026-11-02 — fail-safe correctness against a written rubric (WIP, unfinished)
+### 2026-11-02 — fail-safe correctness against a written rubric; theta decided
+
+The PI delegated the open escalation decisions as "best practice / follow the
+grant" (2 Nov). Headless harness throughout; nothing here is KPI-grade.
+
+#### Added
+- `docs/RUBRIC-failsafe.md`, written and committed before any label changed.
+  - "Triggered" = RTL or Land; Brake and Loiter are holds.
+  - A fail-safe is expected for: E1 a hard RTL / land rule; E2 a disturbance
+    beyond authority; E3 a position error beyond the margin near a P0
+    boundary; E4 no legal continuation; E5 an unsafe repair (over theta or
+    unconverged, or a loiter rule) that the planner keeps asking for past the
+    operator timeout.
+  - N1-N5 are their negations. Clauses are judged on the flight without a
+    fail-safe, never on what the FSM did.
+  - Two clarifications came before any label changed: the
+    flight-without-a-fail-safe basis, and N1 / N2 as exact negations. One
+    amendment came after: E3's noise / latency is read against the planned
+    route, because the flown closest approach gave one cell two labels by
+    seed. No label changed with it.
+- `tools/failsafe_rubric.py` applies the rubric cell by cell. On the
+  library, smoke and nightly (672 cell-seeds) it reports 0 mismatches.
+- Labels carry their clause: `ScenarioSpec.failsafe_clause` and
+  `failsafe_cells` (`guardrail/scenario_spec.py`). A clause that contradicts
+  its label is refused. `tests/test_failsafe_rubric.py` (7) is added to the CI
+  loop.
+- `FSMConfig.for_decision_period(p)` sets T = max(T, N x p x 1.5) for a pilot
+  slower than 10 Hz. Every 10 Hz pilot keeps the grant's thresholds and hash.
+- `summary()["ended_holding"]`, and a CENSORED fail-safe outcome in the
+  sweep: an episode that ends in Loiter with the timeout still running is not
+  scored, and it fails its label gate.
 
 #### Changed
-- `guardrail/fsm.py`: in Loiter, G8 hands back a request the Shield would fly (clean or a repair within theta, no new onset) once the position is legal; X6 / X7 judge the held aircraft's own position (`FSMConfig.loiter_clear`, `loiter_x67`; old readings selectable). `FSMConfig.for_decision_period` scales N-in-T's T for a slow pilot. `summary()["ended_holding"]` reports a Loiter still running its timeout at the end.
-- Labels re-derived from `docs/RUBRIC-failsafe.md` (written first), each naming its clause; 13 families fly 50-70 s so the outcome is shown; an episode ending in Loiter before the timeout is scored censored, not correct. `tools/failsafe_rubric.py` applies the rubric on the flight without a fail-safe.
+- **Theta's basis is DECIDED**: reading A, each repair's forecast depth in
+  metres (the default). Code comments no longer say it waits for the PI.
+- **Loiter's G8** hands back a request the Shield would fly (clean or a repair
+  within theta, no loiter rule, no new onset) once the position is legal
+  (`FSMConfig.loiter_clear` "acceptable").
+- **X6 / X7 in Loiter** judge the held aircraft's position
+  (`loiter_x67` "position").
+- Both old readings stay selectable. A config on the old law hashes
+  `sha256:5ae67785...` as before; the new default hashes
+  `sha256:d55e1bfe...`.
+- **Labels re-derived from the rubric**: 15 families changed or gained a
+  label (list in the rubric's section 5), and 5 outcome labels became
+  RTL_triggered.
+- 13 families fly 50 s (corridor-drift-angles 70 s), so the outcome is shown.
+- **Pins.**
+  - Removed: dyn-nfz-spawn-ahead (4), three-simultaneous-violations,
+    near-edge-at-12mps (2).
+  - Added: rail-mission-stub-vla, corridor-swap-shifted.
+  - standoff-wedge now pins its goal only.
+- `docs/data/scenario_sweep.json` republished.
+- LOITER flown as ArduCopter's BRAKE is kept as the best-practice mapping.
+  Literal LOITER descends with no RC throttle.
+
+#### Fixed
+- wind-beyond-authority, lane 15 at 12 m/s: a missed fail-safe. G8 handed the
+  hold back while it was still being blown through nfz-square. It now goes
+  G1 G3 X7 G6 and lands off the zone.
+- near-edge-at-12mps (2 cells): false fail-safes. A steady 0 m repair never
+  "cleared" Loiter, and the 30 s timeout sent the aircraft home.
+- 27 library episodes ended in Loiter before the timeout and were scored as
+  correct non-triggers. They now fly to resolution.
 
 #### Found
-- Library (headless, not KPI-grade): 145/171 = 0.848 before; FSM fix alone 148/171 = 0.865; with the rubric labels and full-length episodes 175/179 = 0.978 (2 false: rail-mission-stub-vla and standoff-approach-angles 7 m pedestrian, theta on the first deep forecast; 2 missed: gps-dropout lane 23.6, no fix-quality input), never-trigger null 0.659, always-trigger 0.341, Wilson low 0.944. At equal episode lengths the only P0-tick rise is the newly caught wind-beyond-authority Land (+106 below-floor LAND ticks); polygon entries unchanged.
+- **Fail-safe correctness**, before (7bfd6dc) -> after; nulls never / always;
+  Wilson 95 % lower bound:
+
+  | profile | before | after | nulls (after) | Wilson (before -> after) |
+  |---|---|---|---|---|
+  | library | 145/171 = 0.848 | **175/179 = 0.978** | 0.659 / 0.341 | 0.787 -> 0.944 |
+  | smoke | 57/61 = 0.934 | **62/63 = 0.984** | 0.635 / 0.365 | 0.843 -> 0.915 |
+  | nightly | 547/717 = 0.763 | **721/741 = 0.973** | 0.623 / 0.377 | 0.730 -> 0.959 |
+
+- **E5 sensitivity.** With the E5 labels read as "not expected": library
+  0.760, smoke 0.762, nightly 0.702. E5 carries most of the change; it is the
+  grant's own condition (p1, p4) and is kept.
+- **Below 0.99 on every profile, and not shown at 95 % anywhere.** Remaining:
+  - rail-mission-stub-vla and standoff-approach-angles 7 m pedestrian: theta
+    escalates the first deep forecast, the hold keeps the request deep, and
+    the timeout sends the aircraft home, where projection alone would have
+    resolved it. The Gazebo + ArduCopter SITL flight of the same mission
+    (70ab5e8) flew those edges.
+  - gps-dropout lane 23.6 (missed): no fix-quality input.
+  - two nightly noise seeds that G4 counts.
+- **Safety.**
+  - P0 escapes: 0.
+  - Polygon entries: unchanged.
+  - P0 ticks at the true state rose: library +323, smoke +260, nightly +969.
+    Every tick is in an episode the rubric expects a fail-safe for: the
+    expected RTL / LAND flown now that runs are long enough, plus 106
+    below-floor LAND ticks per wind-12 lane-15 episode.
+  - Autopilot breaches: library 7 -> 10, nightly 21 -> 30. All are in
+    expected episodes, and the old code at the new lengths flies the same.
+- **Time to safe** (library): 3.135 s over 37 recoveries -> 2.997 s over 39.
+  Max 6.7 s. Not optimised; the longest are physics-limited escapes.
+- **PathRepair on by default (decision 4): measured, kept off.** 150/171 =
+  0.877 and 26 more failing episodes. Its magnitude is the replaced
+  forecast's depth, so head-on detours escalate.
+- **Theta depth, measured, not decided.** Depth at the first entry plus one
+  period, and depth weighted by time-to-entry, both remove the two false
+  triggers and the Gazebo escalation (0 over theta on the 8 Oct replay), at
+  a cost:
+  - entry: 3 Shield-on polygon entries instead of 1, and one breach;
+  - weighted: one breach (dyn-nfz-rotate-spin 9 deg/s) and +18 P0 ticks;
+  - against the published labels: 163/179 and 171/179.
 
 #### Limits
-- UNFINISHED: smoke and nightly not re-scored, `docs/data/scenario_sweep.json` not republished, the full test list not run (tests/test_sweep.py re-run pending after its updates), PathRepair measurement (decision 4) not read, DESIGN-escalation-fsm.md / FINAL-REPORT Appendix A rows and the rubric's section 5 not updated, theta "awaiting the PI" comments not yet changed to decided.
+- No flight has used the 2 Nov Loiter law or the rubric. The Gazebo re-fly
+  will show the same X1 G3 G5 edges, a false trigger by the rubric.
+- `for_decision_period` is not wired into a VLA rail.
+- RTLWatch does not judge keep-in corridors (corridor-swap-shifted).
+- No scenario has a planner that thrashes its own request.
 
 ### 2026-11-02 — the October deck's presenter cheat-sheet, committed
 

@@ -41,6 +41,194 @@ the published sweep still carried the old hash). The 8 Oct flight's log, and
 its trimmed copy `tests/fixtures/pas_ap_20261008_audit.short.jsonl`, carry
 `sha256:0136098f...`, the configuration that flew.
 
+**Update 2026-11-02.** The PI delegated the open decisions as "best practice /
+follow the grant". Theta's basis is DECIDED: reading A, each repair's forecast
+depth in metres (the default; the one-period reading stays selectable). The
+fail-safe rubric is written (docs/RUBRIC-failsafe.md), two Loiter behaviours
+were fixed, and the default config hash changed again (two new fields):
+`sha256:d55e1bfe...`. The next section has the decisions, the measurements and
+what is still wrong.
+
+## 2026-11-02: the delegated decisions, and correctness against a written rubric
+
+Headless harness throughout; nothing here is KPI-grade (the grant measures
+its KPIs on the hil topology).
+
+### The four decisions
+
+1. **Theta's basis: reading A, decided.** Each repair's forecast depth in
+   metres (`magnitude_m`, `fsm.DEFAULT_THETA_HORIZON_S = None`). It is the
+   grant's audit-example field (p5) and the PI reference's metric ("a deep
+   head-on dive ... is escalated rather than projected").
+2. **The fail-safe rubric**, written before any label changed:
+   docs/RUBRIC-failsafe.md.
+   - "Triggered" is RTL or Land; Brake and Loiter are holds.
+   - A fail-safe is expected for: E1 a hard RTL / land rule, E2 a
+     disturbance beyond authority, E3 a position error beyond the margin
+     near a P0 boundary, E4 no legal continuation, or E5 an unsafe repair
+     the planner keeps asking for past the operator timeout.
+   - Each clause is judged on the flight without a fail-safe, never on
+     what the FSM did.
+3. **LOITER flown as ArduCopter's BRAKE: kept, as best practice.**
+   - The grant's FSM, the audit record and `set_mode` say LOITER. Literal
+     LOITER is not feasible without a pilot holding the throttle centred:
+     measured in SITL, it went from 15 m to the ground in 6.7 s.
+   - BRAKE holds position and altitude with no pilot input.
+   - `--hold-mode LOITER` remains for a flight with a safety pilot on the
+     sticks.
+   - **N-in-T for a pilot slower than 10 Hz:** `FSMConfig.for_decision_period(p)`
+     sets T = max(T, N x p x 1.5). It is option b of the 21 Oct questions,
+     and every 10 Hz pilot keeps exactly the grant's thresholds. No VLA
+     rail calls it yet.
+4. **PathRepair on by default: measured, kept off.**
+   - **Cost.** The library flown with `path_repair=True` scores 150/171 =
+     0.877 (19 false, 2 missed, 8 censored), against 175/179 with it off.
+     It also adds 26 failing episodes:
+     - all six nfz-head-on arms;
+     - ten gps-noise-within-margin cells sent home;
+     - wind-within-authority lane 15 sent home;
+     - the N1 cells of dyn-nfz-spawn-ahead sent home.
+   - **Mechanism.** PathRepair steps in where projection lost half the
+     progress, which means head-on. Its `magnitude_m` is the depth of the
+     forecast it replaced, so on the decided basis nearly every detour it
+     proposes is over theta and escalates.
+   - **What did not change:** P0 escapes (0) and polygon entries.
+   - It stays selectable (`Shield(path_repair=True)`).
+
+### FSM behaviour that was wrong (fixed, `guardrail/fsm.py`)
+
+**G8 (Loiter → Normal) read only "no hard violation in the request".**
+In Loiter the autopilot flies and nobody flies the request. Two faults
+followed:
+- G8 handed back an aircraft that was still inside nfz-square, because
+  its request pointed out of the zone.
+- G8 never handed back a request the Shield repairs by 0 m. The 30 s
+  timeout then sent near-edge-at-12mps home twice, although no repair was
+  unsafe (p1).
+
+Now (`loiter_clear` "acceptable"):
+- The request must be one the Shield would fly: clean, or a repair G1
+  accepts, with no `loiter` rule violated.
+- No violation may START on the tick; that is the thrash G4 counts.
+- The position must be legal.
+
+**X6 / X7 in Loiter waited for "a hard rule violated on this tick".**
+That condition was written for Brake, where a clean request means the
+pilot is leaving on its own. On wind-beyond-authority lane 15 at 12 m/s
+it let a hold be blown through the zone with no escalation: a missed
+trigger. In Loiter X6 / X7 now judge the aircraft's own position
+(`loiter_x67` "position"). That cell now goes G1 G3 X7 G6 and lands off
+the zone.
+
+Both old readings stay selectable. The c77c77d in-place identity test
+and the 8 Oct flight replay pin the old law explicitly. On the 8 Oct log,
+today's law fires X6 / X7 inside the first Loiter: the old ArduCopter
+LOITER sank the logged aircraft below the floor.
+
+### Censoring and episode length
+
+- **Censored outcomes.** 27 library episodes ended in Loiter before the
+  30 s timeout had run. The 25 labelled ones were scored "correct, not
+  triggered"; rail-mission-stub-vla and altitude-ceiling-hold ended 0.1 s
+  before G5. Now `summary()["ended_holding"]` reports a timeout still
+  pending, and the sweep scores such an episode as censored: not
+  measured, and a failed label gate.
+- **Longer episodes.** 13 families fly 50 s; corridor-drift-angles flies
+  70 s.
+
+### Results
+
+| profile | before (7bfd6dc) | after | E5 read as "not expected" |
+|---|---|---|---|
+| library | 145/171 = 0.848 (25 false / 1 missed); nulls 0.942 / 0.058; Wilson 0.787 | **175/179 = 0.978** (2 / 2); nulls 0.659 / 0.341; Wilson **0.944** | 136/179 = 0.760 (41 / 2) |
+| smoke | 57/61 = 0.934 (3 / 1); 0.885 / 0.115; 0.843 | **62/63 = 0.984** (1 / 0); 0.635 / 0.365; **0.915** | 48/63 = 0.762 (15 / 0) |
+| nightly | 547/717 = 0.763 (167 / 3); 0.941 / 0.059; 0.730 | **721/741 = 0.973** (14 / 6); 0.623 / 0.377; **0.959** | 520/741 = 0.702 (215 / 6) |
+
+The library's 3 s comparison arm, scored against labels derived for the
+grant's 5 s forecast, gives 160/177 = 0.904 (2 / 15). It is reported,
+never gated.
+
+**Below 0.99 everywhere, and not shown at 95 % on any profile.**
+- False triggers left: rail-mission-stub-vla and standoff-approach-angles
+  7 m pedestrian (the theta mechanism below).
+- On nightly the false triggers are 3 rail-mission and 9
+  standoff-approach-angles (3 variants x 3 seeds), plus 2 pinned
+  gps-noise-within-margin seeds (1001, 1003). In those two, 0.3 m of noise
+  makes the ring flicker, N-in-T counts it (G2), and the flicker keeps
+  coming in Loiter (G4). By N2 that is noise, not a planner thrashing.
+- Missed triggers left: gps-dropout lane 23.6 with windows 2-9 s and
+  6-13 s (6 on nightly). The Shield has no fix-quality input.
+
+**Safety costs.**
+- P0 escapes: 0 everywhere.
+- Episodes entering a P0 polygon: unchanged. On the library that is 1
+  Shield-on (tracked) and 4 by the autopilot; on smoke, 1 and 2.
+- Ticks inside polygons fell on the library, from 490 to 487.
+- Nightly: 3 Shield-on episodes into a polygon (tracked) and 12 carried in
+  by the autopilot, the same as before.
+- P0 ticks flown at the true state rose. Every tick of the rise is in an
+  episode the rubric expects a fail-safe for:
+  - library +323: E5 +183, E3 +34, and E2 +106;
+  - smoke +260: E5 +120, E3 +34, E2 +106;
+  - nightly +969: E5 +549, E3 +102, E2 +318;
+  - autopilot breaches (the modelled RTL or LAND moving the aircraft
+    somewhere illegal) went from 7 to 10 on the library and from 21 to 30
+    on nightly. The new ones are standoff-reclassified's RTL past the
+    pedestrian, corridor-swap-shifted's RTL out of the swapped corridor,
+    and gps-dropout's landing through the floor. All are in expected
+    episodes, and the control run (old code, new lengths) flies the same;
+  - the E5 and E3 ticks are the expected RTL / LAND flown after the
+    timeout, now that the runs are long enough to fly it;
+  - the E2 ticks are wind-beyond-authority lane 15 at 12 m/s landing
+    through the 10 m floor;
+  - at the old lengths the FSM change alone adds exactly those 106 E2
+    ticks, and nothing else moves (a control run of 7bfd6dc's code with
+    the new lengths).
+
+**Mean time to safe:** 3.135 s over 37 recoveries became 2.997 s over 39
+(library). Max 6.7 s, unchanged. Two causes:
+- X7 now ends wind-12 lane 15 earlier;
+- the longer runs add two recoveries.
+
+Nothing was changed to move this figure. The longest recoveries are
+escapes at the caps from imposed positions (a grown zone, a reclassified
+ring, a spawn on top), so they are limited by physics.
+
+### Theta on the first deep forecast: three depths, measured, not decided
+
+Both remaining false triggers come from the same mechanism. So does the
+Gazebo Harmonic + ArduCopter SITL flight of the rail mission (master
+70ab5e8: X1 on tick 1 at 8.13 m, G3, G5 at 30.2 s, target never left):
+the first forecast to meet the zone goes deep, theta escalates it, and
+the hold keeps the request deep. For GeofenceSlide and StandoffHold, the
+depths measured were:
+- **deepest** (shipped): the deepest forecast pose, which for a head-on
+  approach is at the horizon's end;
+- **entry**: the depth reached one control period after the first
+  predicted entry;
+- **weighted**: each pose's depth times max(0, 1 - t / lookahead).
+
+The measurement was a scratch patch, never committed. It was scored on
+the library against the published labels. Those labels' E5 assumes the
+deepest basis: another basis would re-derive E5.
+
+| depth | library correctness | Shield-on episodes into a P0 polygon | autopilot polygon entries | P0 ticks at true state | gated cells failing their breach gate | 8 Oct flight replay |
+|---|---|---|---|---|---|---|
+| deepest | 175/179 = 0.978 (2 / 2) | 1 | 4 | 1768 | 0 | 19 ticks over theta, X1 / G3; 0 escapes |
+| entry | 163/179 = 0.911 (0 / 16) | **3** (deepest 8.0 m, tracked) | 2 | 1601 | **1** (dyn-nfz-rotate-spin 9 deg/s) | 0 over theta, no Loiter; 0 escapes |
+| weighted | 171/179 = 0.955 (0 / 8) | 1 | 4 | 1786 | **1** (dyn-nfz-rotate-spin 9 deg/s) | 0 over theta, no Loiter; 0 escapes |
+
+- **Both alternatives** remove the two false triggers and the Gazebo
+  escalation. Under each, 14 or 6 E5 cells no longer escalate (with the
+  published labels these read as missed).
+- **entry** is near-inert at the shipped caps: 0.4 m in a 0.1 s period at
+  4 m/s, against theta's 2.0 m. It lets two more tracked wind cells into
+  a zone.
+- **weighted** keeps the polygon entries but adds one self-caused breach
+  and 18 P0 ticks.
+
+Choosing among them is a change to decision 1, and it is left to a human.
+
 ## 2026-10-08: what the first follow flight on ArduPilot changed
 
 `demo/out/pas_ap_20261008_224440` is a 120 s red-car follow on Project
@@ -1124,6 +1312,12 @@ returns `None`, not 0 and not 1.
 
 ## Questions for the PI
 
+**Answered 2026-11-02** (the PI delegated them as "best practice / follow the
+grant"; "2026-11-02: the delegated decisions" above): 1 (reading A), 3 and 11
+(onsets, at most one a second; a slow pilot scales T), 5 (RTL or Land only;
+docs/RUBRIC-failsafe.md), 10 (BRAKE, kept), 13 (Loiter judges what it would
+hand back and where the aircraft is). The rest stand as written.
+
 1. **θ's unit.** Is θ the position correction per operator (the reference's
    penetration depth / altitude error), or ‖Δaction‖ over some horizon? With
    the proxy measured from the clamped command, the delivered flights never
@@ -1214,9 +1408,10 @@ returns `None`, not 0 and not 1.
   independent from tick to tick. Noise correlated over seconds (GPS drift)
   makes the standard error too small; no test covers that, and X6's
   progress test then also errs towards "working".
-- Theta's basis waits for the PI (question 1). The tables above give both
-  readings' numbers on the replayed flight and the three profiles;
-  switching is one argument (`Shield(theta_horizon_s=0.1)`,
-  `--theta-horizon-s 0.1` on the ROS node and the Project AirSim node).
-- None of the configurations measured reaches 0.99, or beats the
-  never-trigger null on the library or the nightly profile.
+- Theta's basis is decided (2026-11-02, reading A). The one-period
+  reading stays one argument away (`Shield(theta_horizon_s=0.1)`,
+  `--theta-horizon-s 0.1` on the ROS node and the Project AirSim node);
+  the depth at first entry and the time-weighted depth were measured, not
+  adopted ("Theta on the first deep forecast" above).
+- Against the rubric (2026-11-02) the library and smoke beat both nulls,
+  but no profile reaches 0.99, and none shows it at 95 %.

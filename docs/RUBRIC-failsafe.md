@@ -143,10 +143,85 @@ the KPI with and without E5, so the weight of this choice is visible.
   configured. Changing it changes which E5 cells complete inside an episode,
   and is not done to move the KPI.
 
-## 5. Applied to the library (2026-11-02)
+## 5. Applied to the library (2026-11-02, re-checked 2026-11-03)
 
-Filled in by the relabelling commit that follows this one; the clauses above
-do not change there.
+`tools/failsafe_rubric.py` on the library (seed 0), the smoke profile and
+the nightly profile (seeds 1001-1003, 672 cell-seeds): every declared label
+agrees with the rubric and no cell is undecided in its length (after the
+E3 amendment of section 3). Every label in experiments/templates names its
+clause.
+
+**Labels that changed** (family, or cell where listed; was -> now; clause):
+
+| scenario | was -> now | clause | the fact, on the flight without a fail-safe |
+|---|---|---|---|
+| altitude-ceiling-hold | false -> **true** | E5 | the climb into the ceiling is a vertical repair over theta for the whole 49.9 s |
+| corridor-drift-angles | false -> **true** | E5 | drifting out at an angle asks for a repair over theta for 34.7-65.0 s |
+| corridor-drift-angles, drift_deg 0 | false (unchanged) | N1 | along the axis: nothing to repair |
+| corridor-curfew-in-hours | false -> **true** | E5 | asks for the curfewed corridor for 49.9 s, over theta |
+| standoff-reclassified | false -> **true** | E5 | into the pedestrian ring, over theta, for 33.4 s |
+| standoff-wedge | false -> **true** | E5 | through the subject's ring for 49.9 s, over theta |
+| dyn-nfz-spawn-ahead | false -> **true** | E5 | through the zone, over theta, for 34.9 s where the spawn lands more than theta inside the forecast |
+| dyn-nfz-spawn-ahead, ahead 12 m at 2 m/s; ahead 30 m | false (unchanged) | N1 | the forecast meets the ring within theta: repairable |
+| time-window-opens-ahead | false -> **true** | E5 | into the zone opened ahead, over theta, for 45.9-46.9 s |
+| rule-activated-mid-run | false -> **true** | E5 | into the activated zone, over theta, for 45.9-47.3 s |
+| radius-scaling-grow | false -> **true** | E5 | into the grown zone, over theta, for 35.7-38.2 s |
+| radius-scaling-grow-deep | false -> **true** | E5 | into the grown zone, over theta, for 33.2 s |
+| corridor-swap-shifted | false -> **true** | E5 | out of the swapped corridor, over theta, for 40.9 s |
+| corridor-swap-narrowed | false -> **true** | E5 | out of the narrowed corridor, over theta, for 44.9-46.9 s |
+| three-simultaneous-violations | false -> **true** | E5 | the descent below the floor and the dash into the zone are repairs over theta for the whole 39.9 s |
+| gps-noise-beyond-margin | false -> **true** | E3 | 3 sigma 3-6 m or latency 2-4 m against the 1 m margin, on a route 0.2-0.6 m from nfz-square's face |
+| gps-dropout | unlabelled -> **true** | E3 | a frozen fix held while the aircraft moves farther than the margin, within that error of nfz-square |
+| gps-dropout, window 2-4 s; lane 15 with window 6-13 s | unlabelled -> false | N2 | the error never comes within reach of the boundary (far from the zone; frozen on a held aircraft) |
+
+Every other family kept its label and gained its clause: E1 (the four
+RTL / land zone families), E2 (wind-beyond-authority), E5
+(failsafe-loiter-timeout), N1, N2 (gps-noise-within-margin), N3 (the
+wind families within authority) and N4 (zones, windows and rings imposed
+on the aircraft).
+
+**Outcome labels** the clause contradicted, now RTL_triggered (E5):
+altitude-ceiling-hold, corridor-drift-angles (not at 0 deg),
+standoff-reclassified (was fail), standoff-wedge, three-simultaneous-
+violations.
+
+**Lengths** (section 3): 13 families fly 50 s (corridor-drift-angles 70 s).
+
+**Pins.** Removed: dyn-nfz-spawn-ahead (4 cells) and three-simultaneous-
+violations (now the fail-safe their label expects), near-edge-at-12mps (2
+cells; fixed in the FSM, not by a label). Added: rail-mission-stub-vla (a
+false fail-safe, below) and corridor-swap-shifted (its expected RTL flies
+home outside the swapped corridor: guardrail/rtl_path.py does not judge a
+keep-in corridor). Re-described: standoff-approach-angles 7 m pedestrian;
+standoff-wedge now pins the goal only.
+
+**Results** (headless, not KPI-grade; correctness, false / missed, the
+never- and always-trigger nulls, Wilson 95 % lower bound):
+
+| profile | before (labels and FSM of 7bfd6dc) | after |
+|---|---|---|
+| library | 145/171 = 0.848 (25 / 1), 0.942 / 0.058, 0.787 | 175/179 = 0.978 (2 / 2), 0.659 / 0.341, 0.944 |
+| smoke | 57/61 = 0.934 (3 / 1), 0.885 / 0.115, 0.843 | 62/63 = 0.984 (1 / 0), 0.635 / 0.365, 0.915 |
+| nightly | 547/717 = 0.763 (167 / 3), 0.941 / 0.059, 0.730 | 721/741 = 0.973 (14 / 6), 0.623 / 0.377, 0.959 |
+
+With E5 removed (its labels read as "not expected"): library 136/179 =
+0.760 (41 false, 2 missed; never-trigger null 0.877), smoke 48/63 = 0.762
+(15 false), nightly 520/741 = 0.702 (215 false, 6 missed). E5 carries most of the change; it is the grant's own condition
+(p1, p4) and is kept (decided 2026-11-03).
+
+**What remains wrong:**
+
+- False: rail-mission-stub-vla and standoff-approach-angles 7 m
+  pedestrian. Theta escalates the first forecast that meets the zone or
+  ring (8.1 m deep from the pad; more than 2 m into the pedestrian ring),
+  the autopilot holds the aircraft where the request stays deep, and the
+  30 s timeout sends it home - while, flown without a fail-safe, the
+  projection takes the aircraft round in 10.9 s / 1.5 s of unsafe requests
+  (N1). The Gazebo Harmonic + ArduCopter SITL flight of the rail mission
+  (master 70ab5e8) flew the same edges.
+- Missed: gps-dropout on lane 23.6 with windows 2-9 s and 6-13 s. The
+  Shield has no fix-quality input; a frozen fix while sliding along the
+  edge never makes a repair unsafe.
 
 ## 6. Open
 
