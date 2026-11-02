@@ -1096,7 +1096,9 @@ class Policy(BaseModel):
         is a rule on the schema as much as on this method, and
         tests/test_policy_hash.py enforces it - a new field with a non-None
         default would silently change the meaning of every policy that omits
-        it, so it is refused until the IR schema version is bumped.
+        it. Since 2026-11-02 every schema change, an optional one included,
+        also needs an IR_SCHEMA_VERSION bump (the grant's freeze rule); the
+        None-omission is what keeps such a bump from moving stored hashes.
 
         Defaults that are NOT None stay in the canonical form on purpose: if
         `margin_m` defaulted to 2.0 tomorrow, a policy that omits it would
@@ -1763,7 +1765,17 @@ _REFERENCE_DEFAULTED = ("scope", "layer", "altitude_ref")
 # Also bumped by a change to a value that decides enforcement without being
 # stored in the IR: CircleFence.SEGMENTS (the derived polygon's vertex count)
 # is the one such value today.
-IR_SCHEMA_VERSION = "2.1.0"
+#
+# THE FREEZE RULE (grant, Policy DSL page, R6: "every later IR-shape change
+# carries a semver bump and a migration note"). Since 2026-11-02 EVERY change
+# to the shape - additive ones included - needs a bump here, a row in
+# docs/IR-MIGRATIONS.md, and `python -m guardrail.bundle lock --update` to
+# re-pin the lock (guardrail.bundle.ir_schema_drift / check_lock; tests/
+# test_policy_hash.py). Until then a new field defaulting to None was let
+# through unbumped, because it moves no stored hash; that is this project's
+# rule, not the grant's, and `locked_by` (2385f84, 2026-10-19) went in under
+# it. 2.2.0 (2026-11-02) is that change, versioned: no field moved.
+IR_SCHEMA_VERSION = "2.2.0"
 
 # The schema eras the old 16-hex hash went through, by which None-valued keys
 # `model_dump()` emitted as null in each. Derived from `git log -- guardrail/
@@ -1813,13 +1825,14 @@ def ir_schema_defaults(root: type[BaseModel] | None = None
     it out leaves the canonical bytes unchanged; anything else is the default
     VALUE, which the canonical form writes out and the hash therefore covers.
 
-    policies/policy.lock.json pins this. tests/test_policy_hash.py allows one
-    kind of change without a schema bump - a NEW field whose default is
-    `"<absent>"` - because that is the only change that provably moves no
-    stored hash. A new field with a value default, a changed default, or a
-    removed field changes what existing policies mean or how they hash, and
-    is refused until IR_SCHEMA_VERSION is raised and the lock re-pinned. A new
-    MODEL is reported until `lock --update` pins it (see `ir_models`).
+    policies/policy.lock.json pins this, under the version it was pinned at.
+    Since 2026-11-02 no change passes without a schema bump (the grant's R6
+    freeze rule): a new field - even one defaulting to `"<absent>"`, the only
+    change that provably moves no stored hash -, a new field with a value
+    default, a changed default, a removed field and a new MODEL (see
+    `ir_models`) are all reported until IR_SCHEMA_VERSION is raised and
+    `lock --update` re-pins the lock. Until that date a new `"<absent>"`
+    field was allowed unbumped (docs/IR-MIGRATIONS.md, the 2.2.0 row).
     """
     from pydantic_core import PydanticUndefined
     out: dict[str, dict[str, object]] = {}

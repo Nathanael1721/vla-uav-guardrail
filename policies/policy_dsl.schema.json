@@ -4930,5 +4930,5 @@
     "$ref": "#/$defs/CanonicalIR"
   },
   "x-hash-scheme": "sha256-canonical-v3",
-  "x-ir-schema-version": "2.1.0"
+  "x-ir-schema-version": "2.2.0"
 }

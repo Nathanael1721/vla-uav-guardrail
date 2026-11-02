@@ -585,11 +585,17 @@ def test_the_ir_schema_is_pinned_and_unchanged():
     assert ir_schema_drift(pinned) == [], ir_schema_drift(pinned)
 
 
-def test_the_pin_allows_exactly_one_kind_of_change():
+def test_the_pin_allows_no_change_at_all():
+    """The grant's freeze rule (R6): every IR-shape change after the freeze
+    carries a semver bump. Until 2026-11-02 a new field defaulting to None
+    passed this check silently (failed then: `add_none` reported nothing),
+    and that is how `locked_by` went in unbumped (2385f84)."""
     base = ir_schema_defaults()
+    assert ir_schema_drift(base, copy.deepcopy(base)) == []
     add_none = copy.deepcopy(base)
     add_none["PolygonFence"]["added_later"] = "<absent>"
-    assert ir_schema_drift(base, add_none) == [], "an optional-None field was refused"
+    assert any("PolygonFence.added_later" in x for x in ir_schema_drift(base, add_none)), \
+        "an optional-None field passed the freeze unreported"
 
     add_value = copy.deepcopy(base)
     add_value["PolygonFence"]["buffer_m"] = 2.0
@@ -618,10 +624,20 @@ def test_schema_drift_reaches_check_lock_and_the_lock_command():
                for x in problems), problems
 
 
-def test_a_new_ir_model_is_reported_until_the_lock_pins_it():
-    """A new constraint type moves no stored hash, but until it is pinned its
-    defaults could change unseen. So it is reported, and `lock --update` pins
-    it (adding, never rewriting an existing model's pin)."""
+def _bumped(version: str) -> str:
+    major, minor, patch = (int(x) for x in version.split("."))
+    return f"{major}.{minor + 1}.0"
+
+
+def test_an_additive_change_needs_a_version_bump_and_then_re_pins():
+    """THE FREEZE RULE (WP1-22 / X-09, 2026-11-02). A new model and a new
+    None-default field move no stored hash - and are still IR-shape changes,
+    so check_lock reports them and `lock --update` refuses them until
+    IR_SCHEMA_VERSION is raised. Failed before 2026-11-02: check_lock was
+    clean for the deleted Corridor pin once `lock --update` had re-added it
+    unbumped, and silent for a missing `scope` pin. With a bump, the update
+    re-pins and records what changed under `ir_schema.migrations`."""
+    import guardrail.bundle as B
     pinned = load_lock()["ir_schema"]["defaults"]
     current = copy.deepcopy(ir_schema_defaults())
     current["Geofence3D"] = {"id": "<required>", "ceiling_m": 120.0}
@@ -631,47 +647,91 @@ def test_a_new_ir_model_is_reported_until_the_lock_pins_it():
     d = _copy_policies()
     lock_path = d / "lock.json"
     lock = load_lock()
-    del lock["ir_schema"]["defaults"]["Corridor"]           # as if Corridor were new
+    del lock["ir_schema"]["defaults"]["Corridor"]                  # as if Corridor were new
+    del lock["ir_schema"]["defaults"]["PolygonFence"]["scope"]     # as if scope were new
     lock_path.write_text(json.dumps(lock), encoding="utf-8")
-    assert any(x.startswith("IR schema: Corridor:") and "not pinned" in x
-               for x in check_lock(d, load_lock(lock_path)))
-    added = update_lock(d, lock_path, locked_on="2026-10-06")
-    assert added == ["ir_schema:Corridor"], added
-    new = load_lock(lock_path)
-    assert new["ir_schema"]["defaults"]["Corridor"] == ir_schema_defaults()["Corridor"]
-    assert new["ir_schema"]["defaults"]["PolygonFence"] == pinned["PolygonFence"]
-    assert check_lock(d, new) == []
+    probs = check_lock(d, load_lock(lock_path))
+    for name in ("Corridor:", "PolygonFence.scope:"):
+        assert any(x.startswith(f"IR schema: {name}") and "semver bump" in x
+                   for x in probs), (name, probs)
+    try:
+        update_lock(d, lock_path, locked_on="2026-11-02")
+    except ValueError as e:
+        assert "without a version bump" in str(e) and "Corridor" in str(e), e
+    else:
+        raise AssertionError("lock --update pinned an IR-shape change without a bump")
+    assert load_lock(lock_path) == lock, "a refused update wrote the lock"
+
+    # The same change under a raised version: reported until re-pinned, then
+    # re-pinned with the change recorded, and clean.
+    saved = B.IR_SCHEMA_VERSION
+    B.IR_SCHEMA_VERSION = _bumped(saved)
+    try:
+        probs = check_lock(d, load_lock(lock_path))
+        assert any("lock --update" in x and B.IR_SCHEMA_VERSION in x for x in probs), probs
+        added = update_lock(d, lock_path, locked_on="2026-11-02")
+        assert added == [f"ir_schema:version {B.IR_SCHEMA_VERSION}"], added
+        new = load_lock(lock_path)
+        irs = new["ir_schema"]
+        assert irs["version"] == B.IR_SCHEMA_VERSION
+        assert irs["previous_versions"][-1] == saved
+        mig = irs["migrations"][-1]
+        assert (mig["from"], mig["to"], mig["on"]) == (saved, B.IR_SCHEMA_VERSION, "2026-11-02")
+        assert any("Corridor" in x for x in mig["changes"]), mig
+        assert any("PolygonFence.scope" in x for x in mig["changes"]), mig
+        assert irs["defaults"] == ir_schema_defaults()
+        assert new["policies"] == lock["policies"], "a re-pin touched a policy entry"
+        assert check_lock(d, new) == []
+    finally:
+        B.IR_SCHEMA_VERSION = saved
     shutil.rmtree(d, ignore_errors=True)
+
+
+def test_the_schema_version_never_goes_back():
+    import guardrail.bundle as B
+    lock = copy.deepcopy(load_lock())
+    lock["ir_schema"]["version"] = _bumped(B.IR_SCHEMA_VERSION)
+    probs = check_lock(lock=lock)
+    assert any("never goes back" in x for x in probs), probs
+
+
+def test_every_ir_schema_version_has_a_migration_note():
+    """The other half of the freeze rule: the bump carries a migration note.
+    docs/IR-MIGRATIONS.md must have a row for the current version and for
+    every version the lock has pinned."""
+    from guardrail.models import IR_SCHEMA_VERSION
+    text = (ROOT / "docs" / "IR-MIGRATIONS.md").read_text(encoding="utf-8")
+    versions = set()
+    for line in text.splitlines():
+        cells = [c.strip() for c in line.strip().strip("|").split("|")]
+        if line.startswith("|") and len(cells) >= 3:
+            versions.add(cells[2].split(" ")[0])
+    irs = load_lock()["ir_schema"]
+    for v in {IR_SCHEMA_VERSION, irs["version"], *irs.get("previous_versions", [])}:
+        assert v in versions, f"docs/IR-MIGRATIONS.md has no row for IR schema {v}"
+    assert irs["version"] == IR_SCHEMA_VERSION
 
 
 def test_a_new_lock_entry_names_its_scheme_and_pins_stay_complete():
     """Shown failing before 2026-10-07: `_entry()` recorded no hash scheme, so
     an entry locked after the v3 change would carry a v3 hash under the lock's
     top-level v2 label; and the pins of models that existed before 2.1.0 did
-    not list the fields 2.1.0 added, so the pin was not the model's field set.
-
-    A new field defaulting to None is the one change allowed silently; `lock
-    --update` records it in the pin (adding), never altering an existing pin."""
+    not list the fields 2.1.0 added, so the pin was not the model's field set."""
     d = _copy_policies()
     f = d / DEMO.name
-    f.write_text(f.read_text(encoding="utf-8")
-                 .replace("alt_max_m: 20", "alt_max_m: 25")
-                 .replace("version: 0.1.1", "version: 0.2.0"), encoding="utf-8")
+    src = f.read_text(encoding="utf-8")
+    old = load_policy(DEMO).version
+    f.write_text(src.replace("alt_max_m: 20", "alt_max_m: 25")
+                 .replace(f"version: {old}", "version: 9.0.0"), encoding="utf-8")
     lock = load_lock()
-    del lock["ir_schema"]["defaults"]["PolygonFence"]["scope"]   # as before the re-pin
-    margin_pin = lock["ir_schema"]["defaults"]["PolygonFence"]["margin_m"]
     lock_path = d / "lock.json"
     lock_path.write_text(json.dumps(lock), encoding="utf-8")
-    assert not any("scope" in x for x in check_lock(d, load_lock(lock_path))), \
-        "a new absent field is allowed without a report"
     added = update_lock(d, lock_path, locked_on="2026-10-07")
-    assert added == ["ir_schema:PolygonFence.scope", "fase3-sim-demo@0.2.0"], added
+    assert added == ["fase3-sim-demo@9.0.0"], added
     new = load_lock(lock_path)
-    assert new["policies"]["fase3-sim-demo@0.2.0"]["hash_scheme"] == HASH_SCHEME
+    assert new["policies"]["fase3-sim-demo@9.0.0"]["hash_scheme"] == HASH_SCHEME
     assert "hash_scheme" not in new["policies"]["fase3-sim-demo@0.1.1"], \
         "an old entry is never rewritten; it stays under the top-level scheme"
-    assert new["ir_schema"]["defaults"]["PolygonFence"]["scope"] == "<absent>"
-    assert new["ir_schema"]["defaults"]["PolygonFence"]["margin_m"] == margin_pin
     shutil.rmtree(d, ignore_errors=True)
     # The real lock: every pin lists exactly its model's fields.
     pinned = load_lock()["ir_schema"]["defaults"]

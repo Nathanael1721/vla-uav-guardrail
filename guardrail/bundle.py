@@ -1244,15 +1244,21 @@ def _new_form_msg(name: str, key: str, ent: dict, pol: Policy) -> str:
 
 
 def ir_schema_drift(locked: dict, current: dict | None = None) -> list[str]:
-    """How today's IR schema differs from the pinned one, in ways that matter.
+    """Every way today's IR schema differs from the pinned one. Empty = the
+    shape is the pinned shape.
 
-    Allowed silently: a NEW field defaulting to None ("<absent>") - the one
-    change that cannot move any stored hash, because the canonical form omits
-    it. Everything else is reported: a new field with a value default (every
-    policy's canonical bytes grow), a changed default (every policy that omits
-    the field now means something else), a removed field or model - and a
-    model nobody has pinned yet (UNPINNED_MODEL), because a pin that never
-    sees a model cannot notice when that model's defaults change later.
+    THE FREEZE RULE (grant, Policy DSL page, R6: the IR shape freezes at the
+    end of Q1 and "every later IR-shape change carries a semver bump and a
+    migration note"). Since 2026-11-02 every difference is reported, and
+    `check_lock` refuses it until IR_SCHEMA_VERSION is raised and the lock
+    re-pinned (`update_lock`): a removed model or field, a changed default
+    (every policy that omits the field now means something else), a new
+    field with a value default (it enters every canonical IR and moves every
+    hash) - and, the change this rule tightened, a NEW field defaulting to
+    None ("<absent>") or a new MODEL. Those two move no stored hash (the
+    canonical form omits None, and no existing policy uses a new type), and
+    until 2026-11-02 they passed unbumped under this project's own rule; the
+    grant makes no such exception, and `locked_by` (2385f84) went in that way.
     """
     from .models import ir_schema_defaults
     cur = ir_schema_defaults() if current is None else current
@@ -1271,20 +1277,61 @@ def ir_schema_drift(locked: dict, current: dict | None = None) -> list[str]:
         for name in sorted(set(now) - set(fields)):
             if now[name] != "<absent>":
                 out.append(f"{model}.{name}: new field with default "
-                           f"{now[name]!r} - it would enter every canonical IR "
-                           f"and move every hash; default it to None")
-    # A new MODEL (a new constraint type) is additive: no existing policy uses
-    # it, so no stored hash moves. But until it is pinned, its defaults can
-    # change unseen - the review of 2026-10-06 found exactly that hole behind
-    # a hand-written class list. So it is reported until `lock --update`
-    # pins it, which adds the pin and never rewrites an existing one.
+                           f"{now[name]!r} - it enters every canonical IR "
+                           f"and moves every hash")
+            else:
+                out.append(f"{model}.{name}: {NEW_ABSENT_FIELD} (moves no "
+                           f"stored hash, but is an IR-shape change)")
+    # A new MODEL (a new constraint type) moves no stored hash either. But until
+    # it is pinned its defaults can change unseen - the review of 2026-10-06
+    # found exactly that hole behind a hand-written class list.
     for model in sorted(set(cur) - set(locked)):
-        out.append(f"{model}: {UNPINNED_MODEL} - run `python -m guardrail.bundle "
-                   f"lock --update` (additive: no stored hash moves)")
+        out.append(f"{model}: {UNPINNED_MODEL}")
     return out
 
 
 UNPINNED_MODEL = "in the IR schema but not pinned"
+NEW_ABSENT_FIELD = "new field defaulting to None"
+
+
+def _semver_key(v: str | None) -> tuple:
+    """(major, minor, patch) of a plain semver string; () when unreadable."""
+    try:
+        parts = tuple(int(x) for x in str(v).split("-")[0].split("+")[0].split("."))
+    except ValueError:
+        return ()
+    return parts if len(parts) == 3 else ()
+
+
+def ir_schema_problems(lock: dict, current: dict | None = None) -> list[str]:
+    """What check_lock says about the IR schema pin (the freeze rule; see
+    ir_schema_drift). The pin names the version it was made under
+    (`ir_schema.version`); the code names its own (IR_SCHEMA_VERSION).
+
+      same version, same shape        clean;
+      same version, another shape     every difference, each one an IR-shape
+                                      change made without a version bump;
+      a higher version                not yet re-pinned: `lock --update`
+                                      records the change and re-pins;
+      a lower or unreadable version   refused (a version never goes back)."""
+    irs = lock.get("ir_schema") or {}
+    pinned = irs.get("defaults")
+    if pinned is None:
+        return ["the lock does not pin the IR schema (ir_schema.defaults)"]
+    drift = ir_schema_drift(pinned, current)
+    have, want = irs.get("version"), IR_SCHEMA_VERSION
+    if have == want:
+        return [f"IR schema: {x} - an IR-shape change needs a semver bump of "
+                f"IR_SCHEMA_VERSION (still {want}) and a row in "
+                f"docs/IR-MIGRATIONS.md, then `python -m guardrail.bundle lock "
+                f"--update`" for x in drift]
+    if not _semver_key(want) or not _semver_key(have) or \
+            _semver_key(want) <= _semver_key(have):
+        return [f"IR schema: IR_SCHEMA_VERSION {want} is not above the pinned "
+                f"{have}; a schema version never goes back"]
+    return [f"IR schema: IR_SCHEMA_VERSION is {want}, the lock pins {have} - run "
+            f"`python -m guardrail.bundle lock --update` to record the change "
+            f"({len(drift)} difference(s)) and re-pin"]
 
 
 def _previously(ent: dict) -> set[str]:
@@ -1313,11 +1360,7 @@ def check_lock(policies_dir: str | Path | None = None,
         # project keeps finding. Say it.
         problems.append("the lock pins no policies (missing or empty "
                         "policies/policy.lock.json)")
-    pinned = (lock.get("ir_schema") or {}).get("defaults")
-    if pinned is None:
-        problems.append("the lock does not pin the IR schema (ir_schema.defaults)")
-    else:
-        problems += [f"IR schema: {x}" for x in ir_schema_drift(pinned)]
+    problems += ir_schema_problems(lock)
     seen_shared: dict[str, set[str]] = {}
     seen_key: dict[str, str] = {}             # file name -> the id@version it claims
     for f in _policy_files(policies_dir):
@@ -1394,38 +1437,42 @@ def update_lock(policies_dir: str | Path | None = None,
     Returns what was added. Refuses (ValueError) while check_lock reports a
     content change under an existing version, because "updating" that would
     be exactly the silent re-fingerprinting the lock exists to stop.
+
+    The IR schema pin is re-pinned only under a HIGHER IR_SCHEMA_VERSION (the
+    freeze rule, ir_schema_problems). The re-pin replaces `defaults` with
+    today's schema and appends to `ir_schema.migrations` what changed (the
+    ir_schema_drift lines, from -> to, the day), so every earlier pin can be
+    read back from the current one; `previous_versions` keeps the old label.
+    A shape change under the SAME version is refused here, as check_lock
+    reports it: until 2026-11-02 this function pinned a new None-default
+    field or a new model without a bump.
     """
     p = Path(path) if path else LOCK_PATH
     lock = load_lock(p)
     entries = lock.setdefault("policies", {})
     day = locked_on or datetime.now(timezone.utc).strftime("%Y-%m-%d")
     added: list[str] = []
-    # A new IR model (a new constraint type) is pinned here, the first time it
-    # is seen. An existing model's pin is never touched: changing what an
-    # omitted field means is a schema bump, not an update.
-    pinned = (lock.get("ir_schema") or {}).get("defaults")
-    if pinned is not None:
+    irs = lock.get("ir_schema") or {}
+    if irs.get("defaults") is not None:
         from .models import ir_schema_defaults
-        for model, fields in sorted(ir_schema_defaults().items()):
-            if model not in pinned:
-                pinned[model] = fields
-                added.append(f"ir_schema:{model}")
-                continue
-            # A NEW field whose omission means "absent" is the one change
-            # ir_schema_drift allows unannounced; recording it here keeps the
-            # pin a complete list of the model's fields, so a later change to
-            # its default is reported as a change. Existing pins are never
-            # altered.
-            for name, val in sorted(fields.items()):
-                if name not in pinned[model] and val == "<absent>":
-                    pinned[model][name] = val
-                    added.append(f"ir_schema:{model}.{name}")
-        irs = lock["ir_schema"]
-        if irs.get("version") != IR_SCHEMA_VERSION:
-            # The pin's label follows the schema it now pins; the old label is
-            # kept, as every other lock record is.
+        cur = ir_schema_defaults()
+        drift = ir_schema_drift(irs["defaults"], cur)
+        if irs.get("version") == IR_SCHEMA_VERSION:
+            if drift:
+                raise ValueError(
+                    "lock not updated: the IR shape changed without a version "
+                    f"bump (IR_SCHEMA_VERSION is still {IR_SCHEMA_VERSION}):\n  "
+                    + "\n  ".join(drift))
+        else:
+            bad = ir_schema_problems(lock, cur)
+            if bad and "lock --update" not in bad[0]:
+                raise ValueError("lock not updated: " + bad[0])
+            irs.setdefault("migrations", []).append(
+                {"from": irs.get("version"), "to": IR_SCHEMA_VERSION, "on": day,
+                 "changes": drift})
             irs.setdefault("previous_versions", []).append(irs.get("version"))
             irs["version"] = IR_SCHEMA_VERSION
+            irs["defaults"] = cur
             added.append(f"ir_schema:version {IR_SCHEMA_VERSION}")
     for f in _policy_files(policies_dir):
         pol = load_policy(f, runtime=False)

@@ -4,7 +4,7 @@
     "policy_hash is the 64-hex SHA-256 over the None-free canonical IR. The top-level hash_scheme (sha256-canonical-v2) is the scheme of every entry that carries no hash_scheme of its own - all entries locked up to 2026-10-06; an entry locked since records its own hash_scheme. legacy_hashes are the 16-hex forms the same content carried under earlier code, so manifests written before 2026-10-06 still resolve: legacy16-exclude-none (runs up to 2026-08-31; it is also the first 16 hex of policy_hash), legacy16-valid-time (4950be1, 2026-09-01, a window of hours), legacy16-include-defaults (445bdbe 2026-09-01 to 2026-10-06).",
     "hashes (optional, per entry) records the SAME content's hash under a later canonical scheme, added by lock --update and never replacing policy_hash. Scheme sha256-canonical-v3 (2026-10-06) stores WGS84 points as lat/lon instead of projected metres; it differs from v2 only for geographic policies (today wgs84_taipei.yaml), so only that entry carries one.",
     "derived lists policies that exist only mid-flight (a hot-applied rule bumps generation and the hash), with the recipe to rebuild them.",
-    "ir_schema pins what every IR field means when omitted; see guardrail.models.ir_schema_defaults and tests/test_policy_hash.py. A pin lists every field of its model: lock --update adds a new field whose omission means '<absent>' (the one change that moves no hash) and never alters an existing field's pin. The 2.1.0 fields (scope, layer, altitude_ref, issued_at, layers_merged, lat/lon) were added to the pre-existing models' pins on 2026-10-07 this way.",
+    "ir_schema pins what every IR field means when omitted, under the IR schema version it was pinned at (ir_schema.version = guardrail.models.IR_SCHEMA_VERSION); see guardrail.models.ir_schema_defaults and tests/test_policy_hash.py. The freeze rule (2026-11-02, grant R6): ANY change to the pinned shape - a new field, even one defaulting to None, a new model, a changed default, a removal - needs a higher IR_SCHEMA_VERSION and a row in docs/IR-MIGRATIONS.md; lock --update then re-pins `defaults` and appends what changed to `migrations` (from, to, on, changes), so earlier pins can be read back. additive_pins records the two additions pinned WITHOUT a bump before that rule (2026-10-07 and 2026-10-19).",
     "Maintain with: python -m guardrail.bundle lock [--update]. Checked by tests/test_policy_hash.py."
   ],
   "derived": [
@@ -304,10 +304,20 @@
       }
     },
     "locked_on": "2026-10-06",
-    "previous_versions": [
-      "2.0.0"
+    "migrations": [
+      {
+        "changes": [],
+        "from": "2.1.0",
+        "on": "2026-11-02",
+        "to": "2.2.0",
+        "why": "the freeze rule (2026-11-02): the 2026-10-19 change, `locked_by` on every rule (2385f84, the 11 fields in additive_pins), was pinned without a version bump under this project's additive rule; the grant asks for a bump on every IR-shape change, so it is versioned here. No field moved on this date; docs/IR-MIGRATIONS.md has the row."
+      }
     ],
-    "version": "2.1.0"
+    "previous_versions": [
+      "2.0.0",
+      "2.1.0"
+    ],
+    "version": "2.2.0"
   },
   "policies": {
     "corridor-survey@0.1.0": {
