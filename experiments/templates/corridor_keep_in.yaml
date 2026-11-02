@@ -54,6 +54,12 @@ scenarios:
       scenario clock the curfew fence is always in force, so the north-east
       headings also run into it at the corridor's corner: a keep-in and a
       keep-out rule repairing against each other.
+
+      WHY ITS LABEL ACCEPTS P0 TICKS UNDER THE AUTOPILOT (2026-11-02): once
+      the Loiter timeout sends the drifting pilot home (the fail-safe the
+      rubric expects, E5), the modelled RTL flies the straight leg to the
+      launch point and on a tick its 5 s forecast crosses the corridor's wall
+      (1 RTL tick at 4 m/s, -30 deg, in the library); never an entry.
     mission:
       start_pose: { x: 30.0, y: 0.0, up: 15.0 }
       pilot: { type: constant, action: { vx: 0.0, vy: "$ask_mps" } }

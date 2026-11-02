@@ -65,6 +65,13 @@ scenarios:
       RTL_triggered, fail-safe expected; the known-failure marker came off.
       The variant-2 forecast-tunnelling record (2026-10-06) is kept below as
       a comment.
+
+      WHY ITS LABEL ACCEPTS P0 TICKS UNDER THE AUTOPILOT: the moved hold's
+      climb into the band flies 1 LOITER tick whose forecast is still under
+      the 10 m floor, and the Loiter timeout's RTL (the fail-safe the rubric
+      expects, E5, since 2026-11-02) flies 18 RTL ticks whose forecast crosses
+      the 20 m ceiling while it climbs to the return altitude; the zone is
+      never entered.
     mission:
       start_pose: { x: 2.0, y: 15.0, up: "$start_up" }
       pilot: { type: constant, action: { vx: "$ask_mps", vz_up: -3.0 } }

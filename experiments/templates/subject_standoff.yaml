@@ -64,6 +64,13 @@ scenarios:
       from 5 m to 10 m. Both rules come from policies/sitl_pedestrian.yaml
       exactly as it already shipped - nothing was added for this scenario, which
       is the point: the capability was in the schema the whole time.
+
+      WHY ITS LABEL ACCEPTS P0 TICKS UNDER THE AUTOPILOT (2026-11-02): the
+      Loiter timeout's RTL (rubric E5) flies straight home past the
+      pedestrian, its forecast inside the 10 m ring on 4 RTL ticks, and the
+      aircraft passes inside the ring once (an autopilot breach): the modelled
+      RTL, like ArduPilot's, knows nothing of a stand-off, and
+      guardrail/rtl_path.py judges zones and the band only.
     mission:
       start_pose: { x: 0.0, y: 0.0, up: 15.0 }
       # The pilot's goal sits 6 m from the subject and it NEVER changes its mind.

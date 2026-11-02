@@ -80,6 +80,11 @@ scenarios:
       is swapped for one 10 m wide on the same centreline. Before the swap
       the old half-width (20 m) binds; after it the aircraft must be brought
       back inside 5 m and held there against a pilot still pulling out.
+
+      WHY ITS LABEL ACCEPTS P0 TICKS UNDER THE AUTOPILOT (2026-11-02): the
+      Loiter timeout's RTL (rubric E5) flies the straight leg home, its
+      forecast crossing the narrowed corridor's wall on 4-8 RTL ticks; it ends
+      inside the corridor.
     mission:
       start_pose: { x: 30.0, y: 0.0, up: 15.0 }
       pilot: { type: constant, action: { vy: "$ask_mps" } }

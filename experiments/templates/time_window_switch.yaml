@@ -260,6 +260,11 @@ scenarios:
       would let it in and then find it inside a zone that had just opened; this
       one must see the opening coming and hold the aircraft OUT: enforced
       before it is in force, and never unsafe at all.
+
+      WHY ITS LABEL ACCEPTS P0 TICKS UNDER THE AUTOPILOT (2026-11-02): the
+      Loiter timeout's RTL (rubric E5) flies the straight leg home beside the
+      zone that opened, its forecast crossing the zone's ring on 21-29 RTL
+      ticks; it never enters the zone.
     mission:
       start_pose: { x: 60.0, y: -19.0, up: 15.0 }
       target: { x: 60.0, y: 55.0, up: 15.0 }
@@ -359,6 +364,11 @@ scenarios:
       23:00, out of its hours, sent at `at` s while the aircraft flies towards
       it from 19 m south. It is enforced from the event tick on: the aircraft
       must be held out, never enter, and never be unsafe.
+
+      WHY ITS LABEL ACCEPTS P0 TICKS UNDER THE AUTOPILOT (2026-11-02): the
+      Loiter timeout's RTL (rubric E5) flies the straight leg home beside the
+      activated zone, its forecast crossing the zone's ring on 18-29 RTL
+      ticks; it never enters the zone.
     mission:
       start_pose: { x: 60.0, y: -19.0, up: 15.0 }
       target: { x: 60.0, y: 55.0, up: 15.0 }

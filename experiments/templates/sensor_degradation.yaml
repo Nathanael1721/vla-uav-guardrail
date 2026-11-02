@@ -154,8 +154,20 @@ scenarios:
       Shield never emits an action it has itself found illegal, never a
       non-finite one - and on the dropout having actually frozen the pose
       (a window that froze nothing would otherwise pass as a clean run).
-      Unlabelled: with no fix-status input there is no defensible fail-safe
-      expectation to write down.
+      Unlabelled until 2026-11-02 ("with no fix-status input there is no
+      defensible fail-safe expectation to write down"). The rubric
+      (docs/RUBRIC-failsafe.md) reads the expectation from the ground truth,
+      not from what the Shield can see: a frozen fix held while the aircraft
+      moves farther than the margin, within that error of a P0 boundary,
+      expects a fail-safe (E3). The Shield has no fix-quality input, so where
+      the FSM does not trigger for another reason it is a missed trigger,
+      reported as such (lane 23.6 with the 2-9 s and 6-13 s windows).
+
+      WHY ITS LABEL ACCEPTS P0 TICKS UNDER THE AUTOPILOT (2026-11-02): on lane
+      23.6 with the 4-11 s window the Loiter timeout's RTL (the fix was frozen
+      beyond the margin, rubric E3) is blocked and the FSM lands (G6): 1 RTL
+      tick, then 33 LAND ticks through the 10 m floor and one autopilot breach
+      of it - a landing ends below any floor.
     mission:
       start_pose: { x: -30.0, y: "$lane_y", up: 15.0 }
       target: { x: 60.0, y: "$lane_y", up: 15.0 }
