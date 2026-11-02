@@ -21,7 +21,10 @@
 #          test_policy_hash, test_policy_dsl_grant_form, test_replay_identity,
 #          test_replay, test_geo_to_policy, test_wp1_roundtrip_kpi.
 #        WP2, the Prefix Compiler and the Paraphraser: test_csp,
-#          test_prefix_eval, test_paraphraser, test_real_vla_prompt,
+#          test_prefix_eval, test_paraphraser, test_paraphraser_service (its
+#          gRPC service; the gRPC / mTLS tests SKIP without grpcio,
+#          grpcio-tools and cryptography, so it is in the two harness jobs'
+#          `no_skip`), test_real_vla_prompt,
 #          test_city_episode (the city follow's episode record and CSP).
 #        WP3, the Shield and the escalation FSM: test_shield,
 #          test_shield_events, test_corridor, test_clearance,
@@ -535,10 +538,10 @@ jobs:
           # Python 3.10 wheel, so the 3.10 job does without it.
           - python: "3.10"
             extras: "cryptography grpcio==1.84.0 'protobuf>=7.35.1' grpcio-tools==1.84.0"
-            no_skip: "tests/test_harness_service.py"
+            no_skip: "tests/test_harness_service.py tests/test_paraphraser_service.py"
           - python: "3.11"
             extras: "cryptography fastapi httpx uvicorn==0.50.2 jsonschema==4.26.0 grpcio==1.84.0 'protobuf>=7.35.1' grpcio-tools==1.84.0 pyarrow==26.0.0"
-            no_skip: "tests/test_railinputs_node.py tests/test_railinputs_hotapply.py tests/test_api.py tests/test_harness_service.py tests/test_wp4outputs_exporters.py"
+            no_skip: "tests/test_railinputs_node.py tests/test_railinputs_hotapply.py tests/test_api.py tests/test_harness_service.py tests/test_paraphraser_service.py tests/test_wp4outputs_exporters.py"
           - python: "3.11"
             extras: ""
             no_skip: ""
@@ -644,6 +647,7 @@ jobs:
               tests/test_geo_to_policy.py \
               tests/test_wp1_roundtrip_kpi.py \
               tests/test_paraphraser.py \
+              tests/test_paraphraser_service.py \
               tests/test_real_vla_prompt.py \
               tests/test_profile_shield_tick.py \
               tests/test_occ_bands.py \
