@@ -637,9 +637,12 @@ def test_a_mission_layer_may_tighten_and_add():
 
 TUBE_LINE = [{"x": 0, "y": 0}, {"x": 100, "y": 0}]
 REG_TUBE = {"id": "tube", "type": "corridor", "width_m": 20, "centerline": TUBE_LINE}
+# Crosses REG_TUBE at x = 50. Until 2026-11-02 it ran parallel at y = 50,
+# disjoint from REG_TUBE: two hard corridors no flight can be inside at once,
+# which the lint has refused since that date (_geometry_conflicts).
 REG_BAND = {"id": "band-tube", "type": "corridor", "width_m": 20,
             "altitude_floor_m": 10, "altitude_ceiling_m": 60,
-            "centerline": [{"x": 0, "y": 50}, {"x": 100, "y": 50}]}
+            "centerline": [{"x": 50, "y": -50}, {"x": 50, "y": 50}]}
 REG_KIN = {"id": "kin", "type": "kinematic_envelope", "speed_max_mps": 5,
            "climb_rate_max_mps": 2, "yaw_rate_max_dps": 45}
 REG_CLEAR = {"id": "clear", "type": "obstacle_clearance", "min_clearance_m": 5}
@@ -1373,6 +1376,62 @@ def test_the_lint_compares_every_pair_of_hard_height_limits():
         {"id": "msl", "type": "altitude_envelope", "alt_min_m": 30, "alt_max_m": 40,
          "altitude_ref": "MSL"}])
     policy_from_raw(agl_msl, runtime=False)          # not compared: not a conflict
+
+
+def test_the_lint_refuses_a_corridor_no_flight_can_be_inside():
+    """WP1-02 (2026-11-02): the conflict lint covered altitude bands only, so
+    a hard corridor inside a hard no-fly zone, and two hard corridors with no
+    point in common, loaded clean (failed then: both policies below loaded).
+    Each refusal is paired with the near miss that must still load, so the
+    check is about an EMPTY allowed set, not about overlap at all."""
+    tube = {"id": "tube", "type": "corridor", "width_m": 20, "altitude_floor_m": 10,
+            "altitude_ceiling_m": 20, "centerline": TUBE_LINE}       # y in [-10, 10]
+    nfz = _square("nfz", -20, -20, 140, altitude_ceiling_m=100, margin_m=0.0)
+    buried = _raw(constraints=[tube, nfz])
+    _refused(lambda: policy_from_raw(buried), "tube", "nfz", "lies wholly inside")
+    loads = {
+        "a soft zone": [tube, {**nfz, "constraint_type": "soft"}],
+        "a zone band that leaves heights free": [tube, {**nfz, "altitude_floor_m": 15}],
+        "a zone that leaves part of the tube free": [tube, _square("nfz", -20, -20, 110)],
+        "schedules that never meet": [
+            {**tube, "valid_time": {"recurrence": {"days": ["Mon"]}}},
+            {**nfz, "valid_time": {"recurrence": {"days": ["Tue"]}}}],
+        "a zone a switch may turn off": [tube, nfz, {
+            "id": "sw", "type": "time_window_switch", "target_id": "nfz",
+            "active": False, "valid_time": {"recurrence": {"days": ["Mon"]}}}],
+        "a moving zone": [tube, {**nfz, "type": "dynamic_nfz", "motion": {"vx_mps": 1.0}}],
+    }
+    for name, cons in loads.items():
+        try:
+            policy_from_raw(_raw(constraints=cons), runtime=False)
+        except ValueError as e:
+            raise AssertionError(f"{name}: refused - {str(e)[:300]}") from None
+    # The margin ring counts (the Shield forbids polygon + margin)...
+    _refused(lambda: policy_from_raw(_raw(constraints=[
+        tube, _square("nfz", -9, -9, 118, margin_m=2.0)])), "lies wholly inside")
+    # ...a tube that only touches the zone's boundary keeps its touching
+    # points, so it is not reported...
+    policy_from_raw(_raw(constraints=[tube, {
+        "id": "edge", "type": "polygon_fence", "margin_m": 0.0, "vertices": [
+            {"x": -10, "y": -10}, {"x": 110, "y": -10}, {"x": 110, "y": 10},
+            {"x": -10, "y": 10}]}]), runtime=False)
+    # ...and two always-on zones that cover the tube together are a conflict.
+    halves = [tube, _square("west", -20, -20, 70, margin_m=0.0),
+              _square("east", 45, -20, 80, margin_m=0.0)]
+    _refused(lambda: policy_from_raw(_raw(constraints=halves)), "west", "east",
+             "lies wholly inside")
+    # Two hard corridors with no point in common; crossing ones load.
+    far = {"id": "far", "type": "corridor", "width_m": 20,
+           "centerline": [{"x": 0, "y": 100}, {"x": 100, "y": 100}]}
+    _refused(lambda: policy_from_raw(_raw(constraints=[tube, far])), "tube", "far",
+             "no point in common")
+    policy_from_raw(_raw(constraints=[tube, {**far, "centerline": [
+        {"x": 50, "y": -50}, {"x": 50, "y": 100}]}]))
+    policy_from_raw(_raw(constraints=[tube, {**far, "constraint_type": "soft"}]))
+    # The negative corpus holds one file of each.
+    for name in ("corridor_inside_nfz.yaml", "disjoint_hard_corridors.yaml"):
+        _refused(lambda name=name: load_policy(ROOT / "policies" / "negative" / name),
+                 "no flight can satisfy")
 
 
 def test_the_lint_checks_what_a_switch_or_swap_points_at():

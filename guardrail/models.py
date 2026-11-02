@@ -1369,6 +1369,7 @@ class Policy(BaseModel):
                 out.append(f"{c.id}: margin_m {m} shrinks the zone inward (a "
                            f"negative safety ring can erase it)")
         out += _envelope_conflicts(self)
+        out += _geometry_conflicts(self)
         ids = {c.id: c for c in self.constraints}
         for c in self.constraints:
             if isinstance(c, (TimeWindowSwitch, CorridorSwap)):
@@ -1713,8 +1714,8 @@ def _envelope_conflicts(policy: Policy) -> list[str]:
     must be inside ALL of them at once; two hard corridors whose bands never
     meet cannot both hold. (Until 2026-10-07 corridor pairs were skipped as
     "different places".) Corridors whose tubes are horizontally disjoint are
-    equally unsatisfiable; that needs geometry this pure-Python lint does not
-    have, and is not checked."""
+    equally unsatisfiable; since 2026-11-02 `_geometry_conflicts` checks that,
+    and a corridor buried in keep-out zones."""
     bands = []
     for c in policy.constraints:
         if c.constraint_type != "hard":
@@ -1734,6 +1735,96 @@ def _envelope_conflicts(policy: Policy) -> list[str]:
                 out.append(f"{a.id} ({a0:g}-{a1:g} m) and {b.id} ({b0:g}-{b1:g} m) "
                            f"are hard altitude limits with no height in common: no "
                            f"flight can satisfy both")
+    return out
+
+
+def _geometry_conflicts(policy: Policy) -> list[str]:
+    """Hard rules whose GEOMETRY cannot all hold at once (grant lint:
+    "conflicting hard rules"), beyond the altitude bands `_envelope_conflicts`
+    compares. Two cases, both added 2026-11-02 (WP1-02):
+
+      * a hard keep-IN tube (a corridor, or the corridor a corridor_swap puts
+        in force) lying wholly inside hard keep-out zones that forbid every
+        height of its band while both can be in force: every point the
+        corridor allows is a point a zone forbids. One zone at a time, with
+        any schedules; several zones together only when all of them are
+        always in force;
+      * two hard keep-in tubes with no point in common while both can be in
+        force: the Shield holds the vehicle inside every active corridor at
+        once (`_envelope_conflicts` compares their bands).
+
+    Only certain conflicts are named. What a switch or a swap may turn off
+    is left out (a switch's target, a swap's target, and a swap against its
+    own target), as is a moving dynamic_nfz (it does not stay where it was
+    declared), a pair under different altitude references, and anything that
+    needs the clock or a map (obstacle clearance, stand-off). The keep-out
+    area is the polygon grown by its margin exactly as the Shield builds it
+    (geometry.keepout_area); a tube is grown outward by the chord error of
+    shapely's round caps, so the tube tested contains every point the
+    Shield's distance-to-segments check accepts and the test never reports a
+    corridor that has a legal point left. A corridor whose boundary only
+    touches a zone's is not reported (the touching points are legal).
+
+    shapely is imported only when the policy has a hard tube and a second
+    rule to compare it with, so models.py stays importable without it."""
+    switched = {c.target_id for c in policy.constraints if isinstance(c, TimeWindowSwitch)}
+    swapped = {c.target_id for c in policy.constraints if isinstance(c, CorridorSwap)}
+    tubes = [c for c in policy.constraints
+             if isinstance(c, (Corridor, CorridorSwap)) and c.constraint_type == "hard"
+             and c.id not in switched and c.id not in swapped]
+    zones = [c for c in policy.constraints
+             if isinstance(c, (PolygonFence, DynamicNFZ)) and c.constraint_type == "hard"
+             and c.id not in switched
+             and not (isinstance(c, DynamicNFZ) and c.motion is not None
+                      and any((c.motion.vx_mps, c.motion.vy_mps, c.motion.yaw_rate_dps)))]
+    if not tubes or (not zones and len(tubes) < 2):
+        return []
+    from shapely.geometry import LineString
+    from shapely.ops import unary_union
+    from .geometry import keepout_area
+
+    def ref(c) -> str:
+        return getattr(c, "altitude_ref", None) or "AGL"
+
+    # shapely's buffer puts its arc vertices ON the circle, so its round caps
+    # are chords inside the true tube; grown by 1/cos(pi/64) (16 segments a
+    # quarter circle) the polygon contains the whole true tube.
+    grow = 1.0 / math.cos(math.pi / 64.0)
+    tube_area = {t.id: LineString(t.points()).buffer(t.half_width_m * grow + 1e-9)
+                 for t in tubes}
+    out: list[str] = []
+    for t in tubes:
+        lo, hi = t.altitude_floor_m, t.altitude_ceiling_m
+        cover = [z for z in zones if ref(z) == ref(t)
+                 and z.altitude_floor_m <= lo and z.altitude_ceiling_m >= hi]
+        named = False
+        for z in cover:
+            if _times_overlap(t, z) and keepout_area(z).contains_properly(tube_area[t.id]):
+                out.append(f"hard corridor {t.id} ({lo:g}-{hi:g} m) lies wholly inside "
+                           f"hard keep-out zone {z.id} at every height of its band: "
+                           f"no point the corridor allows is outside the zone, so "
+                           f"no flight can satisfy both")
+                named = True
+        always = [z for z in cover if z.valid_time is None]
+        if not named and len(always) > 1:
+            union = unary_union([keepout_area(z) for z in always])
+            if union.contains_properly(tube_area[t.id]):
+                out.append(f"hard corridor {t.id} ({lo:g}-{hi:g} m) lies wholly inside "
+                           f"the hard keep-out zones {', '.join(z.id for z in always)} "
+                           f"at every height of its band: no point the corridor "
+                           f"allows is outside them, so no flight can satisfy all")
+    for i in range(len(tubes)):
+        for j in range(i + 1, len(tubes)):
+            a, b = tubes[i], tubes[j]
+            if ref(a) != ref(b) or not _times_overlap(a, b):
+                continue
+            if isinstance(a, CorridorSwap) and a.target_id == b.id or \
+                    isinstance(b, CorridorSwap) and b.target_id == a.id:
+                continue
+            if not tube_area[a.id].intersects(tube_area[b.id]):
+                out.append(f"hard corridors {a.id} and {b.id} have no point in "
+                           f"common: the Shield holds the vehicle inside every "
+                           f"active corridor, so no flight can satisfy both")
     return out
 
 
