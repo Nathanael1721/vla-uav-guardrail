@@ -172,6 +172,10 @@ sensors or MAVLink (ARCH-22). The PI: follow the grant.
 - The bag tests fail when the join needs 100 % agreement, north and east are
   swapped, the episode-start clock is used, or `executed` is left as the
   log's (mutations run once, 2 Nov).
+- The whole loop, 133 files, one at a time in the worktree under vla-real:
+  132 exit 0, 44 of them skipping the parts that need the lab's data or an
+  optional package; 1 fails, `tests/test_wp4outputs_harness.py` 15/16, its
+  session-TTL test (see Found: it fails on 7bfd6dc too under today's load).
 
 #### To verify the bag path (WSL, or a clone of vla-real)
 ```bash
