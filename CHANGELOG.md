@@ -16,6 +16,36 @@ shipped change and recorded as one.
 
 ## [Unreleased]
 
+### 2026-11-03 — the 2 November branches merged; the flight bundles rebuilt for the new policy versions
+
+#### Changed
+- Three branches of 2 November are on master: the Policy DSL / IR / bundle
+  work (IR schema 3.0.0), the Paraphraser service, and the audit and
+  episode records. They merged in an integration worktree, where the whole
+  CI loop ran one file at a time (`tools/ci_local.py`): 134 of 136 files
+  passed, and both failures came from the branches meeting (Fixed, below).
+  The smoke profile on the merged code scored fail-safe trigger correctness
+  0.934 against a never-trigger null of 0.885 (headless, not KPI-grade).
+  The fail-safe branch is not merged yet.
+- `tools/build_flight_bundles.py` signed the bundles of the new policy
+  versions with the lab key: `fase3-sim-demo-v0.1.2`, and `v0.1.1` of
+  corridor-survey, follow-car, follow-car-nfz, follow-car-citylife,
+  follow-car-citylife-nfz, -nfz3, -nfz3b, follow-pedestrian,
+  vla-goto-citylife and wgs84-taipei-demo. The earlier bundles stay in
+  `bundles/` for the runs that flew them. `deploy/orin/run_vla_fly.sh`
+  defaults to `follow-car-citylife-nfz-v0.1.1`, and three usage examples
+  name the new versions.
+
+#### Fixed
+- The audit branch's new harness-bundle test hot-applied a
+  `time_window_switch` without `constraint_type`, `priority` and
+  `violation_action`, which the WP1 branch made required; it now states
+  them.
+- `sitl/run_ros2_demo.sh` had renamed its `=== fresh SITL ===` line (the
+  `PHYSICS` switch of 2 November), which `tests/test_ros2_package.py`
+  orders the SROS 2 check against; the line is back and the physics is
+  printed on its own line.
+
 ### 2026-11-02 — Policy DSL, IR and bundle to the grant: the freeze rule, required ConstraintBase fields, canonical rings, shipped multi-scale geometry, the two-hash contract
 
 #### Added

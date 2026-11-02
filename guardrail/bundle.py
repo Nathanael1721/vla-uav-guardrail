@@ -2059,7 +2059,7 @@ def _main(argv: list[str] | None = None) -> int:
 
         python -m guardrail.bundle policies/wgs84_taipei.yaml -m "initial"
         python -m guardrail.bundle POLICY --ir-form reference   # the reference reads it
-        python -m guardrail.bundle verify bundles/wgs84-taipei-demo-v0.1.0.tar.gz
+        python -m guardrail.bundle verify bundles/wgs84-taipei-demo-v0.1.1.tar.gz
         python -m guardrail.bundle merge reg.yaml site.yaml mission.yaml -o out.tar.gz
         python -m guardrail.bundle export POLICY [--origin LAT,LON] [-o out.yaml]
         python -m guardrail.bundle export POLICY --reference [--conservative]
