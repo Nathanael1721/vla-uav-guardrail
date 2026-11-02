@@ -65,7 +65,47 @@ with it (`python -m guardrail.replay pack`).
 Switches: `ROUTER=0` (MAVROS straight to SITL tcp 5760, as before
 2026-10-06), `BAG=0`, `USE_LAUNCH=0`, `GUARDRAIL_FENCE=0` (stock autopilot),
 `SITL_WIPE=0` (keep the EEPROM), `GCS_HOST=...`, `VLA=bridge` (AerialVLA in
-the VLA slot instead of the stub, below).
+the VLA slot instead of the stub, below), `GCS_BACKSTOP=1`, `STYLE=mission`
+and `ADAPTER_ARGS=...` (below).
+
+### The GCS-set GeoFence (`GCS_BACKSTOP=1`, WP3-10)
+
+```bash
+GCS_BACKSTOP=1 bash sitl/run_ros2_demo.sh off - --speed 3.5 --tag my_fence_off
+```
+
+SITL boots without `fence/guardrail_fence.parm`; the router's GCS endpoint
+goes to `127.0.0.1:${GCS_UDP_PORT:-14560}`, where `gcs_backstop.py` - the
+ground station's own process, before MAVROS and the Shield start - sets
+FENCE_TYPE, FENCE_ACTION, FENCE_ALT_MAX, FENCE_MARGIN, AVOID_ENABLE and then
+FENCE_ENABLE over that link (system 255, as Mission Planner) and uploads the
+signed bundle's keep-out zones with the mission protocol, reading every
+value and item back into `<out>/gcs_backstop.json`. The run is refused if it
+fails. The adapter then uploads no zone (`--fences-by-gcs`), the Shield node
+changes no fence parameter and records the GCS's read-back beside its own
+(`hil_evidence.autopilot_fence.gcs`). Mission Planner is not on the GCS
+endpoint for such a run.
+
+### The mission style (`STYLE=mission`, WP3-09)
+
+```bash
+STYLE=mission GCS_BACKSTOP=1 bash sitl/run_ros2_demo.sh on - \
+  --waypoints "0,30;30,30" --speed 6 --hotapply-port 8071 --tag my_mission
+```
+
+`ros2_mission_node.py` takes the Shield's place (no VLA node): it checks the
+plan leg by leg with the Shield's own rules, clamps the speed to the policy's
+cap, and sends it to the adapter, which writes it to ArduPilot as
+MISSION_ITEM_INT through MAVROS (`/mavros/mission/push`). In AUTO, at 10 Hz,
+it re-checks the leg to the next waypoint under the rules in force (a REST
+hot-apply may have changed them) and replaces that one item in flight - a
+partial write, MISSION_WRITE_PARTIAL_LIST then MISSION_ITEM_INT - with a held
+point short of the zone, writing the original back once the leg has been
+legal for 2 s. The run folder gains `mission.json`; the bag gains
+`/shield/mission`, `/shield/mission_update` and MAVROS's mission topics.
+MAVROS 2.14's partial push ends in an ArduPilot upload timeout after the item
+has landed (`mavlink_adapter_node.py` says why), so the adapter's verdict on
+an update is its read-back of the item.
 
 ### AerialVLA in the VLA slot (`VLA=bridge`)
 

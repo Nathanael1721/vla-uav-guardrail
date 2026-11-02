@@ -692,9 +692,12 @@ def test_the_mission_starts_every_node_the_native_rail_starts():
     reach the nodes only through it."""
     nodes = _launch_nodes()
     # The VLA slot holds the stub (default) or the AerialVLA bridge
-    # (vla:=bridge / VLA=bridge, 2026-10-23); both files name both.
+    # (vla:=bridge / VLA=bridge, 2026-10-23); both files name both. The
+    # Shield's place holds the Shield node or, for the grant's mission-style
+    # flight (style:=mission / STYLE=mission, 2026-11-03), the mission Shield.
     assert nodes == {"ros2_vla_stub_node.py", "ros2_vla_bridge_node.py",
-                     "mavlink_adapter_node.py", "ros2_shield_node.py"}, nodes
+                     "mavlink_adapter_node.py", "ros2_shield_node.py",
+                     "ros2_mission_node.py"}, nodes
     assert nodes == _native_nodes(), (nodes, _native_nodes())
     assert "guardrail_rail.launch.py" in RUN_ROS2_DEMO.read_text(encoding="utf-8")
     text = ENTRYPOINT.read_text(encoding="utf-8")

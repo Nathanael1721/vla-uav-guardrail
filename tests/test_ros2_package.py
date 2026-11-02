@@ -236,7 +236,7 @@ def _launch_processes(config: dict) -> dict:
         ctx = {"python": "/venv/bin/python", "repo_root": str(ROOT), "out": "",
                "shield_args": "--shield on", "vla": "stub", "vla_args": "",
                "adapter_args": "", "enclave_root": "", "vla_ready_timeout_s": "3300",
-               **config}
+               "style": "guided", **config}
         launch_mod._nodes(ctx)
         # The declared default of enclave_root is empty (nothing changes).
         desc = launch_mod.generate_launch_description()
@@ -272,6 +272,33 @@ def test_each_node_gets_its_own_enclave_only_when_asked():
         assert "absolute" in str(e), e
     else:
         raise AssertionError("a relative enclave_root was accepted")
+
+
+def test_mission_style_runs_the_mission_shield_in_the_shields_place_and_no_vla():
+    """style:=mission (2026-11-03, WP3-09): the Shield's process runs
+    sitl/ros2_mission_node.py with shield_args, in the Shield's enclave; the
+    adapter runs as always; no VLA node starts; the default stays guided, and
+    any other style is refused."""
+    g = _launch_processes({})
+    assert g["defaults"].get("style") == "guided", g["defaults"]
+    assert g["processes"]["safety_shield"]["cmd"][1].endswith("ros2_shield_node.py")
+    m = _launch_processes({"style": "mission", "enclave_root": "/guardrail",
+                           "shield_args": "--waypoints 0,30;30,30 --tag t",
+                           "adapter_args": "--fences-by-gcs", "out": "/runs/t"})
+    assert set(m["processes"]) == {"mavlink_adapter", "safety_shield"}, m["processes"]
+    cmd = m["processes"]["safety_shield"]["cmd"]
+    assert cmd[1].endswith("ros2_mission_node.py") and cmd[2:] == [
+        "--waypoints", "0,30;30,30", "--tag", "t"], cmd
+    env = m["processes"]["safety_shield"]["additional_env"]
+    assert env["ROS_SECURITY_ENCLAVE_OVERRIDE"] == "/guardrail/safety_shield", env
+    acmd = m["processes"]["mavlink_adapter"]["cmd"]
+    assert acmd[1].endswith("mavlink_adapter_node.py") and "--fences-by-gcs" in acmd, acmd
+    try:
+        _launch_processes({"style": "waypoints"})
+    except RuntimeError as e:
+        assert "style" in str(e), e
+    else:
+        raise AssertionError("an unknown style was accepted")
 
 
 def test_the_vla_slot_holds_the_stub_or_the_bridge_never_both():

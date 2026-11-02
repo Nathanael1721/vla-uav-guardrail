@@ -65,6 +65,29 @@
 #                      it runs in the slot's SROS 2 enclave, vla_stub
 #   VLA_READY_TIMEOUT_S=3300  with VLA=bridge: how long the Shield node waits
 #                      for the bridge's warm-up before it refuses to arm
+#   GCS_BACKSTOP=0     1 = the ArduPilot GeoFence is GCS-set (WP3-10): SITL
+#                      boots without sitl/fence/guardrail_fence.parm
+#                      (GUARDRAIL_FENCE=0), the router's GCS endpoint goes to
+#                      127.0.0.1:${GCS_UDP_PORT:-14560}, and there
+#                      sitl/gcs_backstop.py - the ground station's step, a
+#                      process of its own before MAVROS and the Shield start -
+#                      sets FENCE_* and AVOID_ENABLE and uploads the signed
+#                      bundle's keep-out zones, reading each back into
+#                      <out>/gcs_backstop.json; the run is refused if it
+#                      fails. The adapter then uploads no zone
+#                      (--fences-by-gcs). Needs ROUTER=1 and a signed bundle
+#                      (not --dev-yaml). Mission Planner is not on the GCS
+#                      endpoint for such a run.
+#   ADAPTER_ARGS=""    extra arguments for sitl/mavlink_adapter_node.py
+#   STYLE=guided       mission = the grant's pre-planned waypoint mission
+#                      (WP3-09): sitl/ros2_mission_node.py, the mission-style
+#                      Shield, takes the Shield's place (the extra args are
+#                      its own: --waypoints "x,y;x,y", --speed, --bundle,
+#                      --hotapply-port, --max-s, --tag), no VLA node starts,
+#                      the adapter writes the plan as MISSION_ITEM_INT and
+#                      replaces the next waypoint in flight, and the bag adds
+#                      /shield/mission, /shield/mission_update and MAVROS's
+#                      mission topics. Shield `on` only.
 #   SROS2=0            1 = SROS 2 enforced on every ROS 2 process of the rail
 #                      (sitl/sros2_env.sh): the keystore SROS2_KEYSTORE (default
 #                      ~/sros2_keystore, built by tools/sros2_setup.sh from the
@@ -84,6 +107,19 @@ VLA="${VLA:-stub}"
 case "$VLA" in
   stub | bridge) ;;
   *) echo "[vla] REFUSED: VLA must be stub or bridge, not '$VLA'"; exit 2 ;;
+esac
+STYLE="${STYLE:-guided}"
+BAG_EXTRA=()
+case "$STYLE" in
+  guided) ;;
+  mission)
+    if [ "$SHIELD" != "on" ] || [ -n "$DYN" ] || [ "$VLA" != "stub" ]; then
+      echo "[style] REFUSED: STYLE=mission flies the mission-style Shield: shield on, no --dynamic, no VLA=bridge"
+      exit 2
+    fi
+    BAG_EXTRA=(/shield/mission /shield/mission_update /mavros/mission/waypoints /mavros/mission/reached)
+    ;;
+  *) echo "[style] REFUSED: STYLE must be guided or mission, not '$STYLE'"; exit 2 ;;
 esac
 
 # The episode directory, by the Shield node's own rule (or --tag).
@@ -132,7 +168,9 @@ cleanup() {
   pkill -9 -f "[r]os2_vla_stub_node"           2> /dev/null || true
   pkill -9 -f "[r]os2_vla_bridge_node"         2> /dev/null || true
   pkill -9 -f "[m]avlink_adapter_node"         2> /dev/null || true
+  pkill -9 -f "[g]cs_backstop.py"              2> /dev/null || true
   pkill -9 -f "[r]os2_shield_node"             2> /dev/null || true
+  pkill -9 -f "[r]os2_mission_node"            2> /dev/null || true
   pkill -9 -f "mavros_nod[e]"                  2> /dev/null || true
   pkill -9 -f "[m]avproxy.py --master=udpin"   2> /dev/null || true
   pkill -9 -f "[m]avlink-routerd"              2> /dev/null || true
@@ -164,6 +202,46 @@ if [ "$HAS_POLICY" = "0" ] && [ "$HAS_DEV_YAML" = "0" ]; then
     exit 2
   fi
 fi
+
+# GCS_BACKSTOP=1: the ground station sets the GeoFence (see the header). Its
+# bundle is the flight's signed bundle; a YAML flight has none to upload.
+GCS_BACKSTOP="${GCS_BACKSTOP:-0}"
+ADAPTER_EXTRA=()
+read -r -a ADAPTER_EXTRA <<< "${ADAPTER_ARGS:-}"
+case "$GCS_BACKSTOP" in
+  0)
+    # A GCS record left by an earlier flight under this tag would read as
+    # this flight's (the Shield node records it when present).
+    if [ -f "$OUT/gcs_backstop.json" ]; then
+      mkdir -p "$OUT/_previous"
+      mv "$OUT/gcs_backstop.json" "$OUT/_previous/gcs_backstop-$(date -u +%Y%m%dT%H%M%SZ).json"
+    fi
+    ;;
+  1)
+    GCS_BUNDLE=""
+    for ((i = 0; i < ${#EXTRA[@]}; i++)); do
+      case "${EXTRA[$i]}" in
+        --bundle) GCS_BUNDLE="${EXTRA[$((i + 1))]}" ;;
+        --bundle=*) GCS_BUNDLE="${EXTRA[$i]#--bundle=}" ;;
+      esac
+    done
+    if [ -z "$GCS_BUNDLE" ] || [ "$HAS_DEV_YAML" = "1" ]; then
+      echo "[gcs] REFUSED: GCS_BACKSTOP=1 uploads the signed bundle's zones; this run has no --bundle"
+      exit 2
+    fi
+    if [ "${ROUTER:-1}" != "1" ]; then
+      echo "[gcs] REFUSED: GCS_BACKSTOP=1 needs ROUTER=1 (the GCS speaks on the router's GCS endpoint)"
+      exit 2
+    fi
+    if [ -n "${GCS_HOST:-}" ] && [ "$GCS_HOST" != "127.0.0.1" ]; then
+      echo "[gcs] GCS_HOST=$GCS_HOST ignored: with GCS_BACKSTOP=1 the GCS endpoint is the local GCS step"
+    fi
+    export GCS_HOST=127.0.0.1 GCS_UDP_PORT="${GCS_UDP_PORT:-14560}"
+    export GUARDRAIL_FENCE=0
+    ADAPTER_EXTRA+=(--fences-by-gcs)
+    ;;
+  *) echo "[gcs] REFUSED: GCS_BACKSTOP must be 0 or 1, not '$GCS_BACKSTOP'"; exit 2 ;;
+esac
 
 # VLA=bridge: the bridge's own refusals (no --vla-server, bad object words, a
 # policy it cannot load) come here, before SITL starts, not after take-off.
@@ -239,6 +317,22 @@ fi
 export MAVLINK_ROUTER
 export MAVROS_FCU_URL="$FCU_URL"
 
+if [ "$GCS_BACKSTOP" = "1" ]; then
+  # Before MAVROS and the Shield exist: the GCS's own process, on the
+  # router's GCS endpoint, sets the backstop and reads it back.
+  echo "=== GCS: GeoFence set over the GCS link (udpin:127.0.0.1:$GCS_UDP_PORT) ==="
+  GCS_RC=0
+  "$PY" "$DIR/gcs_backstop.py" --bundle "$GCS_BUNDLE" \
+    --link "udpin:127.0.0.1:$GCS_UDP_PORT" \
+    --router-endpoint "$MAVLINK_ROUTER, GCS endpoint (mission_planner) -> 127.0.0.1:$GCS_UDP_PORT" \
+    --out "$OUT" > ~/sitl-run/gcs.log 2>&1 || GCS_RC=$?
+  sed 's/^/[gcs] /' ~/sitl-run/gcs.log
+  if [ "$GCS_RC" -ne 0 ]; then
+    echo "[gcs] REFUSED (exit $GCS_RC): the GCS could not set and read back the GeoFence ($OUT/gcs_backstop.json)"
+    exit 2
+  fi
+fi
+
 echo "=== mavros ($FCU_URL) ==="
 nohup "${ENC_MAVROS[@]}" ros2 run mavros mavros_node --ros-args -p fcu_url:="$FCU_URL" \
   > ~/sitl-run/mavros.log 2>&1 &
@@ -274,7 +368,7 @@ if [ "${BAG:-1}" = "1" ]; then
     /mavros/global_position/global /mavros/global_position/rel_alt \
     /mavros/altitude /mavros/battery /mavros/home_position/home \
     /camera/front/image_raw /camera/down/image_raw \
-    /uas1/mavlink_source /uas1/mavlink_sink \
+    /uas1/mavlink_source /uas1/mavlink_sink "${BAG_EXTRA[@]}" \
     > ~/sitl-run/bag.log 2>&1 &
   BAG_PID=$!
   sleep 2
@@ -292,12 +386,20 @@ fi
 VLA_ARGS=""
 [ "${#VLA_NODE_ARGS[@]}" -gt 0 ] && VLA_ARGS="$(printf '%q ' "${VLA_NODE_ARGS[@]}")"
 
-echo "=== Guardrail nodes (shield $SHIELD, VLA $VLA) ==="
+LAUNCH_ADAPTER=()
+[ "${#ADAPTER_EXTRA[@]}" -gt 0 ] && LAUNCH_ADAPTER=(adapter_args:="${ADAPTER_EXTRA[*]}")
+echo "=== Guardrail nodes (shield $SHIELD, VLA $VLA, style $STYLE) ==="
 if [ "${USE_LAUNCH:-1}" = "1" ]; then
   ros2 launch "$DIR/ros2_ws/src/safety_shield/launch/guardrail_rail.launch.py" \
-    python:="$PY" repo_root:="$ROOT" out:="$OUT" vla:="$VLA"     vla_ready_timeout_s:="$VLA_READY_TIMEOUT_S" \
+    python:="$PY" repo_root:="$ROOT" out:="$OUT" vla:="$VLA" style:="$STYLE" \
+    vla_ready_timeout_s:="$VLA_READY_TIMEOUT_S" \
     shield_args:="$(printf '%q ' "${SHIELD_ARGS[@]}")" \
-    vla_args:="$VLA_ARGS" "${LAUNCH_SROS2[@]}"
+    vla_args:="$VLA_ARGS" "${LAUNCH_ADAPTER[@]}" "${LAUNCH_SROS2[@]}"
+elif [ "$STYLE" = "mission" ]; then
+  nohup "${ENC_ADAPTER[@]}" "$PY" "$DIR/mavlink_adapter_node.py" --out "$OUT" "${ADAPTER_EXTRA[@]}" \
+    > ~/sitl-run/adapter.log 2>&1 &
+  sleep 2
+  "${ENC_SHIELD[@]}" "$PY" "$DIR/ros2_mission_node.py" "${SHIELD_ARGS[@]}"
 else
   if [ "$VLA" = "bridge" ]; then
     nohup "${ENC_VLA[@]}" "$PY" "$DIR/ros2_vla_bridge_node.py" "${VLA_NODE_ARGS[@]}" --out "$OUT" > ~/sitl-run/vla.log 2>&1 &
@@ -306,7 +408,8 @@ else
   else
     nohup "${ENC_VLA[@]}" "$PY" "$DIR/ros2_vla_stub_node.py" "${EXTRA[@]}" > ~/sitl-run/vla.log 2>&1 &
   fi
-  nohup "${ENC_ADAPTER[@]}" "$PY" "$DIR/mavlink_adapter_node.py" --out "$OUT" > ~/sitl-run/adapter.log 2>&1 &
+  nohup "${ENC_ADAPTER[@]}" "$PY" "$DIR/mavlink_adapter_node.py" --out "$OUT" "${ADAPTER_EXTRA[@]}" \
+    > ~/sitl-run/adapter.log 2>&1 &
   sleep 2
   "${ENC_SHIELD[@]}" "$PY" "$DIR/ros2_shield_node.py" "${SHIELD_ARGS[@]}"
   stop_vla

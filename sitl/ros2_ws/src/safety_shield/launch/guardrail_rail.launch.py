@@ -46,6 +46,14 @@ it refuse SROS2=1 until rebuilt (sros2_prepare checks every enclave in
 sitl/sros2_enclaves.txt), and the permissions tools/sros2_setup.sh grants are
 per enclave, not per topic, so the slot's identity is the bridge's whole
 permission.
+
+MISSION STYLE (2026-11-03, WP3-09). `style:=mission` flies the grant's
+pre-planned waypoint mission instead of live setpoints: the Shield process
+runs sitl/ros2_mission_node.py (the mission-style Shield: it checks the
+plan, sends it to the adapter as MISSION_ITEM_INT and replaces the next
+waypoint in flight) with shield_args, in the Shield's enclave, and no VLA
+node starts (the plan is the pilot's whole output). `style:=guided`, the
+default, is every run before it. The rail still ends with the Shield process.
 """
 import os
 import shlex
@@ -62,6 +70,8 @@ SENTINEL = ("guardrail", "shield.py")
 # What may fill the VLA slot (vla:=), and the enclave every one of them runs
 # in (THE VLA SLOT above).
 VLA_KINDS = ("stub", "bridge")
+# The grant's two mission styles (style:=; MISSION STYLE above).
+STYLES = ("guided", "mission")
 VLA_ENCLAVE = "vla_stub"
 # vla:=bridge: how long the Shield node waits for the bridge's ready identity
 # before it refuses to arm (--vla-ready-timeout-s; vla_ready_timeout_s:=).
@@ -135,7 +145,25 @@ def _nodes(context):
     kind = LaunchConfiguration("vla").perform(context).strip() or "stub"
     if kind not in VLA_KINDS:
         raise RuntimeError(f"vla:={kind!r} is not one of {VLA_KINDS}")
+    style = LaunchConfiguration("style").perform(context).strip() or "guided"
+    if style not in STYLES:
+        raise RuntimeError(f"style:={style!r} is not one of {STYLES}")
     shield_args = args("shield_args")
+    if style == "mission":
+        # The mission-style Shield in the Shield's place and enclave; no VLA.
+        adapter = ExecuteProcess(
+            cmd=[py, str(sitl / "mavlink_adapter_node.py"),
+                 *(["--out", out] if out else []), *args("adapter_args")],
+            name="mavlink_adapter", output="screen",
+            additional_env=env_for("mavlink_adapter"))
+        shield = ExecuteProcess(
+            cmd=[py, str(sitl / "ros2_mission_node.py"), *shield_args],
+            name="safety_shield", output="screen", additional_env=env_for("safety_shield"))
+        end = RegisterEventHandler(OnProcessExit(
+            target_action=shield,
+            on_exit=[LogInfo(msg="mission-style Shield finished - shutting the rail down"),
+                     EmitEvent(event=Shutdown(reason="mission over"))]))
+        return [adapter, shield, end]
     if kind == "bridge":
         # Beside the Shield's records, and the Shield arms only once the
         # bridge's warm-up has passed - on this path too, not only through
@@ -182,6 +210,10 @@ def generate_launch_description():
                               description="what fills the VLA slot: stub "
                                           "(sitl/ros2_vla_stub_node.py) or bridge "
                                           "(sitl/ros2_vla_bridge_node.py, AerialVLA)"),
+        DeclareLaunchArgument("style", default_value="guided",
+                              description="the grant's mission style: guided (live "
+                                          "setpoints, sitl/ros2_shield_node.py) or mission "
+                                          "(a waypoint mission, sitl/ros2_mission_node.py)"),
         DeclareLaunchArgument("vla_args", default_value="",
                               description="arguments for the VLA node (the stub or the bridge)"),
         DeclareLaunchArgument("vla_ready_timeout_s", default_value=VLA_READY_TIMEOUT_S,

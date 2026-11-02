@@ -55,10 +55,43 @@ WHAT ELSE GOES THROUGH HERE (the MAVROS-facing side, WP3-09)
     until it is clear, so a hot-applied zone on top of the aircraft cannot
     breach the autopilot fence the moment it arrives. A policy with a
     geographic frame origin far from the autopilot's home is refused.
+  * /shield/mission (std_msgs/String JSON, latched) -> /mavros/mission/push:
+    the grant's second mission style (Safety Shield page, MAVLink adapter
+    table: "Pre-planned waypoint mission | MISSION_ITEM_INT | For
+    mission-style flight; replaces or updates the next waypoint"). A waypoint
+    plan in the policy's local metres becomes ArduPilot mission items about
+    the autopilot's home (`mission_items`: seq 0 home, seq 1 DO_CHANGE_SPEED,
+    then one NAV_WAYPOINT per waypoint), pushed whole and read back
+    (/mavros/mission/pull). MAVROS 2 writes them with the mission protocol,
+    as MISSION_ITEM_INT (the rail's bag carries the raw frames on
+    /uas1/mavlink_sink). Since 2026-11-03.
+  * /shield/mission_update (std_msgs/String JSON) -> /mavros/mission/push
+    with start_index = the item's seq: ONE item replaced in the autopilot's
+    mission (MISSION_WRITE_PARTIAL_LIST, then that item as MISSION_ITEM_INT),
+    the grant's "replaces or updates the next waypoint". ArduCopter 4.5.7
+    applies the item as it arrives and, when it is the item being flown,
+    restarts it ("Auto mission changed, restarted command"): the new
+    waypoint is flown at once. The item is then read back and compared, and
+    that read-back - not MAVROS's push result - is the update's verdict:
+    MAVROS 2.14 writes MISSION_WRITE_PARTIAL_LIST with end_index = start +
+    count, which MAVLink and ArduPilot read as the last index INCLUDED, so
+    ArduPilot asks for one item more, MAVROS refuses it as out of range, and
+    the push ends in ArduPilot's 8 s upload timeout (MISSION_ACK 15) with the
+    item already written (flown 2026-11-03: mission_wp_20261103c, decoded
+    from its bag's /uas1/mavlink_sink and /uas1/mavlink_source).
+    sitl/ros2_mission_node.py, the mission-style Shield, sends both.
   * /mavlink_adapter/status (std_msgs/String JSON, latched): every upload and
     mode request result, which the Shield node writes into events.jsonl.
   * <out>/adapter_log.jsonl: every setpoint in, the heading used, the NED
     setpoint and the ENU message out.
+
+A GCS-SET GEOFENCE (2026-11-03, WP3-10). With `--fences-by-gcs` this node
+uploads no zone: the operator's ground station set the fence parameters and
+the signed bundle's zones before the flight (sitl/gcs_backstop.py on the
+router's GCS endpoint, run_ros2_demo.sh GCS_BACKSTOP=1), as the grant has it
+("GCS-set AP GeoFence parameters ... remain configured as a last-line
+backstop"), and a push from here would replace the GCS's list. Each
+/shield/fences message is answered with a status that says so.
 
 ONLY THE SHIELD FLIES. A setpoint is forwarded only while the Shield node is
 the single publisher on /shield/setpoint: a second publisher (a VLA backend
@@ -112,6 +145,22 @@ MAV_CMD_NAV_FENCE_POLYGON_VERTEX_EXCLUSION = 5002
 MAV_CMD_NAV_FENCE_CIRCLE_INCLUSION = 5003
 MAV_CMD_NAV_FENCE_CIRCLE_EXCLUSION = 5004
 MAV_FRAME_GLOBAL_RELATIVE_ALT = 3
+
+# MAVLink mission items (mission protocol, MAV_MISSION_TYPE_MISSION).
+MAV_CMD_NAV_WAYPOINT = 16
+MAV_CMD_DO_CHANGE_SPEED = 178
+MAV_FRAME_GLOBAL = 0
+MAV_FRAME_MISSION = 2
+# The mission layout `mission_items` writes: ArduPilot keeps seq 0 for home
+# (an upload's item 0 is replaced by the home position), seq 1 sets the speed,
+# the waypoints follow from FIRST_WAYPOINT_SEQ.
+SPEED_ITEM_SEQ = 1
+FIRST_WAYPOINT_SEQ = 2
+# DO_CHANGE_SPEED param1: 1 = ground speed (ArduCopter reads air and ground
+# speed alike); param3 -1 = leave the throttle.
+SPEED_TYPE_GROUND = 1.0
+# NAV_WAYPOINT param1 is the hold time in seconds.
+MAX_HOLD_S = 3600.0
 
 # The modes the adapter forwards: those the escalation FSM can ask for (Normal
 # and Brake fly GUIDED; Loiter, RTL, Land), which include the mission-end LAND.
@@ -231,6 +280,8 @@ TOPIC_MODE_REQUEST = "/shield/mode_request"
 TOPIC_FENCES = "/shield/fences"
 TOPIC_STATUS = "/mavlink_adapter/status"
 TOPIC_RAW_LOCAL = "/mavros/setpoint_raw/local"
+TOPIC_MISSION = "/shield/mission"
+TOPIC_MISSION_UPDATE = "/shield/mission_update"
 # This node's ROS name: the Shield node routes its mode requests through the
 # adapter only when a subscriber of this name is on /shield/mode_request
 # (ros2_shield_node.adapter_listening), not merely any subscriber - rosbag2
@@ -532,6 +583,88 @@ def read_fence_alt_max(parm_path: str | Path) -> float | None:
 
 
 # --------------------------------------------------------------------------- #
+# Waypoint missions -> ArduPilot mission items (MISSION_ITEM_INT through MAVROS)
+# --------------------------------------------------------------------------- #
+
+def waypoint_item(wp: dict, home_lat: float, home_lon: float,
+                  home_local_ne: tuple[float, float] = (0.0, 0.0)) -> dict:
+    """One waypoint {"x" North, "y" East, "up", "hold_s"} in the policy's
+    local metres -> NAV_WAYPOINT fields for mavros_msgs/Waypoint, relative
+    altitude, projected about home as the fences are (`fence_items`)."""
+    for k in ("x", "y", "up"):
+        if not math.isfinite(float(wp[k])):
+            raise ValueError(f"waypoint {k} {wp[k]!r} is not a finite number")
+    hold = float(wp.get("hold_s") or 0.0)
+    if not 0.0 <= hold <= MAX_HOLD_S:
+        raise ValueError(f"hold_s {hold!r} outside 0..{MAX_HOLD_S:g} s")
+    if float(wp["up"]) <= 0.0:
+        raise ValueError(f"waypoint altitude {wp['up']!r} m is not above home")
+    lat, lon = LocalProjection(home_lat, home_lon).to_latlon(
+        float(wp["x"]) - home_local_ne[0], float(wp["y"]) - home_local_ne[1])
+    # param4 (yaw) 0: ArduCopter ignores it for NAV_WAYPOINT and yaws by
+    # WP_YAW_BEHAVIOR; a NaN would also make the adapter log invalid JSON.
+    return {"frame": MAV_FRAME_GLOBAL_RELATIVE_ALT, "command": MAV_CMD_NAV_WAYPOINT,
+            "autocontinue": True, "param1": hold, "param2": 0.0, "param3": 0.0,
+            "param4": 0.0, "x_lat": lat, "y_long": lon,
+            "z_alt": float(wp["up"])}
+
+
+def mission_items(doc: dict, home_lat: float, home_lon: float,
+                  home_local_ne: tuple[float, float] = (0.0, 0.0)) -> list[dict]:
+    """A /shield/mission plan -> the whole mission: seq 0 home (ArduPilot
+    overwrites it with its own), seq 1 DO_CHANGE_SPEED at the plan's speed,
+    then the waypoints in order from FIRST_WAYPOINT_SEQ."""
+    wps = doc.get("waypoints") or []
+    if not wps:
+        raise ValueError("a mission needs at least one waypoint")
+    speed = float(doc.get("speed_mps") or 0.0)
+    if not (math.isfinite(speed) and speed > 0.0):
+        raise ValueError(f"speed_mps {doc.get('speed_mps')!r} is not a positive speed")
+    home = {"frame": MAV_FRAME_GLOBAL, "command": MAV_CMD_NAV_WAYPOINT,
+            "autocontinue": True, "param1": 0.0, "param2": 0.0, "param3": 0.0,
+            "param4": 0.0, "x_lat": home_lat, "y_long": home_lon, "z_alt": 0.0}
+    spd = {"frame": MAV_FRAME_MISSION, "command": MAV_CMD_DO_CHANGE_SPEED,
+           "autocontinue": True, "param1": SPEED_TYPE_GROUND, "param2": speed,
+           "param3": -1.0, "param4": 0.0, "x_lat": 0.0, "y_long": 0.0, "z_alt": 0.0}
+    return [home, spd] + [waypoint_item(w, home_lat, home_lon, home_local_ne)
+                          for w in wps]
+
+
+def mission_update(doc: dict, n_items: int | None, home_lat: float, home_lon: float,
+                   home_local_ne: tuple[float, float] = (0.0, 0.0)) -> tuple[int, dict]:
+    """A /shield/mission_update {"seq", "waypoint"} -> (seq, item): the one
+    NAV_WAYPOINT to write in place. Refused for the home and speed items and
+    for a seq past the mission the autopilot holds (`n_items`, the last
+    upload's count): a partial write only replaces."""
+    seq = int(doc["seq"])
+    if seq < FIRST_WAYPOINT_SEQ:
+        raise ValueError(f"seq {seq}: only a waypoint (seq >= {FIRST_WAYPOINT_SEQ}) "
+                         f"is replaced in flight")
+    if n_items is None:
+        raise ValueError("no mission has been uploaded to update")
+    if seq >= n_items:
+        raise ValueError(f"seq {seq} is past the mission's {n_items} items")
+    return seq, waypoint_item(doc["waypoint"], home_lat, home_lon, home_local_ne)
+
+
+def same_item(a: dict, b: dict, tol_deg: float = 2e-7) -> bool:
+    """Does a read-back item hold what was sent? Command, hold time and
+    position (to the 1e-7 degree MISSION_ITEM_INT carries); the altitude to
+    a centimetre. The home item (seq 0) is the autopilot's own: any home
+    reads as the same."""
+    if int(a["command"]) != int(b["command"]):
+        return False
+    if int(a["command"]) == MAV_CMD_DO_CHANGE_SPEED:
+        return abs(float(a["param2"]) - float(b["param2"])) < 1e-3
+    if int(a.get("frame", MAV_FRAME_GLOBAL_RELATIVE_ALT)) == MAV_FRAME_GLOBAL:
+        return True
+    return (abs(float(a["x_lat"]) - float(b["x_lat"])) <= tol_deg
+            and abs(float(a["y_long"]) - float(b["y_long"])) <= tol_deg
+            and abs(float(a["z_alt"]) - float(b["z_alt"])) < 0.01
+            and abs(float(a["param1"]) - float(b["param1"])) < 0.5)
+
+
+# --------------------------------------------------------------------------- #
 # The ROS 2 node (needs rclpy + mavros_msgs; WSL venv-ros or the Orin)
 # --------------------------------------------------------------------------- #
 
@@ -542,7 +675,7 @@ try:
                            qos_profile_sensor_data)
     from geometry_msgs.msg import PoseStamped
     from std_msgs.msg import Float32MultiArray, String
-    from mavros_msgs.msg import HomePosition, PositionTarget, Waypoint
+    from mavros_msgs.msg import HomePosition, PositionTarget, Waypoint, WaypointList
     from mavros_msgs.srv import SetMode, WaypointPull, WaypointPush
     HAVE_ROS = True
 except ImportError:                                   # Windows, CI: pure part only
@@ -555,7 +688,8 @@ if HAVE_ROS:
 
     class MavlinkAdapterNode(Node):
         def __init__(self, out: Path | None, upload_fences: bool = True,
-                     hold_mode: str = DEFAULT_HOLD_MODE) -> None:
+                     hold_mode: str = DEFAULT_HOLD_MODE,
+                     fences_by_gcs: bool = False) -> None:
             super().__init__(ADAPTER_NODE_NAME)
             if hold_mode not in HOLD_MODES:
                 raise ValueError(f"hold_mode {hold_mode!r} is not one of {HOLD_MODES}")
@@ -567,7 +701,9 @@ if HAVE_ROS:
                     raise RuntimeError(f"PositionTarget.{name} differs from "
                                        f"this module's constant")
             self.out = out
-            self.upload_fences = upload_fences
+            # A GCS-set GeoFence (--fences-by-gcs): no zone is uploaded here.
+            self.fences_by_gcs = fences_by_gcs
+            self.upload_fences = upload_fences and not fences_by_gcs
             self.heading_deg: float | None = None
             self.home = None            # (lat, lon, (north, east))
             self.pending_fences: dict | None = None
@@ -592,6 +728,18 @@ if HAVE_ROS:
                                                "/mavros/geofence/push")
             self.cli_pull = self.create_client(WaypointPull,
                                                "/mavros/geofence/pull")
+            # The waypoint mission (MISSION_ITEM_INT through MAVROS 2).
+            self.mission_n: int | None = None      # items the autopilot holds
+            self.mission_sent: list[dict] = []     # what was last written
+            self.mission_list: list | None = None  # /mavros/mission/waypoints
+            self.pending_mission: dict | None = None
+            self.create_subscription(String, TOPIC_MISSION, self._on_mission, LATCHED)
+            self.create_subscription(String, TOPIC_MISSION_UPDATE,
+                                     self._on_mission_update, 10)
+            self.create_subscription(WaypointList, "/mavros/mission/waypoints",
+                                     self._on_waypoints, LATCHED)
+            self.cli_mpush = self.create_client(WaypointPush, "/mavros/mission/push")
+            self.cli_mpull = self.create_client(WaypointPull, "/mavros/mission/pull")
             self.get_logger().info(
                 f"MAVLink adapter up: {TOPIC_SETPOINT} (body) -> "
                 f"{TOPIC_RAW_LOCAL} (FRAME_LOCAL_NED, type_mask "
@@ -614,6 +762,9 @@ if HAVE_ROS:
             if self.pending_fences is not None:
                 pend, self.pending_fences = self.pending_fences, None
                 self._upload(pend)
+            if self.pending_mission is not None:
+                pend, self.pending_mission = self.pending_mission, None
+                self._push_mission(pend)
 
         def _on_setpoint(self, msg: Float32MultiArray) -> None:
             body = list(msg.data)
@@ -719,9 +870,12 @@ if HAVE_ROS:
                 self.get_logger().warn("unreadable /shield/fences message")
                 return
             if not self.upload_fences:
+                why = ("the GeoFence is GCS-set (sitl/gcs_backstop.py, "
+                       "--fences-by-gcs): this adapter uploads no zone"
+                       if self.fences_by_gcs else "fence upload disabled (--no-fences)")
                 self._status({"kind": "fence_upload", "success": False,
                               "generation": doc.get("generation"),
-                              "why": "fence upload disabled (--no-fences)"})
+                              "fences_by_gcs": self.fences_by_gcs, "why": why})
                 return
             if self.home is None:
                 self.pending_fences = doc
@@ -798,6 +952,180 @@ if HAVE_ROS:
                 fut2.add_done_callback(pulled)
             fut.add_done_callback(pushed)
 
+        # ---------------- waypoint missions ---------------- #
+
+        def _on_waypoints(self, msg) -> None:
+            self.mission_list = list(msg.waypoints)
+
+        @staticmethod
+        def _wp(it: dict):
+            wp = Waypoint()
+            wp.frame = int(it["frame"])
+            wp.command = int(it["command"])
+            wp.is_current = False
+            wp.autocontinue = bool(it.get("autocontinue", True))
+            wp.param1, wp.param2 = float(it["param1"]), float(it["param2"])
+            wp.param3, wp.param4 = float(it["param3"]), float(it["param4"])
+            wp.x_lat, wp.y_long = float(it["x_lat"]), float(it["y_long"])
+            wp.z_alt = float(it["z_alt"])
+            return wp
+
+        @staticmethod
+        def _as_dict(wp) -> dict:
+            return {"frame": int(wp.frame), "command": int(wp.command),
+                    "param1": float(wp.param1), "param2": float(wp.param2),
+                    "x_lat": float(wp.x_lat), "y_long": float(wp.y_long),
+                    "z_alt": float(wp.z_alt)}
+
+        def _on_mission(self, msg: String) -> None:
+            try:
+                doc = json.loads(msg.data)
+            except ValueError:
+                self._status({"kind": "mission_upload", "success": False,
+                              "why": "unreadable /shield/mission message"})
+                return
+            if self.home is None:
+                self.pending_mission = doc
+                self.get_logger().info("mission received; waiting for home")
+                return
+            self._push_mission(doc)
+
+        def _push_mission(self, doc: dict) -> None:
+            lat, lon, ne = self.home
+            base = {"kind": "mission_upload", "generation": doc.get("generation"),
+                    "policy_hash": doc.get("policy_hash"), "reason": doc.get("reason"),
+                    "home": [lat, lon]}
+            try:
+                items = mission_items(doc, lat, lon, ne)
+            except (KeyError, TypeError, ValueError) as e:
+                self._status({**base, "success": False, "why": str(e)})
+                return
+            if not self.cli_mpush.service_is_ready():
+                self._status({**base, "success": False,
+                              "why": "/mavros/mission/push not available"})
+                return
+            req = WaypointPush.Request(start_index=0)
+            req.waypoints = [self._wp(it) for it in items]
+            base["items"] = len(items)
+            self._log({"t": round(time.monotonic(), 4), "mission_push": {
+                "start_index": 0, "items": items}})
+            fut = self.cli_mpush.call_async(req)
+
+            def pushed(f):
+                r = f.result()
+                ok = bool(r and r.success)
+                n = int(r.wp_transfered) if r else 0
+                if ok:
+                    self.mission_n, self.mission_sent = len(items), list(items)
+                self._read_back_mission({**base, "success": ok, "transferred": n},
+                                        list(range(len(items))) if ok else [])
+            fut.add_done_callback(pushed)
+            self.get_logger().info(f"mission: {len(items)} item(s) pushed "
+                                   f"({doc.get('reason')})")
+
+        def _on_mission_update(self, msg: String) -> None:
+            try:
+                doc = json.loads(msg.data)
+            except ValueError:
+                self._status({"kind": "mission_update", "success": False,
+                              "why": "unreadable /shield/mission_update message"})
+                return
+            base = {"kind": "mission_update", "seq": doc.get("seq"),
+                    "generation": doc.get("generation"), "reason": doc.get("reason"),
+                    "update_id": doc.get("update_id")}
+            if self.home is None:
+                self._status({**base, "success": False, "why": "no home position yet"})
+                return
+            lat, lon, ne = self.home
+            try:
+                seq, item = mission_update(doc, self.mission_n, lat, lon, ne)
+            except (KeyError, TypeError, ValueError) as e:
+                self._status({**base, "success": False, "why": str(e)})
+                return
+            if not self.cli_mpush.service_is_ready():
+                self._status({**base, "success": False,
+                              "why": "/mavros/mission/push not available"})
+                return
+            # A partial write: MAVROS sends MISSION_WRITE_PARTIAL_LIST
+            # (seq, seq + 1: see the module docstring) and then the item, as
+            # MISSION_ITEM_INT.
+            req = WaypointPush.Request(start_index=seq)
+            req.waypoints = [self._wp(item)]
+            self._log({"t": round(time.monotonic(), 4), "mission_push": {
+                "start_index": seq, "items": [item],
+                "update_id": doc.get("update_id")}})
+            fut = self.cli_mpush.call_async(req)
+
+            def pushed(f, seq=seq, item=item):
+                r = f.result()
+                ok = bool(r and r.success)
+                n = int(r.wp_transfered) if r else 0
+                st = {**base, "push_success": ok, "transferred": n, "item": item}
+                if not ok:
+                    st["push_note"] = (
+                        "MAVROS reported the partial push failed; the item is read "
+                        "back to see whether the autopilot holds it (MAVROS 2.14 sends "
+                        "end_index = start + count, ArduPilot reads it inclusive and "
+                        "waits for one item more until its upload timeout)")
+                if not ok and n < 1:
+                    self._status({**st, "success": False})
+                    return
+                # The verdict is the autopilot's own copy of the item.
+                prev = self.mission_sent[seq] if seq < len(self.mission_sent) else None
+                if seq < len(self.mission_sent):
+                    self.mission_sent[seq] = item
+                self._read_back_mission(st, [seq], restore=(seq, prev))
+            fut.add_done_callback(pushed)
+            self.get_logger().info(f"mission item {seq} replaced "
+                                   f"({doc.get('reason')})")
+
+        def _read_back_mission(self, status: dict, check: list[int],
+                               restore: tuple | None = None) -> None:
+            """Pull the mission back and compare the items in `check` with
+            what was sent; the status carries the verdict. For an update the
+            verdict IS the comparison (`success`); `restore` (seq, item) puts
+            back what the autopilot held when the read-back shows the new item
+            did not land."""
+            if not check or not self.cli_mpull.service_is_ready():
+                if status.get("kind") == "mission_update":
+                    status = {**status, "success": False,
+                              "why": status.get("why") or "no read-back: /mavros/mission/pull "
+                                                          "not available"}
+                self._status(status)
+                return
+            self.mission_list = None
+            fut = self.cli_mpull.call_async(WaypointPull.Request())
+
+            def pulled(f):
+                r = f.result()
+                got = int(r.wp_received) if r else None
+                state = {"tries": 0}
+
+                # The pulled list arrives on /mavros/mission/waypoints; wait
+                # for it (up to 2 s), then compare.
+                def compare():
+                    state["tries"] += 1
+                    lst = self.mission_list
+                    if lst is None and state["tries"] < 8:
+                        return
+                    timer.cancel()
+                    lst = lst or []
+                    bad = [i for i in check
+                           if i >= len(lst) or i >= len(self.mission_sent)
+                           or not same_item(self.mission_sent[i], self._as_dict(lst[i]))]
+                    rec = {**status, "read_back": got, "match": not bad,
+                           "mismatched": bad}
+                    if status.get("kind") == "mission_update":
+                        rec["success"] = not bad
+                        if bad and restore is not None and restore[1] is not None:
+                            self.mission_sent[restore[0]] = restore[1]
+                    if status.get("kind") == "mission_update" and check and check[0] < len(lst):
+                        rec["read_back_item"] = self._as_dict(lst[check[0]])
+                    self._status(rec)
+                    self._log({"t": round(time.monotonic(), 4), "mission_status": rec})
+                timer = self.create_timer(0.25, compare)
+            fut.add_done_callback(pulled)
+
         def close(self) -> None:
             if self._log_fh is not None:
                 self._log_fh.close()
@@ -813,6 +1141,9 @@ def main(argv: list[str] | None = None) -> None:
                     help="episode directory for adapter_log.jsonl")
     ap.add_argument("--no-fences", action="store_true",
                     help="do not upload the policy's fences to the autopilot")
+    ap.add_argument("--fences-by-gcs", action="store_true",
+                    help="the GeoFence is GCS-set (sitl/gcs_backstop.py): upload no "
+                         "zone, and say so in every fence status")
     ap.add_argument("--hold-mode", choices=HOLD_MODES, default=DEFAULT_HOLD_MODE,
                     help="ArduCopter mode for the FSM's LOITER: BRAKE (default; holds "
                          "with no pilot input) or LOITER (needs the throttle centred)")
@@ -824,7 +1155,8 @@ def main(argv: list[str] | None = None) -> None:
     rclpy.init(args=ros_args)
     node = MavlinkAdapterNode(Path(args.out) if args.out else None,
                               upload_fences=not args.no_fences,
-                              hold_mode=args.hold_mode)
+                              hold_mode=args.hold_mode,
+                              fences_by_gcs=args.fences_by_gcs)
     try:
         rclpy.spin(node)
     except (KeyboardInterrupt, Exception) as e:          # noqa: BLE001
