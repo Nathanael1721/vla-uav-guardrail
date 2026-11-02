@@ -24,7 +24,7 @@ set -euo pipefail
 : "${VLA:?set VLA to the server, e.g. VLA=10.42.0.1:8790}"
 TAG="${TAG:-orin_e2e_$(date +%Y%m%d_%H%M%S)}"
 SECONDS_="${SECONDS_:-420}"
-BUNDLE="${BUNDLE:-bundles/follow-car-citylife-nfz-v0.1.1.tar.gz}"
+BUNDLE="${BUNDLE:-bundles/follow-car-citylife-nfz-v0.1.2.tar.gz}"
 VENV="${VENV:-$HOME/vla-drone-env}"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"

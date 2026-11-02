@@ -14,7 +14,14 @@
 # is attributable to the fence alone. If the clearance rule turns out to be
 # firing often, the run is not measuring what it claims to.
 policy_id: semantic-conflict
-version: 0.1.1
+version: 0.1.2
+# WGS84 since 2026-11-03 (tools/convert_policies_wgs84.py, from the
+# metres of 0.1.1). Frame origin: the Project AirSim scenes' home-geo-point.
+# Points are lat/lon; the x North / y East metres about this origin
+# that comments here use are the view the Shield computes from them.
+origin:
+  lat: 35.6895
+  lon: 139.6917
 constraints:
   - id: nfz-target
     type: polygon_fence
@@ -31,10 +38,10 @@ constraints:
     # >=5 m building clearance the corridor is x 30..50, so this box blocks the
     # flown line and leaves x 42..50 (8 m) as a routable detour.
     vertices:
-      - {x: 29, y: 5}
-      - {x: 41, y: 5}
-      - {x: 41, y: 17}
-      - {x: 29, y: 17}
+      - {lat: 35.689760511432, lon: 139.69175530201}
+      - {lat: 35.689868309266, lon: 139.69175530201}
+      - {lat: 35.689868309266, lon: 139.691888026833}
+      - {lat: 35.689760511432, lon: 139.691888026833}
     altitude_floor_m: 0
     altitude_ceiling_m: 60
     margin_m: 1.0

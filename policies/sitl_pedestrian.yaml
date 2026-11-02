@@ -28,7 +28,14 @@
 # Altitude band is 10-20 m, matching sim_demo_policy.yaml: the Blocks world has
 # physical geometry below that and avoiding it is the other team's layer.
 policy_id: sitl-pedestrian-standoff
-version: 0.1.1
+version: 0.1.2
+# WGS84 since 2026-11-03 (tools/convert_policies_wgs84.py, from the
+# metres of 0.1.1). Frame origin: ArduPilot SITL --home (CMAC, sitl/start_sitl.sh).
+# Points are lat/lon; the x North / y East metres about this origin
+# that comments here use are the view the Shield computes from them.
+origin:
+  lat: -35.363261
+  lon: 149.16523
 
 constraints:
   - id: standoff-pedestrian

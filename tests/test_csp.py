@@ -1512,7 +1512,8 @@ def test_geometry_ref_resolves_and_refuses_a_stale_generation():
     csp = ConstraintCompiler(pol).compile_csp(_mission(), now=MONDAY_0800)
     p0 = {p.id: p for p in csp.P0_constraints}
     ref = p0["nfz-school"].geometry_ref
-    assert ref in ("coarse:nfz-school@v0.1.1/g0", "fine:nfz-school@v0.1.1/g0"), ref  # 0.1.1 since IR 3.0.0
+    # corridor-survey 0.1.2 since the WGS84 conversion (IR schema 3.1.0, 2026-11-03)
+    assert ref in ("coarse:nfz-school@v0.1.2/g0", "fine:nfz-school@v0.1.2/g0"), ref
     pts = K.resolve_geometry_ref(pol, ref)
     assert len(pts) >= 3
     assert p0["corridor-survey-route"].geometry_ref.startswith("fine:"), \
@@ -2381,8 +2382,13 @@ def test_the_cost_map_follows_the_grants_conventions():
     assert set(np.unique(cm.cost[np.isfinite(cm.cost)]).tolist()) <= {0.0, 50.0}
     assert h["policy_hash"] == pol.policy_hash and h["generation"] == pol.generation
     assert cm.ref.startswith(f"costmap:{pol.policy_id}@v{pol.version}/g0#sha256:")
-    metre = K.rasterise_cost_map(load_policy(DEMO))
+    # A policy in metres with no origin (the shipped files state one since the
+    # WGS84 conversion of 2026-11-03; Policy.metre_form is the old form).
+    metre = K.rasterise_cost_map(load_policy(DEMO).metre_form())
     assert metre.header["cost_map"]["origin"] is None, "a metre policy has no WGS84 origin"
+    shipped = K.rasterise_cost_map(load_policy(DEMO))
+    assert set(shipped.header["cost_map"]["origin"]) == {"lat", "lon"}, \
+        "the converted file places its map on the earth"
     # What has no footprint is listed with why, never dropped in silence.
     whys = {d["id"]: d["why"] for d in metre.header["not_drawn"]}
     assert any("speed" in w for w in whys.values()), whys

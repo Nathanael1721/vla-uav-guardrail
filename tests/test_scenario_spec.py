@@ -393,7 +393,9 @@ def test_a_pinned_policy_hash_that_moved_stops_the_load():
 def test_a_wgs84_pose_needs_a_policy_origin():
     from guardrail.scenario_spec import Pose
     pose = Pose(lat=25.0421, lon=121.5310, alt_agl_m=50)
-    no_origin = PolicyRef(path="policies/sim_demo_policy.yaml").load(ROOT)
+    # The shipped files state an origin since the WGS84 conversion
+    # (2026-11-03); the metre form is the policy without one.
+    no_origin = PolicyRef(path="policies/sim_demo_policy.yaml").load(ROOT).metre_form()
     _refused(lambda: pose.local(no_origin), "no origin")
     with_origin = PolicyRef(path="policies/wgs84_taipei.yaml").load(ROOT)
     x, y = pose.local(with_origin)

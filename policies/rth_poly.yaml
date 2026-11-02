@@ -1,5 +1,12 @@
 policy_id: rth-poly-demo
-version: 0.1.1
+version: 0.1.2
+# WGS84 since 2026-11-03 (tools/convert_policies_wgs84.py, from the
+# metres of 0.1.1). Frame origin: the Project AirSim scenes' home-geo-point.
+# Points are lat/lon; the x North / y East metres about this origin
+# that comments here use are the view the Shield computes from them.
+origin:
+  lat: 35.6895
+  lon: 139.6917
 constraints:
   - id: tri-nfz
     type: polygon_fence
@@ -7,9 +14,9 @@ constraints:
     priority: P0
     violation_action: project_fix
     vertices:
-      - {x: 30, y: -12}
-      - {x: 54, y: -12}
-      - {x: 42, y: 12}
+      - {lat: 35.689769494585, lon: 139.691567275177}
+      - {lat: 35.689985090253, lon: 139.691567275177}
+      - {lat: 35.689877292419, lon: 139.691832724823}
     altitude_floor_m: 0
     altitude_ceiling_m: 60
     margin_m: 1.0

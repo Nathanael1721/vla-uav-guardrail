@@ -668,18 +668,27 @@ def test_reprojection_is_deterministic_through_a_bundle():
 
 def test_every_metre_policy_hashes_exactly_as_before():
     """The legacy form keeps its identity: every policy written in metres has
-    the hash the lock pinned before this change."""
+    the hash the lock pinned before this change.
+
+    Since 2026-11-03 no shipped file is written in metres (WP1-14,
+    tools/convert_policies_wgs84.py): each converted file's metre form, at
+    the version it had before, is the metre policy, and it hashes exactly as
+    the lock pinned it then."""
     lock = B.load_lock()["policies"]
     n = 0
     for f in sorted((ROOT / "policies").glob("*.yaml")):
         pol = load_policy(f)
-        if pol.is_geographic:
-            continue
         ent = lock[B.lock_key(pol)]
-        ent = ent["shared_by_files"][f.name] if "shared_by_files" in ent else ent
-        assert ent["policy_hash"] == pol.policy_hash, f.name
+        if not ent.get("migration", {}).get("old_hash_form", "").startswith(B.FRAME_FORM):
+            continue
+        old_key = ent["migrated_from"]
+        metre = B.as_version(pol.metre_form(), old_key.rpartition("@")[2])
+        assert not metre.is_geographic and metre.origin is None, f.name
+        old = lock[old_key]
+        old = old["shared_by_files"][f.name] if "shared_by_files" in old else old
+        assert old["policy_hash"] == metre.policy_hash, f.name
         n += 1
-    assert n >= 27, n
+    assert n == 31, n
 
 
 def test_the_geographic_policy_keeps_its_old_hash_as_a_prior_form():
@@ -1305,8 +1314,14 @@ def test_the_grant_form_is_produced_and_reloads_to_the_same_rules():
     assert "origin" not in g
 
 
+def _metre_demo() -> Policy:
+    """sim_demo_policy.yaml as it was written until 2026-11-03: in metres, no
+    origin (the shipped file is WGS84 since; Policy.metre_form)."""
+    return load_policy(DEMO).metre_form()
+
+
 def test_a_metre_policy_needs_an_anchor_for_the_grant_form():
-    pol = load_policy(DEMO)
+    pol = _metre_demo()
     _refused(lambda: pol.to_grant_form(), "Pass origin=")
     g = pol.to_grant_form(origin=(25.04245, 121.5314))
     back = policy_from_raw(json.loads(json.dumps(g)))
@@ -1322,7 +1337,11 @@ def test_the_export_cli_writes_the_grant_form():
     out = _tmp("g.yaml")
     assert B._main(["export", str(WGS84), "-o", str(out)]) == 0
     assert load_policy(out).to_grant_form() == load_policy(WGS84).to_grant_form()
-    assert B._main(["export", str(DEMO)]) == 2, "a metre policy with no anchor"
+    metre = _tmp("metre.json")
+    metre.write_text(_metre_demo().canonical_bytes().decode(), encoding="utf-8")
+    assert B._main(["export", str(metre)]) == 2, "a metre policy with no anchor"
+    # The shipped file states its origin (WGS84 since 2026-11-03): it exports.
+    assert B._main(["export", str(DEMO), "-o", str(_tmp("demo_g.yaml"))]) == 0
 
 
 # --------------------------------------------------------------------------- #
@@ -1475,7 +1494,7 @@ def test_every_manifest_names_both_hashes_and_both_are_verified():
     metre and reference-form-bundle halves still run, and the test ends in
     SKIP rather than PASS, so a partial run never reads as a full one. Until
     2026-10-19 the unguarded load raised FileNotFoundError there instead."""
-    metre = load_policy(DEMO)                              # not representable
+    metre = _metre_demo()                                  # not representable
     cases = [(metre, None)]
     if REF_DEMO.is_file():
         ref_pol = load_policy(REF_DEMO, runtime=False)    # representable

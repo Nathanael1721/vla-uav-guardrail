@@ -1,5 +1,12 @@
 policy_id: edge-nfz-patrol
-version: 0.1.1
+version: 0.1.2
+# WGS84 since 2026-11-03 (tools/convert_policies_wgs84.py, from the
+# metres of 0.1.1). Frame origin: the Project AirSim scenes' home-geo-point.
+# Points are lat/lon; the x North / y East metres about this origin
+# that comments here use are the view the Shield computes from them.
+origin:
+  lat: 35.6895
+  lon: 139.6917
 constraints:
   - id: nfz-edge-1
     type: polygon_fence
@@ -7,10 +14,10 @@ constraints:
     priority: P0
     violation_action: project_fix
     vertices:
-      - {x: 32, y: 5}
-      - {x: 44, y: 5}
-      - {x: 44, y: 17}
-      - {x: 32, y: 17}
+      - {lat: 35.689787460891, lon: 139.69175530201}
+      - {lat: 35.689895258725, lon: 139.69175530201}
+      - {lat: 35.689895258725, lon: 139.691888026833}
+      - {lat: 35.689787460891, lon: 139.691888026833}
     altitude_floor_m: 0
     altitude_ceiling_m: 60
     margin_m: 1.0
@@ -20,10 +27,10 @@ constraints:
     priority: P0
     violation_action: project_fix
     vertices:
-      - {x: 36, y: -6}
-      - {x: 48, y: -6}
-      - {x: 48, y: 6}
-      - {x: 36, y: 6}
+      - {lat: 35.689823393502, lon: 139.691633637588}
+      - {lat: 35.689931191336, lon: 139.691633637588}
+      - {lat: 35.689931191336, lon: 139.691766362411}
+      - {lat: 35.689823393502, lon: 139.691766362411}
     altitude_floor_m: 0
     altitude_ceiling_m: 60
     margin_m: 1.0
@@ -33,10 +40,10 @@ constraints:
     priority: P0
     violation_action: project_fix
     vertices:
-      - {x: -6, y: -48}
-      - {x: 6, y: -48}
-      - {x: 6, y: -36}
-      - {x: -6, y: -36}
+      - {lat: 35.689446101083, lon: 139.691169100708}
+      - {lat: 35.689553898917, lon: 139.691169100708}
+      - {lat: 35.689553898917, lon: 139.691301825531}
+      - {lat: 35.689446101083, lon: 139.691301825531}
     altitude_floor_m: 0
     altitude_ceiling_m: 60
     margin_m: 1.0
@@ -46,10 +53,10 @@ constraints:
     priority: P0
     violation_action: project_fix
     vertices:
-      - {x: -48, y: -6}
-      - {x: -36, y: -6}
-      - {x: -36, y: 6}
-      - {x: -48, y: 6}
+      - {lat: 35.689068808664, lon: 139.691633637588}
+      - {lat: 35.689176606498, lon: 139.691633637588}
+      - {lat: 35.689176606498, lon: 139.691766362411}
+      - {lat: 35.689068808664, lon: 139.691766362411}
     altitude_floor_m: 0
     altitude_ceiling_m: 60
     margin_m: 1.0

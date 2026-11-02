@@ -117,14 +117,15 @@ def test_the_tool_builds_signs_and_verifies_every_flight_bundle():
         assert src["signature"] == B.SIG_VERIFIED, src
         assert pol.policy_hash == load_policy(ROOT / r["policy"]).policy_hash
     names = sorted(Path(r["bundle"]).name for r in rows)
-    # The versions raised at IR schema 3.0.0 (2026-11-02; policies/policy.lock.json).
-    assert "fase3-sim-demo-v0.1.2.tar.gz" in names, names
-    assert "vla-goto-citylife-v0.1.1.tar.gz" in names, names
+    # The versions raised by the WGS84 conversion (IR schema 3.1.0, 2026-11-03;
+    # policies/policy.lock.json).
+    assert "fase3-sim-demo-v0.1.3.tar.gz" in names, names
+    assert "vla-goto-citylife-v0.1.2.tar.gz" in names, names
     # Same issue time -> same bytes (bundles are byte-derivable build products).
     again = Path(tempfile.mkdtemp(prefix="flightbundles_"))
     T.build(["sim_demo_policy"], again, signer=signer, trust_store=trust,
             issued_at="2026-10-12T00:00:00Z")
-    a = out / "fase3-sim-demo-v0.1.2.tar.gz"
+    a = out / "fase3-sim-demo-v0.1.3.tar.gz"
     assert a.read_bytes() == (again / a.name).read_bytes()
     # --check: OK here, MISSING in an empty folder, BAD under another trust store.
     assert all(T.check_one(n, out, trust)["ok"] for n in T.FLIGHT_POLICIES)
