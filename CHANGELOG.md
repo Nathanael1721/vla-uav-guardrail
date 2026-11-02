@@ -16,6 +16,18 @@ shipped change and recorded as one.
 
 ## [Unreleased]
 
+### 2026-11-02 — the October deck's presenter cheat-sheet, committed
+
+#### Added
+- `docs/CHEATSHEET-Final-Oct2026.md`: the presenter notes for
+  `docs/VLA-Guardrail-Final-Oct2026.pptx`, written with the deck on 27 October
+  and left out of the commits since. It holds the 30-second version, the
+  honesty lines said before anyone asks (no VLA flew the recorded
+  demonstrations; no safety number is a contract KPI yet, because no run is in
+  the hil topology), the numbers to know, the slide timing and the questions to
+  expect. Its numbers are the records as of 27 October; the later AIOT-VLA
+  follow work and the vla_fly subject fix are not in it.
+
 ### 2026-11-01 (late) — the VLA follow's subject stand-off now runs: vla_fly gives the Shield the perception's subject every tick, with its velocity, and says INERT when it has none; every earlier VLA flight was flown with the stand-off inert
 
 #### Fixed
