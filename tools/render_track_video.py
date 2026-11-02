@@ -18,6 +18,17 @@ policy_g0.json (the policy in force at generation 0) and prompt.yaml (the
 mission target, when there is one). Later generations' zones (hot-apply) are
 drawn from the per-tick `generation` with the run's policy_g<N>.json files.
 
+Since 2026-11-03 it also draws what a flight of that date needs to be read:
+a corridor (keep-in, the tube around its centerline) as the swaps of its
+generation leave it (corridor_swap), a zone a time_window_switch has turned
+off as switched off (dashed, "off"), the autopilot's mode on every frame
+(the rows' `mode`), and, for a mission-style flight (sitl/ros2_mission_node.py),
+the planned waypoints and the waypoint the autopilot holds for the next leg.
+A run with no escalation FSM in its rows (Shield off, mission style) says so
+in the title instead of showing an FSM state it never had. The axes are the
+rows' own: x North (horizontal), y East (vertical); until this date they
+were labelled the other way round.
+
 Writes demo/out/<tag>/<tag>_track.mp4 by default, through a .partial file
 that is checked (non-empty) before it replaces the target.
 """
@@ -69,14 +80,73 @@ def zones(policy: dict) -> list[dict]:
             out.append({"id": c.get("id"), "kind": "poly",
                         "xy": [(v["x"], v["y"]) for v in c["vertices"]],
                         "margin": float(c.get("margin_m") or 0.0),
-                        "hard": c.get("constraint_type", "hard") == "hard"})
+                        "hard": c.get("constraint_type", "hard") == "hard",
+                        "scheduled": bool(c.get("valid_time"))})
         elif t == "circle_fence" and c.get("center"):
             out.append({"id": c.get("id"), "kind": "circle",
                         "c": (c["center"]["x"], c["center"]["y"]),
                         "r": float(c.get("radius_m", 0.0)),
                         "margin": float(c.get("margin_m") or 0.0),
-                        "hard": c.get("constraint_type", "hard") == "hard"})
+                        "hard": c.get("constraint_type", "hard") == "hard",
+                        "scheduled": bool(c.get("valid_time"))})
     return out
+
+
+def switched_off(policy: dict) -> set[str]:
+    """Ids a time_window_switch with no schedule holds OFF (active false)."""
+    off, on = set(), set()
+    for c in policy.get("constraints", []):
+        if c.get("type") == "time_window_switch" and not c.get("valid_time"):
+            tgt = c.get("target_id")
+            if c.get("active") is False:
+                off.add(tgt)
+                on.discard(tgt)
+            elif c.get("active") is True:
+                on.add(tgt)
+                off.discard(tgt)
+    return off
+
+
+def corridors(policy: dict) -> list[dict]:
+    """Each corridor as its generation flies it: the last corridor_swap that
+    targets it (with no schedule) replaces its centerline, width and band.
+    {"id", "swapped_by", "centerline": [(x, y)...], "width_m", "band"}."""
+    cons = policy.get("constraints", [])
+    out = []
+    for c in cons:
+        if c.get("type") != "corridor":
+            continue
+        cur, by = c, None
+        for s in cons:
+            if s.get("type") == "corridor_swap" and s.get("target_id") == c.get("id") \
+                    and not s.get("valid_time"):
+                cur, by = s, s.get("id")
+        out.append({"id": c.get("id"), "swapped_by": by,
+                    "centerline": [(p["x"], p["y"]) for p in cur.get("centerline", [])],
+                    "width_m": float(cur.get("width_m", 0.0)),
+                    "band": (float(cur.get("altitude_floor_m", 0.0)),
+                             float(cur.get("altitude_ceiling_m", 1000.0)))})
+    return out
+
+
+def corridor_outline(cor: dict) -> list[tuple[float, float]]:
+    """The tube's outline: points within width/2 of the centerline segments
+    (round ends), as the Shield measures a corridor."""
+    from shapely.geometry import LineString
+    ring = LineString(cor["centerline"]).buffer(cor["width_m"] / 2.0, quad_segs=16)
+    return list(ring.exterior.coords)
+
+
+def mission_waypoints(run: Path) -> list[tuple[float, float]]:
+    """A mission-style flight's planned waypoints (mission.json), or []."""
+    p = run / "mission.json"
+    if not p.is_file():
+        return []
+    try:
+        doc = json.loads(p.read_text(encoding="utf-8"))
+    except ValueError:
+        return []
+    return [(float(w[0]), float(w[1])) for w in (doc.get("plan") or [])]
 
 
 def altitude_band(policy: dict) -> tuple[float, float] | None:
@@ -148,7 +218,11 @@ def render(run: Path, out: Path, fps: int = 10, step: int = 1) -> Path:
     band = altitude_band(g0)
     target = mission_target(run)
     allz = [z for p in pols.values() for z in zones(p)]
-    x0, x1, y0, y1 = bounds(rows, allz, target)
+    allc = [{"id": c["id"], "kind": "poly", "xy": corridor_outline(c)}
+            for p in pols.values() for c in corridors(p) if len(c["centerline"]) >= 2]
+    wps = mission_waypoints(run)
+    x0, x1, y0, y1 = bounds(rows, allz + allc, target)
+    has_fsm = any(r.get("fsm_state_after") for r in rows)
 
     plt.rcParams["animation.ffmpeg_path"] = find_ffmpeg()
     fig = plt.figure(figsize=(12.8, 7.2), dpi=100)
@@ -176,30 +250,57 @@ def render(run: Path, out: Path, fps: int = 10, step: int = 1) -> Path:
         if gen in zone_patches:
             return
         patches = []
-        for z in zones(pols.get(gen, g0)):
+        pol = pols.get(gen, g0)
+        off = switched_off(pol)
+        for cor in corridors(pol):
+            if len(cor["centerline"]) < 2:
+                continue
+            patches.append(ax.add_patch(Polygon(corridor_outline(cor), closed=True, fill=False,
+                                                ec="#2e7d32", lw=1.6, ls="-")))
+            cx, cy = cor["centerline"][-1]
+            label = cor["id"] + (f" (swap {cor['swapped_by']})" if cor["swapped_by"] else "")
+            patches.append(ax.text(cx, cy, f"corridor {label}", fontsize=7, color="#2e7d32"))
+        for z in zones(pol):
             col = "#c62828" if z["hard"] else "#ef6c00"
+            is_off = z["id"] in off
+            # A zone with a schedule (valid_time) is in force only inside its
+            # window, which this drawing does not evaluate: outlined, labelled.
+            sched = z.get("scheduled") and not is_off
+            kw = (dict(fill=False, ec=col, ls=":", lw=1.0) if is_off
+                  else dict(fill=False, ec=col, ls="--", lw=1.0, hatch="//") if sched
+                  else dict(fc=col, alpha=0.25, ec=col))
             if z["kind"] == "poly":
-                patches.append(ax.add_patch(Polygon(z["xy"], closed=True, fc=col, alpha=0.25, ec=col)))
+                patches.append(ax.add_patch(Polygon(z["xy"], closed=True, **kw)))
             else:
-                patches.append(ax.add_patch(Circle(z["c"], z["r"], fc=col, alpha=0.25, ec=col)))
+                patches.append(ax.add_patch(Circle(z["c"], z["r"], **kw)))
                 if z["margin"]:
                     patches.append(ax.add_patch(Circle(z["c"], z["r"] + z["margin"], fill=False,
                                                        ec=col, ls="--", lw=0.8)))
-            ax.text(*(z["xy"][0] if z["kind"] == "poly" else z["c"]), z["id"],
-                    fontsize=8, color=col)
+            patches.append(ax.text(*(z["xy"][0] if z["kind"] == "poly" else z["c"]),
+                                   z["id"] + (" (off)" if is_off else "")
+                                   + (" (valid_time schedule)" if sched else ""),
+                                   fontsize=8, color=col))
         zone_patches[gen] = patches
 
     ax.set_xlim(x0, x1)
     ax.set_ylim(y0, y1)
     ax.set_aspect("equal")
-    ax.set_xlabel("x east (m)")
-    ax.set_ylabel("y north (m)")
+    ax.set_xlabel("x north (m)")
+    ax.set_ylabel("y east (m)")
     ax.grid(alpha=0.3)
     ax.plot([0], [0], "s", color="#455a64", ms=8)
     ax.text(0.5, -1.5, "home", fontsize=8, color="#455a64")
     if target:
         ax.plot([target[0]], [target[1]], "*", color="#1565c0", ms=14)
         ax.text(target[0] + 0.6, target[1] + 0.6, "target", fontsize=8, color="#1565c0")
+    if wps:
+        ax.plot([0.0] + [w[0] for w in wps], [0.0] + [w[1] for w in wps], ":", color="#5c6bc0",
+                lw=1.0)
+        ax.plot([w[0] for w in wps], [w[1] for w in wps], "x", color="#5c6bc0", ms=9,
+                label="planned waypoints")
+    wp_hold, = ax.plot([], [], "D", color="#ef6c00", ms=8,
+                       label="next waypoint (autopilot)" if wps else None)
+    wp_line, = ax.plot([], [], "--", color="#ef6c00", lw=1.0)
     track, = ax.plot([], [], "-", color="#1565c0", lw=1.5)
     dot, = ax.plot([], [], "o", color="#1565c0", ms=9)
     raw_q = ax.quiver([0], [0], [0], [0], color="#9e9e9e", scale=1, scale_units="xy", angles="xy",
@@ -229,9 +330,21 @@ def render(run: Path, out: Path, fps: int = 10, step: int = 1) -> Path:
         emi_q.set_offsets([[r["x"], r["y"]]])
         emi_q.set_UVC([2 * emi.get("vx", 0.0)], [2 * emi.get("vy", 0.0)])
         state, edge = state_at(rows, i)
-        dot.set_color(STATE_COLOURS.get(state, "#1565c0"))
-        title.set_text(f"{run.name}   t = {r['t']:5.1f} s   FSM: {state}")
-        title.set_color(STATE_COLOURS.get(state, "black"))
+        nwp = r.get("next_wp_autopilot")
+        if nwp:
+            wp_hold.set_data([nwp[0]], [nwp[1]])
+            wp_line.set_data([r["x"], nwp[0]], [r["y"], nwp[1]])
+        else:
+            wp_hold.set_data([], [])
+            wp_line.set_data([], [])
+        if has_fsm:
+            dot.set_color(STATE_COLOURS.get(state, "#1565c0"))
+            title.set_text(f"{run.name}   t = {r['t']:5.1f} s   FSM: {state}")
+            title.set_color(STATE_COLOURS.get(state, "black"))
+        else:
+            title.set_text(f"{run.name}   t = {r['t']:5.1f} s   no escalation FSM   "
+                           f"mode {r.get('mode') or '-'}")
+            title.set_color("black")
         viol = ", ".join(sorted({v.get("rule_id", "?") for v in r.get("violations") or []})) or "-"
         reps = "; ".join(f"{p.get('operator')}" + (f" {p['magnitude_m']:.2f} m"
                                                     if isinstance(p.get("magnitude_m"), (int, float))
@@ -248,8 +361,11 @@ def render(run: Path, out: Path, fps: int = 10, step: int = 1) -> Path:
             f"forecast violations: {viol[:60]}\n"
             f"repairs: {reps[:60]}\n"
             f"last FSM edge: {edge or '-'}\n"
-            f"autopilot mode set: {r.get('autopilot_set_mode') or '-'}")
-        return track, dot, alt_dot, raw_q, emi_q, title, body
+            f"autopilot mode: {r.get('mode') or r.get('autopilot_set_mode') or '-'}"
+            + (f"\nnext waypoint {r.get('next_wp_index')}: planned {r.get('next_wp_planned')}\n"
+               f"  autopilot holds {nwp}  replaced {r.get('wp_replaced')}"
+               if r.get("next_wp_planned") is not None else ""))
+        return track, dot, alt_dot, raw_q, emi_q, title, body, wp_hold, wp_line
 
     anim = animation.FuncAnimation(fig, frame, frames=len(idx), blit=False)
     out.parent.mkdir(parents=True, exist_ok=True)
