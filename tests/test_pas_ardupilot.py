@@ -1941,7 +1941,8 @@ def test_the_autopilot_taking_the_aircraft_stops_the_commands():
 
 
 def _audit(run):
-    p = run / "audit.jsonl"
+    from guardrail.audit import AUDIT_FILE
+    p = run / AUDIT_FILE                  # the grant's name since 2026-11-02
     return [json.loads(l) for l in p.read_text().splitlines()] if p.is_file() else []
 
 

@@ -875,7 +875,10 @@ def test_run_demo_flies_dynamic_headless_with_the_shield_on():
     assert "generation 1" in _report_value(report, "Dynamic NFZ"), report
     assert "nfz-dynamic" in _report_value(report, "Zones counted"), report
     assert _report_value(report, "Time inside NFZ") == "0.0 s", report
-    recs = [json.loads(l) for l in (out / "audit.jsonl").read_text(encoding="utf-8").splitlines()]
+    # The grant's file name since 2026-11-02; the old one is not written.
+    from guardrail.audit import AUDIT_FILE, LEGACY_AUDIT_FILE
+    assert not (out / LEGACY_AUDIT_FILE).exists()
+    recs = [json.loads(l) for l in (out / AUDIT_FILE).read_text(encoding="utf-8").splitlines()]
     assert len({r["policy_hash"] for r in recs}) == 2, (
         "the audit records must carry the generation after the hot-apply")
 

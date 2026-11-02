@@ -139,7 +139,8 @@ decision and the subject it was given: shield_subject, shield_subject_v),
 metrics.json ("pilot": pilot_record kind vla with the server's reported
 digest and RemoteVLABackend.stats under "vla"; "subject_standoff":
 subject_standoff_record, `inert` when the stand-off never ran), manifest.json,
-kpi.json, audit.jsonl, the replay bundle, view/ (the video frames and the
+kpi.json, shield_audit.jsonl (audit.jsonl until 2026-11-02), the replay
+bundle, view/ (the video frames and the
 HUD: phrase, step, authorship, decision age) and vla_server_stdout.log.
 """
 from __future__ import annotations
@@ -194,7 +195,8 @@ CAMERAS = {"front": "VLAFront", "down": "VLADown", "detector": "FrontCamera", "c
 # vla_frames/ (content-addressed JPEGs: this run's vla_steps.jsonl names only
 # its own, and an earlier run's frames are not deleted).
 RUN_FILES = ("flight_log.jsonl", "vla_steps.jsonl", "vla_captures.jsonl", "detections.jsonl",
-             "metrics.json", "kpi.json", "manifest.json", "audit.jsonl", "trajectory.json",
+             "metrics.json", "kpi.json", "manifest.json", "shield_audit.jsonl",
+             "audit.jsonl", "trajectory.json",
              "vla_server.jsonl", "vla_server_stdout.log", "replay_gate.json",
              "replay_gate_server.jsonl", "replay_gate_server_stdout.log")
 XY_FLAGS = ("--goal", "--start-xy", "--park-at")
@@ -1504,6 +1506,7 @@ async def _fly(args, holder: dict) -> int:
 
     import follow_vlm as FV
     from guardrail import AuditLogger, State
+    from guardrail.audit import AUDIT_FILE
     from guardrail.bundle import load_for_flight
     from guardrail.manifest import flight_bundle_path, flight_policy_choice
     from guardrail.models import Action4D, AltitudeEnvelope, ObstacleClearance, SubjectStandoff
@@ -1569,7 +1572,7 @@ async def _fly(args, holder: dict) -> int:
     gate_truth = bool(getattr(args, "gate_truth", False))
     feed = subject_feed(standoffs, args.mission, subject_class, gate_truth=gate_truth,
                         identity_on=None)
-    audit = AuditLogger(out / "audit.jsonl", policy)
+    audit = AuditLogger(out / AUDIT_FILE, policy)
     street = None
     sm = Path(args.citymap).parent / "street.npz"
     if sm.is_file():

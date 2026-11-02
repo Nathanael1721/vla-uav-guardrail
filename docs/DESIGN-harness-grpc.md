@@ -137,10 +137,18 @@ arrived with the time it was flown at, and the IssueTask prompt, so the
 episode can be asked for again) and `manifest_extras.json` (the arm's keys,
 the self-contained keys `tools/rerun_episode.py` re-flies the episode from,
 the task's hash and the session), and the sweep's `write_bundle` adds
-`flight_log.jsonl` when asked. **Not written:** `policy_bundle.tar.gz`
-(the episode records the policy's hash, not a copy), `episode.bag2/` (there is
-no ROS 2 graph on the headless path to record) and `shield_audit.jsonl` (no
-audit writer runs on this path). Those three belong to a rail episode.
+`flight_log.jsonl` when asked. Since 2026-10-30 the sweep's `write_bundle`
+also writes `shield_audit.jsonl` (the flying Shield's audit records), and since
+2026-11-02 the service writes `policy_bundle.tar.gz`: the injected policy
+file byte for byte (`injected/<file>`), the canonical IR of generation 0 and
+of the last generation (`generations/policy_g<N>.json`), and an index
+(`policy_bundle.json`) with every member's SHA-256 and every generation the
+episode flew (time, event, rule, policy_hash). A generation between the first
+and the last is in the index by its hash only: the headless runner keeps no
+copy of it, and the index says so (`complete: false`). **Not written:**
+`episode.bag2/`; there is no ROS 2 graph on the headless path to record, and
+`kpi.json`'s `harness.bundle_files` says so. A ROS 2 rail run records its bag
+in its run folder (`bag/`).
 
 ### Scheduled and live episodes
 
@@ -545,9 +553,9 @@ on the ROS 2 graph, as before.
   the other hot-applies only; a conflict with the scenario's own events or an
   EmitEvent is found when it flies (FAILED_PRECONDITION with the runner's
   reason), in live mode too.
-- **The grant's full episode bundle.** `policy_bundle.tar.gz`,
-  `episode.bag2/` and `shield_audit.jsonl` are not written on the headless
-  path (above).
+- **The grant's full episode bundle.** `episode.bag2/` is not written on the
+  headless path, and `policy_bundle.tar.gz` holds generation 0 and the last
+  generation's IR, the ones between them by hash only (above).
 - **SROS 2 on the ROS 2 graph (card X-15).** Opt-in behind `SROS2=1`
   (Enforce, one enclave per process, `tools/sros2_check.sh` 6/6 in WSL Jazzy
   on 2026-10-19, docs/DESIGN-sros2.md); not yet flown (no SITL flight with

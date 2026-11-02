@@ -51,7 +51,7 @@ safe by a Guardrail layer — without touching the flight stack.**
    Emitted action is re-checked: **P0 escape rate 0 by construction**.
 5. **A/B evidence:** OFF = drone cuts through the zone (KPI FAIL, 3.5 s inside).
    ON = same VLA, drone slides around the edge (KPI PASS, 0 s inside), still
-   reaches the target. Audit log (`audit.jsonl`) carries `policy_hash` on every
+   reaches the target. Audit log (`shield_audit.jsonl`; `audit.jsonl` before 2026-11-02) carries `policy_hash` on every
    record — the reproducibility anchor from the grant.
 
 ## What is real vs. stubbed

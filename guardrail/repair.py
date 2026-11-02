@@ -60,9 +60,11 @@ THE OPERATORS
     LateralProjection    Shield._repair_geofence           GeofenceEscape GeofenceSlide
     PathRepair           a body-frame detour waypoint      PathRepair      (flag, default off)
 
-`repair_attempts` in the audit record still lists the REPAIR records (the
-right-hand column) as it always has; `repair_passes` lists these operators,
-pass by pass, with result ok / skip / fail and a reason for every skip.
+In the audit record (version 4, 2026-11-02) `repair_attempts` lists these
+operators flat, in the order they ran, as the grant's example does, and
+`repair_passes` lists these operators, pass by pass, with result ok / skip /
+fail and a reason for every skip; the REPAIR records (the right-hand column)
+are `repair_results` (`repair_attempts` until record version 3).
 
 THE MODES (guardrail/shield.py, Shield(...) keyword arguments)
 

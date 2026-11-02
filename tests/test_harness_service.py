@@ -362,9 +362,10 @@ def _round_trip(srv, **start) -> tuple:
 
 def test_insecure_round_trip_writes_the_episode_bundle():
     """The episode bundle as the headless runner writes it: the grant's
-    manifest.json, harness_events.jsonl and kpi.json, plus the request. (The
-    grant's policy_bundle.tar.gz, episode.bag2/ and shield_audit.jsonl are
-    not written by the headless runner; the DESIGN note says so.)"""
+    manifest.json, harness_events.jsonl, kpi.json, shield_audit.jsonl (since
+    2026-10-30) and policy_bundle.tar.gz (since 2026-11-02), plus the
+    request. The grant's episode.bag2/ is not written: the headless runner
+    has no ROS 2 graph, and kpi.json says so."""
     if _M is None:
         return SKIP
     with _server() as srv:
@@ -376,8 +377,10 @@ def test_insecure_round_trip_writes_the_episode_bundle():
     assert st.bundle_path == b.bundle_path and st.client == ""
     d = Path(b.bundle_path)
     assert d.name.startswith("episode-") and d.name.endswith("--seed1001"), d.name
-    for f in ("manifest.json", "kpi.json", "harness_events.jsonl", "harness_request.json"):
+    for f in ("manifest.json", "kpi.json", "harness_events.jsonl", "harness_request.json",
+              "shield_audit.jsonl", "policy_bundle.tar.gz"):
         assert (d / f).is_file(), f"{f} missing from {d}"
+    assert not (d / "episode.bag2").exists()
     # Not asked for, so not written.
     assert not (d / "flight_log.jsonl").exists()
     man = json.loads((d / "manifest.json").read_text(encoding="utf-8"))
@@ -407,6 +410,77 @@ def test_mtls_round_trip_carries_the_same_episode_and_names_the_client():
     assert st.client == H.DEFAULT_CLIENT_CN, st.client
     assert b1.kpi_json == b0.kpi_json, "the transport changed the episode"
     assert b1.kpi == b0.kpi
+
+
+def _policy_bundle(d: Path) -> tuple[list, dict, dict]:
+    import tarfile
+    with tarfile.open(d / H.POLICY_BUNDLE_FILE, "r:gz") as tar:
+        names = sorted(tar.getnames())
+        blobs = {n: tar.extractfile(n).read() for n in names}
+    return names, blobs, json.loads(blobs[H.POLICY_BUNDLE_INDEX])
+
+
+def test_the_bundle_carries_the_grants_policy_bundle_and_says_why_no_bag():
+    """WP4-05 (the grant's file names, Stress Testing "Episode bundle"):
+    policy_bundle.tar.gz is "the exact bundle that was active (incl. all
+    hot-apply generations)". Two hot-applies (a zone at 3 s, its switch-off at
+    5 s): the injected policy file byte for byte, generation 0's IR and the
+    last generation's, each hashing to the hash the episode recorded, every
+    member under its digest in the index; the generation between them is in
+    the index by its hash only, and the index and kpi.json say the bundle is
+    incomplete. With one hot-apply every generation's IR is in it. The same
+    inputs give the same bytes; a final policy that is not the recorded last
+    generation is not packed as it. episode.bag2/ is not written, and
+    kpi.json says why. Fails before 2026-11-02: no policy_bundle.tar.gz."""
+    from guardrail.models import Policy
+    h = _harness()
+    switch = {"type": "time_window_switch", "target_id": "nfz-hot", "active": False}
+    _, _, b = _h_fly(h, OPEN, hot=[(3.0, ZONE), (5.0, switch)], seed=7)
+    d = Path(b["bundle_path"])
+    assert (d / "shield_audit.jsonl").is_file() and not (d / "episode.bag2").exists()
+    names, blobs, idx = _policy_bundle(d)
+    assert names == sorted(["injected/sim_demo_policy.yaml", "generations/policy_g0.json",
+                            "generations/policy_g2.json", H.POLICY_BUNDLE_INDEX]), names
+    assert blobs["injected/sim_demo_policy.yaml"] == \
+        (ROOT / "policies" / "sim_demo_policy.yaml").read_bytes()
+    assert idx["members"] and all(
+        dig == "sha256:" + hashlib.sha256(blobs[n]).hexdigest() for n, dig in idx["members"].items())
+    events = [json.loads(x) for x in
+              (d / "harness_events.jsonl").read_text(encoding="utf-8").splitlines()]
+    want = [(g["generation"], g["policy_hash"]) for g in S.policy_generations(events)]
+    assert [(g["generation"], g["policy_hash"]) for g in idx["generations"]] == want
+    assert len(want) == 3 and want[0][1] == json.loads(
+        (d / "manifest.json").read_text(encoding="utf-8"))["policy_hash"], want
+    for g in idx["generations"]:
+        if g["ir"]:
+            assert Policy.model_validate(json.loads(blobs[g["ir"]])).matches_hash(
+                g["policy_hash"]), g
+    assert [g["ir"] is None for g in idx["generations"]] == [False, True, False]
+    assert idx["complete"] is False and "[1]" in idx["missing"], idx["missing"]
+    files = _bundle_kpi(b)["harness"]["bundle_files"]
+    assert files["episode.bag2/"].startswith("not written") and "ROS 2" in files["episode.bag2/"]
+    assert files["policy_bundle.tar.gz"].startswith("written, incomplete"), files
+    # One hot-apply: both generations' IR, complete.
+    _, _, b1 = _h_fly(h, OPEN, hot=[(3.0, ZONE)], seed=7)
+    _, blobs1, idx1 = _policy_bundle(Path(b1["bundle_path"]))
+    assert idx1["complete"] and [g["ir"] for g in idx1["generations"]] == [
+        "generations/policy_g0.json", "generations/policy_g1.json"], idx1
+    assert _bundle_kpi(b1)["harness"]["bundle_files"]["policy_bundle.tar.gz"] == \
+        "written, complete"
+    # The same inputs, the same bytes; a wrong final policy is not packed as
+    # the last generation.
+    g0 = Policy.model_validate(json.loads(blobs1["generations/policy_g0.json"]))
+    g1 = Policy.model_validate(json.loads(blobs1["generations/policy_g1.json"]))
+    src = ROOT / "policies" / "sim_demo_policy.yaml"
+    t1, t2 = _tmpdir("pb1_"), _tmpdir("pb2_")
+    H.write_policy_bundle(t1, src, g0, g1, idx1["generations"])
+    H.write_policy_bundle(t2, src, g0, g1, idx1["generations"])
+    assert (t1 / H.POLICY_BUNDLE_FILE).read_bytes() == (t2 / H.POLICY_BUNDLE_FILE).read_bytes()
+    bad = H.write_policy_bundle(_tmpdir("pb3_"), src, g0, g0, idx1["generations"])
+    assert bad["generations"][1]["ir"] is None and bad["complete"] is False, bad
+    gone = H.write_policy_bundle(_tmpdir("pb4_"), ROOT / "policies" / "no-such.yaml", g0, g1,
+                                 idx1["generations"])
+    assert gone["injected"]["member"] is None and not gone["complete"]
 
 
 def test_the_service_scores_exactly_as_the_sweep_does():

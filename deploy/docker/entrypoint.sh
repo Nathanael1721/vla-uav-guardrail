@@ -49,12 +49,19 @@ RUNTIME_DIR="${VLAGUARD_RUNTIME_DIR:-/tmp}"
 DRY="${VLAGUARD_DRY_RUN:-0}"
 LAUNCH_FILE="sitl/ros2_ws/src/safety_shield/launch/guardrail_rail.launch.py"
 
-# The topics the native rail records (sitl/run_ros2_demo.sh); a test keeps the
-# two lists equal.
+# The topics the native rail records (sitl/run_ros2_demo.sh, which says what
+# each group is: actions, mode changes, MAVROS's sensor topics and raw MAVLink,
+# the last two since 2026-11-02); a test keeps the two lists equal.
 BAG_TOPICS=(/vla/action_4d /vla/identity /shield/setpoint /shield/intercept
             /shield/mode_request /shield/fences /mavlink_adapter/status
             /mavros/setpoint_raw/local /mavros/setpoint_raw/target_local
-            /mavros/state /mavros/local_position/pose)
+            /mavros/state /mavros/local_position/pose
+            /mavros/extended_state /mavros/statustext/recv
+            /mavros/local_position/velocity_local /mavros/imu/data
+            /mavros/global_position/global /mavros/global_position/rel_alt
+            /mavros/altitude /mavros/battery /mavros/home_position/home
+            /camera/front/image_raw /camera/down/image_raw
+            /uas1/mavlink_source /uas1/mavlink_sink)
 
 die() { echo "vlaguard-entrypoint: $2" >&2; exit "$1"; }
 

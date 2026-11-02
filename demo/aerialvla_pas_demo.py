@@ -30,6 +30,7 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "demo"))
 
 from guardrail import AuditLogger, Shield, State, load_policy       # noqa: E402
+from guardrail.audit import AUDIT_FILE                             # noqa: E402
 from guardrail.compiler import ConstraintCompiler                   # noqa: E402
 from guardrail.geometry import fence_polygon                        # noqa: E402
 from guardrail.models import (                                      # noqa: E402
@@ -244,7 +245,7 @@ async def fly(args) -> int:
             print(f"[shield] no city map at {args.citymap} "
                   f"-> obstacle_clearance INERT (reactive depth layer only)")
     shield = Shield(policy, lookahead_s=3.0, dt=0.5, obstacle_map=shield_map)
-    audit = AuditLogger(out / "audit.jsonl", policy)   # the POLICY, so a hot-applied rule restamps the hash
+    audit = AuditLogger(out / AUDIT_FILE, policy)   # the POLICY, so a hot-applied rule restamps the hash
 
     # CONFIG CONSISTENCY: the planner must not route tighter than the Shield's
     # clearance rule allows, or the two fight — the plan hugs a wall, the Shield

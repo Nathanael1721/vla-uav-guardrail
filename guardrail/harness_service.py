@@ -707,6 +707,100 @@ def _finite(v, what: str) -> float:
     return f
 
 
+# --------------------------------------------------------------------------- #
+# The grant's episode-bundle files (Stress Testing, "Episode bundle")
+# --------------------------------------------------------------------------- #
+
+POLICY_BUNDLE_FILE = "policy_bundle.tar.gz"
+POLICY_BUNDLE_INDEX = "policy_bundle.json"
+POLICY_BUNDLE_KIND = "vla-guardrail-episode-policy"
+# Why the headless backend writes no episode.bag2/ (kpi.json harness.bundle_files).
+NO_EPISODE_BAG = ("not written: the headless backend runs no ROS 2 graph, so there is "
+                  "nothing for rosbag2 to record (a ROS 2 rail run records its bag in "
+                  "its run folder, bag/)")
+
+
+def write_policy_bundle(ep_dir: str | Path, source: str | Path, start_policy,
+                        final_policy, generations: list[dict]) -> dict:
+    """`policy_bundle.tar.gz` in `ep_dir`: "the exact bundle that was active
+    (incl. all hot-apply generations)" (Stress Testing, "Episode bundle").
+    Returns its index.
+
+    Members (gzip and tar times 0, so the same episode gives the same bytes):
+
+      injected/<file>      the policy file the episode was given, byte for
+                           byte: the signed bundle, an uploaded archive or
+                           the YAML (`source`);
+      generations/policy_g<N>.json
+                           the canonical IR of each generation this function
+                           holds a policy for: `start_policy` (generation 0,
+                           as injected) and `final_policy` (the flying
+                           Shield's at the end), each only where its
+                           generation number AND hash are the ones the
+                           episode recorded for that generation;
+      policy_bundle.json   the index: every generation the episode flew
+                           (`generations`, harness events: t, event, rule,
+                           policy_hash) with its IR member or null, the
+                           injected file's SHA-256, every member's SHA-256,
+                           and `complete` - false, with `missing` saying
+                           which, when a generation's IR is not a member.
+
+    The headless runner keeps no policy object of a generation between the
+    first and the last (its hot_apply events record the hash), so with two or
+    more hot-applies the ones between are in the index by hash only, and the
+    index says so rather than leave the gap unmarked."""
+    import gzip
+    import io
+    import tarfile
+    d = Path(ep_dir)
+    d.mkdir(parents=True, exist_ok=True)
+    members: dict[str, bytes] = {}
+    src = Path(source)
+    injected = None
+    if src.is_file():
+        injected = "injected/" + src.name
+        members[injected] = src.read_bytes()
+    gens = []
+    for g in generations:
+        n, h = g.get("generation"), g.get("policy_hash")
+        ir = None
+        for pol in (start_policy, final_policy):
+            if (pol is not None and h and n == getattr(pol, "generation", None)
+                    and pol.matches_hash(h)):
+                ir = f"generations/policy_g{n}.json"
+                members[ir] = pol.canonical_bytes()
+                break
+        gens.append({"generation": n, "policy_hash": h, "t": g.get("t"),
+                     "event": g.get("event"), "rule_id": g.get("rule_id"), "ir": ir})
+    missing = [g["generation"] for g in gens if g["ir"] is None]
+    why = []
+    if injected is None:
+        why.append(f"the injected policy file {str(source)!r} is no longer on disk")
+    if missing:
+        why.append(f"generation(s) {missing}: no IR held for it (the headless runner "
+                   f"keeps the first and the last generation's policy only); named by "
+                   f"its policy_hash")
+    index = {"kind": POLICY_BUNDLE_KIND, "version": 1,
+             "injected": {"source": str(source), "member": injected,
+                          "sha256": ("sha256:" + hashlib.sha256(members[injected]).hexdigest()
+                                     if injected else None)},
+             "generations": gens,
+             "complete": not why, "missing": "; ".join(why) or None,
+             "members": {k: "sha256:" + hashlib.sha256(v).hexdigest()
+                         for k, v in sorted(members.items())}}
+    members[POLICY_BUNDLE_INDEX] = (json.dumps(_json_safe(index), indent=2, sort_keys=True)
+                                    + "\n").encode()
+    with open(d / POLICY_BUNDLE_FILE, "wb") as fh:
+        with gzip.GzipFile(fileobj=fh, mode="wb", mtime=0, filename="") as gz:
+            with tarfile.open(fileobj=gz, mode="w") as tar:
+                for name, data in sorted(members.items()):
+                    info = tarfile.TarInfo(name=name)
+                    info.size = len(data)
+                    info.mtime = 0
+                    tar.addfile(info, io.BytesIO(data))
+    return index
+
+
 class Harness:
     """Episodes armed, fed events and flown; no gRPC in here (the servicer
     below is a translation of this onto the stubs, and tests drive both)."""
@@ -1945,6 +2039,15 @@ class Harness:
         grade, why_not = is_kpi_grade(manifest, {})
         stamp = _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H-%M-%SZ")
         ep_dir = self.runs_dir / e.episode_id / ep.dir_name(stamp)
+        # The grant's policy_bundle.tar.gz: the injected file, generation 0's
+        # IR and the last generation's (write_policy_bundle).
+        src = Path(spec.policy.source)
+        try:
+            start_pol, _ = spec.policy.load_with_source(ROOT)
+        except Exception:                                        # noqa: BLE001
+            start_pol = None              # said in the index: g0's IR is missing
+        pb = write_policy_bundle(ep_dir, src if src.is_absolute() else ROOT / src,
+                                 start_pol, run.policy, S.policy_generations(run.events))
         shield = "on" if spec.shield else "off"
         common = {"id": ep.run_id, "id_cell": ep.episode_id,
                   "scenario_id": ep.cell.scenario_id, "template": spec.template,
@@ -1962,7 +2065,14 @@ class Harness:
                    "live": e.live, "pace": e.pace if e.live else None, "task": task,
                    "events_injected": [{"index": q.index, "source": q.source,
                                         "event": q.event.model_dump(mode="json")}
-                                       for q in queued]}
+                                       for q in queued],
+                   # The grant's episode-bundle file names, and which of them
+                   # this backend writes (Stress Testing, "Episode bundle").
+                   "bundle_files": {
+                       POLICY_BUNDLE_FILE: ("written, complete" if pb["complete"]
+                                            else f"written, incomplete: {pb['missing']}"),
+                       "shield_audit.jsonl": "written",
+                       "episode.bag2/": NO_EPISODE_BAG}}
         kpi_doc = _json_safe({
             **common, "status": status, "gates_failed": bad, "kpi_grade": grade,
             "kpi_grade_reasons": why_not, "arm_record": arm_record,

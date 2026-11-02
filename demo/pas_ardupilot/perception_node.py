@@ -48,7 +48,8 @@ was flown and the Shield's check on it (guardrail.replay.flown_fields: a tick
 nothing was sent on cannot escape), and the episode directory is written
 through guardrail.replay.EpisodeRecord, so time to safe is measurable, the
 replay bundle carries every policy generation and binds its files by the
-episode id. audit.jsonl carries this node's FSM verdict (audit_tick), the
+episode id. shield_audit.jsonl (audit.jsonl until 2026-11-02) carries this
+node's FSM verdict (audit_tick), the
 same one the flight log does. These are the contracts both SITL rails follow.
 
 RULE CLOCK, MISSION, POLICY, BACKSTOP, TRUTH (2026-10-12, as on the SITL rails)
@@ -293,6 +294,7 @@ def _live_heartbeat(name: str, **kw):
         return _NoBeat()
 
 from guardrail import AuditLogger, State                             # noqa: E402
+from guardrail.audit import AUDIT_FILE                               # noqa: E402
 from guardrail.bundle import load_for_flight                          # noqa: E402
 from guardrail.compiler import ConstraintCompiler, Mission            # noqa: E402
 from guardrail.fence_export import (defer_near, is_enforced,       # noqa: E402
@@ -4655,7 +4657,7 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
                                          encoding="utf-8")
     except Exception as exc:                                  # noqa: BLE001
         rec.event("prompt_failed", error=f"{type(exc).__name__}: {exc}")
-    audit = AuditLogger(out / "audit.jsonl", policy)
+    audit = AuditLogger(out / AUDIT_FILE, policy)
     if obs is None:
         from semantic_demo import SemanticObs
         obs = SemanticObs()

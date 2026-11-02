@@ -37,6 +37,20 @@ WHAT EACH TEST GUARDS
     never faked, and `--format parquet` alone without pyarrow writes nothing
     and exits 3; the nearest bag message is read through `mcap` when it is
     installed and SKIPPED when it is not.
+  * (2026-11-02, WP4-13) With the run's rosbag2, `executed` is the setpoint
+    MAVROS was sent on /mavros/setpoint_raw/local in each tick's window,
+    back in the world frame, the flight log's verdict beside it: the bag's
+    where the two differ or nothing reached MAVROS. The join is placed on
+    the mission_start event's clock and refused when the bag does not line
+    up with the log (another clock, another flight). Without a bag, without
+    `rosbags`, with the join refused or headless, `executed` is the flight
+    log's, labelled a fallback on every step. A replay bundle's bag is read
+    from the verified archive. The bag's reading is a stand-in here
+    (rosbags is not in vla-real); the round trip through a real rosbag2
+    SKIPs without rosbags.
+  * Audit record version 4: the world-frame actions a step takes from the
+    record are raw_action_world / emitted_action_world, never the grant's
+    body-frame raw_action; a step's violation carries both categories.
   * A headless bundle without manifest_extras.json takes its generation
     timeline from harness_events.jsonl, a refused hot-apply left out; the
     outcome on every step is the stored table's; a braked or autopilot tick
@@ -460,6 +474,326 @@ def test_bag_observations_use_the_mcap_reader_when_present_and_skip_without():
     assert "SKIP nearest bag message" in buf.getvalue()
 
 
+# --------------------------------------------------------------------------- #
+# executed = what MAVROS was sent, from the rosbag2 (WP4-13, 2026-11-02)
+# --------------------------------------------------------------------------- #
+
+_E_NS = 1_761_955_200_000_000_000           # the episode starts
+_TAKEOFF_S = 20.0                           # the mission starts 20 s later
+_M_NS = _E_NS + int(_TAKEOFF_S * 1e9)
+_HEADING = 30.0
+
+
+def _iso(ns: int) -> str:
+    from datetime import datetime, timezone
+    return datetime.fromtimestamp(ns / 1e9, tz=timezone.utc).isoformat(timespec="milliseconds")
+
+
+def _f32(v: float) -> float:
+    import struct
+    return struct.unpack("f", struct.pack("f", float(v)))[0]
+
+
+def _ros2_rail_run(root: Path, *, mission_start: bool = True) -> tuple[Path, list, list, list]:
+    """A run folder as the ROS 2 rail writes one, with what its bag holds: six
+    ticks at a 30 deg heading, t counted from the mission start (20 s after
+    the episode start). The adapter's own conversion (body -> NED -> the ENU
+    message MAVROS reads, through a float32 /shield/setpoint) gives each
+    setpoint. Tick 3: MAVROS was sent something other than the log's verdict.
+    Tick 4: the FSM braked (zero sent). Tick 5: the log says "pass" but
+    nothing reached MAVROS (the adapter dropped it). Tick 6: nothing streamed.
+    One setpoint before the mission (the take-off) lands on no tick."""
+    sys.path.insert(0, str(ROOT / "sitl"))
+    import mavlink_adapter_node as A
+    from guardrail.frames import to_body
+    from guardrail.models import Action4D
+    run = root / "ros2"
+    (run / "bag").mkdir(parents=True)
+    (run / "bag" / "metadata.yaml").write_text(
+        "rosbag2_bagfile_information:\n  storage_identifier: mcap\n"
+        f"  starting_time: {{nanoseconds_since_epoch: {_E_NS - 5_000_000_000}}}\n"
+        "  duration: {nanoseconds: 40000000000}\n"
+        "  relative_file_paths: [bag_0.mcap]\n"
+        "  topics_with_message_count:\n"
+        f"    - topic_metadata: {{name: {X.SETPOINT_TOPIC}}}\n      message_count: 5\n"
+        f"    - topic_metadata: {{name: {X.POSE_TOPIC}}}\n      message_count: 6\n",
+        encoding="utf-8")
+    events = [{"kind": "episode_start", "t": None, "wall": _iso(_E_NS), "wall_ns": _E_NS,
+               "episode_id": _E_NS}]
+    if mission_start:
+        events.append({"kind": "mission_start", "t": 0.0, "wall": _iso(_M_NS)})
+    (run / "events.jsonl").write_text("".join(json.dumps(e) + "\n" for e in events),
+                                      encoding="utf-8")
+    cmd = {1: (3.0, 1.0), 2: (3.0, 0.5), 3: (2.0, 2.0), 4: (2.5, 0.0), 5: (2.5, 0.0),
+           6: (0.0, 0.0)}
+    sp_of = {1: "pass", 2: "pass", 3: "pass", 4: "brake", 5: "pass", 6: "none"}
+
+    def message(a: Action4D) -> dict:
+        body = [_f32(v) for v in to_body(a, _HEADING)]
+        f = A.setpoint_from_body(body, _HEADING)["fields"]
+        return {"coordinate_frame": f["coordinate_frame"], "type_mask": f["type_mask"],
+                "velocity": [float(v) for v in f["velocity"]],
+                "yaw_rate": _f32(f["yaw_rate"]), "stamp_ns": 0}
+    rows, sent, poses = [], [(_M_NS - 5_000_000_000, message(Action4D(vz_up=1.0)))], []
+    for tick in range(1, 7):
+        t = round(0.1 * tick, 3)
+        em = Action4D(vx=cmd[tick][0], vy=cmd[tick][1], vz_up=0.2, yaw_rate=0.1)
+        sp = sp_of[tick]
+        rows.append({"t": t, "tick": tick, "x": float(tick), "y": 0.0, "up": 15.0,
+                     "yaw_deg": _HEADING, "raw": dict(em.model_dump(), vx=em.vx + 1.0),
+                     "emitted": em.model_dump(), "setpoint": sp, "flown": sp != "none",
+                     "violations": [], "repairs": []})
+        tick_ns = _M_NS + int(t * 1e9)
+        poses.append((tick_ns - 10_000_000, {"x": float(tick), "y": 0.0, "up": 15.0,
+                                             "yaw_deg": _HEADING}))
+        flown = {"pass": em, "brake": Action4D(), "none": None}[sp]
+        if tick == 3:
+            flown = Action4D(vx=1.0)
+        if flown is not None and tick != 5:
+            sent.append((tick_ns + 4_000_000, message(flown)))
+    (run / "flight_log.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows),
+                                          encoding="utf-8")
+    return run, rows, sent, poses
+
+
+def _close(a: dict | None, b: dict, tol: float = 1e-5) -> bool:
+    return a is not None and all(abs(a[k] - b[k]) <= tol for k in ("vx", "vy", "vz_up",
+                                                                   "yaw_rate"))
+
+
+def _check_executed_from_bag(steps: list, ep: dict, rows: list) -> None:
+    """What every bag test expects of the six-tick ROS 2 run above."""
+    from guardrail.models import Action4D
+    s = {st["tick"]: st for st in steps}
+    assert all(st["action"]["executed_from"] == "bag" for st in steps), \
+        [st["action"]["executed_fallback"] for st in steps]
+    assert all(st["action"]["executed_fallback"] is None for st in steps)
+    for tick in (1, 2):
+        a = s[tick]["action"]
+        assert _close(a["executed"], rows[tick - 1]["emitted"]), (tick, a["executed"])
+        assert a["executed_source"] == f"bag:{X.SETPOINT_TOPIC}"
+        assert a["executed_bag"]["lag_ms"] == 4.0 and a["executed_bag"]["messages_in_window"] == 1
+    # tick 3: the bag's command, not the log's; the log's beside it
+    a = s[3]["action"]
+    assert _close(a["executed"], Action4D(vx=1.0).model_dump()), a["executed"]
+    assert a["executed_flight_log"] == rows[2]["emitted"], a
+    assert _close(s[4]["action"]["executed"], X.ZERO)                     # the brake
+    for tick in (5, 6):                                    # nothing reached MAVROS
+        a = s[tick]["action"]
+        assert a["executed"] is None and "no message" in a["executed_source"], a
+    assert s[5]["action"]["executed_flight_log"] == rows[4]["emitted"]     # the log said pass
+    e = ep["executed"]
+    assert (e["from"], e["comparable"], e["agree"], e["disagree_with_flight_log"]) == \
+        ("bag", 4, 3, 1), e
+    assert (e["ticks_with_message"], e["ticks_without_message"], e["messages_on_no_tick"]) \
+        == (4, 2, 1), e
+    assert e["clock"].startswith("mission_start"), e
+    ob = s[2]["observation"]["bag"]
+    assert ob["t_ns"] == _M_NS + 200_000_000 and ob["clock"].startswith("mission_start"), ob
+    assert ob["state"]["x"] == 2.0 and ob["state"]["topic"] == X.POSE_TOPIC, ob
+    assert ep["trajectory"]["executed"][2] == s[3]["action"]["executed"]
+
+
+class _FakeBag:
+    """X.read_bag replaced by one returning `data` (or None: no rosbags)."""
+
+    def __init__(self, data):
+        self.data, self.seen = data, []
+
+    def __enter__(self):
+        self.saved = X.read_bag
+
+        def fake(d):
+            self.seen.append(Path(d))
+            self.files = sorted(p.name for p in Path(d).iterdir())
+            return self.data
+        X.read_bag = fake
+        return self
+
+    def __exit__(self, *exc):
+        X.read_bag = self.saved
+        return False
+
+
+def test_executed_is_what_the_bag_says_mavros_was_sent():
+    """WP4-13 (independent review of 29 Oct): `executed` was inferred from the
+    flight log. Now, with the run's rosbag2, it is the setpoint MAVROS was
+    sent on /mavros/setpoint_raw/local in each tick's window, back in the
+    world frame: where the log and the bag differ (tick 3) and where the log
+    says "pass" but nothing reached MAVROS (tick 5), the bag's. The bag is
+    read here through a stand-in for read_bag (rosbags is not in vla-real);
+    the round trip through a real bag is the next test, which needs it."""
+    run, rows, sent, poses = _ros2_rail_run(_tmp("wp4_bagexec_"))
+    with _FakeBag(X.BagData(reader="fake", times={X.SETPOINT_TOPIC: [t for t, _ in sent]},
+                            setpoints=sent, poses=poses)) as fake:
+        steps, ep = _export(run)
+    assert fake.seen == [run / "bag"]
+    _check_executed_from_bag(steps, ep, rows)
+
+
+def test_without_a_trusted_bag_executed_is_the_flight_log_labelled_a_fallback():
+    """The nulls of the test above. Each one leaves `executed` the flight
+    log's verdict and says why on every step and in the episode record: no
+    bag; a bag but no rosbags (and the run prints SKIP with the install
+    line); a bag placed on the episode start's clock, 20 s before the
+    mission's, whose setpoints then line up with no tick (the join is
+    refused, not half used); a bag with no setpoint topic; a headless
+    episode."""
+    from guardrail.models import Action4D
+    root = _tmp("wp4_bagnull_")
+    run, rows, sent, poses = _ros2_rail_run(root)
+    data = X.BagData(reader="fake", setpoints=sent, poses=poses)
+
+    def labelled(steps, ep, word):
+        assert ep["executed"]["from"] == "flight_log" and word in ep["executed"]["why"], \
+            ep["executed"]
+        for st, r in zip(steps, rows):
+            a = st["action"]
+            assert a["executed_from"] == "flight_log" and word in a["executed_fallback"], a
+            assert "executed_flight_log" not in a
+            want = {"pass": r["emitted"], "brake": X.ZERO, "none": None}[r["setpoint"]]
+            assert a["executed"] == want, (r["tick"], a)
+    # no rosbags
+    with _FakeBag(None):
+        steps, ep = _export(run)
+        with contextlib.redirect_stdout(io.StringIO()) as buf:
+            X.main([str(run), "--out", str(root / "o"), "--format", "jsonl"])
+    labelled(steps, ep, "rosbags")
+    assert "SKIP executed from the bag" in buf.getvalue() and "pip install" in buf.getvalue()
+    # the wrong clock: no mission_start, so the episode start's (20 s early)
+    run2, rows2, _, _ = _ros2_rail_run(root / "b", mission_start=False)
+    with _FakeBag(data):
+        steps, ep = _export(run2)
+    labelled(steps, ep, "do not line up")
+    # a bag without the setpoint topic
+    with _FakeBag(X.BagData(reader="fake", poses=poses)):
+        steps, ep = _export(run)
+    labelled(steps, ep, "no /mavros/setpoint_raw/local")
+    # no bag at all
+    shutil.rmtree(run / "bag")
+    steps, ep = _export(run)
+    labelled(steps, ep, "no rosbag2")
+    # a headless episode never reads a bag
+    hs, hep = _export(_fly(OPEN))
+    assert hep["executed"]["from"] == "flight_log" and "headless" in hep["executed"]["why"]
+    assert all(st["action"]["executed_from"] == "flight_log" for st in hs)
+    # a setpoint in another frame is not converted (one that ignores the
+    # velocity neither)
+    f = dict(sent[1][1], coordinate_frame=8)
+    assert X.setpoint_world(f)[0] is None and "FRAME_LOCAL_NED" in X.setpoint_world(f)[1]
+    f = dict(sent[1][1], type_mask=sent[1][1]["type_mask"] | 8)
+    assert X.setpoint_world(f)[0] is None
+    assert _close(X.setpoint_world(sent[1][1])[0], rows[0]["emitted"])
+    assert not X._agrees(Action4D(vx=3.0).model_dump(), Action4D(vx=2.0).model_dump())
+
+
+def test_a_replay_bundles_bag_is_read_from_the_verified_archive():
+    """A replay bundle carries the bag (guardrail/replay.py); the exporter
+    reads it from the verified archive, its files flat in a folder of their
+    own, and the setpoints in it give `executed` as in a run folder. The
+    episode is tests/test_replay.py's synthetic one (no mission_start: the
+    episode start is its clock), its bag a stand-in read by the fake."""
+    import test_replay as RP
+    from guardrail.replay import write_replay
+    root = _tmp("wp4_replaybag_")
+    run, policy, rec, rows = RP._episode(root, hot=False)
+    RP._bag(run, rec.episode_id - int(20e9))
+    sent = [(rec.episode_id + int(round(r["t"] * 1e9)) + 3_000_000,
+             {"coordinate_frame": 1, "type_mask": 1479,
+              "velocity": [r["emitted"]["vy"], r["emitted"]["vx"], r["emitted"]["vz_up"]],
+              "yaw_rate": -r["emitted"]["yaw_rate"]}) for r in rows]
+    out = write_replay(run, policy, root / "r.replay.tar.gz", signer=None)
+    with _FakeBag(X.BagData(reader="fake", setpoints=sent)) as fake:
+        steps, ep = _export(out)
+    assert fake.files == ["bag_0.mcap", "metadata.yaml"], fake.files
+    assert ep["kind"] == "replay" and ep["executed"]["from"] == "bag", ep["executed"]
+    assert ep["executed"]["clock"] == "episode_start wall_ns"
+    assert all(st["action"]["executed_from"] == "bag" for st in steps)
+    assert all(_close(st["action"]["executed"], r["emitted"]) for st, r in zip(steps, rows))
+
+
+def test_the_exporters_heading_formula_is_the_adapters():
+    """The pose a step's observation takes from the bag is turned into a
+    heading by the exporter's copy of the adapter's formula; the two must
+    not drift."""
+    sys.path.insert(0, str(ROOT / "sitl"))
+    import mavlink_adapter_node as A
+    for yaw_enu in (-3.1, -1.2, 0.0, 0.4, 1.5707963, 2.9):
+        for tilt in (0.0, 0.05):
+            q = (tilt, 0.0, math.sin(yaw_enu / 2), math.cos(yaw_enu / 2))
+            assert abs(X.heading_deg_from_enu_quaternion(*q)
+                       - A.heading_deg_from_enu_quaternion(*q)) < 1e-12, q
+
+
+def _write_rosbag(bag_dir: Path, sent: list, poses: list) -> None:
+    """A real rosbag2 with `rosbags` (>= 0.10): the setpoints as
+    mavros_msgs/PositionTarget, the poses as PoseStamped in MAVROS's ENU."""
+    from rosbags.rosbag2 import Writer
+    from rosbags.typesys import Stores, get_typestore, get_types_from_msg
+    store = get_typestore(getattr(Stores, "ROS2_JAZZY", None) or Stores.LATEST)
+    store.register(get_types_from_msg(X.POSITION_TARGET_MSG, X.POSITION_TARGET_TYPE))
+    T = store.types
+    Time, Header = T["builtin_interfaces/msg/Time"], T["std_msgs/msg/Header"]
+    Point, Vector3 = T["geometry_msgs/msg/Point"], T["geometry_msgs/msg/Vector3"]
+    Quaternion, Pose = T["geometry_msgs/msg/Quaternion"], T["geometry_msgs/msg/Pose"]
+    PoseStamped, PT = T["geometry_msgs/msg/PoseStamped"], T[X.POSITION_TARGET_TYPE]
+    writer = None
+    for kw in ({"version": 9}, {"version": 8}, {}):
+        try:
+            writer = Writer(bag_dir, **kw)
+            break
+        except (TypeError, ValueError):
+            continue
+    assert writer is not None, "no rosbags Writer signature worked"
+
+    def header(ts):
+        return Header(stamp=Time(sec=ts // 10 ** 9, nanosec=ts % 10 ** 9), frame_id="")
+    with writer as w:
+        def conn(topic, typ):
+            try:
+                return w.add_connection(topic, typ, typestore=store)
+            except TypeError:                    # rosbags < 0.10
+                return w.add_connection(topic, typ)
+        c_sp = conn(X.SETPOINT_TOPIC, X.POSITION_TARGET_TYPE)
+        c_pose = conn(X.POSE_TOPIC, "geometry_msgs/msg/PoseStamped")
+        for ts, f in sent:
+            msg = PT(header=header(ts), coordinate_frame=f["coordinate_frame"],
+                     type_mask=f["type_mask"], position=Point(x=0.0, y=0.0, z=0.0),
+                     velocity=Vector3(x=f["velocity"][0], y=f["velocity"][1],
+                                      z=f["velocity"][2]),
+                     acceleration_or_force=Vector3(x=0.0, y=0.0, z=0.0), yaw=0.0,
+                     yaw_rate=f["yaw_rate"])
+            w.write(c_sp, ts, store.serialize_cdr(msg, X.POSITION_TARGET_TYPE))
+        for ts, p in poses:
+            yaw_enu = math.radians(90.0 - p["yaw_deg"])
+            msg = PoseStamped(header=header(ts), pose=Pose(
+                position=Point(x=p["y"], y=p["x"], z=p["up"]),
+                orientation=Quaternion(x=0.0, y=0.0, z=math.sin(yaw_enu / 2),
+                                       w=math.cos(yaw_enu / 2))))
+            w.write(c_pose, ts, store.serialize_cdr(msg, "geometry_msgs/msg/PoseStamped"))
+
+
+def test_a_real_rosbag2_is_read_with_rosbags():
+    """The same six ticks through a rosbag2 written and read with `rosbags`
+    (the reader the exporter uses), in a run folder and in its replay
+    bundle. SKIPPED where rosbags is not installed: it is not in vla-real.
+    Run it with `pip install "rosbags>=0.10"` in a scratch environment, or
+    in WSL (see CHANGELOG 2026-11-02)."""
+    if not X.have_rosbags():
+        print(f"      SKIP: rosbags is not installed ({X.ROSBAGS_INSTALL_HINT})")
+        return SKIP
+    root = _tmp("wp4_rosbags_")
+    run, rows, sent, poses = _ros2_rail_run(root)
+    shutil.rmtree(run / "bag")
+    _write_rosbag(run / "bag", sent, poses)
+    data = X.read_bag(run / "bag")
+    assert len(data.setpoints) == len(sent) and len(data.poses) == len(poses), data
+    assert abs(data.poses[0][1]["yaw_deg"] - _HEADING) < 1e-9
+    steps, ep = _export(run)
+    _check_executed_from_bag(steps, ep, rows)
+    assert ep["executed"]["reader"].startswith("rosbags")
+
+
 def _tw_policy():
     """A zone in force from 07:30 at priority P1; at 07:29:58 a Monday the
     forecast enters it after the window opens: the grant's time-window
@@ -474,11 +808,13 @@ def _tw_policy():
                       {"x": 10, "y": 10}]}]})
 
 
-def _writer_run(root: Path, name: str, vx_list, *, policy=None, clock=None) -> tuple[Path, list]:
+def _writer_run(root: Path, name: str, vx_list, *, policy=None, clock=None,
+                yaw_deg: float = 0.0) -> tuple[Path, list]:
     """A run folder as the ROS 2 rail writes one: the audit by
-    guardrail/audit.py's AuditLogger (record version 2, monitor_tick from 0),
-    the flight log's `tick` from 1, its violations without priority or
-    grant category. No policy file: the record's priority is the only one."""
+    guardrail/audit.py's AuditLogger (record version 2 when this was written,
+    4 now; monitor_tick from 0), the flight log's `tick` from 1, its
+    violations without priority or grant category. No policy file: the
+    record's priority is the only one."""
     from datetime import datetime
     from guardrail.audit import AuditLogger
     from guardrail.models import Action4D, State
@@ -491,7 +827,7 @@ def _writer_run(root: Path, name: str, vx_list, *, policy=None, clock=None) -> t
     al = AuditLogger(run / "audit.jsonl", pol)
     rows = []
     for i, vx in enumerate(vx_list):
-        d = sh.filter(State(x=0.0, y=0.0, up=10.0), Action4D(vx=vx))
+        d = sh.filter(State(x=0.0, y=0.0, up=10.0, yaw_deg=yaw_deg), Action4D(vx=vx))
         al.log(i, d)                                   # 0-based, as the rail does
         rows.append({"t": round(0.1 * (i + 1), 3), "tick": i + 1, "x": 0.0, "y": 0.0,
                      "up": 10.0, "raw": d.raw.model_dump(), "emitted": d.emitted.model_dump(),
@@ -512,7 +848,9 @@ def test_a_version_2_audit_from_the_writer_is_joined_one_tick_on_and_labels_the_
     # join does not read), 2 when this test was written.
     assert recs and all(r["record_version"] >= 2 for r in recs), recs[:1]
     assert [r["monitor_tick"] for r in recs] == [0, 1, 2, 3]
-    assert all(v.get("grant_category") == "time-window" and v.get("priority") == "P1"
+    # Record version 4: the grant's category is `category`, ours `rule_category`.
+    assert all(v.get("category") == "time-window" and v.get("priority") == "P1"
+               and v.get("rule_category") == "geofence"
                for r in recs for v in r["violations"])
     steps, ep = _export(run)
     for s, r in zip(steps, rows):
@@ -529,6 +867,32 @@ def test_a_version_2_audit_from_the_writer_is_joined_one_tick_on_and_labels_the_
     steps, ep = _export(run)
     assert all(s["risk_level"] == "P0" and s["risk_level_defaulted"] for s in steps)
     assert all(s["violation_type"] == ["fence"] for s in steps)
+
+
+def test_a_version_4_audit_lends_its_world_frame_actions_and_both_categories():
+    """Audit record version 4 (2026-11-02): `raw_action` / `emitted_action`
+    are the grant's body frame. Heading East (90 deg), a North command is
+    vx 0, vy -3.3 in the body frame; the step that takes its action from the
+    record must take the WORLD one (raw_action_world), and its violation
+    carries the grant's category beside ours. Reading `raw_action` as world,
+    the join compared body against world and joined nothing."""
+    run, rows = _writer_run(_tmp("wp4_v4_"), "rail", [3.0, 3.1, 3.2, 3.3], yaw_deg=90.0)
+    recs = [json.loads(x) for x in (run / "audit.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert recs[-1]["record_version"] == 4 and abs(recs[-1]["raw_action"]["vy"] + 3.3) < 1e-9
+    # the last row logged only its pose: its actions come from the record
+    rows[-1] = {k: rows[-1][k] for k in ("t", "tick", "x", "y", "up")}
+    (run / "flight_log.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows),
+                                          encoding="utf-8")
+    steps, ep = _export(run)
+    assert ep["audit_join"]["joined"] == 4, ep["audit_join"]
+    last = steps[-1]
+    assert last["action"]["planner_output"] == recs[-1]["raw_action_world"] == {
+        "vx": 3.3, "vy": 0.0, "vz_up": 0.0, "yaw_rate": 0.0}, last["action"]
+    assert last["action"]["post_repair"] == recs[-1]["emitted_action_world"]
+    v = last["violations"][0]
+    assert (v["category"], v["rule_category"], v["violation_type"]) == \
+        ("time-window", "geofence", "schedule"), v
+    assert steps[0]["schema"] == "vlaguard.episode_export/2"
 
 
 def test_an_appended_audit_joins_only_the_flight_that_flew():
@@ -667,7 +1031,8 @@ def test_a_stop_advised_record_is_its_tick_s_second_decision_not_a_new_flight():
         if r["tick"] in advised:
             a = s["stop_advice"]
             assert a is not None and a["source"].startswith("audit record"), a
-            assert a["emitted"] == by_tick[r["tick"]]["emitted_action"] == r["flown_action"], a
+            assert a["emitted"] == by_tick[r["tick"]]["emitted_action_world"] == \
+                r["flown_action"], a
             assert "stop" in s["action"]["post_repair_source"], s["action"]
         else:
             assert s["stop_advice"] is None, s["stop_advice"]
@@ -1001,13 +1366,23 @@ def test_without_extras_the_generation_timeline_comes_from_the_events():
                "policy_hash": "sha256:refused-never-flew"}
     (copy / "harness_events.jsonl").write_text(
         "\n".join([ev[0], json.dumps(refused)] + ev[1:]) + "\n", encoding="utf-8")
-    steps, ep = _export(copy)
-    assert len(ep["generations"]) == 2, ep["generations"]
-    by_t = [(s["t"], s["policy_state"]) for s in steps]
-    assert all(ps["source"] == "the episode's generation timeline" for _, ps in by_t)
-    assert {ps["generation"] for t, ps in by_t if t < 3.0 - 1e-9} == {0}
-    assert {ps["generation"] for t, ps in by_t if t >= 3.0 - 1e-9} == {1}
-    assert "sha256:refused-never-flew" not in {ps["policy_hash"] for _, ps in by_t}
+    # The bundle's shield_audit.jsonl (written since 2026-10-30, read by the
+    # exporter since 2026-11-02) answers the ticks the Shield logged; the rest
+    # take the timeline. Without the audit, every tick takes the timeline.
+    for with_audit in (True, False):
+        if not with_audit:
+            (copy / "shield_audit.jsonl").unlink()
+        steps, ep = _export(copy)
+        assert len(ep["generations"]) == 2, ep["generations"]
+        by_t = [(s["t"], s["policy_state"], s["audit_record"]) for s in steps]
+        assert all(ps["source"] == ("audit record" if rec else
+                                    "the episode's generation timeline")
+                   for _, ps, rec in by_t)
+        assert any(rec for *_, rec in by_t) == with_audit
+        assert any(not rec for *_, rec in by_t)
+        assert {ps["generation"] for t, ps, _ in by_t if t < 3.0 - 1e-9} == {0}
+        assert {ps["generation"] for t, ps, _ in by_t if t >= 3.0 - 1e-9} == {1}
+        assert "sha256:refused-never-flew" not in {ps["policy_hash"] for _, ps, _ in by_t}
 
 
 def test_the_action_columns_follow_who_flew_the_tick():

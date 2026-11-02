@@ -144,9 +144,20 @@ def test_the_entry_points_find_the_repository_not_a_copy():
 def test_the_demo_script_records_the_grants_topics_and_routes_through_the_adapter():
     sh = (ROOT / "sitl" / "run_ros2_demo.sh").read_text(encoding="utf-8")
     assert "ros2 bag record" in sh
+    # The recorded topics are the command's arguments, not words in a comment.
+    cmd = sh.split('ros2 bag record -s mcap -o "$OUT/bag"', 1)[1].split(">", 1)[0]
     for topic in ("/vla/action_4d", "/mavros/setpoint_raw/local",
                   "/mavros/state", "/mavros/local_position/pose"):
-        assert topic in sh, f"the bag does not record {topic}"
+        assert topic in cmd.split(), f"the bag does not record {topic}"
+    # ARCH-22 (2026-11-02): the grant's bag holds "sensors, actions, MAVLink,
+    # mode changes" - MAVROS's sensor topics, the cameras the VLA bridge
+    # reads, and raw MAVLink both ways (MAVROS 2's link to its router).
+    for topic in ("/mavros/imu/data", "/mavros/global_position/global",
+                  "/mavros/local_position/velocity_local", "/mavros/altitude",
+                  "/mavros/battery", "/mavros/extended_state",
+                  "/camera/front/image_raw", "/camera/down/image_raw",
+                  "/uas1/mavlink_source", "/uas1/mavlink_sink"):
+        assert topic in cmd.split(), f"the bag does not record {topic}"
     assert "guardrail_rail.launch.py" in sh and "mavlink_adapter_node.py" in sh
     assert "start_router.sh" in sh and "udp://:" in sh, "MAVROS must use the router"
     assert "guardrail.replay pack" in sh, "the bundle must be re-packed with the bag"

@@ -35,7 +35,9 @@ WHAT EVERY RUN RECORDS (WP2-11, WP2-15, WP1-24, WP4-13, WP4-20, WP3-11, WP3-17)
                     the policy and the typed CSP of every generation, written
                     at take-off and after each hot-apply (guardrail.replay.
                     EpisodeRecord).
-  audit.jsonl       this episode's Shield audit only; a stale one is moved to
+  shield_audit.jsonl
+                    this episode's Shield audit only (the grant's file name;
+                    audit.jsonl until 2026-11-02); a stale one is moved to
                     _previous/, never appended to.
   events.jsonl      episode start, generations, hot-applies, mode requests and
                     changes, fence uploads, FSM transitions, autopilot text.
@@ -244,6 +246,7 @@ for _p in (ROOT, ROOT / "sitl"):
         sys.path.insert(0, str(_p))
 
 from guardrail import Action4D, AuditLogger, Shield, State             # noqa: E402
+from guardrail.audit import AUDIT_FILE                                    # noqa: E402
 from guardrail.bundle import load_for_flight                              # noqa: E402
 from guardrail.compiler import ConstraintCompiler                         # noqa: E402
 from guardrail.frames import from_body, to_body                           # noqa: E402
@@ -1070,7 +1073,7 @@ if HAVE_ROS:
             # while it swaps the Shield's rules and records the generation.
             self._lock = threading.RLock()
             self.hot = None             # guardrail.api.FlightHotApply, if served
-            self.audit = AuditLogger(out / "audit.jsonl", self.policy,
+            self.audit = AuditLogger(out / AUDIT_FILE, self.policy,
                                      episode_id=str(self.rec.episode_id))
 
             # Escalation FSM, Shield-on arm only (the control arm records

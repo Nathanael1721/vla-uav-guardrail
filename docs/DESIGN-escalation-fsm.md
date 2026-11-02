@@ -1006,6 +1006,14 @@ the existing mode helper (`self.m.set_mode(mode_id)` with
 `fsm_config_hash` into the record. Write one file per episode, not appended
 (WP4-20).
 
+Since 2026-11-02 (audit record version 4) the record is the grant's, name for
+name: `fsm_state_before` / `fsm_state_after` close the grant's ten fields, and
+`raw_action` / `emitted_action` (body frame), a violation's `category` (the
+grant's three) and `repair_attempts` (the operators tried) carry the grant's
+content; this project's world-frame actions, finer category and repair
+records are `raw_action_world` / `emitted_action_world`, `rule_category` and
+`repair_results`. The file is `shield_audit.jsonl` (guardrail/audit.py).
+
 ### 6. `guardrail/kpi.py` and the harness (WP3-15, WP4)
 
 - Per flight: `outcome` takes `RTL_triggered` / `Land_triggered` from

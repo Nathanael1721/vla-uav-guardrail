@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "urn:guardrail:audit-record:3",
+  "$id": "urn:guardrail:audit-record:4",
   "$defs": {
     "BodyAction": {
       "additionalProperties": false,
@@ -146,6 +146,94 @@
       "title": "HoldPointRecord",
       "type": "object"
     },
+    "OperatorAttempt": {
+      "additionalProperties": false,
+      "description": "One repair operator, one call, in the grant's `repair_attempts` keys\n(Safety Shield page: {\"operator\": \"AltitudeClamp\", \"result\": \"skip\",\n\"reason\": ...}, {\"operator\": \"LateralProjection\", \"result\": \"ok\",\n\"magnitude_m\": 0.7, \"iterations\": 1}). `iterations` is the pass it ran in\n(guardrail/repair.py RepairAttempt.iterations); `run`, `axis` and\n`repairs` are this project's.",
+      "properties": {
+        "operator": {
+          "title": "Operator",
+          "type": "string"
+        },
+        "result": {
+          "enum": [
+            "ok",
+            "skip",
+            "fail",
+            "fallback",
+            "relaxed"
+          ],
+          "title": "Result",
+          "type": "string"
+        },
+        "reason": {
+          "default": "",
+          "title": "Reason",
+          "type": "string"
+        },
+        "magnitude_m": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Magnitude M"
+        },
+        "iterations": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Iterations"
+        },
+        "run": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Run"
+        },
+        "axis": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Axis"
+        },
+        "repairs": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Repairs",
+          "type": "array"
+        }
+      },
+      "required": [
+        "operator",
+        "result"
+      ],
+      "title": "OperatorAttempt",
+      "type": "object"
+    },
     "PassAttempt": {
       "additionalProperties": false,
       "description": "One repair operator, one call (guardrail/repair.py RepairAttempt).",
@@ -220,78 +308,6 @@
         "result"
       ],
       "title": "PassAttempt",
-      "type": "object"
-    },
-    "RepairAttemptRecord": {
-      "additionalProperties": false,
-      "properties": {
-        "operator": {
-          "title": "Operator",
-          "type": "string"
-        },
-        "result": {
-          "enum": [
-            "ok",
-            "skip",
-            "fail",
-            "fallback",
-            "relaxed"
-          ],
-          "title": "Result",
-          "type": "string"
-        },
-        "reason": {
-          "default": "",
-          "title": "Reason",
-          "type": "string"
-        },
-        "magnitude_m": {
-          "anyOf": [
-            {
-              "type": "number"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Magnitude M"
-        },
-        "axis": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Axis"
-        },
-        "recovery": {
-          "default": false,
-          "title": "Recovery",
-          "type": "boolean"
-        },
-        "iterations": {
-          "anyOf": [
-            {
-              "type": "integer"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Iterations"
-        }
-      },
-      "required": [
-        "operator",
-        "result"
-      ],
-      "title": "RepairAttemptRecord",
       "type": "object"
     },
     "RepairPass": {
@@ -378,8 +394,82 @@
       "title": "RepairRecord",
       "type": "object"
     },
+    "RepairResult": {
+      "additionalProperties": false,
+      "description": "One Repair the decision logged, with its result and the pass that first\nlogged it: `repair_results` (what `repair_attempts` held until record\nversion 4).",
+      "properties": {
+        "operator": {
+          "title": "Operator",
+          "type": "string"
+        },
+        "result": {
+          "enum": [
+            "ok",
+            "skip",
+            "fail",
+            "fallback",
+            "relaxed"
+          ],
+          "title": "Result",
+          "type": "string"
+        },
+        "reason": {
+          "default": "",
+          "title": "Reason",
+          "type": "string"
+        },
+        "magnitude_m": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Magnitude M"
+        },
+        "axis": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Axis"
+        },
+        "recovery": {
+          "default": false,
+          "title": "Recovery",
+          "type": "boolean"
+        },
+        "iterations": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Iterations"
+        }
+      },
+      "required": [
+        "operator",
+        "result"
+      ],
+      "title": "RepairResult",
+      "type": "object"
+    },
     "ViolationRecord": {
       "additionalProperties": false,
+      "description": "`category` is the grant's (geometric / envelope / time-window, or this\nproject's `contract`), `rule_category` this project's finer one (record\nversion 4; until then `category` held ours and `grant_category` the\ngrant's).",
       "properties": {
         "rule_id": {
           "title": "Rule Id",
@@ -388,6 +478,30 @@
         "category": {
           "title": "Category",
           "type": "string"
+        },
+        "boundary_intersect_at_s": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Boundary Intersect At S"
+        },
+        "rule_category": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Rule Category"
         },
         "detail": {
           "default": "",
@@ -405,30 +519,6 @@
           ],
           "default": null,
           "title": "Predicted At S"
-        },
-        "boundary_intersect_at_s": {
-          "anyOf": [
-            {
-              "type": "number"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Boundary Intersect At S"
-        },
-        "grant_category": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Grant Category"
         },
         "priority": {
           "anyOf": [
@@ -482,7 +572,7 @@
     }
   },
   "additionalProperties": false,
-  "description": "One audit line. Field order is the order written.",
+  "description": "One audit line. Field order is the order written: the grant's ten\nfields first, in its example's order (GRANT_FIELDS), then this\nproject's. `raw_action` / `emitted_action` are required keys and null\nonly for a decision without a heading. The world-frame actions and a\nviolation's `rule_category` are optional here only so the grant's own\nexample record validates; AuditLogger writes them on every record.",
   "properties": {
     "ts": {
       "title": "Ts",
@@ -508,6 +598,73 @@
       "title": "Monitor Tick",
       "type": "integer"
     },
+    "raw_action": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/BodyAction"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "violations": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/ViolationRecord"
+      },
+      "title": "Violations",
+      "type": "array"
+    },
+    "repair_attempts": {
+      "anyOf": [
+        {
+          "items": {
+            "$ref": "#/$defs/OperatorAttempt"
+          },
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Repair Attempts"
+    },
+    "emitted_action": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/BodyAction"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "fsm_state_before": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Fsm State Before"
+    },
+    "fsm_state_after": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Fsm State After"
+    },
     "tick": {
       "title": "Tick",
       "type": "integer"
@@ -527,16 +684,27 @@
       "default": null,
       "title": "Episode Id"
     },
-    "raw_action": {
-      "$ref": "#/$defs/WorldAction"
+    "raw_action_world": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/WorldAction"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
     },
-    "violations": {
-      "default": [],
-      "items": {
-        "$ref": "#/$defs/ViolationRecord"
-      },
-      "title": "Violations",
-      "type": "array"
+    "emitted_action_world": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/WorldAction"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
     },
     "repairs": {
       "default": [],
@@ -546,16 +714,13 @@
       "title": "Repairs",
       "type": "array"
     },
-    "repair_attempts": {
+    "repair_results": {
       "default": [],
       "items": {
-        "$ref": "#/$defs/RepairAttemptRecord"
+        "$ref": "#/$defs/RepairResult"
       },
-      "title": "Repair Attempts",
+      "title": "Repair Results",
       "type": "array"
-    },
-    "emitted_action": {
-      "$ref": "#/$defs/WorldAction"
     },
     "emitted_violations": {
       "anyOf": [
@@ -591,30 +756,6 @@
       ],
       "default": null,
       "title": "Relaxed"
-    },
-    "fsm_state_before": {
-      "anyOf": [
-        {
-          "type": "string"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "title": "Fsm State Before"
-    },
-    "fsm_state_after": {
-      "anyOf": [
-        {
-          "type": "string"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "title": "Fsm State After"
     },
     "fsm_edge": {
       "anyOf": [
@@ -717,28 +858,6 @@
       "default": null,
       "title": "Body Yaw Deg"
     },
-    "raw_action_body": {
-      "anyOf": [
-        {
-          "$ref": "#/$defs/BodyAction"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null
-    },
-    "emitted_action_body": {
-      "anyOf": [
-        {
-          "$ref": "#/$defs/BodyAction"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null
-    },
     "repair_mode": {
       "anyOf": [
         {
@@ -831,9 +950,9 @@
     "ts",
     "policy_hash",
     "monitor_tick",
-    "tick",
     "raw_action",
-    "emitted_action"
+    "emitted_action",
+    "tick"
   ],
   "title": "AuditRecord",
   "type": "object"

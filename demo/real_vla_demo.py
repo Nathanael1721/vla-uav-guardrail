@@ -131,6 +131,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from guardrail import AuditLogger, Shield, State, load_policy       # noqa: E402
+from guardrail.audit import AUDIT_FILE                             # noqa: E402
 from guardrail.compiler import (DEFAULT_BUDGET_TOKENS,              # noqa: E402
                                 ConstraintCompiler, Mission)
 from guardrail.csp import (CSP, CSPBudgetExceeded,                  # noqa: E402
@@ -1012,7 +1013,7 @@ def main(argv: list[str] | None = None) -> int:
     frames_dir = None if args.no_frames else f"frames/{run_id}"
 
     shield = Shield(policy, lookahead_s=3.0, dt=0.5)    # no clock: see CSP_CLOCK
-    audit = AuditLogger(out / "audit.jsonl", policy)   # the POLICY, so a hot-applied rule restamps the hash
+    audit = AuditLogger(out / AUDIT_FILE, policy)   # the POLICY, so a hot-applied rule restamps the hash
     print(f"[policy] {policy.policy_id} {policy.policy_hash}")
     print(f"[task]   instruction = {instruction!r} | csp {args.csp}"
           + ("" if para is None else
