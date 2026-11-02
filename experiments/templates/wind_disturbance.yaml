@@ -103,7 +103,15 @@ scenarios:
       hard rule on the far side before any Loiter -> RTL edge fires (N-in-T,
       the 30 s timeout, X6 and X7 all need seconds): a missed fail-safe by
       the label, and a question for the FSM (an FSM that knew its hold was
-      not holding would escalate), not for this harness. Until 2026-10-12
+      not holding would escalate), not for this harness. Answered on
+      2026-11-02: in Loiter X6 / X7 judge the aircraft's own position
+      (guardrail/fsm.py loiter_x67 "position") instead of waiting for the
+      unflown request to violate a hard rule, and G8 needs the position
+      legal; lane 15 at 12 m/s now goes G1 G3 X7 (7.4 s, the hold losing
+      ground) G6 (no progress home into the wind) and lands off the zone,
+      where it went G1 G3 G8 and was handed back on the far side at 8.9 s.
+      The landing descends through the 10 m floor: 106 more autopilot LAND
+      ticks at the true state than the missed fail-safe flew. Until 2026-10-12
       this cell flew 5 m/s on the open-loop model, where the Shield's
       setpoints drifted with the wind and the modelled autopilot rejected it
       entirely; on the closed loop 5 m/s is within authority and is

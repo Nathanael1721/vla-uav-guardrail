@@ -869,17 +869,33 @@ def test_in_place_holds_fly_c77c77ds_rows_exactly():
     must be c77c77d's - the flight every rail still flies - so a drift in the
     off mode fails here, not in a later comparison. On c77c77d's recovery
     law ("lookahead"): since 2026-10-29 the default recovers at the climb
-    cap, a change of the Shield's own (WP3-17)."""
+    cap, a change of the Shield's own (WP3-17). And on c77c77d's Loiter law
+    (FSMConfig loiter_clear "violation_free", loiter_x67 "request"): since
+    2026-11-02 Loiter hands back a request the Shield would fly and X6 / X7
+    judge the held aircraft's position, which changes three of these cells
+    (dyn-nfz-rotate-spin at 3 and 6 deg/s, wind-beyond-authority lane 15 at
+    12 m/s) - a change of the FSM's own."""
     import sweep_scenarios as SW
+    from guardrail.fsm import FSMConfig
     from guardrail.scenario_spec import Library
     lib = Library(ROOT / "experiments" / "scenarios.yaml")
     fams = lib.by_id()
     got = {}
-    for sid in sorted({k.split("@")[0] for k in C77_IN_PLACE_DIGESTS}):
-        for cell in fams[sid].cells():
-            run = SW.run_episode(cell.spec, lib.defaults, 0, autopilot_hold="in_place",
-                                 recovery="lookahead")
-            got[cell.episode_id] = (_row_digest(run.rows), len(run.rows))
+    orig = SW.Shield
+    old_law = FSMConfig(loiter_clear="violation_free", loiter_x67="request")
+
+    def shield_on_the_old_loiter_law(*a, escalation=True, **k):
+        return orig(*a, escalation=old_law if escalation is True else escalation, **k)
+
+    SW.Shield = shield_on_the_old_loiter_law
+    try:
+        for sid in sorted({k.split("@")[0] for k in C77_IN_PLACE_DIGESTS}):
+            for cell in fams[sid].cells():
+                run = SW.run_episode(cell.spec, lib.defaults, 0, autopilot_hold="in_place",
+                                     recovery="lookahead")
+                got[cell.episode_id] = (_row_digest(run.rows), len(run.rows))
+    finally:
+        SW.Shield = orig
     assert set(got) == set(C77_IN_PLACE_DIGESTS), sorted(set(got) ^ set(C77_IN_PLACE_DIGESTS))
     bad = {k: (got[k], v) for k, v in C77_IN_PLACE_DIGESTS.items() if got[k] != v}
     assert not bad, bad

@@ -439,6 +439,176 @@ def test_rtl_ignores_the_pilots_proposals():
         assert (o.state, o.set_mode, o.setpoint) == (S.RTL, None, "none")
 
 
+def _to_loiter_via_g2(f, t0=0.0):
+    """Three trusted (small) repairs one second apart, clean in between:
+    N-in-T (G2) into Loiter on the third onset. Returns the next free time."""
+    edges = []
+    for t in clock(21, t0=t0):
+        k = round(t - t0, 1)
+        if k in (0.0, 1.0, 2.0):
+            o = f.tick(t, "repaired", [hit()], SMALL)
+        else:
+            o = f.tick(t)
+        if o.edge:
+            edges.append(o.edge)
+    assert edges == ["G1", "G2"] and f.state == S.LOITER, edges
+    return t0 + 2.1
+
+
+def test_g8_hands_back_a_request_the_shield_would_fly():
+    """REGRESSION (library, near-edge-at-12mps, ask 8 / pass_y 40.5 and ask
+    12 / pass_y 40.8). A pilot flying along a zone's edge with a slight drift:
+    its forecast re-touches the margin ring after each 0 m GeofenceSlide, three
+    onsets in T (G2, Loiter). Held by the autopilot, the request is a steady
+    0 m slide - a repair G1 accepts - on every tick. G8 read "no hard
+    violation", never came, and the 30 s timeout (G5) sent the aircraft home:
+    a fail-safe though every repair was trusted (p1: "trigger fail-safe (RTL
+    / Land) when repair is unsafe"). Loiter now hands back a request the
+    Shield would fly once it has been that for T_recover. Failed before
+    2026-11-02 (G5 at 32.1 s)."""
+    f = EscalationFSM()
+    t0 = _to_loiter_via_g2(f)
+    edges = []
+    for t in clock(320, t0=t0):
+        o = f.tick(t, "repaired", [hit()], SMALL)    # steady, trusted, never clean
+        if o.edge:
+            edges.append((round(t, 1), o.edge))
+            break
+    # Loiter's clock starts on the first tick after entry (2.1 s): 2.0 s later.
+    assert edges == [(4.1, "G8")], edges
+    assert o.state == S.NORMAL and o.set_mode == "GUIDED" and o.setpoint == "pass"
+    assert "repair within theta" in o.reason, o.reason
+    # The reading until 2026-11-02 is kept: it times out.
+    f = EscalationFSM(FSMConfig(loiter_clear="violation_free"))
+    t0 = _to_loiter_via_g2(f)
+    edges = []
+    for t in clock(320, t0=t0):
+        o = f.tick(t, "repaired", [hit()], SMALL)
+        if o.edge:
+            edges.append((round(t, 1), o.edge))
+            break
+    assert edges == [(32.0, "G5")], edges
+
+
+def test_g8_does_not_hand_back_an_unsafe_repair_or_a_loiter_rule():
+    """What Loiter must keep holding: a request over theta, one no operator
+    converged on (the conservative cap, p4), and a rule whose action is
+    `loiter` (it asks for exactly this hold). Each reaches the timeout."""
+    for label, args in (("over theta", ("repaired", [hit()], BIG)),
+                        ("not converged", ("blocked", [hit()])),
+                        ("loiter rule", ("blocked", [hit(action="loiter")]))):
+        f = EscalationFSM()
+        to_loiter_via_g3(f)
+        edges = []
+        for t in clock(310, t0=0.2):
+            o = f.tick(t, *args)
+            if o.edge:
+                edges.append((round(t, 1), o.edge))
+                break
+        assert edges == [(30.1, "G5")], (label, edges)
+
+
+def test_g8_needs_the_aircraft_somewhere_legal():
+    """REGRESSION (library, wind-beyond-authority, lane 15, 12 m/s). The
+    autopilot's hold was blown through nfz-square; on the far side of the
+    zone's middle the pilot's request pointed out of it and re-checked clean,
+    and G8 counted those ticks as "cleared" while the aircraft was still
+    inside (stop_illegal) - Loiter -> Normal at 8.9 s. The grant's checker
+    counts "Position point in NFZ?" as a violation (p2). Failed before
+    2026-11-02 (G8 at 2.2 s here)."""
+    f = EscalationFSM(FSMConfig(loiter_x67="request"))   # X7 off the table here
+    to_loiter_via_g3(f)
+    edges = []
+    for i, t in enumerate(clock(60, t0=0.2)):
+        inside = t < 3.0
+        o = f.tick(t, stop_illegal=inside, unsafe_depth_m=1.0 if inside else None)
+        if o.edge:
+            edges.append((round(t, 1), o.edge))
+            break
+    # Legal from 3.0 s; Loiter's clock reaches T_recover at 5.0 s.
+    assert edges == [(5.0, "G8")], edges
+
+
+def test_x7_in_loiter_judges_the_aircraft_not_the_request():
+    """REGRESSION (library, wind-beyond-authority, lane 15, 12 m/s: a missed
+    fail-safe). LOITER is held by the autopilot; a wind beyond its authority
+    carries the aircraft into the zone at 5.6 m/s. The pilot's request turns
+    clean (it points out of the zone) while the illegal depth still grows.
+    X7 asked for "a hard rule violated on this tick" - written for Brake,
+    where a clean request is the pilot leaving on its own - so it never
+    fired, and the aircraft was handed back on the far side. In Loiter nobody
+    flies the request: X7 now judges the aircraft's position. Failed before
+    2026-11-02 (no X7; G8)."""
+    def fly(cfg):
+        f = EscalationFSM(cfg)
+        to_loiter_via_g3(f)
+        edges = []
+        for t in clock(80, t0=0.2):
+            depth = max(0.0, 5.6 * (t - 0.2))
+            o = f.tick(t, stop_illegal=True, unsafe_depth_m=depth)   # request clean
+            if o.edge:
+                edges.append((round(t, 1), o.edge))
+                break
+        return edges, o
+    edges, o = fly(FSMConfig())
+    assert edges == [(2.2, "X7")], edges
+    assert "the autopilot holds" in o.reason, o.reason
+    assert f"{o.state.value}" == "RTL" and o.set_mode == "RTL"
+    edges, _ = fly(FSMConfig(loiter_x67="request", loiter_clear="violation_free"))
+    assert edges == [(2.2, "G8")], edges
+
+
+def test_x6_in_loiter_judges_the_aircraft_not_the_request():
+    """The same for X6: an autopilot hold that stays illegal for T with no
+    progress (a hold no legal point could be found for) goes home at T even
+    when the pilot's request happens to be clean."""
+    f = EscalationFSM()
+    to_loiter_via_g3(f)
+    edges = []
+    for t in clock(80, t0=0.2):
+        o = f.tick(t, stop_illegal=True, unsafe_depth_m=2.0)
+        if o.edge:
+            edges.append((round(t, 1), o.edge))
+            break
+    assert edges == [(5.2, "X6")], edges
+    # Brake keeps its rule: a clean (escaping) request there is the pilot
+    # leaving on its own, and X6 waits for a tick the Shield intervenes on.
+    f = EscalationFSM(FSMConfig(t_recover_s=10.0))
+    f.tick(0.0, "repaired", [hit()], SMALL, stop_illegal=True, unsafe_depth_m=2.0)
+    for t in clock(60, t0=0.1):
+        o = f.tick(t, stop_illegal=True, unsafe_depth_m=2.0)
+        assert o.state == S.BRAKE, o.reason
+
+
+def test_loiter_holds_t_recover_and_a_new_onset_restarts_its_clock():
+    """Loiter holds at least T_recover even when it is entered on a tick
+    whose request is already acceptable (G2 the tick after a G1: the third
+    onset fell in Normal), and a request that keeps STARTING new violations
+    (the thrash G4 is for) never clears it."""
+    f = EscalationFSM(FSMConfig(onset_clear_s=0.0))
+    edges = []
+    for t in clock(70):
+        k = round(t, 1)
+        violated = k in (0.0, 0.2) or k >= 2.4
+        o = f.tick(t, "repaired", [hit()], SMALL) if violated else f.tick(t)
+        if o.edge:
+            edges.append((k, o.edge))
+        if o.edge == "G8":
+            break
+    # Loiter from 2.5 s (acceptable on its entry tick) to 4.5 s: T_recover.
+    assert edges == [(0.0, "G1"), (2.3, "G7"), (2.4, "G1"), (2.5, "G2"), (4.5, "G8")], edges
+    # Thrash in Loiter: one-tick violations every 0.3 s - G4, never G8.
+    f = EscalationFSM()
+    to_loiter_via_g3(f)
+    edges = []
+    for i, t in enumerate(clock(100, t0=0.2)):
+        o = (f.tick(t, "repaired", [hit()], SMALL) if i % 3 == 0 else f.tick(t))
+        if o.edge:
+            edges.append(o.edge)
+            break
+    assert edges == ["G4"], edges
+
+
 def test_x6_a_position_illegal_for_t_reaches_rtl_not_a_permanent_brake():
     """A recovery that re-checks clean every tick is trusted (G1), exempt from
     theta, and one onset however long it lasts. Without X6 nothing could ever

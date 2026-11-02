@@ -120,6 +120,21 @@ Interpretations of terms the grant uses but does not define:
     from the last violated one. That is the later of the two, so recovery is
     never early. A Loiter always holds for at least T_recover (see _enter
     for why that needs no extra code).
+  * In LOITER (since 2026-11-02, FSMConfig.loiter_clear "acceptable") the
+    autopilot holds the aircraft and the pilot's request is not flown, so
+    "cleared" (G8) judges what Loiter would hand back and where the aircraft
+    is: the request is one the Shield would fly (clean, or a repair G1
+    accepts: converged and within theta; no `loiter` rule; no violation
+    STARTING on the tick, which is the thrash G4 counts) and the position is
+    legal (no stop_illegal). Until then G8 read "no hard violation in the
+    request" only: it handed back an aircraft still inside a zone because
+    the request pointed out of it, and it never handed back a request the
+    Shield repairs by 0 m, so the 30 s timeout sent such a flight home - a
+    fail-safe although no repair was unsafe (p1).
+  * X6 / X7 in LOITER judge the aircraft's own position (FSMConfig.loiter_x67
+    "position", 2026-11-02). Their "hard rule violated on this tick" exists
+    for Brake, where the Shield flies the request and a clean one is the
+    pilot leaving on its own; in Loiter nobody flies it.
   * Window edges are INCLUSIVE: an onset exactly T seconds old still counts,
     and exactly T_recover of clearing is enough (p4 writes ">= T_recover").
     Floating-point slack is 1e-9 s.
@@ -408,6 +423,24 @@ PRIORITIES = ("P0", "P1", "P2")
 OUTCOMES = ("clean", "repaired", "blocked")
 SETPOINTS = ("pass", "brake", "none")
 EVENT_MODES = ("onset", "tick")
+# What G8 (Loiter -> Normal, "cleared for >= T_recover") reads while the
+# AUTOPILOT holds the aircraft and the pilot's request is not flown (since
+# 2026-11-02; docs/DESIGN-escalation-fsm.md, "Loiter judges what it would
+# hand back, and where the aircraft is"):
+#   acceptable      the request is one the Shield could fly if handed back -
+#                   clean, or repaired within theta (what G1 accepts), with
+#                   no `loiter` rule violated - AND the aircraft's position
+#                   is legal (no `stop_illegal`). The default.
+#   violation_free  no hard enforced violation in the request, wherever the
+#                   aircraft is: the reading until 2026-11-02, kept for
+#                   comparison.
+LOITER_CLEAR_MODES = ("acceptable", "violation_free")
+# Whether X6 / X7 in LOITER judge the aircraft's own position only
+# ("position", the default since 2026-11-02) or also need the pilot's request
+# to violate a hard rule on the tick ("request", the reading until then; it
+# exists for Brake, where a request that already escapes is the pilot leaving
+# on its own - in Loiter nobody flies the request).
+LOITER_X67_MODES = ("position", "request")
 
 # Every edge this FSM can take: id -> (from, to, source, label). The design
 # doc's transition table lists the same ids, and tests/test_fsm.py drives
@@ -1021,6 +1054,10 @@ class FSMConfig:
     every return). The three knobs entered the config on 2026-10-08/09, so
     every fsm_config_hash written before then differs from today's for the
     same grant thresholds.
+    loiter_clear (LOITER_CLEAR_MODES) is what G8's "cleared" reads in
+    Loiter, and loiter_x67 (LOITER_X67_MODES) whether X6 / X7 in Loiter
+    judge the aircraft's position alone. Both entered on 2026-11-02 (the
+    hash changed again); "violation_free" / "request" fly the FSM as it was.
     """
     n_violations: int = 3
     window_s: float = 5.0
@@ -1032,6 +1069,8 @@ class FSMConfig:
     x6_min_escape_mps: float = X6_MIN_ESCAPE_MPS
     onset_clear_s: float = ONSET_CLEAR_S
     x7_min_rise_m: float = X7_MIN_RISE_M
+    loiter_clear: str = "acceptable"
+    loiter_x67: str = "position"
 
     # Grant symbols accepted in YAML, so a profile can be written the way p4
     # writes it ("N: 3, T: 5, T_recover: 2").
@@ -1069,6 +1108,12 @@ class FSMConfig:
         if self.event_mode not in EVENT_MODES:
             raise ValueError(f"FSMConfig.event_mode {self.event_mode!r} "
                              f"is not one of {EVENT_MODES}")
+        if self.loiter_clear not in LOITER_CLEAR_MODES:
+            raise ValueError(f"FSMConfig.loiter_clear {self.loiter_clear!r} "
+                             f"is not one of {LOITER_CLEAR_MODES}")
+        if self.loiter_x67 not in LOITER_X67_MODES:
+            raise ValueError(f"FSMConfig.loiter_x67 {self.loiter_x67!r} "
+                             f"is not one of {LOITER_X67_MODES}")
         # At most one counted onset per onset_clear_s: N of them need
         # (N - 1) x onset_clear_s seconds, which must fit in T, or N-in-T (G2,
         # G4) could never fire and the config would quietly delete both edges.
@@ -1295,6 +1340,9 @@ class EscalationFSM:
         self._last_onset: float | None = None   # the last COUNTED onset (rate limit)
         self._clean_any_since: float | None = None   # no enforced violation since
         self._clean_hard_since: float | None = None  # no HARD enforced violation since
+        # In Loiter: the request acceptable and the position legal since
+        # (G8 under loiter_clear "acceptable"); restarted on Loiter entry.
+        self._loiter_ok_since: float | None = None
         self._stuck_since: float | None = None       # stop_illegal on every tick since
         # (t, unsafe_depth_m or None) on the ticks of the current stuck spell,
         # oldest first, pruned to the last sample at least max(T, T_recover)
@@ -1467,6 +1515,7 @@ class EscalationFSM:
         not how long clean, and X6 and G5 can only fire sooner for a gap."""
         self._clean_any_since = None
         self._clean_hard_since = None
+        self._loiter_ok_since = None
 
     def step(self, inp: TickInput) -> FSMOutput:
         if not isinstance(inp, TickInput):
@@ -1559,6 +1608,35 @@ class EscalationFSM:
             self._clean_hard_since = None
         elif self._clean_hard_since is None:
             self._clean_hard_since = t
+        # Loiter's own clock (loiter_clear "acceptable", since 2026-11-02).
+        # While the AUTOPILOT holds, the pilot's request is not flown, so
+        # "cleared" asks two things the request-only clock above does not:
+        # would the Shield fly this request if handed back - clean, or a
+        # repair G1 accepts (not hard_untrusted: within theta and converged;
+        # not a `loiter` rule, which asks for exactly this hold) - and is the
+        # aircraft itself somewhere legal (not stop_illegal: the grant's
+        # checker counts "Position point in NFZ?" as a violation, p2)? The
+        # request-only clock ran on ticks the held aircraft was being blown
+        # through nfz-square (wind-beyond-authority, 12 m/s, lane 15: G8 at
+        # 8.9 s, a missed fail-safe), and never ran for a request the Shield
+        # repairs by 0 m (near-edge-at-12mps: G2, then the 30 s timeout, G5,
+        # RTL - a fail-safe though every repair was trusted, which p1 does not
+        # ask for: "trigger fail-safe (RTL / Land) when repair is unsafe").
+        # A Loiter still holds for at least T_recover (_enter says why no
+        # restart is needed there). A hard violation that STARTS on this tick (the
+        # rising edge N-in-T counts) restarts it too: a pilot that keeps
+        # re-violating is the thrash G4 ("N-in-T persists") exists for, and
+        # a steady repair is not; without this a pilot re-violating every
+        # 0.3 s with small repairs left Loiter by G8 at 2.0 s and cycled
+        # G2 / G8 for 30 s instead of reaching G4
+        # (test_n_in_t_still_catches_a_pilot_who_re_violates_faster_than_the_debounce).
+        starts_now = hard_violated and not self._prev_hard
+        acceptable = (not hard_untrusted and strongest not in ("loiter", "RTL", "land")
+                      and not inp.stop_illegal and not starts_now)
+        if not acceptable:
+            self._loiter_ok_since = None
+        elif self._loiter_ok_since is None:
+            self._loiter_ok_since = t
 
         # N-in-T bookkeeping: hard-rule onsets only, at most one per
         # onset_clear_s. A violation that starts again sooner than that after
@@ -1583,11 +1661,14 @@ class EscalationFSM:
                        else t - self._clean_any_since)
         cleared_hard = (None if self._clean_hard_since is None
                         else t - self._clean_hard_since)
+        cleared_loiter = (None if self._loiter_ok_since is None
+                          else t - self._loiter_ok_since)
 
         target, edge, why = self._decide(inp, t, violated, strongest, gov,
                                          untrusted, hard_untrusted, theta_exceeded,
                                          n_in_t, cleared_any, cleared_hard,
-                                         hard_violated, stuck_s, progress, losing)
+                                         hard_violated, stuck_s, progress, losing,
+                                         cleared_loiter)
 
         terminal_now = False
         if edge in ("G9", "G10", "X5"):
@@ -1676,6 +1757,13 @@ class EscalationFSM:
             "note": inp.note,
             "fsm_config_hash": cfg.digest,
         }
+        if before == FSMState.LOITER:
+            # Loiter's own "cleared" clock (loiter_clear "acceptable",
+            # 2026-11-02): the request acceptable and the position legal for
+            # this long. Only on ticks that START in Loiter, so every other
+            # record is byte for byte what it was.
+            record["cleared_loiter_s"] = (None if cleared_loiter is None
+                                          else round(cleared_loiter, 6))
         if after in _HOLD_STATES and not self._terminal:
             # Only on Loiter / Land ticks, so every other record is byte for
             # byte what it was. `hold_point` is the plan in force BEFORE this
@@ -1788,6 +1876,13 @@ class EscalationFSM:
             # "N-in-T persists" has to be NEW evidence: the onsets that caused
             # this Loiter would otherwise fire G4 on the next tick.
             self._events = []
+            # Loiter's own clock (loiter_clear "acceptable") needs no restart
+            # here either: every way in is a tick that is not acceptable (G3
+            # untrusted, X4 a loiter rule, G2 on the onset that completes
+            # N-in-T) or, for G2 on the tick after a G1, the first acceptable
+            # tick, so the clock reads the entry time or later and a Loiter
+            # still holds for at least T_recover
+            # (test_loiter_holds_t_recover_and_a_new_onset_restarts_its_clock).
             # The clean clock is NOT restarted here, because it never needs to
             # be. Every way into Loiter is either a violated tick (G3, X4, G2
             # on an onset), where the clock is unset, or the first clean tick
@@ -1803,12 +1898,28 @@ class EscalationFSM:
                 theta_exceeded: bool | None, n_in_t: bool,
                 cleared_any: float | None, cleared_hard: float | None,
                 hard_violated: bool = False, stuck_s: float | None = None,
-                progress: dict | None = None, losing: dict | None = None):
+                progress: dict | None = None, losing: dict | None = None,
+                cleared_loiter: float | None = None):
         """Return (target state or None, edge id or None, reason)."""
         cfg = self.config
         S = FSMState
         if self._terminal:
             return None, None, f"terminal ({self._terminal_reason}); no transitions"
+        # Who is flying decides what X6 / X7 judge. In Brake the Shield flies
+        # the pilot's request, and a request that already escapes (clean) is
+        # the pilot leaving on its own, so X6 / X7 wait for a tick on which the
+        # Shield intervenes on a hard rule. In LOITER the autopilot holds the
+        # aircraft and nobody flies the request: a clean request says nothing
+        # about where the aircraft is going, and with loiter_x67 "position"
+        # (since 2026-11-02) the aircraft's own illegal position is enough.
+        # Until then a hold blown through nfz-square by a 12 m/s wind beyond
+        # authority (wind-beyond-authority, lane 15) was never escalated: the
+        # request turned clean on the far side of the zone's middle, X7 never
+        # saw a "hard rule violated on this tick", and G8 handed the aircraft
+        # back (a missed fail-safe by its label).
+        in_loiter_by_position = (self._state == S.LOITER
+                                 and cfg.loiter_x67 == "position")
+        judged = hard_violated or in_loiter_by_position
         # X6: somewhere a stop is illegal for a whole T, with the Shield still
         # intervening on a hard rule, and the illegal depth NOT falling. The
         # recovery is not getting the aircraft out, and holding (Loiter) would
@@ -1818,7 +1929,7 @@ class EscalationFSM:
         # zone home at T, while they were working (docs/DESIGN-escalation-
         # fsm.md, "X6 waits for a recovery that is working").
         working = bool(progress and progress.get("progressing"))
-        stuck = (hard_violated and stuck_s is not None
+        stuck = (judged and stuck_s is not None
                  and stuck_s >= cfg.window_s - EPS and not working)
         if stuck:
             fell = progress.get("fell_m") if progress else None
@@ -1828,8 +1939,10 @@ class EscalationFSM:
                           f"{progress['need_m']:.2f} m a working recovery makes "
                           f"(slope {progress['slope_mps']:+.2f} +/- "
                           f"{2 * progress['se_mps']:.2f} m/s)")
+        who = ("while the autopilot holds it" if (in_loiter_by_position and not hard_violated)
+               else "while the Shield intervenes on a hard rule")
         stuck_why = (f"position illegal for {stuck_s:.2f} s >= T {cfg.window_s:g} s "
-                     f"while the Shield intervenes on a hard rule{trend}; holding "
+                     f"{who}{trend}; holding "
                      f"here keeps the aircraft in the violation" if stuck else "")
         # X7: the position has been illegal for T_recover and is getting
         # DEEPER while the Shield commands its recovery - something the
@@ -1837,12 +1950,14 @@ class EscalationFSM:
         # it. Waiting for X6's full T lets it through the zone: the 5 m/s
         # tailwind of `wind-beyond-authority` crosses the 16 m square in about
         # 3.5 s (5.4-8.9 s, lane 15, measured with X6 / X7 off).
-        sinking = bool(hard_violated and losing and losing.get("losing"))
+        sinking = bool(judged and losing and losing.get("losing"))
         sinking_why = (f"position illegal for {stuck_s:.2f} s and its illegal depth "
                        f"grew {losing['rose_m']:.2f} m (fitted) in "
                        f"{losing['span_s']:.2f} s (slope {losing['slope_mps']:+.2f} "
-                       f"+/- {2 * losing['se_mps']:.2f} m/s) while the Shield "
-                       f"recovers: the recovery is losing ground"
+                       f"+/- {2 * losing['se_mps']:.2f} m/s) "
+                       + ("while the autopilot holds: the hold is losing ground"
+                          if (in_loiter_by_position and not hard_violated) else
+                          "while the Shield recovers: the recovery is losing ground")
                        if sinking else "")
 
         def cite(h: RuleHit | None) -> str:
@@ -1921,7 +2036,14 @@ class EscalationFSM:
             if n_in_t:
                 return (S.RTL, "G4", f"N-in-T persists: {len(self._events)} onsets "
                         f"in {cfg.window_s:g} s since Loiter entry")
-            if cleared_hard is not None and cleared_hard >= cfg.t_recover_s - EPS:
+            if cfg.loiter_clear == "acceptable":
+                if cleared_loiter is not None and cleared_loiter >= cfg.t_recover_s - EPS:
+                    return S.NORMAL, "G8", (
+                        f"cleared {cleared_loiter:.2f} s >= T_recover "
+                        f"{cfg.t_recover_s:g} s: the request is one the Shield would "
+                        f"fly (clean or a repair within theta) and the position is "
+                        f"legal" + (f"; {cite(gov)} repaired" if violated else ""))
+            elif cleared_hard is not None and cleared_hard >= cfg.t_recover_s - EPS:
                 return S.NORMAL, "G8", (f"hard rules cleared {cleared_hard:.2f} s >= "
                                         f"T_recover {cfg.t_recover_s:g} s")
             dwell = t - (self._entered_at if self._entered_at is not None else t)

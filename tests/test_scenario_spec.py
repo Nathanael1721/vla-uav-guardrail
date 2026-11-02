@@ -458,7 +458,9 @@ def test_a_known_failure_pin_names_the_gates_it_fails_and_only_real_ones():
     # 6 since 2026-10-21, when time-window-opens-on-vehicle's three cell pins
     # came off (C2: the escape from a window opening on the aircraft is no
     # longer a violation, Shield._opening_imposed).
-    assert len(pinned) >= 6, [f.scenario_id for f in pinned]
+    # 5 since 2026-11-02, when near-edge-at-12mps's two edge-flicker pins
+    # came off (Loiter hands back a request the Shield would fly, G8).
+    assert len(pinned) >= 5, [f.scenario_id for f in pinned]
     assert "time-window-opens-on-vehicle" not in {f.scenario_id for f in pinned}
 
 

@@ -1326,14 +1326,14 @@ def test_a_new_failure_in_a_pinned_cell_is_a_failure_not_the_old_defect():
     The three-simultaneous-violations pin came off on 2026-10-19, when its
     cells passed at 300 ticks - only because the run ended 0.2 s before the
     Loiter timeout (G5) - and came back on 2026-10-20 at 400 ticks, where G5
-    fires (review of T1c, P1). Its two cells are back among the cases; the
-    two label pins of near-edge-at-12mps stay as further cover."""
+    fires (review of T1c, P1). Its two cells are back among the cases. The
+    two label pins of near-edge-at-12mps were further cover until
+    2026-11-02, when Loiter began handing back a request the Shield would fly
+    (G8) and both cells passed; their pins came off."""
     cases = (("three-simultaneous-violations", {"start_up": 3.0, "ask_mps": 11,
                                                 "variant": 0}),
              ("three-simultaneous-violations", {"start_up": 3.0, "ask_mps": 8,
                                                 "variant": 2}),
-             ("near-edge-at-12mps", {"pass_y": 40.5, "ask_mps": 8}),
-             ("near-edge-at-12mps", {"pass_y": 40.8, "ask_mps": 12}),
              ("dyn-nfz-spawn-ahead", {"ahead_m": 3, "vehicle_speed_mps": 4,
                                       "variant": 0}),
              ("standoff-wedge", {}))
