@@ -2231,8 +2231,14 @@ def test_the_csp_times_switches_and_swaps_exactly_as_the_shield_does():
     would be missing from the CSP for most of a minute while the Shield
     enforced it. Checked at instants on both sides of every edge of HOT,
     against the Shield's own `rule_status()["in_force"]`, and the minute
-    reading is run as the null: it fails the same check, so the check can."""
+    reading is run as the null: it fails the same check, so the check can.
+    Since 2026-11-03 the compiler's clock IS the Shield's (shield.RuleClock,
+    inherited, WP3-22), so the exact agreement below is by construction; what
+    this test still proves is that the CSP's DECISIONS never leave out a rule
+    the Shield enforces at any of these instants."""
     _need()
+    from guardrail.shield import RuleClock
+    assert K._RuleClock.on is RuleClock.on, "the compiler keeps a clock of its own"
     pol = _hot()
     clock = K._RuleClock(pol)
 
@@ -2801,7 +2807,9 @@ def test_the_last_switch_in_policy_order_decides_as_in_the_shield():
     policy order decides (shield._Schedule.on). A clock where the FIRST
     decided passed every other test (the review's mutation M02): no policy
     there has two switches on one target. Both orders, every edge, against
-    the Shield's own rule_status."""
+    the Shield's own rule_status (one clock since 2026-11-03: the mutation
+    would now have to be made in shield.RuleClock, where the Shield's own
+    tests see it too)."""
     _need()
     for first_active in (False, True):
         pol = _two_switches(first_active)

@@ -2198,6 +2198,15 @@ class FenceGuard:
     force now, a moving zone where it is this tick. Pass the flight's Shield;
     without one a Shield is built over `policy` (no escalation FSM). Distances
     are 2-D, every zone's footprint whatever its band, as before.
+
+    AND SO ARE THE DISTANCES (2026-11-03, WP3-22). gate() and slide() used to
+    measure `poly.distance(Point(x, y))` against those rings themselves. They
+    now ask the Shield's ruler (`Shield.zone_ruler()`, the distance
+    Shield.fence_distance reports), once per call, for every probe point: the
+    same rings, the same distance, one implementation. What stays here is
+    the controller's own question - where to brake, which way round - built
+    on those answers (`clear_aim`'s keep-out band is the rings grown by the
+    stand-off, a planning shape, not a rule).
     """
 
     def __init__(self, policy, brake_m: float = 12.0, stand_off_m: float = 3.0,
@@ -2400,7 +2409,6 @@ class FenceGuard:
         tick 10 times. The single-call values are what the tests pin and are
         right; the smoothing between calls is the flight loop's GuardSmoother.
         """
-        from shapely.geometry import Point
         o_scale, o_d, o_blocked = self._obstacle_gate(x, y, vx, vy)
         o_cause = "obstacle" if o_scale < 1.0 else None
         # _obstacle_gate returns the clearance whenever its forecast hits a
@@ -2409,13 +2417,12 @@ class FenceGuard:
         # "the building the guard is braking for", so record it only then
         # (review of f7611f9, 2026-10-19).
         self.last_obstacle_d = o_d if o_scale < 1.0 else None
-        polys = self.polys
-        if not polys:
+        ruler = self.shield.zone_ruler()
+        if not ruler:
             self.last_fence_d = None
             self.last_cause = o_cause
             return o_scale, o_d, o_blocked
-        p = Point(x, y)
-        d = min(poly.distance(p) for poly in polys)
+        d = ruler.distance(x, y)
         self.last_fence_d = float(d)
         speed = math.hypot(vx, vy)
         if speed < 1e-3:
@@ -2444,8 +2451,7 @@ class FenceGuard:
         horizon = max(self.brake_m, speed * 3.0)
         d_min = d
         for a in np.linspace(0.0, horizon, 8)[1:]:
-            q = Point(x + ux * a, y + uy * a)
-            d_min = min(d_min, min(poly.distance(q) for poly in polys))
+            d_min = min(d_min, ruler.distance(x + ux * a, y + uy * a))
             if d_min <= self.stand_off_m:
                 break
         if d_min > self.stand_off_m:
@@ -2500,9 +2506,11 @@ class FenceGuard:
         big is the detour — and the side with the shorter answer wins. On the gap
         policy the eastward answer is finite and the westward one is infinite.
         """
-        from shapely.geometry import Point
         speed = math.hypot(vx, vy)
-        polys = self.polys
+        # The Shield's distances to the zones in force now (one ruler for
+        # every probe of this call).
+        ruler = self.shield.zone_ruler()
+        polys = bool(ruler)
         # A BUILDING IS AS GOOD A REASON TO SIDESTEP AS A FENCE.
         #
         # This used to return "no opinion" whenever the policy declared no
@@ -2560,9 +2568,7 @@ class FenceGuard:
         def _ahead_clear(px: float, py: float) -> bool:
             pts = [(px + ux * a, py + uy * a)
                    for a in (probe_m * 0.5, probe_m, probe_m * 1.5)]
-            if polys and not all(
-                    min(poly.distance(Point(*q)) for poly in polys)
-                    >= self.stand_off_m for q in pts):
+            if polys and not all(ruler.distance(*q) >= self.stand_off_m for q in pts):
                 return False
             return all(_clear_of_obstacles(*q) and _on_street(*q) for q in pts)
 
@@ -2582,8 +2588,7 @@ class FenceGuard:
                 px = x + lx * sgn * off
                 py = y + ly * sgn * off
                 # Standing here must itself be legal, with the stand-off kept.
-                if polys and min(poly.distance(Point(px, py))
-                                 for poly in polys) < self.stand_off_m:
+                if polys and ruler.distance(px, py) < self.stand_off_m:
                     continue
                 if not (_clear_of_obstacles(px, py) and _on_street(px, py)):
                     continue          # outside the fence but off the street

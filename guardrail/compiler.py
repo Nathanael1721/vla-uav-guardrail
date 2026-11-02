@@ -114,13 +114,13 @@ from . import csp as _csp
 from .csp import (CSP, CSP_VERSION, AllowedActionSet, CSPBudgetExceeded,
                   CSPUnenforcedRules, ForbiddenActionSet, P0Entry, RiskWeights,
                   RuleDecision, Selection, TokenCounter)
-from .geometry import nearest_on_polyline, point_in_fence
 from .ir import PolicyIR, is_moving
 from .models import (DAYS, RUNTIME_TYPES, AltitudeEnvelope, CircleFence, Corridor,
                      CorridorSwap, DynamicNFZ, KinematicEnvelope,
                      ObstacleClearance, Policy, PolygonFence, SubjectStandoff,
                      TimeWindowSwitch)
-from .shield import RuleClock
+from .shield import (RuleClock, corridor_breached, corridor_in_band, corridor_offset,
+                     corridor_wide, in_zone_band, zone_breached)
 
 # Keep-OUT zones and keep-IN tubes. CircleFence is a PolygonFence (its vertices
 # are the derived 32-gon); DynamicNFZ and CorridorSwap are not subclasses of
@@ -383,10 +383,13 @@ def render_summary(rule) -> str:
 # --------------------------------------------------------------------------- #
 # Geometry for SUMMARISING, not enforcing.
 #
-# The distance helpers below are pure Python: they only score and describe,
-# and nothing the Shield decides depends on them. Where a check does matter for
-# safety (does this action enter a zone?) the code calls geometry.point_in_fence,
-# the Shield's own test. The multi-scale polygons are not computed here at all:
+# The distance helpers below are pure Python: they only score and describe
+# (a zone's distance from the mission's path, for the risk grade and the
+# relevance text), and nothing the Shield decides depends on them. Where a
+# check is about a rule (is this point inside a zone, a corridor, a band?)
+# the code calls the Shield's own verdicts (guardrail/shield.py zone_breached,
+# corridor_breached, in_zone_band; one rule-evaluation code path, WP3-22).
+# The multi-scale polygons are not computed here at all:
 # they are read from the compiled IR (guardrail/ir.py), the grant's "the Prefix
 # Compiler picks the scale, never re-computes" (card WP2-16).
 # --------------------------------------------------------------------------- #
@@ -727,7 +730,7 @@ def _relevance(rule, act: dict, ctx: _Ctx) -> str:
         facts = {"crosses": d_path <= 0.0, "sx": sx, "sy": sy, "tx": tx, "ty": ty,
                  "d_path": d_path, "d_target": d_tgt, "alt": m.cruise_alt_m,
                  "floor": rule.altitude_floor_m, "ceil": rule.altitude_ceiling_m,
-                 "in_band": rule.altitude_floor_m <= m.cruise_alt_m <= rule.altitude_ceiling_m}
+                 "in_band": in_zone_band(rule, m.cruise_alt_m)}
         if isinstance(rule, CircleFence):
             facts["r"] = rule
         elif isinstance(rule, DynamicNFZ):
@@ -737,12 +740,14 @@ def _relevance(rule, act: dict, ctx: _Ctx) -> str:
                          turn=abs(mv.yaw_rate_dps) if mv else 0.0,
                          travel=speed * ctx.lookahead_s, lookahead=ctx.lookahead_s)
     elif isinstance(rule, _TUBES):
-        hw, pts = rule.half_width_m, rule.points()
-        facts = {"start_in": nearest_on_polyline(sx, sy, pts)[0] <= hw,
-                 "target_in": nearest_on_polyline(tx, ty, pts)[0] <= hw,
+        hw = rule.half_width_m
+        # Inside the corridor or not: the Shield's verdicts (shield.py
+        # corridor_wide / corridor_in_band), not a comparison of this module's.
+        facts = {"start_in": not corridor_wide(rule, corridor_offset(rule, sx, sy)),
+                 "target_in": not corridor_wide(rule, corridor_offset(rule, tx, ty)),
                  "hw": hw, "alt": m.cruise_alt_m, "floor": rule.altitude_floor_m,
                  "ceil": rule.altitude_ceiling_m,
-                 "alt_in_band": rule.altitude_floor_m <= m.cruise_alt_m <= rule.altitude_ceiling_m}
+                 "alt_in_band": corridor_in_band(rule, m.cruise_alt_m)}
         if isinstance(rule, CorridorSwap):
             facts["target"] = rule.target_id
     elif isinstance(rule, TimeWindowSwitch):
@@ -975,8 +980,11 @@ def action_violations(action, csp: CSP, state=None, policy: Policy | None = None
     The speed checks need no rotation (see AllowedActionSet: the caps are
     rotation-invariant). With `state`, the altitude after `dt` is checked; with
     `state` and the `policy` the CSP was compiled from, the position after `dt`
-    is checked against every forbidden zone using geometry.point_in_fence - the
-    Shield's own test - and against every keep-in corridor. Advisory: this
+    is checked against every forbidden zone and every keep-in corridor by the
+    Shield's own point verdicts (shield.zone_breached, corridor_breached: one
+    rule-evaluation code path, card WP3-22). The speed, yaw and altitude-band
+    checks compare the action with the CSP's published action sets - the
+    CSP's numbers, which are the compiler's output, not a rule. Advisory: this
     counts would-be violations (the offline-replay metric of PDF p5); the
     Shield, not this function, decides what flies. A MOVING dynamic_nfz is
     tested where it was declared: the CSP cannot know how far the Shield has
@@ -1015,13 +1023,16 @@ def action_violations(action, csp: CSP, state=None, policy: Policy | None = None
     by_id = {c.id: c for c in policy.constraints}
     rings = ({r.rule.id: r.buffered for r in ir.fences}
              if ir is not None and ir.is_current_for(policy) else {})
+    # The position verdicts are the Shield's (guardrail/shield.py zone_breached,
+    # corridor_breached): since 2026-11-03 this function compares nothing of
+    # its own about a rule. The corridor test it made before had no 1e-9 m
+    # slack on the half-width and the band, so a point within a nanometre
+    # outside them reads inside now, as the Shield reads it (WP3-22).
     for fid in f.no_translate_into_polygons:
-        if point_in_fence(x, y, up, by_id[fid], buffered=rings.get(fid)):
+        if zone_breached(by_id[fid], x, y, up, buffered=rings.get(fid)):
             out.append(f"polygon:{fid}")
     for cid in f.no_translate_out_of_corridors:
-        c = by_id[cid]
-        d, _, _ = nearest_on_polyline(x, y, c.points())
-        if d > c.half_width_m or not (c.altitude_floor_m <= up <= c.altitude_ceiling_m):
+        if corridor_breached(by_id[cid], x, y, up):
             out.append(f"corridor:{cid}")
     return out
 
@@ -1344,7 +1355,11 @@ def rasterise_cost_map(policy: Policy, *, now: datetime | None = None,
         return float(zone_age_s or 0.0)
 
     def in_band(c) -> bool:
-        return altitude_m is None or (c.altitude_floor_m <= altitude_m <= c.altitude_ceiling_m)
+        # The Shield's band tests (shield.py in_zone_band, corridor_in_band).
+        if altitude_m is None:
+            return True
+        return (corridor_in_band(c, altitude_m) if isinstance(c, _TUBES)
+                else in_zone_band(c, altitude_m))
 
     drawn: list[tuple[str, str | None, object, float]] = []   # name, source, geometry, cost
     tubes: list[tuple] = []                                     # (rule, geometry or None)
@@ -2097,8 +2112,7 @@ def time_window_lead_warnings(policy: Policy, *, lookahead_s: float = DEFAULT_LO
         if start is None or now is None:
             continue
         sx, sy, sup = (float(v) for v in start)
-        if not (ring.contains(Point(sx, sy))
-                and z.altitude_floor_m <= sup <= z.altitude_ceiling_m):
+        if not zone_breached(z, sx, sy, sup, buffered=ring):   # the Shield's test
             continue
         if clock.on(z, now):
             continue        # already in force at the start: start_conflicts' case

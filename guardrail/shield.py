@@ -531,6 +531,99 @@ def escape_direction(x: float, y: float, poly, vx: float = 0.0,
     return dirs[0]                        # the first along the canonical ring
 
 
+# --------------------------------------------------------------------------- #
+# Per-position rule tests: the violation checker's point verdicts
+# --------------------------------------------------------------------------- #
+#
+# "Does this point break this rule?" and "how far is it from this zone?" are
+# answered by these functions and nowhere else (grant, Safety Shield page,
+# "Violation checking": "there is exactly one rule-evaluation code path in
+# the system"). The monitor's own views call them (rule_status,
+# rule_clearances, zones_now, fence_distance, the corridor check), and so do
+# the readers outside it: the Prefix Compiler's action check
+# (compiler.action_violations), its relevance facts and its lint, the cost
+# map's band, the RTL hand-over (guardrail/rtl_path.py) and the city
+# controller (demo/follow_vlm.py FenceGuard, through `ZoneRuler`). The
+# comparisons are the ones the monitor always made: a zone's band with its
+# ends included, the interior of its margin ring (geometry.point_in_fence on
+# the ring compiled once in the IR), a corridor's half-width and band with
+# 1e-9 m of slack. Until 2026-11-03 compiler.action_violations judged a
+# corridor without that slack, and rtl_path, FenceGuard and the lint each
+# made these comparisons themselves (card WP3-22).
+
+_CORRIDOR_SLACK_M = 1e-9
+
+
+def band_holds(lo: float, hi: float, up: float) -> bool:
+    """Is altitude `up` within [lo, hi], ends included: a keep-out zone's
+    band test (geometry.point_in_fence's first comparison)."""
+    return lo <= up <= hi
+
+
+def in_zone_band(zone, up: float) -> bool:
+    """Is altitude `up` within keep-out zone `zone`'s band?"""
+    return band_holds(zone.altitude_floor_m, zone.altitude_ceiling_m, up)
+
+
+def zone_breached(zone, x: float, y: float, up: float, polygon=None,
+                  buffered=None) -> bool:
+    """Does the point (x, y, up) break keep-out zone `zone`: inside its margin
+    ring AND within its band? `buffered` is the ring compiled once in the IR
+    (FenceRecord.buffered); without it the ring is built here."""
+    return point_in_fence(x, y, up, zone, polygon, buffered)
+
+
+def corridor_offset(corridor, x: float, y: float) -> float:
+    """Metres from (x, y) to a corridor's centreline (its segments)."""
+    return nearest_on_polyline(x, y, corridor.points())[0]
+
+
+def corridor_band_outside(corridor, up: float) -> tuple[bool, bool]:
+    """(below the corridor's floor, above its ceiling) at altitude `up`."""
+    return (up < corridor.altitude_floor_m - _CORRIDOR_SLACK_M,
+            up > corridor.altitude_ceiling_m + _CORRIDOR_SLACK_M)
+
+
+def corridor_wide(corridor, offset: float) -> bool:
+    """Is a lateral `offset` from the centreline outside the corridor?"""
+    return offset > corridor.half_width_m + _CORRIDOR_SLACK_M
+
+
+def corridor_in_band(corridor, up: float) -> bool:
+    below, above = corridor_band_outside(corridor, up)
+    return not (below or above)
+
+
+def corridor_breached(corridor, x: float, y: float, up: float) -> bool:
+    """Does the point (x, y, up) break keep-in corridor `corridor`: wider
+    than its half-width or outside its band?"""
+    return corridor_wide(corridor, corridor_offset(corridor, x, y)) or \
+        not corridor_in_band(corridor, up)
+
+
+class ZoneRuler:
+    """Distances from points to the margin rings of a set of compiled zones:
+    `Shield.zone_ruler()`, the zones in force at one tick, read once and
+    asked for as many points as the caller needs (FenceGuard asks for a
+    dozen per control tick). The distance is the one Shield.fence_distance
+    reports: 0 inside a ring, inf with no zone."""
+    __slots__ = ("records", "_rings")
+
+    def __init__(self, records):
+        self.records = tuple(records)
+        self._rings = tuple(r.buffered for r in self.records)
+
+    def __bool__(self) -> bool:
+        return bool(self._rings)
+
+    def __len__(self) -> int:
+        return len(self._rings)
+
+    def distance(self, x: float, y: float) -> float:
+        p = Point(x, y)
+        return min((g.distance(p) for g in self._rings), default=math.inf)
+
+
 def _sanitise(a: Action4D) -> tuple[Action4D, list[str]]:
     """Force every channel finite, returning the names of the ones that were not.
 
@@ -3126,9 +3219,8 @@ class Shield:
         pts = c.points()
         half = c.half_width_m
         d_now, (ux, uy) = self._corridor_geom(c, state.x, state.y)
-        wide = d_now > half + 1e-9
-        below = state.up < c.altitude_floor_m - 1e-9
-        above = state.up > c.altitude_ceiling_m + 1e-9
+        wide = corridor_wide(c, d_now)
+        below, above = corridor_band_outside(c, state.up)
 
         if (alive is True or alive(0.0)) and (wide or below or above):
             bad = []
@@ -3151,13 +3243,12 @@ class Shield:
             if alive is not True and not alive(t):
                 continue
             d, _, _ = nearest_on_polyline(p.x, p.y, pts)
-            if d > half + 1e-9:
+            if corridor_wide(c, d):
                 return [Violation(
                     rule_id=c.id, category="corridor", predicted_at_s=t,
                     detail=(f"predicted {d:.1f}m off centerline at t+{t:.1f}s, "
                             f"half-width {half:.1f}m"))]
-            if not (c.altitude_floor_m - 1e-9 <= p.up
-                    <= c.altitude_ceiling_m + 1e-9):
+            if not corridor_in_band(c, p.up):
                 return [Violation(
                     rule_id=c.id, category="corridor", predicted_at_s=t,
                     detail=(f"predicted alt {p.up:.1f}m outside corridor band "
@@ -4729,7 +4820,7 @@ class Shield:
                     h = rec.buffered.distance(P)
                 out[c.id] = RuleClearance(
                     True, h, up - c.altitude_floor_m, c.altitude_ceiling_m - up, in_force,
-                    in_force and point_in_fence(x, y, up, c, rec.polygon, rec.buffered))
+                    in_force and zone_breached(c, x, y, up, rec.polygon, rec.buffered))
             elif c.type == "altitude_envelope":
                 below, above = self._alt_outside(c, up)
                 out[c.id] = RuleClearance(False, inf, up - c.alt_min_m, c.alt_max_m - up,
@@ -4752,11 +4843,10 @@ class Shield:
                                           in_force and d < c.min_clearance_m, self._dist_lip)
             elif c.type in ("corridor", "corridor_swap"):
                 off, _ = self._corridor_geom(c, x, y)
-                in_band = c.altitude_floor_m - 1e-9 <= up <= c.altitude_ceiling_m + 1e-9
                 out[c.id] = RuleClearance(
                     False, c.half_width_m - off, up - c.altitude_floor_m,
                     c.altitude_ceiling_m - up, in_force,
-                    in_force and (off > c.half_width_m + 1e-9 or not in_band))
+                    in_force and (corridor_wide(c, off) or not corridor_in_band(c, up)))
         return out
 
     def rule_motion(self, rule_ids=None) -> dict[str, tuple[float, float, float, float, float]]:
@@ -5302,15 +5392,15 @@ class Shield:
                     rec = tick.current(rec)
                 inside = rec.polygon.contains(P)
                 in_ring = rec.buffered.contains(P)
-                in_band = c.altitude_floor_m <= state.up <= c.altitude_ceiling_m
+                in_band = in_zone_band(c, state.up)
                 d = 0.0 if in_ring else rec.buffered.distance(P)
                 row.update(bound=in_force and in_band, inside=inside,
                            in_margin=in_ring and not inside, in_band=in_band,
                            value=d, distance_m=d, margin_m=float(c.margin_m),
                            vertices=[(float(x), float(y)) for x, y in
                                      list(rec.polygon.exterior.coords)[:-1]],
-                           breach=in_force and point_in_fence(
-                               state.x, state.y, state.up, c, rec.polygon, rec.buffered))
+                           breach=in_force and zone_breached(
+                               c, state.x, state.y, state.up, rec.polygon, rec.buffered))
             elif c.type == "altitude_envelope":
                 below, above = self._alt_outside(c, state.up)
                 row.update(bound=in_force, value=state.up,
@@ -5340,11 +5430,11 @@ class Shield:
                                breach=in_force and d < c.min_clearance_m)
             elif c.type in ("corridor", "corridor_swap"):
                 off, _ = self._corridor_geom(c, state.x, state.y)
-                in_band = c.altitude_floor_m - 1e-9 <= state.up <= c.altitude_ceiling_m + 1e-9
+                in_band = corridor_in_band(c, state.up)
                 row.update(bound=in_force, value=off, distance_m=c.half_width_m - off,
                            in_band=in_band, centerline=list(c.points()),
                            width_m=float(c.width_m),
-                           breach=in_force and (off > c.half_width_m + 1e-9 or not in_band))
+                           breach=in_force and (corridor_wide(c, off) or not in_band))
             elif c.type == "time_window_switch":
                 row.update(target_id=c.target_id, active=c.active)
             out.append(row)
@@ -5373,18 +5463,34 @@ class Shield:
             m = tick.sched.mask(r.rule)
             if not (m is True or (m is not False and m(0.0))):
                 continue
-            if up is not None and not (r.rule.altitude_floor_m <= up
-                                       <= r.rule.altitude_ceiling_m):
+            if up is not None and not in_zone_band(r.rule, up):
                 continue
             out.append(tick.current(r) if r.moving else r)
         return out
 
+    def zone_ruler(self, up: float | None = None) -> ZoneRuler:
+        """Distances to the margin rings of the zones in force now
+        (`zones_now(up)`), read once for as many points as the caller asks
+        about: the measure `fence_distance` reports, for a reader that needs
+        it at many points in one control tick (demo/follow_vlm.py FenceGuard,
+        which until 2026-11-03 measured the rings itself)."""
+        return ZoneRuler(self.zones_now(up))
+
     def fence_distance(self, x: float, y: float, up: float | None = None) -> float:
         """Metres from (x, y) to the nearest in-force zone's margin ring (0
         inside it); inf with no zone. The geometry the zone rule enforces."""
-        p = Point(x, y)
-        zones = self.zones_now(up)
-        return min((r.buffered.distance(p) for r in zones), default=float("inf"))
+        return self.zone_ruler(up).distance(x, y)
+
+    def enforces_hard(self, rule_id: str) -> bool:
+        """Is `rule_id` a HARD rule this Shield enforces (its effective action
+        is not monitor_only), in the rule set it is enforcing now? The
+        escalation FSM's own table (rt.hard, rt.eff), for a reader that
+        selects the rules a fail-safe must respect (guardrail/rtl_path.py)
+        instead of re-reading the rule's fields."""
+        tick = self._tick_ctx()
+        rt = tick.rt if tick is not None else self._rt
+        return bool(rt.hard.get(rule_id, False)) and \
+            rt.eff.get(rule_id) not in (None, "monitor_only")
 
     # ---------------- the public entry point ---------------- #
 

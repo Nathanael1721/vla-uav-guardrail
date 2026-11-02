@@ -328,6 +328,22 @@ def test_the_guard_measures_the_shields_own_zones():
     for x, y in ((30.0, -10.0), (47.0, 2.0), (0.0, 0.0)):
         d = min(p.distance(Point(x, y)) for p in g.polys)
         assert abs(d - sh.fence_distance(x, y)) < 1e-12
+    # Since 2026-11-03 (WP3-22) the guard's distances ARE the Shield's: it
+    # asks Shield.zone_ruler and measures nothing itself. A ruler that puts a
+    # zone 1 m from every point makes it hold on an open road.
+    asked = []
+
+    class OneMetre:
+        def __bool__(self):
+            return True
+
+        def distance(self, x, y):
+            asked.append((x, y))
+            return 1.0
+    sh.zone_ruler = lambda up=None: OneMetre()
+    scale, dist, blocked = g.gate(10.0, -40.0, *NORTH)
+    assert asked and (scale, dist, blocked) == (0.0, 1.0, True), (scale, dist, blocked)
+    assert g.slide(10.0, -40.0, *NORTH)[2] == float("inf"), "slide measured on its own"
 
 
 def test_a_zone_hot_applied_mid_flight_is_seen_by_the_guard():
