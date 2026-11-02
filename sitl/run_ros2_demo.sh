@@ -219,7 +219,8 @@ case "$PHYSICS" in
   *) echo "PHYSICS must be sitl or gazebo, got '$PHYSICS'"; exit 1 ;;
 esac
 
-echo "=== fresh SITL ($PHYSICS physics) ==="
+echo "=== fresh SITL ==="
+echo "[physics] $PHYSICS"
 nohup bash "$DIR/start_sitl.sh" > ~/sitl-run/sitl.log 2>&1 &
 sleep 8
 

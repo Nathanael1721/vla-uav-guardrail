@@ -434,7 +434,7 @@ def test_the_bundle_carries_the_grants_policy_bundle_and_says_why_no_bag():
     kpi.json says why. Fails before 2026-11-02: no policy_bundle.tar.gz."""
     from guardrail.models import Policy
     h = _harness()
-    switch = {"type": "time_window_switch", "target_id": "nfz-hot", "active": False}
+    switch = {"type": "time_window_switch", **HARD_P0, "target_id": "nfz-hot", "active": False}
     _, _, b = _h_fly(h, OPEN, hot=[(3.0, ZONE), (5.0, switch)], seed=7)
     d = Path(b["bundle_path"])
     assert (d / "shield_audit.jsonl").is_file() and not (d / "episode.bag2").exists()
