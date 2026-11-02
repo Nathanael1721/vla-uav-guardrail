@@ -1118,7 +1118,10 @@ def _assert_stop_advice_on_record(rows, run):
                                                          [r["tick"] for r in advised][:5])
     for r in advised:
         a = adv[r["tick"]]
-        assert a["emitted_action"] == r["flown_action"] == r["stop_advice"]["emitted"], r["tick"]
+        # World frame, as the row: the grant's emitted_action is body frame
+        # since audit record version 4.
+        assert a["emitted_action_world"] == r["flown_action"] == r["stop_advice"]["emitted"], \
+            r["tick"]
         assert a["repair_passes"] is not None, "the advised decision's trace is on record"
         assert [v["rule_id"] for v in a["emitted_violations"]] == \
             [v["rule_id"] for v in r["emitted_violations"]], r["tick"]

@@ -27,9 +27,12 @@ INPUTS (each argument is one episode)
     before anything is read; `adapter_log.jsonl` and the bag's files come out
     of the same verified archive (their digests are checked against the
     index again here);
-  * a rail's run folder: `flight_log.jsonl`, the audit log (`audit.jsonl` or
-    `audit_<id>.jsonl`), `events.jsonl`, `adapter_log.jsonl`, `metrics.json`,
-    `kpi.json`, `manifest.json`, `policy_g<N>.json`, `bag/`;
+  * a rail's run folder: `flight_log.jsonl`, the audit log
+    (`shield_audit.jsonl` since 2026-11-02, `audit.jsonl` in a run stored
+    before then, or the per-episode `shield_audit_<id>.jsonl` /
+    `audit_<id>.jsonl`; guardrail.audit.audit_files), `events.jsonl`,
+    `adapter_log.jsonl`, `metrics.json`, `kpi.json`, `manifest.json`,
+    `policy_g<N>.json`, `bag/`;
   * a headless bundle (experiments/sweep_scenarios.py, the gRPC harness):
     `manifest.json`, `kpi.json` (the table nested under `kpi`, with the
     episode's `rule_priorities`), `harness_events.jsonl`,
@@ -50,8 +53,8 @@ WHAT EACH FIELD IS, WRITER BY WRITER (the part a reader must not assume)
                      tick (below), else (headless) the generation in force
                      at the tick, from the episode's accepted hot-applies in
                      harness_events.jsonl.
-  planner_output     the row's `raw` (the joined audit record's `raw_action`
-                     when the row has none).
+  planner_output     the row's `raw` (the joined audit record's world-frame
+                     `raw_action_world` when the row has none).
   post_repair        the Shield's emitted action. On the rails that is the
                      row's `emitted`. In a HEADLESS row `emitted` is what
                      FLEW (sweep_scenarios: the raw action with the Shield
@@ -70,18 +73,22 @@ WHAT EACH FIELD IS, WRITER BY WRITER (the part a reader must not assume)
                      episode record, not joined per step.
   outcome            the episode's (the run's stored KPI table, else
                      guardrail.kpi.compute on the log), on every step.
-  violation_type     per violation, from this project's category: geofence
-                     and corridor -> fence, altitude -> alt, kinematic ->
-                     envelope, clearance and standoff -> distance, contract
-                     -> contract (an extension: a non-finite command). The
-                     grant's category `time-window` (audit record version 2:
-                     a rule whose window edge falls in the lookahead) is
-                     `schedule`; a record with only the grant's category maps
-                     geometric -> fence. Before record version 2 `schedule`
-                     never occurs: a rule out of its window raises nothing.
-                     A row's violation, which carries neither `priority` nor
-                     `grant_category`, takes both from the joined audit
-                     record's violation of the same rule.
+  violation_type     per violation, from this project's category (a flight
+                     log row's `category`, an audit record's `rule_category`):
+                     geofence and corridor -> fence, altitude -> alt,
+                     kinematic -> envelope, clearance and standoff ->
+                     distance, contract -> contract (an extension: a
+                     non-finite command). The grant's category `time-window`
+                     (audit record version 2 on: a rule whose window edge
+                     falls in the lookahead) is `schedule`; a violation with
+                     only the grant's category maps geometric -> fence.
+                     Before record version 2 `schedule` never occurs: a rule
+                     out of its window raises nothing. A row's violation,
+                     which carries neither `priority` nor the grant's
+                     category, takes both from the joined audit record's
+                     violation of the same rule. Each step's violation
+                     carries both categories: `category` the grant's (null
+                     when no audit record lent it), `rule_category` ours.
   risk_level         the highest priority among the tick's violations (the
                      violation's own `priority` when its audit record
                      carries it,
@@ -101,14 +108,20 @@ WHAT EACH FIELD IS, WRITER BY WRITER (the part a reader must not assume)
 
 THE AUDIT LOG, AND WHICH OF ITS RECORDS BELONG TO WHICH TICK
 
-Every shape guardrail/audit.py has stored is read (`read_audit` /
-`upgrade_record` list them): before record version 2 a record has `tick`
-only; version 2 (2026-10-12, policies/audit_record.schema.json) adds
+Every shape guardrail/audit.py has stored is read: each record is first put
+in the version-4 shape by guardrail.audit.upgrade_record, so the readers below
+read one set of names. Before record version 2 a record has `tick` only;
+version 2 (2026-10-12, policies/audit_record.schema.json) adds
 `monitor_tick`, `episode_id`, a violation's `priority` (the rule's, copied
-into the record) and `grant_category` (whose "time-window", a rule at its
-window edge, is labelled `schedule`). The world-frame actions stay
-`raw_action` / `emitted_action`; the grant's body-frame keys
-(`raw_action_body`, vx forward) are never read as world velocities.
+into the record) and the grant's category (whose "time-window", a rule at
+its window edge, is labelled `schedule`). Version 4 (2026-11-02) puts the
+grant's content under the grant's names: the world-frame actions every
+reader here joins on are `raw_action_world` / `emitted_action_world` (they
+were `raw_action` / `emitted_action` until then, and the upgrade moves them
+there); the body-frame `raw_action` (vx forward) is never read as a world
+velocity. The repairs made are `repair_results` (the old `repair_attempts`),
+the grant's category is a violation's `category` and ours its
+`rule_category`.
 
 A record is joined to a row only when it is shown to be that row's. Until
 `rotate_stale_episode` existed (audit card WP4-20) a reused run folder
@@ -176,8 +189,11 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from guardrail import kpi as K                                     # noqa: E402
+from guardrail.audit import audit_files, upgrade_record            # noqa: E402
 
-SCHEMA = "vlaguard.episode_export/1"
+# 2 since 2026-11-02: a step's violation carries the grant's `category` and
+# ours as `rule_category` (until then `category` was ours, alone).
+SCHEMA = "vlaguard.episode_export/2"
 ACTION_KEYS = ("vx", "vy", "vz_up", "yaw_rate")
 ZERO = {k: 0.0 for k in ACTION_KEYS}
 
@@ -245,9 +261,10 @@ def json_safe(o):
 
 def action(a: Any) -> dict | None:
     """A world-frame Action4D dict (vx North, vy East, vz_up, yaw_rate), as
-    every flight log and every audit record's `raw_action` / `emitted_action`
-    write it. The body-frame `raw_action_body` (vx forward, `vz`) is not
-    read: its vx and vy are not these."""
+    every flight log writes it and an audit record's `raw_action_world` /
+    `emitted_action_world` carry it (record version 4; `raw_action` /
+    `emitted_action` before). The grant's body-frame `raw_action` (vx
+    forward, `vz`) is not read: its vx and vy are not these."""
     if not isinstance(a, dict):
         return None
     out = {k: a.get(k) for k in ACTION_KEYS}
@@ -275,16 +292,42 @@ def _same_action(a: dict | None, b: dict | None, tol: float = 1e-9) -> bool:
 
 
 def violation_type(v: dict) -> str:
-    """The grant's violation_type label of one violation (module docstring)."""
+    """The grant's violation_type label of one violation, in the form
+    `_violation` gives it: `rule_category` ours, `grant_category` the
+    grant's (module docstring)."""
     if v.get("grant_category") == "time-window":
-        # Audit record version 2 (2026-10-12) marks a rule whose window edge
+        # Audit record version 2 (2026-10-12) on marks a rule whose window edge
         # falls inside the lookahead as the grant's time-window category.
         return "schedule"
-    cat = v.get("category")
+    cat = v.get("rule_category")
     if cat in VIOLATION_TYPE:
         return VIOLATION_TYPE[cat]
     g = v.get("grant_category") or cat
     return GRANT_CATEGORY_TYPE.get(g, str(g) if g else "unknown")
+
+
+def _violation(v: dict, *, audit: bool) -> dict:
+    """One violation in the form the labels read: an audit record's (version
+    4: `category` the grant's, `rule_category` ours) or a flight-log row's
+    (`category` ours; no grant category)."""
+    out = {"rule_id": v.get("rule_id")}
+    if audit:
+        out.update(rule_category=v.get("rule_category"), grant_category=v.get("category"))
+    else:
+        out["rule_category"] = v.get("category")
+    if v.get("priority") is not None:
+        out["priority"] = v.get("priority")
+    return {k: x for k, x in out.items() if x is not None}
+
+
+def _audit_v4(a: dict) -> dict:
+    """An audit record of any stored version in the version-4 shape
+    (guardrail.audit.upgrade_record), so every reader here reads one set of
+    names; one the upgrade cannot read is kept as it is."""
+    try:
+        return upgrade_record(a)
+    except Exception:                                            # noqa: BLE001
+        return a
 
 
 # --------------------------------------------------------------------------- #
@@ -406,7 +449,7 @@ def load_replay(path: Path, trust_store=None) -> Episode:
                     raise ExportError(f"{path}: {name} does not match its digest")
                 extra[name] = data
     ep = Episode(key=path.name.replace(".replay.tar.gz", ""), source=_rel(path),
-                 kind="replay", rows=got["rows"], audit=got["audit"],
+                 kind="replay", rows=got["rows"], audit=[_audit_v4(a) for a in got["audit"]],
                  events=got["events"], manifest=got["manifest"] or {},
                  kpi_doc=got["kpi"] or {}, metrics=got["metrics"] or {},
                  signature=got["signature"])
@@ -437,10 +480,9 @@ def load_replay(path: Path, trust_store=None) -> Episode:
 
 
 def _audit_files(run: Path) -> list[Path]:
-    one = run / "audit.jsonl"
-    if one.is_file():
-        return [one]
-    return sorted(run.glob("audit_*.jsonl"))
+    """shield_audit.jsonl, else a stored run's audit.jsonl, else the
+    per-episode files (guardrail.audit.audit_files)."""
+    return audit_files(run)
 
 
 def _resolve_policy_by_hash(manifest: dict):
@@ -467,7 +509,7 @@ def load_dir(run: Path) -> Episode:
     if log.is_file():
         ep.rows = _jsonl(log.read_bytes())
     for a in _audit_files(run):
-        ep.audit += _jsonl(a.read_bytes())
+        ep.audit += [_audit_v4(x) for x in _jsonl(a.read_bytes())]
     ev = run / ("harness_events.jsonl" if headless else "events.jsonl")
     ep.events = _jsonl(ev.read_bytes()) if ev.is_file() else []
     ad = run / "adapter_log.jsonl"
@@ -564,7 +606,7 @@ def _generation_at(gens: list[dict], t: Any) -> dict | None:
 
 def _actions(row: dict, audit: dict | None, shield: str | None,
              advised: bool = False) -> dict:
-    raw = action(row.get("raw")) or action((audit or {}).get("raw_action"))
+    raw = action(row.get("raw")) or action((audit or {}).get("raw_action_world"))
     if "owner" in row:
         # experiments/sweep_scenarios.py: `emitted` is what FLEW.
         owner = row.get("owner")
@@ -581,7 +623,7 @@ def _actions(row: dict, audit: dict | None, shield: str | None,
         src = f"headless:{owner}" + (f":{row['autopilot']}" if row.get("autopilot") else "")
         return {"planner_output": raw, "post_repair": post, "executed": flown,
                 "post_repair_source": post_src, "executed_source": src}
-    post = action(row.get("emitted")) or action((audit or {}).get("emitted_action"))
+    post = action(row.get("emitted")) or action((audit or {}).get("emitted_action_world"))
     if "flown_action" in row:
         if row.get("flown") is False:
             exe, src = None, "not_flown: the rail streamed nothing"
@@ -745,7 +787,7 @@ def join_audit_records(rows: list[dict], audit: list[dict]) -> tuple[dict, dict,
                 if raw is None:
                     continue
                 comparable += 1
-                matched += _same_action(raw, action(a.get("raw_action")))
+                matched += _same_action(raw, action(a.get("raw_action_world")))
             key = (matched, -abs(off), bi)
             if best is None or key > best[0]:
                 best = (key, bi, off, matched, comparable)
@@ -788,11 +830,11 @@ def _stop_advice(row: dict, rec: dict | None) -> dict | None:
     def ids(vs):
         return [str(v.get("rule_id")) for v in vs or [] if isinstance(v, dict)]
     if rec is not None and rec.get("decision_kind") == "stop_advised":
-        return {"emitted": action(rec.get("emitted_action")),
+        return {"emitted": action(rec.get("emitted_action_world")),
                 "violations": ids(rec.get("violations")),
                 "emitted_violations": ids(rec.get("emitted_violations")),
                 "repairs": [str(r.get("operator")) for r in
-                            _first(rec, "repair_attempts", "repairs", default=[]) or []
+                            _first(rec, "repair_results", "repairs", default=[]) or []
                             if isinstance(r, dict)],
                 "source": "audit record (decision_kind stop_advised)"}
     adv = row.get("stop_advice")
@@ -828,14 +870,16 @@ def build_steps(ep: Episode, outcome: str | None) -> list[dict]:
                   {"policy_hash": ep.manifest.get("policy_hash"), "generation": None,
                    "source": "manifest (policy at t = 0 only)"})
         vios = row.get("violations")
-        if vios is None and audit is not None:
+        from_audit = vios is None and audit is not None
+        if from_audit:
             vios = audit.get("violations")
         # The joined record's violation of the same rule lends what a row's
         # violation does not carry (record version 2's priority and grant
         # category); the row's own fields win where both have one.
-        recorded = {str(v.get("rule_id", "")): v for v in (audit or {}).get("violations") or []
-                    if isinstance(v, dict)}
-        vios = [{**recorded.get(str(v.get("rule_id", "")), {}), **v}
+        recorded = {str(v.get("rule_id", "")): _violation(v, audit=True)
+                    for v in (audit or {}).get("violations") or [] if isinstance(v, dict)}
+        vios = [{**recorded.get(str(v.get("rule_id", "")), {}),
+                 **_violation(v, audit=from_audit)}
                 for v in (vios or []) if isinstance(v, dict)]
         labelled = []
         defaulted = False
@@ -846,13 +890,16 @@ def build_steps(ep: Episode, outcome: str | None) -> list[dict]:
             lvl = v.get("priority") or ep.priorities.get(rid)
             if lvl is None:
                 lvl, defaulted = "P0", True
-            labelled.append({"rule_id": rid, "category": v.get("category"),
+            labelled.append({"rule_id": rid, "category": v.get("grant_category"),
+                             "rule_category": v.get("rule_category"),
                              "violation_type": violation_type(v), "risk_level": lvl})
         levels = {x["risk_level"] for x in labelled}
         risk = next((lvl for lvl in K.PRIORITY_LEVELS if lvl in levels), None)
         reps = row.get("repairs")
         if reps is None and audit is not None:
-            reps = _first(audit, "repair_attempts", "repairs", default=[])
+            # The repairs made (repair_results; the grant's repair_attempts
+            # lists the operators tried, skips included).
+            reps = _first(audit, "repair_results", "repairs", default=[])
         advice = _stop_advice(row, second.get(tick))
         step = {
             "schema": SCHEMA, "episode": ep.key, "step": i, "tick": tick, "t": row.get("t"),

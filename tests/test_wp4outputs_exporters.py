@@ -469,11 +469,13 @@ def _tw_policy():
                       {"x": 10, "y": 10}]}]})
 
 
-def _writer_run(root: Path, name: str, vx_list, *, policy=None, clock=None) -> tuple[Path, list]:
+def _writer_run(root: Path, name: str, vx_list, *, policy=None, clock=None,
+                yaw_deg: float = 0.0) -> tuple[Path, list]:
     """A run folder as the ROS 2 rail writes one: the audit by
-    guardrail/audit.py's AuditLogger (record version 2, monitor_tick from 0),
-    the flight log's `tick` from 1, its violations without priority or
-    grant category. No policy file: the record's priority is the only one."""
+    guardrail/audit.py's AuditLogger (record version 2 when this was written,
+    4 now; monitor_tick from 0), the flight log's `tick` from 1, its
+    violations without priority or grant category. No policy file: the
+    record's priority is the only one."""
     from datetime import datetime
     from guardrail.audit import AuditLogger
     from guardrail.models import Action4D, State
@@ -486,7 +488,7 @@ def _writer_run(root: Path, name: str, vx_list, *, policy=None, clock=None) -> t
     al = AuditLogger(run / "audit.jsonl", pol)
     rows = []
     for i, vx in enumerate(vx_list):
-        d = sh.filter(State(x=0.0, y=0.0, up=10.0), Action4D(vx=vx))
+        d = sh.filter(State(x=0.0, y=0.0, up=10.0, yaw_deg=yaw_deg), Action4D(vx=vx))
         al.log(i, d)                                   # 0-based, as the rail does
         rows.append({"t": round(0.1 * (i + 1), 3), "tick": i + 1, "x": 0.0, "y": 0.0,
                      "up": 10.0, "raw": d.raw.model_dump(), "emitted": d.emitted.model_dump(),
@@ -507,7 +509,9 @@ def test_a_version_2_audit_from_the_writer_is_joined_one_tick_on_and_labels_the_
     # join does not read), 2 when this test was written.
     assert recs and all(r["record_version"] >= 2 for r in recs), recs[:1]
     assert [r["monitor_tick"] for r in recs] == [0, 1, 2, 3]
-    assert all(v.get("grant_category") == "time-window" and v.get("priority") == "P1"
+    # Record version 4: the grant's category is `category`, ours `rule_category`.
+    assert all(v.get("category") == "time-window" and v.get("priority") == "P1"
+               and v.get("rule_category") == "geofence"
                for r in recs for v in r["violations"])
     steps, ep = _export(run)
     for s, r in zip(steps, rows):
@@ -524,6 +528,32 @@ def test_a_version_2_audit_from_the_writer_is_joined_one_tick_on_and_labels_the_
     steps, ep = _export(run)
     assert all(s["risk_level"] == "P0" and s["risk_level_defaulted"] for s in steps)
     assert all(s["violation_type"] == ["fence"] for s in steps)
+
+
+def test_a_version_4_audit_lends_its_world_frame_actions_and_both_categories():
+    """Audit record version 4 (2026-11-02): `raw_action` / `emitted_action`
+    are the grant's body frame. Heading East (90 deg), a North command is
+    vx 0, vy -3.3 in the body frame; the step that takes its action from the
+    record must take the WORLD one (raw_action_world), and its violation
+    carries the grant's category beside ours. Reading `raw_action` as world,
+    the join compared body against world and joined nothing."""
+    run, rows = _writer_run(_tmp("wp4_v4_"), "rail", [3.0, 3.1, 3.2, 3.3], yaw_deg=90.0)
+    recs = [json.loads(x) for x in (run / "audit.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert recs[-1]["record_version"] == 4 and abs(recs[-1]["raw_action"]["vy"] + 3.3) < 1e-9
+    # the last row logged only its pose: its actions come from the record
+    rows[-1] = {k: rows[-1][k] for k in ("t", "tick", "x", "y", "up")}
+    (run / "flight_log.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows),
+                                          encoding="utf-8")
+    steps, ep = _export(run)
+    assert ep["audit_join"]["joined"] == 4, ep["audit_join"]
+    last = steps[-1]
+    assert last["action"]["planner_output"] == recs[-1]["raw_action_world"] == {
+        "vx": 3.3, "vy": 0.0, "vz_up": 0.0, "yaw_rate": 0.0}, last["action"]
+    assert last["action"]["post_repair"] == recs[-1]["emitted_action_world"]
+    v = last["violations"][0]
+    assert (v["category"], v["rule_category"], v["violation_type"]) == \
+        ("time-window", "geofence", "schedule"), v
+    assert steps[0]["schema"] == "vlaguard.episode_export/2"
 
 
 def test_an_appended_audit_joins_only_the_flight_that_flew():
@@ -662,7 +692,8 @@ def test_a_stop_advised_record_is_its_tick_s_second_decision_not_a_new_flight():
         if r["tick"] in advised:
             a = s["stop_advice"]
             assert a is not None and a["source"].startswith("audit record"), a
-            assert a["emitted"] == by_tick[r["tick"]]["emitted_action"] == r["flown_action"], a
+            assert a["emitted"] == by_tick[r["tick"]]["emitted_action_world"] == \
+                r["flown_action"], a
             assert "stop" in s["action"]["post_repair_source"], s["action"]
         else:
             assert s["stop_advice"] is None, s["stop_advice"]
@@ -996,13 +1027,23 @@ def test_without_extras_the_generation_timeline_comes_from_the_events():
                "policy_hash": "sha256:refused-never-flew"}
     (copy / "harness_events.jsonl").write_text(
         "\n".join([ev[0], json.dumps(refused)] + ev[1:]) + "\n", encoding="utf-8")
-    steps, ep = _export(copy)
-    assert len(ep["generations"]) == 2, ep["generations"]
-    by_t = [(s["t"], s["policy_state"]) for s in steps]
-    assert all(ps["source"] == "the episode's generation timeline" for _, ps in by_t)
-    assert {ps["generation"] for t, ps in by_t if t < 3.0 - 1e-9} == {0}
-    assert {ps["generation"] for t, ps in by_t if t >= 3.0 - 1e-9} == {1}
-    assert "sha256:refused-never-flew" not in {ps["policy_hash"] for _, ps in by_t}
+    # The bundle's shield_audit.jsonl (written since 2026-10-30, read by the
+    # exporter since 2026-11-02) answers the ticks the Shield logged; the rest
+    # take the timeline. Without the audit, every tick takes the timeline.
+    for with_audit in (True, False):
+        if not with_audit:
+            (copy / "shield_audit.jsonl").unlink()
+        steps, ep = _export(copy)
+        assert len(ep["generations"]) == 2, ep["generations"]
+        by_t = [(s["t"], s["policy_state"], s["audit_record"]) for s in steps]
+        assert all(ps["source"] == ("audit record" if rec else
+                                    "the episode's generation timeline")
+                   for _, ps, rec in by_t)
+        assert any(rec for *_, rec in by_t) == with_audit
+        assert any(not rec for *_, rec in by_t)
+        assert {ps["generation"] for t, ps, _ in by_t if t < 3.0 - 1e-9} == {0}
+        assert {ps["generation"] for t, ps, _ in by_t if t >= 3.0 - 1e-9} == {1}
+        assert "sha256:refused-never-flew" not in {ps["policy_hash"] for _, ps, _ in by_t}
 
 
 def test_the_action_columns_follow_who_flew_the_tick():

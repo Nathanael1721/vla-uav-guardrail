@@ -601,11 +601,16 @@ def test_the_audit_record_carries_generation_fsm_state_and_the_grants_fields():
               "fsm_state_before", "fsm_state_after"):
         assert k in r, k
     assert (r["fsm_state_before"], r["fsm_state_after"], r["fsm_edge"]) == ("Normal", "Brake", "G1")
-    att = r["repair_attempts"][0]
+    # Record version 4: repair_attempts is the operator list (the grant's),
+    # the repair made is in repair_results; the category is the grant's.
+    att = r["repair_results"][0]
     assert att["operator"] == "GeofenceSlide" and att["axis"] == "lateral"
     assert abs(att["magnitude_m"] - 0.5) < 1e-6 and att["result"] == "ok"
+    op = next(a for a in r["repair_attempts"] if a["result"] == "ok")
+    assert op["operator"] == "LateralProjection" and op["repairs"] == ["GeofenceSlide"]
     v = r["violations"][0]
-    assert v["boundary_intersect_at_s"] == v["predicted_at_s"] and v["grant_category"] == "geometric"
+    assert v["boundary_intersect_at_s"] == v["predicted_at_s"] and v["category"] == "geometric"
+    assert v["rule_category"] == "geofence"
     assert r["fsm_config_hash"].startswith("sha256:")
 
 
@@ -646,14 +651,15 @@ def test_one_audit_file_per_episode():
     al = AuditLogger.for_episode(tmp, pol, "ep-001")
     sh = Shield(pol)
     al.log(1, sh.filter(State(x=0, y=15, up=4), Action4D(vx=1.3)))
-    assert (tmp / "audit_ep-001.jsonl").is_file()
+    # The grant's file name, per episode (audit_<id>.jsonl until 2026-11-02).
+    assert (tmp / "shield_audit_ep-001.jsonl").is_file()
     again = AuditLogger.for_episode(tmp, pol, "ep-001")        # fresh, not appended
     assert again.records_written == 0
-    assert (tmp / "audit_ep-001.jsonl").read_text(encoding="utf-8") == ""
+    assert (tmp / "shield_audit_ep-001.jsonl").read_text(encoding="utf-8") == ""
     again.log(2, sh.filter(State(x=0, y=15, up=4), Action4D(vx=1.3)))
     p2 = again.rotate("ep-002")
-    assert p2.name == "audit_ep-002.jsonl" and p2.read_text(encoding="utf-8") == ""
-    rec = json.loads((tmp / "audit_ep-001.jsonl").read_text(encoding="utf-8"))
+    assert p2.name == "shield_audit_ep-002.jsonl" and p2.read_text(encoding="utf-8") == ""
+    rec = json.loads((tmp / "shield_audit_ep-001.jsonl").read_text(encoding="utf-8"))
     assert rec["episode_id"] == "ep-001"
     _raises(ValueError, AuditLogger.for_episode, tmp, pol, "../x")
 

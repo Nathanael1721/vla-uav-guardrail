@@ -3,12 +3,21 @@
 Run:  python tests/test_shieldcore_audit.py
 
   * a record is validated before it is written, and a bad one is refused;
-  * the raw and emitted actions are also written in the grant's body-frame
-    keys {vx, vy, vz, yaw_rate}, frames.to_body at the tick's heading;
-  * a violation a window edge causes is the grant's "time-window" category;
-  * repair_attempts keeps its old keys and gains the measured `iterations`,
-    the pass that logged each repair (operator AND detail);
-    repair_passes lists every operator considered, in every chain run;
+  * record version 4 (2026-11-02): the grant's ten fields come first, in its
+    order, with the grant's content; the grant's own p5 example validates;
+    a world-frame action (vz_up) under the grant's name is refused;
+  * raw_action / emitted_action are the grant's body-frame keys
+    {vx, vy, vz, yaw_rate}, frames.to_body at the tick's heading, and the
+    world-frame actions are raw_action_world / emitted_action_world;
+  * a violation's `category` is the grant's (a window edge's is
+    "time-window"), ours is `rule_category`;
+  * repair_attempts is the grant's operator list (skips with their reason,
+    the ok operator's magnitude_m and pass); repair_results keeps the old
+    repair_attempts' keys and the measured `iterations`, the pass that
+    logged each repair (operator AND detail); repair_passes lists every
+    operator considered, in every chain run;
+  * the file is shield_audit.jsonl; audit_path / audit_files find a stored
+    run's audit.jsonl too;
   * policies/audit_record.schema.json is the model's schema;
   * where the escalation FSM told the autopilot to hold or land is on the
     record (`fsm_hold_point`, record version 3 since 2026-10-20), on the
@@ -34,7 +43,9 @@ for _p in (ROOT, ROOT / "tests"):
         sys.path.insert(0, str(_p))
 
 from guardrail import load_policy                                       # noqa: E402
-from guardrail.audit import (AuditLogger, AuditRecord, SCHEMA_PATH,      # noqa: E402
+from guardrail.audit import (AUDIT_FILE, GRANT_CATEGORY, GRANT_FIELDS,    # noqa: E402
+                             LEGACY_AUDIT_FILE, AuditLogger, AuditRecord,
+                             SCHEMA_PATH, audit_files, audit_path,
                              audit_record_schema, read_audit, upgrade_record)
 from guardrail.frames import to_body                                    # noqa: E402
 from guardrail.models import Action4D, Policy, State                    # noqa: E402
@@ -56,19 +67,42 @@ LEGACY_SOURCES = (("adopt_check", (1, 2)), ("ros2fix_on_dyn_yaw", (1, 2)),
 
 def _log(decisions, policy=None):
     tmp = Path(tempfile.mkdtemp())
-    al = AuditLogger(tmp / "audit.jsonl", policy or "sha256:test")
+    al = AuditLogger(tmp / AUDIT_FILE, policy or "sha256:test")
     for i, d in enumerate(decisions, 1):
         al.log(i, d)
-    p = tmp / "audit.jsonl"
+    p = tmp / AUDIT_FILE
     return [json.loads(l) for l in p.read_text(encoding="utf-8").splitlines()] if p.exists() else []
+
+
+# The grant's example record, Safety Shield page, "Audit log", verbatim.
+GRANT_EXAMPLE = """{
+  "ts": "2026-04-28T09:01:12.345Z",
+  "policy_hash": "sha256:9d31...",
+  "generation": 0,
+  "monitor_tick": 12345,
+  "raw_action": {"vx": 5.0, "vy": 1.2, "vz": 0.0, "yaw_rate": 0.1},
+  "violations": [
+    {"rule_id": "nfz-school-yard", "category": "geometric",
+     "boundary_intersect_at_s": 1.4}
+  ],
+  "repair_attempts": [
+    {"operator": "AltitudeClamp", "result": "skip", "reason": "no altitude violation"},
+    {"operator": "LateralProjection", "result": "ok",
+     "magnitude_m": 0.7, "iterations": 1}
+  ],
+  "emitted_action": {"vx": 4.7, "vy": -0.3, "vz": 0.0, "yaw_rate": 0.1},
+  "fsm_state_before": "Normal",
+  "fsm_state_after":  "Brake"
+}"""
 
 
 def test_a_record_is_validated_before_it_is_written():
     sh = Shield(load_policy(DEMO))
     d = sh.filter(State(x=0, y=15, up=4), Action4D(vx=1.3))
     rec = AuditLogger(Path(tempfile.mkdtemp()) / "a.jsonl", "h").record(1, d)
-    # 3 since 2026-10-20 (fsm_hold_point); 2 since AuditRecord.
-    assert isinstance(rec, AuditRecord) and rec.record_version == 3
+    # 4 since 2026-11-02 (the grant's names, the grant's content); 3 since
+    # 2026-10-20 (fsm_hold_point); 2 since AuditRecord.
+    assert isinstance(rec, AuditRecord) and rec.record_version == 4
     # A ledger entry with a result nobody defined is refused, and nothing is
     # written - a reader never meets it.
     bad = d.model_copy()
@@ -90,24 +124,81 @@ def test_a_record_is_validated_before_it_is_written():
         pass
 
 
+def test_the_grants_example_validates_and_ours_writes_its_ten_fields_first():
+    """WP3-11 (independent review of 29 Oct): three of the grant's names
+    carried this project's content. Now the grant's p5 example record,
+    verbatim, validates as an AuditRecord, and a record this writer writes
+    starts with the grant's ten fields in the grant's order, each with the
+    same kind of value: body-frame actions with keys {vx, vy, vz, yaw_rate},
+    a violation's category one of the grant's, and repair_attempts the
+    operators tried - AltitudeClamp skipped with its reason, the operator
+    that repaired with its magnitude_m and pass, as in the example. On the
+    version-3 writer the record's raw_action had `vz_up`, its category
+    "geofence" and repair_attempts held one GeofenceSlide record."""
+    ex = json.loads(GRANT_EXAMPLE)
+    got = AuditRecord.model_validate(upgrade_record(ex))
+    assert got.raw_action.vz == 0.0 and got.violations[0].category == "geometric"
+    assert [(a.operator, a.result) for a in got.repair_attempts] == [
+        ("AltitudeClamp", "skip"), ("LateralProjection", "ok")]
+    assert got.raw_action_world is None, "the example's body action was moved"
+    pol = load_policy(DEMO)
+    r = _log([Shield(pol).filter(State(x=0, y=15, up=4), Action4D(vx=1.3))], pol)[0]
+    assert tuple(r)[:len(GRANT_FIELDS)] == GRANT_FIELDS == tuple(ex), tuple(r)[:10]
+    for k in ("raw_action", "emitted_action"):
+        assert set(r[k]) == set(ex[k]) == {"vx", "vy", "vz", "yaw_rate"}, (k, r[k])
+    assert set(ex["violations"][0]) <= set(r["violations"][0])
+    assert r["violations"][0]["category"] == "geometric", r["violations"][0]
+    keys = set().union(*(set(a) for a in ex["repair_attempts"]))
+    assert all(keys <= set(a) for a in r["repair_attempts"]), r["repair_attempts"][0]
+    by_op = {a["operator"]: a for a in r["repair_attempts"]}
+    assert by_op["AltitudeClamp"]["result"] == "skip" and by_op["AltitudeClamp"]["reason"]
+    lp = by_op["LateralProjection"]
+    assert (lp["result"], lp["iterations"]) == ("ok", 1) and lp["magnitude_m"] > 0, lp
+    assert set(GRANT_CATEGORY.values()) <= {"geometric", "envelope", "time-window",
+                                             "contract"}
+
+
+def test_a_world_frame_action_under_the_grants_name_is_refused():
+    """The rule that fails on bad input: a version-4 record whose raw_action
+    is the world-frame Action4D (vz_up) does not validate, and neither does
+    one that still writes the version-3 keys beside it."""
+    pol = load_policy(DEMO)
+    rec = AuditLogger.in_memory(pol).record(
+        1, Shield(pol).filter(State(x=0, y=15, up=4), Action4D(vx=1.3)))
+    line = AuditLogger.line(rec)
+    for bad in ({**line, "raw_action": line["raw_action_world"]},
+                {**line, "emitted_action": line["emitted_action_world"]},
+                {**line, "raw_action_body": line["raw_action"]},
+                {**line, "violations": [{**line["violations"][0],
+                                         "grant_category": "geometric"}]}):
+        try:
+            AuditRecord.model_validate(bad)
+        except ValueError:
+            continue
+        raise AssertionError(f"validated: {sorted(set(bad) - set(line)) or bad['raw_action']}")
+
+
 def test_the_body_frame_actions_are_to_body_at_the_ticks_heading():
     sh = Shield(load_policy(DEMO))
     st, a = State(x=0, y=15, up=4, yaw_deg=30.0), Action4D(vx=1.3, vy=-0.4, yaw_rate=0.1)
     d = sh.filter(st, a)
     r = _log([d])[0]
     assert r["body_yaw_deg"] == 30.0
-    for key, act in (("raw_action_body", d.raw), ("emitted_action_body", d.emitted)):
+    for key, act in (("raw_action", d.raw), ("emitted_action", d.emitted)):
         want = dict(zip(("vx", "vy", "vz", "yaw_rate"), to_body(act, 30.0)))
         assert r[key] == want, (key, r[key], want)
-    # The old world-frame keys are still there, vz_up and all.
-    assert r["raw_action"] == {"vx": 1.3, "vy": -0.4, "vz_up": 0.0, "yaw_rate": 0.1}
+    # The world-frame actions, vz_up and all, under their own names.
+    assert r["raw_action_world"] == {"vx": 1.3, "vy": -0.4, "vz_up": 0.0, "yaw_rate": 0.1}
+    assert r["emitted_action_world"] == d.emitted.model_dump()
+    assert "raw_action_body" not in r and "emitted_action_body" not in r
     # A decision that does not carry the heading (one built by hand) writes
     # no body-frame action rather than one at a guessed heading.
     from guardrail.shield import ShieldDecision, Violation
     hand = ShieldDecision(raw=a, emitted=a, violations=[Violation(
         rule_id="r", category="geofence", detail="", predicted_at_s=0.0)])
     r = _log([hand])[0]
-    assert r["raw_action_body"] is None and r["body_yaw_deg"] is None
+    assert r["raw_action"] is None and r["body_yaw_deg"] is None
+    assert r["raw_action_world"] == a.model_dump() and r["repair_attempts"] is None
 
 
 def test_a_violation_a_window_edge_causes_is_time_window():
@@ -127,9 +218,9 @@ def test_a_violation_a_window_edge_causes_is_time_window():
     d_later = Shield(pol.model_copy(deep=True), now=lambda: later).filter(st, a)
     assert d_edge.trace["window_edge"] == ["school"] and d_later.trace["window_edge"] == []
     r_edge, r_later = _log([d_edge])[0], _log([d_later])[0]
-    assert [v["grant_category"] for v in r_edge["violations"]] == ["time-window"]
-    assert [v["grant_category"] for v in r_later["violations"]] == ["geometric"]
-    assert r_edge["violations"][0]["category"] == "geofence"      # ours, unchanged
+    assert [v["category"] for v in r_edge["violations"]] == ["time-window"]
+    assert [v["category"] for v in r_later["violations"]] == ["geometric"]
+    assert r_edge["violations"][0]["rule_category"] == "geofence"      # ours
     # A CLOSING edge inside the lookahead causes nothing: the zone is in force
     # now (17:29:57) and until 17:30:00, and the forecast from x = 5 m enters
     # its ring at t + 1.3 s, before it closes. Geometric, not time-window.
@@ -138,24 +229,33 @@ def test_a_violation_a_window_edge_causes_is_time_window():
         State(x=5.0, y=0.0, up=10.0), a)
     assert [v.rule_id for v in d_close.violations] == ["school"], d_close.violations
     assert d_close.trace["window_edge"] == [], d_close.trace["window_edge"]
-    assert [v["grant_category"] for v in _log([d_close])[0]["violations"]] == ["geometric"]
+    assert [v["category"] for v in _log([d_close])[0]["violations"]] == ["geometric"]
 
 
-def test_repair_attempts_keep_their_keys_and_gain_the_measured_iteration():
+def test_repair_results_keep_the_old_keys_and_repair_attempts_are_the_operators():
     pol = load_policy(DEMO)
     sh = Shield(pol)
     r = _log([sh.filter(State(x=0, y=15, up=4), Action4D(vx=1.3))], pol)[0]
     for k in ("ts", "policy_hash", "generation", "monitor_tick", "raw_action",
               "violations", "repair_attempts", "emitted_action",
               "fsm_state_before", "fsm_state_after", "repairs", "emitted_violations",
-              "braked", "relaxed", "fsm_edge", "fsm_fault", "tick", "episode_id"):
+              "braked", "relaxed", "fsm_edge", "fsm_fault", "tick", "episode_id",
+              "repair_results", "raw_action_world", "emitted_action_world"):
         assert k in r, k
-    att = r["repair_attempts"][0]
+    # What repair_attempts held until record version 4, under its own name.
+    att = r["repair_results"][0]
     assert (att["operator"], att["result"], att["axis"], att["iterations"]) == \
         ("GeofenceSlide", "ok", "lateral", 1), att
     assert r["iterations"] == 1 and r["chain_runs"] == 1 and r["repair_mode"] == "chain"
     ops = [(x["operator"], x["result"]) for p in r["repair_passes"] for x in p["attempts"]]
     assert ("LateralProjection", "ok") in ops and len(ops) == 7, ops
+    # The grant's repair_attempts: the same seven operator calls, flat, in order.
+    flat = [(a["operator"], a["result"]) for a in r["repair_attempts"]]
+    assert flat == ops, (flat, ops)
+    assert [a["run"] for a in r["repair_attempts"]] == [1] * 7
+    lp = next(a for a in r["repair_attempts"] if a["operator"] == "LateralProjection")
+    assert lp["repairs"] == ["GeofenceSlide"] and lp["magnitude_m"] == att["magnitude_m"]
+    assert all(a["reason"] for a in r["repair_attempts"] if a["result"] == "skip")
     assert r["violations"][0]["priority"] == "P0"
 
 
@@ -173,10 +273,14 @@ def test_each_repair_attempt_carries_the_pass_that_logged_it():
     d = Shield(pol).filter(State(x=42.45, y=2.99, up=13.58, yaw_deg=-148.3),
                            Action4D(vx=-1.67, vy=7.95, vz_up=1.56, yaw_rate=-0.3))
     r = _log([d], pol)[0]
-    got = [(a["operator"], a["iterations"]) for a in r["repair_attempts"]]
+    got = [(a["operator"], a["iterations"]) for a in r["repair_results"]]
     assert got == [("SpeedClamp", 0), ("AltitudeFix", 0), ("GeofenceSlide", 1),
                    ("GeofenceEscape", 1), ("ClimbClamp", 1), ("GeofenceSlide", 2),
                    ("ClearanceEscape", None)], got
+    # The operator list ends in the same fallback, after the loop (no pass).
+    last = r["repair_attempts"][-1]
+    assert (last["operator"], last["result"], last["iterations"]) == \
+        ("ClearanceEscape", "fallback", None), last
     assert r["iterations"] == 3 and r["chain_runs"] == 1 and r["flown_run"] == 1
     assert [p["pass"] for p in r["repair_passes"]] == [0, 1, 2, 3]
     fb = [(p["pass"], a["operator"]) for p in r["repair_passes"] for a in p["attempts"]
@@ -190,11 +294,11 @@ def test_each_repair_attempt_carries_the_pass_that_logged_it():
     assert r["braked"] and r["iterations"] == 3, (r["braked"], r["iterations"])
     assert [(p["pass"], a["operator"]) for p in r["repair_passes"] for a in p["attempts"]
             if a["result"] == "fallback"] == [(3, "Brake")]
-    assert [a["iterations"] for a in r["repair_attempts"]] == [0, 0, 0, 1, None]
+    assert [a["iterations"] for a in r["repair_results"]] == [0, 0, 0, 1, None]
     d = Shield(pol).filter(State(x=-22.39, y=-62.64, up=0.01, yaw_deg=-125.5),
                            Action4D(vx=-6.38, vy=-2.18, vz_up=-3.8, yaw_rate=2.25))
     r = _log([d], pol)[0]
-    got = [(a["operator"], a["iterations"]) for a in r["repair_attempts"]]
+    got = [(a["operator"], a["iterations"]) for a in r["repair_results"]]
     assert got == [("SpeedClamp", 0), ("ClimbClamp", 0), ("YawClamp", 0),
                    ("CorridorAltitudeFix", 1), ("CorridorReturn", 1), ("ClimbClamp", 1)], got
     # A passthrough ran no loop at all.
@@ -221,8 +325,12 @@ def test_every_chain_run_is_on_the_record_when_soft_rules_are_relaxed():
     assert r["iterations"] == 4, r["iterations"]
     last = r["repair_passes"][-1]["attempts"][-1]
     assert (last["operator"], last["result"]) == ("SoftRelax", "relaxed")
-    assert [(a["operator"], a["result"], a["iterations"]) for a in r["repair_attempts"]] == \
+    assert [(a["operator"], a["result"], a["iterations"]) for a in r["repair_results"]] == \
         [("SoftRelax", "relaxed", None)]
+    # Both runs in the grant's flat list, each attempt with its run.
+    runs = [a["run"] for a in r["repair_attempts"]]
+    assert runs == sorted(runs) and set(runs) == {1, 2}, runs
+    assert r["repair_attempts"][-1]["operator"] == "SoftRelax"
     assert AuditRecord.model_validate(r).repair_passes[0].run == 1
 
 
@@ -251,7 +359,7 @@ def test_the_fsm_hold_point_is_on_the_audit_record():
     assert (d0.fsm_edge, d1.fsm_state_after) == ("X4", "Loiter"), (d0.fsm_edge,
                                                                    d1.fsm_state_after)
     recs = _log([d0, d1], pol)
-    assert recs and all(r["record_version"] == 3 for r in recs), recs[:1]
+    assert recs and all(r["record_version"] == 4 for r in recs), recs[:1]
     by_tick = {r["monitor_tick"]: r for r in recs}
     hp = by_tick[1]["fsm_hold_point"]
     assert hp is not None and hp == d0.hold_point, (hp, d0.hold_point)
@@ -287,7 +395,9 @@ def _stored_audits():
     at 62 s (this glob and reading every record: about 4 s)."""
     if not DEMO_OUT.is_dir():
         return []
-    found = set(DEMO_OUT.glob("*/audit*.jsonl")) | set(DEMO_OUT.glob("*/*/audit*.jsonl"))
+    found = set()
+    for pat in ("audit*.jsonl", "shield_audit*.jsonl"):
+        found |= set(DEMO_OUT.glob(f"*/{pat}")) | set(DEMO_OUT.glob(f"*/*/{pat}"))
     return sorted(p for p in found if p.stat().st_size)
 
 
@@ -296,15 +406,21 @@ def test_the_stored_audits_read_into_the_model():
     escape ticks and its last; two August, one September and two 6-7 Oct
     records of the two older shapes); every audit stored under demo/out when
     present. A shape that did not record emitted_violations reads as None
-    (not measured), never as an empty list."""
+    (not measured), never as an empty list; one that recorded no operator
+    list has repair_attempts None (not "no operator ran") and its repairs
+    as repair_results; its world-frame actions are raw_action_world /
+    emitted_action_world, and with no heading kept its body-frame ones are
+    None, never rotated at a guess."""
     recs = read_audit(FIX_AUDIT)
     assert len(recs) == 12 and all(r.record_version == 1 for r in recs)
     assert {r.tick for r in recs} >= {857, 927, 928, 999, 1100}
     legacy = read_audit(FIX_LEGACY)
     assert len(legacy) == 5
     assert [r.emitted_violations is None for r in legacy] == [True, True, False, False, False]
-    assert all(r.monitor_tick == r.tick and r.repair_attempts is not None for r in legacy)
+    assert all(r.monitor_tick == r.tick and r.repair_results is not None for r in legacy)
     for r in recs + legacy:
+        assert r.repair_attempts is None and r.raw_action is None, r.tick
+        assert r.raw_action_world is not None and r.emitted_action_world is not None
         again = AuditRecord.model_validate(json.loads(json.dumps(r.model_dump(by_alias=True))))
         assert again == r
     files = _stored_audits()
@@ -316,19 +432,19 @@ def test_the_stored_audits_read_into_the_model():
 
 def test_an_old_records_derived_fields_are_what_its_writer_would_write():
     """A record of the two older shapes has no repair_attempts and no
-    boundary_intersect_at_s: the reader derives them as the writer of the
-    third shape did - result "fallback" for Brake and ClearanceEscape,
-    "relaxed" for SoftRelax, "ok" otherwise; boundary_intersect_at_s =
-    predicted_at_s; the grant's category from ours. The stored September
-    record ends in a ClearanceEscape; no stored record of those shapes holds
-    a Brake or a SoftRelax, so those two are a synthetic record of the July
-    shape."""
+    boundary_intersect_at_s: the reader derives its repair results as the
+    writer of the third shape derived its repair_attempts - result
+    "fallback" for Brake and ClearanceEscape, "relaxed" for SoftRelax, "ok"
+    otherwise; boundary_intersect_at_s = predicted_at_s; the grant's
+    category from ours. The stored September record ends in a
+    ClearanceEscape; no stored record of those shapes holds a Brake or a
+    SoftRelax, so those two are a synthetic record of the July shape."""
     stored = read_audit(FIX_LEGACY)[4]
-    assert [(a.operator, a.result) for a in stored.repair_attempts] == \
+    assert [(a.operator, a.result) for a in stored.repair_results] == \
         [("ClearanceFix", "ok")] * 3 + [("ClearanceEscape", "fallback")]
     v = stored.violations[0]
     assert v.boundary_intersect_at_s == v.predicted_at_s == 0.8835775033671844
-    assert (v.category, v.grant_category) == ("clearance", "envelope")
+    assert (v.rule_category, v.category) == ("clearance", "envelope")
     july = {"ts": "2026-07-30T10:00:00.000+00:00", "policy_hash": "sha256:synthetic",
             "tick": 7, "raw_action": {"vx": 1.0, "vy": 0.0, "vz_up": 0.0, "yaw_rate": 0.0},
             "violations": [{"rule_id": "z", "category": "geofence", "detail": "",
@@ -341,14 +457,70 @@ def test_an_old_records_derived_fields_are_what_its_writer_would_write():
             "emitted_action": {"vx": 0.0, "vy": 0.0, "vz_up": 0.0, "yaw_rate": 0.0},
             "braked": True}
     rec = AuditRecord.model_validate(upgrade_record(july))
-    assert [(a.operator, a.result, a.reason) for a in rec.repair_attempts] == [
+    assert [(a.operator, a.result, a.reason) for a in rec.repair_results] == [
         ("GeofenceSlide", "ok", "z: removed 1.00 m/s"),
         ("SoftRelax", "relaxed", "soft rule(s) band given up"),
         ("Brake", "fallback", "repair not converged -> stop")]
-    assert [(v.boundary_intersect_at_s, v.grant_category) for v in rec.violations] == \
-        [(1.5, "geometric"), (0.0, "envelope")]
+    assert [(v.boundary_intersect_at_s, v.category, v.rule_category)
+            for v in rec.violations] == [(1.5, "geometric", "geofence"),
+                                         (0.0, "envelope", "altitude")]
     assert rec.emitted_violations is None and rec.record_version == 1
     assert rec.monitor_tick == rec.tick == 7
+    assert rec.repair_attempts is None and rec.raw_action is None
+
+
+def test_a_version_3_record_reads_with_the_grants_names_and_upgrades_once():
+    """A record the version-3 writer wrote (body-frame copies under
+    raw_action_body, the grant's category under grant_category, the repair
+    records under repair_attempts and the operator list under
+    repair_passes) reads into version 4 with each value under the name that
+    now carries it; upgrading the result again changes nothing."""
+    from guardrail.audit import operator_attempts
+    pol = load_policy(DEMO)
+    line = AuditLogger.line(AuditLogger.in_memory(pol).record(
+        1, Shield(pol).filter(State(x=0, y=15, up=4, yaw_deg=20.0), Action4D(vx=1.3))))
+    v3 = {k: v for k, v in line.items() if k not in (
+        "raw_action_world", "emitted_action_world", "repair_results")}
+    v3.update(record_version=3, raw_action=line["raw_action_world"],
+              emitted_action=line["emitted_action_world"],
+              raw_action_body=line["raw_action"], emitted_action_body=line["emitted_action"],
+              repair_attempts=line["repair_results"],
+              violations=[{"rule_id": v["rule_id"], "category": v["rule_category"],
+                           "detail": v["detail"], "predicted_at_s": v["predicted_at_s"],
+                           "boundary_intersect_at_s": v["boundary_intersect_at_s"],
+                           "grant_category": v["category"], "priority": v["priority"]}
+                          for v in line["violations"]])
+    up = upgrade_record(v3)
+    for k in ("raw_action", "emitted_action", "raw_action_world", "emitted_action_world",
+              "repair_results", "repair_attempts"):
+        assert up[k] == line[k], k
+    assert [(v["category"], v["rule_category"]) for v in up["violations"]] == \
+        [(v["category"], v["rule_category"]) for v in line["violations"]]
+    assert up["repair_attempts"] == operator_attempts(v3["repair_passes"])
+    assert AuditRecord.model_validate(up).record_version == 3
+    assert upgrade_record(up) == up and upgrade_record(line) == {**line}
+    for raw in map(json.loads, FIX_LEGACY.read_text(encoding="utf-8").splitlines()):
+        once = upgrade_record(raw)
+        assert upgrade_record(once) == once
+
+
+def test_the_file_is_shield_audit_and_a_stored_runs_audit_jsonl_still_reads():
+    """The grant's file name (Stress Testing, episode bundle): the per-episode
+    logger writes shield_audit_<id>.jsonl; a run folder's audit is found
+    under the new name first, the old one (a run stored before 2026-11-02)
+    after it, and a folder with neither has none."""
+    d = Path(tempfile.mkdtemp())
+    assert AUDIT_FILE == "shield_audit.jsonl" and LEGACY_AUDIT_FILE == "audit.jsonl"
+    assert AuditLogger.for_episode(d, "h", "ep-1").path.name == "shield_audit_ep-1.jsonl"
+    assert audit_files(d) == [d / "shield_audit_ep-1.jsonl"]
+    assert audit_path(d) is None
+    (d / LEGACY_AUDIT_FILE).write_text("{}\n", encoding="utf-8")
+    assert audit_path(d) == d / LEGACY_AUDIT_FILE and audit_files(d) == [d / LEGACY_AUDIT_FILE]
+    (d / AUDIT_FILE).write_text("{}\n", encoding="utf-8")
+    assert audit_path(d) == d / AUDIT_FILE
+    old = Path(tempfile.mkdtemp())
+    (old / "audit_ep-0.jsonl").write_text("{}\n", encoding="utf-8")
+    assert audit_files(old) == [old / "audit_ep-0.jsonl"]
 
 
 def test_the_stored_8_oct_audit_agrees_with_its_flight_log():
@@ -361,10 +533,16 @@ def test_the_stored_8_oct_audit_agrees_with_its_flight_log():
         rows = {r["tick"]: r for r in (json.loads(l) for l in fh if l.strip())}
     for rec in read_audit(FIX_AUDIT):
         row = rows[rec.tick]
-        assert rec.raw_action.model_dump() == row["raw"], rec.tick
-        assert rec.emitted_action.model_dump() == row["emitted"], rec.tick
+        assert rec.raw_action_world.model_dump() == row["raw"], rec.tick
+        assert rec.emitted_action_world.model_dump() == row["emitted"], rec.tick
         assert [v.rule_id for v in rec.violations] == [v["rule_id"] for v in row["violations"]]
         assert all(v.boundary_intersect_at_s == v.predicted_at_s for v in rec.violations)
+
+
+# A stored value's name in the version-4 shape, where its meaning moved.
+_RENAMED = {"raw_action": "raw_action_world", "emitted_action": "emitted_action_world",
+            "raw_action_body": "raw_action", "emitted_action_body": "emitted_action",
+            "repair_attempts": "repair_results"}
 
 
 def test_upgrading_keeps_every_stored_value():
@@ -373,17 +551,23 @@ def test_upgrading_keeps_every_stored_value():
         up = upgrade_record(raw)
         for k, v in raw.items():
             if k == "violations":
-                assert [{kk: vv for kk, vv in x.items() if kk in y} for x, y in
-                        zip(up[k], v)] == v
+                for x, y in zip(up[k], v):
+                    assert x["rule_category"] == y["category"]
+                    if "grant_category" in y:
+                        assert x["category"] == y["grant_category"]
+                    moved = ("category", "grant_category")
+                    assert {kk: vv for kk, vv in x.items()
+                            if kk in y and kk not in moved} == \
+                        {kk: vv for kk, vv in y.items() if kk not in moved}
             elif k != "emitted_violations":
-                assert up[k] == v, k
-        assert isinstance(up["repair_attempts"], list)
+                assert up[_RENAMED.get(k, k)] == v, k
+        assert isinstance(up["repair_results"], list)
 
 
 def regenerate_fixtures() -> Path:
     lines = []
     for run, nums in LEGACY_SOURCES:
-        src = (DEMO_OUT / run / "audit.jsonl").read_text(encoding="utf-8").splitlines()
+        src = (DEMO_OUT / run / LEGACY_AUDIT_FILE).read_text(encoding="utf-8").splitlines()
         lines += [src[n - 1] for n in nums]
     with open(FIX_LEGACY, "w", encoding="utf-8", newline="\n") as fh:
         fh.writelines(l + "\n" for l in lines)
