@@ -2105,6 +2105,7 @@ _JP721_PKGS = {"nvidia-l4t-core": "39.2.1-20260806224157", "cuda-cudart-13-2": "
 _AGX = {"release": _JP721_RELEASE, "pkgs": _JP721_PKGS, "os_version": "24.04",
         "kernel": "6.8.12-1021-tegra"}
 AGX_ENV = ORIN_DIR / "agx_vla_env.sh"
+AGX_DRONECATS_ENV = ORIN_DIR / "agx_dronecats_env.sh"
 VLA_BF16_CHECK = ORIN_DIR / "vla_bf16_check.py"
 
 
@@ -2182,6 +2183,45 @@ def test_the_agx_env_keeps_the_vla_pins_and_its_own_torch():
             assert '--index-url "$TORCH_INDEX"' in call, call
         elif "--no-deps" not in call:
             assert '-c "$CONS"' in call or "-U pip wheel" in call, call
+    assert 'TORCH_INDEX="https://download.pytorch.org/whl/cu132"' in text
+    assert "--isolated" in text
+
+
+def _constraints(text: str) -> dict:
+    cons = re.search(r"cat > \"\$CONS\" <<'EOF'\n(.*?)\nEOF", text, flags=re.S)
+    assert cons, "no constraints file"
+    return dict(line.split("==") for line in cons.group(1).splitlines())
+
+
+def test_the_agx_dronecats_env_shares_the_vla_torch_and_holds_transformers_5():
+    """agx_dronecats_env.sh is DroneCATS' own venv: the same torch pair as the
+    VLA environment (one CUDA 13.2 build on the board), the transformers 5
+    vla_server_foreign.py asks for, which the VLA stack's 4.40.1 cannot be,
+    and no quantization package (the 64 GB module serves the 2B model in
+    bf16). Every pip call names its index and reads the constraints."""
+    text = AGX_DRONECATS_ENV.read_text(encoding="utf-8")
+    assert text.startswith("#!/usr/bin/env bash\n") and "set -euo pipefail" in text
+    pins = _constraints(text)
+    vla_pins = _constraints(AGX_ENV.read_text(encoding="utf-8"))
+    for name in ("torch", "torchvision"):
+        assert pins[name] == vla_pins[name], (name, pins[name], vla_pins[name])
+    need = re.search(r"transformers>=(\d+)\.(\d+)",
+                     (ROOT / "demo" / "vla_server_foreign.py").read_text(encoding="utf-8"))
+    assert need, "vla_server_foreign.py no longer says which transformers DroneCATS needs"
+    have = tuple(int(x) for x in pins["transformers"].split(".")[:2])
+    assert have >= (int(need.group(1)), int(need.group(2))), (pins["transformers"], need.group(0))
+    assert pins["transformers"] != vla_pins["transformers"]
+    pip_calls = [l for l in text.splitlines() if l.lstrip().startswith('"${PIP[@]}" install')]
+    assert len(pip_calls) == 3, pip_calls
+    for call in pip_calls:
+        assert "--index-url" in call, call
+        if "torch" in call.split("install", 1)[1].split():
+            assert '--index-url "$TORCH_INDEX"' in call, call
+        else:
+            assert '-c "$CONS"' in call or "-U pip wheel" in call, call
+    installs = " ".join(l for l in text.splitlines() if not l.lstrip().startswith("#"))
+    for pkg in ("torchao", "bitsandbytes"):
+        assert pkg not in installs, f"{pkg} is installed"
     assert 'TORCH_INDEX="https://download.pytorch.org/whl/cu132"' in text
     assert "--isolated" in text
 
