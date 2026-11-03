@@ -16,6 +16,52 @@ shipped change and recorded as one.
 
 ## [Unreleased]
 
+### 2026-11-03 (night) — the first follow flown from the AGX Orin: 0.952 within 30 m, detector 2.57 Hz; city flights bundle themselves again
+
+#### Fixed
+- `demo/follow_vlm.py` wrote the episode id into every flight-log row
+  (since f6ee433, 2026-10-28) but not into `metrics.json` or `kpi.json`, so
+  `guardrail.replay.write_replay` refused every city flight ("metrics.json
+  carries no episode id while the log does") and none wrote its replay
+  bundle: 72 city runs in `demo/out` from 28 October to this flight, 0
+  bundles. `episode_fields()` now stamps the id on the rows, the metrics and
+  the KPI table, as the SITL rails stamp theirs.
+  `tests/test_city_episode.py`: a new test writes the three files the way a
+  flight does and bundles them, and refuses them with the id missing from the
+  two documents; 4 of 4 pass, and the new test fails on the code before the
+  fix.
+
+#### Flown (Project AirSim CityLife, simple_flight, sim on the PC, controller on the AGX; not KPI-grade)
+- `agx_follow_01`: the hand-written follow of the red car (Car_10) with the
+  controller and OWL-ViT on the AGX Orin (native environment, MAXN setting,
+  clocks not locked) and the simulator on the desktop, over the 2.5 Gbit/s
+  cable, at a609cf8: policy `follow_car_citylife_nfz` 0.1.1 from its signed
+  bundle, the grant's 5 s / 0.1 s forecast, 420 s. Within 30 m 0.952,
+  detector 2.57 Hz, P0 escape 0.0, 0 mission collisions (one contact before
+  the mission and one during the landing descent), landing site reached.
+  The run, its PIP video and its note are in
+  `D:\vla_drone_offload\jetson_runs\agx_follow_01`, listed in that folder's
+  `INDEX.md`.
+- Against: the Orin Nano's `orin_follow_02` 0.957 at 2.18 Hz (63f9072, its
+  MAXN_SUPER mode, the 3 s legacy forecast), and the desktop's three flights
+  on the same 5 s forecast, `fc5s_manual_r1/r2/r3_20261103`, 0.980 / 0.961 /
+  0.947. One flight; 0.952 lies inside the desktop's spread.
+
+#### Found
+- In flight the detector is not limited by the GPU: its forward pass took a
+  median 192 ms on the AGX (252 ms on the Nano's flight, against 192 ms
+  alone there in its 25W mode), while the same model alone on the idle AGX took 61 ms. The
+  desktop shows the same gap: the whole inference 66 ms alone and 287 ms in
+  flight (`demo/follow_vlm.py`'s grounder notes).
+
+#### Limits
+- `agx_follow_01` has no replay bundle (it flew before the fix), nor have
+  the other 71 city runs since 28 October; their files are not edited after
+  the fact.
+- The flight ran in the MAXN setting, not the budgeted MODE_50W with
+  `jetson_clocks` that timing and KPI runs use; its topology,
+  `projectairsim-remote-sim`, is not the grant's `hil`.
+
 ### 2026-11-03 (evening) — the AGX Orin 64 GB on JetPack 7.2.1 becomes the hil machine: OpenVLA-7B unquantized in bf16 on the board at about 1 s per action, OWL-ViT at 61 ms; the first-boot check reads JetPack 7.2.1
 
 #### Added

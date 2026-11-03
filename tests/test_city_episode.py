@@ -113,6 +113,47 @@ def test_a_finished_episode_with_ids_on_every_row_bundles_bound_to_it():
                 assert not ok and any("mission_end" in w for w in why), why
 
 
+def test_metrics_and_kpi_carry_the_episode_id_so_the_flight_bundles_itself():
+    """A city flight writes metrics.json and kpi.json beside its log. Until
+    2026-11-03 only the rows carried the episode id, so write_replay refused
+    every city flight ("metrics.json carries no episode id while the log
+    does") and none bundled itself (agx_follow_01, the 3 Nov forecast
+    flights). With episode_fields in all three the bundle binds; without it
+    in the two documents it is refused as before."""
+    fv = _fv()
+    pol = load_policy(POLICY)
+    assert fv.episode_fields(None) == {}
+    for stamped in (True, False):
+        with tempfile.TemporaryDirectory() as td:
+            d = Path(td)
+            rec = fv.city_episode(d, pol, 5.0, (0.0, 0.0), "a red car", 8.0, 5.0)
+            ids = fv.episode_fields(rec)
+            assert ids == {"episode_id": rec.episode_id}
+            rows = [{**ids, "t": 0.1 * i, "tick": i, "x": 0.0, "y": float(i),
+                     "up": 8.0, "policy_hash": pol.policy_hash,
+                     "violations": [], "repairs": []} for i in range(5)]
+            with open(d / "flight_log.jsonl", "w", encoding="utf-8", newline="\n") as fh:
+                for r in rows:
+                    fh.write(json.dumps(r) + "\n")
+            rec.end("the mission window closed", t=0.5)
+            (d / "manifest.json").write_text(json.dumps(fv.flight_manifest(pol.policy_hash, 1)),
+                                             encoding="utf-8")
+            doc_ids = ids if stamped else {}
+            (d / "metrics.json").write_text(json.dumps({"tag": "t", **doc_ids, "ticks": 5}),
+                                            encoding="utf-8")
+            (d / "kpi.json").write_text(json.dumps({"ticks": 5, **doc_ids}), encoding="utf-8")
+            try:
+                path = write_replay(d, pol, d / "t.replay.tar.gz", signer=None)
+            except ValueError as exc:
+                assert not stamped, exc
+                assert "metrics.json carries no episode id" in str(exc), exc
+                assert "kpi.json carries no episode id" in str(exc), exc
+                continue
+            assert stamped, "a bundle without the id in metrics and kpi was written"
+            ok, why = verify_replay(path)
+            assert not any("carries no episode id" in w for w in why), why
+
+
 # --------------------------------------------------------------------- runner
 
 if __name__ == "__main__":

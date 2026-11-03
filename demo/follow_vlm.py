@@ -3993,6 +3993,15 @@ def city_episode(out: Path, policy, lookahead_s: float, start_xy, object_text: s
     return rec
 
 
+def episode_fields(episode: EpisodeRecord | None) -> dict:
+    """The episode id for every flight-log row, metrics.json and kpi.json, as
+    the SITL rails stamp theirs; {} for a flight whose record failed.
+    guardrail.replay binds the three by it and refuses metrics or a KPI table
+    without the id beside a log that carries one: from 2026-10-28 (f6ee433)
+    to 2026-11-03 only the rows had it, so no city flight bundled itself."""
+    return {} if episode is None else {"episode_id": episode.episode_id}
+
+
 # The episode files a re-used tag must not inherit (fly() removes them before
 # take-off, with the flight log and the detections).
 CITY_EPISODE_FILES = ("events.jsonl", "policy_g*.json", "csp_g*.json",
@@ -6532,7 +6541,7 @@ async def fly(args) -> int:
             traj.append({"x": state.x, "y": state.y, "up": state.up,
                          "touched": d.touched})
             rows.append({
-                **({} if episode is None else {"episode_id": episode.episode_id}),
+                **episode_fields(episode),
                 "t": round(time.time() - t0, 3), "tick": tick,
                 "x": state.x, "y": state.y, "up": state.up, "psi": yaw,
                 "det_seq": g["seq"], "det_age_s": round(min(age, 99), 3),
@@ -6905,7 +6914,8 @@ async def fly(args) -> int:
     # Over the MISSION's inferences only, like det_hz (det_rates).
     _dr = det_rates(g, det_g_at_t0, rows[-1]["t"] if rows else None)
     metrics = {
-        "tag": args.tag, "ticks": len(traj), "object": args.object,
+        "tag": args.tag, **episode_fields(episode),
+        "ticks": len(traj), "object": args.object,
         "detector": DETECTOR_ID,
         # --teacher-truth: the boxes were the subject's TRUE position, so the
         # follow numbers below are a teacher's, never a follow result
@@ -7202,6 +7212,7 @@ async def fly(args) -> int:
     # THIS forecast, so the figure carries it; and an aborted flight says so.
     kpis["shield_lookahead"] = metrics["shield_lookahead"]
     kpis["aborted"] = aborted
+    kpis.update(episode_fields(episode))
     (out / "kpi.json").write_text(json.dumps(kpis, indent=1), encoding="utf-8")
     metrics["kpi_grade"] = graded
     metrics["p0_violation_escape_rate"] = kpis["p0_violation_escape_rate"]
