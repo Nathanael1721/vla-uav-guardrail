@@ -16,6 +16,98 @@ shipped change and recorded as one.
 
 ## [Unreleased]
 
+### 2026-11-04 — the 28 October Jetson comparison matrix re-flown on the AGX Orin with every VLA served on the board: the hierarchical follows hold their Orin Nano scores at a median 2.4 times the latency; one flight left the obstacle map and pressed against a building with a P0 escape rate of 0.0
+
+#### Added
+- `deploy/orin/agx_dronecats_env.sh` (6da813d): DroneCATS' own venv on the
+  AGX (transformers 5.21.0 beside the VLA env's 4.40.1, the same torch
+  2.14.1 build), with its test in `tests/test_deploy_configs.py` (67 of 67
+  pass; the test refuses a transformers 4 pin, another torch, torchao, or a
+  torch call without the CUDA 13.2 index).
+- `deploy/evidence/hil/aerialvla_serving_bench_agx_merged.json`: AerialVLA
+  in the matrix's configuration (bf16, sdpa, adapter merged) on the AGX:
+  p50 1073.9 ms, p95 1099.6 ms over 50 requests, 0 parse failures, peak
+  15.471 GB (unmerged: 1520.3 ms). MAXN setting; not R1. Listed in
+  `deploy/evidence/README.md`.
+
+#### Flown (AGX Orin: flight client and VLA server; simulator on the PC; not KPI-grade)
+The 16 steps of the 28 October Jetson matrix and its NFZ3b flight, with the
+same server configurations (the AerialVLA family bf16/sdpa/merged with
+`--missing-down refuse`; DroneCATS bf16 on the detector's frames; RaceVLA
+bf16; the fixed 12 m stand-in), the same flight arguments and the simulator
+restarted for every flight (offscreen, 30 fps), at 6da813d with the AGX in
+MAXN. The difference is where the server ran: on the AGX itself, where on 28
+October it ran on the PC's GPU behind an SSH tunnel. Every model's weights
+digest equals 28 October's (ca9e8701, 3309cdfb, 8cbab0c9, 5080e727,
+03f3bb48). Scores on the 28 October basis (pure VLA: within 30 m after
+acquisition; otherwise within 30 m from the start gate):
+
+| step | AGX | Nano | AGX / Nano VLA latency (s) |
+|---|---|---|---|
+| hand-written | 0.952 | 0.976 | - |
+| hierarchical AerialVLA | 1.000 | 0.989 | 1.44 / 0.63 |
+| hierarchical r1 | 0.647 | 0.890 | 1.47 / 0.62 |
+| hierarchical r2 | 0.920 | 0.924 | 1.46 / 0.52 |
+| hierarchical r3 | 0.843 | 0.876 | 1.46 / 0.62 |
+| hierarchical r4 | 0.911 | 0.882 | 1.46 / 0.49 |
+| hierarchical DroneCATS | 0.941 | 0.969 | 2.64 / 1.24 |
+| hierarchical RaceVLA | 0.715 | 0.704 | 1.22 / 0.51 |
+| hierarchical fixed 12 m (no VLA) | 0.374 | 0.799 | 0.09 / 0.10 |
+| pure AerialVLA | 0.048 | 0.102 | 1.48 / 0.60 |
+| pure r1 | 0.034 | 0.113 | 1.47 / 0.58 |
+| pure r2 | 0.130 | 0.017 | 1.48 / 0.58 |
+| pure r3 | 0.098 | 0.076 | 1.49 / 0.39 |
+| pure r4 | 0.077 | 0.077 | 1.47 / 0.46 |
+| pure DroneCATS | 0.000 | 0.076 | 1.71 / 0.78 |
+| pure RaceVLA | 0.055 | 0.083 | 1.23 / 0.51 |
+| NFZ3b, hierarchical AerialVLA | 0.152 | 0.454 | 1.39 / 0.62 |
+| pure DroneCATS, 30 s timeouts (extra) | 0.081 | - | 1.75 / - |
+
+- P0 escape rate 0.0 on all 18 flights (but see Found). The served latency
+  on the board was 2.1 to 3.9 times the Nano matrix's (median 2.4); over the
+  six hierarchical VLA models flown in full on both (all but r1 and the
+  stand-in) the mean is 0.888 on the AGX and 0.891 on the Nano, and the
+  seven pure-VLA flights stay at or below 0.13 on both.
+- The runs: `D:\vla_drone_offload\jetson_runs` (the first seven) and
+  `E:\vla_drone_offload\jetson_runs` (from `agx_e2e_r3_20261103` on), listed
+  in the former's `INDEX.md`; full PIP videos in `E:\vla_drone_offload\videos`,
+  copies under 30 MB as `docs/video/<tag>_pip_small.mp4` (git-ignored).
+
+#### Found
+- **A flight off the obstacle map pressed against a building while its P0
+  escape rate stayed 0.0.** `nfz3b_agx_hier_aerovla_20261103` searched for
+  the car past the map's edge (y 139) from t 68 s and was off the map on 3484
+  of its 4160 ticks; from t 351.5 s to the end of the mission (420 s) the
+  simulator reported 1919 contacts with `BP_jctBldSetK33_6`, and 657 more
+  after it. The console said that building clearance is not checked off the
+  map, yet
+  `kpi.json` reports the escape rate as measured, with 0 ticks not
+  measurable. The 28 October flights also left the map (two pure-VLA Nano
+  flights for more than 3100 ticks each) without touching anything; this is
+  the first mission contact in any Jetson flight.
+- **Pure DroneCATS cannot hold vla_fly's timeouts on the board.** Its
+  planning answers (up to 1024 tokens) outlasted the 10 s decision timeout,
+  and the mission ended as `server_slow` after 384 ticks (0.000). Flown again
+  with 30 s timeouts it lasted the mission but decided 11 times in 420 s
+  (p95 10.7 s) and hovered on 3473 of 4201 ticks (0.081).
+- The hierarchical r1 flight's start gate timed out (the car never came
+  within 30 m in 330 s), so its 0.647 began without a subject; the stand-in
+  flight lost the car for most of the mission (out of view on 69 % of its
+  ticks; the Nano's 37.5 %): neither difference is the VLA's.
+- D: (an SMR disk, 55 GB free) slowed to about 0.6 MB/s under the run copies,
+  so the runner copies to E: since `agx_hier_r3_20261103`.
+
+#### Limits
+- One flight per configuration. In the 27-29 October set
+  (`docs/FINAL-REPORT-outline.md` section 6) the hand-written follow's five
+  PC flights had a sample std of 0.012, and a car lost at a corner moves one
+  flight far more: hierarchical AerialVLA on the PC ranged 0.309 to 0.999
+  over five.
+- Two changes since 28 October apply to every hierarchical and hand-written
+  flight: the city rail's forecast is the grant's 5 s / 0.1 s (3 s / 0.5 s
+  then), and the policy is `follow_car_citylife_nfz` 0.1.1 (0.1.0 then).
+- MAXN setting, clocks not locked; topology `projectairsim-remote-sim`.
+
 ### 2026-11-03 (late night) — AerialVLA on the AGX Orin itself: 1.52 s per decision; the hierarchical follow 0.988, the end-to-end follow 0.213 with one P0 escape against a phantom subject
 
 #### Added
