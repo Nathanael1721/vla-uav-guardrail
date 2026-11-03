@@ -1,0 +1,335 @@
+===== vlaguard first-boot check (targets: JetPack 6.2, L4T r36.4.x; JetPack 7.2.1, L4T r39.2.x) =====
+date_utc: 2026-11-03T09:16:20Z
+script_commit: 81793ff
+
+----- L4T release
+$ cat /etc/nv_tegra_release
+# R39 (release), REVISION: 2.1, GCID: 46758480, BOARD: generic, EABI: aarch64, DATE: Fri Aug  7 05:54:22 AM UTC 2026
+# KERNEL_VARIANT: oot
+TARGET_USERSPACE_LIB_DIR=nvidia
+TARGET_USERSPACE_LIB_DIR_PATH=usr/lib/aarch64-linux-gnu/nvidia
+
+
+----- Board
+$ cat /proc/device-tree/model
+NVIDIA Jetson AGX Orin Developer Kit
+
+----- Kernel and architecture
+$ uname -srvmo
+Linux 6.8.12-1021-tegra #1 SMP PREEMPT Thu Aug  6 21:56:04 PDT 2026 aarch64 GNU/Linux
+
+----- Ubuntu
+$ cat /etc/os-release
+PRETTY_NAME="Ubuntu 24.04.5 LTS"
+NAME="Ubuntu"
+VERSION_ID="24.04"
+VERSION="24.04.5 LTS (Noble Numbat)"
+VERSION_CODENAME=noble
+ID=ubuntu
+ID_LIKE=debian
+HOME_URL="https://www.ubuntu.com/"
+SUPPORT_URL="https://help.ubuntu.com/"
+BUG_REPORT_URL="https://bugs.launchpad.net/ubuntu/"
+PRIVACY_POLICY_URL="https://www.ubuntu.com/legal/terms-and-policies/privacy-policy"
+UBUNTU_CODENAME=noble
+LOGO=ubuntu-logo
+
+
+----- JetPack and its compute stack on the host
+$ cat /usr/local/cuda/version.json
+{
+   "cuda" : {
+      "name" : "CUDA SDK",
+      "version" : "13.2.2"
+   },
+   "cuda_cccl" : {
+      "name" : "CUDA C++ Core Compute Libraries",
+      "version" : "13.2.86"
+   },
+   "cuda_crt" : {
+      "name" : "CUDA crt Compiler for CUDA applications",
+      "version" : "13.2.86"
+   },
+   "cuda_ctadvisor" : {
+      "name" : "CUDA Compile Time Advisor",
+      "version" : "13.2.86"
+   },
+   "cuda_cudart" : {
+      "name" : "CUDA Runtime (cudart)",
+      "version" : "13.2.86"
+   },
+   "cuda_culibos" : {
+      "name" : "CUDA DEV culibos is a Math Libraries",
+      "version" : "13.2.86"
+   },
+   "cuda_cuobjdump" : {
+      "name" : "cuobjdump",
+      "version" : "13.2.86"
+   },
+   "cuda_cupti" : {
+      "name" : "CUPTI",
+      "version" : "13.2.86"
+   },
+   "cuda_cuxxfilt" : {
+      "name" : "CUDA cu++ filt",
+      "version" : "13.2.86"
+   },
+   "cuda_gdb" : {
+      "name" : "CUDA GDB",
+      "version" : "13.2.86"
+   },
+   "cuda_nvcc" : {
+      "name" : "CUDA NVCC",
+      "version" : "13.2.86"
+   },
+   "cuda_nvdisasm" : {
+      "name" : "CUDA nvdisasm",
+      "version" : "13.2.86"
+   },
+   "cuda_nvml_dev" : {
+      "name" : "CUDA NVML Headers",
+      "version" : "13.2.86"
+   },
+   "cuda_nvprune" : {
+      "name" : "CUDA nvprune",
+      "version" : "13.2.86"
+   },
+   "cuda_nvrtc" : {
+      "name" : "CUDA NVRTC",
+      "version" : "13.2.86"
+   },
+   "cuda_nvtx" : {
+      "name" : "CUDA NVTX",
+      "version" : "13.2.86"
+   },
+   "cuda_profiler_api" : {
+      "name" : "CUDA Profiler API",
+      "version" : "13.2.86"
+   },
+   "cuda_sandbox_dev" : {
+      "name" : "NVIDIA Sandbox Utils",
+      "version" : "13.2.86"
+   },
+   "cuda_sanitizer_api" : {
+      "name" : "CUDA Compute Sanitizer API",
+      "version" : "13.2.87"
+   },
+   "libcublas" : {
+      "name" : "CUDA cuBLAS",
+      "version" : "13.4.1.3"
+   },
+   "libcudla" : {
+      "name" : "CUDA cuDLA",
+      "version" : "13.2.86"
+   },
+   "libcufft" : {
+      "name" : "CUDA cuFFT",
+      "version" : "12.2.0.57"
+   },
+   "libcufile" : {
+      "name" : "GPUDirect Storage (cufile)",
+      "version" : "1.17.1.22"
+   },
+   "libcurand" : {
+      "name" : "CUDA cuRAND",
+      "version" : "10.4.2.66"
+   },
+   "libcusolver" : {
+      "name" : "CUDA cuSOLVER",
+      "version" : "12.2.0.11"
+   },
+   "libcusparse" : {
+      "name" : "CUDA cuSPARSE",
+      "version" : "12.7.10.12"
+   },
+   "libnpp" : {
+      "name" : "CUDA NPP",
+      "version" : "13.1.0.59"
+   },
+   "libnvfatbin" : {
+      "name" : "Fatbin interaction library",
+      "version" : "13.2.86"
+   },
+   "libnvjitlink" : {
+      "name" : "JIT Linker Library",
+      "version" : "13.2.86"
+   },
+   "libnvjpeg" : {
+      "name" : "CUDA nvJPEG",
+      "version" : "13.1.0.59"
+   },
+   "libnvptxcompiler" : {
+      "name" : "CUDA PTX compiler",
+      "version" : "13.2.86"
+   },
+   "libnvvm" : {
+      "name" : "NVVM",
+      "version" : "13.2.86"
+   },
+   "nsight_compute" : {
+      "name" : "Nsight Compute",
+      "version" : "2026.1.1.2"
+   },
+   "nsight_systems" : {
+      "name" : "Nsight Systems",
+      "version" : "2025.6.3.541"
+   },
+   "nvidia_driver" : {
+      "name" : "NVIDIA Linux Driver",
+      "version" : "595.71.05"
+   },
+   "nvidia_fs" : {
+      "name" : "NVIDIA file-system",
+      "version" : "2.28.4"
+   }
+}
+
+$ dpkg-query -W nvidia-jetpack nvidia-l4t-core cuda-cudart-13-2 libcudnn9-cuda-13 tensorrt nvidia-container-toolkit
+dpkg-query: no packages found matching nvidia-jetpack
+cuda-cudart-13-2	13.2.86-1
+libcudnn9-cuda-13	9.20.0.46-1
+nvidia-container-toolkit	1.19.1-1
+nvidia-l4t-core	39.2.1-20260806224157
+tensorrt	10.16.2.10-1+cuda13.2
+(exit 1)
+
+----- Power mode
+$ nvpmodel -q
+NV Power Mode: MAXN
+0
+$ grep -E 'POWER_MODEL|PM_CONFIG' /etc/nvpmodel.conf
+# < POWER_MODEL ID=id_num NAME=mode_name >
+# < PM_CONFIG DEFAULT=default_mode >
+< POWER_MODEL ID=0 NAME=MAXN >
+< POWER_MODEL ID=1 NAME=MODE_15W >
+< POWER_MODEL ID=2 NAME=MODE_30W >
+< POWER_MODEL ID=3 NAME=MODE_50W >
+< PM_CONFIG DEFAULT=2 >
+$ cat /sys/devices/system/cpu/online
+0-11
+
+$ sudo -n jetson_clocks --show
+SOC family:tegra234  Machine:NVIDIA Jetson AGX Orin Developer Kit
+Online CPUs: 0-11, Offline CPUs: 
+cpu0:  Governor=schedutil MinFreq=729600 MaxFreq=2201600 CurrentFreq=1420800 IdleStates: WFI=1 c7=1 
+cpu1:  Governor=schedutil MinFreq=729600 MaxFreq=2201600 CurrentFreq=1267200 IdleStates: WFI=1 c7=1 
+cpu2:  Governor=schedutil MinFreq=729600 MaxFreq=2201600 CurrentFreq=1190400 IdleStates: WFI=1 c7=1 
+cpu3:  Governor=schedutil MinFreq=729600 MaxFreq=2201600 CurrentFreq=729600 IdleStates: WFI=1 c7=1 
+cpu4:  Governor=schedutil MinFreq=729600 MaxFreq=2201600 CurrentFreq=1497600 IdleStates: WFI=1 c7=1 
+cpu5:  Governor=schedutil MinFreq=729600 MaxFreq=2201600 CurrentFreq=729600 IdleStates: WFI=1 c7=1 
+cpu6:  Governor=schedutil MinFreq=729600 MaxFreq=2201600 CurrentFreq=729600 IdleStates: WFI=1 c7=1 
+cpu7:  Governor=schedutil MinFreq=729600 MaxFreq=2201600 CurrentFreq=729600 IdleStates: WFI=1 c7=1 
+cpu8:  Governor=schedutil MinFreq=729600 MaxFreq=2201600 CurrentFreq=806400 IdleStates: WFI=1 c7=1 
+cpu9:  Governor=schedutil MinFreq=729600 MaxFreq=2201600 CurrentFreq=1497600 IdleStates: WFI=1 c7=1 
+cpu10: Governor=schedutil MinFreq=729600 MaxFreq=2201600 CurrentFreq=1497600 IdleStates: WFI=1 c7=1 
+cpu11: Governor=schedutil MinFreq=729600 MaxFreq=2201600 CurrentFreq=729600 IdleStates: WFI=1 c7=1 
+GPU MinFreq=306000000 MaxFreq=1300500000 CurrentFreq=1300500000
+Active GPU TPCs: 8
+EMC MinFreq=204000000 MaxFreq=3199000000 CurrentFreq=3199000000
+DLA0_CORE:   Online=1 MinFreq=0 MaxFreq=1600000000 CurrentFreq=1600000000
+DLA0_FALCON: Online=1 MinFreq=0 MaxFreq=844800000 CurrentFreq=844800000
+DLA1_CORE:   Online=1 MinFreq=0 MaxFreq=1600000000 CurrentFreq=1600000000
+DLA1_FALCON: Online=1 MinFreq=0 MaxFreq=844800000 CurrentFreq=844800000
+PVA0_VPS0: Online=1 MinFreq=0 MaxFreq=1369600000 CurrentFreq=1369600000
+PVA0_AXI:  Online=1 MinFreq=0 MaxFreq=985600000 CurrentFreq=985600000
+FAN Dynamic Speed Control=nvfancontrol hwmon2_pwm1=51
+FAN Dynamic Speed Control=nvfancontrol hwmon2_pwm1_enable=1
+NV Power Mode: MAXN
+
+----- ROS 2 on the host
+$ ls /opt/ros
+(none)
+ROS_DISTRO=
+
+----- Docker
+$ docker info
+Client: Docker Engine - Community
+ Version:    29.9.2
+ Context:    default
+ Debug Mode: false
+ Plugins:
+  buildx: Docker Buildx (Docker Inc.)
+    Version:  v0.38.1
+    Path:     /usr/libexec/docker/cli-plugins/docker-buildx
+  compose: Docker Compose (Docker Inc.)
+    Version:  v5.7.0
+    Path:     /usr/libexec/docker/cli-plugins/docker-compose
+
+Server:
+permission denied while trying to connect to the docker API at unix:///var/run/docker.sock
+(exit 1)
+$ docker compose version
+Docker Compose version v5.7.0
+$ docker buildx version
+github.com/docker/buildx v0.38.1 0dbe87f36ed472fe36b6796c3f70b4210a731fc5
+$ nvidia-ctk --version
+NVIDIA Container Toolkit CLI version 1.19.1
+commit: 598a9cbb6239c7d05df9c881bad36df7eff34d78
+
+----- Memory, swap and disks
+$ free -h
+               total        used        free      shared  buff/cache   available
+Mem:            61Gi        12Gi        21Gi       133Mi        27Gi        48Gi
+Swap:          2.0Gi          0B       2.0Gi
+$ swapon --show
+NAME      TYPE SIZE USED PRIO
+/swapfile file   2G   0B   -2
+$ df -h /
+Filesystem      Size  Used Avail Use% Mounted on
+/dev/nvme0n1p1  438G   55G  362G  14% /
+$ lsblk -d -o NAME,SIZE,MODEL,TRAN
+NAME           SIZE MODEL          TRAN
+loop0            4K                
+loop1         61.8M                
+loop2        188.3M                
+loop3         46.8M                
+loop4         54.7M                
+loop6          562M                
+loop7         91.7M                
+loop8        188.2M                
+loop9         38.6M                
+loop10          16M                
+mmcblk0       59.2G                mmc
+mmcblk0boot0     4M                mmc
+mmcblk0boot1     4M                mmc
+nvme0n1      447.1G ADATA SX8200NP nvme
+
+----- Network
+$ ip -br addr
+lo               UNKNOWN        127.0.0.1/8 ::1/128 
+wlP1p1s0         UP             192.168.50.85/24 fe80::de42:b0ae:7ce2:e253/64 
+can0             DOWN           
+can1             DOWN           
+end0             UP             10.42.0.3/24 
+l4tbr0           DOWN           192.168.55.1/24 fe80::1/64 
+usb0             DOWN           
+usb1             DOWN           
+docker0          DOWN           172.17.0.1/16 
+
+----- Time
+$ timedatectl
+               Local time: Tue 2026-11-03 17:16:22 CST
+           Universal time: Tue 2026-11-03 09:16:22 UTC
+                 RTC time: Tue 2026-11-03 09:16:22
+                Time zone: Asia/Taipei (CST, +0800)
+System clock synchronized: yes
+              NTP service: active
+          RTC in local TZ: no
+$ chronyc tracking
+(command not found: chronyc)
+
+----- git
+$ git --version
+git version 2.43.0
+
+===== VERDICTS =====
+PASS  l4t: R39.2.1 = JetPack 7.2.1, the AGX Orin's release since 2026-11-03 (docs/DESIGN-topologies.md, decision 11)
+PASS  board: NVIDIA Jetson AGX Orin Developer Kit
+PASS  arch: aarch64
+PASS  os: Ubuntu 24.04, as JetPack 7.2 ships it
+WARN  jetpack: the nvidia-jetpack meta-package is not installed; SDK Manager can install its components one by one, so CUDA, cuDNN and TensorRT are checked by package below (the meta-package: sudo apt install nvidia-jetpack)
+PASS  compute: CUDA 13.2 (13.2.86-1), cuDNN 9.20.0.46-1, TensorRT 10.16.2.10-1+cuda13.2
+PASS  power: current 'NV Power Mode: MAXN'; modes 0=MAXN 1=MODE_15W 2=MODE_30W 3=MODE_50W; default ID 2 = MODE_30W; highest budgeted mode ID 3 = MODE_50W; MAXN mode ID 0 = MAXN; timing runs set the mode by ID and lock the clocks (runbook step 4)
+PASS  ros_host: no ROS 2 on the host: ROS 2 Jazzy runs inside the companion image (docs/DESIGN-topologies.md, decision 2)
+FAIL  docker: the Docker daemon does not answer this user (is it running, and is the user in the docker group?)
+===== 1 FAIL, 1 WARN, 7 PASS =====

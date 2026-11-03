@@ -42,7 +42,7 @@ shipped change and recorded as one.
   warnings and failures (JetPack 6.2's Ubuntu or TensorRT on r39, a missing
   cudart-13-2, an r39 that is not r39.2, an R40), a JetPack 6.2 board keeps
   its own expectations, the AGX script's pins and indexes, and the bf16
-  check's refusals.
+  check's refusals. `python tests/test_deploy_configs.py`: 66 of 66 pass.
 
 #### Changed
 - `deploy/orin/first_boot_check.sh` reads the release first: r39 expects
@@ -56,12 +56,18 @@ shipped change and recorded as one.
   distribution; the companion container stays) and `README.md` say so.
 
 #### Measured (on the AGX, 2026-11-03; not R1)
+- The three checks ran from the checkout at 81793ff; their outputs are in
+  `deploy/evidence/hil/` (`first_boot_check.txt`, `gpu_check_agx_native.json`,
+  `vla_bf16_check.json`), listed in `deploy/evidence/README.md`.
+- `first_boot_check.sh`: 7 PASS, WARN no meta-package, FAIL Docker (Found,
+  below).
 - `gpu_check.py --skip-bnb` in the native environment: no problem
   (capability 8.7, bf16 supported, matrix product within 5.7e-7 of the CPU).
-- OpenVLA-7B in bf16 (the bf16 check's procedure from a scratch copy, before
-  the script was committed): load 9.5 to 9.8 s, eight greedy answers on the
-  protocol frame all seven finite numbers and identical, 0.97 to 1.00 s each
-  after the first, peak memory 15.47 GB. The 30W mode and the unconstrained
+- `vla_bf16_check.py`: OpenVLA-7B in bf16 loaded in 8.8 s, eight greedy
+  answers on the protocol frame all seven finite numbers and identical, 0.97
+  to 1.00 s each after the first (median 0.975 s), peak memory 15.47 GB; the
+  same procedure from a scratch copy before the commit gave the same. The
+  30W mode and the unconstrained
   MAXN setting gave the same seconds per action with the GPU at its 1300.5
   MHz top clock: the decode reads the 15 GB of weights per token, so memory
   bandwidth sets the rate.

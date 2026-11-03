@@ -1,0 +1,24 @@
+{
+  "facts": {
+    "python": "3.12.3",
+    "machine": "aarch64",
+    "torch": "2.14.1+cu132",
+    "torch_cuda": "13.2",
+    "cuda_available": true,
+    "device_name": "Orin",
+    "capability": [
+      8,
+      7
+    ],
+    "bf16_supported": true,
+    "matmul_device": "cuda:0",
+    "matmul_rel_err": 5.747673412770382e-07,
+    "bitsandbytes": "skipped"
+  },
+  "expect_capability": [
+    8,
+    7
+  ],
+  "problems": [],
+  "verdict": "ok"
+}

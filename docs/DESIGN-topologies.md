@@ -516,13 +516,20 @@ needed there. It stays for 16 GB GPUs.
 
 **The gate, before any flight** (2026-11-03, on the board):
 
-- `deploy/orin/gpu_check.py --skip-bnb`: no problem; capability 8.7, bf16
-  supported, the GPU's matrix product within 5.7e-7 of the CPU's.
-- `deploy/orin/vla_bf16_check.py`'s procedure, run from a scratch copy
-  before the script was committed: OpenVLA-7B loaded in bf16 in 9.5 to 9.8 s,
-  weights on `cuda:0`; eight greedy answers on the protocol frame's front
-  half, all seven finite numbers and identical; 0.97 to 1.00 s each after
-  the first; peak memory 15.47 GB.
+- `deploy/orin/gpu_check.py --skip-bnb`
+  (`deploy/evidence/hil/gpu_check_agx_native.json`): no problem; capability
+  8.7, bf16 supported, the GPU's matrix product within 5.7e-7 of the CPU's.
+- `deploy/orin/first_boot_check.sh` (`deploy/evidence/hil/first_boot_check.txt`):
+  7 PASS, a WARN for the missing meta-package, and a FAIL for Docker: the
+  daemon refuses the board's user, who is not in the `docker` group. Adding
+  it is the board owner's decision (that group is root-equivalent); the
+  companion containers need it, the native VLA path does not.
+- `deploy/orin/vla_bf16_check.py` at 81793ff
+  (`deploy/evidence/hil/vla_bf16_check.json`): OpenVLA-7B loaded in bf16 in
+  8.8 s, weights on `cuda:0`; eight greedy answers on the protocol frame's
+  front half, all seven finite numbers and identical; 0.97 to 1.00 s each
+  after the first (median 0.975 s); peak memory 15.47 GB. The same
+  procedure from a scratch copy earlier that day gave the same.
 - OWL-ViT (`google/owlvit-base-patch32`, fp32, the follow's detector): 61 ms
   per frame, against 192 ms on the Orin Nano.
 
@@ -628,10 +635,10 @@ that choice to this measurement set.
 | Entrypoint roles and refusals | yes | - | dry-run in tests; the router role with a stand-in `mavlink-routerd`; the `versions` role for real (no ROS on this desktop) |
 | Companion image's Python-floor check (JetPack 6.2, decision 2) | yes | - | its code executed in tests on Python 3.10 (refused) and 3.11 (passed) |
 | VLA install for the r36.4 base (`vla-install.sh`) | yes | - | dry-run plans in tests (with a stand-in interpreter, no torch needed on the host); the sm_87 check, the torch comparison and the pip-config check with stand-ins |
-| First-boot check (`deploy/orin/first_boot_check.sh`) | yes | - | against stand-in Orins in tests (AGX Orin, Orin NX and Orin Nano mode tables; JetPack 6.2 and 7.2.1); on the AGX Orin next |
+| First-boot check (`deploy/orin/first_boot_check.sh`) | yes | - | against stand-in Orins in tests (AGX Orin, Orin NX and Orin Nano mode tables; JetPack 6.2 and 7.2.1); on the AGX Orin on 2026-11-03 (`deploy/evidence/hil/first_boot_check.txt`: Docker fails, its daemon refuses the user) |
 | GPU check (`deploy/orin/gpu_check.py`) | yes | - | its verdicts, and its measuring code against stand-in torch and bitsandbytes modules, in tests; `--skip-bnb` on the AGX Orin's native environment on 2026-11-03 (decision 11) |
 | AGX native environment (`deploy/orin/agx_vla_env.sh`, JetPack 7.2.1) | yes | - | its pins checked by tests; the same steps run by hand on the AGX on 2026-11-03 before the script was written |
-| bf16 OpenVLA check (`deploy/orin/vla_bf16_check.py`) | yes | - | its verdicts in tests; its procedure on the AGX on 2026-11-03 (decision 11) |
+| bf16 OpenVLA check (`deploy/orin/vla_bf16_check.py`) | yes | - | its verdicts in tests; on the AGX on 2026-11-03 (`deploy/evidence/hil/vla_bf16_check.json`, decision 11) |
 | Shield tick profile | yes | - | desktop baseline committed; Orin next |
 | VLA backend protocol and table | yes | - | stub and BC on the desktop CPU; Orin next |
 
