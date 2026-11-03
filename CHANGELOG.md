@@ -16,6 +16,62 @@ shipped change and recorded as one.
 
 ## [Unreleased]
 
+### 2026-11-03 (late night) — AerialVLA on the AGX Orin itself: 1.52 s per decision; the hierarchical follow 0.988, the end-to-end follow 0.213 with one P0 escape against a phantom subject
+
+#### Added
+- `deploy/evidence/hil/aerialvla_serving_bench_agx.json`:
+  `demo/vla_server_v2.py bench` on the AGX in the configuration the desktop
+  flies (bf16, sdpa, adapter unmerged), 5 warm-up and 50 timed requests on
+  the protocol frames: p50 1520.3 ms, p95 1537.8 ms, 0 parse failures, peak
+  15.934 GB. MAXN setting, clocks not locked: not R1. Its
+  `identity.agreement` block is the RTX 4090's probe
+  (`docs/data/aerialvla_serving_4090.json`), carried by configuration; the
+  AGX's own agreement with the reference outputs was not measured. Listed in
+  `deploy/evidence/README.md`.
+
+#### Flown (AerialVLA server on the AGX, simulator on the PC; not KPI-grade)
+- `agx_hier_aerovla_01` (`follow_vlm --vla-hierarchy 127.0.0.1:8790` through
+  `deploy/orin/run_follow_controller.sh`, 07cee03): within 30 m 0.988,
+  detector 2.72 Hz, P0 escape 0.0, 10 repairs (9 kinematic, 1 clearance),
+  0 mission collisions. The VLA answered in a median 1.88 s in flight (237
+  requests: 231 steps, 3 parse failures, 2 LAND); answers older than the
+  1.5 s hold left the controller flying alone on 909 ticks (21.7 %: 858
+  expired, 51 no answer), against 77 ticks on the Nano's
+  `orin_hier_aerovla_20261028` (0.989), whose server ran on the PC's GPU.
+  Its replay bundle wrote itself and re-derives its KPIs, the first city
+  flight to do so since 28 October.
+- `agx_e2e_aerovla_01` (`demo/vla_fly.py` through `deploy/orin/run_vla_fly.sh`,
+  07cee03): within 30 m 0.213 (0.184 after acquisition), 55 decisions at
+  0.13 Hz with a median latency of 1.92 s, the aircraft hovering on 2346 of
+  4200 ticks for want of a new decision. The Nano's `orin_e2e_aerovla_20261028`
+  gave 0.102 and the desktop's `cmp2_e2e_aerovla_20261028` 0.12, both with
+  the server on the PC. P0 escape rate 0.000238: one tick (Found).
+- Both runs, their notes and PIP videos are in
+  `D:\vla_drone_offload\jetson_runs`, listed in its `INDEX.md`.
+
+#### Found
+- **The end-to-end flight's one P0 escape was against a phantom subject.**
+  At tick 3824 (382.6 s) a detection scored 0.0093 (threshold 0.008) placed
+  the subject 3.4 m from the aircraft, 20.1 m from the previous estimate,
+  moving at 7.29 m/s, while the level car was 29.9 m away. StandoffRecover
+  asked for 0.50 m/s of opening, ClearanceEscape acted on the same tick
+  (a building 2.43 m away two ticks earlier), and the repaired command still
+  closed on the estimate, so the Shield's own check counted the tick as an
+  escape. The Shield judged the perception, as designed
+  (`vla_fly.shield_subject` never uses truth); what failed is the subject
+  estimate, which accepted a 20 m jump from a low-score box.
+- In the hierarchical flight the aircraft came within 5 m (horizontal; it
+  flew at 8 m) of the car on 69 ticks with the stand-off rule silent, all
+  while the target was lost (search and plan modes), when the Shield had no
+  subject to keep away from.
+- On the board, the VLA's latency, not the detector, decides how much of the
+  flight it steers: at 1.9 s per answer most hierarchical answers expired
+  before use, and the end-to-end pilot spent more than half the mission
+  hovering.
+
+#### Limits
+- One flight of each, in the MAXN setting, on the remote-sim topology.
+
 ### 2026-11-03 (night) — the first follow flown from the AGX Orin: 0.952 within 30 m, detector 2.57 Hz; city flights bundle themselves again
 
 #### Fixed
