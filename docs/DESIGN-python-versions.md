@@ -386,6 +386,14 @@ would put the Shield on Python 3.10, below the grant's "Python 3.11+ as a ROS
 companion image's build stops if rclpy would run below 3.11. The desktop's
 dev rail is the same distribution. Nothing of this has run on the Orin yet.
 
+Since 2026-11-03 the hil machine is an AGX Orin on JetPack 7.2.1, whose host
+is Ubuntu 24.04 with Python 3.12.3 (`docs/DESIGN-topologies.md`, decision
+11). Jazzy is that Ubuntu's own distribution, so the choice above now holds
+on the host as well; the companion container stays, because hil and flight
+share one image (decision 1). The AGX's native VLA environment runs Python
+3.12 and torch 2.14.1 (CUDA 13.2), against the desktop vla-real's 3.10 and
+torch 2.6.0.
+
 ## Open items (owned by other files)
 
 - Done since: `README.md` states the split (the guardrail package needs

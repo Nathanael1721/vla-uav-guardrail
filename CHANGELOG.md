@@ -16,6 +16,75 @@ shipped change and recorded as one.
 
 ## [Unreleased]
 
+### 2026-11-03 (evening) — the AGX Orin 64 GB on JetPack 7.2.1 becomes the hil machine: OpenVLA-7B unquantized in bf16 on the board at about 1 s per action, OWL-ViT at 61 ms; the first-boot check reads JetPack 7.2.1
+
+#### Added
+- `docs/DESIGN-topologies.md`, decision 11: the AGX Orin 64 GB Developer
+  Kit, flashed on 2026-11-03 with JetPack 7.2.1 (L4T r39.2.1, Ubuntu 24.04.5,
+  kernel 6.8.12, CUDA 13.2.2, cuDNN 9.20.0, TensorRT 10.16.2), replaces the
+  Orin Nano for the Jetson work. What the board reported, why the VLA runs
+  natively there, what that costs, the gate's numbers and the cable
+  (10.42.0.1 to 10.42.0.3, 2.5 Gbit/s).
+- `deploy/orin/agx_vla_env.sh`: the AGX's native environment. No published
+  image carries a JetPack 7.2 Orin torch (jetson-containers' Orin JetPack 7.2
+  issue #1736 open, its jp7/cu132 index 410 Gone), so the script builds a venv
+  on the host's Python 3.12: torch 2.14.1 + torchvision 0.29.1 from PyTorch's
+  CUDA 13.2 index, held by a constraints file every later pip call reads;
+  `requirements-vla.txt` minus bitsandbytes; the follow controller's packages
+  at vla-real's versions except opencv-contrib-python 4.11.0.86 (5.x needs
+  numpy 2); the Project AirSim client at fa404d0, editable, no dependencies.
+- `deploy/orin/vla_bf16_check.py`: OpenVLA-7B loaded in bf16 answers the R1
+  protocol frame a few times with the flight scripts' call; refused unless
+  the weights are bf16 on the GPU and every answer is seven finite numbers.
+  A gate, not an R1 rate.
+- Five tests in `tests/test_deploy_configs.py`: the AGX on JetPack 7.2.1
+  passes the first-boot check (with and without the meta-package), its
+  warnings and failures (JetPack 6.2's Ubuntu or TensorRT on r39, a missing
+  cudart-13-2, an r39 that is not r39.2, an R40), a JetPack 6.2 board keeps
+  its own expectations, the AGX script's pins and indexes, and the bf16
+  check's refusals.
+
+#### Changed
+- `deploy/orin/first_boot_check.sh` reads the release first: r39 expects
+  JetPack 7.2's Ubuntu 24.04 and CUDA 13.2 / cuDNN 9.20 / TensorRT 10.16, and
+  checks them by package even without the `nvidia-jetpack` meta-package
+  (SDK Manager did not install it on the AGX); r36 keeps every JetPack 6.2
+  expectation as it was.
+- `deploy/README.md` ("The AGX Orin: JetPack 7.2.1", the layout's Orin
+  rows), `docs/RUNBOOK-orin-hil.md` (which steps apply on r39),
+  `docs/DESIGN-python-versions.md` (Jazzy is now the host's own
+  distribution; the companion container stays) and `README.md` say so.
+
+#### Measured (on the AGX, 2026-11-03; not R1)
+- `gpu_check.py --skip-bnb` in the native environment: no problem
+  (capability 8.7, bf16 supported, matrix product within 5.7e-7 of the CPU).
+- OpenVLA-7B in bf16 (the bf16 check's procedure from a scratch copy, before
+  the script was committed): load 9.5 to 9.8 s, eight greedy answers on the
+  protocol frame all seven finite numbers and identical, 0.97 to 1.00 s each
+  after the first, peak memory 15.47 GB. The 30W mode and the unconstrained
+  MAXN setting gave the same seconds per action with the GPU at its 1300.5
+  MHz top clock: the decode reads the 15 GB of weights per token, so memory
+  bandwidth sets the rate.
+- OWL-ViT base-patch32 fp32 (the follow's detector): 61 ms per frame, against
+  192 ms on the Orin Nano.
+- `guardrail.manifest.collect_host_evidence()` on the board: device model
+  "NVIDIA Jetson AGX Orin Developer Kit", L4T R39.2.1, `orin_missing()`
+  empty.
+
+#### Found
+- The AGX's user is not in the `docker` group, so `docker info` is refused
+  there; the first-boot check's Docker lines fail until the board's owner
+  adds it.
+
+#### Limits
+- No flight has run on the AGX yet, and no R1 rate: R1 needs the budgeted
+  power mode with the clocks locked.
+- The R1 table's desktop (torch 2.6.0) and AGX (2.14.1) columns no longer
+  share one torch version; PyTorch's CUDA 13.2 index has no torch older than
+  2.12.0.
+- A container for the AGX's VLA path needs a base image checked on r39; none
+  has been.
+
 ### 2026-11-03 — the 2 November branches merged; the flight bundles rebuilt for the new policy versions
 
 #### Changed

@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # First-boot check of the Jetson Orin for the hil topology, on JetPack 6.2
-# (L4T r36.4.x, Ubuntu 22.04). docs/RUNBOOK-orin-hil.md, step 1.
+# (L4T r36.4.x, Ubuntu 22.04) or, since 2026-11-03, on JetPack 7.2.1 (L4T
+# r39.2.x, Ubuntu 24.04: the AGX Orin 64 GB, docs/DESIGN-topologies.md
+# decision 11). The release read from /etc/nv_tegra_release picks which
+# Ubuntu and compute stack are expected. docs/RUNBOOK-orin-hil.md, step 1.
 #
 #   mkdir -p deploy/evidence/incoming/hil
 #   bash deploy/orin/first_boot_check.sh 2>&1 | tee deploy/evidence/incoming/hil/first_boot_check.txt
@@ -60,7 +63,7 @@ dpkg_version() {                           # the installed version of PACKAGE, o
   dpkg-query -W -f='${Version}' "$1" 2>/dev/null || true
 }
 
-echo "===== vlaguard first-boot check (target: JetPack 6.2, L4T r36.4.x) ====="
+echo "===== vlaguard first-boot check (targets: JetPack 6.2, L4T r36.4.x; JetPack 7.2.1, L4T r39.2.x) ====="
 echo "date_utc: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
 rev="$(git -C "$(dirname "$0")/../.." rev-parse --short HEAD 2>/dev/null)" || rev=""
 echo "script_commit: ${rev:-unknown}"
@@ -69,10 +72,22 @@ echo "script_commit: ${rev:-unknown}"
 section "L4T release"
 show /etc/nv_tegra_release
 rel="$(tr -d '\000' < "$SYS/etc/nv_tegra_release" 2>/dev/null)"
+# Which JetPack the rest of the checks expect: jp62 (r36, Ubuntu 22.04, CUDA
+# 12.6) unless the release is r39 (JetPack 7, Ubuntu 24.04, CUDA 13.2).
+TARGET="jp62"
 if [[ "$rel" =~ R([0-9]+)\ \(release\),\ REVISION:\ ([0-9]+)\.([0-9]+) ]]; then
   L4T_MAJOR="${BASH_REMATCH[1]}"; L4T_MINOR="${BASH_REMATCH[2]}"; L4T_PATCH="${BASH_REMATCH[3]}"
   L4T="R$L4T_MAJOR.$L4T_MINOR.$L4T_PATCH"
-  if [ "$L4T_MAJOR" = "36" ] && [ "$L4T_MINOR" = "4" ]; then
+  [ "$L4T_MAJOR" = "39" ] && TARGET="jp72"
+  if [ "$L4T_MAJOR" = "39" ] && [ "$L4T_MINOR" = "2" ]; then
+    case "$L4T_PATCH" in
+      1) pass l4t "$L4T = JetPack 7.2.1, the AGX Orin's release since 2026-11-03 (docs/DESIGN-topologies.md, decision 11)" ;;
+      0) pass l4t "$L4T = JetPack 7.2 (CUDA 13.2.1; JetPack 7.2.1 has 13.2.2, the same cuDNN 9.20 and TensorRT 10.16)" ;;
+      *) pass l4t "$L4T: the r39.2 line (JetPack 7.2.x) decision 11 is written for" ;;
+    esac
+  elif [ "$L4T_MAJOR" = "39" ]; then
+    warn l4t "$L4T is JetPack 7 but not the r39.2 line decision 11 was checked on (JetPack 7.0 and 7.1 are Jetson Thor releases; 7.2 added the Orin): deploy/orin/gpu_check.py decides"
+  elif [ "$L4T_MAJOR" = "36" ] && [ "$L4T_MINOR" = "4" ]; then
     case "$L4T_PATCH" in
       3) pass l4t "$L4T = JetPack 6.2, the release deploy/ is written for" ;;
       4) pass l4t "$L4T = JetPack 6.2.1 (the same CUDA 12.6 / cuDNN 9.3 / TensorRT 10.3 as 6.2, plus the Docker 28 fix)" ;;
@@ -84,7 +99,7 @@ if [[ "$rel" =~ R([0-9]+)\ \(release\),\ REVISION:\ ([0-9]+)\.([0-9]+) ]]; then
   elif [ "$L4T_MAJOR" = "36" ]; then
     fail l4t "$L4T is JetPack 6.0 or older; flash JetPack 6.2 (L4T r36.4.3)"
   else
-    fail l4t "$L4T is not JetPack 6 (L4T R36); flash JetPack 6.2"
+    fail l4t "$L4T is neither JetPack 6 (L4T R36) nor JetPack 7.2 (L4T R39.2); flash JetPack 6.2 or 7.2.1"
   fi
 else
   L4T=""
@@ -113,31 +128,58 @@ kver="$(uname -r 2>/dev/null)"
 section "Ubuntu"
 show /etc/os-release
 os_id="$(. "$SYS/etc/os-release" 2>/dev/null && echo "${ID:-}-${VERSION_ID:-}")"
-if [ "$os_id" = "ubuntu-22.04" ]; then
-  pass os "Ubuntu 22.04, as JetPack 6.2 ships it"
+if [ "$TARGET" = "jp72" ]; then
+  want_os="24.04"; jp_name="JetPack 7.2"
 else
-  warn os "'${os_id:-unknown}': JetPack 6.2 ships Ubuntu 22.04"
+  want_os="22.04"; jp_name="JetPack 6.2"
+fi
+if [ "$os_id" = "ubuntu-$want_os" ]; then
+  pass os "Ubuntu $want_os, as $jp_name ships it"
+else
+  warn os "'${os_id:-unknown}': $jp_name ships Ubuntu $want_os"
 fi
 
 # --------------------------------------------------------------------------- #
 section "JetPack and its compute stack on the host"
-cmd dpkg-query -W nvidia-jetpack nvidia-l4t-core cuda-cudart-12-6 libcudnn9-cuda-12 tensorrt \
-    nvidia-container-toolkit
 show /usr/local/cuda/version.json
-jp="$(dpkg_version nvidia-jetpack)"
-case "$jp" in
-  6.2*) pass jetpack "nvidia-jetpack $jp" ;;
-  "")   warn jetpack "the nvidia-jetpack meta-package is not installed, so the host has no CUDA / cuDNN / TensorRT packages; the images bring their own and need only the driver, so nothing in deploy/ needs them (install with: sudo apt install nvidia-jetpack)" ;;
-  *)    warn jetpack "nvidia-jetpack $jp, not 6.2" ;;
-esac
-cudart="$(dpkg_version cuda-cudart-12-6)"
-trt="$(dpkg_version tensorrt)"
-cudnn="$(dpkg_version libcudnn9-cuda-12)"
-if [ -n "$jp" ]; then
-  if [ -n "$cudart" ] && [[ "$trt" == 10.3* ]] && [[ "$cudnn" == 9.3* ]]; then
-    pass compute "CUDA 12.6 ($cudart), cuDNN $cudnn, TensorRT $trt"
+if [ "$TARGET" = "jp72" ]; then
+  # JetPack 7.2.1 on the AGX: the VLA runs natively on these host libraries
+  # (deploy/orin/agx_vla_env.sh; decision 11), so they are checked even when
+  # SDK Manager installed them without the meta-package.
+  cmd dpkg-query -W nvidia-jetpack nvidia-l4t-core cuda-cudart-13-2 libcudnn9-cuda-13 tensorrt \
+      nvidia-container-toolkit
+  jp="$(dpkg_version nvidia-jetpack)"
+  case "$jp" in
+    7.2*) pass jetpack "nvidia-jetpack $jp" ;;
+    "")   warn jetpack "the nvidia-jetpack meta-package is not installed; SDK Manager can install its components one by one, so CUDA, cuDNN and TensorRT are checked by package below (the meta-package: sudo apt install nvidia-jetpack)" ;;
+    *)    warn jetpack "nvidia-jetpack $jp, not 7.2" ;;
+  esac
+  cudart="$(dpkg_version cuda-cudart-13-2)"
+  trt="$(dpkg_version tensorrt)"
+  cudnn="$(dpkg_version libcudnn9-cuda-13)"
+  if [ -n "$cudart" ] && [[ "$trt" == 10.16* ]] && [[ "$cudnn" == 9.20* ]]; then
+    pass compute "CUDA 13.2 ($cudart), cuDNN $cudnn, TensorRT $trt"
   else
-    warn compute "expected JetPack 6.2's CUDA 12.6 / cuDNN 9.3 / TensorRT 10.3; found cudart-12-6 '${cudart:-none}', cuDNN '${cudnn:-none}', TensorRT '${trt:-none}'"
+    warn compute "expected JetPack 7.2's CUDA 13.2 / cuDNN 9.20 / TensorRT 10.16; found cudart-13-2 '${cudart:-none}', cuDNN '${cudnn:-none}', TensorRT '${trt:-none}'"
+  fi
+else
+  cmd dpkg-query -W nvidia-jetpack nvidia-l4t-core cuda-cudart-12-6 libcudnn9-cuda-12 tensorrt \
+      nvidia-container-toolkit
+  jp="$(dpkg_version nvidia-jetpack)"
+  case "$jp" in
+    6.2*) pass jetpack "nvidia-jetpack $jp" ;;
+    "")   warn jetpack "the nvidia-jetpack meta-package is not installed, so the host has no CUDA / cuDNN / TensorRT packages; the images bring their own and need only the driver, so nothing in deploy/ needs them (install with: sudo apt install nvidia-jetpack)" ;;
+    *)    warn jetpack "nvidia-jetpack $jp, not 6.2" ;;
+  esac
+  cudart="$(dpkg_version cuda-cudart-12-6)"
+  trt="$(dpkg_version tensorrt)"
+  cudnn="$(dpkg_version libcudnn9-cuda-12)"
+  if [ -n "$jp" ]; then
+    if [ -n "$cudart" ] && [[ "$trt" == 10.3* ]] && [[ "$cudnn" == 9.3* ]]; then
+      pass compute "CUDA 12.6 ($cudart), cuDNN $cudnn, TensorRT $trt"
+    else
+      warn compute "expected JetPack 6.2's CUDA 12.6 / cuDNN 9.3 / TensorRT 10.3; found cudart-12-6 '${cudart:-none}', cuDNN '${cudnn:-none}', TensorRT '${trt:-none}'"
+    fi
   fi
 fi
 

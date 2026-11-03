@@ -1,7 +1,7 @@
 # Design: one stack for dev, hil and flight
 
 **Date:** 2026-10-06; revised 2026-10-08 for JetPack 6.2 (decisions 1, 2
-and 10)
+and 10) and 2026-11-03 for JetPack 7.2.1 on the AGX Orin 64 GB (decision 11)
 **Files:** `deploy/` (images, compose files, topology files, the Orin's
 first-boot and GPU checks in `deploy/orin/`), `tools/profile_shield_tick.py`,
 `tools/vla_backend_table.py`, and their tests `tests/test_deploy_configs.py`,
@@ -30,9 +30,10 @@ the desktop feeding it "UDP / Ethernet", and it says "promoting from hil to
 flight is a configuration change, not a code change."
 
 A Jetson Orin is the hil machine, and the same stack is to move onto the drone
-once the airframe is ready. The Orin is being installed with **JetPack 6.2**
+once the airframe is ready. The Orin was planned with **JetPack 6.2**
 (Jetson Linux / L4T r36.4.x on Ubuntu 22.04); decision 10 lists what that
-fixes.
+fixes. Since 2026-11-03 the hil machine is an AGX Orin 64 GB on **JetPack
+7.2.1** (L4T r39.2.1, Ubuntu 24.04); decision 11 lists what that changes.
 
 ## Decisions
 
@@ -451,6 +452,94 @@ power guide: an AGX Orin 64GB has MAXN at 0, its default 30W at 2 and 50W at
 its 40W at 4; an Orin Nano Super has MAXN_SUPER at 2 and defaults to its 25W
 at 1; a Nano without the Super flash has no MAXN mode).
 
+### 11. JetPack 7.2.1 on the AGX Orin 64 GB (2026-11-03)
+
+The hil machine is now the Jetson AGX Orin 64 GB Developer Kit. It was flashed
+on 2026-11-03 with **JetPack 7.2.1**: JetPack 7.2 is the first JetPack 7
+release for the Orin family (7.0 and 7.1 were Jetson Thor only), and it puts
+Ubuntu 24.04 on the host. The Orin Nano Super (JetPack 6.2.3, L4T R36.5) that
+carried the Jetson flights of 27 to 29 Oct stays as the small-edge data point;
+decision 10 still describes a JetPack 6.2 Orin.
+
+**What the board reported** (read on it on 2026-11-03):
+
+| | AGX Orin 64 GB, JetPack 7.2.1 |
+|---|---|
+| `/etc/nv_tegra_release` | `R39 (release), REVISION: 2.1` (`nvidia-l4t-core` 39.2.1) |
+| Ubuntu, kernel | 24.04.5, 6.8.12-1021-tegra |
+| CUDA | 13.2.2 (`cuda-toolkit-13-2` 13.2.2-1, `cuda-cudart-13-2` 13.2.86-1) |
+| cuDNN | 9.20.0.46 (`libcudnn9-cuda-13`) |
+| TensorRT | 10.16.2.10 |
+| VPI | 4.1.4 |
+| NVIDIA Container Toolkit | 1.19.1 |
+| Python | 3.12.3 |
+| Memory, disk | 61 GiB; 447 GB NVMe as root |
+| `nvidia-jetpack` meta-package | not installed (SDK Manager installed the components) |
+
+`guardrail.manifest.collect_host_evidence()` on the board reads the device
+tree's "NVIDIA Jetson AGX Orin Developer Kit" and L4T R39.2.1, so
+`orin_missing()` is empty without the meta-package: runs there earn the Orin
+evidence the hil label needs.
+
+**The VLA runs natively, not in the vla image.** Decision 10's bases are
+jetson-containers builds for L4T r36.4 and are not used on r39. No published
+container image carries a torch build for JetPack 7.2 on an Orin:
+jetson-containers' JetPack 7.2 Orin support was an open issue with no
+maintainer reply (#1736), and its jp7/cu132 package index answered 410 Gone
+(both checked 2026-11-03). NVIDIA's forum staff point JetPack 7.2 users to
+PyTorch's own CUDA 13.2 wheels (`download.pytorch.org/whl/cu132`), whose
+aarch64 builds carry sm_80 code that the Orin's sm_87 runs. That index lists
+torch 2.12.0 to 2.15.0 and torchvision 0.27.0 to 0.29.1 for Python 3.12
+(2026-11-03), so the AGX runs **torch 2.14.1 + torchvision 0.29.1**: the
+newest pair whose torchvision exists (2.15.0 has none there yet).
+`deploy/orin/agx_vla_env.sh` builds that environment on the host's Python
+3.12, with `requirements-vla.txt`'s pins minus bitsandbytes and the follow
+controller's packages. A container for this path is open: it needs a base
+image checked on r39.
+
+What that costs, recorded rather than hidden:
+
+- The desktop's torch 2.6.0 has no CUDA 13 build, so the R1 table's desktop
+  and AGX columns no longer share one framework version (decision 10 kept
+  them equal). Each R1 row names the torch it ran on.
+- The VLA's GPU runtime is on the host, beside the companion containers, not
+  in an image of its own. The safety reason of decision 1 still holds: the
+  VLA is its own process, never the Shield's.
+- opencv-contrib-python is 4.11.0.86 on the AGX against 5.0.0.93 on the
+  desktop, because 5.x needs numpy 2 and the VLA stack pins numpy 1.26.4.
+
+**bf16, not 4-bit.** The 64 GB module holds OpenVLA-7B unquantized, the
+precision upstream publishes (`SERVING_REFERENCE` in
+`tools/vla_backend_table.py`: bf16, eager attention, unmerged), so the AGX
+does not load bitsandbytes and the sm_87 source build of decision 10 is not
+needed there. It stays for 16 GB GPUs.
+
+**The gate, before any flight** (2026-11-03, on the board):
+
+- `deploy/orin/gpu_check.py --skip-bnb`: no problem; capability 8.7, bf16
+  supported, the GPU's matrix product within 5.7e-7 of the CPU's.
+- `deploy/orin/vla_bf16_check.py`'s procedure, run from a scratch copy
+  before the script was committed: OpenVLA-7B loaded in bf16 in 9.5 to 9.8 s,
+  weights on `cuda:0`; eight greedy answers on the protocol frame's front
+  half, all seven finite numbers and identical; 0.97 to 1.00 s each after
+  the first; peak memory 15.47 GB.
+- OWL-ViT (`google/owlvit-base-patch32`, fp32, the follow's detector): 61 ms
+  per frame, against 192 ms on the Orin Nano.
+
+These are not R1 numbers: R1 is 5 warm-up and 50 timed inferences in the
+budgeted mode with the clocks locked (the list above), and has not run on
+the AGX. The same gate gave the same seconds per action in the 30W mode and
+with the unconstrained MAXN setting, with the GPU at its 1300.5 MHz top
+clock: generating an action reads the 15 GB of weights once per token, so
+memory bandwidth sets the rate and the power mode barely moves it.
+Quantization or TensorRT would.
+
+**Network.** One cable: the desktop's "Ethernet 2" at 10.42.0.1/24 and the
+AGX's `end0` at 10.42.0.3/24 (no gateway, never the default route), linked at
+2.5 Gbit/s; the AGX reaches the internet over its Wi-Fi. The Orin Nano's
+10.42.0.2 is kept free for it. The runbook's picture still shows the
+192.168.50.x plan, which the lab's Wi-Fi already uses.
+
 ## Measurements so far (desktop, dev)
 
 ### Shield time per tick, on real flight states
@@ -539,8 +628,10 @@ that choice to this measurement set.
 | Entrypoint roles and refusals | yes | - | dry-run in tests; the router role with a stand-in `mavlink-routerd`; the `versions` role for real (no ROS on this desktop) |
 | Companion image's Python-floor check (JetPack 6.2, decision 2) | yes | - | its code executed in tests on Python 3.10 (refused) and 3.11 (passed) |
 | VLA install for the r36.4 base (`vla-install.sh`) | yes | - | dry-run plans in tests (with a stand-in interpreter, no torch needed on the host); the sm_87 check, the torch comparison and the pip-config check with stand-ins |
-| First-boot check (`deploy/orin/first_boot_check.sh`) | yes | - | against stand-in Orins in tests (AGX Orin, Orin NX and Orin Nano mode tables); not yet on the Orin |
-| GPU check (`deploy/orin/gpu_check.py`) | yes | - | its verdicts, and its measuring code against stand-in torch and bitsandbytes modules, in tests; a real GPU needs the Orin |
+| First-boot check (`deploy/orin/first_boot_check.sh`) | yes | - | against stand-in Orins in tests (AGX Orin, Orin NX and Orin Nano mode tables; JetPack 6.2 and 7.2.1); on the AGX Orin next |
+| GPU check (`deploy/orin/gpu_check.py`) | yes | - | its verdicts, and its measuring code against stand-in torch and bitsandbytes modules, in tests; `--skip-bnb` on the AGX Orin's native environment on 2026-11-03 (decision 11) |
+| AGX native environment (`deploy/orin/agx_vla_env.sh`, JetPack 7.2.1) | yes | - | its pins checked by tests; the same steps run by hand on the AGX on 2026-11-03 before the script was written |
+| bf16 OpenVLA check (`deploy/orin/vla_bf16_check.py`) | yes | - | its verdicts in tests; its procedure on the AGX on 2026-11-03 (decision 11) |
 | Shield tick profile | yes | - | desktop baseline committed; Orin next |
 | VLA backend protocol and table | yes | - | stub and BC on the desktop CPU; Orin next |
 

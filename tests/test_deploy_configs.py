@@ -2094,6 +2094,131 @@ def test_gpu_check_collect_reports_what_the_gpu_computed():
     assert G.problems(facts, G.ORIN_CAPABILITY) == [], G.problems(facts, G.ORIN_CAPABILITY)
 
 
+# --- JetPack 7.2.1 on the AGX Orin (docs/DESIGN-topologies.md, decision 11) --- #
+_JP721_RELEASE = ("# R39 (release), REVISION: 2.1, GCID: 46758480, BOARD: generic, "
+                  "EABI: aarch64, DATE: Fri Aug  7 05:54:22 AM UTC 2026")
+# What dpkg-query read on the AGX on 2026-11-03: SDK Manager installed the
+# components, not the nvidia-jetpack meta-package.
+_JP721_PKGS = {"nvidia-l4t-core": "39.2.1-20260806224157", "cuda-cudart-13-2": "13.2.86-1",
+               "libcudnn9-cuda-13": "9.20.0.46-1", "tensorrt": "10.16.2.10-1+cuda13.2",
+               "nvidia-container-toolkit": "1.19.1-1"}
+_AGX = {"release": _JP721_RELEASE, "pkgs": _JP721_PKGS, "os_version": "24.04",
+        "kernel": "6.8.12-1021-tegra"}
+AGX_ENV = ORIN_DIR / "agx_vla_env.sh"
+VLA_BF16_CHECK = ORIN_DIR / "vla_bf16_check.py"
+
+
+def test_first_boot_check_passes_the_agx_orin_on_jetpack_721():
+    """The release picks the expectations: on r39.2 the check wants Ubuntu
+    24.04 and CUDA 13.2 / cuDNN 9.20 / TensorRT 10.16, and reads them by
+    package even without the meta-package, because the VLA runs on those host
+    libraries there (agx_vla_env.sh)."""
+    if not find_bash():
+        return SKIP
+    r, v = _first_boot(*_fake_orin(**_AGX))
+    assert r.returncode == 0, (r.stdout[-3000:], r.stderr)
+    assert v["l4t"][0] == "PASS" and "R39.2.1 = JetPack 7.2.1" in v["l4t"][1], v["l4t"]
+    assert v["os"] == ("PASS", "Ubuntu 24.04, as JetPack 7.2 ships it"), v["os"]
+    assert v["compute"][0] == "PASS", v["compute"]
+    for part in ("CUDA 13.2 (13.2.86-1)", "cuDNN 9.20.0.46-1", "TensorRT 10.16.2.10"):
+        assert part in v["compute"][1], (part, v["compute"])
+    assert v["jetpack"][0] == "WARN" and "checked by package below" in v["jetpack"][1], v["jetpack"]
+    others = {k: x for k, x in v.items() if x[0] != "PASS" and k != "jetpack"}
+    assert not others, others
+    assert "$ dpkg-query -W nvidia-jetpack nvidia-l4t-core cuda-cudart-13-2" in r.stdout
+    r, v = _first_boot(*_fake_orin(**{**_AGX, "pkgs": {**_JP721_PKGS, "nvidia-jetpack": "7.2.1-b42"}}))
+    assert v["jetpack"] == ("PASS", "nvidia-jetpack 7.2.1-b42"), v["jetpack"]
+
+
+def test_first_boot_check_on_jetpack_7_warns_and_fails_what_it_must():
+    if not find_bash():
+        return SKIP
+    for kw, key, text in (
+        ({"os_version": "22.04"}, "os", "'ubuntu-22.04': JetPack 7.2 ships Ubuntu 24.04"),
+        ({"pkgs": {**_JP721_PKGS, "tensorrt": "10.3.0.30-1+cuda12.5"}}, "compute",
+         "TensorRT '10.3.0.30-1+cuda12.5'"),
+        ({"pkgs": {**_JP721_PKGS, "libcudnn9-cuda-13": "9.13.0.50-1"}}, "compute",
+         "cuDNN '9.13.0.50-1'"),
+        ({"pkgs": {k: x for k, x in _JP721_PKGS.items() if k != "cuda-cudart-13-2"}},
+         "compute", "cudart-13-2 'none'"),
+        ({"pkgs": {**_JP721_PKGS, "nvidia-jetpack": "7.1-b7"}}, "jetpack", "7.1-b7, not 7.2"),
+        ({"release": "# R39 (release), REVISION: 0.0, GCID: 1, BOARD: generic"}, "l4t",
+         "not the r39.2 line"),
+    ):
+        r, v = _first_boot(*_fake_orin(**{**_AGX, **kw}))
+        assert r.returncode == 0, (kw, r.stdout[-2000:])
+        assert v.get(key, ("?",))[0] == "WARN" and text in v[key][1], (kw, v.get(key))
+    r, v = _first_boot(*_fake_orin(**{**_AGX, "release": "# R40 (release), REVISION: 1.0, GCID: 1"}))
+    assert r.returncode == 1 and v["l4t"][0] == "FAIL", v["l4t"]
+    assert "neither JetPack 6 (L4T R36) nor JetPack 7.2" in v["l4t"][1], v["l4t"]
+    # A JetPack 6.2 board keeps its own expectations: JetPack 7's Ubuntu there
+    # is still the warning it was.
+    r, v = _first_boot(*_fake_orin(os_version="24.04"))
+    assert v["os"] == ("WARN", "'ubuntu-24.04': JetPack 6.2 ships Ubuntu 22.04"), v["os"]
+
+
+def test_the_agx_env_keeps_the_vla_pins_and_its_own_torch():
+    """agx_vla_env.sh installs requirements-vla.txt itself (minus
+    bitsandbytes, which the bf16 module does not load), pins the torch pair
+    decision 11 names in a constraints file that every later pip call reads,
+    and takes torch from PyTorch's CUDA 13.2 index only."""
+    text = AGX_ENV.read_text(encoding="utf-8")
+    assert text.startswith("#!/usr/bin/env bash\n") and "set -euo pipefail" in text
+    assert "deploy/docker/requirements-vla.txt" in text and "^bitsandbytes" in text
+    cons = re.search(r"cat > \"\$CONS\" <<'EOF'\n(.*?)\nEOF", text, flags=re.S)
+    assert cons, "no constraints file"
+    pins = dict(line.split("==") for line in cons.group(1).splitlines())
+    assert pins["torch"] == "2.14.1" and pins["torchvision"] == "0.29.1", pins
+    vla = _pins(DOCKER_DIR / "requirements-vla.txt")
+    for name in ("numpy", "transformers"):
+        assert pins[name] == vla[name], (name, pins[name], vla[name])
+    design = re.sub(r"\s+", " ", DESIGN_TOPOLOGIES.read_text(encoding="utf-8"))
+    assert "torch 2.14.1 + torchvision 0.29.1" in design, "decision 11 does not name the AGX's pair"
+    pip_calls = [l for l in text.splitlines() if l.lstrip().startswith('"${PIP[@]}" install')]
+    assert len(pip_calls) == 5, pip_calls
+    for call in pip_calls:
+        assert "--index-url" in call or "--no-deps" in call, call
+        if "torch" in call.split("install", 1)[1].split():
+            assert '--index-url "$TORCH_INDEX"' in call, call
+        elif "--no-deps" not in call:
+            assert '-c "$CONS"' in call or "-U pip wheel" in call, call
+    assert 'TORCH_INDEX="https://download.pytorch.org/whl/cu132"' in text
+    assert "--isolated" in text
+
+
+def _vla_bf16_module():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("vlaguard_vla_bf16_check", VLA_BF16_CHECK)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_vla_bf16_check_refuses_a_model_off_the_gpu_quantized_or_answering_nonsense():
+    V = _vla_bf16_module()
+    good = {"cuda_available": True, "torch": "2.14.1+cu132", "torch_cuda": "13.2",
+            "param_device": "cuda:0", "param_dtype": "torch.bfloat16",
+            "actions": [[-0.0038, 0.0184, 0.007, 0.0452, -0.0256, 0.0741, 0.9961]] * 3}
+    assert V.problems(good) == [], V.problems(good)
+    for change, said in (
+        ({"param_device": "cpu"}, "not on a CUDA device"),
+        ({"param_dtype": "torch.uint8"}, "not torch.bfloat16"),
+        ({"param_dtype": "torch.float32"}, "not torch.bfloat16"),
+        ({"actions": []}, "no action was returned"),
+        ({"actions": [[0.1] * 6]}, "not seven finite numbers"),
+        ({"actions": [[0.1] * 6 + [float("nan")]]}, "not seven finite numbers"),
+        ({"cuda_available": False}, "sees no GPU"),
+        ({"run_error": "OutOfMemoryError: CUDA out of memory"}, "failed: OutOfMemoryError"),
+        ({"import_error": "ModuleNotFoundError: No module named 'transformers'"}, "does not import"),
+    ):
+        found = V.problems({**good, **change})
+        assert any(said in p for p in found), (change, found)
+    # Identical greedy answers are recorded, never a verdict.
+    assert V.problems({**good, "identical_answers": False}) == []
+    assert V.PROMPT.startswith("In: What action should the robot take to ")
+    assert V.UNNORM_KEY == "bridge_orig" and V.FRAME.is_file(), V.FRAME
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     failed = skipped = 0

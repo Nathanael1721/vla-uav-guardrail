@@ -12,6 +12,17 @@ The images and compose files have not been built or run yet; the
 configuration is checked by `tests/test_deploy_configs.py`. When a step does
 not behave as written, fix the step here in the same commit as the fix.
 
+**The AGX Orin on JetPack 7.2.1 (since 2026-11-03).** The hil machine is an
+AGX Orin 64 GB flashed with JetPack 7.2.1 (L4T r39.2.1, Ubuntu 24.04), not
+the JetPack 6.2 this procedure was written for. Step 1 applies as written
+(`first_boot_check.sh` reads the release and expects JetPack 7.2's Ubuntu and
+compute stack there). The VLA image's steps do not: its r36.4 bases are not
+used on r39, and the VLA runs natively in the environment
+`deploy/orin/agx_vla_env.sh` builds, checked with `gpu_check.py --skip-bnb`
+and `vla_bf16_check.py` (`deploy/README.md`, "The AGX Orin";
+`docs/DESIGN-topologies.md`, decision 11). The cable is 10.42.0.1 (desktop)
+to 10.42.0.3 (AGX), not the 192.168.50.x of the picture below.
+
 ## The picture
 
 ```

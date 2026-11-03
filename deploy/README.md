@@ -32,8 +32,11 @@ the person setting up the Orin needs, and nothing else.
 | `docker/vla-install.sh` | The VLA image's install: keeps the base image's Jetson torch (constraints, compared again at the end), runs pip against PyPI only (the Jetson bases set their own `PIP_INDEX_URL`: every pip call runs `--isolated` with `PIP_CONFIG_FILE=/dev/null`, so neither that variable nor a `pip.conf` applies, and the build stops if pip still reports a setting), and on aarch64 builds the pinned bitsandbytes for the Orin's sm_87 (CMake configure and compile, then pip, as bitsandbytes' guide says) and refuses a library without sm_87 code. |
 | `docker/sitl.Dockerfile` | ArduPilot SITL at the pin in `sitl/setup_sitl.sh` (Copter-4.5.7). Desktop only. |
 | `docker/entrypoint.sh` | Roles of the companion image: `router` (the native `sitl/start_router.sh`), `mavros`, `mission` (the native launch file: VLA stub, MAVLink adapter, Shield node; rosbag2; replay bundle), `profile`, `facts`, `vla-table`, `versions` (what the image holds: Ubuntu, ROS 2 distribution, rclpy's Python, MAVROS), `shell`. Nothing branches on the host. |
-| `orin/first_boot_check.sh` | Run on the Orin right after JetPack 6.2 is installed (runbook step 1): read-only report of the L4T release, board, JetPack's CUDA / cuDNN / TensorRT, the power mode and this module's mode table (IDs, default, highest budgeted mode, MAXN), any ROS on the host with its version, and Docker, with a PASS / WARN / FAIL line per expectation; the file is sent back. |
-| `orin/gpu_check.py` | Run inside the VLA image (or its base) on the Orin (runbook step 8): a GPU matrix product against the CPU and an NF4 4-bit round trip through bitsandbytes, each with the device it ran on, so a stack that only imports, or a result not computed on the GPU, is refused. |
+| `orin/first_boot_check.sh` | Run on the Orin right after JetPack 6.2 or 7.2.1 is installed (runbook step 1): read-only report of the L4T release, board, JetPack's CUDA / cuDNN / TensorRT, the power mode and this module's mode table (IDs, default, highest budgeted mode, MAXN), any ROS on the host with its version, and Docker, with a PASS / WARN / FAIL line per expectation; the release picks the expected Ubuntu and compute stack. The file is sent back. |
+| `orin/gpu_check.py` | Run inside the VLA image (or its base) on the Orin (runbook step 8), or in the AGX's native environment with `--skip-bnb`: a GPU matrix product against the CPU and an NF4 4-bit round trip through bitsandbytes, each with the device it ran on, so a stack that only imports, or a result not computed on the GPU, is refused. |
+| `orin/agx_vla_env.sh` | The AGX Orin's native VLA and follow-controller environment on JetPack 7.2.1 (`docs/DESIGN-topologies.md`, decision 11): a venv on the host's Python 3.12 with torch 2.14.1 + torchvision 0.29.1 from PyTorch's CUDA 13.2 index (held by a constraints file), `requirements-vla.txt` minus bitsandbytes, the follow's packages and the Project AirSim client. |
+| `orin/vla_bf16_check.py` | Run after the GPU check in that environment: OpenVLA-7B loaded unquantized in bf16 answers the R1 protocol frame a few times; refused unless the weights are bf16 on the GPU and every answer is seven finite numbers. A gate, not an R1 rate. |
+| `orin/sync_follow_controller.ps1`, `run_follow_controller.sh`, `run_vla_fly.sh`, `start_sim_for_jetson.ps1` | The Jetson flights against the desktop's Project AirSim: the checkout sent as a git bundle with the map and policy bundles, the follow controller or `vla_fly` started on the Jetson, the simulator started for a remote client. `-JetsonHost nathan-agxiot@10.42.0.3` for the AGX. |
 | `docker/sitl-entrypoint.sh` | Starts SITL as `sitl/start_sitl.sh` does (EEPROM wiped, GeoFence backstop) or, for Project AirSim, as `demo/pas_ardupilot/start_ardupilot.sh` does (scene home, airframe file). |
 | `docker/*.dockerignore` | Build contexts limited to the files each Dockerfile copies. The repository root is ~34 GB and holds the private signing key; neither enters a build. |
 | `topologies/dev.env`, `hil.env`, `flight.env` | The only thing that differs between topologies. Same keys in all three. They select configuration; the label a run carries comes from evidence (`guardrail.manifest.detect_topology`). |
@@ -75,6 +78,27 @@ default; not the unconstrained MAXN) and lock the clocks with `jetson_clocks`.
 `docs/DESIGN-topologies.md` (decisions 2 and 10) has the reasoning and the
 container tags that were checked; `docs/RUNBOOK-orin-hil.md` steps 1 to 4 the
 set-up.
+
+## The AGX Orin: JetPack 7.2.1 (since 2026-11-03)
+
+The hil machine is now an AGX Orin 64 GB on JetPack 7.2.1 (L4T r39.2.1,
+Ubuntu 24.04, CUDA 13.2.2, cuDNN 9.20, TensorRT 10.16). The r36.4 VLA bases
+above do not apply there and no published image carries a JetPack 7.2 Orin
+torch, so the VLA and the follow controller run natively in the venv that
+`orin/agx_vla_env.sh` builds (torch 2.14.1 + torchvision 0.29.1, CUDA 13.2;
+OpenVLA-7B in bf16, no bitsandbytes). The companion image needs no GPU and is
+unchanged. On the board, in order:
+
+```bash
+bash deploy/orin/first_boot_check.sh 2>&1 | tee deploy/evidence/incoming/hil/first_boot_check.txt
+bash deploy/orin/agx_vla_env.sh
+~/vla-drone-env/bin/python deploy/orin/gpu_check.py --skip-bnb
+~/vla-drone-env/bin/python deploy/orin/vla_bf16_check.py --model ~/models/openvla-7b
+```
+
+`docs/DESIGN-topologies.md`, decision 11, has what the board reported, why
+the environment is native, what that costs (the R1 columns no longer share
+one torch version) and the first measurements.
 
 ## Status (2026-10-08)
 

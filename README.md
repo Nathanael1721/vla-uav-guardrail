@@ -67,7 +67,7 @@ only its 5 m catch-all rule applies
 | `tests/` | one test file per module, each runnable on its own, plus a ~10 min coverage suite |
 | `docs/` | finding documents, design notes and reports — see below |
 | `sitl/` | the ArduPilot SITL rail (pymavlink, and MAVROS 2 on ROS 2), all on one desktop; the MAVROS 2 rail is the grant's *dev* topology. The same stack moves to the *hil* topology (VLA + Shield on a Jetson Orin) for the KPI campaign |
-| `deploy/` | container images and topology files for the grant's *dev*, *hil* and *flight* topologies, with the Orin side defined for JetPack 6.2; not yet run on an Orin |
+| `deploy/` | container images and topology files for the grant's *dev*, *hil* and *flight* topologies, with the Orin side defined for JetPack 6.2, and the AGX Orin's native environment on JetPack 7.2.1; the containers are not yet run on an Orin |
 | `tools/` | report, deck and KPI builders; `check_claims.py` fails on a withdrawn claim stated again; `prefix_eval.py` replays recorded frames with and without the CSP |
 | `scripts/` | launcher scripts (`.ps1` / `.bat`) — see `scripts/README.md` for which backend each targets |
 | `reference/` | the grant's own PDFs; not this project's to edit |
@@ -240,8 +240,10 @@ Done in October 2026, none of it KPI-grade:
   headless harness ([design note](docs/DESIGN-harness-grpc.md)).
 - **The Jetson Orin deployment is defined for JetPack 6.2**, with ROS 2 Jazzy
   in an Ubuntu 24.04 container ([`deploy/`](deploy/README.md),
-  [topologies](docs/DESIGN-topologies.md)). Nothing has been built or run on
-  an Orin yet.
+  [topologies](docs/DESIGN-topologies.md)). No container has been built or
+  run on an Orin yet. Since 2026-11-03 the hil machine is an AGX Orin 64 GB
+  on JetPack 7.2.1, where OpenVLA-7B runs unquantized in bf16 in a native
+  environment (decision 11 of the topologies note).
 
 Next: the *hil* topology on the Jetson Orin for the KPI campaign, the
 perception node through MAVROS 2, an escalation hold step that keeps the
