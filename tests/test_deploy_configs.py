@@ -1068,15 +1068,56 @@ def _sitl(env: dict) -> subprocess.CompletedProcess:
     return dry_run(SITL_ENTRYPOINT, [], {**base, **env})
 
 
+def test_the_native_sitl_keeps_extra_defaults_with_the_fence_on():
+    """start_sitl.sh appends the GeoFence backstop to the defaults instead of
+    replacing them. Shown failing on the old line, `DEFAULTS="$PARM,$FENCE_PARM"`,
+    which dropped SITL_EXTRA_DEFAULTS: PHYSICS=gazebo with the fence on (the
+    default) booted without gazebo-iris.parm."""
+    native = START_SITL.read_text(encoding="utf-8")
+    assert 'DEFAULTS="$DEFAULTS,$FENCE_PARM"' in native
+    assert 'DEFAULTS="$PARM,$FENCE_PARM"' not in native
+    if not find_bash():
+        return SKIP
+    # The two assignments, run as bash runs them, with the fence on.
+    lines = [l for l in native.splitlines() if l.strip().startswith("DEFAULTS=")]
+    script = ('PARM=/p/copter.parm; FENCE_PARM=/p/fence.parm; '
+              'SITL_EXTRA_DEFAULTS=/p/gazebo-iris.parm; ' + "; ".join(l.strip() for l in lines)
+              + '; echo "$DEFAULTS"')
+    r = subprocess.run([find_bash(), "-c", script], capture_output=True, text=True)
+    assert r.stdout.strip() == "/p/copter.parm,/p/gazebo-iris.parm,/p/fence.parm", r.stdout
+
+
+def test_the_ros2_rail_boots_sitl_at_a_geographic_bundles_origin():
+    """run_ros2_demo.sh (2026-11-04): a WGS84 bundle is flown at its frame
+    origin (SITL_HOME), so the adapter's GeoFence upload, refused beyond 5 m
+    of the autopilot's home, lands on the zones. harness_corridor_20261104
+    flew corridor-survey 0.1.2 (origin 35.6895, 139.6917) from CMAC and every
+    upload was refused: 7955798.7 m from home."""
+    demo = RUN_ROS2_DEMO.read_text(encoding="utf-8")
+    assert 'export SITL_HOME="$ORIGIN,584,0"' in demo
+    assert '"$DIR/bundle_origin.py" "$FLIGHT_BUNDLE"' in demo
+    assert 'if [ -z "${SITL_HOME:-}" ]; then' in demo, "a hand-set SITL_HOME must win"
+    sys.path.insert(0, str(ROOT / "sitl"))
+    import bundle_origin as BO
+    assert BO.main(["no/such/bundle.tar.gz"]) == 2, "a bundle that does not load must refuse"
+    corridor = ROOT / "bundles" / "corridor-survey-v0.1.2.tar.gz"
+    demo_bundle = ROOT / "bundles" / "fase3-sim-demo-v0.1.3.tar.gz"
+    if not (corridor.is_file() and demo_bundle.is_file()):
+        return SKIP                  # bundles/ is gitignored: built on the lab machine
+    assert BO.origin_of(str(corridor)) == "35.6895,139.6917"
+    assert BO.origin_of(str(demo_bundle)) == "-35.363261,149.16523"   # CMAC: nothing moves
+
+
 def test_sitl_quad_starts_like_start_sitl_sh():
     """sitl/start_sitl.sh: EEPROM wiped at each start, the GeoFence backstop as
     a second defaults file, SERIAL0 a TCP server, SERIAL2 to the router."""
     if not find_bash():
         return SKIP
     native = START_SITL.read_text(encoding="utf-8")
+    # SITL_HOME (2026-11-04): CMAC unless set, as the container's entrypoint.
     for s in ('SITL_WIPE:-1}" = "1" ] && WIPE=(-w)', 'GUARDRAIL_FENCE:-1', "--serial0 tcp:0",
-              "fence/guardrail_fence.parm", f"--home {CMAC_HOME}", "--speedup 1",
-              '--serial2 "udpclient:127.0.0.1:'):
+              "fence/guardrail_fence.parm", f'"${{SITL_HOME:-{CMAC_HOME}}}"',
+              '--home "$HOME_LOC"', "--speedup 1", '--serial2 "udpclient:127.0.0.1:'):
         assert s in native, f"sitl/start_sitl.sh changed ({s!r}); re-check the container's start"
     r = _sitl({})
     assert r.returncode == 0, r.stderr

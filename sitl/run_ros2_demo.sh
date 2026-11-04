@@ -203,6 +203,34 @@ if [ "$HAS_POLICY" = "0" ] && [ "$HAS_DEV_YAML" = "0" ]; then
   fi
 fi
 
+# WHERE THE FLIGHT IS (2026-11-04). A geographic bundle (WGS84 since IR schema
+# 3.1.0) is flown at its frame origin: SITL boots there (start_sitl.sh,
+# SITL_HOME), so MAVROS's local frame and the policy's metres share an origin
+# and the adapter's GeoFence upload - refused beyond 5 m of the autopilot's
+# home - lands on the zones. Until then SITL always booted at CMAC, and a
+# bundle anchored elsewhere (corridor-survey 0.1.2: the Project AirSim
+# scenes' home-geo-point) flew its geometry about CMAC with no GeoFence
+# uploaded. A bundle whose origin is CMAC changes nothing, a flight without a
+# bundle keeps CMAC, and SITL_HOME set by hand wins. Altitude 584 m is the
+# SITL ground every rail assumes (guardrail/terrain.py, FlatGround).
+if [ -z "${SITL_HOME:-}" ]; then
+  FLIGHT_BUNDLE=""
+  for ((i = 0; i < ${#EXTRA[@]}; i++)); do
+    case "${EXTRA[$i]}" in
+      --bundle) FLIGHT_BUNDLE="${EXTRA[$((i + 1))]}" ;;
+      --bundle=*) FLIGHT_BUNDLE="${EXTRA[$i]#--bundle=}" ;;
+    esac
+  done
+  if [ -n "$FLIGHT_BUNDLE" ]; then
+    ORIGIN="$(cd "$ROOT" && "$PY" "$DIR/bundle_origin.py" "$FLIGHT_BUNDLE")" || {
+      echo "[home] REFUSED: could not read the frame origin of $FLIGHT_BUNDLE"; exit 2; }
+    if [ -n "$ORIGIN" ]; then
+      export SITL_HOME="$ORIGIN,584,0"
+      echo "[home] SITL boots at the bundle's frame origin: $SITL_HOME"
+    fi
+  fi
+fi
+
 # GCS_BACKSTOP=1: the ground station sets the GeoFence (see the header). Its
 # bundle is the flight's signed bundle; a YAML flight has none to upload.
 GCS_BACKSTOP="${GCS_BACKSTOP:-0}"
