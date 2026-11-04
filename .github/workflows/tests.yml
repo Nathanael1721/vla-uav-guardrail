@@ -180,6 +180,8 @@
 #          INERT in the console, metrics.subject_standoff and the HUD when
 #          it cannot (--gate-truth, no identity); the real Shield on the
 #          flown policy at the grant's forecast; nothing SKIPs).
+#          test_held_box_gate (2026-11-04: a held box the subject could not
+#          have reached is refused, so a phantom box is not the subject).
 #        The CityLife level, checked offline (the level itself is
 #          gitignored): test_citylife_*, test_car_speed, test_drive_signals_dsl,
 #          test_ped_walk_plan, test_parked_cars.
@@ -431,7 +433,10 @@
 #          absent: WSL has no node, so they have never run on Linux.
 #        test_policy_hud.py: 6 of its 45 tests ERROR without Pillow (the
 #          overlay drawing), which no job installs for the loop; since
-#          2026-11-04 it runs, with test_hud_fits, in the Pillow step below.
+#          2026-11-04 it runs in the Pillow step below.
+#        test_hud_fits.py: 8 of its 12 tests ERROR without Pillow (the
+#          panels drawn on blank frames, 2026-11-04); it runs in the Pillow
+#          step below.
 #        test_range_and_lock.py: 16 of its 112 tests ERROR without OpenCV.
 #        test_two_view.py: 6 of its 9 tests ERROR without OpenCV and Pillow.
 #      END OF THE EXCLUSIONS

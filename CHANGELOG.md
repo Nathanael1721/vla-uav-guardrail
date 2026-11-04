@@ -16,6 +16,23 @@ shipped change and recorded as one.
 
 ## [Unreleased]
 
+### 2026-11-04 (CI) — the whole local suite on the day's four commits: one new failure, the workflow's own file lists, fixed
+
+#### Tests
+- `tools/ci_local.py --no-smoke` at 03718b3: 133 of 139 files, 3538 of
+  3580 tests. New against the record of ea90a67: `test_harnesstruth_ci.py`
+  33 of 35, because `test_held_box_gate.py` ran in the loop without a line
+  in the workflow's header and `test_hud_fits.py` (Pillow step) had no
+  exclusion entry; both are added (`.github/workflows/tests.yml`,
+  `tests/test_harnesstruth_ci.py` EXCLUDED: 8 of its 12 tests ERROR without
+  Pillow, measured with PIL blocked) and the file passes 35 of 35. The
+  other five failures are the ones ea90a67 recorded, with the same counts:
+  test_build_progress_oct_data 45 of 47, test_explainer_deck 10 of 24,
+  test_harnesstruth_bundles 11 of 12, test_track_truth 35 of 36,
+  test_wp4outputs_harness 15 of 16. The Pillow step's files, which
+  ci_local does not run, pass by hand: test_policy_hud 45 of 45,
+  test_hud_fits 12 of 12.
+
 ### 2026-11-04 (end of day) — the end-to-end follow refuses a held box its subject could not have reached: the phantom behind the AGX flight's one P0 escape is refused on replay
 
 #### Fixed

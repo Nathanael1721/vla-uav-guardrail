@@ -248,6 +248,8 @@ EXCLUDED: dict[str, tuple[str, str]] = {
         "", "7 of its 13 tests need flight logs under demo/out/, and its JavaScript "
             "comparisons return early, counted as passes, where node is absent (WSL has none)"),
     "test_policy_hud.py": ("pillow", "6 of its 45 tests ERROR without Pillow (the overlay drawing)"),
+    "test_hud_fits.py": ("pillow", "8 of its 12 tests ERROR without Pillow (the panels drawn "
+                                   "on blank frames)"),
     "test_range_and_lock.py": ("opencv", "16 of its 112 tests ERROR without OpenCV"),
     "test_two_view.py": ("opencv", "6 of its 9 tests ERROR without OpenCV and Pillow"),
 }
