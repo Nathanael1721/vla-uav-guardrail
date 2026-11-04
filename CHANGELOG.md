@@ -16,6 +16,90 @@ shipped change and recorded as one.
 
 ## [Unreleased]
 
+### 2026-11-04 (night) — CityLife's obstacle maps cover the whole level: the building the NFZ3b flight touched is on the map, and the rule the AGX flights were blind to sees again
+
+#### Changed
+- `demo/out/citymap_citylife/` (gitignored) is rebuilt over the whole
+  level: NED x -960 to 1060 m and y -860 to 880 m at 2 m (1010 x 870
+  cells, every band), from the simulator's voxels, where it was the 360 x
+  200 m rectangle x -140 to 220, y -60 to 140. The level's buildings reach
+  x -916 to 1008 m and y -802 to 834 m (measured on these voxels; the
+  actors' positions said x -710 to 750, y -598 to 557, their pivots), so
+  every band now has an empty margin of at least 40 m: no occupied cell
+  within 20 m of any edge. Off a map the Shield takes every obstacle to be
+  on it (`guardrail/shield.py` `_distance_at`); on CityLife that is now
+  true. The earlier maps are kept in
+  `demo/out/citymap_citylife_20260924/`; `map_build.json` beside the maps
+  records how they were made.
+- Inside the old rectangle the new maps are the old ones, cell for cell:
+  the 0-2 m, 6-14 m and 15-55 m bands came back identical (0 of 18000
+  cells differ), the 2-4 m band differed in 362 cells where cars and
+  pedestrians stood at scan time, and those were kept from the old scan
+  (`--keep-from`), so the street mask there is unchanged (0 of 18000) and
+  the pedestrian crossings, landing sites and identity checks built on it
+  stay as tested.
+
+#### Added
+- `demo/build_voxel_map.py`: `--tile-m` asks for the rectangle in square
+  tiles that start on the whole grid's cells and stitches them (70.3
+  million voxels in 16 requests, 160 s; one request for the old rectangle
+  takes 8 s); `--keep-from DIR` keeps an earlier build's cells inside its
+  own rectangle and reports how many the new scan had otherwise;
+  `map_build.json` is written with every build (arguments, extent, the
+  ground slice, what was kept). Its docstring gives both commands.
+
+#### Found
+- Re-judged on the whole level's map, the two AGX flights that left the old
+  map: `nfz3b_agx_hier_aerovla_20261103` read a smallest clearance of
+  2.59 m along its path on the old map (245 ticks under 3 m) and 3.01 m at
+  the point of contact (64.5, 145.5), which was off it; on the new map the
+  path reaches -2.91 m, inside the building, with 2241 ticks under 3 m, and
+  the contact point reads -3.14 m. `agx_e2e_r3_20261103` read no tick under
+  3 m on the old map and has 2931 on the new one (smallest 1.99 m), with no
+  contact reported. Neither flight's Shield could have acted on them.
+- The ArduPilot rail's documented example goal, `--goal 50,-78`
+  (`docs/DESIGN-vla-pilot.md`), lay 17 m south of the old map: its "17.0 m
+  at the goal" was that off-map estimate. On the new map its straight line
+  from the spawn passes through a building (-1.86 m) and the goal has
+  3.70 m. It is replaced by (46, -52), 33.8 m WNW of the spawn, 4.08 m on
+  the line (the spawn's own clearance) and 10.0 m at the goal, the same on
+  both maps. The flown goto runs (`pas_vla_goto_01`, `_02`,
+  `vla_goto_01_20261023`) never left the old map.
+- The 82 m street grid that landing's `prefer="pavement"` rests on is
+  0.96-1.00 street along each line on the old rectangle, where it was
+  measured, but 0.84-0.88 over the central city (y -250 to 250 m).
+
+#### Tests
+- `tests/test_voxel_map.py` 8 of 8 (3 new): tiles start on the grid and
+  cover the rectangle once; a tiled query stitches to the single request
+  voxel for voxel, a block across a seam included; a short tile is refused.
+- Tests that assumed the old rectangle, now reading the map they are given:
+  `tests/test_landing.py` 25 of 25 (off-map points 50 m past the map's own
+  edges, where (-500, 0), (0, 500) and (300, 0) were off it before; the
+  grid-line check on the rectangle it was measured on, from
+  `map_build.json`), `tests/test_flight_pas_ap_20261008.py` 3 of 3 (the
+  flight's own 360 x 200 m map cut out of the new one, so its replay reads
+  the map it flew), `tests/test_pas_vla.py` 29 of 29 (the new goal, which
+  must be on the map). Unchanged on the new map: test_citylife_peds 26 of
+  26, test_search 20 of 20, test_identity 21 of 21, test_vla_fly 63 of 63,
+  test_railvideo_recording 21 of 21, test_city_traffic 34 of 34,
+  test_citylife_routes 22 of 22, test_occ_bands 14 of 14, test_clearance
+  16 of 16, test_vla_standoff_feed 11 of 11, test_shieldcore_repair 25 of
+  25, test_own_velocity_forecast 28 of 28, test_hold_points 34 of 34,
+  test_shieldcore_audit 16 of 16, test_policy_hud 45 of 45.
+
+#### Limits
+- The maps are gitignored: another checkout keeps the old rectangle until
+  it is rebuilt with the commands in `demo/build_voxel_map.py`, and the
+  Jetsons get it through `deploy/orin/sync_follow_controller.ps1`.
+- Outside the old rectangle the 2-4 m band and the street mask hold the
+  cars and pedestrians that stood there at scan time. The flight bands do
+  not move with them.
+- Building the map in the simulator's voxels does not make a flight safe
+  where the Shield's forecast cannot stop it in time; it makes the rule see.
+  Whether an NFZ3b flight now keeps its clearance is not shown here: that
+  needs a flight.
+
 ### 2026-11-04 (evening) — the video panels say which model flew and keep every word on the frame: the P0 escapes back in view on Jetson-flown videos, no banner over the status box
 
 #### Fixed

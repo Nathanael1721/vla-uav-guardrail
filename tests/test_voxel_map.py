@@ -19,8 +19,9 @@ import numpy as np
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "demo"))
 
-from build_voxel_map import (band_occ, cell_of, grid_geometry,   # noqa: E402
-                             ground_index, reshape_voxels)
+from build_voxel_map import (band_occ, cell_of, fetch_voxels,     # noqa: E402
+                             grid_geometry, ground_index, reshape_voxels,
+                             tile_rects)
 
 
 def _sim_flat(geo, solid):
@@ -95,6 +96,58 @@ def test_bad_extents_are_refused():
         except ValueError:
             continue
         raise AssertionError(f"accepted {args}")
+
+
+def _world_two(X, Y, Z):
+    """The ground, the block of _world, and a second block across where a
+    tile seam falls (x 56..60, y -4..2)."""
+    return (_world(X, Y, Z)
+            or (56.0 <= X <= 60.0 and -4.0 <= Y <= 2.0 and 0.0 <= Z <= 8.0))
+
+
+def test_tiles_start_on_the_grid_and_cover_the_rectangle_once():
+    rects = tile_rects(-140, 220, -60, 140, 100, 2.0)
+    assert len(rects) == 4 * 2, rects                # 100,100,100,60 by 100,100
+    cells = set()
+    for x0, x1, y0, y1 in rects:
+        assert (x0 + 140) % 2 == 0 and (y0 + 60) % 2 == 0, (x0, y0)
+        g = grid_geometry(x0, x1, y0, y1, 40, 2.0)
+        for i in range(g["nx"]):
+            for j in range(g["ny"]):
+                c = (x0 + 2 * i, y0 + 2 * j)
+                assert c not in cells, c
+                cells.add(c)
+    assert len(cells) == 180 * 100
+    for bad in (0, -10, 3):
+        try:
+            tile_rects(-140, 220, -60, 140, bad, 2.0)
+        except ValueError:
+            continue
+        raise AssertionError(f"accepted tile {bad}")
+
+
+def test_a_tiled_query_stitches_to_the_one_request():
+    """The whole level is queried in tiles (2026-11-04); the stitched grid
+    must be the single request's, voxel for voxel, a block across a seam
+    included."""
+    g = grid_geometry(-20, 100, -20, 120, 40, 2.0)
+    one = fetch_voxels(g, request=lambda t: _sim_flat(t, _world_two))
+    for tile in (20, 46, 60, 200):
+        tiled = fetch_voxels(g, tile_m=tile, request=lambda t: _sim_flat(t, _world_two))
+        assert tiled.shape == one.shape and (tiled == one).all(), tile
+    occ = band_occ(one, ground_index(one), 6.0, 14.0, 2.0)
+    i, j = cell_of(58.0, -2.0, g)
+    assert occ[i, j] == 1 and occ[cell_of(12.0, 102.0, g)] == 1
+
+
+def test_a_tile_whose_reply_is_short_is_refused():
+    g = grid_geometry(-20, 100, -20, 120, 40, 2.0)
+    try:
+        fetch_voxels(g, tile_m=60, request=lambda t: _sim_flat(t, _world)[:-1])
+    except ValueError as exc:
+        assert "expected" in str(exc), exc
+    else:
+        raise AssertionError("a short tile was stitched")
 
 
 if __name__ == "__main__":

@@ -844,7 +844,7 @@ The simulator up on CityLife (the rail's own steps, `-Step scene` /
 `-Step sitl`), a server already serving AerialVLA (`demo/vla_server_v2.py
 serve --precision bf16 --attn sdpa --no-merge` in vla-real), then:
 
-    python demo\pas_ardupilot\perception_node.py --network nat --windows-ip <win> --wsl-ip <wsl> --pilot vla --mission goto --goal 50,-78 --vla-server 127.0.0.1:8790 --tag pas_vla_goto_01 --max-s 180 --save-view
+    python demo\pas_ardupilot\perception_node.py --network nat --windows-ip <win> --wsl-ip <wsl> --pilot vla --mission goto --goal 46,-52 --vla-server 127.0.0.1:8790 --tag pas_vla_goto_01 --max-s 180 --save-view
 
 or let the node start the server, naming its configuration:
 `--vla-precision bf16 --vla-attn sdpa --no-vla-merge` in place of
@@ -852,16 +852,20 @@ or let the node start the server, naming its configuration:
 attaching node (`--scene-mode attach`) needs the scene loaded with the VLA
 cameras: `run_pas_ardupilot.ps1 -Step scene -VlaCameras`.
 
-The example goal (50, -78) is 59.9 m from the spawn (35, -20), WNW of it
+The example goal (46, -52) is 33.8 m from the spawn (35, -20), WNW of it
 (the spawn faces north, so the first phrase is "to your left "). Checked on
 the Shield's own distance field over the 6-14 m band map, as section 13's
-goal was: the straight line from the spawn never comes within 3.20 m of an
-occupied cell (the obstacle rule's margin is 3 m), the goal has 17.0 m and
-lies on the street mask (`tests/test_pas_vla.py`
+goal was: the straight line from the spawn never comes within 4.08 m of an
+occupied cell (the spawn's own clearance; the obstacle rule's margin is
+3 m), the goal has 10.0 m and lies on the street mask (`tests/test_pas_vla.py`
 `test_the_documented_example_goal_is_clear_from_the_spawn`, which needs the
 gitignored `demo/out/citymap_citylife` and SKIPs without it). An earlier
 draft of this section gave (60, -20), an occupied cell (review of 4a0da6d,
-P2-6).
+P2-6). Until 2026-11-04 it gave (50, -78), 17 m south of the map of that
+day (y -61 to 139 m): its "17.0 m at the goal" was the Shield's estimate
+off the map, which assumes every obstacle lies on it. On the map of the
+whole level the same line passes through a building (-1.86 m) and the goal
+has 3.70 m. The goto flights pas_vla_goto_01 and _02 stayed on that map.
 
 ### Cameras (VLA-03)
 
@@ -902,7 +906,7 @@ server with a real-looking identity).
   (approach) and the model on one GPU are not measured.
 - `scripts/run_pas_ardupilot.ps1` has no `-Pilot vla` switch yet: the flags
   reach the node through `-NodeArgs` (e.g. `-NodeArgs "--pilot","vla",
-  "--goal","50,-78","--vla-server","127.0.0.1:8790"`); the launcher does not
+  "--goal","46,-52","--vla-server","127.0.0.1:8790"`); the launcher does not
   check them before the simulator starts, as `run_vla_fly.ps1` does.
 - The free-VRAM record and the nf4 advice for the approach stand in for a
   measurement of bf16 + OWL-ViT + Unreal on one 24 GB card, which has not

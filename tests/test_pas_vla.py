@@ -1006,8 +1006,10 @@ def test_an_approach_is_scored_on_the_subjects_true_range():
 
 
 # The example goal docs/DESIGN-vla-pilot.md section 14 gives for this rail
-# (review of 4a0da6d, P2-6: the first one, 60,-20, was an occupied cell).
-DOC_EXAMPLE_GOAL = (50.0, -78.0)
+# (review of 4a0da6d, P2-6: the first one, 60,-20, was an occupied cell; the
+# second, 50,-78, lay 17 m off the map of its day and its line crosses a
+# building on the map of the whole level, 2026-11-04).
+DOC_EXAMPLE_GOAL = (46.0, -52.0)
 
 
 def test_the_documented_example_goal_is_clear_from_the_spawn():
@@ -1015,12 +1017,16 @@ def test_the_documented_example_goal_is_clear_from_the_spawn():
     demo/out/citymap_citylife: SKIP where it is absent), as test_vla_fly
     checks the city rail's: the straight line from this rail's spawn (35,
     -20) to the example goal keeps 3 m, the goal is clear and on the street
-    mask (3.20 m on the line, 17.0 m at the goal, measured 2026-10-23)."""
+    mask (4.08 m on the line, the spawn's own, and 10.0 m at the goal,
+    measured 2026-11-04 on the whole level's map and on the 360 x 200 m map
+    before it). The goal must lie ON the map: off it the Shield's clearance
+    is an estimate that assumes every obstacle is on the map, which is how
+    50,-78 read 17.0 m."""
     import numpy as np
     from guardrail import Shield
     from guardrail.models import load_policy
     doc = (ROOT / "docs" / "DESIGN-vla-pilot.md").read_text(encoding="utf-8")
-    assert "--goal 50,-78" in doc and "60,-20" not in doc
+    assert "--goal 46,-52" in doc and "60,-20" not in doc and "50,-78" not in doc
     d = ROOT / "demo" / "out" / "citymap_citylife"
     if not (d / "occ_day_flightband_6to14.npz").is_file():
         print("      (no demo/out/citymap_citylife here: the level's map is gitignored; "
@@ -1033,7 +1039,8 @@ def test_the_documented_example_goal_is_clear_from_the_spawn():
                 escalation=False)
     (sx, sy), (gx, gy) = START, DOC_EXAMPLE_GOAL
     line = [sh.clearance_at(sx + f * (gx - sx), sy + f * (gy - sy)) for f in np.linspace(0, 1, 400)]
-    assert min(line) >= 3.0 and sh.clearance_at(gx, gy) > 10.0, (min(line), sh.clearance_at(gx, gy))
+    assert min(line) >= 3.0 and sh.clearance_at(gx, gy) >= 9.0, (min(line), sh.clearance_at(gx, gy))
+    assert not sh.off_map(gx, gy), "the goal is off the map: its clearance is not measured"
     st = np.load(d / "street.npz")["street"]
     assert st[int(round((gx - occ["ox"]) / 2.0)), int(round((gy - occ["oy"]) / 2.0))]
 

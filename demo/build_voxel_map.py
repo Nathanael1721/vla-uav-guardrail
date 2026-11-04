@@ -38,6 +38,34 @@ The simulator's indexing, from WorldSimApi::createVoxelGrid:
 so the flat array reshapes to (ny, nz, nx), and a map whose cells are centred
 at `origin + i * res` has origin = centre - (n // 2) * res. With the defaults
 (the +-80 m cube) this is exactly what the script always did.
+
+WHOLE LEVEL (2026-11-04)
+------------------------
+The 360 x 200 m rectangle was still not CityLife: the level's buildings reach
+x -916..1008 m and y -802..834 m, and off a map the Shield assumes "every
+obstacle lives inside the map" (shield.py `_distance_at`). Two AGX flights
+searched past its edge; one pressed against BP_jctBldSetK33_6 at (64.5,
+145.5), 6.5 m north of it, 1919 contact reports with the P0 escape rate at
+0.0. CityLife's maps now cover the whole level with 40-62 m of empty margin:
+
+    python demo/build_voxel_map.py --x-min -960 --x-max 1060 --y-min -860 --y-max 880 \
+        --tile-m 400 --out-dir demo/out/citymap_citylife \
+        --bands ground_0to2:0:2,ground_2to4:2:4,occ_day_flightband_6to14:6:14,occ_day_highband_15to55:15:55 \
+        --alias occ_day=occ_day_flightband_6to14 --free-check 35,-20
+
+`--tile-m` asks for the 70 million voxels in sixteen requests of at most
+200 x 200 x 80 and stitches them (160 s); one request for the old rectangle
+took 8 s. `--keep-from` keeps an earlier build's cells inside its own
+rectangle: the flight bands came back identical there (0 of 18000 cells),
+but the 2-4 m band differed in 362 cells where cars and pedestrians stood
+at scan time, and the street mask, pedestrian crossings and landing tests
+rest on the earlier scan. Re-cut from the stitched voxels with
+
+    python demo/build_voxel_map.py --from-voxels demo/out/citymap_citylife/voxels.npz \
+        --out-dir demo/out/citymap_citylife --keep-from demo/out/citymap_citylife_20260924 \
+        --bands (as above) --alias occ_day=occ_day_flightband_6to14 --free-check 35,-20
+
+Each build writes `map_build.json` beside the maps (the folder is gitignored).
 """
 from __future__ import annotations
 
@@ -125,27 +153,89 @@ def parse_bands(spec: str):
     return out
 
 
-def fetch_voxels(geo: dict):
-    from projectairsim import Drone, ProjectAirSimClient, World
-    from projectairsim.types import Pose, Quaternion, Vector3
+def keep_earlier(occ: np.ndarray, geo: dict, path: Path):
+    """`occ` with an earlier map's cells inside that map's rectangle, and how
+    many of them this scan had otherwise (None when there is no such map).
+    The earlier map must lie on this grid: the same cell size, an origin a
+    whole number of cells away, inside the new rectangle."""
+    if not path.is_file():
+        return occ, None
+    with np.load(path) as z:
+        old = z["occ"].astype(occ.dtype)
+        res, ox, oy = float(z["res"]), float(z["origin_x"]), float(z["origin_y"])
+    di, dj = (ox - geo["origin_x"]) / geo["res"], (oy - geo["origin_y"]) / geo["res"]
+    if (res != geo["res"] or abs(di - round(di)) > 1e-9 or abs(dj - round(dj)) > 1e-9):
+        raise ValueError(f"{path}: not on this grid (res {res}, origin {ox}, {oy})")
+    di, dj = int(round(di)), int(round(dj))
+    n, m = old.shape
+    if di < 0 or dj < 0 or di + n > occ.shape[0] or dj + m > occ.shape[1]:
+        raise ValueError(f"{path}: its rectangle is not inside the new one")
+    out = occ.copy()
+    changed = int((out[di:di + n, dj:dj + m] != old).sum())
+    out[di:di + n, dj:dj + m] = old
+    return out, {"cells": int(old.size), "cells_changed": changed,
+                 "origin": [ox, oy], "shape": [n, m]}
 
-    client = ProjectAirSimClient()
-    client.connect()
-    try:
+
+def tile_rects(x_min: float, x_max: float, y_min: float, y_max: float,
+               tile_m: float, res: float) -> list[tuple[float, float, float, float]]:
+    """The rectangle cut into tiles of at most `tile_m` a side, each starting
+    on a cell of the whole grid (x_min + k*res), so the tiles' cell centres
+    are the whole grid's and stitch without a seam."""
+    if tile_m <= 0 or abs(tile_m / res - round(tile_m / res)) > 1e-9:
+        raise ValueError(f"tile {tile_m} m must be a positive whole number of {res} m cells")
+
+    def edges(lo, hi):
+        out, a = [], lo
+        while a < hi - 1e-9:
+            out.append((a, min(a + tile_m, hi)))
+            a += tile_m
+        return out
+    return [(x0, x1, y0, y1) for x0, x1 in edges(x_min, x_max)
+            for y0, y1 in edges(y_min, y_max)]
+
+
+def fetch_voxels(geo: dict, tile_m: float | None = None, request=None):
+    """vox[j, k, i] for the whole rectangle: one createVoxelGrid request, or
+    with `tile_m` one per tile, stitched (WHOLE LEVEL, module docstring).
+    `request(tile_geo) -> flat` stands in for the simulator in the tests."""
+    x0, y0 = geo["origin_x"], geo["origin_y"]
+    x1, y1 = x0 + geo["nx"] * geo["res"], y0 + geo["ny"] * geo["res"]
+    rects = ([(x0, x1, y0, y1)] if tile_m is None
+             else tile_rects(x0, x1, y0, y1, tile_m, geo["res"]))
+    client = None
+    if request is None:
+        from projectairsim import Drone, ProjectAirSimClient, World
+        from projectairsim.types import Pose, Quaternion, Vector3
+
+        client = ProjectAirSimClient()
+        client.connect()
         world = World(client, SCENE, delay_after_load_sec=2,
                       sim_config_path=SIM_CONFIG_DIR)
         Drone(client, world, "Drone1")           # ensure the scene is live
-        center = Pose({
-            "translation": Vector3({"x": geo["cx"], "y": geo["cy"], "z": 0.0}),
-            "rotation": Quaternion({"w": 1.0, "x": 0.0, "y": 0.0, "z": 0.0}),
-        })
-        print(f"[voxel] requesting {geo['nx']}x{geo['ny']}x{geo['nz']} grid @ "
-              f"{geo['res']} m centred on NED ({geo['cx']:g}, {geo['cy']:g}) ...")
-        flat = world.create_voxel_grid(center, geo["x_size"], geo["y_size"],
-                                       geo["z_size"], int(geo["res"]))
+
+        def request(g):
+            center = Pose({
+                "translation": Vector3({"x": g["cx"], "y": g["cy"], "z": 0.0}),
+                "rotation": Quaternion({"w": 1.0, "x": 0.0, "y": 0.0, "z": 0.0}),
+            })
+            return world.create_voxel_grid(center, g["x_size"], g["y_size"],
+                                           g["z_size"], int(g["res"]))
+    try:
+        vox = np.zeros((geo["ny"], geo["nz"], geo["nx"]), dtype=bool)
+        for n, (a, b, c, d) in enumerate(rects, 1):
+            g = grid_geometry(a, b, c, d, geo["z_size"], geo["res"])
+            print(f"[voxel] requesting {g['nx']}x{g['ny']}x{g['nz']} grid @ "
+                  f"{g['res']} m centred on NED ({g['cx']:g}, {g['cy']:g})"
+                  + (f" (tile {n} of {len(rects)})" if len(rects) > 1 else "") + " ...")
+            part = reshape_voxels(request(g), g["nx"], g["ny"], g["nz"])
+            i0 = int(round((a - x0) / geo["res"]))
+            j0 = int(round((c - y0) / geo["res"]))
+            vox[j0:j0 + g["ny"], :, i0:i0 + g["nx"]] = part
     finally:
-        client.disconnect()
-    return reshape_voxels(flat, geo["nx"], geo["ny"], geo["nz"])
+        if client is not None:
+            client.disconnect()
+    return vox
 
 
 def main():
@@ -166,6 +256,10 @@ def main():
     ap.add_argument("--y-max", type=float, default=GRID_HALF)
     ap.add_argument("--z-size", type=float, default=2 * GRID_HALF,
                     help="vertical extent, metres, centred on NED z = 0")
+    ap.add_argument("--tile-m", type=float, default=None,
+                    help="query in square tiles of this side (metres, whole cells) "
+                         "and stitch them: a whole level in one request is tens of "
+                         "millions of voxels in one RPC (WHOLE LEVEL)")
     ap.add_argument("--out-dir", default=None,
                     help="where to write the maps. Default demo/out/citymap (the "
                          "Demo_day maps), or with --from-voxels the voxels file's "
@@ -173,6 +267,11 @@ def main():
                          "Demo_day's maps by default")
     ap.add_argument("--from-voxels", default=None,
                     help="re-cut bands from a saved voxels.npz; no simulator")
+    ap.add_argument("--keep-from", default=None,
+                    help="a folder of earlier maps on the same grid: inside each "
+                         "one's rectangle its cells are kept, so the area earlier "
+                         "flights and tests rest on does not change with the "
+                         "actors that stood there at scan time (WHOLE LEVEL)")
     ap.add_argument("--free-check", action="append", default=None,
                     help="X,Y (NED m) that must be FREE in every band above "
                          "2 m, e.g. the spawn. Default 35,-20 (Demo_day spawn).")
@@ -196,7 +295,7 @@ def main():
     else:
         geo = grid_geometry(args.x_min, args.x_max, args.y_min, args.y_max,
                             args.z_size, RES)
-        vox = fetch_voxels(geo)
+        vox = fetch_voxels(geo, tile_m=args.tile_m)
         np.savez_compressed(out / "voxels.npz", vox=vox,
                             origin_x=geo["origin_x"], origin_y=geo["origin_y"],
                             res=geo["res"], cx=geo["cx"], cy=geo["cy"])
@@ -214,8 +313,15 @@ def main():
     checks = [tuple(float(v) for v in c.split(",")) for c in
               (args.free_check if args.free_check is not None else ["35,-20"])]
     saved = {}
+    kept = {}
     for name, lo, hi in bands:
         occ = band_occ(vox, gz, lo, hi, geo["res"])
+        if args.keep_from:
+            occ, kept[name] = keep_earlier(occ, geo, Path(args.keep_from) / f"{name}.npz")
+            if kept[name] is not None:
+                print(f"[voxel] {name}: kept {args.keep_from}'s rectangle; "
+                      f"{kept[name]['cells_changed']} of its {kept[name]['cells']} cells "
+                      "differed in this scan")
         np.savez(out / f"{name}.npz", occ=occ, res=geo["res"],
                  origin_x=geo["origin_x"], origin_y=geo["origin_y"])
         saved[name] = occ
@@ -237,6 +343,22 @@ def main():
         np.savez(out / f"{new}.npz", occ=saved[old], res=geo["res"],
                  origin_x=geo["origin_x"], origin_y=geo["origin_y"])
         print(f"[voxel] {new}.npz = {old}")
+    # How these maps were made, beside them: the folder is gitignored, so this
+    # is the only record a reader of a flight's map path can find.
+    import json
+    import datetime
+    n_x, n_y = saved[bands[0][0]].shape
+    (out / "map_build.json").write_text(json.dumps({
+        "built": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
+        "argv": sys.argv[1:],
+        "res": geo["res"], "origin_x": geo["origin_x"], "origin_y": geo["origin_y"],
+        "cells": [n_x, n_y],
+        "extent_m": {"x": [geo["origin_x"] - geo["res"] / 2, geo["origin_x"] + (n_x - 0.5) * geo["res"]],
+                     "y": [geo["origin_y"] - geo["res"] / 2, geo["origin_y"] + (n_y - 0.5) * geo["res"]]},
+        "ground_z_index": gz, "bands": {n: [lo, hi] for n, lo, hi in bands},
+        "from_voxels": args.from_voxels,
+        "kept_from": args.keep_from, "kept": kept or None,
+    }, indent=1) + "\n", encoding="utf-8")
 
     try:
         import matplotlib

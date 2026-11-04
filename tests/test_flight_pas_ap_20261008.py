@@ -90,7 +90,28 @@ def _full_inputs():
     if sel["map"] is None:
         return None
     m = sel["map"]
-    return pol, rows, {"occ": m["occ"], "res": m["res"], "ox": m["ox"], "oy": m["oy"]}
+    return pol, rows, _as_flown({"occ": m["occ"], "res": m["res"], "ox": m["ox"], "oy": m["oy"]})
+
+
+# The map this flight flew: the 360 x 200 m rectangle CityLife's maps were
+# until 2026-11-04 (origin -140, -60 at 2 m). The map on disk now covers the
+# whole level and keeps that rectangle cell for cell, so the flight's own map
+# is cut out of it: off the rectangle the two differ, and so would a replay's
+# clearance there.
+FLOWN_RECT = {"ox": -140.0, "oy": -60.0, "shape": (180, 100), "res": 2.0}
+
+
+def _as_flown(smap: dict) -> dict:
+    occ = np.asarray(smap["occ"])
+    if occ.shape == FLOWN_RECT["shape"] or float(smap["res"]) != FLOWN_RECT["res"]:
+        return smap
+    i0 = int(round((FLOWN_RECT["ox"] - float(smap["ox"])) / FLOWN_RECT["res"]))
+    j0 = int(round((FLOWN_RECT["oy"] - float(smap["oy"])) / FLOWN_RECT["res"]))
+    n, m = FLOWN_RECT["shape"]
+    if i0 < 0 or j0 < 0 or i0 + n > occ.shape[0] or j0 + m > occ.shape[1]:
+        return smap
+    return {"occ": occ[i0:i0 + n, j0:j0 + m], "res": FLOWN_RECT["res"],
+            "ox": FLOWN_RECT["ox"], "oy": FLOWN_RECT["oy"]}
 
 
 def _fixture_inputs():

@@ -315,28 +315,49 @@ def test_constants_agree_with_the_routes():
 
 # ------------------------------------------------------------ the real maps
 
+def _measured_cells(mp):
+    """(i0, i1, j0, j1), the cells of the street mask the 82 m grid was
+    measured on (2026-09-29): the 360 x 200 m map of that day. Since
+    2026-11-04 the map covers the whole level and keeps that rectangle cell
+    for cell (map_build.json `kept`); with no such record, the whole map."""
+    rec = CITYMAP_DIR / "map_build.json"
+    if rec.is_file():
+        kept = (json.loads(rec.read_text(encoding="utf-8")).get("kept") or {}).get("ground_2to4")
+        if kept:
+            i0 = int(round((kept["origin"][0] - mp.origin_x) / mp.res))
+            j0 = int(round((kept["origin"][1] - mp.origin_y) / mp.res))
+            return i0, i0 + kept["shape"][0], j0, j0 + kept["shape"][1]
+    n, m = mp.shape
+    return 0, n, 0, m
+
+
 def test_every_street_grid_line_is_a_street():
     """What prefer="pavement" rests on: the level's roads are the 82 m grid.
     Measured 2026-09-29 on the street mask: every grid line is 0.96-1.00
-    street along its length."""
+    street along its length - on the 360 x 200 m map of that day, the
+    rectangle checked here. Over the whole central city (y -250 to 250 m)
+    the same lines are 0.84-0.88 street (measured 2026-11-04 on the whole
+    level's map), so the grid is a good guide there, not an exact one."""
     mp = _real_maps()
     if mp is None:
         return SKIP
     g = mp.road_grid
-    n, m = mp.shape
-    x_lo, y_lo = mp.centre(0, 0)
-    x_hi, y_hi = mp.centre(n - 1, m - 1)
+    i0, i1, j0, j1 = _measured_cells(mp)
+    x_lo, y_lo = mp.centre(i0, j0)
+    x_hi, y_hi = mp.centre(i1 - 1, j1 - 1)
     lines = 0
     for k in range(-5, 6):
         v = g["x_m"] + k * g["period_m"]
         if x_lo <= v <= x_hi:
             i = int(round((v - mp.origin_x) / mp.res))
-            assert mp.street[i, :].mean() >= 0.9, ("x", v, mp.street[i, :].mean())
+            f = mp.street[i, j0:j1].mean()
+            assert f >= 0.9, ("x", v, f)
             lines += 1
         v = g["y_m"] + k * g["period_m"]
         if y_lo <= v <= y_hi:
             j = int(round((v - mp.origin_y) / mp.res))
-            assert mp.street[:, j].mean() >= 0.9, ("y", v, mp.street[:, j].mean())
+            f = mp.street[i0:i1, j].mean()
+            assert f >= 0.9, ("y", v, f)
             lines += 1
     assert lines >= 6, lines
 
@@ -433,7 +454,13 @@ def test_off_map_is_rejected_on_the_real_map():
     mp = _real_maps()
     if mp is None:
         return SKIP
-    for p in ((-500.0, 0.0), (0.0, 500.0), (300.0, 0.0)):
+    # 50 m past each edge of the map on disk: it covers the whole level since
+    # 2026-11-04, where (-500, 0), (0, 500) and (300, 0) were off it before.
+    n, m = mp.shape
+    x_lo, y_lo = mp.centre(0, 0)
+    x_hi, y_hi = mp.centre(n - 1, m - 1)
+    xc, yc = (x_lo + x_hi) / 2, (y_lo + y_hi) / 2
+    for p in ((x_lo - 50.0, yc), (x_hi + 50.0, yc), (xc, y_lo - 50.0), (xc, y_hi + 50.0)):
         ok, why = is_landable(mp, *p)
         assert not ok and reason_keys(why) == ["off_map"], (p, why)
 
