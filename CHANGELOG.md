@@ -44,6 +44,15 @@ shipped change and recorded as one.
   WP3-10, X-15 and WP3-23 are DONE; WP3-22, X-13 and WP1-14 move from DRIFT
   to PARTIAL. The WP3 paragraph no longer says the city rail flies a 3 s
   lookahead or that the theta basis is open.
+- `tools/build_flight_bundles.py` signed the WGS84 versions with the lab
+  key: `fase3-sim-demo-v0.1.3`, and `v0.1.2` of corridor-survey,
+  follow-car, follow-car-nfz, follow-car-citylife, follow-car-citylife-nfz,
+  -nfz3, -nfz3b, follow-pedestrian, vla-goto-citylife,
+  sitl-pedestrian-standoff and poly-test (`wgs84-taipei-demo-v0.1.1` was
+  already WGS84). Their hashes are the conversion table's
+  (`docs/data/wgs84_conversion.json`). The earlier bundles stay for the
+  runs that flew them. Three usage examples under `sitl/` name
+  `fase3-sim-demo-v0.1.3`.
 
 #### Fixed
 - `tests/test_wp4outputs_harness.py`

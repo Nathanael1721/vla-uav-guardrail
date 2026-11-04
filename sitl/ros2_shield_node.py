@@ -106,7 +106,7 @@ Run (after `source /opt/ros/jazzy/setup.bash`; normally via run_ros2_demo.sh
 or the launch file in sitl/ros2_ws):
 
     ~/venv-ros/bin/python sitl/ros2_shield_node.py --shield on [--dynamic]
-    ~/venv-ros/bin/python sitl/ros2_shield_node.py --bundle bundles/fase3-sim-demo-v0.1.2.tar.gz
+    ~/venv-ros/bin/python sitl/ros2_shield_node.py --bundle bundles/fase3-sim-demo-v0.1.3.tar.gz
     ~/venv-ros/bin/python sitl/ros2_shield_node.py --policy P.yaml --dev-yaml
 
 POLICY. `--bundle` flies the signed bundle (guardrail/bundle.py): the policy
