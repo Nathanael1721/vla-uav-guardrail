@@ -1876,6 +1876,136 @@ def test_gen_pki_refuses_a_synced_folder_unless_told():
 # the client tool
 # --------------------------------------------------------------------------- #
 
+class _PlainEndpoint:
+    """guardrail/api.py's /health and /hot_apply on a live Shield, plaintext
+    on loopback as a rail's --hotapply-port serves it by default; standard
+    library only."""
+
+    def __init__(self, policy: str = "policies/sim_demo_policy.yaml"):
+        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+        from guardrail import api, load_policy
+        from guardrail.shield import Shield
+        self.shield = Shield(load_policy(ROOT / policy), escalation=False)
+        self.posted: list = []
+        ep = self
+
+        class Handler(BaseHTTPRequestHandler):
+            def log_message(self, *a):
+                pass
+
+            def _send(self, status, doc):
+                data = json.dumps(doc).encode("utf-8")
+                self.send_response(status)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+
+            def do_GET(self):
+                self._send(200, api.health(ep.shield))
+
+            def do_POST(self):
+                body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+                ep.posted.append((self.path, body))
+                try:
+                    self._send(200, api.apply_event(ep.shield, body))
+                except api.ApiError as e:
+                    self._send(e.status, {"detail": e.detail})
+
+        self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.url = f"http://127.0.0.1:{self.server.server_address[1]}"
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+
+    def close(self):
+        self.server.shutdown()
+        self.server.server_close()
+
+
+def test_drive_sends_a_timeline_through_a_session_into_a_flying_rails_endpoint():
+    """tools/harness_client.py drive (2026-11-03, WP4-03): the harness driving
+    a rail. A session bound to the rail's REST endpoint, the policy injected
+    and checked against the endpoint's /health, the rail's mission_start
+    waited for in its events.jsonl, then each timeline body sent as a session
+    HotApply at its mission time - the server POSTs it to <endpoint>/hot_apply
+    and the endpoint's Shield bumps its generation - and a body the endpoint
+    refuses is logged with the REST code mapped to gRPC, exit 1."""
+    if _M is None:
+        return SKIP
+    import yaml
+    from guardrail import load_policy
+    d = _tmpdir("drive_")
+    ep = _PlainEndpoint()
+    events, log, tl = d / "events.jsonl", d / "drive.jsonl", d / "timeline.yaml"
+    unknown = dict(SW_OFF, id="sw2", target_id="no-such-zone")
+    tl.write_text(yaml.safe_dump([{"at": 0.2, "label": "spawn", "body": ZONE},
+                                  {"at": 0.4, "label": "switch", "body": SW_OFF},
+                                  {"at": 0.5, "label": "bad", "body": unknown}]),
+                  encoding="utf-8")
+    pol = "policies/sim_demo_policy.yaml"
+    want = load_policy(ROOT / pol).policy_hash
+
+    def rail():                                   # the rail's own record, later
+        time.sleep(0.8)
+        events.write_text(json.dumps({"kind": "mission_start", "t": 0.0}) + "\n",
+                          encoding="utf-8")
+    try:
+        with _server() as srv:
+            th = threading.Thread(target=rail, daemon=True)
+            th.start()
+            t0 = time.monotonic()
+            rc, out, err = _tool("--target", srv.address, "--insecure", "drive",
+                                 "--rest-endpoint", ep.url, "--policy-bundle", pol,
+                                 "--expected-hash", want, "--timeline", str(tl),
+                                 "--events-file", str(events), "--log", str(log),
+                                 "--wait-s", "20")
+            took = time.monotonic() - t0
+        assert rc == 1, (rc, out, err)                 # the third body was refused
+        assert ep.shield.policy.generation == 2, ep.shield.policy.generation
+        assert [p for p, _ in ep.posted] == ["/hot_apply"] * 3, ep.posted
+        recs = [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines()]
+        kinds = [r["kind"] for r in recs]
+        for k in ("drive_start", "StartSession", "InjectPolicy", "mission_start_seen",
+                  "StopSession", "drive_end"):
+            assert k in kinds, (k, kinds)
+        assert kinds.index("InjectPolicy") < kinds.index("mission_start_seen") \
+            < kinds.index("HotApply")
+        hot = [r for r in recs if r["kind"] == "HotApply"]
+        assert [h["ack"]["generation"] for h in hot] in (["1", "2"], [1, 2]), hot
+        assert all(h["ack"]["forwarded_to"] == ep.url + "/hot_apply" for h in hot)
+        assert all(h["mission_t"] >= h["at"] for h in hot), hot
+        bad = [r for r in recs if r["kind"] == "HotApply_refused"]
+        assert len(bad) == 1 and bad[0]["code"] == "NOT_FOUND", bad
+        inj = next(r for r in recs if r["kind"] == "InjectPolicy")
+        assert inj["ack"]["endpoint_policy_hash"] == want, inj
+        assert took >= 0.8 + 0.5, took                  # waited for the rail's start
+    finally:
+        ep.close()
+
+
+def test_a_drive_timeline_is_checked_before_anything_is_sent():
+    import harness_client
+    d = _tmpdir("drive_tl_")
+    good = d / "good.yaml"
+    good.write_text("- {at: 3, body: {type: corridor_swap}}\n- {at: 1, body: {type: dynamic_nfz}}\n",
+                    encoding="utf-8")
+    assert [e["at"] for e in harness_client._load_timeline(str(good))] == [1.0, 3.0]
+    for text in ("[]", "- {at: 1}", "- {at: -1, body: {type: dynamic_nfz}}",
+                 "- {at: 1, body: {id: x}}", "{at: 1}"):
+        bad = d / "bad.yaml"
+        bad.write_text(text, encoding="utf-8")
+        try:
+            harness_client._load_timeline(str(bad))
+        except ValueError:
+            continue
+        raise AssertionError(f"accepted timeline {text!r}")
+    ev = d / "events.jsonl"
+    ev.write_text('{"kind": "episode_start"}\nnot json\n{"kind": "mission_start", "t": 0.0}\n',
+                  encoding="utf-8")
+    assert harness_client.wait_for_event(ev, "mission_start", 1.0)["t"] == 0.0
+    assert harness_client.wait_for_event(ev, "mission_end", 0.2) is None
+    assert harness_client.wait_for_event(d / "absent.jsonl", "mission_start", 0.2) is None
+
+
 def _tool(*argv) -> tuple[int, str, str]:
     import harness_client
     out, err = io.StringIO(), io.StringIO()

@@ -1,0 +1,230 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  SROS 2 access-control policy of the ROS 2 rail: what each enclave of
+  sitl/sros2_enclaves.txt may publish, subscribe, call and serve.
+
+  WHY (audit card X-15). Until 2026-11-03 every enclave carried sros2's
+  default permissions (rt/*, rq/*, rr/* in both directions): Enforce kept
+  out a process with no enclave or another CA, but any process of the rail
+  could publish any topic - the VLA could publish /shield/setpoint and fly
+  around the Shield. This file narrows each enclave to its own process's
+  interfaces, so that:
+
+    /shield/setpoint        is published by /guardrail/safety_shield ONLY
+    /vla/action_4d          is published by /guardrail/vla_stub ONLY
+    /mavros/*, /uas1/*      are published by /guardrail/mavros ONLY (a wildcard)
+    /mavros/setpoint_raw/local  is published by /guardrail/mavlink_adapter ONLY
+                            (MAVROS subscribes to it)
+
+  and each node may reach the MAVROS services it calls and nothing else.
+  Every node also publishes /rosout and /parameter_events and serves its own
+  parameter and type-description services (~/*).
+
+  HOW IT IS USED. tools/sros2_setup.sh (its permissions option) runs
+  `ros2 security create_permission <keystore> <enclave> sitl/sros2_policy.xml`
+  for each enclave: sros2 turns the enclave's profiles into its DDS
+  permissions.xml (topics as rt/<name>, services as rq/<name>Request and
+  rr/<name>Reply; anything not granted is DENY) and signs it with the
+  keystore's permissions CA - the lab CA - as permissions.p7s.
+  tools/sros2_check.sh checks 7 and 8 show a refused publication live.
+
+  Names are absolute ROS names; a trailing * is a DDS fnmatch wildcard (it
+  also matches /). The node names are the processes' own (super().__init__):
+  safety_shield (sitl/ros2_shield_node.py) and mission_shield
+  (sitl/ros2_mission_node.py, run_ros2_demo.sh STYLE=mission) share the
+  Shield's enclave; vla_stub and vla_bridge share the VLA slot's.
+-->
+<policy version="0.2.0">
+  <enclaves>
+
+    <enclave path="/guardrail/safety_shield">
+      <profiles>
+        <profile ns="/" node="safety_shield">
+          <topics publish="ALLOW">
+            <topic>/shield/setpoint</topic>
+            <topic>/shield/mode_request</topic>
+            <topic>/shield/fences</topic>
+            <topic>/shield/intercept</topic>
+            <topic>/rosout</topic>
+            <topic>/parameter_events</topic>
+          </topics>
+          <topics subscribe="ALLOW">
+            <topic>/vla/action_4d</topic>
+            <topic>/vla/identity</topic>
+            <topic>/mavlink_adapter/status</topic>
+            <topic>/mavros/local_position/pose</topic>
+            <topic>/mavros/local_position/velocity_local</topic>
+            <topic>/mavros/state</topic>
+            <topic>/mavros/extended_state</topic>
+            <topic>/mavros/statustext/recv</topic>
+          </topics>
+          <services request="ALLOW">
+            <service>/mavros/set_mode</service>
+            <service>/mavros/cmd/arming</service>
+            <service>/mavros/cmd/takeoff</service>
+            <service>/mavros/set_stream_rate</service>
+            <service>/mavros/param/get_parameters</service>
+            <service>/mavros/param/set_parameters</service>
+            <service>/mavros/get_parameters</service>
+            <service>/mavros/vehicle_info_get</service>
+          </services>
+          <services reply="ALLOW">
+            <service>~/*</service>
+          </services>
+        </profile>
+        <profile ns="/" node="mission_shield">
+          <topics publish="ALLOW">
+            <topic>/shield/mission</topic>
+            <topic>/shield/mission_update</topic>
+            <topic>/shield/mode_request</topic>
+            <topic>/rosout</topic>
+            <topic>/parameter_events</topic>
+          </topics>
+          <topics subscribe="ALLOW">
+            <topic>/mavlink_adapter/status</topic>
+            <topic>/mavros/local_position/pose</topic>
+            <topic>/mavros/state</topic>
+            <topic>/mavros/statustext/recv</topic>
+            <topic>/mavros/mission/waypoints</topic>
+            <topic>/mavros/mission/reached</topic>
+          </topics>
+          <services request="ALLOW">
+            <service>/mavros/set_mode</service>
+            <service>/mavros/cmd/arming</service>
+            <service>/mavros/cmd/takeoff</service>
+            <service>/mavros/set_stream_rate</service>
+          </services>
+          <services reply="ALLOW">
+            <service>~/*</service>
+          </services>
+        </profile>
+      </profiles>
+    </enclave>
+
+    <enclave path="/guardrail/mavlink_adapter">
+      <profiles>
+        <profile ns="/" node="mavlink_adapter">
+          <topics publish="ALLOW">
+            <topic>/mavros/setpoint_raw/local</topic>
+            <topic>/mavlink_adapter/status</topic>
+            <topic>/rosout</topic>
+            <topic>/parameter_events</topic>
+          </topics>
+          <topics subscribe="ALLOW">
+            <topic>/shield/setpoint</topic>
+            <topic>/shield/mode_request</topic>
+            <topic>/shield/fences</topic>
+            <topic>/shield/mission</topic>
+            <topic>/shield/mission_update</topic>
+            <topic>/mavros/local_position/pose</topic>
+            <topic>/mavros/home_position/home</topic>
+            <topic>/mavros/mission/waypoints</topic>
+          </topics>
+          <services request="ALLOW">
+            <service>/mavros/set_mode</service>
+            <service>/mavros/geofence/push</service>
+            <service>/mavros/geofence/pull</service>
+            <service>/mavros/mission/push</service>
+            <service>/mavros/mission/pull</service>
+          </services>
+          <services reply="ALLOW">
+            <service>~/*</service>
+          </services>
+        </profile>
+      </profiles>
+    </enclave>
+
+    <enclave path="/guardrail/vla_stub">
+      <profiles>
+        <profile ns="/" node="vla_stub">
+          <topics publish="ALLOW">
+            <topic>/vla/action_4d</topic>
+            <topic>/vla/identity</topic>
+            <topic>/rosout</topic>
+            <topic>/parameter_events</topic>
+          </topics>
+          <topics subscribe="ALLOW">
+            <topic>/mavros/local_position/pose</topic>
+          </topics>
+          <services reply="ALLOW">
+            <service>~/*</service>
+          </services>
+        </profile>
+        <profile ns="/" node="vla_bridge">
+          <topics publish="ALLOW">
+            <topic>/vla/action_4d</topic>
+            <topic>/vla/identity</topic>
+            <topic>/rosout</topic>
+            <topic>/parameter_events</topic>
+          </topics>
+          <topics subscribe="ALLOW">
+            <topic>/mavros/local_position/pose</topic>
+            <topic>/mavros/state</topic>
+            <topic>/shield/setpoint</topic>
+            <topic>/camera/*</topic>
+          </topics>
+          <services reply="ALLOW">
+            <service>~/*</service>
+          </services>
+        </profile>
+      </profiles>
+    </enclave>
+
+    <enclave path="/guardrail/mavros">
+      <profiles>
+        <!-- MAVROS 2's mavros_node container: the /mavros node and its
+             plugin nodes (/mavros/<plugin>), /mavros_node, /mavros_router,
+             the UAS link (/uas1/mavlink_source, /uas1/mavlink_sink) and a
+             tf2 listener. Its own namespaces as wildcards. -->
+        <profile ns="/" node="mavros">
+          <topics publish="ALLOW" subscribe="ALLOW">
+            <topic>/mavros/*</topic>
+            <topic>/uas1/*</topic>
+            <topic>/tf</topic>
+            <topic>/tf_static</topic>
+            <topic>/diagnostics</topic>
+            <topic>/move_base_simple/goal</topic>
+            <topic>/rosout</topic>
+            <topic>/parameter_events</topic>
+          </topics>
+          <services reply="ALLOW" request="ALLOW">
+            <service>/mavros/*</service>
+            <service>/mavros_node/*</service>
+            <service>/mavros_router/*</service>
+            <service>/transform_listener_impl_*</service>
+          </services>
+        </profile>
+      </profiles>
+    </enclave>
+
+    <enclave path="/guardrail/bag_recorder">
+      <profiles>
+        <!-- ros2 bag record (the rail's episode bag): it subscribes to the
+             topics sitl/run_ros2_demo.sh names and publishes nothing but its
+             own events and log. -->
+        <profile ns="/" node="rosbag2_recorder">
+          <topics publish="ALLOW">
+            <topic>/events/write_split</topic>
+            <topic>/rosout</topic>
+            <topic>/parameter_events</topic>
+          </topics>
+          <topics subscribe="ALLOW">
+            <topic>/vla/*</topic>
+            <topic>/shield/*</topic>
+            <topic>/mavlink_adapter/status</topic>
+            <topic>/mavros/*</topic>
+            <topic>/uas1/*</topic>
+            <topic>/camera/*</topic>
+            <!-- an rclcpp node's time source subscribes to it; without it
+                 the recorder died at start-up (sros2_policy_on_20261103) -->
+            <topic>/parameter_events</topic>
+          </topics>
+          <services reply="ALLOW">
+            <service>~/*</service>
+          </services>
+        </profile>
+      </profiles>
+    </enclave>
+
+  </enclaves>
+</policy>

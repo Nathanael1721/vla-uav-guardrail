@@ -63,6 +63,11 @@ the policy's ceiling when it sits below it, and publishes each generation's
 keep-out zones to the adapter - except a zone the aircraft is in or near,
 which is held back until the aircraft is clear, so a zone hot-applied on top
 of the aircraft is the Shield's to resolve, not an instant autopilot RTL.
+When the ground station set the fence (2026-11-03, WP3-10: sitl/
+gcs_backstop.py wrote <out>/gcs_backstop.json before this node started,
+run_ros2_demo.sh GCS_BACKSTOP=1), this node changes no fence parameter -
+the GCS owns them, as the grant has it - and records the GCS's own read-back
+beside its own (hil_evidence.autopilot_fence.gcs, `matches_autopilot`).
 
 SHIELD HORIZON. 5 s at 0.1 s steps, 50 future poses, as the grant's Safety
 Shield page locks it (3 s at 0.5 s until 2026-10-07).
@@ -292,6 +297,38 @@ DYNAMIC_FENCE = PolygonFence(
 # its hardest, a zone hot-applied ON TOP of the aircraft, so the run starts
 # unsafe and time to safe is measured with the Shield on (WP3-17).
 ON_AIRCRAFT_HALF_M = 5.0
+
+
+def gcs_backstop_record(out: Path, autopilot_vals: dict) -> dict | None:
+    """The ground station's GeoFence step (sitl/gcs_backstop.py) as this run
+    recorded it, or None when no GCS set the fence: its verdict, its link,
+    each parameter as the GCS read it back, its fence upload, and whether
+    the values this node read through MAVROS (`autopilot_vals`) are the
+    GCS's (`matches_autopilot`; None for a parameter either side lacks)."""
+    p = Path(out) / "gcs_backstop.json"
+    if not p.is_file():
+        return None
+    try:
+        doc = json.loads(p.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as e:
+        return {"file": p.name, "ok": False, "error": f"unreadable: {e}"}
+    params = doc.get("params") or {}
+    gcs_vals = {k: (v or {}).get("read_back") for k, v in params.items()}
+    diffs = {k: {"gcs": g, "autopilot": autopilot_vals.get(k)}
+             for k, g in gcs_vals.items()
+             if g is None or autopilot_vals.get(k) is None
+             or abs(float(g) - float(autopilot_vals[k])) > 1e-3}
+    fence = doc.get("fence") or {}
+    return {"file": p.name, "ok": bool(doc.get("ok")), "error": doc.get("error"),
+            "link": doc.get("link"), "router_endpoint": doc.get("router_endpoint"),
+            "gcs_sysid": doc.get("gcs_sysid"), "pid": doc.get("pid"),
+            "bundle_policy_hash": (doc.get("bundle") or {}).get("policy_hash"),
+            "params_read_back": gcs_vals,
+            "params_before": {k: (v or {}).get("before") for k, v in params.items()},
+            "fence_zones": fence.get("zones"), "fence_items_sent": fence.get("items_sent"),
+            "fence_items_read_back": fence.get("items_read_back"),
+            "fence_match": fence.get("match"),
+            "matches_autopilot": not diffs, "differences": diffs}
 
 
 def keepout_zones(policy) -> list:
@@ -1693,7 +1730,12 @@ if HAVE_ROS:
             # policy's ceiling is recorded (stricter_than_policy), not fixed.
             is_sitl = isinstance(vals.get("SIM_SPEEDUP"), float) \
                 and vals["SIM_SPEEDUP"] > 0.0
-            if plan["raise_to"] is not None and alt_max is not None and is_sitl:
+            # A GCS-set fence (gcs_backstop.json in the run folder, written by
+            # the ground station's own process before this node started): the
+            # GCS owns the parameters, so this node changes none of them.
+            gcs = gcs_backstop_record(self.out, vals)
+            raise_ok = is_sitl and gcs is None
+            if plan["raise_to"] is not None and alt_max is not None and raise_ok:
                 if self._set_param("FENCE_ALT_MAX", plan["raise_to"]):
                     raised_from = alt_max
                     alt_max = self._get_params(
@@ -1708,7 +1750,11 @@ if HAVE_ROS:
                               if k in FENCE_PARAMS},
                 "policy_ceiling_m": ceiling, "policy_ceiling_source": ceiling_src,
                 "fence_alt_max_raised_from": raised_from,
-                "raise_allowed": is_sitl,
+                "raise_allowed": raise_ok,
+                "set_by": ("gcs" if gcs is not None else
+                           "sitl defaults file (start_sitl.sh GUARDRAIL_FENCE) or "
+                           "this node"),
+                "gcs": gcs,
                 "backstop_active": (None if enabled is None else enabled >= 1.0),
                 "stricter_than_policy": (
                     None if alt_max is None or ceiling is None

@@ -566,13 +566,41 @@ def test_the_shield_node_defers_a_zone_over_the_aircraft_and_reads_the_backstop(
     # still unknown at altitude is read again before the mission.
     assert "all(vals.get(k) is not None for k in FENCE_PARAMS)" in src
     assert '"fence parameters read late"' in src
-    # A hardware autopilot's GeoFence is GCS-set: only SITL's is changed.
-    assert "and is_sitl:" in src
+    # A hardware autopilot's GeoFence is GCS-set: only SITL's is changed, and
+    # never one the ground station set on this run (gcs_backstop.json, WP3-10,
+    # 2026-11-03): the GCS owns the parameters, the node records its read-back.
+    assert "raise_ok = is_sitl and gcs is None" in src and "and raise_ok:" in src
+    assert "gcs = gcs_backstop_record(self.out, vals)" in src and '"gcs": gcs,' in src
     # The take-off publish waits for the autopilot's values and a position.
     i = src.index("def bring_up")
     body = src[i:src.index("def start_mission")]
     assert body.index("self.read_autopilot_fence()") < \
         body.index('self._publish_fences("take-off")')
+
+
+def test_the_shield_node_records_the_gcs_set_fence_beside_its_own_read_back():
+    """WP3-10 (2026-11-03): when the ground station's step wrote
+    gcs_backstop.json into the run folder, the node records its verdict and
+    read-back, and whether the values it read itself through MAVROS are the
+    GCS's; no file, no record; an unreadable file is recorded as such."""
+    import json as _json
+    import ros2_shield_node as N
+    d = Path(tempfile.mkdtemp(prefix="gcs_rec_"))
+    assert N.gcs_backstop_record(d, {}) is None
+    doc = {"ok": True, "link": "udpin:127.0.0.1:14560", "gcs_sysid": 255,
+           "params": {"FENCE_ENABLE": {"before": 0.0, "read_back": 1.0},
+                      "FENCE_TYPE": {"before": 7.0, "read_back": 5.0}},
+           "fence": {"zones": ["nfz-square"], "items_sent": 4, "items_read_back": 4,
+                     "match": True}}
+    (d / "gcs_backstop.json").write_text(_json.dumps(doc), encoding="utf-8")
+    r = N.gcs_backstop_record(d, {"FENCE_ENABLE": 1.0, "FENCE_TYPE": 5.0})
+    assert r["ok"] and r["matches_autopilot"] and r["differences"] == {}, r
+    assert r["params_before"]["FENCE_ENABLE"] == 0.0 and r["fence_items_read_back"] == 4
+    r = N.gcs_backstop_record(d, {"FENCE_ENABLE": 0.0, "FENCE_TYPE": 5.0})
+    assert not r["matches_autopilot"] and list(r["differences"]) == ["FENCE_ENABLE"], r
+    (d / "gcs_backstop.json").write_text("{not json", encoding="utf-8")
+    r = N.gcs_backstop_record(d, {})
+    assert r["ok"] is False and "unreadable" in r["error"], r
 
 
 def test_the_gcs_check_needs_position_and_attitude_through_the_whole_mission():

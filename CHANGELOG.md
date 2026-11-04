@@ -642,6 +642,199 @@ acquisition; otherwise within 30 m from the start gate):
   2.12.0.
 - A container for the AGX's VLA path needs a base image checked on r39; none
   has been.
+### 2026-11-03 (G) — the grant's mission style flown through MISSION_ITEM_INT, a GCS-set GeoFence, per-topic SROS 2 permissions, and the harness driving a flying rail
+
+Four open items of the 29 Oct review, each against the grant's wording:
+WP3-09 (the MAVLink adapter's MISSION_ITEM_INT row), WP3-10 (a GCS-set
+GeoFence backstop), X-15 (SROS 2 permissions narrower than sros2's
+allow-all) and WP1-15 / WP4-03 (corridor_swap in flight, and the harness,
+not a scripted client, driving the events).
+
+#### Added
+- **The mission style (WP3-09).** The grant's MAVLink adapter table has a
+  second row: "Pre-planned waypoint mission | MISSION_ITEM_INT | For
+  mission-style flight; replaces or updates the next waypoint". Until now
+  nothing on any rail wrote a mission item. `sitl/ros2_mission_node.py` is
+  the Shield for that style: it checks a waypoint plan leg by leg with the
+  Shield's own position check (`state_is_unsafe`, hard and enforced rules,
+  every 0.5 m), replaces a leg that reaches an illegal step by a held point
+  1.5 m short of it, and clamps the plan's speed to the policy's cap (the
+  mission's DO_CHANGE_SPEED). `sitl/mavlink_adapter_node.py` writes the plan
+  through `/mavros/mission/push` (home, DO_CHANGE_SPEED, one NAV_WAYPOINT
+  per waypoint) and reads it back. In AUTO, at 10 Hz, the node re-checks the
+  leg to the next waypoint under the rules in force; when a hot-applied zone
+  makes it illegal, that one item is replaced in the autopilot by a partial
+  write (MISSION_WRITE_PARTIAL_LIST, then the item as MISSION_ITEM_INT) with
+  a held point short of the zone, and the original is written back once the
+  leg has been legal for 2 s. `STYLE=mission` in `sitl/run_ros2_demo.sh` and
+  `style:=mission` in the launch file run it in the Shield's place and
+  enclave, with no VLA node; the bag adds `/shield/mission`,
+  `/shield/mission_update` and MAVROS's mission topics; the run writes
+  `mission.json`.
+- **A GCS-set GeoFence (WP3-10).** The grant: "GCS-set AP GeoFence
+  parameters (FENCE_ENABLE, FENCE_TYPE, FENCE_ACTION) remain configured as a
+  last-line backstop". `sitl/gcs_backstop.py` is the ground station's step,
+  a process of its own that runs before MAVROS and the Shield on the
+  router's GCS endpoint (`GCS_BACKSTOP=1`: SITL boots without the fence
+  defaults file, the endpoint goes to 127.0.0.1:14560). It speaks as the GCS
+  (system 255, component 190), reads the fence parameters as they stand,
+  sets FENCE_TYPE, FENCE_ACTION, FENCE_ALT_MAX (raised above the policy's
+  ceiling + 5 m when the operator's file sits below it), FENCE_MARGIN,
+  AVOID_ENABLE and then FENCE_ENABLE, reading each back, and uploads the
+  signed bundle's keep-out zones with the mission protocol (fence type,
+  MISSION_ITEM_INT), reading the list back item by item. Everything goes into
+  `<out>/gcs_backstop.json`; the run is refused if any value or item does
+  not read back as set. On such a run the adapter uploads no zone
+  (`--fences-by-gcs`), and the Shield node changes no fence parameter and
+  records the GCS's read-back beside its own (`hil_evidence.autopilot_fence`:
+  `set_by: gcs`, `gcs.matches_autopilot`).
+- **Per-topic SROS 2 permissions (X-15).** `sitl/sros2_policy.xml`, an
+  sros2 access-control policy with one entry per enclave: the Shield's
+  enclave alone may publish `/shield/setpoint`, the VLA slot's alone
+  `/vla/action_4d`, the adapter's alone `/mavros/setpoint_raw/local` among
+  the Guardrail's, MAVROS its own `/mavros/*` and `/uas1/*` (wildcards), the
+  bag recorder nothing but its own events; each node calls only the MAVROS
+  services it uses. `tools/sros2_setup.sh` signs each enclave's permissions
+  from it with the keystore's permissions CA (the lab CA), verifies each
+  signed file and refuses one that still grants `rt/*`; `--permissions-only`
+  re-signs an existing keystore. `tools/sros2_check.sh` gains check 7 (a
+  process in the VLA's enclave publishing `/shield/setpoint`, and one in the
+  Shield's publishing `/vla/action_4d`, are refused at the publisher in the
+  security layer's words, their nodes up) and check 8 (the signed
+  permissions: no blanket grant, one publisher enclave for each of the two
+  topics). A flight records each process's `permissions_scope` and the
+  SHA-256 of its `permissions.p7s` (`guardrail.manifest.ros2_security_evidence`).
+- **The harness drives a flying rail (WP4-03).** `tools/harness_client.py
+  drive` opens a session bound to the rail's REST hot-apply endpoint,
+  injects the bundle the rail flies (pinned to its hash; InjectPolicy checks
+  the endpoint's /health reports it), waits for the rail's own
+  `mission_start`, and sends a timeline of HotApply at mission time, which
+  the harness POSTs to `<endpoint>/hot_apply`; every request, answer and
+  streamed harness event is a line of `<tag>.harness.jsonl`.
+- `tools/bag_mission_protocol.py`: the mission-protocol exchange decoded
+  from a run's raw MAVLink topics (`/uas1/mavlink_sink`,
+  `/uas1/mavlink_source`).
+- `tools/render_track_video.py` draws corridors as their generation flies
+  them, switched-off and scheduled zones as such, the mission style's
+  waypoints, and the autopilot's mode.
+- WSL: `~/venv-harness` (grpcio 1.85.1, protobuf 7.36.2, cryptography
+  50.0.2, pydantic 2.14.2, shapely 2.1.2, numpy 2.4.6, jinja2, PyYAML) for
+  the harness service, whose stubs need protobuf >= 7.35.1 (`~/venv-ros`
+  has 4.21).
+
+#### Changed
+- The WSL keystore `~/sros2_keystore` carries the policy's permissions
+  (backed up first as `~/sros2_keystore.before-policy-20261102T201841Z.tar.gz`).
+  Any node that adds a publisher, subscription or service client must be
+  added to the policy and the keystore re-signed, or Enforce refuses it.
+- `render_track_video.py`'s axis labels: the rows are x North, y East; the
+  frames said x east, y north (the drawing itself is unchanged). Today's
+  earlier videos were rendered again with it.
+- `docs/FINAL-REPORT-outline.md`: WP3-10 and X-15 move to DONE on these
+  flights; WP3-09, WP1-15, WP4-03 and WP4-05 gain them as evidence and stay
+  PARTIAL for what their rows name; WP3-07 gains G7 (Brake -> Normal, flown on
+  `gcs_fence_on_20261103c`). The map reads 44 DONE, 79 PARTIAL, 12 DRIFT,
+  1 MISSING (42 and 81 before).
+- `docs/DESIGN-sros2.md` (the per-topic permissions and the 8/8 check) and
+  `sitl/README.md` (GCS_BACKSTOP=1, STYLE=mission).
+
+#### Fixed
+- The first per-topic flight (`sros2_policy_on_20261103`) lost its bag: an
+  rclcpp node's time source subscribes to `/parameter_events`, which the bag
+  recorder's profile did not grant, and the recorder died at start
+  ("rt/parameter_events topic not found in allow rule"). Granted; re-flown.
+
+#### Flown (the ROS 2 rail in WSL: ArduCopter 4.5.7 SITL, mavlink-routerd, MAVROS 2.14, topology `dev`; from this worktree, so `code_revision` reads "unversioned")
+
+Every run has its flight-log replay video, `demo/out/<tag>/<tag>_track.mp4`
+(`tools/render_track_video.py`), and its rail log `<tag>.rail.log`.
+
+| Run | Set-up | What happened |
+|---|---|---|
+| `gcs_fence_off_20261103` | GCS_BACKSTOP=1, Shield **off**, default mission to (30, 30) at 6 m/s, signed `fase3-sim-demo` 0.1.2 | The GCS step on 127.0.0.1:14560 found the stock values and set them: FENCE_TYPE 7 -> 5, FENCE_ACTION 1, FENCE_ALT_MAX 100 -> 30 (the policy's 20 m ceiling + 5 m is below the file's 30), FENCE_MARGIN 2, AVOID_ENABLE 3 -> 0, FENCE_ENABLE 0 -> 1, each read back; `nfz-square` uploaded as 4 MISSION_ITEM_INT (ArduPilot asked with MISSION_REQUEST), 4 read back, equal. The Shield node read the same values through MAVROS (`matches_autopilot` true). **"Fence Breached" at 3.37 s, GUIDED -> RTL**; 6.4 s inside the zone (the RTL flew home across its corner); P0 escape 1.0 (Shield off). |
+| `gcs_fence_off_20261103b` | the same at 3.5 m/s | **"Fence Breached" at 4.08 s, GUIDED -> RTL**; 5.4 s inside the zone. |
+| `gcs_fence_on_20261103` | Shield **on**, 6 m/s | X1 and G3 at 0.11 / 0.21 s on `nfz-square` (repair 8.14 m against theta 2 m: the 5 s forecast from home reaches the zone), BRAKE, G5 RTL at 30.3 s, home: no breach, P0 escape 0.0. Its rosbag was never closed (Found). |
+| `gcs_fence_on_20261103b` | Shield **on**, 3.5 m/s | The same: X1 / G3 at 0.11 / 0.21 s (repair 6.37 m), RTL at 30.3 s; no breach. The aircraft hardly left home on either Shield-on run, so neither tests the fence near a zone; the next one does. |
+| `gcs_fence_on_20261103c` | GCS_BACKSTOP=1, Shield **on**, to (40, 15) at 2 m/s: a route past the zone's corner | The Shield bent the route around `nfz-square` (G1 Normal -> Brake at 4.6 s on a 0.04 m repair, **G7 Brake -> Normal** at 12.7 s after 2.09 s clear); the aircraft passed 1.58 m from the zone and reached the target at 22.4 s, landed. **No breach** - the GCS-set fence stayed silent with the Shield working beside the zone; P0 escape 0.0, no unsafe tick. |
+| `harness_corridor_20261103` | the signed `corridor-survey` 0.1.1 (a 40 m corridor along (0,0)-(60,0)-(60,60)), to (60, 0) at 3.5 m/s, REST on 127.0.0.1:8071, the harness in WSL | The harness refused to inject an unpinned policy (`expected_hash is required`), so no event was sent: the flight went to the target with no event, 17.8 s. |
+| `harness_corridor_20261103b` | the same | Stopped on the pad by hand (the same refusal; the driver script had not been fixed): no flight log, so no video. |
+| `harness_corridor_20261103c` | the same, the bundle's hash pinned | **The harness drove the events.** gRPC over mTLS with the lab CA in `~/harness_pki` (the CA the SROS 2 keystore was seeded with), a session bound to the rail's endpoint, InjectPolicy matching the endpoint's hash, then four HotApply at mission time, each POSTed by the harness to `/hot_apply` (61-108 ms per call): `dynamic_nfz` `nfz-hot-1` across the route at 2.0 s (generation 1, receipt to swap 1.814 ms), `time_window_switch` off at 9.0 s (2, 0.761 ms), `corridor_swap` to a 10 m corridor ending at x = 40 at 15.0 s (3, 0.765 ms), `corridor_swap` back to the survey route at 26.0 s (4, 0.711 ms). The FSM: G1 at 2.9 s and G3 at 3.4 s on the zone (the aircraft held at x 13, short of the zone's margin at 23), G8 at 11.2 s, X1 and G3 at 15.1 / 15.2 s on `swap-route-short` (held at x 29.2, inside the swapped corridor, short of its end), G8 at 28.2 s; target reached at 37.6 s, landed. P0 escape 0.0, no unsafe tick. Each generation's policy and CSP written; the harness's event stream carried `hot_apply_forwarded` four times. |
+| `mission_wp_20261103` | STYLE=mission, GCS_BACKSTOP=1, waypoints (0, 30) and (30, 30), speed 6 | Refused on the pad: the node waited for the adapter's upload before arming, but ArduPilot sets its home at arming and the adapter converts the plan about home. Fixed (the upload is awaited after the climb). No flight log, no video. |
+| `mission_wp_20261103b` | the same | Uploaded and read back (4 items), AUTO; the first replacement raised a TypeError in the node's event record (a duplicated `t`), and the node's own fail-safe landed it at 1.6 s. Fixed. |
+| `mission_wp_20261103c` | the same, the harness sending the zone | Flown as intended (below), but the adapter reported both updates failed: it took MAVROS's push result, and MAVROS 2.14's partial push always ends in an ArduPilot timeout (Found). The bag shows both items written and flown. |
+| `mission_wp_20261103d` | the same, the adapter's verdict now its read-back | **The mission style, end to end.** Pre-execution: the plan legal, the speed 6 m/s clamped to the policy's 4 m/s cap (DO_CHANGE_SPEED 4). Upload: 4 items, read back, equal. AUTO from 0.0 s ("Mission: 1 ChangeSpeed", "Mission: 2 WP"). The harness spawned `nfz-hot-1` across the first leg at 1.5 s; 85 ms later the node replaced item 2 (0, 30) by a held point (0.003, 15.124) - "leg to (0, 30) breaks nfz-hot-1 at 16.84 m" - and ArduPilot answered "Auto mission changed, restarted command"; the aircraft came to rest at the held point and never went past y 15.35 m (the zone's margin begins at 17 m). The harness switched the zone off at 12.0 s; after 2.1 s of a legal leg the node wrote (0, 30) back, ArduPilot restarted the command, and the mission went on: item 2 reached at 20.6 s, item 3 (30, 30) at 28.1 s, LAND. Both updates confirmed by read-back (MAVROS's push result false both times). The bag (`/uas1/mavlink_sink`) carries 6 MISSION_ITEM_INT to the autopilot and no MISSION_ITEM: 4 for the upload, one per update (`mission_protocol_from_bag.txt` in the run folder, from `tools/bag_mission_protocol.py`). No unsafe tick; the node's checks took at most 9.4 ms a tick. Its replay pack was refused (`metrics.json` lacked the episode id; fixed after this flight). |
+| `sros2_policy_on_20261103` | SROS2=1 with the per-topic permissions, Shield on, 3.5 m/s | Flew under Enforce (every Guardrail node and MAVROS in its own enclave; the Shield node records `permissions_scope: per_topic`): X1 / G3 at 0.11 / 0.21 s, RTL at 30.3 s. **The rosbag recorder died at start** (`rt/parameter_events topic not found in allow rule`), so the run has no bag. Fixed in the policy. |
+| `sros2_policy_on_20261103b` | the same, the recorder's permission granted | The same flight with its bag (every recorded topic, `/uas1/*` included, 21020 MAVLink frames from the autopilot) and its replay bundle with the bag; fence upload and mode requests through MAVROS's services under the per-topic grants; `permissions_scope: per_topic`, the lab CA's fingerprint 69:73:B8:BA:...; P0 escape 0.0. |
+
+None is KPI-grade: `dev` topology without the PI's waiver, and a worktree
+run records `code_revision` "unversioned" (the worktree's `.git` file names
+a Windows path WSL's git cannot follow).
+
+#### Found
+- **MAVROS 2.14's partial mission push is off by one against ArduPilot
+  4.5.7.** It sends MISSION_WRITE_PARTIAL_LIST with end_index = start_index
+  + count (here 2, 3); MAVLink and ArduPilot read end_index as the last
+  index included, so ArduPilot asks for item 2, gets it as MISSION_ITEM_INT,
+  writes it and restarts the command it is flying, then asks for item 3 nine
+  times, which MAVROS refuses as out of range, and ends the upload with
+  MISSION_ACK 15 and "Mission upload timeout" after 8 s; MAVROS reports the
+  push failed. Decoded from `mission_wp_20261103c`'s and `_d`'s bags. The
+  item does land, so the adapter's verdict is its read-back; the 8 s window
+  would refuse a second update sent inside it.
+- **ArduPilot 4.5.7 asks for every uploaded item with MISSION_REQUEST, not
+  MISSION_REQUEST_INT** (MissionItemProtocol::queued_request_send). MAVROS
+  2.14 answers with MISSION_ITEM_INT anyway ("Trying to send a
+  MISSION_ITEM_INT instead", in its plugin), as the GCS step does: no
+  MISSION_ITEM went to the autopilot on the decoded flights.
+- **ArduCopter restarts the item it is flying when that item is rewritten**
+  ("Auto mission changed, restarted command"). A first version of the
+  adapter followed each replacement with MISSION_SET_CURRENT, on the reading
+  of AP_Mission::update alone, which only notes the change; ModeAuto acts on
+  it. Removed before any flight relied on it.
+- **The 29 Oct "unexplained" Shield-on fence breach is explained by its own
+  records.** `ros2fix_on_policy55` flew `poly-test`, whose `tri-nfz` has a
+  vertex at home (0, 0): at take-off the node held the zone back
+  (`zones_over_home: [tri-nfz]`), uploaded it at 2.0 s once clear, the FSM
+  went to RTL at 5.2 s, the mission ended at 10.2 s with the aircraft at
+  (0.0, -1.9) in RTL, and "Fence Breached" came at 26.5 s: the autopilot's
+  RTL landing in a zone that covers home, which the adapter warns of. With a
+  GCS-set fence the GCS step holds a zone over the pad back the same way,
+  so it cannot fire there - and nothing backstops that zone.
+- With the Shield on, both default-mission flights held the aircraft within
+  0.2 s of the mission start (the 5 s forecast from home reaches
+  `nfz-square`), so they show only that the fence stays quiet when the
+  Shield stops early; `gcs_fence_on_20261103c` approaches the zone.
+- **The harness injects only a pinned policy**: InjectPolicy without
+  `expected_hash` is refused, by design; the first corridor flight flew
+  without its events because the driver script sent none.
+- **Editing `sitl/run_ros2_demo.sh` while it runs breaks that run**: bash
+  reads a script as it executes it. `gcs_fence_on_20261103` ended with
+  "syntax error near unexpected token `fi'" after the Shield node finished,
+  the trap killed the bag recorder, and the bag was never closed (its replay
+  bundle has no bag). Its other records are whole.
+
+#### Limits
+- `dev` topology and an unversioned worktree: nothing here is KPI-grade.
+- `GCS_BACKSTOP=1` is opt-in; the default rail still loads the fence
+  defaults file and lets the adapter upload the zones, so Mission Planner
+  keeps the GCS endpoint. The GCS step is a scripted stand-in for an
+  operator in Mission Planner, not Mission Planner (ARCH-10 is that item). A
+  GCS-set fence is static: a zone hot-applied in flight is the Shield's
+  alone.
+- The mission style runs no escalation FSM, forecasts the straight leg (not
+  ArduCopter's path), replaces only the next waypoint, writes no manifest,
+  kpi.json or Shield audit, and flew without SROS 2 (its node's
+  permissions are in the policy, not flown). Its only flown event was a
+  dynamic zone across the leg and its switch-off.
+- The harness forwards a session's HotApply to `/hot_apply`, which spawns a
+  zone, switches a rule or swaps a corridor; it cannot move, rotate or scale
+  a zone (PATCH /dynamic_nfz), does not start the rail or its episode
+  (StartEpisode's SITL backend is reserved), and reads no telemetry from it.
+- The harness ran in WSL with the lab CA of the SROS 2 keystore; the
+  Windows harness's PKI is still another CA.
+- Per-topic permissions are per enclave: the stub and the AerialVLA bridge
+  share the VLA slot's, the Shield node and the mission-style node the
+  Shield's. The Orin has no keystore yet.
 
 ### 2026-11-03 — the 2 November branches merged; the flight bundles rebuilt for the new policy versions
 

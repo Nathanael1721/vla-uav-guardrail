@@ -236,7 +236,7 @@ def _launch_processes(config: dict) -> dict:
         ctx = {"python": "/venv/bin/python", "repo_root": str(ROOT), "out": "",
                "shield_args": "--shield on", "vla": "stub", "vla_args": "",
                "adapter_args": "", "enclave_root": "", "vla_ready_timeout_s": "3300",
-               **config}
+               "style": "guided", **config}
         launch_mod._nodes(ctx)
         # The declared default of enclave_root is empty (nothing changes).
         desc = launch_mod.generate_launch_description()
@@ -272,6 +272,33 @@ def test_each_node_gets_its_own_enclave_only_when_asked():
         assert "absolute" in str(e), e
     else:
         raise AssertionError("a relative enclave_root was accepted")
+
+
+def test_mission_style_runs_the_mission_shield_in_the_shields_place_and_no_vla():
+    """style:=mission (2026-11-03, WP3-09): the Shield's process runs
+    sitl/ros2_mission_node.py with shield_args, in the Shield's enclave; the
+    adapter runs as always; no VLA node starts; the default stays guided, and
+    any other style is refused."""
+    g = _launch_processes({})
+    assert g["defaults"].get("style") == "guided", g["defaults"]
+    assert g["processes"]["safety_shield"]["cmd"][1].endswith("ros2_shield_node.py")
+    m = _launch_processes({"style": "mission", "enclave_root": "/guardrail",
+                           "shield_args": "--waypoints 0,30;30,30 --tag t",
+                           "adapter_args": "--fences-by-gcs", "out": "/runs/t"})
+    assert set(m["processes"]) == {"mavlink_adapter", "safety_shield"}, m["processes"]
+    cmd = m["processes"]["safety_shield"]["cmd"]
+    assert cmd[1].endswith("ros2_mission_node.py") and cmd[2:] == [
+        "--waypoints", "0,30;30,30", "--tag", "t"], cmd
+    env = m["processes"]["safety_shield"]["additional_env"]
+    assert env["ROS_SECURITY_ENCLAVE_OVERRIDE"] == "/guardrail/safety_shield", env
+    acmd = m["processes"]["mavlink_adapter"]["cmd"]
+    assert acmd[1].endswith("mavlink_adapter_node.py") and "--fences-by-gcs" in acmd, acmd
+    try:
+        _launch_processes({"style": "waypoints"})
+    except RuntimeError as e:
+        assert "style" in str(e), e
+    else:
+        raise AssertionError("an unknown style was accepted")
 
 
 def test_the_vla_slot_holds_the_stub_or_the_bridge_never_both():
@@ -483,6 +510,47 @@ def test_the_live_check_counts_a_refusal_only_in_the_security_layers_words():
                    "heard_zero:heard_nothing"}, (got, cp.stderr)
 
 
+def test_check_7_counts_a_refused_publisher_only_in_the_security_layers_words():
+    """tools/sros2_check.sh check 7 (X-15, 2026-11-03): a publisher the
+    per-topic permissions do not grant is refused only if the probe's node
+    came up, no PROBE line was printed, Fast DDS's access control named THAT
+    topic and rclpy failed the publisher - the text recorded in WSL Jazzy on
+    2026-11-03. A probe refused at start-up, one refused on another topic,
+    one that died otherwise and one that published all fail it."""
+    if _bash() is None:
+        print("      SKIP: no bash on this host")
+        return SKIP
+    import subprocess
+    src = (ROOT / "tools" / "sros2_check.sh").read_text(encoding="utf-8")
+    start, end = "# --- verdict helpers", "# --- end of the verdict helpers ---"
+    helpers = src.split(start, 1)[1].split("\n", 1)[1].split(end, 1)[0]
+    assert 'publisher_refused "$WORK/pub7a.txt" /shield/setpoint' in src
+    assert 'publisher_refused "$WORK/pub7b.txt" /vla/action_4d' in src
+    refused = ("NODE-UP node=vla_stub\n"
+               "\x1b[37;1m2026-11-03 04:19:39.936 \x1b[31;1m[\x1b[37;1mSECURITY\x1b[31;1m Error] "
+               "\x1b[37mrt/shield/setpoint topic not found in allow rule. "
+               "(./src/cpp/security/accesscontrol/Permissions.cpp:1192)\x1b[34;1m -> Function "
+               "\x1b[36mcheck_create_datawriter\x1b[m\n"
+               "rclpy._rclpy_pybind11.RCLError: Failed to create publisher: create_publisher() "
+               "could not create data writer, at ./src/publisher.cpp:275\n")
+    cases = {
+        "refused": refused,
+        "other_topic": refused.replace("rt/shield/setpoint", "rt/rosout"),
+        "no_node": refused.replace("NODE-UP node=vla_stub\n", ""),
+        "published": "NODE-UP node=vla_stub\nPROBE role=pub node=vla_stub enclave=/guardrail/"
+                     "vla_stub received=0 sent=30\n",
+        "died": "NODE-UP node=vla_stub\nModuleNotFoundError: No module named 'std_msgs'\n",
+    }
+    d = _tmp("sros2_pub_")
+    for name, text in cases.items():
+        (d / f"{name}.txt").write_text(text, encoding="utf-8", newline="\n")
+    loop = "".join(f'publisher_refused "{(d / n).as_posix()}.txt" /shield/setpoint '
+                   f'&& echo "{n}"\n' for n in cases)
+    cp = subprocess.run([_bash(), "-c", helpers + "\n" + loop], capture_output=True,
+                        text=True, timeout=60)
+    assert set(cp.stdout.split()) == {"refused"}, (cp.stdout, cp.stderr)
+
+
 def test_a_flight_records_sros2_only_when_it_is_on():
     """guardrail.manifest.ros2_security_evidence, which the Shield node puts
     in hil_evidence: None with security off (the record is what it was), and
@@ -514,7 +582,19 @@ def test_a_flight_records_sros2_only_when_it_is_on():
                   "enclave": "/guardrail/safety_shield",
                   "enclave_source": "ROS_SECURITY_ENCLAVE_OVERRIDE",
                   "files_present": True, "identity_ca_sha256": want,
-                  "permissions_ca_sha256": want}, ev
+                  "permissions_ca_sha256": want,
+                  "permissions_sha256": hashlib.sha256(b"x").hexdigest(),
+                  "permissions_scope": None}, ev
+    # The permissions' scope (X-15): sros2's allow-all default, or a policy's
+    # per-topic grant, read from the clear-signed p7s.
+    grant = ("<dds><permissions><grant name='/guardrail/safety_shield'><allow_rule><publish>"
+             "<topics><topic>{}</topic></topics></publish></allow_rule></grant></permissions></dds>")
+    (d / "permissions.p7s").write_text(grant.format("rt/*"))
+    on = {"ROS_SECURITY_ENABLE": "true", "ROS_SECURITY_KEYSTORE": str(ks),
+          "ROS_SECURITY_ENCLAVE_OVERRIDE": "/guardrail/safety_shield"}
+    assert ros2_security_evidence(on)["permissions_scope"] == "allow_all"
+    (d / "permissions.p7s").write_text(grant.format("rt/shield/setpoint"))
+    assert ros2_security_evidence(on)["permissions_scope"] == "per_topic"
     (d / "permissions.p7s").unlink()
     assert ros2_security_evidence({"ROS_SECURITY_ENABLE": "true", "ROS_SECURITY_KEYSTORE": str(ks),
                                    "ROS_SECURITY_ENCLAVE_OVERRIDE": "/guardrail/safety_shield"}

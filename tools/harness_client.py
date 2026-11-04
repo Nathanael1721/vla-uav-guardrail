@@ -8,6 +8,9 @@
         --policy-bundle bundles/x.tar.gz --expected-hash sha256:... \
         --prompt "fly east to the tower" --live --pace 10
     python tools/harness_client.py forward --rest-endpoint http://127.0.0.1:8071 zone.json
+    python tools/harness_client.py drive --rest-endpoint http://127.0.0.1:8071 \
+        --policy-bundle bundles/x.tar.gz --timeline events.yaml \
+        --events-file demo/out/<tag>/events.jsonl --log demo/out/<tag>/<tag>.harness.jsonl
     python tools/harness_client.py status ep-0123456789ab
     python tools/harness_client.py --insecure --target 127.0.0.1:50051 run ...
 
@@ -34,6 +37,23 @@ events the session's streams carried. `forward` opens a session bound to a
 REST hot-apply endpoint (guardrail/api.py) and sends one HotApply to it,
 which the server POSTs to <endpoint>/hot_apply.
 
+`drive` (2026-11-03, WP4-03) is the harness driving a FLYING rail: it opens
+a session bound to the rail's REST hot-apply endpoint (the Shield node's
+--hotapply-port), injects the policy the rail flies (InjectPolicy checks the
+endpoint's GET /health reports the same hash, and is retried while the
+endpoint is not up yet), waits for the rail's own `mission_start` in its
+events.jsonl, then sends each timeline entry as a session HotApply at its
+mission time - the server POSTs it to <endpoint>/hot_apply, the grant's
+"harness drives dynamic_nfz, time_window_switch, and corridor_swap events
+via the Policy DSL's REST hot-apply endpoint" - and stops the session. The
+session's event stream (StreamEvents) is read on a thread throughout. Every
+request, acknowledgement and refusal, and every streamed event, is a line of
+--log. The timeline is a JSON/YAML list of {"at": seconds after
+mission_start, "body": a REST hot-apply body with its "type"}. What it does
+NOT do: start the rail or its episode (StartEpisode's SITL backend is
+reserved, UNIMPLEMENTED), or read the flight's telemetry (the rail's own
+records hold it).
+
 Exit codes: 0 the episode's status is pass, tracked or known_failure (the
 sweep's meaning: reported, not failed); 1 fail or unexpected_pass; 2 the server
 refused a call (the gRPC status code is printed) or the client could not start.
@@ -46,6 +66,8 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import threading
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -263,6 +285,155 @@ def _load_body(path: str) -> dict:
     return doc
 
 
+def _load_timeline(path: str) -> list[dict]:
+    """A drive timeline: a list of {"at": seconds after mission_start,
+    "body": a hot-apply body with its type}, sorted by time."""
+    import yaml
+    try:
+        doc = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
+    except yaml.YAMLError as e:
+        raise ValueError(f"{path}: not valid JSON/YAML: {e}") from None
+    if not isinstance(doc, list) or not doc:
+        raise ValueError(f"{path}: a timeline is a non-empty list of {{at, body}}")
+    out = []
+    for i, e in enumerate(doc):
+        if not isinstance(e, dict) or not isinstance(e.get("body"), dict) \
+                or not e["body"].get("type"):
+            raise ValueError(f"{path} entry {i}: needs a body object with a type")
+        at = float(e.get("at"))
+        if not at >= 0.0:
+            raise ValueError(f"{path} entry {i}: at must be >= 0 s")
+        out.append({"at": at, "body": e["body"], "label": e.get("label", "")})
+    return sorted(out, key=lambda e: e["at"])
+
+
+def wait_for_event(path: Path, kind: str, timeout_s: float, poll_s: float = 0.05):
+    """The first `kind` event appended to a rail's events.jsonl, or None. A
+    file that a new episode rotates aside and recreates is followed."""
+    end = time.monotonic() + timeout_s
+    while time.monotonic() < end:
+        try:
+            with open(path, encoding="utf-8") as fh:
+                for line in fh:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        rec = json.loads(line)
+                    except ValueError:
+                        continue
+                    if rec.get("kind") == kind:
+                        return rec
+        except OSError:
+            pass
+        time.sleep(poll_s)
+    return None
+
+
+def drive(client: "HarnessClient", args, timeline: list[dict]) -> int:
+    """The `drive` command: a session bound to a flying rail's REST endpoint,
+    its policy injected, the timeline sent as HotApply at mission time."""
+    from google.protobuf import json_format
+    grpc = H._grpc_modules().grpc
+    log_path = Path(args.log)
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    fh = open(log_path, "a", encoding="utf-8", newline="\n")
+    lock = threading.Lock()
+
+    def note(kind: str, **data) -> dict:
+        rec = {"wall": round(time.time(), 4), "kind": kind, **data}
+        with lock:
+            fh.write(json.dumps(rec, default=str) + "\n")
+            fh.flush()
+        return rec
+
+    def msg(m) -> dict:
+        return json_format.MessageToDict(m, preserving_proto_field_name=True)
+
+    note("drive_start", target=args.target, rest_endpoint=args.rest_endpoint,
+         policy_bundle=args.policy_bundle, timeline=timeline, insecure=args.insecure)
+    ref = client.start_session(rest_endpoint=args.rest_endpoint, label=args.label)
+    session = ref.session_id
+    note("StartSession", ack=msg(ref))
+    print(f"session {session} bound to {args.rest_endpoint}")
+    stream_n = {"n": 0}
+
+    def read_stream():
+        try:
+            for ev in client.stream_events(session, timeout=args.wait_s + 600):
+                stream_n["n"] += 1
+                note("StreamEvents", event=msg(ev))
+        except grpc.RpcError as e:
+            note("StreamEvents_end", code=e.code().name, details=e.details())
+    th = threading.Thread(target=read_stream, daemon=True)
+    th.start()
+    rc = 0
+    try:
+        # InjectPolicy reads the endpoint's /health: retried until the
+        # rail's listener is up (it starts on the pad, before arming).
+        end = time.monotonic() + args.wait_s
+        while True:
+            try:
+                ack = client.inject_policy(session, bundle_path=args.policy_bundle,
+                                           expected_hash=args.expected_hash)
+                note("InjectPolicy", ack=msg(ack))
+                print(f"  policy {ack.policy_hash} = the endpoint's "
+                      f"{ack.endpoint_policy_hash} (signature {ack.signature})")
+                break
+            except grpc.RpcError as e:
+                if e.code().name == "UNAVAILABLE" and time.monotonic() < end:
+                    time.sleep(1.0)
+                    continue
+                note("InjectPolicy_refused", code=e.code().name, details=e.details())
+                raise
+        start = wait_for_event(Path(args.events_file), "mission_start",
+                               max(0.0, end - time.monotonic()))
+        if start is None:
+            note("no_mission_start", events_file=args.events_file)
+            print(f"no mission_start in {args.events_file} within {args.wait_s:g} s",
+                  file=sys.stderr)
+            return 2
+        t0 = time.monotonic()
+        note("mission_start_seen", event_wall=start.get("wall"))
+        print("  mission_start seen")
+        for e in timeline:
+            # Never early: a sleep may wake before the monotonic clock says
+            # the time has come (Windows' timer granularity).
+            while True:
+                delay = t0 + e["at"] - time.monotonic()
+                if delay <= 0:
+                    break
+                time.sleep(min(delay, 0.05))
+            sent = time.monotonic()
+            try:
+                ack = client.hot_apply("", 0.0, e["body"], session_id=session)
+                rtt = time.monotonic() - sent
+                note("HotApply", at=e["at"], mission_t=round(sent - t0, 3),
+                     label=e["label"], body=e["body"], ack=msg(ack), rtt_s=round(rtt, 4))
+                print(f"  t={sent - t0:6.2f} s HotApply {ack.type} {ack.rule_id} ({ack.op}) "
+                      f"-> {ack.forwarded_to}: generation {ack.generation}, "
+                      f"{rtt * 1e3:.1f} ms")
+            except grpc.RpcError as err:
+                rc = 1
+                note("HotApply_refused", at=e["at"], mission_t=round(sent - t0, 3),
+                     label=e["label"], body=e["body"], code=err.code().name,
+                     details=err.details())
+                print(f"  t={sent - t0:6.2f} s HotApply REFUSED {err.code().name}: "
+                      f"{err.details()}", file=sys.stderr)
+        time.sleep(1.0)
+    finally:
+        try:
+            stop = client.stop_session(session)
+            note("StopSession", ack=msg(stop))
+            print(f"session {session} stopped: {stop.events} events")
+        except grpc.RpcError as e:
+            note("StopSession_refused", code=e.code().name, details=e.details())
+        th.join(timeout=5.0)
+        note("drive_end", streamed_events=stream_n["n"], rc=rc)
+        fh.close()
+    return rc
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--target", default=DEFAULT_TARGET)
@@ -301,6 +472,21 @@ def main(argv: list[str] | None = None) -> int:
     f.add_argument("body_file")
     s = sub.add_parser("status", help="GetStatus of an episode")
     s.add_argument("episode_id")
+    d = sub.add_parser("drive", help="drive a flying rail: a session bound to its REST "
+                                     "endpoint, a timeline of HotApply at mission time")
+    d.add_argument("--rest-endpoint", required=True)
+    d.add_argument("--policy-bundle", required=True,
+                   help="the bundle the rail flies, under the server's bundles/")
+    d.add_argument("--expected-hash", default="")
+    d.add_argument("--timeline", required=True,
+                   help="JSON/YAML list of {at: s after mission_start, body: {type, ...}}")
+    d.add_argument("--events-file", required=True,
+                   help="the rail's events.jsonl, watched for mission_start")
+    d.add_argument("--log", required=True, help="JSONL of every request, answer and "
+                                                "streamed event")
+    d.add_argument("--wait-s", type=float, default=900.0,
+                   help="how long to wait for the endpoint and the mission start")
+    d.add_argument("--label", default="")
     args = ap.parse_args(argv)
 
     # Every file and argument is read and checked HERE, before any call: a
@@ -313,6 +499,7 @@ def main(argv: list[str] | None = None) -> int:
     # client is built last, so a refusal here leaves no channel open.
     try:
         fwd_body = _load_body(args.body_file) if args.cmd == "forward" else None
+        timeline = _load_timeline(args.timeline) if args.cmd == "drive" else None
         hot = [(float(at), _load_body(p)) for at, p in args.hot_apply] \
             if args.cmd == "run" else []
         evs = [(float(at), t, json.loads(pl)) for at, t, pl in args.event] \
@@ -339,6 +526,8 @@ def main(argv: list[str] | None = None) -> int:
                 st = client.status(args.episode_id)
                 print(st)
                 return 0
+            if args.cmd == "drive":
+                return drive(client, args, timeline)
             if args.cmd == "forward":
                 session = client.start_session(rest_endpoint=args.rest_endpoint).session_id
                 ack = client.hot_apply("", 0.0, fwd_body, session_id=session)

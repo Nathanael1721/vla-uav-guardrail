@@ -570,6 +570,148 @@ def test_time_controls_reads_only_a_real_window_or_a_switch_off():
         "time_window_switch sw-off can switch it off"]
 
 
+# --------------------------------------------------------------------------- #
+# The mission style (WP3-09): MISSION_ITEM_INT through MAVROS's mission push
+# --------------------------------------------------------------------------- #
+
+def test_a_waypoint_plan_becomes_home_speed_and_one_item_per_waypoint():
+    """seq 0 home (ArduPilot overwrites it), seq 1 DO_CHANGE_SPEED at the
+    plan's speed, then a NAV_WAYPOINT per waypoint at relative altitude,
+    projected about home exactly as the fences are (back to the plan's own
+    metres through the same projection)."""
+    doc = {"waypoints": [{"x": 0, "y": 30, "up": 15}, {"x": 30, "y": 30, "up": 15}],
+           "speed_mps": 4.0}
+    items = A.mission_items(doc, *HOME)
+    assert [it["command"] for it in items] == [A.MAV_CMD_NAV_WAYPOINT, A.MAV_CMD_DO_CHANGE_SPEED,
+                                               A.MAV_CMD_NAV_WAYPOINT, A.MAV_CMD_NAV_WAYPOINT]
+    assert A.FIRST_WAYPOINT_SEQ == 2 and A.SPEED_ITEM_SEQ == 1
+    assert items[0]["frame"] == A.MAV_FRAME_GLOBAL and items[1]["param2"] == 4.0
+    proj = LocalProjection(*HOME)
+    for it, (x, y) in zip(items[2:], [(0, 30), (30, 30)]):
+        assert it["frame"] == A.MAV_FRAME_GLOBAL_RELATIVE_ALT and it["z_alt"] == 15.0
+        assert it["param1"] == 0.0 and it["param4"] == 0.0, it
+        n, e = proj.to_local(it["x_lat"], it["y_long"])
+        assert abs(n - x) < 1e-6 and abs(e - y) < 1e-6, (n, e, x, y)
+    for bad in ({"waypoints": [], "speed_mps": 4}, {"waypoints": doc["waypoints"]},
+                {"waypoints": [{"x": 0, "y": 30, "up": 0}], "speed_mps": 4},
+                {"waypoints": [{"x": float("nan"), "y": 30, "up": 15}], "speed_mps": 4}):
+        try:
+            A.mission_items(bad, *HOME)
+        except ValueError:
+            continue
+        raise AssertionError(f"accepted {bad}")
+
+
+def test_a_mission_update_replaces_one_waypoint_and_nothing_else():
+    """The grant's "replaces or updates the next waypoint": one NAV_WAYPOINT
+    at its seq, with its hold time; never the home or the speed item, never
+    past the mission the autopilot holds, never before a mission exists."""
+    seq, item = A.mission_update({"seq": 2, "waypoint": {"x": 0, "y": 15.5, "up": 15,
+                                                         "hold_s": 600}}, 4, *HOME)
+    assert seq == 2 and item["command"] == A.MAV_CMD_NAV_WAYPOINT and item["param1"] == 600.0
+    for doc, n in (({"seq": 1, "waypoint": {"x": 0, "y": 1, "up": 15}}, 4),
+                   ({"seq": 0, "waypoint": {"x": 0, "y": 1, "up": 15}}, 4),
+                   ({"seq": 4, "waypoint": {"x": 0, "y": 1, "up": 15}}, 4),
+                   ({"seq": 2, "waypoint": {"x": 0, "y": 1, "up": 15}}, None),
+                   ({"seq": 2, "waypoint": {"x": 0, "y": 1, "up": 15,
+                                            "hold_s": A.MAX_HOLD_S + 1}}, 4)):
+        try:
+            A.mission_update(doc, n, *HOME)
+        except ValueError:
+            continue
+        raise AssertionError(f"accepted {doc} with {n} items")
+
+
+def test_a_read_back_item_matches_to_the_int_protocols_resolution():
+    items = A.mission_items({"waypoints": [{"x": 0, "y": 30, "up": 15}], "speed_mps": 4},
+                            *HOME)
+    wp = items[2]
+    assert A.same_item(wp, dict(wp, x_lat=wp["x_lat"] + 1e-7))      # one int unit
+    assert not A.same_item(wp, dict(wp, x_lat=wp["x_lat"] + 1e-5))  # about a metre
+    assert not A.same_item(wp, dict(wp, param1=600.0))              # a hold it lacks
+    assert not A.same_item(items[1], dict(items[1], param2=6.0))    # another speed
+    assert A.same_item(items[0], dict(items[0], x_lat=1.0))         # home: the autopilot's
+
+
+def test_an_updates_verdict_is_the_autopilots_read_back_not_mavros_push_result():
+    """Flown 2026-11-03 (mission_wp_20261103c, decoded from the bag): MAVROS
+    2.14 writes MISSION_WRITE_PARTIAL_LIST with end_index = start + count,
+    which ArduPilot reads inclusive - it applies the item, restarts the
+    command it is flying, asks for one item more and times out after 8 s,
+    so MAVROS reports the push failed although the item landed. The adapter
+    therefore reads the item back after any push that sent it, and THAT
+    comparison is the update's `success`; a push that sent nothing fails."""
+    src = (ROOT / "sitl" / "mavlink_adapter_node.py").read_text(encoding="utf-8")
+    body = src[src.index("def _on_mission_update"):src.index("def close(self)")]
+    assert '"push_success": ok' in body and "if not ok and n < 1:" in body
+    assert 'rec["success"] = not bad' in body
+    assert "set_current" not in body, "ArduCopter restarts a changed item itself"
+
+
+def test_a_gcs_set_fence_has_the_operators_values_and_a_column_over_the_ceiling():
+    """sitl/gcs_backstop.py (WP3-10): the GCS sets the operator's fence file,
+    FENCE_ENABLE last, with FENCE_ALT_MAX raised above the policy's ceiling
+    when the file's sits below it, and refuses a file that omits one."""
+    import gcs_backstop as G
+    parm = A.read_parm(PARM)
+    pol = load_policy(POLICY)
+    vals, plan = G.desired_params(parm, pol, 15.0)
+    assert G.PARAM_ORDER[-1] == "FENCE_ENABLE"
+    assert set(G.GRANT_PARAMS) <= set(vals)
+    assert vals["FENCE_ENABLE"] == 1.0 and vals["FENCE_TYPE"] == 5.0 and vals["FENCE_ACTION"] == 1.0
+    assert vals["FENCE_ALT_MAX"] == 30.0 and plan["raise_to"] is None and vals["AVOID_ENABLE"] == 0.0
+    low = dict(parm, FENCE_ALT_MAX=20.0)
+    vals2, plan2 = G.desired_params(low, pol, 15.0)
+    assert vals2["FENCE_ALT_MAX"] == 25.0 and plan2["file_value"] == 20.0
+    try:
+        G.desired_params({k: v for k, v in parm.items() if k != "FENCE_ACTION"}, pol, 15.0)
+    except ValueError as e:
+        assert "FENCE_ACTION" in str(e)
+    else:
+        raise AssertionError("a fence file without FENCE_ACTION was accepted")
+
+
+def test_the_gcs_compares_the_fence_it_reads_back_item_by_item():
+    import gcs_backstop as G
+    pol = load_policy(POLICY)
+    fences, _ = A.policy_fences(pol, column_m=30.0)
+    items = G.int_items(A.fence_items(fences, *HOME))
+    assert len(items) == 4 and all(isinstance(it["x"], int) for it in items)
+    assert G.items_match(items, [dict(it) for it in items]) == []
+    assert G.items_match(items, items[:3])
+    moved = [dict(it) for it in items]
+    moved[2]["y"] += 50
+    assert any("item 2" in p for p in G.items_match(items, moved))
+
+
+def test_the_mission_shield_replaces_an_illegal_leg_by_its_stop_short_point():
+    """sitl/ros2_mission_node.py: a leg is walked with the Shield's own
+    position check; a legal plan goes up unchanged, a leg into a zone has its
+    waypoint replaced by a held point short of the zone (its margin
+    included), and a zone hot-applied across a leg makes it illegal there."""
+    import ros2_mission_node as M
+    from guardrail.models import DynamicNFZ
+    from guardrail.replay import rail_shield
+    pol = load_policy(POLICY)
+    sh = rail_shield(pol, lookahead_s=5.0, dt=0.1)
+    assert M.parse_waypoints("0,30; 30,30") == [(0.0, 30.0), (30.0, 30.0)]
+    wps, legs = M.check_plan(sh, (0.0, 0.0, 15.0), [(0.0, 30.0, 15.0), (30.0, 30.0, 15.0)])
+    assert [g["legal"] for g in legs] == [True, True]
+    assert [(w["x"], w["y"], w["hold_s"]) for w in wps] == [(0.0, 30.0, 0.0), (30.0, 30.0, 0.0)]
+    wps, legs = M.check_plan(sh, (0.0, 0.0, 15.0), [(15.0, 15.0, 15.0), (30.0, 30.0, 15.0)])
+    assert legs[0]["legal"] is False and legs[0]["rules"] == ["nfz-square"]
+    assert wps[0]["hold_s"] == M.HOLD_S and wps[0]["x"] < 6.0 and wps[0]["y"] < 6.0, wps[0]
+    assert legs[1]["legal"] is None and wps[1]["hold_s"] == 0.0
+    sh.hot_apply(DynamicNFZ(id="hot", type="dynamic_nfz", **HARD_P0,
+                            vertices=[XY(x=-4, y=18), XY(x=4, y=18), XY(x=4, y=22),
+                                      XY(x=-4, y=22)], margin_m=1.0))
+    v = M.leg_check(sh, (0.0, 5.0, 15.0), (0.0, 30.0, 15.0))
+    assert v["legal"] is False and v["rules"] == ["hot"] and 16.5 <= v["first_illegal"][1] <= 17.5
+    p = M.stop_short((0.0, 5.0, 15.0), v)
+    assert abs(p[1] - (v["last_legal"][1] - M.STANDOFF_M)) < 1e-9 and p[0] == 0.0
+    assert M.stop_short((0.0, 5.0, 15.0), dict(v, last_legal=(0.0, 5.5, 15.0)))[1] == 5.0
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     failed = 0
