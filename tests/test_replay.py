@@ -613,6 +613,8 @@ def test_a_bundle_re_derives_its_own_kpis():
 
 
 def test_an_episode_with_no_log_is_refused_rather_than_packaged_empty():
+    if not _have_fixture():          # _flown_policy reads the stored run's manifest
+        return SKIP
     d = _tmp()
     (d / "empty_run").mkdir()
     try:

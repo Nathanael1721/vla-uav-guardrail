@@ -16,6 +16,48 @@ shipped change and recorded as one.
 
 ## [Unreleased]
 
+### 2026-11-04 (merge) — the three 3 November branches on master: 49 DONE, 78 PARTIAL, 8 DRIFT, 1 MISSING
+
+#### Changed
+- The SITL branch (G), the one-path Shield branch (E) and the WGS84 /
+  distance-envelope branch (F) of 3 November merged onto master in an
+  integration worktree. Their sections are below:
+  - 2026-11-03 (G): GCS-set fence, MISSION_ITEM_INT, SROS 2 per-topic,
+    harness drive;
+  - 2026-11-03 (E): RuleClock, the Shield's point verdicts, the buffer,
+    the tie fix;
+  - 2026-11-03 (F): WGS84 canonical, distance_envelope, MSL.
+- E and F both changed `guardrail/shield.py`. The merge keeps F's
+  `_runtime_rule` (a distance envelope as the runtime rule of its class, an
+  MSL band over the Shield's `ground`) and E's `RuleClock` for the schedule,
+  so `_build_runtime` maps each rule first and the clock reads the mapped
+  rules. E's `SlidingWindow` buffer is built beside F's `ground`.
+- `bundle lock`: 32 policies, 0 problems. `tools/convert_policies_wgs84.py
+  --check`: every proof held. The tests where the branches meet passed
+  (test_shield 86/86, test_shieldcore_onepath 10/10,
+  test_distance_envelope_msl 12/12, test_policy_hud 45/45).
+- The full CI loop on the merged code (`tools/ci_local.py`): 139 of 141
+  files, the claim scan clean, the smoke profile's fail-safe trigger
+  correctness 0.984127 against a never-trigger null of 0.634921 (headless,
+  not KPI-grade). The two failures are fixed below.
+- `docs/FINAL-REPORT-outline.md`: 49 DONE, 78 PARTIAL, 8 DRIFT, 1 MISSING.
+  WP3-10, X-15 and WP3-23 are DONE; WP3-22, X-13 and WP1-14 move from DRIFT
+  to PARTIAL. The WP3 paragraph no longer says the city rail flies a 3 s
+  lookahead or that the theta basis is open.
+
+#### Fixed
+- `tests/test_wp4outputs_harness.py`
+  `test_an_idle_session_expires_and_frees_its_slot` failed on timing, not
+  on the harness. Its session TTL was 0.3 s, and `start_episode` alone took
+  0.20-0.55 s on a loaded machine, so the session under test expired before
+  the null was asked. Every wait is now a multiple of a 2.0 s TTL; it passed
+  3 times in a row.
+- `tests/test_replay.py`
+  `test_an_episode_with_no_log_is_refused_rather_than_packaged_empty`
+  errored where the stored run is absent (any worktree), because it reads
+  that run's manifest through `_flown_policy`. It now skips there, like the
+  other tests of the file.
+
 ### 2026-11-04 (records) — the contract map brought up to date with the 2 November work: 46 DONE, 78 PARTIAL, 11 DRIFT, 1 MISSING
 
 #### Changed

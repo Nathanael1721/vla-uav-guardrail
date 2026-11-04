@@ -304,7 +304,12 @@ def test_a_sessions_seed_is_the_default_of_its_episodes():
 
 
 def test_an_idle_session_expires_and_frees_its_slot():
-    h = H.Harness(runs_dir=_tmp("wp4h_ttl_"), session_idle_ttl_s=0.3)
+    # The TTL was 0.3 s until 2026-11-04, and start_episode alone took
+    # 0.20-0.55 s on a loaded machine, so session `a` expired before the null
+    # below was asked and the test failed on timing, not on the harness. Every
+    # wait is now a multiple of TTL, which is long enough to hold that margin.
+    ttl = 2.0
+    h = H.Harness(runs_dir=_tmp("wp4h_ttl_"), session_idle_ttl_s=ttl)
     saved = H.MAX_OPEN_SESSIONS
     H.MAX_OPEN_SESSIONS = 2
     try:
@@ -313,7 +318,7 @@ def test_an_idle_session_expires_and_frees_its_slot():
         h.start_episode(scenario_yaml=OPEN, session_id=b)      # b has an ARMED episode
         # the null: inside the TTL the cap holds
         assert _refused(h.start_session)[0] == "RESOURCE_EXHAUSTED"
-        time.sleep(0.5)
+        time.sleep(ttl + 0.5)
         c = h.start_session()["session_id"]                    # a expired; b did not
         items, _, done = h.wait_stream(a, "events", 0, 0.1)
         kinds = [i["kind"] for i in items]
@@ -325,8 +330,8 @@ def test_an_idle_session_expires_and_frees_its_slot():
         # its null, a session opened beside it with no call, expires
         H.MAX_OPEN_SESSIONS = 4
         d = h.start_session()["session_id"]
-        for _ in range(4):
-            time.sleep(0.15)
+        for _ in range(4):                                     # 2 x TTL in all
+            time.sleep(ttl / 2)                                # c is touched within each TTL
             h.issue_task(session_id=c, prompt="keep going")
         h.start_session()                                      # sweeps the idle ones
         assert h._session(c).state == "OPEN" and h._session(d).state == "STOPPED"
