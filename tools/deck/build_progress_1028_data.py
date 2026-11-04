@@ -32,6 +32,7 @@ from shapely.geometry import Point, Polygon
 REPO = Path(__file__).resolve().parents[2]
 if str(REPO) not in sys.path:          # guardrail.projection when run as a script
     sys.path.insert(0, str(REPO))
+from guardrail.projection import raw_frame_origin, raw_point_metres   # noqa: E402
 OUT = REPO / "demo" / "out"
 DATA = REPO / "docs" / "data" / "progress_1028.json"
 BUILD = REPO / "docs" / "share" / "2026-10-28-Progress" / "_build"
@@ -121,7 +122,6 @@ def mean(v):
 def zone_report(run: str, policy: Path = NFZ3B) -> dict:
     # The zones in the Shield's metres (2026-11-04): the policy files are WGS84
     # since 3 Nov, and v["x"] alone stopped with KeyError on them.
-    from guardrail.projection import raw_frame_origin, raw_point_metres
     pol = yaml.safe_load(policy.read_text(encoding="utf-8"))
     org = raw_frame_origin(pol)
     zones = [(c["id"], Polygon([raw_point_metres(v, org) for v in c["vertices"]]),
@@ -209,13 +209,15 @@ def figures(nfz_res: dict) -> dict:
     fig, ax = plt.subplots(figsize=(9.2, 6.0))
     ax.imshow(img, origin="lower", extent=[ox, ox + nx * res, oy, oy + ny * res])
     pol = yaml.safe_load(NFZ3B.read_text(encoding="utf-8"))
+    org = raw_frame_origin(pol)                 # WGS84 since 3 Nov: the Shield's metres
     for c in pol["constraints"]:
         if c["type"] == "polygon_fence":
-            v = c["vertices"] + [c["vertices"][0]]
-            ax.fill([p["x"] for p in v], [p["y"] for p in v], color="#D9534F", alpha=0.45, lw=0)
-            ax.plot([p["x"] for p in v], [p["y"] for p in v], color="#B02A26", lw=1.2)
-            cx = sum(p["x"] for p in c["vertices"]) / 4
-            top = max(p["y"] for p in c["vertices"])
+            ring = [raw_point_metres(p, org) for p in c["vertices"]]
+            v = ring + [ring[0]]
+            ax.fill([p[0] for p in v], [p[1] for p in v], color="#D9534F", alpha=0.45, lw=0)
+            ax.plot([p[0] for p in v], [p[1] for p in v], color="#B02A26", lw=1.2)
+            cx = sum(p[0] for p in ring) / 4
+            top = max(p[1] for p in ring)
             # labels inside the map, on a white box so no track runs through them
             ty, va = (top - 18, "top") if top > 125 else (top + 3, "bottom")
             ax.text(cx + (14 if c["id"] == "nfz-frontage" else 0), ty, c["id"], color="#B02A26", fontsize=8.5,
