@@ -97,6 +97,19 @@ shipped change and recorded as one.
   - `test_what_the_autopilot_flew_through_is_counted_apart_and_reported`
     recreates the side escape it needs by spawning the same zone 0.5 m to
     the side.
+  - @40 flown for 50 s (the coordinator's second case, where it RTL'd with
+    the escape censored): 5.3 s to safe, no FSM edge, not censored.
+  - The full CI loop found two more tests standing on the same tie.
+    `tests/test_manifest.py` (the audit record's restamp after a hot apply)
+    and `tests/test_railinputs_clock.py` (the rail's clock) put the
+    aircraft at a square zone's exact centre, commanding 1 m/s toward an
+    edge, and needed "inside and not escaping". That command now leaves
+    through the edge it heads for. Their aircraft is moved 0.5 m off the
+    centre, where the nearest edge is unambiguous.
+- FenceGuard measured with `Shield.zone_ruler()` even when a subclass gave
+  it its own zones through `polys` (`tests/test_follow_motion.py`'s
+  `_ZonesGuard`). `FenceGuard._ruler()` now measures those rings with the
+  same ruler (`ZoneRuler.of_rings`), and the Shield's zones otherwise.
 
 #### Measured (desktop, not KPI-grade)
 - Library sweep, `--no-bundles`, before (6b80775) and after:
@@ -122,6 +135,19 @@ shipped change and recorded as one.
   -> 1.387 ms. The bench makes a new tick per `_check`, so each call
   rebuilds the tree (about 70 us for 48 zones). Decisions identical to the
   all-zones null on 3900 of 3900 samples.
+- The whole CI loop (`tools/ci_local.py --no-smoke --no-summary`), one file
+  at a time, at b52e7f2: 136 of 138 files, 3447 of 3560 tests, claims scan
+  clean. Two files failed, and neither reads the code changed here:
+  - `test_track_truth`, a known lab-only failure
+    (docs/data/ci_local/b3796cb1c673.json). It runs only with the lab's
+    flights present: three were copied into this worktree's gitignored
+    demo/out so that `test_replay` runs (61/61) instead of erroring.
+  - `test_wp4outputs_harness`, `test_an_idle_session_expires_and_frees_its_slot`.
+    It also fails at 6b80775 on this machine now: `start_episode` takes
+    0.26 s against the test's 0.3 s session TTL. It passed in the run at
+    aa024dc.
+
+  That earlier run (aa024dc) found the three files fixed above.
 
 #### Found
 - `fence_export` skips a dynamic_nfz whose `motion` is present but all zero
@@ -148,9 +174,10 @@ shipped change and recorded as one.
 - No DSL rule reads past actions, so the buffer's 49 older entries are a
   record. Corridors, stand-offs and clearance are not in a tree: they are
   keep-in or subject-relative and are checked at every pose.
-- Two files of other streams were touched:
-  - `guardrail/ir.py`: two new definitions and one docstring sentence;
-  - `guardrail/projection.py`: none (`ring_order` is imported).
+- One file of another stream was touched: `guardrail/ir.py`, with two new
+  definitions (`MovingIndex`, `PolicyIR.moving_index`) and one docstring
+  sentence. `guardrail/projection.py`'s `ring_order` is imported, not
+  changed.
 - The tie-break reads the COMMANDED heading, not the velocity relative to
   a moving zone. That keeps "a hover in a drifting zone's middle is not
   escaping" (`tests/test_shieldcore_identity.py`).
