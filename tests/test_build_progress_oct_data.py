@@ -1030,6 +1030,29 @@ def _sections_or_skip():
     return d, json.loads(json.dumps(fresh))
 
 
+# The deck's status line, read from the newest CHANGELOG section (see
+# test_stored_sections_are_what_the_tree_computes_now).
+STATUS_LINE = ("status_date", "release")
+
+# Packs that were sent, by deck file, with the date they were sent. The
+# October pack was built on 14 Oct and sent on 27 Oct (CHANGELOG, 2026-11-02:
+# "The October deck as sent on 27 October is unchanged").
+SENT_PACKS = {"Guardrail-Progress-Oct2026.pptx": "2026-10-27"}
+
+
+def _commit_with_sha(rel_path: str, digest: str):
+    """The short hash of a commit at which `rel_path` held exactly the bytes
+    with this sha256, or None (a shallow clone, or bytes never committed)."""
+    import hashlib
+    log = subprocess.run(["git", "log", "--format=%H", "--", rel_path], cwd=ROOT,
+                         capture_output=True, text=True)
+    for h in log.stdout.split():
+        blob = subprocess.run(["git", "show", f"{h}:{rel_path}"], cwd=ROOT, capture_output=True)
+        if blob.returncode == 0 and hashlib.sha256(blob.stdout).hexdigest() == digest:
+            return h[:7]
+    return None
+
+
 def test_stored_sections_are_what_the_tree_computes_now():
     """Every section of progress_oct.json except the bench, recomputed by the
     fact functions as they are now. This is what kills a mutation in a fact
@@ -1044,7 +1067,16 @@ def test_stored_sections_are_what_the_tree_computes_now():
     stored, fresh = _sections_or_skip()
     if stored is None:
         return SKIP
-    probs = [p for k, v in fresh.items() for p in P.diff(stored.get(k, "<absent>"), v, k)
+    # NOT COMPARED HERE (2026-11-04): the deck's status line, `status_date` and
+    # `release`. They are read from the newest CHANGELOG section, and
+    # CONTRIBUTING gives every change a section, so the stored line is stale
+    # from the next commit on - verify()'s reason for dropping code_revision.
+    # Compared per commit, this test could not pass for long and was carried
+    # as a known lab failure, which is how a real regression hides. The deck
+    # build still refuses a stale status line: its --verify compares every
+    # section, these two included.
+    probs = [p for k, v in fresh.items() if k not in STATUS_LINE
+             for p in P.diff(stored.get(k, "<absent>"), v, k)
              if not p.split(":", 1)[0].endswith("code_revision")]   # provenance, as in verify()
     assert not probs, ("docs/data/progress_oct.json no longer matches the tree; re-run "
                        "tools/deck/build_progress_oct_data.py, then the deck build:\n      "
@@ -1055,7 +1087,13 @@ def test_the_built_pack_is_the_builders_current_output():
     """Failing first (7 Oct review): the builder was saved again a minute
     after the build, and the pack that would have been sent was the older
     text. The build stamp records the hashes of the builder and the data it
-    read and of the deck it wrote; the PDF must be exported after the deck."""
+    read and of the deck it wrote; the PDF must be exported after the deck.
+
+    Once a pack is SENT (SENT_PACKS) it is not rebuilt, and its builder and
+    data may move on: then each must be found, byte for byte, in a commit.
+    Until 2026-11-04 this failed on every change to progress_oct.json after
+    14 Oct, and "rebuilding means rebuilding a delivered pack" kept it a known
+    failure."""
     stamp_f = P.BUILD / "build_stamp.json"
     if not stamp_f.exists():
         return SKIP
@@ -1066,15 +1104,45 @@ def test_the_built_pack_is_the_builders_current_output():
         return hashlib.sha256(p.read_bytes()).hexdigest()
     builder = ROOT / "tools" / "deck" / "build_progress_oct_deck.js"
     deck = P.SHARE / st["deck"]
-    stale = [what for what, ok in (
-        ("the builder changed after the build", sha(builder) == st["builder_sha256"]),
-        ("progress_oct.json changed after the build", sha(P.OUT_JSON) == st["data_sha256"]),
-        ("the deck is not the one the build wrote", deck.exists() and sha(deck) == st["deck_sha256"]),
-    ) if not ok]
+    sent = SENT_PACKS.get(st["deck"])
+    stale = []
+    for what, f, key in (("the builder", builder, "builder_sha256"),
+                         ("progress_oct.json", P.OUT_JSON, "data_sha256")):
+        if sha(f) == st[key]:
+            continue
+        # A SENT pack is not rebuilt (2026-11-04). Its sources move on with
+        # the code - the data step is meant to be re-run - and what must hold
+        # is that the deck is the one the build wrote and that what it was
+        # built from is on record: a commit holds exactly those bytes.
+        rel = f.relative_to(ROOT).as_posix()
+        commit = _commit_with_sha(rel, st[key]) if sent else None
+        if commit is None:
+            stale.append(f"{what} changed after the build"
+                         + (f" and no commit holds the {what} it was built from" if sent else ""))
+        else:
+            print(f"      ({st['deck']}, sent {sent}: built from {rel} as committed in {commit})")
+    if not (deck.exists() and sha(deck) == st["deck_sha256"]):
+        stale.append("the deck is not the one the build wrote")
     pdf = deck.with_suffix(".pdf")
     if pdf.exists() and deck.exists() and pdf.stat().st_mtime < deck.stat().st_mtime:
         stale.append("the PDF is older than the deck")
     assert not stale, "rebuild the pack (deck step, then PDF): " + "; ".join(stale)
+
+
+def test_a_sent_pack_needs_its_sources_on_record():
+    """The sent-pack branch above is a guard only if bytes that were never
+    committed are refused: the October data the pack was built from is found
+    in 335ec58, and the same bytes with one more are found nowhere."""
+    import hashlib
+    blob = subprocess.run(["git", "show", "335ec58:docs/data/progress_oct.json"], cwd=ROOT,
+                          capture_output=True)
+    if blob.returncode != 0:
+        return SKIP                       # a clone without the October history
+    digest = hashlib.sha256(blob.stdout).hexdigest()
+    assert digest.startswith("0e4c2563bf43a051"), digest     # the stamp's data_sha256
+    assert _commit_with_sha("docs/data/progress_oct.json", digest) == "335ec58"
+    other = hashlib.sha256(blob.stdout + b" ").hexdigest()
+    assert _commit_with_sha("docs/data/progress_oct.json", other) is None
 
 
 def test_stored_bench_carries_the_code_it_timed():

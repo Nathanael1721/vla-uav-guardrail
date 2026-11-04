@@ -1,13 +1,66 @@
 {
  "generated_by": "tools/deck/build_progress_oct_data.py",
- "generated": "2026-10-13T21:27:50Z",
- "code_revision": "5cf7a08e5eee-dirty",
- "status_date": "2026-10-14",
+ "generated": "2026-11-04T12:46:41Z",
+ "code_revision": "b3f6262cb687-dirty",
+ "status_date": "2026-11-04",
  "release": {
   "source": "CHANGELOG.md",
-  "status_date": "2026-10-14",
-  "section": "2026-10-14 — recorded videos of both rails, the ground-truth question answered, an English explainer pack",
+  "status_date": "2026-11-04",
+  "section": "2026-11-04 (lab CI) — the full lab run at dea9a1e: four failing files, each fixed at its cause; the library republished from the merged tree, one cell moved",
   "sections": [
+   "2026-11-04",
+   "2026-11-04",
+   "2026-11-04",
+   "2026-11-04",
+   "2026-11-04",
+   "2026-11-04",
+   "2026-11-04",
+   "2026-11-04",
+   "2026-11-04",
+   "2026-11-04",
+   "2026-11-03",
+   "2026-11-03",
+   "2026-11-03",
+   "2026-11-03",
+   "2026-11-03",
+   "2026-11-03",
+   "2026-11-03",
+   "2026-11-02",
+   "2026-11-02",
+   "2026-11-02",
+   "2026-11-02",
+   "2026-11-02",
+   "2026-11-02",
+   "2026-11-01",
+   "2026-11-01",
+   "2026-11-01",
+   "2026-11-01",
+   "2026-10-31",
+   "2026-10-31",
+   "2026-10-30",
+   "2026-10-30",
+   "2026-10-30",
+   "2026-10-29",
+   "2026-10-29",
+   "2026-10-29",
+   "2026-10-29",
+   "2026-10-28",
+   "2026-10-28",
+   "2026-10-28",
+   "2026-10-27",
+   "2026-10-27",
+   "2026-10-27",
+   "2026-10-25",
+   "2026-10-24",
+   "2026-10-24",
+   "2026-10-23",
+   "2026-10-23",
+   "2026-10-23",
+   "2026-10-23",
+   "2026-10-23",
+   "2026-10-22",
+   "2026-10-21",
+   "2026-10-19",
    "2026-10-14",
    "2026-10-13",
    "2026-10-13",
@@ -29,7 +82,7 @@
  "wp1": {
   "source": "docs/data/wp1_roundtrip.json",
   "command": "python tools/wp1_roundtrip_kpi.py",
-  "code_revision": "10451bc60a15-dirty",
+  "code_revision": "abf4cccdf86e",
   "hash_scheme": "sha256-canonical-v3",
   "policies": 29,
   "round_trip_passed": 29,
@@ -42,31 +95,31 @@
   "negative_run": 35,
   "null_negative_refused": 0,
   "null_why": "a reader that verifies nothing passes every round trip; only the refusal columns separate it from a real one",
-  "lock_entries": 21
+  "lock_entries": 95
  },
  "wp2": {
   "command": "python -m guardrail.compiler report --policies policies --budget 256 --exact",
-  "code_revision": "5cf7a08e5eee-dirty",
+  "code_revision": "b3f6262cb687-dirty",
   "budget_tokens": 256,
   "exact_counter": "openvla-llama2-sp@8f5e2869e180",
   "table_counter": "openvla-table-v1",
-  "policies": 29,
-  "compiled": 29,
-  "p0_in_scope": 105,
-  "p0_covered": 105,
+  "policies": 32,
+  "compiled": 32,
+  "p0_in_scope": 122,
+  "p0_covered": 122,
   "null_p0_covered": 0,
-  "baseline_p0_covered": 105,
-  "rules_in_scope": 134,
-  "rules_in_text": 134,
-  "rules_in_csp": 134,
-  "rules_explained": 134,
+  "baseline_p0_covered": 122,
+  "rules_in_scope": 154,
+  "rules_in_text": 154,
+  "rules_in_csp": 154,
+  "rules_explained": 154,
   "dropped_for_budget": 0,
   "kpi_discriminates": false,
   "tokens_exact_range": [
    54,
-   106
+   122
   ],
-  "tokens_table_max": 126,
+  "tokens_table_max": 149,
   "csp_fields_locked": 14,
   "csp_fields_added": [
    "policy_id",
@@ -81,8 +134,8 @@
    "policy": "policies/follow_car_citylife_nfz.yaml",
    "policy_id": "follow-car-citylife-nfz",
    "rules": 6,
-   "prompt": "Stay between 6 m and 14 m altitude. Keep at least 3 m from any building. Keep at least 5 m away from anything you are following. Keep at least 10 m away from any pedestrian. Never enter zone 'nfz-frontage'. Keep speed at or below 5 m/s, climb rate below 2 m/s and turn rate below 45 deg/s.",
-   "tokens_exact": 93
+   "prompt": "Stay between 6 m and 14 m altitude. Keep at least 3 m from any building. Keep at least 5 m away from anything you are following. Keep at least 10 m away from the pedestrian you are following. Never enter zone 'nfz-frontage'. Keep speed at or below 5 m/s, climb rate below 2 m/s and turn rate below 45 deg/s.",
+   "tokens_exact": 96
   }
  },
  "wp3_bench": {
@@ -98,8 +151,8 @@
    "poses_per_check": 50,
    "machine": "Intel64 Family 6 Model 183 Stepping 1, GenuineIntel",
    "git": {
-    "rev": "4418ae0",
-    "dirty_guardrail": true
+    "rev": "b3f6262",
+    "dirty_guardrail": false
    },
    "command": "python experiments/bench_shield_50rules.py --horizon 5 --dt 0.1 --legacy-cap 40",
    "agreement": {
@@ -113,73 +166,73 @@
    "clear/_check": {
     "current": {
      "n": 1000,
-     "median_ms": 0.137,
-     "p99_ms": 0.226
+     "median_ms": 0.143,
+     "p99_ms": 0.261
     },
     "legacy": {
      "n": 40,
-     "median_ms": 78.354,
-     "p99_ms": 80.529
+     "median_ms": 199.151,
+     "p99_ms": 227.034
     },
     "floor": {
      "n": 1000,
-     "median_ms": 0.05,
-     "p99_ms": 0.072
+     "median_ms": 0.089,
+     "p99_ms": 0.822
     }
    },
    "near/_check": {
     "current": {
      "n": 1000,
-     "median_ms": 0.307,
-     "p99_ms": 0.745
+     "median_ms": 0.336,
+     "p99_ms": 0.894
     },
     "legacy": {
      "n": 40,
-     "median_ms": 78.789,
-     "p99_ms": 81.675
+     "median_ms": 217.685,
+     "p99_ms": 267.395
     },
     "floor": {
      "n": 1000,
-     "median_ms": 0.05,
-     "p99_ms": 0.074
+     "median_ms": 0.09,
+     "p99_ms": 0.301
     }
    },
    "near/filter": {
     "current": {
      "n": 300,
-     "median_ms": 2.124,
-     "p99_ms": 3.911
+     "median_ms": 4.043,
+     "p99_ms": 12.321
     },
     "legacy": {
      "n": 40,
-     "median_ms": 396.984,
-     "p99_ms": 420.947
+     "median_ms": 1062.727,
+     "p99_ms": 1196.567
     },
     "floor": {
      "n": 300,
-     "median_ms": 0.072,
-     "p99_ms": 0.32
+     "median_ms": 0.235,
+     "p99_ms": 0.78
     }
    },
    "grid/_check": {
     "current": {
      "n": 1000,
-     "median_ms": 0.147,
-     "p99_ms": 0.727
+     "median_ms": 0.309,
+     "p99_ms": 1.034
     },
     "legacy": {
      "n": 40,
-     "median_ms": 78.125,
-     "p99_ms": 80.649
+     "median_ms": 221.204,
+     "p99_ms": 245.401
     },
     "floor": {
      "n": 1000,
-     "median_ms": 0.05,
-     "p99_ms": 0.07
+     "median_ms": 0.089,
+     "p99_ms": 0.268
     }
    },
-   "code_sha": "2b2f6fb066eb1786",
-   "measured": "2026-10-13T12:18:40Z"
+   "code_sha": "b523cfbf4d5f6d0f",
+   "measured": "2026-11-04T12:45:51Z"
   },
   "default_3s": {
    "horizon_s": 3.0,
@@ -193,8 +246,8 @@
    "poses_per_check": 6,
    "machine": "Intel64 Family 6 Model 183 Stepping 1, GenuineIntel",
    "git": {
-    "rev": "4418ae0",
-    "dirty_guardrail": true
+    "rev": "b3f6262",
+    "dirty_guardrail": false
    },
    "command": "python experiments/bench_shield_50rules.py --horizon 3 --dt 0.5 --legacy-cap 100",
    "agreement": {
@@ -208,73 +261,73 @@
    "clear/_check": {
     "current": {
      "n": 1000,
-     "median_ms": 0.048,
-     "p99_ms": 0.098
+     "median_ms": 0.054,
+     "p99_ms": 0.114
     },
     "legacy": {
      "n": 100,
-     "median_ms": 12.251,
-     "p99_ms": 13.136
+     "median_ms": 13.106,
+     "p99_ms": 15.885
     },
     "floor": {
      "n": 1000,
-     "median_ms": 0.012,
-     "p99_ms": 0.028
+     "median_ms": 0.015,
+     "p99_ms": 0.02
     }
    },
    "near/_check": {
     "current": {
      "n": 1000,
-     "median_ms": 0.107,
-     "p99_ms": 0.173
+     "median_ms": 0.189,
+     "p99_ms": 0.508
     },
     "legacy": {
      "n": 100,
-     "median_ms": 12.069,
-     "p99_ms": 12.755
+     "median_ms": 32.384,
+     "p99_ms": 46.275
     },
     "floor": {
      "n": 1000,
-     "median_ms": 0.012,
-     "p99_ms": 0.029
+     "median_ms": 0.029,
+     "p99_ms": 0.049
     }
    },
    "near/filter": {
     "current": {
      "n": 300,
-     "median_ms": 0.614,
-     "p99_ms": 0.895
+     "median_ms": 1.31,
+     "p99_ms": 2.517
     },
     "legacy": {
      "n": 100,
-     "median_ms": 60.806,
-     "p99_ms": 63.471
+     "median_ms": 162.628,
+     "p99_ms": 194.712
     },
     "floor": {
      "n": 300,
-     "median_ms": 0.033,
-     "p99_ms": 0.14
+     "median_ms": 0.096,
+     "p99_ms": 0.541
     }
    },
    "grid/_check": {
     "current": {
      "n": 1000,
-     "median_ms": 0.051,
-     "p99_ms": 0.149
+     "median_ms": 0.116,
+     "p99_ms": 0.392
     },
     "legacy": {
      "n": 100,
-     "median_ms": 12.23,
-     "p99_ms": 13.157
+     "median_ms": 32.477,
+     "p99_ms": 64.905
     },
     "floor": {
      "n": 1000,
-     "median_ms": 0.012,
-     "p99_ms": 0.019
+     "median_ms": 0.028,
+     "p99_ms": 0.151
     }
    },
-   "code_sha": "2b2f6fb066eb1786",
-   "measured": "2026-10-13T12:18:56Z"
+   "code_sha": "b523cfbf4d5f6d0f",
+   "measured": "2026-11-04T12:46:38Z"
   }
  },
  "bench_pick_rule": {
@@ -506,7 +559,7 @@
   "duration_s": 239.9,
   "ticks": 2399,
   "policy_id": "follow-car-citylife-nfz",
-  "policy_version": "0.1.0",
+  "policy_version": "0.1.2",
   "policy_rules": 6,
   "zone_id": "nfz-frontage",
   "zone_vertices": [
