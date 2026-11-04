@@ -47,11 +47,14 @@ in the world frame (a fence is a polygon on the ground), so the chain is:
 1. The VLA node publishes body frame. The stub plans in the world frame and
    rotates its answer with `guardrail.frames.to_body` and the heading of
    `/mavros/local_position/pose`.
-2. The Shield node rotates the body action once into the world frame
-   (`frames.from_body`, same heading source), lets the Shield check and repair
-   it, and rotates the result back (`frames.to_body`). With the Shield off the
-   body action passes through untouched. The Shield therefore takes a body
-   action and returns a body action; the rotation is exact.
+2. The Shield node hands the body action to the Shield as it arrives
+   (`Shield.filter_body`, same heading source). The Shield turns it once into
+   the world frame its rules are written in (`frames.from_body`), checks and
+   repairs it, and turns the result back (`frames.to_body`). With the Shield
+   off the body action passes through untouched. The Shield therefore takes a
+   body action and returns a body action at its own boundary; the rotation is
+   exact. (Until 2026-11-04 the node made the two turns around
+   `Shield.filter()`.)
 3. The adapter turns `/shield/setpoint` into local NED (`from_body`, then
    `to_local_ned`): the single body -> NED crossing.
 4. MAVROS expects ENU in `PositionTarget` and converts it to NED itself: for

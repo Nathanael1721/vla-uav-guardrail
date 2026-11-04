@@ -16,6 +16,46 @@ shipped change and recorded as one.
 
 ## [Unreleased]
 
+### 2026-11-04 (body frame) — the Shield takes the grant's body frame at its own boundary: WP3-04 and ARCH-04 DRIFT -> PARTIAL; 49 DONE, 80 PARTIAL, 6 DRIFT, 1 MISSING
+
+#### Changed
+- **`Shield.filter_body(state, body)`** takes the action in the grant's body
+  frame (vx forward, vy right, vz up, yaw rate in rad/s) and returns the
+  emitted action in the same frame beside the tick's decision. It turns the
+  action into the world frame at the state's heading (`frames.from_body`),
+  runs `filter`, and turns the emitted action back (`frames.to_body`). The
+  repairs are geometric and rotate with the action and the scene, so this is
+  the body-frame repair, computed against the rules' world geometry without
+  rotating that geometry on every tick.
+- **The ROS 2 Shield node turns nothing.** `shield_step` and the
+  pre-mission warm-up call `filter_body`; until now the node made the two
+  turns around `Shield.filter()`. The body -> local-NED conversion stays the
+  MAVLink adapter's alone (`sitl/mavlink_adapter_node.py`). The behaviour is
+  the same: the same rotations at the same heading (test_sitl_rails 52/52).
+- `docs/DESIGN-ros2-interface.md` (the frame chain) and `guardrail/frames.py`
+  (who calls it) say so.
+- `docs/FINAL-REPORT-outline.md`: WP3-04 and ARCH-04 DRIFT -> PARTIAL. The
+  map: 49 DONE, 80 PARTIAL, 6 DRIFT, 1 MISSING.
+
+#### Tests
+- `tests/test_frame_contract.py`: `filter_body` equals `filter` between the
+  two exact rotations on 60 random states and actions, to the bit; a
+  body-forward action at heading East is checked against the zone to the
+  East, and the same numbers read as a world-frame action are not. Shown
+  failing with the heading taken as 0 inside `filter_body`: the first random
+  case (heading 86.6 degrees) parts and the zone test finds no violation. The
+  docstring test now requires the Shield, not the node, among frames.py's
+  users. In the worktree 14 pass and 2 SKIP (no reference checkout).
+- test_shield 86/86, test_shieldcore_audit 16/16, test_mavlink_adapter 38/38,
+  test_ros2_package 17/17, test_sitl_rails 52/52.
+
+#### Limits
+- The dev rails (the city follow, the pymavlink SITL rail, PAS ArduPilot,
+  the headless harness) still hand the Shield world-frame actions.
+- The forecast holds the action's world direction from t = 0, as before: a
+  body command with a yaw rate is not forecast along the arc it would fly.
+- Not yet flown on the ROS 2 rail with this code.
+
 ### 2026-11-04 (decks) — the two 14 October decks stop failing the lab run: the explainer reads the data of its date, the October data step runs again, and a sent pack is checked against its record
 
 #### Fixed

@@ -43,11 +43,14 @@ The flight rails, at their boundary with a body-frame producer. (Until
 true once the body-frame producers were wired in, and the paragraph was not
 updated.) As of that date:
 
-  * `sitl/ros2_shield_node.py` (`shield_step`): the grant's ROS 2 boundary.
-    `/vla/action` arrives in body frame, crosses to world frame once with
+  * `guardrail/shield.py` (`Shield.filter_body`, since 2026-11-04): the
+    Shield's own body-frame boundary (WP3-04, ARCH-04). `/vla/action`
+    arrives in body frame at `sitl/ros2_shield_node.py`, which hands it to
+    `filter_body` as it is; there it crosses to world frame once with
     `from_body` at the heading of the same pose, goes through
     `Shield.filter()`, and the emitted action crosses back with `to_body` at
-    that heading before it is published on /shield/setpoint.
+    that heading, to be published on /shield/setpoint. Until 2026-11-04 the
+    node made those two crossings itself around `Shield.filter()`.
   * `sitl/mavlink_adapter_node.py`: the body -> local-NED crossing of
     /shield/setpoint, `from_body` then `to_local_ned`.
   * `sitl/ros2_vla_stub_node.py`: `to_body`, so the stub publishes

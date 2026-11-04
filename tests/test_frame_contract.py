@@ -22,6 +22,7 @@ agree with it. See `docs/FINDING-the-contract-disagreed-with-itself-about-yaw.md
 import ast
 import importlib.util
 import math
+import random
 import re
 import sys
 from pathlib import Path
@@ -257,9 +258,60 @@ def test_the_frames_docstring_names_every_module_that_crosses_the_boundary():
                 continue
             if pat.search(p.read_text(encoding="utf-8", errors="replace")):
                 users.append(p.relative_to(ROOT).as_posix())
-    assert "sitl/ros2_shield_node.py" in users, users
+    # The grant's boundary: since 2026-11-04 the Shield's own filter_body
+    # (until then sitl/ros2_shield_node.py, which now turns nothing).
+    assert "guardrail/shield.py" in users, users
+    assert "sitl/ros2_shield_node.py" not in users, (
+        "the ROS 2 Shield node rotates the action again; the Shield takes the "
+        "body frame itself (Shield.filter_body)")
     missing = [u for u in users if u not in who]
     assert not missing, f"frames.py's WHO CALLS THIS does not name {missing}"
+
+
+def _policy():
+    from guardrail.models import load_policy
+    return load_policy(ROOT / "policies" / "sim_demo_policy.yaml")
+
+
+def test_filter_body_is_filter_between_the_two_exact_rotations():
+    """WP3-04 / ARCH-04 (2026-11-04). The Shield takes the body frame at its
+    own boundary: filter_body is filter() on the action turned into the world
+    frame at the state's heading, with the emitted action turned back at the
+    same heading - the same decision, the same rules broken, to the bit.
+    Shown failing with the heading taken as 0 inside filter_body: the first
+    random case (heading 86.6 degrees) parts, and the zone test below finds
+    no violation."""
+    from guardrail.models import State
+    from guardrail.shield import Shield
+    rng = random.Random(20261104)
+    for k in range(60):
+        yaw = rng.uniform(-180.0, 180.0)
+        st = State(x=rng.uniform(-30.0, 40.0), y=rng.uniform(-30.0, 40.0),
+                   up=rng.uniform(6.0, 20.0), yaw_deg=yaw)
+        body = Action4D(vx=rng.uniform(-6.0, 6.0), vy=rng.uniform(-6.0, 6.0),
+                        vz_up=rng.uniform(-3.0, 3.0), yaw_rate=rng.uniform(-1.0, 1.0))
+        a, b = Shield(_policy()), Shield(_policy())
+        d_body, em_body = a.filter_body(st, body)
+        d_world = b.filter(st, from_body(body.vx, body.vy, body.vz_up, body.yaw_rate, yaw))
+        assert d_body.raw == d_world.raw and d_body.emitted == d_world.emitted, (k, yaw)
+        assert ([v.rule_id for v in d_body.violations]
+                == [v.rule_id for v in d_world.violations]), k
+        assert em_body == Action4D(**dict(zip(("vx", "vy", "vz_up", "yaw_rate"),
+                                              to_body(d_world.emitted, yaw)))), k
+
+
+def test_filter_body_checks_the_zone_the_body_action_points_at():
+    """Heading East, a body-forward 4 m/s points at the square no-fly zone east
+    of the aircraft, and filter_body repairs it; the same numbers read as a
+    world-frame action point North, past the zone."""
+    from guardrail.models import State
+    from guardrail.shield import Shield
+    st = State(x=15.0, y=0.0, up=15.0, yaw_deg=90.0)
+    d, em = Shield(_policy(), lookahead_s=3.0, dt=0.5).filter_body(st, Action4D(vx=4.0))
+    assert any(v.rule_id == "nfz-square" for v in d.violations), d.violations
+    assert em != Action4D(vx=4.0), "the body-frame action came back unrepaired"
+    w = Shield(_policy(), lookahead_s=3.0, dt=0.5).filter(st, Action4D(vx=4.0))
+    assert not any(v.rule_id == "nfz-square" for v in w.violations)
 
 
 if __name__ == "__main__":

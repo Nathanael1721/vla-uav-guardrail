@@ -127,6 +127,7 @@ from . import fsm as _fsm
 from . import repair as _repair
 from . import response as _response
 from . import terrain as _terrain
+from .frames import from_body as _from_body, to_body as _to_body
 from .geometry import nearest_on_polyline, point_in_fence, push_out_direction
 from .ir import FENCE_TYPES, FenceRecord, PolicyIR, anchor_reach, compile_fence, is_fence
 from .projection import ring_order
@@ -5871,6 +5872,46 @@ class Shield:
         elapsed_ms = (time.perf_counter() - t0) * 1e3
         self._buffer.close(dstate.model_copy(), decision, elapsed_ms, pipe)
         return decision
+
+    def filter_body(self, state: State, body: Action4D, t: float | None = None,
+                    **kw) -> tuple[ShieldDecision, Action4D]:
+        """One monitor tick with the action in the grant's BODY frame.
+
+        The grant (WP3-04, ARCH-04): "Action input frame is body frame (vx,
+        vy, vz, yaw_rate); body->local-NED conversion happens after
+        projection, in the MAVLink adapter." `body` carries the body-frame
+        action in an Action4D: vx forward, vy right, vz_up up, yaw_rate rad/s
+        (as /vla/action does). Returns `(decision, emitted_body)`: the tick's
+        ShieldDecision, whose raw and emitted actions are in the world frame
+        the logs and the audit record read, and the emitted action back in
+        the body frame, for the MAVLink adapter to turn into local NED. That
+        conversion is the adapter's alone (`sitl/mavlink_adapter_node.py`,
+        frames.to_local_ned).
+
+        The action is turned into the world frame at the state's heading
+        (frames.from_body), filtered by `filter`, and turned back at the same
+        heading (frames.to_body). Until 2026-11-04 the ROS 2 Shield node made
+        those two turns itself around `filter()`; the Shield now takes the
+        body frame at its own boundary, and the node turns nothing.
+
+        Why the repair is the body-frame one: the rules are world geometry
+        (a fence on the ground, a distance to a point, an altitude band), and
+        the repairs are geometric - rotating the action and the scene together
+        rotates the repair with them; the speed cap is a norm, and the
+        vertical and yaw caps do not involve the heading. So repairing the
+        rotated action against the world geometry is the body-frame repair,
+        rotated, without rotating every rule's geometry on every tick. One
+        choice is not of that kind: a tie between equally near edges with no
+        heading to break it goes to the first along the ring's stored
+        (world) order (`escape_direction`). The forecast holds the action's
+        world direction from t = 0, as before: a body-frame command with a
+        yaw rate is not forecast along the arc it would fly.
+
+        `t` and the keyword arguments are `filter`'s."""
+        raw = _from_body(body.vx, body.vy, body.vz_up, body.yaw_rate, state.yaw_deg)
+        decision = self.filter(state, raw, t, **kw)
+        fwd, right, up, yaw_rate = _to_body(decision.emitted, state.yaw_deg)
+        return decision, Action4D(vx=fwd, vy=right, vz_up=up, yaw_rate=yaw_rate)
 
     def _decision_state(self, tick: _Tick, state: State) -> State:
         """The state a decision is made from: `state` itself, except that a

@@ -8,13 +8,13 @@ ROS 2 node: the Safety Shield, wired the way the grant's interface locks it.
 
 THE FRAME (WP3-04, ARCH-04, WP2-17). The grant locks the VLA action as
 "a = (vx, vy, vz, yaw_rate) # body-frame velocities + yaw rate" and puts the
-NED conversion in the MAVLink adapter after the Shield. This node takes the
-body-frame action, rotates it ONCE into the world frame the Shield's geometry
-is written in (guardrail.frames.from_body, with the heading of the same pose
-the adapter reads), lets the Shield check and repair it, rotates the result
-back to body frame (frames.to_body) and publishes that on /shield/setpoint.
-The Shield therefore repairs the body-frame action it was given and returns a
-body-frame action; the rotation is exact and is undone with the same heading.
+NED conversion in the MAVLink adapter after the Shield. This node hands the
+body-frame action to the Shield as it arrives (Shield.filter_body, with the
+heading of the same pose the adapter reads) and publishes the body-frame
+action it returns on /shield/setpoint. Since 2026-11-04 the Shield takes the
+body frame at its own boundary; until then this node rotated the action into
+the world frame (guardrail.frames.from_body) before Shield.filter() and back
+(frames.to_body) after - the same exact rotation, now inside the Shield.
 sitl/mavlink_adapter_node.py turns /shield/setpoint into NED - the single
 body -> local-NED crossing - and owns every MAVROS command after take-off
 (SET_MODE, fence upload). Until 2026-10-06 this node published a Twist on
@@ -254,7 +254,6 @@ from guardrail import Action4D, AuditLogger, Shield, State             # noqa: E
 from guardrail.audit import AUDIT_FILE                                    # noqa: E402
 from guardrail.bundle import load_for_flight                              # noqa: E402
 from guardrail.compiler import ConstraintCompiler                         # noqa: E402
-from guardrail.frames import from_body, to_body                           # noqa: E402
 from guardrail.fsm import (DEFAULT_THETA_HORIZON_S, FAILSAFE_STATES,     # noqa: E402
                            MODE_FOR, THETA_HORIZON_S, EscalationFSM, FSMConfig,
                            tick_input_from_decision)
@@ -510,16 +509,15 @@ def shield_step(shield: Shield, state: State, body: Action4D, shield_on: bool):
     Returns `(decision, raw_world, emitted_world, emitted_body)`. The Shield
     always evaluates (the control arm needs its violations); with it off the
     body action passes through untouched, not rotated there and back.
+
+    The Shield takes the body frame itself (`Shield.filter_body`, since
+    2026-11-04); this node turns nothing. The body -> local-NED conversion
+    is the MAVLink adapter's (mavlink_adapter_node.py).
     """
-    raw_world = from_body(body.vx, body.vy, body.vz_up, body.yaw_rate,
-                          state.yaw_deg)
-    decision = shield.filter(state, raw_world)
+    decision, emitted_body = shield.filter_body(state, body)
     if not shield_on:
         return decision, decision.raw, decision.raw, body
-    em = decision.emitted
-    vx, vy, vz, wz = to_body(em, state.yaw_deg)
-    return decision, decision.raw, em, Action4D(vx=vx, vy=vy, vz_up=vz,
-                                                yaw_rate=wz)
+    return decision, decision.raw, decision.emitted, emitted_body
 
 
 def build_row(*, now: float, tick: int, state: State, body: Action4D,
@@ -1936,9 +1934,7 @@ if HAVE_ROS:
             if self.state is not None:
                 warm = rail_shield(self.policy, lookahead_s=LOOKAHEAD_S,
                                    dt=LOOKAHEAD_DT_S, clock=self.clock)
-                b = self.raw_body
-                warm.filter(self.state, from_body(b.vx, b.vy, b.vz_up,
-                                                  b.yaw_rate, self.state.yaw_deg))
+                warm.filter_body(self.state, self.raw_body)
                 self.rec.event("shield_warmup", t=None,
                                ms=round(warm.history[-1].elapsed_ms, 3))
             self.mission_t0 = time.monotonic()
