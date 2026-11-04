@@ -42,7 +42,8 @@ and the reference implementation (kuanting-vla-uav-guardrail, policy_dsl/ir.py,
 `_choose_origin`) derives the local plane's origin instead: the mean of the FIRST
 polygon_fence's vertices. `derive_frame_origin` does exactly that, with the
 same float arithmetic, so the two implementations put a given lat/lon at the
-same metres. Where the reference falls back to (0, 0) - a policy with no polygon
+same metres: `LocalProjection.to_local` to the last bit, the policy's rounded
+view (above) to within half a micrometre. Where the reference falls back to (0, 0) - a policy with no polygon
 - this module uses the first rule that has any geographic point instead: (0, 0)
 would place the frame in the Gulf of Guinea, thousands of kilometres from every
 rule, and the equirectangular projection is only good near its origin.

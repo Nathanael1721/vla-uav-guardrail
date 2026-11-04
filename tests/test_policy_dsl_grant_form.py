@@ -219,16 +219,29 @@ def test_every_reference_document_loads_and_hashes_as_the_reference_does():
 
 def test_the_frame_is_derived_the_way_the_reference_derives_it():
     """No origin in the grant's form: the reference takes the mean of the first
-    polygon's vertices. Same float, to the last bit, so the same lat/lon lands
-    on the same metres - transposed, as this project's frame is (north, east)."""
+    polygon's vertices. Same float, to the last bit. The projector is the
+    reference's arithmetic as well, so `LocalProjection.to_local` puts the same
+    lat/lon on the same metres, to the last bit - transposed, as this project's
+    frame is (north, east). The policy's local view (`point.x` / `point.y`) is
+    that projection rounded to the micrometre (IR schema 3.1.0, projection.py),
+    so it is the reference's metres to within half a micrometre.
+
+    Until 2026-11-04 this asserted that the rounded view itself was
+    bit-identical. Schema 3.1.0 rounds it on purpose, and the old assertion
+    failed in the lab checkout - (38.961822, 40.341935) against the reference's
+    (38.9618217773572, 40.341935165238766) - while the branch's own test run
+    skipped it, having no reference checkout."""
     if not REF_DEMO.is_file():
         return SKIP
+    from guardrail.projection import LOCAL_QUANTUM_M, projection_for, quantize_m
     pol = load_policy(REF_DEMO, runtime=False)
     assert pol.frame_origin == REF_ORIGIN, pol.frame_origin
     v = pol.constraints[0].vertices[2]
     east = math.radians(v.lon - REF_ORIGIN[1]) * 6_378_137.0 * math.cos(math.radians(REF_ORIGIN[0]))
     north = math.radians(v.lat - REF_ORIGIN[0]) * 6_378_137.0
-    assert (v.x, v.y) == (north, east), ((v.x, v.y), (north, east))
+    assert projection_for(*REF_ORIGIN).to_local(v.lat, v.lon) == (north, east)
+    assert (v.x, v.y) == (quantize_m(north), quantize_m(east)), ((v.x, v.y), (north, east))
+    assert max(abs(v.x - north), abs(v.y - east)) <= LOCAL_QUANTUM_M / 2
 
 
 def test_the_reference_bundle_loads_under_a_named_form():
