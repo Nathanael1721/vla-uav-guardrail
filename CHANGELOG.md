@@ -835,6 +835,171 @@ a Windows path WSL's git cannot follow).
 - Per-topic permissions are per enclave: the stub and the AerialVLA bridge
   share the VLA slot's, the Shield node and the mission-style node the
   Shield's. The Orin has no keystore yet.
+### 2026-11-03 (E) — one rule-evaluation code path; the Shield node's buffer feeds the checker and moving zones are in the IR's R-tree; the way out of a tie no longer follows the ring's vertex order
+
+#### Added
+- `guardrail/shield.py` is the violation checker library the grant names
+  ("there is exactly one rule-evaluation code path in the system", Safety
+  Shield page, WP3-22 / X-13). `RuleClock` is the one rule clock (windows to
+  the microsecond, time_window_switch, corridor_swap), built once per
+  generation (`Shield.rule_clock`). The per-position verdicts are
+  `zone_breached`, `in_zone_band`, `band_holds`, `corridor_offset`,
+  `corridor_wide`, `corridor_in_band` and `corridor_breached`; `ZoneRuler`
+  (`Shield.zone_ruler`) gives the distance `fence_distance` reports, and
+  `Shield.enforces_hard` reads the FSM's own table. `escape_direction` is
+  the way out of a zone (below).
+- `SlidingWindow`, the Shield node's buffer (WP3-23). Each `filter()` tick
+  admits its action and that action's predicted trajectory before anything
+  is checked. The checker reads the trajectory from there: `_predict`
+  yields the buffer's poses for the admitted (state, action). `TickRecord`
+  gains `trajectory`, and `history` is the last 50.
+- `PolicyIR.moving_index` and `MovingIndex` in `guardrail/ir.py` (WP3-23):
+  an STRtree over the moving dynamic_nfz zones' reach boxes at one instant.
+  The Shield rebuilds it per tick and horizon (`_Tick.moving_near`) and
+  queries it beside the static tree in `_check_in` and `_repair_geofence`.
+  `_reach` still asks the exact question, so the same zones are judged.
+- `tests/test_shieldcore_onepath.py` (in the CI loop), 10 tests:
+  - the compiler's clock IS the Shield's;
+  - the minute-grained scope reading equals `models.active_at` at every
+    minute of a week (4 offsets, 6 windows);
+  - a patched `RuleClock` moves the Shield, the CSP, the fence export and
+    the dwell count;
+  - an AST scan, with a planted-copy null, fails if a second evaluator is
+    defined or a wrapped primitive is called outside the Shield;
+  - a tampered buffer blinds the checker;
+  - the moving R-tree returns exactly the zones whose reach box meets the
+    query, and changes no decision against the one-by-one test.
+- Invariance tests for the tie: `tests/test_shield_events.py` (all eight
+  vertex orders, at four rotations, and a spawn-on-top flown 8 s) and
+  `tests/test_sweep.py` (the library cell flown with its ring in every
+  order). Both fail on 6b80775.
+
+#### Changed
+- The copies now call the Shield's evaluator:
+  - `compiler._RuleClock` is a subclass that only samples and words. The
+    compiler's minute-grained scope test (`_activity`, `_in_force_sets`)
+    reads the same clock at the minute's start (`RuleClock.minute_on`),
+    which is `active_at`'s answer.
+  - `compiler.action_violations`, the relevance facts, the lint's
+    start-inside test and the cost map's band test use the Shield's
+    verdicts. A corridor is now judged with the Shield's 1e-9 m slack, so
+    a point within a nanometre outside reads inside, as the Shield reads it.
+  - `fence_export` reads its time controls and `in_force_now` from
+    `RuleClock`.
+  - `replay.zone_dwell` uses `Shield.rule_clock`.
+  - `rtl_path` selects zones and bands through `Shield.enforces_hard` and
+    tests "already inside" with `zone_breached` on the Shield's ring.
+  - FenceGuard's `gate` and `slide` measure with `Shield.zone_ruler()`.
+- The equality tests became identity tests: `tests/test_csp.py` (the
+  compiler's `on` is the Shield's), `tests/test_fenceguard.py` (a patched
+  ruler moves the guard).
+
+#### Fixed
+- **The escape from a zone depended on the order of its vertices**
+  (coordinator's report of a regression after the WP1 merge). At an exact
+  tie, such as a zone spawned centred on the aircraft, push_out_direction
+  takes the first nearest point along the ring. The canonical ring order
+  of 2 Nov moved that choice. `dyn-nfz-spawn-on-top@size_m=40,variant=0`
+  took a side edge, the pilot's forward command stopped counting as
+  escaping, and the episode ended in Loiter, censored.
+  `escape_direction` returns push_out_direction's own answer wherever the
+  nearest point is unique. In a tie it takes the edge the commanded
+  heading is going to, then the first along the ring's canonical order,
+  recomputed so the stored order does not matter. A hover therefore
+  answers as the canonical rings did. Every escape direction in the Shield
+  uses it.
+  - Library: @40 fail -> pass, 10.6 s and 107 repairs -> 5.3 s and 0
+    repairs, the published figure from before 2 Nov.
+  - @20 now leaves forward as well: 5.6 s, 77 repairs and a missed goal
+    -> 2.8 s, 0 repairs, success. Its old escape was the ring order's
+    choice too.
+  - `test_what_the_autopilot_flew_through_is_counted_apart_and_reported`
+    recreates the side escape it needs by spawning the same zone 0.5 m to
+    the side.
+  - @40 flown for 50 s (the coordinator's second case, where it RTL'd with
+    the escape censored): 5.3 s to safe, no FSM edge, not censored.
+  - The full CI loop found two more tests standing on the same tie.
+    `tests/test_manifest.py` (the audit record's restamp after a hot apply)
+    and `tests/test_railinputs_clock.py` (the rail's clock) put the
+    aircraft at a square zone's exact centre, commanding 1 m/s toward an
+    edge, and needed "inside and not escaping". That command now leaves
+    through the edge it heads for. Their aircraft is moved 0.5 m off the
+    centre, where the nearest edge is unambiguous.
+- FenceGuard measured with `Shield.zone_ruler()` even when a subclass gave
+  it its own zones through `polys` (`tests/test_follow_motion.py`'s
+  `_ZonesGuard`). `FenceGuard._ruler()` now measures those rings with the
+  same ruler (`ZoneRuler.of_rings`), and the Shield's zones otherwise.
+
+#### Measured (desktop, not KPI-grade)
+- Library sweep, `--no-bundles`, before (6b80775) and after:
+  - 153 -> 154 passed, 1 -> 0 failed (spawn-on-top@40), 22 tracked and
+    4 known failures unchanged;
+  - 178 of 180 episodes identical (the two spawn-on-top cells changed),
+    and every commit after the tie fix 180/180 identical;
+  - P0 escape 0.0 over 179 Shield-on episodes, before and after. The true
+    state is unchanged: 1 Shield-on episode into a P0 polygon (tracked),
+    4 polygon entries by the autopilot, 1768 P0 ticks;
+  - fail-safe labels 174/178 -> 175/179 (0.977528 -> 0.977654), Loiter
+    censored 1 -> 0.
+- `tools/profile_shield_tick.py` on the packed flights, pinned to the
+  performance cores, before and after in one session:
+  - design_load / grant: `_check` p99 0.594 -> 0.548 ms, `filter` p99
+    8.995 -> 8.685 ms;
+  - design_load_velocity / grant: `_check` p99 2.073 -> 2.047 ms, `filter`
+    p99 14.70 -> 13.98 ms (max 51.0 -> 58.5 ms);
+  - replay agreement unchanged (219/219, 309/309, 160/160).
+- `experiments/bench_shield_50rules.py --variant moving` (48 moving zones),
+  pinned. `_check` median clear 0.215 -> 0.278, grid 0.278 -> 0.391, near
+  0.325 -> 0.419 ms; `filter` median 0.391 -> 0.461, 0.579 -> 0.633, 1.189
+  -> 1.387 ms. The bench makes a new tick per `_check`, so each call
+  rebuilds the tree (about 70 us for 48 zones). Decisions identical to the
+  all-zones null on 3900 of 3900 samples.
+- The whole CI loop (`tools/ci_local.py --no-smoke --no-summary`), one file
+  at a time, at b52e7f2: 136 of 138 files, 3447 of 3560 tests, claims scan
+  clean. Two files failed, and neither reads the code changed here:
+  - `test_track_truth`, a known lab-only failure
+    (docs/data/ci_local/b3796cb1c673.json). It runs only with the lab's
+    flights present: three were copied into this worktree's gitignored
+    demo/out so that `test_replay` runs (61/61) instead of erroring.
+  - `test_wp4outputs_harness`, `test_an_idle_session_expires_and_frees_its_slot`.
+    It also fails at 6b80775 on this machine now: `start_episode` takes
+    0.26 s against the test's 0.3 s session TTL. It passed in the run at
+    aa024dc.
+
+  That earlier run (aa024dc) found the three files fixed above.
+
+#### Found
+- `fence_export` skips a dynamic_nfz whose `motion` is present but all zero
+  as moving, while the IR and the Shield treat it as static. That is the
+  safe direction for a backstop: the zone is not uploaded and the Shield
+  alone holds it. Left as is.
+
+#### Limits
+- WP3-22 is PARTIAL, not DONE. These still measure zone geometry of their
+  own, because their question is not a rule verdict:
+  - the compiler's mission-path distance for the risk grade and the
+    relevance text (`_fence_dist`, `_seg_poly`);
+  - the lint's exit regions (`_ring_of`, `_exits_for`);
+  - the cost map's raster;
+  - the RTL leg's crossing test;
+  - FenceGuard's building half: its own occupancy-grid scan against
+    `min_clearance_m`, not the Shield's distance field;
+  - the behaviour-cloned pilots' input features (`training/features.py`).
+
+  Folding the last two changes flown behaviour, which needs flights.
+  `models.active_at` is still defined, and nothing in the system calls it.
+  The source scan works by name and shape: a copy under a new name is not
+  caught.
+- No DSL rule reads past actions, so the buffer's 49 older entries are a
+  record. Corridors, stand-offs and clearance are not in a tree: they are
+  keep-in or subject-relative and are checked at every pose.
+- One file of another stream was touched: `guardrail/ir.py`, with two new
+  definitions (`MovingIndex`, `PolicyIR.moving_index`) and one docstring
+  sentence. `guardrail/projection.py`'s `ring_order` is imported, not
+  changed.
+- The tie-break reads the COMMANDED heading, not the velocity relative to
+  a moving zone. That keeps "a hover in a drifting zone's middle is not
+  escaping" (`tests/test_shieldcore_identity.py`).
 
 ### 2026-11-03 — the 2 November branches merged; the flight bundles rebuilt for the new policy versions
 

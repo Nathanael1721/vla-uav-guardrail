@@ -939,6 +939,115 @@ def test_the_migration_keeps_the_zones_breach_action_type_and_priority():
     assert [(v.x, v.y) for v in z.vertices] == [(v.x, v.y) for v in pf.vertices]
 
 
+# ------------------------------- the way out does not depend on vertex order
+
+def _square_ring(cx, cy, half, deg):
+    """A square of half-side `half` centred on (cx, cy), turned by `deg`."""
+    c, s = math.cos(math.radians(deg)), math.sin(math.radians(deg))
+    return [(cx + c * a * half - s * b * half, cy + s * a * half + c * b * half)
+            for a, b in ((-1, -1), (1, -1), (1, 1), (-1, 1))]
+
+
+def _orders(ring):
+    """Every start vertex, both windings."""
+    n = len(ring)
+    out = []
+    for r in (ring, ring[::-1]):
+        for k in range(n):
+            out.append(r[k:] + r[:k])
+    return out
+
+
+def _zone_in_order(pts, zid="dyn-nfz", margin=1.0):
+    """A dynamic_nfz whose ring is stored in exactly the order `pts` - past
+    the model's canonical ordering, which would otherwise hide the order the
+    test is about (IR schema 3.0.0 canonicalises every ring at validation)."""
+    z = DynamicNFZ.model_validate({
+        "id": zid, "type": "dynamic_nfz", **HARD_P0, "margin_m": margin,
+        "vertices": [{"x": x, "y": y} for x, y in pts]})
+    object.__setattr__(z, "vertices", [type(z.vertices[0])(x=x, y=y) for x, y in pts])
+    assert [(v.x, v.y) for v in z.vertices] == list(pts)
+    return z
+
+
+def test_the_way_out_of_a_tie_is_the_zones_not_the_rings_order():
+    """In the middle of a square every edge is equally near. The geometry
+    primitive takes whichever nearest point the ring lists first, so its
+    answer moves with the start vertex and the winding (the null: it gives
+    more than one direction over the eight orders). escape_direction gives
+    one, whatever the order: the edge the heading is taking, and with no
+    heading the first along the ring in its canonical order (the choice the
+    canonical rings made for a hover)."""
+    from shapely.geometry import Polygon
+    from guardrail.geometry import push_out_direction
+    from guardrail.shield import escape_direction
+    for deg in (0.0, 30.0, 45.0, 117.0):
+        ring = _square_ring(-120.0, 35.0, 21.0, deg)
+        cx, cy = -120.0, 35.0
+        heads = {"none": (0.0, 0.0)}
+        for k in range(4):                       # straight at each edge's middle
+            a = math.radians(deg + 90.0 * k)
+            heads[f"edge{k}"] = (4.0 * math.cos(a), 4.0 * math.sin(a))
+        base = set()
+        for name, (vx, vy) in heads.items():
+            got = set()
+            for pts in _orders(ring):
+                poly = Polygon(pts)
+                ux, uy = escape_direction(cx, cy, poly, vx, vy)
+                got.add((round(ux, 9), round(uy, 9)))
+                base.add(tuple(round(v, 6) for v in push_out_direction(cx, cy, poly)))
+            assert len(got) == 1, (deg, name, got)
+            (ux, uy), = got
+            if name != "none":
+                assert ux * vx + uy * vy > 3.99, (deg, name, (ux, uy))
+            else:
+                # A hover: what push_out_direction gives on the canonical ring.
+                from guardrail.projection import ring_order
+                canon = [ring[i] for i in ring_order(ring)]
+                want = push_out_direction(cx, cy, Polygon(canon))
+                assert abs(ux - want[0]) < 1e-9 and abs(uy - want[1]) < 1e-9, (deg, want)
+        assert len(base) > 1, f"the null found no tie at {deg} deg: {base}"
+    # Off the tie the answer is push_out_direction's own, bit for bit.
+    poly = Polygon(_square_ring(0.0, 0.0, 10.0, 20.0))
+    for x, y in ((1.0, 0.3), (-4.0, 2.5), (12.0, -1.0), (0.2, -9.0)):
+        assert escape_direction(x, y, poly, 3.0, -1.0) == push_out_direction(x, y, poly)
+
+
+def test_a_zone_spawned_on_top_is_left_the_same_way_in_every_vertex_order():
+    """The library cell dyn-nfz-spawn-on-top@size_m=40 in miniature: a 40 m
+    square (1 m margin) spawned centred on an aircraft flying at 4 m/s along
+    a 30 deg heading. Flown for 8 s with the Shield's own emitted action, the
+    decisions are identical tick for tick in all eight vertex orders, and the
+    forward command is never refused - it is already leaving through the
+    edge ahead, as it was before the rings were stored canonically. Until
+    2026-11-03 the order decided which edge the escape took (the library cell
+    failed, ending in Loiter, after the canonical ring order of 2026-11-02)."""
+    deg = 30.0
+    hx, hy = math.cos(math.radians(deg)), math.sin(math.radians(deg))
+    start = (-150.0, 20.0)
+    runs = []
+    for pts in _orders(_square_ring(*start, 20.0, deg)):
+        sh = Shield(Policy(policy_id="spawn", constraints=[]), escalation=False)
+        x, y = start
+        sh.filter(State(x=x, y=y, up=15.0), Action4D(vx=4 * hx, vy=4 * hy), t=0.0)
+        sh.hot_apply(_zone_in_order(pts), t=0.0)
+        rows = []
+        for k in range(1, 81):
+            d = sh.filter(State(x=x, y=y, up=15.0), Action4D(vx=4 * hx, vy=4 * hy), t=0.1 * k)
+            # (policy_hash differs by construction: the order is hashed.)
+            rows.append((round(x, 9), round(y, 9),
+                         d.model_dump(exclude={"trace", "policy_hash"})))
+            x += d.emitted.vx * 0.1
+            y += d.emitted.vy * 0.1
+        runs.append(rows)
+    assert all(r == runs[0] for r in runs[1:]), "the escape depends on the ring's order"
+    assert not any(row[2]["violations"] for row in runs[0]), runs[0][0]
+    # ... and it is out: 21 m to the ring ahead at 4 m/s.
+    x, y = runs[0][-1][:2]
+    along = (x - start[0]) * hx + (y - start[1]) * hy
+    assert along > 21.0, along
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     failed = 0

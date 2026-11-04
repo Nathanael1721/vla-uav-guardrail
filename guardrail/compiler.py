@@ -114,13 +114,13 @@ from . import csp as _csp
 from .csp import (CSP, CSP_VERSION, AllowedActionSet, CSPBudgetExceeded,
                   CSPUnenforcedRules, ForbiddenActionSet, P0Entry, RiskWeights,
                   RuleDecision, Selection, TokenCounter)
-from .geometry import nearest_on_polyline, point_in_fence
 from .ir import PolicyIR, is_moving
 from .models import (DAYS, RUNTIME_TYPES, AltitudeEnvelope, CircleFence, Corridor,
                      CorridorSwap, DynamicNFZ, KinematicEnvelope,
                      ObstacleClearance, Policy, PolygonFence, SubjectStandoff,
                      TimeWindowSwitch)
-from .shield import recurrence_active
+from .shield import (RuleClock, corridor_breached, corridor_in_band, corridor_offset,
+                     corridor_wide, in_zone_band, zone_breached)
 
 # Keep-OUT zones and keep-IN tubes. CircleFence is a PolygonFence (its vertices
 # are the derived 32-gon); DynamicNFZ and CorridorSwap are not subclasses of
@@ -383,10 +383,13 @@ def render_summary(rule) -> str:
 # --------------------------------------------------------------------------- #
 # Geometry for SUMMARISING, not enforcing.
 #
-# The distance helpers below are pure Python: they only score and describe,
-# and nothing the Shield decides depends on them. Where a check does matter for
-# safety (does this action enter a zone?) the code calls geometry.point_in_fence,
-# the Shield's own test. The multi-scale polygons are not computed here at all:
+# The distance helpers below are pure Python: they only score and describe
+# (a zone's distance from the mission's path, for the risk grade and the
+# relevance text), and nothing the Shield decides depends on them. Where a
+# check is about a rule (is this point inside a zone, a corridor, a band?)
+# the code calls the Shield's own verdicts (guardrail/shield.py zone_breached,
+# corridor_breached, in_zone_band; one rule-evaluation code path, WP3-22).
+# The multi-scale polygons are not computed here at all:
 # they are read from the compiled IR (guardrail/ir.py), the grant's "the Prefix
 # Compiler picks the scale, never re-computes" (card WP2-16).
 # --------------------------------------------------------------------------- #
@@ -519,17 +522,23 @@ def _activity(rule, now: datetime | None, lookahead_s: float) -> dict:
 
     Recurrence is minute-grained, so the window is sampled at `now` and at
     every minute boundary up to its end - exactly the instants at which a
-    schedule can change state. The test is the rule's own active_at, the same
-    one the Shield uses, so the CSP and the Shield cannot disagree about when a
-    rule is on. No clock means in force (models.py: "absent means active").
+    schedule can change state. Each instant is read by THE rule clock
+    (guardrail/shield.py RuleClock.minute_on): the rule's own window at the
+    start of that minute, which is models.ConstraintBase.active_at's answer
+    to the microsecond (tests/test_shieldcore_onepath.py holds the two equal
+    over every minute of a week) and wider than the Shield's at a window's
+    end, so the CSP never leaves out a rule the Shield enforces. Until
+    2026-11-03 this called `active_at` itself, a second reader of the
+    schedule beside the Shield's. No clock means in force (models.py:
+    "absent means active").
     """
     if now is None or rule.valid_time is None:
         return {"now": True, "any": True, "on": False, "off": False}
     end = now + timedelta(seconds=lookahead_s)
-    states = [rule.active_at(now)]
+    states = [RuleClock.minute_on(rule, now)]
     t = now.replace(second=0, microsecond=0) + timedelta(minutes=1)
     while t <= end:
-        states.append(rule.active_at(t))
+        states.append(RuleClock.minute_on(rule, t))
         t += timedelta(minutes=1)
     later = states[1:]
     return {"now": states[0], "any": any(states),
@@ -546,79 +555,33 @@ _SWITCH_PAD_S = 1.0
 _JUST_AFTER = timedelta(microseconds=1)
 
 
-class _RuleClock:
-    """Which rules are in force at an instant, with time_window_switch and
-    corridor_swap applied EXACTLY as the Shield applies them
-    (guardrail/shield.py `_Schedule.on`, the same `recurrence_active`, to the
-    microsecond).
+class _RuleClock(RuleClock):
+    """The Prefix Compiler's view of THE rule clock (guardrail/shield.py
+    RuleClock, the Shield's own): which rules are in force at an instant,
+    time_window_switch and corridor_swap applied exactly as the Shield
+    applies them, to the microsecond. `on`, `holders` and `involved` are the
+    Shield's methods, inherited, not copied; this class adds only what the
+    compiler asks that the Shield does not - the sampling of a lookahead
+    window (`activity`) and the wording of who acts on a rule
+    (`acted_on_text`).
 
-    Why a second implementation of `on` and not a call into the Shield: the
-    Shield's schedule hangs off its per-generation runtime (fence index,
-    anchors, FSM) and is private. This is the ~20 lines of rule logic only,
-    and tests/test_csp.py holds it to the Shield's own answer
-    (`Shield.rule_status(...)["in_force"]`) at every instant around every edge
-    of a policy built to have them. If they ever disagree the test names the
-    rule and the instant.
+    Until 2026-11-03 this was a second implementation of `on` ("the ~20
+    lines of rule logic only"), held to the Shield's answer by
+    tests/test_csp.py; the review of 29 Oct counted it as a second
+    rule-evaluation path (card WP3-22 / X-13).
 
     Used only for rules a switch or swap touches (and for those events
     themselves). Every other rule keeps `_activity`'s minute-grained test,
     unchanged since 2026-10-06, so no stored CSP moves. That test is the
-    conservative one for a rule's OWN window (models.Recurrence.active_at keeps
-    a window ending 17:30 open until 17:30:59; the Shield closes it at
-    17:30:00) - but it is NOT conservative for a switch that turns a rule OFF,
-    which it would hold off 59 s longer than the Shield: a rule the Shield
-    enforces would be missing from the CSP. Hence the exact clock here.
+    conservative one for a rule's OWN window (it keeps a window ending 17:30
+    open until 17:30:59; the Shield closes it at 17:30:00) - but it is NOT
+    conservative for a switch that turns a rule OFF, which it would hold off
+    59 s longer than the Shield: a rule the Shield enforces would be missing
+    from the CSP. Hence the exact clock here.
     """
 
     def __init__(self, policy: Policy):
-        self.sw: dict[str, list] = {}
-        self.sp: dict[str, list] = {}
-        for c in policy.constraints:
-            if isinstance(c, TimeWindowSwitch):
-                self.sw.setdefault(c.target_id, []).append(c)
-            elif isinstance(c, CorridorSwap):
-                self.sp.setdefault(c.target_id, []).append(c)
-
-    def involved(self, rule) -> bool:
-        return (isinstance(rule, (TimeWindowSwitch, CorridorSwap))
-                or rule.id in self.sw or rule.id in self.sp)
-
-    @staticmethod
-    def _base(rule, x):
-        """The rule's own window at x: True, False, or None (it has a window
-        and there is no clock). shield._Schedule._base, verbatim."""
-        vt = rule.valid_time
-        if vt is None or vt.recurrence is None:
-            return True
-        if x is None:
-            return None
-        return recurrence_active(vt.recurrence, x)
-
-    def on(self, rule, x) -> bool:
-        """Is `rule` in force at instant x (None: no clock)?
-
-        A time_window_switch is "in force" while its own window holds (it then
-        acts); the Shield never enforces it as geometry. Everything else is
-        shield._Schedule.on: a corridor_swap holds while its window holds and
-        switches its target off meanwhile; of the switches on a rule that are
-        in force, the last in policy order decides; a switch whose window
-        cannot be read turns a rule ON but never OFF; no clock counts as in
-        force."""
-        if isinstance(rule, TimeWindowSwitch):
-            return self._base(rule, x) is not False
-        if isinstance(rule, CorridorSwap):
-            return self._base(rule, x) is not False
-        for sp in self.sp.get(rule.id, ()):
-            if self._base(sp, x) is True:
-                return False
-        sws = self.sw.get(rule.id, ())
-        if sws:
-            if any(s.active and self._base(s, x) is None for s in sws):
-                return True
-            known = [s.active for s in sws if self._base(s, x) is True]
-            if known:
-                return known[-1]
-        return self._base(rule, x) is not False
+        super().__init__(policy.constraints)
 
     def acted_on_text(self, rule) -> str | None:
         """Every switch and swap that acts on `rule`, with its window, in
@@ -627,18 +590,10 @@ class _RuleClock:
         window: a switch target read "always" there although a switch turns
         it off for part of the week (found in review, 2026-10-08)."""
         parts = [f"switched {'on' if s.active else 'off'} by {s.id} "
-                 f"({window_text(s) or 'always'})" for s in self.sw.get(rule.id, ())]
+                 f"({window_text(s) or 'always'})" for s in self.switches_on.get(rule.id, ())]
         parts += [f"replaced by {sp.id} ({window_text(sp) or 'always'})"
-                  for sp in self.sp.get(rule.id, ())]
+                  for sp in self.swaps_on.get(rule.id, ())]
         return "; ".join(parts) or None
-
-    def holders(self, rule, x) -> list[str]:
-        """The ids of the switches and swaps holding `rule` OFF at x."""
-        out = [sp.id for sp in self.sp.get(rule.id, ()) if self._base(sp, x) is True]
-        sws = [s for s in self.sw.get(rule.id, ()) if self._base(s, x) is True]
-        if sws and not sws[-1].active:
-            out.append(sws[-1].id)
-        return out
 
     def activity(self, rule, now: datetime | None, lookahead_s: float) -> dict:
         """`_activity`'s answer, from exact instants.
@@ -775,7 +730,7 @@ def _relevance(rule, act: dict, ctx: _Ctx) -> str:
         facts = {"crosses": d_path <= 0.0, "sx": sx, "sy": sy, "tx": tx, "ty": ty,
                  "d_path": d_path, "d_target": d_tgt, "alt": m.cruise_alt_m,
                  "floor": rule.altitude_floor_m, "ceil": rule.altitude_ceiling_m,
-                 "in_band": rule.altitude_floor_m <= m.cruise_alt_m <= rule.altitude_ceiling_m}
+                 "in_band": in_zone_band(rule, m.cruise_alt_m)}
         if isinstance(rule, CircleFence):
             facts["r"] = rule
         elif isinstance(rule, DynamicNFZ):
@@ -785,12 +740,14 @@ def _relevance(rule, act: dict, ctx: _Ctx) -> str:
                          turn=abs(mv.yaw_rate_dps) if mv else 0.0,
                          travel=speed * ctx.lookahead_s, lookahead=ctx.lookahead_s)
     elif isinstance(rule, _TUBES):
-        hw, pts = rule.half_width_m, rule.points()
-        facts = {"start_in": nearest_on_polyline(sx, sy, pts)[0] <= hw,
-                 "target_in": nearest_on_polyline(tx, ty, pts)[0] <= hw,
+        hw = rule.half_width_m
+        # Inside the corridor or not: the Shield's verdicts (shield.py
+        # corridor_wide / corridor_in_band), not a comparison of this module's.
+        facts = {"start_in": not corridor_wide(rule, corridor_offset(rule, sx, sy)),
+                 "target_in": not corridor_wide(rule, corridor_offset(rule, tx, ty)),
                  "hw": hw, "alt": m.cruise_alt_m, "floor": rule.altitude_floor_m,
                  "ceil": rule.altitude_ceiling_m,
-                 "alt_in_band": rule.altitude_floor_m <= m.cruise_alt_m <= rule.altitude_ceiling_m}
+                 "alt_in_band": corridor_in_band(rule, m.cruise_alt_m)}
         if isinstance(rule, CorridorSwap):
             facts["target"] = rule.target_id
     elif isinstance(rule, TimeWindowSwitch):
@@ -885,7 +842,7 @@ def _in_force_sets(rules: list, clock: "_RuleClock", now: datetime,
     def on(r, x) -> bool:
         if clock.involved(r):
             return now - pad <= x <= end + pad and clock.on(r, x)
-        return now <= x <= end and r.active_at(x)
+        return now <= x <= end and RuleClock.minute_on(r, x)
     return [(x, frozenset(r.id for r in rules if on(r, x)))
             for x in [now] + sorted(ts - {now})]
 
@@ -1023,8 +980,11 @@ def action_violations(action, csp: CSP, state=None, policy: Policy | None = None
     The speed checks need no rotation (see AllowedActionSet: the caps are
     rotation-invariant). With `state`, the altitude after `dt` is checked; with
     `state` and the `policy` the CSP was compiled from, the position after `dt`
-    is checked against every forbidden zone using geometry.point_in_fence - the
-    Shield's own test - and against every keep-in corridor. Advisory: this
+    is checked against every forbidden zone and every keep-in corridor by the
+    Shield's own point verdicts (shield.zone_breached, corridor_breached: one
+    rule-evaluation code path, card WP3-22). The speed, yaw and altitude-band
+    checks compare the action with the CSP's published action sets - the
+    CSP's numbers, which are the compiler's output, not a rule. Advisory: this
     counts would-be violations (the offline-replay metric of PDF p5); the
     Shield, not this function, decides what flies. A MOVING dynamic_nfz is
     tested where it was declared: the CSP cannot know how far the Shield has
@@ -1063,13 +1023,16 @@ def action_violations(action, csp: CSP, state=None, policy: Policy | None = None
     by_id = {c.id: c for c in policy.constraints}
     rings = ({r.rule.id: r.buffered for r in ir.fences}
              if ir is not None and ir.is_current_for(policy) else {})
+    # The position verdicts are the Shield's (guardrail/shield.py zone_breached,
+    # corridor_breached): since 2026-11-03 this function compares nothing of
+    # its own about a rule. The corridor test it made before had no 1e-9 m
+    # slack on the half-width and the band, so a point within a nanometre
+    # outside them reads inside now, as the Shield reads it (WP3-22).
     for fid in f.no_translate_into_polygons:
-        if point_in_fence(x, y, up, by_id[fid], buffered=rings.get(fid)):
+        if zone_breached(by_id[fid], x, y, up, buffered=rings.get(fid)):
             out.append(f"polygon:{fid}")
     for cid in f.no_translate_out_of_corridors:
-        c = by_id[cid]
-        d, _, _ = nearest_on_polyline(x, y, c.points())
-        if d > c.half_width_m or not (c.altitude_floor_m <= up <= c.altitude_ceiling_m):
+        if corridor_breached(by_id[cid], x, y, up):
             out.append(f"corridor:{cid}")
     return out
 
@@ -1392,7 +1355,11 @@ def rasterise_cost_map(policy: Policy, *, now: datetime | None = None,
         return float(zone_age_s or 0.0)
 
     def in_band(c) -> bool:
-        return altitude_m is None or (c.altitude_floor_m <= altitude_m <= c.altitude_ceiling_m)
+        # The Shield's band tests (shield.py in_zone_band, corridor_in_band).
+        if altitude_m is None:
+            return True
+        return (corridor_in_band(c, altitude_m) if isinstance(c, _TUBES)
+                else in_zone_band(c, altitude_m))
 
     drawn: list[tuple[str, str | None, object, float]] = []   # name, source, geometry, cost
     tubes: list[tuple] = []                                     # (rule, geometry or None)
@@ -1970,13 +1937,13 @@ def _opening_outcome(policy: Policy, z) -> str:
 
 def _timed_zones(policy: Policy) -> list:
     """Hard, enforced keep-out zones whose being in force can change with
-    time: their own weekly window, or a time_window_switch aimed at them."""
-    switched = {c.target_id for c in policy.constraints if isinstance(c, TimeWindowSwitch)}
+    time: their own weekly window, or a time_window_switch aimed at them -
+    read from THE rule clock's structure (guardrail/shield.py RuleClock)."""
+    clock = RuleClock.of(policy)
     return [c for c in policy.constraints
             if isinstance(c, _ZONES) and c.constraint_type == "hard"
             and c.violation_action != "monitor_only"
-            and ((c.valid_time is not None and c.valid_time.recurrence is not None)
-                 or c.id in switched)]
+            and (clock.has_window(c) or c.id in clock.switches_on)]
 
 
 def _ring_of(zone):
@@ -2005,7 +1972,7 @@ def _exits_for(policy: Policy, zone, ring):
     always = [_ring_of(z) for z in policy.constraints
               if isinstance(z, _ZONES) and z is not zone and z.constraint_type == "hard"
               and z.violation_action != "monitor_only" and z.id not in timed
-              and (z.valid_time is None or z.valid_time.recurrence is None)]
+              and not RuleClock.has_window(z)]
     minx, miny, maxx, maxy = ring.bounds
     pad = max(maxx - minx, maxy - miny) + 1.0
     world = box(minx - pad, miny - pad, maxx + pad, maxy + pad)
@@ -2145,8 +2112,7 @@ def time_window_lead_warnings(policy: Policy, *, lookahead_s: float = DEFAULT_LO
         if start is None or now is None:
             continue
         sx, sy, sup = (float(v) for v in start)
-        if not (ring.contains(Point(sx, sy))
-                and z.altitude_floor_m <= sup <= z.altitude_ceiling_m):
+        if not zone_breached(z, sx, sy, sup, buffered=ring):   # the Shield's test
             continue
         if clock.on(z, now):
             continue        # already in force at the start: start_conflicts' case

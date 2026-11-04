@@ -618,6 +618,7 @@ jobs:
               tests/test_shieldcore_repair.py \
               tests/test_shieldcore_audit.py \
               tests/test_shieldcore_identity.py \
+              tests/test_shieldcore_onepath.py \
               tests/test_railinputs_fence_export.py \
               tests/test_railinputs_clock.py \
               tests/test_railinputs_policy.py \

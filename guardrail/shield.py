@@ -91,6 +91,21 @@ ENFORCEMENT (2026-10-07; docs/DESIGN-shield-enforcement.md has the whole story)
     behind constructor flags, all off by default. A moving zone's polygon is
     built only when its anchor box meets the forecast (guardrail/ir.py
     `anchor_reach`).
+  * ONE RULE-EVALUATION CODE PATH and the grant's node architecture
+    (2026-11-03, cards WP3-22 / X-13 / WP3-23). This module is the violation
+    checker library every reader calls: the rule clock (RuleClock: windows,
+    switches, swaps), the per-position verdicts (zone_breached,
+    corridor_breached, the band tests, ZoneRuler) and the way out of a zone
+    (escape_direction, invariant to the ring's vertex order). The Prefix
+    Compiler, the fence export, the RTL hand-over, the dwell count and the
+    city controller's FenceGuard ask these instead of keeping their own
+    (tests/test_shieldcore_onepath.py fails if a second one appears). Each
+    filter() tick admits its action and the action's predicted trajectory
+    into the sliding-window buffer (SlidingWindow, the last 50) before
+    anything is checked, and the checker reads the trajectory from there.
+    Static zones are queried through the IR's STRtree; moving dynamic_nfz
+    zones through an STRtree of their reach boxes rebuilt per tick
+    (_Tick.moving_near).
 """
 from __future__ import annotations
 
@@ -113,6 +128,7 @@ from . import repair as _repair
 from . import response as _response
 from .geometry import nearest_on_polyline, point_in_fence, push_out_direction
 from .ir import FENCE_TYPES, FenceRecord, PolicyIR, anchor_reach, compile_fence, is_fence
+from .projection import ring_order
 from .models import (
     DAYS,
     DEFAULT_LAYER,
@@ -291,6 +307,347 @@ def _recurrence_edge_within(rec, t0, t1) -> bool:
     return False
 
 
+def _window_of(rule):
+    """A rule's own weekly schedule (models.Recurrence), or None when it has
+    none (no `valid_time`, or one without a recurrence: always in force). Read
+    by attribute, so a duck-typed rule without the field counts as always."""
+    vt = getattr(rule, "valid_time", None)
+    return None if vt is None else getattr(vt, "recurrence", None)
+
+
+_SWITCH = "time_window_switch"
+_SWAP = "corridor_swap"
+
+
+class RuleClock:
+    """THE rule clock: which rules are in force at an instant. The one
+    implementation in the system (grant, Safety Shield page, "Violation
+    checking": "there is exactly one rule-evaluation code path").
+
+    Built once per generation from the rule list (the Shield keeps one on its
+    runtime, `Shield.rule_clock`). Every reader asks this class:
+
+      * the Shield's per-pose schedule (`_Schedule`, both sides of each
+        forecast instant) asks `enforced`;
+      * the Prefix Compiler's time filter (compiler._RuleClock, a subclass
+        that adds only its own sampling and wording) asks `on`, `holders`
+        and `minute_on`;
+      * the autopilot fence export (guardrail/fence_export.py) asks
+        `off_switches`, `has_window` and `on`;
+      * the dwell count of every rail (guardrail/replay.zone_dwell) asks the
+        flight's Shield's own clock.
+
+    Until 2026-11-03 the compiler held a second copy of `on` ("the ~20
+    lines of rule logic only", kept equal to the Shield by tests/test_csp.py)
+    and the fence export a third reading of which switches turn a zone off
+    (the review of 29 Oct, card WP3-22 / X-13).
+
+    The semantics are the Shield's, to the microsecond (block comment above):
+
+      * no clock (x None) counts as in force ("absent means active");
+      * a corridor_swap holds while its own window holds, and switches its
+        target off meanwhile;
+      * of the time_window_switches on a rule whose windows hold at x, the
+        LAST in policy order decides (events accumulate in order); a switch
+        whose window cannot be read (no clock) turns a rule ON but never OFF.
+
+    A time_window_switch is an event, not geometry: `on` says whether it is
+    ACTING (its own window holds), `enforced` says False (the monitor never
+    judges a pose against it). Rules are read by attribute (`type`,
+    `valid_time`, `target_id`, `active`), so the duck-typed policies the
+    fence export accepts read the same way.
+    """
+    __slots__ = ("switches_on", "swaps_on", "timed", "recurrences")
+
+    def __init__(self, constraints):
+        cons = tuple(constraints)
+        sw: dict = {}
+        sp: dict = {}
+        for c in cons:
+            kind = getattr(c, "type", None)
+            if kind == _SWITCH:
+                sw.setdefault(c.target_id, []).append(c)
+            elif kind == _SWAP:
+                sp.setdefault(c.target_id, []).append(c)
+        # target id -> the switches / swaps acting on it, in policy order.
+        self.switches_on: dict = {k: tuple(v) for k, v in sw.items()}
+        self.swaps_on: dict = {k: tuple(v) for k, v in sp.items()}
+        # Ids whose in-force state can change with the clock, and every
+        # weekly schedule in the rule set (the tick's fast path, _Schedule).
+        timed = {c.id for c in cons if _window_of(c) is not None}
+        timed |= set(sw) | set(sp)
+        timed |= {c.id for c in cons if getattr(c, "type", None) == _SWAP}
+        self.timed = frozenset(timed)
+        self.recurrences = tuple(r for r in (_window_of(c) for c in cons) if r is not None)
+
+    @classmethod
+    def of(cls, policy) -> "RuleClock":
+        """The clock of `policy`'s rules (a Policy, or anything with a
+        `constraints` list)."""
+        return cls(getattr(policy, "constraints", ()) or ())
+
+    @staticmethod
+    def _base(rule, x):
+        """The rule's own window at instant x: True, False, or None when it
+        has a window and there is no clock to read it."""
+        rec = _window_of(rule)
+        if rec is None:
+            return True
+        if x is None:
+            return None
+        return recurrence_active(rec, x)
+
+    def on(self, rule, x) -> bool:
+        """Is `rule` in force at instant x (None: no clock)? For a switch or a
+        swap: is it acting (its own window holds or cannot be read)."""
+        kind = rule.type
+        if kind == _SWITCH or kind == _SWAP:
+            return self._base(rule, x) is not False
+        for sp in self.swaps_on.get(rule.id, ()):
+            if self._base(sp, x) is True:
+                return False
+        sws = self.switches_on.get(rule.id, ())
+        if sws:
+            if any(s.active and self._base(s, x) is None for s in sws):
+                return True
+            known = [s.active for s in sws if self._base(s, x) is True]
+            if known:
+                return known[-1]
+        return self._base(rule, x) is not False
+
+    def enforced(self, rule, x) -> bool:
+        """`on`, for the monitor: a time_window_switch is never judged as
+        geometry (it acts through its target)."""
+        if rule.type == _SWITCH:
+            return False
+        return self.on(rule, x)
+
+    def involved(self, rule) -> bool:
+        """Is `rule` a switch or a swap, or the target of one?"""
+        return (rule.type in (_SWITCH, _SWAP)
+                or rule.id in self.switches_on or rule.id in self.swaps_on)
+
+    def holders(self, rule, x) -> list[str]:
+        """The ids of the swaps and the switch holding `rule` OFF at x."""
+        out = [sp.id for sp in self.swaps_on.get(rule.id, ()) if self._base(sp, x) is True]
+        sws = [s for s in self.switches_on.get(rule.id, ()) if self._base(s, x) is True]
+        if sws and not sws[-1].active:
+            out.append(sws[-1].id)
+        return out
+
+    def off_switches(self, rule_id: str) -> list[str]:
+        """The ids of the time_window_switches that can turn `rule_id` OFF
+        (`active: false`), in policy order. A switch that only holds a rule
+        ON adds no off-time to it."""
+        return [s.id for s in self.switches_on.get(rule_id, ())
+                if getattr(s, "active", True) is False]
+
+    @staticmethod
+    def has_window(rule) -> bool:
+        """Does `rule` carry a weekly window of its own?"""
+        return _window_of(rule) is not None
+
+    @classmethod
+    def minute_on(cls, rule, x) -> bool:
+        """The rule's OWN window read at the start of x's minute: exactly
+        models.ConstraintBase.active_at's minute-grained answer (whole
+        minutes, inclusive end: a window ending 17:30 holds until 17:30:59),
+        which the Prefix Compiler's time filter has always used for a rule
+        no switch or swap touches - wider than `on` at a window's end, so a
+        CSP never leaves out a rule the Shield enforces. Read through
+        `_base`, so the one schedule reader answers it; None (no clock)
+        counts as in force."""
+        if x is None:
+            return True
+        return cls._base(rule, x.replace(second=0, microsecond=0)) is not False
+
+
+# --------------------------------------------------------------------------- #
+# The way out of a zone, whatever order its vertices are stored in
+# --------------------------------------------------------------------------- #
+#
+# geometry.push_out_direction takes the nearest point of the zone's boundary
+# from shapely's `project`, which returns the FIRST nearest point along the
+# ring. Where two or more edges are exactly as near - the middle of a square,
+# a point on its diagonal's bisector - that is decided by where the ring
+# starts and which way it winds, not by the zone. Since IR schema 3.0.0
+# (2026-11-02) every ring is stored in canonical order (positive winding,
+# smallest point first), which moved that choice: the library cell
+# dyn-nfz-spawn-on-top@size_m=40 (a 40 m zone spawned centred ON the
+# aircraft) took a side edge where it had taken the forward one, the pilot's
+# forward command stopped counting as escaping, and the episode ended in
+# Loiter with the escape incomplete.
+#
+# The Shield's answer must depend on the zone, not on how it is written. So
+# every escape direction the Shield uses comes from `escape_direction`: the
+# same direction as push_out_direction wherever the nearest boundary point is
+# unique (bit for bit: push_out_direction's own result is returned), and in an
+# exact tie (nearest points within _TIE_M of each other in distance, in
+# different directions) the tied direction most aligned with the heading the
+# caller judges - the commanded velocity, relative to a moving zone - so a
+# command already leaving through one of the equally near edges is escaping.
+# With no heading (a hover), or two tied directions equally aligned with it,
+# the first of them along the ring in its CANONICAL order (positive winding,
+# smallest point first: projection.ring_order, recomputed here from the
+# coordinates, so a ring stored in any other order answers the same). That is
+# the choice the canonical rings have made since 2026-11-02 for a hover in a
+# tie (tests/test_hold_points.py pins one), now a property of the zone and not
+# of its storage. Once the aircraft has moved off the tie the nearest point is
+# unique again, so no memory is needed.
+
+# Two boundary points whose distances differ by less than this are a tie: far
+# above the rounding of the distances (about 1e-14 m at the library's 200 m
+# coordinates), far below anything a position can be measured to.
+_TIE_M = 1e-9
+
+
+def escape_direction(x: float, y: float, poly, vx: float = 0.0,
+                     vy: float = 0.0) -> tuple[float, float]:
+    """The unit vector from (x, y) towards the nearest way OUT of `poly`
+    (inside it) or away from it (outside), as geometry.push_out_direction,
+    with an exact tie between equally near boundary points broken by the
+    heading (vx, vy) and then by the ring's canonical order - never by the
+    order the ring is stored in (block comment above)."""
+    base = push_out_direction(x, y, poly)
+    pts = [(float(px), float(py)) for px, py in list(poly.exterior.coords)[:-1]]
+    if len(pts) < 3:
+        return base
+    pts = [pts[i] for i in ring_order(pts)]
+    ring = pts + pts[:1]
+    best = math.inf
+    near: list[tuple[float, float, float]] = []
+    for (ax, ay), (bx, by) in zip(ring, ring[1:]):
+        ex, ey = bx - ax, by - ay
+        L2 = ex * ex + ey * ey
+        s = 0.0 if L2 <= 0.0 else max(0.0, min(1.0, ((x - ax) * ex + (y - ay) * ey) / L2))
+        nx, ny = ax + s * ex, ay + s * ey
+        d = math.hypot(x - nx, y - ny)
+        near.append((d, nx, ny))
+        if d < best:
+            best = d
+    if best < 1e-9:
+        return base                       # on the boundary: push_out_direction's own fallback
+    inside = poly.contains(Point(x, y))
+    dirs: list[tuple[float, float]] = []
+    for d, nx, ny in near:
+        if d > best + _TIE_M:
+            continue
+        ux, uy = (nx - x) / d, (ny - y) / d
+        if not inside:
+            ux, uy = -ux, -uy
+        if all(ux * px + uy * py < 1.0 - 1e-12 for px, py in dirs):
+            dirs.append((ux, uy))
+    if len(dirs) < 2:
+        return base                       # one nearest point (or one direction): no tie
+    h = math.hypot(vx, vy)
+    if h > 1e-9 and math.isfinite(h):
+        top = max(ux * vx + uy * vy for ux, uy in dirs) / h
+        dirs = [(ux, uy) for ux, uy in dirs if (ux * vx + uy * vy) / h >= top - 1e-9]
+    return dirs[0]                        # the first along the canonical ring
+
+
+# --------------------------------------------------------------------------- #
+# Per-position rule tests: the violation checker's point verdicts
+# --------------------------------------------------------------------------- #
+#
+# "Does this point break this rule?" and "how far is it from this zone?" are
+# answered by these functions and nowhere else (grant, Safety Shield page,
+# "Violation checking": "there is exactly one rule-evaluation code path in
+# the system"). The monitor's own views call them (rule_status,
+# rule_clearances, zones_now, fence_distance, the corridor check), and so do
+# the readers outside it: the Prefix Compiler's action check
+# (compiler.action_violations), its relevance facts and its lint, the cost
+# map's band, the RTL hand-over (guardrail/rtl_path.py) and the city
+# controller (demo/follow_vlm.py FenceGuard, through `ZoneRuler`). The
+# comparisons are the ones the monitor always made: a zone's band with its
+# ends included, the interior of its margin ring (geometry.point_in_fence on
+# the ring compiled once in the IR), a corridor's half-width and band with
+# 1e-9 m of slack. Until 2026-11-03 compiler.action_violations judged a
+# corridor without that slack, and rtl_path, FenceGuard and the lint each
+# made these comparisons themselves (card WP3-22).
+
+_CORRIDOR_SLACK_M = 1e-9
+
+
+def band_holds(lo: float, hi: float, up: float) -> bool:
+    """Is altitude `up` within [lo, hi], ends included: a keep-out zone's
+    band test (geometry.point_in_fence's first comparison)."""
+    return lo <= up <= hi
+
+
+def in_zone_band(zone, up: float) -> bool:
+    """Is altitude `up` within keep-out zone `zone`'s band?"""
+    return band_holds(zone.altitude_floor_m, zone.altitude_ceiling_m, up)
+
+
+def zone_breached(zone, x: float, y: float, up: float, polygon=None,
+                  buffered=None) -> bool:
+    """Does the point (x, y, up) break keep-out zone `zone`: inside its margin
+    ring AND within its band? `buffered` is the ring compiled once in the IR
+    (FenceRecord.buffered); without it the ring is built here."""
+    return point_in_fence(x, y, up, zone, polygon, buffered)
+
+
+def corridor_offset(corridor, x: float, y: float) -> float:
+    """Metres from (x, y) to a corridor's centreline (its segments)."""
+    return nearest_on_polyline(x, y, corridor.points())[0]
+
+
+def corridor_band_outside(corridor, up: float) -> tuple[bool, bool]:
+    """(below the corridor's floor, above its ceiling) at altitude `up`."""
+    return (up < corridor.altitude_floor_m - _CORRIDOR_SLACK_M,
+            up > corridor.altitude_ceiling_m + _CORRIDOR_SLACK_M)
+
+
+def corridor_wide(corridor, offset: float) -> bool:
+    """Is a lateral `offset` from the centreline outside the corridor?"""
+    return offset > corridor.half_width_m + _CORRIDOR_SLACK_M
+
+
+def corridor_in_band(corridor, up: float) -> bool:
+    below, above = corridor_band_outside(corridor, up)
+    return not (below or above)
+
+
+def corridor_breached(corridor, x: float, y: float, up: float) -> bool:
+    """Does the point (x, y, up) break keep-in corridor `corridor`: wider
+    than its half-width or outside its band?"""
+    return corridor_wide(corridor, corridor_offset(corridor, x, y)) or \
+        not corridor_in_band(corridor, up)
+
+
+class ZoneRuler:
+    """Distances from points to the margin rings of a set of compiled zones:
+    `Shield.zone_ruler()`, the zones in force at one tick, read once and
+    asked for as many points as the caller needs (FenceGuard asks for a
+    dozen per control tick). The distance is the one Shield.fence_distance
+    reports: 0 inside a ring, inf with no zone."""
+    __slots__ = ("records", "_rings")
+
+    def __init__(self, records):
+        self.records = tuple(records)
+        self._rings = tuple(r.buffered for r in self.records)
+
+    @classmethod
+    def of_rings(cls, rings) -> "ZoneRuler":
+        """The same measure over margin rings given directly (shapely
+        polygons), for a caller that is handed zones rather than reading
+        them from a Shield (a test that puts a fence where it needs one)."""
+        ruler = cls(())
+        ruler._rings = tuple(rings)
+        return ruler
+
+    def __bool__(self) -> bool:
+        return bool(self._rings)
+
+    def __len__(self) -> int:
+        return len(self._rings)
+
+    def distance(self, x: float, y: float) -> float:
+        p = Point(x, y)
+        return min((g.distance(p) for g in self._rings), default=math.inf)
+
+
 def _sanitise(a: Action4D) -> tuple[Action4D, list[str]]:
     """Force every channel finite, returning the names of the ones that were not.
 
@@ -356,6 +713,13 @@ RECOVERY_LAWS = ("cap", "lookahead")
 # trajectory", feeding the violation checker. 50 ticks is 5 s at the 10 Hz
 # monitor rate, the same span as the grant's lookahead.
 HISTORY_LEN = 50
+
+# Padding (metres) of the forecast box queried against the per-tick R-tree
+# of moving zones (_Tick.moving_near): the tree's answer is then a superset of
+# the zones whose reach box meets the forecast's, boundary contacts included,
+# and the exact test (Shield._reach) decides. A larger pad costs only an
+# exact test that was not needed, never an answer.
+_INDEX_PAD_M = 1e-6
 
 
 def _dedupe(repairs: list["Repair"]) -> list["Repair"]:
@@ -649,10 +1013,20 @@ class RuleClearance(NamedTuple):
 
 
 class TickRecord(NamedTuple):
-    """One entry of the Shield's sliding window: where the vehicle was and what
-    the Shield decided. The predicted trajectory the spec puts beside it is
-    recomputable from these (`Shield.forecast(rec.state, rec.decision.emitted,
-    pipe=rec.pipe)`), so it is not paid for on every tick.
+    """One entry of the Shield's sliding window: where the vehicle was, the
+    action it was given (`decision.raw`), the predicted trajectory the
+    violation checker judged that action on (`trajectory`), and what the
+    Shield decided.
+
+    `trajectory` (since 2026-11-03, WP3-23): the forecast of `decision.raw`
+    from `state`, as (t, pose) pairs over the lookahead - the poses the
+    checker read from the buffer (SlidingWindow). A pose has x, y, up and
+    yaw_deg. For a state with a measured velocity it holds two poses per grid
+    time, the own-velocity one then the commanded one, exactly as the rules
+    walked them (Shield._predict). Until that date the buffer kept no
+    trajectory: it was "recomputable", and the checker never read the buffer.
+    The forecast of the EMITTED action is still recomputable on demand
+    (`Shield.forecast(rec.state, rec.decision.emitted, pipe=rec.pipe)`).
 
     `elapsed_ms` is how long that `filter()` call took, wall clock. The grant
     budgets the monitor at 100 ms per tick (Safety Shield page) and no flight
@@ -670,6 +1044,93 @@ class TickRecord(NamedTuple):
     decision: ShieldDecision
     elapsed_ms: float
     pipe: tuple | None = None
+    trajectory: tuple | None = None
+
+
+class _Admitted(NamedTuple):
+    """The action the current tick admitted into the buffer, with its
+    predicted trajectory, before the decision on it is made."""
+    tick: Any
+    state: Any
+    action: Any
+    key: tuple
+    trajectory: tuple
+
+
+class SlidingWindow:
+    """The Shield node's sliding-window buffer (grant, Safety Shield page,
+    node architecture: Action subscriber -> "Sliding-window buffer: last 50
+    actions + predicted trajectory" -> Violation checker).
+
+    Each filter() tick ADMITS the action it was given, with the predicted
+    trajectory of that action from the decision state, before anything is
+    checked (`admit`). The checker then READS that trajectory from here: the
+    Shield's forecast (`Shield._predict`) of the admitted (state, action) on
+    the admitting tick is the buffer's, so the geometric, envelope and
+    time-window rules all walk the poses the buffer holds (`trajectory_for`).
+    When the decision is made the entry is closed into a TickRecord
+    (`close`) and kept with the last HISTORY_LEN - 1 before it, oldest first
+    (`records`, the Shield's `history`).
+
+    What reads the older entries: `Shield.history` (the HUD, the audit and
+    episode writers, the sweep). No rule of this DSL reads PAST actions, so
+    the checker reads the newest entry only; the other 49 are what a rule
+    over recent actions (an oscillation rule, say) would read.
+
+    Only the tick that admitted an entry can read its trajectory, and only
+    for that (state, action): `advise()` and the look-ahead views admit
+    nothing and forecast as before; a repair candidate is another action
+    and is forecast as before. The forecast is a pure function of (state,
+    action) on a tick, so reading it from here or computing it again gives
+    the same poses: every decision is unchanged (tests/test_shieldcore_
+    onepath.py; the library sweep and the identity tests)."""
+    __slots__ = ("_records", "_head")
+
+    def __init__(self, maxlen: int = HISTORY_LEN):
+        self._records: deque[TickRecord] = deque(maxlen=maxlen)
+        self._head: _Admitted | None = None
+
+    @staticmethod
+    def _key(action) -> tuple:
+        return (action.vx, action.vy, action.vz_up, action.yaw_rate)
+
+    def admit(self, tick, state, action, trajectory) -> None:
+        """The action subscriber's hand-over: `action` from `state` on
+        `tick`, with its predicted trajectory."""
+        self._head = _Admitted(tick, state, action, self._key(action), tuple(trajectory))
+
+    @property
+    def head(self) -> "_Admitted | None":
+        """The entry admitted on the current tick and not yet closed."""
+        return self._head
+
+    def trajectory_for(self, tick, state, action) -> tuple | None:
+        """The admitted trajectory, when (tick, state, action) is the
+        admitted entry's; else None (the caller forecasts it)."""
+        h = self._head
+        if h is None or h.tick is not tick or h.state is not state:
+            return None
+        if action is not h.action and self._key(action) != h.key:
+            return None
+        return h.trajectory
+
+    def close(self, state, decision, elapsed_ms: float, pipe) -> TickRecord:
+        """The decision on the admitted entry: kept as a TickRecord."""
+        h, self._head = self._head, None
+        rec = TickRecord(state, decision, elapsed_ms, pipe,
+                         h.trajectory if h is not None else None)
+        self._records.append(rec)
+        return rec
+
+    def clear(self) -> None:
+        self._records.clear()
+        self._head = None
+
+    def records(self) -> tuple[TickRecord, ...]:
+        return tuple(self._records)
+
+    def __len__(self) -> int:
+        return len(self._records)
 
 
 def _effective_action(c) -> str:
@@ -693,8 +1154,9 @@ class _Runtime:
     clear: tuple
     standoffs: tuple
     corridors: tuple            # corridors and corridor_swap rules
-    switches_on: dict           # target id -> time_window_switch rules, policy order
-    swaps_on: dict              # target id -> corridor_swap rules, policy order
+    clock: RuleClock            # THE rule clock of this generation's rules
+    switches_on: dict           # target id -> time_window_switch rules, policy order (clock's)
+    swaps_on: dict              # target id -> corridor_swap rules, policy order (clock's)
     eff: dict                   # rule id -> effective breach action
     hard: dict                  # rule id -> hard?
     timed: frozenset            # ids whose in-force state can change with time or events
@@ -705,19 +1167,7 @@ class _Runtime:
 
 def _build_runtime(policy: Policy, prev: "_Runtime | None", anchors: dict) -> _Runtime:
     cons = tuple(policy.constraints)
-    switches_on: dict = {}
-    swaps_on: dict = {}
-    for c in cons:
-        if isinstance(c, TimeWindowSwitch):
-            switches_on.setdefault(c.target_id, []).append(c)
-        elif isinstance(c, CorridorSwap):
-            swaps_on.setdefault(c.target_id, []).append(c)
-    timed = {c.id for c in cons if c.valid_time is not None
-             and c.valid_time.recurrence is not None}
-    timed |= set(switches_on) | set(swaps_on)
-    timed |= {c.id for c in cons if isinstance(c, CorridorSwap)}
-    recs = tuple(c.valid_time.recurrence for c in cons
-                 if c.valid_time is not None and c.valid_time.recurrence is not None)
+    clock = RuleClock(cons)
     ir = PolicyIR.from_policy(policy, reuse=prev.ir if prev is not None else None)
     moving = frozenset(r.rule.id for r in ir.fences if r.moving)
     return _Runtime(
@@ -727,11 +1177,10 @@ def _build_runtime(policy: Policy, prev: "_Runtime | None", anchors: dict) -> _R
         clear=tuple(c for c in cons if isinstance(c, ObstacleClearance)),
         standoffs=tuple(c for c in cons if isinstance(c, SubjectStandoff)),
         corridors=tuple(c for c in cons if isinstance(c, (Corridor, CorridorSwap))),
-        switches_on={k: tuple(v) for k, v in switches_on.items()},
-        swaps_on={k: tuple(v) for k, v in swaps_on.items()},
+        clock=clock, switches_on=clock.switches_on, swaps_on=clock.swaps_on,
         eff={c.id: _effective_action(c) for c in cons},
         hard={c.id: c.constraint_type == "hard" for c in cons},
-        timed=frozenset(timed), recurrences=recs,
+        timed=clock.timed, recurrences=clock.recurrences,
         anchors={k: v for k, v in anchors.items() if k in moving}, moving_ids=moving)
 
 
@@ -771,19 +1220,11 @@ class _Schedule:
             self.const = not any(_recurrence_edge_within(r, lo, hi)
                                  for r in rt.recurrences)
 
-    @staticmethod
-    def _base(rule, x):
-        """The rule's own window at instant x: True, False, or None when it has
-        a window and there is no clock to read it."""
-        vt = rule.valid_time
-        if vt is None or vt.recurrence is None:
-            return True
-        if x is None:
-            return None
-        return recurrence_active(vt.recurrence, x)
-
     def on(self, rule, x) -> bool:
-        """Is `rule` enforced at instant x (switches and swaps applied)?
+        """Is `rule` enforced at instant x (switches and swaps applied)? The
+        runtime's RuleClock answers (`RuleClock.enforced`): the one rule
+        clock, which the Prefix Compiler, the fence export and the dwell
+        count read too.
 
         * A corridor_swap rule is enforced while its own window holds; the
           corridor it targets is replaced (off) while that window holds.
@@ -795,22 +1236,7 @@ class _Schedule:
         * Unknown (no clock) counts as in force, for the same reason. A swap
           of unknown window therefore enforces both corridors, the stricter
           reading."""
-        rt = self.rt
-        if isinstance(rule, TimeWindowSwitch):
-            return False                       # an event, not a geometric rule
-        if isinstance(rule, CorridorSwap):
-            return self._base(rule, x) is not False
-        for sp in rt.swaps_on.get(rule.id, ()):
-            if self._base(sp, x) is True:
-                return False
-        sws = rt.switches_on.get(rule.id, ())
-        if sws:
-            if any(sw.active and self._base(sw, x) is None for sw in sws):
-                return True
-            known = [sw.active for sw in sws if self._base(sw, x) is True]
-            if known:
-                return known[-1]
-        return self._base(rule, x) is not False
+        return self.rt.clock.enforced(rule, x)
 
     def in_force(self, rule, tau: float) -> bool:
         if self.when is None:
@@ -1010,6 +1436,35 @@ class _Tick:
         if b is None:
             b = self._swept[key] = anchor_reach(rec, self._age(rec.rule), horizon)
         return b
+
+    def moving_near(self, ir: PolicyIR, box: tuple, horizon: float) -> set | None:
+        """The indices of the MOVING zones whose reach over `horizon` from
+        this tick (`anchor_box`, ir.anchor_reach) meets `box`, from an R-tree.
+
+        The grant's geometry queries "hit the IR's R-tree spatial index"
+        (Safety Shield page). The IR's STRtree holds the static zones: a
+        moving zone has no fixed envelope, so until 2026-11-03 it was left out
+        of the tree, returned by every query, and tested one by one. Here the
+        moving zones are RE-INDEXED PER TICK: the IR's moving-zone R-tree
+        (PolicyIR.moving_index), an STRtree over each one's reach box from its
+        anchor geometry, built once per tick and horizon on the first query
+        (no polygon is built for it), and queried with the forecast's box.
+        The query box is padded by _INDEX_PAD_M, so the tree
+        returns a superset of the zones whose box meets it; the caller still
+        asks the exact question (Shield._reach), so the zones judged are the
+        ones the one-by-one test judged. None for a non-finite `box` (every
+        moving zone is then looked at, as the static query does)."""
+        if not all(math.isfinite(v) for v in box):
+            return None
+        key = ("moving_tree", id(ir), horizon)
+        index = self._swept.get(key)
+        if index is None:
+            # The IR's moving-zone R-tree at this tick (ir.PolicyIR.
+            # moving_index), each zone aged as `anchor_box` ages it.
+            index = self._swept[key] = ir.moving_index(
+                lambda r: self._age(r.rule), horizon)
+        p = _INDEX_PAD_M
+        return index.query(box[0] - p, box[1] - p, box[2] + p, box[3] + p)
 
 
 def _to_zone_frame(p: State, tau: float, mv) -> tuple[float, float]:
@@ -1212,8 +1667,10 @@ class Shield:
         dyn = {c.id: None for c in policy.constraints if isinstance(c, DynamicNFZ)}
         self._anchors: dict = dyn
         self._rt = _build_runtime(policy, None, dyn)
-        # The last HISTORY_LEN ticks, oldest first; see `history`.
-        self._window: deque[TickRecord] = deque(maxlen=HISTORY_LEN)
+        # The sliding-window buffer: the last HISTORY_LEN ticks' actions and
+        # predicted trajectories, oldest first, which the checker reads (see
+        # SlidingWindow and `history`).
+        self._buffer = SlidingWindow(HISTORY_LEN)
         # Monitor clock (seconds): the `t` of each filter() tick, or the tick
         # count x MONITOR_PERIOD_S when the caller passes none.
         self._ticks = 0
@@ -1497,6 +1954,22 @@ class Shield:
             return (-inf, -inf, inf, inf), horizon
         return (min(xs), min(ys), max(xs), max(ys)), horizon
 
+    def _moving_near(self, ir: PolicyIR, tick: "_Tick | None", box: tuple,
+                     horizon: float) -> set | None:
+        """The moving zones the forecast in `box` can meet within `horizon`,
+        from this tick's R-tree of moving zones (`_Tick.moving_near`): a
+        superset of the ones `_reach` keeps, which still decides. None - look
+        at every moving zone, as before 2026-11-03 - without a tick or a
+        moving zone, for a non-finite box, and for a subclass that answers
+        reach its own way (`_reach` / `_may_reach` overridden: the identity
+        tests' nulls judge every moving zone, and must keep doing so)."""
+        if tick is None or not tick.rt.moving_ids:
+            return None
+        cls = type(self)
+        if cls._reach is not Shield._reach or cls._may_reach is not Shield._may_reach:
+            return None
+        return tick.moving_near(ir, box, horizon)
+
     def _may_reach(self, rec: FenceRecord, box: tuple, horizon: float) -> bool:
         """Can the forecast in `box` meet `rec` within `horizon`? Always True
         for a static zone (the STRtree already answered); for a moving one,
@@ -1554,15 +2027,18 @@ class Shield:
     @property
     def history(self) -> tuple[TickRecord, ...]:
         """The sliding window: the last HISTORY_LEN ticks through `filter()`,
-        oldest first.
+        oldest first, each with the action given, the predicted trajectory
+        the checker judged it on, and the decision (TickRecord).
 
-        The grant's node design puts this buffer in front of the checker. No
-        rule in this DSL reads past actions yet, so today it is a record, not
-        an input - it lets a caller (the HUD, an audit writer, a future
-        oscillation rule) see what the Shield did over the last 5 s without
-        keeping a second copy that could disagree with it. Every return path of
-        `filter()` appends, the brake and rescue branches included."""
-        return tuple(self._window)
+        The grant's node design puts this buffer in front of the checker, and
+        since 2026-11-03 it is there: each tick's action and its predicted
+        trajectory are admitted to the buffer first and the checker reads the
+        trajectory from it (SlidingWindow). No rule in this DSL reads PAST
+        actions, so the older entries are a record - for the HUD, an audit
+        writer, a future oscillation rule - without a second copy that could
+        disagree with it. Every return path of `filter()` closes its entry,
+        the brake and rescue branches included."""
+        return self._buffer.records()
 
     @property
     def applied_caps(self) -> "_fsm.KinematicCaps | None":
@@ -1584,6 +2060,16 @@ class Shield:
     def ir(self) -> PolicyIR:
         """The compiled fence IR the monitor is querying (read-only view)."""
         return self._ir
+
+    @property
+    def rule_clock(self) -> RuleClock:
+        """The rule clock of the rule set the monitor is enforcing (this
+        generation's; read-only): the one implementation of "is this rule in
+        force at that instant", for a reader that needs the answer at an
+        instant of its own (guardrail/replay.zone_dwell reads each logged
+        point's clock reading through it)."""
+        tick = self._tick_ctx()
+        return tick.rt.clock if tick is not None else self._rt.clock
 
     @property
     def mission_started(self) -> bool:
@@ -1712,7 +2198,21 @@ class Shield:
         rule uses a much shorter, braking-distance-sized one (see
         `_clear_horizon_s`). The final sample always lands exactly ON the
         horizon, so a horizon that is not a whole number of `dt` still gets its
-        endpoint checked."""
+        endpoint checked.
+
+        THE BUFFER IS THE CHECKER'S INPUT (2026-11-03, WP3-23). On the tick
+        that admitted an action into the sliding-window buffer
+        (SlidingWindow.admit, in filter()), the forecast of that action from
+        that state is the buffer's trajectory: it is yielded from there, not
+        computed again, so every rule that judges the action walks the
+        poses the buffer holds. Any other forecast (a repair candidate, a
+        stop, another horizon, the own-velocity path alone, a look-ahead
+        view) is computed as before."""
+        if horizon_s is None and not own_only:
+            held = self._buffer.trajectory_for(self._tick_ctx(), state, action)
+            if held is not None:
+                yield from held
+                return
         horizon = self.lookahead_s if horizon_s is None else horizon_s
         t = 0.0
         # UNITS. State.yaw_deg is degrees; Action4D.yaw_rate is RADIANS per
@@ -2184,9 +2684,9 @@ class Shield:
             if rec is None or not point_in_fence(
                     state.x, state.y, state.up, f, rec.polygon, rec.buffered):
                 continue
-            ox, oy = push_out_direction(state.x, state.y, rec.polygon)
             mv = self._motion_of(f)
             ex, ey = (a.vx - mv[0], a.vy - mv[1]) if mv else (a.vx, a.vy)
+            ox, oy = escape_direction(state.x, state.y, rec.polygon, a.vx, a.vy)
             n += int(ex * ox + ey * oy < -1e-9)
         return n
 
@@ -2590,7 +3090,7 @@ class Shield:
             if alive is True or alive(0.0):
                 if f.id not in self._opened_on:
                     return None               # inside a zone in force it flew into
-                ox, oy = push_out_direction(state.x, state.y, poly)
+                ox, oy = escape_direction(state.x, state.y, poly, action.vx, action.vy)
             else:
                 t_open = self._opening_imposed(f, ring, state)
                 if t_open is None:
@@ -2598,7 +3098,7 @@ class Shield:
                 px, py = state.x + action.vx * t_open, state.y + action.vy * t_open
                 if not point_in_fence(px, py, state.up + action.vz_up * t_open, f, poly, ring):
                     return None               # over the cap: walked as before
-                ox, oy = push_out_direction(px, py, poly)
+                ox, oy = escape_direction(px, py, poly, action.vx, action.vy)
             if action.vx * ox + action.vy * oy <= 0.1:
                 return None                   # not leaving it: that zone's violation
             t_exit = self._ring_exit_time(ring, state, action, h)
@@ -2672,11 +3172,14 @@ class Shield:
             poses = list(self._predict(state, action))
         if (alive is True or alive(0.0)) and point_in_fence(
                 state.x, state.y, state.up, f, poly, buffered):
-            ox, oy = push_out_direction(state.x, state.y, poly)
             # Escaping is judged RELATIVE to a moving zone: leaving at 1 m/s a
-            # zone that follows at 2 m/s is not leaving it.
+            # zone that follows at 2 m/s is not leaving it. Where two edges
+            # are exactly as near (the zone's middle), the way out is the one
+            # the command is heading for (escape_direction), not whichever the
+            # ring's vertex order lists first.
             ex, ey = ((action.vx - mv[0], action.vy - mv[1]) if mv
                       else (action.vx, action.vy))
+            ox, oy = escape_direction(state.x, state.y, poly, action.vx, action.vy)
             escaping = (ex * ox + ey * oy) > 0.1
             if not escaping:
                 return [Violation(
@@ -2703,7 +3206,7 @@ class Shield:
             p_open = next((p for t, p in poses if abs(t - t_open) < 1e-9), None)
             if p_open is not None and point_in_fence(p_open.x, p_open.y, p_open.up,
                                                      f, poly, buffered):
-                ox, oy = push_out_direction(p_open.x, p_open.y, poly)
+                ox, oy = escape_direction(p_open.x, p_open.y, poly, action.vx, action.vy)
                 if action.vx * ox + action.vy * oy > 0.1:
                     return []      # leaving, as the inside rule asks once it opens
                 return [Violation(
@@ -2908,9 +3411,8 @@ class Shield:
         pts = c.points()
         half = c.half_width_m
         d_now, (ux, uy) = self._corridor_geom(c, state.x, state.y)
-        wide = d_now > half + 1e-9
-        below = state.up < c.altitude_floor_m - 1e-9
-        above = state.up > c.altitude_ceiling_m + 1e-9
+        wide = corridor_wide(c, d_now)
+        below, above = corridor_band_outside(c, state.up)
 
         if (alive is True or alive(0.0)) and (wide or below or above):
             bad = []
@@ -2933,13 +3435,12 @@ class Shield:
             if alive is not True and not alive(t):
                 continue
             d, _, _ = nearest_on_polyline(p.x, p.y, pts)
-            if d > half + 1e-9:
+            if corridor_wide(c, d):
                 return [Violation(
                     rule_id=c.id, category="corridor", predicted_at_s=t,
                     detail=(f"predicted {d:.1f}m off centerline at t+{t:.1f}s, "
                             f"half-width {half:.1f}m"))]
-            if not (c.altitude_floor_m - 1e-9 <= p.up
-                    <= c.altitude_ceiling_m + 1e-9):
+            if not corridor_in_band(c, p.up):
                 return [Violation(
                     rule_id=c.id, category="corridor", predicted_at_s=t,
                     detail=(f"predicted alt {p.up:.1f}m outside corridor band "
@@ -3103,8 +3604,13 @@ class Shield:
             else:
                 near = self._fence_candidates(ir, state, poses)
                 box, horizon = self._forecast_box(state, poses)
+            # The static zones come from the IR's R-tree (`near`), the moving
+            # ones from this tick's (`moving`, None: every one is looked at).
+            moving = self._moving_near(ir, tick, box, horizon)
             for r in recs:
                 if r.index not in near:
+                    continue
+                if r.moving and moving is not None and r.index not in moving:
                     continue
                 r = self._reach(r, tick, box, horizon)
                 if r is not None:
@@ -3477,7 +3983,7 @@ class Shield:
         # fence outside the current forecast's box is exactly the old loop's
         # `if not hit: continue`, decided without the per-pose tests.
         ir = self._ir
-        near_for = poses = near = box = horizon = None
+        near_for = poses = near = box = horizon = moving = None
         # A zone the aircraft's momentum already carries it into is repaired
         # from the stop point, on that state's own forecast (_committed); it
         # is relevant by construction, so the candidate test is not asked.
@@ -3497,6 +4003,7 @@ class Shield:
                     poses = list(self._predict(outer, probe))
                 near = self._fence_candidates(ir, outer, poses)
                 box, horizon = self._forecast_box(outer, poses)
+                moving = self._moving_near(ir, tick, box, horizon)   # this tick's R-tree
                 near_for = (vx, vy)
             st = self._rule_state(rec.rule, outer) if com is not None else outer
             if st is not outer:
@@ -3508,6 +4015,8 @@ class Shield:
                 state, fposes = outer, poses
                 if rec.index not in near:
                     continue
+                if rec.moving and moving is not None and rec.index not in moving:
+                    continue
                 rec = self._reach(rec, tick, box, horizon)
             if rec is None:
                 continue
@@ -3518,7 +4027,10 @@ class Shield:
             mv = self._motion_of(f)
             zx, zy = (mv[0], mv[1]) if mv else (0.0, 0.0)
             if point_in_fence(state.x, state.y, state.up, f, poly, ring):
-                ox, oy = push_out_direction(state.x, state.y, poly)
+                # The way out the check reads (_check_fence): an exact tie
+                # between equally near edges goes to the one the current
+                # command is heading for (escape_direction).
+                ox, oy = escape_direction(state.x, state.y, poly, vx, vy)
                 # A window opening on the aircraft sooner than it can leave
                 # (_opening_imposed): the way out is read where the current
                 # velocity puts it when the zone comes into force, as
@@ -3528,8 +4040,8 @@ class Shield:
                 # into a 2 m/s one.
                 t_open = None if mv else self._opening_imposed(f, ring, state)
                 if t_open is not None:
-                    ox, oy = push_out_direction(state.x + vx * t_open,
-                                                state.y + vy * t_open, poly)
+                    ox, oy = escape_direction(state.x + vx * t_open,
+                                              state.y + vy * t_open, poly, vx, vy)
                 # ... and its escape leaves at the CAP, not the in-force 2.0
                 # m/s floor below: before the opening (t_open) and after it,
                 # until the aircraft is out of the ring (`_opened_on`, kept by
@@ -3671,7 +4183,9 @@ class Shield:
             if not hit:
                 continue
 
-            ox, oy = push_out_direction(state.x, state.y, poly)   # unit "away from zone"
+            # unit "away from zone"; a tie between equally near edges is
+            # broken by the commanded heading (escape_direction)
+            ox, oy = escape_direction(state.x, state.y, poly, vx, vy)
             into = -((vx - zx) * ox + (vy - zy) * oy)             # speed INTO the zone
             if into > 0:
                 vx += ox * into                                   # cancel it
@@ -4506,7 +5020,7 @@ class Shield:
                     h = rec.buffered.distance(P)
                 out[c.id] = RuleClearance(
                     True, h, up - c.altitude_floor_m, c.altitude_ceiling_m - up, in_force,
-                    in_force and point_in_fence(x, y, up, c, rec.polygon, rec.buffered))
+                    in_force and zone_breached(c, x, y, up, rec.polygon, rec.buffered))
             elif c.type == "altitude_envelope":
                 below, above = self._alt_outside(c, up)
                 out[c.id] = RuleClearance(False, inf, up - c.alt_min_m, c.alt_max_m - up,
@@ -4529,11 +5043,10 @@ class Shield:
                                           in_force and d < c.min_clearance_m, self._dist_lip)
             elif c.type in ("corridor", "corridor_swap"):
                 off, _ = self._corridor_geom(c, x, y)
-                in_band = c.altitude_floor_m - 1e-9 <= up <= c.altitude_ceiling_m + 1e-9
                 out[c.id] = RuleClearance(
                     False, c.half_width_m - off, up - c.altitude_floor_m,
                     c.altitude_ceiling_m - up, in_force,
-                    in_force and (off > c.half_width_m + 1e-9 or not in_band))
+                    in_force and (corridor_wide(c, off) or not corridor_in_band(c, up)))
         return out
 
     def rule_motion(self, rule_ids=None) -> dict[str, tuple[float, float, float, float, float]]:
@@ -5079,15 +5592,15 @@ class Shield:
                     rec = tick.current(rec)
                 inside = rec.polygon.contains(P)
                 in_ring = rec.buffered.contains(P)
-                in_band = c.altitude_floor_m <= state.up <= c.altitude_ceiling_m
+                in_band = in_zone_band(c, state.up)
                 d = 0.0 if in_ring else rec.buffered.distance(P)
                 row.update(bound=in_force and in_band, inside=inside,
                            in_margin=in_ring and not inside, in_band=in_band,
                            value=d, distance_m=d, margin_m=float(c.margin_m),
                            vertices=[(float(x), float(y)) for x, y in
                                      list(rec.polygon.exterior.coords)[:-1]],
-                           breach=in_force and point_in_fence(
-                               state.x, state.y, state.up, c, rec.polygon, rec.buffered))
+                           breach=in_force and zone_breached(
+                               c, state.x, state.y, state.up, rec.polygon, rec.buffered))
             elif c.type == "altitude_envelope":
                 below, above = self._alt_outside(c, state.up)
                 row.update(bound=in_force, value=state.up,
@@ -5117,11 +5630,11 @@ class Shield:
                                breach=in_force and d < c.min_clearance_m)
             elif c.type in ("corridor", "corridor_swap"):
                 off, _ = self._corridor_geom(c, state.x, state.y)
-                in_band = c.altitude_floor_m - 1e-9 <= state.up <= c.altitude_ceiling_m + 1e-9
+                in_band = corridor_in_band(c, state.up)
                 row.update(bound=in_force, value=off, distance_m=c.half_width_m - off,
                            in_band=in_band, centerline=list(c.points()),
                            width_m=float(c.width_m),
-                           breach=in_force and (off > c.half_width_m + 1e-9 or not in_band))
+                           breach=in_force and (corridor_wide(c, off) or not in_band))
             elif c.type == "time_window_switch":
                 row.update(target_id=c.target_id, active=c.active)
             out.append(row)
@@ -5150,18 +5663,34 @@ class Shield:
             m = tick.sched.mask(r.rule)
             if not (m is True or (m is not False and m(0.0))):
                 continue
-            if up is not None and not (r.rule.altitude_floor_m <= up
-                                       <= r.rule.altitude_ceiling_m):
+            if up is not None and not in_zone_band(r.rule, up):
                 continue
             out.append(tick.current(r) if r.moving else r)
         return out
 
+    def zone_ruler(self, up: float | None = None) -> ZoneRuler:
+        """Distances to the margin rings of the zones in force now
+        (`zones_now(up)`), read once for as many points as the caller asks
+        about: the measure `fence_distance` reports, for a reader that needs
+        it at many points in one control tick (demo/follow_vlm.py FenceGuard,
+        which until 2026-11-03 measured the rings itself)."""
+        return ZoneRuler(self.zones_now(up))
+
     def fence_distance(self, x: float, y: float, up: float | None = None) -> float:
         """Metres from (x, y) to the nearest in-force zone's margin ring (0
         inside it); inf with no zone. The geometry the zone rule enforces."""
-        p = Point(x, y)
-        zones = self.zones_now(up)
-        return min((r.buffered.distance(p) for r in zones), default=float("inf"))
+        return self.zone_ruler(up).distance(x, y)
+
+    def enforces_hard(self, rule_id: str) -> bool:
+        """Is `rule_id` a HARD rule this Shield enforces (its effective action
+        is not monitor_only), in the rule set it is enforcing now? The
+        escalation FSM's own table (rt.hard, rt.eff), for a reader that
+        selects the rules a fail-safe must respect (guardrail/rtl_path.py)
+        instead of re-reading the rule's fields."""
+        tick = self._tick_ctx()
+        rt = tick.rt if tick is not None else self._rt
+        return bool(rt.hard.get(rule_id, False)) and \
+            rt.eff.get(rule_id) not in (None, "monitor_only")
 
     # ---------------- the public entry point ---------------- #
 
@@ -5195,6 +5724,13 @@ class Shield:
                 else:
                     self.n_velocity_set_aside += 1
             self._forget_left_openings(dstate)
+            # The action subscriber -> the sliding-window buffer -> the
+            # violation checker (grant node architecture): the action (made
+            # finite, as _decide makes it) and its predicted trajectory from
+            # the decision state go into the buffer first, and every rule
+            # that judges this action reads that trajectory (_predict).
+            admitted, _ = _sanitise(raw)
+            self._buffer.admit(tick, dstate, admitted, self._predict(dstate, admitted))
             decision = self._decide(dstate, raw)
             # Zones this tick saw opening on the aircraft: their escape flies
             # at the cap on every later tick until the aircraft is out of the
@@ -5208,7 +5744,7 @@ class Shield:
             pipe = (tuple(self.pipe()) if self._velocity_of(dstate) is not None
                     else None)
         elapsed_ms = (time.perf_counter() - t0) * 1e3
-        self._window.append(TickRecord(dstate.model_copy(), decision, elapsed_ms, pipe))
+        self._buffer.close(dstate.model_copy(), decision, elapsed_ms, pipe)
         return decision
 
     def _decision_state(self, tick: _Tick, state: State) -> State:
@@ -5322,7 +5858,7 @@ class Shield:
                 self.fsm.reset()
             self._fsm_fault = None
             self._last_caps = None
-            self._window.clear()
+            self._buffer.clear()
             self._flown.clear()
             self._opened_on.clear()
             rt = self._rt
@@ -5885,7 +6421,8 @@ class Shield:
                 continue
             t_open = self._opening_imposed(f, r.buffered, st)
             dt = t_open or 0.0
-            ox, oy = push_out_direction(st.x + raw.vx * dt, st.y + raw.vy * dt, r.polygon)
+            ox, oy = escape_direction(st.x + raw.vx * dt, st.y + raw.vy * dt, r.polygon,
+                                      raw.vx, raw.vy)
             leaving = raw.vx * ox + raw.vy * oy
             if leaving >= floor - 1e-9:
                 continue
@@ -5951,7 +6488,8 @@ class Shield:
             return None
         r, st = inside[0]
         dt = self._opening_imposed(r.rule, r.buffered, st) or 0.0
-        ox, oy = push_out_direction(st.x + raw.vx * dt, st.y + raw.vy * dt, r.polygon)
+        ox, oy = escape_direction(st.x + raw.vx * dt, st.y + raw.vy * dt, r.polygon,
+                                  raw.vx, raw.vy)
         out_now = raw.vx * ox + raw.vy * oy
         if out_now <= 0.1:
             return None                     # not escaping that zone (the check agrees)

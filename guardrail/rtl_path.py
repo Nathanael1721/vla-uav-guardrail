@@ -43,7 +43,15 @@ WHAT IT ANSWERS (pure geometry and arithmetic: no ROS, no MAVLink, no clock)
 `zones_from_shield` and `band_from_shield` read the rules from a
 guardrail.shield.Shield, so the leg is judged on the Shield's own compiled
 geometry and schedule ("there is exactly one rule-evaluation code path",
-Safety Shield p2).
+Safety Shield p2). Since 2026-11-03 (card WP3-22) that includes WHICH rules:
+a zone or band is one the leg must respect when the Shield's own table says
+it enforces it as a hard rule (Shield.enforces_hard: the escalation FSM's
+effective action, not monitor_only) and it is P0 - not a reading of the
+rule's fields here - and every band test below is the Shield's
+(shield.band_holds), as is the "already inside" test (shield.zone_breached
+on the Shield's compiled ring, when the zone carries its rule). What stays
+here is the leg's own question - does a straight path cross a ring, and is
+the stretch inside a zone the way out - asked of the Shield's rings.
 
 THE NUMBERS AND WHERE THEY COME FROM
 
@@ -77,11 +85,15 @@ _EPS_M = 1e-6
 
 class Zone(NamedTuple):
     """One keep-out zone as the leg check needs it: `shape` is the forbidden
-    shape (a shapely Polygon: the authored zone plus its margin)."""
+    shape (a shapely Polygon: the authored zone plus its margin). `rule`, the
+    constraint itself when the zone came from a Shield (zones_from_shield),
+    lets the "already inside" test be the Shield's own (shield.zone_breached);
+    a zone built by hand without it is tested on its shape and band."""
     rule_id: str
     shape: Any
     floor_m: float
     ceiling_m: float
+    rule: Any = None
 
 
 class Band(NamedTuple):
@@ -162,6 +174,8 @@ def check_leg(x: float, y: float, up: float, home: tuple[float, float],
     """Is the straight RTL path from (x, y, up) to `home` clear of every zone
     in `zones` and inside `band`? (Module docstring.)"""
     from shapely.geometry import LineString, Point
+
+    from .shield import Shield, band_holds, zone_breached
     h = rtl_altitude(up, rtl_alt_m)
     p = Point(x, y)
     blocking: list[str] = []
@@ -171,7 +185,10 @@ def check_leg(x: float, y: float, up: float, home: tuple[float, float],
            if math.hypot(home[0] - x, home[1] - y) > _EPS_M else None)
     for z in zones:
         in_footprint = z.shape.contains(p)
-        if in_footprint and z.floor_m <= up <= z.ceiling_m:
+        # Already inside: the Shield's own test on its ring (zone_breached:
+        # the footprint AND the band), for a zone that carries its rule.
+        if (zone_breached(z.rule, x, y, up, buffered=z.shape) if z.rule is not None
+                else in_footprint and band_holds(z.floor_m, z.ceiling_m, up)):
             inside.append(z.rule_id)
         already = z.rule_id in inside
         # The climb: a vertical segment at (x, y) from `up` to `h`.
@@ -182,7 +199,7 @@ def check_leg(x: float, y: float, up: float, home: tuple[float, float],
                            f"({z.floor_m:g}-{z.ceiling_m:g} m)")
             continue
         # The return leg at h.
-        if seg is None or not (z.floor_m <= h <= z.ceiling_m):
+        if seg is None or not band_holds(z.floor_m, z.ceiling_m, h):
             continue
         parts = _pieces(seg.intersection(z.shape))
         if already:
@@ -199,7 +216,8 @@ def check_leg(x: float, y: float, up: float, home: tuple[float, float],
                 Point(home[0], home[1])) else ""
             reasons.append(f"the leg home at {h:g} m crosses {z.rule_id} "
                            f"({sum(g.length for g in parts):.1f} m inside its ring{ends})")
-    if band is not None and not (band.alt_min_m - 1e-9 <= h <= band.alt_max_m + 1e-9):
+    # The altitude envelope's own test (Shield._alt_outside: 1e-9 m of slack).
+    if band is not None and any(Shield._alt_outside(band, h)):
         blocking.append(band.rule_id)
         why = ("RTL keeps the current altitude above RTL_ALT" if up > rtl_alt_m
                else "RTL_ALT")
@@ -308,18 +326,19 @@ class RTLWatch:
 # reading the rules from a Shield
 # --------------------------------------------------------------------------- #
 
-def _enforced_p0(rule) -> bool:
-    return (getattr(rule, "priority", "P0") == "P0"
-            and getattr(rule, "constraint_type", "hard") == "hard"
-            and getattr(rule, "violation_action", "repair") != "monitor_only")
+def _enforced_p0(shield, rule) -> bool:
+    """A P0 rule the Shield enforces as a hard rule, by the Shield's own table
+    (Shield.enforces_hard); until 2026-11-03 this re-read the rule's
+    constraint_type and violation_action itself."""
+    return getattr(rule, "priority", "P0") == "P0" and shield.enforces_hard(rule.id)
 
 
 def zones_from_shield(shield) -> list[Zone]:
     """Every hard, enforced P0 zone the Shield has in force now (moving zones
     where they are now), as the forbidden shape: polygon plus margin."""
     return [Zone(r.rule.id, r.buffered, float(r.rule.altitude_floor_m),
-                 float(r.rule.altitude_ceiling_m))
-            for r in shield.zones_now(None) if _enforced_p0(r.rule)]
+                 float(r.rule.altitude_ceiling_m), r.rule)
+            for r in shield.zones_now(None) if _enforced_p0(shield, r.rule)]
 
 
 def band_from_shield(shield, state) -> Band | None:
@@ -328,7 +347,7 @@ def band_from_shield(shield, state) -> Band | None:
     for row in shield.rule_status(state):
         rule = row.get("rule")
         if row.get("type") != "altitude_envelope" or not row.get("in_force") \
-                or rule is None or not _enforced_p0(rule):
+                or rule is None or not _enforced_p0(shield, rule):
             continue
         lo, hi = max(lo, float(rule.alt_min_m)), min(hi, float(rule.alt_max_m))
         ids.append(rule.id)

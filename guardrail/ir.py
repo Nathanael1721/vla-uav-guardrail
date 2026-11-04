@@ -38,7 +38,9 @@ from the anchor record alone, and the Shield builds the zone's polygon at the
 tick's time only when that box meets the forecast's (then transforms each
 forecast pose into the zone's frame; guardrail/shield.py `_reach`). Until
 2026-10-12 every moving zone was built on every check, reachable or not:
-70 % of a 48-moving-zone `_check`.
+70 % of a 48-moving-zone `_check`. Since 2026-11-03 those reach boxes are
+an R-tree of their own (`moving_index`, rebuilt by the Shield per monitor
+tick), so a moving zone is found by a tree query too (card WP3-23).
 
 WHERE THE LOOKAHEAD TRAVEL GOES
 
@@ -315,6 +317,26 @@ def anchor_reach(rec: FenceRecord, age_s: float, horizon_s: float) -> tuple:
             maxx + max(0.0, dx), maxy + max(0.0, dy))
 
 
+class MovingIndex:
+    """PolicyIR.moving_index's answer: the moving zones' reach boxes at one
+    instant in an STRtree. `query` returns the indices (FenceRecord.index) of
+    the zones whose box meets the query box, boundaries included; with an old
+    shapely (no index-returning STRtree) the same test runs box by box."""
+    __slots__ = ("_tree", "_idx", "_boxes")
+
+    def __init__(self, tree, idx: list[int], boxes: list[tuple]):
+        self._tree, self._idx, self._boxes = tree, idx, boxes
+
+    def __len__(self) -> int:
+        return len(self._idx)
+
+    def query(self, minx: float, miny: float, maxx: float, maxy: float) -> set[int]:
+        if self._tree is not None:
+            return {self._idx[int(i)] for i in self._tree.query(box(minx, miny, maxx, maxy))}
+        return {i for i, b in zip(self._idx, self._boxes)
+                if b[0] <= maxx and b[2] >= minx and b[1] <= maxy and b[3] >= miny}
+
+
 class PolicyIR:
     """Indexed, compiled form of a policy's fences. Immutable once built:
     `with_fence` and `from_policy(..., reuse=...)` return a new IR, so a reader
@@ -471,6 +493,24 @@ class PolicyIR:
         reference checker does) - see 'Where the lookahead travel goes'."""
         r = abs(radius_m)
         return self.fences_in_box(x - r, y - r, x + r, y + r)
+
+    def moving_index(self, age_of, horizon_s: float) -> "MovingIndex":
+        """The MOVING zones in an R-tree for one instant (2026-11-03, card
+        WP3-23): an STRtree over each moving zone's `anchor_reach` box from
+        `age_of(record)` seconds after its anchor over `horizon_s`. A moving
+        zone has no fixed envelope, so it cannot sit in the static tree; the
+        Shield rebuilds this per monitor tick (shield.py `_Tick.moving_near`)
+        and queries it beside `fences_in_box`. A zone whose box is not finite
+        (an empty ring) is left out: it meets nothing."""
+        idx, lo_x, lo_y, hi_x, hi_y = [], [], [], [], []
+        for r in self._moving:
+            b = anchor_reach(r, age_of(r), horizon_s)
+            if math.isfinite(b[0] + b[1] + b[2] + b[3]):   # no NaN, no inf
+                idx.append(r.index)
+                lo_x.append(b[0]), lo_y.append(b[1]), hi_x.append(b[2]), hi_y.append(b[3])
+        tree = (_STRtree(shapely.box(lo_x, lo_y, hi_x, hi_y))
+                if idx and _STRtree is not None else None)
+        return MovingIndex(tree, idx, list(zip(lo_x, lo_y, hi_x, hi_y)))
 
     # ------------------------------------------------------------ multi-scale
 

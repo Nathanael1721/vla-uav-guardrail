@@ -23,7 +23,10 @@ confirmed sent (WP2-12, WP4-21), the Gazebo rail first flew end-to-end
 (ARCH-16, late: DRIFT), and the paraphraser became the separate service the
 grant names (WP2-13), and the audit record took the grant's field meanings
 (WP3-11). On 3 Nov a GCS-set GeoFence (WP3-10) and per-topic SROS 2
-permissions (X-15) were flown. **48 DONE, 76 PARTIAL, 11 DRIFT, 1 MISSING.** DONE means the code
+permissions (X-15) were flown, the copies of the rule clock and the rule
+verdicts were folded into the Shield's evaluator (WP3-22 and X-13, DRIFT to
+PARTIAL) and the Shield node's buffer and index were conformed (WP3-23).
+**49 DONE, 77 PARTIAL, 9 DRIFT, 1 MISSING.** DONE means the code
 or the artefact the grant names exists and matches the grant's words; it
 never means KPI-grade.
 
@@ -139,14 +142,19 @@ the subsections are written from.
   listener driven during a flight (WP3-12) and one flown zone per breach
   action (WP3-08), on the ROS 2 rail with MAVROS, and since 2 Nov the audit
   record (WP3-11: the grant's field names with the grant's content,
-  shield_audit.jsonl). Not as the grant words
+  shield_audit.jsonl), and since 3 Nov the node architecture (WP3-23: the
+  sliding-window buffer holds each action's predicted trajectory and is
+  what the checker reads; moving zones in the IR's R-tree, re-indexed per
+  tick). Not as the grant words
   them: the mid-term node came after the 20 July gate (WP3-01); repairs in
-  a world frame (WP3-04); the city rail flies a 3 s lookahead (WP3-05);
+  a world frame (WP3-04); older demo scripts still build a 3 s lookahead
+  (WP3-05);
   the PAS rail bypasses the adapter (WP3-09; the MISSION_ITEM_INT path
   flew on 3 Nov); no `hil` run
-  (WP3-18); the smoke matrix never run per build (WP3-19); more than one
-  rule-evaluation path (WP3-22); the trajectory buffer (WP3-23). Open: the
-  theta basis and whether PathRepair goes on by default (WP3-06),
+  (WP3-18); the smoke matrix never run per build (WP3-19). Partly: one
+  rule clock and one set of rule verdicts since 3 Nov, but planning and
+  analysis code still measures zone geometry of its own (WP3-22). Open:
+  PathRepair off by default, a measured deviation (WP3-06),
   the FSM edges not yet flown, among them G10 after a landing (WP3-07),
   the Orin tick profile (WP3-13), and the KPIs of section 2
   (WP3-14 to WP3-17, WP3-20).
@@ -231,7 +239,7 @@ Each deviation, the grant text it departs from, and its state:
 | WP1-21, WP3-01, ARCH-15, ARCH-17 | dated gates: mid-term 2026-07-20, G1 2026-06-30 | IR committed 2026-10-06; ROS 2 Shield node from 2026-08-19/24; G1 passed 2026-10-08 over SIM_AirSim JSON, not HIL_* | state the actual dates; a PI ruling on G1's swap rule |
 | WP3-04, ARCH-04 | body-frame action, one body-to-NED boundary in the adapter, repairs in the VLA's frame | repairs act in a world (North/East) frame; the conversion is in the Shield node, the adapter and three more modules | re-frame the Shield, or a written acceptance |
 | WP3-11 | audit fields raw_action / emitted_action (body), category 'geometric', repair_attempts ok/skip, file shield_audit.jsonl | since 2 Nov (audit record version 4) the grant's names carry the grant's content; this project's world-frame actions, finer category and repair records are raw_action_world / emitted_action_world, rule_category and repair_results; every rail writes shield_audit.jsonl | closed 2026-11-02; stored runs keep audit.jsonl in versions 1-3, read through guardrail.audit.upgrade_record |
-| WP3-22, X-13 | exactly one rule-evaluation code path | the Shield's monitor plus compiler.action_violations / _RuleClock, fence_export, rtl_path and FenceGuard, kept equal by tests | fold them into the Shield's evaluator, or a written acceptance |
+| WP3-22, X-13 | exactly one rule-evaluation code path | since 3 Nov one rule clock and one set of point verdicts in guardrail/shield.py, called by the compiler, fence export, RTL hand-over, dwell count and FenceGuard; their planning and analysis geometry (mission-path distance, lint regions, cost-map raster, RTL leg crossing, FenceGuard's building scan, BC pilot features) is still their own | folded 2026-11-03; the remaining geometry answers other questions than a rule verdict: fold FenceGuard's building half with flights, or a written acceptance for the rest |
 | WP4-13 | exporters: rosbag2 to JSONL / Parquet, action.executed = what MAVROS published | since 2 Nov the exporter reads the run's rosbag2 (with `rosbags`) and takes action.executed from /mavros/setpoint_raw/local; without a bag (every rail but the ROS 2 one), without `rosbags` or headless it falls back to the flight log's verdict, labelled on every step | the bag path ran on real bags on 3 Nov (rosbags 0.10.11 in a WSL venv): 4 stored ROS 2 runs, executed from the bag, every comparable tick agreeing with the flight log; `rosbags` is still not in vla-real |
 | WP1-07 | distance_envelope to people, buildings, roads | buildings via obstacle_clearance, the followed subject via subject_standoff; distance_envelope declarable and refused by the flight loaders | open (code) |
 | WP2-16 | multi-scale geometry, P0Entry.geometry_ref: "The Prefix Compiler picks the scale, never re-computes" | the fine / coarse / bbox scales are computed in one place (guardrail/ir.py) from the IR's polygons, deterministically, when the policy is compiled or loaded; the compiler reads them there and never re-computes them (since 8 Oct); since 2 Nov the bundle ships them (multiscale.json, its digest in the signed manifest) and a bundle-loaded policy compiles its CSP from them | closed 2 Nov: the bundle ships the scales |
@@ -359,7 +367,7 @@ applied; regenerate it before the report is written.
 
 ### WP3 - Safety Shield
 
-24 items: 8 DONE, 13 PARTIAL, 3 DRIFT.
+24 items: 9 DONE, 13 PARTIAL, 2 DRIFT.
 
 | ID | Obligation | Status | Evidence | Open |
 |---|---|---|---|---|
@@ -384,8 +392,8 @@ applied; regenerate it before the report is written.
 | WP3-19 | Smoke test matrix: high-speed near-edge, sudden NFZ (hot-applied), time-window switch instant, three simultaneous violations, GPS noise/latency | PARTIAL | experiments/profiles/smoke.yaml covers all five rows (CHANGELOG 2026-10-06/-07); tests/test_sweep.py | the smoke matrix has never run on a release or a build (CI last ran at 1b95383, 14 Oct); the smoke set is headless, not the grant's KPI-grade smoke (independent review against the grant's wording, 29 Oct) |
 | WP3-20 | Repair success rate (Safety Shield page, Acceptance KPIs (locked): 'tracked; informs Prefix Compiler effectiveness eval') | PARTIAL | guardrail/kpi.py repair_success with theta (CHANGELOG 2026-10-06); 0.776 on the 8 Oct pymavlink run; theta basis decided 2 Nov (reading A, the default the KPI already reads); no KPI-grade value | A hil value. |
 | WP3-21 | Single IR contract: the Shield consumes the Policy IR and never re-parses the YAML/JSON source ('hard invariant; violating it ... breaks reproducibility', Overview cross-cutting invariants) | DONE | every rail flies the signed bundle; YAML only under --dev-yaml (demo/follow_vlm.py:122-193; CHANGELOG 2026-10-22); Jetson metrics policy_source kind bundle, hash verified | None. |
-| WP3-22 | Exactly one rule-evaluation code path in the system ('Violation checking' section; violation checker library shares the IR) | DRIFT | guardrail.replay.zone_dwell reads Shield.rule_status on every rail (CHANGELOG 2026-10-12) | more than one rule-evaluation path: compiler._RuleClock and action_violations, fence_export, rtl_path and FenceGuard keep their own geometry or clocks (independent review against the grant's wording, 29 Oct) |
-| WP3-23 | Shield node architecture: sliding-window buffer (last 50 actions + predicted trajectory) and geometry queries on the IR's R-tree spatial index | PARTIAL | Shield.history (50 ticks) + guardrail/ir.py STRtree, anchor_reach (CHANGELOG 2026-10-06, -13); tests/test_ir.py | the predicted trajectory is not buffered, the buffer is a record and not the checker's input, and moving dynamic_nfz are outside the STRtree (independent review against the grant's wording, 29 Oct) |
+| WP3-22 | Exactly one rule-evaluation code path in the system ('Violation checking' section; violation checker library shares the IR) | PARTIAL | since 3 Nov guardrail/shield.py is the one evaluator the others call: the rule clock (RuleClock: windows, switches, swaps; the compiler's _RuleClock is a subclass that only samples and words, its minute-grained scope test reads the same clock), the per-position verdicts (zone_breached, corridor_breached, the band tests, ZoneRuler) and the way out of a zone (escape_direction). compiler.action_violations, its relevance facts, lint and cost-map band, fence_export (time controls, in_force_now), rtl_path (selection via Shield.enforces_hard, the inside test), replay.zone_dwell (Shield.rule_clock) and FenceGuard's gate/slide (Shield.zone_ruler) read it; tests/test_shieldcore_onepath.py fails if a second evaluator is defined or a wrapped primitive is called elsewhere (CHANGELOG 2026-11-03 (E)); library sweep 180/180 identical | geometry of their own remains where the question is not a rule verdict: the compiler's mission-path distance for the risk grade and relevance text (_fence_dist), the lint's exit-region analysis (_ring_of, _exits_for), the cost map's rasterisation, the RTL leg's crossing test, FenceGuard's building half (its own occupancy-grid scan against min_clearance_m, not the Shield's distance field) and the BC pilots' input features (training/features.py); folding the last two changes flown behaviour and needs flights. The source scan is by name and shape: a copy under a new name is not caught |
+| WP3-23 | Shield node architecture: sliding-window buffer (last 50 actions + predicted trajectory) and geometry queries on the IR's R-tree spatial index | DONE | since 3 Nov each filter() tick admits its action and that action's predicted trajectory into the buffer (shield.SlidingWindow, last 50) before anything is checked, and the checker reads the trajectory from it (a tampered buffer blinds the checker: tests/test_shieldcore_onepath.py); static zones through the IR's STRtree, moving dynamic_nfz through the IR's moving-zone STRtree rebuilt per tick (PolicyIR.moving_index), decisions identical to the one-by-one test on 3900 bench samples; library sweep 180/180 identical; tick profile within noise (CHANGELOG 2026-11-03 (E)) | None required. Notes: no DSL rule reads past actions, so the 49 older entries are a record; corridors, stand-offs and clearance are not in a tree (keep-in or subject-relative, checked at every pose); the per-tick rebuild costs about 0.06-0.1 ms per check on the 48-moving-zone bench |
 | WP3-24 | Safety Shield ROS 2 node delivered as a 'Python package; rclpy' (Outputs table) | DONE | sitl/ros2_ws/ rclpy packages + launch files; tests/test_ros2_package.py | None. |
 
 ### WP4 - Stress Testing
@@ -456,7 +464,7 @@ applied; regenerate it before the report is written.
 
 ### Cross-cutting locked choices
 
-16 items: 4 DONE, 10 PARTIAL, 2 DRIFT.
+16 items: 4 DONE, 11 PARTIAL, 1 DRIFT.
 
 | ID | Obligation | Status | Evidence | Open |
 |---|---|---|---|---|
@@ -472,7 +480,7 @@ applied; regenerate it before the report is written.
 | X-10 | Bundle identity fields: policy_hash as a full SHA-256, signed_by (Lab or ITRI CA), changelog as a diff against the previous version, issued_at, layers_merged | PARTIAL | full SHA-256, issued_at, layers_merged, Ed25519 signed_by lab-dev key; since 29 Oct the changelog is a diff against the previous version (guardrail/bundle.py --previous, manifest changelog_diff, 895b5a0; tests/test_bundle.py) | CA name for signed_by (PI/ITRI, 12 Oct Q5). |
 | X-11 | MSL as an opt-in altitude reference on geometry primitives (altitude_ref AGL/MSL) | PARTIAL | altitude_ref AGL/MSL declarable (guardrail/models.py:156); MSL refused for flight (models.py:1424, no ground-elevation source); MSL hot-apply refused (CHANGELOG 2026-10-19) | Give the Shield a ground-elevation source so an MSL rule can fly. |
 | X-12 | Hybrid hot-update rule: only dynamic_nfz, time_window_switch and corridor_swap may change mid-flight; polygon_fence and the envelopes stay locked from mission start | DONE | hot-apply of a fixed polygon fence after take-off refused; only the three classes hot-apply (guardrail/api.py; CHANGELOG 2026-10-07); tests/test_api.py, tests/test_shield_events.py | None. |
-| X-13 | Single rule-evaluation code path (the checker reuses the IR and nothing else evaluates rules) | DRIFT | Shield.rule_status is the one checker; HUD and FenceGuard read it (CHANGELOG 2026-10-07) | as WP3-22: compiler.action_violations is a second rule evaluator (tools/prefix_eval uses it) (independent review against the grant's wording, 29 Oct) |
+| X-13 | Single rule-evaluation code path (the checker reuses the IR and nothing else evaluates rules) | PARTIAL | as WP3-22: since 3 Nov compiler.action_violations (tools/prefix_eval) and every other reader call the Shield's rule clock and point verdicts; tests/test_shieldcore_onepath.py (CHANGELOG 2026-11-03 (E)) | as WP3-22: planning and analysis code that measures zone geometry of its own |
 | X-14 | Dynamic-actor stressors in parameter sweeps: wind (and GPS denial) | PARTIAL | wind, gusts, GPS dropout stressors with a closed-loop ArduCopter wind model (CHANGELOG 2026-10-06, -13); experiments/templates/wind_disturbance.yaml; since 2 Nov `sitl/run_sitl_demo.py --sim-param` applies SITL's own SIM_WIND_* / SIM_GPS_DISABLE at mission start and reads them back: sitl_wind8_shield_on/off_20261102, sitl_gpsloss_shield_on_20261102 (CHANGELOG 2026-11-02 evening) | the Shield-on stressor runs held near home (the first-tick escalation), so no simulator run yet shows a Shield flying a mission through wind or GPS loss; the parameter sweeps stay headless |
 | X-15 | SROS 2 security on the ROS 2 graph (the harness mTLS reuses its root CA) | DONE | SROS2=1 opt-in, one enclave per process, Enforce; flown 2026-11-02 (ros2_sros2_shield_on_20261102, allow-all permissions); since 3 Nov per-topic permissions: sitl/sros2_policy.xml signed per enclave by the keystore's permissions CA = the lab CA (tools/sros2_setup.sh --permissions-only): only the Shield's enclave may publish /shield/setpoint, only the VLA slot's /vla/action_4d, MAVROS its own mavros/* and uas1/*; tools/sros2_check.sh 8/8 in WSL Jazzy, check 7 showing a VLA-enclave publisher of /shield/setpoint refused ('rt/shield/setpoint topic not found in allow rule'); flown sros2_policy_on_20261103b with the policy's permissions (permissions_scope per_topic in hil_evidence.ros2_security); the harness that drove harness_corridor_20261103c ran its gRPC mTLS with the same lab CA (~/harness_pki in WSL) (CHANGELOG 2026-11-03 (G)) | The Windows harness PKI (%LOCALAPPDATA%/vla-guardrail/harness_pki) is still another CA: run the harness where the keystore's CA is, as done here, or seed both from one CA. |
 | X-16 | Meaning of the vla_model_hash field (SHA-256 of the VLA's weights). This is a nuance of the six-field manifest item rated DONE | DONE | vla_model_hash carries the weights' SHA-256 on VLA flights (e.g. nfz3b_orin_hier_aerovla_20261028/manifest.json aerialvla:...@sha256:ca9e8701...), none:hand-written-controller otherwise | None. |

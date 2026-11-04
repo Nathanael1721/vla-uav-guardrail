@@ -1277,7 +1277,12 @@ def test_an_audit_record_after_a_hot_apply_carries_the_new_policy_hash():
     # update model takes the zone only as a dynamic_nfz (2026-10-07).
     import guardrail.shield as _S
     sh.hot_apply(_S.as_dynamic_nfz(zone) if hasattr(_S, "as_dynamic_nfz") else zone)
-    al.log(2, sh.filter(State(x=-20, y=-20, up=4), Action4D(vx=1)))
+    # 0.5 m off the zone's centre, so its nearest edge is the WEST one and the
+    # 1 m/s east command is not the way out. At the exact centre every edge
+    # is a tie, which since 2026-11-03 goes to the edge the command heads for
+    # (shield.escape_direction): the command would then be escaping, and the
+    # violation this test needs came only from the ring's vertex order.
+    al.log(2, sh.filter(State(x=-20.5, y=-20, up=4), Action4D(vx=1)))
 
     recs = [_json.loads(l) for l in path.read_text(encoding="utf-8").splitlines()]
     assert len(recs) == 2, recs
