@@ -71,20 +71,46 @@ def load_policies(run: Path) -> dict[int, dict]:
     return out
 
 
+def policy_origin(policy: dict):
+    """The policy's frame origin (lat, lon): stated, or derived as the model
+    derives it (projection.derive_frame_origin); None for a metre policy."""
+    o = policy.get("origin")
+    if isinstance(o, dict) and o.get("lat") is not None and o.get("lon") is not None:
+        return (float(o["lat"]), float(o["lon"]))
+    from guardrail.projection import derive_frame_origin
+    return derive_frame_origin(policy.get("constraints", []))
+
+
+def point_xy(p: dict, origin) -> tuple[float, float]:
+    """A point in local metres (x North, y East): as written, or - a WGS84
+    point, which a policy dump has carried as lat/lon only since IR schema
+    3.1.0 (2026-11-03) - projected about the policy's frame origin exactly as
+    the Shield projects it (projection.local_metres). Until 2026-11-04 this
+    file read p["x"] alone and stopped with KeyError: 'x' on every flight of
+    a WGS84 policy."""
+    if p.get("x") is not None and p.get("y") is not None:
+        return float(p["x"]), float(p["y"])
+    if origin is None or p.get("lat") is None or p.get("lon") is None:
+        raise ValueError(f"a point with neither x/y nor a placeable lat/lon: {p}")
+    from guardrail.projection import local_metres
+    return local_metres(origin, float(p["lat"]), float(p["lon"]))
+
+
 def zones(policy: dict) -> list[dict]:
     """Keep-out shapes in local metres: polygons and circles, with margins."""
     out = []
+    org = policy_origin(policy)
     for c in policy.get("constraints", []):
         t = c.get("type")
         if t in ("polygon_fence", "dynamic_nfz") and c.get("vertices"):
             out.append({"id": c.get("id"), "kind": "poly",
-                        "xy": [(v["x"], v["y"]) for v in c["vertices"]],
+                        "xy": [point_xy(v, org) for v in c["vertices"]],
                         "margin": float(c.get("margin_m") or 0.0),
                         "hard": c.get("constraint_type", "hard") == "hard",
                         "scheduled": bool(c.get("valid_time"))})
         elif t == "circle_fence" and c.get("center"):
             out.append({"id": c.get("id"), "kind": "circle",
-                        "c": (c["center"]["x"], c["center"]["y"]),
+                        "c": point_xy(c["center"], org),
                         "r": float(c.get("radius_m", 0.0)),
                         "margin": float(c.get("margin_m") or 0.0),
                         "hard": c.get("constraint_type", "hard") == "hard",
@@ -112,6 +138,7 @@ def corridors(policy: dict) -> list[dict]:
     targets it (with no schedule) replaces its centerline, width and band.
     {"id", "swapped_by", "centerline": [(x, y)...], "width_m", "band"}."""
     cons = policy.get("constraints", [])
+    org = policy_origin(policy)
     out = []
     for c in cons:
         if c.get("type") != "corridor":
@@ -122,7 +149,7 @@ def corridors(policy: dict) -> list[dict]:
                     and not s.get("valid_time"):
                 cur, by = s, s.get("id")
         out.append({"id": c.get("id"), "swapped_by": by,
-                    "centerline": [(p["x"], p["y"]) for p in cur.get("centerline", [])],
+                    "centerline": [point_xy(p, org) for p in cur.get("centerline", [])],
                     "width_m": float(cur.get("width_m", 0.0)),
                     "band": (float(cur.get("altitude_floor_m", 0.0)),
                              float(cur.get("altitude_ceiling_m", 1000.0)))})

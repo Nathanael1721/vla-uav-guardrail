@@ -56,6 +56,39 @@ def test_zones_read_polygons_and_circles_with_margins_and_hardness():
     assert R.altitude_band(POLICY) == (10.0, 20.0)
 
 
+def test_a_wgs84_policy_dump_is_drawn_at_the_shields_metres():
+    """Since IR schema 3.1.0 a policy dump carries a WGS84 point as lat/lon
+    only; the drawing must place it where the Shield does (its frame origin,
+    projection.local_metres), and keep a metre zone hot-applied into it as
+    written. Shown failing before 2026-11-04: KeyError: 'x' on the first
+    vertex, as on every ROS 2 rail flight of 4 Nov."""
+    from guardrail.projection import LocalProjection, local_metres
+    org = (-35.363261, 149.16523)
+    proj = LocalProjection(*org)
+    ll = lambda x, y: dict(zip(("lat", "lon"), proj.to_latlon(x, y)))   # noqa: E731
+    pol = {"origin": {"lat": org[0], "lon": org[1]}, "constraints": [
+        {"id": "nfz-square", "type": "polygon_fence", "constraint_type": "hard",
+         "margin_m": 1.0, "vertices": [ll(16, 14), ll(32, 14), ll(32, 30), ll(16, 30)]},
+        {"id": "ring", "type": "circle_fence", "center": ll(-4, 2), "radius_m": 2.0},
+        {"id": "nfz-hot-1", "type": "dynamic_nfz", "constraint_type": "hard",
+         "vertices": [{"x": 24, "y": -6}, {"x": 30, "y": -6}, {"x": 30, "y": 6}]},
+        {"id": "route", "type": "corridor", "width_m": 40,
+         "centerline": [ll(0, 0), ll(60, 0)]}]}
+    z = {q["id"]: q for q in R.zones(pol)}
+    want = [local_metres(org, v["lat"], v["lon"]) for v in pol["constraints"][0]["vertices"]]
+    assert z["nfz-square"]["xy"] == want
+    assert all(abs(a - b) < 1e-5 for p, q in zip(want, [(16, 14), (32, 14), (32, 30), (16, 30)])
+               for a, b in zip(p, q)), want
+    assert all(abs(a - b) < 1e-5 for a, b in zip(z["ring"]["c"], (-4, 2)))
+    assert z["nfz-hot-1"]["xy"] == [(24.0, -6.0), (30.0, -6.0), (30.0, 6.0)]
+    (cor,) = R.corridors(pol)
+    assert all(abs(a - b) < 1e-5 for p, q in zip(cor["centerline"], [(0, 0), (60, 0)])
+               for a, b in zip(p, q)), cor["centerline"]
+    # A policy with no stated origin derives it as the model does.
+    del pol["origin"]
+    assert R.policy_origin(pol) is not None
+
+
 def test_the_fsm_state_and_last_edge_follow_the_log():
     rows = [_row(0), _row(1, "Normal", "Brake", "X1"), _row(2, "Brake", "Brake"),
             _row(3, "Brake", "Loiter", "G3")]
