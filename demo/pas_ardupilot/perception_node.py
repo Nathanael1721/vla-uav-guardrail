@@ -789,8 +789,10 @@ class VLAPilot:
 
     def __init__(self, backend, monitor, *, mission: str, goal_xy=None, detections=None,
                  hint_source=None, detector_hint=None, stale_s: float = DETECTION_STALE_S,
-                 server_alive=lambda: True, vm=None):
+                 server_alive=lambda: True, vm=None, model_label: str | None = None):
         self.vm = vm or _vm()
+        # The VLA panel's name for the model (vla_mission.model_label).
+        self.model_label = model_label
         self.backend, self.monitor, self.mission = backend, monitor, mission
         self.goal_xy = None if goal_xy is None else (float(goal_xy[0]), float(goal_xy[1]))
         self.detections, self.stale_s = detections, float(stale_s)
@@ -880,7 +882,8 @@ class VLAPilot:
         hud = vm.vla_hud(t_mission, st.up, tk, cur, step, touched=touched,
                          shield_on=shield_on, mission=self.mission,
                          cadence=getattr(self.backend, "cadence", None),
-                         goal_dist_m=gd, box_frac=frac, end_reason=end)
+                         goal_dist_m=gd, box_frac=frac, end_reason=end,
+                         model=self.model_label)
         return end, row, hud
 
     def freeze(self) -> None:
@@ -5251,8 +5254,9 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
                            detections=None if vla_goto else grounder,
                            hint_source=vla_rec["hint_source"],
                            detector_hint=vla_rec["detector_hint"], stale_s=args.det_fresh_s,
-                           server_alive=lambda: vla_srv.alive, vm=VM)
-            print(f"[vla]    mission {args.mission}: AerialVLA flies"
+                           server_alive=lambda: vla_srv.alive, vm=VM,
+                           model_label=VM.model_label(vla_identity))
+            print(f"[vla]    mission {args.mission}: {VM.model_words(vla_identity)} flies"
                   + (f" to {args.goal}" if vla_goto else f", hint from the box on {args.object!r}")
                   + " - every tick through the Shield"
                   + (" and the escalation FSM" if fsm is not None else ""))

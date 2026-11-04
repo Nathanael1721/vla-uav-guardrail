@@ -430,7 +430,8 @@
 #          comparisons return early, counted as passes, where node is
 #          absent: WSL has no node, so they have never run on Linux.
 #        test_policy_hud.py: 6 of its 45 tests ERROR without Pillow (the
-#          overlay drawing), which no job installs for the loop.
+#          overlay drawing), which no job installs for the loop; since
+#          2026-11-04 it runs, with test_hud_fits, in the Pillow step below.
 #        test_range_and_lock.py: 16 of its 112 tests ERROR without OpenCV.
 #        test_two_view.py: 6 of its 9 tests ERROR without OpenCV and Pillow.
 #      END OF THE EXCLUSIONS
@@ -754,7 +755,10 @@ jobs:
       # (2026-10-24) for its prev_front mosaic, its mirror and the evaluation
       # tool's prev_front requests; its torch test SKIPs. test_vla_speed_words
       # (2026-10-24) for the evaluation of a speed-words dataset through the
-      # server's mosaic; its torch test SKIPs.
+      # server's mosaic; its torch test SKIPs. test_policy_hud and
+      # test_hud_fits (2026-11-04) for the video panels: drawn on blank
+      # frames, every panel's ink inside its box, the P0 escapes on the frame,
+      # the model the server named.
       - name: AerialVLA image tests (Pillow)
         if: matrix.python == '3.10'
         env:
@@ -763,7 +767,7 @@ jobs:
         run: |
           python -m pip install --target "$RUNNER_TEMP/pillow" pillow==12.2.0
           fail=0
-          for img in tests/test_aerialvla_codec.py tests/test_vla_server.py tests/test_follow_dataset.py tests/test_vla_prev_front_rate.py tests/test_vla_speed_words.py; do
+          for img in tests/test_aerialvla_codec.py tests/test_vla_server.py tests/test_follow_dataset.py tests/test_vla_prev_front_rate.py tests/test_vla_speed_words.py tests/test_policy_hud.py tests/test_hud_fits.py; do
             echo "::group::$img (with Pillow)"
             if ! PYTHONPATH="$RUNNER_TEMP/pillow" python "$img"; then
               echo "::error file=$img::$img failed with Pillow installed"

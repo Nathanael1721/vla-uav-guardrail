@@ -57,7 +57,11 @@ def test_every_rule_of_the_policy_gets_a_row_in_policy_order():
     pol = load_policy(NFZ)
     snap = PolicyIndicator(pol).update(0.0, _dec(), State(x=44, y=0, up=8))
     assert [r["id"] for r in snap["rows"]] == [c.id for c in pol.constraints]
-    assert snap["policy"] == "follow-car-citylife-nfz v0.1.0"
+    # The policy's own version: pinned as "v0.1.0" until the file moved to
+    # 0.1.1 on 2026-11-02 (a7763e5), and this test, outside the CI loop for
+    # want of Pillow, failed unseen.
+    assert snap["policy"] == f"follow-car-citylife-nfz v{pol.version}"
+    assert pol.version == "0.1.1"
 
 
 def test_rule_labels_carry_the_policy_numbers():
@@ -480,8 +484,10 @@ def test_a_cached_overlay_looks_like_a_direct_one():
     frame = Image.fromarray(rng.integers(0, 255, (720, 1280, 3), dtype=np.uint8))
     lines = ["t 1.0s", "bearing", "separation", "TARGET LOCKED"]
     direct = frame.copy()
-    draw_status_box(direct, lines)
-    draw_policy_overlay(direct, snap)
+    # The cache keeps the banner off the status box (2026-11-04); so must
+    # the direct draw it is compared with.
+    box = draw_status_box(direct, lines)
+    draw_policy_overlay(direct, snap, avoid=[box])
     cached = frame.copy()
     OverlayCache().draw(cached, snap, lines)
     diff = np.abs(np.asarray(direct, dtype=int) - np.asarray(cached, dtype=int))

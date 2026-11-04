@@ -1080,9 +1080,10 @@ def mission_fields(gd, gb, frac, det, det_age, detector_hint: DetectorHint | Non
 
 def vla_hud(t: float, alt: float, tk, cur: dict, step: dict | None, *, touched: bool,
             shield_on: bool, mission: str, cadence, goal_dist_m, box_frac,
-            end_reason) -> dict:
-    """What the VLA panel (hud_lines) draws for one tick."""
-    return {"t": t, "alt": alt, "author": tk.author,
+            end_reason, model: str | None = None) -> dict:
+    """What the VLA panel (hud_lines) draws for one tick. `model` is the
+    server's model as the panel names it (model_label)."""
+    return {"t": t, "alt": alt, "author": tk.author, "model": model,
             "reason": tk.reason, "seq": tk.seq, "age_s": tk.age_s,
             "phrase": cur.get("phrase"), "hint_source": cur.get("hint_source"),
             "step": step, "land": bool(tk.land_requested), "shield": bool(touched),
@@ -1135,7 +1136,7 @@ class MissionLoop:
                  detector_hint: DetectorHint | None = None, audit=None,
                  server_alive: Callable[[], bool] = lambda: True,
                  clock: Callable[[], float] = time.time,
-                 close_hold: BoxClose | None = None):
+                 close_hold: BoxClose | None = None, model_label: str | None = None):
         from guardrail.replay import flown_fields
         if mission not in MISSIONS:
             raise ValueError(f"mission {mission!r}")
@@ -1155,6 +1156,8 @@ class MissionLoop:
         # Counted, and the row says so (close_hold).
         self.close_hold = close_hold
         self.n_close_hold = 0
+        # The VLA panel's name for the model (model_label of the server's hello).
+        self.model_label = model_label
         self._flown_fields = flown_fields
         self.n = 0
         self.t0: float | None = None
@@ -1266,7 +1269,7 @@ class MissionLoop:
         hud = vla_hud(now - self.t0, state.up, tk, cur, step, touched=bool(hd.touched),
                       shield_on=self.shield_on, mission=self.mission,
                       cadence=getattr(self.backend, "cadence", None),
-                      goal_dist_m=gd, box_frac=frac, end_reason=end)
+                      goal_dist_m=gd, box_frac=frac, end_reason=end, model=self.model_label)
         self.n += 1
         return LoopTick(flown, d, row, hud, end, hd, det)
 
@@ -1294,8 +1297,12 @@ def hud_lines(hud: dict) -> list[str]:
         l0 += f"  box {hud['box_frac']:.2f}"
     seq, age = hud.get("seq"), hud.get("age_s")
     cad = {"stop_and_go": "  stop-and-go", "pipelined": "  pipelined"}.get(hud.get("cadence"), "")
-    l1 = (f"AerialVLA #{seq}  image {age:.1f} s old{cad}" if seq is not None and age is not None
-          else f"AerialVLA  no decision flying{cad}")
+    # The model the server said it is (model_label). This read "AerialVLA"
+    # whatever flew, so the DroneCATS and RaceVLA videos of 27 October to
+    # 3 November name the wrong model; a panel with no identity says "VLA".
+    name = hud.get("model") or "VLA"
+    l1 = (f"{name} #{seq}  image {age:.1f} s old{cad}" if seq is not None and age is not None
+          else f"{name}  no decision flying{cad}")
     ph = hud.get("phrase")
     l2 = ("phrase -" if ph is None else
           f"phrase '{ph.strip() or 'none: arrived?'}' ({hud.get('hint_source')})")
@@ -1989,6 +1996,38 @@ def model_words(identity: dict | None) -> str:
     foreign model by its family ("the foreign VLA dronecats")."""
     fam = C.foreign_family(identity.get("id") if isinstance(identity, dict) else None)
     return "AerialVLA" if fam is None else f"the foreign VLA {fam}"
+
+
+# How the video panel names a foreign family (aerialvla_codec.FOREIGN_FAMILIES).
+FAMILY_LABEL = {"dronecats": "DroneCATS", "racevla": "RaceVLA", "aiotvla": "AIOT-VLA",
+                "ntutvla": "NTUT-VLA"}
+
+
+def model_label(identity: dict | None) -> str:
+    """How the VLA panel on the video names the server's model: "AerialVLA"
+    for upstream's adapter, "AerialVLA FT <run>" for a follow fine-tune
+    (model_id_for), a foreign model by its family's name ("DroneCATS"),
+    "stand-in, not a VLA" for any `fake:` id (the scripted server of the
+    fixed-12 m step), and "VLA" when the server gave no identity - never a
+    model that did not fly. Only the id the server sent decides it, as in
+    model_id_for and identity_is_vla."""
+    from guardrail.aerialvla_codec import adapter_variant
+    sid = str((identity or {}).get("id") or "")
+    if not sid:
+        return "VLA"
+    if sid.startswith("fake:"):
+        return "stand-in, not a VLA"
+    fam = C.foreign_family(sid)
+    if fam is not None:
+        return FAMILY_LABEL.get(fam, fam)
+    if adapter_variant(sid) == "fine-tune":
+        # "aerialvla-ft-follow/follow_v3_pf_r1/epoch1@..." -> "AerialVLA FT
+        # v3_pf_r1": the run, without the family's own "follow_".
+        parts = sid.split("@", 1)[0].split("/")
+        run = parts[1] if len(parts) > 1 else ""
+        run = run[len("follow_"):] if run.startswith("follow_") else run
+        return f"AerialVLA FT {run}" if run else "AerialVLA FT"
+    return "AerialVLA"
 
 
 # The identity keys a record keeps of the server's hello: the brief's six, the

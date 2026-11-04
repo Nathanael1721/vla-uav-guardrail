@@ -141,7 +141,9 @@ STEPS_DIR = "vla_hierarchy"      # under demo/out/<tag>/: vla_steps.jsonl
 ROBOT_CONFIG = "robot_semantic_quad_vla.jsonc"
 _FLYING_AUTHORS = ("vla_step", "hold")
 _INTENT_OF = {"controller_follow": "follow", "vla_search": "search", "hold": "hold"}
-RULE = ("AerialVLA is asked continuously (pipelined); each answer it parsed sets the intent, "
+# Model-neutral since 2026-11-04: the same rule flies AerialVLA, its fine-tunes,
+# DroneCATS and RaceVLA, and metrics.json's `rule` named AerialVLA for all of them.
+RULE = ("The VLA is asked continuously (pipelined); each answer it parsed sets the intent, "
         "held until the next and expiring expiry_s after it arrived. Fresh step + the "
         "controller's lock: controller_follow (the controller flies with its stand-off at the "
         "VLA's desired range, far m at fwd 0 to near m at fwd 5, moved at most s_rate_mps). "

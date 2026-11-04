@@ -90,6 +90,7 @@ from __future__ import annotations
 import math
 from collections import deque
 from dataclasses import dataclass
+from pathlib import Path
 
 # Row status rank; the latch keeps the highest seen within hold_s.
 SEVERITY = {"idle": 0, "ok": 1, "near": 2, "avoid": 3, "hold": 4, "watch": 5,
@@ -575,15 +576,44 @@ class PolicyIndicator:
 
 _FONTS: dict = {}
 
+# ONE FACE ON EVERY MACHINE (2026-11-04). This asked for Consolas first. The PC
+# got Consolas; the Jetsons, which have neither Consolas nor Arial, got DejaVu
+# Sans Mono, about 9 % wider, and the panels - laid out at fixed pixel columns
+# for Consolas - pushed the rule panel's last line off the frame: "P0 escapes"
+# with its number past the right edge on every Jetson-flown video (and on the
+# PC too once the counts grew: 2784 corrections, 454 holds), and a value of ten
+# characters ("141 m away") ran into its status. DejaVu Sans Mono is on every
+# Ubuntu image and ships inside matplotlib on the PC, so it is asked for first;
+# the panels are sized from the text they hold either way (_fit, the column
+# widths in draw_policy_overlay).
+_FACES = {False: ("DejaVuSansMono.ttf", "consola.ttf", "arial.ttf"),
+          True: ("DejaVuSansMono-Bold.ttf", "consolab.ttf", "arialbd.ttf")}
+
+
+def _face_paths(bold: bool):
+    """The candidates for a face, by name (the system's font folders) and, for
+    DejaVu, inside matplotlib's own data - found without importing it."""
+    import importlib.util
+    for name in _FACES[bold]:
+        yield name
+        if name.startswith("DejaVu"):
+            try:
+                spec = importlib.util.find_spec("matplotlib")
+            except (ImportError, ValueError):
+                spec = None
+            for loc in (spec.submodule_search_locations or []) if spec else []:
+                yield str(Path(loc) / "mpl-data" / "fonts" / "ttf" / name)
+
 
 def font(size: int, bold: bool = False):
-    """A legible monospace font, cached. Falls back to PIL's scalable default."""
+    """A legible monospace font, cached: DejaVu Sans Mono wherever it can be
+    found (ONE FACE ON EVERY MACHINE), else Consolas or Arial, else PIL's
+    scalable default."""
     from PIL import ImageFont
     key = (size, bold)
     if key not in _FONTS:
         f = None
-        for name in (("consolab.ttf", "arialbd.ttf", "DejaVuSansMono-Bold.ttf") if bold
-                     else ("consola.ttf", "arial.ttf", "DejaVuSansMono.ttf")):
+        for name in _face_paths(bold):
             try:
                 f = ImageFont.truetype(name, size)
                 break
@@ -719,6 +749,7 @@ class OverlayCache:
         self._key = None
         self._t = None
         self._tiles: list = []
+        self._box_w: float | None = None
 
     def draw(self, im, snap: dict, lines: list[str] | None = None) -> None:
         from PIL import Image
@@ -728,95 +759,180 @@ class OverlayCache:
                  or t - self._t >= self.period or t < self._t)
         if stale:
             layer = Image.new("RGBA", im.size, (0, 0, 0, 0))
+            boxes = []
             if lines:
-                draw_status_box(layer, lines)
-            draw_policy_overlay(layer, snap)
-            W, H = im.size
-            # Three regions: the status box, banner + rule panel, the map.
-            regions = ((0, 0, int(W * 0.30), int(H * 0.25)),
-                       (int(W * 0.22), 0, W, int(H * 0.55)),
-                       (int(W * 0.70), int(H * 0.55), W, H))
+                box = draw_status_box(layer, lines, min_w=self._box_w)
+                # The box only widens within a flight: a line that grows by a
+                # digit must not make it, and the banner beside it, jump.
+                self._box_w = box[2] - box[0]
+                boxes.append(box)
+            boxes += draw_policy_overlay(layer, snap, avoid=boxes)
+            # One tile per element drawn (status box, banner, rule panel,
+            # map), cut where it was drawn. Fixed fractions of the frame
+            # clipped a panel that grew past them, and pasted the overlap of
+            # two fractions twice.
             tiles = []
-            for x0, y0, x1, y1 in regions:
-                sub = layer.crop((x0, y0, x1, y1))
-                bb = sub.getchannel("A").getbbox()
-                if bb:
-                    tile = sub.crop(bb)
-                    tiles.append((tile.convert("RGB"), tile.getchannel("A"),
-                                  (x0 + bb[0], y0 + bb[1])))
+            for bb in boxes:
+                x0, y0, x1, y1 = _pixel_box(bb, im.size)
+                if x1 > x0 and y1 > y0:
+                    tile = layer.crop((x0, y0, x1, y1))
+                    tiles.append((tile.convert("RGB"), tile.getchannel("A"), (x0, y0)))
             self._tiles, self._key, self._t = tiles, key, t
             self.renders += 1
         for rgb, alpha, xy in self._tiles:
             im.paste(rgb, xy, alpha)
 
 
-def draw_status_box(im, lines: list[str]) -> None:
+def _pixel_box(bb, size) -> tuple[int, int, int, int]:
+    """A drawn box as whole pixels that contain it, inside the frame."""
+    W, H = size
+    return (max(0, math.floor(bb[0])), max(0, math.floor(bb[1])),
+            min(W, math.ceil(bb[2]) + 1), min(H, math.ceil(bb[3]) + 1))
+
+
+def _tw(f, text: str) -> float:
+    """The drawn width of `text` in font `f`, in pixels."""
+    try:
+        return float(f.getlength(text))
+    except AttributeError:                     # Pillow < 9.2 bitmap default
+        return float(f.getsize(text)[0])
+
+
+def _fit(text: str, f, room: float) -> str:
+    """`text` as it fits in `room` pixels: whole, or cut and ended with an
+    ellipsis - never drawn past the panel that holds it."""
+    if _tw(f, text) <= room:
+        return text
+    while text and _tw(f, text + "…") > room:
+        text = text[:-1]
+    return text + "…"
+
+
+def draw_status_box(im, lines: list[str], min_w: float | None = None
+                    ) -> tuple[float, float, float, float]:
     """The flight lines (time/altitude, bearing/speed, separation, tracking
     state), top left, at a size a video viewer can read. The last line is the
-    tracking state and is coloured: green when locked, amber otherwise."""
+    tracking state and is coloured: green when locked, amber otherwise.
+
+    Sized to its longest line: at least 322 px wide at 1280 (the box it has
+    always been), at least `min_w`, at most 45 % of the frame, where a longer
+    line is cut with an ellipsis. Until 2026-11-04 it was 322 px whatever it
+    held, and "AerialVLA  no decision flying  pipelined" ran past it. Returns
+    the box drawn, (x0, y0, x1, y1)."""
     from PIL import ImageDraw
     d = ImageDraw.Draw(im, "RGBA")
-    s = im.size[0] / 1280.0
+    W = im.size[0]
+    s = W / 1280.0
     f = font(int(15 * s))
-    d.rounded_rectangle([8 * s, 8 * s, 330 * s, 8 * s + 21 * s * len(lines) + 10 * s],
-                        radius=6 * s, fill=(10, 10, 15, 200))
-    for i, ln in enumerate(lines):
-        last = i == len(lines) - 1
+    x0 = y0 = 8 * s
+    widest = 0.45 * W - x0
+    shown = [_fit(ln, f, widest - 16 * s) for ln in lines]
+    need = max([_tw(f, ln) for ln in shown] + [0.0]) + 16 * s
+    w = min(max(322 * s, need, min_w or 0.0), widest)
+    box = (x0, y0, x0 + w, y0 + 21 * s * len(lines) + 10 * s)
+    d.rounded_rectangle(list(box), radius=6 * s, fill=(10, 10, 15, 200))
+    for i, ln in enumerate(shown):
+        last = i == len(shown) - 1
         d.text((16 * s, 13 * s + 21 * s * i), ln, font=f,
                fill=((120, 255, 140) if last and "LOCKED" in ln
                      else (255, 220, 120) if last else (255, 255, 255)))
+    return box
 
 
-def draw_policy_overlay(im, snap: dict) -> None:
-    """Draw the banner, the rule panel, the counts and the map onto `im`."""
+def draw_policy_overlay(im, snap: dict, avoid=()) -> list[tuple[float, float, float, float]]:
+    """Draw the banner, the rule panel, the counts and the map onto `im`,
+    keeping the banner off the boxes in `avoid` (the status box), and return
+    the boxes drawn: the banner, the rule panel and, with a map, the map."""
     from PIL import ImageDraw
     d = ImageDraw.Draw(im, "RGBA")
     W, H = im.size
     s = W / 1280.0
     f_row, f_bold = font(int(15 * s)), font(int(15 * s), bold=True)
-    f_head, f_ban = font(int(14 * s), bold=True), font(int(20 * s), bold=True)
+    f_head = font(int(14 * s), bold=True)
+    white = (255, 255, 255)
+    drawn = []
 
-    # Banner, top centre.
+    # Banner, top centre; centred in the room right of the status box when
+    # centred it would cover it (in nfz3b_agx_hier_aerovla_20261103 a Shield
+    # banner covered the box's speed), smaller when that room is too narrow,
+    # cut with an ellipsis only below 14 px at 1280.
     ban = snap["banner"]
     col = COLOURS[ban["level"]]
-    tw = d.textlength(ban["text"], font=f_ban)
-    bx0 = (W - tw) / 2 - 14 * s
     big = ban["level"] not in ("ok", "idle")
     pad = 8 * s if big else 5 * s
-    bh = (20 * s + 2 * pad)
-    d.rounded_rectangle([bx0, 10 * s, bx0 + tw + 28 * s, 10 * s + bh], radius=6 * s,
-                        fill=col + ((215,) if big else (150,)))
-    d.text((bx0 + 14 * s, 10 * s + pad - 1), ban["text"], font=f_ban,
-           fill=(20, 20, 20) if ban["level"] in ("ok", "near", "idle") else (255, 255, 255))
+    top = 10 * s
+    lo, hi = 10 * s, W - 10 * s
+    for ax0, ay0, ax1, ay1 in avoid or ():
+        if ay0 < top + 20 * s + 2 * pad and ay1 > top:
+            lo = max(lo, ax1 + 8 * s)
+    text, size = ban["text"], 20
+    while True:
+        f_ban = font(int(size * s), bold=True)
+        bw = _tw(f_ban, text) + 28 * s
+        if bw <= hi - lo or size <= 14:
+            break
+        size -= 1
+    if bw > hi - lo:
+        text = _fit(text, f_ban, hi - lo - 28 * s)
+        bw = _tw(f_ban, text) + 28 * s
+    bx0 = (W - bw) / 2
+    if bx0 < lo:
+        bx0 = lo + max(0.0, (hi - lo - bw) / 2)
+    banner = (bx0, top, bx0 + bw, top + size * s + 2 * pad)
+    d.rounded_rectangle(list(banner), radius=6 * s, fill=col + ((215,) if big else (150,)))
+    d.text((bx0 + 14 * s, top + pad - 1), text, font=f_ban,
+           fill=(20, 20, 20) if ban["level"] in ("ok", "near", "idle") else white)
+    drawn.append(banner)
 
-    # Rule panel, top right.
+    # Rule panel, top right. The label and limit columns are as wide as this
+    # policy's labels and limits; the value and the status change from tick
+    # to tick, so theirs are as wide as they can ever be (12 characters, the
+    # longest status) and the panel does not breathe. They were fixed pixel
+    # columns, and a ten-character value ("141 m away") ran into its status.
     rows = snap["rows"]
-    pw = 470 * s
+    k = snap["counts"]
+    gap, rh = 12 * s, 21 * s
+    x_lab = 30 * s
+    x_lim = x_lab + max([_tw(f_row, r["label"][:22]) for r in rows] + [0.0]) + gap
+    x_val = x_lim + max([_tw(f_row, r["limit"]) for r in rows] + [0.0]) + gap
+    x_st = x_val + _tw(f_row, "0" * 12) + gap
+    head = f"GUARDRAIL POLICY  {snap['policy']}"
+    counts = f"Shield corrections {k['repaired']}  brakes {k['braked']}  holds {k['held']}"
+    pw = max(470 * s, x_st + max(_tw(f_bold, t) for t in STATUS_TEXT.values()) + 10 * s,
+             _tw(f_head, head) + 20 * s, _tw(f_row, counts) + 20 * s,
+             _tw(f_row, "Shield corrections 99999  brakes 99999  holds 99999") + 20 * s)
+    pw = min(pw, W - 20 * s)
     px0 = W - pw - 10 * s
-    py0 = 10 * s + bh + 8 * s
-    rh = 21 * s
-    ph = (rows and len(rows) or 1) * rh + 50 * s
-    d.rounded_rectangle([px0, py0, px0 + pw, py0 + ph], radius=6 * s, fill=(10, 10, 15, 175))
-    d.text((px0 + 10 * s, py0 + 6 * s), f"GUARDRAIL POLICY  {snap['policy']}",
-           font=f_head, fill=(255, 255, 255))
+    py0 = banner[3] + 8 * s
+    ph = (rows and len(rows) or 1) * rh + 28 * s + rh + 22 * s
+    panel = (px0, py0, px0 + pw, py0 + ph)
+    d.rounded_rectangle(list(panel), radius=6 * s, fill=(10, 10, 15, 175))
+    d.text((px0 + 10 * s, py0 + 6 * s), _fit(head, f_head, pw - 20 * s), font=f_head,
+           fill=white)
     y = py0 + 28 * s
     for r in rows:
         c = COLOURS[r["status"]]
         d.ellipse([px0 + 10 * s, y + 4 * s, px0 + 22 * s, y + 16 * s], fill=c + (255,))
-        d.text((px0 + 30 * s, y), r["label"][:22], font=f_row, fill=(235, 235, 235))
-        d.text((px0 + 232 * s, y), r["limit"], font=f_row, fill=(180, 180, 180))
-        d.text((px0 + 318 * s, y), r["value"][:12], font=f_row, fill=(235, 235, 235))
-        d.text((px0 + 404 * s, y), STATUS_TEXT[r["status"]], font=f_bold, fill=c)
+        d.text((px0 + x_lab, y), r["label"][:22], font=f_row, fill=(235, 235, 235))
+        d.text((px0 + x_lim, y), r["limit"], font=f_row, fill=(180, 180, 180))
+        d.text((px0 + x_val, y), r["value"][:12], font=f_row, fill=(235, 235, 235))
+        d.text((px0 + x_st, y), STATUS_TEXT[r["status"]], font=f_bold, fill=c)
         y += rh
-    k = snap["counts"]
-    d.text((px0 + 10 * s, y + 4 * s),
-           f"Shield corrections {k['repaired']}  brakes {k['braked']}  "
-           f"holds {k['held']}  P0 escapes {k['p0_escapes']}",
-           font=f_row, fill=(255, 255, 255))
+    d.text((px0 + 10 * s, y + 4 * s), _fit(counts, f_row, pw - 20 * s), font=f_row,
+           fill=white)
+    # The P0 escapes on a line of their own: the one KPI whose limit is zero,
+    # red when it is not. On the shared line they were the last words, the
+    # ones the right edge cut.
+    esc = k["p0_escapes"]
+    d.text((px0 + 10 * s, y + 4 * s + rh), f"P0 escapes {esc}",
+           font=f_bold if esc else f_row, fill=COLOURS["brake"] if esc else white)
+    drawn.append(panel)
 
     # Map, bottom right.
     m = snap.get("map")
     if m is not None:
         size = int(220 * s)
-        draw_minimap(im, m, int(W - size - 10 * s), int(H - size - 10 * s), size,
-                     scale=s)
+        mx0, my0 = int(W - size - 10 * s), int(H - size - 10 * s)
+        draw_minimap(im, m, mx0, my0, size, scale=s)
+        drawn.append((mx0, my0, mx0 + size - 1, my0 + size - 1))
+    return drawn

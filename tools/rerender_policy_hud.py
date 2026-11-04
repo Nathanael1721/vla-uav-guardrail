@@ -175,8 +175,8 @@ def main() -> int:
         from PIL import ImageDraw
         sc = im.size[0] / 1280.0
         ImageDraw.Draw(im).rectangle([0, 0, 336 * sc, 112 * sc], fill=(12, 12, 16))
-        draw_status_box(im, status_lines(rows[k]))
-        draw_policy_overlay(im, snaps[k])
+        box = draw_status_box(im, status_lines(rows[k]))
+        draw_policy_overlay(im, snaps[k], avoid=[box])
         return im
 
     if args.out:

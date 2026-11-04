@@ -2035,8 +2035,8 @@ async def _fly(args, holder: dict) -> int:
                               det_source=det_source, hint_source=hint_src,
                               detector_hint=detector_hint, audit=audit,
                               server_alive=lambda: server.alive, clock=time.time,
-                              close_hold=close_rule)
-        print(f"[vla] mission {args.mission} - AerialVLA flies; hint source "
+                              close_hold=close_rule, model_label=VM.model_label(identity))
+        print(f"[vla] mission {args.mission} - {VM.model_words(identity)} flies; hint source "
               f"{hint_src.kind}; object words {args.object!r} (inert)")
         deadline = None
         stuck = (VM.StuckWatch() if args.mission == "follow" and not args.no_stuck_reset

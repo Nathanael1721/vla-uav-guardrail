@@ -16,6 +16,75 @@ shipped change and recorded as one.
 
 ## [Unreleased]
 
+### 2026-11-04 (evening) — the video panels say which model flew and keep every word on the frame: the P0 escapes back in view on Jetson-flown videos, no banner over the status box
+
+#### Fixed
+- `demo/vla_mission.py`: the VLA panel's second line was "AerialVLA #N"
+  or "AerialVLA  no decision flying" whatever the server was, so every
+  end-to-end DroneCATS and RaceVLA video named the wrong model (checked:
+  `cmp2_e2e_racevla_20261028` on the PC, `orin_e2e_racevla_20261028` on the
+  Orin Nano, `agx_e2e_dronecats_20261103`, `agx_e2e_dronecats_t30_20261103`
+  and `agx_e2e_racevla_20261103` on the AGX). New `model_label(identity)`
+  names the model from the id in the server's hello: "AerialVLA",
+  "AerialVLA FT v2_r1" for a follow fine-tune, "DroneCATS", "RaceVLA",
+  "stand-in, not a VLA" for a `fake:` id, "VLA" with no identity.
+  `vla_hud` carries it; `MissionLoop` (vla_fly) and the ArduPilot rail's
+  `VLAPilot` take it from the hello, and their console lines use
+  `model_words`. `demo/vla_hierarchy.py` RULE, recorded in every
+  hierarchical flight's metrics, no longer names AerialVLA.
+- `demo/policy_hud.py`: the rule panel was 470 px with columns at fixed
+  pixel offsets, laid out for Consolas. The Jetsons have no Consolas; their
+  DejaVu Sans Mono is wider, so the last line ("Shield corrections N  brakes
+  N  holds N  P0 escapes N", 478.7 px of text in 460 px of room with
+  one-digit counts) put the P0 escapes off the frame on every Jetson-flown
+  video, and on the PC too once the counts grew (2784 corrections and 454
+  holds: 478.5 px). A ten-character value ("141 m away") ran into its
+  status. Now the label and limit columns are sized from the policy's own
+  text, the value and status columns for the widest they can hold, and the
+  panel from all of them; the P0 escapes have a line of their own, red when
+  not 0. The status box grows to its longest line (at least the old 322 px,
+  at most 45 % of the frame, a longer line cut with an ellipsis) and, in a
+  flight's overlay cache, never shrinks. The banner is centred in the room
+  right of the status box when centred it would cover it (it covered the
+  speed in `nfz3b_agx_hier_aerovla_20261103`), shrunk to 14 px and only then
+  cut. `draw_status_box` and `draw_policy_overlay` return the boxes they
+  drew, and the overlay cache cuts its tiles from those boxes instead of
+  fixed fractions of the frame, which clipped a grown panel and pasted the
+  overlap of two fractions twice. `font()` asks for DejaVu Sans Mono first,
+  by name or inside matplotlib, so the PC draws what the Jetson draws.
+  `tools/rerender_policy_hud.py` passes its status box too.
+
+#### Tests
+- `tests/test_hud_fits.py` (new, 12 of 12 pass): drawn with the nfz3b rows
+  and counts at 960, 1280 and 1920 px wide, no ink lands outside the boxes
+  drawn and every box is on the frame; the P0 escapes are inside the panel
+  and red only when not 0; on every row the value's ink ends half a
+  character before the status's begins; a long banner leaves no ink in the
+  status box and an over-long one is shrunk, cut, and kept on the frame;
+  the status box's width rules and the cache's grow-only width; the model
+  label for the ids the AGX matrix's servers sent; `hud_lines` with and
+  without a model; both rails pass the hello's label; RULE names no model.
+  Checked against two mutants: a layout that under-measures its text by
+  15 % (columns touch) and an overlay that ignores the status box (the
+  banner lands in it); both fail.
+- `tests/test_policy_hud.py` 45 of 45: one test pinned the policy as
+  "v0.1.0", stale since the file moved to 0.1.1 on 2026-11-02 (a7763e5),
+  and it failed unseen because the file needs Pillow, which the CI loop does
+  not install; it now reads the policy's own version. Both files join the
+  workflow's Pillow step (`tools/ci_local.py` runs only the loop, so they
+  are run by hand there). Unchanged: test_pas_vla 29 of 29, test_vla_fly 63
+  of 63, test_vla_fly_fakesim 14 of 14, test_pas_ardupilot 149 of 149,
+  test_vla_hierarchy 17 of 17, test_make_demo_video 4 of 4,
+  test_render_track_video 5 of 5, test_vla_dagger 18 of 18,
+  test_vla_follow_smooth 14 of 14, test_vla_follow_reacquire 13 of 13,
+  test_vla_prev_front_rate 25 of 25, test_vla_speed_words 17 of 17.
+
+#### Limits
+- The panels are drawn into the frames during the flight, so videos
+  already recorded keep the old text; their run index says so
+  (`D:\vla_drone_offload\jetson_runs\INDEX.md`). The DejaVu face changes the
+  PC videos' look slightly (wider text) from today on.
+
 ### 2026-11-04 (afternoon) — the KPIs read what the rules could not see and what the aircraft hit: a flight off the obstacle map is no longer a measured 0.0, and a flight that touched a building is no longer a success
 
 #### Fixed
