@@ -95,7 +95,13 @@ def test_without_a_start_the_wall_clock_reads_the_missions_zone_and_says_so():
 def test_rail_shield_gives_the_shield_the_rails_clock():
     from guardrail.replay import rail_shield, rule_clock
     pol = load_policy(_windowed_policy_file())
-    inside = State(x=15.0, y=15.0, up=10.0)
+    # Inside nfz-square (7-23 x 7-23), 0.5 m west of its centre: its nearest
+    # edge is the west one, so the 1 m/s east command is not the way out. At
+    # the exact centre every edge is a tie, which since 2026-11-03 goes to the
+    # edge the command heads for (shield.escape_direction), and the command
+    # would be escaping: the violation this test reads came from the ring's
+    # vertex order there.
+    inside = State(x=14.5, y=15.0, up=10.0)
     hits = {}
     for hhmm in ("08:30", "12:00"):
         clock, _ = rule_clock(f"2026-10-12T{hhmm}:00", elapsed=lambda: 0.0)

@@ -2264,6 +2264,17 @@ class FenceGuard:
         """The keep-out zones' margin rings, from the Shield, in force now."""
         return [r.buffered for r in self.shield.zones_now()]
 
+    def _ruler(self):
+        """What gate() and slide() measure distances with: the Shield's
+        ruler over the zones in force now (`Shield.zone_ruler()`). A subclass
+        that hands the guard its own zones through `polys`
+        (tests/test_follow_motion.py puts a fence where a test needs one) is
+        measured by the same ruler over those rings (ZoneRuler.of_rings)."""
+        if type(self).polys is FenceGuard.polys:
+            return self.shield.zone_ruler()
+        from guardrail.shield import ZoneRuler
+        return ZoneRuler.of_rings(self.polys)
+
     @property
     def _aim_keepout(self):
         """The zones grown by the stand-off plus a metre, as one shape, for
@@ -2417,7 +2428,7 @@ class FenceGuard:
         # "the building the guard is braking for", so record it only then
         # (review of f7611f9, 2026-10-19).
         self.last_obstacle_d = o_d if o_scale < 1.0 else None
-        ruler = self.shield.zone_ruler()
+        ruler = self._ruler()
         if not ruler:
             self.last_fence_d = None
             self.last_cause = o_cause
@@ -2509,7 +2520,7 @@ class FenceGuard:
         speed = math.hypot(vx, vy)
         # The Shield's distances to the zones in force now (one ruler for
         # every probe of this call).
-        ruler = self.shield.zone_ruler()
+        ruler = self._ruler()
         polys = bool(ruler)
         # A BUILDING IS AS GOOD A REASON TO SIDESTEP AS A FENCE.
         #

@@ -628,6 +628,15 @@ class ZoneRuler:
         self.records = tuple(records)
         self._rings = tuple(r.buffered for r in self.records)
 
+    @classmethod
+    def of_rings(cls, rings) -> "ZoneRuler":
+        """The same measure over margin rings given directly (shapely
+        polygons), for a caller that is handed zones rather than reading
+        them from a Shield (a test that puts a fence where it needs one)."""
+        ruler = cls(())
+        ruler._rings = tuple(rings)
+        return ruler
+
     def __bool__(self) -> bool:
         return bool(self._rings)
 
