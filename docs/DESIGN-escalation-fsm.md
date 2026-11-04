@@ -190,6 +190,13 @@ never gated.
 - X7 now ends wind-12 lane 15 earlier;
 - the longer runs add two recoveries.
 
+On 4 Nov, republished from the merged tree (a586956): 2.926 s over 39, max
+6.7 s. One cell moved: dyn-nfz-spawn-on-top@size_m=20 leaves in 2.8 s
+instead of 5.6 s. The zone appears centred on the aircraft, so every edge is
+equally near; since `shield.escape_direction` breaks that tie by the
+commanded heading, the pilot's forward command is the way out and the Shield
+passes it, where GeofenceEscape used to steer for a side edge.
+
 Nothing was changed to move this figure. The longest recoveries are
 escapes at the caps from imposed positions (a grown zone, a reclassified
 ring, a spawn on top), so they are limited by physics.

@@ -16,6 +16,82 @@ shipped change and recorded as one.
 
 ## [Unreleased]
 
+### 2026-11-04 (lab CI) — the full lab run at dea9a1e: four failing files, each fixed at its cause; the library republished from the merged tree, one cell moved
+
+#### Fixed
+- **test_policy_dsl_grant_form: a stale expectation, not a regression.** IR
+  schema 3.1.0 (F) rounds the policy's local view to the micrometre on
+  purpose (`guardrail/projection.py`); the test still demanded that view be
+  bit-identical to the reference implementation's projection, (38.961822,
+  40.341935) against (38.9618217773572, 40.341935165238766). The branch's own
+  run skipped it: it has no reference checkout. The test now holds the
+  projector to the last bit, the view to the rounded value and the gap to
+  half a micrometre; 66/66 (59fa12b).
+- **test_track_truth had been failing in the lab since the 28 October Jetson
+  matrix flights, and its assert named only the first flight it met.**
+  Listed in full, 206 flights scored and 53 lost to their null:
+  - 31 were flown with `--teacher-truth`. Their boxes are the subject's true
+    position, not a detection, so they say nothing about a detector. They are
+    skipped by the flight's own `metrics.json` declaration, never by score.
+  - 10 held the subject within 8 px of the frame centre and lost by more
+    than the tie bound (5 % + 0.1 px): six on the Orin Nano (28 Oct), four on
+    the AGX Orin (3-4 Nov), e.g. agx_follow_01 3.3 px against 3.0. A new
+    shape accepts them only with the box within 8 px of the subject at the
+    median AND within 25 px on at least three scored ticks in four (lowest
+    such flight 0.823; the nearest loss under it that is not a crowd flight,
+    0.236).
+  - aiot_rec_k01, the black-car recording kept but not trained on (30 Oct),
+    94.3 px against 75.1: its own controller was in TRACK on 12 % of ticks.
+    Shape five: the flight said it had lost the subject.
+  - This reverses the 29 Oct note on orin_hier_aerovla_20261028 ("the
+    tolerance is not widened to fit it"). The tie bound is not widened; the
+    new shape needs independent evidence that the box was on the subject,
+    and `test_the_loss_shapes_do_not_excuse_a_box_off_the_subject` shows
+    each shape refusing a flight just past it (a box 12 px off a centred
+    subject, a box off it on 40 % of ticks, a controller that believed it
+    was tracking while 94 px off). 37/37 (a586956).
+
+#### Changed
+- **`docs/data/scenario_sweep.json` republished from the merged tree**
+  (a586956, clean; the 3 Nov publish was 11252c7-dirty). 154 pass, 22
+  tracked, 0 fail, 4 known failures, as before; fail-safe 175/179 = 0.978,
+  unchanged. One cell moved, dyn-nfz-spawn-on-top@size_m=20: 77 P0 violation
+  ticks and 77 repairs became 0 and 0, out of the zone in 2.8 s instead of
+  5.6 s, mission fail became success. Library: mean time to safe 2.997 s ->
+  2.926 s (39 recoveries, max 6.7 s), mission success 0.5419 -> 0.5475,
+  null-passthrough P0 rate 0.2420 -> 0.2404, mean repair magnitude 6.978 ->
+  6.995 m/s.
+- `docs/FINAL-REPORT-outline.md` (the KPI table and WP3-17) and
+  `docs/DESIGN-escalation-fsm.md` quote the new figures.
+
+#### Found
+- **The zero in that cell was checked, not assumed.** The zone appears
+  centred on the aircraft, so all four edges are equally near. Since E's
+  `escape_direction` breaks such a tie by the commanded heading, the pilot's
+  forward command is the way out and the Shield passes it; before, the tie
+  went to a side edge and GeofenceEscape flew there. The per-tick log (a
+  re-run of the two cells with `--keep-logs`) flags the state unsafe from
+  t = 5.1 s until the aircraft is out, with no action violating P0 - so
+  none is counted. The 40 m variant has shown the same since the cell was
+  added (7 Oct).
+- **The track scorer's error carries the box's age times the yaw rate.** It
+  judges each box against the subject projected at the tick, not at the
+  frame's capture (det_age_s, median 0.18 s on the teacher flights). On
+  aiot_tch_w03/w04, flown with DART yaw-rate perturbations, the error is
+  85.5 / 90.8 px on ticks where age x yaw rate exceeds 20 px and 11.6 /
+  10.8 px where it is under 5 px. The term is small at ordinary yaw rates;
+  it is there on every flight.
+
+#### Tests
+- Lab CI at dea9a1e (`docs/data/ci_local/dea9a1ea3bfb.json`): 137 of 141
+  files, 3578 of 3617 tests, claim scan clean, smoke fail-safe 0.984127
+  (never-trigger null 0.634921). Two of the four failures are fixed above;
+  the two deck files (test_explainer_deck, test_build_progress_oct_data)
+  have their own section.
+- On the republished sweep: test_kpi_magnitudes 84/84, test_sweep 102/103
+  (1 skip), test_build_eval_data 10/10, test_build_deck_data 8/8,
+  test_check_claims 22/22, `tools/check_claims.py` clean.
+
 ### 2026-11-04 (merge) — the three 3 November branches on master: 49 DONE, 78 PARTIAL, 8 DRIFT, 1 MISSING
 
 #### Changed
