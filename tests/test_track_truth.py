@@ -351,6 +351,36 @@ def test_logs_without_names_are_not_instance_scorable():
     assert score_instance(rows) is None
 
 
+def _loss_shape(real, null, in_shot, absent, candidates, inst_margin,
+                on_target_25=None, track_share=None):
+    """The known shape that excuses a flight whose median lost to its null, or
+    None. Each shape, and the flights that set it, is described where
+    test_the_median_separates_where_the_fraction_does_not applies this.
+
+    real, null: the in-shot median and its null, px. in_shot: frac_in_shot.
+    absent: the share of detected ticks the flight's presence check called
+    ABSENT. candidates, inst_margin: the crowd's (truth_candidates_max, the
+    one-figure score's margin over its null). on_target_25: the share of
+    scored ticks with the box within 25 px of the subject. track_share: the
+    share of ticks the flight's own controller spent in TRACK
+    (metrics.json mode_frac.track)."""
+    if in_shot < 0.5:
+        return "out_of_frame"                                   # shape one
+    if absent is not None and absent > 0.5:
+        return "presence_absent"                                # shape two
+    if (candidates is not None and candidates > 1
+            and inst_margin is not None and inst_margin >= 0.05):
+        return "crowd"                                          # shape three
+    if in_shot >= 0.95 and null <= 8.0 and real <= null * 1.05 + 0.1:
+        return "centre_tie"                                     # shape four
+    if (in_shot >= 0.95 and null <= 8.0 and real <= 8.0
+            and on_target_25 is not None and on_target_25 >= 0.75):
+        return "centre_held"                                    # shape four, past a tie
+    if track_share is not None and track_share < 0.5:
+        return "lost"                                           # shape five
+    return None
+
+
 def test_the_median_separates_where_the_fraction_does_not():
     """Why the headline moved. The threshold count is within a whisker of a
     lag-1 baseline everywhere - repeat your own last box and you score the same
@@ -367,7 +397,18 @@ def test_the_median_separates_where_the_fraction_does_not():
     null, where the class-level null is the distance to the nearest of forty
     people and measures the crowd's density, not the detector; and a tie at
     the frame centre under 8 px, where the aircraft held the subject so close
-    to the centre that the constant-centre null cannot be beaten."""
+    to the centre that the constant-centre null cannot be beaten - or, past a
+    tie, a box still within 8 px of a subject held there and within 25 px of
+    it on at least three ticks in four (agx_follow_01). A fifth (2026-11-04):
+    a flight whose own controller was out of TRACK on most ticks - it had
+    lost the subject, and said so (aiot_rec_k01). The predicate is
+    `_loss_shape`; the test after this one shows each shape refusing a
+    flight just past it.
+
+    Flights flown with --teacher-truth are not scored here: their "detector"
+    boxes were the subject's TRUE position (follow_vlm, metrics.json
+    teacher_truth), so the median measures two projections of the truth
+    against each other, not a detector."""
     from track_truth import score_instance
     out = ROOT / "demo" / "out"
     # The fixture is the recorded FLIGHTS, not the directory (review of
@@ -385,9 +426,30 @@ def test_the_median_separates_where_the_fraction_does_not():
     if not runs:
         return SKIP
     checked = 0
-    wins, losses = [], []
+    wins, losses, teachers = [], [], []
     presence_absent = {}
     for run in runs:
+        try:
+            metrics = json.loads((run / "metrics.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            metrics = {}
+        if not isinstance(metrics, dict):
+            metrics = {}
+        # A TEACHER IS NOT A DETECTOR (2026-11-04). With --teacher-truth every
+        # box in the log is drawn where the subject truly is (follow_vlm
+        # _teacher_box); nothing detected it. Scoring those boxes against the
+        # truth compares the truth with itself, a box from the capture against
+        # the subject projected at the tick, so the "error" is mostly the
+        # box's age times the aircraft's yaw rate: on aiot_tch_w03 / w04
+        # (DART yaw-rate perturbations) the median came out 39.1 and 39.8 px,
+        # 85.5 and 90.8 px on the ticks where age x yaw rate exceeds 20 px
+        # and 11.6 and 10.8 px where it is under 5 px. Of the 31 teacher
+        # flights on disk on 2026-11-04, 19 beat the null and 12 lost to it,
+        # and none of it says anything about a detector. The skip is by the
+        # flight's own declaration, not by its score.
+        if metrics.get("teacher_truth"):
+            teachers.append(run.name)
+            continue
         # load_rows, not a bare read: it recovers each box's frame width, and
         # without it every 768 px flight is scored as if it were 400 px wide.
         rows = load_rows(run)
@@ -408,9 +470,11 @@ def test_the_median_separates_where_the_fraction_does_not():
             inst_margin = (None if not inst or inst.get("frac_on_target") is None
                            or inst.get("frac_on_target_chance") is None
                            else inst["frac_on_target"] - inst["frac_on_target_chance"])
+            track_share = (metrics.get("mode_frac") or {}).get("track")
             losses.append((run.name, r["det_gt_err_px_median_in_shot"],
                            r["det_gt_err_px_median_chance"],
-                           r["frac_in_shot"], r["truth_candidates_max"], inst_margin))
+                           r["frac_in_shot"], r["truth_candidates_max"], inst_margin,
+                           r["frac_on_target_25px"], track_share))
 
     # NOT "beats every null on every flight". The first version of this test
     # skipped every flight with frac_in_shot < 0.5 - which is exactly the two
@@ -428,7 +492,8 @@ def test_the_median_separates_where_the_fraction_does_not():
     # is the statistic working.
     assert checked >= 20, checked
     assert len(wins) >= 15, (len(wins), losses)
-    for name, real, null, in_shot, candidates, inst_margin in losses:
+    for (name, real, null, in_shot, candidates, inst_margin, on_target_25,
+         track_share) in losses:
         # SHAPE TWO: the flight's OWN presence check said the box was not the
         # subject on most ticks. citylife_follow2 and _follow3 lose to the null
         # (128.2 px against 31.9, 113.5 against 23.3) with somebody in frame
@@ -468,17 +533,76 @@ def test_the_median_separates_where_the_fraction_does_not():
         # DAgger siblings win 5.0-7.1 against 5.8-8.3), only under 8 px (1 %
         # of a 768 px frame), only with the subject in frame on >= 95 % of
         # rows: a box on the wrong object is not within 8 px of the subject.
+        #
+        # SHAPE FOUR, HELD AT THE CENTRE BUT NOT A TIE (2026-11-04). This test
+        # had been failing in the lab checkout since the 28 October Jetson
+        # matrix flights, reporting only the first flight it met. Listed in
+        # full on 2026-11-04, ten flights lost by more than the tie bound with
+        # the subject held within 8 px of the centre - six on the Orin Nano
+        # (28 October), four on the AGX Orin (3-4 November) - among them
+        # agx_follow_01 (the first follow with the controller on the AGX Orin):
+        # 3.3 px against 3.0 (0.382 deg against 0.349), subject in frame on
+        # every scored row. That gap is about 10 %, past the tie bound above
+        # (5 % + 0.1 px = 3.25 px), so it is not called a tie. It is the same
+        # shape for the reason the tie was excused: the box is on the subject
+        # while the aircraft holds the subject so close to the centre that the
+        # constant cannot be beaten. Accepted only with the box within 8 px of
+        # the subject at the median AND within 25 px (3 % of a 768 px frame) on
+        # at least three scored ticks in four - the box did not wander. The
+        # bound was set with these flights in view: the lowest centre-held
+        # flight scores 0.823 (nfz3b_agx_hier_aerovla_20261104); of the other
+        # losses only the crowd flight citylife_ped_final comes near (0.799,
+        # and its 12.0 px median already fails the 8 px condition), and the
+        # next is 0.236 (citylife_follow3, a box on buildings). The flight's
+        # presence share is not used here: on several hier flights it is
+        # 9-20 % with the box on the subject, so it does not separate them.
+        #
+        # SHAPE FIVE, LOST (2026-11-04, aiot_rec_k01, the hand-written follow
+        # flown on the black car on 2026-10-30): 94.3 px against 75.1, subject
+        # in frame on 59 % of rows. CHANGELOG (2026-10-30, night) records it
+        # within 30 m of the car on 6.9 % of ticks at a median distance of
+        # 166.6 m, kept but not trained on. Its own controller agrees: TRACK
+        # on 12 % of ticks, its search planner on 78 %. A flight that says it
+        # had lost the subject, and whose median says the same, is the median
+        # working.
         absent = presence_absent.get(name)
-        crowd_ok = (candidates is not None and candidates > 1
-                    and inst_margin is not None and inst_margin >= 0.05)
-        centre_tie = in_shot >= 0.95 and null <= 8.0 and real <= null * 1.05 + 0.1
-        assert (in_shot < 0.5 or (absent is not None and absent > 0.5) or crowd_ok
-                or centre_tie), (
+        shape = _loss_shape(real, null, in_shot, absent, candidates, inst_margin,
+                            on_target_25, track_share)
+        assert shape, (
             f"{name} lost to the null ({real} px against {null}) on a flight "
             f"whose subject was in frame {in_shot:.0%} of the time and whose "
             f"presence check called the box ABSENT on "
-            f"{'unknown' if absent is None else f'{absent:.0%}'} of ticks - "
-            f"that is not a known shape of this exception")
+            f"{'unknown' if absent is None else f'{absent:.0%}'} of ticks, with "
+            f"the box within 25 px on {on_target_25} of them and the controller "
+            f"in TRACK on {track_share} - that is not a known shape of this "
+            f"exception")
+
+
+def test_the_loss_shapes_do_not_excuse_a_box_off_the_subject():
+    """The exceptions above are a guard only if a bad flight still fails them.
+    Each shape at the numbers of a flight that set it, then flights just past
+    what the shape excuses. Runs without any flight on disk."""
+    S = _loss_shape
+    # Arguments: real px, null px, frac_in_shot, presence ABSENT share,
+    # truth candidates, instance margin, share within 25 px, TRACK share.
+    assert S(203.1, 35.6, 0.17, 0.21, 1, None, 0.018, None) == "out_of_frame"  # envactor3
+    assert S(128.2, 31.9, 0.94, 0.61, 31, None, 0.126, None) == "presence_absent"  # citylife_follow2
+    # The crowd shape at citylife_ped_final's medians (12.0 against 7.4);
+    # the margin here is illustrative.
+    assert S(12.0, 7.4, 1.0, 0.18, 32, 0.06, 0.799, None) == "crowd"
+    assert S(5.5, 5.3, 1.0, 0.096, 1, None, 0.886, None) == "centre_tie"      # ft_dagger_01
+    assert S(3.3, 3.0, 1.0, 0.006, 1, None, 0.929, None) == "centre_held"     # agx_follow_01
+    assert S(94.3, 75.1, 0.592, 0.12, 1, None, 0.106, 0.12) == "lost"         # aiot_rec_k01
+    # Just past each one:
+    assert S(12.0, 7.4, 1.0, 0.18, 32, 0.04, 0.799, None) is None   # one-figure score lost
+    assert S(12.0, 3.0, 1.0, 0.006, 1, None, 0.929, None) is None   # box 12 px off a centred subject
+    assert S(3.3, 3.0, 1.0, 0.006, 1, None, 0.60, None) is None     # box off it on 40 % of ticks
+    assert S(3.3, 3.0, 1.0, 0.006, 1, None, None, None) is None     # nothing says where the box was
+    assert S(3.3, 3.0, 0.90, 0.006, 1, None, 0.929, None) is None   # subject out of frame on 10 %
+    assert S(8.5, 8.4, 1.0, 0.006, 1, None, 0.929, None) is None    # subject held 8.4 px off centre
+    # The controller believed it was tracking while the box was 94 px off:
+    # exactly the flight this test exists to surface.
+    assert S(94.3, 75.1, 0.592, 0.12, 1, None, 0.106, 0.60) is None
 
 
 def test_a_constant_detector_is_the_null_model_that_actually_bites():
