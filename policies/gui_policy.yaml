@@ -1,5 +1,12 @@
 policy_id: gui-mission
-version: 0.1.1
+version: 0.1.2
+# WGS84 since 2026-11-03 (tools/convert_policies_wgs84.py, from the
+# metres of 0.1.1). Frame origin: the Project AirSim scenes' home-geo-point.
+# Points are lat/lon; the x North / y East metres about this origin
+# that comments here use are the view the Shield computes from them.
+origin:
+  lat: 35.6895
+  lon: 139.6917
 constraints:
 - id: gui-nfz-1
   type: polygon_fence
@@ -7,14 +14,14 @@ constraints:
   priority: P0
   violation_action: project_fix
   vertices:
-  - x: -6.5
-    y: 25.5
-  - x: 12.5
-    y: 25.5
-  - x: 12.5
-    y: 40.0
-  - x: -6.5
-    y: 40.0
+  - lat: 35.689441609507
+    lon: 139.691982040249
+  - lat: 35.689612289411
+    lon: 139.691982040249
+  - lat: 35.689612289411
+    lon: 139.692142416077
+  - lat: 35.689441609507
+    lon: 139.692142416077
   altitude_floor_m: 0
   altitude_ceiling_m: 60
   margin_m: 1.0
@@ -24,14 +31,14 @@ constraints:
   priority: P0
   violation_action: project_fix
   vertices:
-  - x: -40.2
-    y: -9.0
-  - x: -32.0
-    y: -9.0
-  - x: -32.0
-    y: 5.5
-  - x: -40.2
-    y: 5.5
+  - lat: 35.689138877256
+    lon: 139.691600456383
+  - lat: 35.689212539109
+    lon: 139.691600456383
+  - lat: 35.689212539109
+    lon: 139.691760832211
+  - lat: 35.689138877256
+    lon: 139.691760832211
   altitude_floor_m: 0
   altitude_ceiling_m: 60
   margin_m: 1.0
@@ -41,14 +48,14 @@ constraints:
   priority: P0
   violation_action: project_fix
   vertices:
-  - x: -7.8
-    y: -38.2
-  - x: 2.0
-    y: -38.2
-  - x: 2.0
-    y: -30.0
-  - x: -7.8
-    y: -30.0
+  - lat: 35.689429931408
+    lon: 139.691277492647
+  - lat: 35.689517966306
+    lon: 139.691277492647
+  - lat: 35.689517966306
+    lon: 139.691368187942
+  - lat: 35.689429931408
+    lon: 139.691368187942
   altitude_floor_m: 0
   altitude_ceiling_m: 60
   margin_m: 1.0

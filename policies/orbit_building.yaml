@@ -36,7 +36,14 @@
 # The usual spawn at (35, -20) is 40.3 m from the centroid, so the aircraft
 # starts essentially ON the ring and the transit does not eat the flight window.
 policy_id: orbit-building
-version: 0.1.1
+version: 0.1.2
+# WGS84 since 2026-11-03 (tools/convert_policies_wgs84.py, from the
+# metres of 0.1.1). Frame origin: the Project AirSim scenes' home-geo-point.
+# Points are lat/lon; the x North / y East metres about this origin
+# that comments here use are the view the Shield computes from them.
+origin:
+  lat: 35.6895
+  lon: 139.6917
 constraints:
   # The orbit radius and this rule interact directly: an orbit inside the
   # clearance ring is an unflyable policy, and that is checked above rather than

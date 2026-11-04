@@ -1000,6 +1000,143 @@ a Windows path WSL's git cannot follow).
 - The tie-break reads the COMMANDED heading, not the velocity relative to
   a moving zone. That keeps "a hover in a drifting zone's middle is not
   escaping" (`tests/test_shieldcore_identity.py`).
+### 2026-11-03 (F) — WGS84 is the stored form of every policy; distance_envelope enforced; MSL flies over a stated ground
+
+#### Added
+- `tools/convert_policies_wgs84.py` (WP1-14): rewrites a policy written in
+  local metres as WGS84 - a stated `origin` and every point as lat/lon about
+  it - and proves, per file, that it enforces the same geometry: every
+  point round-trips within 1 um (unrounded error at most 5.5e-8 m over 257
+  points) and the policy's view gives back the old metres exactly; the
+  converted file's metre form at the old version has the old canonical
+  bytes, so the same hash, IR 2.x forms and 16-hex forms; zones, tubes,
+  start conflicts, flight problems and runtime notes unchanged. Record:
+  `docs/data/wgs84_conversion.json`. Origins: the ArduPilot SITL home (CMAC,
+  -35.363261, 149.165230) for the three policies flown on the SITL rails,
+  whose MAVLink adapter refuses zones more than 5 m from home; the Project
+  AirSim scenes' home-geo-point (35.6895, 139.6917) for the other 28.
+- `Policy.metre_form()` and `bundle.rewind` / `FRAME_FORM`
+  (`sha256-canonical-v3/local-metres`): a converted file answers for its
+  metre versions; `policy_candidates` walks the chain through it, so a run
+  flown under any metre version resolves to the file it flew.
+- `guardrail/terrain.py` (X-11): a ground-elevation source for MSL rules.
+  `FlatGround(elevation, source)`, the rails' own home altitudes
+  (`SITL_CMAC` 584 m, `PAS_SCENE` 40 m, `scene_ground(scene)`), and the
+  conversion of an MSL band to the AGL band over it.
+- `Shield(road_map=...)` (WP1-07): a road field (the street mask,
+  `demo/build_street_mask.py`) built and read exactly as the obstacle field.
+- `tests/test_distance_envelope_msl.py`: 12 tests, in the CI loop and its
+  header (`.github/workflows/tests.yml`). Run on Windows under 3.10
+  (vla-real) and 3.11 (vla-drone), 12/12 each; not yet in the WSL job venvs
+  the header describes for earlier additions.
+
+#### Changed
+- **IR schema 3.1.0** (docs/IR-MIGRATIONS.md). A point's `x` / `y` are
+  optional: a WGS84 point stores lat/lon only, and its metres are a view the
+  Shield or the compiler computes when it first reads them, from the frame
+  origin the policy binds it to, cached per origin and rounded to the
+  micrometre (`models.XY`, `projection.local_metres`). Nothing is projected
+  at load. Every 3.0.0 document validates; every policy file hashed as
+  under 3.0.0 before the conversion (all 32 hash forms compared).
+- **The 31 metre policies are WGS84** and raised their patch version:
+  `fase3-sim-demo` 0.1.2 -> 0.1.3, the other 30 0.1.1 -> 0.1.2
+  (`wgs84-taipei-demo` stays 0.1.1). The lock gained 31 entries and lost
+  none; each names its metre version in `migrated_from`. The scenario
+  generator writes WGS84 (`--metres` for the old form); the Orin launcher
+  defaults to `follow-car-citylife-nfz-v0.1.2`.
+- **distance_envelope is enforced** (WP1-07; RUNTIME_TYPES, the Shield's
+  ENFORCED_TYPES). The Shield enforces it as the runtime rule of its class,
+  under the rule's own id, priority, action and schedule: buildings as a
+  clearance rule on the obstacle map, roads as one on the road map, people
+  as a stand-off from the tracked subject while it is classified as a
+  person. A buildings or roads envelope without its map is refused at
+  construction - never inert. The compiler renders it (three templates);
+  the city rail passes the street mask when a policy needs it.
+- **MSL is an opt-in that names its ground** (X-11): the loaders take
+  `ground=`, the Shield `ground=` and enforces an MSL band as the AGL band
+  over it; a hot-apply follows the Shield's ground. Without a ground MSL is
+  refused, as before.
+- shield.py, for the other stream refactoring it: imports, ENFORCED_TYPES,
+  `_field_name`, `_runtime_rule` / `_build_runtime`, the constructor
+  (`road_map`, `ground`, `require_maps`), `unenforceable(ground)`,
+  `_field_for`, the `ground` property, a field argument on `_distance_at`,
+  `_away_dir`, `_clear_min_dist`, `_best_clear_dir`, `_clear_forecast`,
+  `_check_clearance`, the clearance block of `_check_in`,
+  `_repair_clearance`, the geofence slide's clearance side check,
+  `_depth_terms`, the rule clearance table, `rule_status`, `_commit`. With no
+  road rule every call reads the obstacle map as before. compiler.py: a
+  relevance branch, a cost-map branch, the by-type order and
+  `require_maps=False` on its two in-force Shields. ir.py:
+  `PolicyIR.from_policy(rules=...)`.
+
+#### Fixed
+- `tests/test_policy_hud.py` pinned `v0.1.0` and failed since IR 3.0.0 (it
+  is not in the CI loop); it reads the file's own version.
+- Tests that took a shipped file as "a policy in metres with no origin"
+  (test_api, test_bundle, test_csp, test_geo_to_policy,
+  test_policy_dsl_grant_form, test_scenario_spec) use its metre form;
+  test_window_opens_on moves the survey corridor's point in lat/lon (one
+  rule, one frame); the version pins of test_policy_hash, test_csp and
+  test_railinputs_policy name the converted versions; tests that used
+  distance_envelope as "the type no loader accepts" use an MSL height with
+  no ground.
+
+#### Found
+- The full CI list, once, sequentially (`tools/ci_local.py --no-smoke
+  --no-summary`, vla-real, at 0c0782b): 135 of 138 files, 3446 of 3559
+  tests, claims scan rc 0. None of the three failures is this change's:
+  test_harnesstruth_bundles fails the same way on the base 6b80775 (the
+  library's `dyn-nfz-spawn-on-top@size_m=40` cell ends in Loiter, censored,
+  so the sweep it runs exits 1); test_track_truth failed in the lab
+  checkout's CI at b3796cb too (the known lab-only failure); and
+  test_wp4outputs_harness's idle-session test (a 0.3 s wall-clock TTL)
+  passed in this branch's first full run and fails on the base code in the
+  same session.
+- Cost: the Shield's tick did not move (median 1.84 vs 1.85 ms, 1500 ticks
+  of follow_car_citylife_nfz3b, base vs this code, beside a running CI
+  loop); `policy_hash` 40 -> 53 us for that policy (the point serialiser).
+- The library sweep did not move: before and after, P0 escape 0.0 over the
+  Shield-flown ticks of 179 shield-on episodes (null passthrough 0.244922,
+  shield-off control 0.24), fail-safe labels 174/178, every episode's P0
+  count, status, repairs and outcome equal. One episode on
+  `wgs84_taipei.yaml` moved in the 7th decimal of a repair sum (16.702743 ->
+  16.702742): that policy's view is now rounded to the micrometre.
+- Stored runs in the lab checkout (read-only, 4 Nov): 386 of 396 manifests
+  resolve directly with the base code and with this code, each to the same
+  id@version and the same content (the 27 flown at a 0.1.1 version, the AGX
+  flights among them, through the converted file's metre form); the other
+  10 (ros2_hotapply_*, ros2_action_*, gazebo_shield_on_dynamic_20261102)
+  changed their policy in flight and resolve through their own generation
+  chain, 10 of 10 with either code, to `fase3-sim-demo@0.1.1`.
+- The 19 bundles in the lab checkout's `bundles/` verify with this code; a
+  pre-3.1.0 WGS84 bundle's multi-scale geometry is read within half a
+  micrometre of the rounded view.
+- The 13 flight bundles rebuilt with the lab key (into a scratch folder)
+  load through `load_for_flight` signature-verified, and through each rail's
+  path: the SITL policies' origin is 0.0 m from SITL home (the adapter
+  uploads), every CityLife policy anchors the PAS rail at its scene's home
+  (the identity), the city and vla_fly Shields build, every CSP compiles.
+  `wgs84-taipei-demo` anchors in Taipei, so on a PAS scene its zone is where
+  WGS84 puts it, about 2000 km away.
+
+#### Limits
+- people: the Shield knows one subject, so a person who is not the tracked
+  subject is outside the rule. Buildings and roads exist where the maps
+  cover. vla_fly and the PAS rail pass no road map, and load their obstacle
+  map only for an obstacle_clearance rule, so a roads or buildings envelope
+  is refused there (loudly), not flown. guardrail/kpi.py's blind-tick count
+  (master, 4 Nov) assumes every rule on the obstacle map is P0; a P1
+  distance_envelope over buildings would break that.
+- MSL: a flat ground only (a varying one is refused); no rail passes a
+  ground yet, and the CSP still refuses an MSL rule.
+- A metre document still loads: the legacy read form for pre-2026-11-03
+  bundles, runs and lock recipes, and what the REST API, the Shield's own
+  zone edits and the stress harness's spawned zones write. Stored artefacts
+  need it; new input could be converted at ingest.
+- No simulator flight of a converted bundle (none was run here); the Orin
+  needs `follow-car-citylife-nfz-v0.1.2` synced. `sitl/` usage text still
+  names `fase3-sim-demo-v0.1.2` (left to the sitl stream);
+  `docs/data/wp1_roundtrip.json` was not regenerated.
 
 ### 2026-11-03 — the 2 November branches merged; the flight bundles rebuilt for the new policy versions
 

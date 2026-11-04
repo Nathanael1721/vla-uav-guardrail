@@ -19,7 +19,14 @@
 # car comes out the far side, and the drone re-acquires and carries on. Target
 # never lost, rule never broken.
 policy_id: follow-car-nfz
-version: 0.1.1
+version: 0.1.2
+# WGS84 since 2026-11-03 (tools/convert_policies_wgs84.py, from the
+# metres of 0.1.1). Frame origin: the Project AirSim scenes' home-geo-point.
+# Points are lat/lon; the x North / y East metres about this origin
+# that comments here use are the view the Shield computes from them.
+origin:
+  lat: 35.6895
+  lon: 139.6917
 constraints:
   - id: nfz-route
     type: polygon_fence
@@ -27,10 +34,10 @@ constraints:
     priority: P0
     violation_action: project_fix
     vertices:
-      - {x: 26, y: 2}
-      - {x: 54, y: 2}
-      - {x: 54, y: 16}
-      - {x: 26, y: 16}
+      - {lat: 35.689733561974, lon: 139.691722120804}
+      - {lat: 35.689985090253, lon: 139.691722120804}
+      - {lat: 35.689985090253, lon: 139.691876966431}
+      - {lat: 35.689733561974, lon: 139.691876966431}
     altitude_floor_m: 0
     altitude_ceiling_m: 60
     margin_m: 1.0

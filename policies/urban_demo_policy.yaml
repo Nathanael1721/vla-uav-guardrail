@@ -3,7 +3,14 @@
 # obstacle avoidance below that is the flight-stack team's layer, not ours.
 # The NFZ square sits over a residential block on the diagonal route.
 policy_id: fase3-urban-demo
-version: 0.1.1
+version: 0.1.2
+# WGS84 since 2026-11-03 (tools/convert_policies_wgs84.py, from the
+# metres of 0.1.1). Frame origin: the Project AirSim scenes' home-geo-point.
+# Points are lat/lon; the x North / y East metres about this origin
+# that comments here use are the view the Shield computes from them.
+origin:
+  lat: 35.6895
+  lon: 139.6917
 
 constraints:
   - id: nfz-residential-block
@@ -12,10 +19,10 @@ constraints:
     priority: P0
     violation_action: project_fix
     vertices:
-      - { x: 7,  y: 7 }
-      - { x: 23, y: 7 }
-      - { x: 23, y: 23 }
-      - { x: 7,  y: 23 }
+      - {lat: 35.68956288207, lon: 139.691777422813}
+      - {lat: 35.689706612515, lon: 139.691777422813}
+      - {lat: 35.689706612515, lon: 139.691954389244}
+      - {lat: 35.68956288207, lon: 139.691954389244}
     altitude_floor_m: 0
     altitude_ceiling_m: 100
     margin_m: 1.0

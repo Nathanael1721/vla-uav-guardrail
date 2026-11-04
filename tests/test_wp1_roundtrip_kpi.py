@@ -512,8 +512,11 @@ def test_a_rest_flown_run_resolves_through_its_own_generation_chain():
     from guardrail.models import policy_from_raw
     cands = policy_candidates()
     base = load_policy(ROOT / "policies" / "sim_demo_policy.yaml", runtime=False)
-    g0 = {"policy_id": base.policy_id, "version": base.version, "generation": 0,
-          "constraints": [c.model_dump(mode="json", exclude_none=True) for c in base.constraints]}
+    # What the run writer writes (guardrail.replay EpisodeRecord.write_generation:
+    # the canonical IR) - with the policy's `origin` since the file is WGS84
+    # (2026-11-03); a dump of the rules alone would lose the frame.
+    g0 = json.loads(base.canonical_bytes())
+    g0["generation"] = 0
     if policy_from_raw(g0, runtime=False).policy_hash != base.policy_hash:
         return SKIP                      # the dump form drifted from the run writer's
     g1 = json.loads(json.dumps(g0))

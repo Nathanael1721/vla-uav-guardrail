@@ -668,18 +668,27 @@ def test_reprojection_is_deterministic_through_a_bundle():
 
 def test_every_metre_policy_hashes_exactly_as_before():
     """The legacy form keeps its identity: every policy written in metres has
-    the hash the lock pinned before this change."""
+    the hash the lock pinned before this change.
+
+    Since 2026-11-03 no shipped file is written in metres (WP1-14,
+    tools/convert_policies_wgs84.py): each converted file's metre form, at
+    the version it had before, is the metre policy, and it hashes exactly as
+    the lock pinned it then."""
     lock = B.load_lock()["policies"]
     n = 0
     for f in sorted((ROOT / "policies").glob("*.yaml")):
         pol = load_policy(f)
-        if pol.is_geographic:
-            continue
         ent = lock[B.lock_key(pol)]
-        ent = ent["shared_by_files"][f.name] if "shared_by_files" in ent else ent
-        assert ent["policy_hash"] == pol.policy_hash, f.name
+        if not ent.get("migration", {}).get("old_hash_form", "").startswith(B.FRAME_FORM):
+            continue
+        old_key = ent["migrated_from"]
+        metre = B.as_version(pol.metre_form(), old_key.rpartition("@")[2])
+        assert not metre.is_geographic and metre.origin is None, f.name
+        old = lock[old_key]
+        old = old["shared_by_files"][f.name] if "shared_by_files" in old else old
+        assert old["policy_hash"] == metre.policy_hash, f.name
         n += 1
-    assert n >= 27, n
+    assert n == 31, n
 
 
 def test_the_geographic_policy_keeps_its_old_hash_as_a_prior_form():
@@ -1135,13 +1144,14 @@ def test_declarable_only_rules_are_refused_for_flight_and_loaded_as_declarations
     enforcing nothing. So a flight loader refuses it, and says which and why;
     the DSL still validates, hashes and bundles it. Which types are
     declarable-only is RUNTIME_TYPES' business (it shrinks as the runtime
-    grows); distance_envelope stays in that set for the foreseeable future."""
+    grows). Since 2026-11-03 (WP1-07) it is empty: distance_envelope, the last
+    one, is enforced. The nine still do not fly from a FILE: the dynamic_nfz
+    is held (FLIGHT_HELD_TYPES), and that refusal is what is checked here."""
     p = _yaml(json.dumps(_all_nine()), "nine.json")
     msg = _refused(lambda: load_policy(p), "cannot enforce")
     declarable_only = set(GRANT_TYPES) - RUNTIME_TYPES
-    assert "distance_envelope" in declarable_only
-    for t in declarable_only:
-        assert t in msg, t
+    assert declarable_only == set(), declarable_only
+    assert "dynamic_nfz" in msg and "distance_envelope" not in msg, msg
     pol = load_policy(p, runtime=False)
     _refused(lambda: B.load_for_flight(None, p), "cannot enforce")
     b = B.write_bundle(pol, _tmp("nine.tar.gz"), signer=None)
@@ -1305,8 +1315,14 @@ def test_the_grant_form_is_produced_and_reloads_to_the_same_rules():
     assert "origin" not in g
 
 
+def _metre_demo() -> Policy:
+    """sim_demo_policy.yaml as it was written until 2026-11-03: in metres, no
+    origin (the shipped file is WGS84 since; Policy.metre_form)."""
+    return load_policy(DEMO).metre_form()
+
+
 def test_a_metre_policy_needs_an_anchor_for_the_grant_form():
-    pol = load_policy(DEMO)
+    pol = _metre_demo()
     _refused(lambda: pol.to_grant_form(), "Pass origin=")
     g = pol.to_grant_form(origin=(25.04245, 121.5314))
     back = policy_from_raw(json.loads(json.dumps(g)))
@@ -1322,7 +1338,11 @@ def test_the_export_cli_writes_the_grant_form():
     out = _tmp("g.yaml")
     assert B._main(["export", str(WGS84), "-o", str(out)]) == 0
     assert load_policy(out).to_grant_form() == load_policy(WGS84).to_grant_form()
-    assert B._main(["export", str(DEMO)]) == 2, "a metre policy with no anchor"
+    metre = _tmp("metre.json")
+    metre.write_text(_metre_demo().canonical_bytes().decode(), encoding="utf-8")
+    assert B._main(["export", str(metre)]) == 2, "a metre policy with no anchor"
+    # The shipped file states its origin (WGS84 since 2026-11-03): it exports.
+    assert B._main(["export", str(DEMO), "-o", str(_tmp("demo_g.yaml"))]) == 0
 
 
 # --------------------------------------------------------------------------- #
@@ -1333,12 +1353,16 @@ def test_the_export_cli_writes_the_grant_form():
 # A rule type neither the flight loaders nor the Shield accept. Until
 # 2026-10-07 these tests used a dynamic_nfz, which the Shield of that morning
 # ignored; the Shield has enforced dynamic_nfz since (guardrail/shield.py), so
-# the case that a loader must not hand the Shield a rule it cannot enforce is
-# now made with distance_envelope.
+# the case that a loader must not hand the Shield a rule it cannot enforce was
+# made with distance_envelope - enforced since 2026-11-03 (WP1-07), and no
+# declarable-only type is left. It is now made with an MSL height and no
+# ground-elevation source, which the loaders and the Shield still refuse (X-11:
+# MSL is an opt-in that names its ground). The rule keeps the id "people" so
+# every needle below still names it.
 UNENF_RAW = {"policy_id": "dist", "constraints": [
     {"id": "alt", "type": "altitude_envelope", **HARD_P0, "alt_min_m": 5, "alt_max_m": 60},
-    {"id": "people", "type": "distance_envelope", **HARD_P0, "object_class": "people",
-     "min_distance_m": 10.0}]}
+    {"id": "people", "type": "altitude_envelope", **HARD_P0, "alt_min_m": 600,
+     "alt_max_m": 700, "altitude_ref": "MSL"}]}
 
 
 def test_load_bundle_applies_the_flight_gate():
@@ -1475,7 +1499,7 @@ def test_every_manifest_names_both_hashes_and_both_are_verified():
     metre and reference-form-bundle halves still run, and the test ends in
     SKIP rather than PASS, so a partial run never reads as a full one. Until
     2026-10-19 the unguarded load raised FileNotFoundError there instead."""
-    metre = load_policy(DEMO)                              # not representable
+    metre = _metre_demo()                                  # not representable
     cases = [(metre, None)]
     if REF_DEMO.is_file():
         ref_pol = load_policy(REF_DEMO, runtime=False)    # representable
@@ -1722,9 +1746,11 @@ def test_load_layered_applies_the_flight_gate():
     reg = _yaml("policy_id: reg\nconstraints:\n  - {id: alt, type: altitude_envelope, "
                 f"layer: regulation, {_HP0_YAML}, alt_min_m: 5, alt_max_m: 120}}\n",
                 "reg.yaml")
-    mis = _yaml("policy_id: m\nconstraints:\n  - {id: people, type: distance_envelope, "
-                f"layer: mission, {_HP0_YAML}, object_class: people, "
-                "min_distance_m: 10}\n", "mis.yaml")
+    # An MSL height with no ground (UNENF_RAW says why: no declarable-only type
+    # is left since 2026-11-03).
+    mis = _yaml("policy_id: m\nconstraints:\n  - {id: people, type: altitude_envelope, "
+                f"layer: mission, {_HP0_YAML}, alt_min_m: 600, alt_max_m: 700, "
+                "altitude_ref: MSL}\n", "mis.yaml")
     _refused(lambda: load_layered([reg, mis]), "cannot enforce", "people")
     assert len(load_layered([reg, mis], runtime=False).constraints) == 2
 

@@ -1,0 +1,4 @@
+{#- Buildings and roads come from runtime maps the CSP does not carry; people
+    from perception, and only the tracked subject while it is a person
+    (models.DistanceEnvelope). Saying so is the honest reason. -#}
+{% if cls == "people" %}{% if follow %}the mission text asks to follow a subject, so this binds to it{% else %}the mission text does not ask to follow anything; this binds to a subject only if one is tracked{% endif %}, and only while it is classified as a person: any other person near the aircraft is outside this rule; the subject's position comes from perception at run time{% elif cls == "roads" %}applies along the whole {{ length|m }} m path; road positions come from the runtime road map, which this CSP does not carry{% else %}applies along the whole {{ length|m }} m path; building positions come from the runtime occupancy map, which this CSP does not carry{% endif %}{% if time_fact %}; {{ time_fact }}{% endif %}

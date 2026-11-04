@@ -126,6 +126,7 @@ from shapely.geometry import LineString, Point
 from . import fsm as _fsm
 from . import repair as _repair
 from . import response as _response
+from . import terrain as _terrain
 from .geometry import nearest_on_polyline, point_in_fence, push_out_direction
 from .ir import FENCE_TYPES, FenceRecord, PolicyIR, anchor_reach, compile_fence, is_fence
 from .projection import ring_order
@@ -136,7 +137,9 @@ from .models import (
     AltitudeEnvelope,
     Corridor,
     CorridorSwap,
+    DistanceEnvelope,
     DynamicNFZ,
+    EnvelopeClearance,
     KinematicEnvelope,
     ObstacleClearance,
     Policy,
@@ -148,6 +151,13 @@ from .models import (
 )
 
 BRAKE =Action4D(vx=0.0, vy=0.0, vz_up=0.0, yaw_rate=0.0)
+
+
+def _field_name(c) -> str:
+    """Which map a clearance rule is measured on: "buildings" (the obstacle
+    map: every obstacle_clearance) or "roads" (a distance_envelope over
+    roads, models.RoadClearance). WP1-07, 2026-11-03."""
+    return getattr(c, "MAP", "buildings")
 
 # A subject closer than this (metres, horizontally) is directly under or over
 # the aircraft: the line to it, and with it "closing" and "opening", is not
@@ -171,7 +181,10 @@ HOT_APPLICABLE = ("dynamic_nfz", "time_window_switch", "corridor_swap")
 ENFORCED_TYPES = frozenset({
     "polygon_fence", "circle_fence", "dynamic_nfz", "altitude_envelope",
     "kinematic_envelope", "obstacle_clearance", "subject_standoff", "corridor",
-    "time_window_switch", "corridor_swap"})
+    "time_window_switch", "corridor_swap",
+    # Since 2026-11-03 (WP1-07): enforced as its runtime rule (models.
+    # DistanceEnvelope.runtime_rule), see _build_runtime.
+    "distance_envelope"})
 
 # Breach actions that skip projection and stop. The PI reference's shield.py
 # skips projection only when the WORST violation's action is RTL or land ("Rules
@@ -1165,10 +1178,28 @@ class _Runtime:
     moving_ids: frozenset
 
 
-def _build_runtime(policy: Policy, prev: "_Runtime | None", anchors: dict) -> _Runtime:
-    cons = tuple(policy.constraints)
+def _runtime_rule(c, ground):
+    """The rule the runtime enforces for declared rule `c` (2026-11-03): a
+    distance_envelope as the runtime rule of its class (WP1-07: buildings and
+    roads as clearance rules on the obstacle and road maps, people as a
+    stand-off from a tracked person), an MSL band as the AGL band over
+    `ground` (X-11, guardrail/terrain.py). Same id, priority, breach action
+    and schedule, so every check, repair, status row and audit record names
+    the declared rule. Every other rule is itself."""
+    if isinstance(c, DistanceEnvelope):
+        c = c.runtime_rule()
+    if ground is not None and _terrain.is_msl(c):
+        c = _terrain.agl_rule(c, ground)
+    return c
+
+
+def _build_runtime(policy: Policy, prev: "_Runtime | None", anchors: dict,
+                   ground=None) -> _Runtime:
+    rules = [_runtime_rule(c, ground) for c in policy.constraints]
+    cons = tuple(rules)
     clock = RuleClock(cons)
-    ir = PolicyIR.from_policy(policy, reuse=prev.ir if prev is not None else None)
+    ir = PolicyIR.from_policy(policy, reuse=prev.ir if prev is not None else None,
+                              rules=rules)
     moving = frozenset(r.rule.id for r in ir.fences if r.moving)
     return _Runtime(
         ir=ir, constraints=cons,
@@ -1488,12 +1519,27 @@ class Shield:
                  segment_check: bool = False, repair_order: tuple | None = None,
                  hold_points: bool = True, land_site_ok=None,
                  velocity_response: "_response.VelocityResponse | None" = _response.ARDUCOPTER_GUIDED,
-                 pipe_clock=None, recovery_law: str = "cap"):
+                 pipe_clock=None, recovery_law: str = "cap",
+                 road_map: dict | None = None, ground=None, require_maps: bool = True):
         """obstacle_map: None, or {"occ": uint8 NxN (1 = blocked), "res": float,
         "ox": float, "oy": float} — the same occupancy grid the global planner
         uses. A policy YAML cannot carry an 80x80 grid, so obstacle_clearance
         rules get their world here. With obstacle_map=None those rules are
         inert and the Shield behaves exactly as before.
+
+        road_map: the same format, 1 = road (the street mask,
+        demo/build_street_mask.py): the world of a distance_envelope over
+        `roads` (since 2026-11-03, WP1-07), measured exactly as the clearance
+        rule measures buildings. A distance_envelope over buildings or roads
+        is refused at construction when its map is not given - unlike
+        obstacle_clearance, it is never inert. `require_maps=False` builds
+        one anyway, the rule then inert: only for a Shield that is asked
+        about the clock and not flown (the compiler's in-force queries).
+
+        ground: the ground-elevation source of an MSL rule (guardrail/
+        terrain.py, X-11): None refuses every rule with altitude_ref MSL, as
+        before 2026-11-03; a FlatGround (a stated elevation, per rail) lets
+        the Shield enforce an MSL band as the AGL band it is over that ground.
 
         now: a zero-argument callable returning the current datetime, used only
         to evaluate `valid_time` windows. INJECTED rather than called inline so
@@ -1646,7 +1692,9 @@ class Shield:
         # then. Read only for a state with a measured velocity.
         self._flown: deque = deque(maxlen=64)
         self._tubes: dict = {}
-        why = self.unenforceable(policy)
+        # The ground under an MSL rule (X-11, 2026-11-03); None = no MSL rule.
+        self._ground = ground
+        why = self.unenforceable(policy, ground)
         if why:
             raise ValueError("the Shield does not enforce every rule of "
                              f"{policy.policy_id!r}: " + "; ".join(why))
@@ -1666,7 +1714,7 @@ class Shield:
         # in one 50-rule check, most of its 14-33 ms.
         dyn = {c.id: None for c in policy.constraints if isinstance(c, DynamicNFZ)}
         self._anchors: dict = dyn
-        self._rt = _build_runtime(policy, None, dyn)
+        self._rt = _build_runtime(policy, None, dyn, ground)
         # The sliding-window buffer: the last HISTORY_LEN ticks' actions and
         # predicted trajectories, oldest first, which the checker reads (see
         # SlidingWindow and `history`).
@@ -1739,21 +1787,59 @@ class Shield:
             self._oy = float(obstacle_map["oy"])
             self._dist = _build_signed_distance_field(obstacle_map["occ"], self._res)
             self._dist_lip = _field_lipschitz(self._dist, self._res)
+        # The road field of a distance_envelope over `roads` (WP1-07), built
+        # the same way from road_map (1 = road): distance to the nearest road.
+        self._road = None
+        if road_map is not None and any(_field_name(c) == "roads" for c in self._rt.clear):
+            rres = float(road_map["res"])
+            rd = _build_signed_distance_field(road_map["occ"], rres)
+            self._road = (rd, rres, float(road_map["ox"]), float(road_map["oy"]),
+                          _field_lipschitz(rd, rres))
+        # A distance_envelope is never inert (models.DistanceEnvelope): one
+        # over buildings or roads without its map is refused here.
+        blind = [f"{c.id}: a distance_envelope over {_field_name(c)} needs "
+                 f"{'road_map' if _field_name(c) == 'roads' else 'obstacle_map'} "
+                 f"(the Shield has no other source of {_field_name(c)})"
+                 for c in self._rt.clear
+                 if isinstance(c, EnvelopeClearance) and self._field_for(c) is None]
+        if blind and require_maps:
+            raise ValueError("the Shield cannot enforce every rule of "
+                             f"{policy.policy_id!r}: " + "; ".join(blind))
 
     @staticmethod
-    def unenforceable(policy: Policy) -> list[str]:
+    def unenforceable(policy: Policy, ground=None) -> list[str]:
         """Rules of `policy` this Shield would NOT enforce, with the reason.
         A Shield is never built over them: a Policy object made directly (not
-        through a flight loader) reaches here without the loaders' gate."""
+        through a flight loader) reaches here without the loaders' gate.
+        An MSL height is enforceable since 2026-11-03 with a ground-elevation
+        source (`ground`, guardrail/terrain.py) and refused without one."""
         out = []
         for c in policy.constraints:
             if c.type not in ENFORCED_TYPES:
                 out.append(f"{c.id}: {c.type} is declarable in the DSL but the "
                            f"Safety Shield does not enforce it")
             if getattr(c, "altitude_ref", None) == "MSL":
-                out.append(f"{c.id}: altitude_ref MSL - heights are measured above "
-                           f"ground and there is no ground-elevation source")
+                why = _terrain.ground_problem(ground)
+                if why:
+                    out.append(f"{c.id}: altitude_ref MSL - {why}")
         return out
+
+    def _field_for(self, c):
+        """The distance field clearance rule `c` is measured on: (field, res,
+        ox, oy, lipschitz) - the obstacle map for buildings (every
+        obstacle_clearance), the road map for a distance_envelope over roads -
+        or None when that map was not given."""
+        if _field_name(c) == "roads":
+            return self._road
+        if self._dist is None:
+            return None
+        return (self._dist, self._res, self._ox, self._oy, self._dist_lip)
+
+    @property
+    def ground(self):
+        """The ground-elevation source MSL rules are enforced over (None:
+        no MSL rule can be enforced)."""
+        return self._ground
 
     # ---------------- which rules are in force right now ---------------- #
     #
@@ -2079,21 +2165,27 @@ class Shield:
 
     # ---------------- obstacle distance field ---------------- #
 
-    def _distance_at(self, x: float, y: float) -> float:
+    def _distance_at(self, x: float, y: float, f=None) -> float:
         """Approx. SIGNED metres from world point (x, y) to the nearest mapped
         obstacle — negative inside a building footprint. inf when there is no
         map. Bilinear inside the grid; outside it, a safe lower bound built from
         the distance to the map edge (every obstacle lives inside the map, so
-        being far off-map IS clear)."""
-        d = self._dist
+        being far off-map IS clear).
+
+        `f`: another field (`_field_for`: the road map of a distance_envelope
+        over roads, WP1-07), read the same way; None, the obstacle map."""
+        if f is None:
+            d, res, ox, oy = self._dist, self._res, self._ox, self._oy
+        else:
+            d, res, ox, oy = f[0], f[1], f[2], f[3]
         if d is None:
             return float("inf")
         n, m = d.shape
-        fi = (x - self._ox) / self._res
-        fj = (y - self._oy) / self._res
+        fi = (x - ox) / res
+        fj = (y - oy) / res
         ci = min(max(fi, 0.0), n - 1.0)
         cj = min(max(fj, 0.0), m - 1.0)
-        off = math.hypot((fi - ci) * self._res, (fj - cj) * self._res)
+        off = math.hypot((fi - ci) * res, (fj - cj) * res)
 
         i0 = int(math.floor(ci)); i1 = min(i0 + 1, n - 1); ti = ci - i0
         j0 = int(math.floor(cj)); j1 = min(j0 + 1, m - 1); tj = cj - j0
@@ -2129,7 +2221,7 @@ class Shield:
             # cell centre, so the half cell of building beyond it read as
             # clear and a push "out" through it counted as receding (found in
             # review, 2026-09-24).
-            return max(v - off, min(v + off, off - 0.5 * self._res))
+            return max(v - off, min(v + off, off - 0.5 * res))
         return v
 
     @property
@@ -2151,16 +2243,18 @@ class Shield:
         fj = (y - self._oy) / self._res
         return not (-0.5 <= fi <= n - 0.5 and -0.5 <= fj <= m - 0.5)
 
-    def _away_dir(self, x: float, y: float, probe_r: float) -> tuple[float, float]:
+    def _away_dir(self, x: float, y: float, probe_r: float,
+                  f=None) -> tuple[float, float]:
         """Unit vector along the local gradient of the distance field, i.e.
         'the way AWAY from the nearest building'. (0, 0) when even the probe
         finds nothing to steer by — the caller then leaves the action alone and
-        the P0 re-check decides."""
-        if self._dist is None:
+        the P0 re-check decides. `f`: the field (_distance_at)."""
+        if (self._dist if f is None else f[0]) is None:
             return 0.0, 0.0
-        h = max(self._res * 0.5, 1e-3)
-        gx = (self._distance_at(x + h, y) - self._distance_at(x - h, y)) / (2 * h)
-        gy = (self._distance_at(x, y + h) - self._distance_at(x, y - h)) / (2 * h)
+        res = self._res if f is None else f[1]
+        h = max(res * 0.5, 1e-3)
+        gx = (self._distance_at(x + h, y, f) - self._distance_at(x - h, y, f)) / (2 * h)
+        gy = (self._distance_at(x, y + h, f) - self._distance_at(x, y - h, f)) / (2 * h)
         norm = math.hypot(gx, gy)
         if norm > 1e-6:
             return gx / norm, gy / norm
@@ -2169,15 +2263,15 @@ class Shield:
         # gains the most distance, WIDENING the radius until something gains.
         # "No direction" must never fall through to a brake — a stationary
         # vehicle never recedes, so the violation would repeat forever.
-        here = self._distance_at(x, y)
-        r0 = max(probe_r, self._res)
+        here = self._distance_at(x, y, f)
+        r0 = max(probe_r, res)
         for mult in (1.0, 2.0, 4.0):
             r = r0 * mult
             best, best_d = (0.0, 0.0), here
             for k in range(8):
                 ang = k * math.pi / 4.0
                 ux, uy = math.cos(ang), math.sin(ang)
-                dv = self._distance_at(x + ux * r, y + uy * r)
+                dv = self._distance_at(x + ux * r, y + uy * r, f)
                 if dv > best_d + 1e-9:
                     best, best_d = (ux, uy), dv
             if best != (0.0, 0.0):
@@ -2572,7 +2666,7 @@ class Shield:
             return 0.0
         return min(self.lookahead_s, self.dt + v / (2.0 * _CLEAR_DECEL_MPS2))
 
-    def _clear_min_dist(self, state: State, a: Action4D) -> float:
+    def _clear_min_dist(self, state: State, a: Action4D, f=None) -> float:
         """Smallest mapped-obstacle distance `a`'s FORECAST reaches. This is the
         score every clearance repair is judged by: a repair must raise it, never
         lower it.
@@ -2580,11 +2674,12 @@ class Shield:
         The t = 0 sample is excluded on purpose — every candidate action shares
         the present position, so scoring it in makes the number blind exactly
         when the vehicle is already inside the ring and the choice matters most.
-        (A standstill has no forecast, so it scores its own position.)"""
-        if self._dist is None:
+        (A standstill has no forecast, so it scores its own position.)
+        `f`: the field (_distance_at); None, the obstacle map."""
+        if (self._dist if f is None else f[0]) is None:
             return float("inf")
         steps = self._clear_steps(state, a)
-        return min(self._distance_at(p.x, p.y) for _, p in (steps[1:] or steps))
+        return min(self._distance_at(p.x, p.y, f) for _, p in (steps[1:] or steps))
 
     def _clear_dir_candidates(self, a: Action4D, cap: float):
         """Recovery headings: 12 bearings x 2 speeds, inheriting `a`'s vertical
@@ -2609,14 +2704,14 @@ class Shield:
                 spd = cap * frac
                 yield Action4D(vx=ux * spd, vy=uy * spd, vz_up=vz, yaw_rate=yr)
 
-    def _best_clear_dir(self, state: State, a: Action4D, cap: float):
+    def _best_clear_dir(self, state: State, a: Action4D, cap: float, f=None):
         """The candidate heading whose clearance forecast keeps the most room,
-        ties broken toward the commanded heading."""
-        if self._dist is None:
+        ties broken toward the commanded heading. `f`: the field."""
+        if (self._dist if f is None else f[0]) is None:
             return None
         best, best_key = None, None
         for cand in self._clear_dir_candidates(a, cap):
-            key = (self._clear_min_dist(state, cand),
+            key = (self._clear_min_dist(state, cand, f),
                    cand.vx * a.vx + cand.vy * a.vy)
             if best_key is None or key > best_key:
                 best, best_key = cand, key
@@ -3459,19 +3554,22 @@ class Shield:
                             f"half-width {half:.1f}m"))]
         return []
 
-    def _clear_forecast(self, state: State, action: Action4D):
+    def _clear_forecast(self, state: State, action: Action4D, f=None):
         """(steps, dists) over the clearance horizon.
 
         Shared so a repair that has already paid for the forecast does not pay
-        again, once per rule per repair pass.
+        again, once per rule per repair pass. `f`: the field (_distance_at).
         """
         steps = self._clear_steps(state, action)
-        return steps, [self._distance_at(p.x, p.y) for _, p in steps]
+        return steps, [self._distance_at(p.x, p.y, f) for _, p in steps]
 
     def _check_clearance(self, c, state: State, action: Action4D,
                          steps=None, dists=None) -> list[Violation]:
-        """Trend-aware, same shape as the geofence rule."""
-        if self._dist is None:
+        """Trend-aware, same shape as the geofence rule. Measured on the
+        rule's own map (`_field_for`: buildings, or roads for a
+        distance_envelope over roads)."""
+        f = self._field_for(c)
+        if f is None:
             return []
         alive = self._mask(c)
         if alive is False:
@@ -3480,7 +3578,7 @@ class Shield:
             # A caller that passes the forecast passes it for the state the
             # rule is judged from (_check_in, _repair_clearance).
             state = self._rule_state(c, state)
-            steps, dists = self._clear_forecast(state, action)
+            steps, dists = self._clear_forecast(state, action, f)
         if self._velocity_of(state) is not None:
             # THE MEASURED VELOCITY ONLY ADDS (_predict): judged on the
             # own-velocity "stop after one control period" forecast AND, as
@@ -3618,20 +3716,28 @@ class Shield:
                                                poses, r.buffered)
         for c in self._corridors:
             found += self._check_corridor(c, state, action, shaped)
-        if self._dist is not None and self._clear:
-            # One forecast shared across every clearance rule, as before - one
-            # per state judged from, when a rule is judged from the stop
-            # point (_committed).
-            steps, dists = self._clear_forecast(state, action)
+        if self._clear:
+            # One forecast shared across every clearance rule of one map, as
+            # before - one per state judged from, when a rule is judged from
+            # the stop point (_committed). A rule whose map was not given is
+            # inert (obstacle_clearance; a distance_envelope never gets here
+            # without its map, see __init__).
+            fc: dict = {}
             other = None
             for c in self._clear:
+                f = self._field_for(c)
+                if f is None:
+                    continue
+                key = _field_name(c)
                 st = self._rule_state(c, state)
                 if st is state:
-                    found += self._check_clearance(c, state, action, steps, dists)
+                    if key not in fc:
+                        fc[key] = self._clear_forecast(state, action, f)
+                    found += self._check_clearance(c, state, action, *fc[key])
                 else:
-                    if other is None or other[0] is not st:
-                        other = (st, *self._clear_forecast(st, action))
-                    found += self._check_clearance(c, st, action, other[1], other[2])
+                    if other is None or other[0] is not st or other[1] != key:
+                        other = (st, key, *self._clear_forecast(st, action, f))
+                    found += self._check_clearance(c, st, action, other[2], other[3])
         com = self._committed(state)
         if com is not None and com[1]:
             # THE MEASURED VELOCITY ONLY ADDS (_predict), for a rule judged
@@ -3834,13 +3940,18 @@ class Shield:
         SLOWER progress but a FIRMER escape, never a limp one. soft_margin_m
         only widens the band the taper ramps over. It never zeroes the action —
         that is the brake's job."""
-        if self._dist is None or not self._clear:
+        if not self._clear:
             return a
         vx, vy = a.vx, a.vy
         cap = min((k.speed_max_mps for k in self._kins), default=4.0)
 
         outer = state
         for c in self._clear:
+            # Each rule on its own map (_field_for: buildings, or roads for a
+            # distance_envelope over roads); a rule with no map is inert.
+            f = self._field_for(c)
+            if f is None:
+                continue
             # Judged, and repaired, from the stop point when the aircraft's
             # momentum already carries it into this ring (_committed): the
             # push-out then starts before the aircraft reaches the ring.
@@ -3848,7 +3959,7 @@ class Shield:
             hard_r = c.min_clearance_m
             soft_r = c.min_clearance_m + c.soft_margin_m
             probe = Action4D(vx=vx, vy=vy, vz_up=a.vz_up, yaw_rate=a.yaw_rate)
-            steps, dists = self._clear_forecast(state, probe)
+            steps, dists = self._clear_forecast(state, probe, f)
             alive_c = self._mask(c)
             if (alive_c is not False and self._velocity_of(state) is not None
                     and not self._clearance_verdict(c, steps, dists, alive_c)
@@ -3861,7 +3972,7 @@ class Shield:
                 # change; the forecast the repair steers by must be the one
                 # that breaks (the first offending pose below).
                 state = self._positional(state)
-                steps, dists = self._clear_forecast(state, probe)
+                steps, dists = self._clear_forecast(state, probe, f)
 
             # Ask the MONITOR, against the mutating vector, rather than
             # re-deriving a weaker condition here. The two had drifted: the
@@ -3885,7 +3996,7 @@ class Shield:
                 # the monitor is happy with. (Until 2026-10-19 the passthrough
                 # declined it for this branch whenever no other rule was broken:
                 # the chain never ran. Shield._floor_the_escape runs it now.)
-                oxc, oyc = self._away_dir(state.x, state.y, hard_r)
+                oxc, oyc = self._away_dir(state.x, state.y, hard_r, f)
                 if oxc == 0.0 and oyc == 0.0:
                     continue
                 out_have = vx * oxc + vy * oyc
@@ -3904,9 +4015,9 @@ class Shield:
             # the FIRST offending pose is the obstacle we have to steer off; at
             # t = 0 that is the current position, which is the old behaviour.
             hit = steps[next(i for i, d in enumerate(dists) if d < hard_r)][1]
-            ox, oy = self._away_dir(hit.x, hit.y, hard_r)
+            ox, oy = self._away_dir(hit.x, hit.y, hard_r, f)
             if ox == 0.0 and oy == 0.0:
-                ox, oy = self._away_dir(state.x, state.y, hard_r)
+                ox, oy = self._away_dir(state.x, state.y, hard_r, f)
             if ox == 0.0 and oy == 0.0:
                 continue                       # nothing to steer by; rescue decides
 
@@ -3917,7 +4028,7 @@ class Shield:
             # flying away at 5 m/s that is 0.886 against 3.696 - a 4.2x gap, so
             # `after > before` held automatically and the "never leave it
             # worse" invariant below was suppressed exactly where it mattered.
-            before = self._clear_min_dist(state, probe)
+            before = self._clear_min_dist(state, probe, f)
 
             out_c = vx * ox + vy * oy          # outward component already commanded
             tx, ty = vx - out_c * ox, vy - out_c * oy      # tangential = mission part
@@ -3941,10 +4052,10 @@ class Shield:
             # buildings in play) fall back to the direction search rather than
             # shipping a "fix" that flies further in.
             cand = Action4D(vx=cx, vy=cy, vz_up=a.vz_up, yaw_rate=a.yaw_rate)
-            after = self._clear_min_dist(state, cand)
+            after = self._clear_min_dist(state, cand, f)
             if after <= before + 1e-9:
-                esc = self._best_clear_dir(state, probe, cap)
-                esc_d = self._clear_min_dist(state, esc) if esc is not None else None
+                esc = self._best_clear_dir(state, probe, cap, f)
+                esc_d = self._clear_min_dist(state, esc, f) if esc is not None else None
                 if esc_d is not None and esc_d > max(after, before):
                     cx, cy, after = esc.vx, esc.vy, esc_d
                 elif before >= after:
@@ -4205,8 +4316,9 @@ class Shield:
                     # that already ran, and the P0 guard brakes. The turn side is
                     # only overridden on an actual violation — a legal tangent
                     # keeps following the raw action's intent.
-                    if self._dist is not None and self._clear:
-                        hard = min(c.min_clearance_m for c in self._clear)
+                    bld = [c for c in self._clear if _field_name(c) == "buildings"]
+                    if self._dist is not None and bld:
+                        hard = min(c.min_clearance_m for c in bld)
                         pro = Action4D(vx=tx * spd, vy=ty * spd,
                                        vz_up=a.vz_up, yaw_rate=a.yaw_rate)
                         if self._clear_min_dist(state, pro) < hard:
@@ -4902,11 +5014,15 @@ class Shield:
             for so in self._standoffs:
                 if so.id in ids and so.binds(self._subject_class):
                     out.append((so.id, max(0.0, so.min_range_m - d)))
-        if self._dist is not None:
-            here = self._distance_at(x, y)
-            for c in self._clear:
-                if c.id in ids:
-                    out.append((c.id, max(0.0, c.min_clearance_m - here)))
+        here_by: dict = {}
+        for c in self._clear:
+            f = self._field_for(c) if c.id in ids else None
+            if f is None:
+                continue
+            key = _field_name(c)
+            if key not in here_by:
+                here_by[key] = self._distance_at(x, y, f)
+            out.append((c.id, max(0.0, c.min_clearance_m - here_by[key])))
         for c in self._corridors:
             if c.id in ids:
                 d_lat, _ = self._corridor_geom(c, x, y)
@@ -5034,13 +5150,14 @@ class Shield:
                 out[c.id] = RuleClearance(False, sep - c.min_range_m, inf, inf, in_force,
                                           in_force and self._standoff_inside(c, sep))
             elif c.type == "obstacle_clearance":
-                if self._dist is None:
+                f = self._field_for(c)
+                if f is None:
                     continue
-                d = self._distance_at(x, y)
+                d = self._distance_at(x, y, f)
                 if not math.isfinite(d):
                     continue
                 out[c.id] = RuleClearance(False, d - c.min_clearance_m, inf, inf, in_force,
-                                          in_force and d < c.min_clearance_m, self._dist_lip)
+                                          in_force and d < c.min_clearance_m, f[4])
             elif c.type in ("corridor", "corridor_swap"):
                 off, _ = self._corridor_geom(c, x, y)
                 out[c.id] = RuleClearance(
@@ -5126,7 +5243,8 @@ class Shield:
         # policy the Shield was flying. Only what the event ADDS is refused,
         # like the lint (the constructor keeps the policy clean, so in
         # practice that is everything).
-        bad = sorted(set(Shield.unenforceable(cand)) - set(Shield.unenforceable(self.policy)))
+        bad = sorted(set(Shield.unenforceable(cand, self._ground))
+                     - set(Shield.unenforceable(self.policy, self._ground)))
         if bad:
             raise HotApplyRefused(f"{op} {rule_id!r} refused: the Shield would not "
                                   f"enforce it: " + "; ".join(bad))
@@ -5142,7 +5260,7 @@ class Shield:
         # (expire of the last moving zone), so it is tested against None.
         anchors = self._anchors if anchors is None else anchors
         try:
-            rt = _build_runtime(cand, self._rt, anchors)
+            rt = _build_runtime(cand, self._rt, anchors, self._ground)
         except Exception as e:                       # noqa: BLE001 - any build fault
             raise HotApplyRefused(f"{op} {rule_id!r} refused: the runtime could not "
                                   f"compile the policy it would leave: "
@@ -5621,6 +5739,13 @@ class Shield:
                         row.update(bound=in_force, value=sep,
                                    distance_m=sep - c.min_range_m,
                                    breach=in_force and self._standoff_inside(c, sep))
+            elif c.type == "obstacle_clearance" and _field_name(c) == "roads":
+                # A distance_envelope over roads (WP1-07): its own map.
+                f = self._field_for(c)
+                d = self._distance_at(state.x, state.y, f) if f is not None else None
+                if d is not None and math.isfinite(d):
+                    row.update(bound=in_force, value=d, distance_m=d - c.min_clearance_m,
+                               breach=in_force and d < c.min_clearance_m)
             elif c.type == "obstacle_clearance":
                 d = clearance_m if clearance_m is not None else (
                     self._distance_at(state.x, state.y) if self._dist is not None else None)

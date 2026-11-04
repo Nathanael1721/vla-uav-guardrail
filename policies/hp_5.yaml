@@ -1,5 +1,12 @@
 policy_id: random-scenario-hp-5
-version: 0.1.1
+version: 0.1.2
+# WGS84 since 2026-11-03 (tools/convert_policies_wgs84.py, from the
+# metres of 0.1.1). Frame origin: the Project AirSim scenes' home-geo-point.
+# Points are lat/lon; the x North / y East metres about this origin
+# that comments here use are the view the Shield computes from them.
+origin:
+  lat: 35.6895
+  lon: 139.6917
 constraints:
   - id: nfz-leg-1
     type: polygon_fence
@@ -7,10 +14,10 @@ constraints:
     priority: P0
     violation_action: project_fix
     vertices:
-      - {x: 25.5, y: 6.5}
-      - {x: 41.5, y: 6.5}
-      - {x: 41.5, y: 22.5}
-      - {x: 25.5, y: 22.5}
+      - {lat: 35.689729070397, lon: 139.691771892612}
+      - {lat: 35.689872800843, lon: 139.691771892612}
+      - {lat: 35.689872800843, lon: 139.691948859043}
+      - {lat: 35.689729070397, lon: 139.691948859043}
     altitude_floor_m: 0
     altitude_ceiling_m: 60
     margin_m: 1.0
@@ -20,10 +27,10 @@ constraints:
     priority: P0
     violation_action: project_fix
     vertices:
-      - {x: 32.5, y: 24.5}
-      - {x: 48.5, y: 24.5}
-      - {x: 48.5, y: 40.5}
-      - {x: 32.5, y: 40.5}
+      - {lat: 35.689791952467, lon: 139.691970979847}
+      - {lat: 35.689935682913, lon: 139.691970979847}
+      - {lat: 35.689935682913, lon: 139.692147946278}
+      - {lat: 35.689791952467, lon: 139.692147946278}
     altitude_floor_m: 0
     altitude_ceiling_m: 60
     margin_m: 1.0
@@ -33,10 +40,10 @@ constraints:
     priority: P0
     violation_action: project_fix
     vertices:
-      - {x: -13.0, y: -45.0}
-      - {x: 3.0, y: -45.0}
-      - {x: 3.0, y: -29.0}
-      - {x: -13.0, y: -29.0}
+      - {lat: 35.689383219013, lon: 139.691202281914}
+      - {lat: 35.689526949459, lon: 139.691202281914}
+      - {lat: 35.689526949459, lon: 139.691379248344}
+      - {lat: 35.689383219013, lon: 139.691379248344}
     altitude_floor_m: 0
     altitude_ceiling_m: 60
     margin_m: 1.0
@@ -46,10 +53,10 @@ constraints:
     priority: P0
     violation_action: project_fix
     vertices:
-      - {x: -47.0, y: -0.5}
-      - {x: -31.0, y: -0.5}
-      - {x: -31.0, y: 15.5}
-      - {x: -47.0, y: 15.5}
+      - {lat: 35.689077791816, lon: 139.691694469799}
+      - {lat: 35.689221522262, lon: 139.691694469799}
+      - {lat: 35.689221522262, lon: 139.69187143623}
+      - {lat: 35.689077791816, lon: 139.69187143623}
     altitude_floor_m: 0
     altitude_ceiling_m: 60
     margin_m: 1.0

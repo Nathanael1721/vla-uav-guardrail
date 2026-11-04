@@ -21,7 +21,14 @@
 # follow_pedestrian.yaml's two stand-offs, unchanged. Nothing is relaxed for a
 # person - if the subject were ever reported as a pedestrian, 10 m binds.
 policy_id: follow-car-citylife
-version: 0.1.1
+version: 0.1.2
+# WGS84 since 2026-11-03 (tools/convert_policies_wgs84.py, from the
+# metres of 0.1.1). Frame origin: the Project AirSim scenes' home-geo-point.
+# Points are lat/lon; the x North / y East metres about this origin
+# that comments here use are the view the Shield computes from them.
+origin:
+  lat: 35.6895
+  lon: 139.6917
 constraints:
   - id: standoff-pedestrian
     type: subject_standoff

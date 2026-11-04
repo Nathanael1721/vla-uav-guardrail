@@ -54,7 +54,14 @@
 # - within 30 m 0.985 / 0.977;
 # - 0 Shield corrections.
 policy_id: follow-car-citylife-nfz
-version: 0.1.1
+version: 0.1.2
+# WGS84 since 2026-11-03 (tools/convert_policies_wgs84.py, from the
+# metres of 0.1.1). Frame origin: the Project AirSim scenes' home-geo-point.
+# Points are lat/lon; the x North / y East metres about this origin
+# that comments here use are the view the Shield computes from them.
+origin:
+  lat: 35.6895
+  lon: 139.6917
 constraints:
   - id: nfz-frontage
     type: polygon_fence
@@ -62,10 +69,10 @@ constraints:
     priority: P0
     violation_action: project_fix
     vertices:
-      - {x: 45, y: 62}
-      - {x: 62, y: 62}
-      - {x: 62, y: 92}
-      - {x: 45, y: 92}
+      - {lat: 35.689904241878, lon: 139.692385744919}
+      - {lat: 35.690056955476, lon: 139.692385744919}
+      - {lat: 35.690056955476, lon: 139.692717556976}
+      - {lat: 35.689904241878, lon: 139.692717556976}
     altitude_floor_m: 0
     altitude_ceiling_m: 60
     margin_m: 1.0

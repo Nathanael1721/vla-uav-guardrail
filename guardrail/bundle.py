@@ -127,6 +127,7 @@ from typing import Any
 from .models import (HASH_SCHEME, IR2_FORMS, IR_SCHEMA_VERSION, PRIOR_SCHEME_V2, SHORT_FORM,
                      REFERENCE_FORM, Policy, _prune_nulls, canonical_json,
                      ir2_rule_view, load_policy)
+from .projection import LOCAL_QUANTUM_M
 
 try:                                    # optional: see "VERIFYING EVERYWHERE"
     from cryptography.exceptions import InvalidSignature
@@ -1042,8 +1043,15 @@ def check_bundle(path: str | Path,
                        hashes=hashes, source_policy=source)
 
 
-def multiscale_problems(doc, policy: Policy) -> list[str]:
+def multiscale_problems(doc, policy: Policy, tol: float = 0.0) -> list[str]:
     """Why a bundle's multiscale.json does not describe `policy`, or [].
+
+    `tol` (metres) is how far a fine-scale coordinate may sit from the
+    policy's: 0 - float for float - except for a WGS84 policy's bundle
+    written before IR schema 3.1.0, whose fine scale holds the unrounded
+    projection of its day; the policy's view is now rounded to the
+    micrometre (projection.local_metres), so that bundle is read within
+    half of it (_attach_multiscale).
 
     Checks, not a recomputation (so a reader needs no shapely and no
     agreement with the writer's GEOS build): the document names this policy
@@ -1072,18 +1080,25 @@ def multiscale_problems(doc, policy: Policy) -> list[str]:
 
     def pts(v):
         return [(float(x), float(y)) for x, y in v]
+
+    def same(a, b) -> bool:
+        if tol <= 0.0:
+            return a == b
+        return len(a) == len(b) and all(abs(p[0] - q[0]) <= tol and abs(p[1] - q[1]) <= tol
+                                        for p, q in zip(a, b))
     for rid in sorted(set(rules) & set(want)):
         c, ent = want[rid], rules[rid]
         try:
             if c.type in TUBE_TYPES:
-                if set(ent) != {"fine"} or pts(ent["fine"]) != [tuple(p) for p in c.points()]:
+                if set(ent) != {"fine"} or not same(pts(ent["fine"]),
+                                                    [tuple(p) for p in c.points()]):
                     out.append(f"{rid}: the fine scale is not the centerline")
                 continue
             if set(ent) != {"fine", "coarse", "bbox"}:
                 out.append(f"{rid}: scales {sorted(ent)}, not fine / coarse / bbox")
                 continue
             fine = pts(ent["fine"])
-            if fine != [(float(v.x), float(v.y)) for v in c.vertices]:
+            if not same(fine, [(float(v.x), float(v.y)) for v in c.vertices]):
                 out.append(f"{rid}: the fine scale is not the zone's vertices")
                 continue
             xs, ys = [p[0] for p in fine], [p[1] for p in fine]
@@ -1156,7 +1171,12 @@ def _attach_multiscale(name: str, manifest: dict, ms_bytes: bytes | None,
                         and doc.get("policy_hash") == source.policy_hash) else policy
     if form == REFERENCE_FORM and source is None:
         return
-    bad = multiscale_problems(doc, target)
+    # A WGS84 policy's bundle from before IR 3.1.0 shipped the unrounded
+    # projection; the view is rounded since (multiscale_problems).
+    tol = (0.5 * LOCAL_QUANTUM_M
+           if target.is_geographic and
+           _semver_key(manifest.get("ir_schema_version")) < (3, 1, 0) else 0.0)
+    bad = multiscale_problems(doc, target, tol)
     if bad:
         raise ValueError(f"{name}: {MULTISCALE_NAME} does not describe the policy "
                          f"in this bundle: " + "; ".join(bad[:5]))
@@ -1236,7 +1256,7 @@ def _verify_both_hashes(name: str, manifest: dict, ir_bytes: bytes, policy: Poli
     return {HASH_SCHEME: declared, REFERENCE_FORM: ref}, None
 
 
-def _refuse_for_flight(chk: BundleCheck, name: str) -> None:
+def _refuse_for_flight(chk: BundleCheck, name: str, ground=None) -> None:
     """What no flight loader accepts from a bundle, whatever its signature.
 
     1. A rule the Shield would not enforce as written (models.
@@ -1262,14 +1282,14 @@ def _refuse_for_flight(chk: BundleCheck, name: str) -> None:
             f"{str(chk.manifest.get('policy_hash'))[:23]}..., so a run could not "
             f"be traced back to it. Write the bundle with this code (`python -m "
             f"guardrail.bundle POLICY`, either --ir-form) to fly it.")
-    _refuse_unenforced(chk.flight_policy, name)
+    _refuse_unenforced(chk.flight_policy, name, ground)
 
 
 def load_bundle(path: str | Path, *, require_signature: bool = True,
                 trust_store: str | Path | dict | None = None,
-                runtime: bool = True) -> Policy:
+                runtime: bool = True, ground=None) -> Policy:
     """Load a bundle, rebuild the Policy, and REFUSE it if it is not the policy
-    that was issued.
+    that was issued. `ground`: the MSL opt-in (models.load_policy).
 
     Rebuilding from the canonical IR is not re-parsing the DSL: the IR is the
     post-validation single source of truth, which is the whole point of
@@ -1299,7 +1319,7 @@ def load_bundle(path: str | Path, *, require_signature: bool = True,
     """
     chk = check_bundle(path, trust_store)
     if runtime:
-        _refuse_for_flight(chk, Path(path).name)
+        _refuse_for_flight(chk, Path(path).name, ground)
     if require_signature and not chk.verified:
         raise BundleSignatureError(
             f"{Path(path).name}: signature {chk.signature}: {chk.detail}. "
@@ -1311,8 +1331,8 @@ def load_bundle(path: str | Path, *, require_signature: bool = True,
 def load_for_flight(bundle: str | Path | None = None,
                     yaml_path: str | Path | None = None, *,
                     allow_unverified: bool = False,
-                    trust_store: str | Path | dict | None = None
-                    ) -> tuple[Policy, dict]:
+                    trust_store: str | Path | dict | None = None,
+                    ground=None) -> tuple[Policy, dict]:
     """The one way a flight entry point gets its policy: `(policy, source)`.
 
     Audit cards ARCH-29 / WP3-21: every flight script built its rules straight
@@ -1335,6 +1355,10 @@ def load_for_flight(bundle: str | Path | None = None,
     it only requests, a soft rule's action capped at brake) and a start
     inside a hard keep-out zone (`Policy.runtime_notes`), so a run never reads
     as having honoured something it did not.
+
+    `ground` (X-11, 2026-11-03): the ground-elevation source the rail flies
+    over (guardrail/terrain.py); with one an MSL height is flyable (the
+    caller gives the Shield the same), and the record names it (`ground`).
     """
     from .manifest import policy_source_record
     if bundle and yaml_path:
@@ -1342,7 +1366,7 @@ def load_for_flight(bundle: str | Path | None = None,
                          "run with two candidate policies cannot say which flew")
     if bundle:
         chk = check_bundle(bundle, trust_store)
-        _refuse_for_flight(chk, Path(bundle).name)
+        _refuse_for_flight(chk, Path(bundle).name, ground)
         if not chk.verified and not allow_unverified:
             raise BundleSignatureError(
                 f"{Path(bundle).name}: signature {chk.signature}: {chk.detail}. "
@@ -1355,8 +1379,10 @@ def load_for_flight(bundle: str | Path | None = None,
     else:
         if yaml_path is None:
             raise ValueError("no policy given: pass a bundle or a YAML file")
-        pol = load_policy(yaml_path)
+        pol = load_policy(yaml_path, ground=ground)
         rec = policy_source_record("yaml", str(yaml_path), pol.policy_hash)
+    if ground is not None:
+        rec["ground"] = ground.record()
     notes = pol.runtime_notes()
     if notes:
         rec["runtime_notes"] = notes
@@ -1402,11 +1428,59 @@ def _entry(policy: Policy) -> dict:
 
 MIGRATION_FORMS = (PRIOR_SCHEME_V2, *IR2_FORMS)
 
+# The frame migration (2026-11-03, IR schema 3.1.0, WP1-14): every shipped
+# policy was rewritten from local metres to WGS84 lat/lon about a stated
+# origin (tools/convert_policies_wgs84.py) and raised its version. The old
+# version is read back as the converted file's METRE FORM (Policy.metre_form):
+# the same rules in metres about the same origin, which reproduces the old
+# entry's hash exactly - under the current scheme for an entry locked under
+# IR 3.0.0, under an IR 2.x form or a legacy form for an older one. A lock
+# entry's `migration.old_hash_form` names it FRAME_FORM, or FRAME_FORM plus
+# the form the metre form matched ("<FRAME_FORM>+<form>").
+FRAME_FORM = "sha256-canonical-v3/local-metres"
+
 
 def as_version(policy: Policy, version: str) -> Policy:
     """`policy` with another `version` and nothing else changed (its rules,
     with the ring order they were given, are shared)."""
     return policy.model_copy(update={"version": version})
+
+
+def rewind(pol: Policy, old_key: str, pin: dict | None) -> tuple[Policy, str] | None:
+    """The policy file `pol` put back at the version `old_key` names, as the
+    content `pin` (that version's lock pin) recorded, and the form its hash
+    is reproduced under - or None when neither reading reproduces it.
+
+    Two readings are tried: the same content at the old version (an IR change
+    that moved the hash: MIGRATION_FORMS), and, for a WGS84 policy, its metre
+    form at the old version (the frame migration: FRAME_FORM). The legacy
+    16-hex forms the pin records must be reproduced too."""
+    if pin is None:
+        return None
+    pid, _, ver = old_key.rpartition("@")
+    if pid != pol.policy_id:
+        return None
+    tries = [(as_version(pol, ver), False)]
+    if pol.is_geographic or pol.origin is not None:
+        try:
+            tries.append((as_version(pol.metre_form(), ver), True))
+        except ValueError:
+            pass
+    for old, metre in tries:
+        form = old.hash_form(pin.get("policy_hash"))
+        ok = form in MIGRATION_FORMS or (metre and form == HASH_SCHEME)
+        if not ok:
+            continue
+        later = (pin.get("hashes") or {}).get(HASH_SCHEME)
+        if later is not None and not (metre and later == old.policy_hash) and \
+                old.hash_form(later) not in MIGRATION_FORMS:
+            continue
+        if pin.get("legacy_hashes") is not None and pin["legacy_hashes"] != old.legacy_hashes():
+            continue
+        if metre:
+            form = FRAME_FORM if form == HASH_SCHEME else f"{FRAME_FORM}+{form}"
+        return old, form
+    return None
 
 
 def _pin_for(ent: dict, fname: str) -> dict | None:
@@ -1427,18 +1501,19 @@ def migration_problem(pol: Policy, old_key: str, pin: dict | None) -> str | None
     pid, _, ver = old_key.rpartition("@")
     if pid != pol.policy_id:
         return f"{old_key} is another policy id than {pol.policy_id}"
+    if rewind(pol, old_key, pin) is not None:
+        return None
+    # Say why, for the reading that went furthest (the plain rewind).
     old = as_version(pol, ver)
     form = old.hash_form(pin.get("policy_hash"))
     if form not in MIGRATION_FORMS:
         return (f"rewound to {ver} it does not reproduce {old_key}'s hash "
                 f"{str(pin.get('policy_hash'))[:23]}... under any migration form "
-                f"(got {form or 'no form'})")
+                f"(got {form or 'no form'}{', nor does its metre form' if pol.is_geographic else ''})")
     later = (pin.get("hashes") or {}).get(HASH_SCHEME)
     if later is not None and old.hash_form(later) not in MIGRATION_FORMS:
         return f"rewound to {ver} it does not reproduce {old_key}'s {HASH_SCHEME} hash"
-    if pin.get("legacy_hashes") is not None and pin["legacy_hashes"] != old.legacy_hashes():
-        return f"rewound to {ver} it does not reproduce {old_key}'s legacy hashes"
-    return None
+    return f"rewound to {ver} it does not reproduce {old_key}'s legacy hashes"
 
 
 def _migration_source(pol: Policy, fname: str, entries: dict, key: str) -> tuple | None:
@@ -1449,9 +1524,10 @@ def _migration_source(pol: Policy, fname: str, entries: dict, key: str) -> tuple
         if k == key:
             continue
         pin = _pin_for(e, fname)
-        if pin is not None and migration_problem(pol, k, pin) is None:
+        got = rewind(pol, k, pin) if pin is not None else None
+        if got is not None:
             ver = k.rpartition("@")[2]
-            found.append((_semver_key(ver), k, as_version(pol, ver).hash_form(pin["policy_hash"])))
+            found.append((_semver_key(ver), k, got[1]))
     if not found:
         return None
     _, k, form = max(found)
@@ -1836,14 +1912,19 @@ def policy_candidates(policies_dir: str | Path | None = None,
             continue
         out.append((f.name, pol))
         by_key.setdefault(lock_key(pol), pol)
-        ent, seen = entries.get(lock_key(pol)), set()
+        ent, seen, base = entries.get(lock_key(pol)), set(), pol
         while ent and ent.get("migrated_from") and ent["migrated_from"] not in seen:
             old_key = ent["migrated_from"]
             seen.add(old_key)
-            old = as_version(pol, old_key.rpartition("@")[2])
+            # Each step back is read from the step before it: across the
+            # frame migration (2026-11-03) that is the metre form, and every
+            # older version is that metre policy at its own version.
+            ent = entries.get(old_key)
+            got = rewind(base, old_key, _pin_for(ent or {}, f.name))
+            old = got[0] if got is not None else as_version(base, old_key.rpartition("@")[2])
             out.append((f"{f.name} as {old_key}", old))
             by_key.setdefault(old_key, old)
-            ent = entries.get(old_key)
+            base = old
     for d in lock.get("derived") or []:
         base = by_key.get(d.get("base"))
         if base is None:

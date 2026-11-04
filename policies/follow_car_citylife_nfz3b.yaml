@@ -49,7 +49,14 @@
 # the car before a leg never meets that leg's zone, and then says nothing about
 # it (count the zone events, do not read a zero as a pass).
 policy_id: follow-car-citylife-nfz3b
-version: 0.1.1
+version: 0.1.2
+# WGS84 since 2026-11-03 (tools/convert_policies_wgs84.py, from the
+# metres of 0.1.1). Frame origin: the Project AirSim scenes' home-geo-point.
+# Points are lat/lon; the x North / y East metres about this origin
+# that comments here use are the view the Shield computes from them.
+origin:
+  lat: 35.6895
+  lon: 139.6917
 constraints:
   - id: nfz-frontage
     type: polygon_fence
@@ -57,10 +64,10 @@ constraints:
     priority: P0
     violation_action: project_fix
     vertices:
-      - {x: 45, y: 62}
-      - {x: 62, y: 62}
-      - {x: 62, y: 92}
-      - {x: 45, y: 92}
+      - {lat: 35.689904241878, lon: 139.692385744919}
+      - {lat: 35.690056955476, lon: 139.692385744919}
+      - {lat: 35.690056955476, lon: 139.692717556976}
+      - {lat: 35.689904241878, lon: 139.692717556976}
     altitude_floor_m: 0
     altitude_ceiling_m: 60
     margin_m: 1.0
@@ -71,10 +78,10 @@ constraints:
     priority: P0
     violation_action: project_fix
     vertices:
-      - {x: 100, y: 122}
-      - {x: 124, y: 122}
-      - {x: 124, y: 134}
-      - {x: 100, y: 134}
+      - {lat: 35.690398315284, lon: 139.693049369034}
+      - {lat: 35.690613910952, lon: 139.693049369034}
+      - {lat: 35.690613910952, lon: 139.693182093857}
+      - {lat: 35.690398315284, lon: 139.693182093857}
     altitude_floor_m: 0
     altitude_ceiling_m: 60
     margin_m: 1.0
@@ -85,10 +92,10 @@ constraints:
     priority: P0
     violation_action: project_fix
     vertices:
-      - {x: 145, y: -34}
-      - {x: 175, y: -34}
-      - {x: 175, y: -26}
-      - {x: 145, y: -26}
+      - {lat: 35.690802557162, lon: 139.691323946335}
+      - {lat: 35.691072051747, lon: 139.691323946335}
+      - {lat: 35.691072051747, lon: 139.69141242955}
+      - {lat: 35.690802557162, lon: 139.69141242955}
     altitude_floor_m: 0
     altitude_ceiling_m: 60
     margin_m: 1.0

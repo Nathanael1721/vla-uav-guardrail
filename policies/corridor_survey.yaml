@@ -30,7 +30,14 @@
 # inside the audit trail; a window that was not hashed would let the same policy
 # id mean two different things.
 policy_id: corridor-survey
-version: 0.1.1
+version: 0.1.2
+# WGS84 since 2026-11-03 (tools/convert_policies_wgs84.py, from the
+# metres of 0.1.1). Frame origin: the Project AirSim scenes' home-geo-point.
+# Points are lat/lon; the x North / y East metres about this origin
+# that comments here use are the view the Shield computes from them.
+origin:
+  lat: 35.6895
+  lon: 139.6917
 
 constraints:
   - id: corridor-survey-route
@@ -39,9 +46,9 @@ constraints:
     priority: P0
     violation_action: project_fix
     centerline:
-      - { x: 0.0,  y: 0.0 }
-      - { x: 60.0, y: 0.0 }
-      - { x: 60.0, y: 60.0 }
+      - {lat: 35.6895, lon: 139.6917}
+      - {lat: 35.69003898917, lon: 139.6917}
+      - {lat: 35.69003898917, lon: 139.692363624115}
     width_m: 40.0
     altitude_floor_m: 10.0
     altitude_ceiling_m: 20.0
@@ -52,10 +59,10 @@ constraints:
     priority: P0
     violation_action: project_fix
     vertices:
-      - { x: 50.0, y: 12.0 }
-      - { x: 70.0, y: 12.0 }
-      - { x: 70.0, y: 30.0 }
-      - { x: 50.0, y: 30.0 }
+      - {lat: 35.689949157642, lon: 139.691832724823}
+      - {lat: 35.690128820699, lon: 139.691832724823}
+      - {lat: 35.690128820699, lon: 139.692031812058}
+      - {lat: 35.689949157642, lon: 139.692031812058}
     altitude_floor_m: 0.0
     altitude_ceiling_m: 100.0
     margin_m: 1.0

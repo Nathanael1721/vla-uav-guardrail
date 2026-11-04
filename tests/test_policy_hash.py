@@ -92,8 +92,11 @@ def _era_dump(node):
 def _old_policy_hash(pol) -> str:
     """The pre-2026-10-06 property body, verbatim, over that era's dump. That
     era's model held the IR 2.x shape (rings as written, `repair`), which is
-    what `_ir2_dump` gives back since IR schema 3.0.0."""
-    canon = json.dumps(_era_dump(pol._ir2_dump(mode="python", exclude_none=False)),
+    what `_ir2_dump` gives back since IR schema 3.0.0. A WGS84 point held the
+    UNROUNDED projection of its day; since IR schema 3.1.0 the "era" context
+    gives it (a plain dump gives the view, rounded to the micrometre)."""
+    canon = json.dumps(_era_dump(pol._ir2_dump(mode="python", exclude_none=False,
+                                               context={"points": "era"})),
                        sort_keys=True, separators=(",", ":"))
     return "sha256:" + hashlib.sha256(canon.encode()).hexdigest()[:16]
 
@@ -173,9 +176,13 @@ def test_the_short_hash_is_the_july_hash():
         assert full[:len("sha256:") + 16] == pol.legacy_hashes()["legacy16-exclude-none"], f.name
         assert pol.policy_hash.startswith(pol.policy_hash_short)
     demo = load_policy(DEMO)
-    assert demo.version == "0.1.2" and demo.hash_form(JULY_SIM_DEMO) is None, \
-        "the July hash is fase3-sim-demo@0.1.1's, not the migrated 0.1.2's"
-    old = as_version(demo, "0.1.1")
+    assert demo.version == "0.1.3" and demo.hash_form(JULY_SIM_DEMO) is None, \
+        "the July hash is fase3-sim-demo@0.1.1's, not the WGS84 0.1.3's"
+    # 0.1.1 (IR 2.x) and 0.1.2 (IR 3.0.0) were written in metres; since the
+    # WGS84 conversion (IR schema 3.1.0, 2026-11-03) the file answers for them
+    # through its metre form (Policy.metre_form, bundle.rewind).
+    assert as_version(demo, "0.1.1").hash_form(JULY_SIM_DEMO) is None
+    old = as_version(demo.metre_form(), "0.1.1")
     assert old.ir2_hashes()[IR2_FORM][:len("sha256:") + 16] == JULY_SIM_DEMO
     assert old.hash_form(JULY_SIM_DEMO) == "legacy16-exclude-none"
     assert old.hash_form(SEPT_SIM_DEMO) == "legacy16-include-defaults"
@@ -209,14 +216,16 @@ def test_a_hot_apply_still_restamps_the_hash():
 def test_the_dynamic_runs_rebuild_from_the_lock():
     """No file on disk produces a mid-flight hash; the lock's recipe does. The
     recipe's base is fase3-sim-demo@0.1.1, which sim_demo_policy.yaml left for
-    0.1.2 at IR schema 3.0.0: the base is the file put back at 0.1.1, and the
-    recipe - written under IR 2.x, its rule omits the three ConstraintBase
-    fields - is read with the 2.x defaults (derive, IR2_RULE_DEFAULTS)."""
+    0.1.2 at IR schema 3.0.0 and for the WGS84 0.1.3 at 3.1.0: the base is the
+    file's metre form put back at 0.1.1, and the recipe - written under IR
+    2.x, its rule omits the three ConstraintBase fields - is read with the
+    2.x defaults (derive, IR2_RULE_DEFAULTS)."""
     from guardrail.bundle import as_version
     from guardrail.models import IR2_FORM
     lock = load_lock()
     (d,) = [x for x in lock["derived"] if x["base"] == "fase3-sim-demo@0.1.1"]
-    pol = derive(as_version(load_policy(DEMO), "0.1.1"), d["hot_apply"], d["generations"])
+    pol = derive(as_version(load_policy(DEMO).metre_form(), "0.1.1"), d["hot_apply"],
+                 d["generations"])
     assert pol.generation == 1
     assert pol.hash_form(DYNAMIC_RUNS) == "legacy16-exclude-none"
     assert pol.hash_form(d["policy_hash"]) == IR2_FORM
@@ -424,28 +433,52 @@ def test_every_migrated_entry_reproduces_the_hash_it_replaces():
     claim is re-proved, not trusted: put back at the old version the file
     reproduces the old entry's recorded hash and legacy hashes, and a run
     recorded under the old version resolves to it (policy_candidates). A
-    forged or broken link is reported by check_lock."""
-    from guardrail.bundle import as_version
+    forged or broken link is reported by check_lock.
+
+    Since 2026-11-03 (IR schema 3.1.0) the 31 metre policies were converted
+    to WGS84 and raised their version again: a chain of two migrations, each
+    step read back from the step after it (bundle.rewind) - the frame
+    migration through the file's metre form (FRAME_FORM), the IR 3.0.0 one
+    as before."""
+    from guardrail.bundle import FRAME_FORM, rewind
     from guardrail.models import IR2_FORMS
     lock = load_lock()
     ents = lock["policies"]
     cands = policy_candidates()
+    frame_steps = ir3_steps = 0
     for f in _policy_files():
         pol = load_policy(f, runtime=False)
         ent = ents[lock_key(pol)]
-        assert ent.get("ir_schema_version") == "3.0.0", f.name
-        old_key = ent["migrated_from"]
-        assert old_key.rpartition("@")[2] < pol.version, (f.name, old_key)
-        old_ent = ents[old_key]
-        pin = old_ent["shared_by_files"][f.name] if "shared_by_files" in old_ent else old_ent
-        old = as_version(pol, old_key.rpartition("@")[2])
-        assert old.hash_form(pin["policy_hash"]) in (PRIOR_SCHEME_V2, *IR2_FORMS), f.name
-        assert old.legacy_hashes() == pin["legacy_hashes"], f.name
-        assert pol.hash_form(pin["policy_hash"]) is None, f"{f.name}: the old hash is not the new"
-        got, form, label = resolve_run_policy({"policy_hash": pin["policy_hash"]}, cands)
-        assert got is not None and label == f"{f.name} as {old_key}", (f.name, label)
-        short = pin["legacy_hashes"]["legacy16-exclude-none"]
-        assert resolve_run_policy({"policy_hash": short}, cands)[2] == f"{f.name} as {old_key}"
+        assert ent.get("ir_schema_version") in ("3.0.0", "3.1.0"), f.name
+        base = pol
+        while ent.get("migrated_from"):
+            old_key = ent["migrated_from"]
+            assert old_key.rpartition("@")[2] < base.version, (f.name, old_key)
+            old_ent = ents[old_key]
+            pin = old_ent["shared_by_files"][f.name] if "shared_by_files" in old_ent else old_ent
+            got = rewind(base, old_key, pin)
+            assert got is not None, (f.name, old_key)
+            old, form = got
+            assert form == ent["migration"]["old_hash_form"], (f.name, form, ent["migration"])
+            if form.startswith(FRAME_FORM):
+                frame_steps += 1
+                assert ent["migration"]["ir_schema_version"] == "3.1.0", f.name
+                assert not old.is_geographic and old.origin is None, f.name
+            else:
+                ir3_steps += 1
+                assert form in (PRIOR_SCHEME_V2, *IR2_FORMS), (f.name, form)
+            assert old.legacy_hashes() == pin["legacy_hashes"], f.name
+            assert pol.hash_form(pin["policy_hash"]) is None, \
+                f"{f.name}: the old hash is not the new"
+            got, _, label = resolve_run_policy({"policy_hash": pin["policy_hash"]}, cands)
+            assert got is not None and label == f"{f.name} as {old_key}", (f.name, label)
+            short = pin["legacy_hashes"]["legacy16-exclude-none"]
+            assert resolve_run_policy({"policy_hash": short}, cands)[2] == \
+                f"{f.name} as {old_key}", (f.name, old_key)
+            ent, base = old_ent, old
+            if "shared_by_files" in ent:
+                break
+    assert frame_steps == 31 and ir3_steps == 32, (frame_steps, ir3_steps)
     assert check_lock(POLICIES, lock) == []
     # Broken links are caught: a hash the rewound file does not reproduce,
     # and a migration claimed from another policy's entry.
@@ -464,14 +497,18 @@ def test_a_file_left_at_its_old_version_after_the_ir_change_is_caught():
     """The lock's rule holds across an IR change: a policy whose canonical
     bytes moved must raise its version. Put back at its old version, a
     shipped file is reported as changed - not recorded as 'the same content
-    under a newer scheme', which is the treatment a prior hash SCHEME gets."""
+    under a newer scheme', which is the treatment a prior hash SCHEME gets.
+    The same holds for the WGS84 conversion (IR schema 3.1.0): the converted
+    file at its metre version is another content under that version."""
     d = _copy_policies()
     f = d / DEMO.name
-    f.write_text(f.read_text(encoding="utf-8").replace("version: 0.1.2", "version: 0.1.1"),
-                 encoding="utf-8")
-    probs = check_lock(d)
-    assert any(DEMO.name in x and "content changed but version did not" in x
-               for x in probs), probs
+    src = f.read_text(encoding="utf-8")
+    for now, was in (("version: 0.1.3", "version: 0.1.2"), ("version: 0.1.3", "version: 0.1.1")):
+        assert now in src, src[:300]
+        f.write_text(src.replace(now, was), encoding="utf-8")
+        probs = check_lock(d)
+        assert any(DEMO.name in x and "content changed but version did not" in x
+                   for x in probs), (was, probs)
     shutil.rmtree(d, ignore_errors=True)
 
 
@@ -505,10 +542,11 @@ def test_a_content_change_inside_the_shared_identity_is_still_caught():
     version bump is reported like any other content change (mutant M34). The
     shared entry still pins each file's old content."""
     d = _copy_policies()
+    # 0.1.2 since the WGS84 conversion (IR schema 3.1.0, 2026-11-03).
     for name, want in (("random_scenario.yaml", "content changed but version did not - "
-                                                "random-scenario@0.1.1"),
+                                                "random-scenario@0.1.2"),
                        ("hard_3.yaml", "content changed but version did not - "
-                                       "random-scenario-hard-3@0.1.1")):
+                                       "random-scenario-hard-3@0.1.2")):
         f = d / name
         src = f.read_text(encoding="utf-8")
         assert "altitude_ceiling_m: 60\n" in src, src[:400]
@@ -550,25 +588,40 @@ def test_the_generator_gives_each_file_its_own_policy_id():
     folder claims; and its text reproduces each shipped generated file byte
     for byte (line endings aside), so the shipped ids are the generator's.
     Errors before the change: the module had no default_policy_id."""
-    import yaml
     G = _generator()
+    sys.path.insert(0, str(ROOT / "tools"))
+    try:
+        import convert_policies_wgs84 as CV
+    finally:
+        sys.path.remove(str(ROOT / "tools"))
     assert G.default_policy_id(POLICIES / "random_scenario.yaml") == "random-scenario"
     assert G.default_policy_id(POLICIES / "hard_3.yaml") == "random-scenario-hard-3"
     assert G.default_policy_id("out/My Scene_2.yaml") == "random-scenario-my-scene-2"
     for name in GENERATED + ("random_scenario",):
         f = POLICIES / f"{name}.yaml"
-        doc = yaml.safe_load(f.read_text(encoding="utf-8"))
-        assert doc["policy_id"] == G.default_policy_id(f), (name, doc["policy_id"])
+        pol = load_policy(f, runtime=False)
+        assert pol.policy_id == G.default_policy_id(f), (name, pol.policy_id)
+        # Since the WGS84 conversion (2026-11-03) the shipped file is the
+        # generator's metre text at the version before, converted by
+        # tools/convert_policies_wgs84.py: read the rules back in metres.
+        metre = pol.metre_form()
         nfzs, band = [], None
-        for c in doc["constraints"]:
-            if c["type"] == "polygon_fence":
-                v = c["vertices"]
-                nfzs.append((v[0]["x"], v[1]["x"], v[0]["y"], v[2]["y"]))
-            elif c["type"] == "altitude_envelope":
-                band = (c["alt_min_m"], c["alt_max_m"])
-        # 0.1.1 since IR schema 3.0.0 (project_fix; the generator writes it)
-        assert G.policy_yaml(doc["policy_id"], nfzs, *band, version=doc["version"]) == \
+        for c in metre.constraints:
+            if c.type == "polygon_fence":
+                v = c.given_vertices()
+                nfzs.append((v[0].x, v[1].x, v[0].y, v[2].y))
+            elif c.type == "altitude_envelope":
+                band = (c.alt_min_m, c.alt_max_m)
+        major, minor, patch = pol.version.split(".")
+        before = f"{major}.{minor}.{int(patch) - 1}"
+        text = G.policy_yaml(pol.policy_id, nfzs, *band, version=before)
+        assert CV.convert_text(text, CV.anchor_for(f.name))[0] == \
             f.read_text(encoding="utf-8"), name
+        # ... and the generator writes that form itself now (at its version).
+        assert G.wgs84_policy_yaml(pol.policy_id, nfzs, *band, version=pol.version) \
+            .replace("Generated by demo/gen_random_scenario.py in WGS84",
+                     f"WGS84 since 2026-11-03 (tools/convert_policies_wgs84.py, from the\n"
+                     f"# metres of {before})") == f.read_text(encoding="utf-8"), name
     # Read-only questions about policies/ itself (nothing is written):
     # regenerating a file is not a clash; a new file under a taken id is.
     assert G.id_claimed_elsewhere("random-scenario-hard-3", POLICIES / "hard_3.yaml") == []
@@ -639,7 +692,8 @@ def test_a_file_that_left_a_shared_identity_must_be_locked_under_its_own():
         assert new["policies"]["random-scenario@0.1.0"] == lock["policies"]["random-scenario@0.1.0"]
         hp42 = lock_key(load_policy(POLICIES / "hp_42.yaml", runtime=False))
         assert new["policies"][hp42]["previously"] == "random-scenario@0.1.0"
-        assert new["policies"][hp42]["migrated_from"] == "random-scenario-hp-42@0.1.0"
+        # 0.1.2 (WGS84, 2026-11-03) migrated from 0.1.1 (IR 3.0.0, metres)
+        assert new["policies"][hp42]["migrated_from"] == "random-scenario-hp-42@0.1.1"
         assert check_lock(d, new) == []
     finally:
         shutil.rmtree(d, ignore_errors=True)

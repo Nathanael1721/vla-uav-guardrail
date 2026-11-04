@@ -1,0 +1,7 @@
+{% extends "sentence/_base.j2" %}
+{#- The grant's distance_envelope (WP1-07, 2026-11-03). The Shield enforces it
+    through its clearance and stand-off runtime (models.DistanceEnvelope):
+    people binds to the subject being followed while it is classified as a
+    person - never to bystanders, so it is worded that way, as
+    subject_standoff is. -#}
+{% block core %}Keep at least {{ r.min_distance_m|g }} m from {% if r.object_class == "people" %}the person you are following{% elif r.object_class == "roads" %}any road{% else %}any building{% endif %}{% endblock %}

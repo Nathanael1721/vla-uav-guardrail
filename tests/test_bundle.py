@@ -1147,11 +1147,15 @@ def test_geographic_coordinates_without_an_origin_get_the_references_frame_never
         {"id": "f", "type": "polygon_fence", **HARD_P0,
          "vertices": [{"lat": 25.0, "lon": 121.0}, {"lat": 25.1, "lon": 121.0},
                       {"lat": 25.1, "lon": 121.1}]}]}
+    # Since IR schema 3.1.0 (2026-11-03, WP1-14) nothing is projected at load:
+    # project_raw leaves the points as lat/lon, and the metres are the view the
+    # Shield reads (XY.x / XY.y), computed then.
     out = project_raw(raw)
-    pts = out["constraints"][0]["vertices"]
-    assert all(abs(p["x"]) < 20_000 and abs(p["y"]) < 20_000 for p in pts), pts
+    assert all("x" not in p for p in out["constraints"][0]["vertices"]), out
     from guardrail.models import Policy
     pol = Policy.model_validate(raw)
+    pts = [(v.x, v.y) for v in pol.constraints[0].vertices]
+    assert all(abs(x) < 20_000 and abs(y) < 20_000 for x, y in pts), pts
     assert pol.frame_origin == ((25.0 + 25.1 + 25.1) / 3, (121.0 + 121.0 + 121.1) / 3)
     corridor_only = {"policy_id": "p", "constraints": [
         {"id": "c", "type": "corridor", **HARD_P0, "width_m": 10,

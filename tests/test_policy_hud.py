@@ -58,10 +58,10 @@ def test_every_rule_of_the_policy_gets_a_row_in_policy_order():
     snap = PolicyIndicator(pol).update(0.0, _dec(), State(x=44, y=0, up=8))
     assert [r["id"] for r in snap["rows"]] == [c.id for c in pol.constraints]
     # The policy's own version: pinned as "v0.1.0" until the file moved to
-    # 0.1.1 on 2026-11-02 (a7763e5), and this test, outside the CI loop for
-    # want of Pillow, failed unseen.
+    # 0.1.1 on 2026-11-02 (a7763e5) and to 0.1.2 with the WGS84 conversion of
+    # 2026-11-03; this test, outside the CI loop for want of Pillow, failed unseen.
     assert snap["policy"] == f"follow-car-citylife-nfz v{pol.version}"
-    assert pol.version == "0.1.1"
+    assert pol.version == "0.1.2"
 
 
 def test_rule_labels_carry_the_policy_numbers():
