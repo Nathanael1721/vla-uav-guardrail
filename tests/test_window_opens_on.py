@@ -190,7 +190,16 @@ def _survey_src(north=None, corridor_end=None):
     if corridor_end is not None:
         for c in src["constraints"]:
             if c["id"] == "corridor-survey-route":
-                c["centerline"][-1] = {"x": 60.0, "y": corridor_end - 20.0}
+                pt = {"x": 60.0, "y": corridor_end - 20.0}
+                if src.get("origin"):
+                    # WGS84 since 2026-11-03 (WP1-14): one rule cannot mix
+                    # frames, so the moved point is written in lat/lon about
+                    # the policy's origin; its view is the same metres.
+                    from guardrail.projection import LocalProjection
+                    lat, lon = LocalProjection(src["origin"]["lat"], src["origin"]["lon"]) \
+                        .to_latlon(pt["x"], pt["y"])
+                    pt = {"lat": lat, "lon": lon}
+                c["centerline"][-1] = pt
     return src
 
 

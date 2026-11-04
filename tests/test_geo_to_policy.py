@@ -343,9 +343,12 @@ def test_a_duplicate_id_against_the_base_is_refused():
 
 
 def test_geographic_zones_are_refused_onto_a_metre_base_with_no_origin():
-    """sim_demo_policy is in metres with no origin: there is no telling where
-    in its frame a lat/lon zone lies. Appending anyway would misplace it."""
-    _refused(lambda: G.ingest(_fc(_feature(YARD)), load_policy(DEMO)), "origin")
+    """sim_demo_policy was in metres with no origin: there is no telling where
+    in its frame a lat/lon zone lies. Appending anyway would misplace it.
+    The file states an origin since 2026-11-03 (WP1-14); its metre form is
+    the policy as it was."""
+    _refused(lambda: G.ingest(_fc(_feature(YARD)), load_policy(DEMO).metre_form()),
+             "origin")
 
 
 def test_geographic_zones_land_in_a_geographic_base():

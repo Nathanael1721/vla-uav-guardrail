@@ -19,7 +19,8 @@
 #      THE LOOP RUNS
 #        WP1, policies and bundles: test_ir, test_bundle, test_manifest,
 #          test_policy_hash, test_policy_dsl_grant_form, test_replay_identity,
-#          test_replay, test_geo_to_policy, test_wp1_roundtrip_kpi.
+#          test_replay, test_geo_to_policy, test_wp1_roundtrip_kpi,
+#          test_distance_envelope_msl (distance_envelope and MSL, 2026-11-03).
 #        WP2, the Prefix Compiler and the Paraphraser: test_csp,
 #          test_prefix_eval, test_paraphraser, test_paraphraser_service (its
 #          gRPC service; the gRPC / mTLS tests SKIP without grpcio,
@@ -633,6 +634,7 @@ jobs:
               tests/test_policy_hash.py \
               tests/test_csp.py \
               tests/test_policy_dsl_grant_form.py \
+              tests/test_distance_envelope_msl.py \
               tests/test_replay_identity.py \
               tests/test_vla_backends.py \
               tests/test_vla_link.py \
