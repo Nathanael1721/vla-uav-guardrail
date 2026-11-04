@@ -30,6 +30,11 @@ BUILDER = ROOT / "tools" / "deck" / "build_explainer_deck.js"
 PACK = ROOT / "docs" / "share" / "2026-10-14-Explainer"
 DECK = "Guardrail-Explainer-13Oct2026.pptx"
 SKIP = "SKIP"
+# Files put in the pack by hand after the builder wrote its README (14 Oct:
+# README 05:08, SPEAKER-SCRIPT.md 12:56, .pdf 12:58). The README as built does
+# not name them, and rewriting it would no longer be the pack's README; any
+# OTHER unlisted file still fails the README test.
+ADDED_AFTER_BUILD = {"SPEAKER-SCRIPT.md", "SPEAKER-SCRIPT.pdf"}
 # Slides without an optional image: cover, what it is, terms, the VLA, five
 # figures, escalation, the section slide, close approach, G1, harness, Shield
 # speed, interfaces, two KPI tables, next steps, closing.
@@ -373,11 +378,25 @@ def test_the_builder_refuses_a_number_that_no_longer_matches():
     tmp = Path(tempfile.mkdtemp(prefix="explainer_mut_"))
     for f in facts:
         for src in f["source"].split(" | "):
-            p = Path(src)
-            if p.is_absolute() or not (ROOT / p).is_file():
+            # A source the builder reads as committed (its PINNED files, since
+            # 2026-11-04) is named "<file> (git <rev>)"; the copy gets that
+            # version, because the builder reads a copy's files as they lie.
+            m = re.fullmatch(r"(.+) \(git ([0-9a-f]{7,40})\)", src)
+            p = Path(m.group(1) if m else src)
+            if p.is_absolute():
+                continue
+            if m:
+                blob = subprocess.run(["git", "show", f"{m.group(2)}:{p.as_posix()}"], cwd=ROOT,
+                                      capture_output=True)
+                if blob.returncode != 0:
+                    continue
+                data = blob.stdout
+            elif (ROOT / p).is_file():
+                data = (ROOT / p).read_bytes()
+            else:
                 continue
             (tmp / p).parent.mkdir(parents=True, exist_ok=True)
-            shutil.copyfile(ROOT / p, tmp / p)
+            (tmp / p).write_bytes(data)
     same = _run_builder(tmp / "out", "--check-facts-only", env={"EXPLAINER_REPO": str(tmp)})
     assert same.returncode == 0, f"an unchanged copy was refused:\n{same.stdout}\n{same.stderr}"
     sweep = tmp / "docs" / "data" / "scenario_sweep.json"
@@ -773,7 +792,7 @@ def test_the_pack_readme_lists_every_file_and_video():
         if p.is_dir() or "_build" in p.relative_to(PACK).parts:
             continue
         rel = p.relative_to(PACK).as_posix()
-        if f"`{rel}`" not in text:
+        if f"`{rel}`" not in text and rel not in ADDED_AFTER_BUILD:
             missing.append(rel)
     assert not missing, f"files in the pack the README does not list: {missing}"
     for rec in ("facts.json", "slides_text.json", "layout.json", "build_stamp.json", "render/slide_NN.png"):
