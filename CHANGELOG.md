@@ -41,7 +41,10 @@ shipped change and recorded as one.
   conversion of an MSL band to the AGL band over it.
 - `Shield(road_map=...)` (WP1-07): a road field (the street mask,
   `demo/build_street_mask.py`) built and read exactly as the obstacle field.
-- `tests/test_distance_envelope_msl.py`: 12 tests.
+- `tests/test_distance_envelope_msl.py`: 12 tests, in the CI loop and its
+  header (`.github/workflows/tests.yml`). Run on Windows under 3.10
+  (vla-real) and 3.11 (vla-drone), 12/12 each; not yet in the WSL job venvs
+  the header describes for earlier additions.
 
 #### Changed
 - **IR schema 3.1.0** (docs/IR-MIGRATIONS.md). A point's `x` / `y` are
@@ -85,20 +88,42 @@ shipped change and recorded as one.
 #### Fixed
 - `tests/test_policy_hud.py` pinned `v0.1.0` and failed since IR 3.0.0 (it
   is not in the CI loop); it reads the file's own version.
+- Tests that took a shipped file as "a policy in metres with no origin"
+  (test_api, test_bundle, test_csp, test_geo_to_policy,
+  test_policy_dsl_grant_form, test_scenario_spec) use its metre form;
+  test_window_opens_on moves the survey corridor's point in lat/lon (one
+  rule, one frame); the version pins of test_policy_hash, test_csp and
+  test_railinputs_policy name the converted versions; tests that used
+  distance_envelope as "the type no loader accepts" use an MSL height with
+  no ground.
 
 #### Found
+- The full CI list, once, sequentially (`tools/ci_local.py --no-smoke
+  --no-summary`, vla-real, at 0c0782b): 135 of 138 files, 3446 of 3559
+  tests, claims scan rc 0. None of the three failures is this change's:
+  test_harnesstruth_bundles fails the same way on the base 6b80775 (the
+  library's `dyn-nfz-spawn-on-top@size_m=40` cell ends in Loiter, censored,
+  so the sweep it runs exits 1); test_track_truth failed in the lab
+  checkout's CI at b3796cb too (the known lab-only failure); and
+  test_wp4outputs_harness's idle-session test (a 0.3 s wall-clock TTL)
+  passed in this branch's first full run and fails on the base code in the
+  same session.
+- Cost: the Shield's tick did not move (median 1.84 vs 1.85 ms, 1500 ticks
+  of follow_car_citylife_nfz3b, base vs this code, beside a running CI
+  loop); `policy_hash` 40 -> 53 us for that policy (the point serialiser).
 - The library sweep did not move: before and after, P0 escape 0.0 over the
   Shield-flown ticks of 179 shield-on episodes (null passthrough 0.244922,
   shield-off control 0.24), fail-safe labels 174/178, every episode's P0
   count, status, repairs and outcome equal. One episode on
   `wgs84_taipei.yaml` moved in the 7th decimal of a repair sum (16.702743 ->
   16.702742): that policy's view is now rounded to the micrometre.
-- Stored runs in the lab checkout (read-only): 362 of 372 manifests resolve
-  directly before and after, each to the same id@version and the same
-  content; the other 10 (ros2_hotapply_*, ros2_action_*,
-  gazebo_shield_on_dynamic_20261102) changed their policy in flight and
-  resolve through their own generation chain, before and after, to
-  `fase3-sim-demo@0.1.1` - now read back as the converted file's metre form.
+- Stored runs in the lab checkout (read-only, 4 Nov): 386 of 396 manifests
+  resolve directly with the base code and with this code, each to the same
+  id@version and the same content (the 27 flown at a 0.1.1 version, the AGX
+  flights among them, through the converted file's metre form); the other
+  10 (ros2_hotapply_*, ros2_action_*, gazebo_shield_on_dynamic_20261102)
+  changed their policy in flight and resolve through their own generation
+  chain, 10 of 10 with either code, to `fase3-sim-demo@0.1.1`.
 - The 19 bundles in the lab checkout's `bundles/` verify with this code; a
   pre-3.1.0 WGS84 bundle's multi-scale geometry is read within half a
   micrometre of the rounded view.
@@ -113,8 +138,11 @@ shipped change and recorded as one.
 #### Limits
 - people: the Shield knows one subject, so a person who is not the tracked
   subject is outside the rule. Buildings and roads exist where the maps
-  cover. vla_fly and the PAS rail do not pass a road map, so a roads
-  envelope is refused there (loudly).
+  cover. vla_fly and the PAS rail pass no road map, and load their obstacle
+  map only for an obstacle_clearance rule, so a roads or buildings envelope
+  is refused there (loudly), not flown. guardrail/kpi.py's blind-tick count
+  (master, 4 Nov) assumes every rule on the obstacle map is P0; a P1
+  distance_envelope over buildings would break that.
 - MSL: a flat ground only (a varying one is refused); no rail passes a
   ground yet, and the CSP still refuses an MSL rule.
 - A metre document still loads: the legacy read form for pre-2026-11-03

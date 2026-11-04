@@ -341,9 +341,9 @@ requires. What keeps every stored run traceable:
   policy shipped unrounded multi-scale geometry; it is read within half a
   micrometre of the rounded view.
 
-Measured: 362 of 372 stored manifests in the lab checkout resolve directly
-before and after, each to the same id@version and content; the other 10
-(ros2_hotapply_*, ros2_action_*, gazebo_shield_on_dynamic_20261102) changed
-their policy in flight and resolve through their own generation chain
-(`manifest.resolve_run_generation_chain`), 10 of 10 before and after. Every
-one of the 19 bundles there verifies.
+Measured (4 Nov): 386 of the 396 stored manifests in the lab checkout resolve
+directly with the base code and with this one, each to the same id@version
+and content; the other 10 (ros2_hotapply_*, ros2_action_*,
+gazebo_shield_on_dynamic_20261102) changed their policy in flight and resolve
+through their own generation chain (`manifest.resolve_run_generation_chain`),
+10 of 10 with either code. Every one of the 19 bundles there verifies.
