@@ -16,6 +16,64 @@ shipped change and recorded as one.
 
 ## [Unreleased]
 
+### 2026-11-04 (re-flown) — the 3 November ROS 2 rail runs flown again from the main checkout, through Shield.filter_body; the re-flights found three WGS84 regressions, fixed
+
+#### Flown
+Every run from the main checkout in WSL (ArduCopter 4.5.7 SITL, MAVROS 2,
+the `dev` topology), each with its flight-log replay video
+`demo/out/<tag>/<tag>_track.mp4` (424-784 KB). The Shield node hands
+/vla/action to `Shield.filter_body` (7e0cb41).
+
+| run | as | what it showed |
+|---|---|---|
+| `gcs_fence_on_20261104` | `gcs_fence_on_20261103c`: GCS_BACKSTOP=1, Shield on, to (40, 15) at 2 m/s | Code 7e0cb41. The Shield bent the route around `nfz-square`: G1 at 4.6 s, G7 at 12.5 s (12.7 s on 3 Nov); 59 P0 violation ticks repaired, P0 escape 0.0, no unsafe tick, no breach. |
+| `gcs_fence_off_20261104` | `gcs_fence_off_20261103b`: Shield off, 3.5 m/s | Code 7e0cb41. "Fence Breached" at 4.07 s (4.08 s on 3 Nov), GUIDED -> RTL; P0 escape 1.0, 104 unsafe ticks: the GCS-set fence is the only backstop. |
+| `sros2_policy_on_20261104` | `sros2_policy_on_20261103b`: SROS2=1, per-topic permissions, Shield on, 3.5 m/s | Code 7e0cb41. `permissions_scope: per_topic`, the Shield in its own enclave; X1 / G3 at 0.11 / 0.21 s, G5 RTL at 30.3 s, as on 3 Nov; P0 escape 0.0. |
+| `harness_corridor_20261104` | `harness_corridor_20261103c`: the harness over gRPC/mTLS, four HotApply | Code 7e0cb41. The same FSM as on 3 Nov (G1 2.9 s, G3 3.5 s, G8 11.2 s, X1 / G3 15.1 / 15.2 s, G8 28.2 s), target reached at 37.3 s, P0 escape 0.0 - but every GeoFence upload refused (Found). |
+| `harness_corridor_20261104b` | the same, after d2f52b6 | Code d2f52b6. SITL booted at the bundle's origin; generation 1 uploaded `nfz-hot-1` (4 items, "Fence Indexed OK"), generations 2-4 export nothing for the reasons the 3 Nov run gave; the same FSM; target 37.4 s; P0 escape 0.0. |
+| `mission_wp_20261104` | `mission_wp_20261103d`: STYLE=mission, the harness spawning the zone | Flown at 7e0cb41 (the driver's log; see Found). Item 2 replaced by a held point 98 ms after the zone's hot-apply ("leg to (0, 30) breaks nfz-hot-1 at 16.81 m"), restored after 2.1 s of a legal leg, item 2 reached at 20.6 s, mission end at 28.1 s: as on 3 Nov. |
+
+#### Found
+- **A geographic bundle flew about the wrong home.** The 3 Nov conversion
+  anchored corridor-survey 0.1.2 at the Project AirSim scenes'
+  home-geo-point (35.6895, 139.6917); the SITL rail booted at CMAC, 7955798.7
+  m away. The Shield flew the geometry about CMAC, and the adapter refused
+  every GeoFence upload ("the zones would be uploaded in the wrong place"):
+  the autopilot backstop was absent. 28 of the 32 policies carry that origin.
+- **The ROS 2 rail's replay videos could not be drawn**: a policy dump holds a
+  WGS84 point as lat/lon only, and `tools/render_track_video.py` read x/y:
+  KeyError: 'x' on all six runs. The 28 Oct deck's data step read the
+  WGS84 nfz3b file the same way (zone counts and map).
+- `sitl/start_sitl.sh` assigned the fence parm over `SITL_EXTRA_DEFAULTS`,
+  so PHYSICS=gazebo with the fence on booted without gazebo-iris.parm.
+- **The mission-style node writes no six-field manifest**: its run folder
+  carries no code revision or topology. Its revision here comes from the
+  flight driver's log (7e0cb41, a clean tree), not from the run.
+
+#### Fixed
+- d2f52b6: `start_sitl.sh` takes SITL_HOME (CMAC by default, as the
+  container's entrypoint); `run_ros2_demo.sh` boots SITL at a geographic
+  bundle's frame origin (`sitl/bundle_origin.py`) unless SITL_HOME is set;
+  the fence parm is appended, not assigned.
+- 5e34965, a0ac6f3, e6900e3: `guardrail/projection.py` gains
+  `raw_frame_origin` and `raw_point_metres` (x/y as written, else lat/lon
+  through `local_metres`, the Shield's view); the renderer and the 28 Oct
+  deck's zone counts and map use them. Drawn into a temporary folder, the
+  map's three zones sit where the city and both tracks place them.
+- `docs/FINAL-REPORT-outline.md`: WP3-04 records the flights with
+  `filter_body`; the rows that cited the 3 Nov runs name their re-flights.
+
+#### Tests
+- test_deploy_configs 69/69 (the SITL home and the defaults, the latter
+  shown failing on the old line), test_render_track_video 6/6,
+  test_build_progress_1028_data 4/4 (the same square in lat/lon gives the
+  metre square's counts; the shipped nfz3b file loads), test_frame_contract
+  16/16 and test_sitl_rails 52/52 in the lab checkout.
+
+#### Limits
+- Not KPI-grade: the `dev` topology, desktop SITL.
+- The mission-style manifest is open (above).
+
 ### 2026-11-04 (body frame) — the Shield takes the grant's body frame at its own boundary: WP3-04 and ARCH-04 DRIFT -> PARTIAL; 49 DONE, 80 PARTIAL, 6 DRIFT, 1 MISSING
 
 #### Changed
