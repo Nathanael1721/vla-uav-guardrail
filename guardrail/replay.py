@@ -228,6 +228,10 @@ VERIFIED_KPI_FIELDS = (
     "p0_violation_ticks",
     "p0_escapes",
     "p0_ticks_not_measurable",
+    # Since 2026-11-04 (kpi.py, WHAT THE RULES COULD NOT SEE): the ticks the
+    # escape rate does not cover. A bundle written before has no such field
+    # and is noted, not refused.
+    "p0_ticks_blind",
     "failsafe_trigger_correctness",
     "mean_repair_magnitude_mps",
     "max_repair_magnitude_mps",
@@ -966,9 +970,12 @@ def verify_replay(path: str | Path,
     for field in VERIFIED_KPI_FIELDS:
         if field not in stored:
             # Present in compute() but not in this (older) stored table. Worth
-            # saying; not a mismatch.
-            notes.append(f"{field}: absent from the bundle's KPI table, so it "
-                         f"could not be re-derived")
+            # saying; not a mismatch. Unless the log cannot give it either
+            # (compute()'s None, e.g. p0_ticks_blind on rows that never carried
+            # `off_map`): then there was nothing to re-derive on either side.
+            if fresh.get(field) is not None:
+                notes.append(f"{field}: absent from the bundle's KPI table, so it "
+                             f"could not be re-derived")
             continue
         a, b = stored.get(field), fresh.get(field)
         if isinstance(a, float) and isinstance(b, float):

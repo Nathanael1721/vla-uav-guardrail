@@ -38,6 +38,7 @@
 #        WP4, the stress harness and its outputs: test_scenario_spec,
 #          test_sweep, test_failsafe_rubric (the fail-safe labels and
 #          docs/RUBRIC-failsafe.md), test_kpi_magnitudes, test_kpi_report,
+#          test_kpi_blind (off-map ticks and simulator contacts),
 #          test_harness_service, test_harnesstruth_*, test_wp4outputs_*.
 #        The flying rails: test_railinputs_*, test_flight_pas_ap_20261008 (on
 #          its tests/fixtures/ copy of the 8 Oct flight), test_pas_ardupilot,
@@ -594,6 +595,7 @@ jobs:
               tests/test_check_contract.py \
               tests/test_guardrail_coverage.py \
               tests/test_kpi_magnitudes.py \
+              tests/test_kpi_blind.py \
               tests/test_manifest.py \
               tests/test_bundle.py \
               tests/test_frame_contract.py \

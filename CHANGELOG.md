@@ -16,6 +16,69 @@ shipped change and recorded as one.
 
 ## [Unreleased]
 
+### 2026-11-04 (afternoon) — the KPIs read what the rules could not see and what the aircraft hit: a flight off the obstacle map is no longer a measured 0.0, and a flight that touched a building is no longer a success
+
+#### Fixed
+- `guardrail/kpi.py` compute(): Shield ticks flown off the obstacle map
+  (`off_map`, which follow_vlm and vla_fly write on every tick the Shield
+  has a map) are counted in the new `p0_ticks_blind`. Off the map the
+  building-clearance rule's distance field holds no building, so no
+  violation there is not a clean tick. With any such tick the escape rate's
+  status reads `partially_measured`, the reasons carry `p0_blind:off_map`
+  and `mission_success` is False, the rule already applied to P0 ticks the
+  log could not measure. The status now also reads `partially_measured`
+  for those (`p0_ticks_not_measurable`), which it never did. A log whose
+  rows never say leaves the count None, not 0. The rate itself is
+  unchanged.
+- compute() reads the simulator's contact reports (`metrics.collisions`
+  when `measured`): a contact during the mission fails the outcome
+  (`collision`) and is counted in `collision_contacts` and
+  `collision_objects`; contacts before t0 (take-off) and after the last tick
+  (landing) stay out, as collisions_summary splits them. rollup() pools
+  both (`p0_ticks_blind`, `episodes_p0_blind`, `episodes_with_collision`,
+  `episodes_collision_not_measured`); `failure_categories()` names
+  `p0_blind` and `collision`, and the top-K list ranks a contact beside the
+  escapes and shows both counts.
+- `guardrail/replay.py`: `p0_ticks_blind` joins `VERIFIED_KPI_FIELDS`, so a
+  bundle's blind count is re-derived from its rows. A field missing from an
+  older bundle is noted only when the log can give it (compute() not None).
+
+#### Found
+- The two AGX flights it changes, recomputed read-only from their stored
+  logs (the kpi.json files stay as flown; `tools/rescore_kpis.py` only adds
+  fields): `nfz3b_agx_hier_aerovla_20261103`, 3484 of 4160 ticks off the map
+  and 1919 contact reports with BP_jctBldSetK33_6 from t 351.5 s, read
+  outcome success, mission_success True and the escape rate measured at
+  0.0; now fail (`collision`, `p0_blind:off_map`), mission_success False,
+  partially_measured. `agx_e2e_r3_20261103`, 2926 of 4200 ticks off the map
+  and no contact: mission_success False, partially_measured. The other 19
+  AGX runs (the matrix and the first three flights of 3 November) are
+  unchanged, and the P0 figures (rate, escapes, violation ticks) are equal
+  on all 21.
+
+#### Tests
+- `tests/test_kpi_blind.py` (new, 14 of 14 pass; in
+  `.github/workflows/tests.yml`): a log with the nfz3b counts fails with
+  both reasons; the same log without `off_map` and `collisions` scores the
+  old success (the finding itself); take-off and landing contacts do not
+  fail; an unmeasured contact topic is None; autopilot ticks stay out; the
+  rollup, top-K order and replay field; every obstacle_clearance rule under
+  policies/ is P0, which is what lets an off-map tick count as a blind P0
+  tick without a rule lookup. Unchanged suites: test_kpi_magnitudes 84 of
+  84, test_kpi_report 40 of 40, test_replay 61 of 61, test_bundle 57 of 57,
+  test_manifest 68 of 68, test_wp4outputs_kpi_report 24 of 24,
+  test_build_dashboard 20 of 20, test_replay_identity 9 of 9,
+  test_sitl_rails 51 of 51, test_city_episode 4 of 4.
+
+#### Limits
+- A blind tick says the aircraft was off the map, not that a building was
+  near: a gap in the evidence, not a violation. A contact count is only as
+  complete as the simulator's collision topic. Rails that write no
+  `off_map` (the SITL rails, the stress harness) report the count as None.
+  This makes the gap visible; it does not close it: the flights left the
+  map because the map (x -141 to 219 m, y -61 to 139 m) does not cover the
+  level they fly in.
+
 ### 2026-11-04 — the 28 October Jetson comparison matrix re-flown on the AGX Orin with every VLA served on the board: the hierarchical follows hold their Orin Nano scores at a median 2.4 times the latency; one flight left the obstacle map and pressed against a building with a P0 escape rate of 0.0
 
 #### Added
