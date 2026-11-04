@@ -1113,7 +1113,83 @@ def new_acquisition(acq, t0: float | None = None) -> dict:
     return {"acq": acq, "committed": False, "last_seq": -1, "commits": [], "reacquires": 0,
             "lapses": [], "errors": [], "t0": t0, "seen_t": None, "t_ok": -math.inf,
             "last_t_det": None, "hist": [], "last": None, "v": None, "v_prior": None,
-            "vxy": None, "attempts": [], "attempt": None}
+            "vxy": None, "attempts": [], "attempt": None, "jumps": 0, "jumps_first": []}
+
+
+# A HELD BOX THE SUBJECT COULD NOT HAVE REACHED (2026-11-04). The committed
+# follow took every held box's map point as the subject's place. In
+# agx_e2e_aerovla_01 (2026-11-03) a box scored 0.0093 (threshold 0.008) put
+# the subject 20.1 m from the previous estimate, 3.4 m from the aircraft,
+# while the level car was 29.9 m away; the measured velocity jumped to
+# 7.29 m/s, the stand-off repair closed on the phantom, and the Shield's own
+# check counted the tick as the flight's one P0 escape. A held box now counts
+# only within the reach follow_vlm.Reacquirer allows from the last measured
+# position: reach_base_m + v_r x dt from the last accepted point, v_r =
+# clip(1.5 x the measured speed, v_min, v_max) and dt the time between the
+# two sightings. A refused box is not a sighting: refused long enough, the
+# subject lapses and is re-acquired from its last good place, as any loss is.
+#
+# Chosen on the 79 perception follows replayed with
+# tools/replay_standoff_feed.py (224,255 ticks; each refused box set against
+# the level car's truth). The Reacquirer's pick-to-pick step_m (3 m) for
+# every box refused 690, 460 of them within 5 m of the car - a slow car's
+# map-point jitter, not a jump. reach_base_m (10 m) for every box refused
+# 153, but let the phantom through. The rule below refuses 173, 158 of them
+# more than 8 m from the car and 8 within 5 m; the replayed P0 escapes at the
+# flown forecast (5 s / 0.1 s, velocity given) go from 27 to 10, the
+# phantom's among the 17 gone; the ticks with a subject (0.302 -> 0.301) and
+# the median distance of the subject to the car (2.06 m) stay as they were.
+#
+# A SOFT box answers to the tighter rule. "Soft" is the identity's word for a
+# box only allowed to CONTINUE a track it agrees with (a car half hidden
+# behind a truck); the phantom was one: tier soft, score 0.0093, 63.7 x
+# 178.2 px (taller than wide, where the car from 8 m up is wider), 12.4 m
+# from the last point 0.91 s later - inside reach_base_m's reach. A soft box
+# must lie within the Reacquirer's pick-to-pick step_m + v_r x dt instead.
+JUMP_REACH_BASE_M = 10.0               # Reacquirer reach_base_m (an "ok" box)
+JUMP_STEP_M = 3.0                      # Reacquirer step_m (a "soft" box)
+JUMP_V_MIN, JUMP_V_MAX = 3.0, 12.0     # Reacquirer v_min, v_max (m/s)
+
+
+def take_held_box(acq_box: dict, now: float, t_capture: float, tier, P) -> bool:
+    """One held box of the committed subject (_acquire_step; the replays use
+    it too): an "ok" box, or a soft one within 3 s of an ok one, is a
+    sighting; its map point `P` updates the measurement unless it lies past
+    the reach (A HELD BOX THE SUBJECT COULD NOT HAVE REACHED). Returns
+    whether the box was taken. `now` is the sighting's time, `t_capture` its
+    frame's capture time."""
+    import follow_vlm as FV
+    if not (tier == "ok" or now - acq_box["t_ok"] < 3.0):
+        return False
+    hist = acq_box["hist"]
+    if P is not None and hist:
+        t_l, x_l, y_l = hist[-1]
+        v = acq_box.get("v")
+        v_r = min(JUMP_V_MAX, max(JUMP_V_MIN, 1.5 * v if v is not None else 0.0))
+        jump = math.hypot(float(P[0]) - x_l, float(P[1]) - y_l)
+        base = JUMP_REACH_BASE_M if tier == "ok" else JUMP_STEP_M
+        reach = base + v_r * max(0.0, now - t_l)
+        if jump > reach:
+            acq_box["jumps"] = acq_box.get("jumps", 0) + 1
+            first = acq_box.setdefault("jumps_first", [])
+            if len(first) < 10:
+                t0 = acq_box.get("t0")
+                first.append({"t": round(now - t0, 3) if t0 is not None else round(now, 3),
+                              "jump_m": round(jump, 2), "reach_m": round(reach, 2),
+                              "tier": tier})
+            return False
+    if tier == "ok":
+        acq_box["t_ok"] = now
+    acq_box["seen_t"] = now
+    if P is not None:
+        hist.append((now, float(P[0]), float(P[1])))
+        del hist[:-40]
+        v = FV.measured_speed(hist)
+        if v is not None:
+            acq_box["v"] = v
+        acq_box["vxy"] = measured_velocity(hist)    # the Shield's (shield_subject)
+        acq_box["last"] = {"t": float(t_capture), "P": (float(P[0]), float(P[1]))}
+    return True
 
 
 def _open_attempt(acq_box: dict, kind: str, t) -> dict:
@@ -1167,8 +1243,9 @@ def _acquire_step(grounder, acq_box: dict, args, clock=time.time) -> None:
     dropped the stale box (8 s): #8 spent 1060 of its 1306 detector frames
     acquiring and #9 hovered 54 % of the time. The hint's memory and search
     keep the phrases coming meanwhile (DetectorHint). `args` is unused since
-    (kept for the callers); `clock` is the wall clock of the Grounder."""
-    import follow_vlm as FV
+    (kept for the callers); `clock` is the wall clock of the Grounder. A held
+    box is taken through take_held_box, which refuses a jump the subject
+    could not have made (2026-11-04)."""
     gw = grounder.latest()
     if gw.get("seq") == acq_box["last_seq"]:
         return
@@ -1218,23 +1295,9 @@ def _acquire_step(grounder, acq_box: dict, args, clock=time.time) -> None:
     t_det = gw.get("t_det")
     if gw.get("det") is not None and t_det and t_det != acq_box["last_t_det"]:
         acq_box["last_t_det"] = t_det
-        tier = gw.get("tier")
-        if tier == "ok" or now - acq_box["t_ok"] < 3.0:
-            if tier == "ok":
-                acq_box["t_ok"] = now
-            acq_box["seen_t"] = now
-            P = (gw.get("feat") or {}).get("P")
-            if P is not None:
-                cap = gw.get("cap") or {}
-                hist = acq_box["hist"]
-                hist.append((now, float(P[0]), float(P[1])))
-                del hist[:-40]
-                v = FV.measured_speed(hist)
-                if v is not None:
-                    acq_box["v"] = v
-                acq_box["vxy"] = measured_velocity(hist)    # the Shield's (shield_subject)
-                acq_box["last"] = {"t": float(cap.get("t_capture") or cap.get("t_cap") or now),
-                                   "P": (float(P[0]), float(P[1]))}
+        cap = gw.get("cap") or {}
+        take_held_box(acq_box, now, cap.get("t_capture") or cap.get("t_cap") or now,
+                      gw.get("tier"), (gw.get("feat") or {}).get("P"))
     unseen = now - (acq_box["seen_t"] if acq_box["seen_t"] is not None else now)
     why = ("lock: no held instance" if gw.get("lock_why") == "no held instance"
            else f"unseen {unseen:.1f} s" if unseen > LAPSE_S else None)
@@ -1351,7 +1414,11 @@ def follow_measured(acq_box: dict, resets: list[dict], loop) -> dict:
                "reacquires": acq_box["reacquires"], "lapses": list(acq_box["lapses"]),
                "errors": list(acq_box["errors"]),
                "judged": sum(a["judged"] for a in atts), "outcomes": outcomes,
-               "refused": refused, "attempts": atts}
+               "refused": refused, "attempts": atts,
+               # Held boxes refused for a jump the subject could not have
+               # made (take_held_box), and the first ten of them.
+               "held_jumps_refused": acq_box.get("jumps", 0),
+               "held_jumps_first": list(acq_box.get("jumps_first") or [])}
     return {"acquisition": acq, "perception_resets": list(resets),
             "stuck_resets": sum(1 for e in resets if e.get("why") == "stuck"),
             "close_stalls": sum(1 for e in resets if e.get("why") == "close_stall"),

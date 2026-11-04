@@ -16,6 +16,102 @@ shipped change and recorded as one.
 
 ## [Unreleased]
 
+### 2026-11-04 (end of day) — the end-to-end follow refuses a held box its subject could not have reached: the phantom behind the AGX flight's one P0 escape is refused on replay
+
+#### Fixed
+- `demo/vla_fly.py`: the committed follow took every held box's map point
+  as its subject's place. In `agx_e2e_aerovla_01` (2026-11-03) a soft box
+  (score 0.0093, threshold 0.008; 63.7 x 178.2 px, taller than wide, where
+  the car from 8 m up is wider) lay 12.4 m from the last point 0.91 s later
+  and put the subject 3.4 m from the aircraft with the level car 29.9 m
+  away; the stand-off repair closed on it and the Shield counted the
+  flight's one P0 escape. New `take_held_box()`, the one measurement step
+  for `_acquire_step` and the replay, takes a held box only within
+  follow_vlm.Reacquirer's reach of the last accepted point: an "ok" box
+  within its `reach_base_m` (10 m) + v_r x dt, a "soft" box - the
+  identity's word for a box only allowed to continue a track it agrees
+  with - within its pick-to-pick `step_m` (3 m) + v_r x dt, v_r =
+  clip(1.5 x the measured speed, 3, 12) m/s. A refused box is not a
+  sighting; refused for LAPSE_S the subject lapses and is re-acquired from
+  its last good place. `metrics.follow.acquisition` records
+  `held_jumps_refused` and the first ten.
+
+#### Found
+- Chosen on the 79 perception follows under demo/out, replayed with
+  `tools/replay_standoff_feed.py` (224,255 ticks from the first
+  acquisition), each refused box set against the level car's truth:
+  `step_m` for every box refused 690, 460 of them within 5 m of the car (a
+  slow car's map-point jitter); `reach_base_m` for every box refused 153
+  and let the phantom through; the rule above refuses 173 boxes in 37
+  flights, 158 of them more than 8 m from the car and 8 within 5 m. At the
+  flown forecast (5 s / 0.1 s, the subject's velocity given) the replayed
+  P0 escapes go from 27 to 10, `agx_e2e_aerovla_01`'s among those gone (1
+  to 0); the ticks with a subject fed stay 0.301 of the total (0.302
+  before), the ticks with the car truly within 5 m and the subject placed
+  within 5 m stay 129, and the median distance of the subject to the car
+  stays 2.06 m (closer in 15 flights, farther in none). The 10 left (in
+  `aiot_v3g_01` and `aiot_v10p_03`) are not jumps: no box of theirs is
+  refused.
+
+#### Added
+- `tools/replay_standoff_feed.py`: the replay takes held boxes through
+  `take_held_box` (`--no-jump-gate` for the old step), counts the refusals
+  per run and the P0 escapes per forecast (the Shield's re-check of what it
+  emitted, as kpi.py counts them).
+
+#### Tests
+- `tests/test_held_box_gate.py` (new, 10 of 10; in
+  `.github/workflows/tests.yml`): a car at 10 m/s is taken box after box; the
+  20.1 m phantom is refused and moves neither the place, the velocity nor
+  the last sighting; the reach grows with the time since the last good
+  point; a slow car's 6 m jitter is not a jump; a soft box at 12.4 m is
+  refused where an ok one is taken; the constants are the Reacquirer's;
+  phantoms for LAPSE_S leave the Shield no subject, the last good place
+  kept; `_acquire_step` and the replay share the step; the record carries
+  the refusals. `tests/test_vla_fly.py` 63 of 63 (its pinned acquisition
+  record gains the two fields), test_vla_follow_reacquire 13 of 13,
+  test_vla_standoff_feed 11 of 11, test_vla_follow_smooth 14 of 14,
+  test_pas_vla 29 of 29, test_vla_fly_fakesim 14 of 14 (13 of 14 once
+  under the replay's load, 14 of 14 alone, as before).
+
+#### Limits
+- Open loop: the replay feeds each tick's logged command, so 10 replayed
+  escapes are what the Shield would have done with that command, not what a
+  flight with this step would fly. Not flown yet. The 8 refused boxes
+  within 5 m of the car are a short loss each, not a wrong subject.
+
+### 2026-11-04 (late night) — the three AGX flights that showed the gaps, flown again on the whole level's map: no tick off the map, no contact, every panel on the frame
+
+#### Flown
+- On the AGX Orin at 989f967 (MAXN, every VLA served on the board, the
+  simulator on this PC, the matrix's runner and arguments), with the maps
+  of the section below synced to the board:
+
+  | flight | within 30 m | off-map ticks | contacts | smallest clearance on the path (whole-level map) |
+  |---|---|---|---|---|
+  | `nfz3b_agx_hier_aerovla_20261104` | 0.494 | 0 | 0 | 2.76 m |
+  | `nfz3b_agx_hier_aerovla_20261103` (before) | 0.152 | 3484 | 1919 | -2.91 m |
+  | `agx_e2e_r3_20261104` | 0.285 (after acquisition) | 0 | 0 | 3.00 m |
+  | `agx_e2e_r3_20261103` (before) | 0.098 | 2926 | 0 | 1.99 m |
+  | `agx_e2e_racevla_20261104` | 0.079 (after acquisition) | 0 | 0 | 3.03 m |
+
+  The NFZ3b flight came within 3 m of a building on 16 ticks; the
+  building-clearance rule was violated on 26 ticks and repaired. P0 escape
+  rate 0.0 on all three, status `measured`, `p0_ticks_blind` 0 (the first
+  kpi.json files with the field). The Orin Nano's NFZ3b flight of
+  28 October read 0.454.
+- The panels on the board's frames: "RaceVLA  no decision flying  pipelined"
+  and "AerialVLA FT v4_r3 #27  image 1.8 s old  pipelined" on the VLA panel,
+  "P0 escapes 0" on a line of its own inside the rule panel, the banner
+  clear of the status box; the board draws them in DejaVu Sans Mono
+  (`fc-list`). PIP videos in `E:\vla_drone_offload\videos`, copies under
+  30 MB in `docs/video/<tag>_pip_small.mp4` (gitignored).
+
+#### Limits
+- One flight each; the NFZ3b difference rests on one flight before and one
+  after. The 4 November NFZ3b flight never left the map, so it does not
+  show what the Shield does at a building it would once have missed.
+
 ### 2026-11-04 (night) — CityLife's obstacle maps cover the whole level: the building the NFZ3b flight touched is on the map, and the rule the AGX flights were blind to sees again
 
 #### Changed

@@ -695,6 +695,7 @@ jobs:
               tests/test_vla_lateral_step.py \
               tests/test_follow_teacher.py \
               tests/test_vla_standoff_feed.py \
+              tests/test_held_box_gate.py \
               tests/test_citylife_peds.py \
               tests/test_citylife_routes.py \
               tests/test_citylife_signal_lamps.py \

@@ -82,7 +82,7 @@ def follow_runs(out_root: Path) -> list[tuple[str, bool]]:
     return found
 
 
-def replay(run_dir: str, citymap_dir: str) -> dict:
+def replay(run_dir: str, citymap_dir: str, jump_gate: bool = True) -> dict:
     import occ_bands
     import vla_fly as VF
     from guardrail.models import Action4D, State, load_policy
@@ -125,7 +125,9 @@ def replay(run_dir: str, citymap_dir: str) -> dict:
     box = VF.new_acquisition(None)
     shields = {k: rail_shield(pol, lookahead_s=a, dt=b, obstacle_map=smap)
                for k, (a, b, _) in VARIANTS.items()}
-    res = {k: {"so_rep": 0, "cut": [], "truth_lt10": 0, "other_rep": 0} for k in VARIANTS}
+    res = {k: {"so_rep": 0, "cut": [], "truth_lt10": 0, "other_rep": 0, "p0_escapes": 0}
+           for k in VARIANTS}
+    prio = {c.id: c.priority for c in pol.constraints}
     n = fed = t5 = t5_fed = t5_seen = 0
     err = []
     ei = hi = 0
@@ -136,14 +138,20 @@ def replay(run_dir: str, citymap_dir: str) -> dict:
         while ei < len(ev) and ev[ei][0] <= t:
             if ev[ei][1] == "commit":
                 box.update(committed=True, hist=[], vxy=None, last=None, seen_t=None,
-                           t_ok=-math.inf)
+                           t_ok=-math.inf, v=None)
             else:
                 box["committed"] = False
             ei += 1
         while hi < len(held) and held[hi][0] <= now:
             tp, tc, tier, P = held[hi]
             hi += 1
-            if box["committed"] and (tier == "ok" or tp - box["t_ok"] < 3.0):
+            if not box["committed"]:
+                continue
+            if jump_gate:
+                # vla_fly's own measurement step, its jump gate included.
+                VF.take_held_box(box, tp, tc, tier, P)
+            elif tier == "ok" or tp - box["t_ok"] < 3.0:
+                # As flown until 2026-11-04: every held box taken.
                 if tier == "ok":
                     box["t_ok"] = tp
                 box["seen_t"] = tp
@@ -191,7 +199,13 @@ def replay(run_dir: str, citymap_dir: str) -> dict:
                                  - math.hypot(dec.emitted.vx, dec.emitted.vy))
                 rr["truth_lt10"] += td is not None and td < 10.0
             rr["other_rep"] += bool(ops - SO_OPS)
-    return {"run": d.name, "ticks": n, "fed": fed, "truth_lt5": t5, "truth_lt5_fed": t5_fed,
+            # The Shield's own re-check of what it emitted (kpi.py's escape):
+            # a P0 rule still broken after the repair.
+            rr["p0_escapes"] += any(prio.get(v.rule_id, "P0") == "P0" for v in dec.violations) \
+                and any(prio.get(v.rule_id, "P0") == "P0" for v in dec.emitted_violations)
+    return {"run": d.name, "ticks": n, "fed": fed, "jump_gate": jump_gate,
+            "held_jumps_refused": box.get("jumps", 0),
+            "truth_lt5": t5, "truth_lt5_fed": t5_fed,
             "truth_lt5_perceived_lt5": t5_seen,
             "subject_err_m": round(st.median(err), 2) if err else None,
             "variants": {k: {"so_rep": rr["so_rep"],
@@ -199,7 +213,8 @@ def replay(run_dir: str, citymap_dir: str) -> dict:
                              "cut_median_mps": (round(st.median(rr["cut"]), 2)
                                                 if rr["cut"] else None),
                              "so_rep_truth_lt10": rr["truth_lt10"],
-                             "other_rep": rr["other_rep"]} for k, rr in res.items()}}
+                             "other_rep": rr["other_rep"],
+                             "p0_escapes": rr["p0_escapes"]} for k, rr in res.items()}}
 
 
 def summary(results: list[dict], label: str) -> list[str]:
@@ -208,13 +223,16 @@ def summary(results: list[dict], label: str) -> list[str]:
     if not n:
         return [f"{label}: nothing replayed"]
     fed = sum(r["fed"] for r in ok)
-    out = [f"{label}: {len(ok)} flights, {n} ticks from the first acquisition; a subject "
+    out = [f"{label}: {len(ok)} flights, {n} ticks from the first acquisition; "
+           f"{sum(r.get('held_jumps_refused', 0) for r in ok)} held boxes refused as jumps "
+           f"(in {sum(1 for r in ok if r.get('held_jumps_refused'))} flights); a subject "
            f"fed on {fed} ({fed / n:.3f}); truth within 5 m on "
            f"{sum(r['truth_lt5'] for r in ok)}, a subject fed on "
            f"{sum(r['truth_lt5_fed'] for r in ok)} of them, placed within 5 m on "
            f"{sum(r['truth_lt5_perceived_lt5'] for r in ok)}",
            f"  {'forecast':8}  {'stand-off repair ticks':>24}  {'flights >5 %':>12}  "
-           f"{'worst':>6}  {'median cut':>10}  {'truth <10 m':>11}  {'other repairs':>13}"]
+           f"{'worst':>6}  {'median cut':>10}  {'truth <10 m':>11}  {'other repairs':>13}"
+           f"  {'P0 escapes':>10}"]
     for k in VARIANTS:
         rep = sum(r["variants"][k]["so_rep"] for r in ok)
         fl = [r["variants"][k]["so_rep_frac"] for r in ok]
@@ -223,7 +241,8 @@ def summary(results: list[dict], label: str) -> list[str]:
         out.append(f"  {k:8}  {rep:>14} ({rep / n:7.4f})  {sum(f > 0.05 for f in fl):>12}  "
                    f"{max(fl):6.3f}  {(st.median(cuts) if cuts else float('nan')):7.2f} m/s"
                    f"  {sum(r['variants'][k]['so_rep_truth_lt10'] for r in ok):>11}"
-                   f"  {sum(r['variants'][k]['other_rep'] for r in ok):>13}")
+                   f"  {sum(r['variants'][k]['other_rep'] for r in ok):>13}"
+                   f"  {sum(r['variants'][k].get('p0_escapes', 0) for r in ok):>10}")
     return out
 
 
@@ -232,6 +251,9 @@ def main(argv=None) -> int:
     ap.add_argument("runs", nargs="*")
     ap.add_argument("--out-root", default=str(ROOT / "demo" / "out"))
     ap.add_argument("--jobs", type=int, default=4)
+    ap.add_argument("--no-jump-gate", action="store_true",
+                    help="take every held box, as vla_fly did until 2026-11-04 "
+                         "(take_held_box's jump gate off)")
     a = ap.parse_args(argv)
     out_root = Path(a.out_root)
     citymap = out_root / "citymap_citylife"
@@ -239,7 +261,7 @@ def main(argv=None) -> int:
     runs = a.runs or list(known)
     with ProcessPoolExecutor(max_workers=max(1, a.jobs)) as ex:
         results = list(ex.map(replay, [str(out_root / r) for r in runs],
-                              [str(citymap)] * len(runs)))
+                              [str(citymap)] * len(runs), [not a.no_jump_gate] * len(runs)))
     for r in results:
         print(json.dumps(r))
     for err in (r for r in results if "error" in r):

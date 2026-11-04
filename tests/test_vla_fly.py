@@ -1656,7 +1656,9 @@ def test_the_follow_records_the_perception_it_applied():
     assert m["acquisition"] == {"committed": True, "commits_s": [1.2, 6.0], "reacquires": 1,
                                 "lapses": [{"t": 5.0, "why": "lock: no held instance"}],
                                 "errors": [], "judged": 0, "outcomes": {}, "refused": {},
-                                "attempts": []}, m
+                                "attempts": [],
+                                # take_held_box's jump gate (2026-11-04): none here
+                                "held_jumps_refused": 0, "held_jumps_first": []}, m
     assert m["stuck_resets"] == 2 and m["close_stalls"] == 1 and m["close_hold_ticks"] == 17
     assert m["perception_resets"] == resets
     assert vla_fly.follow_measured(vla_fly.new_acquisition(None), [], None)["acquisition"] is None
