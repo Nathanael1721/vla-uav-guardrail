@@ -97,6 +97,39 @@ def test_zone_counts_separate_inside_margin_and_outside():
     assert (z["car_ticks_inside"], z["car_ticks_in_margin"]) == (1, 1), z
 
 
+def test_zone_counts_read_a_wgs84_policy_at_the_shields_metres():
+    """The policy files are WGS84 since 3 Nov (IR schema 3.1.0); zone_report
+    read v["x"] alone and stopped with KeyError: 'x' on them (shown failing
+    on the old line, 2026-11-04). The same 10 m square written in lat/lon
+    about a stated origin gives the same counts as the metre one, and the
+    shipped nfz3b file - the one the deck reads - loads."""
+    import sys
+    sys.path.insert(0, str(ROOT))
+    from guardrail.projection import LocalProjection
+    M = _mod()
+    proj = LocalProjection(35.6895, 139.6917)
+    ll = lambda x, y: "{lat: %r, lon: %r}" % proj.to_latlon(x, y)        # noqa: E731
+    with tempfile.TemporaryDirectory() as tmp:
+        M.OUT = Path(tmp) / "out"
+        pol = Path(tmp) / "p.yaml"
+        pol.write_text("policy_id: t\nversion: 0.1.0\norigin: {lat: 35.6895, lon: 139.6917}\n"
+                       "constraints:\n  - id: z\n    type: polygon_fence\n    margin_m: 1.0\n"
+                       f"    vertices: [{ll(0, 0)}, {ll(10, 0)}, {ll(10, 10)}, {ll(0, 10)}]\n",
+                       encoding="utf-8")
+        car = lambda x, y: {"class": "car", "pts": [[x, y]]}                # noqa: E731
+        log = [{"x": 5, "y": 5, "truth": car(5, 5)},
+               {"x": 10.5, "y": 5, "truth": car(20, 5)},
+               {"x": 15, "y": 5, "truth": car(-0.5, 5)},
+               {"x": 30, "y": 30}]
+        _flight(M.OUT, "nfz", {}, log=log)
+        z = M.zone_report("nfz", pol)["z"]
+        assert (z["drone_ticks_inside"], z["drone_ticks_in_margin"]) == (1, 1), z
+        assert (z["car_ticks_inside"], z["car_ticks_in_margin"]) == (1, 1), z
+        _flight(M.OUT, "real", {}, log=[{"x": 0.0, "y": 0.0}])
+        zr = M.zone_report("real", M.NFZ3B)
+    assert zr and all("drone_min_dist_m" in v for v in zr.values()), zr
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     failed = 0

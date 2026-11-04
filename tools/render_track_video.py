@@ -73,27 +73,20 @@ def load_policies(run: Path) -> dict[int, dict]:
 
 def policy_origin(policy: dict):
     """The policy's frame origin (lat, lon): stated, or derived as the model
-    derives it (projection.derive_frame_origin); None for a metre policy."""
-    o = policy.get("origin")
-    if isinstance(o, dict) and o.get("lat") is not None and o.get("lon") is not None:
-        return (float(o["lat"]), float(o["lon"]))
-    from guardrail.projection import derive_frame_origin
-    return derive_frame_origin(policy.get("constraints", []))
+    derives it; None for a metre policy (projection.raw_frame_origin)."""
+    from guardrail.projection import raw_frame_origin
+    return raw_frame_origin(policy)
 
 
 def point_xy(p: dict, origin) -> tuple[float, float]:
     """A point in local metres (x North, y East): as written, or - a WGS84
     point, which a policy dump has carried as lat/lon only since IR schema
     3.1.0 (2026-11-03) - projected about the policy's frame origin exactly as
-    the Shield projects it (projection.local_metres). Until 2026-11-04 this
-    file read p["x"] alone and stopped with KeyError: 'x' on every flight of
-    a WGS84 policy."""
-    if p.get("x") is not None and p.get("y") is not None:
-        return float(p["x"]), float(p["y"])
-    if origin is None or p.get("lat") is None or p.get("lon") is None:
-        raise ValueError(f"a point with neither x/y nor a placeable lat/lon: {p}")
-    from guardrail.projection import local_metres
-    return local_metres(origin, float(p["lat"]), float(p["lon"]))
+    the Shield projects it (projection.raw_point_metres). Until 2026-11-04
+    this file read p["x"] alone and stopped with KeyError: 'x' on every
+    flight of a WGS84 policy."""
+    from guardrail.projection import raw_point_metres
+    return raw_point_metres(p, origin)
 
 
 def zones(policy: dict) -> list[dict]:

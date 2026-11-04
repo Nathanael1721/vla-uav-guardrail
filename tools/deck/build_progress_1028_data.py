@@ -23,12 +23,15 @@ from __future__ import annotations
 import json
 import re
 import statistics
+import sys
 from pathlib import Path
 
 import yaml
 from shapely.geometry import Point, Polygon
 
 REPO = Path(__file__).resolve().parents[2]
+if str(REPO) not in sys.path:          # guardrail.projection when run as a script
+    sys.path.insert(0, str(REPO))
 OUT = REPO / "demo" / "out"
 DATA = REPO / "docs" / "data" / "progress_1028.json"
 BUILD = REPO / "docs" / "share" / "2026-10-28-Progress" / "_build"
@@ -116,8 +119,13 @@ def mean(v):
 
 
 def zone_report(run: str, policy: Path = NFZ3B) -> dict:
+    # The zones in the Shield's metres (2026-11-04): the policy files are WGS84
+    # since 3 Nov, and v["x"] alone stopped with KeyError on them.
+    from guardrail.projection import raw_frame_origin, raw_point_metres
     pol = yaml.safe_load(policy.read_text(encoding="utf-8"))
-    zones = [(c["id"], Polygon([(v["x"], v["y"]) for v in c["vertices"]]), float(c.get("margin_m", 0)))
+    org = raw_frame_origin(pol)
+    zones = [(c["id"], Polygon([raw_point_metres(v, org) for v in c["vertices"]]),
+              float(c.get("margin_m", 0)))
              for c in pol["constraints"] if c["type"] == "polygon_fence"]
     rows = [json.loads(l) for l in (OUT / run / "flight_log.jsonl").open(encoding="utf-8")]
     out = {}

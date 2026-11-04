@@ -257,6 +257,31 @@ def derive_frame_origin(rules) -> tuple[float, float] | None:
     return None
 
 
+def raw_frame_origin(raw: dict) -> tuple[float, float] | None:
+    """The frame origin of a RAW policy dict - authored YAML or a policy dump
+    (policy_g*.json) - without validating it: its stated `origin`, else the
+    one `derive_frame_origin` gives; None for a policy written in metres.
+    For tools that draw or measure a policy's geometry (2026-11-04)."""
+    o = raw.get("origin") if isinstance(raw, dict) else None
+    if isinstance(o, dict) and o.get("lat") is not None and o.get("lon") is not None:
+        return (_num(o["lat"], "origin lat"), _num(o["lon"], "origin lon"))
+    return derive_frame_origin(raw.get("constraints", []) if isinstance(raw, dict) else [])
+
+
+def raw_point_metres(point: dict, origin) -> tuple[float, float]:
+    """A raw point's (x_north_m, y_east_m) in the frame of `origin`: as
+    written when it carries x/y (a metre rule, e.g. one hot-applied into a
+    WGS84 policy), else its lat/lon through `local_metres` - the Shield's
+    own view of it. Since IR schema 3.1.0 a WGS84 point is dumped as lat/lon
+    only, so a tool that read point["x"] stopped with KeyError on it."""
+    if point.get("x") is not None and point.get("y") is not None:
+        return _num(point["x"], "x"), _num(point["y"], "y")
+    if origin is None or point.get("lat") is None or point.get("lon") is None:
+        raise ValueError(f"a point with neither x/y nor a placeable lat/lon: {point}")
+    return local_metres((float(origin[0]), float(origin[1])),
+                        _num(point["lat"], "lat"), _num(point["lon"], "lon"))
+
+
 def _num(v, what: str) -> float:
     try:
         f = float(v)
