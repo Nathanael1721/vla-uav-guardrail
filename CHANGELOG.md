@@ -16,6 +16,35 @@ shipped change and recorded as one.
 
 ## [Unreleased]
 
+### 2026-11-04 (records) — the contract map brought up to date with the 2 November work: 46 DONE, 78 PARTIAL, 11 DRIFT, 1 MISSING
+
+#### Changed
+- `docs/FINAL-REPORT-outline.md`. The 2 November Policy DSL branch merged
+  without updating its Appendix A rows; checked against the code and the
+  grant's wording, they now read:
+  - WP1-02 DONE: rings in canonical order (`canonical_ring_order`), and the
+    lint refuses a corridor no flight can be inside and two disjoint hard
+    corridors. The grant's schema has no polygon holes.
+  - WP1-22 and X-09 DONE: `check_lock` refuses any IR-shape change, additive
+    included, until `IR_SCHEMA_VERSION` rises (2.2.0, then 3.0.0), each with
+    a row in `docs/IR-MIGRATIONS.md`.
+  - WP2-16 DONE: the bundle ships the multi-scale geometry (`multiscale.json`,
+    digest in the signed manifest).
+  - WP1-01 from DRIFT to PARTIAL: three of the grant's required fields are
+    required since IR schema 3.0.0; `scope` is still optional.
+  - WP1-05 stays PARTIAL with the converter and the two-hash contract named;
+    the PI's acceptance is still open.
+- Also brought up to date:
+  - WP4-13: the exporter's bag path ran on four stored ROS 2 bags on
+    3 November.
+  - X-14: the SITL wind and GPS-loss stressor runs of 2 November; still
+    PARTIAL.
+  - The KPI table of section 2: fail-safe correctness against the rubric
+    (0.978 / 0.984 / 0.973, below 0.99), mean time to safe 2.997 s, and the
+    theta basis decided.
+- Not counted here: the SITL branch of 3 November (GCS-set fence WP3-10,
+  SROS 2 per-topic permissions X-15), which is not merged yet.
+
 ### 2026-11-04 (CI) — the whole local suite on the day's four commits: one new failure, the workflow's own file lists, fixed
 
 #### Tests
