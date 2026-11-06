@@ -391,8 +391,9 @@ def jetson_facts(read=None, machine=None, jetpack=None) -> dict:
     by the SAME rule as a run's topology label.
 
     guardrail.manifest.collect_host_evidence reads the device tree's board name
-    (/proc/device-tree/model, which Docker masks inside a default container:
-    the Orin compose file unmasks it with security_opt systempaths=unconfined),
+    (/proc/device-tree/model, which Docker masks and AppArmor denies inside a
+    default container: the Orin compose file mounts the host's file read-only
+    at /run/vlaguard/host/device-tree-model, the path read after it),
     /etc/nv_tegra_release (mounted read-only into the Orin's containers) and
     the JetPack package; guardrail.manifest's Orin check then requires
     aarch64, an Orin named by the device tree, and L4T or JetPack. A Jetson

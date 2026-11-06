@@ -820,8 +820,17 @@ def ardupilot_version_from_mavlink(master, timeout: float = 3.0) -> dict | None:
 # hil and flight: evidence from the machine and the link, not from a flag
 # --------------------------------------------------------------------------- #
 
+# The host's board-name file as the Orin compose file mounts it, read-only, into
+# the containers that gather evidence. Docker's default AppArmor profile denies
+# /sys/firmware/** inside a container (where /proc/device-tree points), and
+# security_opt systempaths=unconfined does not lift that: on the AGX Orin
+# (JetPack 7.2.1, AppArmor on) the read was "Permission denied" and the first
+# facts run said is_orin false (2026-11-06). The file is still the device
+# tree's own string, seen through a read-only bind mount.
+_DT_MODEL_MOUNT = "/run/vlaguard/host/device-tree-model"
 _DT_MODEL_PATHS = ("/proc/device-tree/model",
-                   "/sys/firmware/devicetree/base/model")
+                   "/sys/firmware/devicetree/base/model",
+                   _DT_MODEL_MOUNT)
 _TEGRA_RELEASE = "/etc/nv_tegra_release"
 _ARM64 = ("aarch64", "arm64")
 

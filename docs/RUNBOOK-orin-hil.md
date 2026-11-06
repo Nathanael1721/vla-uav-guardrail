@@ -525,11 +525,14 @@ the router log.
 
 `"is_orin": true` with `"missing": []` means the containers can read the
 evidence a run needs to be labelled hil: the device tree's board name and the
-L4T release (`R36.4.3` on JetPack 6.2). If `missing` says the device model is
-`None`, the container cannot read `/proc/device-tree/model`; the Orin compose
-file lifts Docker's masking of it with `security_opt: systempaths=unconfined`,
-which needs Docker 19.03 or newer. (`-T` keeps a terminal from writing CRLF
-into the file.)
+L4T release (`R36.4.3` on JetPack 6.2, `R39.2.1` on the AGX Orin's JetPack
+7.2.1). If `missing` says the device model is `None`, the container cannot read
+the board name: Docker masks `/sys/firmware` (where `/proc/device-tree` points)
+and its default AppArmor profile denies it, so the Orin compose file mounts the
+host's `/sys/firmware/devicetree/base/model` read-only at
+`/run/vlaguard/host/device-tree-model` instead, the path guardrail.manifest
+reads after the device tree's own. Check that the host has the file. (`-T`
+keeps a terminal from writing CRLF into the file.)
 
 ## 11. A first mission
 

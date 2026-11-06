@@ -35,14 +35,18 @@
 # (guardrail.manifest.collect_host_evidence): the board name in the device
 # tree, /etc/nv_tegra_release and the JetPack package. A default Docker
 # container cannot read the device tree: Docker masks /sys/firmware, which
-# /proc/device-tree points into. The services that collect evidence therefore
-# run with security_opt systempaths=unconfined (Docker 19.03+; it lifts the
-# masking of /proc and /sys paths for that container, which these containers,
-# already on host networking on a lab Orin, are trusted with) and mount
-# /etc/nv_tegra_release read-only. Check it once on the Orin, with the image
-# already built (nothing is pulled):
-#   docker run --rm --runtime runc --security-opt systempaths=unconfined \
-#       --entrypoint cat vlaguard/companion:jazzy /proc/device-tree/model
+# /proc/device-tree points into, and its default AppArmor profile denies
+# /sys/firmware/** as well. Until 2026-11-06 these services lifted only the
+# masking (security_opt systempaths=unconfined); on the AGX Orin (JetPack 7.2.1,
+# AppArmor on) the read was still "Permission denied" and the first facts run
+# said is_orin false. The services that collect evidence now mount the host's
+# board-name file read-only at /run/vlaguard/host/device-tree-model (the path
+# guardrail.manifest reads after the device tree's own), plus
+# /etc/nv_tegra_release and the nvpmodel state directory, and lift nothing.
+# Check it once on the Orin, with the image already built (nothing is pulled):
+#   docker run --rm --runtime runc \
+#       -v /sys/firmware/devicetree/base/model:/run/vlaguard/host/device-tree-model:ro \
+#       --entrypoint cat vlaguard/companion:jazzy /run/vlaguard/host/device-tree-model
 #
 # EVIDENCE THAT THE AUTOPILOT IS ELSEWHERE. The Shield node also scans /proc
 # for ArduPilot SITL, MAVROS and router processes
@@ -101,6 +105,16 @@ x-companion-volumes: &companion-volumes
   - ../../deploy/evidence:/opt/vlaguard/deploy/evidence
   - /etc/nv_tegra_release:/etc/nv_tegra_release:ro
 
+# The companion volumes plus what the evidence services read from the host
+# (above, EVIDENCE THAT THIS IS THE ORIN): the board name and the power mode.
+x-evidence-volumes: &evidence-volumes
+  - ../..:/opt/vlaguard:ro
+  - ../../demo/out:/opt/vlaguard/demo/out
+  - ../../deploy/evidence:/opt/vlaguard/deploy/evidence
+  - /etc/nv_tegra_release:/etc/nv_tegra_release:ro
+  - /sys/firmware/devicetree/base/model:/run/vlaguard/host/device-tree-model:ro
+  - /var/lib/nvpmodel:/var/lib/nvpmodel:ro
+
 services:
   mavros:
     image: ${VLAGUARD_IMAGE:?}
@@ -121,30 +135,27 @@ services:
     network_mode: host
     pid: host
     depends_on: [mavros]
-    security_opt: ["systempaths=unconfined"]
     command: ["mission", "--shield", "on"]
     environment: *companion-env
-    volumes: *companion-volumes
+    volumes: *evidence-volumes
 
   profile:
     image: ${VLAGUARD_IMAGE:?}
     profiles: ["tools"]
     runtime: runc
     network_mode: none
-    security_opt: ["systempaths=unconfined"]
     command: ["profile"]
     environment: *companion-env
-    volumes: *companion-volumes
+    volumes: *evidence-volumes
 
   facts:
     image: ${VLAGUARD_IMAGE:?}
     profiles: ["tools"]
     runtime: runc
     network_mode: none
-    security_opt: ["systempaths=unconfined"]
     command: ["facts"]
     environment: *companion-env
-    volumes: *companion-volumes
+    volumes: *evidence-volumes
 
   # R1 inference-rate protocol for one VLA backend (VLA_BACKEND) on the Orin;
   # the CPU backends (stub, bc_v3) are measured here too.
@@ -158,7 +169,6 @@ services:
     profiles: ["vla-bench"]
     runtime: nvidia
     network_mode: none
-    security_opt: ["systempaths=unconfined"]
     command: ["measure", "--backend", "${VLA_BACKEND:?}", "--allow-gpu",
               "--model-root", "/models", "--topology", "${VLAGUARD_TOPOLOGY:?}"]
     environment:
@@ -169,3 +179,5 @@ services:
       - ../../deploy/evidence:/opt/vlaguard/deploy/evidence
       - ${VLAGUARD_MODEL_ROOT:?}:/models:ro
       - /etc/nv_tegra_release:/etc/nv_tegra_release:ro
+      - /sys/firmware/devicetree/base/model:/run/vlaguard/host/device-tree-model:ro
+      - /var/lib/nvpmodel:/var/lib/nvpmodel:ro

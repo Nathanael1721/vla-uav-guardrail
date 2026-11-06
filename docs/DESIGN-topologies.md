@@ -240,7 +240,7 @@ the processes running on the Shield's host, and the `fcu_url` remote.
 | Evidence the manifest reads | What `deploy/` provides |
 |---|---|
 | The SITL autopilot runs off the Shield's host (hil): the `fcu_url` names a remote desktop, or the host's processes were scanned and show no SITL | `FCU_URL=udp://:14555@192.168.50.1:14555` in `hil.env`, which holds even where no scan could be made and gives the link record its interface (Ethernet); and `pid: host` on the `mission` service, so the Shield node's `/proc` scan covers the whole Orin: it sees MAVROS in the sibling container (`mavros_on: shield_host`) and would see a SITL started on the Orin itself, which keeps the run `dev` |
-| The device tree names an Orin | `security_opt: systempaths=unconfined` on the services that gather evidence (`mission`, `profile`, `facts`, `vla-bench`): Docker masks `/sys/firmware`, where `/proc/device-tree` points, in a default container |
+| The device tree names an Orin | the host's board-name file mounted read-only at `/run/vlaguard/host/device-tree-model` on the services that gather evidence (`mission`, `profile`, `facts`, `vla-bench`), with `/etc/nv_tegra_release` and `/var/lib/nvpmodel`: Docker masks `/sys/firmware`, where `/proc/device-tree` points, and its default AppArmor profile denies it, so `systempaths=unconfined` (the October design) was not enough on the AGX Orin, AppArmor on (2026-11-06) |
 | The L4T release | `/etc/nv_tegra_release` mounted read-only into the same services |
 | The VLA node's host is an Orin (`vla_host`) | the VLA stub runs in the `mission` container, with the same access to the device tree and the release file |
 | aarch64 | the arm64 build of the companion image |
