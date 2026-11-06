@@ -148,9 +148,10 @@ THE VLA PILOT (--pilot vla; wave V2b, 2026-10-23, to-do VLA-07)
     the aircraft back (resume), and no VLA end names a held mission.
   * The missions: --mission goto (the default; --goal X,Y in the Shield's
     frame, no default: the spawn has two street trees in the flight band
-    within about a metre of every line east, vla_mission's CityLife notes)
-    and approach (the OWL-ViT box's bearing through demo/vla_bridge, as the
-    city rail's M2). LAND is the model's flag, landed by this node's own
+    within about a metre of every line east, vla_mission's CityLife notes),
+    approach (the OWL-ViT box's bearing through demo/vla_bridge, as the
+    city rail's M2) and follow (THE VLA FOLLOW below, the city rail's M3).
+    LAND is the model's flag, landed by this node's own
     mission-end LAND (link.land), never a mode request from the pilot; the
     city rail's other stop rules apply (vla_mission.MissionMonitor), beside
     this rail's (max_s, a lost link, a takeover, the FSM).
@@ -189,6 +190,52 @@ THE VLA PILOT (--pilot vla; wave V2b, 2026-10-23, to-do VLA-07)
   * NOT FLOWN: none of this has run against Unreal, ArduPilot or the model;
     tests/test_pas_vla.py drives it with the stand-in link and a scripted
     protocol-v2 server.
+
+THE VLA FOLLOW (--pilot vla --mission follow; 2026-11-06)
+
+  The red-car follow flown by a VLA on this rail - first of all the lab's
+  own AIOT-VLA (demo/vla_server_foreign.py --model aiotvla,
+  docs/DESIGN-aiotvla.md) - from demo/vla_fly.py's M3 parts, imported, not
+  copied:
+  * The hint (vla_mission.DetectorHint): the OWL-ViT box's phrase, the last
+    sighting's bearing kept --follow-memory-s (6 s) past the box, then a
+    quarter turn toward it --follow-search-s (20 s); a close box
+    (vla_mission.BoxClose: bottom edge at --close-bottom-frac 0.92 of the
+    image, or --close-width-frac 0.25 wide) sends nothing and holds the
+    horizontal motion (VLAPilot.step, as vla_mission.MissionLoop: inside
+    the tracker when it smooths). Each request records its kind (fresh /
+    memory / search). No hint, no request: the backend's request count goes
+    to the stop rules, so a follow that never asked ends
+    subject_not_acquired, not as a VLA failure.
+  * The step tracker is vla_fly's follow tracker (vla_fly.tracker_config on
+    vla_fly's own parse of this flight: turn while moving, the altitude held
+    at --cruise-alt, steps anchored at the answer, LAND held as arrival,
+    the smoothing), with --vla-step-as-rate H (each step a velocity over
+    H: AIOT-VLA's 0.5 s label horizon) and --vla-rate-yaw rate (dpsi/H as
+    the yaw rate itself, the meaning of AIOT-VLA's label).
+  * --vla-front-source detector sends the detector's FrontCamera frame
+    (768x432, pitched -20 deg) as the request's front image, from the ONE
+    FrontCamera subscription that feeds the detector; VLAFront is then not
+    subscribed and only VLADown is required. The server's hello must declare
+    that camera (vla_mission.front_source_check), or nothing is armed.
+  * The server's own host (its hello's `host`) is the run's `vla_host`
+    evidence: the VLA is a separate process, so hil holds only when that
+    host is an Orin too (guardrail.manifest._vla_host_missing).
+  * The object words are recorded as what they are to the model that
+    answered (vla_mission.object_words_record): AIOT-VLA's grounding phrase,
+    not AerialVLA's inert slot.
+  * THE OBSERVATION RATE (metrics.json `vla_observation`; the grant's
+    "Camera / IMU / GPS - 10 Hz observation"): the DISTINCT front-frame sim
+    stamps among the requests actually sent, per wall second of the mission,
+    per sim second, and per second the pilot was being asked (not held by
+    the rail, not gated by the hint), with the duplicates, the gaps between
+    frames and the hint-gated spans apart. Never the decision rate or the
+    request rate. --front-capture-interval-s renders FrontCamera's capture
+    interval (0.1 s in the template) at scene render time.
+  * Run on the AGX Orin by deploy/orin/run_pas_perception.sh (the hil
+    topology; docs/DESIGN-projectairsim-ardupilot.md has the order).
+  * NOT FLOWN: tests/test_pas_vla.py drives it with the stand-in link and a
+    scripted protocol-v2 server announcing an aiotvla identity.
 
 WHAT THIS IS NOT. follow_vlm.fly()'s further layers - the target estimator,
 the strict lock and its re-acquisition, trail following, the fence guard, the
@@ -611,10 +658,20 @@ OWN_VELOCITY_DEFAULT = "on"
 # on the detector's box (FollowPilot), the default; "vla": AerialVLA through
 # the step tracker (VLAPilot). The missions each pilot flies.
 PILOTS = ("servo", "vla")
-PILOT_MISSIONS = {"servo": ("follow",), "vla": ("goto", "approach")}
+PILOT_MISSIONS = {"servo": ("follow",), "vla": ("goto", "approach", "follow")}
 # AerialVLA's two cameras in robot_citylife_ardupilot.jsonc (to-do VLA-03),
 # the CityLife VLA flight's names (demo/vla_fly.CAMERAS).
 VLA_CAMERAS = {"front": "VLAFront", "down": "VLADown"}
+# THE VLA FOLLOW's options (module docstring): set only for --pilot vla
+# --mission follow, refused for any other run; their defaults are
+# demo/vla_fly.py's own (its parser), read there, never copied here.
+VLA_FOLLOW_ONLY = ("vla_step_as_rate", "follow_memory_s", "follow_search_s",
+                   "close_bottom_frac", "close_width_frac")
+# What a VLA run's metrics.params adds (as resolved by check_pilot_args).
+VLA_PARAMS = ("vla_front_source", "vla_step_as_rate", "vla_rate_yaw", "follow_memory_s",
+              "follow_search_s", "close_bottom_frac", "close_width_frac", "lost_timeout_s",
+              "vla_cruise_mps", "vla_speed_cap_mps", "allow_unstamped_pipelined",
+              "front_capture_interval_s")
 # Exit codes beside 0 and 1 (demo/vla_fly.py's): a VLA failure ended the
 # mission (vla_mission.VLA_FAILURE_ENDS), and a run refused before arming.
 EXIT_VLA_FAILURE = 3
@@ -639,6 +696,15 @@ def _vm():
     """demo/vla_mission.py, imported for --pilot vla only (stdlib and
     guardrail; no simulator, no model)."""
     return importlib.import_module("vla_mission")
+
+
+def _vf():
+    """demo/vla_fly.py, the city rail's VLA flight, imported for its follow's
+    configuration only (its parser, resolve_args, tracker_config, its lost
+    timeouts): nothing of it flies here. Module level is stdlib, guardrail
+    and vla_mission; the simulator and the detector are imported inside its
+    functions."""
+    return importlib.import_module("vla_fly")
 
 
 # --------------------------------------------------------------------------- #
@@ -739,21 +805,47 @@ class NoDetector:
         return None
 
 
+def box_of(g) -> tuple:
+    """One follow_vlm.Grounder.latest() answer as (the box, the wall time its
+    frame was captured, the heading at that frame, when the detector
+    published it) - demo/vla_fly.py's latest_box; (None,)*4 without a box."""
+    if not g or g.get("det") is None:
+        return None, None, None, None
+    cap = g.get("cap") or {}
+    yaw = (cap.get("pose") or {}).get("yaw")
+    return (g["det"], (cap.get("t_capture") or cap.get("t_cap") or g.get("t_det")),
+            None if yaw is None else float(yaw), g.get("t_det"))
+
+
 def grounder_box_source(grounder):
     """A `latest()` for vla_mission.DetectorHint and the mission monitor:
-    (the box, the wall time its frame was captured, the heading at that
-    frame, when the detector published it) from follow_vlm.Grounder, whose
-    "cap" carries the frame's pose - demo/vla_fly.py's latest_box. (None,)*4
-    without a box."""
+    box_of the Grounder's latest answer (its "cap" carries the frame's
+    pose)."""
     def latest_box():
-        g = grounder.latest() if grounder is not None else None
-        if not g or g.get("det") is None:
-            return None, None, None, None
-        cap = g.get("cap") or {}
-        yaw = (cap.get("pose") or {}).get("yaw")
-        return (g["det"], (cap.get("t_capture") or cap.get("t_cap") or g.get("t_det")),
-                None if yaw is None else float(yaw), g.get("t_det"))
+        return box_of(grounder.latest() if grounder is not None else None)
     return latest_box
+
+
+# What RemoteVLABackend.act() did about a request on one tick, read from the
+# change in its counts: "sent", "no_hint" (a capture was built and the hint
+# said no request: no fresh box past the follow's memory and search, a close
+# box), "no_capture" (no frame pair), "error" (building the request raised),
+# None (no attempt: a request in flight, the stop-and-go settle, a suspended
+# tracker, a LAND, the client's backoff).
+REQUEST_OUTCOMES = (("requests", "sent"), ("no_hint", "no_hint"),
+                    ("no_capture", "no_capture"), ("request_errors", "error"))
+
+
+def request_outcome(before: dict | None, after) -> str | None:
+    """REQUEST_OUTCOMES' word for the change from `before` to `after` (the
+    backend's counts around one act()); None when either is unknown or
+    nothing changed."""
+    if not isinstance(before, dict) or not isinstance(after, dict):
+        return None
+    for key, word in REQUEST_OUTCOMES:
+        if int(after.get(key, 0) or 0) > int(before.get(key, 0) or 0):
+            return word
+    return None
 
 
 class VLAPilot:
@@ -785,11 +877,22 @@ class VLAPilot:
     hold(now): the same hold between ticks (a stale-link span).
     close() -> the backend's stats, read before its close (the decision rate
       is over the time act() ran) with the log's counts after it.
+
+    A FOLLOW (THE VLA FOLLOW, `close_hold` a vla_mission.BoxClose) holds the
+    horizontal motion while a fresh box counts as close, as the city rail's
+    MissionLoop does: inside the tracker when it smooths
+    (backend.act(hold_horizontal=...)), else the tracker's action with its
+    horizontal velocity zeroed; its turn and climb fly. The Grounder is read
+    ONCE per tick (step), so the close hold, the stop rules and the row see
+    the same box. Every tick also records what the backend did about a
+    request (`vla_request`: sent / no_hint / no_capture / error / None for no
+    attempt), from its counts - the observation-rate summary reads it.
     """
 
     def __init__(self, backend, monitor, *, mission: str, goal_xy=None, detections=None,
                  hint_source=None, detector_hint=None, stale_s: float = DETECTION_STALE_S,
-                 server_alive=lambda: True, vm=None, model_label: str | None = None):
+                 server_alive=lambda: True, vm=None, model_label: str | None = None,
+                 close_hold=None):
         self.vm = vm or _vm()
         # The VLA panel's name for the model (vla_mission.model_label).
         self.model_label = model_label
@@ -798,6 +901,7 @@ class VLAPilot:
         self.detections, self.stale_s = detections, float(stale_s)
         self.det_source = grounder_box_source(detections) if detections is not None else None
         self.hint_source, self.detector_hint = hint_source, detector_hint
+        self.close_hold = close_hold
         self.server_alive = server_alive
         self.last_tick = None
         self.n_held = 0
@@ -806,10 +910,19 @@ class VLAPilot:
         # zero the pilot never chose (review of 4a0da6d, P3-13: recorded).
         self.n_fsm_on_zeroed = 0
         self.n_stale_holds = 0
+        # A follow's ticks whose horizontal motion the close hold held.
+        self.n_close_hold = 0
         self.authors: collections.Counter = collections.Counter()
         self._t_last: float | None = None
         self._frozen: dict | None = None
         self._stats: dict | None = None
+        # This tick's box (box_of), close-hold state, tracker action and
+        # request outcome, from step() for after().
+        self._box: tuple | None = None
+        self._close: tuple[bool, bool] = (False, False)
+        self._pilot_raw = None
+        self._request: str | None = None
+        self._no_hint_why: str | None = None
 
     def hold(self, now: float) -> None:
         """The rail holds the aircraft between ticks (a stale-link span: one
@@ -826,12 +939,57 @@ class VLAPilot:
         tk = self.last_tick
         return None if tk is None else f"VLA {tk.author} #{tk.seq}"
 
+    def _close_now(self, now: float) -> bool:
+        """A fresh box that counts as close this tick (the follow's close
+        hold): MissionLoop's rule, on this tick's box."""
+        if self.close_hold is None or self._box is None:
+            return False
+        det, t_box = self._box[0], self._box[1]
+        if det is None or t_box is None:
+            return False
+        dh = self.detector_hint
+        fresh_s = dh.fresh_s if dh is not None else self.stale_s
+        if dh is not None and dh.box_ignored(t_box):
+            return False
+        return bool(now - float(t_box) <= fresh_s and self.close_hold(det))
+
     def step(self, now: float, st) -> tuple:
         from guardrail.frames import to_body
-        raw = self.backend.act(st)
+        from guardrail.models import Action4D
+        lat = self.detections.latest() if self.detections is not None else {}
+        lat = lat if isinstance(lat, dict) else {}
+        # The Grounder read ONCE per tick: the close hold here, the stop rules
+        # and the row in after() all see this box.
+        self._box = box_of(lat) if self.detections is not None else None
+        close_now = self._close_now(now)
+        counts = getattr(self.backend, "counts", None)
+        before = dict(counts) if isinstance(counts, dict) else None
+        tracker = getattr(self.backend, "tracker", None)
+        held_close = False
+        if self.close_hold is not None and bool(getattr(tracker, "smoothing", False)):
+            # SMOOTHING (vla_link.TrackerConfig): the close hold is the
+            # tracker's input, so it ramps down at its acceleration limit.
+            raw = self.backend.act(st, hold_horizontal=close_now)
+            held_close = close_now
+        else:
+            raw = self.backend.act(st)
+        pilot_raw = raw
+        if (self.close_hold is not None and close_now and not held_close
+                and (raw.vx or raw.vy)):
+            raw = Action4D(vx=0.0, vy=0.0, vz_up=raw.vz_up, yaw_rate=raw.yaw_rate)
+            held_close = True
+        self.n_close_hold += int(held_close)
+        self._close = (held_close, close_now)
+        self._pilot_raw = pilot_raw
+        self._request = request_outcome(before, getattr(self.backend, "counts", None))
+        self._no_hint_why = None
+        if self._request == "no_hint":
+            kind = getattr(self.detector_hint, "last_kind", None)
+            self._no_hint_why = ("close_box" if kind == "close" else
+                                 "gated" if kind == "gated" else
+                                 "no_fresh_box" if self.detector_hint is not None else None)
         self.last_tick = self.backend.last_tick
         body = to_body(raw, st.yaw_deg)
-        lat = self.detections.latest() if self.detections is not None else {}
         det, t_det = lat.get("det"), lat.get("t_det") or 0.0
         fresh = det is not None and t_det > 0 and (now - t_det) <= self.stale_s
         return raw, body, {"mode": "vla", "fresh": bool(fresh), "seq": lat.get("seq"),
@@ -845,7 +1003,8 @@ class VLAPilot:
         pose = Pose.from_state(st)
         det = t_box = None
         if self.det_source is not None:
-            det, t_box, _, _ = vm.unpack_box(self.det_source())
+            got = self._box if self._box is not None else self.det_source()
+            det, t_box, _, _ = vm.unpack_box(got)
         det_age = None if t_box is None else now - float(t_box)
         lf = getattr(self.backend, "last_link_failure", None)
         lf = lf if isinstance(lf, dict) else None
@@ -859,7 +1018,26 @@ class VLAPilot:
                "pilot_held": not flies,
                # The raw action this tick was the suspended tracker's zero.
                "raw_zeroed_by_hold": zeroed,
+               # What the backend did about a request this tick (step).
+               "vla_request": self._request,
                **vm.mission_fields(gd, gb, frac, det, det_age, self.detector_hint)}
+        if self._request == "no_hint":
+            row["vla_no_hint_why"] = self._no_hint_why
+        if self.close_hold is not None:
+            # As the city rail's MissionLoop rows: the close hold, a fresh
+            # close box this tick, and the tracker's own action.
+            row["close_hold"], row["close_box"] = self._close
+            row["pilot_raw"] = (None if self._pilot_raw is None
+                                else self._pilot_raw.model_dump())
+        if self.detector_hint is not None and getattr(self.detector_hint, "record_kind", False):
+            row["hint_kind"] = cur.get("hint_kind")
+            row["hint_sent_kind"] = ((self.hint_source.last or {}).get("kind")
+                                     if self.hint_source is not None else None)
+        tracker = getattr(self.backend, "tracker", None)
+        if getattr(getattr(tracker, "cfg", None), "rate_horizon_s", None) is not None:
+            # RATE EXECUTION: the commanded speed and yaw rate of a step
+            # flown as a velocity (vla_link.StepTracker.last_rate).
+            row["vla_rate"] = getattr(tracker, "last_rate", None)
         self._t_last = now
         end = None
         if flies:
@@ -869,8 +1047,14 @@ class VLAPilot:
                 alive = bool(self.server_alive())
             except Exception:                                 # noqa: BLE001
                 alive = False
+            # A follow's request count (MissionLoop's rule): one that never
+            # asked ends subject_not_acquired, not as a VLA failure.
+            counts = getattr(self.backend, "counts", None)
+            sent = (int(counts.get("requests", 0))
+                    if self.mission == "follow" and isinstance(counts, dict) else None)
             end = self.monitor.update(now, pose, tk, goal_xy=self.goal_xy, det=det,
-                                      det_age_s=det_age, server_alive=alive, link_failure=lf)
+                                      det_age_s=det_age, server_alive=alive, link_failure=lf,
+                                      requests_sent=sent)
         else:
             # Held: the tracker is suspended and the mission's stop rules
             # wait (MissionMonitor.hold; review of 4a0da6d, P3-9): no VLA
@@ -1876,17 +2060,27 @@ class ProjectAirSimCamera:
                   into it - the callback stores the message, as SemanticObs
                   does - and a robot config without them is refused at
                   start(): a VLA run that cannot see is no VLA run.
+    vla_front_source  "vla" (VLAFront is the request's front frame) or
+                  "detector" (--vla-front-source detector: the FrontCamera
+                  frame the detector sees is ALSO the request's front frame,
+                  from the one FrontCamera subscription - a pointer each, as
+                  demo/vla_fly.py does; VLAFront is then not subscribed and
+                  only VLADown is required, in the robot and among the live
+                  topics an attached node checks).
     """
 
     def __init__(self, obs, sim_cfg: dict, address: str = "127.0.0.1",
                  projectairsim=None, view_switch: int = 1,
                  robot: str = rail.ROBOT_NAME, attach: bool = False,
-                 chase: bool = False, vla_frames=None):
+                 chase: bool = False, vla_frames=None, vla_front_source: str = "vla"):
+        if vla_front_source not in ("vla", "detector"):
+            raise ValueError(f"vla_front_source {vla_front_source!r} is not vla or detector")
         self.obs, self.cfg, self.address = obs, sim_cfg, address
         self.pas = projectairsim
         self.view_switch, self.robot, self.attach = view_switch, robot, attach
         self.chase = chase
         self.vla_frames = vla_frames
+        self.vla_front_source = vla_front_source
         self._live_topics: list | None = None
         self.client = self.world = self.drone = None
         self.collisions: list[dict] = []
@@ -1954,17 +2148,14 @@ class ProjectAirSimCamera:
             self.collisions_subscribed = True
         except Exception as exc:                              # noqa: BLE001
             print(f"[collide] *** not subscribed ({exc}); contacts will NOT be counted")
-        self.client.subscribe(self.drone.sensors["FrontCamera"]["scene_camera"],
-                              lambda _, m: self.obs.put_front(m))
-        try:
-            self.client.subscribe(self.drone.sensors["FrontCamera"]["depth_camera"],
-                                  lambda _, m: self.obs.put_depth(m))
-            self.have_depth = True
-        except Exception as exc:                              # noqa: BLE001
-            print(f"[range] no depth stream ({exc}); range from apparent width")
-        if self.vla_frames is not None:
-            fr = self.vla_frames
-            missing = [c for c in VLA_CAMERAS.values() if c not in self.drone.sensors]
+        fr = self.vla_frames
+        detector_front = fr is not None and self.vla_front_source == "detector"
+        if fr is not None:
+            # The VLA's cameras: VLADown always, VLAFront only when it is the
+            # request's front frame (vla_front_source "vla").
+            need = ([VLA_CAMERAS["down"]] if detector_front
+                    else [VLA_CAMERAS["front"], VLA_CAMERAS["down"]])
+            missing = [c for c in need if c not in self.drone.sensors]
             if missing:
                 raise RuntimeError(f"--pilot vla: the robot config has no {missing} "
                                    f"(AerialVLA's {VLA_CAMERAS['front']} / "
@@ -1973,18 +2164,40 @@ class ProjectAirSimCamera:
                 # Attached, the robot is the record's, not what the desktop
                 # loaded: the cameras must be live (rail.select_vla_cameras
                 # renders them only for a VLA run or --vla-cameras).
-                dead = [c for c in VLA_CAMERAS.values()
+                dead = [c for c in need
                         if not any(f"/sensors/{c}/" in str(t) for t in self._live_topics)]
                 if dead:
                     raise RuntimeError(
                         f"--pilot vla: the scene the desktop loaded serves no {dead}: load "
                         f"it with --vla-cameras (run_pas_ardupilot.ps1 -Step scene "
                         f"-VlaCameras) or from a --pilot vla node")
-            self.client.subscribe(self.drone.sensors[VLA_CAMERAS["front"]]["scene_camera"],
-                                  lambda _, m: fr.put_front(m))
+        if detector_front:
+            # --vla-front-source detector: the detector's frame is also the
+            # request's front frame, from ONE subscription feeding both (a
+            # pointer each, nothing decoded in the callback).
+            def _front(_, m):
+                self.obs.put_front(m)
+                fr.put_front(m)
+        else:
+            def _front(_, m):
+                self.obs.put_front(m)
+        self.client.subscribe(self.drone.sensors["FrontCamera"]["scene_camera"], _front)
+        try:
+            self.client.subscribe(self.drone.sensors["FrontCamera"]["depth_camera"],
+                                  lambda _, m: self.obs.put_depth(m))
+            self.have_depth = True
+        except Exception as exc:                              # noqa: BLE001
+            print(f"[range] no depth stream ({exc}); range from apparent width")
+        if fr is not None:
+            if not detector_front:
+                self.client.subscribe(self.drone.sensors[VLA_CAMERAS["front"]]["scene_camera"],
+                                      lambda _, m: fr.put_front(m))
             self.client.subscribe(self.drone.sensors[VLA_CAMERAS["down"]]["scene_camera"],
                                   lambda _, m: fr.put_down(m))
             self.scene_record["vla_cameras"] = dict(VLA_CAMERAS)
+            self.scene_record["vla_front_source"] = self.vla_front_source
+            self.scene_record["vla_front_camera"] = ("FrontCamera" if detector_front
+                                                     else VLA_CAMERAS["front"])
         if self.chase:
             # As follow_vlm --save-view: the callback stores the message and
             # nothing else, so a 20 Hz camera costs the receive thread a
@@ -2231,9 +2444,9 @@ def follow_mission(object_text: str, start_xy, cruise_alt_m: float,
 def pilot_mission(args, start_xy) -> tuple[Mission, str]:
     """(the mission each generation's CSP is compiled for, where its target
     came from). The servo pilot's follow (follow_mission); the VLA's GOTO has
-    a target, the commanded goal itself; its approach is a follow's context
-    (the subject's position is not known before the flight), worded as one.
-    The speed preference is the pilot's own cap."""
+    a target, the commanded goal itself; its approach and its follow have a
+    follow's context (the subject's position is not known before the flight),
+    each worded as what it is. The speed preference is the pilot's own cap."""
     if getattr(args, "pilot", "servo") == "vla":
         sx, sy = float(start_xy[0]), float(start_xy[1])
         if args.mission == "goto":
@@ -2242,11 +2455,12 @@ def pilot_mission(args, start_xy) -> tuple[Mission, str]:
                             target_y=gy, cruise_alt_m=float(args.cruise_alt),
                             speed_pref_mps=float(args.vla_cruise_mps), start_x=sx, start_y=sy),
                     "the commanded goal (--goal)")
-        return (Mission(task_text=f"approach {args.object}", target_x=sx, target_y=sy,
+        verb = "follow" if args.mission == "follow" else "approach"
+        return (Mission(task_text=f"{verb} {args.object}", target_x=sx, target_y=sy,
                         cruise_alt_m=float(args.cruise_alt),
                         speed_pref_mps=float(args.vla_cruise_mps), start_x=sx, start_y=sy),
-                "the start (proxy): an approach's subject position is not known before "
-                "the flight")
+                f"the start (proxy): {'a' if verb == 'follow' else 'an'} {verb}'s subject "
+                f"position is not known before the flight")
     return (follow_mission(args.object, start_xy, args.cruise_alt, args.speed_max),
             "the start (proxy): a follow mission's subject position is not known before "
             "the flight")
@@ -3688,6 +3902,13 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--g1-verdict", default=None)
     ap.add_argument("--citymap", default=str(DEFAULT_CITYMAP))
     ap.add_argument("--hfov", type=float, default=None)
+    ap.add_argument("--front-capture-interval-s", type=float, default=None, metavar="S",
+                    help="render FrontCamera (the detector's camera, and the front frame "
+                         "of --vla-front-source detector) capturing every S seconds, in "
+                         f"(0, {rail.MAX_CAPTURE_INTERVAL_S:g}] (0.066 is about 15 Hz); "
+                         "default the template's 0.1 s. Recorded (sim_config). An attaching "
+                         "node records what the desktop's scene step was given the same "
+                         "flag; what arrived is measured (vla_observation)")
     # pilot (follow_vlm's defaults; cruise 8 m as the CityLife launcher flies)
     ap.add_argument("--cruise-alt", type=float, default=8.0)
     ap.add_argument("--yaw-gain", type=float, default=1.2)
@@ -3705,20 +3926,51 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--mission", choices=sorted({m for v in PILOT_MISSIONS.values()
                                                  for m in v}), default=None,
                     help="follow (the servo pilot's, its default); goto (the VLA's default: "
-                         "--goal) or approach (the detector box's phrase) for --pilot vla")
+                         "--goal), approach (the detector box's phrase) or follow (the "
+                         "VLA follow, demo/vla_fly.py's M3) for --pilot vla")
     ap.add_argument("--goal", default=None, metavar="X,Y",
                     help="--mission goto: the goal in the Shield's frame (x North, y East, "
                          "metres), no default; a negative X is joined by main() "
                          "(join_cli) or written --goal=-10,5")
     ap.add_argument("--vla-object", default=None,
-                    help="the prompt's object words (INERT for AerialVLA, recorded). "
-                         "Default: vla_mission.GOTO_OBJECT_TEXT for goto, --object for "
-                         "approach")
+                    help="the prompt's object words (inert for AerialVLA; AIOT-VLA's "
+                         "grounding phrase; recorded as which, vla_mission."
+                         "object_words_record). Default: vla_mission.GOTO_OBJECT_TEXT for "
+                         "goto, --object for approach and follow")
     ap.add_argument("--arrive-radius-m", type=float, default=3.0)
     ap.add_argument("--arrive-grace-s", type=float, default=8.0)
     ap.add_argument("--overshoot-s", type=float, default=3.0)
     ap.add_argument("--close-box-frac", type=float, default=0.15)
-    ap.add_argument("--lost-timeout-s", type=float, default=15.0)
+    ap.add_argument("--lost-timeout-s", type=float, default=None,
+                    help="no fresh box this long ends a detector mission (default "
+                         "demo/vla_fly.py's: 15 s for goto and approach, 90 s for follow, "
+                         "whose car drives out of view for long spells)")
+    # THE VLA FOLLOW (module docstring): vla_fly's M3 options, its defaults
+    ap.add_argument("--follow-memory-s", type=float, default=None,
+                    help="follow: past the box's freshness, keep the phrase of its last "
+                         "bearing this long (default vla_fly's, 6 s)")
+    ap.add_argument("--follow-search-s", type=float, default=None,
+                    help="follow: then turn toward the side it was last seen on this long "
+                         "(default vla_fly's, 20 s)")
+    ap.add_argument("--close-bottom-frac", type=float, default=None,
+                    help="follow: a box whose bottom edge is this low in the image is close: "
+                         "no new step, horizontal motion held (default vla_fly's, 0.92)")
+    ap.add_argument("--close-width-frac", type=float, default=None,
+                    help="follow: a box at least this wide (fraction of the image) is close "
+                         "(default vla_fly's, 0.25)")
+    ap.add_argument("--vla-step-as-rate", type=float, default=None, metavar="H",
+                    help="follow: fly each step as a velocity over H seconds until the next "
+                         "answer replaces it (vla_fly --step-as-rate; AIOT-VLA: its label "
+                         "horizon, 0.5). Default off")
+    ap.add_argument("--vla-rate-yaw", choices=("heading", "rate"), default="heading",
+                    help="with --vla-step-as-rate: 'heading' turns to the capture heading + "
+                         "dpsi; 'rate' flies dpsi/H as the yaw rate (AIOT-VLA's label; "
+                         "vla_fly --rate-yaw)")
+    ap.add_argument("--vla-front-source", choices=("vla", "detector"), default="vla",
+                    help="the request's front frame: 'vla' (VLAFront, 256x256, AerialVLA's "
+                         "training camera) or 'detector' (the detector's FrontCamera, "
+                         "768x432, pitched -20 deg: AIOT-VLA from v3). Must be the camera "
+                         "the server's hello declares: refused before arming otherwise")
     ap.add_argument("--det-fresh-s", type=float, default=DETECTION_STALE_S,
                     help="approach: a box older than this at the VLA capture is no hint "
                          "(no request)")
@@ -3846,6 +4098,14 @@ def check_args(args) -> None:
     if getattr(args, "live_view", False) and not getattr(args, "save_view", False):
         raise SystemExit("--live-view needs --save-view: the window draws the frames "
                          "the recorder produces, and without it none are captured")
+    fci = getattr(args, "front_capture_interval_s", None)
+    if fci is not None and not (math.isfinite(fci)
+                                and 0.0 < fci <= rail.MAX_CAPTURE_INTERVAL_S):
+        raise SystemExit(f"--front-capture-interval-s {fci!r} is not in (0, "
+                         f"{rail.MAX_CAPTURE_INTERVAL_S:g}] seconds (0.066 is about 15 Hz)")
+    if fci is not None and args.camera != "projectairsim":
+        raise SystemExit("--front-capture-interval-s renders the simulator's FrontCamera; "
+                         "--camera ros2 has none")
     # `not (0 < x <= max)` also refuses inf and nan (START_TIMEOUT_MAX_S).
     if getattr(args, "start_when_seen", 0) < 0 or not (
             0.0 < getattr(args, "start_timeout_s", 1.0) <= START_TIMEOUT_MAX_S):
@@ -3873,27 +4133,36 @@ def check_pilot_args(args) -> None:
     """The pilot's options (module docstring, THE VLA PILOT): refused before
     anything starts when a run could not fly them honestly, and resolved in
     place - `mission` (follow for the servo pilot, goto for the VLA's),
-    `goal` (an (x, y) tuple), `vla_object` (the prompt's object words) and
-    `vla_monitor` (vla_mission.MonitorConfig, which checks its own numbers).
-    Called again on resolved args, it changes nothing."""
+    `goal` (an (x, y) tuple), `vla_object` (the prompt's object words),
+    `lost_timeout_s` (demo/vla_fly.py's per mission), a VLA follow's options
+    (THE VLA FOLLOW: vla_fly's own resolution of them, its defaults filled
+    in) and `vla_monitor` (vla_mission.MonitorConfig, which checks its own
+    numbers). Called again on resolved args, it changes nothing."""
     pilot = getattr(args, "pilot", "servo")
     allowed = PILOT_MISSIONS[pilot]
     if getattr(args, "mission", None) is None:
         args.mission = allowed[0]
     if args.mission not in allowed:
         raise SystemExit(f"--mission {args.mission} is not one --pilot {pilot} flies "
-                         f"({', '.join(allowed)}): goto and approach are --pilot vla's, "
-                         f"follow the servo pilot's")
+                         f"({', '.join(allowed)}): goto and approach are --pilot vla's")
     if pilot != "vla":
         vla_only = [f for f, v in (("--goal", getattr(args, "goal", None)),
                                    ("--vla-server", getattr(args, "vla_server", None)),
                                    ("--vla-fake-output", getattr(args, "vla_fake_output", None)),
                                    ("--vla-precision", getattr(args, "vla_precision", None)),
                                    ("--vla-attn", getattr(args, "vla_attn", None)),
-                                   ("--vla-merge", getattr(args, "vla_merge", None)))
+                                   ("--vla-merge", getattr(args, "vla_merge", None)),
+                                   *((f"--{k.replace('_', '-')}", getattr(args, k, None))
+                                     for k in VLA_FOLLOW_ONLY),
+                                   ("--vla-rate-yaw",
+                                    None if getattr(args, "vla_rate_yaw", "heading") == "heading"
+                                    else args.vla_rate_yaw),
+                                   ("--vla-front-source",
+                                    None if getattr(args, "vla_front_source", "vla") == "vla"
+                                    else args.vla_front_source))
                     if v is not None]
         if vla_only:
-            raise SystemExit(f"{', '.join(vla_only)} configure(s) the AerialVLA pilot: "
+            raise SystemExit(f"{', '.join(vla_only)} configure(s) the VLA pilot: "
                              f"add --pilot vla, or drop them")
         return
     VM = _vm()
@@ -3963,6 +4232,44 @@ def check_pilot_args(args) -> None:
         raise SystemExit("--vla-cruise-mps may not exceed --vla-speed-cap-mps")
     if not (math.isfinite(args.late_reply_wait_s) and args.late_reply_wait_s >= 0):
         raise SystemExit("--late-reply-wait-s must be 0 or more")
+    # A detector mission's lost timeout is demo/vla_fly.py's (LOST_TIMEOUT_S):
+    # a follow waits for a car the level drives out of view for long spells.
+    if getattr(args, "lost_timeout_s", None) is None:
+        args.lost_timeout_s = float(_vf().LOST_TIMEOUT_S[args.mission])
+    if args.mission != "follow":
+        given = [f"--{k.replace('_', '-')}" for k in VLA_FOLLOW_ONLY
+                 if getattr(args, k, None) is not None]
+        if getattr(args, "vla_rate_yaw", "heading") != "heading":
+            given.append("--vla-rate-yaw")
+        if given:
+            raise SystemExit(f"{', '.join(given)} configure(s) the VLA follow (--mission "
+                             f"follow): a {args.mission} flies upstream's step on the plain "
+                             f"{'goal' if args.mission == 'goto' else 'detector'} hint")
+    else:
+        h = args.vla_step_as_rate
+        if h is not None and not (math.isfinite(h) and h > 0):
+            raise SystemExit(f"--vla-step-as-rate must be a positive number of seconds, "
+                             f"got {h!r}")
+        if args.vla_rate_yaw != "heading" and h is None:
+            raise SystemExit("--vla-rate-yaw rate flies a rate step: it needs "
+                             "--vla-step-as-rate")
+        for k in ("follow_memory_s", "follow_search_s"):
+            v = getattr(args, k)
+            if v is not None and not (math.isfinite(v) and v >= 0):
+                raise SystemExit(f"--{k.replace('_', '-')} must be 0 or more seconds, got {v!r}")
+        for k in ("close_bottom_frac", "close_width_frac"):
+            v = getattr(args, k)
+            if v is not None and not 0 < v <= 1:
+                raise SystemExit(f"--{k.replace('_', '-')} must be in (0, 1], got {v!r}")
+        # vla_fly's own reading of this follow: its defaults filled in here,
+        # its refusals (TrackerConfig's among them) before anything starts.
+        vargs, _ = vla_fly_follow(args)
+        follow_tracker_config(vargs, None)
+        for k, v in (("follow_memory_s", vargs.follow_memory_s),
+                     ("follow_search_s", vargs.follow_search_s),
+                     ("close_bottom_frac", vargs.close_bottom_frac),
+                     ("close_width_frac", vargs.close_width_frac)):
+            setattr(args, k, float(v))
     try:
         args.vla_monitor = VM.MonitorConfig(
             mission=args.mission, max_s=args.max_s, arrive_radius_m=args.arrive_radius_m,
@@ -3973,6 +4280,59 @@ def check_pilot_args(args) -> None:
             overshoot_s=args.overshoot_s)
     except ValueError as exc:
         raise SystemExit(f"--pilot vla: {exc}") from None
+
+
+def vla_fly_follow(args) -> tuple:
+    """(demo/vla_fly.py's own resolved arguments for this follow, the argv it
+    parsed). THE VLA FOLLOW's configuration is vla_fly's by construction: its
+    parser's defaults (the memory, the search, the close rule, the
+    smoothing) and its resolve_args' refusals, never a copy here - the way
+    demo/vla_dagger.py builds its follow. The argv carries this node's own
+    values under vla_fly's names: the object words, the cadence, the cruise
+    and cap speeds, the altitude, the decision timeout, the front source, and
+    each follow option given here. SystemExit with vla_fly's reason when it
+    refuses."""
+    VF = _vf()
+    argv = ["--mission", "follow", "--cadence", str(args.cadence),
+            f"--object={args.vla_object}",
+            "--cruise-mps", repr(float(args.vla_cruise_mps)),
+            "--speed-cap-mps", repr(float(args.vla_speed_cap_mps)),
+            "--cruise-alt", repr(float(args.cruise_alt)),
+            "--decision-timeout-s", repr(float(args.vla_decision_timeout_s)),
+            "--vla-front-source", str(args.vla_front_source)]
+    for k, flag in (("follow_memory_s", "--follow-memory-s"),
+                    ("follow_search_s", "--follow-search-s"),
+                    ("close_bottom_frac", "--close-bottom-frac"),
+                    ("close_width_frac", "--close-width-frac"),
+                    ("vla_step_as_rate", "--step-as-rate")):
+        v = getattr(args, k, None)
+        if v is not None:
+            argv += [flag, repr(float(v))]
+    if getattr(args, "vla_rate_yaw", "heading") != "heading":
+        argv += ["--rate-yaw", str(args.vla_rate_yaw)]
+    try:
+        return VF.resolve_args(VF.build_arg_parser().parse_args(argv)), argv
+    except ValueError as exc:
+        raise SystemExit(f"--pilot vla --mission follow: demo/vla_fly.py refuses this follow "
+                         f"({exc})") from None
+    except SystemExit:
+        raise SystemExit(f"--pilot vla --mission follow: demo/vla_fly.py's parser refuses "
+                         f"{' '.join(argv)}") from None
+
+
+def follow_tracker_config(vargs, pilot_band):
+    """The step tracker of THE VLA FOLLOW: demo/vla_fly.tracker_config on
+    vla_fly's own resolved arguments (vla_fly_follow) - the follow executor
+    (turn while moving, the altitude held at the cruise altitude, steps
+    anchored at the answer, LAND held as arrival), its smoothing, the rate
+    execution - with this rail's altitude clamp. SystemExit when the
+    TrackerConfig refuses its own numbers."""
+    from guardrail.vla_link import TrackerConfig
+    try:
+        return _vf().tracker_config(vargs, pilot_band, TrackerConfig)
+    except ValueError as exc:
+        raise SystemExit(f"--pilot vla --mission follow: the step tracker refuses this follow "
+                         f"({exc})") from None
 
 
 def join_cli(argv) -> list[str]:
@@ -4007,11 +4367,47 @@ def vla_server_plan(args, out: Path):
                         log_path=Path(out) / "vla_server_stdout.log")
 
 
-def rail_topology_evidence(args, sim_cfg: dict | None, link) -> tuple[dict, dict]:
+_NO_VLA_PROCESS = object()
+
+
+def vla_host_of(identity: dict | None) -> dict | None:
+    """Where the VLA server runs, by its own hello (`host`: guardrail.manifest.
+    collect_host_evidence, which demo/vla_server_v2.py and
+    demo/vla_server_foreign.py put there), or None when it said nothing -
+    which hil refuses: a VLA that does not say where it runs cannot be shown
+    to be on the Orin (manifest._vla_host_missing)."""
+    host = identity.get("host") if isinstance(identity, dict) else None
+    return dict(host) if isinstance(host, dict) and host else None
+
+
+def note_vla_host(link, vla_host: dict | None) -> None:
+    """The VLA server's host into the link's own hil evidence (MavrosLink.
+    hil_evidence), as sitl/ros2_shield_node.py records a separate VLA node's
+    /vla/identity host, so link_evidence and the topology evidence agree. A
+    link that keeps no such dict (pymavlink, the stand-ins) is left alone:
+    rail_topology_evidence adds the key to what is judged either way."""
+    hil = getattr(link, "hil_evidence", None)
+    if isinstance(hil, dict):
+        hil["vla_host"] = None if vla_host is None else dict(vla_host)
+
+
+def rail_topology_evidence(args, sim_cfg: dict | None, link,
+                           vla_host=_NO_VLA_PROCESS) -> tuple[dict, dict]:
     """(the evidence topology.classify() judges, the link's own evidence):
     the camera source, the robot's controller, where the simulator runs, the
-    link, the autopilot's heartbeat, the hil evidence and gate G1."""
+    link, the autopilot's heartbeat, the hil evidence and gate G1.
+
+    `vla_host`: given for a VLA run (--pilot vla), whose VLA is a separate
+    process, the server: its hello's host (vla_host_of), or None when it
+    reported none. It goes into the hil evidence as `vla_host`, the key
+    guardrail.manifest._vla_host_missing reads, so a server on another host
+    (the desktop's, through a tunnel) never makes the run hil. Absent for the
+    detector pilot, whose pilot runs in this process (the manifest's reading
+    of an absent key)."""
     link_ev = link.evidence()
+    tev = dict(link_ev.get("topology_evidence") or {})
+    if vla_host is not _NO_VLA_PROCESS:
+        tev["vla_host"] = None if vla_host is None else dict(vla_host)
     ev = {"camera_source": args.camera,
           "controller_type": sim_cfg["controller_type"] if sim_cfg else None,
           "sim_same_desktop": (topo.sim_on_this_desktop(args.sim_host)
@@ -4019,7 +4415,7 @@ def rail_topology_evidence(args, sim_cfg: dict | None, link) -> tuple[dict, dict
           "link": link.name,
           "autopilot": {k: link_ev.get(k) for k in ("heartbeat", "is_ardupilot",
                                                     "heartbeat_seen", "ardupilot_seen")},
-          "topology_evidence": link_ev.get("topology_evidence") or {},
+          "topology_evidence": tev,
           "g1": g1_status(args.g1_verdict)}
     return ev, link_ev
 
@@ -4054,7 +4450,7 @@ def _vla_refusal_records(args, out: Path, VM, exc: "PreArmRefused", *, rec, poli
         rec.end(why)
     except Exception as e:                                    # noqa: BLE001
         print(f"[node]   *** mission_end not written: {e}")
-    ev, _ = rail_topology_evidence(args, sim_cfg, link)
+    ev, _ = rail_topology_evidence(args, sim_cfg, link, vla_host=vla_rec.get("vla_host"))
     cls = topo.classify(ev)
     metrics = {"tag": out.name, "rail": "projectairsim-ardupilot", "episode_id": rec.episode_id,
                "topology": cls["stamp"], "grant_topology": cls["grant"],
@@ -4066,7 +4462,8 @@ def _vla_refusal_records(args, out: Path, VM, exc: "PreArmRefused", *, rec, poli
                "params": {k: getattr(args, k, None) for k in (
                    "object", "cruise_alt", "seed", "link", "camera", "scene_mode", "pilot",
                    "mission", "goal", "vla_object", "cadence", "vla_decision_timeout_s",
-                   "first_decision_timeout_s", "warmup_max_latency_s", "late_reply_wait_s")}}
+                   "first_decision_timeout_s", "warmup_max_latency_s", "late_reply_wait_s",
+                   *VLA_PARAMS)}}
     try:
         metrics.update(_vla_records(args, out, VM, None, backend, srv, identity, vla_rec,
                                     warmup, frames, saver, [], exc.kind))
@@ -4125,6 +4522,175 @@ def approach_scores(rows: list[dict], radius_m: float, *, scored: bool) -> dict:
             "reached_goal": bool(d[-1] <= radius_m)}
 
 
+def obs_frames_received(obs) -> int | None:
+    """The FrontCamera messages the node's frame buffer has been handed
+    (demo/semantic_demo.SemanticObs.stats()["frames_received"]: every
+    put_front, the detector's camera), or None when it cannot say."""
+    fn = getattr(obs, "stats", None)
+    if not callable(fn):
+        return None
+    try:
+        n = (fn() or {}).get("frames_received")
+    except Exception:                                         # noqa: BLE001
+        return None
+    return int(n) if isinstance(n, (int, float)) and not isinstance(n, bool) else None
+
+
+def _p50_p95_max(vals) -> dict:
+    """{n, p50, p95, max} of a list of seconds (None for each when empty)."""
+    v = [float(x) for x in vals]
+    return {"n": len(v), "p50": percentile(v, 50), "p95": percentile(v, 95),
+            "max": None if not v else round(max(v), 4)}
+
+
+def vla_observation(captures: list[dict], rows: list[dict], *, t0: float,
+                    span_s: float | None, front_source: str, camera: str,
+                    camera_frames: int | None = None, capture_interval_s: float | None = None,
+                    tick_s: float = TICK, grant_hz: float = GRANT_OBS_HZ) -> dict:
+    """How often a NEW observation reached the VLA (metrics.json
+    `vla_observation`; the grant's "Camera / IMU / GPS - 10 Hz observation",
+    X-05, ARCH-25), measured from what was sent, never the decision rate
+    (answers parsed) or the request rate (a request can re-send a frame
+    already sent).
+
+    `captures`: vla_mission.VLAFrames.log (vla_captures.jsonl), one line per
+    request sent with its front frame's sim stamp (`stamp_ns`) and capture
+    wall time (`t_capture`); warm-up lines are left out. `rows`: the flight's
+    rows, whose `vla_request` (VLAPilot: sent / no_hint / no_capture / error /
+    None) and `pilot_held` say what each tick did. `t0`: the mission's start
+    (wall); `span_s`: the loop's own span (its first tick to its last, plus
+    one tick).
+
+      distinct_frames   distinct stamps among the requests sent;
+                        duplicate_requests those that re-sent one; a request
+                        whose frame had no stamp is counted apart, never as
+                        distinct.
+      hz_per_wall_s     distinct_frames over the mission's wall seconds.
+      hz_while_asking   ... over the seconds the pilot was being asked: not
+                        held by the rail (pilot_held) and not HINT-GATED.
+      hint_gated        the spans in which requests were withheld because the
+                        hint said none (no fresh box past the follow's memory
+                        and search, a close box): from a tick whose capture
+                        found no hint to the next tick that sent, each with
+                        why. The VLA was not asked then by design; the
+                        aircraft held or hovered on the tracker's last step.
+      hz_per_sim_s      (distinct_frames - 1) over the sim seconds between
+                        the first and last frame sent; sim_per_wall the same
+                        span's sim seconds per wall second (the renderer's
+                        clock).
+      gap_sim_s, gap_wall_s  the gaps between consecutive distinct frames
+                        (median = p50, p95, max), by stamp and by capture
+                        time.
+      camera_delivery   FrontCamera messages delivered to this node over the
+                        mission (`camera_frames`, SemanticObs) and their rate:
+                        the ceiling when the front source is the detector's
+                        camera; `capture_interval_s` the interval its scene
+                        was rendered with.
+    Each tick counts for the time to the next row, at most two ticks;
+    `unrowed_s` is the rest of the span (ticks with no live state)."""
+    sent = [c for c in captures if isinstance(c, dict) and not c.get("warmup")]
+    stamped = [c for c in sent if c.get("stamp_ns") is not None]
+    first_wall: dict[float, float | None] = {}
+    for c in stamped:
+        s = float(c["stamp_ns"])
+        if s not in first_wall:
+            t = c.get("t_capture")
+            first_wall[s] = None if t is None else float(t)
+    stamps = sorted(first_wall)
+    n_dist = len(stamps)
+    gaps_sim = [(b - a) / 1e9 for a, b in zip(stamps, stamps[1:])]
+    walls = [first_wall[s] for s in stamps if first_wall[s] is not None]
+    gaps_wall = [b - a for a, b in zip(walls, walls[1:])]
+    sim_span = (stamps[-1] - stamps[0]) / 1e9 if n_dist >= 2 else None
+    wall_span = (walls[-1] - walls[0]) if len(walls) >= 2 else None
+    held_s = gated_s = asking_s = 0.0
+    spans: list[dict] = []
+    cur: dict | None = None
+    gated = False
+    for i, r in enumerate(rows):
+        t = float(r.get("t") or 0.0)
+        nxt = float(rows[i + 1].get("t") or t) if i + 1 < len(rows) else t + tick_s
+        d = max(0.0, min(nxt - t, 2.0 * tick_s))
+        req = r.get("vla_request")
+        if req == "sent":
+            gated = False
+        elif req == "no_hint":
+            gated = True
+        if r.get("pilot_held"):
+            held_s += d
+            kind = "held"
+        elif gated:
+            gated_s += d
+            kind = "gated"
+        else:
+            asking_s += d
+            kind = "asking"
+        if kind == "gated":
+            if cur is None:
+                cur = {"t": round(t, 3), "s": 0.0, "ticks": 0,
+                       "why": collections.Counter()}
+            cur["s"] += d
+            cur["ticks"] += 1
+            if req == "no_hint":
+                cur["why"][r.get("vla_no_hint_why") or "unknown"] += 1
+        elif cur is not None:
+            spans.append(cur)
+            cur = None
+    if cur is not None:
+        spans.append(cur)
+    why_all: collections.Counter = collections.Counter()
+    for sp in spans:
+        why_all.update(sp["why"])
+    span = float(span_s) if span_s else None
+
+    def rate(n, s):
+        return round(n / s, 3) if s else None
+    hz_wall, hz_ask = rate(n_dist, span), rate(n_dist, asking_s)
+    return {
+        "basis": ("distinct front-frame sim stamps among the requests actually sent "
+                  "(vla_captures.jsonl stamp_ns; warm-up excluded): how often a NEW "
+                  "observation reached the VLA. Not the decision rate (pilot.summary."
+                  "decision_hz, answers parsed) and not the request rate"),
+        "front_source": front_source, "camera": camera, "grant_obs_hz": grant_hz,
+        "requests_sent": len(sent), "requests_with_stamp": len(stamped),
+        "requests_without_stamp": len(sent) - len(stamped),
+        "distinct_frames": n_dist, "duplicate_requests": len(stamped) - n_dist,
+        "duplicate_share": (round((len(stamped) - n_dist) / len(stamped), 4)
+                            if stamped else None),
+        "mission_wall_s": None if span is None else round(span, 3),
+        "hz_per_wall_s": hz_wall,
+        "asking_s": round(asking_s, 3), "held_s": round(held_s, 3),
+        "unrowed_s": (None if span is None else
+                      round(max(0.0, span - asking_s - held_s - gated_s), 3)),
+        "hz_while_asking": hz_ask,
+        "hint_gated": {"spans": len(spans), "s": round(gated_s, 3),
+                       "longest_s": (round(max(sp["s"] for sp in spans), 3)
+                                     if spans else None),
+                       "why_ticks": dict(why_all),
+                       "first": [{"t": sp["t"], "s": round(sp["s"], 3), "ticks": sp["ticks"],
+                                  "why": dict(sp["why"])} for sp in spans[:20]]},
+        "sim_span_s": None if sim_span is None else round(sim_span, 3),
+        "wall_span_s": None if wall_span is None else round(wall_span, 3),
+        "sim_per_wall": (round(sim_span / wall_span, 4)
+                         if sim_span is not None and wall_span else None),
+        "hz_per_sim_s": (round((n_dist - 1) / sim_span, 3)
+                         if sim_span else None),
+        "gap_sim_s": _p50_p95_max(gaps_sim),
+        "gap_wall_s": _p50_p95_max(gaps_wall),
+        "below_grant": {"per_wall_s": None if hz_wall is None else hz_wall < grant_hz,
+                        "while_asking": None if hz_ask is None else hz_ask < grant_hz},
+        "camera_delivery": {"camera": "FrontCamera", "frames": camera_frames,
+                            "hz": (None if camera_frames is None else
+                                   rate(camera_frames, span)),
+                            "capture_interval_s": capture_interval_s,
+                            "note": ("the detector's camera: the VLA's front frame too"
+                                     if front_source == "detector" else
+                                     "the detector's camera; the VLA's front frame is "
+                                     "VLAFront, not counted here")},
+        "t0_wall": round(float(t0), 3),
+    }
+
+
 def _vla_bring_up(args, out: Path, VM, srv, policy, shield_on: bool, grounder, hfov: float,
                   frames, live, clock, client=None, run_cmd=subprocess.run) -> tuple:
     """The VLA side up to the flight: the server's hello (waited for up to
@@ -4136,8 +4702,14 @@ def _vla_bring_up(args, out: Path, VM, srv, policy, shield_on: bool, grounder, h
     (vla_mission.pilot_alt_config: the policy's band with the Shield on, the
     simulator safety band with it off) and the backend (RemoteVLABackend:
     the step tracker, the cadence, vla_steps.jsonl, the frames kept on each
-    request sent). Returns (identity, backend, record); SystemExit on a
-    refusal. `client`: an injected RemoteVLA (tests)."""
+    request sent). A FOLLOW's hint and tracker are demo/vla_fly.py's
+    (THE VLA FOLLOW: DetectorHint with the memory, the search and the close
+    rule; vla_fly.tracker_config). The record carries the server's host
+    (vla_host_of: the run's `vla_host` evidence), the front-camera check
+    and what the object words are to this model. Returns (identity,
+    backend, record); SystemExit on a refusal. `client`: an injected
+    RemoteVLA (tests)."""
+    from guardrail.aerialvla_codec import FRONT_SOURCES
     from guardrail.vla_backends import make_backend
     from guardrail.vla_link import RemoteVLA, TrackerConfig, identity_of
     said = {"t": 0.0}
@@ -4160,13 +4732,28 @@ def _vla_bring_up(args, out: Path, VM, srv, policy, shield_on: bool, grounder, h
                          f"pass --allow-stand-in to fly a stand-in, recorded as one")
     print(f"[vla]    hello: {identity_of(identity)}"
           + ("" if is_vla else f"  *** STAND-IN, not a VLA: {why_not}"))
-    # This rail sends VLAFront: a foreign server (demo/vla_server_foreign.py)
-    # whose intrinsics assume another camera is refused
+    # Where the server runs, by its own hello: the run's vla_host evidence
+    # (rail_topology_evidence), as the ROS rail records a VLA node's host.
+    vla_host = vla_host_of(identity)
+    print(f"[vla]    server host: "
+          + ("NOT REPORTED (no 'host' in its hello): this run cannot be hil"
+             if vla_host is None else
+             f"{vla_host.get('device_model') or 'no device model'} "
+             f"({vla_host.get('host_arch')})"))
+    # The front camera this flight sends (--vla-front-source) must be the one
+    # the server reads: AerialVLA reads VLAFront, a foreign server
+    # (demo/vla_server_foreign.py) the camera its hello declares
     # (vla_mission.front_source_check).
-    front_check = VM.front_source_check(identity, "vla", is_vla=is_vla)
+    front_cam = FRONT_SOURCES[args.vla_front_source]["camera"]
+    front_check = VM.front_source_check(identity, args.vla_front_source, is_vla=is_vla)
     if not front_check["ok"]:
         raise SystemExit(f"[vla]    *** refused before take-off: {front_check['why']} (this "
-                         f"rail sends VLAFront)")
+                         f"flight sends {front_cam}: --vla-front-source "
+                         f"{args.vla_front_source})")
+    print(f"[vla]    front image {front_cam} (--vla-front-source {args.vla_front_source})"
+          + (f", the server's ({front_check['source']})" if front_check["checked"]
+             else f" - {front_check['source']}"))
+    words = VM.object_words_record(identity)
     # The GPU's memory with the model loaded (review of 4a0da6d, P2-7).
     gpu = {"at_hello": gpu_memory(run_cmd)}
     weight_paths = (None if (args.no_local_weights or not is_vla)
@@ -4182,19 +4769,47 @@ def _vla_bring_up(args, out: Path, VM, srv, policy, shield_on: bool, grounder, h
             raise SystemExit(f"[vla]    *** the link failed before take-off: {exc}") from None
         if identity_of(client.identity) != identity_of(identity):
             raise SystemExit("[vla]    *** the pinned identity is not the hello's")
-        det_hint = None
+        det_hint = close_rule = follow_rec = None
+        follow = args.mission == "follow"
+        vargs = vla_fly_follow(args)[0] if follow else None
         if args.mission == "goto":
             hint_src = VM.goto_hint_source(args.goal, args.arrive_radius_m)
         else:
             from vla_bridge import VLABridge
             bridge = VLABridge(args.object, hfov_deg=hfov, bearing_gain=args.bearing_gain)
-            det_hint = VM.DetectorHint(grounder_box_source(grounder), bridge,
-                                       fresh_s=args.det_fresh_s)
+            if follow:
+                # vla_fly's M3 hint: the sighting's memory, the search turn,
+                # the close rule; each hint records its kind.
+                close_rule = VM.BoxClose(vargs.close_bottom_frac, vargs.close_width_frac)
+                det_hint = VM.DetectorHint(grounder_box_source(grounder), bridge,
+                                           fresh_s=args.det_fresh_s,
+                                           memory_s=vargs.follow_memory_s,
+                                           search_s=vargs.follow_search_s,
+                                           close=close_rule, record_kind=True)
+            else:
+                det_hint = VM.DetectorHint(grounder_box_source(grounder), bridge,
+                                           fresh_s=args.det_fresh_s)
             hint_src = VM.HintSource(det_hint, "detector")
         backend_policy, pilot_band, band_rec = VM.pilot_alt_config(shield_on, policy)
-        tcfg = TrackerConfig(cruise_mps=args.vla_cruise_mps,
-                             speed_cap_mps=args.vla_speed_cap_mps,
-                             decision_timeout_s=args.vla_decision_timeout_s, alt_band=pilot_band)
+        if follow:
+            # vla_fly's follow tracker (the executor, its smoothing, the rate
+            # execution), with this rail's altitude clamp.
+            tcfg = follow_tracker_config(vargs, pilot_band)
+            vf = _vf()
+            follow_rec = {"executor": bool(vargs.follow_executor),
+                          "smooth": vf.smooth_record(vargs),
+                          "step_as_rate_s": vargs.step_as_rate, "rate_yaw": vargs.rate_yaw,
+                          "memory_s": vargs.follow_memory_s, "search_s": vargs.follow_search_s,
+                          "close_rule": close_rule.as_dict(),
+                          "lost_timeout_s": args.lost_timeout_s,
+                          "from": ("demo/vla_fly.py: its parser and resolve_args on this "
+                                   "flight's values, then vla_fly.tracker_config "
+                                   "(perception_node.vla_fly_follow)")}
+        else:
+            tcfg = TrackerConfig(cruise_mps=args.vla_cruise_mps,
+                                 speed_cap_mps=args.vla_speed_cap_mps,
+                                 decision_timeout_s=args.vla_decision_timeout_s,
+                                 alt_band=pilot_band)
         backend = make_backend("aerovla", None, backend_policy, get_capture=frames.capture,
                                get_hint=hint_src, client=client, object_text=args.vla_object,
                                tracker_config=tcfg, cadence=args.cadence,
@@ -4209,10 +4824,23 @@ def _vla_bring_up(args, out: Path, VM, srv, policy, shield_on: bool, grounder, h
     alt_band = {**band_rec, "applied": dict(backend.alt_band_info)}
     print(f"[vla]    pilot: mission {args.mission}, hint {hint_src.kind}, cadence "
           f"{args.cadence}, altitude clamp {backend.alt_band_info.get('band')} "
-          f"({backend.alt_band_info.get('source')}); object words {args.vla_object!r} (inert)")
+          f"({backend.alt_band_info.get('source')}); object words {args.vla_object!r} ("
+          + ("inert" if words["object_words_are_inert"] else words["object_words_role"]) + ")")
+    if follow_rec is not None:
+        sm = follow_rec["smooth"]
+        print(f"[vla]    follow: memory {follow_rec['memory_s']:g} s, search "
+              f"{follow_rec['search_s']:g} s, close {follow_rec['close_rule']}; executor "
+              f"{'on' if follow_rec['executor'] else 'off'}, smoothing "
+              f"{'on' if sm.get('on') else 'off'}"
+              + (f"; steps flown as rates over {follow_rec['step_as_rate_s']:g} s (yaw "
+                 f"{follow_rec['rate_yaw']})" if follow_rec["step_as_rate_s"] else "")
+              + f"; lost after {args.lost_timeout_s:g} s")
     return identity, backend, {"is_vla": is_vla, "why_not": why_not,
                                "weight_paths": weight_paths, "client": client,
                                "hint_source": hint_src, "detector_hint": det_hint,
+                               "close_rule": close_rule, "follow": follow_rec,
+                               "front_source": front_check, "object_words": words,
+                               "vla_host": vla_host,
                                "pilot_alt_band": alt_band, "gpu_memory": gpu,
                                "tracker": {k: getattr(tcfg, k)
                                            for k in tcfg.__dataclass_fields__}}
@@ -4262,11 +4890,16 @@ def _vla_records(args, out: Path, VM, vla, backend, srv, identity, rec: dict, wa
     if not is_vla:
         pilot["warning"] = ("a scripted stand-in answered: this run tests the flight path, "
                             "it is NOT a VLA flight")
+    # What the object words were to the model that answered (THE VLA FOLLOW):
+    # AerialVLA's inert slot, AIOT-VLA's grounding phrase.
+    words = rec.get("object_words") or VM.object_words_record(identity)
     return {
         "end_reason_means": VM.END_REASONS.get(end_reason),
         "pilot": pilot,
         "vla": {"mission": {"kind": args.mission, "goal_xy": None if goal is None else list(goal),
-                            "object": args.vla_object, "object_words_are_inert": True,
+                            "object": args.vla_object,
+                            "object_words_are_inert": words["object_words_are_inert"],
+                            "object_words_role": words["object_words_role"],
                             "object_is_default": goto and args.vla_object == VM.GOTO_OBJECT_TEXT,
                             "hint_source": None if hint_src is None else hint_src.kind,
                             "hint": None if hint_src is None else hint_src.stats(),
@@ -4279,6 +4912,14 @@ def _vla_records(args, out: Path, VM, vla, backend, srv, identity, rec: dict, wa
                 "warmup": warmup,
                 "pilot_alt_band": rec.get("pilot_alt_band"),
                 "tracker": rec.get("tracker"),
+                # THE VLA FOLLOW's configuration as flown (None for goto and
+                # approach), and the front-camera check against the hello.
+                "follow": rec.get("follow"),
+                "close_hold_ticks": (None if vla is None or vla.close_hold is None
+                                     else vla.n_close_hold),
+                "front_source": rec.get("front_source"),
+                # The server's host, by its hello (the run's vla_host).
+                "server_host": rec.get("vla_host"),
                 "cadence": args.cadence,
                 "allow_unstamped_pipelined": bool(getattr(args, "allow_unstamped_pipelined",
                                                           False)),
@@ -4311,6 +4952,9 @@ def _vla_records(args, out: Path, VM, vla, backend, srv, identity, rec: dict, wa
                                "and its pose the EKF interpolated there (stop-and-go "
                                "captures while hovering)")}},
         "land": VM.land_record(rows, records, goal),
+        # A GOTO is scored on its goal, an approach on the subject's true
+        # range; a follow on the follow proxy (frac_within_30m, the caller's)
+        # and declares no goal.
         **(VM.mission_scores(args.mission, rows, goal_xy=goal,
                              arrive_radius_m=args.arrive_radius_m) if goto else
            (approach or {"reached_goal": None})),
@@ -4326,10 +4970,15 @@ def sim_configs(args, out: Path):
     # step an attaching VLA node will use (--vla-cameras): rail.
     # select_vla_cameras, review of 4a0da6d, P2-4. Recorded as vla_cameras.
     vla_cams = getattr(args, "pilot", "servo") == "vla" or bool(getattr(args, "vla_cameras", False))
+    # FrontCamera's capture interval, when one is asked for (--front-capture-
+    # interval-s): rendered, and recorded as sim_config.front_capture_interval_s.
+    fci = getattr(args, "front_capture_interval_s", None)
     if args.scene_mode == "attach":
-        return rail.write_attach_configs(out / "pas_config", vla_cameras=vla_cams), None
+        return rail.write_attach_configs(out / "pas_config", vla_cameras=vla_cams,
+                                         front_capture_interval_s=fci), None
     plan = rail.plan_network(args.network, args.windows_ip, args.wsl_ip)
-    return rail.write_sim_configs(out / "pas_config", plan, vla_cameras=vla_cams), plan
+    return rail.write_sim_configs(out / "pas_config", plan, vla_cameras=vla_cams,
+                                  front_capture_interval_s=fci), plan
 
 
 def dry_run(args, out: Path) -> dict:
@@ -4373,6 +5022,11 @@ def dry_run(args, out: Path) -> dict:
         report["vla"] = {"mission": args.mission,
                          "goal": None if args.goal is None else list(args.goal),
                          "object": args.vla_object, "cadence": args.cadence,
+                         "front_source": args.vla_front_source,
+                         "lost_timeout_s": args.lost_timeout_s,
+                         "follow": (None if args.mission != "follow" else
+                                    {k: getattr(args, k) for k in VLA_FOLLOW_ONLY
+                                     + ("vla_rate_yaw",)}),
                          "server": {"mode": "started" if srv.started_here else "attached",
                                     "addr": f"{srv.host}:{srv.port}", "argv": srv.argv}}
     return report
@@ -4687,7 +5341,9 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
         camera = ProjectAirSimCamera(obs, sim_cfg, address=args.sim_host,
                                      attach=args.scene_mode == "attach",
                                      chase=save_view,
-                                     vla_frames=vla_frames if vla_on else None)
+                                     vla_frames=vla_frames if vla_on else None,
+                                     vla_front_source=(args.vla_front_source if vla_on
+                                                       else "vla"))
     recorder = view_dir = rhud = None
     rec_why = None if save_view else "--save-view not given"
     rec_summary = None
@@ -4816,6 +5472,10 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
             # none would put it in an airborne hover nothing watches.
             raise SystemExit(f"--pilot vla needs a link with a pre-arm step (the warm-up "
                              f"gate runs disarmed): {link.name} has none")
+        if vla_on:
+            # The VLA server's host (its hello) into the link's own hil
+            # evidence, as the ROS rail records a VLA node's (note_vla_host).
+            note_vla_host(link, vla_rec.get("vla_host"))
         ap_fence = backstop = None
         pre_arm: dict = {}
         # The detector's first inference (wait_for_detector): waited for in the
@@ -5237,6 +5897,9 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
         # "now": SYSTEM_TIME comes at 2 Hz, and pairing a stale FCU stamp with
         # the current wall time read a perfect real-time run as 0.97x.
         tb0 = (link.snap.time_boot_ms, getattr(link.snap, "t_time_boot", None))
+        # The FrontCamera frames delivered so far (SemanticObs.stats), so the
+        # observation summary counts the mission's own (None: obs says not).
+        obs_frames0 = obs_frames_received(obs)
         t0 = clock()
         mission_t0[0] = t0
         if takeover is not None and "t_abs" in takeover:
@@ -5255,7 +5918,8 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
                            hint_source=vla_rec["hint_source"],
                            detector_hint=vla_rec["detector_hint"], stale_s=args.det_fresh_s,
                            server_alive=lambda: vla_srv.alive, vm=VM,
-                           model_label=VM.model_label(vla_identity))
+                           model_label=VM.model_label(vla_identity),
+                           close_hold=vla_rec.get("close_rule"))
             print(f"[vla]    mission {args.mission}: {VM.model_words(vla_identity)} flies"
                   + (f" to {args.goal}" if vla_goto else f", hint from the box on {args.object!r}")
                   + " - every tick through the Shield"
@@ -6122,7 +6786,10 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
                   f"{n_stale} stale-link and {n_no_state} no-state tick(s) of "
                   f"{len(tick_starts)})")
 
-        ev, link_ev = rail_topology_evidence(args, sim_cfg, link)
+        # A VLA run's VLA is a separate process, the server: its host is
+        # judged beside the Orin's (vla_host; THE VLA FOLLOW).
+        ev, link_ev = rail_topology_evidence(
+            args, sim_cfg, link, **({"vla_host": vla_rec.get("vla_host")} if vla_on else {}))
         cls = topo.classify(ev)
         simulated = args.camera == "projectairsim"
         qualified = cls["rail_qualified_by_g1"] is True
@@ -6407,8 +7074,39 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
         metrics["params"].update({k: getattr(args, k, None) for k in (
             "start_when_seen", "start_max_range_m", "start_timeout_s",
             "start_timeout_action", "negative_query", "identity", "lock_gate",
-            "no_lock_target", "pilot", "mission")})
+            "no_lock_target", "pilot", "mission", "front_capture_interval_s")})
         if vla_on:
+            metrics["params"].update({k: getattr(args, k, None) for k in VLA_PARAMS})
+            # THE OBSERVATION RATE (the grant's 10 Hz observation, X-05 /
+            # ARCH-25): distinct front frames that reached the VLA, never the
+            # decision or request rate (vla_observation's docstring).
+            try:
+                from guardrail.aerialvla_codec import FRONT_SOURCES
+                f1 = obs_frames_received(obs)
+                metrics["vla_observation"] = vla_observation(
+                    list(getattr(vla_frames, "log", None) or []), rows, t0=t0,
+                    span_s=((tick_starts[-1] - tick_starts[0] + TICK) if tick_starts
+                            else None),
+                    front_source=args.vla_front_source,
+                    camera=FRONT_SOURCES[args.vla_front_source]["camera"],
+                    camera_frames=(None if f1 is None or obs_frames0 is None
+                                   else f1 - obs_frames0),
+                    capture_interval_s=(sim_cfg or {}).get("front_capture_interval_s"))
+            except Exception as exc:                          # noqa: BLE001
+                metrics["vla_observation"] = {"error": f"{type(exc).__name__}: {exc}"}
+            if args.mission == "follow":
+                # This rail starts the mission clock at the start gate's
+                # acquisition, so its whole-mission follow proxy is the share
+                # vla_fly reports from the first acquisition (fair-follow
+                # scoring); None when the gate did not open on the subject.
+                metrics["frac_within_30m_after_acquire"] = (
+                    metrics.get("frac_within_30m") if gate_rec.get("reached") else None)
+                metrics["frac_within_30m_basis"] = (
+                    "the mission clock starts at the start gate's acquisition (StartGate), "
+                    "so the mission's share is the share after acquisition"
+                    if gate_rec.get("reached") else
+                    "the start gate did not confirm the subject: the share runs from "
+                    "take-off, not from an acquisition")
             # THE VLA PILOT's records, as on the city rail (demo/vla_mission):
             # metrics.pilot (pilot_entry: kind vla only with the server's real
             # identity, the backend's stats under "vla" - what tools/todo.py
@@ -6420,8 +7118,10 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
                     args, out, VM, vla, vla_backend, vla_srv, vla_identity, vla_rec,
                     vla_warmup, vla_frames, vla_saver, rows, end_reason, gate_rec=gate_rec,
                     detector_id=None if vla_goto else (fv or _fv()).DETECTOR_ID,
-                    approach=(None if vla_goto else
-                              approach_scores(rows, args.approach_radius_m, scored=scored))))
+                    # An approach is scored on the subject's true range; a
+                    # follow on the follow proxy above, never on a radius.
+                    approach=(approach_scores(rows, args.approach_radius_m, scored=scored)
+                              if args.mission == "approach" else None)))
                 vla_captures_written = True
             except Exception as exc:                              # noqa: BLE001
                 metrics["vla_records_error"] = f"{type(exc).__name__}: {exc}"
@@ -6663,6 +7363,16 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
                   f"{manifest.get('vla_model_hash')}"
                   + ("" if vla_rec.get("is_vla") else " - *** a STAND-IN answered: not a VLA "
                                                       "flight ***"))
+            o_ = metrics.get("vla_observation") or {}
+            gs_ = o_.get("hint_gated") or {}
+            print(f"[report] VLA observation ({o_.get('camera')}): {o_.get('distinct_frames')} "
+                  f"distinct frames sent = {o_.get('hz_per_wall_s')} Hz over the mission, "
+                  f"{o_.get('hz_while_asking')} Hz while the pilot was asked, "
+                  f"{o_.get('hz_per_sim_s')} per sim s (grant {GRANT_OBS_HZ:g} Hz); "
+                  f"{o_.get('duplicate_requests')} duplicate request(s); hint-gated "
+                  f"{gs_.get('s')} s in {gs_.get('spans')} span(s); camera "
+                  f"{(o_.get('camera_delivery') or {}).get('hz')} Hz delivered"
+                  + (f"; *** {o_['error']}" if o_.get("error") else ""))
         # A hover that crashed was landed and recorded above, and is still a
         # failed run: the launchers count a non-zero exit as one; so is a VLA
         # mission that ended on a VLA failure (exit 3, as demo/vla_fly.py).

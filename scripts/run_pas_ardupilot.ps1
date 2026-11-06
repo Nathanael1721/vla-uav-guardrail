@@ -23,7 +23,9 @@
 # this Windows env (not a grant topology). For the MAVROS node - dev in WSL, hil
 # on the Jetson Orin - run -Step scene, then -Step sitl -Mavros (dev) or
 # -Step sitl -Orin <orin ip> (hil), then the node there with --link mavros
-# --scene-mode attach (the design doc has the exact commands). Starting SITL
+# --scene-mode attach (the design doc has the exact commands; the VLA follow
+# on the AGX Orin: -Step scene -VlaCameras, then deploy/orin/run_pas_perception.sh
+# there). Starting SITL
 # before a scene (re)load lets the simulator's clock reset run ArduPilot's
 # clock backwards.
 #
@@ -76,6 +78,7 @@ param(
     [string]$OffloadRoot = "D:\vla_drone_offload\demo_out",   # outside OneDrive; C: filled up on 23 Oct
     [switch]$Mavros,                    # -Step sitl: also start MAVROS 2 in WSL (dev)
     [switch]$VlaCameras,                # -Step scene: render AerialVLA's VLAFront/VLADown for an attaching --pilot vla node
+    [double]$FrontCaptureIntervalS = 0, # -Step scene / node: FrontCamera's capture interval in s (0 = the template's 0.1; 0.066 is about 15 Hz)
     [switch]$SkipSim,
     [switch]$KeepSim
 )
@@ -330,6 +333,10 @@ try {
             # renders them on its own).
             $sceneExtra = @()
             if ($VlaCameras) { $sceneExtra += @("--vla-cameras") }
+            # FrontCamera's capture interval is rendered into the scene the
+            # desktop loads; an attaching node is given the same value
+            # (perception_node --front-capture-interval-s) and measures what arrives.
+            if ($FrontCaptureIntervalS -gt 0) { $sceneExtra += @("--front-capture-interval-s", "$FrontCaptureIntervalS") }
             & $Py $Node --scene-only --tag $Tag @net @sceneExtra
             if ($LASTEXITCODE -ne 0) { throw "scene load exited $LASTEXITCODE" }
             Say "scene loaded and left running. Next: -Step sitl -SkipSim (ArduPilot AFTER the scene, never before a reload)"
@@ -349,6 +356,7 @@ try {
             $a += Get-PolicyArgs
             $a += @("--hold-mode", $HoldMode)
             if ($ClockStart) { $a += @("--clock-start", $ClockStart) }
+            if ($FrontCaptureIntervalS -gt 0) { $a += @("--front-capture-interval-s", "$FrontCaptureIntervalS") }
             if ($NodeArgs) { Say "node args: $($NodeArgs -join ' ')"; $a += $NodeArgs }
             if (-not $G1Verdict) {
                 $v = Get-ChildItem (Join-Path $Out "g1_*\g1_verdict.json") -ErrorAction SilentlyContinue |

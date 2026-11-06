@@ -736,7 +736,7 @@ law on the detector's box) stays the default.
 | Shield | `shield.filter` (5 s / 0.1 s, own-velocity forecast) | the same call |
 | escalation FSM | Brake / Loiter (BRAKE) / RTL / Land, the hold that stops clear | the same code |
 | sent | the Shield's `emitted`, the FSM's brake, or nothing | the same |
-| subject for stand-offs | the Grounder's box, placed from its own capture | approach: the same box, unchanged; goto: none (no subject) |
+| subject for stand-offs | the Grounder's box, placed from its own capture | approach and follow: the same box, unchanged; goto: none (no subject) |
 
 A tick on which the pilot's action did not fly (the FSM's brake setpoint or
 a stop the Shield advised, Loiter / RTL / Land, a fault, a takeover) suspends
@@ -896,6 +896,30 @@ FSM's state, an autopilot takeover, SHIELD OFF - as its last line,
 the way out of a run that crashed too. `tools/todo.py classify_run`
 reads such a run as a VLA flight from these records (tested on the scripted
 server with a real-looking identity).
+
+### The follow, and AIOT-VLA (2026-11-06)
+
+`--mission follow` flies section 13's M3 on this rail, from `demo/vla_fly.py`
+itself:
+
+- the follow's `DetectorHint` (the sighting's memory, the search turn, the
+  close rule);
+- its step tracker, built by `vla_fly.tracker_config` on vla_fly's own
+  parse of the flight (`perception_node.vla_fly_follow`);
+- the close hold;
+- the request count for the stop rules, so a follow that never asked ends
+  `subject_not_acquired`.
+
+`--vla-front-source detector` sends the detector's FrontCamera frame, which
+AIOT-VLA reads from v3 on; the server's hello must declare that camera. The
+run also records:
+
+- the server's host as its `vla_host` (hil only on an Orin);
+- the object words as what they are to the model (AIOT-VLA's grounding
+  phrase);
+- `vla_observation`, the distinct front frames that reached the VLA.
+
+The hil commands are in `docs/DESIGN-projectairsim-ardupilot.md`. Not flown.
 
 ### Not verified
 

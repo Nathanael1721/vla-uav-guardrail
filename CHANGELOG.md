@@ -16,6 +16,113 @@ shipped change and recorded as one.
 
 ## [Unreleased]
 
+### 2026-11-06 (perception VLA) — the ArduPilot perception rail can fly a VLA follow: AIOT-VLA as the pilot, on vla_fly's M3 parts, for the hil topology on the AGX Orin; not flown
+
+#### Changed
+- **`--pilot vla --mission follow`** on `demo/pas_ardupilot/perception_node.py`
+  (refused until now). It is `demo/vla_fly.py`'s M3, imported, not copied:
+  - The hint is `vla_mission.DetectorHint` with the sighting's memory
+    (`--follow-memory-s`, 6 s), the search turn (`--follow-search-s`, 20 s)
+    and the close rule (`--close-bottom-frac` 0.92, `--close-width-frac`
+    0.25). Each request records its kind (fresh, memory, search).
+  - The step tracker is `vla_fly.tracker_config` on vla_fly's own parse of
+    this flight (`perception_node.vla_fly_follow`, the way
+    `demo/vla_dagger.py` builds its follow): turn while moving, the altitude
+    held at `--cruise-alt`, steps anchored at the answer, LAND held as
+    arrival, the smoothing. `--vla-step-as-rate H` and `--vla-rate-yaw rate`
+    fly AIOT-VLA's label (a step over 0.5 s, its yaw rate). The defaults and
+    the refusals are vla_fly's.
+  - A fresh close box holds the horizontal motion, inside the tracker when
+    it smooths, as `vla_mission.MissionLoop` does. `VLAPilot` now reads the
+    Grounder once per tick, so the close hold, the stop rules and the row see
+    one box.
+  - The stop rules get the request count. A follow that never asked ends
+    `subject_not_acquired`, not `no_first_decision` (a VLA failure, exit 3).
+    `--lost-timeout-s` defaults to vla_fly's per mission: 90 s for a follow,
+    15 s otherwise.
+- **`--vla-front-source detector`.** The FrontCamera subscription that feeds
+  the detector also feeds the VLA's frame store, so the request's front image
+  is the detector's frame (768x432, pitched -20 deg). VLAFront is then
+  neither subscribed nor required, in the robot config or among an attached
+  node's live topics. `front_source_check` takes the flag. It was hard-coded
+  to VLAFront, which refused every AIOT-VLA from v3 on (they read the
+  detector's camera).
+- **`vla_host`.** The server's hello `host` goes into the run's hil evidence
+  (and `MavrosLink.hil_evidence`), as `sitl/ros2_shield_node.py` records a
+  VLA node's. A server on another host, or one that reports none, keeps the
+  run from hil (`guardrail.manifest._vla_host_missing`). Before this a VLA
+  run's evidence had no such key, which the manifest reads as "the VLA runs
+  in the Shield's process".
+- **The object words** are recorded as what they are to the model that
+  answered (`vla_mission.object_words_record`): AIOT-VLA's grounding phrase,
+  DroneCATS' and RaceVLA's command, AerialVLA's inert slot. This rail
+  recorded every model's words as inert.
+- The CSP mission says "follow a red car". A follow declares no goal, so no
+  approach-radius score. `frac_within_30m_after_acquire` sits beside the
+  whole-mission share, because this rail's mission clock starts at the start
+  gate.
+- **`metrics.json` `vla_observation`**, for the grant's 10 Hz observation
+  (X-05, ARCH-25). It counts the distinct front-frame sim stamps among the
+  requests actually sent (`vla_captures.jsonl`) and gives:
+  - the rate per wall second, per sim second, and while the pilot was being
+    asked (not held by the rail, not hint-gated);
+  - the duplicate requests and the gaps between frames (p50, p95, max);
+  - the hint-gated spans, with why;
+  - FrontCamera's delivered rate.
+  It never quotes the decision rate or the request rate. Each row says what
+  the backend did about a request (`vla_request`).
+- **`--front-capture-interval-s S`** renders FrontCamera's capture interval at
+  scene render time (`rail.write_sim_configs` / `write_attach_configs`;
+  `-FrontCaptureIntervalS` on `run_pas_ardupilot.ps1`'s scene and node
+  steps). The default is the template's 0.1 s, unchanged. The value and where
+  it came from are recorded (`sim_config.front_capture_interval_s`).
+- **`deploy/orin/run_pas_perception.sh`** runs the node natively on the AGX
+  Orin (host ROS 2 Jazzy from apt, `~/vla-drone-env`) on the companion
+  MAVROS's ROS 2 graph, read from `deploy/topologies/hil.env`. It refuses
+  `--dev-yaml` and `--start-sitl`.
+- Docs: `docs/DESIGN-topologies.md` decision 2 (host ROS for this node only,
+  and why), the hil section of `docs/DESIGN-projectairsim-ardupilot.md` (the
+  layout and the commands, in order), `docs/DESIGN-vla-pilot.md` section 14,
+  `deploy/README.md`.
+
+#### Tests
+- `tests/test_pas_vla.py` 37/38 (one skip: the map-dependent goal check).
+  Nine new tests; with the changed refusal test, the ten that touch this
+  change fail against master 28c61e7 and pass here.
+- `tests/test_deploy_configs.py` 69/70 (one skip). The script is in the LF
+  and shebang list. A dry-run test checks its graph against `hil.env`, the
+  node's own parse of its command, its pass-through, its refusals, and that
+  a relative G1 verdict path still names the same file.
+- Every test file that imports the node, the rail, `vla_mission` or
+  `vla_fly`, and the two that master 1e15312 touched (46 files), one at a
+  time in the worktree after that merge: 1494/1543, no failure. The 49 skips
+  are the lab's gitignored maps, flights and bundles, which a worktree does
+  not have. Two other full CI runs and a nightly sweep shared the machine.
+  Before the merge, one run of `test_railvideo_recording.py`'s wall-clock
+  loop-rate comparison failed under that load (9.97 Hz without the recorder
+  against 8.08 Hz with it). It passed twice run alone, and in the run above.
+- `tools/check_claims.py`: 330/330 files clean. The full per-build list
+  (`tools/ci_local.py`) was not run on this branch.
+
+#### Limits
+- **Not flown.** Nothing here has run against Unreal, ArduPilot, MAVROS, the
+  Orin or the model. The tests use the rail's stand-ins and a scripted
+  protocol-v2 server that announces an aiotvla identity.
+- This rail's pose ring has no sim stamps, so each image is paired with the
+  EKF pose at its arrival (the flag's help: 0.1-0.4 m and 3-9 deg off while
+  flying pipelined). The run says so (`--allow-unstamped-pipelined`,
+  `capture_time_basis`).
+- Not ported from vla_fly's follow: the StuckWatch and CloseStall perception
+  resets, the identity Reacquirer's re-acquisition after a lapse, and
+  vla_fly's held-box subject feed. This rail feeds the Shield its own depth
+  or width estimate, as before.
+- A detector-front run still renders VLAFront (an unused 256x256 capture
+  every 0.1 s).
+- `deploy/orin/first_boot_check.sh`'s host-ROS WARN still says the rail never
+  uses host ROS; on the AGX this node now does.
+- `demo/vla_fly.py`'s own records still call every model's object words
+  inert.
+
 ### 2026-11-06 (dev images) — the dev topology flown in containers for the first time; the same companion image definition on the desktop and the Orin
 
 #### Flown

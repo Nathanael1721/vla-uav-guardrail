@@ -123,8 +123,28 @@ nodes are plain rclpy, and the guardrail package also imports on Python 3.10
   repository keeps only the newest build of each package, so these versions
   are recorded per image rather than pinned.
 
-Nothing ROS is installed on the Orin's own Ubuntu; the first-boot check warns
-if something is.
+Nothing ROS is installed on the Orin's own Ubuntu, with one exception below;
+the first-boot check warns if something is.
+
+**Host ROS for the perception node only (2026-11-06).** The safety path keeps
+its home in the companion image (MAVROS, the Shield node, mavlink-router,
+rosbag2), and nothing in it changes. One node runs on the Orin's own Ubuntu,
+on ROS 2 Jazzy from apt: the Project AirSim perception node flown by a VLA
+(`demo/pas_ardupilot/perception_node.py --link mavros`, started by
+`deploy/orin/run_pas_perception.sh`). It needs `ros-jazzy-ros-base`,
+`ros-jazzy-mavros-msgs` and `ros-jazzy-rmw-cyclonedds-cpp` there, and the
+script checks for them before it starts the node. Why it cannot run in the companion
+image: its detector (OWL-ViT) and the VLA client's frame pipeline need the
+GPU and torch, and the Project AirSim client, and the companion image never
+carries them. It runs with runc and no GPU library (decision 1), and on
+JetPack 7.2.1 the GPU stack is the native environment of decision 11.
+The node's rclpy is Jazzy's on the host's Python 3.12, so the grant's
+Python floor holds there too. It joins the companion's ROS 2 graph with the
+same ROS_DOMAIN_ID, RMW and Cyclone DDS configuration, which the script reads
+from `deploy/topologies/hil.env`. MAVROS stays in the container, and the
+perception node talks to it over that graph's topics and services. So on the
+AGX the first-boot check reports host ROS (a WARN naming its rclpy), and
+that is expected.
 
 ### 3. MAVROS 2 on the Orin in hil
 
