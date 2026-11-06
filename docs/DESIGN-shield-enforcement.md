@@ -250,25 +250,29 @@ recoveries stay exempt from theta, so the FSM reads them as before.
 | corridor-swap-shifted | 4.0 s | 0.6 s |
 | corridor-swap-narrowed, ask 2 m/s | 2.0 s | 0.6 s |
 
-On the library (seed 0) the mean time to safe went from 2.926 s over 39
-spells to 2.540 s over 35 (max 6.7 to 6.4 s); over the 34 episodes that
-recover under both laws, from 2.944 s to 2.540 s. Of the four spells that
-are gone, three are gps-dropout cells that the FSM's new X8 returns before
-the frozen fix carries the aircraft anywhere unsafe
-(docs/DESIGN-escalation-fsm.md), and one is standoff-reclassified's second
-spell. Smoke: 3.216 s over 19 spells to 2.533 s over 15. Nightly:
-NIGHTLY_T2S. On every profile no Shield-on episode flew into a P0 polygon
-(library 1, smoke 1, nightly NIGHTLY_POLY before), no Shield-on episode
-breached (2, 2, NIGHTLY_BREACH before) and the P0 escape rate stays 0.0;
-the library's true-state P0 ticks went from 1768 to 1474.
+With this date's change as a whole (this law and the FSM's new X8,
+docs/DESIGN-escalation-fsm.md; headless, the grant's forecast, the ideal
+vehicle, against master 23ac319), the library's mean time to safe went from
+2.926 s over 39 spells to 2.540 s over 35 (max 6.7 to 6.4 s); over the 34
+episodes that recover under both, from 2.944 s to 2.540 s. Of the four
+spells that are gone, three are gps-dropout cells that X8 returns before
+the frozen fix carries the aircraft anywhere unsafe, and one is
+standoff-reclassified's second spell. Smoke: 3.216 s over 19 spells to
+2.533 s over 15. Nightly: 2.813 s over 165 spells to 2.539 s over 153 (over
+the 150 episodes that recover under both, 2.819 s to 2.539 s). On every
+profile no Shield-on episode flew into a P0 polygon (library 1, smoke 1,
+nightly 3 before), no Shield-on episode breached (2, 2, 6 before) and the
+P0 escape rate stays 0.0; the true-state P0 ticks went from 1768 to 1474
+(library) and from 5931 to 5120 (nightly).
 
 What is left of the reference sweep's 2.0 s is depth over cap. The
 library's remaining spells are the climb from outside the band at the
 2 m/s climb cap (14 spells, mean 2.47 s), escapes at the 4 m/s speed cap
 from geometry imposed on the aircraft (11, 2.78 s), wind beyond the hold
-authority (4, 3.80 s) and the operator laws below the cap (6, 1.42 s). A
-lower mean needs higher caps in the policies, or shallower imposed
-geometry - policy decisions, not a recovery law.
+authority (4, 3.80 s) and the operator laws below the cap (6, 1.42 s); the
+nightly's are the same four groups (78 spells at 2.27 s, 45 at 3.12 s, 12
+at 3.80 s, 18 at 1.42 s). A lower mean needs higher caps in the policies,
+or shallower imposed geometry - policy decisions, not a recovery law.
 
 `Shield(recovery_law="cap")` keeps the 29 Oct law and `"lookahead"` the one
 before it; `--recovery-law cap` flies a comparison run. A bundle names its
