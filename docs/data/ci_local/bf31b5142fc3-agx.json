@@ -1,0 +1,886 @@
+{
+ "revision": "bf31b5142fc3",
+ "dirty": false,
+ "host": "AGX Orin 64 GB (nathan-agxiot@10.42.0.3), aarch64, JetPack 7.2.1",
+ "python": "3.12.3",
+ "interpreter": "~/vla-drone-env (deploy/orin/agx_vla_env.sh): numpy 1.26.4, pydantic 2.13.4",
+ "started": "2026-11-07T02:23",
+ "ended": "2026-11-07T03:01",
+ "files": 142,
+ "files_ok": 139,
+ "tests_passed": 3485,
+ "tests_total": 3672,
+ "check_claims_rc": 0,
+ "smoke": {
+  "rc": 0,
+  "episodes": 64,
+  "null_never_trigger": 0.634921,
+  "null_always_trigger": 0.365079,
+  "failsafe_trigger_correctness": 0.984127
+ },
+ "files_failed": [
+  "test_env_pins.py",
+  "test_own_velocity_forecast.py",
+  "test_track_truth.py"
+ ],
+ "failures_explained": {
+  "test_env_pins.py": "this venv runs numpy 1.26.4, the VLA stack's numpy (and the companion image's, ROS Jazzy's Ubuntu numpy); requirements.txt pins 2.4.6 for Python 3.11+ outside the two Docker images. An environment fact, not a code failure.",
+  "test_own_velocity_forecast.py": "the c77c77d identity digests are x86-64's: on aarch64, 2 of 500 decisions in follow_car_citylife.yaml's stream differ in one component by 1 ulp (vy -4.330127018922193 on x86-64, -4.330127018922192 here: the platform's sin/cos). Desktop Python 3.10 and 3.12 streams are byte-identical.",
+  "test_track_truth.py": "this checkout's demo/out holds 13 scorable flights; the test requires the lab store's 20 or more (a partial store fails by design, only an empty one skips)."
+ },
+ "per_file": {
+  "test_scenario_spec.py": {
+   "ok": true,
+   "passed": 40,
+   "total": 40,
+   "skips": 0
+  },
+  "test_sweep.py": {
+   "ok": true,
+   "passed": 108,
+   "total": 108,
+   "skips": 0
+  },
+  "test_failsafe_rubric.py": {
+   "ok": true,
+   "passed": 7,
+   "total": 7,
+   "skips": 0
+  },
+  "test_shield.py": {
+   "ok": true,
+   "passed": 86,
+   "total": 86,
+   "skips": 0
+  },
+  "test_shield_events.py": {
+   "ok": true,
+   "passed": 37,
+   "total": 37,
+   "skips": 0
+  },
+  "test_ir.py": {
+   "ok": true,
+   "passed": 20,
+   "total": 20,
+   "skips": 0
+  },
+  "test_api.py": {
+   "ok": true,
+   "passed": 10,
+   "total": 15,
+   "skips": 5
+  },
+  "test_corridor.py": {
+   "ok": true,
+   "passed": 25,
+   "total": 25,
+   "skips": 0
+  },
+  "test_clearance.py": {
+   "ok": true,
+   "passed": 16,
+   "total": 16,
+   "skips": 0
+  },
+  "test_check_contract.py": {
+   "ok": true,
+   "passed": 2,
+   "total": 2,
+   "skips": 0
+  },
+  "test_guardrail_coverage.py": {
+   "ok": true,
+   "passed": 17,
+   "total": 17,
+   "skips": 0
+  },
+  "test_kpi_magnitudes.py": {
+   "ok": true,
+   "passed": 82,
+   "total": 84,
+   "skips": 2
+  },
+  "test_kpi_blind.py": {
+   "ok": true,
+   "passed": 14,
+   "total": 14,
+   "skips": 0
+  },
+  "test_manifest.py": {
+   "ok": true,
+   "passed": 67,
+   "total": 68,
+   "skips": 1
+  },
+  "test_bundle.py": {
+   "ok": true,
+   "passed": 58,
+   "total": 58,
+   "skips": 0
+  },
+  "test_frame_contract.py": {
+   "ok": true,
+   "passed": 14,
+   "total": 16,
+   "skips": 2
+  },
+  "test_harness_service.py": {
+   "ok": true,
+   "passed": 29,
+   "total": 59,
+   "skips": 30
+  },
+  "test_harnesstruth_forecast.py": {
+   "ok": true,
+   "passed": 14,
+   "total": 14,
+   "skips": 0
+  },
+  "test_harnesstruth_rtl.py": {
+   "ok": true,
+   "passed": 20,
+   "total": 20,
+   "skips": 0
+  },
+  "test_harnesstruth_wind.py": {
+   "ok": true,
+   "passed": 9,
+   "total": 9,
+   "skips": 0
+  },
+  "test_harnesstruth_bundles.py": {
+   "ok": true,
+   "passed": 12,
+   "total": 12,
+   "skips": 0
+  },
+  "test_harnesstruth_ci.py": {
+   "ok": true,
+   "passed": 35,
+   "total": 35,
+   "skips": 0
+  },
+  "test_harnesstruth_response.py": {
+   "ok": true,
+   "passed": 18,
+   "total": 19,
+   "skips": 1
+  },
+  "test_env_pins.py": {
+   "ok": false,
+   "passed": 40,
+   "total": 41,
+   "skips": 0
+  },
+  "test_flight_pas_ap_20261008.py": {
+   "ok": true,
+   "passed": 2,
+   "total": 3,
+   "skips": 1
+  },
+  "test_own_velocity_forecast.py": {
+   "ok": false,
+   "passed": 26,
+   "total": 28,
+   "skips": 0
+  },
+  "test_shieldcore_repair.py": {
+   "ok": true,
+   "passed": 25,
+   "total": 25,
+   "skips": 0
+  },
+  "test_shieldcore_audit.py": {
+   "ok": true,
+   "passed": 16,
+   "total": 16,
+   "skips": 0
+  },
+  "test_shieldcore_identity.py": {
+   "ok": true,
+   "passed": 7,
+   "total": 7,
+   "skips": 0
+  },
+  "test_shieldcore_onepath.py": {
+   "ok": true,
+   "passed": 10,
+   "total": 10,
+   "skips": 0
+  },
+  "test_railinputs_fence_export.py": {
+   "ok": true,
+   "passed": 5,
+   "total": 5,
+   "skips": 0
+  },
+  "test_railinputs_clock.py": {
+   "ok": true,
+   "passed": 7,
+   "total": 7,
+   "skips": 0
+  },
+  "test_railinputs_policy.py": {
+   "ok": true,
+   "passed": 11,
+   "total": 11,
+   "skips": 0
+  },
+  "test_railinputs_manifest.py": {
+   "ok": true,
+   "passed": 6,
+   "total": 6,
+   "skips": 0
+  },
+  "test_railinputs_node.py": {
+   "ok": true,
+   "passed": 13,
+   "total": 16,
+   "skips": 3
+  },
+  "test_railinputs_hotapply.py": {
+   "ok": true,
+   "passed": 2,
+   "total": 6,
+   "skips": 4
+  },
+  "test_railinputs_perception.py": {
+   "ok": true,
+   "passed": 33,
+   "total": 35,
+   "skips": 2
+  },
+  "test_wp4outputs_kpi_report.py": {
+   "ok": true,
+   "passed": 24,
+   "total": 24,
+   "skips": 0
+  },
+  "test_wp4outputs_exporters.py": {
+   "ok": true,
+   "passed": 31,
+   "total": 38,
+   "skips": 7
+  },
+  "test_wp4outputs_harness.py": {
+   "ok": true,
+   "passed": 13,
+   "total": 16,
+   "skips": 3
+  },
+  "test_railvideo_truth_frame.py": {
+   "ok": true,
+   "passed": 18,
+   "total": 19,
+   "skips": 1
+  },
+  "test_railvideo_recording.py": {
+   "ok": true,
+   "passed": 20,
+   "total": 21,
+   "skips": 1
+  },
+  "test_railvideo_compare.py": {
+   "ok": true,
+   "passed": 7,
+   "total": 9,
+   "skips": 2
+  },
+  "test_explainer_figures.py": {
+   "ok": true,
+   "passed": 12,
+   "total": 13,
+   "skips": 1
+  },
+  "test_explainer_deck.py": {
+   "ok": true,
+   "passed": 5,
+   "total": 24,
+   "skips": 19
+  },
+  "test_fsm.py": {
+   "ok": true,
+   "passed": 124,
+   "total": 124,
+   "skips": 0
+  },
+  "test_hold_points.py": {
+   "ok": true,
+   "passed": 34,
+   "total": 34,
+   "skips": 0
+  },
+  "test_hold_transit.py": {
+   "ok": true,
+   "passed": 14,
+   "total": 15,
+   "skips": 1
+  },
+  "test_window_lead_lint.py": {
+   "ok": true,
+   "passed": 12,
+   "total": 12,
+   "skips": 0
+  },
+  "test_window_opens_on.py": {
+   "ok": true,
+   "passed": 22,
+   "total": 22,
+   "skips": 0
+  },
+  "test_position_quality.py": {
+   "ok": true,
+   "passed": 14,
+   "total": 14,
+   "skips": 0
+  },
+  "test_policy_hash.py": {
+   "ok": true,
+   "passed": 34,
+   "total": 34,
+   "skips": 0
+  },
+  "test_csp.py": {
+   "ok": true,
+   "passed": 98,
+   "total": 100,
+   "skips": 2
+  },
+  "test_policy_dsl_grant_form.py": {
+   "ok": true,
+   "passed": 58,
+   "total": 69,
+   "skips": 11
+  },
+  "test_distance_envelope_msl.py": {
+   "ok": true,
+   "passed": 12,
+   "total": 12,
+   "skips": 0
+  },
+  "test_replay_identity.py": {
+   "ok": true,
+   "passed": 9,
+   "total": 9,
+   "skips": 0
+  },
+  "test_vla_backends.py": {
+   "ok": true,
+   "passed": 16,
+   "total": 16,
+   "skips": 0
+  },
+  "test_vla_link.py": {
+   "ok": true,
+   "passed": 35,
+   "total": 35,
+   "skips": 0
+  },
+  "test_prefix_eval.py": {
+   "ok": true,
+   "passed": 13,
+   "total": 13,
+   "skips": 0
+  },
+  "test_fenceguard.py": {
+   "ok": true,
+   "passed": 27,
+   "total": 27,
+   "skips": 0
+  },
+  "test_follow_motion.py": {
+   "ok": true,
+   "passed": 22,
+   "total": 23,
+   "skips": 1
+  },
+  "test_identity.py": {
+   "ok": true,
+   "passed": 21,
+   "total": 21,
+   "skips": 0
+  },
+  "test_identity_lock.py": {
+   "ok": true,
+   "passed": 30,
+   "total": 30,
+   "skips": 0
+  },
+  "test_pas_ardupilot.py": {
+   "ok": true,
+   "passed": 146,
+   "total": 149,
+   "skips": 3
+  },
+  "test_sitl_rails.py": {
+   "ok": true,
+   "passed": 63,
+   "total": 63,
+   "skips": 0
+  },
+  "test_mavlink_adapter.py": {
+   "ok": true,
+   "passed": 40,
+   "total": 40,
+   "skips": 0
+  },
+  "test_ros2_vla_bridge.py": {
+   "ok": true,
+   "passed": 47,
+   "total": 47,
+   "skips": 0
+  },
+  "test_deploy_configs.py": {
+   "ok": true,
+   "passed": 68,
+   "total": 70,
+   "skips": 2
+  },
+  "test_public_docs.py": {
+   "ok": true,
+   "passed": 7,
+   "total": 7,
+   "skips": 0
+  },
+  "test_ft_report.py": {
+   "ok": true,
+   "passed": 7,
+   "total": 7,
+   "skips": 0
+  },
+  "test_replay.py": {
+   "ok": true,
+   "passed": 40,
+   "total": 61,
+   "skips": 21
+  },
+  "test_geo_to_policy.py": {
+   "ok": true,
+   "passed": 25,
+   "total": 25,
+   "skips": 0
+  },
+  "test_wp1_roundtrip_kpi.py": {
+   "ok": true,
+   "passed": 19,
+   "total": 20,
+   "skips": 1
+  },
+  "test_paraphraser.py": {
+   "ok": true,
+   "passed": 103,
+   "total": 103,
+   "skips": 0
+  },
+  "test_paraphraser_service.py": {
+   "ok": true,
+   "passed": 4,
+   "total": 8,
+   "skips": 4
+  },
+  "test_real_vla_prompt.py": {
+   "ok": true,
+   "passed": 49,
+   "total": 49,
+   "skips": 2
+  },
+  "test_profile_shield_tick.py": {
+   "ok": true,
+   "passed": 41,
+   "total": 43,
+   "skips": 2
+  },
+  "test_occ_bands.py": {
+   "ok": true,
+   "passed": 14,
+   "total": 14,
+   "skips": 0
+  },
+  "test_ros2_package.py": {
+   "ok": true,
+   "passed": 17,
+   "total": 17,
+   "skips": 0
+  },
+  "test_kpi_report.py": {
+   "ok": true,
+   "passed": 38,
+   "total": 41,
+   "skips": 3
+  },
+  "test_recorder.py": {
+   "ok": true,
+   "passed": 5,
+   "total": 5,
+   "skips": 0
+  },
+  "test_track_truth.py": {
+   "ok": false,
+   "passed": 31,
+   "total": 37,
+   "skips": 5
+  },
+  "test_camera_model.py": {
+   "ok": true,
+   "passed": 11,
+   "total": 11,
+   "skips": 0
+  },
+  "test_target_state.py": {
+   "ok": true,
+   "passed": 20,
+   "total": 22,
+   "skips": 2
+  },
+  "test_trail.py": {
+   "ok": true,
+   "passed": 18,
+   "total": 18,
+   "skips": 0
+  },
+  "test_search.py": {
+   "ok": true,
+   "passed": 20,
+   "total": 20,
+   "skips": 0
+  },
+  "test_landing.py": {
+   "ok": true,
+   "passed": 21,
+   "total": 25,
+   "skips": 4
+  },
+  "test_level_actors.py": {
+   "ok": true,
+   "passed": 15,
+   "total": 15,
+   "skips": 0
+  },
+  "test_voxel_map.py": {
+   "ok": true,
+   "passed": 8,
+   "total": 8,
+   "skips": 0
+  },
+  "test_replay_pipeline.py": {
+   "ok": true,
+   "passed": 11,
+   "total": 12,
+   "skips": 1
+  },
+  "test_demo_negative_xy.py": {
+   "ok": true,
+   "passed": 2,
+   "total": 2,
+   "skips": 0
+  },
+  "test_vla_bridge.py": {
+   "ok": true,
+   "passed": 28,
+   "total": 28,
+   "skips": 0
+  },
+  "test_vla_backend_table.py": {
+   "ok": true,
+   "passed": 26,
+   "total": 28,
+   "skips": 2
+  },
+  "test_vla_server.py": {
+   "ok": true,
+   "passed": 31,
+   "total": 32,
+   "skips": 1
+  },
+  "test_aerialvla_codec.py": {
+   "ok": true,
+   "passed": 20,
+   "total": 20,
+   "skips": 0
+  },
+  "test_vla_fly.py": {
+   "ok": true,
+   "passed": 62,
+   "total": 63,
+   "skips": 1
+  },
+  "test_vla_fly_fakesim.py": {
+   "ok": true,
+   "passed": 14,
+   "total": 14,
+   "skips": 0
+  },
+  "test_vla_replay_gate.py": {
+   "ok": true,
+   "passed": 8,
+   "total": 8,
+   "skips": 0
+  },
+  "test_vla_follow_smooth.py": {
+   "ok": true,
+   "passed": 14,
+   "total": 14,
+   "skips": 0
+  },
+  "test_finetune_follow.py": {
+   "ok": true,
+   "passed": 15,
+   "total": 16,
+   "skips": 1
+  },
+  "test_pas_vla.py": {
+   "ok": true,
+   "passed": 38,
+   "total": 38,
+   "skips": 0
+  },
+  "test_follow_dataset.py": {
+   "ok": true,
+   "passed": 39,
+   "total": 39,
+   "skips": 0
+  },
+  "test_vla_dagger.py": {
+   "ok": true,
+   "passed": 18,
+   "total": 18,
+   "skips": 0
+  },
+  "test_vla_prev_front_rate.py": {
+   "ok": true,
+   "passed": 25,
+   "total": 25,
+   "skips": 0
+  },
+  "test_follow_hint_modes.py": {
+   "ok": true,
+   "passed": 12,
+   "total": 12,
+   "skips": 0
+  },
+  "test_follow_decide_rate.py": {
+   "ok": true,
+   "passed": 9,
+   "total": 9,
+   "skips": 0
+  },
+  "test_vla_speed_words.py": {
+   "ok": true,
+   "passed": 17,
+   "total": 17,
+   "skips": 0
+  },
+  "test_vla_follow_reacquire.py": {
+   "ok": true,
+   "passed": 13,
+   "total": 13,
+   "skips": 0
+  },
+  "test_vla_hierarchy.py": {
+   "ok": true,
+   "passed": 17,
+   "total": 17,
+   "skips": 0
+  },
+  "test_vla_foreign.py": {
+   "ok": true,
+   "passed": 48,
+   "total": 49,
+   "skips": 2
+  },
+  "test_aiotvla.py": {
+   "ok": true,
+   "passed": 37,
+   "total": 37,
+   "skips": 0
+  },
+  "test_vla_lateral_step.py": {
+   "ok": true,
+   "passed": 10,
+   "total": 10,
+   "skips": 0
+  },
+  "test_follow_teacher.py": {
+   "ok": true,
+   "passed": 6,
+   "total": 6,
+   "skips": 0
+  },
+  "test_vla_standoff_feed.py": {
+   "ok": true,
+   "passed": 11,
+   "total": 11,
+   "skips": 0
+  },
+  "test_held_box_gate.py": {
+   "ok": true,
+   "passed": 10,
+   "total": 10,
+   "skips": 0
+  },
+  "test_citylife_peds.py": {
+   "ok": true,
+   "passed": 26,
+   "total": 26,
+   "skips": 0
+  },
+  "test_citylife_routes.py": {
+   "ok": true,
+   "passed": 22,
+   "total": 22,
+   "skips": 0
+  },
+  "test_citylife_signal_lamps.py": {
+   "ok": true,
+   "passed": 5,
+   "total": 5,
+   "skips": 0
+  },
+  "test_citylife_signals.py": {
+   "ok": true,
+   "passed": 10,
+   "total": 10,
+   "skips": 0
+  },
+  "test_citylife_traffic_model.py": {
+   "ok": true,
+   "passed": 14,
+   "total": 14,
+   "skips": 0
+  },
+  "test_car_speed.py": {
+   "ok": true,
+   "passed": 5,
+   "total": 5,
+   "skips": 0
+  },
+  "test_drive_signals_dsl.py": {
+   "ok": true,
+   "passed": 13,
+   "total": 13,
+   "skips": 0
+  },
+  "test_ped_walk_plan.py": {
+   "ok": true,
+   "passed": 19,
+   "total": 19,
+   "skips": 0
+  },
+  "test_parked_cars.py": {
+   "ok": true,
+   "passed": 9,
+   "total": 9,
+   "skips": 0
+  },
+  "test_check_claims.py": {
+   "ok": true,
+   "passed": 22,
+   "total": 22,
+   "skips": 0
+  },
+  "test_build_public_site.py": {
+   "ok": true,
+   "passed": 47,
+   "total": 47,
+   "skips": 0
+  },
+  "test_build_mideval_report.py": {
+   "ok": true,
+   "passed": 7,
+   "total": 7,
+   "skips": 0
+  },
+  "test_build_deck_data.py": {
+   "ok": true,
+   "passed": 7,
+   "total": 8,
+   "skips": 1
+  },
+  "test_build_eval_data.py": {
+   "ok": true,
+   "passed": 8,
+   "total": 10,
+   "skips": 2
+  },
+  "test_build_progress_oct_data.py": {
+   "ok": true,
+   "passed": 44,
+   "total": 48,
+   "skips": 4
+  },
+  "test_build_progress_1028_data.py": {
+   "ok": true,
+   "passed": 4,
+   "total": 4,
+   "skips": 0
+  },
+  "test_city_episode.py": {
+   "ok": true,
+   "passed": 4,
+   "total": 4,
+   "skips": 0
+  },
+  "test_tracker_content.py": {
+   "ok": true,
+   "passed": 4,
+   "total": 19,
+   "skips": 15
+  },
+  "test_tracker_serve.py": {
+   "ok": true,
+   "passed": 26,
+   "total": 29,
+   "skips": 3
+  },
+  "test_add_update.py": {
+   "ok": true,
+   "passed": 23,
+   "total": 24,
+   "skips": 1
+  },
+  "test_build_dashboard.py": {
+   "ok": true,
+   "passed": 19,
+   "total": 20,
+   "skips": 1
+  },
+  "test_live_status.py": {
+   "ok": true,
+   "passed": 20,
+   "total": 20,
+   "skips": 0
+  },
+  "test_todo.py": {
+   "ok": true,
+   "passed": 16,
+   "total": 17,
+   "skips": 1
+  },
+  "test_encode_deliverable.py": {
+   "ok": true,
+   "passed": 6,
+   "total": 6,
+   "skips": 0
+  },
+  "test_make_demo_video.py": {
+   "ok": true,
+   "passed": 4,
+   "total": 4,
+   "skips": 0
+  },
+  "test_ci_local.py": {
+   "ok": true,
+   "passed": 10,
+   "total": 10,
+   "skips": 0
+  },
+  "test_render_track_video.py": {
+   "ok": true,
+   "passed": 5,
+   "total": 6,
+   "skips": 1
+  }
+ },
+ "how": "python tools/ci_local.py --no-summary on the AGX's checkout at bf31b51 (git bundle), its log copied here; ci-local/ is gitignored on the Orin."
+}
