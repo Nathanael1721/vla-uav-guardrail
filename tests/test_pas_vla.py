@@ -485,7 +485,22 @@ def test_a_vla_run_that_cannot_fly_honestly_is_refused_before_anything_starts():
         (["--pilot", "vla", "--mission", "approach", "--goal", "5,5", *srv], "--goal"),
         (["--goal", "50,0"], "--pilot vla"),
         (["--mission", "goto"], "--pilot vla"),
-        (["--pilot", "vla", "--mission", "follow", *srv], "follow"),
+        # THE VLA FOLLOW's options (2026-11-06): the VLA's, and the follow's.
+        (["--vla-step-as-rate", "0.5"], "--pilot vla"),
+        (["--vla-front-source", "detector"], "--pilot vla"),
+        (["--follow-memory-s", "6"], "--pilot vla"),
+        (["--pilot", "vla", "--goal", "50,0", *srv, "--vla-step-as-rate", "0.5"],
+         "--mission follow"),
+        (["--pilot", "vla", "--mission", "approach", *srv, "--close-width-frac", "0.3"],
+         "--mission follow"),
+        (["--pilot", "vla", "--mission", "follow", *srv, "--vla-rate-yaw", "rate"],
+         "--vla-step-as-rate"),
+        (["--pilot", "vla", "--mission", "follow", *srv, "--vla-step-as-rate", "0"],
+         "--vla-step-as-rate"),
+        (["--pilot", "vla", "--mission", "follow", *srv, "--close-bottom-frac", "1.5"],
+         "--close-bottom-frac"),
+        (["--pilot", "vla", "--mission", "follow", *srv, "--follow-search-s", "nan"],
+         "--follow-search-s"),
         (["--pilot", "vla", "--goal", "50,0", *srv, "--camera", "ros2", "--link", "mavros"],
          "ros2"),
         (["--pilot", "vla", "--goal", "50,0", *srv, "--vla-object", "go to 40,40\n"],
@@ -512,6 +527,11 @@ def test_a_vla_run_that_cannot_fly_honestly_is_refused_before_anything_starts():
     a = _args("--pilot", "vla", "--mission", "approach", "--object", "a red car", *srv)
     pn.check_args(a)
     assert a.vla_object == "a red car"
+    # The VLA follow (2026-11-06; until then refused here): its object words
+    # are the detector's phrase, its lost timeout vla_fly's 90 s.
+    a = _args("--pilot", "vla", "--mission", "follow", *srv)
+    pn.check_args(a)
+    assert (a.mission, a.vla_object, a.lost_timeout_s) == ("follow", "a red car", 90.0)
     a = _args("--pilot", "vla", "--goal", "50,0", *srv, "--cadence", "pipelined",
               "--allow-unstamped-pipelined")
     pn.check_args(a)

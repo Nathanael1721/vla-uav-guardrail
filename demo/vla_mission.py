@@ -2030,6 +2030,40 @@ def model_label(identity: dict | None) -> str:
     return "AerialVLA"
 
 
+# What the prompt's object words are to the model that answered (2026-11-06).
+# AerialVLA's object slot is inert (docs/FINDING-what-drives-aerialvla.md),
+# and so are its fine-tunes' and the scripted stand-in's (it reads nothing).
+# A foreign model is another matter: AIOT-VLA's frozen OWL-ViT backbone
+# grounds the words in the image - they ARE its grounding phrase
+# (docs/DESIGN-aiotvla.md, vla_server_foreign.AIOTVLAFamily) - and DroneCATS
+# and RaceVLA build their own command from them (vla_server_foreign, the
+# command template). Until this the ArduPilot rail recorded every VLA's words
+# as inert.
+OBJECT_WORDS_ROLE = {
+    "aiotvla": ("AIOT-VLA's grounding phrase: its frozen OWL-ViT backbone grounds these "
+                "words in the image (docs/DESIGN-aiotvla.md)"),
+    "ntutvla": ("AIOT-VLA's grounding phrase (its name until 30 Oct): its frozen OWL-ViT "
+                "backbone grounds these words in the image (docs/DESIGN-aiotvla.md)"),
+}
+
+
+def object_words_record(identity: dict | None) -> dict:
+    """{"object_words_are_inert", "object_words_role"} for the model whose
+    hello `identity` is, decided by the server's id alone (as model_label):
+    inert for AerialVLA, its fine-tunes and a stand-in; not inert for an
+    allow-listed foreign family (OBJECT_WORDS_ROLE)."""
+    fam = C.foreign_family(identity.get("id") if isinstance(identity, dict) else None)
+    if fam is None:
+        return {"object_words_are_inert": True,
+                "object_words_role": ("inert: AerialVLA's object slot does not steer it "
+                                      "(docs/FINDING-what-drives-aerialvla.md); recorded, "
+                                      "never claimed as grounding")}
+    return {"object_words_are_inert": False,
+            "object_words_role": OBJECT_WORDS_ROLE.get(
+                fam, f"the foreign model's command: the {fam} server builds its own "
+                     f"instruction from these words (demo/vla_server_foreign.py)")}
+
+
 # The identity keys a record keeps of the server's hello: the brief's six, the
 # measured agreement, the adapter block, and a foreign model's variant and
 # declared inputs (aerialvla_codec.foreign_block).
