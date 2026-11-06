@@ -223,17 +223,20 @@ def bounds(rows, zs, target, pad=6.0):
 
 
 def render(run: Path, out: Path, fps: int = 10, step: int = 1) -> Path:
+    # The run's own inputs are judged before the drawing stack is imported: a
+    # run with nothing to draw is refused the same way on a host without
+    # matplotlib (found by the Python 3.12 CI env, 2026-11-06).
+    rows = load_rows(run)
+    pols = load_policies(run)
+    if not pols:
+        raise SystemExit(f"no policy_g*.json in {run}")
+
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
     from matplotlib import animation
     from matplotlib.patches import Circle, Polygon
     from tools.encode_deliverable import find_ffmpeg
-
-    rows = load_rows(run)
-    pols = load_policies(run)
-    if not pols:
-        raise SystemExit(f"no policy_g*.json in {run}")
     g0 = pols[min(pols)]
     band = altitude_band(g0)
     target = mission_target(run)
