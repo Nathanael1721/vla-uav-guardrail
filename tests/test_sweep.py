@@ -213,87 +213,191 @@ def _argparse_flags(script: Path) -> set[str]:
     return flags
 
 
+def _flag_names(cmd):
+    """The option names of a command line, `--flag=value` read as `--flag`."""
+    return {a.split("=", 1)[0] for a in cmd if a.startswith("--")}
+
+
+def _val(cmd, flag):
+    """A flag's value, given as `--flag=value` or `--flag value`."""
+    for i, a in enumerate(cmd):
+        if a.startswith(flag + "="):
+            return a.split("=", 1)[1]
+        if a == flag:
+            return cmd[i + 1]
+    raise KeyError(flag)
+
+
 def test_every_sitl_flag_is_one_the_node_accepts():
     """REGRESSION (audit card WP4-04). The backend passed `--out` to
     sitl/run_sitl_demo.py, which has no such argument, so `--backend sitl` could
     only ever die in argparse. It now drives run_ros2_demo.sh, which forwards
-    $3.. to ros2_shield_node.py - checked here flag by flag."""
+    $3.. to ros2_shield_node.py - and to the VLA stub, which reads the pilot's
+    flags since 2026-11-06 - checked here flag by flag, each against the node
+    it is for (both drop what they do not declare: parse_known_args)."""
     # Every flag, the policy-reference ones included: until the review of
     # 2026-10-12 --dev-yaml and --expected-hash were added to the node's
     # set here, so this check could not catch a flag the node drops.
     node_flags = _argparse_flags(ROOT / S.SITL_NODE)
+    stub_flags = _argparse_flags(ROOT / S.SITL_STUB)
     assert "--out" not in node_flags, "the check would not catch the old bug"
     assert "--out" not in _argparse_flags(ROOT / "sitl" / "run_sitl_demo.py")
     script = (ROOT / S.SITL_SCRIPT).read_text(encoding="utf-8")
     assert '"${@:3}"' in script, "run_ros2_demo.sh no longer forwards $3.. to the node"
-    for sid in ("nfz-head-on", "nfz-head-on-control", "standoff-approach"):
-        cmd = S.build_sitl_cmd(BY_ID[sid], "sweep_t")
+    assert '"$DIR/ros2_vla_stub_node.py" "${EXTRA[@]}"' in script, "... nor to the stub"
+    entry = (ROOT / "deploy" / "docker" / "entrypoint.sh").read_text(encoding="utf-8")
+    assert "vla_args=\"$(printf '%q ' \"${extra[@]}\")\"" in entry, "the Orin's stub"
+    for sid in ("nfz-head-on", "nfz-head-on-control", "standoff-approach", "speed-cap",
+                "dyn-nfz-spawn-ahead", "corridor-curfew-in-hours"):
+        cmd = S.build_sitl_cmd(BY_ID[sid], "sweep_t", events="demo/out/_campaign/t/events.json",
+                               meta="demo/out/_campaign/t/scenario.json")
         assert cmd[:3] == ["wsl", "bash", S.SITL_SCRIPT], cmd
         assert cmd[3] in ("on", "off") and cmd[4] in ("", "--dynamic"), cmd
-        passed = {a for a in cmd[5:] if a.startswith("--")}
-        assert passed <= node_flags, f"{sid}: node rejects {passed - node_flags}"
-    assert "--subject" in S.build_sitl_cmd(BY_ID["standoff-approach"], "t")
+        passed = _flag_names(cmd[5:])
+        assert passed <= node_flags | stub_flags, \
+            f"{sid}: no node takes {passed - node_flags - stub_flags}"
+        assert passed & set(S.RAIL_SHIELD_FLAGS) <= node_flags, (sid, passed - node_flags)
+        assert passed & set(S.RAIL_STUB_FLAGS) <= stub_flags, (sid, passed - stub_flags)
+    assert "--subject" in _flag_names(S.build_sitl_cmd(BY_ID["standoff-approach"], "t"))
+    assert S.sitl_node_flags() == node_flags
+    assert S.sitl_node_flags(ROOT / S.SITL_STUB) == stub_flags
 
 
-def test_the_sitl_rail_refuses_what_it_cannot_reproduce():
-    """It flies its own mission with no clock, stressors or event schedule."""
-    assert "scenario clock" in S.sitl_refusal(BY_ID["corridor-curfew-in-hours"])
-    assert "events" in S.sitl_refusal(BY_ID["dyn-nfz-spawn-ahead"])
-    assert "stressors" in S.sitl_refusal(BY_ID["gps-noise-within-margin"])
-    assert "stressors" in S.sitl_refusal(BY_ID["gps-dropout"])
-    assert "relabel" in S.sitl_refusal(BY_ID["standoff-reclassified"])
+def test_the_rails_refuse_only_what_they_cannot_realise():
+    """One refusal for both rails (2026-11-06; sitl_refusal and
+    _mission_mismatch until then, which refused every scenario but the rail's
+    own mission, and a scenario clock the node had taken since 2026-10-12).
+    The node now takes the start, the pilot law, the clock and the events:
+    what neither rail can realise is refused, with the reason, and the rest
+    is flown."""
+    for backend in S.RAIL_BACKENDS:
+        def why(spec, **kw):
+            return S.rail_refusal(spec, backend, **kw) or ""
+        assert "stressors" in why(BY_ID["gps-noise-within-margin"])
+        assert "gps_noise_m" in why(BY_ID["gps-noise-within-margin"])
+        assert "gps_dropout_s" in why(BY_ID["gps-dropout"])
+        assert "wind_speed_mps" in why(BY_ID["wind-within-authority"])
+        assert "battery_critical_at_s" in why(BY_ID["failsafe-low-battery"])
+        assert "rtl_failed_ticks" in why(BY_ID["failsafe-rtl-blocked"])
+        assert "relabel" in why(BY_ID["standoff-reclassified"])
+        assert "non-finite pilot action" in why(BY_ID["nonfinite-action"])
+        low = _cell("altitude-recovery-depth", start_up=0.5)
+        high = _cell("altitude-recovery-depth", start_up=30.0)
+        assert "start altitude 0.5 m" in why(low), why(low)
+        assert "start altitude 30 m" in why(high) and "FENCE_ALT_MAX 30 m" in why(high)
+        assert not why(_cell("altitude-recovery-depth", start_up=24.0))
+        for sid in ("nfz-head-on", "speed-cap", "corridor-curfew-in-hours",
+                    "dyn-nfz-spawn-ahead", "standoff-approach", "rail-mission-stub-vla",
+                    "corridor-swap-shifted", "time-window-switch-event", "nfz-head-on-control"):
+            assert not why(BY_ID[sid]), (backend, sid, why(BY_ID[sid]))
+        # What the headless harness refuses too: an event after the run's end.
+        spawn = BY_ID["dyn-nfz-spawn-ahead"]
+        late = _with(spawn, ticks=int(spawn.events[0].at_sim_t / DEFAULTS.dt))
+        assert "after the run's last tick" in why(late, defaults=DEFAULTS), why(late)
+    # The arms: a paraphrase or prefix-off arm would re-fly the canonical
+    # arm's flight under another id; only the canonical one goes.
+    eps, _ = S.expand(LIBRARY, None, 0, ["nfz-head-on"])
+    reasons = {e.arm_tag: S.rail_refusal(e.cell.spec, "hil", episode=e) for e in eps}
+    assert reasons.pop("canonical,prefix-on") is None and reasons, reasons
+    assert all("paraphrase / prefix arm" in r for r in reasons.values()), reasons
+    # sitl_refusal is the desktop rail's.
+    assert S.sitl_refusal(BY_ID["gps-dropout"]) == S.rail_refusal(BY_ID["gps-dropout"], "sitl")
+    assert S.sitl_refusal(BY_ID["nfz-head-on"]) is None
 
 
-def test_the_sitl_rail_refuses_a_mission_that_is_not_its_own():
-    """REGRESSION (review 2026-10-06). The first version refused only events,
-    stressors, clocks and relabels, so nfz-head-on, speed-cap and the corridor
-    scenarios would have been flown as the rail's fixed mission and scored
-    against their own gates under their own ids - a pass describing a
-    different flight. Since the node takes --target / --speed (2026-10-07)
-    the target is the scenario's own, but the start (the pad) and the pilot
-    (StubVLA) are still the rail's: every scenario that differs there is
-    refused, with what differs."""
-    why = S.sitl_refusal(BY_ID["nfz-head-on"])
-    assert why and "its own mission" in why, why
-    assert "start (-20, 15)" in why and "pilot goto" in why, why
-    assert "target" not in why, "the target is passed now; it is not a mismatch"
-    flyable = {sid for sid, spec in BY_ID.items() if not S.sitl_refusal(spec)}
-    assert flyable == {"rail-mission-stub-vla"}, flyable
-    # A scenario on the rail's start is still refused on the pilot: StubVLA is
-    # not the headless goto law.
-    same = _with(BY_ID["nfz-head-on"], **{"mission.start_pose.x": 0.0,
-                                         "mission.start_pose.y": 0.0,
-                                         "mission.target.x": 30.0,
-                                         "mission.target.y": 30.0})
-    diff = S._mission_mismatch(same)
-    assert len(diff) == 1 and diff[0].startswith("pilot goto"), diff
-    assert len(S._mission_mismatch(BY_ID["nfz-head-on"])) == 2
-    # ... and a stub_vla mission off the pad, or at another cruise altitude.
-    off_pad = _with(BY_ID["rail-mission-stub-vla"], **{"mission.start_pose.x": 5.0})
-    assert any(d.startswith("start") for d in S._mission_mismatch(off_pad))
-    high = _with(BY_ID["rail-mission-stub-vla"], **{"mission.target.up": 25.0})
-    assert any(d.startswith("cruise altitude") for d in S._mission_mismatch(high))
-
-
-def test_the_rail_mission_goes_to_the_node_with_its_target_speed_seed_and_cap():
-    """REGRESSION (WP4-12, follow-up #130's sweep half). The manifest's
-    random_seed was a hard-coded 0 on the rail; the node takes --seed now, and
-    the scenario's target, speed and time cap travel with it. The one library
-    scenario the rail can fly under its own id carries all four."""
+def test_the_rail_flies_the_scenarios_own_mission():
+    """REVIEW 2026-10-06 (a scenario scored under its id while the rail flew
+    something else), kept now that the rail flies the scenario's mission:
+    since 2026-11-06 the start (--start, where SITL boots), the target and its
+    altitude, the pilot law (--pilot / --action), its speed (the harness's
+    4 m/s when the scenario names none), the time cap, the subject TURNED
+    with the mission (it was sent unturned), the clock and the events travel
+    with the scenario, and SITL_HOME puts the autopilot's home at the start."""
+    import random
+    from guardrail.projection import LocalProjection
     spec = BY_ID["rail-mission-stub-vla"]
     cmd = S.build_sitl_cmd(spec, "sweep_t", seed=1002, defaults=DEFAULTS)
-    val = {cmd[i]: cmd[i + 1] for i in range(5, len(cmd) - 1) if cmd[i].startswith("--")}
-    assert val["--seed"] == "1002" and val["--target"] == "30,30", val
+    assert _val(cmd, "--seed") == "1002" and _val(cmd, "--start") == "0,0,15", cmd
+    assert _val(cmd, "--target") == "30,30,15" and _val(cmd, "--pilot") == "stub_vla"
     # 50 s since 2026-11-02 (it flies past the Loiter timeout).
-    assert val["--speed"] == "6" and val["--max-s"] == "50", val
-    assert {a for a in cmd[5:] if a.startswith("--")} <= _argparse_flags(ROOT / S.SITL_NODE)
-    # A rotation about the start turns only the target, and the turned target
-    # is what the node is given.
+    assert _val(cmd, "--speed") == "6" and _val(cmd, "--max-s") == "50", cmd
+    assert _val(cmd, "--reach-m") == "3"
+    head = S.build_sitl_cmd(BY_ID["nfz-head-on"], "t", defaults=DEFAULTS)
+    assert (_val(head, "--start"), _val(head, "--target"), _val(head, "--pilot"),
+            _val(head, "--speed")) == ("-20,15,15", "40,15,15", "goto", "4"), head
+    cap = S.build_sitl_cmd(BY_ID["speed-cap"], "t", defaults=DEFAULTS)
+    assert "--no-target" in cap and "--target" not in _flag_names(cap)
+    assert _val(cap, "--pilot") == "constant" and _val(cap, "--action") == "20,0,0,0"
+    curfew = S.build_sitl_cmd(BY_ID["corridor-curfew-in-hours"], "t")
+    assert _val(curfew, "--clock-start") == "2026-09-07T09:00:00"
+    # A rotation about the start turns the target, and the turned target is
+    # what the node is given.
     turned = _with(spec, **{"mission.rotate_deg": 90.0})
-    tcmd = S.build_sitl_cmd(turned, "t")
-    tx, ty = (float(v) for v in tcmd[tcmd.index("--target") + 1].split(","))
-    assert abs(tx + 30.0) < 1e-6 and abs(ty - 30.0) < 1e-6, (tx, ty)
-    assert not S.sitl_refusal(turned)
+    tx, ty, tup = (float(v) for v in _val(S.build_sitl_cmd(turned, "t"), "--target").split(","))
+    assert abs(tx + 30.0) < 1e-6 and abs(ty - 30.0) < 1e-6 and tup == 15.0, (tx, ty)
+    assert not S.rail_refusal(turned)
+    ang = _cell("standoff-approach-angles", offset_m=12, subject_class="pedestrian",
+                variant=0)
+    sx, sy = (float(v) for v in _val(S.build_sitl_cmd(ang, "t"), "--subject").split(","))
+    mm = S._resolve_mission(ang, ang.policy.load(ROOT), random.Random(0))
+    assert abs(sx - mm.subject[0]) < 1e-5 and abs(sy - mm.subject[1]) < 1e-5
+    assert (round(sx, 3), round(sy, 3)) != (ang.mission.subject.x, ang.mission.subject.y)
+    ev = S.build_sitl_cmd(BY_ID["dyn-nfz-spawn-ahead"], "t", events="e.json", meta="m.json")
+    assert _val(ev, "--events") == "e.json" and _val(ev, "--scenario-meta") == "m.json"
+    # SITL_HOME: the policy frame origin's projection of the start, 584 m,
+    # facing the start yaw (turned with the mission).
+    pol = BY_ID["nfz-head-on"].policy.load(ROOT)
+    lat, lon, alt, hdg = (float(v) for v in S.sitl_home(BY_ID["nfz-head-on"], pol).split(","))
+    n, e = LocalProjection(*pol.frame_origin).to_local(lat, lon)
+    assert abs(n + 20.0) < 0.01 and abs(e - 15.0) < 0.01 and alt == 584.0 and hdg == 0.0
+    assert S.sitl_home(turned, pol).endswith(",584,90.00"), S.sitl_home(turned, pol)
+
+
+def test_the_hil_arguments_parse_in_both_nodes_as_the_harness_means_them():
+    """Every argument the hil rail would send for every flyable cell of the
+    smoke profile, read by the Shield node's and the VLA stub's own parsers
+    (sitl/ros2_shield_node.py, ros2_vla_stub_node.py, no ROS): nothing
+    dropped, nothing misread. Shown failing first: the Shield node read the
+    stub's `--action=20,0,0,0` as an abbreviation of --action-timeout-s and
+    exited 2, so a constant-pilot mission would never have started."""
+    sys.path.insert(0, str(ROOT / "sitl"))
+    import ros2_shield_node as N
+    import ros2_vla_stub_node as V
+    from guardrail.scenario_spec import load_profile
+    eps, _ = S.expand(LIBRARY, load_profile(ROOT / "experiments" / "profiles" / "smoke.yaml"))
+    with tempfile.TemporaryDirectory() as td:
+        bundles = _signed_like_bundles(Path(td))
+        plan = S.hil_plan(eps, DEFAULTS, S.HilConfig(bundles_dir=str(bundles)), "t")
+    fly = [p for p in plan if p["fly"]]
+    assert len(fly) >= 35, len(fly)
+    for p in fly:
+        args = p["args"]
+        ns, rest_n = N.make_parser().parse_known_args(args)
+        vs, rest_v = V.make_parser().parse_known_args(args)
+        assert _flag_names(rest_n) <= set(S.RAIL_STUB_FLAGS) - set(S.RAIL_SHIELD_FLAGS), \
+            (p["id"], rest_n)
+        assert _flag_names(rest_v) <= set(S.RAIL_SHIELD_FLAGS) - set(S.RAIL_STUB_FLAGS), \
+            (p["id"], rest_v)
+        V.check_args(vs)
+        N.parse_point(ns.start, "--start")
+        assert ns.start == vs.start == _val(args, "--start") and ns.seed == vs.seed
+        assert (ns.target, ns.no_target) == (vs.target, vs.no_target)
+        assert ns.speed == vs.speed and ns.bundle == vs.bundle == _val(args, "--bundle")
+        assert ns.expected_hash and ns.scenario_meta.endswith(f"{p['tag']}/scenario.json")
+        assert vs.pilot == _val(args, "--pilot") and ns.reach_m in (3.0, N.REACH_M)
+
+
+def _signed_like_bundles(root: Path) -> Path:
+    """bundles/<id>-v<version>.tar.gz of the library's policies in `root`, as
+    tools/build_flight_bundles.py names them (written unsigned here:
+    flight_bundle_status judges the policy hash, not the signature)."""
+    from guardrail.bundle import write_bundle
+    from guardrail.manifest import flight_bundle_path
+    out = root / "bundles"
+    for name in ("sim_demo_policy", "corridor_survey", "sitl_pedestrian", "wgs84_taipei"):
+        pol = load_policy(ROOT / "policies" / f"{name}.yaml")
+        write_bundle(pol, flight_bundle_path(pol, out), signer=None)
+    return out
 
 
 def test_the_rail_mission_constants_are_the_nodes_own():
@@ -327,7 +431,9 @@ def test_a_bundle_policy_goes_to_the_nodes_bundle_flag():
         return None
     assert cmd[cmd.index("--bundle") + 1] == "demo/out/x/policy_bundle.tar.gz"
     assert "--policy" not in cmd
-    assert {a for a in cmd[5:] if a.startswith("--")} <= node
+    # The rest goes to the node or to the VLA stub, which reads the pilot's
+    # flags (2026-11-06): each one declared by a node that reads it.
+    assert _flag_names(cmd[5:]) <= node | _argparse_flags(ROOT / S.SITL_STUB)
 
 
 def test_a_stale_rail_log_is_refused_not_scored():
@@ -1711,9 +1817,12 @@ def test_a_run_that_scores_nothing_does_not_exit_zero():
     """Every episode skipped is a run that tested nothing: exit 3, never 0.
     (Until 2026-10-07 an unsupported event made the skip; every event type is
     supported now, so the skip is the SITL backend's: either the rail is not
-    on this host, or it refuses a scenario that is not its own mission - and
-    neither launches anything.)"""
-    rc, doc = _sweep_lib([_raw("speed-cap")], "--backend", "sitl")
+    on this host, or it refuses a scenario it cannot realise - and neither
+    launches anything. Since 2026-11-06 the rail flies speed-cap, its own
+    mission no longer being the only one, so the probe is an action the
+    rail cannot fly: a flyable one here would start SITL in WSL.)"""
+    assert S.rail_refusal(BY_ID["nonfinite-action"], "sitl"), "the probe must stay refused"
+    rc, doc = _sweep_lib([_raw("nonfinite-action")], "--backend", "sitl", "--seed", "1001")
     assert doc["_counts"]["skipped"] == 1 and rc == 3, (doc["_counts"], rc)
 
 
@@ -2691,6 +2800,344 @@ def test_the_episode_bundle_carries_the_shields_audit():
         assert not (d / "ep2" / "shield_audit.jsonl").exists()
     finally:
         shutil.rmtree(d, ignore_errors=True)
+
+# --------------------------------------------------------------------------- #
+# the hil rail (2026-11-06): each step judged under the previous rules, the
+# campaign through its rig, a run accepted by its own records
+# --------------------------------------------------------------------------- #
+
+def _step_rows(unsafe, **extra):
+    """Rail rows at one place, `unsafe` per row, flown by the Shield."""
+    return [dict({"t": 0.1 * i, "x": 0.0, "y": 0.0, "up": 15.0, "unsafe": u,
+                  "flown": True, "setpoint": "pass"}, **extra) for i, u in enumerate(unsafe)]
+
+
+def test_a_rail_step_is_judged_under_the_rules_of_the_instant_before():
+    """H3: a step into an unsafe position is a breach only if the position was
+    already unsafe under the previous row's rules, zones and rule clock, and
+    no rule changed on the row - read from the node's own judgement
+    (`unsafe_prev_rules`, `zones_in_prev`, `rule_events`), else rebuilt from
+    the run's generations at the previous row's clock. Until then every
+    false -> true step after the first row was the flight's own: a zone
+    spawned onto the aircraft read as a breach (the null below)."""
+    pol = load_policy(ROOT / "policies" / "sim_demo_policy.yaml")
+    rows = _step_rows([False, False, True, True])
+    # The node's judgement: the step on row 2 was already unsafe before.
+    made = [dict(r, unsafe_prev_rules=(["nfz-square"] if i == 2 else []), zones_in_prev=[],
+                 rule_events=[], zones_in=[], zone_d_m=None) for i, r in enumerate(rows)]
+    assert S.rail_measurements(made, pol)["breaches"] == 1
+    # ...or the rules changed under it (a spawn on row 2): imposed.
+    imposed = [dict(r, rule_events=(["scenario event 0: spawn_polygon_fence"] if i == 2 else []))
+               for i, r in enumerate(made)]
+    assert S.rail_measurements(imposed, pol)["breaches"] == 0
+    # ...or it was safe a tick earlier (a window opening over it): imposed.
+    opened = [dict(r, unsafe_prev_rules=[]) for r in made]
+    assert S.rail_measurements(opened, pol)["breaches"] == 0
+    # An older log, rules unchanged and nothing timed: its own reading.
+    assert S.rail_measurements(rows, pol)["breaches"] == 1
+    # An older log whose rules changed (two generations): rebuilt from the
+    # generations - the spawned zone is not where the aircraft came from -
+    # and without them, not measured (never 0).
+    from guardrail.shield import as_dynamic_nfz
+    from guardrail.models import PolygonFence, XY
+    g1 = load_policy(ROOT / "policies" / "sim_demo_policy.yaml")
+    sh = Shield(g1)
+    sh.filter(State(x=-50.0, y=-50.0, up=15.0), Action4D())
+    sh.hot_apply(as_dynamic_nfz(PolygonFence(
+        id="dyn-top", type="polygon_fence", constraint_type="hard", priority="P0",
+        violation_action="project_fix", margin_m=1.0,
+        vertices=[XY(x=-5, y=-5), XY(x=5, y=-5), XY(x=5, y=5), XY(x=-5, y=5)])))
+    gens = {0: pol, 1: g1}
+    old = [dict(r, generation=(1 if i >= 2 else 0)) for i, r in enumerate(rows)]
+    m = S.rail_measurements(old, pol, gens)
+    assert m["breaches"] == 0 and m["polygon_entries"] == 0, m
+    assert m["ticks_inside_fence_polygon"] == 2, m
+    unmeasured = S.rail_measurements(old, pol)
+    assert "breaches" not in unmeasured and unmeasured["rail_measurements_not_measured"]
+    # The null: the same log read as one generation counts the spawn.
+    assert S.rail_measurements([dict(r, generation=0) for r in old], pol)["breaches"] == 1
+
+
+class _FakeRig:
+    """A stand-in hil rig for run_hil: no WSL, no ssh. Its "Orin" flies the
+    scenario it is handed (the meta file it was pushed names the cell) on
+    the headless harness, and writes the run folder the Shield node would,
+    rows in the rail's shape, with the scenario record it was handed; fetch
+    copies it into the store. Every call is recorded. `nonce` / `finish`
+    make it write another launch's record or an unfinished episode."""
+
+    def __init__(self, cfg, nonce=None, finish=True):
+        self.cfg, self.nonce, self.finish = cfg, nonce, finish
+        self.calls: list[tuple] = []
+        self.remote = Path(tempfile.mkdtemp(prefix="fake_orin_"))
+
+    def restart_sitl(self, home):
+        self.calls.append(("restart_sitl", home))
+        return "HIL_DESKTOP READY"
+
+    def stop_sitl(self):
+        self.calls.append(("stop_sitl",))
+
+    def push(self, local_dir, remote_rel):
+        self.calls.append(("push", remote_rel))
+        shutil.copytree(local_dir, self.remote / remote_rel)
+
+    def restart_mavros(self):
+        self.calls.append(("restart_mavros",))
+
+    def run_mission(self, args, tag, shield, timeout_s):
+        self.calls.append(("run_mission", tag, shield, list(args), timeout_s))
+        meta = json.loads((self.remote / _val(args, "--scenario-meta")).read_text(
+            encoding="utf-8"))
+        cell = next(c for c in FAMILIES[meta["scenario_id"]].cells(samples=3)
+                    if c.episode_id == meta["cell"])
+        run = S.run_episode(cell.spec, DEFAULTS, meta["seed"])
+        out = self.remote / "demo" / "out" / tag
+        out.mkdir(parents=True)
+        ep = 1793968079901861321
+        (out / "flight_log.jsonl").write_text("".join(
+            json.dumps(S._json_safe(dict(r, flown=r.get("owner") != "autopilot",
+                                         # what the rail sent: a speed is the same
+                                         # in either frame
+                                         emitted_body=r["emitted"], episode_id=ep)))
+            + "\n" for r in run.rows),
+            encoding="utf-8")
+        scen = dict(meta, run_nonce=self.nonce) if self.nonce else meta
+        (out / "metrics.json").write_text(json.dumps({
+            "episode_id": ep, "shield": shield, "reached": run.extra["reached_goal"],
+            "fsm": run.extra.get("fsm"), "scenario": scen,
+            "scenario_family": meta["family"]}), encoding="utf-8")
+        ev = [{"kind": "episode_start", "episode_id": ep}]
+        if self.finish:
+            ev.append({"kind": "mission_end", "why": "fake"})
+        (out / "events.jsonl").write_text("".join(json.dumps(e) + "\n" for e in ev),
+                                          encoding="utf-8")
+        (out / "policy_g0.json").write_bytes(run.policy.canonical_bytes())
+        return 0, f"fake mission {tag}"
+
+    def fetch(self, tag, local_parent):
+        local_parent.mkdir(parents=True, exist_ok=True)
+        shutil.copytree(self.remote / "demo" / "out" / tag, local_parent / tag)
+        return local_parent / tag
+
+
+def _hil_campaign(argv, td: Path, **rig_kw):
+    """main() --backend hil on a fake rig; (rc, results doc, the rig)."""
+    cfg = td / "hil.json"
+    cfg.write_text(json.dumps({"store": str(td / "store"),
+                               "bundles_dir": str(_signed_like_bundles(td))}),
+                   encoding="utf-8")
+    rigs = []
+    saved = S.make_hil_transport
+    S.make_hil_transport = lambda c: rigs.append(_FakeRig(c, **rig_kw)) or rigs[-1]
+    try:
+        rc = _sweep(["--backend", "hil", "--hil-config", str(cfg), "--seed", "1001",
+                     "--out", str(td / "s.json"), "--no-bundles"] + argv)
+    finally:
+        S.make_hil_transport = saved
+        for d in (ROOT / S.CAMPAIGN_DIR).glob("tst*"):
+            shutil.rmtree(d, ignore_errors=True)
+    doc = json.loads((td / "s.json").read_text(encoding="utf-8"))
+    return rc, doc, rigs[0] if rigs else None
+
+
+def test_the_hil_backend_flies_each_scenario_through_its_rig_and_scores_it():
+    """--backend hil end to end on a fake rig: per flyable scenario SITL is
+    restarted at its SITL_HOME, its files go to the Orin, MAVROS restarts,
+    the mission runs with the scenario's arguments, its folder is fetched
+    into the store, accepted by its own records and scored with the same
+    score() / episode_verdict (the headless flight's verdict here), and
+    scenario_score.json is written beside it with this launch's nonce. A
+    scenario the rail cannot fly is skipped with its reason, never flown."""
+    with tempfile.TemporaryDirectory() as td:
+        td = Path(td)
+        rc, doc, rig = _hil_campaign(["--only", "rail-mission-stub-vla", "speed-cap",
+                                      "gps-dropout", "--hil-campaign", "tst1"], td)
+        res = {r["id"]: r for r in doc["results"]}
+        assert res["speed-cap"]["status"] == "pass", res["speed-cap"]
+        spec = BY_ID["rail-mission-stub-vla"]
+        hr = S.run_episode(spec, DEFAULTS, 1001)
+        headless = S.episode_verdict(spec, S.score(spec, hr.rows, hr.extra, hr.policy,
+                                                   hr.priorities), {}, 1001)[0]
+        assert res["rail-mission-stub-vla"]["status"] == headless, res["rail-mission-stub-vla"]
+        drop = [r for r in res.values() if r["id"].startswith("gps-dropout")]
+        assert drop and all(r["status"] == "skipped" and "gps_dropout_s" in r["reason"]
+                            for r in drop), drop
+        runs = [c for c in rig.calls if c[0] == "run_mission"]
+        assert [c[1] for c in runs] == ["tst1_001_rail-mission-stub-vla", "tst1_002_speed-cap"]
+        kinds = [c[0] for c in rig.calls]
+        assert kinds[:5] == ["restart_sitl", "push", "restart_mavros", "run_mission",
+                             "stop_sitl"], kinds
+        pol = BY_ID["speed-cap"].policy.load(ROOT)
+        assert ("restart_sitl", S.sitl_home(BY_ID["speed-cap"], pol)) in rig.calls
+        assert ("push", f"{S.CAMPAIGN_DIR}/tst1_002_speed-cap") in rig.calls
+        args = runs[1][3]
+        assert _val(args, "--bundle") == "bundles/fase3-sim-demo-v0.1.3.tar.gz"
+        assert _val(args, "--expected-hash") == pol.policy_hash
+        assert _val(args, "--pilot") == "constant" and "--no-target" in args
+        assert runs[1][2] == "on"
+        assert abs(runs[1][4] - 30.0 - S.HilConfig().mission_margin_s) < 1e-6, runs[1][4]
+        run_dir = td / "store" / "tst1_002_speed-cap"
+        score = json.loads((run_dir / S.SCENARIO_SCORE).read_text(encoding="utf-8"))
+        met = json.loads((run_dir / "metrics.json").read_text(encoding="utf-8"))
+        assert score["run_nonce"] == met["scenario"]["run_nonce"] and score["status"] == "pass"
+        assert score["scenario"]["family"] == "hil-stress/kinematic_envelope/speed-cap/shield-on"
+        assert score["metrics"]["shield"] == "on" and "kpi" in score
+        assert (run_dir / "mission_console.log").is_file()
+        assert res["speed-cap"]["mission_tag"] == "tst1_002_speed-cap"
+        assert doc["_backend"] == "hil" and doc["_scope"]["hil"]["campaign"] == "tst1"
+        assert rc in (0, 1), rc
+
+
+def test_a_hil_run_is_accepted_by_its_own_records_not_by_file_times():
+    """The fetched folder is this launch's only if its records say so: this
+    episode's mission_end, metrics.json and every row of the same episode,
+    and the scenario record carrying this launch's nonce. Another launch's
+    record, or an episode that never ended, is an error - flown, not
+    scored - and never a pass."""
+    with tempfile.TemporaryDirectory() as td:
+        td = Path(td)
+        rc, doc, _ = _hil_campaign(["--only", "speed-cap", "--hil-campaign", "tst2"], td,
+                                   nonce="another-launch")
+        r = doc["results"][0]
+        assert r["status"] == "error" and "not this launch's" in r["error"] and rc == 1, r
+    with tempfile.TemporaryDirectory() as td:
+        td = Path(td)
+        rc, doc, _ = _hil_campaign(["--only", "speed-cap", "--hil-campaign", "tst3"], td,
+                                   finish=False)
+        r = doc["results"][0]
+        assert r["status"] == "error" and "has no mission_end" in r["error"], r
+    with tempfile.TemporaryDirectory() as td:
+        run = Path(td) / "x"
+        run.mkdir()
+        (run / "events.jsonl").write_text(json.dumps({"kind": "episode_start", "episode_id": 1})
+                                          + "\n" + json.dumps({"kind": "mission_end"}) + "\n",
+                                          encoding="utf-8")
+        (run / "metrics.json").write_text(json.dumps(
+            {"episode_id": 1, "scenario": {"run_nonce": "n"}}), encoding="utf-8")
+        (run / "flight_log.jsonl").write_text(json.dumps({"episode_id": 1}) + "\n"
+                                              + json.dumps({"episode_id": 2}) + "\n",
+                                              encoding="utf-8")
+        try:
+            S.accept_hil_run(run, "n")
+        except RuntimeError as e:
+            assert "rows of other episodes" in str(e), e
+        else:
+            raise AssertionError("a log of two episodes was accepted")
+        (run / "flight_log.jsonl").write_text(json.dumps({"episode_id": 1}) + "\n",
+                                              encoding="utf-8")
+        rows, met, ep = S.accept_hil_run(run, "n")
+        assert len(rows) == 1 and ep["episode_id"] == 1
+        (run / "metrics.json").write_text(json.dumps(
+            {"episode_id": 9, "scenario": {"run_nonce": "n"}}), encoding="utf-8")
+        try:
+            S.accept_hil_run(run, "n")
+        except RuntimeError as e:
+            assert "metrics.json is episode 9" in str(e), e
+        else:
+            raise AssertionError("another episode's metrics were accepted")
+
+
+def test_the_hil_dry_run_lists_every_mission_and_flies_nothing():
+    """--hil-dry-run: every episode with its tag, SITL_HOME and commands, or
+    why it is refused, and the counts; no transport is made, no file
+    written, exit 0. The refused families are the ones the rail cannot
+    realise, each with its reason."""
+    made = []
+    saved = S.make_hil_transport
+    S.make_hil_transport = lambda c: made.append(c)
+    before = set((ROOT / S.CAMPAIGN_DIR).glob("*")) if (ROOT / S.CAMPAIGN_DIR).is_dir() else set()
+    buf = io.StringIO()
+    try:
+        with tempfile.TemporaryDirectory() as td:
+            cfg = Path(td) / "hil.yaml"
+            cfg.write_text(yaml.safe_dump({"bundles_dir": str(_signed_like_bundles(Path(td)))}),
+                           encoding="utf-8")
+            with contextlib.redirect_stdout(buf):
+                rc = _sweep(["--profile", "smoke", "--backend", "hil", "--hil-dry-run",
+                             "--hil-config", str(cfg), "--hil-campaign", "dry"])
+    finally:
+        S.make_hil_transport = saved
+    out = buf.getvalue()
+    after = set((ROOT / S.CAMPAIGN_DIR).glob("*")) if (ROOT / S.CAMPAIGN_DIR).is_dir() else set()
+    assert rc == 0 and not made and after == before, (rc, made, after - before)
+    assert "41 mission(s) to fly, 23 refused" in out, out[:300]
+    assert "dry_001_nfz-head-on" in out and "SITL_HOME  -35.36344066,149.16539523,584,0.00" in out
+    assert "--start=-20,15,15" in out and "hil_desktop.sh" in out
+    for why in ("gps_noise_m", "wind_speed_mps", "rtl_failed_ticks", "non-finite",
+                "start altitude 30 m", "relabel", "paraphrase / prefix arm",
+                "Shield-off control arm"):
+        assert why in out, why
+    # A config key it does not know is refused (exit 2), not ignored.
+    with tempfile.TemporaryDirectory() as td:
+        bad = Path(td) / "hil.json"
+        bad.write_text(json.dumps({"ssh_targte": "x"}), encoding="utf-8")
+        assert _sweep(["--only", "speed-cap", "--backend", "hil", "--hil-config", str(bad),
+                       "--hil-dry-run"]) == 2
+    assert _sweep(["--only", "speed-cap", "--hil-dry-run"]) == 2
+
+
+def test_the_hil_transport_runs_the_rig_commands_it_names():
+    """SubprocessTransport with recording stand-ins for subprocess: the WSL
+    helper started with the home and the router's target and waited on for
+    its ready line, the files and the run folder copied with scp relative to
+    the remote home, the mission run in the hil topology's compose project
+    with every argument quoted for the remote shell; a mission that times
+    out stops its container."""
+    calls = []
+
+    class _Done:
+        def __init__(self, rc=0, out=""):
+            self.returncode, self.stdout, self.stderr = rc, out, ""
+
+    class _Popen:
+        def __init__(self, cmd, **kw):
+            calls.append(("popen", cmd))
+            self.stdout = iter(["hil_desktop: home: x\n", "HIL_DESKTOP READY sitl_pid=1\n"])
+
+        def terminate(self):
+            calls.append(("terminate",))
+
+    def run(cmd, **kw):
+        calls.append(("run", cmd, kw.get("cwd"), kw.get("timeout")))
+        if "run --rm -T mission" in cmd[-1] and "slow" in cmd[-1]:
+            raise subprocess.TimeoutExpired(cmd, kw.get("timeout"))
+        return _Done(0, "ok")
+    cfg = S.HilConfig(wsl_repo="/mnt/d/repo")
+    t = S.SubprocessTransport(cfg, run=run, popen=_Popen)
+    assert "HIL_DESKTOP READY" in t.restart_sitl("-35.1,149.2,584,90.00")
+    popen = [c for c in calls if c[0] == "popen"][0][1]
+    assert popen[:6] == ["wsl.exe", "-d", "Ubuntu", "--", "bash", "/mnt/d/repo/sitl/hil_desktop.sh"]
+    assert popen[6] == "start" and _val(popen, "--home") == "-35.1,149.2,584,90.00"
+    assert _val(popen, "--mavros-host") == "10.42.0.3"
+    t.stop_sitl()
+    assert any(c[0] == "run" and c[1][-1] == "stop" for c in calls) and ("terminate",) in calls
+    with tempfile.TemporaryDirectory() as td:
+        d = Path(td) / "tag1"
+        d.mkdir()
+        t.push(d, "demo/out/_campaign/tag1")
+        scp = [c for c in calls if c[0] == "run" and c[1][0] == "scp"][-1]
+        assert scp[1][-2:] == ["tag1", "nathan-agxiot@10.42.0.3:vla-drone/demo/out/_campaign/"]
+        assert scp[2] == str(Path(td)), scp
+        got = t.fetch("tag1", Path(td) / "store")
+        scp = [c for c in calls if c[0] == "run" and c[1][0] == "scp"][-1]
+        assert scp[1][-2:] == ["nathan-agxiot@10.42.0.3:vla-drone/demo/out/tag1", "."]
+        assert got == Path(td) / "store" / "tag1"
+    t.restart_mavros()
+    rc, out = t.run_mission(["--start=-200,0,15", "--action=-3,0,0,0", "--tag", "it's"],
+                            "tag1", "on", 99.0)
+    ssh = [c for c in calls if c[0] == "run" and c[1][0] == "ssh"][-1]
+    remote = ssh[1][-1]
+    assert remote.startswith("cd ~/vla-drone && docker compose --env-file "
+                             "deploy/topologies/hil.env -f "
+                             "deploy/compose/docker-compose.orin.yml run --rm -T mission "
+                             "mission --shield on --tag tag1 "), remote
+    assert "--start=-200,0,15 --action=-3,0,0,0 --tag 'it'\"'\"'s'" in remote, remote
+    assert "BatchMode=yes" in ssh[1] and ssh[3] == 99.0 and rc == 0
+    rc, out = t.run_mission(["--slow"], "tag2", "on", 5.0)
+    assert rc == 124 and "timed out" in out
+    assert "xargs -r docker kill" in [c for c in calls if c[0] == "run"][-1][1][-1]
+
 
 if __name__ == "__main__":
     # A test that cannot run on this host returns SKIP, counted apart, never

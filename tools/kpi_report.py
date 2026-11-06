@@ -342,8 +342,64 @@ def _arms_of(doc: dict) -> dict | None:
             "cell": doc.get("id_cell") or doc.get("id"), "seed": doc.get("seed")}
 
 
+# A rail run of the stress library (experiments/sweep_scenarios.py --backend
+# hil / sitl) carries the harness's verdict beside it (2026-11-06).
+SCENARIO_SCORE = "scenario_score.json"
+# The fields the harness measured that a flight log alone cannot give
+# compute() - the label fields load_bundle_log keeps from a stress bundle's
+# table, plus the label itself.
+SCENARIO_FIELDS = ("failsafe_triggered", "failsafe_matches_label", "mission_outcome",
+                   "outcome_matches_label", "breaches", "polygon_entries",
+                   "true_p0_flown_ticks", "min_true_dist_to_fence_m", "reached_goal",
+                   "failsafe_label", "failsafe_clause", "failsafe_censored")
+
+
+def scenario_score_for(run: Path, scenario) -> tuple[dict | None, str | None]:
+    """(the run's scenario_score.json, None) when it is THIS run's: its
+    run id and nonce are the ones the node recorded in metrics.json
+    `scenario` (the harness's --scenario-meta). (None, why) otherwise; (None,
+    None) for a run that flew no scenario or has no score yet."""
+    p = run / SCENARIO_SCORE
+    if not isinstance(scenario, dict) or not p.is_file():
+        return None, None
+    doc = _read_json(p)
+    if not doc:
+        return None, f"{SCENARIO_SCORE} unreadable"
+    if (doc.get("run_id"), doc.get("run_nonce")) != (scenario.get("run_id"),
+                                                     scenario.get("run_nonce")):
+        return None, (f"{SCENARIO_SCORE} is for {doc.get('run_id')!r} / nonce "
+                      f"{doc.get('run_nonce')!r}, the run flew {scenario.get('run_id')!r} "
+                      f"/ {scenario.get('run_nonce')!r}: ignored")
+    if not isinstance(doc.get("metrics"), dict) or not isinstance(doc.get("kpi"), dict):
+        return None, f"{SCENARIO_SCORE} carries no metrics / kpi"
+    return doc, None
+
+
+def scenario_family(scenario: dict, arm: str) -> str:
+    """The KPI report's row of a rail run of the stress library:
+    "<backend>-stress/<template>/<cell>/shield-<arm>" (hil-stress/... for the
+    hil rail), the stress bundles' row with the rail named where the
+    harness's "stress-bundle" stands."""
+    backend = scenario.get("backend") or "hil"
+    return (f"{backend}-stress/{scenario.get('template')}/"
+            f"{scenario.get('cell') or scenario.get('scenario_id')}/shield-{arm}")
+
+
 def load_run(run: Path, by_hash: dict, by_id: dict, trust_store=None) -> dict:
-    """Score one run folder. Returns an episode dict, or {"skipped": reason}."""
+    """Score one run folder. Returns an episode dict, or {"skipped": reason}.
+
+    A RAIL RUN OF THE STRESS LIBRARY (2026-11-06): the node recorded the
+    harness's scenario in metrics.json (`scenario`), and the harness wrote
+    its verdict beside the run (scenario_score.json, sweep_scenarios.
+    write_scenario_score). When the two match (scenario_score_for), the run
+    is re-scored as a stress bundle with its log is (load_bundle_log): with
+    the metrics the harness gave compute() - the goal, the breaches it
+    measured (a zone spawned onto the aircraft, a window opening over it, is
+    not one), the arm, the FSM record - and the rule priorities it recorded
+    (hot-applied zones included); its label fields come from the harness's
+    table; and its row is the scenario's (scenario_family:
+    "hil-stress/<template>/<cell>/shield-<arm>"). The run's own dwell figures
+    stay beside it (`rail_dwell`)."""
     log = run / "flight_log.jsonl"
     if not log.is_file():
         if (run / "kpi.json").is_file():
@@ -386,18 +442,35 @@ def load_run(run: Path, by_hash: dict, by_id: dict, trust_store=None) -> dict:
 
     rail = RAIL.get(manifest.get("topology"), manifest.get("topology") or "no-manifest")
     prios = K.rule_priorities(pol) if pol else {}
+    scenario = metrics.get("scenario") if isinstance(metrics.get("scenario"), dict) else None
+    sc_doc, sc_note = scenario_score_for(run, scenario)
+    sc_prios = sc_doc.get("rule_priorities") if sc_doc is not None else None
+    if isinstance(sc_prios, dict) and sc_prios:
+        # The harness's: the take-off policy's and every hot-applied rule's.
+        prios = dict(prios, **sc_prios)
     # demo/follow_vlm.py has no Shield-off switch, so an AirSim flight is
     # shielded by construction. Saying so to compute() keeps a repair that
     # changed nothing a FAILED repair there, instead of letting the arm-unknown
     # "logged but not flown" test set it aside.
     m_c = (dict(metrics, shield="on")
            if rail == "airsim" and metrics.get("shield") is None else metrics)
+    if sc_doc is not None:
+        # The metrics the harness gave compute() (a stress bundle's way,
+        # load_bundle_log), not the rail's dwell figures: a zone the scenario
+        # spawned onto the aircraft is dwell, not a failure of the mission.
+        m_c = dict(sc_doc["metrics"])
     # compute() judges theta on the basis the run recorded; on the one-period
     # reading a clamped tick needs the policy's caps to be sized
     # (rescore_kpis.policy_caps). None without a resolved policy.
     k = K.compute(rows, prios, m_c, caps=R.policy_caps(pol))
-    priority_source = "recomputed against the resolved policy"
-    if pol is None:
+    if sc_doc is not None:
+        for f in SCENARIO_FIELDS:
+            if f in sc_doc["kpi"]:
+                k[f] = sc_doc["kpi"][f]
+    priority_source = ("the stress harness's (scenario_score.json): the policy's and "
+                       "every hot-applied rule's" if isinstance(sc_prios, dict) and sc_prios
+                       else "recomputed against the resolved policy")
+    if pol is None and not (isinstance(sc_prios, dict) and sc_prios):
         for f in PRIORITY_FIELDS:
             k[f] = stored.get(f)
         priority_source = ("stored kpi.json, computed in flight against the real "
@@ -408,9 +481,10 @@ def load_run(run: Path, by_hash: dict, by_id: dict, trust_store=None) -> dict:
             # The class table needs no priorities and stays; the priority
             # table was withheld, and the status says which half is missing.
             k["repair_magnitude_breakdown_status"] = "priorities_unresolved"
-    k["null_hover_mission"] = K.null_hover_mission(rows, metrics)
+    k["null_hover_mission"] = K.null_hover_mission(rows, m_c if sc_doc is not None
+                                                   else metrics)
     wt = K.worst_tick(rows, prios)
-    if wt is not None and pol is None:
+    if wt is not None and pol is None and not (isinstance(sc_prios, dict) and sc_prios):
         wt["priorities_unresolved"] = True
     k["worst_tick"] = wt
 
@@ -451,6 +525,10 @@ def load_run(run: Path, by_hash: dict, by_id: dict, trust_store=None) -> dict:
                 if cell else "")
     family = (metrics.get("scenario_family")
               or f"{rail}/{pid}/{mission}{cell_txt}/shield-{arm}")
+    if scenario is not None:
+        # A rail run of the stress library: the scenario's row, with or
+        # without the harness's score.
+        family = scenario_family(scenario, arm)
     bundles = sorted(run.glob("*.replay.tar.gz"))
 
     diffs = {}
@@ -487,6 +565,24 @@ def load_run(run: Path, by_hash: dict, by_id: dict, trust_store=None) -> dict:
         # if it had always been that way.
         "time_to_safe_superseded": stored.get("time_to_safe_superseded"),
     })
+    if scenario is not None:
+        k.update({
+            "scenario_id": scenario.get("scenario_id"),
+            "params": {"template": scenario.get("template"),
+                       "cell": scenario.get("params") or None,
+                       "seed": scenario.get("seed", manifest.get("random_seed")),
+                       "scenario_id": scenario.get("scenario_id"),
+                       "policy_id": pid, "model": manifest.get("vla_model_hash"),
+                       "topology": manifest.get("topology")},
+            # Where the harness's verdict came from, or why it was not used.
+            "scenario_score": (SCENARIO_SCORE if sc_doc is not None
+                               else sc_note or f"no {SCENARIO_SCORE} beside the run"),
+            "scenario_status": (sc_doc or {}).get("status"),
+            "metrics_from": (f"{SCENARIO_SCORE}: the metrics the stress harness gave "
+                             f"compute()" if sc_doc is not None else "metrics.json"),
+            "rail_dwell": {f: metrics.get(f) for f in ("nfz_s", "alt_violation_s",
+                                                      "standoff_s")},
+        })
     return k
 
 

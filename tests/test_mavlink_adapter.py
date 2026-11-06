@@ -493,7 +493,10 @@ def test_a_geo_policy_far_from_home_is_refused_by_offset():
     n, e = A.origin_offset_m(far, *HOME)
     assert abs(math.hypot(n, e) - 50.0) < 0.5 and math.hypot(n, e) > A.ORIGIN_TOLERANCE_M
     src = (ROOT / "sitl" / "mavlink_adapter_node.py").read_text(encoding="utf-8")
-    assert "ORIGIN_TOLERANCE_M" in src[src.index("def _upload"):]
+    # The upload judges the frame through fence_frame (2026-11-06), which
+    # holds the tolerance (test_the_fences_go_up_about_the_home_the_shield_flies).
+    assert "fence_frame(doc, lat, lon, ne)" in src[src.index("def _upload"):]
+    assert "ORIGIN_TOLERANCE_M" in src[src.index("def fence_frame"):src.index("def fence_items")]
 
 
 def test_the_module_imports_without_ros_and_says_so_at_run_time():
@@ -712,6 +715,67 @@ def test_the_mission_shield_replaces_an_illegal_leg_by_its_stop_short_point():
     p = M.stop_short((0.0, 5.0, 15.0), v)
     assert abs(p[1] - (v["last_legal"][1] - M.STANDOFF_M)) < 1e-9 and p[0] == 0.0
     assert M.stop_short((0.0, 5.0, 15.0), dict(v, last_legal=(0.0, 5.5, 15.0)))[1] == 5.0
+
+
+def test_the_fences_go_up_about_the_home_the_shield_flies():
+    """A stress scenario's start (2026-11-06): the Shield node flies the EKF
+    origin at --start's policy-frame position and says so in the fences
+    document (`home_policy_ne`). The adapter projects the zones about the
+    autopilot's home from there, so each vertex lands where the policy put
+    it, and refuses a home the frame origin puts anywhere else - a SITL
+    booted at CMAC for a scenario that starts 200 m south. The null: a
+    document from before (no home_policy_ne) is judged and placed exactly
+    as it was (home at the frame origin), and a non-finite home is refused."""
+    proj = LocalProjection(*HOME)
+    lat, lon = proj.to_latlon(-200.0, 0.0)
+    doc = {"origin": {"lat": HOME[0], "lon": HOME[1]}, "home_policy_ne": [-200.0, 0.0]}
+    home_local, off, refused = A.fence_frame(doc, lat, lon)
+    assert refused is None and home_local == (-200.0, 0.0), (home_local, refused)
+    assert math.hypot(off[0] + 200.0, off[1]) < 1e-6, off
+    verts = [(-190.0, 0.0), (-190.0, 10.0), (-180.0, 10.0)]
+    items = A.fence_items([{"kind": "polygon", "id": "z", "vertices": verts}], lat, lon,
+                          home_local)
+    for it, (x, y) in zip(items, verts):
+        # Within MISSION_ITEM_INT's 1e-7 degree: projected about home rather
+        # than the frame origin, the equirectangular scale differs by under a
+        # millimetre over these 200 m.
+        want = proj.to_latlon(x, y)
+        assert abs(it["x_lat"] - want[0]) < 1e-7 and abs(it["y_long"] - want[1]) < 1e-7, \
+            (it, want)
+    # Home 2 m from the EKF origin (HomePosition.position) shifts the frame.
+    hl, _, r = A.fence_frame(doc, *proj.to_latlon(-198.0, 0.0), home_ne=(2.0, 0.0))
+    assert r is None and hl == (-198.0, 0.0), (hl, r)
+    # SITL at the frame origin instead of the start: refused, naming both.
+    _, off2, wrong = A.fence_frame(doc, *HOME)
+    assert wrong is not None and "200.0 m from (-200.0, 0.0) m" in wrong["why"], wrong
+    assert wrong["home_policy_ne"] == [-200.0, 0.0] and wrong["origin_offset_m"] == [0.0, 0.0]
+    # The null: the documents every run before sent.
+    old = {"origin": {"lat": HOME[0], "lon": HOME[1]}}
+    assert A.fence_frame(old, *HOME) == ((0.0, 0.0), (0.0, 0.0), None)
+    _, _, far = A.fence_frame(old, lat, lon)
+    assert "the policy's frame origin is 200.0 m from the autopilot's home" in far["why"], far
+    assert A.fence_frame({"home_policy_ne": [-200.0, 0.0]}, *HOME)[2] is None, \
+        "a metre policy (no origin) is placed by the declared home and never refused"
+    assert A.fence_frame(dict(doc, home_policy_ne=[float("nan"), 0.0]), lat, lon)[2]
+
+
+def test_a_negative_start_and_action_parse_as_values():
+    """--start (south or west of a frame origin) and --action (a pilot flying
+    south) take a negative first value as theirs, as --target does, and both
+    nodes read flags whole: an abbreviation is not another node's flag."""
+    assert {"--start", "--action"} <= set(A.XY_FLAGS)
+    assert A.join_negative_xy(["--start", "-200,0,15", "--action", "-3,0,0,0"]) == \
+        ["--start=-200,0,15", "--action=-3,0,0,0"]
+    import ros2_shield_node as N
+    import ros2_vla_stub_node as V
+    for mk in (N.make_parser, V.make_parser):
+        assert mk().allow_abbrev is False, mk
+    ns, rest = N.make_parser().parse_known_args(["--action=-3,0,0,0", "--pilot=goto",
+                                                 "--start", "-200,0,15"])
+    assert ns.start == "-200,0,15" and rest == ["--action=-3,0,0,0", "--pilot=goto"], rest
+    vs, rest = V.make_parser().parse_known_args(["--events=e.json", "--reach-m=3",
+                                                 "--action", "-3,0,0,0"])
+    assert vs.action == "-3,0,0,0" and rest == ["--events=e.json", "--reach-m=3"], rest
 
 
 if __name__ == "__main__":

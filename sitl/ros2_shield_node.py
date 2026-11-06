@@ -97,6 +97,35 @@ runs the one FSM: its Shield is built without an FSM of its own
 each audit record carries the node's FSM verdict and its log row's tick
 number (guardrail.replay.audit_tick).
 
+A STRESS SCENARIO ON THIS RAIL (2026-11-06). The stress harness
+(experiments/sweep_scenarios.py --backend hil / sitl) flies the scenario
+library here, one scenario per mission. Until this date the node took a
+target and a seed but no start, no pilot and no events
+(docs/RUNBOOK-orin-hil.md, step 14):
+  * --start X,Y[,UP]: the policy-frame position of the autopilot's home. The
+    harness boots SITL there (SITL_HOME, the policy frame origin's projection
+    of (X, Y)); every pose is offset by it, the home's position goes into
+    the fences document (`home_policy_ne`, which the adapter projects the
+    zones about), and the node refuses to arm unless the autopilot's own home
+    lies within HOME_TOL_M of it (check_home, metrics.json `home_check`).
+    UP is the take-off altitude, held before the mission starts.
+  * --target X,Y[,UP], --no-target, --reach-m: the scenario's goal (none for
+    a constant pilot: `reached` null) and its tolerance.
+  * --events FILE: the scenario's ScenarioEvents, applied in the tick once
+    the mission time reaches each, with the harness's own code
+    (guardrail.scenario_events), the Shield given t=None as REST gives it;
+    each is a `scenario_event` in events.jsonl and writes its generation.
+  * --scenario-meta FILE: the harness's record, in metrics.json `scenario`
+    and `scenario_family` (tools/kpi_report.py's row).
+  * Each row carries the rule clock's reading (`clock`), the zones holding
+    the position (`zones_in`, `zone_d_m`), the same judgements under the
+    previous tick's rules and clock (`unsafe_prev_rules`, `zones_in_prev`:
+    _prev_judgement) and the rule changes the position met (`rule_events`),
+    which the harness reads to tell a breach from a rule that switched on
+    under the aircraft.
+The pilot laws are the VLA stub's (sitl/ros2_vla_stub_node.py --pilot,
+--action), which reads the same arguments.
+
 ZONE DWELL AND COST MAP (2026-10-11). `nfz_s` is the count every rail shares
 (guardrail.replay.zone_dwell, read from the Shield's rule checker): polygon
 and circle fences and every dynamic_nfz that does not move, the hot-applied
@@ -252,6 +281,7 @@ for _p in (ROOT, ROOT / "sitl"):
         sys.path.insert(0, str(_p))
 
 from guardrail import Action4D, AuditLogger, Shield, State             # noqa: E402
+from guardrail import scenario_events as SE                               # noqa: E402
 from guardrail.audit import AUDIT_FILE                                    # noqa: E402
 from guardrail.bundle import load_for_flight                              # noqa: E402
 from guardrail.compiler import ConstraintCompiler                         # noqa: E402
@@ -265,6 +295,7 @@ from guardrail.manifest import (DEV_YAML_FLAG, UNRESOLVED,               # noqa:
                                 is_kpi_grade, pilot_record)
 from guardrail.models import (AltitudeEnvelope, PolygonFence,             # noqa: E402
                               SubjectStandoff, XY)
+from guardrail.projection import LocalProjection                          # noqa: E402
 from guardrail.replay import (EpisodeRecord, audit_tick,                  # noqa: E402
                               episode_row_fields, flown_fields,
                               kpi_evidence_grade, rail_shield, rule_clock,
@@ -273,7 +304,7 @@ from mavros_evidence import (get_params, initial_evidence,                # noqa
                              note_mavros_state, poll_autopilot_version,
                              poll_sim_speedup, record_link, topology_manifest)
 from mavlink_adapter_node import (ADAPTER_NODE_NAME, DEFAULT_HOLD_MODE,   # noqa: E402
-                                  FENCE_MARGIN_M,
+                                  FENCE_MARGIN_M, ORIGIN_TOLERANCE_M,
                                   HOLD_MODES, TOPIC_FENCES, TOPIC_MODE_REQUEST,
                                   TOPIC_SETPOINT, TOPIC_STATUS, ModeRequests,
                                   XYArgumentParser, fence_alt_plan,
@@ -441,6 +472,23 @@ ACTION_PUBLISHERS_CHECKS = 3
 # --vla-ready-timeout-s it starts after the wait for the VLA, which can last
 # far longer (review of 339f23a, P1-B).
 BRING_UP_S = 180.0
+# A SCENARIO'S START (--start X,Y[,UP], 2026-11-06). The autopilot's home,
+# projected about the policy's frame origin, must lie this close to (X, Y)
+# before arming (the adapter's own tolerance for its fence upload): a SITL
+# booted elsewhere flies the scenario somewhere else, and is refused on the
+# pad. The node asks MAVROS for the home (/mavros/home_position/req_update)
+# every HOME_REQUEST_EVERY_S while it waits, up to HOME_WAIT_S.
+HOME_TOL_M = ORIGIN_TOLERANCE_M
+HOME_WAIT_S = 90.0
+HOME_REQUEST_EVERY_S = 3.0
+# With a start altitude the mission starts once the aircraft has held it
+# within START_UP_TOL_M for START_SETTLE_S (the climb's overshoot is not the
+# scenario's start); without one, at cruise altitude - 1 m, as before.
+START_UP_TOL_M = 0.5
+START_SETTLE_S = 1.0
+# A heading for the scenario's events (spawn ahead, move left) is read from
+# the measured velocity above this speed; slower, the last one is kept.
+EVENT_HEADING_MIN_MPS = 0.1
 
 
 # --------------------------------------------------------------------------- #
@@ -454,6 +502,120 @@ def parse_xy(text: str | None) -> tuple[float, float] | None:
     if len(parts) != 2 or not all(math.isfinite(v) for v in parts):
         raise ValueError(f"expected X,Y, got {text!r}")
     return parts[0], parts[1]
+
+
+def parse_point(text: str | None, what: str = "point"
+                ) -> tuple[float, float, float | None] | None:
+    """`X,Y` or `X,Y,UP` (finite metres) as (x, y, up or None); None for no
+    text. Raises ValueError otherwise, before anything flies: --target and
+    --start (2026-11-06; --target took X,Y only until then)."""
+    if not text:
+        return None
+    try:
+        parts = [float(v) for v in str(text).split(",")]
+    except ValueError:
+        raise ValueError(f"{what}: expected X,Y or X,Y,UP, got {text!r}") from None
+    if len(parts) not in (2, 3) or not all(math.isfinite(v) for v in parts):
+        raise ValueError(f"{what}: expected X,Y or X,Y,UP, got {text!r}")
+    return parts[0], parts[1], (parts[2] if len(parts) == 3 else None)
+
+
+def repo_path(p: str | Path) -> Path:
+    """A file named on the command line: as given when it exists (absolute, or
+    relative to the working directory), else relative to the repository - the
+    container's working directory is the checkout, the desktop rail's need
+    not be."""
+    path = Path(p)
+    if path.is_absolute() or path.exists():
+        return path
+    return ROOT / path
+
+
+def load_scenario_meta(path) -> dict:
+    """--scenario-meta: the stress harness's record of the scenario this
+    mission flies (experiments/sweep_scenarios.py rail_meta): a JSON object,
+    written into metrics.json as `scenario`, its `family` as
+    `scenario_family` (the KPI report's row)."""
+    doc = json.loads(repo_path(path).read_text(encoding="utf-8"))
+    if not isinstance(doc, dict):
+        raise ValueError(f"--scenario-meta {path}: not a JSON object")
+    return doc
+
+
+def load_events(path) -> list:
+    """--events: a JSON list of the library's ScenarioEvents (guardrail.
+    scenario_spec.ScenarioEvent, validated here, before anything flies),
+    returned as (index in the file, event) in the order they fire: by
+    at_sim_t, ties in file order, as the stress harness schedules them."""
+    from guardrail.scenario_spec import ScenarioEvent
+    raw = json.loads(repo_path(path).read_text(encoding="utf-8"))
+    if isinstance(raw, dict):
+        raw = raw.get("events")
+    if not isinstance(raw, list):
+        raise ValueError(f"--events {path}: expected a JSON list of ScenarioEvents")
+    evs = [(i, ScenarioEvent.model_validate(e)) for i, e in enumerate(raw)]
+    return sorted(evs, key=lambda p: (p[1].at_sim_t, p[0]))
+
+
+def home_check(home, origin, start_xy, tol_m: float = HOME_TOL_M) -> dict:
+    """Is the autopilot's home where --start says the scenario starts?
+
+    `home` is (lat, lon, (north, east) of home from the EKF origin) from
+    /mavros/home_position/home, or None if none arrived; `origin` the
+    policy's frame origin (lat, lon), None for a metre policy; `start_xy` the
+    policy-frame position the node flies the EKF origin at. The node offsets
+    every pose by `start_xy`, so home must sit at start_xy + its EKF offset
+    in the policy's frame, within `tol_m`. A metre policy has no geography to
+    check: its frame is the one --start declares."""
+    sx, sy = float(start_xy[0]), float(start_xy[1])
+    rec = {"start": [sx, sy], "tolerance_m": tol_m}
+    if origin is None:
+        return dict(rec, checked=False, ok=True,
+                    why="the policy is written in metres (no frame origin): the "
+                        "frame is the one --start declares")
+    rec["frame_origin"] = [float(origin[0]), float(origin[1])]
+    if home is None:
+        return dict(rec, checked=True, ok=False,
+                    why="no home position from the autopilot "
+                        "(/mavros/home_position/home): SITL's home cannot be checked "
+                        "against --start")
+    lat, lon = float(home[0]), float(home[1])
+    en = home[2] if len(home) > 2 and home[2] is not None else (0.0, 0.0)
+    n, e = LocalProjection(rec["frame_origin"][0], rec["frame_origin"][1]).to_local(lat, lon)
+    want_n, want_e = sx + float(en[0]), sy + float(en[1])
+    miss = math.hypot(n - want_n, e - want_e)
+    ok = miss <= tol_m
+    return dict(rec, checked=True, ok=ok, home=[lat, lon],
+                home_policy_ne=[round(n, 3), round(e, 3)],
+                home_from_ekf_origin_ne=[round(float(en[0]), 3), round(float(en[1]), 3)],
+                miss_m=round(miss, 3),
+                why=None if ok else
+                (f"the autopilot's home is at ({n:.1f}, {e:.1f}) m in the policy's "
+                 f"frame, {miss:.1f} m from the scenario's start ({want_n:.1f}, "
+                 f"{want_e:.1f}) m (tolerance {tol_m:g} m): SITL booted at another "
+                 f"home (SITL_HOME) than the scenario starts from"))
+
+
+def zones_at(shield, st: State) -> tuple[list[str], float | None]:
+    """(ids of the keep-out zones in force at the aircraft's altitude whose
+    POLYGON holds the position, metres from the nearest zone's polygon -
+    negative inside, None with no zone in force): the stress harness's
+    polygon measures (sweep_scenarios._signed_dist), on the zones as the
+    Shield places them now (Shield.zones_now: moving zones where they are,
+    a zone a clock has switched off left out)."""
+    from shapely.geometry import Point
+    p = Point(st.x, st.y)
+    ids: list[str] = []
+    best = None
+    for zr in shield.zones_now(st.up):
+        poly = zr.polygon
+        inside = poly.contains(p)
+        d = poly.exterior.distance(p)
+        sd = -d if inside else d
+        best = sd if best is None else min(best, sd)
+        if inside:
+            ids.append(zr.rule.id)
+    return sorted(ids), (None if best is None else round(best, 4))
 
 
 def adapter_listening(node_names) -> bool:
@@ -1022,6 +1184,16 @@ try:
                                  VehicleInfoGet)
     from rcl_interfaces.msg import Parameter, ParameterType, ParameterValue
     from rcl_interfaces.srv import GetParameters, SetParameters
+    try:
+        # The autopilot's home, checked against --start before arming
+        # (2026-11-06); a stand-in ROS stack without them runs without it.
+        from mavros_msgs.msg import HomePosition
+    except ImportError:
+        HomePosition = None
+    try:
+        from std_srvs.srv import Trigger            # /mavros/home_position/req_update
+    except ImportError:
+        Trigger = None
     HAVE_ROS = True
 except ImportError:
     HAVE_ROS = False
@@ -1061,22 +1233,76 @@ if HAVE_ROS:
             # its test compare scenarios against exactly this text.
             self.mission = (compiler.parse_command(args.command) if args.command
                             else compiler.parse_command("fly to the northeast pad at 6 m/s"))
-            tgt = parse_xy(args.target)
+            tgt = parse_point(args.target, "--target")
+            # A scenario's start (2026-11-06): the policy-frame position of
+            # the autopilot's home (every pose is offset by it), and the
+            # altitude the mission starts at.
+            start = parse_point(getattr(args, "start", None), "--start")
+            self.start_given = start is not None
+            self.start_xy = (start[0], start[1]) if start else (0.0, 0.0)
+            self.start_up = start[2] if start else None
+            self.has_target = not getattr(args, "no_target", False)
+            self.reach_m = float(getattr(args, "reach_m", REACH_M))
+            upd: dict = {}
             if tgt is not None:
-                self.mission = self.mission.model_copy(
-                    update={"target_x": tgt[0], "target_y": tgt[1]})
+                upd.update(target_x=tgt[0], target_y=tgt[1])
+            if tgt is not None and tgt[2] is not None:
+                upd["cruise_alt_m"] = tgt[2]
+            elif self.start_up is not None:
+                upd["cruise_alt_m"] = self.start_up
+            if start is not None:
+                upd.update(start_x=start[0], start_y=start[1])
+            if not self.has_target:
+                # No target: the mission's (its CSP's) target is the start,
+                # as the stress harness writes a target-less mission's.
+                upd.update(target_x=self.start_xy[0], target_y=self.start_xy[1])
+            if upd:
+                self.mission = self.mission.model_copy(update=upd)
             if args.speed is not None:
                 self.mission = self.mission.model_copy(
                     update={"speed_pref_mps": float(args.speed)})
+            # The stress harness's scenario (--scenario-meta) and its
+            # mid-flight events (--events), applied in the tick once the
+            # mission time reaches each (_apply_scenario_events).
+            meta = getattr(args, "scenario_meta", None)
+            self.scenario_meta = load_scenario_meta(meta) if meta else None
+            ev_path = getattr(args, "events", None)
+            self._ev_pending = load_events(ev_path) if ev_path else []
+            self._ev_file = str(ev_path) if ev_path else None
+            self._ev_declared = len(self._ev_pending)
+            self._ev_state = None               # SE.EventState, once the Shield exists
+            self._ev_records: list[dict] = []
+            self._ev_unexpected: list[dict] = []
+            self._ev_live_from: dict[str, float] = {}
+            self._ev_heading = (1.0, 0.0)
+            self._ev_heading_source = "default (no start heading yet)"
+            # The autopilot's home (/mavros/home_position/home) and its check
+            # against --start before arming (check_home).
+            self.home_geo = None
+            self.home_check: dict | None = None
+            self.n_home_requests = 0
 
             # The rule clock, one callable for the Shield and every
             # generation's CSP (guardrail.replay.rule_clock): scripted from
             # --clock-start with the mission time, else the wall clock in the
             # mission's time zone. Mission time is None until mission start.
+            # It can be PINNED for one query (`_clock_pin`, under the tick's
+            # lock): a tick judges the position under the previous tick's
+            # rules at the previous tick's reading (_prev_judgement), which
+            # the stress harness reads to tell a breach the aircraft made from
+            # a rule that switched on under it.
             self.mission_t0: float | None = None
-            self.clock, self.clock_record = rule_clock(
+            base_clock, self.clock_record = rule_clock(
                 getattr(args, "clock_start", None), elapsed=self._t,
                 tz=getattr(args, "clock_tz", None))
+            self._clock_pin = None
+
+            def clock():
+                pin = self._clock_pin
+                return pin if pin is not None else base_clock()
+            self.clock = clock
+            self._last_clock = None             # the previous row's reading
+            self._gen_after_tick: int | None = None
             # Episode record FIRST: it moves an earlier flight's audit and
             # generation files aside, so the logger below starts a fresh file.
             self.rec = EpisodeRecord(out, self.policy, self.mission,
@@ -1095,6 +1321,7 @@ if HAVE_ROS:
             self.shield = rail_shield(self.policy, lookahead_s=LOOKAHEAD_S,
                                       dt=LOOKAHEAD_DT_S, clock=self.clock,
                                       pipe_clock=time.monotonic)
+            self._ev_state = SE.EventState(shields=[self.shield])
             # The own-velocity forecast (OWN_VELOCITY_DEFAULT: off here), the
             # Shield-on arm only; the latest velocity_local and its receipt.
             self.own_v = (getattr(args, "own_velocity_forecast", OWN_VELOCITY_DEFAULT)
@@ -1270,6 +1497,14 @@ if HAVE_ROS:
                                                "/mavros/vehicle_info_get")
             self.cli_param_set = self.create_client(
                 SetParameters, "/mavros/param/set_parameters")
+            # The autopilot's home, for check_home (--start). The QoS the
+            # adapter reads it with (sensor data), which MAVROS's publisher
+            # serves; MAVROS re-sends it when asked (req_update).
+            if HomePosition is not None:
+                self.create_subscription(HomePosition, "/mavros/home_position/home",
+                                         self._on_home, qos_profile_sensor_data)
+            self.cli_home = (self.create_client(Trigger, "/mavros/home_position/req_update")
+                             if Trigger is not None else None)
             # The fences are published in bring_up(), once the autopilot's
             # fence parameters and the aircraft's position are known.
 
@@ -1281,8 +1516,13 @@ if HAVE_ROS:
         def _on_pose(self, msg: PoseStamped) -> None:
             q = msg.pose.orientation
             # MAVROS ENU -> our up-positive frame (x = N, y = E), heading
-            # clockwise from North. The adapter reads the same topic.
-            self.state = State(x=msg.pose.position.y, y=msg.pose.position.x,
+            # clockwise from North. The adapter reads the same topic. The
+            # pose is metres about the EKF origin, which SITL puts at home;
+            # --start says where home is in the policy's frame (0, 0 when
+            # not given: the frame origin IS home, as every run before
+            # 2026-11-06 flew it).
+            self.state = State(x=msg.pose.position.y + self.start_xy[0],
+                               y=msg.pose.position.x + self.start_xy[1],
                                up=msg.pose.position.z,
                                yaw_deg=heading_deg_from_enu_quaternion(
                                    q.x, q.y, q.z, q.w))
@@ -1297,6 +1537,17 @@ if HAVE_ROS:
             # record (state_v); receipt on the node's monotonic clock.
             self.vel = velocity_from_enu(msg.twist.linear)
             self.vel_rx = time.monotonic()
+
+        def _on_home(self, msg) -> None:
+            # HomePosition: geo is WGS84; position is ENU metres from the EKF
+            # origin (x East, y North) - kept as (north, east).
+            first = self.home_geo is None
+            self.home_geo = (float(msg.geo.latitude), float(msg.geo.longitude),
+                             (float(msg.position.y), float(msg.position.x)))
+            if first:
+                self.rec.event("autopilot_home", t=self._t(), lat=self.home_geo[0],
+                               lon=self.home_geo[1],
+                               from_ekf_origin_ne=list(self.home_geo[2]))
 
         def _on_state(self, msg: MavState) -> None:
             self.mav_connected = msg.connected
@@ -1483,23 +1734,26 @@ if HAVE_ROS:
             clear). The column is the autopilot's own FENCE_ALT_MAX as read
             back at take-off; unknown, nothing is exported."""
             st = self.state
-            # No pose yet means the aircraft is still on the pad, at the
-            # local origin. "Unknown, so upload everything" armed a zone that
+            # No pose yet means the aircraft is still on the pad, at home:
+            # the policy-frame position --start gives it (the local origin
+            # without one). "Unknown, so upload everything" armed a zone that
             # covers home under the aircraft on a 2026-10-07 flight: the
             # GeoFence held it on the pad and take-off never completed.
             if st is not None:
                 pos, pos_src = (st.x, st.y), "pose"
             else:
-                pos, pos_src = (0.0, 0.0), "assumed home: no pose yet (on the pad)"
+                pos, pos_src = self.start_xy, "assumed home: no pose yet (on the pad)"
             fences, skipped = policy_fences(
                 self.policy, column_m=self.fence_column_m, position=pos,
                 margin_m=self.fence_margin_m, enforced=self.fences_enforced)
             self.deferred_fences = sorted(s["id"] for s in skipped
                                           if s.get("deferred"))
-            # Zones over home (the local origin in SITL): an RTL flies back
-            # into them. Recorded and warned, not withheld.
+            # Zones over home (the local origin in SITL, --start's position
+            # in the policy's frame): an RTL flies back into them. Recorded
+            # and warned, not withheld.
             every, _ = policy_fences(self.policy, column_m=self.fence_column_m)
-            over_home = zones_near(every, 0.0, 0.0, self.fence_margin_m)
+            over_home = zones_near(every, self.start_xy[0], self.start_xy[1],
+                                   self.fence_margin_m)
             if over_home and over_home != self.zones_over_home:
                 self.get_logger().warn(
                     f"zone(s) {', '.join(over_home)} cover home: an RTL lands "
@@ -1516,6 +1770,11 @@ if HAVE_ROS:
                    "position_source": pos_src,
                    "origin": (None if origin is None else
                               {"lat": origin[0], "lon": origin[1]}),
+                   # Where this node flies the autopilot's home in the
+                   # policy's frame (--start; 0, 0 without): the adapter
+                   # projects the zones about home from there and refuses a
+                   # home the frame origin puts elsewhere (fence_frame).
+                   "home_policy_ne": [self.start_xy[0], self.start_xy[1]],
                    "backstop_active": self.autopilot_fence.get("backstop_active")}
             self._fences_sent = {"generation": doc["generation"],
                                  "ids": sorted(f["id"] for f in fences),
@@ -1739,6 +1998,10 @@ if HAVE_ROS:
                                             if self.fence_status else
                                             "no upload reported by the adapter"))
 
+            # A scenario's start (--start): refused on the pad unless the
+            # autopilot's home is where the scenario starts.
+            self.check_home()
+
             # A VLA that must warm up first (--vla-ready-timeout-s): refused
             # here, before GUIDED and arming, never in the air. The wait is
             # the VLA's, not the autopilot's: GUIDED, arming and the climb get
@@ -1770,7 +2033,9 @@ if HAVE_ROS:
                     f"budget (the autopilot's pre-arm checks did not pass)" if attempts else
                     f"arming never tried: the {BRING_UP_S:g} s bring-up budget ran out first")
 
-            alt = self.mission.cruise_alt_m
+            # The scenario's start altitude (--start X,Y,UP), else the
+            # mission's cruise altitude, as before.
+            alt = self.start_up if self.start_up is not None else self.mission.cruise_alt_m
             while time.time() < t_end:
                 r = self._call(self.cli_tol, CommandTOL.Request(altitude=float(alt)))
                 if r and r.success:
@@ -1780,9 +2045,23 @@ if HAVE_ROS:
             else:
                 raise RuntimeError("takeoff never accepted")
 
+            settled_since: float | None = None
             while time.time() < t_end:
                 rclpy.spin_once(self, timeout_sec=0.5)
-                if self.state and self.state.up >= alt - 1.0:
+                if self.start_up is None:
+                    ready = bool(self.state and self.state.up >= alt - 1.0)
+                else:
+                    # Settled at the start altitude: within START_UP_TOL_M
+                    # for START_SETTLE_S, so the climb's overshoot is not
+                    # where the scenario starts.
+                    near = (self.state is not None
+                            and abs(self.state.up - alt) <= START_UP_TOL_M)
+                    if not near:
+                        settled_since = None
+                    elif settled_since is None:
+                        settled_since = time.time()
+                    ready = near and time.time() - settled_since >= START_SETTLE_S
+                if ready:
                     # ArduPilot may set home only when the EKF is ready (at
                     # arming), and the adapter uploads the fence once home is
                     # known: give it a bounded wait before the mission.
@@ -1810,6 +2089,48 @@ if HAVE_ROS:
                     log.info(f"SIM_SPEEDUP read from autopilot: {self.sim_speedup}")
                     return
             raise RuntimeError("never reached takeoff altitude")
+
+        def check_home(self) -> None:
+            """--start X,Y (2026-11-06): refuse to arm - RuntimeError, before
+            GUIDED - unless the autopilot's home, projected about the
+            policy's frame origin, lies within HOME_TOL_M of (X, Y)
+            (home_check). This is what catches a SITL booted at another home
+            than the scenario starts from: every pose is offset by --start,
+            so such a flight would put the Shield's zones where they are not.
+            MAVROS publishes the home when ArduPilot sends it; the node asks
+            for it (/mavros/home_position/req_update) every
+            HOME_REQUEST_EVERY_S, up to HOME_WAIT_S. Without --start nothing
+            is checked, as before (the adapter still refuses a fence upload
+            whose frame origin is far from home). The verdict is an event
+            (`home_check`) and metrics.json `home_check`."""
+            if not self.start_given:
+                return
+            origin = getattr(self.policy, "frame_origin", None)
+            t0 = time.time()
+            last_req = None
+            while origin is not None and self.home_geo is None \
+                    and time.time() - t0 < HOME_WAIT_S:
+                if (self.cli_home is not None and self.cli_home.service_is_ready()
+                        and (last_req is None
+                             or time.time() - last_req >= HOME_REQUEST_EVERY_S)):
+                    self.cli_home.call_async(Trigger.Request())
+                    self.n_home_requests += 1
+                    last_req = time.time()
+                rclpy.spin_once(self, timeout_sec=0.5)
+            self.home_check = dict(home_check(self.home_geo, origin, self.start_xy),
+                                   waited_s=round(time.time() - t0, 1),
+                                   home_requests=self.n_home_requests)
+            self.rec.event("home_check", **self.home_check)
+            if self.home_check["ok"]:
+                self.get_logger().info(
+                    "home check: " + ("not checkable, metre policy"
+                                      if not self.home_check["checked"] else
+                                      f"home {self.home_check['miss_m']} m from --start "
+                                      f"{list(self.start_xy)}"))
+                return
+            msg = f"refusing to arm: {self.home_check['why']}"
+            self.get_logger().error(msg)
+            raise RuntimeError(msg)
 
         def wait_for_vla(self) -> bool:
             """--vla-ready-timeout-s S (2026-10-23): wait up to S for a
@@ -1866,14 +2187,33 @@ if HAVE_ROS:
             self.mission_t0 = time.monotonic()
             self.watchdog.start(self.mission_t0)
             self.pose_watchdog.start(self.mission_t0)
+            # The heading the scenario's first events see (spawn ahead, move
+            # left): start to target, else the start yaw (SITL boots facing
+            # the scenario's start yaw), as the stress harness does; then the
+            # measured velocity's direction once the aircraft moves.
+            here = (self.start_xy if self.start_given else
+                    (self.state.x, self.state.y) if self.state is not None else (0.0, 0.0))
+            self._ev_heading = SE.start_heading(
+                here, ((self.mission.target_x, self.mission.target_y)
+                       if self.has_target else None),
+                self.state.yaw_deg if self.state is not None else 0.0)
+            self._ev_heading_source = ("start to target" if self.has_target
+                                       else "start yaw")
             self.rec.event("mission_start", t=0.0,
-                           target=[self.mission.target_x, self.mission.target_y],
+                           target=([self.mission.target_x, self.mission.target_y]
+                                   if self.has_target else None),
                            speed_pref_mps=self.mission.speed_pref_mps,
                            shield=self.args.shield,
                            rule_clock_reading=self.clock().isoformat(
                                timespec="seconds"),
                            action_timeout_s=self.watchdog.timeout_s,
-                           pose_timeout_s=self.pose_watchdog.timeout_s)
+                           pose_timeout_s=self.pose_watchdog.timeout_s,
+                           start=(None if not self.start_given else
+                                  [self.start_xy[0], self.start_xy[1], self.start_up]),
+                           reach_m=self.reach_m if self.has_target else None,
+                           scenario=((self.scenario_meta or {}).get("run_id")
+                                     if self.scenario_meta else None),
+                           scenario_events_declared=self._ev_declared)
             self.create_timer(TICK, self._tick)
 
         def serve_hot_apply(self) -> None:
@@ -1902,6 +2242,104 @@ if HAVE_ROS:
             or near held back as for every other generation."""
             self._publish_fences(f"hot_apply {result['applied']} "
                                  f"({result['op']} {result['type']}) over REST")
+
+        def _prev_judgement(self, st: State, changing: bool):
+            """THIS tick's position under the PREVIOUS tick's rules, zone
+            positions and rule-clock reading: (unsafe rule ids, ids of the
+            zones whose polygon holds it), or None on the first tick. The
+            stress harness's breach and polygon-entry tests (it judges the
+            new position under the rules of the instant before; sweep_
+            scenarios.rail_measurements reads these), so a zone spawned onto
+            the aircraft, a window opening over it or a zone moving onto it
+            is not counted as a step the aircraft made.
+
+            Called first in the tick, before any event of this tick and
+            before filter(): the Shield then still holds the previous
+            generation and places moving zones at its last tick, and the
+            rule clock is pinned to the previous row's reading for the one
+            query (under the tick's lock, so the REST thread never sees the
+            pin). Only computed where it can differ from this tick's own
+            judgement - an event due, a rule that switches with the clock, a
+            moving zone - else "same", and the row copies its own."""
+            if self._last_clock is None:
+                return None
+            if not (changing or SE.rules_switch_with_clock(self.policy)
+                    or SE.has_moving_zone(self.policy)):
+                return "same"
+            self._clock_pin = self._last_clock
+            try:
+                unsafe = sorted({v.rule_id for v in self.shield.state_is_unsafe(st)})
+                zin, _ = zones_at(self.shield, st)
+            finally:
+                self._clock_pin = None
+            return unsafe, zin
+
+        def _update_event_heading(self) -> None:
+            """The scenario events' heading: the measured velocity's direction
+            while it is fresh and over EVENT_HEADING_MIN_MPS (the airframe's
+            own, as the harness's response arm reads it), else the last one."""
+            age = None if self.vel_rx is None else time.monotonic() - self.vel_rx
+            if self.vel is None or age is None or age > VELOCITY_MAX_AGE_S:
+                return
+            sp = math.hypot(self.vel[0], self.vel[1])
+            if math.isfinite(sp) and sp > EVENT_HEADING_MIN_MPS:
+                self._ev_heading = (self.vel[0] / sp, self.vel[1] / sp)
+                self._ev_heading_source = "measured velocity"
+
+        def _apply_scenario_events(self, now: float, st: State) -> list[str]:
+            """Every --events entry whose at_sim_t the mission time has
+            reached, applied to the flying Shield with the stress harness's
+            own code (guardrail.scenario_events.apply_event), the Shield
+            given t=None as the REST path gives it (its own last tick). Each
+            accepted event writes its generation's policy and CSP
+            (EpisodeRecord.hot_applied); every one is a `scenario_event` in
+            events.jsonl; a spawned zone counts in the dwell from its mission
+            time (live_from); the fences follow the new generation (a zone
+            the aircraft is in or near held back, as for every generation).
+            An event the Shield refuses and the scenario does not expect
+            refused (the harness would error the episode) is recorded and
+            flown past - the rules stay as they were - and named in
+            metrics.json, so the harness refuses to score the flight. Returns
+            one label per event, for the row."""
+            labels: list[str] = []
+            accepted: list[str] = []
+            while self._ev_pending and self._ev_pending[0][1].at_sim_t <= now + 1e-9:
+                idx, ev = self._ev_pending.pop(0)
+                try:
+                    rec = SE.apply_event(ev, self._ev_state, st, self._ev_heading,
+                                         now, shield_t=None)
+                except Exception as e:                       # noqa: BLE001
+                    rec = {"t": round(now, 4), "type": "hot_apply", "event": ev.type,
+                           "at_sim_t": ev.at_sim_t, "refused": True, "expected": False,
+                           "reason": f"{type(e).__name__}: {e}"}
+                    self._ev_unexpected.append({"index": idx, "event": ev.type,
+                                                "t": round(now, 3),
+                                                "reason": rec["reason"]})
+                    self.get_logger().error(f"scenario event {idx} ({ev.type}) refused "
+                                            f"by the Shield: {rec['reason']}")
+                rec.update(index=idx, heading=[round(h, 4) for h in self._ev_heading],
+                           heading_source=self._ev_heading_source,
+                           position=[round(st.x, 3), round(st.y, 3), round(st.up, 3)],
+                           late_s=round(now - ev.at_sim_t, 3))
+                if not rec.get("refused"):
+                    rule = rec.get("rule_id") or rec.get("zone") or rec.get("target")
+                    self.rec.hot_applied(str(rule or ev.type), t=now)
+                    if ev.type == "spawn_polygon_fence" and rec.get("rule_id"):
+                        # On the trajectory's 0.01 s grid, as the --dynamic
+                        # zone's and a REST zone's (zone_dwell).
+                        self._ev_live_from[rec["rule_id"]] = round(now, 2)
+                    accepted.append(f"{ev.type} {rule}")
+                self._ev_records.append(rec)
+                self.rec.event("scenario_event", t=now,
+                               **{k: v for k, v in rec.items() if k != "t"})
+                labels.append(f"scenario event {idx}: {ev.type}"
+                              + (" (refused)" if rec.get("refused") else ""))
+                self.get_logger().info(
+                    f"scenario event {idx} {ev.type} at t={now:.1f}s -> generation "
+                    f"{self.policy.generation}" + (" REFUSED" if rec.get("refused") else ""))
+            if accepted:
+                self._publish_fences("scenario event(s): " + "; ".join(accepted))
+            return labels
 
         def _tick(self) -> None:
             tick_ns = time.monotonic_ns()
@@ -2123,6 +2561,24 @@ if HAVE_ROS:
                     stream_id=0, message_rate=10, on_off=True))
                 self._last_rate_req = now
 
+            # The rule changes this tick's position meets that the aircraft
+            # did not make: a REST hot-apply between ticks, this tick's
+            # scenario events, the --dynamic zone (`rule_events` on the row;
+            # the stress harness reads a step into an unsafe position on
+            # such a row as imposed). First, the position under the previous
+            # tick's rules (_prev_judgement), before any of this tick's.
+            rule_events: list[str] = []
+            if self._gen_after_tick is not None \
+                    and self.policy.generation != self._gen_after_tick:
+                rule_events.append(f"hot-apply between ticks: generation "
+                                   f"{self._gen_after_tick} -> {self.policy.generation}")
+            due = bool(self._ev_pending and self._ev_pending[0][1].at_sim_t <= now + 1e-9)
+            dyn_due = self.dynamic and self.spawn_t is None and now >= DYNAMIC_AT_S
+            prev = self._prev_judgement(st, due or dyn_due or bool(rule_events))
+            self._update_event_heading()
+            if due:
+                rule_events += self._apply_scenario_events(now, st)
+
             if self.dynamic and self.spawn_t is None and now >= DYNAMIC_AT_S:
                 fence = (DYNAMIC_FENCE if self.args.dynamic_zone == "route"
                          else zone_around(st.x, st.y))
@@ -2132,13 +2588,16 @@ if HAVE_ROS:
                 applied = self.rec.apply_zone(self.shield, fence, t=now)
                 self._publish_fences(f"hot_apply {applied.id} ({applied.type})")
                 self.spawn_t, self.spawn_pos = now, (st.x, st.y)
+                rule_events.append(f"dynamic zone {applied.id}")
                 self.get_logger().info(
                     f"dynamic NFZ applied t={now:.1f}s -> generation "
                     f"{self.policy.generation}")
 
+            # The target's reach (--reach-m, REACH_M by default); a mission
+            # with no target (--no-target) has none, and flies to its cap.
             dist = math.hypot(self.mission.target_x - st.x,
                               self.mission.target_y - st.y)
-            if dist < REACH_M and self.takeover is None:
+            if self.has_target and dist < self.reach_m and self.takeover is None:
                 self.reached = True
                 self.get_logger().info(f"target reached t={now:.1f}s")
                 self._finish("target reached")
@@ -2214,6 +2673,10 @@ if HAVE_ROS:
             self.n_vel_seen += vel is not None
             st_sh = shield_state(st, vel, vel_age, self.own_v)
             self.n_vel_used += st_sh is not st
+            # The rule clock's reading for this tick's row (and, pinned, the
+            # next tick's _prev_judgement): read once, right before the
+            # Shield reads it.
+            clock_reading = self.clock()
             decision, raw_w, em_w, em_body = shield_step(
                 self.shield, st_sh, body, self.shield_on)
             extra = episode_row_fields(self.shield, st, self.policy,
@@ -2251,8 +2714,10 @@ if HAVE_ROS:
                     inp = tick_input_from_decision(
                         now, decision, self.policy, horizon_s=self.theta_horizon_s,
                         rtl_failed=False,
+                        # Home is --start's position in the policy frame.
                         home_reached=(self.mode == "RTL"
-                                      and math.hypot(st.x, st.y) < REACH_M),
+                                      and math.hypot(st.x - self.start_xy[0],
+                                                     st.y - self.start_xy[1]) < REACH_M),
                         landed=bool(self.landed) and self.mode in ("RTL", "LAND"),
                         stop_illegal=stop_illegal, unsafe_depth_m=unsafe_depth,
                         # The caps the Shield clamped against on this tick,
@@ -2348,6 +2813,22 @@ if HAVE_ROS:
                                  state_v=(None if vel is None
                                           else [round(c, 3) for c in vel]),
                                  shield_velocity=st_sh is not st)
+            # What the stress harness's position measures need (2026-11-06;
+            # sweep_scenarios.rail_measurements): the rule clock this tick
+            # read, the zones whose polygon holds the position and the
+            # signed distance to the nearest (as the Shield places them now),
+            # the same two judgements under the previous tick's rules
+            # (_prev_judgement), and the rule changes the position met.
+            zin, zd = zones_at(self.shield, st)
+            row = self.rows[-1]
+            same = prev == "same"
+            row.update(clock=clock_reading.isoformat(), zones_in=zin, zone_d_m=zd,
+                       unsafe_prev_rules=(row.get("unsafe_rules") if same
+                                          else None if prev is None else prev[0]),
+                       zones_in_prev=(zin if same else None if prev is None else prev[1]),
+                       rule_events=rule_events)
+            self._last_clock = clock_reading
+            self._gen_after_tick = self.policy.generation
             if self.n_pilot_msgs or self.n_pilot_malformed:
                 # The VLA bridge's decision behind this tick's action: who
                 # authored it, which decision, how old at this tick; what the
@@ -2433,6 +2914,8 @@ if HAVE_ROS:
             live = dict(self.hot.live_from) if self.hot is not None else {}
             if self.dynamic_fence_id and self.spawn_t is not None:
                 live[self.dynamic_fence_id] = round(self.spawn_t, 2)
+            # A zone a scenario event spawned counts from its spawn too.
+            live.update(self._ev_live_from)
             self.dwell = zone_dwell(self.shield, self.traj, TICK,
                                     live_from=live or None, clock_key="clock")
             nfz_s = self.dwell["nfz_s"]
@@ -2472,13 +2955,14 @@ if HAVE_ROS:
                                 color="orange", markersize=4, label="shield active")
                     ax.plot(self.traj[0]["y"], self.traj[0]["x"], "go",
                             markersize=10, label="start")
-                ax.plot(self.mission.target_y, self.mission.target_x, "k*",
-                        markersize=16, label="target")
+                if self.has_target:
+                    ax.plot(self.mission.target_y, self.mission.target_x, "k*",
+                            markersize=16, label="target")
                 ax.set_xlabel("East (m)"); ax.set_ylabel("North (m)")
                 ax.set_title(f"ROS 2 + MAVROS rail - shield "
                              f"{'ON' if self.shield_on else 'OFF'}\n"
                              f"NFZ time: {nfz_s:.1f}s | "
-                             f"{'reached' if self.reached else 'NOT reached'}")
+                             f"{'no target' if not self.has_target else 'reached' if self.reached else 'NOT reached'}")
                 ax.legend(loc="upper left", fontsize=9)
                 ax.set_aspect("equal"); ax.grid(alpha=0.3)
                 fig.tight_layout(); fig.savefig(self.out / "trajectory.png", dpi=130)
@@ -2527,10 +3011,14 @@ if HAVE_ROS:
                     "velocity_ticks": self.n_vel_used,
                     "shield_velocity_ticks": self.shield.n_velocity_ticks,
                     "velocity_nonfinite": self.shield.n_velocity_nonfinite},
-                "reached": self.reached,
+                # None with no target (--no-target): no goal was declared,
+                # so none was missed either.
+                "reached": self.reached if self.has_target else None,
                 # compute() reads this as "did the mission happen"; a waypoint
                 # mission expresses reaching the target in its units.
-                "frac_within_30m": 1.0 if self.reached else 0.0,
+                "frac_within_30m": ((1.0 if self.reached else 0.0)
+                                    if self.has_target else None),
+                "reach_m": self.reach_m if self.has_target else None,
                 "nfz_s": round(nfz_s, 2),
                 "nfz_by_zone_s": self.dwell["nfz_by_zone_s"],
                 "nfz_moving_not_counted": self.dwell["nfz_moving_not_counted"],
@@ -2541,8 +3029,37 @@ if HAVE_ROS:
                 "brakes": self.n_braked,
                 "frame": "body (grant Architecture constraints p2)",
                 "seed": self.args.seed,
-                "target": [self.mission.target_x, self.mission.target_y],
+                "target": ([self.mission.target_x, self.mission.target_y]
+                           if self.has_target else None),
                 "speed_pref_mps": self.mission.speed_pref_mps,
+                # A scenario's start (--start): where the autopilot's home is
+                # in the policy's frame, the altitude the mission started at,
+                # and the check of the autopilot's own home against it.
+                "start": (None if not self.start_given else
+                          {"policy_ne": [self.start_xy[0], self.start_xy[1]],
+                           "up": self.start_up, "source": "--start"}),
+                "home_check": self.home_check,
+                # The stress harness's scenario (--scenario-meta), its KPI
+                # report row, and its mid-flight events (--events).
+                "scenario": self.scenario_meta,
+                "scenario_family": (self.scenario_meta or {}).get("family"),
+                "scenario_events": (None if not self._ev_file else {
+                    "file": self._ev_file, "declared": self._ev_declared,
+                    "applied": [r for r in self._ev_records if not r.get("refused")],
+                    "refused": [r for r in self._ev_records if r.get("refused")],
+                    "unexpected_refusals": self._ev_unexpected,
+                    "not_applied": [{"index": i, "event": e.type, "at_sim_t": e.at_sim_t}
+                                    for i, e in self._ev_pending],
+                    # The harness's gate: None when nothing was refused, else
+                    # whether every refusal was expected and nothing expected
+                    # refused was accepted (sweep_scenarios event_refusals_
+                    # as_expected).
+                    "event_refusals_as_expected": (
+                        None if not (self._ev_state.refused or self._ev_unexpected)
+                        else (not self._ev_unexpected
+                              and all(exp for _, _, exp in self._ev_state.refused))),
+                    "live_from": dict(self._ev_live_from),
+                    "shield_time": "t=None (the Shield's own last tick), as REST"}),
                 "pilot": pilot,
                 "vla_identity": self.vla_identity,
                 "vla_actions_received": self.n_actions,
@@ -2713,7 +3230,8 @@ if HAVE_ROS:
 | Pose stream | {metrics['pose_hz']} Hz; {len(self.pose_watchdog.spells)} stale spell(s) (timeout {self.pose_watchdog.timeout_s:g} s), {pose_stale_s:g} s of ticks on a stale pose |
 | Tick latency (e2e p50 / p99 / max) | {metrics['tick_latency']['e2e_ms']['p50']} / {metrics['tick_latency']['e2e_ms']['p99']} / {metrics['tick_latency']['e2e_ms']['max']} ms, budget {TICK_BUDGET_MS:g} ms |
 | Topology | `{manifest['topology']}` |
-| Target reached | {'yes' if self.reached else 'NO'} |
+| Target reached | {'no target (--no-target)' if not self.has_target else 'yes' if self.reached else 'NO'} |
+| Scenario | {(self.scenario_meta or {}).get('run_id') or 'none'}{f", {sum(1 for r in self._ev_records if not r.get('refused'))} of {self._ev_declared} event(s) applied" if self._ev_file else ''} |
 | Ticks | {len(self.traj)} ({metrics['ticks_flown']} flown, {metrics['ticks_not_flown']} held by the autopilot or a fault) |
 | Shield lookahead | {LOOKAHEAD_S:g} s at {LOOKAHEAD_DT_S:g} s ({metrics['shield_lookahead']['poses']} poses) |
 | Shield interventions | {self.n_touched} |
@@ -2732,7 +3250,11 @@ if HAVE_ROS:
 def make_parser() -> argparse.ArgumentParser:
     # XYArgumentParser: `--target -20,15` (negative X) parses as a value
     # instead of exiting with status 2 (mavlink_adapter_node.join_negative_xy).
-    ap = XYArgumentParser()
+    # allow_abbrev off (2026-11-06), as the VLA bridge's: the rail hands
+    # every argument to this node and the VLA node alike, and the stub's
+    # `--action=-3,0,0,0` was read here as an abbreviation of
+    # --action-timeout-s - an argparse error, the mission never started.
+    ap = XYArgumentParser(allow_abbrev=False)
     ap.add_argument("--shield", choices=["on", "off"], default="on")
     ap.add_argument("--dynamic", action="store_true")
     ap.add_argument("--dynamic-zone", choices=["route", "on-aircraft"],
@@ -2813,10 +3335,33 @@ def make_parser() -> argparse.ArgumentParser:
                          "either way)")
     ap.add_argument("--command", default=None,
                     help="mission text (default: fly to the northeast pad at 6 m/s)")
-    ap.add_argument("--target", default=None, metavar="X,Y",
-                    help="override the mission target (local NED metres), so "
+    ap.add_argument("--target", default=None, metavar="X,Y[,UP]",
+                    help="override the mission target (policy-frame metres North, "
+                         "East; UP its altitude, the mission's cruise altitude), so "
                          "the rail can fly a stress scenario's mission; a "
                          "negative X parses either way (-20,15 or =-20,15)")
+    ap.add_argument("--no-target", action="store_true",
+                    help="the mission has no target (a stress scenario's constant "
+                         "pilot): no reach test, `reached` null; it flies to --max-s")
+    ap.add_argument("--reach-m", type=float, default=REACH_M,
+                    help=f"the target counts as reached within this (default "
+                         f"{REACH_M:g} m; the stress harness passes its goal "
+                         f"tolerance, 3 m)")
+    ap.add_argument("--start", default=None, metavar="X,Y[,UP]",
+                    help="a stress scenario's start: the policy-frame position of the "
+                         "autopilot's home (every pose is offset by it; the node "
+                         "refuses to arm unless the autopilot's home lies within "
+                         f"{HOME_TOL_M:g} m of it), and UP the altitude the mission "
+                         "starts at (take-off climbs to it and settles)")
+    ap.add_argument("--scenario-meta", default=None, metavar="FILE",
+                    help="the stress harness's record of the scenario flown (JSON), "
+                         "written into metrics.json as `scenario` and its `family` "
+                         "as `scenario_family`")
+    ap.add_argument("--events", default=None, metavar="FILE",
+                    help="the scenario's mid-flight events (a JSON list of "
+                         "guardrail.scenario_spec.ScenarioEvent), each applied to "
+                         "the flying Shield once the mission time reaches its "
+                         "at_sim_t (guardrail.scenario_events)")
     ap.add_argument("--speed", type=float, default=None,
                     help="override the pilot's preferred speed, m/s")
     ap.add_argument("--seed", type=int, default=0,
@@ -2863,7 +3408,20 @@ def main(argv: list[str] | None = None) -> None:
         if not (math.isfinite(args.vla_ready_timeout_s) and args.vla_ready_timeout_s >= 0):
             raise ValueError(f"--vla-ready-timeout-s must be 0 or more seconds, "
                              f"got {args.vla_ready_timeout_s!r}")
-    except ValueError as exc:
+        # A stress scenario's mission (2026-11-06): its start, target, reach,
+        # record and events, each refused here rather than mid-air.
+        parse_point(args.target, "--target")
+        start = parse_point(args.start, "--start")
+        if start is not None and start[2] is not None and not start[2] > 0:
+            raise ValueError(f"--start altitude must be above home, got {start[2]!r}")
+        if not (math.isfinite(args.reach_m) and args.reach_m > 0):
+            raise ValueError(f"--reach-m must be a positive number of metres, "
+                             f"got {args.reach_m!r}")
+        if args.scenario_meta:
+            load_scenario_meta(args.scenario_meta)
+        if args.events:
+            load_events(args.events)
+    except (ValueError, OSError) as exc:
         raise SystemExit(f"[safety_shield] REFUSED: {exc}")
     if not HAVE_ROS:
         raise SystemExit("ros2_shield_node needs rclpy and mavros_msgs: source "

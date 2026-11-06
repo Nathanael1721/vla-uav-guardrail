@@ -294,6 +294,62 @@ shipped change and recorded as one.
 - `demo/vla_fly.py`'s own records still call every model's object words
   inert.
 
+### 2026-11-06 (hil scenarios) — the stress library can drive the hil rail, one scenario per mission; not flown yet
+
+Until this date the ROS 2 rail took a target and a seed but no start, no
+pilot law and no scenario events (docs/RUNBOOK-orin-hil.md step 14), so the
+hil campaign could only repeat the node's own mission, and the harness's
+`--backend sitl` refused every scenario but `rail-mission-stub-vla`.
+
+#### Added
+- `experiments/sweep_scenarios.py --backend hil` (`--hil-config`,
+  `--hil-dry-run`, `--hil-controls`, `--hil-campaign`): per scenario,
+  `sitl/hil_desktop.sh` restarts SITL and mavlink-routerd in WSL at
+  `SITL_HOME` (the policy frame origin's projection of the scenario's start,
+  584 m, its start yaw), the scenario's events and record are copied to the
+  Orin, MAVROS is restarted, one mission container flies, its run folder is
+  fetched into `demo/out/hil_<profile>/`, accepted by its own records (the
+  episode's `mission_end`, this launch's nonce in `metrics.json`
+  `scenario`) and scored with the harness's own `score()` /
+  `episode_verdict`; `scenario_score.json` is written beside the run.
+- The rail's nodes take the scenario: `--start X,Y[,UP]` (the policy-frame
+  position of home; every pose offset by it; the node refuses to arm unless
+  the autopilot's home lies within 5 m of it; take-off settles at UP),
+  `--target X,Y[,UP]`, `--no-target`, `--reach-m`, `--events` (the
+  library's ScenarioEvents, applied in the tick with the harness's own code,
+  now `guardrail/scenario_events.py`), `--scenario-meta`; the VLA stub
+  flies `--pilot stub_vla | goto | constant` (`--action`), the laws now in
+  `guardrail/vla_stub.py` and shared with the harness. The adapter projects
+  the zones about the home the Shield node declares (`fence_frame`).
+- `tools/kpi_report.py`: such a run is filed under
+  `hil-stress/<template>/<cell>/shield-<arm>` and, with its
+  `scenario_score.json`, re-scored as a stress bundle with its log is.
+
+#### Changed
+- One refusal for both rails (`rail_refusal`, replacing `sitl_refusal` /
+  `_mission_mismatch`): refused are the stressors (wind, gusts, start
+  jitter, GPS noise, latency and dropout, the battery hook), an RTL that
+  must fail (`rtl_failed_ticks`), a non-finite pilot action, a relabel
+  schedule, start altitudes below 1 m or at the GeoFence ceiling, and the
+  paraphrase / prefix-off arms; Shield-off controls fly only with
+  `--hil-controls`. Smoke profile: 64 episodes, 41 missions, 23 refused;
+  nightly: 744 episodes, 546 missions, 198 refused (`--hil-dry-run`).
+- `rail_measurements`: a step into an unsafe position or a zone is the
+  aircraft's own only if it was so under the previous row's rules, zones
+  and rule clock and no rule changed on the row (the node logs that
+  judgement per row; older logs are rebuilt from their generations). A zone
+  spawned onto the aircraft counted as the flight's breach until now.
+
+#### Fixed
+- The Shield node and the VLA stub parse with `allow_abbrev` off, as the
+  VLA bridge already did: both get every argument, and the Shield node read
+  the stub's `--action=...` as an abbreviation of `--action-timeout-s` and
+  exited 2.
+
+Not flown: the shakedown on the hil rig is the user's. Tests:
+`tests/test_sweep.py`, `test_sitl_rails.py`, `test_mavlink_adapter.py`,
+`test_kpi_report.py`, `test_harnesstruth_bundles.py`.
+
 
 ### 2026-11-06 (dev images) — the dev topology flown in containers for the first time; the same companion image definition on the desktop and the Orin
 

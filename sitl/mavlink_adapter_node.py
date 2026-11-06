@@ -289,8 +289,10 @@ TOPIC_MISSION_UPDATE = "/shield/mission_update"
 ADAPTER_NODE_NAME = "mavlink_adapter"
 
 # The rails' X,Y options (sitl/ros2_shield_node.py, ros2_vla_stub_node.py,
-# run_sitl_demo.py).
-XY_FLAGS = ("--target", "--subject")
+# run_sitl_demo.py). --start (a scenario's start, south or west of a policy's
+# frame origin) and --action (the constant pilot's world-frame action, a
+# negative first channel flies south) since 2026-11-06.
+XY_FLAGS = ("--target", "--subject", "--start", "--action")
 _NEGATIVE_VALUE = re.compile(r"^-\.?\d")
 
 
@@ -517,6 +519,53 @@ def origin_offset_m(origin: tuple[float, float] | None,
     n, e = LocalProjection(float(origin[0]), float(origin[1])).to_local(
         home_lat, home_lon)
     return n, e
+
+
+def fence_frame(doc: dict, home_lat: float, home_lon: float,
+                home_ne: tuple[float, float] = (0.0, 0.0)
+                ) -> tuple[tuple[float, float], tuple[float, float] | None, dict | None]:
+    """`(home_local_ne, origin offset, refusal)` for one /shield/fences
+    document: where the autopilot's home sits in the frame the Shield node
+    flies, the geographic offset of home from the policy's frame origin
+    (origin_offset_m; None for a metre policy), and a refusal record or None.
+
+    The Shield node flies the policy's frame with the EKF origin at the
+    policy-frame position it declares in the document (`home_policy_ne`, its
+    --start: a scenario that starts 200 m south of the frame origin boots
+    SITL there; absent, as in every document before 2026-11-06, (0, 0)), so
+    home, `home_ne` metres from the EKF origin (HomePosition.position, 0 in
+    SITL), is at declared + home_ne. fence_items projects the zones about
+    home from there, and a geo-anchored policy whose frame origin puts the
+    autopilot's home more than ORIGIN_TOLERANCE_M from it is refused: the
+    zones would be uploaded off by the difference. Until 2026-11-06 the
+    offset was compared with (0, 0), so the frame origin had to BE home."""
+    dec = doc.get("home_policy_ne") or (0.0, 0.0)
+    try:
+        dn, de = float(dec[0]), float(dec[1])
+    except (TypeError, ValueError, IndexError):
+        dn = de = math.nan
+    base = {"home_policy_ne": dec}
+    if not (math.isfinite(dn) and math.isfinite(de)):
+        return (0.0, 0.0), None, dict(base, why=f"home_policy_ne {dec!r} is not a "
+                                                f"finite (north, east) position")
+    hn, he = dn + float(home_ne[0]), de + float(home_ne[1])
+    org = doc.get("origin")
+    off = origin_offset_m((org["lat"], org["lon"]) if org else None,
+                          home_lat, home_lon)
+    if off is not None:
+        miss = math.hypot(off[0] - hn, off[1] - he)
+        if miss > ORIGIN_TOLERANCE_M:
+            where = ("the policy's frame origin is "
+                     f"{math.hypot(*off):.1f} m from the autopilot's home"
+                     if abs(dn) < 1e-9 and abs(de) < 1e-9 else
+                     f"the autopilot's home lies at ({off[0]:.1f}, {off[1]:.1f}) m in "
+                     f"the policy's frame, {miss:.1f} m from ({hn:.1f}, {he:.1f}) m "
+                     f"where the Shield node flies it (its --start)")
+            return (hn, he), off, dict(
+                base, origin_offset_m=[round(off[0], 2), round(off[1], 2)],
+                why=(f"{where} (tolerance {ORIGIN_TOLERANCE_M:g} m): the zones "
+                     f"would be uploaded in the wrong place"))
+    return (hn, he), off, None
 
 
 def fence_items(fences: list[dict], home_lat: float, home_lon: float,
@@ -885,24 +934,17 @@ if HAVE_ROS:
 
         def _upload(self, doc: dict) -> None:
             lat, lon, ne = self.home
-            # A geo-anchored policy flown from another home: the Shield's
-            # zones (local metres about the EKF origin) and the fence would
-            # both sit off by the offset. Refused, and the offset recorded.
-            org = doc.get("origin")
-            off = origin_offset_m((org["lat"], org["lon"]) if org else None,
-                                  lat, lon)
-            if off is not None and math.hypot(*off) > ORIGIN_TOLERANCE_M:
+            # A geo-anchored policy flown from another home than the one the
+            # Shield node declares (its --start, `home_policy_ne`): the
+            # Shield's zones and the fence would sit off by the difference.
+            # Refused, and the offset recorded (fence_frame).
+            home_local, off, refused = fence_frame(doc, lat, lon, ne)
+            if refused is not None:
                 self._status({"kind": "fence_upload", "success": False,
-                              "generation": doc.get("generation"),
-                              "origin_offset_m": [round(off[0], 2), round(off[1], 2)],
-                              "why": (f"the policy's frame origin is "
-                                      f"{math.hypot(*off):.1f} m from the "
-                                      f"autopilot's home (tolerance "
-                                      f"{ORIGIN_TOLERANCE_M:g} m): the zones "
-                                      f"would be uploaded in the wrong place")})
+                              "generation": doc.get("generation"), **refused})
                 return
             try:
-                items = fence_items(doc.get("fences") or [], lat, lon, ne)
+                items = fence_items(doc.get("fences") or [], lat, lon, home_local)
             except ValueError as e:
                 self._status({"kind": "fence_upload", "success": False,
                               "generation": doc.get("generation"), "why": str(e)})
@@ -923,7 +965,8 @@ if HAVE_ROS:
                     "items": len(items), "skipped": doc.get("skipped") or [],
                     "reason": doc.get("reason"),
                     "backstop_active": doc.get("backstop_active"),
-                    "home": [lat, lon]}
+                    "home": [lat, lon],
+                    "home_local_ne": [round(home_local[0], 3), round(home_local[1], 3)]}
             if off is not None:
                 base["origin_offset_m"] = [round(off[0], 2), round(off[1], 2)]
             if not self.cli_push.service_is_ready():

@@ -548,9 +548,10 @@ stub's "fly to the northeast pad", the MAVLink adapter and the Shield node),
 and packs the replay bundle. The Shield node switches SITL to GUIDED, arms,
 takes off and flies the mission; Mission Planner should show it live. The
 run's files land in `~/vla-drone/demo/out/hil_smoke_01/` on the Orin. Restart
-SITL between missions (`docker compose ... restart sitl` on the desktop): the
-vehicle stays where it landed, and the restart also wipes the fence zones the
-adapter uploaded.
+SITL between missions (`docker compose ... restart sitl` on the desktop, or,
+with SITL in WSL as on the rig since 2026-11-03, `sitl/hil_desktop.sh start`:
+step 14): the vehicle stays where it landed, and the restart also wipes the
+fence zones the adapter uploaded.
 
 **Label.** The Shield node decides the label from evidence, not from the
 topology file. Check `demo/out/hil_smoke_01/manifest.json`: `"topology": "hil"`
@@ -619,33 +620,106 @@ openvla_7b_4bit --allow-gpu --model-root /models --topology hil --csp on`.
 
 ## 14. Running the KPI campaign from the desktop
 
-Once steps 10 to 12 work and step 11's manifest says `hil`, the campaign is a
-loop run from the desktop that starts one mission at a time on the Orin and
-resets SITL between missions:
+Once steps 10 to 12 work and step 11's manifest says `hil`, the campaign is
+the stress harness's scenario library flown on this rail, one scenario per
+mission, driven from the desktop (`experiments/sweep_scenarios.py --backend
+hil`, since 2026-11-06). For each mission it:
+
+1. restarts ArduPilot SITL and mavlink-routerd in WSL at the scenario's
+   start: `sitl/hil_desktop.sh start --home <SITL_HOME> --mavros-host
+   10.42.0.3` kills what is left of the previous mission, boots SITL with
+   `SITL_HOME` (the policy frame origin's projection of the scenario's start,
+   at 584 m, facing its start yaw; fresh EEPROM and the GeoFence backstop, as
+   `sitl/start_sitl.sh` always does), starts the router toward the Orin, and
+   gives the EKF 20 s;
+2. copies the scenario's files - its events and its record - to the Orin, to
+   `~/vla-drone/demo/out/_campaign/<tag>/` (demo/out is gitignored and
+   mounted writable, so the checkout stays clean);
+3. restarts MAVROS on the Orin and runs one mission container with the
+   scenario's arguments, which the Shield node and the VLA stub both read:
+   `--start` (the policy-frame position of home and the take-off altitude),
+   `--target` or `--no-target`, `--reach-m 3`, `--pilot` (`stub_vla`,
+   `goto`, `constant`) and `--action`, `--speed`, `--max-s`,
+   `--clock-start`, `--subject`, `--events`, `--scenario-meta`, and the
+   policy's signed bundle pinned by `--expected-hash`. The Shield node
+   refuses to arm unless the autopilot's home lies within 5 m of `--start`
+   (a SITL booted elsewhere), applies the events in flight, and records the
+   scenario in `metrics.json`;
+4. fetches the run folder into the local store (`demo/out/hil_<profile>/`),
+   accepts it by its own records (this episode's `mission_end`, the nonce of
+   this launch in `metrics.json` `scenario`; never by file times), scores it
+   with the harness's own gates and writes `scenario_score.json` beside it,
+   which `tools/kpi_report.py` reads.
+
+Before a campaign, on both hosts at the same clean commit (step 7), build the
+signed bundles the campaign flies (`bundles/` is a build product; the harness
+checks the desktop's copy against each policy YAML, the Orin's node checks
+its own against `--expected-hash`), lock the Orin's clocks (step 4), and have
+ssh to the Orin work with a key (the harness runs it in batch mode):
 
 ```bash
-for n in $(seq -w 1 20); do
-  ssh orin@192.168.50.2 "cd ~/vla-drone && docker compose --env-file deploy/topologies/hil.env \
-      -f deploy/compose/docker-compose.orin.yml run --rm mission mission --shield on --tag hil_kpi_$n"
-  docker compose --env-file deploy/topologies/hil.env \
-      -f deploy/compose/docker-compose.hil-desktop.yml restart sitl
-  sleep 20                       # EKF settles before the next arming
-done
-rsync -a orin@192.168.50.2:~/vla-drone/demo/out/hil_kpi_* demo/out/
-rsync -a orin@192.168.50.2:~/vla-drone/deploy/evidence/incoming/hil/ deploy/evidence/hil/
-python tools/kpi_report.py --runs "demo/out/hil_kpi_*" --no-sweep --out demo/out/hil_kpi_report
+python tools/build_flight_bundles.py           # on the desktop AND on the Orin
+ssh nathan-agxiot@10.42.0.3 true               # no password prompt
+```
+
+From the desktop, in the repository root:
+
+```bash
+# Every mission it would fly (tag, SITL_HOME, the exact commands) and why the
+# rest is refused; nothing is flown or written.
+python experiments/sweep_scenarios.py --profile smoke --backend hil --hil-dry-run
+# The campaign: one mission at a time, its results in demo/out/hil_smoke/.
+python experiments/sweep_scenarios.py --profile smoke --backend hil --hil-campaign smk01
+# The grant's KPI report over the fetched runs, one row per scenario family
+# (hil-stress/<template>/<cell>/shield-on); only runs that pass
+# guardrail.manifest.is_kpi_grade are KPI-grade.
+python tools/kpi_report.py --runs "demo/out/hil_smoke/*" --no-sweep --out demo/out/hil_smoke_report
+```
+
+The rig is described by `--hil-config FILE` (JSON or YAML; every key
+optional): `ssh_target` (default `nathan-agxiot@10.42.0.3`), `remote_root`
+(`~/vla-drone`), `env_file` and `compose_file` (the hil topology's),
+`wsl_distro` (`Ubuntu`), `wsl_repo` (this checkout as WSL sees it; default
+`/mnt/<drive>/...`), `mavros_host` (`10.42.0.3`), `store` (the local run
+store), `bundles_dir`, `sitl_settle_s` (20), `mission_margin_s` (420 s on
+top of each mission's `--max-s`), `restart_mavros`.
+
+What the rail cannot fly is refused before anything flies, with the reason,
+and listed: the stressors (wind, gusts, start jitter, GPS noise, latency and
+dropout - no `SIM_*` stressor is wired - and the battery hook), an RTL that
+must fail (`rtl_failed_ticks`), a non-finite pilot action, a relabel
+schedule, start altitudes below 1 m or at the GeoFence ceiling (the 0.5 m
+and 30 m cells), and the paraphrase and prefix-off arms (the stub reads no
+text). Shield-off control arms fly only with `--hil-controls`.
+
+One mission by hand, as the harness runs it (from Git Bash set
+`MSYS_NO_PATHCONV=1`, or the `/mnt/...` path is rewritten); `--hil-dry-run`
+prints these lines for every mission:
+
+```bash
+wsl.exe -d Ubuntu -- bash "/mnt/d/<checkout>/sitl/hil_desktop.sh" start \
+    --home -35.36505763,149.16523000,584,220.12 --mavros-host 10.42.0.3   # stays up; stop below
+scp -r demo/out/_campaign/<tag> nathan-agxiot@10.42.0.3:vla-drone/demo/out/_campaign/
+ssh nathan-agxiot@10.42.0.3 "cd ~/vla-drone && docker compose --env-file deploy/topologies/hil.env \
+    -f deploy/compose/docker-compose.orin.yml restart mavros"
+ssh nathan-agxiot@10.42.0.3 "cd ~/vla-drone && docker compose --env-file deploy/topologies/hil.env \
+    -f deploy/compose/docker-compose.orin.yml run --rm -T mission mission --shield on --tag <tag> <args>"
+scp -r nathan-agxiot@10.42.0.3:vla-drone/demo/out/<tag> demo/out/hil_smoke/
+wsl.exe -d Ubuntu -- bash "/mnt/d/<checkout>/sitl/hil_desktop.sh" stop
+```
+
+Afterwards, the Orin's own measurements:
+
+```bash
+scp -r nathan-agxiot@10.42.0.3:vla-drone/deploy/evidence/incoming/hil/. deploy/evidence/hil/
 python tools/vla_backend_table.py table        # moves the Orin's R1 rates into the Orin column
 ```
 
-(`orin` is a placeholder for the Orin's user name.) Lock the clocks on the
-Orin (step 4) before the loop. Review and commit `deploy/evidence/hil/` on the
-desktop; the Orin then pulls it like any other commit, and since its own new
-measurements go to `incoming/`, they never overwrite a tracked file.
-`sim_speedup` is fixed at 1 in the SITL image, and every run reads it back
-from SITL, as the grant requires for a KPI-bearing run. The scenario library
-of the stress harness (`experiments/sweep_scenarios.py`) drives this rail once
-the Shield node accepts a scenario's start, target, pilot and seed; until then
-the campaign is the node's own mission, repeated.
+Review and commit `deploy/evidence/hil/` on the desktop; the Orin then pulls
+it like any other commit, and since its own new measurements go to
+`incoming/`, they never overwrite a tracked file. `sim_speedup` is fixed at 1
+in SITL, and every run reads it back from SITL, as the grant requires for a
+KPI-bearing run.
 
 ## 15. Evidence each hil run must carry
 
