@@ -276,8 +276,10 @@ def _make(impl: str, policy: Policy, horizon: float, dt: float, now=None,
     if impl == "current_fsm":
         return Shield(policy, lookahead_s=horizon, dt=dt, now=now, **flags)
     if impl == "legacy":
+        # On the recovery law whose escape it records (see main's agreement).
         from legacy_fence_loop import LegacyFenceShield
-        return LegacyFenceShield(policy, lookahead_s=horizon, dt=dt, escalation=False)
+        return LegacyFenceShield(policy, lookahead_s=horizon, dt=dt, escalation=False,
+                                 recovery_law="cap")
     if impl == "allzones":
         return AllZonesShield(policy, lookahead_s=horizon, dt=dt, escalation=False, now=now,
                               **flags)
@@ -374,6 +376,18 @@ def main(argv=None) -> int:
                     sanity[f"{sc}/{fn_name}"] = {"samples": len(outs),
                                                  "with_geofence_violation": n_geo}
             null = next((n for n in ("legacy", "allzones") if n in decisions), None)
+            if "current" in decisions and null == "legacy" and not flags:
+                # The legacy loop records the pre-IR fence escape, 2.0 m/s out
+                # of a zone - recovery law "cap". Since 2026-11-06 the shipped
+                # default ("cap_all") flies a static zone's escape at the speed
+                # cap, on purpose (docs/DESIGN-shield-enforcement.md, "Every
+                # recovery at its cap"), and grid/filter disagreed on 19 of 120
+                # samples for that reason alone. The agreement is the index's
+                # question, so it is asked on the law the legacy copy records;
+                # "current" is still TIMED on the shipped default above.
+                same_law = _make("current", full.model_copy(deep=True), args.horizon,
+                                 args.dt, now=now, flags={"recovery_law": "cap"})
+                decisions["current"] = _time(getattr(same_law, fn_name), pairs)[1]
             if "current" in decisions and null == "legacy" and flags:
                 agree[f"{sc}/{fn_name}"] = {"skipped": "the legacy loop has no flags",
                                             "null": null}

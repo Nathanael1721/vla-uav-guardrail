@@ -240,7 +240,12 @@ its cap, the principle the band already follows:
   band's far-edge hold), never below the old law.
 
 Each law stays a floor - a faster legal escape is never slowed - and
-recoveries stay exempt from theta, so the FSM reads them as before.
+recoveries stay exempt from theta, so the FSM reads them as before. At the
+cap the recovery takes the whole speed: an escape from a zone flies
+straight out, and a corridor return or a stand-off recovery at a 4 m/s cap
+keeps none of the pilot's along-corridor or tangential motion, which the
+"cap" law kept (tests/test_corridor.py, tests/test_shield.py fly both). A
+recovery lasts seconds; the time to safe is what WP3-17 measures.
 
 | cell (grant forecast, ideal vehicle) | "cap" (29 Oct) | "cap_all" |
 |---|---|---|

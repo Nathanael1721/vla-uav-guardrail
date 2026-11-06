@@ -261,12 +261,19 @@ def _shields(pol: Policy, smap, cls_new=Shield, now_new=None, now_old=None,
              lookahead_s=3.0, dt=0.5):
     # No escalation FSM on either side: this file is about which fences are
     # looked at and what the repairs do (the FSM is tests/test_fsm.py and
-    # tests/test_shield.py).
+    # tests/test_shield.py). Both sides fly recovery law "cap": the legacy
+    # copy records the pre-IR escape out of a zone (2.0 m/s), and since
+    # 2026-11-06 the default law ("cap_all") flies a static zone's escape at
+    # the speed cap on purpose (docs/DESIGN-shield-enforcement.md, "Every
+    # recovery at its cap"; pinned in tests/test_position_quality.py). The
+    # index is the question here, so it is asked on the law the copy records;
+    # "cap_all"'s zone set walks every fence, no index (Shield._cap_zones).
     m = smap if pol.by_type(ObstacleClearance) else None
     return (cls_new(pol.model_copy(deep=True), lookahead_s=lookahead_s, dt=dt,
-                    obstacle_map=m, now=now_new, escalation=False),
+                    obstacle_map=m, now=now_new, escalation=False, recovery_law="cap"),
             LegacyFenceShield(pol.model_copy(deep=True), lookahead_s=lookahead_s,
-                              dt=dt, obstacle_map=m, now=now_old, escalation=False))
+                              dt=dt, obstacle_map=m, now=now_old, escalation=False,
+                              recovery_law="cap"))
 
 
 class _TickClock:
@@ -538,8 +545,12 @@ def test_the_current_position_is_always_in_the_query_box():
     # 3 s at 0.5 s: the first pose (dropped above) is then 0.5 s ahead, past the
     # zone's far side, which is what this test needs (the default is now the
     # grant's 5 s at 0.1 s, whose first pose is still inside).
-    new = NewAhead(pol.model_copy(deep=True), lookahead_s=3.0, dt=0.5, escalation=False)
-    old = OldAhead(pol.model_copy(deep=True), lookahead_s=3.0, dt=0.5, escalation=False)
+    # Both on recovery law "cap", the law whose zone escape the legacy copy
+    # records (_shields says why).
+    new = NewAhead(pol.model_copy(deep=True), lookahead_s=3.0, dt=0.5, escalation=False,
+                   recovery_law="cap")
+    old = OldAhead(pol.model_copy(deep=True), lookahead_s=3.0, dt=0.5, escalation=False,
+                   recovery_law="cap")
     poses = new.forecast(st, a)
     assert poses[0][0] > 0 and all(p.y > 24.0 for _, p in poses)
     want = _vdump(old._check(st, a))

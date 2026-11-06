@@ -21,6 +21,13 @@ in the Shield was changed by the IR work; tests/test_check_contract.py pins
 If the Shield's fence BEHAVIOUR is ever changed on purpose, this file is the
 record of what it used to be: update it in the same commit and say so, rather
 than let the equivalence test go quietly stale.
+
+2026-11-06: the Shield's default recovery law became "cap_all", which flies
+the escape from a static zone at the speed cap (judged as flown) instead of
+the 2.0 m/s this copy's `_repair_geofence` records. That is a change of the
+escape, not of which fences are looked at, so this copy is left as it was and
+the equivalence (tests/test_ir.py, experiments/bench_shield_50rules.py) is
+asked on recovery law "cap", the law whose escape it records.
 """
 from __future__ import annotations
 

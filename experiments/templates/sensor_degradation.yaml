@@ -158,11 +158,14 @@ scenarios:
       (fix_quality_reported false) the Shield flies blind as before;
       tests/test_sweep.py keeps that measurable.
 
-      WHY ITS LABEL ACCEPTED P0 TICKS UNDER THE AUTOPILOT (2026-11-02): blind,
-      on lane 23.6 with the 4-11 s window the Loiter timeout's RTL (the fix
-      was frozen beyond the margin, rubric E3) is blocked and the FSM lands
-      (G6): 1 RTL tick, then 33 LAND ticks through the 10 m floor and one
-      autopilot breach of it - a landing ends below any floor.
+      WHY ITS LABEL ACCEPTS P0 TICKS UNDER THE AUTOPILOT (2026-11-02; flown
+      blind, as every sweep before 2026-11-06 was, the published one
+      included): on lane 23.6 with the 4-11 s window the Loiter timeout's
+      RTL (the fix was frozen beyond the margin, rubric E3) is blocked and
+      the FSM lands (G6): 1 RTL tick, then 33 LAND ticks through the 10 m
+      floor and one autopilot breach of it - a landing ends below any floor.
+      With the fix quality reported the cell returns on X8 at 6.4 s and
+      lands nowhere.
     mission:
       start_pose: { x: -30.0, y: "$lane_y", up: 15.0 }
       target: { x: 60.0, y: "$lane_y", up: 15.0 }

@@ -73,7 +73,10 @@ shipped change and recorded as one.
     the FSM if none can be flown; StandoffRecover at the cap plus the
     subject's recession; CorridorReturn at the fastest inward speed, up to
     the cap, that holds short of the far wall. A moving zone keeps the floor.
-    "cap" (29 Oct) and "lookahead" (before) stay selectable.
+    At a 4 m/s cap the recovery takes the whole speed: the pilot's
+    along-corridor or tangential motion is not kept while it lasts (the
+    "cap" law kept it). "cap" (29 Oct) and "lookahead" (before) stay
+    selectable.
 - `guardrail/kpi.py`: the per-tick false-trigger invariant leaves out X8
   ticks by their reason (the request on such a tick may be clean by
   design); it still holds for every request edge.
@@ -145,6 +148,15 @@ cell-seeds). Not KPI-grade.
   autopilot test on "cap"), test_hold_points 34/34,
   test_harnesstruth_response 19/19, test_own_velocity_forecast 28/28,
   test_scenario_spec 40/40. `.github/workflows/tests.yml` runs the new file.
+- Found by the full per-build list and fixed: test_ir's index-equivalence
+  tests and experiments/bench_shield_50rules.py's agreement check compared
+  the default Shield with tests/legacy_fence_loop.py, whose zone escape is
+  the pre-IR 2.0 m/s; they now ask the index question on recovery law
+  "cap", the law the frozen copy records (the copy is unchanged and says
+  why); the bench still times the shipped default. test_corridor flies its
+  floored-return case on both laws. gps-dropout's description keeps the
+  marker test_harnesstruth_rtl reads for the published sweep's blind LAND
+  ticks. test_ir 20/20, test_corridor 25/25, test_harnesstruth_rtl 20/20.
 
 #### Limits
 - **C1's 15 false triggers remain** (library 2, smoke 1, nightly 12), and
