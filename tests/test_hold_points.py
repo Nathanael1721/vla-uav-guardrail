@@ -1055,8 +1055,11 @@ def test_a_bundle_from_before_the_hold_points_is_reflown_in_place():
                           recovery="lookahead")
     ex = json.loads(json.dumps(SW.episode_extras(cell.spec, lib.defaults, 0, here,
                                                  autopilot_hold="in_place")))
-    assert ex["extras_schema"] == SW.EXTRAS_SCHEMA == "sweep-episode-extras/4"
+    # /5 since 2026-11-06: arm.dr_drift_mps and the stress's fix report.
+    assert ex["extras_schema"] == SW.EXTRAS_SCHEMA == "sweep-episode-extras/5"
     assert ex["arm"]["recovery"] == "lookahead", ex["arm"]
+    assert ex["arm"]["dr_drift_mps"] == SW.DR_DRIFT_MPS, ex["arm"]
+    ex["arm"].pop("dr_drift_mps")          # every older schema below predates it
     old = copy.deepcopy(ex)
     old["extras_schema"] = "sweep-episode-extras/1"
     del old["arm"]["autopilot_hold"], old["arm"]["recovery"]
@@ -1094,7 +1097,7 @@ def test_a_bundle_from_before_the_hold_points_is_reflown_in_place():
         unnamed = copy.deepcopy(ex)
         unnamed["extras_schema"] = schema
         del unnamed["arm"]["autopilot_hold"]
-        if schema != SW.EXTRAS_SCHEMA:
+        if schema not in ("sweep-episode-extras/4", SW.EXTRAS_SCHEMA):
             del unnamed["arm"]["recovery"]
         try:
             SW.rerun_from_extras(unnamed)

@@ -35,7 +35,9 @@
 #          test_ros2_package, test_own_velocity_forecast (on its
 #          tests/fixtures/ copies of the recorded ArduPilot flights).
 #          The DSL's lint warnings: test_window_lead_lint; a window opening
-#          on the aircraft sooner than it can leave: test_window_opens_on.
+#          on the aircraft sooner than it can leave: test_window_opens_on;
+#          the position-quality input, X8 and every recovery at its cap
+#          (recovery_law cap_all): test_position_quality.
 #        WP4, the stress harness and its outputs: test_scenario_spec,
 #          test_sweep, test_failsafe_rubric (the fail-safe labels and
 #          docs/RUBRIC-failsafe.md), test_kpi_magnitudes, test_kpi_report,
@@ -640,6 +642,7 @@ jobs:
               tests/test_hold_transit.py \
               tests/test_window_lead_lint.py \
               tests/test_window_opens_on.py \
+              tests/test_position_quality.py \
               tests/test_policy_hash.py \
               tests/test_csp.py \
               tests/test_policy_dsl_grant_form.py \

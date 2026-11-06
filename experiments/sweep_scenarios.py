@@ -332,7 +332,7 @@ from guardrail.scenario_spec import (FORECAST_ARMS,                # noqa: E402
                                      check_response_arms, expand,
                                      legacy_pins_read_as_before, load_profile)
 from guardrail.shield import (LOOKAHEAD_DT_S, LOOKAHEAD_S, RECOVERY_LAWS,  # noqa: E402
-                              Shield, recurrence_active)
+                              DR_DRIFT_MPS, Shield, recurrence_active)
 
 LIB = ROOT / "experiments" / "scenarios.yaml"
 PROFILES = ROOT / "experiments" / "profiles"
@@ -379,13 +379,19 @@ AP_HOLD_REACHED_M = 0.05
 # any rail; `--autopilot-hold in_place` gives the ones the rails match.
 AUTOPILOT_HOLD_MODELS = ("moved_points", "in_place")
 DEFAULT_AUTOPILOT_HOLD = "moved_points"
-# How the Shield recovers from outside an altitude band (Shield's
-# recovery_law, guardrail.shield.RECOVERY_LAWS), recorded per episode
-# (`recovery_law`, also in episode_start) and in a bundle's `arm.recovery`:
-#   cap        at the climb cap (since 2026-10-29, WP3-17). The default.
-#   lookahead  the band in one lookahead, every bundle flown before that
-#              date (an exponential approach with time constant L).
-DEFAULT_RECOVERY_LAW = "cap"
+# How the Shield recovers from a position that is already illegal (Shield's
+# recovery_law, guardrail.shield.RECOVERY_LAWS has the full history), recorded
+# per episode (`recovery_law`, also in episode_start) and in a bundle's
+# `arm.recovery`:
+#   cap_all    every recovery at its cap: the altitude band at the climb cap,
+#              a static zone at the speed cap judged as flown, a stand-off
+#              ring and a corridor at the speed cap (since 2026-11-06,
+#              WP3-17). The default.
+#   cap        the altitude band at the climb cap only (2026-10-29 to
+#              2026-11-06).
+#   lookahead  the band in one lookahead, every bundle flown before
+#              2026-10-29 (an exponential approach with time constant L).
+DEFAULT_RECOVERY_LAW = "cap_all"
 
 # The wind model (module docstring, "THE WIND MODEL"). PSC_POSXY_P's default
 # (POSCONTROL_POS_XY_P, AC_PosControl.cpp at Copter-4.5.7), and the strongest
@@ -1610,6 +1616,12 @@ def _episode(sc, defaults, seed: int, arm: dict | None, box: dict,
         "lint_warnings": lint_warnings,
         "autopilot_hold_model": hold_model,
         "recovery_law": recovery_law}]
+    if stress.degrades_perception:
+        # What the modelled rail tells the Shield about its position and the
+        # dead reckoning's drift allowance (2026-11-06): only where perception
+        # is degraded, so every other episode's events are as they were.
+        events[0]["fix_quality_reported"] = stress.fix_quality_reported
+        events[0]["dr_drift_mps"] = getattr(shield, "dr_drift_mps", None)
     es = _EventState(shields=shields)
     st = m.start
     prev_st = st
@@ -1735,9 +1747,11 @@ def _episode(sc, defaults, seed: int, arm: dict | None, box: dict,
                          y=seen.y + (rng_gps.gauss(0, sigma) if sigma else 0.0),
                          up=seen.up + (rng_gps.gauss(0, sigma) if sigma else 0.0),
                          yaw_deg=seen.yaw_deg,
-                         # PROTOTYPE (2026-11-06): the accuracy a receiver
-                         # reports with the fix (GPS_RAW_INT.h_acc).
-                         pos_sigma_m=sigma if sigma else None)
+                         # The accuracy a receiver reports with the fix
+                         # (GPS_RAW_INT.h_acc), when the modelled rail reports
+                         # it (Stress.fix_quality_reported, 2026-11-06).
+                         pos_sigma_m=(sigma if sigma and stress.fix_quality_reported
+                                      else None))
         if drop is not None:
             # GPS denial: hold the last fix. The noise above is still drawn on
             # these ticks, so the noise sequence after the window is the same
@@ -1748,10 +1762,12 @@ def _episode(sc, defaults, seed: int, arm: dict | None, box: dict,
                     events.append({"t": round(t_now, 4), "type": "gps_dropout_start",
                                    "held": [round(seen.x, 3), round(seen.y, 3),
                                             round(seen.up, 3)]})
-                # PROTOTYPE (2026-11-06): the frozen pose is flagged as not a
-                # current fix (State.fix_ok), as a rail reads it from the
-                # pose's stamp age or GPS_RAW_INT.fix_type.
-                seen = frozen.model_copy(update={"fix_ok": False})
+                # A rail that reports fix quality flags the frozen pose as not
+                # a current fix (State.fix_ok False: the pose's stamp age,
+                # GPS_RAW_INT.fix_type); one that does not hands it on as is
+                # (Stress.fix_quality_reported, 2026-11-06).
+                seen = (frozen.model_copy(update={"fix_ok": False})
+                        if stress.fix_quality_reported else frozen)
                 dropout_ticks += 1
             elif frozen is not None:
                 frozen = None
@@ -2467,9 +2483,18 @@ def manifest_extras(arm: dict | None) -> dict | None:
 #     flown before the law had a name, on "lookahead", and is re-flown so; a
 #     /3 reader would re-fly a /4 bundle on "lookahead" under its id, so it
 #     refuses "/4".
-EXTRAS_SCHEMA = "sweep-episode-extras/4"
+# /5  since 2026-11-06 (WP3-15, WP3-17): the spec's `stress` carries
+#     `fix_quality_reported` (whether the modelled rail told the Shield its
+#     pose was stale or how accurate it was: State.fix_ok, State.pos_sigma_m)
+#     and the arm names `dr_drift_mps`, the dead reckoning's drift allowance;
+#     the default recovery law became "cap_all" (named in `arm.recovery` as
+#     on /4). A /4 reader would re-fly a /5 sensor bundle with the Shield
+#     blind to the report, so it refuses "/5"; a /1-/4 bundle was flown blind
+#     and is re-flown so (`fix_quality_reported` False).
+EXTRAS_SCHEMA = "sweep-episode-extras/5"
 READABLE_EXTRAS_SCHEMAS = ("sweep-episode-extras/1", "sweep-episode-extras/2",
-                           "sweep-episode-extras/3", EXTRAS_SCHEMA)
+                           "sweep-episode-extras/3", "sweep-episode-extras/4",
+                           EXTRAS_SCHEMA)
 EXTRAS_SCHEMAS_READ = READABLE_EXTRAS_SCHEMAS       # the T1b branch's name
 
 
@@ -2539,9 +2564,11 @@ def episode_extras(spec: ScenarioSpec, defaults, seed: int, run: EpisodeRun, *,
     one there was); rerun_from_extras reads it so. `arm.autopilot_hold` is
     written on every bundle too, and since 2026-10-29 `arm.recovery` (the
     Shield's recovery law; the run's own `recovery_law` when it has one).
-    Every bundle is EXTRAS_SCHEMA ("/4", which has the history): a reader
-    that does not know a key refuses it rather than re-fly it on the ideal
-    vehicle, with the wrong hold or on the wrong recovery law."""
+    Since 2026-11-06 `arm.dr_drift_mps` too, and the spec's stress names
+    `fix_quality_reported`. Every bundle is EXTRAS_SCHEMA ("/5", which has
+    the history): a reader that does not know a key refuses it rather than
+    re-fly it on the ideal vehicle, with the wrong hold, on the wrong
+    recovery law or with the Shield blind to the rail's fix report."""
     dfl = _as_defaults(defaults)
     out: dict[str, Any] = {
         "extras_schema": EXTRAS_SCHEMA,
@@ -2550,7 +2577,8 @@ def episode_extras(spec: ScenarioSpec, defaults, seed: int, run: EpisodeRun, *,
         "random_seed": int(seed),
         "arm": {"record": arm, "forecast": forecast, "wind_model": wind_model,
                 "autopilot_hold": autopilot_hold, "response": response,
-                "recovery": run.extra.get("recovery_law") or recovery},
+                "recovery": run.extra.get("recovery_law") or recovery,
+                "dr_drift_mps": DR_DRIFT_MPS},
         "forecast": run.extra.get("forecast") or forecast_for(spec, dfl, forecast),
         "wind_model": wind_model,
         "vehicle_response": run.extra.get("vehicle_response") or response_for(response),
@@ -2589,8 +2617,10 @@ def rerun_from_extras(extras: dict, root: Path | None = None) -> EpisodeRun:
           naming both or neither is refused, never guessed;
       /3  names both, or is refused.
     /1-/3 were flown on the "lookahead" recovery law (one naming
-    `arm.recovery` contradicts itself and is refused); /4 names its law, or
-    is refused."""
+    `arm.recovery` contradicts itself and is refused); /4 and /5 name their
+    law, or are refused. /1-/4 were flown with no fix-quality report (the
+    Shield blind on a degraded pose) and are re-flown so; /5 records its
+    drift allowance, and one flown with another is refused."""
     schema = extras.get("extras_schema")
     if schema not in READABLE_EXTRAS_SCHEMAS:
         raise ValueError(f"manifest_extras schema {schema!r}, this harness reads "
@@ -2624,7 +2654,7 @@ def rerun_from_extras(extras: dict, root: Path | None = None) -> EpisodeRun:
             raise ValueError(f"manifest_extras schema {schema!r} names no "
                              f"arm.response: which vehicle flew it is unknown")
     recovery = arm.get("recovery")
-    if schema == EXTRAS_SCHEMA:
+    if schema in ("sweep-episode-extras/4", EXTRAS_SCHEMA):
         if recovery is None:
             raise ValueError(f"manifest_extras schema {schema!r} names no arm.recovery: "
                              f"which recovery law was flown is unknown")
@@ -2638,6 +2668,21 @@ def rerun_from_extras(extras: dict, root: Path | None = None) -> EpisodeRun:
     # which the spec now refuses; read as they were written (they decide
     # only the verdict, never the flight).
     body = legacy_pins_read_as_before(extras["scenario_spec"])
+    if schema != EXTRAS_SCHEMA:
+        # /1-/4 were flown before the rail's fix-quality report existed: the
+        # Shield flew blind on a degraded pose, and is re-flown so. One that
+        # names a drift allowance contradicts itself.
+        if arm.get("dr_drift_mps") is not None:
+            raise ValueError(f"manifest_extras schema {schema!r} predates arm.dr_drift_mps "
+                             f"but names {arm.get('dr_drift_mps')!r}: no harness wrote "
+                             f"that under {schema!r}")
+        body = {**body, "stress": {**(body.get("stress") or {}),
+                                   "fix_quality_reported": False}}
+    elif arm.get("dr_drift_mps") != DR_DRIFT_MPS:
+        # Flown with a drift allowance this harness no longer uses: re-flying
+        # it on today's would describe a different Shield under its id.
+        raise ValueError(f"the bundle was flown with dr_drift_mps "
+                         f"{arm.get('dr_drift_mps')!r}; this harness flies {DR_DRIFT_MPS!r}")
     pol = extras["policy"]
     tmp = None
     try:
@@ -4249,10 +4294,11 @@ def main(argv: list[str] | None = None) -> int:
                          "comparison flown on the measured ArduPilot vehicle "
                          "response (default: the profile's, else ideal)")
     ap.add_argument("--recovery-law", choices=RECOVERY_LAWS, default=DEFAULT_RECOVERY_LAW,
-                    help="how the Shield recovers from outside an altitude band: cap "
-                         "(at the climb cap, the default since 2026-10-29) or "
-                         "lookahead (the band in one lookahead, the law before; "
-                         "for comparison)")
+                    help="how the Shield recovers from an illegal position: cap_all "
+                         "(every recovery at its cap, the default since 2026-11-06), "
+                         "cap (the altitude band only, 2026-10-29 to 2026-11-06) or "
+                         "lookahead (the band in one lookahead, before; for "
+                         "comparison)")
     args = ap.parse_args(argv)
 
     if args.publish and (args.out or args.profile or args.only or args.seed is not None
