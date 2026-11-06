@@ -319,8 +319,12 @@ def test_the_rail_flies_the_scenarios_own_mission():
     cmd = S.build_sitl_cmd(spec, "sweep_t", seed=1002, defaults=DEFAULTS)
     assert _val(cmd, "--seed") == "1002" and _val(cmd, "--start") == "0,0,15", cmd
     assert _val(cmd, "--target") == "30,30,15" and _val(cmd, "--pilot") == "stub_vla"
-    # 50 s since 2026-11-02 (it flies past the Loiter timeout).
-    assert _val(cmd, "--speed") == "6" and _val(cmd, "--max-s") == "50", cmd
+    # 50 s since 2026-11-02 (it flies past the Loiter timeout); on a rail
+    # since 2026-11-07 plus the node's 30 s Loiter timeout and 5 s
+    # (rail_max_s: the lagging autopilot can enter Loiter where the ideal
+    # vehicle does not).
+    assert _val(cmd, "--speed") == "6" and _val(cmd, "--max-s") == "85", cmd
+    assert S.rail_max_s(50.0) == 85.0 and S.rail_max_s(30.0) == 65.0
     assert _val(cmd, "--reach-m") == "3"
     head = S.build_sitl_cmd(BY_ID["nfz-head-on"], "t", defaults=DEFAULTS)
     assert (_val(head, "--start"), _val(head, "--target"), _val(head, "--pilot"),
@@ -2994,7 +2998,10 @@ def test_the_hil_backend_flies_each_scenario_through_its_rig_and_scores_it():
         assert _val(args, "--expected-hash") == pol.policy_hash
         assert _val(args, "--pilot") == "constant" and "--no-target" in args
         assert runs[1][2] == "on"
-        assert abs(runs[1][4] - 30.0 - S.HilConfig().mission_margin_s) < 1e-6, runs[1][4]
+        # The mission's timeout is the rail's time cap (rail_max_s: 30 s + the
+        # node's 30 s Loiter timeout + 5 s, 2026-11-07) plus the margin.
+        assert abs(runs[1][4] - S.rail_max_s(30.0) - S.HilConfig().mission_margin_s) < 1e-6, (
+            runs[1][4])
         run_dir = td / "store" / "tst1_002_speed-cap"
         score = json.loads((run_dir / S.SCENARIO_SCORE).read_text(encoding="utf-8"))
         met = json.loads((run_dir / "metrics.json").read_text(encoding="utf-8"))

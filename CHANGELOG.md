@@ -16,6 +16,97 @@ shipped change and recorded as one.
 
 ## [Unreleased]
 
+### 2026-11-07 (hil shakedown) — the first stress missions on the hil rig: three rail defects fixed, and the autopilot's lag escalates head-on approaches the ideal vehicle never escalates
+
+One smoke scenario (`nfz-head-on`, the goto pilot at 4 m/s at a square
+no-fly zone, the target behind it) flown three times on the hil rig through
+`experiments/sweep_scenarios.py --backend hil` (ArduCopter 4.5.7 SITL in WSL,
+MAVROS 2 and the Shield on the AGX Orin). Not KPI-grade: shk01 flew master
+62a4713, shk03 flew 8bfe08f, neither a release.
+
+#### Fixed
+- **Kinematic caps are judged with the float32 contract's slack**
+  (`guardrail/fsm.py` `cap_exceeded`, used by the Shield's check and clamps,
+  `KinematicCaps.clamp` / `exceeded_by` and `compiler.action_violations`).
+  shk01: the stub asked for exactly the 4 m/s cap; quantised to float32 in
+  the body frame and rotated to the world it read 2e-8 to 1.2e-7 m/s over it
+  on 148 of 299 ticks, each a kin-caps violation under the old 1e-9 slack:
+  G1 Normal -> Brake at 0.3 s, the onsets G2 -> Loiter at 2.9 s, the mission
+  lost to rounding. The slack is a millionth of the cap (never under 1e-9),
+  about eight float32 steps. Headless pins unchanged (test_sweep,
+  test_check_contract's 28 800 hashed answers, the c77c77d digests).
+- **The hil transport never hands ssh, scp or the WSL helper its own
+  stdin.** shk02 lost its mission before take-off: `ssh ... mkdir -p` ran
+  into its 60 s timeout though it answers in 0.4 s by hand.
+
+#### Changed
+- **A rail mission's time cap is the scenario's plus the node's Loiter
+  timeout plus 5 s** (`rail_max_s`; the scenario meta records `rail_max_s`
+  beside `max_s`, and the hil mission timeout is taken from it). shk03 entered
+  Loiter at 3.4 s and its 30 s episode ended there: a censored fail-safe
+  (docs/RUBRIC-failsafe.md section 3). A mission that reaches its target still
+  ends at the target. docs/RUNBOOK-orin-hil.md says so.
+
+#### Found
+- **On the rig the Shield escalates a head-on approach the ideal vehicle
+  slides past.** shk03, with the cap fix: the zone enters the 5 s forecast
+  at 2.9 s, GeofenceSlide repairs (repair 0.27 m), G1 Brake; the autopilot
+  reacts after about 0.45 s and brakes at about 1.75 m/s^2, so the aircraft
+  keeps closing and the horizon-end depth grows about 0.4 m a tick: 2.20 m
+  > theta 2.00 m at 3.4 s, G3 Brake -> Loiter. The headless harness's ideal
+  vehicle stops closing on the tick and never escalates. The same profile
+  headless on the measured ArduPilot response (`--response-arms ideal
+  ardupilot`): fail-safe labels 62/63 on the ideal vehicle, 49/54 on the
+  ArduPilot response (5 false triggers, 0 missed, the rest not decided),
+  static_nfz 6/7 -> 0/1; P0 escapes 0 -> 0. The labels were derived on the
+  ideal vehicle; which vehicle the KPI-grade labels should be derived on is
+  open (a measured proposal is being prepared; the theta basis is unchanged).
+- The slide's direction follows the sign of the stub's small sideways
+  command (+/-0.02 m/s) at a head-on tie, so it flipped between +4 and -4 m/s
+  four times in eight ticks before the escalation. Not changed here.
+
+#### Tests
+- `tests/test_shield.py` 87/87 (a float32 command at a cap is at it, an
+  excess past the slack is clamped), `test_sweep.py` 107/108 (the rail's time cap and
+  the hil mission timeout; 1 skip), `test_fsm` 124/124, `test_check_contract` 2/2,
+  `test_own_velocity_forecast` 28/28, `test_csp` 100/100,
+  `test_position_quality` 14/14, `test_sitl_rails` 63/63,
+  `test_kpi_report` 38/41.
+
+### 2026-11-07 (integration) — four branches merged and tested on two machines; the suite run on the AGX Orin under Python 3.12
+
+#### Changed
+- Merged into master: IR 4.0.0, the perception VLA rail, the hil scenario
+  campaign and the fail-safe work (X8, noise hysteresis, cap_all), each
+  section below. The fail-safe branch's new test file stated no `scope`,
+  which IR 4.0.0 requires (fixed, 14/14).
+- `docs/data/progress_oct.json` regenerated on the merged tree (WP1 round
+  trip 32/32, WP2 P0 122/122 at 256 tokens, smoke 64 / nightly 744
+  episodes). The October explainer pack reads `docs/data/csp_kpis.json` as
+  committed with it (335ec58), like its other two sources: the 6 Nov
+  regeneration (120/122 at 144 tokens) made its build refuse "104/105 at 120".
+- IR 4.0.0 flight bundles built and signed on the desktop and on the AGX
+  Orin (its own key), the same policy hashes on both.
+
+#### Fixed
+- `tracker/serve.py` drains a refused POST's body before answering, so the
+  403 / 404 reaches the client: the socket was closed with the body unread
+  and reset, and `test_tracker_serve`'s refusal tests errored on 20 of 80
+  calls (WSAECONNABORTED, 10053); 0 of 120 after.
+
+#### Measured
+- Desktop, Python 3.10.20, at bf31b51: 141/142 files, 3540/3674 tests,
+  smoke fail-safe 0.984127 over 64 episodes (the red file: the tracker
+  reset above). Lab checkout at 65c7e4f: 140/142, 3645/3674 (the two red
+  files: the derived data above).
+- AGX Orin, Python 3.12.3 aarch64 (`~/vla-drone-env`, numpy 1.26.4), at
+  bf31b51: 139/142 files, 3485/3672 tests, the same smoke figures to the
+  last digit. Red: the venv's numpy against the 3.11+ pin (an environment
+  fact), the x86-64 identity digests (2 of 500 decisions of one stream
+  differ by 1 ulp: the platform's sin/cos; desktop 3.10 and 3.12 are
+  byte-identical), a run store of 13 flights where the test needs 20
+  (`docs/data/ci_local/bf31b5142fc3-agx.json`).
+
 ### 2026-11-06 (IR 4.0.0) — `scope` required on every rule: WP1-01 closed the grant's way, all 154 shipped rules state `scope: mission`, and every stored document of an earlier era still reads and re-derives its recorded hash
 
 #### Changed

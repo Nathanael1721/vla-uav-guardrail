@@ -684,6 +684,19 @@ optional): `ssh_target` (default `nathan-agxiot@10.42.0.3`), `remote_root`
 store), `bundles_dir`, `sitl_settle_s` (20), `mission_margin_s` (420 s on
 top of each mission's `--max-s`), `restart_mavros`.
 
+A mission's `--max-s` is the scenario's own time cap plus the node's 30 s
+Loiter operator timeout plus 5 s (`rail_max_s`, since 2026-11-07). The
+autopilot lags (about 0.45 s, 1.75 m/s^2), so on the rail a Shield can enter
+Loiter where the harness's ideal vehicle never does, and an episode that ends
+with that timeout still running is a censored fail-safe
+(docs/RUBRIC-failsafe.md section 3): the second hil shakedown (shk03,
+nfz-head-on) entered Loiter at 3.4 s and its 30 s episode ended there. A
+mission that reaches its target still ends at the target.
+
+Every ssh, scp and `sitl/hil_desktop.sh` call runs with its stdin closed
+(since 2026-11-07): from a parent whose stdin is a pipe, Windows OpenSSH
+held `ssh ... mkdir -p` open into its 60 s timeout (shk02).
+
 What the rail cannot fly is refused before anything flies, with the reason,
 and listed: the stressors (wind, gusts, start jitter, GPS noise, latency and
 dropout - no `SIM_*` stressor is wired - and the battery hook), an RTL that

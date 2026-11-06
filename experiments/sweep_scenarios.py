@@ -2567,6 +2567,22 @@ RAIL_HOME_ALT_M = 584.0
 # The node's reach test, at the harness's goal tolerance (the goto law stops
 # commanding inside it, so the node's 2 m default would never fire).
 RAIL_REACH_M = GOAL_TOL_M
+# A rail flight's time cap is the scenario's (ticks x dt) plus the Shield
+# node's Loiter operator timeout (FSMConfig's, the node's default) plus this
+# margin. An episode that ends in Loiter with that timeout still running is a
+# CENSORED fail-safe (docs/RUBRIC-failsafe.md section 3), and the library
+# sizes each cell's ticks so the IDEAL vehicle's Loiters resolve. On the
+# rails the autopilot lags (about 0.45 s, 1.75 m/s^2), so a Shield can enter
+# Loiter where the ideal vehicle never does: the hil shakedown shk03 (7 Nov,
+# nfz-head-on, 30 s cap) entered Loiter at 3.4 s and ended there, censored.
+# A mission that reaches its target still ends at the target.
+RAIL_RESOLVE_MARGIN_S = 5.0
+
+
+def rail_max_s(max_s: float) -> float:
+    """The rail's --max-s for a scenario whose own cap is `max_s`."""
+    from guardrail.fsm import FSMConfig
+    return float(max_s) + float(FSMConfig().loiter_timeout_s or 0.0) + RAIL_RESOLVE_MARGIN_S
 # What each node must declare for what the harness sends it (check_rail_
 # flags). Both get every argument (the entrypoint's mission role and
 # run_ros2_demo.sh hand the same list to the Shield node and the VLA stub)
@@ -2889,7 +2905,7 @@ def rail_node_args(spec: ScenarioSpec, seed: int = 0, defaults=None, *,
         a = rm["action"] or {}
         args.append("--action=" + _pts(*(a.get(k, 0.0) for k in VS.CONSTANT_CHANNELS)))
     args.append(f"--speed={_num(rm['speed'])}")
-    args.append(f"--max-s={_num(rm['max_s'])}")
+    args.append(f"--max-s={_num(rail_max_s(rm['max_s']))}")
     if rm["subject"] is not None:
         args.append(f"--subject={_pts(*rm['subject'])}")
         if rm["subject_class"]:
@@ -3294,7 +3310,8 @@ def rail_meta(spec: ScenarioSpec, ep, seed: int, backend: str, run_id: str,
             "sitl_home": home, "start": list(rm["start"]), "yaw_deg": rm["yaw_deg"],
             "target": None if rm["target"] is None else list(rm["target"]),
             "pilot": rm["pilot"], "action": rm["action"], "speed_mps": rm["speed"],
-            "max_s": rm["max_s"], "events": len(spec.events),
+            "max_s": rm["max_s"], "rail_max_s": rail_max_s(rm["max_s"]),
+            "events": len(spec.events),
             "policy": spec.policy.source,
             "harness": f"experiments/sweep_scenarios.py --backend {backend}"}
 
@@ -3615,7 +3632,7 @@ def run_hil(spec: ScenarioSpec, ep, seed: int, defaults, cfg: HilConfig, transpo
     events, meta_rel = write_campaign_files(spec, meta)
     args = rail_node_args(spec, seed, defaults, backend="hil", events=events, meta=meta_rel,
                           bundles_dir=cfg.bundles_dir)
-    timeout = float(meta["max_s"]) + cfg.mission_margin_s
+    timeout = float(meta["rail_max_s"]) + cfg.mission_margin_s
     try:
         transport.restart_sitl(home)
         transport.push(ROOT / CAMPAIGN_DIR / tag, f"{CAMPAIGN_DIR}/{tag}")
