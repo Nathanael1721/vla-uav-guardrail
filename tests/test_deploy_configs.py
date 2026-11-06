@@ -114,6 +114,9 @@ SITL_ENTRYPOINT = DOCKER_DIR / "sitl-entrypoint.sh"
 VLA_INSTALL = DOCKER_DIR / "vla-install.sh"
 ORIN_DIR = DEPLOY / "orin"
 FIRST_BOOT = ORIN_DIR / "first_boot_check.sh"
+# The perception rail's hil follow on the AGX Orin (perception_node --pilot vla
+# --mission follow, natively on the host beside the companion's MAVROS).
+RUN_PAS_PERCEPTION = ORIN_DIR / "run_pas_perception.sh"
 GPU_CHECK = ORIN_DIR / "gpu_check.py"
 RUNBOOK = ROOT / "docs" / "RUNBOOK-orin-hil.md"
 DESIGN_TOPOLOGIES = ROOT / "docs" / "DESIGN-topologies.md"
@@ -954,7 +957,8 @@ def test_deploy_text_files_have_lf_endings_and_scripts_a_bash_shebang():
         assert b"\r\n" not in data, f"{p.relative_to(ROOT)} has CRLF line endings"
         checked += 1
     assert checked >= 18, checked
-    for sh in (ENTRYPOINT, SITL_ENTRYPOINT, START_ROUTER, VLA_INSTALL, FIRST_BOOT):
+    for sh in (ENTRYPOINT, SITL_ENTRYPOINT, START_ROUTER, VLA_INSTALL, FIRST_BOOT,
+               RUN_PAS_PERCEPTION):
         assert sh.read_text(encoding="utf-8").startswith("#!/usr/bin/env bash\n"), sh.name
         assert b"\r\n" not in sh.read_bytes(), f"{sh.name} would fail in a container"
 
@@ -2311,6 +2315,102 @@ def test_vla_bf16_check_refuses_a_model_off_the_gpu_quantized_or_answering_nonse
     assert V.problems({**good, "identical_answers": False}) == []
     assert V.PROMPT.startswith("In: What action should the robot take to ")
     assert V.UNNORM_KEY == "bridge_orig" and V.FRAME.is_file(), V.FRAME
+
+
+# --- the perception rail's hil follow on the AGX Orin (2026-11-06) ------------- #
+def _pas_perception(args: list[str], **env) -> subprocess.CompletedProcess:
+    """deploy/orin/run_pas_perception.sh dry-run (VLAGUARD_DRY_RUN=1), with a
+    G1 verdict file present unless `env` says otherwise."""
+    g1 = Path(tempfile.mkdtemp()) / "g1_verdict.json"
+    g1.write_text("{}", encoding="utf-8")
+    full = {k: v for k, v in os.environ.items()
+            if k not in ("VLAGUARD_DRY_RUN", "G1_VERDICT", "TAG", "BUNDLE", "VLA_PORT",
+                         "FRONT_CAPTURE_INTERVAL_S", "SECONDS_")}
+    full.update({"VLAGUARD_DRY_RUN": "1", "G1_VERDICT": g1.as_posix()})
+    for k, v in env.items():
+        if v is None:
+            full.pop(k, None)
+        else:
+            full[k] = v
+    return subprocess.run([find_bash(), RUN_PAS_PERCEPTION.as_posix(), *args], env=full,
+                          capture_output=True, text=True, timeout=60)
+
+
+def test_the_perception_rail_hil_script_joins_hil_envs_graph_and_flies_no_dev_policy():
+    """deploy/orin/run_pas_perception.sh runs the perception node natively on
+    the Orin beside MAVROS in the companion container, so both must be on ONE
+    ROS 2 graph: its domain, RMW, Cyclone DDS peers and MAVROS's FCU URL are
+    hil.env's - read from that file, never written into the script - and the
+    simulator is hil.env's desktop. It never passes --dev-yaml or
+    --start-sitl and refuses them, and the topology's own flags, in any
+    abbreviation argparse would take; the node's own parser takes what it
+    runs (the VLA follow resolves)."""
+    if not find_bash():
+        return SKIP
+    hil = read_env("hil")
+    text = RUN_PAS_PERCEPTION.read_text(encoding="utf-8")
+    for literal in (hil["VLAGUARD_DDS_PEER_A"], hil["VLAGUARD_DDS_PEER_B"], hil["FCU_URL"],
+                    hil["DESKTOP_IP"], hil["RMW_IMPLEMENTATION"],
+                    f"ROS_DOMAIN_ID={hil['ROS_DOMAIN_ID']}"):
+        assert literal not in text, f"the script copies hil.env's {literal!r}"
+    r = _pas_perception([])
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    env = dict(line[len("ENV: "):].split("=", 1) for line in r.stdout.splitlines()
+               if line.startswith("ENV: "))
+    assert env["ROS_DOMAIN_ID"] == hil["ROS_DOMAIN_ID"], env
+    assert env["RMW_IMPLEMENTATION"] == hil["RMW_IMPLEMENTATION"], env
+    assert (env["VLAGUARD_DDS_PEER_A"], env["VLAGUARD_DDS_PEER_B"]) == \
+        (hil["VLAGUARD_DDS_PEER_A"], hil["VLAGUARD_DDS_PEER_B"]), env
+    assert env["MAVROS_FCU_URL"] == hil["FCU_URL"], env
+    assert env["CYCLONEDDS_URI"].startswith("file://") and \
+        env["CYCLONEDDS_URI"].endswith("/deploy/dds/cyclonedds.xml") and DDS.is_file(), env
+    argv = printed(r)
+    opts = options(argv)
+    assert argv[:2] == ["python", "demo/pas_ardupilot/perception_node.py"], argv
+    assert (opts["--link"], opts["--scene-mode"], opts["--sim-host"]) == \
+        ("mavros", "attach", hil["DESKTOP_IP"]), opts
+    assert (opts["--pilot"], opts["--mission"], opts["--vla-server"]) == \
+        ("vla", "follow", "127.0.0.1:8791"), opts
+    assert (opts["--vla-front-source"], opts["--vla-step-as-rate"], opts["--vla-rate-yaw"],
+            opts["--cadence"]) == ("detector", "0.5", "rate", "pipelined"), opts
+    assert opts["--allow-unstamped-pipelined"] is True and opts["--g1-verdict"], opts
+    assert "--dev-yaml" not in argv and "--start-sitl" not in argv, argv
+    # The node's own parser takes it, and the VLA follow resolves (in a child
+    # process: the node puts demo/ on sys.path, which this file's later tests
+    # should not inherit).
+    code = ("import json, sys; sys.path.insert(0, sys.argv[1]); import perception_node as pn; "
+            "a = pn.build_parser().parse_args(sys.argv[2:]); pn.check_args(a); "
+            "print(json.dumps([a.mission, a.vla_object, a.lost_timeout_s, a.link, "
+            "a.scene_mode, a.dev_yaml, a.start_sitl]))")
+    c = subprocess.run([sys.executable, "-c", code, str(ROOT / "demo" / "pas_ardupilot"),
+                        *argv[2:]], capture_output=True, text=True, timeout=120, cwd=str(ROOT))
+    assert c.returncode == 0, c.stderr[-2000:]
+    import json
+    assert json.loads(c.stdout.strip().splitlines()[-1]) == \
+        ["follow", "a red car", 90.0, "mavros", "attach", False, False], c.stdout[-500:]
+    # Passed through: a node flag and the knobs; refused: the dev policy, SITL,
+    # the topology's own flags (abbreviations included), a tag outside
+    # demo/out, a missing G1 verdict.
+    o = options(printed(_pas_perception(["--seed", "7"])))
+    assert o["--seed"] == "7", o
+    o = options(printed(_pas_perception([], TAG="pas_hil_x", BUNDLE="bundles/b.tar.gz",
+                                        FRONT_CAPTURE_INTERVAL_S="0.066", VLA_PORT="8792",
+                                        SECONDS_="300")))
+    assert (o["--tag"], o["--bundle"], o["--front-capture-interval-s"], o["--vla-server"],
+            o["--max-s"]) == ("pas_hil_x", "bundles/b.tar.gz", "0.066", "127.0.0.1:8792",
+                              "300"), o
+    for bad in ("--dev-yaml", "--dev", "--start-sitl", "--start-s", "--link=pymavlink",
+                "--lin", "--scene-mode", "--scene-only", "--sim-host", "--sim", "--camera"):
+        r = _pas_perception([bad])
+        assert r.returncode == 64 and bad in r.stderr and "EXEC:" not in r.stdout, \
+            (bad, r.returncode, r.stderr)
+    for tag in ("../escape", "a/b", ".hidden"):
+        r = _pas_perception([], TAG=tag)
+        assert r.returncode == 64 and "EXEC:" not in r.stdout, (tag, r.returncode, r.stderr)
+    r = _pas_perception([], G1_VERDICT=None)
+    assert r.returncode != 0 and "G1_VERDICT" in r.stderr and "EXEC:" not in r.stdout, r
+    r = _pas_perception([], G1_VERDICT=(Path(tempfile.mkdtemp()) / "none.json").as_posix())
+    assert r.returncode == 66 and "no G1 verdict" in r.stderr, (r.returncode, r.stderr)
 
 
 if __name__ == "__main__":
