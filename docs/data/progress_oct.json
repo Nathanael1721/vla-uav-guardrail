@@ -1,13 +1,25 @@
 {
  "generated_by": "tools/deck/build_progress_oct_data.py",
- "generated": "2026-11-04T12:46:41Z",
- "code_revision": "b3f6262cb687-dirty",
- "status_date": "2026-11-04",
+ "generated": "2026-11-06T20:25:28Z",
+ "code_revision": "65c7e4f83e4c-dirty",
+ "status_date": "2026-11-06",
  "release": {
   "source": "CHANGELOG.md",
-  "status_date": "2026-11-04",
-  "section": "2026-11-04 (lab CI) — the full lab run at dea9a1e: four failing files, each fixed at its cause; the library republished from the merged tree, one cell moved",
+  "status_date": "2026-11-06",
+  "section": "2026-11-06 (IR 4.0.0) — `scope` required on every rule: WP1-01 closed the grant's way, all 154 shipped rules state `scope: mission`, and every stored document of an earlier era still reads and re-derives its recorded hash",
   "sections": [
+   "2026-11-06",
+   "2026-11-06",
+   "2026-11-06",
+   "2026-11-06",
+   "2026-11-06",
+   "2026-11-06",
+   "2026-11-06",
+   "2026-11-06",
+   "2026-11-06",
+   "2026-11-04",
+   "2026-11-04",
+   "2026-11-04",
    "2026-11-04",
    "2026-11-04",
    "2026-11-04",
@@ -99,7 +111,7 @@
  },
  "wp2": {
   "command": "python -m guardrail.compiler report --policies policies --budget 256 --exact",
-  "code_revision": "b3f6262cb687-dirty",
+  "code_revision": "65c7e4f83e4c-dirty",
   "budget_tokens": 256,
   "exact_counter": "openvla-llama2-sp@8f5e2869e180",
   "table_counter": "openvla-table-v1",
@@ -151,7 +163,7 @@
    "poses_per_check": 50,
    "machine": "Intel64 Family 6 Model 183 Stepping 1, GenuineIntel",
    "git": {
-    "rev": "b3f6262",
+    "rev": "65c7e4f",
     "dirty_guardrail": false
    },
    "command": "python experiments/bench_shield_50rules.py --horizon 5 --dt 0.1 --legacy-cap 40",
@@ -166,73 +178,73 @@
    "clear/_check": {
     "current": {
      "n": 1000,
-     "median_ms": 0.143,
-     "p99_ms": 0.261
+     "median_ms": 0.148,
+     "p99_ms": 0.2
     },
     "legacy": {
      "n": 40,
-     "median_ms": 199.151,
-     "p99_ms": 227.034
+     "median_ms": 200.471,
+     "p99_ms": 242.155
     },
     "floor": {
      "n": 1000,
-     "median_ms": 0.089,
-     "p99_ms": 0.822
+     "median_ms": 0.092,
+     "p99_ms": 0.164
     }
    },
    "near/_check": {
     "current": {
      "n": 1000,
-     "median_ms": 0.336,
-     "p99_ms": 0.894
+     "median_ms": 0.349,
+     "p99_ms": 0.802
     },
     "legacy": {
      "n": 40,
-     "median_ms": 217.685,
-     "p99_ms": 267.395
+     "median_ms": 206.517,
+     "p99_ms": 232.648
     },
     "floor": {
      "n": 1000,
-     "median_ms": 0.09,
-     "p99_ms": 0.301
+     "median_ms": 0.093,
+     "p99_ms": 0.156
     }
    },
    "near/filter": {
     "current": {
      "n": 300,
-     "median_ms": 4.043,
-     "p99_ms": 12.321
+     "median_ms": 5.282,
+     "p99_ms": 8.87
     },
     "legacy": {
      "n": 40,
-     "median_ms": 1062.727,
-     "p99_ms": 1196.567
+     "median_ms": 1024.731,
+     "p99_ms": 1069.878
     },
     "floor": {
      "n": 300,
-     "median_ms": 0.235,
-     "p99_ms": 0.78
+     "median_ms": 0.236,
+     "p99_ms": 0.59
     }
    },
    "grid/_check": {
     "current": {
      "n": 1000,
-     "median_ms": 0.309,
-     "p99_ms": 1.034
+     "median_ms": 0.293,
+     "p99_ms": 0.757
     },
     "legacy": {
      "n": 40,
-     "median_ms": 221.204,
-     "p99_ms": 245.401
+     "median_ms": 209.649,
+     "p99_ms": 250.248
     },
     "floor": {
      "n": 1000,
-     "median_ms": 0.089,
-     "p99_ms": 0.268
+     "median_ms": 0.091,
+     "p99_ms": 0.259
     }
    },
-   "code_sha": "b523cfbf4d5f6d0f",
-   "measured": "2026-11-04T12:45:51Z"
+   "code_sha": "b3b3d1e3e960c577",
+   "measured": "2026-11-06T20:24:34Z"
   },
   "default_3s": {
    "horizon_s": 3.0,
@@ -246,7 +258,7 @@
    "poses_per_check": 6,
    "machine": "Intel64 Family 6 Model 183 Stepping 1, GenuineIntel",
    "git": {
-    "rev": "b3f6262",
+    "rev": "65c7e4f",
     "dirty_guardrail": false
    },
    "command": "python experiments/bench_shield_50rules.py --horizon 3 --dt 0.5 --legacy-cap 100",
@@ -261,73 +273,73 @@
    "clear/_check": {
     "current": {
      "n": 1000,
-     "median_ms": 0.054,
-     "p99_ms": 0.114
+     "median_ms": 0.056,
+     "p99_ms": 0.089
     },
     "legacy": {
      "n": 100,
-     "median_ms": 13.106,
-     "p99_ms": 15.885
+     "median_ms": 13.489,
+     "p99_ms": 18.19
     },
     "floor": {
      "n": 1000,
-     "median_ms": 0.015,
-     "p99_ms": 0.02
+     "median_ms": 0.018,
+     "p99_ms": 0.041
     }
    },
    "near/_check": {
     "current": {
      "n": 1000,
-     "median_ms": 0.189,
-     "p99_ms": 0.508
+     "median_ms": 0.192,
+     "p99_ms": 0.422
     },
     "legacy": {
      "n": 100,
-     "median_ms": 32.384,
-     "p99_ms": 46.275
+     "median_ms": 32.064,
+     "p99_ms": 43.434
     },
     "floor": {
      "n": 1000,
      "median_ms": 0.029,
-     "p99_ms": 0.049
+     "p99_ms": 0.041
     }
    },
    "near/filter": {
     "current": {
      "n": 300,
-     "median_ms": 1.31,
-     "p99_ms": 2.517
+     "median_ms": 2.703,
+     "p99_ms": 5.315
     },
     "legacy": {
      "n": 100,
-     "median_ms": 162.628,
-     "p99_ms": 194.712
+     "median_ms": 162.102,
+     "p99_ms": 181.363
     },
     "floor": {
      "n": 300,
-     "median_ms": 0.096,
-     "p99_ms": 0.541
+     "median_ms": 0.102,
+     "p99_ms": 0.26
     }
    },
    "grid/_check": {
     "current": {
      "n": 1000,
-     "median_ms": 0.116,
-     "p99_ms": 0.392
+     "median_ms": 0.112,
+     "p99_ms": 0.393
     },
     "legacy": {
      "n": 100,
-     "median_ms": 32.477,
-     "p99_ms": 64.905
+     "median_ms": 31.911,
+     "p99_ms": 42.768
     },
     "floor": {
      "n": 1000,
-     "median_ms": 0.028,
-     "p99_ms": 0.151
+     "median_ms": 0.029,
+     "p99_ms": 0.047
     }
    },
-   "code_sha": "b523cfbf4d5f6d0f",
-   "measured": "2026-11-04T12:46:38Z"
+   "code_sha": "b3b3d1e3e960c577",
+   "measured": "2026-11-06T20:25:25Z"
   }
  },
  "bench_pick_rule": {
@@ -487,6 +499,7 @@
   "n_templates": 16,
   "stressors": [
    "battery_critical_at_s",
+   "fix_quality_reported",
    "gps_dropout_s",
    "gps_noise_m",
    "gust_mps",
@@ -559,7 +572,7 @@
   "duration_s": 239.9,
   "ticks": 2399,
   "policy_id": "follow-car-citylife-nfz",
-  "policy_version": "0.1.2",
+  "policy_version": "0.1.3",
   "policy_rules": 6,
   "zone_id": "nfz-frontage",
   "zone_vertices": [

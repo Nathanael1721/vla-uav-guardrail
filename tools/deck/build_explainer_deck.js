@@ -381,7 +381,12 @@ const TOP10 = [
  * An EXPLAINER_REPO copy (the tests' mutation check) is itself a snapshot of
  * the sources: there every file is read as it lies, so the copy holds the
  * pinned versions. facts.json names a pinned source "<file> (git <rev>)". */
-const PINNED = { [SW]: "335ec58", [PO]: "335ec58" };
+// docs/data/csp_kpis.json too (2026-11-07): the IR 4.0.0 regeneration of
+// 6 Nov (4ee949e: 32 policies, the naive cut at 144 tokens keeps 120/122 P0)
+// made the build refuse the pack's "104/105 at 120", which is what that file
+// said when the pack was made.
+const CSP_KPIS = "docs/data/csp_kpis.json";
+const PINNED = { [SW]: "335ec58", [PO]: "335ec58", [CSP_KPIS]: "335ec58" };
 const REPO_IS_COPY = Boolean(process.env.EXPLAINER_REPO);
 const pinOf = (file) => (!REPO_IS_COPY && PINNED[file]) || null;
 const sourceName = (file) => (pinOf(file) ? `${file} (git ${pinOf(file)})` : file);
