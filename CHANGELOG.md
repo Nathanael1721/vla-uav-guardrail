@@ -156,10 +156,14 @@ shipped change and recorded as one.
   test_bundle 58/58, test_csp 100/100, test_harness_service 59/59,
   test_replay 40/61, test_api 10/15, test_railinputs_node 13/16; the skips
   are fixtures a worktree lacks. With them read from the lab checkout:
-  test_policy_dsl_grant_form 68/69 against its reference repository,
-  test_replay 60/61 with a copy of its retarget_demo2 run, test_policy_hash
-  34/34 with that run's manifest; test_api 15/15 and test_railinputs_node
-  16/16 in the Python 3.12 env with fastapi and uvicorn.
+  test_policy_dsl_grant_form 69/69 against its reference repository (at
+  7e79fe0); with its 31 earlier flight bundles copied in, the on-disk test
+  reads 44 bundles (IR 2.1.0 x8, 3.0.0 x10, 3.1.0 x13, 4.0.0 x13) and
+  test_harnesstruth_bundles 12/12 flies its 2.1.0 bundle
+  fase3-sim-demo-v0.1.1 with hot-applied zones; test_replay 60/61 with a
+  copy of its retarget_demo2 run, test_policy_hash 34/34 with that run's
+  manifest; test_api 15/15 and test_railinputs_node 16/16 in the Python 3.12
+  env with fastapi and uvicorn.
 
 #### Limits
 - Scope is declared, not enforced differently: the Shield enforces every
