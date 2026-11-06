@@ -238,6 +238,7 @@ constraints:
   - id: kin-caps
     type: kinematic_envelope
     constraint_type: hard
+    scope: mission
     priority: P1
     violation_action: repair
     speed_max_mps: 5.0

@@ -1522,8 +1522,9 @@ def test_geometry_ref_resolves_and_refuses_a_stale_generation():
     csp = ConstraintCompiler(pol).compile_csp(_mission(), now=MONDAY_0800)
     p0 = {p.id: p for p in csp.P0_constraints}
     ref = p0["nfz-school"].geometry_ref
-    # corridor-survey 0.1.2 since the WGS84 conversion (IR schema 3.1.0, 2026-11-03)
-    assert ref in ("coarse:nfz-school@v0.1.2/g0", "fine:nfz-school@v0.1.2/g0"), ref
+    # corridor-survey 0.1.2 since the WGS84 conversion (IR schema 3.1.0,
+    # 2026-11-03), 0.1.3 since its rules state scope (IR schema 4.0.0, 2026-11-06)
+    assert ref in ("coarse:nfz-school@v0.1.3/g0", "fine:nfz-school@v0.1.3/g0"), ref
     pts = K.resolve_geometry_ref(pol, ref)
     assert len(pts) >= 3
     assert p0["corridor-survey-route"].geometry_ref.startswith("fine:"), \

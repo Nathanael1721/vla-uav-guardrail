@@ -103,6 +103,7 @@ constraints:
   - id: nfz-ahead
     type: polygon_fence
     constraint_type: hard
+    scope: mission
     priority: P0
     violation_action: repair
     vertices:
@@ -414,6 +415,7 @@ constraints:
   - id: nfz-ahead
     type: polygon_fence
     constraint_type: hard
+    scope: mission
     priority: P0
     violation_action: repair
     vertices:
@@ -427,6 +429,7 @@ constraints:
   - id: nfz-pad
     type: polygon_fence
     constraint_type: hard
+    scope: mission
     priority: P0
     violation_action: repair
     vertices:
@@ -440,6 +443,7 @@ constraints:
   - id: nfz-window
     type: polygon_fence
     constraint_type: hard
+    scope: mission
     priority: P0
     violation_action: repair
     vertices:
@@ -457,6 +461,7 @@ constraints:
   - id: nfz-low
     type: polygon_fence
     constraint_type: hard
+    scope: mission
     priority: P0
     violation_action: repair
     vertices:
@@ -986,6 +991,7 @@ constraints:
   - id: standoff-any
     type: subject_standoff
     constraint_type: hard
+    scope: mission
     priority: P0
     violation_action: repair
     subject_class: "*"

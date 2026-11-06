@@ -344,6 +344,7 @@ constraints:
   - id: alt-ceiling
     type: altitude_envelope
     constraint_type: hard
+    scope: mission
     priority: P0
     violation_action: loiter
     alt_min_m: 1

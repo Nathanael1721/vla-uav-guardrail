@@ -1017,7 +1017,7 @@ def _spawn_zone(payload: dict, k: int, st: State, heading: tuple[float, float]
             "priority": payload.get("priority", "P0"), "vertices": verts,
             "constraint_type": payload.get("constraint_type", "hard"),
             "violation_action": payload.get("violation_action", "repair"),
-            "scope": "mission",          # required since IR schema 4.0.0
+            "scope": payload.get("scope", "mission"),   # required since IR 4.0.0
             "altitude_floor_m": float(payload.get("altitude_floor_m", 0.0)),
             "altitude_ceiling_m": float(payload.get("altitude_ceiling_m", 1000.0)),
             "margin_m": float(payload.get("margin_m", 1.0))}

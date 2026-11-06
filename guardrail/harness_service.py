@@ -453,7 +453,7 @@ def kpi_row(rollup: dict, family: str, cell: str, shield: str) -> dict:
 _CARRIED = {
     "dynamic_nfz": {"id", "type", "vertices", "altitude_floor_m", "altitude_ceiling_m",
                     "margin_m", "priority", "constraint_type", "violation_action",
-                    "motion"},
+                    "scope", "motion"},
     "time_window_switch": {"id", "type", "target_id", "active", "valid_time"},
     "corridor_swap": {"id", "type", "target_id", "centerline", "width_m",
                       "altitude_floor_m", "altitude_ceiling_m", "valid_time"},
@@ -462,16 +462,14 @@ _CARRIED = {
 # runner's switch and swap events do not carry them: apply_event writes them
 # at these values (what they defaulted to before), so a rule setting exactly
 # these is carried, and any other value is not. The same for `scope`, which
-# every rule states since IR schema 4.0.0 and no runner event carries: the
-# runner writes "mission" on every rule it builds (a zone, switch or swap
-# applied during an episode belongs to that mission; an absent scope meant
-# "mission" before), so a hot-applied rule of that scope is carried and one of
-# another scope is not.
-_RUNNER_SCOPE = {"scope": "mission"}
-_RUNNER_WRITES = {"dynamic_nfz": dict(_RUNNER_SCOPE),
-                  **{kind: {"constraint_type": "hard", "priority": "P0",
-                            "violation_action": "project_fix", **_RUNNER_SCOPE}
-                     for kind in ("time_window_switch", "corridor_swap")}}
+# every rule states since IR schema 4.0.0: a zone's payload carries it, but
+# the switch and swap events do not, and the runner writes "mission" on those
+# (a switch or swap applied during an episode belongs to that mission; an
+# absent scope meant "mission" before), so a hot-applied switch or swap of
+# that scope is carried and one of another scope is not.
+_RUNNER_WRITES = {kind: {"constraint_type": "hard", "priority": "P0",
+                         "violation_action": "project_fix", "scope": "mission"}
+                  for kind in ("time_window_switch", "corridor_swap")}
 
 
 def _window_of(rule) -> dict | None:
@@ -512,7 +510,7 @@ def scenario_event_from_rule(rule, at_sim_t: float) -> dict:
             "altitude_ceiling_m": float(rule.altitude_ceiling_m),
             "margin_m": float(rule.margin_m), "priority": rule.priority,
             "constraint_type": rule.constraint_type,
-            "violation_action": rule.violation_action}
+            "violation_action": rule.violation_action, "scope": rule.scope}
         if rule.motion is not None:
             payload["motion"] = rule.motion.model_dump(mode="json")
         return {"at_sim_t": at_sim_t, "type": "spawn_polygon_fence", "payload": payload}

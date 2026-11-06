@@ -109,6 +109,7 @@ constraints:
   - id: standoff-any
     type: subject_standoff
     constraint_type: hard
+    scope: mission
     priority: P0
     violation_action: repair
     subject_class: "*"
