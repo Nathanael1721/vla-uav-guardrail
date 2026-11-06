@@ -1154,7 +1154,58 @@ def _edge_scripts():
         "X7": run(None, [(0.0, dict(stuck, unsafe_depth_m=1.0)),
                          (1.0, dict(stuck, unsafe_depth_m=1.5)),
                          (2.0, dict(stuck, unsafe_depth_m=2.0))]),
+        # PROTOTYPE (2026-11-06): a position that can no longer be certified.
+        "X8": run(None, [(0.0, rep), (0.1, dict(rep, position_lost="no valid fix"))]),
     }
+
+
+def test_x8_returns_from_normal_brake_and_loiter_on_a_lost_position():
+    """PROTOTYPE (2026-11-06). X8 takes Normal, Brake and Loiter to RTL when
+    the position input can no longer be certified (TickInput.position_lost),
+    before any rule's own answer; a fail-safe already flying is left alone,
+    and a return that fails still lands by G6."""
+    lost = dict(position_lost="no valid fix")
+    f = EscalationFSM()
+    o = f.tick(0.0, **lost)
+    assert (o.state, o.edge, o.set_mode) == (S.RTL, "X8", "RTL"), o.reason
+    assert o.record["position_lost"] == "no valid fix"
+    o = f.tick(0.1, rtl_failed=True, **lost)
+    assert (o.state, o.edge) == (S.LAND, "G6"), o.reason
+    f = EscalationFSM()
+    f.tick(0.0, "repaired", [hit()], SMALL)
+    o = f.tick(0.1, "repaired", [hit()], SMALL, **lost)
+    assert (o.state, o.edge) == (S.RTL, "X8"), o.reason
+    f = EscalationFSM()
+    to_loiter_via_g3(f)
+    o = f.tick(0.3, **lost)
+    assert (o.state, o.edge) == (S.RTL, "X8"), o.reason
+    f = EscalationFSM()
+    f.tick(0.0, "blocked", [hit(action="land")])
+    o = f.tick(0.1, **lost)
+    assert o.state == S.LAND and o.edge is None, o.reason
+    # Without the input every record is as it was.
+    f = EscalationFSM()
+    assert "position_lost" not in f.tick(0.0).record
+
+
+def test_noise_marginal_clean_ticks_do_not_start_new_onsets():
+    """PROTOTYPE (2026-11-06). The thrash script that takes G2 (three onsets a
+    debounce apart) does not when every clean tick between them was clean of
+    the zone by less than the position's own noise (noise_marginal): those
+    returns are the same violation seen through noise, not a pilot fighting
+    the Shield. Unmarked, the same ticks still take G2."""
+    rep = dict(outcome="repaired", violations=[hit()], magnitude=SMALL)
+    for marginal, want in ((False, "G2"), (True, None)):
+        f = EscalationFSM()
+        edges = []
+        for t, kw in ((0.0, rep), (0.1, {}), (1.2, rep), (1.3, {}), (2.4, rep)):
+            if not kw:
+                kw = dict(noise_marginal=marginal)
+            o = f.tick(t, **kw)
+            if o.edge:
+                edges.append(o.edge)
+        got = edges[-1] if edges and edges[-1] != "G1" else None
+        assert got == want, (marginal, edges)
 
 
 def test_every_edge_is_driven():

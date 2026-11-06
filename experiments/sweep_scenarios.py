@@ -1734,7 +1734,10 @@ def _episode(sc, defaults, seed: int, arm: dict | None, box: dict,
             seen = State(x=seen.x + (rng_gps.gauss(0, sigma) if sigma else 0.0),
                          y=seen.y + (rng_gps.gauss(0, sigma) if sigma else 0.0),
                          up=seen.up + (rng_gps.gauss(0, sigma) if sigma else 0.0),
-                         yaw_deg=seen.yaw_deg)
+                         yaw_deg=seen.yaw_deg,
+                         # PROTOTYPE (2026-11-06): the accuracy a receiver
+                         # reports with the fix (GPS_RAW_INT.h_acc).
+                         pos_sigma_m=sigma if sigma else None)
         if drop is not None:
             # GPS denial: hold the last fix. The noise above is still drawn on
             # these ticks, so the noise sequence after the window is the same
@@ -1745,7 +1748,10 @@ def _episode(sc, defaults, seed: int, arm: dict | None, box: dict,
                     events.append({"t": round(t_now, 4), "type": "gps_dropout_start",
                                    "held": [round(seen.x, 3), round(seen.y, 3),
                                             round(seen.up, 3)]})
-                seen = frozen
+                # PROTOTYPE (2026-11-06): the frozen pose is flagged as not a
+                # current fix (State.fix_ok), as a rail reads it from the
+                # pose's stamp age or GPS_RAW_INT.fix_type.
+                seen = frozen.model_copy(update={"fix_ok": False})
                 dropout_ticks += 1
             elif frozen is not None:
                 frozen = None

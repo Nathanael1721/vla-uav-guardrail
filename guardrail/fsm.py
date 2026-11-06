@@ -479,6 +479,21 @@ EDGES: dict[str, tuple[str, str, str, str]] = {
            "position illegal for >= T_recover and its illegal depth GROWING (fitted slope "
            "at two standard errors, and a minimum rise) while the Shield intervenes on a "
            "hard rule (a recovery losing ground)"),
+    # PROTOTYPE (2026-11-06): the Shield's position input cannot be trusted
+    # (no valid fix: its error dead-reckoned on what the Shield streamed since
+    # the last valid one; or a reported accuracy whose 3 sigma) exceeds a hard
+    # P0 zone's margin with that zone's boundary within the error: the margin
+    # can no longer certify the rule (docs/RUBRIC-failsafe.md E3), so no
+    # repair computed from that position is safe (p1). RTL: the autopilot
+    # navigates on its own estimate; when the return fails (rtl_path), G6
+    # lands it, as for any RTL. (Where the AUTOPILOT has lost its own fix -
+    # GPS_RAW_INT.fix_type < 3, EKF without absolute position - RTL cannot be
+    # flown and ArduPilot's EKF failsafe lands, FS_EKF_ACTION = 1: a second
+    # input, not modelled here.)
+    "X8": ("Normal|Brake|Loiter", "RTL", "extension",
+           "position knowledge lost: the position error (stale or invalid fix, or "
+           "reported accuracy) exceeds a hard P0 zone's margin with its boundary "
+           "within that error"),
 }
 
 
@@ -1000,8 +1015,23 @@ class TickInput:
     stop_illegal: bool = False
     unsafe_depth_m: float | None = None
     hold_legal: bool | None = None
+    # PROTOTYPE (2026-11-06): why the position can no longer be certified
+    # (edge X8), or None - every caller before it, and every tick with a
+    # valid fix. Set by Shield._position_verdict from State.fix_ok.
+    position_lost: str | None = None
+    # PROTOTYPE (2026-11-06): a clean tick whose request is clean of a hard
+    # zone by less than 3 sigma of the reported position accuracy
+    # (Shield._noise_marginal). The next violation of it is then the same
+    # one seen through noise, not a new N-in-T onset. False: as before.
+    noise_marginal: bool = False
 
     def __post_init__(self) -> None:
+        if not isinstance(self.noise_marginal, bool):
+            raise ValueError(f"noise_marginal must be a bool, got {self.noise_marginal!r}")
+        if self.position_lost is not None and not (
+                isinstance(self.position_lost, str) and self.position_lost):
+            raise ValueError(f"position_lost must be a non-empty reason or None, "
+                             f"got {self.position_lost!r}")
         if self.hold_legal is not None and not isinstance(self.hold_legal, bool):
             raise ValueError(f"hold_legal must be a bool or None, got {self.hold_legal!r}")
         if isinstance(self.t, bool) or not isinstance(self.t, (int, float)) \
@@ -1705,7 +1735,9 @@ class EscalationFSM:
             onset = rising and (self._last_onset is None
                                 or t - self._last_onset >= cfg.onset_clear_s - EPS)
         merged = rising and not onset
-        self._prev_hard = hard_violated
+        # PROTOTYPE: a clean tick within the position's own noise of a hard
+        # zone keeps the violation "on" for onset counting (noise_marginal).
+        self._prev_hard = hard_violated or inp.noise_marginal
         if onset:
             self._last_onset = t
             self._events.append(t)
@@ -1812,6 +1844,12 @@ class EscalationFSM:
             "note": inp.note,
             "fsm_config_hash": cfg.digest,
         }
+        if inp.position_lost is not None:
+            # PROTOTYPE (X8's input), only on ticks that carry it, so every
+            # other record is byte for byte what it was.
+            record["position_lost"] = inp.position_lost
+        if inp.noise_marginal:
+            record["noise_marginal"] = True
         if before == FSMState.LOITER:
             # Loiter's own "cleared" clock (loiter_clear "acceptable",
             # 2026-11-02): the request acceptable and the position legal for
@@ -2035,6 +2073,12 @@ class EscalationFSM:
         state = self._state
         direct = {"land": S.LAND, "RTL": S.RTL, "loiter": S.LOITER}
 
+        if inp.position_lost and state in (S.NORMAL, S.BRAKE, S.LOITER):
+            # X8 (PROTOTYPE): before any rule's own answer - every one of them
+            # was computed from a position that can no longer be certified.
+            return S.RTL, "X8", (f"position knowledge lost: {inp.position_lost}; "
+                                 f"returning on the autopilot's own estimate")
+
         if state == S.NORMAL:
             if strongest in direct:
                 edge = {"land": "G12", "RTL": "G11", "loiter": "X4"}[strongest]
@@ -2245,7 +2289,9 @@ def tick_input_from_decision(t: float, decision: Any, policy: Any,
                              stop_illegal: Any = None,
                              caps: "KinematicCaps | None | bool" = None,
                              unsafe_depth_m: float | None = None,
-                             hold_legal: bool | None = None) -> TickInput:
+                             hold_legal: bool | None = None,
+                             position_lost: str | None = None,
+                             noise_marginal: bool = False) -> TickInput:
     """Map one `guardrail.shield.ShieldDecision` onto a TickInput.
 
     blocked   the Shield braked, or its own re-check of the emitted action is
@@ -2329,7 +2375,8 @@ def tick_input_from_decision(t: float, decision: Any, policy: Any,
     return TickInput(t=t, outcome=outcome, violations=hits, magnitude=mag,
                      rtl_failed=rtl_failed, home_reached=home_reached,
                      landed=landed, note=note, stop_illegal=bool(stop),
-                     unsafe_depth_m=unsafe_depth_m, hold_legal=hold_legal)
+                     unsafe_depth_m=unsafe_depth_m, hold_legal=hold_legal,
+                     position_lost=position_lost, noise_marginal=bool(noise_marginal))
 
 
 # --------------------------------------------------------------------------- #

@@ -140,6 +140,27 @@ class State(BaseModel):
     # is not refused here - x and y are not either - but the Shield ignores
     # it and counts it (Shield.n_velocity_nonfinite).
     velocity: tuple[float, float, float] | None = None
+    # PROTOTYPE (2026-11-06): is (x, y, up) a CURRENT, VALID position fix?
+    # None (the default, every caller before it): the rail does not say, and
+    # the Shield trusts the position exactly as before. False: it is not - a
+    # stale pose (a bridge forwarding its last sample; the pose's own stamp
+    # older than the monitor period), or the autopilot reporting no 3D fix
+    # (MAVLink GPS_RAW_INT.fix_type < 3, MAVROS /mavros/gpsstatus/gps1/raw or
+    # the NavSatFix status of /mavros/global_position/raw/fix) or an EKF
+    # without its absolute horizontal position (EKF_STATUS_REPORT flags).
+    # The Shield then bounds how far the aircraft may be from this position by
+    # what it has itself streamed since the last valid fix, and escalates when
+    # that error can no longer be certified by a hard P0 rule's margin (the
+    # FSM's X8; docs/RUBRIC-failsafe.md E3).
+    fix_ok: bool | None = None
+    # PROTOTYPE (2026-11-06): the reported 1-sigma HORIZONTAL accuracy of
+    # (x, y), metres - GPS_RAW_INT.h_acc (MAVLink 2 extension, mm), the
+    # NavSatFix position_covariance MAVROS builds from it, or the EKF's own
+    # position variance. None (the default): not reported, nothing changes.
+    # Read by the Shield for the FSM's onset hysteresis (a ring re-touched
+    # within 3 sigma is the same violation seen through noise) and for X8
+    # (3 sigma beyond a hard P0 margin near its boundary).
+    pos_sigma_m: float | None = None
 
     @model_serializer(mode="wrap")
     def _omit_absent_velocity(self, handler):
@@ -149,6 +170,10 @@ class State(BaseModel):
         out = handler(self)
         if isinstance(out, dict) and out.get("velocity", 0) is None:
             out.pop("velocity")
+        if isinstance(out, dict) and out.get("fix_ok", 0) is None:
+            out.pop("fix_ok")
+        if isinstance(out, dict) and out.get("pos_sigma_m", 0) is None:
+            out.pop("pos_sigma_m")
         return out
 
 

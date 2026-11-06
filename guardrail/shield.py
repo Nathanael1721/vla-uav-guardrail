@@ -720,7 +720,16 @@ _REPAIR_PASSES = 3
 # How a recovery from outside an altitude band climbs (Shield's recovery_law):
 # "cap" at the climb cap (since 2026-10-29), "lookahead" the band in one
 # lookahead (before; an exponential approach, WP3-17).
-RECOVERY_LAWS = ("cap", "lookahead")
+# "cap_all" (PROTOTYPE, 2026-11-06, not the default): "cap" for the altitude
+# band, and the same reasoning applied to the three LATERAL recoveries that
+# still ran slower than their cap - GeofenceEscape at the speed cap instead of
+# the reference's fixed 2.0 m/s, StandoffRecover at the speed cap instead of
+# (ring - d) / L floored at 0.5 m/s, and CorridorReturn at the fastest inward
+# speed whose lookahead endpoint stays a re-entry margin short of the far
+# wall (the band rule's far-edge hold) instead of (d - half) / L floored at
+# 0.5 m/s. Each is still a FLOOR (a faster legal escape is never slowed), and
+# recoveries stay exempt from theta as before.
+RECOVERY_LAWS = ("cap", "lookahead", "cap_all")
 
 # Length of the sliding window of recent ticks. Safety Shield page, node
 # architecture: "Sliding-window buffer - last 50 actions + predicted
@@ -1759,6 +1768,13 @@ class Shield:
         # the opening and after it. Kept by filter() only
         # (_remember_openings), cleared by reset_episode().
         self._opened_on: set[str] = set()
+        # PROTOTYPE (2026-11-06), position knowledge (State.fix_ok, the FSM's
+        # X8): the last position given as a valid fix, the dead reckoning
+        # since it on what this Shield streamed (None while the fix is
+        # valid), and what it streamed on the last tick (t, vx, vy).
+        self._pk_good: tuple[float, float] | None = None
+        self._pk: dict | None = None
+        self._pk_cmd: tuple[float, float, float] | None = None
 
         if escalation is True:
             cfg = _fsm.FSMConfig()
@@ -4205,6 +4221,10 @@ class Shield:
                 # Against a zone that follows the aircraft outward, the exit
                 # speed is raised by the zone's own outward speed.
                 spd = cap_out if opened else min(2.0 + max(0.0, zx * ox + zy * oy), cap)
+                if self.recovery_law == "cap_all":
+                    # PROTOTYPE (RECOVERY_LAWS): every zone is left at the
+                    # speed cap, not only one whose window opened on it.
+                    spd = cap_out
                 out_now = vx * ox + vy * oy          # outward speed commanded
                 probe = Action4D(vx=vx, vy=vy, vz_up=a.vz_up, yaw_rate=a.yaw_rate)
                 if opened and not self._check_fence(f, poly, state, probe, fposes, ring):
@@ -4557,6 +4577,11 @@ class Shield:
             # range, the same reasoning as the clearance ring's push-out.
             cap = min((k.speed_max_mps for k in self._kins), default=4.0)
             want = min(cap, max(0.5, (ring - d) / max(self.lookahead_s, 1e-3)))
+            if self.recovery_law == "cap_all":
+                # PROTOTYPE (RECOVERY_LAWS): open the range at the speed cap.
+                # Radially outward from a point subject the range only grows,
+                # so there is no far edge to hold short of.
+                want = cap
             # FLOOR the opening rate, never assign it.
             #
             # `-closing` is the opening speed already commanded. Writing the
@@ -4646,6 +4671,8 @@ class Shield:
         what is left. With no velocity, exactly the stationary action."""
         cap = min((k.speed_max_mps for k in self._kins), default=4.0)
         want = min(cap, max(0.5, (ring - d) / max(self.lookahead_s, 1e-3)))
+        if self.recovery_law == "cap_all":
+            want = cap                     # PROTOTYPE (RECOVERY_LAWS)
         _, _, svx, svy = self._subject_track()
         rx, ry = a.vx - svx, a.vy - svy
         h = math.hypot(rx, ry)
@@ -4783,6 +4810,13 @@ class Shield:
 
             if d > half + 1e-9:
                 need = max((d - half) / L, 0.5)
+                if self.recovery_law == "cap_all":
+                    # PROTOTYPE (RECOVERY_LAWS): the fastest inward speed, up
+                    # to the cap, whose lookahead endpoint stays a re-entry
+                    # margin short of the FAR wall - the altitude band's
+                    # far-edge hold (_recovery_vz) - never below the old law.
+                    m = self._reentry_margin(-half, half)
+                    need = max(need, min(cap, (d + half - m) / L))
                 excursion, recovering = d - half, True
             elif d + outward * L > half + 1e-9:
                 need = 0.0
@@ -5865,6 +5899,9 @@ class Shield:
             self._last_caps = self._applied_caps(tick, decision)
             decision = self._escalate(tick, dstate, decision, rtl_failed=rtl_failed,
                                       home_reached=home_reached, landed=landed)
+            # PROTOTYPE (State.fix_ok): what this tick streams, for the dead
+            # reckoning while the position is not a valid fix.
+            self._note_streamed(tick, decision, dstate)
             # The forecast's inputs the State does not hold (TickRecord.pipe),
             # for a tick that forecast from a measured velocity only.
             pipe = (tuple(self.pipe()) if self._velocity_of(dstate) is not None
@@ -6027,6 +6064,7 @@ class Shield:
             self._buffer.clear()
             self._flown.clear()
             self._opened_on.clear()
+            self._pk_good = self._pk = self._pk_cmd = None
             rt = self._rt
             if rt.moving_ids and self._t_last is not None:
                 # Pin every moving zone to an explicit anchor (a policy-authored
@@ -6908,6 +6946,136 @@ class Shield:
             k for k in tick.rules("kins")
             if self._act(rt, k.id) != "monitor_only" and k.id not in tick.given_up)
 
+    def _position_verdict(self, tick: _Tick, state: State,
+                          raw: "Action4D | None" = None) -> "tuple[str, str] | None":
+        """PROTOTYPE (2026-11-06): the escalation FSM's X8 input, as
+        (reason, rule id), or None.
+
+        None while the position is a valid fix (State.fix_ok True, or None:
+        not reported, every caller before the field) with no accuracy
+        reported. With fix_ok False the aircraft is dead-reckoned from the last
+        valid fix on what this Shield itself streamed since (`_note_streamed`:
+        its command; a stop or an in-place hold streams 0, a moved hold in
+        transit its plan's speed), and the position handed in is wrong by
+        err = |estimate - handed|. With a reported accuracy
+        (State.pos_sigma_m) err is at least 3 sigma, judged at the position
+        and along the request's own forecast (the rubric reads noise-E3
+        against the planned route).
+
+        The rubric's E3 (docs/RUBRIC-failsafe.md): a hard P0 zone's margin is
+        sized for a position-error budget, so once err exceeds that margin
+        while the zone's boundary lies within err of the estimate, the margin
+        no longer certifies the rule and no repair computed from the handed
+        position can be trusted (p1, "repair is unsafe"). The FSM's X8 then
+        returns (RTL, on the autopilot's own estimate), and G6 lands it if
+        the return fails. Until the error reaches a boundary nothing changes,
+        so a fix that comes back in time (or one frozen on a held aircraft,
+        whose estimate does not move) costs nothing."""
+        t = tick.t
+        prev, self._pk_cmd = self._pk_cmd, None      # _note_streamed sets it again
+        sigma = getattr(state, "pos_sigma_m", None)
+        noise = 3.0 * float(sigma) if sigma is not None and sigma > 0 else 0.0
+        if getattr(state, "fix_ok", None) is not False:
+            self._pk_good = (state.x, state.y)
+            self._pk = None
+            if not noise:
+                return None
+            # A valid fix with a reported accuracy: the rubric's E3 for white
+            # noise reads 3 sigma as the error, at the position as given.
+            ex, ey, err, since = state.x, state.y, noise, None
+            # ...and along the motion asked for: the rubric reads noise-E3
+            # against the PLANNED route, and the Shield's view of the plan is
+            # the request's own forecast (a pass within the error of the
+            # boundary is one the margin cannot certify).
+            plan = raw
+        else:
+            plan = None
+            if self._pk is None:
+                ax, ay = self._pk_good if self._pk_good is not None else (state.x, state.y)
+                self._pk = {"anchor": (ax, ay), "dx": 0.0, "dy": 0.0, "since": t}
+            pk = self._pk
+            if prev is not None and t > prev[0]:
+                pk["dx"] += prev[1] * (t - prev[0])
+                pk["dy"] += prev[2] * (t - prev[0])
+            ex, ey = pk["anchor"][0] + pk["dx"], pk["anchor"][1] + pk["dy"]
+            err = max(math.hypot(ex - state.x, ey - state.y), noise)
+            since = pk["since"]
+        rt = tick.rt
+        p = Point(ex, ey)
+        poses = None
+        for r in self._zones_now_in(tick, state.up):
+            f = r.rule
+            if not rt.hard.get(f.id, True) or self._act(rt, f.id) == "monitor_only":
+                continue
+            if getattr(f, "priority", "P0") != "P0":
+                continue
+            margin = float(getattr(f, "margin_m", 0.0) or 0.0)
+            if not err > margin:
+                continue
+            dist = r.polygon.distance(p)            # 0 inside
+            if plan is not None and dist > err:
+                if poses is None:
+                    poses = [Point(q.x, q.y)
+                             for _, q in self._predict(state, _sanitise(plan)[0])]
+                dist = min([dist] + [r.polygon.distance(q) for q in poses])
+            if dist <= err:
+                what = (f"no valid fix for {t - since:.1f} s: the position handed in is "
+                        f"{err:.1f} m from the dead-reckoned one" if since is not None
+                        else f"reported accuracy 3 sigma = {err:.1f} m")
+                return (f"{what}, beyond {f.id}'s {margin:g} m margin, with its "
+                        f"boundary {dist:.1f} m from the estimate - the margin no "
+                        f"longer certifies it", f.id)
+        return None
+
+    def _noise_marginal(self, tick: _Tick, state: State, d: ShieldDecision) -> bool:
+        """PROTOTYPE (2026-11-06): with a reported position accuracy
+        (State.pos_sigma_m), is this tick's request clean of every hard zone
+        by less than 3 sigma - a verdict the position's own noise could flip?
+        The FSM then does not count the next violation of the same ring as a
+        new N-in-T onset (TickInput.noise_marginal): N-in-T is for a pilot
+        that keeps re-violating, and a ring re-touched inside the position's
+        own uncertainty is the same violation seen through noise (rubric N2,
+        N5). False with no accuracy reported, so every other run is as before."""
+        sigma = getattr(state, "pos_sigma_m", None)
+        if sigma is None or not sigma > 0:
+            return False
+        rt = tick.rt
+        if any(rt.hard.get(v.rule_id, True) and self._act(rt, v.rule_id) != "monitor_only"
+               for v in d.violations):
+            return False                    # violated: not a clean tick
+        zones = [r for r in self._zones_now_in(tick, state.up)
+                 if rt.hard.get(r.rule.id, True)
+                 and self._act(rt, r.rule.id) != "monitor_only"]
+        if not zones:
+            return False
+        ruler = ZoneRuler(zones)
+        raw, _ = _sanitise(d.raw)
+        band = 3.0 * float(sigma)
+        return any(ruler.distance(p.x, p.y) <= band for _, p in self._predict(state, raw))
+
+    def _note_streamed(self, tick: _Tick, d: ShieldDecision, state: State) -> None:
+        """PROTOTYPE (2026-11-06): what this tick hands the aircraft, for the
+        dead reckoning of _position_verdict - the command streamed, or with
+        the autopilot holding, 0 (in place) or the transit to a moved hold
+        point at its plan's speed. Only read while State.fix_ok is False."""
+        cmd = getattr(d, "command", None)
+        vx = vy = 0.0
+        if cmd is not None:
+            vx, vy = float(cmd.vx), float(cmd.vy)
+        elif self.fsm is not None and self.fsm.state is _fsm.FSMState.LOITER:
+            h = self.fsm.hold
+            if (h is not None and h.kind == "moved" and h.speed_mps
+                    and h.t_s is not None and tick.t < h.t_s + h.travel_s):
+                pk = self._pk
+                ex = (pk["anchor"][0] + pk["dx"]) if pk else state.x
+                ey = (pk["anchor"][1] + pk["dy"]) if pk else state.y
+                dx, dy = h.x - ex, h.y - ey
+                n = math.hypot(dx, dy)
+                if n > 1e-9:
+                    vx, vy = dx / n * h.speed_mps, dy / n * h.speed_mps
+        if math.isfinite(vx) and math.isfinite(vy):
+            self._pk_cmd = (tick.t, vx, vy)
+
     def _escalate(self, tick: _Tick, state: State, d: ShieldDecision, *,
                   rtl_failed: bool = False, home_reached: bool = False,
                   landed: bool = False) -> ShieldDecision:
@@ -6943,13 +7111,16 @@ class Shield:
                 # without the velocity. Its inputs keep their meaning.
                 unsafe = self._check(self._positional(state), BRAKE)
             caps = self._applied_caps(tick, d)
+            lost = self._position_verdict(tick, state, d.raw)
             inp = _fsm.tick_input_from_decision(
                 tick.t, d, tick.rt, horizon_s=self.theta_horizon_s,
                 stop_illegal=unsafe, rtl_failed=bool(rtl_failed),
                 home_reached=bool(home_reached), landed=bool(landed),
                 caps=caps if caps is not None else False,
                 unsafe_depth_m=self._unsafe_depth_in(state, unsafe),
-                hold_legal=self._hold_legal(tick))
+                hold_legal=self._hold_legal(tick),
+                position_lost=lost[0] if lost else None,
+                noise_marginal=self._noise_marginal(tick, state, d))
             out = self.fsm.step(inp)
             rec = out.record
             if self.fsm.needs_hold:
