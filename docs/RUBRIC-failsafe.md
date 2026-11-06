@@ -286,3 +286,98 @@ cells, smoke 56, nightly 672 cell-seeds).
   yet (docs/DESIGN-escalation-fsm.md, "Where each rail's signal lives"),
   and ArduPilot's own EKF failsafe is still not modelled.
 - Nothing here is KPI-grade: the grant's KPI is measured on the hil topology.
+
+## 7. PROPOSED, NOT ADOPTED: E5 read on the flight the grant prescribes (draft, 2026-11-06)
+
+**Status: a draft for the user's decision. It is not the rubric.** Sections
+1-6 are the rubric; nothing in them changes unless this is adopted. This
+section exists only on the branch `e5-prescribed-flight-proposal`, which
+also carries the tool, labels and tests that would go with it, so the
+numbers below are measured, not estimated.
+
+**The question.** E5 asks whether the planner keeps requesting an action the
+Shield may not fly for the operator timeout plus one control period. Section
+3 reads it on the flight *without a fail-safe*: the Shield's projection flown
+every tick. On that flight an over-theta repair is flown - which is exactly
+what the grant says does not happen (Safety Shield p4: "If ... > threshold,
+or no operator converges, the Shield abandons projection and triggers
+fail-safe"). The fifteen remaining false triggers (section 5,
+rail-mission-stub-vla and standoff-approach-angles 7 m pedestrian) are the
+cells where this matters: flown with the over-theta projection the aircraft
+is taken round the zone in 10.9 s / 1.5 s of unsafe requests (N1), while
+flown as the grant prescribes - projection abandoned, the aircraft held -
+the request stays over theta past the timeout.
+
+**The proposed reading.** E5 is read on the *prescribed* flight
+(`tools/failsafe_rubric.py`, `prescribed`):
+
+- on a tick whose request the Shield may not fly (the E5 tick of section 2:
+  a hard rule's repair over theta or not converged, or a hard `loiter` rule
+  violated), the projection is not flown and the aircraft is held - a stop,
+  as Brake and the autopilot's Loiter hold it on the ideal vehicle - unless
+  a stop there is illegal, where the Shield's own action flies (a hold
+  cannot);
+- on every other tick the Shield's action flies: projection resumes the
+  tick the request is acceptable again;
+- nothing reads the escalation FSM: not its state, edges, T_recover,
+  N-in-T or the Loiter timeout. The flight is the grant's prescription, not
+  this FSM's implementation of it, so a label still cannot follow from what
+  the FSM did.
+
+E5 holds when the longest unbroken spell of such requests on that flight
+reaches `loiter_timeout_s` + 0.1 s (30.1 s). E1-E4 are read as before (E1
+and E3 on the flight without a fail-safe).
+
+**Why it is not circular.** The objection to judging E5 on the FSM's own
+flight (section 3) is that the FSM's hold makes the request persist, so the
+label would follow from the FSM. The prescribed flight holds too - that is
+the point of the grant's Loiter -> RTL timeout: a planner that keeps asking
+for an unsafe repair while held is the case the operator timeout exists to
+end. What the proposal removes is every choice of this implementation:
+it holds on the grant's own condition (the E5 tick) and resumes on its
+negation, with no timers or counters of ours.
+
+**What it costs.** It labels "expected" a planner whose own path would have
+been safe had the projection been flown over theta - the rail mission's stub
+is taken round the zone in 10.9 s on that flight. Whether the KPI should
+count that as a needed fail-safe is the decision. The decided theta basis
+is unchanged either way.
+
+**Labels it moves** (`tools/failsafe_rubric.py`, both readings printed;
+library seed 0, smoke, nightly seeds 1001-1003; run on the Shield and FSM
+of e43bceb, which nothing up to c07998d changes on Python 3.10): 15
+episodes, every one from "not expected" (N1) to "expected" (E5), none the
+other way - exactly the fifteen false triggers of section 5:
+
+| cell | episodes | E5 spell, held / free |
+|---|---|---|
+| rail-mission-stub-vla | library s0; smoke s1001; nightly s1001-1003 | 49.9 s / 10.9 s |
+| standoff-approach-angles, offset 7 m, pedestrian | library variant 0; nightly variants 0-2 x s1001-1003 | 39.9 s / 1.5 s |
+
+Every other cell keeps its label. Where the two spells differ at all they
+stay on the same side of 30.1 s: corridor-drift-angles at -30 and -60 deg
+(34.7-56.2 s free, 56.2-56.7 s held: E5 either way) and
+gps-noise-beyond-margin (0.0-0.2 s either way: E3). No cell is undecided in
+its length under either reading (wind-beyond-authority at 8 m/s ends inside
+a spell on both, and is labelled by E2).
+
+**Measured on this branch** (labels as above, on branch 1's code at
+c07998d; headless, not KPI-grade):
+
+| profile | adopted rubric (branch 1) | this proposal | Wilson 95 % low |
+|---|---|---|---|
+| library | 177/179 = 0.989 (2 / 0) | 179/179 = 1.000 (0 / 0) | 0.960 -> 0.979 |
+| smoke | 62/63 = 0.984 (1 / 0) | 63/63 = 1.000 (0 / 0) | 0.915 -> 0.943 |
+| nightly | 729/741 = 0.984 (12 / 0) | 741/741 = 1.000 (0 / 0) | 0.972 -> 0.995 |
+
+(false / missed in brackets.) The never-trigger nulls fall with the
+relabelling (library 0.659 -> 0.648, smoke 0.635 -> 0.619, nightly
+0.623 -> 0.607). Nothing else moves: the code is branch 1's, so P0
+escape (0.0), time to safe, the true-state counts and the flights are
+identical; the sweeps' own gates: library 155 pass / 22 tracked / 0 fail /
+3 known, smoke 56 / 6 / 0 / 2, nightly 663 / 66 / 0 / 15 (the rail
+mission's pin is off, the 7 m cell's keeps only the goal).
+
+**To adopt it**: merge this branch (the tool's default, the labels, the
+pins, the tests) and fold this section into sections 2-5. **To reject it**:
+discard the branch; sections 1-6 stand.
