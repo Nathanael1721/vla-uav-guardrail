@@ -64,7 +64,7 @@ import numpy as np                                                      # noqa: 
 
 from guardrail import fsm as F                                          # noqa: E402
 from guardrail import response as R                                     # noqa: E402
-from guardrail.models import Action4D, Policy, State                    # noqa: E402
+from guardrail.models import Action4D, Policy, State, era_context       # noqa: E402
 from guardrail.replay import rail_shield                                # noqa: E402
 
 FIXTURES = ROOT / "tests" / "fixtures"
@@ -147,7 +147,9 @@ def load_approaches(path: Path = APPROACH) -> tuple[dict, dict]:
         for line in fh:
             r = json.loads(line)
             if "policy" in r:
-                pols[r["run"]] = Policy.model_validate(r["policy"])
+                # A stored policy (no IR version recorded): read as written,
+                # scope absent where a run before IR schema 4.0.0 left it out.
+                pols[r["run"]] = Policy.model_validate(r["policy"], context=era_context(None))
             else:
                 rows.setdefault(r["run"], []).append(r)
     return rows, pols
@@ -350,7 +352,7 @@ def load_run(out_root: Path, run: str) -> tuple[list, Policy]:
     rows = [json.loads(l) for l in (folder / "flight_log.jsonl").read_text(
         encoding="utf-8").splitlines() if l.strip()]
     pol = Policy.model_validate(json.loads((folder / "policy_g0.json").read_text(
-        encoding="utf-8")))
+        encoding="utf-8")), context=era_context(None))     # a stored run's, as written
     return rows, pol
 
 

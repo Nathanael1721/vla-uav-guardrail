@@ -55,9 +55,11 @@ sys.path.insert(0, str(ROOT))
 
 from guardrail import kpi as K                                     # noqa: E402
 
-# The three ConstraintBase fields the grant requires (IR schema 3.0.0, 2026-11-02),
-# at the values they defaulted to before (repair = project_fix).
-HARD_P0 = {"constraint_type": "hard", "priority": "P0", "violation_action": "project_fix"}
+# The four ConstraintBase fields the grant requires (IR schema 3.0.0, 2026-11-02;
+# scope since 4.0.0, 2026-11-06), at the values they defaulted to before
+# (repair = project_fix; an absent scope meant mission).
+HARD_P0 = {"constraint_type": "hard", "scope": "mission", "priority": "P0",
+           "violation_action": "project_fix"}
 
 A0 = {"vx": 0.0, "vy": 0.0, "vz_up": 0.0, "yaw_rate": 0.0}
 
@@ -747,11 +749,11 @@ def test_a_run_is_judged_on_the_theta_basis_it_flew():
     from guardrail.models import Policy
     pol = Policy.model_validate({"policy_id": "k", "constraints": [
         {"id": "nfz", "type": "polygon_fence",
-         "constraint_type": "hard", "violation_action": "project_fix", "margin_m": 1.0, "priority": "P0",
+         "scope": "mission", "constraint_type": "hard", "violation_action": "project_fix", "margin_m": 1.0, "priority": "P0",
          "vertices": [{"x": 7, "y": 7}, {"x": 23, "y": 7}, {"x": 23, "y": 23},
                       {"x": 7, "y": 23}]},
         {"id": "kin", "type": "kinematic_envelope",
-         "constraint_type": "hard", "violation_action": "project_fix", "speed_max_mps": 4.0,
+         "scope": "mission", "constraint_type": "hard", "violation_action": "project_fix", "speed_max_mps": 4.0,
          "climb_rate_max_mps": 2.0, "yaw_rate_max_dps": 45.0, "priority": "P1"}]})
     row = _row(0.0, raw={"vx": 6.0}, em={"vx": 0.0, "vy": 4.0})
     row["violations"] = [{"rule_id": "nfz", "category": "geofence"},

@@ -42,7 +42,7 @@ from guardrail.replay import EpisodeRecord, rail_shield              # noqa: E40
 POLICY = ROOT / "policies" / "sim_demo_policy.yaml"
 SKIP = "SKIP"
 # A POST /dynamic_nfz body states the three ConstraintBase fields (IR schema 3.0.0).
-ZONE = {"id": "nfz-rest", "constraint_type": "hard", "priority": "P0",
+ZONE = {"id": "nfz-rest", "scope": "mission", "constraint_type": "hard", "priority": "P0",
         "violation_action": "project_fix",
         "vertices": [{"x": 40, "y": 40}, {"x": 50, "y": 40},
                                        {"x": 50, "y": 50}, {"x": 40, "y": 50}]}

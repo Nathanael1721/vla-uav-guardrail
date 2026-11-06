@@ -99,9 +99,11 @@ import rerun_episode as RR                                         # noqa: E402
 from guardrail import harness_service as H                       # noqa: E402
 from guardrail import load_policy                                  # noqa: E402
 
-# The three ConstraintBase fields the grant requires (IR schema 3.0.0, 2026-11-02),
-# at the values they defaulted to before (repair = project_fix).
-HARD_P0 = {"constraint_type": "hard", "priority": "P0", "violation_action": "project_fix"}
+# The four ConstraintBase fields the grant requires (IR schema 3.0.0, 2026-11-02;
+# scope since 4.0.0, 2026-11-06), at the values they defaulted to before
+# (repair = project_fix; an absent scope meant mission).
+HARD_P0 = {"constraint_type": "hard", "scope": "mission", "priority": "P0",
+           "violation_action": "project_fix"}
 
 SKIP = "SKIP"
 _TMP: list[Path] = []
@@ -802,7 +804,7 @@ def _tw_policy():
     from guardrail.models import Policy
     return Policy.model_validate({"policy_id": "tw", "constraints": [
         {"id": "school", "type": "polygon_fence",
-         "constraint_type": "hard", "violation_action": "project_fix", "margin_m": 1.0, "priority": "P1",
+         "scope": "mission", "constraint_type": "hard", "violation_action": "project_fix", "margin_m": 1.0, "priority": "P1",
          "valid_time": {"recurrence": {"start_time": "07:30", "end_time": "17:30"}},
          "vertices": [{"x": 10, "y": -10}, {"x": 30, "y": -10}, {"x": 30, "y": 10},
                       {"x": 10, "y": 10}]}]})

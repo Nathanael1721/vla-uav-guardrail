@@ -43,9 +43,11 @@ from guardrail.replay import (EPISODE, INDEX_NAME,             # noqa: E402
                               _SIGNED_BY, _digest,
                               read_replay, verify_replay, write_replay)
 
-# The three ConstraintBase fields the grant requires (IR schema 3.0.0, 2026-11-02),
-# at the values they defaulted to before (repair = project_fix).
-HARD_P0 = {"constraint_type": "hard", "priority": "P0", "violation_action": "project_fix"}
+# The four ConstraintBase fields the grant requires (IR schema 3.0.0, 2026-11-02;
+# scope since 4.0.0, 2026-11-06), at the values they defaulted to before
+# (repair = project_fix; an absent scope meant mission).
+HARD_P0 = {"constraint_type": "hard", "scope": "mission", "priority": "P0",
+           "violation_action": "project_fix"}
 
 RUN = ROOT / "demo" / "out" / "retarget_demo2"
 POLICY_FILE = ROOT / "policies" / "follow_pedestrian.yaml"
@@ -430,13 +432,23 @@ def test_the_tracked_replay_bundles_still_verify():
     policy hash, keyless signature. The identity release must not orphan them.
     On the old-hash code they verified; on the first cut of the new hash they
     all failed ("the index says sha256:083fbd16d33505c3"); they must verify -
-    and say they are unsigned."""
-    tracked = sorted((ROOT / "bundles").glob("*.replay.tar.gz"))
+    and say they are unsigned. Since IR schema 4.0.0 (2026-11-06) a rule
+    states `scope`; these bundles' rules leave it out, as every document
+    before then did, and are read as written (models.era_context).
+
+    The TRACKED ones (git ls-files): bundles/ also holds untracked build
+    products, and since 2026-11-06 the lab checkout's holds the signed,
+    64-hex replay of hil_smoke_03, which this test is not about."""
+    import subprocess
+    r = subprocess.run(["git", "ls-files", "bundles/*.replay.tar.gz"], cwd=ROOT,
+                       capture_output=True, text=True)
+    tracked = sorted(ROOT / n for n in r.stdout.split()) if r.returncode == 0 else []
     if not tracked:
         return SKIP
     for b in tracked:
         got = read_replay(b)
         assert got["hash_form"].startswith("legacy16-"), (b.name, got["hash_form"])
+        assert all(c.scope is None for c in got["policy"].constraints), b.name
         ok, why = verify_replay(b)
         assert ok, (b.name, why)
         assert any("UNSIGNED" in w for w in why), (b.name, why)

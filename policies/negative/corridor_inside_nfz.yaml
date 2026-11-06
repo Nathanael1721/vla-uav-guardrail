@@ -8,6 +8,7 @@ constraints:
   - id: route
     type: corridor
     constraint_type: hard
+    scope: mission
     priority: P0
     violation_action: project_fix
     centerline:
@@ -19,6 +20,7 @@ constraints:
   - id: nfz-site
     type: polygon_fence
     constraint_type: hard
+    scope: mission
     priority: P0
     violation_action: project_fix
     vertices:

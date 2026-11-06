@@ -6,7 +6,7 @@ policy is flown where it is and the autopilot's GeoFence lands on its zones.
 Exit 2 when the bundle does not load: a flight must not start somewhere it
 cannot name.
 
-    python sitl/bundle_origin.py bundles/corridor-survey-v0.1.2.tar.gz
+    python sitl/bundle_origin.py bundles/corridor-survey-v0.1.3.tar.gz
     35.6895,139.6917
 """
 from __future__ import annotations

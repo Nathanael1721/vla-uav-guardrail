@@ -8,6 +8,7 @@ constraints:
   - id: nfz
     type: polygon_fence
     constraint_type: hard
+    scope: mission
     priority: P0
     vertices:
       - {x: 10, y: 10}

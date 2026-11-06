@@ -7,6 +7,7 @@ constraints:
   - id: kin
     type: kinematic_envelope
     constraint_type: hard
+    scope: mission
     priority: P0
     violation_action: project_fix
     speed_max_mps: fast

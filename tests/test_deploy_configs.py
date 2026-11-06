@@ -1110,8 +1110,8 @@ def test_the_ros2_rail_boots_sitl_at_a_geographic_bundles_origin():
     sys.path.insert(0, str(ROOT / "sitl"))
     import bundle_origin as BO
     assert BO.main(["no/such/bundle.tar.gz"]) == 2, "a bundle that does not load must refuse"
-    corridor = ROOT / "bundles" / "corridor-survey-v0.1.2.tar.gz"
-    demo_bundle = ROOT / "bundles" / "fase3-sim-demo-v0.1.3.tar.gz"
+    corridor = ROOT / "bundles" / "corridor-survey-v0.1.3.tar.gz"
+    demo_bundle = ROOT / "bundles" / "fase3-sim-demo-v0.1.4.tar.gz"
     if not (corridor.is_file() and demo_bundle.is_file()):
         return SKIP                  # bundles/ is gitignored: built on the lab machine
     assert BO.origin_of(str(corridor)) == "35.6895,139.6917"

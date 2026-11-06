@@ -36,7 +36,7 @@
 # The usual spawn at (35, -20) is 40.3 m from the centroid, so the aircraft
 # starts essentially ON the ring and the transit does not eat the flight window.
 policy_id: orbit-building
-version: 0.1.2
+version: 0.1.3
 # WGS84 since 2026-11-03 (tools/convert_policies_wgs84.py, from the
 # metres of 0.1.1). Frame origin: the Project AirSim scenes' home-geo-point.
 # Points are lat/lon; the x North / y East metres about this origin
@@ -51,6 +51,7 @@ constraints:
   - id: bld-clearance
     type: obstacle_clearance
     constraint_type: hard
+    scope: mission
     priority: P0
     violation_action: project_fix
     min_clearance_m: 5.0
@@ -71,6 +72,7 @@ constraints:
   - id: alt-band
     type: altitude_envelope
     constraint_type: hard
+    scope: mission
     priority: P0
     violation_action: project_fix
     alt_min_m: 12
@@ -79,6 +81,7 @@ constraints:
   - id: kin-caps
     type: kinematic_envelope
     constraint_type: hard
+    scope: mission
     priority: P1
     violation_action: project_fix
     speed_max_mps: 5.0

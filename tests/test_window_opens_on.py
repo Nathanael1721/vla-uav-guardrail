@@ -140,7 +140,7 @@ def _shield(now=MON_0729_58, policy=None, **kw):
 
 
 def _school(**over):
-    z = {"id": "school", "type": "polygon_fence", "constraint_type": "hard",
+    z = {"id": "school", "type": "polygon_fence", "scope": "mission", "constraint_type": "hard",
          "priority": "P0", "violation_action": "repair", "margin_m": 1.0,
          "altitude_floor_m": 0.0, "altitude_ceiling_m": 100.0,
          "vertices": [{"x": 50, "y": 12}, {"x": 70, "y": 12}, {"x": 70, "y": 30},
@@ -152,7 +152,7 @@ def _school(**over):
 
 
 def _caps(**over):
-    c = {"id": "caps", "type": "kinematic_envelope", "constraint_type": "hard",
+    c = {"id": "caps", "type": "kinematic_envelope", "scope": "mission", "constraint_type": "hard",
          "priority": "P1", "violation_action": "repair", "speed_max_mps": 4.0,
          "climb_rate_max_mps": 2.0, "yaw_rate_max_dps": 45.0}
     c.update(over)
@@ -171,7 +171,7 @@ def _north(y0):
     the school zone's ring (y = 31) and then a stop, which reaches it only
     when y0 - 1 < 34.07 (31 + 4 x 0.1 + 4^2 / (2 x 3), the grant arm's 0.1 s
     step; 31 + 4 x 0.5 + 2.67 = 35.67 on the 3 s arm's 0.5 s step)."""
-    return {"id": "nfz-north", "type": "polygon_fence", "constraint_type": "hard",
+    return {"id": "nfz-north", "type": "polygon_fence", "scope": "mission", "constraint_type": "hard",
             "priority": "P0", "violation_action": "repair", "margin_m": 1.0,
             "altitude_floor_m": 0.0, "altitude_ceiling_m": 100.0,
             "vertices": [{"x": 50, "y": y0}, {"x": 70, "y": y0}, {"x": 70, "y": y0 + 6},
@@ -576,7 +576,7 @@ def test_not_claimed_without_a_hard_enforced_cap_that_holds_over_the_tick():
     """No cap, a soft cap, a monitor_only cap and a cap with a window of its
     own prove nothing: the ideal vehicle has no speed to be measured against,
     or the Shield may not hold it to one. The old judgement stands."""
-    for caps in ((), (_caps(constraint_type="soft"),),
+    for caps in ((), (_caps(scope="mission", constraint_type="soft"),),
                  (_caps(violation_action="monitor_only"),),
                  (_caps(valid_time={"recurrence": {"start_time": "07:00",
                                                    "end_time": "07:30"}}),)):

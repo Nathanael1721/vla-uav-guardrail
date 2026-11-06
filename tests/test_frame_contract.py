@@ -64,7 +64,7 @@ def _yaw_only_shield():
     """A Shield whose only rule is a yaw-rate cap, so nothing else can fire."""
     pol = Policy(policy_id="yaw-units-probe", version="0.0.1", constraints=[
         KinematicEnvelope(id="kin", type="kinematic_envelope",
-                          constraint_type="hard", priority="P1",
+                          scope="mission", constraint_type="hard", priority="P1",
                           violation_action="repair",
                           speed_max_mps=50.0, climb_rate_max_mps=50.0,
                           yaw_rate_max_dps=CAP_DPS),

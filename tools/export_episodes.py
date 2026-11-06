@@ -905,11 +905,13 @@ def load_dir(run: Path) -> Episode:
                             "--keep-logs / keep_flight_log): episode record only; "
                             "tools/rerun_episode.py re-flies it and writes the log")
     else:
-        from guardrail.models import Policy
+        from guardrail.models import Policy, era_context
         pols = {}
         for f in sorted(run.glob("policy_g*.json")):
             try:
-                pol = Policy.model_validate(_json(f))
+                # A run's generation file records no IR version: read as
+                # written (scope absent in a run from before IR schema 4.0.0).
+                pol = Policy.model_validate(_json(f), context=era_context(None))
                 pols[int(pol.generation)] = pol
             except Exception:                                    # noqa: BLE001
                 ep.notes.append(f"{f.name} does not load as a policy")

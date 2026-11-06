@@ -29,9 +29,11 @@ from guardrail.shield import Repair, ShieldDecision, Violation  # noqa: E402
 from policy_hud import (PolicyIndicator, draw_policy_overlay,   # noqa: E402
                         draw_status_box, render_base_map, rule_view)
 
-# The three ConstraintBase fields the grant requires (IR schema 3.0.0, 2026-11-02),
-# at the values they defaulted to before (repair = project_fix).
-HARD_P0 = {"constraint_type": "hard", "priority": "P0", "violation_action": "project_fix"}
+# The four ConstraintBase fields the grant requires (IR schema 3.0.0, 2026-11-02;
+# scope since 4.0.0, 2026-11-06), at the values they defaulted to before
+# (repair = project_fix; an absent scope meant mission).
+HARD_P0 = {"constraint_type": "hard", "scope": "mission", "priority": "P0",
+           "violation_action": "project_fix"}
 
 NFZ = ROOT / "policies" / "follow_car_citylife_nfz.yaml"
 CITY = ROOT / "policies" / "follow_car_citylife.yaml"
@@ -687,12 +689,12 @@ def test_a_zone_outside_its_window_is_idle():
 def _monitor_only_policy():
     from guardrail.models import Policy
     return Policy.model_validate({"policy_id": "m", "version": "0.1.0", "constraints": [
-        {"id": "nfz-watch", "type": "polygon_fence", "constraint_type": "hard", "margin_m": 1.0,
+        {"id": "nfz-watch", "type": "polygon_fence", "scope": "mission", "constraint_type": "hard", "margin_m": 1.0,
          "violation_action": "monitor_only", "priority": "P1",
          "vertices": [{"x": 7, "y": 7}, {"x": 23, "y": 7}, {"x": 23, "y": 23},
                       {"x": 7, "y": 23}]},
         {"id": "kin", "type": "kinematic_envelope",
-         "constraint_type": "hard", "violation_action": "project_fix", "priority": "P1", "speed_max_mps": 4.0,
+         "scope": "mission", "constraint_type": "hard", "violation_action": "project_fix", "priority": "P1", "speed_max_mps": 4.0,
          "climb_rate_max_mps": 2.0, "yaw_rate_max_dps": 45.0}]})
 
 

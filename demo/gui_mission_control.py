@@ -87,11 +87,11 @@ FONT = ("Segoe UI", 9)
 # policies/urban_demo_policy.yaml).
 FALLBACK_KEEP = [
     {"id": "alt-band-urban", "type": "altitude_envelope",
-     "constraint_type": "hard", "priority": "P0", "violation_action": "repair",
-     "alt_min_m": 15, "alt_max_m": 25},
+     "constraint_type": "hard", "scope": "mission", "priority": "P0",
+     "violation_action": "repair", "alt_min_m": 15, "alt_max_m": 25},
     {"id": "kin-caps", "type": "kinematic_envelope",
-     "constraint_type": "hard", "priority": "P1", "violation_action": "repair",
-     "speed_max_mps": 4.0, "climb_rate_max_mps": 2.0, "yaw_rate_max_dps": 45.0},
+     "constraint_type": "hard", "scope": "mission", "priority": "P1",
+     "violation_action": "repair", "speed_max_mps": 4.0, "climb_rate_max_mps": 2.0, "yaw_rate_max_dps": 45.0},
 ]
 
 
@@ -693,6 +693,7 @@ class MissionControl:
                 "id": f"gui-nfz-{i + 1}",
                 "type": "polygon_fence",
                 "constraint_type": "hard",
+                "scope": "mission",
                 "priority": "P0",
                 "violation_action": "repair",
                 "vertices": [
@@ -714,6 +715,7 @@ class MissionControl:
                 "id": f"gui-poly-{i + 1}",
                 "type": "polygon_fence",
                 "constraint_type": "hard",
+                "scope": "mission",
                 "priority": "P0",
                 "violation_action": "repair",
                 "vertices": [{"x": round(px, 1), "y": round(py, 1)}

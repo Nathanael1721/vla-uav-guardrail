@@ -17,9 +17,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from guardrail import Action4D, Shield, State, load_policy
 
-# The three ConstraintBase fields the grant requires (IR schema 3.0.0, 2026-11-02),
-# at the values they defaulted to before (repair = project_fix).
-HARD_P0 = {"constraint_type": "hard", "priority": "P0", "violation_action": "project_fix"}
+# The four ConstraintBase fields the grant requires (IR schema 3.0.0, 2026-11-02;
+# scope since 4.0.0, 2026-11-06), at the values they defaulted to before
+# (repair = project_fix; an absent scope meant mission).
+HARD_P0 = {"constraint_type": "hard", "scope": "mission", "priority": "P0",
+           "violation_action": "project_fix"}
 
 POLICY_PATH = Path(__file__).resolve().parents[1] / "policies" / "demo_policy.yaml"
 
@@ -268,7 +270,7 @@ def _standoff_shield(min_range_m=10.0, subject_class="pedestrian"):
         SubjectStandoff(id="ped-standoff", type="subject_standoff", **HARD_P0,
                         subject_class=subject_class, min_range_m=min_range_m),
         KinematicEnvelope(id="kin", type="kinematic_envelope",
-                          constraint_type="hard", violation_action="project_fix", priority="P1",
+                          scope="mission", constraint_type="hard", violation_action="project_fix", priority="P1",
                           speed_max_mps=5.0, climb_rate_max_mps=2.0,
                           yaw_rate_max_dps=45.0),
     ])
@@ -457,7 +459,7 @@ def test_a_non_finite_subject_escalates_no_harder_than_the_rule():
     sh = shield()
     *_, (t, d, edges) = fly(sh, lambda t: int(t / 0.5) % 2 == 0)
     assert edges == [(0.0, "G1", "Brake"), (2.0, "G2", "Loiter"), (5.0, "G4", "RTL")], edges
-    for kw in ({"constraint_type": "soft"}, {"violation_action": "monitor_only"}):
+    for kw in ({"scope": "mission", "constraint_type": "soft"}, {"violation_action": "monitor_only"}):
         for nan_at in (lambda t: True, lambda t: int(t / 0.5) % 2 == 0):
             sh = shield(**kw)
             for t, d, edges in fly(sh, nan_at, n=60):
@@ -583,15 +585,15 @@ def _follow_car_policy():
     return Policy.model_validate({"policy_id": "follow-car-citylife", "version": "0.1.0",
                                   "constraints": [
         {"id": "standoff-pedestrian", "type": "subject_standoff", "subject_class": "pedestrian",
-         "min_range_m": 10.0, "soft_margin_m": 2.0, "constraint_type": "hard",
+         "min_range_m": 10.0, "soft_margin_m": 2.0, "scope": "mission", "constraint_type": "hard",
          "priority": "P0", "violation_action": "repair"},
         {"id": "standoff-any", "type": "subject_standoff", "subject_class": "*",
-         "min_range_m": 5.0, "soft_margin_m": 1.0, "constraint_type": "hard",
+         "min_range_m": 5.0, "soft_margin_m": 1.0, "scope": "mission", "constraint_type": "hard",
          "priority": "P0", "violation_action": "repair"},
         {"id": "alt-band", "type": "altitude_envelope", "alt_min_m": 6.0, "alt_max_m": 14.0,
-         "constraint_type": "hard", "priority": "P0", "violation_action": "repair"},
+         "scope": "mission", "constraint_type": "hard", "priority": "P0", "violation_action": "repair"},
         {"id": "kin-caps", "type": "kinematic_envelope", "speed_max_mps": 5.0,
-         "climb_rate_max_mps": 2.0, "yaw_rate_max_dps": 45.0, "constraint_type": "hard",
+         "climb_rate_max_mps": 2.0, "yaw_rate_max_dps": 45.0, "scope": "mission", "constraint_type": "hard",
          "priority": "P1", "violation_action": "repair"}]})
 
 
@@ -676,7 +678,7 @@ def test_unsafe_depth_measures_how_far_the_position_is_from_legal():
         {"id": "band", "type": "altitude_envelope", **HARD_P0, "alt_min_m": 10.0, "alt_max_m": 30.0},
         {"id": "soft-band", "type": "altitude_envelope",
          "violation_action": "project_fix", "alt_min_m": 12.0,
-         "alt_max_m": 30.0, "constraint_type": "soft", "priority": "P2"},
+         "alt_max_m": 30.0, "scope": "mission", "constraint_type": "soft", "priority": "P2"},
         {"id": "ring", "type": "subject_standoff", **HARD_P0, "subject_class": "*",
          "min_range_m": 5.0}]})
     sh = Shield(pol)
@@ -707,11 +709,11 @@ def test_applied_caps_leave_out_only_the_soft_caps_the_chain_gave_up():
              "alt_max_m": 10},
             {"id": "soft-high", "type": "altitude_envelope",
              "violation_action": "project_fix", "alt_min_m": 20,
-             "alt_max_m": 30, "constraint_type": "soft", "priority": "P2"},
+             "alt_max_m": 30, "scope": "mission", "constraint_type": "soft", "priority": "P2"},
             {"id": "soft-speed", "type": "kinematic_envelope",
              "violation_action": "project_fix", "speed_max_mps": 2.0,
              "climb_rate_max_mps": 2.0, "yaw_rate_max_dps": 45.0,
-             "constraint_type": "soft", "priority": speed_prio},
+             "scope": "mission", "constraint_type": "soft", "priority": speed_prio},
             {"id": "nfz", "type": "polygon_fence", **HARD_P0, "margin_m": 1.0,
              "vertices": [{"x": 7, "y": 7}, {"x": 23, "y": 7}, {"x": 23, "y": 23},
                           {"x": 7, "y": 23}]}]})
@@ -821,7 +823,7 @@ def test_deepens_counts_hard_enforced_rules_and_a_moving_zone_relative_to_it():
     assert [hard._deepens(st, Action4D(vx=v)) for v in (-2.0, 0.0, 2.0)] == [1, 0, 0]
     assert [hard._deepens(st, Action4D(vy=v)) for v in (-2.0, 2.0)] == [0, 0]
     for kw in ({"violation_action": "monitor_only"},
-               {"constraint_type": "soft", "priority": "P2"}):
+               {"scope": "mission", "constraint_type": "soft", "priority": "P2"}):
         sh = Shield(zone(**kw), escalation=False)
         assert sh._deepens(st, Action4D(vx=-2.0)) == 0, kw
     moving = Shield(Policy.model_validate({"policy_id": "mv", "constraints": [
@@ -1033,7 +1035,7 @@ def test_a_crawl_out_of_a_breach_is_floored_with_nothing_else_wrong():
     from guardrail.models import KinematicEnvelope
     pol = load_policy(POLICY_PATH)
     pol.constraints.append(KinematicEnvelope(
-        id="yaw-watch", type="kinematic_envelope", constraint_type="hard", priority="P0", violation_action="monitor_only",
+        id="yaw-watch", type="kinematic_envelope", scope="mission", constraint_type="hard", priority="P0", violation_action="monitor_only",
         speed_max_mps=20.0, climb_rate_max_mps=10.0, yaw_rate_max_dps=10.0))
     sh = Shield(pol, lookahead_s=3.0, dt=0.5)
     st = State(x=22.0, y=15.0, up=4.0)
@@ -1376,7 +1378,7 @@ def _zone_policy(**kw):
     zone.update(kw)
     return Policy.model_validate({"policy_id": "zone", "constraints": [
         zone, {"id": "kin", "type": "kinematic_envelope",
-               "constraint_type": "hard", "violation_action": "project_fix", "priority": "P1",
+               "scope": "mission", "constraint_type": "hard", "violation_action": "project_fix", "priority": "P1",
                "speed_max_mps": 4.0, "climb_rate_max_mps": 2.0,
                "yaw_rate_max_dps": 45.0}]})
 
@@ -1487,7 +1489,7 @@ def test_theta_is_measured_from_the_caps_the_chain_applied_this_tick():
            "climb_rate_max_mps": 2.0, "yaw_rate_max_dps": 45.0}
     st, fast = State(x=0, y=15, up=4), Action4D(vx=6.0)
     watched = Policy.model_validate({"policy_id": "mo", "constraints": [
-        zone, dict(kin, violation_action="monitor_only", constraint_type="soft",
+        zone, dict(kin, violation_action="monitor_only", scope="mission", constraint_type="soft",
                    priority="P2")]})
     assert Shield(watched).filter(st, fast).fsm_fault is None
     sh = Shield(watched, theta_horizon_s=0.1)
@@ -1618,7 +1620,7 @@ def test_a_soft_rule_is_capped_at_brake():
     """A soft rule written with RTL stops the aircraft but never changes the
     flight mode (fsm.RuleHit.effective_action), and the record says it was
     capped."""
-    s = Shield(_zone_policy(violation_action="RTL", constraint_type="soft"))
+    s = Shield(_zone_policy(violation_action="RTL", scope="mission", constraint_type="soft"))
     d = s.filter(State(x=0, y=15, up=4), Action4D(vx=3.0))
     assert d.braked and d.set_mode is None and d.fsm_state_after == "Brake"
     gov = d.fsm_record["governing_rule"]
@@ -1631,10 +1633,10 @@ def _soft_conflict(p_high="P2", p_mid="P1"):
         {"id": "hard-band", "type": "altitude_envelope", **HARD_P0, "alt_min_m": 0, "alt_max_m": 10},
         {"id": "soft-high", "type": "altitude_envelope",
          "violation_action": "project_fix", "alt_min_m": 20,
-         "alt_max_m": 30, "constraint_type": "soft", "priority": p_high},
+         "alt_max_m": 30, "scope": "mission", "constraint_type": "soft", "priority": p_high},
         {"id": "soft-mid", "type": "altitude_envelope",
          "violation_action": "project_fix", "alt_min_m": 3,
-         "alt_max_m": 8, "constraint_type": "soft", "priority": p_mid}]})
+         "alt_max_m": 8, "scope": "mission", "constraint_type": "soft", "priority": p_mid}]})
 
 
 def test_the_repair_chain_gives_up_a_soft_rule_lowest_priority_first():
@@ -1667,10 +1669,10 @@ def test_the_lower_priority_soft_rule_goes_first_when_either_would_do():
             {"id": "hard-band", "type": "altitude_envelope", **HARD_P0, "alt_min_m": 0, "alt_max_m": 10},
             {"id": "soft-low", "type": "altitude_envelope",
              "violation_action": "project_fix", "alt_min_m": 0, "alt_max_m": 5,
-             "constraint_type": "soft", "priority": p_low},
+             "scope": "mission", "constraint_type": "soft", "priority": p_low},
             {"id": "soft-up", "type": "altitude_envelope",
              "violation_action": "project_fix", "alt_min_m": 7, "alt_max_m": 10,
-             "constraint_type": "soft", "priority": p_up}]})
+             "scope": "mission", "constraint_type": "soft", "priority": p_up}]})
     st, a = State(x=0, y=0, up=6), Action4D(vx=1.0)
     d = Shield(pol("P2", "P1")).filter(st, a)
     assert d.relaxed == ["soft-low"] and d.emitted.vz_up > 0, (d.relaxed, d.emitted)
@@ -1682,7 +1684,7 @@ def test_a_stop_that_breaks_only_a_soft_rule_is_allowed():
     """Inside a SOFT zone whose action is brake: the stop leaves the aircraft
     inside a rule that allows a stop as its response, so the Shield stops
     rather than recovering. (Only a HARD rule makes a stop illegal.)"""
-    s = Shield(_zone_policy(violation_action="brake", constraint_type="soft"))
+    s = Shield(_zone_policy(violation_action="brake", scope="mission", constraint_type="soft"))
     d = s.filter(State(x=10, y=15, up=4), Action4D(vx=0.5))
     assert d.braked and d.emitted == Action4D(), d
     assert [r.operator for r in d.repairs] == ["Brake"]
@@ -1895,10 +1897,10 @@ def test_relaxed_lists_only_the_soft_rules_the_flown_action_breaks():
         {"id": "soft-kin", "type": "kinematic_envelope",
          "violation_action": "project_fix", "speed_max_mps": 2.0,
          "climb_rate_max_mps": 2.0, "yaw_rate_max_dps": 45.0,
-         "constraint_type": "soft", "priority": "P2"},
+         "scope": "mission", "constraint_type": "soft", "priority": "P2"},
         {"id": "soft-high", "type": "altitude_envelope",
          "violation_action": "project_fix", "alt_min_m": 20,
-         "alt_max_m": 30, "constraint_type": "soft", "priority": "P1"}]})
+         "alt_max_m": 30, "scope": "mission", "constraint_type": "soft", "priority": "P1"}]})
     d = Shield(pol).filter(State(x=0, y=0, up=8), Action4D(vx=3.0))
     assert sorted(v.rule_id for v in d.violations) == ["hard-kin", "soft-high", "soft-kin"]
     assert d.relaxed == ["soft-high"], d.relaxed

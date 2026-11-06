@@ -544,6 +544,7 @@ constraints:
   - id: zone
     type: polygon_fence
     constraint_type: hard
+    scope: mission
     priority: P0
     violation_action: repair
     vertices:
@@ -557,6 +558,7 @@ constraints:
   - id: clearance
     type: obstacle_clearance
     constraint_type: hard
+    scope: mission
     priority: P0
     violation_action: repair
     min_clearance_m: 3.0
@@ -564,6 +566,7 @@ constraints:
   - id: band
     type: altitude_envelope
     constraint_type: hard
+    scope: mission
     priority: P0
     violation_action: repair
     alt_min_m: 6

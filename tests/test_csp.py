@@ -68,9 +68,11 @@ except ImportError as e:                                           # noqa: BLE00
     _IMPORT_ERROR = e
 from guardrail.compiler import ConstraintCompiler, Mission         # noqa: E402
 
-# The three ConstraintBase fields the grant requires (IR schema 3.0.0, 2026-11-02),
-# at the values they defaulted to before (repair = project_fix).
-HARD_P0 = {"constraint_type": "hard", "priority": "P0", "violation_action": "project_fix"}
+# The four ConstraintBase fields the grant requires (IR schema 3.0.0, 2026-11-02;
+# scope since 4.0.0, 2026-11-06), at the values they defaulted to before
+# (repair = project_fix; an absent scope meant mission).
+HARD_P0 = {"constraint_type": "hard", "scope": "mission", "priority": "P0",
+           "violation_action": "project_fix"}
 
 POLICIES = sorted((ROOT / "policies").glob("*.yaml"))
 SURVEY = ROOT / "policies" / "corridor_survey.yaml"
@@ -116,25 +118,25 @@ MIX = {
     "policy_id": "mix-for-budget",
     "constraints": [
         {"id": "nfz-on-path", "type": "polygon_fence",
-         "constraint_type": "hard", "violation_action": "project_fix", "priority": "P0",
+         "scope": "mission", "constraint_type": "hard", "violation_action": "project_fix", "priority": "P0",
          "vertices": _sq(40, -5, 50, 5)},
         {"id": "alt-band", "type": "altitude_envelope",
-         "constraint_type": "hard", "violation_action": "project_fix", "priority": "P0",
+         "scope": "mission", "constraint_type": "hard", "violation_action": "project_fix", "priority": "P0",
          "alt_min_m": 5, "alt_max_m": 50},
         {"id": "kin-caps", "type": "kinematic_envelope",
-         "constraint_type": "hard", "violation_action": "project_fix", "priority": "P1",
+         "scope": "mission", "constraint_type": "hard", "violation_action": "project_fix", "priority": "P1",
          "speed_max_mps": 5, "climb_rate_max_mps": 2, "yaw_rate_max_dps": 45},
         {"id": "nfz-near-p1", "type": "polygon_fence",
-         "constraint_type": "hard", "violation_action": "project_fix", "priority": "P1",
+         "scope": "mission", "constraint_type": "hard", "violation_action": "project_fix", "priority": "P1",
          "vertices": _sq(60, 8, 70, 18)},
         {"id": "nfz-far-p1", "type": "polygon_fence",
-         "constraint_type": "hard", "violation_action": "project_fix", "priority": "P1",
+         "scope": "mission", "constraint_type": "hard", "violation_action": "project_fix", "priority": "P1",
          "vertices": _sq(60, 120, 70, 130)},
         {"id": "keep-off-buildings", "type": "obstacle_clearance",
-         "constraint_type": "hard", "violation_action": "project_fix",
+         "scope": "mission", "constraint_type": "hard", "violation_action": "project_fix",
          "priority": "P2", "min_clearance_m": 3},
         {"id": "standoff-any", "type": "subject_standoff",
-         "constraint_type": "hard", "violation_action": "project_fix", "priority": "P2",
+         "scope": "mission", "constraint_type": "hard", "violation_action": "project_fix", "priority": "P2",
          "min_range_m": 5},
     ],
 }
@@ -467,7 +469,7 @@ def test_reach_uses_the_tightest_hard_speed_cap_else_the_requested_speed():
     def pol(*caps):
         cs = [{"id": f"k{i}", "type": "kinematic_envelope",
                "violation_action": "project_fix", "priority": "P1",
-               "constraint_type": ct, "speed_max_mps": v, "climb_rate_max_mps": 1,
+               "scope": "mission", "constraint_type": ct, "speed_max_mps": v, "climb_rate_max_mps": 1,
                "yaw_rate_max_dps": 30} for i, (v, ct) in enumerate(caps)]
         return Policy.model_validate({"policy_id": "reach", "constraints": cs})
     m = _mission(speed=4.0)
@@ -485,13 +487,13 @@ def test_a_soft_rule_is_graded_below_the_same_hard_rule():
     _need()
     pol = Policy.model_validate({"policy_id": "soft", "constraints": [
         {"id": "hard-p1", "type": "polygon_fence",
-         "constraint_type": "hard", "violation_action": "project_fix", "priority": "P1",
+         "scope": "mission", "constraint_type": "hard", "violation_action": "project_fix", "priority": "P1",
          "vertices": _sq(10, 10, 12, 12)},
         {"id": "soft-p1", "type": "polygon_fence",
          "violation_action": "project_fix", "priority": "P1",
-         "constraint_type": "soft", "vertices": _sq(10, 10, 12, 12)},
+         "scope": "mission", "constraint_type": "soft", "vertices": _sq(10, 10, 12, 12)},
         {"id": "soft-p0", "type": "polygon_fence",
-         "priority": "P0", "violation_action": "project_fix", "constraint_type": "soft",
+         "priority": "P0", "violation_action": "project_fix", "scope": "mission", "constraint_type": "soft",
          "vertices": _sq(10, 10, 12, 12)}]})
     csp = ConstraintCompiler(pol).compile_csp(_mission(), now=None)
     assert _row(csp, "hard-p1").severity == 0.6
@@ -506,7 +508,7 @@ def test_a_windowed_p1_rule_keeps_its_window_in_the_summary():
     _need()
     pol = Policy.model_validate({"policy_id": "p1win", "constraints": [
         {"id": "zq", "type": "polygon_fence",
-         "constraint_type": "hard", "violation_action": "project_fix", "priority": "P1",
+         "scope": "mission", "constraint_type": "hard", "violation_action": "project_fix", "priority": "P1",
          "vertices": _sq(10, 10, 12, 12),
          "valid_time": {"recurrence": {"days": ["Mon", "Tue", "Wed", "Thu", "Fri"],
                                        "start_time": "07:30", "end_time": "17:30"}}}]})
@@ -659,10 +661,10 @@ def test_truncation_is_a_strict_prefix_by_risk_not_skip_and_continue():
     pol = Policy.model_validate({"policy_id": "prefix", "constraints": [
         {"id": "p0z", "type": "polygon_fence", **HARD_P0, "vertices": _sq(40, -5, 50, 5)},
         {"id": "kin", "type": "kinematic_envelope",
-         "constraint_type": "hard", "violation_action": "project_fix", "priority": "P1",
+         "scope": "mission", "constraint_type": "hard", "violation_action": "project_fix", "priority": "P1",
          "speed_max_mps": 5, "climb_rate_max_mps": 2, "yaw_rate_max_dps": 45},
         {"id": "zq", "type": "polygon_fence",
-         "constraint_type": "hard", "violation_action": "project_fix", "priority": "P2",
+         "scope": "mission", "constraint_type": "hard", "violation_action": "project_fix", "priority": "P2",
          "vertices": _sq(20, -2, 22, 2)}]})
     m = _mission(**MIX_MISSION)
     big, p0, rest = _order_without_budget(pol, m)
@@ -958,7 +960,7 @@ def test_the_coverage_function_can_say_zero():
     assert K.p0_coverage(no_text, pol)["coverage"] == 0.0, "the scorer ignores the prompt text"
     none = Policy.model_validate({"policy_id": "p1-only", "constraints": [
         {"id": "k", "type": "kinematic_envelope",
-         "constraint_type": "hard", "violation_action": "project_fix", "priority": "P1",
+         "scope": "mission", "constraint_type": "hard", "violation_action": "project_fix", "priority": "P1",
          "speed_max_mps": 3, "climb_rate_max_mps": 1, "yaw_rate_max_dps": 30}]})
     got = K.p0_coverage(ConstraintCompiler(none).compile_csp(_mission(), now=None), none)
     assert got["coverage"] is None and got["n_p0_in_scope"] == 0, \
@@ -1300,7 +1302,7 @@ def test_the_kpi_report_lists_a_file_with_an_unenforced_rule_and_carries_on():
     # declarable-only type is left: an MSL height with no ground is the case.
     people = {"policy_id": "p-people", "version": "0.1.0", "constraints": [
         {"id": "fence", "type": "polygon_fence",
-         "constraint_type": "hard", "violation_action": "project_fix", "priority": "P0",
+         "scope": "mission", "constraint_type": "hard", "violation_action": "project_fix", "priority": "P0",
          "vertices": [{"x": 10, "y": 10}, {"x": 20, "y": 10}, {"x": 20, "y": 20}],
          "altitude_floor_m": 0, "altitude_ceiling_m": 100},
         {"id": "people", "type": "altitude_envelope", **HARD_P0, "alt_min_m": 600,
@@ -1431,10 +1433,10 @@ def test_a_soft_rule_says_so_which_the_old_text_did_not():
     _need()
     pol = Policy.model_validate({"policy_id": "soft", "constraints": [
         {"id": "z", "type": "polygon_fence",
-         "priority": "P0", "violation_action": "project_fix", "constraint_type": "soft",
+         "priority": "P0", "violation_action": "project_fix", "scope": "mission", "constraint_type": "soft",
          "vertices": _sq(0, 0, 1, 1)},
         {"id": "k", "type": "kinematic_envelope",
-         "priority": "P0", "violation_action": "project_fix", "constraint_type": "soft",
+         "priority": "P0", "violation_action": "project_fix", "scope": "mission", "constraint_type": "soft",
          "speed_max_mps": 3, "climb_rate_max_mps": 1, "yaw_rate_max_dps": 30}]})
     z, k = pol.constraints
     assert K.render_sentence(z) == "Never enter zone 'z' (soft limit)."
@@ -1599,7 +1601,7 @@ def test_a_corridor_altitude_band_bounds_the_action_set():
     spec = Policy.model_validate({"policy_id": "spec-example", "constraints": [
         river,
         {"id": "alt", "type": "altitude_envelope",
-         "constraint_type": "hard", "violation_action": "project_fix", "priority": "P1",
+         "scope": "mission", "constraint_type": "hard", "violation_action": "project_fix", "priority": "P1",
          "alt_min_m": 5, "alt_max_m": 120}]})
     band = ConstraintCompiler(spec).compile_csp(_mission(), now=None).allowed_action_set
     assert band.altitude_band_m_agl == (30.0, 80.0), band
@@ -2117,32 +2119,32 @@ HOT = {
     "policy_id": "hot-apply-mix",
     "constraints": [
         {"id": "fence-a", "type": "polygon_fence",
-         "constraint_type": "hard", "violation_action": "project_fix", "priority": "P0",
+         "scope": "mission", "constraint_type": "hard", "violation_action": "project_fix", "priority": "P0",
          "vertices": _sq(40, -25, 50, -15), "valid_time": _weekdays("07:30", "17:30")},
         {"id": "fence-b", "type": "polygon_fence",
-         "constraint_type": "hard", "violation_action": "project_fix", "priority": "P0",
+         "scope": "mission", "constraint_type": "hard", "violation_action": "project_fix", "priority": "P0",
          "vertices": _sq(60, 20, 70, 30)},
         {"id": "corr-main", "type": "corridor",
-         "constraint_type": "hard", "violation_action": "project_fix", "priority": "P0",
+         "scope": "mission", "constraint_type": "hard", "violation_action": "project_fix", "priority": "P0",
          "centerline": [{"x": 0, "y": 0}, {"x": 100, "y": 0}], "width_m": 40,
          "altitude_floor_m": 5, "altitude_ceiling_m": 60},
         {"id": "dyn", "type": "dynamic_nfz",
-         "constraint_type": "hard", "violation_action": "project_fix", "priority": "P0",
+         "scope": "mission", "constraint_type": "hard", "violation_action": "project_fix", "priority": "P0",
          "vertices": _sq(20, 30, 30, 40),
          "motion": {"vx_mps": 2.0, "vy_mps": 0.0, "yaw_rate_dps": 0.0}},
         {"id": "dyn-still", "type": "dynamic_nfz",
-         "constraint_type": "hard", "violation_action": "project_fix", "priority": "P1",
+         "scope": "mission", "constraint_type": "hard", "violation_action": "project_fix", "priority": "P1",
          "vertices": _sq(-400, -400, -390, -390)},
         {"id": "sw-a-off", "type": "time_window_switch",
-         "constraint_type": "hard", "violation_action": "project_fix", "priority": "P0",
+         "scope": "mission", "constraint_type": "hard", "violation_action": "project_fix", "priority": "P0",
          "target_id": "fence-a", "active": False,
          "valid_time": _weekdays("12:00", "13:00", ("Mon",))},
         {"id": "sw-b-off", "type": "time_window_switch",
-         "constraint_type": "hard", "violation_action": "project_fix", "priority": "P1",
+         "scope": "mission", "constraint_type": "hard", "violation_action": "project_fix", "priority": "P1",
          "target_id": "fence-b", "active": False,
          "valid_time": _weekdays("08:00", "08:30", ("Mon",))},
         {"id": "swap-main", "type": "corridor_swap",
-         "constraint_type": "hard", "violation_action": "project_fix", "priority": "P0",
+         "scope": "mission", "constraint_type": "hard", "violation_action": "project_fix", "priority": "P0",
          "target_id": "corr-main",
          "centerline": [{"x": 0, "y": 0}, {"x": 100, "y": 10}], "width_m": 30,
          "altitude_floor_m": 10, "altitude_ceiling_m": 50,
@@ -2812,7 +2814,7 @@ def _two_switches(first_active: bool):
          "active": not first_active, "valid_time": _weekdays("08:30", "08:45", ("Mon",))}
     return policy_from_raw({"policy_id": "two-switches", "constraints": [
         {"id": "fence-s", "type": "polygon_fence",
-         "constraint_type": "hard", "violation_action": "project_fix", "priority": "P0",
+         "scope": "mission", "constraint_type": "hard", "violation_action": "project_fix", "priority": "P0",
          "vertices": _sq(40, -5, 50, 5)}, a, b]}, runtime=False)
 
 

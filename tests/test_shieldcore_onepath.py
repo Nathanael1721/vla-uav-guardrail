@@ -46,7 +46,8 @@ from guardrail import shield as SH                                      # noqa: 
 from guardrail.models import Action4D, Policy, State                    # noqa: E402
 from guardrail.shield import RuleClock, Shield                          # noqa: E402
 
-HARD_P0 = {"constraint_type": "hard", "priority": "P0", "violation_action": "project_fix"}
+HARD_P0 = {"constraint_type": "hard", "scope": "mission", "priority": "P0",
+           "violation_action": "project_fix"}
 
 # Where the system's code lives. Not scanned: tests/ (its legacy copies are
 # the nulls the identity tests compare against) and training/, whose

@@ -126,7 +126,7 @@ from typing import Any
 
 from .models import (HASH_SCHEME, IR2_FORMS, IR_SCHEMA_VERSION, PRIOR_SCHEME_V2, SHORT_FORM,
                      REFERENCE_FORM, Policy, _prune_nulls, canonical_json,
-                     ir2_rule_view, load_policy)
+                     era_context, ir2_rule_view, load_policy)
 from .projection import LOCAL_QUANTUM_M
 
 try:                                    # optional: see "VERIFYING EVERYWHERE"
@@ -716,7 +716,11 @@ def manifest_for(policy: Policy, changelog: str = "initial", *,
         "policy_hash": digest,
         "hash_scheme": scheme,
         "hashes": {HASH_SCHEME: policy.policy_hash, REFERENCE_FORM: ref},
-        "ir_schema_version": IR_SCHEMA_VERSION,
+        # The schema the archived IR is a document of (Policy.ir_schema_version):
+        # IR_SCHEMA_VERSION, or 3.1.0 for a policy of an earlier era whose
+        # rules leave `scope` out (IR 4.0.0), so check_bundle reads it in that
+        # era (_manifest_era).
+        "ir_schema_version": policy.ir_schema_version,
         "signed_by": signed_by or UNSIGNED,
         "changelog": changelog,
     }
@@ -902,6 +906,15 @@ class BundleCheck:
                 "signature_detail": self.detail}
 
 
+def _manifest_era(manifest) -> dict:
+    """The validation context for the IR of a bundle with this manifest: the
+    era of the IR schema it was written under (models.era_context). A manifest
+    written before 2026-10-06 names no version (an earlier era too); a value
+    that is not a readable version is read as today's (scope required)."""
+    return era_context(manifest.get("ir_schema_version")
+                       if isinstance(manifest, dict) else None)
+
+
 def check_bundle(path: str | Path,
                  trust_store: str | Path | dict | None = None) -> BundleCheck:
     """Open a bundle, prove its integrity, and report its signature status.
@@ -933,8 +946,11 @@ def check_bundle(path: str | Path,
     # are projected again by the model, deterministically, in the same frame.
     # Since 2026-10-06 the model refuses an unknown key outright (it used to
     # drop it, and the hash comparison below was what caught that).
+    # In the era its manifest names (IR schema 4.0.0, 2026-11-06): a bundle
+    # written before may leave a rule's `scope` out, and it stays absent, so
+    # the IR hashes as it was issued; one written since must state it.
     try:
-        policy = Policy.model_validate(json.loads(ir_bytes))
+        policy = Policy.model_validate(json.loads(ir_bytes), context=_manifest_era(manifest))
     except ValueError as exc:
         first = str(exc).strip().splitlines()
         raise ValueError(
@@ -1223,7 +1239,8 @@ def _verify_both_hashes(name: str, manifest: dict, ir_bytes: bytes, policy: Poli
                              f"{HASH_SCHEME} must carry the reference_delta that "
                              f"rebuilds that policy")
         try:
-            source = Policy.from_reference(json.loads(ir_bytes), manifest["reference_delta"])
+            source = Policy.from_reference(json.loads(ir_bytes), manifest["reference_delta"],
+                                           context=_manifest_era(manifest))
         except ValueError as exc:
             raise ValueError(f"{name}: reference_delta does not rebuild a policy "
                              f"from this document: {str(exc).splitlines()[0]}") from None
@@ -1403,7 +1420,7 @@ def _entry(policy: Policy) -> dict:
     and are under the lock's top-level `hash_scheme` (v2) - see its `_doc`."""
     return {"policy_hash": policy.policy_hash,
             "hash_scheme": HASH_SCHEME,
-            "ir_schema_version": IR_SCHEMA_VERSION,
+            "ir_schema_version": policy.ir_schema_version,
             "legacy_hashes": policy.legacy_hashes()}
 
 
@@ -1439,6 +1456,15 @@ MIGRATION_FORMS = (PRIOR_SCHEME_V2, *IR2_FORMS)
 # the form the metre form matched ("<FRAME_FORM>+<form>").
 FRAME_FORM = "sha256-canonical-v3/local-metres"
 
+# The scope migration (2026-11-06, IR schema 4.0.0, WP1-01): `scope` became
+# required, and every shipped policy, which had left it out, now states it on
+# every rule and raised its patch version. The old version is read back as the
+# new file with scope left out (Policy.ir3_form: every rule's scope absent,
+# nothing else changed), which reproduces the old entry's hash, IR 2.x forms
+# and legacy forms exactly. A lock entry's `migration.old_hash_form` names it
+# IR3_FORM (or IR3_FORM plus the form it matched, "<IR3_FORM>+<form>").
+IR3_FORM = "sha256-canonical-v3/ir-3.x"
+
 
 def as_version(policy: Policy, version: str) -> Policy:
     """`policy` with another `version` and nothing else changed (its rules,
@@ -1451,34 +1477,38 @@ def rewind(pol: Policy, old_key: str, pin: dict | None) -> tuple[Policy, str] | 
     content `pin` (that version's lock pin) recorded, and the form its hash
     is reproduced under - or None when neither reading reproduces it.
 
-    Two readings are tried: the same content at the old version (an IR change
-    that moved the hash: MIGRATION_FORMS), and, for a WGS84 policy, its metre
-    form at the old version (the frame migration: FRAME_FORM). The legacy
-    16-hex forms the pin records must be reproduced too."""
+    Three readings are tried: the same content at the old version (an IR
+    change that moved the hash: MIGRATION_FORMS); for a policy that states
+    `scope`, the file with scope left out at the old version (the scope
+    migration: IR3_FORM); and, for a WGS84 policy, its metre form at the old
+    version (the frame migration: FRAME_FORM). The legacy 16-hex forms the
+    pin records must be reproduced too."""
     if pin is None:
         return None
     pid, _, ver = old_key.rpartition("@")
     if pid != pol.policy_id:
         return None
-    tries = [(as_version(pol, ver), False)]
+    tries: list[tuple[Policy, str | None]] = [(as_version(pol, ver), None)]
+    if any(c.scope is not None for c in pol.constraints):
+        tries.append((as_version(pol.ir3_form(), ver), IR3_FORM))
     if pol.is_geographic or pol.origin is not None:
         try:
-            tries.append((as_version(pol.metre_form(), ver), True))
+            tries.append((as_version(pol.metre_form(), ver), FRAME_FORM))
         except ValueError:
             pass
-    for old, metre in tries:
+    for old, reading in tries:
         form = old.hash_form(pin.get("policy_hash"))
-        ok = form in MIGRATION_FORMS or (metre and form == HASH_SCHEME)
+        ok = form in MIGRATION_FORMS or (reading is not None and form == HASH_SCHEME)
         if not ok:
             continue
         later = (pin.get("hashes") or {}).get(HASH_SCHEME)
-        if later is not None and not (metre and later == old.policy_hash) and \
+        if later is not None and not (reading is not None and later == old.policy_hash) and \
                 old.hash_form(later) not in MIGRATION_FORMS:
             continue
         if pin.get("legacy_hashes") is not None and pin["legacy_hashes"] != old.legacy_hashes():
             continue
-        if metre:
-            form = FRAME_FORM if form == HASH_SCHEME else f"{FRAME_FORM}+{form}"
+        if reading is not None:
+            form = reading if form == HASH_SCHEME else f"{reading}+{form}"
         return old, form
     return None
 
@@ -1507,9 +1537,13 @@ def migration_problem(pol: Policy, old_key: str, pin: dict | None) -> str | None
     old = as_version(pol, ver)
     form = old.hash_form(pin.get("policy_hash"))
     if form not in MIGRATION_FORMS:
+        others = [r for r, has in (("its form with scope left out",
+                                    any(c.scope is not None for c in pol.constraints)),
+                                   ("its metre form", pol.is_geographic)) if has]
         return (f"rewound to {ver} it does not reproduce {old_key}'s hash "
                 f"{str(pin.get('policy_hash'))[:23]}... under any migration form "
-                f"(got {form or 'no form'}{', nor does its metre form' if pol.is_geographic else ''})")
+                f"(got {form or 'no form'}"
+                + "".join(f", nor does {r}" for r in others) + ")")
     later = (pin.get("hashes") or {}).get(HASH_SCHEME)
     if later is not None and old.hash_form(later) not in MIGRATION_FORMS:
         return f"rewound to {ver} it does not reproduce {old_key}'s {HASH_SCHEME} hash"
@@ -1868,16 +1902,19 @@ def derive(base: Policy, hot_apply: list[dict], generations: int | None = None,
     (every recipe in the lock before 2026-11-02) means 2.x. A 2.x recipe may
     omit constraint_type / priority / violation_action, which then meant
     hard / P0 / repair (models.IR2_RULE_DEFAULTS); those are filled in, so
-    the rule is rebuilt as it flew. Under 3.0.0 a recipe states them."""
+    the rule is rebuilt as it flew. Under 3.0.0 a recipe states them.
+    Before 4.0.0 a recipe may leave `scope` out, and it stays absent, as it
+    flew (models.era_context); under 4.0.0 a recipe states it."""
     from pydantic import TypeAdapter
     from .models import IR2_RULE_DEFAULTS, Constraint
     ir2 = _semver_key(ir_schema_version or "2.0.0") < (3, 0, 0)
     pol = base.model_copy(deep=True)
     ta = TypeAdapter(Constraint)
+    era = era_context(ir_schema_version)
     for raw in hot_apply:
         if ir2 and isinstance(raw, dict):
             raw = {**IR2_RULE_DEFAULTS, **raw}
-        pol.constraints.append(ta.validate_python(raw))
+        pol.constraints.append(ta.validate_python(raw, context=era))
         pol.generation += 1
     if generations is not None and pol.generation != base.generation + generations:
         raise ValueError(f"derivation expected {generations} generation(s), "
@@ -1957,12 +1994,26 @@ def ir_json_schema() -> dict:
             "or {lat, lon} WGS84 - the canonical form of a geographic point.")
     # A DERIVED field (exclude=True: circle_fence's polygon) is never in the IR
     # and is refused when authored, so the published contract does not offer it.
-    from .models import ir_models
+    from .models import SCOPE_REQUIRED_SINCE, ir_models
     for cls in ir_models():
         d = schema.get("$defs", {}).get(cls.__name__)
         for name, f in cls.model_fields.items():
             if f.exclude and d is not None:
                 d.get("properties", {}).pop(name, None)
+        # `scope` (IR schema 4.0.0): required, one of the grant's four. The
+        # model's annotation also admits null, which only a rule of a
+        # document from an earlier era may hold (models.era_context: the
+        # readers of stored artefacts) - never a document this schema
+        # describes, so the published contract does not offer it.
+        p = (d or {}).get("properties", {}).get("scope")
+        if p is not None and "anyOf" in p:
+            (branch,) = [b for b in p["anyOf"] if b.get("type") != "null"]
+            p.pop("anyOf")
+            p.update(branch)
+            p["description"] = (
+                f"Where the rule applies (the grant's ConstraintBase): global, "
+                f"mission, segment or waypoint. Required since IR schema "
+                f"{SCOPE_REQUIRED_SINCE}.")
     return schema
 
 
@@ -2140,7 +2191,7 @@ def _main(argv: list[str] | None = None) -> int:
 
         python -m guardrail.bundle policies/wgs84_taipei.yaml -m "initial"
         python -m guardrail.bundle POLICY --ir-form reference   # the reference reads it
-        python -m guardrail.bundle verify bundles/wgs84-taipei-demo-v0.1.1.tar.gz
+        python -m guardrail.bundle verify bundles/wgs84-taipei-demo-v0.1.2.tar.gz
         python -m guardrail.bundle merge reg.yaml site.yaml mission.yaml -o out.tar.gz
         python -m guardrail.bundle export POLICY [--origin LAT,LON] [-o out.yaml]
         python -m guardrail.bundle export POLICY --reference [--conservative]

@@ -28,9 +28,11 @@ sys.path.insert(0, str(ROOT))
 from guardrail import Action4D, Shield, State, load_policy  # noqa: E402
 from guardrail import api as A                             # noqa: E402
 
-# The three ConstraintBase fields the grant requires (IR schema 3.0.0, 2026-11-02),
-# at the values they defaulted to before (repair = project_fix).
-HARD_P0 = {"constraint_type": "hard", "priority": "P0", "violation_action": "project_fix"}
+# The four ConstraintBase fields the grant requires (IR schema 3.0.0, 2026-11-02;
+# scope since 4.0.0, 2026-11-06), at the values they defaulted to before
+# (repair = project_fix; an absent scope meant mission).
+HARD_P0 = {"constraint_type": "hard", "scope": "mission", "priority": "P0",
+           "violation_action": "project_fix"}
 
 DEMO = ROOT / "policies" / "demo_policy.yaml"
 WGS = ROOT / "policies" / "wgs84_taipei.yaml"
@@ -87,14 +89,17 @@ def test_the_legacy_nfz_body_now_spawns_a_dynamic_nfz():
         [(p["x"], p["y"]) for p in ZONE["vertices"]]
 
 
-def test_a_rule_body_must_state_the_three_constraintbase_fields():
+def test_a_rule_body_must_state_the_four_constraintbase_fields():
     """IR schema 3.0.0 (2026-11-02): a REST body that is a DSL rule states
     constraint_type, priority and violation_action, as every rule must; until
     then a body without them spawned a hard P0 zone (failed then: each body
-    below was accepted). The deprecated POST /nfz keeps its fixed 2026-07
-    body, which never had them, and spawns what it always meant."""
+    below was accepted). IR schema 4.0.0 (2026-11-06): and scope, which an
+    absent body field meant "mission" until then (failed then: the body
+    without it was accepted). The deprecated POST /nfz keeps its fixed
+    2026-07 body, which never had them, and spawns what it always meant:
+    hard, P0, project_fix, for this mission."""
     sh = _flying()
-    for field in ("constraint_type", "priority", "violation_action"):
+    for field in ("constraint_type", "scope", "priority", "violation_action"):
         body = {k: v for k, v in ZONE.items() if k != field}
         e = _err(A.apply_dynamic_nfz, sh, body)
         assert e.status == 422 and field in e.detail, (field, e.status, e.detail)
@@ -105,9 +110,14 @@ def test_a_rule_body_must_state_the_three_constraintbase_fields():
     assert sh.policy.generation == 0, "a refused body changed the policy"
     legacy = {k: ZONE[k] for k in ("id", "vertices", "altitude_floor_m",
                                    "altitude_ceiling_m", "margin_m")}
-    A.apply_legacy_nfz(sh, legacy)
+    res = A.apply_legacy_nfz(sh, legacy)
     z = sh.policy.constraints[-1]
-    assert (z.constraint_type, z.priority, z.violation_action) == ("hard", "P0", "project_fix")
+    assert (z.constraint_type, z.priority, z.violation_action, z.scope) == \
+        ("hard", "P0", "project_fix", "mission")
+    assert "scope" in res["deprecated"] and "this mission" in res["deprecated"], res
+    # A null scope is no scope.
+    e = _err(A.apply_dynamic_nfz, sh, {**ZONE, "id": "null-scope", "scope": None})
+    assert e.status == 422 and "scope" in e.detail, (e.status, e.detail)
     # `repair` is still read, as the grant's project_fix.
     A.apply_dynamic_nfz(sh, {**ZONE, "id": "old-spelling", "violation_action": "repair",
                              "vertices": [{"x": 40, "y": 40}, {"x": 45, "y": 40},

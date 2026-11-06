@@ -40,9 +40,11 @@ from guardrail.shield import (HotApplyRefused, LayerRelaxation,        # noqa: E
                               LockedRuleClass, RuleIdConflict, UnknownRule,
                               as_dynamic_nfz)
 
-# The three ConstraintBase fields the grant requires (IR schema 3.0.0, 2026-11-02),
-# at the values they defaulted to before (repair = project_fix).
-HARD_P0 = {"constraint_type": "hard", "priority": "P0", "violation_action": "project_fix"}
+# The four ConstraintBase fields the grant requires (IR schema 3.0.0, 2026-11-02;
+# scope since 4.0.0, 2026-11-06), at the values they defaulted to before
+# (repair = project_fix; an absent scope meant mission).
+HARD_P0 = {"constraint_type": "hard", "scope": "mission", "priority": "P0",
+           "violation_action": "project_fix"}
 
 DEMO = ROOT / "policies" / "demo_policy.yaml"
 
@@ -696,7 +698,7 @@ def _layered(extra_reg=(), extra_mis=()):
          "vertices": _SQ},
         {"id": "nfz-park", "type": "polygon_fence",
          "violation_action": "project_fix", "layer": "regulation",
-         "constraint_type": "soft", "priority": "P2",
+         "scope": "mission", "constraint_type": "soft", "priority": "P2",
          "vertices": [{"x": -40, "y": 7}, {"x": -30, "y": 7}, {"x": -30, "y": 23},
                       {"x": -40, "y": 23}]},
         *extra_reg]})
@@ -818,7 +820,7 @@ def test_a_swap_may_not_loosen_a_hard_corridor_of_another_layer():
     wide = CorridorSwap.model_validate({
         "id": "wide", "type": "corridor_swap", "target_id": "lane", "width_m": 2000,
         "centerline": [{"x": -100, "y": 0}, {"x": 100, "y": 0}],
-        "altitude_floor_m": 0, "altitude_ceiling_m": 1000, "constraint_type": "soft",
+        "altitude_floor_m": 0, "altitude_ceiling_m": 1000, "scope": "mission", "constraint_type": "soft",
         "priority": "P2", "violation_action": "monitor_only"})
     e = _raises(LayerRelaxation, sh.hot_apply, wide)
     assert "hard regulation-layer corridor 'lane'" in str(e)
@@ -928,7 +930,7 @@ def test_the_migration_keeps_the_zones_breach_action_type_and_priority():
     from guardrail.models import PolygonFence
     pf = PolygonFence.model_validate({
         "id": "pf", "type": "polygon_fence", "violation_action": "RTL",
-        "constraint_type": "soft", "priority": "P1", "margin_m": 2.0,
+        "scope": "mission", "constraint_type": "soft", "priority": "P1", "margin_m": 2.0,
         "altitude_floor_m": 3.0, "altitude_ceiling_m": 50.0,
         "vertices": [{"x": 0, "y": 0}, {"x": 4, "y": 0}, {"x": 4, "y": 4}]})
     z = as_dynamic_nfz(pf)

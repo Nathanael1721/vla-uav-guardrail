@@ -51,6 +51,11 @@
           ]
         },
         {
+          "required": [
+            "scope"
+          ]
+        },
+        {
           "anyOf": [
             {
               "required": [
@@ -191,22 +196,15 @@
           "type": "string"
         },
         "scope": {
-          "anyOf": [
-            {
-              "enum": [
-                "global",
-                "mission",
-                "segment",
-                "waypoint"
-              ],
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
+          "description": "Where the rule applies (the grant's ConstraintBase): global, mission, segment or waypoint. Required since IR schema 4.0.0.",
+          "enum": [
+            "global",
+            "mission",
+            "segment",
+            "waypoint"
           ],
-          "default": null,
-          "title": "Scope"
+          "title": "Scope",
+          "type": "string"
         },
         "type": {
           "const": "altitude_envelope",
@@ -506,6 +504,11 @@
           ]
         },
         {
+          "required": [
+            "scope"
+          ]
+        },
+        {
           "anyOf": [
             {
               "required": [
@@ -724,22 +727,15 @@
           "type": "number"
         },
         "scope": {
-          "anyOf": [
-            {
-              "enum": [
-                "global",
-                "mission",
-                "segment",
-                "waypoint"
-              ],
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
+          "description": "Where the rule applies (the grant's ConstraintBase): global, mission, segment or waypoint. Required since IR schema 4.0.0.",
+          "enum": [
+            "global",
+            "mission",
+            "segment",
+            "waypoint"
           ],
-          "default": null,
-          "title": "Scope"
+          "title": "Scope",
+          "type": "string"
         },
         "type": {
           "const": "circle_fence",
@@ -868,6 +864,11 @@
         {
           "required": [
             "violation_action"
+          ]
+        },
+        {
+          "required": [
+            "scope"
           ]
         },
         {
@@ -1055,22 +1056,15 @@
           "type": "string"
         },
         "scope": {
-          "anyOf": [
-            {
-              "enum": [
-                "global",
-                "mission",
-                "segment",
-                "waypoint"
-              ],
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
+          "description": "Where the rule applies (the grant's ConstraintBase): global, mission, segment or waypoint. Required since IR schema 4.0.0.",
+          "enum": [
+            "global",
+            "mission",
+            "segment",
+            "waypoint"
           ],
-          "default": null,
-          "title": "Scope"
+          "title": "Scope",
+          "type": "string"
         },
         "type": {
           "const": "corridor",
@@ -1212,6 +1206,11 @@
         {
           "required": [
             "violation_action"
+          ]
+        },
+        {
+          "required": [
+            "scope"
           ]
         },
         {
@@ -1413,22 +1412,15 @@
           "type": "string"
         },
         "scope": {
-          "anyOf": [
-            {
-              "enum": [
-                "global",
-                "mission",
-                "segment",
-                "waypoint"
-              ],
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
+          "description": "Where the rule applies (the grant's ConstraintBase): global, mission, segment or waypoint. Required since IR schema 4.0.0.",
+          "enum": [
+            "global",
+            "mission",
+            "segment",
+            "waypoint"
           ],
-          "default": null,
-          "title": "Scope"
+          "title": "Scope",
+          "type": "string"
         },
         "target": {
           "description": "The grant's name for `target_id`; give one of the two.",
@@ -1497,6 +1489,11 @@
         {
           "required": [
             "violation_action"
+          ]
+        },
+        {
+          "required": [
+            "scope"
           ]
         },
         {
@@ -1586,22 +1583,15 @@
           "type": "string"
         },
         "scope": {
-          "anyOf": [
-            {
-              "enum": [
-                "global",
-                "mission",
-                "segment",
-                "waypoint"
-              ],
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
+          "description": "Where the rule applies (the grant's ConstraintBase): global, mission, segment or waypoint. Required since IR schema 4.0.0.",
+          "enum": [
+            "global",
+            "mission",
+            "segment",
+            "waypoint"
           ],
-          "default": null,
-          "title": "Scope"
+          "title": "Scope",
+          "type": "string"
         },
         "type": {
           "const": "distance_envelope",
@@ -1715,6 +1705,11 @@
         {
           "required": [
             "violation_action"
+          ]
+        },
+        {
+          "required": [
+            "scope"
           ]
         },
         {
@@ -1884,22 +1879,15 @@
           "type": "string"
         },
         "scope": {
-          "anyOf": [
-            {
-              "enum": [
-                "global",
-                "mission",
-                "segment",
-                "waypoint"
-              ],
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
+          "description": "Where the rule applies (the grant's ConstraintBase): global, mission, segment or waypoint. Required since IR schema 4.0.0.",
+          "enum": [
+            "global",
+            "mission",
+            "segment",
+            "waypoint"
           ],
-          "default": null,
-          "title": "Scope"
+          "title": "Scope",
+          "type": "string"
         },
         "type": {
           "const": "dynamic_nfz",
@@ -2033,22 +2021,15 @@
           "type": "string"
         },
         "scope": {
-          "anyOf": [
-            {
-              "enum": [
-                "global",
-                "mission",
-                "segment",
-                "waypoint"
-              ],
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
+          "description": "Where the rule applies (the grant's ConstraintBase): global, mission, segment or waypoint. Required since IR schema 4.0.0.",
+          "enum": [
+            "global",
+            "mission",
+            "segment",
+            "waypoint"
           ],
-          "default": null,
-          "title": "Scope"
+          "title": "Scope",
+          "type": "string"
         },
         "type": {
           "const": "altitude_envelope",
@@ -2084,6 +2065,7 @@
         "constraint_type",
         "priority",
         "violation_action",
+        "scope",
         "type",
         "alt_min_m",
         "alt_max_m"
@@ -2194,22 +2176,15 @@
           "type": "number"
         },
         "scope": {
-          "anyOf": [
-            {
-              "enum": [
-                "global",
-                "mission",
-                "segment",
-                "waypoint"
-              ],
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
+          "description": "Where the rule applies (the grant's ConstraintBase): global, mission, segment or waypoint. Required since IR schema 4.0.0.",
+          "enum": [
+            "global",
+            "mission",
+            "segment",
+            "waypoint"
           ],
-          "default": null,
-          "title": "Scope"
+          "title": "Scope",
+          "type": "string"
         },
         "type": {
           "const": "circle_fence",
@@ -2245,6 +2220,7 @@
         "constraint_type",
         "priority",
         "violation_action",
+        "scope",
         "type",
         "center",
         "radius_m"
@@ -2350,22 +2326,15 @@
           "type": "string"
         },
         "scope": {
-          "anyOf": [
-            {
-              "enum": [
-                "global",
-                "mission",
-                "segment",
-                "waypoint"
-              ],
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
+          "description": "Where the rule applies (the grant's ConstraintBase): global, mission, segment or waypoint. Required since IR schema 4.0.0.",
+          "enum": [
+            "global",
+            "mission",
+            "segment",
+            "waypoint"
           ],
-          "default": null,
-          "title": "Scope"
+          "title": "Scope",
+          "type": "string"
         },
         "type": {
           "const": "corridor",
@@ -2406,6 +2375,7 @@
         "constraint_type",
         "priority",
         "violation_action",
+        "scope",
         "type",
         "centerline",
         "width_m"
@@ -2511,22 +2481,15 @@
           "type": "string"
         },
         "scope": {
-          "anyOf": [
-            {
-              "enum": [
-                "global",
-                "mission",
-                "segment",
-                "waypoint"
-              ],
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
+          "description": "Where the rule applies (the grant's ConstraintBase): global, mission, segment or waypoint. Required since IR schema 4.0.0.",
+          "enum": [
+            "global",
+            "mission",
+            "segment",
+            "waypoint"
           ],
-          "default": null,
-          "title": "Scope"
+          "title": "Scope",
+          "type": "string"
         },
         "target_id": {
           "minLength": 1,
@@ -2572,6 +2535,7 @@
         "constraint_type",
         "priority",
         "violation_action",
+        "scope",
         "type",
         "target_id",
         "centerline",
@@ -2658,22 +2622,15 @@
           "type": "string"
         },
         "scope": {
-          "anyOf": [
-            {
-              "enum": [
-                "global",
-                "mission",
-                "segment",
-                "waypoint"
-              ],
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
+          "description": "Where the rule applies (the grant's ConstraintBase): global, mission, segment or waypoint. Required since IR schema 4.0.0.",
+          "enum": [
+            "global",
+            "mission",
+            "segment",
+            "waypoint"
           ],
-          "default": null,
-          "title": "Scope"
+          "title": "Scope",
+          "type": "string"
         },
         "type": {
           "const": "distance_envelope",
@@ -2709,6 +2666,7 @@
         "constraint_type",
         "priority",
         "violation_action",
+        "scope",
         "type",
         "object_class",
         "min_distance_m"
@@ -2822,22 +2780,15 @@
           "type": "string"
         },
         "scope": {
-          "anyOf": [
-            {
-              "enum": [
-                "global",
-                "mission",
-                "segment",
-                "waypoint"
-              ],
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
+          "description": "Where the rule applies (the grant's ConstraintBase): global, mission, segment or waypoint. Required since IR schema 4.0.0.",
+          "enum": [
+            "global",
+            "mission",
+            "segment",
+            "waypoint"
           ],
-          "default": null,
-          "title": "Scope"
+          "title": "Scope",
+          "type": "string"
         },
         "type": {
           "const": "dynamic_nfz",
@@ -2881,6 +2832,7 @@
         "constraint_type",
         "priority",
         "violation_action",
+        "scope",
         "type",
         "vertices"
       ],
@@ -2956,22 +2908,15 @@
           "type": "string"
         },
         "scope": {
-          "anyOf": [
-            {
-              "enum": [
-                "global",
-                "mission",
-                "segment",
-                "waypoint"
-              ],
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
+          "description": "Where the rule applies (the grant's ConstraintBase): global, mission, segment or waypoint. Required since IR schema 4.0.0.",
+          "enum": [
+            "global",
+            "mission",
+            "segment",
+            "waypoint"
           ],
-          "default": null,
-          "title": "Scope"
+          "title": "Scope",
+          "type": "string"
         },
         "speed_max_mps": {
           "exclusiveMinimum": 0,
@@ -3017,6 +2962,7 @@
         "constraint_type",
         "priority",
         "violation_action",
+        "scope",
         "type",
         "speed_max_mps",
         "climb_rate_max_mps",
@@ -3117,22 +3063,15 @@
           "type": "string"
         },
         "scope": {
-          "anyOf": [
-            {
-              "enum": [
-                "global",
-                "mission",
-                "segment",
-                "waypoint"
-              ],
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
+          "description": "Where the rule applies (the grant's ConstraintBase): global, mission, segment or waypoint. Required since IR schema 4.0.0.",
+          "enum": [
+            "global",
+            "mission",
+            "segment",
+            "waypoint"
           ],
-          "default": null,
-          "title": "Scope"
+          "title": "Scope",
+          "type": "string"
         },
         "soft_margin_m": {
           "default": 0.0,
@@ -3174,6 +3113,7 @@
         "constraint_type",
         "priority",
         "violation_action",
+        "scope",
         "type",
         "min_clearance_m"
       ],
@@ -3299,22 +3239,15 @@
           "type": "string"
         },
         "scope": {
-          "anyOf": [
-            {
-              "enum": [
-                "global",
-                "mission",
-                "segment",
-                "waypoint"
-              ],
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
+          "description": "Where the rule applies (the grant's ConstraintBase): global, mission, segment or waypoint. Required since IR schema 4.0.0.",
+          "enum": [
+            "global",
+            "mission",
+            "segment",
+            "waypoint"
           ],
-          "default": null,
-          "title": "Scope"
+          "title": "Scope",
+          "type": "string"
         },
         "type": {
           "const": "polygon_fence",
@@ -3358,6 +3291,7 @@
         "constraint_type",
         "priority",
         "violation_action",
+        "scope",
         "type",
         "vertices"
       ],
@@ -3467,22 +3401,15 @@
           "type": "string"
         },
         "scope": {
-          "anyOf": [
-            {
-              "enum": [
-                "global",
-                "mission",
-                "segment",
-                "waypoint"
-              ],
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
+          "description": "Where the rule applies (the grant's ConstraintBase): global, mission, segment or waypoint. Required since IR schema 4.0.0.",
+          "enum": [
+            "global",
+            "mission",
+            "segment",
+            "waypoint"
           ],
-          "default": null,
-          "title": "Scope"
+          "title": "Scope",
+          "type": "string"
         },
         "soft_margin_m": {
           "default": 0.0,
@@ -3529,6 +3456,7 @@
         "constraint_type",
         "priority",
         "violation_action",
+        "scope",
         "type",
         "min_range_m"
       ],
@@ -3603,22 +3531,15 @@
           "type": "string"
         },
         "scope": {
-          "anyOf": [
-            {
-              "enum": [
-                "global",
-                "mission",
-                "segment",
-                "waypoint"
-              ],
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
+          "description": "Where the rule applies (the grant's ConstraintBase): global, mission, segment or waypoint. Required since IR schema 4.0.0.",
+          "enum": [
+            "global",
+            "mission",
+            "segment",
+            "waypoint"
           ],
-          "default": null,
-          "title": "Scope"
+          "title": "Scope",
+          "type": "string"
         },
         "target_id": {
           "minLength": 1,
@@ -3659,6 +3580,7 @@
         "constraint_type",
         "priority",
         "violation_action",
+        "scope",
         "type",
         "target_id",
         "active"
@@ -3802,6 +3724,11 @@
           ]
         },
         {
+          "required": [
+            "scope"
+          ]
+        },
+        {
           "anyOf": [
             {
               "required": [
@@ -3916,22 +3843,15 @@
           "type": "string"
         },
         "scope": {
-          "anyOf": [
-            {
-              "enum": [
-                "global",
-                "mission",
-                "segment",
-                "waypoint"
-              ],
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
+          "description": "Where the rule applies (the grant's ConstraintBase): global, mission, segment or waypoint. Required since IR schema 4.0.0.",
+          "enum": [
+            "global",
+            "mission",
+            "segment",
+            "waypoint"
           ],
-          "default": null,
-          "title": "Scope"
+          "title": "Scope",
+          "type": "string"
         },
         "speed_max": {
           "description": "The grant's name for `speed_max_mps`; give one of the two.",
@@ -4032,6 +3952,11 @@
         },
         {
           "required": [
+            "scope"
+          ]
+        },
+        {
+          "required": [
             "min_clearance_m"
           ]
         }
@@ -4103,22 +4028,15 @@
           "type": "string"
         },
         "scope": {
-          "anyOf": [
-            {
-              "enum": [
-                "global",
-                "mission",
-                "segment",
-                "waypoint"
-              ],
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
+          "description": "Where the rule applies (the grant's ConstraintBase): global, mission, segment or waypoint. Required since IR schema 4.0.0.",
+          "enum": [
+            "global",
+            "mission",
+            "segment",
+            "waypoint"
           ],
-          "default": null,
-          "title": "Scope"
+          "title": "Scope",
+          "type": "string"
         },
         "soft_margin_m": {
           "default": 0.0,
@@ -4262,6 +4180,11 @@
         {
           "required": [
             "violation_action"
+          ]
+        },
+        {
+          "required": [
+            "scope"
           ]
         },
         {
@@ -4420,22 +4343,15 @@
           "type": "string"
         },
         "scope": {
-          "anyOf": [
-            {
-              "enum": [
-                "global",
-                "mission",
-                "segment",
-                "waypoint"
-              ],
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
+          "description": "Where the rule applies (the grant's ConstraintBase): global, mission, segment or waypoint. Required since IR schema 4.0.0.",
+          "enum": [
+            "global",
+            "mission",
+            "segment",
+            "waypoint"
           ],
-          "default": null,
-          "title": "Scope"
+          "title": "Scope",
+          "type": "string"
         },
         "type": {
           "const": "polygon_fence",
@@ -4535,6 +4451,11 @@
         },
         {
           "required": [
+            "scope"
+          ]
+        },
+        {
+          "required": [
             "min_range_m"
           ]
         }
@@ -4606,22 +4527,15 @@
           "type": "string"
         },
         "scope": {
-          "anyOf": [
-            {
-              "enum": [
-                "global",
-                "mission",
-                "segment",
-                "waypoint"
-              ],
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
+          "description": "Where the rule applies (the grant's ConstraintBase): global, mission, segment or waypoint. Required since IR schema 4.0.0.",
+          "enum": [
+            "global",
+            "mission",
+            "segment",
+            "waypoint"
           ],
-          "default": null,
-          "title": "Scope"
+          "title": "Scope",
+          "type": "string"
         },
         "soft_margin_m": {
           "default": 0.0,
@@ -4694,6 +4608,11 @@
         {
           "required": [
             "violation_action"
+          ]
+        },
+        {
+          "required": [
+            "scope"
           ]
         },
         {
@@ -4782,22 +4701,15 @@
           "type": "string"
         },
         "scope": {
-          "anyOf": [
-            {
-              "enum": [
-                "global",
-                "mission",
-                "segment",
-                "waypoint"
-              ],
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
+          "description": "Where the rule applies (the grant's ConstraintBase): global, mission, segment or waypoint. Required since IR schema 4.0.0.",
+          "enum": [
+            "global",
+            "mission",
+            "segment",
+            "waypoint"
           ],
-          "default": null,
-          "title": "Scope"
+          "title": "Scope",
+          "type": "string"
         },
         "target": {
           "description": "The grant's name for `target_id`; give one of the two.",
@@ -5072,5 +4984,5 @@
     "$ref": "#/$defs/CanonicalIR"
   },
   "x-hash-scheme": "sha256-canonical-v3",
-  "x-ir-schema-version": "3.1.0"
+  "x-ir-schema-version": "4.0.0"
 }

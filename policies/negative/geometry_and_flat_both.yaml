@@ -8,6 +8,7 @@ constraints:
   - id: nfz
     type: polygon_fence
     constraint_type: hard
+    scope: mission
     priority: P0
     violation_action: project_fix
     altitude_ceiling_m: 400

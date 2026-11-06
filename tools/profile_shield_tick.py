@@ -682,7 +682,7 @@ def design_load_policy(policy, xy: list[tuple[float, float]],
     added = []
     for k, (gx, gy) in enumerate(chosen):
         added.append(PolygonFence(
-            id=f"design-load-{k:02d}", type="polygon_fence", constraint_type="hard", priority="P0", violation_action="project_fix",
+            id=f"design-load-{k:02d}", type="polygon_fence", constraint_type="hard", priority="P0", violation_action="project_fix", scope="mission",
             vertices=[{"x": gx, "y": gy}, {"x": gx + LOAD_SIDE_M, "y": gy},
                       {"x": gx + LOAD_SIDE_M, "y": gy + LOAD_SIDE_M},
                       {"x": gx, "y": gy + LOAD_SIDE_M}],
@@ -826,10 +826,13 @@ def pack_flight(d: Path, max_ticks: int = DEFAULT_MAX_TICKS) -> dict:
 
     omap, omap_note = _obstacle_map_for(policy, metrics)
     dump = policy.model_dump(mode="json", exclude_none=True)
-    from guardrail.models import Policy
-    if Policy.model_validate(dump).policy_hash != policy.policy_hash:
+    from guardrail.models import Policy, era_context
+    # In the era of the document it is (a run's policy from before IR schema
+    # 4.0.0 leaves `scope` out, and is read back so).
+    era = era_context(policy.ir_schema_version)
+    if Policy.model_validate(dump, context=era).policy_hash != policy.policy_hash:
         dump = policy.model_dump(mode="json")
-        if Policy.model_validate(dump).policy_hash != policy.policy_hash:
+        if Policy.model_validate(dump, context=era).policy_hash != policy.policy_hash:
             raise PackRefused(f"{d.name}: the resolved policy does not survive a "
                               f"JSON round trip with its hash intact")
     return {
@@ -892,7 +895,7 @@ def load_pack(path: Path) -> dict:
     from the packed value is loaded with a warning in `pack["warnings"]`: that
     means the fingerprint function changed, not the policy."""
     from guardrail.manifest import normalize_topology
-    from guardrail.models import Policy
+    from guardrail.models import Policy, era_context
     pack = json.loads(Path(path).read_text(encoding="utf-8"))
     if pack.get("schema") != PACK_SCHEMA:
         raise ValueError(f"{path}: schema {pack.get('schema')!r}, expected {PACK_SCHEMA!r}")
@@ -911,7 +914,9 @@ def load_pack(path: Path) -> dict:
         if want is None or got != want:
             raise ValueError(f"{path}: flight {f['tag']}: stored policy hashes to "
                              f"{got[:16]}, packed as {str(want)[:16]}: the pack was edited")
-        pol = Policy.model_validate(f["policy"])
+        # A stored document (the pack records no IR version): read as written,
+        # scope absent where a run before IR schema 4.0.0 left it out.
+        pol = Policy.model_validate(f["policy"], context=era_context(None))
         if pol.policy_hash != f["policy_hash"]:
             pack["warnings"].append(
                 f"{f['tag']}: Policy.policy_hash is now {pol.policy_hash}, packed as "

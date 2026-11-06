@@ -54,7 +54,8 @@ earlier form, and both load into the same model:
     speed_max / climb_rate_max /            speed_max_mps / climb_rate_max_mps /
     turn_rate_max                           yaw_rate_max_dps
     violation_action: project_fix           violation_action: repair (alias)
-    scope, layer, altitude_ref              (absent = the grant's defaults)
+    scope (required since IR 4.0.0)         scope (required since IR 4.0.0)
+    layer, altitude_ref                     (absent = the grant's defaults)
     issued_at, layers_merged                (absent)
 
 The IR keeps this project's field names, so no stored hash moved. `to_grant_form`
@@ -181,11 +182,70 @@ IR2_RULE_DEFAULTS: dict[str, str] = {"constraint_type": "hard", "priority": "P0"
 
 # Merge precedence, lowest first (grant: "mission > site > regulation").
 LAYER_ORDER: tuple[str, ...] = ("regulation", "site", "mission")
-# What an absent `scope` / `layer` means. The grant's ConstraintBase defaults
-# layer to "mission"; it gives scope no default, and the reference uses
+# What an absent `layer` means: the grant's ConstraintBase defaults it to
 # "mission". Absent stays absent in the IR (None) so no stored hash moves.
-DEFAULT_SCOPE = "mission"
 DEFAULT_LAYER = "mission"
+# What an absent `scope` MEANT before IR schema 4.0.0 (the reference's default;
+# the grant gives scope none). Not a default any more: since 4.0.0 every rule
+# states its scope. Kept to read a rule of an earlier era's document, which
+# may leave it out (`effective_scope`, `era_context`).
+DEFAULT_SCOPE = "mission"
+
+# IR schema 4.0.0 (2026-11-06, WP1-01) made `scope` REQUIRED, as the grant's
+# ConstraintBase writes it. Until then every shipped policy, every rule built
+# in code and so every artefact recorded before left it out, and such a
+# document must still load and hash exactly as it was stored. A reader of a
+# STORED artefact says which era the document is from (`era_context`); a
+# document validated without that context is today's, and must state scope.
+SCOPE_REQUIRED_SINCE = "4.0.0"
+# The last IR schema version under which a rule could leave `scope` out. The
+# IR shapes of 3.1.0 and 4.0.0 differ in that requirement only, so a policy
+# read from an earlier era's document that leaves scope out IS a 3.1.0
+# document (Policy.ir_schema_version).
+LAST_SCOPE_OPTIONAL = "3.1.0"
+_ERA_KEY = "ir_era"
+
+
+def _semver_tuple(v) -> tuple:
+    """(major, minor, patch) of a plain semver string; () when unreadable."""
+    try:
+        parts = tuple(int(x) for x in str(v).split("-")[0].split("+")[0].split("."))
+    except ValueError:
+        return ()
+    return parts if len(parts) == 3 else ()
+
+
+def era_context(ir_schema_version: str | None) -> dict:
+    """The validation context for a STORED document:
+
+        Policy.model_validate(doc, context=era_context(version))
+
+    `version` is the IR schema version the artefact records - a bundle
+    manifest's or a lock recipe's `ir_schema_version` - or None for one that
+    records none: a bundle written before 2026-10-06, a lock recipe of IR
+    2.x, a replay bundle, a run's policy_g<N>.json. Under a version before
+    SCOPE_REQUIRED_SINCE, and under None, a rule may leave `scope` out and it
+    stays absent (None), so the document hashes exactly as it did when it was
+    recorded. Under SCOPE_REQUIRED_SINCE or later, or a version that cannot
+    be read, scope is required, as for a document written today.
+
+    Tolerating None for an artefact that records no version weakens nothing:
+    a document that leaves scope out can only be one written before
+    SCOPE_REQUIRED_SINCE, and the stored hash it must reproduce (the bundle's,
+    the replay index's, the run's) is a hash of exactly that document."""
+    return {_ERA_KEY: ir_schema_version}
+
+
+def scope_may_be_absent(context) -> bool:
+    """True when the validation `context` says the document is of an era
+    before SCOPE_REQUIRED_SINCE (see era_context)."""
+    if not isinstance(context, dict) or _ERA_KEY not in context:
+        return False
+    v = context[_ERA_KEY]
+    if v is None:
+        return True
+    key = _semver_tuple(v)
+    return bool(key) and key < _semver_tuple(SCOPE_REQUIRED_SINCE)
 
 # Every IR model refuses a key it does not know (a misspelt field used to be
 # dropped without a word, and its safety limit fell back to a loose default)
@@ -350,20 +410,32 @@ class ConstraintBase(BaseModel):
     Every shipped policy already wrote all three; every rule built in code now
     states them too.
 
-    `scope` and `layer` were added on 2026-10-06. Absent means the grant's
-    default ("mission" for both, `DEFAULT_SCOPE` / `DEFAULT_LAYER`) and stays
-    absent in the IR, so a policy that does not write them hashes as before.
-    The grant gives `scope` no default either; it stays optional here (open:
-    docs/FINAL-REPORT-outline.md Appendix A, WP1-01). The Shield enforces every
-    rule everywhere; a narrower `scope` (segment, waypoint) is therefore
-    enforced more widely than written, never less.
+    `scope` is REQUIRED too, since IR schema 4.0.0 (2026-11-06): the grant
+    gives it no default either. It was added on 2026-10-06 as an optional
+    field whose absence meant "mission" (`DEFAULT_SCOPE`, the reference's
+    default), and no shipped policy wrote it. A rule of a document of an
+    earlier era may still leave it out (`era_context`, which the readers of
+    stored bundles, replay bundles, runs and lock recipes pass): it stays
+    absent in the IR, so that document hashes exactly as it was stored, and
+    `effective_scope` reads it as "mission", what it meant then. The model's
+    annotation admits None for that reason only; a document validated
+    without an earlier era's context that leaves scope out, or writes null,
+    is refused. The Shield enforces every rule everywhere, whatever its
+    scope; a narrower `scope` (segment, waypoint) is therefore enforced more
+    widely than written, never less.
+
+    `layer` was added on 2026-10-06 too. Absent means the grant's default
+    ("mission", `DEFAULT_LAYER`) and stays absent in the IR, so a policy that
+    does not write it hashes as before.
     """
     model_config = _IR_CONFIG
     id: str = Field(min_length=1)
     constraint_type: Literal["hard", "soft"]
     priority: Literal["P0", "P1", "P2"]
     violation_action: ViolationAction
-    scope: Scope | None = None
+    # Required (no default) since IR schema 4.0.0; None only in a rule of an
+    # earlier era's document (era_context).
+    scope: Scope | None
     layer: Layer | None = None
     # Provenance a layer merge leaves behind: the LOWER layers that wrote a
     # hard copy of this rule which this (higher-layer, no looser) copy
@@ -397,6 +469,28 @@ class ConstraintBase(BaseModel):
     def _grant_form(cls, data):
         return _normalise_rule(cls, data)
 
+    @model_validator(mode="before")
+    @classmethod
+    def _earlier_era_scope(cls, data, info: ValidationInfo):
+        # A rule of an earlier era's document (era_context) may leave `scope`
+        # out, as every document before IR schema 4.0.0 could: it stays
+        # absent, so the document hashes as it was stored. Without that
+        # context a missing scope is pydantic's "Field required".
+        if isinstance(data, dict) and "scope" not in data and \
+                scope_may_be_absent(info.context):
+            return {**data, "scope": None}
+        return data
+
+    @field_validator("scope")
+    @classmethod
+    def _scope_stated(cls, v, info: ValidationInfo):
+        if v is None and not scope_may_be_absent(info.context):
+            raise ValueError(
+                "scope is required (IR schema 4.0.0; the grant's ConstraintBase "
+                "gives it no default): one of global, mission, segment, waypoint. "
+                "Only a document of an earlier era may leave it out")
+        return v
+
     @classmethod
     def _post_normalise(cls, data: dict) -> dict:
         return data
@@ -420,6 +514,8 @@ class ConstraintBase(BaseModel):
 
     @property
     def effective_scope(self) -> str:
+        """The rule's scope; for a rule of an earlier era's document that left
+        it out, what that meant then ("mission", DEFAULT_SCOPE)."""
         return self.scope or DEFAULT_SCOPE
 
     @property
@@ -1121,11 +1217,17 @@ class DistanceEnvelope(ConstraintBase):
                     priority=self.priority, violation_action=self.violation_action,
                     scope=self.scope, layer=self.layer, locked_by=self.locked_by,
                     valid_time=self.valid_time)
+        # The scope is carried as it is: absent too, for a rule of an earlier
+        # era's document (IR schema 4.0.0 made it required; era_context).
+        ctx = era_context(None) if self.scope is None else None
         if self.object_class == "people":
-            return PeopleStandoff(type="subject_standoff", subject_class="people",
-                                  min_range_m=self.min_distance_m, **base)
+            return PeopleStandoff.model_validate(
+                dict(type="subject_standoff", subject_class="people",
+                     min_range_m=self.min_distance_m, **base), context=ctx)
         cls = RoadClearance if self.object_class == "roads" else EnvelopeClearance
-        return cls(type="obstacle_clearance", min_clearance_m=self.min_distance_m, **base)
+        return cls.model_validate(dict(type="obstacle_clearance",
+                                       min_clearance_m=self.min_distance_m, **base),
+                                  context=ctx)
 
 
 # Subject classes perception reports for a person (demo/follow_vlm.py and the
@@ -1480,6 +1582,19 @@ class Policy(BaseModel):
         return canonical_json(self.canonical_ir())
 
     @property
+    def ir_schema_version(self) -> str:
+        """The IR schema version this document is a document of:
+        IR_SCHEMA_VERSION, or LAST_SCOPE_OPTIONAL for a policy read from an
+        earlier era's document (era_context) whose rules leave `scope` out -
+        what its canonical bytes conform to. A bundle's manifest records it
+        (guardrail.bundle.manifest_for), so a reader reads the IR in the era it
+        belongs to: recording the writer's version instead would make a
+        re-bundled earlier policy (a replay of an old run) unreadable."""
+        if any(c.scope is None for c in self.constraints):
+            return LAST_SCOPE_OPTIONAL
+        return IR_SCHEMA_VERSION
+
+    @property
     def policy_hash(self) -> str:
         """SHA-256 over the canonicalised IR, all 64 hex digits.
 
@@ -1602,7 +1717,26 @@ class Policy(BaseModel):
                              f"policy is written in metres already")
         d = self._ir2_dump(mode="json", exclude_none=True, repair=False)
         d.pop("origin", None)
-        return Policy.model_validate(_metric_view(d))
+        # A document of IR schema 3.0.0 (or earlier): a rule that left `scope`
+        # out keeps it absent (era_context); one that states it keeps it.
+        return Policy.model_validate(_metric_view(d), context=era_context("3.0.0"))
+
+    def ir3_form(self) -> "Policy":
+        """This policy as IR schema 3.x held it with `scope` left out: every
+        rule's scope absent (None), nothing else changed - the rules keep the
+        ring order they were given, their points the frame they are bound to.
+
+        Every shipped policy, and every rule built in code, left scope out
+        until IR schema 4.0.0 (2026-11-06), when the shipped files stated it
+        and raised their patch version. Put back at the old version
+        (bundle.as_version), this form of the new file IS the old file's IR -
+        the same canonical bytes, so the same policy_hash, IR 2.x hashes and
+        legacy forms - which is how the lock reads the old version back
+        (bundle.rewind, bundle.IR3_FORM) and how a run flown under it still
+        resolves. It reconstructs the document the old version was; an
+        absent scope meant "mission" then (DEFAULT_SCOPE)."""
+        rules = [c.model_copy(update={"scope": None}) for c in self.constraints]
+        return self.model_copy(update={"constraints": rules})
 
     def hash_form(self, recorded: str | None) -> str | None:
         """Which identity form `recorded` is for THIS policy, or None.
@@ -1682,7 +1816,8 @@ class Policy(BaseModel):
 
         Absent scope/layer/altitude_ref are written as the reference's defaults
         ("mission", "mission", "AGL"), because that is what the reference
-        stores for them. Rings are written in their canonical order (the IR's,
+        stores for them (scope is absent only in a rule of a document from
+        before IR schema 4.0.0). Rings are written in their canonical order (the IR's,
         so the document is the same before and after a bundle); `given=True`
         writes them in the order this policy was given them, which is what
         the reference hashed for a document it read itself."""
@@ -1734,7 +1869,9 @@ class Policy(BaseModel):
         The reference's form is lossy in two ways only, both about defaults
         (everything else it cannot hold is refused by `reference_problems`):
         an absent `scope` / `layer` / `altitude_ref` is written as "mission" /
-        "mission" / "AGL", and `repair` is spelt `project_fix`. A
+        "mission" / "AGL" (since IR schema 4.0.0 a rule always states its
+        scope, so only a policy of an earlier era's document has an absent
+        one to record), and `repair` is spelt `project_fix`. A
         reference-form bundle ships this record in its manifest
         (guardrail/bundle.py), so the PI's loader verifies the reference hash
         and this project's loader verifies BOTH that and this project's hash of
@@ -1755,11 +1892,17 @@ class Policy(BaseModel):
         return {"rules": rules}
 
     @classmethod
-    def from_reference(cls, doc: dict, delta: dict | None) -> "Policy":
+    def from_reference(cls, doc: dict, delta: dict | None, *,
+                       context: dict | None = None) -> "Policy":
         """The policy a reference-form document plus its `reference_delta`
         stands for. Refuses a delta that does not round-trip: the rebuilt
         policy must write back exactly `doc` (so a delta can only restore an
-        absent default or a spelling, never change what a rule means)."""
+        absent default or a spelling, never change what a rule means).
+
+        `context`: the era of the bundle the delta came from (era_context of
+        its manifest's ir_schema_version). A delta written before IR schema
+        4.0.0 may restore `scope` as absent; since 4.0.0 no policy leaves it
+        out, so no delta says so, and one that does is refused."""
         import copy
         rules = dict((delta or {}).get("rules") or {})
         out = copy.deepcopy(doc)
@@ -1780,7 +1923,7 @@ class Policy(BaseModel):
                 holder.pop(k, None)
             if "violation_action" in d:
                 r["violation_action"] = d["violation_action"]
-        pol = cls.model_validate(out)
+        pol = cls.model_validate(out, context=context)
         if pol.reference_ir() != canonical_reference_doc(doc):
             raise ValueError("the reference delta does not round-trip: the policy "
                              "it rebuilds does not write back the archived "
@@ -2375,7 +2518,19 @@ _REFERENCE_DEFAULTED = ("scope", "layer", "altitude_ref")
 # held lat/lon only for a WGS84 point already). The shipped policies were
 # converted to WGS84 in the same release - a content change, so each raised
 # its version (bundle.FRAME_FORM, tools/convert_policies_wgs84.py).
-IR_SCHEMA_VERSION = "3.1.0"
+#
+# 4.0.0 (2026-11-06, WP1-01): `scope` is required on every rule, as the
+# grant's ConstraintBase writes it (11 pins, '<absent>' -> '<required>'; an
+# absent scope meant "mission"). A field a writer must now give is a breaking
+# change: a major version, as 3.0.0 was. A document of an earlier era - a
+# bundle whose manifest names an older ir_schema_version, a lock recipe
+# recorded before, a replay bundle or a run's policy_g<N>.json (formats that
+# record no version) - is read in its own era (era_context): scope stays
+# absent where it wrote none, so it hashes exactly as stored. The shipped
+# policies state scope since this release - a content change, so each raised
+# its patch version; the old version is read back as the file with scope
+# left out (Policy.ir3_form, bundle.IR3_FORM).
+IR_SCHEMA_VERSION = "4.0.0"
 
 # The schema eras the old 16-hex hash went through, by which None-valued keys
 # `model_dump()` emitted as null in each. Derived from `git log -- guardrail/
@@ -2704,6 +2859,7 @@ def merge_layers(policies: list[Policy], *, policy_id: str | None = None,
             as_corr = Corridor(id=tgt.id, type="corridor",
                                constraint_type=c.constraint_type,
                                priority=c.priority, violation_action=c.violation_action,
+                               scope=c.effective_scope,   # compared, never stored
                                valid_time=c.valid_time, altitude_ref=c.altitude_ref,
                                centerline=c.centerline, width_m=c.width_m,
                                altitude_floor_m=c.altitude_floor_m,
@@ -2802,11 +2958,16 @@ def _refuse_unenforced(pol: Policy, source: str, ground=None) -> None:
 
 
 def policy_from_raw(raw, *, source: str = "<policy>", runtime: bool = True,
-                    ground=None) -> Policy:
+                    ground=None, context: dict | None = None) -> Policy:
     """Raw document -> validated, linted Policy. The single DSL entry point
     behind load_policy, the REST ingest and the GeoJSON converter. `ground`:
-    see load_policy."""
-    pol = Policy.model_validate(raw)
+    see load_policy.
+
+    `context` is for a reader of a STORED document only (a run's
+    policy_g<N>.json): its era, era_context, under which a document written
+    before IR schema 4.0.0 may leave `scope` out. Every ingest gives none, so
+    every new document states every required field."""
+    pol = Policy.model_validate(raw, context=context)
     problems = pol.lint()
     if problems:
         raise ValueError(f"{source}: the policy does not pass the DSL lint:\n  - "

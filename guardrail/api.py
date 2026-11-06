@@ -25,7 +25,7 @@ update model"); every route below is one of them:
 POST /dynamic_nfz body (metres in the policy frame, or lat/lon for a policy
 with a frame; the DSL's own field names):
 
-    {"id": "nfz-landslide-007",
+    {"id": "nfz-landslide-007", "scope": "mission",
      "constraint_type": "hard", "priority": "P0", "violation_action": "project_fix",
      "vertices": [{"x": 23, "y": 6}, {"x": 31, "y": 6}, {"x": 31, "y": 14}],
      "altitude_floor_m": 0, "altitude_ceiling_m": 100, "margin_m": 1.0,
@@ -36,19 +36,22 @@ PATCH /dynamic_nfz/{id}: {"op": "move", "vertices": [...]},
 {"op": "scale", "factor": 1.5}.
 
 POST /time_window_switch: {"target_id": "nfz-school-yard", "active": false,
-"constraint_type": "hard", "priority": "P0", "violation_action": "project_fix"}
-(an `id` and a `valid_time` are optional). POST /corridor_swap: a corridor's
-fields plus "target_id" and an "id".
+"constraint_type": "hard", "scope": "mission", "priority": "P0",
+"violation_action": "project_fix"} (an `id` and a `valid_time` are
+optional). POST /corridor_swap: a corridor's fields plus "target_id" and an
+"id".
 
-THE THREE CONSTRAINTBASE FIELDS (2026-11-02, IR schema 3.0.0). A body that is
-a DSL rule - POST /dynamic_nfz, /time_window_switch, /corridor_swap,
-/hot_apply - states `constraint_type`, `priority` and `violation_action`, as
-every rule must (the grant's ConstraintBase gives them no default); a body
-without one is refused with 422 naming it. Until that date they defaulted to
-hard / P0 / `repair`. `repair` is still read as project_fix. Only the
-deprecated POST /nfz keeps its fixed 2026-07 body, which never had them: it
-spawns the zone that body always meant, hard / P0 / project_fix
-(models.IR2_RULE_DEFAULTS), and says so in its response.
+THE FOUR CONSTRAINTBASE FIELDS (2026-11-02, IR schema 3.0.0; `scope` since
+2026-11-06, IR schema 4.0.0). A body that is a DSL rule - POST /dynamic_nfz,
+/time_window_switch, /corridor_swap, /hot_apply - states `constraint_type`,
+`scope`, `priority` and `violation_action`, as every rule must (the grant's
+ConstraintBase gives them no default); a body without one is refused with 422
+naming it. Until those dates the first three defaulted to hard / P0 /
+`repair`, and an absent scope meant "mission". `repair` is still read as
+project_fix. Only the deprecated POST /nfz keeps its fixed 2026-07 body,
+which never had them: it spawns the zone that body always meant, hard / P0 /
+project_fix (models.IR2_RULE_DEFAULTS) for this mission (scope "mission"),
+and says so in its response.
 
 WHAT CHANGED ON 2026-10-07. POST /nfz built a PolygonFence and appended it -
 a class the grant locks at mission start. It now spawns a dynamic_nfz with the
@@ -327,18 +330,21 @@ def apply_legacy_nfz(shield: Shield, body: dict) -> dict:
         req = NfzRequest.model_validate(body)
     except ValidationError as e:
         raise ApiError(422, str(e)) from None
-    # The 2026-07 body has no constraint_type / priority / violation_action;
-    # it always meant the IR 2.x defaults, hard / P0 / repair (= project_fix),
-    # and still does - stated here, since the rule now requires them.
+    # The 2026-07 body has no constraint_type / priority / violation_action /
+    # scope; it always meant the IR 2.x defaults, hard / P0 / repair
+    # (= project_fix), for this mission (an absent scope meant "mission"
+    # until IR schema 4.0.0), and still does - stated here, since the rule
+    # now requires all four.
     data = {"id": req.id, "vertices": [v.model_dump(exclude_none=True) for v in req.vertices],
             "altitude_floor_m": req.altitude_floor_m,
             "altitude_ceiling_m": req.altitude_ceiling_m, "margin_m": req.margin_m,
-            **IR2_RULE_DEFAULTS}
+            **IR2_RULE_DEFAULTS, "scope": "mission"}
     res = apply_dynamic_nfz(shield, data)
     res["deprecated"] = ("POST /nfz now spawns a dynamic_nfz: polygon_fence is locked "
                          "at mission start. Use POST /dynamic_nfz. This body states no "
-                         "constraint_type, priority or violation_action; the zone is "
-                         "hard, P0, project_fix, what the body always meant.")
+                         "constraint_type, scope, priority or violation_action; the zone "
+                         "is hard, P0, project_fix, for this mission (scope mission), "
+                         "what the body always meant.")
     return res
 
 

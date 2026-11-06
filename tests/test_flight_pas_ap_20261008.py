@@ -50,7 +50,7 @@ for _p in (ROOT, ROOT / "demo", ROOT / "demo" / "pas_ardupilot"):
 import numpy as np                                                      # noqa: E402
 
 from guardrail import fsm as F                                          # noqa: E402
-from guardrail.models import Action4D, Policy, State                    # noqa: E402
+from guardrail.models import Action4D, Policy, State, era_context       # noqa: E402
 from guardrail.replay import rail_shield                                # noqa: E402
 from guardrail.shield import LOOKAHEAD_DT_S, LOOKAHEAD_S                # noqa: E402
 
@@ -83,7 +83,9 @@ def _full_inputs():
         import occ_bands
     except Exception:                                            # noqa: BLE001
         return None
-    pol = Policy.model_validate(json.loads((RUN / "policy_g0.json").read_text(encoding="utf-8")))
+    # A stored run (8 Oct, IR 2.x): read as written, scope absent (era_context).
+    pol = Policy.model_validate(json.loads((RUN / "policy_g0.json").read_text(encoding="utf-8")),
+                                context=era_context(None))
     rows = [json.loads(l) for l in
             (RUN / "flight_log.jsonl").read_text(encoding="utf-8").splitlines() if l.strip()]
     sel = occ_bands.select_for_band(CITYMAP, 6.0, 14.0)
@@ -118,7 +120,8 @@ def _fixture_inputs():
     """The same three from tests/fixtures/, or None when they are missing."""
     if not (FIX_LOG.is_file() and FIX_POLICY.is_file() and FIX_MAP.is_file()):
         return None
-    pol = Policy.model_validate(json.loads(FIX_POLICY.read_text(encoding="utf-8")))
+    pol = Policy.model_validate(json.loads(FIX_POLICY.read_text(encoding="utf-8")),
+                                context=era_context(None))     # stored: read as written
     with gzip.open(FIX_LOG, "rt", encoding="utf-8") as fh:
         rows = [json.loads(l) for l in fh if l.strip()]
     with np.load(FIX_MAP) as z:

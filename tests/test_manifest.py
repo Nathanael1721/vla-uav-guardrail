@@ -28,9 +28,11 @@ from guardrail.manifest import (MAX_HEADING_ERR_DEG, MIN_DET_HZ,      # noqa: E4
                                 build_manifest, is_kpi_grade,
                                 normalize_topology, sim_speedup_from_scene)
 
-# The three ConstraintBase fields the grant requires (IR schema 3.0.0, 2026-11-02),
-# at the values they defaulted to before (repair = project_fix).
-HARD_P0 = {"constraint_type": "hard", "priority": "P0", "violation_action": "project_fix"}
+# The four ConstraintBase fields the grant requires (IR schema 3.0.0, 2026-11-02;
+# scope since 4.0.0, 2026-11-06), at the values they defaulted to before
+# (repair = project_fix; an absent scope meant mission).
+HARD_P0 = {"constraint_type": "hard", "scope": "mission", "priority": "P0",
+           "violation_action": "project_fix"}
 
 SCENE = ROOT / "demo" / "pas_config" / "scene_semantic.jsonc"
 GOOD_METRICS = {"det_hz": 4.5, "start_heading_err_deg": 1.5}

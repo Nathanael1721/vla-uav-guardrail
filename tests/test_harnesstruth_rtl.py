@@ -247,6 +247,7 @@ constraints:
   - id: hard-p0
     type: polygon_fence
     constraint_type: hard
+    scope: mission
     priority: P0
     violation_action: repair
     vertices: [{x: 10, y: -5}, {x: 20, y: -5}, {x: 20, y: 5}, {x: 10, y: 5}]
@@ -256,6 +257,7 @@ constraints:
   - id: p1-zone
     type: polygon_fence
     constraint_type: hard
+    scope: mission
     priority: P1
     violation_action: repair
     vertices: [{x: 30, y: -5}, {x: 40, y: -5}, {x: 40, y: 5}, {x: 30, y: 5}]
@@ -264,6 +266,7 @@ constraints:
   - id: soft-zone
     type: polygon_fence
     constraint_type: soft
+    scope: mission
     priority: P0
     violation_action: monitor_only
     vertices: [{x: 50, y: -5}, {x: 60, y: -5}, {x: 60, y: 5}, {x: 50, y: 5}]
@@ -272,6 +275,7 @@ constraints:
   - id: watched-zone
     type: polygon_fence
     constraint_type: hard
+    scope: mission
     priority: P0
     violation_action: monitor_only
     vertices: [{x: 70, y: -5}, {x: 80, y: -5}, {x: 80, y: 5}, {x: 70, y: 5}]
@@ -280,6 +284,7 @@ constraints:
   - id: band-night
     type: altitude_envelope
     constraint_type: hard
+    scope: mission
     priority: P0
     violation_action: repair
     alt_min_m: 12.0
@@ -292,6 +297,7 @@ constraints:
   - id: band-tight
     type: altitude_envelope
     constraint_type: hard
+    scope: mission
     priority: P0
     violation_action: repair
     alt_min_m: 10.0
@@ -299,6 +305,7 @@ constraints:
   - id: band-wide
     type: altitude_envelope
     constraint_type: hard
+    scope: mission
     priority: P0
     violation_action: repair
     alt_min_m: 5.0

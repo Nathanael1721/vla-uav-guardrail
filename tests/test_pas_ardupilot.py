@@ -1471,6 +1471,7 @@ constraints:
   - id: kin-caps
     type: kinematic_envelope
     constraint_type: hard
+    scope: mission
     priority: P1
     violation_action: repair
     speed_max_mps: 2.0
@@ -1479,6 +1480,7 @@ constraints:
   - id: alt-band
     type: altitude_envelope
     constraint_type: hard
+    scope: mission
     priority: P0
     violation_action: repair
     alt_min_m: 2
@@ -1494,6 +1496,7 @@ constraints:
   - id: alt-ceiling
     type: altitude_envelope
     constraint_type: hard
+    scope: mission
     priority: P0
     violation_action: RTL
     alt_min_m: 1
@@ -1506,6 +1509,7 @@ constraints:
   - id: standoff-car
     type: subject_standoff
     constraint_type: hard
+    scope: mission
     priority: P0
     violation_action: repair
     subject_class: car
@@ -1833,6 +1837,7 @@ constraints:
   - id: watched-speed
     type: kinematic_envelope
     constraint_type: soft
+    scope: mission
     priority: P2
     violation_action: monitor_only
     speed_max_mps: 2.0
@@ -1841,6 +1846,7 @@ constraints:
   - id: nfz-ahead
     type: polygon_fence
     constraint_type: hard
+    scope: mission
     priority: P0
     violation_action: repair
     margin_m: 1.0
@@ -1991,6 +1997,7 @@ constraints:
   - id: nfz-ahead
     type: polygon_fence
     constraint_type: hard
+    scope: mission
     priority: P0
     violation_action: repair
     vertices:
@@ -2275,6 +2282,7 @@ constraints:
   - id: floor
     type: altitude_envelope
     constraint_type: hard
+    scope: mission
     priority: P0
     violation_action: repair
     alt_min_m: 10
@@ -2282,6 +2290,7 @@ constraints:
   - id: nfz-here
     type: polygon_fence
     constraint_type: hard
+    scope: mission
     priority: P0
     violation_action: repair
     vertices:

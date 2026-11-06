@@ -15,7 +15,7 @@ Run inside WSL (SITL listening on tcp:127.0.0.1:5760):
     ~/venv-ap/bin/python run_sitl_demo.py --shield on
     ~/venv-ap/bin/python run_sitl_demo.py --shield off
     ~/venv-ap/bin/python run_sitl_demo.py --shield on --dynamic
-    ~/venv-ap/bin/python run_sitl_demo.py --bundle ../bundles/fase3-sim-demo-v0.1.3.tar.gz
+    ~/venv-ap/bin/python run_sitl_demo.py --bundle ../bundles/fase3-sim-demo-v0.1.4.tar.gz
     ~/venv-ap/bin/python run_sitl_demo.py --policy ../policies/X.yaml --dev-yaml
 
 Policy note: `--bundle` flies the signed policy bundle (guardrail/bundle.py) and
@@ -148,7 +148,7 @@ DEFAULT_POLICY_YAML = ROOT / "policies" / "sim_demo_policy.yaml"
 DYNAMIC_AT_S = 8.0
 DYNAMIC_FENCE = PolygonFence(
     id="nfz-dynamic", type="polygon_fence",
-    constraint_type="hard", priority="P0", violation_action="project_fix",
+    constraint_type="hard", priority="P0", violation_action="project_fix", scope="mission",
     vertices=[XY(x=23, y=6), XY(x=31, y=6), XY(x=31, y=14), XY(x=23, y=14)],
     margin_m=1.0,
 )
