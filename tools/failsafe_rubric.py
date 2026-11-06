@@ -26,6 +26,15 @@ the aircraft - never the FSM's state, edges or outcome:
       from the Shield's decision at the state it was given: the TRUE state
       unless the cell degrades perception (then flagged `seen`).
 
+PROPOSED, NOT ADOPTED (2026-11-06, docs/RUBRIC-failsafe.md section 7): on
+this branch E5 is read on a second flight, the one the grant PRESCRIBES
+(`prescribed`): projection abandoned on every tick whose request the Shield
+may not fly, the aircraft held there, projection resumed the tick the
+request is acceptable again (`--e5-flight prescribed`, this branch's
+default). E1 and E3 still read the flight without a fail-safe. The adopted
+rubric's reading is `--e5-flight no-failsafe`. Both spells are printed, so
+every label the choice moves is listed.
+
 The derived label is "expected" when any E clause holds. A cell whose
 declared label differs is listed; the exit code is 1 if any does, 0 if none,
 2 if nothing was judged. The FSM's own trigger is printed beside it for the
@@ -179,16 +188,81 @@ def counterfactual(spec, lib, seed: int):
     return run, log
 
 
-def judge(e, lib, timeout_s: float, with_fsm: bool = True) -> dict:
-    spec = e.cell.spec
-    run, log = counterfactual(spec, lib, e.seed)
-    flown = SW.run_episode(spec, lib.defaults, e.seed) if with_fsm else None
-    dt = float(spec.dt or lib.defaults.dt)
+def prescribed(spec, lib, seed: int):
+    """The cell flown as the grant PRESCRIBES the fail-safe path, without the
+    fail-safe itself (proposed 2026-11-06, NOT adopted: docs/RUBRIC-
+    failsafe.md, section 7). Safety Shield p4: "If ... > threshold, or no
+    operator converges, the Shield abandons projection" - so on a tick whose
+    request the Shield may not fly (`unsafe_request`: a hard rule's repair
+    over theta or not converged, or a hard `loiter` rule violated) the
+    projection is not flown and the aircraft is HELD: a stop, as Brake and
+    the autopilot's Loiter hold it on the ideal vehicle. Where a stop is
+    illegal (`stop_illegal`: holding there would itself break a rule) the
+    Shield's own action flies, as a hold cannot. On every other tick the
+    Shield's action flies: projection resumes the tick the request is
+    acceptable again. Nothing here reads the FSM's state, edges or timers -
+    not T_recover, not N-in-T, not the Loiter timeout - so the flight is the
+    grant's prescription, not this FSM's implementation of it. Returns (run,
+    records), as `counterfactual`."""
+    log: list[dict] = []
+    orig_cls, orig_filter = SW.Shield, SH.Shield.filter
+    made = [0]
+
+    def factory(*a, **k):
+        made[0] += 1
+        if made[0] == 1:                      # the flying Shield (_episode builds it first)
+            k["escalation"] = True
+        return orig_cls(*a, **k)
+
+    def held_filter(self, state, *a, **k):
+        d = orig_filter(self, state, *a, **k)
+        if getattr(self, "fsm", None) is None:
+            return d
+        rec = getattr(d, "fsm_record", None) or {}
+        log.append(rec)
+        if unsafe_request(rec) and not (rec.get("flags") or {}).get("stop_illegal"):
+            d = d.model_copy(update={"emitted": SH.BRAKE,
+                                     "emitted_violations": self._check(state, SH.BRAKE)})
+        return d
+
+    SW.Shield, SH.Shield.filter = factory, held_filter
+    try:
+        run = SW.run_episode(spec.model_copy(update={"escalation": False}),
+                             lib.defaults, seed)
+    finally:
+        SW.Shield, SH.Shield.filter = orig_cls, orig_filter
+    return run, log
+
+
+# Which flight E5 is read on: "no-failsafe" (the adopted rubric, section 3)
+# or "prescribed" (proposed 2026-11-06, not adopted; this branch's labels).
+E5_FLIGHTS = ("no-failsafe", "prescribed")
+E5_FLIGHT = "prescribed"
+
+
+def _spell(log: list[dict], dt: float) -> tuple[float, float, int]:
+    """(longest unbroken spell of unsafe requests, s; the spell still running
+    at the end, s; its length in ticks)."""
     best = cur = 0
     for rec in log:
         cur = cur + 1 if unsafe_request(rec) else 0
         best = max(best, cur)
-    spell = round((best - 1) * dt, 1) if best else 0.0
+    return (round((best - 1) * dt, 1) if best else 0.0,
+            round((cur - 1) * dt, 1) if cur else 0.0, cur)
+
+
+def judge(e, lib, timeout_s: float, with_fsm: bool = True,
+          e5_flight: str = E5_FLIGHT) -> dict:
+    if e5_flight not in E5_FLIGHTS:
+        raise ValueError(f"e5_flight {e5_flight!r}: one of {E5_FLIGHTS}")
+    spec = e.cell.spec
+    run, log = counterfactual(spec, lib, e.seed)
+    _, held_log = prescribed(spec, lib, e.seed)
+    flown = SW.run_episode(spec, lib.defaults, e.seed) if with_fsm else None
+    dt = float(spec.dt or lib.defaults.dt)
+    spells = {"no-failsafe": _spell(log, dt), "prescribed": _spell(held_log, dt)}
+    spell, tail, cur = spells[e5_flight]
+    other = "prescribed" if e5_flight == "no-failsafe" else "no-failsafe"
     need = timeout_s + F.CONTROL_PERIOD_S
     e1 = any(demands_failsafe(r) for r in log)
     e2 = spec.stress.wind_speed_mps > SW.AP_HOLD_AUTHORITY_MPS
@@ -196,15 +270,22 @@ def judge(e, lib, timeout_s: float, with_fsm: bool = True) -> dict:
     e5 = spell >= need - 1e-9
     # A spell still running when the episode ends, shorter than the timeout:
     # E5 is undecided, and the family must fly longer (rubric, section 3).
-    tail = round((cur - 1) * dt, 1) if cur else 0.0
     e5_censored = bool(cur) and tail < need - 1e-9
     held = [c for c, h in (("E1", e1), ("E2", e2), ("E3", e3["holds"]), ("E5", e5)) if h]
+    o_spell, o_tail, o_cur = spells[other]
+    o_e5 = o_spell >= need - 1e-9
+    o_held = [c for c, h in (("E1", e1), ("E2", e2), ("E3", e3["holds"]), ("E5", o_e5)) if h]
     fsm = (flown.extra.get("fsm") or {}) if flown is not None else {}
     return {"episode": e.cell.episode_id, "seed": e.seed,
             "declared": spec.expected_failsafe, "clause": spec.failsafe_clause,
             "derived": bool(held), "clauses_held": held,
+            "e5_flight": e5_flight,
             "e5_spell_s": spell, "e5_need_s": round(need, 1), "e5_censored": e5_censored,
             "e5_judged_at": "seen" if spec.stress.degrades_perception else "true",
+            # The same cell under the other reading of E5, for the flip list.
+            "other": {"e5_flight": other, "e5_spell_s": o_spell,
+                      "e5_censored": bool(o_cur) and o_tail < need - 1e-9,
+                      "derived": bool(o_held), "clauses_held": o_held},
             "e3": e3, "wind_mps": spec.stress.wind_speed_mps,
             "episode_s": round(len(run.rows) * dt, 1),
             "fsm_triggered": fsm.get("failsafe_triggered"),
@@ -218,6 +299,9 @@ def main(argv=None) -> int:
     ap.add_argument("--json", default=None, help="write every cell's facts here")
     ap.add_argument("--no-fsm", action="store_true",
                     help="skip the flight WITH the FSM (printed for the reader only)")
+    ap.add_argument("--e5-flight", choices=E5_FLIGHTS, default=E5_FLIGHT,
+                    help="the flight E5 is read on: no-failsafe (the adopted rubric) or "
+                         "prescribed (proposed 2026-11-06, not adopted; default here)")
     args = ap.parse_args(argv)
     prof = SW._resolve_profile(args.profile)
     lib = Library(ROOT / (prof.library if prof else "experiments/scenarios.yaml"))
@@ -226,9 +310,9 @@ def main(argv=None) -> int:
            and e.paraphrase_arm in (None, -1)
            and e.cell.spec.shield and e.cell.spec.escalation]
     timeout = F.FSMConfig().loiter_timeout_s
-    out, bad = [], []
+    out, bad, flips = [], [], []
     for e in eps:
-        j = judge(e, lib, timeout, with_fsm=not args.no_fsm)
+        j = judge(e, lib, timeout, with_fsm=not args.no_fsm, e5_flight=args.e5_flight)
         out.append(j)
         mark = ""
         if j["e5_censored"] and not j["derived"]:
@@ -239,16 +323,27 @@ def main(argv=None) -> int:
         elif j["declared"] != j["derived"]:
             mark = "MISMATCH"
             bad.append(j)
+        o = j["other"]
+        if o["derived"] != j["derived"]:
+            flips.append(j)
         print(f"{mark:11} {j['episode'][:70]:70} s{j['seed']:<5} declared "
               f"{str(j['declared']):5} {str(j['clause']):4} derived {str(j['derived']):5} "
               f"{','.join(j['clauses_held']) or '-':8} E5 {j['e5_spell_s']:5.1f}/"
-              f"{j['e5_need_s']} ({j['e5_judged_at']}) ep {j['episode_s']:5.1f} s "
-              f"fsm {j['fsm_triggered']} {j['fsm_edges']}")
+              f"{j['e5_need_s']} ({j['e5_judged_at']}, {j['e5_flight']}; {o['e5_flight']} "
+              f"{o['e5_spell_s']:.1f}{' FLIPS' if o['derived'] != j['derived'] else ''}) "
+              f"ep {j['episode_s']:5.1f} s fsm {j['fsm_triggered']} {j['fsm_edges']}")
         sys.stdout.flush()
     if args.json:
         Path(args.json).write_text(json.dumps(out, indent=1), encoding="utf-8")
     print(f"\n{len(out)} cells judged, {len(bad)} declared labels disagree with the rubric "
           f"or cannot be decided in the episode's length (CENSORED)")
+    print(f"{len(flips)} cells derive another label with E5 read on the "
+          f"{out[0]['other']['e5_flight'] if out else 'other'} flight")
+    for j in flips:
+        o = j["other"]
+        print(f"  {j['episode'][:70]:70} s{j['seed']:<5} {j['e5_flight']} "
+              f"{j['derived']!s:5} (E5 {j['e5_spell_s']:.1f} s) | {o['e5_flight']} "
+              f"{o['derived']!s:5} (E5 {o['e5_spell_s']:.1f} s)")
     if not out:
         return 2
     return 1 if bad else 0
