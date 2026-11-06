@@ -230,6 +230,59 @@ def test_the_prescribed_flight_holds_on_an_unsafe_request_and_flies_the_rest():
     assert [(r["x"], r["y"]) for r in h2.rows] == [(r["x"], r["y"]) for r in f2.rows]
 
 
+def test_labels_can_be_derived_on_the_rail_vehicle_and_flown_longer():
+    """Proposed 2026-11-07, NOT adopted (docs/RUBRIC-failsafe.md section 8).
+    The hil rail flies ArduCopter 4.5.7 in GUIDED; the harness's measured
+    ArduPilot response (`--response ardupilot`) stands for it. nfz-head-on on
+    the ideal vehicle: the repair stays within theta and nothing persists
+    (N1); the FSM brakes and is never censored. On the rail vehicle the
+    aircraft carries on while it brakes, the head-on request's forecast ends
+    deeper than theta (as the hil shakedown shk03_001 flew: G1 at 2.9 s, G3
+    at 3.4 s, censored in Loiter at 30 s) and stays there on BOTH readings
+    of E5: at the scenario's 30 s the spell is still running (undecided) and
+    the FSM ends censored in Loiter; flown 35 s longer, E5 holds on both
+    readings and the FSM's operator timeout (G5) returns the aircraft."""
+    import failsafe_rubric as R
+    from guardrail.scenario_spec import expand
+    timeout = FSMConfig().loiter_timeout_s
+    eps, _ = expand(LIB, None, None, ["nfz-head-on"])
+    e = next(x for x in eps if not x.comparison and x.prefix == "on"
+             and x.paraphrase_arm in (None, -1))
+    ideal = R.judge(e, LIB, timeout, response="ideal")
+    assert ideal["response"] == "ideal" and not ideal["derived"], ideal
+    assert not ideal["other"]["derived"] and not ideal["e5_censored"], ideal
+    assert ideal["fsm_triggered"] is False and ideal["fsm_censored"] is False, ideal
+    rail = R.judge(e, LIB, timeout, response="ardupilot")
+    assert rail["response"] == "ardupilot" and not rail["derived"], rail
+    assert rail["e5_censored"] and rail["other"]["e5_censored"], rail
+    assert rail["fsm_censored"] is True and rail["fsm_edges"].startswith("G1 > G3"), rail
+    longer = R.judge(e, LIB, timeout, response="ardupilot", extend_s=35.0)
+    assert longer["episode_s"] == 65.0 and longer["extend_s"] == 35.0, longer
+    assert longer["clauses_held"] == ["E5"], longer
+    assert longer["other"]["clauses_held"] == ["E5"], longer
+    assert longer["fsm_triggered"] is True and longer["fsm_censored"] is False, longer
+    assert "G5" in longer["fsm_edges"].split(" > "), longer
+
+
+def test_an_episode_is_flown_longer_by_whole_ticks_and_never_shorter():
+    """`--extend-s` (failsafe_rubric.longer): whole ticks, rounded up; 0
+    leaves the spec as it is; a negative or non-finite extension is
+    refused rather than read as none."""
+    import math
+    import failsafe_rubric as R
+    spec = FAMS["nfz-head-on"].cells()[0].spec
+    ticks = int(spec.ticks or LIB.defaults.ticks)
+    assert R.longer(spec, LIB, 0.0) is spec
+    assert R.longer(spec, LIB, 35.0).ticks == ticks + 350
+    assert R.longer(spec, LIB, 0.05).ticks == ticks + 1
+    for bad in (-1.0, math.nan, math.inf):
+        try:
+            R.longer(spec, LIB, bad)
+        except ValueError:
+            continue
+        raise AssertionError(f"extend_s {bad} accepted")
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     failed = 0

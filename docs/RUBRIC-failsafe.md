@@ -291,7 +291,8 @@ cells, smoke 56, nightly 672 cell-seeds).
 
 **Status: a draft for the user's decision. It is not the rubric.** Sections
 1-6 are the rubric; nothing in them changes unless this is adopted. This
-section exists only on the branch `e5-prescribed-flight-proposal`, which
+section exists only on the branch `e5-prescribed-flight-proposal` (and on
+`e5-prescribed-on-rail-vehicle`, which builds section 8 on it), which
 also carries the tool, labels and tests that would go with it, so the
 numbers below are measured, not estimated.
 
@@ -381,3 +382,104 @@ mission's pin is off, the 7 m cell's keeps only the goal).
 **To adopt it**: merge this branch (the tool's default, the labels, the
 pins, the tests) and fold this section into sections 2-5. **To reject it**:
 discard the branch; sections 1-6 stand.
+
+## 8. PROPOSED, NOT ADOPTED: the KPI-grade labels derived on the vehicle that flies them (draft, 2026-11-07)
+
+**Status: a draft for the user's decision. It is not the rubric.** Sections
+1-6 are the rubric. This section exists only on the branch
+`e5-prescribed-on-rail-vehicle`, which also carries section 7's proposal
+(its tool, labels and tests); the vehicle and the reading of E5 are two
+separate decisions, and the numbers below give every combination.
+
+**What the hil rig showed.** shk03_001 (nfz-head-on, the Shield at 8bfe08f,
+ArduCopter 4.5.7 SITL in GUIDED on the hil topology): the zone enters the
+5 s forecast at 2.9 s and the Shield's repair is 0.27 m deep (G1, Brake).
+The autopilot answers the setpoint late and the aircraft keeps advancing,
+so the forecast's depth at the horizon's end grows to 2.20 m in 0.5 s, over
+the 2.0 m lateral theta: G3 at 3.4 s, Loiter, still there when the run
+ends at 30 s - censored. The headless ideal vehicle flies the same cell with
+one G1 and no escalation, and the ideal vehicle is what every label of
+sections 2-5 was derived on. Section 2 reads a label from "the scenario's
+physics"; the response of the vehicle is part of that physics, and the
+KPI-grade runs fly a vehicle that does not stop where the ideal one does.
+
+**The proposed reading.** Two label sets, each derived by this same rubric
+on the vehicle its runs fly:
+
+- headless (the ideal vehicle): the labels in experiments/templates today;
+- KPI-grade (the hil rail, ArduCopter 4.5.7 SITL in GUIDED): every flight
+  the rubric reads - section 3's flight without a fail-safe and section
+  7's prescribed one - flown on the harness's measured ArduPilot response
+  (`tools/failsafe_rubric.py --response ardupilot`, the sweep's
+  `--response-arms ardupilot`: 0.08 s delay, 2.4 m/s^2, jerk 5.7 m/s^3,
+  0.03 s airframe lag, fitted to the recorded Copter-4.5.7 flights; a held
+  aircraft is the zero setpoint flown through that response).
+
+And every run flies long enough to show its outcome (section 3): a run that
+would end censored in Loiter, or a label left undecided, is flown max_s +
+`loiter_timeout_s` + 5 s. The hil rail passes `--max-s` = the scenario's
+max_s today, so a Loiter entered at 3.4 s with a 30 s timeout is censored
+by construction.
+
+**Labels it moves**, ideal -> ArduPilot (`tools/failsafe_rubric.py` on both
+vehicles; smoke, library seed 0, nightly seeds 1001-1003): smoke 7, library
+14, nightly 66 cell-seeds, every one from "not expected", none the other
+way, and the same cells on both readings of E5:
+
+| cells (nightly cell-seeds) | moves to | why |
+|---|---|---|
+| dyn-nfz-spawn-ahead 12 m at 2 m/s and 30 m at 4 and 8 m/s (27), corridor-drift-angles at 0 deg (6), gps-dropout on lane 15, windows 2-4 and 6-13 s (6), wind-gusts 2 m/s and wind-within-authority 5 m/s on lane 15 (3 + 3) | expected (E5, both readings) | braking the ideal vehicle finishes inside theta, the ArduPilot response does not: the request stays over theta for 32-69 s |
+| corridor-drift-out, dyn-nfz-rotate-step, dyn-nfz-spawn-ahead 30 m at 2 m/s, nfz-head-on, time-window-opens-on-sideways-pilot (3 + 3 + 9 + 3 + 3) | undecided at the scenario's length; expected (E5, both readings) flown 35 s longer | exactly the cells whose ArduPilot runs end censored in Loiter |
+
+Where sections 3 and 7 differ (rail-mission-stub-vla, standoff-approach-
+angles 7 m pedestrian) they differ the same way on both vehicles.
+
+**Measured.** Fail-safe trigger correctness of the FSM flown on the
+ArduPilot response (headless, not KPI-grade; integrate/1107 at 9cfbac0 with
+this branch's tool; episodes, as the sweep counts them), against (a) the
+ideal-vehicle labels on section 3's reading (the adopted labels), (b) the
+ArduPilot labels on section 3's reading, (c) the ArduPilot labels on
+section 7's reading; Wilson 95 % lower bound in brackets:
+
+| profile | censored in Loiter | (a) | (b) | (c) |
+|---|---|---|---|---|
+| smoke, scenario length | 9 | 49/54 = 0.907 (0.801) | 52/54 = 0.963 (0.875) | 53/54 = 0.981 (0.902) |
+| smoke, flown longer | 0 | 49/63 = 0.778 (0.661) | 61/63 = 0.968 (0.891) | 62/63 = 0.984 (0.915) |
+| library, scenario length | 10 | 154/169 = 0.911 (0.859) | 163/169 = 0.964 (0.925) | 165/169 = 0.976 (0.941) |
+| library, flown longer | 0 | 154/179 = 0.860 (0.802) | 173/179 = 0.966 (0.929) | 175/179 = 0.978 (0.944) |
+| nightly, scenario length | 36 | 636/705 = 0.902 (0.878) | 681/705 = 0.966 (0.950) | 693/705 = 0.983 (0.970) |
+| nightly, flown longer | 0 | 636/741 = 0.858 (0.831) | 717/741 = 0.968 (0.952) | 729/741 = 0.984 (0.972) |
+
+"Flown longer": only the runs censored in Loiter (and the labels undecided
+with them), 35 s longer; every one of them resolves - the ArduPilot labels
+become E5 on both readings and the FSM's operator timeout returns the
+aircraft (G5; time-window-opens-on-sideways-pilot then lands, G6). The
+ideal labels with section 7's reading (section 7's own proposal, on the
+ideal vehicle) give 50/54, 156/169 and 648/705 at the scenario's length.
+
+**What is left under (c)**, all of it FSM behaviour on the rail vehicle,
+none of it a label question:
+
+- dyn-nfz-rotate-spin at 3, 6 and 9 deg/s (nightly 9 false): X6 sends the
+  aircraft home - the rotating zone keeps a stop illegal and the slower
+  vehicle does not get out within T - while no E clause holds (N4: the
+  zone is imposed and can be left within the caps).
+- corridor-drift-angles at 8 m/s, -30 deg (nightly 3 missed): E5 holds on
+  both vehicles, but on the ArduPilot response the FSM's own Brake keeps
+  the request within theta and it never escalates past G1.
+
+**The hil runs, scored under (c)** (a sanity check, not a measurement):
+shk03_001 ends censored at 30 s and its label is undecided at 30 s too;
+flown to 65 s the cell is E5 and the headless ArduPilot run shows the edges
+the rig flew, earlier by the rig's take-off (G1 at 1.6 s, G3 at 2.1 s, then
+G5 at 32.1 s, home at 35.5 s) - a correct trigger under (b) and (c), a
+false one under (a). shk01_001 predates the float32 cap-slack fix (8bfe08f):
+its G1 at 0.3 s was the kinematic cap's own spurious violation and its
+Loiter came from N-in-T on those onsets (G2 at 2.9 s), so it is evidence
+of the bug, not of either label set.
+
+**To adopt it**: the KPI-grade label set is derived with `--response
+ardupilot` (on section 3's reading, or on section 7's if that is adopted
+too), the hil runs fly max_s + `loiter_timeout_s` + 5 s, and the headless
+labels stay as they are. **To reject it**: discard the branch; sections 1-6
+stand.
