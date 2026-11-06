@@ -72,6 +72,77 @@ Not flown: the shakedown on the hil rig is the user's. Tests:
 `tests/test_sweep.py`, `test_sitl_rails.py`, `test_mavlink_adapter.py`,
 `test_kpi_report.py`, `test_harnesstruth_bundles.py`.
 
+### 2026-11-06 (contract) — ten more items closed on the hil evidence and by small conformance fixes; the per-build CI on Python 3.12 finds a cross-version determinism bug
+
+#### Changed
+- WP3-05: the six older demo scripts (aerialvla_demo, aerialvla_pas_demo,
+  real_vla_demo, run_demo, semantic_demo, semantic_seek) forecast with
+  guardrail.shield's LOOKAHEAD_S / LOOKAHEAD_DT_S (5 s at 0.1 s) instead of
+  3 s at 0.5 s (8d1a0f3).
+- WP4-13: `rosbags` 0.10.11 and pyarrow are installed in vla-real, so
+  tests/test_wp4outputs_exporters.py runs 38/38 with no skip. On the KPI-grade
+  hil run hil_smoke_03 the exporter writes 303 steps as JSONL and Parquet, with
+  action.executed read from the bag (/mavros/setpoint_raw/local) on 303/303.
+- WP1-18, WP1-20: the tracked store bundles/ keeps evidence, not only the four
+  legacy replays: hil_smoke_03's bundle (signed on the Orin) and signed copies
+  of the AIOT-VLA city flights aiot_v10bs_01-03 (flown from the clean master
+  55faad0; each keeps its flown policy hash under its IR 2.x form).
+  tests/test_replay.py checks the legacy four as before and every other
+  tracked bundle for a current hash form and a trusted signature.
+- WP1-19: the WP1 cold start measured on the Orin, in the companion image
+  (tools/wp1_roundtrip_kpi.py --no-runs --no-reference): a signed 50-rule
+  bundle to a ready Shield in fresh processes, p95 590 ms against 1 s (whole
+  process wall p95 867 ms); tampered, untrusted and badly signed bundles
+  refused through the same path. `deploy/evidence/hil/wp1_roundtrip_agx.json`.
+- AIOT-VLA v10b served natively on the Orin (`vla_server_foreign.py serve
+  --model aiotvla --horizon-s 0.5 --front-source detector`), timed on 300
+  frames of aiot_v10br_01 with tools/bench_foreign_vla.py: model p50 32.6 ms,
+  p95 33.9 ms, round trip p50 39.6 ms
+  (`deploy/evidence/hil/aiotvla_v10b_bench_agx.json`). The server alone, not
+  a flight.
+- docs/FINAL-REPORT-outline.md: WP1-18, WP1-19, WP1-20, WP3-05, WP3-18,
+  WP4-13, ARCH-12, ARCH-13, ARCH-26 and X-07 to DONE (the Rust decision:
+  no Rust hot path); WP3-13 keeps PARTIAL until a hil campaign logs the
+  VLA-to-setpoint latency over hundreds of ticks. 59 DONE, 70 PARTIAL, 6 DRIFT,
+  1 MISSING.
+
+#### Found
+- **The per-build CI on Python 3.12** (`tools/ci_local.py --python` a new env
+  with requirements.txt and the 3.11-extras job's packages, numpy 2.4.6),
+  at ff0ee43: 137/141 files, 3557/3628 tests, check_claims rc 0, smoke rc 0
+  (fail-safe 0.984127, as on 3.10). The four failing files:
+  - test_policy_dsl_grant_form: Python 3.12 made sum() of floats compensated
+    (gh-100425). The frame origin of the reference demo came out
+    121.5314 on 3.12 and 121.53139999999999 on 3.10, so the desktop (3.10) and
+    the Orin (3.12) projected the same policy to different metres.
+  - test_replay: the tracked-bundle test allowed only the four legacy bundles
+    (the new hil bundle).
+  - test_render_track_video: the refusal test errored on `import matplotlib`
+    before reaching the refusal.
+  - test_railinputs_node: two REST payloads lack IR 3.0.0's required
+    constraint_type / priority / violation_action. The lab CI on 3.10 skips
+    the file (no uvicorn), so it was never seen.
+
+#### Fixed
+- 28c61e7: guardrail.projection's mean adds left to right on every Python,
+  the reference's arithmetic on 3.10 and 3.12 alike; test_replay knows the
+  tracked KPI bundles.
+- c8e2b22: tools/render_track_video.py refuses a run with no policy before
+  importing the drawing stack.
+
+#### Tests
+- test_policy_dsl_grant_form 66/66 and test_replay 61/61 on both 3.10 and
+  3.12; test_render_track_video 6/6 (3.10), 5/6 + 1 skip (3.12, no
+  matplotlib); test_wp4outputs_exporters 38/38; the six demo scripts' tests
+  (24 files) pass.
+
+#### Limits
+- test_railinputs_node's fixtures are fixed with the IR 4.0.0 scope change
+  (in progress), not here.
+- The two other centroid sums (guardrail/ir.py moving-zone bound,
+  models.ring_at) still use sum(): runtime geometry, not identity; a
+  nanometre-level difference between hosts remains possible there.
+
 ### 2026-11-06 (hil) — the hil topology flown for the first time: the Shield and MAVROS 2 on the AGX Orin, ArduPilot SITL on the desktop; the project's first KPI-grade run, and the Orin profile within the grant's budgets
 
 #### Flown

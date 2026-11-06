@@ -29,7 +29,7 @@ PARTIAL), the Shield node's buffer and index were conformed (WP3-23), and
 every shipped policy became WGS84 with a lazy local view, distance_envelope
 was enforced and MSL given a ground source (WP1-14: DRIFT to PARTIAL; WP1-07,
 X-11 still PARTIAL, with less open).
-**58 DONE, 71 PARTIAL, 6 DRIFT, 1 MISSING.** DONE means the code
+**59 DONE, 70 PARTIAL, 6 DRIFT, 1 MISSING.** DONE means the code
 or the artefact the grant names exists and matches the grant's words; it
 never means KPI-grade.
 
@@ -319,7 +319,7 @@ applied; regenerate it before the report is written.
 
 ### WP1 - Policy DSL and IR
 
-25 items: 16 DONE, 8 PARTIAL, 1 DRIFT.
+25 items: 17 DONE, 7 PARTIAL, 1 DRIFT.
 
 | ID | Obligation | Status | Evidence | Open |
 |---|---|---|---|---|
@@ -342,7 +342,7 @@ applied; regenerate it before the report is written.
 | WP1-17 | WP1 KPI: policy load round-trip | DONE | tools/wp1_roundtrip_kpi.py -> docs/data/wp1_roundtrip.json: round-trip 29/29, tamper 29/29, negative 35/35, nulls 0/29; tests/test_wp1_roundtrip_kpi.py | None. |
 | WP1-18 | WP1 KPI: bundle replayability (load the bundle whose policy_hash matches, never 'the latest') | DONE | hil_smoke_03 (2026-11-06): flown from a clean git checkout on the AGX Orin (code d0e91bb, hil, KPI-grade), its replay bundle signed by the Orin's own key, holding the policy generation whose hash the manifest names, the flight log and the rosbag; `python -m guardrail.replay verify` OK and tools/kpi_report.py re-derives its KPIs from its own log (1 KPI-grade episode); kept in the tracked store as bundles/hil_smoke_03.replay.tar.gz (CHANGELOG 2026-11-06 (hil)); headless re-fly bit-for-bit (tools/rerun_episode.py) | - |
 | WP1-19 | Policy DSL acceptance KPIs: schema-validation pass rate 100%, golden cases 100%, cold-start 50-rule ≤1 s, hot-apply ≤50 ms, monitor query ≤5 ms at 10 Hz with 50 rules | DONE | On the AGX Orin (hil machine, companion image, Python 3.12, MAXN): cold start of a signed 50-rule bundle to a ready Shield in fresh processes p95 590 ms (imports + verify + parse + IR + Shield, worst bundle; whole-process wall p95 867 ms) against 1 s, tampered / untrusted / bad-signature bundles refused through the same path (deploy/evidence/hil/wp1_roundtrip_agx.json); hot-apply at 50 rules p99 3.86 ms against 50 ms and _check p99 0.295-0.605 ms (deploy/evidence/hil/bench_shield_50rules_5s_agx.json); 1,301 real ticks at 50 rules x 51 poses: query p99 0.977 ms against 5 ms (deploy/evidence/hil/shield_tick_profile.json); schema validation 100 % and golden cases 100 % (docs/data/wp1_roundtrip.json, desktop; the Orin's image has no jsonschema); in flight, REST receipt to swap 0.444-4.443 ms over 18 events (desktop WSL, 29 Oct) | - |
-| WP1-20 | Policies used in the CityLife city flights are bundled and replayable | PARTIAL | city rail flies signed bundles by default (CHANGELOG 2026-10-22; nfz3b bundle signed and deployed to the Jetson, CHANGELOG 2026-10-28 later); replay bundles in each run folder | Copy the deliverable CityLife replay bundles into tracked bundles/ (only 4 retarget replays there); fly deliverable runs from a clean tree (27-28 Oct runs are -dirty/unversioned). |
+| WP1-20 | Policies used in the CityLife city flights are bundled and replayable | DONE | the city rail flies signed bundles by default (CHANGELOG 2026-10-22; nfz3b bundle signed and deployed to the Jetson, 2026-10-28); replay bundles in each run folder; since 2026-11-06 the deliverable CityLife flights of the report's VLA section - AIOT-VLA v10b with the stand-off feed, aiot_v10bs_01-03, flown from the clean master 55faad0 - are in the tracked store as signed replay bundles (bundles/aiot_v10bs_0N.replay.tar.gz, lab key; each keeps its flown policy hash under its IR 2.x form and verifies, tests/test_replay.py) | - |
 | WP1-21 | Mid-term gate (2026-07-20): Policy DSL + IR shipped | DRIFT | guardrail/ir.py delivered 2026-10-06 (after the 2026-07-20 gate); DSL since August | dated gate missed: the IR was first committed 2026-10-06, the DSL has no evidence before 2026-08-24; the final report states the actual dates (independent review against the grant's wording, 29 Oct) |
 | WP1-22 | R6 freeze gate: freeze the IR shape at end of Q1, and give every IR-shape change a semver bump and migration note (the Policy DSL page cites 'R6 ... for the freeze gate at the end of Q1') | DONE | sha256-canonical-v2 + policies/policy.lock.json + docs/DESIGN-policy-identity.md (CHANGELOG 2026-10-06); generated policies get unique ids (CHANGELOG 2026-10-22, 'WP1-22'); 29 Oct: the migration-note register docs/IR-MIGRATIONS.md (7c02284), one row per IR-shape change since the freeze; since 2 Nov any IR-shape change, additive included, is refused by check_lock until IR_SCHEMA_VERSION rises: 2.2.0 versioned `locked_by`, 3.0.0 the required fields (tests/test_policy_hash.py) | - |
 | WP1-23 | Single IR contract across the deployed system (Overview: Compiler and Shield 'never re-parse the YAML / JSON source') | DONE | one bundle feeds Shield and VLA nodes (sitl/run_ros2_demo.sh, --bundle); city rail too since 2026-10-22 | None. |
