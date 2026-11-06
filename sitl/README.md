@@ -103,6 +103,12 @@ partial write, MISSION_WRITE_PARTIAL_LIST then MISSION_ITEM_INT - with a held
 point short of the zone, writing the original back once the leg has been
 legal for 2 s. The run folder gains `mission.json`; the bag gains
 `/shield/mission`, `/shield/mission_update` and MAVROS's mission topics.
+Since 2026-11-06 it also writes the grant's six-field `manifest.json` beside
+`metrics.json`, from the same evidence the GUIDED Shield node gathers
+(`mavros_evidence.py`): `vla_model_hash` is `none:hand-written-controller`
+(no VLA flies this style), `policy_hash` the final generation's (the take-off
+hash is in metrics), `random_seed` from `--seed` (default 0), `sim_speedup`
+read from the autopilot, and `topology` from the evidence (also in metrics).
 MAVROS 2.14's partial push ends in an ArduPilot upload timeout after the item
 has landed (`mavlink_adapter_node.py` says why), so the adapter's verdict on
 an update is its read-back of the item.

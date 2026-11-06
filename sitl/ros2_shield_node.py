@@ -55,7 +55,9 @@ fcu_url) and its manifest says `hil`, whether MAVROS runs on the desktop (the
 grant's table) or on the Orin (docs/RUNBOOK-orin-hil.md); with a hardware
 autopilot it says `flight`. The label comes from that evidence
 (guardrail.manifest.detect_topology), never from a flag, so moving the stack
-from the desktop to the Orin to the drone changes no code.
+from the desktop to the Orin to the drone changes no code. The evidence is
+gathered by sitl/mavros_evidence.py, which the mission-style node
+(sitl/ros2_mission_node.py) uses too (2026-11-06).
 
 GEOFENCE BACKSTOP. At take-off the node reads FENCE_ENABLE, FENCE_ALT_MAX,
 AVOID_ENABLE and the rest back from the autopilot, raises FENCE_ALT_MAX above
@@ -239,7 +241,6 @@ from __future__ import annotations
 import argparse
 import json
 import math
-import os
 import sys
 import threading
 import time
@@ -259,20 +260,18 @@ from guardrail.fsm import (DEFAULT_THETA_HORIZON_S, FAILSAFE_STATES,     # noqa:
                            tick_input_from_decision)
 from guardrail.geometry import fence_polygon                              # noqa: E402
 from guardrail.kpi import compute_from_dir                                # noqa: E402
-from guardrail.manifest import (DEV_YAML_FLAG, TOPOLOGY_ARDUPILOT_SITL,   # noqa: E402
-                                UNRESOLVED, build_manifest,
-                                collect_host_evidence, decode_custom_version,
-                                describe_autopilot_version, detect_topology,
+from guardrail.manifest import (DEV_YAML_FLAG, UNRESOLVED,               # noqa: E402
                                 flight_bundle_path, flight_policy_choice,
-                                is_kpi_grade, mavros_location,
-                                network_link_evidence, pilot_record,
-                                ros2_security_evidence, scan_local_processes)
+                                is_kpi_grade, pilot_record)
 from guardrail.models import (AltitudeEnvelope, PolygonFence,             # noqa: E402
                               SubjectStandoff, XY)
 from guardrail.replay import (EpisodeRecord, audit_tick,                  # noqa: E402
                               episode_row_fields, flown_fields,
                               kpi_evidence_grade, rail_shield, rule_clock,
                               verify_replay, write_replay, zone_dwell)
+from mavros_evidence import (get_params, initial_evidence,                # noqa: E402
+                             note_mavros_state, poll_autopilot_version,
+                             poll_sim_speedup, record_link, topology_manifest)
 from mavlink_adapter_node import (ADAPTER_NODE_NAME, DEFAULT_HOLD_MODE,   # noqa: E402
                                   FENCE_MARGIN_M,
                                   HOLD_MODES, TOPIC_FENCES, TOPIC_MODE_REQUEST,
@@ -1199,23 +1198,15 @@ if HAVE_ROS:
             self.traj: list[dict] = []
             self.rows: list[dict] = []
             # Evidence of the topology, gathered from the live system rather
-            # than asserted (guardrail.manifest.check_topology_evidence).
-            self.hil_evidence: dict = {
-                "ros_distro": os.environ.get("ROS_DISTRO"),
-                "mavros_node": None,
-                "fcu_connected": None,
-                "ardupilot_version": None,
-                "ardupilot_version_source": None,
-                # The VLA node's own host, from /vla/identity; None until (and
-                # unless) it reports one. The grant puts it on the Orin.
-                "vla_host": None,
-                **collect_host_evidence(),
-            }
+            # than asserted (guardrail.manifest.check_topology_evidence), the
+            # same way as the mission-style node (sitl/mavros_evidence.py).
+            # vla_node: the VLA node's own host, from /vla/identity, is None
+            # until (and unless) it reports one; the grant puts it on the Orin.
+            self.hil_evidence: dict = initial_evidence(vla_node=True)
             # SROS 2 (sitl/run_ros2_demo.sh SROS2=1): recorded only when it is
             # on, so a run without it records what it always did.
-            security = ros2_security_evidence()
+            security = self.hil_evidence.get("ros2_security")
             if security is not None:
-                self.hil_evidence["ros2_security"] = security
                 self.get_logger().info(
                     f"SROS 2 {security['strategy']}: enclave {security['enclave']}, "
                     f"identity CA {security['identity_ca_sha256']}")
@@ -1309,8 +1300,7 @@ if HAVE_ROS:
 
         def _on_state(self, msg: MavState) -> None:
             self.mav_connected = msg.connected
-            self.hil_evidence["mavros_node"] = "/mavros"
-            self.hil_evidence["fcu_connected"] = bool(msg.connected)
+            note_mavros_state(self.hil_evidence, msg.connected)
             if msg.mode != self.mode:
                 self.rec.event("mode", t=self._t(), mode=msg.mode,
                                previous=self.mode, armed=bool(msg.armed))
@@ -1588,105 +1578,41 @@ if HAVE_ROS:
             rclpy.spin_until_future_complete(self, fut, timeout_sec=timeout)
             return fut.result()
 
+        # The MAVROS chain's evidence: the readers are sitl/mavros_evidence.py's,
+        # shared with the mission-style node; these wrappers hand them this
+        # node's service calls, its spin and its clock.
+
         def _get_params(self, client, names: list[str]) -> dict:
-            try:
-                res = self._call(client, GetParameters.Request(names=names), 5.0)
-            except Exception:                                 # noqa: BLE001
-                return {}
-            out = {}
-            if res is not None:
-                for n, v in zip(names, res.values):
-                    # type 0 = PARAMETER_NOT_SET. MAVROS sometimes reports
-                    # SIM_SPEEDUP as INTEGER with the value in double_value,
-                    # so take whichever field carries one.
-                    if v.type == 0:
-                        out[n] = None
-                    elif v.type == 4:
-                        out[n] = v.string_value
-                    else:
-                        out[n] = float(v.double_value) or float(v.integer_value)
-            return out
+            return get_params(self._call, client, GetParameters.Request, names)
+
+        def _spin_evidence(self) -> None:
+            rclpy.spin_once(self, timeout_sec=0.5)
 
         def read_sim_speedup(self) -> float | None:
             """SIM_SPEEDUP from the autopilot, or None - and whether the
-            autopilot is SITL at all.
-
-            MAVROS 2 surfaces autopilot parameters as node parameters of
-            /mavros/param (rcl_interfaces/GetParameters); it populates them
-            itself on FCU connect, and a forced pull raced the refill and
-            returned 0.0, so this polls and accepts the first positive answer.
-            A hardware autopilot has no SIM_ parameters: SYSID_THISMAV present
-            and SIM_SPEEDUP absent marks it `hardware`. Never assumed.
-            """
-            deadline = time.time() + 20.0
-            vals: dict = {}
-            while time.time() < deadline:
-                vals = self._get_params(self.cli_param, ["SIM_SPEEDUP",
-                                                         "SYSID_THISMAV"])
-                sp = vals.get("SIM_SPEEDUP")
-                if isinstance(sp, float) and sp > 0.0:
-                    self.hil_evidence["autopilot_kind"] = "sitl"
-                    return round(sp, 4)
-                rclpy.spin_once(self, timeout_sec=0.5)
-            # Only after the whole wait: while MAVROS is still loading the
-            # parameter set, SYSID_THISMAV can be present before SIM_* is.
-            hardware = bool(vals.get("SYSID_THISMAV")) and \
-                "SIM_SPEEDUP" in vals and vals["SIM_SPEEDUP"] is None
-            self.hil_evidence["autopilot_kind"] = "hardware" if hardware else None
-            if not hardware:
-                self.get_logger().warn("[speedup] SIM_SPEEDUP never resolved")
-            return None
+            autopilot is SITL at all (mavros_evidence.poll_sim_speedup).
+            Never assumed."""
+            return poll_sim_speedup(
+                lambda names: self._get_params(self.cli_param, names),
+                self._spin_evidence, self.hil_evidence, now=time.time,
+                warn=self.get_logger().warn)
 
         def read_autopilot_version(self) -> None:
             """AUTOPILOT_VERSION as MAVROS received it (ARCH-31); the setup
-            script's banner only as a labelled fallback."""
-            deadline = time.time() + 15.0
-            while time.time() < deadline:
-                try:
-                    res = self._call(self.cli_info, VehicleInfoGet.Request(
-                        sysid=0, compid=0, get_all=False), 5.0)
-                except Exception:                             # noqa: BLE001
-                    res = None
-                if res is not None and res.success and res.vehicles:
-                    v = res.vehicles[0]
-                    if v.available_info & 2:      # HAVE_INFO_AUTOPILOT_VERSION
-                        custom = decode_custom_version(v.flight_custom_version)
-                        self.hil_evidence.update({
-                            "ardupilot_version": describe_autopilot_version(
-                                v.flight_sw_version, custom, v.type, v.autopilot),
-                            "ardupilot_version_source":
-                                "AUTOPILOT_VERSION via /mavros/vehicle_info_get",
-                            "flight_sw_version": f"{int(v.flight_sw_version):08x}",
-                            "flight_custom_version_raw": v.flight_custom_version,
-                        })
-                        return
-                rclpy.spin_once(self, timeout_sec=0.5)
-            env = os.environ.get("ARDUPILOT_VERSION")
-            if env:
-                self.hil_evidence.update({
-                    "ardupilot_version": env,
-                    "ardupilot_version_source":
-                        "sitl/setup_sitl.sh --verify binary banner (the "
-                        "autopilot itself did not answer)",
-                    "ardupilot_pin_ok": os.environ.get("ARDUPILOT_PIN_OK") == "1"})
-            else:
-                self.get_logger().warn("autopilot version not read")
+            script's banner only as a labelled fallback
+            (mavros_evidence.poll_autopilot_version)."""
+            poll_autopilot_version(
+                lambda: self._call(self.cli_info, VehicleInfoGet.Request(
+                    sysid=0, compid=0, get_all=False), 5.0),
+                self._spin_evidence, self.hil_evidence, now=time.time,
+                warn=self.get_logger().warn)
 
         def read_link(self) -> None:
             """The MAVLink link MAVROS flies over: its own fcu_url parameter,
-            else the URL the launch script started it with (labelled)."""
-            url = self._get_params(self.cli_mavros_param, ["fcu_url"]).get("fcu_url")
-            src = "/mavros fcu_url parameter"
-            if not url:
-                url, src = os.environ.get("MAVROS_FCU_URL"), "MAVROS_FCU_URL (launch script)"
-            self.hil_evidence["network_link"] = {**network_link_evidence(url),
-                                                 "source": src if url else None}
-            self.hil_evidence["mavlink_router"] = os.environ.get("MAVLINK_ROUTER")
-            # Which MAVLink actors run on THIS host (None off Linux): where
-            # SITL and MAVROS are decides dev vs hil, whatever the URL says.
-            procs = scan_local_processes()
-            self.hil_evidence["local_processes"] = procs
-            self.hil_evidence["mavros_on"] = mavros_location(self.hil_evidence)
+            else the URL the launch script started it with (labelled); and
+            which MAVLink actors run on this host (mavros_evidence.record_link)."""
+            record_link(self._get_params(self.cli_mavros_param, ["fcu_url"]).get("fcu_url"),
+                        self.hil_evidence)
 
         def _set_param(self, name: str, value: float) -> bool:
             """One autopilot parameter through MAVROS 2 (/mavros/param is a
@@ -2682,21 +2608,15 @@ if HAVE_ROS:
             (self.out / "flight_log.jsonl").write_text(
                 "".join(json.dumps(r) + "\n" for r in self.rows), encoding="utf-8")
 
+            # The topology the evidence supports, or the refusal recorded and
+            # the rail's own label (mavros_evidence.topology_manifest).
             speedup = self.sim_speedup
-            topology = detect_topology(self.hil_evidence)
-            try:
-                manifest = build_manifest(
-                    policy_hash=self.policy.policy_hash, model_id=model_id,
-                    seed=self.args.seed, scene_path=None, sim_speedup=speedup,
-                    topology=topology, hil_evidence=self.hil_evidence,
-                    reported_digest=reported_digest)
-            except ValueError as e:
-                self.get_logger().warn(f"not the {topology} topology: {e}")
-                metrics["topology_refused"] = str(e)
-                manifest = build_manifest(
-                    policy_hash=self.policy.policy_hash, model_id=model_id,
-                    seed=self.args.seed, scene_path=None, sim_speedup=speedup,
-                    topology=TOPOLOGY_ARDUPILOT_SITL, reported_digest=reported_digest)
+            manifest, refused = topology_manifest(
+                policy_hash=self.policy.policy_hash, model_id=model_id,
+                seed=self.args.seed, sim_speedup=speedup, evidence=self.hil_evidence,
+                reported_digest=reported_digest, warn=self.get_logger().warn)
+            if refused is not None:
+                metrics["topology_refused"] = refused
             metrics["topology"] = manifest["topology"]
             (self.out / "metrics.json").write_text(json.dumps(metrics, indent=2),
                                                    encoding="utf-8")

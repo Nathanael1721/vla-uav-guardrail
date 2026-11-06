@@ -210,6 +210,12 @@ def test_the_ros2_rail_reads_sim_speedup_instead_of_asserting_it():
     assert "sim_speedup=1.0" not in src, (
         "ros2_shield_node.py still asserts sim_speedup=1.0")
     assert "def read_sim_speedup" in src and "sim_speedup=speedup" in src
+    # Since 2026-11-06 the mission-style node reads it the same way, through
+    # the same reader (sitl/mavros_evidence.py poll_sim_speedup).
+    src = (SITL / "ros2_mission_node.py").read_text(encoding="utf-8")
+    assert "sim_speedup=1.0" not in src, (
+        "ros2_mission_node.py asserts sim_speedup=1.0")
+    assert "def read_sim_speedup" in src and "sim_speedup=self.sim_speedup" in src
 
 
 def test_both_rails_write_the_kpi_grade_into_the_artefact():
@@ -370,8 +376,14 @@ def test_both_rails_record_the_autopilots_own_version():
     by the setup script's pin."""
     assert "ardupilot_version_from_mavlink(" in (
         SITL / "run_sitl_demo.py").read_text(encoding="utf-8")
-    src = (SITL / "ros2_shield_node.py").read_text(encoding="utf-8")
-    assert "VehicleInfoGet" in src and "describe_autopilot_version(" in src
+    # The ROS 2 nodes ask MAVROS's vehicle_info_get and decode the answer
+    # with sitl/mavros_evidence.py (2026-11-06; until then inside the Shield
+    # node, and the mission-style node did not ask at all).
+    assert "describe_autopilot_version(" in (
+        SITL / "mavros_evidence.py").read_text(encoding="utf-8")
+    for name in ("ros2_shield_node.py", "ros2_mission_node.py"):
+        src = (SITL / name).read_text(encoding="utf-8")
+        assert "VehicleInfoGet" in src and "poll_autopilot_version(" in src, name
 
 
 def test_the_vla_stub_publishes_body_frame():
@@ -1512,6 +1524,304 @@ def test_a_stressor_that_does_not_read_back_stops_the_run():
     assert '"sim_stressors": sim_stressors' in src, "metrics.json must record the stressors"
     tail = src.split("sim_stressors = []", 1)[1][:1500]
     assert "did not read back as" in tail and "raise SystemExit" in tail
+
+
+# --------------------------------------------------------------------------- #
+# The MAVROS evidence and the six-field manifest (WP4-12), one module for the
+# GUIDED Shield node and the mission-style node (2026-11-06)
+# --------------------------------------------------------------------------- #
+
+GRANT_FIELDS = ["code_revision", "vla_model_hash", "policy_hash", "random_seed",
+                "sim_speedup", "topology"]
+DESKTOP = {"host_arch": "x86_64", "device_model": None, "l4t_release": None,
+           "jetpack": None, "hostname": "desktop"}
+
+
+class _Param:
+    """An rcl_interfaces/ParameterValue as MAVROS returns it."""
+
+    def __init__(self, type, double_value=0.0, integer_value=0, string_value=""):
+        self.type, self.double_value = type, double_value
+        self.integer_value, self.string_value = integer_value, string_value
+
+
+def _vehicle_info(available_info=2):
+    """MAVROS's /mavros/vehicle_info_get answer for ArduCopter 4.5.7 (official
+    build, git 2a3dc4b7); available_info bit 2 = AUTOPILOT_VERSION received."""
+    from types import SimpleNamespace
+    v = SimpleNamespace(available_info=available_info,
+                        flight_sw_version=(4 << 24) | (5 << 16) | (7 << 8) | 255,
+                        flight_custom_version=list(b"2a3dc4b7"), type=2, autopilot=3)
+    return SimpleNamespace(success=True, vehicles=[v])
+
+
+def test_the_mavros_evidence_is_read_from_the_autopilot_never_assumed():
+    """sitl/mavros_evidence.py, the readers both ROS 2 rail nodes use: a
+    parameter as MAVROS returns it (SIM_SPEEDUP sometimes INTEGER with the
+    value in double_value), SIM_SPEEDUP polled through MAVROS's refill race
+    (0.0, then the value) and None - never 1.0 - when it never answers, a
+    hardware autopilot told apart by SYSID_THISMAV without SIM_*, the
+    autopilot's own AUTOPILOT_VERSION with the setup banner only as a
+    labelled fallback, MAVROS's own fcu_url before the launch script's, and
+    vla_host only where a separate VLA node reports one."""
+    from types import SimpleNamespace
+    sys.path.insert(0, str(SITL))
+    import mavros_evidence as E
+    assert E.param_value(_Param(0)) is None
+    assert E.param_value(_Param(4, string_value="udp://:14555@")) == "udp://:14555@"
+    assert E.param_value(_Param(2, integer_value=1)) == 1.0
+    assert E.param_value(_Param(2, double_value=1.0)) == 1.0
+
+    def gone(*a):
+        raise RuntimeError("service gone")
+    assert E.get_params(gone, None, dict, ["SIM_SPEEDUP"]) == {}
+    assert E.get_params(lambda *a: None, None, dict, ["SIM_SPEEDUP"]) == {}
+    assert E.get_params(lambda c, req, t: SimpleNamespace(values=[_Param(3, 1.0)]),
+                        None, dict, ["SIM_SPEEDUP"]) == {"SIM_SPEEDUP": 1.0}
+
+    clk = [0.0]
+
+    def spin():
+        clk[0] += 0.5
+
+    def now():
+        return clk[0]
+    answers = iter([{"SIM_SPEEDUP": 0.0, "SYSID_THISMAV": 1.0},
+                    {"SIM_SPEEDUP": 1.0, "SYSID_THISMAV": 1.0}])
+    ev, warned = {}, []
+    assert E.poll_sim_speedup(lambda names: next(answers), spin, ev, now=now) == 1.0
+    assert ev == {"autopilot_kind": "sitl"}
+    assert E.poll_sim_speedup(lambda names: {}, spin, ev, now=now, warn=warned.append) is None
+    assert ev == {"autopilot_kind": None} and warned == ["[speedup] SIM_SPEEDUP never resolved"]
+    assert E.poll_sim_speedup(lambda names: {"SIM_SPEEDUP": None, "SYSID_THISMAV": 1.0},
+                              spin, ev, now=now) is None
+    assert ev == {"autopilot_kind": "hardware"}
+
+    ev, warned = {}, []
+    E.poll_autopilot_version(_vehicle_info, spin, ev, now=now, environ={})
+    assert ev["ardupilot_version"] == "ArduCopter V4.5.7 (2a3dc4b7)", ev
+    assert ev["ardupilot_version_source"] == "AUTOPILOT_VERSION via /mavros/vehicle_info_get"
+    ev = {}
+    E.poll_autopilot_version(lambda: _vehicle_info(available_info=0), spin, ev, now=now,
+                             environ={"ARDUPILOT_VERSION": "ArduCopter V4.5.7 (2a3dc4b7)",
+                                      "ARDUPILOT_PIN_OK": "1"}, warn=warned.append)
+    assert "banner" in ev["ardupilot_version_source"] and ev["ardupilot_pin_ok"] is True
+    ev = {}
+    E.poll_autopilot_version(gone, spin, ev, now=now, environ={}, warn=warned.append)
+    assert ev == {} and warned == ["autopilot version not read"], (ev, warned)
+
+    ev = {}
+    E.record_link("udp://:14555@127.0.0.1:14550", ev, environ={"MAVLINK_ROUTER": "routerd"},
+                  scan=lambda: {"local_sitl": ["arducopter"], "local_mavros": True,
+                                "local_router": []})
+    assert ev["network_link"]["source"] == "/mavros fcu_url parameter"
+    assert ev["network_link"]["fcu_url"] == "udp://:14555@127.0.0.1:14550"
+    assert ev["mavlink_router"] == "routerd" and ev["mavros_on"] == "shield_host"
+    ev = {}
+    E.record_link(None, ev, environ={"MAVROS_FCU_URL": "udp://:14555@"}, scan=lambda: None)
+    assert ev["network_link"]["source"] == "MAVROS_FCU_URL (launch script)"
+    assert ev["network_link"]["fcu_url"] == "udp://:14555@" and ev["mavros_on"] is None
+
+    shield = E.initial_evidence(vla_node=True, environ={"ROS_DISTRO": "jazzy"}, host=DESKTOP)
+    mission = E.initial_evidence(vla_node=False, environ={"ROS_DISTRO": "jazzy"}, host=DESKTOP)
+    assert shield["vla_host"] is None and "vla_host" not in mission
+    assert mission["ros_distro"] == "jazzy" and mission["fcu_connected"] is None
+    assert "ros2_security" not in mission and mission["hostname"] == "desktop"
+    E.note_mavros_state(mission, 1)
+    assert mission["mavros_node"] == "/mavros" and mission["fcu_connected"] is True
+
+
+def test_both_ros2_rail_nodes_gather_their_evidence_through_one_module():
+    """The mission-style node (2026-11-03) gathered no evidence and wrote no
+    manifest. Both nodes now gather it with sitl/mavros_evidence.py and build
+    the manifest with its topology_manifest: neither keeps a second copy of
+    the readers or the topology rule, and neither asserts a speedup."""
+    ev_src = (SITL / "mavros_evidence.py").read_text(encoding="utf-8")
+    assert "describe_autopilot_version(" in ev_src and "detect_topology(" in ev_src
+    for name in ("ros2_shield_node.py", "ros2_mission_node.py"):
+        src = (SITL / name).read_text(encoding="utf-8")
+        assert "from mavros_evidence import" in src, name
+        for call in ("initial_evidence(", "note_mavros_state(", "poll_sim_speedup(",
+                     "poll_autopilot_version(", "record_link(", "topology_manifest("):
+            assert call in src, (name, call)
+        assert "def read_sim_speedup" in src and "GetParameters" in src, name
+        for copy in ("describe_autopilot_version(", "detect_topology(",
+                     "network_link_evidence(", "sim_speedup=1.0"):
+            assert copy not in src, (name, copy)
+
+
+def test_the_mission_node_takes_the_shield_nodes_seed():
+    """random_seed is the seed the run was given: --seed on both nodes, the
+    same default (run_ros2_demo.sh hands its extra args to whichever node
+    takes the Shield's place)."""
+    sys.path.insert(0, str(SITL))
+    import ros2_mission_node as M
+    N = _node()
+    assert M.make_parser().parse_known_args([])[0].seed \
+        == N.make_parser().parse_known_args([])[0].seed == 0
+    assert M.make_parser().parse_known_args(["--seed", "7"])[0].seed == 7
+
+
+def test_a_mission_run_whose_mavros_evidence_does_not_hold_keeps_its_manifest():
+    """A mission refused before MAVROS ever connected (main() ends it through
+    _finish) still writes the six fields: the grant label is refused on the
+    evidence and the rail's own label stamped, the refusal is in metrics
+    (`topology_refused`), and an unread speedup is "unresolved", not 1.0."""
+    sys.path.insert(0, str(SITL))
+    import mavros_evidence as E
+    import ros2_mission_node as M
+    from guardrail.manifest import NO_VLA, TOPOLOGY_ARDUPILOT_SITL, UNRESOLVED
+    pol = load_policy(POLICY)
+    out = Path(tempfile.mkdtemp(prefix="mission_refused_"))
+    metrics, warned = {"rail": "ros2_mavros_mission"}, []
+    man = M.write_run_records(out, metrics, policy_hash=pol.policy_hash, seed=3,
+                              sim_speedup=None, warn=warned.append,
+                              evidence=E.initial_evidence(vla_node=False, environ={},
+                                                          host=DESKTOP))
+    assert list(man) == GRANT_FIELDS, man
+    assert man["topology"] == TOPOLOGY_ARDUPILOT_SITL and man["sim_speedup"] == UNRESOLVED
+    assert man["vla_model_hash"] == NO_VLA and man["random_seed"] == 3
+    assert man["policy_hash"] == pol.policy_hash
+    disk = json.loads((out / "metrics.json").read_text(encoding="utf-8"))
+    assert disk["topology"] == TOPOLOGY_ARDUPILOT_SITL and "fcu_connected" in disk["topology_refused"]
+    assert json.loads((out / "manifest.json").read_text(encoding="utf-8")) == man
+    assert warned and warned[0].startswith("not the dev topology"), warned
+
+
+def _mission_standin(path: Path = SITL / "ros2_mission_node.py"):
+    """sitl/ros2_mission_node.py on tests/test_railinputs_node.py's stand-in
+    ROS stack (no rclpy, no MAVROS, no autopilot), plus the two mission
+    message types the mission node adds. The modules it shares with the
+    plain imports (the adapter's constants, the evidence readers) are
+    imported first, without the stand-in, so they are not cached with it."""
+    import importlib.util
+    sys.path.insert(0, str(SITL))
+    sys.path.insert(0, str(ROOT / "tests"))
+    import mavlink_adapter_node                                   # noqa: F401
+    import mavros_evidence                                        # noqa: F401
+    import test_railinputs_node as RN
+    fakes = RN._fake_ros()
+    for n in ("WaypointList", "WaypointReached"):
+        setattr(fakes["mavros_msgs.msg"], n, type(n, (RN._Msg,), {}))
+    saved = {k: sys.modules.get(k) for k in fakes}
+    sys.modules.update(fakes)
+    try:
+        spec = importlib.util.spec_from_file_location("ros2_mission_node_standin", path)
+        M = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(M)
+    finally:
+        for k, v in saved.items():
+            if v is None:
+                sys.modules.pop(k, None)
+            else:
+                sys.modules[k] = v
+    assert M.HAVE_ROS, "the stand-in ROS stack did not import"
+    return RN, M
+
+
+def test_the_mission_node_writes_the_six_field_manifest_beside_its_metrics():
+    """WP4-12 on the mission style. The real MissionShieldNode, on the
+    stand-in ROS stack, is brought up against a stand-in MAVROS that answers
+    as SITL does (connected, AUTOPILOT_VERSION, its fcu_url, SIM_SPEEDUP 0.0
+    and then 1.0 - MAVROS's refill race), flies under a zone hot-applied
+    after take-off, and ends. manifest.json lies beside metrics.json with the
+    grant's six fields: NO_VLA, the --seed it was given, the speedup the
+    autopilot reported, topology dev from the evidence, and the FINAL policy
+    hash - the last generation, which the replay pack binds the bundle to.
+    metrics.json carries the topology, the evidence and the take-off hash.
+    Fails on the node as of 0029a43 (mission_wp_20261104 has no manifest)."""
+    import os
+    from types import SimpleNamespace
+    from guardrail.manifest import NO_VLA
+    from guardrail.models import DynamicNFZ
+    from guardrail.replay import last_generation_policy, read_replay, write_replay
+    RN, M = _mission_standin()
+    clk = RN._Clock()
+    clk.perf_counter = clk.monotonic           # the tick times its own Shield work
+    M.time = clk
+    M.rclpy.spin_once = lambda *a, **kw: setattr(clk, "t", clk.t + 0.5)
+    args, _ = M.make_parser().parse_known_args(
+        ["--policy", str(POLICY), "--dev-yaml", "--waypoints", "0,30;30,30", "--seed", "7"])
+    out = Path(tempfile.mkdtemp(prefix="mission_standin_"))
+    keys = ("ROS_DISTRO", "MAVROS_FCU_URL", "MAVLINK_ROUTER", "ARDUPILOT_VERSION",
+            "ROS_SECURITY_ENABLE")
+    saved = {k: os.environ.get(k) for k in keys}
+    for k in keys:
+        os.environ.pop(k, None)
+    os.environ["ROS_DISTRO"] = "jazzy"            # the rail sources ROS 2 Jazzy
+    try:
+        node = M.MissionShieldNode(args, out)
+        speedups = iter([0.0, 1.0])
+        asked = []
+        # getattr: a node that asks MAVROS nothing (0029a43) still flies here,
+        # and the test then fails where it should, on the missing manifest.
+        info, link, params = (getattr(node, n, object()) for n in
+                              ("cli_info", "cli_mavros_param", "cli_param"))
+
+        def call(client, req, timeout=5.0):
+            if client is info:
+                return _vehicle_info()
+            if client is link:
+                return SimpleNamespace(values=[_Param(4, string_value="udp://:14555@127.0.0.1:14550")])
+            if client is params:
+                asked.append(list(req.names))
+                return SimpleNamespace(values=[_Param(3, next(speedups, 1.0)),
+                                               _Param(2, integer_value=1)])
+            return SimpleNamespace(success=True, mode_sent=True)   # rate, mode, arm, take-off
+        node._call = call
+        node._on_state(M.MavState(connected=True, armed=False, mode="GUIDED"))
+        node.state = State(x=0.0, y=0.0, up=node.alt)
+        node._on_adapter(M.String(data=json.dumps(
+            {"kind": "mission_upload", "success": True, "match": True, "items": 4,
+             "read_back": 4})))
+        loaded = node.policy.policy_hash
+        node.bring_up()
+        node.start()
+        node._on_state(M.MavState(connected=True, armed=True, mode="AUTO"))
+        zone = DynamicNFZ(id="nfz-hot-1", type="dynamic_nfz", **HARD_P0, margin_m=1.0,
+                          vertices=[XY(x=-4, y=18), XY(x=4, y=18), XY(x=4, y=22),
+                                    XY(x=-4, y=22)])
+        with node._lock:                    # as the REST hot-apply thread does
+            node.shield.hot_apply(zone)
+            node.rec.hot_applied(zone.id, t=node._t())
+        for _ in range(3):
+            clk.t += 0.1
+            node._tick()
+        node._finish("last waypoint reached")
+    finally:
+        for k, v in saved.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+
+    assert (out / "manifest.json").is_file(), "the mission node wrote no manifest.json"
+    man = json.loads((out / "manifest.json").read_text(encoding="utf-8"))
+    met = json.loads((out / "metrics.json").read_text(encoding="utf-8"))
+    assert list(man) == GRANT_FIELDS, man
+    assert man["vla_model_hash"] == NO_VLA and man["random_seed"] == 7 == met["seed"]
+    assert man["sim_speedup"] == 1.0 and len(asked) == 2, (man, asked)
+    assert asked[0] == ["SIM_SPEEDUP", "SYSID_THISMAV"]
+    assert man["topology"] == "dev" == met["topology"] and "topology_refused" not in met, met
+    assert isinstance(man["code_revision"], str) and man["code_revision"]
+    ev = met["hil_evidence"]
+    assert ev["fcu_connected"] is True and ev["mavros_node"] == "/mavros"
+    assert ev["ardupilot_version"] == "ArduCopter V4.5.7 (2a3dc4b7)", ev
+    assert ev["autopilot_kind"] == "sitl" and "vla_host" not in ev
+    assert ev["network_link"]["fcu_url"] == "udp://:14555@127.0.0.1:14550"
+    # The take-off hash and the final one: the manifest carries the final
+    # one, the hash of the last generation the episode recorded.
+    final = last_generation_policy(out)
+    assert final.generation == 1 and man["policy_hash"] == final.policy_hash
+    assert met["policy_hash_final"] == man["policy_hash"] != loaded
+    assert met["policy_hash_at_takeoff"] == loaded and met["generation_at_takeoff"] == 0
+    assert met["generation_final"] == 1
+    # ...which is what binds the replay bundle: "manifest", not "unverified".
+    bundle = out / "standin.replay.tar.gz"
+    write_replay(out, final, bundle, changelog="stand-in", signer=None,
+                 policy_source=met["policy_source"])
+    idx = read_replay(bundle)["index"]
+    assert idx["policy_binding"] == "manifest" and idx["flown_policy_hash"] == final.policy_hash
 
 
 if __name__ == "__main__":
