@@ -99,6 +99,18 @@ term.
       x7_min_rise_m. A recovery is losing ground to something the Shield's
       forecast cannot see (wind beyond the speed cap). Ours, since
       2026-10-08; a PI question.
+  X8  Normal / Brake / Loiter -> RTL when the POSITION the Shield is handed
+      can no longer certify a hard P0 zone's margin (`position_lost`, from
+      Shield._position_verdict, since 2026-11-06): the rail says the fix is
+      not valid and the error dead-reckoned since the last valid one (plus a
+      drift allowance) exceeds the zone's margin with its boundary within
+      that error, or the rail reports an accuracy whose 3 sigma does. The
+      rubric's E3 (docs/RUBRIC-failsafe.md), which until then was a clause
+      the FSM had no input for. It comes before every rule's own answer,
+      since each was computed from that position. RTL, because the autopilot
+      still navigates on its own estimate; G6 lands it if the return fails.
+      A rail that reports no fix quality (every rail on that date) never
+      takes it.
 
 Interpretations of terms the grant uses but does not define:
 
@@ -113,6 +125,12 @@ Interpretations of terms the grant uses but does not define:
     itself lists the N-in-T defaults as an open question to "adjust against
     stress-run data" (p7). `event_mode="tick"` is kept so that data can
     decide.
+  * With a REPORTED position accuracy (TickInput.noise_marginal, since
+    2026-11-06), a clean tick whose request is clean of a hard zone by less
+    than 3 sigma does not end the violation for onset counting: the next
+    return is the same violation seen through noise, not a new onset (a
+    spatial hysteresis beside the temporal one above). Without a reported
+    accuracy nothing changes.
   * "N-in-T persists" (Loiter -> RTL) means N new onsets within T AFTER
     entering Loiter. The window is cleared on entry. Without that, the onsets
     that caused the Loiter would fire the RTL on the very next tick.
@@ -479,17 +497,17 @@ EDGES: dict[str, tuple[str, str, str, str]] = {
            "position illegal for >= T_recover and its illegal depth GROWING (fitted slope "
            "at two standard errors, and a minimum rise) while the Shield intervenes on a "
            "hard rule (a recovery losing ground)"),
-    # PROTOTYPE (2026-11-06): the Shield's position input cannot be trusted
-    # (no valid fix: its error dead-reckoned on what the Shield streamed since
-    # the last valid one; or a reported accuracy whose 3 sigma) exceeds a hard
-    # P0 zone's margin with that zone's boundary within the error: the margin
-    # can no longer certify the rule (docs/RUBRIC-failsafe.md E3), so no
-    # repair computed from that position is safe (p1). RTL: the autopilot
-    # navigates on its own estimate; when the return fails (rtl_path), G6
-    # lands it, as for any RTL. (Where the AUTOPILOT has lost its own fix -
-    # GPS_RAW_INT.fix_type < 3, EKF without absolute position - RTL cannot be
-    # flown and ArduPilot's EKF failsafe lands, FS_EKF_ACTION = 1: a second
-    # input, not modelled here.)
+    # Since 2026-11-06: the Shield's position input cannot be trusted - no
+    # valid fix (its error dead-reckoned on what the Shield streamed since the
+    # last valid one, with a drift allowance), or a reported accuracy whose 3
+    # sigma - beyond a hard P0 zone's margin with that zone's boundary within
+    # the error: the margin can no longer certify the rule
+    # (docs/RUBRIC-failsafe.md E3), so no repair computed from that position
+    # is safe (p1). RTL: the autopilot navigates on its own estimate; when the
+    # return fails (rtl_path), G6 lands it, as for any RTL. (Where the
+    # AUTOPILOT has lost its own fix - GPS_RAW_INT.fix_type < 3, an EKF without
+    # absolute position - RTL cannot be flown and ArduPilot's EKF failsafe
+    # lands, FS_EKF_ACTION = 1: a second input, not modelled here.)
     "X8": ("Normal|Brake|Loiter", "RTL", "extension",
            "position knowledge lost: the position error (stale or invalid fix, or "
            "reported accuracy) exceeds a hard P0 zone's margin with its boundary "
@@ -1015,14 +1033,15 @@ class TickInput:
     stop_illegal: bool = False
     unsafe_depth_m: float | None = None
     hold_legal: bool | None = None
-    # PROTOTYPE (2026-11-06): why the position can no longer be certified
-    # (edge X8), or None - every caller before it, and every tick with a
-    # valid fix. Set by Shield._position_verdict from State.fix_ok.
+    # Why the position can no longer be certified (edge X8, 2026-11-06), or
+    # None - every caller before it, and every tick whose rail reports no
+    # fix quality or a good one. Set by Shield._position_verdict from
+    # State.fix_ok / State.pos_sigma_m.
     position_lost: str | None = None
-    # PROTOTYPE (2026-11-06): a clean tick whose request is clean of a hard
-    # zone by less than 3 sigma of the reported position accuracy
-    # (Shield._noise_marginal). The next violation of it is then the same
-    # one seen through noise, not a new N-in-T onset. False: as before.
+    # A clean tick whose request is clean of a hard zone by less than 3 sigma
+    # of the REPORTED position accuracy (Shield._noise_marginal, 2026-11-06).
+    # The next violation of it is then the same one seen through noise, not a
+    # new N-in-T onset. False (every rail that reports no accuracy): as before.
     noise_marginal: bool = False
 
     def __post_init__(self) -> None:
@@ -1735,8 +1754,9 @@ class EscalationFSM:
             onset = rising and (self._last_onset is None
                                 or t - self._last_onset >= cfg.onset_clear_s - EPS)
         merged = rising and not onset
-        # PROTOTYPE: a clean tick within the position's own noise of a hard
-        # zone keeps the violation "on" for onset counting (noise_marginal).
+        # A clean tick within the reported position noise of a hard zone keeps
+        # the violation "on" for onset counting (noise_marginal, 2026-11-06):
+        # the next return is the same violation seen through noise.
         self._prev_hard = hard_violated or inp.noise_marginal
         if onset:
             self._last_onset = t
@@ -1845,8 +1865,8 @@ class EscalationFSM:
             "fsm_config_hash": cfg.digest,
         }
         if inp.position_lost is not None:
-            # PROTOTYPE (X8's input), only on ticks that carry it, so every
-            # other record is byte for byte what it was.
+            # X8's input, only on ticks that carry it, so every other record
+            # is byte for byte what it was.
             record["position_lost"] = inp.position_lost
         if inp.noise_marginal:
             record["noise_marginal"] = True
@@ -2074,8 +2094,8 @@ class EscalationFSM:
         direct = {"land": S.LAND, "RTL": S.RTL, "loiter": S.LOITER}
 
         if inp.position_lost and state in (S.NORMAL, S.BRAKE, S.LOITER):
-            # X8 (PROTOTYPE): before any rule's own answer - every one of them
-            # was computed from a position that can no longer be certified.
+            # X8: before any rule's own answer - every one of them was
+            # computed from a position that can no longer be certified.
             return S.RTL, "X8", (f"position knowledge lost: {inp.position_lost}; "
                                  f"returning on the autopilot's own estimate")
 
