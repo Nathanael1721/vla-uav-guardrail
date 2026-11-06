@@ -38,9 +38,14 @@ serves it over gRPC (`guardrail/protos/paraphraser.proto`: `Paraphrase`, `Valida
 (default `harness-client`, the orchestrator), plaintext on a loopback address only.
 Templated NL in, paraphrases out: each has passed `validate()` against the text sent
 (checked again before the reply goes), and the reply names the validator and store
-digests and the candidates refused on the way. The stress harness still draws its
-paraphrase arms in-process; binding it to the service is a change in
-`guardrail/harness_service.py`.
+digests and the candidates refused on the way. Since 2026-11-07 the stress harness,
+the reference design's orchestrator, draws every paraphrase arm from the service
+(`guardrail/harness_service.py`, `Harness(paraphraser=...)`, `serve --paraphraser
+HOST:PORT`, mutual TLS with the lab PKI's `harness-client` certificate), with no
+in-process fallback, because the reference design describes none; a server bound to no service
+refuses a paraphrase arm, and every arm record names the service, the transport and
+the validator and store digests the reply carried (`paraphrase.via`). The headless
+batch sweep (`experiments/sweep_scenarios.py`) still draws in process.
 
 The grant does not say how many paraphrases to make, how to seed the choice, or
 what to log. Where it is silent, this design copies the Stress Testing contract
@@ -494,7 +499,9 @@ day the parser is fixed the test fails and this table must change.
   `manifest_extras()` into a trial row yet. The sweep and the KPI module are not this
   unit's files.
 * **No service boundary.** The module is in-process; the reference design's
-  Paraphraser is a control-plane service over gRPC+mTLS.
+  Paraphraser is a control-plane service over gRPC+mTLS. (Superseded: the service
+  exists since 2026-11-02, and the stress harness draws from it since 2026-11-07;
+  see the top of this note.)
 * **No live LLM service.** `LLMServiceBackend` is the slot. `LLMClient` is a
   protocol with `model_id` and `complete(prompt, n=, seed=)`. With no client the
   backend raises `BackendUnavailable` rather than inventing text. A live service is

@@ -2,7 +2,8 @@
 
     python tools/prefix_eval.py demo/out/<tag>                    # needs the GPU model
     python tools/prefix_eval.py demo/out/<tag> --limit 50 --out report.json
-    python tools/prefix_eval.py demo/out/<tag> --dry-run          # prompts + tokens only
+    python tools/prefix_eval.py demo/out/<tag> --dry-run          # prompts, tokens, Shield
+    python tools/prefix_eval.py demo/out/<tag> --precision bf16   # not the flight's: flagged
 
 WHAT IT MEASURES
 
@@ -28,7 +29,30 @@ scale the step was flown with), then through a FRESH Shield with the flight's
 policy, so every frame is judged on its own (open loop: the replay cannot move
 the aircraft, so a repair in one frame cannot change the next frame's state).
 The CSP is compiled at the flight's own token budget (vla_run.json
-`csp_budget_tokens`) unless --budget overrides it. Per arm it reports:
+`csp_budget_tokens`) unless --budget overrides it.
+
+THE SHIELD IS THE FLIGHT'S (2026-11-07). Until then this file built every
+replay Shield at 3 s / 0.5 s ("what real_vla_demo flies with"), while the demo
+has built the grant's 5 s / 0.1 s since 8d1a0f3 (2026-11-06): a replay would
+have judged the model's actions with a Shield the flight never had. The
+settings now come from the run (`flight_shield_settings`):
+
+  * vla_run.json `shield` (real_vla_demo.shield_record, written since
+    2026-11-07): the replay Shield is rebuilt from it, and the first one built
+    is read back with the same function; any difference, or a setting the
+    replay cannot give (a rule clock, an obstacle or road map, an FSM config
+    other than the defaults, a key it does not know) refuses the run. A
+    recorded forecast other than the grant's is replayed as flown and FLAGGED
+    (`shield.grant_forecast` false, a summary line).
+  * no record: the demo's Shield of the time, Shield(policy, LOOKAHEAD_S,
+    LOOKAHEAD_DT_S) with the FSM on (guardrail.shield's constants), flagged as
+    unrecorded. A run that started before 8d1a0f3 flew 3 s / 0.5 s instead,
+    so it is REFUSED unless --allow-shield-mismatch replays it with the
+    constants anyway (then `shield.matches_flight` is false).
+
+The model is the flight's too: loaded at the run's own precision (vla_run.json
+`precision`, else the nf4 every earlier run flew; --precision overrides, and
+the report says whether it matches). Per arm it reports:
 
   * repair rate          frames the Shield touched (any violation), / frames;
   * repair size          |emitted - raw| in m/s on the touched frames, mean and
@@ -85,8 +109,11 @@ from guardrail import Shield, State, load_policy                   # noqa: E402
 from guardrail.compiler import (DEFAULT_BUDGET_TOKENS,              # noqa: E402
                                 Mission, action_violations)
 from guardrail.csp import csp_content_hash, csp_hash               # noqa: E402
+from guardrail.fsm import FSMConfig                                # noqa: E402
 from guardrail.ir import PolicyIR                                  # noqa: E402
 from guardrail.kpi import _repair_magnitude                        # noqa: E402
+from guardrail.response import VelocityResponse                    # noqa: E402
+from guardrail.shield import LOOKAHEAD_DT_S, LOOKAHEAD_S            # noqa: E402
 
 import real_vla_demo as rv                                         # noqa: E402
 
@@ -97,7 +124,17 @@ NEUTRAL_SENTENCE = "The scene is an ordinary outdoor environment seen from a cam
 # A replayed raw action "reproduces" the logged one within this (raw units are
 # arm deltas ~1e-2; 4-bit GPU kernels are not bit-deterministic run to run).
 REPRODUCE_TOL = 1e-4
-SHIELD_KW = dict(lookahead_s=3.0, dt=0.5)       # what real_vla_demo flies with
+# When real_vla_demo stopped building Shield(policy, lookahead_s=3.0, dt=0.5)
+# and took guardrail.shield's constants (commit 8d1a0f3, 2026-11-06 20:52
+# +0800). A run that records no Shield and started before this flew 3 s / 0.5 s.
+SHIELD_CONSTANTS_SINCE_UTC = "2026-11-06T12:52:29+00:00"
+# Every key real_vla_demo.shield_record writes. A record with another key was
+# written by a demo this replay does not know how to rebuild.
+SHIELD_RECORD_KEYS = frozenset({
+    "lookahead_s", "dt_s", "poses", "grant_forecast", "escalation_fsm",
+    "fsm_config_hash", "theta_horizon_s", "repair_mode", "path_repair",
+    "segment_check", "repair_order", "hold_points", "recovery_law",
+    "velocity_response", "clock", "obstacle_map", "road_map"})
 
 
 # --------------------------------------------------------------------------- #
@@ -142,6 +179,109 @@ def _mission(meta: dict) -> Mission:
 def _run_policy(meta: dict):
     p = Path(meta["policy_path"])
     return load_policy(p if p.is_absolute() else ROOT / p)
+
+
+# --------------------------------------------------------------------------- #
+# The flight's Shield (module docstring, THE SHIELD IS THE FLIGHT'S)
+# --------------------------------------------------------------------------- #
+
+def shield_kwargs(rec: dict) -> dict:
+    """Shield(...) keyword arguments that rebuild a recorded Shield
+    (real_vla_demo.shield_record). ValueError for anything this replay cannot
+    give a Shield: it would judge the frames with another one."""
+    unknown = sorted(set(rec) - SHIELD_RECORD_KEYS)
+    if unknown:
+        raise ValueError(f"the run records Shield setting(s) {unknown} this replay "
+                         f"does not know how to rebuild")
+    if rec.get("obstacle_map") or rec.get("road_map"):
+        raise ValueError("the flight's Shield had an obstacle or road map; this replay "
+                         "has none to give it, so its clearance rules would be inert")
+    if rec.get("clock") is not None:
+        raise ValueError(f"the flight's Shield had a rule clock ({rec['clock']}); this "
+                         f"replay has none, so its time windows would read differently")
+    kw: dict = {"lookahead_s": float(rec["lookahead_s"]), "dt": float(rec["dt_s"])}
+    if rec.get("escalation_fsm"):
+        want, default = rec.get("fsm_config_hash"), FSMConfig().digest
+        if want != default:
+            raise ValueError(f"the flight's escalation FSM config {want} is not the "
+                             f"defaults' {default}; this replay builds only the defaults")
+        kw["escalation"] = True
+    else:
+        kw["escalation"] = False
+    for k in ("theta_horizon_s", "repair_mode", "path_repair", "segment_check",
+              "hold_points", "recovery_law"):
+        if k in rec:
+            kw[k] = rec[k]
+    if rec.get("repair_order") is not None:
+        kw["repair_order"] = tuple(rec["repair_order"])
+    if "velocity_response" in rec:
+        vr = rec["velocity_response"]
+        kw["velocity_response"] = None if vr is None else VelocityResponse(**vr)
+    return kw
+
+
+def _started_before_constants(started_utc) -> bool | None:
+    if not started_utc:
+        return None
+    try:
+        t = datetime.fromisoformat(str(started_utc).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if t.tzinfo is None:
+        t = t.replace(tzinfo=timezone.utc)
+    return t < datetime.fromisoformat(SHIELD_CONSTANTS_SINCE_UTC)
+
+
+def flight_shield_settings(meta: dict, *, allow_mismatch: bool = False) -> dict:
+    """How the replay's Shield is built for this run, and where that came from.
+
+    {"kwargs": Shield(...) keyword arguments, "record": the flight's record or
+    None, "source", "recorded", "matches_flight" (True: rebuilt from the
+    record and checked against it when the first Shield is built; None: not
+    recorded, the constants assumed; False: known to differ, replayed only
+    under allow_mismatch), "grant_forecast", "note"}. ValueError for a record
+    that cannot be rebuilt, and for an unrecorded run known to have flown
+    3 s / 0.5 s unless allow_mismatch."""
+    rec = meta.get("shield")
+    if rec is not None:
+        kw = shield_kwargs(rec)
+        grant = (kw["lookahead_s"] == LOOKAHEAD_S and kw["dt"] == LOOKAHEAD_DT_S)
+        return {"kwargs": kw, "record": rec, "source": "vla_run.json shield",
+                "recorded": True, "matches_flight": True, "grant_forecast": grant,
+                "note": None if grant else (
+                    f"the flight's Shield forecast {kw['lookahead_s']:g} s at "
+                    f"{kw['dt']:g} s, not the grant's {LOOKAHEAD_S:g} s at "
+                    f"{LOOKAHEAD_DT_S:g} s; replayed as flown")}
+    kw = {"lookahead_s": LOOKAHEAD_S, "dt": LOOKAHEAD_DT_S}
+    before = _started_before_constants(meta.get("started_utc"))
+    if before:
+        why = (f"the run records no Shield and started {meta.get('started_utc')}, before "
+               f"real_vla_demo took guardrail.shield's {LOOKAHEAD_S:g} s / "
+               f"{LOOKAHEAD_DT_S:g} s forecast (8d1a0f3, {SHIELD_CONSTANTS_SINCE_UTC}): "
+               f"it flew Shield(lookahead_s=3.0, dt=0.5)")
+        if not allow_mismatch:
+            raise ValueError(why + "; --allow-shield-mismatch replays it with the "
+                                   "constants anyway, flagged")
+        return {"kwargs": kw, "record": None, "source": "guardrail.shield constants",
+                "recorded": False, "matches_flight": False, "grant_forecast": True,
+                "note": why + "; replayed with the constants under --allow-shield-mismatch"}
+    return {"kwargs": kw, "record": None, "source": "guardrail.shield constants",
+            "recorded": False, "matches_flight": None, "grant_forecast": True,
+            "note": ("the run records no Shield (vla_run.json before 2026-11-07); "
+                     "assumed the demo's Shield of the time: the constants, FSM on")}
+
+
+def _check_replay_shield(shield, settings: dict) -> None:
+    """The first replay Shield, read back the way the flight recorded its own:
+    a difference means the replay judges with another Shield."""
+    rec = settings["record"]
+    if rec is None:
+        return
+    got = rv.shield_record(shield)
+    diff = {k: {"flight": rec[k], "replay": got.get(k)}
+            for k in rec if got.get(k) != rec[k]}
+    if diff:
+        raise ValueError(f"the replay's Shield is not the flight's: {diff}")
 
 
 # --------------------------------------------------------------------------- #
@@ -210,13 +350,15 @@ def build_prompts(meta: dict, policy, *, budget: int = DEFAULT_BUDGET_TOKENS,
 
 class OpenVLAReplayModel:
     """The flight's model, loaded the way the flight loaded it
-    (real_vla_demo.OpenVLABackend._load), fed the way the flight fed it:
-    cv2.imdecode -> RGB -> PIL resize to the checkpoint size -> processor."""
+    (real_vla_demo.OpenVLABackend._load, at the flight's precision), fed the
+    way the flight fed it: cv2.imdecode -> RGB -> PIL resize to the checkpoint
+    size -> processor."""
 
-    name = rv.MODEL_ID
-
-    def __init__(self):
+    def __init__(self, precision: str = rv.DEFAULT_PRECISION):
         backend = rv.OpenVLABackend.__new__(rv.OpenVLABackend)
+        backend.precision, backend.seed = precision, None
+        self.precision = precision
+        self.name = f"{rv.MODEL_ID} ({precision})"
         self.proc, self.model, self.torch = rv.OpenVLABackend._load(backend)
 
     def __call__(self, frame_bytes: bytes, prompt: str):
@@ -247,11 +389,14 @@ def _mean(xs):
 
 def evaluate(run: dict, model: Callable[[bytes, str], list], *, policy=None,
              budget: int | None = None, tokenizer=None,
-             limit: int | None = None) -> dict:
+             limit: int | None = None, allow_shield_mismatch: bool = False) -> dict:
     """Replay `run` through `model` under the three prompts; the report dict.
 
-    `budget` None = the flight's own CSP budget (flight_budget)."""
+    `budget` None = the flight's own CSP budget (flight_budget). The Shield
+    is the flight's (flight_shield_settings); `allow_shield_mismatch` replays
+    an unrecorded run known to have flown another one, flagged."""
     meta = run["meta"]
+    shield_cfg = flight_shield_settings(meta, allow_mismatch=allow_shield_mismatch)
     if budget is None:
         budget, budget_src = flight_budget(meta)
     else:
@@ -279,6 +424,7 @@ def evaluate(run: dict, model: Callable[[bytes, str], list], *, policy=None,
                        if steps and prompts[a]["prompt"] == steps[0].get("prompt")), None)
     reproduced = compared = 0
     rows = []
+    checked = False
     for s in steps:
         st = State(**s["state"])
         # The scale this step was flown with (step_record logs it), else the
@@ -292,8 +438,13 @@ def evaluate(run: dict, model: Callable[[bytes, str], list], *, policy=None,
             act = rv.openvla_raw_to_action(raw, scale, st.yaw_deg)
             acts[arm] = act
             # A fresh Shield per frame and arm: no state carries between
-            # frames that the open-loop replay did not fly in sequence.
-            d = Shield(policy, **SHIELD_KW).filter(st, act)
+            # frames that the open-loop replay did not fly in sequence. The
+            # flight's settings; the first one is checked against its record.
+            sh = Shield(policy, **shield_cfg["kwargs"])
+            if not checked:
+                _check_replay_shield(sh, shield_cfg)
+                checked = True
+            d = sh.filter(st, act)
             p = per[arm]
             p["n"] += 1
             if d.touched:
@@ -337,10 +488,15 @@ def evaluate(run: dict, model: Callable[[bytes, str], list], *, policy=None,
         "generated_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "run_dir": str(run["dir"]),
         "run_id": meta.get("run_id"),
+        # What the frames are (real_vla_demo.rail_label, since 2026-11-07).
+        "rail": meta.get("rail"),
         "model": getattr(model, "name", type(model).__name__),
         "policy_id": policy.policy_id, "policy_hash": policy.policy_hash,
         "instruction": _instruction(meta),
         "csp": dict(prompts["_csp"], budget_source=budget_src),
+        # The Shield every frame was judged with, and whether it is the
+        # flight's (flight_shield_settings).
+        "shield": shield_report(shield_cfg),
         "flight_csp_content_hash": logged_csp,
         "csp_matches_flight": (None if logged_csp is None
                                else logged_csp == prompts["_csp"]["csp_content_hash"]),
@@ -367,11 +523,29 @@ def evaluate(run: dict, model: Callable[[bytes, str], list], *, policy=None,
     }
 
 
+def shield_report(cfg: dict) -> dict:
+    """flight_shield_settings' answer, JSON-ready (the keyword arguments as
+    plain values)."""
+    kw = {k: (v.to_dict() if isinstance(v, VelocityResponse)
+              else list(v) if isinstance(v, tuple) else v)
+          for k, v in cfg["kwargs"].items()}
+    return {k: v for k, v in cfg.items() if k != "kwargs"} | {"replay_kwargs": kw}
+
+
 def summary_lines(rep: dict) -> list[str]:
     out = [f"run {rep['run_dir']}  model {rep['model']}  policy {rep['policy_id']}",
+           f"frames from {rep.get('rail') or 'a run that recorded no rail label'}",
            f"frames replayed {rep['frames_replayed']}, skipped {rep['frames_skipped']}",
            f"csp {rep['csp']['csp_content_hash'][:19]}  {rep['csp']['tokens_used']}/"
            f"{rep['csp']['budget_tokens']} tokens"]
+    sh = rep.get("shield")
+    if sh:
+        kw = sh["replay_kwargs"]
+        out.append(f"shield {kw['lookahead_s']:g} s / {kw['dt']:g} s, FSM "
+                   f"{'on' if kw.get('escalation', True) else 'off'} ({sh['source']}); "
+                   f"the flight's: {sh['matches_flight']}"
+                   + ("" if sh["grant_forecast"] else "; NOT the grant's forecast")
+                   + (f"; {sh['note']}" if sh.get("note") else ""))
     for arm, a in rep["arms"].items():
         out.append(f"  {arm:8s} repair {a['repairs']}/{a['frames']} "
                    f"(rate {a['repair_rate']}), size mean {a['repair_mps_mean']} "
@@ -386,6 +560,11 @@ def summary_lines(rep: dict) -> list[str]:
                f"on arm {r['arm']}")
     out.append(f"CSP budget {rep['csp']['budget_tokens']} ({rep['csp']['budget_source']}); "
                f"matches the flight's CSP: {rep['csp_matches_flight']}")
+    pr = rep.get("precision")
+    if pr:
+        out.append(f"precision {pr['value']} ({pr['source']}); the flight's "
+                   f"{pr['flight']}" + ("" if pr["matches_flight"] else
+                                        ": NOT the flight's model"))
     return out
 
 
@@ -401,22 +580,46 @@ def main(argv=None) -> int:
     ap.add_argument("--out", default=None, help="write the JSON report here")
     ap.add_argument("--dry-run", action="store_true",
                     help="build the three prompts and count tokens; no model")
+    ap.add_argument("--precision", choices=rv.PRECISIONS, default=None,
+                    help="load the model at this precision (default: the flight's, "
+                         "vla_run.json `precision`; the report says if they differ)")
+    ap.add_argument("--allow-shield-mismatch", action="store_true",
+                    help="replay a run that recorded no Shield and flew 3 s / 0.5 s "
+                         "(before 8d1a0f3) with guardrail.shield's constants, flagged")
     args = ap.parse_args(argv)
 
     run = load_run(args.run)
+    meta = run["meta"]
+    # The Shield and the precision are settled BEFORE the multi-minute model
+    # load: a run this replay cannot judge as flown costs nothing.
+    try:
+        shield_cfg = flight_shield_settings(meta, allow_mismatch=args.allow_shield_mismatch)
+    except ValueError as e:
+        print(f"[prefix_eval] refused: {e}", file=sys.stderr)
+        return 2
+    flown_precision, precision_src = rv.precision_of(meta)
+    precision = args.precision or flown_precision
+    precision_rec = {"value": precision,
+                     "source": "--precision" if args.precision else precision_src,
+                     "flight": flown_precision,
+                     "matches_flight": precision == flown_precision}
     policy = load_policy(args.policy) if args.policy else None
     tok = rv.load_openvla_tokenizer()
     if args.dry_run:
-        pol = policy or _run_policy(run["meta"])
-        budget = args.budget if args.budget is not None else flight_budget(run["meta"])[0]
-        pr = build_prompts(run["meta"], pol, budget=budget, tokenizer=tok)
+        pol = policy or _run_policy(meta)
+        budget = args.budget if args.budget is not None else flight_budget(meta)[0]
+        pr = build_prompts(meta, pol, budget=budget, tokenizer=tok)
         pr.pop("_csp_obj")
         print(json.dumps({"frames_replayable": len(run["steps"]),
-                          "frames_skipped": len(run["skipped"]), "prompts": pr},
+                          "frames_skipped": len(run["skipped"]), "prompts": pr,
+                          "shield": shield_report(shield_cfg),
+                          "precision": precision_rec},
                          indent=2, ensure_ascii=False))
         return 0
-    rep = evaluate(run, OpenVLAReplayModel(), policy=policy, budget=args.budget,
-                   tokenizer=tok, limit=args.limit)
+    rep = evaluate(run, OpenVLAReplayModel(precision), policy=policy, budget=args.budget,
+                   tokenizer=tok, limit=args.limit,
+                   allow_shield_mismatch=args.allow_shield_mismatch)
+    rep["precision"] = precision_rec
     rep["command"] = "python tools/prefix_eval.py " + " ".join(argv or sys.argv[1:])
     for line in summary_lines(rep):
         print(line)

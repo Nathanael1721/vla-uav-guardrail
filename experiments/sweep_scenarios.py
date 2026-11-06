@@ -2196,14 +2196,20 @@ def csp_text(spec: ScenarioSpec, policy) -> str:
 _ARM_CACHE: dict = {}
 
 
-def build_arm(ep, policy=None) -> dict | None:
+def build_arm(ep, policy=None, drawn=None) -> dict | None:
     """The arm record of one episode, or None when it has none.
 
     paraphrase: guardrail.paraphraser.paraphrase(text, k, seed, backend) for the
     episode's seed (cached per cell and seed: the arms of one draw), the arm's
     own wording (index -1 is the canonical one, backend "identity"), its
     `manifest_extras()` and `to_record()`. prefix: whether the rule summary is
-    shown, and the hash of the prompt the pilot would read."""
+    shown, and the hash of the prompt the pilot would read.
+
+    `drawn` (2026-11-07): the paraphrase arm's wording as someone else drew it
+    - the stress harness gets it from the paraphraser service
+    (guardrail/harness_service.py, WP4-10) - anything with `text`,
+    `to_record()` and `manifest_extras()`. Used for a paraphrase arm (index
+    >= 0) only; this sweep's own batch runs still draw in process."""
     spec = ep.cell.spec
     if ep.paraphrase_arm is None and ep.prefix == "on" and not ep.ab:
         return None
@@ -2217,6 +2223,8 @@ def build_arm(ep, policy=None) -> dict | None:
         text, which = instruction_text(spec, policy)
         if ep.paraphrase_arm < 0:
             arm = P.canonical(text)
+        elif drawn is not None:
+            arm = drawn
         else:
             key = (ep.episode_id, ep.seed, text, spec.paraphrase.backend, spec.paraphrase.k)
             draw = _ARM_CACHE.get(key)

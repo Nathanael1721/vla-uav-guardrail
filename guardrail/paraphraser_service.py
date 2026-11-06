@@ -33,7 +33,8 @@ the other end.
       paraphrase returned has passed validate(text, paraphrase), and the
       candidates refused on the way come back too, with their reasons. The
       reply carries validator_digest and store_digest, so a trial record can
-      name the exact validator and stored set its wording came from.
+      name the exact validator and stored set its wording came from, and
+      (since 2026-11-07) each record the stored item's `form`.
   Validate(source, candidate)         -> paraphraser.validate().
   GetStatus()                         -> the digests, the store's size, the
       backends this server can serve.
@@ -43,14 +44,22 @@ source with no stored set is NOT_FOUND, AerialVLA's protected prompt and a
 backend this build cannot run are FAILED_PRECONDITION, n beyond the stored set
 is OUT_OF_RANGE, a tampered store is DATA_LOSS.
 
+WHO CALLS IT
+
+Since 2026-11-07 the stress harness - the reference design's orchestrator,
+which "issue[s] tasks (and paraphrased variants) to the VLA" - draws every
+paraphrase arm through this service (guardrail/harness_service.py,
+`Harness(paraphraser=ParaphraserClient(...))`, `serve --paraphraser
+HOST:PORT`), with no in-process fallback: the reference design describes
+none. The headless batch sweep (experiments/sweep_scenarios.py) still draws
+in process.
+
 WHAT IT IS NOT
 
-The stress harness still draws its paraphrase arms in-process
-(harness_service.py imports guardrail.paraphraser): binding the harness to
-this service is a change in that module, owned elsewhere. And no pilot reads
-the paraphrases in flight yet (WP4-09 needs a text-reading VLA), so the
-per-paraphrase robustness KPI is still unmeasured; this serves the wordings
-it will be measured on.
+No pilot has read the paraphrases in flight yet (WP4-09 needs a text-reading
+VLA, and the harness's headless pilot reads no text), so the per-paraphrase
+robustness KPI is still unmeasured; this serves the wordings it will be
+measured on.
 """
 from __future__ import annotations
 
@@ -122,6 +131,10 @@ def _record(p: P.Paraphrase) -> dict:
     out = p.to_record()
     out["novelty"] = p.novelty if p.novelty is not None else 0.0
     out["fallback_from"] = p.provenance.get("fallback_from", "")
+    # The stored item's form (2026-11-07): a pilot that frames the wording as
+    # a question (OpenVLA, demo/real_vla_demo.py) refuses an utterance unless
+    # told otherwise, and must learn the form from the service it drew from.
+    out["form"] = p.provenance.get("form") or ""
     return out
 
 
@@ -297,6 +310,9 @@ class ParaphraserClient:
         M = _grpc_modules()
         self._M = M
         self.timeout_s = timeout_s
+        # What a caller records about where its paraphrases came from (the
+        # stress harness puts both in every arm record it draws through here).
+        self.address, self.secure = address, pki_dir is not None
         if pki_dir is None:
             self.channel = M.grpc.insecure_channel(address)
         else:

@@ -24,7 +24,7 @@ _sym_db = _symbol_database.Default()
 
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\"guardrail/protos/paraphraser.proto\x12\x18guardrail.paraphraser.v1\"f\n\x11ParaphraseRequest\x12\x0c\n\x04text\x18\x01 \x01(\t\x12\t\n\x01n\x18\x02 \x01(\r\x12\x0c\n\x04seed\x18\x03 \x01(\x03\x12\x0f\n\x07\x62\x61\x63kend\x18\x04 \x01(\t\x12\x19\n\x11include_canonical\x18\x05 \x01(\x08\"\xcc\x01\n\x10ParaphraseRecord\x12\x15\n\rparaphrase_id\x18\x01 \x01(\t\x12\x11\n\tsource_id\x18\x02 \x01(\t\x12\x0f\n\x07\x62\x61\x63kend\x18\x03 \x01(\t\x12\r\n\x05index\x18\x04 \x01(\x05\x12\x0c\n\x04seed\x18\x05 \x01(\x03\x12\x0c\n\x04text\x18\x06 \x01(\t\x12\x13\n\x0btext_sha256\x18\x07 \x01(\t\x12\x15\n\rsource_sha256\x18\x08 \x01(\t\x12\x0f\n\x07novelty\x18\t \x01(\x01\x12\x15\n\rfallback_from\x18\n \x01(\t\"H\n\x07Refusal\x12\x0f\n\x07\x62\x61\x63kend\x18\x01 \x01(\t\x12\r\n\x05index\x18\x02 \x01(\x05\x12\x0c\n\x04text\x18\x03 \x01(\t\x12\x0f\n\x07reasons\x18\x04 \x03(\t\"\x9e\x02\n\x0fParaphraseReply\x12\x11\n\tsource_id\x18\x01 \x01(\t\x12\x13\n\x0bsource_text\x18\x02 \x01(\t\x12?\n\x0bparaphrases\x18\x03 \x03(\x0b\x32*.guardrail.paraphraser.v1.ParaphraseRecord\x12=\n\tcanonical\x18\x04 \x01(\x0b\x32*.guardrail.paraphraser.v1.ParaphraseRecord\x12\x33\n\x08refusals\x18\x05 \x03(\x0b\x32!.guardrail.paraphraser.v1.Refusal\x12\x18\n\x10validator_digest\x18\x06 \x01(\t\x12\x14\n\x0cstore_digest\x18\x07 \x01(\t\"4\n\x0fValidateRequest\x12\x0e\n\x06source\x18\x01 \x01(\t\x12\x11\n\tcandidate\x18\x02 \x01(\t\"g\n\x07Verdict\x12\n\n\x02ok\x18\x01 \x01(\x08\x12\x0f\n\x07reasons\x18\x02 \x03(\t\x12\x0f\n\x07novelty\x18\x03 \x01(\x01\x12\x14\n\x0clength_ratio\x18\x04 \x01(\x01\x12\x18\n\x10validator_digest\x18\x05 \x01(\t\"\x0f\n\rStatusRequest\"\x95\x01\n\x06Status\x12\x18\n\x10validator_digest\x18\x01 \x01(\t\x12\x14\n\x0cstore_digest\x18\x02 \x01(\t\x12\x16\n\x0estored_sources\x18\x03 \x01(\r\x12\x1a\n\x12stored_paraphrases\x18\x04 \x01(\r\x12\x10\n\x08\x62\x61\x63kends\x18\x05 \x03(\t\x12\x15\n\rplaces_source\x18\x06 \x01(\t2\xa5\x02\n\x0bParaphraser\x12\x64\n\nParaphrase\x12+.guardrail.paraphraser.v1.ParaphraseRequest\x1a).guardrail.paraphraser.v1.ParaphraseReply\x12X\n\x08Validate\x12).guardrail.paraphraser.v1.ValidateRequest\x1a!.guardrail.paraphraser.v1.Verdict\x12V\n\tGetStatus\x12\'.guardrail.paraphraser.v1.StatusRequest\x1a .guardrail.paraphraser.v1.Statusb\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\"guardrail/protos/paraphraser.proto\x12\x18guardrail.paraphraser.v1\"f\n\x11ParaphraseRequest\x12\x0c\n\x04text\x18\x01 \x01(\t\x12\t\n\x01n\x18\x02 \x01(\r\x12\x0c\n\x04seed\x18\x03 \x01(\x03\x12\x0f\n\x07\x62\x61\x63kend\x18\x04 \x01(\t\x12\x19\n\x11include_canonical\x18\x05 \x01(\x08\"\xda\x01\n\x10ParaphraseRecord\x12\x15\n\rparaphrase_id\x18\x01 \x01(\t\x12\x11\n\tsource_id\x18\x02 \x01(\t\x12\x0f\n\x07\x62\x61\x63kend\x18\x03 \x01(\t\x12\r\n\x05index\x18\x04 \x01(\x05\x12\x0c\n\x04seed\x18\x05 \x01(\x03\x12\x0c\n\x04text\x18\x06 \x01(\t\x12\x13\n\x0btext_sha256\x18\x07 \x01(\t\x12\x15\n\rsource_sha256\x18\x08 \x01(\t\x12\x0f\n\x07novelty\x18\t \x01(\x01\x12\x15\n\rfallback_from\x18\n \x01(\t\x12\x0c\n\x04\x66orm\x18\x0b \x01(\t\"H\n\x07Refusal\x12\x0f\n\x07\x62\x61\x63kend\x18\x01 \x01(\t\x12\r\n\x05index\x18\x02 \x01(\x05\x12\x0c\n\x04text\x18\x03 \x01(\t\x12\x0f\n\x07reasons\x18\x04 \x03(\t\"\x9e\x02\n\x0fParaphraseReply\x12\x11\n\tsource_id\x18\x01 \x01(\t\x12\x13\n\x0bsource_text\x18\x02 \x01(\t\x12?\n\x0bparaphrases\x18\x03 \x03(\x0b\x32*.guardrail.paraphraser.v1.ParaphraseRecord\x12=\n\tcanonical\x18\x04 \x01(\x0b\x32*.guardrail.paraphraser.v1.ParaphraseRecord\x12\x33\n\x08refusals\x18\x05 \x03(\x0b\x32!.guardrail.paraphraser.v1.Refusal\x12\x18\n\x10validator_digest\x18\x06 \x01(\t\x12\x14\n\x0cstore_digest\x18\x07 \x01(\t\"4\n\x0fValidateRequest\x12\x0e\n\x06source\x18\x01 \x01(\t\x12\x11\n\tcandidate\x18\x02 \x01(\t\"g\n\x07Verdict\x12\n\n\x02ok\x18\x01 \x01(\x08\x12\x0f\n\x07reasons\x18\x02 \x03(\t\x12\x0f\n\x07novelty\x18\x03 \x01(\x01\x12\x14\n\x0clength_ratio\x18\x04 \x01(\x01\x12\x18\n\x10validator_digest\x18\x05 \x01(\t\"\x0f\n\rStatusRequest\"\x95\x01\n\x06Status\x12\x18\n\x10validator_digest\x18\x01 \x01(\t\x12\x14\n\x0cstore_digest\x18\x02 \x01(\t\x12\x16\n\x0estored_sources\x18\x03 \x01(\r\x12\x1a\n\x12stored_paraphrases\x18\x04 \x01(\r\x12\x10\n\x08\x62\x61\x63kends\x18\x05 \x03(\t\x12\x15\n\rplaces_source\x18\x06 \x01(\t2\xa5\x02\n\x0bParaphraser\x12\x64\n\nParaphrase\x12+.guardrail.paraphraser.v1.ParaphraseRequest\x1a).guardrail.paraphraser.v1.ParaphraseReply\x12X\n\x08Validate\x12).guardrail.paraphraser.v1.ValidateRequest\x1a!.guardrail.paraphraser.v1.Verdict\x12V\n\tGetStatus\x12\'.guardrail.paraphraser.v1.StatusRequest\x1a .guardrail.paraphraser.v1.Statusb\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
@@ -34,19 +34,19 @@ if not _descriptor._USE_C_DESCRIPTORS:
   _globals['_PARAPHRASEREQUEST']._serialized_start=64
   _globals['_PARAPHRASEREQUEST']._serialized_end=166
   _globals['_PARAPHRASERECORD']._serialized_start=169
-  _globals['_PARAPHRASERECORD']._serialized_end=373
-  _globals['_REFUSAL']._serialized_start=375
-  _globals['_REFUSAL']._serialized_end=447
-  _globals['_PARAPHRASEREPLY']._serialized_start=450
-  _globals['_PARAPHRASEREPLY']._serialized_end=736
-  _globals['_VALIDATEREQUEST']._serialized_start=738
-  _globals['_VALIDATEREQUEST']._serialized_end=790
-  _globals['_VERDICT']._serialized_start=792
-  _globals['_VERDICT']._serialized_end=895
-  _globals['_STATUSREQUEST']._serialized_start=897
-  _globals['_STATUSREQUEST']._serialized_end=912
-  _globals['_STATUS']._serialized_start=915
-  _globals['_STATUS']._serialized_end=1064
-  _globals['_PARAPHRASER']._serialized_start=1067
-  _globals['_PARAPHRASER']._serialized_end=1360
+  _globals['_PARAPHRASERECORD']._serialized_end=387
+  _globals['_REFUSAL']._serialized_start=389
+  _globals['_REFUSAL']._serialized_end=461
+  _globals['_PARAPHRASEREPLY']._serialized_start=464
+  _globals['_PARAPHRASEREPLY']._serialized_end=750
+  _globals['_VALIDATEREQUEST']._serialized_start=752
+  _globals['_VALIDATEREQUEST']._serialized_end=804
+  _globals['_VERDICT']._serialized_start=806
+  _globals['_VERDICT']._serialized_end=909
+  _globals['_STATUSREQUEST']._serialized_start=911
+  _globals['_STATUSREQUEST']._serialized_end=926
+  _globals['_STATUS']._serialized_start=929
+  _globals['_STATUS']._serialized_end=1078
+  _globals['_PARAPHRASER']._serialized_start=1081
+  _globals['_PARAPHRASER']._serialized_end=1374
 # @@protoc_insertion_point(module_scope)

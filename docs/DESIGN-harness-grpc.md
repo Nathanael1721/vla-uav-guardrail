@@ -95,7 +95,11 @@ UNIMPLEMENTED (`test_the_pages_ten_rpcs_and_get_status_are_served`).
    `stored` backend with no stored set for the prompt) is refused up front
    with FAILED_PRECONDITION; before 9 Oct it was accepted and then failed at
    EndEpisode as INTERNAL. The draw is a function of (cell, seed, arm), so
-   when it is made does not change what flies.
+   when it is made does not change what flies. Since 2026-11-07 a paraphrase
+   arm is drawn by the paraphraser service the server is bound to (`serve
+   --paraphraser HOST:PORT`), never in process: a server bound to none refuses
+   it (FAILED_PRECONDITION), a service that does not answer is UNAVAILABLE,
+   and the arm record names the service and its validator and store digests.
    In a **session** (`session_id`), the episode flies the session's injected
    policy instead of the scenario's (the dry run starts from it too), takes
    the session's seed when it names none, and carries the session's task.

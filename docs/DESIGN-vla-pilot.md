@@ -28,6 +28,13 @@ Tested offline (`tests/test_vla_follow_smooth.py`,
 `tests/test_finetune_follow.py`); neither has flown, and no training run has
 been made.
 
+2026-11-07: OpenVLA reading the Constraint Summary Pack (section 16):
+`demo/real_vla_demo.py` on classic AirSim (AirSimNH, not the grant's Project
+AirSim + ArduPilot rail, not KPI-grade), its CSP on/off A/B and paraphrase
+campaign (`tools/run_csp_flights.ps1`, `tools/score_csp_flights.py`) at bf16,
+each seed a start offset, the paraphrases drawn by the paraphraser service.
+Tested offline; not flown.
+
 2026-10-22: the review of 7c7cc50 found nine problems; all are fixed, each
 with a failing-first test. The ones that change behaviour: a server error is
 no answer (section 5), the client re-reads `raw_text` and pins the model
@@ -1005,3 +1012,119 @@ closed-loop measure is a flight scored by `tools/compare_motion.py` and
   run2 overshot because the expert decided at 10 Hz and the model at
   0.8 Hz); that is the dataset's labels (FT-D's horizon and stride), not this
   trainer's.
+
+## 16. OpenVLA reads the CSP: `demo/real_vla_demo.py` A/B and paraphrases (2026-11-07)
+
+Status: built and tested offline (`tests/test_real_vla_prompt.py`,
+`tests/test_prefix_eval.py`); nothing here has flown.
+
+The one model in the repository that reads its instruction is base
+OpenVLA-7B, and the one script that gives it the Constraint Summary Pack is
+`demo/real_vla_demo.py` (`--csp on`, section "THE CONSTRAINT SUMMARY PACK IN
+THE PROMPT" of its docstring). It flies **classic AirSim** through the
+`airsim` package (msgpack-rpc on port 41451), in **AirSimNH**, the world
+`policies/urban_demo_policy.yaml` was drawn for. It does not fly the
+CityLife rail of sections 13-14: CityLife is Project AirSim (port 8989), a
+different protocol that the `airsim` package does not speak, and porting the
+demo to it is a separate change. The simulator needs a SimpleFlight vehicle;
+`Documents\AirSim\settings.json` on the lab PC declares an ArduCopter vehicle
+(the SITL rail), so the runner starts AirSimNH with
+`tools/airsim_settings_real_vla.json` through AirSim's `-settings=` argument
+and leaves that file alone. The demo checks the vehicle before its model loads
+(`sim_preflight`) and lands and refuses (exit 3) when the take-off does not
+reach cruise height.
+
+**What these flights are.** Every record of them (`vla_run.json`,
+`metrics.json`, the scorer's report, the runner's last line) carries
+`real_vla_demo.rail_label`: "AirSimNH (classic AirSim, simple_flight), not the
+grant's Project AirSim + ArduPilot rail, not KPI-grade". The orchestrator
+accepted AirSimNH as the image source for this measurement on 2026-11-07, with
+that label, and no CityLife port for now.
+
+Each run records what a CSP on/off A/B and the offline replay need (the
+orchestrator's rulings of 2026-11-07 for the campaign):
+
+- **Precision.** The campaign flies `--precision bf16` (the checkpoint
+  unquantized; nf4 stays the script's own default). Before a weight is read,
+  the device's free VRAM, with AirSimNH already on the card, is checked
+  against 15.6 GB plus 1 GB for the renderer (`vram_verdict`); too little, or
+  CUDA running out of memory during the load or in flight, refuses the run
+  with the numbers (exit 3, `metrics.json` `refused: vram`) and stops the
+  campaign. Nothing falls back to nf4. The device's peak VRAM in use is
+  sampled after every inference (`metrics.json` `vram.peak`), so the first
+  flight is the measurement of bf16 beside AirSimNH.
+- **A dead model worker stops the flight.** Until this change a worker thread
+  that raised just ended, and the control loop flew its last action to the
+  end of the flight. Now the worker holds zero, the flight stops and lands,
+  and the run says why (`stopped`; exit 3 for out of memory, exit 4 for
+  anything else); the scorer leaves such a run out of every comparison.
+- **The seed is a start.** `--seed N` draws a deterministic offset from the
+  spawn pose (`start_offset`: a point within 3 m, a heading within 30 deg,
+  from `random.Random(N)`), the same for the CSP off and on arms of a seed and
+  for the paraphrase runs at that seed. After the climb the drone is flown
+  there with AirSim's position and yaw commands (set-up, like the take-off,
+  not through the Shield) and the pose is checked: more than 1 m or 5 deg off
+  lands and refuses. No wind. The seed also seeds the generators, which
+  changes nothing OpenVLA computes from one frame and prompt (greedy
+  decoding).
+- **The decision rate.** `metrics.json` `decision`: decisions per second of
+  the flight, the gaps between them and each inference's time, beside the
+  grant's 10 Hz observation path. Whether the measured rate is acceptable
+  (G3) is the PI's call; the flights only measure it.
+- **Paraphrases from the service (WP4-10).** The paraphrase runs draw their
+  wording from the paraphraser service (`--paraphraser HOST:PORT`), as the
+  reference design's orchestrator gets "paraphrased variants" from it; the
+  runner starts one on loopback (port 50061) for those flights and stops it
+  after. Each run records `via` (the service's address, the transport, the
+  validator and store digests), as the stress harness does.
+  `--paraphrase-in-process` is the explicit fallback, recorded as such; a
+  paraphrase run with neither is refused before anything loads.
+- **The Shield** it flew with (`shield`: 5 s / 0.1 s, no FSM inside, since
+  this demo flies `emitted`), the simulator check (`sim`), and per tick
+  `flight_log.jsonl`, `metrics.json` and `kpi.json` (guardrail.kpi on the
+  rows). `tools/prefix_eval.py` replays a run with the recorded Shield and
+  precision.
+- **Frames on E:.** The model stays on D:; each run's frames go through a
+  junction `demo\out\<tag>\frames` to `E:\vla_drone_offload\demo_out\<tag>\`
+  (created when missing). The runner refuses to start with less than 20 GB
+  free there.
+
+Commands, in order (vla-real env, from the repository root, nothing else on
+the GPU, no `tools/ci_local.py` running):
+
+    # dry run: every flight's prompt, tokens, CSP content hash, start offset and
+    # configuration, the paraphrases drawn from a loopback service (~1 min)
+    pwsh -File tools\run_csp_flights.ps1 -Prefix cspab_20261107 -DryRun
+    # one short A/B pair first (2 flights of 30 s, about 10-15 min): the rail end
+    # to end, and the peak VRAM beside AirSimNH
+    pwsh -File tools\run_csp_flights.ps1 -Prefix cspsmoke_20261107 -Phase ab -Seeds 1001 -MaxS 30
+    # the campaign: A/B off/on x seeds 1001-1003, then 4 verb_phrase + 4 utterance
+    # paraphrases with the CSP on, each flight from a restarted simulator (1.2-1.8 h)
+    pwsh -File tools\run_csp_flights.ps1 -Prefix cspab_20261107
+    # the WP4-15 deltas and the WP4-09 stability (also printed by the runner)
+    C:\Users\natha\.conda\envs\vla-real\python.exe tools\score_csp_flights.py score --prefix cspab_20261107 --json demo\out\cspab_20261107_score.json
+    # the WP2-09 offline replay, one run at a time (the scorer lists them)
+    C:\Users\natha\.conda\envs\vla-real\python.exe tools\prefix_eval.py demo\out\cspab_20261107_ab_s1001_on --out demo\out\cspab_20261107_ab_s1001_on\prefix_eval.json
+
+By hand, one flight with AirSimNH already up on the SimpleFlight settings (a
+paraphrase run adds `--paraphrase-index 1 --paraphraser 127.0.0.1:50061` with
+`python -m guardrail.paraphraser_service serve --insecure --port 50061`
+running):
+
+    C:\Users\natha\.conda\envs\vla-real\python.exe demo\real_vla_demo.py --csp on --precision bf16 --seed 1001 --tag cspab_hand_on
+
+### Not verified
+
+- Nothing has flown: not AirSimNH with these settings through `-settings=`
+  (the demo refuses a vehicle that is not SimpleFlight, so a setting that was
+  not read stops the flight before the model loads), not the take-off check,
+  not the move to the seed's start (AirSim's `moveToPositionAsync` and
+  `rotateToYawAsync` on SimpleFlight), not the contact count, not bf16 beside
+  the renderer on the 24 GB card (the VRAM check is tested with stand-ins
+  only), not the paraphraser service started by the runner.
+- The durations in the runner's header are estimates: the 7 Nov bf16 smoke
+  check (load 117 s, 0.55-0.61 s a decision with no simulator running) and
+  the July nf4 runs.
+- Base OpenVLA was trained on robot-arm data and never on rule text; whether
+  the CSP moves its actions at all is what the A/B measures. Three seeds are
+  three starts, one flight each, not repeats of one condition.
