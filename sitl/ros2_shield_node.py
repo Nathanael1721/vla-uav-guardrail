@@ -533,7 +533,7 @@ def repo_path(p: str | Path) -> Path:
 
 def load_scenario_meta(path) -> dict:
     """--scenario-meta: the stress harness's record of the scenario this
-    mission flies (experiments/sweep_scenarios.py hil_meta): a JSON object,
+    mission flies (experiments/sweep_scenarios.py rail_meta): a JSON object,
     written into metrics.json as `scenario`, its `family` as
     `scenario_family` (the KPI report's row)."""
     doc = json.loads(repo_path(path).read_text(encoding="utf-8"))
