@@ -1,0 +1,140 @@
+{
+  "os": "Linux",
+  "os_release": "6.8.12-1021-tegra",
+  "machine": "aarch64",
+  "cpu_model": "ARM CPU part 0xd42",
+  "cpu_count": 12,
+  "python": "3.12.3",
+  "in_container": true,
+  "ros_distro": "jazzy",
+  "topology_env": "hil",
+  "libs": {
+    "numpy": "1.26.4",
+    "shapely": "2.1.2",
+    "pydantic": "2.13.4",
+    "yaml": "6.0.1",
+    "geos": "3.13.1"
+  },
+  "perf_counter_resolution_s": 1e-09,
+  "jetson": {
+    "is_orin": true,
+    "missing": [],
+    "host_arch": "aarch64",
+    "device_model": "NVIDIA Jetson AGX Orin Developer Kit",
+    "l4t_release": "R39.2.1",
+    "jetpack": null,
+    "nvpmodel": null
+  },
+  "power": {
+    "nvpmodel": {
+      "source": "/var/lib/nvpmodel/status",
+      "raw": "pmode:0000",
+      "mode_id": 0,
+      "mode_name": null,
+      "why": "mode ID read; its name is not, because /etc/nvpmodel.conf is not readable here or does not list ID 0"
+    },
+    "cpufreq": {
+      "source": "/sys/devices/system/cpu/cpu<N>/cpufreq",
+      "online": "0-11",
+      "cpus": {
+        "0": {
+          "governor": "schedutil",
+          "scaling_min_khz": 729600,
+          "scaling_max_khz": 2201600,
+          "cpuinfo_min_khz": 115200,
+          "cpuinfo_max_khz": 2201600,
+          "cur_khz": 2201600
+        },
+        "1": {
+          "governor": "schedutil",
+          "scaling_min_khz": 729600,
+          "scaling_max_khz": 2201600,
+          "cpuinfo_min_khz": 115200,
+          "cpuinfo_max_khz": 2201600,
+          "cur_khz": 2201600
+        },
+        "2": {
+          "governor": "schedutil",
+          "scaling_min_khz": 729600,
+          "scaling_max_khz": 2201600,
+          "cpuinfo_min_khz": 115200,
+          "cpuinfo_max_khz": 2201600,
+          "cur_khz": 2201600
+        },
+        "3": {
+          "governor": "schedutil",
+          "scaling_min_khz": 729600,
+          "scaling_max_khz": 2201600,
+          "cpuinfo_min_khz": 115200,
+          "cpuinfo_max_khz": 2201600,
+          "cur_khz": 2201600
+        },
+        "4": {
+          "governor": "schedutil",
+          "scaling_min_khz": 729600,
+          "scaling_max_khz": 2201600,
+          "cpuinfo_min_khz": 115200,
+          "cpuinfo_max_khz": 2201600,
+          "cur_khz": 729600
+        },
+        "5": {
+          "governor": "schedutil",
+          "scaling_min_khz": 729600,
+          "scaling_max_khz": 2201600,
+          "cpuinfo_min_khz": 115200,
+          "cpuinfo_max_khz": 2201600,
+          "cur_khz": 729600
+        },
+        "6": {
+          "governor": "schedutil",
+          "scaling_min_khz": 729600,
+          "scaling_max_khz": 2201600,
+          "cpuinfo_min_khz": 115200,
+          "cpuinfo_max_khz": 2201600,
+          "cur_khz": 729600
+        },
+        "7": {
+          "governor": "schedutil",
+          "scaling_min_khz": 729600,
+          "scaling_max_khz": 2201600,
+          "cpuinfo_min_khz": 115200,
+          "cpuinfo_max_khz": 2201600,
+          "cur_khz": 729600
+        },
+        "8": {
+          "governor": "schedutil",
+          "scaling_min_khz": 729600,
+          "scaling_max_khz": 2201600,
+          "cpuinfo_min_khz": 115200,
+          "cpuinfo_max_khz": 2201600,
+          "cur_khz": 729600
+        },
+        "9": {
+          "governor": "schedutil",
+          "scaling_min_khz": 729600,
+          "scaling_max_khz": 2201600,
+          "cpuinfo_min_khz": 115200,
+          "cpuinfo_max_khz": 2201600,
+          "cur_khz": 729600
+        },
+        "10": {
+          "governor": "schedutil",
+          "scaling_min_khz": 729600,
+          "scaling_max_khz": 2201600,
+          "cpuinfo_min_khz": 115200,
+          "cpuinfo_max_khz": 2201600,
+          "cur_khz": 729600
+        },
+        "11": {
+          "governor": "schedutil",
+          "scaling_min_khz": 729600,
+          "scaling_max_khz": 2201600,
+          "cpuinfo_min_khz": 115200,
+          "cpuinfo_max_khz": 2201600,
+          "cur_khz": 729600
+        }
+      },
+      "why": null
+    }
+  }
+}
