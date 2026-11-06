@@ -25,7 +25,8 @@ real demo/vla_server_v2.py answering with its scripted stand-in:
     stand-in as a stub, which the dashboard rule never calls a VLA;
   * M2 asks only while a (fake) detector box is fresh, ends on the box's
     size, and scores against the parked car's truth;
-  * a server killed mid-mission makes the tracker hover on link_lost, the
+  * a server killed mid-mission makes the tracker hover on link_lost (as
+    `none` when it dies before the first answer: nothing flown to drop), the
     mission end server_dead after --dead-timeout-s, the aircraft land, and
     the exit code 3.
 
@@ -413,26 +414,84 @@ def test_the_detector_camera_is_the_front_image_with_vla_front_source_detector()
     assert "front image FrontCamera" in said, said[-2000:]
 
 
+def _author_runs(rows):
+    """The rows' author transitions: each run of consecutive rows with one
+    (author, author_reason), as {"author", "reason", "first", "last"} (row
+    indexes, inclusive)."""
+    runs = []
+    for i, r in enumerate(rows):
+        if runs and (runs[-1]["author"], runs[-1]["reason"]) == (r["author"], r["author_reason"]):
+            runs[-1]["last"] = i
+        else:
+            runs.append({"author": r["author"], "reason": r["author_reason"], "first": i, "last": i})
+    return runs
+
+
 def test_a_server_killed_mid_mission_hovers_then_lands_and_exits_3():
+    """The server killed 4 s after its hello: once the pilot finds the link
+    dead the aircraft hovers without a break, the dead rule ends the mission
+    server_dead --dead-timeout-s later, the aircraft lands, exit code 3.
+
+    Stated from the flight's own records (2026-11-06), not from the last 25
+    rows, which the lab CI at 61a24ab once found all ('none', 'link_lost').
+    The kill is wall-clock and lands about when the mission's first answer
+    does (warm-ups, climb and turn take ~3.6 s alone, ~4 s on a shared CPU;
+    the stand-in answers ~0.3 s into the mission). A server dead before that
+    answer leaves the tracker nothing to drop, and it authors the same zero
+    command `none`/link_lost (vla_link.StepTracker._no_answer, pinned in
+    tests/test_vla_backends.py); the monitor's dead rule counts both.
+
+    So: the server's exit is in the monitor's events and the end is the last
+    of them; the rows' LAST author run is the hover - `hover` if anything
+    was flown before it, `none` if not - the only link loss, beginning no
+    earlier than the tick before the monitor saw the exit (the reset can
+    reach the link first), every tick a zero command over a dead link, for
+    dead_timeout_s; then the landing. A run that never hovers fails, shown
+    failing first: with the monitor ending server_dead on the tick it saw
+    the exit (exit 3 and server_dead as before), the last run is the step
+    being flown, or a link_lost run of one tick."""
     why = _missing()
     if why:
         print(f"      ({why})")
         return SKIP
+    veh = _Vehicle()
     code, out, said = _fly(["--mission", "goto", "--tag", "fakesim_dead", "--max-s", "60",
                             "--no-transfer", "--no-land-site", "--no-save-view",
                             "--dead-timeout-s", "3", "--vla-fake-output", "96 48 49</s>"],
-                           kill_after_s=4.0)
+                           kill_after_s=4.0, veh=veh)
     assert code == 3, said[-3000:]
-    m = json.loads((out / "metrics.json").read_text(encoding="utf-8"))
-    assert m["end_reason"] == "server_dead" and m["mission"]["monitor"]["vla_failure"]
-    ev = [e["event"] for e in m["mission"]["monitor"]["events"]]
-    assert "server_exited" in ev and ev[-1] == "end"
+    m = _metrics(out)
+    mon = m["mission"]["monitor"]
+    assert m["end_reason"] == "server_dead" and mon["vla_failure"], m["end_reason"]
+    assert m["pilot"]["server"]["exit_code"] not in (None, 0)        # killed, not stopped
+    ev = mon["events"]
+    exits = [e["t"] for e in ev if e["event"] == "server_exited"]
+    assert len(exits) == 1 and ev[-1]["event"] == "end" and ev[-1]["reason"] == "server_dead", ev
     rows = _rows(out)
-    tail = rows[-25:]
-    assert all(r["author"] == "hover" and r["author_reason"] == "link_lost" for r in tail), \
-        {(r["author"], r["author_reason"]) for r in tail}
-    assert m["pilot"]["server"]["exit_code"] not in (None, 0)
-    assert all(r["link_failure"] in ("link", "protocol") for r in tail), tail[-1]
+    runs = _author_runs(rows)
+    seen = [f"{x['author']}/{x['reason']} x{x['last'] - x['first'] + 1} from t={rows[x['first']]['t']}"
+            for x in runs]
+    # The tick the monitor saw the server gone, in the rows' clock: the
+    # events count from vla_fly's t0, the rows from the loop's first tick,
+    # and the end tick is the last row in both.
+    shift = ev[-1]["t"] - rows[-1]["t"]
+    died = min(range(len(rows)), key=lambda i: abs(rows[i]["t"] + shift - exits[0]))
+    assert abs(rows[died]["t"] + shift - exits[0]) <= 0.002, (shift, exits, seen)
+    hover = runs[-1]
+    assert hover["reason"] == "link_lost" and hover["author"] in ("hover", "none"), seen
+    assert not any(x["reason"] == "link_lost" for x in runs[:-1]), seen
+    assert hover["first"] >= died - 1, (rows[died]["t"], seen)
+    flew = any(x["author"] != "none" for x in runs[:-1])
+    assert hover["author"] == ("hover" if flew else "none"), seen
+    streak = rows[hover["first"]:]
+    moved = [r for r in streak if any(r["flown_action"][k] for k in ("vx", "vy", "vz_up", "yaw_rate"))]
+    assert not moved, (len(moved), moved[0]["t"], moved[0]["flown_action"])
+    assert all(r["link_failure"] in ("link", "protocol") for r in streak), streak[-1]
+    dead_s = mon["config"]["dead_timeout_s"]
+    assert streak[-1]["t"] - streak[0]["t"] >= dead_s - 0.002, (dead_s, seen)
+    # ... then the controlled landing, not an abort.
+    assert veh.lands >= 1 and m["aborted"] is None and m["abort_landing"] is None, \
+        (veh.lands, m["aborted"], m["abort_landing"])
 
 
 def _metrics(out):

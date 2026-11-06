@@ -16,6 +16,65 @@ shipped change and recorded as one.
 
 ## [Unreleased]
 
+### 2026-11-06 — the server-kill test reads the hover from the flight's own records: the lab run's one failure at 61a24ab was the same hover authored `none`, not a short one
+
+#### Found
+- **The lab run at 61a24ab** (`docs/data/ci_local/61a24ab455ec.json`: 141
+  files, 3597 of 3619 tests, one file failed) failed
+  `test_a_server_killed_mid_mission_hovers_then_lands_and_exits_3` with
+  `{('none', 'link_lost')}`: all of the last 25 rows. **There were enough
+  hover rows; they were labelled `none`.** The test kills the stand-in server 4 s after its
+  hello. The mission starts 3.6-3.8 s after the hello on a quiet machine
+  (three warm-ups to 1.1-1.3 s, the climb to 7 m 2.0 s, the turn and its
+  0.5 s) and 3.9-4.1 s on a loaded one, and the stand-in's first answer is
+  accepted 0.4 s into the mission. A kill before that answer leaves the
+  tracker no decision to drop: `vla_link.StepTracker._no_answer` sets the
+  `hover` fallback only once a decision has been accepted, and before one
+  the same zero command is authored `none`/link_lost. Every failing run
+  ended on 31-32 such rows (3.0-3.1 s, the dead timeout). They are not
+  landing rows (flight_log.jsonl holds mission ticks only), and they are
+  not rows before the hover: they are the hover.
+- Reproduced with the old assertion: 2 of 9 runs on a quiet machine, 5 of 7
+  with 28 busy processes beside it (100 % CPU). In one of those the server
+  died 0.01 s before the mission began.
+- **Not a vla_fly bug.** The monitor's dead rule counts `none` and `hover`
+  alike (`vla_mission.MissionMonitor.update`); `tests/test_vla_backends.py`
+  and `tests/test_vla_fly.py` pin `none`/link_lost before any decision.
+  The aircraft flew zero on every such tick, ended server_dead, landed and
+  exited 3. `demo/vla_fly.py` is unchanged.
+
+#### Changed
+- `tests/test_vla_fly_fakesim.py`: the test no longer reads a fixed count
+  of trailing rows. From the flight's own records:
+  - one `server_exited` event, and `end` (server_dead) the last of the
+    monitor's events;
+  - the rows' last author run is the hover: `hover` if anything was flown
+    before it, `none` if not;
+  - it is the only link_lost run, and it starts no earlier than the tick
+    before the one where the monitor saw the exit;
+  - every tick of it flies a zero command over a dead link (link or
+    protocol), for the dead timeout read from metrics;
+  - then a controlled landing, no abort, and exit 3.
+
+#### Tests
+- Shown failing first. Five mutations make a run that never hovers; each
+  still exits 3 with server_dead, and each fails the new test, four of its
+  checks between them. The kill was forced at 2.0 s (before the first
+  answer) and at 6.0 s (mid-step); the last mutation only at 6.0 s, since
+  before the first answer there is nothing to forget.
+  - The monitor ends server_dead on the tick it sees the server gone, or a
+    tracker flies on past the link loss and the mission ends 3 s after the
+    exit: the last run is not link_lost.
+  - The mission ends on the first link_lost tick: a hover of 1 tick, short
+    of the 3 s.
+  - The "hover" commands 1 m/s: flown vx 1.0. The old assertion passed this
+    one at 6.0 s.
+  - The tracker forgets it had flown: `none` after a flown step.
+- The code as it is passes both branches: at 2.0 s, `none`/link_lost x31;
+  at 6.0 s, `hover`/link_lost x31. It also passes 8 of 8 runs at the
+  test's own 4.0 s (4 quiet, 4 loaded); the old assertion failed 2 of those
+  8. The whole file passes 14/14.
+
 ### 2026-11-04 (re-flown) — the 3 November ROS 2 rail runs flown again from the main checkout, through Shield.filter_body; the re-flights found three WGS84 regressions, fixed
 
 #### Flown
