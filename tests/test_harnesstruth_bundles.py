@@ -294,9 +294,16 @@ def test_the_node_accepts_the_yaml_policy_command():
     from guardrail import manifest
     assert manifest.DEV_YAML_FLAG == S.SITL_DEV_YAML_FLAG, manifest.DEV_YAML_FLAG
     assert S.SITL_DEV_YAML_FLAG in flags, f"{S.SITL_NODE} does not declare --dev-yaml"
-    passed = {a for a in S.build_sitl_cmd(FAMILIES["rail-mission-stub-vla"].first.spec,
-                                          "t")[5:] if a.startswith("--")}
-    assert passed <= flags, passed - flags
+    # Since 2026-11-06 the command also carries the pilot's flags, which the
+    # VLA stub reads (the rail hands both nodes every argument), and gives
+    # coordinates as --flag=value: each one is checked against the node
+    # that reads it.
+    cmd = S.build_sitl_cmd(FAMILIES["rail-mission-stub-vla"].first.spec, "t")
+    passed = {a.split("=", 1)[0] for a in cmd[5:] if a.startswith("--")}
+    stub = S.sitl_node_flags(ROOT / S.SITL_STUB)
+    assert passed & set(S.RAIL_SHIELD_FLAGS) <= flags, passed - flags
+    assert passed & set(S.RAIL_STUB_FLAGS) <= stub, passed - stub
+    assert passed <= flags | stub, passed - flags - stub
     assert S.sitl_node_flags() == flags, "the harness reads the node differently"
 
 
@@ -319,7 +326,9 @@ def test_a_bundle_never_reaches_the_node_unpinned():
     assert S.SITL_EXPECTED_HASH_FLAG in flags, "sent a flag the node drops"
     i = cmd.index(S.SITL_EXPECTED_HASH_FLAG)
     assert cmd[i + 1] == "sha256:" + "1" * 64, cmd
-    assert {a for a in cmd[5:] if a.startswith("--")} <= flags
+    names = {a.split("=", 1)[0] for a in cmd[5:] if a.startswith("--")}
+    assert names & set(S.RAIL_SHIELD_FLAGS) <= flags, names - flags
+    assert names <= flags | S.sitl_node_flags(ROOT / S.SITL_STUB), names
 
 
 def test_the_sitl_rail_refuses_what_only_the_headless_harness_flies():

@@ -567,8 +567,11 @@ def test_the_shield_node_defers_a_zone_over_the_aircraft_and_reads_the_backstop(
     assert "position=pos," in src and "pos, pos_src = (st.x, st.y)" in src
     # No pose yet = on the pad: held back as if at home, never "unknown, so
     # upload everything" (a 2026-10-07 flight armed a zone over home that way
-    # and the GeoFence kept it on the pad).
-    assert 'pos, pos_src = (0.0, 0.0), "assumed home' in src
+    # and the GeoFence kept it on the pad). Home is --start's position in
+    # the policy's frame since 2026-11-06 ((0, 0) without one, as before;
+    # test_a_scenario_start_puts_every_pose_and_the_home_in_the_policy_frame).
+    assert 'pos, pos_src = self.start_xy, "assumed home' in src
+    assert "self.start_xy = (start[0], start[1]) if start else (0.0, 0.0)" in src
     assert "self._recheck_deferred(st," in src
     assert "def read_autopilot_fence" in src and '"backstop_active"' in src
     assert "fence_alt_plan(" in src and '"FENCE_ALT_MAX"' in src
@@ -1822,6 +1825,302 @@ def test_the_mission_node_writes_the_six_field_manifest_beside_its_metrics():
                  policy_source=met["policy_source"])
     idx = read_replay(bundle)["index"]
     assert idx["policy_binding"] == "manifest" and idx["flown_policy_hash"] == final.policy_hash
+
+
+# --------------------------------------------------------------------------- #
+# A stress scenario on the ROS 2 rail (2026-11-06): the node takes the
+# scenario's start, target, pilot and events (sitl/ros2_shield_node.py,
+# sitl/ros2_vla_stub_node.py), driven on tests/test_railinputs_node.py's
+# stand-in ROS stack
+# --------------------------------------------------------------------------- #
+
+CMAC = (-35.363261, 149.16523)
+
+
+def _scenario_node(argv):
+    """sitl/ros2_shield_node.py on the stand-in ROS stack, built from its own
+    parser with `argv` (the dev YAML sim_demo policy, frame origin CMAC) on a
+    virtual clock; nothing ticks until start_mission. (RN, N, node, clk, out)."""
+    sys.path.insert(0, str(ROOT / "tests"))
+    import test_railinputs_node as RN
+    N = RN._node_module()
+    clk = RN._Clock()
+    N.time = clk
+    args, _ = N.make_parser().parse_known_args(
+        ["--policy", str(POLICY), "--dev-yaml"] + list(argv))
+    out = Path(tempfile.mkdtemp(prefix="scenario_node_"))
+    return RN, N, N.ShieldNode(args, out), clk, out
+
+
+def _ekf_pose(RN, N, node, north=0.0, east=0.0, up=15.0, yaw=0.0):
+    """MAVROS's pose: metres about the EKF origin (SITL: home)."""
+    node._on_pose(RN._pose_msg(N, State(x=north, y=east, up=up, yaw_deg=yaw)))
+
+
+def _fly(RN, N, node, clk, n, **pose):
+    for _ in range(n):
+        _ekf_pose(RN, N, node, **pose)
+        RN._act(N, node, vx=0.0)
+        clk.t += 0.1
+        node._tick()
+
+
+def test_a_scenario_start_puts_every_pose_and_the_home_in_the_policy_frame():
+    """--start X,Y,UP: SITL boots at the scenario's start, so MAVROS's local
+    frame is about (X, Y) of the policy's; every pose is offset by it, the
+    pad before the first pose is there, and the fences document names it
+    (`home_policy_ne`, which the adapter projects the zones about). The null:
+    without --start the pose is the policy frame's, as every run before."""
+    RN, N, node, clk, out = _scenario_node(["--start", "-200,0,15", "--target=-80,0,12"])
+    assert node.start_xy == (-200.0, 0.0) and node.start_up == 15.0
+    assert (node.mission.target_x, node.mission.target_y) == (-80.0, 0.0)
+    assert node.mission.cruise_alt_m == 12.0, "the target's altitude is the cruise's"
+    node.fence_column_m = 30.0
+    node._publish_fences_locked("take-off")
+    doc = json.loads(node.pubs[N.TOPIC_FENCES].sent[-1].data)
+    assert doc["home_policy_ne"] == [-200.0, 0.0] and doc["position"] == [-200.0, 0.0], doc
+    _ekf_pose(RN, N, node, north=3.0, east=4.0, up=15.0, yaw=90.0)
+    st = node.state
+    assert (st.x, st.y, st.up) == (-197.0, 4.0, 15.0) and abs(st.yaw_deg - 90.0) < 1e-6, st
+    # A zone over the start (not over the frame origin) is the one an RTL lands in.
+    zone = Shield(load_policy(POLICY)).zones_now(15.0)[0].polygon.centroid
+    RN2, N2, over, _, _ = _scenario_node([f"--start={zone.x},{zone.y},15"])
+    over.fence_column_m = 30.0
+    over._publish_fences_locked("take-off")
+    assert over.zones_over_home == ["nfz-square"], over.zones_over_home
+    # The null: no --start.
+    RN3, N3, plain, _, _ = _scenario_node([])
+    _ekf_pose(RN3, N3, plain, north=3.0, east=4.0)
+    assert (plain.state.x, plain.state.y) == (3.0, 4.0)
+    assert plain.zones_over_home == [] and plain.start_given is False
+
+
+def test_a_home_that_is_not_the_scenarios_start_is_refused_before_arming():
+    """The check that catches a SITL booted at the wrong home: the
+    autopilot's home, projected about the policy's frame origin, must lie
+    within 5 m of --start. Shown on home_check and on the node's check_home
+    (which raises before GUIDED); a home that never arrives is refused after
+    the wait, a metre policy has nothing to check, and without --start
+    nothing is checked, as before."""
+    N = _node()
+    from guardrail.projection import LocalProjection
+    proj = LocalProjection(*CMAC)
+    lat, lon = proj.to_latlon(-200.0, 0.0)
+    ok = N.home_check((lat, lon, (0.0, 0.0)), CMAC, (-200.0, 0.0))
+    assert ok["checked"] and ok["ok"] and ok["miss_m"] < 0.01, ok
+    assert N.home_check(proj.to_latlon(-200.0, 4.9) + ((0.0, 0.0),), CMAC, (-200.0, 0.0))["ok"]
+    near = N.home_check(proj.to_latlon(-200.0, 5.1) + ((0.0, 0.0),), CMAC, (-200.0, 0.0))
+    assert not near["ok"] and "SITL booted at another home" in near["why"], near
+    wrong = N.home_check((CMAC[0], CMAC[1], (0.0, 0.0)), CMAC, (-200.0, 0.0))
+    assert not wrong["ok"] and abs(wrong["miss_m"] - 200.0) < 0.01, wrong
+    # Home 3 m from the EKF origin (a real autopilot's) is where the frame says.
+    off = N.home_check(proj.to_latlon(-197.0, 0.0) + ((3.0, 0.0),), CMAC, (-200.0, 0.0))
+    assert off["ok"], off
+    assert not N.home_check(None, CMAC, (-200.0, 0.0))["ok"]
+    metre = N.home_check(None, None, (-200.0, 0.0))
+    assert metre["checked"] is False and metre["ok"] is True
+    # On the node.
+    RN, N1, node, clk, out = _scenario_node(["--start=-200,0,15"])
+    node.home_geo = (CMAC[0], CMAC[1], (0.0, 0.0))            # booted at CMAC
+    try:
+        node.check_home()
+    except RuntimeError as e:
+        assert "refusing to arm" in str(e) and "SITL booted" in str(e), e
+    else:
+        raise AssertionError("a SITL booted 200 m from the start was armed")
+    ev = [e for e in RN._events(out) if e["kind"] == "home_check"]
+    assert ev and ev[-1]["ok"] is False and abs(ev[-1]["miss_m"] - 200.0) < 0.01, ev
+    node.home_geo = (lat, lon, (0.0, 0.0))
+    node.check_home()
+    assert node.home_check["ok"] and node.home_check["checked"]
+    # No home ever arrives: refused once the wait (on the node's clock) is over.
+    RN2, N2, quiet, clk2, _ = _scenario_node(["--start=-200,0,15"])
+    N2.rclpy.spin_once = lambda *a, **kw: setattr(clk2, "t", clk2.t + 0.5)
+    try:
+        quiet.check_home()
+    except RuntimeError as e:
+        assert "no home position" in str(e), e
+    else:
+        raise AssertionError("armed with no home position to check")
+    assert quiet.home_check["waited_s"] >= N2.HOME_WAIT_S
+    # Without --start: nothing checked, as before.
+    _, _, plain, _, _ = _scenario_node([])
+    plain.check_home()
+    assert plain.home_check is None
+
+
+def test_a_mission_with_no_target_flies_to_its_cap_and_declares_no_goal():
+    """--no-target (a constant pilot): no reach test, and metrics.json
+    `reached` / `frac_within_30m` null - no goal, so none missed. The null:
+    the same position WITH a target there ends the mission at once."""
+    RN, N, node, clk, out = _scenario_node(["--start=-30,-30,3", "--no-target",
+                                            "--max-s", "0.75"])
+    assert not node.has_target
+    assert (node.mission.target_x, node.mission.target_y) == (-30.0, -30.0)
+    _ekf_pose(RN, N, node, up=3.0)
+    node.start_mission()
+    _fly(RN, N, node, clk, 5, up=3.0)
+    assert not node.done and len(node.rows) == 5
+    _fly(RN, N, node, clk, 4, up=3.0)
+    assert node.done
+    m = json.loads((out / "metrics.json").read_text(encoding="utf-8"))
+    assert m["reached"] is None and m["frac_within_30m"] is None and m["target"] is None, m
+    assert m["start"] == {"policy_ne": [-30.0, -30.0], "up": 3.0, "source": "--start"}
+    start = [e for e in RN._events(out) if e["kind"] == "mission_start"][0]
+    assert start["target"] is None and start["start"] == [-30.0, -30.0, 3.0]
+    # The null.
+    RN2, N2, aimed, clk2, out2 = _scenario_node(["--start=-30,-30,3", "--target=-30,-30,3",
+                                                 "--reach-m", "3"])
+    _ekf_pose(RN2, N2, aimed, up=3.0)
+    aimed.start_mission()
+    _fly(RN2, N2, aimed, clk2, 1, up=3.0)
+    assert aimed.done and aimed.reached, "the target under the aircraft was not reached"
+    assert json.loads((out2 / "metrics.json").read_text(encoding="utf-8"))["reached"] is True
+
+
+def test_scenario_events_reach_the_flying_shield_and_every_record():
+    """--events: a ScenarioEvent list applied in the tick once the mission
+    time reaches each, through guardrail.scenario_events (the harness's own
+    code) with the Shield given t=None. The spawn lands on the aircraft: a
+    new generation (policy_g1.json), a scenario_event, live_from for the
+    dwell, the fences re-published, and on its row `rule_events` and the
+    previous tick's judgement (not unsafe, in no zone) - so the harness
+    counts no breach and no polygon entry. An event the Shield refuses and
+    the scenario does not expect refused is recorded, flown past and named
+    in metrics.json. --scenario-meta goes into metrics.json."""
+    tmp = Path(tempfile.mkdtemp(prefix="scenario_files_"))
+    evs = [{"at_sim_t": 0.3, "type": "spawn_polygon_fence",
+            "payload": {"id": "dyn-top", "width_m": 10, "height_m": 10,
+                        "ahead_of_vehicle_m": 0, "anchor": "center"}},
+           {"at_sim_t": 0.3, "type": "scale_radius",
+            "payload": {"id": "no-such-zone", "factor": 2.0}}]
+    (tmp / "events.json").write_text(json.dumps(evs), encoding="utf-8")
+    meta = {"run_id": "t_001_x", "run_nonce": "n0", "backend": "hil",
+            "template": "dynamic_nfz_movement", "cell": "x@y=1",
+            "family": "hil-stress/dynamic_nfz_movement/x@y=1/shield-on"}
+    (tmp / "scenario.json").write_text(json.dumps(meta), encoding="utf-8")
+    RN, N, node, clk, out = _scenario_node(
+        ["--start=-100,0,15", "--target=0,0,15", f"--events={tmp / 'events.json'}",
+         f"--scenario-meta={tmp / 'scenario.json'}"])
+    assert node._ev_declared == 2
+    _ekf_pose(RN, N, node)
+    node.start_mission()
+    assert node._ev_heading == (1.0, 0.0), node._ev_heading     # start -> target
+    sent = len(node.pubs[N.TOPIC_FENCES].sent)
+    _fly(RN, N, node, clk, 6)
+    assert node.policy.generation == 1 and (out / "policy_g1.json").is_file()
+    recs = [e for e in RN._events(out) if e["kind"] == "scenario_event"]
+    assert [r["event"] for r in recs] == ["spawn_polygon_fence", "scale_radius"], recs
+    assert not recs[0].get("refused") and recs[0]["rule_id"] == "dyn-top"
+    assert recs[1]["refused"] and recs[1]["expected"] is False, recs[1]
+    assert node._ev_live_from == {"dyn-top": recs[0]["t"]}, node._ev_live_from
+    assert len(node.pubs[N.TOPIC_FENCES].sent) > sent, "the fences did not follow"
+    k = next(i for i, r in enumerate(node.rows) if r["rule_events"])
+    row = node.rows[k]
+    assert k > 0 and row["unsafe"] and not node.rows[k - 1]["unsafe"], row
+    assert row["unsafe_prev_rules"] == [] and row["zones_in_prev"] == [], row
+    assert row["zones_in"] == ["dyn-top"] and row["zone_d_m"] < 0, row
+    assert all("clock" in r for r in node.rows)
+    sys.path.insert(0, str(ROOT / "experiments"))
+    import sweep_scenarios as S
+    m = S.rail_measurements(node.rows, node.policy)
+    assert m["breaches"] == 0 and m["polygon_entries"] == 0, m
+    assert m["ticks_inside_fence_polygon"] >= 1 and m["min_true_dist_to_fence_m"] < 0, m
+    node._finish("test")
+    met = json.loads((out / "metrics.json").read_text(encoding="utf-8"))
+    sev = met["scenario_events"]
+    assert sev["declared"] == 2 and len(sev["applied"]) == 1 and len(sev["refused"]) == 1
+    assert sev["unexpected_refusals"] and sev["event_refusals_as_expected"] is False, sev
+    assert met["scenario"]["run_id"] == "t_001_x"
+    assert met["scenario_family"] == meta["family"]
+
+
+def test_every_row_carries_the_rule_clock_and_the_previous_judgement_reads_its_own():
+    """Each row records the rule clock's reading it was judged at, and the
+    next tick's judgement of the position under the previous rules pins the
+    clock to that reading for its one query - then releases it."""
+    from datetime import datetime
+    RN, N, node, clk, out = _scenario_node(["--clock-start", "2026-09-07T17:29:50"])
+    _ekf_pose(RN, N, node)
+    node.start_mission()
+    _fly(RN, N, node, clk, 3)
+    clocks = [datetime.fromisoformat(r["clock"]) for r in node.rows]
+    assert clocks[0] >= datetime(2026, 9, 7, 17, 29, 50) and clocks == sorted(clocks)
+    assert node._last_clock == clocks[-1] and node._clock_pin is None
+    seen = []
+    real = node.shield.state_is_unsafe
+
+    def spy(st, **kw):
+        seen.append(node.clock())
+        return real(st, **kw)
+    node.shield.state_is_unsafe = spy
+    node._prev_judgement(node.state, True)
+    assert seen == [clocks[-1]] and node._clock_pin is None, seen
+    clk.t += 0.1                                         # unpinned again: it moves on
+    assert node.clock() > clocks[-1]
+
+
+def test_the_vla_stub_flies_the_harness_laws_in_the_policy_frame():
+    """sitl/ros2_vla_stub_node.py --pilot goto / constant / stub_vla: the
+    laws are guardrail.vla_stub's, the harness's own (one implementation),
+    on a pose offset by --start, turned into the body frame; each announces
+    its model id, which the manifest pins by the module's source. Arguments
+    a law cannot fly are refused before ROS starts, and a negative --start
+    or --action parses as a value."""
+    import math
+    import ros2_vla_stub_node as V
+    from guardrail.compiler import Mission
+    from guardrail import vla_stub as VS
+    sys.path.insert(0, str(ROOT / "experiments"))
+    import sweep_scenarios as S
+    m0 = Mission(task_text="", target_x=30.0, target_y=30.0, cruise_alt_m=15.0,
+                 speed_pref_mps=6.0)
+
+    def parse(argv):
+        return V.make_parser().parse_known_args(argv)[0]
+    a = parse(["--pilot", "goto", "--start", "-200,0,15", "--target", "-80,0,15",
+               "--speed", "4", "--shield", "on", "--tag", "x", "--events=e.json"])
+    mission, tgt, start = V.mission_from_args(a, m0)
+    pilot, rec = V.pilot_from_args(a, mission, tgt)
+    assert rec["model_id"] == "guardrail.vla_stub.GotoPilot" and rec["approach_accel_mps2"] == 2.4
+    north = (0.0, 0.0, math.sin(math.radians(45.0)), math.cos(math.radians(45.0)))
+    st = V.pose_state(0.0, 0.0, 15.0, north, start)
+    assert (st.x, st.y) == (-200.0, 0.0) and abs(st.yaw_deg) < 1e-9, st
+    mm = S._Mission(start=st, target=(-80.0, 0.0, 15.0), subject=None, action=None, speed=4.0)
+    assert pilot.act(st) == S._pilot(mm, "goto", st, VS.APPROACH_ACCEL_MPS2), "two laws"
+    assert VS.APPROACH_ACCEL_MPS2 == S.AP_RESPONSE.accel_mps2 and VS.APPROACH_P == S.AP_POSXY_P
+    body = V.body_action(pilot, st, 0.0)
+    assert abs(body[0] - 4.0) < 1e-9 and abs(body[1]) < 1e-9, body      # forward, North
+    c = parse(["--pilot", "constant", "--action", "-3,0,0,0", "--no-target"])
+    assert c.action == "-3,0,0,0"
+    cm, ct, _ = V.mission_from_args(c, m0)
+    cp, crec = V.pilot_from_args(c, cm, ct)
+    east = (0.0, 0.0, 0.0, 1.0)                                    # ENU yaw 0: heading East
+    st_e = V.pose_state(0.0, 0.0, 15.0, east)
+    assert abs(st_e.yaw_deg - 90.0) < 1e-9
+    b = V.body_action(cp, st_e, None)
+    assert abs(b[0]) < 1e-9 and abs(b[1] - 3.0) < 1e-9, b      # South, heading East: right
+    assert crec["model_id"] == "guardrail.vla_stub.ConstantPilot"
+    for bad in (["--pilot", "goto", "--no-target"], ["--pilot", "constant"],
+                ["--pilot", "constant", "--action=nan,0,0"], ["--pilot", "goto", "--action=1,0,0"],
+                ["--start=1,2,3,4"], ["--pilot", "stub_vla", "--speed", "-1"]):
+        try:
+            V.check_args(parse(bad))
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(f"{bad} was accepted")
+    V.check_args(parse(["--start=-1,2", "--target=3,4"]))
+    ident = V.identity_record(load_policy(POLICY), {"kind": "yaml"}, mission, yaw_rate=0.0,
+                              seed=1, host={}, pilot=rec, start=start)
+    assert ident["model_id"] == rec["model_id"] and ident["pilot"]["type"] == "goto"
+    assert ident["start"] == [-200.0, 0.0, 15.0] and ident["target"] == [-80.0, 0.0]
+    from guardrail.manifest import model_hash
+    assert model_hash(rec["model_id"]).startswith("guardrail.vla_stub.GotoPilot@src:")
+    # The Shield node reads a negative --start and --action as values too.
+    N = _node()
+    ns, _ = N.make_parser().parse_known_args(["--start", "-200,0,15", "--action", "-3,0,0,0"])
+    assert ns.start == "-200,0,15"
 
 
 if __name__ == "__main__":
