@@ -285,7 +285,8 @@ def test_a_clean_tick_within_three_sigma_of_a_ring_is_marked_for_the_fsm():
 
 def _box(rid, x0, y0, x1, y1, **over):
     z = {"id": rid, "type": "polygon_fence", "constraint_type": "hard", "priority": "P0",
-         "violation_action": "repair", "margin_m": 1.0, "altitude_floor_m": 0.0,
+         "violation_action": "repair", "scope": "mission", "margin_m": 1.0,
+         "altitude_floor_m": 0.0,
          "altitude_ceiling_m": 100.0,
          "vertices": [{"x": x0, "y": y0}, {"x": x1, "y": y0}, {"x": x1, "y": y1},
                       {"x": x0, "y": y1}]}
@@ -294,7 +295,8 @@ def _box(rid, x0, y0, x1, y1, **over):
 
 
 CAPS = {"id": "caps", "type": "kinematic_envelope", "constraint_type": "hard",
-        "priority": "P1", "violation_action": "repair", "speed_max_mps": 4.0,
+        "priority": "P1", "violation_action": "repair", "scope": "mission",
+        "speed_max_mps": 4.0,
         "climb_rate_max_mps": 2.0, "yaw_rate_max_dps": 45.0}
 INSIDE = State(x=10.0, y=18.0, up=15.0)        # zone A's east edge 2 m away, its ring 3 m
 CRAWL_EAST = Action4D(vy=0.3)                  # leaving A, legal by the inside rule
