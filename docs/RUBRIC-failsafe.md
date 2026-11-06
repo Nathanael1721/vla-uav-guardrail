@@ -134,16 +134,20 @@ the KPI with and without E5, so the weight of this choice is visible.
 
 - How good the FSM is: it says when a trigger is right, not how to produce
   one. A clause the FSM has no input for (E3 with a frozen fix: the Shield
-  has no fix-quality field) still makes the scenario expect a fail-safe;
-  where the FSM does not trigger, that is a missed trigger, reported with its
-  mechanism.
+  had no fix-quality field until 2026-11-06) still makes the scenario expect
+  a fail-safe; where the FSM does not trigger, that is a missed trigger,
+  reported with its mechanism. Since 2026-11-06 the Shield reads a rail's
+  fix validity and accuracy (`State.fix_ok`, `State.pos_sigma_m`) and the
+  FSM answers E3 through X8 (docs/DESIGN-escalation-fsm.md); a rail that
+  reports neither is still in the position this paragraph describes, and
+  the rubric's clauses did not change with it.
 - The theta basis (decided separately: each repair's forecast depth in
   metres, reading A of docs/DESIGN-escalation-fsm.md).
 - The operator timeout (30 s, `loiter_timeout_s`): the rubric reads it as
   configured. Changing it changes which E5 cells complete inside an episode,
   and is not done to move the KPI.
 
-## 5. Applied to the library (2026-11-02, re-checked 2026-11-03)
+## 5. Applied to the library (2026-11-02, re-checked 2026-11-03, re-run 2026-11-06)
 
 `tools/failsafe_rubric.py` on the library (seed 0), the smoke profile and
 the nightly profile (seeds 1001-1003, 672 cell-seeds): every declared label
@@ -223,11 +227,62 @@ With E5 removed (its labels read as "not expected"): library 136/179 =
   Shield has no fix-quality input; a frozen fix while sliding along the
   edge never makes a repair unsafe.
 
+### Re-run on 2026-11-06: X8, the noise hysteresis, every recovery at its cap
+
+No clause and no label changed; E5 is as written above. What changed is
+the FSM and the Shield (docs/DESIGN-escalation-fsm.md, "X8, the position
+the Shield is handed"; docs/DESIGN-shield-enforcement.md, "Every recovery
+at its cap"): the Shield reads a rail's fix validity and accuracy, the FSM
+returns the aircraft when the position can no longer certify a hard P0
+margin (X8), noise inside the margin no longer starts new N-in-T onsets,
+and the Shield's recoveries fly at their caps. The flight without a
+fail-safe changed with the recovery law, so the labels were checked again:
+`tools/failsafe_rubric.py` on the final code finds every declared label in
+agreement with the rubric and none undecided in its length (library 168
+cells, smoke 56, nightly 672 cell-seeds).
+
+| profile | 3 Nov (above) | 6 Nov | never / always null | Wilson 95 % low |
+|---|---|---|---|---|
+| library | 175/179 = 0.978 (2 / 2) | 177/179 = 0.989 (2 / 0) | 0.659 / 0.341 | 0.944 -> 0.960 |
+| smoke | 62/63 = 0.984 (1 / 0) | 62/63 = 0.984 (1 / 0) | 0.635 / 0.365 | 0.915 -> 0.915 |
+| nightly | 721/741 = 0.973 (14 / 6) | 729/741 = 0.984 (12 / 0) | 0.623 / 0.377 | 0.959 -> 0.972 |
+
+(headless, not KPI-grade; false / missed in brackets.)
+
+- **Missed: none.** The gps-dropout misses (lane 23.6, windows 2-9 s and
+  6-13 s: library 2, nightly 6, every seed) are X8 triggers at 5.3 s and
+  7.6 s.
+- **The two noise false triggers are gone** (gps-noise-within-margin
+  latency 0 / pass_y 23.2 / sigma 0.3, seeds 1001 and 1003): with the
+  rail's accuracy reported, a clean tick within 3 sigma of the ring no
+  longer ends the violation, so the noise starts no new onsets.
+- **What remains wrong: the 15 false triggers of theta on the first deep
+  forecast** - rail-mission-stub-vla (library, smoke, nightly x 3 seeds)
+  and standoff-approach-angles 7 m pedestrian (library; nightly, 3 variants
+  x 3 seeds). The first forecast that meets the zone or ring is already
+  more than theta deep, so the FSM abandons projection and holds the
+  aircraft (X1, G3), the held request stays deep, and the operator timeout
+  sends it home (G5 at 30.1 s); flown without a fail-safe, the projection
+  takes the aircraft round in 10.9 s and 1.5 s of unsafe requests (N1).
+  Under the decided theta basis and E5 as written they are false triggers,
+  and no change to the FSM can answer them: holding on an over-theta
+  repair is what p4 prescribes, and the hold is what keeps the request
+  over theta. Reading E5 on the flight the grant prescribes (projection
+  abandoned, the aircraft held) instead of the flight without a fail-safe
+  would label them "expected"; that is a change to this rubric, a decision
+  for the user, and not made here.
+- No profile reaches the grant's 0.99, as a point estimate or as a Wilson
+  lower bound; the library's 0.989 is one episode short of it (178/179 =
+  0.994).
+
 ## 6. Open
 
 - No scenario has a planner that thrashes by changing its own request (N5):
   N-in-T persisting (G4) is exercised only by the harness's position noise.
-- E3's frozen fix is a ground-truth clause the Shield cannot observe: the
-  headless harness models neither the rails' stale-pose watchdog nor
-  ArduPilot's EKF failsafe, which would answer it on a flight.
+- E3's frozen fix is a ground-truth clause the Shield could not observe
+  until 2026-11-06. It now can where a rail reports fix validity
+  (`State.fix_ok`), and the headless harness models a rail that does
+  (`stress.fix_quality_reported`, default true); no flight rail reports it
+  yet (docs/DESIGN-escalation-fsm.md, "Where each rail's signal lives"),
+  and ArduPilot's own EKF failsafe is still not modelled.
 - Nothing here is KPI-grade: the grant's KPI is measured on the hil topology.

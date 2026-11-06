@@ -33,7 +33,8 @@ checked. The check is the whole point; without it this would just be a nicer
 place to keep a made-up number.
 
 Both curves are of the one-lookahead recovery law. Since 2026-10-29 the
-Shield recovers at the climb cap by default (WP3-17, `recovery_law="cap"`),
+Shield recovers at the climb cap by default (WP3-17, `recovery_law="cap"`;
+"cap_all" since 2026-11-06, the same climb for the altitude band),
 so the cross-check flies `recovery_law="lookahead"`, the law this study
 models; the September deck's curve is unchanged.
 """

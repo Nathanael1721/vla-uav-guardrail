@@ -657,12 +657,24 @@ class Stress(_Strict):
                      headless run can model it. The state the Shield sees
                      FREEZES at the last fix for the window - what a bridge
                      that keeps forwarding the last pose hands it - while the
-                     vehicle keeps flying. The Shield's State has no
-                     fix-quality field, so nothing tells it the pose is stale.
-                     The grant names no Shield response to GPS loss; the
-                     reference design lists "GPS denial" among the dynamic
-                     actors stress scenarios need (docs/03-simulation/
+                     vehicle keeps flying. Whether the Shield is TOLD the
+                     pose is stale is `fix_quality_reported`. The grant names
+                     no Shield response to GPS loss; the reference design
+                     lists "GPS denial" among the dynamic actors stress
+                     scenarios need (docs/03-simulation/
                      layer-requirements.md, L2), which is all this answers.
+    fix_quality_reported  (since 2026-11-06) whether the modelled rail reports
+                     the quality of the position it hands the Shield, as a
+                     rail can from GPS_RAW_INT / EKF_STATUS_REPORT or the
+                     pose's own stamp age: through a gps_dropout_s window the
+                     pose carries State.fix_ok False, and under gps_noise_m it
+                     carries State.pos_sigma_m = gps_noise_m. True by default
+                     (the Shield's answer, X8 and the onset hysteresis, is
+                     what the sensor families measure); False models a rail
+                     that reports nothing - every rail on that date - and the
+                     Shield flies blind on the degraded pose, as every run
+                     before that date did. Nothing changes for an episode
+                     whose perception is not degraded.
     battery_critical_at_s  from this simulated time on, the battery reports
                      critical (guardrail/rtl_path.py BatteryHook). It acts
                      only on an RTL in progress, which then fails: the
@@ -679,6 +691,7 @@ class Stress(_Strict):
     start_jitter_m: float = Field(default=0.0, ge=0)
     gps_dropout_s: tuple[float, float] | None = None
     battery_critical_at_s: float | None = Field(default=None, ge=0)
+    fix_quality_reported: bool = True
 
     @model_validator(mode="after")
     def _dropout_window(self) -> "Stress":

@@ -53,9 +53,9 @@ def _corridor(**kw):
     return Corridor(**base)
 
 
-def _shield(*constraints, now=None):
+def _shield(*constraints, now=None, **kw):
     return Shield(Policy(policy_id="t", constraints=list(constraints)),
-                  lookahead_s=3.0, dt=0.5, now=now)
+                  lookahead_s=3.0, dt=0.5, now=now, **kw)
 
 
 # --------------------------------------------------------------------------- #
@@ -141,18 +141,28 @@ def test_already_outside_but_returning_passes():
     FLOORED now, as it always was with a yaw breach beside it
     (docs/FINDING-repairs-must-floor-the-escape.md), the along-corridor motion
     kept; a return already at the cap still passes untouched.
+
+    Since 2026-11-06 the default recovery law ("cap_all") returns at the
+    speed cap (docs/DESIGN-shield-enforcement.md, "Every recovery at its
+    cap"): from 6 m out at a 4 m/s cap that leaves nothing of the speed for
+    the along-corridor motion, which the "cap" law keeps. Both are flown.
     """
-    sh = _shield(_corridor(), KIN)
-    d = sh.filter(State(x=50, y=25, up=15), Action4D(vy=-2))
-    assert not d.violations, d
-    assert d.emitted.vy < -2.0, "a slow return is floored, never slowed"
-    assert [(r.operator, r.recovery) for r in d.repairs] == [("CorridorReturn", True)]
-    yawed = sh.filter(State(x=50, y=25, up=15), Action4D(vy=-2, yaw_rate=1.5))
-    assert yawed.violations and yawed.emitted.vy == d.emitted.vy, yawed
-    d = sh.filter(State(x=50, y=16, up=15), Action4D(vx=1.0, vy=-0.5))   # 6 m out
-    assert not d.violations and d.emitted.vx == 1.0 and d.emitted.vy <= -2.0 + 1e-9, d
-    d = sh.filter(State(x=50, y=25, up=15), Action4D(vy=-KIN.speed_max_mps))
-    assert not d.violations and not d.repairs and d.emitted == d.raw, d
+    for law in ("cap", "cap_all"):
+        sh = _shield(_corridor(), KIN, recovery_law=law)
+        d = sh.filter(State(x=50, y=25, up=15), Action4D(vy=-2))
+        assert not d.violations, (law, d)
+        assert d.emitted.vy < -2.0, "a slow return is floored, never slowed"
+        assert [(r.operator, r.recovery) for r in d.repairs] == [("CorridorReturn", True)]
+        yawed = sh.filter(State(x=50, y=25, up=15), Action4D(vy=-2, yaw_rate=1.5))
+        assert yawed.violations and yawed.emitted.vy == d.emitted.vy, (law, yawed)
+        d = sh.filter(State(x=50, y=16, up=15), Action4D(vx=1.0, vy=-0.5))   # 6 m out
+        if law == "cap":
+            assert not d.violations and d.emitted.vx == 1.0 and d.emitted.vy <= -2.0 + 1e-9, d
+        else:
+            assert not d.violations and abs(d.emitted.vy + KIN.speed_max_mps) < 1e-9 \
+                and abs(d.emitted.vx) < 1e-9, d
+        d = sh.filter(State(x=50, y=25, up=15), Action4D(vy=-KIN.speed_max_mps))
+        assert not d.violations and not d.repairs and d.emitted == d.raw, (law, d)
 
 
 def test_the_floor_never_flies_a_projection_theta_did_not_judge():

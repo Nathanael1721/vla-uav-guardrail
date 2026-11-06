@@ -717,10 +717,47 @@ _CLEAR_DECEL_MPS2 = 3.0
 # of being treated as a one-way pipeline whose last stage is never re-repaired.
 _REPAIR_PASSES = 3
 
-# How a recovery from outside an altitude band climbs (Shield's recovery_law):
-# "cap" at the climb cap (since 2026-10-29), "lookahead" the band in one
-# lookahead (before; an exponential approach, WP3-17).
-RECOVERY_LAWS = ("cap", "lookahead")
+# How the Shield recovers from a position that is already illegal (Shield's
+# recovery_law, WP3-17):
+#   "cap_all"    the default since 2026-11-06: every recovery at its cap.
+#                The altitude band as "cap"; GeofenceEscape from a static zone
+#                at the speed cap (was the reference's fixed 2.0 m/s) through
+#                the path a zone whose window opened on the aircraft already
+#                took - judged as flown, out of the ring and then a stop
+#                (_shaped_escape), slower only where the cap's stop breaks
+#                another rule (_opened_retries), reported to the FSM if none
+#                can be flown (_escape_shortfall); StandoffRecover at the speed
+#                cap (was (ring - d) / L floored at 0.5 m/s); CorridorReturn at
+#                the fastest inward speed, up to the cap, whose lookahead
+#                endpoint stays a re-entry margin short of the far wall (was
+#                (d - half) / L floored at 0.5 m/s). A moving zone keeps the
+#                floor (no shaped escape for a moving ring).
+#   "cap"        2026-10-29 to 2026-11-06: the altitude band at the climb cap,
+#                the lateral recoveries on the laws above.
+#   "lookahead"  before 2026-10-29: the band in one lookahead too (an
+#                exponential approach).
+# Each law is a FLOOR (a faster legal escape is never slowed), and recoveries
+# stay exempt from theta under every one. Every bundle names its law
+# (sweep_scenarios `arm.recovery`), so a run on an older law re-flies on it.
+RECOVERY_LAWS = ("cap", "lookahead", "cap_all")
+DEFAULT_RECOVERY_LAW = "cap_all"
+
+# The dead reckoning's drift allowance, m/s (Shield(dr_drift_mps=...)), while
+# the position is not a valid fix (State.fix_ok False; _position_verdict, the
+# FSM's X8). The Shield dead-reckons on the commands it streamed, which is
+# exact on the harness's ideal vehicle and not on an aircraft: the measured
+# ArduCopter GUIDED response flies a setpoint from 0.45 s after it is sent at
+# no more than 1.75 m/s^2 (guardrail/response.py ARDUCOPTER_GUIDED), and a wind
+# estimate or a gust moves it where no command did. The allowance lets the
+# true position wander from the estimate at this rate since the last valid
+# fix: the error the Shield must assume grows by it, and the boundary may be
+# that much nearer, so X8 can only come earlier with it, never later. 0.5 m/s
+# is a judgement - an eighth of the shipped 4 m/s cap, about the residual
+# velocity error of a closed loop that holds a steady command - recorded with
+# every X8 reason and per harness episode, so a run on another value is told
+# apart; a rail that reports its own position variance should set it from
+# that. 0 reproduces the rubric's E3 exactly on the ideal vehicle.
+DR_DRIFT_MPS = 0.5
 
 # Length of the sliding window of recent ticks. Safety Shield page, node
 # architecture: "Sliding-window buffer - last 50 actions + predicted
@@ -1520,8 +1557,9 @@ class Shield:
                  segment_check: bool = False, repair_order: tuple | None = None,
                  hold_points: bool = True, land_site_ok=None,
                  velocity_response: "_response.VelocityResponse | None" = _response.ARDUCOPTER_GUIDED,
-                 pipe_clock=None, recovery_law: str = "cap",
-                 road_map: dict | None = None, ground=None, require_maps: bool = True):
+                 pipe_clock=None, recovery_law: str = DEFAULT_RECOVERY_LAW,
+                 road_map: dict | None = None, ground=None, require_maps: bool = True,
+                 dr_drift_mps: float = DR_DRIFT_MPS):
         """obstacle_map: None, or {"occ": uint8 NxN (1 = blocked), "res": float,
         "ox": float, "oy": float} — the same occupancy grid the global planner
         uses. A policy YAML cannot carry an 80x80 grid, so obstacle_clearance
@@ -1627,18 +1665,35 @@ class Shield:
         clock, the sliding window, N-in-T and every decision without a
         velocity are untouched by it.
 
-        recovery_law: how fast AltitudeFix and CorridorAltitudeFix recover
-        from OUTSIDE an altitude band (RECOVERY_LAWS). "cap" (the default
-        since 2026-10-29): at the smallest kinematic climb cap, held to the
-        band's far edge, and never slower than the band in one lookahead
-        (_recovery_vz). "lookahead": the law before that date, exactly - the
-        band in one lookahead, which approaches it as an exponential with
-        time constant L; kept so a bundle flown with it re-flies bit for bit
-        and so the two can be compared (WP3-17)."""
+        recovery_law: how fast the Shield recovers from a position that is
+        already illegal (RECOVERY_LAWS has the three laws and their dates).
+        "cap_all" (the default since 2026-11-06): every recovery at its cap -
+        the altitude band at the smallest kinematic climb cap, held to the
+        band's far edge (_recovery_vz), a static zone at the speed cap judged
+        as flown (_cap_zones), a stand-off ring at the speed cap, a corridor
+        at the fastest inward speed whose lookahead endpoint stays short of
+        the far wall. "cap" (2026-10-29 to 2026-11-06): the altitude band at
+        its cap, the lateral recoveries on their old floors (2.0 m/s out of a
+        zone; one lookahead, at least 0.5 m/s, back into a ring or corridor).
+        "lookahead" (before 2026-10-29): the band in one lookahead too, an
+        exponential with time constant L. The older two are kept so a bundle
+        flown with them re-flies bit for bit and so the laws can be compared
+        (WP3-17).
+
+        dr_drift_mps: the dead reckoning's drift allowance (m/s) while the
+        position is not a valid fix (State.fix_ok False): how fast the
+        Shield lets the aircraft's true position wander from the estimate it
+        dead-reckons on its own streamed commands. Read only for such a state
+        (`_position_verdict`, the FSM's X8), recorded in every X8 reason and
+        by the harness per episode. DR_DRIFT_MPS says why its default."""
         if recovery_law not in RECOVERY_LAWS:
             raise ValueError(f"recovery_law must be one of {RECOVERY_LAWS}, "
                              f"got {recovery_law!r}")
         self.recovery_law = recovery_law
+        if not (isinstance(dr_drift_mps, (int, float)) and not isinstance(dr_drift_mps, bool)
+                and math.isfinite(dr_drift_mps) and dr_drift_mps >= 0):
+            raise ValueError(f"dr_drift_mps must be a finite number >= 0, got {dr_drift_mps!r}")
+        self.dr_drift_mps = float(dr_drift_mps)
         if repair_mode not in _repair.REPAIR_MODES:
             raise ValueError(f"repair_mode must be one of {_repair.REPAIR_MODES}, "
                              f"got {repair_mode!r}")
@@ -1759,6 +1814,13 @@ class Shield:
         # the opening and after it. Kept by filter() only
         # (_remember_openings), cleared by reset_episode().
         self._opened_on: set[str] = set()
+        # Position knowledge (State.fix_ok, the FSM's X8; 2026-11-06): the last
+        # position given as a valid fix and its time, the dead reckoning
+        # since it on what this Shield streamed (None while the fix is
+        # valid), and what it streamed on the last tick (t, vx, vy).
+        self._pk_good: tuple[float, float, float] | None = None
+        self._pk: dict | None = None
+        self._pk_cmd: tuple[float, float, float] | None = None
 
         if escalation is True:
             cfg = _fsm.FSMConfig()
@@ -3099,7 +3161,10 @@ class Shield:
         "A zone whose window opened on the aircraft": hard, enforced, not
         moving, the position inside its ring and band, and either in force
         now and remembered (`_opened_on`) or still to open with the opening
-        imposed (`_opening_imposed`). "Escapes": leaving it at more than 0.1
+        imposed (`_opening_imposed`). Under recovery_law "cap_all" (since
+        2026-11-06) also any such zone the aircraft is inside for any other
+        reason (Shield._cap_zones_at, for the state judged): every recovery from a
+        static zone then flies at the cap, so it is judged the same way. "Escapes": leaving it at more than 0.1
         m/s by the inside rule's own test, at the pose where the zone opens
         for an opening still to come (as _check_fence reads it). The action
         must escape every such zone the aircraft is in, and the aircraft
@@ -3156,11 +3221,13 @@ class Shield:
         if not (math.isfinite(h) and h > 0.1):
             return None                       # nothing escapes at 0.1 m/s or less
         tick = self._tick_ctx()
-        if tick is None or (not self._opened_on
+        cap = self._cap_zones_at(tick, state) if tick is not None else frozenset()
+        if tick is None or (not self._opened_on and not cap
                             and (not tick.rt.timed or tick.sched.const)):
             return None                       # no zone can have opened on it
         key = ("shaped", state.x, state.y, state.up, state.yaw_deg, action.vx,
-               action.vy, action.vz_up, action.yaw_rate, frozenset(self._opened_on))
+               action.vy, action.vz_up, action.yaw_rate,
+               frozenset(self._opened_on) | cap)
         hit = tick.committed.get(key)
         if hit is None:
             hit = tick.committed[key] = (self._shape_escape(tick, state, action, h),)
@@ -3184,7 +3251,7 @@ class Shield:
             if alive is False or not point_in_fence(state.x, state.y, state.up, f, poly, ring):
                 continue
             if alive is True or alive(0.0):
-                if f.id not in self._opened_on:
+                if f.id not in self._opened_on and f.id not in self._cap_zones_at(tick, state):
                     return None               # inside a zone in force it flew into
                 ox, oy = escape_direction(state.x, state.y, poly, action.vx, action.vy)
             else:
@@ -4176,9 +4243,24 @@ class Shield:
                 # (_shaped_escape; review of 69c27bd, P2), not on the cap held
                 # for the whole lookahead: that 20 m reached the library's
                 # own corridor edge, 9 m past the school zone's ring.
-                try_mps = getattr(self._tick_ctx(), "opened_mps", None)
-                opened = ((t_open is not None or (not mv and f.id in self._opened_on))
+                #
+                # Under recovery_law "cap_all" (2026-11-06) the same holds for
+                # every static zone the aircraft is inside (`_cap_zones_at`),
+                # whatever put it there: the recovery flies at the cap, judged
+                # as flown, slower only where the cap's stop breaks another
+                # rule - as the altitude recovery climbs at the climb cap since
+                # 2026-10-29. A moving zone keeps the floor below (the shaped
+                # escape is not defined for a moving ring).
+                tick_now = self._tick_ctx()
+                try_mps = getattr(tick_now, "opened_mps", None)
+                at_cap = (not mv and tick_now is not None
+                          and f.id in self._cap_zones_at(tick_now, state)
+                          and t_open is None and f.id not in self._opened_on)
+                opened = ((t_open is not None or (not mv and f.id in self._opened_on)
+                           or at_cap)
                           and try_mps != _IN_FORCE_FLOOR)
+                why_cap = ("inside the zone (recovery at the cap)" if at_cap
+                           else "window opened on the aircraft")
                 if opened and try_mps is not None:
                     cap_out = min(float(try_mps), cap)
                 else:
@@ -4226,10 +4308,10 @@ class Shield:
                         vx, vy = nvx, nvy
                         repairs.append(Repair(
                             operator="GeofenceEscape",
-                            detail=(f"{f.id}: window opened on the aircraft, leaving "
+                            detail=(f"{f.id}: {why_cap}, leaving "
                                     f"at {out_now:.2f} m/s -> straight out at the "
                                     f"{cap:.1f} m/s cap" if spd >= cap - 1e-9 else
-                                    f"{f.id}: window opened on the aircraft, leaving "
+                                    f"{f.id}: {why_cap}, leaving "
                                     f"at {out_now:.2f} m/s -> out at {spd:.2f} m/s, "
                                     f"under the {cap:.1f} m/s cap"),
                             magnitude_m=depth, axis="lateral", recovery=True))
@@ -4557,6 +4639,17 @@ class Shield:
             # range, the same reasoning as the clearance ring's push-out.
             cap = min((k.speed_max_mps for k in self._kins), default=4.0)
             want = min(cap, max(0.5, (ring - d) / max(self.lookahead_s, 1e-3)))
+            if self.recovery_law == "cap_all":
+                # The default since 2026-11-06 (RECOVERY_LAWS): open the range
+                # with the aircraft's own outward speed at the cap, as the
+                # altitude band is recovered at the climb cap - the fastest
+                # opening the cap allows, so the relative rate is the cap plus
+                # the subject's own recession (`s_u`; 0 for a still subject).
+                # Radially outward from a point subject the range only grows,
+                # so there is no far edge to hold short of. The one-lookahead
+                # law above took standoff-reclassified 6.5 s at 0.5-0.65 m/s
+                # from 3.25 m inside; at the cap, 0.9 s.
+                want = cap + s_u
             # FLOOR the opening rate, never assign it.
             #
             # `-closing` is the opening speed already commanded. Writing the
@@ -4646,6 +4739,8 @@ class Shield:
         what is left. With no velocity, exactly the stationary action."""
         cap = min((k.speed_max_mps for k in self._kins), default=4.0)
         want = min(cap, max(0.5, (ring - d) / max(self.lookahead_s, 1e-3)))
+        if self.recovery_law == "cap_all":
+            want = cap                     # "cap_all" (RECOVERY_LAWS)
         _, _, svx, svy = self._subject_track()
         rx, ry = a.vx - svx, a.vy - svy
         h = math.hypot(rx, ry)
@@ -4783,6 +4878,14 @@ class Shield:
 
             if d > half + 1e-9:
                 need = max((d - half) / L, 0.5)
+                if self.recovery_law == "cap_all":
+                    # The default since 2026-11-06 (RECOVERY_LAWS): the
+                    # fastest inward speed, up to the cap, whose lookahead
+                    # endpoint stays a re-entry margin short of the FAR wall -
+                    # the altitude band's far-edge hold (_recovery_vz) - never
+                    # below the old law.
+                    m = self._reentry_margin(-half, half)
+                    need = max(need, min(cap, (d + half - m) / L))
                 excursion, recovering = d - half, True
             elif d + outward * L > half + 1e-9:
                 need = 0.0
@@ -5868,6 +5971,9 @@ class Shield:
             self._last_caps = self._applied_caps(tick, decision)
             decision = self._escalate(tick, dstate, decision, rtl_failed=rtl_failed,
                                       home_reached=home_reached, landed=landed)
+            # What this tick streams, for the dead reckoning while the
+            # position is not a valid fix (State.fix_ok, X8).
+            self._note_streamed(tick, decision, dstate)
             # The forecast's inputs the State does not hold (TickRecord.pipe),
             # for a tick that forecast from a measured velocity only.
             pipe = (tuple(self.pipe()) if self._velocity_of(dstate) is not None
@@ -6030,6 +6136,7 @@ class Shield:
             self._buffer.clear()
             self._flown.clear()
             self._opened_on.clear()
+            self._pk_good = self._pk = self._pk_cmd = None
             rt = self._rt
             if rt.moving_ids and self._t_last is not None:
                 # Pin every moving zone to an explicit anchor (a policy-authored
@@ -6532,6 +6639,59 @@ class Shield:
             d.trace["floor_refused"] = f"raw flown: {refused}"
         return d
 
+    def _cap_zones(self, tick: _Tick, state: State) -> frozenset:
+        """Under recovery_law "cap_all" (2026-11-06): the ids of the static,
+        hard, enforced zones in force now whose margin ring holds the
+        aircraft - every zone whose escape flies at the speed cap through the
+        path a zone whose window opened on the aircraft already takes
+        (`_repair_geofence`, `_shaped_escape`, `_opened_retries`,
+        `_escape_shortfall`, `_slower_opened_escape`), whatever put the
+        aircraft there: a zone grown or spawned over it, wind, a stale pose.
+        Empty under the other laws. A moving zone is left out: the shaped
+        escape is not defined for a moving ring (it is left out of the window
+        path for the same reason), so its escape keeps the floor."""
+        if self.recovery_law != "cap_all":
+            return frozenset()
+        rt = tick.rt
+        out = set()
+        for r in rt.ir.fences:
+            if r.moving:
+                continue
+            f = r.rule
+            if not rt.hard.get(f.id, True) or self._act(rt, f.id) == "monitor_only":
+                continue
+            alive = tick.sched.mask(f)
+            if alive is False or not (alive is True or alive(0.0)):
+                continue
+            if point_in_fence(state.x, state.y, state.up, f, r.polygon, r.buffered):
+                out.add(f.id)
+        return frozenset(out)
+
+    def _cap_zones_at(self, tick: _Tick, state: State) -> frozenset:
+        """`_cap_zones` for `state`, once per tick and state (tick.committed).
+        Read wherever an escape is judged - the decision, its repairs, and any
+        check made outside a decision (a stop query, a re-check of what was
+        emitted) - so an escape from a zone the aircraft is in is judged the
+        same way everywhere. (A first version computed the set once, for the
+        decision's state only: a re-check made outside the decision walked
+        the cap's straight 20 m forecast and refused an escape the decision
+        had judged as flown - tests/test_own_velocity_forecast.py's sample.)"""
+        if self.recovery_law != "cap_all":
+            return frozenset()
+        key = ("cap_zones", state.x, state.y, state.up)
+        hit = tick.committed.get(key)
+        if hit is None:
+            hit = tick.committed[key] = self._cap_zones(tick, state)
+        return hit
+
+    @staticmethod
+    def _cap_ids(flags: dict) -> set:
+        """Every zone whose escape flies at the cap on this decision: a window
+        that opens or opened on the aircraft, and under "cap_all" every static
+        zone it is in (`escape_at_cap`)."""
+        return (set(flags.get("window_opens_on") or ()) | set(flags.get("window_opened_on") or ())
+                | set(flags.get("escape_at_cap") or ()))
+
     def _opened_retries(self, flags: dict) -> list:
         """The settings _floor_the_escape re-runs the floors with when the
         escape from a zone that opened on the aircraft (`window_opens_on`,
@@ -6547,8 +6707,9 @@ class Shield:
         re-check is monotone in the speed for a zone straight ahead, but
         nothing makes it so for every rule, and a bisection could step over
         the speed that passes. Nine re-runs at most, and only on a tick whose
-        cap was refused."""
-        if not (flags.get("window_opens_on") or flags.get("window_opened_on")):
+        cap was refused. Under recovery_law "cap_all" a zone the aircraft is
+        in for any reason is retried the same way (`escape_at_cap`)."""
+        if not self._cap_ids(flags):
             return []
         cap = min((k.speed_max_mps for k in self._kins), default=4.0)
         floor = min(2.0, cap)
@@ -6573,10 +6734,12 @@ class Shield:
         _repair_geofence reads it: at the pose where the zone opens, for an
         opening still imposed. Empty when `raw` already leaves every such
         zone at the floor or faster: that is the floor, and it flies as
-        before."""
-        ids = set(flags.get("window_opens_on") or ()) | set(flags.get("window_opened_on") or ())
+        before. Under recovery_law "cap_all" the same for a zone the aircraft
+        is in for any reason (`escape_at_cap`)."""
+        ids = self._cap_ids(flags)
         if not ids:
             return []
+        windows = set(flags.get("window_opens_on") or ()) | set(flags.get("window_opened_on") or ())
         cap = min((k.speed_max_mps for k in self._kins), default=4.0)
         floor = min(2.0, cap)
         recs, _ = self._fence_anchors(self._ir)
@@ -6595,9 +6758,11 @@ class Shield:
             leaving = raw.vx * ox + raw.vy * oy
             if leaving >= floor - 1e-9:
                 continue
+            what = ("window opened on the aircraft" if f.id in windows
+                    else "inside the zone (recovery at the cap)")
             out.append(Violation(
                 rule_id=f.id, category="geofence", predicted_at_s=dt,
-                detail=(f"window opened on the aircraft: leaving at {leaving:.2f} m/s, "
+                detail=(f"{what}: leaving at {leaving:.2f} m/s, "
                         f"under the {floor:.1f} m/s escape floor, and no floored escape "
                         f"can be flown ({why})")))
         return out
@@ -6640,11 +6805,12 @@ class Shield:
         m/s stops at 34.07, short of y = 39), and this applies only to a
         rule inside the escape's stop (tests/test_window_opens_on.py: the
         ring 2 m past the exit, the 4 m/s slowed to 3.0)."""
-        ids = set(flags.get("window_opens_on") or ()) | set(flags.get("window_opened_on") or ())
+        ids = self._cap_ids(flags)
         if not ids or not enforced or any(
                 v.rule_id in ids or v.category not in ("geofence", "corridor")
                 for v in enforced):
             return None
+        windows = set(flags.get("window_opens_on") or ()) | set(flags.get("window_opened_on") or ())
         recs, _ = self._fence_anchors(self._ir)
         inside = []
         for r in recs:
@@ -6674,9 +6840,11 @@ class Shield:
                             vz_up=raw.vz_up, yaw_rate=raw.yaw_rate)
             if self._check(state, cand):
                 continue
+            what = ("window opened on the aircraft" if r.rule.id in windows
+                    else "inside the zone (recovery at the cap)")
             return cand, Repair(
                 operator="GeofenceEscape",
-                detail=(f"{r.rule.id}: window opened on the aircraft, leaving at "
+                detail=(f"{r.rule.id}: {what}, leaving at "
                         f"{out_now:.2f} m/s -> out at {s:.2f} m/s, the fastest from the "
                         f"{cap:.1f} m/s cap that does not break {broke}"),
                 magnitude_m=depth, axis="lateral", recovery=True)
@@ -6698,6 +6866,12 @@ class Shield:
                  # the aircraft, not yet left (`_opened_on`): their escape
                  # flies at the cap after the opening too.
                  "window_opened_on": sorted(self._opened_on)}
+        # Under recovery_law "cap_all": every static zone the aircraft is in,
+        # escaped at the cap through the same path (`_cap_zones_at`). The key
+        # is written only when there is one, so every other trace is as it was.
+        cap_now = self._cap_zones_at(tick, state)
+        if cap_now:
+            flags["escape_at_cap"] = sorted(cap_now)
         mode = self.repair_mode
         # Finiteness first: every check below is a comparison, and NaN loses them
         # all, so an unsanitised action would be declared legal and passed
@@ -6911,6 +7085,154 @@ class Shield:
             k for k in tick.rules("kins")
             if self._act(rt, k.id) != "monitor_only" and k.id not in tick.given_up)
 
+    def _position_verdict(self, tick: _Tick, state: State,
+                          raw: "Action4D | None" = None) -> "tuple[str, str] | None":
+        """The escalation FSM's X8 input (2026-11-06): (reason, rule id) when
+        the position the Shield is handed can no longer certify a hard P0
+        zone's margin, else None.
+
+        WHAT A RAIL REPORTS (State.fix_ok, State.pos_sigma_m). Both None -
+        every rail today - and this returns None on every tick: the Shield
+        behaves exactly as before the fields existed.
+          * fix_ok False: the position is not a current valid fix (a stale
+            pose, no 3D fix, an EKF without absolute position). The aircraft
+            is dead-reckoned from the last valid fix on what this Shield
+            itself streamed since (`_note_streamed`: its command; a stop or
+            an in-place hold streams 0, a moved hold in transit its plan's
+            speed). The position handed in is wrong by err = |estimate -
+            handed| + u, where u = dr_drift_mps x the time since the last
+            valid fix is the drift the dead reckoning cannot see
+            (DR_DRIFT_MPS), and the boundary is taken to be u nearer.
+          * pos_sigma_m: the rail's 1-sigma horizontal accuracy. Only when a
+            rail reports it (None is "not reported", never "perfect"): err is
+            at least 3 sigma, judged at the position and along the request's
+            own forecast (the rubric reads noise-E3 against the planned
+            route; the Shield's view of the plan is the request).
+
+        THE TEST is the rubric's E3 (docs/RUBRIC-failsafe.md), on the
+        Shield's own estimate: a hard P0 zone's margin_m is sized for a
+        position-error budget, so once err exceeds it while the zone's
+        boundary lies within err of the estimate, the margin no longer
+        certifies the rule and no repair computed from the handed position
+        can be trusted (p1, "repair is unsafe"). The FSM's X8 then returns
+        (RTL, on the autopilot's own estimate); G6 lands it if the return
+        fails. Until the error reaches a boundary nothing changes, so a fix
+        that comes back in time, or one frozen on a held aircraft (whose
+        estimate does not move), costs nothing. With dr_drift_mps 0 the test
+        fires on the tick E3 first holds on the ideal vehicle; a larger
+        allowance only makes it earlier.
+
+        ONCE A RAIL REPORTS ITS ACCURACY, A MARGIN IS AN ACCURACY
+        REQUIREMENT: a 1 m margin certifies a P0 zone only while 3 sigma <=
+        1 m (sigma <= 0.33 m, RTK class). With ordinary GNSS accuracy the
+        request's forecast passing within 3 sigma of such a zone returns the
+        aircraft. Sizing margins to the rail's real (EKF-fused) accuracy is a
+        policy decision; no policy was changed with this."""
+        t = tick.t
+        prev, self._pk_cmd = self._pk_cmd, None      # _note_streamed sets it again
+        sigma = getattr(state, "pos_sigma_m", None)
+        noise = 3.0 * float(sigma) if sigma is not None and sigma > 0 else 0.0
+        if getattr(state, "fix_ok", None) is not False:
+            self._pk_good = (state.x, state.y, t)
+            self._pk = None
+            if not noise:
+                return None
+            ex, ey, err, since, drift, plan = state.x, state.y, noise, None, 0.0, raw
+        else:
+            if self._pk is None:
+                gx, gy, gt = (self._pk_good if self._pk_good is not None
+                              else (state.x, state.y, t))
+                self._pk = {"anchor": (gx, gy), "dx": 0.0, "dy": 0.0, "since": gt}
+            pk = self._pk
+            if prev is not None and t > prev[0]:
+                pk["dx"] += prev[1] * (t - prev[0])
+                pk["dy"] += prev[2] * (t - prev[0])
+            ex, ey = pk["anchor"][0] + pk["dx"], pk["anchor"][1] + pk["dy"]
+            since = pk["since"]
+            drift = self.dr_drift_mps * max(0.0, t - since)
+            err = max(math.hypot(ex - state.x, ey - state.y) + drift, noise)
+            plan = None
+        rt = tick.rt
+        p = Point(ex, ey)
+        poses = None
+        for r in self._zones_now_in(tick, state.up):
+            f = r.rule
+            if not rt.hard.get(f.id, True) or self._act(rt, f.id) == "monitor_only":
+                continue
+            if getattr(f, "priority", "P0") != "P0":
+                continue
+            margin = float(getattr(f, "margin_m", 0.0) or 0.0)
+            if not err > margin:
+                continue
+            dist = max(0.0, r.polygon.distance(p) - drift)      # 0 inside
+            if plan is not None and dist > err:
+                if poses is None:
+                    poses = [Point(q.x, q.y)
+                             for _, q in self._predict(state, _sanitise(plan)[0])]
+                dist = min([dist] + [r.polygon.distance(q) for q in poses])
+            if dist <= err:
+                what = (f"no valid fix for {t - since:.1f} s: the position handed in may be "
+                        f"{err:.1f} m off (dead reckoning on the streamed commands, drift "
+                        f"allowance {self.dr_drift_mps:g} m/s)" if since is not None
+                        else f"reported accuracy: 3 sigma = {err:.1f} m")
+                return (f"{what}, beyond {f.id}'s {margin:g} m margin, with its "
+                        f"boundary within {dist:.1f} m of the estimate - the margin no "
+                        f"longer certifies it", f.id)
+        return None
+
+    def _noise_marginal(self, tick: _Tick, state: State, d: ShieldDecision) -> bool:
+        """The FSM's onset hysteresis input (TickInput.noise_marginal,
+        2026-11-06): with a REPORTED position accuracy (State.pos_sigma_m;
+        None, every rail today, is always False), is this tick's request
+        clean of every hard zone by less than 3 sigma - a verdict the
+        position's own noise could flip? The FSM then does not count the next
+        violation of the ring as a new N-in-T onset: N-in-T is for a pilot
+        that keeps re-violating (rubric N5), and a ring re-touched inside the
+        position's own uncertainty is the same violation seen through noise
+        (rubric N2). Measured: 0.3 m of noise along the margin ring of
+        gps-noise-within-margin (nightly seeds 1001, 1003) made three onsets
+        in 5 s out of repairs of 0.02-0.43 m and sent the aircraft home by
+        G2 and G4."""
+        sigma = getattr(state, "pos_sigma_m", None)
+        if sigma is None or not sigma > 0:
+            return False
+        rt = tick.rt
+        if any(rt.hard.get(v.rule_id, True) and self._act(rt, v.rule_id) != "monitor_only"
+               for v in d.violations):
+            return False                    # violated: not a clean tick
+        zones = [r for r in self._zones_now_in(tick, state.up)
+                 if rt.hard.get(r.rule.id, True)
+                 and self._act(rt, r.rule.id) != "monitor_only"]
+        if not zones:
+            return False
+        ruler = ZoneRuler(zones)
+        raw, _ = _sanitise(d.raw)
+        band = 3.0 * float(sigma)
+        return any(ruler.distance(p.x, p.y) <= band for _, p in self._predict(state, raw))
+
+    def _note_streamed(self, tick: _Tick, d: ShieldDecision, state: State) -> None:
+        """What this tick hands the aircraft, for the dead reckoning of
+        _position_verdict (2026-11-06): the command streamed, or with the
+        autopilot holding, 0 (in place) or the transit to a moved hold point
+        at its plan's speed. Read only while State.fix_ok is False."""
+        cmd = getattr(d, "command", None)
+        vx = vy = 0.0
+        if cmd is not None:
+            vx, vy = float(cmd.vx), float(cmd.vy)
+        elif self.fsm is not None and self.fsm.state is _fsm.FSMState.LOITER:
+            h = self.fsm.hold
+            if (h is not None and h.kind == "moved" and h.speed_mps
+                    and h.t_s is not None and tick.t < h.t_s + h.travel_s):
+                pk = self._pk
+                ex = (pk["anchor"][0] + pk["dx"]) if pk else state.x
+                ey = (pk["anchor"][1] + pk["dy"]) if pk else state.y
+                dx, dy = h.x - ex, h.y - ey
+                n = math.hypot(dx, dy)
+                if n > 1e-9:
+                    vx, vy = dx / n * h.speed_mps, dy / n * h.speed_mps
+        if math.isfinite(vx) and math.isfinite(vy):
+            self._pk_cmd = (tick.t, vx, vy)
+
     def _escalate(self, tick: _Tick, state: State, d: ShieldDecision, *,
                   rtl_failed: bool = False, home_reached: bool = False,
                   landed: bool = False) -> ShieldDecision:
@@ -6946,13 +7268,16 @@ class Shield:
                 # without the velocity. Its inputs keep their meaning.
                 unsafe = self._check(self._positional(state), BRAKE)
             caps = self._applied_caps(tick, d)
+            lost = self._position_verdict(tick, state, d.raw)
             inp = _fsm.tick_input_from_decision(
                 tick.t, d, tick.rt, horizon_s=self.theta_horizon_s,
                 stop_illegal=unsafe, rtl_failed=bool(rtl_failed),
                 home_reached=bool(home_reached), landed=bool(landed),
                 caps=caps if caps is not None else False,
                 unsafe_depth_m=self._unsafe_depth_in(state, unsafe),
-                hold_legal=self._hold_legal(tick))
+                hold_legal=self._hold_legal(tick),
+                position_lost=lost[0] if lost else None,
+                noise_marginal=self._noise_marginal(tick, state, d))
             out = self.fsm.step(inp)
             rec = out.record
             if self.fsm.needs_hold:

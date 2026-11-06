@@ -512,6 +512,21 @@ def _fsm_field(row: dict, name: str) -> Any:
     return f.get(name) if isinstance(f, dict) else None
 
 
+def _position_trigger(row: dict) -> bool:
+    """Did the FSM leave its state on this tick by X8 - the position the
+    Shield is handed no longer certifies a hard P0 margin (guardrail/fsm.py,
+    since 2026-11-06)? Read from the row's edge (`fsm_edge`, as the harness
+    and the rails write it) or from its FSM record (`edge`, `position_lost`).
+    The one trigger whose input is not the request: compute()'s false-trigger
+    invariant leaves it out (see there)."""
+    if _fsm_field(row, "fsm_edge") == "X8":
+        return True
+    rec = row.get("fsm_record") if isinstance(row.get("fsm_record"), dict) else None
+    if rec is not None and (rec.get("edge") == "X8" or rec.get("position_lost")):
+        return True
+    return bool(_fsm_field(row, "position_lost"))
+
+
 def _state(v: Any) -> str | None:
     """A state name in the grant's spelling, matched case-insensitively (the
     grant itself writes both `land` and `Land`). None if absent or unknown."""
@@ -1443,6 +1458,18 @@ def compute(rows: Iterable[dict], priorities: dict[str, str],
     # a logging fault (the row's violations are not what the FSM saw), and
     # the grant's false triggers are the LABELLED episodes'
     # (`failsafe_labelled_episodes`).
+    #
+    # ONE EDGE LEAVES NORMAL WITHOUT A VIOLATION, BY DESIGN (2026-11-06): X8,
+    # "position knowledge lost" (guardrail/fsm.py). Its input is not the
+    # request but the position the Shield is handed (State.fix_ok /
+    # pos_sigma_m: the rail's own report that the fix is stale or too
+    # inaccurate for a hard P0 zone's margin), so its tick can carry a clean
+    # request. Such a tick is a trigger the row's violations cannot explain
+    # by construction, not a logging fault, and it is left out of the count
+    # (`_position_trigger`); the invariant still holds for every request
+    # edge. Logging the uncertified zone as a violation instead would put a
+    # rule breach on a tick whose request broke nothing, and the P0 counters
+    # would read it.
     violation_free = permitted = false_trig = 0
     prev_state = "Normal"
     breakdown = _MagnitudeBreakdown()
@@ -1546,7 +1573,7 @@ def compute(rows: Iterable[dict], priorities: dict[str, str],
             permitted += 1
         else:
             violation_free += 1
-            if new_trigger:
+            if new_trigger and not _position_trigger(r):
                 false_trig += 1
 
     # Mission outcome. Decided from the recorded metrics and the log rather

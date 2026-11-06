@@ -141,6 +141,30 @@ class State(BaseModel):
     # is not refused here - x and y are not either - but the Shield ignores
     # it and counts it (Shield.n_velocity_nonfinite).
     velocity: tuple[float, float, float] | None = None
+    # Since 2026-11-06: is (x, y, up) a CURRENT, VALID position fix? None (the
+    # default, every rail on that date): the rail does not say, and the
+    # Shield trusts the position exactly as before. True: it is. False: it is
+    # not - a stale pose (a bridge forwarding its last sample; the pose's own
+    # stamp older than the monitor period), the autopilot reporting no 3D fix
+    # (MAVLink GPS_RAW_INT.fix_type < 3; MAVROS /mavros/gpsstatus/gps1/raw or
+    # the NavSatFix status of /mavros/global_position/raw/fix), or an EKF
+    # without its absolute horizontal position (EKF_STATUS_REPORT flags). The
+    # Shield then dead-reckons on what it streamed since the last valid fix
+    # and escalates once the error can no longer be certified by a hard P0
+    # zone's margin (the FSM's X8; docs/RUBRIC-failsafe.md E3;
+    # docs/DESIGN-escalation-fsm.md, "X8" has where each rail's signal is).
+    fix_ok: bool | None = None
+    # Since 2026-11-06: the reported 1-sigma HORIZONTAL accuracy of (x, y), m -
+    # GPS_RAW_INT.h_acc (a MAVLink 2 extension, in mm), the NavSatFix
+    # position_covariance MAVROS builds from it, or the EKF's own position
+    # variance. None (the default): NOT REPORTED - never read as perfect, and
+    # nothing changes. Reported, the Shield reads it for the FSM's onset
+    # hysteresis (a ring re-touched within 3 sigma is the same violation seen
+    # through noise) and for X8 (3 sigma beyond a hard P0 margin near its
+    # boundary). Once a rail reports it, every hard P0 margin_m becomes an
+    # accuracy requirement: a 1 m margin certifies a zone only while 3 sigma
+    # <= 1 m. Sizing margins to a rail's real accuracy is a policy decision.
+    pos_sigma_m: float | None = None
 
     @model_serializer(mode="wrap")
     def _omit_absent_velocity(self, handler):
@@ -150,6 +174,10 @@ class State(BaseModel):
         out = handler(self)
         if isinstance(out, dict) and out.get("velocity", 0) is None:
             out.pop("velocity")
+        if isinstance(out, dict) and out.get("fix_ok", 0) is None:
+            out.pop("fix_ok")
+        if isinstance(out, dict) and out.get("pos_sigma_m", 0) is None:
+            out.pop("pos_sigma_m")
         return out
 
 

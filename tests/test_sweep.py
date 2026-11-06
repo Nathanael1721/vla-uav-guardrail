@@ -1202,8 +1202,11 @@ def test_latency_hands_the_shield_the_state_from_n_ticks_ago():
 def test_true_state_violations_are_counted_apart_from_the_shields_own():
     """Under noise the Shield's log can be clean while the flown action was
     illegal where the aircraft really was. Both are reported; neither replaces
-    the other."""
-    spec = _cell("gps-noise-beyond-margin", pass_y=23.6, sigma=2.0, latency=10)
+    the other. Measured blind (the rail's accuracy report withheld, as on
+    every rail that reports none): with it reported, X8 returns the aircraft
+    before the noise can carry it anywhere (2026-11-06)."""
+    spec = _with(_cell("gps-noise-beyond-margin", pass_y=23.6, sigma=2.0, latency=10),
+                 **{"stress.fix_quality_reported": False})
     run = S.run_episode(spec, DEFAULTS, 1001)
     res = _kpi(spec, run.rows, run.extra, run.policy)
     assert res["p0_escapes"] == 0, "the Shield's own re-check should be clean"
@@ -1237,14 +1240,19 @@ def test_gps_dropout_on_the_head_on_lane_is_a_measured_polygon_entry():
     was given). If this stops holding, the description in scenarios.yaml is
     wrong and must be re-measured. Re-measured 2026-10-12 at the grant's 5 s
     forecast: the entry is the 4-11 s window's (frozen still at speed, 24 m
-    out); the old 6-11 s window freezes a pose the Shield already holds."""
-    spec = _cell("gps-dropout", lane_y=15.0, window=[4.0, 11.0])
+    out); the old 6-11 s window freezes a pose the Shield already holds.
+    Since 2026-11-06 the modelled rail reports the stale pose by default
+    (stress.fix_quality_reported) and X8 returns the aircraft before the
+    zone, so this finding is measured with the report WITHHELD: the Shield
+    flying blind, as on every rail that reports nothing."""
+    blind = {"stress.fix_quality_reported": False}
+    spec = _with(_cell("gps-dropout", lane_y=15.0, window=[4.0, 11.0]), **blind)
     run = S.run_episode(spec, DEFAULTS, 0)
     res = _kpi(spec, run.rows, run.extra, run.policy)
     assert res["p0_escapes"] == 0, "the Shield's own re-check should be clean"
     assert run.extra["ticks_inside_fence_polygon"] > 0
     assert run.extra["min_true_dist_to_fence_m"] < -5.0, run.extra["min_true_dist_to_fence_m"]
-    short = _cell("gps-dropout", lane_y=15.0, window=[2.0, 4.0])
+    short = _with(_cell("gps-dropout", lane_y=15.0, window=[2.0, 4.0]), **blind)
     e2 = S.run_episode(short, DEFAULTS, 0).extra
     assert e2["ticks_inside_fence_polygon"] == 0 and e2["breaches"] == 0, e2
 
@@ -1706,8 +1714,11 @@ def test_a_bounded_pin_absorbs_its_measured_magnitude_and_no_more():
 def test_a_tracked_episode_is_never_counted_as_a_pass():
     """gps-dropout on the head-on lane passes its gates (the Shield's own log
     is clean) while the aircraft flies 7 m into the zone. It must be reported
-    "tracked", counted apart, with the incursion in the true-state summary."""
+    "tracked", counted apart, with the incursion in the true-state summary.
+    Flown blind (the rail's fix report withheld, 2026-11-06): reported, X8
+    returns the aircraft before the zone."""
     fam = _raw("gps-dropout", parameter_sweep={"lane_y": [15.0], "window": [[4.0, 11.0]]})
+    fam["stress"] = {**fam["stress"], "fix_quality_reported": False}
     rc, doc = _sweep_lib([fam])
     r = doc["results"][0]
     assert r["status"] == "tracked" and rc == 0, (r["status"], rc)
@@ -1724,11 +1735,13 @@ def test_a_tracked_episode_is_never_counted_as_a_pass():
 
 def test_an_imposed_polygon_is_not_an_entry_and_a_flown_one_is():
     """A zone spawned on the aircraft puts it inside through no action of its
-    own (time_to_safe's business); a frozen fix lets it fly in (an entry)."""
+    own (time_to_safe's business); a frozen fix lets it fly in (an entry) -
+    flown blind, the rail's fix report withheld (2026-11-06)."""
     on_top = S.run_episode(_cell("dyn-nfz-spawn-on-top", size_m=40, variant=0),
                            DEFAULTS, 0).extra
     assert on_top["ticks_inside_fence_polygon"] > 0 and on_top["polygon_entries"] == 0, on_top
-    flown = S.run_episode(_cell("gps-dropout", lane_y=15.0, window=[4.0, 11.0]),
+    flown = S.run_episode(_with(_cell("gps-dropout", lane_y=15.0, window=[4.0, 11.0]),
+                                **{"stress.fix_quality_reported": False}),
                           DEFAULTS, 0).extra
     assert flown["polygon_entries"] >= 1, flown
     ctrl = _run("nfz-head-on-control")[1]
@@ -2321,7 +2334,11 @@ def test_what_the_autopilot_flew_through_is_counted_apart_and_reported():
     the edge ahead and no FSM edge is taken. An escape the forward command
     does not already fly, which this test was written on (the ring order's
     choice was not the edge ahead), is recreated by spawning the same zone
-    0.5 m to the side: no tie, and the nearest edge is the side one."""
+    0.5 m to the side: no tie, and the nearest edge is the side one.
+    Re-pinned 2026-11-06: on the default recovery law ("cap_all") that side
+    exit flies at the 4 m/s cap and is out in 2.6 s, inside X6's T, so no
+    RTL happens at all; the RTL this test is about is flown on the law it
+    was written on ("cap": the 2.0 m/s floor), which stays selectable."""
     from guardrail.fsm import FSMConfig
 
     class NoProgressTest(S.Shield):
@@ -2344,7 +2361,7 @@ def test_what_the_autopilot_flew_through_is_counted_apart_and_reported():
         return z
     S._spawn_zone = beside
     try:
-        default = S.run_episode(spec, DEFAULTS, 0)
+        default = S.run_episode(spec, DEFAULTS, 0, recovery="cap")
     except BaseException:
         S._spawn_zone = orig_spawn
         raise
@@ -2353,7 +2370,7 @@ def test_what_the_autopilot_flew_through_is_counted_apart_and_reported():
     real = S.Shield
     S.Shield = NoProgressTest
     try:
-        watched = S.run_episode(spec, DEFAULTS, 0)
+        watched = S.run_episode(spec, DEFAULTS, 0, recovery="cap")
         assess = S.RP.RTLWatch.assess
 
         def silent(self, *a, **k):
@@ -2361,7 +2378,7 @@ def test_what_the_autopilot_flew_through_is_counted_apart_and_reported():
             return S.RP.RTLVerdict(False, (), v.leg, False, False)
         S.RP.RTLWatch.assess = silent
         try:
-            run = S.run_episode(spec, DEFAULTS, 0)
+            run = S.run_episode(spec, DEFAULTS, 0, recovery="cap")
         finally:
             S.RP.RTLWatch.assess = assess
     finally:

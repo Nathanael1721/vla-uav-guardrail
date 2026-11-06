@@ -350,6 +350,175 @@ Not flown: the shakedown on the hil rig is the user's. Tests:
 `tests/test_sweep.py`, `test_sitl_rails.py`, `test_mavlink_adapter.py`,
 `test_kpi_report.py`, `test_harnesstruth_bundles.py`.
 
+### 2026-11-06 (fail-safe) — a frozen fix now gets its fail-safe (X8), noise inside the margin no longer counts as a pilot thrashing, and every recovery flies at its cap; theta's first-deep-forecast false triggers remain
+
+#### Found
+- Fail-safe trigger correctness (WP3-15, >= 0.99, against
+  docs/RUBRIC-failsafe.md) on master 23ac319, headless: library 175/179 =
+  0.978 (2 false, 2 missed), smoke 62/63 = 0.984 (1 false), nightly 721/741 =
+  0.973 (14 false, 6 missed). Three causes:
+  - **C1, theta on the first deep forecast** (15 false: library 2, smoke 1,
+    nightly 12). rail-mission-stub-vla (every seed) and
+    standoff-approach-angles 7 m pedestrian (every variant and seed): the
+    first forecast that meets the zone or ring is already more than theta
+    deep, so X1 -> G3 holds the aircraft, the held request stays deep, and
+    G5 sends it home at 30.1 s, while the rubric's flight without a
+    fail-safe (the projection flown every tick) takes it round in 10.9 s /
+    1.5 s of unsafe requests (N1).
+  - **C2, a frozen fix the FSM could not see** (missed: library 2, nightly
+    6). gps-dropout lane 23.6, windows 2-9 s and 6-13 s: the pose frozen
+    for 7 s, the Shield passing 4 m/s, the aircraft ending 1.2 m from
+    nfz-square with 28 m of error. The Shield had no fix-quality input.
+  - **C3, noise inside the margin counted as thrash** (nightly 2 false:
+    gps-noise-within-margin latency 0 / pass_y 23.2 / sigma 0.3, seeds 1001
+    and 1003). 0.3 m of white noise flipped the forecast in and out of
+    nfz-square's ring; every return was a new N-in-T onset, and G2 then G4
+    sent the aircraft home on repairs of 0.02-0.43 m.
+- Mean time to safe (WP3-17, reference <= 2.0 s): library 2.926 s over 39
+  spells. After the 29 Oct climb cap, the lateral recoveries still flew the
+  reference's laws: a fixed 2.0 m/s escape from a zone imposed on the
+  aircraft, stand-off and corridor returns at depth / L floored at 0.5 m/s
+  (radius-scaling-grow-deep 6.7 s, standoff-reclassified 3.5 s,
+  corridor-swap-shifted 4.0 s).
+
+#### Changed
+- `guardrail/models.py`: `State.fix_ok` (is (x, y) a current, valid fix)
+  and `State.pos_sigma_m` (the reported 1-sigma horizontal accuracy). Both
+  optional; None means not reported, and the position is trusted exactly as
+  before.
+- `guardrail/fsm.py`: edge X8, Normal / Brake / Loiter -> RTL, "position
+  knowledge lost", checked before every rule's own answer; the grant's G6
+  lands the aircraft if the return fails. `TickInput.position_lost` and
+  `TickInput.noise_marginal` (a clean tick within 3 sigma of a hard zone's
+  ring keeps the violation "on" for N-in-T onset counting). No FSMConfig
+  field was added: the default config still hashes `sha256:d55e1bfe...`.
+- `guardrail/shield.py`:
+  - `_position_verdict` is rubric E3 on the Shield's own estimate. While
+    `fix_ok` is False it dead-reckons from the last valid fix on the
+    commands it streamed, plus a drift allowance `dr_drift_mps` x the fix's
+    age (0.5 m/s by default, `Shield(dr_drift_mps=...)`, recorded in every
+    X8 reason and per harness episode). With `pos_sigma_m` reported the
+    error is at least 3 sigma, judged at the position and along the
+    request's forecast. X8 fires when the error exceeds a hard, enforced P0
+    zone's margin with the zone's boundary inside it.
+  - `recovery_law="cap_all"` is the default: GeofenceEscape from a static
+    hard zone at the speed cap, judged as flown (out of the ring, then a
+    stop), slower only where the cap's stop breaks another rule, reported to
+    the FSM if none can be flown; StandoffRecover at the cap plus the
+    subject's recession; CorridorReturn at the fastest inward speed, up to
+    the cap, that holds short of the far wall. A moving zone keeps the floor.
+    At a 4 m/s cap the recovery takes the whole speed: the pilot's
+    along-corridor or tangential motion is not kept while it lasts (the
+    "cap" law kept it). "cap" (29 Oct) and "lookahead" (before) stay
+    selectable.
+- `guardrail/kpi.py`: the per-tick false-trigger invariant leaves out X8
+  ticks by their reason (the request on such a tick may be clean by
+  design); it still holds for every request edge.
+- `experiments/sweep_scenarios.py`: the modelled rail reports fix quality
+  (`stress.fix_quality_reported`, default true: `fix_ok` False through a
+  dropout window, `pos_sigma_m` = the noise sigma); bundle extras schema /5
+  names `arm.dr_drift_mps`, and a /1-/4 bundle re-flies with the fix quality
+  withheld, as it was flown; `--recovery-law` defaults to cap_all.
+- `experiments/templates/sensor_degradation.yaml`: gps-noise-within-margin's
+  nightly known-failure pins removed (the cells pass).
+- Docs: docs/DESIGN-escalation-fsm.md (X8, its inputs, the per-rail signal
+  table, the margin-as-accuracy-requirement note, the KPI invariant, the
+  measurements), docs/DESIGN-shield-enforcement.md ("Every recovery at its
+  cap"), docs/RUBRIC-failsafe.md (section 5 re-run; sections 4 and 6 note
+  the new input). No clause and no label changed.
+
+#### Fixed
+Headless, the grant's 5 s forecast on the ideal vehicle, against master
+23ac319; the rubric and every label unchanged (`tools/failsafe_rubric.py`:
+every declared label agrees, library 168 cells, smoke 56, nightly 672
+cell-seeds). Not KPI-grade.
+- **Fail-safe trigger correctness**:
+
+  | profile | before | after |
+  |---|---|---|
+  | library | 175/179 = 0.978 (2 false, 2 missed), Wilson low 0.944 | 177/179 = 0.989 (2 false, 0 missed), 0.960 |
+  | smoke | 62/63 = 0.984 (1 false), 0.915 | 62/63 = 0.984 (1 false), 0.915 |
+  | nightly | 721/741 = 0.973 (14 false, 6 missed), 0.959 | 729/741 = 0.984 (12 false, 0 missed), 0.972 |
+
+  - C2: every missed trigger is a trigger now (X8 at 5.3 s and 7.6 s,
+    home at 9.3 s and 13.3 s). The dropout cells that already triggered
+    did so late, through the hold: they now return at 5.3-6.4 s instead of
+    G5 at 39.1-45.0 s, and lane 23.6 window 4-11 s returns instead of
+    landing (G6).
+  - C3: both noise false triggers are gone.
+  - gps-noise-beyond-margin (E3) returns on X8 at 2.5-4.7 s instead of
+    N-in-T's G4 at 7.7-12.3 s, on every cell and seed.
+- **Mean time to safe**: library 2.926 s over 39 spells -> 2.540 s over 35
+  (max 6.7 -> 6.4 s); smoke 3.216 s / 19 -> 2.533 s / 15; nightly 2.813 s /
+  165 -> 2.539 s / 153. Over the episodes that recover in both runs:
+  2.944 -> 2.540 s, 3.312 -> 2.533 s, 2.819 -> 2.539 s. The spells that
+  are gone are gps-dropout cells X8 returns before they get anywhere unsafe,
+  and standoff-reclassified's second spell. Cells:
+  radius-scaling-grow-deep 6.7 -> 3.4 s, standoff-reclassified 3.5 s (2
+  spells) -> 0.9 s, corridor-swap-shifted 4.0 -> 0.6 s.
+- **Safety**: P0 escape 0.0 on every profile; Shield-on episodes that flew
+  into a P0 polygon 1 / 1 / 3 -> 0 (library / smoke / nightly), Shield-on
+  episodes with a breach 2 / 2 / 6 -> 0; true-state P0 ticks 1768 -> 1474
+  (library) and 5931 -> 5120 (nightly); the modelled autopilot's breaches
+  10 -> 8 and 30 -> 24. That is the condition cap_all was made the default
+  on; the sweeps' own gates: library 154 pass / 22 tracked / 0 fail / 4
+  known, nightly 660 / 66 / 0 / 18 (two pins fewer).
+
+#### Tests
+- New `tests/test_position_quality.py` (14): X8 fires on the tick E3 first
+  holds on the ideal vehicle (drift allowance 0) and never in the N2 cells,
+  and the allowance never makes it later; fix_ok None or True changes
+  nothing; a blind Shield (quality withheld) flies as before; the noise
+  hysteresis; the sigma branch only when a rail reports sigma; cap_all is
+  the default, its escape judged as flown where the straight 20 m forecast
+  refused the cap, a slower retry where the cap's stop breaks another rule,
+  a moving zone at the floor; the KPI invariant; bundle /5, a /4 bundle
+  re-flown blind, the refusals.
+- test_fsm 124/124 (X8 from Normal, Brake and Loiter; noise_marginal
+  onsets), test_shield 86/86 and test_window_opens_on 22/22 (the old floors
+  pinned to "cap", the cap_all numbers beside them), test_sweep 102/103 + 1
+  skip (the SITL backend, not installed here; four fixtures fly with the fix
+  quality withheld, the blind case they were written for, and the
+  autopilot test on "cap"), test_hold_points 34/34,
+  test_harnesstruth_response 19/19, test_own_velocity_forecast 28/28,
+  test_scenario_spec 40/40. `.github/workflows/tests.yml` runs the new file.
+- Found by the full per-build list and fixed: test_ir's index-equivalence
+  tests and experiments/bench_shield_50rules.py's agreement check compared
+  the default Shield with tests/legacy_fence_loop.py, whose zone escape is
+  the pre-IR 2.0 m/s; they now ask the index question on recovery law
+  "cap", the law the frozen copy records (the copy is unchanged and says
+  why); the bench still times the shipped default. test_corridor flies its
+  floored-return case on both laws. gps-dropout's description keeps the
+  marker test_harnesstruth_rtl reads for the published sweep's blind LAND
+  ticks. test_ir 20/20, test_corridor 25/25, test_harnesstruth_rtl 20/20.
+
+#### Limits
+- **C1's 15 false triggers remain** (library 2, smoke 1, nightly 12), and
+  stay false triggers under the decided theta basis (each repair's forecast
+  depth in metres) and E5 as written (judged on the flight without a
+  fail-safe). No change to the FSM answers them under those two decisions;
+  judging E5 on the flight the grant prescribes (projection abandoned, the
+  aircraft held) would, and is a decision for the user, not made here.
+- No flight rail reports `fix_ok` or `pos_sigma_m` yet, so X8 and the noise
+  hysteresis are idle on every flight. The ROS 2 node (MAVROS
+  /mavros/global_position/raw/fix, GPSRAW, EKF_STATUS_REPORT, the pose
+  stamp's age) is to be wired after the rail rework in progress; the PAS
+  ArduPilot rail already parses GPS_RAW_INT and EKF_STATUS_REPORT, for its
+  pre-arm gate only; simple_flight hands a ground-truth pose and cannot
+  report one.
+- The autopilot losing its own fix (ArduPilot's EKF failsafe, LAND) is a
+  second input, not modelled: the headless autopilot has a perfect position.
+- `dr_drift_mps` 0.5 m/s is a judgement (an eighth of the 4 m/s cap); a
+  rail that reports its own position variance should set it from that.
+- Once a rail reports its accuracy, every hard P0 margin is an accuracy
+  requirement: a 1 m margin certifies a zone only while 3 sigma <= 1 m
+  (sigma <= 0.33 m, RTK class); with ordinary GNSS the Shield will return
+  the aircraft near such zones. Sizing margins is a policy decision; no
+  policy was changed.
+- Mean time to safe stays above the reference 2.0 s: what is left is depth
+  over the policies' caps (2 m/s climb, 4 m/s speed) on geometry imposed on
+  the aircraft, plus wind beyond authority.
+- Headless, not KPI-grade.
 
 ### 2026-11-06 (dev images) — the dev topology flown in containers for the first time; the same companion image definition on the desktop and the Orin
 

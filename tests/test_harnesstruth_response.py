@@ -485,7 +485,7 @@ def test_a_rerun_refuses_a_bundle_flown_on_other_response_parameters():
     # the ideal vehicle.
     old = json.loads(json.dumps(ex))
     del old["vehicle_response"]
-    del old["arm"]["response"], old["arm"]["recovery"]
+    del old["arm"]["response"], old["arm"]["recovery"], old["arm"]["dr_drift_mps"]
     old["extras_schema"] = "sweep-episode-extras/1"
     assert not any("vehicle_v" in r for r in S.rerun_from_extras(old).rows)
 
@@ -504,7 +504,9 @@ def test_an_arm_bundle_is_a_schema_a_reader_without_the_arm_refuses():
     were flown (the ideal vehicle; the named one, held in place), and a
     bundle whose schema and keys disagree is refused rather than re-flown on
     either. Since 2026-10-29 every bundle is "/4" and also names the
-    recovery law; the older ones carry none and flew "lookahead"."""
+    recovery law; the older ones carry none and flew "lookahead". Since
+    2026-11-06 every bundle is "/5" and also names arm.dr_drift_mps (the
+    Shield's dead-reckoning drift allowance); the older ones carry none."""
     import copy
     spec = _spec("nfz-head-on-control")
     pre_arm_reads = ("sweep-episode-extras/1",)                 # c77c77d's
@@ -527,6 +529,7 @@ def test_an_arm_bundle_is_a_schema_a_reader_without_the_arm_refuses():
         theirs = copy.deepcopy(ex[arm])
         theirs["extras_schema"] = schema
         del theirs["arm"]["autopilot_hold"], theirs["arm"]["recovery"]
+        del theirs["arm"]["dr_drift_mps"]
         flown = S.run_episode(spec, LIBRARY.defaults, 0, response=arm,
                               autopilot_hold="in_place", recovery="lookahead")
         again = S.rerun_from_extras(theirs)
@@ -545,7 +548,7 @@ def test_an_arm_bundle_is_a_schema_a_reader_without_the_arm_refuses():
     nameless = json.loads(json.dumps(ex["ardupilot"]))
     del nameless["arm"]["response"]
     assert "arm.response" in _refused(lambda: S.rerun_from_extras(nameless))
-    unknown = dict(ex["ideal"], extras_schema="sweep-episode-extras/5")
+    unknown = dict(ex["ideal"], extras_schema="sweep-episode-extras/6")
     assert "schema" in _refused(lambda: S.rerun_from_extras(unknown))
 
 

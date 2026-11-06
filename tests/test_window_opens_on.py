@@ -319,9 +319,15 @@ def test_the_cap_holds_after_the_opening_until_the_aircraft_is_out_of_the_ring()
     the aircraft is out of the ring - and only those: a fresh Shield at the
     same pose, which never saw the window open on it, floors at 2.0 as it
     always did, and so does the same Shield once the aircraft has left and
-    flies back in on its own. reset_episode() forgets."""
+    flies back in on its own. reset_episode() forgets.
+
+    That distinction is recovery_law "cap" (2026-10-29 to 2026-11-06), pinned
+    on it below. Since 2026-11-06 the default "cap_all" leaves EVERY static
+    zone the aircraft is in at the cap, remembered or not (`escape_at_cap`
+    in the trace): the fresh Shield and a flight back in leave at 4 m/s too
+    (the end of this test)."""
     clock = [MON_0729_58]
-    sh = Shield(load_policy(SURVEY), now=lambda: clock[0])
+    sh = Shield(load_policy(SURVEY), now=lambda: clock[0], recovery_law="cap")
     crawl = Action4D(vy=1.5)
     d = sh.filter(MID, crawl, t=0.0)
     assert abs(d.emitted.vy - 4.0) < 1e-9, d.emitted
@@ -335,7 +341,7 @@ def test_the_cap_holds_after_the_opening_until_the_aircraft_is_out_of_the_ring()
         d.trace
     assert abs(d.emitted.vx) < 1e-9 and abs(d.emitted.vy - 4.0) < 1e-9, d.emitted
     assert [r.operator for r in d.repairs] == ["GeofenceEscape"], d.repairs
-    fresh = Shield(load_policy(SURVEY), now=lambda: clock[0])
+    fresh = Shield(load_policy(SURVEY), now=lambda: clock[0], recovery_law="cap")
     df = fresh.filter(inside, crawl, t=2.5)
     assert df.trace["window_opened_on"] == [], df.trace
     assert abs(df.emitted.vy - 2.0) < 1e-9, df.emitted          # the in-force floor
@@ -349,13 +355,23 @@ def test_the_cap_holds_after_the_opening_until_the_aircraft_is_out_of_the_ring()
     assert abs(d.emitted.vy - 2.0) < 1e-9, d.emitted
     # reset_episode forgets it as it forgets the FSM.
     clock[0] = MON_0729_58
-    sh2 = Shield(load_policy(SURVEY), now=lambda: clock[0])
+    sh2 = Shield(load_policy(SURVEY), now=lambda: clock[0], recovery_law="cap")
     sh2.filter(MID, crawl, t=0.0)
     sh2.reset_episode()
     clock[0] = MON_0729_58 + timedelta(seconds=2.5)
     d = sh2.filter(inside, crawl, t=0.0)
     assert d.trace["window_opened_on"] == [] and abs(d.emitted.vy - 2.0) < 1e-9, \
         (d.trace, d.emitted)
+    # The default "cap_all": a fresh Shield, and a flight back in on its own,
+    # leave at the cap too.
+    fresh = Shield(load_policy(SURVEY), now=lambda: clock[0])
+    df = fresh.filter(inside, crawl, t=2.5)
+    assert df.trace["window_opened_on"] == [] and df.trace["escape_at_cap"] == ["nfz-school"], \
+        df.trace
+    assert abs(df.emitted.vy - 4.0) < 1e-9, df.emitted
+    clock[0] = MON_0729_58 + timedelta(seconds=3.6)
+    d = fresh.filter(State(x=60.0, y=29.0, up=15.0), crawl, t=3.6)
+    assert abs(d.emitted.vy - 4.0) < 1e-9, d.emitted
 
 
 def test_a_refused_cap_escape_flies_the_fastest_speed_that_re_checks_clean():
@@ -450,8 +466,15 @@ def test_the_cap_escape_is_judged_out_of_the_ring_then_braked_to_a_stop():
     assert d.fsm_state_after == "Normal", (d.fsm_state_after, d.fsm_edge)          # was Brake [X1]
     assert sh._check(near, Action4D(vx=4.0)) == []
     assert sh._check(near, Action4D(vx=2.0)) == []
-    fresh = Shield(load_policy(SURVEY), now=lambda: clock[0])
+    fresh = Shield(load_policy(SURVEY), now=lambda: clock[0], recovery_law="cap")
     assert [v.rule_id for v in fresh._check(near, Action4D(vx=4.0))] == ["corridor-survey-route"]
+    # Since 2026-11-06 the default law ("cap_all") flies every escape from a
+    # static hard zone's ring at the cap, judged as flown, whether or not
+    # the Shield saw the zone open: the fresh Shield's 4 m/s stops at 74.07
+    # as well, and the corridor holds.
+    fresh_all = Shield(load_policy(SURVEY), now=lambda: clock[0])
+    assert fresh_all.recovery_law == "cap_all"
+    assert fresh_all._check(near, Action4D(vx=4.0)) == []
     with sh._scope(sh._new_tick(None)):
         assert sh._shaped_escape(near, BRAKE) is None
         assert sh._shaped_escape(near, Action4D(vx=-1.0)) is None      # not leaving east
