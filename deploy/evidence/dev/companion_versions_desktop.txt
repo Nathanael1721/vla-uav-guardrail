@@ -1,0 +1,17 @@
+image_os=ubuntu 24.04
+ros_distro=jazzy
+ros_setup=/opt/ros/jazzy/setup.bash
+python[python3]=3.12.3
+python[/opt/venv/bin/python]=3.12.3
+deb[ros-jazzy-rclpy]=7.1.12-1noble.20260912.162354
+deb[ros-jazzy-mavros]=2.16.0-1noble.20260927.165620
+deb[ros-jazzy-mavros-extras]=2.16.0-1noble.20260927.172724
+deb[ros-jazzy-rmw-cyclonedds-cpp]=2.2.4-1noble.20260911.095700
+deb[ros-jazzy-rosbag2-storage-mcap]=0.26.11-1noble.20260911.143733
+mavlink-routerd=mavlink-router version v4
+pip[pydantic]=2.13.4
+pip[shapely]=2.1.2
+pip[numpy]=1.26.4
+pip[PyYAML]=6.0.1
+pip[Jinja2]=3.1.2
+pip[cryptography]=41.0.7

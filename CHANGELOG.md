@@ -72,6 +72,32 @@ Not flown: the shakedown on the hil rig is the user's. Tests:
 `tests/test_sweep.py`, `test_sitl_rails.py`, `test_mavlink_adapter.py`,
 `test_kpi_report.py`, `test_harnesstruth_bundles.py`.
 
+### 2026-11-06 (dev images) — the dev topology flown in containers for the first time; the same companion image definition on the desktop and the Orin
+
+#### Flown
+- `dev_compose_01`: deploy/compose/docker-compose.dev.yml on Docker Desktop,
+  every service in a container built on the desktop: ArduCopter 4.5.7 SITL
+  (`vlaguard/sitl:copter-4.5.7`, ae721bdc), mavlink-router, MAVROS 2 and the
+  mission (`vlaguard/companion:jazzy` amd64, aad0b268). Code 30667cc (clean),
+  the default signed bundle (fase3-sim-demo 0.1.3), topology `dev` from the
+  evidence; P0 escape 0.0; refused as KPI evidence because a dev run needs
+  the PI's written waiver, as the rule says. The same first-tick escalation
+  as hil_smoke_03. Video `demo/out/dev_compose_01/dev_compose_01_track.mp4`.
+
+#### Recorded
+- `deploy/evidence/hil/images.txt`: the companion image built natively on
+  the AGX Orin (arm64, 8938f2d5) and on the desktop (amd64, aad0b268) from the
+  same Dockerfile, and the desktop's SITL image. Both companion builds carry
+  the same OS, ROS distribution, Python 3.12.3, mavlink-router and pip set;
+  only the Debian build stamps of the architectures differ
+  (`deploy/evidence/dev/companion_versions_desktop.txt` against
+  `deploy/evidence/hil/companion_versions.txt`).
+- The desktop's first build attempt of the companion image failed on
+  Docker Desktop's DNS (auth.docker.io: no such host); it resolved on retry.
+- docs/FINAL-REPORT-outline.md: ARCH-11, ARCH-28 and X-08 to DONE (flight is
+  the same image with flight.env, waiting on ARCH-14's waiver). 62 DONE,
+  67 PARTIAL, 6 DRIFT, 1 MISSING.
+
 ### 2026-11-06 (contract) — ten more items closed on the hil evidence and by small conformance fixes; the per-build CI on Python 3.12 finds a cross-version determinism bug
 
 #### Changed
