@@ -59,7 +59,23 @@ WHAT IT RECORDS (demo/out/<tag>/), beside the adapter's adapter_log.jsonl
                     the items uploaded and read back, every in-flight
                     replacement / update with its timings and read-back.
   policy_g<N>.json, csp_g<N>.json, events.jsonl  (guardrail.replay.EpisodeRecord)
-  metrics.json      the mission's outcome and counts, the hot-apply summary.
+  metrics.json      the mission's outcome and counts, the hot-apply summary,
+                    the policy hash at take-off and the final one, the seed,
+                    `hil_evidence` (the MAVROS chain, the autopilot's own
+                    version, the host, the link) and `topology` (with
+                    `topology_refused` when the evidence did not hold).
+  manifest.json     the grant's six fields (WP4-12), as every other rail
+                    writes them (since 2026-11-06; mission_wp_20261103d and
+                    mission_wp_20261104 have none): code_revision;
+                    vla_model_hash NO_VLA (no VLA flies this style);
+                    policy_hash, the hash in force at the end (the last
+                    generation after a hot-apply, which the replay pack binds
+                    to; the take-off hash is metrics' and policy_g0.json's);
+                    random_seed from --seed; sim_speedup read from the
+                    autopilot over MAVROS's parameter service, never a
+                    literal; topology from the evidence
+                    (guardrail.manifest.detect_topology), the same evidence
+                    the GUIDED Shield node gathers (sitl/mavros_evidence.py).
 
 WHAT IT IS NOT
 
@@ -73,7 +89,7 @@ WHAT IT IS NOT
 Run (normally through sitl/run_ros2_demo.sh with STYLE=mission):
 
     ~/venv-ros/bin/python sitl/ros2_mission_node.py --tag T --waypoints "0,12;0,30" \\
-        [--bundle B] [--speed 3] [--hotapply-port 8071] [--max-s 120]
+        [--bundle B] [--speed 3] [--hotapply-port 8071] [--max-s 120] [--seed 0]
 """
 from __future__ import annotations
 
@@ -92,11 +108,14 @@ for _p in (ROOT, ROOT / "sitl"):
 
 from guardrail import State                                              # noqa: E402
 from guardrail.compiler import ConstraintCompiler                        # noqa: E402
-from guardrail.manifest import collect_host_evidence                     # noqa: E402
+from guardrail.manifest import NO_VLA                                    # noqa: E402
 from guardrail.replay import EpisodeRecord, rail_shield, rule_clock      # noqa: E402
 from mavlink_adapter_node import (FIRST_WAYPOINT_SEQ, TOPIC_MISSION,     # noqa: E402
                                   TOPIC_MISSION_UPDATE, TOPIC_MODE_REQUEST,
                                   TOPIC_STATUS, XYArgumentParser)
+from mavros_evidence import (get_params, initial_evidence,              # noqa: E402
+                             note_mavros_state, poll_autopilot_version,
+                             poll_sim_speedup, record_link, topology_manifest)
 
 TICK_S = 0.1
 MAX_S = 180.0
@@ -206,6 +225,34 @@ def check_plan(shield, home: tuple[float, float, float],
     return out, legs
 
 
+def write_run_records(out: Path, metrics: dict, *, policy_hash: str, seed: int,
+                      sim_speedup: float | None, evidence: dict,
+                      warn=None) -> dict:
+    """The mission's end-of-run records: manifest.json - the grant's six
+    fields (WP4-12) - beside metrics.json, and `topology` in metrics (with
+    `topology_refused` when the evidence did not hold). Returns the manifest.
+
+    The manifest is the GUIDED Shield node's (mavros_evidence.topology_manifest:
+    the topology the evidence supports, else the rail's own label and the
+    refusal recorded), with NO_VLA as the model: the mission style has no VLA,
+    the plan is given on the command line. `policy_hash` is the hash in force
+    at the end (the replay pack binds the bundle to it); `sim_speedup` is the
+    autopilot's own SIM_SPEEDUP as read (None -> "unresolved"), never a
+    literal; `seed` is --seed, recorded (nothing in this style draws a random
+    number)."""
+    manifest, refused = topology_manifest(
+        policy_hash=policy_hash, model_id=NO_VLA, seed=seed,
+        sim_speedup=sim_speedup, evidence=evidence, warn=warn)
+    if refused is not None:
+        metrics["topology_refused"] = refused
+    metrics["topology"] = manifest["topology"]
+    (out / "metrics.json").write_text(json.dumps(metrics, indent=1, default=str) + "\n",
+                                      encoding="utf-8")
+    (out / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n",
+                                       encoding="utf-8")
+    return manifest
+
+
 try:
     import rclpy
     from rclpy.node import Node
@@ -215,7 +262,9 @@ try:
     from std_msgs.msg import String
     from mavros_msgs.msg import State as MavState
     from mavros_msgs.msg import StatusText, WaypointList, WaypointReached
-    from mavros_msgs.srv import CommandBool, CommandTOL, SetMode, StreamRate
+    from mavros_msgs.srv import (CommandBool, CommandTOL, SetMode, StreamRate,
+                                 VehicleInfoGet)
+    from rcl_interfaces.srv import GetParameters
     HAVE_ROS = True
 except ImportError:
     HAVE_ROS = False
@@ -284,6 +333,20 @@ if HAVE_ROS:
             self._log_fh = open(out / "flight_log.jsonl", "w", encoding="utf-8", newline="\n")
             self.texts: list[dict] = []
             self.pre: dict = {}
+            # The topology's evidence, gathered from the live system as the
+            # GUIDED Shield node gathers it (sitl/mavros_evidence.py); no
+            # separate VLA node flies this style, so no vla_host.
+            self.hil_evidence: dict = initial_evidence(vla_node=False)
+            security = self.hil_evidence.get("ros2_security")
+            if security is not None:
+                self.get_logger().info(
+                    f"SROS 2 {security['strategy']}: enclave {security['enclave']}, "
+                    f"identity CA {security['identity_ca_sha256']}")
+            # SIM_SPEEDUP as the autopilot reports it (read in bring_up, before
+            # the tick timer: a service call from a timer callback never
+            # completes), and the policy in force when take-off was accepted.
+            self.sim_speedup: float | None = None
+            self.takeoff_policy: dict | None = None
 
             self.create_subscription(PoseStamped, "/mavros/local_position/pose", self._on_pose,
                                      qos_profile_sensor_data)
@@ -302,6 +365,11 @@ if HAVE_ROS:
             self.cli_arm = self.create_client(CommandBool, "/mavros/cmd/arming")
             self.cli_tol = self.create_client(CommandTOL, "/mavros/cmd/takeoff")
             self.cli_rate = self.create_client(StreamRate, "/mavros/set_stream_rate")
+            self.cli_param = self.create_client(GetParameters,
+                                                "/mavros/param/get_parameters")
+            self.cli_mavros_param = self.create_client(GetParameters,
+                                                       "/mavros/get_parameters")
+            self.cli_info = self.create_client(VehicleInfoGet, "/mavros/vehicle_info_get")
             self.get_logger().info(
                 f"mission-style Shield: policy {self.policy.policy_id} "
                 f"{self.policy.policy_hash}, {len(self.plan)} waypoint(s) at {self.alt:g} m")
@@ -318,6 +386,7 @@ if HAVE_ROS:
         def _on_state(self, msg) -> None:
             self.connected = bool(msg.connected)
             self.armed = bool(msg.armed)
+            note_mavros_state(self.hil_evidence, msg.connected)
             if msg.mode != self.mode:
                 self.rec.event("mode", t=self._t(), mode=msg.mode, previous=self.mode,
                                armed=self.armed)
@@ -379,6 +448,40 @@ if HAVE_ROS:
             fut = client.call_async(req)
             rclpy.spin_until_future_complete(self, fut, timeout_sec=timeout)
             return fut.result()
+
+        # The MAVROS chain's evidence: sitl/mavros_evidence.py's readers, the
+        # GUIDED Shield node's, handed this node's service calls, spin and
+        # clock.
+
+        def _get_params(self, client, names: list[str]) -> dict:
+            return get_params(self._call, client, GetParameters.Request, names)
+
+        def _spin_evidence(self) -> None:
+            rclpy.spin_once(self, timeout_sec=0.5)
+
+        def read_sim_speedup(self) -> float | None:
+            """SIM_SPEEDUP from the autopilot over MAVROS's parameter service,
+            or None - never assumed (mavros_evidence.poll_sim_speedup)."""
+            return poll_sim_speedup(
+                lambda names: self._get_params(self.cli_param, names),
+                self._spin_evidence, self.hil_evidence, now=time.time,
+                warn=self.get_logger().warn)
+
+        def read_autopilot_version(self) -> None:
+            """AUTOPILOT_VERSION as MAVROS received it; the setup script's
+            banner only as a labelled fallback
+            (mavros_evidence.poll_autopilot_version)."""
+            poll_autopilot_version(
+                lambda: self._call(self.cli_info, VehicleInfoGet.Request(
+                    sysid=0, compid=0, get_all=False), 5.0),
+                self._spin_evidence, self.hil_evidence, now=time.time,
+                warn=self.get_logger().warn)
+
+        def read_link(self) -> None:
+            """MAVROS's fcu_url and where the MAVLink actors run
+            (mavros_evidence.record_link)."""
+            record_link(self._get_params(self.cli_mavros_param, ["fcu_url"]).get("fcu_url"),
+                        self.hil_evidence)
 
         def _set_mode_direct(self, mode: str, why: str) -> bool:
             """Bring-up modes (GUIDED, AUTO) straight to MAVROS: the adapter
@@ -451,6 +554,13 @@ if HAVE_ROS:
                 rclpy.spin_once(self, timeout_sec=0.5)
             if not self.connected:
                 raise RuntimeError("mavros never connected to FCU")
+            # The autopilot's own name and the link, as the GUIDED Shield
+            # node reads them after connect: the manifest's topology is
+            # judged on them.
+            self.read_autopilot_version()
+            log.info(f"autopilot: {self.hil_evidence.get('ardupilot_version')} "
+                     f"({self.hil_evidence.get('ardupilot_version_source')})")
+            self.read_link()
             self._call(self.cli_rate, StreamRate.Request(stream_id=0, message_rate=10,
                                                          on_off=True))
             # Pre-execution: the plan against the policy, the speed against
@@ -497,6 +607,11 @@ if HAVE_ROS:
             while time.time() < t_end:
                 r = self._call(self.cli_tol, CommandTOL.Request(altitude=self.alt))
                 if r and r.success:
+                    # The policy at take-off (metrics.json), under the lock
+                    # the REST hot-apply thread swaps the rules under.
+                    with self._lock:
+                        self.takeoff_policy = {"policy_hash": self.policy.policy_hash,
+                                               "generation": self.policy.generation}
                     break
                 time.sleep(2)
             else:
@@ -524,6 +639,12 @@ if HAVE_ROS:
                                    f"{ups[-1] if ups else 'no status from the adapter'}")
             log.info(f"mission uploaded: {ups[-1].get('items')} items, read back "
                      f"{ups[-1].get('read_back')}, match {ups[-1].get('match')}")
+            # Read here, not in _finish(): _finish runs from the tick timer,
+            # and a service call from a timer callback is a nested spin that
+            # never completes (the GUIDED Shield node reads it at take-off
+            # altitude for the same reason).
+            self.sim_speedup = self.read_sim_speedup()
+            log.info(f"SIM_SPEEDUP read from autopilot: {self.sim_speedup}")
 
         def start(self) -> None:
             self.mission_t0 = time.monotonic()
@@ -672,9 +793,15 @@ if HAVE_ROS:
                 "outcome": why, "reached_last_waypoint": reached,
                 "mission_s": round(now or 0.0, 3), "ticks": self.tick_no,
                 "policy_id": self.policy.policy_id,
-                "policy_hash_at_takeoff": self.policy_source.get("loaded_policy_hash"),
+                # The hash in force when take-off was accepted (None: the run
+                # never took off) and at the end; the manifest carries the
+                # final one (the last generation, which the replay pack binds
+                # to). Until 2026-11-06 the "take-off" hash was the loaded one.
+                "policy_hash_at_takeoff": (self.takeoff_policy or {}).get("policy_hash"),
+                "generation_at_takeoff": (self.takeoff_policy or {}).get("generation"),
                 "policy_hash_final": self.policy.policy_hash,
                 "generation_final": self.policy.generation, "policy_source": self.policy_source,
+                "seed": self.args.seed,
                 "rule_clock": self.clock_record,
                 "waypoints_planned": len(self.plan),
                 "pre_execution_repairs": sum(1 for g in self.pre.get("legs", [])
@@ -691,16 +818,24 @@ if HAVE_ROS:
                 "hot_apply": None if self.hot is None else {
                     "events": self.hot.applied, "endpoint": self.hot.endpoint},
                 "position_unsafe_ticks": None,
-                "host": collect_host_evidence(),
+                # Beside the manifest, which is exactly the grant's six fields
+                # (the host's own evidence is part of it since 2026-11-06; it
+                # was metrics' `host` before).
+                "hil_evidence": self.hil_evidence,
             }
             with open(self.out / "flight_log.jsonl", encoding="utf-8") as fh:
                 rows = [json.loads(line) for line in fh if line.strip()]
             metrics["position_unsafe_ticks"] = sum(1 for r in rows if r.get("unsafe"))
             metrics["shield_ms_max"] = max((r["shield_ms"] for r in rows), default=None)
-            (self.out / "metrics.json").write_text(json.dumps(metrics, indent=1, default=str)
-                                                   + "\n", encoding="utf-8")
+            # manifest.json beside metrics.json, and the topology in metrics.
+            manifest = write_run_records(
+                self.out, metrics, policy_hash=self.policy.policy_hash, seed=self.args.seed,
+                sim_speedup=self.sim_speedup, evidence=self.hil_evidence,
+                warn=self.get_logger().warn)
             self.get_logger().info(f"mission end: {why}; {len(upd)} in-flight update(s), "
-                                   f"{len(ok_updates)} confirmed")
+                                   f"{len(ok_updates)} confirmed; manifest: topology "
+                                   f"{manifest['topology']}, sim_speedup "
+                                   f"{manifest['sim_speedup']}, code {manifest['code_revision']}")
 
 
 def make_parser() -> argparse.ArgumentParser:
@@ -720,6 +855,10 @@ def make_parser() -> argparse.ArgumentParser:
     ap.add_argument("--target", default=None, metavar="X,Y")
     ap.add_argument("--command", default=None)
     ap.add_argument("--speed", type=float, default=None)
+    ap.add_argument("--seed", type=int, default=0,
+                    help="recorded in the manifest (random_seed), as the GUIDED "
+                         "Shield node's; nothing in the mission style draws a "
+                         "random number")
     ap.add_argument("--max-s", type=float, default=MAX_S)
     ap.add_argument("--clock-start", default=None)
     ap.add_argument("--clock-tz", default=None)

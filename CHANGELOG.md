@@ -75,6 +75,132 @@ shipped change and recorded as one.
   test's own 4.0 s (4 quiet, 4 loaded); the old assertion failed 2 of those
   8. The whole file passes 14/14.
 
+### 2026-11-06 (mission manifest) — the mission-style ROS 2 node writes the grant's six-field manifest; one module gathers the MAVROS evidence for both ROS 2 nodes
+
+#### Changed
+- **`sitl/ros2_mission_node.py` writes `manifest.json`** beside
+  `metrics.json` (WP4-12), as every other rail does. Its run folders until
+  now (`mission_wp_20261103d`, `mission_wp_20261104`) carry no code_revision,
+  vla_model_hash, policy_hash, random_seed, sim_speedup or topology; the
+  revision of the 4 Nov re-flight is known only from the flight driver's log.
+  The six fields:
+  - `vla_model_hash`: `none:hand-written-controller`
+    (`guardrail.manifest.NO_VLA`): no VLA flies the mission style.
+  - `policy_hash`: the hash in force at the end, the last generation after a
+    hot-apply, as the GUIDED Shield node writes it. It is the hash the replay
+    pack binds the bundle to: `python -m guardrail.replay pack` takes the last
+    generation's policy and refuses a manifest naming another. metrics.json
+    keeps both hashes: `policy_hash_at_takeoff` (now the hash when take-off
+    was accepted, beside `generation_at_takeoff`; until now it was the loaded
+    hash) and `policy_hash_final`.
+  - `random_seed`: the new `--seed` (default 0, as the Shield node's).
+    Nothing in the mission style draws a random number.
+  - `sim_speedup`: SIM_SPEEDUP read from the autopilot over MAVROS's
+    parameter service at the end of bring-up, never a literal; `unresolved`
+    when it never answers. It is read before the tick timer starts, because
+    `_finish` runs from that timer and a service call there never completes.
+  - `topology`: the label the evidence supports (`detect_topology`). When the
+    evidence does not hold, the rail's own label is stamped and the refusal
+    is recorded in metrics `topology_refused`, as on the Shield node.
+
+  metrics.json gains `topology`, `seed` and `hil_evidence`: the MAVROS
+  chain, the autopilot's AUTOPILOT_VERSION, MAVROS's link and the host. The
+  host evidence was metrics `host` before.
+- **`sitl/mavros_evidence.py`** (new) holds the evidence gathering, factored
+  out of `sitl/ros2_shield_node.py`. It is ROS-free:
+  - the initial evidence: ROS distro, the MAVROS chain's fields, the host,
+    SROS 2 when on, and `vla_host` only for a node flown with a separate VLA
+    node;
+  - the /mavros/state note and the GetParameters decoding;
+  - SIM_SPEEDUP polling, with the hardware-autopilot reading;
+  - AUTOPILOT_VERSION, with the setup banner as a labelled fallback;
+  - the link, and the MAVLink processes on this host;
+  - the manifest, with its topology fallback.
+
+  Both nodes keep their method names (`read_sim_speedup`,
+  `read_autopilot_version`, `read_link`). They are now wrappers that hand the
+  readers the node's own service calls, spin and clock. The Shield node makes
+  the same calls with the same timeouts and writes the same records.
+
+#### Tests
+- `tests/test_sitl_rails.py` 57/57 (5 new):
+  - the readers on canned MAVROS answers: the refill race (0.0, then 1.0), no
+    answer (None, never 1.0), a hardware autopilot, AUTOPILOT_VERSION, the
+    banner fallback, both fcu_url sources;
+  - both nodes use the module and keep no copy of it;
+  - the mission node takes the Shield node's `--seed`;
+  - a mission refused before MAVROS connected still writes its manifest: the
+    rail's label, `topology_refused`, sim_speedup `unresolved`;
+  - the real MissionShieldNode on the stand-in ROS stack of
+    `tests/test_railinputs_node.py`. It is brought up against a stand-in
+    MAVROS, flown under a zone hot-applied after take-off, and ended.
+    manifest.json holds the six fields in the grant's order: NO_VLA, seed 7,
+    sim_speedup 1.0 after MAVROS's 0.0, topology dev (also in metrics), and
+    the final hash. The final hash is the last generation's and differs from
+    the take-off hash in metrics. The replay bundle binds by manifest, not
+    "unverified".
+
+  On the 0029a43 node the stand-in test fails with "the mission node wrote no
+  manifest.json". The pure tests fail there too: there is no
+  `write_run_records` and no `--seed`.
+- Two source checks follow the moved code. In test_sitl_rails, the
+  autopilot-version decoder is now in `mavros_evidence.py`, and both nodes
+  ask VehicleInfoGet. In test_ros2_package 17/17, "SROS 2 only when on" is
+  checked through `initial_evidence`, for both nodes.
+- test_mavlink_adapter 38/38, test_ros2_vla_bridge 47/47,
+  test_railinputs_manifest 6/6. test_railinputs_node 13/16 (3 SKIP: no
+  uvicorn, as in the lab run). test_manifest 67/68 and test_deploy_configs
+  68/69 (1 SKIP each: no reference checkout in a worktree).
+- The whole list (`tools/ci_local.py`), each run alone on the machine: in
+  the worktree at 26ba907, 141/141 files, 3491/3630 tests (the rest SKIP:
+  lab-only data); in the main checkout at b91dbd8, 141/141 files, 3609/3630
+  tests. Both: the claim scan rc 0 and the smoke profile rc 0 (64 episodes,
+  fail-safe trigger correctness 0.984). Records:
+  `docs/data/ci_local/26ba9074fdf1.json`, `docs/data/ci_local/b91dbd838dc6.json`.
+
+#### Flown
+- **`mission_wp_20261106b`**, from the main checkout at a3c36a5 in WSL:
+  the 4 Nov run `mission_wp_20261104` flown again (STYLE=mission,
+  GCS_BACKSTOP=1, the bundle fase3-sim-demo 0.1.3, waypoints (0, 30) then
+  (30, 30), 6 m/s asked; the harness spawned `nfz-hot-1` across the first
+  leg at 1.5 s and switched it off at 12 s). Driver:
+  `demo/out/_drivers/fly_mission_1106.sh`. Replay video:
+  `demo/out/mission_wp_20261106b/mission_wp_20261106b_track.mp4` (575 KB,
+  28 s).
+- Its `manifest.json`: code_revision `a3c36a51e28c` (a clean tree, no
+  "-dirty"), vla_model_hash `none:hand-written-controller`, policy_hash the
+  final generation's (generation 2, `sha256:eeccc182...`), random_seed 0,
+  sim_speedup 1.0, topology `dev`. metrics.json: topology `dev` with no
+  refusal; `policy_hash_at_takeoff` `sha256:1a777a0f...` (generation 0, the
+  bundle's) beside the final hash. The evidence names ArduCopter V4.5.7
+  (2a3dc4b7) from AUTOPILOT_VERSION, autopilot_kind `sitl`, MAVROS's link
+  `udp://:14555@` (the launch script's), and the local SITL, MAVROS and
+  mavlink-routerd processes.
+- The evidence reads cost no flight time: the autopilot's version was read
+  8 ms after the hot-apply listener came up, SIM_SPEEDUP 4 ms after the
+  mission's read-back. The end-of-run records, the git revision included,
+  took 1.1 s after the LAND request.
+- The replay bundle now binds its policy by the manifest
+  (`policy_binding: manifest`, generations 0-2, bag included);
+  `mission_wp_20261104`'s says `unverified`.
+- The flight itself as on 4 Nov:
+  - item 2 replaced by a held point at (0.0, 15.2) 90 ms after the zone's
+    hot-apply (98 ms on 4 Nov): "leg to (0, 30) breaks nfz-hot-1 at
+    16.8 m";
+  - while generation 1 was in force (105 ticks) the aircraft stayed at
+    y <= 15.39 m; the zone's margin begins at 17 m;
+  - item 2 written back after 2.1 s of a legal leg, both updates confirmed
+    by read-back;
+  - item 2 reached at 20.6 s, mission end at 28.0 s (28.1 s on 4 Nov);
+  - no tick with the position illegal; the speed was clamped from 6 to the
+    policy's 4 m/s.
+
+#### Limits
+- Not KPI-grade: the `dev` topology, desktop SITL. The mission style still
+  writes no kpi.json and no Shield audit, and runs no escalation FSM.
+- `demo/pas_ardupilot/mavros_link.py` (the Project AirSim + ArduPilot rail)
+  still keeps its own copy of these MAVROS readers.
+
 ### 2026-11-04 (re-flown) — the 3 November ROS 2 rail runs flown again from the main checkout, through Shield.filter_body; the re-flights found three WGS84 regressions, fixed
 
 #### Flown

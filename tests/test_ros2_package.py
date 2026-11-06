@@ -599,8 +599,18 @@ def test_a_flight_records_sros2_only_when_it_is_on():
     assert ros2_security_evidence({"ROS_SECURITY_ENABLE": "true", "ROS_SECURITY_KEYSTORE": str(ks),
                                    "ROS_SECURITY_ENCLAVE_OVERRIDE": "/guardrail/safety_shield"}
                                   )["files_present"] is False
-    src = (ROOT / "sitl" / "ros2_shield_node.py").read_text(encoding="utf-8")
-    assert "ros2_security_evidence()" in src and 'hil_evidence["ros2_security"]' in src
+    # Both ROS 2 rail nodes start their evidence from sitl/mavros_evidence.py's
+    # initial_evidence (2026-11-06), which records it only when it is on.
+    if str(ROOT / "sitl") not in sys.path:
+        sys.path.insert(0, str(ROOT / "sitl"))
+    from mavros_evidence import initial_evidence
+    host = {"host_arch": "x86_64", "hostname": "pc"}
+    assert "ros2_security" not in initial_evidence(vla_node=True, environ={}, host=host)
+    assert initial_evidence(vla_node=False, environ=on, host=host)["ros2_security"] \
+        == ros2_security_evidence(on)
+    for node in ("ros2_shield_node.py", "ros2_mission_node.py"):
+        src = (ROOT / "sitl" / node).read_text(encoding="utf-8")
+        assert "initial_evidence(vla_node=" in src and 'hil_evidence.get("ros2_security")' in src, node
     # Against a real certificate (where `cryptography` can make one), the
     # fingerprint is the one gen-pki prints for the lab CA.
     from guardrail.bundle import HAVE_CRYPTO
