@@ -555,7 +555,9 @@ def test_x7_in_loiter_judges_the_aircraft_not_the_request():
     where a clean request is the pilot leaving on its own - so it never
     fired, and the aircraft was handed back on the far side. In Loiter nobody
     flies the request: X7 now judges the aircraft's position. Failed before
-    2026-11-02 (no X7; G8)."""
+    2026-11-02 (no X7; G8). Since 2026-11-07 the clock starts on the first
+    tick past the limit (t = 0.3 s; at 0.2 s the depth is 0.0, on the ring),
+    so X7 fires at 2.3 s (was 2.2 s)."""
     def fly(cfg):
         f = EscalationFSM(cfg)
         to_loiter_via_g3(f)
@@ -568,7 +570,7 @@ def test_x7_in_loiter_judges_the_aircraft_not_the_request():
                 break
         return edges, o
     edges, o = fly(FSMConfig())
-    assert edges == [(2.2, "X7")], edges
+    assert edges == [(2.3, "X7")], edges
     assert "the autopilot holds" in o.reason, o.reason
     assert f"{o.state.value}" == "RTL" and o.set_mode == "RTL"
     edges, _ = fly(FSMConfig(loiter_x67="request", loiter_clear="violation_free"))
@@ -734,7 +736,11 @@ def test_x7_a_recovery_losing_ground_goes_home_before_t():
     """`wind-beyond-authority` (5 m/s tailwind, 4 m/s cap): once the Shield's
     repairs are trusted, the wind carries the aircraft into the zone and
     through its 16 m in about 3.5 s - under X6's T. X7 fires once the
-    illegal depth has GROWN for T_recover while the Shield recovers."""
+    illegal depth has GROWN for T_recover while the Shield recovers.
+
+    Since 2026-11-07 the clock starts on the first tick PAST the limit
+    (depth > 0): the tick at t = 0, depth 0.0, is on the ring, not past
+    it, so X7 fires one tick later than it did (2.1 s, was 2.0 s)."""
     f = EscalationFSM()
     edges = []
     for t in clock(40):
@@ -743,7 +749,7 @@ def test_x7_a_recovery_losing_ground_goes_home_before_t():
                    unsafe_depth_m=depth)
         if o.edge:
             edges.append((round(t, 1), o.edge))
-    assert edges == [(0.0, "G1"), (2.0, "X7")], edges
+    assert edges == [(0.0, "G1"), (2.1, "X7")], edges
     assert f.summary()["outcome_label"] == "RTL_triggered"
     # Noise around a steady depth is not losing ground.
     f = EscalationFSM()
@@ -761,8 +767,12 @@ def test_x7_is_not_fooled_by_position_noise_on_a_working_recovery():
     0.3 m, 176 of 200 at 0.3 m/s. It now fits a least-squares slope over the
     window and needs it above x6_min_escape_mps at two standard errors and a
     fitted rise of x7_min_rise_m. 50 seeds each: no X7 on a working
-    recovery; the 3 m/s push-in still fires X7 at 2.0 s through the same
-    noise. Failed on the two-sample X7."""
+    recovery; the 3 m/s push-in still fires X7 T_recover after the position
+    went past the limit for good, through the same noise (2.0 s from t = 0
+    until 2026-11-07; since then the clock runs only on ticks whose depth is
+    above 0.0, and the noise clamped at the ring gives a few such 0.0 ticks
+    in the first 0.3 s, each restarting it, as a legal tick does). Failed on
+    the two-sample X7."""
     import random as _r
     for sigma, v in ((0.3, 0.5), (0.3, 0.3), (0.2, 0.2)):
         for seed in range(50):
@@ -776,14 +786,17 @@ def test_x7_is_not_fooled_by_position_noise_on_a_working_recovery():
     for seed in range(50):
         rng = _r.Random(seed)
         f = EscalationFSM()
-        edge = None
+        edge = since = None
         for t in clock(40):
+            d = max(0.0, 3.0 * t + rng.gauss(0.0, 0.3))
+            since = (since if since is not None else t) if d > 0.0 else None
             o = f.tick(t, "repaired", [hit()], SMALL, stop_illegal=True,
-                       unsafe_depth_m=max(0.0, 3.0 * t + rng.gauss(0.0, 0.3)))
+                       unsafe_depth_m=d)
             if o.edge in ("X6", "X7"):
                 edge = (round(t, 1), o.edge)
                 break
-        assert edge == (2.0, "X7"), (seed, edge)
+        assert since is not None and since <= 0.5 + 1e-9, (seed, since)
+        assert edge == (round(since + 2.0, 1), "X7"), (seed, since, edge)
 
 
 def test_x7_needs_a_rise_beyond_its_floor_and_a_slope_beyond_the_noise():
@@ -2328,6 +2341,87 @@ def test_a_monitor_only_or_relaxed_rule_flown_as_commanded_is_not_a_failed_repai
     row_watch = {"t": 0.0, "violations": [v_watch.model_dump()], "repairs": [],
                  "emitted_violations": [v_watch.model_dump()]}
     assert tick_input_from_row(row_watch, pol).outcome == "clean"
+
+
+def test_a_stop_illegal_only_in_the_forecast_is_not_an_illegal_position():
+    """REGRESSION (2026-11-07, dyn-nfz-rotate-spin at 3, 6 and 9 deg/s on the
+    ArduPilot response: false fail-safes by X6, no rubric clause holding).
+    `stop_illegal` is "a stop here breaks a hard rule within the lookahead";
+    where the position itself is past no limit (unsafe depth 0.0: a bar
+    sweeping toward a held aircraft) X6 and X7 read a depth that cannot
+    fall, so "no progress" held by construction and X6 fired at T. Now their
+    clock runs only while the position is PAST a hard limit (depth above
+    0.0, or unknown), and Loiter's hand-back (G8) asks the same of the
+    position. Once the position is past the limit, the clock starts there
+    and X6 still fires T later on no progress; an unknown depth still
+    counts."""
+    # Loiter, request clean, a stop illegal only in the forecast: handed back
+    # at T_recover (was: never acceptable, X6 at 5.2 s).
+    f = EscalationFSM()
+    to_loiter_via_g3(f)
+    edges = []
+    for t in clock(100, t0=0.2):
+        o = f.tick(t, stop_illegal=True, unsafe_depth_m=0.0)
+        assert o.setpoint != "brake", (round(t, 1), o.reason)
+        if o.edge:
+            edges.append((round(t, 1), o.edge))
+            break
+    assert edges == [(2.2, "G8")], edges
+    # Brake, a hard rule repaired on every tick, the same forecast-only
+    # stop: no X6 in 10 s (was X6 at 5.0 s).
+    f = EscalationFSM(FSMConfig(t_recover_s=10.0))
+    for t in clock(100):
+        o = f.tick(t, "repaired", [hit()], SMALL, stop_illegal=True, unsafe_depth_m=0.0)
+        assert o.edge in (None, "G1"), (round(t, 1), o.reason)
+        assert o.record["stop_illegal_s"] is None, o.record
+    # The position goes past the limit at 6.0 s and stays 2 m deep: X6 at
+    # 11.0 s, T after it got there - not at once on a spell that began at 0.
+    f = EscalationFSM(FSMConfig(t_recover_s=10.0))
+    edges = []
+    for t in clock(160):
+        d = 0.0 if t < 6.0 - 1e-9 else 2.0
+        o = f.tick(t, "repaired", [hit()], SMALL, stop_illegal=True, unsafe_depth_m=d)
+        if o.edge:
+            edges.append((round(t, 1), o.edge))
+    assert edges == [(0.0, "G1"), (11.0, "X6")], edges
+    # An unknown depth is no evidence of progress: it still counts.
+    f = EscalationFSM()
+    edges = []
+    for t in clock(60):
+        o = f.tick(t, "repaired", [hit()], SMALL, stop_illegal=True, unsafe_depth_m=None)
+        if o.edge:
+            edges.append((round(t, 1), o.edge))
+    assert edges == [(0.0, "G1"), (5.0, "X6")], edges
+
+
+def test_an_over_theta_size_that_projects_no_violated_rule_is_not_distrusted():
+    """REGRESSION (2026-11-07, corridor-drift-angles at 8 m/s, -30 deg, on the
+    ArduPilot response: a missed fail-safe, E5 on both vehicles). The speed
+    cap was the only rule the request broke; CorridorReturn's own "leaves
+    within one lookahead" test, along the nearest leg, also moved the clamped
+    action by more than theta for a corridor the request does not break (a
+    dog-leg's corner). That size is no repair of a violation, yet the tick
+    abandoned projection - a stop, held in Brake for the whole episode,
+    since nothing G3 could name was over theta. Theta now judges the
+    repairs of the rules being projected: G1, the Shield's action passed,
+    and the record keeps the measured `theta_exceeded` beside
+    `theta_unattributed`. The first over-theta repair of a projected hard
+    rule still escalates (G3)."""
+    kin = RuleHit("kin-caps", "project_fix", "hard", "P1", kinematic=True)
+    f = EscalationFSM()
+    o = f.tick(0.0, "repaired", [kin], BIG)
+    assert o.edge == "G1" and o.setpoint == "pass", o.reason
+    assert o.record["theta_exceeded"] is True and o.record["theta_unattributed"] is True
+    for t in clock(50, t0=0.1):
+        o = f.tick(t, "repaired", [kin], BIG)
+        assert o.state == S.BRAKE and o.setpoint == "pass" and o.edge is None, (t, o.reason)
+    o = f.tick(5.1, "repaired", [kin, hit("nfz-school")], BIG)
+    assert o.edge == "G3" and "nfz-school" in o.reason, o.reason
+    assert "theta_unattributed" not in o.record, o.record
+    # Unchanged where a projected rule carries the size: X1 from Normal.
+    o = EscalationFSM().tick(0.0, "repaired", [kin, hit("ring")], BIG)
+    assert o.edge == "X1" and o.setpoint == "brake", o.reason
+    assert "theta_unattributed" not in o.record, o.record
 
 
 if __name__ == "__main__":

@@ -1674,14 +1674,31 @@ class EscalationFSM:
 
         theta_exceeded = (inp.magnitude.exceeds(cfg)
                           if inp.outcome == "repaired" else None)
-        # The repair cannot be trusted: nothing converged, or it moved the
-        # aircraft further than theta allows (Safety Shield PDF p4).
-        untrusted = inp.outcome == "blocked" or bool(theta_exceeded)
-        # ...and it was a HARD rule being projected, which is what escalates.
+        # The rules being projected: what an untrusted repair is a repair OF.
         # Not a kinematic rule: its clamps always converge and theta never
         # judges them, so it cannot be the repair that was not trusted.
         projected = [h for h in enforced
                      if h.effective_action == "project_fix" and not h.kinematic]
+        # The repair cannot be trusted: nothing converged, or it moved the
+        # aircraft further than theta allows (Safety Shield PDF p4) - the
+        # repair of a violation. A magnitude over theta on a tick that
+        # projects no violated rule (since 2026-11-07) came from an operator
+        # acting on a rule the request does not break - CorridorReturn's
+        # linear "leaves within one lookahead" test along the nearest leg,
+        # which a dog-leg's corner passes - and is no repair of a violation
+        # to distrust. Until then such a tick abandoned projection (a stop)
+        # with nothing G3 could name: corridor-drift-angles at 8 m/s, -30
+        # deg, on the ArduPilot response, braked at (34.6, 6.7) and held
+        # there in Brake for the whole 70 s (the speed cap its only violated
+        # rule), where the rubric expects the fail-safe (E5) and the ideal
+        # vehicle flies on into nfz-school, over theta, G3 and G5. The record
+        # keeps `theta_exceeded` as measured (the KPI's repair-size count
+        # reads it) and says when it judged nothing (`theta_unattributed`);
+        # the edges read `theta_over`, the judged one.
+        theta_over = bool(theta_exceeded and projected)
+        theta_unattributed = bool(theta_exceeded) and not projected
+        untrusted = inp.outcome == "blocked" or theta_over
+        # ...and it was a HARD rule being projected, which is what escalates.
         # A rule whose action is brake (a soft rule capped at brake included)
         # is answered by the stop itself: where a stop is legal the Shield
         # skips projection altogether (shield.py's stop-rule branch: braked,
@@ -1710,8 +1727,22 @@ class EscalationFSM:
             # judges, not to the speed cap that happened to sort first.
             gov = min(projected, key=_governing_key)
 
-        # X6's clock: the position has been illegal on every tick since.
-        if not inp.stop_illegal:
+        # X6's clock: the position has been illegal on every tick since -
+        # PAST a hard limit, which since 2026-11-07 is not the same as "a stop
+        # here breaks a rule": a stop is also illegal where the position is
+        # legal now and a rule reaches it inside the lookahead (a zone
+        # spinning, drifting or opening toward a held aircraft), and there
+        # the depth X6 and X7 read stays 0.0 on every tick, so "not shown to
+        # fall" was true by construction. dyn-nfz-rotate-spin on the
+        # ArduPilot response went home by X6 at 31.0 s on such a spell (26.0-
+        # 31.0 s, depth 0.0 throughout) while the autopilot was flying to a
+        # moved hold point that was legal through the lookahead, and no
+        # rubric clause held (N4). An unknown depth (None) still counts: no
+        # evidence of progress is not evidence of it. A stop that is
+        # illegal is still never streamed (`withheld`), whatever the depth.
+        past_limit = inp.stop_illegal and (inp.unsafe_depth_m is None
+                                           or inp.unsafe_depth_m > 0.0)
+        if not past_limit:
             self._stuck_since = None
             self._depths = []
         else:
@@ -1761,9 +1792,16 @@ class EscalationFSM:
         # 0.3 s with small repairs left Loiter by G8 at 2.0 s and cycled
         # G2 / G8 for 30 s instead of reaching G4
         # (test_n_in_t_still_catches_a_pilot_who_re_violates_faster_than_the_debounce).
+        # "Somewhere legal" is the position PAST no hard limit (`past_limit`,
+        # X6's clock), since 2026-11-07: the hold the aircraft is flying is
+        # the autopilot's, and a stop that breaks a rule only later in the
+        # lookahead (a zone sweeping toward a moved, legal hold point) is the
+        # Shield's to answer once the request is handed back, not a reason
+        # to hold until the timeout. dyn-nfz-rotate-spin on the ArduPilot
+        # response: clean from 29.5 s, never handed back, G5 at 34.1 s.
         starts_now = hard_violated and not self._prev_hard
         acceptable = (not hard_untrusted and strongest not in ("loiter", "RTL", "land")
-                      and not inp.stop_illegal and not starts_now)
+                      and not past_limit and not starts_now)
         if not acceptable:
             self._loiter_ok_since = None
         elif self._loiter_ok_since is None:
@@ -1799,7 +1837,8 @@ class EscalationFSM:
                           else t - self._loiter_ok_since)
 
         target, edge, why = self._decide(inp, t, violated, strongest, gov,
-                                         untrusted, hard_untrusted, theta_exceeded,
+                                         untrusted, hard_untrusted,
+                                         None if theta_exceeded is None else theta_over,
                                          n_in_t, cleared_any, cleared_hard,
                                          hard_violated, stuck_s, progress, losing,
                                          cleared_loiter)
@@ -1897,6 +1936,11 @@ class EscalationFSM:
             record["position_lost"] = inp.position_lost
         if inp.noise_marginal:
             record["noise_marginal"] = True
+        if theta_unattributed:
+            # Over theta, but on a tick that projects no violated rule: no
+            # repair of a violation was distrusted (2026-11-07). Only on such
+            # ticks, so every other record is as it was.
+            record["theta_unattributed"] = True
         if before == FSMState.LOITER:
             # Loiter's own "cleared" clock (loiter_clear "acceptable",
             # 2026-11-02): the request acceptable and the position legal for
