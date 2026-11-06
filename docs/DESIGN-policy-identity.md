@@ -388,5 +388,11 @@ Measured (6 Nov, read-only, the lab checkout's gitignored stores with this
 code): 36 of its 36 bundles open - 31 flight bundles written under IR
 schema 2.1.0 (8), 3.0.0 (10) and 3.1.0 (13), every signature verified, each
 under the hash its manifest records (24 under the current scheme, 8 under
-their IR 2.x form), and 5 replay bundles (4 tracked, 16-hex; hil_smoke_03) -
-171 rules, every scope absent as written.
+their IR 2.x form), and 5 replay bundles (the 4 legacy ones, 16-hex;
+hil_smoke_03) - 171 rules, every scope absent as written. Every one of the
+405 stored manifests there resolves with this code exactly as with the base
+code (master 30667cc): 392 directly, each to the same id@version and the
+same canonical bytes under the same hash form, and 13 through their own
+generation chain, whose base the label now names as the old version of its
+file (`corridor_survey.yaml as corridor-survey@0.1.2 -> policy_g4`).
+`tools/wp1_roundtrip_kpi.py` counts 404/404 of them (docs/data/wp1_roundtrip.json).

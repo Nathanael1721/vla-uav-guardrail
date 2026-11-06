@@ -16,6 +16,149 @@ shipped change and recorded as one.
 
 ## [Unreleased]
 
+### 2026-11-06 (IR 4.0.0) — `scope` required on every rule: WP1-01 closed the grant's way, all 154 shipped rules state `scope: mission`, and every stored document of an earlier era still reads and re-derives its recorded hash
+
+#### Changed
+- **IR schema 4.0.0 (WP1-01): `scope` is required** (`guardrail/models.py`,
+  4ae620a), the last of the four ConstraintBase fields the grant writes
+  without a default; `constraint_type`, `priority` and `violation_action`
+  have been since 3.0.0 (2 Nov). It had been optional since 2026-10-06, an
+  absent scope meaning "mission". A rule that leaves it out, or writes null,
+  is refused by name at every DSL entry: a YAML/JSON policy, a REST rule
+  body (422), a rule built in code, a lock recipe or a bundle marked 4.0.0.
+  A field every writer must give is a breaking change, hence the major
+  version, as 3.0.0 was. `lock --update` re-pinned the schema (11 pins
+  `<absent>` -> `<required>`, `ir_schema.migrations` 3.1.0 -> 4.0.0 with its
+  why), and `policies/policy_dsl.schema.json` requires `scope` with the
+  grant's four values and no null. docs/IR-MIGRATIONS.md has the row.
+- **The rule applied to choose each value: scope follows the layer that
+  authored the rule.** A regulation- or site-layer rule applies to every
+  mission flown under it (`global`), a mission-layer rule to its mission
+  (`mission`), `segment` / `waypoint` only to a rule written for part of a
+  mission - the pairing of the grant's worked example (its site and
+  regulation rules global, its mission corridor mission). No shipped file
+  writes `layer`, so all 154 rules are mission-layer rules written for their
+  file's mission: every one states `scope: mission`, and none is narrowed.
+  The GeoJSON importer keeps its defaults, `layer: site` with
+  `scope: global`, by the same rule.
+- **All 32 policies raised their patch version**: `fase3-sim-demo` 0.1.3 ->
+  0.1.4, `wgs84-taipei-demo` 0.1.1 -> 0.1.2, the other 30 0.1.2 -> 0.1.3. The
+  lock gained 32 entries (95 -> 127), each `migrated_from` the old one with
+  `migration.old_hash_form` `sha256-canonical-v3/ir-3.x` (`bundle.IR3_FORM`):
+  the file with every scope left out (`Policy.ir3_form`) is the old file,
+  its hash, IR 2.x and legacy forms reproduced for all 32 and re-proved by
+  `check_lock` on every run. `policy_candidates` walks the chain one step
+  further (scope stated -> WGS84 -> metres at 3.0.0 -> metres at 2.x).
+- **A stored document of an earlier era is read in its own era**
+  (`models.era_context`): scope stays absent where it wrote none, so it
+  hashes exactly as recorded, and `effective_scope` reads the absence as
+  "mission". `check_bundle` takes the era from the manifest's
+  `ir_schema_version`, `derive` from the recipe's, `read_replay` from the
+  replay's policy manifest; a run's and a replay's `policy_g<N>.json` and
+  the stored packs (`tools/profile_shield_tick.py`,
+  `tools/own_velocity_closed_loop.py`, `tools/export_episodes.py`) record no
+  version and are read as written: only a document from before 4.0.0 can
+  leave scope out, and the hash it must reproduce is that document's.
+- **A manifest records the schema its IR is a document of**
+  (`Policy.ir_schema_version`, `bundle.manifest_for`; new lock entries too):
+  4.0.0, or 3.1.0 for a policy of an earlier era bundled again (a replay of
+  an old run), which is then read back in that era.
+- **Every rule built in code states scope `mission`** (a zone, switch or
+  swap applied during a mission belongs to it): the REST API's deprecated
+  POST /nfz body, the Shield's switch (`set_rule_active`), the rails' and
+  demos' zones, the generator (`demo/gen_random_scenario.py`), the benches,
+  the training scenarios, the cold-start policy, the GeoJSON importer's
+  2026-07 zone body. The harness carries a hot-applied zone's scope to the
+  runner (`_CARRIED`, the spawn payload may hold it, `scenario_spec._ZONE_KEYS`;
+  the runner writes "mission" where a payload has none) and the runner
+  writes "mission" on its switches and swaps (`_RUNNER_WRITES`; another
+  scope is refused as UNIMPLEMENTED, as for the other three fields). Three
+  edits fall in files other agents are changing, each only what a test
+  needs: `experiments/sweep_scenarios.py` (the runner's zone, switch and
+  swap, 3 lines), `sitl/ros2_shield_node.py` (`DYNAMIC_FENCE`, built at
+  import, and `zone_around`, 2 lines), `guardrail/shield.py`
+  (`set_rule_active` and `_swap`'s comparison corridor; not the escalation
+  code).
+- The negative corpus states scope on its 40 rules, so each case is still
+  refused for its own defect, and gains `missing_scope.yaml` (39 cases).
+  `tests/test_railinputs_node.py`'s two REST bodies, which lacked IR 3.0.0's
+  three fields (the file skips without fastapi/uvicorn), state all four.
+- `tools/build_flight_bundles.py` signed the new versions with the lab key
+  (gitignored build products, in the worktree): `fase3-sim-demo-v0.1.4`,
+  `wgs84-taipei-demo-v0.1.2`, and `v0.1.3` of corridor-survey, follow-car,
+  follow-car-nfz, follow-car-citylife, follow-car-citylife-nfz, -nfz3,
+  -nfz3b, follow-pedestrian, vla-goto-citylife, sitl-pedestrian-standoff
+  and poly-test (13). `deploy/orin/run_vla_fly.sh` defaults to
+  `follow-car-citylife-nfz-v0.1.3`; the usage examples in
+  `sitl/run_sitl_demo.py`, `sitl/gcs_backstop.py`, `sitl/bundle_origin.py`
+  and `guardrail/bundle.py` name the new versions.
+- **Regenerated from the clean tree:** `docs/data/wp1_roundtrip.json`
+  (4edd5d1; the published file was the 20 Oct run over 29 policies): round
+  trip 32/32, tamper 32/32, negative corpus 39/39, grant form 32/32, the
+  reference's loader 3/3 both ways, both hashes 32/32, forged reference
+  hashes 32/32 refused, cold start p95 581 ms in fresh processes against
+  1 s, schema 32/32, 404/404 stored manifests resolve. `docs/data/csp_kpis.json`
+  (52ac56c; was the 21 Oct run over 29 policies): P0 122/122 at 256 tokens
+  (the naive cut too) and at 144 tokens, the largest budget where the naive
+  cut drops one (120/122); null 0/122. No other docs/data file pins a policy
+  hash of today's files: `wgs84_conversion.json` records the 3 Nov
+  conversion's hashes, of the 0.1.2 versions, which the lock keeps.
+- docs/FINAL-REPORT-outline.md: WP1-01 PARTIAL -> DONE (Appendix A, section
+  7 closed without a waiver, section 4.1), the regenerated KPI rows;
+  60 DONE, 69 PARTIAL, 6 DRIFT, 1 MISSING.
+
+#### Measured (read-only, the lab checkout's gitignored stores, with this code)
+- 36/36 bundles in its bundles/ open: 31 flight bundles written under IR
+  schema 2.1.0 (8), 3.0.0 (10) and 3.1.0 (13), every signature verified, each
+  under the hash its manifest records (24 current, 8 under their IR 2.x
+  form), and 5 replay bundles; 171 rules, every scope absent as written.
+- All 405 stored manifests resolve exactly as with the base code (master
+  30667cc): 392 directly, to the same id@version and canonical bytes under
+  the same hash form; 13 through their own generation chain, whose base the
+  label now names as the old version of its file.
+
+#### Tests
+- New: test_every_rule_must_state_its_scope (a file, a raw document, a rule
+  built in code, null, an unknown value, the era context's edges, the 11
+  pins, the published schema, the corpus, every shipped rule) and
+  test_a_document_from_before_ir_4_reads_and_hashes_as_stored (every tracked
+  replay bundle - 8 with master's KPI evidence - a run's stored policy_g0
+  that resolves to the lock's follow-car-citylife@0.1.0, a 3.1.0 bundle that
+  reads under a 3.0.0 or no version and is refused as 4.0.0), and
+  test_every_bundle_on_disk_reads_in_its_era (tests/test_policy_dsl_grant_form.py);
+  the scope step of the lock chain (32 scope, 31 frame, 32 IR 2.x steps),
+  the recipes of each era, the reference delta of an earlier era
+  (tests/test_policy_hash.py); the scope migration as a changelog diff
+  (tests/test_bundle.py); the four REST fields and POST /nfz's scope
+  (tests/test_api.py).
+- On this branch (vla-real, Python 3.10.20, the worktree): test_policy_hash
+  34/34, test_policy_dsl_grant_form 58/69 (11 skips: the reference
+  repository is not in a worktree; 68/69 against the lab checkout's, read
+  only), test_bundle 58/58, test_replay 60/61, test_wp1_roundtrip_kpi 19/20,
+  test_csp 100/100, test_harness_service 59/59, test_api 10/15 (5 need
+  fastapi); test_api 15/15 and test_railinputs_node 16/16 in the Python 3.12
+  env with fastapi and uvicorn.
+
+#### Limits
+- Scope is declared, not enforced differently: the Shield enforces every
+  rule over the whole flight, so a `segment` or `waypoint` rule would be
+  enforced more widely than written, never less. The layer merge compares
+  no scope.
+- A dynamic_nfz of an earlier era's document cannot be edited by the Shield
+  (`_edit_zone`), nor a fence of one converted (`as_dynamic_nfz`): both
+  re-validate it as today's and refuse the missing scope. No rail does
+  either: the zones a flight edits are the ones it hot-applied.
+- The bundles are build products: the lab checkout and the Orin need the
+  new ones built (`tools/build_flight_bundles.py`) before a rail starts
+  without `--bundle`, since the default follows the YAML's version.
+- `docs/data/progress_oct.json` counts the lock's entries (95, now 127) and
+  reads wp1_roundtrip.json (29 round trips, now 32); its data step needs the
+  lab checkout's flight output and its bench, so it is re-run there, where
+  test_build_progress_oct_data compares it with the tree.
+- `sitl/ros2_shield_node.py`'s usage example still names
+  `fase3-sim-demo-v0.1.3` (left for the agent changing that file). No
+  tracker entry (tracker/data is local to the lab checkout).
+
 ### 2026-11-06 (contract) — ten more items closed on the hil evidence and by small conformance fixes; the per-build CI on Python 3.12 finds a cross-version determinism bug
 
 #### Changed
