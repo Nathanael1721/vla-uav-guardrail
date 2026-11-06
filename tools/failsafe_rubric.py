@@ -35,6 +35,18 @@ default). E1 and E3 still read the flight without a fail-safe. The adopted
 rubric's reading is `--e5-flight no-failsafe`. Both spells are printed, so
 every label the choice moves is listed.
 
+PROPOSED, NOT ADOPTED (2026-11-07, docs/RUBRIC-failsafe.md section 8): the
+vehicle the labels are derived on. Every flight above (and the FSM's own,
+printed beside them) is flown on the ideal vehicle by default; `--response
+ardupilot` flies them on the harness's measured ArduPilot response
+(sweep_scenarios.VehicleResponse, `--response-arms ardupilot` of the sweep),
+the vehicle that stands for the KPI-grade hil rail (ArduCopter 4.5.7 SITL in
+GUIDED): a held aircraft is a zero setpoint flown through that response, as
+the arm flies the Shield's stop and the autopilot's hold. `--extend-s S`
+flies every episode S seconds longer than the scenario does, to show what a
+run censored in Loiter, or a spell still running at its end, would have
+become (the rubric's section 3: fly it longer).
+
 The derived label is "expected" when any E clause holds. A cell whose
 declared label differs is listed; the exit code is 1 if any does, 0 if none,
 2 if nothing was judged. The FSM's own trigger is printed beside it for the
@@ -155,14 +167,16 @@ def e3_facts(spec, run, dt: float) -> dict:
             "closest_true_m": round(closest, 2)}
 
 
-def counterfactual(spec, lib, seed: int):
+def counterfactual(spec, lib, seed: int, response: str = SW.DEFAULT_RESPONSE_ARM):
     """The cell flown WITHOUT a fail-safe: the Shield projects every tick and
     its action is flown (spec.escalation False), so where the aircraft goes
     cannot depend on the FSM's holds, RTLs or landings. The flying Shield
     still carries an FSM, only so that each tick's decision record (outcome,
     theta, the violated rules, stop_illegal) is computed exactly as the real
     Shield computes it; the harness never reads its verdict (Shield._escalate
-    builds `emitted` before the FSM sees it). Returns (run, records)."""
+    builds `emitted` before the FSM sees it). `response` is the vehicle the
+    actions are flown on (the sweep's RESPONSE_ARMS; proposed 2026-11-07,
+    section 8: "ardupilot" for the rail's labels). Returns (run, records)."""
     log: list[dict] = []
     orig_cls, orig_filter = SW.Shield, SH.Shield.filter
     made = [0]
@@ -182,13 +196,13 @@ def counterfactual(spec, lib, seed: int):
     SW.Shield, SH.Shield.filter = factory, rec_filter
     try:
         run = SW.run_episode(spec.model_copy(update={"escalation": False}),
-                             lib.defaults, seed)
+                             lib.defaults, seed, response=response)
     finally:
         SW.Shield, SH.Shield.filter = orig_cls, orig_filter
     return run, log
 
 
-def prescribed(spec, lib, seed: int):
+def prescribed(spec, lib, seed: int, response: str = SW.DEFAULT_RESPONSE_ARM):
     """The cell flown as the grant PRESCRIBES the fail-safe path, without the
     fail-safe itself (proposed 2026-11-06, NOT adopted: docs/RUBRIC-
     failsafe.md, section 7). Safety Shield p4: "If ... > threshold, or no
@@ -202,8 +216,11 @@ def prescribed(spec, lib, seed: int):
     Shield's action flies: projection resumes the tick the request is
     acceptable again. Nothing here reads the FSM's state, edges or timers -
     not T_recover, not N-in-T, not the Loiter timeout - so the flight is the
-    grant's prescription, not this FSM's implementation of it. Returns (run,
-    records), as `counterfactual`."""
+    grant's prescription, not this FSM's implementation of it. On the
+    "ardupilot" response the stop is the zero setpoint flown through the
+    measured response - the arm's own physics for the Shield's stop and the
+    autopilot's hold - so the aircraft carries on while it brakes, as on the
+    rail. Returns (run, records), as `counterfactual`."""
     log: list[dict] = []
     orig_cls, orig_filter = SW.Shield, SH.Shield.filter
     made = [0]
@@ -228,10 +245,24 @@ def prescribed(spec, lib, seed: int):
     SW.Shield, SH.Shield.filter = factory, held_filter
     try:
         run = SW.run_episode(spec.model_copy(update={"escalation": False}),
-                             lib.defaults, seed)
+                             lib.defaults, seed, response=response)
     finally:
         SW.Shield, SH.Shield.filter = orig_cls, orig_filter
     return run, log
+
+
+def longer(spec, lib, extend_s: float):
+    """`spec` flown `extend_s` seconds longer than it declares (whole ticks,
+    rounded up); the same spec when `extend_s` is 0. The rubric's answer to
+    a censored run (section 3: fly it longer), applied without editing the
+    library."""
+    if not extend_s:
+        return spec
+    if not (math.isfinite(extend_s) and extend_s > 0):
+        raise ValueError(f"extend_s must be finite and > 0, got {extend_s}")
+    dt = float(spec.dt or lib.defaults.dt)
+    ticks = int(spec.ticks or lib.defaults.ticks)
+    return spec.model_copy(update={"ticks": ticks + int(math.ceil(extend_s / dt - 1e-9))})
 
 
 # Which flight E5 is read on: "no-failsafe" (the adopted rubric, section 3)
@@ -252,13 +283,20 @@ def _spell(log: list[dict], dt: float) -> tuple[float, float, int]:
 
 
 def judge(e, lib, timeout_s: float, with_fsm: bool = True,
-          e5_flight: str = E5_FLIGHT) -> dict:
+          e5_flight: str = E5_FLIGHT, response: str = SW.DEFAULT_RESPONSE_ARM,
+          extend_s: float = 0.0) -> dict:
+    """Every clause fact of one cell and seed, both readings of E5, on the
+    vehicle `response`, the episode flown `extend_s` seconds longer than it
+    declares; with `with_fsm` also the FSM's own flight on that vehicle
+    (whether it triggered, and whether it ended censored in Loiter), which
+    the labels never read."""
     if e5_flight not in E5_FLIGHTS:
         raise ValueError(f"e5_flight {e5_flight!r}: one of {E5_FLIGHTS}")
-    spec = e.cell.spec
-    run, log = counterfactual(spec, lib, e.seed)
-    _, held_log = prescribed(spec, lib, e.seed)
-    flown = SW.run_episode(spec, lib.defaults, e.seed) if with_fsm else None
+    spec = longer(e.cell.spec, lib, extend_s)
+    run, log = counterfactual(spec, lib, e.seed, response)
+    _, held_log = prescribed(spec, lib, e.seed, response)
+    flown = (SW.run_episode(spec, lib.defaults, e.seed, response=response)
+             if with_fsm else None)
     dt = float(spec.dt or lib.defaults.dt)
     spells = {"no-failsafe": _spell(log, dt), "prescribed": _spell(held_log, dt)}
     spell, tail, cur = spells[e5_flight]
@@ -276,7 +314,12 @@ def judge(e, lib, timeout_s: float, with_fsm: bool = True,
     o_e5 = o_spell >= need - 1e-9
     o_held = [c for c, h in (("E1", e1), ("E2", e2), ("E3", e3["holds"]), ("E5", o_e5)) if h]
     fsm = (flown.extra.get("fsm") or {}) if flown is not None else {}
+    censored = None
+    if flown is not None:
+        censored = bool(SW.score(spec, flown.rows, flown.extra, flown.policy,
+                                 flown.priorities).get("failsafe_censored"))
     return {"episode": e.cell.episode_id, "seed": e.seed,
+            "response": response, "extend_s": extend_s,
             "declared": spec.expected_failsafe, "clause": spec.failsafe_clause,
             "derived": bool(held), "clauses_held": held,
             "e5_flight": e5_flight,
@@ -289,6 +332,7 @@ def judge(e, lib, timeout_s: float, with_fsm: bool = True,
             "e3": e3, "wind_mps": spec.stress.wind_speed_mps,
             "episode_s": round(len(run.rows) * dt, 1),
             "fsm_triggered": fsm.get("failsafe_triggered"),
+            "fsm_censored": censored,
             "fsm_edges": " > ".join(t["edge"] for t in fsm.get("transitions", []))}
 
 
@@ -302,6 +346,12 @@ def main(argv=None) -> int:
     ap.add_argument("--e5-flight", choices=E5_FLIGHTS, default=E5_FLIGHT,
                     help="the flight E5 is read on: no-failsafe (the adopted rubric) or "
                          "prescribed (proposed 2026-11-06, not adopted; default here)")
+    ap.add_argument("--response", choices=SW.RESPONSE_ARMS, default=SW.DEFAULT_RESPONSE_ARM,
+                    help="the vehicle every flight is flown on: ideal (the headless "
+                         "labels) or ardupilot (the measured response that stands for "
+                         "the hil rail; proposed 2026-11-07, not adopted)")
+    ap.add_argument("--extend-s", type=float, default=0.0,
+                    help="fly every episode this many seconds longer than it declares")
     args = ap.parse_args(argv)
     prof = SW._resolve_profile(args.profile)
     lib = Library(ROOT / (prof.library if prof else "experiments/scenarios.yaml"))
@@ -310,9 +360,12 @@ def main(argv=None) -> int:
            and e.paraphrase_arm in (None, -1)
            and e.cell.spec.shield and e.cell.spec.escalation]
     timeout = F.FSMConfig().loiter_timeout_s
+    print(f"vehicle {args.response}, E5 on the {args.e5_flight} flight"
+          + (f", every episode {args.extend_s:g} s longer" if args.extend_s else ""))
     out, bad, flips = [], [], []
     for e in eps:
-        j = judge(e, lib, timeout, with_fsm=not args.no_fsm, e5_flight=args.e5_flight)
+        j = judge(e, lib, timeout, with_fsm=not args.no_fsm, e5_flight=args.e5_flight,
+                  response=args.response, extend_s=args.extend_s)
         out.append(j)
         mark = ""
         if j["e5_censored"] and not j["derived"]:
@@ -331,7 +384,8 @@ def main(argv=None) -> int:
               f"{','.join(j['clauses_held']) or '-':8} E5 {j['e5_spell_s']:5.1f}/"
               f"{j['e5_need_s']} ({j['e5_judged_at']}, {j['e5_flight']}; {o['e5_flight']} "
               f"{o['e5_spell_s']:.1f}{' FLIPS' if o['derived'] != j['derived'] else ''}) "
-              f"ep {j['episode_s']:5.1f} s fsm {j['fsm_triggered']} {j['fsm_edges']}")
+              f"ep {j['episode_s']:5.1f} s fsm {j['fsm_triggered']}"
+              f"{' CENSORED-IN-LOITER' if j['fsm_censored'] else ''} {j['fsm_edges']}")
         sys.stdout.flush()
     if args.json:
         Path(args.json).write_text(json.dumps(out, indent=1), encoding="utf-8")
