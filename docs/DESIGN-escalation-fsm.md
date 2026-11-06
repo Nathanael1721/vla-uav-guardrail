@@ -49,6 +49,133 @@ were fixed, and the default config hash changed again (two new fields):
 `sha256:d55e1bfe...`. The next section has the decisions, the measurements and
 what is still wrong.
 
+**Update 2026-11-06.** A ninth extension edge, X8 (Normal / Brake / Loiter ->
+RTL): the position the Shield is handed can no longer certify a hard P0
+zone's margin. It has two new inputs a rail may report, `State.fix_ok` and
+`State.pos_sigma_m`; a rail that reports neither (every rail on that date)
+never takes it and flies exactly as before. With a reported accuracy, N-in-T
+gains a spatial hysteresis. No FSMConfig field was added, so the default
+config still hashes `sha256:d55e1bfe...`. The next section has the design,
+where each rail's signal lives, and the measurements.
+
+## 2026-11-06: X8, the position the Shield is handed
+
+The fail-safe KPI's remaining misses (headless harness, against
+docs/RUBRIC-failsafe.md) had three causes. Two are answered here; the third
+(theta on the first deep forecast, 15 false triggers) is not, because no
+change to the FSM can answer it under the decided theta basis and E5 (the
+rubric's section 5 says why).
+
+### The frozen fix: what the rubric asked and the FSM could not see
+
+Rubric E3 expects a fail-safe when "the position the Shield acts on is wrong
+by more than the policy's margin around a hard P0 boundary ... while the
+aircraft is within that error of the boundary". Its section 4 said plainly
+that the FSM had no input for it. gps-dropout lane 23.6, windows 2-9 s and
+6-13 s, were the missed triggers: the pose frozen at (-22, 23.6) for 7 s, the
+Shield passing 4 m/s throughout, the aircraft ending 1.2 m from nfz-square
+with 28 m of error, and no fail-safe.
+
+**The inputs** (`guardrail/models.py` State):
+
+| field | meaning | None (default) |
+|---|---|---|
+| `fix_ok` | (x, y) is a current, valid fix. False: a stale pose (the pose's stamp older than the monitor period, or a bridge re-publishing its last sample), no 3D fix, or an EKF without absolute horizontal position | not reported: the position is trusted exactly as before |
+| `pos_sigma_m` | the reported 1-sigma horizontal accuracy, metres | not reported - never read as "perfect" |
+
+**The test** (`Shield._position_verdict`) is E3 on the Shield's own estimate:
+
+- While `fix_ok` is False the Shield dead-reckons from the last valid fix on
+  what it itself streamed (its command; 0 for a stop or an in-place hold;
+  a moved hold point's transit at its plan's speed).
+- The handed position is wrong by err = |estimate - handed| + u, where u =
+  `dr_drift_mps` x the time since the last valid fix is the drift a dead
+  reckoning on commands cannot see (the measured ArduCopter GUIDED response
+  flies a setpoint from 0.45 s after it is sent at 1.75 m/s^2; wind and
+  gusts move the aircraft where no command did). The boundary is taken u
+  nearer.
+- `dr_drift_mps` is configurable (`Shield(dr_drift_mps=...)`), 0.5 m/s by
+  default (`shield.DR_DRIFT_MPS`), and recorded in every X8 reason, in the
+  harness's episode_start and in every bundle (`arm.dr_drift_mps`). With 0
+  the test fires on the tick E3 first holds on the ideal vehicle; a larger
+  allowance only makes it earlier.
+- With `pos_sigma_m` reported, err is at least 3 sigma, judged at the
+  position and along the request's own forecast: the rubric reads
+  noise-E3 against the planned route, and the Shield's view of the plan is
+  the request.
+- X8 fires when err exceeds a hard, enforced P0 zone's `margin_m` with the
+  zone's boundary within err of the estimate.
+
+**Why RTL, and when Land.** A stale or noisy Shield input does not stop the
+autopilot navigating: it still flies on its own estimate. So X8 returns
+(RTL), and the grant's G6 lands the aircraft when the return fails
+(rtl_path's blocked leg, no progress over T, a critical battery). A first
+version landed instead, and landing through the 10 m altitude floor raised
+the library's autopilot breaches from 10 to 22 and its true-state P0 ticks
+from 1768 to 4741. Where the AUTOPILOT has lost its own fix (GPS_RAW_INT
+fix_type below 3, an EKF without absolute position) RTL cannot be flown and
+ArduPilot's own EKF failsafe lands (FS_EKF_ACTION = 1). That is a second
+input, not modelled: the headless autopilot has a perfect position.
+
+**Precedence.** X8 comes before every rule's own answer in Normal, Brake and
+Loiter: each of those answers was computed from the position that can no
+longer be certified. It does not act in RTL or Land.
+
+**When nothing changes.** A fix that comes back before the error reaches a
+boundary costs nothing; a fix frozen on a held aircraft does not move the
+estimate (the N2 cell lane 15, 6-13 s). A rail that reports neither field
+never takes X8.
+
+### Noise inside the margin is not a pilot thrashing
+
+Two nightly false triggers (gps-noise-within-margin latency 0 / pass_y 23.2 /
+sigma 0.3, seeds 1001 and 1003) were N-in-T counting noise: the slide held the
+aircraft 0.4-0.9 m outside nfz-square's ring, 0.3 m of white noise flipped
+the request's forecast in and out of the ring, every return was a new onset
+(at most one a second), and G2 then G4 sent it home on repairs of 0.02-0.43
+m. With a reported accuracy, a clean tick whose request passes within 3 sigma
+of a hard zone's ring (`Shield._noise_marginal`) keeps the violation "on" for
+onset counting (`TickInput.noise_marginal`): the next return is the same
+violation seen through noise. Without a reported accuracy nothing changes.
+The hysteresis would also have removed the accidental N-in-T trigger of
+gps-noise-beyond-margin (E3, 3 sigma 3-6 m against the 1 m margin); X8's
+sigma branch answers those cells directly instead (a first version without
+the planned-route reading left 6 of them ending in Loiter and 1 missed).
+
+### Once a rail reports its accuracy, a margin is an accuracy requirement
+
+`margin_m` is the position-error budget the rubric's E3 reads. A 1 m margin
+certifies a zone only while 3 sigma <= 1 m (sigma <= 0.33 m, RTK class). With
+ordinary GNSS accuracy (1-3 m) the request's forecast passing within 3 sigma
+of such a zone returns the aircraft. That is the rubric's E3 applied
+honestly; sizing every hard P0 margin to the real (EKF-fused) accuracy of the
+rail that flies it is a policy decision, and no policy was changed with this.
+
+### Where each rail's signal lives
+
+| rail | fix validity (`fix_ok`) | accuracy (`pos_sigma_m`) | today |
+|---|---|---|---|
+| ROS 2 + MAVROS 2 (sitl/ros2_shield_node.py; the hil topology) | `/mavros/global_position/raw/fix` (NavSatFix status from GPS_RAW_INT.fix_type), `/mavros/gpsstatus/gps1/raw` (mavros_msgs/GPSRAW: fix_type, satellites_visible); EKF_STATUS_REPORT from the raw MAVLink the node already records; the pose's own header stamp age (the node's stale-pose watchdog, `POSE_TIMEOUT_S`, checks arrival only and would miss a bridge re-publishing its last pose) | GPSRAW.h_acc, or the NavSatFix position_covariance MAVROS builds from h_acc / eph | not wired: a later change, after the rail rework |
+| Project AirSim + ArduPilot (demo/pas_ardupilot/autopilot.py) | already parsed: GPS_RAW_INT.fix_type (`snap.gps_fix`), EKF_STATUS_REPORT flags (`snap.ekf_flags`, `ekf_ready()`), the position's receipt time (`snap.t_pos`) - used only as a pre-arm gate | GPS_RAW_INT.h_acc (not parsed yet) | not wired |
+| Project AirSim simple_flight (demo/follow_vlm.py and the city rails) | none: the State is `get_ground_truth_kinematics()`, a perfect position; only a configured GPS sensor, or injection, could report one | none | None (unobservable) |
+| headless harness (experiments/sweep_scenarios.py) | `stress.gps_dropout_s` with `stress.fix_quality_reported` (default true): False through the window | `stress.gps_noise_m` with the same flag | reported; withheld per scenario to keep "the Shield flying blind" measurable |
+
+### The KPI invariant
+
+guardrail/kpi.py's per-tick `false_trigger_rate` is an invariant check: the
+FSM leaves Normal only on an enforced violation, so a violation-free tick
+that leaves it is a logging fault. X8 leaves it on a tick whose request may
+be clean, by design: its input is the position, not the request. Such a tick
+is left out of the count by its reason (`kpi._position_trigger`: the row's
+edge, or its record's `position_lost`), and the invariant still holds for
+every request edge (tests/test_position_quality.py). Logging the uncertified
+zone as a violation instead would put a rule breach on a tick whose request
+broke nothing, and the P0 counters would read it.
+
+### Measured (headless, not KPI-grade)
+
+RESULTS_PLACEHOLDER
+
 ## 2026-11-02: the delegated decisions, and correctness against a written rubric
 
 Headless harness throughout; nothing here is KPI-grade (the grant measures
