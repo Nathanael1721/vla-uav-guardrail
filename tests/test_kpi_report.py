@@ -1115,6 +1115,69 @@ def test_the_wp2_section_names_the_files_an_altitude_conflict_left_out():
     assert "| 256 | 1 | 0 | n/m |" in md_old, md_old
 
 
+def test_a_hil_scenario_run_is_rescored_with_the_harness_score_beside_it():
+    """K1 (2026-11-06): a rail run of the stress library carries its scenario
+    in metrics.json and the harness's verdict beside it (scenario_score.json,
+    experiments/sweep_scenarios.py write_scenario_score). load_run re-scores
+    it as a stress bundle with its log is: with the metrics the harness gave
+    compute() - here no breach, the unsafe stretch being a zone spawned onto
+    the aircraft - its label fields, the scenario's rule priorities (the
+    hot-applied zone among them) and the scenario's row
+    hil-stress/<template>/<cell>/shield-on. The null: the same run without
+    the score fails its mission on the rail's own reading (a step into an
+    unsafe position, the zone's dwell); a score of another launch (another
+    nonce) is ignored, and says why."""
+    KR = _report_module()
+    pol = load_policy(PED)
+    rows = [dict(r, unsafe=i >= 10, unsafe_rules=["dyn-top"] if i >= 10 else [],
+                 flown=True, setpoint="pass")
+            for i, r in enumerate(_rows_past_a_person(20))]
+    rows = [dict(r, unsafe=False, unsafe_rules=[]) if i >= 15 else r
+            for i, r in enumerate(rows)]
+    cell = "dyn-nfz-spawn-on-top@size_m=40,variant=0"
+    meta = {"schema": "rail-scenario/1", "backend": "hil", "run_id": "smk_001_dyn",
+            "run_nonce": "nonce-1", "scenario_id": "dyn-nfz-spawn-on-top",
+            "template": "dynamic_nfz_movement", "cell": cell,
+            "params": {"size_m": 40, "variant": 0}, "seed": 1001, "arm": "on",
+            "family": f"hil-stress/dynamic_nfz_movement/{cell}/shield-on"}
+    metrics = {"shield": "on", "reached": True, "nfz_s": 0.5, "scenario": meta,
+               "scenario_family": meta["family"]}
+    kpi = K.compute(rows, dict(K.rule_priorities(pol), **{"dyn-top": "P0"}),
+                    {"reached_goal": True, "breaches": 0, "shield": "on"})
+    kpi.update(failsafe_label=False, failsafe_matches_label=1.0, failsafe_triggered=False,
+               mission_outcome="success", outcome_matches_label=None, breaches=0,
+               polygon_entries=0, reached_goal=True)
+    score = {"schema": "rail-scenario-score/1", "scenario": meta, "run_id": meta["run_id"],
+             "run_nonce": "nonce-1", "status": "pass", "gates_failed": [],
+             "metrics": {"reached_goal": True, "breaches": 0, "shield": "on", "fsm": None},
+             "rule_priorities": dict(K.rule_priorities(pol), **{"dyn-top": "P0"}),
+             "kpi": kpi}
+    with tempfile.TemporaryDirectory() as td:
+        run = _make_run(Path(td), "smk_001_dyn", rows, policy_hash=pol.policy_hash,
+                        metrics=metrics)
+        bare = KR.load_run(run, {pol.policy_hash: pol}, {})
+        (run / KR.SCENARIO_SCORE).write_text(json.dumps(score), encoding="utf-8")
+        e = KR.load_run(run, {pol.policy_hash: pol}, {})
+        other = _make_run(Path(td), "smk_002_dyn", rows, policy_hash=pol.policy_hash,
+                          metrics=dict(metrics, scenario=dict(meta, run_nonce="nonce-2")))
+        (other / KR.SCENARIO_SCORE).write_text(json.dumps(score), encoding="utf-8")
+        o = KR.load_run(other, {pol.policy_hash: pol}, {})
+    fam = "hil-stress/dynamic_nfz_movement/" + cell + "/shield-on"
+    assert e["family"] == bare["family"] == o["family"] == fam, (e["family"], bare["family"])
+    assert e["scenario_score"] == "scenario_score.json" and e["scenario_status"] == "pass"
+    assert e["metrics_from"].startswith("scenario_score.json"), e["metrics_from"]
+    assert e["mission_success"] is True and e["mission_outcome"] == "success", e
+    assert e["breaches"] == 0 and e["failsafe_matches_label"] == 1.0
+    assert e["priority_fields_from"].startswith("the stress harness's"), e["priority_fields_from"]
+    assert e["params"]["template"] == "dynamic_nfz_movement" and e["params"]["seed"] == 1001
+    assert e["rail_dwell"]["nfz_s"] == 0.5
+    # The null: no score, the rail's own reading of the same log.
+    assert bare["mission_success"] is False and bare["scenario_score"].startswith("no "), bare
+    # Another launch's score: ignored, with why.
+    assert o["scenario_score"].startswith("scenario_score.json is for 'smk_001_dyn'"), o
+    assert o["mission_success"] is False and o["metrics_from"] == "metrics.json"
+
+
 if __name__ == "__main__":
     # A test whose inputs are not on this machine returns SKIP, counted apart
     # and never as a pass (the pattern of tests/test_bundle.py).
