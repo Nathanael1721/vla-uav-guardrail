@@ -134,9 +134,13 @@ the KPI with and without E5, so the weight of this choice is visible.
 
 - How good the FSM is: it says when a trigger is right, not how to produce
   one. A clause the FSM has no input for (E3 with a frozen fix: the Shield
-  has no fix-quality field) still makes the scenario expect a fail-safe;
-  where the FSM does not trigger, that is a missed trigger, reported with its
-  mechanism.
+  had no fix-quality field until 2026-11-06) still makes the scenario expect
+  a fail-safe; where the FSM does not trigger, that is a missed trigger,
+  reported with its mechanism. Since 2026-11-06 the Shield reads a rail's
+  fix validity and accuracy (`State.fix_ok`, `State.pos_sigma_m`) and the
+  FSM answers E3 through X8 (docs/DESIGN-escalation-fsm.md); a rail that
+  reports neither is still in the position this paragraph describes, and
+  the rubric's clauses did not change with it.
 - The theta basis (decided separately: each repair's forecast depth in
   metres, reading A of docs/DESIGN-escalation-fsm.md).
 - The operator timeout (30 s, `loiter_timeout_s`): the rubric reads it as
@@ -227,7 +231,10 @@ With E5 removed (its labels read as "not expected"): library 136/179 =
 
 - No scenario has a planner that thrashes by changing its own request (N5):
   N-in-T persisting (G4) is exercised only by the harness's position noise.
-- E3's frozen fix is a ground-truth clause the Shield cannot observe: the
-  headless harness models neither the rails' stale-pose watchdog nor
-  ArduPilot's EKF failsafe, which would answer it on a flight.
+- E3's frozen fix is a ground-truth clause the Shield could not observe
+  until 2026-11-06. It now can where a rail reports fix validity
+  (`State.fix_ok`), and the headless harness models a rail that does
+  (`stress.fix_quality_reported`, default true); no flight rail reports it
+  yet (docs/DESIGN-escalation-fsm.md, "Where each rail's signal lives"),
+  and ArduPilot's own EKF failsafe is still not modelled.
 - Nothing here is KPI-grade: the grant's KPI is measured on the hil topology.

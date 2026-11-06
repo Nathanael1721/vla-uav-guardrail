@@ -777,10 +777,13 @@ never presented as a contract term. One transition per tick at most.
 | X5 | RTL → [*] | `landed` during RTL without `home_reached` | – | extension: ArduPilot's RTL ends by landing at home |
 | X6 | Brake, Loiter → RTL | `stop_illegal` on every tick for ≥ T, a hard rule violated on this tick, and (since 2026-10-08) the illegal depth not falling at `x6_min_escape_mps` over that T | RTL | extension: p1 "trigger fail-safe when repair is unsafe". See "X6" below |
 | X7 | Brake, Loiter → RTL | `stop_illegal` for ≥ T_recover, a hard rule violated on this tick, and the illegal depth GROWING by ≥ `x6_min_escape_mps` over the last T_recover (since 2026-10-08) | RTL | extension: a recovery losing ground to something the forecast cannot see |
+| X8 | Normal, Brake, Loiter → RTL | `position_lost` (since 2026-11-06): the handed position's error (with `fix_ok` False: the dead-reckoned distance from the last valid fix plus `dr_drift_mps` × its age; with `pos_sigma_m` reported: at least 3 σ, at the position and along the request's forecast) exceeds a hard, enforced P0 zone's `margin_m` while that zone's boundary lies within the error. Never taken on a rail that reports neither field | RTL | extension: rubric E3 (a fail-safe when the position the Shield acts on is wrong by more than the margin near a hard P0 boundary); see "X8" above |
 
 The order of checks inside each state is fixed, and it is the order the table
 is resolved in when two conditions hold at once. It follows the strongest
-response. **Brake:** direct land, direct RTL, X6, X7, direct loiter, then G3,
+response. **Normal, Brake and Loiter:** X8 first (since 2026-11-06), because
+every later answer was computed from the position X8 can no longer certify.
+**Brake:** direct land, direct RTL, X6, X7, direct loiter, then G3,
 G2, G7. **Loiter:** direct land/RTL, then G4, G8, G5, X6, X7. Recovery wins
 over the timeout when both hold on the same tick. **RTL:** G9, X5, G6, so a tick
 that reports home together with an RTL failure is a finished RTL. In RTL and
