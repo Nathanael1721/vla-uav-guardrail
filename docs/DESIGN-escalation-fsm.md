@@ -174,7 +174,35 @@ broke nothing, and the P0 counters would read it.
 
 ### Measured (headless, not KPI-grade)
 
-RESULTS_PLACEHOLDER
+Against docs/RUBRIC-failsafe.md, E5 unchanged, the grant's 5 s forecast on
+the ideal vehicle, before (master 23ac319) and after (this change, with the
+Shield's recovery law "cap_all", docs/DESIGN-shield-enforcement.md):
+
+| profile | before | after | Wilson 95 % low |
+|---|---|---|---|
+| library (seed 0) | 175/179 = 0.978 (2 false, 2 missed) | 177/179 = 0.989 (2 false, 0 missed) | 0.944 -> 0.960 |
+| smoke | 62/63 = 0.984 (1 false) | 62/63 = 0.984 (1 false) | 0.915 -> 0.915 |
+| nightly (seeds 1001-1003) | NIGHTLY_BEFORE | NIGHTLY_AFTER | NIGHTLY_WILSON |
+
+`tools/failsafe_rubric.py` on the final code: every declared label agrees
+with the rubric (library 168 cells, smoke 56, nightly RUBRIC_NIGHTLY), none
+undecided in its length; no label changed.
+
+- **The two library misses are triggers now.** gps-dropout lane 23.6,
+  windows 2-9 s and 6-13 s: X8 at 5.3 s and 7.6 s (the frozen fix's
+  dead-reckoned error passes the 1 m margin with nfz-square inside it),
+  home at 9.3 s and 13.3 s. The other dropout cells that expected a
+  trigger already had one, late and through the hold: X8 now returns at
+  5.3-6.4 s where G5 fired at 39.1-45.0 s, and the lane 23.6 window 4-11 s
+  cell, which landed (G6), now returns.
+- **gps-noise-beyond-margin returns on X8** at 2.5-4.5 s, where N-in-T's
+  G4 fired at 8.2-10.9 s.
+- **The nightly's noise false triggers are gone**: NIGHTLY_NOISE.
+- **What remains**: the false triggers of theta on the first deep forecast
+  (rail-mission-stub-vla; standoff-approach-angles 7 m pedestrian; and
+  NIGHTLY_C1 on the nightly), X1 -> G3 -> G5: library 2, smoke 1, nightly
+  NIGHTLY_C1N. Under the decided theta basis and E5 these stay false
+  triggers (docs/RUBRIC-failsafe.md, section 5).
 
 ## 2026-11-02: the delegated decisions, and correctness against a written rubric
 

@@ -205,6 +205,78 @@ c77c77d row digests fly it, and the harness re-flies every bundle from
 before this date on it (bundle extras schema /4 names `arm.recovery`;
 `--recovery-law lookahead` flies a comparison run).
 
+#### Every recovery at its cap (2026-11-06, WP3-17)
+
+With the band at its climb cap, the slowest recoveries left were the
+lateral ones, still on the reference's laws: GeofenceEscape from a zone
+imposed on the aircraft at a fixed 2.0 m/s (only a zone whose window
+opened on the aircraft escaped at the cap), StandoffRecover at
+(ring - d) / L floored at 0.5 m/s, CorridorReturn at (d - half) / L floored
+at 0.5 m/s. radius-scaling-grow-deep took 6.7 s to leave the grown zone,
+standoff-reclassified 3.5 s in two spells at 0.5-0.65 m/s,
+corridor-swap-shifted 4.0 s.
+
+`recovery_law="cap_all"`, the default since this date, flies each of them at
+its cap, the principle the band already follows:
+
+- **GeofenceEscape** from a static, hard, enforced zone whose ring holds the
+  aircraft: at the speed cap, through the path a window that opened on the
+  aircraft already took. The escape is judged as flown - out of the ring,
+  then a stop (one 0.1 s step at the speed, then 3 m/s^2) - not as a
+  straight 5 s line (`_shaped_escape`), so a cap whose straight forecast
+  would cross a corridor wall beyond the zone is not refused for it. It is
+  slower only where the cap's own stop breaks another rule (retries from
+  the cap down to 2.0 m/s in 0.25 m/s steps, then the in-force floor;
+  `_opened_retries`), and reported to the FSM as the zone's violation when
+  none can be flown (`_escape_shortfall`). The tick's trace names the zones
+  (`escape_at_cap`). A moving zone keeps the floor: the shaped escape
+  judges a fixed ring.
+- **StandoffRecover**: the aircraft's own outward speed at the cap, so the
+  range opens at the cap plus the subject's own recession (0 for a still
+  subject). Radially outward from a point there is no far edge to hold
+  short of.
+- **CorridorReturn**: the fastest inward speed, up to the cap, whose
+  lookahead endpoint stays a re-entry margin short of the FAR wall (the
+  band's far-edge hold), never below the old law.
+
+Each law stays a floor - a faster legal escape is never slowed - and
+recoveries stay exempt from theta, so the FSM reads them as before.
+
+| cell (grant forecast, ideal vehicle) | "cap" (29 Oct) | "cap_all" |
+|---|---|---|
+| radius-scaling-grow-deep | 6.7 s | 3.4 s |
+| radius-scaling-grow, factor 3.8 / 3.3 | 4.2 / 1.7 s | 2.1 / 0.9 s |
+| standoff-reclassified | 3.5 s (2 spells) | 0.9 s (1 spell) |
+| corridor-swap-shifted | 4.0 s | 0.6 s |
+| corridor-swap-narrowed, ask 2 m/s | 2.0 s | 0.6 s |
+
+On the library (seed 0) the mean time to safe went from 2.926 s over 39
+spells to 2.540 s over 35 (max 6.7 to 6.4 s); over the 34 episodes that
+recover under both laws, from 2.944 s to 2.540 s. Of the four spells that
+are gone, three are gps-dropout cells that the FSM's new X8 returns before
+the frozen fix carries the aircraft anywhere unsafe
+(docs/DESIGN-escalation-fsm.md), and one is standoff-reclassified's second
+spell. Smoke: 3.216 s over 19 spells to 2.533 s over 15. Nightly:
+NIGHTLY_T2S. On every profile no Shield-on episode flew into a P0 polygon
+(library 1, smoke 1, nightly NIGHTLY_POLY before), no Shield-on episode
+breached (2, 2, NIGHTLY_BREACH before) and the P0 escape rate stays 0.0;
+the library's true-state P0 ticks went from 1768 to 1474.
+
+What is left of the reference sweep's 2.0 s is depth over cap. The
+library's remaining spells are the climb from outside the band at the
+2 m/s climb cap (14 spells, mean 2.47 s), escapes at the 4 m/s speed cap
+from geometry imposed on the aircraft (11, 2.78 s), wind beyond the hold
+authority (4, 3.80 s) and the operator laws below the cap (6, 1.42 s). A
+lower mean needs higher caps in the policies, or shallower imposed
+geometry - policy decisions, not a recovery law.
+
+`Shield(recovery_law="cap")` keeps the 29 Oct law and `"lookahead"` the one
+before it; `--recovery-law cap` flies a comparison run. A bundle names its
+law (`arm.recovery`), so one flown on "cap" re-flies on it; extras schema
+/5 (this date) also names the dead reckoning's drift allowance
+(`arm.dr_drift_mps`), and an older bundle re-flies with the fix quality
+withheld, as it was flown.
+
 What the PI reference does here is narrower. Its `safety_shield/shield.py`
 skips projection only when the WORST violation's action is `RTL` or `land`,
 and then emits the raw action while its FSM changes mode; for `brake` and
