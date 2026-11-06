@@ -195,12 +195,26 @@ def geo_points(node) -> list[tuple[float, float]]:
     return out
 
 
+def _ordered_sum(xs) -> float:
+    """Left-to-right float addition, as the built-in sum() did before Python
+    3.12. From 3.12 sum() of floats is compensated (Neumaier, gh-100425) and
+    can differ in the last bit: on the reference demo's first polygon the mean
+    longitude is 121.53139999999999 on 3.10 and 121.5314 on 3.12, so the
+    frame origin - and every projected metre - depended on the interpreter
+    (the desktop runs 3.10, the Orin 3.12; found 2026-11-06)."""
+    total = 0.0
+    for x in xs:
+        total += x
+    return total
+
+
 def _mean(pts: list[tuple[float, float]]) -> tuple[float, float]:
-    # The reference's arithmetic, term for term:
-    #   sum(v.lat for v in verts) / len(verts)
+    # The reference's arithmetic, term for term, on every Python version:
+    #   sum(v.lat for v in verts) / len(verts)   (pre-3.12 summation)
     # A different summation order can differ in the last bit, which moves every
     # projected metre by a nanometre and breaks bit-for-bit agreement.
-    return (sum(p[0] for p in pts) / len(pts), sum(p[1] for p in pts) / len(pts))
+    return (_ordered_sum(p[0] for p in pts) / len(pts),
+            _ordered_sum(p[1] for p in pts) / len(pts))
 
 
 def ring_order(keys: list[tuple[float, float]]) -> list[int]:

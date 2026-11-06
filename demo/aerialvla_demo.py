@@ -39,6 +39,7 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "demo"))
 
 from guardrail import AuditLogger, Shield, State, load_policy       # noqa: E402
+from guardrail.shield import LOOKAHEAD_DT_S, LOOKAHEAD_S            # noqa: E402
 from guardrail.audit import AUDIT_FILE                             # noqa: E402
 from guardrail.aerialvla_codec import parse_action                  # noqa: E402
 from guardrail.compiler import ConstraintCompiler                   # noqa: E402
@@ -381,7 +382,7 @@ def main() -> int:
 
     policy = load_policy(args.policy)
     mission = ConstraintCompiler(policy).parse_command(args.command)
-    shield = Shield(policy, lookahead_s=3.0, dt=0.5)
+    shield = Shield(policy, lookahead_s=LOOKAHEAD_S, dt=LOOKAHEAD_DT_S)
     audit = AuditLogger(out / AUDIT_FILE, policy)   # the POLICY, so a hot-applied rule restamps the hash
     target = (mission.target_x, mission.target_y)
     print(f"[policy] {policy.policy_id} {policy.policy_hash}")
