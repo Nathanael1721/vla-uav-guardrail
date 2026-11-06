@@ -53,6 +53,11 @@ from guardrail.models import State                                    # noqa: E4
 
 POLICY = ROOT / "policies" / "sim_demo_policy.yaml"
 SKIP = "SKIP"
+# The four ConstraintBase fields a REST rule body states (IR schema 3.0.0:
+# constraint_type, priority, violation_action; 4.0.0: scope), at the values
+# the deprecated POST /nfz body means.
+HARD_P0 = {"constraint_type": "hard", "scope": "mission", "priority": "P0",
+           "violation_action": "project_fix"}
 
 
 # --------------------------------------------------------------------------- #
@@ -358,8 +363,9 @@ def test_a_hot_apply_over_rest_reaches_the_flying_shield_and_its_records():
     _act(N, node)
     clk.t += 0.1
     node._tick()
-    zone = {"id": "nfz-rest", "vertices": [{"x": 40, "y": 40}, {"x": 50, "y": 40},
-                                           {"x": 50, "y": 50}, {"x": 40, "y": 50}]}
+    zone = {"id": "nfz-rest", **HARD_P0,
+            "vertices": [{"x": 40, "y": 40}, {"x": 50, "y": 40},
+                         {"x": 50, "y": 50}, {"x": 40, "y": 50}]}
     url = f"http://127.0.0.1:{port}"
     r = httpx.post(f"{url}/dynamic_nfz", json=zone, timeout=10)
     assert r.status_code == 200 and r.json()["generation"] == 1, r.text
@@ -811,10 +817,10 @@ def test_a_stranger_cannot_hot_apply_by_sending_its_request_with_its_finished():
     try:
         for i in range(5):
             answer = _coalesced_post(port, pki, "other-client",
-                                     {"id": f"intruder-{i}", "vertices": square})
+                                     {"id": f"intruder-{i}", **HARD_P0, "vertices": square})
             assert b"200 OK" not in answer, answer[:200]
         answer = _coalesced_post(port, pki, "harness-client",
-                                 {"id": "friend", "vertices": square})
+                                 {"id": "friend", **HARD_P0, "vertices": square})
         assert answer.startswith(b"HTTP/1.1 200"), answer[:200]
         time.sleep(0.3)                  # anything still queued in the thread pool
         intruders = [c.id for c in sh.policy.constraints if c.id.startswith("intruder")]

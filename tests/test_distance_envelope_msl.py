@@ -45,7 +45,7 @@ from guardrail.models import (RUNTIME_TYPES, Action4D, DynamicNFZ,      # noqa: 
                               State, policy_from_raw)
 from guardrail.shield import ENFORCED_TYPES, HotApplyRefused, Shield    # noqa: E402
 
-H = {"constraint_type": "hard", "priority": "P0", "violation_action": "project_fix"}
+H = {"scope": "mission", "constraint_type": "hard", "priority": "P0", "violation_action": "project_fix"}
 
 
 def _refused(fn, *needles):

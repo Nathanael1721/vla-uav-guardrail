@@ -50,9 +50,11 @@ from guardrail.fsm import (HOLD_ARRIVAL_SLACK_S, HOLD_MIN_REPLAN_S,  # noqa: E40
 from guardrail.models import Action4D, DynamicNFZ, Policy, State  # noqa: E402
 from guardrail.shield import Shield  # noqa: E402
 
-# The three ConstraintBase fields the grant requires (IR schema 3.0.0, 2026-11-02),
-# at the values they defaulted to before (repair = project_fix).
-HARD_P0 = {"constraint_type": "hard", "priority": "P0", "violation_action": "project_fix"}
+# The four ConstraintBase fields the grant requires (IR schema 3.0.0, 2026-11-02;
+# scope since 4.0.0, 2026-11-06), at the values they defaulted to before
+# (repair = project_fix; an absent scope meant mission).
+HARD_P0 = {"constraint_type": "hard", "scope": "mission", "priority": "P0",
+           "violation_action": "project_fix"}
 
 S = FSMState
 SURVEY = ROOT / "policies" / "corridor_survey.yaml"
@@ -326,7 +328,7 @@ def test_a_look_ahead_view_ages_moving_zones_and_advances_a_moving_subject():
     inside_now = any(r["breach"] for r in sh.rule_status(p) if r["id"] == "mover")
     assert inside_then and not inside_now
     so_pol = Policy.model_validate({"policy_id": "so", "constraints": [
-        {"id": "ring", "type": "subject_standoff", "constraint_type": "hard",
+        {"id": "ring", "type": "subject_standoff", "scope": "mission", "constraint_type": "hard",
          "priority": "P0", "violation_action": "repair", "min_range_m": 5.0}]})
     sh2 = Shield(so_pol, escalation=False)
     sh2.set_subject(0.0, 0.0, "pedestrian", velocity=(1.0, 0.0))
@@ -382,14 +384,14 @@ def _two_zone_policy(window_start: str) -> Policy:
     """Zone A (timed) around (0, 0), 20 x 20 m; zone B, always in force, right
     against A's north side - so the nearest exit north lands in B."""
     return Policy.model_validate({"policy_id": "two-zones", "constraints": [
-        {"id": "a-timed", "type": "polygon_fence", "constraint_type": "hard",
+        {"id": "a-timed", "type": "polygon_fence", "scope": "mission", "constraint_type": "hard",
          "priority": "P0", "violation_action": "repair", "margin_m": 1.0,
          "vertices": [{"x": -10, "y": -10}, {"x": 10, "y": -10}, {"x": 10, "y": 10},
                       {"x": -10, "y": 10}],
          "altitude_floor_m": 0, "altitude_ceiling_m": 100,
          "valid_time": {"recurrence": {"days": ["Mon", "Tue", "Wed", "Thu", "Fri"],
                                        "start_time": window_start, "end_time": "17:00"}}},
-        {"id": "b-always", "type": "polygon_fence", "constraint_type": "hard",
+        {"id": "b-always", "type": "polygon_fence", "scope": "mission", "constraint_type": "hard",
          "priority": "P0", "violation_action": "repair", "margin_m": 1.0,
          "vertices": [{"x": -30, "y": 11}, {"x": 30, "y": 11}, {"x": 30, "y": 40},
                       {"x": -30, "y": 40}],
@@ -487,13 +489,13 @@ def test_a_transit_never_closes_on_the_person_it_must_keep_clear_of():
     quicker out of the ring, but it is deeper in it - closer to the person
     the rule protects - so the honest answer is no legal transit."""
     def wall(zid, x0, y0, x1, y1):
-        return {"id": zid, "type": "polygon_fence", "constraint_type": "hard",
+        return {"id": zid, "type": "polygon_fence", "scope": "mission", "constraint_type": "hard",
                 "priority": "P0", "violation_action": "repair", "margin_m": 0.5,
                 "vertices": [{"x": x0, "y": y0}, {"x": x1, "y": y0}, {"x": x1, "y": y1},
                              {"x": x0, "y": y1}],
                 "altitude_floor_m": 0, "altitude_ceiling_m": 100}
     pol = Policy.model_validate({"policy_id": "walled", "constraints": [
-        {"id": "ring", "type": "subject_standoff", "constraint_type": "hard",
+        {"id": "ring", "type": "subject_standoff", "scope": "mission", "constraint_type": "hard",
          "priority": "P0", "violation_action": "repair", "min_range_m": 10.0},
         wall("north", -3, 9, 40, 40), wall("south", -3, -40, 40, -9),
         wall("east", 9, -40, 40, 40)]})
@@ -514,7 +516,7 @@ def test_no_legal_point_holds_in_place_marked_illegal():
     """A zone opening over the aircraft that reaches past the 60 m search: the
     plan says so instead of inventing a legal hold."""
     big = Policy.model_validate({"policy_id": "big", "constraints": [
-        {"id": "huge", "type": "polygon_fence", "constraint_type": "hard",
+        {"id": "huge", "type": "polygon_fence", "scope": "mission", "constraint_type": "hard",
          "priority": "P0", "violation_action": "repair", "margin_m": 1.0,
          "vertices": [{"x": -200, "y": -200}, {"x": 200, "y": -200},
                       {"x": 200, "y": 200}, {"x": -200, "y": 200}],
@@ -530,7 +532,7 @@ def test_no_legal_point_holds_in_place_marked_illegal():
 def test_a_landing_site_leaves_a_zone_the_descent_would_enter():
     """Hovering above a low zone is legal; landing through it is not."""
     pol = Policy.model_validate({"policy_id": "low", "constraints": [
-        {"id": "low-zone", "type": "polygon_fence", "constraint_type": "hard",
+        {"id": "low-zone", "type": "polygon_fence", "scope": "mission", "constraint_type": "hard",
          "priority": "P0", "violation_action": "repair", "margin_m": 1.0,
          "vertices": [{"x": -5, "y": -5}, {"x": 5, "y": -5}, {"x": 5, "y": 5},
                       {"x": -5, "y": 5}],

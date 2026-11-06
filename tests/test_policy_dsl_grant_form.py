@@ -45,9 +45,11 @@ from guardrail.models import (GRANT_TYPES, HASH_SCHEME,             # noqa: E402
                               policy_from_raw, polygon_problem)
 from guardrail.shield import Shield                                # noqa: E402
 
-# The three ConstraintBase fields the grant requires (IR schema 3.0.0, 2026-11-02),
-# at the values they defaulted to before (repair = project_fix).
-HARD_P0 = {"constraint_type": "hard", "priority": "P0", "violation_action": "project_fix"}
+# The four ConstraintBase fields the grant requires (IR schema 3.0.0, 2026-11-02;
+# scope since 4.0.0, 2026-11-06), at the values they defaulted to before
+# (repair = project_fix; an absent scope meant mission).
+HARD_P0 = {"constraint_type": "hard", "scope": "mission", "priority": "P0",
+           "violation_action": "project_fix"}
 # The same three in a YAML flow mapping, for the inline documents below.
 _HP0_YAML = ", ".join(f"{k}: {v}" for k, v in HARD_P0.items())
 
@@ -544,8 +546,8 @@ def test_a_ring_hashes_the_same_whatever_order_it_is_written_in():
         [(v.lat, v.lon) for v in f.given_vertices()]
     # Through a bundle the canonical ring comes back as it went in.
     p = _yaml("policy_id: cw\nversion: 0.1.0\nconstraints:\n  - id: z\n"
-              "    type: polygon_fence\n    constraint_type: hard\n    priority: P0\n"
-              "    violation_action: project_fix\n    vertices:\n"
+              "    type: polygon_fence\n    constraint_type: hard\n    scope: mission\n"
+              "    priority: P0\n    violation_action: project_fix\n    vertices:\n"
               + "".join(f"      - {{x: {v['x']}, y: {v['y']}}}\n" for v in spellings[6]))
     src = load_policy(p)
     back = B.check_bundle(B.write_bundle(src, _tmp("cw.tar.gz"), signer=None)).policy
@@ -621,6 +623,196 @@ def test_every_rule_must_state_its_type_priority_and_breach_action():
                                  "missing_violation_action.yaml"), "violation_action")
 
 
+def test_every_rule_must_state_its_scope():
+    """WP1-01, the fourth field (IR schema 4.0.0, 2026-11-06): the grant's
+    ConstraintBase gives `scope` no default either. Until this date it was
+    optional here and an absent scope was read as "mission" (failed then:
+    every document below that leaves it out loaded, and the published
+    schema offered null). It is refused by name at every DSL entry - a
+    file, a raw document, a rule built in code, a 4.0.0 recipe - and so is a
+    null; the published schema requires it and offers the grant's four
+    values only; every shipped rule states it."""
+    from guardrail.models import era_context, ir_schema_defaults
+    r = _raw()
+    del r["constraints"][0]["scope"]
+    _refused(lambda: policy_from_raw(r), "scope", "Field required")
+    text = ("policy_id: t\nversion: 0.1.0\nconstraints:\n  - id: alt\n"
+            "    type: altitude_envelope\n    alt_min_m: 5\n    alt_max_m: 30\n"
+            + "".join(f"    {k}: {v}\n" for k, v in HARD_P0.items() if k != "scope"))
+    _refused(lambda: load_policy(_yaml(text)), "scope", "Field required")
+    nul = _raw()
+    nul["constraints"][0]["scope"] = None
+    _refused(lambda: policy_from_raw(nul), "scope is required")
+    for bad in ("everywhere", "Mission", "", 1):
+        x = _raw()
+        x["constraints"][0]["scope"] = bad
+        _refused(lambda x=x: policy_from_raw(x), "scope")
+    for good in ("global", "mission", "segment", "waypoint"):
+        x = _raw()
+        x["constraints"][0]["scope"] = good
+        assert policy_from_raw(x).constraints[0].scope == good
+    # A rule built in code, with no document behind it, states it too.
+    _refused(lambda: CircleFence(id="c", type="circle_fence", constraint_type="hard",
+                                 priority="P0", violation_action="project_fix",
+                                 center={"x": 0.0, "y": 0.0}, radius_m=5.0),
+             "scope", "Field required")
+    # An era says otherwise only for a document of an earlier one: an
+    # unreadable or later version is today's.
+    for era in ("4.0.0", "4.1.0", "5.0.0", "banana", "3.1"):
+        _refused(lambda era=era: Policy.model_validate(r, context=era_context(era)), "scope")
+    for era in (None, "2.2.0", "3.0.0", "3.1.0"):
+        assert Policy.model_validate(r, context=era_context(era)).constraints[0].scope is None
+    # The schema pin and the published contract.
+    pins = ir_schema_defaults()
+    assert {m for m, f in pins.items() if f.get("scope") == "<required>"} == {
+        "PolygonFence", "CircleFence", "AltitudeEnvelope", "KinematicEnvelope",
+        "ObstacleClearance", "SubjectStandoff", "Corridor", "DistanceEnvelope",
+        "DynamicNFZ", "TimeWindowSwitch", "CorridorSwap"}, pins
+    pub = json.loads((ROOT / "policies" / "policy_dsl.schema.json").read_text(encoding="utf-8"))
+    for model in ("PolygonFence", "AltitudeEnvelope", "Corridor", "TimeWindowSwitch",
+                  "IR.PolygonFence", "IR.DynamicNFZ", "IR.CorridorSwap"):
+        d = pub["$defs"][model]
+        req = set(d.get("required", [])) | {x for r_ in d.get("allOf", [])
+                                             for x in r_.get("required", [])}
+        assert "scope" in req, (model, req)
+        sc = d["properties"]["scope"]
+        assert sc["enum"] == ["global", "mission", "segment", "waypoint"] and "anyOf" not in sc, sc
+    _refused(lambda: load_policy(ROOT / "policies" / "negative" / "missing_scope.yaml"),
+             "scope", "Field required")
+    n = 0
+    for f in sorted((ROOT / "policies").glob("*.yaml")):
+        pol = load_policy(f, runtime=False)
+        assert {c.scope for c in pol.constraints} == {"mission"}, f.name
+        assert pol.ir_schema_version == "4.0.0", f.name
+        n += len(pol.constraints)
+    assert n >= 154, n
+
+
+def test_a_document_from_before_ir_4_reads_and_hashes_as_stored():
+    """IR schema 4.0.0 made `scope` required, and no stored document before it
+    wrote scope. Each must still load and re-derive the hash it recorded,
+    rewritten nowhere: it is read in its own era (models.era_context), scope
+    absent, and `effective_scope` reads that as "mission", what it meant.
+    Checked over the stored artefacts in this repository (the bundles of
+    every earlier flight live in the lab checkout's gitignored bundles/ and
+    are covered by test_every_bundle_on_disk_reads_in_its_era):
+
+      * every tracked replay bundle (bundles/*.replay.tar.gz): the four of
+        before 2026-10-06 (16-hex hash) and the KPI evidence of 6 Nov
+        (hil_smoke_03, the AIOT-VLA city flights), all written under IR
+        schema 3.1.0 or earlier: read and verified as before, every rule's
+        scope absent; the same ir.json read as a document of today is
+        refused;
+      * a run's policy_g0.json (tests/fixtures/pas_ap_20261008_policy_g0.json,
+        flown 8 Oct): read by the run readers as written, it resolves to the
+        lock's rewound follow-car-citylife@0.1.0;
+      * a bundle issued under 3.1.0 for a shipped policy's previous version
+        (its content rebuilt from the lock chain, so its ir.json is the bytes
+        such a bundle holds): check_bundle reads it in its manifest's era
+        with the hash the manifest records; the same bytes under a 4.0.0
+        manifest are refused, and a policy of the earlier era re-bundled
+        today records 3.1.0, the schema its IR is a document of."""
+    import subprocess
+    from guardrail.manifest import resolve_run_policy
+    from guardrail.replay import POLICY, generation_table, read_replay, verify_replay
+    # The tracked ones: bundles/ also holds untracked build products.
+    r = subprocess.run(["git", "ls-files", "bundles/*.replay.tar.gz"], cwd=ROOT,
+                       capture_output=True, text=True)
+    tracked = sorted(ROOT / n for n in r.stdout.split()) if r.returncode == 0 else []
+    if not tracked:
+        return SKIP                     # not a git checkout
+    legacy = {"retarget_demo", "retarget_demo2", "retarget_fixed", "retarget_smooth"}
+    assert legacy <= {b.name.split(".")[0] for b in tracked}, tracked
+    for b in tracked:
+        got = read_replay(b)
+        assert got["hash_form"] is not None, b.name
+        if b.name.split(".")[0] in legacy:
+            assert got["hash_form"].startswith("legacy16-"), (b.name, got["hash_form"])
+        assert got["policy"].constraints and \
+            all(c.scope is None for c in got["policy"].constraints), b.name
+        assert {c.effective_scope for c in got["policy"].constraints} == {"mission"}
+        assert got["policy"].ir_schema_version == "3.1.0", b.name
+        ok, why = verify_replay(b)
+        assert ok, (b.name, why)
+        with tarfile.open(b, "r:gz") as tar:
+            ir = json.loads(tar.extractfile(POLICY + "ir.json").read())
+        _refused(lambda ir=ir: Policy.model_validate(ir), "scope", "Field required")
+    fx = ROOT / "tests" / "fixtures" / "pas_ap_20261008_policy_g0.json"
+    _, pols, probs = generation_table({"policy_g0.json": fx.read_bytes()})
+    assert probs == [] and [c.scope for c in pols[0].constraints] == [None] * 5, probs
+    pol, form, label = resolve_run_policy({"policy_hash": pols[0].policy_hash},
+                                          B.policy_candidates())
+    assert label == "follow_car_citylife.yaml as follow-car-citylife@0.1.0", label
+    assert form == HASH_SCHEME and pol.policy_hash == pols[0].policy_hash
+    _refused(lambda: Policy.model_validate(json.loads(fx.read_text(encoding="utf-8"))), "scope")
+    # A 3.1.0 bundle of follow_car.yaml's previous version (0.1.2).
+    lock = B.load_lock()["policies"]
+    now = load_policy(ROOT / "policies" / "follow_car.yaml", runtime=False)
+    prev_key = lock[B.lock_key(now)]["migrated_from"]
+    prev = B.as_version(now.ir3_form(), prev_key.rpartition("@")[2])
+    assert prev.policy_hash == lock[prev_key]["policy_hash"], "not the issued 0.1.2"
+    assert prev.ir_schema_version == "3.1.0"
+    path = B.write_bundle(prev, _tmp("prev.tar.gz"), signer=None,
+                          issued_at="2026-11-04T09:32:15Z")
+    chk = B.check_bundle(path)
+    assert chk.manifest["ir_schema_version"] == "3.1.0", chk.manifest["ir_schema_version"]
+    assert chk.hash_form == HASH_SCHEME and chk.manifest["policy_hash"] == lock[prev_key]["policy_hash"]
+    assert all(c.scope is None for c in chk.policy.constraints)
+    with tarfile.open(path, "r:gz") as tar:
+        members = {m.name: tar.extractfile(m).read() for m in tar.getmembers()}
+    for era in ("3.0.0", None):
+        man = json.loads(members[B.MANIFEST_NAME])
+        man.pop("ir_schema_version") if era is None else man.update(ir_schema_version=era)
+        assert B.check_bundle(_bundle_with(members, {B.MANIFEST_NAME: man})).hash_form == \
+            HASH_SCHEME, era
+    man = json.loads(members[B.MANIFEST_NAME])
+    man["ir_schema_version"] = "4.0.0"
+    _refused(lambda: B.check_bundle(_bundle_with(members, {B.MANIFEST_NAME: man})),
+             "cannot represent", "scope")
+
+
+def _bundle_with(members: dict, replace: dict) -> Path:
+    """A copy of a bundle's members with some replaced (a dict is written as
+    the manifest's JSON), as a new keyless tar.gz."""
+    out = _tmp("edited.tar.gz")
+    with tarfile.open(out, "w:gz") as tar:
+        for n, data in members.items():
+            if n in replace:
+                data = json.dumps(replace[n], indent=2, sort_keys=True).encode()
+            info = tarfile.TarInfo(n)
+            info.size = len(data)
+            tar.addfile(info, io.BytesIO(data))
+    return out
+
+
+def test_every_bundle_on_disk_reads_in_its_era():
+    """Every policy bundle in bundles/ (flight bundles are gitignored build
+    products: in the lab checkout they go back to 2026-10-06, each written
+    under the IR schema its manifest names) still opens: integrity, its
+    recorded hash, and every rule's scope as its era wrote it - absent
+    before 4.0.0 (read as "mission"), stated since. SKIP where there is no
+    bundle but the replay ones (a fresh clone)."""
+    from guardrail.models import _semver_tuple
+    found = sorted(p for p in (ROOT / "bundles").glob("*.tar.gz")
+                   if not p.name.endswith(".replay.tar.gz"))
+    if not found:
+        return SKIP
+    eras = {}
+    for p in found:
+        chk = B.check_bundle(p)
+        era = chk.manifest.get("ir_schema_version")
+        eras[p.name] = era
+        scopes = {c.scope for c in chk.policy.constraints}
+        if era is not None and _semver_tuple(era) >= (4, 0, 0):
+            assert None not in scopes, (p.name, scopes)
+        assert chk.signature in (B.SIG_VERIFIED, B.SIG_UNSIGNED), (p.name, chk.signature)
+        assert {c.effective_scope for c in chk.policy.constraints} <= {
+            "global", "mission", "segment", "waypoint"}
+    print(f"      {len(found)} bundles: " + ", ".join(
+        f"{v or 'unrecorded'} x{sum(1 for e in eras.values() if e == v)}"
+        for v in sorted(set(eras.values()), key=lambda v: _semver_tuple(v) if v else ())))
+
+
 def test_every_grant_rule_type_is_declarable():
     """All nine classes of the grant's taxonomy table validate and hash."""
     import typing
@@ -686,12 +878,18 @@ def test_every_metre_policy_hashes_exactly_as_before():
     Since 2026-11-03 no shipped file is written in metres (WP1-14,
     tools/convert_policies_wgs84.py): each converted file's metre form, at
     the version it had before, is the metre policy, and it hashes exactly as
-    the lock pinned it then."""
+    the lock pinned it then. Since IR schema 4.0.0 (2026-11-06) the file
+    states scope: the WGS84 version it migrated from is the file with scope
+    left out (Policy.ir3_form, bundle.IR3_FORM), and its metre form is that
+    metre policy."""
     lock = B.load_lock()["policies"]
     n = 0
     for f in sorted((ROOT / "policies").glob("*.yaml")):
         pol = load_policy(f)
         ent = lock[B.lock_key(pol)]
+        if ent.get("migration", {}).get("old_hash_form") == B.IR3_FORM:
+            prev = ent["migrated_from"]
+            pol, ent = B.as_version(pol.ir3_form(), prev.rpartition("@")[2]), lock[prev]
         if not ent.get("migration", {}).get("old_hash_form", "").startswith(B.FRAME_FORM):
             continue
         old_key = ent["migrated_from"]
@@ -709,10 +907,17 @@ def test_the_geographic_policy_keeps_its_old_hash_as_a_prior_form():
     under the named prior scheme; the lock keeps it and records the v3 form
     beside it, never instead of it. Since IR schema 3.0.0 both belong to
     wgs84-taipei-demo@0.1.0, the file's version before the migration; the
-    file, put back at 0.1.0, reproduces both."""
+    file, put back at 0.1.0, reproduces both. Since IR schema 4.0.0 the file
+    (0.1.2) states scope; it reproduces them with scope left out, as 0.1.1
+    and 0.1.0 were written (Policy.ir3_form)."""
     from guardrail.models import IR2_FORM
     pol = load_policy(WGS84)
     lock = B.load_lock()["policies"]
+    ent = lock[B.lock_key(pol)]
+    assert ent["migration"]["old_hash_form"] == B.IR3_FORM, ent
+    assert B.as_version(pol, "0.1.0").prior_hashes()[PRIOR_SCHEME_V2] != \
+        lock["wgs84-taipei-demo@0.1.0"]["policy_hash"], "a scope-stating 0.1.0 is not the old one"
+    pol = B.as_version(pol.ir3_form(), ent["migrated_from"].rpartition("@")[2])
     old_key = lock[B.lock_key(pol)]["migrated_from"]
     ent = lock[old_key]
     old = B.as_version(pol, old_key.rpartition("@")[2])
@@ -806,7 +1011,7 @@ def test_the_conflict_lint_is_not_over_eager():
          {"id": "hi", "type": "altitude_envelope", **HARD_P0, "alt_min_m": 30, "alt_max_m": 40,
           "valid_time": night}],
         [{"id": "lo", "type": "altitude_envelope", **HARD_P0, "alt_min_m": 10, "alt_max_m": 20},
-         {"id": "hi", "type": "altitude_envelope",
+         {"id": "hi", "type": "altitude_envelope", "scope": "mission",
           "priority": "P0", "violation_action": "project_fix", "alt_min_m": 30, "alt_max_m": 40,
           "constraint_type": "soft"}],
     ]
@@ -1259,7 +1464,7 @@ def test_the_breach_action_notes_say_what_the_shield_now_does():
     behaviour, so the two cannot drift apart unnoticed."""
     def env(action, kind="hard"):
         return policy_from_raw(_raw(constraints=[
-            {"id": "alt", "type": "altitude_envelope",
+            {"id": "alt", "type": "altitude_envelope", "scope": "mission",
              "priority": "P0", "alt_min_m": 5, "alt_max_m": 60,
              "constraint_type": kind, "violation_action": action}]))
     for act in sorted(SHIELD_ACTS_ON):

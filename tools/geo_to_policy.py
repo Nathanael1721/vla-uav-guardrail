@@ -343,11 +343,12 @@ def rules_from_payload(obj, defaults: dict | None = None) -> list[dict] | None:
                                   f"unknown keys {sorted(extra)}")
         # As guardrail/api.py reads them since IR schema 3.0.0: a body with
         # only the 2026-07 POST /nfz keys is that endpoint's fixed body and
-        # means hard / P0 / project_fix (apply_legacy_nfz); any other zone
-        # body is a POST /dynamic_nfz rule and states the three itself (the
+        # means hard / P0 / project_fix for this mission (apply_legacy_nfz;
+        # scope "mission" since IR schema 4.0.0 requires it); any other zone
+        # body is a POST /dynamic_nfz rule and states the four itself (the
         # DSL refuses it otherwise).
         if set(obj) <= _LEGACY_NFZ_KEYS:
-            return [{"type": "dynamic_nfz", **IR2_RULE_DEFAULTS, **obj}]
+            return [{"type": "dynamic_nfz", **IR2_RULE_DEFAULTS, "scope": "mission", **obj}]
         return [{"type": "dynamic_nfz", **obj}]
     if isinstance(obj, dict) and "type" in obj and "constraints" not in obj:
         return [obj]                                    # one DSL rule (a patch)

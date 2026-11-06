@@ -1637,7 +1637,7 @@ def resolve_run_generation_chain(run_dir, recorded: str | None, candidates) -> s
     is a dynamic_nfz, which a policy FILE may not fly, C-16)."""
     if not recorded:
         return None
-    from guardrail.models import policy_from_raw
+    from guardrail.models import era_context, policy_from_raw
     run_dir = Path(run_dir)
 
     def gen(f: Path) -> int:
@@ -1647,8 +1647,11 @@ def resolve_run_generation_chain(run_dir, recorded: str | None, candidates) -> s
     if not gens or gens[0].name != "policy_g0.json":
         return None
     try:
+        # A run's policy_g<N>.json records no IR schema version: read as
+        # written, so a run flown before IR schema 4.0.0, whose rules leave
+        # `scope` out, resolves as it did (models.era_context).
         chain = [policy_from_raw(json.loads(f.read_text(encoding="utf-8")), source=f.name,
-                                 runtime=False) for f in gens]
+                                 runtime=False, context=era_context(None)) for f in gens]
     except Exception:                                          # noqa: BLE001
         return None
     base, _, label = resolve_run_policy({"policy_hash": chain[0].policy_hash}, candidates)

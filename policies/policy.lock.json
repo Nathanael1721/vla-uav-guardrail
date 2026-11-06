@@ -6,7 +6,7 @@
     "derived lists policies that exist only mid-flight (a hot-applied rule bumps generation and the hash), with the recipe to rebuild them.",
     "ir_schema pins what every IR field means when omitted, under the IR schema version it was pinned at (ir_schema.version = guardrail.models.IR_SCHEMA_VERSION); see guardrail.models.ir_schema_defaults and tests/test_policy_hash.py. The freeze rule (2026-11-02, grant R6): ANY change to the pinned shape - a new field, even one defaulting to None, a new model, a changed default, a removal - needs a higher IR_SCHEMA_VERSION and a row in docs/IR-MIGRATIONS.md; lock --update then re-pins `defaults` and appends what changed to `migrations` (from, to, on, changes), so earlier pins can be read back. additive_pins records the two additions pinned WITHOUT a bump before that rule (2026-10-07 and 2026-10-19).",
     "Maintain with: python -m guardrail.bundle lock [--update]. Checked by tests/test_policy_hash.py.",
-    "migrated_from (since 2026-11-02, IR schema 3.0.0): an entry locked because an IR change moved the policy's hash without changing its rules names the entry it migrates. The claim is re-proved by check_lock: the file's policy, put back at the old version, must reproduce the old entry's recorded hash under an IR 2.x form (guardrail.models.Policy.ir2_hashes) and its legacy hashes. policy_candidates offers that rewound policy, so runs flown under the old version still resolve. ir_schema_version on an entry names the IR schema it was locked under (absent: 2.x)."
+    "migrated_from (since 2026-11-02, IR schema 3.0.0): an entry locked because an IR change moved the policy's hash without changing its rules names the entry it migrates. The claim is re-proved by check_lock: the file's policy, put back at the old version, must reproduce the old entry's recorded hash under an IR 2.x form (guardrail.models.Policy.ir2_hashes) and its legacy hashes. policy_candidates offers that rewound policy, so runs flown under the old version still resolve. ir_schema_version on an entry names the IR schema it was locked under (absent: 2.x). Two later migrations are read back the same way, each by its own reading of the file (guardrail.bundle.rewind): the frame migration (2026-11-03, IR schema 3.1.0; old_hash_form sha256-canonical-v3/local-metres: the file's metre form, Policy.metre_form) and the scope migration (2026-11-06, IR schema 4.0.0; sha256-canonical-v3/ir-3.x: the file with every rule's scope left out, Policy.ir3_form)."
   ],
   "derived": [
     {
@@ -107,7 +107,7 @@
         "layer": "<absent>",
         "locked_by": "<absent>",
         "priority": "<required>",
-        "scope": "<absent>",
+        "scope": "<required>",
         "type": "<required>",
         "valid_time": "<absent>",
         "violation_action": "<required>"
@@ -124,7 +124,7 @@
         "margin_m": 1.0,
         "priority": "<required>",
         "radius_m": "<required>",
-        "scope": "<absent>",
+        "scope": "<required>",
         "type": "<required>",
         "valid_time": "<absent>",
         "vertices": [],
@@ -140,7 +140,7 @@
         "layer": "<absent>",
         "locked_by": "<absent>",
         "priority": "<required>",
-        "scope": "<absent>",
+        "scope": "<required>",
         "type": "<required>",
         "valid_time": "<absent>",
         "violation_action": "<required>",
@@ -156,7 +156,7 @@
         "layer": "<absent>",
         "locked_by": "<absent>",
         "priority": "<required>",
-        "scope": "<absent>",
+        "scope": "<required>",
         "target_id": "<required>",
         "type": "<required>",
         "valid_time": "<absent>",
@@ -171,7 +171,7 @@
         "min_distance_m": "<required>",
         "object_class": "<required>",
         "priority": "<required>",
-        "scope": "<absent>",
+        "scope": "<required>",
         "type": "<required>",
         "valid_time": "<absent>",
         "violation_action": "<required>"
@@ -187,7 +187,7 @@
         "margin_m": 1.0,
         "motion": "<absent>",
         "priority": "<required>",
-        "scope": "<absent>",
+        "scope": "<required>",
         "type": "<required>",
         "valid_time": "<absent>",
         "vertices": "<required>",
@@ -200,7 +200,7 @@
         "layer": "<absent>",
         "locked_by": "<absent>",
         "priority": "<required>",
-        "scope": "<absent>",
+        "scope": "<required>",
         "speed_max_mps": "<required>",
         "type": "<required>",
         "valid_time": "<absent>",
@@ -219,7 +219,7 @@
         "locked_by": "<absent>",
         "min_clearance_m": "<required>",
         "priority": "<required>",
-        "scope": "<absent>",
+        "scope": "<required>",
         "soft_margin_m": 0.0,
         "type": "<required>",
         "valid_time": "<absent>",
@@ -248,7 +248,7 @@
         "locked_by": "<absent>",
         "margin_m": 1.0,
         "priority": "<required>",
-        "scope": "<absent>",
+        "scope": "<required>",
         "type": "<required>",
         "valid_time": "<absent>",
         "vertices": "<required>",
@@ -274,7 +274,7 @@
         "locked_by": "<absent>",
         "min_range_m": "<required>",
         "priority": "<required>",
-        "scope": "<absent>",
+        "scope": "<required>",
         "soft_margin_m": 0.0,
         "subject_class": "*",
         "type": "<required>",
@@ -288,7 +288,7 @@
         "layer": "<absent>",
         "locked_by": "<absent>",
         "priority": "<required>",
-        "scope": "<absent>",
+        "scope": "<required>",
         "target_id": "<required>",
         "type": "<required>",
         "valid_time": "<absent>",
@@ -363,15 +363,35 @@
         "on": "2026-11-03",
         "to": "3.1.0",
         "why": "WP1-14 (2026-11-03): x / y are optional on a point, not required - a WGS84 point stores lat/lon only and its metres are a view computed when first read, from the frame origin its policy binds it to (models.XY, projection.local_metres). Every 3.0.0 document still validates; a required field made optional changes the meaning of no document that states it, and the canonical form held a WGS84 point as lat/lon only already, so no stored hash moved (all 32 policy files hash as under 3.0.0)."
+      },
+      {
+        "changes": [
+          "AltitudeEnvelope.scope: default '<absent>' -> '<required>'; every policy that omits it is refused",
+          "CircleFence.scope: default '<absent>' -> '<required>'; every policy that omits it is refused",
+          "Corridor.scope: default '<absent>' -> '<required>'; every policy that omits it is refused",
+          "CorridorSwap.scope: default '<absent>' -> '<required>'; every policy that omits it is refused",
+          "DistanceEnvelope.scope: default '<absent>' -> '<required>'; every policy that omits it is refused",
+          "DynamicNFZ.scope: default '<absent>' -> '<required>'; every policy that omits it is refused",
+          "KinematicEnvelope.scope: default '<absent>' -> '<required>'; every policy that omits it is refused",
+          "ObstacleClearance.scope: default '<absent>' -> '<required>'; every policy that omits it is refused",
+          "PolygonFence.scope: default '<absent>' -> '<required>'; every policy that omits it is refused",
+          "SubjectStandoff.scope: default '<absent>' -> '<required>'; every policy that omits it is refused",
+          "TimeWindowSwitch.scope: default '<absent>' -> '<required>'; every policy that omits it is refused"
+        ],
+        "from": "3.1.0",
+        "on": "2026-11-06",
+        "to": "4.0.0",
+        "why": "WP1-01 (2026-11-06): `scope` is required on every rule, as the grant's ConstraintBase writes it (it was absent by default, which meant \"mission\"). A field every writer must now give is a breaking change, hence the major version. A document of an earlier era - a bundle whose manifest names an older ir_schema_version, a lock recipe recorded before, a replay bundle or a run's policy_g<N>.json - is read in its own era (models.era_context): scope stays absent where it wrote none, so it hashes exactly as stored. Every shipped policy now states scope (mission on all 154 rules: every rule is a mission-layer rule), so each raised its patch version; its new entry names the old one in migrated_from with old_hash_form sha256-canonical-v3/ir-3.x, and check_lock re-proves that the file with scope left out (Policy.ir3_form) reproduces the old entry's hash and legacy hashes."
       }
     ],
     "previous_versions": [
       "2.0.0",
       "2.1.0",
       "2.2.0",
-      "3.0.0"
+      "3.0.0",
+      "3.1.0"
     ],
-    "version": "3.1.0"
+    "version": "4.0.0"
   },
   "policies": {
     "corridor-survey@0.1.0": {
@@ -418,6 +438,23 @@
       },
       "policy_hash": "sha256:fc35249beda5c9a25aa68d55648f2b1a7d03382056ebf3a35f9c3cf2efd3464f"
     },
+    "corridor-survey@0.1.3": {
+      "file": "corridor_survey.yaml",
+      "hash_scheme": "sha256-canonical-v3",
+      "ir_schema_version": "4.0.0",
+      "legacy_hashes": {
+        "legacy16-exclude-none": "sha256:dd6f4eec7cdf6cf5",
+        "legacy16-include-defaults": "sha256:0707fe46ea8404d4",
+        "legacy16-valid-time": "sha256:0707fe46ea8404d4"
+      },
+      "locked_on": "2026-11-06",
+      "migrated_from": "corridor-survey@0.1.2",
+      "migration": {
+        "ir_schema_version": "4.0.0",
+        "old_hash_form": "sha256-canonical-v3/ir-3.x"
+      },
+      "policy_hash": "sha256:ddb43893eea8b015098dd735b74914497c4d0ec8490b4834e8d623310ee61df7"
+    },
     "edge-nfz-patrol@0.1.0": {
       "file": "edge_patrol.yaml",
       "legacy_hashes": {
@@ -461,6 +498,23 @@
         "old_hash_form": "sha256-canonical-v3/local-metres"
       },
       "policy_hash": "sha256:390a037253bb9a43fe8e05e5696f145781730b66c0cac2594aa0d53a685bc738"
+    },
+    "edge-nfz-patrol@0.1.3": {
+      "file": "edge_patrol.yaml",
+      "hash_scheme": "sha256-canonical-v3",
+      "ir_schema_version": "4.0.0",
+      "legacy_hashes": {
+        "legacy16-exclude-none": "sha256:7d49daaff50c0252",
+        "legacy16-include-defaults": "sha256:3f9e32e49beba72e",
+        "legacy16-valid-time": "sha256:3f9e32e49beba72e"
+      },
+      "locked_on": "2026-11-06",
+      "migrated_from": "edge-nfz-patrol@0.1.2",
+      "migration": {
+        "ir_schema_version": "4.0.0",
+        "old_hash_form": "sha256-canonical-v3/ir-3.x"
+      },
+      "policy_hash": "sha256:6a60d08ed13052c6f1843e0480d04a56013c628bc0b1b923fdaf76073fed6122"
     },
     "fase3-demo@0.1.0": {
       "file": "demo_policy.yaml",
@@ -506,6 +560,23 @@
       },
       "policy_hash": "sha256:757590d67b1a7a63970fe5531d7b01613681bde5d26c4b879eb1a564b082683f"
     },
+    "fase3-demo@0.1.3": {
+      "file": "demo_policy.yaml",
+      "hash_scheme": "sha256-canonical-v3",
+      "ir_schema_version": "4.0.0",
+      "legacy_hashes": {
+        "legacy16-exclude-none": "sha256:b1dae56e19f2a00a",
+        "legacy16-include-defaults": "sha256:75129f18859a7d55",
+        "legacy16-valid-time": "sha256:75129f18859a7d55"
+      },
+      "locked_on": "2026-11-06",
+      "migrated_from": "fase3-demo@0.1.2",
+      "migration": {
+        "ir_schema_version": "4.0.0",
+        "old_hash_form": "sha256-canonical-v3/ir-3.x"
+      },
+      "policy_hash": "sha256:ec26566b569589af919fa932ab7dd77bfa6d2c4eda027ff8ae101e7ddd8ff7c9"
+    },
     "fase3-sim-demo@0.1.1": {
       "file": "sim_demo_policy.yaml",
       "legacy_hashes": {
@@ -550,6 +621,23 @@
       },
       "policy_hash": "sha256:1a777a0f4caa299e1a9a1bf68e894ea924b686f1edcac083a4237873579adafe"
     },
+    "fase3-sim-demo@0.1.4": {
+      "file": "sim_demo_policy.yaml",
+      "hash_scheme": "sha256-canonical-v3",
+      "ir_schema_version": "4.0.0",
+      "legacy_hashes": {
+        "legacy16-exclude-none": "sha256:68c7bdd4aca6437f",
+        "legacy16-include-defaults": "sha256:c530ed49e7d2f65f",
+        "legacy16-valid-time": "sha256:c530ed49e7d2f65f"
+      },
+      "locked_on": "2026-11-06",
+      "migrated_from": "fase3-sim-demo@0.1.3",
+      "migration": {
+        "ir_schema_version": "4.0.0",
+        "old_hash_form": "sha256-canonical-v3/ir-3.x"
+      },
+      "policy_hash": "sha256:b665adbaac29186240d5a74a8fa36a94b69adae2db6035ca69d45c8e93e7f358"
+    },
     "fase3-urban-demo@0.1.0": {
       "file": "urban_demo_policy.yaml",
       "legacy_hashes": {
@@ -593,6 +681,23 @@
         "old_hash_form": "sha256-canonical-v3/local-metres"
       },
       "policy_hash": "sha256:b6fc647a2618be75c4c08acff3df8e8a1230e67bcfd01a6304ed6bea77165fcb"
+    },
+    "fase3-urban-demo@0.1.3": {
+      "file": "urban_demo_policy.yaml",
+      "hash_scheme": "sha256-canonical-v3",
+      "ir_schema_version": "4.0.0",
+      "legacy_hashes": {
+        "legacy16-exclude-none": "sha256:1e6e199f188a3b2d",
+        "legacy16-include-defaults": "sha256:43799f53bff1e848",
+        "legacy16-valid-time": "sha256:43799f53bff1e848"
+      },
+      "locked_on": "2026-11-06",
+      "migrated_from": "fase3-urban-demo@0.1.2",
+      "migration": {
+        "ir_schema_version": "4.0.0",
+        "old_hash_form": "sha256-canonical-v3/ir-3.x"
+      },
+      "policy_hash": "sha256:dfb6572e02772406e6e1b18c7b8b0737f51abcbf9b43a5e9b9391f1a899ae09d"
     },
     "follow-car-citylife-nfz3@0.1.0": {
       "file": "follow_car_citylife_nfz3.yaml",
@@ -639,6 +744,23 @@
       },
       "policy_hash": "sha256:411dc340ce8ed5421ba82ed6ad3a6b6d089f942fc17c4b6eef99a786ecd76d01"
     },
+    "follow-car-citylife-nfz3@0.1.3": {
+      "file": "follow_car_citylife_nfz3.yaml",
+      "hash_scheme": "sha256-canonical-v3",
+      "ir_schema_version": "4.0.0",
+      "legacy_hashes": {
+        "legacy16-exclude-none": "sha256:527319e80e668434",
+        "legacy16-include-defaults": "sha256:b21a4ea9e5c160df",
+        "legacy16-valid-time": "sha256:b21a4ea9e5c160df"
+      },
+      "locked_on": "2026-11-06",
+      "migrated_from": "follow-car-citylife-nfz3@0.1.2",
+      "migration": {
+        "ir_schema_version": "4.0.0",
+        "old_hash_form": "sha256-canonical-v3/ir-3.x"
+      },
+      "policy_hash": "sha256:cc8cff0a7de55b53f78b5e774159a59b6646b8d7f32e9fcb5ed0136578cd65f4"
+    },
     "follow-car-citylife-nfz3b@0.1.0": {
       "file": "follow_car_citylife_nfz3b.yaml",
       "hash_scheme": "sha256-canonical-v3",
@@ -684,6 +806,23 @@
       },
       "policy_hash": "sha256:b85c1bac43a5e1b736bd714c0f828591675b609301795765cde32f43f45e70c6"
     },
+    "follow-car-citylife-nfz3b@0.1.3": {
+      "file": "follow_car_citylife_nfz3b.yaml",
+      "hash_scheme": "sha256-canonical-v3",
+      "ir_schema_version": "4.0.0",
+      "legacy_hashes": {
+        "legacy16-exclude-none": "sha256:4d1f7fc49595d350",
+        "legacy16-include-defaults": "sha256:5a7724de284a3bdd",
+        "legacy16-valid-time": "sha256:5a7724de284a3bdd"
+      },
+      "locked_on": "2026-11-06",
+      "migrated_from": "follow-car-citylife-nfz3b@0.1.2",
+      "migration": {
+        "ir_schema_version": "4.0.0",
+        "old_hash_form": "sha256-canonical-v3/ir-3.x"
+      },
+      "policy_hash": "sha256:50973396041c6ee841139d42516a6ca147e044405d2f9abaa28c9d4ee7c1b681"
+    },
     "follow-car-citylife-nfz@0.1.0": {
       "file": "follow_car_citylife_nfz.yaml",
       "legacy_hashes": {
@@ -727,6 +866,23 @@
         "old_hash_form": "sha256-canonical-v3/local-metres"
       },
       "policy_hash": "sha256:12b62007c2ea2fa354a2efe14ab8b0a45238778e65c1fe7ef58b9a2bf39abd0f"
+    },
+    "follow-car-citylife-nfz@0.1.3": {
+      "file": "follow_car_citylife_nfz.yaml",
+      "hash_scheme": "sha256-canonical-v3",
+      "ir_schema_version": "4.0.0",
+      "legacy_hashes": {
+        "legacy16-exclude-none": "sha256:d8ffe412d9b7daaa",
+        "legacy16-include-defaults": "sha256:14eb68e54f3a9981",
+        "legacy16-valid-time": "sha256:14eb68e54f3a9981"
+      },
+      "locked_on": "2026-11-06",
+      "migrated_from": "follow-car-citylife-nfz@0.1.2",
+      "migration": {
+        "ir_schema_version": "4.0.0",
+        "old_hash_form": "sha256-canonical-v3/ir-3.x"
+      },
+      "policy_hash": "sha256:a618c08c6256376b9a21c16d1d4b30e7060a59743f003e31d7e7707408a75d63"
     },
     "follow-car-citylife@0.1.0": {
       "file": "follow_car_citylife.yaml",
@@ -772,6 +928,23 @@
       },
       "policy_hash": "sha256:67154c8d6b3ff1bc23169fff3a4142d0a8bf99d96e1c29f1f65fd4f0efa42097"
     },
+    "follow-car-citylife@0.1.3": {
+      "file": "follow_car_citylife.yaml",
+      "hash_scheme": "sha256-canonical-v3",
+      "ir_schema_version": "4.0.0",
+      "legacy_hashes": {
+        "legacy16-exclude-none": "sha256:0cea33aeeafc1732",
+        "legacy16-include-defaults": "sha256:79608ecb3fb82f5d",
+        "legacy16-valid-time": "sha256:79608ecb3fb82f5d"
+      },
+      "locked_on": "2026-11-06",
+      "migrated_from": "follow-car-citylife@0.1.2",
+      "migration": {
+        "ir_schema_version": "4.0.0",
+        "old_hash_form": "sha256-canonical-v3/ir-3.x"
+      },
+      "policy_hash": "sha256:a04669db056f708003d2be7eb5656bf443272271bf2b69df862ec8b9e2f8f7af"
+    },
     "follow-car-gap@0.1.0": {
       "file": "follow_car_gap.yaml",
       "legacy_hashes": {
@@ -815,6 +988,23 @@
         "old_hash_form": "sha256-canonical-v3/local-metres"
       },
       "policy_hash": "sha256:05d6f99fb9313624c0087aeb46cc15515de352eff6673c7df6849aa18fe89a5a"
+    },
+    "follow-car-gap@0.1.3": {
+      "file": "follow_car_gap.yaml",
+      "hash_scheme": "sha256-canonical-v3",
+      "ir_schema_version": "4.0.0",
+      "legacy_hashes": {
+        "legacy16-exclude-none": "sha256:e92dee58a8070125",
+        "legacy16-include-defaults": "sha256:f6467a33edfce6df",
+        "legacy16-valid-time": "sha256:f6467a33edfce6df"
+      },
+      "locked_on": "2026-11-06",
+      "migrated_from": "follow-car-gap@0.1.2",
+      "migration": {
+        "ir_schema_version": "4.0.0",
+        "old_hash_form": "sha256-canonical-v3/ir-3.x"
+      },
+      "policy_hash": "sha256:70356b33397dea7653c906376bbf46a1facc58d180f205bf4e3c9969222b1c50"
     },
     "follow-car-nfz@0.1.0": {
       "file": "follow_car_nfz.yaml",
@@ -860,6 +1050,23 @@
       },
       "policy_hash": "sha256:49381fad1e5a842596ae9760432622ad91c2207470bb7917dd7ab327d1dc64b3"
     },
+    "follow-car-nfz@0.1.3": {
+      "file": "follow_car_nfz.yaml",
+      "hash_scheme": "sha256-canonical-v3",
+      "ir_schema_version": "4.0.0",
+      "legacy_hashes": {
+        "legacy16-exclude-none": "sha256:abe40b1abc368cc2",
+        "legacy16-include-defaults": "sha256:4b32971716a63846",
+        "legacy16-valid-time": "sha256:4b32971716a63846"
+      },
+      "locked_on": "2026-11-06",
+      "migrated_from": "follow-car-nfz@0.1.2",
+      "migration": {
+        "ir_schema_version": "4.0.0",
+        "old_hash_form": "sha256-canonical-v3/ir-3.x"
+      },
+      "policy_hash": "sha256:5f6efe9fcdc33c99347ea73c85a753a38c27617e4dbdb285263451c9856b2c68"
+    },
     "follow-car@0.1.0": {
       "file": "follow_car.yaml",
       "legacy_hashes": {
@@ -903,6 +1110,23 @@
         "old_hash_form": "sha256-canonical-v3/local-metres"
       },
       "policy_hash": "sha256:fa8f54afff9cf865185da54783f8baea54d833f95f5077e315275c75f26f0c36"
+    },
+    "follow-car@0.1.3": {
+      "file": "follow_car.yaml",
+      "hash_scheme": "sha256-canonical-v3",
+      "ir_schema_version": "4.0.0",
+      "legacy_hashes": {
+        "legacy16-exclude-none": "sha256:9268da5430a06af3",
+        "legacy16-include-defaults": "sha256:6a18444211deb0e7",
+        "legacy16-valid-time": "sha256:6a18444211deb0e7"
+      },
+      "locked_on": "2026-11-06",
+      "migrated_from": "follow-car@0.1.2",
+      "migration": {
+        "ir_schema_version": "4.0.0",
+        "old_hash_form": "sha256-canonical-v3/ir-3.x"
+      },
+      "policy_hash": "sha256:6fc2a25be5095660e33f1b6bb52db8103c2f43f2443cb7f5636f2d00a5d74ff1"
     },
     "follow-pedestrian@0.1.0": {
       "file": "follow_pedestrian.yaml",
@@ -948,6 +1172,23 @@
       },
       "policy_hash": "sha256:86e7bfb5396a6adc1a4cd23254d5b67a330609512aaab67425ff9439cfd96159"
     },
+    "follow-pedestrian@0.1.3": {
+      "file": "follow_pedestrian.yaml",
+      "hash_scheme": "sha256-canonical-v3",
+      "ir_schema_version": "4.0.0",
+      "legacy_hashes": {
+        "legacy16-exclude-none": "sha256:7ea4fad5a631b7d2",
+        "legacy16-include-defaults": "sha256:c806baaa43bcd69c",
+        "legacy16-valid-time": "sha256:c806baaa43bcd69c"
+      },
+      "locked_on": "2026-11-06",
+      "migrated_from": "follow-pedestrian@0.1.2",
+      "migration": {
+        "ir_schema_version": "4.0.0",
+        "old_hash_form": "sha256-canonical-v3/ir-3.x"
+      },
+      "policy_hash": "sha256:db36c08ad292b1d3fb255dc43ddb56b4c18a33d3975e6641ac2f57f8f0ee136b"
+    },
     "gui-high-test@0.1.0": {
       "file": "gui_high_test.yaml",
       "legacy_hashes": {
@@ -991,6 +1232,23 @@
         "old_hash_form": "sha256-canonical-v3/local-metres"
       },
       "policy_hash": "sha256:fb0ca722ae6ebf3e1fbac9018ea4a1b88f36ab07617568aeb050c8456619328c"
+    },
+    "gui-high-test@0.1.3": {
+      "file": "gui_high_test.yaml",
+      "hash_scheme": "sha256-canonical-v3",
+      "ir_schema_version": "4.0.0",
+      "legacy_hashes": {
+        "legacy16-exclude-none": "sha256:17da1caf24db9fca",
+        "legacy16-include-defaults": "sha256:cb5b69db9e378be8",
+        "legacy16-valid-time": "sha256:cb5b69db9e378be8"
+      },
+      "locked_on": "2026-11-06",
+      "migrated_from": "gui-high-test@0.1.2",
+      "migration": {
+        "ir_schema_version": "4.0.0",
+        "old_hash_form": "sha256-canonical-v3/ir-3.x"
+      },
+      "policy_hash": "sha256:3899147a0001310b6de09c342435a99d96dae4cad647b5a5ee72e74e4064f036"
     },
     "gui-mission@0.1.0": {
       "file": "gui_policy.yaml",
@@ -1036,6 +1294,23 @@
       },
       "policy_hash": "sha256:bfcc3c40d45e72b418f6a0cb8511b75c7dcf603a462ef0cf9aa280a9db47d41e"
     },
+    "gui-mission@0.1.3": {
+      "file": "gui_policy.yaml",
+      "hash_scheme": "sha256-canonical-v3",
+      "ir_schema_version": "4.0.0",
+      "legacy_hashes": {
+        "legacy16-exclude-none": "sha256:d0ad266cab10431a",
+        "legacy16-include-defaults": "sha256:d1fe1e3607ca63e1",
+        "legacy16-valid-time": "sha256:d1fe1e3607ca63e1"
+      },
+      "locked_on": "2026-11-06",
+      "migrated_from": "gui-mission@0.1.2",
+      "migration": {
+        "ir_schema_version": "4.0.0",
+        "old_hash_form": "sha256-canonical-v3/ir-3.x"
+      },
+      "policy_hash": "sha256:22d428d90bf5be1d5a23f9cda967c34e5cb05708f9f07ceb28253bcf68a6e021"
+    },
     "orbit-building@0.1.0": {
       "file": "orbit_building.yaml",
       "legacy_hashes": {
@@ -1080,6 +1355,23 @@
       },
       "policy_hash": "sha256:73b10714819119a3910a81c2795836d531fdf6c8453ac375112eba545be854ea"
     },
+    "orbit-building@0.1.3": {
+      "file": "orbit_building.yaml",
+      "hash_scheme": "sha256-canonical-v3",
+      "ir_schema_version": "4.0.0",
+      "legacy_hashes": {
+        "legacy16-exclude-none": "sha256:b3a62890ab5faefd",
+        "legacy16-include-defaults": "sha256:71086f4bc73cf297",
+        "legacy16-valid-time": "sha256:71086f4bc73cf297"
+      },
+      "locked_on": "2026-11-06",
+      "migrated_from": "orbit-building@0.1.2",
+      "migration": {
+        "ir_schema_version": "4.0.0",
+        "old_hash_form": "sha256-canonical-v3/ir-3.x"
+      },
+      "policy_hash": "sha256:254ee2016fbcbf3b20b5352fe2d99fb3329d00ec3b2a81c5cd426c1fbefdf353"
+    },
     "poly-test@0.1.0": {
       "file": "poly_test.yaml",
       "legacy_hashes": {
@@ -1123,6 +1415,23 @@
         "old_hash_form": "sha256-canonical-v3/local-metres"
       },
       "policy_hash": "sha256:34e47cd27e0602a69aa935d1f0cb2e417f591af8130a8fdaff5e321ebe960cc3"
+    },
+    "poly-test@0.1.3": {
+      "file": "poly_test.yaml",
+      "hash_scheme": "sha256-canonical-v3",
+      "ir_schema_version": "4.0.0",
+      "legacy_hashes": {
+        "legacy16-exclude-none": "sha256:46de874f829162c0",
+        "legacy16-include-defaults": "sha256:a6bae7b63a207028",
+        "legacy16-valid-time": "sha256:a6bae7b63a207028"
+      },
+      "locked_on": "2026-11-06",
+      "migrated_from": "poly-test@0.1.2",
+      "migration": {
+        "ir_schema_version": "4.0.0",
+        "old_hash_form": "sha256-canonical-v3/ir-3.x"
+      },
+      "policy_hash": "sha256:f5c8b047f14556b7a579cfda9aa861734ec82185c1b5b1fb99faa32c8c543e86"
     },
     "random-scenario-hard-11@0.1.0": {
       "file": "hard_11.yaml",
@@ -1170,6 +1479,24 @@
         "old_hash_form": "sha256-canonical-v3/local-metres"
       },
       "policy_hash": "sha256:95531761ae14071197dd33caaa0a892bd4dfc28efa9052c658533cb3af6e0b80",
+      "previously": "random-scenario@0.1.0"
+    },
+    "random-scenario-hard-11@0.1.3": {
+      "file": "hard_11.yaml",
+      "hash_scheme": "sha256-canonical-v3",
+      "ir_schema_version": "4.0.0",
+      "legacy_hashes": {
+        "legacy16-exclude-none": "sha256:9713c618fc6d2782",
+        "legacy16-include-defaults": "sha256:ff554bb95a806062",
+        "legacy16-valid-time": "sha256:ff554bb95a806062"
+      },
+      "locked_on": "2026-11-06",
+      "migrated_from": "random-scenario-hard-11@0.1.2",
+      "migration": {
+        "ir_schema_version": "4.0.0",
+        "old_hash_form": "sha256-canonical-v3/ir-3.x"
+      },
+      "policy_hash": "sha256:257923ef9c72c03b6ebde625951cc02503056f09f96a9172fa7983670489ca09",
       "previously": "random-scenario@0.1.0"
     },
     "random-scenario-hard-21@0.1.0": {
@@ -1220,6 +1547,24 @@
       "policy_hash": "sha256:bddd9137c5cbee0b4da0354b50c09b186a1a97b1f3aa1b6aabf48d27922bc33c",
       "previously": "random-scenario@0.1.0"
     },
+    "random-scenario-hard-21@0.1.3": {
+      "file": "hard_21.yaml",
+      "hash_scheme": "sha256-canonical-v3",
+      "ir_schema_version": "4.0.0",
+      "legacy_hashes": {
+        "legacy16-exclude-none": "sha256:2eb29caf469a9315",
+        "legacy16-include-defaults": "sha256:b614e9fb3c2b079e",
+        "legacy16-valid-time": "sha256:b614e9fb3c2b079e"
+      },
+      "locked_on": "2026-11-06",
+      "migrated_from": "random-scenario-hard-21@0.1.2",
+      "migration": {
+        "ir_schema_version": "4.0.0",
+        "old_hash_form": "sha256-canonical-v3/ir-3.x"
+      },
+      "policy_hash": "sha256:940b86bcc8c971a19fbb1f8b2689a4f7c8f0266cea1b4709ac770fbe2a3e8921",
+      "previously": "random-scenario@0.1.0"
+    },
     "random-scenario-hard-3@0.1.0": {
       "file": "hard_3.yaml",
       "hash_scheme": "sha256-canonical-v3",
@@ -1266,6 +1611,24 @@
         "old_hash_form": "sha256-canonical-v3/local-metres"
       },
       "policy_hash": "sha256:a415a3ffec43ae6975a065fc1be0d9e6305a77e1770288a825b1b6eede0f7cf2",
+      "previously": "random-scenario@0.1.0"
+    },
+    "random-scenario-hard-3@0.1.3": {
+      "file": "hard_3.yaml",
+      "hash_scheme": "sha256-canonical-v3",
+      "ir_schema_version": "4.0.0",
+      "legacy_hashes": {
+        "legacy16-exclude-none": "sha256:c0668b7daf640dd8",
+        "legacy16-include-defaults": "sha256:50b905858d20d672",
+        "legacy16-valid-time": "sha256:50b905858d20d672"
+      },
+      "locked_on": "2026-11-06",
+      "migrated_from": "random-scenario-hard-3@0.1.2",
+      "migration": {
+        "ir_schema_version": "4.0.0",
+        "old_hash_form": "sha256-canonical-v3/ir-3.x"
+      },
+      "policy_hash": "sha256:254d6bd3895f5d0774ea790ad04007e817866b5240a5d305b3a0bf5f98a09d75",
       "previously": "random-scenario@0.1.0"
     },
     "random-scenario-hp-14@0.1.0": {
@@ -1316,6 +1679,24 @@
       "policy_hash": "sha256:c8a8844d3dec53a4a375a45ac67e82373d098625f7684373bd80d8ec9d276681",
       "previously": "random-scenario@0.1.0"
     },
+    "random-scenario-hp-14@0.1.3": {
+      "file": "hp_14.yaml",
+      "hash_scheme": "sha256-canonical-v3",
+      "ir_schema_version": "4.0.0",
+      "legacy_hashes": {
+        "legacy16-exclude-none": "sha256:4afb0575360a3d68",
+        "legacy16-include-defaults": "sha256:3087c76d6cb4248c",
+        "legacy16-valid-time": "sha256:3087c76d6cb4248c"
+      },
+      "locked_on": "2026-11-06",
+      "migrated_from": "random-scenario-hp-14@0.1.2",
+      "migration": {
+        "ir_schema_version": "4.0.0",
+        "old_hash_form": "sha256-canonical-v3/ir-3.x"
+      },
+      "policy_hash": "sha256:676d7b5c4fe34f8ddb1e64549534ef0f372eb8774862d49bc6aa1e6fae3eede7",
+      "previously": "random-scenario@0.1.0"
+    },
     "random-scenario-hp-30@0.1.0": {
       "file": "hp_30.yaml",
       "hash_scheme": "sha256-canonical-v3",
@@ -1362,6 +1743,24 @@
         "old_hash_form": "sha256-canonical-v3/local-metres"
       },
       "policy_hash": "sha256:4fc45122497d1ed9e3e73c499e7c41628cd6175dffb72bf4dd00a17d7256a831",
+      "previously": "random-scenario@0.1.0"
+    },
+    "random-scenario-hp-30@0.1.3": {
+      "file": "hp_30.yaml",
+      "hash_scheme": "sha256-canonical-v3",
+      "ir_schema_version": "4.0.0",
+      "legacy_hashes": {
+        "legacy16-exclude-none": "sha256:424a75fe28aeb806",
+        "legacy16-include-defaults": "sha256:447d6550853a423d",
+        "legacy16-valid-time": "sha256:447d6550853a423d"
+      },
+      "locked_on": "2026-11-06",
+      "migrated_from": "random-scenario-hp-30@0.1.2",
+      "migration": {
+        "ir_schema_version": "4.0.0",
+        "old_hash_form": "sha256-canonical-v3/ir-3.x"
+      },
+      "policy_hash": "sha256:7079d00bb906869b875f88a7fe26970bb9a43b44acd88abd76348de96cf9ffed",
       "previously": "random-scenario@0.1.0"
     },
     "random-scenario-hp-42@0.1.0": {
@@ -1412,6 +1811,24 @@
       "policy_hash": "sha256:6039fe0934420a1e1afb06aabe268b9354991616034479f9a94def853d423038",
       "previously": "random-scenario@0.1.0"
     },
+    "random-scenario-hp-42@0.1.3": {
+      "file": "hp_42.yaml",
+      "hash_scheme": "sha256-canonical-v3",
+      "ir_schema_version": "4.0.0",
+      "legacy_hashes": {
+        "legacy16-exclude-none": "sha256:70e550d13d924fa8",
+        "legacy16-include-defaults": "sha256:8426ce647d6c54d8",
+        "legacy16-valid-time": "sha256:8426ce647d6c54d8"
+      },
+      "locked_on": "2026-11-06",
+      "migrated_from": "random-scenario-hp-42@0.1.2",
+      "migration": {
+        "ir_schema_version": "4.0.0",
+        "old_hash_form": "sha256-canonical-v3/ir-3.x"
+      },
+      "policy_hash": "sha256:6dee06cfdda41462d8f698a5028541b145c3428da2226ee827b8b182665bf587",
+      "previously": "random-scenario@0.1.0"
+    },
     "random-scenario-hp-5@0.1.0": {
       "file": "hp_5.yaml",
       "hash_scheme": "sha256-canonical-v3",
@@ -1460,6 +1877,24 @@
       "policy_hash": "sha256:7b6a7bf3c1b3caac9ee3767ec054d8cb48b31db3e299a2202d7012dde163f013",
       "previously": "random-scenario@0.1.0"
     },
+    "random-scenario-hp-5@0.1.3": {
+      "file": "hp_5.yaml",
+      "hash_scheme": "sha256-canonical-v3",
+      "ir_schema_version": "4.0.0",
+      "legacy_hashes": {
+        "legacy16-exclude-none": "sha256:d721e898c8b6a084",
+        "legacy16-include-defaults": "sha256:356001265cf80fff",
+        "legacy16-valid-time": "sha256:356001265cf80fff"
+      },
+      "locked_on": "2026-11-06",
+      "migrated_from": "random-scenario-hp-5@0.1.2",
+      "migration": {
+        "ir_schema_version": "4.0.0",
+        "old_hash_form": "sha256-canonical-v3/ir-3.x"
+      },
+      "policy_hash": "sha256:3f668c42bcab5f900fef9974a5a92c3d3bc5b3743a0ab608c2c3b0d1a5a93448",
+      "previously": "random-scenario@0.1.0"
+    },
     "random-scenario-hp-8@0.1.0": {
       "file": "hp_8.yaml",
       "hash_scheme": "sha256-canonical-v3",
@@ -1506,6 +1941,24 @@
         "old_hash_form": "sha256-canonical-v3/local-metres"
       },
       "policy_hash": "sha256:d56703e6509c857d791b583356af5a864559329f82a613d9308d8cb9f1268eaf",
+      "previously": "random-scenario@0.1.0"
+    },
+    "random-scenario-hp-8@0.1.3": {
+      "file": "hp_8.yaml",
+      "hash_scheme": "sha256-canonical-v3",
+      "ir_schema_version": "4.0.0",
+      "legacy_hashes": {
+        "legacy16-exclude-none": "sha256:98623eee6d8a00b4",
+        "legacy16-include-defaults": "sha256:f462c713da65ebb7",
+        "legacy16-valid-time": "sha256:f462c713da65ebb7"
+      },
+      "locked_on": "2026-11-06",
+      "migrated_from": "random-scenario-hp-8@0.1.2",
+      "migration": {
+        "ir_schema_version": "4.0.0",
+        "old_hash_form": "sha256-canonical-v3/ir-3.x"
+      },
+      "policy_hash": "sha256:4c1ed26effe3aa620cd377382bf2c7717013c1914cb5b67be6c22c581b07b2b8",
       "previously": "random-scenario@0.1.0"
     },
     "random-scenario@0.1.0": {
@@ -1622,6 +2075,24 @@
       "policy_hash": "sha256:1d28316d14e5ab8536d7444b1930f399d3ee77be3b9f01b6e459bf53641b776a",
       "previously": "random-scenario@0.1.0"
     },
+    "random-scenario@0.1.3": {
+      "file": "random_scenario.yaml",
+      "hash_scheme": "sha256-canonical-v3",
+      "ir_schema_version": "4.0.0",
+      "legacy_hashes": {
+        "legacy16-exclude-none": "sha256:2a2569323fba7be8",
+        "legacy16-include-defaults": "sha256:f3d6482eaac1c6ba",
+        "legacy16-valid-time": "sha256:f3d6482eaac1c6ba"
+      },
+      "locked_on": "2026-11-06",
+      "migrated_from": "random-scenario@0.1.2",
+      "migration": {
+        "ir_schema_version": "4.0.0",
+        "old_hash_form": "sha256-canonical-v3/ir-3.x"
+      },
+      "policy_hash": "sha256:a566c5b14bad47af5ad55e0b608941e1030ea0f11805585fb98213dc7a4a2ca7",
+      "previously": "random-scenario@0.1.0"
+    },
     "rth-poly-demo@0.1.0": {
       "file": "rth_poly.yaml",
       "legacy_hashes": {
@@ -1665,6 +2136,23 @@
         "old_hash_form": "sha256-canonical-v3/local-metres"
       },
       "policy_hash": "sha256:5f200b6744fee7ae98fbf643ec1b1683f7e9c368a4ea3ff0f92d4e80c1c434a1"
+    },
+    "rth-poly-demo@0.1.3": {
+      "file": "rth_poly.yaml",
+      "hash_scheme": "sha256-canonical-v3",
+      "ir_schema_version": "4.0.0",
+      "legacy_hashes": {
+        "legacy16-exclude-none": "sha256:939e09d5040df99c",
+        "legacy16-include-defaults": "sha256:80b0a24378fced63",
+        "legacy16-valid-time": "sha256:80b0a24378fced63"
+      },
+      "locked_on": "2026-11-06",
+      "migrated_from": "rth-poly-demo@0.1.2",
+      "migration": {
+        "ir_schema_version": "4.0.0",
+        "old_hash_form": "sha256-canonical-v3/ir-3.x"
+      },
+      "policy_hash": "sha256:5681f4c2f5940617047b2db25c65a963450b1ed721b4b72037153854ec9491cd"
     },
     "semantic-conflict@0.1.0": {
       "file": "semantic_conflict.yaml",
@@ -1710,6 +2198,23 @@
       },
       "policy_hash": "sha256:0f18efc7e5fbc498631dc1c189b189b82686d66ec870af85bdd8af0c909f78af"
     },
+    "semantic-conflict@0.1.3": {
+      "file": "semantic_conflict.yaml",
+      "hash_scheme": "sha256-canonical-v3",
+      "ir_schema_version": "4.0.0",
+      "legacy_hashes": {
+        "legacy16-exclude-none": "sha256:967f81c502b95480",
+        "legacy16-include-defaults": "sha256:affc6d0118d406e4",
+        "legacy16-valid-time": "sha256:affc6d0118d406e4"
+      },
+      "locked_on": "2026-11-06",
+      "migrated_from": "semantic-conflict@0.1.2",
+      "migration": {
+        "ir_schema_version": "4.0.0",
+        "old_hash_form": "sha256-canonical-v3/ir-3.x"
+      },
+      "policy_hash": "sha256:524c7ff140ee4615b16cdc160ae665972ca8b87335ff484076281a71bba5a626"
+    },
     "sitl-pedestrian-standoff@0.1.0": {
       "file": "sitl_pedestrian.yaml",
       "legacy_hashes": {
@@ -1754,6 +2259,23 @@
       },
       "policy_hash": "sha256:dcf2e41dd4910c0cd9c2214ddcb253e00543caebedee914378a69f456d674745"
     },
+    "sitl-pedestrian-standoff@0.1.3": {
+      "file": "sitl_pedestrian.yaml",
+      "hash_scheme": "sha256-canonical-v3",
+      "ir_schema_version": "4.0.0",
+      "legacy_hashes": {
+        "legacy16-exclude-none": "sha256:1ad727075756c9f4",
+        "legacy16-include-defaults": "sha256:e9ee19f865a9354a",
+        "legacy16-valid-time": "sha256:e9ee19f865a9354a"
+      },
+      "locked_on": "2026-11-06",
+      "migrated_from": "sitl-pedestrian-standoff@0.1.2",
+      "migration": {
+        "ir_schema_version": "4.0.0",
+        "old_hash_form": "sha256-canonical-v3/ir-3.x"
+      },
+      "policy_hash": "sha256:bb58ca54153c3e6b5d477ea5f8f3172ee5ddbdd9234255f163781fe1425ec139"
+    },
     "urban-clearance-patrol@0.1.0": {
       "file": "urban_clearance.yaml",
       "legacy_hashes": {
@@ -1797,6 +2319,23 @@
         "old_hash_form": "sha256-canonical-v3/local-metres"
       },
       "policy_hash": "sha256:5dd766c2dfddb4ccd1fcd3b6810c8e858843a9ae2d719ad953ace7a1778ee4a1"
+    },
+    "urban-clearance-patrol@0.1.3": {
+      "file": "urban_clearance.yaml",
+      "hash_scheme": "sha256-canonical-v3",
+      "ir_schema_version": "4.0.0",
+      "legacy_hashes": {
+        "legacy16-exclude-none": "sha256:10704cfe9cdfd906",
+        "legacy16-include-defaults": "sha256:76b8b1fcf27bfedd",
+        "legacy16-valid-time": "sha256:76b8b1fcf27bfedd"
+      },
+      "locked_on": "2026-11-06",
+      "migrated_from": "urban-clearance-patrol@0.1.2",
+      "migration": {
+        "ir_schema_version": "4.0.0",
+        "old_hash_form": "sha256-canonical-v3/ir-3.x"
+      },
+      "policy_hash": "sha256:c75bb9e7d63edb22b71236328cee3838671db6fe149a69dd804f95f779094469"
     },
     "vla-goto-citylife@0.1.0": {
       "file": "vla_goto_citylife.yaml",
@@ -1843,6 +2382,23 @@
       },
       "policy_hash": "sha256:e76c102f5477ee207505ca988e99d93f73d6ede9d6baeba47f8647e282eff053"
     },
+    "vla-goto-citylife@0.1.3": {
+      "file": "vla_goto_citylife.yaml",
+      "hash_scheme": "sha256-canonical-v3",
+      "ir_schema_version": "4.0.0",
+      "legacy_hashes": {
+        "legacy16-exclude-none": "sha256:f6c245cc06b3c282",
+        "legacy16-include-defaults": "sha256:33ba1e8bd3d36d46",
+        "legacy16-valid-time": "sha256:33ba1e8bd3d36d46"
+      },
+      "locked_on": "2026-11-06",
+      "migrated_from": "vla-goto-citylife@0.1.2",
+      "migration": {
+        "ir_schema_version": "4.0.0",
+        "old_hash_form": "sha256-canonical-v3/ir-3.x"
+      },
+      "policy_hash": "sha256:1d99b94ed2c9fd1c0391a7e59571445a7d16d9cde2dafb6415b39023791968ef"
+    },
     "wgs84-taipei-demo@0.1.0": {
       "file": "wgs84_taipei.yaml",
       "hashes": {
@@ -1872,6 +2428,23 @@
         "old_hash_form": "sha256-canonical-v2"
       },
       "policy_hash": "sha256:e316a6736564fcd0e0322899d5450e36fef4a26eb944a83477190534a9de28f2"
+    },
+    "wgs84-taipei-demo@0.1.2": {
+      "file": "wgs84_taipei.yaml",
+      "hash_scheme": "sha256-canonical-v3",
+      "ir_schema_version": "4.0.0",
+      "legacy_hashes": {
+        "legacy16-exclude-none": "sha256:da34022d617abba6",
+        "legacy16-include-defaults": "sha256:a1c4796481bde92b",
+        "legacy16-valid-time": "sha256:a1c4796481bde92b"
+      },
+      "locked_on": "2026-11-06",
+      "migrated_from": "wgs84-taipei-demo@0.1.1",
+      "migration": {
+        "ir_schema_version": "4.0.0",
+        "old_hash_form": "sha256-canonical-v3/ir-3.x"
+      },
+      "policy_hash": "sha256:a5f52b5fe0044cb27bebbe8ef5e8c080f23585499befad75b411c54475687076"
     }
   }
 }

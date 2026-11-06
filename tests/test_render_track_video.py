@@ -21,10 +21,10 @@ from tools import render_track_video as R                     # noqa: E402
 SKIP = "SKIP"
 
 POLICY = {"constraints": [
-    {"id": "nfz", "type": "polygon_fence", "constraint_type": "hard", "priority": "P0",
+    {"id": "nfz", "type": "polygon_fence", "scope": "mission", "constraint_type": "hard", "priority": "P0",
      "margin_m": 1.0, "vertices": [{"x": 5, "y": 5}, {"x": 9, "y": 5}, {"x": 9, "y": 9},
                                    {"x": 5, "y": 9}]},
-    {"id": "ring", "type": "circle_fence", "constraint_type": "soft", "priority": "P1",
+    {"id": "ring", "type": "circle_fence", "scope": "mission", "constraint_type": "soft", "priority": "P1",
      "center": {"x": -4, "y": 2}, "radius_m": 2.0, "margin_m": 0.5},
     {"id": "band", "type": "altitude_envelope", "alt_min_m": 10, "alt_max_m": 20}]}
 
@@ -67,10 +67,10 @@ def test_a_wgs84_policy_dump_is_drawn_at_the_shields_metres():
     proj = LocalProjection(*org)
     ll = lambda x, y: dict(zip(("lat", "lon"), proj.to_latlon(x, y)))   # noqa: E731
     pol = {"origin": {"lat": org[0], "lon": org[1]}, "constraints": [
-        {"id": "nfz-square", "type": "polygon_fence", "constraint_type": "hard",
+        {"id": "nfz-square", "type": "polygon_fence", "scope": "mission", "constraint_type": "hard",
          "margin_m": 1.0, "vertices": [ll(16, 14), ll(32, 14), ll(32, 30), ll(16, 30)]},
         {"id": "ring", "type": "circle_fence", "center": ll(-4, 2), "radius_m": 2.0},
-        {"id": "nfz-hot-1", "type": "dynamic_nfz", "constraint_type": "hard",
+        {"id": "nfz-hot-1", "type": "dynamic_nfz", "scope": "mission", "constraint_type": "hard",
          "vertices": [{"x": 24, "y": -6}, {"x": 30, "y": -6}, {"x": 30, "y": 6}]},
         {"id": "route", "type": "corridor", "width_m": 40,
          "centerline": [ll(0, 0), ll(60, 0)]}]}

@@ -53,9 +53,11 @@ from guardrail.models import State                                 # noqa: E402
 from guardrail.projection import LocalProjection, project_raw      # noqa: E402
 from guardrail.shield import Shield                                # noqa: E402
 
-# The three ConstraintBase fields the grant requires (IR schema 3.0.0, 2026-11-02),
-# at the values they defaulted to before (repair = project_fix).
-HARD_P0 = {"constraint_type": "hard", "priority": "P0", "violation_action": "project_fix"}
+# The four ConstraintBase fields the grant requires (IR schema 3.0.0, 2026-11-02;
+# scope since 4.0.0, 2026-11-06), at the values they defaulted to before
+# (repair = project_fix; an absent scope meant mission).
+HARD_P0 = {"constraint_type": "hard", "scope": "mission", "priority": "P0",
+           "violation_action": "project_fix"}
 
 DEMO = ROOT / "policies" / "sim_demo_policy.yaml"
 WGS84 = ROOT / "policies" / "wgs84_taipei.yaml"
@@ -189,7 +191,7 @@ def test_the_changelog_is_a_diff_against_the_previous_version():
             if r["id"] == "alt-band":
                 r["alt_max_m"] = 25.0                        # changed
             out.append(r)
-        out.append({"id": "alt-low", "type": "altitude_envelope",
+        out.append({"id": "alt-low", "type": "altitude_envelope", "scope": "mission",
                     "priority": "P0", "violation_action": "project_fix",   # added
                     "constraint_type": "hard", "alt_min_m": 5.0, "alt_max_m": 30.0})
         return out
@@ -222,11 +224,38 @@ def test_the_changelog_is_a_diff_against_the_previous_version():
     assert B.diff_text(same).endswith("no rule changed")
     # A rule replaced by another type under the same id names `type`.
     swapped = _next_version(prev, lambda rs: [
-        {"id": "kin-caps", "type": "altitude_envelope",
+        {"id": "kin-caps", "type": "altitude_envelope", "scope": "mission",
          "priority": "P0", "violation_action": "project_fix", "constraint_type": "hard",
          "alt_min_m": 1.0, "alt_max_m": 200.0}
         if r["id"] == "kin-caps" else r for r in rs])
     assert "type" in B.policy_diff(prev, swapped)["changed"]["kin-caps"]
+
+
+def test_the_scope_migration_reads_as_a_diff_against_the_previous_version():
+    """IR schema 4.0.0 (2026-11-06): every shipped policy states `scope` and
+    raised its patch version. Its bundle's changelog against the version
+    before - rebuilt from the lock as it was issued, scope absent (Policy.
+    ir3_form) - names that change and nothing else: every rule's `scope`,
+    and the policy's version. The previous version keeps the hash its own
+    bundle recorded."""
+    now = load_policy(DEMO)
+    lock = B.load_lock()["policies"]
+    prev_key = lock[B.lock_key(now)]["migrated_from"]
+    prev = B.as_version(now.ir3_form(), prev_key.rpartition("@")[2])
+    assert prev.policy_hash == lock[prev_key]["policy_hash"]
+    diff = B.policy_diff(prev, now)
+    assert (diff["added"], diff["removed"]) == ([], []), diff
+    assert diff["changed"] == {c.id: ["scope"] for c in now.constraints}, diff["changed"]
+    assert diff["policy_fields"] == ["version"], diff["policy_fields"]
+    m = B.manifest_for(now, previous=prev)
+    assert m["ir_schema_version"] == "4.0.0" and m["changelog_diff"] == diff
+    assert all(f"changed {c.id} (scope)" in m["changelog"] for c in now.constraints), m["changelog"]
+    # The previous version, bundled again (a replay would), records the
+    # schema its IR is a document of and reads back under it.
+    path = write_bundle(prev, _tmp(), signer=None, issued_at=ISSUED)
+    chk = check_bundle(path)
+    assert chk.manifest["ir_schema_version"] == "3.1.0"
+    assert chk.policy.policy_hash == prev.policy_hash == chk.manifest["policy_hash"]
 
 
 def test_a_previous_version_that_does_not_verify_is_refused():

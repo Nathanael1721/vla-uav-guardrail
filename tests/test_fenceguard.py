@@ -29,9 +29,11 @@ sys.path.insert(0, str(ROOT / "demo"))
 from guardrail import load_policy                                # noqa: E402
 from follow_vlm import FenceGuard                                # noqa: E402
 
-# The three ConstraintBase fields the grant requires (IR schema 3.0.0, 2026-11-02),
-# at the values they defaulted to before (repair = project_fix).
-HARD_P0 = {"constraint_type": "hard", "priority": "P0", "violation_action": "project_fix"}
+# The four ConstraintBase fields the grant requires (IR schema 3.0.0, 2026-11-02;
+# scope since 4.0.0, 2026-11-06), at the values they defaulted to before
+# (repair = project_fix; an absent scope meant mission).
+HARD_P0 = {"constraint_type": "hard", "scope": "mission", "priority": "P0",
+           "violation_action": "project_fix"}
 
 GAP = ROOT / "policies" / "follow_car_gap.yaml"      # fence x 26..42, gap x 43..50
 FULL = ROOT / "policies" / "follow_car_nfz.yaml"     # fence x 26..54, no gap

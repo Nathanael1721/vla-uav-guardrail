@@ -151,7 +151,7 @@ from .bundle import (LEGACY_PLACEHOLDER_SIGNER, SIG_BAD, SIG_VERIFIED,
                      _resolve_signer, manifest_for, parse_signature,
                      signature_text, verify_signature)
 from .kpi import compute, rule_priorities
-from .models import Policy
+from .models import Policy, era_context
 
 INDEX_NAME = "replay.json"
 # The keyless legacy signer, kept under its old name for importers.
@@ -348,7 +348,11 @@ def generation_table(files: dict[str, bytes]) -> tuple[list[dict], dict, list[st
             continue
         if kind == "policy":
             try:
-                pol = Policy.model_validate(doc)
+                # A stored generation file records no IR schema version: read
+                # as written, so one from before IR schema 4.0.0 that leaves a
+                # rule's `scope` out loads and hashes as it was recorded
+                # (models.era_context).
+                pol = Policy.model_validate(doc, context=era_context(None))
             except Exception as exc:                       # noqa: BLE001
                 problems.append(f"{name} is not a policy IR ({type(exc).__name__})")
                 continue
@@ -804,8 +808,14 @@ def read_replay(path: str | Path,
         return default if b is None else json.loads(b)
 
     # model_validate, not load_policy: the IR is already projected and
-    # validated, exactly as load_bundle does it.
-    policy = Policy.model_validate(_json(POLICY + "ir.json"))
+    # validated, exactly as load_bundle does it - in the era its manifest
+    # names (manifest_for records the schema the IR is a document of): a
+    # bundle packed before IR schema 4.0.0, or packing a policy of that era,
+    # may leave a rule's `scope` out, and hashes as it was packed.
+    pman = _json(POLICY + "manifest.json", {})
+    policy = Policy.model_validate(
+        _json(POLICY + "ir.json"),
+        context=era_context(pman.get("ir_schema_version") if isinstance(pman, dict) else None))
     form = policy.hash_form(index.get("policy_hash"))
     if form is None:
         raise ValueError(

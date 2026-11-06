@@ -8,6 +8,7 @@ constraints:
   - id: nfz
     type: polygon_fence
     constraint_type: hard
+    scope: mission
     priority: P0
     violation_action: project_fix
     vertices:
@@ -18,6 +19,7 @@ constraints:
   - id: nfz
     type: altitude_envelope
     constraint_type: hard
+    scope: mission
     violation_action: project_fix
     priority: P2
     alt_min_m: 5

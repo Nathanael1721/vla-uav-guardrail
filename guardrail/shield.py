@@ -5580,10 +5580,12 @@ class Shield:
             # The default layer stays implicit, so the switch (and the policy
             # hash) is the one this method wrote before it took a layer.
             # constraint_type / priority / violation_action are required since
-            # IR schema 3.0.0; these are the values they defaulted to.
+            # IR schema 3.0.0; these are the values they defaulted to. `scope`
+            # is required since 4.0.0: a switch held from now on belongs to
+            # this mission (what an absent scope meant before).
             sw = TimeWindowSwitch(id=sid, type="time_window_switch",
                                   constraint_type="hard", priority="P0",
-                                  violation_action="project_fix",
+                                  violation_action="project_fix", scope="mission",
                                   target_id=rule_id, active=bool(active),
                                   layer=None if layer == DEFAULT_LAYER else layer)
             return self._switch(sw, t)
@@ -5610,6 +5612,7 @@ class Shield:
             as_corr = Corridor(id=tgt.id, type="corridor",
                                constraint_type=sp.constraint_type,
                                priority=sp.priority, violation_action=sp.violation_action,
+                               scope=sp.effective_scope,   # compared, never stored
                                valid_time=sp.valid_time, altitude_ref=sp.altitude_ref,
                                centerline=sp.centerline, width_m=sp.width_m,
                                altitude_floor_m=sp.altitude_floor_m,

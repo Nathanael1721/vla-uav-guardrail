@@ -63,17 +63,19 @@ from guardrail import holdpoint as HP  # noqa: E402
 from guardrail.models import Action4D, DynamicNFZ, Policy, State  # noqa: E402
 from guardrail.shield import Shield  # noqa: E402
 
-# The three ConstraintBase fields the grant requires (IR schema 3.0.0, 2026-11-02),
-# at the values they defaulted to before (repair = project_fix).
-HARD_P0 = {"constraint_type": "hard", "priority": "P0", "violation_action": "project_fix"}
+# The four ConstraintBase fields the grant requires (IR schema 3.0.0, 2026-11-02;
+# scope since 4.0.0, 2026-11-06), at the values they defaulted to before
+# (repair = project_fix; an absent scope meant mission).
+HARD_P0 = {"constraint_type": "hard", "scope": "mission", "priority": "P0",
+           "violation_action": "project_fix"}
 
 DEMO = ROOT / "policies" / "sim_demo_policy.yaml"
 DENSE = 1000
 SKIP = "SKIP"
-KIN = {"id": "kin", "type": "kinematic_envelope", "constraint_type": "hard",
+KIN = {"id": "kin", "type": "kinematic_envelope", "scope": "mission", "constraint_type": "hard",
        "priority": "P1", "violation_action": "repair", "speed_max_mps": 4.0,
        "climb_rate_max_mps": 2.0, "yaw_rate_max_dps": 45.0}
-RING = {"id": "ring", "type": "subject_standoff", "constraint_type": "hard",
+RING = {"id": "ring", "type": "subject_standoff", "scope": "mission", "constraint_type": "hard",
         "priority": "P0", "violation_action": "repair", "min_range_m": 5.0}
 
 
@@ -176,15 +178,15 @@ def _thin_wall() -> tuple[Shield, State]:
     0.5), the aircraft at (0, 0, 3) below the 10-20 m band, and a zone above
     9 m over the start (x -20..1.5), so straight up is not legal."""
     def fence(zid, x0, y0, x1, y1, floor=0, ceil=100, margin=0.5):
-        return {"id": zid, "type": "polygon_fence", "constraint_type": "hard",
+        return {"id": zid, "type": "polygon_fence", "scope": "mission", "constraint_type": "hard",
                 "priority": "P0", "violation_action": "repair", "margin_m": margin,
                 "vertices": [{"x": x0, "y": y0}, {"x": x1, "y": y0}, {"x": x1, "y": y1},
                              {"x": x0, "y": y1}],
                 "altitude_floor_m": floor, "altitude_ceiling_m": ceil}
     pol = Policy.model_validate({"policy_id": "thin", "constraints": [
-        {"id": "alt-band", "type": "altitude_envelope", "constraint_type": "hard",
+        {"id": "alt-band", "type": "altitude_envelope", "scope": "mission", "constraint_type": "hard",
          "priority": "P0", "violation_action": "repair", "alt_min_m": 10, "alt_max_m": 20},
-        {"id": "kin", "type": "kinematic_envelope", "constraint_type": "hard",
+        {"id": "kin", "type": "kinematic_envelope", "scope": "mission", "constraint_type": "hard",
          "priority": "P1", "violation_action": "repair", "speed_max_mps": 4.0,
          "climb_rate_max_mps": 2.0, "yaw_rate_max_dps": 45.0},
         fence("high", -20, -20, 1.5, 20, floor=9, ceil=100),
@@ -276,7 +278,7 @@ def test_a_turning_zone_and_a_walking_person_are_judged_where_they_will_be():
                                 {"x": 0.1, "y": 12.0}, {"x": -0.1, "y": 12.0}],
                       altitude_floor_m=0, altitude_ceiling_m=100, margin_m=0.2,
                       motion={"vx_mps": 0.0, "vy_mps": 0.0, "yaw_rate_dps": 60.0})
-    kin = {"id": "kin", "type": "kinematic_envelope", "constraint_type": "hard",
+    kin = {"id": "kin", "type": "kinematic_envelope", "scope": "mission", "constraint_type": "hard",
            "priority": "P1", "violation_action": "repair", "speed_max_mps": 4.0,
            "climb_rate_max_mps": 2.0, "yaw_rate_max_dps": 45.0}
     sh = Shield(Policy.model_validate({"policy_id": "spin", "constraints": [kin]}),
@@ -298,7 +300,7 @@ def test_a_turning_zone_and_a_walking_person_are_judged_where_they_will_be():
     assert p.kind == "moved" and p.legal and not _dense_problems(sh, st, p), p
 
     ped = Policy.model_validate({"policy_id": "ped", "constraints": [
-        {"id": "ring", "type": "subject_standoff", "constraint_type": "hard",
+        {"id": "ring", "type": "subject_standoff", "scope": "mission", "constraint_type": "hard",
          "priority": "P0", "violation_action": "repair", "min_range_m": 5.0}, kin]})
     st = State(x=0.0, y=0.0, up=15.0)
     sh = Shield(ped, escalation=False)
@@ -375,7 +377,7 @@ def test_no_moved_plan_of_a_seeded_fuzz_enters_or_dips_between_poses():
 def _corridor_shield() -> Shield:
     """A straight corridor along y = 0, 4 m wide, 10-20 m, and nothing else
     that a position can break."""
-    tube = {"id": "tube", "type": "corridor", "constraint_type": "hard",
+    tube = {"id": "tube", "type": "corridor", "scope": "mission", "constraint_type": "hard",
             "priority": "P0", "violation_action": "repair",
             "centerline": [{"x": 0, "y": 0}, {"x": 100, "y": 0}], "width_m": 4.0,
             "altitude_floor_m": 10.0, "altitude_ceiling_m": 20.0}
@@ -433,7 +435,7 @@ def test_the_clearance_field_is_bounded_by_its_own_measured_slope():
     occ[9:11, 9:11] = 1                    # a building in the middle
     occ[0, 5] = 1                          # and one cell on the border
     pol = Policy.model_validate({"policy_id": "map", "constraints": [KIN, {
-        "id": "clear", "type": "obstacle_clearance", "constraint_type": "hard",
+        "id": "clear", "type": "obstacle_clearance", "scope": "mission", "constraint_type": "hard",
         "priority": "P0", "violation_action": "repair", "min_clearance_m": 3.05}]})
     sh = Shield(pol, escalation=False,
                 obstacle_map={"occ": occ, "res": 2.0, "ox": 0.0, "oy": 0.0})
@@ -468,7 +470,7 @@ def _random_world(rng: random.Random, kind: str) -> Shield:
     2-4 segment corridor ("corridor"); or a 6 m square zone whose one-minute
     window opens or closes 0-6 s after the plan ("window"). Bars are added to
     the last three 3 times in 10."""
-    cons = [{"id": "alt-band", "type": "altitude_envelope", "constraint_type": "hard",
+    cons = [{"id": "alt-band", "type": "altitude_envelope", "scope": "mission", "constraint_type": "hard",
              "priority": "P0", "violation_action": "repair", "alt_min_m": 10,
              "alt_max_m": 20}, KIN]
     omap, now = None, None
@@ -480,7 +482,7 @@ def _random_world(rng: random.Random, kind: str) -> Shield:
             i0, j0 = rng.randrange(0, 38), rng.randrange(0, 38)
             occ[i0:i0 + rng.randint(1, 6), j0:j0 + rng.randint(1, 6)] = 1
         omap = {"occ": occ, "res": 2.0, "ox": -40.0, "oy": -40.0}
-        cons.append({"id": "clear", "type": "obstacle_clearance", "constraint_type": "hard",
+        cons.append({"id": "clear", "type": "obstacle_clearance", "scope": "mission", "constraint_type": "hard",
                      "priority": "P0", "violation_action": "repair",
                      "min_clearance_m": rng.choice([0.5, 1.0, 2.0, 3.0, 5.0])})
     elif kind == "corridor":
@@ -488,13 +490,13 @@ def _random_world(rng: random.Random, kind: str) -> Shield:
         for _ in range(rng.randint(1, 3)):
             pts.append({"x": pts[-1]["x"] + rng.uniform(3, 15),
                         "y": pts[-1]["y"] + rng.uniform(-15, 15)})
-        cons.append({"id": "tube", "type": "corridor", "constraint_type": "hard",
+        cons.append({"id": "tube", "type": "corridor", "scope": "mission", "constraint_type": "hard",
                      "priority": "P0", "violation_action": "repair", "centerline": pts,
                      "width_m": rng.uniform(2, 12),
                      "altitude_floor_m": rng.choice([8.0, 10.0, 12.0]),
                      "altitude_ceiling_m": rng.choice([16.0, 20.0])})
     else:
-        cons.append({"id": "timed", "type": "polygon_fence", "constraint_type": "hard",
+        cons.append({"id": "timed", "type": "polygon_fence", "scope": "mission", "constraint_type": "hard",
                      "priority": "P0", "violation_action": "repair",
                      "margin_m": rng.choice([0.2, 1.0]),
                      "vertices": [{"x": x, "y": y} for x, y in
@@ -578,7 +580,7 @@ def _square_world(half: float, margin: float = 1.0, *extra: dict, now=None,
     margin 1 m, the 4 m/s cap (none with `kin` False), nothing moving - the
     nearest legal hold is half + margin + HOLD_MARGIN_M away."""
     pol = Policy.model_validate({"policy_id": "sq", "constraints": ([KIN] if kin else []) + [{
-        "id": "zone", "type": "polygon_fence", "constraint_type": "hard", "priority": "P0",
+        "id": "zone", "type": "polygon_fence", "scope": "mission", "constraint_type": "hard", "priority": "P0",
         "violation_action": "repair", "margin_m": margin,
         "vertices": [{"x": -half, "y": -half}, {"x": half, "y": -half},
                      {"x": half, "y": half}, {"x": -half, "y": half}],
@@ -591,7 +593,7 @@ def _square_world(half: float, margin: float = 1.0, *extra: dict, now=None,
 def _overlapping(k: int) -> Shield:
     """k always-on zones over the whole search area (the final review's cost
     probe): nothing within 60 m is legal, and every candidate is in k boxes."""
-    zones = [{"id": f"o{j}", "type": "polygon_fence", "constraint_type": "hard",
+    zones = [{"id": f"o{j}", "type": "polygon_fence", "scope": "mission", "constraint_type": "hard",
               "priority": "P0", "violation_action": "repair", "margin_m": 1.0,
               "vertices": [{"x": 0.5 * j - 100 - j, "y": -0.5 * j - 100 - j},
                            {"x": 0.5 * j + 100 + j, "y": -0.5 * j - 100 - j},
@@ -754,7 +756,7 @@ def _nested(k: int) -> Shield:
     zones = []
     for j in range(k):
         h = 50.0 - 3.5 * j / max(1, k - 1)
-        zones.append({"id": f"n{j}", "type": "polygon_fence", "constraint_type": "hard",
+        zones.append({"id": f"n{j}", "type": "polygon_fence", "scope": "mission", "constraint_type": "hard",
                       "priority": "P0", "violation_action": "repair", "margin_m": 1.0,
                       "vertices": [{"x": -h, "y": -h}, {"x": h, "y": -h}, {"x": h, "y": h},
                                    {"x": -h, "y": h}],
@@ -861,7 +863,7 @@ def test_a_speed_cap_that_opens_on_the_way_slows_the_whole_transit():
     assumed"). Now each cap's source is kept apart and worded on its own,
     and every case's reason is asserted whole."""
     def opening(speed: float, climb: float) -> dict:
-        return {"id": "slow", "type": "kinematic_envelope", "constraint_type": "hard",
+        return {"id": "slow", "type": "kinematic_envelope", "scope": "mission", "constraint_type": "hard",
                 "priority": "P0", "violation_action": "repair", "speed_max_mps": speed,
                 "climb_rate_max_mps": climb, "yaw_rate_max_dps": 45.0,
                 "valid_time": {"recurrence": {"days": ["Mon"], "start_time": "10:00",
@@ -1034,11 +1036,11 @@ def test_each_charge_bounds_what_its_call_costs():
     for name, took, charged in checks:
         assert took <= 2.0 * charged * unit, (name, took * 1e3, charged, unit * 1e3)
     diamonds = Policy.model_validate({"policy_id": "d", "constraints": [KIN, {
-        "id": "core", "type": "polygon_fence", "constraint_type": "hard", "priority": "P0",
+        "id": "core", "type": "polygon_fence", "scope": "mission", "constraint_type": "hard", "priority": "P0",
         "violation_action": "repair", "margin_m": 1.0,
         "vertices": [{"x": -80, "y": -80}, {"x": 80, "y": -80}, {"x": 80, "y": 80},
                      {"x": -80, "y": 80}], "altitude_floor_m": 0, "altitude_ceiling_m": 100}] + [
-        {"id": f"d{q}{j}", "type": "polygon_fence", "constraint_type": "hard",
+        {"id": f"d{q}{j}", "type": "polygon_fence", "scope": "mission", "constraint_type": "hard",
          "priority": "P0", "violation_action": "repair", "margin_m": 1.0,
          "vertices": [{"x": sx * 40 + r, "y": sy * 40}, {"x": sx * 40, "y": sy * 40 + r},
                       {"x": sx * 40 - r, "y": sy * 40}, {"x": sx * 40, "y": sy * 40 - r}],

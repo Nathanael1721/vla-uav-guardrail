@@ -49,9 +49,11 @@ from guardrail.models import (HASH_SCHEME, PRIOR_SCHEME_V2,         # noqa: E402
                               PolygonFence, SubjectStandoff, canonical_json,
                               ir_schema_defaults, load_policy)
 
-# The three ConstraintBase fields the grant requires (IR schema 3.0.0, 2026-11-02),
-# at the values they defaulted to before (repair = project_fix).
-HARD_P0 = {"constraint_type": "hard", "priority": "P0", "violation_action": "project_fix"}
+# The four ConstraintBase fields the grant requires (IR schema 3.0.0, 2026-11-02;
+# scope since 4.0.0, 2026-11-06), at the values they defaulted to before
+# (repair = project_fix; an absent scope meant mission).
+HARD_P0 = {"constraint_type": "hard", "scope": "mission", "priority": "P0",
+           "violation_action": "project_fix"}
 
 POLICIES = ROOT / "policies"
 DEMO = POLICIES / "sim_demo_policy.yaml"
@@ -176,13 +178,17 @@ def test_the_short_hash_is_the_july_hash():
         assert full[:len("sha256:") + 16] == pol.legacy_hashes()["legacy16-exclude-none"], f.name
         assert pol.policy_hash.startswith(pol.policy_hash_short)
     demo = load_policy(DEMO)
-    assert demo.version == "0.1.3" and demo.hash_form(JULY_SIM_DEMO) is None, \
-        "the July hash is fase3-sim-demo@0.1.1's, not the WGS84 0.1.3's"
+    assert demo.version == "0.1.4" and demo.hash_form(JULY_SIM_DEMO) is None, \
+        "the July hash is fase3-sim-demo@0.1.1's, not the 0.1.4's (WGS84, scope stated)"
     # 0.1.1 (IR 2.x) and 0.1.2 (IR 3.0.0) were written in metres; since the
     # WGS84 conversion (IR schema 3.1.0, 2026-11-03) the file answers for them
-    # through its metre form (Policy.metre_form, bundle.rewind).
+    # through its metre form (Policy.metre_form, bundle.rewind), and since
+    # scope was stated (IR schema 4.0.0, 2026-11-06, 0.1.4) through the metre
+    # form of the file with scope left out (Policy.ir3_form).
     assert as_version(demo, "0.1.1").hash_form(JULY_SIM_DEMO) is None
-    old = as_version(demo.metre_form(), "0.1.1")
+    assert as_version(demo.metre_form(), "0.1.1").hash_form(JULY_SIM_DEMO) is None, \
+        "a metre form that states scope is not the July document"
+    old = as_version(demo.ir3_form().metre_form(), "0.1.1")
     assert old.ir2_hashes()[IR2_FORM][:len("sha256:") + 16] == JULY_SIM_DEMO
     assert old.hash_form(JULY_SIM_DEMO) == "legacy16-exclude-none"
     assert old.hash_form(SEPT_SIM_DEMO) == "legacy16-include-defaults"
@@ -216,28 +222,46 @@ def test_a_hot_apply_still_restamps_the_hash():
 def test_the_dynamic_runs_rebuild_from_the_lock():
     """No file on disk produces a mid-flight hash; the lock's recipe does. The
     recipe's base is fase3-sim-demo@0.1.1, which sim_demo_policy.yaml left for
-    0.1.2 at IR schema 3.0.0 and for the WGS84 0.1.3 at 3.1.0: the base is the
-    file's metre form put back at 0.1.1, and the recipe - written under IR
-    2.x, its rule omits the three ConstraintBase fields - is read with the
-    2.x defaults (derive, IR2_RULE_DEFAULTS)."""
+    0.1.2 at IR schema 3.0.0, for the WGS84 0.1.3 at 3.1.0 and for 0.1.4 at
+    4.0.0 (scope stated): the base is the metre form of the file with scope
+    left out, put back at 0.1.1, and the recipe - written under IR 2.x, its
+    rule omits the three ConstraintBase fields and scope - is read with the
+    2.x defaults (derive, IR2_RULE_DEFAULTS), scope left absent as it flew."""
     from guardrail.bundle import as_version
     from guardrail.models import IR2_FORM
     lock = load_lock()
     (d,) = [x for x in lock["derived"] if x["base"] == "fase3-sim-demo@0.1.1"]
-    pol = derive(as_version(load_policy(DEMO).metre_form(), "0.1.1"), d["hot_apply"],
-                 d["generations"])
+    pol = derive(as_version(load_policy(DEMO).ir3_form().metre_form(), "0.1.1"),
+                 d["hot_apply"], d["generations"])
     assert pol.generation == 1
+    assert all(c.scope is None for c in pol.constraints), "the 2.x recipe gained a scope"
     assert pol.hash_form(DYNAMIC_RUNS) == "legacy16-exclude-none"
     assert pol.hash_form(d["policy_hash"]) == IR2_FORM
     assert pol.legacy_hashes() == d["legacy_hashes"]
     assert any(n == d["name"] and p.hash_form(DYNAMIC_RUNS) for n, p in policy_candidates())
-    # A recipe written under 3.0.0 must state the fields, as a policy must.
+    # A recipe written under 3.0.0 must state the three fields, as a policy must.
     try:
         derive(load_policy(DEMO), d["hot_apply"], ir_schema_version="3.0.0")
     except ValueError as e:
         assert "Field required" in str(e), e
     else:
         raise AssertionError("a 3.0.0 recipe without constraint_type was accepted")
+    # ... and one written under 4.0.0 must state scope too (WP1-01), while the
+    # same rule recorded under 3.x reads with scope absent, as it flew.
+    rule = {**d["hot_apply"][0], "constraint_type": "hard", "priority": "P0",
+            "violation_action": "project_fix"}
+    for era in ("4.0.0", "9.0.0"):
+        try:
+            derive(load_policy(DEMO), [rule], ir_schema_version=era)
+        except ValueError as e:
+            assert "scope" in str(e) and "Field required" in str(e), e
+        else:
+            raise AssertionError(f"a {era} recipe without scope was accepted")
+    got = derive(load_policy(DEMO), [rule], ir_schema_version="3.1.0")
+    assert got.constraints[-1].scope is None and got.constraints[-1].effective_scope == "mission"
+    stated = derive(load_policy(DEMO), [{**rule, "scope": "mission"}], ir_schema_version="4.0.0")
+    assert stated.constraints[-1].scope == "mission"
+    assert stated.policy_hash != got.policy_hash, "an absent scope hashed as a stated one"
 
 
 def test_the_lock_recipe_is_the_fence_the_rails_hot_apply():
@@ -293,34 +317,43 @@ def test_every_stored_manifest_resolves_to_a_policy():
             assert resolve_run_policy(man, cands)[0] is not None, tag
 
 
-def _geo_policy(**rule_extra):
+def _geo_policy(era: str | None = None, **rule_extra):
     """A policy the reference implementation can hold: WGS84 fence with no
-    margin ring, an altitude envelope; scope / layer / altitude_ref absent,
-    the things its form writes out. The breach action is written `repair`,
-    the spelling read as project_fix since IR schema 3.0.0."""
+    margin ring, an altitude envelope; layer / altitude_ref absent, the things
+    its form writes out. The fence states scope mission (required since IR
+    schema 4.0.0) and the envelope global. With `era` (an IR schema version
+    before 4.0.0) the fence leaves scope out, as a document of that era could,
+    and is read in that era (models.era_context). The breach action is
+    written `repair`, the spelling read as project_fix since IR schema 3.0.0."""
+    from guardrail.models import era_context
     sq = [{"lat": 25.0421, "lon": 121.5310}, {"lat": 25.0428, "lon": 121.5310},
           {"lat": 25.0428, "lon": 121.5318}]
     rep = {**HARD_P0, "violation_action": "repair"}
+    fence = {"id": "f", "type": "polygon_fence", **rep, "vertices": sq, "margin_m": 0.0,
+             "altitude_floor_m": 0, "altitude_ceiling_m": 120, **rule_extra}
+    if era is not None:
+        fence.pop("scope")
     return Policy.model_validate({"policy_id": "geo", "version": "0.1.0", "constraints": [
-        {"id": "f", "type": "polygon_fence", **rep, "vertices": sq, "margin_m": 0.0,
-         "altitude_floor_m": 0, "altitude_ceiling_m": 120, **rule_extra},
+        fence,
         {"id": "alt", "type": "altitude_envelope", **rep, "alt_min_m": 5, "alt_max_m": 90,
-         "scope": "global"}]})
+         "scope": "global"}]}, context=None if era is None else era_context(era))
 
 
 def test_the_reference_delta_rebuilds_the_source_exactly_and_nothing_else():
     """Deviation 10: a reference-form bundle carries the reference's hash
     (which its loader checks) and this project's hash of the SOURCE, rebuilt
     from the reference document plus `reference_delta`. The delta may only
-    restore an absent default (scope, layer, altitude_ref) or a spelling
+    restore an absent default (layer, altitude_ref; scope in a delta written
+    before IR 4.0.0, which a policy of that era could leave out) or a spelling
     (repair, in a delta written before IR 3.0.0 - the IR no longer holds it);
     anything that would change what a rule means fails the round trip (the
     rebuilt policy must write back the same reference document)."""
+    from guardrail.models import era_context
     pol = _geo_policy()
     assert {c.violation_action for c in pol.constraints} == {"project_fix"}
     doc = json.loads(json.dumps(pol.reference_ir()))
     delta = pol.reference_delta()
-    assert delta["rules"]["f"] == {"absent": ["scope", "layer", "altitude_ref"]}, delta
+    assert delta["rules"]["f"] == {"absent": ["layer", "altitude_ref"]}, delta
     assert delta["rules"]["alt"] == {"absent": ["layer", "altitude_ref"]}, delta
     back = Policy.from_reference(doc, delta)
     assert back.policy_hash == pol.policy_hash
@@ -330,22 +363,41 @@ def test_the_reference_delta_rebuilds_the_source_exactly_and_nothing_else():
     assert Policy.from_reference(doc, old).policy_hash == pol.policy_hash
     assert Policy.model_validate(doc).policy_hash != pol.policy_hash, \
         "without the delta the document alone is a different policy (the third hash)"
+    # IR schema 4.0.0: the same document from a policy of an earlier era,
+    # whose fence left scope out. Its delta restores the absence, which only
+    # that era allows: in its era it rebuilds the source exactly; read as
+    # today's, it is refused (scope is required), never rebuilt with a guess.
+    pol3 = _geo_policy(era="3.1.0")
+    assert pol3.constraints[0].scope is None and pol3.ir_schema_version == "3.1.0"
+    assert json.loads(json.dumps(pol3.reference_ir())) == doc, "the reference reads absent as mission"
+    delta3 = pol3.reference_delta()
+    assert delta3["rules"]["f"] == {"absent": ["scope", "layer", "altitude_ref"]}, delta3
+    assert Policy.from_reference(doc, delta3, context=era_context("3.1.0")).policy_hash == \
+        pol3.policy_hash != pol.policy_hash
+    for ctx in (None, era_context("4.0.0")):
+        try:
+            Policy.from_reference(doc, delta3, context=ctx)
+        except ValueError as e:
+            assert "scope" in str(e), e
+        else:
+            raise AssertionError(f"a delta restoring an absent scope was accepted in {ctx}")
     forged = [
         ("alt's written scope 'global' claimed absent (= mission)",
-         {"rules": {**delta["rules"], "alt": {"absent": ["scope", "layer", "altitude_ref"]}}}),
+         {"rules": {**delta3["rules"], "alt": {"absent": ["scope", "layer", "altitude_ref"]}}}),
         ("a breach action changed", {"rules": {**delta["rules"],
                                                "f": {**delta["rules"]["f"],
                                                      "violation_action": "brake"}}}),
         ("a field the reference does not default", {"rules": {
             "f": {"absent": ["priority"]}}}),
-        ("a rule the document lacks", {"rules": {"ghost": {"absent": ["scope"]}}}),
+        ("a rule the document lacks", {"rules": {"ghost": {"absent": ["layer"]}}}),
     ]
     for name, bad in forged:
-        try:
-            Policy.from_reference(doc, bad)
-        except ValueError:
-            continue
-        raise AssertionError(f"a forged delta was accepted: {name}")
+        for ctx in (None, era_context("3.1.0")):
+            try:
+                Policy.from_reference(doc, bad, context=ctx)
+            except ValueError:
+                continue
+            raise AssertionError(f"a forged delta was accepted ({ctx}): {name}")
     assert _geo_policy(margin_m=1.0).reference_delta() is None, "not representable"
 
 
@@ -439,33 +491,44 @@ def test_every_migrated_entry_reproduces_the_hash_it_replaces():
     to WGS84 and raised their version again: a chain of two migrations, each
     step read back from the step after it (bundle.rewind) - the frame
     migration through the file's metre form (FRAME_FORM), the IR 3.0.0 one
-    as before."""
-    from guardrail.bundle import FRAME_FORM, rewind
+    as before. Since 2026-11-06 (IR schema 4.0.0) all 32 state `scope` and
+    raised their version a third time: the scope migration is read back
+    through the file with scope left out (Policy.ir3_form, IR3_FORM), which
+    is that old file exactly - every rule's scope absent, as it was stored -
+    before the older steps."""
+    from guardrail.bundle import FRAME_FORM, IR3_FORM, _semver_key, rewind
     from guardrail.models import IR2_FORMS
     lock = load_lock()
     ents = lock["policies"]
     cands = policy_candidates()
-    frame_steps = ir3_steps = 0
+    frame_steps = ir2_steps = scope_steps = 0
     for f in _policy_files():
         pol = load_policy(f, runtime=False)
         ent = ents[lock_key(pol)]
-        assert ent.get("ir_schema_version") in ("3.0.0", "3.1.0"), f.name
+        assert ent.get("ir_schema_version") == "4.0.0", f.name
+        assert {c.scope for c in pol.constraints} == {"mission"}, f.name
         base = pol
         while ent.get("migrated_from"):
             old_key = ent["migrated_from"]
-            assert old_key.rpartition("@")[2] < base.version, (f.name, old_key)
+            assert _semver_key(old_key.rpartition("@")[2]) < _semver_key(base.version), \
+                (f.name, old_key)
             old_ent = ents[old_key]
             pin = old_ent["shared_by_files"][f.name] if "shared_by_files" in old_ent else old_ent
             got = rewind(base, old_key, pin)
             assert got is not None, (f.name, old_key)
             old, form = got
             assert form == ent["migration"]["old_hash_form"], (f.name, form, ent["migration"])
-            if form.startswith(FRAME_FORM):
+            if form == IR3_FORM:
+                scope_steps += 1
+                assert ent["migration"]["ir_schema_version"] == "4.0.0", f.name
+                assert all(c.scope is None for c in old.constraints), f.name
+                assert old.ir_schema_version == "3.1.0", f.name
+            elif form.startswith(FRAME_FORM):
                 frame_steps += 1
                 assert ent["migration"]["ir_schema_version"] == "3.1.0", f.name
                 assert not old.is_geographic and old.origin is None, f.name
             else:
-                ir3_steps += 1
+                ir2_steps += 1
                 assert form in (PRIOR_SCHEME_V2, *IR2_FORMS), (f.name, form)
             assert old.legacy_hashes() == pin["legacy_hashes"], f.name
             assert pol.hash_form(pin["policy_hash"]) is None, \
@@ -478,7 +541,8 @@ def test_every_migrated_entry_reproduces_the_hash_it_replaces():
             ent, base = old_ent, old
             if "shared_by_files" in ent:
                 break
-    assert frame_steps == 31 and ir3_steps == 32, (frame_steps, ir3_steps)
+    assert (scope_steps, frame_steps, ir2_steps) == (32, 31, 32), \
+        (scope_steps, frame_steps, ir2_steps)
     assert check_lock(POLICIES, lock) == []
     # Broken links are caught: a hash the rewound file does not reproduce,
     # and a migration claimed from another policy's entry.
@@ -499,11 +563,14 @@ def test_a_file_left_at_its_old_version_after_the_ir_change_is_caught():
     shipped file is reported as changed - not recorded as 'the same content
     under a newer scheme', which is the treatment a prior hash SCHEME gets.
     The same holds for the WGS84 conversion (IR schema 3.1.0): the converted
-    file at its metre version is another content under that version."""
+    file at its metre version is another content under that version; and for
+    scope (IR schema 4.0.0): the file that states it, put back at the version
+    that left it out (0.1.3), is another content under that version too."""
     d = _copy_policies()
     f = d / DEMO.name
     src = f.read_text(encoding="utf-8")
-    for now, was in (("version: 0.1.3", "version: 0.1.2"), ("version: 0.1.3", "version: 0.1.1")):
+    for now, was in (("version: 0.1.4", "version: 0.1.3"), ("version: 0.1.4", "version: 0.1.2"),
+                     ("version: 0.1.4", "version: 0.1.1")):
         assert now in src, src[:300]
         f.write_text(src.replace(now, was), encoding="utf-8")
         probs = check_lock(d)
@@ -542,11 +609,12 @@ def test_a_content_change_inside_the_shared_identity_is_still_caught():
     version bump is reported like any other content change (mutant M34). The
     shared entry still pins each file's old content."""
     d = _copy_policies()
-    # 0.1.2 since the WGS84 conversion (IR schema 3.1.0, 2026-11-03).
+    # 0.1.2 since the WGS84 conversion (IR schema 3.1.0, 2026-11-03), 0.1.3
+    # since scope was stated (IR schema 4.0.0, 2026-11-06).
     for name, want in (("random_scenario.yaml", "content changed but version did not - "
-                                                "random-scenario@0.1.2"),
+                                                "random-scenario@0.1.3"),
                        ("hard_3.yaml", "content changed but version did not - "
-                                       "random-scenario-hard-3@0.1.2")):
+                                       "random-scenario-hard-3@0.1.3")):
         f = d / name
         src = f.read_text(encoding="utf-8")
         assert "altitude_ceiling_m: 60\n" in src, src[:400]
@@ -601,9 +669,11 @@ def test_the_generator_gives_each_file_its_own_policy_id():
         f = POLICIES / f"{name}.yaml"
         pol = load_policy(f, runtime=False)
         assert pol.policy_id == G.default_policy_id(f), (name, pol.policy_id)
-        # Since the WGS84 conversion (2026-11-03) the shipped file is the
-        # generator's metre text at the version before, converted by
-        # tools/convert_policies_wgs84.py: read the rules back in metres.
+        # Since the WGS84 conversion (2026-11-03) the shipped file was the
+        # generator's metre text at its metre version, converted by
+        # tools/convert_policies_wgs84.py; since scope was stated (IR schema
+        # 4.0.0, 2026-11-06) it is that text with `scope: mission` on every
+        # rule, one version later. Read the rules back in metres.
         metre = pol.metre_form()
         nfzs, band = [], None
         for c in metre.constraints:
@@ -612,16 +682,25 @@ def test_the_generator_gives_each_file_its_own_policy_id():
                 nfzs.append((v[0].x, v[1].x, v[0].y, v[2].y))
             elif c.type == "altitude_envelope":
                 band = (c.alt_min_m, c.alt_max_m)
-        major, minor, patch = pol.version.split(".")
-        before = f"{major}.{minor}.{int(patch) - 1}"
-        text = G.policy_yaml(pol.policy_id, nfzs, *band, version=before)
+        shipped = f.read_text(encoding="utf-8")
+        metre_ver = re.search(r"from the\n# metres of (\d+\.\d+\.\d+)\)", shipped).group(1)
+        wgs_ver = load_lock()["policies"][lock_key(pol)]["migrated_from"].rpartition("@")[2]
+
+        def unscoped(t):
+            return t.replace("    scope: mission\n", "")
+        # The 3.1.0 file (wgs_ver): the conversion of the metre text, which
+        # stated no scope; the generator writes it now, so it is taken out.
+        text = unscoped(G.policy_yaml(pol.policy_id, nfzs, *band, version=metre_ver))
+        assert "scope" not in text, name
         assert CV.convert_text(text, CV.anchor_for(f.name))[0] == \
-            f.read_text(encoding="utf-8"), name
-        # ... and the generator writes that form itself now (at its version).
+            unscoped(shipped).replace(f"version: {pol.version}\n", f"version: {wgs_ver}\n"), name
+        # ... and today's file: the generator writes it itself, scope stated
+        # on every rule, at its version.
+        assert shipped.count("    scope: mission\n") == len(pol.constraints), name
         assert G.wgs84_policy_yaml(pol.policy_id, nfzs, *band, version=pol.version) \
             .replace("Generated by demo/gen_random_scenario.py in WGS84",
                      f"WGS84 since 2026-11-03 (tools/convert_policies_wgs84.py, from the\n"
-                     f"# metres of {before})") == f.read_text(encoding="utf-8"), name
+                     f"# metres of {metre_ver})") == shipped, name
     # Read-only questions about policies/ itself (nothing is written):
     # regenerating a file is not a clash; a new file under a taken id is.
     assert G.id_claimed_elsewhere("random-scenario-hard-3", POLICIES / "hard_3.yaml") == []
@@ -692,8 +771,11 @@ def test_a_file_that_left_a_shared_identity_must_be_locked_under_its_own():
         assert new["policies"]["random-scenario@0.1.0"] == lock["policies"]["random-scenario@0.1.0"]
         hp42 = lock_key(load_policy(POLICIES / "hp_42.yaml", runtime=False))
         assert new["policies"][hp42]["previously"] == "random-scenario@0.1.0"
-        # 0.1.2 (WGS84, 2026-11-03) migrated from 0.1.1 (IR 3.0.0, metres)
-        assert new["policies"][hp42]["migrated_from"] == "random-scenario-hp-42@0.1.1"
+        # 0.1.3 (scope stated, IR 4.0.0, 2026-11-06) migrated from 0.1.2
+        # (WGS84, 2026-11-03), itself from 0.1.1 (IR 3.0.0, metres)
+        assert new["policies"][hp42]["migrated_from"] == "random-scenario-hp-42@0.1.2"
+        assert new["policies"][hp42]["migration"]["old_hash_form"] == \
+            "sha256-canonical-v3/ir-3.x"
         assert check_lock(d, new) == []
     finally:
         shutil.rmtree(d, ignore_errors=True)

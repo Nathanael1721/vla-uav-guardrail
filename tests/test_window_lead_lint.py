@@ -38,16 +38,18 @@ from guardrail.compiler import (LINT_SPEED_MPS, ConstraintCompiler,  # noqa: E40
                                 Mission, time_window_lead_warnings)
 from guardrail.models import Policy  # noqa: E402
 
-# The three ConstraintBase fields the grant requires (IR schema 3.0.0, 2026-11-02),
-# at the values they defaulted to before (repair = project_fix).
-HARD_P0 = {"constraint_type": "hard", "priority": "P0", "violation_action": "project_fix"}
+# The four ConstraintBase fields the grant requires (IR schema 3.0.0, 2026-11-02;
+# scope since 4.0.0, 2026-11-06), at the values they defaulted to before
+# (repair = project_fix; an absent scope meant mission).
+HARD_P0 = {"constraint_type": "hard", "scope": "mission", "priority": "P0",
+           "violation_action": "project_fix"}
 
 SURVEY = ROOT / "policies" / "corridor_survey.yaml"
 MON_0729_58 = datetime(2026, 9, 7, 7, 29, 58)     # a Monday, 2 s before 07:30
 
 
 def _zone(zid, half_w, half_h, *, window=True, cx=0.0, cy=0.0, margin=1.0):
-    z = {"id": zid, "type": "polygon_fence", "constraint_type": "hard",
+    z = {"id": zid, "type": "polygon_fence", "scope": "mission", "constraint_type": "hard",
          "priority": "P0", "violation_action": "repair", "margin_m": margin,
          "vertices": [{"x": cx - half_w, "y": cy - half_h}, {"x": cx + half_w, "y": cy - half_h},
                       {"x": cx + half_w, "y": cy + half_h}, {"x": cx - half_w, "y": cy + half_h}],
@@ -59,7 +61,7 @@ def _zone(zid, half_w, half_h, *, window=True, cx=0.0, cy=0.0, margin=1.0):
 
 
 def _cap(speed):
-    return {"id": "caps", "type": "kinematic_envelope", "constraint_type": "hard",
+    return {"id": "caps", "type": "kinematic_envelope", "scope": "mission", "constraint_type": "hard",
             "priority": "P1", "violation_action": "repair", "speed_max_mps": speed,
             "climb_rate_max_mps": 2.0, "yaw_rate_max_dps": 45.0}
 
@@ -126,7 +128,7 @@ def test_a_keep_in_corridor_bounds_where_the_aircraft_can_be_and_go():
     """A 60 m square zone across a 20 m wide corridor: the aircraft can only
     be inside the corridor, and can only leave along it, 31 m (ring edge at
     x = +/-31) - never by a side exit into the airspace the corridor forbids."""
-    corridor = {"id": "lane", "type": "corridor", "constraint_type": "hard",
+    corridor = {"id": "lane", "type": "corridor", "scope": "mission", "constraint_type": "hard",
                 "priority": "P0", "violation_action": "repair",
                 "centerline": [{"x": -100.0, "y": 0.0}, {"x": 100.0, "y": 0.0}],
                 "width_m": 20.0, "altitude_floor_m": 0.0, "altitude_ceiling_m": 100.0}
@@ -188,7 +190,7 @@ def test_a_start_with_no_legal_exit_is_said_so_without_stepping_a_week():
     zone = _zone("monday", 50.0, 50.0)
     zone["valid_time"] = {"recurrence": {"days": ["Mon"], "start_time": "08:00",
                                          "end_time": "17:00"}}
-    corridor = {"id": "lane", "type": "corridor", "constraint_type": "hard",
+    corridor = {"id": "lane", "type": "corridor", "scope": "mission", "constraint_type": "hard",
                 "priority": "P0", "violation_action": "repair",
                 "centerline": [{"x": -20.0, "y": 0.0}, {"x": 20.0, "y": 0.0}],
                 "width_m": 10.0, "altitude_floor_m": 0.0, "altitude_ceiling_m": 100.0}
@@ -262,7 +264,7 @@ def test_the_warning_says_what_the_shield_makes_of_the_opening():
             "else reported to the escalation FSM") in ws[0], ws[0]
     assert "scores those ticks as P0 escapes" not in ws[0], ws[0]
     big = _zone("big", 40.0, 40.0)
-    for caps in ((), (dict(_cap(4.0), constraint_type="soft"),)):
+    for caps in ((), (dict(_cap(4.0), scope="mission", constraint_type="soft"),)):
         w = time_window_lead_warnings(_pol(big, *caps))[0]
         assert "its counter scores those ticks as P0 escapes" in w, (caps, w)
         assert "cannot prove" in w, (caps, w)

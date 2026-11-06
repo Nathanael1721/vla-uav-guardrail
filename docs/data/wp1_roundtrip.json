@@ -1,5 +1,5 @@
 {
- "generated": "2026-10-20T11:06:52Z",
+ "generated": "2026-11-06T14:25:21Z",
  "command": "python tools/wp1_roundtrip_kpi.py",
  "command_args": [
   "--runs-root",
@@ -10,41 +10,41 @@
  "command_env": {
   "VLAGUARD_SIGNING_KEY": "<main checkout>/policies/keys/lab-dev-ed25519.pem"
  },
- "code_revision": "abf4cccdf86e",
- "python": "3.11.15",
+ "code_revision": "4edd5d137573",
+ "python": "3.10.20",
  "cryptography_available": true,
  "signature_verifier": "cryptography",
  "hash_scheme": "sha256-canonical-v3",
  "kpi": {
-  "round_trip": "29/29",
-  "tamper_refusal": "29/29",
-  "negative_refusal": "35/35",
+  "round_trip": "32/32",
+  "tamper_refusal": "32/32",
+  "negative_refusal": "39/39",
   "negative_accepted": [],
-  "grant_form_round_trip": "29/29",
+  "grant_form_round_trip": "32/32",
   "reference_documents_loaded": "3/3",
   "reference_bundles_loaded": "1/1",
   "reference_hash_agrees": "3/3",
   "reference_loader_reads_ours": "3/3",
-  "both_hashes_recorded_and_verified": "29/29",
-  "reference_hash_representable": "0/29",
-  "forged_reference_hash_refused": "29/29",
+  "both_hashes_recorded_and_verified": "32/32",
+  "reference_hash_representable": "0/32",
+  "forged_reference_hash_refused": "32/32",
   "reference_form_source_verified": "3/3",
-  "cold_start_50_rules": "p95 376 ms <= 1000 ms (fresh process, imports + verify + parse + IR + Shield (worst bundle)); whole process incl. interpreter start p95 504 ms",
+  "cold_start_50_rules": "p95 581 ms <= 1000 ms (fresh process, imports + verify + parse + IR + Shield (worst bundle)); whole process incl. interpreter start p95 692 ms",
   "cold_start_within_budget": true
  },
  "null_record_ignored": {
-  "forged_reference_hash_refused": "0/29",
+  "forged_reference_hash_refused": "0/32",
   "why": "10451bc wrote no `hashes` record and read none; the forged reference hash is invisible to such a reader"
  },
  "null_accept_everything": {
-  "round_trip": "29/29",
-  "tamper_refusal": "0/29",
-  "negative_refusal": "0/35",
+  "round_trip": "32/32",
+  "tamper_refusal": "0/32",
+  "negative_refusal": "0/39",
   "why": "a reader that verifies nothing passes every round trip; only the refusal columns separate it from a real one"
  },
  "null_2026_10_05": {
   "negative_refusal": "20/35 (14/25 on the original 25 cases)",
-  "grant_form_round_trip": "0/29",
+  "grant_form_round_trip": "0/32",
   "reference_documents_loaded": "0/3",
   "reference_bundles_loaded": "0/1",
   "reference_hash_agrees": "0/3",
@@ -54,23 +54,23 @@
   "cold_start_50_rules": "not measured (Shield construction alone: 2.7 ms)"
  },
  "round_trip": {
-  "n": 29,
-  "passed": 29,
+  "n": 32,
+  "passed": 32,
   "rate": 1.0,
   "signatures": {
-   "verified": 29
+   "verified": 32
   },
   "tamper_refusal": {
-   "run": 29,
-   "refused": 29,
+   "run": 32,
+   "refused": 32,
    "rate": 1.0
   },
   "rows": [
    {
     "file": "corridor_survey.yaml",
     "policy_id": "corridor-survey",
-    "version": "0.1.0",
-    "policy_hash": "sha256:5a0e507fe15678551b887141eb85c904030c088d89cf90f916c82649f17b770d",
+    "version": "0.1.3",
+    "policy_hash": "sha256:ddb43893eea8b015098dd735b74914497c4d0ec8490b4834e8d623310ee61df7",
     "same_hash": true,
     "same_canonical_ir": true,
     "same_model_dump": true,
@@ -83,8 +83,8 @@
    {
     "file": "demo_policy.yaml",
     "policy_id": "fase3-demo",
-    "version": "0.1.0",
-    "policy_hash": "sha256:714e1db183a191083567b919ffd49aa0eecce05833d4d0945cff567b77c2d988",
+    "version": "0.1.3",
+    "policy_hash": "sha256:ec26566b569589af919fa932ab7dd77bfa6d2c4eda027ff8ae101e7ddd8ff7c9",
     "same_hash": true,
     "same_canonical_ir": true,
     "same_model_dump": true,
@@ -97,8 +97,8 @@
    {
     "file": "edge_patrol.yaml",
     "policy_id": "edge-nfz-patrol",
-    "version": "0.1.0",
-    "policy_hash": "sha256:e6903b303840f120c880e60b91c3fea44c2c923b3a320060c68f5895c60e1c68",
+    "version": "0.1.3",
+    "policy_hash": "sha256:6a60d08ed13052c6f1843e0480d04a56013c628bc0b1b923fdaf76073fed6122",
     "same_hash": true,
     "same_canonical_ir": true,
     "same_model_dump": true,
@@ -111,8 +111,8 @@
    {
     "file": "follow_car.yaml",
     "policy_id": "follow-car",
-    "version": "0.1.0",
-    "policy_hash": "sha256:979c982866fe38ef506b23a92c48823b038c62adccd39c6ab4da8cd0ba57ad9f",
+    "version": "0.1.3",
+    "policy_hash": "sha256:6fc2a25be5095660e33f1b6bb52db8103c2f43f2443cb7f5636f2d00a5d74ff1",
     "same_hash": true,
     "same_canonical_ir": true,
     "same_model_dump": true,
@@ -125,8 +125,8 @@
    {
     "file": "follow_car_citylife.yaml",
     "policy_id": "follow-car-citylife",
-    "version": "0.1.0",
-    "policy_hash": "sha256:4f7ebad65201bcd0445f3bba6ccc9f9cece5ecb76308501830636e91dc5f7188",
+    "version": "0.1.3",
+    "policy_hash": "sha256:a04669db056f708003d2be7eb5656bf443272271bf2b69df862ec8b9e2f8f7af",
     "same_hash": true,
     "same_canonical_ir": true,
     "same_model_dump": true,
@@ -139,8 +139,8 @@
    {
     "file": "follow_car_citylife_nfz.yaml",
     "policy_id": "follow-car-citylife-nfz",
-    "version": "0.1.0",
-    "policy_hash": "sha256:e50644313d185db5e8917ffa720a2b8dc83f452fe2d5538190adc55667ef63c3",
+    "version": "0.1.3",
+    "policy_hash": "sha256:a618c08c6256376b9a21c16d1d4b30e7060a59743f003e31d7e7707408a75d63",
     "same_hash": true,
     "same_canonical_ir": true,
     "same_model_dump": true,
@@ -151,10 +151,38 @@
     "tamper_reason": "follow_car_citylife_nfz.tampered.tar.gz: policy_hash mismatch"
    },
    {
+    "file": "follow_car_citylife_nfz3.yaml",
+    "policy_id": "follow-car-citylife-nfz3",
+    "version": "0.1.3",
+    "policy_hash": "sha256:cc8cff0a7de55b53f78b5e774159a59b6646b8d7f32e9fcb5ed0136578cd65f4",
+    "same_hash": true,
+    "same_canonical_ir": true,
+    "same_model_dump": true,
+    "same_rule_count": true,
+    "signature": "verified",
+    "ok": true,
+    "tamper": "refused",
+    "tamper_reason": "follow_car_citylife_nfz3.tampered.tar.gz: policy_hash mismatch"
+   },
+   {
+    "file": "follow_car_citylife_nfz3b.yaml",
+    "policy_id": "follow-car-citylife-nfz3b",
+    "version": "0.1.3",
+    "policy_hash": "sha256:50973396041c6ee841139d42516a6ca147e044405d2f9abaa28c9d4ee7c1b681",
+    "same_hash": true,
+    "same_canonical_ir": true,
+    "same_model_dump": true,
+    "same_rule_count": true,
+    "signature": "verified",
+    "ok": true,
+    "tamper": "refused",
+    "tamper_reason": "follow_car_citylife_nfz3b.tampered.tar.gz: policy_hash mismatch"
+   },
+   {
     "file": "follow_car_gap.yaml",
     "policy_id": "follow-car-gap",
-    "version": "0.1.0",
-    "policy_hash": "sha256:70565b9a03394595193e36e5e5422de2105b3ec70fba04173d1b68f31f8f4530",
+    "version": "0.1.3",
+    "policy_hash": "sha256:70356b33397dea7653c906376bbf46a1facc58d180f205bf4e3c9969222b1c50",
     "same_hash": true,
     "same_canonical_ir": true,
     "same_model_dump": true,
@@ -167,8 +195,8 @@
    {
     "file": "follow_car_nfz.yaml",
     "policy_id": "follow-car-nfz",
-    "version": "0.1.0",
-    "policy_hash": "sha256:5826eccda2af83d511b537130865d8ea566eb1af1c41395cda97d854ee986282",
+    "version": "0.1.3",
+    "policy_hash": "sha256:5f6efe9fcdc33c99347ea73c85a753a38c27617e4dbdb285263451c9856b2c68",
     "same_hash": true,
     "same_canonical_ir": true,
     "same_model_dump": true,
@@ -181,8 +209,8 @@
    {
     "file": "follow_pedestrian.yaml",
     "policy_id": "follow-pedestrian",
-    "version": "0.1.0",
-    "policy_hash": "sha256:fefde27c34af37b8e6ff2cc2292c7c7963e540cfa6f020f5bd4e676bfea2ca39",
+    "version": "0.1.3",
+    "policy_hash": "sha256:db36c08ad292b1d3fb255dc43ddb56b4c18a33d3975e6641ac2f57f8f0ee136b",
     "same_hash": true,
     "same_canonical_ir": true,
     "same_model_dump": true,
@@ -195,8 +223,8 @@
    {
     "file": "gui_high_test.yaml",
     "policy_id": "gui-high-test",
-    "version": "0.1.0",
-    "policy_hash": "sha256:71acc4d0ef62b7c9e12265c607c3cb7d4af545e301dd89f4e16a168adc1fc9b5",
+    "version": "0.1.3",
+    "policy_hash": "sha256:3899147a0001310b6de09c342435a99d96dae4cad647b5a5ee72e74e4064f036",
     "same_hash": true,
     "same_canonical_ir": true,
     "same_model_dump": true,
@@ -209,8 +237,8 @@
    {
     "file": "gui_policy.yaml",
     "policy_id": "gui-mission",
-    "version": "0.1.0",
-    "policy_hash": "sha256:6ecb934e9ac1b6d4ad08d91619a150caf8a1abe0d478094b32cd8c28cd931055",
+    "version": "0.1.3",
+    "policy_hash": "sha256:22d428d90bf5be1d5a23f9cda967c34e5cb05708f9f07ceb28253bcf68a6e021",
     "same_hash": true,
     "same_canonical_ir": true,
     "same_model_dump": true,
@@ -222,9 +250,9 @@
    },
    {
     "file": "hard_11.yaml",
-    "policy_id": "random-scenario",
-    "version": "0.1.0",
-    "policy_hash": "sha256:e8fbedd09a32de70a2d2cbb34e0343d9a4a41bb3676ecfa5d6dfef055c3ab2af",
+    "policy_id": "random-scenario-hard-11",
+    "version": "0.1.3",
+    "policy_hash": "sha256:257923ef9c72c03b6ebde625951cc02503056f09f96a9172fa7983670489ca09",
     "same_hash": true,
     "same_canonical_ir": true,
     "same_model_dump": true,
@@ -236,9 +264,9 @@
    },
    {
     "file": "hard_21.yaml",
-    "policy_id": "random-scenario",
-    "version": "0.1.0",
-    "policy_hash": "sha256:453348b882d155ea7acd19ae84d9e8ca214acc6bc26b693c40c817725bc53987",
+    "policy_id": "random-scenario-hard-21",
+    "version": "0.1.3",
+    "policy_hash": "sha256:940b86bcc8c971a19fbb1f8b2689a4f7c8f0266cea1b4709ac770fbe2a3e8921",
     "same_hash": true,
     "same_canonical_ir": true,
     "same_model_dump": true,
@@ -250,9 +278,9 @@
    },
    {
     "file": "hard_3.yaml",
-    "policy_id": "random-scenario",
-    "version": "0.1.0",
-    "policy_hash": "sha256:93cb817f15dcf05a0e38ffb7ba0aa27bee1b7a152875b1abfafca74ff9b297c9",
+    "policy_id": "random-scenario-hard-3",
+    "version": "0.1.3",
+    "policy_hash": "sha256:254d6bd3895f5d0774ea790ad04007e817866b5240a5d305b3a0bf5f98a09d75",
     "same_hash": true,
     "same_canonical_ir": true,
     "same_model_dump": true,
@@ -264,9 +292,9 @@
    },
    {
     "file": "hp_14.yaml",
-    "policy_id": "random-scenario",
-    "version": "0.1.0",
-    "policy_hash": "sha256:e69b769ac522ed8b16b27974b7d5b7966f240323fdf87bbce099eec3b80eeb8c",
+    "policy_id": "random-scenario-hp-14",
+    "version": "0.1.3",
+    "policy_hash": "sha256:676d7b5c4fe34f8ddb1e64549534ef0f372eb8774862d49bc6aa1e6fae3eede7",
     "same_hash": true,
     "same_canonical_ir": true,
     "same_model_dump": true,
@@ -278,9 +306,9 @@
    },
    {
     "file": "hp_30.yaml",
-    "policy_id": "random-scenario",
-    "version": "0.1.0",
-    "policy_hash": "sha256:d01acc72c9b883ac40a3a1fb3d1cfc97002a93dd408f6e7324831a431c184ca8",
+    "policy_id": "random-scenario-hp-30",
+    "version": "0.1.3",
+    "policy_hash": "sha256:7079d00bb906869b875f88a7fe26970bb9a43b44acd88abd76348de96cf9ffed",
     "same_hash": true,
     "same_canonical_ir": true,
     "same_model_dump": true,
@@ -292,9 +320,9 @@
    },
    {
     "file": "hp_42.yaml",
-    "policy_id": "random-scenario",
-    "version": "0.1.0",
-    "policy_hash": "sha256:4961629f34dd5900c125503a6d6b88fc76af871867916b6cac0fa6d12d875791",
+    "policy_id": "random-scenario-hp-42",
+    "version": "0.1.3",
+    "policy_hash": "sha256:6dee06cfdda41462d8f698a5028541b145c3428da2226ee827b8b182665bf587",
     "same_hash": true,
     "same_canonical_ir": true,
     "same_model_dump": true,
@@ -306,9 +334,9 @@
    },
    {
     "file": "hp_5.yaml",
-    "policy_id": "random-scenario",
-    "version": "0.1.0",
-    "policy_hash": "sha256:e3a006271d60c6a62ab0e4995fc49906e313b79ee4c7be30dd7f6e0512ed7ce5",
+    "policy_id": "random-scenario-hp-5",
+    "version": "0.1.3",
+    "policy_hash": "sha256:3f668c42bcab5f900fef9974a5a92c3d3bc5b3743a0ab608c2c3b0d1a5a93448",
     "same_hash": true,
     "same_canonical_ir": true,
     "same_model_dump": true,
@@ -320,9 +348,9 @@
    },
    {
     "file": "hp_8.yaml",
-    "policy_id": "random-scenario",
-    "version": "0.1.0",
-    "policy_hash": "sha256:f6245bbf61ad1f974bcdcf80135724ab1701cc0b4b6dafac4054b9d47fd6ce20",
+    "policy_id": "random-scenario-hp-8",
+    "version": "0.1.3",
+    "policy_hash": "sha256:4c1ed26effe3aa620cd377382bf2c7717013c1914cb5b67be6c22c581b07b2b8",
     "same_hash": true,
     "same_canonical_ir": true,
     "same_model_dump": true,
@@ -335,8 +363,8 @@
    {
     "file": "orbit_building.yaml",
     "policy_id": "orbit-building",
-    "version": "0.1.0",
-    "policy_hash": "sha256:b94223dce2ed42ef897b58e1f2297c624e425c3d96dced0eb631e8d1fc4dc3f3",
+    "version": "0.1.3",
+    "policy_hash": "sha256:254ee2016fbcbf3b20b5352fe2d99fb3329d00ec3b2a81c5cd426c1fbefdf353",
     "same_hash": true,
     "same_canonical_ir": true,
     "same_model_dump": true,
@@ -349,8 +377,8 @@
    {
     "file": "poly_test.yaml",
     "policy_id": "poly-test",
-    "version": "0.1.0",
-    "policy_hash": "sha256:8afa2bc6059bc8d351eea8e1fae83f360fe07621ea66f726e2f7015e4393a940",
+    "version": "0.1.3",
+    "policy_hash": "sha256:f5c8b047f14556b7a579cfda9aa861734ec82185c1b5b1fb99faa32c8c543e86",
     "same_hash": true,
     "same_canonical_ir": true,
     "same_model_dump": true,
@@ -363,8 +391,8 @@
    {
     "file": "random_scenario.yaml",
     "policy_id": "random-scenario",
-    "version": "0.1.0",
-    "policy_hash": "sha256:7d5534e50d9d302bb4b8c5b88d65159cbf271e686c487be578d5691fbcb10516",
+    "version": "0.1.3",
+    "policy_hash": "sha256:a566c5b14bad47af5ad55e0b608941e1030ea0f11805585fb98213dc7a4a2ca7",
     "same_hash": true,
     "same_canonical_ir": true,
     "same_model_dump": true,
@@ -377,8 +405,8 @@
    {
     "file": "rth_poly.yaml",
     "policy_id": "rth-poly-demo",
-    "version": "0.1.0",
-    "policy_hash": "sha256:776daf142f81192470a4bc58cae1bee7790b8a6ad645fdd63c6625c3e98974be",
+    "version": "0.1.3",
+    "policy_hash": "sha256:5681f4c2f5940617047b2db25c65a963450b1ed721b4b72037153854ec9491cd",
     "same_hash": true,
     "same_canonical_ir": true,
     "same_model_dump": true,
@@ -391,8 +419,8 @@
    {
     "file": "semantic_conflict.yaml",
     "policy_id": "semantic-conflict",
-    "version": "0.1.0",
-    "policy_hash": "sha256:79fb476a67d1d205444861bf9cbeb45fb98878813ecf5627fe71a31c3f625694",
+    "version": "0.1.3",
+    "policy_hash": "sha256:524c7ff140ee4615b16cdc160ae665972ca8b87335ff484076281a71bba5a626",
     "same_hash": true,
     "same_canonical_ir": true,
     "same_model_dump": true,
@@ -405,8 +433,8 @@
    {
     "file": "sim_demo_policy.yaml",
     "policy_id": "fase3-sim-demo",
-    "version": "0.1.1",
-    "policy_hash": "sha256:8a311f9d22d2260000eb2b24775c3e6cbfeb70416c8299b3354e47227a2476af",
+    "version": "0.1.4",
+    "policy_hash": "sha256:b665adbaac29186240d5a74a8fa36a94b69adae2db6035ca69d45c8e93e7f358",
     "same_hash": true,
     "same_canonical_ir": true,
     "same_model_dump": true,
@@ -419,8 +447,8 @@
    {
     "file": "sitl_pedestrian.yaml",
     "policy_id": "sitl-pedestrian-standoff",
-    "version": "0.1.0",
-    "policy_hash": "sha256:68a4efd102869f5cf4819b4a2d67e3ee84579a8160b72ecc6d27856d2a2c1259",
+    "version": "0.1.3",
+    "policy_hash": "sha256:bb58ca54153c3e6b5d477ea5f8f3172ee5ddbdd9234255f163781fe1425ec139",
     "same_hash": true,
     "same_canonical_ir": true,
     "same_model_dump": true,
@@ -433,8 +461,8 @@
    {
     "file": "urban_clearance.yaml",
     "policy_id": "urban-clearance-patrol",
-    "version": "0.1.0",
-    "policy_hash": "sha256:d81796e79514d4e1511f873895ca4800118de1a97bf0f67ed726e367ab63ee5b",
+    "version": "0.1.3",
+    "policy_hash": "sha256:c75bb9e7d63edb22b71236328cee3838671db6fe149a69dd804f95f779094469",
     "same_hash": true,
     "same_canonical_ir": true,
     "same_model_dump": true,
@@ -447,8 +475,8 @@
    {
     "file": "urban_demo_policy.yaml",
     "policy_id": "fase3-urban-demo",
-    "version": "0.1.0",
-    "policy_hash": "sha256:c93b635572d11b0f2332aa625dbc5966ab3b087f0f91899812dc4594240242db",
+    "version": "0.1.3",
+    "policy_hash": "sha256:dfb6572e02772406e6e1b18c7b8b0737f51abcbf9b43a5e9b9391f1a899ae09d",
     "same_hash": true,
     "same_canonical_ir": true,
     "same_model_dump": true,
@@ -459,10 +487,24 @@
     "tamper_reason": "urban_demo_policy.tampered.tar.gz: policy_hash mismatch"
    },
    {
+    "file": "vla_goto_citylife.yaml",
+    "policy_id": "vla-goto-citylife",
+    "version": "0.1.3",
+    "policy_hash": "sha256:1d99b94ed2c9fd1c0391a7e59571445a7d16d9cde2dafb6415b39023791968ef",
+    "same_hash": true,
+    "same_canonical_ir": true,
+    "same_model_dump": true,
+    "same_rule_count": true,
+    "signature": "verified",
+    "ok": true,
+    "tamper": "refused",
+    "tamper_reason": "vla_goto_citylife.tampered.tar.gz: policy_hash mismatch"
+   },
+   {
     "file": "wgs84_taipei.yaml",
     "policy_id": "wgs84-taipei-demo",
-    "version": "0.1.0",
-    "policy_hash": "sha256:7d6e19554f33efe2960bc972030d2db81c4f9b00aa495c8309195b34869773b0",
+    "version": "0.1.2",
+    "policy_hash": "sha256:a5f52b5fe0044cb27bebbe8ef5e8c080f23585499befad75b411c54475687076",
     "same_hash": true,
     "same_canonical_ir": true,
     "same_model_dump": true,
@@ -475,8 +517,8 @@
   ]
  },
  "negative_corpus": {
-  "n": 35,
-  "refused": 35,
+  "n": 39,
+  "refused": 39,
   "rate": 1.0,
   "accepted_findings": [],
   "rows": [
@@ -529,7 +571,7 @@
     "file": "bad_violation_action.yaml",
     "defect": "violation_action: ignore",
     "verdict": "refused",
-    "reason": "ValidationError: 1 validation error for Policy | constraints.0.altitude_envelope.violation_action | Input should be 'repair', 'monitor_only', 'project_fix', 'brake', 'loiter', 'RTL' or 'land' [type=literal_error, input_value='ignore', input_type=str]",
+    "reason": "ValidationError: 1 validation error for Policy | constraints.0.altitude_envelope.violation_action | Input should be 'monitor_only', 'project_fix', 'brake', 'loiter', 'RTL' or 'land' [type=literal_error, input_value='ignore', input_type=str]",
     "declared": "refused",
     "declared_matches": true,
     "finding": null
@@ -571,6 +613,24 @@
     "finding": null
    },
    {
+    "file": "corridor_inside_nfz.yaml",
+    "defect": "a hard corridor (y -10..10 m, 10-20 m high) lying wholly inside a hard no-fly zone that covers 0-100 m",
+    "verdict": "refused",
+    "reason": "ValueError: corridor_inside_nfz.yaml: the policy does not pass the DSL lint: | - hard corridor route (10-20 m) lies wholly inside hard keep-out zone nfz-site at every height of its band: no point the corridor allows is outside the zone, so no flight can satisfy both",
+    "declared": "refused",
+    "declared_matches": true,
+    "finding": null
+   },
+   {
+    "file": "disjoint_hard_corridors.yaml",
+    "defect": "two hard corridors, always in force, 100 m apart with no point in common",
+    "verdict": "refused",
+    "reason": "ValueError: disjoint_hard_corridors.yaml: the policy does not pass the DSL lint: | - hard corridors route-south and route-north have no point in common: the Shield holds the vehicle inside every active corridor, so no flight can satisfy both",
+    "declared": "refused",
+    "declared_matches": true,
+    "finding": null
+   },
+   {
     "file": "duplicate_rule_id.yaml",
     "defect": "two rules share the id `nfz`",
     "verdict": "refused",
@@ -583,7 +643,7 @@
     "file": "duplicate_yaml_key.yaml",
     "defect": "the same key twice in one rule (alt_max_m: 30, then alt_max_m: 300)",
     "verdict": "refused",
-    "reason": "ValueError: line 12: key 'alt_max_m' is written twice in one mapping; YAML would keep only the last value",
+    "reason": "ValueError: line 16: key 'alt_max_m' is written twice in one mapping; YAML would keep only the last value",
     "declared": "refused",
     "declared_matches": true,
     "finding": null
@@ -656,6 +716,24 @@
     "defect": "layers_merged says [regulation] but a rule is in the mission layer",
     "verdict": "refused",
     "reason": "ValueError: layers_merged_mismatch.yaml: the policy does not pass the DSL lint: | - alt: layer 'mission' is not in layers_merged ['regulation']",
+    "declared": "refused",
+    "declared_matches": true,
+    "finding": null
+   },
+   {
+    "file": "missing_scope.yaml",
+    "defect": "a no-fly zone that says nothing about where it applies (no scope)",
+    "verdict": "refused",
+    "reason": "ValidationError: 1 validation error for Policy | constraints.0.polygon_fence.scope | Field required [type=missing, input_value={'id': 'nfz', 'type': 'po...0}, {'x': 10, 'y': 20}]}, input_type=dict]",
+    "declared": "refused",
+    "declared_matches": true,
+    "finding": null
+   },
+   {
+    "file": "missing_violation_action.yaml",
+    "defect": "a no-fly zone that says nothing about what a breach does (no violation_action)",
+    "verdict": "refused",
+    "reason": "ValidationError: 1 validation error for Policy | constraints.0.polygon_fence.violation_action | Field required [type=missing, input_value={'id': 'nfz', 'type': 'po...0}, {'x': 10, 'y': 20}]}, input_type=dict]",
     "declared": "refused",
     "declared_matches": true,
     "finding": null
@@ -798,35 +876,38 @@
   ]
  },
  "grant_form": {
-  "n": 29,
-  "passed": 29,
+  "n": 32,
+  "passed": 32,
   "rows": [
    {
     "file": "corridor_survey.yaml",
-    "anchored_at_doc_anchor": true,
+    "anchored_at_doc_anchor": false,
     "same_document": true,
     "same_rules": true,
     "extensions": [
+     "origin",
      "nfz-school.margin_m"
     ],
     "ok": true
    },
    {
     "file": "demo_policy.yaml",
-    "anchored_at_doc_anchor": true,
+    "anchored_at_doc_anchor": false,
     "same_document": true,
     "same_rules": true,
     "extensions": [
+     "origin",
      "nfz-square.margin_m"
     ],
     "ok": true
    },
    {
     "file": "edge_patrol.yaml",
-    "anchored_at_doc_anchor": true,
+    "anchored_at_doc_anchor": false,
     "same_document": true,
     "same_rules": true,
     "extensions": [
+     "origin",
      "nfz-edge-1.margin_m",
      "nfz-edge-2.margin_m",
      "nfz-edge-3.margin_m",
@@ -840,6 +921,7 @@
     "same_document": true,
     "same_rules": true,
     "extensions": [
+     "origin",
      "bld-clearance: type obstacle_clearance"
     ],
     "ok": true
@@ -850,6 +932,7 @@
     "same_document": true,
     "same_rules": true,
     "extensions": [
+     "origin",
      "standoff-pedestrian: type subject_standoff",
      "standoff-any: type subject_standoff",
      "bld-clearance: type obstacle_clearance"
@@ -858,10 +941,11 @@
    },
    {
     "file": "follow_car_citylife_nfz.yaml",
-    "anchored_at_doc_anchor": true,
+    "anchored_at_doc_anchor": false,
     "same_document": true,
     "same_rules": true,
     "extensions": [
+     "origin",
      "nfz-frontage.margin_m",
      "standoff-pedestrian: type subject_standoff",
      "standoff-any: type subject_standoff",
@@ -870,11 +954,44 @@
     "ok": true
    },
    {
-    "file": "follow_car_gap.yaml",
-    "anchored_at_doc_anchor": true,
+    "file": "follow_car_citylife_nfz3.yaml",
+    "anchored_at_doc_anchor": false,
     "same_document": true,
     "same_rules": true,
     "extensions": [
+     "origin",
+     "nfz-frontage.margin_m",
+     "nfz-north-street.margin_m",
+     "nfz-south-block.margin_m",
+     "standoff-pedestrian: type subject_standoff",
+     "standoff-any: type subject_standoff",
+     "bld-clearance: type obstacle_clearance"
+    ],
+    "ok": true
+   },
+   {
+    "file": "follow_car_citylife_nfz3b.yaml",
+    "anchored_at_doc_anchor": false,
+    "same_document": true,
+    "same_rules": true,
+    "extensions": [
+     "origin",
+     "nfz-frontage.margin_m",
+     "nfz-north-street.margin_m",
+     "nfz-south-block.margin_m",
+     "standoff-pedestrian: type subject_standoff",
+     "standoff-any: type subject_standoff",
+     "bld-clearance: type obstacle_clearance"
+    ],
+    "ok": true
+   },
+   {
+    "file": "follow_car_gap.yaml",
+    "anchored_at_doc_anchor": false,
+    "same_document": true,
+    "same_rules": true,
+    "extensions": [
+     "origin",
      "nfz-partial.margin_m",
      "bld-clearance: type obstacle_clearance"
     ],
@@ -882,10 +999,11 @@
    },
    {
     "file": "follow_car_nfz.yaml",
-    "anchored_at_doc_anchor": true,
+    "anchored_at_doc_anchor": false,
     "same_document": true,
     "same_rules": true,
     "extensions": [
+     "origin",
      "nfz-route.margin_m",
      "bld-clearance: type obstacle_clearance"
     ],
@@ -897,6 +1015,7 @@
     "same_document": true,
     "same_rules": true,
     "extensions": [
+     "origin",
      "standoff-pedestrian: type subject_standoff",
      "standoff-any: type subject_standoff",
      "bld-clearance: type obstacle_clearance"
@@ -905,20 +1024,22 @@
    },
    {
     "file": "gui_high_test.yaml",
-    "anchored_at_doc_anchor": true,
+    "anchored_at_doc_anchor": false,
     "same_document": true,
     "same_rules": true,
     "extensions": [
+     "origin",
      "nfz-residential-block.margin_m"
     ],
     "ok": true
    },
    {
     "file": "gui_policy.yaml",
-    "anchored_at_doc_anchor": true,
+    "anchored_at_doc_anchor": false,
     "same_document": true,
     "same_rules": true,
     "extensions": [
+     "origin",
      "gui-nfz-1.margin_m",
      "gui-nfz-2.margin_m",
      "gui-nfz-3.margin_m"
@@ -927,10 +1048,11 @@
    },
    {
     "file": "hard_11.yaml",
-    "anchored_at_doc_anchor": true,
+    "anchored_at_doc_anchor": false,
     "same_document": true,
     "same_rules": true,
     "extensions": [
+     "origin",
      "nfz-leg-1.margin_m",
      "nfz-leg-2.margin_m"
     ],
@@ -938,10 +1060,11 @@
    },
    {
     "file": "hard_21.yaml",
-    "anchored_at_doc_anchor": true,
+    "anchored_at_doc_anchor": false,
     "same_document": true,
     "same_rules": true,
     "extensions": [
+     "origin",
      "nfz-leg-1.margin_m",
      "nfz-leg-2.margin_m",
      "nfz-leg-3.margin_m"
@@ -950,10 +1073,11 @@
    },
    {
     "file": "hard_3.yaml",
-    "anchored_at_doc_anchor": true,
+    "anchored_at_doc_anchor": false,
     "same_document": true,
     "same_rules": true,
     "extensions": [
+     "origin",
      "nfz-leg-1.margin_m",
      "nfz-leg-2.margin_m",
      "nfz-leg-3.margin_m"
@@ -962,10 +1086,11 @@
    },
    {
     "file": "hp_14.yaml",
-    "anchored_at_doc_anchor": true,
+    "anchored_at_doc_anchor": false,
     "same_document": true,
     "same_rules": true,
     "extensions": [
+     "origin",
      "nfz-leg-1.margin_m",
      "nfz-leg-2.margin_m",
      "nfz-leg-3.margin_m",
@@ -975,10 +1100,11 @@
    },
    {
     "file": "hp_30.yaml",
-    "anchored_at_doc_anchor": true,
+    "anchored_at_doc_anchor": false,
     "same_document": true,
     "same_rules": true,
     "extensions": [
+     "origin",
      "nfz-leg-1.margin_m",
      "nfz-leg-2.margin_m",
      "nfz-leg-3.margin_m",
@@ -989,10 +1115,11 @@
    },
    {
     "file": "hp_42.yaml",
-    "anchored_at_doc_anchor": true,
+    "anchored_at_doc_anchor": false,
     "same_document": true,
     "same_rules": true,
     "extensions": [
+     "origin",
      "nfz-leg-1.margin_m",
      "nfz-leg-2.margin_m",
      "nfz-leg-3.margin_m",
@@ -1003,10 +1130,11 @@
    },
    {
     "file": "hp_5.yaml",
-    "anchored_at_doc_anchor": true,
+    "anchored_at_doc_anchor": false,
     "same_document": true,
     "same_rules": true,
     "extensions": [
+     "origin",
      "nfz-leg-1.margin_m",
      "nfz-leg-2.margin_m",
      "nfz-leg-3.margin_m",
@@ -1016,10 +1144,11 @@
    },
    {
     "file": "hp_8.yaml",
-    "anchored_at_doc_anchor": true,
+    "anchored_at_doc_anchor": false,
     "same_document": true,
     "same_rules": true,
     "extensions": [
+     "origin",
      "nfz-leg-1.margin_m",
      "nfz-leg-2.margin_m",
      "nfz-leg-3.margin_m",
@@ -1034,26 +1163,29 @@
     "same_document": true,
     "same_rules": true,
     "extensions": [
+     "origin",
      "bld-clearance: type obstacle_clearance"
     ],
     "ok": true
    },
    {
     "file": "poly_test.yaml",
-    "anchored_at_doc_anchor": true,
+    "anchored_at_doc_anchor": false,
     "same_document": true,
     "same_rules": true,
     "extensions": [
+     "origin",
      "tri-nfz.margin_m"
     ],
     "ok": true
    },
    {
     "file": "random_scenario.yaml",
-    "anchored_at_doc_anchor": true,
+    "anchored_at_doc_anchor": false,
     "same_document": true,
     "same_rules": true,
     "extensions": [
+     "origin",
      "nfz-leg-1.margin_m",
      "nfz-leg-2.margin_m",
      "nfz-leg-3.margin_m",
@@ -1063,10 +1195,11 @@
    },
    {
     "file": "rth_poly.yaml",
-    "anchored_at_doc_anchor": true,
+    "anchored_at_doc_anchor": false,
     "same_document": true,
     "same_rules": true,
     "extensions": [
+     "origin",
      "tri-nfz.margin_m",
      "bld-clearance: type obstacle_clearance"
     ],
@@ -1074,10 +1207,11 @@
    },
    {
     "file": "semantic_conflict.yaml",
-    "anchored_at_doc_anchor": true,
+    "anchored_at_doc_anchor": false,
     "same_document": true,
     "same_rules": true,
     "extensions": [
+     "origin",
      "nfz-target.margin_m",
      "bld-clearance: type obstacle_clearance"
     ],
@@ -1085,10 +1219,11 @@
    },
    {
     "file": "sim_demo_policy.yaml",
-    "anchored_at_doc_anchor": true,
+    "anchored_at_doc_anchor": false,
     "same_document": true,
     "same_rules": true,
     "extensions": [
+     "origin",
      "nfz-square.margin_m"
     ],
     "ok": true
@@ -1099,6 +1234,7 @@
     "same_document": true,
     "same_rules": true,
     "extensions": [
+     "origin",
      "standoff-pedestrian: type subject_standoff",
      "standoff-any: type subject_standoff"
     ],
@@ -1106,10 +1242,11 @@
    },
    {
     "file": "urban_clearance.yaml",
-    "anchored_at_doc_anchor": true,
+    "anchored_at_doc_anchor": false,
     "same_document": true,
     "same_rules": true,
     "extensions": [
+     "origin",
      "bld-clearance: type obstacle_clearance",
      "nfz-edge-1.margin_m",
      "nfz-edge-2.margin_m",
@@ -1120,11 +1257,24 @@
    },
    {
     "file": "urban_demo_policy.yaml",
-    "anchored_at_doc_anchor": true,
+    "anchored_at_doc_anchor": false,
     "same_document": true,
     "same_rules": true,
     "extensions": [
+     "origin",
      "nfz-residential-block.margin_m"
+    ],
+    "ok": true
+   },
+   {
+    "file": "vla_goto_citylife.yaml",
+    "anchored_at_doc_anchor": false,
+    "same_document": true,
+    "same_rules": true,
+    "extensions": [
+     "origin",
+     "nfz-frontage.margin_m",
+     "bld-clearance: type obstacle_clearance"
     ],
     "ok": true
    },
@@ -1142,23 +1292,22 @@
   ]
  },
  "both_hashes": {
-  "n": 29,
-  "passed": 29,
+  "n": 32,
+  "passed": 32,
   "representable": 0,
   "not_representable_because": {
-   "a rule type the reference lacks": 29,
+   "a rule type the reference lacks": 32,
    "a schedule (valid_time)": 2,
-   "margin ring": 24,
-   "metre vertices": 23,
-   "origin": 1
+   "margin ring": 27,
+   "origin": 32
   },
-  "forged_refused": 29,
-  "forged_run": 29,
+  "forged_refused": 32,
+  "forged_run": 32,
   "null_record_ignored_refused": 0,
   "rows": [
    {
     "file": "corridor_survey.yaml",
-    "policy_hash": "sha256:5a0e507fe15678551b887141eb85c904030c088d89cf90f916c82649f17b770d",
+    "policy_hash": "sha256:ddb43893eea8b015098dd735b74914497c4d0ec8490b4834e8d623310ee61df7",
     "policy_hash_unchanged": true,
     "both_recorded": true,
     "both_verified": true,
@@ -1167,14 +1316,14 @@
      "a rule type the reference lacks",
      "a schedule (valid_time)",
      "margin ring",
-     "metre vertices"
+     "origin"
     ],
     "ok": true,
     "forged_reference_hash": "refused"
    },
    {
     "file": "demo_policy.yaml",
-    "policy_hash": "sha256:714e1db183a191083567b919ffd49aa0eecce05833d4d0945cff567b77c2d988",
+    "policy_hash": "sha256:ec26566b569589af919fa932ab7dd77bfa6d2c4eda027ff8ae101e7ddd8ff7c9",
     "policy_hash_unchanged": true,
     "both_recorded": true,
     "both_verified": true,
@@ -1182,14 +1331,14 @@
     "reference_problems": [
      "a rule type the reference lacks",
      "margin ring",
-     "metre vertices"
+     "origin"
     ],
     "ok": true,
     "forged_reference_hash": "refused"
    },
    {
     "file": "edge_patrol.yaml",
-    "policy_hash": "sha256:e6903b303840f120c880e60b91c3fea44c2c923b3a320060c68f5895c60e1c68",
+    "policy_hash": "sha256:6a60d08ed13052c6f1843e0480d04a56013c628bc0b1b923fdaf76073fed6122",
     "policy_hash_unchanged": true,
     "both_recorded": true,
     "both_verified": true,
@@ -1197,40 +1346,42 @@
     "reference_problems": [
      "a rule type the reference lacks",
      "margin ring",
-     "metre vertices"
+     "origin"
     ],
     "ok": true,
     "forged_reference_hash": "refused"
    },
    {
     "file": "follow_car.yaml",
-    "policy_hash": "sha256:979c982866fe38ef506b23a92c48823b038c62adccd39c6ab4da8cd0ba57ad9f",
+    "policy_hash": "sha256:6fc2a25be5095660e33f1b6bb52db8103c2f43f2443cb7f5636f2d00a5d74ff1",
     "policy_hash_unchanged": true,
     "both_recorded": true,
     "both_verified": true,
     "reference_hash": null,
     "reference_problems": [
-     "a rule type the reference lacks"
+     "a rule type the reference lacks",
+     "origin"
     ],
     "ok": true,
     "forged_reference_hash": "refused"
    },
    {
     "file": "follow_car_citylife.yaml",
-    "policy_hash": "sha256:4f7ebad65201bcd0445f3bba6ccc9f9cece5ecb76308501830636e91dc5f7188",
+    "policy_hash": "sha256:a04669db056f708003d2be7eb5656bf443272271bf2b69df862ec8b9e2f8f7af",
     "policy_hash_unchanged": true,
     "both_recorded": true,
     "both_verified": true,
     "reference_hash": null,
     "reference_problems": [
-     "a rule type the reference lacks"
+     "a rule type the reference lacks",
+     "origin"
     ],
     "ok": true,
     "forged_reference_hash": "refused"
    },
    {
     "file": "follow_car_citylife_nfz.yaml",
-    "policy_hash": "sha256:e50644313d185db5e8917ffa720a2b8dc83f452fe2d5538190adc55667ef63c3",
+    "policy_hash": "sha256:a618c08c6256376b9a21c16d1d4b30e7060a59743f003e31d7e7707408a75d63",
     "policy_hash_unchanged": true,
     "both_recorded": true,
     "both_verified": true,
@@ -1238,14 +1389,44 @@
     "reference_problems": [
      "a rule type the reference lacks",
      "margin ring",
-     "metre vertices"
+     "origin"
+    ],
+    "ok": true,
+    "forged_reference_hash": "refused"
+   },
+   {
+    "file": "follow_car_citylife_nfz3.yaml",
+    "policy_hash": "sha256:cc8cff0a7de55b53f78b5e774159a59b6646b8d7f32e9fcb5ed0136578cd65f4",
+    "policy_hash_unchanged": true,
+    "both_recorded": true,
+    "both_verified": true,
+    "reference_hash": null,
+    "reference_problems": [
+     "a rule type the reference lacks",
+     "margin ring",
+     "origin"
+    ],
+    "ok": true,
+    "forged_reference_hash": "refused"
+   },
+   {
+    "file": "follow_car_citylife_nfz3b.yaml",
+    "policy_hash": "sha256:50973396041c6ee841139d42516a6ca147e044405d2f9abaa28c9d4ee7c1b681",
+    "policy_hash_unchanged": true,
+    "both_recorded": true,
+    "both_verified": true,
+    "reference_hash": null,
+    "reference_problems": [
+     "a rule type the reference lacks",
+     "margin ring",
+     "origin"
     ],
     "ok": true,
     "forged_reference_hash": "refused"
    },
    {
     "file": "follow_car_gap.yaml",
-    "policy_hash": "sha256:70565b9a03394595193e36e5e5422de2105b3ec70fba04173d1b68f31f8f4530",
+    "policy_hash": "sha256:70356b33397dea7653c906376bbf46a1facc58d180f205bf4e3c9969222b1c50",
     "policy_hash_unchanged": true,
     "both_recorded": true,
     "both_verified": true,
@@ -1253,14 +1434,14 @@
     "reference_problems": [
      "a rule type the reference lacks",
      "margin ring",
-     "metre vertices"
+     "origin"
     ],
     "ok": true,
     "forged_reference_hash": "refused"
    },
    {
     "file": "follow_car_nfz.yaml",
-    "policy_hash": "sha256:5826eccda2af83d511b537130865d8ea566eb1af1c41395cda97d854ee986282",
+    "policy_hash": "sha256:5f6efe9fcdc33c99347ea73c85a753a38c27617e4dbdb285263451c9856b2c68",
     "policy_hash_unchanged": true,
     "both_recorded": true,
     "both_verified": true,
@@ -1268,27 +1449,28 @@
     "reference_problems": [
      "a rule type the reference lacks",
      "margin ring",
-     "metre vertices"
+     "origin"
     ],
     "ok": true,
     "forged_reference_hash": "refused"
    },
    {
     "file": "follow_pedestrian.yaml",
-    "policy_hash": "sha256:fefde27c34af37b8e6ff2cc2292c7c7963e540cfa6f020f5bd4e676bfea2ca39",
+    "policy_hash": "sha256:db36c08ad292b1d3fb255dc43ddb56b4c18a33d3975e6641ac2f57f8f0ee136b",
     "policy_hash_unchanged": true,
     "both_recorded": true,
     "both_verified": true,
     "reference_hash": null,
     "reference_problems": [
-     "a rule type the reference lacks"
+     "a rule type the reference lacks",
+     "origin"
     ],
     "ok": true,
     "forged_reference_hash": "refused"
    },
    {
     "file": "gui_high_test.yaml",
-    "policy_hash": "sha256:71acc4d0ef62b7c9e12265c607c3cb7d4af545e301dd89f4e16a168adc1fc9b5",
+    "policy_hash": "sha256:3899147a0001310b6de09c342435a99d96dae4cad647b5a5ee72e74e4064f036",
     "policy_hash_unchanged": true,
     "both_recorded": true,
     "both_verified": true,
@@ -1296,14 +1478,14 @@
     "reference_problems": [
      "a rule type the reference lacks",
      "margin ring",
-     "metre vertices"
+     "origin"
     ],
     "ok": true,
     "forged_reference_hash": "refused"
    },
    {
     "file": "gui_policy.yaml",
-    "policy_hash": "sha256:6ecb934e9ac1b6d4ad08d91619a150caf8a1abe0d478094b32cd8c28cd931055",
+    "policy_hash": "sha256:22d428d90bf5be1d5a23f9cda967c34e5cb05708f9f07ceb28253bcf68a6e021",
     "policy_hash_unchanged": true,
     "both_recorded": true,
     "both_verified": true,
@@ -1311,14 +1493,14 @@
     "reference_problems": [
      "a rule type the reference lacks",
      "margin ring",
-     "metre vertices"
+     "origin"
     ],
     "ok": true,
     "forged_reference_hash": "refused"
    },
    {
     "file": "hard_11.yaml",
-    "policy_hash": "sha256:e8fbedd09a32de70a2d2cbb34e0343d9a4a41bb3676ecfa5d6dfef055c3ab2af",
+    "policy_hash": "sha256:257923ef9c72c03b6ebde625951cc02503056f09f96a9172fa7983670489ca09",
     "policy_hash_unchanged": true,
     "both_recorded": true,
     "both_verified": true,
@@ -1326,14 +1508,14 @@
     "reference_problems": [
      "a rule type the reference lacks",
      "margin ring",
-     "metre vertices"
+     "origin"
     ],
     "ok": true,
     "forged_reference_hash": "refused"
    },
    {
     "file": "hard_21.yaml",
-    "policy_hash": "sha256:453348b882d155ea7acd19ae84d9e8ca214acc6bc26b693c40c817725bc53987",
+    "policy_hash": "sha256:940b86bcc8c971a19fbb1f8b2689a4f7c8f0266cea1b4709ac770fbe2a3e8921",
     "policy_hash_unchanged": true,
     "both_recorded": true,
     "both_verified": true,
@@ -1341,14 +1523,14 @@
     "reference_problems": [
      "a rule type the reference lacks",
      "margin ring",
-     "metre vertices"
+     "origin"
     ],
     "ok": true,
     "forged_reference_hash": "refused"
    },
    {
     "file": "hard_3.yaml",
-    "policy_hash": "sha256:93cb817f15dcf05a0e38ffb7ba0aa27bee1b7a152875b1abfafca74ff9b297c9",
+    "policy_hash": "sha256:254d6bd3895f5d0774ea790ad04007e817866b5240a5d305b3a0bf5f98a09d75",
     "policy_hash_unchanged": true,
     "both_recorded": true,
     "both_verified": true,
@@ -1356,14 +1538,14 @@
     "reference_problems": [
      "a rule type the reference lacks",
      "margin ring",
-     "metre vertices"
+     "origin"
     ],
     "ok": true,
     "forged_reference_hash": "refused"
    },
    {
     "file": "hp_14.yaml",
-    "policy_hash": "sha256:e69b769ac522ed8b16b27974b7d5b7966f240323fdf87bbce099eec3b80eeb8c",
+    "policy_hash": "sha256:676d7b5c4fe34f8ddb1e64549534ef0f372eb8774862d49bc6aa1e6fae3eede7",
     "policy_hash_unchanged": true,
     "both_recorded": true,
     "both_verified": true,
@@ -1371,14 +1553,14 @@
     "reference_problems": [
      "a rule type the reference lacks",
      "margin ring",
-     "metre vertices"
+     "origin"
     ],
     "ok": true,
     "forged_reference_hash": "refused"
    },
    {
     "file": "hp_30.yaml",
-    "policy_hash": "sha256:d01acc72c9b883ac40a3a1fb3d1cfc97002a93dd408f6e7324831a431c184ca8",
+    "policy_hash": "sha256:7079d00bb906869b875f88a7fe26970bb9a43b44acd88abd76348de96cf9ffed",
     "policy_hash_unchanged": true,
     "both_recorded": true,
     "both_verified": true,
@@ -1386,14 +1568,14 @@
     "reference_problems": [
      "a rule type the reference lacks",
      "margin ring",
-     "metre vertices"
+     "origin"
     ],
     "ok": true,
     "forged_reference_hash": "refused"
    },
    {
     "file": "hp_42.yaml",
-    "policy_hash": "sha256:4961629f34dd5900c125503a6d6b88fc76af871867916b6cac0fa6d12d875791",
+    "policy_hash": "sha256:6dee06cfdda41462d8f698a5028541b145c3428da2226ee827b8b182665bf587",
     "policy_hash_unchanged": true,
     "both_recorded": true,
     "both_verified": true,
@@ -1401,14 +1583,14 @@
     "reference_problems": [
      "a rule type the reference lacks",
      "margin ring",
-     "metre vertices"
+     "origin"
     ],
     "ok": true,
     "forged_reference_hash": "refused"
    },
    {
     "file": "hp_5.yaml",
-    "policy_hash": "sha256:e3a006271d60c6a62ab0e4995fc49906e313b79ee4c7be30dd7f6e0512ed7ce5",
+    "policy_hash": "sha256:3f668c42bcab5f900fef9974a5a92c3d3bc5b3743a0ab608c2c3b0d1a5a93448",
     "policy_hash_unchanged": true,
     "both_recorded": true,
     "both_verified": true,
@@ -1416,14 +1598,14 @@
     "reference_problems": [
      "a rule type the reference lacks",
      "margin ring",
-     "metre vertices"
+     "origin"
     ],
     "ok": true,
     "forged_reference_hash": "refused"
    },
    {
     "file": "hp_8.yaml",
-    "policy_hash": "sha256:f6245bbf61ad1f974bcdcf80135724ab1701cc0b4b6dafac4054b9d47fd6ce20",
+    "policy_hash": "sha256:4c1ed26effe3aa620cd377382bf2c7717013c1914cb5b67be6c22c581b07b2b8",
     "policy_hash_unchanged": true,
     "both_recorded": true,
     "both_verified": true,
@@ -1431,27 +1613,28 @@
     "reference_problems": [
      "a rule type the reference lacks",
      "margin ring",
-     "metre vertices"
+     "origin"
     ],
     "ok": true,
     "forged_reference_hash": "refused"
    },
    {
     "file": "orbit_building.yaml",
-    "policy_hash": "sha256:b94223dce2ed42ef897b58e1f2297c624e425c3d96dced0eb631e8d1fc4dc3f3",
+    "policy_hash": "sha256:254ee2016fbcbf3b20b5352fe2d99fb3329d00ec3b2a81c5cd426c1fbefdf353",
     "policy_hash_unchanged": true,
     "both_recorded": true,
     "both_verified": true,
     "reference_hash": null,
     "reference_problems": [
-     "a rule type the reference lacks"
+     "a rule type the reference lacks",
+     "origin"
     ],
     "ok": true,
     "forged_reference_hash": "refused"
    },
    {
     "file": "poly_test.yaml",
-    "policy_hash": "sha256:8afa2bc6059bc8d351eea8e1fae83f360fe07621ea66f726e2f7015e4393a940",
+    "policy_hash": "sha256:f5c8b047f14556b7a579cfda9aa861734ec82185c1b5b1fb99faa32c8c543e86",
     "policy_hash_unchanged": true,
     "both_recorded": true,
     "both_verified": true,
@@ -1459,14 +1642,14 @@
     "reference_problems": [
      "a rule type the reference lacks",
      "margin ring",
-     "metre vertices"
+     "origin"
     ],
     "ok": true,
     "forged_reference_hash": "refused"
    },
    {
     "file": "random_scenario.yaml",
-    "policy_hash": "sha256:7d5534e50d9d302bb4b8c5b88d65159cbf271e686c487be578d5691fbcb10516",
+    "policy_hash": "sha256:a566c5b14bad47af5ad55e0b608941e1030ea0f11805585fb98213dc7a4a2ca7",
     "policy_hash_unchanged": true,
     "both_recorded": true,
     "both_verified": true,
@@ -1474,14 +1657,14 @@
     "reference_problems": [
      "a rule type the reference lacks",
      "margin ring",
-     "metre vertices"
+     "origin"
     ],
     "ok": true,
     "forged_reference_hash": "refused"
    },
    {
     "file": "rth_poly.yaml",
-    "policy_hash": "sha256:776daf142f81192470a4bc58cae1bee7790b8a6ad645fdd63c6625c3e98974be",
+    "policy_hash": "sha256:5681f4c2f5940617047b2db25c65a963450b1ed721b4b72037153854ec9491cd",
     "policy_hash_unchanged": true,
     "both_recorded": true,
     "both_verified": true,
@@ -1489,14 +1672,14 @@
     "reference_problems": [
      "a rule type the reference lacks",
      "margin ring",
-     "metre vertices"
+     "origin"
     ],
     "ok": true,
     "forged_reference_hash": "refused"
    },
    {
     "file": "semantic_conflict.yaml",
-    "policy_hash": "sha256:79fb476a67d1d205444861bf9cbeb45fb98878813ecf5627fe71a31c3f625694",
+    "policy_hash": "sha256:524c7ff140ee4615b16cdc160ae665972ca8b87335ff484076281a71bba5a626",
     "policy_hash_unchanged": true,
     "both_recorded": true,
     "both_verified": true,
@@ -1504,14 +1687,14 @@
     "reference_problems": [
      "a rule type the reference lacks",
      "margin ring",
-     "metre vertices"
+     "origin"
     ],
     "ok": true,
     "forged_reference_hash": "refused"
    },
    {
     "file": "sim_demo_policy.yaml",
-    "policy_hash": "sha256:8a311f9d22d2260000eb2b24775c3e6cbfeb70416c8299b3354e47227a2476af",
+    "policy_hash": "sha256:b665adbaac29186240d5a74a8fa36a94b69adae2db6035ca69d45c8e93e7f358",
     "policy_hash_unchanged": true,
     "both_recorded": true,
     "both_verified": true,
@@ -1519,27 +1702,28 @@
     "reference_problems": [
      "a rule type the reference lacks",
      "margin ring",
-     "metre vertices"
+     "origin"
     ],
     "ok": true,
     "forged_reference_hash": "refused"
    },
    {
     "file": "sitl_pedestrian.yaml",
-    "policy_hash": "sha256:68a4efd102869f5cf4819b4a2d67e3ee84579a8160b72ecc6d27856d2a2c1259",
+    "policy_hash": "sha256:bb58ca54153c3e6b5d477ea5f8f3172ee5ddbdd9234255f163781fe1425ec139",
     "policy_hash_unchanged": true,
     "both_recorded": true,
     "both_verified": true,
     "reference_hash": null,
     "reference_problems": [
-     "a rule type the reference lacks"
+     "a rule type the reference lacks",
+     "origin"
     ],
     "ok": true,
     "forged_reference_hash": "refused"
    },
    {
     "file": "urban_clearance.yaml",
-    "policy_hash": "sha256:d81796e79514d4e1511f873895ca4800118de1a97bf0f67ed726e367ab63ee5b",
+    "policy_hash": "sha256:c75bb9e7d63edb22b71236328cee3838671db6fe149a69dd804f95f779094469",
     "policy_hash_unchanged": true,
     "both_recorded": true,
     "both_verified": true,
@@ -1547,14 +1731,14 @@
     "reference_problems": [
      "a rule type the reference lacks",
      "margin ring",
-     "metre vertices"
+     "origin"
     ],
     "ok": true,
     "forged_reference_hash": "refused"
    },
    {
     "file": "urban_demo_policy.yaml",
-    "policy_hash": "sha256:c93b635572d11b0f2332aa625dbc5966ab3b087f0f91899812dc4594240242db",
+    "policy_hash": "sha256:dfb6572e02772406e6e1b18c7b8b0737f51abcbf9b43a5e9b9391f1a899ae09d",
     "policy_hash_unchanged": true,
     "both_recorded": true,
     "both_verified": true,
@@ -1562,14 +1746,29 @@
     "reference_problems": [
      "a rule type the reference lacks",
      "margin ring",
-     "metre vertices"
+     "origin"
+    ],
+    "ok": true,
+    "forged_reference_hash": "refused"
+   },
+   {
+    "file": "vla_goto_citylife.yaml",
+    "policy_hash": "sha256:1d99b94ed2c9fd1c0391a7e59571445a7d16d9cde2dafb6415b39023791968ef",
+    "policy_hash_unchanged": true,
+    "both_recorded": true,
+    "both_verified": true,
+    "reference_hash": null,
+    "reference_problems": [
+     "a rule type the reference lacks",
+     "margin ring",
+     "origin"
     ],
     "ok": true,
     "forged_reference_hash": "refused"
    },
    {
     "file": "wgs84_taipei.yaml",
-    "policy_hash": "sha256:7d6e19554f33efe2960bc972030d2db81c4f9b00aa495c8309195b34869773b0",
+    "policy_hash": "sha256:a5f52b5fe0044cb27bebbe8ef5e8c080f23585499befad75b411c54475687076",
     "policy_hash_unchanged": true,
     "both_recorded": true,
     "both_verified": true,
@@ -1664,7 +1863,7 @@
   "machine": {
    "processor": "Intel64 Family 6 Model 183 Stepping 1, GenuineIntel",
    "system": "Windows 10",
-   "python": "3.11.15",
+   "python": "3.10.20",
    "child_python": "this interpreter"
   },
   "warm_runs": 100,
@@ -1685,8 +1884,8 @@
     "scheduled_rules": 20,
     "zones": 42,
     "geographic": true,
-    "policy_hash": "sha256:1a4d01fc368d6c93191e8e6d680d5b37f247b53fa8dbbfd7f327b75434f95782",
-    "bundle_bytes": 3670
+    "policy_hash": "sha256:3f348454aa18209871b66e60c4b252b4d98af7cbf1b64cb6517bebea5ea3f6ce",
+    "bundle_bytes": 14138
    },
    "grid": {
     "rules": 50,
@@ -1698,67 +1897,67 @@
     "scheduled_rules": 0,
     "zones": 48,
     "geographic": false,
-    "policy_hash": "sha256:14b6f5fac3c172c8f9f4c33f26adb22b38d6769d97460c515cc65ee26686fc6a",
-    "bundle_bytes": 1908
+    "policy_hash": "sha256:0f214fcac9d4c3ea49ae5fcfcbc3e68c64aad054a9b94f737003c26302783805",
+    "bundle_bytes": 3757
    }
   },
   "in_process": {
    "typical": {
     "load_for_flight": {
      "n": 100,
-     "median_ms": 6.974,
-     "p95_ms": 8.273,
-     "min_ms": 6.442,
-     "max_ms": 14.113
+     "median_ms": 51.078,
+     "p95_ms": 65.492,
+     "min_ms": 46.472,
+     "max_ms": 83.839
     },
     "shield": {
      "n": 100,
-     "median_ms": 5.059,
-     "p95_ms": 5.563,
-     "min_ms": 4.706,
-     "max_ms": 11.559
+     "median_ms": 11.924,
+     "p95_ms": 13.543,
+     "min_ms": 10.22,
+     "max_ms": 21.198
     },
     "total": {
      "n": 100,
-     "median_ms": 12.084,
-     "p95_ms": 13.735,
-     "min_ms": 11.366,
-     "max_ms": 19.509
+     "median_ms": 62.786,
+     "p95_ms": 79.706,
+     "min_ms": 56.692,
+     "max_ms": 104.082
     },
-    "first_call_ms": 13.735,
+    "first_call_ms": 72.633,
     "stages_ms_median": {
-     "tar_read": 0.343,
-     "ir_parse_and_validate": 3.016,
-     "signature_verify": 0.253
+     "tar_read": 0.975,
+     "ir_parse_and_validate": 8.127,
+     "signature_verify": 0.561
     }
    },
    "grid": {
     "load_for_flight": {
      "n": 100,
-     "median_ms": 3.144,
-     "p95_ms": 3.593,
-     "min_ms": 2.866,
-     "max_ms": 11.317
+     "median_ms": 18.432,
+     "p95_ms": 20.881,
+     "min_ms": 16.656,
+     "max_ms": 37.466
     },
     "shield": {
      "n": 100,
-     "median_ms": 3.837,
-     "p95_ms": 4.395,
-     "min_ms": 3.523,
-     "max_ms": 4.957
+     "median_ms": 8.841,
+     "p95_ms": 10.145,
+     "min_ms": 7.963,
+     "max_ms": 11.478
     },
     "total": {
      "n": 100,
-     "median_ms": 7.006,
-     "p95_ms": 7.938,
-     "min_ms": 6.485,
-     "max_ms": 15.238
+     "median_ms": 27.379,
+     "p95_ms": 31.449,
+     "min_ms": 25.055,
+     "max_ms": 47.046
     },
-    "first_call_ms": 7.939,
+    "first_call_ms": 34.135,
     "stages_ms_median": {
-     "tar_read": 0.274,
-     "ir_parse_and_validate": 0.998,
-     "signature_verify": 0.219
+     "tar_read": 0.751,
+     "ir_parse_and_validate": 5.118,
+     "signature_verify": 0.517
     }
    }
   },
@@ -1766,20 +1965,20 @@
    "typical": {
     "total": {
      "n": 20,
-     "median_ms": 14.919,
-     "p95_ms": 16.273,
-     "min_ms": 14.243,
-     "max_ms": 21.892
+     "median_ms": 68.202,
+     "p95_ms": 75.546,
+     "min_ms": 64.689,
+     "max_ms": 76.502
     },
     "verifier": "Ed25519 signature by 'wp1-cold-start-bench:ed25519:88cc41d5fedf977b' verified (pure-python)"
    },
    "grid": {
     "total": {
      "n": 20,
-     "median_ms": 9.383,
-     "p95_ms": 9.769,
-     "min_ms": 9.104,
-     "max_ms": 9.855
+     "median_ms": 31.852,
+     "p95_ms": 32.669,
+     "min_ms": 30.669,
+     "max_ms": 32.929
     },
     "verifier": "Ed25519 signature by 'wp1-cold-start-bench:ed25519:88cc41d5fedf977b' verified (pure-python)"
    }
@@ -1788,10 +1987,10 @@
    "typical": {
     "yaml_to_signed_bundle": {
      "n": 20,
-     "median_ms": 51.069,
-     "p95_ms": 60.889,
-     "min_ms": 49.421,
-     "max_ms": 63.354
+     "median_ms": 169.165,
+     "p95_ms": 184.98,
+     "min_ms": 163.618,
+     "max_ms": 190.41
     },
     "same_policy_hash": true
    }
@@ -1802,52 +2001,52 @@
     "verifier": "cryptography",
     "import": {
      "n": 20,
-     "median_ms": 343.784,
-     "p95_ms": 358.623,
-     "min_ms": 335.994,
-     "max_ms": 360.031
+     "median_ms": 445.685,
+     "p95_ms": 486.503,
+     "min_ms": 405.822,
+     "max_ms": 542.713
     },
     "load_for_flight": {
      "n": 20,
-     "median_ms": 11.757,
-     "p95_ms": 12.251,
-     "min_ms": 11.282,
-     "max_ms": 13.022
+     "median_ms": 38.217,
+     "p95_ms": 42.622,
+     "min_ms": 36.107,
+     "max_ms": 43.348
     },
     "shield": {
      "n": 20,
-     "median_ms": 5.49,
-     "p95_ms": 7.835,
-     "min_ms": 5.226,
-     "max_ms": 9.876
+     "median_ms": 6.626,
+     "p95_ms": 7.152,
+     "min_ms": 5.953,
+     "max_ms": 7.86
     },
     "path_first_call": {
      "n": 20,
-     "median_ms": 17.253,
-     "p95_ms": 19.615,
-     "min_ms": 16.581,
-     "max_ms": 22.898
+     "median_ms": 44.843,
+     "p95_ms": 49.73,
+     "min_ms": 42.269,
+     "max_ms": 50.175
     },
     "ingest_with_imports": {
      "n": 20,
-     "median_ms": 361.699,
-     "p95_ms": 375.792,
-     "min_ms": 354.576,
-     "max_ms": 377.965
+     "median_ms": 489.575,
+     "p95_ms": 534.715,
+     "min_ms": 448.091,
+     "max_ms": 590.115
     },
     "whole_process_wall": {
      "n": 20,
-     "median_ms": 447.057,
-     "p95_ms": 471.229,
-     "min_ms": 437.558,
-     "max_ms": 545.074
+     "median_ms": 605.981,
+     "p95_ms": 662.673,
+     "min_ms": 563.037,
+     "max_ms": 744.967
     },
     "second_call_same_process": {
      "n": 20,
-     "median_ms": 18.088,
-     "p95_ms": 19.513,
-     "min_ms": 17.631,
-     "max_ms": 27.554
+     "median_ms": 36.174,
+     "p95_ms": 38.444,
+     "min_ms": 34.819,
+     "max_ms": 39.754
     }
    },
    "grid": {
@@ -1855,52 +2054,52 @@
     "verifier": "cryptography",
     "import": {
      "n": 20,
-     "median_ms": 343.459,
-     "p95_ms": 358.468,
-     "min_ms": 336.005,
-     "max_ms": 364.447
+     "median_ms": 445.28,
+     "p95_ms": 562.472,
+     "min_ms": 415.14,
+     "max_ms": 594.449
     },
     "load_for_flight": {
      "n": 20,
-     "median_ms": 7.369,
-     "p95_ms": 7.98,
-     "min_ms": 6.971,
-     "max_ms": 7.99
+     "median_ms": 13.77,
+     "p95_ms": 15.434,
+     "min_ms": 12.675,
+     "max_ms": 16.035
     },
     "shield": {
      "n": 20,
-     "median_ms": 4.143,
-     "p95_ms": 5.449,
-     "min_ms": 3.89,
-     "max_ms": 5.928
+     "median_ms": 4.662,
+     "p95_ms": 4.962,
+     "min_ms": 4.404,
+     "max_ms": 4.964
     },
     "path_first_call": {
      "n": 20,
-     "median_ms": 11.621,
-     "p95_ms": 13.155,
-     "min_ms": 10.947,
-     "max_ms": 13.172
+     "median_ms": 18.375,
+     "p95_ms": 20.396,
+     "min_ms": 17.164,
+     "max_ms": 20.999
     },
     "ingest_with_imports": {
      "n": 20,
-     "median_ms": 355.067,
-     "p95_ms": 370.363,
-     "min_ms": 347.008,
-     "max_ms": 376.645
+     "median_ms": 463.445,
+     "p95_ms": 581.499,
+     "min_ms": 432.304,
+     "max_ms": 615.448
     },
     "whole_process_wall": {
      "n": 20,
-     "median_ms": 433.857,
-     "p95_ms": 504.191,
-     "min_ms": 419.521,
-     "max_ms": 521.219
+     "median_ms": 559.113,
+     "p95_ms": 691.698,
+     "min_ms": 524.209,
+     "max_ms": 725.594
     },
     "second_call_same_process": {
      "n": 20,
-     "median_ms": 7.399,
-     "p95_ms": 8.786,
-     "min_ms": 6.86,
-     "max_ms": 8.96
+     "median_ms": 15.443,
+     "p95_ms": 16.175,
+     "min_ms": 14.032,
+     "max_ms": 16.258
     }
    }
   },
@@ -1927,8 +2126,8 @@
   },
   "verdict": {
    "reading": "fresh process, imports + verify + parse + IR + Shield (worst bundle)",
-   "p95_ms": 375.792,
-   "whole_process_wall_p95_ms": 504.191,
+   "p95_ms": 581.499,
+   "whole_process_wall_p95_ms": 691.698,
    "budget_ms": 1000.0,
    "checks_hold": true,
    "within_budget": true
@@ -1947,12 +2146,12 @@
  },
  "schema_validation": {
   "run": true,
-  "n": 29,
-  "passed": 29,
-  "authored": "29/29",
-  "canonical_ir": "29/29",
+  "n": 32,
+  "passed": 32,
+  "authored": "32/32",
+  "canonical_ir": "32/32",
   "grant_documents": "3/3",
-  "negative_refused_by_schema": "20/35",
+  "negative_refused_by_schema": "22/39",
   "null_401305a_schema": {
    "authored": "28/29",
    "grant_documents": "0/3"
@@ -1960,13 +2159,15 @@
   "failures": []
  },
  "stored_runs": {
-  "n": 97,
-  "matched_before": 34,
-  "matched_after": 97,
+  "n": 404,
+  "matched_before": 0,
+  "matched_after": 404,
   "after_by_form": {
    "legacy16-exclude-none": 42,
+   "sha256-canonical-v3": 32,
+   "sha256-canonical-v3/ir-2.x": 283,
    "legacy16-include-defaults": 34,
-   "sha256-canonical-v3": 21
+   "run-recorded generation": 13
   },
   "unmatched_after": [],
   "set_aside": [
@@ -1991,28 +2192,28 @@
     "matched_before": false,
     "matched_after": true,
     "form": "legacy16-exclude-none",
-    "policy": "sitl_pedestrian.yaml"
+    "policy": "sitl_pedestrian.yaml as sitl-pedestrian-standoff@0.1.0"
    },
    "ros2_ped_on": {
     "policy_hash": "sha256:68a4efd102869f5c",
     "matched_before": false,
     "matched_after": true,
     "form": "legacy16-exclude-none",
-    "policy": "sitl_pedestrian.yaml"
+    "policy": "sitl_pedestrian.yaml as sitl-pedestrian-standoff@0.1.0"
    },
    "ros2_shield_off": {
     "policy_hash": "sha256:8a311f9d22d22600",
     "matched_before": false,
     "matched_after": true,
     "form": "legacy16-exclude-none",
-    "policy": "sim_demo_policy.yaml"
+    "policy": "sim_demo_policy.yaml as fase3-sim-demo@0.1.1"
    },
    "ros2_shield_on": {
     "policy_hash": "sha256:8a311f9d22d22600",
     "matched_before": false,
     "matched_after": true,
     "form": "legacy16-exclude-none",
-    "policy": "sim_demo_policy.yaml"
+    "policy": "sim_demo_policy.yaml as fase3-sim-demo@0.1.1"
    },
    "ros2_shield_on_dynamic": {
     "policy_hash": "sha256:77d64d2e5e94ac39",
@@ -2023,6 +2224,6 @@
    }
   },
   "before_means": "Policy.policy_hash as computed by the code before 2026-10-06 (16 hex over model_dump() with nulls), against every policies/*.yaml",
-  "after_means": "guardrail.manifest.resolve_run_policy over guardrail.bundle.policy_candidates(): the 64-hex hash, every legacy 16-hex form, and the hot-applied derivations in policies/policy.lock.json"
+  "after_means": "guardrail.manifest.resolve_run_policy over guardrail.bundle.policy_candidates(): the 64-hex hash, every legacy 16-hex form, and the hot-applied derivations in policies/policy.lock.json; then, for a run whose policy changed over REST in flight, its own policy_g<N>.json chain from a resolvable g0 (run_generation_chain)"
  }
 }

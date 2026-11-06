@@ -48,9 +48,11 @@ from guardrail import load_policy                                      # noqa: E
 from guardrail.models import Action4D, ObstacleClearance, State        # noqa: E402
 from guardrail.shield import Shield                                    # noqa: E402
 
-# The three ConstraintBase fields the grant requires (IR schema 3.0.0, 2026-11-02),
-# at the values they defaulted to before (repair = project_fix).
-HARD_P0 = {"constraint_type": "hard", "priority": "P0", "violation_action": "project_fix"}
+# The four ConstraintBase fields the grant requires (IR schema 3.0.0, 2026-11-02;
+# scope since 4.0.0, 2026-11-06), at the values they defaulted to before
+# (repair = project_fix; an absent scope meant mission).
+HARD_P0 = {"constraint_type": "hard", "scope": "mission", "priority": "P0",
+           "violation_action": "project_fix"}
 
 FIXTURES = ROOT / "tests" / "fixtures"
 IDENTITY = FIXTURES / "own_velocity_identity_digests.json"
@@ -1038,6 +1040,7 @@ constraints:
   - id: watched-speed
     type: kinematic_envelope
     constraint_type: hard
+    scope: mission
     priority: P0
     violation_action: monitor_only
     speed_max_mps: 0.5
@@ -1050,6 +1053,7 @@ constraints:
   - id: wall
     type: polygon_fence
     constraint_type: hard
+    scope: mission
     priority: P0
     violation_action: monitor_only
     margin_m: 1.0
@@ -1109,6 +1113,7 @@ constraints:
   - id: alt-ceiling
     type: altitude_envelope
     constraint_type: hard
+    scope: mission
     priority: P0
     violation_action: loiter
     alt_min_m: 1
@@ -1306,6 +1311,7 @@ constraints:
   - id: kin-brake
     type: kinematic_envelope
     constraint_type: hard
+    scope: mission
     priority: P1
     violation_action: brake
     speed_max_mps: 2.0

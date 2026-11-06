@@ -244,10 +244,13 @@ GRANT_EVENT_TYPES = ("spawn_polygon_fence", "translate_polygon_fence",
 # (spawn: width_m / height_m / ahead_of_vehicle_m; translate: mps /
 # direction); the rest is this project's, named after the Shield API it
 # drives. An unknown key stops the load, exactly as everywhere else here.
+# A zone's ConstraintBase fields may come with it (the runner writes the
+# ones that do not: hard, P0, project_fix and, since IR schema 4.0.0, scope
+# mission - experiments/sweep_scenarios.py _spawn_zone).
 _ZONE_KEYS = frozenset({"id", "width_m", "height_m", "ahead_of_vehicle_m", "anchor",
                         "vertices", "altitude_floor_m", "altitude_ceiling_m",
                         "margin_m", "priority", "constraint_type",
-                        "violation_action", "motion"})
+                        "violation_action", "scope", "motion"})
 _SWITCH_KEYS = frozenset({"id", "window", "expect_refused"})
 EVENT_PAYLOADS: dict[str, tuple[frozenset, frozenset]] = {
     "spawn_polygon_fence": (frozenset(), _ZONE_KEYS),

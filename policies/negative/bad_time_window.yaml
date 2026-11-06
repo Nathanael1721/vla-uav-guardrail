@@ -7,6 +7,7 @@ constraints:
   - id: alt
     type: altitude_envelope
     constraint_type: hard
+    scope: mission
     priority: P0
     violation_action: project_fix
     alt_min_m: 5

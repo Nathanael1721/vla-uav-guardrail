@@ -2302,7 +2302,7 @@ def test_a_motion_swap_on_a_policy_zone_keeps_it_where_it_is():
         # the first one's edit.
         return policy_from_raw({"policy_id": "drift", "constraints": [
             {"id": "z", "type": "dynamic_nfz",
-             "constraint_type": "hard", "violation_action": "project_fix", "priority": "P0",
+             "scope": "mission", "constraint_type": "hard", "violation_action": "project_fix", "priority": "P0",
              "vertices": [{"x": 100, "y": 0}, {"x": 110, "y": 0},
                           {"x": 110, "y": 10}, {"x": 100, "y": 10}],
              "motion": {"vx_mps": 1.0, "vy_mps": 0.0, "yaw_rate_dps": 0.0}}]},

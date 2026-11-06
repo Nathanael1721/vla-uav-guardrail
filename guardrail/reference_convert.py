@@ -116,8 +116,10 @@ def _band(c) -> dict:
 
 
 def _base(c) -> dict:
-    # The reference writes scope and layer out; absent here means "mission",
-    # as there (models.DEFAULT_SCOPE / DEFAULT_LAYER).
+    # The reference writes scope and layer out. Every rule states its scope
+    # since IR schema 4.0.0; one of an earlier era's document may leave it
+    # out, which meant "mission", as there (models.DEFAULT_SCOPE). An absent
+    # layer means "mission" (models.DEFAULT_LAYER).
     return {"id": c.id, "type": "polygon_fence" if isinstance(c, PolygonFence)
             else c.type, "constraint_type": c.constraint_type,
             "scope": c.effective_scope, "priority": c.priority,

@@ -35,9 +35,11 @@ from guardrail.models import (Action4D, AltitudeEnvelope, Corridor,  # noqa: E40
                               Recurrence, State, ValidTime, XY)
 from guardrail.shield import Shield                                # noqa: E402
 
-# The three ConstraintBase fields the grant requires (IR schema 3.0.0, 2026-11-02),
-# at the values they defaulted to before (repair = project_fix).
-HARD_P0 = {"constraint_type": "hard", "priority": "P0", "violation_action": "project_fix"}
+# The four ConstraintBase fields the grant requires (IR schema 3.0.0, 2026-11-02;
+# scope since 4.0.0, 2026-11-06), at the values they defaulted to before
+# (repair = project_fix; an absent scope meant mission).
+HARD_P0 = {"constraint_type": "hard", "scope": "mission", "priority": "P0",
+           "violation_action": "project_fix"}
 
 KIN = KinematicEnvelope(id="k", type="kinematic_envelope", **HARD_P0, speed_max_mps=4.0,
                         climb_rate_max_mps=2.0, yaw_rate_max_dps=45.0)

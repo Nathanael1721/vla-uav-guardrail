@@ -2,7 +2,7 @@
 The ground station's step: set the ArduPilot GeoFence backstop over the GCS
 link and read it back, before the Shield process exists.
 
-    ~/venv-ros/bin/python sitl/gcs_backstop.py --bundle bundles/fase3-sim-demo-v0.1.3.tar.gz \\
+    ~/venv-ros/bin/python sitl/gcs_backstop.py --bundle bundles/fase3-sim-demo-v0.1.4.tar.gz \\
         --link udpin:127.0.0.1:14560 --out demo/out/<tag>
 
 WHAT THE GRANT ASKS FOR (WP3-10)

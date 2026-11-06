@@ -43,9 +43,11 @@ from guardrail.replay import (EPISODE, INDEX_NAME,             # noqa: E402
                               _SIGNED_BY, _digest,
                               read_replay, verify_replay, write_replay)
 
-# The three ConstraintBase fields the grant requires (IR schema 3.0.0, 2026-11-02),
-# at the values they defaulted to before (repair = project_fix).
-HARD_P0 = {"constraint_type": "hard", "priority": "P0", "violation_action": "project_fix"}
+# The four ConstraintBase fields the grant requires (IR schema 3.0.0, 2026-11-02;
+# scope since 4.0.0, 2026-11-06), at the values they defaulted to before
+# (repair = project_fix; an absent scope meant mission).
+HARD_P0 = {"constraint_type": "hard", "scope": "mission", "priority": "P0",
+           "violation_action": "project_fix"}
 
 RUN = ROOT / "demo" / "out" / "retarget_demo2"
 POLICY_FILE = ROOT / "policies" / "follow_pedestrian.yaml"
@@ -440,7 +442,11 @@ def test_the_tracked_replay_bundles_still_verify():
     Since 2026-11-06 the store also keeps KPI evidence (WP1-18: a KPI-grade
     run's bundle in the tracked store; the first is hil_smoke_03's). Such a
     bundle is of the current hash form and must verify WITH a trusted
-    signature: an unsigned one is not evidence."""
+    signature: an unsigned one is not evidence.
+
+    Since IR schema 4.0.0 (2026-11-06) a rule states `scope`; a bundle
+    written before leaves it out and is read as written, in its era
+    (models.era_context) - the four legacy ones among them."""
     tracked = sorted((ROOT / "bundles").glob("*.replay.tar.gz"))
     if not tracked:
         return SKIP
@@ -448,6 +454,8 @@ def test_the_tracked_replay_bundles_still_verify():
     assert LEGACY_TRACKED <= names, sorted(LEGACY_TRACKED - names)
     for b in tracked:
         got = read_replay(b)
+        if b.name in LEGACY_TRACKED:
+            assert all(c.scope is None for c in got["policy"].constraints), b.name
         ok, why = verify_replay(b)
         assert ok, (b.name, why)
         if b.name in LEGACY_TRACKED:

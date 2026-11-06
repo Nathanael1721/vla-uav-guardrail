@@ -60,9 +60,11 @@ from guardrail.vla_link import (AUTHORS, Capture, Decision, Hint, Pose,  # noqa:
                                 TrackerConfig)
 import vla_fake_server as F                                          # noqa: E402
 
-# The three ConstraintBase fields the grant requires (IR schema 3.0.0, 2026-11-02),
-# at the values they defaulted to before (repair = project_fix).
-HARD_P0 = {"constraint_type": "hard", "priority": "P0", "violation_action": "project_fix"}
+# The four ConstraintBase fields the grant requires (IR schema 3.0.0, 2026-11-02;
+# scope since 4.0.0, 2026-11-06), at the values they defaulted to before
+# (repair = project_fix; an absent scope meant mission).
+HARD_P0 = {"constraint_type": "hard", "scope": "mission", "priority": "P0",
+           "violation_action": "project_fix"}
 
 SKIP = "SKIP"
 MODULE = ROOT / "guardrail" / "vla_link.py"
@@ -467,7 +469,7 @@ def test_the_policy_band_skips_msl_envelopes_and_never_widens_a_configured_band(
                            alt_max_m=300, altitude_ref="MSL")
     soft = AltitudeEnvelope(id="soft", type="altitude_envelope",
                             priority="P0", violation_action="project_fix", alt_min_m=10,
-                            alt_max_m=12, constraint_type="soft")
+                            alt_max_m=12, scope="mission", constraint_type="soft")
     info = L.policy_alt_band(SimpleNamespace(constraints=[agl, msl, soft]))
     assert info == {"band": (5.0, 40.0), "envelopes": ["agl"], "skipped_msl": ["msl"]}, info
     assert L.alt_band_from_policy(SimpleNamespace(constraints=[agl, msl])) == (5.0, 40.0)
