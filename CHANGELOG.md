@@ -93,6 +93,16 @@ shipped change and recorded as one.
   and shebang list. A dry-run test checks its graph against `hil.env`, the
   node's own parse of its command, its pass-through, its refusals, and that
   a relative G1 verdict path still names the same file.
+- Every test file that imports the node, the rail, `vla_mission` or
+  `vla_fly`, and the two that master 1e15312 touched (46 files), one at a
+  time in the worktree after that merge: 1494/1543, no failure. The 49 skips
+  are the lab's gitignored maps, flights and bundles, which a worktree does
+  not have. Two other full CI runs and a nightly sweep shared the machine.
+  Before the merge, one run of `test_railvideo_recording.py`'s wall-clock
+  loop-rate comparison failed under that load (9.97 Hz without the recorder
+  against 8.08 Hz with it). It passed twice run alone, and in the run above.
+- `tools/check_claims.py`: 330/330 files clean. The full per-build list
+  (`tools/ci_local.py`) was not run on this branch.
 
 #### Limits
 - **Not flown.** Nothing here has run against Unreal, ArduPilot, MAVROS, the
