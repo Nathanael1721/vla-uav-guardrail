@@ -42,7 +42,8 @@
 # said is_orin false. The services that collect evidence now mount the host's
 # board-name file read-only at /run/vlaguard/host/device-tree-model (the path
 # guardrail.manifest reads after the device tree's own), plus
-# /etc/nv_tegra_release and the nvpmodel state directory, and lift nothing.
+# /etc/nv_tegra_release and the nvpmodel state and table (mode ID and name),
+# and lift nothing.
 # Check it once on the Orin, with the image already built (nothing is pulled):
 #   docker run --rm --runtime runc \
 #       -v /sys/firmware/devicetree/base/model:/run/vlaguard/host/device-tree-model:ro \
@@ -114,6 +115,7 @@ x-evidence-volumes: &evidence-volumes
   - /etc/nv_tegra_release:/etc/nv_tegra_release:ro
   - /sys/firmware/devicetree/base/model:/run/vlaguard/host/device-tree-model:ro
   - /var/lib/nvpmodel:/var/lib/nvpmodel:ro
+  - /etc/nvpmodel.conf:/etc/nvpmodel.conf:ro
 
 services:
   mavros:
@@ -181,3 +183,4 @@ services:
       - /etc/nv_tegra_release:/etc/nv_tegra_release:ro
       - /sys/firmware/devicetree/base/model:/run/vlaguard/host/device-tree-model:ro
       - /var/lib/nvpmodel:/var/lib/nvpmodel:ro
+      - /etc/nvpmodel.conf:/etc/nvpmodel.conf:ro

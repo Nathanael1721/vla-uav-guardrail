@@ -448,6 +448,7 @@ def test_the_containers_that_gather_evidence_can_read_it():
             assert board in vols, f"orin/{name} cannot read the board name"
             assert f"{M._TEGRA_RELEASE}:{M._TEGRA_RELEASE}:ro" in vols, name
             assert "/var/lib/nvpmodel:/var/lib/nvpmodel:ro" in vols, name
+            assert "/etc/nvpmodel.conf:/etc/nvpmodel.conf:ro" in vols, name
         else:
             assert board not in vols, f"orin/{name} mounts host evidence it does not gather"
     assert doc["services"]["vla-bench"].get("runtime") == "nvidia"
