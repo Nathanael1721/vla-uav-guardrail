@@ -694,6 +694,27 @@ def _watched_only(c: Any) -> bool:
         return False
 
 
+# How far over a kinematic cap a value may read and still be AT the cap: a
+# millionth of the cap, never less than 1e-9 (the absolute slack every cap
+# test used until 2026-11-07). The action contract is float32 (/vla/action_4d
+# and the VLA heads): a command at the cap, quantised to float32 in the body
+# frame and rotated to the world, reads up to ~1.2e-7 m/s over 4 m/s. On the
+# hil rig's first stress mission (shk01_001_nfz-head-on, 2026-11-07) 148 of
+# 299 ticks were 2e-8 to 1.2e-7 m/s over the 4 m/s cap; each one was a
+# kin-caps violation, the first sent Normal -> Brake at 0.3 s (G1) and the
+# onsets -> Loiter at 2.9 s (G2), so the mission was lost to rounding. float32
+# spacing is 1.2e-7 of the value, so 1e-6 is about eight of its steps: wide
+# enough for the quantisation and the rotation, far below any physical meaning
+# (4 micrometres per second at 4 m/s). One function, so the Shield's check,
+# its clamps, this module's mirror of them and the CSP's action set agree.
+CAP_REL_SLACK = 1e-6
+
+
+def cap_exceeded(value: float, cap: float) -> bool:
+    """`value` is over `cap` by more than the float32 contract's slack."""
+    return value > cap + max(1e-9, CAP_REL_SLACK * abs(cap))
+
+
 @dataclass(frozen=True)
 class KinematicCaps:
     """The policy's horizontal-speed and climb-rate caps, as shield.py applies them.
@@ -741,18 +762,24 @@ class KinematicCaps:
     def clamp(self, vx: float, vy: float, vz: float) -> tuple[float, float, float]:
         """shield.py's SpeedClamp and ClimbClamp, exactly: scale the horizontal
         vector onto the speed cap, clip |vz| to the climb cap (with the Shield's
-        1e-9 tolerance, so a float-rounding excess is left alone)."""
+        slack, cap_exceeded, so a float-rounding excess is left alone)."""
         h = math.hypot(vx, vy)
-        if h > self.speed_max_mps + 1e-9:
+        if cap_exceeded(h, self.speed_max_mps):
             s = self.speed_max_mps / h
             vx, vy = vx * s, vy * s
-        if abs(vz) > self.climb_rate_max_mps + 1e-9:
+        if cap_exceeded(abs(vz), self.climb_rate_max_mps):
             vz = math.copysign(self.climb_rate_max_mps, vz)
         return vx, vy, vz
 
-    def exceeded_by(self, vx: float, vy: float, vz: float, tol: float = 1e-6) -> bool:
-        return (math.hypot(vx, vy) > self.speed_max_mps + tol
-                or abs(vz) > self.climb_rate_max_mps + tol)
+    def exceeded_by(self, vx: float, vy: float, vz: float, tol: float | None = None) -> bool:
+        """Over a cap by more than `tol`, or by more than the clamps' own slack
+        (cap_exceeded) when `tol` is None: an excess the clamps leave alone
+        must not read as a decision made under other caps."""
+        h, z = math.hypot(vx, vy), abs(vz)
+        if tol is None:
+            return (cap_exceeded(h, self.speed_max_mps)
+                    or cap_exceeded(z, self.climb_rate_max_mps))
+        return h > self.speed_max_mps + tol or z > self.climb_rate_max_mps + tol
 
     def to_dict(self) -> dict[str, float]:
         return {"speed_max_mps": self.speed_max_mps,

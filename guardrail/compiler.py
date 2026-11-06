@@ -114,6 +114,7 @@ from . import csp as _csp
 from .csp import (CSP, CSP_VERSION, AllowedActionSet, CSPBudgetExceeded,
                   CSPUnenforcedRules, ForbiddenActionSet, P0Entry, RiskWeights,
                   RuleDecision, Selection, TokenCounter)
+from .fsm import cap_exceeded
 from .ir import PolicyIR, is_moving
 from .models import (DAYS, RUNTIME_TYPES, AltitudeEnvelope, CircleFence, Corridor,
                      CorridorSwap, DistanceEnvelope, DynamicNFZ, KinematicEnvelope,
@@ -1008,11 +1009,12 @@ def action_violations(action, csp: CSP, state=None, policy: Policy | None = None
                            ("vz", action.vz_up, a.vz_range_mps)):
         if rng is not None and not (rng[0] - 1e-9 <= val <= rng[1] + 1e-9):
             out.append(name)
+    # The caps with the Shield's float32 slack (fsm.cap_exceeded, 2026-11-07).
     if (a.horizontal_speed_max_mps is not None
-            and math.hypot(action.vx, action.vy) > a.horizontal_speed_max_mps + 1e-9):
+            and cap_exceeded(math.hypot(action.vx, action.vy), a.horizontal_speed_max_mps)):
         out.append("speed")
     if (a.yaw_rate_max_dps is not None
-            and abs(action.yaw_rate) > math.radians(a.yaw_rate_max_dps) + 1e-12):
+            and cap_exceeded(abs(action.yaw_rate), math.radians(a.yaw_rate_max_dps))):
         out.append("yaw_rate")
     if state is None:
         return out

@@ -90,6 +90,39 @@ def test_yaw_rate_clamped():
     assert abs(dps - 45.0) < 1e-6, f"should clamp exactly to the cap, got {dps}"
 
 
+def test_a_float32_command_at_the_cap_is_at_the_cap():
+    """REGRESSION 2026-11-07 (hil shakedown shk01_001_nfz-head-on). The stub
+    pilot asked for exactly the 4 m/s cap; quantised to float32 in the body
+    frame and rotated to the world it read 2e-8 to 1.2e-7 m/s over it on 148 of
+    299 ticks. Each one was a kin-caps violation under the old 1e-9 slack: G1
+    Normal -> Brake at 0.3 s, the onsets G2 -> Loiter at 2.9 s, mission lost.
+    A float32-rounded command at a cap is at the cap (fsm.cap_exceeded); an
+    excess well past float32's resolution is still caught and clamped."""
+    import struct
+    from guardrail.fsm import CAP_REL_SLACK, cap_exceeded
+
+    def f32(x):
+        return struct.unpack("f", struct.pack("f", x))[0]
+    # The recorded tick 3: world (3.9999999389969854, 0.0008217847731525774),
+    # 2.3e-8 m/s over 4.0.
+    rec = Action4D(vx=3.9999999389969854, vy=0.0008217847731525774)
+    assert math.hypot(rec.vx, rec.vy) - 4.0 > 1e-9
+    # (No climb here: 2 m/s for the 3 s forecast from 4 m would break this
+    # policy's 6 m ceiling, an altitude rule, not the cap.)
+    for a in (rec, Action4D(vx=f32(4.0 * math.cos(0.3)), vy=f32(4.0 * math.sin(0.3)),
+                            yaw_rate=f32(math.radians(45.0)))):
+        d = make_shield().filter(State(x=-20, y=-20, up=4), a)
+        assert not d.violations and not d.touched, (a, d.violations, d.repairs)
+        assert d.emitted == d.raw
+    over = 4.0 * (1 + 10 * CAP_REL_SLACK)
+    d = make_shield().filter(State(x=-20, y=-20, up=4), Action4D(vx=over))
+    assert d.touched and any(r.operator == "SpeedClamp" for r in d.repairs)
+    assert abs(d.emitted.vx - 4.0) < 1e-12
+    assert not cap_exceeded(4.0 + 3.9e-6, 4.0) and cap_exceeded(4.0 + 4.1e-6, 4.0)
+    assert not cap_exceeded(abs(f32(-2.0000001)), 2.0)          # the climb cap's float32
+    assert cap_exceeded(0.5e-9 + 2e-9, 0.0) and not cap_exceeded(0.9e-9, 0.0)
+
+
 # --------------------------------------------------------------- altitude
 
 def test_climb_above_cap_clamped():

@@ -2863,17 +2863,19 @@ class Shield:
     def _check_kinematic(self, k, action: Action4D) -> list[Violation]:
         """A property of the action alone - no state, no forecast."""
         out = []
+        # Each cap with the float32 contract's slack (fsm.cap_exceeded, since
+        # 2026-11-07; 1e-9 absolute before).
         h_speed = (action.vx ** 2 + action.vy ** 2) ** 0.5
-        if h_speed > k.speed_max_mps + 1e-9:
+        if _fsm.cap_exceeded(h_speed, k.speed_max_mps):
             out.append(Violation(
                 rule_id=k.id, category="kinematic", predicted_at_s=0.0,
                 detail=f"h-speed {h_speed:.2f} > max {k.speed_max_mps}"))
-        if abs(action.vz_up) > k.climb_rate_max_mps + 1e-9:
+        if _fsm.cap_exceeded(abs(action.vz_up), k.climb_rate_max_mps):
             out.append(Violation(
                 rule_id=k.id, category="kinematic", predicted_at_s=0.0,
                 detail=f"|vz| {abs(action.vz_up):.2f} > max {k.climb_rate_max_mps}"))
         yaw_dps = math.degrees(abs(action.yaw_rate))     # contract is rad/s
-        if yaw_dps > k.yaw_rate_max_dps + 1e-9:
+        if _fsm.cap_exceeded(yaw_dps, k.yaw_rate_max_dps):
             out.append(Violation(
                 rule_id=k.id, category="kinematic", predicted_at_s=0.0,
                 detail=f"|yaw_rate| {yaw_dps:.1f} dps > max {k.yaw_rate_max_dps}"))
@@ -3833,21 +3835,22 @@ class Shield:
         # flagged. Whether that happened depended on the platform's floating
         # point: on Windows nfz-head-on logged 82 such repairs, on Linux (the
         # CI runners) none, which is why tests/test_sweep.py's pinned repair
-        # counts failed on GitHub only.
+        # counts failed on GitHub only. Since 2026-11-07 the tolerance is the
+        # float32 contract's slack, fsm.cap_exceeded, in the check and here.
         vx, vy, vz, yr = a.vx, a.vy, a.vz_up, a.yaw_rate
         for k in self._kins:
             h = (vx ** 2 + vy ** 2) ** 0.5
-            if h > k.speed_max_mps + 1e-9:
+            if _fsm.cap_exceeded(h, k.speed_max_mps):
                 s = k.speed_max_mps / h
                 vx, vy = vx * s, vy * s
                 repairs.append(Repair(operator="SpeedClamp",
                                       detail=f"h-speed {h:.2f} -> {k.speed_max_mps}"))
-            if abs(vz) > k.climb_rate_max_mps + 1e-9:
+            if _fsm.cap_exceeded(abs(vz), k.climb_rate_max_mps):
                 new = k.climb_rate_max_mps * (1 if vz > 0 else -1)
                 repairs.append(Repair(operator="ClimbClamp", detail=f"vz {vz:.2f} -> {new:.2f}"))
                 vz = new
             ymax = math.radians(k.yaw_rate_max_dps)
-            if math.degrees(abs(yr)) > k.yaw_rate_max_dps + 1e-9:
+            if _fsm.cap_exceeded(math.degrees(abs(yr)), k.yaw_rate_max_dps):
                 new = ymax * (1 if yr > 0 else -1)
                 repairs.append(Repair(
                     operator="YawClamp",
