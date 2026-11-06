@@ -1375,7 +1375,7 @@ class _Tick:
     (monitor_only rules, and soft rules it has given up)."""
     __slots__ = ("rt", "sched", "t", "skip", "_lists", "_moving", "_swept", "unsafe",
                  "_t_first", "given_up", "chain_runs", "ledger", "ahead", "origin",
-                 "committed", "pipe_t", "opened_mps", "cap_zones")
+                 "committed", "pipe_t", "opened_mps")
 
     def __init__(self, rt: _Runtime, sched: _Schedule, t: float, t_first: float | None):
         self.rt, self.sched, self.t, self._t_first = rt, sched, t, t_first
@@ -1413,14 +1413,6 @@ class _Tick:
         # Shield._floor_the_escape, for one run of its retries
         # (`_opened_retries`), and None again after it.
         self.opened_mps: "float | str | None" = None
-        # Under recovery_law "cap_all": the static, hard, enforced zones in
-        # force whose ring holds the aircraft on this tick (Shield._cap_zones,
-        # set by _decide). Their escape is flown and judged exactly as the
-        # escape from a zone whose window opened on the aircraft: at the cap,
-        # judged as flown (_shaped_escape), slower only if the cap's stop
-        # breaks another rule (_opened_retries). Empty under the other laws and
-        # on every view that is not a decision.
-        self.cap_zones: frozenset = frozenset()
 
     def rules(self, name: str):
         key = (name, self.skip)
@@ -3171,7 +3163,7 @@ class Shield:
         now and remembered (`_opened_on`) or still to open with the opening
         imposed (`_opening_imposed`). Under recovery_law "cap_all" (since
         2026-11-06) also any such zone the aircraft is inside for any other
-        reason (`tick.cap_zones`, Shield._cap_zones): every recovery from a
+        reason (Shield._cap_zones_at, for the state judged): every recovery from a
         static zone then flies at the cap, so it is judged the same way. "Escapes": leaving it at more than 0.1
         m/s by the inside rule's own test, at the pose where the zone opens
         for an opening still to come (as _check_fence reads it). The action
@@ -3229,12 +3221,13 @@ class Shield:
         if not (math.isfinite(h) and h > 0.1):
             return None                       # nothing escapes at 0.1 m/s or less
         tick = self._tick_ctx()
-        if tick is None or (not self._opened_on and not tick.cap_zones
+        cap = self._cap_zones_at(tick, state) if tick is not None else frozenset()
+        if tick is None or (not self._opened_on and not cap
                             and (not tick.rt.timed or tick.sched.const)):
             return None                       # no zone can have opened on it
         key = ("shaped", state.x, state.y, state.up, state.yaw_deg, action.vx,
                action.vy, action.vz_up, action.yaw_rate,
-               frozenset(self._opened_on) | tick.cap_zones)
+               frozenset(self._opened_on) | cap)
         hit = tick.committed.get(key)
         if hit is None:
             hit = tick.committed[key] = (self._shape_escape(tick, state, action, h),)
@@ -3258,7 +3251,7 @@ class Shield:
             if alive is False or not point_in_fence(state.x, state.y, state.up, f, poly, ring):
                 continue
             if alive is True or alive(0.0):
-                if f.id not in self._opened_on and f.id not in tick.cap_zones:
+                if f.id not in self._opened_on and f.id not in self._cap_zones_at(tick, state):
                     return None               # inside a zone in force it flew into
                 ox, oy = escape_direction(state.x, state.y, poly, action.vx, action.vy)
             else:
@@ -4252,7 +4245,7 @@ class Shield:
                 # own corridor edge, 9 m past the school zone's ring.
                 #
                 # Under recovery_law "cap_all" (2026-11-06) the same holds for
-                # every static zone the aircraft is inside (`tick.cap_zones`),
+                # every static zone the aircraft is inside (`_cap_zones_at`),
                 # whatever put it there: the recovery flies at the cap, judged
                 # as flown, slower only where the cap's stop breaks another
                 # rule - as the altitude recovery climbs at the climb cap since
@@ -4260,7 +4253,8 @@ class Shield:
                 # escape is not defined for a moving ring).
                 tick_now = self._tick_ctx()
                 try_mps = getattr(tick_now, "opened_mps", None)
-                at_cap = (not mv and tick_now is not None and f.id in tick_now.cap_zones
+                at_cap = (not mv and tick_now is not None
+                          and f.id in self._cap_zones_at(tick_now, state)
                           and t_open is None and f.id not in self._opened_on)
                 opened = ((t_open is not None or (not mv and f.id in self._opened_on)
                            or at_cap)
@@ -4647,12 +4641,15 @@ class Shield:
             want = min(cap, max(0.5, (ring - d) / max(self.lookahead_s, 1e-3)))
             if self.recovery_law == "cap_all":
                 # The default since 2026-11-06 (RECOVERY_LAWS): open the range
-                # at the speed cap, as the altitude band is recovered at the
-                # climb cap. Radially outward from a point subject the range
-                # only grows, so there is no far edge to hold short of. The
-                # one-lookahead law above took standoff-reclassified 6.5 s at
-                # 0.5-0.65 m/s from 3.25 m inside; at the cap, 0.9 s.
-                want = cap
+                # with the aircraft's own outward speed at the cap, as the
+                # altitude band is recovered at the climb cap - the fastest
+                # opening the cap allows, so the relative rate is the cap plus
+                # the subject's own recession (`s_u`; 0 for a still subject).
+                # Radially outward from a point subject the range only grows,
+                # so there is no far edge to hold short of. The one-lookahead
+                # law above took standoff-reclassified 6.5 s at 0.5-0.65 m/s
+                # from 3.25 m inside; at the cap, 0.9 s.
+                want = cap + s_u
             # FLOOR the opening rate, never assign it.
             #
             # `-closing` is the opening speed already commanded. Writing the
@@ -6667,6 +6664,23 @@ class Shield:
                 out.add(f.id)
         return frozenset(out)
 
+    def _cap_zones_at(self, tick: _Tick, state: State) -> frozenset:
+        """`_cap_zones` for `state`, once per tick and state (tick.committed).
+        Read wherever an escape is judged - the decision, its repairs, and any
+        check made outside a decision (a stop query, a re-check of what was
+        emitted) - so an escape from a zone the aircraft is in is judged the
+        same way everywhere. (A first version computed the set once, for the
+        decision's state only: a re-check made outside the decision walked
+        the cap's straight 20 m forecast and refused an escape the decision
+        had judged as flown - tests/test_own_velocity_forecast.py's sample.)"""
+        if self.recovery_law != "cap_all":
+            return frozenset()
+        key = ("cap_zones", state.x, state.y, state.up)
+        hit = tick.committed.get(key)
+        if hit is None:
+            hit = tick.committed[key] = self._cap_zones(tick, state)
+        return hit
+
     @staticmethod
     def _cap_ids(flags: dict) -> set:
         """Every zone whose escape flies at the cap on this decision: a window
@@ -6850,11 +6864,11 @@ class Shield:
                  # flies at the cap after the opening too.
                  "window_opened_on": sorted(self._opened_on)}
         # Under recovery_law "cap_all": every static zone the aircraft is in,
-        # escaped at the cap through the same path (`_cap_zones`). The key is
-        # written only when there is one, so every other trace is as it was.
-        tick.cap_zones = self._cap_zones(tick, state)
-        if tick.cap_zones:
-            flags["escape_at_cap"] = sorted(tick.cap_zones)
+        # escaped at the cap through the same path (`_cap_zones_at`). The key
+        # is written only when there is one, so every other trace is as it was.
+        cap_now = self._cap_zones_at(tick, state)
+        if cap_now:
+            flags["escape_at_cap"] = sorted(cap_now)
         mode = self.repair_mode
         # Finiteness first: every check below is a comparison, and NaN loses them
         # all, so an unsanitised action would be declared legal and passed

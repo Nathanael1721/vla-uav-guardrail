@@ -462,7 +462,11 @@ def test_a_known_failure_pin_names_the_gates_it_fails_and_only_real_ones():
     # longer a violation, Shield._opening_imposed).
     # 5 since 2026-11-02, when near-edge-at-12mps's two edge-flicker pins
     # came off (Loiter hands back a request the Shield would fly, G8).
-    assert len(pinned) >= 5, [f.scenario_id for f in pinned]
+    # 4 since 2026-11-06, when gps-noise-within-margin's two noise-flicker
+    # pins came off (with the accuracy reported, a ring re-touched within 3
+    # sigma is not a new onset: TickInput.noise_marginal).
+    assert len(pinned) >= 4, [f.scenario_id for f in pinned]
+    assert "gps-noise-within-margin" not in {f.scenario_id for f in pinned}
     assert "time-window-opens-on-vehicle" not in {f.scenario_id for f in pinned}
 
 

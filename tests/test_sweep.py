@@ -2225,7 +2225,11 @@ def test_what_the_autopilot_flew_through_is_counted_apart_and_reported():
     the edge ahead and no FSM edge is taken. An escape the forward command
     does not already fly, which this test was written on (the ring order's
     choice was not the edge ahead), is recreated by spawning the same zone
-    0.5 m to the side: no tie, and the nearest edge is the side one."""
+    0.5 m to the side: no tie, and the nearest edge is the side one.
+    Re-pinned 2026-11-06: on the default recovery law ("cap_all") that side
+    exit flies at the 4 m/s cap and is out in 2.6 s, inside X6's T, so no
+    RTL happens at all; the RTL this test is about is flown on the law it
+    was written on ("cap": the 2.0 m/s floor), which stays selectable."""
     from guardrail.fsm import FSMConfig
 
     class NoProgressTest(S.Shield):
@@ -2248,7 +2252,7 @@ def test_what_the_autopilot_flew_through_is_counted_apart_and_reported():
         return z
     S._spawn_zone = beside
     try:
-        default = S.run_episode(spec, DEFAULTS, 0)
+        default = S.run_episode(spec, DEFAULTS, 0, recovery="cap")
     except BaseException:
         S._spawn_zone = orig_spawn
         raise
@@ -2257,7 +2261,7 @@ def test_what_the_autopilot_flew_through_is_counted_apart_and_reported():
     real = S.Shield
     S.Shield = NoProgressTest
     try:
-        watched = S.run_episode(spec, DEFAULTS, 0)
+        watched = S.run_episode(spec, DEFAULTS, 0, recovery="cap")
         assess = S.RP.RTLWatch.assess
 
         def silent(self, *a, **k):
@@ -2265,7 +2269,7 @@ def test_what_the_autopilot_flew_through_is_counted_apart_and_reported():
             return S.RP.RTLVerdict(False, (), v.leg, False, False)
         S.RP.RTLWatch.assess = silent
         try:
-            run = S.run_episode(spec, DEFAULTS, 0)
+            run = S.run_episode(spec, DEFAULTS, 0, recovery="cap")
         finally:
             S.RP.RTLWatch.assess = assess
     finally:

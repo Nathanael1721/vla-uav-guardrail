@@ -338,11 +338,25 @@ def test_it_never_accelerates_toward_the_subject():
 
 def test_orbiting_at_the_ring_is_allowed():
     """The rule objects to one direction of travel, not to the mission. Killing
-    the whole velocity would stop the aircraft to satisfy it."""
+    the whole velocity would stop the aircraft to satisfy it.
+
+    At the ring the orbit always flies untouched. 2 m INSIDE it the action is
+    a recovery: on recovery_law "cap" the range opened at 0.5 m/s, which left
+    room under the 5 m/s cap for all 3 m/s of the orbit; on the default
+    "cap_all" (2026-11-06) it opens at the cap, and the orbit waits until the
+    aircraft is out - during a recovery the escape is the urgent part
+    (Shield._cap_sparing_radial), as for the window escape."""
     sh = _standoff_shield(min_range_m=10.0)
     sh.set_subject(30.0, 0.0, "pedestrian")
+    at = sh.filter(State(x=20.0, y=0.0, up=9.0), Action4D(vy=3.0))
+    assert at.emitted == at.raw and not at.repairs, "at the ring the orbit flies untouched"
+    sh.recovery_law = "cap"
     dec = sh.filter(State(x=22.0, y=0.0, up=9.0), Action4D(vy=3.0))
     assert abs(dec.emitted.vy - 3.0) < 1e-6, "tangential motion must survive"
+    sh.recovery_law = "cap_all"
+    dec = sh.filter(State(x=22.0, y=0.0, up=9.0), Action4D(vy=3.0))
+    assert abs(_radial(dec, pos=(22.0, 0.0)) + 5.0) < 1e-6 and abs(dec.emitted.vy) < 1e-6, (
+        dec.emitted)
 
 
 def test_standoff_violations_are_repaired_not_escaped():
@@ -517,6 +531,9 @@ def test_a_moving_subject_is_forecast_at_its_velocity():
     assert [v.rule_id for v in d.violations] == ["car-standoff"], d.violations
     assert abs(d.emitted.vx + 3.0) < 1e-9, d.emitted
     assert not go((14.0, 0.0), Action4D()).violations, "held still, a hover is fine"
+    # Inside the ring, on recovery_law "cap" (2026-10-29 to 2026-11-06): the
+    # opening floored at 0.5 m/s, or one lookahead's worth over the subject.
+    sh.recovery_law = "cap"
     d = go((4.0, 0.0), Action4D(vx=4.0), velocity=(4.0, 0.0))   # 4 m behind, inside
     assert [r.operator for r in d.repairs] == ["StandoffRecover"], d.repairs
     assert abs(d.emitted.vx - 3.5) < 1e-9, (
@@ -526,6 +543,22 @@ def test_a_moving_subject_is_forecast_at_its_velocity():
     d = go((0.0, 0.0), Action4D(vx=4.0), velocity=(4.0, 0.0))   # right over it, in step
     assert [r.operator for r in d.repairs] == ["StandoffRecover"], d.repairs
     assert abs(d.emitted.vx - 3.0) < 1e-9 and abs(d.emitted.vy) < 1e-9, d.emitted
+    # The default "cap_all" (2026-11-06): the aircraft's OWN outward speed at
+    # the 5 m/s cap - behind a car doing 4 m/s it backs off at 5 m/s (the
+    # range opening at 9 m/s, the fastest the cap allows), backs off a parked
+    # car at 5 m/s too, and directly over a car in step falls back at the cap
+    # relative to it (no line to the subject: StandoffRecover's overhead case
+    # opens the range at the cap relative to the subject, the subject's
+    # velocity added back).
+    sh.recovery_law = "cap_all"
+    d = go((4.0, 0.0), Action4D(vx=4.0), velocity=(4.0, 0.0))
+    assert [r.operator for r in d.repairs] == ["StandoffRecover"], d.repairs
+    assert abs(d.emitted.vx + 5.0) < 1e-9, d.emitted
+    d = go((4.0, 0.0), Action4D(vx=4.0))
+    assert abs(d.emitted.vx + 5.0) < 1e-9, d.emitted
+    d = go((0.0, 0.0), Action4D(vx=4.0), velocity=(4.0, 0.0))
+    assert [r.operator for r in d.repairs] == ["StandoffRecover"], d.repairs
+    assert abs(d.emitted.vx + 1.0) < 1e-9 and abs(d.emitted.vy) < 1e-9, d.emitted
     assert not go((0.0, 0.0), Action4D(), velocity=(4.0, 0.0)).violations, (
         "hovering while the car drives away from under it opens the range")
 
@@ -633,13 +666,16 @@ def test_a_hover_directly_over_the_subject_backs_away_from_the_heading():
     # Any motion at more than 0.1 m/s already opens the range from 0 and
     # passes. Once something else opens the repair loop (an unrelated yaw
     # breach, as in the escape-floor tests below), a slow drift is kept in its
-    # direction and floored at the recovery speed (5 m ring / 5 s lookahead =
-    # 1.0 m/s), never lowered.
+    # direction and floored at the recovery speed, never lowered: on
+    # recovery_law "cap" the ring in one lookahead (5 m ring / 5 s = 1.0
+    # m/s), on the default "cap_all" the 5 m/s speed cap (2026-11-06).
     assert not sh.filter(st, Action4D(vx=0.2)).violations
-    d = sh.filter(st, Action4D(vx=0.2, yaw_rate=YAW_BREACH))
-    assert abs(d.emitted.vx - 1.0) < 1e-9 and abs(d.emitted.vy) < 1e-9, d.emitted
-    d = sh.filter(st, Action4D(vx=3.0, yaw_rate=YAW_BREACH))
-    assert abs(d.emitted.vx - 3.0) < 1e-9, d.emitted
+    for law, floor in (("cap", 1.0), ("cap_all", 5.0)):
+        sh.recovery_law = law
+        d = sh.filter(st, Action4D(vx=0.2, yaw_rate=YAW_BREACH))
+        assert abs(d.emitted.vx - floor) < 1e-9 and abs(d.emitted.vy) < 1e-9, (law, d.emitted)
+        d = sh.filter(st, Action4D(vx=3.0, yaw_rate=YAW_BREACH))
+        assert abs(d.emitted.vx - max(3.0, floor)) < 1e-9, (law, d.emitted)
 
 
 def test_a_stand_off_holds_magnitude_is_a_depth_the_ring_can_have():
@@ -993,18 +1029,29 @@ def test_a_crawl_out_of_a_breach_is_floored_with_nothing_else_wrong():
     the floor still passes untouched. Since 2026-10-29 the altitude floor is
     the climb cap held to the band (Shield._recovery_vz): 1.5 m/s here
     (2-6 m band, 1 m margin, 3 s lookahead), so a 1.0 m/s climb is a crawl
-    too and 1.6 m/s is the fast escape."""
+    too and 1.6 m/s is the fast escape.
+
+    The floors below are recovery_law "cap" (2026-10-29 to 2026-11-06),
+    pinned on it. Since 2026-11-06 the default "cap_all" floors the zone and
+    the stand-off ring at their speed cap (4 m/s and 3 m/s here): the same
+    crawls leave at the cap, and only an escape already at the cap is
+    untouched (the second half below)."""
     cases = (
         ("altitude", make_shield, State(x=-30.0, y=-30.0, up=0.5), "vz_up",
-         (1e-6, 0.05, 0.2, 1.0), 1.5, "AltitudeFix", 1.6),
+         (1e-6, 0.05, 0.2, 1.0), 1.5, "AltitudeFix", 1.6, "cap"),
         ("zone", make_shield, State(x=22.0, y=15.0, up=4.0), "vx",
-         (0.11, 0.15), 2.0, "GeofenceEscape", 3.0),
+         (0.11, 0.15), 2.0, "GeofenceEscape", 3.0, "cap"),
         ("stand-off", _standoff_ring_shield, State(x=9.0, y=0.0, up=9.0), "vx",
-         (0.11, 0.15), 0.5, "StandoffRecover", 3.0),
+         (0.11, 0.15), 0.5, "StandoffRecover", 3.0, "cap"),
         ("clearance", _wall_shield, State(x=6.0, y=0.0, up=40.0), "vx",
-         (-0.02, -0.2), -0.5, "ClearanceFix", -3.0))
-    for label, mk, st, ax, crawls, floor, op, fast in cases:
+         (-0.02, -0.2), -0.5, "ClearanceFix", -3.0, "cap"),
+        ("zone at the cap", make_shield, State(x=22.0, y=15.0, up=4.0), "vx",
+         (0.11, 0.15, 3.0), 4.0, "GeofenceEscape", 4.0, "cap_all"),
+        ("stand-off at the cap", _standoff_ring_shield, State(x=9.0, y=0.0, up=9.0), "vx",
+         (0.11, 0.15, 2.0), 3.0, "StandoffRecover", 3.0, "cap_all"))
+    for label, mk, st, ax, crawls, floor, op, fast, law in cases:
         sh = mk()
+        sh.recovery_law = law
         assert sh.state_is_unsafe(st), label
         sign = 1.0 if floor > 0 else -1.0
         for cmd in crawls:
