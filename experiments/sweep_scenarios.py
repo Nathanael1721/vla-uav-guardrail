@@ -3431,8 +3431,9 @@ class SubprocessTransport:
                                 "--settle-s", f"{self.cfg.sitl_settle_s:g}"]
         if home:
             cmd += ["--home", home]
-        proc = self.popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                          text=True, encoding="utf-8", errors="replace")
+        proc = self.popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                          stderr=subprocess.STDOUT, text=True, encoding="utf-8",
+                          errors="replace")
         self._sitl = proc
         lines: list[str] = []
         done = threading.Event()
@@ -3455,7 +3456,7 @@ class SubprocessTransport:
     def stop_sitl(self) -> None:
         if self._sitl is not None:
             self.run(self._helper() + ["stop"], capture_output=True, text=True,
-                     timeout=60)
+                     stdin=subprocess.DEVNULL, timeout=60)
             try:
                 self._sitl.terminate()
             except Exception:                                 # noqa: BLE001
@@ -3464,9 +3465,13 @@ class SubprocessTransport:
 
     # ---- the Orin ----
     def _ssh(self, remote_cmd: str, timeout: float) -> tuple[int, str]:
+        # stdin is never the harness's own: Windows OpenSSH reading an
+        # inherited pipe kept `ssh ... mkdir -p` open until the 60 s timeout
+        # on the second shakedown (shk02, 2026-11-07) though the command takes
+        # 0.4 s; the same for scp and the WSL helper below.
         r = self.run(["ssh", *self.cfg.ssh_options, self.cfg.ssh_target, remote_cmd],
                      capture_output=True, text=True, encoding="utf-8", errors="replace",
-                     timeout=timeout)
+                     stdin=subprocess.DEVNULL, timeout=timeout)
         return r.returncode, (r.stdout or "") + (r.stderr or "")
 
     def push(self, local_dir: Path, remote_rel: str) -> None:
@@ -3478,7 +3483,7 @@ class SubprocessTransport:
         r = self.run(["scp", "-r", "-q", *self.cfg.ssh_options, local_dir.name,
                       f"{self.cfg.ssh_target}:{self.cfg.remote_rel(parent)}/"],
                      cwd=str(local_dir.parent), capture_output=True, text=True,
-                     timeout=120)
+                     stdin=subprocess.DEVNULL, timeout=120)
         if r.returncode != 0:
             raise RuntimeError(f"scp to the Orin failed ({r.returncode}): "
                                f"{(r.stderr or r.stdout)[-300:]}")
@@ -3510,7 +3515,8 @@ class SubprocessTransport:
         local_parent.mkdir(parents=True, exist_ok=True)
         r = self.run(["scp", "-r", "-q", *self.cfg.ssh_options,
                       f"{self.cfg.ssh_target}:{self.cfg.remote_rel('demo/out/' + tag)}", "."],
-                     cwd=str(local_parent), capture_output=True, text=True, timeout=600)
+                     cwd=str(local_parent), capture_output=True, text=True,
+                     stdin=subprocess.DEVNULL, timeout=600)
         if r.returncode != 0:
             raise RuntimeError(f"scp from the Orin failed ({r.returncode}): "
                                f"{(r.stderr or r.stdout)[-300:]}")
