@@ -16,6 +16,179 @@ shipped change and recorded as one.
 
 ## [Unreleased]
 
+### 2026-11-06 (dev images) — the dev topology flown in containers for the first time; the same companion image definition on the desktop and the Orin
+
+#### Flown
+- `dev_compose_01`: deploy/compose/docker-compose.dev.yml on Docker Desktop,
+  every service in a container built on the desktop: ArduCopter 4.5.7 SITL
+  (`vlaguard/sitl:copter-4.5.7`, ae721bdc), mavlink-router, MAVROS 2 and the
+  mission (`vlaguard/companion:jazzy` amd64, aad0b268). Code 30667cc (clean),
+  the default signed bundle (fase3-sim-demo 0.1.3), topology `dev` from the
+  evidence; P0 escape 0.0; refused as KPI evidence because a dev run needs
+  the PI's written waiver, as the rule says. The same first-tick escalation
+  as hil_smoke_03. Video `demo/out/dev_compose_01/dev_compose_01_track.mp4`.
+
+#### Recorded
+- `deploy/evidence/hil/images.txt`: the companion image built natively on
+  the AGX Orin (arm64, 8938f2d5) and on the desktop (amd64, aad0b268) from the
+  same Dockerfile, and the desktop's SITL image. Both companion builds carry
+  the same OS, ROS distribution, Python 3.12.3, mavlink-router and pip set;
+  only the Debian build stamps of the architectures differ
+  (`deploy/evidence/dev/companion_versions_desktop.txt` against
+  `deploy/evidence/hil/companion_versions.txt`).
+- The desktop's first build attempt of the companion image failed on
+  Docker Desktop's DNS (auth.docker.io: no such host); it resolved on retry.
+- docs/FINAL-REPORT-outline.md: ARCH-11, ARCH-28 and X-08 to DONE (flight is
+  the same image with flight.env, waiting on ARCH-14's waiver). 62 DONE,
+  67 PARTIAL, 6 DRIFT, 1 MISSING.
+
+### 2026-11-06 (contract) — ten more items closed on the hil evidence and by small conformance fixes; the per-build CI on Python 3.12 finds a cross-version determinism bug
+
+#### Changed
+- WP3-05: the six older demo scripts (aerialvla_demo, aerialvla_pas_demo,
+  real_vla_demo, run_demo, semantic_demo, semantic_seek) forecast with
+  guardrail.shield's LOOKAHEAD_S / LOOKAHEAD_DT_S (5 s at 0.1 s) instead of
+  3 s at 0.5 s (8d1a0f3).
+- WP4-13: `rosbags` 0.10.11 and pyarrow are installed in vla-real, so
+  tests/test_wp4outputs_exporters.py runs 38/38 with no skip. On the KPI-grade
+  hil run hil_smoke_03 the exporter writes 303 steps as JSONL and Parquet, with
+  action.executed read from the bag (/mavros/setpoint_raw/local) on 303/303.
+- WP1-18, WP1-20: the tracked store bundles/ keeps evidence, not only the four
+  legacy replays: hil_smoke_03's bundle (signed on the Orin) and signed copies
+  of the AIOT-VLA city flights aiot_v10bs_01-03 (flown from the clean master
+  55faad0; each keeps its flown policy hash under its IR 2.x form).
+  tests/test_replay.py checks the legacy four as before and every other
+  tracked bundle for a current hash form and a trusted signature.
+- WP1-19: the WP1 cold start measured on the Orin, in the companion image
+  (tools/wp1_roundtrip_kpi.py --no-runs --no-reference): a signed 50-rule
+  bundle to a ready Shield in fresh processes, p95 590 ms against 1 s (whole
+  process wall p95 867 ms); tampered, untrusted and badly signed bundles
+  refused through the same path. `deploy/evidence/hil/wp1_roundtrip_agx.json`.
+- AIOT-VLA v10b served natively on the Orin (`vla_server_foreign.py serve
+  --model aiotvla --horizon-s 0.5 --front-source detector`), timed on 300
+  frames of aiot_v10br_01 with tools/bench_foreign_vla.py: model p50 32.6 ms,
+  p95 33.9 ms, round trip p50 39.6 ms
+  (`deploy/evidence/hil/aiotvla_v10b_bench_agx.json`). The server alone, not
+  a flight.
+- docs/FINAL-REPORT-outline.md: WP1-18, WP1-19, WP1-20, WP3-05, WP3-18,
+  WP4-13, ARCH-12, ARCH-13, ARCH-26 and X-07 to DONE (the Rust decision:
+  no Rust hot path); WP3-13 keeps PARTIAL until a hil campaign logs the
+  VLA-to-setpoint latency over hundreds of ticks. 59 DONE, 70 PARTIAL, 6 DRIFT,
+  1 MISSING.
+
+#### Found
+- **The per-build CI on Python 3.12** (`tools/ci_local.py --python` a new env
+  with requirements.txt and the 3.11-extras job's packages, numpy 2.4.6),
+  at ff0ee43: 137/141 files, 3557/3628 tests, check_claims rc 0, smoke rc 0
+  (fail-safe 0.984127, as on 3.10). The four failing files:
+  - test_policy_dsl_grant_form: Python 3.12 made sum() of floats compensated
+    (gh-100425). The frame origin of the reference demo came out
+    121.5314 on 3.12 and 121.53139999999999 on 3.10, so the desktop (3.10) and
+    the Orin (3.12) projected the same policy to different metres.
+  - test_replay: the tracked-bundle test allowed only the four legacy bundles
+    (the new hil bundle).
+  - test_render_track_video: the refusal test errored on `import matplotlib`
+    before reaching the refusal.
+  - test_railinputs_node: two REST payloads lack IR 3.0.0's required
+    constraint_type / priority / violation_action. The lab CI on 3.10 skips
+    the file (no uvicorn), so it was never seen.
+
+#### Fixed
+- 28c61e7: guardrail.projection's mean adds left to right on every Python,
+  the reference's arithmetic on 3.10 and 3.12 alike; test_replay knows the
+  tracked KPI bundles.
+- c8e2b22: tools/render_track_video.py refuses a run with no policy before
+  importing the drawing stack.
+
+#### Tests
+- test_policy_dsl_grant_form 66/66 and test_replay 61/61 on both 3.10 and
+  3.12; test_render_track_video 6/6 (3.10), 5/6 + 1 skip (3.12, no
+  matplotlib); test_wp4outputs_exporters 38/38; the six demo scripts' tests
+  (24 files) pass.
+
+#### Limits
+- test_railinputs_node's fixtures are fixed with the IR 4.0.0 scope change
+  (in progress), not here.
+- The two other centroid sums (guardrail/ir.py moving-zone bound,
+  models.ring_at) still use sum(): runtime geometry, not identity; a
+  nanometre-level difference between hosts remains possible there.
+
+### 2026-11-06 (hil) — the hil topology flown for the first time: the Shield and MAVROS 2 on the AGX Orin, ArduPilot SITL on the desktop; the project's first KPI-grade run, and the Orin profile within the grant's budgets
+
+#### Flown
+The runbook's layout (docs/RUNBOOK-orin-hil.md): ArduCopter 4.5.7 SITL and
+mavlink-routerd in WSL on the desktop, the router's MAVROS endpoint
+10.42.0.3:14555 over the direct cable; MAVROS 2, the Shield node, the VLA stub
+and the MAVLink adapter in the companion container on the AGX Orin 64 GB
+(JetPack 7.2.1, L4T R39.2.1, MAXN). The mission is the node's own (the stub
+to the northeast pad, `fase3-sim-demo` 0.1.3, CMAC home).
+
+| run | code | label | what it showed |
+|---|---|---|---|
+| `hil_smoke_01` | 890b723 | - | refused before take-off: the signed bundles are build artefacts (gitignored), and the Orin's checkout had none. The 31 signed policy bundles were copied over (hashes identical). |
+| `hil_smoke_02` | 890b723 | `hil`, KPI-grade no | flown; the run bundle was unsigned: the lab key lives on the desktop. |
+| `hil_smoke_03` | d0e91bb | `hil`, **KPI-grade yes** | the first run any gate has accepted: six-field manifest (sim_speedup 1.0 read back from SITL, clean revision), `hil_evidence` (Orin named by its device tree, R39.2.1, MAVROS on the Shield's host, no SITL there), run bundle signed by the Orin's key, rosbag included. Re-checked on the desktop: `tools/kpi_report.py` counts 1 KPI-grade episode of 2. |
+
+#### Measured on the Orin
+- `tools/profile_shield_tick.py profile --topology hil --cpus 1-3`, the 1,301
+  real flight ticks at 50 active rules and a 5 s / 0.1 s forecast (51 poses),
+  MAXN, clocks not locked (schedutil): `_check` p99 0.977 ms (max 1.047 ms,
+  0 ticks over) against 5 ms; `filter` p99 22.647 ms (max 25.518 ms, 0 over)
+  against 100 ms. Host-speed reference steady (51.0 / 55.8 ms).
+  `deploy/evidence/hil/shield_tick_profile.json`; the KPI report's profile
+  table now lists it as the only Orin row, within budget.
+- `experiments/bench_shield_50rules.py --horizon 5 --dt 0.1` in the same
+  container: `_check` p99 0.295 / 0.605 / 0.539 ms (clear / grid / near),
+  `filter` p99 1.476 / 4.967 / 5.873 ms; lifecycle at 50 rules: Shield
+  construction p99 17.5 ms (the IR part of the 1 s cold start), hot-apply
+  p99 3.86 ms against 50 ms. `deploy/evidence/hil/bench_shield_50rules_5s_agx.json`.
+- The image as the Orin built it: Ubuntu 24.04, ROS 2 Jazzy, Python 3.12.3
+  for rclpy and the Shield, MAVROS 2.16.0, Cyclone DDS, rosbag2 MCAP,
+  mavlink-router v4 (`deploy/evidence/hil/companion_versions.txt`); the host
+  as the containers read it (`host_facts.json`: is_orin true, MAXN by name).
+- Clocks: the Orin is NTP-synchronised (systemd-timesyncd); its UTC matched
+  the desktop's to within the ssh round trip.
+
+#### Found
+- **The first KPI-grade run shows the first-tick escalation.** At t = 0.10 s
+  the FSM went Normal -> Brake (X1): "nfz-square: repair over theta, lat
+  8.14 m vs theta 2.00 m; projection abandoned", Loiter at 0.2 s, RTL at the
+  30 s loiter timeout, home reached at 30.3 s. P0 escape 0.0, but the target
+  was never approached: the false trigger WP3-15 and ARCH-16 record, now on
+  the canonical rail.
+- mavlink-router's own unit tests do not compile on the Jazzy base (gtest.h
+  302); Docker's default AppArmor profile denies /sys/firmware/** inside a
+  container even with systempaths=unconfined, so the October design never
+  let a container read the board name on an AppArmor host.
+- Three bag topics stayed empty on this rail: /mavros/altitude,
+  /mavros/extended_state, /mavros/setpoint_raw/target_local.
+- The desktop's own build of the same image failed before its first layer:
+  Docker Desktop's VM could not resolve auth.docker.io (no such host).
+
+#### Fixed
+- ba18657: the companion image builds only the mavlink-routerd target.
+- d2ddab3: `deploy/topologies/hil.env` carries the cable's addresses (10.42.0.1
+  desktop, 10.42.0.3 Orin) and says the hil machine is the AGX Orin.
+- 890b723: the evidence services mount the host's board-name file read-only at
+  /run/vlaguard/host/device-tree-model (read after the device tree's own
+  paths) and lift no confinement; guardrail.manifest, the compose file, the
+  runbook, DESIGN-topologies and the tests follow.
+- d0e91bb: the Orin's own lab-dev key (generated there; only the public half
+  is in policies/keys/trusted_signers.json); /etc/nvpmodel.conf mounted so the
+  power mode is recorded by name.
+
+#### Tests
+- test_deploy_configs 69/69, test_manifest 68/68, test_profile_shield_tick
+  43/43, test_bundle 57/57.
+
+#### Limits
+- One mission, the node's own, repeated; the scenario library does not drive
+  this rail yet (the node takes a target and a seed, no start and no pilot).
+- MAXN with the clocks not locked; the runbook's MODE_50W + jetson_clocks
+  session needs sudo on the Orin.
+- The image is built on the Orin only; the desktop build waits on Docker
+  Desktop's DNS.
+
 ### 2026-11-06 — the server-kill test reads the hover from the flight's own records: the lab run's one failure at 61a24ab was the same hover authored `none`, not a short one
 
 #### Found

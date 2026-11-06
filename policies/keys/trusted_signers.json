@@ -7,6 +7,13 @@
       "note": "lab DEVELOPMENT key - not a CA. Replace with the CA the PI names (lab or ITRI) before final delivery.",
       "public_key_hex": "2f52e0132113fe9d457fb30766b12a2e95b0d90b8beb18043bcbe880fdf20ffe",
       "registered": "2026-10-06"
+    },
+    "lab-dev:ed25519:715f70c4647a9701": {
+      "algorithm": "ed25519",
+      "authority": "lab-dev",
+      "note": "lab DEVELOPMENT key of the AGX Orin hil machine (10.42.0.3): signs the run bundles of hil missions packed there. Generated on the Orin (python -m guardrail.bundle keygen), its private key never left it. Not a CA: replace with the CA the PI names (lab or ITRI) before final delivery.",
+      "public_key_hex": "5555acee0e7ba0a075e44b7c1df78bbb5baf5dbb6501a6afd49142b053d47d4d",
+      "registered": "2026-11-06"
     }
   }
 }

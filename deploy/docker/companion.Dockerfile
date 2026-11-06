@@ -65,11 +65,16 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       git ca-certificates meson ninja-build pkg-config g++ python3 \
  && rm -rf /var/lib/apt/lists/*
+# Only the daemon is built. A plain `ninja -C build` also compiles
+# mavlink-router's unit tests, and on the Jazzy base (noble) those fail against
+# the image's own GoogleTest headers (gtest.h:302, "expected '>' before '<'
+# token"; first build on the AGX Orin, 2026-11-06). The tests are the router
+# project's, not this image's; the daemon target needs no GoogleTest.
 RUN git clone --depth 1 --branch "${MAVLINK_ROUTER_REF}" --recurse-submodules \
       --shallow-submodules https://github.com/mavlink-router/mavlink-router.git /src \
  && cd /src \
  && meson setup build . --buildtype=release -Dsystemdsystemunitdir=/usr/lib/systemd/system \
- && ninja -C build \
+ && ninja -C build src/mavlink-routerd \
  && install -m 0755 build/src/mavlink-routerd /usr/local/bin/mavlink-routerd
 
 # --------------------------------------------------------------------------- #

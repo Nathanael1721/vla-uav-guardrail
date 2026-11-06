@@ -1,0 +1,5 @@
+# vlaguard images as built on each host from the same Dockerfiles (2026-11-06)
+# host image id architecture created
+orin(agx, 10.42.0.3) vlaguard/companion:jazzy sha256:8938f2d56e8d81d65fcfbb300fc71e9c4bf5ff28a5f83c6d809f108be33a24a5 arm64 2026-11-06T20:09:46.484605127+08:00
+desktop vlaguard/companion:jazzy sha256:aad0b2682b1432cdadd61cdc242af2e5984d397ee48d19e2c3e221f093a6252b amd64 2026-11-06T13:09:08.117100751Z
+desktop vlaguard/sitl:copter-4.5.7 sha256:ae721bdcd8950c7b142ef67862b4bb9fbbae8899aacbd91172ca689416e394b7 amd64 2026-11-06T14:24:35.974240497Z

@@ -424,23 +424,33 @@ def test_a_flight_run_with_a_serial_link_earns_the_flight_label():
 
 def test_the_containers_that_gather_evidence_can_read_it():
     """guardrail.manifest reads the board name from the device tree and the
-    L4T release from /etc/nv_tegra_release. Docker masks /sys/firmware (where
-    /proc/device-tree points) in a default container, so every service that
-    gathers evidence must lift the masking and mount the release file; the
-    others must not lift it (least privilege)."""
+    L4T release from /etc/nv_tegra_release. Inside a container Docker masks
+    /sys/firmware (where /proc/device-tree points) and its default AppArmor
+    profile denies it; lifting the masking (systempaths=unconfined) did not
+    make the file readable on the AGX Orin, AppArmor on (2026-11-06). Every
+    service that gathers evidence mounts the host's board-name file read-only
+    at the path the manifest reads after the device tree's own, plus the
+    release file and the nvpmodel state; no service lifts Docker's masking
+    or confinement (least privilege)."""
     doc = load_compose(COMPOSE_DIR / "docker-compose.orin.yml")
     ev_services = doc["x-vlaguard"]["evidence_services"]
     assert set(ev_services) == {"mission", "profile", "facts", "vla-bench"}, ev_services
-    assert all(p.startswith(("/proc/device-tree", "/sys/firmware")) for p in M._DT_MODEL_PATHS), \
-        "the manifest reads the board name somewhere Docker does not mask: revisit the opt-out"
+    assert M._DT_MODEL_PATHS[-1] == M._DT_MODEL_MOUNT, M._DT_MODEL_PATHS
+    assert all(p.startswith(("/proc/device-tree", "/sys/firmware"))
+               for p in M._DT_MODEL_PATHS[:-1]),         "the manifest reads the board name from somewhere other than the device tree"
+    board = f"/sys/firmware/devicetree/base/model:{M._DT_MODEL_MOUNT}:ro"
     for name, svc in doc["services"].items():
-        unconfined = "systempaths=unconfined" in (svc.get("security_opt") or [])
+        opts = svc.get("security_opt") or []
+        assert not any(o.startswith(("systempaths=", "apparmor=", "seccomp="))
+                       for o in opts), f"orin/{name} lifts Docker's confinement: {opts}"
+        vols = svc.get("volumes") or []
         if name in ev_services:
-            assert unconfined, f"orin/{name} cannot read /proc/device-tree/model"
-            vols = svc["volumes"]
-            assert any(v == f"{M._TEGRA_RELEASE}:{M._TEGRA_RELEASE}:ro" for v in vols), name
+            assert board in vols, f"orin/{name} cannot read the board name"
+            assert f"{M._TEGRA_RELEASE}:{M._TEGRA_RELEASE}:ro" in vols, name
+            assert "/var/lib/nvpmodel:/var/lib/nvpmodel:ro" in vols, name
+            assert "/etc/nvpmodel.conf:/etc/nvpmodel.conf:ro" in vols, name
         else:
-            assert not unconfined, f"orin/{name} lifts Docker's masking without needing to"
+            assert board not in vols, f"orin/{name} mounts host evidence it does not gather"
     assert doc["services"]["vla-bench"].get("runtime") == "nvidia"
 
 
