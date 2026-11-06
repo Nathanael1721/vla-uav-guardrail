@@ -275,6 +275,11 @@
 #          test_wp4outputs_harness's 3 live-session tests; one test in each
 #          of the two files runs its in-process half and drops the gRPC half
 #          (PARTIAL_RETURNS in tests/test_harnesstruth_ci.py).
+#        - The paraphraser service on loopback (grpcio; since 2026-11-07 the
+#          CSP flights draw their paraphrases from it): test_real_vla_prompt's
+#          flown paraphrase and test_prefix_eval's dry run of the CSP
+#          campaign, 1 test each, SKIP on the requirements-only job and run
+#          on the two jobs that install grpcio.
 #        - jsonschema (3.11 extras only) runs the schema checks of test_csp,
 #          test_policy_hash and test_policy_dsl_grant_form; elsewhere they SKIP.
 #        - pyarrow (pyproject's `export` extra, pinned to vla-drone's 26.0.0;

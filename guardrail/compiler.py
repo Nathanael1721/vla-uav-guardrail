@@ -45,8 +45,10 @@ Three jobs live here.
    grade to the return (the triangle start - target - home), and the
    relevance explanations name the home and any breach action whose mode the
    mission does not allow. The weights stay the grant's 0.5 / 0.3 / 0.2: PDF
-   p6 calls them "placeholders; need empirical tuning during Q2" and names
-   neither the data nor the target of that tuning; nothing here has tuned them.
+   p6 lists their tuning as an open question ("placeholders; need empirical
+   tuning during Q2") and names no objective or data for it. The CSP A/B
+   flights' data (tools/run_csp_flights.ps1) could later serve one; nothing
+   here has tuned them.
 
    Every runtime rule type renders, the three hot-apply classes included
    (dynamic_nfz, time_window_switch, corridor_swap; templates since

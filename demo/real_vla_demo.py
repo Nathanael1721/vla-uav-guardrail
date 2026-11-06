@@ -103,8 +103,9 @@ A STORED PARAPHRASE AS THE INSTRUCTION (--paraphrase-seed / --paraphrase-index)
 
 The per-paraphrase robustness KPI (WP4) needs the pilot to read a paraphrase
 instead of the canonical wording, traceably. `--paraphrase-index i` flies item i
-of the stored set for `--instruction` (experiments/paraphrases/, served through
-guardrail.paraphraser so every item is re-validated against the source);
+of the stored set for `--instruction` (experiments/paraphrases/, served by the
+paraphraser service since 2026-11-07, every item re-validated against the
+source; see paraphrased_instruction);
 `--paraphrase-seed s` flies the first item of the seed-s draw. Only items of
 form `verb_phrase` are flown by default: OpenVLA's frame is "What action should
 the robot take to {instruction}?", and an `utterance` ("Please fly forward,
@@ -119,18 +120,40 @@ The grant's effectiveness evaluation (Prefix Compiler PDF p5) has two modes:
 the offline replay (tools/prefix_eval.py) and the "Always-on A/B": one
 scenario flown twice, Prefix on and off, with the same seed. This demo is the
 flight half; tools/run_csp_flights.ps1 flies the campaign and
-tools/score_csp_flights.py scores it. What each run now records for that:
+tools/score_csp_flights.py scores it. Every record of these flights is
+labelled rail_label(--world): "AirSimNH (classic AirSim, simple_flight), not
+the grant's Project AirSim + ArduPilot rail, not KPI-grade". What each run
+records:
 
   --precision nf4|bf16  how OpenVLA sits on the GPU. nf4 (bitsandbytes 4-bit,
-                    ~4.7 GB, ~0.9 s a decision in July) stays the default;
-                    bf16 is the checkpoint unquantized (~15 GB: it starved
-                    the simulator on the 16 GB card of July, and is meant for
-                    the 24 GB RTX 4090). In vla_run.json, and read by
-                    prefix_eval so a replay loads what flew.
-  --seed N          seeds Python's, NumPy's and torch's generators (SEED_NOTE:
-                    OpenVLA decodes greedily and this flight draws nothing at
-                    random, so two seeds of one arm are two REPEATS, not two
-                    conditions).
+                    ~4.7 GB, ~0.9 s a decision in July) stays this script's
+                    default; the campaign flies bf16, the checkpoint
+                    unquantized (15.1 GB: it starved the simulator on the
+                    16 GB card of July). Before any weight is read the device's
+                    free VRAM, the simulator already on it, is checked against
+                    VRAM_NEED_GB + VRAM_MARGIN_GB; too little, or an
+                    out-of-memory load, refuses the flight with the numbers
+                    (exit 3, metrics.json `refused: vram`), never a silent
+                    fall back to nf4. The peak in use beside the simulator is
+                    sampled after every inference (metrics.json `vram`).
+                    Out of memory IN FLIGHT is the same refusal: the worker
+                    holds zero, the flight stops and lands (exit 3); a worker
+                    that dies of anything else stops it too (exit 4,
+                    metrics.json `stopped`). Until 2026-11-07 a dead worker
+                    left the last action flying to the end.
+  --seed N          the start: a deterministic offset from the spawn pose
+                    drawn from the seed (start_offset: within 3 m and 30 deg),
+                    flown to after the climb and checked (fly_to_start), the
+                    same for the CSP off and on arms of one seed. It also seeds
+                    the generators; OpenVLA decodes greedily (SEED_NOTE).
+  the decision rate decisions per second of the flight, the gaps between them
+                    and each inference's time (metrics.json `decision`): the
+                    G3 question, the grant's 10 Hz observation, is the PI's.
+  a paraphrase      drawn by the paraphraser service (--paraphraser HOST:PORT;
+                    the runner starts one on loopback), recorded with `via`
+                    as the stress harness records it; --paraphrase-in-process
+                    is the explicit, recorded fallback, and a paraphrase run
+                    with neither is refused.
   the Shield        `flight_shield`: the grant's 5 s / 0.1 s forecast, no
                     clock, and since 2026-11-07 no escalation FSM inside it
                     (guardrail.replay.rail_shield). This demo flies `emitted`
@@ -167,6 +190,7 @@ import hashlib
 import json
 import math
 import random
+import re
 import socket
 import sys
 import threading
@@ -249,6 +273,9 @@ LATERAL_SIGN = "unverified: Bridge +y assumed to be the drone's right"
 # exits 3 whatever the reason, so "refused to fly" never shares a code with
 # "the print-out could not decide".
 EXIT_OK, EXIT_OVERFLOW, EXIT_UNKNOWN, EXIT_REFUSED = 0, 1, 2, 3
+# The model's worker died mid-flight (not out of memory, which is the VRAM
+# refusal, EXIT_REFUSED): the flight stopped, landed, and says why.
+EXIT_STOPPED = 4
 _PRINT_EXIT = {None: EXIT_OK, "csp_p0_over_budget": EXIT_OVERFLOW,
                "prompt_over_text_budget": EXIT_OVERFLOW,
                "fit_unproven": EXIT_UNKNOWN, "no_prompt": EXIT_REFUSED}
@@ -260,13 +287,38 @@ PRECISIONS = ("nf4", "bf16")
 DEFAULT_PRECISION = "nf4"
 ATTN_IMPLEMENTATION = "eager"           # no flash-attn on Windows; as in July
 
-# What --seed does, in the run record's words.
-SEED_NOTE = ("seeds Python's, NumPy's and torch's generators (CUDA's too). OpenVLA "
-             "decodes greedily (do_sample=False) and this flight draws nothing at "
-             "random, so the seed changes nothing the model computes: two seeds of "
-             "one arm are two repeats, and what differs between them is GPU kernel "
-             "non-determinism and the inference thread's timing against the "
-             "simulator")
+# VRAM OpenVLA needs on the device, by precision: 15.13 GB allocated after a
+# bf16 load (the smoke check of 2026-11-07) and 4.7 GB at nf4 (July), each
+# plus an allowance of ~0.4 GB for one inference (not measured on its own).
+# A load is refused - with the numbers, never a silent fall back to the other
+# precision - when the device has less free than that plus VRAM_MARGIN_GB
+# left for the simulator's renderer.
+VRAM_NEED_GB = {"bf16": 15.6, "nf4": 5.2}
+VRAM_MARGIN_GB = 1.0
+
+# What --seed does, in the run record's words (the orchestrator's ruling of
+# 2026-11-07: a seed is a start, not a wind).
+SEED_NOTE = ("the seed draws a deterministic start offset from the spawn (start_offset: "
+             "up to START_OFFSET_MAX_M in position and START_YAW_MAX_DEG in heading), "
+             "the same for the CSP off and on arms of one seed, and seeds Python's, "
+             "NumPy's and torch's generators. OpenVLA decodes greedily "
+             "(do_sample=False), so the seed changes nothing the model computes from "
+             "one image and prompt: what differs between seeds is where the flight "
+             "starts and looks")
+
+# The seed's start offset from the spawn pose: a point drawn uniformly in a
+# disc of this radius, and a heading offset up to this either way. Reached
+# through AirSim's position and yaw commands after the climb, before the model
+# flies, within START_TOL_M / START_TOL_DEG or the run is refused.
+START_OFFSET_MAX_M = 3.0
+START_YAW_MAX_DEG = 30.0
+START_TOL_M = 1.0
+START_TOL_DEG = 5.0
+START_TRANSFER_MPS = 1.5
+START_TRANSFER_TIMEOUT_S = 20.0
+# rotateToYawAsync's own "done" margin (AirSim's default is 5 deg, the whole
+# tolerance): asked tighter so a turn that AirSim calls done is inside it.
+START_YAW_MARGIN_DEG = 2.0
 
 # The simulator this demo talks to: classic AirSim's msgpack-rpc. Project
 # AirSim (the CityLife rail) listens on 8989 with another protocol, which the
@@ -276,6 +328,17 @@ PROJECT_AIRSIM_PORT = 8989
 SIM_VEHICLE = "SimpleFlight"
 # Take-off counts as done within this much of the cruise height.
 CRUISE_TOLERANCE_M = 0.5
+# The classic AirSim worlds this demo can be pointed at (--world); every
+# record and document of its flights carries rail_label(world).
+SIM_WORLDS = ("AirSimNH", "Blocks", "LandscapeMountains")
+DEFAULT_WORLD = "AirSimNH"
+
+
+def rail_label(world: str = DEFAULT_WORLD) -> str:
+    """The label every record of these flights carries (the orchestrator's
+    ruling, 2026-11-07): what the image source is, and what it is not."""
+    return (f"{world} (classic AirSim, simple_flight), not the grant's Project AirSim "
+            f"+ ArduPilot rail, not KPI-grade")
 
 
 # --------------------------------------------------------------------------- #
@@ -305,51 +368,107 @@ def compile_flight_csp(policy: Policy, mission: Mission, now: datetime | None = 
                                                   cost_map=cost_map)
 
 
+# The keys of guardrail.paraphraser.Paraphrase.to_record(): a paraphrase drawn
+# by the service is recorded with exactly these, as one drawn in process is.
+_PARAPHRASE_KEYS = ("paraphrase_id", "source_id", "backend", "index", "seed", "text",
+                    "text_sha256", "source_sha256")
+_HOLDS = re.compile(r"holds (\d+)")
+
+
+def _service_draw(src: str, seed: int, client) -> tuple[list[dict], dict]:
+    """Every stored paraphrase of `src` in the order the `seed` draw gives
+    them, from the paraphraser service (records with `form`), and where they
+    came from. The service never pads a draw, so the whole set is asked for
+    in two calls: one over any set's size, whose OUT_OF_RANGE answer names
+    the size, then exactly that many."""
+    where = getattr(client, "address", type(client).__name__)
+    try:
+        reply = client.paraphrase(src, 64, seed, "stored")
+    except Exception as e:                       # noqa: BLE001 - re-raised or retried
+        details = e.details() if callable(getattr(e, "details", None)) else str(e)
+        m = _HOLDS.search(details or "")
+        if not m:
+            raise ValueError(f"the paraphraser service at {where} did not draw a "
+                             f"paraphrase of {src!r}: {details}") from None
+        reply = client.paraphrase(src, int(m.group(1)), seed, "stored")
+    via = {"service": where,
+           "transport": ("mutual TLS" if getattr(client, "secure", False)
+                         else "plaintext (loopback)"),
+           "validator_digest": reply.get("validator_digest"),
+           "store_digest": reply.get("store_digest"),
+           "source_id": reply.get("source_id")}
+    return [dict(r) for r in reply.get("paraphrases") or []], via
+
+
 def paraphrased_instruction(instruction: str, *, seed: int | None = None,
                             index: int | None = None, store_dir=None,
-                            allow_utterance: bool = False) -> tuple[str, dict | None]:
+                            allow_utterance: bool = False, client=None,
+                            in_process: bool = False) -> tuple[str, dict | None]:
     """(the instruction to fly, the paraphrase record or None).
 
     No seed and no index: the instruction as typed, record None. Otherwise a
-    stored paraphrase of it, drawn through guardrail.paraphraser.paraphrase
-    (so it is validated against the source on every use): item `index` of the
-    stored set, or the first item of the `seed` draw. A non-`verb_phrase`
-    item is refused unless `allow_utterance`, because OpenVLA's question frame
-    expects a verb phrase (see the module docstring). Raises
-    paraphraser.UnknownSource when no stored set covers the instruction: a run
-    asked to fly a paraphrase never falls back to the canonical text.
+    stored paraphrase of it: item `index` of the stored set, or the first
+    item of the `seed` draw. A non-`verb_phrase` item is refused unless
+    `allow_utterance`, because OpenVLA's question frame expects a verb phrase
+    (see the module docstring). A run asked to fly a paraphrase never falls
+    back to the canonical text.
+
+    WHO DRAWS IT (2026-11-07, WP4-10). `client` - a paraphraser service
+    client (guardrail.paraphraser_service.ParaphraserClient, --paraphraser) -
+    draws it, as the reference design's orchestrator gets "paraphrased
+    variants" from the Paraphraser service; the record's `via` names the
+    service, the transport and the validator and store digests the reply
+    carried. `in_process` (--paraphrase-in-process) is the explicit fallback:
+    drawn through guardrail.paraphraser in this process, and `via` says so.
+    A paraphrase asked for with neither is refused (ValueError): a flown
+    paraphrase is never drawn in process unless asked. Both draw the same ids
+    and text.
     """
     if seed is None and index is None:
         return instruction, None
     from guardrail import paraphraser as P
     src = P.normalise_source(instruction)
-    size = P.get_backend("stored", store_dir).size(src)
-    draw = P.paraphrase(src, n=size, seed=0 if seed is None else seed,
-                        backend="stored", store_dir=store_dir)
+    draw_seed = 0 if seed is None else int(seed)
+    if client is not None:
+        items, via = _service_draw(src, draw_seed, client)
+    elif in_process:
+        size = P.get_backend("stored", store_dir).size(src)
+        drawn = P.paraphrase(src, n=size, seed=draw_seed, backend="stored",
+                             store_dir=store_dir)
+        items = [dict(pp.to_record(), form=pp.provenance.get("form") or "",
+                      store_file=pp.provenance.get("store_file")) for pp in drawn]
+        via = {"in_process": True, "flag": "--paraphrase-in-process",
+               "validator_digest": P.validator_digest(),
+               "store_digest": P.store_digest(store_dir)}
+    else:
+        raise ValueError(
+            "a flown paraphrase is drawn by the paraphraser service: give "
+            "--paraphraser HOST:PORT (tools/run_csp_flights.ps1 starts one on "
+            "loopback), or --paraphrase-in-process for the recorded in-process "
+            "fallback")
     if index is not None:
-        hit = [pp for pp in draw if pp.index == index]
+        hit = [it for it in items if it.get("index") == index]
         if not hit:
             raise ValueError(f"--paraphrase-index {index}: the stored set for "
-                             f"{src!r} has indices {sorted(pp.index for pp in draw)}")
+                             f"{src!r} has indices {sorted(it.get('index') for it in items)}")
         pick = hit[0]
     else:
-        ok = [pp for pp in draw
-              if allow_utterance or pp.provenance.get("form") == "verb_phrase"]
+        ok = [it for it in items if allow_utterance or it.get("form") == "verb_phrase"]
         if not ok:
             raise ValueError(f"the stored set for {src!r} has no verb_phrase item")
         pick = ok[0]
-    form = pick.provenance.get("form")
+    form = pick.get("form") or None
     if form != "verb_phrase" and not allow_utterance:
         raise ValueError(
-            f"stored paraphrase {pick.index} of {src!r} is form {form!r}, not "
+            f"stored paraphrase {pick.get('index')} of {src!r} is form {form!r}, not "
             f"'verb_phrase': in OpenVLA's 'What action should the robot take to "
             f"...?' frame it would test grammar as well as wording. Pick a "
             f"verb_phrase item, or pass --paraphrase-allow-utterance to record "
             f"the confound.")
-    rec = dict(pick.to_record(), form=form,
-               grammar_confound=form != "verb_phrase",
-               store_file=pick.provenance.get("store_file"))
-    return pick.text, rec
+    rec = {k: pick.get(k) for k in _PARAPHRASE_KEYS}
+    rec.update(form=form, grammar_confound=form != "verb_phrase",
+               store_file=pick.get("store_file"), via=via)
+    return pick["text"], rec
 
 
 def build_openvla_prompt(instruction: str, csp: str | None = None) -> str:
@@ -832,6 +951,15 @@ class OpenVLABackend:
         self._n_inf = 0
         self._n_refused = 0
         self.infer_s: list[float] = []          # each inference's own time
+        self.infer_done_t: list[float] = []     # when each one finished (decision rate)
+        # The device's VRAM as the flight ran (the simulator on the same card):
+        # the verdict at load (vram_verdict) and the peak sampled after every
+        # inference. None where the backend has no CUDA to ask.
+        self.vram_at_load: dict | None = None
+        self.vram_peak: dict | None = None
+        # Why the worker died mid-flight (_fail), or None: the control loop
+        # stops the flight on it instead of flying the last action on.
+        self.worker_error: dict | None = None
         self.proc, self.model, self.torch = self._load()
         if prompts.tokenizer is None:
             # Preflight had no tokenizer file; the processor's is the exact one.
@@ -854,6 +982,14 @@ class OpenVLABackend:
         if precision not in PRECISIONS:
             raise ValueError(f"precision {precision!r} is not one of {PRECISIONS}")
         self.seeded = seed_everything(getattr(self, "seed", None), torch)
+        # Does it fit beside what already runs on the card (the simulator)?
+        # Refused with the numbers before any weight is read: never a silent
+        # fall back to another precision.
+        free, total = torch.cuda.mem_get_info()
+        verdict = vram_verdict(precision, free, total)
+        self.vram_at_load = verdict
+        if not verdict["fits"]:
+            raise VramRefused(verdict)
         print(f"[vla] loading {MODEL_ID} ({precision}) ...")
         t0 = time.time()
         proc = AutoProcessor.from_pretrained(MODEL_ID, trust_remote_code=True)
@@ -871,11 +1007,72 @@ class OpenVLABackend:
                 bnb_4bit_quant_type="nf4")
         # bf16: the checkpoint's weights as published, placed on GPU 0 shard by
         # shard (device_map), so the CPU never holds the whole 15 GB.
-        model = AutoModelForVision2Seq.from_pretrained(MODEL_ID, **kw).eval()
+        try:
+            model = AutoModelForVision2Seq.from_pretrained(MODEL_ID, **kw).eval()
+        except torch.cuda.OutOfMemoryError as e:
+            free, total = torch.cuda.mem_get_info()
+            raise VramRefused(dict(verdict, fits=False, detail=(
+                f"CUDA ran out of memory loading OpenVLA at {precision} ({e}); "
+                f"{free / 1e9:.2f} GB free of {total / 1e9:.2f} GB after the "
+                f"attempt. {verdict['detail']}"))) from e
         self.load_s = round(time.time() - t0, 1)
         self.vram_gb = round(torch.cuda.memory_allocated() / 1e9, 2)
-        print(f"[vla] loaded in {self.load_s:.0f}s (VRAM {self.vram_gb:.1f} GB, {precision})")
+        free, total = torch.cuda.mem_get_info()
+        self.vram_at_load = dict(verdict, allocated_gb_after_load=self.vram_gb,
+                                 device_used_gb_after_load=round((total - free) / 1e9, 2))
+        print(f"[vla] loaded in {self.load_s:.0f}s (VRAM {self.vram_gb:.1f} GB, {precision}; "
+              f"device {(total - free) / 1e9:.1f} of {total / 1e9:.1f} GB in use)")
         return proc, model, torch
+
+    def _sample_vram(self) -> None:
+        """The device's VRAM after an inference (the simulator included): the
+        peak in use, the least free, and the model's own peak allocation."""
+        cuda = getattr(self.torch, "cuda", None)
+        if cuda is None or not hasattr(cuda, "mem_get_info"):
+            return
+        try:
+            free, total = cuda.mem_get_info()
+            mine = cuda.max_memory_allocated() / 1e9
+        except Exception:                        # noqa: BLE001 - a sample, not a rule
+            return
+        used = (total - free) / 1e9
+        with self._lock:
+            p = self.vram_peak or {"device_used_peak_gb": 0.0, "device_free_min_gb": None,
+                                   "model_allocated_peak_gb": 0.0, "samples": 0}
+            p["device_used_peak_gb"] = round(max(p["device_used_peak_gb"], used), 2)
+            fmin = free / 1e9
+            p["device_free_min_gb"] = round(fmin if p["device_free_min_gb"] is None
+                                            else min(p["device_free_min_gb"], fmin), 2)
+            p["model_allocated_peak_gb"] = round(max(p["model_allocated_peak_gb"], mine), 2)
+            p["total_gb"] = round(total / 1e9, 2)
+            p["samples"] += 1
+            self.vram_peak = p
+
+    def _fail(self, e: BaseException) -> None:
+        """The worker died. Until 2026-11-07 its thread just ended and the
+        control loop flew the last action for the rest of the flight. Now it
+        holds zero (hover), and `worker_error` says why so the flight stops:
+        CUDA out of memory beside the simulator is the VRAM refusal, with the
+        device's numbers; anything else is a stopped flight."""
+        oom_type = getattr(getattr(self.torch, "cuda", None), "OutOfMemoryError", None)
+        oom = ((isinstance(oom_type, type) and isinstance(e, oom_type))
+               or "out of memory" in str(e).lower())
+        if oom:
+            self._sample_vram()
+        with self._lock:
+            self._last = Action4D()
+            self._last_inf = None
+            peak = dict(self.vram_peak) if self.vram_peak else None
+            rec = {"kind": "vram" if oom else "worker_error",
+                   "detail": f"{type(e).__name__}: {e}", "after_inferences": self._n_inf}
+            if oom:
+                rec["vram_peak"] = peak
+                rec["detail"] = (f"CUDA ran out of memory in flight after {self._n_inf} "
+                                 f"inference(s) at {self.precision} beside the simulator "
+                                 f"(device peak {(peak or {}).get('device_used_peak_gb')} of "
+                                 f"{(peak or {}).get('total_gb')} GB in use): {type(e).__name__}: {e}")
+            self.worker_error = rec
+        print(f"  [vla] WORKER STOPPED ({rec['kind']}): {rec['detail']} - holding zero")
 
     def prompt(self) -> dict:
         """The prompt record for the policy in force now (see FlightPrompt)."""
@@ -958,6 +1155,8 @@ class OpenVLABackend:
                     n = self._n_inf
                     self._last_inf = n
                     self.infer_s.append(round(infer_s, 4))
+                    self.infer_done_t.append(time.time())
+                self._sample_vram()
                 if log is not None:
                     log.write(json.dumps(step_record(
                         n, frame_index, frame_file, state, r, self.scale, prec,
@@ -966,6 +1165,8 @@ class OpenVLABackend:
                 if n % 5 == 1:
                     print(f"  [vla#{n}] yaw={state.yaw_deg:6.1f} raw={r[:3].round(4)} -> "
                           f"act=({act.vx:.2f},{act.vy:.2f},{act.vz_up:.2f})")
+        except Exception as e:                   # noqa: BLE001 - recorded; the flight stops
+            self._fail(e)
         finally:
             if log is not None:
                 log.close()
@@ -1074,6 +1275,114 @@ def seed_everything(seed: int | None, torch=None) -> dict:
             cuda.manual_seed_all(seed)
             done.append("torch.cuda")
     return {"seed": seed, "seeded": done, "note": SEED_NOTE}
+
+
+def start_offset(seed: int | None) -> dict:
+    """The seed's start: an offset from the spawn pose, drawn with Python's
+    own Mersenne Twister (`random.Random(seed).random()`, whose stream Python
+    keeps stable across versions), so the CSP off and on arms of one seed -
+    and a paraphrase run at that seed - start from the same pose. A point
+    uniform in a disc of START_OFFSET_MAX_M, a heading offset uniform within
+    +-START_YAW_MAX_DEG. No seed: the spawn itself, as before 2026-11-07."""
+    if seed is None:
+        return {"seed": None, "dx_m": 0.0, "dy_m": 0.0, "dyaw_deg": 0.0,
+                "rule": "no --seed: the spawn pose itself"}
+    r = random.Random(int(seed))
+    u1, u2, u3 = r.random(), r.random(), r.random()
+    radius = START_OFFSET_MAX_M * math.sqrt(u1)
+    bearing = 2.0 * math.pi * u2
+    return {"seed": int(seed),
+            "dx_m": round(radius * math.cos(bearing), 3),
+            "dy_m": round(radius * math.sin(bearing), 3),
+            "dyaw_deg": round((2.0 * u3 - 1.0) * START_YAW_MAX_DEG, 2),
+            "rule": (f"random.Random(seed): u1, u2, u3; north/east offset "
+                     f"{START_OFFSET_MAX_M:g} m * sqrt(u1) at bearing 2*pi*u2, heading "
+                     f"offset {START_YAW_MAX_DEG:g} deg * (2*u3 - 1); from the spawn pose")}
+
+
+def _wrap_deg(a: float) -> float:
+    return (a + 180.0) % 360.0 - 180.0
+
+
+def fly_to_start(client, spawn: State, off: dict, alt_m: float) -> dict:
+    """After the climb, before the model flies: AirSim's own position and yaw
+    commands (set-up, like the take-off and the climb, not through the
+    Shield) to the spawn plus the seed's offset, then the pose is read back.
+    `reached` False when it is not within START_TOL_M / START_TOL_DEG."""
+    tx, ty = spawn.x + off["dx_m"], spawn.y + off["dy_m"]
+    tyaw = _wrap_deg(spawn.yaw_deg + off["dyaw_deg"])
+    client.moveToPositionAsync(tx, ty, -alt_m, START_TRANSFER_MPS,
+                               timeout_sec=START_TRANSFER_TIMEOUT_S).join()
+    client.rotateToYawAsync(tyaw, timeout_sec=START_TRANSFER_TIMEOUT_S,
+                            margin=START_YAW_MARGIN_DEG).join()
+    got = state_from_pose(client.simGetVehiclePose())
+    err_m = math.hypot(got.x - tx, got.y - ty)
+    err_deg = abs(_wrap_deg(got.yaw_deg - tyaw))
+    return {"spawn": {"x": spawn.x, "y": spawn.y, "yaw_deg": spawn.yaw_deg},
+            "target": {"x": round(tx, 3), "y": round(ty, 3), "up": alt_m,
+                       "yaw_deg": round(tyaw, 2)},
+            "reached_pose": {"x": got.x, "y": got.y, "up": got.up, "yaw_deg": got.yaw_deg},
+            "error_m": round(err_m, 3), "error_deg": round(err_deg, 2),
+            "tolerance": {"m": START_TOL_M, "deg": START_TOL_DEG},
+            "reached": err_m <= START_TOL_M and err_deg <= START_TOL_DEG,
+            "how": (f"moveToPositionAsync at {START_TRANSFER_MPS:g} m/s, then "
+                    f"rotateToYawAsync (AirSim's API; set-up, not through the Shield)")}
+
+
+class VramRefused(RuntimeError):
+    """The device has too little free VRAM for OpenVLA at this precision
+    (vram_verdict), or the load ran out of it. Carries the numbers; the flight
+    refuses with them rather than fall back to another precision."""
+
+    def __init__(self, record: dict):
+        super().__init__(record["detail"])
+        self.record = record
+
+
+class _NoPlot(Exception):
+    """Why the trajectory plot is skipped when matplotlib is there (a flight
+    stopped before its first control tick has no path to draw)."""
+
+
+def vram_verdict(precision: str, free_b: float, total_b: float) -> dict:
+    """Whether OpenVLA at `precision` fits the device as it is now (the
+    simulator already running): free >= VRAM_NEED_GB + VRAM_MARGIN_GB."""
+    need = VRAM_NEED_GB[precision]
+    free, total = free_b / 1e9, total_b / 1e9
+    fits = free >= need + VRAM_MARGIN_GB
+    return {"precision": precision, "need_gb": need, "margin_gb": VRAM_MARGIN_GB,
+            "free_gb_before_load": round(free, 2), "total_gb": round(total, 2),
+            "used_by_others_gb": round(total - free, 2), "fits": fits,
+            "detail": (f"OpenVLA at {precision} needs {need:g} GB plus {VRAM_MARGIN_GB:g} GB "
+                       f"left for the renderer; the device has {free:.2f} GB free of "
+                       f"{total:.2f} GB ({total - free:.2f} GB in use by everything else "
+                       f"on it, the simulator included)" + ("" if fits else ": does not fit"))}
+
+
+def _quantile(xs: list[float], q: float) -> float | None:
+    if not xs:
+        return None
+    s = sorted(xs)
+    return round(s[min(len(s) - 1, int(round(q * (len(s) - 1))))], 4)
+
+
+def decision_stats(done_t: list[float], infer_s: list[float], t0: float,
+                   t_end: float) -> dict:
+    """The decision rate this flight measured (the G3 question: the grant's
+    observation path asks 10 Hz, a ruling the PI owns): inferences completed
+    while the control loop ran, per second of it, the gaps between them and
+    each inference's own time."""
+    inside = [t for t in done_t if t0 <= t <= t_end]
+    span = t_end - t0
+    gaps = [b - a for a, b in zip(inside, inside[1:])]
+    return {"decisions": len(inside), "flight_s": round(span, 3),
+            "decision_rate_hz": round(len(inside) / span, 4) if span > 0 else None,
+            "decision_interval_s_median": _quantile(gaps, 0.5),
+            "decision_interval_s_p95": _quantile(gaps, 0.95),
+            "infer_s_median": _quantile(infer_s, 0.5),
+            "infer_s_p95": _quantile(infer_s, 0.95),
+            "infer_s_max": round(max(infer_s), 4) if infer_s else None,
+            "grant_observation_hz": 10.0}
 
 
 def flight_shield(policy: Policy):
@@ -1322,11 +1631,26 @@ def main(argv: list[str] | None = None) -> int:
                          "default every run since July flew) or bf16 (unquantized, "
                          "~15 GB; for the 24 GB card)")
     ap.add_argument("--seed", type=int, default=None,
-                    help="seed Python's, NumPy's and torch's generators; recorded. "
-                         "Greedy decoding: a seed is a repeat, not a condition "
-                         "(SEED_NOTE)")
+                    help="the start: a deterministic offset from the spawn drawn from "
+                         "the seed (start_offset), the same for both CSP arms; also "
+                         "seeds the generators. Recorded (SEED_NOTE)")
     ap.add_argument("--max-s", type=float, default=None,
                     help=f"seconds the model flies after take-off (default {MAX_S:g})")
+    ap.add_argument("--world", choices=SIM_WORLDS, default=DEFAULT_WORLD,
+                    help="the classic AirSim world running, for the records' label "
+                         "(rail_label)")
+    ap.add_argument("--paraphraser", default=None, metavar="HOST:PORT",
+                    help="draw --paraphrase-index / --paraphrase-seed from the "
+                         "paraphraser service (python -m guardrail.paraphraser_service "
+                         "serve); plaintext on loopback, or mutual TLS with "
+                         "--paraphraser-pki")
+    ap.add_argument("--paraphraser-pki", default=None,
+                    help="the lab PKI folder for mutual TLS with the paraphraser service")
+    ap.add_argument("--paraphraser-client", default="harness-client",
+                    help="the client certificate name in --paraphraser-pki")
+    ap.add_argument("--paraphrase-in-process", action="store_true",
+                    help="the explicit fallback: draw the paraphrase from the stored "
+                         "set in this process instead of the service (recorded)")
     ap.add_argument("--print-prompt", action="store_true",
                     help="print the exact prompt record and exit: no model, no sim "
                          "(reads OpenVLA's tokenizer.json only, if present)")
@@ -1335,12 +1659,33 @@ def main(argv: list[str] | None = None) -> int:
     max_s = float(MAX_S if args.max_s is None else args.max_s)
     if not (max_s > 0 and math.isfinite(max_s)):
         ap.error(f"--max-s must be a positive number of seconds, got {args.max_s}")
+    if args.paraphraser and args.paraphrase_in_process:
+        ap.error("--paraphraser and --paraphrase-in-process: one source for the paraphrase")
+    rail = rail_label(args.world)
 
     policy = load_policy(args.policy)
     mission = ConstraintCompiler(policy).parse_command(DEFAULT_MISSION)
-    instruction, para = paraphrased_instruction(
-        args.instruction, seed=args.paraphrase_seed, index=args.paraphrase_index,
-        allow_utterance=args.paraphrase_allow_utterance)
+    # The paraphrase, from the paraphraser service unless the in-process
+    # fallback is asked for by name; a refusal costs nothing yet.
+    try:
+        client = None
+        if args.paraphraser and (args.paraphrase_seed is not None
+                                 or args.paraphrase_index is not None):
+            from guardrail.harness_service import paraphraser_client
+            client = paraphraser_client(args.paraphraser, pki_dir=args.paraphraser_pki,
+                                        client_name=args.paraphraser_client)
+        instruction, para = paraphrased_instruction(
+            args.instruction, seed=args.paraphrase_seed, index=args.paraphrase_index,
+            allow_utterance=args.paraphrase_allow_utterance, client=client,
+            in_process=args.paraphrase_in_process)
+    except Exception as e:                       # noqa: BLE001 - every cause refuses
+        why = {"kind": "no_paraphrase", "detail": f"{type(e).__name__}: {e}"}
+        if args.print_prompt:
+            print(json.dumps({"csp": args.csp, "refused": why, "paraphrase": None},
+                             indent=2, ensure_ascii=False))
+        else:
+            print(f"[paraphrase] REFUSING TO FLY (no_paraphrase): {why['detail']}")
+        return EXIT_REFUSED
 
     # PREFLIGHT, before the multi-minute model load and before anything is
     # written: compile the CSP, build and count the prompt, refuse if it fails.
@@ -1352,12 +1697,15 @@ def main(argv: list[str] | None = None) -> int:
     # What this run flies with besides the prompt: --print-prompt shows it, so
     # a dry run checks the whole configuration of a campaign without a model
     # or a simulator (tools/score_csp_flights.py check).
-    flight = {"tag": args.tag, "policy_path": args.policy,
+    offset = start_offset(args.seed)
+    flight = {"tag": args.tag, "rail": rail, "world": args.world,
+              "policy_path": args.policy,
               "policy_id": policy.policy_id, "policy_hash": policy.policy_hash,
               "instruction": args.instruction, "instruction_flown": instruction,
               "mission": mission.model_dump(), "csp_budget_tokens": args.csp_budget,
               "precision": args.precision, "quantization": quantization_note(args.precision),
-              "seed": args.seed, "max_s": max_s, "tick_s": TICK, "scale": args.scale,
+              "seed": args.seed, "start_offset": offset, "max_s": max_s, "tick_s": TICK,
+              "scale": args.scale,
               "dv_h": args.dv_h, "dv_z": args.dv_z, "frames": not args.no_frames,
               "cost_map": args.cost_map, "shield": shield_record(shield),
               "model_id": MODEL_ID, "unnorm_key": UNNORM_KEY}
@@ -1412,8 +1760,17 @@ def main(argv: list[str] | None = None) -> int:
              f" | paraphrase {para['paraphrase_id']} ({para['form']}) of {args.instruction!r}"))
 
     # load the model BEFORE opening the control connection (load takes minutes)
-    vla = OpenVLABackend(prompts, scale=args.scale, out=out, frames_dir=frames_dir,
-                         precision=args.precision, seed=args.seed)
+    try:
+        vla = OpenVLABackend(prompts, scale=args.scale, out=out, frames_dir=frames_dir,
+                             precision=args.precision, seed=args.seed)
+    except VramRefused as e:
+        # Beside the simulator the card has too little for this precision:
+        # refused with the numbers, never flown at another precision instead.
+        print(f"[vla] REFUSING TO FLY (vram): {e.record['detail']}")
+        (out / "metrics.json").write_text(json.dumps({
+            "tag": args.tag, "run_id": run_id, "rail": rail, "refused": "vram",
+            "vram": e.record}, indent=2), encoding="utf-8")
+        return EXIT_REFUSED
     prec, refusal = check_prompt(prompts)         # exact count now, if it was not
     if refusal is not None:
         print(f"[prompt] REFUSING TO FLY ({refusal['kind']}): {refusal['detail']}")
@@ -1430,6 +1787,8 @@ def main(argv: list[str] | None = None) -> int:
     run_rec = {
         "started_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "run_id": run_id, "tag": args.tag,
+        # The orchestrator's ruling (2026-11-07): every record says what this is.
+        "rail": rail, "world": args.world,
         "argv": list(sys.argv[1:] if argv is None else argv),
         "code_revision": _code_revision(),
         "model_id": MODEL_ID, "unnorm_key": UNNORM_KEY, "scale": args.scale,
@@ -1449,7 +1808,8 @@ def main(argv: list[str] | None = None) -> int:
         "quantization": quantization_note(args.precision),
         "attn_implementation": ATTN_IMPLEMENTATION,
         "model_load_s": vla.load_s, "vram_gb_after_load": vla.vram_gb,
-        "seed": args.seed, "seeding": vla.seeded,
+        "vram_at_load": vla.vram_at_load,
+        "seed": args.seed, "seeding": vla.seeded, "start_offset": offset,
         "shield": shield_record(shield),
         "sim": sim_rec,
         "libraries": libs,
@@ -1460,6 +1820,9 @@ def main(argv: list[str] | None = None) -> int:
 
     client = airsim.MultirotorClient()
     client.confirmConnection()
+    # The spawn pose, before take-off: the base of the seed's start offset,
+    # the same for every run on a freshly started simulator.
+    spawn = state_from_pose(client.simGetVehiclePose())
     client.enableApiControl(True)
     client.armDisarm(True)
     client.takeoffAsync().join()
@@ -1480,10 +1843,29 @@ def main(argv: list[str] | None = None) -> int:
         client.armDisarm(False)
         client.enableApiControl(False)
         (out / "metrics.json").write_text(json.dumps({
-            "tag": args.tag, "run_id": run_id, "refused": "cruise_not_reached",
+            "tag": args.tag, "run_id": run_id, "rail": rail,
+            "refused": "cruise_not_reached",
             "up_after_climb_m": round(up, 2), "cruise_alt_m": mission.cruise_alt_m},
             indent=2), encoding="utf-8")
         return EXIT_REFUSED
+    # The seed's start (start_offset): the same pose for both CSP arms.
+    transfer = None
+    if args.seed is not None:
+        transfer = fly_to_start(client, spawn, offset, mission.cruise_alt_m)
+        if not transfer["reached"]:
+            print(f"[flight] REFUSING TO FLY (start_not_reached): {transfer['error_m']} m "
+                  f"and {transfer['error_deg']} deg from the seed's start; landing")
+            client.landAsync().join()
+            client.armDisarm(False)
+            client.enableApiControl(False)
+            (out / "metrics.json").write_text(json.dumps({
+                "tag": args.tag, "run_id": run_id, "rail": rail,
+                "refused": "start_not_reached", "start_offset": offset,
+                "start_transfer": transfer}, indent=2), encoding="utf-8")
+            return EXIT_REFUSED
+        print(f"[flight] at the seed's start: offset ({offset['dx_m']:+.2f}, "
+              f"{offset['dy_m']:+.2f}) m, heading {offset['dyaw_deg']:+.1f} deg "
+              f"(error {transfer['error_m']} m, {transfer['error_deg']} deg)")
     vla.start()                                   # inference thread from here on
     print("[flight] cruise reached — real VLA now flying (guardrail ON)")
 
@@ -1496,6 +1878,12 @@ def main(argv: list[str] | None = None) -> int:
     tick = 0
     try:
         while time.time() - t0 < max_s:
+            if vla.worker_error is not None:
+                # The model is gone (out of memory beside the simulator, or a
+                # crash): stop here rather than fly a frozen command on.
+                print(f"[flight] STOPPED ({vla.worker_error['kind']}) after "
+                      f"{time.time() - t0:.1f} s: {vla.worker_error['detail']}; landing")
+                break
             tick += 1
             state = state_from_pose(client.simGetVehiclePose())   # heading included
             raw, n_inf = vla.latest()             # never blocks; n_inf: see latest()
@@ -1521,6 +1909,7 @@ def main(argv: list[str] | None = None) -> int:
             time.sleep(TICK)
     finally:
         log.close()
+    t_end = time.time()
 
     vla.stop()
     # gentle landing: slow descent instead of landAsync's drop
@@ -1553,12 +1942,28 @@ def main(argv: list[str] | None = None) -> int:
     # same function every rail's KPIs come from (guardrail.kpi.compute).
     with vla._lock:
         infer_s = list(vla.infer_s)
+        done_t = list(vla.infer_done_t)
+        vram_peak = dict(vla.vram_peak) if vla.vram_peak else None
+        stopped = dict(vla.worker_error) if vla.worker_error else None
+    # The device's VRAM beside the simulator: at load, and the peak.
+    vram = {"at_load": vla.vram_at_load, "peak": vram_peak}
+    halt = {}
+    if stopped is not None:
+        halt["stopped"] = stopped
+        if stopped["kind"] == "vram":
+            # The VRAM refusal, met in flight: refused with the numbers, as at load.
+            halt["refused"] = "vram"
+            vram["detail"] = stopped["detail"]
     metrics = run_metrics(
         rows, nfz=dwell, collisions=collisions.summary(), n_inf=vla._n_inf,
         n_refused=vla._n_refused, infer_s=infer_s,
-        extra={"tag": args.tag, "run_id": run_id,
-               "rail": "classic AirSim, SimpleFlight (msgpack-rpc): not a grant "
-                       "topology, not KPI-grade",
+        extra={"tag": args.tag, "run_id": run_id, "rail": rail, "world": args.world,
+               **halt,
+               # G3 (the PI's ruling): the decision rate this flight measured.
+               "decision": decision_stats(done_t, infer_s, t0, t_end),
+               "vram": vram,
+               "start_offset": offset, "start_transfer": transfer,
+               "paraphrase_via": None if para is None else para.get("via"),
                "csp": args.csp, "seed": args.seed, "precision": args.precision,
                "instruction": args.instruction, "instruction_flown": instruction,
                "paraphrase_id": None if para is None else para["paraphrase_id"],
@@ -1578,6 +1983,8 @@ def main(argv: list[str] | None = None) -> int:
     (out / "kpi.json").write_text(json.dumps(k, indent=2, ensure_ascii=False, default=str),
                                   encoding="utf-8")
     try:
+        if not traj:
+            raise _NoPlot("no control tick was flown")
         import matplotlib
         matplotlib.use("Agg")
         import matplotlib.pyplot as plt
@@ -1601,6 +2008,7 @@ def main(argv: list[str] | None = None) -> int:
         ax.set_xlabel("East (m)")
         ax.set_ylabel("North (m)")
         ax.set_title(f"REAL VLA (OpenVLA-7B) through the guardrail | CSP {args.csp}\n"
+                     f"{args.world} (classic AirSim, simple_flight), not KPI-grade\n"
                      f"instruction: {instruction!r}\n"
                      f"NFZ time {nfz_s:.1f}s | shield interventions {n_touched}")
         ax.legend(loc="upper left", fontsize=9)
@@ -1625,7 +2033,7 @@ def main(argv: list[str] | None = None) -> int:
         fig.tight_layout()
         fig.savefig(out / "trajectory.png", dpi=130)
         print(f"[plot] {out / 'trajectory.png'}")
-    except ImportError as e:
+    except (ImportError, _NoPlot) as e:
         # Name the import that failed: matplotlib imports Pillow too, so
         # "matplotlib missing" can be the wrong diagnosis.
         print(f"[plot] skipped ({type(e).__name__}: {e})")
@@ -1637,6 +2045,11 @@ def main(argv: list[str] | None = None) -> int:
           f"| mean repair {k.get('mean_repair_magnitude_mps')} m/s | outcome "
           f"{k.get('outcome')} | contacts {metrics['collisions']['mission']} "
           f"| {out / 'kpi.json'}")
+    dec = metrics["decision"]
+    print(f"[rate]   {dec['decisions']} decisions in {dec['flight_s']} s = "
+          f"{dec['decision_rate_hz']} Hz (median inference {dec['infer_s_median']} s); "
+          f"VRAM peak {(vram_peak or {}).get('device_used_peak_gb')} of "
+          f"{(vram_peak or {}).get('total_gb')} GB on the device | {rail}")
     if n_steps == 0:
         # Silence reads as success: zero interventions with zero inferences is a
         # model that never flew, not a model that behaved.
@@ -1650,6 +2063,10 @@ def main(argv: list[str] | None = None) -> int:
           f"{', frames in ' + str(out / frames_dir) if frames_dir else ''})")
     print("[note] raw flight is not UAV-sensible (base OpenVLA is arm-trained); "
           "the guardrail keeping it inside the rules is the result.")
+    if stopped is not None:
+        print(f"[report] STOPPED ({stopped['kind']}) after {stopped['after_inferences']} "
+              f"inference(s): {stopped['detail']}. Not a comparable run.")
+        return EXIT_REFUSED if stopped["kind"] == "vram" else EXIT_STOPPED
     return EXIT_OK
 
 

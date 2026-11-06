@@ -693,17 +693,18 @@ caught by the test named in that version.
   missions x 3 clocks) had identical content hashes before and after. The
   grant gives the context no other use, and the natural-language prompt does
   not change with it (the stored paraphrase sets stay valid).
-- **The risk weights are the grant's placeholders, untuned.** PDF p6 (open
-  questions): "The 0.5 / 0.3 / 0.2 weights above are placeholders; need
-  empirical tuning during Q2." The page names no data set, objective or
-  procedure for that tuning, and its outputs table asks only that the
-  function have "configurable weights" (p6), which `csp.RiskWeights` is. The
-  only empirical signal the grant defines for the compiler is its own
-  effectiveness evaluation (p5: violating-candidate rate before vs after,
-  repair magnitude), which no flight has produced yet; the weights also only
-  reorder sentences and choose which P1/P2 rules a budget drops, and no
-  shipped policy reaches the 256-token budget. Tuning them is a decision for
-  after the CSP flights (tools/run_csp_flights.ps1).
+- **The risk weights stay the grant's placeholders, 0.5 / 0.3 / 0.2,
+  untuned.** The PDF lists their tuning as an open question (p6): "The 0.5 /
+  0.3 / 0.2 weights above are placeholders; need empirical tuning during Q2."
+  It names no objective and no data for that tuning, and its outputs table
+  asks only that the function have "configurable weights" (p6), which
+  `csp.RiskWeights` is. The data of the CSP A/B flights
+  (tools/run_csp_flights.ps1: repair rate, repair magnitude and P0 escapes
+  with the CSP on and off, the grant's own effectiveness measures, p5) could
+  later serve such an objective; none has been flown, and the weights are not
+  tuned now (the orchestrator's ruling of 2026-11-07). They also only reorder
+  sentences and choose which P1/P2 rules a budget drops, and no shipped
+  policy reaches the 256-token budget.
 - **`now` is assumed to be in the policy's local time**, as `Shield(now=...)`
   already assumes. No timezone is stored in a policy.
 

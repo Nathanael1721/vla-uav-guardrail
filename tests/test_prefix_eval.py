@@ -36,7 +36,15 @@ aimed at one of them:
     run that recorded none, and a run known to have flown another Shield, or
     one whose record cannot be rebuilt, refused before any model loads;
   * the model is loaded at the flight's precision, and a replay at another
-    one says so.
+    one says so;
+  * the flown half (tools/score_csp_flights.py): the plan is the A/B then
+    the paraphrases, at bf16 in AirSimNH, its paraphrase flights drawn by
+    the paraphraser service (2026-11-07); the dry run starts that service on
+    loopback and catches what would break the A/B (another precision or
+    start on one arm, another CSP, a paraphrase drawn elsewhere); the scorer
+    reports the deltas, the decision rate, the VRAM peak and how many
+    paraphrases the service issued. The dry run needs grpcio and SKIPs
+    without it.
 
 No test loads OpenVLA, torch or AirSim. The real model needs a GPU run on
 recorded frames, which has not been made yet.
@@ -44,6 +52,7 @@ recorded frames, which has not been made yet.
 import contextlib
 import io
 import json
+import socket
 import sys
 import tempfile
 from pathlib import Path
@@ -70,6 +79,25 @@ STATES = [dict(x=4.0, y=15.0, up=20.0, yaw_deg=0.0)] * 4 + \
 # Facing North 10 m short of the zone's margin ring (x 6): 3 m/s forward
 # reaches it inside a 5 s forecast and not inside a 3 s one.
 FAR_SOUTH = [dict(x=-4.0, y=15.0, up=20.0, yaw_deg=0.0)]
+
+
+class Skipped(Exception):
+    """Raised (standalone) when a test cannot run here; counted, never a pass."""
+
+
+def _skip(msg):
+    if "pytest" in sys.modules:
+        import pytest
+        pytest.skip(msg)
+    raise Skipped(msg)
+
+
+def _free_port():
+    s = socket.socket()
+    s.bind(("127.0.0.1", 0))
+    port = s.getsockname()[1]
+    s.close()
+    return port
 
 
 def _shield_rec(policy=URBAN, **kw):
@@ -491,12 +519,24 @@ def test_the_campaign_plan_is_the_ab_then_the_paraphrases():
     for f in plan:
         a = f["args"]
         assert a[a.index("--tag") + 1] == f["tag"] and a[a.index("--csp") + 1] == f["csp"]
-        assert a[a.index("--seed") + 1] == str(f["seed"]) and "--precision" in a
+        assert a[a.index("--seed") + 1] == str(f["seed"])
+        # the orchestrator's rulings (2026-11-07): bf16, AirSimNH
+        assert (a[a.index("--precision") + 1], a[a.index("--world") + 1]) == ("bf16", "AirSimNH")
+        assert Path(a[a.index("--policy") + 1]).is_absolute(), "a relative policy path"
         assert ("--paraphrase-allow-utterance" in a) == (f["family"] == "utterance")
     assert all(f["csp"] == "on" and f["seed"] == 1001 for f in pp)
     assert len({f["paraphrase_id"] for f in pp}) == 8
+    # the paraphrases are drawn by the service the runner starts; the A/B has none
+    assert all(f["args"][f["args"].index("--paraphraser") + 1] == SC.DEFAULT_PARAPHRASER
+               == "127.0.0.1:50061" for f in pp)
+    assert not any("--paraphraser" in f["args"] or "--paraphrase-in-process" in f["args"]
+                   for f in plan[:6])
+    fallback = SC.plan_flights("cspT", phase="paraphrase", per_family=1, paraphraser=None)
+    assert all("--paraphrase-in-process" in f["args"] and "--paraphraser" not in f["args"]
+               for f in fallback), "the in-process fallback is not asked for by name"
     for bad in (dict(prefix="a b"), dict(seeds=(1, 1)), dict(per_family=5),
-                dict(precision="fp8"), dict(families=("poem",)), dict(max_s=0)):
+                dict(precision="fp8"), dict(families=("poem",)), dict(max_s=0),
+                dict(world="CityLife")):
         kw = dict(prefix="cspT") | bad
         try:
             SC.plan_flights(kw.pop("prefix"), **kw)
@@ -511,49 +551,82 @@ def test_the_campaign_plan_is_the_ab_then_the_paraphrases():
 
 def test_the_dry_run_passes_the_plan_and_catches_what_would_break_the_ab():
     """`check` runs real_vla_demo's --print-prompt for every planned flight
-    (no model, no simulator) and passes the real plan. Each mutation of one
-    record - another precision on one arm, a CSP-on run reading another CSP,
-    an off arm carrying text, a paraphrase flown as the canonical wording -
-    is a named problem."""
-    plan = SC.plan_flights("cspD", seeds=(1001,), per_family=1)
-    shown = {f["tag"]: SC.print_prompt(f["args"]) for f in plan}
+    (no model, no simulator), with a loopback paraphraser service started
+    where the plan names one and nothing listens, and passes the real plan.
+    Each mutation of one record - another precision or start on one arm, two
+    seeds with one start, a CSP-on run reading another CSP, an off arm
+    carrying text, a paraphrase flown as the canonical wording or drawn in
+    process - is a named problem."""
+    try:
+        import grpc  # noqa: F401
+    except ImportError as e:
+        _skip(f"no grpcio here ({e}): the paraphrase flights are drawn by the service")
+    addr = f"127.0.0.1:{_free_port()}"
+    plan = SC.plan_flights("cspD", seeds=(1001, 1002), per_family=1, paraphraser=addr)
+    with SC.paraphraser_for(plan) as started:
+        shown = {f["tag"]: SC.print_prompt(f["args"]) for f in plan}
+    assert started == [addr], started
     res = SC.check_flights(plan, shown=shown)
     assert res["problems"] == [], res["problems"]
-    assert res["csp_content_hash"] and len(res["rows"]) == 4
+    assert res["csp_content_hash"] and len(res["rows"]) == 6
+    assert res["rail"] == rv.rail_label("AirSimNH"), res["rail"]
+    assert [r["via"] for r in res["rows"] if r["phase"] == "paraphrase"] == [addr, addr]
+    assert not any("in process" in w for w in res["warnings"]), res["warnings"]
+    starts = {r["seed"]: r["start_offset"] for r in res["rows"]}
+    assert starts[1001] == rv.start_offset(1001) != starts[1002] == rv.start_offset(1002)
     assert any("PASS" in ln for ln in SC.check_lines(res))
 
-    def broken(tag, edit):
+    def broken(edit, *tags):
         s = json.loads(json.dumps(shown))
-        edit(s[tag][1])
+        for t in tags:
+            edit(s[t][1])
         return SC.check_flights(plan, shown={k: tuple(v) for k, v in s.items()})["problems"]
 
-    p = broken("cspD_ab_s1001_on", lambda r: r["flight"].__setitem__("precision", "bf16"))
+    p = broken(lambda r: r["flight"].__setitem__("precision", "nf4"), "cspD_ab_s1001_on")
     assert any("differ in ['precision']" in x for x in p), p
-    p = broken("cspD_pp_verb_phrase_0",
-               lambda r: r.__setitem__("csp_content_hash", "sha256:" + "1" * 64))
+    p = broken(lambda r: r["flight"]["start_offset"].__setitem__(
+        "dx_m", r["flight"]["start_offset"]["dx_m"] + 1.0), "cspD_ab_s1001_on")
+    assert any("differ in ['start_offset']" in x for x in p), p
+    one = shown["cspD_ab_s1001_off"][1]["flight"]["start_offset"]
+    p = broken(lambda r: r["flight"].__setitem__("start_offset", one),
+               "cspD_ab_s1002_off", "cspD_ab_s1002_on")
+    assert p == ["two seeds plan the same start offset"], p
+    p = broken(lambda r: r.__setitem__("csp_content_hash", "sha256:" + "1" * 64),
+               "cspD_pp_verb_phrase_0")
     assert any("different CSPs" in x for x in p), p
-    p = broken("cspD_ab_s1001_off", lambda r: r.__setitem__("prompt", "In: x " + r["prompt"][4:]))
+    p = broken(lambda r: r.__setitem__("prompt", "In: x " + r["prompt"][4:]), "cspD_ab_s1001_off")
     assert any("plain prompt" in x for x in p), p
-    p = broken("cspD_pp_utterance_4", lambda r: r["flight"].__setitem__(
-        "instruction_flown", r["flight"]["instruction"]))
+    p = broken(lambda r: r["flight"].__setitem__("instruction_flown", r["flight"]["instruction"]),
+               "cspD_pp_utterance_4")
     assert any("canonical wording" in x for x in p), p
+    p = broken(lambda r: r["paraphrase"].__setitem__(
+        "via", {"in_process": True, "flag": "--paraphrase-in-process"}), "cspD_pp_verb_phrase_0")
+    assert any("planned from the paraphraser service" in x for x in p), p
 
 
-def _flown(root, tag, *, csp="on", seed=1001, precision="nf4", repair=0.2, mag=1.0,
+RAIL_NH = rv.rail_label("AirSimNH")
+SERVICE = {"service": "127.0.0.1:50061", "transport": "plaintext (loopback)"}
+
+
+def _flown(root, tag, *, csp="on", seed=1001, precision="bf16", repair=0.2, mag=1.0,
            esc=0, outcome="success", nfz=0.0, start=(0.0, 0.0), para=None,
-           csp_hash="sha256:aa", inferences=50):
+           csp_hash="sha256:aa", inferences=50, hz=1.6, vram=19.4, via=None, stopped=None):
     d = root / tag
     d.mkdir(parents=True)
     run = {"tag": tag, "seed": seed, "precision": precision, "shield": {"lookahead_s": 5.0},
            "mission": {"target_x": 40.0}, "max_s": 60.0, "tick_s": 0.1, "scale": 150.0,
            "dv_h": 0.25, "dv_z": 0.15, "csp_budget_tokens": 256, "code_revision": "abc",
-           "instruction": INSTR, "paraphrase": para}
+           "instruction": INSTR, "paraphrase": para, "rail": RAIL_NH,
+           "start_offset": rv.start_offset(seed)}
     m = {"csp": csp, "seed": seed, "repair_rate": repair, "nfz_s": nfz, "ticks": 600,
          "inferences": inferences, "collisions": {"measured": True, "mission": 0},
          "start_pose": {"x": start[0], "y": start[1], "up": 20.0, "yaw_deg": 0.0},
          "policy_hash": "sha256:pp", "csp_content_hash": None if csp == "off" else csp_hash,
          "paraphrase_id": (para or {}).get("paraphrase_id"),
-         "paraphrase_form": (para or {}).get("form")}
+         "paraphrase_form": (para or {}).get("form"), "rail": RAIL_NH,
+         "decision": {"decision_rate_hz": hz, "infer_s_median": 0.6},
+         "vram": {"at_load": None, "peak": {"device_used_peak_gb": vram, "total_gb": 24.0}},
+         "paraphrase_via": via, "stopped": stopped}
     k = {"mean_repair_magnitude_mps": mag, "max_repair_magnitude_mps": mag * 2,
          "p0_escapes": esc, "p0_violation_escape_rate": 0.0, "outcome": outcome,
          "mission_success": outcome == "success" and esc == 0, "mission_fail_reasons": []}
@@ -566,20 +639,29 @@ def test_the_scorer_reports_the_ab_delta_and_the_paraphrase_stability():
     another precision, or a missing arm, is listed with why and left out).
     WP4-09: each paraphrase's outcome against the canonical arm's (the CSP-on
     run at its seed); a run that read another CSP does not count; the
-    robustness table is guardrail.kpi's, the canonical wording as the null."""
+    robustness table is guardrail.kpi's, the canonical wording as the null.
+    Each arm's decision rate and VRAM peak are in the table, the label on
+    top, and the paraphrases the service issued are counted (WP4-10)."""
     root = Path(tempfile.mkdtemp())
-    _flown(root, "cspS_ab_s1001_off", csp="off", repair=0.30, mag=1.2, esc=0, nfz=0.0)
-    _flown(root, "cspS_ab_s1001_on", repair=0.10, mag=0.8, esc=0)
+    _flown(root, "cspS_ab_s1001_off", csp="off", repair=0.30, mag=1.2, esc=0, nfz=0.0,
+           hz=1.62, vram=19.4)
+    _flown(root, "cspS_ab_s1001_on", repair=0.10, mag=0.8, esc=0, hz=1.48, vram=19.6)
     _flown(root, "cspS_ab_s1002_off", csp="off", seed=1002, repair=0.40, mag=1.0)
-    _flown(root, "cspS_ab_s1002_on", seed=1002, repair=0.20, mag=0.9, precision="bf16")
+    _flown(root, "cspS_ab_s1002_on", seed=1002, repair=0.20, mag=0.9, precision="nf4")
     _flown(root, "cspS_ab_s1003_off", csp="off", seed=1003)
     _flown(root, "cspS_ab_s1004_off", csp="off", seed=1004, start=(9.0, 0.0))
     _flown(root, "cspS_ab_s1004_on", seed=1004)
+    _flown(root, "cspS_ab_s1005_off", csp="off", seed=1005)
+    _flown(root, "cspS_ab_s1005_on", seed=1005, stopped={
+        "kind": "worker_error", "detail": "ConnectionError: x", "after_inferences": 4})
     pp = lambda i, f: {"paraphrase_id": f"pp-{i}", "form": f, "backend": "stored"}  # noqa: E731
-    _flown(root, "cspS_pp_verb_phrase_0", para=pp(0, "verb_phrase"))
-    _flown(root, "cspS_pp_utterance_4", para=pp(4, "utterance"), outcome="fail")
-    _flown(root, "cspS_pp_verb_phrase_1", para=pp(1, "verb_phrase"), csp_hash="sha256:bb")
+    _flown(root, "cspS_pp_verb_phrase_0", para=pp(0, "verb_phrase"), via=SERVICE)
+    _flown(root, "cspS_pp_utterance_4", para=pp(4, "utterance"), outcome="fail",
+           via={"in_process": True, "flag": "--paraphrase-in-process"})
+    _flown(root, "cspS_pp_verb_phrase_1", para=pp(1, "verb_phrase"), csp_hash="sha256:bb",
+           via=SERVICE)
     rep = SC.score("cspS", root)
+    assert rep["rail"] == RAIL_NH, rep["rail"]
     pairs = {p["seed"]: p for p in rep["ab"]["pairs"]}
     assert pairs[1001]["valid"] and rep["ab"]["valid_pairs"] == 1, rep["ab"]
     d = pairs[1001]["delta_on_minus_off"]
@@ -587,6 +669,9 @@ def test_the_scorer_reports_the_ab_delta_and_the_paraphrase_stability():
     assert any("precision" in x for x in pairs[1002]["problems"]), pairs[1002]
     assert pairs[1003]["problems"] == ["arm on not flown"]
     assert any("same start" in x for x in pairs[1004]["problems"]), pairs[1004]
+    # a flight whose model died mid-flight is no arm of an A/B
+    assert pairs[1005]["problems"] == ["cspS_ab_s1005_on is stopped"], pairs[1005]
+    assert pairs[1005]["on"]["stopped"] == "worker_error"
     assert rep["ab"]["mean_delta_on_minus_off"]["repair_rate"] == -0.2
     para = {x["tag"]: x for x in rep["paraphrase"]["runs"]}
     assert para["cspS_pp_verb_phrase_0"]["same_outcome_as_canonical"] is True
@@ -596,23 +681,38 @@ def test_the_scorer_reports_the_ab_delta_and_the_paraphrase_stability():
     assert (st["runs"], st["same_outcome"], st["share"]) == (2, 1, 0.5), st
     rb = rep["paraphrase"]["per_paraphrase_robustness"]
     assert rb["canonical_success_rate"] == 1.0 and rb["worst_drop_vs_canonical"] == 1.0, rb
-    text = "\n".join(SC.score_lines(rep))
+    assert [para[t]["via"] for t in sorted(para)] == \
+        ["in-process", SERVICE["service"], SERVICE["service"]], para
+    assert rep["paraphrase"]["issued_by_service"] == 2
+    on = pairs[1001]["on"]
+    assert (on["decision_rate_hz"], on["vram_peak_gb"], on["vram_total_gb"]) == (1.48, 19.6, 24.0)
+    lines = SC.score_lines(rep)
+    text = "\n".join(lines)
     assert "WP4-15" in text and "WP4-09" in text and "INVALID" in text
+    assert lines[1] == RAIL_NH, lines[:2]
+    row = next(ln for ln in lines if ln.split()[:2] == ["1001", "on"])
+    assert row.split()[4:6] == ["1.48", "19.6"], row          # Hz, VRAM
+    assert "issued by the paraphraser service (WP4-10): 2 of 3" in text
+    assert "STOPPED worker_error" in text
     assert any("prefix_eval.py" in c for c in rep["replay"])
 
 
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
-    failed = 0
+    failed = skipped = 0
     for fn in fns:
         try:
             fn()
             print(f"PASS  {fn.__name__}")
+        except Skipped as e:
+            skipped += 1
+            print(f"SKIP  {fn.__name__}\n      {e}")
         except AssertionError as e:
             failed += 1
             print(f"FAIL  {fn.__name__}\n      {e}")
         except Exception as e:                       # noqa: BLE001
             failed += 1
             print(f"ERROR {fn.__name__}\n      {type(e).__name__}: {e}")
-    print(f"\n{len(fns) - failed}/{len(fns)} passed")
+    ran = len(fns) - skipped
+    print(f"\n{ran - failed}/{ran} passed" + (f", {skipped} skipped" if skipped else ""))
     sys.exit(1 if failed else 0)

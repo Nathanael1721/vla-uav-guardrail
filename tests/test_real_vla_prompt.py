@@ -35,7 +35,16 @@ like that can be wrong in quiet ways, and each test below is aimed at one:
     on; the wrong simulator (nothing on the port, Project AirSim, an
     ArduCopter vehicle) is refused before the model loads; a take-off that
     does not reach cruise height lands and refuses; and the rows, metrics
-    and KPIs the scorer reads are written, the KPIs by guardrail.kpi itself.
+    and KPIs the scorer reads are written, the KPIs by guardrail.kpi itself;
+  - the orchestrator's rulings of 2026-11-07: every record says "AirSimNH
+    (classic AirSim, simple_flight), not the grant's Project AirSim +
+    ArduPilot rail, not KPI-grade"; a seed is a start (an offset from the
+    spawn drawn from the seed, the same for both CSP arms, reached or
+    refused); a model that does not fit the card beside the simulator is
+    refused with the numbers, never loaded at another precision; the decision
+    rate and the VRAM peak are measured per flight; and a flown paraphrase is
+    drawn by the paraphraser service (`via` recorded), in process only when
+    asked by name.
 
 The rotation tests are the regression for the body-to-world bug. On the old
 mapping (yaw ignored) `test_yaw_90_forward_flies_east` and
@@ -762,14 +771,20 @@ class _Sim:
     velocity command are recorded."""
 
     def __init__(self, yaw=0.0, frames=1, before_frame=None, exhausted=None,
-                 contacts=None):
+                 contacts=None, transfer_ok=True):
         self.yaw, self.z = yaw, -20.0
+        self.x, self.y = 5.0, 6.0
         self.frames, self.before_frame, self.exhausted = frames, before_frame, exhausted
         self.calls = {"img": 0, "pose": 0, "takeoff": 0, "land": 0, "move": [],
-                      "collision": 0}
+                      "collision": 0, "goto": [], "yaw": []}
         # contacts: None = a simulator without simGetCollisionInfo; else a
         # function of the call number -> (has_collided, time_stamp, object).
         self.contacts = contacts
+        # transfer_ok False: the position and yaw commands are taken and do
+        # nothing (a vehicle that does not move there).
+        self.transfer_ok = transfer_ok
+        # on_move(n): called after the n-th velocity command is recorded.
+        self.on_move = None
 
     def modules(self, stand_in_pil=True):
         """airsim and cv2 stand-ins, and PIL's unless `stand_in_pil` is False
@@ -802,6 +817,8 @@ class _Sim:
 
             def moveByVelocityAsync(self, vx, vy, vz, duration=None):
                 sim.calls["move"].append((vx, vy, vz))
+                if sim.on_move is not None:
+                    sim.on_move(len(sim.calls["move"]))
                 return Fut()
 
             def simGetImage(self, cam, kind):
@@ -816,7 +833,19 @@ class _Sim:
 
             def simGetVehiclePose(self):
                 sim.calls["pose"] += 1
-                return _pose(sim.yaw, z=sim.z)
+                return _pose(sim.yaw, x=sim.x, y=sim.y, z=sim.z)
+
+            def moveToPositionAsync(self, x, y, z, velocity, timeout_sec=None, **kw):
+                sim.calls["goto"].append((x, y, z, velocity))
+                if sim.transfer_ok:
+                    sim.x, sim.y, sim.z = x, y, z
+                return Fut()
+
+            def rotateToYawAsync(self, yaw, timeout_sec=None, margin=None, **kw):
+                sim.calls["yaw"].append(yaw)
+                if sim.transfer_ok:
+                    sim.yaw = yaw
+                return Fut()
 
         if sim.contacts is not None:
             def simGetCollisionInfo(self):
@@ -856,10 +885,14 @@ class _StandInBackend(rv.OpenVLABackend):
     `stop()` puts the drone on the ground so main()'s descent loop ends."""
     proc_tokenizer = None
     sim = None
+    fake_cuda = None          # a torch.cuda stand-in (mem_get_info, ...), or none
+    fail_at = None            # predict_action raises `fail_with` from this call on
+    fail_with = None
 
     def _load(self):
         import numpy as np
         self.seen, self.next_raw, self.after_predict = [], np.array(FWD), None
+        self.predicted = 0
         b = self
 
         class Inputs(dict):
@@ -875,18 +908,24 @@ class _StandInBackend(rv.OpenVLABackend):
 
         def predict_action(**kw):
             assert kw["unnorm_key"] == rv.UNNORM_KEY
+            b.predicted += 1
+            if b.fail_at is not None and b.predicted >= b.fail_at:
+                raise b.fail_with
             raw = b.next_raw
             if b.after_predict is not None:
                 b.after_predict()
             return raw
 
-        return (Proc(), _Obj(predict_action=predict_action),
-                _Obj(no_grad=contextlib.nullcontext, bfloat16="bf16"))
+        torch = _Obj(no_grad=contextlib.nullcontext, bfloat16="bf16")
+        if self.fake_cuda is not None:
+            torch.cuda = self.fake_cuda
+        return (Proc(), _Obj(predict_action=predict_action), torch)
 
     def start(self):
         super().start()
         t = _time.time()
-        while self._n_inf + self._n_refused == 0 and _time.time() - t < 10.0:
+        while self._n_inf + self._n_refused == 0 and self.worker_error is None \
+                and _time.time() - t < 10.0:
             _time.sleep(0.001)
 
     def stop(self):
@@ -1029,23 +1068,40 @@ SIM_OK = ({"api": "stand-in", "address": "stand-in", "vehicle_types": ["SimpleFl
 
 
 def _fly(argv, *, yaw=90.0, frames=3, preflight_tokenizer=CharTokenizer,
-         proc_tokenizer=None, plot=False, z=-20.0, contacts=None, sim_check=SIM_OK):
+         proc_tokenizer=None, plot=False, z=-20.0, contacts=None, sim_check=SIM_OK,
+         transfer_ok=True, fake_cuda=None, load_raises=None, fail_at=None,
+         fail_with=None, before_frame=None, on_move=None):
     """rv.main(argv) end to end: the real preflight, FlightPrompt, backend
     __init__, worker thread, control loop, Shield, audit, run record and
-    report, against `_Sim`. Only `_load` is a stand-in, and the simulator
-    preflight answers `sim_check` (a stand-in sim has no RPC port to probe).
-    Output goes to a temp ROOT. Returns (exit code, out dir, stdout, sim,
-    backend or None)."""
+    report, against `_Sim`. Only `_load` is a stand-in (raising `load_raises`
+    when given; its predict_action raising `fail_with` from call `fail_at`
+    on), and the simulator preflight answers `sim_check` (a stand-in sim has
+    no RPC port to probe). `before_frame(sim, i)` and `on_move(sim, n)` hook
+    the sim. Output goes to a temp ROOT. Returns (exit code, out dir, stdout,
+    sim, backend or None)."""
     tmp = Path(tempfile.mkdtemp())
-    sim, built = _Sim(yaw=yaw, frames=frames, contacts=contacts), []
+    sim, built = _Sim(yaw=yaw, frames=frames, contacts=contacts,
+                      transfer_ok=transfer_ok), []
     sim.z = z
+    sim.built = built                      # every backend main() tried to build
+    if before_frame is not None:
+        sim.before_frame = lambda i: before_frame(sim, i)
+    if on_move is not None:
+        sim.on_move = lambda n: on_move(sim, n)
 
     class Backend(_StandInBackend):
         def __init__(self, *a, **k):
             built.append(self)
             super().__init__(*a, **k)
 
+        def _load(self):
+            if load_raises is not None:
+                raise load_raises
+            return super()._load()
+
     Backend.sim, Backend.proc_tokenizer = sim, proc_tokenizer
+    Backend.fake_cuda = fake_cuda
+    Backend.fail_at, Backend.fail_with = fail_at, fail_with
     mods = sim.modules(stand_in_pil=importlib.util.find_spec("PIL") is None)
     if not plot:
         mods["matplotlib"] = None          # `import matplotlib` raises: plot skipped
@@ -1396,30 +1452,36 @@ def test_a_stored_paraphrase_is_flown_traceably_and_only_as_a_verb_phrase():
     `utterance` item is refused in OpenVLA's question frame unless asked for."""
     text, rec = rv.paraphrased_instruction(INSTR)
     assert (text, rec) == (INSTR, None), "no flag must fly the instruction as typed"
-    t0, r0 = rv.paraphrased_instruction(INSTR, index=0)
+    # Since 2026-11-07 the service draws a flown paraphrase; the in-process
+    # draw is the explicit fallback, and asking for neither is refused.
+    _expect(ValueError, rv.paraphrased_instruction, INSTR, index=0)
+    t0, r0 = rv.paraphrased_instruction(INSTR, index=0, in_process=True)
     assert t0 != INSTR and r0["index"] == 0 and r0["form"] == "verb_phrase", r0
     assert r0["text"] == t0 and r0["paraphrase_id"].startswith("pp-"), r0
     assert r0["grammar_confound"] is False
+    assert r0["via"]["in_process"] is True and r0["via"]["flag"] == "--paraphrase-in-process"
     assert rv.build_openvla_prompt(t0) == f"In: {QUESTION} {t0}?\nOut:"
     # index 4 is an utterance ("Please fly forward, ..."): refused by default
     try:
-        rv.paraphrased_instruction(INSTR, index=4)
+        rv.paraphrased_instruction(INSTR, index=4, in_process=True)
     except ValueError as e:
         assert "verb_phrase" in str(e), e
     else:
         raise AssertionError("an utterance was accepted into the question frame")
-    t4, r4 = rv.paraphrased_instruction(INSTR, index=4, allow_utterance=True)
+    t4, r4 = rv.paraphrased_instruction(INSTR, index=4, allow_utterance=True,
+                                        in_process=True)
     assert r4["form"] == "utterance" and r4["grammar_confound"] is True, r4
     # a seed draw is deterministic and lands on a verb phrase
-    ta, ra = rv.paraphrased_instruction(INSTR, seed=7)
-    tb, rb = rv.paraphrased_instruction(INSTR, seed=7)
+    ta, ra = rv.paraphrased_instruction(INSTR, seed=7, in_process=True)
+    tb, rb = rv.paraphrased_instruction(INSTR, seed=7, in_process=True)
     assert (ta, ra) == (tb, rb) and ra["form"] == "verb_phrase", ra
-    seen = {rv.paraphrased_instruction(INSTR, seed=s)[1]["index"] for s in range(12)}
+    seen = {rv.paraphrased_instruction(INSTR, seed=s, in_process=True)[1]["index"]
+            for s in range(12)}
     assert len(seen) > 1, f"every seed drew the same item {seen}: the seed does nothing"
     # an instruction with no stored set refuses; it never falls back silently
     from guardrail import paraphraser as P
     try:
-        rv.paraphrased_instruction("hover over the moon", index=0)
+        rv.paraphrased_instruction("hover over the moon", index=0, in_process=True)
     except P.UnknownSource:
         pass
     else:
@@ -1429,9 +1491,11 @@ def test_a_stored_paraphrase_is_flown_traceably_and_only_as_a_verb_phrase():
 def test_print_prompt_names_the_paraphrase_it_would_fly():
     out = io.StringIO()
     with contextlib.redirect_stdout(out):
-        code = rv.main(["--print-prompt", "--paraphrase-index", "1"])
+        code = rv.main(["--print-prompt", "--paraphrase-index", "1",
+                        "--paraphrase-in-process"])
     shown = json.loads(out.getvalue())
     assert shown["paraphrase"]["index"] == 1, shown["paraphrase"]
+    assert shown["paraphrase"]["via"]["in_process"] is True
     assert shown["paraphrase"]["text"] in shown["prompt"], shown["prompt"]
     assert INSTR not in shown["prompt"], "the canonical text was flown instead"
     assert code == rv._PRINT_EXIT[None if shown["refused"] is None
@@ -1499,7 +1563,8 @@ def test_precision_and_seed_are_checked_and_said_plainly():
     assert draw == (random.random(), float(np.random.rand())), "the seed seeded nothing"
     assert calls == [("torch", 1001), ("cuda", 1001)], calls
     assert a["seeded"] == ["random", "numpy", "torch", "torch.cuda"] and b["seed"] == 1001
-    assert "repeats" in a["note"] and rv.seed_everything(None)["seeded"] == []
+    assert "start offset" in a["note"] and "greedily" in a["note"], a["note"]
+    assert rv.seed_everything(None)["seeded"] == []
 
 
 def test_main_records_the_precision_seed_shield_and_simulator_it_flew_with():
@@ -1542,6 +1607,9 @@ def test_main_writes_the_rows_metrics_and_kpis_the_scorer_reads():
     assert m["csp"] == "on" and m["shield"] == "on" and m["inferences"] == 3
     assert m["collisions"]["measured"] is False and m["collisions"]["mission"] is None
     assert m["start_pose"] == {k: rows[0][k] for k in ("x", "y", "up", "yaw_deg")}
+    # no --seed: the spawn is the start, and nothing moved the vehicle there
+    assert m["start_transfer"] is None and sim.calls["goto"] == [] == sim.calls["yaw"]
+    assert (m["start_offset"]["dx_m"], m["start_offset"]["dyaw_deg"]) == (0.0, 0.0)
     k = json.loads((out / "kpi.json").read_text(encoding="utf-8"))
     want = KPI.compute(rows, KPI.rule_priorities(load_policy(URBAN)), m)
     assert k == json.loads(json.dumps(want, default=str)), "kpi.json is not kpi.compute"
@@ -1650,6 +1718,340 @@ def test_the_simulator_preflight_refuses_the_wrong_simulator_before_the_model_lo
     assert b is None, "the model was loaded for a simulator that was refused"
     assert not out.exists(), "a refused run wrote output"
     assert sim.calls["takeoff"] == 0
+
+
+# --------------------------------------------------------------------------- #
+# The orchestrator's rulings of 2026-11-07: the label, the seed's start, VRAM,
+# the decision rate, and the paraphraser service
+# --------------------------------------------------------------------------- #
+
+# Spelled out, not read from the module, so an edit to the label cannot pass
+# itself.
+RAIL_NH = ("AirSimNH (classic AirSim, simple_flight), not the grant's Project AirSim "
+           "+ ArduPilot rail, not KPI-grade")
+
+
+def test_every_record_says_airsimnh_not_the_grants_rail_not_kpi_grade():
+    assert rv.rail_label() == rv.rail_label("AirSimNH") == RAIL_NH
+    code, rec = _main_json(["--csp", "on", "--print-prompt"])
+    assert (rec["flight"]["rail"], rec["flight"]["world"]) == (RAIL_NH, "AirSimNH"), rec["flight"]
+    code, rec = _main_json(["--print-prompt", "--world", "Blocks"])
+    assert rec["flight"]["rail"].startswith("Blocks (classic AirSim, simple_flight)")
+    assert rec["flight"]["rail"].endswith("not KPI-grade")
+    code, out, stdout, sim, b = _fly(
+        ["--csp", "on", "--tag", "rail", "--policy", str(URBAN)], yaw=0.0)
+    assert code == rv.EXIT_OK, stdout[-1500:]
+    run = json.loads((out / "vla_run.json").read_text(encoding="utf-8"))
+    m = json.loads((out / "metrics.json").read_text(encoding="utf-8"))
+    assert run["rail"] == m["rail"] == RAIL_NH, (run["rail"], m["rail"])
+    assert run["world"] == m["world"] == "AirSimNH"
+    assert RAIL_NH in stdout, "the report does not say what the flight was"
+
+
+def test_the_seed_draws_one_start_for_both_csp_arms():
+    """The ruling: a seed is a start - a position within a few metres of the
+    spawn and a heading offset, drawn from the seed by the rule the record
+    states, identical for the CSP off and on arms, recorded - and no wind
+    (the stand-in sim has no wind call: one would fail the flight)."""
+    import random
+    a = rv.start_offset(1001)
+    assert a == rv.start_offset(1001) and a["seed"] == 1001, a
+    r = random.Random(1001)
+    u1, u2, u3 = r.random(), r.random(), r.random()
+    radius, bearing = 3.0 * math.sqrt(u1), 2.0 * math.pi * u2
+    assert a["dx_m"] == round(radius * math.cos(bearing), 3), a
+    assert a["dy_m"] == round(radius * math.sin(bearing), 3), a
+    assert a["dyaw_deg"] == round((2.0 * u3 - 1.0) * 30.0, 2), a
+    offs = [rv.start_offset(s) for s in range(1001, 1041)]
+    assert all(math.hypot(o["dx_m"], o["dy_m"]) <= 3.0 + 1e-9 for o in offs)
+    assert all(abs(o["dyaw_deg"]) <= 30.0 for o in offs)
+    assert len({(o["dx_m"], o["dy_m"], o["dyaw_deg"]) for o in offs}) == len(offs)
+    none = rv.start_offset(None)
+    assert (none["dx_m"], none["dy_m"], none["dyaw_deg"]) == (0.0, 0.0, 0.0), none
+
+    flown = {}
+    for arm in ("off", "on"):
+        code, out, stdout, sim, b = _fly(
+            ["--csp", arm, "--tag", f"start_{arm}", "--policy", str(URBAN),
+             "--seed", "1001"], yaw=10.0)
+        assert code == rv.EXIT_OK, (arm, stdout[-1500:])
+        run = json.loads((out / "vla_run.json").read_text(encoding="utf-8"))
+        m = json.loads((out / "metrics.json").read_text(encoding="utf-8"))
+        assert run["start_offset"] == m["start_offset"] == a, (arm, run["start_offset"])
+        t = m["start_transfer"]
+        assert t["reached"] is True and t["error_m"] == 0.0, (arm, t)
+        assert (t["spawn"]["x"], t["spawn"]["y"]) == (5.0, 6.0)
+        assert _close(t["spawn"]["yaw_deg"], 10.0, 1e-6), t["spawn"]
+        cruise = run["mission"]["cruise_alt_m"]
+        assert sim.calls["goto"] == [(5.0 + a["dx_m"], 6.0 + a["dy_m"], -cruise,
+                                      rv.START_TRANSFER_MPS)], sim.calls["goto"]
+        assert len(sim.calls["yaw"]) == 1
+        assert _close(sim.calls["yaw"][0], rv._wrap_deg(t["spawn"]["yaw_deg"] + a["dyaw_deg"]),
+                      1e-9), sim.calls["yaw"]
+        # the model's first tick is at the seed's start, not at the spawn
+        assert _close(m["start_pose"]["x"], 5.0 + a["dx_m"], 1e-9), m["start_pose"]
+        assert _close(m["start_pose"]["yaw_deg"], sim.calls["yaw"][0], 1e-6)
+        flown[arm] = (sim.calls["goto"], sim.calls["yaw"])
+    assert flown["off"] == flown["on"], flown
+
+
+def test_a_start_the_vehicle_does_not_reach_lands_and_refuses():
+    seed = next(s for s in range(1001, 1100)
+                if math.hypot(rv.start_offset(s)["dx_m"], rv.start_offset(s)["dy_m"])
+                > rv.START_TOL_M)
+    code, out, stdout, sim, b = _fly(
+        ["--csp", "on", "--tag", "nostart", "--policy", str(URBAN), "--seed", str(seed)],
+        transfer_ok=False)
+    assert code == rv.EXIT_REFUSED, (code, stdout[-800:])
+    assert "REFUSING TO FLY (start_not_reached)" in stdout and sim.calls["land"] == 1
+    assert b is not None and b._thread.ident is None, "the model flew from the wrong start"
+    m = json.loads((out / "metrics.json").read_text(encoding="utf-8"))
+    assert m["refused"] == "start_not_reached" and m["rail"] == RAIL_NH, m
+    assert m["start_transfer"]["reached"] is False, m["start_transfer"]
+    assert m["start_transfer"]["error_m"] > rv.START_TOL_M
+    assert m["start_offset"] == rv.start_offset(seed)
+    assert not (out / "flight_log.jsonl").exists() and _steps(out) == []
+
+
+def test_vram_verdict_says_the_numbers():
+    v = rv.vram_verdict("bf16", 14.0e9, 24.0e9)
+    assert v["fits"] is False and (v["need_gb"], v["margin_gb"]) == (15.6, 1.0), v
+    assert (v["free_gb_before_load"], v["total_gb"], v["used_by_others_gb"]) == (14.0, 24.0, 10.0)
+    assert "14.00 GB free of 24.00 GB" in v["detail"] and "does not fit" in v["detail"]
+    assert rv.vram_verdict("bf16", 16.7e9, 24.0e9)["fits"] is True
+    assert rv.vram_verdict("bf16", 16.5e9, 24.0e9)["fits"] is False
+    assert rv.vram_verdict("nf4", 6.3e9, 16.0e9)["fits"] is True
+
+
+def _stand_in_torch(free_b, total_b, oom=False):
+    """torch and transformers stand-ins for the REAL OpenVLABackend._load:
+    the device reports `free_b` of `total_b` bytes free; with `oom` the model
+    load runs out of memory. Every from_pretrained call is recorded."""
+    calls = []
+
+    class OOM(RuntimeError):
+        pass
+
+    torch = types.ModuleType("torch")
+    torch.bfloat16 = "bf16"
+    torch.manual_seed = lambda s: None
+    torch.cuda = types.SimpleNamespace(
+        is_available=lambda: True, manual_seed_all=lambda s: None,
+        mem_get_info=lambda: (free_b, total_b), memory_allocated=lambda: 15.13e9,
+        max_memory_allocated=lambda: 15.2e9, OutOfMemoryError=OOM)
+
+    def loader(kind):
+        def from_pretrained(*a, **k):
+            calls.append((kind, k))
+            if oom and kind == "model":
+                raise OOM("CUDA out of memory. Tried to allocate 2.00 GiB")
+            return _Obj(eval=lambda: "model") if kind == "model" else "proc"
+        return _Obj(from_pretrained=from_pretrained)
+
+    tf = types.ModuleType("transformers")
+    tf.AutoModelForVision2Seq, tf.AutoProcessor = loader("model"), loader("processor")
+    tf.BitsAndBytesConfig = lambda **k: ("bnb", k)
+    return {"torch": torch, "transformers": tf}, calls
+
+
+def test_a_load_that_does_not_fit_beside_the_simulator_is_refused_with_its_numbers():
+    """The ruling: fly bf16, and if it does not fit beside AirSimNH refuse
+    with the number, never fall back. The REAL `_load` runs here against
+    torch/transformers stand-ins: the free VRAM is checked before a weight is
+    read, and a load that runs out of memory is the same refusal - not a
+    crash, and not nf4."""
+    bare = object.__new__(rv.OpenVLABackend)
+    bare.precision, bare.seed = "bf16", None
+    mods, calls = _stand_in_torch(14.0e9, 24.0e9)
+    with _stand_in_modules(mods), contextlib.redirect_stdout(io.StringIO()):
+        e = _expect(rv.VramRefused, rv.OpenVLABackend._load, bare)
+    assert e.record["fits"] is False and e.record["free_gb_before_load"] == 14.0, e.record
+    assert calls == [], f"weights were read for a load that cannot fit: {calls}"
+    assert bare.vram_at_load == e.record
+
+    mods, calls = _stand_in_torch(20.0e9, 24.0e9, oom=True)
+    with _stand_in_modules(mods), contextlib.redirect_stdout(io.StringIO()):
+        e = _expect(rv.VramRefused, rv.OpenVLABackend._load, bare)
+    assert e.record["fits"] is False and "ran out of memory" in e.record["detail"], e.record
+    assert [c[0] for c in calls] == ["processor", "model"], calls
+    assert "quantization_config" not in calls[1][1], "bf16 was loaded quantized"
+
+    mods, calls = _stand_in_torch(20.0e9, 24.0e9)
+    with _stand_in_modules(mods), contextlib.redirect_stdout(io.StringIO()):
+        proc, model, _ = rv.OpenVLABackend._load(bare)
+    assert (proc, model, bare.vram_gb) == ("proc", "model", 15.13)
+    assert bare.vram_at_load["fits"] is True, bare.vram_at_load
+    assert bare.vram_at_load["allocated_gb_after_load"] == 15.13
+    assert bare.vram_at_load["device_used_gb_after_load"] == 4.0
+    assert not ({"torch", "transformers"} & (set(sys.modules) - _preloaded))
+
+
+def test_main_refuses_a_model_that_does_not_fit_and_never_falls_back():
+    record = rv.vram_verdict("bf16", 14.0e9, 24.0e9)
+    code, out, stdout, sim, b = _fly(
+        ["--csp", "on", "--tag", "vram", "--policy", str(URBAN), "--precision", "bf16"],
+        load_raises=rv.VramRefused(record))
+    assert code == rv.EXIT_REFUSED, (code, stdout[-800:])
+    assert "REFUSING TO FLY (vram)" in stdout and "14.00 GB free of 24.00 GB" in stdout
+    assert [x.precision for x in sim.built] == ["bf16"], "another load was tried"
+    assert sim.calls["takeoff"] == 0, "it took off with no model"
+    m = json.loads((out / "metrics.json").read_text(encoding="utf-8"))
+    assert m["refused"] == "vram" and m["vram"] == record and m["rail"] == RAIL_NH, m
+    assert not (out / "vla_run.json").exists() and not (out / "flight_log.jsonl").exists()
+
+
+def test_decision_stats_counts_the_decisions_inside_the_flight():
+    d = rv.decision_stats([9.0, 10.0, 10.5, 11.0, 12.0, 12.5], [0.5, 0.5, 0.6, 0.9],
+                          10.0, 12.0)
+    assert (d["decisions"], d["flight_s"], d["decision_rate_hz"]) == (4, 2.0, 2.0), d
+    assert (d["decision_interval_s_median"], d["decision_interval_s_p95"]) == (0.5, 1.0), d
+    assert (d["infer_s_max"], d["grant_observation_hz"]) == (0.9, 10.0), d
+    none = rv.decision_stats([], [], 10.0, 10.0)
+    assert none["decisions"] == 0 and none["decision_rate_hz"] is None, none
+    assert none["infer_s_median"] is None and none["decision_interval_s_median"] is None
+
+
+class _FakeCuda:
+    """torch.cuda for the stand-in backend: the device's use rises 0.1 GB per
+    query from 18 GB of 24 GB; the model's peak allocation is 15.2 GB."""
+
+    def __init__(self):
+        self.n = 0
+
+    def mem_get_info(self):
+        self.n += 1
+        return 24.0e9 - (18.0e9 + 0.1e9 * self.n), 24.0e9
+
+    def max_memory_allocated(self):
+        return 15.2e9
+
+
+def test_the_decision_rate_and_the_vram_peak_are_measured_per_flight():
+    """G3 is the PI's to rule on; the flight measures the decision rate (and
+    the VRAM beside the simulator) so there is a number to rule on."""
+    cuda = _FakeCuda()
+    code, out, stdout, sim, b = _fly(
+        ["--csp", "on", "--tag", "rate", "--policy", str(URBAN), "--precision", "bf16"],
+        yaw=0.0, fake_cuda=cuda)
+    assert code == rv.EXIT_OK, stdout[-1500:]
+    m = json.loads((out / "metrics.json").read_text(encoding="utf-8"))
+    d = m["decision"]
+    assert 1 <= d["decisions"] <= m["inferences"] == 3, (d, m["inferences"])
+    assert d["flight_s"] > 0 and d["decision_rate_hz"] == round(d["decisions"] / d["flight_s"], 4)
+    assert d["grant_observation_hz"] == 10.0 and d["infer_s_median"] is not None, d
+    peak = m["vram"]["peak"]
+    assert peak["samples"] == cuda.n == m["inferences"], (peak, cuda.n)
+    assert peak["device_used_peak_gb"] == round(18.0 + 0.1 * cuda.n, 2), peak
+    assert peak["device_free_min_gb"] == round(24.0 - 18.0 - 0.1 * cuda.n, 2), peak
+    assert (peak["total_gb"], peak["model_allocated_peak_gb"]) == (24.0, 15.2), peak
+    assert f"= {d['decision_rate_hz']} Hz" in stdout and "VRAM peak" in stdout, stdout[-600:]
+
+
+def test_a_model_that_dies_in_flight_stops_the_flight_and_says_why():
+    """Until 2026-11-07 a worker that died ended its thread, and the control
+    loop flew the last action on for the rest of the flight. Now CUDA out of
+    memory beside the simulator is the VRAM refusal met in flight - the
+    drone holds zero, the flight stops and lands, metrics.json says
+    `refused: vram` with the device's numbers, exit 3 - and any other death
+    stops the flight the same way, exit 4. The hooks make it deterministic:
+    the worker's second frame waits for three control ticks, and the third
+    tick waits for the worker to fail."""
+    def before_frame(sim, i):
+        t = _time.time()
+        while i == 2 and len(sim.calls["move"]) < 3 and _time.time() - t < 5.0:
+            _time.sleep(0.001)
+
+    def on_move(sim, n):
+        t = _time.time()
+        while n == 3 and sim.built[0].worker_error is None and _time.time() - t < 5.0:
+            _time.sleep(0.001)
+
+    for exc, code_want, kind in (
+            (RuntimeError("CUDA out of memory. Tried to allocate 1.00 GiB"),
+             rv.EXIT_REFUSED, "vram"),
+            (ConnectionError("the simulator stopped answering"), rv.EXIT_STOPPED,
+             "worker_error")):
+        cuda = _FakeCuda()
+        code, out, stdout, sim, b = _fly(
+            ["--csp", "on", "--tag", f"die_{kind}", "--policy", str(URBAN),
+             "--precision", "bf16"], yaw=0.0, fake_cuda=cuda, fail_at=2, fail_with=exc,
+            before_frame=before_frame, on_move=on_move)
+        assert code == code_want, (kind, code, stdout[-1500:])
+        assert f"WORKER STOPPED ({kind})" in stdout and f"[flight] STOPPED ({kind})" in stdout
+        m = json.loads((out / "metrics.json").read_text(encoding="utf-8"))
+        assert m["stopped"]["kind"] == kind and m["stopped"]["after_inferences"] == 1, m["stopped"]
+        assert m["ticks"] == 3 and m["inferences"] == 1, (m["ticks"], m["inferences"])
+        assert sim.calls["land"] == 1, "it did not land"
+        assert b.latest() == (rv.Action4D(), None), "the last action was kept, not zero"
+        if kind == "vram":
+            peak = m["vram"]["peak"]["device_used_peak_gb"]
+            assert m["refused"] == "vram" and peak == round(18.0 + 0.1 * cuda.n, 2), m["vram"]
+            assert f"device peak {peak} of 24.0 GB" in m["vram"]["detail"], m["vram"]
+        else:
+            assert "refused" not in m and "ConnectionError" in m["stopped"]["detail"], m
+        assert "Not a comparable run" in stdout
+
+
+def _paraphraser_service():
+    """A loopback paraphraser service (port 0), or SKIP where grpcio is absent."""
+    try:
+        from guardrail import paraphraser_service as PS
+        srv = PS.serve(host="127.0.0.1", port=0)
+    except Exception as e:                      # noqa: BLE001 - no grpcio here
+        _skip(f"no paraphraser service here ({type(e).__name__}: {e})")
+    return srv, PS
+
+
+def test_a_flown_paraphrase_is_drawn_by_the_paraphraser_service():
+    """WP4-10 (the ruling of 2026-11-07): the flights' paraphrase arms are
+    issued by the paraphraser service and the run records `via`, as the
+    harness does; the in-process draw is the fallback asked for by name, and
+    draws the same ids and text. An utterance, an instruction with no stored
+    set, both sources, or neither are refused before anything flies."""
+    srv, PS = _paraphraser_service()
+    try:
+        client = PS.ParaphraserClient(srv.address)
+        for kw in ({"index": 0}, {"index": 1}, {"seed": 7}, {"seed": 1001}):
+            ts, rs = rv.paraphrased_instruction(INSTR, client=client, **kw)
+            tp, rp = rv.paraphrased_instruction(INSTR, in_process=True, **kw)
+            assert ts == tp, (kw, ts, tp)
+            for k in rv._PARAPHRASE_KEYS + ("form", "grammar_confound"):
+                assert rs[k] == rp[k], (kw, k, rs[k], rp[k])
+            v = rs["via"]
+            assert (v["service"], v["transport"]) == (srv.address, "plaintext (loopback)"), v
+            assert v["validator_digest"] == rp["via"]["validator_digest"], (v, rp["via"])
+            assert v["store_digest"] == rp["via"]["store_digest"], (v, rp["via"])
+        _expect(ValueError, rv.paraphrased_instruction, INSTR, index=4, client=client)
+        e = _expect(ValueError, rv.paraphrased_instruction, "hover over the moon",
+                    index=0, client=client)
+        assert srv.address in str(e), e
+
+        code, rec = _main_json(["--csp", "on", "--print-prompt", "--paraphrase-index", "1",
+                                "--paraphraser", srv.address])
+        assert code == rv.EXIT_OK, rec["refused"]
+        assert rec["paraphrase"]["via"]["service"] == srv.address, rec["paraphrase"]
+        assert rec["paraphrase"]["text"] in rec["prompt"]
+        code, out, stdout, sim, b = _fly(
+            ["--csp", "on", "--tag", "pp_svc", "--policy", str(URBAN),
+             "--paraphrase-index", "1", "--paraphraser", srv.address], yaw=0.0)
+        assert code == rv.EXIT_OK, stdout[-1500:]
+        run = json.loads((out / "vla_run.json").read_text(encoding="utf-8"))
+        m = json.loads((out / "metrics.json").read_text(encoding="utf-8"))
+        assert run["paraphrase"]["via"]["service"] == srv.address, run["paraphrase"]
+        assert m["paraphrase_via"] == run["paraphrase"]["via"]
+        assert m["instruction_flown"] == run["paraphrase"]["text"] != INSTR
+    finally:
+        srv.stop(None)
+
+    code, rec = _main_json(["--print-prompt", "--paraphrase-index", "1"])
+    assert code == rv.EXIT_REFUSED and rec["refused"]["kind"] == "no_paraphrase", rec
+    assert "--paraphrase-in-process" in rec["refused"]["detail"], rec["refused"]
+    err = io.StringIO()
+    with contextlib.redirect_stderr(err):
+        e = _expect(SystemExit, rv.main, ["--print-prompt", "--paraphrase-index", "1",
+                                          "--paraphraser", "127.0.0.1:1",
+                                          "--paraphrase-in-process"])
+    assert e.code == 2 and "one source" in err.getvalue(), err.getvalue()
 
 
 def test_importing_the_demo_loads_no_model():

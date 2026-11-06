@@ -488,6 +488,8 @@ def evaluate(run: dict, model: Callable[[bytes, str], list], *, policy=None,
         "generated_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "run_dir": str(run["dir"]),
         "run_id": meta.get("run_id"),
+        # What the frames are (real_vla_demo.rail_label, since 2026-11-07).
+        "rail": meta.get("rail"),
         "model": getattr(model, "name", type(model).__name__),
         "policy_id": policy.policy_id, "policy_hash": policy.policy_hash,
         "instruction": _instruction(meta),
@@ -532,6 +534,7 @@ def shield_report(cfg: dict) -> dict:
 
 def summary_lines(rep: dict) -> list[str]:
     out = [f"run {rep['run_dir']}  model {rep['model']}  policy {rep['policy_id']}",
+           f"frames from {rep.get('rail') or 'a run that recorded no rail label'}",
            f"frames replayed {rep['frames_replayed']}, skipped {rep['frames_skipped']}",
            f"csp {rep['csp']['csp_content_hash'][:19]}  {rep['csp']['tokens_used']}/"
            f"{rep['csp']['budget_tokens']} tokens"]

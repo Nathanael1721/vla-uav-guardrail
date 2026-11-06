@@ -16,7 +16,7 @@ shipped change and recorded as one.
 
 ## [Unreleased]
 
-### 2026-11-07 (CSP flights ready) — OpenVLA can fly the CSP A/B and the paraphrase set and both can be scored; the replay judges with the flight's Shield, the mission context carries home and allowed modes, the harness draws its paraphrases from the paraphraser service; nothing was flown
+### 2026-11-07 (CSP flights ready) — OpenVLA can fly the CSP A/B and the paraphrase set in AirSimNH at bf16 and both can be scored; each seed is a start, the flights and the harness draw their paraphrases from the paraphraser service, the replay judges with the flight's Shield, the mission context carries home and allowed modes; nothing was flown
 
 Audit cards WP2-01, WP2-05, WP2-09, WP2-18, WP4-09, WP4-10 and WP4-15. **Nothing
 was flown.** No simulator, SITL, WSL, Docker or Orin was started. OpenVLA-7B
@@ -34,6 +34,30 @@ running:
 
 One frame is not a measurement: this checks the code path, not the CSP's
 effect.
+
+#### Decided (the orchestrator's rulings for this campaign, 2026-11-07)
+- **AirSimNH is the image source for this measurement**, with no CityLife
+  port now. Every record and document of these flights says "AirSimNH
+  (classic AirSim, simple_flight), not the grant's Project AirSim + ArduPilot
+  rail, not KPI-grade" (`real_vla_demo.rail_label`).
+- **G3 (is the decision rate fast enough) stays with the PI.** Each flight
+  records the rate it measured.
+- **The campaign flies bf16.** If it does not fit beside AirSimNH, the flight
+  refuses with the numbers; nothing falls back to nf4. The first smoke flight
+  records the peak VRAM.
+- **A seed is a start**: a deterministic offset of position and heading from
+  the spawn, the same for both CSP arms of a seed, recorded. No wind.
+- **The risk weights stay 0.5 / 0.3 / 0.2.** The PDF lists their tuning as an
+  open question naming no objective or data; the A/B data could later serve
+  one. Not tuned now.
+- **The demo leaves home and allowed modes unstated**: its rail executes no
+  mode change.
+- **The flights' paraphrases come from the paraphraser service** (the runner
+  starts it on loopback; each run records `via`, as the harness does), so they
+  count as issued to a VLA by the service (WP4-10). The stored-set draw in
+  process stays only as an explicit, recorded fallback flag.
+- **The model stays on D:, the frames go to E:** (`E:\vla_drone_offload\demo_out`,
+  created when missing); the runner refuses to start under 20 GB free there.
 
 #### Found
 - **`demo/real_vla_demo.py` cannot fly the CityLife rail.** It talks to
@@ -93,17 +117,56 @@ effect.
   (`AuditLogger` appends by default). The demo now opens it fresh, with the
   run id as its episode id, and removes the earlier run's vla_run.json,
   flight log, metrics, KPIs and trajectory before it starts.
+- **A model worker that died left its last action flying.** An exception in
+  `real_vla_demo`'s inference thread (CUDA out of memory, a simulator that
+  stops answering) ended the thread, and the control loop flew the last
+  action, through the Shield, to the end of the flight; the run then read as
+  complete. Now the worker holds zero and records why (`worker_error`), the
+  control loop stops the flight and lands, and `metrics.json` says `stopped`
+  (exit 4). Out of memory is the VRAM refusal met in flight: `refused: vram`
+  with the device's peak, exit 3. The scorer leaves both out of every
+  comparison. Shown failing first: with the worker's catch removed, the new
+  test's flight exited 0.
 
 #### Added
 - **`real_vla_demo` records what a CSP on/off A/B and the replay need.**
-  - `--precision nf4|bf16`. nf4 (bitsandbytes 4-bit) stays the default, as
-    the docs have it. bf16 is the checkpoint unquantized, for the 24 GB card.
-  - `--seed N`. It seeds Python's, NumPy's and torch's generators. OpenVLA
-    decodes greedily and the flight draws nothing at random, so two seeds of
-    one arm are two repeats, not two conditions (`SEED_NOTE`, in every run).
+  - `--precision nf4|bf16`. nf4 (bitsandbytes 4-bit) stays the script's
+    default, as the docs have it; the campaign flies bf16, the checkpoint
+    unquantized. Before a weight is read, the device's free VRAM (the
+    simulator already on the card) is checked against 15.6 GB at bf16 / 5.2 GB
+    at nf4 (the smoke check's 15.13 GB and July's 4.7 GB, plus an allowance
+    for one inference) and 1 GB for the renderer (`vram_verdict`). Too little,
+    or CUDA out of memory during the load, refuses the flight with the numbers
+    (exit 3, `metrics.json` `refused: vram`), before take-off. The device's
+    VRAM is sampled after every inference: `metrics.json` `vram.peak` (peak in
+    use, least free, the model's own peak allocation).
+  - `--seed N` is the start. `start_offset` draws, with `random.Random(N)`, a
+    point within 3 m of the spawn and a heading within 30 deg of it; after
+    the climb the drone is flown there with AirSim's position and yaw commands
+    (set-up, like the take-off, not through the Shield) and the pose is read
+    back (`fly_to_start`). More than 1 m or 5 deg off lands and refuses (exit
+    3, `start_not_reached`). Both CSP arms of a seed, and the paraphrase runs
+    at it, start from the same pose. No wind. The seed also seeds Python's,
+    NumPy's and torch's generators, which changes nothing OpenVLA computes
+    from one frame and prompt (greedy decoding; `SEED_NOTE`, in every run).
+  - The decision rate: `metrics.json` `decision` (decisions in the flight,
+    per second, the gaps between them and each inference's time, beside the
+    grant's 10 Hz observation path), and a `[rate]` line in the report.
+  - `--world` (AirSimNH by default) and the label `rail_label(world)` in
+    vla_run.json, metrics.json, `--print-prompt` and the report.
   - `--max-s`, and in vla_run.json the precision, quantization, seed and what
-    seeding did, the Shield, the simulator check, the tag and the argument
-    list.
+    seeding did, the start offset, the Shield, the simulator check, the VRAM
+    verdict at load, the tag and the argument list.
+  - A paraphrase run draws its wording from the paraphraser service:
+    `--paraphraser HOST:PORT` (plaintext on loopback, or mutual TLS with
+    `--paraphraser-pki`). The record carries `via` (the service, the
+    transport, the validator and store digests the reply carried), in
+    vla_run.json and metrics.json. `--paraphrase-in-process` is the explicit
+    fallback, recorded as `via.in_process`; a paraphrase run with neither, or
+    with both, is refused before anything loads. Both draws give the same
+    ids and text. The service's `ParaphraseRecord` gained `form` (proto field
+    11, stubs regenerated with grpcio-tools 1.84.0), so a drawn item's form
+    (verb_phrase, utterance) comes with it.
   - `sim_preflight`, before the model loads: a port nobody answers on is
     refused (naming Project AirSim when port 8989 is what listens), and so is
     a vehicle that is not SimpleFlight. A simulator that cannot report its
@@ -116,37 +179,50 @@ effect.
     `metrics.json` (repair rate = ticks the Shield changed the action /
     ticks, NFZ seconds, the simulator's contacts from the VLA's start, the
     start pose) and `kpi.json` (`guardrail.kpi.compute` on those).
-  - `--print-prompt` also shows the whole flight: precision, seed, Shield,
-    mission, policy hash, length.
-- **`tools/run_csp_flights.ps1`** (PowerShell 7) flies the campaign in order.
-  First the A/B: `--csp off` then `on` for seeds 1001, 1002 and 1003. Then the
-  paraphrase set, CSP on, at seed 1001: the first 4 stored items of each
-  family (`verb_phrase`, `utterance`; utterances with their grammar confound
-  recorded). Each flight starts from a restarted AirSimNH. `-DryRun` checks
-  every flight without a model or a simulator. `-SkipDone` resumes a
+  - `--print-prompt` also shows the whole flight: precision, seed and start
+    offset, Shield, mission, policy hash, length, label, and the paraphrase
+    with its `via`.
+- **`tools/run_csp_flights.ps1`** (PowerShell 7) flies the campaign in order,
+  at bf16 (`-Precision`). First the A/B: `--csp off` then `on` for seeds 1001,
+  1002 and 1003. Then the paraphrase set, CSP on, at seed 1001: the first 4
+  stored items of each family (`verb_phrase`, `utterance`; utterances with
+  their grammar confound recorded), drawn from the paraphraser service the
+  script starts on loopback (`python -m guardrail.paraphraser_service serve
+  --insecure`, port 50061, `-ParaphraserPort`; a port already taken is
+  refused) and stops after. Each flight starts from a restarted AirSimNH.
+  After each flight it prints the decisions, the rate, the median inference
+  and the peak VRAM, or the refusal with its numbers; a VRAM refusal always
+  stops the campaign, and so does a stopped flight (exit 4). `-DryRun`
+  checks every flight without a model or a simulator. `-SkipDone` resumes a
   campaign. Each run's frames go outside OneDrive through a junction
-  `demo\out\<tag>\frames` (`-OffloadRoot`, default
-  `D:\vla_drone_offload\demo_out`, as the city launchers do with `view\`).
-  The script refuses to fly while `tools/ci_local.py` runs. Its
-  header holds the exact sequence and the estimated durations (about 5-8 min
-  a flight, 1.2-2 h for the 14).
+  `demo\out\<tag>\frames` to `E:\vla_drone_offload\demo_out\<tag>\`
+  (`-OffloadRoot`, created when missing); the script refuses to start with
+  less than 20 GB free there (`-MinFreeGB`). It refuses to fly while
+  `tools/ci_local.py` runs. Its header holds the exact sequence and the
+  estimated durations (about 5-7 min a flight, 1.2-1.8 h for the 14).
 - **`tools/score_csp_flights.py`**: `plan` (the flights, their tags and exact
-  arguments), `check` (the dry run) and `score`.
-  - `check` runs `--print-prompt` for every planned flight and checks that
-    each fits its budgets. It also checks that both arms of a seed fly one
-    configuration and differ only by the CSP ahead of the question, that
-    every CSP-on flight reads one CSP (one content hash), and that every
-    paraphrase flight reads that CSP and its own stored item.
-  - `score` prints the WP4-15 table: per seed and arm, the repair rate, mean
-    and max repair magnitude, P0 escapes, NFZ seconds, contacts and outcome;
-    the on - off delta, and its mean over the valid pairs only. A pair is
-    invalid when an arm is missing, unfinished or never answered by the model,
-    or when the arms flew another configuration or start more than 2 m /
+  arguments), `check` (the dry run) and `score`. Every report carries the
+  label.
+  - `check` runs `--print-prompt` for every planned flight, starting a
+    loopback paraphraser service in process where the plan names one and
+    nothing listens there, and checks that each fits its budgets. It also
+    checks that both arms of a seed fly one configuration (start offset
+    included) and differ only by the CSP ahead of the question, that two
+    seeds plan two starts, that every CSP-on flight reads one CSP (one
+    content hash), and that every paraphrase flight reads that CSP and its
+    own stored item, drawn by the service it was planned to come from.
+  - `score` prints the WP4-15 table: per seed and arm, the decision rate and
+    the peak VRAM, the repair rate, mean and max repair magnitude, P0
+    escapes, NFZ seconds, contacts and outcome; the on - off delta, and its
+    mean over the valid pairs only. A pair is invalid when an arm is
+    missing, refused, stopped, unfinished or never answered by the model, or
+    when the arms flew another configuration or started more than 2 m /
     15 deg apart; it is listed with why.
   - `score` also prints the WP4-09 outcome stability: each paraphrase run's
     outcome against the canonical arm's, per family and overall, and
-    `guardrail.kpi.per_paraphrase_robustness`. It lists the `prefix_eval`
-    command for every finished run.
+    `guardrail.kpi.per_paraphrase_robustness`, and how many paraphrase runs
+    the service issued (WP4-10). It lists the `prefix_eval` command for every
+    finished run.
 - **WP2-05: home and allowed modes in the mission context**
   (`guardrail/compiler.py`). `Mission.home_x` / `home_y` (None: the start, as
   before) and `Mission.allowed_modes` (the grant's SET_MODE names GUIDED /
@@ -163,17 +239,22 @@ effect.
   (every shipped policy x 3 missions x 3 clocks) had identical content hashes
   before and after. The natural-language prompt never changes with the
   context, so the stored paraphrase sets stay valid. The weights stay the
-  grant's 0.5 / 0.3 / 0.2 and are still untuned (Found, above).
-- **WP4-10: the stress harness draws its paraphrase arms from the paraphraser
-  service** (`guardrail/harness_service.py`). The reference data-flow page
+  grant's 0.5 / 0.3 / 0.2 and are still untuned (Decided and Found, above;
+  docs/DESIGN-prefix-compiler.md says the same). `real_vla_demo` states
+  neither home nor modes, so its CSPs are unchanged.
+- **WP4-10: the stress harness, and the CSP flights (above), draw their
+  paraphrases from the paraphraser service** (`guardrail/harness_service.py`,
+  `demo/real_vla_demo.py`). The reference data-flow page
   has the "Paraphraser service" feed the "Orchestrator service", which
   "issue[s] tasks (and paraphrased variants) to the VLA", over gRPC + mTLS.
   - `Harness(paraphraser=...)`, `serve --paraphraser HOST:PORT`: mutual TLS
     with the lab PKI's `harness-client` certificate (the name the service
     allows by default), or plaintext on loopback with `--insecure`.
-  - No in-process fallback, because the reference design describes none. A
-    server bound to no service refuses a paraphrase arm (FAILED_PRECONDITION);
-    a service that does not answer is UNAVAILABLE.
+  - No in-process fallback in the harness, because the reference design
+    describes none. A server bound to no service refuses a paraphrase arm
+    (FAILED_PRECONDITION); a service that does not answer is UNAVAILABLE.
+    The flights keep `--paraphrase-in-process` only as the explicit,
+    recorded fallback the orchestrator allowed.
   - The arm record carries the same ids and text an in-process draw gives,
     plus `paraphrase.via`: the service, the transport, and the validator and
     store digests the reply carried. The canonical arm and the
@@ -197,19 +278,45 @@ brackets.
   - a record that cannot be rebuilt is refused, and so is a rebuild that
     drops a recorded setting;
   - the model loads at the flight's precision;
-  - the campaign plan, the dry run on the real plan (and four mutations it
-    must catch), and the scorer on synthetic runs (a valid pair, an invalid
-    precision, a missing arm, a different start, paraphrases with and
-    without the canonical's outcome, one reading another CSP).
+  - the campaign plan (bf16, AirSimNH, absolute policy path, the paraphrase
+    flights on the service and the in-process fallback only by name);
+  - the dry run on a two-seed plan, through a loopback paraphraser service it
+    starts, and seven mutations it must catch (another precision or start on
+    one arm, two seeds with one start, another CSP, an off arm with text, the
+    canonical wording flown as a paraphrase, a paraphrase drawn in process).
+    It needs grpcio and SKIPs without it (the runner now counts a SKIP);
+  - the scorer on synthetic runs: a valid pair, an invalid precision, a
+    missing arm, a different start, a stopped arm, paraphrases with and
+    without the canonical's outcome, one reading another CSP, the decision
+    rate and VRAM columns, the label, and the paraphrases the service issued.
   - `test_the_action_scale_is_the_one_the_step_flew_with` now uses scale 15:
     at the flight's 5 s forecast, 0.6 m/s reaches the margin ring.
-- `tests/test_real_vla_prompt.py` 59/59 (51). New: the flight Shield and its
+- `tests/test_real_vla_prompt.py` 69/69 (51). New: the flight Shield and its
   record, `--print-prompt`'s flight block, precision and seed, the run
   record, the rows / metrics / KPIs (kpi.json recomputed with
   `guardrail.kpi.compute`), contacts during and before the mission, the
   take-off refusal, and the simulator preflight (an unanswered port, Project
   AirSim's port, an ArduCopter vehicle, an unverifiable one) with `main()`
-  refusing before the backend is built.
+  refusing before the backend is built. For the rulings:
+  - the label in every record, spelled out in the test;
+  - the seed's start: the draw against its stated rule, bounds, 40 seeds
+    with 40 starts, and both CSP arms of seed 1001 flown to one target;
+  - a start the vehicle does not reach lands and refuses;
+  - `vram_verdict`, and the real `_load` against torch/transformers
+    stand-ins: too little free VRAM is refused before a weight is read, an
+    out-of-memory load is the same refusal, bf16 loads unquantized;
+  - `main()` refusing a model that does not fit, with the numbers, without a
+    second load and without taking off;
+  - the decision rate and the VRAM peak per flight;
+  - a worker that dies in flight (out of memory, then a lost simulator)
+    stops the flight at the next tick, holds zero and lands, with exit 3 and
+    exit 4 (made deterministic with simulator hooks);
+  - the paraphraser service: the same ids and text as the in-process draw,
+    `via` in the records of a flight, and the refusals (an utterance, an
+    instruction with no stored set, neither source, both).
+  Four mutants were checked against these tests and each made a test fail:
+  the worker's catch removed, the loop's stop check removed, the move to the
+  start removed, the VRAM check removed.
 - `tests/test_csp.py` 104/104 (100). New: the context fields are checked as a
   whole and an old run record still loads; a mission without them keeps its
   old `mission_id` and gets no new clauses; a stated home brings a zone on
@@ -225,44 +332,59 @@ brackets.
   - an unbound server, and a dead service, draw none (FAILED_PRECONDITION,
     UNAVAILABLE);
   - plaintext off loopback is refused.
-- Unchanged and passing: `tests/test_paraphraser_service.py` 8/8,
-  `tests/test_paraphraser.py` 103/103, `tests/test_wp4outputs_harness.py`
-  16/16, `tests/test_wp4outputs_exporters.py` 38/38,
-  `tests/test_harnesstruth_ci.py` 35/35.
+- Passing after the last change, with no new tests: `tests/test_paraphraser_service.py`
+  8/8 (the stubs carry `form`), `tests/test_paraphraser.py` 103/103,
+  `tests/test_wp4outputs_harness.py` 16/16, `tests/test_harnesstruth_ci.py`
+  35/35 (it reads the workflow header, which now says where the two new
+  service tests SKIP). `tests/test_wp4outputs_exporters.py` 38/38 was run
+  before the follow-up changes, which do not touch what it imports.
 - Not run: the full CI list (`tools/ci_local.py`), and `tests/test_sweep.py`
   (`build_arm` gained an optional argument only).
 - The dry run: `pwsh -File tools\run_csp_flights.ps1 -Prefix cspab_20261107
-  -DryRun` passes 14 flights.
+  -DryRun` passes 14 flights in 3 s.
   - The off prompt is 20 OpenVLA tokens, the on prompt 80 (the CSP 60, all
     three urban rules kept), counted with openvla-llama2-sp@8f5e2869e180.
   - Every CSP-on flight reads one CSP (content hash `sha256:367e04b88e9a...`).
-  - The paraphrase prompts are 82-92 tokens.
-  - The Shield is 5 s / 0.1 s with no FSM, at nf4, on every flight.
+  - The paraphrase prompts are 82-92 tokens, all 8 drawn by the loopback
+    service the check started on 127.0.0.1:50061 (`via` on every one).
+  - The starts (dx m, dy m, dyaw deg): seed 1001 +2.50 +0.96 +15.6, 1002
+    -1.91 +1.03 -16.7, 1003 -1.35 +1.63 +13.3.
+  - The Shield is 5 s / 0.1 s with no FSM, at bf16, on every flight, all
+    labelled AirSimNH.
+  - The runner's own service command (`python -m guardrail.paraphraser_service
+    serve --insecure --host 127.0.0.1 --port N`) was started once by hand: it
+    listened after 1.3 s, and `--print-prompt --paraphraser` drew utterance
+    pp-cae5531528dec80a from it.
 
 #### Limits
 - **Nothing has flown.** Not AirSimNH with these settings through
   `-settings=` (a vehicle that is not SimpleFlight is refused before the
-  model loads), not the take-off check, not the contact count, not bf16
-  beside the renderer.
-- **The flights are classic AirSim, not a grant rail.** SimpleFlight on the
-  desktop: never KPI-grade (no hil), like every simple_flight run. The
-  Shield's forecast keeps its default velocity response, ArduCopter GUIDED's
-  (fitted on SITL), not SimpleFlight's: the same in every arm, so it moves
-  the absolute repair rates, not the on - off comparison's footing.
-- **Three seeds of a greedy decoder are three repeats.** They measure run to
-  run spread from GPU kernels and timing, not three conditions. Whether a
-  seed should drive a disturbance (wind, a start offset) is a question for
-  the PI.
-- **The flown paraphrases are drawn from the stored set in process**
-  (`real_vla_demo --paraphrase-index`, the same ids the service gives). Only
-  the harness is bound to the service. So the paraphrases a VLA reads in
-  these flights are not yet issued by the service.
+  model loads), not the take-off check, not the move to a seed's start, not
+  the contact count, not bf16 beside the renderer (the VRAM check is tested
+  on stand-ins only; 15.6 GB is the smoke check's 15.13 GB plus an
+  allowance, not a measurement beside AirSimNH), not the service started by
+  the runner during a campaign.
+- **The flights are classic AirSim, not a grant rail**: "AirSimNH (classic
+  AirSim, simple_flight), not the grant's Project AirSim + ArduPilot rail,
+  not KPI-grade". The Shield's forecast keeps its default velocity response,
+  ArduCopter GUIDED's (fitted on SITL), not SimpleFlight's: the same in every
+  arm, so it moves the absolute repair rates, not the on - off comparison's
+  footing.
+- **Three seeds are three starts, one flight each.** They are not repeats of
+  one condition, so a per-seed delta mixes the CSP's effect with what that
+  start shows the camera; the mean over seeds is over three such deltas.
+- **The service the runner starts is plaintext on loopback.** `real_vla_demo`
+  can reach it over mutual TLS (`--paraphraser-pki`), but the runner does not
+  use the lab PKI.
+- **Whether the measured decision rate is acceptable (G3) is the PI's.** The
+  grant's observation path asks 10 Hz; a decision took 0.55-0.61 s at bf16
+  in the smoke check, without the renderer.
 - **Base OpenVLA was trained on robot-arm data and never on rule text.**
   Whether the CSP moves its actions at all is what the A/B measures.
-- **The risk weights are untuned**, and the grant does not say against what.
-  They only reorder sentences and choose which P1/P2 rules a budget drops.
-  No shipped policy reaches the 256-token budget: 149 tokens at most, with
-  the region filter off.
+- **The risk weights are untuned** (Decided, above). They only reorder
+  sentences and choose which P1/P2 rules a budget drops. No shipped policy
+  reaches the 256-token budget: 149 tokens at most, with the region filter
+  off.
 - docs/FINAL-REPORT-outline.md and tracker/ are not edited here.
 
 ### 2026-11-06 (IR 4.0.0) — `scope` required on every rule: WP1-01 closed the grant's way, all 154 shipped rules state `scope: mission`, and every stored document of an earlier era still reads and re-derives its recorded hash

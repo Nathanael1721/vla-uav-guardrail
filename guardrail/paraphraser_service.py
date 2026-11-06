@@ -33,7 +33,8 @@ the other end.
       paraphrase returned has passed validate(text, paraphrase), and the
       candidates refused on the way come back too, with their reasons. The
       reply carries validator_digest and store_digest, so a trial record can
-      name the exact validator and stored set its wording came from.
+      name the exact validator and stored set its wording came from, and
+      (since 2026-11-07) each record the stored item's `form`.
   Validate(source, candidate)         -> paraphraser.validate().
   GetStatus()                         -> the digests, the store's size, the
       backends this server can serve.
@@ -130,6 +131,10 @@ def _record(p: P.Paraphrase) -> dict:
     out = p.to_record()
     out["novelty"] = p.novelty if p.novelty is not None else 0.0
     out["fallback_from"] = p.provenance.get("fallback_from", "")
+    # The stored item's form (2026-11-07): a pilot that frames the wording as
+    # a question (OpenVLA, demo/real_vla_demo.py) refuses an utterance unless
+    # told otherwise, and must learn the form from the service it drew from.
+    out["form"] = p.provenance.get("form") or ""
     return out
 
 

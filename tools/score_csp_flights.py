@@ -15,31 +15,41 @@ Prefix Compiler PDF p5, "Effectiveness evaluation": the offline replay
 (tools/prefix_eval.py), and "Always-on A/B during stress runs. A scenario can
 be flagged for A/B; the harness runs it twice (Prefix on / off) with the same
 seed, and the KPI report shows the delta." Grant overview, WP4: "per-paraphrase
-robustness", mission outcome stability across paraphrased task prompts. The
-plan, in order:
+robustness", mission outcome stability across paraphrased task prompts.
+
+Every record is labelled real_vla_demo.rail_label: "AirSimNH (classic AirSim,
+simple_flight), not the grant's Project AirSim + ArduPilot rail, not
+KPI-grade" (the orchestrator's ruling of 2026-11-07, as are bf16, the seed's
+start and the paraphraser service below). The plan, in order:
 
   1. the A/B: for each seed (default 1001, 1002, 1003: the grant's example
      seeds, Stress Testing PDF p2-3), the same flight with --csp off, then on.
-     Same policy, instruction, precision, Shield and length; every flight
-     starts from the simulator's spawn (the runner restarts the simulator).
+     Same policy, instruction, precision (bf16), Shield and length; the seed
+     draws a start offset from the spawn (real_vla_demo.start_offset), the
+     same for both arms of a seed; every flight starts on a freshly started
+     simulator (the runner restarts it).
   2. the paraphrase set, CSP on, at the first seed: for each family of the
      stored set of the instruction (its `form`: verb_phrase, utterance), the
-     first N items (default all 4), flown by --paraphrase-index. An utterance
-     needs --paraphrase-allow-utterance and carries the grammar confound
+     first N items (default all 4), flown by --paraphrase-index and drawn by
+     the paraphraser service (--paraphraser; WP4-10). An utterance needs
+     --paraphrase-allow-utterance and carries the grammar confound
      (real_vla_demo.paraphrased_instruction says why). The canonical arm is
      the A/B's CSP-on flight at that seed.
 
 `check` runs real_vla_demo's --print-prompt for every planned flight, in
-process, and checks what makes the comparison an A/B: each flight fits the
-budgets; both arms of a seed fly the same configuration (precision, seed,
-Shield, mission, policy, instruction, length) and differ only by the CSP in
-the prompt; every CSP-on flight reads the same CSP (one content hash); every
-paraphrase flight reads that CSP, its own stored item, and nothing else new.
+process (starting a loopback paraphraser service for the paraphrase flights
+when none listens), and checks what makes the comparison an A/B: each flight
+fits the budgets; both arms of a seed fly the same configuration (precision,
+seed and start offset, Shield, mission, policy, instruction, length) and
+differ only by the CSP in the prompt; two seeds start apart; every CSP-on
+flight reads the same CSP (one content hash); every paraphrase flight reads
+that CSP and its own stored item, drawn by the service it was planned to be.
 
 `score` reads demo/out/<prefix>_* (vla_run.json, metrics.json, kpi.json, all
 written by real_vla_demo) and prints:
 
-  WP4-15  per seed and arm: repair rate (ticks the Shield changed the action /
+  WP4-15  per seed and arm: the decision rate (G3) and the peak VRAM beside
+          the simulator, repair rate (ticks the Shield changed the action /
           ticks), mean and max repair magnitude (guardrail.kpi), P0 escapes,
           NFZ seconds, contacts, outcome; the on - off delta per seed and its
           mean over the valid pairs. A pair is valid only if both runs
@@ -53,10 +63,10 @@ written by real_vla_demo) and prints:
           wording as the null.
 
 What it cannot say: these are classic AirSim SimpleFlight flights, not a grant
-topology and never KPI-grade (no hil); three seeds of a greedy decoder are
-three repeats (real_vla_demo.SEED_NOTE); and base OpenVLA was never trained on
-rule text or UAV control, so a delta is the measurement, not a result implied
-by the flag.
+topology and never KPI-grade (no hil); three seeds are three starts, not
+three samples of one condition (real_vla_demo.SEED_NOTE); and base OpenVLA was
+never trained on rule text or UAV control, so a delta is the measurement, not
+a result implied by the flag.
 """
 from __future__ import annotations
 
@@ -81,16 +91,27 @@ DEFAULT_POLICY = "policies/urban_demo_policy.yaml"
 FAMILIES = ("verb_phrase", "utterance")
 DEFAULT_PER_FAMILY = 4
 DEFAULT_MAX_S = 60.0
+# The orchestrator's rulings of 2026-11-07: the campaign flies bf16, in
+# AirSimNH, and its paraphrases come from the paraphraser service (the runner
+# starts one on this loopback address; `check` starts one in process when
+# nothing listens there).
+DEFAULT_PRECISION = "bf16"
+DEFAULT_WORLD = rv.DEFAULT_WORLD
+DEFAULT_PARAPHRASER = "127.0.0.1:50061"
 # Two runs start "from the same start" when the pose the model took over at is
-# this close: every flight starts at the simulator's spawn and climbs to
-# cruise height, which drifts a little.
+# this close: both arms of a seed are flown to the spawn plus the seed's
+# offset (real_vla_demo.start_offset), each within real_vla_demo.START_TOL_M
+# (1 m) and START_TOL_DEG (5 deg) of it or refused, so within twice that of
+# each other, plus what the hover drifts before the first control tick.
 START_TOL_M = 2.0
 START_TOL_DEG = 15.0
 _TAG_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
 # What both arms of an A/B (and a paraphrase run and its canonical arm) must
-# share, read from --print-prompt's `flight` block and from vla_run.json.
-SAME = ("policy_hash", "precision", "seed", "shield", "mission", "max_s", "tick_s",
-        "scale", "dv_h", "dv_z", "csp_budget_tokens")
+# share, read from --print-prompt's `flight` block and from vla_run.json. The
+# seed and its start offset differ between seeds, and only there.
+SAME = ("policy_hash", "precision", "seed", "start_offset", "shield", "mission",
+        "max_s", "tick_s", "scale", "dv_h", "dv_z", "csp_budget_tokens", "rail")
+PER_SEED = ("seed", "start_offset")
 
 
 # --------------------------------------------------------------------------- #
@@ -99,28 +120,34 @@ SAME = ("policy_hash", "precision", "seed", "shield", "mission", "max_s", "tick_
 
 def stored_items(instruction: str) -> list[dict]:
     """Every item of the stored paraphrase set of `instruction`, as
-    real_vla_demo would fly it: index, form, paraphrase id, text. Raises the
-    paraphraser's UnknownSource when no stored set covers the instruction."""
+    real_vla_demo would fly it: index, form, paraphrase id, text. Read in
+    process (planning: which items each family has); the flights draw them
+    from the service. Raises the paraphraser's UnknownSource when no stored
+    set covers the instruction."""
     from guardrail import paraphraser as P
     src = P.normalise_source(instruction)
     size = P.get_backend("stored").size(src)
     out = []
     for i in range(size):
-        text, rec = rv.paraphrased_instruction(instruction, index=i, allow_utterance=True)
+        text, rec = rv.paraphrased_instruction(instruction, index=i, allow_utterance=True,
+                                               in_process=True)
         out.append({"index": i, "form": rec["form"], "paraphrase_id": rec["paraphrase_id"],
                     "text": text})
     return out
 
 
 def plan_flights(prefix: str, *, phase: str = "all", seeds=DEFAULT_SEEDS,
-                 precision: str = rv.DEFAULT_PRECISION,
+                 precision: str = DEFAULT_PRECISION,
                  instruction: str = DEFAULT_INSTRUCTION, policy: str = DEFAULT_POLICY,
                  families=FAMILIES, per_family: int = DEFAULT_PER_FAMILY,
-                 max_s: float = DEFAULT_MAX_S) -> list[dict]:
+                 max_s: float = DEFAULT_MAX_S, world: str = DEFAULT_WORLD,
+                 paraphraser: str | None = DEFAULT_PARAPHRASER) -> list[dict]:
     """The flights, in the order they are flown: the A/B (off then on, per
     seed), then the paraphrase set at the first seed. Each flight: tag, phase,
     csp, seed, paraphrase index / form / id, and the exact real_vla_demo
-    arguments."""
+    arguments. A paraphrase flight draws its wording from the paraphraser
+    service at `paraphraser`; None plans the explicit in-process fallback
+    (--paraphrase-in-process), which the records then say."""
     if not _TAG_RE.match(prefix or ""):
         raise ValueError(f"--prefix {prefix!r}: letters, digits, '_', '.', '-' only "
                          f"(it names folders under demo/out)")
@@ -139,8 +166,12 @@ def plan_flights(prefix: str, *, phase: str = "all", seeds=DEFAULT_SEEDS,
     policy = str(pol if pol.is_absolute() else ROOT / pol)
     if not Path(policy).is_file():
         raise ValueError(f"policy {policy} does not exist")
+    if world not in rv.SIM_WORLDS:
+        raise ValueError(f"world {world!r} is not one of {rv.SIM_WORLDS}")
     common = ["--instruction", instruction, "--policy", policy,
-              "--precision", precision, "--max-s", f"{max_s:g}"]
+              "--precision", precision, "--max-s", f"{max_s:g}", "--world", world]
+    source = (["--paraphraser", paraphraser] if paraphraser
+              else ["--paraphrase-in-process"])
     flights: list[dict] = []
     if phase in ("all", "ab"):
         for s in seeds:
@@ -168,6 +199,7 @@ def plan_flights(prefix: str, *, phase: str = "all", seeds=DEFAULT_SEEDS,
                 tag = f"{prefix}_pp_{fam}_{it['index']}"
                 args = common + ["--csp", "on", "--seed", str(s0),
                                  "--paraphrase-index", str(it["index"]), "--tag", tag]
+                args += source
                 if fam != "verb_phrase":
                     args.append("--paraphrase-allow-utterance")
                 flights.append({"tag": tag, "phase": "paraphrase", "csp": "on",
@@ -194,12 +226,39 @@ def _same(a: dict, b: dict, keys=SAME) -> list[str]:
     return [k for k in keys if a.get(k) != b.get(k)]
 
 
+def _arg(args: list[str], flag: str) -> str | None:
+    return args[args.index(flag) + 1] if flag in args else None
+
+
+@contextlib.contextmanager
+def paraphraser_for(flights: list[dict]):
+    """A loopback paraphraser service at every address the plan's paraphrase
+    flights name that nothing answers on yet, for the dry run; stopped after.
+    Yields the addresses it started."""
+    from guardrail import paraphraser_service as PS
+    from guardrail.harness_service import is_loopback
+    started, servers = [], []
+    try:
+        for addr in sorted({_arg(f["args"], "--paraphraser") for f in flights} - {None}):
+            host, _, port = addr.rpartition(":")
+            if rv._port_open(host, int(port)) or not is_loopback(host):
+                continue
+            servers.append(PS.serve(host=host, port=int(port)))
+            started.append(addr)
+        yield started
+    finally:
+        for s in servers:
+            s.stop(None)
+
+
 def check_flights(flights: list[dict], *, shown: dict | None = None) -> dict:
     """Every planned flight's --print-prompt, and the invariants that make the
     campaign an A/B and a paraphrase test. `shown` ({tag: (code, record)})
     replaces the calls (tests). Returns {"rows", "problems", "warnings"}."""
+    started = []
     if shown is None:
-        shown = {f["tag"]: print_prompt(f["args"]) for f in flights}
+        with paraphraser_for(flights) as started:
+            shown = {f["tag"]: print_prompt(f["args"]) for f in flights}
     problems, warnings, rows = [], [], []
     by_tag = {f["tag"]: f for f in flights}
     for f in flights:
@@ -219,9 +278,13 @@ def check_flights(flights: list[dict], *, shown: dict | None = None) -> dict:
         if (para or {}).get("index") != f["paraphrase_index"]:
             problems.append(f"{f['tag']}: planned paraphrase {f['paraphrase_index']}, "
                             f"the demo would fly {(para or {}).get('index')}")
+        via = (para or {}).get("via") or {}
         rows.append({"tag": f["tag"], "phase": f["phase"], "csp": rec.get("csp"),
                      "seed": fl.get("seed"), "paraphrase": (para or {}).get("paraphrase_id"),
                      "form": (para or {}).get("form"),
+                     "via": via.get("service") or ("in-process" if via.get("in_process")
+                                                   else None),
+                     "start_offset": fl.get("start_offset"),
                      "prompt_tokens": rec.get("prompt_tokens"),
                      "csp_tokens": rec.get("csp_tokens"),
                      "token_method": rec.get("token_method"),
@@ -233,12 +296,20 @@ def check_flights(flights: list[dict], *, shown: dict | None = None) -> dict:
                             for k in ("lookahead_s", "dt_s")}),
                      "precision": fl.get("precision")})
     flights_cfg = {t: (shown[t][1].get("flight") or {}) for t in by_tag}
-    # One configuration for the whole campaign, but for csp / seed / paraphrase.
+    # One configuration for the whole campaign, but for csp / seed (and its
+    # start) / paraphrase.
     first = next(iter(flights_cfg.values()), {})
     for t, fl in flights_cfg.items():
-        diff = _same(first, fl, tuple(k for k in SAME if k != "seed"))
+        diff = _same(first, fl, tuple(k for k in SAME if k not in PER_SEED))
         if diff:
             problems.append(f"{t}: flies another {diff} than {flights[0]['tag']}")
+    # Two seeds, two starts: a seed that does not move the start is no seed.
+    starts = {}
+    for f in flights:
+        so = flights_cfg[f["tag"]].get("start_offset") or {}
+        starts.setdefault(f["seed"], set()).add(json.dumps(so, sort_keys=True))
+    if len(starts) > 1 and len({next(iter(v)) for v in starts.values()}) < len(starts):
+        problems.append("two seeds plan the same start offset")
     # The A/B: per seed, off and on, identical but for the CSP.
     on_hashes = set()
     for s in sorted({f["seed"] for f in flights if f["phase"] == "ab"}):
@@ -279,6 +350,14 @@ def check_flights(flights: list[dict], *, shown: dict | None = None) -> dict:
         if para.get("paraphrase_id") != f["paraphrase_id"]:
             problems.append(f"{f['tag']}: planned {f['paraphrase_id']}, the demo would fly "
                             f"{para.get('paraphrase_id')}")
+        want_via = _arg(f["args"], "--paraphraser")
+        got_via = (para.get("via") or {})
+        if want_via and got_via.get("service") != want_via:
+            problems.append(f"{f['tag']}: planned from the paraphraser service at {want_via}, "
+                            f"drawn {got_via or 'from nowhere'}")
+        if not want_via:
+            warnings.append(f"{f['tag']}: drawn in process (--paraphrase-in-process): it "
+                            f"will not count as issued by the paraphraser service")
         if bool(para.get("grammar_confound")) != (f["family"] != "verb_phrase"):
             problems.append(f"{f['tag']}: the grammar confound is not recorded as its form says")
     ids = [f["paraphrase_id"] for f in para_flights]
@@ -288,19 +367,31 @@ def check_flights(flights: list[dict], *, shown: dict | None = None) -> dict:
     if len(on_hashes) > 1:
         problems.append(f"the CSP-on flights read {len(on_hashes)} different CSPs: "
                         f"{sorted(h[:19] for h in on_hashes)}")
-    return {"rows": rows, "problems": problems, "warnings": sorted(set(warnings)),
-            "csp_content_hash": next(iter(on_hashes), None)}
+    rail = next((fl.get("rail") for fl in flights_cfg.values() if fl.get("rail")), None)
+    return {"rail": rail, "rows": rows, "problems": problems,
+            "warnings": sorted(set(warnings)),
+            "csp_content_hash": next(iter(on_hashes), None),
+            "paraphraser_started_for_the_check": started}
 
 
 def check_lines(res: dict) -> list[str]:
-    out = [f"{'tag':38s} {'csp':3s} {'seed':>5s} {'paraphrase':20s} {'form':12s} "
-           f"{'tok':>4s} {'csp':>4s} {'csp content':19s} {'prompt sha':19s} shield"]
+    out = [f"{res.get('rail') or ''}",
+           f"{'tag':36s} {'csp':3s} {'seed':>5s} {'start (dx, dy, dyaw)':21s} "
+           f"{'paraphrase':20s} {'form':11s} {'via':16s} {'tok':>4s} {'csp':>4s} "
+           f"{'csp content':19s} {'prompt sha':19s} shield"]
     for r in res["rows"]:
-        out.append(f"{r['tag']:38s} {r['csp'] or '-':3s} {str(r['seed']):>5s} "
-                   f"{r['paraphrase'] or '-':20s} {r['form'] or '-':12s} "
+        so = r.get("start_offset") or {}
+        start = ("-" if so.get("seed") is None else
+                 f"{so['dx_m']:+.2f} {so['dy_m']:+.2f} {so['dyaw_deg']:+.1f}")
+        out.append(f"{r['tag']:36s} {r['csp'] or '-':3s} {str(r['seed']):>5s} {start:21s} "
+                   f"{r['paraphrase'] or '-':20s} {r['form'] or '-':11s} "
+                   f"{r.get('via') or '-':16s} "
                    f"{str(r['prompt_tokens']):>4s} {str(r['csp_tokens'] or '-'):>4s} "
                    f"{(r['csp_content_hash'] or '-')[:19]:19s} "
                    f"{(r['prompt_sha256'] or '-')[:19]:19s} {r['shield']} {r['precision']}")
+    if res.get("paraphraser_started_for_the_check"):
+        out.append(f"(a paraphraser service was started in process for the check at "
+                   f"{', '.join(res['paraphraser_started_for_the_check'])}, and stopped)")
     for w in res["warnings"]:
         out.append(f"WARNING {w}")
     for p in res["problems"]:
@@ -324,13 +415,16 @@ def _read(p: Path):
 
 def load_run_record(run_dir: Path) -> dict:
     """vla_run.json + metrics.json + kpi.json of one flown run, and whether it
-    finished: `status` complete | refused | incomplete | missing."""
+    finished: `status` complete | refused | stopped (the model's worker died
+    mid-flight) | incomplete | missing."""
     run, metrics, kpi = (_read(run_dir / n) for n in
                          ("vla_run.json", "metrics.json", "kpi.json"))
     if run is None and metrics is None:
         status = "missing"
     elif (metrics or {}).get("refused"):
         status = "refused"
+    elif (metrics or {}).get("stopped"):
+        status = "stopped"
     elif run is None or metrics is None or kpi is None or "error" in (kpi or {}):
         status = "incomplete"
     else:
@@ -341,9 +435,19 @@ def load_run_record(run_dir: Path) -> dict:
 
 def arm_summary(r: dict) -> dict:
     m, k, run = r["metrics"], r["kpi"], r["run"]
+    dec = m.get("decision") or {}
+    peak = (m.get("vram") or {}).get("peak") or {}
+    via = m.get("paraphrase_via") or (run.get("paraphrase") or {}).get("via") or {}
     return {"tag": r["tag"], "status": r["status"], "csp": m.get("csp"),
             "seed": m.get("seed", run.get("seed")),
+            "refused": m.get("refused"),
+            "stopped": (m.get("stopped") or {}).get("kind"),
             "paraphrase_id": m.get("paraphrase_id"), "form": m.get("paraphrase_form"),
+            "via": via.get("service") or ("in-process" if via.get("in_process") else None),
+            "decision_rate_hz": dec.get("decision_rate_hz"),
+            "infer_s_median": dec.get("infer_s_median"),
+            "vram_peak_gb": peak.get("device_used_peak_gb"),
+            "vram_total_gb": peak.get("total_gb"),
             "ticks": m.get("ticks"), "inferences": m.get("inferences"),
             "repair_rate": m.get("repair_rate"),
             "mean_repair_mps": k.get("mean_repair_magnitude_mps"),
@@ -482,10 +586,12 @@ def score(prefix: str, out_root: Path = ROOT / "demo" / "out") -> dict:
     robustness = None
     if trials and any(t["backend"] != "identity" for t in trials):
         robustness = K.per_paraphrase_robustness(trials)
+    rails = sorted({r["run"].get("rail") or r["metrics"].get("rail") for r in runs.values()}
+                   - {None})
     return {
         "_what": "CSP flights of demo/real_vla_demo.py: the WP4-15 A/B (prefix on - off, "
-                 "same seed, same start) and WP4-09 outcome stability across paraphrases. "
-                 "Classic AirSim SimpleFlight: not a grant topology, never KPI-grade.",
+                 "same seed, same start) and WP4-09 outcome stability across paraphrases.",
+        "rail": rails[0] if len(rails) == 1 else (rails or rv.rail_label(DEFAULT_WORLD)),
         "prefix": prefix, "runs_found": len(runs),
         "ab": {"pairs": pairs, "valid_pairs": len(valid),
                "mean_delta_on_minus_off": mean_delta,
@@ -495,6 +601,10 @@ def score(prefix: str, out_root: Path = ROOT / "demo" / "out") -> dict:
                        "stability_by_family": {f: stability([x for x in rows
                                                              if x["form"] == f])
                                                for f in fams},
+                       # WP4-10: the paraphrases a VLA read that the paraphraser
+                       # service issued (the rest were the recorded fallback).
+                       "issued_by_service": sum(1 for x in rows if x["via"]
+                                                and x["via"] != "in-process"),
                        "per_paraphrase_robustness": robustness},
         "replay": [f"C:\\Users\\natha\\.conda\\envs\\vla-real\\python.exe "
                    f"tools\\prefix_eval.py demo\\out\\{t} --out demo\\out\\{t}\\prefix_eval.json"
@@ -515,11 +625,15 @@ def _f(v, nd=3):
 
 
 def score_lines(rep: dict) -> list[str]:
-    out = [f"CSP flights {rep['prefix']}: {rep['runs_found']} run folder(s)", "",
+    rail = rep.get("rail")
+    out = [f"CSP flights {rep['prefix']}: {rep['runs_found']} run folder(s)",
+           f"{rail if isinstance(rail, str) else '; '.join(rail or [])}", "",
            "WP4-15  A/B: prefix on - off, same seed, same start "
-           "(repair rate = ticks the Shield changed / ticks)",
-           f"  {'seed':>5s} {'arm':3s} {'ticks':>5s} {'inf':>4s} {'repair':>7s} "
-           f"{'rep m/s':>8s} {'max':>6s} {'P0 esc':>6s} {'NFZ s':>6s} {'hits':>4s} outcome"]
+           "(repair rate = ticks the Shield changed / ticks; Hz = decisions a second, "
+           "the G3 question; VRAM = the device's peak in use beside the simulator)",
+           f"  {'seed':>5s} {'arm':3s} {'ticks':>5s} {'inf':>4s} {'Hz':>5s} {'VRAM':>5s} "
+           f"{'repair':>7s} {'rep m/s':>8s} {'max':>6s} {'P0 esc':>6s} {'NFZ s':>6s} "
+           f"{'hits':>4s} outcome"]
     for p in rep["ab"]["pairs"]:
         if "off" not in p:
             out.append(f"  {p['seed']:>5d} invalid: {'; '.join(p['problems'])}")
@@ -527,9 +641,12 @@ def score_lines(rep: dict) -> list[str]:
         for arm in ("off", "on"):
             a = p[arm]
             out.append(f"  {p['seed']:>5d} {arm:3s} {_f(a['ticks']):>5s} {_f(a['inferences']):>4s} "
+                       f"{_f(a['decision_rate_hz'], 2):>5s} {_f(a['vram_peak_gb'], 1):>5s} "
                        f"{_f(a['repair_rate']):>7s} {_f(a['mean_repair_mps']):>8s} "
                        f"{_f(a['max_repair_mps']):>6s} {_f(a['p0_escapes']):>6s} "
-                       f"{_f(a['nfz_s'], 1):>6s} {_f(a['contacts']):>4s} {a['outcome']}")
+                       f"{_f(a['nfz_s'], 1):>6s} {_f(a['contacts']):>4s} {a['outcome']}"
+                       + (f"  REFUSED {a['refused']}" if a.get("refused") else "")
+                       + (f"  STOPPED {a['stopped']}" if a.get("stopped") else ""))
         d = p["delta_on_minus_off"]
         out.append(f"        on-off  repair {_f(d['repair_rate'])}  mean repair "
                    f"{_f(d['mean_repair_mps'])} m/s  P0 esc {_f(d['p0_escapes'])}  "
@@ -550,13 +667,16 @@ def score_lines(rep: dict) -> list[str]:
     for x in pp["runs"]:
         out.append(f"  {x['tag']:38s} {x['form'] or '-':12s} outcome {x['outcome']} "
                    f"same as canonical: {x['same_outcome_as_canonical']} "
-                   f"repair {_f(x['repair_rate'])}"
+                   f"repair {_f(x['repair_rate'])} Hz {_f(x['decision_rate_hz'], 2)} "
+                   f"via {x['via'] or '-'}"
                    + ("" if x["valid"] else f"   INVALID: {'; '.join(x['problems'])}"))
     st = pp["stability"]
     out.append(f"  outcome stability: {st['same_outcome']}/{st['runs']} "
                f"({_f(st['share'])})" + "".join(
                    f"; {f} {v['same_outcome']}/{v['runs']}"
                    for f, v in pp["stability_by_family"].items()))
+    out.append(f"  issued by the paraphraser service (WP4-10): {pp['issued_by_service']} of "
+               f"{len(pp['runs'])} paraphrase run(s)")
     rb = pp["per_paraphrase_robustness"]
     if rb:
         out.append(f"  mission success: canonical {_f(rb['canonical_success_rate'])}, "
@@ -578,12 +698,18 @@ def _plan_args(p: argparse.ArgumentParser) -> None:
     p.add_argument("--prefix", required=True, help="tag prefix: demo/out/<prefix>_*")
     p.add_argument("--phase", choices=("all", "ab", "paraphrase"), default="all")
     p.add_argument("--seeds", default=",".join(str(s) for s in DEFAULT_SEEDS))
-    p.add_argument("--precision", choices=rv.PRECISIONS, default=rv.DEFAULT_PRECISION)
+    p.add_argument("--precision", choices=rv.PRECISIONS, default=DEFAULT_PRECISION)
     p.add_argument("--instruction", default=DEFAULT_INSTRUCTION)
     p.add_argument("--policy", default=DEFAULT_POLICY)
     p.add_argument("--families", default=",".join(FAMILIES))
     p.add_argument("--per-family", type=int, default=DEFAULT_PER_FAMILY)
     p.add_argument("--max-s", type=float, default=DEFAULT_MAX_S)
+    p.add_argument("--world", choices=rv.SIM_WORLDS, default=DEFAULT_WORLD)
+    p.add_argument("--paraphraser", default=DEFAULT_PARAPHRASER,
+                   help="HOST:PORT of the paraphraser service the paraphrase flights draw "
+                        "from (the runner starts it on loopback)")
+    p.add_argument("--paraphrase-in-process", action="store_true",
+                   help="plan the explicit in-process fallback instead of the service")
 
 
 def _plan(a) -> list[dict]:
@@ -591,7 +717,8 @@ def _plan(a) -> list[dict]:
                         seeds=[int(s) for s in str(a.seeds).replace(" ", ",").split(",") if s],
                         precision=a.precision, instruction=a.instruction, policy=a.policy,
                         families=[f for f in str(a.families).replace(" ", ",").split(",") if f],
-                        per_family=a.per_family, max_s=a.max_s)
+                        per_family=a.per_family, max_s=a.max_s, world=a.world,
+                        paraphraser=None if a.paraphrase_in_process else a.paraphraser)
 
 
 def main(argv: list[str] | None = None) -> int:

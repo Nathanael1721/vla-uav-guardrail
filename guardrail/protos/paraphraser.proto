@@ -55,6 +55,10 @@ message ParaphraseRecord {
   string source_sha256 = 8;
   double novelty = 9;
   string fallback_from = 10;     // "stored" when "auto" fell back to the template bank
+  // The stored item's form, from its provenance ("verb_phrase", "utterance");
+  // "" when the backend records none. Added 2026-11-07: a pilot that frames
+  // the wording as a question (OpenVLA) must know before it flies one.
+  string form = 11;
 }
 
 message Refusal {
