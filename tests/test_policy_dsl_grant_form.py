@@ -697,9 +697,12 @@ def test_a_document_from_before_ir_4_reads_and_hashes_as_stored():
     every earlier flight live in the lab checkout's gitignored bundles/ and
     are covered by test_every_bundle_on_disk_reads_in_its_era):
 
-      * the four tracked replay bundles (bundles/*.replay.tar.gz, 16-hex
-        hash): read and verified as before, every rule's scope absent; the
-        same ir.json read as a document of today is refused;
+      * every tracked replay bundle (bundles/*.replay.tar.gz): the four of
+        before 2026-10-06 (16-hex hash) and the KPI evidence of 6 Nov
+        (hil_smoke_03, the AIOT-VLA city flights), all written under IR
+        schema 3.1.0 or earlier: read and verified as before, every rule's
+        scope absent; the same ir.json read as a document of today is
+        refused;
       * a run's policy_g0.json (tests/fixtures/pas_ap_20261008_policy_g0.json,
         flown 8 Oct): read by the run readers as written, it resolves to the
         lock's rewound follow-car-citylife@0.1.0;
@@ -712,18 +715,21 @@ def test_a_document_from_before_ir_4_reads_and_hashes_as_stored():
     import subprocess
     from guardrail.manifest import resolve_run_policy
     from guardrail.replay import POLICY, generation_table, read_replay, verify_replay
-    # The tracked ones: bundles/ also holds untracked build products (in the
-    # lab checkout, the signed 64-hex replay of hil_smoke_03).
+    # The tracked ones: bundles/ also holds untracked build products.
     r = subprocess.run(["git", "ls-files", "bundles/*.replay.tar.gz"], cwd=ROOT,
                        capture_output=True, text=True)
     tracked = sorted(ROOT / n for n in r.stdout.split()) if r.returncode == 0 else []
     if not tracked:
         return SKIP                     # not a git checkout
-    assert len(tracked) == 4, tracked
+    legacy = {"retarget_demo", "retarget_demo2", "retarget_fixed", "retarget_smooth"}
+    assert legacy <= {b.name.split(".")[0] for b in tracked}, tracked
     for b in tracked:
         got = read_replay(b)
-        assert got["hash_form"].startswith("legacy16-"), (b.name, got["hash_form"])
-        assert [c.scope for c in got["policy"].constraints] == [None] * 5, b.name
+        assert got["hash_form"] is not None, b.name
+        if b.name.split(".")[0] in legacy:
+            assert got["hash_form"].startswith("legacy16-"), (b.name, got["hash_form"])
+        assert got["policy"].constraints and \
+            all(c.scope is None for c in got["policy"].constraints), b.name
         assert {c.effective_scope for c in got["policy"].constraints} == {"mission"}
         assert got["policy"].ir_schema_version == "3.1.0", b.name
         ok, why = verify_replay(b)

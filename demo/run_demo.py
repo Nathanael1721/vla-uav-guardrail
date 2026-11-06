@@ -51,6 +51,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from guardrail import AuditLogger, Shield, State, load_policy          # noqa: E402
+from guardrail.shield import LOOKAHEAD_DT_S, LOOKAHEAD_S               # noqa: E402
 from guardrail.audit import AUDIT_FILE                                # noqa: E402
 from guardrail.compiler import ConstraintCompiler                      # noqa: E402
 from guardrail.geometry import fence_polygon                           # noqa: E402
@@ -191,7 +192,7 @@ def main() -> int:
         print("[vla]      gate-passing policy in the slot (models/vla_policy_v2.pt)")
     else:
         vla = StubVLA(mission)
-    shield = Shield(policy, lookahead_s=3.0, dt=0.5)
+    shield = Shield(policy, lookahead_s=LOOKAHEAD_S, dt=LOOKAHEAD_DT_S)
     audit = AuditLogger(out / AUDIT_FILE, policy)   # the POLICY, so a hot-applied rule restamps the hash
 
     if args.api:
