@@ -88,6 +88,19 @@
 #                      replaces the next waypoint in flight, and the bag adds
 #                      /shield/mission, /shield/mission_update and MAVROS's
 #                      mission topics. Shield `on` only.
+#   SITL_STRESS_PLAN / SITL_STRESS_RECORD (2026-11-07; experiments/
+#                      sweep_scenarios.py run_sitl sets both through WSLENV
+#                      for a cell with wind or a GPS dropout): the
+#                      simulator's stressors. Once SITL and the router are
+#                      up, sitl/sitl_stressors.py connects to SITL's SERIAL0
+#                      (tcp:5760, free with ROUTER=1; refused with ROUTER=0,
+#                      where MAVROS has it), sets the plan's boot SIM_*
+#                      parameters and reads them back - the run is refused
+#                      before MAVROS starts unless it says "SITL_STRESS BOOT
+#                      OK" - and applies the scheduled ones at the episode's
+#                      t = 0 the Shield node announces, writing its record to
+#                      SITL_STRESS_RECORD. Its Python: SITL_STRESS_PYTHON
+#                      (default ~/venv-ap/bin/python, pymavlink).
 #   SROS2=0            1 = SROS 2 enforced on every ROS 2 process of the rail
 #                      (sitl/sros2_env.sh): the keystore SROS2_KEYSTORE (default
 #                      ~/sros2_keystore, built by tools/sros2_setup.sh from the
@@ -163,6 +176,8 @@ stop_vla() {
 cleanup() {
   stop_bag
   stop_vla
+  # The stressor process with TERM, so its record says how far it got.
+  pkill -TERM -f "[s]itl_stressors.py" 2> /dev/null || true
   pkill -TERM -f "[r]os2 bag record -s mcap" 2> /dev/null || true
   pkill -9 -f "[g]uardrail_rail.launch.py"     2> /dev/null || true
   pkill -9 -f "[r]os2_vla_stub_node"           2> /dev/null || true
@@ -344,6 +359,41 @@ else
 fi
 export MAVLINK_ROUTER
 export MAVROS_FCU_URL="$FCU_URL"
+
+# THE SIMULATOR'S STRESSORS (SITL_STRESS_PLAN, see the header): before MAVROS
+# and the Shield exist, the boot parameters set and read back, or no flight.
+if [ -n "${SITL_STRESS_PLAN:-}" ]; then
+  if [ "${ROUTER:-1}" != "1" ]; then
+    echo "[stress] REFUSED: SITL_STRESS_PLAN needs ROUTER=1 (with ROUTER=0 MAVROS holds SITL's tcp:5760)"
+    exit 2
+  fi
+  if [ -z "${SITL_STRESS_RECORD:-}" ] || [ ! -f "$SITL_STRESS_PLAN" ]; then
+    echo "[stress] REFUSED: SITL_STRESS_RECORD unset or no plan at $SITL_STRESS_PLAN"
+    exit 2
+  fi
+  STRESS_PY="${SITL_STRESS_PYTHON:-$HOME/venv-ap/bin/python}"
+  echo "=== simulator stressors ($SITL_STRESS_PLAN) ==="
+  "$STRESS_PY" "$DIR/sitl_stressors.py" --plan "$SITL_STRESS_PLAN" \
+    --record "$SITL_STRESS_RECORD" > ~/sitl-run/stress.log 2>&1 &
+  STRESS_PID=$!
+  STRESS_OK=0
+  for _ in $(seq 1 120); do
+    if grep -q "^SITL_STRESS BOOT OK" ~/sitl-run/stress.log 2> /dev/null; then
+      STRESS_OK=1
+      break
+    fi
+    grep -q "^SITL_STRESS BOOT FAILED" ~/sitl-run/stress.log 2> /dev/null && break
+    kill -0 "$STRESS_PID" 2> /dev/null || break
+    sleep 0.5
+  done
+  # Once more: it may have said so just before the last check.
+  grep -q "^SITL_STRESS BOOT OK" ~/sitl-run/stress.log 2> /dev/null && STRESS_OK=1
+  sed 's/^/[stress] /' ~/sitl-run/stress.log 2> /dev/null || true
+  if [ "$STRESS_OK" != "1" ]; then
+    echo "[stress] REFUSED: the boot parameters were not set and read back ($SITL_STRESS_RECORD)"
+    exit 2
+  fi
+fi
 
 if [ "$GCS_BACKSTOP" = "1" ]; then
   # Before MAVROS and the Shield exist: the GCS's own process, on the

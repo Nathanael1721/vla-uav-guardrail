@@ -567,6 +567,26 @@ AGX's `end0` at 10.42.0.3/24 (no gateway, never the default route), linked at
 10.42.0.2 is kept free for it. The runbook's picture still shows the
 192.168.50.x plan, which the lab's Wi-Fi already uses.
 
+### 12. The simulator's stressors are set on the simulator's side (2026-11-07)
+
+A stressed cell of the hil campaign (wind, GPS denial; X-14) is flown as
+ArduPilot SITL's own SIM_* parameters, and the process that sets them,
+`sitl/sitl_stressors.py`, runs beside SITL on the desktop, on SITL's SERIAL0,
+and not in the Shield node, which is the system under test and on the drone
+would face a real sky it cannot configure. The node is not told the
+schedule. What it does is what any flight would let it do: announce its own
+mission clock (a STATUSTEXT at t = 0, through MAVROS) and record what the
+autopilot reports - the SIM_* values at take-off, every change ArduPilot
+broadcasts, the GPS fix. The stressor process aligns its changes on the
+announced clock; the alignment is MEASURED on the node's clock and checked
+by the harness, which refuses to score a flight whose stress it cannot
+confirm. The alternative - the node setting the parameters through MAVROS
+on its own tick - aligns trivially but puts fault injection inside the
+system under test, and a flight build would then carry code that changes
+the simulator. docs/RUNBOOK-orin-hil.md step 14 has the parameters, the
+source lines they were read from, and what SITL's physics changes against
+the headless harness's models.
+
 ## Measurements so far (desktop, dev)
 
 ### Shield time per tick, on real flight states

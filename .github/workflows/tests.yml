@@ -45,7 +45,9 @@
 #          test_harness_service, test_harnesstruth_*, test_wp4outputs_*.
 #        The flying rails: test_railinputs_*, test_flight_pas_ap_20261008 (on
 #          its tests/fixtures/ copy of the 8 Oct flight), test_pas_ardupilot,
-#          test_sitl_rails, test_mavlink_adapter, test_ros2_vla_bridge (the
+#          test_sitl_rails, test_sitl_stressors (the simulator's stressors on
+#          the rails, X-14, 2026-11-07), test_mavlink_adapter,
+#          test_ros2_vla_bridge (the
 #          ROS 2 rail's AerialVLA node and the Shield node's side of it, on
 #          tests/vla_fake_server.py and a stand-in rclpy), test_fenceguard,
 #          test_follow_motion, test_identity, test_identity_lock,
@@ -657,6 +659,7 @@ jobs:
               tests/test_identity_lock.py \
               tests/test_pas_ardupilot.py \
               tests/test_sitl_rails.py \
+              tests/test_sitl_stressors.py \
               tests/test_mavlink_adapter.py \
               tests/test_ros2_vla_bridge.py \
               tests/test_deploy_configs.py \

@@ -15,6 +15,9 @@
     /mavros/*, /uas1/*      are published by /guardrail/mavros ONLY (a wildcard)
     /mavros/setpoint_raw/local  is published by /guardrail/mavlink_adapter ONLY
                             (MAVROS subscribes to it)
+    /mavros/statustext/send is published by /guardrail/safety_shield ONLY: the
+                            episode's t = 0 marker for the simulator side
+                            (2026-11-07, sitl/sitl_stressors.py)
 
   and each node may reach the MAVROS services it calls and nothing else.
   Every node also publishes /rosout and /parameter_events and serves its own
@@ -45,6 +48,8 @@
             <topic>/shield/mode_request</topic>
             <topic>/shield/fences</topic>
             <topic>/shield/intercept</topic>
+            <!-- the episode's t = 0 marker (2026-11-07) -->
+            <topic>/mavros/statustext/send</topic>
             <topic>/rosout</topic>
             <topic>/parameter_events</topic>
           </topics>
@@ -57,6 +62,13 @@
             <topic>/mavros/state</topic>
             <topic>/mavros/extended_state</topic>
             <topic>/mavros/statustext/recv</topic>
+            <!-- the autopilot's home, checked against a scenario's start
+                 (2026-11-06), the GPS fix behind State.fix_ok and SITL's
+                 stressor parameters as the autopilot broadcasts them
+                 (2026-11-07) -->
+            <topic>/mavros/home_position/home</topic>
+            <topic>/mavros/global_position/raw/fix</topic>
+            <topic>/mavros/param/event</topic>
           </topics>
           <services request="ALLOW">
             <service>/mavros/set_mode</service>
@@ -67,6 +79,7 @@
             <service>/mavros/param/set_parameters</service>
             <service>/mavros/get_parameters</service>
             <service>/mavros/vehicle_info_get</service>
+            <service>/mavros/home_position/req_update</service>
           </services>
           <services reply="ALLOW">
             <service>~/*</service>

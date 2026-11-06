@@ -58,6 +58,11 @@ gains a spatial hysteresis. No FSMConfig field was added, so the default
 config still hashes `sha256:d55e1bfe...`. The next section has the design,
 where each rail's signal lives, and the measurements.
 
+**Update 2026-11-07.** The ROS 2 Shield node reports `fix_ok`
+(`/mavros/global_position/raw/fix`) and its FSM takes X8 from the Shield's
+own verdict; `pos_sigma_m` stays unreported there, a policy decision ("Where
+each rail's signal lives"). Not flown yet.
+
 ## 2026-11-06: X8, the position the Shield is handed
 
 The fail-safe KPI's remaining misses (headless harness, against
@@ -155,10 +160,37 @@ rail that flies it is a policy decision, and no policy was changed with this.
 
 | rail | fix validity (`fix_ok`) | accuracy (`pos_sigma_m`) | today |
 |---|---|---|---|
-| ROS 2 + MAVROS 2 (sitl/ros2_shield_node.py; the hil topology) | `/mavros/global_position/raw/fix` (NavSatFix status from GPS_RAW_INT.fix_type), `/mavros/gpsstatus/gps1/raw` (mavros_msgs/GPSRAW: fix_type, satellites_visible); EKF_STATUS_REPORT from the raw MAVLink the node already records; the pose's own header stamp age (the node's stale-pose watchdog, `POSE_TIMEOUT_S`, checks arrival only and would miss a bridge re-publishing its last pose) | GPSRAW.h_acc, or the NavSatFix position_covariance MAVROS builds from h_acc / eph | not wired: a later change, after the rail rework |
+| ROS 2 + MAVROS 2 (sitl/ros2_shield_node.py; the hil topology) | **wired 2026-11-07:** `/mavros/global_position/raw/fix`, the NavSatFix MAVROS 2's global_position plugin (core MAVROS, no mavros_extras needed) builds from GPS_RAW_INT: STATUS_FIX when fix_type > 2, else STATUS_NO_FIX; `fix_ok` = status >= STATUS_FIX while the message is no older than the pose timeout (1 s), None before the first one or once stale (`fix_ok_from`). Not used: `/mavros/gpsstatus/gps1/raw` (mavros_extras' gps_status plugin), EKF_STATUS_REPORT, the pose's stamp age | GPSRAW.h_acc, or the NavSatFix position_covariance MAVROS builds from h_acc / eph - **not fed**: a policy decision, below | `fix_ok` reported; `pos_sigma_m` None |
 | Project AirSim + ArduPilot (demo/pas_ardupilot/autopilot.py) | already parsed: GPS_RAW_INT.fix_type (`snap.gps_fix`), EKF_STATUS_REPORT flags (`snap.ekf_flags`, `ekf_ready()`), the position's receipt time (`snap.t_pos`) - used only as a pre-arm gate | GPS_RAW_INT.h_acc (not parsed yet) | not wired |
 | Project AirSim simple_flight (demo/follow_vlm.py and the city rails) | none: the State is `get_ground_truth_kinematics()`, a perfect position; only a configured GPS sensor, or injection, could report one | none | None (unobservable) |
 | headless harness (experiments/sweep_scenarios.py) | `stress.gps_dropout_s` with `stress.fix_quality_reported` (default true): False through the window | `stress.gps_noise_m` with the same flag | reported; withheld per scenario to keep "the Shield flying blind" measurable |
+
+**On the ROS 2 rail (2026-11-07).** The node's Shield has no FSM of its own
+(guardrail.replay.rail_shield): the node runs THE FSM, because only it sees
+the autopilot. So the Shield judges X8's input on any state that reports its
+fix quality and hands it out (`ShieldDecision.position_lost`, excluded from
+every dump), and the node passes it to its FSM's `tick_input_from_decision`
+(`position_lost=`). The Shield's dead reckoning integrates what the node
+SENT, not what filter() emitted: the node's FSM decides after filter()
+whether a stop, nothing (the autopilot holding) or the Shield's action flew,
+and tells the Shield through `note_flown`, which on a Shield with no FSM now
+also feeds the dead reckoning. A state that reports nothing - every other
+rail, the harness's oracle on the true state - computes nothing new.
+`pos_sigma_m` is NOT fed on this rail: with the shipped 1 m margins X8's
+sigma branch certifies a zone only while sigma <= 0.33 m. SITL's u-blox
+stream reports 0.3 m (SIM_GPS_ACC, libraries/SITL/SIM_GPS_UBLOX.cpp:256),
+just inside; an ordinary receiver in the field reports metres, and then
+every request passing within 3 sigma of a hard P0 zone returns the aircraft.
+Whether margins are sized to the rail's accuracy, or the accuracy is fed, is
+a policy decision left open. On SITL the fix is lost by setting
+SIM_GPS_DISABLE from the simulator's side (sitl/sitl_stressors.py;
+docs/RUNBOOK-orin-hil.md step 14):
+there the pose the Shield is handed keeps moving on EKF3's inertial dead
+reckoning instead of freezing, so X8 fires on the drift allowance alone,
+later than on the headless harness's frozen fix, and ArduCopter's own EKF
+failsafe lands the aircraft about 8 s after the GPS is lost (7 s
+posRetryTimeNoVel_ms, then 1 s of ekf_check) - the "second input, not
+modelled" above, which a flight now meets.
 
 ### The KPI invariant
 

@@ -1004,6 +1004,14 @@ class ShieldDecision(BaseModel):
     # `fsm_record["hold_point"]`. Excluded from model_dump() like `trace`, so
     # a dumped decision of any other state is byte for byte what it was.
     hold_point: dict | None = Field(default=None, exclude=True)
+    # X8's input as THIS Shield judged it, (reason, rule id), for a rail that
+    # runs the escalation FSM itself (guardrail/replay.py rail_shield: a
+    # Shield with no FSM of its own): `_position_verdict` on the state it was
+    # handed (2026-11-07, the ROS 2 node's /mavros/global_position/raw/fix).
+    # Computed only for a state that reports its fix quality (State.fix_ok or
+    # pos_sigma_m); None otherwise and on a Shield with its own FSM, which
+    # reads the verdict directly. Excluded from model_dump() like `trace`.
+    position_lost: tuple[str, str] | None = Field(default=None, exclude=True)
 
     @property
     def touched(self) -> bool:
@@ -2503,16 +2511,29 @@ class Shield:
         been sent 2.9 m/s towards a wall is forecast to sit still for the
         whole reaction time (0.45 s) while it is in fact accelerating (the
         closed loop's second approach, docs/DESIGN-own-velocity-forecast.md).
-        It changes nothing for a state without a measured velocity."""
+        It changes nothing for a state without a measured velocity.
+
+        A Shield with no escalation FSM of its own (a rail's, guardrail/
+        replay.py rail_shield) also dead-reckons on it while the position is
+        not a valid fix (State.fix_ok False, X8's input; 2026-11-07): the
+        rail's FSM decided after filter() what flew - a stop, nothing while
+        the autopilot holds, or the Shield's action - so the next tick's
+        estimate integrates what was SENT on this one (None: 0, the
+        autopilot holding in place), not the action filter() emitted. It is
+        read only while State.fix_ok is False."""
         if t is None:
             t = (float(self._pipe_clock()) if self._pipe_clock is not None
                  else self._t_last if self._t_last is not None else 0.0)
         t = float(t)
-        if action is None or not (math.isfinite(action.vx) and math.isfinite(action.vy)):
+        finite = action is not None and math.isfinite(action.vx) and math.isfinite(action.vy)
+        if not finite:
             self._flown.append((t, None, None))
         else:
             self._flown.append((t, float(action.vx), float(action.vy)))
             self.n_noted_setpoints += 1
+        if self.fsm is None and self._t_last is not None:
+            self._pk_cmd = ((self._t_last, float(action.vx), float(action.vy)) if finite
+                            else (self._t_last, 0.0, 0.0))
 
     def pipe(self, t: float | None = None) -> list:
         """The setpoints already sent that act during the next reaction time,
@@ -7254,6 +7275,16 @@ class Shield:
                                "policy_hash": tick.rt.ir.policy_hash}
         if self.fsm is None:
             upd["command"] = d.emitted
+            # A rail that runs THE escalation FSM itself (the ROS 2 node,
+            # guardrail/replay.py rail_shield) still needs X8's input, and it
+            # is this Shield's to judge: its dead reckoning on what the rail
+            # streamed (note_flown) and its zones (2026-11-07). Only for a
+            # state that reports its fix quality, so every caller whose
+            # states report none - every other rail, and the harness's
+            # oracle on the true state - runs exactly as before.
+            if (getattr(state, "fix_ok", None) is not None
+                    or getattr(state, "pos_sigma_m", None) is not None):
+                upd["position_lost"] = self._position_verdict(tick, state, d.raw)
             return d.model_copy(update=upd)
         if self._fsm_fault is not None:
             upd.update(fsm_fault=self._fsm_fault, setpoint="none", command=None,

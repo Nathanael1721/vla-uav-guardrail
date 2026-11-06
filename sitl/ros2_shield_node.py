@@ -126,6 +126,33 @@ target and a seed but no start, no pilot and no events
 The pilot laws are the VLA stub's (sitl/ros2_vla_stub_node.py --pilot,
 --action), which reads the same arguments.
 
+THE GPS FIX AND THE SIMULATOR'S STRESSORS (2026-11-07, X-14).
+  * State.fix_ok from /mavros/global_position/raw/fix: MAVROS 2's
+    global_position plugin (core MAVROS, loaded on both rails without
+    mavros_extras) publishes it from the autopilot's GPS_RAW_INT, with
+    status STATUS_FIX when fix_type > 2 and STATUS_NO_FIX otherwise ("GP: No
+    GPS fix"). fix_ok_from: True for STATUS_FIX or better, False for
+    STATUS_NO_FIX, None before the first message and when the last is older
+    than FIX_STALE_S - a rail without the topic flies exactly as before. The
+    Shield judges X8's input from it (ShieldDecision.position_lost, its dead
+    reckoning on what this node sent: Shield.note_flown) and this node's FSM
+    takes X8 (RTL). pos_sigma_m is NOT fed: with 1 m margins X8's sigma
+    branch needs sigma <= 0.33 m (SITL reports 0.3 m; a field receiver
+    reports metres, and every mission passing near a zone would return);
+    sizing margins to the rail's accuracy is a policy decision left open.
+    Rows carry fix_ok, fix_status, fix_age_ms and the Shield's
+    position_lost; metrics.json `fix_quality`.
+  * The simulator's stressors are set on the SIMULATOR'S side
+    (sitl/sitl_stressors.py, on the desktop beside SITL), never here. This
+    node only (a) announces its mission clock: on a scenario mission
+    (--scenario-meta with a run nonce) a STATUSTEXT `GRDL T0 <nonce8> t=<s>`
+    through /mavros/statustext/send at t = 0 and each of MARKER_TIMES_S, the
+    t = 0 the simulator side schedules against; (b) reads SITL's stressor
+    parameters back at take-off (SIM_SPEEDUP answering: SITL only) and
+    records every change the autopilot broadcasts (/mavros/param/event) on
+    its own mission clock - the measured alignment the stress harness checks
+    (metrics.json `sim_params`).
+
 ZONE DWELL AND COST MAP (2026-10-11). `nfz_s` is the count every rail shares
 (guardrail.replay.zone_dwell, read from the Shield's rule checker): polygon
 and circle fences and every dynamic_nfz that does not move, the hot-applied
@@ -301,8 +328,10 @@ from guardrail.replay import (EpisodeRecord, audit_tick,                  # noqa
                               kpi_evidence_grade, rail_shield, rule_clock,
                               verify_replay, write_replay, zone_dwell)
 from mavros_evidence import (get_params, initial_evidence,                # noqa: E402
-                             note_mavros_state, poll_autopilot_version,
+                             note_mavros_state, param_value, poll_autopilot_version,
                              poll_sim_speedup, record_link, topology_manifest)
+from sitl_stressors import (MARKER_TIMES_S, WATCHED_SIM_PARAMS,          # noqa: E402
+                            marker_text)
 from mavlink_adapter_node import (ADAPTER_NODE_NAME, DEFAULT_HOLD_MODE,   # noqa: E402
                                   FENCE_MARGIN_M, ORIGIN_TOLERANCE_M,
                                   HOLD_MODES, TOPIC_FENCES, TOPIC_MODE_REQUEST,
@@ -489,6 +518,20 @@ START_SETTLE_S = 1.0
 # A heading for the scenario's events (spawn ahead, move left) is read from
 # the measured velocity above this speed; slower, the last one is kept.
 EVENT_HEADING_MIN_MPS = 0.1
+# The GPS fix behind State.fix_ok (2026-11-07; module docstring, "THE GPS FIX
+# AND THE SIMULATOR'S STRESSORS"). sensor_msgs/NavSatStatus: STATUS_NO_FIX
+# -1, STATUS_FIX 0 (SBAS 1, GBAS 2). A status older than the pose timeout is
+# not a report about the pose this tick checks.
+FIX_TOPIC = "/mavros/global_position/raw/fix"
+NAVSAT_STATUS_FIX = 0
+FIX_STALE_S = POSE_TIMEOUT_S
+# The simulator side's inputs and this node's announcement of its clock.
+PARAM_EVENT_TOPIC = "/mavros/param/event"
+STATUSTEXT_SEND_TOPIC = "/mavros/statustext/send"
+STATUSTEXT_INFO = 6                   # MAV_SEVERITY_INFO
+# Parameter events kept in metrics.json (MAVROS's pull at connect sends one
+# per parameter; only the watched SIM_* ones are kept, and at most these).
+SIM_PARAM_EVENTS_MAX = 200
 
 
 # --------------------------------------------------------------------------- #
@@ -662,6 +705,39 @@ def shield_state(state: State, velocity, age_s: float | None, enabled: bool) -> 
             or not all(math.isfinite(c) for c in velocity)):
         return state
     return state.model_copy(update={"velocity": tuple(velocity)})
+
+
+def fix_ok_from(status, age_s: float | None, stale_s: float = FIX_STALE_S) -> bool | None:
+    """State.fix_ok from the latest /mavros/global_position/raw/fix
+    (2026-11-07): its NavSatStatus `status` and its age on the node's clock.
+    None - not reported, the position trusted exactly as before - with no
+    message yet (a rail without the topic) or one older than `stale_s`; True
+    for STATUS_FIX or better (MAVROS: GPS_RAW_INT.fix_type > 2, a 3D fix);
+    False for STATUS_NO_FIX (fix_type 0-2: SITL's GPS with SIM_GPS_DISABLE
+    reports 0, libraries/SITL/SIM_GPS_UBLOX.cpp)."""
+    if status is None or age_s is None:
+        return None
+    age = float(age_s)
+    if not (math.isfinite(age) and 0.0 <= age <= float(stale_s)):
+        return None
+    return int(status) >= NAVSAT_STATUS_FIX
+
+
+def fix_spells(rows: list[dict]) -> list[dict]:
+    """The spells of rows whose fix_ok is False: [{t_start, t_end, ticks}],
+    t_end None for a spell still running at the last row."""
+    out: list[dict] = []
+    cur = None
+    for r in rows:
+        if r.get("fix_ok") is False:
+            if cur is None:
+                cur = {"t_start": r.get("t"), "t_end": None, "ticks": 0}
+                out.append(cur)
+            cur["ticks"] += 1
+        elif cur is not None:
+            cur["t_end"] = r.get("t")
+            cur = None
+    return out
 
 
 def shield_step(shield: Shield, state: State, body: Action4D, shield_on: bool):
@@ -1194,6 +1270,17 @@ try:
         from std_srvs.srv import Trigger            # /mavros/home_position/req_update
     except ImportError:
         Trigger = None
+    try:
+        # The GPS fix behind State.fix_ok (2026-11-07); a stand-in ROS stack
+        # without it runs the node with fix_ok None, as before.
+        from sensor_msgs.msg import NavSatFix
+    except ImportError:
+        NavSatFix = None
+    try:
+        # SITL's stressor parameters as the autopilot broadcasts them.
+        from mavros_msgs.msg import ParamEvent
+    except ImportError:
+        ParamEvent = None
     HAVE_ROS = True
 except ImportError:
     HAVE_ROS = False
@@ -1462,6 +1549,22 @@ if HAVE_ROS:
             self.failsafe_t: float | None = None
             self.n_pose = 0
             self._last_rate_req = 0.0
+            # The GPS fix (FIX_TOPIC): the latest NavSatStatus and its
+            # receipt on the node's monotonic clock; fix_ok_from reads them
+            # each tick. And the X8 verdicts the Shield handed this node's FSM.
+            self.fix_status: int | None = None
+            self.fix_rx: float | None = None
+            self.n_fix = 0
+            self.n_position_lost = 0
+            # SITL's stressor parameters: as read back at take-off, every
+            # change the autopilot broadcast (on the mission clock), and the
+            # t = 0 markers this node sent (module docstring).
+            self.sim_params_takeoff: dict | None = None
+            self.sim_param_events: list[dict] = []
+            self.n_sim_param_events = 0
+            self._run_nonce = str((self.scenario_meta or {}).get("run_nonce") or "")
+            self.markers_sent: list[float] = []
+            self._marker_times = list(MARKER_TIMES_S) if self._run_nonce else []
 
             self.create_subscription(PoseStamped, "/mavros/local_position/pose",
                                      self._on_pose, qos_profile_sensor_data)
@@ -1505,6 +1608,34 @@ if HAVE_ROS:
                                          self._on_home, qos_profile_sensor_data)
             self.cli_home = (self.create_client(Trigger, "/mavros/home_position/req_update")
                              if Trigger is not None else None)
+            # The GPS fix (fix_ok) and SITL's parameter changes, both with the
+            # sensor-data QoS: best effort matches MAVROS's publishers
+            # whatever their reliability. The t = 0 marker goes out RELIABLE,
+            # which MAVROS's subscription accepts whatever its own. Each may be
+            # refused by SROS 2 under a keystore made before sitl/
+            # sros2_policy.xml granted it (2026-11-07): recorded, and the node
+            # flies without it - fix_ok None as before, no marker (a stressed
+            # cell then errors on the harness's check, never flies as scored).
+            self.inputs_refused: dict[str, str] = {}
+            self.pub_text = None
+            try:
+                if NavSatFix is not None:
+                    self.create_subscription(NavSatFix, FIX_TOPIC, self._on_fix,
+                                             qos_profile_sensor_data)
+            except Exception as e:                               # noqa: BLE001
+                self._input_refused("fix", e)
+            try:
+                if ParamEvent is not None:
+                    self.create_subscription(ParamEvent, PARAM_EVENT_TOPIC,
+                                             self._on_param_event, qos_profile_sensor_data)
+            except Exception as e:                               # noqa: BLE001
+                self._input_refused("param_event", e)
+            try:
+                if self._run_nonce:
+                    self.pub_text = self.create_publisher(StatusText,
+                                                          STATUSTEXT_SEND_TOPIC, 10)
+            except Exception as e:                               # noqa: BLE001
+                self._input_refused("marker", e)
             # The fences are published in bring_up(), once the autopilot's
             # fence parameters and the aircraft's position are known.
 
@@ -1548,6 +1679,60 @@ if HAVE_ROS:
                 self.rec.event("autopilot_home", t=self._t(), lat=self.home_geo[0],
                                lon=self.home_geo[1],
                                from_ekf_origin_ne=list(self.home_geo[2]))
+
+        def _input_refused(self, what: str, e: Exception) -> None:
+            self.inputs_refused[what] = f"{type(e).__name__}: {e}"
+            self.get_logger().warn(f"{what} not available: {type(e).__name__}: {e}")
+
+        def _on_fix(self, msg) -> None:
+            # NavSatFix from the autopilot's GPS_RAW_INT (FIX_TOPIC); receipt
+            # on the node's monotonic clock, as the pose's.
+            try:
+                self.fix_status = int(msg.status.status)
+            except (AttributeError, TypeError, ValueError):
+                return
+            self.fix_rx = time.monotonic()
+            self.n_fix += 1
+
+        def fix_ok_now(self) -> bool | None:
+            """State.fix_ok for this tick (fix_ok_from)."""
+            age = None if self.fix_rx is None else time.monotonic() - self.fix_rx
+            return fix_ok_from(self.fix_status, age)
+
+        def _on_param_event(self, msg) -> None:
+            # A PARAM_VALUE the autopilot sent (MAVROS's pull at connect, or
+            # the broadcast after any PARAM_SET, the simulator side's
+            # included): only SITL's stressor parameters are kept, with the
+            # mission time this node received it at (None before mission
+            # start). The simulator side's alignment is measured here.
+            pid = str(getattr(msg, "param_id", "") or "")
+            if pid not in WATCHED_SIM_PARAMS:
+                return
+            try:
+                val = param_value(msg.value)
+            except (AttributeError, TypeError, ValueError):
+                val = None
+            self.n_sim_param_events += 1
+            t = self._t()
+            if len(self.sim_param_events) < SIM_PARAM_EVENTS_MAX:
+                self.sim_param_events.append(
+                    {"t": None if t is None else round(t, 4), "param": pid, "value": val})
+            if t is not None:
+                self.rec.event("sim_param", t=t, param=pid, value=val)
+                self.get_logger().info(f"simulator parameter {pid} = {val} at t={t:.2f}s")
+
+        def _send_marker(self, t: float) -> None:
+            """The episode's t = 0 for the simulator side: a STATUSTEXT
+            through MAVROS (sitl_stressors.marker_text), on a scenario
+            mission only; the mission time it carries is this node's."""
+            if self.pub_text is None:
+                return
+            try:
+                self.pub_text.publish(StatusText(severity=STATUSTEXT_INFO,
+                                                 text=marker_text(self._run_nonce, t)))
+                self.markers_sent.append(round(float(t), 4))
+            except Exception as e:                           # noqa: BLE001
+                self.get_logger().warn(f"t=0 marker not sent: {type(e).__name__}: {e}")
 
         def _on_state(self, msg: MavState) -> None:
             self.mav_connected = msg.connected
@@ -1961,6 +2146,55 @@ if HAVE_ROS:
                 self.get_logger().warn(f"backstop stricter than the policy: "
                                        f"{plan['why']}")
 
+        def read_sim_params(self) -> None:
+            """SITL's stressor parameters (sitl_stressors.WATCHED_SIM_PARAMS)
+            as the autopilot holds them before take-off, through MAVROS
+            (metrics.json `sim_params.at_takeoff`): the boot values the
+            simulator side set, read back by a second process on a second
+            link. Only on SITL (SIM_SPEEDUP answers); a hardware autopilot has
+            no SIM_* parameter, and the record says so.
+
+            Accepted once two reads in a row agree with every value present
+            (MAVROS fills its parameter set after connect, and a forced pull
+            once read 0.0 mid-refill: mavros_evidence.poll_sim_speedup), for
+            up to 10 s. Evidence only: a read that fails is recorded with why
+            (`sitl` None) and bring-up goes on - the harness then refuses a
+            stressed cell (experiments/sweep_scenarios.py rail_stress_check)."""
+            names = list(WATCHED_SIM_PARAMS) + ["SIM_SPEEDUP"]
+            try:
+                vals = self._get_params(self.cli_param, names)
+                if vals.get("SIM_SPEEDUP") is None:
+                    self.sim_params_takeoff = {"sitl": False, "values": None,
+                                               "why": "SIM_SPEEDUP did not answer: not SITL, "
+                                                      "or MAVROS has not pulled the parameters"}
+                    return
+                deadline = time.time() + 10.0
+                cur = {k: vals.get(k) for k in WATCHED_SIM_PARAMS}
+                prev, reads, stable = None, 1, False
+                while True:
+                    if cur == prev and all(v is not None for v in cur.values()):
+                        stable = True
+                        break
+                    if time.time() >= deadline:
+                        break
+                    rclpy.spin_once(self, timeout_sec=0.2)
+                    prev = cur
+                    vals = self._get_params(self.cli_param, names)
+                    cur = {k: vals.get(k) for k in WATCHED_SIM_PARAMS}
+                    reads += 1
+            except Exception as e:                               # noqa: BLE001
+                self.sim_params_takeoff = {"sitl": None, "values": None,
+                                           "why": f"not read: {type(e).__name__}: {e}"}
+                self.get_logger().warn(f"simulator parameters not read: "
+                                       f"{type(e).__name__}: {e}")
+                return
+            self.sim_params_takeoff = {
+                "sitl": True, "source": "/mavros/param (read from the autopilot)",
+                "values": cur, "reads": reads, "stable": stable}
+            self.rec.event("sim_params", **self.sim_params_takeoff)
+            self.get_logger().info("simulator parameters at take-off: " + ", ".join(
+                f"{k}={vals.get(k)}" for k in WATCHED_SIM_PARAMS))
+
         def bring_up(self) -> None:
             log = self.get_logger()
             self.serve_hot_apply()
@@ -1984,6 +2218,9 @@ if HAVE_ROS:
             # zones - once the aircraft's position is known, so a zone over
             # the pad is held back rather than armed under the aircraft.
             self.read_autopilot_fence()
+            # SITL's stressor parameters as they stand before take-off (the
+            # simulator side set its boot values before this node started).
+            self.read_sim_params()
             pose_deadline = time.time() + 10.0
             while self.state is None and time.time() < pose_deadline:
                 rclpy.spin_once(self, timeout_sec=0.5)
@@ -2185,6 +2422,11 @@ if HAVE_ROS:
                 self.rec.event("shield_warmup", t=None,
                                ms=round(warm.history[-1].elapsed_ms, 3))
             self.mission_t0 = time.monotonic()
+            # The episode's t = 0 for the simulator side (a scenario mission
+            # only), sent the moment the mission clock starts.
+            if self._marker_times and self._marker_times[0] <= 0.0:
+                self._marker_times.pop(0)
+                self._send_marker(0.0)
             self.watchdog.start(self.mission_t0)
             self.pose_watchdog.start(self.mission_t0)
             # The heading the scenario's first events see (spawn ahead, move
@@ -2552,6 +2794,11 @@ if HAVE_ROS:
                 self.get_logger().warn("mission time cap")
                 self._finish("time cap")
                 return
+            # The t = 0 marker's repeats, each with the mission time it is
+            # sent at (the simulator side takes the least delayed one).
+            while self._marker_times and now >= self._marker_times[0]:
+                self._marker_times.pop(0)
+                self._send_marker(now)
             st = self.state
 
             # Re-assert 10 Hz streams: a ground station on the same router
@@ -2673,12 +2920,24 @@ if HAVE_ROS:
             self.n_vel_seen += vel is not None
             st_sh = shield_state(st, vel, vel_age, self.own_v)
             self.n_vel_used += st_sh is not st
+            # The GPS fix (2026-11-07): the Shield is told whether this
+            # position is a current valid fix (None, no report: as before).
+            fix_ok = self.fix_ok_now()
+            if fix_ok is not None:
+                st_sh = st_sh.model_copy(update={"fix_ok": fix_ok})
             # The rule clock's reading for this tick's row (and, pinned, the
             # next tick's _prev_judgement): read once, right before the
             # Shield reads it.
             clock_reading = self.clock()
             decision, raw_w, em_w, em_body = shield_step(
                 self.shield, st_sh, body, self.shield_on)
+            # X8's input, the Shield's own verdict on the position it was
+            # handed (ShieldDecision.position_lost: fix_ok False and the
+            # dead-reckoned error beyond a hard P0 margin near its boundary);
+            # None while the fix is valid or not reported. This node's FSM
+            # takes it below.
+            lost = getattr(decision, "position_lost", None)
+            self.n_position_lost += bool(lost)
             extra = episode_row_fields(self.shield, st, self.policy,
                                        self.rec.episode_id)
             self._recheck_deferred(st, extra["unsafe_rules"])
@@ -2722,7 +2981,8 @@ if HAVE_ROS:
                         stop_illegal=stop_illegal, unsafe_depth_m=unsafe_depth,
                         # The caps the Shield clamped against on this tick,
                         # not every cap the policy lists (Shield.applied_caps).
-                        caps=self.shield.applied_caps or False)
+                        caps=self.shield.applied_caps or False,
+                        position_lost=lost[0] if lost else None)
                     fsm_out = self.fsm.step(inp)
                 except ValueError as e:
                     # A Shield/FSM contract break mid-flight: hold, say why,
@@ -2827,6 +3087,14 @@ if HAVE_ROS:
                                           else None if prev is None else prev[0]),
                        zones_in_prev=(zin if same else None if prev is None else prev[1]),
                        rule_events=rule_events)
+            if self.n_fix:
+                # The GPS fix this tick handed the Shield (2026-11-07): only
+                # once FIX_TOPIC has spoken, so a rail without it writes the
+                # rows it always did. position_lost: the Shield's X8 verdict.
+                fix_age = (None if self.fix_rx is None
+                           else round((time.monotonic() - self.fix_rx) * 1000.0, 1))
+                row.update(fix_ok=fix_ok, fix_status=self.fix_status, fix_age_ms=fix_age,
+                           position_lost=(lost[0] if lost else None))
             self._last_clock = clock_reading
             self._gen_after_tick = self.policy.generation
             if self.n_pilot_msgs or self.n_pilot_malformed:
@@ -3118,6 +3386,42 @@ if HAVE_ROS:
                     "stale_ticks": n_pose_stale,
                     "stale_s": pose_stale_s},
                 "tick_latency": latency_summary(self.rows),
+                # The GPS fix behind State.fix_ok (2026-11-07; module
+                # docstring, "THE GPS FIX AND THE SIMULATOR'S STRESSORS").
+                "fix_quality": {
+                    "topic": FIX_TOPIC,
+                    "source": ("sensor_msgs/NavSatFix status MAVROS 2's global_position "
+                               "plugin sets from GPS_RAW_INT (fix_type > 2: STATUS_FIX)"),
+                    "messages": self.n_fix,
+                    "stale_after_s": FIX_STALE_S,
+                    "ticks_fix_ok": sum(1 for r in self.rows if r.get("fix_ok") is True),
+                    "ticks_no_fix": sum(1 for r in self.rows if r.get("fix_ok") is False),
+                    "ticks_not_reported": sum(1 for r in self.rows
+                                              if r.get("fix_ok") is None),
+                    "no_fix_spells": fix_spells(self.rows),
+                    "position_lost_ticks": self.n_position_lost,
+                    "pos_sigma_m": None,
+                    "pos_sigma_m_why": ("not fed: with 1 m margins X8's sigma branch "
+                                        "needs sigma <= 0.33 m (SITL reports 0.3 m, a "
+                                        "field receiver metres, which would return "
+                                        "every mission passing near a zone); sizing "
+                                        "margins to the rail's accuracy is a policy "
+                                        "decision left open")},
+                # SITL's stressor parameters (set by the simulator side,
+                # sitl/sitl_stressors.py): read back at take-off, every change
+                # the autopilot broadcast on this node's mission clock, and
+                # the t = 0 markers this node announced its clock with.
+                "sim_params": {
+                    "watched": list(WATCHED_SIM_PARAMS),
+                    "at_takeoff": self.sim_params_takeoff,
+                    "events": self.sim_param_events,
+                    "events_total": self.n_sim_param_events,
+                    "events_topic": PARAM_EVENT_TOPIC,
+                    "markers_sent": self.markers_sent,
+                    "marker_topic": STATUSTEXT_SEND_TOPIC if self.pub_text else None,
+                    # Inputs the ROS graph refused this node (an SROS 2
+                    # keystore made before they were granted): {} normally.
+                    "inputs_refused": self.inputs_refused},
                 # Beside the manifest, which is exactly the grant's six fields.
                 "hil_evidence": self.hil_evidence,
                 "policy_source": self.policy_source,
@@ -3228,6 +3532,8 @@ if HAVE_ROS:
 | Hot-apply API | {f"{metrics['hot_apply']['n_applied']} event(s) at {metrics['hot_apply']['endpoint']['url']}, receipt to swap max {metrics['hot_apply']['receipt_to_swap_ms_max']} ms" if self.hot is not None else 'not served'} |
 | Action stream | {self.n_actions} received; {self.watchdog.summary()['n_spells']} stale spell(s) (timeout {self.watchdog.timeout_s:g} s) |
 | Pose stream | {metrics['pose_hz']} Hz; {len(self.pose_watchdog.spells)} stale spell(s) (timeout {self.pose_watchdog.timeout_s:g} s), {pose_stale_s:g} s of ticks on a stale pose |
+| GPS fix (`fix_ok`, {FIX_TOPIC}) | {f"{self.n_fix} message(s); {metrics['fix_quality']['ticks_no_fix']} tick(s) without a fix; X8 input on {self.n_position_lost} tick(s)" if self.n_fix else 'not reported (no message): fix_ok None, as before'} |
+| Simulator parameters | {f"at take-off {self.sim_params_takeoff.get('values')}; {sum(1 for e in self.sim_param_events if e['t'] is not None)} change(s) in flight" if (self.sim_params_takeoff or {}).get('sitl') else 'not SITL, or not read'} |
 | Tick latency (e2e p50 / p99 / max) | {metrics['tick_latency']['e2e_ms']['p50']} / {metrics['tick_latency']['e2e_ms']['p99']} / {metrics['tick_latency']['e2e_ms']['max']} ms, budget {TICK_BUDGET_MS:g} ms |
 | Topology | `{manifest['topology']}` |
 | Target reached | {'no target (--no-target)' if not self.has_target else 'yes' if self.reached else 'NO'} |

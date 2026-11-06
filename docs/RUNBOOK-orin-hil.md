@@ -629,9 +629,12 @@ hil`, since 2026-11-06). For each mission it:
    start: `sitl/hil_desktop.sh start --home <SITL_HOME> --mavros-host
    10.42.0.3` kills what is left of the previous mission, boots SITL with
    `SITL_HOME` (the policy frame origin's projection of the scenario's start,
-   at 584 m, facing its start yaw; fresh EEPROM and the GeoFence backstop, as
-   `sitl/start_sitl.sh` always does), starts the router toward the Orin, and
-   gives the EKF 20 s;
+   at 584 m, facing its start yaw, with the cell's start jitter for the seed;
+   fresh EEPROM and the GeoFence backstop, as `sitl/start_sitl.sh` always
+   does), starts the router toward the Orin and, for a cell with wind or a
+   GPS dropout (`--stress-plan` / `--stress-record`, since 2026-11-07),
+   `sitl/sitl_stressors.py` with the cell's SITL parameters set and read
+   back, and gives the EKF 20 s;
 2. copies the scenario's files - its events and its record - to the Orin, to
    `~/vla-drone/demo/out/_campaign/<tag>/` (demo/out is gitignored and
    mounted writable, so the checkout stays clean);
@@ -698,18 +701,127 @@ Every ssh, scp and `sitl/hil_desktop.sh` call runs with its stdin closed
 held `ssh ... mkdir -p` open into its 60 s timeout (shk02).
 
 What the rail cannot fly is refused before anything flies, with the reason,
-and listed: the stressors (wind, gusts, start jitter, GPS noise, latency and
-dropout - no `SIM_*` stressor is wired - and the battery hook), an RTL that
-must fail (`rtl_failed_ticks`), a non-finite pilot action, a relabel
-schedule, start altitudes below 1 m or at the GeoFence ceiling (the 0.5 m
-and 30 m cells), and the paraphrase and prefix-off arms (the stub reads no
-text). Shield-off control arms fly only with `--hil-controls`.
+and listed: the stressors SITL has no honest equivalent for (GPS noise,
+state latency, gusts, the battery hook; next section), an RTL that must fail
+(`rtl_failed_ticks`), a non-finite pilot action, a relabel schedule, start
+altitudes below 1 m or at the GeoFence ceiling (the 0.5 m and 30 m cells),
+and the paraphrase and prefix-off arms (the stub reads no text). Shield-off
+control arms fly only with `--hil-controls`. Until 2026-11-07 every stressor
+was refused ("no SIM_* stressor is wired"): smoke 64 episodes, 41 missions,
+23 refused; nightly 744, 546, 198. Since then: smoke 47 missions, 17
+refused; nightly 588 missions, 156 refused (`--hil-dry-run`).
+
+### The simulator's stressors (X-14, since 2026-11-07)
+
+Wind, GPS denial and start jitter are flown as ArduPilot SITL's own
+parameters, set from the SIMULATOR's side: `sitl/sitl_stressors.py`, started
+by `hil_desktop.sh` beside SITL in WSL, on SITL's SERIAL0 (tcp:5760; the
+router uses SERIAL2). The Shield node on the Orin never sets a SIM_*
+parameter, and is not told the schedule. Verified against the Copter 4.5.7
+tree in WSL (`~/ardupilot`, paths under `libraries/`):
+
+| scenario field | SITL | units, convention | source |
+|---|---|---|---|
+| `wind_speed_mps` | `SIM_WIND_SPD` 0 at boot, the cell's speed at the episode's t = 0 | m/s; SITL low-passes it 0.95/0.05 per physics update, a step | `SITL/SITL.cpp:74`, `AP_HAL_SITL/SITL_State.cpp:437` |
+| (the profile) | `SIM_WIND_T` = 1 at boot | "none": the default 0 is a square law, `sqrt(alt / 60 m)` below 60 m, half the speed at 15 m | `SITL.cpp:203`, `SITL_State.cpp:443-446` |
+| `wind_dir_deg` | `SIM_WIND_DIR` at boot | degrees true the wind comes FROM: (toward + 180) mod 360; toward = `wind_dir_deg` + `mission.rotate_deg`, or the harness's own draw for the seed when None | `SITL.cpp:80`; `SITL/SIM_Aircraft.cpp:779-804` (`wind_ef` negated) |
+| (no gusts) | `SIM_WIND_TURB` = 0 at boot | | `SITL.cpp:86` |
+| `gps_dropout_s` | `SIM_GPS_DISABLE` 1 at t0 + start, 0 at t0 + end | 0/1; 4.5.7's name (4.6 renames it `SIM_GPS1_DISABLE`); the GPS reports no lock, fix type 0 | `SITL.cpp:561, 183`; `SITL/SIM_GPS.cpp:333`; `SIM_GPS_UBLOX.cpp:202-251` |
+| `start_jitter_m` | `SITL_HOME` and `--start` | m, drawn as the harness draws it (`random.Random(f"{seed}:jitter")`): the headless and the rail episode of one cell and seed start at one point | `experiments/sweep_scenarios.py` `_resolve_mission`, `rail_mission` |
+
+Refused, with the reason in the dry run: `gps_noise_m` (4.5.7's
+`SIM_GPS_NOISE` is a slow sine on the GPS altitude alone, `SIM_GPS.cpp:353`,
+and horizontal noise fed to SITL's GPS would be fused by the EKF that also
+flies the aircraft), `latency_ticks` (the rail's own latency is real and
+recorded per row; `SIM_GPS_LAG_MS` delays the GPS into the EKF, which
+compensates it), `gust_mps` (`SIM_WIND_TURB` redraws its azimuth every
+physics step and low-passes SITL's own random speed, `SIM_Aircraft.cpp:785-
+800`: neither the process nor the seed's draw of the harness's per-tick
+gust), `battery_critical_at_s` (the node's FSM has no RTL watch, so G6
+cannot fire; SITL's battery drives ArduPilot's own BATT_FS_*), and a dropout
+flown blind (`fix_quality_reported: false`: the rail reports its fix).
+
+**The episode's clock.** The node announces its mission clock on every
+scenario mission: a STATUSTEXT `GRDL T0 <nonce8> t=<s>` through MAVROS at
+t = 0 and at 1, 2, 3 and 4 s. ArduPilot forwards it to SERIAL0
+(`GCS_MAVLink/MAVLink_routing.cpp`), where the stressor process takes t0 as
+min(receipt - t) - never before the node's own t = 0 - and applies each
+change at t0 + t, reading the autopilot's echo. The node records the
+autopilot's PARAM_VALUE broadcast of every change on ITS clock
+(`/mavros/param/event`, metrics.json `sim_params.events`): that is the
+measured alignment. Expected: the marker's one-way delay over the cable and
+the router plus the stressor loop's 20 ms, tens of milliseconds; the denial
+reaches the Shield's `fix_ok` one SITL GPS period (5 Hz), one GPS_RAW_INT
+period (10 Hz) and one tick later, up to about 0.4 s.
+
+**Fail closed.** After the mission the harness copies the stressor
+process's record beside the run (`sitl_stress.json`) and refuses to score
+the flight - the episode is an ERROR, never a pass under the cell's name -
+unless the record is this launch's (its nonce), every boot parameter was
+set and read back, the node read the same values back at take-off, every
+scheduled change was seen within -0.05 / +0.2 s of its time on the node's
+clock (on the stressor process's own t0 only when the node saw no parameter
+event at all), a dropout reached `fix_ok` within 1 s, and a jittered home
+lies within 0.25 m of `--start`; a cell that sets nothing must find SITL at
+its neutral values. A boot parameter that does not read back stops
+`hil_desktop.sh start` before READY. `scenario_score.json` carries
+`sim_stressors` (each parameter as `run_sitl_demo.py --sim-param` records
+it: `param`, `set`, `read_back`, `applied`, with its time, the node's
+observation and the error) and `sim_stressors_check`.
+
+**Not the harness's model.** On the rail the wind acts through ArduPilot's
+own physics - SITL's drag model, the position controller's real authority
+and its transient after the step at t = 0 - never through the harness's
+`--wind-model`. The dropout acts through EKF3: the pose the node hands the
+Shield keeps moving on the EKF's inertial dead reckoning (the headless
+harness hands it the frozen last fix), the node's `fix_ok` goes False (the
+Shield's X8 reads it, dead-reckoning on what the node sent), and after 7 s
+without GPS (`AP_NavEKF3.h:466`, posRetryTimeNoVel_ms) the EKF stops
+reporting an absolute position, so ArduCopter's EKF failsafe
+(`ArduCopter/ekf_check.cpp`, 1 s at 10 Hz, FS_EKF_ACTION 1) lands the
+aircraft - a takeover on the rail.
+
+**Labels SITL's physics may not reach** (none relabelled; the rubric's labels
+stand, and a disagreement is a finding to report):
+
+- wind-beyond-authority at 8 m/s (lanes 15 and 20): E2 is read from the
+  harness's 6.4 m/s hold authority; SITL's quad at ArduCopter's 30 degree
+  ANGLE_MAX may hold 8 m/s (the harness's own reading of `SIM_Frame.h` puts
+  its authority between 6.4 and 11.5 m/s), and then no fail-safe is the
+  physically right flight and a "missed" one by the label. At 12 m/s the
+  label should hold, but G6 (no progress home) cannot fire on the rail: the
+  aircraft is in ArduPilot's RTL until the 40 s grace.
+- gps-dropout, the E3 cells (lane 15 windows 2-9 and 4-11, lane 23.6 windows
+  2-9, 4-11 and 6-13): X8 fires on the drift allowance alone (0.5 m/s), since
+  the EKF's pose is not frozen, so later than headless; it must fire before
+  ArduPilot's EKF failsafe (about 8 s after the GPS is lost) or the FSM's
+  label reads missed. The 7 s windows end at the EKF's 7 s: whether its
+  failsafe fires is a race between SITL's 5 Hz GPS returning and
+  posRetryTimeNoVel_ms.
+- gps-dropout lane 15 window 6-13 (N2): no X8 is expected and none should
+  fire (the aircraft is held 20 m out), but the same EKF race can land it.
+- gps-dropout, the 2-4 s windows (N2, both lanes): should hold - 2 s of drift
+  allowance is 1 m with the aircraft 20 m or more out, and the EKF's 7 s are
+  never reached.
+- wind-within-authority (N3): should hold; the wind's step at t = 0 is a
+  transient the harness's model does not have.
+
+**What must be flown to show it**: one mission per realised stressor, with
+the dry run's commands - a wind-within-authority lane, a wind-beyond-
+authority lane at 8 and at 12 m/s, a gps-dropout E3 cell (lane 23.6, 4-11 s)
+and the N2 one (lane 15, 6-13 s) - each checked for its `sitl_stress.json`,
+`sim_params.events` errors under 0.2 s, the dropout's onset in
+`fix_quality.no_fix_spells`, the FSM's X8 edge in metrics.json and whether
+ArduPilot's EKF failsafe took the aircraft (`autopilot_took_over`).
 
 One mission by hand, as the harness runs it (from Git Bash set
 `MSYS_NO_PATHCONV=1`, or the `/mnt/...` path is rewritten); `--hil-dry-run`
 prints these lines for every mission:
 
 ```bash
+# A cell with wind or a GPS dropout also passes --stress-plan /mnt/d/<checkout>/
+# demo/out/_stress/<tag>/plan.json --stress-record .../record.json (the dry run
+# prints both; the harness writes the plan first).
 wsl.exe -d Ubuntu -- bash "/mnt/d/<checkout>/sitl/hil_desktop.sh" start \
     --home -35.36505763,149.16523000,584,220.12 --mavros-host 10.42.0.3   # stays up; stop below
 scp -r demo/out/_campaign/<tag> nathan-agxiot@10.42.0.3:vla-drone/demo/out/_campaign/

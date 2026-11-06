@@ -86,6 +86,24 @@ changes no fence parameter and records the GCS's read-back beside its own
 (`hil_evidence.autopilot_fence.gcs`). Mission Planner is not on the GCS
 endpoint for such a run.
 
+### The simulator's stressors (`SITL_STRESS_PLAN`, X-14, 2026-11-07)
+
+A stress-harness cell with wind or a GPS dropout (`experiments/
+sweep_scenarios.py --backend sitl | hil`) gets a plan, and `sitl_stressors.py`,
+a process of the simulator's side on SITL's SERIAL0 (tcp:5760, free with
+`ROUTER=1`), sets SITL's own parameters: SIM_WIND_DIR (where the wind comes
+FROM), SIM_WIND_T 1 and SIM_WIND_TURB 0 at boot, read back before MAVROS
+starts (the run is refused otherwise), then SIM_WIND_SPD at the episode's
+t = 0 and SIM_GPS_DISABLE 1 / 0 at the window's edges, on the clock the
+Shield node announces in a STATUSTEXT (`GRDL T0 <nonce> t=<s>`). The Shield
+node never sets a SIM_* parameter; it reads them back at take-off and records
+every change the autopilot broadcasts (metrics.json `sim_params`), and hands
+the Shield its GPS fix (`/mavros/global_position/raw/fix`, `fix_ok`).
+`run_sitl_demo.py --sim-param` shares the parameter rule, the read-back test
+and the record (`sitl_stressors.parse_sim_params`, `stressor_entry`), and
+since 2026-11-07 a wind speed brings SIM_WIND_T 1 there too: SITL's default
+square-law profile halved the 2 Nov runs' 8 m/s at their 15 m.
+
 ### The mission style (`STYLE=mission`, WP3-09)
 
 ```bash

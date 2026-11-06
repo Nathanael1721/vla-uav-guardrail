@@ -1498,20 +1498,16 @@ def test_the_pas_planner_routes_around_every_static_zone_and_leaves_moving_ones(
     assert [z.id for z in A.planning_zones(pol)] == ["poly", "circ", "dyn"]
 
 
-def _sitl_function(name):
-    """One function of sitl/run_sitl_demo.py, run on its own (the module
-    imports pymavlink and connects at main())."""
-    src = (SITL / "run_sitl_demo.py").read_text(encoding="utf-8")
-    fn = next(n for n in ast.parse(src).body if isinstance(n, ast.FunctionDef) and n.name == name)
-    ns = {}
-    exec(compile(ast.Module(body=[fn], type_ignores=[]), "run_sitl_demo.py", "exec"), ns)
-    return ns[name]
-
-
 def test_sim_stressors_are_only_the_simulators_own_parameters():
     """X-14: a stressor changes the simulated world, never the firmware under
-    test, and a value that is not a finite number is refused."""
-    parse = _sitl_function("parse_sim_params")
+    test, and a value that is not a finite number is refused. Since
+    2026-11-07 the rule lives in sitl/sitl_stressors.py, shared with the ROS 2
+    rails' simulator side, and the pymavlink rail imports it from there
+    rather than keeping a copy."""
+    sys.path.insert(0, str(SITL))
+    from sitl_stressors import parse_sim_params as parse
+    src = (SITL / "run_sitl_demo.py").read_text(encoding="utf-8")
+    assert "from sitl_stressors import" in src and "def parse_sim_params" not in src
     assert parse(None) == {}
     assert parse(["sim_wind_spd=6", "SIM_WIND_DIR=225", "SIM_GPS_DISABLE=1"]) == {
         "SIM_WIND_SPD": 6.0, "SIM_WIND_DIR": 225.0, "SIM_GPS_DISABLE": 1.0}

@@ -184,7 +184,11 @@ only where that frame has it whatever its drag split. No SITL run with wind
 exists in demo/out: the rails' scripts set no SIM_WIND_* parameter, so the
 ros2fix* flights flew SITL's still air, where an open-loop and a closed-loop
 model of a zero setpoint agree. The model rests on the source, not on a
-flight; a SITL run with SIM_WIND_SPD set is what would test it.
+flight; a SITL run with SIM_WIND_SPD set is what would test it. Since
+2026-11-07 the rails (`--backend sitl` / `hil`) fly a cell's wind as SITL's
+own SIM_WIND_* ("THE SIMULATOR'S STRESSORS ON THE RAILS", above
+rail_refusal): there the wind acts through ArduPilot's physics and its
+position controller, never through this model or `--wind-model`.
 
 THE VEHICLE RESPONSE (2026-10-19): A LABELLED COMPARISON ARM
 
@@ -2617,6 +2621,421 @@ def _fence_ceiling(policy) -> tuple[float | None, float]:
     return alt_max, float(parm.get("FENCE_MARGIN", FENCE_MARGIN_M))
 
 
+# --------------------------------------------------------------------------- #
+# THE SIMULATOR'S STRESSORS ON THE RAILS (2026-11-07, X-14)
+# --------------------------------------------------------------------------- #
+#
+# Until this date rail_refusal refused every stressor ("no SIM_* wind or GPS
+# stressor is wired"). ArduCopter 4.5.7's SITL (the pinned tree, ~/ardupilot
+# in WSL, read for this; paths under libraries/) realises three of them, set
+# on the SIMULATOR's side by sitl/sitl_stressors.py - a process beside SITL on
+# the desktop, on SITL's SERIAL0 - and never by the Shield node:
+#
+#   wind_speed_mps  SIM_WIND_SPD (m/s; SITL/SITL.cpp:74), 0 at boot and the
+#                   cell's speed at the episode's t = 0. SITL low-passes it
+#                   0.95 / 0.05 per physics update (AP_HAL_SITL/
+#                   SITL_State.cpp:437): a step. SIM_WIND_T = 1 at boot
+#                   ("none", SITL.cpp:203): the default 0, the square law,
+#                   scales the wind by sqrt(altitude / SIM_WIND_T_ALT 60 m)
+#                   below 60 m (SITL_State.cpp:443-446) - half the speed at
+#                   15 m, which is what the 2 Nov pymavlink wind runs flew.
+#                   SIM_WIND_TURB = 0 at boot (gusts are refused, below).
+#   wind_dir_deg    SIM_WIND_DIR (degrees true; SITL.cpp:80, default 180) at
+#                   boot. It is the direction the wind comes FROM: the air
+#                   moves along -(cos, sin) of it (SITL/SIM_Aircraft.cpp:
+#                   779-804, wind_ef negated), so SIM_WIND_DIR = (toward +
+#                   180) mod 360 (sim_wind_dir_deg). toward is the scenario's
+#                   wind_dir_deg turned with mission.rotate_deg, or, when the
+#                   scenario leaves it None, the harness's own draw for the
+#                   seed (random.Random(f"{seed}:wind").uniform(0, 360), the
+#                   first draw of _episode's wind generator): rail_wind.
+#   gps_dropout_s   SIM_GPS_DISABLE (0/1; SITL.cpp:561, var_gps, a "" sub-
+#                   group of SIM_, SITL.cpp:183: SIM_GPS_DISABLE in 4.5.7, not
+#                   4.6's SIM_GPS1_DISABLE), 0 at boot, 1 at t0 + start, 0 at
+#                   t0 + end. SITL's GPS then reports no lock (SITL/
+#                   SIM_GPS.cpp:333; the u-blox stream carries fix type 0 and
+#                   3 satellites, SIM_GPS_UBLOX.cpp:202-251), GPS_RAW_INT's
+#                   fix type drops below 3 and the Shield node's fix_ok goes
+#                   False (sitl/ros2_shield_node.py fix_ok_from).
+#   start_jitter_m  the SITL home: rail_mission draws the start exactly as the
+#                   harness does (_resolve_mission with random.Random(
+#                   f"{seed}:jitter")), so SITL_HOME and --start carry the
+#                   same offset as the headless episode of the same seed.
+#
+# What a rail flight of such a cell is NOT: the harness's `--wind-model`. The
+# wind acts through ArduPilot's own physics - its drag model, its position
+# controller's real authority and transients - and the dropout through its
+# own EKF: the pose the Shield is handed is EKF3's inertial dead reckoning
+# (not the frozen last fix the headless harness hands it), and after
+# posRetryTimeNoVel_ms (7 s, AP_NavEKF3.h:466) without GPS the EKF stops
+# reporting an absolute position (AP_NavEKF3_Control.cpp:367-385, 743) and
+# ArduCopter's EKF failsafe (ArduCopter/ekf_check.cpp, 1 s at 10 Hz,
+# FS_EKF_ACTION 1) lands the aircraft. docs/RUNBOOK-orin-hil.md step 14 lists
+# the cells whose labels SITL's physics may not reach.
+#
+# Refused (RAIL_STRESS_REFUSALS): gps_noise_m, latency_ticks, gust_mps,
+# battery_critical_at_s, and a dropout with fix_quality_reported false.
+#
+# Fail closed (rail_stress_check, after the mission): the simulator side's
+# record (this launch's nonce; every boot parameter set and read back), the
+# Shield node's own read-back at take-off, and every scheduled change applied
+# within RAIL_STRESS_TOL_S of its time on the node's mission clock (the
+# autopilot's PARAM_VALUE broadcast as the node received it; the simulator
+# side's own timing only where the node saw no parameter event at all), a
+# dropout reaching the node's fix_ok within RAIL_DROPOUT_ONSET_MAX_S, a
+# jittered home where SITL was told to boot. Anything else is not the cell's
+# flight: the episode errors, it is never scored under the cell's name.
+
+RAIL_STRESS_DIR = "demo/out/_stress"
+# A scheduled change counts as applied at its time when the node saw it
+# within these bounds of the plan (early: clock rounding only - the simulator
+# side never applies a change before the node's t = 0 plus its time).
+RAIL_STRESS_TOL_S = 0.2
+RAIL_STRESS_EARLY_S = 0.05
+# The GPS denial must reach the Shield's input (a row with fix_ok False)
+# within this of the window's start: SITL's GPS at 5 Hz, GPS_RAW_INT at the
+# node's 10 Hz stream, the 10 Hz tick.
+RAIL_DROPOUT_ONSET_MAX_S = 1.0
+# A jittered start: the autopilot's home within this of --start (the node's
+# own home check allows 5 m, more than any jitter in the library).
+RAIL_JITTER_HOME_TOL_M = 0.25
+SIM_PARAM_TOL = 1e-3
+# SITL's stressor parameters when nothing is stressed (SITL.cpp defaults; the
+# simulator side sets none of them for such a cell).
+SIM_NEUTRAL = {"SIM_WIND_SPD": 0.0, "SIM_WIND_TURB": 0.0, "SIM_GPS_DISABLE": 0.0}
+RAIL_STRESS_REFUSALS = {
+    "gps_noise_m": (
+        "SITL has no equivalent: 4.5.7's SIM_GPS_NOISE is a slow sine on the GPS "
+        "altitude alone (SITL/SIM_GPS.cpp:353), and horizontal noise put into SITL's "
+        "GPS (SIM_GPS_GLITCH) would be fused by the EKF that also flies the aircraft - "
+        "the Shield would see the EKF's filtered estimate and the airframe would chase "
+        "it, where the cell's labels were derived for white noise on the Shield's view "
+        "alone"),
+    "latency_ticks": (
+        "the rail's own pose latency is real and recorded per row (pose_age_ms, "
+        "e2e_ms); SIM_GPS_LAG_MS delays the GPS into the EKF, which compensates its "
+        "own GPS delay, not the state the Shield is handed"),
+    "gust_mps": (
+        "SITL's SIM_WIND_TURB is not a fair stand-in: its azimuth is redrawn on every "
+        "physics step and its speed is a low-pass of SITL's own random draws "
+        "(SITL/SIM_Aircraft.cpp:785-800), acting on the airframe through drag, where "
+        "the harness's gust is a per-tick Gaussian ground-velocity disturbance on each "
+        "axis drawn from the episode's seed - neither the process nor the draw is the "
+        "cell's"),
+    "battery_critical_at_s": (
+        "the node feeds its escalation FSM no RTL watch (rtl_failed is False on every "
+        "tick), so the grant's G6 cannot fire; SITL's battery drives ArduPilot's own "
+        "BATT_FS_* failsafe instead, another edge"),
+}
+
+
+def _sitl_stressors():
+    """sitl/sitl_stressors.py, the simulator side: its plan schema, the t = 0
+    marker and the stressor record the pymavlink rail shares (imported from
+    the checkout this file is in; it needs no pymavlink to be read)."""
+    if str(_REPO / "sitl") not in sys.path:
+        sys.path.insert(0, str(_REPO / "sitl"))
+    import sitl_stressors
+    return sitl_stressors
+
+
+def sim_wind_dir_deg(toward_deg: float) -> float:
+    """SITL's SIM_WIND_DIR for a wind blowing TOWARD `toward_deg` (degrees
+    clockwise from true North, the harness's convention): the direction it
+    comes FROM, (toward + 180) mod 360 (module comment, "THE SIMULATOR'S
+    STRESSORS ON THE RAILS")."""
+    return round((float(toward_deg) + 180.0) % 360.0, 6)
+
+
+def rail_wind(spec: ScenarioSpec, seed: int = 0) -> dict | None:
+    """The steady wind of one episode as the harness flies it (_episode):
+    the declared direction turned with the mission, or the seed's own draw
+    when the scenario leaves it None; None with no wind."""
+    s = spec.stress
+    if not s.wind_speed_mps > 0:
+        return None
+    drawn = s.wind_dir_deg is None
+    toward = (random.Random(f"{seed}:wind").uniform(0.0, 360.0) if drawn
+              else float(s.wind_dir_deg) + float(spec.mission.rotate_deg))
+    toward %= 360.0
+    return {"speed_mps": float(s.wind_speed_mps), "toward_deg": round(toward, 6),
+            "drawn_from_seed": drawn, "sim_wind_dir_deg": sim_wind_dir_deg(toward)}
+
+
+def start_jitter(spec: ScenarioSpec, seed: int = 0) -> tuple[float, float]:
+    """The start's (dx, dy) in the mission's frame, drawn as _resolve_mission
+    draws it for `seed` (random.Random(f"{seed}:jitter"), x then y); (0, 0)
+    with no jitter."""
+    j = spec.stress.start_jitter_m
+    if not j > 0:
+        return 0.0, 0.0
+    rng = random.Random(f"{seed}:jitter")
+    return rng.uniform(-j, j), rng.uniform(-j, j)
+
+
+def rail_stress_refusals(spec: ScenarioSpec, defaults=None) -> list[str]:
+    """The stressors of `spec` neither rail realises, each with its reason
+    (RAIL_STRESS_REFUSALS); [] when every stressor it declares is realised."""
+    s = spec.stress
+    out = [f"{k} {getattr(s, k)}: {why}" for k, why in RAIL_STRESS_REFUSALS.items()
+           if getattr(s, k) not in (None, 0, 0.0)]
+    if s.gps_dropout_s is not None and not s.fix_quality_reported:
+        out.append("fix_quality_reported false: the rail reports its fix "
+                   "(/mavros/global_position/raw/fix), so the blind arm stays headless")
+    if s.gps_dropout_s is not None:
+        dfl = _as_defaults(defaults)
+        t_end = ((spec.ticks or dfl.ticks) - 1) * (spec.dt or dfl.dt)
+        if s.gps_dropout_s[0] > t_end + 1e-9:
+            out.append(f"gps_dropout_s starts at {s.gps_dropout_s[0]:g} s, after the run's "
+                       f"last tick ({t_end:g} s; the headless harness refuses it too)")
+    return out
+
+
+def rail_stress_plan(spec: ScenarioSpec, seed: int = 0, defaults=None, *,
+                     run_id: str | None = None, nonce: str | None = None) -> dict | None:
+    """What the simulator side sets for one episode (sitl/sitl_stressors.py,
+    its PLAN_SCHEMA): the boot parameters (set and read back before READY)
+    and the changes at the episode's t = 0 plus their time. None when the
+    cell needs nothing set in SITL (no wind, no dropout; a jittered start is
+    in SITL_HOME alone). The wind's boot values are the pymavlink rail's
+    rule too (sitl_stressors.with_uniform_wind: SIM_WIND_T = 1 with a
+    speed)."""
+    SST = _sitl_stressors()
+    wind = rail_wind(spec, seed)
+    drop = spec.stress.gps_dropout_s
+    if wind is None and drop is None:
+        return None
+    boot: list[dict] = []
+    sched: list[dict] = []
+    if wind is not None:
+        # The profile by the rule the pymavlink rail applies too (one meaning
+        # of a wind speed on both).
+        profile = SST.with_uniform_wind({"SIM_WIND_SPD": wind["speed_mps"]})["SIM_WIND_T"]
+        boot += [
+            {"param": "SIM_WIND_T", "value": profile,
+             "why": "no altitude profile: the cell's speed at every altitude (the "
+                    "default square law halves it at 15 m)"},
+            {"param": "SIM_WIND_TURB", "value": 0,
+             "why": "no turbulence: gusts are not realised on the rails"},
+            {"param": "SIM_WIND_DIR", "value": wind["sim_wind_dir_deg"],
+             "why": f"the direction the wind comes FROM: toward {wind['toward_deg']:g} "
+                    f"deg + 180"},
+            {"param": "SIM_WIND_SPD", "value": 0,
+             "why": "still air until the episode's t = 0"}]
+        sched.append({"t": 0.0, "param": "SIM_WIND_SPD", "value": wind["speed_mps"],
+                      "field": "wind_speed_mps"})
+    if drop is not None:
+        boot.append({"param": "SIM_GPS_DISABLE", "value": 0,
+                     "why": "GPS on until the window opens"})
+        sched += [{"t": float(drop[0]), "param": "SIM_GPS_DISABLE", "value": 1,
+                   "field": "gps_dropout_s start"},
+                  {"t": float(drop[1]), "param": "SIM_GPS_DISABLE", "value": 0,
+                   "field": "gps_dropout_s end", "restore": True}]
+    sched.sort(key=lambda it: it["t"])
+    return {"schema": SST.PLAN_SCHEMA, "run_id": run_id, "run_nonce": nonce,
+            "scenario_id": spec.scenario_id, "seed": int(seed),
+            "boot": boot, "schedule": sched,
+            "wind": wind, "gps_dropout_s": None if drop is None else list(drop),
+            "align_tol_s": RAIL_STRESS_TOL_S,
+            "written_by": "experiments/sweep_scenarios.py rail_stress_plan"}
+
+
+def write_stress_plan(plan: dict, root: Path | None = None) -> tuple[Path, Path]:
+    """The plan, under RAIL_STRESS_DIR/<run id>/plan.json on THIS host (the
+    desktop: the simulator side reads it in WSL, and nothing of it goes to
+    the Orin), and where its record will be: (plan path, record path). A
+    record left by an earlier launch is never read as this one's
+    (rail_stress_check matches the nonce)."""
+    d = (root or ROOT) / RAIL_STRESS_DIR / str(plan["run_id"])
+    d.mkdir(parents=True, exist_ok=True)
+    p = d / "plan.json"
+    p.write_text(json.dumps(_json_safe(plan), indent=1) + "\n", encoding="utf-8",
+                 newline="\n")
+    return p, d / "record.json"
+
+
+def read_stress_record(path: Path | None) -> dict | None:
+    """The simulator side's record, or None when it left none (or an
+    unreadable one)."""
+    if path is None or not Path(path).is_file():
+        return None
+    try:
+        doc = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return doc if isinstance(doc, dict) else None
+
+
+def _num_close(a, b, tol: float = SIM_PARAM_TOL) -> bool:
+    try:
+        return a is not None and b is not None and abs(float(a) - float(b)) <= tol
+    except (TypeError, ValueError):
+        return False
+
+
+def rail_stress_check(spec: ScenarioSpec, plan: dict | None, record: dict | None,
+                      metrics: dict, rows: list[dict], seed: int = 0
+                      ) -> tuple[list[str], dict]:
+    """Was the cell's stress realised on this flight? (problems, summary).
+
+    Any problem means the flight is not the cell's and must not be scored
+    under its name (run_hil / run_sitl raise). Checked: a jittered start's
+    home (the node's home_check, within RAIL_JITTER_HOME_TOL_M); with no
+    plan, SITL at its neutral stressor values (SIM_NEUTRAL, as the node read
+    them back at take-off); with a plan, the simulator side's record (this
+    launch's nonce, every boot parameter set and read back), the node's own
+    read-back of every boot parameter, every scheduled change applied within
+    [-RAIL_STRESS_EARLY_S, +RAIL_STRESS_TOL_S] of its time - on the node's
+    mission clock (`sim_params.events`), or, where the node recorded no
+    in-flight parameter event at all, on the simulator side's own t0 - and a
+    dropout reaching the node's fix_ok within RAIL_DROPOUT_ONSET_MAX_S. A
+    window's end that falls after the episode's last row may go unapplied
+    (the episode ended in the dropout, as a headless one can).
+
+    summary["entries"] is every SIM_* parameter the simulator side set, in
+    the record the pymavlink rail writes into metrics.json `sim_stressors`
+    (sitl_stressors.stressor_entry: param, set, read_back, applied) with its
+    time: a boot parameter read back by the Shield node at take-off (t
+    None), a scheduled one with its plan time, the autopilot's echo to the
+    simulator side, the time the node saw it and the error."""
+    SST = _sitl_stressors()
+    problems: list[str] = []
+    sim = metrics.get("sim_params") if isinstance(metrics.get("sim_params"), dict) else {}
+    at = sim.get("at_takeoff") if isinstance(sim.get("at_takeoff"), dict) else {}
+    node_vals = at.get("values") if at.get("sitl") else None
+    summary: dict[str, Any] = {"plan": None if plan is None else {
+        "boot": plan["boot"], "schedule": plan["schedule"], "wind": plan.get("wind"),
+        "gps_dropout_s": plan.get("gps_dropout_s")},
+        "node_at_takeoff": node_vals, "align_tol_s": RAIL_STRESS_TOL_S, "entries": []}
+    dx, dy = start_jitter(spec, seed)
+    if dx or dy:
+        hc = metrics.get("home_check") if isinstance(metrics.get("home_check"), dict) else {}
+        miss = hc.get("miss_m")
+        summary["start_jitter"] = {"dx_m": round(dx, 4), "dy_m": round(dy, 4),
+                                   "home_miss_m": miss,
+                                   "tolerance_m": RAIL_JITTER_HOME_TOL_M}
+        if not hc.get("checked") or miss is None or float(miss) > RAIL_JITTER_HOME_TOL_M:
+            problems.append(f"start jitter ({dx:+.3f}, {dy:+.3f}) m not confirmed: the "
+                            f"autopilot's home is {miss} m from the jittered --start "
+                            f"(allowed {RAIL_JITTER_HOME_TOL_M:g} m)")
+    if plan is None:
+        if node_vals:
+            off = {k: v for k, v in node_vals.items()
+                   if k in SIM_NEUTRAL and v is not None and not _num_close(v, SIM_NEUTRAL[k])}
+            if off:
+                problems.append(f"SITL flew with stressor parameters this cell does not "
+                                f"set: {off}")
+        summary["problems"] = problems
+        return problems, summary
+    if record is None:
+        problems.append("the simulator side (sitl/sitl_stressors.py) left no record")
+    elif record.get("run_nonce") != plan.get("run_nonce"):
+        problems.append(f"the simulator side's record is not this launch's (nonce "
+                        f"{record.get('run_nonce')!r})")
+        record = None
+    elif not (record.get("boot") or {}).get("ok"):
+        problems.append(f"the simulator side did not set and read back its boot "
+                        f"parameters ({record.get('error')})")
+    summary["simulator_side"] = None if record is None else {
+        k: record.get(k) for k in ("state", "error", "t0", "markers", "boot")}
+    if node_vals is None:
+        problems.append("the Shield node read no simulator parameters at take-off "
+                        "(metrics.json sim_params.at_takeoff): the boot values are "
+                        "unconfirmed")
+    else:
+        bad = [f"{it['param']} {node_vals.get(it['param'])} (set {it['value']:g})"
+               for it in plan["boot"] if not SST.read_back_ok(it["value"],
+                                                             node_vals.get(it["param"]))]
+        if bad:
+            problems.append("SITL's parameters at take-off are not the plan's: "
+                            + ", ".join(bad))
+    sim_boot = {p.get("param"): p.get("read_back")
+                for p in ((record or {}).get("boot") or {}).get("params") or []
+                if isinstance(p, dict)}
+    for it in plan["boot"]:
+        summary["entries"].append(SST.stressor_entry(
+            it["param"], it["value"], (node_vals or {}).get(it["param"]), t=None,
+            when="boot (set before the mission, read back by the Shield node at take-off)",
+            simulator_side_read_back=sim_boot.get(it["param"])))
+    events = [e for e in (sim.get("events") or [])
+              if isinstance(e, dict) and e.get("t") is not None]
+    last_t = float(rows[-1]["t"]) if rows else None
+    rec_sched = (record or {}).get("schedule") or []
+    applied_out = []
+    for i, it in enumerate(plan["schedule"]):
+        t_plan = float(it["t"])
+        ent = rec_sched[i] if i < len(rec_sched) and isinstance(rec_sched[i], dict) else {}
+        seen = sorted(float(e["t"]) for e in events
+                      if e.get("param") == it["param"] and _num_close(e.get("value"), it["value"])
+                      and float(e["t"]) >= t_plan - RAIL_STRESS_EARLY_S)
+        obs = seen[0] if seen else None
+        if obs is not None:
+            err, source = obs - t_plan, "node (/mavros/param/event, mission clock)"
+        elif not events and ent.get("applied") and ent.get("t_echo") is not None:
+            err, source = float(ent["t_echo"]) - t_plan, ("simulator side (its t0 from "
+                                                         "the node's markers)")
+        else:
+            err, source = None, None
+        ended_first = last_t is not None and last_t < t_plan + RAIL_STRESS_TOL_S
+        entry = SST.stressor_entry(
+            it["param"], it["value"], ent.get("read_back"), t=t_plan, field=it.get("field"),
+            when="scheduled (the episode's t = 0 plus t)",
+            t_echo_simulator_side=ent.get("t_echo"), t_observed_node=obs,
+            error_s=None if err is None else round(err, 4), measured_by=source)
+        if err is None:
+            if it.get("restore") and ended_first:
+                entry["note"] = (f"the episode ended at {last_t:g} s, before the window's "
+                                 f"end")
+            elif events and ent.get("applied"):
+                problems.append(f"{it.get('field')}: the simulator side applied "
+                                f"{it['param']}={it['value']:g} but the Shield node saw no "
+                                f"such change")
+            else:
+                problems.append(f"{it.get('field')}: {it['param']}={it['value']:g} at "
+                                f"t={t_plan:g} s was never applied"
+                                + (f" (the episode ended at {last_t:g} s)" if ended_first
+                                   else ""))
+        elif not (-RAIL_STRESS_EARLY_S <= err <= RAIL_STRESS_TOL_S):
+            if not (it.get("restore") and ended_first):
+                problems.append(f"{it.get('field')}: {it['param']}={it['value']:g} applied "
+                                f"{err:+.3f} s from its time t={t_plan:g} s (allowed "
+                                f"-{RAIL_STRESS_EARLY_S:g} .. +{RAIL_STRESS_TOL_S:g} s, "
+                                f"measured by the {source})")
+        applied_out.append(entry)
+    summary["entries"] += applied_out
+    drop = plan.get("gps_dropout_s")
+    if drop is not None:
+        start = float(drop[0])
+        fixes = [r for r in rows if "fix_ok" in r]
+        onset = next((float(r["t"]) for r in fixes
+                      if r.get("fix_ok") is False and float(r["t"]) >= start - RAIL_STRESS_EARLY_S),
+                     None)
+        summary["dropout"] = {"window": list(drop),
+                              "first_no_fix_t": onset,
+                              "onset_s": None if onset is None else round(onset - start, 4),
+                              "no_fix_ticks": sum(1 for r in fixes if r.get("fix_ok") is False),
+                              "onset_max_s": RAIL_DROPOUT_ONSET_MAX_S}
+        if not fixes:
+            problems.append("gps_dropout_s: the Shield node reported no GPS fix at all "
+                            "(no /mavros/global_position/raw/fix): the denial cannot have "
+                            "reached it")
+        elif last_t is not None and last_t < start:
+            problems.append(f"gps_dropout_s: the episode ended at {last_t:g} s, before the "
+                            f"window opened at {start:g} s")
+        elif onset is None or onset - start > RAIL_DROPOUT_ONSET_MAX_S:
+            if last_t is not None and last_t < start + RAIL_DROPOUT_ONSET_MAX_S:
+                # Ended before the denial could reach the Shield: the cell's
+                # own gate (gps_dropout_ticks >= 1) fails that flight.
+                summary["dropout"]["note"] = (f"the episode ended at {last_t:g} s, within "
+                                              f"{RAIL_DROPOUT_ONSET_MAX_S:g} s of the window")
+            else:
+                problems.append(f"gps_dropout_s: the GPS denial from t={start:g} s did not "
+                                f"reach the Shield's fix_ok within "
+                                f"{RAIL_DROPOUT_ONSET_MAX_S:g} s (first no-fix tick: {onset})")
+    summary["problems"] = problems
+    return problems, summary
+
+
 def rail_refusal(spec: ScenarioSpec, backend: str = "sitl", *, episode=None,
                  policy=None, defaults=None) -> str | None:
     """Why a flight rail cannot fly this scenario AS WRITTEN, or None. One
@@ -2627,11 +3046,14 @@ def rail_refusal(spec: ScenarioSpec, backend: str = "sitl", *, episode=None,
     Since that date the rails take a scenario's start (--start: SITL boots
     at it), target and altitude, pilot law (the VLA stub's --pilot goto /
     constant / stub_vla), speed, time cap, subject, scenario clock
-    (--clock-start) and mid-flight events (--events), so a scenario is
-    refused only for what neither rail can realise:
-      * stressors: GPS noise, latency and dropout, wind, gusts, start
-        jitter (no SIM_* stressor is wired) and the battery hook (the
-        node's FSM has none);
+    (--clock-start) and mid-flight events (--events), and since 2026-11-07
+    the simulator's stressors SITL realises (module comment, "THE
+    SIMULATOR'S STRESSORS ON THE RAILS": wind and its direction, GPS denial,
+    start jitter), so a scenario is refused only for what neither rail can
+    realise:
+      * the stressors SITL has no honest equivalent for (RAIL_STRESS_
+        REFUSALS: GPS noise, state latency, gusts, the battery hook), and a
+        dropout flown blind (fix_quality_reported false);
       * a relabel schedule (the node declares one subject class);
       * a non-finite pilot action (the node refuses to fly or count one:
         the action-contract family stays headless);
@@ -2649,20 +3071,14 @@ def rail_refusal(spec: ScenarioSpec, backend: str = "sitl", *, episode=None,
     Until 2026-11-06 the rail flew its own mission only (sitl_refusal and
     _mission_mismatch: the pad, StubVLA, 15 m), and every scenario but
     rail-mission-stub-vla was refused; the clock refusal had been stale
-    since the node took --clock-start (2026-10-12)."""
+    since the node took --clock-start (2026-10-12). Until 2026-11-07 every
+    stressor was refused ("no SIM_* wind or GPS stressor is wired")."""
     if backend not in RAIL_BACKENDS:
         raise ValueError(f"backend {backend!r} is not a flight rail ({RAIL_BACKENDS})")
     why: list[str] = []
-    s = spec.stress
-    stressors = [f"{k} {v}" for k, v in (
-        ("gps_noise_m", s.gps_noise_m), ("latency_ticks", s.latency_ticks),
-        ("gps_dropout_s", s.gps_dropout_s), ("wind_speed_mps", s.wind_speed_mps),
-        ("gust_mps", s.gust_mps), ("start_jitter_m", s.start_jitter_m),
-        ("battery_critical_at_s", s.battery_critical_at_s)) if v]
+    stressors = rail_stress_refusals(spec, defaults)
     if stressors:
-        why.append("stressors the rail cannot inject (" + ", ".join(stressors) + "): no "
-                   "SIM_* wind or GPS stressor is wired, and the node's FSM has no "
-                   "battery hook")
+        why.append("stressors the rail cannot realise (" + "; ".join(stressors) + ")")
     m = spec.mission
     if m.subject and m.subject.reclassify:
         why.append("a relabel schedule (the node declares one subject class for the "
@@ -2794,15 +3210,18 @@ def _pts(*vals) -> str:
     return ",".join(_num(v) for v in vals)
 
 
-def rail_mission(spec: ScenarioSpec, policy, defaults=None) -> dict:
+def rail_mission(spec: ScenarioSpec, policy, defaults=None, seed: int = 0) -> dict:
     """The scenario's mission as the rail flies it: _resolve_mission's start
-    (rotated; the rails refuse jitter), target, subject, pilot law, action
+    (rotated, and jittered for `seed` exactly as the headless harness draws
+    it, random.Random(f"{seed}:jitter"): since 2026-11-07, when the rails
+    stopped refusing start_jitter_m), target, subject, pilot law, action
     (rotated), speed (the pilot's, else the harness's 4 m/s), time cap
     (ticks x dt) and clock."""
     dfl = _as_defaults(defaults)
-    mm = _resolve_mission(spec, policy, random.Random(0))
+    mm = _resolve_mission(spec, policy, random.Random(f"{seed}:jitter"))
     m = spec.mission
     return {"start": (mm.start.x, mm.start.y, mm.start.up),
+            "jitter_m": start_jitter(spec, seed),
             "yaw_deg": float(mm.start.yaw_deg) % 360.0,
             "target": mm.target, "subject": mm.subject,
             "subject_class": m.subject.class_ if m.subject else None,
@@ -2811,18 +3230,19 @@ def rail_mission(spec: ScenarioSpec, policy, defaults=None) -> dict:
             "clock_start": m.clock_start}
 
 
-def sitl_home(spec: ScenarioSpec, policy, defaults=None) -> str | None:
+def sitl_home(spec: ScenarioSpec, policy, defaults=None, seed: int = 0) -> str | None:
     """SITL_HOME (lat,lon,alt,heading - start_sitl.sh's form) that puts the
     autopilot's home at the scenario's start: the policy frame origin's
     projection of the start (guardrail.projection, the policy's own
-    equirectangular frame), RAIL_HOME_ALT_M, the start yaw. None for a
-    metre policy (no frame origin), which the rails fly only from its
-    origin, at SITL's default home."""
+    equirectangular frame; jittered for `seed` as rail_mission draws it),
+    RAIL_HOME_ALT_M, the start yaw. None for a metre policy (no frame
+    origin), which the rails fly only from its origin, at SITL's default
+    home."""
     origin = getattr(policy, "frame_origin", None)
     if origin is None:
         return None
     from guardrail.projection import projection_for
-    rm = rail_mission(spec, policy, defaults)
+    rm = rail_mission(spec, policy, defaults, seed)
     lat, lon = projection_for(float(origin[0]), float(origin[1])).to_latlon(
         rm["start"][0], rm["start"][1])
     return f"{lat:.8f},{lon:.8f},{RAIL_HOME_ALT_M:g},{rm['yaw_deg']:.2f}"
@@ -2888,7 +3308,7 @@ def rail_node_args(spec: ScenarioSpec, seed: int = 0, defaults=None, *,
         # rail_policy_args): a mission in local metres needs no policy.
         pol = None
     try:
-        rm = rail_mission(spec, pol, defaults)
+        rm = rail_mission(spec, pol, defaults, seed)
     except Exception as e:                               # noqa: BLE001
         raise UnsupportedScenario(f"the scenario's mission cannot be resolved here "
                                   f"({type(e).__name__}: {e})") from e
@@ -3254,6 +3674,13 @@ def sitl_extra(spec: ScenarioSpec, rows: list[dict], metrics: dict, policy,
     ev = metrics.get("scenario_events")
     if isinstance(ev, dict):
         extra["event_refusals_as_expected"] = ev.get("event_refusals_as_expected")
+    if spec.stress.gps_dropout_s is not None:
+        # The rail's measure of the headless `gps_dropout_ticks` (2026-11-07):
+        # ticks whose position the Shield was told is not a valid fix (the
+        # node's fix_ok False, SITL's GPS disabled). 0, never None, for a
+        # flight on which the denial never reached the Shield, so the cell's
+        # gate (min 1) fails rather than score a clean run.
+        extra["gps_dropout_ticks"] = sum(1 for r in rows if r.get("fix_ok") is False)
     return extra
 
 
@@ -3293,9 +3720,13 @@ def rail_meta(spec: ScenarioSpec, ep, seed: int, backend: str, run_id: str,
     metrics.json `scenario`): which cell of which template, seed and arm,
     the family row tools/kpi_report.py files it under
     ("<backend>-stress/<template>/<cell>/shield-<arm>"), the nonce that ties
-    the fetched run to this launch, and what the rail was told to fly."""
+    the fetched run to this launch, and what the rail was told to fly -
+    since 2026-11-07 with the stress it realises (`stress`: the cell's
+    stressors, the start jitter drawn for the seed, the wind as SITL is
+    given it, the dropout window; how the simulator side applied them is in
+    its own plan and record, rail_stress_check)."""
     pol = spec.policy.load(ROOT)
-    rm = rail_mission(spec, pol, defaults)
+    rm = rail_mission(spec, pol, defaults, seed)
     arm = "on" if spec.shield else "off"
     cell = ep.episode_id if ep is not None else spec.scenario_id
     return {"schema": "rail-scenario/1", "backend": backend, "run_id": run_id,
@@ -3312,6 +3743,11 @@ def rail_meta(spec: ScenarioSpec, ep, seed: int, backend: str, run_id: str,
             "pilot": rm["pilot"], "action": rm["action"], "speed_mps": rm["speed"],
             "max_s": rm["max_s"], "rail_max_s": rail_max_s(rm["max_s"]),
             "events": len(spec.events),
+            "stress": {"declared": spec.stress.model_dump(mode="json", exclude_defaults=True),
+                       "start_jitter_m": [round(v, 6) for v in rm["jitter_m"]],
+                       "wind": rail_wind(spec, seed),
+                       "gps_dropout_s": (None if spec.stress.gps_dropout_s is None
+                                         else list(spec.stress.gps_dropout_s))},
             "policy": spec.policy.source,
             "harness": f"experiments/sweep_scenarios.py --backend {backend}"}
 
@@ -3321,7 +3757,15 @@ def run_sitl(sc, tag: str, seed: int = 0, defaults=None,
     """One scenario on the desktop's rail (sitl/run_ros2_demo.sh, which boots
     a fresh SITL per run): SITL_HOME at the scenario's start, through WSLENV
     so the WSL script sees it; its events and scenario record written under
-    CAMPAIGN_DIR first. None when the rail is not on this host."""
+    CAMPAIGN_DIR first. None when the rail is not on this host.
+
+    THE SIMULATOR'S STRESSORS (2026-11-07): a cell with wind or a GPS
+    dropout gets its plan (rail_stress_plan) under RAIL_STRESS_DIR, and
+    run_ros2_demo.sh (SITL_STRESS_PLAN / SITL_STRESS_RECORD through WSLENV)
+    starts sitl/sitl_stressors.py beside SITL before MAVROS, refusing the run
+    unless its boot parameters read back. After the flight the record goes
+    beside the run (sitl_stress.json) and rail_stress_check must find the
+    stress realised, or the flight is an error, not a scored episode."""
     spec = _as_spec(sc)
     if not sitl_available():
         return None
@@ -3329,15 +3773,25 @@ def run_sitl(sc, tag: str, seed: int = 0, defaults=None,
     if why:
         raise UnsupportedScenario(why)
     pol = spec.policy.load(ROOT)
-    home = sitl_home(spec, pol, defaults)
-    meta = rail_meta(spec, episode, seed, "sitl", tag, uuid.uuid4().hex, home, None,
-                     defaults)
+    home = sitl_home(spec, pol, defaults, seed)
+    nonce = uuid.uuid4().hex
+    meta = rail_meta(spec, episode, seed, "sitl", tag, nonce, home, None, defaults)
     events, meta_rel = write_campaign_files(spec, meta)
     cmd = build_sitl_cmd(spec, tag, seed, defaults, events=events, meta=meta_rel)
     env = dict(os.environ)
+    wslenv = [env.get("WSLENV", "")]
     if home is not None:
         env["SITL_HOME"] = home
-        env["WSLENV"] = ":".join(p for p in (env.get("WSLENV", ""), "SITL_HOME/u") if p)
+        wslenv.append("SITL_HOME/u")
+    plan = rail_stress_plan(spec, seed, defaults, run_id=tag, nonce=nonce)
+    record_path = None
+    if plan is not None:
+        plan_path, record_path = write_stress_plan(plan)
+        env["SITL_STRESS_PLAN"] = _wsl_path(plan_path)
+        env["SITL_STRESS_RECORD"] = _wsl_path(record_path)
+        wslenv += ["SITL_STRESS_PLAN/u", "SITL_STRESS_RECORD/u"]
+    if len(wslenv) > 1:
+        env["WSLENV"] = ":".join(p for p in wslenv if p)
     out_dir = ROOT / "demo" / "out" / tag
     launched_at = time.time()
     r = subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True, env=env)
@@ -3346,7 +3800,18 @@ def run_sitl(sc, tag: str, seed: int = 0, defaults=None,
                            f"{(r.stderr or r.stdout)[-400:]}")
     rows = read_fresh_log(out_dir / "flight_log.jsonl", launched_at)
     metrics = read_fresh_metrics(out_dir / "metrics.json", launched_at)
-    return rows, sitl_extra(spec, rows, metrics, pol, run_generations(out_dir))
+    record = read_stress_record(record_path)
+    if record is not None:
+        (out_dir / "sitl_stress.json").write_text(
+            json.dumps(record, indent=1) + "\n", encoding="utf-8", newline="\n")
+    problems, stress = rail_stress_check(spec, plan, record, metrics, rows, seed)
+    if problems:
+        raise RuntimeError(f"{tag}: the cell's stress was not realised: "
+                           + "; ".join(problems))
+    extra = sitl_extra(spec, rows, metrics, pol, run_generations(out_dir))
+    extra["sim_stressors"] = stress["entries"]
+    extra["sim_stressors_check"] = stress
+    return rows, extra
 
 
 # --------------------------------------------------------------------------- #
@@ -3438,16 +3903,34 @@ class SubprocessTransport:
         return ["wsl.exe", "-d", self.cfg.wsl_distro, "--", "bash",
                 f"{repo.rstrip('/')}/{HIL_HELPER}"]
 
-    def restart_sitl(self, home: str | None) -> str:
+    def _wsl(self, p) -> str:
+        """A path as the WSL helper sees it: under the checkout, through
+        `wsl_repo` (the checkout as WSL sees it); elsewhere, /mnt/<drive>."""
+        p = Path(p)
+        try:
+            rel = p.resolve().relative_to(ROOT.resolve())
+        except ValueError:
+            return _wsl_path(p)
+        repo = (self.cfg.wsl_repo or _wsl_path(ROOT)).rstrip("/")
+        return f"{repo}/{rel.as_posix()}"
+
+    def restart_sitl(self, home: str | None, stress: tuple | None = None) -> str:
         """Kill SITL and the router, boot SITL at `home` (None: start_sitl's
         CMAC default) and the router toward the Orin, wait for the EKF; the
         helper stays in the foreground (keeping the WSL distro up) until
-        stop_sitl. Returns its output up to the ready line."""
+        stop_sitl. `stress` (2026-11-07): (plan path, record path) of the
+        simulator's stressors (rail_stress_plan) - the helper then starts
+        sitl/sitl_stressors.py beside SITL and prints its ready line only
+        once the plan's boot parameters read back. Returns its output up to
+        the ready line."""
         self.stop_sitl()
         cmd = self._helper() + ["start", "--mavros-host", self.cfg.mavros_host,
                                 "--settle-s", f"{self.cfg.sitl_settle_s:g}"]
         if home:
             cmd += ["--home", home]
+        if stress:
+            cmd += ["--stress-plan", self._wsl(stress[0]),
+                    "--stress-record", self._wsl(stress[1])]
         proc = self.popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                           stderr=subprocess.STDOUT, text=True, encoding="utf-8",
                           errors="replace")
@@ -3620,21 +4103,34 @@ def run_hil(spec: ScenarioSpec, ep, seed: int, defaults, cfg: HilConfig, transpo
     same score() / episode_verdict as every episode. Writes
     scenario_score.json beside the run (tools/kpi_report.py merges it).
     Returns {rows, extra, policy, prios, run_dir, tag}; raises
-    UnsupportedScenario (refused) or RuntimeError (the flight failed)."""
+    UnsupportedScenario (refused) or RuntimeError (the flight failed).
+
+    THE SIMULATOR'S STRESSORS (2026-11-07): a cell with wind or a GPS
+    dropout gets its plan (rail_stress_plan, kept on this desktop under
+    RAIL_STRESS_DIR - nothing of it goes to the Orin), which the WSL helper
+    hands sitl/sitl_stressors.py; the helper is ready only once the plan's
+    boot parameters read back. After the flight the simulator side's record
+    is copied beside the run (sitl_stress.json) and rail_stress_check must
+    find the stress realised, or the flight is an error, never scored."""
     why = rail_refusal(spec, "hil", episode=ep, defaults=defaults)
     if why:
         raise UnsupportedScenario(why)
     pol = spec.policy.load(ROOT)
     tag = hil_run_id(campaign, k, spec)
     nonce = uuid.uuid4().hex
-    home = sitl_home(spec, pol, defaults)
+    home = sitl_home(spec, pol, defaults, seed)
     meta = rail_meta(spec, ep, seed, "hil", tag, nonce, home, campaign, defaults)
     events, meta_rel = write_campaign_files(spec, meta)
     args = rail_node_args(spec, seed, defaults, backend="hil", events=events, meta=meta_rel,
                           bundles_dir=cfg.bundles_dir)
+    plan = rail_stress_plan(spec, seed, defaults, run_id=tag, nonce=nonce)
+    stress_paths = write_stress_plan(plan) if plan is not None else None
     timeout = float(meta["rail_max_s"]) + cfg.mission_margin_s
     try:
-        transport.restart_sitl(home)
+        if stress_paths is None:
+            transport.restart_sitl(home)
+        else:
+            transport.restart_sitl(home, stress=stress_paths)
         transport.push(ROOT / CAMPAIGN_DIR / tag, f"{CAMPAIGN_DIR}/{tag}")
         if cfg.restart_mavros:
             transport.restart_mavros()
@@ -3651,11 +4147,20 @@ def run_hil(spec: ScenarioSpec, ep, seed: int, defaults, cfg: HilConfig, transpo
         rows, metrics, _ = accept_hil_run(run_dir, nonce)
     except RuntimeError as e:
         raise RuntimeError(f"{e} (mission exited {rc}: {out[-400:]})") from e
+    record = read_stress_record(stress_paths[1]) if stress_paths else None
+    if record is not None:
+        (run_dir / "sitl_stress.json").write_text(json.dumps(record, indent=1) + "\n",
+                                                  encoding="utf-8", newline="\n")
+    stress_problems, stress = rail_stress_check(spec, plan, record, metrics, rows, seed)
     problems = hil_flight_problems(metrics)
+    if stress_problems:
+        problems.append("the cell's stress was not realised: " + "; ".join(stress_problems))
     if problems:
         raise RuntimeError(f"mission {tag}: " + "; ".join(problems))
     gens = run_generations(run_dir)
     extra = sitl_extra(spec, rows, metrics, pol, gens)
+    extra["sim_stressors"] = stress["entries"]
+    extra["sim_stressors_check"] = stress
     prios = dict(K.rule_priorities(pol))
     if gens:
         prios.update(K.rule_priorities(gens[max(gens)]))
@@ -3678,6 +4183,13 @@ def write_scenario_score(run_dir: Path, meta: dict, res: dict, extra: dict,
                        "fsm": extra.get("fsm")},
            "status": status, "gates_failed": bad, "labels_failed": labels_failed,
            "known_failure_reason": known_why, "rule_priorities": prios,
+           # The simulator's stressors as realised (rail_stress_check, since
+           # 2026-11-07): every SIM_* parameter in the pymavlink rail's record
+           # (param, set, read_back, applied) with when the Shield node saw it,
+           # and the check behind them (the plan, the simulator side's
+           # record, the dropout's onset, the jittered home).
+           "sim_stressors": extra.get("sim_stressors"),
+           "sim_stressors_check": extra.get("sim_stressors_check"),
            "kpi": res,
            "scored_by": "experiments/sweep_scenarios.py (score, episode_verdict)"}
     p = run_dir / SCENARIO_SCORE
@@ -3712,8 +4224,15 @@ def hil_plan(episodes, defaults, cfg: HilConfig, campaign: str,
                                       events=(f"{rel}/events.json" if spec.events else None),
                                       meta=f"{rel}/scenario.json",
                                       bundles_dir=cfg.bundles_dir)
-                item.update(fly=True, tag=tag, sitl_home=sitl_home(spec, pol, defaults),
-                            shield="on" if spec.shield else "off", args=args)
+                stress = rail_stress_plan(spec, ep.seed, defaults, run_id=tag)
+                jx, jy = start_jitter(spec, ep.seed)
+                item.update(fly=True, tag=tag,
+                            sitl_home=sitl_home(spec, pol, defaults, ep.seed),
+                            shield="on" if spec.shield else "off", args=args,
+                            stress=None if stress is None else {
+                                "boot": stress["boot"], "schedule": stress["schedule"],
+                                "plan": f"{RAIL_STRESS_DIR}/{tag}/plan.json"},
+                            start_jitter_m=[jx, jy] if (jx or jy) else None)
             except UnsupportedScenario as e:
                 k -= 1
                 why = str(e)
@@ -3737,13 +4256,26 @@ def print_hil_plan(plan: list[dict], cfg: HilConfig) -> None:
     fly = [p for p in plan if p["fly"]]
     print(f"hil campaign plan: {len(plan)} episode(s), {len(fly)} mission(s) to fly, "
           f"{len(plan) - len(fly)} refused (nothing flown, nothing written)\n")
-    helper = SubprocessTransport(cfg)._helper()
+    tr = SubprocessTransport(cfg)
+    helper = tr._helper()
     for p in plan:
         if not p["fly"]:
             continue
         print(f"  FLY  {p['tag']}  {p['id']}  seed={p['seed']}")
-        print(f"       SITL_HOME  {p['sitl_home'] or 'start_sitl.sh default (CMAC)'}")
-        print(f"       desktop    {shlex.join(helper + ['start', '--mavros-host', cfg.mavros_host, '--settle-s', f'{cfg.sitl_settle_s:g}'] + (['--home', p['sitl_home']] if p['sitl_home'] else []))}")
+        print(f"       SITL_HOME  {p['sitl_home'] or 'start_sitl.sh default (CMAC)'}"
+              + (f"  (start jitter {p['start_jitter_m'][0]:+.3f}, "
+                 f"{p['start_jitter_m'][1]:+.3f} m)" if p.get("start_jitter_m") else ""))
+        st = p.get("stress")
+        sargs = []
+        if st:
+            print("       SITL boot  " + ", ".join(f"{b['param']}={b['value']:g}"
+                                                    for b in st["boot"]))
+            print("       SITL t=0+  " + ", ".join(f"{s['param']}={s['value']:g} at "
+                                                    f"{s['t']:g} s" for s in st["schedule"]))
+            rel = st["plan"]
+            sargs = ["--stress-plan", tr._wsl(ROOT / rel),
+                     "--stress-record", tr._wsl(ROOT / rel.replace("plan.json", "record.json"))]
+        print(f"       desktop    {shlex.join(helper + ['start', '--mavros-host', cfg.mavros_host, '--settle-s', f'{cfg.sitl_settle_s:g}'] + (['--home', p['sitl_home']] if p['sitl_home'] else []) + sargs)}")
         print(f"       orin       cd {cfg.remote_root} && {cfg.compose()} run --rm -T mission "
               f"mission --shield {p['shield']} --tag {p['tag']} {shlex.join(p['args'])}")
     refused = [p for p in plan if not p["fly"]]

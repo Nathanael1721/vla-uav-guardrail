@@ -275,8 +275,11 @@ def test_the_rails_refuse_only_what_they_cannot_realise():
             return S.rail_refusal(spec, backend, **kw) or ""
         assert "stressors" in why(BY_ID["gps-noise-within-margin"])
         assert "gps_noise_m" in why(BY_ID["gps-noise-within-margin"])
-        assert "gps_dropout_s" in why(BY_ID["gps-dropout"])
-        assert "wind_speed_mps" in why(BY_ID["wind-within-authority"])
+        # Since 2026-11-07 SITL realises wind, its direction, GPS denial and
+        # start jitter (tests/test_sitl_stressors.py); gusts stay refused.
+        assert not why(BY_ID["gps-dropout"]), why(BY_ID["gps-dropout"])
+        assert not why(BY_ID["wind-within-authority"]), why(BY_ID["wind-within-authority"])
+        assert "gust_mps" in why(BY_ID["wind-gusts"])
         assert "battery_critical_at_s" in why(BY_ID["failsafe-low-battery"])
         assert "rtl_failed_ticks" in why(BY_ID["failsafe-rtl-blocked"])
         assert "relabel" in why(BY_ID["standoff-reclassified"])
@@ -301,7 +304,8 @@ def test_the_rails_refuse_only_what_they_cannot_realise():
     assert reasons.pop("canonical,prefix-on") is None and reasons, reasons
     assert all("paraphrase / prefix arm" in r for r in reasons.values()), reasons
     # sitl_refusal is the desktop rail's.
-    assert S.sitl_refusal(BY_ID["gps-dropout"]) == S.rail_refusal(BY_ID["gps-dropout"], "sitl")
+    noise = BY_ID["gps-noise-within-margin"]
+    assert S.sitl_refusal(noise) == S.rail_refusal(noise, "sitl") and S.sitl_refusal(noise)
     assert S.sitl_refusal(BY_ID["nfz-head-on"]) is None
 
 
@@ -2892,8 +2896,12 @@ class _FakeRig:
         self.calls: list[tuple] = []
         self.remote = Path(tempfile.mkdtemp(prefix="fake_orin_"))
 
-    def restart_sitl(self, home):
+    def restart_sitl(self, home, stress=None):
+        # This rig has no simulator side: a stress plan is recorded and
+        # nothing is set (tests/test_sitl_stressors.py has a rig that does).
         self.calls.append(("restart_sitl", home))
+        if stress is not None:
+            self.calls.append(("stress", str(stress[0])))
         return "HIL_DESKTOP READY"
 
     def stop_sitl(self):
@@ -2958,6 +2966,8 @@ def _hil_campaign(argv, td: Path, **rig_kw):
         S.make_hil_transport = saved
         for d in (ROOT / S.CAMPAIGN_DIR).glob("tst*"):
             shutil.rmtree(d, ignore_errors=True)
+        for d in (ROOT / S.RAIL_STRESS_DIR).glob("tst*"):
+            shutil.rmtree(d, ignore_errors=True)
     doc = json.loads((td / "s.json").read_text(encoding="utf-8"))
     return rc, doc, rigs[0] if rigs else None
 
@@ -2969,7 +2979,10 @@ def test_the_hil_backend_flies_each_scenario_through_its_rig_and_scores_it():
     into the store, accepted by its own records and scored with the same
     score() / episode_verdict (the headless flight's verdict here), and
     scenario_score.json is written beside it with this launch's nonce. A
-    scenario the rail cannot fly is skipped with its reason, never flown."""
+    scenario the rail cannot fly is skipped with its reason, never flown.
+    Since 2026-11-07 a GPS dropout is flown, with its stress plan handed to
+    the desktop side; on this rig, whose simulator side sets nothing, each
+    such mission is an ERROR (the stress was not realised), never scored."""
     with tempfile.TemporaryDirectory() as td:
         td = Path(td)
         rc, doc, rig = _hil_campaign(["--only", "rail-mission-stub-vla", "speed-cap",
@@ -2982,10 +2995,13 @@ def test_the_hil_backend_flies_each_scenario_through_its_rig_and_scores_it():
                                                    hr.priorities), {}, 1001)[0]
         assert res["rail-mission-stub-vla"]["status"] == headless, res["rail-mission-stub-vla"]
         drop = [r for r in res.values() if r["id"].startswith("gps-dropout")]
-        assert drop and all(r["status"] == "skipped" and "gps_dropout_s" in r["reason"]
+        assert drop and all(r["status"] == "error" and "stress was not realised" in r["error"]
                             for r in drop), drop
+        assert sum(1 for c in rig.calls if c[0] == "stress") == len(drop)
         runs = [c for c in rig.calls if c[0] == "run_mission"]
-        assert [c[1] for c in runs] == ["tst1_001_rail-mission-stub-vla", "tst1_002_speed-cap"]
+        assert [c[1] for c in runs][:2] == ["tst1_001_rail-mission-stub-vla",
+                                            "tst1_002_speed-cap"]
+        assert all("gps-dropout" in c[1] for c in runs[2:]) and len(runs) == 2 + len(drop)
         kinds = [c[0] for c in rig.calls]
         assert kinds[:5] == ["restart_sitl", "push", "restart_mavros", "run_mission",
                              "stop_sitl"], kinds
@@ -3086,10 +3102,15 @@ def test_the_hil_dry_run_lists_every_mission_and_flies_nothing():
     out = buf.getvalue()
     after = set((ROOT / S.CAMPAIGN_DIR).glob("*")) if (ROOT / S.CAMPAIGN_DIR).is_dir() else set()
     assert rc == 0 and not made and after == before, (rc, made, after - before)
-    assert "41 mission(s) to fly, 23 refused" in out, out[:300]
+    # 41 / 23 until 2026-11-07, when the two GPS-dropout, two wind-within-
+    # authority and two wind-beyond-authority cells began to fly.
+    assert "47 mission(s) to fly, 17 refused" in out, out[:300]
     assert "dry_001_nfz-head-on" in out and "SITL_HOME  -35.36344066,149.16539523,584,0.00" in out
     assert "--start=-20,15,15" in out and "hil_desktop.sh" in out
-    for why in ("gps_noise_m", "wind_speed_mps", "rtl_failed_ticks", "non-finite",
+    # The simulator's stressors, as the desktop side will set them.
+    assert "SIM_GPS_DISABLE=1 at 4 s" in out and "SIM_WIND_DIR=180" in out
+    assert "--stress-plan" in out and "--stress-record" in out
+    for why in ("gps_noise_m", "gust_mps", "rtl_failed_ticks", "non-finite",
                 "start altitude 30 m", "relabel", "paraphrase / prefix arm",
                 "Shield-off control arm"):
         assert why in out, why

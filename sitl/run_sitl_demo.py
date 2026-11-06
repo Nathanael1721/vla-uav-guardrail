@@ -113,6 +113,11 @@ from mavlink_adapter_node import (DEFAULT_HOLD_MODE, HOLD_MODES,       # noqa: E
                                   ModeRequests, XYArgumentParser,
                                   autopilot_mode, fence_alt_plan,
                                   policy_ceiling_m)
+# The simulator's stressors: one parameter rule, read-back test and record
+# for this rail and the ROS 2 rails' simulator side (2026-11-07; parse_sim_
+# params was this file's own until then).
+from sitl_stressors import (parse_sim_params, stressor_entry,         # noqa: E402
+                            with_uniform_wind)
 
 TICK = 0.1
 # The own-velocity forecast (docs/DESIGN-own-velocity-forecast.md): OFF by
@@ -170,31 +175,6 @@ def theta_horizon(arg: str | None = "auto") -> float | None:
         raise ValueError(f"--theta-horizon-s must be 'auto', 'none' or seconds > 0, "
                          f"got {arg!r}")
     return h
-
-
-def parse_sim_params(items: list[str] | None) -> dict[str, float]:
-    """`--sim-param NAME=VALUE` (repeatable): the simulator's own stressors.
-
-    Only SITL's SIM_* parameters are accepted (wind SIM_WIND_SPD / _DIR /
-    _TURB, GPS SIM_GPS_DISABLE / SIM_GPS_GLITCH_X ...): they change the
-    simulated world, never the firmware under test, which is what the
-    stressor runs of X-14 need (until 2026-11-02 wind and GPS loss acted on
-    the headless kinematic model only). Anything else is refused here."""
-    out: dict[str, float] = {}
-    for it in items or []:
-        name, sep, val = it.partition("=")
-        name = name.strip().upper()
-        if not sep or not name.startswith("SIM_") or not name[4:]:
-            raise ValueError(f"--sim-param {it!r}: give SIM_<NAME>=<number>; only the "
-                             f"simulator's SIM_* parameters are stressors")
-        try:
-            v = float(val)
-        except ValueError:
-            raise ValueError(f"--sim-param {it!r}: {val!r} is not a number") from None
-        if v != v or v in (float("inf"), float("-inf")):
-            raise ValueError(f"--sim-param {it!r}: not a finite number")
-        out[name] = v
-    return out
 
 
 def theta_basis(horizon_s: float | None) -> dict:
@@ -490,11 +470,16 @@ def main() -> int:
                     metavar="CN", help="client common name allowed in (repeat)")
     ap.add_argument("--sim-param", action="append", default=None, metavar="SIM_NAME=VALUE",
                     help="a simulator stressor set at mission start and read back "
-                         "(repeat), e.g. SIM_WIND_SPD=6 SIM_WIND_DIR=225 SIM_GPS_DISABLE=1")
+                         "(repeat), e.g. SIM_WIND_SPD=6 SIM_WIND_DIR=225 SIM_GPS_DISABLE=1; "
+                         "SIM_WIND_DIR is where the wind comes FROM, and a wind speed "
+                         "brings SIM_WIND_T=1 (no altitude profile) unless given")
     ap.add_argument("--tag", default=None)
     args = ap.parse_args()
     try:
-        sim_params = parse_sim_params(args.sim_param)
+        # A wind speed is the speed at every altitude (sitl_stressors.
+        # with_uniform_wind, 2026-11-07): SITL's default profile halved the
+        # 2 Nov runs' 8 m/s at their 15 m.
+        sim_params = with_uniform_wind(parse_sim_params(args.sim_param))
     except ValueError as e:
         ap.error(str(e))
 
@@ -626,9 +611,13 @@ def main() -> int:
     sim_stressors = []
     for name, want in sim_params.items():
         got = link.set_param(name, want)
-        ok = got is not None and abs(got - want) <= 1e-3 * max(1.0, abs(want))
-        sim_stressors.append({"param": name, "set": want, "read_back": got, "applied": ok})
-        rec.event("sim_stressor", param=name, set=want, read_back=got, applied=ok)
+        # The shared record of a stressor (sitl_stressors.stressor_entry:
+        # param, set, read_back, applied), as the ROS 2 rails' simulator side
+        # writes it.
+        entry = stressor_entry(name, want, got)
+        ok = entry["applied"]
+        sim_stressors.append(entry)
+        rec.event("sim_stressor", **entry)
         print(f"[stress]   {name} = {want} (read back {got})")
         if not ok:
             raise SystemExit(f"[stress]   {name} did not read back as {want} (got {got}): "

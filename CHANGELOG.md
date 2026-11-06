@@ -16,6 +16,218 @@ shipped change and recorded as one.
 
 ## [Unreleased]
 
+### 2026-11-07 (SITL stressors) — the flight rails fly wind, GPS denial and start jitter as ArduPilot SITL's own parameters, set from the simulator's side and checked against the Shield node's clock; the ROS 2 node hands the Shield its GPS fix and takes X8; not flown yet
+
+Until this date both flight rails refused every stressor (`rail_refusal`:
+"no SIM_* wind or GPS stressor is wired"), so contract item X-14's wind and
+GPS denial could not reach a hil mission, and no flight rail reported its
+fix, so X8 (2026-11-06) was idle on every flight. The pymavlink rail could
+set static SIM_* parameters at mission start since 2 Nov (`run_sitl_demo.py
+--sim-param`); the ROS 2 rails, which the hil campaign flies, had nothing.
+
+#### Added
+- `sitl/sitl_stressors.py`, the SIMULATOR's side of a stressed mission: a
+  process beside SITL on the desktop, on SITL's SERIAL0 (tcp:5760; the
+  router is on SERIAL2), never a node of the system under test. It sets the
+  cell's boot parameters and reads each back (the PARAM_VALUE echo, then a
+  PARAM_REQUEST_READ) before the helpers say ready, then applies the
+  scheduled changes at the episode's t = 0 plus their time. t = 0 is the
+  Shield node's mission start: the node announces it in a STATUSTEXT
+  through MAVROS (`GRDL T0 <nonce8> t=<s>`, at t = 0 and each second to 4 s)
+  on every scenario mission, without knowing the plan; ArduPilot forwards
+  it to SERIAL0 (`GCS_MAVLink/MAVLink_routing.cpp`), and t0 is min(receipt -
+  t), never before the node's own. Its record (`sitl-stress-record/1`) is
+  rewritten at every step and copied beside the run (`sitl_stress.json`).
+- The mapping, each line read in the pinned Copter 4.5.7 tree
+  (`libraries/`; experiments/sweep_scenarios.py "THE SIMULATOR'S STRESSORS
+  ON THE RAILS", docs/RUNBOOK-orin-hil.md step 14):
+  - `wind_speed_mps` -> `SIM_WIND_SPD` (m/s, `SITL/SITL.cpp:74`), 0 at boot,
+    the cell's speed at t = 0 (SITL low-passes it 0.95/0.05 per physics
+    update: a step), with `SIM_WIND_T` 1 (no altitude profile, `SITL.cpp:
+    203`) and `SIM_WIND_TURB` 0 at boot;
+  - `wind_dir_deg` -> `SIM_WIND_DIR` at boot, the direction the wind comes
+    FROM (`SITL.cpp:80`; `SITL/SIM_Aircraft.cpp:779-804` negates it into the
+    air's velocity): (toward + 180) mod 360, toward the scenario's direction
+    turned with the mission, or the harness's own draw for the seed;
+  - `gps_dropout_s` -> `SIM_GPS_DISABLE` (4.5.7's name, `SITL.cpp:561`; 4.6
+    renames it `SIM_GPS1_DISABLE`) 0 at boot, 1 at t0 + start, 0 at t0 + end;
+    SITL's GPS then reports no lock (`SIM_GPS.cpp:333`, fix type 0);
+  - `start_jitter_m` -> `SITL_HOME` and `--start`, drawn exactly as the
+    headless harness draws it for the seed (`random.Random(f"{seed}:
+    jitter")`): a cell's headless and rail episodes start at one point.
+- `sitl/ros2_shield_node.py`:
+  - `State.fix_ok` from `/mavros/global_position/raw/fix`, the NavSatFix
+    MAVROS 2's global_position plugin (core MAVROS: both rails load it
+    without mavros_extras) builds from GPS_RAW_INT, STATUS_FIX when
+    fix_type > 2 (`fix_ok_from`: None before the first message and once one
+    is older than the 1 s pose timeout, so a rail without the topic flies
+    exactly as before). Rows carry `fix_ok`, `fix_status`, `fix_age_ms` and
+    the Shield's `position_lost` once the topic has spoken; metrics.json
+    `fix_quality`.
+  - X8 on the node's FSM: `tick_input_from_decision(position_lost=)` from
+    the Shield's own verdict.
+  - SITL's stressor parameters read back at take-off (SITL only; two reads
+    that agree, and a read that fails is recorded with why while bring-up
+    goes on) and every change the autopilot broadcasts recorded on the
+    mission clock (`/mavros/param/event`), with the t = 0 markers sent
+    (metrics.json `sim_params`).
+- `guardrail/shield.py`: a Shield with no FSM of its own (a rail's,
+  `rail_shield`) judges X8's input on a state that reports its fix quality
+  and hands it out (`ShieldDecision.position_lost`, excluded from every
+  dump), and `note_flown` feeds its dead reckoning with what the rail SENT
+  (a stop, nothing while the autopilot holds, or the Shield's action). A
+  state that reports nothing computes nothing new.
+- `sitl/hil_desktop.sh start --stress-plan FILE --stress-record FILE`: READY
+  only after `SITL_STRESS BOOT OK`, else start fails and nothing flies; `stop`
+  ends the stressor process with TERM first. `sitl/run_ros2_demo.sh`:
+  `SITL_STRESS_PLAN` / `SITL_STRESS_RECORD` the same way, before MAVROS
+  starts; refused with `ROUTER=0` (MAVROS then holds tcp:5760).
+- `experiments/sweep_scenarios.py`: `rail_stress_plan` (the plan, kept on
+  the desktop under `demo/out/_stress/<tag>/`; nothing of it goes to the
+  Orin), `rail_wind`, `sim_wind_dir_deg`, `start_jitter`, and
+  `rail_stress_check`, which fails closed after the mission: the episode is
+  an ERROR, never scored under the cell's name, unless the simulator side's
+  record is this launch's and its boot parameters read back, the node read
+  the same values at take-off, every scheduled change was seen within
+  -0.05 / +0.2 s of its time on the node's clock (on the simulator side's
+  own t0 only when the node saw no parameter event at all), a dropout
+  reached `fix_ok` within 1 s, and a jittered home lies within 0.25 m of
+  `--start`; a cell that sets nothing must find SITL at its neutral values.
+  `scenario_score.json` gains `sim_stressors` (every SIM_* parameter in the
+  pymavlink rail's record, with its time, the node's observation and the
+  error) and `sim_stressors_check`. The dry run prints each mission's boot
+  and scheduled parameters and the helper's `--stress-*` arguments.
+- Docs: docs/RUNBOOK-orin-hil.md step 14 (the mapping and its source lines,
+  the episode's clock, fail closed, what SITL's physics changes, the labels
+  it may not reach, what to fly), docs/DESIGN-topologies.md decision 12 (why
+  the simulator's side and not the Shield node), docs/DESIGN-escalation-
+  fsm.md (the ROS 2 row of "Where each rail's signal lives"), sitl/README.md.
+
+#### Changed
+- `rail_refusal`: wind, its direction, GPS denial and start jitter fly;
+  refused with the reason: `gps_noise_m` (4.5.7's `SIM_GPS_NOISE` is a slow
+  sine on the GPS altitude alone, `SIM_GPS.cpp:353`, and noise fed to
+  SITL's GPS would be fused by the EKF that also flies the aircraft),
+  `latency_ticks` (the rail's latency is its own, recorded per row),
+  `gust_mps` (`SIM_WIND_TURB` redraws its azimuth every physics step from
+  SITL's own random numbers, `SIM_Aircraft.cpp:785-800`: not the harness's
+  per-tick Gaussian gust nor its seed), `battery_critical_at_s` (no RTL
+  watch on the node, so no G6), and a dropout flown blind
+  (`fix_quality_reported: false`). `--hil-dry-run`: smoke 64 episodes, 41
+  missions, 23 refused -> 47 missions, 17 refused (+2 gps-dropout, +2
+  wind-within-authority, +2 wind-beyond-authority); nightly 744 episodes,
+  546 missions, 198 refused -> 588, 156 (+24 gps-dropout, +6
+  wind-within-authority, +12 wind-beyond-authority). wind-gusts and both
+  GPS-noise families stay refused.
+- `rail_mission`, `sitl_home`, `rail_meta` take the seed (the jitter);
+  `rail_meta` records the realised stress (`stress`). `sitl_extra` measures
+  `gps_dropout_ticks` on a rail (rows whose `fix_ok` is False; 0, never
+  None, when the denial never reached the Shield, so the cell's gate fails).
+- ONE MECHANISM WITH THE PYMAVLINK RAIL'S. `parse_sim_params` moved from
+  `sitl/run_sitl_demo.py` to `sitl/sitl_stressors.py` unchanged, and both
+  rails share it, the read-back test (`read_back_ok`, 1e-3 x max(1, |v|))
+  and the record of a stressor (`stressor_entry`: `param`, `set`,
+  `read_back`, `applied` - the keys of the pymavlink rail's metrics.json
+  `sim_stressors`). The pymavlink rail is the Shield's own process and sets
+  its static stressors itself at mission start; the ROS 2 rails' Shield node
+  is the system under test, so there the simulator side sets them, on the
+  episode's clock.
+- `sitl/sros2_policy.xml`: the Shield's enclave may subscribe to
+  `/mavros/global_position/raw/fix` and `/mavros/param/event` and publish
+  `/mavros/statustext/send` (the t = 0 marker). A keystore made before
+  needs tools/sros2_setup.sh's permissions step again; until then the node
+  records the refused input (metrics.json `sim_params.inputs_refused`) and
+  flies without it (fix_ok None, no marker: a stressed cell errors).
+
+#### Fixed
+- `run_sitl_demo.py --sim-param SIM_WIND_SPD=<v>` now brings `SIM_WIND_T`
+  1 unless a profile is given (`sitl_stressors.with_uniform_wind`):
+  SITL's default square law scales the wind by sqrt(altitude / 60 m) below
+  60 m (`AP_HAL_SITL/SITL_State.cpp:443-446`).
+- `sitl/sros2_policy.xml` also grants the Shield's enclave the autopilot's
+  home (`/mavros/home_position/home`, `/mavros/home_position/req_update`),
+  which the node has used since the 2026-11-06 home check and SROS 2 would
+  have refused it under `SROS2=1`.
+
+#### Found
+- **The 2 Nov SITL wind runs flew half the wind they name.**
+  `sitl_wind8_shield_on_20261102` and `sitl_wind8_shield_off_20261102` set
+  SIM_WIND_SPD 8 without SIM_WIND_T, so at their 15 m the wind was
+  8 x sqrt(15 / 60) = 4 m/s (no default parameter file sets SIM_WIND_T);
+  the 2026-11-02 (evening) entry says 8 m/s, and docs/FINAL-REPORT-outline.md
+  row X-14 cites the runs by those names. Their reading of
+  SIM_WIND_DIR 225 as "from 225 deg (toward the zone)" was right. The runs
+  are not re-scored here.
+
+#### Limits
+- **Not flown.** No mission with any of this has flown: the rig was in use.
+  What must be flown to show it, one mission each with the dry run's
+  commands: a wind-within-authority lane, wind-beyond-authority at 8 and at
+  12 m/s, gps-dropout lane 23.6 4-11 s (E3) and lane 15 6-13 s (N2); each
+  checked for `sitl_stress.json`, alignment errors under 0.2 s in
+  `sim_stressors`, the dropout's onset in `fix_quality.no_fix_spells`, the
+  FSM's X8 edge, and whether ArduPilot's EKF failsafe took the aircraft
+  (`autopilot_took_over`).
+- **Read in the source, not yet seen on the rig**: ArduPilot forwarding the
+  node's STATUSTEXT to SERIAL0 once the stressor process's heartbeat has
+  taught the route, and MAVROS 2 publishing `/mavros/param/event` for the
+  PARAM_VALUE ArduPilot broadcasts after a set. If the marker never arrives
+  the schedule never fires and the episode errors; if the events never
+  arrive the alignment is the simulator side's own, and says so.
+- **Not the harness's model.** On SITL the wind acts through ArduPilot's
+  physics (its drag model, the position controller's real authority, the
+  transient of the step at t = 0), never `--wind-model`; the dropout through
+  EKF3, whose pose keeps moving on inertial dead reckoning (the headless
+  harness hands the Shield the frozen last fix), and ArduCopter's EKF
+  failsafe lands the aircraft about 8 s after the GPS is lost (7 s
+  posRetryTimeNoVel_ms, `AP_NavEKF3.h:466`, then 1 s of `ekf_check.cpp`).
+- **Labels SITL may not reach** (none relabelled; docs/RUNBOOK-orin-hil.md
+  step 14): wind-beyond-authority at 8 m/s (E2 is read from the harness's
+  6.4 m/s authority; SITL's quad may hold 8 m/s), the gps-dropout E3 cells
+  (X8 on the drift allowance alone must beat the EKF failsafe), lane 15
+  6-13 s (N2, the same EKF race on the 7 s windows); wind-within-authority
+  and the 2-4 s dropout windows (N2) should hold.
+- `pos_sigma_m` is not fed on the rail: with 1 m margins X8's sigma branch
+  needs sigma <= 0.33 m; SITL reports 0.3 m, a field receiver metres.
+  Feeding it, or sizing margins to it, is a policy decision left open.
+- Still refused: GPS noise, state latency, gusts (wind-gusts, both
+  GPS-noise families) and the battery hook (failsafe-low-battery).
+
+#### Tests
+- New `tests/test_sitl_stressors.py` (21): the wind's FROM convention against
+  SITL's air velocity, the boot / t = 0 split and the uniform profile, a
+  drawn direction equal to the headless draw for four seeds, the dropout's
+  schedule, plan validation, the jittered start equal to the headless start
+  for four seeds (SITL_HOME and --start), the scheduler on a virtual clock
+  (never early, late by the marker's delay, a boot parameter that does not
+  read back stops it, no marker no schedule), the fail-closed check (13
+  ways), the refusals, `fix_ok_from`, the rail Shield's X8 verdict and the
+  dead reckoning on what was sent, the node on the stand-in ROS stack
+  (marker, fix_ok, X8 -> RTL, `sim_params`, `fix_quality`; a node without
+  the topic as before), the scripts, the transport, run_sitl's WSLENV, a
+  hil campaign whose desktop side realises the plan, and the record the
+  pymavlink rail shares. `.github/workflows/tests.yml` runs it.
+- test_sweep (the refusals, a hil campaign whose rig realises no stress
+  errors its dropout missions, the dry run's counts), test_sitl_rails
+  (`parse_sim_params` from `sitl_stressors`).
+- Run here one file at a time (Windows, Python 3.10), the 62 files that
+  load what this changes or read the changed documents, each with the
+  skips CI had at bf31b51:
+  test_sitl_stressors 21/21, test_sweep 107/108, test_sitl_rails 63/63,
+  test_ros2_vla_bridge 47/47, test_railinputs_node 13/16, _clock 7/7,
+  _hotapply 2/6, _policy 11/11, _perception 35/35, test_ros2_package 17/17,
+  test_position_quality 14/14, test_own_velocity_forecast 28/28,
+  test_shield 86/86, test_fsm 124/124, test_replay 40/61,
+  test_mavlink_adapter 40/40, test_pas_ardupilot 148/149,
+  test_deploy_configs 69/70, test_kpi_report 38/41, test_check_claims
+  22/22, test_harnesstruth_ci 35/35, test_ci_local 10/10, test_public_docs
+  7/7, test_build_public_site 47/47, and the harnesstruth, wp4outputs,
+  shieldcore, window, hold-point, vla and tracker-page files.
+  Two failed first and were fixed: test_ros2_vla_bridge (a stand-in's reply
+  made the node's new take-off read raise; it now records a failed read and
+  bring-up goes on) and test_harnesstruth_ci (the workflow's header now
+  names test_sitl_stressors).
+
 ### 2026-11-07 (hil shakedown) — the first stress missions on the hil rig: three rail defects fixed, and the autopilot's lag escalates head-on approaches the ideal vehicle never escalates
 
 One smoke scenario (`nfz-head-on`, the goto pilot at 4 m/s at a square
