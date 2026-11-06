@@ -66,6 +66,8 @@ done
 # (No apostrophe in this message: inside "${...:?word}" bash reads one as a quote.)
 : "${G1_VERDICT:?set G1_VERDICT to a copy of the desktop g1_verdict.json (demo/out/g1_*/)}"
 [ -f "$G1_VERDICT" ] || die 66 "no G1 verdict at $G1_VERDICT (copy the desktop's demo/out/g1_*/g1_verdict.json here)"
+# Absolute: the node runs from the checkout's root (cd below), not from here.
+G1_VERDICT="$(cd "$(dirname "$G1_VERDICT")" && pwd)/$(basename "$G1_VERDICT")"
 TAG="${TAG:-pas_hil_aiot_$(date +%Y%m%d_%H%M%S)}"
 case "$TAG" in
   ""|*/*|.*) die 64 "TAG '$TAG' must be a plain directory name under demo/out" ;;

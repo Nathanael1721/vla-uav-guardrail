@@ -129,10 +129,11 @@ the first-boot check warns if something is.
 **Host ROS for the perception node only (2026-11-06).** The safety path keeps
 its home in the companion image (MAVROS, the Shield node, mavlink-router,
 rosbag2), and nothing in it changes. One node runs on the Orin's own Ubuntu,
-with ROS 2 Jazzy from apt (`ros-jazzy-ros-base`, `ros-jazzy-mavros-msgs`,
-`ros-jazzy-rmw-cyclonedds-cpp`): the Project AirSim perception node flown by a
-VLA (`demo/pas_ardupilot/perception_node.py --link mavros`, started by
-`deploy/orin/run_pas_perception.sh`). Why it cannot run in the companion
+on ROS 2 Jazzy from apt: the Project AirSim perception node flown by a VLA
+(`demo/pas_ardupilot/perception_node.py --link mavros`, started by
+`deploy/orin/run_pas_perception.sh`). It needs `ros-jazzy-ros-base`,
+`ros-jazzy-mavros-msgs` and `ros-jazzy-rmw-cyclonedds-cpp` there, and the
+script checks for them before it starts the node. Why it cannot run in the companion
 image: its detector (OWL-ViT) and the VLA client's frame pipeline need the
 GPU and torch, and the Project AirSim client, and the companion image never
 carries them. It runs with runc and no GPU library (decision 1), and on

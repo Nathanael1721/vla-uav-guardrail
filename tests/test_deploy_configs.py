@@ -2318,9 +2318,9 @@ def test_vla_bf16_check_refuses_a_model_off_the_gpu_quantized_or_answering_nonse
 
 
 # --- the perception rail's hil follow on the AGX Orin (2026-11-06) ------------- #
-def _pas_perception(args: list[str], **env) -> subprocess.CompletedProcess:
+def _pas_perception(args: list[str], cwd: str | None = None, **env) -> subprocess.CompletedProcess:
     """deploy/orin/run_pas_perception.sh dry-run (VLAGUARD_DRY_RUN=1), with a
-    G1 verdict file present unless `env` says otherwise."""
+    G1 verdict file present unless `env` says otherwise, run from `cwd`."""
     g1 = Path(tempfile.mkdtemp()) / "g1_verdict.json"
     g1.write_text("{}", encoding="utf-8")
     full = {k: v for k, v in os.environ.items()
@@ -2333,7 +2333,7 @@ def _pas_perception(args: list[str], **env) -> subprocess.CompletedProcess:
         else:
             full[k] = v
     return subprocess.run([find_bash(), RUN_PAS_PERCEPTION.as_posix(), *args], env=full,
-                          capture_output=True, text=True, timeout=60)
+                          capture_output=True, text=True, timeout=60, cwd=cwd)
 
 
 def test_the_perception_rail_hil_script_joins_hil_envs_graph_and_flies_no_dev_policy():
@@ -2411,6 +2411,13 @@ def test_the_perception_rail_hil_script_joins_hil_envs_graph_and_flies_no_dev_po
     assert r.returncode != 0 and "G1_VERDICT" in r.stderr and "EXEC:" not in r.stdout, r
     r = _pas_perception([], G1_VERDICT=(Path(tempfile.mkdtemp()) / "none.json").as_posix())
     assert r.returncode == 66 and "no G1 verdict" in r.stderr, (r.returncode, r.stderr)
+    # A verdict named relative to where the script was started still names
+    # that file once the script runs from the checkout's root.
+    here = Path(tempfile.mkdtemp())
+    (here / "g1_verdict.json").write_text("{}", encoding="utf-8")
+    r = _pas_perception([], cwd=str(here), G1_VERDICT="g1_verdict.json")
+    got = options(printed(r))["--g1-verdict"]
+    assert got.startswith("/") and got.endswith("/g1_verdict.json"), got
 
 
 if __name__ == "__main__":
