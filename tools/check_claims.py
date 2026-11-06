@@ -222,6 +222,12 @@ CLAIMS: list[tuple[str, str, str]] = [
     ("C-01", r"grant's (exact|final) (topology|architecture)",
      "2026-10-06: canonical HIL (the RUNBOOK's wording, 2026-10-19)"),
     ("C-11", r"[Ff]our rails, all show", "2026-10-06: four rails run (the RUNBOOK's wording, 2026-10-19)"),
+    # 2026-11-07 (SITL stressors): sitl_wind8_shield_on/off_20261102 set
+    # SIM_WIND_SPD 8 without SIM_WIND_T, so SITL's square law gave 4 m/s at
+    # their 15 m. The claim is an 8 m/s wind flown on SITL in those runs.
+    ("X-14", r"wind 8 m/s from 225|8 m/s (?:SITL )?wind[^.\n]{0,60}sitl_wind8|"
+             r"sitl_wind8[^.\n]{0,60}\b8 m/s",
+     "2026-11-07: the 2 Nov SITL wind runs flew 8 m/s (4 m/s at 15 m)"),
 ]
 
 # One sentence per pattern that states the withdrawn claim plainly. The test
@@ -290,6 +296,8 @@ CLAIM_EXAMPLES: list[str] = [
     "That is a replay, not a flight: no flight has used the fix yet.",
     "Rail 3 is the grant's exact topology.",
     "Four rails, all show the same thing.",
+    "Simulator stressors: wind 8 m/s from 225 deg, Shield on P0 0.0.",
+    "An 8 m/s SITL wind was flown with the Shield on (sitl_wind8_shield_on_20261102).",
 ]
 
 # --------------------------------------------------------------------------- #
@@ -403,6 +411,8 @@ RETRACTIONS: dict[str, str] = {
     "dev topology on one desktop": "not a sentence: a topology label on one run, corrected",
     "published library sweep": "not a sentence: a sweep figure, republished",
     "749 p0 escape ticks": "not a sentence: a tick count, recounted by priority (kpi.json p0_escapes)",
+    # 2026-11-07 (SITL stressors)
+    "flew half the wind they name": "X-14",
 }
 
 # The quotation is marked as withdrawn when one of these is near it. Only

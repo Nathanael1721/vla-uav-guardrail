@@ -149,7 +149,7 @@ set static SIM_* parameters at mission start since 2 Nov (`run_sitl_demo.py
   which the node has used since the 2026-11-06 home check and SROS 2 would
   have refused it under `SROS2=1`.
 
-#### Found
+#### Retracted
 - **The 2 Nov SITL wind runs flew half the wind they name.**
   `sitl_wind8_shield_on_20261102` and `sitl_wind8_shield_off_20261102` set
   SIM_WIND_SPD 8 without SIM_WIND_T, so at their 15 m the wind was
