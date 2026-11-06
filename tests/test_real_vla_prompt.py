@@ -28,7 +28,14 @@ like that can be wrong in quiet ways, and each test below is aimed at one:
   - a token count without OpenVLA's tokenizer must SAY it is an estimate, and
     a budget it cannot prove must read "unknown", never "fits"; an exact count
     must name the tokenizer.json it came from;
-  - with --csp off the CSP fields are None, never 0 (silence reads as success).
+  - with --csp off the CSP fields are None, never 0 (silence reads as success);
+  - ready for the CSP A/B (2026-11-07): the precision, seed, Shield and
+    simulator a run flew with are recorded (and shown by --print-prompt);
+    the Shield is the grant's forecast without an FSM the demo never acts
+    on; the wrong simulator (nothing on the port, Project AirSim, an
+    ArduCopter vehicle) is refused before the model loads; a take-off that
+    does not reach cruise height lands and refuses; and the rows, metrics
+    and KPIs the scorer reads are written, the KPIs by guardrail.kpi itself.
 
 The rotation tests are the regression for the body-to-world bug. On the old
 mapping (yaw ignored) `test_yaw_90_forward_flies_east` and
@@ -754,10 +761,15 @@ class _Sim:
     tests stop the loop there) and returns None. Takeoffs, landings and every
     velocity command are recorded."""
 
-    def __init__(self, yaw=0.0, frames=1, before_frame=None, exhausted=None):
+    def __init__(self, yaw=0.0, frames=1, before_frame=None, exhausted=None,
+                 contacts=None):
         self.yaw, self.z = yaw, -20.0
         self.frames, self.before_frame, self.exhausted = frames, before_frame, exhausted
-        self.calls = {"img": 0, "pose": 0, "takeoff": 0, "land": 0, "move": []}
+        self.calls = {"img": 0, "pose": 0, "takeoff": 0, "land": 0, "move": [],
+                      "collision": 0}
+        # contacts: None = a simulator without simGetCollisionInfo; else a
+        # function of the call number -> (has_collided, time_stamp, object).
+        self.contacts = contacts
 
     def modules(self, stand_in_pil=True):
         """airsim and cv2 stand-ins, and PIL's unless `stand_in_pil` is False
@@ -805,6 +817,13 @@ class _Sim:
             def simGetVehiclePose(self):
                 sim.calls["pose"] += 1
                 return _pose(sim.yaw, z=sim.z)
+
+        if sim.contacts is not None:
+            def simGetCollisionInfo(self):
+                sim.calls["collision"] += 1
+                hit, stamp, obj = sim.contacts(sim.calls["collision"])
+                return _Obj(has_collided=hit, time_stamp=stamp, object_name=obj)
+            Client.simGetCollisionInfo = simGetCollisionInfo
 
         airsim = types.ModuleType("airsim")
         airsim.MultirotorClient = Client
@@ -1005,14 +1024,21 @@ class _Clock:
         _time.sleep(0.0005)
 
 
+SIM_OK = ({"api": "stand-in", "address": "stand-in", "vehicle_types": ["SimpleFlight"],
+           "settings_sha256": None, "verified": True}, None)
+
+
 def _fly(argv, *, yaw=90.0, frames=3, preflight_tokenizer=CharTokenizer,
-         proc_tokenizer=None, plot=False):
+         proc_tokenizer=None, plot=False, z=-20.0, contacts=None, sim_check=SIM_OK):
     """rv.main(argv) end to end: the real preflight, FlightPrompt, backend
     __init__, worker thread, control loop, Shield, audit, run record and
-    report, against `_Sim`. Only `_load` is a stand-in. Output goes to a temp
-    ROOT. Returns (exit code, out dir, stdout, sim, backend or None)."""
+    report, against `_Sim`. Only `_load` is a stand-in, and the simulator
+    preflight answers `sim_check` (a stand-in sim has no RPC port to probe).
+    Output goes to a temp ROOT. Returns (exit code, out dir, stdout, sim,
+    backend or None)."""
     tmp = Path(tempfile.mkdtemp())
-    sim, built = _Sim(yaw=yaw, frames=frames), []
+    sim, built = _Sim(yaw=yaw, frames=frames, contacts=contacts), []
+    sim.z = z
 
     class Backend(_StandInBackend):
         def __init__(self, *a, **k):
@@ -1026,6 +1052,7 @@ def _fly(argv, *, yaw=90.0, frames=3, preflight_tokenizer=CharTokenizer,
     buf = io.StringIO()
     with _stand_in_modules(mods), \
             _patched(OpenVLABackend=Backend, ROOT=tmp, MAX_S=1.0, time=_Clock(),
+                     sim_preflight=lambda *a, **k: sim_check,
                      load_openvla_tokenizer=lambda *a, **k: (
                          preflight_tokenizer() if preflight_tokenizer else None)):
         with contextlib.redirect_stdout(buf):
@@ -1409,6 +1436,220 @@ def test_print_prompt_names_the_paraphrase_it_would_fly():
     assert INSTR not in shown["prompt"], "the canonical text was flown instead"
     assert code == rv._PRINT_EXIT[None if shown["refused"] is None
                                   else shown["refused"]["kind"]]
+
+
+# --------------------------------------------------------------------------- #
+# Ready for the CSP A/B (2026-11-07): precision, seed, Shield, simulator, records
+# --------------------------------------------------------------------------- #
+
+def test_the_flight_shield_is_the_grant_forecast_without_an_fsm():
+    """The demo flies `emitted` and acts on no mode request, so its Shield is
+    a rail Shield (no FSM inside), at the grant's 5 s / 0.1 s; the record is
+    read off the object, so it cannot describe a Shield that did not fly."""
+    pol = load_policy(URBAN)
+    sh = rv.flight_shield(pol)
+    assert (sh.lookahead_s, sh.dt, sh.fsm) == (5.0, 0.1, None), (sh.lookahead_s, sh.dt)
+    rec = rv.shield_record(sh)
+    assert rec["grant_forecast"] is True and rec["poses"] == 50, rec
+    assert rec["escalation_fsm"] is False and rec["fsm_config_hash"] is None
+    assert rec["clock"] is None and not rec["obstacle_map"] and not rec["road_map"]
+    other = rv.shield_record(Shield(pol, lookahead_s=3.0, dt=0.5))
+    assert other["grant_forecast"] is False and other["escalation_fsm"] is True
+    assert other["fsm_config_hash"].startswith("sha256:"), other
+
+
+def test_print_prompt_shows_the_whole_flight_without_a_model_or_a_sim():
+    """A dry run checks a campaign's flights from --print-prompt alone
+    (tools/score_csp_flights.py check), so it must carry what the flight would
+    fly with besides the prompt: precision, seed, Shield, mission, length."""
+    code, rec = _main_json(["--csp", "on", "--print-prompt", "--precision", "bf16",
+                            "--seed", "1002", "--max-s", "30"])
+    assert code == rv.EXIT_OK, rec["refused"]
+    f = rec["flight"]
+    assert (f["precision"], f["seed"], f["max_s"]) == ("bf16", 1002, 30.0), f
+    assert "unquantized" in f["quantization"]
+    pol = load_policy(URBAN)
+    assert f["shield"] == rv.shield_record(rv.flight_shield(pol))
+    assert f["policy_hash"] == pol.policy_hash and f["instruction_flown"] == INSTR
+    assert (f["mission"]["target_x"], f["mission"]["target_y"]) == (40.0, 40.0)
+    assert not ({"torch", "airsim"} & (set(sys.modules) - _preloaded)), "loaded a model or sim"
+    code, rec = _main_json(["--print-prompt"])
+    assert (rec["flight"]["precision"], rec["flight"]["seed"]) == ("nf4", None)
+    assert rec["flight"]["max_s"] == float(rv.MAX_S)
+
+
+def test_precision_and_seed_are_checked_and_said_plainly():
+    assert "4-bit nf4" in rv.quantization_note("nf4")
+    assert "unquantized" in rv.quantization_note("bf16")
+    _expect(ValueError, rv.quantization_note, "fp8")
+    fp = _fp(load_policy(URBAN), tokenizer=CharTokenizer())
+    _expect(ValueError, _StandInBackend, fp, precision="fp8")
+    assert rv.precision_of({"precision": "bf16"}) == ("bf16", "vla_run.json precision")
+    p, src = rv.precision_of({"quantization": "bitsandbytes 4-bit nf4, compute bfloat16"})
+    assert p == "nf4" and "quantization" in src
+    assert rv.precision_of({})[0] == rv.DEFAULT_PRECISION == "nf4"
+    import random
+    import numpy as np
+    calls = []
+    cuda = _Obj(is_available=lambda: True, manual_seed_all=lambda s: calls.append(("cuda", s)))
+    torch = _Obj(manual_seed=lambda s: calls.append(("torch", s)), cuda=cuda)
+    a = rv.seed_everything(1001, torch)
+    draw = (random.random(), float(np.random.rand()))
+    b = rv.seed_everything(1001)
+    assert draw == (random.random(), float(np.random.rand())), "the seed seeded nothing"
+    assert calls == [("torch", 1001), ("cuda", 1001)], calls
+    assert a["seeded"] == ["random", "numpy", "torch", "torch.cuda"] and b["seed"] == 1001
+    assert "repeats" in a["note"] and rv.seed_everything(None)["seeded"] == []
+
+
+def test_main_records_the_precision_seed_shield_and_simulator_it_flew_with():
+    code, out, stdout, sim, b = _fly(
+        ["--csp", "on", "--tag", "rec", "--policy", str(URBAN), "--precision", "bf16",
+         "--seed", "1001"], yaw=0.0)
+    assert code == rv.EXIT_OK, f"exit {code}\n{stdout[-1500:]}"
+    run = json.loads((out / "vla_run.json").read_text(encoding="utf-8"))
+    assert (run["precision"], run["seed"], run["tag"]) == ("bf16", 1001, "rec"), run
+    assert run["quantization"] == rv.quantization_note("bf16")
+    assert run["shield"] == rv.shield_record(rv.flight_shield(load_policy(URBAN)))
+    assert run["sim"] == SIM_OK[0] and run["max_s"] == 1.0
+    assert run["argv"][:2] == ["--csp", "on"] and "--seed" in run["argv"]
+    assert (b.precision, b.seed) == ("bf16", 1001)
+
+
+def test_main_writes_the_rows_metrics_and_kpis_the_scorer_reads():
+    """flight_log.jsonl is one row per control tick in guardrail/kpi.py's
+    shape, metrics.json says the repair rate and the contacts, and kpi.json is
+    guardrail.kpi.compute on those two, recomputed here: one scorer."""
+    from guardrail import kpi as KPI
+    code, out, stdout, sim, b = _fly(
+        ["--csp", "on", "--tag", "kpi", "--policy", str(URBAN)], yaw=0.0)
+    assert code == rv.EXIT_OK, f"exit {code}\n{stdout[-1500:]}"
+    traj = json.loads((out / "trajectory.json").read_text(encoding="utf-8"))
+    rows = [json.loads(x) for x in
+            (out / "flight_log.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert len(rows) == len(traj) >= 10, (len(rows), len(traj))
+    for r in rows:
+        for k in ("t", "raw", "vla", "emitted", "violations", "repairs",
+                  "emitted_violations", "flown", "unsafe", "unsafe_rules", "policy_hash"):
+            assert k in r, (k, sorted(r))
+        assert r["flown"] is True
+    # `raw` is what the Shield judged: the rate-limited command, not the model's
+    assert _close(rows[0]["raw"]["vx"], 0.25) and _close(rows[0]["vla"]["vx"], 1.5), rows[0]
+    m = json.loads((out / "metrics.json").read_text(encoding="utf-8"))
+    touched = sum(1 for r in rows if r["touched"])
+    assert (m["ticks"], m["touched_ticks"]) == (len(rows), touched), m
+    assert m["repair_rate"] == round(touched / len(rows), 6)
+    assert m["csp"] == "on" and m["shield"] == "on" and m["inferences"] == 3
+    assert m["collisions"]["measured"] is False and m["collisions"]["mission"] is None
+    assert m["start_pose"] == {k: rows[0][k] for k in ("x", "y", "up", "yaw_deg")}
+    k = json.loads((out / "kpi.json").read_text(encoding="utf-8"))
+    want = KPI.compute(rows, KPI.rule_priorities(load_policy(URBAN)), m)
+    assert k == json.loads(json.dumps(want, default=str)), "kpi.json is not kpi.compute"
+    assert k["ticks"] == len(rows) and "p0_escapes" in k and k["outcome"], k
+    assert "[kpi]" in stdout and "repair rate" in stdout
+
+
+def test_a_contact_during_the_mission_is_counted_and_one_before_it_is_not():
+    """The simulator's contacts from the VLA's start on fail the outcome
+    (guardrail.kpi reads `collisions`); the ground contact a take-off leaves
+    on record is not one of the mission's."""
+    code, out, stdout, sim, b = _fly(
+        ["--tag", "hit", "--policy", str(URBAN)], yaw=0.0,
+        contacts=lambda i: (i >= 3, 1000.0 + (i >= 3), "Fence_7"))
+    assert code == rv.EXIT_OK, stdout[-1500:]
+    m = json.loads((out / "metrics.json").read_text(encoding="utf-8"))
+    assert m["collisions"]["measured"] is True and m["collisions"]["mission"] == 1, m
+    assert m["collisions"]["mission_objects"] == ["Fence_7"]
+    k = json.loads((out / "kpi.json").read_text(encoding="utf-8"))
+    assert k["collision_contacts"] == 1 and "collision" in k["mission_fail_reasons"], k
+    code, out, stdout, sim, b = _fly(
+        ["--tag", "ground", "--policy", str(URBAN)], yaw=0.0,
+        contacts=lambda i: (True, 500.0, "Ground"))
+    m = json.loads((out / "metrics.json").read_text(encoding="utf-8"))
+    assert m["collisions"]["mission"] == 0, m["collisions"]
+
+
+def test_a_takeoff_that_does_not_reach_cruise_lands_and_refuses():
+    """A vehicle that does not climb (an ArduCopter vehicle ignores the API)
+    must not have the model flown from 2 m and scored: it lands, exits 3, the
+    worker never starts, and metrics.json says why."""
+    code, out, stdout, sim, b = _fly(["--tag", "low", "--policy", str(URBAN)], z=-2.0)
+    assert code == rv.EXIT_REFUSED, (code, stdout[-800:])
+    assert "cruise_not_reached" in stdout and sim.calls["land"] == 1
+    assert b is not None and b._thread.ident is None, "the worker was started"
+    m = json.loads((out / "metrics.json").read_text(encoding="utf-8"))
+    assert m["refused"] == "cruise_not_reached" and m["up_after_climb_m"] == 2.0, m
+    assert not (out / "flight_log.jsonl").exists() and _steps(out) == []
+
+
+def test_the_simulator_preflight_refuses_the_wrong_simulator_before_the_model_loads():
+    """Classic AirSim with a SimpleFlight vehicle, or nothing: a port nobody
+    answers on is refused (naming Project AirSim when its port is what
+    listens), an ArduCopter vehicle is refused, a simulator that cannot report
+    its settings is recorded as unverified. main() refuses before the backend
+    is built and before anything is written."""
+    import socket as _socket
+
+    def listener():
+        s = _socket.socket()
+        s.bind(("127.0.0.1", 0))
+        s.listen(4)
+        return s
+
+    def free_port():
+        s = listener()
+        p = s.getsockname()[1]
+        s.close()
+        return p
+
+    port = free_port()
+    rec, ref = rv.sim_preflight(port=port)
+    assert ref["kind"] == "sim_unreachable" and "nothing answers" in ref["detail"], ref
+    pas = listener()
+    try:
+        with _patched(PROJECT_AIRSIM_PORT=pas.getsockname()[1]):
+            rec, ref = rv.sim_preflight(port=port)
+        assert "Project AirSim" in ref["detail"] and "CityLife" in ref["detail"], ref
+    finally:
+        pas.close()
+
+    def airsim_with(settings):
+        def get():
+            if isinstance(settings, Exception):
+                raise settings
+            return json.dumps(settings)
+        mod = types.ModuleType("airsim")
+        mod.MultirotorClient = lambda ip, port, timeout_value: _Obj(getSettingsString=get)
+        return {"airsim": mod}
+
+    up = listener()
+    try:
+        p = up.getsockname()[1]
+        arducopter = {"SimMode": "Multirotor", "Vehicles": {
+            "ArduCopter": {"VehicleType": "ArduCopter"}}}
+        with _stand_in_modules(airsim_with(arducopter)):
+            rec, ref = rv.sim_preflight(port=p)
+        assert ref["kind"] == "sim_vehicle" and "ArduCopter" in ref["detail"], ref
+        simple = {"SimMode": "Multirotor", "Vehicles": {
+            "SimpleFlight": {"VehicleType": "SimpleFlight"}}}
+        for settings in (simple, {"SimMode": "Multirotor"}):
+            with _stand_in_modules(airsim_with(settings)):
+                rec, ref = rv.sim_preflight(port=p)
+            assert ref is None and rec["verified"] is True, (settings, rec)
+            assert rec["vehicle_types"] == ["SimpleFlight"]
+        with _stand_in_modules(airsim_with(RuntimeError("no such method"))):
+            rec, ref = rv.sim_preflight(port=p)
+        assert ref is None and rec["verified"] is False and "unverified" in rec["note"], rec
+    finally:
+        up.close()
+
+    code, out, stdout, sim, b = _fly(
+        ["--csp", "on", "--tag", "wrongsim", "--policy", str(URBAN)],
+        sim_check=({"address": "x"}, {"kind": "sim_vehicle", "detail": "ArduCopter"}))
+    assert code == rv.EXIT_REFUSED and "REFUSING TO FLY (sim_vehicle)" in stdout, stdout[-600:]
+    assert b is None, "the model was loaded for a simulator that was refused"
+    assert not out.exists(), "a refused run wrote output"
+    assert sim.calls["takeoff"] == 0
 
 
 def test_importing_the_demo_loads_no_model():

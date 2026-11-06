@@ -48,6 +48,11 @@ What must hold, and how each test tries to break it:
     one that resets us says which allow-list to check.
   * A client's bad input is the client's error: a lat/lon that is not a
     number, a NaN in a Struct, a bad body file for the client tool.
+  * Paraphrase arms come from the paraphraser service (WP4-10, 2026-11-07):
+    with the in-process draw made to fail, an arm is still drawn, from the
+    bound client, and recorded with where it came from; over gRPC it is the
+    in-process draw's wording and ids; a server bound to no service, or to
+    one that does not answer, draws none (no fallback).
 
 The logic tests drive `Harness` directly, so they run without grpcio; tests
 that need grpcio (or cryptography) print SKIP where it is absent (never
@@ -119,9 +124,27 @@ def _cleanup():
 _STATE: dict = {}
 
 
+def _paraphraser():
+    """(server, client) of a loopback paraphraser service, started once: the
+    harness draws its paraphrase arms from it (WP4-10, 2026-11-07). None
+    where grpcio is absent (the transport tests SKIP there)."""
+    if "para" not in _STATE:
+        try:
+            from guardrail import paraphraser_service as PS
+            srv = PS.serve(host="127.0.0.1", port=0)
+        except Exception:                                    # noqa: BLE001 - no grpcio
+            _STATE["para"] = None
+        else:
+            atexit.register(lambda: srv.stop(None))
+            _STATE["para"] = (srv, PS.ParaphraserClient(srv.address))
+    return _STATE["para"]
+
+
 def _harness() -> H.Harness:
     if "harness" not in _STATE:
-        _STATE["harness"] = H.Harness(runs_dir=_tmpdir("harness_runs_"))
+        p = _paraphraser()
+        _STATE["harness"] = H.Harness(runs_dir=_tmpdir("harness_runs_"),
+                                      paraphraser=None if p is None else p[1])
     return _STATE["harness"]
 
 
@@ -794,6 +817,118 @@ def test_a_protected_prompt_with_a_paraphrase_arm_is_the_clients_error():
     assert code == "INVALID_ARGUMENT" and "protected" in why, (code, why)
     assert len(h._episodes) == n
     assert h.start_episode(scenario_yaml=av)["arm"] == "canonical"
+
+
+# --------------------------------------------------------------------------- #
+# WP4-10: paraphrase arms come from the paraphraser service (2026-11-07)
+# --------------------------------------------------------------------------- #
+
+TMPL = OPEN + "paraphrase: {k: 2, backend: template}\n"
+
+
+class _StubParaphraser:
+    """A paraphraser client that answers a fixed reply and records the call."""
+    address, secure = "stub:0", False
+
+    def __init__(self, reply):
+        self.reply, self.calls = reply, []
+
+    def paraphrase(self, text, n, seed, backend="auto", include_canonical=False):
+        self.calls.append((text, n, seed, backend))
+        return self.reply
+
+
+def _arm_of(h, ref) -> dict:
+    return h._episodes[ref["episode_id"]].arm_record
+
+
+def test_paraphrase_arms_are_drawn_by_the_service_never_in_process():
+    """The reference's orchestrator gets its paraphrased variants from the
+    paraphraser service (data-flow page: Paraphraser service -> Orchestrator,
+    gRPC + mTLS). Here the harness's draw goes to a client that is not the
+    module: with guardrail.paraphraser.paraphrase made to fail, a paraphrase
+    arm is still drawn, from the client, with the text the arm rewords, the
+    scenario's k and backend and the episode's seed, and recorded with where
+    it came from. The canonical arm asks the service nothing."""
+    from guardrail import paraphraser as P
+    from guardrail import paraphraser_service as PS
+    cell = _own_harness("pp_fam_")._family_from_yaml(TMPL).cells()[0]
+    pol = cell.spec.policy.load(ROOT)
+    text, which = S.instruction_text(cell.spec, pol)
+    assert which == "csp", which
+    reply = PS.ParaphraserCore().paraphrase(text, 2, 1001, "template")
+    stub = _StubParaphraser(reply)
+    h = _own_harness("pp_stub_", paraphraser=stub)
+    real = P.paraphrase
+    P.paraphrase = lambda *a, **k: (_ for _ in ()).throw(
+        AssertionError("the harness drew a paraphrase in process"))
+    try:
+        ref = h.start_episode(scenario_yaml=TMPL, seed=1001, arm="pp1")
+        canon = h.start_episode(scenario_yaml=TMPL, seed=1001)
+    finally:
+        P.paraphrase = real
+    assert stub.calls == [(text, 2, 1001, "template")], stub.calls
+    arm = _arm_of(h, ref)
+    want = reply["paraphrases"][1]
+    assert arm["paraphrase"]["paraphrase_id"] == want["paraphrase_id"], arm
+    assert arm["paraphrase"]["text"] == want["text"] and arm["paraphrase"]["seed"] == 1001
+    via = arm["paraphrase"]["via"]
+    assert via["service"] == "stub:0" and via["transport"] == "plaintext (loopback)", via
+    assert via["validator_digest"] == P.validator_digest() == reply["validator_digest"]
+    assert arm["manifest_extras"]["paraphrase_service"] == "stub:0"
+    assert _arm_of(h, canon)["paraphrase"]["backend"] == "identity"
+    assert len(stub.calls) == 1, "the canonical arm asked the service"
+
+
+def test_over_grpc_the_service_arm_is_the_in_process_draw_and_names_the_service():
+    """Over the wire (a loopback service), the arm record carries the same ids
+    and text the in-process draw gives for the same cell, seed and arm, plus
+    the service's address and digests: binding the harness to the service
+    changed where the wording comes from, not which wording it is."""
+    if _M is None or _paraphraser() is None:
+        return SKIP
+    from guardrail import paraphraser as P
+    from guardrail.scenario_spec import Episode
+    srv, _client = _paraphraser()
+    h = _harness()
+    ref = h.start_episode(scenario_yaml=TMPL, seed=1001, arm="pp1")
+    arm = _arm_of(h, ref)["paraphrase"]
+    ep = h._episodes[ref["episode_id"]].ep
+    local = S.build_arm(Episode(cell=ep.cell, seed=1001, paraphrase_arm=1, prefix="on"))
+    want = local["paraphrase"]
+    assert {k: v for k, v in arm.items() if k != "via"} == want, (arm, want)
+    assert arm["via"]["service"] == srv.address and \
+        arm["via"]["validator_digest"] == P.validator_digest(), arm["via"]
+    assert arm["via"]["store_digest"] == P.store_digest()
+
+
+def test_a_server_bound_to_no_service_or_a_dead_one_draws_no_paraphrase():
+    """No fallback: the reference has none. Bound to nothing, a paraphrase arm
+    is FAILED_PRECONDITION naming the flag; bound to a service that does not
+    answer, UNAVAILABLE naming its address; the canonical arm flies either
+    way; and a plaintext client off loopback is refused at construction."""
+    unbound = _own_harness("pp_none_")
+    code, why = _h_refused(unbound.start_episode, scenario_yaml=TMPL, arm="pp1")
+    assert code == "FAILED_PRECONDITION" and "--paraphraser" in why, (code, why)
+    assert unbound.start_episode(scenario_yaml=TMPL)["arm"] == "canonical"
+    try:
+        H.paraphraser_client("10.1.2.3:50061")
+    except ValueError as e:
+        assert "loopback" in str(e), e
+    else:
+        raise AssertionError("a plaintext paraphraser client off loopback was built")
+    if _M is None:
+        return SKIP
+    import socket
+    s = socket.socket()
+    s.bind(("127.0.0.1", 0))
+    dead = f"127.0.0.1:{s.getsockname()[1]}"
+    s.close()
+    from guardrail import paraphraser_service as PS
+    h = _own_harness("pp_dead_", paraphraser=PS.ParaphraserClient(dead, timeout_s=3.0))
+    code, why = _h_refused(h.start_episode, scenario_yaml=TMPL, arm="pp1")
+    assert code == "UNAVAILABLE" and dead in why, (code, why)
+    assert h.start_episode(scenario_yaml=TMPL)["arm"] == "canonical"
 
 
 # --------------------------------------------------------------------------- #

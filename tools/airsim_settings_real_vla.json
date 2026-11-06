@@ -1,0 +1,15 @@
+{
+  "SeeDocsAt": "https://microsoft.github.io/AirSim/settings/",
+  "SettingsVersion": 1.2,
+  "SimMode": "Multirotor",
+  "ClockSpeed": 1.0,
+  "ViewMode": "SpringArmChase",
+  "CameraDefaults": {
+    "CaptureSettings": [
+      {"ImageType": 0, "Width": 1280, "Height": 720, "FOV_Degrees": 90}
+    ]
+  },
+  "Vehicles": {
+    "SimpleFlight": {"VehicleType": "SimpleFlight", "AutoCreate": true}
+  }
+}

@@ -34,6 +34,12 @@ one the issue stamp comes from the wall clock, so the CSP is compared by
 `csp_content_hash` (every field but the stamp), which is tested under a clock
 that ticks between two compilations.
 
+The mission context is the grant's "pose, home, target, allowed modes" (PDF
+p3; audit card WP2-05, 2026-11-07): a stated home brings the way home into the
+region and the grade, with RTL ruled out it does not (the null), a breach mode
+the mission forbids is explained, and a mission that states neither compiles
+with the id it always had.
+
 A test that needs an optional dependency (jsonschema, the OpenVLA tokenizer)
 SKIPs visibly under both runners - pytest.skip under pytest, a SKIP line and a
 "skipped" count under the standalone runner - and never passes in its place.
@@ -577,6 +583,162 @@ def test_a_fence_on_the_path_outranks_the_same_fence_far_away():
     assert near.proximity > far.proximity, (near, far)
     assert near.risk > far.risk, (near, far)
     assert _row(csp, "nfz-on-path").proximity == 1.0
+
+
+# --------------------------------------------------------------------------- #
+# WP2-05: the rest of the mission context - home and allowed modes (2026-11-07)
+# --------------------------------------------------------------------------- #
+
+def _old_mission_id(m):
+    """compiler._mission_id as it was at 65c7e4f (before the home and the
+    modes existed): the identity a mission that states neither must keep."""
+    canon = json.dumps({"task": m.task_text, "start": [m.start_x, m.start_y],
+                        "target": [m.target_x, m.target_y],
+                        "alt": m.cruise_alt_m, "speed": m.speed_pref_mps},
+                       sort_keys=True, separators=(",", ":"))
+    return "m-" + hashlib.sha256(canon.encode("utf-8")).hexdigest()[:12]
+
+
+# The mission flies (0, 0) -> (100, 0). A zone halfway along the way home from
+# (0, 600) to the start; three on the outbound path, whose breach actions ask
+# for RTL, for GUIDED (a repair) and for no mode at all; and one beside both.
+HOMEWARD = Policy.model_validate({"policy_id": "homeward", "constraints": [
+    {"id": "nfz-homeward", "type": "polygon_fence", **HARD_P0,
+     "vertices": _sq(-5, 300, 5, 310)},
+    {"id": "nfz-rtl-on-path", "type": "polygon_fence", **dict(HARD_P0, violation_action="RTL"),
+     "vertices": _sq(45, -5, 55, 5)},
+    {"id": "nfz-fix-on-path", "type": "polygon_fence", **HARD_P0,
+     "vertices": _sq(20, -5, 30, 5)},
+    {"id": "nfz-watch", "type": "polygon_fence",
+     **dict(HARD_P0, violation_action="monitor_only"), "vertices": _sq(70, -5, 80, 5)},
+    {"id": "nfz-aside", "type": "polygon_fence", **HARD_P0,
+     "vertices": _sq(200, 100, 210, 110)},
+]})
+
+
+def _homeward(**kw):
+    """The mission, with any context field added - validated, as a caller's
+    Mission is (model_copy would skip the validators)."""
+    m = _mission(tx=100.0, ty=0.0, alt=15.0, speed=4.0, text="fly to (100, 0)")
+    return Mission(**{**m.model_dump(), **kw})
+
+
+def test_the_mission_context_carries_home_and_allowed_modes():
+    """Prefix Compiler PDF p3 (Pipeline): the mission context is "pose, home,
+    target, allowed modes". Until 2026-11-07 Mission had the start (the pose)
+    and the target only; the home was the start by implication and the modes
+    were nowhere (audit card WP2-05). Each new field is checked as a whole:
+    a half home, an empty or unknown or repeated mode list is refused, a home
+    that is not stated reads as the start, and a run record written before
+    the fields existed still loads."""
+    _need()
+    m = Mission(task_text="t", target_x=1, target_y=2, cruise_alt_m=3, speed_pref_mps=4,
+                start_x=5, start_y=6, home_x=-10, home_y=20,
+                allowed_modes=["GUIDED", "LAND"])
+    assert m.home == (-10.0, 20.0) and m.allowed_modes == ["GUIDED", "LAND"]
+    assert Mission(task_text="t", target_x=1, target_y=2, cruise_alt_m=3,
+                   speed_pref_mps=4, start_x=5, start_y=6).home == (5.0, 6.0)
+    base = dict(task_text="t", target_x=1, target_y=2, cruise_alt_m=3, speed_pref_mps=4)
+    for bad in ({"home_x": 1.0}, {"home_y": 1.0}, {"allowed_modes": []},
+                {"allowed_modes": ["GUIDED", "AUTO"]}, {"allowed_modes": ["RTL", "RTL"]},
+                {"home_x": float("nan"), "home_y": 0.0}):
+        try:
+            Mission(**base, **bad)
+        except ValueError:
+            continue
+        raise AssertionError(f"accepted a mission context of {bad}")
+    old_record = {k: v for k, v in m.model_dump().items()
+                  if k not in ("home_x", "home_y", "allowed_modes")}
+    again = Mission(**old_record)
+    assert again.home_x is None and again.allowed_modes is None and again.home == (5.0, 6.0)
+
+
+def test_a_mission_without_home_or_modes_compiles_as_it_did():
+    """The fields are optional with the old implied values, so no stored CSP
+    and no flight's mission_id moves: the id is the old formula, and no
+    explanation carries a home or a mode clause. (Measured once on
+    2026-11-07: every shipped policy x 3 missions x 3 clocks, 288 CSPs,
+    byte-identical content hashes before and after the change.)"""
+    _need()
+    for m in (_homeward(), _mission(), _mission(sx=-30, sy=10, tx=120, ty=-60)):
+        csp = ConstraintCompiler(HOMEWARD).compile_csp(m, now=None)
+        assert csp.mission_id == _old_mission_id(m), (csp.mission_id, m)
+        text = " ".join(csp.relevance_explanations.values())
+        assert "return home" not in text and "breach action" not in text, text
+
+
+def test_a_stated_home_brings_the_way_home_into_the_region_and_the_grade():
+    """The grant's spatial filter intersects the mission bbox and its
+    proximity grade reads the mission context (PDF p3-4). With a home off the
+    path and RTL not ruled out, the way home is part of the mission: a zone
+    on it, filtered as out of region when the home is the start, is kept,
+    graded as on the route (proximity 1, fine geometry) and explained by the
+    home. The null is the modes: with RTL not allowed nobody flies home, and
+    the zone is filtered again."""
+    _need()
+    cc = ConstraintCompiler(HOMEWARD)
+    before = cc.compile_csp(_homeward(), now=None)
+    assert _row(before, "nfz-homeward").decision == "filtered_out_of_region", \
+        _row(before, "nfz-homeward")
+    home = cc.compile_csp(_homeward(home_x=0.0, home_y=600.0), now=None)
+    r = _row(home, "nfz-homeward")
+    assert r.decision == "kept" and r.proximity == 1.0, r
+    assert home.selection.region["y_max"] >= 600.0 > before.selection.region["y_max"]
+    assert "return home to (0, 600) can cross this zone" in \
+        home.relevance_explanations["nfz-homeward"], home.relevance_explanations
+    entry = next(p for p in home.P0_constraints if p.id == "nfz-homeward")
+    assert entry.geometry_ref.startswith("fine:"), entry
+    assert "Never enter zone 'nfz-homeward'" in home.natural_language_prompt
+    # A zone on the outbound path is on the way home from there; one beside
+    # both is told how far the return passes it.
+    assert "can cross this zone" in home.relevance_explanations["nfz-fix-on-path"]
+    aside = home.relevance_explanations["nfz-aside"]
+    assert "a return home to (0, 600) passes" in aside and "m from this zone" in aside, aside
+    assert "return home" not in before.relevance_explanations["nfz-aside"]
+    no_rtl = cc.compile_csp(_homeward(home_x=0.0, home_y=600.0,
+                                      allowed_modes=["GUIDED", "LOITER", "LAND"]), now=None)
+    assert _row(no_rtl, "nfz-homeward").decision == "filtered_out_of_region"
+    assert no_rtl.selection.region == before.selection.region
+    rtl = cc.compile_csp(_homeward(home_x=0.0, home_y=600.0,
+                                   allowed_modes=["GUIDED", "RTL"]), now=None)
+    assert _row(rtl, "nfz-homeward").decision == "kept"
+    # Each stated context is its own mission; the unstated one keeps its id.
+    ids = {before.mission_id, home.mission_id, no_rtl.mission_id, rtl.mission_id}
+    assert len(ids) == 4 and before.mission_id == _old_mission_id(_homeward()), ids
+
+
+def test_a_breach_mode_the_mission_does_not_allow_is_explained():
+    """Allowed modes are mission context the grant names and does not use any
+    further (PDF p3); the one rule-level fact they decide is whether a rule's
+    breach action asks for a mode this mission forbids, and the explanation
+    says so. A monitor_only rule asks for no mode; a mission that states no
+    modes, or allows the one asked for, adds nothing."""
+    _need()
+    cc = ConstraintCompiler(HOMEWARD)
+    no_rtl = cc.compile_csp(_homeward(allowed_modes=["GUIDED", "LOITER", "LAND"]), now=None)
+    why = no_rtl.relevance_explanations["nfz-rtl-on-path"]
+    assert why.endswith("; its breach action RTL asks for RTL, which this mission's "
+                        "allowed modes (GUIDED, LAND, LOITER) do not include"), why
+    for rid in ("nfz-fix-on-path", "nfz-watch", "nfz-aside"):
+        assert "breach action" not in no_rtl.relevance_explanations[rid], rid
+    for m in (_homeward(), _homeward(allowed_modes=["GUIDED", "RTL"])):
+        text = cc.compile_csp(m, now=None).relevance_explanations["nfz-rtl-on-path"]
+        assert "breach action" not in text, text
+    # GUIDED itself not allowed: a repair (project_fix) asks for GUIDED;
+    # monitor_only asks for nothing whatever the modes.
+    odd = cc.compile_csp(_homeward(allowed_modes=["LAND"]), now=None)
+    assert "its breach action project_fix asks for GUIDED" in \
+        odd.relevance_explanations["nfz-fix-on-path"], odd.relevance_explanations
+    assert "breach action" not in odd.relevance_explanations["nfz-watch"]
+    # The explanation is the only place the modes reach: the rules and the
+    # text the model reads are the same with or without them.
+    plain = cc.compile_csp(_homeward(), now=None)
+    assert odd.natural_language_prompt == plain.natural_language_prompt
+    assert [r.decision for r in odd.selection.rules] == \
+        [r.decision for r in plain.selection.rules]
+    # The weights the risk is graded with stay the grant's placeholders.
+    assert odd.selection.weights == C.RiskWeights(severity=0.5, proximity=0.3,
+                                                  time_critical=0.2)
 
 
 # --------------------------------------------------------------------------- #

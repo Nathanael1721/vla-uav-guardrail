@@ -28,6 +28,11 @@ Tested offline (`tests/test_vla_follow_smooth.py`,
 `tests/test_finetune_follow.py`); neither has flown, and no training run has
 been made.
 
+2026-11-07: OpenVLA reading the Constraint Summary Pack (section 16):
+`demo/real_vla_demo.py` on classic AirSim (AirSimNH), its CSP on/off A/B and
+paraphrase campaign (`tools/run_csp_flights.ps1`, `tools/score_csp_flights.py`).
+Tested offline; not flown.
+
 2026-10-22: the review of 7c7cc50 found nine problems; all are fixed, each
 with a failing-first test. The ones that change behaviour: a server error is
 no answer (section 5), the client re-reads `raw_text` and pins the model
@@ -1005,3 +1010,62 @@ closed-loop measure is a flight scored by `tools/compare_motion.py` and
   run2 overshot because the expert decided at 10 Hz and the model at
   0.8 Hz); that is the dataset's labels (FT-D's horizon and stride), not this
   trainer's.
+
+## 16. OpenVLA reads the CSP: `demo/real_vla_demo.py` A/B and paraphrases (2026-11-07)
+
+Status: built and tested offline (`tests/test_real_vla_prompt.py`,
+`tests/test_prefix_eval.py`); nothing here has flown.
+
+The one model in the repository that reads its instruction is base
+OpenVLA-7B, and the one script that gives it the Constraint Summary Pack is
+`demo/real_vla_demo.py` (`--csp on`, section "THE CONSTRAINT SUMMARY PACK IN
+THE PROMPT" of its docstring). It flies **classic AirSim** through the
+`airsim` package (msgpack-rpc on port 41451), in **AirSimNH**, the world
+`policies/urban_demo_policy.yaml` was drawn for. It does not fly the
+CityLife rail of sections 13-14: CityLife is Project AirSim (port 8989), a
+different protocol that the `airsim` package does not speak, and porting the
+demo to it is a separate change. The simulator needs a SimpleFlight vehicle;
+`Documents\AirSim\settings.json` on the lab PC declares an ArduCopter vehicle
+(the SITL rail), so the runner starts AirSimNH with
+`tools/airsim_settings_real_vla.json` through AirSim's `-settings=` argument
+and leaves that file alone. The demo checks the vehicle before its model loads
+(`sim_preflight`) and lands and refuses (exit 3) when the take-off does not
+reach cruise height.
+
+Each run records what a CSP on/off A/B and the offline replay need:
+`--precision nf4|bf16` (nf4 stays the default), `--seed` (a repeat, not a
+condition: OpenVLA decodes greedily), the Shield it flew with (`shield`:
+5 s / 0.1 s, no FSM inside, since this demo flies `emitted`), the simulator
+check (`sim`), and per tick `flight_log.jsonl`, `metrics.json` and `kpi.json`
+(guardrail.kpi on the rows). `tools/prefix_eval.py` replays a run with the
+recorded Shield and precision.
+
+Commands, in order (vla-real env, from the repository root, nothing else on
+the GPU, no `tools/ci_local.py` running):
+
+    # dry run: every flight's prompt, tokens, CSP content hash and configuration
+    pwsh -File tools\run_csp_flights.ps1 -Prefix cspab_20261107 -DryRun
+    # one flight first (about 6-8 min)
+    pwsh -File tools\run_csp_flights.ps1 -Prefix cspsmoke_20261107 -Phase ab -Seeds 1001 -MaxS 30
+    # the campaign: A/B off/on x seeds 1001-1003, then 4 verb_phrase + 4 utterance
+    # paraphrases with the CSP on, each flight from a restarted simulator (1.2-2 h)
+    pwsh -File tools\run_csp_flights.ps1 -Prefix cspab_20261107
+    # the WP4-15 deltas and the WP4-09 stability (also printed by the runner)
+    C:\Users\natha\.conda\envs\vla-real\python.exe tools\score_csp_flights.py score --prefix cspab_20261107 --json demo\out\cspab_20261107_score.json
+    # the WP2-09 offline replay, one run at a time (the scorer lists them)
+    C:\Users\natha\.conda\envs\vla-real\python.exe tools\prefix_eval.py demo\out\cspab_20261107_ab_s1001_on --out demo\out\cspab_20261107_ab_s1001_on\prefix_eval.json
+
+By hand, one flight with AirSimNH already up on the SimpleFlight settings:
+
+    C:\Users\natha\.conda\envs\vla-real\python.exe demo\real_vla_demo.py --csp on --seed 1001 --tag cspab_hand_on
+
+### Not verified
+
+- Nothing has flown: not AirSimNH with these settings through `-settings=`
+  (the demo refuses a vehicle that is not SimpleFlight, so a setting that was
+  not read stops the flight before the model loads), not the take-off check,
+  not the contact count, not bf16 beside the renderer on the 24 GB card.
+- The durations in the runner's header are estimates from the July runs.
+- Base OpenVLA was trained on robot-arm data and never on rule text; whether
+  the CSP moves its actions at all is what the A/B measures. Three seeds of a
+  greedy decoder are three repeats.

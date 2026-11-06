@@ -29,7 +29,14 @@ aimed at one of them:
     defect of docs/FINDING-forward-flew-north.md), the step's action scale,
     and a fresh Shield for every frame and arm;
   * the CSP is compiled at the flight's own token budget, and the report
-    says whether it is the CSP the flight logged.
+    says whether it is the CSP the flight logged;
+  * the Shield is the flight's (2026-11-07): rebuilt from the run's own
+    record (a 3 s and a 5 s forecast judge the same frame differently, so a
+    replay that ignores the record fails one half), the constants only for a
+    run that recorded none, and a run known to have flown another Shield, or
+    one whose record cannot be rebuilt, refused before any model loads;
+  * the model is loaded at the flight's precision, and a replay at another
+    one says so.
 
 No test loads OpenVLA, torch or AirSim. The real model needs a GPU run on
 recorded frames, which has not been made yet.
@@ -57,9 +64,22 @@ INSTR = "fly forward and avoid restricted areas"
 FAST = [0.02, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0]     # 3 m/s forward at scale 150
 AWAY = [0.0, -0.02, 0.0, 0.0, 0.0, 0.0, 1.0]    # 3 m/s left (west at yaw 0)
 # Four frames facing North just south of the zone (forward runs into it within
-# the 3 s lookahead) and two far away (forward is harmless there).
+# the lookahead) and two far away (forward is harmless there).
 STATES = [dict(x=4.0, y=15.0, up=20.0, yaw_deg=0.0)] * 4 + \
          [dict(x=-60.0, y=-60.0, up=20.0, yaw_deg=0.0)] * 2
+# Facing North 10 m short of the zone's margin ring (x 6): 3 m/s forward
+# reaches it inside a 5 s forecast and not inside a 3 s one.
+FAR_SOUTH = [dict(x=-4.0, y=15.0, up=20.0, yaw_deg=0.0)]
+
+
+def _shield_rec(policy=URBAN, **kw):
+    """What real_vla_demo records for the Shield it flies (default), or for a
+    rail Shield built with `kw` instead."""
+    pol = load_policy(policy)
+    if not kw:
+        return rv.shield_record(rv.flight_shield(pol))
+    from guardrail.replay import rail_shield
+    return rv.shield_record(rail_shield(pol, **kw))
 
 
 class Deaf:
@@ -97,14 +117,18 @@ class NotTheFlightModel(RuleReader):
 
 
 def _run(policy=URBAN, logged_raw=FAST, extra=(), states=None, scale=150.0,
-         meta_extra=None, prompt=None):
-    """A run folder as real_vla_demo.py writes it (default: --csp off)."""
+         meta_extra=None, prompt=None, shield="flight"):
+    """A run folder as real_vla_demo.py writes it (default: --csp off, with
+    the record of the Shield the demo flies; `shield=None` writes a run from
+    before that record, a dict writes that record)."""
     d = Path(tempfile.mkdtemp()) / "real_vla_fake"
     (d / "frames" / "r1").mkdir(parents=True)
     pol = load_policy(policy)
     mission = ConstraintCompiler(pol).parse_command(rv.DEFAULT_MISSION)
     meta = {"run_id": "r1", "instruction": INSTR, "policy_path": str(policy),
             "mission": mission.model_dump(), "scale": scale}
+    if shield is not None:
+        meta["shield"] = _shield_rec(policy) if shield == "flight" else shield
     meta.update(meta_extra or {})
     (d / "vla_run.json").write_text(json.dumps(meta), encoding="utf-8")
     prompt = prompt or rv.build_openvla_prompt(INSTR)
@@ -243,15 +267,17 @@ def test_forward_is_rotated_by_the_heading_the_frame_was_captured_at():
 
 
 def test_the_action_scale_is_the_one_the_step_flew_with():
-    """At scale 30 the 'fast' output is 0.6 m/s and stays short of the zone in
-    the 3 s lookahead; at the default 150 it is 3 m/s and enters it."""
-    slow = _eval(Deaf(), scale=30.0)
+    """At scale 15 the 'fast' output is 0.3 m/s and stays short of the zone in
+    the flight's 5 s lookahead; at the default 150 it is 3 m/s and enters it.
+    (Scale 30 until 2026-11-07, when the replay still judged with 3 s: 0.6 m/s
+    for 5 s reaches the margin ring.)"""
+    slow = _eval(Deaf(), scale=15.0)
     assert slow["arms"]["off"]["repairs"] == 0, slow["arms"]["off"]
     assert _eval(Deaf(), scale=150.0)["arms"]["off"]["repairs"] == 4
-    # The step's own record wins over the run's: steps flown at 30 under a
+    # The step's own record wins over the run's: steps flown at 15 under a
     # vla_run.json that says 150 (or a run file written before the field
-    # existed, which falls back to 150) are replayed at 30.
-    mixed = _eval(Deaf(), scale=30.0, meta_extra={"scale": 150.0})
+    # existed, which falls back to 150) are replayed at 15.
+    mixed = _eval(Deaf(), scale=15.0, meta_extra={"scale": 150.0})
     assert mixed["arms"]["off"]["repairs"] == 0, mixed["arms"]["off"]
 
 
@@ -306,6 +332,273 @@ def test_the_csp_is_compiled_at_the_flights_budget_and_checked_against_it():
     bad = dict(rec, csp_content_hash="sha256:" + "0" * 64)
     rep = PE.evaluate(PE.load_run(_run(meta_extra={"prompt": bad}, prompt=flown)), RuleReader())
     assert rep["csp_matches_flight"] is False
+
+
+# --------------------------------------------------------------------------- #
+# The flight's Shield and the flight's precision (2026-11-07)
+# --------------------------------------------------------------------------- #
+
+def test_the_replay_judges_with_the_shield_the_flight_recorded():
+    """REVIEW FIX, 7 Nov. The replay built every Shield at 3 s / 0.5 s while
+    real_vla_demo has built 5 s / 0.1 s since 8d1a0f3. The same frame (3 m/s
+    North, 10 m short of the margin ring) is a repair under the recorded
+    5 s forecast and clean under a recorded 3 s one, so a replay that
+    ignores the record - the constants, or the old SHIELD_KW - fails one
+    half; the 3 s run is replayed as flown and flagged."""
+    grant = _eval(Deaf(), states=FAR_SOUTH)
+    assert grant["arms"]["off"]["repairs"] == 1, grant["arms"]["off"]
+    sh = grant["shield"]
+    assert sh["source"] == "vla_run.json shield" and sh["matches_flight"] is True, sh
+    assert sh["grant_forecast"] is True and sh["note"] is None, sh
+    kw = sh["replay_kwargs"]
+    assert (kw["lookahead_s"], kw["dt"], kw["escalation"]) == (5.0, 0.1, False), kw
+    short = _eval(Deaf(), states=FAR_SOUTH,
+                  shield=_shield_rec(lookahead_s=3.0, dt=0.5))
+    assert short["arms"]["off"]["repairs"] == 0, short["arms"]["off"]
+    assert short["shield"]["grant_forecast"] is False and "3 s" in short["shield"]["note"]
+    assert any("NOT the grant's forecast" in ln for ln in PE.summary_lines(short))
+
+
+def test_a_run_without_a_shield_record_takes_the_constants_and_says_so():
+    """A run written before the record existed: the demo's Shield of the time,
+    guardrail.shield's constants with the FSM on, labelled unrecorded (None,
+    never True); with no start time, or one after 8d1a0f3, it is replayed."""
+    for meta in ({}, {"started_utc": "2026-11-06T13:00:00+00:00"}):
+        rep = _eval(Deaf(), states=FAR_SOUTH, shield=None, meta_extra=meta)
+        sh = rep["shield"]
+        assert sh["recorded"] is False and sh["matches_flight"] is None, sh
+        assert sh["source"] == "guardrail.shield constants" and "no Shield" in sh["note"]
+        kw = sh["replay_kwargs"]
+        assert (kw["lookahead_s"], kw["dt"]) == (PE.LOOKAHEAD_S, PE.LOOKAHEAD_DT_S), kw
+        assert "escalation" not in kw          # the FSM on, as the demo built it then
+        assert rep["arms"]["off"]["repairs"] == 1
+
+
+def test_an_unrecorded_run_that_flew_3s_is_refused_before_the_model_loads():
+    """A run with no Shield record that started before 8d1a0f3 flew 3 s /
+    0.5 s: judging it with 5 s / 0.1 s would score another Shield. Refused by
+    evaluate and by the CLI (exit 2, no model built); --allow-shield-mismatch
+    replays it, flagged matches_flight False."""
+    old = {"started_utc": "2026-10-20T08:00:00+00:00"}
+    run = PE.load_run(_run(shield=None, meta_extra=old))
+    try:
+        PE.evaluate(run, Deaf())
+    except ValueError as e:
+        assert "3.0" in str(e) and "--allow-shield-mismatch" in str(e), e
+    else:
+        raise AssertionError("a run that flew 3 s / 0.5 s was judged with 5 s / 0.1 s")
+    rep = PE.evaluate(run, Deaf(), allow_shield_mismatch=True)
+    assert rep["shield"]["matches_flight"] is False and "3.0" in rep["shield"]["note"]
+
+    class Boom:
+        def __init__(self, *a, **k):
+            raise AssertionError("the model was loaded for a refused replay")
+    real = PE.OpenVLAReplayModel
+    PE.OpenVLAReplayModel = Boom
+    try:
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err), contextlib.redirect_stdout(io.StringIO()):
+            code = PE.main([str(_run(shield=None, meta_extra=old))])
+    finally:
+        PE.OpenVLAReplayModel = real
+    assert code == 2 and "refused" in err.getvalue(), (code, err.getvalue())
+
+
+def test_a_shield_record_the_replay_cannot_rebuild_is_refused():
+    """What this replay cannot give a Shield - a map, a rule clock, a non-
+    default FSM, a setting it does not know - refuses the run; and the first
+    replay Shield is read back like the flight's, so a setting the rebuild
+    drops (here path_repair, by a mutated shield_kwargs) is caught too."""
+    base = _shield_rec()
+    for bad, word in (({"obstacle_map": True}, "map"), ({"clock": "a rule clock"}, "clock"),
+                      ({"escalation_fsm": True, "fsm_config_hash": "sha256:" + "0" * 64},
+                       "FSM"), ({"wind_model": "gusts"}, "wind_model")):
+        try:
+            PE.flight_shield_settings({"shield": dict(base, **bad)})
+        except ValueError as e:
+            assert word in str(e), (bad, e)
+        else:
+            raise AssertionError(f"a Shield record with {bad} was accepted")
+    # The round trip, both ways: the demo's own Shield rebuilds and checks...
+    cfg = PE.flight_shield_settings({"shield": base})
+    PE._check_replay_shield(PE.Shield(load_policy(URBAN), **cfg["kwargs"]), cfg)
+    # ...and a rebuild that drops a recorded setting is refused.
+    rec = _shield_rec(lookahead_s=PE.LOOKAHEAD_S, dt=PE.LOOKAHEAD_DT_S, path_repair=True)
+    real = PE.shield_kwargs
+    PE.shield_kwargs = lambda r: {k: v for k, v in real(r).items() if k != "path_repair"}
+    try:
+        try:
+            PE.evaluate(PE.load_run(_run(shield=rec)), Deaf())
+        except ValueError as e:
+            assert "path_repair" in str(e) and "not the flight's" in str(e), e
+        else:
+            raise AssertionError("a replay Shield without the flight's path_repair passed")
+    finally:
+        PE.shield_kwargs = real
+
+
+def test_the_replay_loads_the_model_at_the_flights_precision():
+    """vla_run.json `precision` (since 2026-11-07), else the nf4 every earlier
+    run flew (its quantization string); --precision overrides it and the
+    report says the replay is then not the flight's model."""
+    loaded = []
+
+    class Capture(Deaf):
+        def __init__(self, precision=None):
+            loaded.append(precision)
+            self.name = f"stand-in ({precision})"
+
+    def report(meta, *extra):
+        out = Path(tempfile.mkdtemp()) / "rep.json"
+        real = PE.OpenVLAReplayModel
+        PE.OpenVLAReplayModel = Capture
+        try:
+            with contextlib.redirect_stdout(io.StringIO()):
+                code = PE.main([str(_run(meta_extra=meta)), "--out", str(out), *extra])
+        finally:
+            PE.OpenVLAReplayModel = real
+        assert code == 0
+        return json.loads(out.read_text(encoding="utf-8"))["precision"]
+
+    p = report({"precision": "bf16"})
+    assert loaded[-1] == "bf16" and p["matches_flight"] is True, p
+    p = report({"quantization": "bitsandbytes 4-bit nf4, compute bfloat16"})
+    assert loaded[-1] == "nf4" and "quantization" in p["source"], p
+    p = report({"precision": "bf16"}, "--precision", "nf4")
+    assert loaded[-1] == "nf4" and p["matches_flight"] is False and p["source"] == "--precision"
+
+
+# --------------------------------------------------------------------------- #
+# The flown half: tools/score_csp_flights.py (plan, dry run, A/B and paraphrase
+# scoring) - the grant's "Always-on A/B" beside this file's offline replay
+# --------------------------------------------------------------------------- #
+
+import score_csp_flights as SC                                     # noqa: E402
+
+
+def test_the_campaign_plan_is_the_ab_then_the_paraphrases():
+    """Prefix Compiler p5: one scenario flown twice, Prefix on and off, with
+    the same seed - off then on per seed; then the stored paraphrases of the
+    instruction per family, CSP on, at the first seed; an utterance carries
+    its grammar confound flag. Nonsense is refused before anything flies."""
+    plan = SC.plan_flights("cspT")
+    tags = [f["tag"] for f in plan]
+    assert tags[:6] == [f"cspT_ab_s{s}_{a}" for s in (1001, 1002, 1003) for a in ("off", "on")]
+    pp = plan[6:]
+    assert [(f["family"], f["paraphrase_index"]) for f in pp] == \
+        [("verb_phrase", i) for i in range(4)] + [("utterance", i) for i in range(4, 8)], pp
+    assert len(set(tags)) == len(tags) == 14
+    for f in plan:
+        a = f["args"]
+        assert a[a.index("--tag") + 1] == f["tag"] and a[a.index("--csp") + 1] == f["csp"]
+        assert a[a.index("--seed") + 1] == str(f["seed"]) and "--precision" in a
+        assert ("--paraphrase-allow-utterance" in a) == (f["family"] == "utterance")
+    assert all(f["csp"] == "on" and f["seed"] == 1001 for f in pp)
+    assert len({f["paraphrase_id"] for f in pp}) == 8
+    for bad in (dict(prefix="a b"), dict(seeds=(1, 1)), dict(per_family=5),
+                dict(precision="fp8"), dict(families=("poem",)), dict(max_s=0)):
+        kw = dict(prefix="cspT") | bad
+        try:
+            SC.plan_flights(kw.pop("prefix"), **kw)
+        except ValueError:
+            continue
+        raise AssertionError(f"a plan with {bad} was accepted")
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        assert SC.main(["plan", "--prefix", "cspT", "--phase", "ab", "--seeds", "7", "--json"]) == 0
+    assert [f["tag"] for f in json.loads(out.getvalue())] == ["cspT_ab_s7_off", "cspT_ab_s7_on"]
+
+
+def test_the_dry_run_passes_the_plan_and_catches_what_would_break_the_ab():
+    """`check` runs real_vla_demo's --print-prompt for every planned flight
+    (no model, no simulator) and passes the real plan. Each mutation of one
+    record - another precision on one arm, a CSP-on run reading another CSP,
+    an off arm carrying text, a paraphrase flown as the canonical wording -
+    is a named problem."""
+    plan = SC.plan_flights("cspD", seeds=(1001,), per_family=1)
+    shown = {f["tag"]: SC.print_prompt(f["args"]) for f in plan}
+    res = SC.check_flights(plan, shown=shown)
+    assert res["problems"] == [], res["problems"]
+    assert res["csp_content_hash"] and len(res["rows"]) == 4
+    assert any("PASS" in ln for ln in SC.check_lines(res))
+
+    def broken(tag, edit):
+        s = json.loads(json.dumps(shown))
+        edit(s[tag][1])
+        return SC.check_flights(plan, shown={k: tuple(v) for k, v in s.items()})["problems"]
+
+    p = broken("cspD_ab_s1001_on", lambda r: r["flight"].__setitem__("precision", "bf16"))
+    assert any("differ in ['precision']" in x for x in p), p
+    p = broken("cspD_pp_verb_phrase_0",
+               lambda r: r.__setitem__("csp_content_hash", "sha256:" + "1" * 64))
+    assert any("different CSPs" in x for x in p), p
+    p = broken("cspD_ab_s1001_off", lambda r: r.__setitem__("prompt", "In: x " + r["prompt"][4:]))
+    assert any("plain prompt" in x for x in p), p
+    p = broken("cspD_pp_utterance_4", lambda r: r["flight"].__setitem__(
+        "instruction_flown", r["flight"]["instruction"]))
+    assert any("canonical wording" in x for x in p), p
+
+
+def _flown(root, tag, *, csp="on", seed=1001, precision="nf4", repair=0.2, mag=1.0,
+           esc=0, outcome="success", nfz=0.0, start=(0.0, 0.0), para=None,
+           csp_hash="sha256:aa", inferences=50):
+    d = root / tag
+    d.mkdir(parents=True)
+    run = {"tag": tag, "seed": seed, "precision": precision, "shield": {"lookahead_s": 5.0},
+           "mission": {"target_x": 40.0}, "max_s": 60.0, "tick_s": 0.1, "scale": 150.0,
+           "dv_h": 0.25, "dv_z": 0.15, "csp_budget_tokens": 256, "code_revision": "abc",
+           "instruction": INSTR, "paraphrase": para}
+    m = {"csp": csp, "seed": seed, "repair_rate": repair, "nfz_s": nfz, "ticks": 600,
+         "inferences": inferences, "collisions": {"measured": True, "mission": 0},
+         "start_pose": {"x": start[0], "y": start[1], "up": 20.0, "yaw_deg": 0.0},
+         "policy_hash": "sha256:pp", "csp_content_hash": None if csp == "off" else csp_hash,
+         "paraphrase_id": (para or {}).get("paraphrase_id"),
+         "paraphrase_form": (para or {}).get("form")}
+    k = {"mean_repair_magnitude_mps": mag, "max_repair_magnitude_mps": mag * 2,
+         "p0_escapes": esc, "p0_violation_escape_rate": 0.0, "outcome": outcome,
+         "mission_success": outcome == "success" and esc == 0, "mission_fail_reasons": []}
+    for name, doc in (("vla_run.json", run), ("metrics.json", m), ("kpi.json", k)):
+        (d / name).write_text(json.dumps(doc), encoding="utf-8")
+
+
+def test_the_scorer_reports_the_ab_delta_and_the_paraphrase_stability():
+    """WP4-15: on - off per seed, the mean over VALID pairs only (an arm at
+    another precision, or a missing arm, is listed with why and left out).
+    WP4-09: each paraphrase's outcome against the canonical arm's (the CSP-on
+    run at its seed); a run that read another CSP does not count; the
+    robustness table is guardrail.kpi's, the canonical wording as the null."""
+    root = Path(tempfile.mkdtemp())
+    _flown(root, "cspS_ab_s1001_off", csp="off", repair=0.30, mag=1.2, esc=0, nfz=0.0)
+    _flown(root, "cspS_ab_s1001_on", repair=0.10, mag=0.8, esc=0)
+    _flown(root, "cspS_ab_s1002_off", csp="off", seed=1002, repair=0.40, mag=1.0)
+    _flown(root, "cspS_ab_s1002_on", seed=1002, repair=0.20, mag=0.9, precision="bf16")
+    _flown(root, "cspS_ab_s1003_off", csp="off", seed=1003)
+    _flown(root, "cspS_ab_s1004_off", csp="off", seed=1004, start=(9.0, 0.0))
+    _flown(root, "cspS_ab_s1004_on", seed=1004)
+    pp = lambda i, f: {"paraphrase_id": f"pp-{i}", "form": f, "backend": "stored"}  # noqa: E731
+    _flown(root, "cspS_pp_verb_phrase_0", para=pp(0, "verb_phrase"))
+    _flown(root, "cspS_pp_utterance_4", para=pp(4, "utterance"), outcome="fail")
+    _flown(root, "cspS_pp_verb_phrase_1", para=pp(1, "verb_phrase"), csp_hash="sha256:bb")
+    rep = SC.score("cspS", root)
+    pairs = {p["seed"]: p for p in rep["ab"]["pairs"]}
+    assert pairs[1001]["valid"] and rep["ab"]["valid_pairs"] == 1, rep["ab"]
+    d = pairs[1001]["delta_on_minus_off"]
+    assert (d["repair_rate"], d["mean_repair_mps"], d["p0_escapes"]) == (-0.2, -0.4, 0), d
+    assert any("precision" in x for x in pairs[1002]["problems"]), pairs[1002]
+    assert pairs[1003]["problems"] == ["arm on not flown"]
+    assert any("same start" in x for x in pairs[1004]["problems"]), pairs[1004]
+    assert rep["ab"]["mean_delta_on_minus_off"]["repair_rate"] == -0.2
+    para = {x["tag"]: x for x in rep["paraphrase"]["runs"]}
+    assert para["cspS_pp_verb_phrase_0"]["same_outcome_as_canonical"] is True
+    assert para["cspS_pp_utterance_4"]["same_outcome_as_canonical"] is False
+    assert not para["cspS_pp_verb_phrase_1"]["valid"], para["cspS_pp_verb_phrase_1"]
+    st = rep["paraphrase"]["stability"]
+    assert (st["runs"], st["same_outcome"], st["share"]) == (2, 1, 0.5), st
+    rb = rep["paraphrase"]["per_paraphrase_robustness"]
+    assert rb["canonical_success_rate"] == 1.0 and rb["worst_drop_vs_canonical"] == 1.0, rb
+    text = "\n".join(SC.score_lines(rep))
+    assert "WP4-15" in text and "WP4-09" in text and "INVALID" in text
+    assert any("prefix_eval.py" in c for c in rep["replay"])
 
 
 if __name__ == "__main__":

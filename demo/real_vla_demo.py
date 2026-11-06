@@ -112,6 +112,53 @@ the robot take to {instruction}?", and an `utterance` ("Please fly forward,
 `--paraphrase-allow-utterance` flies one anyway and records the confound. The
 record (`Paraphrase.to_record()` plus `form`) goes into vla_run.json beside the
 canonical instruction. Without either flag the instruction is flown as typed.
+
+FLYING THE CSP A/B (2026-11-07; nothing below has flown yet)
+
+The grant's effectiveness evaluation (Prefix Compiler PDF p5) has two modes:
+the offline replay (tools/prefix_eval.py) and the "Always-on A/B": one
+scenario flown twice, Prefix on and off, with the same seed. This demo is the
+flight half; tools/run_csp_flights.ps1 flies the campaign and
+tools/score_csp_flights.py scores it. What each run now records for that:
+
+  --precision nf4|bf16  how OpenVLA sits on the GPU. nf4 (bitsandbytes 4-bit,
+                    ~4.7 GB, ~0.9 s a decision in July) stays the default;
+                    bf16 is the checkpoint unquantized (~15 GB: it starved
+                    the simulator on the 16 GB card of July, and is meant for
+                    the 24 GB RTX 4090). In vla_run.json, and read by
+                    prefix_eval so a replay loads what flew.
+  --seed N          seeds Python's, NumPy's and torch's generators (SEED_NOTE:
+                    OpenVLA decodes greedily and this flight draws nothing at
+                    random, so two seeds of one arm are two REPEATS, not two
+                    conditions).
+  the Shield        `flight_shield`: the grant's 5 s / 0.1 s forecast, no
+                    clock, and since 2026-11-07 no escalation FSM inside it
+                    (guardrail.replay.rail_shield). This demo flies `emitted`
+                    on every tick and acts on no mode request, so an FSM's
+                    Brake / Loiter / RTL / Land would be on record without
+                    having flown (docs/DESIGN-shield-enforcement.md listed it).
+                    `shield_record` writes what the Shield object holds into
+                    vla_run.json; prefix_eval judges the replay with it.
+  the simulator     classic AirSim through the `airsim` package (msgpack-rpc,
+                    port 41451), with a SimpleFlight vehicle: AirSimNH, the
+                    world urban_demo_policy.yaml was drawn for. NOT Project
+                    AirSim's CityLife (port 8989, another protocol: this demo
+                    cannot fly it). `sim_preflight` refuses, before the model
+                    loads, a port nobody answers on (naming Project AirSim when
+                    8989 is what listens) and a vehicle that is not
+                    SimpleFlight (an ArduCopter vehicle waits for SITL and
+                    ignores moveByVelocity; the lab's Documents\\AirSim
+                    settings.json is ArduCopter since September, which is why
+                    the runner starts AirSimNH with its own settings file).
+                    A take-off that does not reach cruise height lands and
+                    refuses (exit 3) instead of flying the model from low.
+  the records       per tick flight_log.jsonl (the rows guardrail/kpi.py
+                    reads: raw = the rate-limited action the Shield judged,
+                    emitted, violations, repairs, the flown re-check, the
+                    unsafe flags), metrics.json (repair rate, NFZ seconds, the
+                    simulator's contacts during the mission, the start pose)
+                    and kpi.json (guardrail.kpi.compute on those: P0 escapes,
+                    repair magnitude, outcome) - one scorer for every rail.
 """
 from __future__ import annotations
 
@@ -119,6 +166,8 @@ import argparse
 import hashlib
 import json
 import math
+import random
+import socket
 import sys
 import threading
 import time
@@ -130,7 +179,8 @@ import numpy as np
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from guardrail import AuditLogger, Shield, State, load_policy       # noqa: E402
+from guardrail import AuditLogger, State, load_policy               # noqa: E402
+from guardrail import kpi as _kpi                                   # noqa: E402
 from guardrail.shield import LOOKAHEAD_DT_S, LOOKAHEAD_S            # noqa: E402
 from guardrail.audit import AUDIT_FILE                             # noqa: E402
 from guardrail.compiler import (DEFAULT_BUDGET_TOKENS,              # noqa: E402
@@ -141,7 +191,8 @@ from guardrail.csp import (CSP, CSPBudgetExceeded,                  # noqa: E402
 from guardrail.frames import from_body                              # noqa: E402
 from guardrail.geometry import fence_polygon                        # noqa: E402
 from guardrail.models import Action4D, Policy                       # noqa: E402
-from guardrail.replay import DWELL_ZONE_TYPES, zone_dwell           # noqa: E402
+from guardrail.replay import (DWELL_ZONE_TYPES, episode_row_fields,  # noqa: E402
+                              flown_fields, rail_shield, zone_dwell)
 
 TICK = 0.1
 MAX_S = 60
@@ -201,6 +252,30 @@ EXIT_OK, EXIT_OVERFLOW, EXIT_UNKNOWN, EXIT_REFUSED = 0, 1, 2, 3
 _PRINT_EXIT = {None: EXIT_OK, "csp_p0_over_budget": EXIT_OVERFLOW,
                "prompt_over_text_budget": EXIT_OVERFLOW,
                "fit_unproven": EXIT_UNKNOWN, "no_prompt": EXIT_REFUSED}
+
+# How OpenVLA sits on the GPU (--precision). nf4 is what every run of this demo
+# flew from 2026-07-14 on and stays the default; bf16 is the checkpoint's
+# own precision, unquantized (see the module docstring, FLYING THE CSP A/B).
+PRECISIONS = ("nf4", "bf16")
+DEFAULT_PRECISION = "nf4"
+ATTN_IMPLEMENTATION = "eager"           # no flash-attn on Windows; as in July
+
+# What --seed does, in the run record's words.
+SEED_NOTE = ("seeds Python's, NumPy's and torch's generators (CUDA's too). OpenVLA "
+             "decodes greedily (do_sample=False) and this flight draws nothing at "
+             "random, so the seed changes nothing the model computes: two seeds of "
+             "one arm are two repeats, and what differs between them is GPU kernel "
+             "non-determinism and the inference thread's timing against the "
+             "simulator")
+
+# The simulator this demo talks to: classic AirSim's msgpack-rpc. Project
+# AirSim (the CityLife rail) listens on 8989 with another protocol, which the
+# `airsim` package does not speak (docs/pasblocks-study.md).
+SIM_HOST, SIM_PORT = "127.0.0.1", 41451
+PROJECT_AIRSIM_PORT = 8989
+SIM_VEHICLE = "SimpleFlight"
+# Take-off counts as done within this much of the cruise height.
+CRUISE_TOLERANCE_M = 0.5
 
 
 # --------------------------------------------------------------------------- #
@@ -737,9 +812,16 @@ class OpenVLABackend:
     """
 
     def __init__(self, prompts: FlightPrompt, scale: float = 150.0,
-                 out: Path | None = None, frames_dir: str | None = None):
+                 out: Path | None = None, frames_dir: str | None = None,
+                 precision: str = DEFAULT_PRECISION, seed: int | None = None):
+        if precision not in PRECISIONS:
+            raise ValueError(f"precision {precision!r} is not one of {PRECISIONS}")
         self.prompts = prompts
         self.scale = scale
+        self.precision, self.seed = precision, seed
+        self.seeded: dict | None = None      # what seed_everything did, after _load
+        self.load_s: float | None = None
+        self.vram_gb: float | None = None
         self.out, self.frames_dir = out, frames_dir   # frames_dir relative to out
         self._last = Action4D()
         # Which inference produced `_last`: n >= 1; 0 = none has run yet;
@@ -749,6 +831,7 @@ class OpenVLABackend:
         self._stop = False
         self._n_inf = 0
         self._n_refused = 0
+        self.infer_s: list[float] = []          # each inference's own time
         self.proc, self.model, self.torch = self._load()
         if prompts.tokenizer is None:
             # Preflight had no tokenizer file; the processor's is the exact one.
@@ -760,30 +843,38 @@ class OpenVLABackend:
 
         Kept apart so a test can replace exactly this and run everything else
         in `__init__` and the flight for real (tests/test_real_vla_prompt.py).
+        tools/prefix_eval.py calls it on a bare instance to load the replay's
+        model the way the flight loaded it, so it reads `precision` and `seed`
+        with their defaults when the instance has none.
         """
         import torch
-        from transformers import (AutoModelForVision2Seq, AutoProcessor,
-                                  BitsAndBytesConfig)
+        from transformers import AutoModelForVision2Seq, AutoProcessor
 
-        print(f"[vla] loading {MODEL_ID} ...")
+        precision = getattr(self, "precision", DEFAULT_PRECISION)
+        if precision not in PRECISIONS:
+            raise ValueError(f"precision {precision!r} is not one of {PRECISIONS}")
+        self.seeded = seed_everything(getattr(self, "seed", None), torch)
+        print(f"[vla] loading {MODEL_ID} ({precision}) ...")
         t0 = time.time()
         proc = AutoProcessor.from_pretrained(MODEL_ID, trust_remote_code=True)
-        # 4-bit NF4 quantization: 15.1 GB -> 4.7 GB VRAM so the UE4 sim and the
-        # model share the 16 GB card without starving each other (full bf16
-        # caused RPC timeouts). Also ~4x faster: 0.9 s/inference vs 3.4 s.
-        model = AutoModelForVision2Seq.from_pretrained(
-            MODEL_ID,
-            attn_implementation="eager",           # no flash-attn on Windows
-            torch_dtype=torch.bfloat16,
-            quantization_config=BitsAndBytesConfig(
+        kw = dict(attn_implementation=ATTN_IMPLEMENTATION,
+                  torch_dtype=torch.bfloat16, device_map={"": 0},
+                  low_cpu_mem_usage=True, trust_remote_code=True)
+        if precision == "nf4":
+            # 4-bit NF4 quantization: 15.1 GB -> 4.7 GB VRAM so the UE4 sim and
+            # the model shared July's 16 GB card without starving each other
+            # (full bf16 caused RPC timeouts there). Also ~4x faster on that
+            # card: 0.9 s/inference vs 3.4 s.
+            from transformers import BitsAndBytesConfig
+            kw["quantization_config"] = BitsAndBytesConfig(
                 load_in_4bit=True, bnb_4bit_compute_dtype=torch.bfloat16,
-                bnb_4bit_quant_type="nf4"),
-            device_map={"": 0},
-            low_cpu_mem_usage=True,
-            trust_remote_code=True,
-        ).eval()
-        print(f"[vla] loaded in {time.time() - t0:.0f}s "
-              f"(VRAM {torch.cuda.memory_allocated()/1e9:.1f} GB)")
+                bnb_4bit_quant_type="nf4")
+        # bf16: the checkpoint's weights as published, placed on GPU 0 shard by
+        # shard (device_map), so the CPU never holds the whole 15 GB.
+        model = AutoModelForVision2Seq.from_pretrained(MODEL_ID, **kw).eval()
+        self.load_s = round(time.time() - t0, 1)
+        self.vram_gb = round(torch.cuda.memory_allocated() / 1e9, 2)
+        print(f"[vla] loaded in {self.load_s:.0f}s (VRAM {self.vram_gb:.1f} GB, {precision})")
         return proc, model, torch
 
     def prompt(self) -> dict:
@@ -866,6 +957,7 @@ class OpenVLABackend:
                     self._n_inf += 1
                     n = self._n_inf
                     self._last_inf = n
+                    self.infer_s.append(round(infer_s, 4))
                 if log is not None:
                     log.write(json.dumps(step_record(
                         n, frame_index, frame_file, state, r, self.scale, prec,
@@ -940,6 +1032,260 @@ def preprocess_note(pillow_version: str | None) -> dict:
             "then": "AutoProcessor(model_id)(prompt, image), bfloat16, cuda"}
 
 
+# --------------------------------------------------------------------------- #
+# The flight's configuration: precision, seed, Shield, simulator (2026-11-07)
+# --------------------------------------------------------------------------- #
+
+def quantization_note(precision: str) -> str:
+    """The run record's words for how the weights sit on the GPU."""
+    if precision == "nf4":
+        return "bitsandbytes 4-bit nf4, compute bfloat16"
+    if precision == "bf16":
+        return "none: bfloat16 weights as published, unquantized"
+    raise ValueError(f"precision {precision!r} is not one of {PRECISIONS}")
+
+
+def precision_of(meta: dict) -> tuple[str, str]:
+    """(precision, where it was read) of a recorded run: `precision`, else the
+    quantization string every run before 2026-11-07 wrote (all nf4)."""
+    p = meta.get("precision")
+    if p in PRECISIONS:
+        return p, "vla_run.json precision"
+    q = str(meta.get("quantization") or "")
+    if "4-bit nf4" in q:
+        return "nf4", "vla_run.json quantization (written before --precision existed)"
+    return DEFAULT_PRECISION, "default (the run recorded no precision)"
+
+
+def seed_everything(seed: int | None, torch=None) -> dict:
+    """Seed every random generator this process holds (SEED_NOTE says what that
+    does and does not change). None seeds nothing and says so."""
+    if seed is None:
+        return {"seed": None, "seeded": [], "note": "no --seed given: nothing seeded"}
+    seed = int(seed)
+    random.seed(seed)
+    np.random.seed(seed % 2 ** 32)
+    done = ["random", "numpy"]
+    if torch is not None:
+        torch.manual_seed(seed)
+        done.append("torch")
+        cuda = getattr(torch, "cuda", None)
+        if cuda is not None and cuda.is_available():
+            cuda.manual_seed_all(seed)
+            done.append("torch.cuda")
+    return {"seed": seed, "seeded": done, "note": SEED_NOTE}
+
+
+def flight_shield(policy: Policy):
+    """The Shield this demo flies: the grant's forecast (guardrail.shield
+    LOOKAHEAD_S / LOOKAHEAD_DT_S, 5 s at 0.1 s, since 8d1a0f3 on 2026-11-06;
+    3 s / 0.5 s before), no clock (CSP_CLOCK), and no escalation FSM inside it
+    (guardrail.replay.rail_shield, since 2026-11-07). This demo flies `emitted`
+    on every tick and acts on no mode request, so an FSM inside the Shield
+    would put Brake / Loiter / RTL / Land on record that never flew, and
+    guardrail.kpi would read an "RTL_triggered" outcome off rows whose
+    aircraft never turned home (docs/DESIGN-shield-enforcement.md, the demo
+    scripts that "build the Shield with the FSM on but fly `emitted`")."""
+    return rail_shield(policy, lookahead_s=LOOKAHEAD_S, dt=LOOKAHEAD_DT_S)
+
+
+def shield_record(shield) -> dict:
+    """What a Shield object judges with, read from the object itself: the
+    forecast, the escalation FSM and its config hash, the repair library's
+    modes, the recovery law, the velocity response, and whether it has a
+    clock or any map. Written into vla_run.json (`shield`); tools/prefix_eval.py
+    rebuilds its replay Shield from it and refuses one it cannot rebuild."""
+    fsm = getattr(shield, "fsm", None)
+    vr = getattr(shield, "velocity_response", None)
+    order = getattr(shield, "repair_order", None)
+    return {
+        "lookahead_s": float(shield.lookahead_s),
+        "dt_s": float(shield.dt),
+        "poses": int(round(shield.lookahead_s / shield.dt)),
+        "grant_forecast": (shield.lookahead_s == LOOKAHEAD_S
+                           and shield.dt == LOOKAHEAD_DT_S),
+        "escalation_fsm": fsm is not None,
+        "fsm_config_hash": None if fsm is None else fsm.config.digest,
+        "theta_horizon_s": shield.theta_horizon_s,
+        "repair_mode": shield.repair_mode,
+        "path_repair": bool(shield.path_repair),
+        "segment_check": bool(shield.segment_check),
+        "repair_order": None if order is None else list(order),
+        "hold_points": bool(shield.hold_points),
+        "recovery_law": shield.recovery_law,
+        "velocity_response": None if vr is None else vr.to_dict(),
+        "clock": None if getattr(shield, "_now", None) is None else "a rule clock",
+        "obstacle_map": getattr(shield, "_dist", None) is not None,
+        "road_map": getattr(shield, "_road", None) is not None,
+    }
+
+
+def _port_open(host: str, port: int, timeout_s: float = 1.0) -> bool:
+    try:
+        with socket.create_connection((host, port), timeout=timeout_s):
+            return True
+    except OSError:
+        return False
+
+
+def vehicle_types(settings_text: str) -> list[str] | None:
+    """The VehicleType of every vehicle an AirSim settings text declares; a
+    Multirotor settings file that declares none gets AirSim's default,
+    SimpleFlight. None when the text is not a settings document."""
+    try:
+        doc = json.loads(settings_text)
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(doc, dict):
+        return None
+    vehicles = doc.get("Vehicles")
+    if not vehicles:
+        return [SIM_VEHICLE] if doc.get("SimMode", "Multirotor") == "Multirotor" else []
+    return [str((v or {}).get("VehicleType")) for v in vehicles.values()]
+
+
+def sim_preflight(host: str = SIM_HOST, port: int = SIM_PORT, *,
+                  timeout_s: float = 10.0) -> tuple[dict, dict | None]:
+    """(simulator record, refusal or None), BEFORE the model loads.
+
+    Refused: nothing answering on host:port (with Project AirSim named when it
+    is what listens: CityLife is another protocol), and a vehicle that is not
+    SimpleFlight (velocity commands go through AirSim's API, which an
+    ArduCopter vehicle - the lab's Documents settings since September -
+    does not obey). A simulator too old to report its settings is recorded
+    as unverified, not refused: the take-off check still stops a vehicle
+    that does not climb."""
+    rec: dict = {"api": "airsim (msgpack-rpc)", "address": f"{host}:{port}",
+                 "vehicle_types": None, "settings_sha256": None, "verified": False}
+    if not _port_open(host, port):
+        pas = _port_open(host, PROJECT_AIRSIM_PORT)
+        why = (f"nothing answers on {host}:{port}, AirSim's RPC port"
+               + (f"; Project AirSim does, on {PROJECT_AIRSIM_PORT}: this demo flies "
+                  f"classic AirSim through the `airsim` package, and Project "
+                  f"AirSim's CityLife speaks another protocol" if pas else "")
+               + ". Start AirSimNH with the SimpleFlight settings "
+                 "(tools/run_csp_flights.ps1 does).")
+        return rec, {"kind": "sim_unreachable", "detail": why}
+    try:
+        import airsim
+        text = airsim.MultirotorClient(ip=host, port=port,
+                                       timeout_value=timeout_s).getSettingsString()
+    except Exception as e:                       # noqa: BLE001
+        rec["note"] = (f"unverified: the simulator did not report its settings "
+                       f"({type(e).__name__}: {e})")
+        return rec, None
+    types = vehicle_types(text)
+    rec["settings_sha256"] = "sha256:" + hashlib.sha256(
+        str(text).encode("utf-8")).hexdigest()
+    rec["vehicle_types"] = types
+    if types is None:
+        rec["note"] = "unverified: the settings the simulator reported are not JSON"
+        return rec, None
+    if types != [SIM_VEHICLE]:
+        return rec, {"kind": "sim_vehicle",
+                     "detail": (f"the simulator flies {types or 'no vehicle'}; this demo "
+                                f"needs one {SIM_VEHICLE} vehicle (an ArduCopter vehicle "
+                                f"waits for SITL and ignores moveByVelocity). Start AirSim "
+                                f"with tools/airsim_settings_real_vla.json, as "
+                                f"tools/run_csp_flights.ps1 does")}
+    rec["verified"] = True
+    return rec, None
+
+
+class CollisionWatch:
+    """The simulator's contact reports during the mission (from the VLA's start
+    to the end of the control loop: take-off and landing are left out), in the
+    form guardrail.kpi.collision_contacts reads: a run that touched something
+    is not a successful flight. One AirSim call per control tick. A simulator
+    without the call, or one that fails, leaves the count unmeasured (None),
+    never a 0 nobody saw."""
+
+    def __init__(self, client):
+        self.client = client
+        self.events: list[dict] = []
+        self.error: str | None = None
+        self.measured = hasattr(client, "simGetCollisionInfo")
+        self._seen = None
+        if self.measured:
+            try:
+                info = client.simGetCollisionInfo()
+                # A contact before the mission (the ground at take-off) is not
+                # one of the mission's.
+                self._seen = info.time_stamp if info.has_collided else None
+            except Exception as e:               # noqa: BLE001
+                self.measured, self.error = False, f"{type(e).__name__}: {e}"
+
+    def poll(self, t: float) -> None:
+        if not self.measured:
+            return
+        try:
+            info = self.client.simGetCollisionInfo()
+        except Exception as e:                   # noqa: BLE001
+            self.measured, self.error = False, f"{type(e).__name__}: {e}"
+            return
+        if info.has_collided and info.time_stamp != self._seen:
+            self._seen = info.time_stamp
+            self.events.append({"t": round(t, 3), "object": str(info.object_name),
+                                "time_stamp": info.time_stamp})
+
+    def summary(self) -> dict:
+        return {"measured": self.measured,
+                "mission": len(self.events) if self.measured else None,
+                "mission_objects": sorted({e["object"] for e in self.events}),
+                "events": self.events[:100], "error": self.error,
+                "source": "airsim simGetCollisionInfo, polled every control tick "
+                          "from the VLA's start to the end of the loop"}
+
+
+def flight_row(tick: int, t: float, state: State, vla_action: Action4D,
+               raw: Action4D, d, inference: int | None, shield, policy: Policy) -> dict:
+    """One flight_log.jsonl row, in the shape guardrail/kpi.py reads: `raw` is
+    what the Shield judged (the model's action after the rate limiter, as
+    every rail logs the Shield's input), `vla` the model's own action before
+    it; `emitted`, `violations`, `repairs`; the re-check of what FLEW (this
+    demo flies `emitted` every tick: guardrail.replay.flown_fields, setpoint
+    pass) and the per-tick unsafe flags (episode_row_fields)."""
+    row = {"tick": tick, "t": round(float(t), 3),
+           "x": state.x, "y": state.y, "up": state.up, "yaw_deg": state.yaw_deg,
+           "inference": inference,
+           "vla": vla_action.model_dump(), "raw": raw.model_dump(),
+           "emitted": d.emitted.model_dump(),
+           "touched": d.touched, "braked": d.braked,
+           "violations": [v.model_dump() for v in d.violations],
+           "repairs": [r.model_dump() for r in d.repairs]}
+    row.update(flown_fields(shield, state, d, shield_on=True, setpoint="pass"))
+    row.update(episode_row_fields(shield, state, policy))
+    return row
+
+
+def run_metrics(rows: list[dict], *, nfz: dict, collisions: dict, n_inf: int,
+                n_refused: int, infer_s: list[float], extra: dict) -> dict:
+    """metrics.json: what the scorer and guardrail.kpi.compute read beside the
+    rows. `repair_rate` is the share of control ticks on which the Shield
+    changed the action (`touched`), the flight's counterpart of the replay's
+    per-frame repair rate (tools/prefix_eval.py)."""
+    n = len(rows)
+    touched = sum(1 for r in rows if r.get("touched"))
+    first, last = (rows[0], rows[-1]) if rows else (None, None)
+
+    def pose(r):
+        return None if r is None else {k: r[k] for k in ("x", "y", "up", "yaw_deg")}
+
+    lat = sorted(infer_s)
+    return {
+        **extra,
+        "shield": "on",
+        "ticks": n, "touched_ticks": touched,
+        "repair_rate": round(touched / n, 6) if n else None,
+        "inferences": n_inf, "refused_frames": n_refused,
+        "infer_s_median": lat[len(lat) // 2] if lat else None,
+        "nfz_s": nfz.get("nfz_s"),
+        "nfz_moving_not_counted": nfz.get("nfz_moving_not_counted"),
+        "collisions": collisions,
+        "start_pose": pose(first), "end_pose": pose(last),
+    }
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--instruction", default="fly forward and avoid restricted areas")
@@ -971,11 +1317,24 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--paraphrase-allow-utterance", action="store_true",
                     help="allow a non-verb_phrase item (the grammar confound is "
                          "recorded)")
+    ap.add_argument("--precision", choices=PRECISIONS, default=DEFAULT_PRECISION,
+                    help="OpenVLA on the GPU: nf4 (bitsandbytes 4-bit, ~4.7 GB, the "
+                         "default every run since July flew) or bf16 (unquantized, "
+                         "~15 GB; for the 24 GB card)")
+    ap.add_argument("--seed", type=int, default=None,
+                    help="seed Python's, NumPy's and torch's generators; recorded. "
+                         "Greedy decoding: a seed is a repeat, not a condition "
+                         "(SEED_NOTE)")
+    ap.add_argument("--max-s", type=float, default=None,
+                    help=f"seconds the model flies after take-off (default {MAX_S:g})")
     ap.add_argument("--print-prompt", action="store_true",
                     help="print the exact prompt record and exit: no model, no sim "
                          "(reads OpenVLA's tokenizer.json only, if present)")
     args = ap.parse_args(argv)
     csp_on = args.csp == "on"
+    max_s = float(MAX_S if args.max_s is None else args.max_s)
+    if not (max_s > 0 and math.isfinite(max_s)):
+        ap.error(f"--max-s must be a positive number of seconds, got {args.max_s}")
 
     policy = load_policy(args.policy)
     mission = ConstraintCompiler(policy).parse_command(DEFAULT_MISSION)
@@ -989,11 +1348,25 @@ def main(argv: list[str] | None = None) -> int:
                            tokenizer=load_openvla_tokenizer(),
                            csp_budget=args.csp_budget, cost_map=args.cost_map)
     prec, refusal = check_prompt(prompts)
+    shield = flight_shield(policy)                # no clock: see CSP_CLOCK
+    # What this run flies with besides the prompt: --print-prompt shows it, so
+    # a dry run checks the whole configuration of a campaign without a model
+    # or a simulator (tools/score_csp_flights.py check).
+    flight = {"tag": args.tag, "policy_path": args.policy,
+              "policy_id": policy.policy_id, "policy_hash": policy.policy_hash,
+              "instruction": args.instruction, "instruction_flown": instruction,
+              "mission": mission.model_dump(), "csp_budget_tokens": args.csp_budget,
+              "precision": args.precision, "quantization": quantization_note(args.precision),
+              "seed": args.seed, "max_s": max_s, "tick_s": TICK, "scale": args.scale,
+              "dv_h": args.dv_h, "dv_z": args.dv_z, "frames": not args.no_frames,
+              "cost_map": args.cost_map, "shield": shield_record(shield),
+              "model_id": MODEL_ID, "unnorm_key": UNNORM_KEY}
 
     if args.print_prompt:
         shown = dict(prec) if prec is not None else {"csp": args.csp}
         shown["refused"] = refusal
         shown["paraphrase"] = para
+        shown["flight"] = flight
         print(json.dumps(shown, indent=2, ensure_ascii=False))
         return _PRINT_EXIT[None if refusal is None else refusal["kind"]]
 
@@ -1001,6 +1374,15 @@ def main(argv: list[str] | None = None) -> int:
         # R7: never truncate P0 rules to make them fit; refuse to fly instead.
         print(f"[prompt] REFUSING TO FLY ({refusal['kind']}): {refusal['detail']}")
         return EXIT_REFUSED
+
+    # THE SIMULATOR, before the model loads and before anything is written: a
+    # Project AirSim or an ArduCopter vehicle costs seconds here, not minutes.
+    sim_rec, sim_refusal = sim_preflight()
+    if sim_refusal is not None:
+        print(f"[sim] REFUSING TO FLY ({sim_refusal['kind']}): {sim_refusal['detail']}")
+        return EXIT_REFUSED
+    print(f"[sim] {sim_rec['address']} vehicle {sim_rec['vehicle_types'] or '?'}"
+          f"{'' if sim_rec['verified'] else ' (' + sim_rec.get('note', 'unverified') + ')'}")
 
     import airsim
     out = ROOT / "demo" / "out" / args.tag
@@ -1013,15 +1395,25 @@ def main(argv: list[str] | None = None) -> int:
     prompts.attach(out, csp_dir)                                 # csp/<run_id>/<file>.json
     frames_dir = None if args.no_frames else f"frames/{run_id}"
 
-    shield = Shield(policy, lookahead_s=LOOKAHEAD_S, dt=LOOKAHEAD_DT_S)    # no clock: see CSP_CLOCK
-    audit = AuditLogger(out / AUDIT_FILE, policy)   # the POLICY, so a hot-applied rule restamps the hash
+    # The POLICY, so a hot-applied rule restamps the hash; fresh, so a rerun
+    # under the same tag does not append to the earlier run's audit (it did
+    # until 2026-11-07: AuditLogger appends by default).
+    audit = AuditLogger(out / AUDIT_FILE, policy, episode_id=run_id, fresh=True)
+    # Records of an earlier run under this tag that this run writes later: a
+    # run that dies before then must not leave the old ones beside its own
+    # step log for the scorer to read as this run's.
+    for stale in ("vla_run.json", "flight_log.jsonl", "metrics.json", "kpi.json",
+                  "trajectory.json"):
+        (out / stale).unlink(missing_ok=True)
     print(f"[policy] {policy.policy_id} {policy.policy_hash}")
-    print(f"[task]   instruction = {instruction!r} | csp {args.csp}"
+    print(f"[task]   instruction = {instruction!r} | csp {args.csp} | {args.precision}"
+          f" | seed {args.seed}"
           + ("" if para is None else
              f" | paraphrase {para['paraphrase_id']} ({para['form']}) of {args.instruction!r}"))
 
     # load the model BEFORE opening the control connection (load takes minutes)
-    vla = OpenVLABackend(prompts, scale=args.scale, out=out, frames_dir=frames_dir)
+    vla = OpenVLABackend(prompts, scale=args.scale, out=out, frames_dir=frames_dir,
+                         precision=args.precision, seed=args.seed)
     prec, refusal = check_prompt(prompts)         # exact count now, if it was not
     if refusal is not None:
         print(f"[prompt] REFUSING TO FLY ({refusal['kind']}): {refusal['detail']}")
@@ -1035,13 +1427,14 @@ def main(argv: list[str] | None = None) -> int:
               f"({prec['csp_token_counter']}) | {prec['csp_file']} | "
               f"left out: {left_out or 'none'}")
     libs = _lib_versions()
-    (out / "vla_run.json").write_text(json.dumps({
+    run_rec = {
         "started_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-        "run_id": run_id,
+        "run_id": run_id, "tag": args.tag,
+        "argv": list(sys.argv[1:] if argv is None else argv),
         "code_revision": _code_revision(),
         "model_id": MODEL_ID, "unnorm_key": UNNORM_KEY, "scale": args.scale,
         "lateral_sign": LATERAL_SIGN,
-        "dv_h": args.dv_h, "dv_z": args.dv_z, "tick_s": TICK, "max_s": MAX_S,
+        "dv_h": args.dv_h, "dv_z": args.dv_z, "tick_s": TICK, "max_s": max_s,
         "policy_path": args.policy, "instruction": args.instruction,
         # What OpenVLA was actually given, and where it came from: equal to
         # `instruction` unless a stored paraphrase was flown.
@@ -1049,47 +1442,85 @@ def main(argv: list[str] | None = None) -> int:
         "mission": mission.model_dump(), "frames_dir": frames_dir, "csp_dir": csp_dir,
         "csp_clock": CSP_CLOCK_NOTE, "csp_budget_tokens": args.csp_budget,
         "preprocess": preprocess_note(libs.get("Pillow")),
-        "quantization": "bitsandbytes 4-bit nf4, compute bfloat16",
+        # Since 2026-11-07: the precision (a replay loads the same), the seed
+        # and what seeding did, the Shield the flight judged with (a replay
+        # judges with the same), and the simulator it was checked against.
+        "precision": args.precision,
+        "quantization": quantization_note(args.precision),
+        "attn_implementation": ATTN_IMPLEMENTATION,
+        "model_load_s": vla.load_s, "vram_gb_after_load": vla.vram_gb,
+        "seed": args.seed, "seeding": vla.seeded,
+        "shield": shield_record(shield),
+        "sim": sim_rec,
         "libraries": libs,
         "prompt": prec,
-    }, indent=2, ensure_ascii=False), encoding="utf-8")
+    }
+    (out / "vla_run.json").write_text(json.dumps(run_rec, indent=2, ensure_ascii=False),
+                                      encoding="utf-8")
 
     client = airsim.MultirotorClient()
     client.confirmConnection()
     client.enableApiControl(True)
     client.armDisarm(True)
     client.takeoffAsync().join()
+    up = -client.simGetVehiclePose().position.z_val
     for _ in range(150):
         up = -client.simGetVehiclePose().position.z_val
-        if up >= mission.cruise_alt_m - 0.5:
+        if up >= mission.cruise_alt_m - CRUISE_TOLERANCE_M:
             break
         client.moveByVelocityAsync(0, 0, -2.0, duration=0.2)
         time.sleep(0.1)
+    if up < mission.cruise_alt_m - CRUISE_TOLERANCE_M:
+        # A vehicle that does not climb (one that ignores the API, a sim that
+        # stalled) is no start for the model: land where it is and say so,
+        # instead of flying the VLA from low and scoring that.
+        print(f"[flight] REFUSING TO FLY (cruise_not_reached): {up:.1f} m after the "
+              f"climb, cruise {mission.cruise_alt_m:g} m; landing")
+        client.landAsync().join()
+        client.armDisarm(False)
+        client.enableApiControl(False)
+        (out / "metrics.json").write_text(json.dumps({
+            "tag": args.tag, "run_id": run_id, "refused": "cruise_not_reached",
+            "up_after_climb_m": round(up, 2), "cruise_alt_m": mission.cruise_alt_m},
+            indent=2), encoding="utf-8")
+        return EXIT_REFUSED
     vla.start()                                   # inference thread from here on
     print("[flight] cruise reached — real VLA now flying (guardrail ON)")
 
     limiter = RateLimiter(args.dv_h, args.dv_z)
     traj, n_touched = [], 0
+    collisions = CollisionWatch(client)           # contacts from the VLA's start
+    log = (out / "flight_log.jsonl").open("w", encoding="utf-8", newline="\n")
+    rows: list[dict] = []
     t0 = time.time()
     tick = 0
-    while time.time() - t0 < MAX_S:
-        tick += 1
-        state = state_from_pose(client.simGetVehiclePose())   # heading included
-        raw, n_inf = vla.latest()                 # never blocks; n_inf: see latest()
-        smooth = limiter(raw)                     # blend hand-offs BEFORE shield
-        d = shield.filter(state, smooth)          # shield = final authority
-        audit.log(tick, d)
-        if d.touched:
-            n_touched += 1
-        traj.append({"x": state.x, "y": state.y, "up": state.up,
-                     "yaw_deg": state.yaw_deg, "inference": n_inf,
-                     "touched": d.touched})
-        e = d.emitted
-        client.moveByVelocityAsync(e.vx, e.vy, -e.vz_up, duration=0.3)
-        if tick % 50 == 0:
-            print(f"  tick {tick}: pos=({state.x:5.1f},{state.y:5.1f},{state.up:4.1f}) "
-                  f"cmd=({e.vx:.1f},{e.vy:.1f}) shield={'HIT' if d.touched else '-'}")
-        time.sleep(TICK)
+    try:
+        while time.time() - t0 < max_s:
+            tick += 1
+            state = state_from_pose(client.simGetVehiclePose())   # heading included
+            raw, n_inf = vla.latest()             # never blocks; n_inf: see latest()
+            smooth = limiter(raw)                 # blend hand-offs BEFORE shield
+            d = shield.filter(state, smooth)      # shield = final authority
+            audit.log(tick, d)
+            if d.touched:
+                n_touched += 1
+            traj.append({"x": state.x, "y": state.y, "up": state.up,
+                         "yaw_deg": state.yaw_deg, "inference": n_inf,
+                         "touched": d.touched})
+            row = flight_row(tick, time.time() - t0, state, raw, smooth, d, n_inf,
+                             shield, policy)
+            rows.append(row)
+            log.write(json.dumps(row) + "\n")
+            e = d.emitted
+            client.moveByVelocityAsync(e.vx, e.vy, -e.vz_up, duration=0.3)
+            collisions.poll(time.time() - t0)
+            if tick % 50 == 0:
+                log.flush()
+                print(f"  tick {tick}: pos=({state.x:5.1f},{state.y:5.1f},{state.up:4.1f}) "
+                      f"cmd=({e.vx:.1f},{e.vy:.1f}) shield={'HIT' if d.touched else '-'}")
+            time.sleep(TICK)
+    finally:
+        log.close()
 
     vla.stop()
     # gentle landing: slow descent instead of landAsync's drop
@@ -1117,6 +1548,35 @@ def main(argv: list[str] | None = None) -> int:
               if f.type in DWELL_ZONE_TYPES and getattr(f, "vertices", None)]
 
     (out / "trajectory.json").write_text(json.dumps(traj), encoding="utf-8")
+    # metrics.json and kpi.json (2026-11-07): what the A/B scorer reads
+    # (tools/score_csp_flights.py), and the grant's KPIs from the rows by the
+    # same function every rail's KPIs come from (guardrail.kpi.compute).
+    with vla._lock:
+        infer_s = list(vla.infer_s)
+    metrics = run_metrics(
+        rows, nfz=dwell, collisions=collisions.summary(), n_inf=vla._n_inf,
+        n_refused=vla._n_refused, infer_s=infer_s,
+        extra={"tag": args.tag, "run_id": run_id,
+               "rail": "classic AirSim, SimpleFlight (msgpack-rpc): not a grant "
+                       "topology, not KPI-grade",
+               "csp": args.csp, "seed": args.seed, "precision": args.precision,
+               "instruction": args.instruction, "instruction_flown": instruction,
+               "paraphrase_id": None if para is None else para["paraphrase_id"],
+               "paraphrase_form": None if para is None else para["form"],
+               "policy_id": policy.policy_id, "policy_hash": policy.policy_hash,
+               "csp_content_hash": prec.get("csp_content_hash"),
+               "prompt_sha256": prec.get("prompt_sha256"),
+               "max_s": max_s, "tick_s": TICK})
+    (out / "metrics.json").write_text(json.dumps(metrics, indent=2, ensure_ascii=False),
+                                      encoding="utf-8")
+    try:
+        k = _kpi.compute(rows, _kpi.rule_priorities(policy), metrics)
+    except Exception as e:                       # noqa: BLE001
+        # The flight is on disk either way; a scorer fault must say so in the
+        # file the scorer reads, not crash the report.
+        k = {"error": f"{type(e).__name__}: {e}"}
+    (out / "kpi.json").write_text(json.dumps(k, indent=2, ensure_ascii=False, default=str),
+                                  encoding="utf-8")
     try:
         import matplotlib
         matplotlib.use("Agg")
@@ -1173,6 +1633,10 @@ def main(argv: list[str] | None = None) -> int:
     print(f"\n[report] real VLA in the loop | csp {args.csp} | ticks {len(traj)} | "
           f"inferences {n_steps} | refused {n_refused} | shield interventions {n_touched} | "
           f"time inside NFZ {nfz_s:.1f}s -> {'PASS' if nfz_s == 0 else 'FAIL'}")
+    print(f"[kpi]    repair rate {metrics['repair_rate']} | P0 escapes {k.get('p0_escapes')} "
+          f"| mean repair {k.get('mean_repair_magnitude_mps')} m/s | outcome "
+          f"{k.get('outcome')} | contacts {metrics['collisions']['mission']} "
+          f"| {out / 'kpi.json'}")
     if n_steps == 0:
         # Silence reads as success: zero interventions with zero inferences is a
         # model that never flew, not a model that behaved.

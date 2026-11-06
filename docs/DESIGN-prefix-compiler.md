@@ -679,9 +679,31 @@ caught by the test named in that version.
 - **`guardrail/kpi.py` has no CSP field** (WP2-02). The final KPI report reads
   `kpi.py`, which is another unit's file. The numbers above come from
   `coverage_report`.
-- **The mission context has no "allowed modes"** (PDF p3 lists pose, home,
+- ~~**The mission context has no "allowed modes"** (PDF p3 lists pose, home,
   target and allowed modes). `Mission` carries the start, the target, the
-  cruise altitude and the requested speed.
+  cruise altitude and the requested speed.~~ Done 2026-11-07 (WP2-05):
+  `Mission.home_x` / `home_y` (None: the start, as before) and
+  `Mission.allowed_modes` (the grant's SET_MODE names GUIDED / LOITER / RTL /
+  LAND; None: not stated). A stated home whose return RTL may fly widens the
+  mission region and the proximity grade to the triangle start - target - home
+  (an RTL from anywhere on the path flies inside it); the relevance
+  explanations name the home and any breach action whose mode the mission does
+  not allow; both join `mission_id` only when stated. A Mission that states
+  neither compiles byte for byte as before: 288 CSPs (every shipped policy x 3
+  missions x 3 clocks) had identical content hashes before and after. The
+  grant gives the context no other use, and the natural-language prompt does
+  not change with it (the stored paraphrase sets stay valid).
+- **The risk weights are the grant's placeholders, untuned.** PDF p6 (open
+  questions): "The 0.5 / 0.3 / 0.2 weights above are placeholders; need
+  empirical tuning during Q2." The page names no data set, objective or
+  procedure for that tuning, and its outputs table asks only that the
+  function have "configurable weights" (p6), which `csp.RiskWeights` is. The
+  only empirical signal the grant defines for the compiler is its own
+  effectiveness evaluation (p5: violating-candidate rate before vs after,
+  repair magnitude), which no flight has produced yet; the weights also only
+  reorder sentences and choose which P1/P2 rules a budget drops, and no
+  shipped policy reaches the 256-token budget. Tuning them is a decision for
+  after the CSP flights (tools/run_csp_flights.ps1).
 - **`now` is assumed to be in the policy's local time**, as `Shield(now=...)`
   already assumes. No timezone is stored in a policy.
 

@@ -16,6 +16,255 @@ shipped change and recorded as one.
 
 ## [Unreleased]
 
+### 2026-11-07 (CSP flights ready) — OpenVLA can fly the CSP A/B and the paraphrase set and both can be scored; the replay judges with the flight's Shield, the mission context carries home and allowed modes, the harness draws its paraphrases from the paraphraser service; nothing was flown
+
+Audit cards WP2-01, WP2-05, WP2-09, WP2-18, WP4-09, WP4-10 and WP4-15. **Nothing
+was flown.** No simulator, SITL, WSL, Docker or Orin was started. OpenVLA-7B
+was loaded once on the RTX 4090 for a smoke check, then freed. It ran at the
+new `--precision bf16`, through `tools/prefix_eval.py`'s own loader and
+replay, on the committed protocol frame
+(deploy/evidence/vla_protocol_frames/present_+00.png) with no simulator
+running:
+- load 117 s from D:, 15.1 GB of VRAM, the weights bfloat16;
+- 0.55-0.61 s an inference after a 2.6 s first call;
+- three greedy repeats of each prompt answered identically;
+- the off, CSP (80 tokens) and neutral (85 tokens) prompts each gave a
+  different action, and the replay ran end to end with the run's recorded
+  Shield.
+
+One frame is not a measurement: this checks the code path, not the CSP's
+effect.
+
+#### Found
+- **`demo/real_vla_demo.py` cannot fly the CityLife rail.** It talks to
+  classic AirSim through the `airsim` package (msgpack-rpc, port 41451) and
+  flies `policies/urban_demo_policy.yaml`, which was drawn for AirSimNH.
+  CityLife is Project AirSim (port 8989), a different protocol
+  (docs/pasblocks-study.md). The campaign below therefore flies AirSimNH.
+  Porting the demo to Project AirSim is a separate change, not made here.
+- **The lab's classic AirSim settings declare an ArduCopter vehicle**
+  (`Documents\AirSim\settings.json`, both copies, since 17-18 September, for
+  the SITL rail). That vehicle waits for SITL and ignores AirSim's velocity
+  API, through which `real_vla_demo` takes off and flies. The runner leaves the
+  file alone and starts AirSimNH with its own settings
+  (`tools/airsim_settings_real_vla.json`: SimpleFlight, the 1280x720 scene
+  camera of July) through AirSim's `-settings=` argument. The AirSimNH binary
+  (the v1.8.1 build of 17 July 2022) carries that argument and the log line
+  "Loaded settings from commandline" among its strings; it has not been run
+  with it.
+- **What the grant asks of the mission context and the risk weights**
+  (Prefix Compiler PDF):
+  - p3, Pipeline: "Mission context (pose, home, target, allowed modes)" feeds
+    the "Spatial + temporal filter (intersect mission bbox + lookahead
+    window)"; p4: `prox = proximity_score(rule.geometry, mission_ctx.bbox)`
+    and `return 0.5 * sev + 0.3 * prox + 0.2 * tcrit`; p2, the CSP field
+    `relevance_explanations: dict[str, str] # rule_id -> mission-context fact`,
+    with the example "mission target is within 200m of polygon".
+  - p6, Outputs: "Risk-grading function | Python module, configurable
+    weights"; p6, Open questions: "The 0.5 / 0.3 / 0.2 weights above are
+    placeholders; need empirical tuning during Q2." The page names no data
+    set, objective or procedure for that tuning.
+
+#### Fixed
+- **The offline replay judged with a Shield the flight never had.**
+  `tools/prefix_eval.py` built every replay Shield at 3 s / 0.5 s ("what
+  real_vla_demo flies with"); the demo has built the grant's 5 s / 0.1 s
+  Shield since 8d1a0f3 (6 Nov). The settings now come from the run:
+  `real_vla_demo` writes
+  `shield` into vla_run.json (`shield_record`, read off the Shield object),
+  and the replay rebuilds its Shield from it and checks the first one it
+  builds against the record. It refuses a record it cannot rebuild (a rule
+  clock, an obstacle or road map, an FSM config other than the defaults, an
+  unknown key) and flags a recorded forecast other than the grant's. A run
+  with no record gets guardrail.shield's constants, labelled unrecorded; one
+  that started before 8d1a0f3 flew 3 s / 0.5 s and is refused unless
+  `--allow-shield-mismatch` (then flagged `matches_flight: false`). Before
+  any model loads. The model is loaded at the run's own `precision`; the
+  report says when `--precision` makes it another.
+- **`real_vla_demo` built its Shield with an escalation FSM it never acted
+  on.** It flies `emitted` on every tick and requests no mode, so the FSM's
+  Brake, Loiter, RTL and Land went into the audit without having flown, and
+  guardrail.kpi would have read `RTL_triggered` off rows whose aircraft
+  never turned home (docs/DESIGN-shield-enforcement.md listed the demo
+  scripts that do this). It now flies a rail Shield
+  (`guardrail.replay.rail_shield`: 5 s / 0.1 s, no FSM inside), as
+  `demo/vla_fly.py` does.
+- **A rerun under the same tag appended to the earlier run's audit**
+  (`AuditLogger` appends by default). The demo now opens it fresh, with the
+  run id as its episode id, and removes the earlier run's vla_run.json,
+  flight log, metrics, KPIs and trajectory before it starts.
+
+#### Added
+- **`real_vla_demo` records what a CSP on/off A/B and the replay need.**
+  - `--precision nf4|bf16`. nf4 (bitsandbytes 4-bit) stays the default, as
+    the docs have it. bf16 is the checkpoint unquantized, for the 24 GB card.
+  - `--seed N`. It seeds Python's, NumPy's and torch's generators. OpenVLA
+    decodes greedily and the flight draws nothing at random, so two seeds of
+    one arm are two repeats, not two conditions (`SEED_NOTE`, in every run).
+  - `--max-s`, and in vla_run.json the precision, quantization, seed and what
+    seeding did, the Shield, the simulator check, the tag and the argument
+    list.
+  - `sim_preflight`, before the model loads: a port nobody answers on is
+    refused (naming Project AirSim when port 8989 is what listens), and so is
+    a vehicle that is not SimpleFlight. A simulator that cannot report its
+    settings is recorded as unverified.
+  - A take-off that does not reach cruise height lands and refuses (exit 3),
+    with `metrics.json` saying why, instead of flying the model from low.
+  - Per tick `flight_log.jsonl` in guardrail/kpi.py's shape (`raw` = the
+    rate-limited action the Shield judged, `vla` = the model's own; emitted,
+    violations, repairs, the flown re-check, the unsafe flags),
+    `metrics.json` (repair rate = ticks the Shield changed the action /
+    ticks, NFZ seconds, the simulator's contacts from the VLA's start, the
+    start pose) and `kpi.json` (`guardrail.kpi.compute` on those).
+  - `--print-prompt` also shows the whole flight: precision, seed, Shield,
+    mission, policy hash, length.
+- **`tools/run_csp_flights.ps1`** (PowerShell 7) flies the campaign in order.
+  First the A/B: `--csp off` then `on` for seeds 1001, 1002 and 1003. Then the
+  paraphrase set, CSP on, at seed 1001: the first 4 stored items of each
+  family (`verb_phrase`, `utterance`; utterances with their grammar confound
+  recorded). Each flight starts from a restarted AirSimNH. `-DryRun` checks
+  every flight without a model or a simulator. `-SkipDone` resumes a
+  campaign. Each run's frames go outside OneDrive through a junction
+  `demo\out\<tag>\frames` (`-OffloadRoot`, default
+  `D:\vla_drone_offload\demo_out`, as the city launchers do with `view\`).
+  The script refuses to fly while `tools/ci_local.py` runs. Its
+  header holds the exact sequence and the estimated durations (about 5-8 min
+  a flight, 1.2-2 h for the 14).
+- **`tools/score_csp_flights.py`**: `plan` (the flights, their tags and exact
+  arguments), `check` (the dry run) and `score`.
+  - `check` runs `--print-prompt` for every planned flight and checks that
+    each fits its budgets. It also checks that both arms of a seed fly one
+    configuration and differ only by the CSP ahead of the question, that
+    every CSP-on flight reads one CSP (one content hash), and that every
+    paraphrase flight reads that CSP and its own stored item.
+  - `score` prints the WP4-15 table: per seed and arm, the repair rate, mean
+    and max repair magnitude, P0 escapes, NFZ seconds, contacts and outcome;
+    the on - off delta, and its mean over the valid pairs only. A pair is
+    invalid when an arm is missing, unfinished or never answered by the model,
+    or when the arms flew another configuration or start more than 2 m /
+    15 deg apart; it is listed with why.
+  - `score` also prints the WP4-09 outcome stability: each paraphrase run's
+    outcome against the canonical arm's, per family and overall, and
+    `guardrail.kpi.per_paraphrase_robustness`. It lists the `prefix_eval`
+    command for every finished run.
+- **WP2-05: home and allowed modes in the mission context**
+  (`guardrail/compiler.py`). `Mission.home_x` / `home_y` (None: the start, as
+  before) and `Mission.allowed_modes` (the grant's SET_MODE names GUIDED /
+  LOITER / RTL / LAND; None: not stated). Where the grant puts the context:
+  - the mission region (the filter's bbox) and the proximity grade take in
+    the return home when a home is stated and RTL is not ruled out. An RTL
+    from anywhere on the path flies inside the triangle start - target - home;
+  - the relevance explanations name the home ("a return home to (0, 600) can
+    cross this zone") and any breach action whose mode the mission does not
+    allow;
+  - both join `mission_id` only when stated.
+
+  A Mission that states neither compiles byte for byte as before: 288 CSPs
+  (every shipped policy x 3 missions x 3 clocks) had identical content hashes
+  before and after. The natural-language prompt never changes with the
+  context, so the stored paraphrase sets stay valid. The weights stay the
+  grant's 0.5 / 0.3 / 0.2 and are still untuned (Found, above).
+- **WP4-10: the stress harness draws its paraphrase arms from the paraphraser
+  service** (`guardrail/harness_service.py`). The reference data-flow page
+  has the "Paraphraser service" feed the "Orchestrator service", which
+  "issue[s] tasks (and paraphrased variants) to the VLA", over gRPC + mTLS.
+  - `Harness(paraphraser=...)`, `serve --paraphraser HOST:PORT`: mutual TLS
+    with the lab PKI's `harness-client` certificate (the name the service
+    allows by default), or plaintext on loopback with `--insecure`.
+  - No in-process fallback, because the reference design describes none. A
+    server bound to no service refuses a paraphrase arm (FAILED_PRECONDITION);
+    a service that does not answer is UNAVAILABLE.
+  - The arm record carries the same ids and text an in-process draw gives,
+    plus `paraphrase.via`: the service, the transport, and the validator and
+    store digests the reply carried. The canonical arm and the
+    protected-prompt check stay in process: they draw nothing.
+  - `experiments/sweep_scenarios.build_arm` takes the drawn arm (`drawn=`);
+    the headless batch sweep still draws in process.
+  - `ParaphraserClient` keeps its address and transport for that record.
+
+#### Tests
+Run one file at a time in the worktree (vla-real, Python 3.10), with no
+`tools/ci_local.py` running; the counts at 65c7e4f, from the lab run, in
+brackets.
+- `tests/test_prefix_eval.py` 21/21 (13). New:
+  - the replay judges with the recorded Shield. A 3 s and a 5 s record score
+    the same frame differently, so a replay that ignores the record (the old
+    3 s / 0.5 s, or the constants) fails; both mutants are also refused by
+    the read-back check;
+  - an unrecorded run takes the constants, labelled so;
+  - an unrecorded run from before 8d1a0f3 is refused, by the CLI before any
+    model is built;
+  - a record that cannot be rebuilt is refused, and so is a rebuild that
+    drops a recorded setting;
+  - the model loads at the flight's precision;
+  - the campaign plan, the dry run on the real plan (and four mutations it
+    must catch), and the scorer on synthetic runs (a valid pair, an invalid
+    precision, a missing arm, a different start, paraphrases with and
+    without the canonical's outcome, one reading another CSP).
+  - `test_the_action_scale_is_the_one_the_step_flew_with` now uses scale 15:
+    at the flight's 5 s forecast, 0.6 m/s reaches the margin ring.
+- `tests/test_real_vla_prompt.py` 59/59 (51). New: the flight Shield and its
+  record, `--print-prompt`'s flight block, precision and seed, the run
+  record, the rows / metrics / KPIs (kpi.json recomputed with
+  `guardrail.kpi.compute`), contacts during and before the mission, the
+  take-off refusal, and the simulator preflight (an unanswered port, Project
+  AirSim's port, an ArduCopter vehicle, an unverifiable one) with `main()`
+  refusing before the backend is built.
+- `tests/test_csp.py` 104/104 (100). New: the context fields are checked as a
+  whole and an old run record still loads; a mission without them keeps its
+  old `mission_id` and gets no new clauses; a stated home brings a zone on
+  the way home into the region (proximity 1, fine geometry, explained), and
+  ruling out RTL takes it out again (the null); a breach mode the mission
+  forbids is explained, and the modes change neither the prompt nor any
+  decision.
+- `tests/test_harness_service.py` 62/62 (59). The shared test harness is now
+  bound to a loopback paraphraser service. New:
+  - with `guardrail.paraphraser.paraphrase` made to fail, an arm is still
+    drawn, from the bound client, with its record and `via`;
+  - over gRPC the arm is the in-process draw's;
+  - an unbound server, and a dead service, draw none (FAILED_PRECONDITION,
+    UNAVAILABLE);
+  - plaintext off loopback is refused.
+- Unchanged and passing: `tests/test_paraphraser_service.py` 8/8,
+  `tests/test_paraphraser.py` 103/103, `tests/test_wp4outputs_harness.py`
+  16/16, `tests/test_wp4outputs_exporters.py` 38/38,
+  `tests/test_harnesstruth_ci.py` 35/35.
+- Not run: the full CI list (`tools/ci_local.py`), and `tests/test_sweep.py`
+  (`build_arm` gained an optional argument only).
+- The dry run: `pwsh -File tools\run_csp_flights.ps1 -Prefix cspab_20261107
+  -DryRun` passes 14 flights.
+  - The off prompt is 20 OpenVLA tokens, the on prompt 80 (the CSP 60, all
+    three urban rules kept), counted with openvla-llama2-sp@8f5e2869e180.
+  - Every CSP-on flight reads one CSP (content hash `sha256:367e04b88e9a...`).
+  - The paraphrase prompts are 82-92 tokens.
+  - The Shield is 5 s / 0.1 s with no FSM, at nf4, on every flight.
+
+#### Limits
+- **Nothing has flown.** Not AirSimNH with these settings through
+  `-settings=` (a vehicle that is not SimpleFlight is refused before the
+  model loads), not the take-off check, not the contact count, not bf16
+  beside the renderer.
+- **The flights are classic AirSim, not a grant rail.** SimpleFlight on the
+  desktop: never KPI-grade (no hil), like every simple_flight run. The
+  Shield's forecast keeps its default velocity response, ArduCopter GUIDED's
+  (fitted on SITL), not SimpleFlight's: the same in every arm, so it moves
+  the absolute repair rates, not the on - off comparison's footing.
+- **Three seeds of a greedy decoder are three repeats.** They measure run to
+  run spread from GPU kernels and timing, not three conditions. Whether a
+  seed should drive a disturbance (wind, a start offset) is a question for
+  the PI.
+- **The flown paraphrases are drawn from the stored set in process**
+  (`real_vla_demo --paraphrase-index`, the same ids the service gives). Only
+  the harness is bound to the service. So the paraphrases a VLA reads in
+  these flights are not yet issued by the service.
+- **Base OpenVLA was trained on robot-arm data and never on rule text.**
+  Whether the CSP moves its actions at all is what the A/B measures.
+- **The risk weights are untuned**, and the grant does not say against what.
+  They only reorder sentences and choose which P1/P2 rules a budget drops.
+  No shipped policy reaches the 256-token budget: 149 tokens at most, with
+  the region filter off.
+- docs/FINAL-REPORT-outline.md and tracker/ are not edited here.
+
 ### 2026-11-06 (IR 4.0.0) — `scope` required on every rule: WP1-01 closed the grant's way, all 154 shipped rules state `scope: mission`, and every stored document of an earlier era still reads and re-derives its recorded hash
 
 #### Changed

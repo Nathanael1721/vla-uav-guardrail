@@ -58,6 +58,22 @@ allow-list, harness-client unless --rest-client names another); without one an
 https endpoint is refused at StartSession. The endpoint's server certificate
 must name the address the session uses (gen-pki --host, issue --server-host).
 
+PARAPHRASE ARMS (2026-11-07, WP4-10). The reference data-flow page draws the
+"Paraphraser service (Q3 deliverable)" in the control plane feeding the
+"Orchestrator service", which "issue[s] tasks (and paraphrased variants) to
+the VLA", over "gRPC + mTLS"; this harness is that orchestrator. A paraphrase
+arm (ppN) is drawn by the paraphraser service the server is bound to
+(`Harness(paraphraser=...)`, `serve --paraphraser HOST:PORT`, mutual TLS with
+the lab PKI's harness-client certificate - the name the service allows by
+default - or plaintext on loopback with --insecure), never in process: the
+reference design describes no in-process fallback, so there is none, and a
+server bound to no service refuses a paraphrase arm (FAILED_PRECONDITION). The arm record
+names the service, the transport, and the validator and store digests the
+reply carried (`paraphrase.via`), beside the same ids an in-process draw
+would have had. The canonical arm (the templated text itself) and the
+protected-prompt check stay in process: they draw nothing. Until this date the
+harness drew every arm in process through guardrail.paraphraser.
+
 TWO WAYS TO FLY AN EPISODE.
 
   Scheduled (the default). EndEpisode flies a whole episode in one
@@ -162,8 +178,9 @@ STATUS CODES (what a client can rely on)
                          failed, expired, or a scheduled one being flown); an
                          episode the runner refused in flight (see
                          GetStatus.error); a paraphrase arm this server cannot
-                         draw (no LLM client here, or no stored set holding the
-                         prompt); a hot-apply that would make an earlier-acked
+                         draw (bound to no paraphraser service, or one with no
+                         LLM client or no stored set holding the prompt); a
+                         hot-apply that would make an earlier-acked
                          one fail later in the flight; a session that is
                          stopped, or not bound to a REST endpoint for a
                          session HotApply; an injected bundle that does not
@@ -182,7 +199,8 @@ STATUS CODES (what a client can rely on)
                          client on the mTLS port; (from the service) a bound
                          REST endpoint that did not answer, or answered 5xx
                          (an https endpoint that reset us says to check
-                         that its allow-list names our certificate)
+                         that its allow-list names our certificate); the
+                         bound paraphraser service that did not answer
 
 MUTUAL TLS AND THE SHARED ROOT CA
 
@@ -307,6 +325,43 @@ class HarnessError(Exception):
 class HarnessUnavailable(RuntimeError):
     """A package the harness needs (grpcio, protobuf, cryptography) or the
     source tree it drives (experiments/) is not there."""
+
+
+# The paraphraser service's ParaphraseRecord fields that make
+# guardrail.paraphraser.Paraphrase.to_record(): an arm drawn over the wire is
+# recorded exactly as one drawn in process was, plus where it came from.
+_PARAPHRASE_RECORD = ("paraphrase_id", "source_id", "backend", "index", "seed", "text",
+                      "text_sha256", "source_sha256")
+
+
+@dataclass(frozen=True)
+class ServiceParaphrase:
+    """One paraphrase arm as the paraphraser service drew it, in the shape the
+    sweep's build_arm takes (`text`, `to_record()`, `manifest_extras()`). The
+    record adds `via`: the service, the transport, and the validator and store
+    digests the reply carried, so an episode bundle names the exact validator
+    and stored set its wording came from."""
+    record: dict
+    via: dict
+
+    @property
+    def text(self) -> str:
+        return self.record["text"]
+
+    def to_record(self) -> dict:
+        out = {k: self.record.get(k) for k in _PARAPHRASE_RECORD}
+        out["via"] = dict(self.via)
+        return out
+
+    def manifest_extras(self) -> dict:
+        r = self.record
+        return {"paraphrase_id": r.get("paraphrase_id"),
+                "paraphrase_backend": r.get("backend"),
+                "paraphrase_index": r.get("index"),
+                "paraphrase_seed": r.get("seed"),
+                "paraphrase_source_id": r.get("source_id"),
+                "paraphrase_text_sha256": r.get("text_sha256"),
+                "paraphrase_service": self.via.get("service")}
 
 
 # --------------------------------------------------------------------------- #
@@ -816,7 +871,14 @@ class Harness:
                  armed_idle_ttl_s: float | None = None,
                  rest_hosts=(), session_idle_ttl_s: float | None = None,
                  rest_pki_dir: str | Path | None = None,
-                 rest_client_name: str = DEFAULT_CLIENT_CN):
+                 rest_client_name: str = DEFAULT_CLIENT_CN,
+                 paraphraser=None):
+        # The paraphraser service every paraphrase arm is drawn from
+        # (2026-11-07, WP4-10; module docstring, PARAPHRASE ARMS): a
+        # guardrail.paraphraser_service.ParaphraserClient, or anything whose
+        # `paraphrase(text, n, seed, backend)` answers its dicts. None: this
+        # server draws no paraphrase arm (the canonical arm draws none).
+        self.paraphraser = paraphraser
         self.runs_dir = Path(runs_dir) if runs_dir else DEFAULT_RUNS_DIR
         self.armed_idle_ttl_s = float(ARMED_IDLE_TTL_S if armed_idle_ttl_s is None
                                       else armed_idle_ttl_s)
@@ -1177,26 +1239,81 @@ class Harness:
     def _arm_record(self, ep, policy=None) -> dict | None:
         """The episode's arm record (its paraphrase draw and prefix key), built
         now rather than at EndEpisode, so a scenario this server cannot draw
-        an arm for is refused before an episode exists. A schema-valid
-        `paraphrase: {backend: llm:<id>}` needs an LLM client this build does
-        not configure, and a `stored` backend needs a stored set holding the
-        prompt: both are FAILED_PRECONDITION (the server lacks what the spec
-        asks for), with the paraphraser's own words. The draw is a function of
-        (cell, seed, arm), so building it early changes nothing that flies."""
-        from .paraphraser import ParaphraserError, ProtectedTextError
+        an arm for is refused before an episode exists. A paraphrase arm is
+        drawn by the paraphraser service this server is bound to
+        (`_service_draw`, since 2026-11-07), never in process; what the
+        service cannot draw - a `paraphrase: {backend: llm:<id>}` it has no
+        client for, a `stored` source it holds no set of - is
+        FAILED_PRECONDITION with the service's own words, as it was when the
+        draw was in process. The draw is a function of (cell, seed, arm), so
+        building it early changes nothing that flies."""
+        drawn = None
+        if ep.paraphrase_arm is not None and ep.paraphrase_arm >= 0:
+            drawn = self._service_draw(ep, policy)
         try:
             with self._run_lock:                 # the sweep's arm cache is module state
-                return self._S.build_arm(ep, policy)
-        except ProtectedTextError as err:
-            raise HarnessError("INVALID_ARGUMENT", f"arm {ep.arm_tag}: the instruction "
-                                                   f"cannot be paraphrased: {err}") from None
-        except (ParaphraserError, OSError) as err:
+                return self._S.build_arm(ep, policy, drawn=drawn)
+        except OSError as err:
             raise HarnessError("FAILED_PRECONDITION",
-                               f"arm {ep.arm_tag}: this server cannot draw its paraphrase "
-                               f"({type(err).__name__}: {err}); the canonical arm draws "
-                               f"none") from None
+                               f"arm {ep.arm_tag}: {type(err).__name__}: {err}") from None
         except ValueError as err:
             raise HarnessError("INVALID_ARGUMENT", f"arm {ep.arm_tag}: {err}") from None
+
+    def _service_draw(self, ep, policy=None) -> "ServiceParaphrase":
+        """Paraphrase arm `ep.paraphrase_arm` of this episode's seed, drawn by
+        the paraphraser service (module docstring, PARAPHRASE ARMS). The text
+        sent is what the arm rewords (the sweep's instruction_text: the task
+        prompt or the rule summary); AerialVLA's protected prompt is refused
+        here first, as the scenario's mistake (INVALID_ARGUMENT), before any
+        call; an unbound server, or a service that does not answer, draws
+        nothing."""
+        spec = ep.cell.spec
+        pol = policy if policy is not None else spec.policy.load(ROOT)
+        text, _ = self._S.instruction_text(spec, pol)
+        from .paraphraser import protected_reason   # a check on the text: no draw
+        why = protected_reason(text)
+        if why:
+            raise HarnessError("INVALID_ARGUMENT", f"arm {ep.arm_tag}: the instruction "
+                                                   f"cannot be paraphrased: {why}")
+        client = self.paraphraser
+        if client is None:
+            raise HarnessError(
+                "FAILED_PRECONDITION",
+                f"arm {ep.arm_tag}: paraphrase arms are drawn by the paraphraser service "
+                f"(the reference orchestrator's), and this server is bound to none: "
+                f"serve --paraphraser HOST:PORT; the canonical arm draws none")
+        where = getattr(client, "address", type(client).__name__)
+        try:
+            reply = client.paraphrase(text, int(spec.paraphrase.k), int(ep.seed),
+                                      spec.paraphrase.backend)
+        except Exception as err:                 # noqa: BLE001 - mapped, never swallowed
+            code = err.code() if callable(getattr(err, "code", None)) else None
+            name = getattr(code, "name", None)
+            details = (err.details() if callable(getattr(err, "details", None))
+                       else str(err)) or ""
+            to = {"NOT_FOUND": "FAILED_PRECONDITION", "FAILED_PRECONDITION":
+                  "FAILED_PRECONDITION", "OUT_OF_RANGE": "INVALID_ARGUMENT",
+                  "INVALID_ARGUMENT": "INVALID_ARGUMENT", "UNAVAILABLE": "UNAVAILABLE",
+                  "DEADLINE_EXCEEDED": "UNAVAILABLE"}.get(name, "FAILED_PRECONDITION")
+            raise HarnessError(to, f"arm {ep.arm_tag}: the paraphraser service at {where} "
+                                   f"did not draw it ({name or type(err).__name__}: "
+                                   f"{details}); the canonical arm draws none") from None
+        drawn = reply.get("paraphrases") or []
+        if ep.paraphrase_arm >= len(drawn):
+            raise HarnessError("INVALID_ARGUMENT",
+                               f"arm {ep.arm_tag}: the paraphraser service drew "
+                               f"{len(drawn)} paraphrase(s) of k={spec.paraphrase.k}")
+        rec = dict(drawn[ep.paraphrase_arm])
+        if rec.get("seed") != int(ep.seed):
+            raise HarnessError("INTERNAL", f"arm {ep.arm_tag}: the service answered seed "
+                                           f"{rec.get('seed')} for seed {ep.seed}")
+        via = {"service": where,
+               "transport": ("mutual TLS" if getattr(client, "secure", False)
+                             else "plaintext (loopback)"),
+               "validator_digest": reply.get("validator_digest"),
+               "store_digest": reply.get("store_digest"),
+               "source_id": reply.get("source_id")}
+        return ServiceParaphrase(record=rec, via=via)
 
     def _ref(self, e: _Episode) -> dict:
         return {"episode_id": e.episode_id, "scenario_id": e.ep.cell.scenario_id,
@@ -2386,6 +2503,28 @@ def is_loopback(host: str) -> bool:
         return False
 
 
+def paraphraser_client(address: str, *, pki_dir: str | Path | None = None,
+                       client_name: str = DEFAULT_CLIENT_CN):
+    """A client of the paraphraser service for `Harness(paraphraser=...)`:
+    mutual TLS with the lab PKI's `client_name` certificate (the control
+    plane's one CA, as the service's own `--pki`), or, without `pki_dir`,
+    plaintext - which only a loopback address may use; the service refuses
+    plaintext anywhere else too."""
+    host = address.rsplit(":", 1)[0] if ":" in address else address
+    if pki_dir is None and not is_loopback(host):
+        raise ValueError(f"paraphraser {address}: plaintext is for loopback only; give "
+                         f"the lab PKI for mutual TLS")
+    try:
+        from .paraphraser_service import ParaphraserClient
+        return ParaphraserClient(address, pki_dir=pki_dir, client_name=client_name)
+    except ImportError as e:
+        raise HarnessUnavailable(f"the paraphraser client needs grpcio: {e}") from e
+    except Exception as e:                       # noqa: BLE001 - ServiceError and kin
+        if isinstance(e, (FileNotFoundError, ValueError)):
+            raise
+        raise HarnessUnavailable(f"{type(e).__name__}: {e}") from e
+
+
 @dataclass
 class HarnessServer:
     server: Any
@@ -2700,6 +2839,15 @@ def main(argv: list[str] | None = None) -> int:
                         f"{DEFAULT_CLIENT_CN}; a dedicated one, e.g. issue --name "
                         f"harness-forwarder allowed on the rail with --hotapply-client, "
                         f"keeps gRPC clients from holding the rail's identity)")
+    s.add_argument("--paraphraser", default=None, metavar="HOST:PORT",
+                   help="the paraphraser service (python -m guardrail.paraphraser_service "
+                        "serve) every paraphrase arm is drawn from; mutual TLS with "
+                        "--pki's client certificate, plaintext with --insecure (loopback "
+                        "only). Without it this server draws no paraphrase arm")
+    s.add_argument("--paraphraser-client", default=DEFAULT_CLIENT_CN,
+                   help=f"the client certificate name in --pki this server presents to "
+                        f"the paraphraser service (default {DEFAULT_CLIENT_CN}, the name "
+                        f"the service allows by default)")
     args = ap.parse_args(argv)
 
     try:
@@ -2722,12 +2870,18 @@ def main(argv: list[str] | None = None) -> int:
                                    allow_synced=args.allow_synced)
             print(f"  {cert}\n  {key}")
             return 0
+        para = None
+        if args.paraphraser:
+            para = paraphraser_client(args.paraphraser,
+                                      pki_dir=None if args.insecure else args.pki,
+                                      client_name=args.paraphraser_client)
         srv = serve(Harness(runs_dir=args.runs, library=args.library,
                             armed_idle_ttl_s=args.armed_ttl,
                             session_idle_ttl_s=args.session_ttl,
                             rest_hosts=tuple(args.allow_rest_host or ()),
                             rest_pki_dir=args.rest_pki,
-                            rest_client_name=args.rest_client), host=args.host,
+                            rest_client_name=args.rest_client, paraphraser=para),
+                    host=args.host,
                     port=args.port, pki_dir=None if args.insecure else args.pki,
                     allowed_clients=tuple(args.allow_client or (DEFAULT_CLIENT_CN,)))
     except (HarnessUnavailable, FileExistsError, FileNotFoundError, ValueError,
@@ -2737,7 +2891,9 @@ def main(argv: list[str] | None = None) -> int:
     mode = "mutual TLS" if srv.secure else "PLAINTEXT (loopback only)"
     # Flushed: under a service manager stdout is a file, and an unflushed
     # "listening" line reads as a server that never came up.
-    print(f"StressHarness listening on {srv.address}, {mode}; bundles -> {args.runs}",
+    print(f"StressHarness listening on {srv.address}, {mode}; bundles -> {args.runs}; "
+          f"paraphrase arms from "
+          f"{'the paraphraser service at ' + args.paraphraser if para else 'nowhere (no --paraphraser: refused)'}",
           flush=True)
     try:
         srv.server.wait_for_termination()

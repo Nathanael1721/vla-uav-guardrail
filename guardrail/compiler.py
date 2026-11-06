@@ -38,6 +38,16 @@ Three jobs live here.
                                        refs, per-rule relevance explanations
          -> CSP                        the typed record in guardrail/csp.py
 
+   The mission context is the grant's "pose, home, target, allowed modes"
+   (PDF p3): `Mission` carries the start (the pose at issue), the target and,
+   since 2026-11-07, an optional home and optional allowed modes. A stated
+   home whose return RTL may fly widens the mission region and the proximity
+   grade to the return (the triangle start - target - home), and the
+   relevance explanations name the home and any breach action whose mode the
+   mission does not allow. The weights stay the grant's 0.5 / 0.3 / 0.2: PDF
+   p6 calls them "placeholders; need empirical tuning during Q2" and names
+   neither the data nor the target of that tuning; nothing here has tuned them.
+
    Every runtime rule type renders, the three hot-apply classes included
    (dynamic_nfz, time_window_switch, corridor_swap; templates since
    2026-10-08, when they joined models.RUNTIME_TYPES). A rule a switch or swap
@@ -106,9 +116,11 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
 
+from typing import Literal
+
 import numpy as np
 import yaml
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from . import csp as _csp
 from .csp import (CSP, CSP_VERSION, AllowedActionSet, CSPBudgetExceeded,
@@ -169,6 +181,17 @@ from .ir import COARSE_MAX_VERTICES  # noqa: E402
 # P0 rules are never ranked against the others anyway: all of them are kept.
 SEVERITY = {"P0": 1.0, "P1": 0.6, "P2": 0.3}
 SOFT_FACTOR = 0.5
+
+# The flight modes a mission context can allow, in the grant's SET_MODE names
+# (Safety Shield PDF p5, MAVLink adapter: "SET_MODE -> GUIDED / LOITER / RTL /
+# LAND"). The Prefix Compiler's mission context carries "allowed modes" (PDF
+# p3, Pipeline) and says no more about them; see Mission.allowed_modes.
+FLIGHT_MODES = ("GUIDED", "LOITER", "RTL", "LAND")
+# The mode each breach action asks the autopilot for: the state it leads to,
+# through guardrail.fsm.MODE_FOR (Normal and Brake fly GUIDED; a repair is
+# flown in GUIDED too). monitor_only asks for none.
+BREACH_MODE = {"project_fix": "GUIDED", "brake": "GUIDED", "loiter": "LOITER",
+               "RTL": "RTL", "land": "LAND", "monitor_only": None}
 
 TEMPLATE_DIR = Path(__file__).resolve().parent / "templates"
 
@@ -240,6 +263,48 @@ class Mission(BaseModel):
     # of the mission's identity (_mission_id ignores it) and not read by
     # compile_csp, so no stored CSP changes.
     defaults_used: list[str] = Field(default_factory=list)
+    # Added 2026-11-07 (audit card WP2-05): the rest of the grant's mission
+    # context, "pose, home, target, allowed modes" (Prefix Compiler PDF p3,
+    # Pipeline). The start above is the pose at issue and the target was
+    # already here; HOME was implied to be the start, and the modes were not
+    # carried at all.
+    #   home_x / home_y  where RTL returns the aircraft. None: the start, as
+    #                    every Mission before this date implied.
+    #   allowed_modes    the flight modes this mission permits, in the grant's
+    #                    SET_MODE names (FLIGHT_MODES). None: not stated, so
+    #                    no mode is ruled out.
+    # How compile_csp uses them (_Ctx): the return home joins the mission
+    # region and the proximity grade when a home is given and RTL is not ruled
+    # out, and the relevance explanations name the home and any breach action
+    # whose mode the mission does not allow. A Mission that states neither
+    # compiles byte for byte as before, its mission_id included
+    # (tests/test_csp.py).
+    home_x: float | None = None
+    home_y: float | None = None
+    allowed_modes: list[Literal["GUIDED", "LOITER", "RTL", "LAND"]] | None = None
+
+    @model_validator(mode="after")
+    def _context_complete(self) -> "Mission":
+        if (self.home_x is None) != (self.home_y is None):
+            raise ValueError("home_x and home_y are given together or not at all "
+                             f"(got home_x={self.home_x!r}, home_y={self.home_y!r})")
+        for v in (self.home_x, self.home_y):
+            if v is not None and not math.isfinite(v):
+                raise ValueError(f"home must be finite, got {v!r}")
+        if self.allowed_modes is not None:
+            if not self.allowed_modes:
+                raise ValueError("allowed_modes is empty: a mission that allows no "
+                                 "mode cannot fly; None means not stated")
+            if len(set(self.allowed_modes)) != len(self.allowed_modes):
+                raise ValueError(f"allowed_modes repeats a mode: {self.allowed_modes}")
+        return self
+
+    @property
+    def home(self) -> tuple[float, float]:
+        """Where RTL returns: the stated home, else the start."""
+        if self.home_x is None:
+            return (self.start_x, self.start_y)
+        return (float(self.home_x), float(self.home_y))
 
 
 # --------------------------------------------------------------------------- #
@@ -634,6 +699,18 @@ class _Ctx:
         self.m = mission
         self.a: Pt = (mission.start_x, mission.start_y)
         self.b: Pt = (mission.target_x, mission.target_y)
+        # The rest of the grant's mission context (2026-11-07, Mission). The
+        # return home is part of the mission's route when a home is STATED and
+        # RTL is not ruled out (allowed, or no modes stated): anywhere on the
+        # path an RTL flies straight home, so the area it can fly over is the
+        # triangle start - target - home. A home that is not stated is the
+        # start, whose return leg is the path itself, so it adds nothing; that
+        # keeps every Mission written before this date compiling as it did.
+        self.home: Pt | None = (None if mission.home_x is None
+                                else (float(mission.home_x), float(mission.home_y)))
+        self.modes: tuple[str, ...] | None = (None if mission.allowed_modes is None
+                                              else tuple(sorted(mission.allowed_modes)))
+        self.rtl_leg = self.home is not None and (self.modes is None or "RTL" in self.modes)
         self.lookahead_s = lookahead_s
         self.now = now
         self.reach_m = reach_m
@@ -641,13 +718,14 @@ class _Ctx:
         widen = (region_margin_m if region_margin_m is not None
                  else DEFAULT_REGION_MARGIN_M) + reach_m
         self.prox_scale_m = widen
+        pts = [self.a, self.b] + ([self.home] if self.rtl_leg else [])
         if region_margin_m is None:
             self.region = None
         else:
-            self.region = {"x_min": min(self.a[0], self.b[0]) - widen,
-                           "x_max": max(self.a[0], self.b[0]) + widen,
-                           "y_min": min(self.a[1], self.b[1]) - widen,
-                           "y_max": max(self.a[1], self.b[1]) + widen}
+            self.region = {"x_min": min(p[0] for p in pts) - widen,
+                           "x_max": max(p[0] for p in pts) + widen,
+                           "y_min": min(p[1] for p in pts) - widen,
+                           "y_max": max(p[1] for p in pts) + widen}
 
 
 def _fence_dist(f, ctx: _Ctx) -> tuple[float, float]:
@@ -659,6 +737,31 @@ def _fence_dist(f, ctx: _Ctx) -> tuple[float, float]:
     d_path = max(0.0, _seg_poly(ctx.a, ctx.b, poly) - f.margin_m)
     d_tgt = max(0.0, _seg_poly(ctx.b, ctx.b, poly) - f.margin_m)
     return d_path, d_tgt
+
+
+def _return_dist(f, ctx: _Ctx) -> float | None:
+    """Distance from the zone's margin ring to the area a return home can fly
+    over (the triangle start - target - home: an RTL from any point of the
+    straight path flies straight home), 0 where they overlap. None when the
+    return home is not part of this mission (_Ctx.rtl_leg). Measured like
+    _fence_dist: to the polygon, minus the margin, floored at 0."""
+    if not ctx.rtl_leg:
+        return None
+    poly = [(v.x, v.y) for v in f.vertices]
+    tri = [ctx.a, ctx.b, ctx.home]
+    if (any(_point_in_poly(x, y, tri) for x, y in poly)
+            or any(_point_in_poly(x, y, poly) for x, y in tri)):
+        return 0.0
+    d = min(_seg_poly(tri[i], tri[(i + 1) % 3], poly) for i in range(3))
+    return max(0.0, d - f.margin_m)
+
+
+def _route_dist(f, ctx: _Ctx) -> float:
+    """The zone's distance from the mission's route: the straight path, and
+    the return home when it is part of the mission (the nearer of the two)."""
+    d_path, _ = _fence_dist(f, ctx)
+    d_ret = _return_dist(f, ctx)
+    return d_path if d_ret is None else min(d_path, d_ret)
 
 
 def _in_region(rule, ctx: _Ctx) -> bool:
@@ -688,14 +791,18 @@ def _severity(rule) -> float:
 
 
 def _proximity(rule, ctx: _Ctx) -> float:
-    """In [0, 1]. Keep-out zones: 1 on the path, falling linearly to 0 at the
-    region's edge. Everything else binds wherever the vehicle is - a corridor
-    because outside it is forbidden, envelopes and stand-offs because they
-    have no location, a moving zone because its place is not known here, a
-    switch because it acts on a rule wherever that rule binds - so 1."""
+    """In [0, 1]. Keep-out zones: 1 on the route, falling linearly to 0 at the
+    region's edge. The route is the straight path, and the return home when
+    the mission includes one (_route_dist; since 2026-11-07, the grant's
+    "proximity_score(rule.geometry, mission_ctx.bbox)", PDF p4, reads the
+    mission context, home included). Everything else binds wherever the
+    vehicle is - a corridor because outside it is forbidden, envelopes and
+    stand-offs because they have no location, a moving zone because its place
+    is not known here, a switch because it acts on a rule wherever that rule
+    binds - so 1."""
     if not isinstance(rule, _ZONES) or is_moving(rule):
         return 1.0
-    d, _ = _fence_dist(rule, ctx)
+    d = _route_dist(rule, ctx)
     return max(0.0, min(1.0, 1.0 - d / ctx.prox_scale_m))
 
 
@@ -788,7 +895,43 @@ def _relevance(rule, act: dict, ctx: _Ctx) -> str:
     else:                                     # pragma: no cover - new rule type
         raise TypeError(f"no relevance template for {type(rule).__name__}")
     facts["time_fact"] = tf
-    return render_template(f"reason/{template_type('reason', rule)}.j2", facts)
+    text = render_template(f"reason/{template_type('reason', rule)}.j2", facts)
+    # The rest of the mission context (2026-11-07): appended, each only when
+    # the mission states it, so a Mission without a home or allowed modes
+    # explains every rule word for word as before.
+    for extra in (_home_fact(rule, ctx), _mode_fact(rule, ctx)):
+        if extra:
+            text += f"; {extra}"
+    return text
+
+
+def _home_fact(rule, ctx: _Ctx) -> str | None:
+    """A keep-out zone against the return home, when the return home is part
+    of the mission (_Ctx.rtl_leg). A moving zone is measured where the policy
+    declares it, as _fence_dist measures it."""
+    if not isinstance(rule, _ZONES):
+        return None
+    d = _return_dist(rule, ctx)
+    if d is None:
+        return None
+    hx, hy = ctx.home
+    if d <= 0.0:
+        return f"a return home to ({_fmt_g(hx)}, {_fmt_g(hy)}) can cross this zone"
+    return (f"a return home to ({_fmt_g(hx)}, {_fmt_g(hy)}) passes {_fmt_m(d)} m "
+            f"from this zone at the closest")
+
+
+def _mode_fact(rule, ctx: _Ctx) -> str | None:
+    """A breach action whose flight mode this mission does not allow. Said only
+    when the mission states its modes; a switch has no breach of its own (it
+    is an event, not a place the aircraft can violate)."""
+    if ctx.modes is None or isinstance(rule, TimeWindowSwitch):
+        return None
+    mode = BREACH_MODE.get(rule.violation_action)
+    if mode is None or mode in ctx.modes:
+        return None
+    return (f"its breach action {rule.violation_action} asks for {mode}, which "
+            f"this mission's allowed modes ({', '.join(ctx.modes)}) do not include")
 
 
 # --------------------------------------------------------------------------- #
@@ -2170,10 +2313,17 @@ def time_window_lead_warnings(policy: Policy, *, lookahead_s: float = DEFAULT_LO
 def _mission_id(m: Mission) -> str:
     if m.mission_id:
         return m.mission_id
-    canon = json.dumps({"task": m.task_text, "start": [m.start_x, m.start_y],
-                        "target": [m.target_x, m.target_y],
-                        "alt": m.cruise_alt_m, "speed": m.speed_pref_mps},
-                       sort_keys=True, separators=(",", ":"))
+    doc = {"task": m.task_text, "start": [m.start_x, m.start_y],
+           "target": [m.target_x, m.target_y],
+           "alt": m.cruise_alt_m, "speed": m.speed_pref_mps}
+    # The home and the allowed modes (2026-11-07) are part of the mission's
+    # identity when stated, and absent from it otherwise, so a mission that
+    # states neither keeps the id it always had.
+    if m.home_x is not None:
+        doc["home"] = [m.home_x, m.home_y]
+    if m.allowed_modes is not None:
+        doc["modes"] = sorted(m.allowed_modes)
+    canon = json.dumps(doc, sort_keys=True, separators=(",", ":"))
     return "m-" + hashlib.sha256(canon.encode("utf-8")).hexdigest()[:12]
 
 
@@ -2399,6 +2549,11 @@ class ConstraintCompiler:
                                  f"path's bounding box widened by "
                                  f"{_fmt_m(ctx.prox_scale_m)} m); its margin "
                                  f"ring is {_fmt_m(d)} m from the straight path")
+                if ctx.rtl_leg:
+                    # The region holds the return home too (2026-11-07).
+                    row["reason"] += (f" and {_fmt_m(_return_dist(c, ctx))} m from "
+                                      f"the return home to ({_fmt_g(ctx.home[0])}, "
+                                      f"{_fmt_g(ctx.home[1])})")
             else:
                 sev = _r4(_severity(c))
                 prox = _r4(_proximity(c, ctx))
@@ -2455,7 +2610,10 @@ class ConstraintCompiler:
         for r in p0:
             c = r["rule"]
             if isinstance(c, _ZONES) and not is_moving(c):
-                d, _ = _fence_dist(c, ctx)
+                # From the route: the path, and the return home when the
+                # mission has one (_route_dist; the path alone before
+                # 2026-11-07, which a mission without a home still gets).
+                d = _route_dist(c, ctx)
                 scale = "fine" if d <= ctx.reach_m else "coarse"
             elif isinstance(c, _ZONES + _TUBES):
                 scale = "fine"
