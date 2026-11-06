@@ -106,6 +106,18 @@ shipped change and recorded as one.
 - docs/FINAL-REPORT-outline.md: WP1-01 PARTIAL -> DONE (Appendix A, section
   7 closed without a waiver, section 4.1), the regenerated KPI rows;
   60 DONE, 69 PARTIAL, 6 DRIFT, 1 MISSING.
+- Two files quoted the 20 Oct wp1_roundtrip.json (29 policies, 35 corpus
+  cases); the full CI at edbbe4b failed on both. The public site's curated
+  WP1 numbers (`docs/progress/_src/site.json`) now cite the regenerated file
+  (32/32, 0/32, 39/39, 0/39), and the four pages that show them (en / zh
+  index and wp1) were rebuilt with the site generator's own build; its build
+  manifest is left as it was, since its CHANGELOG digests are the curator's
+  record of what was read before a publish (docs/DESIGN-public-site.md, How
+  to update, step 1). `docs/data/progress_oct.json`: its wp1 section is
+  recomputed by the data step's own `wp1_facts` (32/32 round trips and
+  tampers, 39/39 corpus, 127 lock entries); its other sections and the bench
+  need the lab checkout's flight output and stay as the 4 Nov data step
+  wrote them.
 
 #### Measured (read-only, the lab checkout's gitignored stores, with this code)
 - 36/36 bundles in its bundles/ open: 31 flight bundles written under IR
@@ -131,13 +143,23 @@ shipped change and recorded as one.
   (tests/test_policy_hash.py); the scope migration as a changelog diff
   (tests/test_bundle.py); the four REST fields and POST /nfz's scope
   (tests/test_api.py).
-- On this branch (vla-real, Python 3.10.20, the worktree): test_policy_hash
-  34/34, test_policy_dsl_grant_form 58/69 (11 skips: the reference
-  repository is not in a worktree; 68/69 against the lab checkout's, read
-  only), test_bundle 58/58, test_replay 60/61, test_wp1_roundtrip_kpi 19/20,
-  test_csp 100/100, test_harness_service 59/59, test_api 10/15 (5 need
-  fastapi); test_api 15/15 and test_railinputs_node 16/16 in the Python 3.12
-  env with fastapi and uvicorn.
+- The full per-build CI in the worktree (`tools/ci_local.py`, vla-real,
+  Python 3.10.20) at edbbe4b, with a second worktree's CI and a nightly
+  sweep running beside it: 139/141 files, 3486/3634 tests, check_claims rc 0,
+  smoke rc 0 (64 episodes, fail-safe trigger correctness 0.984127). The two
+  failing files, test_build_public_site (30/47) and
+  test_build_progress_oct_data (43/48), were the two quotes of the old
+  wp1_roundtrip.json above, not load; after the fix, run alone:
+  test_build_public_site 47/47, test_build_progress_oct_data 44/48 (4
+  skips, lab artefacts), test_check_claims 22/22.
+- In that run, test_policy_hash 33/34, test_policy_dsl_grant_form 58/69,
+  test_bundle 58/58, test_csp 100/100, test_harness_service 59/59,
+  test_replay 40/61, test_api 10/15, test_railinputs_node 13/16; the skips
+  are fixtures a worktree lacks. With them read from the lab checkout:
+  test_policy_dsl_grant_form 68/69 against its reference repository,
+  test_replay 60/61 with a copy of its retarget_demo2 run, test_policy_hash
+  34/34 with that run's manifest; test_api 15/15 and test_railinputs_node
+  16/16 in the Python 3.12 env with fastapi and uvicorn.
 
 #### Limits
 - Scope is declared, not enforced differently: the Shield enforces every
@@ -151,10 +173,11 @@ shipped change and recorded as one.
 - The bundles are build products: the lab checkout and the Orin need the
   new ones built (`tools/build_flight_bundles.py`) before a rail starts
   without `--bundle`, since the default follows the YAML's version.
-- `docs/data/progress_oct.json` counts the lock's entries (95, now 127) and
-  reads wp1_roundtrip.json (29 round trips, now 32); its data step needs the
-  lab checkout's flight output and its bench, so it is re-run there, where
-  test_build_progress_oct_data compares it with the tree.
+- `docs/data/progress_oct.json`: only its wp1 section is recomputed here.
+  Its data step needs the lab checkout's flight output and bench; run it
+  there (test_build_progress_oct_data compares every section with the tree
+  in the lab). The public site's build manifest likewise waits for its
+  curator's next build.
 - `sitl/ros2_shield_node.py`'s usage example still names
   `fase3-sim-demo-v0.1.3` (left for the agent changing that file). No
   tracker entry (tracker/data is local to the lab checkout).

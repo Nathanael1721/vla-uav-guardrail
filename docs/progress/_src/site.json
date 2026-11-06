@@ -211,9 +211,9 @@
    "src": ["CHANGELOG.md#2026-10-08", "CHANGELOG.md#2026-10-13 (later)", "docs/data/progress_oct.json#g1.runs_ok"]
   },
   {
-   "value": "29/29",
+   "value": "32/32",
    "label": {"en": "signed policy bundles that load back with the same hash and a verified signature", "zh": "已簽章的政策套件重新載入後雜湊值相同、簽章驗證通過"},
-   "context": {"en": "29/29 tampered copies are refused; a loader that checks nothing refuses 0/29.", "zh": "29/29 份竄改過的副本被拒絕；完全不檢查的載入器只會拒絕 0/29。"},
+   "context": {"en": "32/32 tampered copies are refused; a loader that checks nothing refuses 0/32.", "zh": "32/32 份竄改過的副本被拒絕；完全不檢查的載入器只會拒絕 0/32。"},
    "src": ["docs/data/wp1_roundtrip.json#kpi.round_trip", "docs/data/wp1_roundtrip.json#kpi.tamper_refusal", "docs/data/wp1_roundtrip.json#null_accept_everything.tamper_refusal"]
   },
   {
@@ -289,13 +289,13 @@
    "shown": [
     {
      "title": {"en": "Round trip and tamper refusal", "zh": "往返載入與竄改拒絕"},
-     "text": {"en": "29 of 29 project policies load back from a signed bundle with the same hash, the same rules and a verified signature, and 29 of 29 tampered copies are refused. A loader that checked nothing would refuse 0 of 29.", "zh": "29 份專案規則檔中，29 份從已簽章的套件載入後雜湊值與規則都相同，且簽章驗證通過；29 份竄改過的副本中，29 份被拒絕。完全不檢查的載入器只會拒絕 29 份中的 0 份。"},
+     "text": {"en": "32 of 32 project policies load back from a signed bundle with the same hash, the same rules and a verified signature, and 32 of 32 tampered copies are refused. A loader that checked nothing would refuse 0 of 32.", "zh": "32 份專案規則檔中，32 份從已簽章的套件載入後雜湊值與規則都相同，且簽章驗證通過；32 份竄改過的副本中，32 份被拒絕。完全不檢查的載入器只會拒絕 32 份中的 0 份。"},
      "command": "python tools/wp1_roundtrip_kpi.py",
      "src": ["docs/data/wp1_roundtrip.json#kpi.round_trip", "docs/data/wp1_roundtrip.json#kpi.tamper_refusal", "docs/data/wp1_roundtrip.json#null_accept_everything.tamper_refusal"]
     },
     {
      "title": {"en": "Malformed policies refused", "zh": "拒絕寫錯的規則檔"},
-     "text": {"en": "All 35 deliberately malformed policies in the negative test set are refused (35/35). The loader as it was on 5 Oct 2026 refused 20/35, and a loader that checks nothing refuses 0/35.", "zh": "負面測試集中刻意寫錯的 35 份規則檔全部被拒絕（35/35）。2026 年 10 月 5 日當時的載入器只拒絕 20/35，完全不檢查的載入器則拒絕 0/35。"},
+     "text": {"en": "All 39 deliberately malformed policies in the negative test set are refused (39/39). The loader as it was on 5 Oct 2026 refused 20/35 of the cases the set then held, and a loader that checks nothing refuses 0/39.", "zh": "負面測試集中刻意寫錯的 39 份規則檔全部被拒絕（39/39）。2026 年 10 月 5 日當時的載入器對當時集中的案例只拒絕 20/35，完全不檢查的載入器則拒絕 0/39。"},
      "command": "python tools/wp1_roundtrip_kpi.py",
      "src": ["docs/data/wp1_roundtrip.json#kpi.negative_refusal", "docs/data/wp1_roundtrip.json#null_2026_10_05.negative_refusal", "docs/data/wp1_roundtrip.json#null_accept_everything.negative_refusal"]
     },
