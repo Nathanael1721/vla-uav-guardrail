@@ -28,8 +28,10 @@ verdicts were folded into the Shield's evaluator (WP3-22 and X-13, DRIFT to
 PARTIAL), the Shield node's buffer and index were conformed (WP3-23), and
 every shipped policy became WGS84 with a lazy local view, distance_envelope
 was enforced and MSL given a ground source (WP1-14: DRIFT to PARTIAL; WP1-07,
-X-11 still PARTIAL, with less open).
-**49 DONE, 80 PARTIAL, 6 DRIFT, 1 MISSING.** DONE means the code
+X-11 still PARTIAL, with less open). On 6 Nov `scope` became a required
+field (IR schema 4.0.0), the last of the four ConstraintBase fields the
+grant requires, and every shipped rule states it (WP1-01: PARTIAL to DONE).
+**50 DONE, 79 PARTIAL, 6 DRIFT, 1 MISSING.** DONE means the code
 or the artefact the grant names exists and matches the grant's words; it
 never means KPI-grade.
 
@@ -111,11 +113,11 @@ the subsections are written from.
 
 - 4.1 WP1 Policy DSL and IR: 25 obligations. The IR with a spatial index,
   fences, corridors, time windows, breach actions, priorities, layered
-  merge, ingest tools and the round-trip KPI are DONE. Not as the grant
-  words them: ConstraintBase lets the grant's required fields default
-  (WP1-01), the lint normalises no ring direction, takes no holes and checks
-  only altitude-band conflicts (WP1-02), and the 20 July gate was missed
-  (WP1-21). Since 3 Nov every shipped policy is stored and hashed in WGS84
+  merge, ingest tools and the round-trip KPI are DONE. ConstraintBase
+  requires the grant's four fields since IR schema 4.0.0 (6 Nov; scope was
+  the last, WP1-01), and since 2 Nov rings are stored in canonical order and
+  the lint refuses hard corridors no flight can be inside (WP1-02). Not as
+  the grant words it: the 20 July gate was missed (WP1-21). Since 3 Nov every shipped policy is stored and hashed in WGS84
   with a lazily computed local view (WP1-14; a metre document still loads,
   as the legacy read form) and distance_envelope is enforced for buildings,
   roads and the tracked person (WP1-07). Open: the signing authority
@@ -242,7 +244,7 @@ Each deviation, the grant text it departs from, and its state:
 |---|---|---|---|
 | WP1-25, WP2-19, X-06 | Python 3.11+ | 3.10 (the Jetson's JetPack Python, and the AerialVLA stack) | PI said follow the grant (6 Oct): run the stack on 3.11+ in the Orin container, or a written acceptance |
 | WP1-14 | WGS84 canonical, AGL default, ENU/NED computed lazily | since 3 Nov all 32 policies are stored and hashed in WGS84 with a stated origin, the local metres a lazy per-origin view (IR 3.1.0), MSL an opt-in with a ground; a metre document still loads (the legacy read form; also what REST, the Shield's zone edits and the harness's spawned zones write) | conformed for the stored policies (tools/convert_policies_wgs84.py, CHANGELOG 2026-11-03 (F)); deviation 1 now covers only the metre read form: convert metre input at ingest, or record it |
-| WP1-01 | ConstraintBase: constraint_type, scope, priority, violation_action required | since IR schema 3.0.0 (2 Nov) constraint_type, priority and violation_action are required and the action is one of the grant's six ('repair' is read as project_fix); `scope` still defaults to absent | make `scope` required (an IR bump), or a written waiver for it |
+| WP1-01 | ConstraintBase: constraint_type, scope, priority, violation_action required | since IR schema 3.0.0 (2 Nov) constraint_type, priority and violation_action are required and the action is one of the grant's six ('repair' is read as project_fix); since IR schema 4.0.0 (6 Nov) `scope` too: a rule without it is refused at every DSL entry, every shipped rule states `scope: mission` (scope follows the authoring layer, and every shipped rule is a mission-layer rule), and a stored document of an earlier era is read in its own era, scope absent, so it re-derives its recorded hash | closed 6 Nov: conformed (IR bump), no waiver (docs/IR-MIGRATIONS.md, the 4.0.0 row) |
 | WP1-21, WP3-01, ARCH-15, ARCH-17 | dated gates: mid-term 2026-07-20, G1 2026-06-30 | IR committed 2026-10-06; ROS 2 Shield node from 2026-08-19/24; G1 passed 2026-10-08 over SIM_AirSim JSON, not HIL_* | state the actual dates; a PI ruling on G1's swap rule |
 | WP3-04, ARCH-04 | body-frame action, one body-to-NED boundary in the adapter, repairs in the VLA's frame | repairs act in a world (North/East) frame; the conversion is in the Shield node, the adapter and three more modules | re-frame the Shield, or a written acceptance |
 | WP3-11 | audit fields raw_action / emitted_action (body), category 'geometric', repair_attempts ok/skip, file shield_audit.jsonl | since 2 Nov (audit record version 4) the grant's names carry the grant's content; this project's world-frame actions, finer category and repair records are raw_action_world / emitted_action_world, rule_category and repair_results; every rail writes shield_audit.jsonl | closed 2026-11-02; stored runs keep audit.jsonl in versions 1-3, read through guardrail.audit.upgrade_record |
@@ -250,7 +252,7 @@ Each deviation, the grant text it departs from, and its state:
 | WP4-13 | exporters: rosbag2 to JSONL / Parquet, action.executed = what MAVROS published | since 2 Nov the exporter reads the run's rosbag2 (with `rosbags`) and takes action.executed from /mavros/setpoint_raw/local; without a bag (every rail but the ROS 2 one), without `rosbags` or headless it falls back to the flight log's verdict, labelled on every step | the bag path ran on real bags on 3 Nov (rosbags 0.10.11 in a WSL venv): 4 stored ROS 2 runs, executed from the bag, every comparable tick agreeing with the flight log; `rosbags` is still not in vla-real |
 | WP1-07 | distance_envelope to people, buildings, roads | since 3 Nov enforced through the clearance runtime (buildings: obstacle map; roads: the street mask as a road map) and the stand-off runtime (people: the tracked subject while it is a person) | people other than the tracked subject: the Shield knows one subject - a perception feed of every person, or a recorded limit |
 | WP2-16 | multi-scale geometry, P0Entry.geometry_ref: "The Prefix Compiler picks the scale, never re-computes" | the fine / coarse / bbox scales are computed in one place (guardrail/ir.py) from the IR's polygons, deterministically, when the policy is compiled or loaded; the compiler reads them there and never re-computes them (since 8 Oct); since 2 Nov the bundle ships them (multiscale.json, its digest in the signed manifest) and a bundle-loaded policy compiles its CSP from them | closed 2 Nov: the bundle ships the scales |
-| WP1-22, X-09 | IR shape frozen at end of Q1, every later change version-bumped | every post-freeze IR change has a row in docs/IR-MIGRATIONS.md; since 2 Nov any IR-shape change, additive included, is refused until IR_SCHEMA_VERSION rises (2.2.0 versioned `locked_by`; 3.0.0 the required fields) | closed 2 Nov |
+| WP1-22, X-09 | IR shape frozen at end of Q1, every later change version-bumped | every post-freeze IR change has a row in docs/IR-MIGRATIONS.md; since 2 Nov any IR-shape change, additive included, is refused until IR_SCHEMA_VERSION rises (2.2.0 versioned `locked_by`; 3.0.0 the required fields; 3.1.0 optional x / y; 4.0.0 a required `scope`) | closed 2 Nov |
 | X-05, ARCH-25 | observations reach the VLA at ≥ 10 Hz | the detector runs 2-9 Hz depending on host; a VLA decision takes 0.5-1.2 s on the desktop GPU (9.6 s for DroneCATS int4 on the Orin Nano) | G3 ruling (12 / 21 Oct, Q3) |
 | ARCH-08 | AP_DDS migration (Q3, optional) | not done; MAVROS 2 is the bridge | deferred: one sentence in the report |
 | ARCH-16, ARCH-17 | Gazebo Harmonic functional rail at mid-term | first flown end-to-end 2026-11-02, over pymavlink and over MAVROS 2 (dev topology) | late; state actual dates |
@@ -319,11 +321,11 @@ applied; regenerate it before the report is written.
 
 ### WP1 - Policy DSL and IR
 
-25 items: 14 DONE, 10 PARTIAL, 1 DRIFT.
+25 items: 15 DONE, 9 PARTIAL, 1 DRIFT.
 
 | ID | Obligation | Status | Evidence | Open |
 |---|---|---|---|---|
-| WP1-01 | YAML/JSON DSL surface with a Pydantic v2 discriminated-union schema | PARTIAL | guardrail/models.py grant form; tests/test_policy_dsl_grant_form.py; since IR schema 3.0.0 (2 Nov) constraint_type, priority and violation_action are required and the action is one of the grant's six (CHANGELOG 2026-11-02, Policy DSL) | `scope` is still optional where the grant requires it (the other three fields of the 29 Oct review are closed) |
+| WP1-01 | YAML/JSON DSL surface with a Pydantic v2 discriminated-union schema | DONE | guardrail/models.py grant form; tests/test_policy_dsl_grant_form.py; since IR schema 3.0.0 (2 Nov) constraint_type, priority and violation_action are required and the action is one of the grant's six (CHANGELOG 2026-11-02, Policy DSL); since IR schema 4.0.0 (6 Nov) `scope` is required too, so all four ConstraintBase fields are, as the grant writes them: refused when missing or null at every DSL entry (test_every_rule_must_state_its_scope; policies/negative/missing_scope.yaml), `scope: mission` on all 154 shipped rules (32 files, each re-versioned, lock `migrated_from` with old_hash_form sha256-canonical-v3/ir-3.x), stored documents of earlier eras read in their era with their recorded hashes (test_a_document_from_before_ir_4_reads_and_hashes_as_stored; docs/IR-MIGRATIONS.md; CHANGELOG 2026-11-06 (IR 4.0.0)) | None. Scope is declared: the Shield enforces every rule over the whole flight, so a narrower scope is enforced more widely than written, never less. |
 | WP1-02 | Validation behaviour and rule-consistency lint (normalise geometry, lint alt_min<alt_max, conflicting hard rules, valid_time well-formed) | DONE | CHANGELOG 2026-10-07 Changed (negative corpus 35/35 refused); guardrail/models.py lint and conflicting-hard-rule check; since 2 Nov rings are stored in canonical order (canonical_ring_order: positive winding, smallest point first; the hash no longer depends on vertex order) and the lint refuses a hard corridor no flight can be inside and two disjoint hard corridors (policies/negative/corridor_inside_nfz.yaml, disjoint_hard_corridors.yaml) | - (holes: the grant's schema has none; the GeoJSON importer refuses them) |
 | WP1-03 | IR / AST: a typed, indexed in-memory form with spatial index and multi-scale geometry, consumed by Compiler and Shield | DONE | guardrail/ir.py STRtree + coarse/fine geometry; tests/test_ir.py; CHANGELOG 2026-10-06/-07/-13 (check 0.30-0.45 ms at 50 rules, desktop) | Orin-side timing is tracked under X-07. |
 | WP1-04 | Signed policy bundle (hash + semver) as the deployable artefact | PARTIAL | guardrail/bundle.py Ed25519 (lab-dev key), 64-hex hash, policies/policy.lock.json; every rail incl. the city rail flies the signed bundle by default since 2026-10-22 (Jetson metrics policy_source kind=bundle) | Signing authority (lab CA vs ITRI CA) not named; swap the key in policies/keys/trusted_signers.json once named. |

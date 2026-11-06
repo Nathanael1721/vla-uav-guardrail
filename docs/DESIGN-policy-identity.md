@@ -347,3 +347,46 @@ and content; the other 10 (ros2_hotapply_*, ros2_action_*,
 gazebo_shield_on_dynamic_20261102) changed their policy in flight and resolve
 through their own generation chain (`manifest.resolve_run_generation_chain`),
 10 of 10 with either code. Every one of the 19 bundles there verifies.
+
+## 11. Scope required (2026-11-06, IR schema 4.0.0, WP1-01)
+
+The grant's ConstraintBase requires `scope`; it was optional here, absent in
+every shipped policy, and an absent scope meant "mission". Making it required
+is a breaking change for every writer (IR schema 4.0.0), and every policy
+file's content changed (each states `scope: mission` on every rule now), so
+each raised its patch version, as section 4 requires. What keeps every stored
+document readable, and every stored run traceable:
+
+* **A stored document is read in its own era.** `models.era_context(v)` is
+  the validation context under which a document of IR schema `v` before 4.0.0
+  - or of a format that records no version - may leave `scope` out; it stays
+  absent (None), so the canonical bytes, and every hash form, are the ones
+  recorded. `effective_scope` reads the absence as "mission". The readers of
+  stored artefacts pass it: `check_bundle` (the manifest's
+  `ir_schema_version`), `derive` (the recipe's), `read_replay` (the replay's
+  policy manifest), the run readers (`generation_table`,
+  `resolve_run_generation_chain`: a run's policy_g<N>.json records no
+  version). Without that context - every ingest, every rule built in code - a
+  missing or null scope is refused.
+* **The old version is the file with scope left out.** `Policy.ir3_form()`
+  drops every rule's scope and changes nothing else (the given ring order and
+  the points' frame are kept). At the old version its canonical bytes are the
+  old file's, checked for all 32: the old entry's 64-hex hash, IR 2.x forms
+  and 16-hex forms. Each new lock entry says `migrated_from` the old one with
+  `migration.old_hash_form` `sha256-canonical-v3/ir-3.x` (`bundle.IR3_FORM`),
+  `bundle.rewind` reads it back that way, and `check_lock` re-proves every
+  link. `policy_candidates` walks the chain one more step (scope stated ->
+  WGS84 without scope -> metres at 3.0.0 -> metres at 2.x).
+* **A manifest names the schema its IR is a document of.** Since 4.0.0
+  `manifest_for` records `Policy.ir_schema_version`: 4.0.0 for a policy that
+  states every scope, 3.1.0 for one of an earlier era that leaves it out (the
+  two shapes differ only in that requirement). A run of an earlier era packed
+  again (a replay bundle, a re-bundled old policy) is then read in its era,
+  where recording the writer's version would have made it unreadable.
+
+Measured (6 Nov, read-only, the lab checkout's gitignored stores with this
+code): 36 of its 36 bundles open - 31 flight bundles written under IR
+schema 2.1.0 (8), 3.0.0 (10) and 3.1.0 (13), every signature verified, each
+under the hash its manifest records (24 under the current scheme, 8 under
+their IR 2.x form), and 5 replay bundles (4 tracked, 16-hex; hil_smoke_03) -
+171 rules, every scope absent as written.

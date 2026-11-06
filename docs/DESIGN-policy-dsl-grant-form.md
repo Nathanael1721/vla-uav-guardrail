@@ -44,11 +44,34 @@ stored hash moved.
 | `altitude_min_m` / `altitude_max_m` (worked example), `alt_min` / `alt_max` (taxonomy table) | `alt_min_m` / `alt_max_m` |
 | `speed_max`, `climb_rate_max`, `turn_rate_max` | `speed_max_mps`, `climb_rate_max_mps`, `yaw_rate_max_dps` |
 | `violation_action`: the six grant actions | `repair` (kept, an alias of `project_fix`) |
-| `scope`, `layer`, `altitude_ref`, `issued_at`, `layers_merged` | absent |
+| `constraint_type`, `scope`, `priority`, `violation_action` | the same, required in both forms |
+| `layer`, `altitude_ref`, `issued_at`, `layers_merged` | absent |
 
 Writing one field twice (under both names, or inside and beside `geometry`) is
 refused, not resolved. `Policy.to_grant_form()` produces the grant's form
 (`python -m guardrail.bundle export`).
+
+**The grant's ConstraintBase fields have no default, in either form.**
+`constraint_type`, `priority` and `violation_action` since IR schema 3.0.0
+(2026-11-02; they defaulted to hard / P0 / `repair`), `scope` since 4.0.0
+(2026-11-06, WP1-01; an absent scope meant "mission", the reference's
+default). A rule that leaves one out, or writes a null scope, is refused by
+name at every DSL entry: a policy file, a REST rule body (422), a rule built
+in code, a lock recipe or a bundle written under 4.0.0. Every shipped policy
+states `scope: mission` on each of its 154 rules, by one rule: scope follows
+the layer that authored the rule - a regulation- or site-layer rule applies to
+every mission flown under it (`global`), a mission-layer rule to its mission
+(`mission`), `segment` / `waypoint` only to a rule written for part of a
+mission - and every shipped rule is a mission-layer rule written for its
+file's mission. The GeoJSON importer keeps its own defaults, `layer: site`
+with `scope: global`, by the same rule. A STORED document of an earlier era
+(an older bundle, a run's records, a lock recipe, a replay bundle) is read in
+its own era (`models.era_context`): scope stays absent where it wrote none, so
+it re-derives the hash it recorded, and `effective_scope` reads the absence as
+"mission", what it meant then (docs/IR-MIGRATIONS.md, the 4.0.0 row). Scope is
+declared, not enforced differently: the Shield enforces every rule over the
+whole flight, so a narrower scope is enforced more widely than written, never
+less.
 
 A `geometry:` block is filled with the reference's defaults for what it omits -
 altitude band 0-200 m and no margin ring - because that is what the same block
@@ -422,10 +445,15 @@ What still differs, precisely:
    `altitude_cieling_m: 40` is dropped and the ceiling stays at its 200 m
    default) and accepts `version: banana`, duplicate rule ids and MSL. This
    code refuses the first three and refuses MSL for flight.
-4. **Defaults of an omitted field in an authored file.** priority: P0 here, P1
-   in the reference. constraint_type and violation_action are required by the
-   reference and default to hard / repair here. Bundled IRs carry every value,
-   so cross-loaded bundles are unaffected.
+4. **Defaults of an omitted field in an authored file.** None here for the
+   four ConstraintBase fields the grant requires: constraint_type, priority
+   and violation_action since IR schema 3.0.0 (they defaulted to hard / P0 /
+   repair), scope since 4.0.0 (an absent scope meant "mission"). The reference
+   requires constraint_type and violation_action and defaults priority to P1
+   and scope (and layer) to "mission", so a document it reads without a
+   priority or a scope is refused here, naming the field. Bundled IRs carry
+   every value (this project's since 4.0.0 states scope; the reference's
+   writes every default), so cross-loaded bundles are unaffected.
 5. **Margin.** A fence here may carry `margin_m`, a detection ring; the
    reference has none (its repair pushes 1 m outward). A grant-shaped fence
    gets margin 0 here, so both detect at the drawn boundary.
