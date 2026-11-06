@@ -55,6 +55,7 @@ import copy
 import hashlib
 import ipaddress
 import json
+import math
 import sys
 from dataclasses import dataclass
 from pathlib import Path, PureWindowsPath
@@ -383,11 +384,71 @@ def select_vla_cameras(cfg: dict, on: bool) -> dict:
     return cfg
 
 
-def render_robot_config(template: dict, plan: NetworkPlan, vla_cameras: bool = False) -> dict:
+# THE DETECTOR'S CAMERA'S CAPTURE INTERVAL (2026-11-06). FrontCamera (the
+# detector's 768x432 scene and depth captures, and the front frame a VLA
+# served with --front-source detector reads) captures every 0.1 s in the
+# template. A run may render another interval (perception_node
+# --front-capture-interval-s: 0.066 s is about 15 Hz) to measure whether the
+# observation reaching the VLA, and the simulator's real-time factor, hold at
+# a faster capture; the template is never changed, and the rendered value is
+# recorded with the run (sim_config.front_capture_interval_s). Bounded to
+# (0, 1] s: a value in milliseconds typed as seconds would otherwise render a
+# camera that captures once a minute.
+FRONT_CAMERA_ID = "FrontCamera"
+MAX_CAPTURE_INTERVAL_S = 1.0
+
+
+def capture_interval(cfg: dict, sensor_id: str) -> float | None:
+    """The `capture-interval` (s) of the sensor `sensor_id` in a robot config,
+    None when there is no such sensor or it names none."""
+    for s in cfg.get("sensors", []):
+        if s.get("id") == sensor_id:
+            v = s.get("capture-interval")
+            return None if v is None else float(v)
+    return None
+
+
+def set_capture_interval(cfg: dict, sensor_id: str, interval_s: float) -> dict:
+    """`cfg` with the sensor `sensor_id` capturing every `interval_s`
+    seconds, in place; returns `cfg`. ValueError for an interval outside
+    (0, MAX_CAPTURE_INTERVAL_S] or a config without that sensor."""
+    try:
+        v = float(interval_s)
+    except (TypeError, ValueError):
+        raise ValueError(f"capture interval {interval_s!r} is not a number of seconds") from None
+    if not (math.isfinite(v) and 0.0 < v <= MAX_CAPTURE_INTERVAL_S):
+        raise ValueError(f"capture interval {interval_s!r} s is not in "
+                         f"(0, {MAX_CAPTURE_INTERVAL_S:g}] s")
+    for s in cfg.get("sensors", []):
+        if s.get("id") == sensor_id:
+            s["capture-interval"] = v
+            return cfg
+    raise ValueError(f"the robot config has no sensor {sensor_id!r}")
+
+
+def _front_interval_record(robot: dict, asked: float | None, attach: bool) -> dict:
+    """What the run records of FrontCamera's capture interval: the value in
+    the config it keeps, and where that value came from."""
+    if asked is None:
+        src = "template"
+    elif attach:
+        src = ("--front-capture-interval-s, what the desktop's scene step was told "
+               "(this node only attached; the camera's delivered rate is measured)")
+    else:
+        src = "--front-capture-interval-s"
+    return {"front_capture_interval_s": capture_interval(robot, FRONT_CAMERA_ID),
+            "front_capture_interval_source": src}
+
+
+def render_robot_config(template: dict, plan: NetworkPlan, vla_cameras: bool = False,
+                        front_capture_interval_s: float | None = None) -> dict:
     """The template with this run's two addresses (and AerialVLA's cameras
-    only with `vla_cameras`); refuses a config ArduPilot could not fly rather
-    than handing it to the simulator."""
+    only with `vla_cameras`, FrontCamera's capture interval only when
+    `front_capture_interval_s` is given); refuses a config ArduPilot could not
+    fly rather than handing it to the simulator."""
     cfg = select_vla_cameras(copy.deepcopy(template), vla_cameras)
+    if front_capture_interval_s is not None:
+        set_capture_interval(cfg, FRONT_CAMERA_ID, front_capture_interval_s)
     st = cfg.setdefault("controller", {}).setdefault("ardupilot-settings", {})
     st["ardupilot-ip"] = plan.ardupilot_ip
     st["local-host-ip"] = plan.sim_bind_ip
@@ -413,21 +474,25 @@ def render_scene(template: dict, robot_config_name: str) -> dict:
 def write_sim_configs(out_dir: str | Path, plan: NetworkPlan,
                       scene_path: str | Path = SCENE_TEMPLATE,
                       robot_path: str | Path = ROBOT_TEMPLATE,
-                      vla_cameras: bool = False) -> dict:
+                      vla_cameras: bool = False,
+                      front_capture_interval_s: float | None = None) -> dict:
     """Render this run's scene + robot config into `out_dir` (plain JSON, so
     any JSONC reader accepts them) and return where they went and their hashes.
 
     The directory is what `World(client, scene_name, sim_config_path=...)`
     reads, so the configs the simulator receives are the files kept with the
     run - evidence, not a reconstruction. `vla_cameras`: whether AerialVLA's
-    cameras are in it (select_vla_cameras), recorded as such.
+    cameras are in it (select_vla_cameras), recorded as such;
+    `front_capture_interval_s`: FrontCamera's capture interval when it is not
+    the template's (FRONT_CAMERA_ID), recorded with where it came from.
     """
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
     scene_t = load_jsonc(scene_path)
     robot_t = load_jsonc(robot_path)
     robot_name = Path(robot_path).name
-    robot = render_robot_config(robot_t, plan, vla_cameras=vla_cameras)
+    robot = render_robot_config(robot_t, plan, vla_cameras=vla_cameras,
+                                front_capture_interval_s=front_capture_interval_s)
     scene = render_scene(scene_t, robot_name)
     scene_file = out / Path(scene_path).name
     robot_file = out / robot_name
@@ -447,13 +512,15 @@ def write_sim_configs(out_dir: str | Path, plan: NetworkPlan,
             "home": list(home_geo_point(scene)),
             "clock_ratio": scene_clock_ratio(scene),
             "vla_cameras": bool(vla_cameras),
+            **_front_interval_record(robot, front_capture_interval_s, attach=False),
             "network": plan.to_dict()}
 
 
 def write_attach_configs(out_dir: str | Path,
                          scene_path: str | Path = SCENE_TEMPLATE,
                          robot_path: str | Path = ROBOT_TEMPLATE,
-                         vla_cameras: bool = False) -> dict:
+                         vla_cameras: bool = False,
+                         front_capture_interval_s: float | None = None) -> dict:
     """The configs a node that ATTACHES to an already-loaded scene keeps.
 
     The hil node on the Jetson Orin must not load the scene: a reload resets
@@ -463,12 +530,16 @@ def write_attach_configs(out_dir: str | Path,
     marked "attach" instead of inventing addresses. The scene id, home point,
     clock and sensors - everything the node reads - are the template's
     (AerialVLA's cameras only with `vla_cameras`: what the node expects the
-    desktop to have loaded; perception_node checks the live topics).
+    desktop to have loaded; perception_node checks the live topics; and
+    FrontCamera's capture interval only with `front_capture_interval_s`, what
+    the desktop's scene step was told: the node measures what arrived).
     """
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
     robot_name = Path(robot_path).name
     robot = select_vla_cameras(load_jsonc(robot_path), vla_cameras)
+    if front_capture_interval_s is not None:
+        set_capture_interval(robot, FRONT_CAMERA_ID, front_capture_interval_s)
     problems = check_robot_config(robot)
     if problems:
         raise ValueError("robot template cannot be flown by ArduPilot: "
@@ -491,6 +562,7 @@ def write_attach_configs(out_dir: str | Path,
             "home": list(home_geo_point(scene)),
             "clock_ratio": scene_clock_ratio(scene),
             "vla_cameras": bool(vla_cameras),
+            **_front_interval_record(robot, front_capture_interval_s, attach=True),
             "network": net}
 
 
@@ -673,6 +745,8 @@ def main(argv: list[str] | None = None) -> int:
     p_r.add_argument("--network", default="nat")
     p_r.add_argument("--windows-ip", default=None)
     p_r.add_argument("--wsl-ip", default=None)
+    p_r.add_argument("--front-capture-interval-s", type=float, default=None,
+                     help="FrontCamera's capture interval (default: the template's)")
     a = ap.parse_args(argv)
 
     if a.cmd == "home":
@@ -693,7 +767,8 @@ def main(argv: list[str] | None = None) -> int:
             print(x)
     elif a.cmd == "render":
         plan = plan_network(a.network, a.windows_ip, a.wsl_ip)
-        print(json.dumps(write_sim_configs(a.out, plan), indent=2))
+        print(json.dumps(write_sim_configs(
+            a.out, plan, front_capture_interval_s=a.front_capture_interval_s), indent=2))
     return 0
 
 
