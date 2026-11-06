@@ -33,7 +33,8 @@
 #   # 0. dry run: every flight's prompt, tokens, CSP hash and configuration,
 #   #    no model, no simulator (seconds)
 #   pwsh -File tools\run_csp_flights.ps1 -Prefix cspab_20261107 -DryRun
-#   # 1. one flight first, to see the rail work end to end (~6-8 min)
+#   # 1. one short A/B pair first (2 flights of 30 s), to see the rail work end
+#   #    to end (~10-15 min)
 #   pwsh -File tools\run_csp_flights.ps1 -Prefix cspsmoke_20261107 -Phase ab -Seeds 1001 -MaxS 30
 #   # 2. the campaign: 6 A/B flights then 8 paraphrase flights, scored at the end
 #   pwsh -File tools\run_csp_flights.ps1 -Prefix cspab_20261107

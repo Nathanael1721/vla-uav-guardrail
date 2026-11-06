@@ -1045,7 +1045,7 @@ the GPU, no `tools/ci_local.py` running):
 
     # dry run: every flight's prompt, tokens, CSP content hash and configuration
     pwsh -File tools\run_csp_flights.ps1 -Prefix cspab_20261107 -DryRun
-    # one flight first (about 6-8 min)
+    # one short A/B pair first (2 flights of 30 s, about 10-15 min)
     pwsh -File tools\run_csp_flights.ps1 -Prefix cspsmoke_20261107 -Phase ab -Seeds 1001 -MaxS 30
     # the campaign: A/B off/on x seeds 1001-1003, then 4 verb_phrase + 4 utterance
     # paraphrases with the CSP on, each flight from a restarted simulator (1.2-2 h)
