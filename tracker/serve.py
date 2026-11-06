@@ -361,6 +361,25 @@ class Handler(SimpleHTTPRequestHandler):
     def _forbidden(self, why: str):
         return self._json({"error": f"refused: {why}"}, HTTPStatus.FORBIDDEN)
 
+    def _drain_body(self) -> None:
+        """Read and drop a refused POST's body, unparsed. The verdict never
+        depends on it (every check runs first, on the headers alone); it is
+        drained only so the refusal reaches the client: a socket closed with
+        unread bytes is reset, and on Windows the client's read then fails
+        with WSAECONNABORTED (10053) before it sees the 403 or 404 (1 call in
+        4 in tests/test_tracker_serve.py on 2026-11-07, whenever the body
+        arrived after the request line had been read). A body with no usable
+        length or over MAX_STATE_BYTES is left unread."""
+        try:
+            n = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            return
+        if 0 < n <= MAX_STATE_BYTES:
+            try:
+                self.rfile.read(n)
+            except OSError:
+                pass
+
     def do_HEAD(self):
         why = self._refusal()
         if why:
@@ -403,10 +422,13 @@ class Handler(SimpleHTTPRequestHandler):
     def do_POST(self):
         path = urlsplit(self.path).path
         if path != "/api/state":
+            self._drain_body()
             return self.send_error(HTTPStatus.NOT_FOUND)
-        # Checked before the body is read (module docstring).
+        # Checked before the body is read (module docstring); a refused body
+        # is then drained unparsed, so the refusal is delivered.
         why = self._refusal(require_json=True)
         if why:
+            self._drain_body()
             return self._forbidden(why)
         try:
             n = int(self.headers.get("Content-Length") or 0)
