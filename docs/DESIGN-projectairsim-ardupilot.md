@@ -401,20 +401,39 @@ Expected in `~/sitl-run/pas/sitl.log` (ArduPilot's own lines):
 
 Leave Mission Planner passive during a run. A mode change there is recorded as the autopilot taking the aircraft, and the node then stops commanding.
 
-**hil, the node on the Jetson Orin** (after the Orin is set up as in [RUNBOOK-orin-hil.md](RUNBOOK-orin-hil.md); MAVROS on the Orin):
+**hil, the node on the Jetson Orin** (after the Orin is set up as in [RUNBOOK-orin-hil.md](RUNBOOK-orin-hil.md)).
+
+The layout on the AGX Orin (2026-11-06): MAVROS 2 runs in the companion container (`deploy/compose/docker-compose.orin.yml`, service `mavros`, its `FCU_URL` from `deploy/topologies/hil.env`), as on the ROS 2 rail's hil runs. The perception node runs natively on the Orin's host, beside it on one ROS 2 graph: its detector (OWL-ViT) and the VLA client's frame pipeline need the GPU and torch, and the Project AirSim client, which the companion image never carries ([DESIGN-topologies.md](DESIGN-topologies.md), decision 2). On the host the node uses ROS 2 Jazzy's rclpy and mavros_msgs from apt, and the `~/vla-drone-env` environment (`deploy/orin/agx_vla_env.sh`). `deploy/orin/run_pas_perception.sh` takes the graph from `hil.env` (ROS_DOMAIN_ID, RMW_IMPLEMENTATION, the Cyclone DDS peers, and MAVROS's FCU URL as `MAVROS_FCU_URL`, which the link record falls back to) and starts the node.
+
+The VLA follow flown by the lab's own AIOT-VLA (`--pilot vla --mission follow`), in this order:
 
 ```powershell
 # desktop, in this order
-.\scripts\run_pas_ardupilot.ps1 -Step scene                 # loads CityLife + the ArduPilot robot, leaves it running
-.\scripts\run_pas_ardupilot.ps1 -Step sitl -Orin <orin-ip>  # ArduPilot AFTER the scene; router adds a UDP output to the Orin
+.\scripts\run_pas_ardupilot.ps1 -Step scene -VlaCameras        # CityLife + the ArduPilot robot with the VLA cameras, left running
+                                                               # (add -FrontCaptureIntervalS 0.066 for FrontCamera at about 15 Hz)
+.\scripts\run_pas_ardupilot.ps1 -Step sitl -Orin 10.42.0.3     # ArduPilot AFTER the scene; the router adds a UDP output to the Orin
 ```
 
 ```bash
-# Jetson Orin
-ros2 run mavros mavros_node --ros-args -p fcu_url:=udp://:14555@<desktop-ip>:14555 &
-python3 demo/pas_ardupilot/perception_node.py --link mavros --scene-mode attach \
-    --sim-host <desktop-ip> --g1-verdict <copy of the desktop's g1_verdict.json>
+# AGX Orin, in this order
+docker compose --env-file deploy/topologies/hil.env \
+    -f deploy/compose/docker-compose.orin.yml up -d mavros
+~/vla-drone-env/bin/python demo/vla_server_foreign.py serve --model aiotvla \
+    --weights ~/models/aiotvla/v10b --port 8791 --front-source detector --horizon-s 0.5 &
+G1_VERDICT=~/g1_verdict.json TAG=pas_hil_aiot_01 bash deploy/orin/run_pas_perception.sh
+#   FRONT_CAPTURE_INTERVAL_S=0.066 as well when the scene step was given it
 ```
+
+The script runs `perception_node.py --link mavros --scene-mode attach --sim-host <hil.env DESKTOP_IP> --g1-verdict ... --pilot vla --mission follow --vla-server 127.0.0.1:8791 --vla-front-source detector --vla-step-as-rate 0.5 --vla-rate-yaw rate --cadence pipelined --allow-unstamped-pipelined --vla-cruise-mps 4.5 --vla-speed-cap-mps 5`, the last two being `vla_fly`'s follow speeds. It never passes `--dev-yaml` or `--start-sitl` and refuses both. Before it starts the node it checks the G1 verdict, the maps, ROS 2 and the RMW library, the imports, and the simulator's and the server's ports. The detector pilot runs on the Orin the same way, without the VLA flags: `perception_node.py --link mavros --scene-mode attach --sim-host <desktop-ip> --g1-verdict <copy of the desktop's g1_verdict.json>`, with the same environment.
+
+What the VLA follow records beside the rail's usual records (CHANGELOG 2026-11-06, "perception VLA"):
+
+- `vla_host`, the server's host by its own hello. The VLA is a separate process, so the run is hil only when that host is an Orin too.
+- The object words, recorded as AIOT-VLA's grounding phrase.
+- The follow's configuration, which is `vla_fly`'s own.
+- `vla_observation`: the distinct FrontCamera frames that reached the VLA, per wall second, per sim second and while the pilot was being asked, with the duplicates, the gaps and the hint-gated spans counted apart. This is the grant's 10 Hz observation, measured from what was sent.
+
+**Not flown yet.**
 
 In attach mode the node never loads the scene. It checks that the simulator serves `/Sim/SceneCityLifeArduPilot/robots/Drone1/...` topics, and refuses with "Load it on the desktop first" if not. The named remote in `fcu_url` is what the hil evidence check reads. MAVROS's UDP transport replies to the address the router's packets come from, so replies reach the router even though its source port is not 14555; this has not been run here. The runbook recommends WSL mirrored networking when ArduPilot runs natively in WSL, so the Orin can reach it. Under NAT the router's outbound UDP to the Orin should pass, but that is unverified. The desktop must allow inbound TCP 8989/8990 from the Orin for the camera streams.
 
@@ -426,6 +445,12 @@ Settled by the runs of 2026-10-08 and moved to "Measured 2026-10-08": whether th
 - The MAVROS link (including `request_mode`, `time_reference`, `statustext` and `extended_state`) and the ROS 2 camera source were exercised only against stand-ins, never against a live MAVROS.
 - The `dev` path: no WSL environment holds ROS 2 + MAVROS together with `torch`, `transformers` and the `projectairsim` client yet, so the MAVROS node has not been started in WSL either.
 - The Orin path (`hil`): attach mode against a live simulator, the projectairsim client on aarch64, MAVROS's reply path through the router under WSL NAT, and DDS.
+- The VLA follow on hil (2026-11-06, `deploy/orin/run_pas_perception.sh`). Four things have not run:
+  - the perception node on the AGX Orin's host joining the companion container's MAVROS on one ROS 2 graph, with host ROS 2 Jazzy from apt;
+  - AIOT-VLA's server on the Orin answering it;
+  - FrontCamera's frames carried over the cable at 10 to 15 Hz;
+  - whether ArduPilot's real-time factor stays in the band at a 0.066 s capture interval.
+  It is tested with the rail's stand-ins and a scripted protocol-v2 server only.
 - The KPI-evidence step (`guardrail.replay.kpi_evidence_grade`, which demotes a graded run whose replay bundle lacks a trusted signature) is wired as on the SITL rails but has never been reached. G1 has passed, but every live run so far (2026-10-08 to 2026-10-14) used pymavlink, which is offered no grant label. Since 93dcb10 (2026-10-13) `build_manifest()` accepts `dev`/`hil` beside a scene whose robot config it reads as `ardupilot-api`, but only on live MAVROS evidence (an `fcu_url`, no pymavlink link; `hil` also needs the Orin's evidence), and no MAVROS run exists on this rail yet.
 - Land on this rail. On the live follow of 2026-10-08 the escalation FSM reached Loiter 8 times and never RTL or Land (what Loiter did to the altitude is defect (c) above). RTL has flown since: X7 sent the aircraft home on 2026-10-13 and 2026-10-14. Land is still tested with stand-ins only.
 - Tracking on this rail. The Shield-off control, which the follow's P0 escape rate needed as its null, was flown on 2026-10-13 and 2026-10-14. What no run has shown yet is the detector on the car: it boxed a red traffic signal, and the rail had no start gate (see "Flown 2026-10-13"). The gate exists since 2026-10-21 (see "The perception node") and has not flown.
