@@ -2845,7 +2845,7 @@ def test_a_rail_step_is_judged_under_the_rules_of_the_instant_before():
     sh.filter(State(x=-50.0, y=-50.0, up=15.0), Action4D())
     sh.hot_apply(as_dynamic_nfz(PolygonFence(
         id="dyn-top", type="polygon_fence", constraint_type="hard", priority="P0",
-        violation_action="project_fix", margin_m=1.0,
+        violation_action="project_fix", scope="mission", margin_m=1.0,
         vertices=[XY(x=-5, y=-5), XY(x=5, y=-5), XY(x=5, y=5), XY(x=-5, y=5)])))
     gens = {0: pol, 1: g1}
     old = [dict(r, generation=(1 if i >= 2 else 0)) for i, r in enumerate(rows)]
@@ -2972,7 +2972,8 @@ def test_the_hil_backend_flies_each_scenario_through_its_rig_and_scores_it():
         assert ("restart_sitl", S.sitl_home(BY_ID["speed-cap"], pol)) in rig.calls
         assert ("push", f"{S.CAMPAIGN_DIR}/tst1_002_speed-cap") in rig.calls
         args = runs[1][3]
-        assert _val(args, "--bundle") == "bundles/fase3-sim-demo-v0.1.3.tar.gz"
+        # The policy's own id and version name its bundle (0.1.3 until IR 4.0.0, 0.1.4 since).
+        assert _val(args, "--bundle") == f"bundles/{pol.policy_id}-v{pol.version}.tar.gz"
         assert _val(args, "--expected-hash") == pol.policy_hash
         assert _val(args, "--pilot") == "constant" and "--no-target" in args
         assert runs[1][2] == "on"
