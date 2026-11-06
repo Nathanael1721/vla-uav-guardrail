@@ -425,21 +425,37 @@ def test_an_index_naming_another_policy_than_the_archived_ir_is_refused():
     shutil.rmtree(d, ignore_errors=True)
 
 
+# The four replay bundles git has held since before 2026-10-06.
+LEGACY_TRACKED = {"retarget_demo.replay.tar.gz", "retarget_demo2.replay.tar.gz",
+                  "retarget_fixed.replay.tar.gz", "retarget_smooth.replay.tar.gz"}
+
+
 def test_the_tracked_replay_bundles_still_verify():
     """Four replay bundles are in git, written before 2026-10-06: 16-hex
     policy hash, keyless signature. The identity release must not orphan them.
     On the old-hash code they verified; on the first cut of the new hash they
     all failed ("the index says sha256:083fbd16d33505c3"); they must verify -
-    and say they are unsigned."""
+    and say they are unsigned.
+
+    Since 2026-11-06 the store also keeps KPI evidence (WP1-18: a KPI-grade
+    run's bundle in the tracked store; the first is hil_smoke_03's). Such a
+    bundle is of the current hash form and must verify WITH a trusted
+    signature: an unsigned one is not evidence."""
     tracked = sorted((ROOT / "bundles").glob("*.replay.tar.gz"))
     if not tracked:
         return SKIP
+    names = {b.name for b in tracked}
+    assert LEGACY_TRACKED <= names, sorted(LEGACY_TRACKED - names)
     for b in tracked:
         got = read_replay(b)
-        assert got["hash_form"].startswith("legacy16-"), (b.name, got["hash_form"])
         ok, why = verify_replay(b)
         assert ok, (b.name, why)
-        assert any("UNSIGNED" in w for w in why), (b.name, why)
+        if b.name in LEGACY_TRACKED:
+            assert got["hash_form"].startswith("legacy16-"), (b.name, got["hash_form"])
+            assert any("UNSIGNED" in w for w in why), (b.name, why)
+        else:
+            assert not got["hash_form"].startswith("legacy16-"), (b.name, got["hash_form"])
+            assert not any("UNSIGNED" in w or "UNTRUSTED" in w.upper() for w in why), (b.name, why)
 
 
 def test_the_index_records_which_hash_form_the_episode_carried():
