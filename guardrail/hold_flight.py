@@ -31,7 +31,10 @@ THE MODE MAPPING (what each rail sends; the FSM's words in the record)
 A re-plan while the autopilot already holds (a point that turned illegal)
 asks GUIDED again, flies the new transit, and holds on arrival. A plan that
 moves the hold back in place while a transit is flying holds at once. Every
-other state passes the FSM's own mode request through untouched.
+other state passes the FSM's own mode request through untouched. On the
+FSM's entry tick its own setpoint is the hand-over stop, which a rail streams
+as it always did (a `command` is flown only where the FSM's setpoint is
+"none"); the transit starts on the next tick, as the harness flies it.
 
 TRANSIT. The point is a POSITION target, flown as ArduCopter flies one in
 GUIDED: each axis at the sqrt controller of its remaining distance

@@ -1110,6 +1110,66 @@ def test_the_pymavlink_rail_holds_a_refused_fsm_input_as_brake():
     assert all(r["setpoint"] == "none" for r in rows[4:]), "a faulted rail streamed"
 
 
+def _loiter_at_a_moved_point(east_m: float = 6.0):
+    """Patch: the FSM holds its Loiter (T_recover 20 s; the stand-in's flight
+    to (30, 30) enters it by G3 at 0.1 s, nfz-square's repair over theta),
+    and the hold-point search answers a point `east_m` east of the aircraft -
+    the plan guardrail/hold_flight.py must fly."""
+    from guardrail.fsm import FSMConfig, HoldPoint
+
+    def patch(R):
+        class LongLoiter(R.EscalationFSM):
+            def __init__(self, cfg=None):
+                super().__init__(FSMConfig(t_recover_s=20.0, loiter_timeout_s=60.0))
+        R.EscalationFSM = LongLoiter
+
+        def plan_for(shield, fsm, state, **kw):
+            return HoldPoint("LOITER", "moved", state.x, state.y + east_m, state.up,
+                             legal=True, travel_s=east_m / 4.0, speed_mps=4.0,
+                             climb_mps=2.0, reason="test: a point east")
+        R.holdpoint = types.SimpleNamespace(plan_for=plan_for,
+                                            hold_point_legal=lambda *a, **k: True)
+    return patch
+
+
+def test_the_pymavlink_rail_flies_a_moved_hold_then_holds():
+    """2026-11-07 (guardrail/hold_flight.py, the mode mapping): a Loiter whose
+    hold the search moved is flown in GUIDED to the point - the FSM's LOITER
+    is not sent on entry - and the hold (BRAKE) is sent on arrival. The
+    transit rows keep setpoint "none" (no VLA action flown) and carry
+    `hold_transit`; `--hold-points in_place` holds where the aircraft is, at
+    once, as before."""
+    _, metrics, rows, events, sim, R = _fly_pymavlink_rail(
+        ["--shield", "on"], _loiter_at_a_moved_point())
+    assert metrics["fsm"]["hold_points"]["choice"] == "moved"
+    assert metrics["fsm"]["hold_points"]["moved_transits"] >= 1, metrics["fsm"]
+    g3 = next(r for r in rows if r.get("fsm_edge") == "G3")
+    plans = [e for e in events if e["kind"] == "hold_point"]
+    # The plan's own `kind` is recorded as data_kind (EpisodeRecord.event).
+    assert plans and plans[0]["data_kind"] == "moved" and abs(plans[0]["t"] - g3["t"]) < 1e-6
+    holds = [e for e in events if e["kind"] == "mode_request" and e["mode"] == "LOITER"]
+    assert holds and holds[0]["autopilot_mode"] == "BRAKE", holds
+    tr = [r for r in rows if "hold_transit" in r and r["t"] < holds[0]["t"]]
+    # The entry tick streams the FSM's stop (its hand-over), as the harness
+    # flies it; the transit starts on the next one.
+    assert g3["setpoint"] == "brake" and "hold_transit" not in g3, g3
+    assert tr and abs(tr[0]["t"] - g3["t"] - 0.1) < 1e-6, (tr[0]["t"], g3["t"])
+    assert all(r["setpoint"] == "none" for r in tr), tr[:3]
+    assert all(r["hold_transit"][1] > 0.0 for r in tr), "the transit flew east"
+    flight = [e for e in events if e["kind"] == "hold_flight" and e["t"] <= holds[0]["t"]]
+    assert "GUIDED transit" in flight[0]["note"] and "reached" in flight[-1]["note"], flight
+    assert holds[0]["t"] > tr[-1]["t"], "the hold is sent after the transit"
+    # In place: the old hold, sent on the entry tick, nothing streamed.
+    _, m2, rows2, ev2, _, _ = _fly_pymavlink_rail(
+        ["--shield", "on", "--hold-points", "in_place"], _loiter_at_a_moved_point())
+    assert m2["fsm"]["hold_points"] == {"choice": "in_place", "moved_transits": 0}
+    assert not any("hold_transit" in r for r in rows2)
+    entry = next(r for r in rows2 if r.get("fsm_edge") == "G3")
+    first = next(e for e in ev2 if e["kind"] == "mode_request")
+    assert (first["mode"], first["autopilot_mode"]) == ("LOITER", "BRAKE")
+    assert abs(first["t"] - entry["t"]) < 1e-6, (first, entry["t"])
+
+
 def _zone_on_the_path(at_s: float):
     """Patch: the --dynamic zone put on the straight path to (30, 30) and
     applied `at_s` seconds in. The stand-in, shield off, is inside its

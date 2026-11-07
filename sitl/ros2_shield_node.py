@@ -3164,6 +3164,11 @@ if HAVE_ROS:
                 # states; the default "pass" would have published a setpoint
                 # the row records as flown.
                 setpoint = "none"
+            if setpoint != "none":
+                # The hand-over tick streams the FSM's stop while the mode
+                # goes through (and a stale input's hold its own), as the
+                # harness flies it; a moved hold's transit starts next tick.
+                transit = None
             # After the FSM stepped, with ITS verdict (not a Shield-internal
             # FSM's): the audit and the flight log describe one state machine.
             audit_tick(self.audit, tick_no, decision, fsm_out=fsm_out,

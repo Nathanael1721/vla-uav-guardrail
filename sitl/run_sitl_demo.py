@@ -793,6 +793,10 @@ def main() -> int:
         if fsm_fault is not None:
             setpoint = "none"
             transit = None
+        if setpoint != "none":
+            # The hand-over tick streams the FSM's stop while the mode goes
+            # through, as the harness flies it; the transit starts next tick.
+            transit = None
         # After the FSM stepped, with its verdict: one state machine on record.
         audit_tick(audit, tick, decision, fsm_out=fsm_out, fsm_fault=fsm_fault)
         if shield_on and decision.touched:
