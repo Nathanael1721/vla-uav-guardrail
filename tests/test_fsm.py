@@ -2351,22 +2351,23 @@ def test_a_stop_illegal_only_in_the_forecast_is_not_an_illegal_position():
     sweeping toward a held aircraft) X6 and X7 read a depth that cannot
     fall, so "no progress" held by construction and X6 fired at T. Now their
     clock runs only while the position is PAST a hard limit (depth above
-    0.0, or unknown), and Loiter's hand-back (G8) asks the same of the
-    position. Once the position is past the limit, the clock starts there
-    and X6 still fires T later on no progress; an unknown depth still
-    counts."""
-    # Loiter, request clean, a stop illegal only in the forecast: handed back
-    # at T_recover (was: never acceptable, X6 at 5.2 s).
+    0.0, or unknown). Once the position is past the limit, the clock starts
+    there and X6 still fires T later on no progress; an unknown depth still
+    counts. Loiter's hand-back (G8) keeps the whole `stop_illegal`: GUIDED
+    is not handed back into a sweep (a hand-back on `past_limit` breached
+    the 9 deg/s bar on the ideal vehicle), so such a hold ends by the
+    operator timeout, the grant's G5, or clears once the zone has passed."""
+    # Loiter, request clean, a stop illegal only in the forecast: no X6 (was
+    # X6 at 5.2 s), no hand-back; the operator timeout (G5) at 30.1 s.
     f = EscalationFSM()
     to_loiter_via_g3(f)
     edges = []
-    for t in clock(100, t0=0.2):
+    for t in clock(400, t0=0.2):
         o = f.tick(t, stop_illegal=True, unsafe_depth_m=0.0)
-        assert o.setpoint != "brake", (round(t, 1), o.reason)
         if o.edge:
             edges.append((round(t, 1), o.edge))
             break
-    assert edges == [(2.2, "G8")], edges
+    assert edges == [(30.1, "G5")], edges
     # Brake, a hard rule repaired on every tick, the same forecast-only
     # stop: no X6 in 10 s (was X6 at 5.0 s).
     f = EscalationFSM(FSMConfig(t_recover_s=10.0))

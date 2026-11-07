@@ -1792,16 +1792,17 @@ class EscalationFSM:
         # 0.3 s with small repairs left Loiter by G8 at 2.0 s and cycled
         # G2 / G8 for 30 s instead of reaching G4
         # (test_n_in_t_still_catches_a_pilot_who_re_violates_faster_than_the_debounce).
-        # "Somewhere legal" is the position PAST no hard limit (`past_limit`,
-        # X6's clock), since 2026-11-07: the hold the aircraft is flying is
-        # the autopilot's, and a stop that breaks a rule only later in the
-        # lookahead (a zone sweeping toward a moved, legal hold point) is the
-        # Shield's to answer once the request is handed back, not a reason
-        # to hold until the timeout. dyn-nfz-rotate-spin on the ArduPilot
-        # response: clean from 29.5 s, never handed back, G5 at 34.1 s.
+        # "Somewhere legal" stays `stop_illegal` here, the lookahead included,
+        # unlike X6's `past_limit` (2026-11-07): handing GUIDED back while a
+        # zone is about to sweep over the aircraft is not safe. Tried with
+        # `past_limit`, dyn-nfz-rotate-spin at 9 deg/s on the ideal vehicle
+        # was handed back at 8.4 s, into the bar's sweep, and breached it
+        # once (a move of its own onto a spot the sweep had made unsafe, the
+        # Shield's known limit on a bar spinning that fast); held as before,
+        # it waits for the bar to pass (G8 at 20.1 s, no breach).
         starts_now = hard_violated and not self._prev_hard
         acceptable = (not hard_untrusted and strongest not in ("loiter", "RTL", "land")
-                      and not past_limit and not starts_now)
+                      and not inp.stop_illegal and not starts_now)
         if not acceptable:
             self._loiter_ok_since = None
         elif self._loiter_ok_since is None:
