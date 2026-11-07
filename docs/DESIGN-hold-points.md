@@ -1338,6 +1338,183 @@ rule gave up 6: rotate-spin at 3, 6 and 9 deg/s (each then sent home by X6),
 radius-scaling-grow at 3.3 and -deep (0.8 m off; the outcome the same) and
 this one.
 
+## The Loiter held in GUIDED (2026-11-07, night)
+
+**What the rig showed.** The hil shakedown hs04 at ee356c6 (the give-up fix
+above) flew the nine nightly dyn-nfz-rotate-spin cells: 7 of 9 without a
+fail-safe (@3 3/3, @6 1/3, @9 3/3; P0 0, breaches 0). The two failures,
+@6 seeds 1002 and 1003 (hs04_005, hs04_006), took one path: G3, the moved
+hold reached at 8.2 s, G8 at 10.1 s, G1 at 10.2 s (a 1.89-1.90 m repair,
+theta 2.0), G3 at 10.6 s (2.04 m), an in-place plan at 10.7 s at
+(-190.94, -0.38), X6 at 18.8-18.9 s, RTL; one autopilot keep-out breach
+each. At the hand-over the aircraft moved at (-0.18, -0.05) m/s while GUIDED
+was accelerating it toward the repaired request (2.1, -2.0) m/s; under BRAKE
+(from 10.66 s) it accelerated that way to 0.93 m/s, peaking 1.1 s later, and
+crept on - 1.7 m in 2.2 s, still 0.45 m/s at 2.7 s - off the in-place point
+the search had checked, until the bar's sweep reached it.
+
+**BRAKE's carry, from the logs** (hs04_006 and hs03_004, flight_log.jsonl).
+The velocities under BRAKE fit v(t) = (v0 + (a0 - v0) t) e^(-t) per axis -
+the critically damped response of a velocity PI loop with ArduCopter's
+default gains (PSC_VELXY_P 2, PSC_VELXY_I 1) whose integrator starts at a0,
+the acceleration GUIDED was demanding at the hand-over - with a0 =
+(1.85, -1.74) m/s^2 on hs04_006, the airframe's 2.5 m/s^2 toward the last
+command, and v0 the velocity then: within 0.04 m/s at the twelve
+recorded ticks from 10.7 s to 13.4 s that `tests/test_hold_horizon.py`
+test_brakes_carry_is_the_rigs replays. hs03_004 shows the same backward after
+the transit's -3.5 m/s command (peak -0.49 m/s about 1 s after, 1.0 m). So
+it is not a kinematic target ahead of the aircraft that the lagging vehicle
+catches up with (that would end within about 1 s, braked at BRAKE's
+7.5 m/s^2), but the velocity loop's integrator seeded
+with GUIDED's last acceleration demand and bled off at the loop's own 1 s
+pace, which carries the aircraft about |a0| x 1 s^2 (2.5 m) along the last
+command. (This is read from the logs and the loop's shape, consistent with
+AC_PosControl::init_xy_controller seeding the velocity integrator from the
+active controller's acceleration target; the firmware was not instrumented.)
+
+**The choice: (a), the Loiter held in GUIDED.** The companion keeps
+ArduCopter in GUIDED and streams the transit law (TRANSIT: the sqrt
+controller of the remaining distance, gain 1, 1.75 m/s^2, capped at the
+plan's speed) toward the hold's point on every Loiter tick: to a moved point
+and then on it; on an in-place plan's own point; while a plan is still being
+searched for, on where the aircraft was when the Loiter began. BRAKE is asked
+for only when the companion cannot stream - a stale input (the node's own
+stale holds) or a gap of more than 0.3 s in its own stream
+(`HoldFlight.force_brake`, the PAS rail's forced hand-over,
+`guardrail/response.py HOLD_STREAM_GAP_S`) - and then for the rest of that
+Loiter. Why not (b), the PAS rail's deferred hand-over and reclaim: it hands
+over to BRAKE once BRAKE's predicted stop is legal, and BRAKE's stop is
+exactly what the traces show cannot be predicted from the position and
+velocity alone - it depends on the acceleration demand GUIDED left, and it
+lands 1-2.5 m along the last command, not on the point the search checked;
+each reclaim is another hand-over with its own carry, and the deferral
+(up to 3 s) holds in GUIDED anyway. Held in GUIDED there is no hand-over
+and nothing to predict: the hold is on the checked point. The deviation is
+documented beside "LOITER flown as BRAKE" (docs/DESIGN-ros2-interface.md):
+the FSM's state, edges and set_mode are unchanged and its record still says
+LOITER; the rails record what they flew as `hold_flight` events, and
+`--hold-flight brake` keeps the old flow (`--hold-points in_place` keeps
+ArduCopter's own hold at once). Land and RTL are unchanged.
+
+**Parity.** The harness's rail arm flies its Loiter through the rails' own
+HoldFlight on every tick (`RAIL_HOLD_MODEL`, experiments/sweep_scenarios.py):
+"guided", the GUIDED hold, by default; "brake", the old flow, with BRAKE's
+carry modelled in the rail response (`VehicleResponse.brake`, `BRAKE_PI_P` 2
+and `BRAKE_PI_I` 1, the integrator seeded with the response's shaped
+acceleration). The ideal and ArduPilot arms are unchanged.
+
+**Validation on the nine nightly rotate-spin cells (rail arm).**
+From hs04_006's own hand-over (`tests/test_hold_horizon.py` _hs04_handover:
+the trace's state flown on the rail response), the old flow carries the
+aircraft 1.63 m in 2.2 s - the rig: 1.7 m in 2.2 s - and 2.53 m in all; held
+in GUIDED it overshoots by 0.39 m (its braking) and is back on the point, 0.01
+m off, after 3 s. At the scale of a whole flight the harness does not
+reproduce hs04's two failures. Flown under the old flow with the carry
+("brake"), the nine cells give 6 of 9 without a fail-safe: @3 and @6 pass, and
+@9 fails all three (X7 at 13.0 s, one autopilot breach each), where the rig
+failed @6 twice and passed @9. The harness flies the three seeds of a cell
+identically (the rig's one-in-three on @6 is the rig's own timing, which no
+deterministic model reproduces), its transit to @6's moved point arrives at
+6.8 s where the rig's arrived at 8.2 s, and the G8 after it (8.2 s) needs no
+repair over theta, so hs04's G3 at 10.6 s and the in-place plan that BRAKE
+carried the aircraft off never happen. What it does show is that the carry is
+a hazard in this family: the ee356c6 arm, whose hold was a zero velocity
+command with no carry, passed all nine; with BRAKE's carry 6 of 9 pass; held
+in GUIDED all nine pass, with 0 breaches and 0 autopilot breaches (G8 at 9.6
+s, 9.2 s and 23.7 s for @3, @6 and @9).
+
+**The hand-back margin.** In both failures G8 handed back a request that
+needed a 1.89 m repair (theta 2.0) and 0.4 s later it needed 2.04 m (G3).
+No margin is added. At ee356c6 the rail arm's G8 was never followed by a
+re-escalation within 2 s (0 of 90 nightly, 0 of 18 library); held in GUIDED it
+is (27 of 117 nightly, 7 of 25 library, 4 of 12 smoke): the aircraft now holds
+still on its point, so Loiter's "acceptable" clock runs its 2 s where the old
+hold's drift kept restarting it, and every one of those episodes ends as its
+labels expect, with no breach. A probe that accepts only repairs within 0.9
+theta (a prototype marking a larger repair `handback_unsafe` in Loiter; the
+library, rail arm) moved 4 cells: quick re-escalations 7 -> 4, fail-safes 68
+-> 69, censored 5 -> 4, autopilot breaches 13 -> 13, breaches 0 -> 0. It does
+not hand back more safely, it holds longer: dyn-nfz-rotate-step never hands
+back within its run, gps-dropout (lane 15, window 2-4) runs on to the Loiter
+timeout, wind-within-authority at 5 m/s ends by G5 as at ee356c6, and only
+dyn-nfz-translate (variant 0, 1 m/s) loses a re-trigger after its G8. In hs04
+the hand-back itself was not the hazard - BRAKE's carry after the
+re-escalation was, and the GUIDED hold removes it. A margin would also act on
+the ideal and ArduPilot arms, which the probe did not fly, so it stays a
+question for the rig: if hand-backs held in GUIDED re-escalate into trouble
+there, measure it on those flights.
+
+### Measured (headless, not KPI-grade)
+
+Fail-safe correctness and safety, before = ee356c6 (the give-up fix's sweeps,
+`gu`), after = the GUIDED hold; the label sets above; flown 35 s longer where
+censored. Time to safe: mean over the episodes that have one (censored in
+brackets). The ideal arm is the same before and after on every profile.
+
+| profile | arm | (a) | (r) / (a2) | (r2) | P0 escapes | breaches | mean time to safe, before -> after |
+|---|---|---|---|---|---|---|---|
+| smoke | ideal | 62/63 (0.915) | (a2) 63/63 (0.943) | - | 0 | 0 | 2.533 s over 15 (4) |
+| smoke | rail | 52/63 (0.714) | (r) 62/63 (0.915) | 63/63 (0.943) | 0 | 0 | 3.731 s over 16 (5) -> 3.771 s over 17 (5) |
+| library | ideal | 177/179 (0.960) | (a2) 179/179 (0.979) | - | 0 | 0 | 2.585 s over 34 (4) |
+| library | rail | 160/179 (0.840) | (r) 177/179 (0.960) | 179/179 (0.979) | 0 | 0 | 3.803 s over 39 (6) -> 3.786 s over 37 (6) |
+| nightly | ideal | 729/741 (0.972) | (a2) 741/741 (0.995) | - | 0 | 0 | 2.570 s over 150 (12) |
+| nightly | rail | 654/741 (0.857) | (r) 729/741 (0.972) | 741/741 (0.995) | 0 | 0 | 3.849 s over 189 (18) -> 3.654 s over 171 (18) |
+
+What the autopilot did on the rail arm, before -> after (summed over the
+profile's rail-arm episodes; the Shield's own breaches are 0 throughout):
+
+| profile | autopilot breaches | X6 | X7 | G5 | G8 | G10 |
+|---|---|---|---|---|---|---|
+| smoke | 8 -> 9 | 0 -> 0 | 3 -> 1 | 16 -> 17 | 8 -> 12 | 4 -> 3 |
+| library | 15 -> 13 | 2 -> 0 | 7 -> 4 | 43 -> 47 | 18 -> 25 | 5 -> 3 |
+| nightly | 69 -> 51 | 18 -> 0 | 33 -> 24 | 213 -> 234 | 90 -> 117 | 15 -> 9 |
+
+Correctness is the same flown longer on every profile; what moved is how the
+rail arm's Loiters end. 19 of the smoke's 126 episodes (both arms), 57 of the
+library's 358 and 297 of the nightly's 1482 differ in some field, all of them
+on the rail arm. By kind (library and smoke, rail arm only):
+
+* **Held instead of drifting (better).** dyn-nfz-spawn-ahead 6 m ahead (4 and
+  8 m/s): X6 at 12.7 s -> the Loiter timeout (G5) at 35 s, the autopilot
+  breach and the unsafe episode gone; wind-beyond-authority at 8 m/s (lanes 15
+  and 20): X7 at 14.7 s -> G5, the same; corridor-swap-narrowed at 2 m/s: X7
+  -> G5, time to safe 3.3 -> 1.7 s. The old hold was a zero velocity command:
+  the airframe stopped wherever its braking (and, at 8 m/s, the wind) took it;
+  the GUIDED hold brings it back onto the checked point.
+* **Handed back, and re-escalated at once.** corridor-drift-angles (4 m/s -60
+  deg; 8 m/s -60 and +60 deg), gps-dropout lane 15 window 2-4,
+  dyn-nfz-rotate-step and wind-within-authority lane 15 at 5 m/s now take G8
+  and then X1 / G1 -> G3 within 0.1-0.5 s: the aircraft held still on its
+  point lets Loiter's "acceptable" clock run its 2 s where the old hold's
+  drift kept restarting it. Each ends as its label expects;
+  wind-within-authority at 5 m/s ends its run in the second Loiter (censored)
+  where it ended by G5 before, and flown longer it is decided as before.
+* **Worse.** wind-beyond-authority at 12 m/s (lanes 15 and 20): G6 at 12.1 s
+  instead of 7.0-7.3 s and no landing (G10) within the run; mean time to safe
+  3.1 -> 13.6 s and 3.3 -> 9.8 s. standoff-reclassified: 2 autopilot breaches
+  where there were none - the GUIDED hold pulls the aircraft back onto its
+  in-place point (23.9, -4.2) as the pedestrian's stand-off ring reaches it
+  (17.3 s), and its RTL from there later crosses the ring (43.7 s).
+* **The nightly** (26 cells, 78 episodes whose fail-safe outcome or edges
+  moved; each decided as before when flown longer): held instead of drifting -
+  dyn-nfz-spawn-ahead 6 m ahead (all six variant and speed cells) X6 -> G5,
+  wind-beyond-authority at 8 m/s (lanes 15 and 20) X7 -> G5,
+  corridor-swap-narrowed at 2 m/s X7 -> G5, and dyn-nfz-spawn-ahead 12 m ahead
+  at 4 and 8 m/s now reaches home (G9) within the run; handed back and
+  escalated again - corridor-drift-angles (4 m/s -60 deg; 8 m/s -60 and +60
+  deg), gps-dropout lane 15 window 2-4 and lane 23.6 window 6-13,
+  dyn-nfz-rotate-step, dyn-nfz-spawn-ahead variant 2 at 2 m/s (12 and 30 m
+  ahead) and wind-within-authority lane 15 at 5 m/s, where the last and
+  spawn-ahead 12 m now end their run in the second Loiter (censored) instead
+  of by G5; worse - wind-beyond-authority at 12 m/s (lanes 15 and 20) no
+  longer lands (G10) within the run, and standoff-reclassified has 2 autopilot
+  breaches per seed where it had none, as in the library. The nine
+  dyn-nfz-rotate-spin cells did not move: none fails safe, before or after.
+  The rail-arm episodes wrong against (r) or (r2) flown longer are the same 12
+  before and after (rail-mission-stub-vla and standoff-approach-angles at 7 m,
+  against (r)). Loiter's quick re-escalations (within 2 s of G8) on the rail
+  arm: 0 of 90 G8 -> 27 of 117 (15 of those episodes then fail safe).
+
 ## What it does not do
 
 * Remove the 2 Shield escape ticks per opens-on-vehicle cell: they are
@@ -1350,7 +1527,9 @@ this one.
   and fly the hold (`guardrail/hold_flight.py`: a GUIDED transit, then the
   hold mode on arrival; `--hold-points in_place` for the old hold), and the
   harness's `rail` vehicle holds at moved points; Project AirSim / ArduPilot
-  and the city loop still hold in place. Not flown on the rig yet.
+  and the city loop still hold in place. Flown on the rig since the hil
+  shakedowns hs02-hs04; since that night the Loiter is held in GUIDED on the
+  plan's point ("The Loiter held in GUIDED", above).
 * Model wind. A point the aircraft cannot reach against the wind is no
   better than one it cannot hold; X6 / X7 still judge the illegal depth.
 * Cost nothing. A relocation is one search, on the tick it happens (since
@@ -1406,6 +1585,12 @@ this one.
    meanwhile, so that no tick pays for a whole search (one Orin tick paid
    146.9 ms, over WP3-13's 100 ms). Is that latency acceptable, or does the
    grant prefer an occasional long tick to a later plan?
+5. The grant's FSM says "SET_MODE LOITER". Since 2026-11-07 night the rails
+   hold a Loiter at the search's point in GUIDED (the companion streams a
+   position hold) and ask ArduCopter's BRAKE only on a stream fault, because
+   every hand-over to BRAKE carried the aircraft 1-2.5 m along the last GUIDED
+   command (hs04). The FSM's record still says LOITER. Is a companion-held
+   GUIDED hold acceptable as the grant's Loiter on the rig?
 
 ## Reproduce
 

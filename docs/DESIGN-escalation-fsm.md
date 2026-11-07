@@ -97,6 +97,18 @@ carries `hold_search` (`ticks`, `units`; `running` on the ticks before). The
 hand-back guard samples at most `holdpoint.HANDBACK_QUERIES` units a tick.
 docs/DESIGN-hold-points.md, "The per-tick bound", has the numbers.
 
+**Update 2026-11-07, night (the Loiter held in GUIDED).** The FSM is
+unchanged and still asks for LOITER, but the rails no longer send it for a
+Loiter at the hold-point search's plan: the companion holds the aircraft in
+GUIDED on the plan's point (`guardrail/hold_flight.py`, `--hold-flight
+guided`), and ArduCopter's BRAKE is asked for only on a stale input or a gap
+in the companion's stream. On the hil shakedown hs04 every hand-over to BRAKE
+carried the aircraft along GUIDED's last command (1.7 m in 2.2 s), off the
+checked point and into the bar's sweep (X6). docs/DESIGN-hold-points.md,
+"The Loiter held in GUIDED", has the trace, the fit and the numbers;
+docs/DESIGN-ros2-interface.md records the deviation beside "LOITER flown as
+BRAKE".
+
 ## 2026-11-07: the FSM on the rail vehicle
 
 The hil rail flies ArduCopter 4.5.7 SITL in GUIDED. Labelled on a vehicle

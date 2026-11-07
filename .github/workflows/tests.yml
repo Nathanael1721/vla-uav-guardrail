@@ -30,7 +30,13 @@
 #        WP3, the Shield and the escalation FSM: test_shield,
 #          test_shield_events, test_corridor, test_clearance,
 #          test_check_contract, test_guardrail_coverage, test_frame_contract,
-#          test_fsm, test_hold_points, test_hold_transit, test_shieldcore_*,
+#          test_fsm, test_hold_points, test_hold_transit, test_hold_horizon
+#          (how the rails and the harness's rail arm fly a hold: the moved
+#          hold's transit and its give-up, the Loiter held in GUIDED,
+#          BRAKE's carry against the hil traces; 2026-11-07: 27/27 on a
+#          clean `git archive` copy under Python 3.10.20 and 3.11.15 with
+#          and without the extras' packages - this machine's conda
+#          interpreters, not the jobs' WSL venvs), test_shieldcore_*,
 #          test_api, test_profile_shield_tick, test_occ_bands,
 #          test_ros2_package, test_own_velocity_forecast (on its
 #          tests/fixtures/ copies of the recorded ArduPilot flights).
@@ -647,6 +653,7 @@ jobs:
               tests/test_fsm.py \
               tests/test_hold_points.py \
               tests/test_hold_transit.py \
+              tests/test_hold_horizon.py \
               tests/test_window_lead_lint.py \
               tests/test_window_opens_on.py \
               tests/test_position_quality.py \

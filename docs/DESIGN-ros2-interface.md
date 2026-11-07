@@ -385,6 +385,24 @@ Loiter, and the hold after a refused FSM input, as BRAKE (`--hold-mode`,
 `mavlink_adapter_node.DEFAULT_HOLD_MODE`). It records every mode request in
 both vocabularies. No stored flight on that rail has used this yet.
 
+**A Loiter held in GUIDED (2026-11-07, night): a deviation from "LOITER
+flown as BRAKE".** Since then neither rail sends the FSM's LOITER for a
+Loiter at the hold-point search's plan (`--hold-points moved`, the default):
+the companion keeps ArduCopter in GUIDED and streams the hold's own law
+toward the plan's point on every tick (`guardrail/hold_flight.py`, THE MODE
+MAPPING; `--hold-flight guided`). ArduCopter's BRAKE is asked for only when
+the companion cannot stream - a stale input (the node's own stale holds,
+`_hold`) or a gap of more than `guardrail/response.py HOLD_STREAM_GAP_S` in
+its own stream (`HoldFlight.force_brake`, the PAS rail's forced hand-over) -
+and then for the rest of that Loiter. Why: on the hil shakedown hs04
+(ee356c6) every hand-over to BRAKE carried the aircraft on along GUIDED's
+last command (hs04_006: 1.7 m in 2.2 s from the in-place point the search
+had checked, into the bar's sweep, X6 at 18.8 s); docs/DESIGN-hold-points.md
+"The Loiter held in GUIDED" has the trace and the fit. The FSM's state, edges
+and set_mode are unchanged: its record still says LOITER; what the rail does
+with it is recorded as `hold_flight` events. `--hold-flight brake` keeps the
+old flow; `--hold-points in_place` keeps ArduCopter's own hold at once.
+
 ## Shield horizon
 
 Both SITL rails run the Shield with the grant's horizon: "5 s of predicted

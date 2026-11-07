@@ -16,6 +16,97 @@ shipped change and recorded as one.
 
 ## [Unreleased]
 
+### 2026-11-07 (Loiter held in GUIDED) — the rails hold a Loiter in GUIDED on the plan's point instead of handing it to ArduCopter's BRAKE, whose hand-over carried the aircraft off its point; the harness's rail arm flies the same, and models BRAKE's carry for the old flow
+
+#### Found
+- The hil shakedown hs04 at ee356c6 flew the nine nightly
+  dyn-nfz-rotate-spin cells: 7 of 9 without a fail-safe, P0 0, breaches 0.
+  The two failures (@6 seeds 1002 and 1003, hs04_005 / hs04_006): G8 at
+  10.1 s, G1 at 10.2 s (1.90 m, theta 2.0), G3 at 10.6 s (2.04 m), an
+  in-place plan at (-190.94, -0.38), then BRAKE carried the aircraft along
+  GUIDED's last command - 0.93 m/s at its peak, 1.7 m in 2.2 s, still
+  creeping - off the checked point and into the bar's sweep: X6 at 18.8 s,
+  RTL, one autopilot keep-out breach each.
+- BRAKE's carry, read from the logs: the velocities fit the critically damped
+  response of a velocity PI loop (ArduCopter's default PSC_VELXY_P 2,
+  PSC_VELXY_I 1) whose integrator starts at GUIDED's last acceleration
+  demand (hs04_006: (1.85, -1.74) m/s^2) - within 0.04 m/s at every
+  replayed tick to 13.4 s - carrying the aircraft about |a0| x 1 s^2 along
+  the last command; not a kinematic target caught up with. hs03_004 the
+  same, backward.
+
+#### Changed
+- `guardrail/hold_flight.py`: `HoldFlight(guided_hold=True)` (the default):
+  a Loiter is held in GUIDED - the FSM's LOITER is not sent, and the
+  companion streams the transit law toward the hold's point on every tick
+  (a moved point, then on it; an in-place plan's point; where the Loiter
+  began until a plan arrives); a moved point given up is held where the
+  aircraft is, still in GUIDED. `force_brake` hands it to BRAKE for the rest
+  of the Loiter when the stream cannot go on. `guided_hold=False` is the old
+  flow.
+- `sitl/ros2_shield_node.py`, `sitl/run_sitl_demo.py`: `--hold-flight
+  guided|brake` (default guided; `--hold-points in_place` keeps ArduCopter's
+  own hold). The node treats a GUIDED-held Loiter as streamed: a stale input
+  hands it to BRAKE (its own stale holds, the hold's law not streamed
+  meanwhile), and a gap of more than `HOLD_STREAM_GAP_S` in its own stream
+  forces the hand-over (`hold_forced_handover` event).
+- `experiments/sweep_scenarios.py`: the rail arm flies its Loiter through the
+  rails' own HoldFlight (`RAIL_HOLD_MODEL` "guided"; "brake" for the old flow,
+  with BRAKE's carry modelled: `VehicleResponse.brake`, `BRAKE_PI_P` /
+  `BRAKE_PI_I`). The ideal and ArduPilot arms are unchanged.
+- Tests: `tests/test_hold_horizon.py` (the GUIDED hold; BRAKE's model against
+  hs04_006's velocities; the hs04 hand-over held on its point), `tests/
+  test_sitl_rails.py` (the pymavlink rail holds in GUIDED; the old flow under
+  `--hold-flight brake`).
+- Docs: docs/DESIGN-hold-points.md "The Loiter held in GUIDED";
+  docs/DESIGN-ros2-interface.md (the deviation beside "LOITER flown as
+  BRAKE").
+
+#### Fixed (the full CI loop at ee356c6: 140 of 143 files)
+- `tests/test_frame_contract.py`: the ROS 2 Shield node imported
+  `frames.to_body` again, for the moved hold's transit leg (18a8804). The
+  leg's rotation is `guardrail/hold_flight.py`'s `body_command`, named in
+  frames.py's WHO CALLS THIS; the node imports nothing from frames, and a
+  VLA action is still rotated only by `Shield.filter_body`.
+- `tests/test_harnesstruth_ci.py`: `tests/test_hold_horizon.py` is in the
+  workflow's loop - 27/27 on a clean `git archive` copy under Python 3.10.20
+  (vla-real) and 3.11.15 with (vla-drone) and without (pas) the extras'
+  packages: this machine's conda interpreters, not the jobs' WSL venvs.
+- `tests/test_shieldcore_audit.py`: since the per-tick bound the hold plan
+  arrives some ticks after X4 (the fourth, 0.3 s, in its case). The audit
+  record of that tick carries it (its `hold_chosen` makes the tick a record)
+  and so do the Loiter ticks after; X4's and the search's carry null. The
+  test reads that tick and the next and still fails when no plan arrives;
+  guardrail/audit.py's record docs say so.
+
+#### Measured (headless; docs/DESIGN-hold-points.md, "The Loiter held in GUIDED")
+- hs04_006's hand-over flown on the rail response: the old flow carries the
+  aircraft 1.63 m in 2.2 s (the rig: 1.7 m) and 2.53 m in all; held in GUIDED
+  it overshoots 0.39 m and is 0.01 m off its point after 3 s.
+- The nine nightly dyn-nfz-rotate-spin cells, rail arm: 9 of 9 without a
+  fail-safe held in GUIDED (0 breaches, 0 autopilot breaches); 6 of 9 under
+  the old flow with BRAKE's carry modelled; 9 of 9 at ee356c6, whose hold
+  modelled no carry.
+- The rail arm against ee356c6, flown longer: correctness unchanged on smoke,
+  library and nightly ((a) 52/63, 160/179, 654/741; (r) 62/63, 177/179,
+  729/741; (r2) all), P0 escapes 0, breaches 0; mean time to safe 3.731 ->
+  3.771 s, 3.803 -> 3.786 s, 3.849 -> 3.654 s; autopilot breaches 8 -> 9, 15
+  -> 13, 69 -> 51; X6 0 -> 0, 2 -> 0, 18 -> 0; X7 3 -> 1, 7 -> 4, 33 -> 24.
+  The ideal arm is unchanged.
+- Worse: wind-beyond-authority at 12 m/s no longer lands (G10) within the run;
+  standoff-reclassified has 2 autopilot breaches per seed where it had none.
+
+#### Not done
+- The harness does not reproduce hs04's exact failures under the old flow
+  (the old flow with BRAKE's carry fails rotate-spin@9 where the rig failed
+  @6; seeds fly identically headless); see the design doc.
+- No hand-back margin: a 0.9 theta probe (library, rail arm) moved 4 cells -
+  quick re-escalations 7 -> 4, autopilot breaches 13 -> 13 - by holding
+  longer, not by handing back more safely; in hs04 the hazard was BRAKE's
+  carry, not the hand-back.
+- Land and RTL still hand over to ArduCopter's own modes (their own carry is
+  not modelled).
+
 ### 2026-11-07 (transit give-up) — a moved hold's transit is given up only when the aircraft is stuck relative to its point, never while it is still braking out of an overshoot; the harness's rail arm gives up by the same code
 
 #### Found
