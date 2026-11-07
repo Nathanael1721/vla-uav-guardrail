@@ -704,8 +704,10 @@ def test_the_fsm_does_not_step_on_a_stale_pose_or_count_it_as_cleared():
     the pose stopped, and the pose hold sent LOITER on the next tick. With
     the FSM merely paused, its clean streak would still run through the gap
     and G8 would fire on the first fresh tick; it must wait T_recover of
-    fresh clean ticks."""
-    N, node, clk, out = _build([])                      # pose timeout 1.0 s
+    fresh clean ticks.
+    The FSM's Loiter flown as BRAKE is the old flow since 2026-11-07 night
+    (--hold-flight brake); the default holds it in GUIDED, the next test."""
+    N, node, clk, out = _build(["--hold-flight", "brake"])   # pose timeout 1.0 s
     node.start_mission()
     _mode(N, node, "GUIDED")
     _fly(N, node, clk, 1)
@@ -733,6 +735,51 @@ def test_the_fsm_does_not_step_on_a_stale_pose_or_count_it_as_cleared():
     assert node.fsm.state == FSMState.LOITER
     _fly(N, node, clk, 3)                               # past T_recover, fresh
     assert _modes(N, node) == ["LOITER", "GUIDED"], _modes(N, node)
+    g8 = [e for e in _events(out) if e["kind"] == "fsm_transition"]
+    assert [e["edge"] for e in g8] == ["G8"], g8
+
+
+def test_a_loiter_held_in_guided_goes_to_brake_on_a_stale_pose_and_comes_back():
+    """2026-11-07 night: the FSM's Loiter is held in GUIDED by this node
+    (guardrail/hold_flight.py, the default), flown from the pose alone. A
+    stale pose hands it to BRAKE - the node's own pose hold, LOITER through
+    the adapter - with nothing of the hold streamed and the FSM not stepping
+    on the frozen pose; the next pose asks GUIDED again and the companion
+    holds once more; G8 still waits T_recover of fresh clean ticks. A quiet
+    action stream would not have touched it (_streaming)."""
+    N, node, clk, out = _build([])                      # --hold-flight guided
+    node.start_mission()
+    _mode(N, node, "GUIDED")
+    _fly(N, node, clk, 1)
+    node.fsm._enter(FSMState.LOITER, node._t())
+    clk.t += 0.05                                       # ticks off the threshold
+    _fly(N, node, clk, 2)                               # the companion holds
+    assert node.hold_flight.guiding and _modes(N, node) == [], _modes(N, node)
+    held = [r for r in node.rows[-2:] if r["emitted_body"] is not None]
+    assert len(held) == 2, [r["setpoint"] for r in node.rows[-2:]]
+    node.standin_pose_on = False                        # the pose stops
+    _fly(N, node, clk, 30)
+    assert _modes(N, node) == ["LOITER"], _modes(N, node)
+    assert node._holds == {"pose"} and node.fsm.state == FSMState.LOITER
+    assert not [e for e in _events(out) if e["kind"] == "fsm_transition"]
+    stale = [r for r in node.rows if r["pose_stale"]]
+    assert len(stale) == 21, len(stale)
+    assert all(r.get("fsm_state_after") is None for r in stale), stale[:1]
+    # The hold's onset flies the Shield's stop while SET_MODE goes through;
+    # after it nothing is streamed, the GUIDED hold's law included.
+    assert [r["setpoint"] for r in stale] == ["pass"] + ["none"] * 20, \
+        [r["setpoint"] for r in stale]
+    assert all(r["emitted_body"] is None for r in stale[1:])
+    _mode(N, node, "BRAKE")
+    node.standin_pose_on = True                         # the pose comes back
+    _fly(N, node, clk, 1)
+    assert _modes(N, node) == ["LOITER", "GUIDED"], _modes(N, node)
+    assert not node._holds and node.hold_flight.guiding
+    _mode(N, node, "GUIDED")
+    _fly(N, node, clk, 18)                              # 1.9 s of fresh clean ticks
+    assert node.fsm.state == FSMState.LOITER, "G8 counted the stale spell as cleared"
+    assert node.rows[-1]["emitted_body"] is not None    # held in GUIDED again
+    _fly(N, node, clk, 3)                               # past T_recover, fresh
     g8 = [e for e in _events(out) if e["kind"] == "fsm_transition"]
     assert [e["edge"] for e in g8] == ["G8"], g8
 

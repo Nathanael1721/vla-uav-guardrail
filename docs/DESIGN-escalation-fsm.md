@@ -101,8 +101,9 @@ docs/DESIGN-hold-points.md, "The per-tick bound", has the numbers.
 unchanged and still asks for LOITER, but the rails no longer send it for a
 Loiter at the hold-point search's plan: the companion holds the aircraft in
 GUIDED on the plan's point (`guardrail/hold_flight.py`, `--hold-flight
-guided`), and ArduCopter's BRAKE is asked for only on a stale input or a gap
-in the companion's stream. On the hil shakedown hs04 every hand-over to BRAKE
+guided`), and ArduCopter's BRAKE is asked for only on a stale pose (until
+the next pose) or a gap in the companion's stream (for the rest of the
+Loiter). On the hil shakedown hs04 every hand-over to BRAKE
 carried the aircraft along GUIDED's last command (1.7 m in 2.2 s), off the
 checked point and into the bar's sweep (X6). docs/DESIGN-hold-points.md,
 "The Loiter held in GUIDED", has the trace, the fit and the numbers;

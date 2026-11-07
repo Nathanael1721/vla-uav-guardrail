@@ -24,9 +24,13 @@ the companion streams the TRANSIT law (below) toward the hold's point on every
 tick - to a moved point and then on it, or on an in-place plan's point (where
 the aircraft was when it was planned), or, while the plan is still being
 searched for, on where the aircraft was when the Loiter began. ArduCopter's
-BRAKE is asked for only when the companion cannot stream: a stale input (the
-rails' own stale holds) or a gap in its stream (force_brake; guardrail/
-response.py HOLD_STREAM_GAP_S), and then for the rest of that Loiter.
+BRAKE is asked for only when the companion cannot fly the hold. On the ROS 2
+node: a stale pose, the hold's one input (the node's own pose hold, released
+into GUIDED by the next pose; a quiet action or decision stream does not
+touch the hold, which flies no VLA action), and a gap in its own stream
+(force_brake; guardrail/response.py HOLD_STREAM_GAP_S), which hands it over
+for the rest of that Loiter. The pymavlink rail reads its pose and sends in
+one loop and has neither.
 
   FSM state  plan      ArduCopter                  companion streams
   Loiter     any       stays in GUIDED             the TRANSIT law toward the

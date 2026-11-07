@@ -391,10 +391,12 @@ Loiter at the hold-point search's plan (`--hold-points moved`, the default):
 the companion keeps ArduCopter in GUIDED and streams the hold's own law
 toward the plan's point on every tick (`guardrail/hold_flight.py`, THE MODE
 MAPPING; `--hold-flight guided`). ArduCopter's BRAKE is asked for only when
-the companion cannot stream - a stale input (the node's own stale holds,
-`_hold`) or a gap of more than `guardrail/response.py HOLD_STREAM_GAP_S` in
-its own stream (`HoldFlight.force_brake`, the PAS rail's forced hand-over) -
-and then for the rest of that Loiter. Why: on the hil shakedown hs04
+the companion cannot fly the hold: a stale pose, the hold's one input (the
+node's own pose hold, `_hold`, released into GUIDED by the next pose; a quiet
+action or decision stream does not touch the hold, `_streaming`), and a gap
+of more than `guardrail/response.py HOLD_STREAM_GAP_S` in its own stream
+(`HoldFlight.force_brake`, the PAS rail's forced hand-over), which hands it
+over for the rest of that Loiter. Why: on the hil shakedown hs04
 (ee356c6) every hand-over to BRAKE carried the aircraft on along GUIDED's
 last command (hs04_006: 1.7 m in 2.2 s from the in-place point the search
 had checked, into the bar's sweep, X6 at 18.8 s); docs/DESIGN-hold-points.md

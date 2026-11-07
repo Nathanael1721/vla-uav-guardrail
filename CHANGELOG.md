@@ -46,10 +46,12 @@ shipped change and recorded as one.
   flow.
 - `sitl/ros2_shield_node.py`, `sitl/run_sitl_demo.py`: `--hold-flight
   guided|brake` (default guided; `--hold-points in_place` keeps ArduCopter's
-  own hold). The node treats a GUIDED-held Loiter as streamed: a stale input
-  hands it to BRAKE (its own stale holds, the hold's law not streamed
-  meanwhile), and a gap of more than `HOLD_STREAM_GAP_S` in its own stream
-  forces the hand-over (`hold_forced_handover` event).
+  own hold). The node treats a GUIDED-held Loiter as streamed from the pose
+  alone: a stale pose hands it to BRAKE (its own pose hold, the hold's law
+  not streamed meanwhile) until the next pose asks GUIDED again, a quiet
+  action or decision stream does not touch it, and a gap of more than
+  `HOLD_STREAM_GAP_S` in its own stream forces the hand-over for the rest of
+  the Loiter (`hold_forced_handover` event).
 - `experiments/sweep_scenarios.py`: the rail arm flies its Loiter through the
   rails' own HoldFlight (`RAIL_HOLD_MODEL` "guided"; "brake" for the old flow,
   with BRAKE's carry modelled: `VehicleResponse.brake`, `BRAKE_PI_P` /
@@ -78,6 +80,16 @@ shipped change and recorded as one.
   and so do the Loiter ticks after; X4's and the search's carry null. The
   test reads that tick and the next and still fails when no plan arrives;
   guardrail/audit.py's record docs say so.
+- The whole loop on this branch at 0759719 (142 of 144 files) found two more,
+  from the GUIDED hold itself. `tests/test_ros2_vla_bridge.py` N4: a
+  GUIDED-held Loiter counted as streamed for every input, so a quiet
+  decision stream put it on a decision hold and ended the episode; the node's
+  `_streaming(reason)` now counts it only for a stale pose, the hold's one
+  input. `tests/test_railinputs_node.py`: the stale-pose test set up the FSM's
+  Loiter flown as BRAKE, and now says so (`--hold-flight brake`); a new test
+  flies the default - a stale pose hands the GUIDED hold to BRAKE with
+  nothing streamed and the FSM not stepping, the next pose asks GUIDED again,
+  and G8 still waits T_recover of fresh clean ticks.
 
 #### Measured (headless; docs/DESIGN-hold-points.md, "The Loiter held in GUIDED")
 - hs04_006's hand-over flown on the rail response: the old flow carries the

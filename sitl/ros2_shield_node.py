@@ -2706,16 +2706,21 @@ if HAVE_ROS:
             with self._lock:
                 self._tick_locked(tick_ns)
 
-        def _streaming(self) -> bool:
+        def _streaming(self, reason: str | None = None) -> bool:
             """Is this node flying the aircraft with its setpoints (no
-            autopilot takeover, no FSM fault, the FSM in a GUIDED state)?"""
-            # A Loiter held in GUIDED by this node (guardrail/hold_flight.py,
-            # since 2026-11-07 night) is streamed too: a stale input hands it
-            # to BRAKE as any other stream.
-            return (self.takeover is None and self.fsm_fault is None
-                    and (self.fsm is None
-                         or MODE_FOR[self.fsm.state] == "GUIDED"
-                         or self.hold_flight.guiding))
+            autopilot takeover, no FSM fault, the FSM in a GUIDED state)?
+            A Loiter held in GUIDED by this node (guardrail/hold_flight.py,
+            since 2026-11-07 night) is flown from the pose alone: a stale
+            pose (`reason` "pose") hands it to BRAKE as any other stream; a
+            quiet action or decision stream does not touch it - the hold
+            flies no VLA action, and until the CI run at 0759719 such a
+            stream put a GUIDED-held Loiter on a decision hold and ended the
+            episode (test_ros2_vla_bridge, N4)."""
+            if self.takeover is not None or self.fsm_fault is not None:
+                return False
+            if self.fsm is None or MODE_FOR[self.fsm.state] == "GUIDED":
+                return True
+            return reason == "pose" and self.hold_flight.guiding
 
         def _hold(self, reason: str, why: str) -> bool:
             """Hold the aircraft for one stale input (`reason` "action",
@@ -2730,7 +2735,7 @@ if HAVE_ROS:
                 self._holds.add(reason)
                 self._hold_t[reason] = time.monotonic()
                 return False
-            if not self._streaming():
+            if not self._streaming(reason):
                 return False
             self._holds.add(reason)
             self._hold_t[reason] = time.monotonic()
@@ -3189,8 +3194,9 @@ if HAVE_ROS:
                 # The hold's first tick flies the Shield's answer to a stop
                 # (a stop where it is legal) while SET_MODE goes through, as
                 # the FSM's own hand-over does; then the autopilot holds. A
-                # GUIDED hold's law is not streamed meanwhile (its pose or its
-                # loop is what went stale).
+                # GUIDED hold's law is not streamed meanwhile (its pose is
+                # what went stale, or a hold placed before the Loiter is
+                # still in force).
                 setpoint = "pass" if hold_onset else "none"
                 transit = None
                 self._last_pub_ns = None    # a stale hold is no gap in the stream

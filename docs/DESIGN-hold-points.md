@@ -1378,11 +1378,12 @@ controller of the remaining distance, gain 1, 1.75 m/s^2, capped at the
 plan's speed) toward the hold's point on every Loiter tick: to a moved point
 and then on it; on an in-place plan's own point; while a plan is still being
 searched for, on where the aircraft was when the Loiter began. BRAKE is asked
-for only when the companion cannot stream - a stale input (the node's own
-stale holds) or a gap of more than 0.3 s in its own stream
-(`HoldFlight.force_brake`, the PAS rail's forced hand-over,
-`guardrail/response.py HOLD_STREAM_GAP_S`) - and then for the rest of that
-Loiter. Why not (b), the PAS rail's deferred hand-over and reclaim: it hands
+for only when the companion cannot fly the hold: on the ROS 2 node a stale
+pose, the hold's one input (the node's own pose hold, released into GUIDED by
+the next pose; a quiet action or decision stream does not touch the hold),
+and a gap of more than 0.3 s in its own stream (`HoldFlight.force_brake`, the
+PAS rail's forced hand-over, `guardrail/response.py HOLD_STREAM_GAP_S`), which
+hands it over for the rest of that Loiter. Why not (b), the PAS rail's deferred hand-over and reclaim: it hands
 over to BRAKE once BRAKE's predicted stop is legal, and BRAKE's stop is
 exactly what the traces show cannot be predicted from the position and
 velocity alone - it depends on the acceleration demand GUIDED left, and it
