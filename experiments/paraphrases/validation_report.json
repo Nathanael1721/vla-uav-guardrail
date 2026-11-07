@@ -1,7 +1,7 @@
 {
   "schema": "guardrail.paraphrases.validation/1",
   "store_digest": "3f096fceb3c27e56",
-  "validator_digest": "07e219bd3bb3842c",
+  "validator_digest": "42fa886180b3b45b",
   "probes_digest": "5e0eaadaf68aa096",
   "places_source": "guardrail.compiler.PLACES",
   "command": "python -m guardrail.paraphraser validate",

@@ -287,6 +287,127 @@ def test_a_grant_form_mission_with_no_pilot_flies_the_rails_stub_vla():
     _refused(lambda: Family(no_target), "stub_vla", "mission.target")
 
 
+GRANT_PROFILE = PROFILES / "grant_example.yaml"
+GRANT_FAMILY = "grant-example-sweep"
+
+
+def test_the_grant_example_profile_flies_the_grants_example_as_written_36_episodes():
+    """experiments/profiles/grant_example.yaml (2026-11-07): the grant's
+    worked example as a profile of its own, so the final report can check the
+    three KPI values the grant states for that sweep. The profile loads, flies
+    one family, and that family is the grant's text - task prompt, start,
+    target, both events, the bare sweep keys and the three expected_kpis - with
+    one addition, the scenario clock (the test below), expanding to the
+    grant's 4 x 3 x 3 = 36 episodes on the stub_vla pilot."""
+    prof = load_profile(GRANT_PROFILE)
+    assert prof.profile == "grant_example" and prof.families == [GRANT_FAMILY], prof
+    assert prof.seeds == [1001, 1002, 1003] and prof.expected_cells == (12, 12)
+    lib = Library(LIB)
+    eps, info = expand(lib, prof)
+    assert info["cells"] == 12 and info["episodes"] == 36 and len(eps) == 36, info
+    assert info["cells_within_expected"] and not info["duplicate_cells"], info
+    assert info["arms"]["extra_arm_episodes"] == 0, info["arms"]
+    assert sorted({e.seed for e in eps}) == [1001, 1002, 1003]
+    got = sorted((e.cell.spec.mission.pilot.speed, e.cell.spec.stress.wind_speed_mps, e.seed)
+                 for e in eps)
+    assert got == sorted((v, w, s) for v in (6, 8, 10, 12) for w in (0, 2, 5)
+                         for s in (1001, 1002, 1003)), got
+    assert {e.cell.spec.mission.pilot.type for e in eps} == {"stub_vla"}
+    for e in eps:
+        assert e.cell.spec.gates == {"p0_violation_escape_rate": {"equals": 0},
+                                     "failsafe_matches_label": {"min": 0.99},
+                                     "mean_time_to_safe_s": {"max": 2.0}}, e.run_id
+    fam = lib.by_id()[GRANT_FAMILY]
+    assert fam.template == "dynamic_nfz_movement"
+    assert lib.template_files["dynamic_nfz_movement"].name == "dynamic_nfz_movement.yaml"
+    assert fam.grant_bindings == {"vehicle_speed_mps": "mission.pilot.speed",
+                                  "wind_speed_mps": "stress.wind_speed_mps"}
+    ex, raw = grant_example_verbatim(), fam.raw_as_written
+    for key in ("template", "events", "parameter_sweep", "expected_kpis"):
+        assert raw[key] == ex[key], key
+    mission = {k: v for k, v in raw["mission"].items() if k != "clock_start"}
+    assert mission == ex["mission"], mission
+    assert "stress" not in raw and "pilot" not in raw["mission"], "the grant's bare form"
+    s = fam.first.spec
+    assert (s.expected_failsafe, s.failsafe_clause, s.expected_outcome) == (False, "N1", None)
+
+
+def test_the_grant_example_names_every_place_it_differs_from_the_grant():
+    """Each substitution is named in the scenario's description, and each one
+    it states is still true of the files it describes: the bundle the grant
+    names is absent, the policy that flies instead, the school yard at the
+    start held out of force by its own curfew, corridor C1, the speed cap,
+    the 50 m altitude, the wind against the modelled hold authority and the
+    scenario's length against the slowest flight to W3."""
+    sys.path.insert(0, str(ROOT / "experiments"))
+    import math
+
+    import sweep_scenarios as S
+    lib = Library(LIB)
+    s = lib.by_id()[GRANT_FAMILY].first.spec
+    sweep = lib.raw(GRANT_FAMILY)["parameter_sweep"]
+    text = " ".join(s.description.split())
+    for needle in ("itri-icl-2026-demo-v0.3.0", "sha256:9d31", "policies/wgs84_taipei.yaml",
+                   "SCHOOL YARD", "south-west vertex", "clock_start", "Saturday",
+                   "CORRIDOR C1", "W3", "stub_vla", "SPEED CAPS", "12 m/s cap",
+                   "50 m AGL", "WIND", "6.4 m/s", "N3", "3600 ticks", "349.1 s"):
+        assert needle in text, needle
+    # (1) the grant's bundle is not here; the WGS84 policy flies instead
+    assert not (ROOT / "bundles" / "itri-icl-2026-demo-v0.3.0.tar.gz").exists()
+    assert s.policy.path == "policies/wgs84_taipei.yaml" and s.policy.bundle_path is None
+    pol = s.policy.load(ROOT)
+    rules = {c.id: c for c in pol.constraints}
+    # (2) the start is the yard's south-west vertex; the clock is outside its curfew
+    yard = rules["nfz-school-yard"]
+    sx, sy = s.mission.start_pose.local(pol)
+    assert min(math.hypot(sx - v.x, sy - v.y) for v in yard.vertices) < 1e-3
+    days = yard.valid_time.recurrence.days
+    assert s.mission.clock_start.weekday() == 5 and "Sat" not in days, days
+    # (3) no corridor rule: C1 is the straight leg
+    assert not [c for c in pol.constraints if c.type in ("corridor", "corridor_swap")]
+    # (5) every requested speed within the cap, the fastest on it
+    assert max(sweep["vehicle_speed_mps"]) == rules["kin-caps"].speed_max_mps == 12.0
+    # (6) 50 m inside the band
+    band = rules["envelope-default"]
+    assert band.alt_min_m <= s.mission.start_pose.alt_agl_m == 50 <= band.alt_max_m
+    # (7) every wind within the modelled hold authority
+    assert max(sweep["wind_speed_mps"]) <= S.AP_HOLD_AUTHORITY_MPS == 6.4
+    # (8) long enough for the slowest flight to W3
+    tx, ty = s.mission.target.local(pol)
+    d = math.hypot(tx - sx, ty - sy)
+    assert abs(d / 6.0 - 349.1) < 0.05, d
+    assert s.ticks == 3600 and s.ticks * lib.defaults.dt > d / 6.0 + 5.0
+
+
+def test_a_family_for_one_profile_is_in_no_other_run():
+    """`profiles` (2026-11-07): grant-example-sweep sits in its template's file
+    like every family, but only grant_example flies it. The library run and
+    the smoke, nightly and broad profiles leave it out (no published number
+    moves), `--only` cannot bring it into the library run, a profile that
+    lists it without being named is refused, and the field is not part of
+    the flight (two cells that differ only there are one episode)."""
+    lib = Library(LIB)
+    assert GRANT_FAMILY in lib.by_id(), "loaded and validated with the library"
+    _, info = expand(lib)
+    assert GRANT_FAMILY not in info["cells_per_family"], info["cells_per_family"]
+    for name in ("smoke", "nightly", "broad"):
+        _, info = expand(lib, load_profile(PROFILES / f"{name}.yaml"))
+        assert GRANT_FAMILY not in info["cells_per_family"], name
+    _, info = expand(lib, None, only=[GRANT_FAMILY])
+    assert info["only_unmatched"] == [GRANT_FAMILY] and info["cells"] == 0, info
+    other = Profile(profile="other", cadence="c", grant_scope="g", grant_sim_speedup="s",
+                    seeds=[1], families=[GRANT_FAMILY], expected_cells=[1, 50])
+    _refused(lambda: expand(lib, other), "flown only by the profiles they name")
+    _refused(lambda: ScenarioSpec.model_validate(_minimal(profiles=["Not A Name"])),
+             "distinct profile names")
+    _refused(lambda: ScenarioSpec.model_validate(_minimal(profiles=["a", "a"])),
+             "distinct profile names")
+    _refused(lambda: ScenarioSpec.model_validate(_minimal(profiles=[])))
+    a = Family(_minimal()).cells()[0]
+    b = Family(_minimal(scenario_id="t-own", profiles=["grant_example"])).cells()[0]
+    assert duplicate_cells([a, b]) == [("t-min", "t-own")]
+
+
 def test_the_grants_fail_safe_name_does_not_map_onto_the_escape_rate_restated():
     """guardrail.kpi's failsafe_trigger_correctness counts P0 ticks acted on -
     the escape rate in another form (audit card WP3-15). The grant's name must

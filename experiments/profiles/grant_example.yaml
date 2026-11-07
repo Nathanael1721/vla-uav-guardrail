@@ -1,0 +1,55 @@
+# Grant example profile: the grant's worked ScenarioSpec, flown as written.
+#
+# Grant, Stress Testing, "Worked ScenarioSpec example" (dyn-nfz-translate-001):
+#   "A single ScenarioSpec with the sweep above expands to 4 x 3 x 3 = 36
+#    episode runs."
+# Its expected_kpis are P0_escape_rate 0, fail_safe_correctness ">=0.99" and
+# mean_time_to_safe_s "<=2.0". The last is the only figure the grant gives
+# for mean time to safe (the Safety Shield page's KPI table says "tracked;
+# from violation to back-in-safe-zone"), so a comparison with it belongs on
+# this sweep, not on the library's mean (docs/FINAL-REPORT-outline.md,
+# WP3-17).
+#
+# WHAT IT FLIES
+#
+# One family, grant-example-sweep (experiments/templates/
+# dynamic_nfz_movement.yaml), the only family that names this profile in its
+# `profiles`. It is in no other run - not the library run, not smoke,
+# nightly or broad (guardrail/scenario_spec.py, "A FAMILY FOR ONE
+# PROFILE") - so flying it moves no published library number. Its
+# description lists every place it differs from the grant's text and why.
+# 12 cells (vehicle_speed_mps 6 / 8 / 10 / 12 x wind_speed_mps 0 / 2 / 5) on
+# the grant's seeds 1001-1003: 36 episodes, no arms.
+#
+# WHAT IT DOES NOT REPRODUCE
+#
+# Headless, no episode is KPI-grade (manifest topology headless-kinematic, a
+# measured sim_speedup of about 70). On the hil rail (--backend hil)
+# each episode is one mission at sim_speedup 1.0: a take-off to 50 m, then up
+# to 395 s (the 360 s scenario, the Loiter timeout and the rail's margin).
+# The rail flies the policy's SIGNED bundle, bundles/wgs84-taipei-demo-
+# v0.1.2.tar.gz, a build product (python tools/build_flight_bundles.py on
+# both hosts): a checkout without it refuses all 36 missions.
+#
+#   python experiments/sweep_scenarios.py --profile grant_example
+#   python experiments/sweep_scenarios.py --profile grant_example \
+#       --response-arms ideal rail --autopilot-hold in_place
+#   python experiments/sweep_scenarios.py --profile grant_example \
+#       --backend hil --hil-dry-run
+#
+# The second is the vehicle the hil rig flies (sweep_scenarios.RAIL_VEHICLE:
+# the rig's fitted response from a hover, ArduPilot's hold in place), beside
+# the ideal vehicle holding in place. A run's default folder is
+# demo/out/stress_grant_example (a comparison run's demo/out/cmp_...), and
+# tools/kpi_report.py's default glob (demo/out/stress_*/episode-*) reads it
+# beside smoke and nightly: give --runs and --out elsewhere to keep it apart.
+
+profile: grant_example
+cadence: on demand (the final report's check of the grant example's three KPIs)
+grant_scope: "one ScenarioSpec: 4 x 3 x 3 = 36 episode runs (Stress Testing, worked example)"
+grant_sim_speedup: "1.0 for a KPI-bearing run - NOT met headless (measured speedup >> 1); met on the hil rail"
+library: experiments/scenarios.yaml
+seeds: [1001, 1002, 1003]
+samples_per_family: 1
+families: [grant-example-sweep]
+expected_cells: [12, 12]
