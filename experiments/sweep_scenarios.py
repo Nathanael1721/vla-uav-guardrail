@@ -772,14 +772,47 @@ class ResponseParams:
 # these drift from the recordings.
 AP_RESPONSE = ResponseParams(delay_s=0.08, accel_mps2=2.4, jerk_mps3=5.7, tau_s=0.03,
                              accel_z_mps2=2.9, jerk_z_mps3=20.0, tau_z_s=0.12)
-RESPONSES: dict[str, ResponseParams | None] = {"ideal": None, "ardupilot": AP_RESPONSE}
+# THE HIL RIG'S OWN RESPONSE (2026-11-07): the vehicle the KPI-grade runs fly -
+# ArduCopter 4.5.7 SITL in GUIDED on the desktop, flown by the Shield node on
+# the AGX Orin over MAVROS 2 - fitted by `tools/measure_vehicle_response.py
+# --rig` (fit_rig: this module's VehicleResponse, the same loss and search as
+# AP_RESPONSE's) to the hil rehearsal rh01's own flight logs: the command each
+# GUIDED row sent against the fresh position it read, each flight's first
+# segment from the hover the rail starts in kept whole. Fitted 2026-11-07 on 32
+# flights (34 segments, 6570 samples; the two 12 m/s near-edge cells left out,
+# RIG_EXCLUDE: they command more speed than the airframe reaches), the
+# velocity residual (RMS, m/s) over every sample / the first 5 s from the
+# hover (29 flights):
+#   this fit                      0.099 / 0.093
+#   AP_RESPONSE (ardupilot arm)   0.122 / 0.154   delay 0.08, 2.4 m/s^2, 5.7 m/s^3
+#   the rail Shield's own model   0.258 / 0.458   0.45 s, 1.75 m/s^2 (its forecast)
+#   ideal vehicle                 0.934 / 1.742
+# The delay is the weakest-pinned horizontal parameter (+/- 25 % moves the RMS
+# by 1-3 %), the lag barely at all; the vertical axis is weakly identified
+# (the commands are small), as AP_RESPONSE's is. `--rig ... --check-rig`
+# fails when this drifts from the logs.
+RAIL_RESPONSE = ResponseParams(delay_s=0.13, accel_mps2=2.48, jerk_mps3=4.8, tau_s=0.03,
+                               accel_z_mps2=1.3, jerk_z_mps3=35.2, tau_z_s=0.31)
+RIG_FIT = {"source": ("tools/measure_vehicle_response.py --rig 'demo/out/hil_smoke/rh01_*' "
+                      "(RIG_EXCLUDE: *near-edge-at-12mps*)"),
+           "flights": "hil rehearsal rh01, 7 Nov 2026: 32 flights, 6570 samples",
+           "rms_xy_mps": 0.099, "rms_xy_hover_start_mps": 0.093}
+RESPONSES: dict[str, ResponseParams | None] = {"ideal": None, "ardupilot": AP_RESPONSE,
+                                               "rail": RAIL_RESPONSE}
 # How a response arm's airframe ENTERS the episode (2026-11-07): "cruise",
 # at the pilot's first command held to the envelope (entry_velocity: the
-# families start mid-flight; every sweep run), or "rest", from a hover - how
-# a RAIL starts every scenario, after its take-off at the start (the rail
-# gates' derivation, rail_gates_ardupilot). The ideal vehicle has no entry.
+# families start mid-flight; the ardupilot arm, every sweep run), or "rest",
+# from a hover - how a RAIL starts every scenario, after its take-off at the
+# start: the rail arm's own (RESPONSE_ENTRY). The ideal vehicle has no entry.
 ENTRY_STATES = ("cruise", "rest")
 DEFAULT_ENTRY = "cruise"
+RESPONSE_ENTRY = {"ardupilot": "cruise", "rail": "rest"}
+# The rail vehicle as run_episode flies it, for every caller deriving an
+# expectation on it (the rail gates here, the fail-safe labels in
+# tools/failsafe_rubric.py): the rig's response from a hover, and ArduPilot's
+# own hold where the aircraft is (AUTOPILOT_HOLD_MODELS "in_place"), which is
+# what every rail flies for the FSM's Loiter / Land.
+RAIL_VEHICLE = {"response": "rail", "autopilot_hold": "in_place"}
 
 
 # The correction rate a non-negative error asks for (ArduPilot's AP_Math
@@ -960,10 +993,15 @@ def response_for(arm: str = DEFAULT_RESPONSE_ARM) -> dict[str, Any]:
     if params is None:
         return {"arm": arm, "model": "commanded ground velocity, every tick",
                 "params": None}
-    return {"arm": arm, "params": params.record(),
-            "model": ("delayed command, jerk- and acceleration-limited target, "
-                      "first-order airframe lag (sweep_scenarios.VehicleResponse)"),
-            "source": "docs/DESIGN-harness-vehicle-response.md"}
+    rec = {"arm": arm, "params": params.record(),
+           "model": ("delayed command, jerk- and acceleration-limited target, "
+                     "first-order airframe lag (sweep_scenarios.VehicleResponse)"),
+           "source": "docs/DESIGN-harness-vehicle-response.md"}
+    if arm == "rail":
+        # The rig's own fit, entered from a hover as a rail starts (2026-11-07).
+        rec.update(entry=RESPONSE_ENTRY["rail"], source=RIG_FIT["source"],
+                   fitted_to=RIG_FIT["flights"])
+    return rec
 
 
 def forecast_for(spec: ScenarioSpec, defaults: Defaults | None = None,
@@ -1122,15 +1160,15 @@ def run_episode(sc, defaults=None, seed: int = 0, arm: dict | None = None, *,
                 autopilot_hold: str = DEFAULT_AUTOPILOT_HOLD,
                 response: str = DEFAULT_RESPONSE_ARM,
                 recovery: str = DEFAULT_RECOVERY_LAW,
-                entry: str = DEFAULT_ENTRY) -> EpisodeRun:
+                entry: str | None = None) -> EpisodeRun:
     """One headless episode. `arm` (paraphrase / prefix record) is RECORDED in
     the episode_start event and changes nothing else: no headless pilot reads
     text. `forecast` (forecast_for), `wind_model` (WIND_MODELS),
     `autopilot_hold` (AUTOPILOT_HOLD_MODELS), `response` (RESPONSE_ARMS,
     response_for), `recovery` (the Shield's recovery_law, RECOVERY_LAWS) and,
-    on a response arm, `entry` (ENTRY_STATES) DO change the flight. Flown by
-    EpisodeRunner without a pause, so a stepped episode and this one share
-    one integrator."""
+    on a response arm, `entry` (ENTRY_STATES; None: the arm's own,
+    RESPONSE_ENTRY) DO change the flight. Flown by EpisodeRunner without a
+    pause, so a stepped episode and this one share one integrator."""
     return EpisodeRunner(sc, defaults, seed, arm, forecast=forecast,
                          wind_model=wind_model, autopilot_hold=autopilot_hold,
                          response=response, recovery=recovery, entry=entry).finish()
@@ -1173,7 +1211,7 @@ class EpisodeRunner:
                  autopilot_hold: str = DEFAULT_AUTOPILOT_HOLD,
                  response: str = DEFAULT_RESPONSE_ARM,
                  recovery: str = DEFAULT_RECOVERY_LAW,
-                 entry: str = DEFAULT_ENTRY):
+                 entry: str | None = None):
         self._box: dict[str, Any] = {}
         self._gen = _episode(sc, defaults, seed, arm, self._box, forecast, wind_model,
                              autopilot_hold, response, recovery, entry)
@@ -1264,7 +1302,7 @@ def _episode(sc, defaults, seed: int, arm: dict | None, box: dict,
              autopilot_hold: str = DEFAULT_AUTOPILOT_HOLD,
              response: str = DEFAULT_RESPONSE_ARM,
              recovery: str = DEFAULT_RECOVERY_LAW,
-             entry: str = DEFAULT_ENTRY):
+             entry: str | None = None):
     """The integrator behind run_episode and EpisodeRunner: a generator that
     yields (tick, t) at the start of every tick, before that tick's scheduled
     events are applied, and returns the EpisodeRun. `box` receives the
@@ -1293,14 +1331,16 @@ def _episode(sc, defaults, seed: int, arm: dict | None, box: dict,
     # branch the arm adds is behind `veh is not None` / `rsp is not None`.
     rsp_rec = response_for(response)
     rsp = RESPONSES[response]
+    if entry is not None and rsp is None:
+        raise ValueError(f"entry {entry!r} needs a response arm: the ideal vehicle "
+                         f"flies every command at once")
+    entry = entry if entry is not None else RESPONSE_ENTRY.get(response, DEFAULT_ENTRY)
     if entry not in ENTRY_STATES:
         raise ValueError(f"entry {entry!r}: one of {list(ENTRY_STATES)}")
-    if entry != DEFAULT_ENTRY:
-        if rsp is None:
-            raise ValueError(f"entry {entry!r} needs a response arm: the ideal vehicle "
-                             f"flies every command at once")
-        # Recorded only off the default, so every other episode's record is
-        # what it was.
+    if rsp is not None and (entry != DEFAULT_ENTRY or "entry" in rsp_rec):
+        # Recorded off the mid-flight entry, and always on an arm whose record
+        # names one (the rail arm's), so every other episode's record is what
+        # it was.
         rsp_rec = dict(rsp_rec, entry=entry)
     veh: VehicleResponse | None = None
 
@@ -1613,8 +1653,8 @@ def _episode(sc, defaults, seed: int, arm: dict | None, box: dict,
             # edges (G9 home reached, G10 landed). Home is reached at the end
             # of RTL's return leg: over the launch point, after the climb.
             flags = {"home_reached": ap_mode == "RTL"
-                     and st.up >= AP_RTL_ALT_M - 0.1
-                     and math.hypot(st.x - m.home[0], st.y - m.home[1]) <= AP_HOME_TOL_M,
+                     and RP.home_reached(st.x, st.y, st.up, m.home, tol_m=AP_HOME_TOL_M,
+                                         rtl_alt_m=AP_RTL_ALT_M),
                      "landed": ap_mode == "LAND" and st.up <= AP_LANDED_M}
             # G6, RTL -> Land: the straight leg home blocked by a P0 zone or
             # outside the band, no progress home over T, or a critical
@@ -3682,11 +3722,11 @@ def rail_window(rows: list[dict], max_s: float | None) -> tuple[list[dict], list
     Loiter operator timeout plus 5 s (rail_max_s), so that a Loiter the
     lagging autopilot provokes shows its outcome - the fail-safe the rubric
     reads (docs/RUBRIC-failsafe.md, section 3), which is the WHOLE flight's
-    (the FSM record in metrics.json). Every other measure and gate is
-    defined over the scenario's ticks (run_episode flies ticks x dt, the
-    goal and the end are read at their end) and is read over the rows whose
-    mission time is before `max_s`; what was flown after the cap is
-    reported apart (sitl_extra, `whole_flight`). None keeps every row."""
+    (the FSM record in metrics.json), as are the safety invariants
+    (sitl_extra). The performance measures are defined over the scenario's
+    ticks (run_episode flies ticks x dt, the goal is read at their end) and
+    are read over the rows whose mission time is before `max_s`. None keeps
+    every row."""
     if max_s is None:
         return list(rows), []
     k = next((i for i, r in enumerate(rows) if float(r.get("t") or 0.0) >= float(max_s) - 1e-9),
@@ -3951,11 +3991,42 @@ def rail_rule_priorities(policy, generations: dict | None = None) -> dict:
     return prios
 
 
-# The measures read over the whole flight beside the scenario window's
-# (`whole_flight`): what must hold whenever the aircraft flies.
-WHOLE_FLIGHT_FIELDS = ("p0_escapes", "p0_violation_escape_rate", "breaches",
-                       "autopilot_breaches", "polygon_entries", "ticks_inside_fence_polygon",
-                       "ended_safe", "max_speed_flown", "all_actions_finite")
+# The FSM edges that end a mission (guardrail/fsm.py: G9 home reached, G10
+# landed, X5): run_episode stops on that tick. Since 2026-11-07 the ROS 2
+# rail logs on to the autopilot's landing (sitl/ros2_shield_node.py), and its
+# rows after the edge are the autopilot's alone.
+TERMINAL_EDGES = ("G9", "G10", "X5")
+# The SAFETY INVARIANTS (the user's ruling, 2026-11-07): what must hold
+# whenever the aircraft flies, so a rail run gates them over its WHOLE flight
+# - an RTL that flies into a zone after the scenario's cap is a real event
+# (hil rehearsal rh01_021). P0 escapes are the Shield's counter (guardrail.kpi
+# leaves the autopilot's ticks out, by the KPI's definition); the breaches and
+# polygon entries the AUTOPILOT made are counted apart, as run_episode counts
+# them, and gated with the same bound as the Shield's (RAIL_INVARIANT_PAIRS,
+# rail_gate_set); `ended_safe` is the state when the mission ended (its
+# terminal edge, else its last row). The speed and finiteness of what the
+# rail sent are invariants too. Every other gate - how long, how many ticks,
+# the phases, the offsets, the goal - is a performance gate, read over the
+# scenario's own window (rail_window).
+RAIL_INVARIANT_FIELDS = ("breaches", "autopilot_breaches", "polygon_entries",
+                         "autopilot_polygon_entries", "ended_safe", "max_speed_flown",
+                         "all_actions_finite")
+RAIL_INVARIANT_PAIRS = {"breaches": "autopilot_breaches",
+                        "polygon_entries": "autopilot_polygon_entries"}
+
+
+def rail_mission_rows(rows: list[dict]) -> tuple[list[dict], list[dict]]:
+    """(the mission's rows, up to and including the FSM's terminal edge -
+    TERMINAL_EDGES, where run_episode stops - and the rows the rail logged
+    after it, the autopilot's landing). No terminal edge: every row."""
+    k = next((i for i, r in enumerate(rows) if r.get("fsm_edge") in TERMINAL_EDGES), None)
+    return (list(rows), []) if k is None else (list(rows[:k + 1]), list(rows[k + 1:]))
+
+
+def rail_scored_rows(rows: list[dict], max_s: float | None) -> list[dict]:
+    """The rows score() reads for a rail run's performance measures: the
+    mission's (rail_mission_rows) before the scenario's cap (rail_window)."""
+    return rail_window(rail_mission_rows(rows)[0], max_s)[0]
 
 
 def sitl_extra(spec: ScenarioSpec, rows: list[dict], metrics: dict, policy,
@@ -3971,19 +4042,24 @@ def sitl_extra(spec: ScenarioSpec, rows: list[dict], metrics: dict, policy,
     no FSM record leaves `fsm` out, and score() reports the fail-safe label
     "not measured" - never a guess.
 
-    THE SCENARIO'S WINDOW (2026-11-07). Every measure is read over the rows
-    of the scenario's own time cap (rail_window; `max_s`, else the cap the
-    run recorded in metrics.json `scenario`), as run_episode measures its
-    ticks: the goal counts only if reached within it, the end is the
-    window's last row. score() must be given the same rows (rail_window).
-    The FSM record is the whole flight's: the extension past the cap exists
-    to show the fail-safe's outcome. What happened after the cap is
-    reported, not gated: `whole_flight` (the window's measures over every
-    row) and `rail_window` (the cap, the rows in and after it)."""
+    TWO WINDOWS (2026-11-07; the user's ruling). The PERFORMANCE measures are
+    read over the scenario's own window: the mission's rows (up to the FSM's
+    terminal edge, where run_episode stops) before the scenario's time cap
+    (`max_s`, else the cap the run recorded in metrics.json `scenario`), as
+    run_episode measures its ticks - the goal counts only if reached within
+    it; score() must be given the same rows (rail_scored_rows). The SAFETY
+    INVARIANTS (RAIL_INVARIANT_FIELDS, P0 escapes) are the whole flight's:
+    every row, past the cap and through the autopilot's landing, the
+    autopilot's breaches and entries counted apart; `ended_safe` when the
+    mission ended. The FSM record is the whole flight's too: the extension
+    past the cap exists to show the fail-safe's outcome. `in_window` keeps
+    the invariants' values over the scenario's window (the headless
+    comparison), `rail_window` what was read where."""
     extra: dict[str, Any] = {"seed_applied": True}
     if max_s is None:
         max_s = scenario_max_s(metrics)
-    win, after = rail_window(rows, max_s)
+    mission, landing = rail_mission_rows(rows)
+    win, after = rail_window(mission, max_s)
     if isinstance(metrics.get("reached"), bool):
         # Reached within the cap: the node ends a mission at its target, so a
         # flight that went on past the cap reached it (if at all) after it.
@@ -4009,23 +4085,61 @@ def sitl_extra(spec: ScenarioSpec, rows: list[dict], metrics: dict, policy,
         # flight on which the denial never reached the Shield, so the cell's
         # gate (min 1) fails rather than score a clean run.
         extra["gps_dropout_ticks"] = sum(1 for r in win if r.get("fix_ok") is False)
+    # ---- the safety invariants: the whole flight --------------------------
+    # Zones over every row, the landing included (a landing in a zone is an
+    # entry); unsafe positions up to the mission's end: ArduCopter's RTL
+    # ends in a landing at home, below every altitude floor by design, so
+    # the landing's own rows are not breaches (they are reported:
+    # `after_mission_end`).
+    prios = rail_rule_priorities(policy, generations)
+    in_window = {f: extra.get(f) for f in RAIL_INVARIANT_FIELDS}
+    whole = dict(rail_measurements(rows, policy, generations))
+    upto_end = rail_measurements(mission, policy, generations)
+    for f in ("breaches", "autopilot_breaches"):
+        if f in upto_end:
+            whole[f] = upto_end[f]
+        else:
+            whole.pop(f, None)
+    whole.update({k: v for k, v in rail_flight_fields(rows, metrics).items()
+                  if k in ("max_speed_flown", "all_actions_finite")})
+    whole["ended_safe"] = (not mission[-1]["unsafe"]) if rows and "unsafe" in mission[-1] \
+        else None
+    for f in RAIL_INVARIANT_FIELDS:
+        if f in whole:
+            extra[f] = whole[f]
+        else:
+            extra.pop(f, None)               # not measurable over the whole flight
+    if rows:
+        kw = K.compute(rows, prios, {"reached_goal": extra.get("reached_goal"),
+                                     "breaches": extra.get("breaches"),
+                                     "shield": "on" if spec.shield else "off",
+                                     **({"fsm": fsm} if "fsm" in extra else {})})
+        kv = K.compute(win, prios, {"reached_goal": extra.get("reached_goal"),
+                                    "breaches": in_window.get("breaches"),
+                                    "shield": "on" if spec.shield else "off"}) if win else {}
+        for f, v in kw.items():
+            if f.startswith("p0_"):
+                extra[f] = v
+                in_window[f] = kv.get(f)
+    extra["in_window"] = in_window
+    if "rail_measurements_not_measured" in whole:
+        extra["rail_measurements_not_measured"] = whole["rail_measurements_not_measured"]
     extra["rail_window"] = {
         "max_s": max_s, "rows": len(win), "rows_after_cap": len(after),
+        "rows_after_mission_end": len(landing), "rows_flight": len(rows),
         "flight_s": float(rows[-1]["t"]) if rows and rows[-1].get("t") is not None else None,
-        "read_over": ("every measure and gate: the rows before the scenario's cap; the "
-                      "FSM record (fail-safe, outcome label): the whole flight")}
-    if after:
-        whole = dict(rail_measurements(rows, policy, generations))
-        whole.update(rail_flight_fields(rows, metrics))
-        k = K.compute(rows, rail_rule_priorities(policy, generations),
-                      {"reached_goal": metrics.get("reached"),
-                       "breaches": whole.get("breaches"),
-                       "shield": "on" if spec.shield else "off",
-                       **({"fsm": fsm} if "fsm" in extra else {})})
-        whole.update(p0_escapes=k.get("p0_escapes"),
-                     p0_violation_escape_rate=k.get("p0_violation_escape_rate"))
-        extra["whole_flight"] = {"rows": len(rows), "reached_goal": metrics.get("reached"),
-                                 **{f: whole.get(f) for f in WHOLE_FLIGHT_FIELDS}}
+        "read_over": ("performance gates: the mission's rows before the scenario's cap; "
+                      "safety invariants (P0 escapes, breaches, polygon entries - the "
+                      "autopilot's counted apart and gated with them - ended safe, speed, "
+                      "finite actions): the whole flight; the FSM record: the whole flight")}
+    if landing:
+        # What the autopilot flew after the mission's end (RTL's descent and
+        # landing): measured, its breaches and entries in the counts above.
+        extra["after_mission_end"] = {
+            "rows": len(landing), "from_t": float(landing[0]["t"]),
+            "final_up": float(landing[-1]["up"]),
+            "unsafe_rows": sum(1 for r in landing if r.get("unsafe")),
+            "ended": (metrics.get("after_terminal") or {}).get("ended")}
     return extra
 
 
@@ -4157,8 +4271,8 @@ def run_sitl(sc, tag: str, seed: int = 0, defaults=None,
                        max_s=meta["max_s"], dt=spec.dt or _as_defaults(defaults).dt)
     extra["sim_stressors"] = stress["entries"]
     extra["sim_stressors_check"] = stress
-    # score() reads the scenario's own window, as sitl_extra did (rail_window).
-    return rail_window(rows, meta["max_s"])[0], extra
+    # score() reads the scenario's own window, as sitl_extra did.
+    return rail_scored_rows(rows, meta["max_s"]), extra
 
 
 # --------------------------------------------------------------------------- #
@@ -4510,9 +4624,9 @@ def run_hil(spec: ScenarioSpec, ep, seed: int, defaults, cfg: HilConfig, transpo
     extra["sim_stressors"] = stress["entries"]
     extra["sim_stressors_check"] = stress
     prios = rail_rule_priorities(pol, gens)
-    # `rows`: the scenario's own window, which score() reads (rail_window);
+    # `rows`: the scenario's own window, which score() reads (rail_scored_rows);
     # `rows_all`: the whole flight, past the cap to the fail-safe's outcome.
-    return {"rows": rail_window(rows, meta["max_s"])[0], "rows_all": rows, "extra": extra,
+    return {"rows": rail_scored_rows(rows, meta["max_s"]), "rows_all": rows, "extra": extra,
             "policy": pol, "prios": prios, "run_dir": run_dir, "tag": tag, "rc": rc,
             "meta": meta, "metrics": metrics}
 
@@ -4527,11 +4641,13 @@ def write_scenario_score(run_dir: Path, meta: dict, res: dict, extra: dict,
     KPI table it scored, with the metrics it gave compute() (the goal, the
     self-caused breaches, the arm, the FSM), so tools/kpi_report.py re-scores
     the run with them (load_run) under the scenario's family row. Since
-    2026-11-07 also the window it was read over (`rail_window`, which
-    kpi_report applies too), what was flown after the cap (`whole_flight`),
-    what the log could not answer (`rail_not_measured`), and the gates the
-    verdict used (`gates_basis`, `gates`, with the derivation of proposed
-    rail bounds and the verdict under the other basis)."""
+    2026-11-07 also what it was read over (`rail_window`, which kpi_report
+    applies too: performance over the scenario's window, safety invariants
+    over the whole flight, `in_window` beside them), what the autopilot flew
+    after the mission's end (`after_mission_end`), what the log could not
+    answer (`rail_not_measured`), and the gates the verdict used
+    (`gates_basis`, `gates`, with the derivation of proposed rail bounds and
+    the verdict on the cell's own beside it)."""
     doc = score_document(meta, res, extra, status, bad, labels_failed, known_why, prios,
                          spec, gates_basis=gates_basis, gates=gates, derivation=derivation,
                          other_verdicts=other_verdicts)
@@ -4563,18 +4679,23 @@ def score_document(meta: dict, res: dict, extra: dict, status: str, bad: list,
            # record, the dropout's onset, the jittered home).
            "sim_stressors": extra.get("sim_stressors"),
            "sim_stressors_check": extra.get("sim_stressors_check"),
-           # The scenario's window the KPI table was read over (rail_window;
-           # tools/kpi_report.py reads the same rows), what was flown after
-           # its cap, and what the log could not answer (2026-11-07).
+           # What the KPI table was read over (2026-11-07): the performance
+           # measures over the scenario's window (tools/kpi_report.py reads
+           # the same rows), the safety invariants over the whole flight -
+           # their values in the window kept beside them (`in_window`) - what
+           # the autopilot flew after the mission's end, and what the log
+           # could not answer.
            "rail_window": extra.get("rail_window"),
-           "whole_flight": extra.get("whole_flight"),
+           "in_window": extra.get("in_window"),
+           "after_mission_end": extra.get("after_mission_end"),
            "rail_not_measured": {**({"positions": extra["rail_measurements_not_measured"]}
                                     if extra.get("rail_measurements_not_measured") else {}),
                                  **(extra.get("rail_not_measured") or {})} or None,
-           # The gates the verdict used: the cell's own ("ideal"), or the
-           # proposal's bounds derived on the ArduPilot response
-           # ("ardupilot", rail_gates_ardupilot), with how each was derived
-           # and the verdict under the other basis.
+           # The gates the verdict used (rail_gate_set): the cell's own
+           # ("ideal") or the proposal's bounds derived on a vehicle model
+           # ("rail", "ardupilot", "ardupilot-rest"), with the safety
+           # invariants' autopilot counterparts, how each bound was derived,
+           # and the verdict on the cell's own beside it.
            "gates_basis": gates_basis,
            "gates": gates if gates is not None else spec.gates,
            "gates_derivation": derivation or None,
@@ -4636,22 +4757,21 @@ def rescore_rail_run(run_dir: Path, ep, defaults, *, rail_gates: str = "ideal") 
         extra["sim_stressors"] = stored.get("sim_stressors")
         extra["sim_stressors_check"] = stored.get("sim_stressors_check")
     prios = rail_rule_priorities(pol, gens)
-    res = score(spec, rail_window(rows, extra["rail_window"]["max_s"])[0], extra, pol, prios)
-    after = {"ideal": verdict_record(*episode_verdict(spec, res, ep.cell.params, ep.seed))}
-    derived: dict[str, tuple] = {}
+    res = score(spec, rail_scored_rows(rows, extra["rail_window"]["max_s"]), extra, pol, prios)
+    derived: dict[str, tuple] = {"ideal": rail_gate_set("ideal", spec, ep.seed, defaults)}
     if rail_gates != "ideal":
         for basis in RAIL_GATE_BASES[1:]:
-            g, d = rail_gates_for(basis, spec, ep.seed, defaults)
-            derived[basis] = (g, d)
-            after[basis] = verdict_record(*episode_verdict(spec, res, ep.cell.params,
-                                                           ep.seed, gates=g))
-    gates, derivation = derived.get(rail_gates, (None, None))
+            derived[basis] = rail_gate_set(basis, spec, ep.seed, defaults)
+    after = {basis: verdict_record(*episode_verdict(spec, res, ep.cell.params, ep.seed,
+                                                    gates=g))
+             for basis, (g, _) in derived.items()}
+    gates, derivation = derived[rail_gates]
     v = after[rail_gates]
     doc = score_document(meta, res, extra, v["status"], v["gates_failed"], v["labels_failed"],
                          v["known_failure_reason"], prios, spec, gates_basis=rail_gates,
                          gates=gates, derivation=derivation,
                          other_verdicts={k: w for k, w in after.items() if k != rail_gates})
-    doc["derivations"] = {k: d for k, (_, d) in derived.items()} or None
+    doc["derivations"] = {k: d for k, (_, d) in derived.items() if d} or None
     return {"run": run_dir.name, "scenario_id": spec.scenario_id, "cell": ep.episode_id,
             "seed": ep.seed, "before": before, "after": after, "doc": doc}
 
@@ -5048,87 +5168,118 @@ def episode_verdict(spec: ScenarioSpec, res: dict, params: dict, seed: int,
 # and 2.7, with no P0 escape, breach or censored episode.
 VEHICLE_PINNED_GATES = ("ticks_inside_fence_polygon", "max_time_to_safe_s",
                         "mean_time_to_safe_s")
-# `--rail-gates`: the cell's own gates (ideal, the default and the adopted
-# reading) or the proposal's bounds derived on the ArduPilot response arm,
-# entering mid-flight as the sweep's arm does (ardupilot) or from a hover as
-# a rail starts (ardupilot-rest).
-RAIL_GATE_BASES = ("ideal", "ardupilot", "ardupilot-rest")
-RAIL_GATE_ENTRY = {"ardupilot": "cruise", "ardupilot-rest": "rest"}
-# What both derivation flights hold for the FSM's Loiter / Land: ArduPilot's
+# `--rail-gates`: the cell's own gates (ideal, the default until the user
+# decides) or the bounds derived on a model of the vehicle the rails fly:
+# `rail` (the rig's own fitted response from a hover, RAIL_VEHICLE - the
+# principle of 2026-11-07: every expectation derived headless on the vehicle
+# that flies the KPI runs, with the rail's start), and, for comparison, the
+# harness's ArduPilot response entering mid-flight (ardupilot) or from a hover
+# (ardupilot-rest). basis -> (response, entry; None: the arm's own).
+RAIL_GATE_VEHICLES = {"rail": ("rail", None), "ardupilot": ("ardupilot", "cruise"),
+                      "ardupilot-rest": ("ardupilot", "rest")}
+RAIL_GATE_BASES = ("ideal",) + tuple(RAIL_GATE_VEHICLES)
+# What every derivation flight holds for the FSM's Loiter / Land: ArduPilot's
 # own hold where the aircraft is, as every rail flies it.
-RAIL_GATE_HOLD = "in_place"
+RAIL_GATE_HOLD = RAIL_VEHICLE["autopilot_hold"]
 
 
 def _headless_score(spec: ScenarioSpec, defaults, seed: int, response: str,
-                    entry: str = DEFAULT_ENTRY) -> dict:
+                    entry: str | None = None) -> dict:
     """One headless flight of the cell on `response`'s vehicle (entering as
-    `entry` says), holding in place as the rails do, scored by score()."""
+    `entry` says, else as the arm does), holding in place as the rails do,
+    scored by score()."""
     run = run_episode(spec, defaults, seed, autopilot_hold=RAIL_GATE_HOLD, response=response,
                       **({} if response == "ideal" else {"entry": entry}))
     return score(spec, run.rows, run.extra, run.policy, run.priorities)
 
 
-def rail_gates_ardupilot(spec: ScenarioSpec, seed: int, defaults=None, *,
-                         entry: str = DEFAULT_ENTRY, run=None) -> tuple[dict, dict]:
+def rail_gates_derived(spec: ScenarioSpec, seed: int, defaults=None, *,
+                       response: str = "rail", entry: str | None = None,
+                       run=None) -> tuple[dict, dict]:
     """PROPOSED, NOT ADOPTED (2026-11-07): the cell's gates for a rail run,
     each vehicle-pinned bound (VEHICLE_PINNED_GATES, its `max`) moved by what
-    the measured ArduPilot response changes on THIS cell and seed. The
-    headless harness flies the cell twice, on the ideal vehicle and on the
-    ArduPilot response arm (`--response-arms ardupilot`, AP_RESPONSE: the
-    response the fail-safe labels of docs/RUBRIC-failsafe.md section 8 are
-    derived on), both holding in place (RAIL_GATE_HOLD), the ArduPilot one
-    entering as `entry` says (ENTRY_STATES: "cruise", mid-flight as the
-    sweep's arm, or "rest", from a hover as a rail starts), and the bound
+    the rail's vehicle changes on THIS cell and seed. The headless harness
+    flies the cell twice, on the ideal vehicle and on `response`'s (the
+    `rail` arm: the rig's own fit from a hover; or the ArduPilot arm, entering
+    as `entry` says), both holding in place (RAIL_GATE_HOLD), and the bound
     becomes
 
-        ideal bound + (ArduPilot value - ideal value)
+        ideal bound + (vehicle value - ideal value)
 
     so each cell keeps the headroom its ideal pin gave it - the margin rule
     the pins used (time-window-opens-on-vehicle's 2.7 s is its 2.6 s plus a
     tick, its 15 ticks the worst cell of the family; altitude-recovery-
     depth's 5.2 s the deepest cell's 5.0 s plus two ticks). Requirement
     gates are untouched; so are the labels (the fail-safe's on the rail
-    vehicle are section 8's proposal). A bound that either flight leaves
-    unmeasured keeps the ideal bound, and the derivation says so. `run`
-    replaces the headless flight (a test's): (spec, defaults, seed,
-    response, entry) -> score() table. Returns (gates, derivation)."""
+    vehicle are derived by tools/failsafe_rubric.py on the same arm). A
+    bound that either flight leaves unmeasured keeps the ideal bound, and
+    the derivation says so. `run` replaces the headless flight (a test's):
+    (spec, defaults, seed, response, entry) -> score() table. Returns
+    (gates, derivation)."""
     gates = {k: dict(v) for k, v in spec.gates.items()}
     todo = [f for f in VEHICLE_PINNED_GATES if "max" in gates.get(f, {})]
     deriv: dict[str, Any] = {}
     if not todo:
         return gates, deriv
     run = run or _headless_score
-    ideal = run(spec, defaults, seed, "ideal", DEFAULT_ENTRY)
-    ap = run(spec, defaults, seed, "ardupilot", entry)
+    ideal = run(spec, defaults, seed, "ideal", None)
+    veh = run(spec, defaults, seed, response, entry)
     for f in todo:
         bound = gates[f]["max"]
-        vi, va = ideal.get(f), ap.get(f)
-        rec = {"ideal_bound": bound, "ideal_value": vi, "ardupilot_value": va}
+        vi, va = ideal.get(f), veh.get(f)
+        rec = {"ideal_bound": bound, "ideal_value": vi, "vehicle_value": va}
         if vi is None or va is None:
             rec.update(rail_bound=bound, rule=("kept: the "
-                                               + ("ideal" if vi is None else "ArduPilot")
+                                               + ("ideal" if vi is None else response)
                                                + " flight leaves it unmeasured"))
         else:
             nb = bound + (va - vi)
             nb = int(nb) if all(isinstance(x, int) for x in (bound, va, vi)) else round(nb, 4)
-            rec.update(rail_bound=nb, rule="ideal bound + (ArduPilot - ideal) on this cell")
+            rec.update(rail_bound=nb, rule=f"ideal bound + ({response} - ideal) on this cell")
             gates[f] = dict(gates[f], max=nb)
         deriv[f] = rec
-    deriv["_flights"] = {"vehicles": ["ideal", "ardupilot"], "seed": int(seed),
-                         "autopilot_hold": RAIL_GATE_HOLD, "ardupilot_entry": entry,
-                         "ardupilot_response": response_for("ardupilot")}
+    deriv["_flights"] = {"vehicles": ["ideal", response], "seed": int(seed),
+                         "autopilot_hold": RAIL_GATE_HOLD,
+                         "entry": entry or RESPONSE_ENTRY.get(response, DEFAULT_ENTRY),
+                         "response": response_for(response)}
     return gates, deriv
+
+
+def rail_gates_ardupilot(spec: ScenarioSpec, seed: int, defaults=None, *,
+                         entry: str | None = DEFAULT_ENTRY, run=None) -> tuple[dict, dict]:
+    """rail_gates_derived on the harness's ArduPilot arm (the first proposal
+    of 2026-11-07, kept for comparison)."""
+    return rail_gates_derived(spec, seed, defaults, response="ardupilot", entry=entry, run=run)
 
 
 def rail_gates_for(basis: str, spec: ScenarioSpec, seed: int, defaults=None, *,
                    run=None) -> tuple[dict | None, dict | None]:
     """(gates, derivation) of a `--rail-gates` basis: (None, None) for
-    "ideal" (the cell's own), rail_gates_ardupilot for the others."""
+    "ideal" (the cell's own), rail_gates_derived on the basis's vehicle for
+    the others."""
     if basis == "ideal":
         return None, None
-    if basis not in RAIL_GATE_ENTRY:
+    if basis not in RAIL_GATE_VEHICLES:
         raise ValueError(f"--rail-gates {basis!r}: one of {list(RAIL_GATE_BASES)}")
-    return rail_gates_ardupilot(spec, seed, defaults, entry=RAIL_GATE_ENTRY[basis], run=run)
+    response, entry = RAIL_GATE_VEHICLES[basis]
+    return rail_gates_derived(spec, seed, defaults, response=response, entry=entry, run=run)
+
+
+def rail_gate_set(basis: str, spec: ScenarioSpec, seed: int, defaults=None, *,
+                  run=None) -> tuple[dict, dict | None]:
+    """The gates a rail run's verdict uses on `basis` (rail_gates_for; the
+    cell's own for "ideal"), with each safety invariant's autopilot
+    counterpart gated beside it (RAIL_INVARIANT_PAIRS: a cell that bounds the
+    Shield's breaches or polygon entries bounds the autopilot's with the same
+    bound - the user's ruling of 2026-11-07: reported apart as the KPI
+    definitions require, gated). A counterpart the cell gates itself is its
+    own. Returns (gates, derivation)."""
+    derived, derivation = rail_gates_for(basis, spec, seed, defaults, run=run)
+    gates = {k: dict(v) for k, v in (derived if derived is not None else spec.gates).items()}
+    for f, ap in RAIL_INVARIANT_PAIRS.items():
+        if f in gates and ap not in gates:
+            gates[ap] = dict(gates[f])
+    return gates, derivation
 
 
 # --------------------------------------------------------------------------- #
@@ -5669,8 +5820,10 @@ _RSP_DELTA_FIELDS = ("unsafe_position_entries", "episodes_with_unsafe_position_e
 
 
 def response_comparison(headline: list[dict], rsp_scored: list[dict],
-                        rsp_counts: dict, rsp_rows: list[dict]) -> dict:
-    """The ArduPilot vehicle-response arm beside the ideal vehicle (module
+                        rsp_counts: dict, rsp_rows: list[dict],
+                        arm: str = "ardupilot") -> dict:
+    """The run's comparison vehicle `arm` (the ArduPilot response, or since
+    2026-11-07 the rig's own: "rail") beside the ideal vehicle (module
     docstring, "THE VEHICLE RESPONSE"): per family, both arms' unsafe-
     position and true-state entry counts, P0 escapes and labelled fail-safe
     scores over the SAME (cell, seed) pairs, their difference, and every
@@ -5684,7 +5837,7 @@ def response_comparison(headline: list[dict], rsp_scored: list[dict],
     pairs = []
     unmatched = []
     for r in rsp_scored:
-        g = twins.get((_twin_id(r["id"], "response-ardupilot"), r["seed"]))
+        g = twins.get((_twin_id(r["id"], f"response-{arm}"), r["seed"]))
         if g is None:
             unmatched.append(r["id"])
             continue
@@ -5698,7 +5851,7 @@ def response_comparison(headline: list[dict], rsp_scored: list[dict],
     families = {}
     for fam in sorted(set(ideal_side) | set(ap_side)):
         a, b = ideal_side.get(fam) or {}, ap_side.get(fam) or {}
-        families[fam] = {"ideal": a, "ardupilot": b,
+        families[fam] = {"ideal": a, arm: b,
                          "delta": {k: (b.get(k) or 0) - (a.get(k) or 0)
                                    for k in _RSP_DELTA_FIELDS}}
     moved = []
@@ -5706,11 +5859,11 @@ def response_comparison(headline: list[dict], rsp_scored: list[dict],
         a, b = _cmp_side(g), _cmp_side(r)
         if a != b:
             moved.append({"id": g["id"], "seed": r["seed"], "family": r["template"],
-                          "ideal": a, "ardupilot": b,
+                          "ideal": a, arm: b,
                           "max_velocity_lag_mps": (r.get("kpi") or {}).get(
                               "max_velocity_lag_mps")})
     totals = {}
-    for side, items in (("ideal", [g for g, _ in pairs]), ("ardupilot", [r for _, r in pairs])):
+    for side, items in (("ideal", [g for g, _ in pairs]), (arm, [r for _, r in pairs])):
         on = [x for x in items if x.get("arm", "on") == "on"]
         off = [x for x in items if x.get("arm", "on") != "on"]
         totals[side] = {
@@ -5732,9 +5885,9 @@ def response_comparison(headline: list[dict], rsp_scored: list[dict],
     lags = [(r.get("kpi") or {}).get("max_velocity_lag_mps") for _, r in pairs]
     lags = [x for x in lags if x is not None]
     return {
-        "arm": "ardupilot", "response": response_for("ardupilot"),
-        "note": ("the grant's Shield (its forecast unchanged) flown on the measured "
-                 "ArduPilot vehicle response instead of the ideal vehicle, for "
+        "arm": arm, "response": response_for(arm),
+        "note": (f"the grant's Shield (its forecast unchanged) flown on the {arm} "
+                 "vehicle response instead of the ideal vehicle, for "
                  "comparison only: never in _counts, _failsafe_labels, _true_state, "
                  "the top failures or the exit code. Family rows and totals count "
                  "shield-on episodes (the fail-safe labels every labelled one); "
@@ -6182,6 +6335,9 @@ def main(argv: list[str] | None = None) -> int:
     # headline arm alone (expand() resolves them the same way).
     eff_rsp = (rsp_arms if rsp_arms is not None
                else (profile.response_arms if profile else ["ideal"]))
+    # The run's comparison vehicle, when it flies one (check_response_arms
+    # allows one beside "ideal"): "ardupilot", or "rail" since 2026-11-07.
+    rsp_arm = next((a for a in eff_rsp if a != "ideal"), "ardupilot")
     try:
         if fc_arms is not None:
             check_forecast_arms(fc_arms)
@@ -6411,26 +6567,31 @@ def main(argv: list[str] | None = None) -> int:
 
         res = score(spec, rows, extra, policy, prios)
         gates_used = derivation = other = None
-        if args.backend in RAIL_BACKENDS and args.rail_gates != "ideal":
-            # PROPOSED, NOT ADOPTED (2026-11-07): the verdict on the bounds
-            # derived on the ArduPilot response, the cell's own beside it.
-            other = {"ideal": verdict_record(*episode_verdict(spec, res, ep.cell.params,
-                                                              ep.seed))}
-            try:
-                gates_used, derivation = rail_gates_for(args.rail_gates, spec, ep.seed,
-                                                        lib.defaults)
-            except Exception as e:                               # noqa: BLE001
-                derivation = {"error": f"{type(e).__name__}: {e} (the cell's own gates used)"}
+        basis_used = "ideal"
+        if args.backend in RAIL_BACKENDS:
+            # A rail run's gates: the cell's own with each safety invariant's
+            # autopilot counterpart (rail_gate_set, 2026-11-07); on a derived
+            # basis (PROPOSED, NOT ADOPTED) the vehicle-pinned bounds moved,
+            # the verdict on the cell's own kept beside it.
+            gates_used, _ = rail_gate_set("ideal", spec, ep.seed, lib.defaults)
+            if args.rail_gates != "ideal":
+                other = {"ideal": verdict_record(*episode_verdict(
+                    spec, res, ep.cell.params, ep.seed, gates=gates_used))}
+                try:
+                    gates_used, derivation = rail_gate_set(args.rail_gates, spec, ep.seed,
+                                                           lib.defaults)
+                    basis_used = args.rail_gates
+                except Exception as e:                           # noqa: BLE001
+                    derivation = {"error": f"{type(e).__name__}: {e} (the cell's own "
+                                           f"gates used)"}
         status, bad, labels_failed, known_why = episode_verdict(
             spec, res, ep.cell.params, ep.seed, gates=gates_used)
         if hil_run is not None:
             # Beside the fetched run, for tools/kpi_report.py (load_run).
             write_scenario_score(hil_run["run_dir"], hil_run["meta"], res, extra, status,
                                  bad, labels_failed, known_why, prios, spec,
-                                 gates_basis=args.rail_gates if gates_used is not None
-                                 else "ideal",
-                                 gates=gates_used, derivation=derivation,
-                                 other_verdicts=other)
+                                 gates_basis=basis_used, gates=gates_used,
+                                 derivation=derivation, other_verdicts=other)
             common["run"] = _show(hil_run["run_dir"])
             common["mission_tag"] = hil_run["tag"]
         if spec.expect == "tracked":
@@ -6440,7 +6601,8 @@ def main(argv: list[str] | None = None) -> int:
         mark = _MARKS[status]
         if is_cmp:
             ccounts[status] += 1
-            mark = "cmp3s" if kind == "forecast" else "cmpAP"
+            mark = ("cmp3s" if kind == "forecast"
+                    else "cmpRL" if ep.response == "rail" else "cmpAP")
         elif status == "known_failure":
             n_known += 1
         elif status in ("fail", "unexpected_pass"):
@@ -6565,11 +6727,11 @@ def main(argv: list[str] | None = None) -> int:
         if rsp_tables_on:
             ra = _rollup(rsp_tables_on)
             if ra is not None:
-                new_rollups["_comparison_response_ardupilot_shield_on"] = dict(
-                    ra, response_arm="ardupilot",
+                new_rollups[f"_comparison_response_{rsp_arm}_shield_on"] = dict(
+                    ra, response_arm=rsp_arm,
                     true_state=true_state_summary(
                         [r for r in rsp_rows if "kpi" in r]),
-                    note="the grant's Shield flown on the measured ArduPilot vehicle "
+                    note=f"the grant's Shield flown on the {rsp_arm} vehicle "
                          "response (docs/DESIGN-harness-vehicle-response.md), a "
                          "comparison arm; never part of a headline number")
         groups: dict[str, list] = {}
@@ -6587,7 +6749,7 @@ def main(argv: list[str] | None = None) -> int:
                                       cmp_counts, cmp_rows)
                   if cmp_rows else None)
     rsp_comparison = (response_comparison(scored, [r for r in rsp_rows if "kpi" in r],
-                                          rsp_counts, rsp_rows)
+                                          rsp_counts, rsp_rows, arm=rsp_arm)
                       if rsp_rows else None)
     top = None
     try:
@@ -6777,16 +6939,16 @@ def main(argv: list[str] | None = None) -> int:
               f"{comparison['episodes_moved']} episode(s) moved between the forecasts")
     if rsp_comparison:
         rc = rsp_comparison["counts"]
-        ti, ta = rsp_comparison["totals"]["ideal"], rsp_comparison["totals"]["ardupilot"]
+        ti, ta = rsp_comparison["totals"]["ideal"], rsp_comparison["totals"][rsp_arm]
         fi, fa = ti["failsafe_labels"], ta["failsafe_labels"]
-        print(f"vehicle-response comparison (the measured ArduPilot response, NOT the "
+        print(f"vehicle-response comparison (the {rsp_arm} response, NOT the "
               f"headline; reported, never gated): {rc['pass']} pass, {rc['tracked']} "
               f"tracked, {rc['fail'] + rc['error']} fail, {rc['known_failure']} known, "
               f"{rc['unexpected_pass']} pinned-but-passing over "
               f"{rsp_comparison['paired_episodes']} paired episodes; max velocity lag "
               f"{rsp_comparison['max_velocity_lag_mps']} m/s; "
               f"{rsp_comparison['episodes_moved']} episode(s) moved")
-        print(f"  shield-on, ideal -> ardupilot: unsafe-position entries "
+        print(f"  shield-on, ideal -> {rsp_arm}: unsafe-position entries "
               f"{ti['unsafe_position_entries']} -> {ta['unsafe_position_entries']} "
               f"(episodes {ti['episodes_with_unsafe_position_entry']} -> "
               f"{ta['episodes_with_unsafe_position_entry']}); polygon entries "
@@ -6800,11 +6962,11 @@ def main(argv: list[str] | None = None) -> int:
               f"{fi['correct']}/{fi['labelled']} -> {fa['correct']}/{fa['labelled']} "
               f"({fi['false_triggers']} -> {fa['false_triggers']} false, "
               f"{fi['missed_triggers']} -> {fa['missed_triggers']} missed)")
-        print(f"\n  {'family (shield-on), ideal -> ardupilot':<32} {'eps':>4} "
+        print(f"\n  {'family (shield-on), ideal -> ' + rsp_arm:<32} {'eps':>4} "
               f"{'unsafe-entries':>15} {'poly-entries':>13} {'ap-poly':>8} "
               f"{'P0-esc':>8} {'true-P0-cmd':>11} {'true-P0-veh':>11} {'fail-safe':>13}")
         for fam, row in rsp_comparison["families"].items():
-            a, b = row["ideal"], row["ardupilot"]
+            a, b = row["ideal"], row[rsp_arm]
             if not a:
                 continue
             print(f"  {fam:<32} {a['episodes']:>4} "

@@ -131,25 +131,66 @@ def _commanded(r: dict) -> tuple[float, float, float] | None:
     return float(c[0]), float(c[1]), float(c[2])
 
 
-def segments(path: Path, min_rows: int = MIN_SEG) -> list[dict]:
+def _rig_commanded(r: dict) -> tuple[float, float, float] | None:
+    """_commanded for a ROS 2 rail's row (sitl/ros2_shield_node.py build_row):
+    the velocity it SENT, in the world frame - `emitted` on a "pass" tick,
+    the zero on a "brake" tick (the row's `emitted` is then the Shield's
+    action, which was not sent) - and None unless ArduPilot was in GUIDED
+    (`mode`) and the rail flew the tick."""
+    if r.get("flown") is not True or r.get("mode") != "GUIDED":
+        return None
+    if r.get("setpoint") == "brake":
+        return 0.0, 0.0, 0.0
+    if r.get("setpoint") != "pass":
+        return None
+    a = r.get("emitted")
+    if not isinstance(a, dict):
+        return None
+    c = (a.get("vx", 0.0), a.get("vy", 0.0), a.get("vz_up", 0.0))
+    if not all(isinstance(v, (int, float)) and math.isfinite(v) for v in c):
+        return None
+    return float(c[0]), float(c[1]), float(c[2])
+
+
+def segments(path: Path, min_rows: int = MIN_SEG, commanded=None,
+             rig: bool = False) -> list[dict]:
     """Maximal runs of consecutive GUIDED-flown rows: per row its time, its
-    position and the command it sent."""
+    position and the command it sent (`commanded`: _commanded, or
+    _rig_commanded for a ROS 2 rail's log).
+
+    `rig` (a ROS 2 rail's run, fit_rig): the segment that begins on the
+    flight's first row begins at the mission's start, from the hover the
+    rail settles into after its take-off - how a rail starts every scenario.
+    There the model's start is known, not guessed: the velocity the row
+    measured (`state_v`) and no earlier command but the hover's zero, so that
+    segment keeps its first seconds (`burn_s` 0, `v0`), which hold the
+    acceleration from rest that a rail's start flies."""
+    commanded = commanded or _commanded
     rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()
             if line.strip()]
     rows = [r for r in rows if "t" in r and "x" in r and "y" in r and "up" in r]
-    segs, cur = [], []
-    for r in rows:
-        c = _commanded(r)
+    segs, cur, starts = [], [], []
+    for i, r in enumerate(rows):
+        c = commanded(r)
         if c is None:
             if len(cur) >= min_rows:
                 segs.append(cur)
             cur = []
             continue
+        if not cur:
+            starts.append(i)
         cur.append((float(r["t"]), float(r["x"]), float(r["y"]), float(r["up"]), c))
     if len(cur) >= min_rows:
         segs.append(cur)
-    return [{"t": [s[0] for s in seg], "pos": [(s[1], s[2], s[3]) for s in seg],
-             "cmd": [s[4] for s in seg]} for seg in segs]
+    out = [{"t": [s[0] for s in seg], "pos": [(s[1], s[2], s[3]) for s in seg],
+            "cmd": [s[4] for s in seg]} for seg in segs]
+    if rig and out and rows and out[0]["t"][0] == float(rows[0]["t"]):
+        v = rows[0].get("state_v")
+        if isinstance(v, (list, tuple)) and len(v) == 3 and all(
+                isinstance(c, (int, float)) and math.isfinite(c) for c in v):
+            out[0].update(burn_s=0.0, v0=(float(v[0]), float(v[1]), float(v[2])),
+                          from_hover=True)
+    return out
 
 
 def _fd(times: list[float], pos: list[tuple], k: int) -> tuple[float, float, float]:
@@ -176,7 +217,8 @@ def _simulate(params, seg) -> tuple[list[float], list[tuple]]:
     command of row j issued at row j's time, as the rail issued it. Returns
     (times, positions) of the trace, starting at the segment's first row."""
     t0 = seg["t"][0]
-    veh = S.VehicleResponse(params, v0=_start_velocity(seg["t"], seg["pos"]), t0=t0)
+    veh = S.VehicleResponse(params, v0=seg.get("v0") or _start_velocity(seg["t"], seg["pos"]),
+                            t0=t0)
     ts, ps = [t0], [(0.0, 0.0, 0.0)]
     x = y = z = 0.0
     for j in range(len(seg["t"]) - 1):
@@ -215,8 +257,9 @@ def _residuals(seg, sample_t: list[float], trace, axis: str) -> list[float]:
     model = [_interp(ts, ps, t) for t in sample_t]
     out = []
     t_start = sample_t[0]
+    burn = seg.get("burn_s", BURN_S)
     for k in range(HALF, len(sample_t) - HALF):
-        if sample_t[k - HALF] - t_start < BURN_S:
+        if sample_t[k - HALF] - t_start < burn:
             continue
         vm = _fd(sample_t, seg["pos"], k)
         vs = _fd(sample_t, model, k)
@@ -409,6 +452,135 @@ def fit(dirs: list[Path], quick: bool = False, fresh: tuple[str, ...] = (),
     return out
 
 
+# --------------------------------------------------------------------------- #
+# the hil rig's own response (2026-11-07)
+# --------------------------------------------------------------------------- #
+
+# Runs fit_rig leaves out by default: the 12 m/s near-edge cells command more
+# horizontal speed than the SITL airframe reaches (per-run residual 1.26 m/s
+# against 0.01-0.2 for every other rh01 run), a ceiling VehicleResponse does
+# not model - fitting them pulls the acceleration and jerk down to absorb it.
+RIG_EXCLUDE = ("*near-edge-at-12mps*",)
+# The response the rail Shield's own forecast assumes (sitl/ros2_shield_node.py
+# metrics.json `shield_forecast.response`: tools/fit_velocity_response.py,
+# reaction 0.45 s, 1.75 m/s^2), compared beside the rig's fit in its form: a
+# pure reaction delay and an acceleration limit, no jerk limit, no lag.
+SHIELD_FORECAST_MODEL = {"delay_s": 0.45, "accel_mps2": 1.75}
+
+
+def _residual_stats(params, segs: list[dict], axis: str = "xy") -> dict:
+    """RMS, median and 90th percentile of the per-sample velocity residual
+    (m/s) of `params` over `segs` (the loss's samples)."""
+    sq: list[float] = []
+    for seg in segs:
+        sq += _residuals(seg, seg["t"], _simulate(params, seg), axis)
+    if not sq:
+        return {"rms": None, "p50": None, "p90": None, "samples": 0}
+    mag = sorted(math.sqrt(x) for x in sq)
+    return {"rms": round(math.sqrt(sum(sq) / len(sq)), 4),
+            "p50": round(mag[len(mag) // 2], 4),
+            "p90": round(mag[min(len(mag) - 1, int(0.9 * len(mag)))], 4),
+            "samples": len(sq)}
+
+
+def rig_constants(fit_doc: dict) -> dict:
+    """The RAIL_RESPONSE values a rig fit implies, rounded as the harness pins
+    AP_RESPONSE: the rig's own delay and shape, horizontal and vertical."""
+    xy, z = fit_doc["xy"], fit_doc["z"]
+    return {"delay_s": round(xy["delay_s"], 2), "accel_mps2": round(xy["accel_mps2"], 2),
+            "jerk_mps3": round(xy["jerk_mps3"], 1), "tau_s": round(xy["tau_s"], 2),
+            "accel_z_mps2": round(z["accel_z_mps2"], 1),
+            "jerk_z_mps3": round(z["jerk_z_mps3"], 1), "tau_z_s": round(z["tau_z_s"], 2)}
+
+
+def fit_rig(paths: list[Path], quick: bool = False) -> dict:
+    """The hil rig's own response, fitted by this tool's method (the same
+    VehicleResponse, loss and search as fit()) to the given ROS 2 rail runs
+    ONLY: each run's flight_log.jsonl, the command each GUIDED row sent
+    (_rig_commanded) against the position it read (MAVROS's local position,
+    fresh: the rows record its age, pose_age_ms). Beside the fit: the ideal
+    vehicle and the best pure delay (the nulls), the harness's `ardupilot`
+    arm (AP_RESPONSE) and the rail Shield's own forecast response
+    (SHIELD_FORECAST_MODEL), each scored on the same samples, and the fit's
+    residual per run. Raises FileNotFoundError with no usable segment."""
+    by_run = {p.parent.name: segments(p, commanded=_rig_commanded, rig=True) for p in paths}
+    segs = [s for v in by_run.values() for s in v]
+    if not segs:
+        raise FileNotFoundError(f"no GUIDED-flown segment in {[str(p) for p in paths]}")
+    evals = 120 if quick else 400
+    out: dict = {"runs": sorted(n for n, v in by_run.items() if v),
+                 "runs_without_segment": sorted(n for n, v in by_run.items() if not v),
+                 "segments": sum(len(v) for v in by_run.values())}
+    ideal = _params({"delay_s": 0.0, "accel_mps2": math.inf, "jerk_mps3": math.inf,
+                     "tau_s": 0.0})
+    out["ideal"] = {"xy": _residual_stats(ideal, segs), "z": _residual_stats(ideal, segs, "z")}
+    best_d = min(((pas_loss(_params({"delay_s": d, "accel_mps2": math.inf,
+                                     "jerk_mps3": math.inf, "tau_s": 0.0}), segs)[0], d)
+                  for d in [0.05 * i for i in range(0, 31)]))
+    out["pure_delay"] = {"delay_s": round(best_d[1], 3), "rms_xy": round(best_d[0], 4)}
+    out["harness_ardupilot"] = {"params": S.AP_RESPONSE.record(),
+                                "xy": _residual_stats(S.AP_RESPONSE, segs),
+                                "z": _residual_stats(S.AP_RESPONSE, segs, "z")}
+    shield = _params({"delay_s": SHIELD_FORECAST_MODEL["delay_s"],
+                      "accel_mps2": SHIELD_FORECAST_MODEL["accel_mps2"],
+                      "jerk_mps3": math.inf, "tau_s": 0.0})
+    out["shield_forecast_model"] = {"params": dict(SHIELD_FORECAST_MODEL),
+                                    "xy": _residual_stats(shield, segs)}
+
+    def f_xy(x):
+        return pas_loss(_params(x), segs, "xy")[0]
+    x0 = {"delay_s": 0.3, "accel_mps2": 2.0, "jerk_mps3": 5.0, "tau_s": 0.2}
+    xy, rms_xy, n_xy = pattern_search(
+        f_xy, x0, steps={"delay_s": 0.1, "accel_mps2": 0.5, "jerk_mps3": 2.0, "tau_s": 0.1},
+        lo={"delay_s": 0.0, "accel_mps2": 0.3, "jerk_mps3": 0.5, "tau_s": 0.0},
+        hi={"delay_s": 1.5, "accel_mps2": 10.0, "jerk_mps3": 60.0, "tau_s": 2.0},
+        max_evals=evals)
+    out["xy"] = {k: round(v, 3) for k, v in xy.items()}
+    out["rms_xy"] = round(rms_xy, 4)
+    out["evals_xy"] = n_xy
+    out["sensitivity_xy"] = {k: {f"x{f}": round(f_xy(dict(xy, **{k: v * f})), 4)
+                                 for f in (0.75, 1.25)} for k, v in xy.items()}
+
+    def f_z(z):
+        return pas_loss(_params(xy, z), segs, "z")[0]
+    z0 = {"accel_z_mps2": 1.0, "jerk_z_mps3": 5.0, "tau_z_s": 0.3}
+    z, rms_z, n_z = pattern_search(
+        f_z, z0, steps={"accel_z_mps2": 0.4, "jerk_z_mps3": 2.0, "tau_z_s": 0.1},
+        lo={"accel_z_mps2": 0.2, "jerk_z_mps3": 0.5, "tau_z_s": 0.0},
+        hi={"accel_z_mps2": 10.0, "jerk_z_mps3": 60.0, "tau_z_s": 2.0},
+        max_evals=evals)
+    out["z"] = {k: round(v, 3) for k, v in z.items()}
+    out["rms_z"] = round(rms_z, 4)
+    out["evals_z"] = n_z
+    fitted = _params(xy, z)
+    out["fit"] = {"xy": _residual_stats(fitted, segs), "z": _residual_stats(fitted, segs, "z")}
+    out["per_run_rms_xy"] = {n: _residual_stats(fitted, v)["rms"]
+                             for n, v in sorted(by_run.items()) if v}
+    # The rails' start: the first HOVER_HEAD_S of every flight, from the
+    # hover, where a start mid-flight and a start from rest differ most.
+    heads = [_head(s, HOVER_HEAD_S) for s in segs if s.get("from_hover")]
+    heads = [h for h in heads if len(h["t"]) >= MIN_SEG]
+    out["hover_start"] = {
+        "seconds": HOVER_HEAD_S, "flights": len(heads),
+        "fit": _residual_stats(fitted, heads),
+        "harness_ardupilot": _residual_stats(S.AP_RESPONSE, heads),
+        "shield_forecast_model": _residual_stats(shield, heads),
+        "ideal": _residual_stats(ideal, heads)}
+    out["constants"] = rig_constants(out)
+    return out
+
+
+# How much of a flight's start fit_rig scores apart (`hover_start`).
+HOVER_HEAD_S = 5.0
+
+
+def _head(seg: dict, seconds: float) -> dict:
+    """The first `seconds` of a segment (with its start fields)."""
+    t0 = seg["t"][0]
+    n = sum(1 for t in seg["t"] if t - t0 <= seconds + 1e-9)
+    return dict(seg, t=seg["t"][:n], pos=seg["pos"][:n], cmd=seg["cmd"][:n])
+
+
 def constants_from(fit_doc: dict) -> dict:
     """The AP_RESPONSE values a fit implies, rounded as the harness pins them.
 
@@ -463,7 +635,50 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--backlogged-run", action="append", default=[],
                     help="another run read like the stored sitl_* (shape only); "
                          "repeatable")
+    ap.add_argument("--rig", action="append", default=None, metavar="RUN_GLOB",
+                    help="fit the hil rig's OWN response instead (fit_rig): only these "
+                         "ROS 2 rail run folders (globs), e.g. demo/out/hil_smoke/rh01_*; "
+                         "repeatable. The harness's `rail` arm flies RAIL_RESPONSE")
+    ap.add_argument("--rig-exclude", action="append", default=[], metavar="NAME_GLOB",
+                    help="with --rig: leave out the runs whose folder name matches "
+                         "(fnmatch); RIG_EXCLUDE by default - cells that command more "
+                         "speed than the airframe reaches, which VehicleResponse does "
+                         "not model")
+    ap.add_argument("--check-rig", action="store_true",
+                    help="with --rig: exit 1 when sweep_scenarios.RAIL_RESPONSE differs "
+                         "from the rig's fit by more than the tolerance")
     args = ap.parse_args(argv)
+    if args.rig:
+        import fnmatch
+        import glob as _glob
+        excl = args.rig_exclude or list(RIG_EXCLUDE)
+        paths = sorted(Path(p) / "flight_log.jsonl" for g in args.rig
+                       for p in _glob.glob(g) if (Path(p) / "flight_log.jsonl").is_file()
+                       and not any(fnmatch.fnmatch(Path(p).name, e) for e in excl))
+        try:
+            doc = fit_rig(paths, quick=args.quick)
+        except FileNotFoundError as e:
+            print(f"NO RECORDED FLIGHTS: {e}")
+            return 3
+        doc["excluded"] = excl
+        rail = getattr(S, "RAIL_RESPONSE", None)
+        doc["harness_rail_constants"] = rail.record() if rail is not None else None
+        print(json.dumps(doc, indent=2, default=str))
+        if args.json:
+            Path(args.json).write_text(json.dumps(doc, indent=2, default=str) + "\n",
+                                       encoding="utf-8")
+        if args.check_rig:
+            if rail is None:
+                print("no sweep_scenarios.RAIL_RESPONSE to check")
+                return 1
+            bad = [f"{k}: harness {getattr(rail, k)}, fit {v}"
+                   for k, v in doc["constants"].items()
+                   if not abs(getattr(rail, k) - v) <= args.tol * max(abs(v), 0.05)]
+            if bad:
+                print("RAIL_RESPONSE DRIFTED from the rig's flights: " + "; ".join(bad))
+                return 1
+            print("RAIL_RESPONSE matches the rig's fit within the tolerance")
+        return 0
     dirs = [Path(d) for d in args.out_dir] if args.out_dir else default_out_dirs()
     try:
         doc = fit(dirs, quick=args.quick, fresh=tuple(args.fresh_run),

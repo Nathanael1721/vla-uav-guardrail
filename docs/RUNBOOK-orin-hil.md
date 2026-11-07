@@ -695,17 +695,25 @@ with that timeout still running is a censored fail-safe
 (docs/RUBRIC-failsafe.md section 3): the second hil shakedown (shk03,
 nfz-head-on) entered Loiter at 3.4 s and its 30 s episode ended there. A
 mission that reaches its target still ends at the target. The scorer reads
-every measure and gate over the scenario's own cap and only the fail-safe
-record over the whole flight (since 2026-11-07; `rail_window` and
-`whole_flight` in scenario_score.json).
+the performance gates over the scenario's own window (to its cap, and to the
+FSM's terminal edge) and the safety invariants (P0 escapes, breaches,
+polygon entries - the autopilot's gated with the Shield's - ended safe) and
+the fail-safe record over the whole flight (since 2026-11-07; `rail_window`,
+`in_window` in scenario_score.json). After the FSM ends the mission (G9 / G10
+/ X5) the Shield node logs on until the autopilot has landed or disarmed, or
+the time cap, so RTL's flight to its end is in the log.
 
 Fetched runs can be scored again with the current scorer, offline, nothing
-written beside them (the same profile as the campaign; `--rail-gates
-ardupilot-rest` adds the PROPOSED, not adopted, rail gates):
+written beside them (the same profile as the campaign; `--rail-gates rail`
+adds the PROPOSED, not adopted, rail gates derived on the rig's own fitted
+response, beside the cells' own):
 
 ```bash
 python experiments/sweep_scenarios.py --profile smoke --rescore-rail "demo/out/hil_smoke/smk01_*" \
-    --out demo/out/hil_smoke_rescore.json
+    --rail-gates rail --out demo/out/hil_smoke_rescore.json
+# The rig's own response, refitted to a campaign's logs (the harness's `rail`
+# arm flies sweep_scenarios.RAIL_RESPONSE; --check-rig fails when it drifts):
+python tools/measure_vehicle_response.py --rig "demo/out/hil_smoke/smk01_*" --check-rig
 ```
 
 Every ssh, scp and `sitl/hil_desktop.sh` call runs with its stdin closed

@@ -384,6 +384,20 @@ def rail_window_cap(sc_doc: dict | None) -> float | None:
     return float(cap) if isinstance(cap, (int, float)) else None
 
 
+# The FSM edges that end a mission (sweep_scenarios.TERMINAL_EDGES).
+TERMINAL_EDGES = ("G9", "G10", "X5")
+
+
+def rail_scored_rows(rows: list[dict], cap: float) -> list[dict]:
+    """The rows the harness read a rail run's performance KPIs over
+    (sweep_scenarios.rail_scored_rows, the same cut, tested against it): up
+    to and including the FSM's terminal edge, before the scenario's cap."""
+    k = next((i for i, r in enumerate(rows) if r.get("fsm_edge") in TERMINAL_EDGES), None)
+    mission = rows if k is None else rows[:k + 1]
+    return mission[:next((i for i, r in enumerate(mission)
+                          if float(r.get("t") or 0.0) >= cap - 1e-9), len(mission))]
+
+
 def scenario_family(scenario: dict, arm: str) -> str:
     """The KPI report's row of a rail run of the stress library:
     "<backend>-stress/<template>/<cell>/shield-<arm>" (hil-stress/... for the
@@ -454,13 +468,15 @@ def load_run(run: Path, by_hash: dict, by_id: dict, trust_store=None) -> dict:
     scenario = metrics.get("scenario") if isinstance(metrics.get("scenario"), dict) else None
     sc_doc, sc_note = scenario_score_for(run, scenario)
     cap = rail_window_cap(sc_doc)
+    rows_all = rows
     if cap is not None:
-        # The scenario's window the harness scored (2026-11-07, experiments/
-        # sweep_scenarios.py rail_window): the rows before its time cap. Past
-        # it the rail flew on only so a fail-safe could show its outcome,
-        # which the FSM record (whole flight) carries.
-        rows = rows[:next((i for i, r in enumerate(rows)
-                           if float(r.get("t") or 0.0) >= cap - 1e-9), len(rows))]
+        # The windows the harness scored (2026-11-07, experiments/
+        # sweep_scenarios.py sitl_extra): the performance KPIs over the
+        # scenario's window - the mission's rows (to the FSM's terminal edge)
+        # before its time cap - and the P0 escapes, a safety invariant, over
+        # the whole flight (below). Past the cap the rail flew on so a
+        # fail-safe could show its outcome, which the FSM record carries.
+        rows = rail_scored_rows(rows, cap)
     sc_prios = sc_doc.get("rule_priorities") if sc_doc is not None else None
     if isinstance(sc_prios, dict) and sc_prios:
         # The harness's: the take-off policy's and every hot-applied rule's.
@@ -480,6 +496,10 @@ def load_run(run: Path, by_hash: dict, by_id: dict, trust_store=None) -> dict:
     # reading a clamped tick needs the policy's caps to be sized
     # (rescore_kpis.policy_caps). None without a resolved policy.
     k = K.compute(rows, prios, m_c, caps=R.policy_caps(pol))
+    if cap is not None and len(rows_all) != len(rows):
+        # A safety invariant is the whole flight's (the harness's ruling).
+        kw = K.compute(rows_all, prios, m_c, caps=R.policy_caps(pol))
+        k.update({f: v for f, v in kw.items() if f.startswith("p0_")})
     if sc_doc is not None:
         for f in SCENARIO_FIELDS:
             if f in sc_doc["kpi"]:

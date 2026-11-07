@@ -279,7 +279,11 @@ FORECAST_ARMS = ("grant", "3s")
 # harness always flew it. "ardupilot": the commanded velocity through the
 # measured ArduPilot response (experiments/sweep_scenarios.py
 # VehicleResponse, AP_RESPONSE), flown only as a labelled comparison.
-RESPONSE_ARMS = ("ideal", "ardupilot")
+# "rail" (2026-11-07): the hil rig's OWN response, fitted to its flights
+# (RAIL_RESPONSE, tools/measure_vehicle_response.py --rig), from the hover a
+# rail starts every scenario in - the vehicle the KPI-grade runs fly, on
+# which their expectations are derived; also a labelled comparison here.
+RESPONSE_ARMS = ("ideal", "ardupilot", "rail")
 
 # Grant KPI names -> the field that measures each one in a sweep result.
 #
@@ -1599,6 +1603,12 @@ def check_response_arms(arms) -> list[str]:
         raise ValueError(f"response arms {arms} leave out \"ideal\": the ArduPilot "
                          f"response is a comparison beside the ideal vehicle, never "
                          f"instead of it")
+    if sum(1 for a in arms if a != "ideal") > 1:
+        # Each comparison copy is reported against the ideal episode it
+        # shadows; two comparison vehicles in one run would each need their
+        # own report (2026-11-07, when "rail" joined "ardupilot").
+        raise ValueError(f"response arms {arms}: one comparison vehicle per run beside "
+                         f"\"ideal\"")
     return arms
 
 

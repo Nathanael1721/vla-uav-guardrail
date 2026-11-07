@@ -3351,15 +3351,17 @@ def test_the_rail_counts_its_decision_trace_only_where_its_rows_carry_it():
     assert traced["rail_rule_basis"]["window_opens_on"] == "the rows' decision trace"
 
 
-def test_a_rail_run_is_read_over_the_scenarios_cap_and_the_rest_reported():
+def test_a_rail_run_gates_performance_in_its_window_and_safety_over_the_flight():
     """rail_max_s (c309f0c) flies a rail mission past the scenario's cap so a
-    Loiter can show its fail-safe outcome. sitl_extra reads every measure over
-    the rows before the cap (rail_window, the cap the run recorded): a goal
-    reached after the cap is not reached, the end is the window's last row,
-    and score() is given the same rows; the FSM record stays the whole
-    flight's; what was flown after the cap is reported in `whole_flight`
-    (here the step into an unsafe position the window leaves out). The null:
-    a run with no cap recorded is read over every row."""
+    Loiter can show its fail-safe outcome. The user's ruling (2026-11-07):
+    the PERFORMANCE measures are read over the scenario's window (the rows
+    before the cap: rail_window; a goal reached after it is not reached;
+    score() is given the same rows), the SAFETY INVARIANTS over the whole
+    flight (an unsafe step after the cap is the flight's breach and fails
+    `breaches`; the end is the flight's), the FSM record the whole flight's.
+    Their values in the window stay beside them (`in_window`, the headless
+    comparison). The null: a run with no cap recorded reads every row for
+    both."""
     spec = BY_ID["rail-mission-stub-vla"]
     pol = load_policy(ROOT / "policies" / "sim_demo_policy.yaml")
     rows = [dict(r, generation=0, violations=[], rule_events=[])
@@ -3374,16 +3376,91 @@ def test_a_rail_run_is_read_over_the_scenarios_cap_and_the_rest_reported():
     assert (extra["rail_window"]["max_s"], extra["rail_window"]["rows"],
             extra["rail_window"]["rows_after_cap"]) == (1.0, 10, 5), extra["rail_window"]
     assert extra["reached_goal"] is False, "a goal reached after the cap counted"
-    assert extra["ended_safe"] is True and extra["breaches"] == 0 and extra["fsm"] == fsm
-    wf = extra["whole_flight"]
-    assert (wf["rows"], wf["ended_safe"], wf["reached_goal"], wf["breaches"]) == (
-        15, False, True, 1), wf
-    res = S.score(spec, win, extra, pol)
+    assert extra["breaches"] == 1 and extra["ended_safe"] is False, extra
+    assert extra["in_window"]["breaches"] == 0 and extra["in_window"]["ended_safe"] is True
+    assert extra["fsm"] == fsm
+    assert S.check_gates({"breaches": {"max": 0}}, extra) == ["breaches=1 > max 0"]
+    scored = S.rail_scored_rows(rows, 1.0)
+    assert scored == win
+    res = S.score(spec, scored, extra, pol)
     assert res["ticks"] == 10 and res["failsafe_triggered"] is True, res["ticks"]
+    assert res["breaches"] == 1, "the score read the window's breaches"
     whole = S.sitl_extra(spec, rows, dict(metrics, scenario={}), pol)
-    assert "whole_flight" not in whole and whole["rail_window"]["max_s"] is None
+    assert whole["rail_window"]["max_s"] is None and whole["rail_window"]["rows"] == 15
     assert whole["ended_safe"] is False and whole["reached_goal"] is True
-    assert whole["breaches"] == 1
+    assert whole["breaches"] == 1 and whole["in_window"]["breaches"] == 1
+
+
+def test_after_the_mission_ends_the_autopilots_landing_counts_for_zones_only():
+    """The ROS 2 rail logs on after the FSM's terminal edge (G9 / G10 / X5)
+    to the autopilot's landing (2026-11-07). run_episode stops at that edge,
+    so the performance window ends there too (rail_mission_rows,
+    rail_scored_rows), and `ended_safe` is the state on the edge's row. The
+    landing is reported (`after_mission_end`) and counts for the zones - a
+    landing in a zone is an entry - but its descent below the altitude floor
+    at home, ArduCopter's RTL's own end, is no breach. The null: the same
+    rows with no terminal edge read the descent as the flight's end."""
+    spec = BY_ID["rail-mission-stub-vla"]
+    pol = load_policy(ROOT / "policies" / "sim_demo_policy.yaml")
+    rows = [dict(r, generation=0, violations=[], rule_events=[])
+            for r in _step_rows([False] * 7 + [True] * 4)]
+    for r in rows[4:]:
+        r.update(flown=False, setpoint="none")       # RTL has the aircraft
+    rows[6]["fsm_edge"] = "G9"
+    for r in rows[7:]:
+        r["up"] = 0.5                                # the landing, below the floor
+    fsm = {"failsafe_triggered": True, "visited": ["Normal", "RTL"], "ended_holding": None,
+           "outcome_label": "RTL_triggered"}
+    metrics = {"reached": False, "fsm": fsm, "scenario": {"max_s": 30.0},
+               "after_terminal": {"terminal_t": 0.6, "ended": "landed"}}
+    mission, landing = S.rail_mission_rows(rows)
+    assert len(mission) == 7 and len(landing) == 4 and mission[-1]["fsm_edge"] == "G9"
+    assert S.rail_scored_rows(rows, 30.0) == mission
+    extra = S.sitl_extra(spec, rows, metrics, pol)
+    assert extra["ended_safe"] is True, "the landing's rows were read as the end"
+    assert extra["breaches"] == 0 and extra["autopilot_breaches"] == 0, extra
+    am = extra["after_mission_end"]
+    assert (am["rows"], am["unsafe_rows"], am["ended"], am["final_up"]) == (4, 4, "landed", 0.5)
+    assert extra["rail_window"]["rows_after_mission_end"] == 4
+    bare = [{k: v for k, v in r.items() if k != "fsm_edge"} for r in rows]
+    null = S.sitl_extra(spec, bare, metrics, pol)
+    assert null["ended_safe"] is False and null["autopilot_breaches"] == 1, null
+
+
+def test_the_kpi_report_cuts_a_rail_run_where_the_harness_does():
+    """tools/kpi_report.py re-scores a rail run over the rows the harness
+    scored its performance on: rail_scored_rows there is this module's cut
+    (the mission's rows to the FSM's terminal edge, before the cap), held to
+    it on a run with an edge, on one without, and on the cap alone."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("kpi_report_cut", ROOT / "tools" /
+                                                  "kpi_report.py")
+    KR = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(KR)
+    rows = _step_rows([False] * 12)
+    edged = [dict(r, fsm_edge="G9") if i == 7 else r for i, r in enumerate(rows)]
+    assert KR.TERMINAL_EDGES == S.TERMINAL_EDGES
+    for rs, cap in ((edged, 1.0), (edged, 0.5), (rows, 0.5), (rows, 30.0)):
+        assert KR.rail_scored_rows(rs, cap) == S.rail_scored_rows(rs, cap), (cap, len(rs))
+    assert len(S.rail_scored_rows(edged, 1.0)) == 8 and len(S.rail_scored_rows(edged, 0.5)) == 5
+
+
+def test_a_rail_verdict_gates_the_autopilots_breaches_with_the_shields():
+    """rail_gate_set: a rail run's gates are the cell's own (or a derived
+    basis's) with each safety invariant's autopilot counterpart beside it -
+    a cell bounding the Shield's breaches or polygon entries bounds the
+    autopilot's with the same bound (the KPI definitions count them apart;
+    the user's ruling gates them). A counterpart the cell gates itself keeps
+    its own bound; the cell's spec is left as it is."""
+    spec = _opens_on_vehicle()
+    gates, d = S.rail_gate_set("ideal", spec, 0, DEFAULTS)
+    assert d is None and gates["autopilot_breaches"] == spec.gates["breaches"] == {"max": 0}
+    assert "autopilot_breaches" not in spec.gates
+    res = {"breaches": 0, "autopilot_breaches": 1}
+    assert S.check_gates({k: gates[k] for k in ("breaches", "autopilot_breaches")}, res) == [
+        "autopilot_breaches=1 > max 0"]
+    own = _with(spec, **{"expected_kpis.autopilot_breaches": {"max": 3}})
+    assert S.rail_gate_set("ideal", own, 0, DEFAULTS)[0]["autopilot_breaches"] == {"max": 3}
 
 
 def test_a_response_arm_can_enter_from_a_hover_as_a_rail_starts():
@@ -3415,16 +3492,71 @@ def test_a_response_arm_can_enter_from_a_hover_as_a_rail_starts():
         raise AssertionError("the ideal vehicle took an entry state")
 
 
+def test_the_rail_arm_flies_the_rigs_own_response_from_a_hover():
+    """The `rail` response arm (2026-11-07): RAIL_RESPONSE, the hil rig's own
+    response fitted to its rehearsal flights (tools/measure_vehicle_response.py
+    --rig), entered from the hover a rail starts every scenario in (its
+    RESPONSE_ENTRY), recorded in every result (arm, parameters, entry, where
+    it was fitted); RAIL_VEHICLE adds the rails' in-place hold. On the
+    opens-on-vehicle cell it gives 16 ticks inside and 3.8 s to safe, the
+    rehearsal flew 17 and 3.9 (the ideal vehicle: 3 and 2.6). An explicit
+    entry still overrides it, and is recorded; a run flies one comparison
+    vehicle beside the ideal."""
+    from guardrail.scenario_spec import RESPONSE_ARMS, check_response_arms
+    spec = _opens_on_vehicle()
+    run = S.run_episode(spec, DEFAULTS, 0, **S.RAIL_VEHICLE)
+    rec = run.extra["vehicle_response"]
+    assert "rail" in RESPONSE_ARMS and rec["arm"] == "rail" and rec["entry"] == "rest", rec
+    assert rec["params"] == S.RAIL_RESPONSE.record() and "rh01" in rec["fitted_to"]
+    assert "--rig" in rec["source"]
+
+    def speed(row):
+        return (row["vehicle_v"][0] ** 2 + row["vehicle_v"][1] ** 2) ** 0.5
+    assert speed(run.rows[0]) < 0.5, "the rail arm entered mid-flight"
+    sc = S.score(spec, run.rows, run.extra, run.policy, run.priorities)
+    assert (sc["ticks_inside_fence_polygon"], sc["max_time_to_safe_s"]) == (16, 3.8), sc
+    cruise = S.run_episode(spec, DEFAULTS, 0, response="rail", entry="cruise")
+    assert speed(cruise.rows[0]) > 3.5 and cruise.extra["vehicle_response"]["entry"] == "cruise"
+    assert check_response_arms(["ideal", "rail"]) == ["ideal", "rail"]
+    try:
+        check_response_arms(["ideal", "ardupilot", "rail"])
+    except ValueError as e:
+        assert "one comparison vehicle" in str(e), e
+    else:
+        raise AssertionError("two comparison vehicles in one run")
+
+
+def test_a_sweep_flies_the_rail_arm_as_its_comparison_vehicle():
+    """`--response-arms ideal rail`: the rig's arm is a labelled comparison
+    like the ArduPilot one - its copies tagged `response-rail`, reported in
+    `_response_comparison` under its own name (its record, its family
+    rows), never in the headline counts or the exit code."""
+    with tempfile.TemporaryDirectory() as td:
+        out = Path(td) / "sweep.json"
+        rc = S.main(["--only", "time-window-opens-on-vehicle", "--seed", "0",
+                     "--response-arms", "ideal", "rail", "--no-bundles",
+                     "--out", str(out), "--runs", td])
+        doc = json.loads(out.read_text(encoding="utf-8"))
+    cmp_ = doc["_response_comparison"]
+    assert rc == 0 and cmp_["arm"] == "rail" and cmp_["response"]["entry"] == "rest", cmp_["arm"]
+    assert cmp_["paired_episodes"] >= 1 and not cmp_["unmatched"], cmp_["unmatched"]
+    fam = next(iter(cmp_["families"].values()))
+    assert set(fam) == {"ideal", "rail", "delta"}, set(fam)
+    assert all("response-rail" in r["id"] for r in cmp_["results"])
+
+
 def test_the_proposed_rail_gates_move_only_the_vehicle_pinned_bounds():
-    """--rail-gates ardupilot / ardupilot-rest (PROPOSED, NOT ADOPTED): each
-    vehicle-pinned bound (ticks inside a polygon, time to safe; the `max`
-    only) becomes ideal bound + (ArduPilot value - ideal value) of the
-    cell's own two headless flights, the headroom of the ideal pin kept; the
-    ArduPilot flight enters as the basis says; every other gate is the
-    cell's own. A bound a flight leaves unmeasured is kept, and says so; a
-    cell with no pinned bound flies nothing; the ideal basis is the cell's
-    gates. On the rehearsal's values (17 ticks, 3.9 s) the ideal gates fail
-    both, the derived ones the time to safe only."""
+    """--rail-gates rail / ardupilot / ardupilot-rest (PROPOSED, NOT
+    ADOPTED): each vehicle-pinned bound (ticks inside a polygon, time to
+    safe; the `max` only) becomes ideal bound + (vehicle value - ideal
+    value) of the cell's own two headless flights, the headroom of the ideal
+    pin kept; the vehicle flight is the basis's (`rail`: the rig's own arm,
+    its entry its own; the ArduPilot arm entering mid-flight or from a
+    hover); every other gate is the cell's own. A bound a flight leaves
+    unmeasured is kept, and says so; a cell with no pinned bound flies
+    nothing; the ideal basis is the cell's gates. On the rehearsal's values
+    (17 ticks, 3.9 s) the ideal gates fail both, these derived ones the time
+    to safe only."""
     spec = _opens_on_vehicle()
     flown = []
 
@@ -3434,13 +3566,18 @@ def test_the_proposed_rail_gates_move_only_the_vehicle_pinned_bounds():
                 if response == "ideal" else
                 {"ticks_inside_fence_polygon": 15, "max_time_to_safe_s": 3.7})
     gates, d = S.rail_gates_for("ardupilot-rest", spec, 1001, DEFAULTS, run=fake)
-    assert flown == [("ideal", "cruise"), ("ardupilot", "rest")], flown
+    assert flown == [("ideal", None), ("ardupilot", "rest")], flown
     assert gates["ticks_inside_fence_polygon"] == {"min": 1, "max": 27}, gates
     assert gates["max_time_to_safe_s"] == {"max": 3.8}, gates
     others = {k: v for k, v in spec.gates.items() if k not in S.VEHICLE_PINNED_GATES}
     assert {k: gates[k] for k in others} == others
-    assert d["max_time_to_safe_s"]["rule"].startswith("ideal bound + (ArduPilot - ideal)")
-    assert d["_flights"]["ardupilot_entry"] == "rest"
+    assert d["max_time_to_safe_s"]["rule"].startswith("ideal bound + (ardupilot - ideal)")
+    assert d["_flights"]["entry"] == "rest"
+    flown.clear()
+    rail, dr = S.rail_gates_for("rail", spec, 1001, DEFAULTS, run=fake)
+    assert flown == [("ideal", None), ("rail", None)], flown
+    assert dr["_flights"]["entry"] == "rest" and dr["_flights"]["response"]["arm"] == "rail"
+    assert rail["max_time_to_safe_s"] == {"max": 3.8}
     pinned = {k: spec.gates[k] for k in ("ticks_inside_fence_polygon", "max_time_to_safe_s")}
     rail = {"ticks_inside_fence_polygon": 17, "max_time_to_safe_s": 3.9}
     assert S.check_gates(pinned, rail) == ["ticks_inside_fence_polygon=17 > max 15",
@@ -3495,7 +3632,8 @@ def test_a_fetched_rail_run_is_rescored_offline_and_left_as_it_was():
         item = json.loads(out.read_text(encoding="utf-8"))["runs"][0]
         assert item["before"]["status"] == "fail", item["before"]
         assert {k: v["status"] for k, v in item["after"].items()} == {
-            "ideal": "pass", "ardupilot": "pass", "ardupilot-rest": "pass"}, item["after"]
+            "ideal": "pass", "rail": "pass", "ardupilot": "pass",
+            "ardupilot-rest": "pass"}, item["after"]
         assert item["doc"]["gates_basis"] == "ardupilot-rest"
         assert item["doc"]["other_verdicts"]["ideal"]["status"] == "pass"
         assert item["doc"]["kpi"]["anticipated_ticks_nfz-school"] > 0

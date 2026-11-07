@@ -81,12 +81,15 @@ def _cell(cell_id: str):
 # --------------------------------------------------------------------------- #
 
 def test_the_response_arms_are_refused_like_the_forecast_arms():
-    """"ideal" always, "ardupilot" beside it, never alone, never repeated,
-    never an unknown name - and never in the same run as a comparison
-    forecast, whose episodes would shadow neither twin."""
-    assert S.RESPONSE_ARMS == ("ideal", "ardupilot")
+    """"ideal" always, one comparison vehicle beside it ("ardupilot", or the
+    rig's own "rail" since 2026-11-07), never alone, never repeated, never
+    two at once, never an unknown name - and never in the same run as a
+    comparison forecast, whose episodes would shadow neither twin."""
+    assert S.RESPONSE_ARMS == ("ideal", "ardupilot", "rail")
     assert check_response_arms(["ideal", "ardupilot"]) == ["ideal", "ardupilot"]
-    for bad in ([], ["ardupilot"], ["ideal", "ideal"], ["ideal", "wobbly"]):
+    assert check_response_arms(["ideal", "rail"]) == ["ideal", "rail"]
+    for bad in ([], ["ardupilot"], ["rail"], ["ideal", "ideal"], ["ideal", "wobbly"],
+                ["ideal", "ardupilot", "rail"]):
         _refused(lambda bad=bad: check_response_arms(bad))
     check_comparison_arms(["grant", "3s"], ["ideal"])
     check_comparison_arms(["grant"], ["ideal", "ardupilot"])
@@ -683,6 +686,82 @@ def test_the_fit_recovers_known_parameters_from_a_synthetic_flight():
     assert abs(got["delay_s"] - 0.15) <= 0.06, got
     assert abs(got["accel_mps2"] - 2.0) <= 0.3, got
     assert abs(got["jerk_mps3"] - 4.0) <= 1.0, got
+
+
+def test_the_rig_fit_reads_a_ros2_rail_log_and_recovers_its_vehicle():
+    """fit_rig (tools/measure_vehicle_response.py --rig, 2026-11-07) on a
+    synthetic ROS 2 rail log whose vehicle is known: the rail's rows say what
+    was SENT - `emitted` on a "pass" tick, the zero on a "brake" one (the
+    row's `emitted` is then the Shield's unsent action), nothing on a tick
+    the autopilot flew or outside GUIDED - and the flight starts from the
+    hover the rail settles into, which the first segment keeps whole
+    (`burn_s` 0, the row's measured `state_v` as its start). The quick
+    search recovers the vehicle from a wrong start."""
+    import measure_vehicle_response as M
+    assert M._rig_commanded({"flown": True, "mode": "GUIDED", "setpoint": "brake",
+                             "emitted": {"vx": 3.0, "vy": 0.0, "vz_up": 0.0}}) == (0.0, 0.0, 0.0)
+    assert M._rig_commanded({"flown": True, "mode": "BRAKE", "setpoint": "pass",
+                             "emitted": {"vx": 3.0}}) is None
+    assert M._rig_commanded({"flown": False, "mode": "GUIDED", "setpoint": "none"}) is None
+    truth = S.ResponseParams(delay_s=0.15, accel_mps2=2.2, jerk_mps3=4.5, tau_s=0.03,
+                             accel_z_mps2=math.inf, jerk_z_mps3=math.inf, tau_z_s=0.0)
+    rng = random.Random(5)
+    veh = S.VehicleResponse(truth, v0=(0.0, 0.0, 0.0))
+    t, x, y = 0.101, 0.0, 0.0
+    lines = []
+    for k in range(500):
+        brake = 200 <= k < 230
+        if k % 50 == 0:
+            cmd = (rng.uniform(-4, 4), rng.uniform(-4, 4), 0.0)
+        sent = (0.0, 0.0, 0.0) if brake else cmd
+        lines.append(json.dumps({
+            "t": round(t, 4), "tick": k + 1, "x": x, "y": y, "up": 15.0, "mode": "GUIDED",
+            "flown": True, "setpoint": "brake" if brake else "pass",
+            "emitted": {"vx": cmd[0], "vy": cmd[1], "vz_up": 0.0, "yaw_rate": 0.0},
+            "state_v": [round(v, 3) for v in veh.velocity]}))
+        dt = 0.1 + rng.uniform(-0.005, 0.005)
+        mx, my, _ = veh.step(sent, dt)
+        x, y, t = x + mx * dt, y + my * dt, t + dt
+    with tempfile.TemporaryDirectory() as td:
+        p = Path(td) / "rig_001" / "flight_log.jsonl"
+        p.parent.mkdir()
+        p.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        segs = M.segments(p, commanded=M._rig_commanded, rig=True)
+        doc = M.fit_rig([p], quick=True)
+    assert len(segs) == 1 and segs[0]["from_hover"] and segs[0]["burn_s"] == 0.0, segs[0].keys()
+    assert segs[0]["cmd"][210] == (0.0, 0.0, 0.0), "a brake tick's unsent action was read"
+    got = doc["xy"]
+    assert doc["rms_xy"] < 0.05 < doc["ideal"]["xy"]["rms"], (doc["rms_xy"], doc["ideal"])
+    assert abs(got["delay_s"] - 0.15) <= 0.08 and abs(got["accel_mps2"] - 2.2) <= 0.4, got
+    assert doc["hover_start"]["flights"] == 1 and doc["constants"]["accel_mps2"] == round(
+        got["accel_mps2"], 2)
+
+
+def test_the_rail_arm_explains_the_rigs_recorded_flights():
+    """RAIL_RESPONSE (the harness's `rail` arm) against the hil rehearsal it
+    was fitted to (rh01, 7 Nov; RIG_EXCLUDE left out), through the tool's own
+    loss: below the harness's ArduPilot arm and the rail Shield's own model
+    (0.45 s, 1.75 m/s^2) over every sample and over the first 5 s from the
+    hover (fitted: 0.099 / 0.093 m/s, against 0.122 / 0.154 and 0.258 /
+    0.458). The full re-fit is the tool's `--rig ... --check-rig`. The
+    recordings are gitignored (demo/out of the main checkout): on a host
+    without them this is skipped, by name."""
+    import fnmatch
+    import measure_vehicle_response as M
+    runs = sorted(p for d in M.default_out_dirs()
+                  for p in (d / "hil_smoke").glob("rh01_*/flight_log.jsonl")
+                  if not any(fnmatch.fnmatch(p.parent.name, e) for e in M.RIG_EXCLUDE))
+    if len(runs) < 30:
+        print("      SKIP: the hil rehearsal rh01 is not on this host")
+        return SKIP
+    segs = [s for p in runs for s in M.segments(p, commanded=M._rig_commanded, rig=True)]
+    heads = [M._head(s, M.HOVER_HEAD_S) for s in segs if s.get("from_hover")]
+    shield = M._params({"delay_s": 0.45, "accel_mps2": 1.75, "jerk_mps3": math.inf,
+                        "tau_s": 0.0})
+    rail, n = M.pas_loss(S.RAIL_RESPONSE, segs)
+    assert n > 6000 and rail < 0.11, (rail, n)
+    assert rail < M.pas_loss(S.AP_RESPONSE, segs)[0] < M.pas_loss(shield, segs)[0]
+    assert M.pas_loss(S.RAIL_RESPONSE, heads)[0] < M.pas_loss(S.AP_RESPONSE, heads)[0]
 
 
 def test_the_harness_constants_explain_the_recorded_flights():
