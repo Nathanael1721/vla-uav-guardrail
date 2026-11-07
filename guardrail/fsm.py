@@ -473,9 +473,25 @@ LEGACY_LOITER_LAW = {"loiter_clear": "violation_free", "loiter_x67": "request"}
 #   projected  only a violated non-kinematic project_fix rule: the reading
 #              until 2026-11-07, kept for comparison.
 UNTRUSTED_OWNERS = ("chain", "projected")
+# How long a Loiter's hold point must stay legal (since 2026-11-07;
+# docs/DESIGN-hold-points.md, "A hold legal for as long as it is held"):
+#   loiter     from arrival for as long as the Loiter can last - its operator
+#              timeout's remaining time (HOLD_HORIZON_CAP_S without one) - and
+#              one lookahead past it, wherever the world moves (a moving zone,
+#              a moving subject, a rule window); the point a hold MOVES to is
+#              chosen so, and a hold in place that would not stay legal so is
+#              moved too. Where no such point is found the plan is the one the
+#              lookahead alone gives, as before. The default.
+#   lookahead  from arrival through one lookahead only: the reading until
+#              2026-11-07, kept for comparison.
+HOLD_HORIZONS = ("loiter", "lookahead")
+# A Loiter with no operator timeout (loiter_timeout_s None) is held at most
+# this long for the hold horizon's purpose.
+HOLD_HORIZON_CAP_S = 60.0
 # Every law field and the value earlier records were written under: a config
 # on these values hashes as it did before the field existed.
-LEGACY_LAW = {**LEGACY_LOITER_LAW, "untrusted_owner": "projected"}
+LEGACY_LAW = {**LEGACY_LOITER_LAW, "untrusted_owner": "projected",
+              "hold_horizon": "lookahead"}
 
 # Every edge this FSM can take: id -> (from, to, source, label). The design
 # doc's transition table lists the same ids, and tests/test_fsm.py drives
@@ -1085,10 +1101,22 @@ class TickInput:
     # The next violation of it is then the same one seen through noise, not a
     # new N-in-T onset. False (every rail that reports no accuracy): as before.
     noise_marginal: bool = False
+    # In Loiter (since 2026-11-07, FSMConfig.hold_horizon "loiter"): would
+    # flying the Shield's action for this request from here carry the
+    # aircraft, within the lookahead, onto a spot where a stop is illegal
+    # (Shield._handback_unsafe)? Loiter does not hand such a request back
+    # (G8): the hold it would leave is legal for as long as it is held, and
+    # the flight it would hand over moves the aircraft into what the hold
+    # was keeping it out of (a sweep's path). None when the caller does not
+    # judge it (a replay, a rail without the Shield's forecast): as before.
+    handback_unsafe: bool | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.noise_marginal, bool):
             raise ValueError(f"noise_marginal must be a bool, got {self.noise_marginal!r}")
+        if self.handback_unsafe is not None and not isinstance(self.handback_unsafe, bool):
+            raise ValueError(f"handback_unsafe must be a bool or None, "
+                             f"got {self.handback_unsafe!r}")
         if self.position_lost is not None and not (
                 isinstance(self.position_lost, str) and self.position_lost):
             raise ValueError(f"position_lost must be a non-empty reason or None, "
@@ -1157,6 +1185,9 @@ class FSMConfig:
     untrusted_owner (UNTRUSTED_OWNERS) is whose repair an untrusted tick is
     when no non-kinematic rule is projected; it entered on 2026-11-07 (the
     hash changed again), and "projected" flies the FSM as it was.
+    hold_horizon (HOLD_HORIZONS) is how long a Loiter's hold point must stay
+    legal (hold_horizon_s); it entered on 2026-11-07 too, and "lookahead"
+    plans the holds as before.
     """
     n_violations: int = 3
     window_s: float = 5.0
@@ -1171,6 +1202,7 @@ class FSMConfig:
     loiter_clear: str = "acceptable"
     loiter_x67: str = "position"
     untrusted_owner: str = "chain"
+    hold_horizon: str = "loiter"
 
     # Grant symbols accepted in YAML, so a profile can be written the way p4
     # writes it ("N: 3, T: 5, T_recover: 2").
@@ -1217,6 +1249,9 @@ class FSMConfig:
         if self.untrusted_owner not in UNTRUSTED_OWNERS:
             raise ValueError(f"FSMConfig.untrusted_owner {self.untrusted_owner!r} "
                              f"is not one of {UNTRUSTED_OWNERS}")
+        if self.hold_horizon not in HOLD_HORIZONS:
+            raise ValueError(f"FSMConfig.hold_horizon {self.hold_horizon!r} "
+                             f"is not one of {HOLD_HORIZONS}")
         # At most one counted onset per onset_clear_s: N of them need
         # (N - 1) x onset_clear_s seconds, which must fit in T, or N-in-T (G2,
         # G4) could never fire and the config would quietly delete both edges.
@@ -1332,9 +1367,9 @@ class FSMConfig:
         (LEGACY_LOITER_LAW): a config on that law hashes exactly as before
         (the default thresholds of 7bfd6dc: `sha256:5ae67785...`), so an old
         record still names the behaviour it flew, and today's default law
-        has a hash of its own. untrusted_owner (2026-11-07) does the same
-        (LEGACY_LAW): "projected" hashes as every config did before it
-        (today's Loiter law: `sha256:d55e1bfe...`)."""
+        has a hash of its own. untrusted_owner and hold_horizon (2026-11-07)
+        do the same (LEGACY_LAW): "projected" and "lookahead" hash as every
+        config did before them (today's Loiter law: `sha256:d55e1bfe...`)."""
         d = self.__dict__.get("_digest")
         if d is None:
             fields = {k: v for k, v in self.to_dict().items()
@@ -1565,6 +1600,25 @@ class EscalationFSM:
             return False
         due = t0 + h.travel_s + (HOLD_ARRIVAL_SLACK_S if h.kind == "moved" else 0.0)
         return t >= due - EPS
+
+    def hold_horizon_s(self) -> float | None:
+        """How long, from now, the next Loiter plan must stay legal
+        (FSMConfig.hold_horizon "loiter", since 2026-11-07): the time left
+        before this Loiter's operator timeout can end it (HOLD_HORIZON_CAP_S
+        when there is none), never negative. None in any other state, or
+        under the "lookahead" law, where a plan is judged through the
+        Shield's lookahead only, as before. Time arithmetic only: the FSM
+        stays geometry-free, and the integration judges the point
+        (guardrail/holdpoint.py choose_hold_point, `hold_s`)."""
+        if (self.config.hold_horizon != "loiter" or self._terminal
+                or self._state is not FSMState.LOITER):
+            return None
+        timeout = self.config.loiter_timeout_s
+        if timeout is None:
+            return HOLD_HORIZON_CAP_S
+        t = self._t_last if self._t_last is not None else 0.0
+        t0 = self._entered_at if self._entered_at is not None else t
+        return max(0.0, timeout - (t - t0))
 
     def hold_at(self, plan: HoldPoint) -> HoldPoint:
         """Take `plan` as the current Loiter's or Land's hold point; returns
@@ -1827,9 +1881,18 @@ class EscalationFSM:
         # breached it once (a move of its own onto a spot the sweep had made
         # unsafe, the Shield's known limit on a bar spinning that fast); held
         # as it is, it waits for the bar to pass (G8 at 20.1 s, no breach).
+        # And since 2026-11-07 (hold_horizon "loiter"): the request handed
+        # back must not fly the aircraft into a spot where a stop is illegal
+        # within the lookahead (TickInput.handback_unsafe). With the hold
+        # legal for as long as it is held, rotate-spin at 9 deg/s on the
+        # ideal vehicle was otherwise handed back at 8.4 s onto a clean
+        # request straight through the bar's disc, and the harness counted a
+        # breach (a move of its own onto a spot the sweep made unsafe).
         starts_now = hard_violated and not self._prev_hard
+        handback_unsafe = bool(inp.handback_unsafe) and cfg.hold_horizon == "loiter"
         acceptable = (not hard_untrusted and strongest not in ("loiter", "RTL", "land")
-                      and not inp.stop_illegal and not starts_now)
+                      and not inp.stop_illegal and not starts_now
+                      and not handback_unsafe)
         if not acceptable:
             self._loiter_ok_since = None
         elif self._loiter_ok_since is None:
@@ -1969,6 +2032,11 @@ class EscalationFSM:
             # (untrusted_owner "chain", 2026-11-07). Only on such ticks, so
             # every other record is byte for byte what it was.
             record["untrusted_chain"] = [h.rule_id for h in chain]
+        if handback_unsafe:
+            # Loiter kept a request whose flight would carry the aircraft
+            # onto a spot where a stop is illegal (hold_horizon "loiter",
+            # 2026-11-07). Only on such ticks.
+            record["handback_unsafe"] = True
         if before == FSMState.LOITER:
             # Loiter's own "cleared" clock (loiter_clear "acceptable",
             # 2026-11-02): the request acceptable and the position legal for
@@ -2415,7 +2483,8 @@ def tick_input_from_decision(t: float, decision: Any, policy: Any,
                              unsafe_depth_m: float | None = None,
                              hold_legal: bool | None = None,
                              position_lost: str | None = None,
-                             noise_marginal: bool = False) -> TickInput:
+                             noise_marginal: bool = False,
+                             handback_unsafe: bool | None = None) -> TickInput:
     """Map one `guardrail.shield.ShieldDecision` onto a TickInput.
 
     blocked   the Shield braked, or its own re-check of the emitted action is
@@ -2500,7 +2569,8 @@ def tick_input_from_decision(t: float, decision: Any, policy: Any,
                      rtl_failed=rtl_failed, home_reached=home_reached,
                      landed=landed, note=note, stop_illegal=bool(stop),
                      unsafe_depth_m=unsafe_depth_m, hold_legal=hold_legal,
-                     position_lost=position_lost, noise_marginal=bool(noise_marginal))
+                     position_lost=position_lost, noise_marginal=bool(noise_marginal),
+                     handback_unsafe=handback_unsafe)
 
 
 # --------------------------------------------------------------------------- #

@@ -500,18 +500,22 @@ def test_the_old_loiter_law_hashes_as_every_earlier_record_did():
     """The law fields enter fsm_config_hash only when they differ from the
     law earlier records were written under: a config on that law hashes as
     7bfd6dc's default did, and today's default has its own hash. The same
-    for untrusted_owner (2026-11-07): "projected" on today's Loiter law
-    hashes as the default did before the field existed."""
+    for untrusted_owner and hold_horizon (2026-11-07): "projected" and
+    "lookahead" on today's Loiter law hash as the default did before the
+    fields existed, and each new reading alone has a hash of its own."""
     old = FSMConfig(loiter_clear="violation_free", loiter_x67="request",
-                    untrusted_owner="projected")
+                    untrusted_owner="projected", hold_horizon="lookahead")
     assert old.digest.startswith("sha256:5ae67785"), old.digest
     assert FSMConfig().digest != old.digest
     assert FSMConfig(loiter_clear="violation_free").digest not in (old.digest,
                                                                    FSMConfig().digest)
-    before = FSMConfig(untrusted_owner="projected")
+    before = FSMConfig(untrusted_owner="projected", hold_horizon="lookahead")
     assert before.digest.startswith("sha256:d55e1bfe"), before.digest
-    assert FSMConfig().digest != before.digest
+    chain_only = FSMConfig(hold_horizon="lookahead")
+    assert chain_only.digest.startswith("sha256:1e413c8b"), chain_only.digest
+    assert len({FSMConfig().digest, before.digest, chain_only.digest}) == 3
     raises(ValueError, FSMConfig, untrusted_owner="violated")
+    raises(ValueError, FSMConfig, hold_horizon="forever")
 
 
 def test_g8_does_not_hand_back_an_unsafe_repair_or_a_loiter_rule():

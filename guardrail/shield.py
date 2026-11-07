@@ -717,6 +717,12 @@ _CLEAR_DECEL_MPS2 = 3.0
 # of being treated as a one-way pipeline whose last stage is never re-repaired.
 _REPAIR_PASSES = 3
 
+# Loiter's hand-back guard (Shield._handback_unsafe, since 2026-11-07): the
+# straight flight of the request is sampled this often through the lookahead,
+# a stop asked at each sample (ten stop queries a Loiter tick at the grant's
+# 5 s, made only while the position itself is legal).
+HANDBACK_STEP_S = 0.5
+
 # How the Shield recovers from a position that is already illegal (Shield's
 # recovery_law, WP3-17):
 #   "cap_all"    the default since 2026-11-06: every recovery at its cap.
@@ -7303,6 +7309,13 @@ class Shield:
                 unsafe = self._check(self._positional(state), BRAKE)
             caps = self._applied_caps(tick, d)
             lost = self._position_verdict(tick, state, d.raw)
+            # Loiter's hand-back guard (FSMConfig.hold_horizon "loiter",
+            # 2026-11-07): only while the position itself is legal - an
+            # illegal one is not handed back anyway.
+            handback = (self._handback_unsafe(state, d.emitted)
+                        if (self.fsm.state is _fsm.FSMState.LOITER and not unsafe
+                            and self.fsm.config.hold_horizon == "loiter"
+                            and not self.fsm.terminal) else None)
             inp = _fsm.tick_input_from_decision(
                 tick.t, d, tick.rt, horizon_s=self.theta_horizon_s,
                 stop_illegal=unsafe, rtl_failed=bool(rtl_failed),
@@ -7311,7 +7324,8 @@ class Shield:
                 unsafe_depth_m=self._unsafe_depth_in(state, unsafe),
                 hold_legal=self._hold_legal(tick),
                 position_lost=lost[0] if lost else None,
-                noise_marginal=self._noise_marginal(tick, state, d))
+                noise_marginal=self._noise_marginal(tick, state, d),
+                handback_unsafe=handback)
             out = self.fsm.step(inp)
             rec = out.record
             if self.fsm.needs_hold:
@@ -7340,6 +7354,33 @@ class Shield:
                    command=cmd, fsm_record=rec,
                    hold_point=hold.to_dict() if hold is not None else None)
         return d.model_copy(update=upd)
+
+    def _handback_unsafe(self, state: State, a: Action4D) -> bool:
+        """Would flying `a` (the Shield's action for this request) from the
+        position carry the aircraft, within the lookahead, onto a spot where
+        a stop is illegal? (fsm.TickInput.handback_unsafe, since 2026-11-07.)
+        The straight flight of the command is sampled every HANDBACK_STEP_S
+        through the lookahead, and a stop at each sample, from the time the
+        aircraft gets there, is asked of this Shield's own rules (a look-ahead
+        view, as the hold-point search asks). Read only in Loiter, with the
+        position itself legal, under FSMConfig.hold_horizon "loiter": the
+        hold is then legal for as long as it is held, and handing GUIDED back
+        to a request that flies into a moving zone's path - where the hold
+        was keeping the aircraft out - is the breach the harness counts as a
+        move of the aircraft's own (dyn-nfz-rotate-spin at 9 deg/s on the
+        ideal vehicle, handed back at 8.4 s)."""
+        st = self._positional(state)
+        if math.hypot(a.vx, a.vy) <= 1e-9 and abs(a.vz_up) <= 1e-9:
+            return False
+        n = max(1, int(round(self.lookahead_s / HANDBACK_STEP_S)))
+        for i in range(1, n + 1):
+            tau = i * HANDBACK_STEP_S
+            p = State(x=st.x + a.vx * tau, y=st.y + a.vy * tau, up=st.up + a.vz_up * tau,
+                      yaw_deg=st.yaw_deg)
+            with self.looking_ahead(tau):
+                if self.hard_violations(self.state_is_unsafe(p)):
+                    return True
+        return False
 
     def _hold_legal(self, tick: _Tick) -> bool | None:
         """In Loiter: is the FSM's hold POINT still legal - a stop there from
@@ -7393,8 +7434,12 @@ class Shield:
                 break
         try:
             if mode == "LOITER":
+                # How long the hold must stay legal: the Loiter's remaining
+                # time under FSMConfig.hold_horizon "loiter" (since
+                # 2026-11-07), None (one lookahead, as before) otherwise.
                 return _hp.choose_hold_point(self, state, unsafe=unsafe, heading=heading,
-                                             search=self.hold_points)
+                                             search=self.hold_points,
+                                             hold_s=self.fsm.hold_horizon_s())
             return _hp.choose_landing_site(self, state, unsafe=unsafe, heading=heading,
                                            search=self.hold_points,
                                            site_ok=self.land_site_ok)

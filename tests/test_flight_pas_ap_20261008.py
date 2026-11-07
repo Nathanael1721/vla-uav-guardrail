@@ -218,9 +218,10 @@ def test_brake_to_loiter_on_the_replayed_flight_before_and_after():
     assert flown == {"X1": 7, "G3": 8, "G8": 7, "G1": 3, "G7": 2}, flown
     # The FSM the flight flew: its Loiter law until 2026-11-02 (FSMConfig
     # loiter_clear "violation_free", loiter_x67 "request") and its reading
-    # of an untrusted repair until 2026-11-07 (untrusted_owner "projected").
+    # of an untrusted repair until 2026-11-07 (untrusted_owner "projected"),
+    # with its holds judged through one lookahead (hold_horizon "lookahead").
     old = F.FSMConfig(loiter_clear="violation_free", loiter_x67="request",
-                      untrusted_owner="projected")
+                      untrusted_owner="projected", hold_horizon="lookahead")
     before = F.replay_rows(rows, horizon_s=None, policy=pol, config=old)
     assert before["edge_counts_counterfactual"] == dict(sorted(flown.items())), before
     assert before["repaired_over_theta"] == 23, before["repaired_over_theta"]

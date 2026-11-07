@@ -890,7 +890,7 @@ def test_in_place_holds_fly_c77c77ds_rows_exactly():
     got = {}
     orig = SW.Shield
     old_law = FSMConfig(loiter_clear="violation_free", loiter_x67="request",
-                        untrusted_owner="projected")
+                        untrusted_owner="projected", hold_horizon="lookahead")
 
     def shield_on_the_old_loiter_law(*a, escalation=True, **k):
         return orig(*a, escalation=old_law if escalation is True else escalation, **k)

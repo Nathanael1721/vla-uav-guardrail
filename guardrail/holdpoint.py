@@ -128,6 +128,7 @@ WHAT IT DOES NOT DO
 from __future__ import annotations
 
 import math
+from dataclasses import replace
 from typing import Any, Callable, Iterable
 
 from .fsm import HoldPoint
@@ -965,25 +966,63 @@ def transit_breaks(shield, start: State, end: State, travel_s: float, speed: flo
     return []
 
 
+def time_varying(shield) -> bool:
+    """Can a rule's geometry or force change with time in this Shield's
+    world: a moving zone or a moving subject (Shield.rule_motion), or a rule
+    with a window, a switch or a swap (its rule clock's `timed`)? Where
+    nothing can, a stop legal through one lookahead stays legal for as long
+    as it is held, and the hold horizon (choose_hold_point, `hold_s`) asks
+    nothing more of a point."""
+    clock = getattr(shield, "rule_clock", None)
+    timed = True if clock is None else bool(getattr(clock, "timed", True))
+    return timed or bool(shield.rule_motion())
+
+
 def choose_hold_point(shield, state: State, *, unsafe: list | None = None,
                       heading: tuple[float, float] | None = None,
-                      search: bool = True) -> HoldPoint:
+                      search: bool = True, hold_s: float | None = None) -> HoldPoint:
     """Where the FSM's Loiter holds (module docstring). `unsafe` is the hard
     enforced violations of a stop at `state` (the FSM's stop_illegal), read
     here when not given; `heading` the way the aircraft is going (ties);
-    `search` False reports the in-place hold only (Shield(hold_points=False))."""
+    `search` False reports the in-place hold only (Shield(hold_points=False)).
+
+    `hold_s` (since 2026-11-07; fsm.EscalationFSM.hold_horizon_s, FSMConfig
+    hold_horizon "loiter"): how long from now the Loiter can last - the
+    hold must stay legal from arrival until then and one lookahead past it,
+    at its HOLD_MARGIN_M neighbours too, judged in lookahead-long views
+    (`held`). Until then a point was judged through one lookahead from
+    arrival only, so under a moving zone the nearest such point was legal
+    for barely that long: dyn-nfz-rotate-spin on the lagging vehicles re-
+    planned every 0.5-1.4 s ahead of the spinning bar, the aircraft never
+    stood anywhere a stop was legal for T, and X6 sent it home (a false
+    fail-safe by the rubric's N4). None, or a world where nothing can change
+    with time (time_varying), plans exactly as before. A hold in place that
+    is legal through the lookahead but would not stay legal for the Loiter is
+    moved to a point that does; when the search finds no such point (none
+    within reach, or the budget spent), the plan is the one the lookahead
+    alone gives - the plan before this change - so no hold is worse than it
+    was. The lookahead's own search runs first and keeps its whole budget;
+    the longer one gets what it left (candidates it refused are not paid
+    for twice), so a search still costs at most MAX_QUERIES."""
     look = float(shield.lookahead_s)
     if unsafe is None:
         unsafe = shield.hard_violations(shield.state_is_unsafe(state))
     here = f"({state.x:.1f}, {state.y:.1f}, {state.up:.1f})"
+    span = (float(hold_s) if (search and hold_s is not None and float(hold_s) > 0.0
+                              and time_varying(shield)) else None)
+    stay = None
     if not unsafe:
-        return HoldPoint("LOITER", "in_place", state.x, state.y, state.up, legal=True,
+        stay = HoldPoint("LOITER", "in_place", state.x, state.y, state.up, legal=True,
                          checked_s=look,
                          reason=(f"standing still at {here} breaks no hard rule "
                                  f"within the {look:g} s lookahead"))
+        if span is None:
+            return stay
     breaks = _ids(unsafe)
     what = (f"standing still at {here} breaks {', '.join(breaks)} within the "
-            f"{look:g} s lookahead")
+            f"{look:g} s lookahead" if unsafe else
+            f"standing still at {here} is legal through the {look:g} s lookahead, "
+            f"not for the {span:.1f} s the Loiter can last")
     if not search:
         return HoldPoint("LOITER", "in_place", state.x, state.y, state.up, legal=False,
                          breaks=breaks, checked_s=look,
@@ -993,13 +1032,45 @@ def choose_hold_point(shield, state: State, *, unsafe: list | None = None,
     up_t = hold_altitude(shield, state)
     speed, climb, why_speed = _speeds(shield, up_t - state.up)
     tz = abs(up_t - state.up) / climb
-    ledger = _Ledger(shield, state, max(RADII_M[-1] / speed, tz) + look)
+    ledger = _Ledger(shield, state, max(RADII_M[-1] / speed, tz) + look + (span or 0.0))
 
     def stop_ok(p: State) -> bool:
         # Inside a looking_ahead view: a stop at p, from the view's time,
         # breaks no hard enforced rule through the lookahead (the cheap
         # test first, THE CHEAP TEST).
         return ledger.stop_ok(shield, p)
+
+    def views(t_a: float) -> int:
+        """How many lookahead-long views after the first a hold reached at
+        t_a needs, so that the stops judged from arrival cover the Loiter's
+        span and one lookahead past it."""
+        return int(math.ceil(max(0.0, span - t_a) / look - 1e-9)) if span else 0
+
+    def held(p: State, t_a: float) -> bool:
+        """THE HOLD HORIZON: a stop at p (then at its HOLD_MARGIN_M
+        neighbours) is legal in every lookahead-long view from t_a + look to
+        the end of the Loiter's span - the first view, from arrival, the
+        caller has judged. The point's views first: most points fail there,
+        for a fifth of the neighbours' cost."""
+        n = views(t_a)
+        for pts in ([p], _neighbours(p)):
+            for j in range(1, n + 1):
+                if ledger.left <= 0:
+                    return False
+                with shield.looking_ahead(t_a + j * look):
+                    if not all(stop_ok(q) for q in pts):
+                        return False
+        return True
+
+    def held_note(t_a: float) -> str:
+        return (f"; it stays legal for as long as the Loiter can last ({span:.1f} s "
+                f"from now) and one lookahead past it: checked "
+                f"{(views(t_a) + 1) * look:g} s from arrival, the {HOLD_MARGIN_M:g} m "
+                f"about it too")
+
+    if stay is not None and held(state, 0.0):
+        return replace(stay, checked_s=(views(0.0) + 1) * look,
+                       reason=stay.reason + held_note(0.0))
 
     def accept(r: float, k: int, t_a: float, x: float, y: float,
                checked: bool = False) -> HoldPoint | None:
@@ -1033,8 +1104,63 @@ def choose_hold_point(shield, state: State, *, unsafe: list | None = None,
                     f"no deeper (to {LEAVE_TOL_M:g} m) in one it is in than a stop "
                     f"here would be then ({why_speed})"))
 
-    plan = _search(shield, state, speed, climb, up_t, heading,
-                   lambda p, t_a: stop_ok(p), accept, ledger)
+    # Candidates a search refused, by (x, y, up, arrival): the same query in
+    # the same view gives the same answer, so the hold horizon's search does
+    # not pay for them again.
+    refused: set = set()
+
+    def key(x: float, y: float, up: float, t_a: float) -> tuple:
+        return (round(x, 6), round(y, 6), round(up, 6), round(t_a, 9))
+
+    def quick(p: State, t_a: float) -> bool:
+        if key(p.x, p.y, p.up, t_a) in refused:
+            return False
+        ok = stop_ok(p)
+        if not ok:
+            refused.add(key(p.x, p.y, p.up, t_a))
+        return ok
+
+    def accept_once(r: float, k: int, t_a: float, x: float, y: float,
+                    checked: bool = False) -> HoldPoint | None:
+        if key(x, y, up_t, t_a) in refused:
+            return None
+        plan = accept(r, k, t_a, x, y, checked)
+        if plan is None:
+            refused.add(key(x, y, up_t, t_a))
+        return plan
+
+    plan = stay
+    if plan is None:
+        # The lookahead's search, exactly as before this change.
+        plan = _search(shield, state, speed, climb, up_t, heading, quick,
+                       accept_once, ledger)
+        if plan is not None and span is not None:
+            if held(State(x=plan.x, y=plan.y, up=plan.up, yaw_deg=state.yaw_deg),
+                    plan.travel_s):
+                return replace(plan, checked_s=(views(plan.travel_s) + 1) * look,
+                               reason=plan.reason + held_note(plan.travel_s))
+            refused.add(key(plan.x, plan.y, plan.up, plan.travel_s))
+    if span is not None and (plan is not None or stay is not None):
+        # THE HOLD HORIZON's search, on what the first one left.
+        def accept_held(r: float, k: int, t_a: float, x: float, y: float,
+                        checked: bool = False) -> HoldPoint | None:
+            got = accept_once(r, k, t_a, x, y, checked)
+            if got is None:
+                return None
+            if not held(State(x=got.x, y=got.y, up=got.up, yaw_deg=state.yaw_deg), t_a):
+                refused.add(key(got.x, got.y, got.up, t_a))
+                return None
+            return replace(got, checked_s=(views(t_a) + 1) * look,
+                           reason=got.reason + held_note(t_a))
+
+        better = _search(shield, state, speed, climb, up_t, heading, quick,
+                         accept_held, ledger)
+        if better is not None:
+            return better
+        limit = BUDGET_NOTE if ledger.left <= 0 else f"{RADII_M[-1]:g} m"
+        return replace(plan, reason=(
+            f"{plan.reason}; no point within {limit} stays legal for the "
+            f"{span:.1f} s the Loiter can last: the lookahead's plan"))
     if plan is not None:
         return plan
     limit = BUDGET_NOTE if ledger.left <= 0 else f"{RADII_M[-1]:g} m"
