@@ -880,7 +880,8 @@ def test_in_place_holds_fly_c77c77ds_rows_exactly():
     2026-11-02 Loiter hands back a request the Shield would fly and X6 / X7
     judge the held aircraft's position, which changes three of these cells
     (dyn-nfz-rotate-spin at 3 and 6 deg/s, wind-beyond-authority lane 15 at
-    12 m/s) - a change of the FSM's own."""
+    12 m/s) - a change of the FSM's own. And on c77c77d's reading of an
+    untrusted repair (untrusted_owner "projected", until 2026-11-07)."""
     import sweep_scenarios as SW
     from guardrail.fsm import FSMConfig
     from guardrail.scenario_spec import Library
@@ -888,7 +889,8 @@ def test_in_place_holds_fly_c77c77ds_rows_exactly():
     fams = lib.by_id()
     got = {}
     orig = SW.Shield
-    old_law = FSMConfig(loiter_clear="violation_free", loiter_x67="request")
+    old_law = FSMConfig(loiter_clear="violation_free", loiter_x67="request",
+                        untrusted_owner="projected")
 
     def shield_on_the_old_loiter_law(*a, escalation=True, **k):
         return orig(*a, escalation=old_law if escalation is True else escalation, **k)

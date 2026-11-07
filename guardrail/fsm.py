@@ -464,6 +464,18 @@ LOITER_X67_MODES = ("position", "request")
 # The Loiter law until 2026-11-02, which every earlier audit record and
 # config hash was written under (FSMConfig.digest leaves these values out).
 LEGACY_LOITER_LAW = {"loiter_clear": "violation_free", "loiter_x67": "request"}
+# Whose repair an untrusted tick is, for G3 and Loiter's "acceptable" (since
+# 2026-11-07; docs/DESIGN-escalation-fsm.md, "An untrusted repair beside a
+# speed cap alone is the chain's"):
+#   chain      a violated hard project_fix rule that is not kinematic, or - on
+#              a tick that violates no such rule - the kinematic rules the
+#              repair chain ran for. The default.
+#   projected  only a violated non-kinematic project_fix rule: the reading
+#              until 2026-11-07, kept for comparison.
+UNTRUSTED_OWNERS = ("chain", "projected")
+# Every law field and the value earlier records were written under: a config
+# on these values hashes as it did before the field existed.
+LEGACY_LAW = {**LEGACY_LOITER_LAW, "untrusted_owner": "projected"}
 
 # Every edge this FSM can take: id -> (from, to, source, label). The design
 # doc's transition table lists the same ids, and tests/test_fsm.py drives
@@ -556,8 +568,11 @@ class RuleHit:
     # True for a kinematic envelope (speed / climb / yaw caps). Its repairs are
     # clamps: they always converge and theta never judges them, so such a rule
     # can neither make a tick untrusted nor be the rule a theta escalation is
-    # attributed to. Without this, a speed-cap rule that happened to sort first
-    # was cited as the reason a fence repair broke theta.
+    # attributed to while a rule theta judges is violated beside it. Without
+    # this, a speed-cap rule that happened to sort first was cited as the
+    # reason a fence repair broke theta. On a tick where it is the only
+    # project_fix rule violated, an untrusted repair is the repair chain's
+    # run for it (FSMConfig.untrusted_owner "chain", since 2026-11-07).
     kinematic: bool = False
 
     def __post_init__(self) -> None:
@@ -1139,6 +1154,9 @@ class FSMConfig:
     Loiter, and loiter_x67 (LOITER_X67_MODES) whether X6 / X7 in Loiter
     judge the aircraft's position alone. Both entered on 2026-11-02 (the
     hash changed again); "violation_free" / "request" fly the FSM as it was.
+    untrusted_owner (UNTRUSTED_OWNERS) is whose repair an untrusted tick is
+    when no non-kinematic rule is projected; it entered on 2026-11-07 (the
+    hash changed again), and "projected" flies the FSM as it was.
     """
     n_violations: int = 3
     window_s: float = 5.0
@@ -1152,6 +1170,7 @@ class FSMConfig:
     x7_min_rise_m: float = X7_MIN_RISE_M
     loiter_clear: str = "acceptable"
     loiter_x67: str = "position"
+    untrusted_owner: str = "chain"
 
     # Grant symbols accepted in YAML, so a profile can be written the way p4
     # writes it ("N: 3, T: 5, T_recover: 2").
@@ -1195,6 +1214,9 @@ class FSMConfig:
         if self.loiter_x67 not in LOITER_X67_MODES:
             raise ValueError(f"FSMConfig.loiter_x67 {self.loiter_x67!r} "
                              f"is not one of {LOITER_X67_MODES}")
+        if self.untrusted_owner not in UNTRUSTED_OWNERS:
+            raise ValueError(f"FSMConfig.untrusted_owner {self.untrusted_owner!r} "
+                             f"is not one of {UNTRUSTED_OWNERS}")
         # At most one counted onset per onset_clear_s: N of them need
         # (N - 1) x onset_clear_s seconds, which must fit in T, or N-in-T (G2,
         # G4) could never fire and the config would quietly delete both edges.
@@ -1310,11 +1332,13 @@ class FSMConfig:
         (LEGACY_LOITER_LAW): a config on that law hashes exactly as before
         (the default thresholds of 7bfd6dc: `sha256:5ae67785...`), so an old
         record still names the behaviour it flew, and today's default law
-        has a hash of its own."""
+        has a hash of its own. untrusted_owner (2026-11-07) does the same
+        (LEGACY_LAW): "projected" hashes as every config did before it
+        (today's Loiter law: `sha256:d55e1bfe...`)."""
         d = self.__dict__.get("_digest")
         if d is None:
             fields = {k: v for k, v in self.to_dict().items()
-                      if LEGACY_LOITER_LAW.get(k, object()) != v}
+                      if LEGACY_LAW.get(k, object()) != v}
             blob = json.dumps(fields, sort_keys=True, separators=(",", ":"))
             d = "sha256:" + hashlib.sha256(blob.encode("utf-8")).hexdigest()
             object.__setattr__(self, "_digest", d)
@@ -1682,6 +1706,28 @@ class EscalationFSM:
         # judges them, so it cannot be the repair that was not trusted.
         projected = [h for h in enforced
                      if h.effective_action == "project_fix" and not h.kinematic]
+        # Unless the tick projects nothing else (since 2026-11-07,
+        # FSMConfig.untrusted_owner "chain"). The Shield's repair chain runs
+        # every operator on a violated tick, each on its own test, so an
+        # untrusted repair on a tick whose only violated project_fix rules
+        # are kinematic came from an operator acting on a rule the request
+        # does not break - CorridorReturn's straight-line "leaves within one
+        # lookahead" along the nearest leg, which a dog-leg's corner passes -
+        # or from a result that did not re-check clean. Either way it is the
+        # repair of THIS tick, which the chain made for the kinematic rule it
+        # ran for, and p4 abandons it AND triggers the fail-safe ("the Shield
+        # abandons projection and triggers fail-safe"). Before, the
+        # projection was abandoned (X1's stop) and nothing could escalate it:
+        # corridor-drift-angles at 8 m/s, -30 deg, on the ArduPilot response
+        # braked at (34.6, 6.7) on CorridorReturn sizes of up to 4.0 m beside
+        # the speed cap and held there in Brake for the whole 70 s, where the
+        # rubric expects the fail-safe (E5) on both vehicles. Beside a rule
+        # theta does judge, the kinematic rule is still never the owner
+        # (test_a_theta_escalation_is_attributed_to_a_rule_theta_judges).
+        chain = ([h for h in enforced
+                  if h.effective_action == "project_fix" and h.kinematic]
+                 if (untrusted and not projected
+                     and cfg.untrusted_owner == "chain") else [])
         # A rule whose action is brake (a soft rule capped at brake included)
         # is answered by the stop itself: where a stop is legal the Shield
         # skips projection altogether (shield.py's stop-rule branch: braked,
@@ -1703,14 +1749,26 @@ class EscalationFSM:
         # reads illegal, the gate is off and G3 behaves as it did before -
         # the conservative side.
         stop_rule = strongest == "brake" and not inp.stop_illegal
-        hard_untrusted = (untrusted and any(h.hard for h in projected)
+        hard_untrusted = (untrusted and any(h.hard for h in projected or chain)
                           and not stop_rule)
         if untrusted and strongest == "project_fix" and projected:
             # Attribute an untrusted projection to a rule whose repair theta
             # judges, not to the speed cap that happened to sort first.
             gov = min(projected, key=_governing_key)
 
-        # X6's clock: the position has been illegal on every tick since.
+        # X6's clock: the position has been illegal on every tick since -
+        # `stop_illegal`, the lookahead included, the same "unsafe" the
+        # time-to-safe KPI counts. Where a stop is illegal only because a
+        # rule reaches the point later in the lookahead, the unsafe depth is
+        # 0.0 on every tick and cannot be shown to fall, so X6 fires at T:
+        # the aircraft has found no place to stop for T. Counting only the
+        # ticks PAST a limit was tried and measured on 2026-11-07
+        # (dyn-nfz-rotate-spin on the ArduPilot response, where X6 fires that
+        # way): the hold then ran to the operator timeout (G5 at 34.0-34.1 s,
+        # still a fail-safe, landing after a failed RTL at 3 and 6 deg/s) and
+        # the unsafe spells grew (6 deg/s: 8.0 s to 24.0 s), Loiter's
+        # hand-back cannot safely take over (it breached the 9 deg/s bar on
+        # the ideal vehicle), and nothing else moved. So it stays.
         if not inp.stop_illegal:
             self._stuck_since = None
             self._depths = []
@@ -1761,6 +1819,14 @@ class EscalationFSM:
         # 0.3 s with small repairs left Loiter by G8 at 2.0 s and cycled
         # G2 / G8 for 30 s instead of reaching G4
         # (test_n_in_t_still_catches_a_pilot_who_re_violates_faster_than_the_debounce).
+        # "Somewhere legal" is `stop_illegal`, the lookahead included:
+        # handing GUIDED back while a zone is about to sweep over the
+        # aircraft is not safe. Measured on 2026-11-07 with only the position
+        # PAST a limit read here: dyn-nfz-rotate-spin at 9 deg/s on the ideal
+        # vehicle was handed back at 8.4 s, into the bar's sweep, and
+        # breached it once (a move of its own onto a spot the sweep had made
+        # unsafe, the Shield's known limit on a bar spinning that fast); held
+        # as it is, it waits for the bar to pass (G8 at 20.1 s, no breach).
         starts_now = hard_violated and not self._prev_hard
         acceptable = (not hard_untrusted and strongest not in ("loiter", "RTL", "land")
                       and not inp.stop_illegal and not starts_now)
@@ -1802,7 +1868,7 @@ class EscalationFSM:
                                          untrusted, hard_untrusted, theta_exceeded,
                                          n_in_t, cleared_any, cleared_hard,
                                          hard_violated, stuck_s, progress, losing,
-                                         cleared_loiter)
+                                         cleared_loiter, chain_owned=bool(chain))
 
         terminal_now = False
         if edge in ("G9", "G10", "X5"):
@@ -1897,6 +1963,12 @@ class EscalationFSM:
             record["position_lost"] = inp.position_lost
         if inp.noise_marginal:
             record["noise_marginal"] = True
+        if chain:
+            # An untrusted repair on a tick that projects no non-kinematic
+            # rule, owned by the chain run for these kinematic rules
+            # (untrusted_owner "chain", 2026-11-07). Only on such ticks, so
+            # every other record is byte for byte what it was.
+            record["untrusted_chain"] = [h.rule_id for h in chain]
         if before == FSMState.LOITER:
             # Loiter's own "cleared" clock (loiter_clear "acceptable",
             # 2026-11-02): the request acceptable and the position legal for
@@ -2039,7 +2111,7 @@ class EscalationFSM:
                 cleared_any: float | None, cleared_hard: float | None,
                 hard_violated: bool = False, stuck_s: float | None = None,
                 progress: dict | None = None, losing: dict | None = None,
-                cleared_loiter: float | None = None):
+                cleared_loiter: float | None = None, chain_owned: bool = False):
         """Return (target state or None, edge id or None, reason)."""
         cfg = self.config
         S = FSMState
@@ -2161,6 +2233,11 @@ class EscalationFSM:
                          if n_in_t else "")
                 what = (("repair over theta, " + mag()) if theta_exceeded
                         else "no operator converged")
+                if chain_owned:
+                    # Name what the size came from: the speed cap's clamps
+                    # cannot be over theta, the chain run for it was.
+                    what += ("; the chain run for this kinematic rule, no other "
+                             "rule violated")
                 return S.LOITER, "G3", f"{cite(gov)}: {what}{extra}"
             if n_in_t:
                 return (S.LOITER, "G2", f"N-in-T: {len(self._events)} onsets in "

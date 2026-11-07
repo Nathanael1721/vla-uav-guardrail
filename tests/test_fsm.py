@@ -497,14 +497,21 @@ def test_g8_hands_back_a_request_the_shield_would_fly():
 
 
 def test_the_old_loiter_law_hashes_as_every_earlier_record_did():
-    """The two Loiter-law fields enter fsm_config_hash only when they differ
-    from the law earlier records were written under: a config on that law
-    hashes as 7bfd6dc's default did, and today's default has its own hash."""
-    old = FSMConfig(loiter_clear="violation_free", loiter_x67="request")
+    """The law fields enter fsm_config_hash only when they differ from the
+    law earlier records were written under: a config on that law hashes as
+    7bfd6dc's default did, and today's default has its own hash. The same
+    for untrusted_owner (2026-11-07): "projected" on today's Loiter law
+    hashes as the default did before the field existed."""
+    old = FSMConfig(loiter_clear="violation_free", loiter_x67="request",
+                    untrusted_owner="projected")
     assert old.digest.startswith("sha256:5ae67785"), old.digest
     assert FSMConfig().digest != old.digest
     assert FSMConfig(loiter_clear="violation_free").digest not in (old.digest,
                                                                    FSMConfig().digest)
+    before = FSMConfig(untrusted_owner="projected")
+    assert before.digest.startswith("sha256:d55e1bfe"), before.digest
+    assert FSMConfig().digest != before.digest
+    raises(ValueError, FSMConfig, untrusted_owner="violated")
 
 
 def test_g8_does_not_hand_back_an_unsafe_repair_or_a_loiter_rule():
@@ -2328,6 +2335,84 @@ def test_a_monitor_only_or_relaxed_rule_flown_as_commanded_is_not_a_failed_repai
     row_watch = {"t": 0.0, "violations": [v_watch.model_dump()], "repairs": [],
                  "emitted_violations": [v_watch.model_dump()]}
     assert tick_input_from_row(row_watch, pol).outcome == "clean"
+
+
+def test_x6_keeps_a_stop_illegal_in_the_lookahead_as_an_unsafe_position():
+    """DECISION (2026-11-07, measured). `stop_illegal` is "a stop here breaks
+    a hard rule within the lookahead", the same "unsafe" the time-to-safe KPI
+    counts; where a rule only reaches the point later in the lookahead (a bar
+    sweeping toward a held aircraft) the unsafe depth is 0.0 and cannot be
+    shown to fall, so X6 fires at T: no place to stop was found for T. That
+    is how dyn-nfz-rotate-spin goes home on the ArduPilot response (and on
+    the hil rehearsal, rh01_017: X6 at 30.3 s), against the rubric's N4.
+    Counting only the ticks past a limit was tried: those holds then ran to
+    the operator timeout (G5, still a fail-safe) with unsafe spells three
+    times as long, and Loiter's hand-back could not take over safely (it
+    breached the 9 deg/s bar on the ideal vehicle). This pins X6 as it is,
+    and that a position past a limit still waits T from where it started."""
+    f = EscalationFSM()
+    to_loiter_via_g3(f)
+    edges = []
+    for t in clock(100, t0=0.2):
+        o = f.tick(t, stop_illegal=True, unsafe_depth_m=0.0)
+        if o.edge:
+            edges.append((round(t, 1), o.edge))
+            break
+    assert edges == [(5.2, "X6")], edges
+    assert "the autopilot holds" in o.reason and "fell" in o.reason, o.reason
+    # Loiter does not hand back while a stop there is illegal, depth or not.
+    f = EscalationFSM(FSMConfig(window_s=60.0))
+    to_loiter_via_g3(f)
+    for t in clock(300, t0=0.2):
+        o = f.tick(t, stop_illegal=True, unsafe_depth_m=0.0)
+        assert o.edge != "G8", (round(t, 1), o.reason)
+        if o.edge:
+            break
+
+
+def test_an_untrusted_repair_beside_a_speed_cap_alone_is_the_chains_and_escalates():
+    """REGRESSION (2026-11-07, corridor-drift-angles at 8 m/s, -30 deg, on the
+    ArduPilot response: a missed fail-safe, E5 on both vehicles). The speed
+    cap was the only rule the request broke, and the Shield's repair chain -
+    which runs every operator, each on its own test - also moved the clamped
+    action by more than theta: CorridorReturn's straight-line "leaves within
+    one lookahead" along the nearest leg, for a corridor the request does
+    not break (a dog-leg's corner). The tick abandoned projection (the stop,
+    rightly: p4), but G3 needed a projected rule that is not kinematic, so
+    nothing escalated and the aircraft held in Brake for the whole episode.
+    That untrusted repair is the chain's, made for the kinematic rule: G3
+    (p4, "abandons projection and triggers fail-safe"), and Loiter keeps it
+    (not a request it would hand back) until the operator timeout."""
+    kin = RuleHit("kin-caps", "project_fix", "hard", "P1", kinematic=True)
+    f = EscalationFSM()
+    assert f.tick(0.0, "repaired", [kin], SMALL).edge == "G1"      # the clamp alone
+    o = f.tick(0.1, "repaired", [kin], BIG)
+    assert o.edge == "G3" and o.state == S.LOITER, o.reason
+    assert "kin-caps" in o.reason and "the chain run for this kinematic rule" in o.reason
+    assert o.record["untrusted_chain"] == ["kin-caps"], o.record
+    edges = []
+    for t in clock(310, t0=0.2):
+        o = f.tick(t, "repaired", [kin], BIG)
+        if o.edge:
+            edges.append((round(t, 1), o.edge))
+            break
+    assert edges == [(30.1, "G5")], edges
+    # From Normal it is the stop it always was (X1), and a projected rule
+    # beside the cap still owns the size, as before: no `untrusted_chain`.
+    o = EscalationFSM().tick(0.0, "repaired", [kin], BIG)
+    assert o.edge == "X1" and o.setpoint == "brake" and "repair over theta" in o.reason
+    o = EscalationFSM().tick(0.0, "repaired", [kin, hit("ring")], BIG)
+    assert o.edge == "X1" and "untrusted_chain" not in o.record, o.record
+    # A soft cap never changes the mode (the record still names the chain);
+    # the comparison law holds in Brake as before.
+    for cfg, rule, chain in ((FSMConfig(), RuleHit("kin-soft", "project_fix", "soft", "P1",
+                                                   kinematic=True), ["kin-soft"]),
+                             (FSMConfig(untrusted_owner="projected"), kin, None)):
+        f = EscalationFSM(cfg)
+        for t in clock(400):
+            o = f.tick(t, "repaired", [rule], BIG)
+            assert o.state == S.BRAKE, (cfg.untrusted_owner, rule.rule_id, t, o.reason)
+        assert o.record.get("untrusted_chain") == chain, o.record
 
 
 if __name__ == "__main__":
