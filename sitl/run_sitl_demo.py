@@ -618,6 +618,7 @@ def main() -> int:
     # as a GUIDED transit, then the hold (guardrail/hold_flight.py).
     moved_holds = args.hold_points == "moved"
     hold_flight = HoldFlight()
+    hold_planner = holdpoint.HoldPlanner()
     # What was asked of the autopilot, in the FSM's words and ArduCopter's
     # (the FSM's LOITER flown as --hold-mode, BRAKE by default), as the other
     # two rails record it (mavlink_adapter_node.ModeRequests).
@@ -747,14 +748,23 @@ def main() -> int:
                     caps=shield.applied_caps or False,
                     hold_legal=hold_legal, handback_unsafe=handback))
                 setpoint = fsm_out.setpoint
-                if moved_holds and fsm.needs_hold:
+                if moved_holds:
                     # Where the Loiter holds / the Land lands: the search's
-                    # plan from the Shield's own rules (guardrail/holdpoint.py).
+                    # plan from the Shield's own rules (guardrail/holdpoint.py),
+                    # holdpoint.TICK_QUERIES of it a tick, the plan taken on
+                    # the tick it ends (THE PER-TICK BOUND, HoldPlanner).
                     heading = next(((a.vx, a.vy) for a in (decision.emitted, decision.raw)
                                     if math.hypot(a.vx, a.vy) > 0.1), None)
-                    plan = fsm.hold_at(holdpoint.plan_for(
-                        shield, fsm, state, unsafe=hard_unsafe, heading=heading))
-                    rec.event("hold_point", t=now, **plan.to_dict())
+                    got = hold_planner.tick(
+                        shield, fsm,
+                        lambda: holdpoint.plan_for(shield, fsm, state, unsafe=hard_unsafe,
+                                                   heading=heading),
+                        here=state, unsafe=hard_unsafe)
+                    if got is not None:
+                        plan = fsm.hold_at(got)
+                        rec.event("hold_point", t=now, **plan.to_dict(),
+                                  **({"search": dict(hold_planner.last)}
+                                     if hold_planner.last else {}))
                 if fsm_out.transition:
                     rec.event("fsm_transition", t=now,
                               **{k: fsm_out.record[k] for k in (

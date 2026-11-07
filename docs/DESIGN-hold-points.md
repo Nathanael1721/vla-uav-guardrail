@@ -10,7 +10,10 @@ Headless only: nothing here has flown, and no flight rail flies a moved hold
 yet. (Since 2026-11-07 the pymavlink rail and the ROS 2 Shield node fly the
 moved hold - guardrail/hold_flight.py - and a hold must stay legal for as
 long as it is held: "A hold legal for as long as it is held, flown by the
-rails", below. Still not flown on the rig.)
+rails", below. First flown on the rig on the hil shakedown hs02, where the
+tick that planned it broke the Orin's 100 ms budget; since that evening the
+search is spread over ticks, a fixed count of its budget a tick: "The
+per-tick bound", below.)
 Code: `guardrail/fsm.py` (`HoldPoint`, `EscalationFSM.needs_hold` /
 `hold_at`, `TickInput.hold_legal`), `guardrail/holdpoint.py` (the search),
 `guardrail/shield.py` (`looking_ahead`, `state_is_unsafe(ahead_s=)`,
@@ -1046,6 +1049,9 @@ times 2-3, plus the rest of the tick), over the 100 ms tick on that one tick of
 a Loiter entry or re-plan; the per-tick checks (about 5-13 ms at p99) fit.
 Should the AGX measure so, the hold horizon's search can be given part of the
 budget only (its own MAX_QUERIES share), at the cost of reaching less far.
+(It did: the hil shakedown hs02 planned on a 146.9 ms tick. The search is now
+spread over ticks instead, keeping its whole reach: "The per-tick bound",
+below.)
 
 **The hil smoke rh03** (44 missions flown on the AGX at fb96fe5: holds in
 place, no hold horizon), on the same labels: (a) 37/43 = 0.860 (6 false:
@@ -1069,6 +1075,171 @@ design). On the rail arm the moved holds leave corridor-swap-narrowed's
 overshoot as it was (the point is legal where the hold starts; BRAKE's stop
 is the airframe's) and take wind-beyond-authority at 12 m/s from 2 autopilot
 breaches to 1.
+
+## The per-tick bound (2026-11-07, evening)
+
+**What the rig showed.** The hil shakedown hs02 (d186077: the hold horizon
+above plus one node fix) flew dyn-nfz-rotate-spin@3 on the AGX Orin: G1, G3
+at 2.31 m, Loiter, the moved hold flown, G8 hand-back at tick 264, G1, G7; no
+fail-safe, P0 0, breaches 0. But the one tick that planned the moved hold took
+146.9 ms (`tick_ms`; e2e 167.5 ms) against WP3-13's 100 ms tick, while its
+`shield_ms` was 13 ms: the plan and the hold checks took the rest. The
+desktop's worst plan was 37.8 ms, so the Orin is about 3-4x slower on this
+code (its Loiter ticks p50 44 ms; all ticks p50 11.0 ms, p99 50.7 ms). The
+request: bound the hold work on any one tick - the plan, `hold_point_legal`,
+`handback_unsafe` - deterministically (a count, not a clock), to about 15 ms
+of the desktop's time, so the whole tick stays near 70 ms on the Orin.
+
+**What changed.**
+
+* **The search is spread over ticks** (`guardrail/holdpoint.py`, THE PER-TICK
+  BOUND; `HoldSearch`, `HoldPlanner`). The search the FSM asks for runs on a
+  thread of its own and is handed one tick's slice at a time:
+  `TICK_QUERIES` = 100 units of its own ledger (the units of `MAX_QUERIES`,
+  which is unchanged at 600). Every charge of the ledger (`_Ledger.left`) is
+  a pause point, so a slice stops before the charge that would overrun it,
+  wherever in the search that is - a candidate's quick test, a transit's
+  bisection, a view of the hold horizon. The caller's thread waits while the
+  search runs and the search waits while the caller runs, so every query is
+  made in the single-threaded order, and the count, not the machine's speed,
+  decides where each slice ends: a headless sweep is reproducible as before.
+  The search plans in the world of the tick it started on (that tick's
+  Shield view: its time, rule clock, rule set and moving zones; the rule set
+  is pinned, so a hot reload mid-search does not reach it), so the plan it
+  returns is the one the whole search makes on that tick
+  (`tests/test_hold_horizon.py`
+  test_a_search_spread_over_ticks_plans_exactly_as_the_whole_search;
+  `tests/test_hold_points.py` test_the_shield_wires_the_plan_into_the_decision
+  on the Shield). One input is not frozen: a stand-off rule's live subject is
+  read where the rail last set it. The search keeps its whole reach: one that
+  spends all 600 units takes 6 ticks. Why a thread: the dearest charges sit
+  deep in the search (a transit's bisection inside `transit_breaks`), and a
+  bound that holds on every tick needs a pause point at every charge; a
+  generator would have meant rewriting every function on that path, while a
+  thread parked on a semaphore keeps the search's code exactly as it was. Two
+  semaphores hand control back and forth, so nothing is shared at the same
+  time; a search not resumed for `ABANDON_S` (60 s: its loop is gone) ends
+  its thread, `reset_episode` drops one, and a thread that cannot start
+  falls back to the whole search on the tick, as before.
+* **Until the plan arrives the aircraft holds where it is.** On Loiter or
+  Land entry the FSM has no plan yet (`hold` None), which the harness and both
+  rails fly as in place, and X6 / X7 judge the aircraft's own position, as
+  for any in-place hold. On a re-plan (the point held is no longer legal) the
+  planner gives the FSM an in-place plan on the search's first tick - legal
+  unless a stop there breaks a hard rule now, as `hold_at` demands - so the
+  aircraft does not fly on toward the point that turned illegal; the new plan
+  replaces it when the search ends. A search whose FSM state ended (Loiter
+  left, Land entered) is dropped. The FSM is unchanged; `needs_hold` stays
+  True while a plan is pending. A record of a plan found over more than one
+  tick carries `hold_search` (`ticks`, `units`; `running` on the ticks
+  before), and a rail's `hold_point` event carries `search`.
+  `HoldPlanner(units=None)` plans within the tick, as before.
+* **The hand-back guard is bounded** (`Shield.handback_unsafe`): as many
+  samples of the command's flight as fit in `HANDBACK_QUERIES` = 40 units at
+  the world's dearest stop query (`stop_cost_bound`: every moving zone near,
+  every static zone's box holding the point), one every `HANDBACK_STEP_S`
+  (0.5 s) where they all fit, otherwise spread evenly through the lookahead.
+  It was always one every 0.5 s, 10 stop queries whatever each cost (up to
+  17.5 ms measured on the desktop). In every library world where the guard
+  is read (70 cells, seed 0, rail arm) all 10 samples still fit (a stop
+  query there is priced at 4 units at most), so it samples exactly as
+  before; the bound caps only worlds with dearer stop queries.
+* **The rails' transit gives up later** (`guardrail/hold_flight.py`). On
+  hs02 the moved hold, (-190.0, -0.4) with `travel_s` 0.25 s for a 0.43 m
+  move, was given up 1.25 s after the plan ("moved hold not reached by
+  5.4 s"). That deadline does not suit the rig: the plan's travel time is the
+  straight line at the policy's speed cap, and neither the sqrt controller's
+  last metre (gain 1.0: a 1 s time constant, so 1 m takes about 0.7 s to
+  close to the 0.5 m arrival radius) nor the rig's lag (0.13 s, from a hover)
+  nor the drift of the stop the hand-over flew is in it. A transit is now
+  given up only when the plan's travel time plus `HOLD_ARRIVAL_SLACK_S` has
+  passed AND the aircraft has not closed `TRANSIT_PROGRESS_M` (5 cm) on the
+  point for `TRANSIT_STALL_S` (1 s), or `TRANSIT_MAX_S` (10 s) after its
+  travel time whatever it does. The harness's modelled transit never gave
+  up, so no headless number moves with this; it is the rig that flies it.
+
+### Measured (headless, desktop, not KPI-grade)
+
+**Hold work per tick**, the library's 180 Shield-on FSM cells on the `rail`
+arm with moved holds (seed 0, one process, nothing else running; "hold work"
+is the plan's slice, `hold_point_legal` and `handback_unsafe` summed over each
+tick that paid any of them; before = the table above, measured the same way
+on 168 cells - the 12 cells merged since plan no hold, 78 plans both times):
+
+| | n | p50 | p99 | max |
+|---|---|---|---|---|
+| hold work per tick, after | 15,799 | 1.77 ms | 4.52 ms | 13.9 ms |
+| the plan on its one tick, before (the whole search) | 78 | 2.0 ms | 26.0 ms | 37.8 ms (rotate-spin@3) |
+| the plan's slice on one tick, after | 90 | 2.4 ms | 13.6 ms | 13.8 ms |
+| `hold_point_legal`, before / after | 15,723 / 15,712 | 0.19 / 0.18 ms | 0.47 / 0.46 ms | 2.4 / 3.9 ms |
+| `handback_unsafe`, before / after | 15,142 / 15,143 | 1.70 / 1.63 ms | 4.38 / 3.97 ms | 17.5 / 10.0 ms |
+| the whole Loiter tick (`Shield.filter`), before / after | 15,793 / 15,794 | 4.5 / 4.3 ms | 9.1 / 8.2 ms | 39.9 / 28.4 ms |
+
+Of the 78 plans 5 were spread over more than one tick: rotate-spin@3 over 5
+ticks (419 units), @6 and @9 over 4 (303 and 336 units), and dyn-nfz-
+translate at 1 and 2 m/s over 2 (101 units each); the other 73 were found
+within their first tick, as before. At the Orin's 3-4x the worst hold work
+per tick is about 42-56 ms, where the planning tick paid about 113-151 ms of
+plan before (hs02 measured 147 ms). The Orin itself is not re-measured here.
+
+The same comparison with both trees flown side by side on a loaded machine
+(5fc832b and this change at once, beside a nightly sweep; slower and noisier
+than the table, but under one load):
+
+| | before (5fc832b) p50 / p99 / max | after p50 / p99 / max | the dearest tick after |
+|---|---|---|---|
+| hold work per tick | 1.86 / 5.30 / 39.5 ms (rotate-spin@3, its plan tick) | 1.90 / 5.30 / 21.6 ms | corridor-drift-angles 4 m/s, -30 deg: the hand-back guard |
+| the plan on one tick / its slice | 2.1 / 27.5 / 39.5 ms | 2.6 / 14.3 / 16.2 ms | |
+| `handback_unsafe` | 1.71 / 4.71 / 27.7 ms | 1.75 / 4.58 / 21.1 ms | |
+| the whole Loiter tick | 4.5 / 9.5 / 41.9 ms | 4.6 / 10.2 / 25.2 ms | radius-scaling-grow 3.8 (1.8 ms of it hold work) |
+
+Under that load the dearest hold work is no longer a plan but the hand-back
+guard: its 10 samples cost more than the 40 units its bound prices them at
+(about 4 ms). Profiled in corridor-drift-angles (4 m/s, -30 deg; 300 calls,
+2,890 stop queries): a stop query there costs about 0.5 ms, half of it the
+corridor's own check at every forecast pose (`Shield._check_corridor`,
+`nearest_on_polyline`), where the ledger's cost model prices it at 2.15 units
+(0.2 ms; the corridor's two segments at 0.5 units each) - a model calibrated
+on zone worlds, which the search's own budget shares, so a search in a
+corridor world also takes more time than its units say (in the quiet run the
+100-unit slices took up to 13.8 ms, not the 10 ms the units say). Quiet, the
+guard's worst was
+10.0 ms. Should the Orin need more room, the corridor's price in
+`_STOP_RULE_COST` is the thing to re-calibrate (it moves the search's reach in
+corridor worlds too), or `HANDBACK_QUERIES` = 20, which halves the guard's
+worst case at the cost of sampling about every 1 s in the library's worlds;
+neither is made here (each needs its own re-measure).
+
+**Fail-safe correctness and safety, the rail arm** (moved holds; before =
+5fc832b, after = this change; the label sets above; flown 35 s longer where
+censored):
+
+| profile | arm | (a) | (r) / (a2) | (r2) | P0 escapes | breaches | mean time to safe |
+|---|---|---|---|---|---|---|---|
+| smoke | ideal | 62/63 (0.915) | (a2) 63/63 (0.943) | - | 0 | 0 | 2.533 s over 15 |
+| smoke | rail, flown longer | 52/63 (0.714) | (r) 62/63 (0.915) | 63/63 (0.943) | 0 | 0 | 3.731 s over 16 |
+| library | ideal | 177/179 (0.960) | (a2) 179/179 (0.979) | - | 0 | 0 | 2.585 s over 34 |
+| library | rail, flown longer | 160/179 (0.840) | (r) 177/179 (0.960) | 179/179 (0.979) | 0 | 0 | 3.803 s over 39 |
+| nightly | ideal | 729/741 (0.972) | (a2) 741/741 (0.995) | - | 0 | 0 | 2.570 s over 150 |
+| nightly | rail, flown longer | 654/741 (0.857) | (r) 729/741 (0.972) | 741/741 (0.995) | 0 | 0 | 3.849 s over 189 |
+
+The library's holds are the same before and after: 153 taken, 29 of them
+moved, none illegal. Every search spread over ticks was an entry's, so no
+in-place plan was given while one ran.
+
+Flown twice, the cells whose plans spread over ticks (rotate-spin@3 and @9,
+translate at 1 m/s; rail arm, seed 0) give the same 400 rows each, digest for
+digest: the bound keeps a headless run reproducible.
+
+Every number is the same before and after. Per episode, every KPI field
+(trigger, censoring, P0 escapes, breaches, time-to-safe episodes, mean and
+censored) is identical in all 126 smoke, 358 library and 1,482 nightly
+episodes (both arms), and so are the FSM's edges and their times in every
+cell but one: dyn-nfz-rotate-spin@3 on the rail vehicle (smoke seed 1001,
+library seed 0, nightly seeds 1001-1003), whose moved hold is planned over 5
+ticks - G1 3.5 s, G3 4.1 s, then G8 9.5 -> 9.6 s, G1 9.6 -> 9.7 s, G7 21.1 ->
+21.2 s: the same edges, no breach, the same time to safe. (The rig's hs02
+flew the same edges.)
 
 ## What it does not do
 
@@ -1132,6 +1303,11 @@ breaches to 1.
    the label is what is wrong - or is our 30 s timeout too short?
 3. Lint severity classes: is a warning class acceptable, and should a CSP
    carry the mission-level warning?
+4. Since 2026-11-07 (the per-tick bound) a Loiter's plan can arrive up to
+   6 ticks (0.5 s) after it is asked for, the aircraft holding where it is
+   meanwhile, so that no tick pays for a whole search (one Orin tick paid
+   146.9 ms, over WP3-13's 100 ms). Is that latency acceptable, or does the
+   grant prefer an occasional long tick to a later plan?
 
 ## Reproduce
 

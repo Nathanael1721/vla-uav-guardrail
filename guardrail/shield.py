@@ -6161,6 +6161,9 @@ class Shield:
         with self._lock:
             if self.fsm is not None:
                 self.fsm.reset()
+            planner = getattr(self, "_hold_planner", None)
+            if planner is not None:
+                planner.reset()                 # a search of the last episode's Loiter
             self._fsm_fault = None
             self._last_caps = None
             self._buffer.clear()
@@ -7328,18 +7331,33 @@ class Shield:
                 handback_unsafe=handback)
             out = self.fsm.step(inp)
             rec = out.record
-            if self.fsm.needs_hold:
-                # Loiter or Land was just entered, or the point held is no
-                # longer legal: choose where the autopilot holds / lands from
-                # this Shield's own rules (guardrail/holdpoint.py). The FSM
-                # refuses a plan that contradicts its own input (hold_at), and
-                # a refusal is a contract break like any other (the fault
-                # below). Planned against `unsafe`, the stop check the FSM
-                # was just given (about the POSITION), never tick.unsafe,
-                # which with a measured velocity is where a stop would END.
-                plan = self.fsm.hold_at(self._plan_hold(tick, state, d, unsafe))
+            planner = self._holds()
+            # Loiter or Land was just entered, or the point held is no longer
+            # legal (needs_hold): choose where the autopilot holds / lands
+            # from this Shield's own rules (guardrail/holdpoint.py). The FSM
+            # refuses a plan that contradicts its own input (hold_at), and a
+            # refusal is a contract break like any other (the fault below).
+            # Planned against `unsafe`, the stop check the FSM was just given
+            # (about the POSITION), never tick.unsafe, which with a measured
+            # velocity is where a stop would END. Since 2026-11-07 the search
+            # gets holdpoint.TICK_QUERIES of its budget a tick, in this tick's
+            # world, and the plan is taken on the tick it ends (holdpoint.py,
+            # THE PER-TICK BOUND; HoldPlanner): the hil Orin spent 146.9 ms on
+            # one planning tick, over WP3-13's 100 ms.
+            got = planner.tick(
+                self, self.fsm, lambda: self._plan_hold(tick, state, d, unsafe),
+                here=self._positional(state), unsafe=self.hard_violations(unsafe or []),
+                world=tick)
+            if got is not None:
+                plan = self.fsm.hold_at(got)
                 rec = {**rec, "hold_point": plan.to_dict(), "hold_needed": False,
                        "hold_chosen": True}
+                if planner.last is not None and planner.last["ticks"] > 1:
+                    rec["hold_search"] = dict(planner.last)   # spread over ticks
+            elif planner.search is not None:
+                rec = {**rec, "hold_search": {"ticks": planner.search.ticks,
+                                              "units": round(planner.search.spent, 3),
+                                              "running": True}}
         except ValueError as e:
             self._fsm_fault = str(e)
             upd.update(fsm_fault=self._fsm_fault, set_mode="LOITER", setpoint="none",
@@ -7360,7 +7378,9 @@ class Shield:
         position carry the aircraft, within the lookahead, onto a spot where
         a stop is illegal? (fsm.TickInput.handback_unsafe, since 2026-11-07.)
         The straight flight of the command is sampled every HANDBACK_STEP_S
-        through the lookahead, and a stop at each sample, from the time the
+        through the lookahead (fewer, evenly spread, where that many stop
+        queries would cost more than holdpoint.HANDBACK_QUERIES units: the
+        per-tick bound), and a stop at each sample, from the time the
         aircraft gets there, is asked of this Shield's own rules (a look-ahead
         view, as the hold-point search asks). Read only in Loiter, with the
         position itself legal, under FSMConfig.hold_horizon "loiter": the
@@ -7369,18 +7389,45 @@ class Shield:
         was keeping the aircraft out - is the breach the harness counts as a
         move of the aircraft's own (dyn-nfz-rotate-spin at 9 deg/s on the
         ideal vehicle, handed back at 8.4 s)."""
+        from . import holdpoint as _hp      # local: holdpoint imports this module
         st = self._positional(state)
         if math.hypot(a.vx, a.vy) <= 1e-9 and abs(a.vz_up) <= 1e-9:
             return False
-        n = max(1, int(round(self.lookahead_s / HANDBACK_STEP_S)))
+        # At most HANDBACK_QUERIES units a tick (holdpoint.py, THE PER-TICK
+        # BOUND, since 2026-11-07): as many samples as fit at this world's
+        # dearest stop query (holdpoint.stop_cost_bound), spread evenly
+        # through the lookahead when fewer than one every HANDBACK_STEP_S fit.
+        full = max(1, int(round(self.lookahead_s / HANDBACK_STEP_S)))
+        n = max(1, min(full, int(_hp.HANDBACK_QUERIES // self._stop_cost_bound())))
+        step = HANDBACK_STEP_S if n == full else self.lookahead_s / n
         for i in range(1, n + 1):
-            tau = i * HANDBACK_STEP_S
+            tau = i * step
             p = State(x=st.x + a.vx * tau, y=st.y + a.vy * tau, up=st.up + a.vz_up * tau,
                       yaw_deg=st.yaw_deg)
             with self.looking_ahead(tau):
                 if self.hard_violations(self.state_is_unsafe(p)):
                     return True
         return False
+
+    def _stop_cost_bound(self) -> float:
+        """holdpoint.stop_cost_bound for the rule set in force (cached per
+        runtime: it reads rule types and motion only)."""
+        from . import holdpoint as _hp      # local: holdpoint imports this module
+        tick = self._tick_ctx()
+        rt = tick.rt if tick is not None else self._rt
+        got = getattr(self, "_stop_cost_cache", None)
+        if got is None or got[0] is not rt:
+            got = self._stop_cost_cache = (rt, _hp.stop_cost_bound(self))
+        return got[1]
+
+    def _holds(self):
+        """The escalation FSM's hold planner (holdpoint.HoldPlanner, THE
+        PER-TICK BOUND), made on first use."""
+        planner = getattr(self, "_hold_planner", None)
+        if planner is None:
+            from . import holdpoint as _hp  # local: holdpoint imports this module
+            planner = self._hold_planner = _hp.HoldPlanner()
+        return planner
 
     def _hold_legal(self, tick: _Tick) -> bool | None:
         """In Loiter: is the FSM's hold POINT still legal - a stop there from

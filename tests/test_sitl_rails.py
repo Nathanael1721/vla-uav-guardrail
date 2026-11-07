@@ -1115,6 +1115,7 @@ def _loiter_at_a_moved_point(east_m: float = 6.0):
     to (30, 30) enters it by G3 at 0.1 s, nfz-square's repair over theta),
     and the hold-point search answers a point `east_m` east of the aircraft -
     the plan guardrail/hold_flight.py must fly."""
+    from guardrail import holdpoint as HP
     from guardrail.fsm import FSMConfig, HoldPoint
 
     def patch(R):
@@ -1127,8 +1128,11 @@ def _loiter_at_a_moved_point(east_m: float = 6.0):
             return HoldPoint("LOITER", "moved", state.x, state.y + east_m, state.up,
                              legal=True, travel_s=east_m / 4.0, speed_mps=4.0,
                              climb_mps=2.0, reason="test: a point east")
+        # The rail plans through a HoldPlanner (the per-tick bound): this plan
+        # charges no budget, so it is taken on the tick it is asked for.
         R.holdpoint = types.SimpleNamespace(plan_for=plan_for,
-                                            hold_point_legal=lambda *a, **k: True)
+                                            hold_point_legal=lambda *a, **k: True,
+                                            HoldPlanner=HP.HoldPlanner)
     return patch
 
 

@@ -1579,7 +1579,15 @@ class EscalationFSM:
         Loiter searches at most twice a second however fast the world
         invalidates its points. A Land is planned once, on entry: its point
         is a landing site, judged over the descent, and the descent itself is
-        what stop_illegal would object to."""
+        what stop_illegal would object to.
+
+        Since 2026-11-07 an integration may answer a few ticks later: the
+        search gets a fixed share of its budget a tick (guardrail/
+        holdpoint.py, THE PER-TICK BOUND; HoldPlanner), and until it ends the
+        hold stays None on entry - held in place, X6 / X7 judging the
+        aircraft's own position - or, on a re-plan, an in-place plan the
+        integration gives on the search's first tick. This flag stays True
+        meanwhile; the FSM itself is unchanged."""
         st = self._state
         if self._terminal or st not in _HOLD_STATES:
             return False

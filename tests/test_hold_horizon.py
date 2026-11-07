@@ -228,11 +228,32 @@ def test_a_moved_hold_is_a_guided_transit_then_the_hold():
 
 
 def test_a_transit_not_reached_in_time_holds_where_it_is():
+    """Given up once its travel time + HOLD_ARRIVAL_SLACK_S has passed and the
+    aircraft has not closed on the point for TRANSIT_STALL_S."""
     hf = HoldFlight()
     f = _FakeFSM(hold=_moved(travel=1.0))
     assert hf.tick(f, "LOITER", 0.0, 0.0, 15.0, 0.0, 0.1).transit
-    late = hf.tick(f, None, 3.0, 0.0, 15.0, 2.1, 0.1)              # due at 1.0 + 1.0 s
+    late = hf.tick(f, None, 0.0, 0.0, 15.0, 2.1, 0.1)              # due at 1.0 + 1.0 s
     assert (late.mode, late.command) == ("LOITER", None) and "not reached" in late.note
+    assert "not closing" in late.note, late.note
+
+
+def test_a_transit_still_closing_past_its_travel_time_is_flown_on():
+    """The hil shakedown (hs02, rotate-spin@3): a 0.43 m move planned at 0.25 s
+    was given up 1.25 s after the plan (the sqrt controller's last metre and
+    the rig's lag are not in the plan's travel time). Flown on while it
+    closes; TRANSIT_MAX_S caps it."""
+    from guardrail.hold_flight import TRANSIT_MAX_S
+    hf = HoldFlight()
+    f = _FakeFSM(hold=_moved(x=40.0, travel=1.0))
+    assert hf.tick(f, "LOITER", 0.0, 0.0, 15.0, 0.0, 0.1).transit
+    on = hf.tick(f, None, 10.0, 0.0, 15.0, 2.1, 0.1)               # past due, closing
+    assert on.transit and on.mode is None, on
+    on = hf.tick(f, None, 12.0, 0.0, 15.0, 2.9, 0.1)
+    assert on.transit, on
+    capped = hf.tick(f, None, 20.0, 0.0, 15.0, 1.0 + TRANSIT_MAX_S, 0.1)
+    assert (capped.mode, capped.command) == ("LOITER", None), capped
+    assert "past its travel time" in capped.note, capped.note
 
 
 def test_a_moved_landing_site_is_reached_level_then_landed():
@@ -254,6 +275,126 @@ def test_the_transit_law_is_the_harness_rail_arms():
     assert abs(vx - vy) < 1e-9 and (vx * vx + vy * vy) ** 0.5 <= 4.0 + 1e-9
     assert 0.0 < vz <= 2.0
     assert transit_velocity(10.0, 10.0, 17.0, p, 0.1) == (0.0, 0.0, 0.0)
+
+
+# --------------------------------------------------------------------------- #
+# The per-tick bound (guardrail/holdpoint.py, THE PER-TICK BOUND; the hil
+# shakedown hs02: one planning tick of 146.9 ms on the Orin)
+# --------------------------------------------------------------------------- #
+
+def _paced(sh: Shield, units: float, run):
+    """Run `run` as a HoldSearch of `units` a tick until it ends: its result,
+    and the units each tick's slice charged."""
+    per = []
+    s = HP.HoldSearch(sh, run, sh._new_tick(None), units)
+    while True:
+        before = s.spent
+        done = s.step()
+        per.append(s.spent - before)
+        if done:
+            return s, per
+        assert s.ticks < 1000, "the search must end"
+
+
+def test_a_search_spread_over_ticks_plans_exactly_as_the_whole_search():
+    """The same plan, field for field, as the search made within one call in
+    the same world; no tick's slice charges more than its units (a single
+    charge larger than a slice is made alone), and the search takes
+    ceil(spent / units) ticks at most a slice's last charge apart."""
+    sh = _slow_bar(half_len=1.5)
+    whole = HP.choose_hold_point(sh, HERE, hold_s=30.0)
+    s, per = _paced(sh, 20.0, lambda: HP.choose_hold_point(sh, HERE, hold_s=30.0))
+    assert s.error is None and not s.cancelled, s.error
+    assert s.result == whole, (s.result, whole)
+    assert s.ticks > 1 and len(per) == s.ticks, per
+    assert max(per) <= 20.0 + HP.MOVING_ZONE_STOP_COST + 5.0, per    # one charge over at most
+    s2, per2 = _paced(sh, 20.0, lambda: HP.choose_hold_point(sh, HERE, hold_s=30.0))
+    assert (s2.result, per2) == (s.result, per), "the slices must be reproducible"
+
+
+def test_a_search_dropped_mid_way_ends_its_thread():
+    sh = _slow_bar(half_len=1.5)
+    s = HP.HoldSearch(sh, lambda: HP.choose_hold_point(sh, HERE, hold_s=30.0),
+                      sh._new_tick(None), 5.0)
+    assert not s.step()
+    s.cancel()
+    assert s.done and s.cancelled and s.result is None
+    s._thread.join(timeout=5.0)
+    assert not s._thread.is_alive()
+
+
+def test_a_replan_holds_in_place_while_its_search_runs():
+    """A Loiter whose point is no longer legal: on the search's first tick an
+    in-place plan (legal unless a stop here is illegal), then the new plan."""
+    sh = _slow_bar(half_len=1.5)
+    old = HoldPoint("LOITER", "moved", 5.0, 5.0, 15.0, legal=True, travel_s=1.8,
+                    speed_mps=4.0, t_s=0.0)
+
+    class _Asks(_FakeFSM):
+        @property
+        def needs_hold(self):
+            return self.state in (S.LOITER, S.LAND)
+
+    f = _Asks(hold=old)
+    planner = HP.HoldPlanner(units=20.0)
+    run = (lambda: HP.choose_hold_point(sh, HERE, hold_s=30.0))
+    first = planner.tick(sh, f, run, here=HERE, unsafe=[])
+    assert first is not None and (first.kind, first.legal) == ("in_place", True), first
+    assert "while the hold-point search runs" in first.reason, first.reason
+    f.hold = first
+    got = None
+    for _ in range(200):
+        got = planner.tick(sh, f, run, here=HERE, unsafe=[])
+        if got is not None:
+            break
+    assert got == HP.choose_hold_point(sh, HERE, hold_s=30.0), got
+    assert planner.last["ticks"] > 1, planner.last
+    # A Loiter left mid-search drops it.
+    f.hold = old
+    assert planner.tick(sh, f, run, here=HERE, unsafe=[]) is not None   # in place again
+    f.state = S.NORMAL
+    assert planner.tick(sh, f, run, here=HERE, unsafe=[]) is None
+    assert planner.search is None
+
+
+def test_a_search_that_raises_holds_in_place_marked_illegal():
+    """An exception on the search's thread never reaches the rail's loop: the
+    plan is an in-place one marked illegal that names it."""
+    sh = _slow_bar(half_len=1.5)
+
+    class _Asks(_FakeFSM):
+        @property
+        def needs_hold(self):
+            return self.state in (S.LOITER, S.LAND)
+
+    def boom():
+        raise RuntimeError("no geometry")
+    got = HP.HoldPlanner(units=20.0).tick(sh, _Asks(), boom, here=HERE, unsafe=[])
+    assert got is not None and (got.kind, got.legal) == ("in_place", False), got
+    assert "RuntimeError" in got.reason, got.reason
+
+
+def test_the_hand_back_guard_is_bounded_by_its_units():
+    """Shield.handback_unsafe samples at most HANDBACK_QUERIES units' worth of
+    stop queries at the world's dearest (stop_cost_bound), every
+    HANDBACK_STEP_S where that fits."""
+    from guardrail import shield as SH
+    sh = _slow_bar(half_len=1.5)
+    calls = []
+    orig = sh.state_is_unsafe
+
+    def count(p, *a, **kw):
+        calls.append(p)
+        return orig(p, *a, **kw)
+    sh.state_is_unsafe = count
+    try:
+        assert not sh.handback_unsafe(HERE, Action4D(vx=0.0, vy=-0.2, vz_up=0.0))
+    finally:
+        del sh.state_is_unsafe
+    full = int(round(sh.lookahead_s / SH.HANDBACK_STEP_S))
+    bound = HP.stop_cost_bound(sh)
+    assert len(calls) == max(1, min(full, int(HP.HANDBACK_QUERIES // bound))), (len(calls), bound)
+    assert len(calls) * bound <= HP.HANDBACK_QUERIES + bound - 1e-9
 
 
 # --------------------------------------------------------------------------- #
