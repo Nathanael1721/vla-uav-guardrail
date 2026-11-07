@@ -599,16 +599,36 @@ def test_the_shield_wires_the_plan_into_the_decision():
     sh = Shield(pol, now=lambda: t0 + timedelta(seconds=clock[0]))
     st = State(x=60.0, y=21.0, up=15.0)
     d0 = sh.filter(st, Action4D(), t=0.0)          # a hover where the window opens
-    assert d0.fsm_edge == "X4" and d0.hold_point["kind"] == "moved", (d0.fsm_edge,
-                                                                        d0.hold_point)
+    assert d0.fsm_edge == "X4", d0.fsm_edge
+    # The plan is taken on the tick its search ends (holdpoint.py, THE PER-TICK
+    # BOUND, since 2026-11-07): this one spends more than one tick's units, so
+    # until then no point is held and the record says the search is running.
+    d, k = d0, 0
+    while d.hold_point is None:
+        assert (d.fsm_record.get("hold_search") or {}).get("running"), d.fsm_record
+        k += 1
+        assert k < 10, "the search must end within MAX_QUERIES / TICK_QUERIES ticks"
+        clock[0] = 0.1 * k
+        d = sh.filter(st, Action4D(), t=0.1 * k)
+    assert k >= 1 and d.fsm_record["hold_search"]["ticks"] == k + 1, d.fsm_record
+    assert d.hold_point["kind"] == "moved", d.hold_point
     # GeofenceEscape leaves south (the way out of the middle's tie), and the
     # hold is the nearest legal point that way, out of the ring (y 11).
-    assert d0.hold_point["legal"] and d0.hold_point["y"] < 11.0, d0.hold_point
-    assert d0.fsm_record["hold_chosen"] and d0.fsm_record["hold_point"] == d0.hold_point
-    assert "hold_point" not in d0.model_dump(), "dumped decisions must not change"
-    clock[0] = 0.1
-    d1 = sh.filter(State(x=60.0, y=20.8, up=15.0), Action4D(), t=0.1)
-    assert d1.fsm_state_after == "Loiter" and d1.hold_point == d0.hold_point, d1.hold_point
+    assert d.hold_point["legal"] and d.hold_point["y"] < 11.0, d.hold_point
+    assert d.fsm_record["hold_chosen"] and d.fsm_record["hold_point"] == d.hold_point
+    assert "hold_point" not in d.model_dump(), "dumped decisions must not change"
+    clock[0] = 0.1 * (k + 1)
+    d1 = sh.filter(State(x=60.0, y=20.8, up=15.0), Action4D(), t=0.1 * (k + 1))
+    assert d1.fsm_state_after == "Loiter" and d1.hold_point == d.hold_point, d1.hold_point
+    # Planned within the tick (HoldPlanner(units=None)): on the entry tick, the
+    # same point, as before the bound.
+    whole = Shield(pol, now=lambda: t0 + timedelta(seconds=clock[0]))
+    whole._holds().units = None
+    clock[0] = 0.0
+    w0 = whole.filter(st, Action4D(), t=0.0)
+    assert w0.fsm_edge == "X4" and w0.hold_point is not None, w0.hold_point
+    assert {k2: w0.hold_point[k2] for k2 in ("kind", "x", "y", "up", "legal", "travel_s")} == \
+        {k2: d.hold_point[k2] for k2 in ("kind", "x", "y", "up", "legal", "travel_s")}
     # Off: the old in-place hold, recorded as illegal.
     off = Shield(pol, now=lambda: t0 + timedelta(seconds=clock[0]), hold_points=False)
     clock[0] = 0.0

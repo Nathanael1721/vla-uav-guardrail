@@ -47,9 +47,16 @@ harness's `rail` arm flies (`_autopilot`, under a vehicle response). It is
 streamed by the companion as GUIDED velocity setpoints, closed at the rail's
 10 Hz on the measured position; a stale pose stops it (the rails hold then,
 as for any stale input). "Reached": within REACHED_M horizontally (and
-vertically for a Loiter), or the plan's travel time plus
-fsm.HOLD_ARRIVAL_SLACK_S has passed - then the hold mode is sent wherever
-the aircraft is, and the FSM's X6 / X7 judge what follows, as for any hold.
+vertically for a Loiter). A transit not reached is given up once the plan's
+travel time plus fsm.HOLD_ARRIVAL_SLACK_S has passed and the aircraft has
+stopped closing on the point (TRANSIT_STALL_S), or TRANSIT_MAX_S after its
+travel time whatever it does - then the hold mode is sent wherever the
+aircraft is, and the FSM's X6 / X7 judge what follows, as for any hold.
+
+A plan arrives on the tick its search ends (guardrail/holdpoint.py, THE
+PER-TICK BOUND, since 2026-11-07): until then the FSM's hold is None on entry,
+flown as in place, and on a re-plan an in-place plan, so the aircraft holds
+where it is while the search runs.
 """
 from __future__ import annotations
 
@@ -72,6 +79,20 @@ TRANSIT_ACCEL_Z_MPS2 = ARDUCOPTER_GUIDED.accel_mps2 / 2.0
 # the harness's 5 cm): BRAKE then stops within its own braking distance of a
 # transit that is already slowing onto the point.
 REACHED_M = 0.5
+# When a transit that has not reached its point is given up (the hold sent
+# where the aircraft is), since 2026-11-07 evening: only once the plan's
+# travel_s + fsm.HOLD_ARRIVAL_SLACK_S has passed AND the aircraft has not
+# closed TRANSIT_PROGRESS_M on the point for TRANSIT_STALL_S - or, closing or
+# not, TRANSIT_MAX_S after its travel time. Until then the deadline alone gave
+# up: on the hil shakedown (hs02, dyn-nfz-rotate-spin@3) a 0.43 m move planned
+# at 0.25 s was given up 1.25 s after the plan with the aircraft still closing -
+# the plan's travel time is the straight line at the policy's speed cap, and
+# the sqrt controller's last metre (gain TRANSIT_P: a 1 s time constant) and
+# the rig's lag (0.13 s, the hover start) are not in it. The harness's
+# modelled transit never gives up.
+TRANSIT_STALL_S = 1.0
+TRANSIT_PROGRESS_M = 0.05
+TRANSIT_MAX_S = 10.0
 
 _HOLD_STATES = (FSMState.LOITER, FSMState.LAND)
 
@@ -139,6 +160,8 @@ class HoldFlight:
         self.flying: HoldPoint | None = None     # the moved plan in flight
         self.held = False                        # the hold mode was sent for the current plan
         self.transits = 0                        # moved plans flown this episode
+        self._closest = math.inf                 # the transit's least distance yet
+        self._closed_t = 0.0                     # when it last closed TRANSIT_PROGRESS_M
 
     def tick(self, fsm, set_mode: str | None, x: float, y: float, up: float,
              t: float, dt: float) -> HoldTick:
@@ -167,15 +190,25 @@ class HoldFlight:
             mode = "GUIDED" if (self.held and set_mode is None) else None
             self.flying, self.held = plan, False
             self.transits += 1
+            self._closest, self._closed_t = math.inf, t
             note = (f"{hold_mode} at a moved point: GUIDED transit to "
                     f"({plan.x:.1f}, {plan.y:.1f}, {plan.up:.1f}), the hold on arrival")
         elif self.held:
             return HoldTick(None, None, False)
-        due = (plan.t_s if plan.t_s is not None else t) + plan.travel_s + HOLD_ARRIVAL_SLACK_S
-        if reached(x, y, up, plan, self.reached_m) or t >= due - 1e-9:
+        dist = math.hypot(plan.x - x, plan.y - y, 0.0 if plan.mode == "LAND" else plan.up - up)
+        if dist < self._closest - TRANSIT_PROGRESS_M:
+            self._closest, self._closed_t = dist, t
+        t0 = plan.t_s if plan.t_s is not None else t
+        due = t0 + plan.travel_s + HOLD_ARRIVAL_SLACK_S
+        stalled = t >= due - 1e-9 and t - self._closed_t >= TRANSIT_STALL_S - 1e-9
+        late = t >= t0 + plan.travel_s + TRANSIT_MAX_S - 1e-9
+        if reached(x, y, up, plan, self.reached_m) or stalled or late:
             self.held = True
             why = ("reached" if reached(x, y, up, plan, self.reached_m)
-                   else f"not reached by {due:.1f} s: holding where it is")
+                   else f"not reached by {t:.1f} s ({dist:.2f} m off; "
+                        + (f"not closing for {t - self._closed_t:.1f} s"
+                           if stalled else f"{TRANSIT_MAX_S:g} s past its travel time")
+                        + "): holding where it is")
             return HoldTick(hold_mode, None, False,
                             note or f"moved hold {why}: the autopilot holds")
         return HoldTick(mode, transit_velocity(x, y, up, plan, dt, self.accel_mps2,

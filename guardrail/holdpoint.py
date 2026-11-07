@@ -98,6 +98,11 @@ THE SEARCH (deterministic: a sweep is reproducible on any machine)
      static world is searched to the last ring; moving zones make each
      candidate dearer and the reach shorter (constants, "THE SEARCH'S
      BUDGET", "THE CHEAP TEST" and "What the budget reaches").
+  4. Since 2026-11-07 the budget is spent TICK_QUERIES units a tick, the
+     search on a thread of its own in the world of the tick it started on
+     (constants, "THE PER-TICK BOUND"; HoldSearch, HoldPlanner): the same
+     plan, a few ticks later for the dearest searches, so no tick pays for
+     a whole search (the hil Orin paid 146.9 ms for one).
 
 SPEED ASSUMPTION
 
@@ -122,12 +127,14 @@ WHAT IT DOES NOT DO
     decided) is untouched; a moved hold is flown by the autopilot (on
     ArduPilot a GUIDED position target, then the hold mode on arrival) and
     its ticks are the autopilot's, reported as such.
-  * Fly a rail. The flight rails run their own FSM and still hold in place;
-    `ShieldDecision.hold_point` is what a rail would fly (lead notes).
+  * Fly a rail. The flight rails run their own FSM and plan with plan_for
+    (through HoldPlanner); guardrail/hold_flight.py turns the plan into what
+    a rail sends (since 2026-11-07; until then every rail held in place).
 """
 from __future__ import annotations
 
 import math
+import threading
 from dataclasses import replace
 from typing import Any, Callable, Iterable
 
@@ -299,6 +306,40 @@ READ_COST = 0.05
 ZONE_READ_COST = 0.2
 RULE_READ_COST = 0.05
 MOVING_ZONE_READ_COST = 0.5
+#
+# THE PER-TICK BOUND (since 2026-11-07). A search may spend MAX_QUERIES, about
+# 60 ms of the desktop's time, and until then spent them on ONE tick: on the
+# hil shakedown (hs02, d186077) the AGX Orin, 3-4x slower on this code than the
+# desktop, planned dyn-nfz-rotate-spin's moved hold on a 146.9 ms tick (e2e
+# 167.5 ms; its Loiter ticks p50 44 ms), over WP3-13's 100 ms tick budget. A
+# search the FSM asks for (HoldPlanner, for the Shield's own escalation and
+# for the flight rails) now runs on a thread of its own (HoldSearch) and is
+# handed one tick's slice at a time: TICK_QUERIES units of its _Ledger -
+# counted, never timed, so a headless sweep stays reproducible, and the two
+# threads never run at once, so everything happens in the single-threaded
+# order. It plans in the world of the tick it started on (that tick's view:
+# its time, rules, clock and moving zones), so the plan it returns is exactly
+# the one the whole search would have made on that tick (a stand-off rule's
+# live subject excepted: it is read where the rail last set it), and it keeps
+# its whole reach: a search that spends all of MAX_QUERIES takes
+# ceil(MAX_QUERIES / TICK_QUERIES) ticks. Until it returns nothing new is
+# held: on entry the FSM has no plan yet and the aircraft holds where it is;
+# on a re-plan the point held is no longer legal, and an in-place plan is
+# taken on the search's first tick, so the aircraft holds where it is rather
+# than fly on toward that point. HoldPlanner(units=None) plans within the
+# tick, as before.
+TICK_QUERIES = 100
+# Loiter's hand-back guard (Shield.handback_unsafe) on any one tick: as many
+# samples of the command's flight as fit in this many units at the world's
+# dearest stop query (stop_cost_bound), never more than one every
+# shield.HANDBACK_STEP_S. Until then always one every HANDBACK_STEP_S through
+# the lookahead: up to 17.5 ms on the desktop (10 stop queries in a world of
+# many zones; p50 1.7 ms).
+HANDBACK_QUERIES = 40
+# A search not resumed for this long was abandoned by the loop that ran it (an
+# episode that ended mid-search, a node shut down): its thread ends. A live
+# loop resumes it every tick, so no result depends on this.
+ABANDON_S = 60.0
 # A moved point must stay legal this far off it in each horizontal direction
 # (four more stop queries, made only for a point that already passed): the
 # Shield's zone test is strict, so a point exactly ON a margin ring is legal
@@ -412,7 +453,10 @@ class _Ledger:
     can satisfy (LAND_SITE_CATEGORIES)."""
 
     def __init__(self, shield, state: State, horizon_s: float, site_only: bool = False):
-        self.left = float(MAX_QUERIES)
+        self._left = float(MAX_QUERIES)
+        # The search's pacing over monitor ticks (THE PER-TICK BOUND): the
+        # HoldSearch running it, or None for a search made within one call.
+        self._pacer = getattr(_PACE, "search", None)
         self.motion = shield.rule_motion()
         self.rows = rows = shield.rule_status(state)
         horizon = float(horizon_s)
@@ -459,6 +503,19 @@ class _Ledger:
         # alone, at the next one (THE CHEAP TEST, "One rule first").
         self.last_drop: str | None = None
         self.start_reads = None
+
+    @property
+    def left(self) -> float:
+        return self._left
+
+    @left.setter
+    def left(self, v: float) -> None:
+        # Every charge of the search goes through here (`ledger.left -= c`),
+        # so a search paced by a HoldSearch is paused before it spends more
+        # than its tick's slice (HoldSearch.charge).
+        if self._pacer is not None and v < self._left:
+            self._pacer.charge(self._left - v)
+        self._left = v
 
     @property
     def spent(self) -> float:
@@ -1228,6 +1285,198 @@ def plan_for(shield, fsm, state: State, *, unsafe: list | None = None,
                          reason=(f"hold-point search failed ({type(e).__name__}: {e}); "
                                  f"holding where the aircraft is, legality not "
                                  f"established"))
+
+
+# The HoldSearch a search runs under, on the search's own thread (_Ledger
+# reads it when it is made).
+_PACE = threading.local()
+
+
+class _Cancelled(BaseException):
+    """A HoldSearch dropped before it ended. Not an Exception: no `except
+    Exception` in the search's code (plan_for, Shield._plan_hold) may turn it
+    into a plan."""
+
+
+class HoldSearch:
+    """One hold-point search spread over monitor ticks (THE PER-TICK BOUND).
+
+    `run()` - the whole search: Shield._plan_hold, plan_for - runs on a thread
+    of its own in `world` (a Shield tick: its time, rules, clock and moving
+    zones) and only while step() waits for it: each step() lets it charge up
+    to `units` of its _Ledger, then returns. A charge that would overrun the
+    slice waits for the next step (one charge larger than a slice is made
+    alone). The caller's thread and the search never run at once, so every
+    query is made in the order the single-threaded search makes it. `result`
+    is what run() returned, `error` what it raised; `ticks` and `spent` (units)
+    what it took; `cancelled` if it was dropped (cancel(), or ABANDON_S without
+    a step)."""
+
+    def __init__(self, shield, run: Callable[[], Any], world, units: float):
+        self.shield, self.world, self.units = shield, world, float(units)
+        self.result: Any = None
+        self.error: Exception | None = None
+        self.done = False
+        self.cancelled = False
+        self.ticks = 0
+        self.spent = 0.0
+        self._used = 0.0
+        self._go = threading.Semaphore(0)
+        self._back = threading.Semaphore(0)
+        self._thread = threading.Thread(target=self._main, args=(run,), daemon=True,
+                                        name="hold-search")
+        self._thread.start()
+
+    def _main(self, run: Callable[[], Any]) -> None:
+        resumed = self._go.acquire(timeout=ABANDON_S)
+        _PACE.search = self
+        self.shield._local.tick = self.world
+        try:
+            if not resumed or self.cancelled:
+                raise _Cancelled
+            self.result = run()
+        except _Cancelled:
+            self.cancelled = True
+        except Exception as e:                      # noqa: BLE001 - step() reports it
+            self.error = e
+        finally:
+            _PACE.search = None
+            self.shield._local.tick = None
+            self.done = True
+            self._back.release()
+
+    def charge(self, units: float) -> None:
+        """On the search's thread (_Ledger.left): `units` are about to be
+        spent. Past this tick's slice, wait for the next step()."""
+        if self._used > 0.0 and self._used + units > self.units + 1e-9:
+            self._back.release()
+            if not self._go.acquire(timeout=ABANDON_S):
+                self.cancelled = True
+            if self.cancelled:
+                raise _Cancelled
+        self._used += units
+        self.spent += units
+
+    def step(self) -> bool:
+        """Run the search for one tick's slice. True once it has ended."""
+        if self.done:
+            return True
+        self.ticks += 1
+        self._used = 0.0
+        self._go.release()
+        self._back.acquire()
+        return self.done
+
+    def cancel(self) -> None:
+        """Drop the search: its thread ends now (at its next charge)."""
+        if self.done:
+            return
+        self.cancelled = True
+        self._go.release()
+        self._back.acquire()
+
+
+class HoldPlanner:
+    """The FSM's hold plans under THE PER-TICK BOUND, for whoever runs the FSM:
+    the Shield's own escalation (Shield._escalate) and the flight rails that
+    run their own (sitl/run_sitl_demo.py, sitl/ros2_shield_node.py).
+
+    Call tick() once a tick, after the FSM stepped. When the FSM asks for a
+    plan (`needs_hold`) a search starts (HoldSearch, `run`: the whole plan, as
+    the caller made it before) in this tick's world, and gets `units` (default
+    TICK_QUERIES) of its ledger each tick; tick() returns the plan on the tick
+    the search ends, for the caller to give the FSM (`hold_at`). Until then it
+    returns None and nothing new is held: on entry the FSM has no plan, which
+    every rail and the harness hold in place; on a re-plan (the FSM still
+    holds a point that is no longer legal) it returns, on the search's first
+    tick, an in-place plan (`here`, legal unless `unsafe`: the hard enforced
+    violations of a stop there, the FSM's stop_illegal), so the aircraft holds
+    where it is rather than fly on toward that point. A search whose FSM
+    state ended (Loiter left, Land entered, a terminal state) is dropped, and
+    the new state's plan searched for. `units` None plans within the tick, as
+    before 2026-11-07. `last`: the ticks and units the last plan returned
+    took (None for an in-place plan taken meanwhile)."""
+
+    def __init__(self, units: float | None = TICK_QUERIES):
+        self.units = units
+        self.search: HoldSearch | None = None
+        self.last: dict | None = None
+        self._state = None
+        self._replan = False
+
+    def reset(self) -> None:
+        """Drop any search (a new episode, the FSM reset)."""
+        if self.search is not None:
+            self.search.cancel()
+        self.search, self._state, self.last = None, None, None
+
+    def tick(self, shield, fsm, run: Callable[[], HoldPoint], *, here: State,
+             unsafe: list, world=None) -> HoldPoint | None:
+        s = self.search
+        if s is not None and (fsm.terminal or fsm.state is not self._state):
+            self.reset()
+            s = None
+        if s is None:
+            if not fsm.needs_hold:
+                return None
+            if self.units is None:
+                self.last = None
+                return run()
+            if world is None:
+                world = shield._tick_ctx() or shield._new_tick(None)
+            self._state = fsm.state
+            self._replan = fsm.hold is not None
+            s = self.search = HoldSearch(shield, run, world, self.units)
+        from .fsm import FSMState                  # local: as plan_for
+        if not s.step():
+            if (s.ticks == 1 and self._replan and fsm.hold is not None
+                    and fsm.state is FSMState.LOITER):
+                self.last = None
+                return self._in_place(shield, here, unsafe)
+            return None
+        self.search = None
+        self.last = {"ticks": s.ticks, "units": round(s.spent, 3)}
+        if s.cancelled:
+            return None
+        if s.error is not None:
+            land = fsm.state is FSMState.LAND
+            return HoldPoint("LAND" if land else "LOITER", "in_place", here.x, here.y,
+                             here.up, legal=False, breaks=_ids(unsafe),
+                             reason=(f"hold-point search failed ({type(s.error).__name__}: "
+                                     f"{s.error}); holding where the aircraft is, legality "
+                                     f"not established"))
+        return s.result
+
+    def _in_place(self, shield, here: State, unsafe: list) -> HoldPoint:
+        look = float(shield.lookahead_s)
+        at = f"({here.x:.1f}, {here.y:.1f}, {here.up:.1f})"
+        breaks = _ids(unsafe)
+        now = (f"breaks {', '.join(breaks)}" if breaks else "breaks no hard rule")
+        return HoldPoint(
+            "LOITER", "in_place", here.x, here.y, here.up, legal=not breaks,
+            breaks=breaks, checked_s=look,
+            reason=(f"the point held is no longer legal: held at {at} while the "
+                    f"hold-point search runs ({self.units:g} units a tick, the "
+                    f"per-tick bound); standing still here {now} within the "
+                    f"{look:g} s lookahead"))
+
+
+def stop_cost_bound(shield) -> float:
+    """What one stop query in this Shield's world is charged at most (the
+    _Ledger's cost model with every moving zone near and every static zone's
+    box holding the point): the price Shield.handback_unsafe sizes its
+    samples by (HANDBACK_QUERIES). Rule types and motion only: no forecast."""
+    rows = shield.rule_status(State(x=0.0, y=0.0, up=0.0))
+    motion = shield.rule_motion()
+    cost = STOP_QUERY_COST
+    for r in rows:
+        k = _STOP_RULE_COST.get(r["type"], 0.0)
+        if r["type"] in _TUBE_TYPES:
+            k *= max(1, len(r["rule"].points()) - 1)
+        cost += k
+        if r["type"] in _ZONE_TYPES:
+            cost += MOVING_ZONE_STOP_COST if r["id"] in motion else STATIC_ZONE_STOP_COST
+    return cost
 
 
 def _corridor_out(shield, x: float, y: float, up: float, ahead_s: float) -> list[str]:

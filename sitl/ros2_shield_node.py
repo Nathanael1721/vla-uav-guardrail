@@ -1501,6 +1501,7 @@ if HAVE_ROS:
             # aircraft is, as this node did until then.
             self.moved_holds = getattr(args, "hold_points", "moved") == "moved"
             self.hold_flight = HoldFlight()
+            self.hold_planner = holdpoint.HoldPlanner()
 
             # A DECLARED subject, so subject_standoff rules bind on a rail with
             # no camera. Ground truth, not perception.
@@ -3111,16 +3112,25 @@ if HAVE_ROS:
                         position_lost=lost[0] if lost else None,
                         hold_legal=hold_legal, handback_unsafe=handback)
                     fsm_out = self.fsm.step(inp)
-                    if self.moved_holds and self.fsm.needs_hold:
+                    if self.moved_holds:
                         # Where the Loiter holds / the Land lands: the
-                        # search's plan from the Shield's own rules.
+                        # search's plan from the Shield's own rules,
+                        # holdpoint.TICK_QUERIES of it a tick, the plan taken
+                        # on the tick it ends (THE PER-TICK BOUND: the Orin
+                        # spent 146.9 ms on one planning tick, hs02).
                         heading = next(((a.vx, a.vy) for a in (decision.emitted,
                                                                decision.raw)
                                         if math.hypot(a.vx, a.vy) > 0.1), None)
-                        plan = self.fsm.hold_at(holdpoint.plan_for(
-                            self.shield, self.fsm, st, unsafe=hard_unsafe,
-                            heading=heading))
-                        self.rec.event("hold_point", t=now, **plan.to_dict())
+                        got = self.hold_planner.tick(
+                            self.shield, self.fsm,
+                            lambda: holdpoint.plan_for(self.shield, self.fsm, st,
+                                                       unsafe=hard_unsafe, heading=heading),
+                            here=st, unsafe=hard_unsafe)
+                        if got is not None:
+                            plan = self.fsm.hold_at(got)
+                            self.rec.event("hold_point", t=now, **plan.to_dict(),
+                                           **({"search": dict(self.hold_planner.last)}
+                                              if self.hold_planner.last else {}))
                 except ValueError as e:
                     # A Shield/FSM contract break mid-flight: hold, say why,
                     # stop streaming. The run is not KPI-grade.
