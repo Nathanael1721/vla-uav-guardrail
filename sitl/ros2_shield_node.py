@@ -321,6 +321,7 @@ from guardrail.fsm import (DEFAULT_THETA_HORIZON_S, FAILSAFE_STATES,     # noqa:
                            FSMState, tick_input_from_decision)
 from guardrail.geometry import fence_polygon                              # noqa: E402
 from guardrail.hold_flight import HoldFlight                              # noqa: E402
+from guardrail.response import HOLD_STREAM_GAP_S                          # noqa: E402
 from guardrail.kpi import compute_from_dir                                # noqa: E402
 from guardrail.manifest import (DEV_YAML_FLAG, UNRESOLVED,               # noqa: E402
                                 flight_bundle_path, flight_policy_choice,
@@ -1500,7 +1501,15 @@ if HAVE_ROS:
             # hold_flight.py, the mode mapping); "in_place" holds where the
             # aircraft is, as this node did until then.
             self.moved_holds = getattr(args, "hold_points", "moved") == "moved"
-            self.hold_flight = HoldFlight()
+            # How a Loiter is flown (--hold-flight, since 2026-11-07 night):
+            # "guided", held in GUIDED by this node on the plan's point, or
+            # "brake", ArduCopter's BRAKE on arrival / at once (the flow until
+            # then, whose hand-over carried hs04_005/006 into the sweep).
+            # --hold-points in_place keeps ArduCopter's own hold, as before.
+            self.hold_flight = HoldFlight(
+                guided_hold=(self.moved_holds
+                             and getattr(args, "hold_flight", "guided") == "guided"))
+            self._last_pub_ns: int | None = None   # the last setpoint published
             self.hold_planner = holdpoint.HoldPlanner()
 
             # A DECLARED subject, so subject_standoff rules bind on a rail with
@@ -2701,9 +2710,13 @@ if HAVE_ROS:
         def _streaming(self) -> bool:
             """Is this node flying the aircraft with its setpoints (no
             autopilot takeover, no FSM fault, the FSM in a GUIDED state)?"""
+            # A Loiter held in GUIDED by this node (guardrail/hold_flight.py,
+            # since 2026-11-07 night) is streamed too: a stale input hands it
+            # to BRAKE as any other stream.
             return (self.takeover is None and self.fsm_fault is None
                     and (self.fsm is None
-                         or MODE_FOR[self.fsm.state] == "GUIDED"))
+                         or MODE_FOR[self.fsm.state] == "GUIDED"
+                         or self.hold_flight.guiding))
 
         def _hold(self, reason: str, why: str) -> bool:
             """Hold the aircraft for one stale input (`reason` "action",
@@ -3150,6 +3163,16 @@ if HAVE_ROS:
                 # The FSM's mode request, or the hold flight's in its place: a
                 # moved point is flown in GUIDED first and the hold sent on
                 # arrival (guardrail/hold_flight.py, the mode mapping).
+                # A gap in this node's own stream while it holds in GUIDED: the
+                # hold goes to BRAKE for the rest of the Loiter (the PAS rail's
+                # forced hand-over, guardrail/response.py HOLD_STREAM_GAP_S).
+                gap_s = (None if self._last_pub_ns is None or not self.hold_flight.guiding
+                         else (time.monotonic_ns() - self._last_pub_ns) / 1e9)
+                if gap_s is not None and gap_s > HOLD_STREAM_GAP_S:
+                    why = (f"no setpoint for {gap_s:.2f} s (over {HOLD_STREAM_GAP_S:g} s): "
+                           f"the stream that flies the GUIDED hold faltered")
+                    if self.hold_flight.force_brake(why):
+                        self.rec.event("hold_forced_handover", t=now, why=why)
                 ht = self.hold_flight.tick(self.fsm, fsm_out.set_mode, st.x, st.y,
                                            st.up, now, TICK)
                 transit = ht.command
@@ -3166,8 +3189,12 @@ if HAVE_ROS:
             elif self._holds:
                 # The hold's first tick flies the Shield's answer to a stop
                 # (a stop where it is legal) while SET_MODE goes through, as
-                # the FSM's own hand-over does; then the autopilot holds.
+                # the FSM's own hand-over does; then the autopilot holds. A
+                # GUIDED hold's law is not streamed meanwhile (its pose or its
+                # loop is what went stale).
                 setpoint = "pass" if hold_onset else "none"
+                transit = None
+                self._last_pub_ns = None    # a stale hold is no gap in the stream
             elif pose_stale:
                 # No hold: the FSM has the aircraft in an autopilot mode
                 # (LOITER flown as BRAKE, RTL, LAND) and did not step on the
@@ -3208,6 +3235,7 @@ if HAVE_ROS:
             if flown is not None:
                 self._publish_body(flown)
                 pub_ns = time.monotonic_ns()
+                self._last_pub_ns = pub_ns
             # What was sent, in the Shield's world frame, for the own-velocity
             # forecast's pipe (read only for a State with a velocity).
             self.shield.note_flown(flown_w)
@@ -3899,6 +3927,12 @@ def make_parser() -> argparse.ArgumentParser:
                          "and then the hold, guardrail/hold_flight.py; the default "
                          "since 2026-11-07) or in_place (ArduCopter's own hold where "
                          "the aircraft is, as before)")
+    ap.add_argument("--hold-flight", choices=["guided", "brake"], default="guided",
+                    help="how a Loiter at the search's point is flown (guardrail/"
+                         "hold_flight.py): guided (held in GUIDED by this node on the "
+                         "point, BRAKE only on a stale input or a stream gap; the "
+                         "default since 2026-11-07 night) or brake (ArduCopter's "
+                         "BRAKE on arrival, as before)")
     ap.add_argument("--cost-map", action="store_true",
                     help="give every generation's CSP its cost map (costmap_csp_g<N>"
                          ".npz/.json, named in cost_map_ref; guardrail.replay."

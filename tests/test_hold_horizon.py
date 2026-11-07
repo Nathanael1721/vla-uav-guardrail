@@ -11,6 +11,7 @@ never stood anywhere a stop was legal for T.
 
 Run:  python tests/test_hold_horizon.py
 """
+import math
 import sys
 from pathlib import Path
 
@@ -192,7 +193,7 @@ def _moved(x=10.0, y=0.0, up=15.0, t_s=0.0, travel=2.5, mode="LOITER"):
 
 
 def test_an_in_place_hold_is_sent_as_the_fsm_asks():
-    hf = HoldFlight()
+    hf = HoldFlight(guided_hold=False)
     f = _FakeFSM(hold=HoldPoint("LOITER", "in_place", 0.0, 0.0, 15.0, legal=True, t_s=0.0))
     assert hf.tick(f, "LOITER", 0.0, 0.0, 15.0, 0.0, 0.1).mode == "LOITER"
     nxt = hf.tick(f, None, 0.0, 0.0, 15.0, 0.1, 0.1)
@@ -203,7 +204,7 @@ def test_an_in_place_hold_is_sent_as_the_fsm_asks():
 
 
 def test_a_moved_hold_is_a_guided_transit_then_the_hold():
-    hf = HoldFlight()
+    hf = HoldFlight(guided_hold=False)
     plan = _moved()
     f = _FakeFSM(hold=plan)
     first = hf.tick(f, "LOITER", 0.0, 0.0, 15.0, 0.0, 0.1)
@@ -227,11 +228,113 @@ def test_a_moved_hold_is_a_guided_transit_then_the_hold():
     assert (back.mode, back.command) == ("LOITER", None), back
 
 
+def test_a_loiter_is_held_in_guided_on_its_point():
+    """Since 2026-11-07 night (guardrail/hold_flight.py, THE MODE MAPPING): the
+    FSM's LOITER is not sent; the companion streams the transit law toward the
+    hold's point every tick - where the Loiter began until a plan arrives, an
+    in-place plan's own point, a moved point and then on it. BRAKE only when
+    the stream is forced off (force_brake), once, for the rest of the Loiter."""
+    hf = HoldFlight()
+    f = _FakeFSM(hold=None)
+    entry = hf.tick(f, "LOITER", 0.0, 0.0, 15.0, 0.0, 0.1)
+    assert entry.mode is None and entry.command is not None, entry
+    assert "held in GUIDED" in entry.note and hf.guiding, entry
+    # Carried 1 m east by the hand-over: streamed back west, still in GUIDED.
+    back = hf.tick(f, None, 1.0, 0.0, 15.0, 0.1, 0.1)
+    assert back.mode is None and back.command[0] < 0.0, back
+    # An in-place plan holds ITS point, not wherever the aircraft has got to.
+    f.hold = HoldPoint("LOITER", "in_place", -0.5, 0.0, 15.0, legal=True, t_s=0.2)
+    on = hf.tick(f, None, 1.0, 0.0, 15.0, 0.2, 0.1)
+    assert on.mode is None and on.command[0] < 0.0 and "in_place point" in on.note, on
+    # A moved point: flown to, then held on it, never handed to the autopilot.
+    f.hold = _moved(x=10.0, t_s=0.3)
+    go = hf.tick(f, None, 0.0, 0.0, 15.0, 0.3, 0.1)
+    assert go.transit and go.command[0] > 0.0 and hf.transits == 1, go
+    at = hf.tick(f, None, 10.0 - REACHED_M / 2, 0.0, 15.0, 3.0, 0.1)
+    assert at.mode is None and not at.transit and 0.0 < at.command[0] < 0.5, at
+    assert "reached: held there in GUIDED" in at.note, at
+    # A stream fault hands it to BRAKE once; nothing is streamed after that.
+    assert hf.force_brake("no setpoint for 0.45 s")
+    forced = hf.tick(f, None, 10.0, 0.0, 15.0, 3.1, 0.1)
+    assert (forced.mode, forced.command) == ("LOITER", None), forced
+    after = hf.tick(f, None, 10.0, 0.0, 15.0, 3.2, 0.1)
+    assert (after.mode, after.command) == (None, None), after
+    # Leaving the Loiter resets it: the next Loiter is held in GUIDED again.
+    hf.tick(_FakeFSM(state=S.NORMAL), "GUIDED", 10.0, 0.0, 15.0, 3.3, 0.1)
+    assert not hf.forced and hf.tick(_FakeFSM(hold=None), "LOITER", 10.0, 0.0, 15.0,
+                                     3.4, 0.1).command is not None
+
+
+def _hs04_handover(model: str, seconds: float = 3.0):
+    """hs04_006 (the hil shakedown at ee356c6) from its hand-over: at 10.6 s
+    the aircraft moves at (-0.18, -0.05) m/s while GUIDED accelerates it toward
+    the repaired request (2.1, -2.0) m/s - the rig's fitted 2.5 m/s^2 that way
+    (the response's shaped acceleration) - and the in-place plan is the spot
+    it stands on (the origin here). Flown on the harness's rail response
+    (experiments/sweep_scenarios.py RAIL_RESPONSE) by the old flow (ArduCopter
+    BRAKE, with its carry) or the GUIDED hold; the farthest and the last
+    distance from the planned point."""
+    import sweep_scenarios as SW
+    veh = SW.VehicleResponse(SW.RAIL_RESPONSE, v0=(-0.18, -0.05, 0.0))
+    veh.at = [1.85, -1.74]
+    hf = HoldFlight(guided_hold=(model == "guided"))
+    f = _FakeFSM(hold=HoldPoint("LOITER", "in_place", 0.0, 0.0, 15.0, legal=True,
+                                t_s=10.6))
+    x = y = 0.0
+    far = 0.0
+    t = 10.6
+    while t < 10.6 + seconds - 1e-9:
+        ht = hf.tick(f, "LOITER" if t == 10.6 else None, x, y, 15.0, t, 0.1)
+        if ht.command is not None:
+            veh.brake(False)
+            vx, vy, _ = veh.step(ht.command, 0.1)
+        else:
+            veh.brake(True)
+            vx, vy, _ = veh.step((0.0, 0.0, 0.0), 0.1)
+        x, y, t = x + vx * 0.1, y + vy * 0.1, round(t + 0.1, 6)
+        far = max(far, math.hypot(x, y))
+    return far, math.hypot(x, y)
+
+
+def test_brakes_carry_is_the_rigs():
+    """ArduCopter's BRAKE as the rail arm models it (sweep_scenarios.py
+    BRAKE_PI_P / BRAKE_PI_I) against hs04_006's recorded velocities from the
+    hand-over (BRAKE at 10.66 s, -0.10 / -0.11 m/s, GUIDED's last demand
+    (1.85, -1.74) m/s^2): within 0.12 m/s at every tick to 13.4 s."""
+    import sweep_scenarios as SW
+    rec = {10.7: (-0.03, -0.17), 10.8: (0.15, -0.31), 10.9: (0.32, -0.43),
+           11.0: (0.43, -0.51), 11.2: (0.55, -0.58), 11.4: (0.63, -0.62),
+           11.7: (0.68, -0.64), 12.0: (0.66, -0.61), 12.3: (0.61, -0.56),
+           12.6: (0.54, -0.49), 12.9: (0.46, -0.42), 13.4: (0.33, -0.30)}
+    veh = SW.VehicleResponse(SW.RAIL_RESPONSE, v0=(-0.10, -0.11, 0.0), t0=10.66)
+    veh.at = [1.85, -1.74]
+    veh.brake(True)
+    t = 10.66
+    worst = 0.0
+    for tr in sorted(rec):
+        veh.advance(tr - t)
+        t = tr
+        vx, vy, _ = veh.velocity
+        worst = max(worst, abs(vx - rec[tr][0]), abs(vy - rec[tr][1]))
+    assert worst <= 0.12, worst
+
+
+def test_the_hs04_hand_over_holds_its_point_in_guided():
+    """hs04_005/006: handed to BRAKE, the aircraft was carried 1.7 m in 2.2 s
+    from the in-place point the search had checked, and the bar's sweep
+    reached it (X6 at 18.8 s). From the same hand-over the old flow carries it
+    as far on the rail response; held in GUIDED it comes back onto the point."""
+    far_b, last_b = _hs04_handover("brake")
+    far_g, last_g = _hs04_handover("guided")
+    assert far_b > 1.5 and last_b > 1.5, (far_b, last_b)
+    assert far_g < 0.6 and last_g < 0.15, (far_g, last_g)
+
+
 def test_a_transit_not_reached_in_time_holds_where_it_is():
     """Given up once its travel time + HOLD_ARRIVAL_SLACK_S has passed and the
     aircraft has not moved TRANSIT_PROGRESS_M relative to the point, either
     way, for TRANSIT_STALL_S."""
-    hf = HoldFlight()
+    hf = HoldFlight(guided_hold=False)
     f = _FakeFSM(hold=_moved(travel=1.0))
     assert hf.tick(f, "LOITER", 0.0, 0.0, 15.0, 0.0, 0.1).transit
     late = hf.tick(f, None, 0.0, 0.0, 15.0, 2.1, 0.1)              # due at 1.0 + 1.0 s
@@ -245,7 +348,7 @@ def test_a_transit_still_closing_past_its_travel_time_is_flown_on():
     the rig's lag are not in the plan's travel time). Flown on while it
     closes; TRANSIT_MAX_S caps it."""
     from guardrail.hold_flight import TRANSIT_MAX_S
-    hf = HoldFlight()
+    hf = HoldFlight(guided_hold=False)
     f = _FakeFSM(hold=_moved(x=40.0, travel=1.0))
     assert hf.tick(f, "LOITER", 0.0, 0.0, 15.0, 0.0, 0.1).transit
     on = hf.tick(f, None, 10.0, 0.0, 15.0, 2.1, 0.1)               # past due, closing
@@ -277,7 +380,7 @@ HS03_TRACE = [(4.5, 2.28), (4.6, 2.57), (4.7, 2.85), (4.8, 3.11), (4.9, 3.37),
 def _watch_trace(trace, t0, travel):
     """Feed (t, d) to HoldFlight along +x from a point at the origin; the
     first tick the hold mode is sent, or None."""
-    hf = HoldFlight()
+    hf = HoldFlight(guided_hold=False)
     f = _FakeFSM(hold=HoldPoint("LOITER", "moved", 0.0, 0.0, 15.0, legal=True,
                                 travel_s=travel, speed_mps=4.0, climb_mps=2.0, t_s=t0))
     for t, d in trace:

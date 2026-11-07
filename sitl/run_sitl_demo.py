@@ -452,6 +452,11 @@ def main() -> int:
                          "and then the hold, guardrail/hold_flight.py; the default "
                          "since 2026-11-07) or in_place (ArduCopter's own hold where "
                          "the aircraft is, as before)")
+    ap.add_argument("--hold-flight", choices=["guided", "brake"], default="guided",
+                    help="how a Loiter at the search's point is flown (guardrail/"
+                         "hold_flight.py): guided (held in GUIDED by this rail on the "
+                         "point; the default since 2026-11-07 night) or brake "
+                         "(ArduCopter's BRAKE on arrival, as before)")
     ap.add_argument("--own-velocity-forecast", choices=["on", "off"],
                     default=OWN_VELOCITY_DEFAULT,
                     help="give the Shield LOCAL_POSITION_NED's velocity, so its "
@@ -617,7 +622,11 @@ def main() -> int:
     # The FSM's hold points (--hold-points): planned by the search and flown
     # as a GUIDED transit, then the hold (guardrail/hold_flight.py).
     moved_holds = args.hold_points == "moved"
-    hold_flight = HoldFlight()
+    # A Loiter held in GUIDED on the plan's point (--hold-flight guided, since
+    # 2026-11-07 night), or ArduCopter's BRAKE on arrival (brake, as before).
+    hold_flight = HoldFlight(guided_hold=(moved_holds
+                                          and getattr(args, "hold_flight", "guided")
+                                          == "guided"))
     hold_planner = holdpoint.HoldPlanner()
     # What was asked of the autopilot, in the FSM's words and ArduCopter's
     # (the FSM's LOITER flown as --hold-mode, BRAKE by default), as the other

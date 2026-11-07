@@ -832,6 +832,28 @@ RAIL_VEHICLE = {"response": "rail", "autopilot_hold": "moved_points"}
 # and the ArduPilot arm still do (the ideal vehicle arrives on its travel time;
 # the ArduPilot arm models no rail of its own).
 TRANSIT_GIVE_UP_RESPONSES = ("rail",)
+# How the rail arm's autopilot flies a Loiter (since 2026-11-07, night;
+# guardrail/hold_flight.py, THE MODE MAPPING), through the rails' own
+# HoldFlight on every tick:
+#   guided  held in GUIDED by the companion - HoldFlight's law toward the
+#           hold's point, every tick, no hand-over - what the rails fly now;
+#   brake   the rails' flow until then (a moved point's transit, then
+#           ArduCopter's BRAKE; BRAKE at once for an in-place plan), with
+#           BRAKE's hand-over carry modelled (BRAKE_PI_P / BRAKE_PI_I): flown
+#           so, the arm reproduces the hil shakedown hs04's two failures.
+RAIL_HOLD_MODELS = ("guided", "brake")
+RAIL_HOLD_MODEL = "guided"
+# ArduCopter 4.5.7's BRAKE after a GUIDED stream, as the rig flies it (hs04_006
+# and hs03_004, docs/DESIGN-hold-points.md "BRAKE's carry"): the velocity loop
+# starts with its integrator at the acceleration GUIDED's last command left -
+# the response's shaped acceleration, `VehicleResponse.at` - and bleeds it off
+# by its own PI dynamics, dv/dt = -P v + I, dI/dt = -I_gain v. ArduCopter's
+# defaults (PSC_VELXY_P 2, PSC_VELXY_I 1) make that critically damped with a
+# 1 s time constant, which fits the recorded velocities: hs04_006's
+# integrator (1.85, -1.74) m/s^2, the peak 0.93 m/s 1.1 s after the hand-over,
+# 1.7 m in 2.2 s and still 0.45 m/s at 2.7 s.
+BRAKE_PI_P = 2.0
+BRAKE_PI_I = 1.0
 
 
 # The correction rate a non-negative error asks for (ArduPilot's AP_Math
@@ -921,11 +943,28 @@ class VehicleResponse:
         self.vt, self.at, self.va = [v[0], v[1]], [0.0, 0.0], [v[0], v[1]]
         self.vtz, self.atz, self.vaz = [v[2]], [0.0], [v[2]]
         self.nonfinite_commands = 0
+        # ArduCopter's BRAKE (brake()): the velocity loop's integrator, or
+        # None while commands are flown.
+        self._brake: list | None = None
 
     @property
     def velocity(self) -> tuple[float, float, float]:
         """The airframe's velocity now (vx, vy, vz_up)."""
         return self.va[0], self.va[1], self.vaz[0]
+
+    def brake(self, on: bool) -> None:
+        """Hand the airframe to ArduCopter's BRAKE (on) - its velocity loop
+        starting from the acceleration the last commands left and bled off at
+        the loop's own pace (BRAKE_PI_P / BRAKE_PI_I) - or back to commands
+        (off). Horizontal only: BRAKE holds the altitude, as a zero vertical
+        command does."""
+        if on and self._brake is None:
+            self._brake = [self.at[0], self.at[1]]
+            self._queue.clear()
+            self.active = (self.vt[0], self.vt[1], 0.0)
+        elif not on and self._brake is not None:
+            self.at = [self._brake[0], self._brake[1]]
+            self._brake = None
 
     def command(self, cmd) -> None:
         """Issue `cmd` (vx, vy, vz_up) now; it acts delay_s later."""
@@ -952,7 +991,14 @@ class VehicleResponse:
             while self._queue and self._queue[0][0] <= s + 1e-9:
                 self.active = self._queue.popleft()[1]
             c = self.active
-            _shape_step((c[0], c[1]), self.vt, self.at, p.accel_mps2, p.jerk_mps3, h)
+            if self._brake is not None:
+                for k in (0, 1):
+                    a = -BRAKE_PI_P * self.vt[k] + self._brake[k]
+                    self._brake[k] -= BRAKE_PI_I * self.vt[k] * h
+                    self.vt[k] += a * h
+                    self.at[k] = a
+            else:
+                _shape_step((c[0], c[1]), self.vt, self.at, p.accel_mps2, p.jerk_mps3, h)
             _shape_step((c[2],), self.vtz, self.atz, p.accel_z_mps2, p.jerk_z_mps3, h)
             _lag(self.va, self.vt, p.tau_s, h)
             _lag(self.vaz, self.vtz, p.tau_z_s, h)
@@ -1563,6 +1609,14 @@ def _episode(sc, defaults, seed: int, arm: dict | None, box: dict,
     # only, TRANSIT_GIVE_UP_RESPONSES): one TransitWatch per moved plan.
     give_up_transits = response in TRANSIT_GIVE_UP_RESPONSES
     hold_watch: "HF.TransitWatch | None" = None
+    # The rail arm's Loiter, flown by the rails' own HoldFlight (RAIL_HOLD_MODEL):
+    # a GUIDED hold, or the old transit-then-BRAKE flow with BRAKE's carry.
+    if RAIL_HOLD_MODEL not in RAIL_HOLD_MODELS:
+        raise ValueError(f"RAIL_HOLD_MODEL {RAIL_HOLD_MODEL!r}: one of {list(RAIL_HOLD_MODELS)}")
+    hold_flight = (HF.HoldFlight(guided_hold=RAIL_HOLD_MODEL == "guided")
+                   if give_up_transits and esc and rsp is not None else None)
+    hold_tick = None
+    ap_brake = False
     owner_ticks = {"shield": 0, "autopilot": 0, "pilot": 0}
     ap_mode_ticks: dict[str, int] = {}
     ap_p0_by_mode: dict[str, int] = {}
@@ -1718,7 +1772,9 @@ def _episode(sc, defaults, seed: int, arm: dict | None, box: dict,
             elif hold is None or hp.get("t_s") != hold.get("t_s"):
                 hold, hold_done = hp, False
                 hold_watch = (HF.TransitWatch(hp["t_s"], hp["travel_s"])
-                              if give_up_transits and hp.get("kind") == "moved" else None)
+                              if (give_up_transits and hp.get("kind") == "moved"
+                                  and (hold_flight is None or hp.get("mode") == "LAND"))
+                              else None)
                 if (d.fsm_record or {}).get("hold_chosen"):
                     holds_taken.append({k: hp[k] for k in (
                         "t_s", "mode", "kind", "legal", "x", "y", "up", "travel_s",
@@ -1739,6 +1795,15 @@ def _episode(sc, defaults, seed: int, arm: dict | None, box: dict,
                 hold_done = True
                 events.append({"t": round(t_now, 4), "type": "hold_transit_given_up",
                                "note": hold_watch.why})
+            # The rail arm's Loiter is the rails' own HoldFlight, ticked where
+            # the rails tick it (after the FSM and its plan), on the true
+            # position (RAIL_HOLD_MODEL; guardrail/hold_flight.py).
+            if hold_flight is not None:
+                hold_tick = hold_flight.tick(shield.fsm, d.set_mode, st.x, st.y, st.up,
+                                             t_now, dt)
+                if hold_tick.note:
+                    events.append({"t": round(t_now, 4), "type": "hold_flight",
+                                   "note": hold_tick.note})
         if not on:
             # Shield OFF flies the RAW action, so the violations found on `raw`
             # are the flown action's - the same rule the SITL rails follow, and
@@ -1757,10 +1822,22 @@ def _episode(sc, defaults, seed: int, arm: dict | None, box: dict,
             # moved one is flown to first and then held (latched once reached,
             # so a gust after arrival is the position controller's, as before).
             owner = "autopilot"
-            if hold is not None and not hold_done and hold_reached(st, hold):
-                hold_done = True
-            flown = _autopilot(ap_mode, st, m.home, dt, rsp, rtl_alt,
-                               hold=None if hold_done else hold)
+            if (hold_flight is not None and ap_mode == "LOITER" and shield.fsm is not None
+                    and not shield.fsm.terminal and shield.fsm.state.value == "Loiter"):
+                # The rails' Loiter (RAIL_HOLD_MODEL): HoldFlight's command in
+                # GUIDED, or, where it holds by the autopilot's own mode,
+                # ArduCopter's BRAKE with its carry.
+                if hold_tick is not None and hold_tick.command is not None:
+                    c = hold_tick.command
+                    flown = Action4D(vx=c[0], vy=c[1], vz_up=c[2])
+                else:
+                    flown = Action4D()
+                    ap_brake = True
+            else:
+                if hold is not None and not hold_done and hold_reached(st, hold):
+                    hold_done = True
+                flown = _autopilot(ap_mode, st, m.home, dt, rsp, rtl_alt,
+                                   hold=None if hold_done else hold)
             flown_vios = checker.filter(seen, flown, t=t_now).violations
         owner_ticks[owner] += 1
         if owner == "autopilot":
@@ -2006,6 +2083,9 @@ def _episode(sc, defaults, seed: int, arm: dict | None, box: dict,
         if veh is None:
             fvx, fvy, fvz = flown.vx, flown.vy, flown.vz_up
         else:
+            if hold_flight is not None:
+                veh.brake(ap_brake)
+                ap_brake = False
             fvx, fvy, fvz = veh.step((flown.vx, flown.vy, flown.vz_up), dt)
             vsp = math.hypot(fvx, fvy)
             veh_max_speed = max(veh_max_speed, vsp)

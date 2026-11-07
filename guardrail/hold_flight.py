@@ -18,23 +18,48 @@ the hil path) fly the same thing, and the harness's `rail` arm models it.
 
 THE MODE MAPPING (what each rail sends; the FSM's words in the record)
 
-  FSM state  plan      ArduCopter                                companion streams
-  Loiter     in_place  the FSM's LOITER at once (BRAKE on our    nothing
-                       rails, sitl/mavlink_adapter_node.py)
-  Loiter     moved     stays in GUIDED and flies to the point;   the transit velocity
-                       the FSM's LOITER on arrival               (TRANSIT below), then
-                                                                 nothing
-  Land       in_place  LAND at once                              nothing
-  Land       moved     GUIDED to the site level, then LAND       the transit, then
-                                                                 nothing
+Since 2026-11-07 (night) a Loiter is HELD IN GUIDED by the companion
+(`guided_hold`, the default): the FSM's LOITER is not sent to ArduCopter, and
+the companion streams the TRANSIT law (below) toward the hold's point on every
+tick - to a moved point and then on it, or on an in-place plan's point (where
+the aircraft was when it was planned), or, while the plan is still being
+searched for, on where the aircraft was when the Loiter began. ArduCopter's
+BRAKE is asked for only when the companion cannot stream: a stale input (the
+rails' own stale holds) or a gap in its stream (force_brake; guardrail/
+response.py HOLD_STREAM_GAP_S), and then for the rest of that Loiter.
 
-A re-plan while the autopilot already holds (a point that turned illegal)
-asks GUIDED again, flies the new transit, and holds on arrival. A plan that
-moves the hold back in place while a transit is flying holds at once. Every
-other state passes the FSM's own mode request through untouched. On the
+  FSM state  plan      ArduCopter                  companion streams
+  Loiter     any       stays in GUIDED             the TRANSIT law toward the
+                       (BRAKE on a stream fault)   hold's point, every tick
+  Land       in_place  LAND at once                nothing
+  Land       moved     GUIDED to the site level,   the transit, then nothing
+                       then LAND
+
+WHY NOT BRAKE (the hil shakedowns hs03 and hs04, 7 Nov). Every hand-over from
+GUIDED to ArduCopter 4.5.7's BRAKE carried the aircraft on in the direction of
+the last GUIDED command: hs04_006 handed over at 10.66 s at -0.10 m/s while
+GUIDED was accelerating it toward the repaired request (2.1, -2.0) m/s, and
+under BRAKE it accelerated to 0.93 m/s that way, peaking 1.1 s later, and
+crept on - 1.7 m in 2.2 s, 0.45 m/s still at 2.7 s - away from the in-place
+point the search had checked, until the bar's sweep reached it (X6 at
+18.8 s); hs03_004 the same backward (1.0 m). The recorded velocities fit
+v(t) = (v0 + (a0 - v0) t) e^(-t), the critically damped response of a
+velocity PI loop (ArduCopter's default PSC_VELXY_P 2, PSC_VELXY_I 1) whose
+integrator starts at GUIDED's last acceleration demand a0 (hs04_006: a0 =
+(1.85, -1.74) m/s^2, the airframe's 2.5 m/s^2 toward the command) and is bled
+off at the loop's own pace: it carries the aircraft about |a0| x 1 s^2 =
+2.5 m. A hold that hands over to BRAKE lands wherever that carry ends, not
+on the point the search checked; one held in GUIDED never hands over.
+
+The old flow - the hold mode on arrival, at once for an in-place plan - is
+kept as `HoldFlight(guided_hold=False)`, what the harness's rail arm flies
+to model the rig's flights before this change (experiments/
+sweep_scenarios.py RAIL_HOLD_MODEL "brake", with BRAKE's carry modelled).
+
+Every other state passes the FSM's own mode request through untouched. On the
 FSM's entry tick its own setpoint is the hand-over stop, which a rail streams
 as it always did (a `command` is flown only where the FSM's setpoint is
-"none"); the transit starts on the next tick, as the harness flies it.
+"none"); the hold's law starts on the next tick, as the harness flies it.
 
 TRANSIT. The point is a POSITION target, flown as ArduCopter flies one in
 GUIDED: each axis at the sqrt controller of its remaining distance
@@ -42,8 +67,8 @@ GUIDED: each axis at the sqrt controller of its remaining distance
 position gain TRANSIT_P and the airframe's acceleration (the rail Shield's own
 response model, guardrail/response.py ARDUCOPTER_GUIDED, 1.75 m/s^2: braking
 onto the point no harder than the Shield forecasts a stop), capped at the
-plan's speed and climb (the policy's caps, holdpoint._speeds) - the law the
-harness's `rail` arm flies (`_autopilot`, under a vehicle response). It is
+plan's speed and climb (the policy's caps, holdpoint._speeds) - what the
+harness's `rail` arm flies too, through this class (RAIL_HOLD_MODEL). It is
 streamed by the companion as GUIDED velocity setpoints, closed at the rail's
 10 Hz on the measured position; a stale pose stops it (the rails hold then,
 as for any stale input). "Reached": within REACHED_M horizontally (and
@@ -123,6 +148,22 @@ TRANSIT_PROGRESS_M = 0.05
 TRANSIT_MAX_S = 10.0
 
 _HOLD_STATES = (FSMState.LOITER, FSMState.LAND)
+# The speed and climb a GUIDED hold closes on a point with when its plan names
+# none (an in-place plan, or no plan yet): the hold-point search's own
+# defaults (guardrail/holdpoint.py DEFAULT_SPEED_MPS / DEFAULT_CLIMB_MPS).
+HOLD_SPEED_MPS = 4.0
+HOLD_CLIMB_MPS = 2.0
+
+
+@dataclass(frozen=True)
+class _Target:
+    """Where a GUIDED hold holds: what transit_velocity reads of a plan."""
+    mode: str
+    x: float
+    y: float
+    up: float
+    speed_mps: float
+    climb_mps: float
 
 
 class TransitWatch:
@@ -224,23 +265,47 @@ class HoldFlight:
 
     def __init__(self, accel_mps2: float = TRANSIT_ACCEL_MPS2,
                  accel_z_mps2: float = TRANSIT_ACCEL_Z_MPS2,
-                 reached_m: float = REACHED_M) -> None:
+                 reached_m: float = REACHED_M, guided_hold: bool = True) -> None:
         self.accel_mps2 = float(accel_mps2)
         self.accel_z_mps2 = float(accel_z_mps2)
         self.reached_m = float(reached_m)
+        self.guided_hold = bool(guided_hold)
         self.flying: HoldPoint | None = None     # the moved plan in flight
         self.held = False                        # the hold mode was sent for the current plan
         self.transits = 0                        # moved plans flown this episode
         self.watch: TransitWatch | None = None   # when to give up the transit
+        # A GUIDED hold (guided_hold): the plan it holds, where it holds it,
+        # whether the moved point was reached (or given up), and a forced
+        # hand-over to BRAKE (force_brake) for the rest of the Loiter.
+        self.guiding = False
+        self._plan_seen: object = None
+        self._target: _Target | None = None
+        self._arrived = False
+        self.forced: str | None = None
+        self.forced_count = 0
+
+    def force_brake(self, why: str) -> bool:
+        """The companion cannot stream the GUIDED hold (a gap in its stream):
+        hand the hold to ArduCopter's BRAKE for the rest of this Loiter. True
+        if a GUIDED hold was being flown."""
+        if not self.guiding or self.forced:
+            return False
+        self.forced = why
+        self.forced_count += 1
+        return True
 
     def tick(self, fsm, set_mode: str | None, x: float, y: float, up: float,
              t: float, dt: float) -> HoldTick:
         st = fsm.state
         if fsm.terminal or st not in _HOLD_STATES:
             self.flying, self.held = None, False
+            self.guiding, self._plan_seen, self._target = False, None, None
+            self._arrived, self.forced = False, None
             return HoldTick(set_mode, None, False)
         plan = fsm.hold
         hold_mode = "LOITER" if st is FSMState.LOITER else "LAND"
+        if st is FSMState.LOITER and self.guided_hold:
+            return self._guided(plan, set_mode, x, y, up, t, dt)
         if plan is None or plan.kind != "moved":
             if self.flying is not None and not self.held:
                 # The plan went back in place while a transit flew: hold now.
@@ -275,3 +340,56 @@ class HoldFlight:
                             note or f"moved hold {why}: the autopilot holds")
         return HoldTick(mode, transit_velocity(x, y, up, plan, dt, self.accel_mps2,
                                                self.accel_z_mps2), True, note)
+
+    def _guided(self, plan, set_mode, x, y, up, t, dt) -> HoldTick:
+        """A Loiter held in GUIDED (module docstring, THE MODE MAPPING)."""
+        if self.forced:
+            if self.guiding:
+                # The hand-over the stream fault forces: BRAKE, once.
+                self.guiding, self.held = False, True
+                return HoldTick("LOITER", None, False,
+                                f"GUIDED hold handed to the autopilot: {self.forced}")
+            return HoldTick(None, None, False)
+        note = None
+        mode = None
+        if not self.guiding:
+            # The Loiter's first tick (or the first after the autopilot held):
+            # the FSM's LOITER is not sent; the companion holds in GUIDED.
+            self.guiding = True
+            if self.held:
+                mode, self.held = "GUIDED", False
+        if plan is not self._plan_seen or self._target is None:
+            self._plan_seen = plan
+            self._arrived = False
+            self.watch = None
+            if plan is None:
+                self._target = _Target("LOITER", x, y, up, HOLD_SPEED_MPS, HOLD_CLIMB_MPS)
+                what = "no plan yet: where the Loiter began"
+            else:
+                self._target = _Target(
+                    "LOITER", plan.x, plan.y, plan.up,
+                    float(plan.speed_mps or HOLD_SPEED_MPS),
+                    float(plan.climb_mps or HOLD_CLIMB_MPS))
+                what = f"its {plan.kind} point"
+                if plan.kind == "moved":
+                    self.transits += 1
+                    self.watch = TransitWatch(plan.t_s if plan.t_s is not None else t,
+                                              plan.travel_s)
+            tg = self._target
+            note = (f"LOITER held in GUIDED by the companion at ({tg.x:.1f}, {tg.y:.1f}, "
+                    f"{tg.up:.1f}), {what}")
+        tg = self._target
+        moving = plan is not None and plan.kind == "moved" and not self._arrived
+        if moving:
+            if reached(x, y, up, tg, self.reached_m):
+                self._arrived, moving = True, False
+                note = note or "moved hold reached: held there in GUIDED"
+            elif self.watch is not None and self.watch.update(
+                    transit_distance(x, y, up, tg), t):
+                # Given up: held where the aircraft is, still in GUIDED.
+                self._arrived, moving = True, False
+                self._target = _Target("LOITER", x, y, up, tg.speed_mps, tg.climb_mps)
+                note = (f"moved hold not reached by {t:.1f} s ({self.watch.why}): held "
+                        f"where it is, in GUIDED")
+        return HoldTick(mode, transit_velocity(x, y, up, self._target, dt, self.accel_mps2,
+                                               self.accel_z_mps2), moving, note)

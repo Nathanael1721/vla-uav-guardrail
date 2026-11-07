@@ -1046,8 +1046,11 @@ def test_the_pymavlink_rail_wires_the_fsm_as_the_other_two_rails():
     sent the FSM's LOITER as ArduCopter's LOITER, which sinks with nobody on
     the throttle (14.2 m to the ground on 7 Oct)."""
     seen: list = []
+    # The hold mode as it is sent when it is sent (--hold-flight brake: since
+    # 2026-11-07 night a Loiter is held in GUIDED by default, and LOITER goes
+    # to the autopilot only on a stream fault, in the same words).
     out, metrics, rows, events, sim, R = _fly_pymavlink_rail(
-        ["--shield", "on"], _spy_and_force_a_hold(seen))
+        ["--shield", "on", "--hold-flight", "brake"], _spy_and_force_a_hold(seen))
     assert seen, "the FSM never stepped"
     assert all(kw.get("horizon_s") is None for kw in seen), \
         "theta must read each repair's own magnitude_m (DEFAULT_THETA_HORIZON_S)"
@@ -1142,9 +1145,10 @@ def test_the_pymavlink_rail_flies_a_moved_hold_then_holds():
     is not sent on entry - and the hold (BRAKE) is sent on arrival. The
     transit rows keep setpoint "none" (no VLA action flown) and carry
     `hold_transit`; `--hold-points in_place` holds where the aircraft is, at
-    once, as before."""
+    once, as before. That is `--hold-flight brake`; the default since that
+    night is the GUIDED hold (test_the_pymavlink_rail_holds_a_loiter_in_guided)."""
     _, metrics, rows, events, sim, R = _fly_pymavlink_rail(
-        ["--shield", "on"], _loiter_at_a_moved_point())
+        ["--shield", "on", "--hold-flight", "brake"], _loiter_at_a_moved_point())
     assert metrics["fsm"]["hold_points"]["choice"] == "moved"
     assert metrics["fsm"]["hold_points"]["moved_transits"] >= 1, metrics["fsm"]
     g3 = next(r for r in rows if r.get("fsm_edge") == "G3")
@@ -1172,6 +1176,28 @@ def test_the_pymavlink_rail_flies_a_moved_hold_then_holds():
     first = next(e for e in ev2 if e["kind"] == "mode_request")
     assert (first["mode"], first["autopilot_mode"]) == ("LOITER", "BRAKE")
     assert abs(first["t"] - entry["t"]) < 1e-6, (first, entry["t"])
+
+
+def test_the_pymavlink_rail_holds_a_loiter_in_guided():
+    """Since 2026-11-07 night (guardrail/hold_flight.py, THE MODE MAPPING; the
+    hil shakedown hs04: BRAKE's hand-over carried the aircraft 1.7 m off its
+    point): the Loiter is held in GUIDED - no LOITER / BRAKE is asked for -
+    and every Loiter tick after the entry streams the hold's law, to the
+    moved point and then on it."""
+    _, metrics, rows, events, sim, R = _fly_pymavlink_rail(
+        ["--shield", "on"], _loiter_at_a_moved_point())
+    assert metrics["fsm"]["hold_points"]["moved_transits"] >= 1, metrics["fsm"]
+    g3 = next(r for r in rows if r.get("fsm_edge") == "G3")
+    loiter = [r for r in rows if r["t"] > g3["t"] + 1e-9
+              and r.get("fsm_state_after") == "Loiter"]
+    assert loiter and all("hold_transit" in r and r["setpoint"] == "none"
+                          for r in loiter), loiter[:2]
+    assert not any(e["kind"] == "mode_request" and e["mode"] == "LOITER" for e in events)
+    notes = [e["note"] for e in events if e["kind"] == "hold_flight"]
+    assert any("held in GUIDED" in n for n in notes), notes
+    assert any("reached: held there in GUIDED" in n for n in notes), notes
+    last = loiter[-1]["hold_transit"]
+    assert (last[0] ** 2 + last[1] ** 2) ** 0.5 < 0.5, last
 
 
 def _zone_on_the_path(at_s: float):
