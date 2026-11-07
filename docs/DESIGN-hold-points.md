@@ -884,6 +884,192 @@ refusing the cap or the floor), and the sweep counts each episode's
 the P0 headline, zero included, so a slowed escape cannot hide behind "0
 escapes" again.
 
+## A hold legal for as long as it is held, flown by the rails (2026-11-07)
+
+`dyn-nfz-rotate-spin` (3, 6 and 9 deg/s, labelled N4 on every vehicle: a
+zone moved over the aircraft that it can leave within the caps is the
+recovery operators' job) went home by X6 on the lagging vehicles - the
+harness's ArduPilot response and the rig's own fit (the `rail` arm) - and on
+the hil rehearsals (rh01_017 and rh03_017: X6, then RTL). On the nightly
+profile those were 9 false fail-safes per lagging arm: the cells that kept the
+rail vehicle's (r2) at 732/741 = 0.988, under the locked 99 %
+(kuanting-vla-uav-guardrail/docs/02-implementation/stress-testing.md,
+"Acceptance KPIs (locked)"). The hil nightly flies 9 of its 588 missions in
+these cells (`--backend hil --profile nightly --hil-dry-run`).
+
+**Why.** The lag carries the lagging vehicle's slide over theta (G3, Loiter
+at 3.9-4.1 s), about 3 m nearer the bar's centre than the ideal vehicle
+stops - inside the disc the 40 m bar sweeps. The Loiter's hold was legal from
+arrival through ONE lookahead, so under the spinning bar each point was legal
+for barely that long: at 3 deg/s on the ArduPilot response the in-place hold
+of 4.1 s turned illegal at 25.5 s, and the search then moved it 1-1.5 m at a
+time ahead of the bar (26.0, 27.0, 28.4, 29.7 s), the aircraft never standing
+where a stop was legal; after T X6 sent it home (31.0 s). From where it held,
+17.6 m from the bar's centre, the planner's head-on request stayed over theta
+(2.5-3.0 m) for the whole Loiter, so even without X6 the operator timeout
+would have sent it home - which is what the X6 reading of the first version
+on `fsm-rail-vehicle-fixes` measured. And no rail flew a moved point at all.
+
+**The hold horizon** (`FSMConfig.hold_horizon`, default `loiter`;
+`lookahead` plans as before and hashes as every config did before the field,
+`LEGACY_LAW`; the default config hash is now `sha256:3b54b4e3...`). A Loiter's
+hold must stay legal from arrival for as long as the Loiter can last - the
+operator timeout's remaining time (`EscalationFSM.hold_horizon_s`;
+`HOLD_HORIZON_CAP_S` = 60 s without a timeout) - and one lookahead past it,
+at its HOLD_MARGIN_M neighbours too, judged in lookahead-long look-ahead
+views of the Shield's own rules (`choose_hold_point(..., hold_s=)`, "THE HOLD
+HORIZON"). A hold in place that is legal through the lookahead but would not
+stay legal is moved to a point that does. Where nothing can change with time
+(`time_varying`: no moving zone or subject, no window, switch or swap) a plan
+is exactly what it was. The lookahead's own search runs first with its whole
+budget; the longer one gets what it left, the candidates the first refused
+are not paid for twice, and a candidate's own later views are judged before
+its transit and neighbours (the cheap failure first), so a search still costs
+at most MAX_QUERIES. Where no point stays legal within reach, the plan is the
+lookahead's, as before: no hold is worse than it was. On rotate-spin the
+ArduPilot response now holds at (-184.6, -0.5) from 4.1 s, outside the sweep,
+where the request is repaired within theta: the Loiter hands back at 9.5 s
+(G8) and the cell completes (G7 at 23.3 s).
+
+**Loiter's hand-back guard** (the same law). A hold that stays legal lets G8
+hand back sooner, and on the ideal vehicle at 9 deg/s that was at 8.4 s onto
+a clean request straight through the bar's disc: a breach (the harness's move
+of the aircraft's own onto a spot the sweep had made unsafe), the bar's
+known limit for the Shield in GUIDED - the reason the X6 reading of the first
+version was reverted. So Loiter does not hand back a request whose flight
+would carry the aircraft, within the lookahead, onto a spot where a stop is
+illegal (`TickInput.handback_unsafe`, from `Shield.handback_unsafe`: the
+command's straight flight sampled every HANDBACK_STEP_S = 0.5 s, a stop asked
+at each sample from when the aircraft gets there). Under the guard the 9 deg/s
+ideal cell hands back at 19.5 s and 23.8 s and completes with no breach.
+
+**The rails fly it** (`guardrail/hold_flight.py`). The grant names Loiter's
+mode, not its place; the mapping every rail now sends:
+
+| FSM state | plan | ArduCopter | companion streams |
+|---|---|---|---|
+| Loiter | in place | the FSM's LOITER at once (BRAKE on our rails) | nothing |
+| Loiter | moved | stays in GUIDED and flies to the point; the FSM's LOITER on arrival | the transit velocity, then nothing |
+| Land | in place | LAND at once | nothing |
+| Land | moved | GUIDED to the site, level; LAND on arrival | the transit, then nothing |
+
+The entry tick streams the FSM's hand-over stop as before, and the transit
+starts on the next tick, as the harness flies it. A re-plan while the
+autopilot holds asks GUIDED again; a plan back in place during a transit
+holds at once. The transit is a POSITION target flown as ArduCopter flies
+one: the sqrt controller of the remaining distance (gain 1.0, the rail
+Shield's own 1.75 m/s^2), capped at the plan's speed and climb - the
+harness's law for the response arms - streamed by the companion as GUIDED
+velocity setpoints at the rail's 10 Hz on the measured position. Reached:
+within 0.5 m (REACHED_M), or the plan's travel time plus HOLD_ARRIVAL_SLACK_S
+has passed (then it holds where it is, and X6 / X7 judge as for any hold).
+Both the pymavlink rail (`sitl/run_sitl_demo.py`) and the ROS 2 Shield node
+(`sitl/ros2_shield_node.py`, the hil path) answer `needs_hold` with
+`holdpoint.plan_for`, give the FSM `hold_legal` (`holdpoint.hold_point_legal`,
+the Shield's own check, now shared) and `handback_unsafe`, and fly the plan
+through `HoldFlight`; `--hold-points in_place` flies the old hold. A transit
+tick's row keeps setpoint `none` (no VLA action flown, as on an autopilot
+tick) and carries `hold_transit`; the metrics carry `fsm.hold_points`. The
+mission-style node (`sitl/ros2_mission_node.py`) runs no escalation FSM and is
+unchanged. So the harness's `rail` vehicle (`RAIL_VEHICLE`) now holds at moved
+points, as the rails fly them. Not flown on the rig yet.
+
+### Measured (headless, not KPI-grade)
+
+Fail-safe trigger correctness per episode, before (integrate/1107b, a152a75
+in behaviour; the rail arm as the rails flew it until today: holds in place)
+and after, against the label sets of the rail-vehicle proposal: (a) the ideal
+vehicle's (section 3, the adopted ones), (a2) ideal, section 7's prescribed
+reading; (b) / (c) the ArduPilot response's, sections 3 / 7; (r) / (r2) the
+rail vehicle's, sections 3 / 7. Censored runs are counted apart at the
+scenario's length and flown 35 s longer for the "flown longer" rows. Wilson
+95 % lower bounds in brackets.
+
+| profile, arm | labels | before | after |
+|---|---|---|---|
+| smoke, ideal | (a) / (a2) | 62/63 (0.915) / 63/63 (0.943) | unchanged |
+| smoke, ArduPilot, scenario length (9 censored) | (a) / (b) / (c) | 49/54 (0.801) / 52/54 (0.875) / 53/54 (0.902) | 50/54 (0.824) / 53/54 (0.902) / 54/54 (0.934) |
+| smoke, ArduPilot, flown longer | (a) / (b) / (c) | 49/63 (0.661) / 61/63 (0.891) / 62/63 (0.915) | 50/63 (0.678) / 62/63 (0.915) / 63/63 (0.943) |
+| smoke, rail, scenario length (8 censored) | (a) / (r) / (r2) | 51/55 (0.827) / 53/55 (0.877) / 54/55 (0.904) | 52/55 (0.851) / 54/55 (0.904) / 55/55 (0.935) |
+| smoke, rail, flown longer | (a) / (r) / (r2) | 51/63 (0.696) / 61/63 (0.891) / 62/63 (0.915) | 52/63 (0.714) / 62/63 (0.915) / 63/63 (0.943) |
+| library, ideal | (a) / (a2) | 177/179 (0.960) / 179/179 (0.979) | unchanged |
+| library, ArduPilot, scenario length (10 censored) | (a) / (b) / (c) | 155/169 (0.866) / 164/169 (0.933) / 166/169 (0.949) | 158/169 (0.887) / 167/169 (0.958) / 169/169 (0.978) |
+| library, ArduPilot, flown longer | (a) / (b) / (c) | 155/179 (0.808) / 174/179 (0.936) / 176/179 (0.952) | 158/179 (0.827) / 177/179 (0.960) / 179/179 (0.979) |
+| library, rail, scenario length (9 censored) | (a) / (r) / (r2) | 157/170 (0.874) / 165/170 (0.933) / 167/170 (0.949) | 160/170 (0.895) / 168/170 (0.958) / 170/170 (0.978) |
+| library, rail, flown longer | (a) / (r) / (r2) | 157/179 (0.821) / 174/179 (0.936) / 176/179 (0.952) | 160/179 (0.840) / 177/179 (0.960) / 179/179 (0.979) |
+| nightly, ideal | (a) / (a2) | 729/741 (0.972) / 741/741 (0.995) | unchanged |
+| nightly, ArduPilot, scenario length (36 censored) | (a) / (b) / (c) | 639/705 (0.883) / 684/705 (0.955) / 696/705 (0.976) | 648/705 (0.897) / 693/705 (0.970) / 705/705 (0.995) |
+| nightly, ArduPilot, flown longer | (a) / (b) / (c) | 639/741 (0.836) / 720/741 (0.957) / 732/741 (0.977) | 648/741 (0.849) / 729/741 (0.972) / 741/741 (0.995) |
+| nightly, rail, scenario length (33 censored) | (a) / (r) / (r2) | 645/708 (0.888) / 687/708 (0.955) / 699/708 (0.976) | 654/708 (0.902) / 696/708 (0.971) / 708/708 (0.995) |
+| nightly, rail, flown longer | (a) / (r) / (r2) | 645/741 (0.844) / 720/741 (0.957) / 732/741 (0.977) | 654/741 (0.857) / 729/741 (0.972) / 741/741 (0.995) |
+
+Every episode that moved: on the ArduPilot arm and the rail arm, the
+rotate-spin cells (X6 -> G8, G7: correct now, all seeds); on the rail arm,
+which held in place before, also radius-scaling-grow 3.3 / 3.8 / deep and the
+three-simultaneous-violations cells (X6 -> G5: a fail-safe still, as
+labelled) and wind-beyond-authority lane 15 at 12 m/s (the landing site
+moved, so the Land after the failed RTL had not touched down at the episode's
+end: G10 gone, a fail-safe still) - and the same cells on that run's ideal
+vehicle, which held in place too; on the ideal vehicle of this branch's own
+runs (moved holds before and after) only edges of rotate-spin 3 and 6 (G8 /
+G7 at other times; no outcome) and 9 (one unsafe spell of 3.1 s instead of
+two of 2.05 s). No other episode on any arm moved, at the scenario's length or
+flown longer. P0 escapes and the harness's breaches 0
+everywhere, before and after. The sweeps' gates: unchanged on this branch
+(smoke 55 / 6 / 0 / 3, library 154 / 22 / 0 / 4, nightly 660 / 66 / 0 / 18);
+on the rail runs the in-place ideal vehicle's rotate-spin@9 gate failures are
+gone (library 153 / 22 / 1 / 4 -> 154 / 22 / 0 / 4, nightly 657 / 66 / 3 / 18
+-> 660 / 66 / 0 / 18).
+
+Time to safe (the mean over the episodes with an unsafe spell): the ideal vehicle 2.533 / 2.540 / 2.539 s before, 2.533 / 2.585 / 2.570 s after (smoke /
+library / nightly) - the three 9 deg/s episodes now have one spell of 3.1 s
+instead of two of 2.05 s, so the total unsafe time falls (nightly 388.5 s over
+153 episodes, 385.5 s over 150) while the mean of fewer spells rises; the
+ArduPilot response 3.807 / 3.837 / 4.283 s -> 3.521 / 3.463 / 4.048 s; the rail
+arm 4.953 / 5.171 / 5.566 s -> 3.731 / 3.803 / 3.849 s, its spells still
+running at the end 24 -> 15 (nightly).
+
+**Per-tick cost** (desktop; the library flown on the rail arm with moved
+holds, every cell, single process beside two other sweep processes; the 100 ms
+tick is WP3-13's):
+
+| call | ticks that paid it | p50 | p99 | max |
+|---|---|---|---|---|
+| `holdpoint.hold_point_legal` (each Loiter tick) | 15,723 | 0.19 ms | 0.47 ms | 2.4 ms |
+| `Shield.handback_unsafe` (each Loiter tick, position legal) | 15,142 | 1.70 ms | 4.38 ms | 17.5 ms |
+| the plan (`Shield._plan_hold`, what `plan_for` calls; needs_hold ticks) | 78 | 2.0 ms | 26.0 ms | 37.8 ms (rotate-spin@3) |
+| the whole Loiter tick (`Shield.filter`) | 15,793 | 4.5 ms | 9.1 ms | 39.9 ms (a plan tick) |
+
+The worst Loiter tick stays under 60 ms on the desktop. At the Orin's 2-3x a
+plan tick could reach about 80-120 ms (the measured worst plan, 37.8 ms,
+times 2-3, plus the rest of the tick), over the 100 ms tick on that one tick of
+a Loiter entry or re-plan; the per-tick checks (about 5-13 ms at p99) fit.
+Should the AGX measure so, the hold horizon's search can be given part of the
+budget only (its own MAX_QUERIES share), at the cost of reaching less far.
+
+**The hil smoke rh03** (44 missions flown on the AGX at fb96fe5: holds in
+place, no hold horizon), on the same labels: (a) 37/43 = 0.860 (6 false:
+nfz-head-on, rail-mission-stub-vla, rotate-step, rotate-spin@3,
+time-window-opens-on-sideways-pilot, wind-within-authority lane 15 at
+5 m/s); (a2) 38/43 = 0.884; (r) 38/40 = 0.950 (2 false: rail-mission-stub-vla,
+rotate-spin@3); (r2) 39/40 = 0.975 (1 false: rotate-spin@3); one censored,
+three undecided on the rail labels. Of its failures this branch's rail arm
+changes rotate-spin@3 (X6 -> G8, G7) and the edges of three-simultaneous
+ask 11 (X6 -> G5, still the fail-safe its label expects); the rest fly as
+before. Its autopilot record ("2 polygon entries in 2 episodes, 5 breaches in
+5 episodes"): the entries are RTL's path into nfz-school
+(time-window-opens-on-sideways-pilot, 39.9 s, after G5) and the in-place hold
+blown into nfz-square by a wind beyond authority (wind-beyond-authority, 15.0
+s); the breaches are RTL's path twice (time-window-opens-on-sideways-pilot
+39.6 s; corridor-swap-shifted 49.4 s, out of the corridor), the in-place
+hold twice (corridor-swap-narrowed 3.6 s - BRAKE's own stopping distance
+carried it out of the narrowed corridor; wind-beyond-authority 14.4 s) and
+the Land's descent through the floor once (failsafe-land-zone 7.9 s, by
+design). On the rail arm the moved holds leave corridor-swap-narrowed's
+overshoot as it was (the point is legal where the hold starts; BRAKE's stop
+is the airframe's) and take wind-beyond-authority at 12 m/s from 2 autopilot
+breaches to 1.
+
 ## What it does not do
 
 * Remove the 2 Shield escape ticks per opens-on-vehicle cell: they are

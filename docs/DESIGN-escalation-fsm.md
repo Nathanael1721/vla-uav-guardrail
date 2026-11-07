@@ -73,6 +73,17 @@ was). The default config hash changed: `sha256:1e413c8b...`. X6 on a hold
 that finds no place to stop is kept, measured. The next section has the
 mechanism and the numbers.
 
+**Update 2026-11-07 (hold horizon).** A Loiter's hold point must stay legal
+for as long as the Loiter can last (`FSMConfig.hold_horizon` "loiter";
+"lookahead" plans as before), Loiter does not hand back a request whose
+flight would carry the aircraft onto a spot where a stop is illegal
+(`TickInput.handback_unsafe`), and the pymavlink and ROS 2 rails fly a moved
+hold (guardrail/hold_flight.py). dyn-nfz-rotate-spin is no longer sent home by
+X6 on the lagging vehicles: the rail vehicle's own labels (r2) go from
+732/741 to 741/741 nightly, flown longer. The default config hash changed:
+`sha256:3b54b4e3...`. docs/DESIGN-hold-points.md, "A hold legal for as
+long as it is held, flown by the rails", has the mechanism and the numbers.
+
 ## 2026-11-07: the FSM on the rail vehicle
 
 The hil rail flies ArduCopter 4.5.7 SITL in GUIDED. Labelled on a vehicle

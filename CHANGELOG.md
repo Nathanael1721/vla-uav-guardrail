@@ -16,6 +16,124 @@ shipped change and recorded as one.
 
 ## [Unreleased]
 
+### 2026-11-07 (hold horizon) — a Loiter's hold stays legal for as long as it is held, the rails fly it, and Loiter does not hand back into a sweep: dyn-nfz-rotate-spin is no longer sent home by X6 on the lagging vehicles
+
+#### Found
+- dyn-nfz-rotate-spin (3, 6, 9 deg/s; N4 on every vehicle) went home by X6
+  on the harness's ArduPilot response, on the rig's own `rail` arm and on the
+  hil rehearsal (rh01_017: X6 at 30.3 s): 9 false fail-safes on the nightly
+  profile per lagging arm, the cells that kept the rail vehicle's (r2) at
+  732/741 = 0.988, under the locked 99 % (stress-testing.md, "Acceptance KPIs
+  (locked)"). The hil nightly flies 9 of its 588 missions in these cells
+  (`--backend hil --profile nightly --hil-dry-run`).
+- The hold point was judged legal from arrival through ONE lookahead, so
+  under the spinning bar each point was legal for barely that long: the hold
+  was re-planned every 0.5-1.4 s ahead of the bar (3 deg/s, ArduPilot response:
+  25.5, 26.0, 27.0, 28.4, 29.7 s), the aircraft never stood where a stop was
+  legal, and X6 fired at T (31.0 s). Held where the lag had carried it, 17.6
+  m from the bar's centre, the head-on request stayed over theta (2.5-3.0 m)
+  for the whole Loiter, so without X6 the operator timeout would have sent it
+  home instead. And no flight rail flew a moved hold: they held in place.
+
+#### Changed
+- `guardrail/fsm.py`: `FSMConfig.hold_horizon` (`HOLD_HORIZONS`, default
+  `loiter`; `lookahead` plans as before and hashes as every config did
+  before the field, `LEGACY_LAW`; the default config hash is now
+  `sha256:3b54b4e3...`). `EscalationFSM.hold_horizon_s()`: the Loiter's
+  remaining time before its operator timeout (`HOLD_HORIZON_CAP_S` = 60 s
+  without one). `TickInput.handback_unsafe`: Loiter does not hand back (G8)
+  a request whose flight would carry the aircraft, within the lookahead, onto
+  a spot where a stop is illegal; the record carries `handback_unsafe` on
+  such ticks only.
+- `guardrail/holdpoint.py`: `choose_hold_point(..., hold_s=)` - THE HOLD
+  HORIZON: the hold (and its HOLD_MARGIN_M neighbours) must stay stop-legal
+  from arrival to the end of the Loiter's span and one lookahead past it,
+  judged in lookahead-long look-ahead views; a hold in place that would not
+  is moved to one that does; where nothing can change with time
+  (`time_varying`) the plan is exactly as before; where no such point is
+  found the lookahead's plan is kept. The lookahead's search runs first with
+  its whole budget, the longer one gets what it left. `hold_point_legal`
+  (the Shield's per-tick point check, now shared) and `plan_for` (a rail's
+  plan for its own FSM).
+- `guardrail/shield.py`: plans with the horizon, computes `handback_unsafe`
+  (`Shield.handback_unsafe`, HANDBACK_STEP_S = 0.5 s) in Loiter.
+- `guardrail/hold_flight.py` (new): how a rail flies the plan - the mode
+  mapping (a moved Loiter / Land point: GUIDED transit, the hold on arrival)
+  and the transit law (the sqrt controller, the rail Shield's 1.75 m/s^2,
+  capped at the plan's speed and climb).
+- `sitl/run_sitl_demo.py` (pymavlink) and `sitl/ros2_shield_node.py` (ROS 2,
+  the hil path) plan holds (`plan_for`), feed `hold_legal` and
+  `handback_unsafe`, and fly moved points (`--hold-points`, default `moved`;
+  `in_place` flies the old hold); transit rows keep setpoint `none` and carry
+  `hold_transit`; metrics carry `fsm.hold_points`. `sitl/ros2_mission_node.py`
+  runs no escalation FSM and is unchanged.
+- `experiments/sweep_scenarios.py`: `RAIL_VEHICLE` holds at moved points
+  (`autopilot_hold` `moved_points`), as the rails now fly them.
+- docs/DESIGN-hold-points.md ("A hold legal for as long as it is held,
+  flown by the rails"), docs/DESIGN-escalation-fsm.md (update note, the G8
+  row, the record fields, the config example).
+
+#### Measured
+- Headless, before (integrate/1107b, a152a75 in behaviour; the rail arm
+  holding in place, as the rails flew until today) and after, on smoke,
+  library and nightly, at the scenario's length and flown 35 s longer. The
+  rail vehicle's own labels, flown longer, nightly: (r2) 732 -> 741/741
+  (Wilson low 0.977 -> 0.995), (r) 720 -> 729/741 (0.957 -> 0.972); library
+  (r2) 176 -> 179/179, (r) 174 -> 177/179; smoke (r2) 62 -> 63/63. The
+  ArduPilot response's (c) 732 -> 741/741 and (b) 720 -> 729/741 nightly;
+  against the ideal labels (a) the rail arm 645 -> 654/741, the ArduPilot arm
+  639 -> 648/741. The ideal vehicle's own correctness is unchanged (729/741
+  and 741/741 nightly).
+- Moved: the rotate-spin cells on both lagging arms (X6 -> G8, G7: every one
+  correct now); on the rail arm, which held in place before, also
+  radius-scaling-grow and three-simultaneous-violations (X6 -> G5, still the
+  expected fail-safe) and wind-beyond-authority at 12 m/s (the Land's site
+  moved: no touchdown by the episode's end, still a fail-safe). Nothing else,
+  at either length (docs/DESIGN-hold-points.md has the table).
+- P0 escapes and breaches 0 everywhere. Time to safe: the ideal vehicle
+  2.539 -> 2.570 s nightly (fewer, longer spells: the total unsafe time falls,
+  388.5 -> 385.5 s), the ArduPilot response 4.283 -> 4.048 s, the rail arm
+  5.566 -> 3.849 s. The sweeps' gates are unchanged on this branch, and the
+  rail runs' in-place rotate-spin@9 gate failures are gone (nightly 657 / 66
+  / 3 / 18 -> 660 / 66 / 0 / 18).
+- Per-tick cost on the desktop (the library on the rail arm): hold_point_legal
+  p50 0.19 / p99 0.47 / max 2.4 ms over 15,723 Loiter ticks; handback_unsafe
+  1.70 / 4.38 / 17.5 ms over 15,142; the plan 2.0 / 26.0 / 37.8 ms over 78
+  needs_hold ticks; the whole Loiter tick 4.5 / 9.1 / 39.9 ms. At the Orin's
+  2-3x a plan tick could pass the 100 ms tick; the per-tick checks fit.
+- The hil smoke rh03 (44 missions at fb96fe5, holds in place) on the same
+  labels: (a) 37/43, (a2) 38/43, (r) 38/40, (r2) 39/40 - its one (r2) error
+  is rotate-spin@3, the cell this fixes. Its autopilot record: RTL's path (2
+  breaches, 1 polygon entry), the in-place hold (2 breaches, 1 entry: BRAKE's
+  own stop out of a narrowed corridor, and a wind beyond authority), the
+  Land's descent through the floor (1 breach, by design).
+
+#### Tests
+- tests/test_hold_horizon.py (new, 14): the search (moved out of a slow bar's
+  sweep, kept in place when it stays legal, the lookahead plan kept when
+  nothing stays legal, a static world unchanged, the search off), the FSM
+  (the horizon's arithmetic, the hand-back guard under both laws), the
+  rail flight (in place, a moved transit then the hold, not reached in time,
+  a moved landing site, the transit law) and the cells (rotate-spin on the
+  rail vehicle not sent home; on the ideal vehicle not handed back into the
+  bar).
+- tests/test_sitl_rails.py: the pymavlink rail flies a moved hold (the
+  hand-over stop, the transit, BRAKE on arrival; `--hold-points in_place` as
+  before). tests/test_fsm.py: the law's hash.
+- The c77c77d identity proof, the in-place hold digests and the 2026-10-08
+  flight replay fly `hold_horizon` "lookahead", as they fly the old laws.
+- The touched and dependent files, one at a time with vla-real on the merged branch: all 15 exit 0 - 688 passed, 9 skipped (fixtures, flight folders or ROS 2 not on this checkout), none failed (test_fsm 126/126, test_hold_horizon 14/14, test_hold_points 34/34, test_sitl_rails 68/68, test_own_velocity_forecast 29/29, test_sweep 120/121 + 1 skip). test_hold_horizon also 14/14 under Python 3.12 (the AGX's container is 3.12.3 / numpy 1.26.4; the added code uses no numpy).
+
+#### Limits
+- Headless; not flown on the rig. The rails' transit is the companion's
+  GUIDED velocity stream closed on the measured position at 10 Hz (the law
+  the harness's rail arm flies), not ArduPilot's own position target.
+- The Orin's cost is not measured: a plan tick may pass the 100 ms tick
+  there; a share of MAX_QUERIES for the hold horizon's search is the lever.
+- sitl/ros2_mission_node.py (no escalation FSM) and the Project AirSim /
+  city rails still hold in place. rail-mission-stub-vla stays false on (r)
+  (its two readings label it differently).
+
 ### 2026-11-07 (grant example sweep) — the grant's worked ScenarioSpec flown as written, as a profile of its own: no episode is ever in an unsafe position, so its "mean time to safe <= 2.0 s" holds only vacuously
 
 The Stress Testing page's worked example (dyn-nfz-translate-001) is the only
