@@ -97,7 +97,9 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 
+from .frames import to_body
 from .fsm import HOLD_ARRIVAL_SLACK_S, FSMState, HoldPoint
+from .models import Action4D
 from .response import ARDUCOPTER_GUIDED
 from .vla_stub import sqrt_controller
 
@@ -236,6 +238,19 @@ def reached(x: float, y: float, up: float, hold: HoldPoint,
     if math.hypot(hold.x - x, hold.y - y) > tol_m:
         return False
     return hold.mode == "LAND" or abs(hold.up - up) <= tol_m
+
+
+def body_command(command: tuple[float, float, float], yaw_deg: float) -> Action4D:
+    """A HoldTick's command (world frame: north, east, up) in the body frame
+    at `yaw_deg` (frames.to_body): forward, right, up, no yaw rate - for a
+    rail whose setpoints are body frame (sitl/ros2_shield_node.py). The leg
+    is the companion's own command, never a VLA action, and a rail streams
+    it only on ticks whose FSM setpoint is "none" (no action flown), so this
+    is its one rotation; a VLA action's are the Shield's (Shield.filter_body).
+    Until 2026-11-07 the node called frames.to_body for it itself."""
+    fwd, right, up, _ = to_body(Action4D(vx=command[0], vy=command[1], vz_up=command[2]),
+                                yaw_deg)
+    return Action4D(vx=fwd, vy=right, vz_up=up)
 
 
 @dataclass(frozen=True)

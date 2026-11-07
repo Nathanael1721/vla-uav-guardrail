@@ -315,12 +315,11 @@ from guardrail.audit import AUDIT_FILE                                    # noqa
 from guardrail.bundle import load_for_flight                              # noqa: E402
 from guardrail.compiler import ConstraintCompiler                         # noqa: E402
 from guardrail import holdpoint                                           # noqa: E402
-from guardrail.frames import to_body                                      # noqa: E402
 from guardrail.fsm import (DEFAULT_THETA_HORIZON_S, FAILSAFE_STATES,     # noqa: E402
                            MODE_FOR, THETA_HORIZON_S, EscalationFSM, FSMConfig,
                            FSMState, tick_input_from_decision)
 from guardrail.geometry import fence_polygon                              # noqa: E402
-from guardrail.hold_flight import HoldFlight                              # noqa: E402
+from guardrail.hold_flight import HoldFlight, body_command                # noqa: E402
 from guardrail.response import HOLD_STREAM_GAP_S                          # noqa: E402
 from guardrail.kpi import compute_from_dir                                # noqa: E402
 from guardrail.manifest import (DEV_YAML_FLAG, UNRESOLVED,               # noqa: E402
@@ -3227,10 +3226,11 @@ if HAVE_ROS:
                 # A moved hold's GUIDED transit (guardrail/hold_flight.py):
                 # the hold's own leg, streamed while the FSM's setpoint is
                 # "none" (no VLA action flown); world -> body as every
-                # setpoint of this node (the adapter turns body to NED).
+                # setpoint of this node (the adapter turns body to NED), by
+                # hold_flight.body_command: this node rotates nothing itself
+                # (guardrail/frames.py, WHO CALLS THIS).
                 flown_w = Action4D(vx=transit[0], vy=transit[1], vz_up=transit[2])
-                fwd, right, up_, _ = to_body(flown_w, st.yaw_deg)
-                flown = Action4D(vx=fwd, vy=right, vz_up=up_)
+                flown = body_command(transit, st.yaw_deg)
             pub_ns = None
             if flown is not None:
                 self._publish_body(flown)

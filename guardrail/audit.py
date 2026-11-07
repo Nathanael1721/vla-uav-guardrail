@@ -100,7 +100,13 @@ THIS PROJECT'S CONTENT, UNDER ITS OWN NAMES
                        place or moved, the point, whether it is legal and
                        the rules it breaks if not, and why; null in every
                        other state and on a rail that runs its own FSM and
-                       chooses none (record version 3, since 2026-10-20)
+                       chooses none (record version 3, since 2026-10-20).
+                       Since 2026-11-07 the search is spread over ticks
+                       (holdpoint.py, THE PER-TICK BOUND): the point is on
+                       the record of the tick the plan arrives (its
+                       `hold_chosen` makes that tick a record even with no
+                       violation and no edge) and of the ticks after; the
+                       entry tick and the ticks the search runs carry null
 
 plus `emitted_violations`, `braked`, `relaxed`, `fsm_fault`, `repair_mode`,
 `body_yaw_deg` and `record_version` (4 since the grant's names carry the

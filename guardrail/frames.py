@@ -51,6 +51,15 @@ updated.) As of that date:
     `Shield.filter()`, and the emitted action crosses back with `to_body` at
     that heading, to be published on /shield/setpoint. Until 2026-11-04 the
     node made those two crossings itself around `Shield.filter()`.
+  * `guardrail/hold_flight.py` (`body_command`, 2026-11-07): `to_body` of
+    the hold's own leg - the GUIDED transit to a moved hold point and the
+    Loiter held in GUIDED, a command the companion computes in world frame,
+    never a VLA action - for `sitl/ros2_shield_node.py`, whose setpoints are
+    body frame. The node streams the leg only on ticks whose FSM setpoint is
+    "none" (no action flown), so it is that leg's one rotation and no VLA
+    action is rotated twice; the node itself imports nothing from here
+    (from 2026-11-07's moved hold until that night it called `to_body` for
+    the leg itself, and tests/test_frame_contract.py failed on it).
   * `sitl/mavlink_adapter_node.py`: the body -> local-NED crossing of
     /shield/setpoint, `from_body` then `to_local_ned`.
   * `sitl/ros2_vla_stub_node.py`: `to_body`, so the stub publishes

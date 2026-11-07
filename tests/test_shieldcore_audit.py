@@ -21,7 +21,8 @@ Run:  python tests/test_shieldcore_audit.py
   * policies/audit_record.schema.json is the model's schema;
   * where the escalation FSM told the autopilot to hold or land is on the
     record (`fsm_hold_point`, record version 3 since 2026-10-20), on the
-    tick the FSM chose it and on the Loiter ticks after;
+    tick the FSM chose it and on the Loiter ticks after - since 2026-11-07
+    the tick the spread search's plan arrives, null on the ticks before;
   * the stored audit files read into the model (tests/fixtures/ always;
     every audit*.jsonl one or two folders under demo/out when it is there),
     an old record's derived fields are the ones its writer would have
@@ -350,8 +351,16 @@ def test_the_fsm_hold_point_is_on_the_audit_record():
     at 0.0 s and G3 at 0.1 s; since C2 that escape is not a violation
     (Shield._opening_imposed) and never leaves Normal, so the zone's action
     is set to loiter and the aircraft hovers: X4 at 0.0 s (straight to
-    Loiter), the hold on that tick's record and the next."""
+    Loiter), the hold on that tick's record and the next.
+    Since 2026-11-07 the Shield's hold search is spread over ticks
+    (holdpoint.py, THE PER-TICK BOUND): X4's tick has no plan yet, and the
+    plan is on the record of the tick it arrives (0.3 s here, the search's
+    fourth tick) and of the Loiter tick after it; the ticks before carry
+    null. Read on X4's tick, as before, it was (None, None) - the ee356c6
+    CI run."""
+    import math
     from datetime import timedelta
+    from guardrail.holdpoint import MAX_QUERIES, TICK_QUERIES
     pol = load_policy(ROOT / "policies" / "corridor_survey.yaml")
     pol = pol.model_copy(update={"constraints": [
         c.model_copy(update={"violation_action": "loiter"}) if c.id == "nfz-school" else c
@@ -359,22 +368,33 @@ def test_the_fsm_hold_point_is_on_the_audit_record():
     t0 = datetime(2026, 9, 7, 7, 29, 58)
     clock = [0.0]
     sh = Shield(pol, now=lambda: t0 + timedelta(seconds=clock[0]))
-    d0 = sh.filter(State(x=60.0, y=21.0, up=15.0), Action4D(), t=0.0)
-    clock[0] = 0.1
-    d1 = sh.filter(State(x=60.0, y=20.8, up=15.0), Action4D(), t=0.1)
-    assert (d0.fsm_edge, d1.fsm_state_after) == ("X4", "Loiter"), (d0.fsm_edge,
-                                                                   d1.fsm_state_after)
-    recs = _log([d0, d1], pol)
+    ds = [sh.filter(State(x=60.0, y=21.0, up=15.0), Action4D(), t=0.0)]
+    # A search that spends its whole budget ends on its last slice's tick.
+    last = math.ceil(MAX_QUERIES / TICK_QUERIES) - 1
+    while ds[-1].hold_point is None and len(ds) <= last:
+        clock[0] = round(0.1 * len(ds), 3)
+        ds.append(sh.filter(State(x=60.0, y=20.8, up=15.0), Action4D(), t=clock[0]))
+    got = [i for i, d in enumerate(ds) if d.hold_point is not None]
+    assert got, f"no hold point in the search's {len(ds)} ticks"
+    k = got[0]
+    clock[0] = round(0.1 * len(ds), 3)                    # a Loiter tick after it
+    ds.append(sh.filter(State(x=60.0, y=20.8, up=15.0), Action4D(), t=clock[0]))
+    assert ds[0].fsm_edge == "X4" and ds[0].hold_point is None, (ds[0].fsm_edge,
+                                                                 ds[0].hold_point)
+    assert all(d.fsm_state_after == "Loiter" for d in ds), [d.fsm_state_after for d in ds]
+    recs = _log(ds, pol)
     assert recs and all(r["record_version"] == 4 for r in recs), recs[:1]
     by_tick = {r["monitor_tick"]: r for r in recs}
-    hp = by_tick[1]["fsm_hold_point"]
-    assert hp is not None and hp == d0.hold_point, (hp, d0.hold_point)
+    assert 1 in by_tick and k + 1 in by_tick and k + 2 in by_tick, sorted(by_tick)
+    # X4's tick and the search's: no point chosen yet, and none written.
+    assert all(by_tick[i]["fsm_hold_point"] is None for i in range(1, k + 1) if i in by_tick)
+    hp = by_tick[k + 1]["fsm_hold_point"]
+    assert hp is not None and hp == ds[k].hold_point, (hp, ds[k].hold_point)
     assert (hp["mode"], hp["kind"], hp["legal"]) == ("LOITER", "moved", True), hp
     # Out of the ring (y 11 to 31) the way GeofenceEscape leaves, south.
     assert hp["y"] < 11.0 and "nfz-school" in hp["reason"], hp
-    if 2 in by_tick:                                      # a Loiter tick after it
-        assert by_tick[2]["fsm_hold_point"] == hp
-    AuditRecord.model_validate(by_tick[2])
+    assert by_tick[k + 2]["fsm_hold_point"] == hp
+    AuditRecord.model_validate(by_tick[k + 2])
 
 
 def test_the_exported_schema_is_the_models():
