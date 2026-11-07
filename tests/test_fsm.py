@@ -497,14 +497,21 @@ def test_g8_hands_back_a_request_the_shield_would_fly():
 
 
 def test_the_old_loiter_law_hashes_as_every_earlier_record_did():
-    """The two Loiter-law fields enter fsm_config_hash only when they differ
-    from the law earlier records were written under: a config on that law
-    hashes as 7bfd6dc's default did, and today's default has its own hash."""
-    old = FSMConfig(loiter_clear="violation_free", loiter_x67="request")
+    """The law fields enter fsm_config_hash only when they differ from the
+    law earlier records were written under: a config on that law hashes as
+    7bfd6dc's default did, and today's default has its own hash. The same
+    for untrusted_owner (2026-11-07): "projected" on today's Loiter law
+    hashes as the default did before the field existed."""
+    old = FSMConfig(loiter_clear="violation_free", loiter_x67="request",
+                    untrusted_owner="projected")
     assert old.digest.startswith("sha256:5ae67785"), old.digest
     assert FSMConfig().digest != old.digest
     assert FSMConfig(loiter_clear="violation_free").digest not in (old.digest,
                                                                    FSMConfig().digest)
+    before = FSMConfig(untrusted_owner="projected")
+    assert before.digest.startswith("sha256:d55e1bfe"), before.digest
+    assert FSMConfig().digest != before.digest
+    raises(ValueError, FSMConfig, untrusted_owner="violated")
 
 
 def test_g8_does_not_hand_back_an_unsafe_repair_or_a_loiter_rule():
@@ -2363,34 +2370,49 @@ def test_x6_keeps_a_stop_illegal_in_the_lookahead_as_an_unsafe_position():
             break
 
 
-def test_an_over_theta_size_that_projects_no_violated_rule_is_not_distrusted():
+def test_an_untrusted_repair_beside_a_speed_cap_alone_is_the_chains_and_escalates():
     """REGRESSION (2026-11-07, corridor-drift-angles at 8 m/s, -30 deg, on the
-    ArduPilot response: a missed fail-safe, E5 on both vehicles; also on a
-    rig-like vehicle, 0.45 s and 1.75 m/s^2 from a hover). The speed cap was
-    the only rule the request broke; CorridorReturn's own "leaves within one
-    lookahead" test, along the nearest leg, also moved the clamped action by
-    more than theta for a corridor the request does not break (a dog-leg's
-    corner). That size is no repair of a violation, yet the tick abandoned
-    projection - a stop, held in Brake for the whole episode, since nothing
-    G3 could name was over theta. Theta now judges the repairs of the rules
-    being projected: G1, the Shield's action passed, and the record keeps
-    the measured `theta_exceeded` beside `theta_unattributed`. The first
-    over-theta repair of a projected hard rule still escalates (G3)."""
+    ArduPilot response: a missed fail-safe, E5 on both vehicles). The speed
+    cap was the only rule the request broke, and the Shield's repair chain -
+    which runs every operator, each on its own test - also moved the clamped
+    action by more than theta: CorridorReturn's straight-line "leaves within
+    one lookahead" along the nearest leg, for a corridor the request does
+    not break (a dog-leg's corner). The tick abandoned projection (the stop,
+    rightly: p4), but G3 needed a projected rule that is not kinematic, so
+    nothing escalated and the aircraft held in Brake for the whole episode.
+    That untrusted repair is the chain's, made for the kinematic rule: G3
+    (p4, "abandons projection and triggers fail-safe"), and Loiter keeps it
+    (not a request it would hand back) until the operator timeout."""
     kin = RuleHit("kin-caps", "project_fix", "hard", "P1", kinematic=True)
     f = EscalationFSM()
-    o = f.tick(0.0, "repaired", [kin], BIG)
-    assert o.edge == "G1" and o.setpoint == "pass", o.reason
-    assert o.record["theta_exceeded"] is True and o.record["theta_unattributed"] is True
-    for t in clock(50, t0=0.1):
+    assert f.tick(0.0, "repaired", [kin], SMALL).edge == "G1"      # the clamp alone
+    o = f.tick(0.1, "repaired", [kin], BIG)
+    assert o.edge == "G3" and o.state == S.LOITER, o.reason
+    assert "kin-caps" in o.reason and "the chain run for this kinematic rule" in o.reason
+    assert o.record["untrusted_chain"] == ["kin-caps"], o.record
+    edges = []
+    for t in clock(310, t0=0.2):
         o = f.tick(t, "repaired", [kin], BIG)
-        assert o.state == S.BRAKE and o.setpoint == "pass" and o.edge is None, (t, o.reason)
-    o = f.tick(5.1, "repaired", [kin, hit("nfz-school")], BIG)
-    assert o.edge == "G3" and "nfz-school" in o.reason, o.reason
-    assert "theta_unattributed" not in o.record, o.record
-    # Unchanged where a projected rule carries the size: X1 from Normal.
+        if o.edge:
+            edges.append((round(t, 1), o.edge))
+            break
+    assert edges == [(30.1, "G5")], edges
+    # From Normal it is the stop it always was (X1), and a projected rule
+    # beside the cap still owns the size, as before: no `untrusted_chain`.
+    o = EscalationFSM().tick(0.0, "repaired", [kin], BIG)
+    assert o.edge == "X1" and o.setpoint == "brake" and "repair over theta" in o.reason
     o = EscalationFSM().tick(0.0, "repaired", [kin, hit("ring")], BIG)
-    assert o.edge == "X1" and o.setpoint == "brake", o.reason
-    assert "theta_unattributed" not in o.record, o.record
+    assert o.edge == "X1" and "untrusted_chain" not in o.record, o.record
+    # A soft cap never changes the mode (the record still names the chain);
+    # the comparison law holds in Brake as before.
+    for cfg, rule, chain in ((FSMConfig(), RuleHit("kin-soft", "project_fix", "soft", "P1",
+                                                   kinematic=True), ["kin-soft"]),
+                             (FSMConfig(untrusted_owner="projected"), kin, None)):
+        f = EscalationFSM(cfg)
+        for t in clock(400):
+            o = f.tick(t, "repaired", [rule], BIG)
+            assert o.state == S.BRAKE, (cfg.untrusted_owner, rule.rule_id, t, o.reason)
+        assert o.record.get("untrusted_chain") == chain, o.record
 
 
 if __name__ == "__main__":

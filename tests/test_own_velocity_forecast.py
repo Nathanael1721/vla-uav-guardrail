@@ -99,8 +99,11 @@ IDENTITY_FIELDS_OUT = ("policy_hash",)
 # streams fly the law c77c77d had (`C77_LOITER_LAW`, whose config hashes as
 # c77c77d's did: FSMConfig.digest), and the one record field that came with
 # the new law is left out: `cleared_loiter_s` (Loiter's own clock, on ticks
-# that start in Loiter).
-C77_LOITER_LAW = dict(loiter_clear="violation_free", loiter_x67="request")
+# that start in Loiter). The same for whose repair an untrusted tick is
+# (FSMConfig untrusted_owner, 2026-11-07): c77c77d's reading is "projected",
+# whose ticks carry no `untrusted_chain`.
+C77_LOITER_LAW = dict(loiter_clear="violation_free", loiter_x67="request",
+                      untrusted_owner="projected")
 LOITER_LAW_FIELDS = ("cleared_loiter_s",)
 
 
