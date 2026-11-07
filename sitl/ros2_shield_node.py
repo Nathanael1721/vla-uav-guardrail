@@ -2110,7 +2110,8 @@ if HAVE_ROS:
             self.rec.event("extended_sys_state_requested", t=self._t(),
                            message_id=MSG_EXTENDED_SYS_STATE,
                            rate_hz=EXT_STATE_RATE_HZ, acknowledged=ok)
-            log.info(f"EXTENDED_SYS_STATE at {EXT_STATE_RATE_HZ} Hz requested: {ok}")
+            self.get_logger().info(
+                f"EXTENDED_SYS_STATE at {EXT_STATE_RATE_HZ} Hz requested: {ok}")
             return ok
 
         def landed_input(self) -> bool:

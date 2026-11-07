@@ -319,6 +319,18 @@ header comment were not yet committed).
 - Not flown: the next hil campaign is the first to carry it. A Land cell that
   ends before touchdown still ends without G10 (the episode's time cap).
 
+#### Fixed the same day
+- **a152a75 killed the hil node right after FCU connect.**
+  `request_extended_state` logged through `log`, a local of `bring_up`, and
+  raised NameError on the AGX. Both missions the hold shakedown hs01 tried at
+  5fc832b ended with no flight log (dyn-nfz-rotate-step, dyn-nfz-rotate-spin@3);
+  the campaign was stopped there. ArduPilot had acknowledged the request
+  (`extended_sys_state_requested`, acknowledged true) before the log line.
+- No desktop test could see it: the node class exists only where rclpy
+  imports. `test_no_sitl_script_reads_a_name_nothing_binds` (tests/test_sitl_rails.py)
+  reads every sitl script's free names with `symtable`, without importing
+  anything. It failed on a152a75's node and passes now; test_sitl_rails 69/69.
+
 ### 2026-11-07 (FSM on the rail vehicle) — an untrusted repair beside a speed cap alone now escalates (G3): the missed fail-safe on the lagging vehicles is fixed; X6 on a hold that finds no place to stop is kept, measured
 
 #### Found

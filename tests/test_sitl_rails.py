@@ -2307,6 +2307,34 @@ def test_the_shield_node_learns_landed_from_the_autopilot():
     assert "<service>/mavros/set_message_interval</service>" in shield
 
 
+def test_no_sitl_script_reads_a_name_nothing_binds():
+    """The ROS node classes exist only where rclpy imports, so no desktop test
+    runs their methods. a152a75's request_extended_state logged through
+    `log`, a local of bring_up: on the AGX it raised NameError right after
+    FCU connect and every mission of the hold shakedown hs01 (7 Nov) ended
+    with no flight. symtable sees every function's free names without
+    importing anything: each must be bound at module level or a builtin."""
+    import builtins
+    import symtable
+    allowed = set(dir(builtins)) | {"__file__", "__name__"}
+    for path in sorted(SITL.glob("*.py")):
+        top = symtable.symtable(path.read_text(encoding="utf-8"), str(path), "exec")
+        bound = {s.get_name() for s in top.get_symbols()
+                 if s.is_assigned() or s.is_imported() or s.is_namespace()}
+        unbound = []
+
+        def walk(t):
+            for s in t.get_symbols():
+                if (s.is_referenced() and s.is_global() and not s.is_declared_global()
+                        and s.get_name() not in bound and s.get_name() not in allowed):
+                    unbound.append(f"{t.get_name()}:{t.get_lineno()} {s.get_name()}")
+            for c in t.get_children():
+                walk(c)
+
+        walk(top)
+        assert not unbound, f"{path.name}: names nothing binds: {unbound}"
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     failed = 0
