@@ -229,13 +229,14 @@ def test_a_moved_hold_is_a_guided_transit_then_the_hold():
 
 def test_a_transit_not_reached_in_time_holds_where_it_is():
     """Given up once its travel time + HOLD_ARRIVAL_SLACK_S has passed and the
-    aircraft has not closed on the point for TRANSIT_STALL_S."""
+    aircraft has not moved TRANSIT_PROGRESS_M relative to the point, either
+    way, for TRANSIT_STALL_S."""
     hf = HoldFlight()
     f = _FakeFSM(hold=_moved(travel=1.0))
     assert hf.tick(f, "LOITER", 0.0, 0.0, 15.0, 0.0, 0.1).transit
     late = hf.tick(f, None, 0.0, 0.0, 15.0, 2.1, 0.1)              # due at 1.0 + 1.0 s
     assert (late.mode, late.command) == ("LOITER", None) and "not reached" in late.note
-    assert "not closing" in late.note, late.note
+    assert "neither closing nor carried away" in late.note, late.note
 
 
 def test_a_transit_still_closing_past_its_travel_time_is_flown_on():
@@ -254,6 +255,94 @@ def test_a_transit_still_closing_past_its_travel_time_is_flown_on():
     capped = hf.tick(f, None, 20.0, 0.0, 15.0, 1.0 + TRANSIT_MAX_S, 0.1)
     assert (capped.mode, capped.command) == ("LOITER", None), capped
     assert "past its travel time" in capped.note, capped.note
+
+
+# hs03_004_dyn-nfz-rotate-spin (the hil shakedown at 199cfdf), flight_log.jsonl:
+# the moved point (-189.96, -0.43) planned at 4.5 s while the aircraft was still
+# braking out of the hand-over (3.01 m/s away from it). (t, distance to the
+# point): the recorded 2.28 m at 4.5 s, 3.61 at 5.0, 4.42 at 5.5, 4.63 at 5.8,
+# 4.66 at 6.0 (the farthest) and 4.27 at 7.0, the ticks between filled from the
+# recorded velocities (3.01 m/s at 4.5 s, 2.06 at 5.0, 0.87 at 5.5, 0.24 at 5.8,
+# 0.05 at 5.9, -0.13 at 6.0); after 6.0 s the rig's own creep back toward the
+# point under BRAKE (about 0.48 m/s), a slower return than GUIDED's.
+HS03_PLAN_T, HS03_TRAVEL_S = 4.5, 0.11
+HS03_TRACE = [(4.5, 2.28), (4.6, 2.57), (4.7, 2.85), (4.8, 3.11), (4.9, 3.37),
+              (5.0, 3.61), (5.1, 3.82), (5.2, 4.01), (5.3, 4.17), (5.4, 4.31),
+              (5.5, 4.42), (5.6, 4.51), (5.7, 4.58), (5.8, 4.63), (5.9, 4.65),
+              (6.0, 4.66), (6.1, 4.64), (6.2, 4.60), (6.3, 4.56), (6.4, 4.52),
+              (6.5, 4.47), (6.6, 4.43), (6.7, 4.39), (6.8, 4.35), (6.9, 4.31),
+              (7.0, 4.27)]
+
+
+def _watch_trace(trace, t0, travel):
+    """Feed (t, d) to HoldFlight along +x from a point at the origin; the
+    first tick the hold mode is sent, or None."""
+    hf = HoldFlight()
+    f = _FakeFSM(hold=HoldPoint("LOITER", "moved", 0.0, 0.0, 15.0, legal=True,
+                                travel_s=travel, speed_mps=4.0, climb_mps=2.0, t_s=t0))
+    for t, d in trace:
+        out = hf.tick(f, None, d, 0.0, 15.0, t, 0.1)
+        if out.mode == "LOITER":
+            return t, out.note
+    return None
+
+
+def test_the_hs03_overshoot_is_not_given_up():
+    """hs03 (199cfdf) gave the transit up at 5.8 s, 4.63 m off ("not closing
+    for 1.3 s"), one tick before the aircraft's velocity crossed zero, and the
+    hold BRAKE then kept it about 4.3 m forward of the point, where the bar's
+    sweep reached it (X6 at 31.1 s). The overshoot is braked out by the
+    transit's own command: it is not "not closing"."""
+    assert _watch_trace(HS03_TRACE, HS03_PLAN_T, HS03_TRAVEL_S) is None
+    # Stuck at its farthest from then on, it is given up TRANSIT_STALL_S after
+    # its distance last moved 5 cm (4.58 -> 4.63 m at 5.8 s).
+    from guardrail.hold_flight import TRANSIT_STALL_S
+    stuck = [(t, d) for t, d in HS03_TRACE if t <= 6.0 + 1e-9]
+    stuck += [(round(6.0 + 0.1 * k, 1), 4.66) for k in range(1, 40)]
+    got = _watch_trace(stuck, HS03_PLAN_T, HS03_TRAVEL_S)
+    assert got is not None and abs(got[0] - (5.8 + TRANSIT_STALL_S)) < 1e-9, got
+    assert "neither closing nor carried away" in got[1], got
+
+
+def test_a_transit_that_cannot_close_is_given_up():
+    """A wind the aircraft cannot beat: held at one distance it is given up
+    TRANSIT_STALL_S after its plan (its deadline passed); carried away
+    steadily it is given up TRANSIT_MAX_S after its travel time."""
+    from guardrail.hold_flight import TRANSIT_MAX_S, TRANSIT_STALL_S
+    held = [(round(0.1 * k, 1), 3.0) for k in range(0, 60)]
+    t, note = _watch_trace(held, 0.0, 0.75)
+    assert abs(t - max(0.75 + 1.0, TRANSIT_STALL_S)) < 1e-9, (t, note)
+    assert "neither closing nor carried away" in note, note
+    away = [(round(0.1 * k, 1), 3.0 + 0.08 * k) for k in range(0, 200)]
+    t, note = _watch_trace(away, 0.0, 0.75)
+    assert abs(t - (0.75 + TRANSIT_MAX_S)) < 0.1 + 1e-9, (t, note)
+    assert "past its travel time" in note, note
+
+
+def test_the_rail_arm_gives_up_by_the_rails_own_rule():
+    """Parity (experiments/sweep_scenarios.py TRANSIT_GIVE_UP_RESPONSES): the
+    harness's rail arm judges each moved transit with hold_flight.TransitWatch,
+    the class HoldFlight uses, on every tick of its plan; the ideal arm does
+    not give up."""
+    import sweep_scenarios as SW
+    from guardrail import hold_flight as HF
+    seen = []
+
+    class Spy(HF.TransitWatch):
+        def update(self, dist, t):
+            seen.append((t, dist))
+            return super().update(dist, t)
+    keep = HF.TransitWatch
+    HF.TransitWatch = Spy
+    try:
+        _spin("rail", 3)
+        rail = list(seen)
+        seen.clear()
+        _spin("ideal", 3)
+    finally:
+        HF.TransitWatch = keep
+    assert SW.HF is HF and "rail" in SW.TRANSIT_GIVE_UP_RESPONSES
+    assert rail and not seen, (len(rail), len(seen))
 
 
 def test_a_moved_landing_site_is_reached_level_then_landed():

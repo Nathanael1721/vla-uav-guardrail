@@ -336,6 +336,7 @@ ROOT = Path(__file__).resolve().parents[1]
 _REPO = ROOT
 sys.path.insert(0, str(ROOT))
 
+from guardrail import hold_flight as HF                            # noqa: E402
 from guardrail import kpi as K                                     # noqa: E402
 from guardrail import rtl_path as RP                               # noqa: E402
 from guardrail import scenario_events as SE                        # noqa: E402
@@ -629,7 +630,10 @@ def _autopilot(mode: str | None, st: State, home: tuple[float, float],
     GUIDED position target before the hold mode is set on arrival: straight
     at the plan's speed horizontally (the policy's cap, guardrail/
     holdpoint.py) and its climb rate vertically, each axis braking onto the
-    point in its last step; a Land transits level, then descends. Under the
+    point in its last step; a Land transits level, then descends. On the
+    `rail` arm (TRANSIT_GIVE_UP_RESPONSES) _episode gives a transit up as the
+    rails do (hold_flight.TransitWatch) and then passes no hold here: held where
+    the aircraft is, as a reached one is. Under the
     vehicle-response arm (`shaped`) each axis is the sqrt controller of its
     remaining distance instead, capped at the same speeds, as the arm's RTL
     is above and for the same reason: the target is a POSITION, and
@@ -819,6 +823,15 @@ RESPONSE_ENTRY = {"ardupilot": "cruise", "rail": "rest"}
 # AUTOPILOT_HOLD_MODELS "moved_points"). Until then "in_place": ArduPilot's own
 # hold where the aircraft is, what every rail flew.
 RAIL_VEHICLE = {"response": "rail", "autopilot_hold": "moved_points"}
+# The response arms whose modelled autopilot GIVES UP a moved hold's transit
+# as the rails do (since 2026-11-07, evening; guardrail/hold_flight.py,
+# GIVING UP): by the rails' own TransitWatch, judged on every tick of the plan
+# on the true position, so a transit the rig would give up is given up here on
+# the same tick, and a headless rail-arm number predicts the rig. Until then
+# the harness flew every moved transit until it was reached; the ideal vehicle
+# and the ArduPilot arm still do (the ideal vehicle arrives on its travel time;
+# the ArduPilot arm models no rail of its own).
+TRANSIT_GIVE_UP_RESPONSES = ("rail",)
 
 
 # The correction rate a non-negative error asks for (ArduPilot's AP_Math
@@ -1546,6 +1559,10 @@ def _episode(sc, defaults, seed: int, arm: dict | None, box: dict,
     hold: dict | None = None
     hold_done = False
     holds_taken: list[dict] = []
+    # When to give up a moved hold's transit, as the rails do (the rail arm
+    # only, TRANSIT_GIVE_UP_RESPONSES): one TransitWatch per moved plan.
+    give_up_transits = response in TRANSIT_GIVE_UP_RESPONSES
+    hold_watch: "HF.TransitWatch | None" = None
     owner_ticks = {"shield": 0, "autopilot": 0, "pilot": 0}
     ap_mode_ticks: dict[str, int] = {}
     ap_p0_by_mode: dict[str, int] = {}
@@ -1700,6 +1717,8 @@ def _episode(sc, defaults, seed: int, arm: dict | None, box: dict,
                 hold = None
             elif hold is None or hp.get("t_s") != hold.get("t_s"):
                 hold, hold_done = hp, False
+                hold_watch = (HF.TransitWatch(hp["t_s"], hp["travel_s"])
+                              if give_up_transits and hp.get("kind") == "moved" else None)
                 if (d.fsm_record or {}).get("hold_chosen"):
                     holds_taken.append({k: hp[k] for k in (
                         "t_s", "mode", "kind", "legal", "x", "y", "up", "travel_s",
@@ -1708,6 +1727,18 @@ def _episode(sc, defaults, seed: int, arm: dict | None, box: dict,
                                    **{k: hp[k] for k in ("mode", "kind", "legal", "x",
                                                          "y", "up", "travel_s",
                                                          "breaks", "reason")}})
+            # The rails judge a moved transit on every tick of its plan, from
+            # the tick the plan is taken (guardrail/hold_flight.py HoldFlight);
+            # the rail arm judges it on the same ticks, by the same rule, on
+            # the true position. Given up, the plan is held where the aircraft
+            # is from this tick on, as a reached one is.
+            if (hold_watch is not None and hold is not None and not hold_done
+                    and not hold_reached(st, hold)
+                    and hold_watch.update(HF.transit_distance(st.x, st.y, st.up, hold),
+                                          t_now)):
+                hold_done = True
+                events.append({"t": round(t_now, 4), "type": "hold_transit_given_up",
+                               "note": hold_watch.why})
         if not on:
             # Shield OFF flies the RAW action, so the violations found on `raw`
             # are the flown action's - the same rule the SITL rails follow, and
