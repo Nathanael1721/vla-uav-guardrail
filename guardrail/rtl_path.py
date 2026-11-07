@@ -118,6 +118,26 @@ def rtl_altitude(up: float, rtl_alt_m: float = RTL_ALT_M) -> float:
     return max(float(up), float(rtl_alt_m))
 
 
+# Horizontally "over the launch point" for the FSM's G9 (RTL -> home reached).
+HOME_TOL_M = 2.0
+# How far below RTL_ALT the climb counts as done (the harness's 0.1 m).
+RTL_CLIMB_TOL_M = 0.1
+
+
+def home_reached(x: float, y: float, up: float, home: tuple[float, float], *,
+                 tol_m: float = HOME_TOL_M, rtl_alt_m: float = RTL_ALT_M) -> bool:
+    """The FSM's G9 input while RTL flies: home is reached at the END of
+    RTL's return leg - over the launch point (within `tol_m`) AFTER the climb
+    to the return altitude (rtl_altitude: RTL_ALT, or higher when the leg
+    began higher), as ArduCopter flies it. The one test the headless harness
+    and the ROS 2 rail's Shield node ask (2026-11-07). Until then the node
+    asked the distance alone, and on the rails home is the scenario's start:
+    an RTL entered beside the start reported home on its first tick, below
+    the climb (the hil rehearsal rh01_038 ended at 3.0 m, under the floor)."""
+    return (float(up) >= float(rtl_alt_m) - RTL_CLIMB_TOL_M
+            and math.hypot(float(x) - home[0], float(y) - home[1]) <= tol_m)
+
+
 def remaining_to_home(x: float, y: float, up: float, home: tuple[float, float],
                       rtl_alt_m: float = RTL_ALT_M) -> float:
     """Metres of RTL still to fly: the climb to the return altitude plus the

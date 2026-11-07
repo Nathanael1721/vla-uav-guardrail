@@ -2058,6 +2058,74 @@ def test_every_row_carries_the_rule_clock_and_the_previous_judgement_reads_its_o
     assert node.clock() > clocks[-1]
 
 
+def test_g9_home_needs_the_rtl_climb_as_the_harness_asks_it():
+    """G9 on the ROS 2 rail (2026-11-07): home is reached at the END of RTL's
+    return leg - over the start within REACH_M AFTER the climb to RTL_ALT
+    (guardrail.rtl_path.home_reached, the harness's own test since the same
+    day). Until then the node asked the distance alone, and on the rails
+    home IS the scenario's start: rh01_038's RTL, entered beside the start
+    at 3 m, reported home on its next tick and the mission ended below the
+    floor. The null: the same tick at the return altitude is home."""
+    from guardrail.rtl_path import home_reached
+    assert not home_reached(0.0, 0.0, 3.0, (0.0, 0.0))
+    assert home_reached(0.0, 0.0, 15.0, (0.0, 0.0)) and home_reached(1.9, 0.0, 14.95, (0.0, 0.0))
+    assert not home_reached(2.1, 0.0, 15.0, (0.0, 0.0))
+    assert home_reached(0.0, 0.0, 22.0, (0.0, 0.0)), "an RTL above RTL_ALT returns there"
+    RN, N, node, clk, out = _scenario_node(["--start=-30,-30,3", "--no-target", "--max-s", "30"])
+    seen = []
+    real = N.tick_input_from_decision
+
+    def spy(*a, **kw):
+        seen.append(kw.get("home_reached"))
+        return real(*a, **kw)
+    N.tick_input_from_decision = spy
+    try:
+        _ekf_pose(RN, N, node, up=3.0)
+        node.start_mission()
+        node.mode = "RTL"
+        _fly(RN, N, node, clk, 1, up=3.0)          # over the start, below the climb
+        _fly(RN, N, node, clk, 1, up=15.0)         # over it at the return altitude
+        node.mode = "GUIDED"
+        _fly(RN, N, node, clk, 1, up=15.0)         # not in RTL: never home
+    finally:
+        N.tick_input_from_decision = real
+    assert seen == [False, True, False], seen
+
+
+def test_after_the_fsm_ends_the_mission_the_rail_logs_on_to_the_landing():
+    """The ROS 2 rail no longer ends the episode on the FSM's terminal edge
+    (G9 / G10 / X5) or FAILSAFE_GRACE_S after a fail-safe: it logs on until
+    the autopilot has landed or disarmed, or the time cap (2026-11-07), so
+    what RTL flies to its end is in the log (the stress harness gates its
+    safety invariants over it). `mission_terminal` marks the edge once;
+    metrics.json `after_terminal` says when and how it ended. The null: an
+    aircraft still flying after the edge is not the end."""
+    ends = []
+    for how in ("landed", "disarmed"):
+        RN, N, node, clk, out = _scenario_node(["--start=-30,-30,15", "--no-target",
+                                                "--max-s", "30"])
+        assert node.fsm is not None
+        _ekf_pose(RN, N, node)
+        node.start_mission()
+        _fly(RN, N, node, clk, 2)
+        node.fsm._terminal = True                     # G9: the FSM ended the mission
+        _fly(RN, N, node, clk, 3)
+        assert not node.done and len(node.rows) == 5, (node.done, len(node.rows))
+        assert len([e for e in RN._events(out) if e["kind"] == "mission_terminal"]) == 1
+        if how == "landed":
+            node.landed = True
+        else:
+            node.armed = False
+        _fly(RN, N, node, clk, 1)
+        assert node.done, how
+        m = json.loads((out / "metrics.json").read_text(encoding="utf-8"))
+        end = [e for e in RN._events(out) if e["kind"] == "mission_end"][-1]
+        assert end["why"] == "escalation FSM ended the mission", end
+        ends.append(m["after_terminal"]["ended"])
+        assert m["after_terminal"]["terminal_t"] is not None
+    assert ends == ["landed", "disarmed"], ends
+
+
 def test_every_row_carries_the_decisions_trace_words_the_harness_counts():
     """`shield_trace` (2026-11-07): the words of the decision's trace the
     stress harness counts per tick (window_opens_on / window_opened_on,

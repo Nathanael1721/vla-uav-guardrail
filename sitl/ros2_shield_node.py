@@ -325,6 +325,7 @@ from guardrail.manifest import (DEV_YAML_FLAG, UNRESOLVED,               # noqa:
 from guardrail.models import (AltitudeEnvelope, PolygonFence,             # noqa: E402
                               SubjectStandoff, XY)
 from guardrail.projection import LocalProjection                          # noqa: E402
+from guardrail.rtl_path import home_reached                               # noqa: E402
 from guardrail.replay import (EpisodeRecord, audit_tick,                  # noqa: E402
                               episode_row_fields, flown_fields,
                               kpi_evidence_grade, rail_shield, rule_clock,
@@ -1532,6 +1533,11 @@ if HAVE_ROS:
             self.mav_connected = False
             self.mode: str | None = None
             self.landed: bool | None = None
+            # /mavros/state's armed flag, and the mission's end after the FSM
+            # ended it (its terminal edge; logging went on to the landing).
+            self.armed: bool | None = None
+            self._terminal_t: float | None = None
+            self.after_terminal: dict | None = None
             self.traj: list[dict] = []
             self.rows: list[dict] = []
             # Evidence of the topology, gathered from the live system rather
@@ -1759,6 +1765,7 @@ if HAVE_ROS:
 
         def _on_state(self, msg: MavState) -> None:
             self.mav_connected = msg.connected
+            self.armed = bool(msg.armed)
             note_mavros_state(self.hil_evidence, msg.connected)
             if msg.mode != self.mode:
                 self.rec.event("mode", t=self._t(), mode=msg.mode,
@@ -2996,10 +3003,15 @@ if HAVE_ROS:
                     inp = tick_input_from_decision(
                         now, decision, self.policy, horizon_s=self.theta_horizon_s,
                         rtl_failed=False,
-                        # Home is --start's position in the policy frame.
+                        # Home is --start's position in the policy frame,
+                        # reached at the end of RTL's return leg: over it
+                        # AFTER the climb (guardrail.rtl_path.home_reached,
+                        # the harness's own test, 2026-11-07). Until then
+                        # the distance alone: an RTL entered beside the
+                        # start reported home below the climb (rh01_038).
                         home_reached=(self.mode == "RTL"
-                                      and math.hypot(st.x - self.start_xy[0],
-                                                     st.y - self.start_xy[1]) < REACH_M),
+                                      and home_reached(st.x, st.y, st.up, self.start_xy,
+                                                       tol_m=REACH_M)),
                         landed=bool(self.landed) and self.mode in ("RTL", "LAND"),
                         stop_illegal=stop_illegal, unsafe_depth_m=unsafe_depth,
                         # The caps the Shield clamped against on this tick,
@@ -3143,10 +3155,25 @@ if HAVE_ROS:
             if self.takeover is not None and (
                     self.landed or now - self.takeover["t"] > TAKEOVER_GRACE_S):
                 self._finish(f"autopilot took over ({self.takeover['mode']})")
-            elif self.fsm is not None and (self.fsm.terminal or (
-                    self.failsafe_t is not None
-                    and now - self.failsafe_t > FAILSAFE_GRACE_S)):
-                self._finish("escalation FSM ended the mission")
+            elif self.fsm is not None and (self.fsm.terminal or self.failsafe_t is not None):
+                # The FSM handed the aircraft to RTL / Land (failsafe_t) or
+                # ended the mission (G9, G10, X5): the rail logs on until the
+                # autopilot has landed or disarmed, or the time cap - what the
+                # fail-safe flies to its end, RTL's recovery and landing, is in
+                # the log (2026-11-07; the stress harness gates its safety
+                # invariants over it). Until then G9 ended the episode at once,
+                # and a fail-safe FAILSAFE_GRACE_S after it began.
+                if self.fsm.terminal and self._terminal_t is None:
+                    self._terminal_t = now
+                    self.rec.event("mission_terminal", t=now, mode=self.mode,
+                                   edge=(fsm_out.edge if fsm_out is not None else None),
+                                   logging_on="until landed or disarmed, or the time cap")
+                if self.landed or self.armed is False:
+                    self.after_terminal = {"terminal_t": (None if self._terminal_t is None
+                                                          else round(self._terminal_t, 3)),
+                                           "ended": "landed" if self.landed else "disarmed",
+                                           "t": round(now, 3)}
+                    self._finish("escalation FSM ended the mission")
 
         # ---------------- wrap-up ---------------- #
 
@@ -3386,6 +3413,13 @@ if HAVE_ROS:
                          "theta_basis": theta_basis(self.theta_horizon_s),
                          "fault": self.fsm_fault} if self.fsm else None),
                 "autopilot_took_over": self.takeover,
+                # After the FSM's terminal edge the rail logged on to the
+                # landing (2026-11-07): when the edge came, and how it ended
+                # (landed / disarmed; None: the time cap, or no terminal edge).
+                "after_terminal": (self.after_terminal if self.after_terminal is not None
+                                   else ({"terminal_t": round(self._terminal_t, 3),
+                                          "ended": None}
+                                         if self._terminal_t is not None else None)),
                 # Both vocabularies (mavlink_adapter_node.ModeRequests): the
                 # FSM's words, and what ArduCopter was asked for (a request
                 # through the adapter is flown as the adapter's hold mode).
