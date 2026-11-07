@@ -333,8 +333,11 @@ TICK_QUERIES = 100
 # samples of the command's flight as fit in this many units at the world's
 # dearest stop query (stop_cost_bound), never more than one every
 # shield.HANDBACK_STEP_S. Until then always one every HANDBACK_STEP_S through
-# the lookahead: up to 17.5 ms on the desktop (10 stop queries in a world of
-# many zones; p50 1.7 ms).
+# the lookahead, whatever a stop query cost (up to 17.5 ms measured on the
+# desktop; p50 1.7 ms). Every library world still fits all of them (a stop
+# query there is priced at 4 units at most): the bound caps dearer worlds
+# only. The price is the ledger's, and in a corridor world a stop query costs
+# about 2.3x it (docs/DESIGN-hold-points.md, "The per-tick bound").
 HANDBACK_QUERIES = 40
 # A search not resumed for this long was abandoned by the loop that ran it (an
 # episode that ended mid-search, a node shut down): its thread ends. A live
@@ -1426,7 +1429,11 @@ class HoldPlanner:
                 world = shield._tick_ctx() or shield._new_tick(None)
             self._state = fsm.state
             self._replan = fsm.hold is not None
-            s = self.search = HoldSearch(shield, run, world, self.units)
+            try:
+                s = self.search = HoldSearch(shield, run, world, self.units)
+            except RuntimeError:                    # a thread that cannot start
+                self.search, self.last = None, None
+                return run()                        # the whole search, as before
         from .fsm import FSMState                  # local: as plan_for
         if not s.step():
             if (s.ticks == 1 and self._replan and fsm.hold is not None

@@ -240,9 +240,9 @@ def test_a_transit_not_reached_in_time_holds_where_it_is():
 
 def test_a_transit_still_closing_past_its_travel_time_is_flown_on():
     """The hil shakedown (hs02, rotate-spin@3): a 0.43 m move planned at 0.25 s
-    was given up 1.25 s after the plan with the aircraft still closing (the
-    sqrt controller's last metre and the rig's lag are not in the plan's
-    travel time). Flown on while it closes; TRANSIT_MAX_S caps it."""
+    was given up 1.25 s after the plan (the sqrt controller's last metre and
+    the rig's lag are not in the plan's travel time). Flown on while it
+    closes; TRANSIT_MAX_S caps it."""
     from guardrail.hold_flight import TRANSIT_MAX_S
     hf = HoldFlight()
     f = _FakeFSM(hold=_moved(x=40.0, travel=1.0))
@@ -355,6 +355,23 @@ def test_a_replan_holds_in_place_while_its_search_runs():
     f.state = S.NORMAL
     assert planner.tick(sh, f, run, here=HERE, unsafe=[]) is None
     assert planner.search is None
+
+
+def test_a_search_that_raises_holds_in_place_marked_illegal():
+    """An exception on the search's thread never reaches the rail's loop: the
+    plan is an in-place one marked illegal that names it."""
+    sh = _slow_bar(half_len=1.5)
+
+    class _Asks(_FakeFSM):
+        @property
+        def needs_hold(self):
+            return self.state in (S.LOITER, S.LAND)
+
+    def boom():
+        raise RuntimeError("no geometry")
+    got = HP.HoldPlanner(units=20.0).tick(sh, _Asks(), boom, here=HERE, unsafe=[])
+    assert got is not None and (got.kind, got.legal) == ("in_place", False), got
+    assert "RuntimeError" in got.reason, got.reason
 
 
 def test_the_hand_back_guard_is_bounded_by_its_units():

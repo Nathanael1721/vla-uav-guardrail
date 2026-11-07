@@ -16,6 +16,80 @@ shipped change and recorded as one.
 
 ## [Unreleased]
 
+### 2026-11-07 (per-tick bound) — the hold-point search is spread over ticks, a fixed count of its budget a tick, so no Loiter tick pays for a whole search; the hand-back guard is bounded; the rails' transit is not given up while it closes
+
+#### Found
+- The hil shakedown hs02 (d186077) flew the moved hold of
+  dyn-nfz-rotate-spin@3 on the AGX Orin (G1, G3, Loiter, G8 at tick 264, G1,
+  G7; no fail-safe, P0 0, breaches 0), but the tick that planned it took
+  146.9 ms (e2e 167.5 ms; `shield_ms` 13 ms), over WP3-13's 100 ms tick: the
+  search spent its budget (up to `MAX_QUERIES`, 37.8 ms at most on the
+  desktop) on one tick, and the Orin is about 3-4x slower on this code. The
+  hand-back guard made its 10 stop queries whatever each cost (up to 17.5 ms
+  measured on the desktop).
+- On the same flight the moved hold, a 0.43 m move planned at 0.25 s, was
+  given up 1.25 s after the plan ("moved hold not reached by 5.4 s"): the
+  plan's travel time leaves out the sqrt controller's last metre, the rig's
+  lag and the drift of the hand-over's stop, so a deadline of travel time +
+  1 s does not suit the rig.
+
+#### Changed
+- `guardrail/holdpoint.py`: THE PER-TICK BOUND. `HoldSearch` runs a search
+  on a thread of its own, in the world of the tick it started on, and hands
+  it `TICK_QUERIES` = 100 units of its ledger a tick (every `_Ledger` charge
+  is the pause point; a count, not a clock, and the two threads never run at
+  once, so sweeps stay reproducible and the plan is the one the whole search
+  makes on that tick). `HoldPlanner` drives it for whoever runs the FSM:
+  nothing new is held until the plan arrives (on entry the FSM's hold is
+  None, flown in place; on a re-plan an in-place plan is taken on the
+  search's first tick), and a search whose FSM state ended is dropped;
+  `HoldPlanner(units=None)` plans within the tick, as before.
+  `HANDBACK_QUERIES` = 40 and `stop_cost_bound` size the hand-back guard.
+  `MAX_QUERIES` is unchanged (600): a search keeps its reach and takes up to
+  6 ticks.
+- `guardrail/shield.py`: `_escalate` plans through the Shield's
+  `HoldPlanner` (a record of a plan found over more than one tick carries
+  `hold_search`); `reset_episode` drops a running search;
+  `handback_unsafe` samples at most `HANDBACK_QUERIES` units' worth at the
+  world's dearest stop query, never closer than `HANDBACK_STEP_S` (every
+  library world still fits all 10 samples: nothing measured there changes).
+- `sitl/run_sitl_demo.py`, `sitl/ros2_shield_node.py`: plan through a
+  `HoldPlanner`; the `hold_point` event carries `search` (ticks, units).
+- `guardrail/hold_flight.py`: a transit is given up only once its travel
+  time plus `HOLD_ARRIVAL_SLACK_S` has passed and it has not closed
+  `TRANSIT_PROGRESS_M` for `TRANSIT_STALL_S`, or `TRANSIT_MAX_S` after its
+  travel time.
+- `guardrail/fsm.py`: docstring only (`needs_hold` may be answered ticks
+  later). The FSM, its edges and its config hash are unchanged.
+
+#### Measured (headless, desktop; docs/DESIGN-hold-points.md, "The per-tick bound")
+- Hold work per tick on the library's rail arm (plan slice +
+  `hold_point_legal` + `handback_unsafe`): p50 1.77 ms, p99 4.52 ms, max
+  13.9 ms, where one planning tick paid up to 37.8 ms of plan before; the
+  whole Loiter tick max 39.9 -> 28.4 ms. 5 of 78 plans spread over more than
+  one tick (rotate-spin 4-5 ticks, translate 2). Under a loaded machine
+  (both trees side by side) the worst hold work per tick fell from 39.5 ms
+  (rotate-spin@3's plan tick) to 21.6 ms, now the hand-back guard in a
+  corridor world, whose stop queries cost about 2.3x what the ledger prices
+  them at (profiled; the price is shared with the search's budget, not
+  changed here).
+- Flown twice, the cells whose plans spread give the same rows (A/A).
+- Rail arm (moved holds) against 5fc832b, flown 35 s longer where
+  censored: smoke (a) 52/63, (r) 62/63, (r2) 63/63; library (a) 160/179,
+  (r) 177/179, (r2) 179/179; nightly (a) 654/741, (r) 729/741, (r2)
+  741/741 (Wilson low 0.995); the ideal arm the same as before on every
+  profile; P0 escapes 0 and breaches 0 on both arms of every profile; mean
+  time to safe unchanged (rail 3.731 / 3.803 / 3.849 s, ideal 2.533 /
+  2.585 / 2.570 s). Every per-episode KPI field is the same in all 1,966
+  episodes; one cell's edges moved in time: dyn-nfz-rotate-spin@3 on the
+  rail vehicle (every seed), G8 9.5 -> 9.6 s and G7 21.1 -> 21.2 s, its
+  moved hold planned over 5 ticks.
+
+#### Not done
+- The Orin is not re-measured: at its 3-4x the worst hold work per tick is
+  about 42-56 ms. A live subject's position (stand-off rules) is read as the
+  rail last set it, not frozen with the search's world.
+
 ### 2026-11-07 (hold horizon) — a Loiter's hold stays legal for as long as it is held, the rails fly it, and Loiter does not hand back into a sweep: dyn-nfz-rotate-spin is no longer sent home by X6 on the lagging vehicles
 
 #### Found

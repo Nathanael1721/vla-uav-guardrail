@@ -84,6 +84,19 @@ X6 on the lagging vehicles: the rail vehicle's own labels (r2) go from
 `sha256:3b54b4e3...`. docs/DESIGN-hold-points.md, "A hold legal for as
 long as it is held, flown by the rails", has the mechanism and the numbers.
 
+**Update 2026-11-07, evening (the per-tick bound).** The FSM is unchanged,
+but the plan it asks for (`needs_hold`) may now arrive a few ticks later: the
+hold-point search gets `holdpoint.TICK_QUERIES` units of its budget a tick
+(`HoldPlanner`, for the Shield's own escalation and both rails), because on
+the hil shakedown (hs02) one planning tick took 146.9 ms on the Orin, over
+WP3-13's 100 ms. Until the plan arrives the hold is None on entry (held in
+place; X6 / X7 judge the aircraft's own position, as for any in-place hold)
+or, on a re-plan, an in-place plan given on the search's first tick, and
+`needs_hold` stays True. A record of a plan found over more than one tick
+carries `hold_search` (`ticks`, `units`; `running` on the ticks before). The
+hand-back guard samples at most `holdpoint.HANDBACK_QUERIES` units a tick.
+docs/DESIGN-hold-points.md, "The per-tick bound", has the numbers.
+
 ## 2026-11-07: the FSM on the rail vehicle
 
 The hil rail flies ArduCopter 4.5.7 SITL in GUIDED. Labelled on a vehicle

@@ -85,11 +85,11 @@ REACHED_M = 0.5
 # closed TRANSIT_PROGRESS_M on the point for TRANSIT_STALL_S - or, closing or
 # not, TRANSIT_MAX_S after its travel time. Until then the deadline alone gave
 # up: on the hil shakedown (hs02, dyn-nfz-rotate-spin@3) a 0.43 m move planned
-# at 0.25 s was given up 1.25 s after the plan with the aircraft still closing -
-# the plan's travel time is the straight line at the policy's speed cap, and
-# the sqrt controller's last metre (gain TRANSIT_P: a 1 s time constant) and
-# the rig's lag (0.13 s, the hover start) are not in it. The harness's
-# modelled transit never gives up.
+# at 0.25 s was given up 1.25 s after the plan - the plan's travel time is the
+# straight line at the policy's speed cap, and the sqrt controller's last
+# metre (gain TRANSIT_P: a 1 s time constant), the rig's lag (0.13 s, the
+# hover start) and the drift of the hand-over's stop are not in it. The
+# harness's modelled transit never gives up.
 TRANSIT_STALL_S = 1.0
 TRANSIT_PROGRESS_M = 0.05
 TRANSIT_MAX_S = 10.0
