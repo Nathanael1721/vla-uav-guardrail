@@ -733,6 +733,55 @@ def test_the_fit_says_so_when_the_bias_rule_falls_back():
         FV.GRID_L, FV.GRID_A = keep
 
 
+def test_the_fit_reads_a_ros2_rails_runs_with_the_shields_numbers_beside():
+    """--rig (2026-11-07, a report only: guardrail/response.py is not
+    changed). The same fit and rule on a ROS 2 rail's own runs (the hil
+    rig's rh01): each row's command as SENT - `emitted` on a "pass" tick,
+    zero on a "brake" tick (whose `emitted` the rail did not send), none when
+    the autopilot flew - ArduPilot's mode, and the FSM's LOITER flown as
+    BRAKE; run folders an exclusion names are left out. The Shield's current
+    numbers are scored beside the rule's choice on the same windows: on a
+    grid holding only them the two are the same row, value for value."""
+    import tempfile
+    sys.path.insert(0, str(ROOT / "tools"))
+    import fit_velocity_response as FV
+    from guardrail import response as R
+    base = {"t": 0.1, "tick": 1, "x": 1.0, "y": 2.0, "up": 15.0, "mode": "GUIDED"}
+    sent = FV._slim_rig("r", dict(base, flown=True, setpoint="pass", set_mode=None,
+                                  emitted={"vx": 3.0, "vy": -1.0, "vz_up": 0.5}))
+    assert sent["cmd"] == [3.0, -1.0, 0.5] and sent["ap_mode"] == "GUIDED", sent
+    brake = FV._slim_rig("r", dict(base, flown=True, setpoint="brake", emitted={"vx": 3.0}))
+    assert brake["cmd"] == [0.0, 0.0, 0.0], brake
+    held = FV._slim_rig("r", dict(base, flown=False, setpoint="none", set_mode="LOITER",
+                                  mode="BRAKE", emitted={"vx": 3.0}))
+    assert held["cmd"] is None and held["autopilot_set_mode"] == "BRAKE", held
+    with tempfile.TemporaryDirectory() as td:
+        for name in ("rh_001_cell", "rh_002_near-edge-at-12mps"):
+            (Path(td) / name).mkdir()
+            (Path(td) / name / "flight_log.jsonl").write_text(
+                json.dumps(dict(base, flown=True, setpoint="pass", emitted={"vx": 1.0}))
+                + "\n" + json.dumps({"event": "mission_terminal"}) + "\n", encoding="utf-8")
+        runs = FV.load_rig_runs([str(Path(td) / "rh_*")], ("*near-edge-at-12mps*",))
+    assert list(runs) == ["rh_001_cell"] and len(runs["rh_001_cell"]) == 1, runs
+    keep = FV.GRID_L, FV.GRID_A
+    try:
+        FV.GRID_L = [R.ARDUCOPTER_GUIDED.reaction_s]
+        FV.GRID_A = [R.ARDUCOPTER_GUIDED.accel_mps2]
+        rep = FV.fit(FV.load_fixture(FV.FIXTURE), R.ARDUCOPTER_GUIDED)
+    finally:
+        FV.GRID_L, FV.GRID_A = keep
+    cur, c = rep["current"], rep["chosen"]
+    assert cur["on_grid"] and (cur["reaction_s"], cur["accel_mps2"]) == (
+        c["reaction_s"], c["accel_mps2"]), (cur, c)
+    for k in ("objective", "shield_decel_bias_m", "decel_bias_m", "stop_from_cap_m"):
+        assert abs(cur[k] - c[k]) < 1e-9, (k, cur[k], c[k])
+    t = rep["table"]
+    assert (t["Shield form, with the pipe, the current numbers"]
+            == t["Shield form, with the pipe (note_flown)"])
+    assert t["physical form, the current numbers"] == t["physical form, the Shield's numbers"]
+    assert cur["brake"]["chosen"] == rep["brake"]["chosen"], (cur["brake"], rep["brake"])
+
+
 # --------------------------------------------------------------------------- #
 # The 14 Oct replay, and the stop-point counterfactual
 # --------------------------------------------------------------------------- #

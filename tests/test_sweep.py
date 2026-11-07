@@ -3425,6 +3425,22 @@ def test_after_the_mission_ends_the_autopilots_landing_counts_for_zones_only():
     bare = [{k: v for k, v in r.items() if k != "fsm_edge"} for r in rows]
     null = S.sitl_extra(spec, bare, metrics, pol)
     assert null["ended_safe"] is False and null["autopilot_breaches"] == 1, null
+    # These rows name no rule (NO_RULE_NAMES): the autopilot's keep-out count
+    # is all its breaches, read up to the mission's end like them.
+    assert extra["autopilot_keepout_breaches"] == 0 and null["autopilot_keepout_breaches"] == 1
+    assert "autopilot_departures" not in extra and extra["autopilot_scope_basis"] == S.NO_RULE_NAMES
+    # Named: the descent below the floor breaks the altitude band alone - no
+    # keep-out breach over the whole flight - and a landing in a zone is the
+    # autopilot's keep-out entry, gated, though the mission had ended.
+    named = [dict(r, unsafe_rules=(["alt-band"] if r["unsafe"] else [])) for r in rows]
+    ex = S.sitl_extra(spec, named, metrics, pol)
+    assert ex["autopilot_keepout_breaches"] == 0, ex
+    assert ex["autopilot_departures"] == {"corridor": 0, "altitude_band": 0}, ex
+    named[9]["unsafe_rules"] = ["alt-band", "nfz-square"]
+    ex = S.sitl_extra(spec, named, metrics, pol)
+    assert (ex["autopilot_keepout_breaches"], ex["breaches"], ex["autopilot_breaches"]) == (
+        1, 0, 0), ex
+    assert ex["in_window"]["autopilot_keepout_breaches"] == 0, ex["in_window"]
 
 
 def test_the_kpi_report_cuts_a_rail_run_where_the_harness_does():
@@ -3445,22 +3461,102 @@ def test_the_kpi_report_cuts_a_rail_run_where_the_harness_does():
     assert len(S.rail_scored_rows(edged, 1.0)) == 8 and len(S.rail_scored_rows(edged, 0.5)) == 5
 
 
-def test_a_rail_verdict_gates_the_autopilots_breaches_with_the_shields():
+def test_a_rail_verdict_gates_the_autopilots_keepout_breaches_with_the_shields():
     """rail_gate_set: a rail run's gates are the cell's own (or a derived
     basis's) with each safety invariant's autopilot counterpart beside it -
     a cell bounding the Shield's breaches or polygon entries bounds the
-    autopilot's with the same bound (the KPI definitions count them apart;
-    the user's ruling gates them). A counterpart the cell gates itself keeps
-    its own bound; the cell's spec is left as it is."""
+    autopilot's KEEP-OUT breaches and polygon entries with the same bound
+    (the KPI definitions count them apart; the user's ruling of 2026-11-07
+    gates the keep-outs). The all-kinds `autopilot_breaches` and the
+    corridor / altitude-band departures get no gate: reported only. A
+    counterpart the cell gates itself keeps its own bound; the cell's spec
+    is left as it is."""
     spec = _opens_on_vehicle()
     gates, d = S.rail_gate_set("ideal", spec, 0, DEFAULTS)
-    assert d is None and gates["autopilot_breaches"] == spec.gates["breaches"] == {"max": 0}
-    assert "autopilot_breaches" not in spec.gates
-    res = {"breaches": 0, "autopilot_breaches": 1}
-    assert S.check_gates({k: gates[k] for k in ("breaches", "autopilot_breaches")}, res) == [
-        "autopilot_breaches=1 > max 0"]
-    own = _with(spec, **{"expected_kpis.autopilot_breaches": {"max": 3}})
-    assert S.rail_gate_set("ideal", own, 0, DEFAULTS)[0]["autopilot_breaches"] == {"max": 3}
+    assert d is None and gates["autopilot_keepout_breaches"] == spec.gates["breaches"] == {
+        "max": 0}
+    for f, ap in S.RAIL_INVARIANT_PAIRS.items():
+        assert gates.get(ap) == spec.gates.get(f), (f, ap, gates.get(ap))
+    assert "autopilot_breaches" not in gates and "autopilot_departures" not in gates
+    assert "autopilot_keepout_breaches" not in spec.gates
+    res = {"breaches": 0, "autopilot_keepout_breaches": 1, "autopilot_breaches": 2,
+           "autopilot_departures": {"corridor": 1, "altitude_band": 0}}
+    pair = ("breaches", "autopilot_keepout_breaches")
+    assert S.check_gates({k: gates[k] for k in pair}, res) == [
+        "autopilot_keepout_breaches=1 > max 0"]
+    assert S.check_gates({k: gates[k] for k in pair}, dict(res, autopilot_keepout_breaches=0)) == []
+    own = _with(spec, **{"expected_kpis.autopilot_keepout_breaches": {"max": 3}})
+    assert S.rail_gate_set("ideal", own, 0, DEFAULTS)[0]["autopilot_keepout_breaches"] == {
+        "max": 3}
+
+
+def _scoped_rows(seq, prev=None):
+    """Rail rows at one place, each naming the rules its position is unsafe
+    for (`unsafe_rules`, seq[i]) and the node's previous-tick judgement of it
+    (`unsafe_prev_rules`, prev[i], by default the same: the aircraft's own
+    move); the Shield flies row 0, the autopilot (RTL) the rest."""
+    prev = seq if prev is None else prev
+    return [{"t": 0.1 * i, "x": 0.0, "y": 0.0, "up": 15.0, "unsafe": bool(rules),
+             "unsafe_rules": list(rules), "unsafe_prev_rules": list(prev[i]),
+             "zones_in_prev": [], "zones_in": [], "zone_d_m": None, "rule_events": [],
+             "flown": i == 0, "setpoint": "pass" if i == 0 else "none"}
+            for i, rules in enumerate(seq)]
+
+
+def test_the_autopilots_keepout_entries_are_gated_and_its_bound_departures_reported():
+    """The user's ruling (2026-11-07; docs/DESIGN-harness-vehicle-response.md,
+    "The rail's gates"): what the autopilot flew is gated on the KEEP-OUT
+    rules only - an entry into a zone's polygon or ring, a stand-off, a
+    clearance, at any time, and also while the position is already unsafe for
+    a mission bound - and its departures from a keep-in corridor or an
+    altitude band are reported (`autopilot_departures`), not gated: ArduPilot's
+    RTL, LAND and hold do not follow mission bounds (rh01_029: RTL out of
+    corridor route-north; rh01_032: LAND through the 10 m band). Here RTL
+    leaves the corridor, flies on into a zone while still outside it,
+    recovers, then descends through the band: one keep-out breach, one
+    departure of each kind, two all-kinds autopilot breaches. The node's
+    previous-tick judgement decides the aircraft's own move: the same zone
+    imposed (spawned onto it, a window opening) or a rule change on the row
+    counts nothing. The null: rows that name no rule cannot tell a keep-out
+    from a bound, so every autopilot breach is gated (NO_RULE_NAMES) and the
+    departures are not measured."""
+    from types import SimpleNamespace as NS
+    pol = NS(constraints=[NS(id="route", type="corridor"), NS(id="swap", type="corridor_swap"),
+                          NS(id="band", type="altitude_envelope"),
+                          NS(id="nfz", type="polygon_fence"),
+                          NS(id="ped", type="subject_standoff")])
+    assert S._rule_kinds(pol, None) == {"route": "corridor", "swap": "corridor",
+                                        "band": "altitude_band", "nfz": "keepout",
+                                        "ped": "keepout"}
+    seq = [[], [], ["route"], ["route"], ["route", "nfz"], ["route", "nfz"], [], ["band"]]
+    m = S.rail_measurements(_scoped_rows(seq), pol)
+    assert (m["breaches"], m["autopilot_breaches"]) == (0, 2), m
+    assert m["autopilot_keepout_breaches"] == 1, m
+    assert m["autopilot_departures"] == {"corridor": 1, "altitude_band": 1}, m
+    assert "autopilot_scope_basis" not in m
+    # The zone imposed on the aircraft (not unsafe under the previous tick's
+    # rules), or a rule change on the row: not the autopilot's entry.
+    imposed = [p if i != 4 else ["route"] for i, p in enumerate(seq)]
+    assert S.rail_measurements(_scoped_rows(seq, imposed), pol)[
+        "autopilot_keepout_breaches"] == 0
+    changed = _scoped_rows(seq)
+    changed[4]["rule_events"] = ["scenario event 0: spawn_polygon_fence"]
+    assert S.rail_measurements(changed, pol)["autopilot_keepout_breaches"] == 0
+    # The Shield's own step into the zone is its breach, not the autopilot's.
+    shield = _scoped_rows([[], ["nfz"]])
+    m = S.rail_measurements(shield, pol)
+    assert (m["breaches"], m["autopilot_keepout_breaches"]) == (1, 0), m
+    # A stand-off is a keep-out too; a hot-applied zone is kinded from its
+    # generation (an unknown rule is a keep-out).
+    assert S.rail_measurements(_scoped_rows([[], [], ["ped"]]), pol)[
+        "autopilot_keepout_breaches"] == 1
+    gen = NS(constraints=[NS(id="dyn", type="dynamic_nfz")])
+    assert S._rule_kinds(pol, {1: gen})["dyn"] == "keepout"
+    # The null: no rule names on the rows.
+    bare = [{k: v for k, v in r.items() if k != "unsafe_rules"} for r in _scoped_rows(seq)]
+    m = S.rail_measurements(bare, pol)
+    assert m["autopilot_keepout_breaches"] == m["autopilot_breaches"] == 2, m
+    assert "autopilot_departures" not in m and m["autopilot_scope_basis"] == S.NO_RULE_NAMES
 
 
 def test_a_response_arm_can_enter_from_a_hover_as_a_rail_starts():

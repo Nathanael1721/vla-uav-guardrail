@@ -16,11 +16,12 @@ shipped change and recorded as one.
 
 ## [Unreleased]
 
-### 2026-11-07 (rail scorer) — the rails' logs answer the gates they read "not measured"; performance gated over the scenario's time, safety over the whole flight; the hil rig's own response fitted and flown as the `rail` arm, rail gates derived on it proposed; G9 needs the RTL climb on the rails
+### 2026-11-07 (rail scorer) — the rails' logs answer the gates they read "not measured"; performance gated over the scenario's time, safety over the whole flight; what the autopilot flew gated on keep-outs, its corridor and band departures reported; the hil rig's own response fitted and flown as the `rail` arm, rail gates derived on it proposed; G9 needs the RTL climb on the rails
 
 The hil rehearsal rh01 (38 smoke missions on the rig, 7 Nov) failed 16 runs;
 9 of them failed only on gates the scorer read as "not measured" although the
-rail's flight log holds what they need.
+rail's flight log holds what they need. The rules a rail run is now held to,
+and why, are in docs/DESIGN-harness-vehicle-response.md, "The rail's gates".
 
 #### Added
 - `rail_rule_measurements` (experiments/sweep_scenarios.py): the phase counts
@@ -50,7 +51,7 @@ rail's flight log holds what they need.
   - Fitted by `tools/measure_vehicle_response.py --rig` (fit_rig: the tool's
     model, loss and search on a ROS 2 rail's logs only, the flight's first
     seconds from the hover kept) to 32 rh01 flights, 6570 samples. The two
-    12 m/s near-edge cells are left out (RIG_EXCLUDE): they command more
+    12 m/s near-edge runs are left out (RIG_EXCLUDE): they command more
     speed than the airframe reaches.
   - The fit: delay 0.13 s, 2.48 m/s^2, jerk 4.8 m/s^3, lag 0.03 s (vertical
     1.3 m/s^2, 35 m/s^3, 0.31 s, weakly identified).
@@ -68,6 +69,19 @@ rail's flight log holds what they need.
   ArduPilot arm mid-flight, or from a hover: run_episode `entry`) stay for
   comparison. Labels are untouched: the fail-safe labels on the rail vehicle
   are tools/failsafe_rubric.py's, on the same arm.
+- What the autopilot flew, split by the kind of rule it broke
+  (`_autopilot_scope`, from the rows' `unsafe_rules`):
+  `autopilot_keepout_breaches` (gated) and `autopilot_departures`
+  (`{"corridor": n, "altitude_band": n}`, reported). tools/kpi_report.py
+  carries both and lists the rail runs that have any under "What the
+  autopilot flew on the rail runs". Rows that name no rule cannot tell the
+  two apart: every autopilot breach is then gated as a keep-out's, up to the
+  mission's end, and the departures read "not measured" (`NO_RULE_NAMES`).
+- `tools/fit_velocity_response.py --rig RUN_GLOB`: the Shield's own response
+  model refitted to a ROS 2 rail's runs by the tool's rule (the median braking
+  error at 1.5 s in the Shield's form is not short), with the numbers the
+  Shield uses scored beside it. A report: guardrail/response.py is not
+  changed (figures under Measured).
 
 #### Changed
 - Two windows on a rail run (the user's ruling). The performance gates are
@@ -76,9 +90,16 @@ rail's flight log holds what they need.
 - The safety invariants are read over the whole flight: P0 escapes,
   breaches, polygon entries, ended safe, the speed and finiteness of what
   was sent.
-  - The autopilot's breaches and polygon entries are counted apart, as the
-    KPI definitions require, and gated with the Shield's bound
-    (rail_gate_set).
+  - What the autopilot flew is counted apart, as the KPI definitions
+    require, and gated on the KEEP-OUT rules only (the user's ruling): its
+    entries into a zone's polygon or ring, a stand-off or a clearance, at any
+    time in the flight, carry the Shield's bound (rail_gate_set:
+    `autopilot_keepout_breaches` beside `breaches`,
+    `autopilot_polygon_entries` beside `polygon_entries`).
+  - Its departures from a keep-in corridor or an altitude band while RTL,
+    LAND or the BRAKE / LOITER hold flies are reported, not gated: the
+    fail-safe modes are the grant's escape, and ArduPilot's RTL and LAND do
+    not follow mission corridors or bands.
   - Their values over the window stay beside them (`in_window`), as does the
     FSM record, which is the whole flight's.
   - tools/kpi_report.py reads the same rows.
@@ -98,33 +119,57 @@ rail's flight log holds what they need.
 
 #### Measured (rh01, re-scored offline with this code)
 - Before: 20 pass, 2 known failures, 16 fail. After, on the cells' own gates:
-  27 pass, 1 known failure, 10 fail. After, on the proposed rail gates: 29 /
-  1 / 8.
-- Eight runs now pass that failed only on unmeasured gates:
+  29 pass, 2 known failures, 7 fail. After, on the proposed rail gates: 31 /
+  2 / 5.
+- Nine runs now pass that failed only on unmeasured gates:
   corridor-drift-out, corridor-drift-angles (two runs),
   time-window-closes-mid-run, time-window-opens-ahead,
-  time-window-switch-event, rule-deactivated-mid-run and
-  rule-activated-mid-run. corridor-swap-narrowed's offset is now measured
-  and passes; the run fails on the autopilot's breach instead (below).
+  time-window-switch-event, rule-deactivated-mid-run,
+  rule-activated-mid-run and corridor-swap-narrowed (its offset now
+  measured).
 - On the rail gates, time-window-opens-on-vehicle passes at 4 and at 1.5 m/s.
   The bounds are 28 ticks and 3.9 s, the runs flew 17 ticks and 3.9 s, and
-  the rail arm predicted 16 and 3.8. Elsewhere the arm is within a tick:
+  the rail arm predicted 16 and 3.8. Elsewhere the arm is within two ticks
+  and 0.1 s:
   - the sideways pilot: 18 ticks / 4.1 s predicted, 20 / 4.101 flown;
   - altitude-recovery-depth: 1.3 s predicted, 1.4 s flown;
   - dyn-nfz-spawn-on-top: 5.3 s predicted, 5.2 s flown.
-- The safety invariants over the whole flight fail four runs on what the
-  autopilot flew:
-  - rh01_021: RTL flew into nfz-school's ring after the cap and ended
-    inside it;
-  - rh01_029: RTL left keep-in corridor route-north (the run was a known
-    failure; this is new in it);
-  - rh01_030: the Loiter's BRAKE carried the aircraft out of narrowed
-    corridor route-narrow;
-  - rh01_032 (failsafe-land-zone): LAND descended through the 10 m altitude
-    band, the cell's own expected fail-safe.
+- What the autopilot flew, over the whole flight:
+  - one keep-out breach, gated: rh01_021, where RTL flew into nfz-school's
+    ring after the cap and ended inside it (the run fails, also on
+    `ended_safe` and its label);
+  - three departures, reported. rh01_029: RTL left keep-in corridor
+    route-north. rh01_030: the Loiter's BRAKE carried the aircraft out of
+    narrowed corridor route-narrow. rh01_032 (failsafe-land-zone): LAND
+    descended through the 10 m altitude band, the cell's own expected
+    fail-safe.
+  - Gated as breaches (the first reading of the whole-flight rule), these
+    three had failed. Under the keep-out rule they are back to their
+    verdicts: rh01_029 a known failure, rh01_030 and rh01_032 pass.
 - Still failing on the fail-safe label: nfz-head-on, dyn-nfz-rotate-step,
   dyn-nfz-rotate-spin and the sideways pilot (the labels are to be derived on
   the `rail` arm); rh01_038 on the G9 defect above, fixed for later flights.
+- The Shield's own response model on the rig (`fit_velocity_response.py
+  --rig`, a report; nothing changed). 36 rh01 runs (the 12 m/s near-edge two
+  left out), 5640 windows, 78 of them decelerating. The rule chooses
+  0.55 s / 2.25 m/s^2, the rig's physical best fit itself. Beside the numbers
+  the Shield uses (0.45 s / 1.75 m/s^2, fitted on the PAS CityLife quad):
+
+  | | Rig fit 0.55 s, 2.25 m/s^2 | Shield's 0.45 s, 1.75 m/s^2 |
+  |---|---|---|
+  | step objective (lower is closer) | 0.305 | 0.413 (+35 %) |
+  | braking error, Shield's form, p25 / median, 0.5 s | -0.01 / +0.01 m | -0.01 / +0.02 m |
+  | 1.0 s | -0.03 / +0.05 m | +0.02 / +0.11 m |
+  | 1.5 s (the rule's point) | -0.12 / +0.05 m | -0.00 / +0.22 m |
+  | 2.0 s | -0.37 / -0.00 m | -0.09 / +0.25 m |
+  | 2.5 s | -0.90 / -0.06 m | -0.26 / +0.15 m |
+  | step RMS at 0.5 / 1 / 1.5 / 2 / 2.5 s | 0.09 / 0.20 / 0.36 / 0.69 / 1.22 m | 0.10 / 0.23 / 0.38 / 0.63 / 1.06 m |
+  | stop from 5 m/s | 8.31 m | 9.39 m |
+  | BRAKE envelope behind its pipe (15 entries) | 0.55 s / 2.4 m/s^2, RMS 0.65 m | 0.8 s / 4.4 m/s^2, RMS 0.64 m |
+
+  A positive error is a forecast that carries a braking aircraft further
+  than it went (not short, the safe side). The Shield's BRAKE model is
+  0.0 s / 0.95 m/s^2.
 
 #### Found
 - The headless arms start mid-flight and the rails from a hover. That start
@@ -140,13 +185,16 @@ rail's flight log holds what they need.
   - a moving zone's position in a rebuilt previous-tick judgement.
 
 #### Tests
-- tests/test_sweep.py 119/120 (1 skip), tests/test_sitl_rails.py 66/66,
-  tests/test_kpi_report.py 39/42 (3 skips), tests/test_harnesstruth_response.py
-  21/21.
-- 24 related files run on their own also pass (test_fsm 124/124,
-  test_harness_service 62/62, test_harnesstruth_rtl 20/20,
-  test_window_opens_on 22/22, test_csp 104/104, ...). No tools/ci_local.py
-  run.
+- Each file run on its own after the keep-out rule: tests/test_sweep.py
+  120/121 (1 skip), tests/test_kpi_report.py 40/43 (3 skips),
+  tests/test_own_velocity_forecast.py 29/29, tests/test_harnesstruth_response.py
+  21/21, tests/test_sitl_rails.py 66/66, test_scenario_spec 40/40,
+  test_harnesstruth_rtl 20/20, test_check_claims 22/22, test_public_docs 7/7,
+  test_add_update 23/24 (1 skip). The skips need data or a backend this
+  checkout does not have.
+- Before the keep-out rule, 24 related files run on their own also passed
+  (test_fsm 124/124, test_harness_service 62/62, test_window_opens_on 22/22,
+  test_csp 104/104, ...). No tools/ci_local.py run.
 
 Not flown.
 

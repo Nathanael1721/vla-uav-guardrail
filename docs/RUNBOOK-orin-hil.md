@@ -697,9 +697,13 @@ nfz-head-on) entered Loiter at 3.4 s and its 30 s episode ended there. A
 mission that reaches its target still ends at the target. The scorer reads
 the performance gates over the scenario's own window (to its cap, and to the
 FSM's terminal edge) and the safety invariants (P0 escapes, breaches,
-polygon entries - the autopilot's gated with the Shield's - ended safe) and
-the fail-safe record over the whole flight (since 2026-11-07; `rail_window`,
-`in_window` in scenario_score.json). After the FSM ends the mission (G9 / G10
+polygon entries, ended safe) and the fail-safe record over the whole flight
+(since 2026-11-07; `rail_window`, `in_window` in scenario_score.json). What
+the autopilot flew is gated on the keep-outs only: its entries into a zone,
+a ring or a stand-off are gated with the Shield's bound, and its departures
+from a corridor or an altitude band while RTL, LAND or the hold flies are
+reported (`autopilot_departures`; docs/DESIGN-harness-vehicle-response.md,
+"The rail's gates"). After the FSM ends the mission (G9 / G10
 / X5) the Shield node logs on until the autopilot has landed or disarmed, or
 the time cap, so RTL's flight to its end is in the log.
 
@@ -714,6 +718,10 @@ python experiments/sweep_scenarios.py --profile smoke --rescore-rail "demo/out/h
 # The rig's own response, refitted to a campaign's logs (the harness's `rail`
 # arm flies sweep_scenarios.RAIL_RESPONSE; --check-rig fails when it drifts):
 python tools/measure_vehicle_response.py --rig "demo/out/hil_smoke/smk01_*" --check-rig
+# The Shield's own response model refitted to the same logs, in the form the
+# Shield flies and by its rule, beside the numbers it uses (a report: it
+# changes nothing):
+python tools/fit_velocity_response.py --rig "demo/out/hil_smoke/smk01_*"
 ```
 
 Every ssh, scp and `sitl/hil_desktop.sh` call runs with its stdin closed

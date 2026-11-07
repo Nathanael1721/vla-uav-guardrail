@@ -3551,6 +3551,82 @@ def _judged_steps(rows: list[dict], policy, generations: dict | None):
     return out, None
 
 
+# What a rule is to the autopilot's fail-safe modes (2026-11-07, the user's
+# ruling; docs/DESIGN-harness-vehicle-response.md, "The rail's gates"): a
+# KEEP-OUT - a zone's polygon or ring, a stand-off, a clearance - whose entry
+# is a safety event whoever flies, or a MISSION BOUND that ArduPilot's RTL,
+# LAND and BRAKE / LOITER hold do not follow - a keep-in corridor, an
+# altitude band - whose departure while the autopilot flies is reported,
+# not gated: the fail-safe modes are the grant's escape. type -> kind; every
+# other type a rule can be unsafe for is a keep-out.
+RAIL_DEPARTURE_KINDS = {"corridor": "corridor", "corridor_swap": "corridor",
+                        "altitude_envelope": "altitude_band"}
+# Rows that name no rule (no `unsafe_rules`: an older rail's, or the harness's
+# own rows in the rail's shape) cannot tell a keep-out from a mission bound.
+# Every unsafe step the autopilot made is then gated as a keep-out breach (a
+# rule the log does not name is a keep-out, as in _rule_kinds), read up to
+# the mission's end like `breaches` (the landing's descent below the floor is
+# not told from a zone either), and its departures are not told apart.
+NO_RULE_NAMES = ("the rows name no rule (`unsafe_rules`): every unsafe step the autopilot "
+                 "made is gated as a keep-out breach, up to the mission's end; departures "
+                 "from a corridor or an altitude band are not told apart")
+
+
+def _rule_kinds(policy, generations: dict | None) -> dict[str, str]:
+    """rule id -> "keepout" or its RAIL_DEPARTURE_KINDS kind, over the
+    take-off policy and every generation (a hot-applied zone included)."""
+    out: dict[str, str] = {}
+    for p in [policy, *(generations or {}).values()]:
+        for c in getattr(p, "constraints", None) or []:
+            out[c.id] = RAIL_DEPARTURE_KINDS.get(c.type, "keepout")
+    return out
+
+
+def _autopilot_scope(rows: list[dict], policy, generations: dict | None, judged) -> dict:
+    """The autopilot's unsafe steps by what made them unsafe (the user's
+    ruling, 2026-11-07):
+
+      autopilot_keepout_breaches  rows on which a KEEP-OUT rule the previous
+          row was not unsafe for makes the position unsafe, the previous row
+          flown by the autopilot and no rule change on the row - at any time,
+          also while the position is already unsafe for a mission bound (an
+          RTL out of a corridor and then into a zone counts the zone). The
+          aircraft's own move: the node's previous-tick judgement names the
+          zone (`unsafe_prev_rules`), else the row's own reading where
+          nothing changed (judged "own"), else the rebuilt judgement.
+      autopilot_departures  the autopilot's steps into an unsafe position
+          (autopilot_breaches) made by mission bounds alone, per kind
+          ({"corridor": n, "altitude_band": n}): reported, not gated.
+
+    {} on rows without `unsafe_rules`: rail_measurements then gates every
+    autopilot breach as a keep-out's (NO_RULE_NAMES)."""
+    if not all("unsafe_rules" in r for r in rows):
+        return {}
+    kinds = _rule_kinds(policy, generations)
+    ko = 0
+    dep = {"corridor": 0, "altitude_band": 0}
+    prev_unsafe, prev_ko = False, set()
+    for i, r in enumerate(rows):
+        rules = set(r.get("unsafe_rules") or [])
+        ko_now = {rid for rid in rules if kinds.get(rid, "keepout") == "keepout"}
+        if i > 0 and not r.get("rule_events") and _owner(rows[i - 1]) == "autopilot":
+            new_ko = ko_now - prev_ko
+            if new_ko:
+                prev_rules = r.get("unsafe_prev_rules")
+                if prev_rules is not None:
+                    moved = bool(new_ko & set(prev_rules))
+                else:
+                    moved = judged == "own" or (isinstance(judged, list) and bool(judged[i][0]))
+                ko += bool(moved)
+            if r.get("unsafe") and not prev_unsafe and not ko_now:
+                moved_in = judged == "own" or (isinstance(judged, list) and bool(judged[i][0]))
+                if moved_in:
+                    for kind in sorted({kinds.get(rid) for rid in rules} - {"keepout", None}):
+                        dep[kind] = dep.get(kind, 0) + 1
+        prev_unsafe, prev_ko = bool(r.get("unsafe")), ko_now
+    return {"autopilot_keepout_breaches": ko, "autopilot_departures": dep}
+
+
 def rail_measurements(rows: list[dict], policy, generations: dict | None = None) -> dict:
     """The harness's own position measurements, from a rail's flight log.
 
@@ -3607,6 +3683,8 @@ def rail_measurements(rows: list[dict], policy, generations: dict | None = None)
                         b += 1
             prev_unsafe = unsafe
         out.update(breaches=b, autopilot_breaches=ab)
+        out.update(_autopilot_scope(rows, policy, generations, judged)
+                   or {"autopilot_keepout_breaches": ab, "autopilot_scope_basis": NO_RULE_NAMES})
     logged = all("zones_in" in r and "zone_d_m" in r for r in rows)
     if logged or judged == "own":
         fence_seen = False
@@ -4000,18 +4078,25 @@ TERMINAL_EDGES = ("G9", "G10", "X5")
 # whenever the aircraft flies, so a rail run gates them over its WHOLE flight
 # - an RTL that flies into a zone after the scenario's cap is a real event
 # (hil rehearsal rh01_021). P0 escapes are the Shield's counter (guardrail.kpi
-# leaves the autopilot's ticks out, by the KPI's definition); the breaches and
-# polygon entries the AUTOPILOT made are counted apart, as run_episode counts
-# them, and gated with the same bound as the Shield's (RAIL_INVARIANT_PAIRS,
-# rail_gate_set); `ended_safe` is the state when the mission ended (its
-# terminal edge, else its last row). The speed and finiteness of what the
-# rail sent are invariants too. Every other gate - how long, how many ticks,
-# the phases, the offsets, the goal - is a performance gate, read over the
+# leaves the autopilot's ticks out, by the KPI's definition); what the
+# AUTOPILOT flew is counted apart, as run_episode counts it, and gated on the
+# KEEP-OUT rules alone with the Shield's bound (RAIL_INVARIANT_PAIRS,
+# rail_gate_set): its entries into a keep-out polygon or ring. Its departures
+# from a keep-in corridor or an altitude band while a fail-safe mode flies
+# are reported (`autopilot_departures`, and the all-kinds
+# `autopilot_breaches`), not gated: ArduPilot's RTL, LAND and hold do not
+# follow mission bounds, and the fail-safe is the grant's escape (the user's
+# ruling, 2026-11-07; docs/DESIGN-harness-vehicle-response.md, "The rail's
+# gates"). `ended_safe` is the state when the mission ended (its terminal
+# edge, else its last row). The speed and finiteness of what the rail sent
+# are invariants too. Every other gate - how long, how many ticks, the
+# phases, the offsets, the goal - is a performance gate, read over the
 # scenario's own window (rail_window).
-RAIL_INVARIANT_FIELDS = ("breaches", "autopilot_breaches", "polygon_entries",
+RAIL_INVARIANT_FIELDS = ("breaches", "autopilot_breaches", "autopilot_keepout_breaches",
+                         "autopilot_departures", "polygon_entries",
                          "autopilot_polygon_entries", "ended_safe", "max_speed_flown",
                          "all_actions_finite")
-RAIL_INVARIANT_PAIRS = {"breaches": "autopilot_breaches",
+RAIL_INVARIANT_PAIRS = {"breaches": "autopilot_keepout_breaches",
                         "polygon_entries": "autopilot_polygon_entries"}
 
 
@@ -4086,16 +4171,19 @@ def sitl_extra(spec: ScenarioSpec, rows: list[dict], metrics: dict, policy,
         # gate (min 1) fails rather than score a clean run.
         extra["gps_dropout_ticks"] = sum(1 for r in win if r.get("fix_ok") is False)
     # ---- the safety invariants: the whole flight --------------------------
-    # Zones over every row, the landing included (a landing in a zone is an
-    # entry); unsafe positions up to the mission's end: ArduCopter's RTL
-    # ends in a landing at home, below every altitude floor by design, so
-    # the landing's own rows are not breaches (they are reported:
+    # Keep-outs over every row, the landing included (a landing in a zone is
+    # an entry); unsafe positions and departures up to the mission's end:
+    # ArduCopter's RTL ends in a landing at home, below every altitude floor
+    # by design, so the landing's own rows are neither (they are reported:
     # `after_mission_end`).
     prios = rail_rule_priorities(policy, generations)
     in_window = {f: extra.get(f) for f in RAIL_INVARIANT_FIELDS}
     whole = dict(rail_measurements(rows, policy, generations))
     upto_end = rail_measurements(mission, policy, generations)
-    for f in ("breaches", "autopilot_breaches"):
+    upto_fields = ("breaches", "autopilot_breaches", "autopilot_departures")
+    if "autopilot_scope_basis" in whole:
+        upto_fields += ("autopilot_keepout_breaches",)      # NO_RULE_NAMES
+    for f in upto_fields:
         if f in upto_end:
             whole[f] = upto_end[f]
         else:
@@ -4130,11 +4218,13 @@ def sitl_extra(spec: ScenarioSpec, rows: list[dict], metrics: dict, policy,
         "flight_s": float(rows[-1]["t"]) if rows and rows[-1].get("t") is not None else None,
         "read_over": ("performance gates: the mission's rows before the scenario's cap; "
                       "safety invariants (P0 escapes, breaches, polygon entries - the "
-                      "autopilot's counted apart and gated with them - ended safe, speed, "
-                      "finite actions): the whole flight; the FSM record: the whole flight")}
+                      "autopilot's counted apart, gated on keep-outs, its corridor and "
+                      "altitude-band departures reported - ended safe, speed, finite "
+                      "actions): the whole flight; the FSM record: the whole flight")}
     if landing:
         # What the autopilot flew after the mission's end (RTL's descent and
-        # landing): measured, its breaches and entries in the counts above.
+        # landing): measured, its keep-out and polygon entries in the counts
+        # above.
         extra["after_mission_end"] = {
             "rows": len(landing), "from_t": float(landing[0]["t"]),
             "final_up": float(landing[-1]["up"]),
@@ -4690,6 +4780,8 @@ def score_document(meta: dict, res: dict, extra: dict, status: str, bad: list,
            "after_mission_end": extra.get("after_mission_end"),
            "rail_not_measured": {**({"positions": extra["rail_measurements_not_measured"]}
                                     if extra.get("rail_measurements_not_measured") else {}),
+                                 **({"autopilot_departures": extra["autopilot_scope_basis"]}
+                                    if extra.get("autopilot_scope_basis") else {}),
                                  **(extra.get("rail_not_measured") or {})} or None,
            # The gates the verdict used (rail_gate_set): the cell's own
            # ("ideal") or the proposal's bounds derived on a vehicle model
@@ -5270,10 +5362,12 @@ def rail_gate_set(basis: str, spec: ScenarioSpec, seed: int, defaults=None, *,
     """The gates a rail run's verdict uses on `basis` (rail_gates_for; the
     cell's own for "ideal"), with each safety invariant's autopilot
     counterpart gated beside it (RAIL_INVARIANT_PAIRS: a cell that bounds the
-    Shield's breaches or polygon entries bounds the autopilot's with the same
-    bound - the user's ruling of 2026-11-07: reported apart as the KPI
-    definitions require, gated). A counterpart the cell gates itself is its
-    own. Returns (gates, derivation)."""
+    Shield's breaches or polygon entries bounds the autopilot's KEEP-OUT
+    breaches and polygon entries with the same bound - the user's ruling of
+    2026-11-07: reported apart as the KPI definitions require, gated on the
+    keep-outs; corridor and altitude-band departures are reported only). A
+    counterpart the cell gates itself is its own. Returns (gates,
+    derivation)."""
     derived, derivation = rail_gates_for(basis, spec, seed, defaults, run=run)
     gates = {k: dict(v) for k, v in (derived if derived is not None else spec.gates).items()}
     for f, ap in RAIL_INVARIANT_PAIRS.items():

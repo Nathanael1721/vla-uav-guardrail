@@ -207,3 +207,63 @@ and, if the constants move, update `AP_RESPONSE` (the tool's `--check` says whic
 ```bash
 python experiments/sweep_scenarios.py --profile nightly --response-arms ideal ardupilot
 ```
+
+## The rail's gates (2026-11-07)
+
+The hil rehearsal rh01 (the smoke profile's 38 missions on the hil rig) is the first set of stress-library flights on the vehicle the KPI-grade runs fly: ArduCopter 4.5.7 SITL on the desktop, in GUIDED, flown by the Shield node on the AGX Orin over MAVROS. A rail run is scored by the harness's own scorer (experiments/sweep_scenarios.py sitl_extra, score, episode_verdict), and three rules decide what it is held to. The first two are the user's rulings of 7 Nov; the third is proposed and not adopted.
+
+### Two windows
+
+A rail mission flies 35 s past its scenario's cap (`rail_max_s`: the 30 s Loiter timeout and 5 s) so that a Loiter the lagging autopilot provokes can show its outcome, and the ROS 2 node logs on past the FSM's terminal edge (G9, G10, X5) to the autopilot's landing. A rail run is therefore read over two windows:
+
+- **Performance gates** (how long, how many ticks, the phases, the offsets, the goal) are read over the scenario's window: the mission's rows up to the FSM's terminal edge, where run_episode stops, and before the cap (`rail_scored_rows`). A goal counts only when reached inside it.
+- **Safety invariants** (P0 escapes, breaches, polygon entries, ended safe, the speed and finiteness of what was sent) and the fail-safe record are read over the whole flight. An RTL that flies into a zone after the cap is a real event (rh01_021). `ended_safe` is the state when the mission ended (its terminal edge, else its last row). The values over the scenario's window stay beside them (`in_window`, the headless comparison).
+
+The landing after the terminal edge is reported (`after_mission_end`). It counts for the zones (a landing in a zone is an entry), but its descent at home below every altitude floor is RTL's own end, not a breach.
+
+### What the autopilot flew: gated on keep-outs, reported on mission bounds
+
+The KPI definitions count the autopilot's moves apart from the Shield's (guardrail.kpi leaves the autopilot's ticks out of the Shield's counters; run_episode counts `autopilot_breaches` and `autopilot_polygon_entries`). On a rail run they are scored by the kind of rule the move broke (`_autopilot_scope`, `RAIL_DEPARTURE_KINDS`):
+
+- **Keep-outs: gated.** A keep-out is any rule other than a corridor or an altitude band: a zone's polygon or its margin ring, a stand-off, a clearance. A step the autopilot flew that makes the position unsafe for a keep-out it was not unsafe for a tick earlier counts in `autopilot_keepout_breaches`, when it is the aircraft's own move: no rule changed on the row, and the node's previous-tick judgement already names the zone (on a log without it, the judgement rebuilt as for `breaches`; a zone spawned or a window opened onto the aircraft is imposed). Keep-out entries are counted at any time in the flight, the landing included, and also while the position is already unsafe for a mission bound (an RTL out of a corridor and then into a zone counts the zone). They are gated with the Shield's bound for the same family (`rail_gate_set`, `RAIL_INVARIANT_PAIRS`: `autopilot_keepout_breaches` beside `breaches`, `autopilot_polygon_entries` beside `polygon_entries`).
+- **Mission bounds: reported, not gated.** The autopilot's steps out of a keep-in corridor or an altitude band, made by those rules alone, go into `autopilot_departures` (`{"corridor": n, "altitude_band": n}`). They are reported per run in scenario_score.json and in the KPI report's section "What the autopilot flew on the rail runs". The all-kinds count `autopilot_breaches` stays beside them.
+
+Why: the fail-safe modes are the grant's escape, and ArduPilot's fail-safe modes do not follow mission corridors or bands. RTL climbs to RTL_ALT and flies straight home, LAND descends where the aircraft is, and BRAKE stops along its momentum. Holding them to a mission bound would fail the fail-safe for doing what the grant asks of it. rh01 has one of each:
+
+- rh01_029: RTL left keep-in corridor route-north.
+- rh01_030: the Loiter's BRAKE carried the aircraft out of narrowed corridor route-narrow.
+- rh01_032 (failsafe-land-zone): LAND descended through the 10 m altitude band, and that landing is the cell's own expected fail-safe.
+
+A keep-out is different. Entering a no-fly zone, its margin or a person's stand-off is the event the Shield exists to prevent, whoever flies, so rh01_021 (RTL into nfz-school's ring after the cap, ending inside it) stays a failure.
+
+A log whose rows do not name the rules they break (no `unsafe_rules`: an older rail's, or the harness's own rows in the rail's shape) cannot tell a keep-out from a mission bound. There every unsafe step the autopilot made is gated as a keep-out breach, up to the mission's end like `breaches`, and the departures are not told apart (`rail_not_measured`: `autopilot_departures`). A rule the log does not name is a keep-out.
+
+### The `rail` arm: the rig's own response, from a hover
+
+`tools/measure_vehicle_response.py --rig 'demo/out/hil_smoke/rh01_*'` (fit_rig) fits this document's model, with the same loss and search, to the rig's own logs: the command each GUIDED row sent against the velocity the rail measured, each flight's first seconds kept from the hover it starts in. The two 12 m/s near-edge runs are left out (`RIG_EXCLUDE`): they command more horizontal speed than the SITL airframe reaches, a ceiling the model does not have. On 32 flights (6570 samples) the fit is `RAIL_RESPONSE`: delay 0.13 s, 2.48 m/s^2, jerk 4.8 m/s^3, lag 0.03 s. The vertical axis (1.3 m/s^2, 35 m/s^3, 0.31 s) is weakly identified: the smoke missions barely command a climb.
+
+| Model | Velocity RMS, every sample (m/s) | First 5 s from the hover (m/s) |
+|---|---|---|
+| this fit (`rail`) | 0.099 | 0.093 |
+| `AP_RESPONSE` (the `ardupilot` arm) | 0.122 | 0.154 |
+| the rail Shield's own model (0.45 s, 1.75 m/s^2) | 0.258 | 0.458 |
+| the ideal vehicle | 0.934 | 1.742 |
+
+The arm `rail` flies it entering from rest (`RESPONSE_ENTRY`). The families start mid-flight and a rail starts every scenario from a hover, and on time-window-opens-on-vehicle that start alone moves the ArduPilot arm from 3 ticks inside the zone to 15. `RAIL_VEHICLE` adds the rails' in-place hold. Every result records the arm, its parameters, its entry and what it was fitted to; `--check-rig` fails when `RAIL_RESPONSE` drifts from a campaign's logs.
+
+### The rail's gate bounds (PROPOSED, NOT ADOPTED)
+
+`--rail-gates rail` moves each bound pinned on the headless ideal vehicle (`VEHICLE_PINNED_GATES`: the `max` of ticks inside a polygon and of max / mean time to safe) by what the rail arm changes on the same cell, from two headless flights of the cell holding in place as the rails do:
+
+    rail bound = ideal bound + (rail-arm value - ideal value)
+
+Each cell keeps the headroom its ideal pin gave it; every other gate is the cell's own. The rail arm predicts the rig within two ticks and 0.1 s:
+
+| Cell | Rail arm predicted | Rig flew |
+|---|---|---|
+| time-window-opens-on-vehicle (both rh01 runs) | 16 ticks, 3.8 s | 17 ticks, 3.9 s |
+| the sideways pilot | 18 ticks, 4.1 s | 20 ticks, 4.1 s |
+| altitude-recovery-depth | 1.3 s | 1.4 s |
+| dyn-nfz-spawn-on-top | 5.3 s | 5.2 s |
+
+`ideal` (the cell's own gates) stays the default until the user decides; the verdict on the cell's own gates is kept beside a derived one (`other_verdicts`). `ardupilot` and `ardupilot-rest` (the ArduPilot arm mid-flight, or from a hover) stay for comparison.

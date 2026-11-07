@@ -153,6 +153,52 @@ def load_runs(root: Path) -> dict[str, list[dict]]:
     return out
 
 
+def _slim_rig(run: str, r: dict) -> dict:
+    """_slim for a ROS 2 rail's row (sitl/ros2_shield_node.py build_row,
+    2026-11-07): the command SENT - `emitted` on a "pass" tick, the zero on a
+    "brake" tick (the row's `emitted` is then the Shield's unsent action),
+    None when the rail sent nothing - ArduPilot's mode (`mode`), and the
+    FSM's mode request (`set_mode`), whose LOITER the MAVLink adapter flies
+    as BRAKE (its default hold mode)."""
+    cmd = None
+    if r.get("flown") is True and r.get("setpoint") == "brake":
+        cmd = [0.0, 0.0, 0.0]
+    elif r.get("flown") is True and r.get("setpoint") == "pass" \
+            and isinstance(r.get("emitted"), dict):
+        e = r["emitted"]
+        cmd = [e.get("vx", 0.0), e.get("vy", 0.0), e.get("vz_up", 0.0)]
+    sm = r.get("set_mode")
+    return {"run": run, "tick": r["tick"], "t": r["t"], "x": r["x"], "y": r["y"],
+            "up": r["up"], "ap_mode": r.get("mode"), "cmd": cmd,
+            "autopilot_set_mode": "BRAKE" if sm == "LOITER" else sm}
+
+
+def load_rig_runs(globs: list[str], exclude: tuple = ()) -> dict[str, list[dict]]:
+    """A ROS 2 rail's run folders (globs), each read through _slim_rig; the
+    folders whose name matches an `exclude` pattern (fnmatch) left out."""
+    import fnmatch
+    import glob as _glob
+    out = {}
+    for g in globs:
+        for d in sorted(_glob.glob(g)):
+            p = Path(d) / "flight_log.jsonl"
+            if not p.is_file() or any(fnmatch.fnmatch(Path(d).name, e) for e in exclude):
+                continue
+            rows = [json.loads(l) for l in p.read_text(encoding="utf-8").splitlines()
+                    if l.strip()]
+            out[Path(d).name] = [_slim_rig(Path(d).name, r) for r in rows
+                                 if "x" in r and "t" in r]
+    if not out:
+        raise SystemExit(f"no rail run under {globs}")
+    return out
+
+
+def _order(runs: dict[str, list[dict]]) -> list[str]:
+    """The runs in the order the fit reads them: RUNS first (the committed
+    fixture's order, so its numbers are what they were), then any other."""
+    return [r for r in RUNS if r in runs] + sorted(r for r in runs if r not in RUNS)
+
+
 def load_fixture(path: Path) -> dict[str, list[dict]]:
     out: dict[str, list[dict]] = {}
     with gzip.open(path, "rt", encoding="utf-8") as fh:
@@ -188,7 +234,7 @@ def velocity_at(rows: list[dict], i: int, half: int = 2) -> tuple[float, float, 
 
 def windows(runs: dict[str, list[dict]]) -> list[dict]:
     out = []
-    for run in RUNS:
+    for run in _order(runs):
         rows = runs[run]
         n = len(rows)
         for i in range(n):
@@ -362,7 +408,11 @@ def vertical(ws: list[dict], reaction_s: float, accel_mps2: float) -> dict:
     return out
 
 
-def fit(runs: dict[str, list[dict]]) -> dict:
+def fit(runs: dict[str, list[dict]], current: VelocityResponse | None = None) -> dict:
+    """The grid, the identified point, the rule's choice and the table (FIT).
+    `current` (the --rig mode: the Shield's numbers in use) is scored beside
+    them on the same windows: its objective, its braking error in the
+    Shield's form at every horizon, and the BRAKE envelope behind it."""
     ws = windows(runs)
     steps, dec = classify(ws)
     grid = []
@@ -393,13 +443,17 @@ def fit(runs: dict[str, list[dict]]) -> dict:
     model = VelocityResponse(chosen["reaction_s"], chosen["accel_mps2"], "fit")
     ident = VelocityResponse(identified["reaction_s"], identified["accel_mps2"], "identified")
     table = {}
-    for name, m in (("commanded (old forecast)", "commanded"),
-                    ("measured, constant", "measured"),
-                    ("Shield form, measured velocity kept (no pipe)", (model, "hold")),
-                    ("Shield form, with the pipe (note_flown)", (model, "pipe")),
-                    ("physical form, the Shield's numbers", (model, "physical")),
-                    ("Shield form, with the pipe, identified numbers", (ident, "pipe")),
-                    ("physical form, identified numbers", (ident, "physical"))):
+    rows_ = [("commanded (old forecast)", "commanded"),
+             ("measured, constant", "measured"),
+             ("Shield form, measured velocity kept (no pipe)", (model, "hold")),
+             ("Shield form, with the pipe (note_flown)", (model, "pipe")),
+             ("physical form, the Shield's numbers", (model, "physical")),
+             ("Shield form, with the pipe, identified numbers", (ident, "pipe")),
+             ("physical form, identified numbers", (ident, "physical"))]
+    if current is not None:
+        rows_ += [("Shield form, with the pipe, the current numbers", (current, "pipe")),
+                  ("physical form, the current numbers", (current, "physical"))]
+    for name, m in rows_:
         table[name] = {"all": errors(ws, m), "steps": errors(steps, m),
                        "decel": errors(dec, m), "decel_bias_m": along_bias(dec, m),
                        "decel_along_m": along_quartiles(dec, m),
@@ -410,7 +464,7 @@ def fit(runs: dict[str, list[dict]]) -> dict:
                        "decel_along_by_h_m": {h: along_quartiles(dec, m, h)
                                               for h in HORIZONS}}
     out = {"windows": len(ws), "step_windows": len(steps), "decel_windows": len(dec),
-           "runs": list(RUNS), "best_objective": best,
+           "runs": _order(runs), "best_objective": best,
            "ridge": sorted(ridge, key=lambda g: g["objective"]),
            "identified": identified, "shield_form": SHIELD_FORM,
            "chosen": chosen, "fallback": fallback, "table": table}
@@ -420,6 +474,17 @@ def fit(runs: dict[str, list[dict]]) -> dict:
     # BRAKE plant (tools/own_velocity_closed_loop.py), whose GUIDED plant is
     # the identified aircraft. Each envelope is consistent with its own pipe.
     out["brake_identified"] = fit_brake(runs, ident)
+    if current is not None:
+        cur = next((g for g in grid if abs(g["reaction_s"] - current.reaction_s) < 1e-9
+                    and abs(g["accel_mps2"] - current.accel_mps2) < 1e-9), None)
+        out["current"] = {
+            "reaction_s": current.reaction_s, "accel_mps2": current.accel_mps2,
+            "objective": objective(errors(steps, (current, "physical"))),
+            "shield_decel_bias_m": along_bias(dec, (current, SHIELD_FORM)),
+            "decel_bias_m": along_bias(dec, (current, "physical")),
+            "stop_from_cap_m": current.stop_distance(CAP_MPS),
+            "on_grid": cur is not None,
+            "brake": fit_brake(runs, current)}
     return out
 
 
@@ -434,7 +499,7 @@ def brake_entries(runs: dict[str, list[dict]], guided: VelocityResponse) -> list
     0.2 s earlier, and at 1.9 m/s 0.4 s into BRAKE."""
     from guardrail.response import pipe_segments
     out = []
-    for run in RUNS:
+    for run in _order(runs):
         rows = runs[run]
         for i, r in enumerate(rows):
             if r.get("autopilot_set_mode") != "BRAKE":
@@ -514,13 +579,28 @@ def main(argv=None) -> int:
     ap.add_argument("--fixture", default=None)
     ap.add_argument("--write-fixture", action="store_true")
     ap.add_argument("--out", default=None)
+    ap.add_argument("--rig", action="append", default=None, metavar="RUN_GLOB",
+                    help="fit a ROS 2 rail's own runs instead (e.g. the hil rig's "
+                         "demo/out/hil_smoke/rh01_*), by the same rule, with the "
+                         "Shield's current numbers (ARDUCOPTER_GUIDED) scored beside it; "
+                         "repeatable. Reports only: guardrail/response.py is not changed")
+    ap.add_argument("--rig-exclude", action="append", default=None, metavar="NAME_GLOB",
+                    help="with --rig: run folders left out (fnmatch); default "
+                         "*near-edge-at-12mps* (commands the airframe cannot reach)")
     args = ap.parse_args(argv)
-    runs = (load_fixture(Path(args.fixture)) if args.fixture
-            else load_runs(Path(args.runs_root)))
-    if args.write_fixture:
+    current = None
+    if args.rig:
+        from guardrail.response import ARDUCOPTER_GUIDED
+        current = ARDUCOPTER_GUIDED
+        runs = load_rig_runs(args.rig, tuple(args.rig_exclude or ("*near-edge-at-12mps*",)))
+        print(f"rig runs: {len(runs)}")
+    else:
+        runs = (load_fixture(Path(args.fixture)) if args.fixture
+                else load_runs(Path(args.runs_root)))
+    if args.write_fixture and not args.rig:
         write_fixture(runs, FIXTURE)
         print(f"wrote {FIXTURE} ({FIXTURE.stat().st_size} bytes)")
-    rep = fit(runs)
+    rep = fit(runs, current)
     c, i = rep["chosen"], rep["identified"]
     print(f"windows {rep['windows']}, step {rep['step_windows']}, decelerating "
           f"{rep['decel_windows']}")
@@ -544,6 +624,19 @@ def main(argv=None) -> int:
     print("braking error of the Shield's numbers in the Shield's form, p25 / median by "
           "horizon (the rule reads the 1.5 s median only): " + "; ".join(
               f"{h:g}s {q['p25']:+.2f} / {q['median']:+.2f} m" for h, q in by_h.items()))
+    if rep.get("current"):
+        cur = rep["current"]
+        cby = rep["table"]["Shield form, with the pipe, the current numbers"]["decel_along_by_h_m"]
+        print(f"current Shield numbers: reaction {cur['reaction_s']} s, accel "
+              f"{cur['accel_mps2']} m/s^2 (objective {cur['objective']:.3f}, "
+              f"+{100 * (cur['objective'] / rep['best_objective'] - 1):.1f} % over the minimum; "
+              f"braking bias in the Shield's form {cur['shield_decel_bias_m']:+.3f} m, "
+              f"physical {cur['decel_bias_m']:+.3f} m; stop from {CAP_MPS:g} m/s "
+              f"{cur['stop_from_cap_m']:.2f} m)")
+        print("braking error of the current numbers in the Shield's form, p25 / median by "
+              "horizon: " + "; ".join(f"{h:g}s {q['p25']:+.2f} / {q['median']:+.2f} m"
+                                      for h, q in cby.items()))
+        print(f"BRAKE (behind the current GUIDED pipe): {cur['brake'].get('chosen')}")
     print(f"vertical: {rep['vertical']}")
     print(f"BRAKE (behind the Shield's GUIDED pipe): {rep['brake']}")
     print(f"BRAKE (behind the identified GUIDED pipe, the closed loop's plant): "

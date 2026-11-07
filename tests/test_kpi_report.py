@@ -1148,7 +1148,8 @@ def test_a_hil_scenario_run_is_rescored_with_the_harness_score_beside_it():
                     {"reached_goal": True, "breaches": 0, "shield": "on"})
     kpi.update(failsafe_label=False, failsafe_matches_label=1.0, failsafe_triggered=False,
                mission_outcome="success", outcome_matches_label=None, breaches=0,
-               polygon_entries=0, reached_goal=True)
+               polygon_entries=0, reached_goal=True, autopilot_keepout_breaches=0,
+               autopilot_departures={"corridor": 0, "altitude_band": 0})
     score = {"schema": "rail-scenario-score/1", "scenario": meta, "run_id": meta["run_id"],
              "run_nonce": "nonce-1", "status": "pass", "gates_failed": [],
              "metrics": {"reached_goal": True, "breaches": 0, "shield": "on", "fsm": None},
@@ -1170,6 +1171,8 @@ def test_a_hil_scenario_run_is_rescored_with_the_harness_score_beside_it():
     assert e["metrics_from"].startswith("scenario_score.json"), e["metrics_from"]
     assert e["mission_success"] is True and e["mission_outcome"] == "success", e
     assert e["breaches"] == 0 and e["failsafe_matches_label"] == 1.0
+    assert e["autopilot_keepout_breaches"] == 0, e.get("autopilot_keepout_breaches")
+    assert e["autopilot_departures"] == {"corridor": 0, "altitude_band": 0}
     assert e["priority_fields_from"].startswith("the stress harness's"), e["priority_fields_from"]
     assert e["params"]["template"] == "dynamic_nfz_movement" and e["params"]["seed"] == 1001
     assert e["rail_dwell"]["nfz_s"] == 0.5
@@ -1218,6 +1221,33 @@ def test_a_rail_scenario_run_is_read_over_the_window_its_score_was():
     assert w["mission_success"] is True, w.get("mission_fail_reasons")
     assert a["ticks"] == 20 and a["rail_window"] is None, a["ticks"]
     assert a["mission_success"] is False, "the null read the stretch after the cap"
+
+
+def test_the_report_shows_what_the_autopilot_flew_on_the_rail_runs():
+    """2026-11-07 (the user's ruling): the harness gates the autopilot's
+    keep-out breaches and polygon entries on a rail run and only reports its
+    departures from a keep-in corridor or an altitude band while a fail-safe
+    mode flew. The report lists every rail run of the library with any of
+    them, both kinds in their own columns; a run with none, or an episode
+    with no scenario score, is not listed; a count the score does not carry
+    reads n/m, never 0. The null: no such run, no section."""
+    KR = _report_module()
+    dep = {"corridor": 0, "altitude_band": 0}
+    eps = [{"id": "rh_021", "scenario_status": "fail", "autopilot_keepout_breaches": 1,
+            "autopilot_polygon_entries": 1, "autopilot_departures": dict(dep, corridor=1)},
+           {"id": "rh_032", "scenario_status": "pass", "autopilot_keepout_breaches": 0,
+            "autopilot_polygon_entries": 0, "autopilot_departures": dict(dep, altitude_band=1)},
+           {"id": "rh_005", "scenario_status": "pass", "autopilot_keepout_breaches": 0,
+            "autopilot_polygon_entries": 0, "autopilot_departures": dep},
+           {"id": "airsim_flight", "autopilot_keepout_breaches": 2},
+           {"id": "rh_old", "scenario_status": "fail", "autopilot_polygon_entries": 1}]
+    md = "\n".join(KR._render_rail_autopilot(eps))
+    assert "## What the autopilot flew on the rail runs" in md, md
+    assert "| `rh_021` | 1 | 1 | 1 | 0 |" in md and "| `rh_032` | 0 | 0 | 0 | 1 |" in md, md
+    assert "| `rh_old` | n/m | 1 | n/m | n/m |" in md, md
+    assert "rh_005" not in md and "airsim_flight" not in md, md
+    assert KR._render_rail_autopilot(eps[2:4]) == []
+    assert "What the autopilot flew" not in "\n".join(KR._render_rail_autopilot([]))
 
 
 if __name__ == "__main__":
