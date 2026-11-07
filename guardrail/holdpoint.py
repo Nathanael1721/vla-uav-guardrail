@@ -1046,14 +1046,17 @@ def choose_hold_point(shield, state: State, *, unsafe: list | None = None,
         span and one lookahead past it."""
         return int(math.ceil(max(0.0, span - t_a) / look - 1e-9)) if span else 0
 
-    def held(p: State, t_a: float) -> bool:
+    def held(p: State, t_a: float, neighbours: bool = True,
+             point: bool = True) -> bool:
         """THE HOLD HORIZON: a stop at p (then at its HOLD_MARGIN_M
         neighbours) is legal in every lookahead-long view from t_a + look to
         the end of the Loiter's span - the first view, from arrival, the
         caller has judged. The point's views first: most points fail there,
         for a fifth of the neighbours' cost."""
         n = views(t_a)
-        for pts in ([p], _neighbours(p)):
+        for pts in (([p] if point else []), (_neighbours(p) if neighbours else [])):
+            if not pts:
+                continue
             for j in range(1, n + 1):
                 if ledger.left <= 0:
                     return False
@@ -1144,10 +1147,19 @@ def choose_hold_point(shield, state: State, *, unsafe: list | None = None,
         # THE HOLD HORIZON's search, on what the first one left.
         def accept_held(r: float, k: int, t_a: float, x: float, y: float,
                         checked: bool = False) -> HoldPoint | None:
+            # The point's own later views before its transit and neighbours:
+            # under a sweep most candidates near the aircraft are legal for a
+            # lookahead and fail there, for a third of the cost.
+            if key(x, y, up_t, t_a) in refused:
+                return None
+            p = State(x=x, y=y, up=up_t, yaw_deg=state.yaw_deg)
+            if checked and not held(p, t_a, neighbours=False):
+                refused.add(key(x, y, up_t, t_a))
+                return None
             got = accept_once(r, k, t_a, x, y, checked)
             if got is None:
                 return None
-            if not held(State(x=got.x, y=got.y, up=got.up, yaw_deg=state.yaw_deg), t_a):
+            if not held(p, t_a, point=not checked):
                 refused.add(key(got.x, got.y, got.up, t_a))
                 return None
             return replace(got, checked_s=(views(t_a) + 1) * look,
@@ -1170,6 +1182,52 @@ def choose_hold_point(shield, state: State, *, unsafe: list | None = None,
                              f"through the lookahead by a legal transit "
                              f"({why_speed}): held here, and searched again in "
                              f"a second"))
+
+
+def hold_point_legal(shield, hold: HoldPoint | None, t: float) -> bool | None:
+    """Is a Loiter's hold POINT still legal at monitor time `t`: a stop there,
+    from the plan's arrival (now, once it is due), breaks no hard enforced
+    rule through the lookahead (fsm.TickInput.hold_legal)? None without a
+    plan. One stop query. The Shield's own check (Shield._hold_legal) and the
+    flight rails' (guardrail/hold_flight.py) are this function."""
+    if hold is None:
+        return None
+    t0 = hold.t_s if hold.t_s is not None else t
+    ahead = max(0.0, t0 + hold.travel_s - t)
+    p = State(x=hold.x, y=hold.y, up=hold.up)
+    return not shield.hard_violations(shield.state_is_unsafe(p, ahead_s=ahead))
+
+
+def plan_for(shield, fsm, state: State, *, unsafe: list | None = None,
+             heading: tuple[float, float] | None = None, search: bool = True,
+             site_ok=None) -> HoldPoint:
+    """The plan a flight rail running its own FSM gives `fsm` when it asks
+    (`fsm.needs_hold`): its Loiter's hold point (choose_hold_point, judged
+    for the Loiter's remaining time under FSMConfig.hold_horizon "loiter")
+    or its Land's site (choose_landing_site), as the Shield's own escalation
+    plans them (Shield._plan_hold). `unsafe` is the hard enforced violations
+    of a stop at the position (the FSM's stop_illegal); `search` False holds
+    in place, as every rail did until 2026-11-07. A search that raises
+    becomes an in-place plan marked illegal, never an exception in the
+    rail's 10 Hz loop."""
+    from .fsm import FSMState                  # local: no cycle at import
+    land = fsm.state is FSMState.LAND
+    unsafe = shield.hard_violations(unsafe if unsafe is not None
+                                    else shield.state_is_unsafe(state)) or []
+    state = State(x=state.x, y=state.y, up=state.up, yaw_deg=state.yaw_deg)
+    try:
+        if land:
+            return choose_landing_site(shield, state, unsafe=unsafe, heading=heading,
+                                       search=search, site_ok=site_ok)
+        return choose_hold_point(shield, state, unsafe=unsafe, heading=heading,
+                                 search=search, hold_s=fsm.hold_horizon_s())
+    except Exception as e:                          # noqa: BLE001 - see docstring
+        return HoldPoint("LAND" if land else "LOITER", "in_place", state.x, state.y,
+                         state.up, legal=False,
+                         breaks=tuple(sorted({v.rule_id for v in unsafe})),
+                         reason=(f"hold-point search failed ({type(e).__name__}: {e}); "
+                                 f"holding where the aircraft is, legality not "
+                                 f"established"))
 
 
 def _corridor_out(shield, x: float, y: float, up: float, ahead_s: float) -> list[str]:

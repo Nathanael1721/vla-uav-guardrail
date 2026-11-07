@@ -1104,7 +1104,7 @@ class TickInput:
     # In Loiter (since 2026-11-07, FSMConfig.hold_horizon "loiter"): would
     # flying the Shield's action for this request from here carry the
     # aircraft, within the lookahead, onto a spot where a stop is illegal
-    # (Shield._handback_unsafe)? Loiter does not hand such a request back
+    # (Shield.handback_unsafe)? Loiter does not hand such a request back
     # (G8): the hold it would leave is legal for as long as it is held, and
     # the flight it would hand over moves the aircraft into what the hold
     # was keeping it out of (a sweep's path). None when the caller does not

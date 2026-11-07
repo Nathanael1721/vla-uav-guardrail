@@ -390,12 +390,16 @@ AP_HOLD_REACHED_M = 0.05
 #                 2026-10-19): an in-place one as always, a moved one flown
 #                 first as a GUIDED transit, then held. The default.
 #   in_place      ArduPilot's own LOITER / LAND where the aircraft is
-#                 (Shield(hold_points=False)): what EVERY flight rail flies
-#                 today - SITL, ROS 2, Project AirSim / ArduPilot and the city
-#                 loop call no hold_at - and what c77c77d flew, row for row
-#                 (tests/test_hold_points.py pins it by digest).
-# So the autopilot numbers of a moved_points run are MODELLED, not flown by
-# any rail; `--autopilot-hold in_place` gives the ones the rails match.
+#                 (Shield(hold_points=False)): what every flight rail flew
+#                 until 2026-11-07 - SITL, ROS 2, Project AirSim / ArduPilot
+#                 and the city loop called no hold_at - and what c77c77d flew,
+#                 row for row (tests/test_hold_points.py pins it by digest).
+# Since 2026-11-07 the pymavlink rail (sitl/run_sitl_demo.py) and the ROS 2
+# Shield node (sitl/ros2_shield_node.py, the hil path) fly the moved point
+# (guardrail/hold_flight.py: GUIDED to it, the hold on arrival; `--hold-points
+# in_place` flies the old hold), so the `rail` vehicle (RAIL_VEHICLE) holds at
+# moved points; Project AirSim / ArduPilot and the city loop still hold in
+# place.
 AUTOPILOT_HOLD_MODELS = ("moved_points", "in_place")
 DEFAULT_AUTOPILOT_HOLD = "moved_points"
 # How the Shield recovers from a position that is already illegal (Shield's
@@ -809,10 +813,12 @@ DEFAULT_ENTRY = "cruise"
 RESPONSE_ENTRY = {"ardupilot": "cruise", "rail": "rest"}
 # The rail vehicle as run_episode flies it, for every caller deriving an
 # expectation on it (the rail gates here, the fail-safe labels in
-# tools/failsafe_rubric.py): the rig's response from a hover, and ArduPilot's
-# own hold where the aircraft is (AUTOPILOT_HOLD_MODELS "in_place"), which is
-# what every rail flies for the FSM's Loiter / Land.
-RAIL_VEHICLE = {"response": "rail", "autopilot_hold": "in_place"}
+# tools/failsafe_rubric.py): the rig's response from a hover, and the FSM's
+# hold points flown as the rails fly them since 2026-11-07 (guardrail/
+# hold_flight.py: a moved point as a GUIDED transit, then the hold;
+# AUTOPILOT_HOLD_MODELS "moved_points"). Until then "in_place": ArduPilot's own
+# hold where the aircraft is, what every rail flew.
+RAIL_VEHICLE = {"response": "rail", "autopilot_hold": "moved_points"}
 
 
 # The correction rate a non-negative error asks for (ArduPilot's AP_Math

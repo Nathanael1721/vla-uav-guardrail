@@ -717,7 +717,7 @@ _CLEAR_DECEL_MPS2 = 3.0
 # of being treated as a one-way pipeline whose last stage is never re-repaired.
 _REPAIR_PASSES = 3
 
-# Loiter's hand-back guard (Shield._handback_unsafe, since 2026-11-07): the
+# Loiter's hand-back guard (Shield.handback_unsafe, since 2026-11-07): the
 # straight flight of the request is sampled this often through the lookahead,
 # a stop asked at each sample (ten stop queries a Loiter tick at the grant's
 # 5 s, made only while the position itself is legal).
@@ -7312,7 +7312,7 @@ class Shield:
             # Loiter's hand-back guard (FSMConfig.hold_horizon "loiter",
             # 2026-11-07): only while the position itself is legal - an
             # illegal one is not handed back anyway.
-            handback = (self._handback_unsafe(state, d.emitted)
+            handback = (self.handback_unsafe(state, d.emitted)
                         if (self.fsm.state is _fsm.FSMState.LOITER and not unsafe
                             and self.fsm.config.hold_horizon == "loiter"
                             and not self.fsm.terminal) else None)
@@ -7355,7 +7355,7 @@ class Shield:
                    hold_point=hold.to_dict() if hold is not None else None)
         return d.model_copy(update=upd)
 
-    def _handback_unsafe(self, state: State, a: Action4D) -> bool:
+    def handback_unsafe(self, state: State, a: Action4D) -> bool:
         """Would flying `a` (the Shield's action for this request) from the
         position carry the aircraft, within the lookahead, onto a spot where
         a stop is illegal? (fsm.TickInput.handback_unsafe, since 2026-11-07.)
@@ -7389,13 +7389,12 @@ class Shield:
         None outside Loiter or before a point is held. One stop query a
         Loiter tick. The point is judged, not the aircraft: an aircraft
         pushed off a legal hold is X6's and X7's (fsm.py)."""
+        from . import holdpoint as _hp      # local: holdpoint imports this module
         h = self.fsm.hold if self.fsm is not None else None
         if h is None or self.fsm.state is not _fsm.FSMState.LOITER:
             return None
-        t0 = h.t_s if h.t_s is not None else tick.t
-        ahead = max(0.0, t0 + h.travel_s - tick.t)
-        p = State(x=h.x, y=h.y, up=h.up)
-        return not self.hard_violations(self.state_is_unsafe(p, ahead_s=ahead))
+        # The flight rails judge their own FSM's point with the same function.
+        return _hp.hold_point_legal(self, h, tick.t)
 
     def _plan_hold(self, tick: _Tick, state: State, d: ShieldDecision,
                    stop_illegal: list | None = None) -> "_fsm.HoldPoint":

@@ -91,9 +91,11 @@ from guardrail import AuditLogger, State                               # noqa: E
 from guardrail.audit import AUDIT_FILE                                 # noqa: E402
 from guardrail.bundle import load_for_flight                           # noqa: E402
 from guardrail.compiler import ConstraintCompiler                      # noqa: E402
+from guardrail import holdpoint                                        # noqa: E402
 from guardrail.fsm import (DEFAULT_THETA_HORIZON_S, FAILSAFE_STATES,  # noqa: E402
-                           THETA_HORIZON_S, EscalationFSM, FSMConfig,
+                           THETA_HORIZON_S, EscalationFSM, FSMConfig, FSMState,
                            tick_input_from_decision)
+from guardrail.hold_flight import HoldFlight                           # noqa: E402
 from guardrail.geometry import fence_polygon                           # noqa: E402
 from guardrail.kpi import compute_from_dir                             # noqa: E402
 from guardrail.manifest import (DEV_YAML_FLAG, TOPOLOGY_ARDUPILOT_SITL,  # noqa: E402
@@ -120,6 +122,12 @@ from sitl_stressors import (parse_sim_params, stressor_entry,         # noqa: E4
                             with_uniform_wind)
 
 TICK = 0.1
+# Where the FSM's Loiter holds and its Land lands (`--hold-points`, since
+# 2026-11-07): "moved" asks the hold-point search (guardrail/holdpoint.py)
+# whenever the FSM needs a plan and flies a moved point as a GUIDED transit,
+# then the hold (guardrail/hold_flight.py); "in_place" holds where the
+# aircraft is, as this rail did until then.
+HOLD_POINT_CHOICES = ("moved", "in_place")
 # The own-velocity forecast (docs/DESIGN-own-velocity-forecast.md): OFF by
 # default on this rail, as on sitl/ros2_shield_node.py - the response model
 # (guardrail.response.ARDUCOPTER_GUIDED) was measured on the Project AirSim
@@ -438,6 +446,12 @@ def main() -> int:
                          "is flown as: BRAKE (default; ArduCopter's LOITER sinks with "
                          "no pilot on the throttle, see sitl/mavlink_adapter_node.py) "
                          "or LOITER for a flight with a pilot holding the throttle")
+    ap.add_argument("--hold-points", choices=list(HOLD_POINT_CHOICES), default="moved",
+                    help="where the FSM's Loiter holds and its Land lands: moved (the "
+                         "hold-point search's legal point, flown as a GUIDED transit "
+                         "and then the hold, guardrail/hold_flight.py; the default "
+                         "since 2026-11-07) or in_place (ArduCopter's own hold where "
+                         "the aircraft is, as before)")
     ap.add_argument("--own-velocity-forecast", choices=["on", "off"],
                     default=OWN_VELOCITY_DEFAULT,
                     help="give the Shield LOCAL_POSITION_NED's velocity, so its "
@@ -600,6 +614,10 @@ def main() -> int:
            if shield_on and not args.no_fsm else None)
     fsm_fault = None
     failsafe_t = None
+    # The FSM's hold points (--hold-points): planned by the search and flown
+    # as a GUIDED transit, then the hold (guardrail/hold_flight.py).
+    moved_holds = args.hold_points == "moved"
+    hold_flight = HoldFlight()
     # What was asked of the autopilot, in the FSM's words and ArduCopter's
     # (the FSM's LOITER flown as --hold-mode, BRAKE by default), as the other
     # two rails record it (mavlink_adapter_node.ModeRequests).
@@ -696,6 +714,7 @@ def main() -> int:
 
         # Escalation FSM (Shield on only); modes through pymavlink.
         fsm_out, setpoint, unsafe_depth = None, "pass", None
+        transit = None
         if fsm is not None and fsm_fault is None:
             try:
                 in_failsafe = fsm.state in FAILSAFE_STATES
@@ -705,6 +724,18 @@ def main() -> int:
                 # progress test and X7's losing-ground test read its trend.
                 unsafe = shield.state_is_unsafe(state)
                 unsafe_depth = shield.unsafe_depth(state, unsafe)
+                # The hold point's inputs (--hold-points moved, since
+                # 2026-11-07): is the Loiter's point still legal, and would
+                # handing this request back fly into a spot where a stop is
+                # illegal (the Shield's own escalation asks the same).
+                hard_unsafe = shield.hard_violations(unsafe)
+                in_loiter = (moved_holds and fsm.state is FSMState.LOITER
+                             and not fsm.terminal)
+                hold_legal = (holdpoint.hold_point_legal(shield, fsm.hold, now)
+                              if in_loiter else None)
+                handback = (shield.handback_unsafe(state, decision.emitted)
+                            if (in_loiter and not hard_unsafe
+                                and fsm.config.hold_horizon == "loiter") else None)
                 fsm_out = fsm.step(tick_input_from_decision(
                     now, decision, policy, horizon_s=theta_h,
                     home_reached=(in_failsafe
@@ -713,21 +744,40 @@ def main() -> int:
                     stop_illegal=unsafe, unsafe_depth_m=unsafe_depth,
                     # The caps the Shield clamped against on this tick, not
                     # every cap the policy lists (Shield.applied_caps).
-                    caps=shield.applied_caps or False))
+                    caps=shield.applied_caps or False,
+                    hold_legal=hold_legal, handback_unsafe=handback))
                 setpoint = fsm_out.setpoint
+                if moved_holds and fsm.needs_hold:
+                    # Where the Loiter holds / the Land lands: the search's
+                    # plan from the Shield's own rules (guardrail/holdpoint.py).
+                    heading = next(((a.vx, a.vy) for a in (decision.emitted, decision.raw)
+                                    if math.hypot(a.vx, a.vy) > 0.1), None)
+                    plan = fsm.hold_at(holdpoint.plan_for(
+                        shield, fsm, state, unsafe=hard_unsafe, heading=heading))
+                    rec.event("hold_point", t=now, **plan.to_dict())
                 if fsm_out.transition:
                     rec.event("fsm_transition", t=now,
                               **{k: fsm_out.record[k] for k in (
                                   "fsm_state_before", "fsm_state_after",
                                   "transition", "edge", "reason")})
-                if fsm_out.set_mode:
+                # The FSM's mode request, or the hold flight's in its place: a
+                # moved point is flown in GUIDED first, the hold sent on
+                # arrival (guardrail/hold_flight.py, the mode mapping).
+                ht = hold_flight.tick(fsm, fsm_out.set_mode, state.x, state.y,
+                                      state.up, now, TICK)
+                transit = ht.command
+                if ht.note:
+                    rec.event("hold_flight", t=now, note=ht.note, transit=ht.transit)
+                if ht.mode:
                     # The FSM's word on record, ArduCopter's mode sent: its
                     # LOITER is flown as BRAKE (mavlink_adapter_node
                     # .autopilot_mode), which holds altitude with no pilot.
-                    ap_mode = asks.ask(fsm_out.set_mode)
+                    ap_mode = asks.ask(ht.mode)
                     link.m.set_mode(link.m.mode_mapping()[ap_mode])
-                    rec.event("mode_request", t=now, mode=fsm_out.set_mode,
-                              autopilot_mode=ap_mode, why=fsm_out.reason)
+                    rec.event("mode_request", t=now, mode=ht.mode,
+                              autopilot_mode=ap_mode,
+                              why=(fsm_out.reason if ht.mode == fsm_out.set_mode
+                                   else ht.note or fsm_out.reason))
                 if fsm_out.state in FAILSAFE_STATES and failsafe_t is None:
                     failsafe_t = now
             except ValueError as exc:
@@ -742,6 +792,7 @@ def main() -> int:
                 print(f"[fsm]      input refused, {hold}: {exc}")
         if fsm_fault is not None:
             setpoint = "none"
+            transit = None
         # After the FSM stepped, with its verdict: one state machine on record.
         audit_tick(audit, tick, decision, fsm_out=fsm_out, fsm_fault=fsm_fault)
         if shield_on and decision.touched:
@@ -804,8 +855,15 @@ def main() -> int:
                 "failsafe": bool(fsm_out.transition
                                  and fsm_out.state in FAILSAFE_STATES)}
                if fsm_out is not None else {}),
+            # A moved hold's GUIDED transit (guardrail/hold_flight.py): the
+            # hold's own leg, streamed while the FSM's setpoint is "none" (no
+            # VLA action flown, as on an autopilot tick). Only on such rows.
+            **({"hold_transit": [round(c, 3) for c in transit]}
+               if transit is not None else {}),
         })
         flown = {"pass": emitted, "brake": Action4D(), "none": None}[setpoint]
+        if flown is None and transit is not None:
+            flown = Action4D(vx=transit[0], vy=transit[1], vz_up=transit[2])
         if flown is not None:
             link.send_velocity(flown.vx, flown.vy, flown.vz_up, flown.yaw_rate)
         # What was sent (world frame), for the own-velocity forecast's pipe.
@@ -947,7 +1005,11 @@ def main() -> int:
                      theta_basis=theta_basis(theta_h),
                      hold_mode={"fsm_mode": "LOITER",
                                 "autopilot_mode": autopilot_mode("LOITER",
-                                                                 args.hold_mode)})
+                                                                 args.hold_mode)},
+                     # Where the holds were flown (--hold-points) and how many
+                     # moved points were flown as a GUIDED transit.
+                     hold_points={"choice": args.hold_points,
+                                  "moved_transits": hold_flight.transits})
                 if fsm is not None else None),
         # The FSM's words (LOITER, RTL, LAND; LAND also at mission end) and
         # what ArduCopter was asked for (the FSM's LOITER as BRAKE), as the

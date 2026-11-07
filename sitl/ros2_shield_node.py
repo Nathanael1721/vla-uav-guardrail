@@ -314,10 +314,13 @@ from guardrail import scenario_events as SE                               # noqa
 from guardrail.audit import AUDIT_FILE                                    # noqa: E402
 from guardrail.bundle import load_for_flight                              # noqa: E402
 from guardrail.compiler import ConstraintCompiler                         # noqa: E402
+from guardrail import holdpoint                                           # noqa: E402
+from guardrail.frames import to_body                                      # noqa: E402
 from guardrail.fsm import (DEFAULT_THETA_HORIZON_S, FAILSAFE_STATES,     # noqa: E402
                            MODE_FOR, THETA_HORIZON_S, EscalationFSM, FSMConfig,
-                           tick_input_from_decision)
+                           FSMState, tick_input_from_decision)
 from guardrail.geometry import fence_polygon                              # noqa: E402
+from guardrail.hold_flight import HoldFlight                              # noqa: E402
 from guardrail.kpi import compute_from_dir                                # noqa: E402
 from guardrail.manifest import (DEV_YAML_FLAG, UNRESOLVED,               # noqa: E402
                                 flight_bundle_path, flight_policy_choice,
@@ -1491,6 +1494,13 @@ if HAVE_ROS:
             # What was asked of the autopilot, in the FSM's words and
             # ArduCopter's, and which request explains a mode change.
             self._asks = ModeRequests(self.hold_mode)
+            # Where the FSM's Loiter holds and its Land lands (--hold-points,
+            # since 2026-11-07): the hold-point search's plan, a moved point
+            # flown as a GUIDED transit and then the hold (guardrail/
+            # hold_flight.py, the mode mapping); "in_place" holds where the
+            # aircraft is, as this node did until then.
+            self.moved_holds = getattr(args, "hold_points", "moved") == "moved"
+            self.hold_flight = HoldFlight()
 
             # A DECLARED subject, so subject_standoff rules bind on a rail with
             # no camera. Ground truth, not perception.
@@ -3041,6 +3051,7 @@ if HAVE_ROS:
             stop_illegal = None
             unsafe_depth = None
             setpoint = "pass"
+            transit = None
             # Once the autopilot has taken the aircraft (a GeoFence RTL), the
             # FSM no longer steps: its mode requests would fight the autopilot.
             # Nor while this node holds it for a quiet action or pose stream.
@@ -3065,6 +3076,20 @@ if HAVE_ROS:
                     # How far from legal: X6's progress and X7's losing-ground
                     # tests read its trend.
                     unsafe_depth = self.shield.unsafe_depth(st, stop_illegal)
+                    # The hold point's inputs (--hold-points moved, since
+                    # 2026-11-07): is the Loiter's point still legal, and
+                    # would handing this request back fly into a spot where
+                    # a stop is illegal (the Shield's own escalation asks the
+                    # same; guardrail/holdpoint.py, Shield.handback_unsafe).
+                    hard_unsafe = self.shield.hard_violations(stop_illegal)
+                    in_loiter = (self.moved_holds and self.fsm.state is FSMState.LOITER
+                                 and not self.fsm.terminal)
+                    hold_legal = (holdpoint.hold_point_legal(self.shield, self.fsm.hold, now)
+                                  if in_loiter else None)
+                    handback = (self.shield.handback_unsafe(st, decision.emitted)
+                                if (in_loiter and not hard_unsafe
+                                    and self.fsm.config.hold_horizon == "loiter")
+                                else None)
                     inp = tick_input_from_decision(
                         now, decision, self.policy, horizon_s=self.theta_horizon_s,
                         rtl_failed=False,
@@ -3082,8 +3107,19 @@ if HAVE_ROS:
                         # The caps the Shield clamped against on this tick,
                         # not every cap the policy lists (Shield.applied_caps).
                         caps=self.shield.applied_caps or False,
-                        position_lost=lost[0] if lost else None)
+                        position_lost=lost[0] if lost else None,
+                        hold_legal=hold_legal, handback_unsafe=handback)
                     fsm_out = self.fsm.step(inp)
+                    if self.moved_holds and self.fsm.needs_hold:
+                        # Where the Loiter holds / the Land lands: the
+                        # search's plan from the Shield's own rules.
+                        heading = next(((a.vx, a.vy) for a in (decision.emitted,
+                                                               decision.raw)
+                                        if math.hypot(a.vx, a.vy) > 0.1), None)
+                        plan = self.fsm.hold_at(holdpoint.plan_for(
+                            self.shield, self.fsm, st, unsafe=hard_unsafe,
+                            heading=heading))
+                        self.rec.event("hold_point", t=now, **plan.to_dict())
                 except ValueError as e:
                     # A Shield/FSM contract break mid-flight: hold, say why,
                     # stop streaming. The run is not KPI-grade.
@@ -3100,12 +3136,22 @@ if HAVE_ROS:
                                        "fsm_state_before", "fsm_state_after",
                                        "transition", "edge", "edge_source",
                                        "reason", "fsm_config_hash")})
-                if fsm_out.set_mode:
-                    self._request_mode(fsm_out.set_mode, fsm_out.reason)
+                # The FSM's mode request, or the hold flight's in its place: a
+                # moved point is flown in GUIDED first and the hold sent on
+                # arrival (guardrail/hold_flight.py, the mode mapping).
+                ht = self.hold_flight.tick(self.fsm, fsm_out.set_mode, st.x, st.y,
+                                           st.up, now, TICK)
+                transit = ht.command
+                if ht.note:
+                    self.rec.event("hold_flight", t=now, note=ht.note, transit=ht.transit)
+                if ht.mode:
+                    self._request_mode(ht.mode, (fsm_out.reason if ht.mode == fsm_out.set_mode
+                                                 else ht.note or fsm_out.reason))
                 if fsm_out.state in FAILSAFE_STATES and self.failsafe_t is None:
                     self.failsafe_t = now
             if self.fsm_fault is not None or self.takeover is not None:
                 setpoint = "none"
+                transit = None
             elif self._holds:
                 # The hold's first tick flies the Shield's answer to a stop
                 # (a stop where it is legal) while SET_MODE goes through, as
@@ -3133,14 +3179,22 @@ if HAVE_ROS:
                     "fsm": fsm_out.state.value if fsm_out else None})))
 
             flown = {"pass": em_body, "brake": Action4D(), "none": None}[setpoint]
+            flown_w = {"pass": em_w, "brake": Action4D(), "none": None}[setpoint]
+            if flown is None and transit is not None:
+                # A moved hold's GUIDED transit (guardrail/hold_flight.py):
+                # the hold's own leg, streamed while the FSM's setpoint is
+                # "none" (no VLA action flown); world -> body as every
+                # setpoint of this node (the adapter turns body to NED).
+                flown_w = Action4D(vx=transit[0], vy=transit[1], vz_up=transit[2])
+                fwd, right, up_, _ = to_body(flown_w, st.yaw_deg)
+                flown = Action4D(vx=fwd, vy=right, vz_up=up_)
             pub_ns = None
             if flown is not None:
                 self._publish_body(flown)
                 pub_ns = time.monotonic_ns()
             # What was sent, in the Shield's world frame, for the own-velocity
             # forecast's pipe (read only for a State with a velocity).
-            self.shield.note_flown({"pass": em_w, "brake": Action4D(),
-                                    "none": None}[setpoint])
+            self.shield.note_flown(flown_w)
             # A stop flown for a stale input did not come from the action.
             lat = latency_fields(tick_ns, pub_ns, rx_ns,
                                  fresh=(not zeroed and seq != self._flown_seq))
@@ -3173,6 +3227,10 @@ if HAVE_ROS:
                                  state_v=(None if vel is None
                                           else [round(c, 3) for c in vel]),
                                  shield_velocity=st_sh is not st)
+            if transit is not None:
+                # The moved hold's transit, world frame (North, East, up);
+                # only on such rows (guardrail/hold_flight.py).
+                self.rows[-1]["hold_transit"] = [round(c, 3) for c in transit]
             # What the stress harness's position measures need (2026-11-06;
             # sweep_scenarios.rail_measurements): the rule clock this tick
             # read, the zones whose polygon holds the position and the
@@ -3476,7 +3534,13 @@ if HAVE_ROS:
                 "shield_ms_max": (round(max(shield_ms), 3) if shield_ms else None),
                 "fsm": ({**self.fsm.summary(),
                          "theta_basis": theta_basis(self.theta_horizon_s),
-                         "fault": self.fsm_fault} if self.fsm else None),
+                         "fault": self.fsm_fault,
+                         # Where the holds were flown (--hold-points) and how
+                         # many moved points were flown as a GUIDED transit.
+                         "hold_points": {"choice": ("moved" if self.moved_holds
+                                                    else "in_place"),
+                                         "moved_transits": self.hold_flight.transits}}
+                        if self.fsm else None),
                 "autopilot_took_over": self.takeover,
                 # After the FSM's terminal edge the rail logged on to the
                 # landing (2026-11-07): when the edge came, and how it ended
@@ -3813,6 +3877,12 @@ def make_parser() -> argparse.ArgumentParser:
     ap.add_argument("--hold-mode", choices=list(HOLD_MODES), default=DEFAULT_HOLD_MODE,
                     help="ArduCopter mode the FSM's Loiter is flown as when no adapter "
                          "is subscribed (the adapter's own --hold-mode otherwise)")
+    ap.add_argument("--hold-points", choices=["moved", "in_place"], default="moved",
+                    help="where the FSM's Loiter holds and its Land lands: moved (the "
+                         "hold-point search's legal point, flown as a GUIDED transit "
+                         "and then the hold, guardrail/hold_flight.py; the default "
+                         "since 2026-11-07) or in_place (ArduCopter's own hold where "
+                         "the aircraft is, as before)")
     ap.add_argument("--cost-map", action="store_true",
                     help="give every generation's CSP its cost map (costmap_csp_g<N>"
                          ".npz/.json, named in cost_map_ref; guardrail.replay."
