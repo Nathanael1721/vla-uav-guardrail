@@ -319,6 +319,19 @@ def test_a_transit_that_cannot_close_is_given_up():
     assert "past its travel time" in note, note
 
 
+def test_the_rails_and_the_harness_judge_the_same_distance():
+    """transit_distance reads a HoldPoint (the rails) and its dict (the
+    harness's ShieldDecision.hold_point) alike: 3-D for a Loiter, level for a
+    Land."""
+    from guardrail.hold_flight import transit_distance
+    for mode in ("LOITER", "LAND"):
+        p = HoldPoint(mode, "moved", 3.0, 4.0, 12.0, legal=True, travel_s=1.25,
+                      speed_mps=4.0, climb_mps=2.0, t_s=0.0)
+        a = transit_distance(0.0, 0.0, 15.0, p)
+        b = transit_distance(0.0, 0.0, 15.0, p.to_dict())
+        assert a == b and a == (5.0 if mode == "LAND" else (25.0 + 9.0) ** 0.5), (mode, a, b)
+
+
 def test_the_rail_arm_gives_up_by_the_rails_own_rule():
     """Parity (experiments/sweep_scenarios.py TRANSIT_GIVE_UP_RESPONSES): the
     harness's rail arm judges each moved transit with hold_flight.TransitWatch,

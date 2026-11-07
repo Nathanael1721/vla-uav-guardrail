@@ -13,7 +13,10 @@ long as it is held: "A hold legal for as long as it is held, flown by the
 rails", below. First flown on the rig on the hil shakedown hs02, where the
 tick that planned it broke the Orin's 100 ms budget; since that evening the
 search is spread over ticks, a fixed count of its budget a tick: "The
-per-tick bound", below.)
+per-tick bound", below. hs03 then gave the transit up while the aircraft was
+still braking out of the hand-over and X6 sent it home; the give-up rule is
+fixed and the harness's rail arm flies it too: "The transit's give-up, and
+the rail arm flying it", below.)
 Code: `guardrail/fsm.py` (`HoldPoint`, `EscalationFSM.needs_hold` /
 `hold_at`, `TickInput.hold_legal`), `guardrail/holdpoint.py` (the search),
 `guardrail/shield.py` (`looking_ahead`, `state_is_unsafe(ahead_s=)`,
@@ -1157,6 +1160,9 @@ of the desktop's time, so the whole tick stays near 70 ms on the Orin.
   point for `TRANSIT_STALL_S` (1 s), or `TRANSIT_MAX_S` (10 s) after its
   travel time whatever it does. The harness's modelled transit never gave
   up, so no headless number moves with this; it is the rig that flies it.
+  (That rule counted the hand-over's overshoot as "not closing" and sent
+  hs03 home the same night; replaced, and flown by the harness's rail arm
+  too: "The transit's give-up, and the rail arm flying it", below.)
 
 ### Measured (headless, desktop, not KPI-grade)
 
@@ -1241,6 +1247,97 @@ ticks - G1 3.5 s, G3 4.1 s, then G8 9.5 -> 9.6 s, G1 9.6 -> 9.7 s, G7 21.1 ->
 21.2 s: the same edges, no breach, the same time to safe. (The rig's hs02
 flew the same edges.)
 
+## The transit's give-up, and the rail arm flying it (2026-11-07, night)
+
+**What the rig showed.** The hil shakedown hs03 at 199cfdf (the per-tick
+bound above) flew dyn-nfz-rotate-spin@3 to X6 and RTL. The moved point
+(-189.96, -0.43) was planned at 4.5 s, its search spread over the ticks from
+G3 at 4.1 s, while the aircraft was still braking out of the hand-over at
+3.01 m/s away from it. In GUIDED the transit's own command braked it at the
+airframe's 2.0-2.3 m/s^2, but the distance to the point kept growing: 2.28 m
+at 4.5 s, 3.61 at 5.0, 4.42 at 5.5, 4.63 at 5.8. At 5.8 s 199cfdf's rule
+(the deadline passed and no 5 cm of closing for 1 s, the clock running from
+the transit's start) gave it up - "not closing for 1.3 s" - one tick before
+the velocity crossed zero (5.9 s; the farthest, 4.66 m, at 6.0 s). BRAKE then
+held the aircraft about 4.3 m forward of the point, the bar's sweep reached
+it, and X6 sent it home at 31.1 s. The transit would have worked; hs02's G8
+at d186077, under the deadline alone, was luck. And no headless number had
+predicted it: the harness flew every transit until it was reached.
+
+**The rule** (`guardrail/hold_flight.py`, GIVING UP; `TransitWatch`). A
+transit is given up only once its deadline (travel time plus
+`HOLD_ARRIVAL_SLACK_S`) has passed AND the aircraft's distance to the point
+has stayed within `TRANSIT_PROGRESS_M` (5 cm) of where it last moved by that
+much, either way, for `TRANSIT_STALL_S` (now 2 s): the aircraft is stuck
+relative to its point. Closing restarts the clock, and so does being carried
+away - the overshoot of the hand-over's stop, or of the point itself, which
+the transit's own command is braking out. Whatever it does, a transit is
+given up `TRANSIT_MAX_S` (10 s) after its travel time. Why this one and not
+the farthest point alone: the farthest distance of the whole transit misses
+the second overshoot, past the point, that the rail arm flies on the way in
+(rotate-spin@9: through the point at 7.6 s, 0.43 m past it at 8.5 s, back
+again after), which a rule keyed to the farthest yet counted as stuck. On
+hs03's trace (`tests/test_hold_horizon.py` HS03_TRACE) the distance last grew
+by 5 cm at 5.8 s, so an aircraft stuck there would have been given up at
+7.8 s; it was not stuck: the transit's own command, from rest at 2 m/s^2,
+closes 5 cm in about 0.25 s, and even the rig's slower creep back under BRAKE
+(about 0.48 m/s) closed 0.39 m in the second after 6.0 s. A transit that
+truly cannot close is still given up: held at one distance by a wind it
+cannot beat, `TRANSIT_STALL_S` after its deadline; carried away steadily,
+`TRANSIT_MAX_S` after its travel time (both tested).
+
+**Parity.** The harness's `rail` arm (`TRANSIT_GIVE_UP_RESPONSES`,
+experiments/sweep_scenarios.py) judges every moved transit with the same
+`TransitWatch`, on every tick of its plan from the tick it is taken (where
+HoldFlight judges it), on the true position, and holds where the aircraft is
+once it is given up (the event `hold_transit_given_up`). The ideal vehicle
+(it arrives on its travel time) and the ArduPilot arm (it models no rail of
+its own) still fly every transit until it is reached; neither is changed.
+Flown under 199cfdf's rule, the rail arm reproduces hs03: rotate-spin@3 gives
+the transit up at 5.8 s ("not closing for 1.3 s", 4.10 m off; the rig: 5.8 s,
+"not closing for 1.3 s", 4.63 m off) and X6 sends it home at 31.3 s (the rig:
+31.1 s), and @6 and @9 do the same (given up at 5.6 s and 5.4 s); under this
+rule none gives up and all three hand back by G8 (rotate-spin@3: G8 at 9.6 s,
+G7 at 21.2 s; seeds 0 and 1001). Two parity gaps
+are left as they were: the arm's transit closes on the point with the rig's
+fitted 2.48 m/s^2 where HoldFlight streams the rail Shield's 1.75 m/s^2, and a
+point counts as reached within 5 cm on the arm, 0.5 m on the rails.
+
+### Measured (headless, not KPI-grade)
+
+Fail-safe correctness and safety on the rail arm (moved holds) and the ideal
+vehicle, before = 199cfdf (the per-tick bound's sweeps, `tb`), after = this
+change; the label sets above; flown 35 s longer where censored. Time to safe:
+mean over the episodes that have one (censored in brackets).
+
+| profile | arm | (a) | (r) / (a2) | (r2) | P0 escapes | breaches | mean time to safe |
+|---|---|---|---|---|---|---|---|
+| smoke | ideal | 62/63 (0.915) | (a2) 63/63 (0.943) | - | 0 | 0 | 2.533 s over 15 (4) |
+| smoke | rail | 52/63 (0.714) | (r) 62/63 (0.915) | 63/63 (0.943) | 0 | 0 | 3.731 s over 16 (4 -> 5) |
+| library | ideal | 177/179 (0.960) | (a2) 179/179 (0.979) | - | 0 | 0 | 2.585 s over 34 (4) |
+| library | rail | 160/179 (0.840) | (r) 177/179 (0.960) | 179/179 (0.979) | 0 | 0 | 3.803 s over 39 (5 -> 6) |
+| nightly | ideal | 729/741 (0.972) | (a2) 741/741 (0.995) | - | 0 | 0 | 2.570 s over 150 (12) |
+| nightly | rail | 654/741 (0.857) | (r) 729/741 (0.972) | 741/741 (0.995) | 0 | 0 | 3.849 s over 189 (15 -> 18) |
+
+Correctness, P0 escapes and breaches are the same before and after on every
+profile and arm. Per episode, every KPI field is the same in every episode but
+5 of the 1,966 (126 smoke, 358 library and 1,482 nightly, both arms), all one
+cell on the rail arm: wind-beyond-authority, lane 15 at 12 m/s (smoke seed
+1001, library seed 0, nightly seeds 1001-1003). Its G6 Land plans a moved
+landing site 6.5 m away (travel 1.6 s, at 7.0 s); the 12 m/s wind, beyond the
+airframe's authority, carries the aircraft away from it the whole time, so the
+transit is given up by TRANSIT_MAX_S at 18.7 s, 27.3 m off, and the aircraft
+lands where it is: G10 (landed) at 49.3 s, where before (the harness never
+gave up) it kept flying toward the site and never landed. The same trigger and
+labels (a fail-safe, expected), one more autopilot breach (1 -> 2) and one
+more censored time to safe. On the rig HoldFlight now does the same; 199cfdf's
+rule gave this transit up sooner (at 9.7 s, 10.5 m off, with the same G10,
+autopilot breaches and censored time to safe). In the library's 180 rail-arm
+episodes (seed 0) this is the only transit the new rule gives up; 199cfdf's
+rule gave up 6: rotate-spin at 3, 6 and 9 deg/s (each then sent home by X6),
+radius-scaling-grow at 3.3 and -deep (0.8 m off; the outcome the same) and
+this one.
+
 ## What it does not do
 
 * Remove the 2 Shield escape ticks per opens-on-vehicle cell: they are
@@ -1256,7 +1353,8 @@ flew the same edges.)
   and the city loop still hold in place. Not flown on the rig yet.
 * Model wind. A point the aircraft cannot reach against the wind is no
   better than one it cannot hold; X6 / X7 still judge the illegal depth.
-* Cost nothing. A relocation is one search, on the tick it happens: the
+* Cost nothing. A relocation is one search, on the tick it happens (since
+  2026-11-07 spread over ticks: "The per-tick bound", above): the
   library's moved holds took 1-44 ms on the desktop (time-window-opens-on-
   vehicle the dearest, whose candidates nearer than 10 m are all inside the
   zone about to open); an in-place plan 0-3 ms; the per-Loiter-tick point

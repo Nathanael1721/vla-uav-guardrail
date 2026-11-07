@@ -16,6 +16,73 @@ shipped change and recorded as one.
 
 ## [Unreleased]
 
+### 2026-11-07 (transit give-up) — a moved hold's transit is given up only when the aircraft is stuck relative to its point, never while it is still braking out of an overshoot; the harness's rail arm gives up by the same code
+
+#### Found
+- The hil shakedown hs03 at 199cfdf flew dyn-nfz-rotate-spin@3 to X6 and RTL.
+  The moved point, planned at 4.5 s (the search spread over the ticks from G3
+  at 4.1 s), found the aircraft still braking out of the hand-over at
+  3.01 m/s away from it; the transit's own command braked it at 2.0-2.3 m/s^2
+  while the distance grew (2.28 m at 4.5 s, 4.63 at 5.8 s, the farthest 4.66
+  at 6.0 s). 199cfdf's rule (no 5 cm of closing for 1 s, the clock from the
+  transit's start) gave it up at 5.8 s, one tick before the velocity crossed
+  zero; BRAKE held it about 4.3 m forward of the point and the bar's sweep
+  reached it: X6 at 31.1 s. hs02's G8 at d186077 was luck.
+- No headless number predicted it: the harness flew every transit until it
+  was reached. Flown under 199cfdf's rule, the harness's rail arm gives the
+  same transit up at the same 5.8 s ("not closing for 1.3 s") and X6 sends it
+  home at 31.3 s (hs03: 31.1 s); @6 and @9 too.
+
+#### Changed
+- `guardrail/hold_flight.py`: `TransitWatch`, the give-up rule (GIVING UP):
+  given up once the deadline has passed AND the distance to the point has
+  stayed within `TRANSIT_PROGRESS_M` (5 cm) of where it last moved by that
+  much, either way, for `TRANSIT_STALL_S` (1 -> 2 s) - closing and being
+  carried away (an overshoot being braked out) both restart the clock - or
+  `TRANSIT_MAX_S` after the travel time; `transit_distance`. `HoldFlight`
+  uses it.
+- `experiments/sweep_scenarios.py`: `TRANSIT_GIVE_UP_RESPONSES` = ("rail",):
+  the rail arm judges every moved transit with the same `TransitWatch`, on
+  every tick of its plan, and holds where the aircraft is once it is given
+  up (event `hold_transit_given_up`). The ideal and ArduPilot arms are
+  unchanged.
+- `tests/test_hold_horizon.py`: hs03's trace is not given up; a transit held
+  by a wind, or carried away by one, is; the rail arm uses the rails' class.
+
+#### Measured (headless; docs/DESIGN-hold-points.md, "The transit's give-up, and the rail arm flying it")
+- Rail arm against 199cfdf, flown 35 s longer where censored: (a) / (r) /
+  (r2) unchanged on every profile - smoke 52/63, 62/63, 63/63; library
+  160/179, 177/179, 179/179; nightly 654/741, 729/741, 741/741 (Wilson low
+  0.995); the ideal arm unchanged; P0 escapes 0 and breaches 0 on both arms
+  of every profile; mean time to safe unchanged (rail 3.731 / 3.803 /
+  3.849 s, ideal 2.533 / 2.585 / 2.570 s).
+- What moved: 5 of 1,966 episodes, all wind-beyond-authority lane 15 at
+  12 m/s on the rail arm (every seed): its G6 Land's transit to a moved site
+  is carried away by the wind, given up by the 10 s cap at 18.7 s, and the
+  aircraft lands where it is (G10 at 49.3 s; before, the harness flew the
+  transit on and never landed): the same trigger and labels, one more
+  autopilot breach (1 -> 2) and one more censored time to safe each.
+  199cfdf's own rule gives the same transit up at 9.7 s, with the same G10.
+- In the library's 180 rail-arm episodes (seed 0) the new rule gives up 1
+  transit (that one); 199cfdf's rule gives up 6 (rotate-spin at 3, 6 and
+  9 deg/s, each then X6; radius-scaling-grow 3.3 and -deep, outcome the
+  same; the wind one).
+- Flown under 199cfdf's rule, the rail arm gives rotate-spin@3 up at 5.8 s
+  ("not closing for 1.3 s") and X6 fires at 31.3 s; hs03 flew 5.8 s and
+  31.1 s. Under the new rule it holds and hands back (G8 at 9.6 s).
+
+#### Not done
+- Two parity gaps stay: the arm's transit closes with the rig's fitted
+  2.48 m/s^2 where HoldFlight streams 1.75 m/s^2, and the arm counts a point
+  reached within 5 cm where the rails do within 0.5 m.
+- A transit carried away steadily by a wind beyond authority is given up
+  only by `TRANSIT_MAX_S` (wind-beyond-authority, lane 15 at 12 m/s: a Land's
+  transit to its site given up 10 s past its travel time, at 18.7 s, where
+  199cfdf's rule gave it up at 9.7 s; the same landing, G10, either way). A
+  rule that lets only a slowing carry-away restart the clock would give it
+  up sooner; not made (the speed is a difference of noisy positions on the
+  rig).
+
 ### 2026-11-07 (per-tick bound) — the hold-point search is spread over ticks, a fixed count of its budget a tick, so no Loiter tick pays for a whole search; the hand-back guard is bounded; the rails' transit is not given up while it closes
 
 #### Found

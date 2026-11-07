@@ -249,7 +249,7 @@ A log whose rows do not name the rules they break (no `unsafe_rules`: an older r
 | the rail Shield's own model (0.45 s, 1.75 m/s^2) | 0.258 | 0.458 |
 | the ideal vehicle | 0.934 | 1.742 |
 
-The arm `rail` flies it entering from rest (`RESPONSE_ENTRY`). The families start mid-flight and a rail starts every scenario from a hover, and on time-window-opens-on-vehicle that start alone moves the ArduPilot arm from 3 ticks inside the zone to 15. `RAIL_VEHICLE` adds the rails' in-place hold. Every result records the arm, its parameters, its entry and what it was fitted to; `--check-rig` fails when `RAIL_RESPONSE` drifts from a campaign's logs.
+The arm `rail` flies it entering from rest (`RESPONSE_ENTRY`). The families start mid-flight and a rail starts every scenario from a hover, and on time-window-opens-on-vehicle that start alone moves the ArduPilot arm from 3 ticks inside the zone to 15. `RAIL_VEHICLE` adds the rails' hold: in place until 2026-11-07, since then the FSM's moved hold point flown as the rails fly it, and since that night given up by the rails' own rule (`TRANSIT_GIVE_UP_RESPONSES`, guardrail/hold_flight.py `TransitWatch`; docs/DESIGN-hold-points.md). Every result records the arm, its parameters, its entry and what it was fitted to; `--check-rig` fails when `RAIL_RESPONSE` drifts from a campaign's logs.
 
 ### The rail's gate bounds (PROPOSED, NOT ADOPTED)
 
