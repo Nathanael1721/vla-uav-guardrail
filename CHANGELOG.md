@@ -16,6 +16,38 @@ shipped change and recorded as one.
 
 ## [Unreleased]
 
+### 2026-11-07 (CSP flights) — OpenVLA flew the CSP A/B and eight service-issued paraphrases; on this model the CSP's effect on repairs is not above a rule-free prefix's
+
+Fourteen flights of OpenVLA-7B (bf16) through `demo/real_vla_demo.py` at
+c7a69e8 (`tools/run_csp_flights.ps1 -Prefix cspab_20261107`), on AirSimNH
+(classic AirSim, simple_flight): not the grant's Project AirSim + ArduPilot
+rail, not KPI-grade. Each flight 60 s; decision rate 1.23-1.30 Hz (median
+inference 0.61-0.64 s), VRAM peak 20.3-20.7 GB of 25.76.
+
+#### Measured
+- **WP4-15 A/B** (three seeds, each a recorded start offset, the same for
+  both arms): repair rate CSP off 0.200 / 0.127 / 0.108, on 0.392 / 0.207 /
+  0.437; mean on - off +0.201, mean repair +0.060 m/s. P0 escapes 0 and 0.0 s
+  in the no-fly zone on every flight. Outcome: off success 3/3, on fail 3/3
+  (`unsafe_position_entered`; the Shield forecasts with ArduCopter GUIDED's
+  response, AirSimNH flies simple_flight).
+- **WP4-09**: outcome stability across the paraphrases 7/8 (utterance 4/4,
+  verb_phrase 3/4). **WP4-10**: 8 of 8 paraphrases issued by the paraphraser
+  service (each run records `via`).
+- **WP2-09** (`tools/prefix_eval.py` on each run's own frames; every replay
+  reproduced its flight on every compared frame): repair rate csp - off mean
+  +0.097 (median +0.078), the rule-free neutral prefix - off mean +0.129
+  (median +0.111); csp - neutral mean -0.032, csp above neutral in 5 of 14
+  runs.
+- Evidence: `docs/data/csp_flights_20261107.json` (the scorer's A/B and
+  paraphrase tables and every replay).
+
+#### Reading
+- The CSP reaches a text-reading VLA's prompt and is flown (WP2-01). On base
+  OpenVLA, trained on arm manipulation and never on constraint text, its
+  effect is no larger than that of any prefix of its length: the model does
+  not use it. The decision rate is below the grant's 10 Hz (G3).
+
 ### 2026-11-07 (rail scorer) — the rails' logs answer the gates they read "not measured"; performance gated over the scenario's time, safety over the whole flight; what the autopilot flew gated on keep-outs, its corridor and band departures reported; the hil rig's own response fitted and flown as the `rail` arm, rail gates derived on it proposed; G9 needs the RTL climb on the rails
 
 The hil rehearsal rh01 (38 smoke missions on the rig, 7 Nov) failed 16 runs;
