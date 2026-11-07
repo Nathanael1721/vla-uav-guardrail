@@ -1728,21 +1728,19 @@ class EscalationFSM:
             gov = min(projected, key=_governing_key)
 
         # X6's clock: the position has been illegal on every tick since -
-        # PAST a hard limit, which since 2026-11-07 is not the same as "a stop
-        # here breaks a rule": a stop is also illegal where the position is
-        # legal now and a rule reaches it inside the lookahead (a zone
-        # spinning, drifting or opening toward a held aircraft), and there
-        # the depth X6 and X7 read stays 0.0 on every tick, so "not shown to
-        # fall" was true by construction. dyn-nfz-rotate-spin on the
-        # ArduPilot response went home by X6 at 31.0 s on such a spell (26.0-
-        # 31.0 s, depth 0.0 throughout) while the autopilot was flying to a
-        # moved hold point that was legal through the lookahead, and no
-        # rubric clause held (N4). An unknown depth (None) still counts: no
-        # evidence of progress is not evidence of it. A stop that is
-        # illegal is still never streamed (`withheld`), whatever the depth.
-        past_limit = inp.stop_illegal and (inp.unsafe_depth_m is None
-                                           or inp.unsafe_depth_m > 0.0)
-        if not past_limit:
+        # `stop_illegal`, the lookahead included, the same "unsafe" the
+        # time-to-safe KPI counts. Where a stop is illegal only because a
+        # rule reaches the point later in the lookahead, the unsafe depth is
+        # 0.0 on every tick and cannot be shown to fall, so X6 fires at T:
+        # the aircraft has found no place to stop for T. Counting only the
+        # ticks PAST a limit was tried and measured on 2026-11-07
+        # (dyn-nfz-rotate-spin on the ArduPilot response, where X6 fires that
+        # way): the hold then ran to the operator timeout (G5 at 34.0-34.1 s,
+        # still a fail-safe, landing after a failed RTL at 3 and 6 deg/s) and
+        # the unsafe spells grew (6 deg/s: 8.0 s to 24.0 s), Loiter's
+        # hand-back cannot safely take over (it breached the 9 deg/s bar on
+        # the ideal vehicle), and nothing else moved. So it stays.
+        if not inp.stop_illegal:
             self._stuck_since = None
             self._depths = []
         else:
@@ -1792,14 +1790,14 @@ class EscalationFSM:
         # 0.3 s with small repairs left Loiter by G8 at 2.0 s and cycled
         # G2 / G8 for 30 s instead of reaching G4
         # (test_n_in_t_still_catches_a_pilot_who_re_violates_faster_than_the_debounce).
-        # "Somewhere legal" stays `stop_illegal` here, the lookahead included,
-        # unlike X6's `past_limit` (2026-11-07): handing GUIDED back while a
-        # zone is about to sweep over the aircraft is not safe. Tried with
-        # `past_limit`, dyn-nfz-rotate-spin at 9 deg/s on the ideal vehicle
-        # was handed back at 8.4 s, into the bar's sweep, and breached it
-        # once (a move of its own onto a spot the sweep had made unsafe, the
-        # Shield's known limit on a bar spinning that fast); held as before,
-        # it waits for the bar to pass (G8 at 20.1 s, no breach).
+        # "Somewhere legal" is `stop_illegal`, the lookahead included:
+        # handing GUIDED back while a zone is about to sweep over the
+        # aircraft is not safe. Measured on 2026-11-07 with only the position
+        # PAST a limit read here: dyn-nfz-rotate-spin at 9 deg/s on the ideal
+        # vehicle was handed back at 8.4 s, into the bar's sweep, and
+        # breached it once (a move of its own onto a spot the sweep had made
+        # unsafe, the Shield's known limit on a bar spinning that fast); held
+        # as it is, it waits for the bar to pass (G8 at 20.1 s, no breach).
         starts_now = hard_violated and not self._prev_hard
         acceptable = (not hard_untrusted and strongest not in ("loiter", "RTL", "land")
                       and not inp.stop_illegal and not starts_now)
