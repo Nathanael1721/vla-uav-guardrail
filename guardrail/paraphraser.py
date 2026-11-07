@@ -2853,12 +2853,19 @@ def scenario_renderings() -> list[dict]:
     The sweep's pilots are scripted and read no text today (the file's own
     header); this is the set a text-reading pilot WOULD be shown, so it is
     the set the stored backend must cover. Loading the library validates it:
-    a broken scenarios.yaml stops this loudly rather than covering nothing."""
+    a broken scenarios.yaml stops this loudly rather than covering nothing.
+
+    The library's families only: one flown by its own profile alone
+    (scenario_spec.flown_by; since 2026-11-07 grant-example-sweep) is in no
+    library run. It declares no paraphrase arm, so nothing asks the stored
+    backend for its texts; one that did would raise UnknownSource."""
     from .compiler import Mission
-    from .scenario_spec import Library
+    from .scenario_spec import Library, flown_by
     lib = Library(ROOT / "experiments" / "scenarios.yaml")
     out = []
     for fam in lib.families:
+        if not flown_by(fam.first.spec, None):
+            continue
         for cell in fam.cells():
             spec = cell.spec
             pol = spec.policy.load(ROOT)

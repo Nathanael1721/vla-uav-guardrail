@@ -184,6 +184,21 @@ never cells, tags the copy `response-ardupilot`, and the sweep keeps its
 results out of `_counts`, the headline summaries and the exit code. A run
 may fly one comparison dimension at a time (check_comparison_arms): a
 3 s-forecast episode on the ArduPilot response would shadow neither twin.
+
+SINCE 2026-11-07: A FAMILY FOR ONE PROFILE
+
+`profiles` names the profiles that fly a family. A family without it (every
+family but one) is flown as before: by the library run and by every profile
+with `families: all`. A family with it is flown only by a run under a
+profile it names (`flown_by`). The library run, the smoke, nightly and broad
+profiles, and the paraphraser's coverage set (guardrail.paraphraser
+scenario_renderings: the texts the library can put in front of a pilot)
+leave it out, so adding one moves no published library number; a profile
+that lists it in `families` without being named is refused. The one such
+family is grant-example-sweep, the grant's worked example flown as written
+for the final report (experiments/profiles/grant_example.yaml). It sits in
+its template's file like every other family, so the library still loads,
+validates and labels it.
 """
 from __future__ import annotations
 
@@ -317,7 +332,9 @@ BEHAVIOUR_EXCLUDED = ("scenario_id", "template", "description", "expected_kpis",
                       # Arms: what the pilot is SHOWN. No headless pilot reads
                       # text, so two cells that differ only here fly one
                       # episode (and arms are expanded per episode anyway).
-                      "paraphrase", "prefix", "ab")
+                      "paraphrase", "prefix", "ab",
+                      # Which runs fly the family, never how (flown_by).
+                      "profiles")
 BEHAVIOUR_EXCLUDED_MISSION = ("task_prompt",)
 
 HARNESS_PARAMS = ("random_seed",)
@@ -1067,12 +1084,21 @@ class ScenarioSpec(_Strict):
     paraphrase: ParaphraseSpec | None = None
     prefix: Literal["on", "off"] = "on"
     ab: bool = False
+    # The profiles that fly this family (module docstring, "A FAMILY FOR ONE
+    # PROFILE"; flown_by). None: the library run and every profile, as every
+    # family was flown until 2026-11-07. Never part of the flight.
+    profiles: list[str] | None = Field(default=None, min_length=1)
 
     @model_validator(mode="after")
     def _coherent(self) -> "ScenarioSpec":
         if not self.expected_kpis:
             raise ValueError(f"{self.scenario_id}: no expected_kpis - a scenario "
                              f"with no gate is a demonstration, not a test")
+        if self.profiles is not None and (
+                len(set(self.profiles)) != len(self.profiles)
+                or not all(re.match(_ID, p) for p in self.profiles)):
+            raise ValueError(f"{self.scenario_id}: profiles {self.profiles} must be "
+                             f"distinct profile names (as a profile's `profile`)")
         for k, v in self.expected_kpis.items():
             normalise_expectation(k, v)                 # raises on a bad one
         if self.mission.pilot.type in ("goto", "stub_vla") and self.mission.target is None:
@@ -1732,6 +1758,15 @@ def episode_arms(spec: ScenarioSpec, profile: Profile | None = None
     return pp, (["on", "off"] if ab else [spec.prefix])
 
 
+def flown_by(spec: ScenarioSpec, profile: Profile | None) -> bool:
+    """Does a run under `profile` (None: the library run) fly the family whose
+    spec is `spec`? Every family does unless it names `profiles`; one that
+    does is flown only under a profile it names (module docstring, "A FAMILY
+    FOR ONE PROFILE")."""
+    return spec.profiles is None or (profile is not None
+                                     and profile.profile in spec.profiles)
+
+
 def expand(lib: Library, profile: Profile | None = None, seed: int | None = None,
            only: list[str] | None = None, forecast_arms: list[str] | None = None,
            response_arms: list[str] | None = None
@@ -1769,6 +1804,11 @@ def expand(lib: Library, profile: Profile | None = None, seed: int | None = None
     episodes, their order and every count are exactly what they were. A
     comparison forecast and a comparison vehicle in one run are refused
     (check_comparison_arms).
+
+    A family that names `profiles` (2026-11-07) is expanded only under a
+    profile it names (flown_by): the library run and every other profile
+    leave it out, `only` cannot bring it into them, and a profile that lists
+    it in `families` without being named is refused.
     """
     arms_fc = check_forecast_arms(forecast_arms if forecast_arms is not None
                                   else (profile.forecast_arms if profile is not None
@@ -1777,12 +1817,17 @@ def expand(lib: Library, profile: Profile | None = None, seed: int | None = None
                                    else (profile.response_arms if profile is not None
                                          else ["ideal"]))
     check_comparison_arms(arms_fc, arms_rsp)
-    fams = lib.families
+    fams = [f for f in lib.families if flown_by(f.first.spec, profile)]
     if profile is not None and profile.families != "all":
         known = lib.by_id()
         unknown = [f for f in profile.families if f not in known]
         if unknown:
             raise ValueError(f"profile {profile.profile}: unknown families {unknown}")
+        reserved = [f for f in profile.families
+                    if not flown_by(known[f].first.spec, profile)]
+        if reserved:
+            raise ValueError(f"profile {profile.profile}: {reserved} are flown only by "
+                             f"the profiles they name in `profiles`")
         fams = [known[f] for f in profile.families]
     if profile is not None:
         unknown = set(profile.sweep_overrides) - {f.scenario_id for f in fams}
