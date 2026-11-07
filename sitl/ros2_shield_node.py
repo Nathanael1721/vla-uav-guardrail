@@ -1305,14 +1305,44 @@ try:
         from mavros_msgs.msg import ParamEvent
     except ImportError:
         ParamEvent = None
+    try:
+        # EXTENDED_SYS_STATE asked of the autopilot by its message id
+        # (2026-11-07); a stand-in ROS stack without it runs as before.
+        from mavros_msgs.srv import MessageInterval
+    except ImportError:
+        MessageInterval = None
     HAVE_ROS = True
 except ImportError:
     HAVE_ROS = False
+
+def landed_from(mode: str | None, ext_landed: bool | None, armed: bool | None,
+                flew_armed: bool) -> bool:
+    """The FSM's "landed" input (G10, X5), only in RTL or LAND as before
+    (2026-11-07): /mavros/extended_state's landed_state once the autopilot
+    sends it (`ext_landed` not None), otherwise ArduCopter's own end of a
+    landing - LAND and the end of RTL disarm on touchdown - read as
+    /mavros/state's armed flag falling after this run armed. A disarm before
+    the run armed, or in any other mode, is not a landing."""
+    if mode not in ("RTL", "LAND"):
+        return False
+    if ext_landed is not None:
+        return bool(ext_landed)
+    return armed is False and bool(flew_armed)
+
 
 if HAVE_ROS:
     LATCHED = QoSProfile(depth=10, reliability=ReliabilityPolicy.RELIABLE,
                          durability=DurabilityPolicy.TRANSIENT_LOCAL)
     LANDED_STATE_ON_GROUND = 1
+    # ArduCopter puts EXTENDED_SYS_STATE (MAVLink common, id 245) in none of
+    # the stream groups REQUEST_DATA_STREAM switches on, so with the streams
+    # alone /mavros/extended_state stays empty: every hil run of 6-7 Nov
+    # recorded 0 messages on it (rh01_032's bag), and the FSM never read
+    # "landed" - G12 took rh01_032 to Land and G10 never fired (WP3-07,
+    # "G10 never fired after a landing"). Asked for by id instead
+    # (MAV_CMD_SET_MESSAGE_INTERVAL through MAVROS's sys_status plugin).
+    MSG_EXTENDED_SYS_STATE = 245
+    EXT_STATE_RATE_HZ = 2.0
 
     class ShieldNode(Node):
         def __init__(self, args, out: Path, subject=None) -> None:
@@ -1536,6 +1566,10 @@ if HAVE_ROS:
             # /mavros/state's armed flag, and the mission's end after the FSM
             # ended it (its terminal edge; logging went on to the landing).
             self.armed: bool | None = None
+            # Whether /mavros/state has read armed during this run: a disarm
+            # after it, in RTL or LAND, is ArduCopter's own end of a landing
+            # (landed_input).
+            self._flew_armed = False
             self._terminal_t: float | None = None
             self.after_terminal: dict | None = None
             self.traj: list[dict] = []
@@ -1621,6 +1655,9 @@ if HAVE_ROS:
             self.cli_arm = self.create_client(CommandBool, "/mavros/cmd/arming")
             self.cli_tol = self.create_client(CommandTOL, "/mavros/cmd/takeoff")
             self.cli_rate = self.create_client(StreamRate, "/mavros/set_stream_rate")
+            self.cli_msg_interval = (
+                self.create_client(MessageInterval, "/mavros/set_message_interval")
+                if MessageInterval is not None else None)
             self.cli_param = self.create_client(GetParameters,
                                                 "/mavros/param/get_parameters")
             self.cli_mavros_param = self.create_client(GetParameters,
@@ -1766,6 +1803,8 @@ if HAVE_ROS:
         def _on_state(self, msg: MavState) -> None:
             self.mav_connected = msg.connected
             self.armed = bool(msg.armed)
+            if msg.armed:
+                self._flew_armed = True
             note_mavros_state(self.hil_evidence, msg.connected)
             if msg.mode != self.mode:
                 self.rec.event("mode", t=self._t(), mode=msg.mode,
@@ -2045,6 +2084,29 @@ if HAVE_ROS:
 
         # ---------------- helpers ---------------- #
 
+        def request_extended_state(self) -> bool | None:
+            """Ask the autopilot for EXTENDED_SYS_STATE at EXT_STATE_RATE_HZ
+            (MAV_CMD_SET_MESSAGE_INTERVAL through MAVROS's sys_status plugin)
+            and record the answer in events.jsonl: True / False as the
+            autopilot acknowledged, None when the service or the message type
+            is missing. Best effort: without it "landed" is the disarm
+            (landed_input)."""
+            ok = None
+            if self.cli_msg_interval is not None:
+                res = self._call(self.cli_msg_interval, MessageInterval.Request(
+                    message_id=MSG_EXTENDED_SYS_STATE,
+                    message_rate=EXT_STATE_RATE_HZ))
+                ok = None if res is None else bool(res.success)
+            self.rec.event("extended_sys_state_requested", t=self._t(),
+                           message_id=MSG_EXTENDED_SYS_STATE,
+                           rate_hz=EXT_STATE_RATE_HZ, acknowledged=ok)
+            log.info(f"EXTENDED_SYS_STATE at {EXT_STATE_RATE_HZ} Hz requested: {ok}")
+            return ok
+
+        def landed_input(self) -> bool:
+            """The FSM's "landed" (G10, X5): landed_from on this node's view."""
+            return landed_from(self.mode, self.landed, self.armed, self._flew_armed)
+
         def _call(self, client, req, timeout: float = 5.0):
             if not client.wait_for_service(timeout_sec=timeout):
                 return None
@@ -2243,6 +2305,9 @@ if HAVE_ROS:
             self._call(self.cli_rate,
                        StreamRate.Request(stream_id=0, message_rate=10, on_off=True))
             log.info("stream rate 10 Hz requested")
+            # ...and EXTENDED_SYS_STATE by id: no stream group carries it on
+            # ArduCopter, and without it the FSM never learns "landed".
+            self.request_extended_state()
 
             # The backstop as the autopilot holds it, then this generation's
             # zones - once the aircraft's position is known, so a zone over
@@ -3012,7 +3077,7 @@ if HAVE_ROS:
                         home_reached=(self.mode == "RTL"
                                       and home_reached(st.x, st.y, st.up, self.start_xy,
                                                        tol_m=REACH_M)),
-                        landed=bool(self.landed) and self.mode in ("RTL", "LAND"),
+                        landed=self.landed_input(),
                         stop_illegal=stop_illegal, unsafe_depth_m=unsafe_depth,
                         # The caps the Shield clamped against on this tick,
                         # not every cap the policy lists (Shield.applied_caps).

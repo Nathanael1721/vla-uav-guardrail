@@ -75,6 +75,9 @@
             <service>/mavros/cmd/arming</service>
             <service>/mavros/cmd/takeoff</service>
             <service>/mavros/set_stream_rate</service>
+            <!-- EXTENDED_SYS_STATE by message id: "landed" for G10 / X5
+                 (2026-11-07) -->
+            <service>/mavros/set_message_interval</service>
             <service>/mavros/param/get_parameters</service>
             <service>/mavros/param/set_parameters</service>
             <service>/mavros/get_parameters</service>

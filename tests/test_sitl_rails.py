@@ -2219,6 +2219,34 @@ def test_the_vla_stub_flies_the_harness_laws_in_the_policy_frame():
     assert ns.start == "-200,0,15"
 
 
+def test_the_shield_node_learns_landed_from_the_autopilot():
+    """WP3-07, G10 / X5 (2026-11-07). ArduCopter puts EXTENDED_SYS_STATE in
+    no REQUEST_DATA_STREAM group: every hil run of 6-7 Nov recorded 0
+    messages on /mavros/extended_state, so "landed" never reached the FSM
+    and G10 never fired after rh01_032's G12 landing. The node asks for
+    message 245 by id through /mavros/set_message_interval (allowed in its
+    SROS 2 profile) and, until extended_state arrives, reads ArduCopter's
+    disarm on touchdown in RTL / LAND."""
+    N = _node()
+    f = N.landed_from
+    assert f("LAND", True, True, True) and f("RTL", True, False, True)
+    assert not f("LAND", False, False, True), "extended_state, once sent, decides"
+    assert f("LAND", None, False, True), "no extended_state: the disarm after flight"
+    assert not f("LAND", None, False, False), "disarmed before it ever armed"
+    assert not f("LAND", None, True, True) and not f("LAND", None, None, True)
+    assert not f("GUIDED", True, False, True), "only RTL / LAND, as before"
+    assert not f("BRAKE", None, False, True) and not f(None, None, False, True)
+    src = (SITL / "ros2_shield_node.py").read_text(encoding="utf-8")
+    assert "MSG_EXTENDED_SYS_STATE = 245" in src
+    assert '"/mavros/set_message_interval"' in src
+    assert "self.request_extended_state()" in src
+    assert "landed=self.landed_input()," in src
+    assert 'landed=bool(self.landed) and self.mode in ("RTL", "LAND")' not in src
+    pol = (SITL / "sros2_policy.xml").read_text(encoding="utf-8")
+    shield = pol.split('<profile ns="/" node="safety_shield">')[1].split("</profile>")[0]
+    assert "<service>/mavros/set_message_interval</service>" in shield
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     failed = 0

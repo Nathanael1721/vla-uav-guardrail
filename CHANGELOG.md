@@ -16,6 +16,41 @@ shipped change and recorded as one.
 
 ## [Unreleased]
 
+### 2026-11-07 (G10 on the hil rig) — the Shield node asks ArduCopter for EXTENDED_SYS_STATE by id, so "landed" reaches the FSM; until it arrives the disarm on touchdown is read; not flown yet
+
+#### Found
+- Every hil run of 6-7 Nov recorded **0 messages on `/mavros/extended_state`**
+  (rh01_032's replay: "rosbag topics with 0 messages: /mavros/altitude,
+  /mavros/extended_state, ..."). The node asks MAVROS for every stream at
+  10 Hz (`set_stream_rate`, stream 0), and ArduCopter puts EXTENDED_SYS_STATE
+  (MAVLink id 245) in none of the groups REQUEST_DATA_STREAM switches on. So
+  the FSM's `landed` input (`bool(self.landed) and mode in RTL / LAND`) was
+  False on every tick: rh01_032 took G12 to Land and G10 (Land -> end,
+  "landed") never fired, the open item of WP3-07 ("G10 never fired after a
+  landing", first seen on ros2_action_land_01). X5 (landed during RTL away
+  from home) had the same blind input.
+
+#### Changed
+- `sitl/ros2_shield_node.py`: right after the stream request the node asks for
+  EXTENDED_SYS_STATE at 2 Hz by message id (MAV_CMD_SET_MESSAGE_INTERVAL
+  through MAVROS's `/mavros/set_message_interval`) and records the
+  acknowledgement in events.jsonl (`extended_sys_state_requested`). The FSM's
+  `landed` is `landed_from(mode, ext_landed, armed, flew_armed)`, a plain
+  function: only in RTL / LAND as before; extended_state's landed_state once
+  the autopilot sends it; until then ArduCopter's own end of a landing - LAND
+  and the end of RTL disarm on touchdown - read as /mavros/state's armed flag
+  falling after the run armed. A disarm before the run armed, or in any other
+  mode, is not a landing.
+- `sitl/sros2_policy.xml`: the safety_shield profile may call
+  `/mavros/set_message_interval`.
+- `tests/test_sitl_rails.py`: `test_the_shield_node_learns_landed_from_the_autopilot`
+  (the reading, and the request's wiring and permission). 67/67;
+  test_sitl_stressors 21/21, test_ros2_package 17/17.
+
+#### Limits
+- Not flown: the next hil campaign is the first to carry it. A Land cell that
+  ends before touchdown still ends without G10 (the episode's time cap).
+
 ### 2026-11-07 (FSM on the rail vehicle) — an untrusted repair beside a speed cap alone now escalates (G3): the missed fail-safe on the lagging vehicles is fixed; X6 on a hold that finds no place to stop is kept, measured
 
 #### Found
