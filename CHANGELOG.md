@@ -16,6 +16,156 @@ shipped change and recorded as one.
 
 ## [Unreleased]
 
+### 2026-11-07 (grant example sweep) — the grant's worked ScenarioSpec flown as written, as a profile of its own: no episode is ever in an unsafe position, so its "mean time to safe <= 2.0 s" holds only vacuously
+
+The Stress Testing page's worked example (dyn-nfz-translate-001) is the only
+place the grant gives a figure for mean time to safe (<= 2.0 s; the Safety
+Shield page says "tracked; from violation to back-in-safe-zone"). The final
+report compared the library's mean with it (docs/FINAL-REPORT-outline.md,
+WP3-17); no template flew the example itself (dyn-nfz-translate is a
+reshaped version).
+
+#### Added
+- `grant-example-sweep` (experiments/templates/dynamic_nfz_movement.yaml):
+  the example as the grant writes it - task prompt, start (25.0421,
+  121.5310, 50 m AGL, yaw 90), target W3 (25.0560, 121.5450, 50 m), both
+  events at 15 s (a 40 x 60 m polygon 60 m ahead; 5 m/s
+  perpendicular_left), the bare sweep keys (vehicle_speed_mps 6 / 8 / 10 / 12
+  x wind_speed_mps 0 / 2 / 5 x random_seed 1001-1003 = 36 episodes) and its
+  three expected_kpis. Its description names every substitution:
+  - the bundle itri-icl-2026-demo-v0.3.0 is not in this repository and the
+    grant's hash is truncated (the reference repository's bundle of that
+    name carries sha256:31cafbb3..., not 9d31...): policies/wgs84_taipei.yaml
+    flies instead - the same school-yard polygon, with a hard 5-80 m band
+    where the bundle's is soft 5-120 m, a 1 m margin, a weekday curfew and
+    12 m/s / 4 m/s / 60 deg/s caps;
+  - the yard's south-west vertex IS the start, and the straight leg to W3
+    crosses the yard for 105.5 m. A Saturday clock (2026-11-07 10:00) leaves
+    it out of force by its own Mon-Fri curfew. In force (measured, seed 1001
+    at each speed) every episode ends in a false fail-safe: G1, G3, the
+    Loiter timeout at 30 s (G5) and home into the ring at the start (G9),
+    where the rubric reads N1 (flown without a fail-safe, 16.9 s of unsafe
+    requests at 6 m/s, 8.4 s at 12 m/s) - rail-mission-stub-vla's pattern;
+  - corridor C1 has no geometry anywhere: read as the straight leg, no
+    keep-in rule added;
+  - the pilot is stub_vla, the loader's default for the grant's pilot-less
+    mission;
+  - 6-10 m/s are under the policy's 12 m/s cap and 12 m/s is on it; on the
+    hil rail the SITL airframe did not reach 12 m/s on rh01;
+  - 50 m AGL is flown as written;
+  - the winds, from a direction drawn per seed, are all within the 6.4 m/s
+    hold authority: the same track under the guided wind model (N3);
+  - 3600 ticks: W3 is 2094.7 m away, 349.1 s at 6 m/s.
+  Labelled not expected (N1) from the physics: no RTL / land rule, no wind
+  beyond authority, no position error, and the zone leaves the track, ring
+  included, 4.2 s after it appears, while reaching it by then would take
+  more than 14 m/s.
+- experiments/profiles/grant_example.yaml flies that family alone: 12 cells
+  x 3 seeds = 36 episodes.
+- `profiles` (guardrail/scenario_spec.py, `flown_by`): a family flown only by
+  the profiles it names. The library run, smoke, nightly and broad leave it
+  out (library 169 cells / 180 episodes, smoke 57 / 64, nightly 225 / 744, as
+  before), a profile that lists it without being named is refused, `--only`
+  cannot bring it into the library run, and it is not part of the flight.
+
+#### Changed
+- guardrail/paraphraser.py: the stored sets' coverage (scenario_renderings)
+  reads the library's families only. The new family's task prompt and its
+  CSP at the Saturday clock have no stored set, and it declares no
+  paraphrase arm. experiments/paraphrases/validation_report.json re-digested
+  for the edit (`validator_digest` only; every recomputed number unchanged).
+
+#### Measured
+Headless, not KPI-grade (topology headless-kinematic, sim_speedup about 70);
+this branch at 562aee5 (recorded `-dirty`: this entry and the profile's
+header comment were not yet committed).
+- **Ideal vehicle** (`--profile grant_example`, 36 episodes in 185 s): 36
+  pass. P0 escapes 0 (no P0 tick to escape). Fail-safe trigger correctness
+  36/36 = 1.0, Wilson 95 % low 0.904; 9/9 at each speed (0.701), 12/12 at
+  each wind (0.758). Time to safe: no spell in any episode, closed or
+  censored, so it has no mean and no max; the `<= 2.0` gate passes on "never
+  unsafe" alone. Outcomes: success 36 (W3 reached). Repairs 0; every tick of
+  every episode free of any violation (3600 of 3600); breaches 0, polygon
+  entries 0, no FSM transition. Closest approach to the zone's polygon 23.0 /
+  14.8 / 8.9 / 4.7 m at 6 / 8 / 10 / 12 m/s, the same at every wind and seed.
+- **Rail vehicle** (`--response-arms ideal rail --autopilot-hold in_place`:
+  the hil rig's fitted response from a hover and ArduPilot's hold in place,
+  sweep_scenarios.RAIL_VEHICLE; 72 episodes in 435 s): the 36 rail copies
+  and their 36 ideal twins (holding in place) give every number above; no
+  episode moved between twins. On the rail vehicle the stub overshoots W3
+  by up to 22.6 m at 12 m/s (it slows only in its last `speed` metres) and
+  comes back; at 6 m/s W3 is first within 3 m at 350.3 s, inside the 360 s.
+- Four distinct flights per arm, one per speed: the winds are rejected under
+  the guided model, and a seed draws only the wind's direction (24 episodes
+  drew one).
+- **Labels** (`tools/failsafe_rubric.py --profile grant_example --no-fsm`):
+  36 cell-seeds judged, none disagrees with N1; flown without a fail-safe
+  the E5 spell is 0.0 s everywhere (30.1 s needed), no E1, E2 or E3 fact.
+- **hil dry run** (`--backend hil --hil-dry-run`): 36 missions, 0 refused,
+  with the main checkout's signed bundles/wgs84-taipei-demo-v0.1.2.tar.gz
+  (sha256:a5f52b5f..., given through `--hil-config` `bundles_dir`): SITL_HOME
+  25.0421, 121.5310 at heading 90, `--clock-start=2026-11-07T10:00:00`,
+  `--max-s=395`, and on the 24 windy missions SIM_WIND_T 1 with one
+  SIM_WIND_DIR per seed and SIM_WIND_SPD set at t = 0. A checkout without
+  that build product refuses all 36 ("no bundle on disk"). Nothing flown.
+- **The other readings** (not in the profile; seed 1001, wind 0, ideal
+  vehicle). Yard in force: see Added. Zone 60 m across and 40 m along: at
+  10 and 12 m/s the forecast meets its ring (1 and 12 violation ticks, Brake
+  and back, G1 G7), closest 1.4 and 1.0 m. Zone centre 60 m ahead: at 8,
+  10 and 12 m/s (6, 12 and 18 violation ticks; G1 G7 at 8 m/s, X1 G3 G8 at
+  10 and 12), closest 1.6-7.9 m. In none is a position ever unsafe.
+
+#### Reading
+- **Our time to safe** is, per episode, the length of each unbroken spell of
+  ticks whose TRUE position is unsafe: `Shield.state_is_unsafe`, a stop there
+  would break a rule anywhere in the 5 s lookahead - inside a zone or its
+  margin ring, outside a band, or a zone or window that will cover the spot
+  within 5 s. The FSM's `stop_illegal` is the same question on hard enforced
+  rules, and X6 escalates on it. A spell still open when the episode ends is
+  censored: counted, never averaged (guardrail/kpi.py `_time_to_safe` and
+  `_episodes`; the gate's vacuous pass is sweep_scenarios `_VACUOUS`).
+- **The grant's words** are "from violation to back-in-safe-zone" (Safety
+  Shield, KPI table). Read as a position, inside the zone until back outside
+  it, ours starts no later (the ring and the lookahead come first) and ends
+  no sooner (legal through the lookahead, not just outside the polygon): it
+  is never shorter on an entry, and it also counts spells with no entry at
+  all. Read as the Shield's violation, a request it had to repair, until the
+  requests are clean again, it is the harness's `intervention` duration,
+  reported apart and never called a time to safe.
+- **On the example as written neither reading has a tick to measure**: 0
+  unsafe ticks and 0 violation ticks in all 108 episodes, and no reading of
+  the zone's geometry produces an unsafe spell. The grant's <= 2.0 s cannot
+  be checked on its own sweep with this harness. The library's 2.926 s over
+  39 recoveries (WP3-17) measures recoveries from positions made unsafe
+  under the aircraft, which this sweep never creates, so the two are not
+  comparable.
+- The fail-safe correctness meets 0.99 as a point (36/36) and cannot show
+  it: every label is "not expected", so never triggering scores the same
+  (the sweep prints "NOT above never-trigger"), and 36 error-free episodes
+  give a Wilson low of 0.904 (381 are needed for 0.99). P0 escape rate 0
+  holds with nothing to escape.
+
+#### Not done
+- Not flown on the hil rail.
+- guardrail/harness_service.py still flies a profile-only family by id
+  without its profile (one episode on request, no published number).
+
+#### Tests
+- tests/test_scenario_spec.py 43/43, three new: the profile loads and
+  expands to the grant's 36 episodes with the grant's mission, events, sweep
+  and gates; the description names each substitution and each one is still
+  true of the files (the bundle absent, the yard's vertex at the start and
+  its curfew off on the clock's Saturday, no corridor rule, the 12 m/s cap,
+  50 m in the band, the winds within the hold authority, 360 s against the
+  slowest flight to W3); the family is in no library, smoke, nightly or
+  broad run, `--only` cannot add it there, a profile it does not name is
+  refused, and `profiles` is not part of the flight.
+- One at a time with vla-real: test_failsafe_rubric 7/7, test_paraphraser
+  103/103 (102/103 before the report's re-digest), test_harnesstruth_ci
+  35/35, test_build_progress_oct_data 44/48 (4 skipped), test_kpi_report
+  40/43 (3 skipped: flight folders not on this checkout), test_harness_service
+  62/62, test_sweep 120/121 (1 skipped: no SITL rail here).
+
 ### 2026-11-07 (G10 on the hil rig) — the Shield node asks ArduCopter for EXTENDED_SYS_STATE by id, so "landed" reaches the FSM; until it arrives the disarm on touchdown is read; not flown yet
 
 #### Found
