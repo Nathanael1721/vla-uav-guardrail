@@ -3185,6 +3185,328 @@ def test_the_hil_transport_runs_the_rig_commands_it_names():
     assert "xargs -r docker kill" in [c for c in calls if c[0] == "run"][-1][1][-1]
 
 
+# --------------------------------------------------------------------------- #
+# the rail scorer (2026-11-07): the rule readings from the rail's own log, the
+# scenario's window, the proposed rail gates, the offline re-score
+# --------------------------------------------------------------------------- #
+
+_RULE_KEYS = ("phase", "switch_lag_s_", "switch_conservative_", "anticipated_ticks_",
+              "anticipated_opening_only_ticks_", "release_gap_s_", "max_offset_from_corridor",
+              "final_offset_from_corridor")
+
+
+def _rail_generations(spec, run):
+    """{generation: policy} of a headless episode as the rail's node writes
+    them (policy_g<N>.json, the policy's canonical JSON, read back as
+    run_generations reads it): the cell's policy, then each accepted event
+    applied in order through the harness's own event code. Only events that
+    need no vehicle state (rule switches) are rebuilt here."""
+    from guardrail.models import policy_from_raw
+
+    def snap(p):
+        return policy_from_raw(json.loads(p.canonical_bytes()), source="test", runtime=False)
+    sh = Shield(spec.policy.load(ROOT))
+    out = {sh.policy.generation: snap(sh.policy)}
+    es = S._EventState(shields=[sh])
+    recs = [e for e in run.events if e.get("event") and not e.get("refused")]
+    for ev, rec in zip(sorted(spec.events, key=lambda e: e.at_sim_t), recs):
+        assert ev.type in ("activate_rule", "deactivate_rule"), ev.type
+        S.apply_event(ev, es, State(x=0.0, y=0.0, up=15.0), (1.0, 0.0), rec["t"])
+        out[sh.policy.generation] = snap(sh.policy)
+    return out
+
+
+def _rail_rows(spec, run):
+    """A headless episode's rows in the rail log's shape for what
+    rail_rule_measurements reads: the rule clock on every row (the scenario's
+    clock plus t, as the node's scripted clock reads it), the generation
+    flown, and `rule_events` on the row an event took effect, labelled as
+    the node labels them; with the fields rail_measurements reads."""
+    from datetime import timedelta
+    t0 = spec.mission.clock_start
+    by_t: dict = {}
+    for e in run.events:
+        if e.get("event") and not e.get("refused"):
+            by_t.setdefault(round(float(e["t"]), 4), []).append(e)
+    out, gen = [], 0
+    for i, r in enumerate(_as_rail_rows(run.rows)):
+        evs = by_t.get(round(float(r["t"]), 4), [])
+        if evs:
+            gen = evs[-1]["generation"]
+        row = dict(r, tick=i, generation=gen,
+                   rule_events=[f"scenario event {k}: {e['event']}" for k, e in enumerate(evs)])
+        if t0 is not None:
+            row["clock"] = (t0 + timedelta(seconds=float(r["t"]))).isoformat()
+        out.append(row)
+    return out
+
+
+def _opens_on_vehicle():
+    return _cell("time-window-opens-on-vehicle", clock="2026-09-07T07:29:58",
+                 vehicle_speed_mps=4)
+
+
+def test_the_rail_reads_the_harnesss_rule_measures_from_its_own_log():
+    """2026-11-07 (the hil rehearsal rh01): every gate on the phase counts,
+    the window switch's boundary check, the anticipated count and the
+    corridor offset read "not measured" on the rails although their logs
+    hold what these need. rail_rule_measurements reads them with
+    run_episode's definitions - one scorer: fed a headless episode's own
+    rows in the rail log's shape (the rule clock and generation on each row,
+    the run's generations), it gives every rule measure the harness gave,
+    value for value, and the cells' gates pass on them. The null: without
+    the rule clock on the rows nothing is measured - the gate says "not
+    measured", never 0 - and the reason is recorded."""
+    cases = [
+        (_cell("time-window-closes-mid-run", clock="2026-09-07T17:29:40",
+               vehicle_speed_mps=4),
+         ("phase0_violation_ticks_nfz-school", "phase1_violation_ticks_nfz-school",
+          "switch_conservative_nfz-school")),
+        (_opens_on_vehicle(), ("anticipated_ticks_nfz-school",
+                               "switch_conservative_nfz-school")),
+        (BY_ID["time-window-switch-event"],
+         ("phase1_violation_ticks_nfz-school", "phase2_violation_ticks_nfz-school",
+          "switch_conservative_nfz-school")),
+        (BY_ID["rule-deactivated-mid-run"],
+         ("phase0_violation_ticks_nfz-school", "phase1_violation_ticks_nfz-school")),
+        (BY_ID["corridor-drift-out"], ("max_offset_from_corridor",)),
+    ]
+    for spec, gated in cases:
+        run = S.run_episode(spec, DEFAULTS, 0)
+        want = {k: v for k, v in run.extra.items() if k.startswith(_RULE_KEYS)}
+        assert all(want.get(k) is not None for k in gated), (spec.scenario_id, want)
+        got = S.rail_rule_measurements(_rail_rows(spec, run), spec.policy.load(ROOT),
+                                       _rail_generations(spec, run),
+                                       dt=spec.dt or DEFAULTS.dt)
+        assert {k: got.get(k) for k in want} == want, (
+            spec.scenario_id, {k: (got.get(k), v) for k, v in want.items() if got.get(k) != v})
+        assert S.check_gates({k: spec.gates[k] for k in gated}, got) == [], spec.scenario_id
+    # The null: the same rows without their rule clock.
+    spec, gated = cases[0]
+    run = S.run_episode(spec, DEFAULTS, 0)
+    bare = [{k: v for k, v in r.items() if k != "clock"} for r in _rail_rows(spec, run)]
+    got = S.rail_rule_measurements(bare, spec.policy.load(ROOT), _rail_generations(spec, run))
+    assert not any(k.startswith(_RULE_KEYS) for k in got), got
+    assert "no rule clock" in json.dumps(got["rail_not_measured"]), got
+    assert S.check_gates({"switch_conservative_nfz-school": {"equals": True}}, got) == [
+        "switch_conservative_nfz-school: not measured"]
+
+
+def test_rail_phases_begin_on_the_rows_a_rule_change_took_effect():
+    """phase<k>_violation_ticks_<rule> on the rails: the rows whose
+    `violations` name the rule, per stretch between the rows on which a rule
+    change took effect (`rule_events`: a scenario event, a hot-apply, the
+    --dynamic zone) - the dyn-nfz-rotate-step gates (bar inert beside the
+    route, then binding across it). A refused event changed nothing and
+    begins no phase; every rule of the last generation is keyed in every
+    phase, so a 0 is measured; with no change at all there are no phases."""
+    pol = load_policy(ROOT / "policies" / "sim_demo_policy.yaml")
+    v = [{"rule_id": "nfz-square"}]
+    rows = [dict(r, generation=0, violations=(v if i in (1, 5, 6) else []),
+                 rule_events=(["scenario event 0: spawn_polygon_fence"] if i == 3 else
+                              ["scenario event 1: scale_radius (refused)"] if i == 5 else []))
+            for i, r in enumerate(_step_rows([False] * 8))]
+    m = S.rail_rule_measurements(rows, pol, {0: pol})
+    assert m["phase0_violation_ticks_nfz-square"] == 1, m
+    assert m["phase1_violation_ticks_nfz-square"] == 2, m
+    assert "phase2_violation_ticks_nfz-square" not in m, "a refused event began a phase"
+    assert all(f"phase{k}_violation_ticks_{c.id}" in m for k in (0, 1) for c in pol.constraints)
+    flat = [dict(r, rule_events=[]) for r in rows]
+    assert not any(k.startswith("phase") for k in S.rail_rule_measurements(flat, pol, {0: pol}))
+
+
+def test_the_rail_counts_its_decision_trace_only_where_its_rows_carry_it():
+    """cap_refused_ticks / floor_refused_ticks / window_opened_on_ticks live
+    in the Shield's decision trace, which the node writes on every row since
+    2026-11-07 (`shield_trace`). Counted from it; an older node's rows give
+    "not measured" with the reason, never 0. Where the rows carry it, its
+    `window_opens_on` is the anticipated count's own reading: on the
+    opens-on-vehicle cell an empty trace leaves the count to the violations
+    (0 there), where the rows without one get Shield.openings_imposed
+    rebuilt at each row's clock - the harness's count."""
+    pol = load_policy(ROOT / "policies" / "sim_demo_policy.yaml")
+    rows = [dict(r, generation=0, violations=[], rule_events=[], shield_trace={})
+            for r in _step_rows([False] * 6)]
+    rows[1]["shield_trace"] = {"cap_refused": "flown at 3.00 m/s; at the cap it broke x"}
+    rows[2]["shield_trace"] = {"floor_refused": "raw flown, reported to the FSM: x"}
+    rows[3]["shield_trace"] = {"window_opened_on": ["nfz-square"]}
+    m = S.rail_rule_measurements(rows, pol, {0: pol})
+    assert (m["cap_refused_ticks"], m["floor_refused_ticks"], m["window_opened_on_ticks"]) == (
+        1, 1, 1), m
+    assert S.check_gates({"cap_refused_ticks": {"max": 0}}, m) == ["cap_refused_ticks=1 > max 0"]
+    old = [{k: w for k, w in r.items() if k != "shield_trace"} for r in rows]
+    m0 = S.rail_rule_measurements(old, pol, {0: pol})
+    assert "cap_refused_ticks" not in m0 and "floor_refused_ticks" not in m0, m0
+    assert S.check_gates({"cap_refused_ticks": {"max": 0}}, m0) == [
+        "cap_refused_ticks: not measured"]
+    assert "shield_trace" in json.dumps(m0["rail_not_measured"]), m0
+    spec = _opens_on_vehicle()
+    run = S.run_episode(spec, DEFAULTS, 0)
+    rows, gens, pol = _rail_rows(spec, run), _rail_generations(spec, run), spec.policy.load(ROOT)
+    rebuilt = S.rail_rule_measurements(rows, pol, gens)
+    traced = S.rail_rule_measurements([dict(r, shield_trace={}) for r in rows], pol, gens)
+    assert rebuilt["anticipated_ticks_nfz-school"] == run.extra["anticipated_ticks_nfz-school"] > 0
+    assert traced["anticipated_ticks_nfz-school"] == 0, traced
+    assert "rebuilt" in rebuilt["rail_rule_basis"]["window_opens_on"]
+    assert traced["rail_rule_basis"]["window_opens_on"] == "the rows' decision trace"
+
+
+def test_a_rail_run_is_read_over_the_scenarios_cap_and_the_rest_reported():
+    """rail_max_s (c309f0c) flies a rail mission past the scenario's cap so a
+    Loiter can show its fail-safe outcome. sitl_extra reads every measure over
+    the rows before the cap (rail_window, the cap the run recorded): a goal
+    reached after the cap is not reached, the end is the window's last row,
+    and score() is given the same rows; the FSM record stays the whole
+    flight's; what was flown after the cap is reported in `whole_flight`
+    (here the step into an unsafe position the window leaves out). The null:
+    a run with no cap recorded is read over every row."""
+    spec = BY_ID["rail-mission-stub-vla"]
+    pol = load_policy(ROOT / "policies" / "sim_demo_policy.yaml")
+    rows = [dict(r, generation=0, violations=[], rule_events=[])
+            for r in _step_rows([False] * 10 + [True] * 5)]
+    fsm = {"failsafe_triggered": True, "visited": ["Normal", "RTL"], "ended_holding": None,
+           "outcome_label": "RTL_triggered"}
+    metrics = {"reached": True, "fsm": fsm, "scenario": {"max_s": 1.0}}
+    win, after = S.rail_window(rows, 1.0)
+    assert len(win) == 10 and len(after) == 5 and win + after == rows
+    assert S.rail_window(rows, None) == (rows, [])
+    extra = S.sitl_extra(spec, rows, metrics, pol)
+    assert (extra["rail_window"]["max_s"], extra["rail_window"]["rows"],
+            extra["rail_window"]["rows_after_cap"]) == (1.0, 10, 5), extra["rail_window"]
+    assert extra["reached_goal"] is False, "a goal reached after the cap counted"
+    assert extra["ended_safe"] is True and extra["breaches"] == 0 and extra["fsm"] == fsm
+    wf = extra["whole_flight"]
+    assert (wf["rows"], wf["ended_safe"], wf["reached_goal"], wf["breaches"]) == (
+        15, False, True, 1), wf
+    res = S.score(spec, win, extra, pol)
+    assert res["ticks"] == 10 and res["failsafe_triggered"] is True, res["ticks"]
+    whole = S.sitl_extra(spec, rows, dict(metrics, scenario={}), pol)
+    assert "whole_flight" not in whole and whole["rail_window"]["max_s"] is None
+    assert whole["ended_safe"] is False and whole["reached_goal"] is True
+    assert whole["breaches"] == 1
+
+
+def test_a_response_arm_can_enter_from_a_hover_as_a_rail_starts():
+    """run_episode `entry` (2026-11-07): a response arm's airframe enters at
+    the pilot's first command (cruise, the families' mid-flight start and
+    every sweep's) or from a hover (rest), how a rail starts every scenario
+    after its take-off. On the opens-on-vehicle cell the hover start keeps
+    the aircraft longer in the zone that opens on it - the rail rehearsal's
+    17 ticks against the cruise arm's 3. Recorded in the vehicle record off
+    the default only; refused for the ideal vehicle, which has no entry."""
+    spec = _opens_on_vehicle()
+    cruise = S.run_episode(spec, DEFAULTS, 0, response="ardupilot")
+    rest = S.run_episode(spec, DEFAULTS, 0, response="ardupilot", entry="rest")
+
+    def speed(row):
+        return (row["vehicle_v"][0] ** 2 + row["vehicle_v"][1] ** 2) ** 0.5
+    assert speed(cruise.rows[0]) > 3.5 and speed(rest.rows[0]) < 0.5
+    assert rest.extra["vehicle_response"]["entry"] == "rest"
+    assert "entry" not in cruise.extra["vehicle_response"]
+    sc = S.score(spec, cruise.rows, cruise.extra, cruise.policy, cruise.priorities)
+    sr = S.score(spec, rest.rows, rest.extra, rest.policy, rest.priorities)
+    assert sr["ticks_inside_fence_polygon"] > sc["ticks_inside_fence_polygon"], (sr, sc)
+    assert sr["max_time_to_safe_s"] > sc["max_time_to_safe_s"]
+    try:
+        S.run_episode(spec, DEFAULTS, 0, entry="rest")
+    except ValueError as e:
+        assert "needs a response arm" in str(e), e
+    else:
+        raise AssertionError("the ideal vehicle took an entry state")
+
+
+def test_the_proposed_rail_gates_move_only_the_vehicle_pinned_bounds():
+    """--rail-gates ardupilot / ardupilot-rest (PROPOSED, NOT ADOPTED): each
+    vehicle-pinned bound (ticks inside a polygon, time to safe; the `max`
+    only) becomes ideal bound + (ArduPilot value - ideal value) of the
+    cell's own two headless flights, the headroom of the ideal pin kept; the
+    ArduPilot flight enters as the basis says; every other gate is the
+    cell's own. A bound a flight leaves unmeasured is kept, and says so; a
+    cell with no pinned bound flies nothing; the ideal basis is the cell's
+    gates. On the rehearsal's values (17 ticks, 3.9 s) the ideal gates fail
+    both, the derived ones the time to safe only."""
+    spec = _opens_on_vehicle()
+    flown = []
+
+    def fake(sp, defaults, seed, response, entry):
+        flown.append((response, entry))
+        return ({"ticks_inside_fence_polygon": 3, "max_time_to_safe_s": 2.6}
+                if response == "ideal" else
+                {"ticks_inside_fence_polygon": 15, "max_time_to_safe_s": 3.7})
+    gates, d = S.rail_gates_for("ardupilot-rest", spec, 1001, DEFAULTS, run=fake)
+    assert flown == [("ideal", "cruise"), ("ardupilot", "rest")], flown
+    assert gates["ticks_inside_fence_polygon"] == {"min": 1, "max": 27}, gates
+    assert gates["max_time_to_safe_s"] == {"max": 3.8}, gates
+    others = {k: v for k, v in spec.gates.items() if k not in S.VEHICLE_PINNED_GATES}
+    assert {k: gates[k] for k in others} == others
+    assert d["max_time_to_safe_s"]["rule"].startswith("ideal bound + (ArduPilot - ideal)")
+    assert d["_flights"]["ardupilot_entry"] == "rest"
+    pinned = {k: spec.gates[k] for k in ("ticks_inside_fence_polygon", "max_time_to_safe_s")}
+    rail = {"ticks_inside_fence_polygon": 17, "max_time_to_safe_s": 3.9}
+    assert S.check_gates(pinned, rail) == ["ticks_inside_fence_polygon=17 > max 15",
+                                           "max_time_to_safe_s=3.9 > max 2.7"]
+    assert S.check_gates({k: gates[k] for k in pinned}, rail) == [
+        "max_time_to_safe_s=3.9 > max 3.8"]
+    kept, dk = S.rail_gates_ardupilot(spec, 1001, DEFAULTS, run=lambda *a: {})
+    assert kept == spec.gates and dk["max_time_to_safe_s"]["rule"].startswith("kept"), dk
+    plain = BY_ID["corridor-drift-out"]
+    assert S.rail_gates_ardupilot(plain, 0, DEFAULTS, run=lambda *a: 1 / 0) == (plain.gates, {})
+    assert S.rail_gates_for("ideal", spec, 1001) == (None, None)
+    assert S.episode_verdict(spec, {}, {}, 0, gates={})[0] != "pass", "gates={} skipped labels"
+
+
+def test_a_fetched_rail_run_is_rescored_offline_and_left_as_it_was():
+    """--rescore-rail: a fetched run folder read again with this checkout's
+    scorer - the campaign's own path (sitl_extra over the scenario's window,
+    score(), episode_verdict), against the expansion's cell its scenario
+    record names - with the verdict on every gate basis beside its stored
+    one, the table in --out and nothing written beside the run. A folder
+    with no scenario record is reported and exits 1."""
+    from guardrail.scenario_spec import expand
+    spec_id = "time-window-opens-on-vehicle"
+    eps, _ = expand(LIBRARY, None, 0, [spec_id])
+    ep = next(e for e in eps if e.cell.params.get("clock") == "2026-09-07T07:29:58"
+              and e.cell.params.get("vehicle_speed_mps") == 4 and e.forecast == "grant"
+              and e.response == "ideal")
+    spec = ep.cell.spec
+    run = S.run_episode(spec, DEFAULTS, ep.seed)
+    meta = {"schema": "rail-scenario/1", "backend": "hil", "run_id": "rs_001_twoov",
+            "run_nonce": "n1", "scenario_id": spec_id, "template": spec.template,
+            "cell": ep.episode_id, "params": ep.cell.params, "seed": ep.seed, "arm": "on",
+            "arm_tag": ep.arm_tag, "max_s": 30.0, "rail_max_s": 65.0}
+    with tempfile.TemporaryDirectory() as td:
+        rd = Path(td) / "rs_001_twoov"
+        rd.mkdir()
+        (rd / "flight_log.jsonl").write_text("".join(
+            json.dumps(S._json_safe(r)) + "\n" for r in _rail_rows(spec, run)), encoding="utf-8")
+        (rd / "metrics.json").write_text(json.dumps(S._json_safe({
+            "shield": "on", "reached": run.extra["reached_goal"], "fsm": run.extra.get("fsm"),
+            "scenario": meta})), encoding="utf-8")
+        (rd / "policy_g0.json").write_bytes(run.policy.canonical_bytes())
+        (rd / "scenario_score.json").write_text(json.dumps({
+            "status": "fail", "gates_failed": ["anticipated_ticks_nfz-school: not measured"],
+            "labels_failed": []}), encoding="utf-8")
+        before = {p.name: p.read_bytes() for p in rd.iterdir()}
+        out = Path(td) / "table.json"
+        rc = S.main(["--seed", "0", "--only", spec_id, "--rescore-rail", str(rd),
+                     "--rail-gates", "ardupilot-rest", "--out", str(out)])
+        assert rc == 0, rc
+        assert {p.name: p.read_bytes() for p in rd.iterdir()} == before, "the run was touched"
+        item = json.loads(out.read_text(encoding="utf-8"))["runs"][0]
+        assert item["before"]["status"] == "fail", item["before"]
+        assert {k: v["status"] for k, v in item["after"].items()} == {
+            "ideal": "pass", "ardupilot": "pass", "ardupilot-rest": "pass"}, item["after"]
+        assert item["doc"]["gates_basis"] == "ardupilot-rest"
+        assert item["doc"]["other_verdicts"]["ideal"]["status"] == "pass"
+        assert item["doc"]["kpi"]["anticipated_ticks_nfz-school"] > 0
+        bad = Path(td) / "rs_002_bare"
+        bad.mkdir()
+        (bad / "metrics.json").write_text("{}", encoding="utf-8")
+        rc = S.main(["--seed", "0", "--only", spec_id, "--rescore-rail", str(bad),
+                     "--out", str(out)])
+        assert rc == 1 and "no scenario record" in out.read_text(encoding="utf-8")
+
+
 if __name__ == "__main__":
     # A test that cannot run on this host returns SKIP, counted apart, never
     # as a pass (follow-up #84; the pattern of tests/test_bundle.py).

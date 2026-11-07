@@ -16,6 +16,108 @@ shipped change and recorded as one.
 
 ## [Unreleased]
 
+### 2026-11-07 (rail scorer) — the rails' own logs answer the gates they read "not measured", every rail measure is read over the scenario's own time, and rail gates derived on the ArduPilot response are proposed, not adopted
+
+The hil rehearsal rh01 (38 smoke missions on the rig, 7 Nov) failed 16 runs;
+9 of them failed only on gates the scorer read as "not measured" although the
+rail's flight log holds what they need.
+
+#### Added
+- `rail_rule_measurements` (experiments/sweep_scenarios.py): the phase counts
+  (`phase<k>_violation_ticks_<rule>`), the window switch's boundary check
+  (`switch_lag_s_*`, `switch_conservative_*`), `anticipated_ticks_*` and its
+  opening-only part, `release_gap_s_*` and `max_` / `final_offset_from_corridor`,
+  read from a rail's rows with run_episode's definitions. The Shield's
+  readings (in force, the corridor offset, the windows opening on the
+  aircraft) are rebuilt per row from the run's generations at the row's rule
+  clock. Fed a headless episode's own rows in the rail's shape it gives
+  every value the harness gave (five cells). Without a rule clock on the
+  rows the measures are left out, so their gates read "not measured", and
+  the reason is recorded.
+- The Shield node writes the decision's trace words on every row
+  (`shield_trace`: window_opens_on / window_opened_on, cap_refused /
+  floor_refused), counted as `window_opened_on_ticks`, `cap_refused_ticks`,
+  `floor_refused_ticks`. An older node's rows leave these "not measured",
+  with the reason.
+- `--rescore-rail RUN_GLOB --out FILE`: fetched rail runs scored again with
+  the campaign's own path, nothing written beside them.
+- PROPOSED, NOT ADOPTED, behind `--rail-gates` (default `ideal`, the cell's
+  own gates): `ardupilot` and `ardupilot-rest` replace each bound pinned on
+  the headless ideal vehicle (the `max` of ticks inside a polygon, max / mean
+  time to safe) with the ideal bound plus the cell's own (ArduPilot - ideal)
+  value, from two headless flights of the cell holding in place as the rails
+  do. The ArduPilot one enters mid-flight (`ardupilot`, as the sweep's arm)
+  or from a hover, as a rail starts (`ardupilot-rest`; run_episode `entry`).
+  Requirement gates and labels are untouched; the ideal verdict is kept
+  beside it.
+
+#### Changed
+- Each rail measure and gate is read over the scenario's own time cap
+  (`rail_window`). Since c309f0c a rail mission flies 35 s past its cap so a
+  Loiter can show its outcome, and that extension is what the FSM record
+  (fail-safe, outcome label) is read over: the whole flight. A goal counts
+  only when it is reached within the cap, and the end state is the window's.
+  What was flown after the cap is reported, not gated (`whole_flight`).
+  tools/kpi_report.py reads the same rows when the score file records its
+  window. In rh01, 12 runs flew past their cap. Two changed:
+  - rh01_021 (sideways pilot): 20 ticks inside and safe at 30 s, against
+    42 ticks for the whole flight, where the RTL after the timeout flew
+    home into the zone (one autopilot breach, ended inside);
+  - rh01_014: its goal was reached at 30.6 s against a 30 s cap.
+- run_hil records every generation's rule priorities, not only the last.
+
+#### Measured (rh01, re-scored offline with this code)
+- Before: 20 pass, 2 known failures, 16 fail. After, on the cell's own gates:
+  29 pass, 2 known failures, 7 fail.
+- Nine runs now pass that failed only on unmeasured gates:
+  corridor-drift-out, corridor-drift-angles (two runs),
+  time-window-closes-mid-run, time-window-opens-ahead,
+  time-window-switch-event, rule-deactivated-mid-run,
+  rule-activated-mid-run and corridor-swap-narrowed.
+- The seven runs that still fail:
+  - fail-safe labels on the rail vehicle: nfz-head-on, dyn-nfz-rotate-step,
+    dyn-nfz-rotate-spin, time-window-opens-on-sideways-pilot
+    (docs/RUBRIC-failsafe.md section 8, a proposal);
+  - bounds pinned on the ideal vehicle: time-window-opens-on-vehicle at 4
+    and 1.5 m/s (17 ticks and 3.9 s against 15 and 2.7), and the sideways
+    pilot (20 ticks and 4.1 s against 7 and 2.9; its cap and floor refusals
+    are not measured, the node predates `shield_trace`);
+  - three-simultaneous-violations (Found, below).
+- On the proposed gates the opens-on bounds become 15 ticks / 2.7 s and 20 /
+  3.2 s with the mid-flight entry, and 27 / 3.8 s with the hover start.
+  Both runs still fail, now on time to safe alone, the hover-start bound
+  short by one tick. The sideways run's bounds are 11 / 3.3 s and 19 /
+  4.1 s, missed by one tick.
+
+#### Found
+- The headless response arm starts mid-flight, while the rails start from a
+  hover. On the opens-on-vehicle cell that start decides it: 3 ticks inside
+  for the ArduPilot arm in cruise, 15 from a hover.
+- The rail is also slower than AP_RESPONSE. With the rail Shield's own fit
+  (0.45 s, 1.75 m/s^2) from a hover, the same cells give 21 ticks / 4.3 s,
+  21 / 4.3 s and 23 / 4.6 s; the rail's 17 / 3.9 s, 17 / 3.9 s and 20 /
+  4.1 s lie between the two fits.
+- rh01_038 (three-simultaneous-violations): RTL's home reached (G9) fired
+  0.1 s after the RTL began, and the mission ended at 3.0 m, still below the
+  floor. The Shield node calls home reached once the aircraft is in RTL
+  within REACH_M of `--start`, and on the rails home is the scenario's start.
+  The harness's test also needs the RTL climb. Not changed here.
+- Still not measurable from a rail log:
+  - the cap and floor refusals of rows written before `shield_trace`;
+  - what the autopilot flies after G9 ends the mission;
+  - a moving zone's position in a rebuilt previous-tick judgement;
+  - the true position during a SITL GPS dropout (the rows log the EKF's
+    estimate).
+
+#### Tests
+- tests/test_sweep.py 114/115 (1 skip), tests/test_sitl_rails.py 64/64,
+  tests/test_kpi_report.py 39/42 (3 skips).
+- 24 related files run on their own also pass (test_harness_service 62/62,
+  test_harnesstruth_response 19/19, test_window_opens_on 22/22,
+  test_csp 104/104, ...). No tools/ci_local.py run.
+
+Not flown.
+
 ### 2026-11-07 (SITL stressors) — the flight rails fly wind, GPS denial and start jitter as ArduPilot SITL's own parameters, set from the simulator's side and checked against the Shield node's clock; the ROS 2 node hands the Shield its GPS fix and takes X8; not flown yet
 
 Until this date both flight rails refused every stressor (`rail_refusal`:

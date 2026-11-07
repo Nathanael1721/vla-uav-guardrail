@@ -2058,6 +2058,36 @@ def test_every_row_carries_the_rule_clock_and_the_previous_judgement_reads_its_o
     assert node.clock() > clocks[-1]
 
 
+def test_every_row_carries_the_decisions_trace_words_the_harness_counts():
+    """`shield_trace` (2026-11-07): the words of the decision's trace the
+    stress harness counts per tick (window_opens_on / window_opened_on,
+    cap_refused / floor_refused: shield_trace_fields) on every row, {} when
+    there are none, so an empty one is a measured nothing. The school zone's
+    window opens at 07:30:00 on an aircraft 10 m inside its ring, 2 s away:
+    every row before it names the zone (the anticipated count's reading).
+    The null: the same hover at 06:00, the opening 90 minutes off, names
+    nothing."""
+    pol = ROOT / "policies" / "corridor_survey.yaml"
+    names = []
+    for clock in ("2026-09-07T07:29:58", "2026-09-07T06:00:00"):
+        RN, N, node, clk, out = _scenario_node([f"--policy={pol}", "--clock-start", clock,
+                                                "--start=60,21,15", "--target=60,55,15"])
+        _ekf_pose(RN, N, node)
+        node.start_mission()
+        _fly(RN, N, node, clk, 3)
+        assert node.rows and all(isinstance(r.get("shield_trace"), dict) for r in node.rows)
+        names.append([r["shield_trace"].get("window_opens_on") for r in node.rows])
+    assert names[0] == [["nfz-school"]] * 3, names[0]
+    assert names[1] == [None] * 3, names[1]
+    N = _node()
+    from types import SimpleNamespace
+    d = SimpleNamespace(trace={"window_opens_on": {"b", "a"}, "cap_refused": "flown at 2.00 m/s",
+                               "floor_refused": "", "chain": [1, 2]})
+    assert N.shield_trace_fields(d) == {"window_opens_on": ["a", "b"],
+                                        "cap_refused": "flown at 2.00 m/s"}
+    assert N.shield_trace_fields(SimpleNamespace(trace=None)) == {}
+
+
 def test_the_vla_stub_flies_the_harness_laws_in_the_policy_frame():
     """sitl/ros2_vla_stub_node.py --pilot goto / constant / stub_vla: the
     laws are guardrail.vla_stub's, the harness's own (one implementation),

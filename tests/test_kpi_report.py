@@ -1180,6 +1180,46 @@ def test_a_hil_scenario_run_is_rescored_with_the_harness_score_beside_it():
     assert o["mission_success"] is False and o["metrics_from"] == "metrics.json"
 
 
+def test_a_rail_scenario_run_is_read_over_the_window_its_score_was():
+    """2026-11-07: a rail mission flies past its scenario's time cap
+    (rail_max_s) so a fail-safe can show its outcome, and the harness reads
+    every KPI over the rows before the cap (sweep_scenarios.rail_window);
+    its scenario_score.json says so (`rail_window`). load_run reads the same
+    rows: an unsafe stretch entered after the cap is out of the KPI table,
+    as it was out of the harness's. The null: a score written before the
+    window existed reads every row, as the harness then did."""
+    KR = _report_module()
+    pol = load_policy(PED)
+    rows = [dict(r, unsafe=i >= 16, unsafe_rules=["ped-standoff"] if i >= 16 else [],
+                 flown=True, setpoint="pass")
+            for i, r in enumerate(_rows_past_a_person(20))]
+    cell = "rail-mission-stub-vla"
+    meta = {"schema": "rail-scenario/1", "backend": "hil", "run_id": "smk_003_cap",
+            "run_nonce": "nonce-3", "scenario_id": cell, "template": "rail_mission",
+            "cell": cell, "params": {}, "seed": 1001, "arm": "on", "max_s": 1.5,
+            "family": f"hil-stress/rail_mission/{cell}/shield-on"}
+    metrics = {"shield": "on", "reached": True, "scenario": meta,
+               "scenario_family": meta["family"]}
+    base = {"schema": "rail-scenario-score/1", "scenario": meta, "run_id": meta["run_id"],
+            "run_nonce": "nonce-3", "status": "pass", "gates_failed": [],
+            "metrics": {"reached_goal": True, "breaches": 0, "shield": "on", "fsm": None},
+            "rule_priorities": dict(K.rule_priorities(pol)), "kpi": {}}
+    with tempfile.TemporaryDirectory() as td:
+        run = _make_run(Path(td), "smk_003_cap", rows, policy_hash=pol.policy_hash,
+                        metrics=metrics)
+        (run / KR.SCENARIO_SCORE).write_text(
+            json.dumps(dict(base, rail_window={"max_s": 1.5, "rows": 14})), encoding="utf-8")
+        w = KR.load_run(run, {pol.policy_hash: pol}, {})
+        (run / KR.SCENARIO_SCORE).write_text(json.dumps(base), encoding="utf-8")
+        a = KR.load_run(run, {pol.policy_hash: pol}, {})
+    assert KR.rail_window_cap(dict(base, rail_window={"max_s": 1.5})) == 1.5
+    assert KR.rail_window_cap(base) is None and KR.rail_window_cap(None) is None
+    assert w["ticks"] == 14 and w["rail_window"]["max_s"] == 1.5, (w["ticks"], w["rail_window"])
+    assert w["mission_success"] is True, w.get("mission_fail_reasons")
+    assert a["ticks"] == 20 and a["rail_window"] is None, a["ticks"]
+    assert a["mission_success"] is False, "the null read the stretch after the cap"
+
+
 if __name__ == "__main__":
     # A test whose inputs are not on this machine returns SKIP, counted apart
     # and never as a pass (the pattern of tests/test_bundle.py).

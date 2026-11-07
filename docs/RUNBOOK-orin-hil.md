@@ -694,7 +694,19 @@ Loiter where the harness's ideal vehicle never does, and an episode that ends
 with that timeout still running is a censored fail-safe
 (docs/RUBRIC-failsafe.md section 3): the second hil shakedown (shk03,
 nfz-head-on) entered Loiter at 3.4 s and its 30 s episode ended there. A
-mission that reaches its target still ends at the target.
+mission that reaches its target still ends at the target. The scorer reads
+every measure and gate over the scenario's own cap and only the fail-safe
+record over the whole flight (since 2026-11-07; `rail_window` and
+`whole_flight` in scenario_score.json).
+
+Fetched runs can be scored again with the current scorer, offline, nothing
+written beside them (the same profile as the campaign; `--rail-gates
+ardupilot-rest` adds the PROPOSED, not adopted, rail gates):
+
+```bash
+python experiments/sweep_scenarios.py --profile smoke --rescore-rail "demo/out/hil_smoke/smk01_*" \
+    --out demo/out/hil_smoke_rescore.json
+```
 
 Every ssh, scp and `sitl/hil_desktop.sh` call runs with its stdin closed
 (since 2026-11-07): from a parent whose stdin is a pipe, Windows OpenSSH
