@@ -7,7 +7,10 @@ as what is robust), and again after re-review (the transit judged at every
 instant, not at sampled poses; the budget charged by what each call costs
 and sized to the 100 ms tick; pre-hold-point bundles re-flown in place).
 Headless only: nothing here has flown, and no flight rail flies a moved hold
-yet.
+yet. (Since 2026-11-07 the pymavlink rail and the ROS 2 Shield node fly the
+moved hold - guardrail/hold_flight.py - and a hold must stay legal for as
+long as it is held: "A hold legal for as long as it is held, flown by the
+rails", below. Still not flown on the rig.)
 Code: `guardrail/fsm.py` (`HoldPoint`, `EscalationFSM.needs_hold` /
 `hold_at`, `TickInput.hold_legal`), `guardrail/holdpoint.py` (the search),
 `guardrail/shield.py` (`looking_ahead`, `state_is_unsafe(ahead_s=)`,
@@ -886,14 +889,14 @@ escapes" again.
 * Remove the 2 Shield escape ticks per opens-on-vehicle cell: they are
   flown before G3, and the KPI definition is unchanged. (Removed since
   2026-10-21 by the check instead, section above; the cells are unpinned.)
-* Fly a rail. The SITL, ROS 2 and Project AirSim rails run their own FSM
-  (`guardrail/replay.py rail_shield`), call no `hold_at`, and hold or land in
-  place as before (their Loiter records now say `hold_needed: true`). Flying
-  `ShieldDecision.hold_point` there means a GUIDED position target, then the
-  hold mode (BRAKE by default) on arrival; that needs a flight to measure.
-  Until then the harness's moved-hold numbers are modelled only
-  (`autopilot_hold_model`, above), and `--autopilot-hold in_place` gives
-  the ones the rails match.
+* Fly a rail - until 2026-11-07. The SITL, ROS 2 and Project AirSim rails
+  run their own FSM (`guardrail/replay.py rail_shield`), called no `hold_at`,
+  and held or landed in place (their Loiter records said `hold_needed:
+  true`). Since 2026-11-07 the pymavlink rail and the ROS 2 Shield node plan
+  and fly the hold (`guardrail/hold_flight.py`: a GUIDED transit, then the
+  hold mode on arrival; `--hold-points in_place` for the old hold), and the
+  harness's `rail` vehicle holds at moved points; Project AirSim / ArduPilot
+  and the city loop still hold in place. Not flown on the rig yet.
 * Model wind. A point the aircraft cannot reach against the wind is no
   better than one it cannot hold; X6 / X7 still judge the illegal depth.
 * Cost nothing. A relocation is one search, on the tick it happens: the
@@ -930,7 +933,9 @@ escapes" again.
    target, then the hold mode). Is a GUIDED transit acceptable inside the
    grant's "Loiter", or should the FSM stay in Brake (GUIDED, Shield-flown)
    until it reaches the point - which would change G3's timing and put the
-   transit's ticks in the Shield's counter?
+   transit's ticks in the Shield's counter? (Since 2026-11-07 the rails fly
+   it so, the transit streamed by the companion and recorded as the hold's
+   own leg, `hold_transit`, not the Shield's.)
 2. `three-simultaneous-violations`: the hold now climbs into the band and
    X6 no longer fires, but the pilot keeps asking for the illegal action,
    the Loiter never clears, and 30 s after G3 the Loiter timeout (ours, G5)
