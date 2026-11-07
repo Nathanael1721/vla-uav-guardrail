@@ -24,9 +24,12 @@
 # WHAT IT DOES NOT REPRODUCE
 #
 # Headless, no episode is KPI-grade (manifest topology headless-kinematic, a
-# measured sim_speedup in the hundreds). On the hil rail (--backend hil)
+# measured sim_speedup of about 70). On the hil rail (--backend hil)
 # each episode is one mission at sim_speedup 1.0: a take-off to 50 m, then up
 # to 395 s (the 360 s scenario, the Loiter timeout and the rail's margin).
+# The rail flies the policy's SIGNED bundle, bundles/wgs84-taipei-demo-
+# v0.1.2.tar.gz, a build product (python tools/build_flight_bundles.py on
+# both hosts): a checkout without it refuses all 36 missions.
 #
 #   python experiments/sweep_scenarios.py --profile grant_example
 #   python experiments/sweep_scenarios.py --profile grant_example \
