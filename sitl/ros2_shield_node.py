@@ -122,7 +122,9 @@ target and a seed but no start, no pilot and no events
     previous tick's rules and clock (`unsafe_prev_rules`, `zones_in_prev`:
     _prev_judgement) and the rule changes the position met (`rule_events`),
     which the harness reads to tell a breach from a rule that switched on
-    under the aircraft.
+    under the aircraft; since 2026-11-07 also the decision's trace words the
+    harness counts (`shield_trace`: window_opens_on / window_opened_on,
+    cap_refused / floor_refused; shield_trace_fields).
 The pilot laws are the VLA stub's (sitl/ros2_vla_stub_node.py --pilot,
 --action), which reads the same arguments.
 
@@ -659,6 +661,27 @@ def zones_at(shield, st: State) -> tuple[list[str], float | None]:
         if inside:
             ids.append(zr.rule.id)
     return sorted(ids), (None if best is None else round(best, 4))
+
+
+# The decision's trace words the stress harness counts per tick (2026-11-07,
+# experiments/sweep_scenarios.py rail_rule_measurements, as run_episode counts
+# them): the zones whose window opens on the aircraft sooner than it can leave
+# (`window_opens_on`, the anticipated count) or opened on it (`window_opened_on`),
+# and an escape whose cap or floor was refused (`cap_refused`, `floor_refused`).
+SHIELD_TRACE_KEYS = ("window_opens_on", "window_opened_on", "cap_refused", "floor_refused")
+
+
+def shield_trace_fields(decision) -> dict:
+    """The row's `shield_trace`: SHIELD_TRACE_KEYS that the decision's trace
+    holds (zone lists sorted), {} when it holds none. Written on every row,
+    so an empty one is a measured nothing, never a field the log lacks."""
+    tr = getattr(decision, "trace", None) or {}
+    out = {}
+    for k in SHIELD_TRACE_KEYS:
+        v = tr.get(k)
+        if v:
+            out[k] = sorted(v) if isinstance(v, (list, tuple, set)) else v
+    return out
 
 
 def adapter_listening(node_names) -> bool:
@@ -3086,7 +3109,8 @@ if HAVE_ROS:
                        unsafe_prev_rules=(row.get("unsafe_rules") if same
                                           else None if prev is None else prev[0]),
                        zones_in_prev=(zin if same else None if prev is None else prev[1]),
-                       rule_events=rule_events)
+                       rule_events=rule_events,
+                       shield_trace=shield_trace_fields(decision))
             if self.n_fix:
                 # The GPS fix this tick handed the Shield (2026-11-07): only
                 # once FIX_TOPIC has spoken, so a rail without it writes the

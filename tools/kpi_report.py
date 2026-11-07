@@ -375,6 +375,15 @@ def scenario_score_for(run: Path, scenario) -> tuple[dict | None, str | None]:
     return doc, None
 
 
+def rail_window_cap(sc_doc: dict | None) -> float | None:
+    """The time cap a rail run's scenario_score.json was read up to
+    (`rail_window` `max_s`, since 2026-11-07), None for a score written
+    before (it read every row) or none at all."""
+    win = (sc_doc or {}).get("rail_window")
+    cap = win.get("max_s") if isinstance(win, dict) else None
+    return float(cap) if isinstance(cap, (int, float)) else None
+
+
 def scenario_family(scenario: dict, arm: str) -> str:
     """The KPI report's row of a rail run of the stress library:
     "<backend>-stress/<template>/<cell>/shield-<arm>" (hil-stress/... for the
@@ -444,6 +453,14 @@ def load_run(run: Path, by_hash: dict, by_id: dict, trust_store=None) -> dict:
     prios = K.rule_priorities(pol) if pol else {}
     scenario = metrics.get("scenario") if isinstance(metrics.get("scenario"), dict) else None
     sc_doc, sc_note = scenario_score_for(run, scenario)
+    cap = rail_window_cap(sc_doc)
+    if cap is not None:
+        # The scenario's window the harness scored (2026-11-07, experiments/
+        # sweep_scenarios.py rail_window): the rows before its time cap. Past
+        # it the rail flew on only so a fail-safe could show its outcome,
+        # which the FSM record (whole flight) carries.
+        rows = rows[:next((i for i, r in enumerate(rows)
+                           if float(r.get("t") or 0.0) >= cap - 1e-9), len(rows))]
     sc_prios = sc_doc.get("rule_priorities") if sc_doc is not None else None
     if isinstance(sc_prios, dict) and sc_prios:
         # The harness's: the take-off policy's and every hot-applied rule's.
@@ -582,6 +599,10 @@ def load_run(run: Path, by_hash: dict, by_id: dict, trust_store=None) -> dict:
                              f"compute()" if sc_doc is not None else "metrics.json"),
             "rail_dwell": {f: metrics.get(f) for f in ("nfz_s", "alt_violation_s",
                                                       "standoff_s")},
+            # The window the KPIs above were read over (the scenario's cap;
+            # None: every row) and the gates the verdict used (2026-11-07).
+            "rail_window": (sc_doc or {}).get("rail_window"),
+            "scenario_gates_basis": (sc_doc or {}).get("gates_basis"),
         })
     return k
 
