@@ -568,8 +568,11 @@ class RuleHit:
     # True for a kinematic envelope (speed / climb / yaw caps). Its repairs are
     # clamps: they always converge and theta never judges them, so such a rule
     # can neither make a tick untrusted nor be the rule a theta escalation is
-    # attributed to. Without this, a speed-cap rule that happened to sort first
-    # was cited as the reason a fence repair broke theta.
+    # attributed to while a rule theta judges is violated beside it. Without
+    # this, a speed-cap rule that happened to sort first was cited as the
+    # reason a fence repair broke theta. On a tick where it is the only
+    # project_fix rule violated, an untrusted repair is the repair chain's
+    # run for it (FSMConfig.untrusted_owner "chain", since 2026-11-07).
     kinematic: bool = False
 
     def __post_init__(self) -> None:
@@ -1716,8 +1719,8 @@ class EscalationFSM:
         # abandons projection and triggers fail-safe"). Before, the
         # projection was abandoned (X1's stop) and nothing could escalate it:
         # corridor-drift-angles at 8 m/s, -30 deg, on the ArduPilot response
-        # braked at (34.6, 6.7) on a 3.3-4.0 m CorridorReturn beside the
-        # speed cap and held there in Brake for the whole 70 s, where the
+        # braked at (34.6, 6.7) on CorridorReturn sizes of up to 4.0 m beside
+        # the speed cap and held there in Brake for the whole 70 s, where the
         # rubric expects the fail-safe (E5) on both vehicles. Beside a rule
         # theta does judge, the kinematic rule is still never the owner
         # (test_a_theta_escalation_is_attributed_to_a_rule_theta_judges).

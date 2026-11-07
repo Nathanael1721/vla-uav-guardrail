@@ -63,6 +63,186 @@ where each rail's signal lives, and the measurements.
 own verdict; `pos_sigma_m` stays unreported there, a policy decision ("Where
 each rail's signal lives"). Not flown yet.
 
+**Update 2026-11-07 (rail vehicle).** On the vehicle the hil rail flies (the
+harness's measured ArduPilot response, the rig's own fit as the harness's
+`rail` arm, and a slower stand-in), a speed cap that is the only rule a
+request breaks no longer hides an untrusted repair from G3: the size the
+repair chain made beside it is the chain's, made for that kinematic rule
+(`FSMConfig.untrusted_owner`, default `chain`; `projected` flies the FSM as it
+was). The default config hash changed: `sha256:1e413c8b...`. X6 on a hold
+that finds no place to stop is kept, measured. The next section has the
+mechanism and the numbers.
+
+## 2026-11-07: the FSM on the rail vehicle
+
+The hil rail flies ArduCopter 4.5.7 SITL in GUIDED. Labelled on a vehicle
+that answers like it (the harness's measured ArduPilot response,
+`--response-arms ardupilot`; the proposal branch `e5-prescribed-on-rail-
+vehicle`, docs/RUBRIC-failsafe.md section 8 there), two FSM behaviours
+stayed wrong under every label set: a missed fail-safe on
+corridor-drift-angles at 8 m/s, -30 deg (library 1, nightly 3), and
+fail-safes by X6 on dyn-nfz-rotate-spin (nightly 9) where the rubric expects
+none. Both are real on the rig's own response too - the harness's `rail`
+arm (rail-scorer-gaps, 3b67cbe: the fit of 32 rh01 flights, 0.13 s and
+2.48 m/s^2, from a hover, holding in place as the rails do) and a slower
+stand-in (the rail Shield's own 0.45 s / 1.75 m/s^2) - and the second was
+flown: the hil rehearsal rh01_017 (rotate-spin, 3 deg/s) went home by X6 at
+30.3 s. The first is fixed; the second is not, and why is measured below.
+
+### An untrusted repair beside a speed cap alone is the chain's
+
+The speed cap was the only rule the 8 m/s request broke. The Shield's repair
+chain runs every operator on a violated tick, each on its own test, and
+after SpeedClamp, CorridorReturn's "leaves within one lookahead" - a
+straight extrapolation along the NEAREST leg's normal - moved the clamped
+action by up to 4.0 m for a corridor the request does not break: the
+forecast cuts across the dog-leg's corner, inside the 20 m half-width all
+the way (`_check_corridor` walks the polyline and finds nothing). The FSM
+read that size as an untrusted repair and stopped the aircraft - p4's
+"abandons projection", rightly - but G3 escalated only an untrusted repair
+of a violated rule that is not kinematic, and the only rule violated was
+the speed cap: the aircraft was held at (34.6, 6.7) in Brake for the whole
+70 s. On the ideal vehicle the same operator moved the action by 0.09 m
+(the instant response holds the lateral offset at 2.8 m), and the flight
+went on into nfz-school, over theta, G3 and G5 - the fail-safe the rubric
+expects (E5, on both vehicles).
+
+The untrusted repair of such a tick is the chain's, made for the kinematic
+rule it ran for, and p4 says what follows: "the Shield abandons projection
+and triggers fail-safe". `FSMConfig.untrusted_owner` (new; default
+`chain`): on a tick that violates no non-kinematic `project_fix` rule, an
+untrusted repair (over theta, or not converged) belongs to the violated
+kinematic rules; a hard one takes G3, and Loiter keeps holding a request it
+could not hand back (it is not "acceptable"), so a planner that keeps
+asking reaches the operator timeout. Beside a rule theta judges nothing
+changes: the speed cap is still never cited for that rule's size
+(test_a_theta_escalation_is_attributed_to_a_rule_theta_judges), and a soft
+cap never changes the mode. The record names the owner on such ticks
+(`untrusted_chain`) and the G3 reason says it. `projected` is the reading
+until today, kept for comparison; it hashes as every config did before the
+field existed (`LEGACY_LAW`: today's default without it is still
+`sha256:d55e1bfe...`; the new default is `sha256:1e413c8b...`). The c77c77d
+identity proof, the in-place hold digests and the 2026-10-08 flight replay
+fly `projected`, as they fly the old Loiter law. On the ArduPilot response
+the cell now goes Brake at 0.0 s, Loiter at 1.4 s and home by G5 at 31.4 s;
+on the rail arm G3 at 2.7 s and G5 at 32.7 s, on the slower stand-in G3 at
+3.0 s and G5 at 33.0 s (before: Brake to the end on all three).
+
+Two other readings were tried or weighed and not taken:
+
+- Theta judging only the repairs of violated rules (the first version on
+  this branch, a40852a): the over-theta projection then FLIES (G1, the
+  Shield's action passed) on such a tick. It moved the same four episodes,
+  but it breaks the conservative cap and the 2026-10-19 review's rule that a
+  projection theta did not judge never flies: beside a yaw breach,
+  CorridorAltitudeFix's 4.55 m cut of a legal climb flew instead of X1's
+  stop (test_corridor's
+  test_the_floor_never_flies_a_projection_theta_did_not_judge failed).
+- Making CorridorReturn's test agree with the polyline check would remove
+  the spurious size at its source, but it changes the Shield's projection,
+  and with it the flights without a fail-safe that every label is read from
+  (rubric section 3). Not done here.
+
+The rubric's E5 tick (`tools/failsafe_rubric.py`, `unsafe_request`) still
+mirrors the `projected` reading: it counts a hard rule's repair over theta
+only where a non-kinematic rule is violated. The labels do not move with
+this change (they are read on the flight without a fail-safe), and they
+would not move if that tick followed the `chain` reading either: widened,
+it moves no label in 1792 cells (smoke, library and nightly, the ideal and
+ArduPilot vehicles); only the -30 deg cell's E5 spell on the ArduPilot
+vehicle's prescribed flight grows, 67.3 s to 68.5 s. Aligning it is left to
+the rubric.
+
+### X6 on a hold that finds no place to stop: kept, and why
+
+`stop_illegal` is "standing still here breaks a hard rule within the
+lookahead" (Shield.state_is_unsafe) - the same "unsafe" the time-to-safe
+KPI counts. On rotate-spin the lagging vehicle's slide goes over theta
+(Loiter at 3.9-4.1 s, about 3 m nearer the bar than the ideal vehicle
+stops); the head-on request then stays over theta for most of the hold, and
+when it clears, the bar is sweeping toward the held aircraft: a stop is
+illegal in the lookahead though the position is past no limit (unsafe depth
+0.0), and after T X6 sends it home (ArduPilot response: 31.0 s, 17.1 s and
+12.5 s at 3, 6 and 9 deg/s; the rail arm the same). Its progress test
+cannot pass at depth 0.0, which looks like a vacuous trigger. Two changes
+were measured (a40852a, c843d7c on `fsm-rail-vehicle-fixes`):
+
+- X6 and X7 counting only the ticks PAST a limit (depth above 0.0): no other
+  episode on either vehicle moved, but the three rotate-spin cells still
+  ended in a fail-safe - the operator timeout (G5 at 34.0-34.1 s), landing
+  after a failed RTL at 3 and 6 deg/s - and their unsafe spells grew (6
+  deg/s: 8.0 s to 24.0 s; the ArduPilot arm's mean time to safe, library
+  3.837 s to 4.325 s, nightly 4.283 s to 4.622 s).
+- Loiter's hand-back (G8) reading the same: rotate-spin at 9 deg/s on the
+  ideal vehicle was handed back at 8.4 s, into the bar's sweep, and breached
+  it once (the library cell and all three nightly seeds failed their
+  breach gate); as it is, it waits for the bar to pass (G8 at 20.1 s).
+
+So X6 there ends a hold that has found no place to stop for T, the state the
+time-to-safe KPI counts as unsafe, and the alternatives are a longer unsafe
+hold ending the same way, or a hand-back into the sweep. It stays as it was
+(44c7018). Where the hold is placed decides it: with the rails' own hold
+(ArduPilot's, where the aircraft is: `--autopilot-hold in_place`) the IDEAL
+vehicle goes home by X6 at 9 deg/s too (13.3 s; the rail-scorer tree's
+library and nightly sweeps fail that cell's gate on 1 + 3 episodes, before
+and after this change alike), while the FSM's moved hold points - which no
+rail flies yet - keep it (G8 at 20.1 s); on the lagging vehicles the moved
+points are not enough. The rubric's N4 ("a constraint imposed on the
+aircraft that it can leave within the caps") does not credit a hold with no
+legal stop, and the flights without a fail-safe it reads leave the bar in
+1.5-23 s. Removing these fail-safes is a change of the hold - a point the
+sweep has already passed, flown by the rails - or a label decision that a
+hold with no legal stop for T is a fail-safe the KPI should expect. Not done
+here.
+
+### Measured
+
+Headless, the grant's 5 s forecast; fail-safe trigger correctness per
+episode, before (integrate/1107b, c7a69e8) and after this change, against
+the label sets of the rail-vehicle proposal: (a) ideal-vehicle labels,
+section 3's reading (the adopted ones); (a2) ideal, section 7's prescribed
+reading; (b) ArduPilot-response labels, section 3; (c) ArduPilot, section 7;
+(r) and (r2) the same two readings on the rail arm. Censored runs are
+counted apart at the scenario's length, and flown 35 s longer (the Loiter
+timeout plus 5 s) for the "flown longer" rows. Wilson 95 % lower bounds in
+brackets. The ideal and ArduPilot rows are this branch's harness (moved hold
+points); the rail rows are a scratch copy of rail-scorer-gaps (3b67cbe) with
+and without this change's `guardrail/fsm.py`, flown with the rails' hold in
+place (`--response-arms ideal rail --autopilot-hold in_place`).
+
+| profile, arm | labels | before | after |
+|---|---|---|---|
+| smoke, ideal | (a) / (a2) | 62/63 (0.915) / 63/63 (0.943) | unchanged |
+| smoke, ArduPilot, scenario length (9 censored) | (a) / (b) / (c) | 49/54 (0.801) / 52/54 (0.875) / 53/54 (0.902) | unchanged |
+| smoke, ArduPilot, flown longer | (a) / (b) / (c) | 49/63 (0.661) / 61/63 (0.891) / 62/63 (0.915) | unchanged (no -30 deg cell in smoke) |
+| smoke, rail, scenario length (8 censored) | (a) / (r) / (r2) | 51/55 (0.827) / 53/55 (0.877) / 54/55 (0.904) | unchanged |
+| smoke, rail, flown longer | (a) / (r) / (r2) | 51/63 (0.696) / 61/63 (0.891) / 62/63 (0.915) | unchanged |
+| library, ideal | (a) / (a2) | 177/179 (0.960) / 179/179 (0.979) | unchanged |
+| library, ArduPilot, scenario length (10 censored) | (a) / (b) / (c) | 154/169 (0.859) / 163/169 (0.925) / 165/169 (0.941); 1 missed | 155/169 (0.866) / 164/169 (0.933) / 166/169 (0.949); 0 missed |
+| library, ArduPilot, flown longer | (a) / (b) / (c) | 154/179 (0.802) / 173/179 (0.929) / 175/179 (0.944) | 155/179 (0.808) / 174/179 (0.936) / 176/179 (0.952) |
+| library, rail, scenario length (9 censored) | (a) / (r) / (r2) | 156/170 (0.867) / 164/170 (0.925) / 166/170 (0.941); 1 missed on (r), (r2) | 157/170 (0.874) / 165/170 (0.933) / 167/170 (0.949); 0 missed |
+| library, rail, flown longer | (a) / (r) / (r2) | 156/179 (0.815) / 173/179 (0.929) / 175/179 (0.944) | 157/179 (0.821) / 174/179 (0.936) / 176/179 (0.952) |
+| nightly, ideal | (a) / (a2) | 729/741 (0.972) / 741/741 (0.995) | unchanged |
+| nightly, ArduPilot, scenario length (36 censored) | (a) / (b) / (c) | 636/705 (0.878) / 681/705 (0.950) / 693/705 (0.970); 3 missed | 639/705 (0.883) / 684/705 (0.955) / 696/705 (0.976); 0 missed |
+| nightly, ArduPilot, flown longer | (a) / (b) / (c) | 636/741 (0.831) / 717/741 (0.952) / 729/741 (0.972) | 639/741 (0.836) / 720/741 (0.957) / 732/741 (0.977) |
+| nightly, rail, scenario length (33 censored) | (a) / (r) / (r2) | 642/708 (0.883) / 684/708 (0.950) / 696/708 (0.971); 3 missed on (r), (r2) | 645/708 (0.888) / 687/708 (0.955) / 699/708 (0.976); 0 missed |
+| nightly, rail, flown longer | (a) / (r) / (r2) | 642/741 (0.840) / 717/741 (0.952) / 729/741 (0.972) | 645/741 (0.844) / 720/741 (0.957) / 732/741 (0.977) |
+
+On every arm and profile exactly the corridor-drift-angles 8 m/s, -30 deg
+episodes moved (ArduPilot: library 1, nightly 3; rail: library 1, nightly 3;
+Brake to the end -> G3, G5, home; expected on every label set); no other
+episode on any arm changed its FSM outcome or edges, at the scenario's
+length or flown longer. P0 escapes 0 on every profile and arm, before and
+after; time to safe unchanged (ideal 2.533 / 2.540 / 2.539 s, ArduPilot arm
+3.807 / 3.837 / 4.283 s, rail arm 4.953 / 5.171 / 5.566 s for smoke /
+library / nightly); the sweeps' own gates unchanged (this branch: smoke 55
+pass / 6 tracked / 0 fail / 3 known, library 154 / 22 / 0 / 4, nightly
+660 / 66 / 0 / 18; the rail-scorer tree: 55 / 6 / 0 / 3, 153 / 22 / 1 / 4,
+657 / 66 / 3 / 18, its failures the in-place rotate-spin above). The hil
+rehearsal rh01 (38 missions) and the shakedowns shk01 / shk03, replayed
+through the new FSM, keep every edge: no flown tick of the corrected kind
+(the -30 deg cell was not flown there).
+
 ## 2026-11-06: X8, the position the Shield is handed
 
 The fail-safe KPI's remaining misses (headless harness, against
@@ -824,7 +1004,7 @@ never presented as a contract term. One transition per tick at most.
 |---|---|---|---|---|
 | G1 | Normal → Brake | enforced violation, repair converged, magnitude ≤ θ | – | grant p4 |
 | G2 | Brake → Loiter | ≥ N hard-rule onsets within the last T s | LOITER | grant p4 |
-| G3 | Brake → Loiter | a hard, non-kinematic `project_fix` rule's repair is over θ, or did not converge; not on a tick whose strongest action is `brake` where a stop is legal (the Shield skipped projection, so that rule was never projected; since 2026-10-19) | LOITER | grant p4 (diagram + conservative cap) |
+| G3 | Brake → Loiter | a hard, non-kinematic `project_fix` rule's repair is over θ, or did not converge - or, on a tick that violates no non-kinematic `project_fix` rule, the repair the chain made for a hard kinematic rule (`untrusted_owner` "chain", since 2026-11-07); not on a tick whose strongest action is `brake` where a stop is legal (the Shield skipped projection, so that rule was never projected; since 2026-10-19) | LOITER | grant p4 (diagram + conservative cap) |
 | G4 | Loiter → RTL | ≥ N new hard onsets within T, counted from Loiter entry | RTL | grant p4 |
 | G5 | Loiter → RTL | time in Loiter ≥ `loiter_timeout_s` | RTL | grant p4 ("operator-defined timeout") |
 | G6 | RTL → Land | autopilot side reports `rtl_failed` | LAND | grant p4 |
@@ -924,6 +1104,11 @@ stack and the FSM cannot disagree.
   tick untrusted, and an untrusted projection is attributed to a rule whose
   repair θ does judge. Before, with every rule unresolved and P0, the replay
   cited `kin-caps` for every θ escalation, because it sorts first by id.
+  Where no such rule is violated (since 2026-11-07, `untrusted_owner`
+  "chain"), the untrusted repair is the one the chain made for the kinematic
+  rule - an operator acting on its own test for a rule the request does not
+  break - and G3 escalates it when that rule is hard ("2026-11-07: the FSM
+  on the rail vehicle").
 - **Action names are case-insensitive.** The grant spells the same action
   `land` (DSL literal) and `Land` (FSM diagram). Unknown names are refused, not
   defaulted.
@@ -1195,7 +1380,10 @@ set_mode, setpoint, reason, outcome, governing_rule, risk_level, violations
 magnitude (with recovery_exempt), theta, theta_exceeded, n_in_t, n_threshold,
 window_s, cleared_s, cleared_hard_s, stop_illegal_s, unsafe_depth_m,
 x6_progress, x7_losing, flags (incl. stop_illegal), stop_withheld, note,
-fsm_config_hash`.
+fsm_config_hash`; on the ticks that carry them only, `position_lost`,
+`noise_marginal`, `untrusted_chain` (since 2026-11-07: the kinematic rules
+whose chain owns an untrusted repair), `cleared_loiter_s` and the hold
+point's fields.
 
 `fsm_config_hash` is the full SHA-256 of the thresholds in force, over
 canonical float values, so a trigger count can be traced to the N / T / θ
@@ -1220,6 +1408,9 @@ escalation:            # grant symbols (N, T, T_recover) or the field names
   onset_clear_s: 1.0       # ours (2026-10-09); onset rate limit; (N - 1) x it <= T
   x6_min_escape_mps: 0.1   # ours (2026-10-08); X6's progress and X7's losing rate
   x7_min_rise_m: 0.5       # ours (2026-10-09); X7's minimum fitted rise
+  loiter_clear: acceptable # ours (2026-11-02); or "violation_free" (the law before)
+  loiter_x67: position     # ours (2026-11-02); or "request" (the law before)
+  untrusted_owner: chain   # ours (2026-11-07); or "projected" (the reading before)
   profiles:
     night:
       t_recover_s: 3.0     # either spelling, in either layer
