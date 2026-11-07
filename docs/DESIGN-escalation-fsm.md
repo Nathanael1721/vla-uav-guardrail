@@ -1009,7 +1009,7 @@ never presented as a contract term. One transition per tick at most.
 | G5 | Loiter → RTL | time in Loiter ≥ `loiter_timeout_s` | RTL | grant p4 ("operator-defined timeout") |
 | G6 | RTL → Land | autopilot side reports `rtl_failed` | LAND | grant p4 |
 | G7 | Brake → Normal | nothing enforced violated for ≥ T_recover | – | grant p4 |
-| G8 | Loiter → Normal | no **hard** enforced violation for ≥ T_recover | GUIDED | grant p4 |
+| G8 | Loiter → Normal | no **hard** enforced violation for ≥ T_recover (since 2026-11-02, `loiter_clear` "acceptable": the request one the Shield would fly and the position legal; since 2026-11-07, `hold_horizon` "loiter": and its flight carries the aircraft onto no spot where a stop is illegal within the lookahead, `handback_unsafe`) | GUIDED | grant p4 |
 | G9 | RTL → [*] | `home_reached` | – | grant p4 |
 | G10 | Land → [*] | `landed` | – | grant p4 |
 | G11 | Normal → RTL | a violated rule's effective action is RTL | RTL | grant p4, with "unrepairable" read as "skips projection" (see Interpretations) |
@@ -1382,8 +1382,9 @@ window_s, cleared_s, cleared_hard_s, stop_illegal_s, unsafe_depth_m,
 x6_progress, x7_losing, flags (incl. stop_illegal), stop_withheld, note,
 fsm_config_hash`; on the ticks that carry them only, `position_lost`,
 `noise_marginal`, `untrusted_chain` (since 2026-11-07: the kinematic rules
-whose chain owns an untrusted repair), `cleared_loiter_s` and the hold
-point's fields.
+whose chain owns an untrusted repair), `handback_unsafe` (since 2026-11-07:
+Loiter kept a request whose flight would carry the aircraft onto a spot where
+a stop is illegal), `cleared_loiter_s` and the hold point's fields.
 
 `fsm_config_hash` is the full SHA-256 of the thresholds in force, over
 canonical float values, so a trigger count can be traced to the N / T / θ
@@ -1411,6 +1412,7 @@ escalation:            # grant symbols (N, T, T_recover) or the field names
   loiter_clear: acceptable # ours (2026-11-02); or "violation_free" (the law before)
   loiter_x67: position     # ours (2026-11-02); or "request" (the law before)
   untrusted_owner: chain   # ours (2026-11-07); or "projected" (the reading before)
+  hold_horizon: loiter     # ours (2026-11-07); or "lookahead" (the holds before)
   profiles:
     night:
       t_recover_s: 3.0     # either spelling, in either layer
