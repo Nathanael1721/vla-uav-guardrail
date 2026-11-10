@@ -2337,6 +2337,38 @@ def test_the_shield_node_learns_landed_from_the_autopilot():
     assert "<service>/mavros/set_message_interval</service>" in shield
 
 
+def test_the_fence_read_waits_for_sim_speedup_and_a_doomed_takeoff_is_refused():
+    """2026-11-11, from the grant example sweep on hil (ge1110): 4 of 36
+    missions read every FENCE_* value before MAVROS had SIM_SPEEDUP, so the
+    node took SITL for hardware, did not raise FENCE_ALT_MAX (30 m) to the
+    policy's ceiling, armed, and climbed to its 50 m start into the
+    autopilot's own fence - RTL before the mission, nothing flown. The read
+    now waits for SIM_SPEEDUP (a bounded grace: hardware never answers it),
+    and a take-off at or above the line the fence acts on is refused before
+    arming."""
+    N = _node()
+    fence = {k: 1.0 for k in N.FENCE_PARAMS}
+    assert not N.fence_read_done({}, 99.0)
+    assert not N.fence_read_done({**fence, "FENCE_ALT_MAX": None, "SIM_SPEEDUP": 1.0}, 99.0)
+    assert not N.fence_read_done(fence, 0.0), "the old read stopped here, SIM_SPEEDUP unread"
+    assert not N.fence_read_done(fence, N.SIM_SPEEDUP_GRACE_S - 0.1)
+    assert N.fence_read_done({**fence, "SIM_SPEEDUP": 1.0}, 0.0)
+    assert N.fence_read_done(fence, N.SIM_SPEEDUP_GRACE_S), "hardware: after the grace"
+
+    r = N.takeoff_fence_refusal
+    assert r(50.0, 30.0, 2.0, True) and "30" in r(50.0, 30.0, 2.0, True)
+    assert r(28.0, 30.0, 2.0, True), "at the line the fence acts on"
+    assert r(27.9, 30.0, 2.0, True) is None
+    assert r(50.0, 85.0, 2.0, True) is None, "the raised fence of the 32 good runs"
+    assert r(15.0, 30.0, 2.0, True) is None, "every 15 m cell of the library"
+    assert r(50.0, 30.0, 2.0, False) is None and r(50.0, 30.0, 2.0, None) is None
+    assert r(50.0, None, 2.0, True) is None and r(None, 30.0, 2.0, True) is None
+    src = (SITL / "ros2_shield_node.py").read_text(encoding="utf-8")
+    assert "if fence_read_done(vals, time.time() - fence_since):" in src
+    arm = src.index("self.cli_arm, CommandBool.Request")
+    assert src.index("raise RuntimeError(refusal)") < arm, "refused before arming"
+
+
 def test_no_sitl_script_reads_a_name_nothing_binds():
     """The ROS node classes exist only where rclpy imports, so no desktop test
     runs their methods. a152a75's request_extended_state logged through
