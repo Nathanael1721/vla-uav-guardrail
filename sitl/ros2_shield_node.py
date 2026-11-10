@@ -1318,6 +1318,50 @@ try:
 except ImportError:
     HAVE_ROS = False
 
+# After the GeoFence parameters are all read, how long the fence read still
+# waits for SIM_SPEEDUP (2026-11-11). MAVROS fills /mavros/param while it
+# pulls the autopilot's list, and SIM_SPEEDUP - the node's only sign that the
+# autopilot is SITL, whose FENCE_ALT_MAX it may raise - can arrive after the
+# FENCE_* values. Four of the 36 missions of the grant example sweep on hil
+# (ge1110, 10 Nov: 012, 017, 030, 031) read the fence complete and SIM_SPEEDUP
+# still absent, so the raise was not allowed, FENCE_ALT_MAX stayed 30 m under
+# a policy ceiling of 80 m, and the climb to the 50 m start breached the
+# autopilot's own fence: RTL before the mission began, nothing flown. A
+# hardware autopilot never answers SIM_SPEEDUP; there the read goes on after
+# this grace, as before.
+SIM_SPEEDUP_GRACE_S = 5.0
+
+
+def fence_read_done(vals: dict, fence_complete_for_s: float,
+                    grace_s: float = SIM_SPEEDUP_GRACE_S) -> bool:
+    """Is the take-off fence read finished? Every FENCE_PARAMS value read,
+    and SIM_SPEEDUP too - or `grace_s` passed since the fence values were
+    complete (a hardware autopilot has no SIM_SPEEDUP)."""
+    if not all(vals.get(k) is not None for k in FENCE_PARAMS):
+        return False
+    return vals.get("SIM_SPEEDUP") is not None or fence_complete_for_s >= grace_s
+
+
+def takeoff_fence_refusal(alt_m: float | None, fence_alt_max: float | None,
+                          margin_m: float | None,
+                          backstop_active: bool | None) -> str | None:
+    """Why a take-off to `alt_m` must not start, or None (2026-11-11). The
+    autopilot's GeoFence acts `margin_m` below FENCE_ALT_MAX, so a climb to
+    an altitude at or above that line ends in the autopilot's own RTL before
+    the mission begins - the stress harness refuses such a start for the same
+    reason (sweep_scenarios.rail_refusal). Nothing is refused while the fence
+    is off or unread: there is no backstop to trip, or nothing known to judge."""
+    if not backstop_active or alt_m is None or fence_alt_max is None:
+        return None
+    line = float(fence_alt_max) - float(margin_m or 0.0)
+    if float(alt_m) < line:
+        return None
+    return (f"take-off to {float(alt_m):g} m refused: the autopilot's GeoFence acts at "
+            f"FENCE_ALT_MAX {float(fence_alt_max):g} m less its {float(margin_m or 0.0):g} m "
+            f"margin ({line:g} m), so the backstop would end the climb before the "
+            f"mission starts")
+
+
 def landed_from(mode: str | None, ext_landed: bool | None, armed: bool | None,
                 flew_armed: bool) -> bool:
     """The FSM's "landed" input (G10, X5), only in RTL or LAND as before
@@ -2191,14 +2235,21 @@ if HAVE_ROS:
             stricter than the policy; if that fails the record says so."""
             vals: dict = {}
             deadline = time.time() + 20.0
+            fence_since: float | None = None
             while time.time() < deadline:
                 vals = self._get_params(self.cli_param,
                                         list(FENCE_PARAMS) + ["SIM_SPEEDUP"])
                 # ALL of them: MAVROS fills /mavros/param while it pulls the
                 # parameter list, and a 2026-10-07 flight read FENCE_ENABLE
-                # before FENCE_ALT_MAX existed, so no zone was exported.
+                # before FENCE_ALT_MAX existed, so no zone was exported. And
+                # SIM_SPEEDUP with them (fence_read_done, 2026-11-11): read
+                # without it, a SITL autopilot looked like hardware and its
+                # fence was left below the policy's ceiling.
                 if all(vals.get(k) is not None for k in FENCE_PARAMS):
-                    break
+                    if fence_since is None:
+                        fence_since = time.time()
+                    if fence_read_done(vals, time.time() - fence_since):
+                        break
                 rclpy.spin_once(self, timeout_sec=0.5)
             ceiling, ceiling_src = policy_ceiling_m(self.policy,
                                                     self.mission.cruise_alt_m)
@@ -2334,6 +2385,18 @@ if HAVE_ROS:
             # zones - once the aircraft's position is known, so a zone over
             # the pad is held back rather than armed under the aircraft.
             self.read_autopilot_fence()
+            # A take-off the backstop would end is refused here, before
+            # arming (takeoff_fence_refusal, 2026-11-11), with the reason in
+            # events.jsonl; until then the node armed and climbed into the
+            # autopilot's own fence.
+            refusal = takeoff_fence_refusal(
+                self.start_up if self.start_up is not None else self.mission.cruise_alt_m,
+                self.fence_column_m, self.fence_margin_m,
+                (self.autopilot_fence or {}).get("backstop_active"))
+            if refusal:
+                self.rec.event("takeoff_refused", t=None, reason=refusal,
+                               autopilot_fence=self.autopilot_fence)
+                raise RuntimeError(refusal)
             # SITL's stressor parameters as they stand before take-off (the
             # simulator side set its boot values before this node started).
             self.read_sim_params()
