@@ -11,6 +11,9 @@
     python tools/harness_client.py drive --rest-endpoint http://127.0.0.1:8071 \
         --policy-bundle bundles/x.tar.gz --timeline events.yaml \
         --events-file demo/out/<tag>/events.jsonl --log demo/out/<tag>/<tag>.harness.jsonl
+    python tools/harness_client.py --timeout 60 run --backend hil \
+        --rest-endpoint https://10.42.0.3:8071 --scenario nfz-head-on --seed 1001 \
+        --hot-apply 2.0 zone.json --hot-apply 8.0 translate.json
     python tools/harness_client.py status ep-0123456789ab
     python tools/harness_client.py --insecure --target 127.0.0.1:50051 run ...
 
@@ -36,6 +39,19 @@ it flies), EndEpisode, StopSession; it prints how many telemetry frames and
 events the session's streams carried. `forward` opens a session bound to a
 REST hot-apply endpoint (guardrail/api.py) and sends one HotApply to it,
 which the server POSTs to <endpoint>/hot_apply.
+
+`run --backend sitl|hil` (2026-11-10, WP4-05) is one harness session = one
+flown, scored episode: the session is opened on the server's rig (serve
+--rail), StartEpisode LAUNCHES the mission through the sweep's own rail
+backend, each --hot-apply is queued for its MISSION time and forwarded by the
+server to the mission's own REST listener (--rest-endpoint names the address
+it is started on), EndEpisode waits for the flight (--end-timeout, default one
+hour), scores it with the sweep's rail scorer and returns the bundle under
+the grant's names. A --hot-apply body may be an edit of a zone, which the
+server sends as PATCH /dynamic_nfz/<id>: {"type": "dynamic_nfz", "op":
+"translate", "id": "nfz-1", "dx": 5, "dy": 0} (rotate: angle_deg; scale:
+factor). --event is refused on a rail (UNIMPLEMENTED). The same bodies work
+in a `drive` timeline and with `forward`.
 
 `drive` (2026-11-03, WP4-03) is the harness driving a FLYING rail: it opens
 a session bound to the rail's REST hot-apply endpoint (the Shield node's
@@ -123,7 +139,8 @@ class HarnessClient:
                       airframe: str = "", seed: int | None = None,
                       rest_endpoint: str = "", label: str = ""):
         pb = self._M.pb
-        kw = {"backend": {"headless": pb.BACKEND_HEADLESS, "sitl": pb.BACKEND_SITL}
+        kw = {"backend": {"headless": pb.BACKEND_HEADLESS, "sitl": pb.BACKEND_SITL,
+                          "hil": pb.BACKEND_HIL}
               .get(backend, pb.BACKEND_UNSPECIFIED), "scene": scene, "airframe": airframe,
               "rest_endpoint": rest_endpoint, "label": label}
         if seed is not None:
@@ -207,9 +224,11 @@ class HarnessClient:
         return self.stub.GetStatus(self._M.pb.EpisodeRef(episode_id=episode_id),
                                    timeout=self.timeout)
 
-    def end_episode(self, episode_id: str):
+    def end_episode(self, episode_id: str, timeout: float | None = None):
+        """`timeout`: a rail episode's EndEpisode blocks for the rest of the
+        mission, its fetch and its scoring (minutes)."""
         return self.stub.EndEpisode(self._M.pb.EpisodeRef(episode_id=episode_id),
-                                    timeout=self.timeout)
+                                    timeout=self.timeout if timeout is None else timeout)
 
 
 # --------------------------------------------------------------------------- #
@@ -257,10 +276,16 @@ def render_bundle(b) -> str:
            f"bundle: {b.bundle_path}"]
     for g in b.gates_failed:
         out.append(f"  gate failed: {g}")
+    if b.rail_run_path:
+        out.append(f"{b.backend} rail run: {b.rail_run_path}")
     for a in b.applied_events:
         what = f"REFUSED {a.reason}" if a.refused else \
             f"generation {a.generation} {a.policy_hash[:19]}"
-        out.append(f"  t={a.t:.2f} s {a.event} {a.rule_id}: {what}")
+        out.append(f"  t={a.t:.2f} s {a.event} {a.rule_id}"
+                   + (f" (over {a.via})" if a.via and a.via != "runner" else "")
+                   + f": {what}")
+    for name in sorted(b.bundle_files):
+        out.append(f"  {name:<22} {b.bundle_files[name]}")
     out.append(render_kpi(b.kpi))
     if not b.kpi_grade:
         out.append("NOT KPI-grade: " + "; ".join(b.kpi_grade_reasons))
@@ -464,6 +489,16 @@ def main(argv: list[str] | None = None) -> int:
                                                 "(opens a session)")
     r.add_argument("--live", action="store_true",
                    help="fly the episode as it starts, events injected while it flies")
+    r.add_argument("--backend", default="headless", choices=H.BACKENDS,
+                   help="sitl or hil: fly it on the server's rig (serve --rail); "
+                        "StartEpisode launches the mission and EndEpisode waits for it")
+    r.add_argument("--rest-endpoint", default="",
+                   help="a rail backend: the address the mission's own hot-apply "
+                        "listener is started on (each --hot-apply is forwarded there "
+                        "at its mission time)")
+    r.add_argument("--end-timeout", type=float, default=None,
+                   help="seconds EndEpisode may take (default: --timeout; one hour on "
+                        "a rail backend)")
     r.add_argument("--pace", type=float, default=None,
                    help="live: simulated seconds per wall second (default 1.0; 0 unpaced)")
     f = sub.add_parser("forward", help="send one HotApply through a session bound to a "
@@ -510,6 +545,19 @@ def main(argv: list[str] | None = None) -> int:
                                  f"got {type(pl).__name__}")
         if args.cmd == "run" and args.expected_hash and not args.policy_bundle:
             raise ValueError("--expected-hash goes with --policy-bundle")
+        rail = args.cmd == "run" and args.backend in H.RAIL_BACKENDS
+        if args.cmd == "run" and args.rest_endpoint and not rail:
+            raise ValueError("--rest-endpoint goes with --backend sitl or hil (drive and "
+                             "forward bind a session to a rail flown outside the harness)")
+        if rail and (args.live or args.pace is not None):
+            raise ValueError("--live / --pace are the headless backend's: a rail flies "
+                             "in real time")
+        if rail and evs:
+            raise ValueError("--event is refused on a rail (UNIMPLEMENTED): send the "
+                             "change as a --hot-apply body")
+        if rail and hot and not args.rest_endpoint:
+            raise ValueError("--hot-apply on a rail needs --rest-endpoint: the mission's "
+                             "listener is started on it")
         yml = (Path(args.scenario_file).read_text(encoding="utf-8")
                if args.cmd == "run" and args.scenario_file else "")
         client = HarnessClient(args.target, insecure=args.insecure, pki_dir=args.pki,
@@ -535,9 +583,13 @@ def main(argv: list[str] | None = None) -> int:
                       f"({ack.op}), generation {ack.generation} {ack.policy_hash}")
                 client.stop_session(session)
                 return 0
-            if args.policy_bundle or args.prompt or args.live:
-                session = client.start_session(seed=args.seed).session_id
-                print(f"session {session}")
+            if args.policy_bundle or args.prompt or args.live or rail:
+                session = client.start_session(seed=args.seed, backend=args.backend,
+                                               rest_endpoint=args.rest_endpoint
+                                               ).session_id
+                print(f"session {session}"
+                      + (f" on the {args.backend} rail" if rail else "")
+                      + (f", endpoint {args.rest_endpoint}" if args.rest_endpoint else ""))
                 if args.policy_bundle:
                     ack = client.inject_policy(session, bundle_path=args.policy_bundle,
                                                expected_hash=args.expected_hash)
@@ -552,20 +604,25 @@ def main(argv: list[str] | None = None) -> int:
                                        keep_flight_log=args.keep_log,
                                        session_id=session or "", live=args.live,
                                        pace=args.pace if args.live else None)
-            armed = None if args.live else ref.episode_id
+            armed = None if args.live or rail else ref.episode_id
             print(f"started {ref.episode_id}: {ref.run_id} seed {ref.seed}"
                   + (f" profile {ref.profile}" if ref.profile else "")
                   + (" (live, flying)" if ref.live else "")
+                  + (f" (launched on the {ref.backend} rail)" if rail else "")
                   + f", ends at {ref.run_end_sim_t:.1f} s")
             for at, body in hot:
                 ack = client.hot_apply(ref.episode_id, at, body)
                 print(f"  hot-apply #{ack.queue_index} at {ack.at_sim_t} s: {ack.type} "
-                      f"{ack.rule_id} ({ack.op})")
+                      f"{ack.rule_id} ({ack.op})"
+                      + (f" queued for {ack.forwarded_method} {ack.forwarded_to}"
+                         if ack.pending else ""))
             for at, t, payload in evs:
                 ack = client.emit_event(ref.episode_id, at, t, payload)
                 print(f"  event #{ack.queue_index} at {ack.at_sim_t} s: {ack.type}")
             armed = None
-            b = client.end_episode(ref.episode_id)
+            b = client.end_episode(ref.episode_id, timeout=(
+                args.end_timeout if args.end_timeout is not None
+                else 3600.0 if rail else None))
             if session:
                 stop = client.stop_session(session)
                 print(f"session {session} stopped: {stop.telemetry_frames} telemetry "

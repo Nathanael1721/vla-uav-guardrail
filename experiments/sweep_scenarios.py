@@ -1208,6 +1208,14 @@ class EpisodeRun:
     # audit.jsonl; write_bundle packs them as shield_audit.jsonl (audit card
     # WP4-20: until 2026-10-29 the harness bundles carried none).
     audit: list = field(default_factory=list)
+    # The canonical IR bytes of EVERY policy generation the flying Shield held
+    # (2026-11-10, WP4-05): {generation: Policy.canonical_bytes()}, the one
+    # injected at t = 0 and the one each accepted event produced, read right
+    # after the event (a pure read: nothing flown or scored depends on it).
+    # The grant's policy_bundle.tar.gz holds "all hot-apply generations";
+    # until this date a run kept the first and the last policy only, and the
+    # ones between were in a bundle by hash alone.
+    generations: dict = field(default_factory=dict)
 
 
 def _as_spec(sc) -> ScenarioSpec:
@@ -1557,6 +1565,7 @@ def _episode(sc, defaults, seed: int, arm: dict | None, box: dict,
         events[0]["fix_quality_reported"] = stress.fix_quality_reported
         events[0]["dr_drift_mps"] = getattr(shield, "dr_drift_mps", None)
     es = _EventState(shields=shields)
+    generation_irs: dict[int, bytes] = {int(policy.generation): policy.canonical_bytes()}
     st = m.start
     prev_st = st
     hist: list[State] = []
@@ -1669,6 +1678,10 @@ def _episode(sc, defaults, seed: int, arm: dict | None, box: dict,
             for rid, prio in K.rule_priorities(shield.policy).items():
                 priorities.setdefault(rid, prio)
             events.append(rec)
+            if not rec.get("refused") and rec.get("generation") is not None:
+                # EpisodeRun.generations: the IR this event produced.
+                generation_irs[int(rec["generation"])] = (
+                    es.shields[0].policy.canonical_bytes())
             if not rec.get("refused"):
                 imposed = True
         if subj:
@@ -2329,7 +2342,7 @@ def _episode(sc, defaults, seed: int, arm: dict | None, box: dict,
                       seed_consumed=stress.consumes_seed,
                       shield_window=shield.history,
                       priorities=dict(priorities, **K.rule_priorities(shield.policy)),
-                      policy_source=source, audit=audit)
+                      policy_source=source, audit=audit, generations=generation_irs)
 
 
 def run_headless(sc, defaults=None, seed: int = 0) -> tuple[list[dict], dict]:
@@ -2785,6 +2798,14 @@ RAIL_SHIELD_FLAGS = ("--seed", "--bundle", "--expected-hash", "--policy", "--dev
                      "--events", "--scenario-meta")
 RAIL_STUB_FLAGS = ("--seed", "--bundle", "--policy", "--start", "--target", "--no-target",
                    "--speed", "--pilot", "--action")
+# The Shield node's REST hot-apply listener (sitl/ros2_shield_node.py,
+# "HOT-APPLY ON THE FLYING SHIELD"). A campaign sends none of these; the gRPC
+# harness's rail episode (guardrail/harness_service.py, 2026-11-10) asks for
+# the listener through run_hil / run_sitl's `extra_args`, which may hold these
+# flags and no other: a mission-shaping flag (--start, --pilot, ...) handed in
+# beside the scenario's own would fly another mission under its name.
+RAIL_HOTAPPLY_FLAGS = ("--hotapply-port", "--hotapply-host", "--hotapply-pki",
+                       "--hotapply-server-cert", "--hotapply-client")
 # Where a campaign's per-mission files (events, scenario record) go, under
 # the checkout's demo/out (gitignored; the Orin mounts demo/out writable).
 CAMPAIGN_DIR = "demo/out/_campaign"
@@ -3386,6 +3407,27 @@ def check_rail_flags(args: list[str]) -> None:
                                       f"must read: it would drop them")
 
 
+def rail_extra_args(extra_args) -> list[str]:
+    """`extra_args` of run_hil / run_sitl, checked: `--flag=value` tokens of
+    RAIL_HOTAPPLY_FLAGS only, each declared by the Shield node (it reads its
+    arguments with parse_known_args, so an undeclared flag would vanish
+    without a word). [] for None. Raises UnsupportedScenario otherwise."""
+    out = [str(a) for a in (extra_args or ())]
+    if not out:
+        return []
+    bad = [a for a in out if "=" not in a or a.split("=", 1)[0] not in RAIL_HOTAPPLY_FLAGS]
+    if bad:
+        raise UnsupportedScenario(
+            f"extra rail arguments {bad}: only --flag=value forms of "
+            f"{list(RAIL_HOTAPPLY_FLAGS)} may be added to a scenario's own")
+    node = sitl_node_flags(_REPO / SITL_NODE)
+    missing = sorted({a.split("=", 1)[0] for a in out} - node)
+    if missing:
+        raise UnsupportedScenario(f"{SITL_NODE} does not declare {missing}: it would "
+                                  f"drop them and fly with no hot-apply listener")
+    return out
+
+
 def _num(v: float) -> str:
     """A coordinate for a command line: up to 6 decimals, no exponent, no
     trailing zeros, never "-0"."""
@@ -3529,7 +3571,7 @@ def rail_node_args(spec: ScenarioSpec, seed: int = 0, defaults=None, *,
 
 def build_sitl_cmd(spec: ScenarioSpec, tag: str, seed: int = 0,
                    defaults=None, *, events: str | None = None,
-                   meta: str | None = None) -> list[str]:
+                   meta: str | None = None, extra_args=None) -> list[str]:
     """The command line for one scenario on the desktop's MAVROS 2 rail.
 
     Until 2026-10-06 this passed `--out` to sitl/run_sitl_demo.py, which has no
@@ -3563,11 +3605,14 @@ def build_sitl_cmd(spec: ScenarioSpec, tag: str, seed: int = 0,
     THE SCENARIO'S OWN MISSION (2026-11-06): its start (--start, which the
     run's SITL_HOME must match: run_sitl passes it through WSLENV), target
     and altitude, pilot law, speed (the pilot's, else 4 m/s), time cap,
-    subject (turned with the mission), clock and events (rail_node_args)."""
+    subject (turned with the mission), clock and events (rail_node_args).
+    `extra_args` (2026-11-10): the hot-apply listener's flags, for the gRPC
+    harness's rail episode (rail_extra_args); a campaign passes none."""
     return (["wsl", "bash", SITL_SCRIPT, "on" if spec.shield else "off", "",
              "--tag", tag]
             + rail_node_args(spec, seed, defaults, backend="sitl", events=events,
-                             meta=meta))
+                             meta=meta)
+            + rail_extra_args(extra_args))
 
 
 def read_fresh_log(log: Path, launched_at: float) -> list[dict]:
@@ -4419,7 +4464,7 @@ def rail_meta(spec: ScenarioSpec, ep, seed: int, backend: str, run_id: str,
 
 
 def run_sitl(sc, tag: str, seed: int = 0, defaults=None,
-             episode=None) -> tuple[list[dict], dict] | None:
+             episode=None, *, extra_args=None) -> tuple[list[dict], dict] | None:
     """One scenario on the desktop's rail (sitl/run_ros2_demo.sh, which boots
     a fresh SITL per run): SITL_HOME at the scenario's start, through WSLENV
     so the WSL script sees it; its events and scenario record written under
@@ -4443,7 +4488,8 @@ def run_sitl(sc, tag: str, seed: int = 0, defaults=None,
     nonce = uuid.uuid4().hex
     meta = rail_meta(spec, episode, seed, "sitl", tag, nonce, home, None, defaults)
     events, meta_rel = write_campaign_files(spec, meta)
-    cmd = build_sitl_cmd(spec, tag, seed, defaults, events=events, meta=meta_rel)
+    cmd = build_sitl_cmd(spec, tag, seed, defaults, events=events, meta=meta_rel,
+                         extra_args=extra_args)
     env = dict(os.environ)
     wslenv = [env.get("WSLENV", "")]
     if home is not None:
@@ -4764,7 +4810,7 @@ def hil_flight_problems(metrics: dict) -> list[str]:
 
 
 def run_hil(spec: ScenarioSpec, ep, seed: int, defaults, cfg: HilConfig, transport,
-            campaign: str, k: int, store: Path) -> dict:
+            campaign: str, k: int, store: Path, *, extra_args=None) -> dict:
     """One scenario on the hil rail: boot SITL at its start, copy its files
     to the Orin, restart MAVROS, fly the mission container, fetch the run
     folder into `store`, accept it by its own records and score it with the
@@ -4779,7 +4825,13 @@ def run_hil(spec: ScenarioSpec, ep, seed: int, defaults, cfg: HilConfig, transpo
     hands sitl/sitl_stressors.py; the helper is ready only once the plan's
     boot parameters read back. After the flight the simulator side's record
     is copied beside the run (sitl_stress.json) and rail_stress_check must
-    find the stress realised, or the flight is an error, never scored."""
+    find the stress realised, or the flight is an error, never scored.
+
+    `extra_args` (2026-11-10): the Shield node's hot-apply listener flags
+    (rail_extra_args), appended to the scenario's own arguments for the gRPC
+    harness's rail episode, which hot-applies into the flight over REST. A
+    campaign (`--backend hil`) passes none, and its missions are the ones
+    they were."""
     why = rail_refusal(spec, "hil", episode=ep, defaults=defaults)
     if why:
         raise UnsupportedScenario(why)
@@ -4791,6 +4843,8 @@ def run_hil(spec: ScenarioSpec, ep, seed: int, defaults, cfg: HilConfig, transpo
     events, meta_rel = write_campaign_files(spec, meta)
     args = rail_node_args(spec, seed, defaults, backend="hil", events=events, meta=meta_rel,
                           bundles_dir=cfg.bundles_dir)
+    if extra_args:
+        args = args + rail_extra_args(extra_args)
     plan = rail_stress_plan(spec, seed, defaults, run_id=tag, nonce=nonce)
     stress_paths = write_stress_plan(plan) if plan is not None else None
     timeout = float(meta["rail_max_s"]) + cfg.mission_margin_s

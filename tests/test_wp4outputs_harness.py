@@ -27,7 +27,8 @@ What must hold, and how each test tries to break it:
     endpoint UNAVAILABLE; an environment proxy is not used; an endpoint off
     loopback is refused unless the server allows its host; InjectPolicy in a
     bound session refuses a policy the endpoint does not fly.
-  * backend SITL is reserved: UNIMPLEMENTED.
+  * backend SITL (and HIL) on a server with no rig: UNIMPLEMENTED (with one,
+    tests/test_harness_rail.py).
   * The streams replay a session from its start and end when it stops; the
     whole page lifecycle runs over mutual TLS, and its live bundle re-flies
     identically through tools/rerun_episode.py.
@@ -437,9 +438,13 @@ def test_issue_task_is_recorded_by_hash_and_changes_nothing_flown():
 
 
 def test_the_sitl_backend_is_reserved_and_endpoints_are_checked():
+    # Since 2026-11-10 a rail backend is flown by the server's rig (serve
+    # --rail; tests/test_harness_rail.py); a server with none, like this one,
+    # still answers UNIMPLEMENTED, for sitl and for hil.
     h = _harness()
-    code, why = _refused(h.start_session, backend="sitl")
-    assert code == "UNIMPLEMENTED" and "reserved" in why, (code, why)
+    for backend in ("sitl", "hil"):
+        code, why = _refused(h.start_session, backend=backend)
+        assert code == "UNIMPLEMENTED" and f"no {backend} rail" in why, (code, why)
     assert _refused(h.start_session, backend="gazebo")[0] == "INVALID_ARGUMENT"
     assert _refused(h.start_session, rest_endpoint="ftp://127.0.0.1:1")[0] == \
         "INVALID_ARGUMENT"

@@ -1,7 +1,8 @@
 """The stress harness's gRPC control plane over mutual TLS: the Stress Testing
 page's ten RPCs (StartSession, StopSession, InjectPolicy, HotApply,
 StartEpisode, IssueTask, EmitEvent, EndEpisode, StreamTelemetry,
-StreamEvents) plus GetStatus, driving the headless harness.
+StreamEvents) plus GetStatus, driving the headless harness and, on a server
+started with a rig (serve --rail), the flight rails.
 
     python -m guardrail.harness_service gen-pki                 # lab CA + certs
     python -m guardrail.harness_service serve                   # mTLS on :50051
@@ -42,10 +43,14 @@ SESSIONS. A session (StartSession) groups episodes: its injected policy
 archive's bytes, pinned to `expected_hash`) replaces each later episode's
 scenario policy; its task (IssueTask) is recorded with each; its default seed
 is used when an episode names none; and both streams carry its episodes.
-`backend` is HEADLESS; SITL is a reserved value that answers UNIMPLEMENTED
-until the hil rail drives it. A session may be BOUND to a REST hot-apply
-endpoint (guardrail/api.py, e.g. a rail's live Shield): a HotApply addressed
-to the session is POSTed to <endpoint>/hot_apply as it is and the endpoint's
+`backend` is HEADLESS, or a flight rail (SITL, HIL: see RAIL SESSIONS below;
+UNIMPLEMENTED on a server with no rig for it). A session may be BOUND to a
+REST hot-apply endpoint (guardrail/api.py, e.g. a rail's live Shield): a
+HotApply addressed to the session is sent to the endpoint by its own route -
+POST <endpoint>/hot_apply as it is, or, for an edit of a zone (a dynamic_nfz
+body with "op": translate / rotate / scale / move and the zone's "id"),
+PATCH <endpoint>/dynamic_nfz/<id> (rest_route, 2026-11-10: /hot_apply cannot
+carry one) - and the endpoint's
 answer returned, 409 / 404 / 422 mapped as below; the session's InjectPolicy
 checks the endpoint flies that policy (GET /health). Only a loopback endpoint
 is accepted unless the server allows its host (`rest_hosts`,
@@ -57,6 +62,44 @@ serve --rest-pki: the lab CA and a client certificate on the endpoint's
 allow-list, harness-client unless --rest-client names another); without one an
 https endpoint is refused at StartSession. The endpoint's server certificate
 must name the address the session uses (gen-pki --host, issue --server-host).
+
+RAIL SESSIONS (2026-11-10, WP4-05 / WP4-03). A session whose backend is a
+flight rail flies its episodes on the server's rig (`Harness(rail=RailRig(
+...))`, `serve --rail sitl|hil`), through experiments/sweep_scenarios.py's own
+rail backends and nothing else: run_hil with its transport (SITL and the
+router in WSL, the scenario's files to the Orin, MAVROS restarted, the
+mission container, the run folder fetched and accepted by its own records)
+or run_sitl (sitl/run_ros2_demo.sh). One harness session is then one flown,
+scored episode with its bundle:
+
+  StartSession(backend, rest_endpoint)  the endpoint is the address the
+                 MISSION's hot-apply listener will be started on;
+  InjectPolicy   a file both hosts hold; the mission is launched pinned to
+                 its hash (nothing flies yet, so GET /health is not asked);
+  StartEpisode   LAUNCHES the mission (the scenario's own arguments, plus
+                 the listener's flags when there is an endpoint); a scenario
+                 the rail cannot fly as written is FAILED_PRECONDITION and
+                 nothing is launched; one mission at a time;
+  HotApply       to the episode: queued for mission time `at_sim_t` and
+                 forwarded then to the mission's listener (the ack says
+                 `pending`); to the session: forwarded at once. Either is
+                 kept, with its generation and the endpoint's receipt, for
+                 the episode's harness_events.jsonl. EmitEvent is
+                 UNIMPLEMENTED: a ScenarioEvent placed against the flying
+                 vehicle has no REST form;
+  EndEpisode     waits for the mission, scores the fetched run as a
+                 `--backend hil` campaign does (score, rail_gate_set on the
+                 cell's own gates, episode_verdict, scenario_score.json
+                 beside a hil run) and writes the bundle under the grant's
+                 names: manifest.json (the mission's own), policy_bundle
+                 .tar.gz (every generation's IR), episode.bag2/ (the run's
+                 bag/, aliased), shield_audit.jsonl, harness_events.jsonl,
+                 kpi.json. What the run folder lacks is "not written".
+
+Mission time 0 is when the listener's GET /health first reports
+mission_started (_rail_driver says how late that can be). Tested on the fake
+rig tests/test_sweep.py flies its campaign on (tests/test_harness_rail.py);
+NOT FLOWN: no session has driven the real rig.
 
 PARAPHRASE ARMS (2026-11-07, WP4-10). The reference data-flow page draws the
 "Paraphraser service (Q3 deliverable)" in the control plane feeding the
@@ -151,10 +194,12 @@ WHAT IT IS NOT
     guardrail.manifest.is_kpi_grade refuses every episode, and EpisodeBundle
     says so (`kpi_grade`, `kpi_grade_reasons`). The grant's KPI numbers come
     from the hil topology (a Jetson Orin, not built yet).
-  * Not a simulator session. StartSession opens no simulator: the headless
-    backend has no scene or airframe to load (both are recorded), and the
-    SITL backend that would is reserved. IssueTask records the prompt's hash;
-    the headless pilot reads no text.
+  * Not a simulator session on the headless backend. StartSession opens no
+    simulator there: it has no scene or airframe to load (both are
+    recorded). A rail session's simulator is started per episode by the
+    sweep's rail backend, at the scenario's start. IssueTask records the
+    prompt's hash; neither the headless pilot nor the rails' VLA stub reads
+    text.
   * Not a scheduler. Scheduled episodes fly one at a time per server (one
     lock around run_episode; a live episode takes it one tick at a time); the
     reference's answer to throughput (risk R9) is parallel hosts.
@@ -191,9 +236,11 @@ STATUS CODES (what a client can rely on)
                          refused); a package or source file missing on the
                          server
     UNIMPLEMENTED        a hot-apply field the headless runner cannot carry;
-                         the reserved SITL backend
+                         a rail backend (sitl, hil) on a server with no rig
+                         for it; EmitEvent on a rail episode
     RESOURCE_EXHAUSTED   too many open episodes or sessions, events in one
-                         episode, or an InjectPolicy archive too large
+                         episode, or an InjectPolicy archive too large; a
+                         rail StartEpisode while the rig flies another
     UNAVAILABLE          (from gRPC) a TLS handshake that failed: no client
                          certificate, one from another CA, or a plaintext
                          client on the mTLS port; (from the service) a bound
@@ -300,7 +347,21 @@ MAX_BUNDLE_BYTES = 16 << 20      # an InjectPolicy archive sent as bytes
 REST_TIMEOUT_S = 10.0            # a bound REST endpoint's answer
 DEFAULT_PACE = 1.0               # a live episode: simulated seconds per wall second
 STREAM_POLL_S = 0.5              # a stream checks for a cancelled client this often
-BACKENDS = ("headless", "sitl")  # "sitl" is reserved (UNIMPLEMENTED)
+BACKENDS = ("headless", "sitl", "hil")
+# The flight rails: flown by the server's rig (RailRig, serve --rail), through
+# experiments/sweep_scenarios.py's own rail backends.
+RAIL_BACKENDS = ("sitl", "hil")
+# PATCH /dynamic_nfz/{id} (guardrail/api.py apply_nfz_edit): what /hot_apply
+# cannot carry.
+NFZ_EDIT_OPS = ("move", "translate", "rotate", "scale")
+RAIL_ENDPOINT_POLL_S = 0.5       # a rail episode: is the mission's listener up yet?
+RAIL_HEALTH_POLL_S = 0.2         # then: has the mission started (GET /health)?
+EPISODE_BAG_DIR = "episode.bag2"
+MISSION_T0_BASIS = ("this server's mission time 0 is when GET <endpoint>/health first "
+                    "reported mission_started (the Shield's first filter() tick), "
+                    f"polled every {RAIL_HEALTH_POLL_S:g} s: late by at most one poll "
+                    "plus a round trip, never early; `rail.t` is the mission's own time "
+                    "for the same event")
 TASK_NOTE = ("the headless pilot reads no text: the prompt's SHA-256 is recorded in "
              "the bundle's manifest_extras.json (task_prompt_sha256) and no flown "
              "action depends on it")
@@ -667,6 +728,8 @@ class _Episode:
     runner: Any = None               # sweep_scenarios.EpisodeRunner of a live episode
     ticks_flown: int = 0
     wake: threading.Event = field(default_factory=threading.Event)   # cut a live pause short
+    backend: str = "headless"        # the session's: headless | sitl | hil
+    rail: Any = None                 # _RailFlight of a rail episode
 
 
 @dataclass
@@ -768,6 +831,133 @@ def _finite(v, what: str) -> float:
 
 
 # --------------------------------------------------------------------------- #
+# A hot-apply body's route on a guardrail/api.py endpoint; the rail rig
+# --------------------------------------------------------------------------- #
+
+def rest_route(body) -> tuple[str, str, dict]:
+    """(method, path, payload) of a hot-apply body on a guardrail/api.py
+    endpoint (2026-11-10, WP4-03).
+
+    The grant's event list is spawn / translate / rotate a fence, activate /
+    deactivate a rule, swap a corridor, scale a radius. POST /hot_apply
+    carries a spawn (dynamic_nfz), a switch (time_window_switch) and a swap
+    (corridor_swap), and nothing else: an EDIT of a zone that exists is the
+    endpoint's PATCH /dynamic_nfz/{id}. So a body
+
+        {"type": "dynamic_nfz", "op": "translate", "id": "nfz-1", "dx": 5, "dy": 0}
+        {"type": "dynamic_nfz", "op": "rotate",    "id": "nfz-1", "angle_deg": 30}
+        {"type": "dynamic_nfz", "op": "scale",     "id": "nfz-1", "factor": 1.5}
+        {"type": "dynamic_nfz", "op": "move",      "id": "nfz-1", "vertices": [...]}
+
+    goes as PATCH /dynamic_nfz/nfz-1 with the route's own body (everything
+    but `type` and `id`); every other body goes to POST /hot_apply as it is,
+    as before this date. Until then such an edit was POSTed to /hot_apply and
+    refused there (422: a dynamic_nfz with no vertices), so the harness could
+    not move, turn or resize a zone on a flying rail."""
+    if not isinstance(body, dict) or not body:
+        raise HarnessError("INVALID_ARGUMENT", "body must be a non-empty object with a "
+                                               "`type`")
+    if body.get("type") == "dynamic_nfz" and body.get("op") in NFZ_EDIT_OPS:
+        zid = body.get("id")
+        if not isinstance(zid, str) or not zid.strip():
+            raise HarnessError("INVALID_ARGUMENT",
+                               f"a dynamic_nfz {body['op']} names the zone it edits: `id`")
+        if zid in (".", "..") or any(c in zid for c in "/\\") or any(
+                ord(c) < 32 for c in zid):
+            raise HarnessError("INVALID_ARGUMENT",
+                               f"zone id {zid!r} cannot be a path segment of "
+                               f"PATCH /dynamic_nfz/<id>")
+        payload = {k: v for k, v in body.items() if k not in ("type", "id")}
+        return "PATCH", "/dynamic_nfz/" + urllib.parse.quote(zid, safe=""), payload
+    return "POST", "/hot_apply", body
+
+
+@dataclass
+class RailRig:
+    """The rig a server flies rail sessions on (`Harness(rail=...)`, `serve
+    --rail`): nothing of its own, only where experiments/sweep_scenarios.py's
+    rail backends are pointed.
+
+    `hil`: the sweep's run_hil through its transport (`transport(HilConfig)`,
+    default the sweep's make_hil_transport: SITL and the router in WSL, the
+    mission container on the Orin over ssh, the run folder fetched into
+    `store`). `sitl`: the sweep's run_sitl (`sitl_runner`, default it), whose
+    run folder is `sitl_out`/<tag> (default the checkout's demo/out). Tests
+    hand in the fakes tests/test_sweep.py flies its hil campaign on."""
+    backends: tuple = ("hil",)
+    hil_config: Any = None           # sweep HilConfig; None: its defaults
+    transport: Any = None            # factory(HilConfig) -> transport
+    sitl_runner: Any = None          # callable like sweep run_sitl
+    sitl_out: str | Path | None = None
+    # Fetched hil run folders; None: the hil config's `store`, else
+    # <runs>/rail_runs.
+    store: str | Path | None = None
+    campaign: str = ""               # prefixes every mission tag
+    controls: bool = False           # also fly Shield-off control arms
+    # The mission's hot-apply listener, when a session names an endpoint: the
+    # address it binds ("": the endpoint's host), and for an endpoint off
+    # loopback the lab PKI folder AS THE NODE SEES IT, its server
+    # certificate's name ("": harness-server) and the client names it admits
+    # (empty: the node's default, harness-client).
+    hotapply_host: str = ""
+    hotapply_pki: str = ""
+    hotapply_server_cert: str = ""
+    hotapply_clients: tuple = ()
+
+
+@dataclass
+class _RailFlight:
+    """A rail episode's flight: what it was launched with, the hot-applies
+    waiting for their mission time, and every forward made into it."""
+    spec: Any                        # the ScenarioSpec the rail flies
+    hot_args: list                   # the node's hot-apply listener flags ([]: none)
+    endpoint: str = ""
+    tag: str = ""
+    phase: str = "launching"
+    scheduled: list = field(default_factory=list)   # (at | None, index, body), unsent
+    forwarded: list = field(default_factory=list)   # records, in the order sent
+    not_sent: list = field(default_factory=list)
+    t0: float | None = None          # time.monotonic() at mission time 0
+    t0_wall: float | None = None
+    endpoint_policy_hash: str = ""
+    endpoint_problem: str = ""
+    max_s: float = 0.0               # the rail's own time cap (rail_max_s)
+    over: threading.Event = field(default_factory=threading.Event)
+    cond: threading.Condition = field(default_factory=threading.Condition)
+    driver: Any = None
+
+
+def alias_tree(src: str | Path, dst: str | Path) -> dict:
+    """`src`'s files under `dst`, by hard link where the filesystem allows
+    (same volume: no second copy of a bag), else copied. Returns {"how":
+    "hard links" | "copies" | "hard links and copies", "files": [{"path",
+    "bytes", "sha256"}]}, the digests read from `dst` so the alias is
+    checkable against the run folder."""
+    import shutil
+    src, dst = Path(src), Path(dst)
+    linked = copied = 0
+    files = []
+    for f in sorted(p for p in src.rglob("*") if p.is_file()):
+        out = dst / f.relative_to(src)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            os.link(f, out)
+            linked += 1
+        except OSError:
+            shutil.copy2(f, out)
+            copied += 1
+        h = hashlib.sha256()
+        with open(out, "rb") as fh:
+            for chunk in iter(lambda: fh.read(1 << 20), b""):
+                h.update(chunk)
+        files.append({"path": f.relative_to(src).as_posix(), "bytes": out.stat().st_size,
+                      "sha256": "sha256:" + h.hexdigest()})
+    how = ("hard links" if linked and not copied else "copies" if copied and not linked
+           else "hard links and copies" if linked else "nothing")
+    return {"how": how, "files": files}
+
+
+# --------------------------------------------------------------------------- #
 # The grant's episode-bundle files (Stress Testing, "Episode bundle")
 # --------------------------------------------------------------------------- #
 
@@ -780,8 +970,22 @@ NO_EPISODE_BAG = ("not written: the headless backend runs no ROS 2 graph, so the
                   "its run folder, bag/)")
 
 
+def _blob_is(blob: bytes, recorded: str) -> bool:
+    """Is `blob` the canonical IR the hash `recorded` names? Its SHA-256, or
+    (an older run's shortened hash) the policy it parses to matching it."""
+    if "sha256:" + hashlib.sha256(blob).hexdigest() == recorded:
+        return True
+    try:
+        from .models import policy_from_raw
+        return bool(policy_from_raw(json.loads(blob), source="generation",
+                                    runtime=False).matches_hash(recorded))
+    except Exception:                                            # noqa: BLE001
+        return False
+
+
 def write_policy_bundle(ep_dir: str | Path, source: str | Path, start_policy,
-                        final_policy, generations: list[dict]) -> dict:
+                        final_policy, generations: list[dict],
+                        held: dict | None = None) -> dict:
     """`policy_bundle.tar.gz` in `ep_dir`: "the exact bundle that was active
     (incl. all hot-apply generations)" (Stress Testing, "Episode bundle").
     Returns its index.
@@ -797,7 +1001,12 @@ def write_policy_bundle(ep_dir: str | Path, source: str | Path, start_policy,
                            as injected) and `final_policy` (the flying
                            Shield's at the end), each only where its
                            generation number AND hash are the ones the
-                           episode recorded for that generation;
+                           episode recorded for that generation; and, since
+                           2026-11-10, `held`: {generation: canonical IR
+                           bytes} of every generation the run kept (the
+                           headless runner's EpisodeRun.generations, a rail
+                           run's policy_g<N>.json files), each a member only
+                           when its bytes hash to the recorded hash;
       policy_bundle.json   the index: every generation the episode flew
                            (`generations`, harness events: t, event, rule,
                            policy_hash) with its IR member or null, the
@@ -805,10 +1014,12 @@ def write_policy_bundle(ep_dir: str | Path, source: str | Path, start_policy,
                            and `complete` - false, with `missing` saying
                            which, when a generation's IR is not a member.
 
-    The headless runner keeps no policy object of a generation between the
-    first and the last (its hot_apply events record the hash), so with two or
-    more hot-applies the ones between are in the index by hash only, and the
-    index says so rather than leave the gap unmarked."""
+    Until 2026-11-10 nothing held a generation between the first and the
+    last (the headless runner's hot_apply events recorded its hash only), so
+    with two or more hot-applies the ones between were in the index by hash
+    alone. With `held` they are members; a generation nothing holds the IR of
+    is still named by its hash, and the index says so rather than leave the
+    gap unmarked."""
     import gzip
     import io
     import tarfile
@@ -824,7 +1035,11 @@ def write_policy_bundle(ep_dir: str | Path, source: str | Path, start_policy,
     for g in generations:
         n, h = g.get("generation"), g.get("policy_hash")
         ir = None
-        for pol in (start_policy, final_policy):
+        blob = (held or {}).get(n)
+        if blob is not None and h and _blob_is(bytes(blob), h):
+            ir = f"generations/policy_g{n}.json"
+            members[ir] = bytes(blob)
+        for pol in (() if ir else (start_policy, final_policy)):
             if (pol is not None and h and n == getattr(pol, "generation", None)
                     and pol.matches_hash(h)):
                 ir = f"generations/policy_g{n}.json"
@@ -837,9 +1052,8 @@ def write_policy_bundle(ep_dir: str | Path, source: str | Path, start_policy,
     if injected is None:
         why.append(f"the injected policy file {str(source)!r} is no longer on disk")
     if missing:
-        why.append(f"generation(s) {missing}: no IR held for it (the headless runner "
-                   f"keeps the first and the last generation's policy only); named by "
-                   f"its policy_hash")
+        why.append(f"generation(s) {missing}: no IR held for it that hashes to the "
+                   f"recorded policy_hash; named by that hash")
     index = {"kind": POLICY_BUNDLE_KIND, "version": 1,
              "injected": {"source": str(source), "member": injected,
                           "sha256": ("sha256:" + hashlib.sha256(members[injected]).hexdigest()
@@ -872,7 +1086,7 @@ class Harness:
                  rest_hosts=(), session_idle_ttl_s: float | None = None,
                  rest_pki_dir: str | Path | None = None,
                  rest_client_name: str = DEFAULT_CLIENT_CN,
-                 paraphraser=None):
+                 paraphraser=None, rail: "RailRig | None" = None):
         # The paraphraser service every paraphrase arm is drawn from
         # (2026-11-07, WP4-10; module docstring, PARAPHRASE ARMS): a
         # guardrail.paraphraser_service.ParaphraserClient, or anything whose
@@ -921,6 +1135,23 @@ class Harness:
             self._rest_tls, self.rest_client_name = ctx, rest_client_name
         self._lock = threading.Lock()
         self._run_lock = threading.Lock()
+        # The rig this server flies rail episodes on (RailRig; None: it flies
+        # none, and a sitl / hil session is UNIMPLEMENTED here). One mission
+        # at a time: the rig is one aircraft.
+        self.rail = rail
+        self._rail_busy = threading.Lock()
+        self._rail_k = 0
+        self._rail_campaign = ((rail.campaign if rail is not None else "")
+                               or "h" + _dt.datetime.now(_dt.timezone.utc).strftime(
+                                   "%m%dT%H%M"))
+        if rail is not None:
+            bad = sorted(set(rail.backends) - set(RAIL_BACKENDS))
+            if bad or not rail.backends:
+                raise ValueError(f"RailRig.backends {rail.backends!r}: some of "
+                                 f"{RAIL_BACKENDS}")
+            if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,23}", self._rail_campaign):
+                raise ValueError(f"RailRig.campaign {self._rail_campaign!r} must be a "
+                                 f"short plain name (it prefixes every mission tag)")
 
     # ---- lookups -------------------------------------------------------- #
 
@@ -1074,6 +1305,11 @@ class Harness:
             raise HarnessError("INVALID_ARGUMENT",
                                "give exactly one of scenario_id or scenario_yaml")
         sess = self._open_session(session_id) if session_id else None
+        rail = sess is not None and sess.backend in RAIL_BACKENDS
+        if rail and (live or pace is not None):
+            raise HarnessError("INVALID_ARGUMENT",
+                               f"a {sess.backend} rail episode flies in real time on the "
+                               f"rig: `live` and `pace` are the headless backend's")
         if live:
             pace = DEFAULT_PACE if pace is None else _finite(pace, "pace")
             if pace < 0:
@@ -1163,6 +1399,7 @@ class Harness:
             raise HarnessError("INVALID_ARGUMENT",
                                f"policy {(policy_ref or spec.policy).source!r}: {e}") from None
         arm_record = self._arm_record(ep, policy if policy_ref is not None else None)
+        flight = self._rail_prepare(sess, spec, ep, lib.defaults) if rail else None
 
         eid = "ep-" + uuid.uuid4().hex[:12]
         e = _Episode(episode_id=eid, ep=ep, profile=prof.profile if prof else "",
@@ -1181,6 +1418,9 @@ class Harness:
                      task=dict(sess.task) if sess is not None and sess.task else None,
                      live=bool(live), pace=float(pace) if live else DEFAULT_PACE)
         e.dry = self._dry_shield(e, [])[0]
+        if rail:
+            e.backend, e.rail = sess.backend, flight
+            e.state = "RUNNING"          # launched below, once the rig is taken
         if live:
             # Set up now (EpisodeRunner flies its setup to the start of tick
             # 0), so a scenario the runner refuses creates no episode.
@@ -1214,6 +1454,12 @@ class Harness:
             if sess is not None and sess.state != "OPEN":
                 raise HarnessError("FAILED_PRECONDITION", f"session {sess.session_id} "
                                                           f"was stopped")
+            # The rig is taken last, in the step that creates the episode, so
+            # no refusal above leaves it held; _rail_loop releases it.
+            if rail and not self._rail_busy.acquire(blocking=False):
+                raise HarnessError("RESOURCE_EXHAUSTED",
+                                   "the rig is flying another episode's mission: one at "
+                                   "a time (EndEpisode that one first)")
             self._episodes[eid] = e
             if sess is not None:
                 sess.episodes.append(eid)
@@ -1223,6 +1469,9 @@ class Harness:
         if live:
             threading.Thread(target=self._live_loop, args=(e,), daemon=True,
                              name=f"live-{eid}").start()
+        if rail:
+            threading.Thread(target=self._rail_loop, args=(e,), daemon=True,
+                             name=f"rail-{eid}").start()
         return self._ref(e)
 
     def _spec_of(self, e: _Episode, queued) -> Any:
@@ -1320,7 +1569,7 @@ class Harness:
                 "cell_id": e.ep.episode_id, "run_id": e.ep.run_id, "seed": e.ep.seed,
                 "arm": e.ep.arm_tag, "profile": e.profile,
                 "run_end_sim_t": round(e.t_end, 6), "policy_hash": e.policy_hash,
-                "session_id": e.session_id, "live": e.live}
+                "session_id": e.session_id, "live": e.live, "backend": e.backend}
 
     def _at(self, e: _Episode, at_sim_t) -> float:
         at = _finite(at_sim_t, "at_sim_t")
@@ -1378,6 +1627,8 @@ class Harness:
         if session_id:
             return self._forward_hot_apply(session_id, body)
         e = self._get(episode_id)
+        if e.rail is not None:
+            return self._rail_hot_apply(e, at_sim_t, body, now)
         with e.lock:
             self._armed(e)
             at = self._when(e, at_sim_t, now)
@@ -1422,6 +1673,13 @@ class Harness:
     def emit_event(self, episode_id: str, at_sim_t: float, type_: str,
                    payload: dict, *, now: bool = False) -> dict:
         e = self._get(episode_id)
+        if e.rail is not None:
+            raise HarnessError("UNIMPLEMENTED",
+                               f"episode {episode_id} flies on the {e.backend} rail: its "
+                               f"scenario's own events are flown by the mission, and a "
+                               f"mid-flight change goes over REST (HotApply); a "
+                               f"ScenarioEvent placed against the flying vehicle "
+                               f"(ahead_of_vehicle_m, a direction) has no REST form")
         with e.lock:
             self._armed(e)
             at = self._when(e, at_sim_t, now)
@@ -1470,6 +1728,8 @@ class Harness:
             if e.live and e.state == "RUNNING" and e.runner is not None \
                     and e.runner.t is not None:
                 out["next_tick_sim_t"] = float(e.runner.t)
+            if e.rail is not None:
+                out["rail_phase"] = e.rail.phase
             return out
 
     def end_episode(self, episode_id: str) -> dict:
@@ -1732,14 +1992,15 @@ class Harness:
                       seed: int | None = None, rest_endpoint: str = "", label: str = "",
                       client: str = "") -> dict:
         backend = backend or "headless"
-        if backend == "sitl":
-            raise HarnessError("UNIMPLEMENTED",
-                               "backend sitl is reserved: this service does not drive the "
-                               "ArduPilot SITL rail yet (sitl/run_ros2_demo.sh and the "
-                               "pymavlink rail fly their own episodes); use the headless "
-                               "backend")
         if backend not in BACKENDS:
             raise HarnessError("INVALID_ARGUMENT", f"backend {backend!r}: one of {BACKENDS}")
+        if backend in RAIL_BACKENDS and (self.rail is None
+                                         or backend not in self.rail.backends):
+            raise HarnessError("UNIMPLEMENTED",
+                               f"backend {backend}: this server drives no {backend} rail "
+                               f"(it was started without `serve --rail {backend}`, the rig "
+                               f"its episodes would be flown on); the headless backend "
+                               f"needs none")
         for name, v in (("scene", scene), ("airframe", airframe), ("label", label)):
             if len(v) > 256:
                 raise HarnessError("INVALID_ARGUMENT", f"{name} is longer than 256 characters")
@@ -1758,6 +2019,26 @@ class Harness:
             open_sessions = [x for x in self._sessions.values() if x.state == "OPEN"]
         for x in open_sessions:
             self._expire_session_if_idle(x, now)
+        if backend in RAIL_BACKENDS and endpoint:
+            # The mission's own listener is started on this address
+            # (--hotapply-port): it needs the port, and off loopback the node
+            # serves mutual TLS only.
+            u = urllib.parse.urlsplit(endpoint)
+            if u.port is None:
+                raise HarnessError("INVALID_ARGUMENT",
+                                   f"rest_endpoint {endpoint}: a {backend} session's "
+                                   f"endpoint names the port the mission's hot-apply "
+                                   f"listener is started on")
+            if not is_loopback(u.hostname) and u.scheme != "https":
+                raise HarnessError("INVALID_ARGUMENT",
+                                   f"rest_endpoint {endpoint}: off loopback the mission's "
+                                   f"listener serves mutual TLS only (https)")
+            if not is_loopback(u.hostname) and not self.rail.hotapply_pki:
+                raise HarnessError("FAILED_PRECONDITION",
+                                   f"rest_endpoint {endpoint} is off loopback, and this "
+                                   f"server's rig names no PKI folder for the mission's "
+                                   f"listener (serve --rail-hotapply-pki: the lab PKI as "
+                                   f"the node sees it)")
         sid = "ss-" + uuid.uuid4().hex[:12]
         s = _Session(session_id=sid, backend=backend, scene=scene, airframe=airframe,
                      seed=None if seed is None else int(seed), rest_endpoint=endpoint,
@@ -1884,6 +2165,12 @@ class Harness:
         if not expected_hash:
             raise HarnessError("INVALID_ARGUMENT", "expected_hash is required: a policy "
                                                    "nobody pinned is not injected")
+        rail = s.backend in RAIL_BACKENDS
+        if rail and bundle_bytes:
+            raise HarnessError("INVALID_ARGUMENT",
+                               f"a {s.backend} session flies a policy file both hosts "
+                               f"hold (bundle_path under policies/ or bundles/): an "
+                               f"uploaded archive exists on this server only")
         if bundle_path:
             p = Path(bundle_path)
             p = (p if p.is_absolute() else ROOT / p).resolve()
@@ -1922,7 +2209,11 @@ class Harness:
                                f"policy {source} hashes to {pol.policy_hash}, not the "
                                f"expected {expected_hash}")
         endpoint_hash = ""
-        if s.rest_endpoint:
+        # A rail session's endpoint is the mission's own listener, which is
+        # not up before StartEpisode: the mission is launched pinned to this
+        # hash, and the endpoint is checked against it when it first answers
+        # (_rail_driver), before anything is forwarded.
+        if s.rest_endpoint and not rail:
             health = self._rest(s, "GET", "/health")
             endpoint_hash = str(health.get("policy_hash") or "")
             if not endpoint_hash or not pol.matches_hash(endpoint_hash):
@@ -1940,7 +2231,14 @@ class Harness:
                     "policy_id": pol.policy_id, "source": source,
                     "signature": str(rec.get("signature") or ""),
                     "expected_hash": expected_hash}
-        self._emit(s, "policy_injected", "", {k: v for k, v in s.policy.items() if k != "ref"})
+        if rail:
+            # What the rail is told to fly: the checkout-relative file, as
+            # both hosts hold it, pinned to the injected hash.
+            s.policy["rail_ref"] = (
+                PolicyRef(path=source, expected_hash=pol.policy_hash) if is_yaml
+                else PolicyRef(bundle_path=source, expected_hash=pol.policy_hash))
+        self._emit(s, "policy_injected", "", {k: v for k, v in s.policy.items()
+                                              if k not in ("ref", "rail_ref")})
         return {"session_id": s.session_id, "policy_hash": pol.policy_hash,
                 "generation": int(getattr(pol, "generation", 0) or 0),
                 "signature": s.policy["signature"], "endpoint_policy_hash": endpoint_hash}
@@ -2059,27 +2357,712 @@ class Harness:
             raise HarnessError("FAILED_PRECONDITION",
                                f"session {session_id} is not bound to a REST endpoint; "
                                f"address the HotApply to an episode_id instead")
-        if not isinstance(body, dict) or not body:
-            raise HarnessError("INVALID_ARGUMENT", "body must be a non-empty object with a "
-                                                   "`type`")
-        url = s.rest_endpoint + "/hot_apply"
+        # A rail episode of this session that is flying: the forward is also
+        # recorded in ITS bundle (harness_events.jsonl), at its mission time.
+        return self._forward(s, body, episode=self._rail_episode_of(s))[0]
+
+    def _rail_episode_of(self, s: _Session) -> "_Episode | None":
+        with self._lock:
+            eps = [self._episodes.get(i) for i in list(s.episodes)]
+        for e in eps:
+            if e is not None and e.rail is not None and e.state == "RUNNING":
+                return e
+        return None
+
+    def _forward(self, s: _Session, body, *, episode: "_Episode | None" = None,
+                 at_sim_t: float | None = None, queue_index: int | None = None,
+                 source: str = "session") -> tuple[dict, dict]:
+        """One hot-apply body to the session's REST endpoint, by its own route
+        (rest_route: POST /hot_apply, or PATCH /dynamic_nfz/<id> for an edit
+        of a zone), with the endpoint's answer. Returns (the PolicyAck, the
+        record); a refusal is recorded and re-raised. With `episode` (a rail
+        episode in flight) the record - its mission time as this server
+        reckons it, the request, the generation and the endpoint's receipt,
+        or the refusal - is kept for the episode's harness_events.jsonl."""
+        method, path, payload = rest_route(body)
+        url = s.rest_endpoint + path
+        rf = episode.rail if episode is not None else None
+        sent = time.monotonic()
+        rec: dict[str, Any] = {
+            "type": "hot_apply", "via": "rest", "source": source,
+            "t": (None if rf is None or rf.t0 is None else round(sent - rf.t0, 3)),
+            "at_sim_t": at_sim_t, "queue_index": queue_index,
+            "wall_time": round(time.time(), 4), "method": method, "url": url,
+            "body": body, "event": str(body.get("type") or ""),
+            "op": str(body.get("op") or ""),
+            "rule_id": str(body.get("id") or body.get("target_id") or "")}
+        detail = {"url": url, "body": body}
+        if method != "POST":
+            detail["method"] = method
+        if episode is not None:
+            detail.update(mission_t=rec["t"], at_sim_t=at_sim_t, source=source)
+        eid = episode.episode_id if episode is not None else ""
         try:
-            res = self._rest(s, "POST", "/hot_apply", body)
+            res = self._rest(s, method, path, payload)
         except HarnessError as err:
-            self._emit(s, "hot_apply_forwarded", "", {"url": url, "body": body,
-                                                      "refused": err.code,
-                                                      "reason": err.message})
+            rec.update(refused=True, code=err.code, reason=err.message,
+                       rtt_ms=round((time.monotonic() - sent) * 1e3, 2))
+            if rf is not None:
+                with rf.cond:
+                    rf.forwarded.append(rec)
+            self._emit(s, "hot_apply_forwarded", eid, {**detail, "refused": err.code,
+                                                       "reason": err.message})
             raise
         gen = res.get("generation")
         ack = {"session_id": s.session_id, "rule_id": str(res.get("applied") or ""),
                "op": str(res.get("op") or ""), "type": str(res.get("type") or ""),
                "generation": int(gen) if isinstance(gen, int) else 0,
-               "policy_hash": str(res.get("policy_hash") or ""), "forwarded_to": url}
+               "policy_hash": str(res.get("policy_hash") or ""), "forwarded_to": url,
+               "forwarded_method": method}
         ack["validated_generation"] = ack["generation"]
         ack["validated_policy_hash"] = ack["policy_hash"]
-        self._emit(s, "hot_apply_forwarded", "", {"url": url, "body": body,
-                                                  "response": res})
+        rec.update(refused=False, rule_id=ack["rule_id"] or rec["rule_id"],
+                   op=ack["op"] or rec["op"],
+                   generation=gen if isinstance(gen, int) else None,
+                   policy_hash=ack["policy_hash"] or None, receipt=res,
+                   rtt_ms=round((time.monotonic() - sent) * 1e3, 2))
+        if rf is not None:
+            with rf.cond:
+                rf.forwarded.append(rec)
+        self._emit(s, "hot_apply_forwarded", eid, {**detail, "response": res})
+        return ack, rec
+
+    # ---- rail episodes (2026-11-10, WP4-05 / WP4-03) --------------------- #
+    #
+    # A session whose backend is a flight rail (sitl, hil) flies its episodes
+    # on the server's rig, through experiments/sweep_scenarios.py's own rail
+    # backends: run_hil with its transport (SITL in WSL, the scenario's files
+    # to the Orin, the mission container, the run folder fetched and accepted
+    # by its own records) or run_sitl, then the same score() / rail_gate_set /
+    # episode_verdict / write_scenario_score a `--backend hil` campaign runs.
+    # StartEpisode LAUNCHES the mission (it flies in real time, like a live
+    # episode); a HotApply addressed to the episode waits for its mission
+    # time and is forwarded to the mission's own REST listener, which the
+    # mission was launched with (the session's endpoint names its port);
+    # EndEpisode waits for the flight, and the bundle is the grant's six
+    # items under the grant's names.
+
+    def _hil_cfg(self):
+        return self.rail.hil_config or self._S.HilConfig()
+
+    def _rail_hot_args(self, sess: _Session) -> list[str]:
+        """The Shield node's hot-apply listener flags for the session's
+        endpoint ([] when it names none: the mission then takes no REST
+        event). Off loopback the node serves mutual TLS from the rig's PKI
+        folder, as the node sees it."""
+        if not sess.rest_endpoint:
+            return []
+        rig = self.rail
+        u = urllib.parse.urlsplit(sess.rest_endpoint)
+        local = is_loopback(u.hostname)
+        args = [f"--hotapply-port={u.port}"]
+        host = rig.hotapply_host or ("" if local else u.hostname)
+        if host:
+            args.append(f"--hotapply-host={host}")
+        if not local or u.scheme == "https":
+            if not rig.hotapply_pki:
+                raise HarnessError("FAILED_PRECONDITION",
+                                   f"rest_endpoint {sess.rest_endpoint} needs mutual TLS on "
+                                   f"the mission's listener, and this server's rig names "
+                                   f"no PKI folder for it (serve --rail-hotapply-pki)")
+            args.append(f"--hotapply-pki={rig.hotapply_pki}")
+            if rig.hotapply_server_cert:
+                args.append(f"--hotapply-server-cert={rig.hotapply_server_cert}")
+            args += [f"--hotapply-client={cn}" for cn in rig.hotapply_clients]
+        return args
+
+    def _rail_prepare(self, sess: _Session, spec, ep, defaults) -> _RailFlight:
+        """What a rail StartEpisode launches, or why it cannot: the sweep's own
+        refusal (rail_refusal: what neither rail can realise), a Shield-off
+        control arm the rig is not set to fly, a policy the rail cannot be
+        pinned to, an argument a node would drop. Nothing is launched, and
+        no episode created, when it raises."""
+        S, rig, backend = self._S, self.rail, sess.backend
+        rail_ref = (sess.policy or {}).get("rail_ref")
+        rspec = spec.model_copy(update={"policy": rail_ref}) if rail_ref is not None else spec
+        try:
+            why = S.rail_refusal(rspec, backend, episode=ep, defaults=defaults)
+        except Exception as err:                                 # noqa: BLE001
+            raise HarnessError("FAILED_PRECONDITION",
+                               f"the {backend} rail cannot be asked about this scenario: "
+                               f"{type(err).__name__}: {err}") from None
+        if why is None and not rspec.shield and not rig.controls:
+            why = ("a Shield-off control arm: flown only on a rig started with "
+                   "--rail-controls (it flies the raw pilot into the zones, and the "
+                   "GeoFence backstop may take the aircraft)")
+        if why:
+            raise HarnessError("FAILED_PRECONDITION", why)
+        hot = self._rail_hot_args(sess)
+        try:
+            cfg = self._hil_cfg() if backend == "hil" else None
+            S.rail_node_args(rspec, ep.seed, defaults, backend=backend,
+                             bundles_dir=cfg.bundles_dir if cfg else None)
+            S.rail_extra_args(hot)
+        except S.UnsupportedScenario as err:
+            raise HarnessError("FAILED_PRECONDITION", str(err)) from None
+        if backend == "sitl" and rig.sitl_runner is None and not S.sitl_available():
+            raise HarnessError("FAILED_PRECONDITION",
+                               "the ArduPilot SITL rail is not on this host (wsl, "
+                               "sitl/run_ros2_demo.sh, sitl/ros2_shield_node.py)")
+        dt = float(rspec.dt or defaults.dt)
+        ticks = int(rspec.ticks or defaults.ticks)
+        return _RailFlight(spec=rspec, hot_args=hot, endpoint=sess.rest_endpoint,
+                           max_s=float(S.rail_max_s(ticks * dt)))
+
+    def _rail_phase(self, e: _Episode, phase: str, **detail) -> None:
+        e.rail.phase = phase
+        self._emit_episode(e, "rail_phase", {"phase": phase, **detail})
+
+    def _rail_hot_apply(self, e: _Episode, at_sim_t, body, now: bool) -> dict:
+        """A HotApply addressed to a rail episode: queued for mission time
+        `at_sim_t` (`now`: sent as soon as the mission's listener answers),
+        then forwarded by the episode's driver to the endpoint the mission
+        serves. The endpoint is the validator - it holds the flying Shield,
+        the scenario's own events included, which the headless dry run never
+        knew - so the ack is `pending`, and the receipt (or the refusal)
+        follows as a hot_apply_forwarded event and in the bundle."""
+        s = self._flight_session(e)
+        rf = e.rail
+        if s is None or not s.rest_endpoint:
+            raise HarnessError("FAILED_PRECONDITION",
+                               f"episode {e.episode_id}'s session is not bound to a REST "
+                               f"endpoint: its mission was launched with no hot-apply "
+                               f"listener")
+        method, path, _ = rest_route(body)
+        if not body.get("type"):
+            raise HarnessError("INVALID_ARGUMENT", "body must be a non-empty object with a "
+                                                   "`type`")
+        with e.lock:
+            if e.state != "RUNNING" or rf.over.is_set():
+                why = f" ({e.error})" if e.state == "FAILED" and e.error else ""
+                raise HarnessError("FAILED_PRECONDITION",
+                                   f"episode {e.episode_id} is {e.state}{why}: its mission "
+                                   f"takes no more events")
+            if rf.endpoint_problem:
+                raise HarnessError("FAILED_PRECONDITION",
+                                   f"nothing is forwarded to episode {e.episode_id}'s "
+                                   f"mission: {rf.endpoint_problem}")
+            if len(e.queued) >= MAX_EVENTS_PER_EPISODE:
+                raise HarnessError("RESOURCE_EXHAUSTED",
+                                   f"{len(e.queued)} events queued in {e.episode_id}")
+            if now:
+                at = None
+            else:
+                at = _finite(at_sim_t, "at_sim_t")
+                if at < 0:
+                    raise HarnessError("INVALID_ARGUMENT",
+                                       f"at_sim_t {at} is before the mission")
+                if at > rf.max_s + 1e-9:
+                    raise HarnessError("OUT_OF_RANGE",
+                                       f"at_sim_t {at} s never fires: the rail's time cap "
+                                       f"for {e.episode_id} is {rf.max_s:.1f} s")
+                if rf.t0 is not None and at < time.monotonic() - rf.t0:
+                    raise HarnessError("OUT_OF_RANGE",
+                                       f"at_sim_t {at} s has already flown: the mission is "
+                                       f"at {time.monotonic() - rf.t0:.2f} s (send it with "
+                                       f"`now`)")
+            idx = len(e.queued)
+            rid = str(body.get("id") or body.get("target_id") or "")
+            kind = str(body.get("type")) + (f"/{body['op']}" if body.get("op") else "")
+            q = _Queued(index=idx,
+                        event=SimpleNamespace(at_sim_t=0.0 if at is None else at, type=kind),
+                        source="hot_apply", rule_id=rid,
+                        received={"rpc": "HotApply", "at_sim_t": at, "now": bool(now),
+                                  "body": body})
+            e.queued.append(q)
+            with rf.cond:
+                rf.scheduled.append((at, idx, dict(body)))
+                rf.cond.notify_all()
+            e.idle_since = time.monotonic()
+            ack = {"episode_id": e.episode_id, "queue_index": idx,
+                   "at_sim_t": 0.0 if at is None else at, "rule_id": rid,
+                   "op": str(body.get("op") or ""), "type": str(body.get("type") or ""),
+                   "session_id": e.session_id, "pending": True,
+                   "forwarded_to": s.rest_endpoint + path, "forwarded_method": method}
+        self._emit_episode(e, "hot_apply", {**ack, "now": bool(now)})
         return ack
+
+    def _rail_loop(self, e: _Episode) -> None:
+        """A rail episode's thread: the flight (the sweep's rail backend,
+        blocking for the whole mission), its driver beside it when the
+        session names an endpoint, then the score and the bundle. Counted as
+        a flight of its session, so StopSession waits for it; the rig is
+        released when it is over, whatever happened."""
+        s = self._flight_session(e)
+        rf = e.rail
+        if s is not None:
+            with s.cond:
+                s.flying += 1
+        try:
+            if s is not None and s.rest_endpoint:
+                rf.driver = threading.Thread(target=self._rail_driver, args=(e, s),
+                                             daemon=True, name=f"rail-drv-{e.episode_id}")
+                rf.driver.start()
+            self._fly_rail(e, s)
+        finally:
+            rf.over.set()
+            with rf.cond:
+                rf.cond.notify_all()
+            self._rail_busy.release()
+            self._flight_over(s)
+
+    def _rail_driver(self, e: _Episode, s: _Session) -> None:
+        """Beside a rail flight: wait for the mission's REST listener (it
+        starts on the pad, before arming), check it flies the episode's
+        policy, find mission time 0, and forward each queued hot-apply at its
+        mission time - never early.
+
+        MISSION TIME 0 is when GET <endpoint>/health first reports
+        `mission_started` (the Shield's first filter() tick), polled every
+        RAIL_HEALTH_POLL_S and only until then: the clock is the time the
+        request that saw it was SENT, so this server's mission time runs late
+        by at most one poll period plus that request's round trip, and an
+        event is forwarded that much late, never early. The rail's own
+        record of each applied event carries its true mission time
+        (metrics.json hot_apply.events), and the bundle keeps it beside this
+        server's (`rail`). An endpoint whose FIRST answer already says
+        mission_started gives no time 0 (a listener left by another mission,
+        or one this server reached too late): nothing is forwarded to it."""
+        rf = e.rail
+        self._rail_phase(e, "awaiting_endpoint", endpoint=rf.endpoint)
+        up = False
+        while not rf.over.is_set():
+            if not up or rf.t0 is None:
+                asked, wall = time.monotonic(), time.time()
+                try:
+                    h = self._rest(s, "GET", "/health")
+                except HarnessError as err:
+                    if err.code != "UNAVAILABLE":
+                        # A configuration error (TLS, not a guardrail endpoint):
+                        # retrying cannot fix it.
+                        rf.endpoint_problem = f"{err.code}: {err.message}"
+                        break
+                    h = None
+                if h is not None and not up:
+                    up = True
+                    rf.endpoint_policy_hash = str(h.get("policy_hash") or "")
+                    if h.get("mission_started"):
+                        rf.endpoint_problem = (
+                            f"{rf.endpoint} reported mission_started on its first "
+                            f"answer: its mission time 0 was not observed")
+                        break
+                    if h.get("generation") in (0, None) \
+                            and not e.policy.matches_hash(rf.endpoint_policy_hash):
+                        rf.endpoint_problem = (
+                            f"{rf.endpoint} flies policy "
+                            f"{rf.endpoint_policy_hash or '(none reported)'}, not the "
+                            f"episode's {e.policy_hash}")
+                        break
+                    self._rail_phase(e, "awaiting_mission_start", endpoint=rf.endpoint,
+                                     endpoint_policy_hash=rf.endpoint_policy_hash)
+                elif h is not None and h.get("mission_started"):
+                    rf.t0, rf.t0_wall = asked, wall
+                    self._rail_phase(e, "mission", mission_t0_wall=wall)
+            now = time.monotonic()
+            with rf.cond:
+                due = [x for x in rf.scheduled
+                       if (x[0] is None and up)
+                       or (x[0] is not None and rf.t0 is not None and rf.t0 + x[0] <= now)]
+                for x in due:
+                    rf.scheduled.remove(x)
+            # `now` bodies in arrival order first, then by mission time.
+            for at, idx, body in sorted(due, key=lambda x: (x[0] is not None, x[0] or 0.0,
+                                                            x[1])):
+                try:
+                    self._forward(s, body, episode=e, at_sim_t=at, queue_index=idx,
+                                  source="episode")
+                except HarnessError:
+                    pass                    # recorded, and streamed, by _forward
+            with rf.cond:
+                if rf.over.is_set():
+                    break
+                if not up:
+                    wait = RAIL_ENDPOINT_POLL_S
+                elif rf.t0 is None:
+                    wait = RAIL_HEALTH_POLL_S
+                elif any(x[0] is None for x in rf.scheduled):
+                    wait = 0.0
+                else:
+                    nxt = min((rf.t0 + x[0] for x in rf.scheduled), default=None)
+                    wait = 0.5 if nxt is None else max(0.0, min(0.5, nxt - time.monotonic()))
+                if wait > 0:
+                    rf.cond.wait(wait)
+        if rf.endpoint_problem:
+            self._rail_phase(e, rf.phase, endpoint_problem=rf.endpoint_problem)
+            rf.over.wait()
+        # What was never sent is said, never dropped.
+        with rf.cond:
+            left, rf.scheduled = sorted(rf.scheduled, key=lambda x: x[1]), []
+        why = rf.endpoint_problem or (
+            "the mission ended before its mission time" if rf.t0 is not None else
+            "the mission ended before its listener reported mission_started")
+        for at, idx, body in left:
+            rec = {"type": "hot_apply", "via": "rest", "source": "episode", "t": None,
+                   "at_sim_t": at, "queue_index": idx, "wall_time": round(time.time(), 4),
+                   "body": body, "event": str(body.get("type") or ""),
+                   "op": str(body.get("op") or ""),
+                   "rule_id": str(body.get("id") or body.get("target_id") or ""),
+                   "refused": True, "sent": False, "code": "NOT_SENT", "reason": why}
+            with rf.cond:
+                rf.forwarded.append(rec)
+                rf.not_sent.append(idx)
+            self._emit(s, "hot_apply_forwarded", e.episode_id,
+                       {"body": body, "at_sim_t": at, "not_sent": why})
+
+    def _fly_rail(self, e: _Episode, s: _Session | None) -> None:
+        rf = e.rail
+        try:
+            try:
+                run = self._rail_run(e)
+            finally:
+                # The mission is over (or never flew): the driver stops, and
+                # says what it never sent, before anything is bundled.
+                rf.over.set()
+                with rf.cond:
+                    rf.cond.notify_all()
+                if rf.driver is not None:
+                    rf.driver.join(REST_TIMEOUT_S + 10.0)
+            self._rail_phase(e, "fetched", run=Path(run["run_dir"]).as_posix())
+            result = self._bundle_rail(e, s, run)
+        except HarnessError as err:
+            msg = err.message
+        except Exception as err:                                 # noqa: BLE001
+            msg = (f"the {e.backend} rail did not fly the episode: "
+                   f"{type(err).__name__}: {err}")
+        else:
+            e.ticks_flown = len(run["rows"])
+            if self._finish(e, "ENDED", result=result):
+                rf.phase = "scored"
+                self._frames(e, [_row_frame(e, r) for r in run["rows"]])
+                self._emit_episode(e, "episode_ended", {
+                    k: result.get(k) for k in ("bundle_path", "status", "gates_failed",
+                                               "mission_outcome", "kpi_grade",
+                                               "rail_run_path", "bundle_files")})
+            return
+        if self._finish(e, "FAILED", error=msg):
+            self._emit_episode(e, "episode_failed", {"error": msg})
+
+    def _rail_run(self, e: _Episode) -> dict:
+        """Fly the episode's mission on the rig and return the sweep's own
+        record of it ({rows, extra, policy, prios, run_dir, tag, rc, meta,
+        metrics}): run_hil's, or the same built from run_sitl's."""
+        S, rig, rf, ep = self._S, self.rail, e.rail, e.ep
+        with self._lock:
+            self._rail_k += 1
+            k = self._rail_k
+        rf.tag = S.hil_run_id(self._rail_campaign, k, rf.spec)
+        extra_args = list(rf.hot_args) or None
+        if e.backend == "hil":
+            cfg = self._hil_cfg()
+            transport = (rig.transport or S.make_hil_transport)(cfg)
+            # The run store: the rig's, else the hil config's own (the
+            # sweep's --hil-config `store`), else beside this server's bundles.
+            store = Path(rig.store or cfg.store or self.runs_dir / "rail_runs")
+            if not store.is_absolute():
+                store = ROOT / store
+            return S.run_hil(rf.spec, ep, ep.seed, e.defaults, cfg, transport,
+                             self._rail_campaign, k, store, extra_args=extra_args)
+        got = (rig.sitl_runner or S.run_sitl)(rf.spec, rf.tag, ep.seed, e.defaults,
+                                              episode=ep, extra_args=extra_args)
+        if got is None:
+            raise HarnessError("FAILED_PRECONDITION",
+                               "the ArduPilot SITL rail is not on this host")
+        rows, extra = got
+        run_dir = (Path(rig.sitl_out) if rig.sitl_out else ROOT / "demo" / "out") / rf.tag
+        mpath = run_dir / "metrics.json"
+        metrics = (json.loads(mpath.read_text(encoding="utf-8")) if mpath.is_file() else {})
+        pol = rf.spec.policy.load(ROOT)
+        meta = metrics.get("scenario") if isinstance(metrics.get("scenario"), dict) else {}
+        return {"rows": rows, "rows_all": rows, "extra": extra, "policy": pol,
+                "prios": S.rail_rule_priorities(pol, S.run_generations(run_dir)),
+                "run_dir": run_dir, "tag": rf.tag, "rc": 0, "meta": meta,
+                "metrics": metrics}
+
+    def _bundle_rail(self, e: _Episode, s: _Session | None, run: dict) -> dict:
+        """Score a flown rail run as a `--backend hil` campaign does (score,
+        rail_gate_set on the cell's own gates, episode_verdict, and for hil
+        scenario_score.json beside the run), then write the episode bundle
+        under the grant's names (Stress Testing, "Episode bundle"):
+
+          manifest.json         the mission's own, byte for byte;
+          policy_bundle.tar.gz  the policy file the rail was given and EVERY
+                                generation's IR, from the run's own
+                                policy_g<N>.json (write_policy_bundle, held);
+          episode.bag2/         the run's rosbag2 directory. The rail records
+                                it as bag/ (deploy/docker/entrypoint.sh,
+                                sitl/run_ros2_demo.sh), and it keeps that
+                                name THERE: the mission's replay pack, the
+                                exporters and the entrypoint's own handling
+                                of an earlier bag read it, and renaming it
+                                is a change on the flying side. The bundle
+                                gets the same files under the grant's name -
+                                an alias (hard links on one volume, copies
+                                otherwise; alias_tree), each with its SHA-256
+                                in kpi.json, not a rename;
+          shield_audit.jsonl    the run's, byte for byte;
+          harness_events.jsonl  the episode's start, each hot-apply this
+                                server forwarded (the request, its mission
+                                time, the generation and the endpoint's
+                                receipt, or the refusal; the rail's own
+                                record of it beside, `rail`), what was never
+                                sent, and the end;
+          kpi.json              the KPI table, the verdict, and `harness`
+                                (which of the six were written, and why not).
+
+        A file the run folder lacks is NOT made up: kpi.json's
+        harness.bundle_files says "not written" and why."""
+        import shutil
+        S = self._S
+        from . import kpi as K
+        from .manifest import is_kpi_grade
+        ep, rf, spec = e.ep, e.rail, e.rail.spec
+        run_dir = Path(run["run_dir"])
+        rows, extra, policy, prios = run["rows"], run["extra"], run["policy"], run["prios"]
+        metrics = run.get("metrics") if isinstance(run.get("metrics"), dict) else {}
+        meta = run.get("meta") if isinstance(run.get("meta"), dict) else {}
+        held: dict[int, bytes] = {}
+        for f in sorted(run_dir.glob("policy_g*.json")):
+            tail = f.stem[len("policy_g"):]
+            if tail.isdigit():
+                held[int(tail)] = f.read_bytes()
+        manifest = None
+        man_src = run_dir / "manifest.json"
+        if man_src.is_file():
+            try:
+                manifest = json.loads(man_src.read_text(encoding="utf-8"))
+            except ValueError:
+                manifest = None
+            if not isinstance(manifest, dict):
+                manifest = None
+        flown = ((manifest or {}).get("policy_hash")
+                 or ("sha256:" + hashlib.sha256(held[0]).hexdigest() if 0 in held else None))
+        if flown and not e.policy.matches_hash(flown):
+            raise HarnessError("FAILED_PRECONDITION",
+                               f"the mission flew policy {flown}, not the episode's "
+                               f"{e.policy_hash}; nothing is bundled under this episode "
+                               f"(its run folder: {run_dir.as_posix()})")
+
+        res = S.score(spec, rows, extra, policy, prios)
+        gates, _ = S.rail_gate_set("ideal", spec, ep.seed, e.defaults)
+        status, bad, labels_failed, known_why = S.episode_verdict(
+            spec, res, ep.cell.params, ep.seed, gates=gates)
+        score_path = None
+        if e.backend == "hil" and meta:
+            # Beside the fetched run, as the campaign writes it (kpi_report.py).
+            score_path = S.write_scenario_score(
+                run_dir, meta, res, extra, status, bad, labels_failed, known_why, prios,
+                spec, gates_basis="ideal", gates=gates)
+
+        stamp = _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H-%M-%SZ")
+        ep_dir = self.runs_dir / e.episode_id / ep.dir_name(stamp)
+        ep_dir.mkdir(parents=True, exist_ok=True)
+        files: dict[str, str] = {}
+
+        def text(name: str, doc) -> None:
+            with open(ep_dir / name, "w", encoding="utf-8", newline="\n") as fh:
+                fh.write(doc)
+
+        # manifest.json
+        if manifest is not None:
+            shutil.copyfile(man_src, ep_dir / "manifest.json")
+            files["manifest.json"] = "written: the mission's own manifest.json, byte for byte"
+            try:
+                grade, why_not = is_kpi_grade(manifest, metrics)
+            except Exception as err:                             # noqa: BLE001
+                grade, why_not = False, [f"is_kpi_grade could not read the manifest: "
+                                         f"{type(err).__name__}: {err}"]
+        else:
+            files["manifest.json"] = (f"not written: the run folder {run_dir.name} has no "
+                                      f"readable manifest.json, and none is made up for a "
+                                      f"flight this server did not record")
+            grade, why_not = False, [f"the run folder {run_dir.name} has no manifest.json"]
+
+        # The forwards, each beside the rail's own record of the same generation.
+        with rf.cond:
+            forwarded = [dict(r) for r in rf.forwarded]
+        hot = metrics.get("hot_apply") if isinstance(metrics.get("hot_apply"), dict) else {}
+        rail_by_gen = {m.get("generation"): m for m in (hot.get("events") or [])
+                       if isinstance(m, dict)}
+        for r in forwarded:
+            m = rail_by_gen.get(r.get("generation")) if not r.get("refused") else None
+            if m is not None:
+                r["rail"] = {k: m.get(k) for k in ("t", "op", "type", "rule_id",
+                                                   "receipt_to_swap_ms") if k in m}
+        fw_by_gen = {r["generation"]: r for r in forwarded
+                     if not r.get("refused") and r.get("generation") is not None}
+
+        # policy_bundle.tar.gz: every generation the run kept, and every one
+        # an endpoint receipt named (a receipt with no IR beside it is a gap,
+        # and the index says so).
+        gens = []
+        for n in sorted(set(held) | set(fw_by_gen)):
+            fw, rl = fw_by_gen.get(n), rail_by_gen.get(n)
+            h = (fw or {}).get("policy_hash") or (
+                "sha256:" + hashlib.sha256(held[n]).hexdigest() if n in held else None)
+            gens.append({"generation": n, "policy_hash": h,
+                         "t": (0.0 if n == 0 and not fw and not rl else
+                               (rl or {}).get("t") if rl and rl.get("t") is not None
+                               else (fw or {}).get("t")),
+                         "event": (fw or {}).get("event") or (rl or {}).get("type"),
+                         "rule_id": (fw or {}).get("rule_id") or (rl or {}).get("rule_id")})
+        src = Path(spec.policy.source)
+        src = src if src.is_absolute() else ROOT / src
+        try:
+            cfg = self._hil_cfg() if e.backend == "hil" else None
+            pa = S.rail_policy_args(spec, e.backend, cfg.bundles_dir if cfg else None)
+            rel = Path(pa[1])
+            if cfg is not None and cfg.bundles_dir and spec.policy.bundle_path is None:
+                src = Path(cfg.bundles_dir) / rel.name
+            else:
+                src = rel if rel.is_absolute() else ROOT / rel
+        except Exception:                                        # noqa: BLE001
+            pass                 # the scenario's own reference, as resolved above
+        pb = write_policy_bundle(ep_dir, src, None, None, gens, held=held)
+        files[POLICY_BUNDLE_FILE] = ("written, complete" if pb["complete"]
+                                     else f"written, incomplete: {pb['missing']}")
+
+        # episode.bag2/
+        bag_info = None
+        bag = run_dir / "bag"
+        if bag.is_dir() and any(p.is_file() for p in bag.rglob("*")):
+            bag_info = alias_tree(bag, ep_dir / EPISODE_BAG_DIR)
+            bag_info["source"] = bag.as_posix()
+            files[EPISODE_BAG_DIR + "/"] = (
+                f"written: the run's rosbag2 directory (recorded as bag/, which the run "
+                f"folder keeps) under the grant's name, {len(bag_info['files'])} file(s) "
+                f"as {bag_info['how']}")
+        else:
+            files[EPISODE_BAG_DIR + "/"] = (
+                f"not written: the run folder {run_dir.name} has no bag/ (the mission "
+                f"recorded none: VLAGUARD_BAG=0, or rosbag2 did not start)")
+
+        # shield_audit.jsonl
+        audit = next((run_dir / n for n in ("shield_audit.jsonl", "audit.jsonl")
+                      if (run_dir / n).is_file()), None)
+        if audit is not None:
+            shutil.copyfile(audit, ep_dir / "shield_audit.jsonl")
+            files["shield_audit.jsonl"] = f"written: the run's {audit.name}, byte for byte"
+        else:
+            files["shield_audit.jsonl"] = (f"not written: the run folder {run_dir.name} "
+                                           f"has no shield_audit.jsonl")
+        if e.keep_log and (run_dir / "flight_log.jsonl").is_file():
+            shutil.copyfile(run_dir / "flight_log.jsonl", ep_dir / "flight_log.jsonl")
+
+        # harness_events.jsonl
+        shield = "on" if spec.shield else "off"
+        g0 = next((g["policy_hash"] for g in gens if g["generation"] == 0), None)
+        last = max(held) if held else None
+        events = [{"t": 0.0, "type": "episode_start", "scenario_id": spec.scenario_id,
+                   "seed": ep.seed, "policy_hash": g0 or flown or e.policy_hash,
+                   "generation": 0, "shield": shield, "backend": e.backend,
+                   "rail_run": run.get("tag"), "rest_endpoint": rf.endpoint or None,
+                   "endpoint_policy_hash": rf.endpoint_policy_hash or None,
+                   "mission_t0_wall_time": rf.t0_wall,
+                   "mission_t0_basis": (MISSION_T0_BASIS if rf.endpoint else None)}]
+        events += forwarded
+        events.append({"t": (rows[-1].get("t") if rows else None), "type": "episode_end",
+                       "generation": last,
+                       "policy_hash": ("sha256:" + hashlib.sha256(held[last]).hexdigest()
+                                       if last is not None else None),
+                       "mission_rc": run.get("rc"),
+                       "forwarded_applied": len(fw_by_gen),
+                       "forwarded_refused": sum(1 for r in forwarded
+                                                if r.get("refused") and r.get("sent", True)),
+                       "not_sent": len(rf.not_sent)})
+        text("harness_events.jsonl", "".join(json.dumps(_json_safe(x), sort_keys=True) + "\n"
+                                             for x in events))
+        files["harness_events.jsonl"] = "written"
+
+        # kpi.json
+        common = {"id": ep.run_id, "id_cell": ep.episode_id,
+                  "scenario_id": ep.cell.scenario_id, "template": spec.template,
+                  "params": ep.cell.params, "seed": ep.seed, "arm": shield,
+                  "prefix": ep.prefix, "expect": spec.expect,
+                  "why": spec.description.strip()}
+        if labels_failed:
+            common["labels_failed"] = labels_failed
+        if known_why is not None:
+            common["known_failure_reason"] = known_why
+        task = ({k: v for k, v in e.task.items() if k != "text"} if e.task else None)
+        files["kpi.json"] = "written"
+        harness = {"episode_id": e.episode_id, "transport": "grpc", "client": e.client,
+                   "profile": e.profile or None, "backend": e.backend,
+                   "session_id": e.session_id or None, "live": False, "pace": None,
+                   "task": task,
+                   "rail": {"run": run_dir.as_posix(), "tag": run.get("tag"),
+                            "mission_rc": run.get("rc"), "campaign": self._rail_campaign,
+                            "hotapply_args": list(rf.hot_args),
+                            "rest_endpoint": rf.endpoint or None,
+                            "endpoint_policy_hash": rf.endpoint_policy_hash or None,
+                            "endpoint_problem": rf.endpoint_problem or None,
+                            "mission_t0_basis": MISSION_T0_BASIS if rf.endpoint else None,
+                            "scenario_score": (Path(score_path).as_posix()
+                                               if score_path else None),
+                            "scored_by": "experiments/sweep_scenarios.py (score, "
+                                         "rail_gate_set ideal, episode_verdict)"},
+                   "events_forwarded": [{k: r.get(k) for k in (
+                       "queue_index", "source", "t", "at_sim_t", "method", "url", "event",
+                       "op", "rule_id", "generation", "policy_hash", "refused", "code",
+                       "reason", "rtt_ms")} for r in forwarded],
+                   "bundle_files": files, "episode_bag": bag_info}
+        kpi_doc = _json_safe({
+            **common, "status": status, "gates_failed": bad, "kpi_grade": bool(grade),
+            "kpi_grade_reasons": why_not, "arm_record": e.arm_record,
+            "rule_priorities": prios, "gates_basis": "ideal", "gates": gates,
+            "metrics": {"reached_goal": extra.get("reached_goal"),
+                        "breaches": extra.get("breaches"), "shield": shield,
+                        "fsm": extra.get("fsm")},
+            "kpi": res, "harness": harness})
+        text("kpi.json", json.dumps(kpi_doc, indent=2, allow_nan=False) + "\n")
+
+        extras: dict[str, Any] = {"backend": e.backend, "rail_run": run.get("tag"),
+                                  "rail_run_path": run_dir.as_posix()}
+        extras.update(S.manifest_extras(e.arm_record) or {})
+        if e.task:
+            extras.update(task_prompt_sha256=e.task["prompt_sha256"],
+                          task_prompt_chars=e.task["chars"], task_prompt_source="IssueTask",
+                          task_read_by_pilot=False)
+        if e.session_id:
+            extras["harness_session_id"] = e.session_id
+        text("manifest_extras.json", json.dumps(_json_safe(extras), indent=2) + "\n")
+        text("harness_request.json", json.dumps(_json_safe({
+            "rpc": "StartEpisode", "request": e.request, "resolved": self._ref(e),
+            "events": [q.received for q in e.queued], "client": e.client, "task": e.task,
+            "manifest": manifest}), indent=2) + "\n")
+
+        table = {**res, "id": ep.run_id, "family": spec.template, "cell": ep.episode_id,
+                 "arm": shield, "prefix": ep.prefix, "params": ep.cell.params,
+                 "bundle": ep_dir.as_posix(), "kpi_grade": bool(grade)}
+        table["worst_tick"] = _json_safe(K.worst_tick(rows, prios))
+        table["null_hover_mission"] = K.null_hover_mission(
+            rows, {"reached_goal": extra.get("reached_goal")})
+        if not spec.shield:
+            table = _kpi_report().shield_off_table(table)
+        rollup = K.rollup([table])
+        applied = [{"t": float(r.get("t") or 0.0),
+                    "event": str(r.get("event") or "") + (f"/{r['op']}" if r.get("op") else ""),
+                    "rule_id": str(r.get("rule_id") or ""),
+                    "refused": bool(r.get("refused", False)),
+                    "reason": str(r.get("reason") or ""),
+                    "generation": int(r.get("generation") or 0),
+                    "policy_hash": str(r.get("policy_hash") or ""), "via": "rest",
+                    "receipt_json": (json.dumps(_json_safe(r["receipt"]), sort_keys=True)
+                                     if r.get("receipt") is not None else "")}
+                   for r in forwarded]
+        return {"backend": e.backend, "rail_run_path": run_dir.as_posix(),
+                "bundle_files": dict(files),
+                "episode_id": e.episode_id, "bundle_path": ep_dir.as_posix(),
+                "status": status, "gates_failed": list(bad),
+                "mission_outcome": str(res.get("mission_outcome") or ""),
+                "kpi": kpi_row(rollup, spec.template, ep.episode_id, shield),
+                "kpi_json": json.dumps(_json_safe(res), sort_keys=True, allow_nan=False),
+                "rollup_json": json.dumps(_json_safe(rollup), sort_keys=True,
+                                          allow_nan=False),
+                "manifest_json": json.dumps(_json_safe(manifest or {}), sort_keys=True),
+                "kpi_grade": bool(grade), "kpi_grade_reasons": list(why_not),
+                "applied_events": applied, "session_id": e.session_id,
+                "task_prompt_sha256": e.task["prompt_sha256"] if e.task else "",
+                "live": False}
 
     def wait_stream(self, session_id: str, which: str, index: int,
                     timeout: float) -> tuple[list[dict], int, bool]:
@@ -2169,7 +3152,8 @@ class Harness:
         except Exception:                                        # noqa: BLE001
             start_pol = None              # said in the index: g0's IR is missing
         pb = write_policy_bundle(ep_dir, src if src.is_absolute() else ROOT / src,
-                                 start_pol, run.policy, S.policy_generations(run.events))
+                                 start_pol, run.policy, S.policy_generations(run.events),
+                                 held=getattr(run, "generations", None))
         shield = "on" if spec.shield else "off"
         common = {"id": ep.run_id, "id_cell": ep.episode_id,
                   "scenario_id": ep.cell.scenario_id, "template": spec.template,
@@ -2233,8 +3217,10 @@ class Harness:
                             "refused": bool(ev.get("refused", False)),
                             "reason": str(ev.get("reason") or ""),
                             "generation": int(ev.get("generation") or 0),
-                            "policy_hash": str(ev.get("policy_hash") or "")})
-        return {"episode_id": e.episode_id, "bundle_path": ep_dir.as_posix(),
+                            "policy_hash": str(ev.get("policy_hash") or ""),
+                            "via": "runner"})
+        return {"backend": "headless", "bundle_files": dict(harness["bundle_files"]),
+                "episode_id": e.episode_id, "bundle_path": ep_dir.as_posix(),
                 "status": status, "gates_failed": list(bad),
                 "mission_outcome": str(res.get("mission_outcome") or ""),
                 "kpi": kpi_row(rollup, spec.template, ep.episode_id, shield),
@@ -2266,8 +3252,8 @@ def _struct_to_dict(msg, what: str = "body") -> dict:
         raise HarnessError("INVALID_ARGUMENT", f"{what}: {e}") from None
 
 
-_BACKEND_NAME = {0: "headless", 1: "headless", 2: "sitl"}
-_BACKEND_ENUM = {"headless": 1, "sitl": 2}
+_BACKEND_NAME = {0: "headless", 1: "headless", 2: "sitl", 3: "hil"}
+_BACKEND_ENUM = {"headless": 1, "sitl": 2, "hil": 3}
 
 
 class StressHarnessServicer:
@@ -2844,6 +3830,32 @@ def main(argv: list[str] | None = None) -> int:
                         "serve) every paraphrase arm is drawn from; mutual TLS with "
                         "--pki's client certificate, plaintext with --insecure (loopback "
                         "only). Without it this server draws no paraphrase arm")
+    s.add_argument("--rail", action="append", default=None, choices=RAIL_BACKENDS,
+                   help="fly rail sessions on this desktop's rig (repeat): sitl "
+                        "(sitl/run_ros2_demo.sh in WSL) and/or hil (SITL in WSL, the "
+                        "mission on the Orin), through experiments/sweep_scenarios.py's "
+                        "own rail backends, one mission at a time. Without it a sitl / "
+                        "hil session is UNIMPLEMENTED")
+    s.add_argument("--hil-config", default=None, metavar="FILE",
+                   help="--rail hil: the rig (the sweep's --hil-config; default: the "
+                        "rig of 2026-11-06)")
+    s.add_argument("--rail-store", default=None, metavar="DIR",
+                   help="--rail hil: where fetched run folders go (default: the hil "
+                        "config's store, else <runs>/rail_runs)")
+    s.add_argument("--rail-campaign", default="",
+                   help="prefix of every mission tag (default h<UTC month day>T<time>)")
+    s.add_argument("--rail-controls", action="store_true",
+                   help="also fly Shield-off control arms (the sweep's --hil-controls)")
+    s.add_argument("--rail-hotapply-pki", default="", metavar="DIR",
+                   help="the lab PKI folder AS THE MISSION SEES IT (on the Orin, inside "
+                        "its container): its hot-apply listener serves mutual TLS from "
+                        "it when a session's endpoint is off loopback")
+    s.add_argument("--rail-hotapply-host", default="",
+                   help="the address the mission's listener binds (default: the "
+                        "session endpoint's host)")
+    s.add_argument("--rail-hotapply-server-cert", default="", metavar="NAME",
+                   help="the listener's server certificate name in that folder "
+                        "(default harness-server; it must name the endpoint's host)")
     s.add_argument("--paraphraser-client", default=DEFAULT_CLIENT_CN,
                    help=f"the client certificate name in --pki this server presents to "
                         f"the paraphraser service (default {DEFAULT_CLIENT_CN}, the name "
@@ -2875,12 +3887,25 @@ def main(argv: list[str] | None = None) -> int:
             para = paraphraser_client(args.paraphraser,
                                       pki_dir=None if args.insecure else args.pki,
                                       client_name=args.paraphraser_client)
+        rig = None
+        if args.rail:
+            cfg = _sweep().HilConfig.load(args.hil_config) if "hil" in args.rail else None
+            rig = RailRig(backends=tuple(args.rail), hil_config=cfg,
+                          store=args.rail_store or (cfg.store if cfg else None),
+                          campaign=args.rail_campaign, controls=args.rail_controls,
+                          hotapply_pki=args.rail_hotapply_pki,
+                          hotapply_host=args.rail_hotapply_host,
+                          hotapply_server_cert=args.rail_hotapply_server_cert,
+                          hotapply_clients=((args.rest_client,)
+                                            if args.rest_client != DEFAULT_CLIENT_CN
+                                            else ()))
         srv = serve(Harness(runs_dir=args.runs, library=args.library,
                             armed_idle_ttl_s=args.armed_ttl,
                             session_idle_ttl_s=args.session_ttl,
                             rest_hosts=tuple(args.allow_rest_host or ()),
                             rest_pki_dir=args.rest_pki,
-                            rest_client_name=args.rest_client, paraphraser=para),
+                            rest_client_name=args.rest_client, paraphraser=para,
+                            rail=rig),
                     host=args.host,
                     port=args.port, pki_dir=None if args.insecure else args.pki,
                     allowed_clients=tuple(args.allow_client or (DEFAULT_CLIENT_CN,)))
