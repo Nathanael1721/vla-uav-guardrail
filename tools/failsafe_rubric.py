@@ -47,8 +47,11 @@ not a pre-registered reading, and the earlier readings are still printed.
     stay the ideal vehicle's.
   * `--extend-s S` flies every episode S seconds longer than the scenario
     does, to show what a spell still running at its end would have become
-    (section 3: fly it longer). The artefact below is built at the
-    scenario's length: a spell still running there is UNDECIDED, not guessed.
+    (section 3: fly it longer). A rail flies every mission 35 s longer than
+    the scenario (sweep_scenarios.rail_max_s) and its fail-safe is read over
+    that whole flight, so the artefact below reads a rail label left
+    undecided at the scenario's length on the cell flown those 35 s longer;
+    what is undecided even then stays UNDECIDED, not guessed.
 
 THE LABEL ARTEFACT (docs/data/failsafe_labels_rail.json). Four readings per
 cell and seed, each with the clauses that hold and the E5 spell:
@@ -397,53 +400,95 @@ def _reading(rec: dict) -> dict:
             "undecided": undecided}
 
 
+def rail_extend_s() -> float:
+    """How much longer than the scenario a rail flies (sweep_scenarios.
+    rail_max_s: the Loiter operator timeout plus 5 s), so that a Loiter the
+    lagging autopilot provokes shows its outcome. A rail run's fail-safe is
+    read over that whole flight, so a label undecided at the scenario's
+    length is read on the cell flown that much longer."""
+    return float(SW.rail_max_s(0.0))
+
+
 def build_labels(inputs: list[Path]) -> dict:
     """The label artefact from `--json` outputs of this tool (module
-    docstring, THE LABEL ARTEFACT). Every input must be at the scenario's
-    length, on the ideal or the rail vehicle, and all at one clean code
-    revision; a cell and seed judged twice (a seed two profiles share) must
-    agree."""
+    docstring, THE LABEL ARTEFACT). Inputs are on the ideal or the rail
+    vehicle, each at a clean code revision (named per run), at the scenario's
+    length; a cell and seed judged twice (a seed two profiles share) must
+    agree. An input on the rail vehicle flown rail_extend_s() longer RESOLVES
+    the rail readings left undecided at the scenario's length (section 8:
+    the rail flies that long, and its run's fail-safe is read over the whole
+    flight): such a reading says `length` "rail" instead of "scenario". A
+    reading already decided at the scenario's length is never replaced; one
+    that the longer flight reads differently is listed (`built.
+    differ_flown_longer`), not changed."""
     labels: dict[str, dict[str, dict]] = {}
-    revs, runs = set(), []
+    longer: dict[tuple, dict] = {}
+    runs = []
     need = None
+    ext = rail_extend_s()
     for path in inputs:
         rows = json.loads(Path(path).read_text(encoding="utf-8"))
         if not rows:
             raise ValueError(f"{path}: no cells")
         veh = {r["response"] for r in rows}
         prof = {r.get("profile") for r in rows}
+        revs = {r.get("code_revision") for r in rows}
+        exts = {float(r.get("extend_s") or 0.0) for r in rows}
         if len(veh) != 1 or len(prof) != 1 or next(iter(veh)) not in ("ideal", "rail"):
             raise ValueError(f"{path}: one profile on the ideal or the rail vehicle, got "
                              f"{sorted(prof, key=str)} on {sorted(veh)}")
-        if any(r.get("extend_s") for r in rows):
-            raise ValueError(f"{path}: flown longer; the artefact is at the scenario's length")
-        veh, prof = next(iter(veh)), next(iter(prof))
-        revs |= {r.get("code_revision") for r in rows}
+        if len(revs) != 1 or None in revs or next(iter(revs)).endswith("-dirty"):
+            raise ValueError(f"{path}: one clean code revision per input, got "
+                             f"{sorted(map(str, revs))}")
+        veh, prof, x = next(iter(veh)), next(iter(prof)), next(iter(exts))
+        if len(exts) != 1 or x not in (0.0, ext) or (x and veh != "rail"):
+            raise ValueError(f"{path}: flown longer by {sorted(exts)} s on the {veh} vehicle; "
+                             f"only the rail vehicle's own {ext:g} s resolves a label")
         need = rows[0]["e5_need_s"]
         runs.append({"profile": prof, "vehicle": veh, "cell_seeds": len(rows),
+                     "extend_s": x, "code_revision": next(iter(revs)),
                      "command": (f"python tools/failsafe_rubric.py"
                                  + ("" if prof == "library" else f" --profile {prof}")
-                                 + f" --response {veh} --no-fsm --json <out>")})
+                                 + f" --response {veh} --no-fsm"
+                                 + (f" --extend-s {x:g}" if x else "") + " --json <out>")})
         for r in rows:
-            for rec in (r, {**r["other"], "e5_flight": r["other"]["e5_flight"]}):
+            for rec in (r, r["other"]):
                 key = next(k for k, v in READINGS.items() if v == (veh, rec["e5_flight"]))
-                got = _reading(rec)
+                got = {**_reading(rec), "length": "rail" if x else "scenario"}
+                if x:
+                    was = longer.setdefault((r["episode"], str(r["seed"]), key), got)
+                    if was != got:
+                        raise ValueError(f"{r['episode']} seed {r['seed']} reading {key} flown "
+                                         f"longer: {was} in one input, {got} in {path}")
+                    continue
                 slot = labels.setdefault(r["episode"], {}).setdefault(str(r["seed"]), {})
                 if key in slot and slot[key] != got:
                     raise ValueError(f"{r['episode']} seed {r['seed']} reading {key}: "
                                      f"{slot[key]} in one input, {got} in {path}")
                 slot[key] = got
-    if len(revs) != 1 or None in revs or next(iter(revs)).endswith("-dirty"):
-        raise ValueError(f"the inputs must come from one clean code revision, got {sorted(map(str, revs))}")
     short = [(c, s) for c, v in labels.items() for s, lab in v.items() if set(lab) != set(READINGS)]
     if short:
         raise ValueError(f"{len(short)} cell-seeds lack a reading (both vehicles are "
                          f"needed), e.g. {short[:3]}")
+    resolved, differ = 0, []
+    for (cell, seed, key), got in sorted(longer.items()):
+        base = (labels.get(cell) or {}).get(seed, {}).get(key)
+        if base is None:
+            raise ValueError(f"{cell} seed {seed}: flown longer but not at the scenario's length")
+        if base["expected"] is None:
+            if got["expected"] is not None:
+                labels[cell][seed][key] = got
+                resolved += 1
+        elif got["expected"] != base["expected"]:
+            differ.append({"cell": cell, "seed": int(seed), "reading": key,
+                           "scenario": base["expected"], "flown_longer": got["expected"],
+                           "clauses_flown_longer": got["clauses"],
+                           "e5_spell_s_flown_longer": got["e5_spell_s"]})
     return {
         "schema": LABELS_SCHEMA,
         "what": ("Fail-safe labels of the scenario library's cells, derived by "
                  "tools/failsafe_rubric.py (docs/RUBRIC-failsafe.md) on the ideal and the "
-                 "rail vehicle, at the scenario's length"),
+                 "rail vehicle"),
         "readings": {
             "a": "ideal vehicle, E5 on the flight without a fail-safe (section 3)",
             "a2": "ideal vehicle, E5 on the prescribed flight (section 7; the templates' labels)",
@@ -454,10 +499,16 @@ def build_labels(inputs: list[Path]) -> dict:
                     "practice that meets the KPI criteria\"), after the rig had shown the "
                     "autopilot's lag (rh01, 2026-11-07): not a pre-registered reading; "
                     "(a) and (r) are printed beside it"),
-        "undecided": ("expected null: no clause holds and an E5 spell was still running "
-                      "when the episode ended; not guessed"),
-        "built": {"code_revision": next(iter(revs)), "e5_need_s": need,
+        "length": ("scenario: read at the scenario's own length. rail: undecided there (no "
+                   "clause holds and an E5 spell was still running at its end) and read on "
+                   f"the cell flown {ext:g} s longer, as a rail flies it (sweep_scenarios."
+                   "rail_max_s; section 8)"),
+        "undecided": ("expected null: undecided at the scenario's length and not resolved "
+                      "by the longer flight (or none was flown); not guessed"),
+        "built": {"e5_need_s": need, "rail_extend_s": ext,
                   "fsm_config_hash": F.FSMConfig().digest, "runs": runs,
+                  "code_revisions": sorted({r["code_revision"] for r in runs}),
+                  "resolved_flown_longer": resolved, "differ_flown_longer": differ,
                   "then": "python tools/failsafe_rubric.py --build-labels <this file> <out> ..."},
         "vehicles": {"ideal": SW.response_for("ideal"), "rail": SW.response_for("rail")},
         "labels": {c: {s: labels[c][s] for s in sorted(labels[c])} for c in sorted(labels)},

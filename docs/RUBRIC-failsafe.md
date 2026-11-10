@@ -5,6 +5,12 @@
 answered 2 Nov). This file was written and committed **before** any scenario
 label was changed; the labels are then derived from it mechanically, and the
 change list (section 5) names the clause behind every label that moved.
+**Amended 2026-11-10:** sections 7 and 8 are adopted (the user's decision of
+9-10 November): E5 is read on the flight the grant prescribes, and the
+KPI-grade labels are derived on the vehicle that flies them. Unlike the
+rubric of 2 November, that amendment came AFTER flights it bears on (the rig
+showed the autopilot's lag on 7 November), so it is not a pre-registered
+reading; the readings of sections 2-5 are still scored and printed beside it.
 **KPI:** WP3-15, "Fail-safe trigger correctness | >= 99 % | Triggered when
 expected, not when not expected" (Stress Testing, Acceptance KPIs).
 **Code:** `guardrail/fsm.py` (`FAILSAFE_STATES`, `score_failsafe_triggers`),
@@ -51,6 +57,10 @@ edges or its outcome.
 | **E3 Position knowledge** | the position the Shield acts on is wrong by more than the policy's margin around a hard P0 boundary (`margin_m`) - white noise whose 3 sigma exceeds it, a state latency whose distance at the flown speed exceeds it, or a frozen fix held while the aircraft moves farther than it - while the aircraft is within that error of the boundary: the margin can no longer certify the P0 rule | the margin is sized for a position-error budget (experiments/templates/sensor_degradation.yaml); ArduPilot's EKF / GPS failsafes act when position knowledge is lost |
 | **E4 No legal continuation** | no action within the kinematic caps keeps or makes the aircraft legal at all (every exit is out of reach before the constraint binds, and stays so) | p1. No library cell is judged under it today; it is listed so a future scenario has a clause |
 | **E5 Unsafe repair that persists** | the planner keeps requesting, without a break, an action the Shield may not fly - a hard rule's repair over theta on the decided basis (each repair's forecast depth in metres; theta 2.0 m lateral / 0.5 m vertical) or one no operator converges on, or a violation of a hard rule whose action is `loiter` - for at least the operator's Loiter timeout plus one control period (`loiter_timeout_s` + 0.1 s = 30.1 s), judged from the Shield's decision on the request at the true position, on the episode **flown without a fail-safe** (the Shield's projection flown every tick; section 3) | p1 "trigger fail-safe (RTL / Land) when repair is unsafe"; p4 "Conservative cap. If ... > threshold, or no operator converges, the Shield abandons projection and triggers fail-safe", and "Loiter -> RTL: ... operator-defined timeout"; run-time assurance practice (a supervised function that stays untrusted past a bounded wait ends the mission) |
+
+(E5's flight since 2026-11-10: the prescribed one, section 7. The row above
+is kept as written on 2 November; it is the reading (a) and (r) are still
+scored on.)
 
 **Not expected**, stated so that no reader has to infer it:
 
@@ -128,7 +138,9 @@ the KPI with and without E5, so the weight of this choice is visible.
 - **On the grant's configuration.** Labels are derived for the headline
   arm: the grant's 5 s / 0.1 s forecast on the ideal vehicle. The 3 s
   forecast and ArduPilot-response comparison arms are scored against the
-  same labels and reported apart, never gated.
+  same labels and reported apart, never gated. (Since 2026-11-10 a KPI-grade
+  run on the hil rail is scored on labels derived on the rail vehicle:
+  section 8.)
 
 ## 4. What this rubric does not decide
 
@@ -285,16 +297,32 @@ cells, smoke 56, nightly 672 cell-seeds).
   (`stress.fix_quality_reported`, default true); no flight rail reports it
   yet (docs/DESIGN-escalation-fsm.md, "Where each rail's signal lives"),
   and ArduPilot's own EKF failsafe is still not modelled.
-- Nothing here is KPI-grade: the grant's KPI is measured on the hil topology.
+- Nothing in sections 1-5 is KPI-grade: the grant's KPI is measured on the
+  hil topology, on the labels of section 8.
 
-## 7. PROPOSED, NOT ADOPTED: E5 read on the flight the grant prescribes (draft, 2026-11-06)
+## 7. E5 read on the flight the grant prescribes (adopted 2026-11-10; drafted 2026-11-06)
 
-**Status: a draft for the user's decision. It is not the rubric.** Sections
-1-6 are the rubric; nothing in them changes unless this is adopted. This
-section exists only on the branch `e5-prescribed-flight-proposal` (and on
-`e5-prescribed-on-rail-vehicle`, which builds section 8 on it), which
-also carries the tool, labels and tests that would go with it, so the
-numbers below are measured, not estimated.
+**Status: adopted.** Decided by the user on 9-10 November 2026 ("follow the
+best practice that meets the KPI criteria"), with section 8. Three things a
+reader must know about that adoption:
+
+- **It is not a pre-registered reading.** The section was drafted on
+  6 November and adopted after the rig had shown the autopilot's lag (rh01,
+  7 November) and after hil campaigns had been flown and scored on the
+  earlier reading. The rubric of 2 November was written before any label
+  moved; this amendment was not.
+- **The earlier readings are still printed.** Every campaign is scored on
+  section 3's reading as well - (a) on the ideal-vehicle labels, (r) on the
+  rail-vehicle labels - beside the adopted (r2); the label artefact
+  (docs/data/failsafe_labels_rail.json) carries all four readings, and the
+  scoring tool prints the false and missed cells of each by name.
+- **What changed in the library:** the tool's default (`--e5-flight
+  prescribed`), the labels of the two cells below (experiments/templates:
+  rail-mission-stub-vla, standoff-approach-angles 7 m pedestrian), their
+  pins, the tests.
+
+The text below is the draft as it was put to the decision; its numbers were
+measured at the time, on the code named.
 
 **The question.** E5 asks whether the planner keeps requesting an action the
 Shield may not fly for the operator timeout plus one control period. Section
@@ -309,7 +337,7 @@ is taken round the zone in 10.9 s / 1.5 s of unsafe requests (N1), while
 flown as the grant prescribes - projection abandoned, the aircraft held -
 the request stays over theta past the timeout.
 
-**The proposed reading.** E5 is read on the *prescribed* flight
+**The reading.** E5 is read on the *prescribed* flight
 (`tools/failsafe_rubric.py`, `prescribed`):
 
 - on a tick whose request the Shield may not fly (the E5 tick of section 2:
@@ -334,7 +362,7 @@ flight (section 3) is that the FSM's hold makes the request persist, so the
 label would follow from the FSM. The prescribed flight holds too - that is
 the point of the grant's Loiter -> RTL timeout: a planner that keeps asking
 for an unsafe repair while held is the case the operator timeout exists to
-end. What the proposal removes is every choice of this implementation:
+end. What this reading removes is every choice of this implementation:
 it holds on the grant's own condition (the E5 tick) and resumes on its
 negation, with no timers or counters of ours.
 
@@ -362,10 +390,10 @@ gps-noise-beyond-margin (0.0-0.2 s either way: E3). No cell is undecided in
 its length under either reading (wind-beyond-authority at 8 m/s ends inside
 a spell on both, and is labelled by E2).
 
-**Measured on this branch** (labels as above, on branch 1's code at
+**Measured when it was drafted** (labels as above, on branch 1's code at
 c07998d; headless, not KPI-grade):
 
-| profile | adopted rubric (branch 1) | this proposal | Wilson 95 % low |
+| profile | section 3's reading (branch 1) | section 7's reading | Wilson 95 % low |
 |---|---|---|---|
 | library | 177/179 = 0.989 (2 / 0) | 179/179 = 1.000 (0 / 0) | 0.960 -> 0.979 |
 | smoke | 62/63 = 0.984 (1 / 0) | 63/63 = 1.000 (0 / 0) | 0.915 -> 0.943 |
@@ -379,9 +407,8 @@ identical; the sweeps' own gates: library 155 pass / 22 tracked / 0 fail /
 3 known, smoke 56 / 6 / 0 / 2, nightly 663 / 66 / 0 / 15 (the rail
 mission's pin is off, the 7 m cell's keeps only the goal).
 
-**To adopt it**: merge this branch (the tool's default, the labels, the
-pins, the tests) and fold this section into sections 2-5. **To reject it**:
-discard the branch; sections 1-6 stand.
+**Re-derived on 2026-11-11** on the code that flies (section 8): the same
+two cells move and nothing else does - {S7_REDERIVED}.
 
 ## 8. PROPOSED, NOT ADOPTED: the KPI-grade labels derived on the vehicle that flies them (draft, 2026-11-07)
 
