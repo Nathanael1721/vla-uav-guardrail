@@ -502,20 +502,27 @@ def test_the_old_loiter_law_hashes_as_every_earlier_record_did():
     7bfd6dc's default did, and today's default has its own hash. The same
     for untrusted_owner and hold_horizon (2026-11-07): "projected" and
     "lookahead" on today's Loiter law hash as the default did before the
-    fields existed, and each new reading alone has a hash of its own."""
+    fields existed, and each new reading alone has a hash of its own. And
+    for handback_request (2026-11-10): "as_held" hashes as the default did
+    at 9eed35b, and today's default ("at_speed") has a hash of its own."""
     old = FSMConfig(loiter_clear="violation_free", loiter_x67="request",
-                    untrusted_owner="projected", hold_horizon="lookahead")
+                    untrusted_owner="projected", hold_horizon="lookahead",
+                    handback_request="as_held")
     assert old.digest.startswith("sha256:5ae67785"), old.digest
     assert FSMConfig().digest != old.digest
     assert FSMConfig(loiter_clear="violation_free").digest not in (old.digest,
                                                                    FSMConfig().digest)
-    before = FSMConfig(untrusted_owner="projected", hold_horizon="lookahead")
+    before = FSMConfig(untrusted_owner="projected", hold_horizon="lookahead",
+                       handback_request="as_held")
     assert before.digest.startswith("sha256:d55e1bfe"), before.digest
-    chain_only = FSMConfig(hold_horizon="lookahead")
+    chain_only = FSMConfig(hold_horizon="lookahead", handback_request="as_held")
     assert chain_only.digest.startswith("sha256:1e413c8b"), chain_only.digest
-    assert len({FSMConfig().digest, before.digest, chain_only.digest}) == 3
+    held = FSMConfig(handback_request="as_held")        # the default at 9eed35b
+    assert held.digest.startswith("sha256:3b54b4e3"), held.digest
+    assert len({FSMConfig().digest, held.digest, before.digest, chain_only.digest}) == 4
     raises(ValueError, FSMConfig, untrusted_owner="violated")
     raises(ValueError, FSMConfig, hold_horizon="forever")
+    raises(ValueError, FSMConfig, handback_request="never")
 
 
 def test_g8_does_not_hand_back_an_unsafe_repair_or_a_loiter_rule():

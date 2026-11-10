@@ -16,6 +16,113 @@ shipped change and recorded as one.
 
 ## [Unreleased]
 
+### 2026-11-10 (the Orin's tick, and a hand-back judged at speed) — a tick pays for one kind of hold work, never two; Loiter hands back only a request whose repair can be trusted from its hold point at the speed it asks for
+
+#### Found
+- The hil shakedown hs05 at 9eed35b (nine dyn-nfz-rotate-spin flights, the
+  AGX Orin): six ticks over WP3-13's 100 ms, 100.7-122.8 ms, all in hs05_004
+  and hs05_005 (6 deg/s). Every one was a Loiter tick that ran a full
+  100-unit slice of the hold-point search and the hand-back guard. Over the
+  nine flights `tick_ms - shield_ms` is 26.9 ms at the median and 47.6 ms at
+  most on a Loiter tick without a search, 55.3 ms and 95.9 ms with a full
+  slice (7.9 ms at the median on a Normal tick): a 100-unit slice cost the
+  Orin about 28 ms and up to 49 ms, the guard about 19 ms and up to 40 ms.
+  The Orin is 3.6x the desktop on the slice and 4.4x on the guard (medians);
+  the budget broke because both were paid on one tick.
+- The KPI-grade smoke sm1110 at 9eed35b, sm1110_010 (corridor-drift-angles
+  8 m/s, -60 deg): 15 Loiters, 14 handed back after T_recover, the episode
+  ended in the fifteenth - "labelled RTL_triggered, flew success", the
+  fail-safe censored - where rh03 (fb96fe5) and hs03 (199cfdf) flew G3, G5
+  and RTL as labelled. CorridorReturn's repair there follows the distance
+  off the centreline alone (1.70 m at 4.4 m off at 3.9 m/s and nearly at
+  rest alike; 2.01 m at 4.7 m, where G3 fires and the Loiter's point is).
+  The GUIDED hold brings the aircraft back onto that point from the inside:
+  at the end of the first Loiter it was 0.24-0.29 m short, the unchanged
+  request read 1.72-1.78 m there, and Loiter handed it back; the remaining
+  creep took it over theta again in 1.4 s. The old BRAKE hold carried it
+  1-2 m further out, where the request stays over theta.
+
+#### Changed
+- `guardrail/holdpoint.py`: `TICK_QUERIES` 60 (100 before);
+  `HoldPlanner.handback`, the guard under the per-tick bound - while a
+  search runs it samples nothing and the hand-back is refused, and a search
+  that starts on a tick whose units went to the guard takes its first slice
+  on the next (`hold_search.waited`); `HoldPlanner.slice`, `.guard`,
+  `.checked`. A search that spends all of `MAX_QUERIES` takes 10 ticks (6
+  before), 11 for such a re-plan.
+- `guardrail/fsm.py`: `FSMConfig.handback_request` ("at_speed", the
+  default; "as_held", the FSM as it was), `TickInput.handback_untrusted`,
+  `EscalationFSM.untrusted_repair` (G3's own test, nothing moved), and
+  Loiter's "acceptable" refusing a request untrusted from its hold point;
+  such a tick's record carries `handback_untrusted`. The config hash
+  changes: the default is `sha256:e0d9267f...`; `handback_request: as_held` hashes
+  `sha256:3b54b4e3...`, the default at 9eed35b.
+- `guardrail/shield.py`: `Shield.handback_untrusted(raw, at)` - the decision
+  the Shield would make for the request at the hold point from a state with
+  no measured velocity (`advise`), read by `untrusted_repair` on the theta
+  basis the rail gives its own FSM (`horizon_s`);
+  `Shield.world_is_still`; `_escalate` asks the guard through the planner
+  (`handback_refused` on a tick refused for the search). The guard is the
+  path's samples or the request's one decision a tick, never both: the
+  request is asked once where nothing else moves (no timed rule, moving zone
+  or tracked subject) and again only when it, the hold point or the rule set
+  changes; where something moves the two take turns.
+- `sitl/ros2_shield_node.py`, `sitl/run_sitl_demo.py`: the same through
+  their own planner and FSM. The node writes `hold_work` on a Loiter row
+  (`guard`, `checked`, `legal`, `slice_units`): what the tick paid for.
+- Tests: `tests/test_hold_horizon.py` (the guard refused unsampled while a
+  search runs; a re-plan that starts on a guard tick; no tick of the
+  rotate-spin cells pays for two kinds of hold work; the request check asked
+  once while nothing it was asked about changed; Loiter keeps a request
+  untrusted at speed to the timeout and hands back once it clears;
+  `untrusted_repair` against step(); `handback_untrusted` on the demo
+  policy; corridor-drift-angles 8 m/s, -60 deg on the rail vehicle holds to
+  G5), `tests/test_fsm.py` (the hashes), `tests/test_shieldcore_audit.py`
+  (the plan's tick at 60 units).
+- Docs: docs/DESIGN-hold-points.md "The Orin's tick, and a hand-back judged
+  at speed"; docs/DESIGN-escalation-fsm.md "Update 2026-11-10".
+
+#### Measured (headless; docs/DESIGN-hold-points.md has the tables)
+- hs05 on the Orin, `tick_ms - shield_ms` (nine flights): a Loiter tick
+  without a search 26.9 ms at the median, 47.6 ms at most; with a full
+  100-unit slice beside the guard 55.3 ms and 95.9 ms. With this change a
+  slice tick is 60 units and one stop query (about 20 ms, 33 ms at most on
+  those figures) and no tick pays for two kinds of hold work: the desktop's
+  library run counts 0 such ticks where 9eed35b had 12 (135.4 units at most).
+- The desktop, hold work per tick (library, rail arm; p50 / p99 / max): 1.80 /
+  4.77 / 20.32 ms (9eed35b: 1.76 / 4.88 / 17.07 ms, both under the sweeps'
+  load); a request tick 2.00 / 5.35 / 20.02 ms, the cost of the tick's own
+  decision; the longest search 8 ticks (5 before).
+- Smoke, library and nightly on the ideal and rail arms, smoke and library on
+  the ArduPilot arm, against 9eed35b: correctness (a) / (r) / (r2) the same on
+  every arm (nightly rail 654/741, 729/741, 741/741), P0 escapes 0, breaches
+  0, the sweep's gates the same (660 passed, 66 tracked, 0 failed, 18 known on
+  the nightly); mean time to safe the same on the rail arm, 2.570 -> 2.578 s
+  on the nightly's ideal arm.
+- Re-escalations within 2 s of G8 on the rail arm: 4 of 12 -> 0 of 8 (smoke),
+  7 of 25 -> 0 of 18 (library), 27 of 117 -> 0 of 90 (nightly).
+  corridor-drift-angles (4 m/s -60 deg; 8 m/s -60 and +60 deg), gps-dropout
+  (lane 15, 2-4), dyn-nfz-spawn-ahead 12 m (variant 2, 2 m/s) and
+  wind-within-authority at 5 m/s take G5 inside their episode; no rotate-spin
+  cell fails safe.
+- The new check asked, offline, of the rig's own Loiters (each hold point
+  sm1110_010 and sm1110_045 took, the request flown then, the run's rule
+  clock): 15 of 15 and 9 of 9 kept, the first of each on a repair of 2.014 m
+  and 2.073 m (theta 2.0), so neither flight would have been handed back.
+- Tried and withdrawn: the request's answer kept for 0.5 s in a moving world
+  handed dyn-nfz-rotate-spin at 9 deg/s back 0.4 s late on the ideal vehicle
+  and the library's gate failed (censored in Loiter).
+
+#### Not done
+- Nothing has flown on the rig with either change.
+- The rail arm reproduces the rig's churn in kind, not in count: at 9eed35b
+  it hands corridor-drift-angles (8 m/s, -60 deg) back twice and its third
+  Loiter holds to G5, where sm1110_010 was handed back 14 times; and
+  wind-within-authority (lane 15, 5 m/s) once, where sm1110_045 was handed
+  back 8 times.
+- `HANDBACK_QUERIES` is unchanged (40): a guard tick costs the Orin what it
+  did, up to about 40 ms of hold work in the rotate-spin world.
+
 ### 2026-11-07 (Loiter held in GUIDED) — the rails hold a Loiter in GUIDED on the plan's point instead of handing it to ArduCopter's BRAKE, whose hand-over carried the aircraft off its point; the harness's rail arm flies the same, and models BRAKE's carry for the old flow
 
 #### Found

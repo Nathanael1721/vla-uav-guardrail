@@ -7314,11 +7314,20 @@ class Shield:
             lost = self._position_verdict(tick, state, d.raw)
             # Loiter's hand-back guard (FSMConfig.hold_horizon "loiter",
             # 2026-11-07): only while the position itself is legal - an
-            # illegal one is not handed back anyway.
-            handback = (self.handback_unsafe(state, d.emitted)
-                        if (self.fsm.state is _fsm.FSMState.LOITER and not unsafe
-                            and self.fsm.config.hold_horizon == "loiter"
-                            and not self.fsm.terminal) else None)
+            # illegal one is not handed back anyway. Asked through the hold
+            # planner since 2026-11-10: a tick pays for the guard or for a
+            # search slice, never both, and while a plan is being searched
+            # the hand-back is refused unsampled (HoldPlanner.handback).
+            # With it, in turn (FSMConfig.handback_request "at_speed"): is the
+            # request's repair one to trust from the hold point at the speed
+            # it asks for (handback_untrusted).
+            planner = self._holds()
+            handback, hb_untrusted = (
+                planner.handback(self, state, d.emitted, fsm=self.fsm, raw=d.raw)
+                if (self.fsm.state is _fsm.FSMState.LOITER and not unsafe
+                    and self.fsm.config.hold_horizon == "loiter"
+                    and not self.fsm.terminal) else (None, None))
+            refused_for_search = planner.guard == "search"
             inp = _fsm.tick_input_from_decision(
                 tick.t, d, tick.rt, horizon_s=self.theta_horizon_s,
                 stop_illegal=unsafe, rtl_failed=bool(rtl_failed),
@@ -7328,10 +7337,12 @@ class Shield:
                 hold_legal=self._hold_legal(tick),
                 position_lost=lost[0] if lost else None,
                 noise_marginal=self._noise_marginal(tick, state, d),
-                handback_unsafe=handback)
+                handback_unsafe=handback, handback_untrusted=hb_untrusted)
             out = self.fsm.step(inp)
             rec = out.record
-            planner = self._holds()
+            if refused_for_search:
+                # Why this tick's handback_unsafe: nothing was sampled.
+                rec = {**rec, "handback_refused": "hold search running"}
             # Loiter or Land was just entered, or the point held is no longer
             # legal (needs_hold): choose where the autopilot holds / lands
             # from this Shield's own rules (guardrail/holdpoint.py). The FSM
@@ -7408,6 +7419,51 @@ class Shield:
                 if self.hard_violations(self.state_is_unsafe(p)):
                     return True
         return False
+
+    def world_is_still(self) -> bool:
+        """Does a decision here depend on nothing but the state and the
+        action: no rule with a time window, no moving zone, no tracked
+        subject? (holdpoint.HoldPlanner keeps the request check's answer on
+        it; a hot reload or a spawned zone replaces the rule set, which the
+        planner sees for itself.)"""
+        rt = self._rt
+        return not (rt.timed or rt.moving_ids) and self._subject is None
+
+    def handback_untrusted(self, raw: Action4D, at: State, fsm=None,
+                           horizon_s: Any = "shield") -> bool:
+        """Would the request `raw`, judged from `at` - the point a Loiter
+        holds - at the speed it asks for, need a repair of a hard rule that
+        may not be trusted: over theta, or not converged?
+        (fsm.TickInput.handback_untrusted, FSMConfig.handback_request
+        "at_speed", since 2026-11-10.) The decision this Shield WOULD make
+        for it there (`advise`: nothing moves) from a state with no measured
+        velocity - the ideal-response forecast, the request flown as asked -
+        read by the FSM's own G3 test (EscalationFSM.untrusted_repair) at
+        this Shield's theta basis. `fsm`: the FSM whose thresholds judge it
+        (a rail's own; default this Shield's), and `horizon_s` the theta
+        basis that rail gives its FSM (tick_input_from_decision's; default
+        this Shield's own): the request is judged exactly as the rail's G3
+        would judge it.
+
+        The tick's own decision judges the request from the held aircraft:
+        at rest, where a measured-velocity forecast reaches less far, and
+        wherever the hold's settling has it. On the hil smoke sm1110_010
+        (corridor-drift-angles 8 m/s, -60 deg) the Loiter's point sat where
+        CorridorReturn's repair is 2.0 m, the hold crept back to it from
+        0.3 m inside, the repair there read 1.72-1.78 m for T_recover, and
+        Loiter handed the unchanged request back 14 times."""
+        fsm = fsm if fsm is not None else self.fsm
+        if fsm is None:
+            return False
+        p = State(x=at.x, y=at.y, up=at.up, yaw_deg=at.yaw_deg)
+        d = self.advise(p, raw)
+        tick = self._tick_ctx()
+        rt = tick.rt if tick is not None else self._rt
+        basis = self.theta_horizon_s if isinstance(horizon_s, str) else horizon_s
+        inp = _fsm.tick_input_from_decision(
+            float(self._t_last or 0.0), d, rt, horizon_s=basis,
+            stop_illegal=False, caps=self.applied_caps or False)
+        return fsm.untrusted_repair(inp)
 
     def _stop_cost_bound(self) -> float:
         """holdpoint.stop_cost_bound for the rule set in force (cached per

@@ -354,10 +354,10 @@ def test_the_fsm_hold_point_is_on_the_audit_record():
     Loiter), the hold on that tick's record and the next.
     Since 2026-11-07 the Shield's hold search is spread over ticks
     (holdpoint.py, THE PER-TICK BOUND): X4's tick has no plan yet, and the
-    plan is on the record of the tick it arrives (0.3 s here, the search's
-    fourth tick) and of the Loiter tick after it; the ticks before carry
-    null. Read on X4's tick, as before, it was (None, None) - the ee356c6
-    CI run."""
+    plan is on the record of the tick it arrives (0.6 s here, the search's
+    seventh tick, at 60 units a tick since 2026-11-10; the fourth, 0.3 s, at
+    100) and of the Loiter tick after it; the ticks before carry null. Read
+    on X4's tick, as before, it was (None, None) - the ee356c6 CI run."""
     import math
     from datetime import timedelta
     from guardrail.holdpoint import MAX_QUERIES, TICK_QUERIES

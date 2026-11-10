@@ -743,9 +743,16 @@ def main() -> int:
                              and not fsm.terminal)
                 hold_legal = (holdpoint.hold_point_legal(shield, fsm.hold, now)
                               if in_loiter else None)
-                handback = (shield.handback_unsafe(state, decision.emitted)
-                            if (in_loiter and not hard_unsafe
-                                and fsm.config.hold_horizon == "loiter") else None)
+                # The guard through the planner (2026-11-10): a tick pays for
+                # it or for a search slice, never both (HoldPlanner.handback).
+                # With it, in turn (FSMConfig.handback_request "at_speed"): is the
+                # request's repair one to trust from the hold point at the
+                # speed it asks for (Shield.handback_untrusted).
+                handback, hb_untrusted = (
+                    hold_planner.handback(shield, state, decision.emitted,
+                                          fsm=fsm, raw=decision.raw, horizon_s=theta_h)
+                    if (in_loiter and not hard_unsafe
+                        and fsm.config.hold_horizon == "loiter") else (None, None))
                 fsm_out = fsm.step(tick_input_from_decision(
                     now, decision, policy, horizon_s=theta_h,
                     home_reached=(in_failsafe
@@ -755,7 +762,8 @@ def main() -> int:
                     # The caps the Shield clamped against on this tick, not
                     # every cap the policy lists (Shield.applied_caps).
                     caps=shield.applied_caps or False,
-                    hold_legal=hold_legal, handback_unsafe=handback))
+                    hold_legal=hold_legal, handback_unsafe=handback,
+                    handback_untrusted=hb_untrusted))
                 setpoint = fsm_out.setpoint
                 if moved_holds:
                     # Where the Loiter holds / the Land lands: the search's

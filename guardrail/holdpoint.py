@@ -102,7 +102,9 @@ THE SEARCH (deterministic: a sweep is reproducible on any machine)
      search on a thread of its own in the world of the tick it started on
      (constants, "THE PER-TICK BOUND"; HoldSearch, HoldPlanner): the same
      plan, a few ticks later for the dearest searches, so no tick pays for
-     a whole search (the hil Orin paid 146.9 ms for one).
+     a whole search (the hil Orin paid 146.9 ms for one). Since 2026-11-10
+     a tick pays for a slice or for Loiter's hand-back guard, never both
+     (HoldPlanner.handback): the Orin paid 93-121 ms for the two together.
 
 SPEED ASSUMPTION
 
@@ -328,7 +330,26 @@ MOVING_ZONE_READ_COST = 0.5
 # taken on the search's first tick, so the aircraft holds where it is rather
 # than fly on toward that point. HoldPlanner(units=None) plans within the
 # tick, as before.
-TICK_QUERIES = 100
+#
+# 60 since 2026-11-10 (100 from 2026-11-07), and ONE kind of hold work a
+# tick: a search slice, or the hand-back guard, never both (HoldPlanner.
+# handback). On the hil shakedown hs05 (9eed35b, dyn-nfz-rotate-spin) every
+# tick over WP3-13's 100 ms - six, in two flights, 100.7-122.8 ms - was a
+# Loiter tick that ran a full 100-unit slice AND the guard. Read from the
+# nine flights' rows (tick_ms - shield_ms; a Normal tick's is 7.9 ms at the
+# median): a Loiter tick without a search - the guard's ten stop queries and
+# hold_point_legal's one - 26.9 ms at the median and 47.6 ms at most; a tick
+# with a full slice beside them 55.3 ms and 95.9 ms. So a 100-unit slice
+# cost the Orin about 28 ms at the median and up to 49 ms (0.28-0.49 ms a
+# unit; the desktop: 0.077 at the median, so 3.6x), and the guard about
+# 19 ms and up to 40 ms (the desktop: 4.3 ms at the median, 4.4x). A slice
+# tick now costs 60 units and one stop query - about 20 ms, 33 ms at most on
+# those figures - and a guard tick what it did: about 40 ms of hold work at
+# most either way, where it was 88 ms. A search that spends all of
+# MAX_QUERIES takes ceil(MAX_QUERIES / TICK_QUERIES) = 10 ticks (6 before),
+# one more when it starts on a tick whose units went to the guard
+# (docs/DESIGN-hold-points.md, "The Orin's tick").
+TICK_QUERIES = 60
 # Loiter's hand-back guard (Shield.handback_unsafe) on any one tick: as many
 # samples of the command's flight as fit in this many units at the world's
 # dearest stop query (stop_cost_bound), never more than one every
@@ -1398,14 +1419,104 @@ class HoldPlanner:
     state ended (Loiter left, Land entered, a terminal state) is dropped, and
     the new state's plan searched for. `units` None plans within the tick, as
     before 2026-11-07. `last`: the ticks and units the last plan returned
-    took (None for an in-place plan taken meanwhile)."""
+    took (None for an in-place plan taken meanwhile).
+
+    ONE OF THE TWO A TICK (since 2026-11-10; TICK_QUERIES has the rig's
+    numbers). Loiter's hand-back guard (Shield.handback_unsafe, up to
+    HANDBACK_QUERIES units) and a search slice are never both paid on one
+    tick. Ask the guard through handback(), before the FSM steps: while a
+    search runs it samples nothing and answers True - the hand-back is
+    refused until the plan is in hand, the conservative side (Loiter's
+    "acceptable" clock starts again when the search ends) - and when it did
+    sample, a search that starts on that same tick (a re-plan: the point held
+    is no longer legal) takes its first slice on the next tick; the in-place
+    plan a re-plan holds meanwhile is still returned at once. `guard`: what
+    the last handback() did ("ran", "search": refused for the search, None:
+    not asked since the last tick()); `slice`: the units the last tick()'s
+    search slice spent (0 without one).
+
+    The guard itself is two checks under FSMConfig.handback_request
+    "at_speed" (2026-11-10): the path (Shield.handback_unsafe: the Shield's
+    action flown from here, a stop legal at every sample) and the request
+    (Shield.handback_untrusted: its repair judged from the hold point at the
+    speed it asks for, one more decision of the Shield's). One of them a
+    tick, the request first, and the other's last answer stands; until both
+    have answered in a run of guard ticks the hand-back is refused. In a
+    world where nothing else moves (no timed rule, no moving zone, no tracked
+    subject) the request's answer is asked again only when the request (to
+    1 cm/s), the hold point or the rule set changed; where something does
+    move the two take turns, tick by tick; the request is never asked on two
+    ticks running. A tick's hold work is then a slice, or the path's
+    samples, or one decision: never two of them (`checked`: "path",
+    "request")."""
 
     def __init__(self, units: float | None = TICK_QUERIES):
         self.units = units
         self.search: HoldSearch | None = None
         self.last: dict | None = None
+        self.guard: str | None = None
+        self.checked: str | None = None     # which check the last handback() made
+        self.slice = 0.0            # units the last tick()'s search slice spent
         self._state = None
         self._replan = False
+        self._held = False          # the re-plan's in-place plan was given
+        self._waited = 0            # ticks a new search waited for the guard
+        self._path: bool | None = None      # the path check's last answer
+        self._request: bool | None = None   # the request check's last answer
+        self._req_key = self._req_rt = None     # what that answer was asked about
+        self._request_last = False          # the last guard tick asked it
+
+    def handback(self, shield, state: State, action, *, fsm=None, raw=None,
+                 horizon_s: Any = "shield") -> tuple[bool, bool | None]:
+        """Loiter's hand-back guard under the per-tick bound (class
+        docstring): (handback_unsafe, handback_untrusted) for the FSM's
+        TickInput. (True, None) while a search runs, nothing sampled. With
+        `fsm` on handback_request "at_speed" and the request `raw`, the two
+        checks; otherwise the path check alone, as until 2026-11-10.
+        `horizon_s`: the theta basis a rail gives its own FSM (default the
+        Shield's), for the request check to judge by."""
+        self.checked = None
+        if self.units is not None and self.search is not None:
+            self.guard = "search"
+            return True, None
+        self.guard = "ran"
+        if (fsm is None or raw is None
+                or getattr(fsm.config, "handback_request", None) != "at_speed"):
+            self.checked = "path"
+            return bool(shield.handback_unsafe(state, action)), None
+        hold = fsm.hold
+        at = (state if hold is None else
+              State(x=hold.x, y=hold.y, up=hold.up, yaw_deg=state.yaw_deg))
+        # The request check's answer stands while what it was asked about
+        # cannot have changed: the same request (to 1 cm/s) from the same
+        # point under the same rule set, in a world where nothing else moves
+        # (Shield.world_is_still: no timed rule, no moving zone, no tracked
+        # subject). One decision of the Shield's costs as much as the tick's
+        # own (the desktop: 2 ms at the median, 16-22 ms for a request deep
+        # into a zone), and a Loiter that runs to its timeout would make the
+        # same one 150 times. Where the world moves the two checks take
+        # turns, tick by tick: an answer kept for 0.5 s there handed
+        # dyn-nfz-rotate-spin at 9 deg/s back 0.4 s late, into the bar's next
+        # sweep (measured 2026-11-10, the ideal vehicle).
+        key = (round(raw.vx, 2), round(raw.vy, 2), round(raw.vz_up, 2),
+               round(at.x, 2), round(at.y, 2), round(at.up, 2))
+        fresh = (self._request is not None and key == self._req_key
+                 and shield._rt is self._req_rt and shield.world_is_still())
+        if not fresh and not self._request_last:
+            self._request = bool(shield.handback_untrusted(raw, at, fsm=fsm,
+                                                           horizon_s=horizon_s))
+            self._req_key, self._req_rt = key, shield._rt
+            self._request_last = True
+            self.checked = "request"
+        else:
+            # The path's turn: every tick the request's answer stands, and
+            # the tick after a request check whatever changed (never two
+            # request checks running, or a request that changes every tick
+            # would leave the path unsampled).
+            self._path = bool(shield.handback_unsafe(state, action))
+            self._request_last = False
+            self.checked = "path"
+        return (True if self._path is None else self._path), self._request
 
     def reset(self) -> None:
         """Drop any search (a new episode, the FSM reset)."""
@@ -1415,6 +1526,13 @@ class HoldPlanner:
 
     def tick(self, shield, fsm, run: Callable[[], HoldPoint], *, here: State,
              unsafe: list, world=None) -> HoldPoint | None:
+        guard_ran, self.guard = self.guard == "ran", None
+        if not guard_ran:
+            # A run of guard ticks ended: its answers are not the next one's.
+            self._path = self._request = None
+            self._req_key = self._req_rt = None
+            self._request_last = False
+        self.slice = 0.0
         s = self.search
         if s is not None and (fsm.terminal or fsm.state is not self._state):
             self.reset()
@@ -1429,20 +1547,26 @@ class HoldPlanner:
                 world = shield._tick_ctx() or shield._new_tick(None)
             self._state = fsm.state
             self._replan = fsm.hold is not None
+            self._held, self._waited = False, 0
             try:
                 s = self.search = HoldSearch(shield, run, world, self.units)
             except RuntimeError:                    # a thread that cannot start
                 self.search, self.last = None, None
                 return run()                        # the whole search, as before
+            if guard_ran:
+                # This tick's units went to the hand-back guard: the search's
+                # first slice is the next tick's (ONE OF THE TWO A TICK).
+                self._waited = 1
+                return self._meanwhile(shield, fsm, here, unsafe)
         from .fsm import FSMState                  # local: as plan_for
-        if not s.step():
-            if (s.ticks == 1 and self._replan and fsm.hold is not None
-                    and fsm.state is FSMState.LOITER):
-                self.last = None
-                return self._in_place(shield, here, unsafe)
-            return None
+        done = s.step()
+        self.slice = round(s._used, 3)
+        if not done:
+            return self._meanwhile(shield, fsm, here, unsafe)
         self.search = None
         self.last = {"ticks": s.ticks, "units": round(s.spent, 3)}
+        if self._waited:
+            self.last["waited"] = self._waited
         if s.cancelled:
             return None
         if s.error is not None:
@@ -1453,6 +1577,17 @@ class HoldPlanner:
                                      f"{s.error}); holding where the aircraft is, legality "
                                      f"not established"))
         return s.result
+
+    def _meanwhile(self, shield, fsm, here: State, unsafe: list) -> HoldPoint | None:
+        """What is held while the search runs: nothing new, except, once, the
+        in-place plan of a re-plan (the point held is no longer legal)."""
+        from .fsm import FSMState                  # local: as plan_for
+        if (not self._held and self._replan and fsm.hold is not None
+                and fsm.state is FSMState.LOITER):
+            self._held = True
+            self.last = None
+            return self._in_place(shield, here, unsafe)
+        return None
 
     def _in_place(self, shield, here: State, unsafe: list) -> HoldPoint:
         look = float(shield.lookahead_s)

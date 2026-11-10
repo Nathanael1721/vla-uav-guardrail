@@ -485,13 +485,30 @@ UNTRUSTED_OWNERS = ("chain", "projected")
 #   lookahead  from arrival through one lookahead only: the reading until
 #              2026-11-07, kept for comparison.
 HOLD_HORIZONS = ("loiter", "lookahead")
+# What Loiter's hand-back (G8) judges the request on (since 2026-11-10;
+# docs/DESIGN-escalation-fsm.md, "Update 2026-11-10"):
+#   at_speed  on this tick's decision, as before, AND on the same request
+#             judged from the point the Loiter holds at the speed it asks
+#             for (TickInput.handback_untrusted, Shield.handback_untrusted:
+#             the ideal-response forecast from the hold point). A request
+#             whose repair would be untrusted there is not handed back: it
+#             is the request that put the aircraft in Loiter, unchanged, and
+#             only the hold's own stillness - or its sitting a few
+#             decimetres short of its point - makes this tick's repair read
+#             within theta. The hil smoke sm1110_010 (corridor-drift-angles
+#             8 m/s, -60 deg, 9eed35b) was handed back 14 times so, each
+#             after T_recover, and never reached the operator timeout its
+#             label expects. The default.
+#   as_held   on this tick's decision only: the reading until 2026-11-10,
+#             kept for comparison.
+HANDBACK_REQUESTS = ("at_speed", "as_held")
 # A Loiter with no operator timeout (loiter_timeout_s None) is held at most
 # this long for the hold horizon's purpose.
 HOLD_HORIZON_CAP_S = 60.0
 # Every law field and the value earlier records were written under: a config
 # on these values hashes as it did before the field existed.
 LEGACY_LAW = {**LEGACY_LOITER_LAW, "untrusted_owner": "projected",
-              "hold_horizon": "lookahead"}
+              "hold_horizon": "lookahead", "handback_request": "as_held"}
 
 # Every edge this FSM can take: id -> (from, to, source, label). The design
 # doc's transition table lists the same ids, and tests/test_fsm.py drives
@@ -1110,10 +1127,21 @@ class TickInput:
     # was keeping it out of (a sweep's path). None when the caller does not
     # judge it (a replay, a rail without the Shield's forecast): as before.
     handback_unsafe: bool | None = None
+    # In Loiter (since 2026-11-10, FSMConfig.handback_request "at_speed"):
+    # would this request, judged from the point the Loiter holds at the speed
+    # it asks for, need a repair of a hard rule that may not be trusted
+    # (Shield.handback_untrusted: over theta, or not converged)? Loiter does
+    # not hand such a request back (G8), whatever this tick's own repair
+    # reads from the held aircraft. None when the caller does not judge it:
+    # as before.
+    handback_untrusted: bool | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.noise_marginal, bool):
             raise ValueError(f"noise_marginal must be a bool, got {self.noise_marginal!r}")
+        if self.handback_untrusted is not None and not isinstance(self.handback_untrusted, bool):
+            raise ValueError(f"handback_untrusted must be a bool or None, "
+                             f"got {self.handback_untrusted!r}")
         if self.handback_unsafe is not None and not isinstance(self.handback_unsafe, bool):
             raise ValueError(f"handback_unsafe must be a bool or None, "
                              f"got {self.handback_unsafe!r}")
@@ -1188,6 +1216,9 @@ class FSMConfig:
     hold_horizon (HOLD_HORIZONS) is how long a Loiter's hold point must stay
     legal (hold_horizon_s); it entered on 2026-11-07 too, and "lookahead"
     plans the holds as before.
+    handback_request (HANDBACK_REQUESTS) is what Loiter's hand-back judges
+    the request on; it entered on 2026-11-10 (the hash changed again), and
+    "as_held" hands back as before.
     """
     n_violations: int = 3
     window_s: float = 5.0
@@ -1203,6 +1234,7 @@ class FSMConfig:
     loiter_x67: str = "position"
     untrusted_owner: str = "chain"
     hold_horizon: str = "loiter"
+    handback_request: str = "at_speed"
 
     # Grant symbols accepted in YAML, so a profile can be written the way p4
     # writes it ("N: 3, T: 5, T_recover: 2").
@@ -1252,6 +1284,9 @@ class FSMConfig:
         if self.hold_horizon not in HOLD_HORIZONS:
             raise ValueError(f"FSMConfig.hold_horizon {self.hold_horizon!r} "
                              f"is not one of {HOLD_HORIZONS}")
+        if self.handback_request not in HANDBACK_REQUESTS:
+            raise ValueError(f"FSMConfig.handback_request {self.handback_request!r} "
+                             f"is not one of {HANDBACK_REQUESTS}")
         # At most one counted onset per onset_clear_s: N of them need
         # (N - 1) x onset_clear_s seconds, which must fit in T, or N-in-T (G2,
         # G4) could never fire and the config would quietly delete both edges.
@@ -1369,7 +1404,9 @@ class FSMConfig:
         record still names the behaviour it flew, and today's default law
         has a hash of its own. untrusted_owner and hold_horizon (2026-11-07)
         do the same (LEGACY_LAW): "projected" and "lookahead" hash as every
-        config did before them (today's Loiter law: `sha256:d55e1bfe...`)."""
+        config did before them (today's Loiter law: `sha256:d55e1bfe...`),
+        and so does handback_request (2026-11-10): "as_held" hashes as the
+        default did at 9eed35b."""
         d = self.__dict__.get("_digest")
         if d is None:
             fields = {k: v for k, v in self.to_dict().items()
@@ -1734,6 +1771,30 @@ class EscalationFSM:
         self._clean_hard_since = None
         self._loiter_ok_since = None
 
+    def untrusted_repair(self, inp: TickInput) -> bool:
+        """Would step() read `inp`'s repair as one of a HARD rule that may
+        not be trusted - over theta or not converged, not the legal stop a
+        brake rule asks for (G3's own test, `hard_untrusted`)? Nothing moves:
+        no state, clock or window is read or written. For a request judged
+        somewhere other than this tick's state (Shield.handback_untrusted)."""
+        cfg = self.config
+        enforced = [h for h in inp.violations if h.effective_action != "monitor_only"]
+        if not enforced:
+            return False
+        strongest = min(enforced, key=_governing_key).effective_action
+        theta_exceeded = (inp.magnitude.exceeds(cfg)
+                          if inp.outcome == "repaired" else None)
+        untrusted = inp.outcome == "blocked" or bool(theta_exceeded)
+        projected = [h for h in enforced
+                     if h.effective_action == "project_fix" and not h.kinematic]
+        chain = ([h for h in enforced
+                  if h.effective_action == "project_fix" and h.kinematic]
+                 if (untrusted and not projected
+                     and cfg.untrusted_owner == "chain") else [])
+        stop_rule = strongest == "brake" and not inp.stop_illegal
+        return bool(untrusted and any(h.hard for h in projected or chain)
+                    and not stop_rule)
+
     def step(self, inp: TickInput) -> FSMOutput:
         if not isinstance(inp, TickInput):
             raise ValueError(f"step() takes a TickInput, got {type(inp).__name__}")
@@ -1898,9 +1959,18 @@ class EscalationFSM:
         # breach (a move of its own onto a spot the sweep made unsafe).
         starts_now = hard_violated and not self._prev_hard
         handback_unsafe = bool(inp.handback_unsafe) and cfg.hold_horizon == "loiter"
+        # And since 2026-11-10 (handback_request "at_speed"): the request
+        # must also be one whose repair can be trusted from the point the
+        # Loiter holds, at the speed it asks for (TickInput.
+        # handback_untrusted). This tick's repair is judged from the held
+        # aircraft - at rest, and wherever the hold's settling has it - and
+        # on the rig that read the unchanged request of corridor-drift-angles
+        # within theta 14 times over (sm1110_010).
+        handback_untrusted = (bool(inp.handback_untrusted)
+                              and cfg.handback_request == "at_speed")
         acceptable = (not hard_untrusted and strongest not in ("loiter", "RTL", "land")
                       and not inp.stop_illegal and not starts_now
-                      and not handback_unsafe)
+                      and not handback_unsafe and not handback_untrusted)
         if not acceptable:
             self._loiter_ok_since = None
         elif self._loiter_ok_since is None:
@@ -2045,6 +2115,11 @@ class EscalationFSM:
             # onto a spot where a stop is illegal (hold_horizon "loiter",
             # 2026-11-07). Only on such ticks.
             record["handback_unsafe"] = True
+        if handback_untrusted:
+            # Loiter kept a request whose repair, judged from the hold point
+            # at the speed it asks for, could not be trusted (handback_request
+            # "at_speed", 2026-11-10). Only on such ticks.
+            record["handback_untrusted"] = True
         if before == FSMState.LOITER:
             # Loiter's own "cleared" clock (loiter_clear "acceptable",
             # 2026-11-02): the request acceptable and the position legal for
@@ -2492,7 +2567,8 @@ def tick_input_from_decision(t: float, decision: Any, policy: Any,
                              hold_legal: bool | None = None,
                              position_lost: str | None = None,
                              noise_marginal: bool = False,
-                             handback_unsafe: bool | None = None) -> TickInput:
+                             handback_unsafe: bool | None = None,
+                             handback_untrusted: bool | None = None) -> TickInput:
     """Map one `guardrail.shield.ShieldDecision` onto a TickInput.
 
     blocked   the Shield braked, or its own re-check of the emitted action is
@@ -2578,7 +2654,8 @@ def tick_input_from_decision(t: float, decision: Any, policy: Any,
                      landed=landed, note=note, stop_illegal=bool(stop),
                      unsafe_depth_m=unsafe_depth_m, hold_legal=hold_legal,
                      position_lost=position_lost, noise_marginal=bool(noise_marginal),
-                     handback_unsafe=handback_unsafe)
+                     handback_unsafe=handback_unsafe,
+                     handback_untrusted=handback_untrusted)
 
 
 # --------------------------------------------------------------------------- #
