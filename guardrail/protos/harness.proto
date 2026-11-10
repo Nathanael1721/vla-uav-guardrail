@@ -40,8 +40,12 @@ service StressHarness {
   // Open a session: the backend that flies its episodes, the page's
   // (scene, airframe, seed), and optionally a REST hot-apply endpoint
   // (guardrail/api.py) the session is BOUND to: a HotApply addressed to the
-  // session is then forwarded there as an HTTP POST. BACKEND_SITL is
-  // reserved and answers UNIMPLEMENTED. An endpoint off loopback is
+  // session is then forwarded there as an HTTP request. BACKEND_SITL and
+  // BACKEND_HIL (2026-11-10) are the flight rails: the session's episodes
+  // are flown by the server's rig (serve --rail), one mission each, and the
+  // endpoint is then the address the mission's own hot-apply listener is
+  // started on. A server with no rig for the backend answers UNIMPLEMENTED.
+  // An endpoint off loopback is
   // PERMISSION_DENIED unless the server allows its host. A session left
   // OPEN with no call on it and nothing armed or flying for the server's
   // session TTL (default one hour) is stopped, its event stream saying
@@ -63,7 +67,11 @@ service StressHarness {
   // bytes, pinned to `expected_hash` (required; a bundle that hashes to
   // anything else is FAILED_PRECONDITION). In a REST-bound session the
   // endpoint must be flying that policy (GET /health), or the session would
-  // hot-apply onto rules it did not inject: FAILED_PRECONDITION.
+  // hot-apply onto rules it did not inject: FAILED_PRECONDITION. In a rail
+  // session nothing flies yet: the policy must be a file both hosts hold
+  // (bundle_path, no uploaded bytes), the mission is launched pinned to its
+  // hash, and the endpoint is checked against it when the mission's listener
+  // first answers, before anything is forwarded.
   rpc InjectPolicy (InjectPolicyRequest) returns (PolicyAck);
 
   // A mid-flight policy event in the Policy DSL's REST hot-apply form
@@ -83,6 +91,19 @@ service StressHarness {
   // Addressed to a SESSION (`session_id`) bound to a REST endpoint: POSTed to
   // <endpoint>/hot_apply as it is, and the endpoint's answer returned (its
   // 409 / 404 / 422 as above; an endpoint that does not answer UNAVAILABLE).
+  // An EDIT of a dynamic_nfz (2026-11-10) - a body {"type": "dynamic_nfz",
+  // "op": "translate" | "rotate" | "scale" | "move", "id": <zone>, ...} - is
+  // sent as PATCH <endpoint>/dynamic_nfz/<id> instead, with the route's own
+  // body ({"op": "translate", "dx": 5, "dy": 0}, {"op": "rotate",
+  // "angle_deg": 30}, {"op": "scale", "factor": 1.5}): /hot_apply cannot
+  // carry one. PolicyAck.forwarded_method says which.
+  //
+  // Addressed to an EPISODE of a RAIL session: queued for mission time
+  // `at_sim_t` (or sent at once with `now`) and forwarded then, as above, to
+  // the endpoint the mission serves; the ack says `pending`, and the
+  // endpoint's receipt arrives as a `hot_apply_forwarded` event and in the
+  // bundle's harness_events.jsonl. Mission time 0 is when the endpoint's
+  // GET /health first reports mission_started.
   rpc HotApply (HotApplyRequest) returns (PolicyAck);
 
   // ---- episode ----------------------------------------------------------
@@ -92,7 +113,11 @@ service StressHarness {
   // until EndEpisode, and an episode left ARMED with no call for the
   // server's idle TTL (default one hour) expires. `live`: it starts flying
   // now, stepped at `pace` simulated seconds per wall second, and takes
-  // HotApply / EmitEvent while it flies.
+  // HotApply / EmitEvent while it flies. In a RAIL session (BACKEND_SITL,
+  // BACKEND_HIL) the mission is LAUNCHED by this call on the server's rig
+  // (the sweep's own rail transport), one at a time (a second one while it
+  // flies is RESOURCE_EXHAUSTED); a scenario the rail cannot fly as written
+  // is FAILED_PRECONDITION with the rail's reason, nothing launched.
   rpc StartEpisode (StartEpisodeRequest) returns (EpisodeRef);
 
   // The natural-language task, for an ARMED episode or for the session's
@@ -102,7 +127,9 @@ service StressHarness {
   rpc IssueTask (IssueTaskRequest) returns (TaskAck);
 
   // A ScenarioEvent (the grant's seven event types), at `at_sim_t` (or, on a
-  // live episode with `now`, at the next tick).
+  // live episode with `now`, at the next tick). A rail episode takes none
+  // (UNIMPLEMENTED): its scenario's own events are flown by the mission, and
+  // mid-flight changes go over REST (HotApply).
   rpc EmitEvent (EmitEventRequest) returns (EventAck);
 
   rpc GetStatus (EpisodeRef) returns (EpisodeStatus);
@@ -113,7 +140,11 @@ service StressHarness {
   // and a call made while another call is flying the episode waits for that
   // flight and returns its bundle (or its failure). An episode the runner
   // refuses in flight (an event the Shield rejects, say) is
-  // FAILED_PRECONDITION.
+  // FAILED_PRECONDITION. A rail episode: BLOCKS until the mission has ended
+  // and its run folder is fetched (minutes: give it the mission's time cap
+  // plus the rig's margin), then scores it with the sweep's rail scorer and
+  // returns its bundle; a flight the rig could not complete or accept is
+  // FAILED_PRECONDITION with the rig's reason.
   rpc EndEpisode (EpisodeRef) returns (EpisodeBundle);
 
   // ---- streams ----------------------------------------------------------
@@ -134,7 +165,12 @@ service StressHarness {
 enum Backend {
   BACKEND_UNSPECIFIED = 0;   // read as BACKEND_HEADLESS
   BACKEND_HEADLESS = 1;      // experiments/sweep_scenarios.py, kinematic, never KPI-grade
-  BACKEND_SITL = 2;          // RESERVED (the ArduPilot SITL rail): UNIMPLEMENTED
+  // The flight rails, flown by the server's rig (serve --rail; a server
+  // without one answers UNIMPLEMENTED): the desktop's ArduPilot SITL +
+  // MAVROS 2 rail (topology dev), and the hil rig (SITL on the desktop, the
+  // mission on the Jetson Orin).
+  BACKEND_SITL = 2;
+  BACKEND_HIL = 3;
 }
 
 message StartSessionRequest {
@@ -235,6 +271,8 @@ message EpisodeRef {
   string policy_hash = 9;
   string session_id = 10;
   bool live = 11;
+  // headless | sitl | hil
+  string backend = 12;
 }
 
 message HotApplyRequest {
@@ -277,6 +315,13 @@ message PolicyAck {
   string signature = 14;
   // InjectPolicy in a REST-bound session: the policy the endpoint flies.
   string endpoint_policy_hash = 15;
+  // A forwarded HotApply: the HTTP method (POST to /hot_apply, PATCH to
+  // /dynamic_nfz/<id> for an edit of a zone).
+  string forwarded_method = 16;
+  // A HotApply to a rail episode: queued for its mission time, not yet sent;
+  // generation and policy_hash are then unknown (0, ""), and the endpoint's
+  // receipt follows in StreamEvents and the bundle.
+  bool pending = 17;
 }
 
 message IssueTaskRequest {
@@ -356,6 +401,11 @@ message EpisodeStatus {
   // once a scheduled episode has ENDED. Unset otherwise (a scheduled
   // episode flies in one call; 0 would read as "flew nothing").
   optional int64 ticks_flown = 19;
+  // headless | sitl | hil
+  string backend = 20;
+  // A rail episode: launching | awaiting_endpoint | awaiting_mission_start |
+  // mission | fetched | scored ("" on the headless backend).
+  string rail_phase = 21;
 }
 
 // One row of the Stress Testing KPI report ("per-scenario-family stats
@@ -391,16 +441,30 @@ message AppliedEvent {
   string reason = 5;
   int64 generation = 6;
   string policy_hash = 7;
+  // "runner" (the headless runner applied it) or "rest" (forwarded to the
+  // session's REST endpoint, which applied it to the flying Shield).
+  string via = 8;
+  // via "rest": the endpoint's answer as JSON (its receipt: applied, op,
+  // type, generation, policy_hash), or "" when it refused.
+  string receipt_json = 9;
 }
 
+// A RAIL episode's bundle (2026-11-10) is the grant's six items under the
+// grant's names - manifest.json (the mission's own), policy_bundle.tar.gz
+// (every generation's IR from the run's policy_g<N>.json), episode.bag2/ (the
+// run's rosbag2 directory, recorded there as bag/), shield_audit.jsonl,
+// harness_events.jsonl (each forwarded hot-apply with its generation and the
+// endpoint's receipt) and kpi.json - beside harness_request.json and
+// manifest_extras.json; `bundle_files` says which were written and why not.
+//
 // The episode bundle as the headless runner writes it, in `bundle_path`:
 // manifest.json (the grant's six fields), kpi.json, harness_events.jsonl and
 // harness_request.json, manifest_extras.json (the arm, the task's hash, and
 // the self-contained keys tools/rerun_episode.py re-flies the episode from)
-// and, when asked, flight_log.jsonl. The grant's bundle also lists
-// policy_bundle.tar.gz, episode.bag2/ and shield_audit.jsonl: the headless
-// runner writes none of them (no ROS 2 graph to record, no audit writer on
-// this path).
+// and, when asked, flight_log.jsonl, with shield_audit.jsonl (since
+// 2026-10-30) and policy_bundle.tar.gz (2026-11-02; every generation's IR
+// since 2026-11-10). episode.bag2/ is not written on the headless backend:
+// there is no ROS 2 graph to record (`bundle_files` says so).
 message EpisodeBundle {
   string episode_id = 1;
   string bundle_path = 2;
@@ -421,6 +485,13 @@ message EpisodeBundle {
   // The IssueTask prompt's SHA-256 ("" when no task was issued).
   string task_prompt_sha256 = 14;
   bool live = 15;
+  // headless | sitl | hil
+  string backend = 16;
+  // A rail episode: the fetched run folder the bundle was made from.
+  string rail_run_path = 17;
+  // The grant's episode-bundle names -> "written ..." or "not written: why"
+  // (kpi.json harness.bundle_files).
+  map<string, string> bundle_files = 18;
 }
 
 message Action4D {
@@ -462,7 +533,7 @@ message HarnessEvent {
   double wall_time = 4;
   // session_started | policy_injected | task_issued | episode_started |
   // hot_apply | hot_apply_forwarded | emit_event | run_event |
-  // episode_ended | episode_failed | session_stopped
+  // rail_phase | episode_ended | episode_failed | session_stopped
   string kind = 5;
   string detail_json = 6;
 }

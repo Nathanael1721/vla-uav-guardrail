@@ -16,6 +16,135 @@ shipped change and recorded as one.
 
 ## [Unreleased]
 
+### 2026-11-10 (harness on the rails) — a harness session on a flight rail is one flown, scored episode with the grant's bundle, and zone edits go to the flying Shield as PATCH /dynamic_nfz; built and tested on a fake rig, not flown
+
+Audit cards WP4-03 and WP4-05, the code side. **Nothing here has flown**: no
+SITL, WSL, docker, ssh or Orin was touched (KPI flights were in the air on
+the desktop while this was written), and every test runs on the fake rig
+`tests/test_sweep.py` flies its hil campaign on.
+
+#### Found
+- The harness forwarded a session's HotApply to `<endpoint>/hot_apply` only,
+  which takes a spawn, a switch and a swap. An edit of a zone that exists
+  (translate, rotate, scale, move) is the endpoint's
+  `PATCH /dynamic_nfz/{id}`; sent to `/hot_apply` it is refused there (422),
+  so three of the grant's seven event types could not be driven through the
+  harness into a flying Shield.
+- `BACKEND_SITL` answered UNIMPLEMENTED: the rail was started outside the
+  harness, which neither launched the episode nor scored it. The sweep
+  already had both (`--backend hil`: `run_hil`, its transport, the rail
+  scorer), with nothing joining them to a session.
+- The bundle's `policy_bundle.tar.gz` held the first and the last
+  generation's IR, the ones between by hash only: the headless runner kept
+  no copy. Nothing wrote `episode.bag2/`; a rail run's bag is `bag/`.
+- The Orin's mission image, as its build files read, has no fastapi or
+  uvicorn (`deploy/docker/companion.Dockerfile` installs `requirements.txt`
+  under `constraints-companion.txt`; neither names them), so a hil mission
+  launched with `--hotapply-port` could not start its listener. Read from
+  the files, the built image not inspected; not changed here (the image is
+  built on the Orin). It is the first thing a hil flight of this needs.
+
+#### Added
+- **Zone edits over the bound REST endpoint** (`rest_route`,
+  `guardrail/harness_service.py`). A hot-apply body `{"type": "dynamic_nfz",
+  "op": "translate" | "rotate" | "scale" | "move", "id": ...}` is sent as
+  `PATCH <endpoint>/dynamic_nfz/<id>` with the route's own body; every other
+  body still goes to `POST /hot_apply` unchanged. Same request function as
+  the POST: no proxy, the server's REST TLS identity, the endpoint's 409 /
+  404 / 422 mapped as before. `PolicyAck.forwarded_method` says which route.
+  Works for a session HotApply, a `drive` timeline and a rail episode.
+- **Rail sessions** (`BACKEND_SITL`, new `BACKEND_HIL`; `RailRig`,
+  `serve --rail sitl|hil`). StartEpisode launches the mission through
+  `experiments/sweep_scenarios.py`'s own `run_hil` and transport (or
+  `run_sitl`), with the scenario's own arguments plus the Shield node's
+  hot-apply listener flags when the session names an endpoint; a HotApply
+  to the episode is queued for its mission time and forwarded then;
+  EndEpisode waits for the flight, scores the fetched run with `score`,
+  `rail_gate_set("ideal")` and `episode_verdict`, writes
+  `scenario_score.json` beside a hil run as the campaign does, and returns
+  the bundle. The transport is injected (`RailRig.transport`,
+  `RailRig.sitl_runner`). A scenario the rail cannot fly as written, a
+  control arm on a rig without `--rail-controls`, `live` and `pace` are
+  refused with nothing launched; EmitEvent on a rail episode is
+  UNIMPLEMENTED; one mission at a time. A server with no rig answers
+  UNIMPLEMENTED for both backends, as it did for SITL.
+- **The bundle's grant names for a rail episode**: `manifest.json` (the
+  mission's own), `policy_bundle.tar.gz`, `episode.bag2/`,
+  `shield_audit.jsonl`, `harness_events.jsonl` (each forwarded hot-apply
+  with its route, mission time, generation and the endpoint's receipt, or
+  the refusal; the rail's own record of it beside; what was never sent),
+  `kpi.json`. `episode.bag2/` is an alias of the run's `bag/` (hard links
+  on one volume, copies otherwise, each file's SHA-256 in kpi.json), not a
+  rename: the run folder keeps `bag/`, which the replay pack, the exporters
+  and the entrypoint read. A file the run folder lacks is "not written"
+  with the reason, never made up (`EpisodeBundle.bundle_files`).
+- **Every hot-apply generation's IR in `policy_bundle.tar.gz`.** The
+  headless runner keeps each generation's canonical IR
+  (`EpisodeRun.generations`, a read after each accepted event);
+  `write_policy_bundle(held=...)` packs each one that hashes to the recorded
+  hash. A rail episode's come from the run's `policy_g<N>.json`.
+- `tools/harness_client.py run --backend sitl|hil --rest-endpoint URL
+  [--end-timeout S]`; `render_bundle` prints the rail run, the route of
+  each applied event and the bundle's files.
+- `.proto`: `BACKEND_HIL`, `EpisodeRef.backend`, `PolicyAck.forwarded_method`
+  and `pending`, `EpisodeStatus.backend` and `rail_phase`,
+  `AppliedEvent.via` and `receipt_json`, `EpisodeBundle.backend`,
+  `rail_run_path` and `bundle_files`. New field numbers only; the stubs are
+  regenerated.
+
+#### Changed
+- `run_hil`, `run_sitl` and `build_sitl_cmd` take an optional `extra_args`
+  (the listener's flags, `RAIL_HOTAPPLY_FLAGS`, checked by
+  `rail_extra_args`; a mission-shaping flag is refused). A campaign passes
+  none: `tests/test_sweep.py`, unchanged, passes, and a session with no
+  endpoint launches exactly `rail_node_args`' list.
+- A two-hot-apply headless bundle is now `complete` (it said incomplete);
+  `tests/test_harness_service.py` keeps the old gap as its null.
+- `guardrail/fsm.py`, `shield.py`, `holdpoint.py`, `hold_flight.py` and the
+  `sitl/` nodes are untouched.
+
+#### Tests
+- `tests/test_harness_rail.py`, 11/11 (in the CI loop): the routes; each
+  edit forwarded as PATCH with the endpoint's receipt, against a twin Shield
+  given the same handler calls, and the old behaviour as the null; a hil
+  session flown, scored (the campaign's own `scenario_score.json` agrees)
+  and bundled, with five forwards, a refusal and an event never sent; a
+  bare run folder ("not written"); the refusals; a failed flight and a
+  manifest naming another policy; an endpoint flying another policy, and
+  one already past its mission start (nothing forwarded, and said); the
+  sitl backend; the headless generations; the client tool over gRPC.
+- Seventeen deliberate breaks of this change, each applied alone and the
+  file restored: edits routed to /hot_apply, the PATCH body keeping `type`
+  and `id`, scheduled hot-applies forwarded at once, forwards not kept for
+  the bundle, held generations ignored, the bag not aliased, `run_hil`
+  dropping the listener's flags, the rig taking two missions, the
+  endpoint's policy unchecked, a mission that flew another policy bundled,
+  any extra rail argument accepted, the runner keeping no later generation,
+  the receipt's generation not recorded, a refused scenario launched, a
+  missing manifest made up, a never-sent hot-apply dropped, a listener
+  already past its mission start given a time 0. All seventeen fail
+  `tests/test_harness_rail.py`.
+- `tests/test_harness_service.py` 62/62, `tests/test_wp4outputs_harness.py`
+  16/16 (the SITL-reserved test now reads "no rig").
+
+#### Limits
+- The fake rig's listener is the standard library calling
+  `guardrail/api.py`'s handlers; the real one is FastAPI under uvicorn with
+  mutual TLS off loopback. The PATCH tests use plaintext loopback.
+- Mission time 0 is when the listener's `GET /health` first reports
+  `mission_started`, polled every 0.2 s on the pad: this server's mission
+  time runs late by at most a poll plus a round trip, never early. On a
+  real node that is unmeasured, as is what the pad polls cost its tick.
+- A failed rail flight has no bundle; its forwards stay in the session's
+  stream.
+
+#### Not done
+- No rail session has flown, on hil or the desktop rail: WP4-03 and WP4-05
+  stay open until one has. The rig command is in
+  docs/DESIGN-harness-grpc.md, "Not flown, and what a flight needs".
+- fastapi and uvicorn in the Orin's mission image (above).
+- `DELETE /dynamic_nfz/{id}` is not forwarded (not on the grant's list).
+
 ### 2026-11-10 (the Orin's tick, and a hand-back judged at speed) — a tick pays for one kind of hold work, never two; Loiter hands back only a request whose repair can be trusted from its hold point at the speed it asks for
 
 #### Found

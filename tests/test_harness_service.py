@@ -449,11 +449,12 @@ def test_the_bundle_carries_the_grants_policy_bundle_and_says_why_no_bag():
     """WP4-05 (the grant's file names, Stress Testing "Episode bundle"):
     policy_bundle.tar.gz is "the exact bundle that was active (incl. all
     hot-apply generations)". Two hot-applies (a zone at 3 s, its switch-off at
-    5 s): the injected policy file byte for byte, generation 0's IR and the
-    last generation's, each hashing to the hash the episode recorded, every
-    member under its digest in the index; the generation between them is in
-    the index by its hash only, and the index and kpi.json say the bundle is
-    incomplete. With one hot-apply every generation's IR is in it. The same
+    5 s): the injected policy file byte for byte and EVERY generation's IR
+    (since 2026-11-10 the runner keeps each one, EpisodeRun.generations; until
+    then the one between the first and the last was in the index by its hash
+    only, and the bundle said incomplete), each hashing to the hash the
+    episode recorded, every member under its digest in the index. Without
+    the held IRs the old gap is back and is said (the null). The same
     inputs give the same bytes; a final policy that is not the recorded last
     generation is not packed as it. episode.bag2/ is not written, and
     kpi.json says why. Fails before 2026-11-02: no policy_bundle.tar.gz."""
@@ -465,7 +466,8 @@ def test_the_bundle_carries_the_grants_policy_bundle_and_says_why_no_bag():
     assert (d / "shield_audit.jsonl").is_file() and not (d / "episode.bag2").exists()
     names, blobs, idx = _policy_bundle(d)
     assert names == sorted(["injected/sim_demo_policy.yaml", "generations/policy_g0.json",
-                            "generations/policy_g2.json", H.POLICY_BUNDLE_INDEX]), names
+                            "generations/policy_g1.json", "generations/policy_g2.json",
+                            H.POLICY_BUNDLE_INDEX]), names
     assert blobs["injected/sim_demo_policy.yaml"] == \
         (ROOT / "policies" / "sim_demo_policy.yaml").read_bytes()
     assert idx["members"] and all(
@@ -480,11 +482,19 @@ def test_the_bundle_carries_the_grants_policy_bundle_and_says_why_no_bag():
         if g["ir"]:
             assert Policy.model_validate(json.loads(blobs[g["ir"]])).matches_hash(
                 g["policy_hash"]), g
-    assert [g["ir"] is None for g in idx["generations"]] == [False, True, False]
-    assert idx["complete"] is False and "[1]" in idx["missing"], idx["missing"]
+    assert [g["ir"] is None for g in idx["generations"]] == [False, False, False]
+    assert idx["complete"] is True and idx["missing"] is None, idx["missing"]
     files = _bundle_kpi(b)["harness"]["bundle_files"]
     assert files["episode.bag2/"].startswith("not written") and "ROS 2" in files["episode.bag2/"]
-    assert files["policy_bundle.tar.gz"].startswith("written, incomplete"), files
+    assert files["policy_bundle.tar.gz"] == "written, complete", files
+    # The null: the same episode's generations with no held IR (the bundle of
+    # before 2026-11-10) - the middle one by hash only, and said.
+    first = Policy.model_validate(json.loads(blobs["generations/policy_g0.json"]))
+    final = Policy.model_validate(json.loads(blobs["generations/policy_g2.json"]))
+    old = H.write_policy_bundle(_tmpdir("pb0_"), ROOT / "policies" / "sim_demo_policy.yaml",
+                                first, final, idx["generations"])
+    assert [g["ir"] is None for g in old["generations"]] == [False, True, False]
+    assert old["complete"] is False and "[1]" in old["missing"], old["missing"]
     # One hot-apply: both generations' IR, complete.
     _, _, b1 = _h_fly(h, OPEN, hot=[(3.0, ZONE)], seed=7)
     _, blobs1, idx1 = _policy_bundle(Path(b1["bundle_path"]))

@@ -100,8 +100,12 @@ class StressHarnessServicer:
         """Open a session: the backend that flies its episodes, the page's
         (scene, airframe, seed), and optionally a REST hot-apply endpoint
         (guardrail/api.py) the session is BOUND to: a HotApply addressed to the
-        session is then forwarded there as an HTTP POST. BACKEND_SITL is
-        reserved and answers UNIMPLEMENTED. An endpoint off loopback is
+        session is then forwarded there as an HTTP request. BACKEND_SITL and
+        BACKEND_HIL (2026-11-10) are the flight rails: the session's episodes
+        are flown by the server's rig (serve --rail), one mission each, and the
+        endpoint is then the address the mission's own hot-apply listener is
+        started on. A server with no rig for the backend answers UNIMPLEMENTED.
+        An endpoint off loopback is
         PERMISSION_DENIED unless the server allows its host. A session left
         OPEN with no call on it and nothing armed or flying for the server's
         session TTL (default one hour) is stopped, its event stream saying
@@ -131,7 +135,11 @@ class StressHarnessServicer:
         bytes, pinned to `expected_hash` (required; a bundle that hashes to
         anything else is FAILED_PRECONDITION). In a REST-bound session the
         endpoint must be flying that policy (GET /health), or the session would
-        hot-apply onto rules it did not inject: FAILED_PRECONDITION.
+        hot-apply onto rules it did not inject: FAILED_PRECONDITION. In a rail
+        session nothing flies yet: the policy must be a file both hosts hold
+        (bundle_path, no uploaded bytes), the mission is launched pinned to its
+        hash, and the endpoint is checked against it when the mission's listener
+        first answers, before anything is forwarded.
         """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -155,6 +163,19 @@ class StressHarnessServicer:
         Addressed to a SESSION (`session_id`) bound to a REST endpoint: POSTed to
         <endpoint>/hot_apply as it is, and the endpoint's answer returned (its
         409 / 404 / 422 as above; an endpoint that does not answer UNAVAILABLE).
+        An EDIT of a dynamic_nfz (2026-11-10) - a body {"type": "dynamic_nfz",
+        "op": "translate" | "rotate" | "scale" | "move", "id": <zone>, ...} - is
+        sent as PATCH <endpoint>/dynamic_nfz/<id> instead, with the route's own
+        body ({"op": "translate", "dx": 5, "dy": 0}, {"op": "rotate",
+        "angle_deg": 30}, {"op": "scale", "factor": 1.5}): /hot_apply cannot
+        carry one. PolicyAck.forwarded_method says which.
+
+        Addressed to an EPISODE of a RAIL session: queued for mission time
+        `at_sim_t` (or sent at once with `now`) and forwarded then, as above, to
+        the endpoint the mission serves; the ack says `pending`, and the
+        endpoint's receipt arrives as a `hot_apply_forwarded` event and in the
+        bundle's harness_events.jsonl. Mission time 0 is when the endpoint's
+        GET /health first reports mission_started.
         """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -168,7 +189,11 @@ class StressHarnessServicer:
         until EndEpisode, and an episode left ARMED with no call for the
         server's idle TTL (default one hour) expires. `live`: it starts flying
         now, stepped at `pace` simulated seconds per wall second, and takes
-        HotApply / EmitEvent while it flies.
+        HotApply / EmitEvent while it flies. In a RAIL session (BACKEND_SITL,
+        BACKEND_HIL) the mission is LAUNCHED by this call on the server's rig
+        (the sweep's own rail transport), one at a time (a second one while it
+        flies is RESOURCE_EXHAUSTED); a scenario the rail cannot fly as written
+        is FAILED_PRECONDITION with the rail's reason, nothing launched.
         """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -186,7 +211,9 @@ class StressHarnessServicer:
 
     def EmitEvent(self, request, context):
         """A ScenarioEvent (the grant's seven event types), at `at_sim_t` (or, on a
-        live episode with `now`, at the next tick).
+        live episode with `now`, at the next tick). A rail episode takes none
+        (UNIMPLEMENTED): its scenario's own events are flown by the mission, and
+        mid-flight changes go over REST (HotApply).
         """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -205,7 +232,11 @@ class StressHarnessServicer:
         and a call made while another call is flying the episode waits for that
         flight and returns its bundle (or its failure). An episode the runner
         refuses in flight (an event the Shield rejects, say) is
-        FAILED_PRECONDITION.
+        FAILED_PRECONDITION. A rail episode: BLOCKS until the mission has ended
+        and its run folder is fetched (minutes: give it the mission's time cap
+        plus the rig's margin), then scores it with the sweep's rail scorer and
+        returns its bundle; a flight the rig could not complete or accept is
+        FAILED_PRECONDITION with the rig's reason.
         """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')

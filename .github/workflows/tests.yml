@@ -48,7 +48,10 @@
 #          test_sweep, test_failsafe_rubric (the fail-safe labels and
 #          docs/RUBRIC-failsafe.md), test_kpi_magnitudes, test_kpi_report,
 #          test_kpi_blind (off-map ticks and simulator contacts),
-#          test_harness_service, test_harnesstruth_*, test_wp4outputs_*.
+#          test_harness_service, test_harnesstruth_*, test_wp4outputs_*,
+#          test_harness_rail (2026-11-10: the harness's rail sessions and
+#          zone edits over PATCH /dynamic_nfz, on test_sweep's fake hil rig;
+#          its gRPC test SKIPs on the requirements-only job).
 #        The flying rails: test_railinputs_*, test_flight_pas_ap_20261008 (on
 #          its tests/fixtures/ copy of the 8 Oct flight), test_pas_ardupilot,
 #          test_sitl_rails, test_sitl_stressors (the simulator's stressors on
@@ -644,7 +647,7 @@ jobs:
               tests/test_railinputs_perception.py \
               tests/test_wp4outputs_kpi_report.py \
               tests/test_wp4outputs_exporters.py \
-              tests/test_wp4outputs_harness.py \
+              tests/test_wp4outputs_harness.py               tests/test_harness_rail.py \
               tests/test_railvideo_truth_frame.py \
               tests/test_railvideo_recording.py \
               tests/test_railvideo_compare.py \
