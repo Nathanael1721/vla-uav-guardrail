@@ -21,7 +21,10 @@ labelled two ways (failsafe-loiter-timeout "expected", dyn-nfz-spawn-ahead
     non-trigger;
   * the tool that applies the rubric (tools/failsafe_rubric.py) gives each
     clause on a cell built for it, from the flight WITHOUT a fail-safe, so a
-    label cannot follow from what the FSM did.
+    label cannot follow from what the FSM did. On this branch (proposed
+    2026-11-06, NOT adopted: docs/RUBRIC-failsafe.md section 7) E5 is read
+    on the flight the grant prescribes instead - projection abandoned and
+    the aircraft held on an unsafe request - which reads no FSM state either.
 """
 import sys
 from pathlib import Path
@@ -154,12 +157,18 @@ def test_an_episode_ending_in_loiter_before_the_timeout_is_censored_not_correct(
 
 
 def test_the_tool_gives_each_clause_from_the_flight_without_a_fail_safe():
-    """tools/failsafe_rubric.py on cells built for each clause. E5 from the
-    flight with no fail-safe: a spawn 3 m ahead keeps the pilot asking for a
-    repair over theta past the timeout; one 30 m ahead does not. The rail
-    mission's E5 spell is short there (the projection takes the stub round
-    the zone) although on the FSM's own flight its Loiter kept the request
-    deep for 30 s: the label cannot follow from what the FSM did."""
+    """tools/failsafe_rubric.py on cells built for each clause. E1-E3 from the
+    flight with no fail-safe. E5, on this branch (proposed 2026-11-06, NOT
+    adopted: docs/RUBRIC-failsafe.md section 7), from the flight the grant
+    prescribes - projection abandoned and the aircraft held on every tick
+    whose request the Shield may not fly - with the adopted reading (the
+    flight with no fail-safe) printed beside it. A spawn 3 m ahead keeps the
+    pilot asking for a repair over theta past the timeout on both; one 30 m
+    ahead on neither. The rail mission is where the two readings part: on
+    the flight without a fail-safe the projection takes the stub round the
+    zone (10.9 s of unsafe requests, N1); held, as the grant prescribes, its
+    request stays over theta for the whole 49.9 s (E5). Neither reads what
+    the FSM did."""
     import failsafe_rubric as R
     from guardrail.scenario_spec import expand
     timeout = FSMConfig().loiter_timeout_s
@@ -167,10 +176,11 @@ def test_the_tool_gives_each_clause_from_the_flight_without_a_fail_safe():
         "dyn-nfz-spawn-ahead@ahead_m=3,variant=0,vehicle_speed_mps=4": (True, ["E5"]),
         "dyn-nfz-spawn-ahead@ahead_m=30,variant=0,vehicle_speed_mps=4": (False, []),
         "wind-beyond-authority@lane_y=15,wind_speed_mps=8": (True, ["E2"]),
-        "rail-mission-stub-vla": (False, []),
+        "rail-mission-stub-vla": (True, ["E5"]),
         "failsafe-rtl-zone@ahead_m=6,variant=0": (True, ["E1"]),
         "gps-noise-beyond-margin@latency=5,pass_y=23.2,sigma=1": (True, ["E3"]),
     }
+    assert R.E5_FLIGHT == "prescribed"
     eps, _ = expand(LIB, None, None, sorted({k.split("@")[0] for k in want}))
     got = {}
     for e in eps:
@@ -181,9 +191,96 @@ def test_the_tool_gives_each_clause_from_the_flight_without_a_fail_safe():
             assert (j["derived"], j["clauses_held"]) == want[e.cell.episode_id], (
                 e.cell.episode_id, j)
             assert j["derived"] == e.cell.spec.expected_failsafe, j
+            if e.cell.episode_id != "rail-mission-stub-vla":
+                assert j["other"]["derived"] == j["derived"], j       # no flip
     assert set(got) == set(want), sorted(set(want) - set(got))
     rail = got["rail-mission-stub-vla"]
-    assert rail["e5_spell_s"] < rail["e5_need_s"] and rail["fsm_triggered"] is True, rail
+    assert rail["e5_flight"] == "prescribed" and rail["e5_spell_s"] >= rail["e5_need_s"], rail
+    assert rail["other"] == {"e5_flight": "no-failsafe", "e5_spell_s": 10.9,
+                             "e5_censored": False, "derived": False,
+                             "clauses_held": []}, rail
+    assert rail["fsm_triggered"] is True, rail
+
+
+def test_the_prescribed_flight_holds_on_an_unsafe_request_and_flies_the_rest():
+    """The flight E5 is read on, on this branch (proposed, not adopted): on a
+    tick whose request the Shield may not fly, and where a stop is legal, the
+    aircraft is held (BRAKE on the ideal vehicle: it does not move); on every
+    other tick the Shield's own action flies. The rail mission's request is
+    over theta from the pad for the whole episode, so the held flight never
+    leaves the pad, while the flight without a fail-safe flies the
+    projection round the zone. A spawn 30 m ahead never asks for an unsafe
+    repair: there both flights are the same flight."""
+    import failsafe_rubric as R
+    from guardrail.scenario_spec import expand
+    eps, _ = expand(LIB, None, None, ["rail-mission-stub-vla", "dyn-nfz-spawn-ahead"])
+    by = {e.cell.episode_id: e for e in eps if not e.comparison and e.prefix == "on"
+          and e.paraphrase_arm in (None, -1)}
+    rail = by["rail-mission-stub-vla"]
+    held, hlog = R.prescribed(rail.cell.spec, LIB, rail.seed)
+    free, flog = R.counterfactual(rail.cell.spec, LIB, rail.seed)
+    assert hlog and all(R.unsafe_request(r) for r in hlog)
+    x0, y0 = held.rows[0]["x"], held.rows[0]["y"]
+    assert max(abs(r["x"] - x0) + abs(r["y"] - y0) for r in held.rows) < 1e-6
+    assert max(abs(r["x"] - x0) + abs(r["y"] - y0) for r in free.rows) > 10.0
+    far = by["dyn-nfz-spawn-ahead@ahead_m=30,variant=0,vehicle_speed_mps=4"]
+    h2, l2 = R.prescribed(far.cell.spec, LIB, far.seed)
+    f2, _ = R.counterfactual(far.cell.spec, LIB, far.seed)
+    assert not any(R.unsafe_request(r) for r in l2)
+    assert [(r["x"], r["y"]) for r in h2.rows] == [(r["x"], r["y"]) for r in f2.rows]
+
+
+def test_labels_can_be_derived_on_the_rail_vehicle_and_flown_longer():
+    """Proposed 2026-11-07, NOT adopted (docs/RUBRIC-failsafe.md section 8).
+    The hil rail flies ArduCopter 4.5.7 in GUIDED; the harness's measured
+    ArduPilot response (`--response ardupilot`) stands for it. nfz-head-on on
+    the ideal vehicle: the repair stays within theta and nothing persists
+    (N1); the FSM brakes and is never censored. On the rail vehicle the
+    aircraft carries on while it brakes, the head-on request's forecast ends
+    deeper than theta (as the hil shakedown shk03_001 flew: G1 at 2.9 s, G3
+    at 3.4 s, censored in Loiter at 30 s) and stays there on BOTH readings
+    of E5: at the scenario's 30 s the spell is still running (undecided) and
+    the FSM ends censored in Loiter; flown 35 s longer, E5 holds on both
+    readings and the FSM's operator timeout (G5) returns the aircraft."""
+    import failsafe_rubric as R
+    from guardrail.scenario_spec import expand
+    timeout = FSMConfig().loiter_timeout_s
+    eps, _ = expand(LIB, None, None, ["nfz-head-on"])
+    e = next(x for x in eps if not x.comparison and x.prefix == "on"
+             and x.paraphrase_arm in (None, -1))
+    ideal = R.judge(e, LIB, timeout, response="ideal")
+    assert ideal["response"] == "ideal" and not ideal["derived"], ideal
+    assert not ideal["other"]["derived"] and not ideal["e5_censored"], ideal
+    assert ideal["fsm_triggered"] is False and ideal["fsm_censored"] is False, ideal
+    rail = R.judge(e, LIB, timeout, response="ardupilot")
+    assert rail["response"] == "ardupilot" and not rail["derived"], rail
+    assert rail["e5_censored"] and rail["other"]["e5_censored"], rail
+    assert rail["fsm_censored"] is True and rail["fsm_edges"].startswith("G1 > G3"), rail
+    longer = R.judge(e, LIB, timeout, response="ardupilot", extend_s=35.0)
+    assert longer["episode_s"] == 65.0 and longer["extend_s"] == 35.0, longer
+    assert longer["clauses_held"] == ["E5"], longer
+    assert longer["other"]["clauses_held"] == ["E5"], longer
+    assert longer["fsm_triggered"] is True and longer["fsm_censored"] is False, longer
+    assert "G5" in longer["fsm_edges"].split(" > "), longer
+
+
+def test_an_episode_is_flown_longer_by_whole_ticks_and_never_shorter():
+    """`--extend-s` (failsafe_rubric.longer): whole ticks, rounded up; 0
+    leaves the spec as it is; a negative or non-finite extension is
+    refused rather than read as none."""
+    import math
+    import failsafe_rubric as R
+    spec = FAMS["nfz-head-on"].cells()[0].spec
+    ticks = int(spec.ticks or LIB.defaults.ticks)
+    assert R.longer(spec, LIB, 0.0) is spec
+    assert R.longer(spec, LIB, 35.0).ticks == ticks + 350
+    assert R.longer(spec, LIB, 0.05).ticks == ticks + 1
+    for bad in (-1.0, math.nan, math.inf):
+        try:
+            R.longer(spec, LIB, bad)
+        except ValueError:
+            continue
+        raise AssertionError(f"extend_s {bad} accepted")
 
 
 if __name__ == "__main__":

@@ -495,7 +495,10 @@ def test_the_rail_mission_scored_from_the_rail_log_gets_the_headless_verdict():
     headless = S.episode_verdict(spec, res, {}, 0)
     # A known failure since 2026-11-02: past the Loiter timeout the FSM sends
     # it home, a false fail-safe by the rubric (N1), pinned on the label only.
-    assert headless[0] == "known_failure", headless
+    # On this branch (proposed 2026-11-06, NOT adopted: E5 read on the flight
+    # the grant prescribes) the same RTL is the fail-safe its label expects
+    # (E5), the pin is off, and the headless verdict is a pass.
+    assert headless[0] == "pass", headless
     rows = _as_rail_rows(run.rows)
     # what main() scored before: nothing measured, a FAIL for a clean flight
     old = S.score(spec, rows, {"seed_applied": True}, run.policy)
@@ -1531,13 +1534,15 @@ def test_a_new_failure_in_a_pinned_cell_is_a_failure_not_the_old_defect():
     Since 2026-11-02 the fail-safe rubric (docs/RUBRIC-failsafe.md) labels
     three-simultaneous-violations and dyn-nfz-spawn-ahead's theta cells as
     expecting the fail-safe they fly, and both pins came off. The cases are
-    the pins the library still carries: the rail mission's false fail-safe
-    (a whole-scenario pin on the label), standoff-approach-angles' 7 m
-    pedestrian cell (a cell pin on the goal, outcome and label), the
-    corridor-swap-shifted RTL that ends outside the swapped corridor (two
-    corridor gates) and the standoff wedge (the goal)."""
-    cases = (("rail-mission-stub-vla", {}),
-             ("standoff-approach-angles", {"offset_m": 7, "subject_class": "pedestrian",
+    the pins the library still carries: standoff-approach-angles' 7 m
+    pedestrian cell (a cell pin on the goal), the corridor-swap-shifted RTL
+    that ends outside the swapped corridor (two corridor gates) and the
+    standoff wedge (the goal). On this branch (proposed 2026-11-06, NOT
+    adopted: E5 read on the flight the grant prescribes, docs/RUBRIC-
+    failsafe.md section 7) the rail mission's pin on its label is off - its
+    fail-safe is the one the proposed label expects - and the 7 m cell's pin
+    keeps only the goal."""
+    cases = (("standoff-approach-angles", {"offset_m": 7, "subject_class": "pedestrian",
                                            "variant": 0}),
              ("corridor-swap-shifted", {}),
              ("standoff-wedge", {}))
