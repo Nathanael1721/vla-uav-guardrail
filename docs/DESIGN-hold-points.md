@@ -1612,8 +1612,9 @@ the speed the request asks for** (`TickInput.handback_untrusted`):
   for the request at the hold point from a state with no measured velocity -
   the ideal-response forecast, the request flown as asked (`Shield.advise`:
   nothing moves) - read by G3's own test (`EscalationFSM.untrusted_repair`:
-  over theta or not converged, of a hard projected rule) on the rail's theta
-  basis. Before a plan is in hand the point is the aircraft's own position.
+  over theta or not converged, of a hard projected rule) on the theta basis
+  the rail gives its own FSM (`horizon_s`; the Shield's own by default).
+  Before a plan is in hand the point is the aircraft's own position.
 * A request that became clean - the bar passed, the window closed - is clean
   from the hold point too, and hands back as before.
 * The tick bound: the guard is now two checks, the path (`handback_unsafe`,
@@ -1653,6 +1654,22 @@ and the third Loiter holds to G5 (54.7 s), a fail-safe inside the episode,
 where the rig handed back twelve more times. The harness's vehicle settles
 onto the point by the third Loiter; the rig's kept arriving from the inside.
 Parity is partial again: the harness shows the mechanism, not the count.
+
+**The rig's own Loiters, asked again.** sm1110_045 (wind-within-authority,
+lane 15, 5 m/s) is the same churn through another operator: 9 Loiters, 8
+hand-backs, censored. GeofenceSlide's repair follows the position there too:
+2.07 m where G3 fired (5.8 s, x -11.93, the Loiter's point), 1.55-1.63 m where
+the hold had settled 0.4-0.5 m short of it by 12.0 s, at 0.4 m/s. At 9eed35b
+the rail arm hands that cell back once (G8, X1, G3) and ends censored in its
+second Loiter. The new check was then asked, offline, of every hold point the
+rig took in both runs, with the request it was flying at that moment and the
+run's own rule clock (`Shield.handback_untrusted` on the cell's policy): all
+15 Loiters of sm1110_010 and all 9 of sm1110_045 are kept, the first of each
+on a repair of 2.014 m and 2.073 m. Neither flight would have been handed
+back at all: G3, then G5 thirty seconds later, as labelled. The later hold
+points of both runs read 2.000-2.036 m: a hold point within millimetres of
+the theta boundary is where the check could read either way, and such a
+point only arises after a hand-back.
 
 ### Measured (headless, desktop, not KPI-grade)
 

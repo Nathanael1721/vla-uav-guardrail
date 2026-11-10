@@ -7429,7 +7429,8 @@ class Shield:
         rt = self._rt
         return not (rt.timed or rt.moving_ids) and self._subject is None
 
-    def handback_untrusted(self, raw: Action4D, at: State, fsm=None) -> bool:
+    def handback_untrusted(self, raw: Action4D, at: State, fsm=None,
+                           horizon_s: Any = "shield") -> bool:
         """Would the request `raw`, judged from `at` - the point a Loiter
         holds - at the speed it asks for, need a repair of a hard rule that
         may not be trusted: over theta, or not converged?
@@ -7439,7 +7440,10 @@ class Shield:
         velocity - the ideal-response forecast, the request flown as asked -
         read by the FSM's own G3 test (EscalationFSM.untrusted_repair) at
         this Shield's theta basis. `fsm`: the FSM whose thresholds judge it
-        (a rail's own; default this Shield's).
+        (a rail's own; default this Shield's), and `horizon_s` the theta
+        basis that rail gives its FSM (tick_input_from_decision's; default
+        this Shield's own): the request is judged exactly as the rail's G3
+        would judge it.
 
         The tick's own decision judges the request from the held aircraft:
         at rest, where a measured-velocity forecast reaches less far, and
@@ -7455,8 +7459,9 @@ class Shield:
         d = self.advise(p, raw)
         tick = self._tick_ctx()
         rt = tick.rt if tick is not None else self._rt
+        basis = self.theta_horizon_s if isinstance(horizon_s, str) else horizon_s
         inp = _fsm.tick_input_from_decision(
-            float(self._t_last or 0.0), d, rt, horizon_s=self.theta_horizon_s,
+            float(self._t_last or 0.0), d, rt, horizon_s=basis,
             stop_illegal=False, caps=self.applied_caps or False)
         return fsm.untrusted_repair(inp)
 
