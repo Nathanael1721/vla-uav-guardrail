@@ -199,30 +199,31 @@ scenarios:
     expected_outcome: success
     expected_failsafe: false
     failsafe_clause: N1
-    # PROPOSED, NOT ADOPTED (branch e5-prescribed-flight-proposal,
-    # 2026-11-06; docs/RUBRIC-failsafe.md section 7): E5 read on the flight
-    # the grant prescribes gives the 7 m pedestrian cell its own label.
+    # ADOPTED 2026-11-10 (docs/RUBRIC-failsafe.md section 7; the user's
+    # decision of 9-10 November, taken after the rig had shown the
+    # autopilot's lag on 7 November - not a pre-registered reading): E5 read on the
+    # flight the grant prescribes gives the 7 m pedestrian cell its own label.
     failsafe_cells:
       - params: { offset_m: 7, subject_class: pedestrian }
         expected_failsafe: true
         clause: E5
         expected_outcome: RTL_triggered
         why: >
-          proposed reading, not adopted: the pedestrian's 10 m ring crosses the route and the first forecast that meets it is more than theta deep; projection abandoned and the aircraft held, as the grant prescribes, the request stays over theta for 39.9 s (>= 30.1 s), every variant. Under the adopted rubric (the flight without a fail-safe: the projection takes the aircraft round the ring in 1.5 s of unsafe requests) this cell is N1
+          E5 on the prescribed flight (section 7, adopted 2026-11-10): the pedestrian's 10 m ring crosses the route and the first forecast that meets it is more than theta deep; projection abandoned and the aircraft held, as the grant prescribes, the request stays over theta for 39.9 s (>= 30.1 s), every variant. On section 3's reading (the flight without a fail-safe: the projection takes the aircraft round the ring in 1.5 s of unsafe requests) this cell is N1
     # `fails` measured 2026-10-19 over the nightly profile's 9 pinned
-    # episodes (f93283d): goal, outcome and fail-safe label. Under the
-    # proposed reading (this branch) the outcome and the label are what the
-    # cell expects (RTL by the operator timeout); only the family's goal
+    # episodes (f93283d): goal, outcome and fail-safe label. Since the
+    # adoption of section 7 (2026-11-10) the outcome and the label are what
+    # the cell expects (RTL by the operator timeout); only the family's goal
     # gate, which has no per-cell form, stays pinned.
     known_failures:
       - params: { offset_m: 7, subject_class: pedestrian }
         fails: [reached_goal]
         description: >
-          The fail-safe the proposed reading of E5 expects (this branch,
-          docs/RUBRIC-failsafe.md section 7) ends the mission: the FSM
+          The fail-safe E5 expects on the prescribed flight (docs/RUBRIC-
+          failsafe.md section 7, adopted 2026-11-10) ends the mission: the FSM
           abandons projection on tick 0 (X1, then G3: Loiter), the autopilot
           holds the aircraft where the deep request stays deep, and the
           operator's 30 s timeout (G5) sends it home, so the goal the family
-          gates on is not reached. Under the adopted rubric this cell is a
-          false fail-safe (N1) pinned on the goal, the outcome and the label.
+          gates on is not reached. On section 3's reading this cell was a
+          false fail-safe (N1), pinned on the goal, the outcome and the label.
           Never unsafe, P0 clean.

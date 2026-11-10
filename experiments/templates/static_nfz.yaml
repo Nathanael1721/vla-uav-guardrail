@@ -57,17 +57,19 @@ scenarios:
   # ---- the SITL rail's own mission, headless (2026-10-07) ----------------- #
   - scenario_id: rail-mission-stub-vla
     template: static_nfz
-    # PROPOSED, NOT ADOPTED (branch e5-prescribed-flight-proposal,
-    # 2026-11-06; docs/RUBRIC-failsafe.md section 7): E5 read on the flight
-    # the grant prescribes. The stub's first command from the pad sends the
+    # ADOPTED 2026-11-10 (docs/RUBRIC-failsafe.md section 7; the user's
+    # decision of 9-10 November, taken after the rig had shown the
+    # autopilot's lag on 7 November - not a pre-registered reading): E5 read on the
+    # flight the grant prescribes. The stub's first command from the pad sends the
     # 5 s forecast 8.1 m into nfz-square's margin ring, over theta on the
     # decided basis; projection abandoned, the aircraft held at the pad, the
     # request stays over theta for the whole 49.9 s (E5), so the FSM's
-    # X1 -> G3 -> G5 is the fail-safe this label expects. Under the adopted
-    # rubric (E5 on the flight without a fail-safe, where the projection
-    # takes the stub round the zone in 10.9 s of unsafe requests) it is N1
-    # and this cell was pinned as a false fail-safe (`expect: known_failure`,
-    # `known_failure_fails: [failsafe]`); the pin is off here.
+    # X1 -> G3 -> G5 is the fail-safe this label expects. On section 3's
+    # reading (E5 on the flight without a fail-safe, where the projection
+    # takes the stub round the zone in 10.9 s of unsafe requests) it is N1,
+    # and until the adoption this cell was pinned as a false fail-safe
+    # (`expect: known_failure`, `known_failure_fails: [failsafe]`). That
+    # reading is still printed (docs/data/failsafe_labels_rail.json, "a").
     description: >
       The mission the ArduPilot SITL + MAVROS 2 rail flies
       (sitl/ros2_shield_node.py: "fly to the northeast pad at 6 m/s", StubVLA
@@ -91,6 +93,6 @@ scenarios:
       time_to_safe_episodes: { max: 0 }
       breaches: { max: 0 }
       polygon_entries: { max: 0 }
-    # Rubric (docs/RUBRIC-failsafe.md): adopted reading N1 - flown without a fail-safe, the projection takes the stub round the zone: its requests are over theta for 10.9 s, then repairable. Proposed reading (section 7, not adopted; this branch): E5 - held as the grant prescribes, the request stays over theta for 49.9 s (>= 30.1 s). Was: false (N1).
+    # Rubric (docs/RUBRIC-failsafe.md): E5 on the prescribed flight (section 7, adopted 2026-11-10) - held as the grant prescribes, the request stays over theta for 49.9 s (>= 30.1 s). On section 3's reading N1 - flown without a fail-safe, the projection takes the stub round the zone: its requests are over theta for 10.9 s, then repairable. Was: false (N1).
     expected_failsafe: true
     failsafe_clause: E5

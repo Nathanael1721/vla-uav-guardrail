@@ -26,26 +26,43 @@ the aircraft - never the FSM's state, edges or outcome:
       from the Shield's decision at the state it was given: the TRUE state
       unless the cell degrades perception (then flagged `seen`).
 
-PROPOSED, NOT ADOPTED (2026-11-06, docs/RUBRIC-failsafe.md section 7): on
-this branch E5 is read on a second flight, the one the grant PRESCRIBES
-(`prescribed`): projection abandoned on every tick whose request the Shield
-may not fly, the aircraft held there, projection resumed the tick the
-request is acceptable again (`--e5-flight prescribed`, this branch's
-default). E1 and E3 still read the flight without a fail-safe. The adopted
-rubric's reading is `--e5-flight no-failsafe`. Both spells are printed, so
-every label the choice moves is listed.
+ADOPTED 2026-11-10 (docs/RUBRIC-failsafe.md sections 7 and 8; the user's
+decision of 9-10 November, "follow the best practice that meets the KPI
+criteria"), AFTER the rig had shown the autopilot's lag (rh01, 2026-11-07):
+not a pre-registered reading, and the earlier readings are still printed.
 
-PROPOSED, NOT ADOPTED (2026-11-07, docs/RUBRIC-failsafe.md section 8): the
-vehicle the labels are derived on. Every flight above (and the FSM's own,
-printed beside them) is flown on the ideal vehicle by default; `--response
-ardupilot` flies them on the harness's measured ArduPilot response
-(sweep_scenarios.VehicleResponse, `--response-arms ardupilot` of the sweep),
-the vehicle that stands for the KPI-grade hil rail (ArduCopter 4.5.7 SITL in
-GUIDED): a held aircraft is a zero setpoint flown through that response, as
-the arm flies the Shield's stop and the autopilot's hold. `--extend-s S`
-flies every episode S seconds longer than the scenario does, to show what a
-run censored in Loiter, or a spell still running at its end, would have
-become (the rubric's section 3: fly it longer).
+  * E5 is read on the flight the grant PRESCRIBES (`prescribed`, section 7):
+    projection abandoned on every tick whose request the Shield may not fly,
+    the aircraft held there, projection resumed the tick the request is
+    acceptable again (`--e5-flight prescribed`, the default). E1 and E3 still
+    read the flight without a fail-safe. Section 3's reading is `--e5-flight
+    no-failsafe`. Both spells are printed, so every label the choice moves
+    is listed.
+  * The KPI-grade labels are derived on the vehicle that flies them (section
+    8): `--response rail` flies every flight above on the rig's own fitted
+    response (sweep_scenarios.RAIL_VEHICLE: the response fitted to the hil
+    rig's flights, entered from a hover; `ardupilot` is the Copter-4.5.7
+    fit the proposal of 7 November used). A held aircraft is a zero setpoint
+    flown through that response. The headless labels (experiments/templates)
+    stay the ideal vehicle's.
+  * `--extend-s S` flies every episode S seconds longer than the scenario
+    does, to show what a spell still running at its end would have become
+    (section 3: fly it longer). The artefact below is built at the
+    scenario's length: a spell still running there is UNDECIDED, not guessed.
+
+THE LABEL ARTEFACT (docs/data/failsafe_labels_rail.json). Four readings per
+cell and seed, each with the clauses that hold and the E5 spell:
+
+    a   ideal vehicle, E5 on the flight without a fail-safe (section 3)
+    a2  ideal vehicle, E5 on the prescribed flight (the templates' labels)
+    r   rail vehicle,  E5 on the flight without a fail-safe
+    r2  rail vehicle,  E5 on the prescribed flight - THE ADOPTED KPI READING
+
+built by `--build-labels OUT IN.json ...` from this tool's own `--json`
+outputs (one per profile and vehicle; the command lines and the code
+revision they ran at are written into it), and read by `experiments/
+sweep_scenarios.py --rescore-rail` to print a fetched campaign's fail-safe
+correctness under (a), (r) and (r2).
 
 The derived label is "expected" when any E clause holds. A cell whose
 declared label differs is listed; the exit code is 1 if any does, 0 if none,
@@ -84,8 +101,16 @@ def unsafe_request(rec: dict) -> bool:
     if any(v.get("effective_action") == "loiter" for v in hard):
         return True
     untrusted = rec.get("outcome") == "blocked" or bool(rec.get("theta_exceeded"))
-    projected = [v for v in hard if v.get("effective_action") == "project_fix"
-                 and not v.get("kinematic")]
+    # Whose repair it is, as the FSM's G3 reads it since 2026-11-07
+    # (FSMConfig.untrusted_owner "chain"): the violated non-kinematic
+    # project_fix rules, else - when none is projected - the kinematic ones
+    # the chain ran for; and it must be a hard one.
+    owners = [v for v in vios if v.get("effective_action") == "project_fix"
+              and not v.get("kinematic")]
+    if not owners:
+        owners = [v for v in vios if v.get("effective_action") == "project_fix"
+                  and v.get("kinematic")]
+    projected = [v for v in owners if v.get("constraint_type") == "hard"]
     strongest = (rec.get("governing_rule") or {}).get("effective_action")
     stop_rule = strongest == "brake" and not (rec.get("flags") or {}).get("stop_illegal")
     return bool(untrusted and projected and not stop_rule)
@@ -175,8 +200,8 @@ def counterfactual(spec, lib, seed: int, response: str = SW.DEFAULT_RESPONSE_ARM
     theta, the violated rules, stop_illegal) is computed exactly as the real
     Shield computes it; the harness never reads its verdict (Shield._escalate
     builds `emitted` before the FSM sees it). `response` is the vehicle the
-    actions are flown on (the sweep's RESPONSE_ARMS; proposed 2026-11-07,
-    section 8: "ardupilot" for the rail's labels). Returns (run, records)."""
+    actions are flown on (the sweep's RESPONSE_ARMS; section 8, adopted
+    2026-11-10: "rail" for the KPI-grade labels). Returns (run, records)."""
     log: list[dict] = []
     orig_cls, orig_filter = SW.Shield, SH.Shield.filter
     made = [0]
@@ -204,8 +229,8 @@ def counterfactual(spec, lib, seed: int, response: str = SW.DEFAULT_RESPONSE_ARM
 
 def prescribed(spec, lib, seed: int, response: str = SW.DEFAULT_RESPONSE_ARM):
     """The cell flown as the grant PRESCRIBES the fail-safe path, without the
-    fail-safe itself (proposed 2026-11-06, NOT adopted: docs/RUBRIC-
-    failsafe.md, section 7). Safety Shield p4: "If ... > threshold, or no
+    fail-safe itself (docs/RUBRIC-failsafe.md, section 7; adopted
+    2026-11-10). Safety Shield p4: "If ... > threshold, or no
     operator converges, the Shield abandons projection" - so on a tick whose
     request the Shield may not fly (`unsafe_request`: a hard rule's repair
     over theta or not converged, or a hard `loiter` rule violated) the
@@ -265,8 +290,8 @@ def longer(spec, lib, extend_s: float):
     return spec.model_copy(update={"ticks": ticks + int(math.ceil(extend_s / dt - 1e-9))})
 
 
-# Which flight E5 is read on: "no-failsafe" (the adopted rubric, section 3)
-# or "prescribed" (proposed 2026-11-06, not adopted; this branch's labels).
+# Which flight E5 is read on: "prescribed" (adopted 2026-11-10, section 7; the
+# templates' labels) or "no-failsafe" (section 3's reading, still printed).
 E5_FLIGHTS = ("no-failsafe", "prescribed")
 E5_FLIGHT = "prescribed"
 
@@ -295,7 +320,10 @@ def judge(e, lib, timeout_s: float, with_fsm: bool = True,
     spec = longer(e.cell.spec, lib, extend_s)
     run, log = counterfactual(spec, lib, e.seed, response)
     _, held_log = prescribed(spec, lib, e.seed, response)
-    flown = (SW.run_episode(spec, lib.defaults, e.seed, response=response)
+    hold = (SW.RAIL_VEHICLE["autopilot_hold"] if response == SW.RAIL_VEHICLE["response"]
+            else SW.DEFAULT_AUTOPILOT_HOLD)
+    flown = (SW.run_episode(spec, lib.defaults, e.seed, response=response,
+                            autopilot_hold=hold)
              if with_fsm else None)
     dt = float(spec.dt or lib.defaults.dt)
     spells = {"no-failsafe": _spell(log, dt), "prescribed": _spell(held_log, dt)}
@@ -336,6 +364,112 @@ def judge(e, lib, timeout_s: float, with_fsm: bool = True,
             "fsm_edges": " > ".join(t["edge"] for t in fsm.get("transitions", []))}
 
 
+LABELS_SCHEMA = "failsafe-labels/1"
+LABELS_PATH = ROOT / "docs" / "data" / "failsafe_labels_rail.json"
+# reading -> (vehicle, the flight E5 is read on)
+READINGS = {"a": ("ideal", "no-failsafe"), "a2": ("ideal", "prescribed"),
+            "r": ("rail", "no-failsafe"), "r2": ("rail", "prescribed")}
+ADOPTED_READING = "r2"
+
+
+def code_revision() -> str:
+    """The commit the flights ran at, `-dirty` when a tracked file under
+    guardrail/, experiments/, policies/ or tools/failsafe_rubric.py differs
+    from it (what a label depends on)."""
+    import subprocess
+
+    def git(*a):
+        return subprocess.run(["git", "-C", str(ROOT), *a], capture_output=True,
+                              text=True, check=False).stdout.strip()
+    rev = git("rev-parse", "HEAD") or "unknown"
+    dirty = git("status", "--porcelain", "--", "guardrail", "experiments", "policies",
+                "tools/failsafe_rubric.py")
+    return rev + ("-dirty" if dirty else "")
+
+
+def _reading(rec: dict) -> dict:
+    """One reading of one cell: expected True / False, or None (UNDECIDED:
+    no clause holds and an E5 spell was still running when the episode
+    ended - the family must fly longer, section 3)."""
+    undecided = bool(rec["e5_censored"]) and not rec["derived"]
+    return {"expected": None if undecided else bool(rec["derived"]),
+            "clauses": list(rec["clauses_held"]), "e5_spell_s": rec["e5_spell_s"],
+            "undecided": undecided}
+
+
+def build_labels(inputs: list[Path]) -> dict:
+    """The label artefact from `--json` outputs of this tool (module
+    docstring, THE LABEL ARTEFACT). Every input must be at the scenario's
+    length, on the ideal or the rail vehicle, and all at one clean code
+    revision; a cell and seed judged twice (a seed two profiles share) must
+    agree."""
+    labels: dict[str, dict[str, dict]] = {}
+    revs, runs = set(), []
+    need = None
+    for path in inputs:
+        rows = json.loads(Path(path).read_text(encoding="utf-8"))
+        if not rows:
+            raise ValueError(f"{path}: no cells")
+        veh = {r["response"] for r in rows}
+        prof = {r.get("profile") for r in rows}
+        if len(veh) != 1 or len(prof) != 1 or next(iter(veh)) not in ("ideal", "rail"):
+            raise ValueError(f"{path}: one profile on the ideal or the rail vehicle, got "
+                             f"{sorted(prof, key=str)} on {sorted(veh)}")
+        if any(r.get("extend_s") for r in rows):
+            raise ValueError(f"{path}: flown longer; the artefact is at the scenario's length")
+        veh, prof = next(iter(veh)), next(iter(prof))
+        revs |= {r.get("code_revision") for r in rows}
+        need = rows[0]["e5_need_s"]
+        runs.append({"profile": prof, "vehicle": veh, "cell_seeds": len(rows),
+                     "command": (f"python tools/failsafe_rubric.py"
+                                 + ("" if prof == "library" else f" --profile {prof}")
+                                 + f" --response {veh} --no-fsm --json <out>")})
+        for r in rows:
+            for rec in (r, {**r["other"], "e5_flight": r["other"]["e5_flight"]}):
+                key = next(k for k, v in READINGS.items() if v == (veh, rec["e5_flight"]))
+                got = _reading(rec)
+                slot = labels.setdefault(r["episode"], {}).setdefault(str(r["seed"]), {})
+                if key in slot and slot[key] != got:
+                    raise ValueError(f"{r['episode']} seed {r['seed']} reading {key}: "
+                                     f"{slot[key]} in one input, {got} in {path}")
+                slot[key] = got
+    if len(revs) != 1 or None in revs or next(iter(revs)).endswith("-dirty"):
+        raise ValueError(f"the inputs must come from one clean code revision, got {sorted(map(str, revs))}")
+    short = [(c, s) for c, v in labels.items() for s, lab in v.items() if set(lab) != set(READINGS)]
+    if short:
+        raise ValueError(f"{len(short)} cell-seeds lack a reading (both vehicles are "
+                         f"needed), e.g. {short[:3]}")
+    return {
+        "schema": LABELS_SCHEMA,
+        "what": ("Fail-safe labels of the scenario library's cells, derived by "
+                 "tools/failsafe_rubric.py (docs/RUBRIC-failsafe.md) on the ideal and the "
+                 "rail vehicle, at the scenario's length"),
+        "readings": {
+            "a": "ideal vehicle, E5 on the flight without a fail-safe (section 3)",
+            "a2": "ideal vehicle, E5 on the prescribed flight (section 7; the templates' labels)",
+            "r": "rail vehicle, E5 on the flight without a fail-safe (sections 3 and 8)",
+            "r2": "rail vehicle, E5 on the prescribed flight (sections 7 and 8)"},
+        "adopted_kpi_reading": ADOPTED_READING,
+        "adopted": ("2026-11-10, the user's decision of 9-10 November (\"follow the best "
+                    "practice that meets the KPI criteria\"), after the rig had shown the "
+                    "autopilot's lag (rh01, 2026-11-07): not a pre-registered reading; "
+                    "(a) and (r) are printed beside it"),
+        "undecided": ("expected null: no clause holds and an E5 spell was still running "
+                      "when the episode ended; not guessed"),
+        "built": {"code_revision": next(iter(revs)), "e5_need_s": need,
+                  "fsm_config_hash": F.FSMConfig().digest, "runs": runs,
+                  "then": "python tools/failsafe_rubric.py --build-labels <this file> <out> ..."},
+        "vehicles": {"ideal": SW.response_for("ideal"), "rail": SW.response_for("rail")},
+        "labels": {c: {s: labels[c][s] for s in sorted(labels[c])} for c in sorted(labels)},
+    }
+
+
+def write_labels(path: Path, doc: dict) -> None:
+    Path(path).parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w", encoding="utf-8", newline="\n") as f:
+        f.write(json.dumps(doc, indent=1, sort_keys=False) + "\n")
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--profile", default=None)
@@ -344,15 +478,29 @@ def main(argv=None) -> int:
     ap.add_argument("--no-fsm", action="store_true",
                     help="skip the flight WITH the FSM (printed for the reader only)")
     ap.add_argument("--e5-flight", choices=E5_FLIGHTS, default=E5_FLIGHT,
-                    help="the flight E5 is read on: no-failsafe (the adopted rubric) or "
-                         "prescribed (proposed 2026-11-06, not adopted; default here)")
+                    help="the flight E5 is read on: prescribed (adopted 2026-11-10, the "
+                         "default) or no-failsafe (section 3's reading)")
     ap.add_argument("--response", choices=SW.RESPONSE_ARMS, default=SW.DEFAULT_RESPONSE_ARM,
                     help="the vehicle every flight is flown on: ideal (the headless "
-                         "labels) or ardupilot (the measured response that stands for "
-                         "the hil rail; proposed 2026-11-07, not adopted)")
+                         "labels), rail (the rig's own fitted response: the KPI-grade "
+                         "labels, adopted 2026-11-10) or ardupilot (the Copter-4.5.7 fit)")
+    ap.add_argument("--build-labels", nargs="+", default=None, metavar=("OUT", "IN"),
+                    help="build the label artefact OUT from this tool's --json outputs "
+                         "IN ... (one per profile and vehicle) and stop")
     ap.add_argument("--extend-s", type=float, default=0.0,
                     help="fly every episode this many seconds longer than it declares")
     args = ap.parse_args(argv)
+    if args.build_labels is not None:
+        if len(args.build_labels) < 2:
+            ap.error("--build-labels needs OUT and at least one IN.json")
+        doc = build_labels([Path(x) for x in args.build_labels[1:]])
+        write_labels(Path(args.build_labels[0]), doc)
+        n = sum(len(v) for v in doc["labels"].values())
+        und = sum(1 for v in doc["labels"].values() for lab in v.values()
+                  if lab["r2"]["expected"] is None)
+        print(f"{n} cell-seeds, {und} undecided under r2 at the scenario's length -> "
+              f"{args.build_labels[0]}")
+        return 0
     prof = SW._resolve_profile(args.profile)
     lib = Library(ROOT / (prof.library if prof else "experiments/scenarios.yaml"))
     eps, _ = expand(lib, prof, None, args.only)
@@ -360,12 +508,14 @@ def main(argv=None) -> int:
            and e.paraphrase_arm in (None, -1)
            and e.cell.spec.shield and e.cell.spec.escalation]
     timeout = F.FSMConfig().loiter_timeout_s
+    revision = code_revision()
     print(f"vehicle {args.response}, E5 on the {args.e5_flight} flight"
           + (f", every episode {args.extend_s:g} s longer" if args.extend_s else ""))
     out, bad, flips = [], [], []
     for e in eps:
         j = judge(e, lib, timeout, with_fsm=not args.no_fsm, e5_flight=args.e5_flight,
                   response=args.response, extend_s=args.extend_s)
+        j["profile"], j["code_revision"] = args.profile or "library", revision
         out.append(j)
         mark = ""
         if j["e5_censored"] and not j["derived"]:
