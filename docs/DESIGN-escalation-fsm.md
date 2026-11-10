@@ -110,6 +110,28 @@ checked point and into the bar's sweep (X6). docs/DESIGN-hold-points.md,
 docs/DESIGN-ros2-interface.md records the deviation beside "LOITER flown as
 BRAKE".
 
+**Update 2026-11-10 (a hand-back judged at speed; one kind of hold work a
+tick).** A new law field, `FSMConfig.handback_request`: "at_speed" (the
+default) or "as_held" (the FSM as it was at 9eed35b). Under "at_speed"
+Loiter's "acceptable" (G8) also needs `TickInput.handback_untrusted` to be
+false: the request's repair, judged from the point the Loiter holds at the
+speed the request asks for (`Shield.handback_untrusted`, read by G3's own
+test, `EscalationFSM.untrusted_repair`), must be one the FSM may trust. On
+the KPI-grade smoke sm1110_010 (corridor-drift-angles 8 m/s, -60 deg) the
+GUIDED hold sat 0.3 m short of its point, the unchanged request's repair read
+1.72-1.78 m there (theta 2.0), and Loiter handed it back 14 times, never
+reaching the operator timeout its label expects. A tick that keeps a request
+for this reason carries `handback_untrusted: true` on its record. The config
+hash changes: the default is `sha256:e0d9267f...`, and `handback_request: as_held`
+hashes `sha256:3b54b4e3...`, the default at 9eed35b. The same change bounds
+the hold work on the Orin: `holdpoint.TICK_QUERIES` is 60, and a tick pays
+for a search slice, or the guard's path samples, or the guard's one decision
+for the request, never two of them (`HoldPlanner.handback`); while a plan is
+being searched the hand-back is refused (`handback_refused` on the Shield's
+record). The FSM's edges are unchanged. docs/DESIGN-hold-points.md, "The
+Orin's tick, and a hand-back judged at speed", has the rows, the calibration
+and the numbers.
+
 ## 2026-11-07: the FSM on the rail vehicle
 
 The hil rail flies ArduCopter 4.5.7 SITL in GUIDED. Labelled on a vehicle

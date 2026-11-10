@@ -1510,6 +1510,7 @@ if HAVE_ROS:
                              and getattr(args, "hold_flight", "guided") == "guided"))
             self._last_pub_ns: int | None = None   # the last setpoint published
             self.hold_planner = holdpoint.HoldPlanner()
+            self._hold_work: dict | None = None    # this tick's, for its row
 
             # A DECLARED subject, so subject_standoff rules bind on a rail with
             # no camera. Ground truth, not perception.
@@ -3105,10 +3106,27 @@ if HAVE_ROS:
                                  and not self.fsm.terminal)
                     hold_legal = (holdpoint.hold_point_legal(self.shield, self.fsm.hold, now)
                                   if in_loiter else None)
-                    handback = (self.shield.handback_unsafe(st, decision.emitted)
-                                if (in_loiter and not hard_unsafe
-                                    and self.fsm.config.hold_horizon == "loiter")
-                                else None)
+                    # The guard through the planner (2026-11-10): a tick
+                    # pays for it or for a search slice, never both - the
+                    # Orin paid 93-121 ms for the two (hs05) - and while a
+                    # plan is searched the hand-back is refused unsampled
+                    # (HoldPlanner.handback).
+                    # With it, in turn (FSMConfig.handback_request "at_speed"):
+                    # is the request's repair one to trust from the hold
+                    # point at the speed it asks for (sm1110_010 was handed
+                    # back 14 times on a repair read from the held aircraft).
+                    handback, hb_untrusted = (
+                        self.hold_planner.handback(self.shield, st, decision.emitted,
+                                                   fsm=self.fsm, raw=decision.raw)
+                        if (in_loiter and not hard_unsafe
+                            and self.fsm.config.hold_horizon == "loiter")
+                        else (None, None))
+                    # Which hold work this tick paid for, on its row
+                    # (`hold_work`): hs05's slow ticks could only be read
+                    # from tick_ms - shield_ms.
+                    self._hold_work = ({"guard": self.hold_planner.guard,
+                                        "checked": self.hold_planner.checked,
+                                        "legal": hold_legal} if in_loiter else None)
                     inp = tick_input_from_decision(
                         now, decision, self.policy, horizon_s=self.theta_horizon_s,
                         rtl_failed=False,
@@ -3127,7 +3145,8 @@ if HAVE_ROS:
                         # not every cap the policy lists (Shield.applied_caps).
                         caps=self.shield.applied_caps or False,
                         position_lost=lost[0] if lost else None,
-                        hold_legal=hold_legal, handback_unsafe=handback)
+                        hold_legal=hold_legal, handback_unsafe=handback,
+                        handback_untrusted=hb_untrusted)
                     fsm_out = self.fsm.step(inp)
                     if self.moved_holds:
                         # Where the Loiter holds / the Land lands: the
@@ -3143,6 +3162,9 @@ if HAVE_ROS:
                             lambda: holdpoint.plan_for(self.shield, self.fsm, st,
                                                        unsafe=hard_unsafe, heading=heading),
                             here=st, unsafe=hard_unsafe)
+                        if self._hold_work is not None or self.hold_planner.slice:
+                            self._hold_work = {**(self._hold_work or {}),
+                                               "slice_units": self.hold_planner.slice}
                         if got is not None:
                             plan = self.fsm.hold_at(got)
                             self.rec.event("hold_point", t=now, **plan.to_dict(),
@@ -3281,6 +3303,14 @@ if HAVE_ROS:
                 # The moved hold's transit, world frame (North, East, up);
                 # only on such rows (guardrail/hold_flight.py).
                 self.rows[-1]["hold_transit"] = [round(c, 3) for c in transit]
+            hold_work, self._hold_work = self._hold_work, None
+            if hold_work is not None:
+                # The hold work this tick paid for (2026-11-10, THE PER-TICK
+                # BOUND): `guard` "ran" (Shield.handback_unsafe sampled),
+                # "search" (refused unsampled, a search running) or None;
+                # `legal` hold_point_legal's answer; `slice_units` the
+                # search slice's units. Only on Loiter / search rows.
+                self.rows[-1]["hold_work"] = hold_work
             # What the stress harness's position measures need (2026-11-06;
             # sweep_scenarios.rail_measurements): the rule clock this tick
             # read, the zones whose polygon holds the position and the

@@ -178,6 +178,123 @@ def test_loiter_does_not_hand_back_a_flight_into_a_stop_illegal_spot():
         assert edges == [(g8, "G8")], (law, edges)
 
 
+def test_loiter_does_not_hand_back_a_request_untrusted_at_speed_from_its_point():
+    """2026-11-10, the hil smoke sm1110_010 (corridor-drift-angles 8 m/s,
+    -60 deg): the hold sat 0.3 m short of its point, the unchanged request's
+    repair read 1.72-1.78 m there (theta 2.0) for T_recover, and Loiter handed
+    it back 14 times; its label expects the operator timeout. Loiter keeps a
+    request whose repair, judged from the hold point at the speed it asks for,
+    is untrusted (TickInput.handback_untrusted): held to the timeout while it
+    stays so, handed back once it is not; the "as_held" law ignores the
+    input, as the FSM did until then."""
+    for law, edge in (("at_speed", (30.1, "G5")), ("as_held", (2.2, "G8"))):
+        f = EscalationFSM(FSMConfig(handback_request=law))
+        _to_loiter(f)
+        f.hold_at(HoldPoint("LOITER", "in_place", 0.0, 0.0, 15.0, legal=True))
+        edges = []
+        t = 0.2
+        while t < 31.0 and not edges:
+            # This tick's repair reads within theta from the held aircraft.
+            o = f.step(TickInput(t=round(t, 1), outcome="clean", handback_unsafe=False,
+                                 handback_untrusted=True))
+            if o.edge:
+                edges.append((round(t, 1), o.edge))
+            elif law == "at_speed":
+                assert o.record.get("handback_untrusted") is True, o.record
+            else:
+                assert "handback_untrusted" not in o.record, o.record
+            t += 0.1
+        assert edges == [edge], (law, edges)
+    f = EscalationFSM()
+    _to_loiter(f)
+    f.hold_at(HoldPoint("LOITER", "in_place", 0.0, 0.0, 15.0, legal=True))
+    got, t = [], 0.2
+    while t < 8.0 and not got:
+        o = f.step(TickInput(t=round(t, 1), outcome="clean", handback_unsafe=False,
+                             handback_untrusted=t < 3.15))
+        if o.edge:
+            got.append((round(t, 1), o.edge))
+        t += 0.1
+    assert got == [(5.2, "G8")], got                    # T_recover after it cleared
+    raises = None
+    try:
+        TickInput(t=0.0, outcome="clean", handback_untrusted="yes")
+    except ValueError as e:
+        raises = e
+    assert raises is not None
+    try:
+        FSMConfig(handback_request="sometimes")
+        raise AssertionError("an unknown handback_request was accepted")
+    except ValueError:
+        pass
+
+
+def test_untrusted_repair_is_g3s_own_test():
+    """EscalationFSM.untrusted_repair reads a tick as step() does for G3 -
+    over theta or not converged, of a hard projected rule - and moves
+    nothing."""
+    from guardrail.fsm import RepairMagnitude
+    f = EscalationFSM()
+    big = RepairMagnitude(lateral_m=2.5, vertical_m=0.0)
+    small = RepairMagnitude(lateral_m=1.5, vertical_m=0.0)
+    before = (f.state, f._n, f._t_last)
+    assert f.untrusted_repair(TickInput(t=0.0, outcome="repaired", violations=(_hit(),),
+                                        magnitude=big))
+    assert not f.untrusted_repair(TickInput(t=0.0, outcome="repaired", violations=(_hit(),),
+                                            magnitude=small))
+    assert f.untrusted_repair(TickInput(t=0.0, outcome="blocked", violations=(_hit(),)))
+    assert not f.untrusted_repair(TickInput(t=0.0, outcome="clean"))
+    soft = RuleHit("soft", "project_fix", "soft", "P2")
+    assert not f.untrusted_repair(TickInput(t=0.0, outcome="blocked", violations=(soft,)))
+    assert (f.state, f._n, f._t_last) == before
+    # ... and step() agrees: from Brake, the untrusted one is G3.
+    for mag, edge in ((big, "G3"), (small, None)):
+        g = EscalationFSM()
+        g.step(TickInput(t=0.0, outcome="repaired", violations=(_hit(),), magnitude=small))
+        inp = TickInput(t=0.1, outcome="repaired", violations=(_hit(),), magnitude=mag)
+        want = g.untrusted_repair(inp)
+        assert (g.step(inp).edge == "G3") == want == (edge == "G3"), (mag, edge)
+
+
+def test_the_request_is_judged_from_the_hold_point_at_the_speed_it_asks_for():
+    """Shield.handback_untrusted on the demo policy: 4 m/s north at nfz-square
+    is a GeofenceSlide of 8.8 m (theta 2.0) from 13 m short of it, and clean
+    from 35 m short - judged where the Loiter holds (`at`), whatever the
+    aircraft's own state is, and with nothing moved."""
+    sh = Shield(load_policy(DEMO))
+    raw = Action4D(vx=4.0, vy=0.0, vz_up=0.0)
+    near, far = State(x=2.0, y=15.0, up=15.0), State(x=-20.0, y=15.0, up=15.0)
+    assert sh.handback_untrusted(raw, near) is True
+    assert sh.handback_untrusted(raw, far) is False
+    assert sh.handback_untrusted(Action4D(), near) is False          # a hover asks nothing
+    # A rail's own FSM judges by its own theta.
+    wide = EscalationFSM(FSMConfig(theta_lateral_m=20.0))
+    assert sh.handback_untrusted(raw, near, fsm=wide) is False
+    assert sh.fsm.state is S.NORMAL and sh._t_last is None and not len(sh.history)
+
+
+def test_the_drift_that_churned_on_the_rig_holds_to_its_timeout():
+    """corridor-drift-angles 8 m/s, -60 deg on the rig's vehicle: at 9eed35b
+    Loiter handed the unchanged request back twice headless (G8 at 18.6 s and
+    24.5 s) and 14 times on the rig (sm1110_010), where the label expects the
+    operator timeout. Judged from its hold point at speed it is not handed
+    back: G3, then G5 thirty seconds later, inside the episode."""
+    import sweep_scenarios as SW
+    from guardrail.scenario_spec import Library
+    lib = Library(ROOT / "experiments" / "scenarios.yaml")
+    cell = next(c for c in lib.by_id()["corridor-drift-angles"].cells()
+                if c.params.get("ask_mps") == 8 and c.params.get("drift_deg") == -60)
+    run = SW.run_episode(cell.spec, lib.defaults, 0, response="rail",
+                         autopilot_hold=SW.RAIL_VEHICLE["autopilot_hold"])
+    sc = SW.score(cell.spec, run.rows, run.extra, run.policy, run.priorities)
+    tr = [(t["edge"], t["t_s"]) for t in (run.extra.get("fsm") or {}).get("transitions", [])]
+    edges = [e for e, _ in tr]
+    assert "G8" not in edges and edges[:3] == ["G1", "G3", "G5"], tr
+    assert abs((tr[2][1] - tr[1][1]) - 30.0) < 0.11, tr
+    assert sc["failsafe_triggered"] and not sc.get("failsafe_censored"), sc
+    assert (sc["p0_escapes"], sc["breaches"]) == (0, 0), sc
+
+
 # --------------------------------------------------------------------------- #
 # How a rail flies it (guardrail/hold_flight.py)
 # --------------------------------------------------------------------------- #
@@ -560,6 +677,183 @@ def test_a_replan_holds_in_place_while_its_search_runs():
     f.state = S.NORMAL
     assert planner.tick(sh, f, run, here=HERE, unsafe=[]) is None
     assert planner.search is None
+
+
+def test_the_guard_is_refused_unsampled_while_a_search_runs():
+    """2026-11-10 (the hil shakedown hs05: the Orin paid 93-121 ms for a
+    slice and the hand-back guard on one tick). HoldPlanner.handback samples
+    nothing while a search runs and refuses the hand-back; with no search it
+    is Shield.handback_unsafe."""
+    sh = _slow_bar(half_len=1.5)
+    calls = []
+    orig = sh.handback_unsafe
+
+    def count(*a, **kw):
+        calls.append(a)
+        return orig(*a, **kw)
+    sh.handback_unsafe = count
+
+    class _Asks(_FakeFSM):
+        @property
+        def needs_hold(self):
+            return self.state in (S.LOITER, S.LAND) and self.hold is None
+
+    f = _Asks()
+    planner = HP.HoldPlanner(units=20.0)
+    run = (lambda: HP.choose_hold_point(sh, HERE, hold_s=30.0))
+    act = Action4D(vx=0.0, vy=-0.2, vz_up=0.0)
+    try:
+        assert planner.tick(sh, f, run, here=HERE, unsafe=[]) is None    # entry: no guard ran
+        assert planner.search is not None and planner.slice > 0.0 and planner.guard is None
+        got, slices = None, []
+        while got is None:
+            assert planner.handback(sh, HERE, act) == (True, None) and planner.guard == "search"
+            got = planner.tick(sh, f, run, here=HERE, unsafe=[])
+            slices.append(planner.slice)
+            assert len(slices) < 200
+        assert not calls, "the guard sampled on a search tick"
+        assert all(0.0 < s <= 20.0 + HP.MOVING_ZONE_STOP_COST + 5.0 for s in slices), slices
+        assert got == HP.choose_hold_point(sh, HERE, hold_s=30.0)
+        f.hold = got
+        assert planner.handback(sh, HERE, act) == (False, None) and len(calls) == 1
+        assert (planner.guard, planner.checked) == ("ran", "path")
+        # Within the tick (units None) there is no slice to keep the guard from.
+        whole = HP.HoldPlanner(units=None)
+        assert whole.handback(sh, HERE, act) == (False, None) and len(calls) == 2
+    finally:
+        del sh.handback_unsafe
+
+
+def test_a_replan_that_starts_on_a_guard_tick_takes_its_first_slice_the_next():
+    """The tick the point held stops being legal already paid for the guard:
+    the in-place plan is still given at once, and the search's first slice is
+    the next tick's (`last["waited"]`)."""
+    sh = _slow_bar(half_len=1.5)
+    old = HoldPoint("LOITER", "moved", 5.0, 5.0, 15.0, legal=True, travel_s=1.8,
+                    speed_mps=4.0, t_s=0.0)
+
+    class _Asks(_FakeFSM):
+        @property
+        def needs_hold(self):
+            return self.state in (S.LOITER, S.LAND)
+
+    f = _Asks(hold=old)
+    planner = HP.HoldPlanner(units=20.0)
+    run = (lambda: HP.choose_hold_point(sh, HERE, hold_s=30.0))
+    planner.handback(sh, HERE, Action4D(vx=0.0, vy=-0.2, vz_up=0.0))
+    first = planner.tick(sh, f, run, here=HERE, unsafe=[])
+    assert first is not None and (first.kind, first.legal) == ("in_place", True), first
+    assert planner.slice == 0.0 and planner.search is not None and planner.search.ticks == 0
+    f.hold = first
+    got = None
+    for _ in range(200):
+        assert planner.handback(sh, HERE, Action4D(vx=0.0, vy=-0.2, vz_up=0.0)) == (True, None)
+        got = planner.tick(sh, f, run, here=HERE, unsafe=[])
+        assert planner.slice > 0.0
+        if got is not None:
+            break
+    assert got == HP.choose_hold_point(sh, HERE, hold_s=30.0), got
+    assert planner.last["waited"] == 1 and planner.last["ticks"] > 1, planner.last
+
+
+def test_the_request_check_is_asked_once_while_nothing_it_was_asked_about_changed():
+    """One decision of the Shield's is as dear as the tick's own, so the
+    guard's request check is not made every other tick: in a still world
+    once, then the path every tick; again when the request, the hold point
+    or the rule set changes; in turn with the path, tick by tick, where the
+    world moves (an answer kept 0.5 s there handed rotate-spin at 9 deg/s
+    back late, into the bar's next sweep); and never on two ticks running, so
+    a request that changes every tick still leaves the path sampled."""
+    class _Cfg:
+        handback_request = "at_speed"
+
+    def run(sh, raws, f):
+        asked = []
+        orig_rq, orig_hb = sh.handback_untrusted, sh.handback_unsafe
+        sh.handback_untrusted = lambda *a, **kw: (asked.append("request"), False)[1]
+        sh.handback_unsafe = lambda *a, **kw: (asked.append("path"), False)[1]
+        planner = HP.HoldPlanner(units=20.0)
+        outs = []
+        try:
+            for raw in raws:
+                outs.append(planner.handback(sh, HERE, raw, fsm=f, raw=raw))
+                planner.tick(sh, f, lambda: None, here=HERE, unsafe=[])
+        finally:
+            del sh.handback_untrusted, sh.handback_unsafe
+        return asked, outs
+
+    f = _FakeFSM(hold=HoldPoint("LOITER", "in_place", 0.0, 0.0, 15.0, legal=True, t_s=0.0))
+    f.config, f.needs_hold = _Cfg(), False
+    still = Shield(load_policy(DEMO), escalation=False)
+    still.filter(HERE, Action4D(), t=0.0)
+    assert still.world_is_still()
+    same = [Action4D(vx=1.0, vy=0.0, vz_up=0.0)] * 12
+    asked, outs = run(still, same, f)
+    assert asked == ["request"] + ["path"] * 11, asked
+    assert outs[0] == (True, False) and outs[1] == (False, False), outs[:2]   # refused until both answered
+    # A request that changes (by more than 1 cm/s) is asked about again, a tick apart.
+    drift = [Action4D(vx=1.0 + 0.05 * i, vy=0.0, vz_up=0.0) for i in range(8)]
+    asked, _ = run(still, drift, f)
+    assert asked == ["request", "path"] * 4, asked
+    jitter = [Action4D(vx=1.0 + 1e-6 * i, vy=0.0, vz_up=0.0) for i in range(6)]
+    assert run(still, jitter, f)[0] == ["request"] + ["path"] * 5
+    # Where a zone moves, in turn.
+    moving = _slow_bar(half_len=1.5)
+    assert not moving.world_is_still()
+    asked, _ = run(moving, same, f)
+    assert asked == ["request", "path"] * 6, asked
+
+
+def test_no_tick_of_the_cells_pays_for_two_kinds_of_hold_work():
+    """dyn-nfz-rotate-spin on the rig's vehicle, every Shield tick: the
+    hand-back guard's path samples, or its one decision for the request at
+    speed, or a search slice of at most TICK_QUERIES units - never two of
+    them; a hand-back refused for the search says so on its record."""
+    from guardrail import shield as SH
+    ticks = []
+    cur = {"path": 0, "request": 0, "slice": 0.0}
+    orig_hb, orig_rq, orig_tick, orig_filter = (
+        SH.Shield.handback_unsafe, SH.Shield.handback_untrusted, HP.HoldPlanner.tick,
+        SH.Shield.filter)
+
+    def hb(self, *a, **kw):
+        cur["path"] += 1
+        return orig_hb(self, *a, **kw)
+
+    def rq(self, *a, **kw):
+        cur["request"] += 1
+        return orig_rq(self, *a, **kw)
+
+    def ptick(self, *a, **kw):
+        try:
+            return orig_tick(self, *a, **kw)
+        finally:
+            cur["slice"] += self.slice
+
+    def filt(self, *a, **kw):
+        cur.update(path=0, request=0, slice=0.0)
+        d = orig_filter(self, *a, **kw)
+        rec = getattr(d, "fsm_record", None) or {}
+        ticks.append((cur["path"], cur["request"], cur["slice"], rec.get("handback_refused"),
+                      rec.get("handback_unsafe")))
+        return d
+    (SH.Shield.handback_unsafe, SH.Shield.handback_untrusted, HP.HoldPlanner.tick,
+     SH.Shield.filter) = hb, rq, ptick, filt
+    try:
+        for dps in (3, 6):
+            _spin("rail", dps)
+    finally:
+        (SH.Shield.handback_unsafe, SH.Shield.handback_untrusted, HP.HoldPlanner.tick,
+         SH.Shield.filter) = orig_hb, orig_rq, orig_tick, orig_filter
+    n = [sum(1 for t in ticks if t[k]) for k in (0, 1, 2)]
+    assert min(n) > 5 and n[0] > 20 and n[1] > 20, n
+    two = [t for t in ticks if (t[0] > 0) + (t[1] > 0) + (t[2] > 0) > 1]
+    assert not two, two[:3]
+    assert max(t[0] for t in ticks) == 1 and max(t[1] for t in ticks) == 1
+    assert max(t[2] for t in ticks) <= HP.TICK_QUERIES + 1e-9, max(t[2] for t in ticks)
+    refused = [t for t in ticks if t[3]]
+    assert refused and all(t[3] == "hold search running" and t[4] and not t[0] and not t[1]
+                           for t in refused), refused[:3]
 
 
 def test_a_search_that_raises_holds_in_place_marked_illegal():
