@@ -5021,13 +5021,22 @@ def rail_label_scores(runs: list[dict], labels: dict) -> dict:
     undecided (the label could not be decided in the scenario's length),
     unlabelled (the cell and seed are not in the artefact), not measured (no
     FSM verdict) - and the false and missed triggers. Nothing is pooled
-    across readings and nothing left out is counted as correct."""
+    across readings and nothing left out is counted as correct.
+
+    A rail flies 35 s longer than the scenario (rail_max_s) and its
+    fail-safe is read over that whole flight, so the artefact reads a rail
+    label that is undecided at the scenario's length on the cell flown that
+    much longer (`length` "rail"). Runs scored on such a label are named
+    (`label_flown_longer`) and the count without them is kept beside the
+    reading's (`at_scenario_length`), so what the longer reading adds is
+    never hidden in the total."""
     from guardrail.fsm import score_failsafe_triggers
     adopted = labels.get("adopted_kpi_reading")
     out = {}
     for key, what in RAIL_LABEL_READINGS:
-        pairs, names = [], {k: [] for k in ("false", "missed", "censored", "undecided",
-                                           "unlabelled", "not_measured")}
+        pairs, short = [], []
+        names = {k: [] for k in ("false", "missed", "censored", "undecided", "unlabelled",
+                                 "not_measured", "label_flown_longer")}
         for it in runs:
             tag = {"run": it["run"], "cell": it["cell"], "seed": it["seed"]}
             lab = ((labels["labels"].get(it["cell"]) or {}).get(str(it["seed"])) or {}).get(key)
@@ -5042,6 +5051,10 @@ def rail_label_scores(runs: list[dict], labels: dict) -> dict:
             else:
                 exp, trig = bool(lab["expected"]), bool(it["triggered"])
                 pairs.append((exp, trig))
+                if lab.get("length") == "rail":
+                    names["label_flown_longer"].append(tag)
+                else:
+                    short.append((exp, trig))
                 if trig and not exp:
                     names["false"].append({**tag, "label": lab.get("clauses") or []})
                 elif exp and not trig:
@@ -5056,6 +5069,8 @@ def rail_label_scores(runs: list[dict], labels: dict) -> dict:
                     "null_never_trigger": sc["null_never_trigger"],
                     "expected_triggers": sc["expected_triggers"],
                     "expected_non_triggers": sc["expected_non_triggers"],
+                    "at_scenario_length": {
+                        "scored": len(short), "correct": sum(1 for e, t in short if e == t)},
                     **{k: v for k, v in names.items()}}
     return out
 
@@ -5078,9 +5093,16 @@ def rail_label_lines(scores: dict, labels: dict, path: Path) -> list[str]:
                  f"{f(sc['null_always_trigger'])}, never-trigger {f(sc['null_never_trigger'])}"
                  f"  | censored {len(sc['censored'])}, undecided {len(sc['undecided'])}, "
                  f"unlabelled {len(sc['unlabelled'])}, no verdict {len(sc['not_measured'])}")
-        for kind in ("false", "missed", "censored", "undecided", "unlabelled"):
+        if sc["label_flown_longer"]:
+            s0 = sc["at_scenario_length"]
+            L.append(f"      {len(sc['label_flown_longer'])} of them on a label undecided at the "
+                     f"scenario's length, read on the cell flown as long as the rail flies; "
+                     f"without them {s0['correct']}/{s0['scored']}")
+        for kind in ("false", "missed", "censored", "undecided", "unlabelled",
+                     "label_flown_longer"):
             for t in sc[kind]:
-                L.append(f"      {kind:10} {t['run']}  ({t['cell']}, seed {t['seed']})")
+                name = "longer" if kind == "label_flown_longer" else kind
+                L.append(f"      {name:10} {t['run']}  ({t['cell']}, seed {t['seed']})")
     return L
 
 

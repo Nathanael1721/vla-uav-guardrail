@@ -549,8 +549,11 @@ def main(argv=None) -> int:
         n = sum(len(v) for v in doc["labels"].values())
         und = sum(1 for v in doc["labels"].values() for lab in v.values()
                   if lab["r2"]["expected"] is None)
-        print(f"{n} cell-seeds, {und} undecided under r2 at the scenario's length -> "
-              f"{args.build_labels[0]}")
+        b = doc["built"]
+        print(f"{n} cell-seeds; under r2 {und} undecided, {b['resolved_flown_longer']} "
+              f"reading(s) resolved on the flight as long as the rail flies, "
+              f"{len(b['differ_flown_longer'])} decided reading(s) that flight reads "
+              f"otherwise (listed, not changed) -> {args.build_labels[0]}")
         return 0
     prof = SW._resolve_profile(args.profile)
     lib = Library(ROOT / (prof.library if prof else "experiments/scenarios.yaml"))

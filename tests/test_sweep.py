@@ -3711,7 +3711,11 @@ def test_a_rail_campaign_is_scored_under_each_label_reading_and_names_what_it_le
         "moved": {"1001": lab(False, False, True)},      # section 7 moves it
         "free": {"1001": lab(False, False, False)},
         "open": {"1001": lab(False, None, None)},        # undecided on the rail vehicle
-        "loit": {"1001": lab(True, True, True)}}}
+        "loit": {"1001": lab(True, True, True)},
+        # undecided on the rail vehicle at the scenario's length; r2 read on
+        # the cell flown as long as the rail flies
+        "late": {"1001": lab(False, None, True)}}}
+    labels["labels"]["late"]["1001"]["r2"]["length"] = "rail"
     runs = [{"run": "c_001", "cell": "held", "seed": 1001, "triggered": True, "censored": False},
             {"run": "c_002", "cell": "moved", "seed": 1001, "triggered": True, "censored": False},
             {"run": "c_003", "cell": "free", "seed": 1001, "triggered": False, "censored": False},
@@ -3719,7 +3723,8 @@ def test_a_rail_campaign_is_scored_under_each_label_reading_and_names_what_it_le
             {"run": "c_005", "cell": "loit", "seed": 1001, "triggered": False, "censored": True},
             {"run": "c_006", "cell": "loit", "seed": 1001, "triggered": False, "censored": False},
             {"run": "c_007", "cell": "gone", "seed": 1001, "triggered": True, "censored": False},
-            {"run": "c_008", "cell": "free", "seed": 1001, "triggered": None, "censored": False}]
+            {"run": "c_008", "cell": "free", "seed": 1001, "triggered": None, "censored": False},
+            {"run": "c_009", "cell": "late", "seed": 1001, "triggered": True, "censored": False}]
     sc = S.rail_label_scores(runs, labels)
     assert list(sc) == ["a", "r", "r2"] and [v["adopted_kpi_reading"] for v in sc.values()] == [
         False, False, True]
@@ -3727,31 +3732,39 @@ def test_a_rail_campaign_is_scored_under_each_label_reading_and_names_what_it_le
     def names(v, kind):
         return [t["run"] for t in v[kind]]
     a, r, r2 = sc["a"], sc["r"], sc["r2"]
-    # (a): 5 scored (held, moved, free, open, loit c_006); held and moved false, loit missed.
-    assert (a["correct"], a["scored"]) == (2, 5), a
-    assert names(a, "false") == ["c_001", "c_002"] and names(a, "missed") == ["c_006"]
-    assert a["failsafe_trigger_correctness"] == 0.4
-    assert (a["null_always_trigger"], a["null_never_trigger"]) == (0.2, 0.8), a
-    # (r): the open cell is undecided, not a correct non-trigger.
+    # (a): 6 scored (held, moved, free, open, loit c_006, late); held, moved
+    # and late false, loit missed.
+    assert (a["correct"], a["scored"]) == (2, 6), a
+    assert names(a, "false") == ["c_001", "c_002", "c_009"] and names(a, "missed") == ["c_006"]
+    assert a["failsafe_trigger_correctness"] == round(2 / 6, 6)
+    assert (a["null_always_trigger"], a["null_never_trigger"]) == (round(1 / 6, 6),
+                                                                   round(5 / 6, 6)), a
+    # (r): the open and the late cell are undecided, not correct non-triggers.
     assert (r["correct"], r["scored"]) == (2, 4), r
     assert names(r, "false") == ["c_002"] and names(r, "missed") == ["c_006"]
-    assert names(r, "undecided") == ["c_004"]
-    # (r2): the adopted reading.
-    assert (r2["correct"], r2["scored"]) == (3, 4), r2
+    assert names(r, "undecided") == ["c_004", "c_009"]
+    # (r2): the adopted reading; the late cell is scored on its label flown
+    # as long as the rail flies, named, and the count without it kept.
+    assert (r2["correct"], r2["scored"]) == (4, 5), r2
     assert names(r2, "false") == [] and names(r2, "missed") == ["c_006"]
-    assert r2["failsafe_trigger_correctness"] == 0.75 and 0.0 < r2["wilson_low_95"] < 0.75
-    assert (r2["null_always_trigger"], r2["null_never_trigger"]) == (0.75, 0.25), r2
+    assert r2["failsafe_trigger_correctness"] == 0.8 and 0.0 < r2["wilson_low_95"] < 0.8
+    assert (r2["null_always_trigger"], r2["null_never_trigger"]) == (0.8, 0.2), r2
+    assert names(r2, "label_flown_longer") == ["c_009"]
+    assert r2["at_scenario_length"] == {"scored": 4, "correct": 3}, r2
+    assert a["at_scenario_length"] == {"scored": 6, "correct": 2} and not names(
+        a, "label_flown_longer")
     for v in sc.values():
-        assert v["runs"] == 8
+        assert v["runs"] == 9
         assert names(v, "censored") == ["c_005"] and names(v, "unlabelled") == ["c_007"]
         assert names(v, "not_measured") == ["c_008"]
         left = sum(len(v[k]) for k in ("censored", "undecided", "unlabelled", "not_measured"))
-        assert v["scored"] + left == 8, v
+        assert v["scored"] + left == 9, v
     lines = S.rail_label_lines(sc, {"built": {"code_revisions": ["f" * 40]}, **labels},
                                S.RAIL_LABELS)
     text = "\n".join(lines)
     assert "(r2)" in text and "THE ADOPTED KPI READING" in text and text.count("ADOPTED") == 1
-    assert "3/4 = 0.750" in text and "missed     c_006" in text and "undecided  c_004" in text
+    assert "4/5 = 0.800" in text and "missed     c_006" in text and "undecided  c_004" in text
+    assert "without them 3/4" in text and "longer     c_009" in text
 
 
 def test_a_fetched_rail_run_is_rescored_offline_and_left_as_it_was():

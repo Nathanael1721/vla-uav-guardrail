@@ -407,16 +407,183 @@ identical; the sweeps' own gates: library 155 pass / 22 tracked / 0 fail /
 3 known, smoke 56 / 6 / 0 / 2, nightly 663 / 66 / 0 / 15 (the rail
 mission's pin is off, the 7 m cell's keeps only the goal).
 
-**Re-derived on 2026-11-11** on the code that flies (section 8): the same
-two cells move and nothing else does - {S7_REDERIVED}.
+**Re-derived on 2026-11-11** on the code that flies (section 8): the same two
+cells move and nothing else does - on the ideal vehicle rail-mission-stub-vla
+(smoke 1, nightly 3 cell-seeds: 49.9 s held, 10.9 s free) and
+standoff-approach-angles 7 m pedestrian (nightly 9: 39.9 s held, 1.5 s free),
+and no declared label disagrees with the tool (0 of 764 judged cell-seeds); on
+the rail vehicle the same two cells (r to r2: 49.9 s held, 9.8 s free; 39.9 s
+held, 2.3 s free).
 
-## 8. PROPOSED, NOT ADOPTED: the KPI-grade labels derived on the vehicle that flies them (draft, 2026-11-07)
+## 8. The KPI-grade labels are derived on the vehicle that flies them (adopted 2026-11-10; drafted 2026-11-07)
 
-**Status: a draft for the user's decision. It is not the rubric.** Sections
-1-6 are the rubric. This section exists only on the branch
-`e5-prescribed-on-rail-vehicle`, which also carries section 7's proposal
-(its tool, labels and tests); the vehicle and the reading of E5 are two
-separate decisions, and the numbers below give every combination.
+**Status: adopted**, with section 7, by the user's decision of 9-10 November
+2026 ("follow the best practice that meets the KPI criteria"). The same three
+things hold as for section 7: it was adopted AFTER the rig had shown the
+autopilot's lag (rh01, 7 November) and after KPI-grade campaigns had flown,
+so it is not a pre-registered reading; the earlier readings are still
+printed beside it; and what changed is named below.
+
+**The adopted reading.** The fail-safe correctness of a KPI-grade run on the
+hil rail is judged on **(r2)**: this rubric's labels derived on the rail
+vehicle, with E5 read on the prescribed flight (section 7). Beside it, on
+every campaign, by name: **(a)**, the ideal-vehicle labels on section 3's
+reading (what every campaign was scored on until now), and **(r)**, the
+rail-vehicle labels on section 3's reading. The headless labels in
+experiments/templates stay the ideal vehicle's (a2: section 7's reading).
+
+- **The vehicle** is `tools/failsafe_rubric.py --response rail`: the harness's
+  `RAIL_VEHICLE`, the response fitted to the rig's own flights and entered
+  from a hover, as a rail starts (docs/DESIGN-harness-vehicle-response.md).
+  Every flight the rubric reads - section 3's flight without a fail-safe and
+  section 7's prescribed one - is flown on it; a held aircraft is the zero
+  setpoint flown through that response. The draft of 7 November used the
+  Copter-4.5.7 fit (`--response ardupilot`), the only one there was then.
+- **The artefact** is docs/data/failsafe_labels_rail.json
+  (`tools/failsafe_rubric.py --build-labels`): for every Shield-on, FSM-on
+  cell and seed of the smoke, grant_example and nightly profiles, the four
+  readings a, a2, r, r2, each with the clauses that hold, its E5 spell and
+  the length it was read at, the commands that derived them and the code
+  revision each ran at.
+- **Undecided is not guessed, and is read at the length the rail flies.**
+  A label is derived at the scenario's own length. Where no clause holds
+  and an E5 spell is still running when the episode ends, it is undecided
+  there. The draft asked that "a label left undecided" be flown max_s +
+  `loiter_timeout_s` + 5 s, and the rails have flown exactly that long
+  since (`sweep_scenarios.rail_max_s`; a rail run's fail-safe verdict is
+  read over the whole flight). So a rail label undecided at the scenario's
+  length is read on the cell flown 35 s longer and marked `length: "rail"`;
+  one undecided even then would stay undecided (`expected` null), left out
+  of the count and named. A label decided at the scenario's length is never
+  replaced by the longer flight's; a difference would be listed
+  (`built.differ_flown_longer`). Every score names the runs judged on a
+  label read at the rail's length and prints the count without them.
+- **The scoring path** is `experiments/sweep_scenarios.py --rescore-rail
+  <run folders> --profile <the campaign's>`: every fetched run re-scored
+  with the checkout's scorer, then the fail-safe trigger correctness under
+  (a), (r) and (r2) - count, rate, Wilson 95 % lower bound, both nulls, and
+  by name the censored, undecided and unlabelled runs and the false and
+  missed triggers. (r2) is marked the adopted KPI reading. Shield-off runs
+  are left out and counted.
+
+**Why the labels do not depend on the FSM that flew.** Neither flight the
+labels read steps on the FSM's verdict (sections 3 and 7), so a change of
+the FSM's law cannot move a label: the smoke's rail labels derived on the
+harness of 9eed35b (hand-back "as_held", 100-unit slices) and on the code
+that flies (hand-back "at_speed", 60-unit slices) are identical: 112 of 112
+readings (56 cell-seeds, both readings of E5), label, clauses and E5 spell
+alike. The
+KPI-grade campaigns flown at 9eed35b are therefore scored on the same
+artefact as the ones flown after it.
+
+### Re-derived on 2026-11-11, on the code that flies
+
+`tools/failsafe_rubric.py` at 442397f (the scenario-length derivations) and
+897dac7 (the longer flights): this branch's tool on b36c0e6 and on 22d434b,
+the commit that flies, which differ only in the rail's node, both vehicles:
+
+Expected / not expected, per reading; in brackets, how many of the expected
+were undecided at the scenario's length and are read on the cell flown as long
+as the rail flies:
+
+| profile (cell-seeds) | a | a2 | r | r2, adopted |
+|---|---|---|---|---|
+| smoke (56) | 23 / 33 | 24 / 32 | 28 / 28 (3) | 29 / 27 (3) |
+| grant_example (36) | 0 / 36 | 0 / 36 | 0 / 36 | 0 / 36 |
+| nightly (672) | 279 / 393 | 291 / 381 | 333 / 339 (18) | 345 / 327 (18) |
+
+708 cell-seeds in all (the smoke's are the nightly's seed 1001). No reading is
+undecided after the longer flight, and no label decided at the scenario's
+length is read differently on it (checked on every smoke cell and on the four
+nightly families that had an undecided cell: 0 differ;
+`built.differ_flown_longer`). The ideal labels are the templates': 0 of 764
+judged cell-seeds disagree (`a2`).
+
+Where the rail labels differ from the ideal ones, on the same reading (smoke
+5, nightly 60 cell-seeds):
+
+| cells (nightly cell-seeds) | ideal -> rail | read |
+|---|---|---|
+| dyn-nfz-spawn-ahead 12 m at 2 m/s (9) and 30 m at 4 and 8 m/s (18); gps-dropout lane 15, windows 2-4 and 6-13 s (6); wind-gusts lane 15 at 2 m/s (3); wind-within-authority lane 15 at 5 m/s (3) | not expected -> expected (E5, spells of 32.1-44.1 s) | at the scenario's length |
+| nfz-head-on (3); dyn-nfz-rotate-step (3); time-window-opens-on-sideways-pilot (3); dyn-nfz-spawn-ahead 30 m at 2 m/s (9) | not expected -> expected (E5) | undecided at the scenario's length (spells of 20.1-26.6 s still running when the episode ends); E5 on the flight as long as the rail flies (55.1-61.6 s) |
+| gps-dropout lane 23.6, window 6-13 s (3) | expected (E3) -> not expected | at the scenario's length: on the rig's response the aircraft's closest true approach to the fence is 4.36 m (ideal 1.0 m), so E3 does not hold |
+
+Section 7's two cells (rail-mission-stub-vla, standoff-approach-angles 7 m
+pedestrian: nightly 12 cell-seeds) move from r to r2 exactly as from a to a2.
+
+**Every label that moved since the draft** (48abc9a: the labels of 7
+November, derived on the Copter-4.5.7 fit at 9cfbac0), and why:
+
+No label moved because the code moved. Checked four ways: the rail derivation
+of 7 November (the rig's own fit, kept from that day's work) and today's give
+the same label for every cell-seed on both readings (smoke 56, nightly 672);
+the smoke derived on the harness of 9eed35b and on the code that flies is
+identical reading for reading (above); the ideal labels are those of 7
+November; and the owner rule of 7 November (`untrusted_owner` "chain", which
+the tool now follows) moves none (the Copter-fit derivations of that day with
+and without it: 0 of 112 smoke and 1,344 nightly readings).
+
+What moved is the vehicle the draft was derived on. 48abc9a used the
+Copter-4.5.7 fit, entered mid-flight at the asked speed (`RESPONSE_ENTRY`
+"cruise"); the adopted labels use the rig's own fit, entered from a hover as a
+rail starts ("rest"). Smoke 2, nightly 12 cell-seeds, the same on both
+readings:
+
+| cells (nightly cell-seeds) | 48abc9a | adopted | why |
+|---|---|---|---|
+| corridor-drift-angles at 0 deg, 4 and 8 m/s (6) | expected (E5, 69.3 s) | not expected (0.0 s) | entered at 4 or 8 m/s along the corridor the Copter fit's request is over theta for the whole episode; entered from a hover it is never over theta |
+| corridor-drift-out (3) | undecided (a spell of 29.3 s still running) | not expected (0.0 s) | the same |
+| gps-dropout lane 23.6, window 6-13 s (3) | expected (E3) | not expected | E3 reads the frozen fix against the true distance to the fence: closest true approach 2.32 m on the Copter fit, 4.36 m on the rig's |
+
+Everything else the draft moved stands: the other cells of its table are the
+cells of the table above, with the same clause.
+
+**What stays undecided on the rail vehicle** (r and r2 alike): none, once the
+labels undecided at the scenario's length are read on the flight as long as
+the rail flies. Those were 18 nightly cell-seeds (3 of the smoke's):
+nfz-head-on, dyn-nfz-rotate-step, time-window-opens-on-sideways-pilot and
+dyn-nfz-spawn-ahead 30 m at 2 m/s. Runs scored on such a label are named in
+every table (`longer`), with the count without them beside it.
+
+### The KPI-grade campaigns, scored
+
+`--rescore-rail` on the fetched run folders (demo/out/hil_smoke), the
+re-scored verdict of each run against the artefact:
+
+| campaign | flown at | Shield-on runs | (a) | (r) | (r2), adopted | left out |
+|---|---|---|---|---|---|---|
+| rh03, smoke | fb96fe5 | 44 | 37/43 = 0.860 (0.727) | 41/43 = 0.953 (0.845) | 42/43 = 0.977 (0.879) | 1 censored (wind-beyond-authority at 12 m/s) |
+| hs05, the nine rotate-spin cells | 9eed35b | 9 | 7/7 (0.646) | 7/7 (0.646) | 7/7 (0.646) | 2 censored (6 deg/s, seeds 1001 and 1002) |
+| sm1110, smoke | 9eed35b | 47 | 40/45 = 0.889 (0.765) | 43/45 = 0.956 (0.852) | 44/45 = 0.978 (0.884) | 2 censored (corridor-drift-angles 8 m/s -60 deg, wind-within-authority 5 m/s: the hand-back churn) |
+| ge1110, grant example | 9eed35b | 32 (of 36; 4 folders hold no flight log) | 32/32 (0.893) | 32/32 (0.893) | 32/32 (0.893) | none |
+
+Wilson 95 % lower bound in brackets. Nulls under (r2): rh03 always-trigger
+0.512, never-trigger 0.488; sm1110 0.489 and 0.511; hs05 and ge1110 fly no
+cell that expects a fail-safe (never-trigger 1.000), so their 7/7 and 32/32
+say nothing a Shield with no fail-safe would not also score.
+
+- **Scored on a label read at the rail's length** (nfz-head-on,
+  dyn-nfz-rotate-step, time-window-opens-on-sideways-pilot): 3 runs in rh03
+  and 3 in sm1110, all correct triggers. Without them (r) is 38/40 and (r2)
+  39/40 on rh03 - the figures reported on 7 November - and 40/42 and 41/42 on
+  sm1110.
+- **Wrong under (r2):** rh03_017 (dyn-nfz-rotate-spin at 3 deg/s: X6 sent it
+  home at 30.4 s while no clause holds; the same cell is a correct non-trigger
+  in sm1110); sm1110_048 (wind-beyond-authority, lane 15 at 12 m/s: E2 expects
+  a fail-safe, the Loiter was handed back at 14.3 s and none followed).
+- **Wrong under (a) and not under (r2):** the three cells above in both
+  smokes, rail-mission-stub-vla in both (section 7's cell: wrong under (r)
+  too) and wind-within-authority at 5 m/s in rh03 - each a fail-safe the
+  flight took that the ideal vehicle's labels do not expect.
+- The smoke at the commit that flies (sm1111, 22d434b) was in the air when
+  this was written; it is scored by the same command.
+
+### The draft of 7 November, as it was put to the decision
+
+Its numbers were measured on the Copter-4.5.7 fit at 9cfbac0 and are kept
+for the record; the tables above replace them. Where it says the hil rail
+passes the scenario's max_s, that was true on 7 November: the rails have
+flown max_s + `loiter_timeout_s` + 5 s since.
 
 **What the hil rig showed.** shk03_001 (nfz-head-on, the Shield at 8bfe08f,
 ArduCopter 4.5.7 SITL in GUIDED on the hil topology): the zone enters the
@@ -430,7 +597,7 @@ sections 2-5 was derived on. Section 2 reads a label from "the scenario's
 physics"; the response of the vehicle is part of that physics, and the
 KPI-grade runs fly a vehicle that does not stop where the ideal one does.
 
-**The proposed reading.** Two label sets, each derived by this same rubric
+**The reading as drafted.** Two label sets, each derived by this same rubric
 on the vehicle its runs fly:
 
 - headless (the ideal vehicle): the labels in experiments/templates today;
@@ -504,9 +671,3 @@ false one under (a). shk01_001 predates the float32 cap-slack fix (8bfe08f):
 its G1 at 0.3 s was the kinematic cap's own spurious violation and its
 Loiter came from N-in-T on those onsets (G2 at 2.9 s), so it is evidence
 of the bug, not of either label set.
-
-**To adopt it**: the KPI-grade label set is derived with `--response
-ardupilot` (on section 3's reading, or on section 7's if that is adopted
-too), the hil runs fly max_s + `loiter_timeout_s` + 5 s, and the headless
-labels stay as they are. **To reject it**: discard the branch; sections 1-6
-stand.
