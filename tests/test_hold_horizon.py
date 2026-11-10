@@ -267,9 +267,13 @@ def test_the_request_is_judged_from_the_hold_point_at_the_speed_it_asks_for():
     assert sh.handback_untrusted(raw, near) is True
     assert sh.handback_untrusted(raw, far) is False
     assert sh.handback_untrusted(Action4D(), near) is False          # a hover asks nothing
-    # A rail's own FSM judges by its own theta.
+    # A rail's own FSM judges by its own theta, on its own basis: the same
+    # slide is 8.8 m by its own magnitude and under theta on the one-period
+    # reading (|dv| over 0.1 s), which a rail may select.
     wide = EscalationFSM(FSMConfig(theta_lateral_m=20.0))
     assert sh.handback_untrusted(raw, near, fsm=wide) is False
+    assert sh.handback_untrusted(raw, near, horizon_s=None) is True
+    assert sh.handback_untrusted(raw, near, horizon_s=0.1) is False
     assert sh.fsm.state is S.NORMAL and sh._t_last is None and not len(sh.history)
 
 

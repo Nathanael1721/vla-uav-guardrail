@@ -750,7 +750,7 @@ def main() -> int:
                 # speed it asks for (Shield.handback_untrusted).
                 handback, hb_untrusted = (
                     hold_planner.handback(shield, state, decision.emitted,
-                                          fsm=fsm, raw=decision.raw)
+                                          fsm=fsm, raw=decision.raw, horizon_s=theta_h)
                     if (in_loiter and not hard_unsafe
                         and fsm.config.hold_horizon == "loiter") else (None, None))
                 fsm_out = fsm.step(tick_input_from_decision(

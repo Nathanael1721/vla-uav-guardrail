@@ -59,7 +59,8 @@ shipped change and recorded as one.
   `sha256:3b54b4e3...`, the default at 9eed35b.
 - `guardrail/shield.py`: `Shield.handback_untrusted(raw, at)` - the decision
   the Shield would make for the request at the hold point from a state with
-  no measured velocity (`advise`), read by `untrusted_repair`;
+  no measured velocity (`advise`), read by `untrusted_repair` on the theta
+  basis the rail gives its own FSM (`horizon_s`);
   `Shield.world_is_still`; `_escalate` asks the guard through the planner
   (`handback_refused` on a tick refused for the search). The guard is the
   path's samples or the request's one decision a tick, never both: the
@@ -104,15 +105,21 @@ shipped change and recorded as one.
   (lane 15, 2-4), dyn-nfz-spawn-ahead 12 m (variant 2, 2 m/s) and
   wind-within-authority at 5 m/s take G5 inside their episode; no rotate-spin
   cell fails safe.
+- The new check asked, offline, of the rig's own Loiters (each hold point
+  sm1110_010 and sm1110_045 took, the request flown then, the run's rule
+  clock): 15 of 15 and 9 of 9 kept, the first of each on a repair of 2.014 m
+  and 2.073 m (theta 2.0), so neither flight would have been handed back.
 - Tried and withdrawn: the request's answer kept for 0.5 s in a moving world
   handed dyn-nfz-rotate-spin at 9 deg/s back 0.4 s late on the ideal vehicle
   and the library's gate failed (censored in Loiter).
 
 #### Not done
 - Nothing has flown on the rig with either change.
-- The rail arm reproduces sm1110_010's churn in kind, not in count: at
-  9eed35b it hands back twice and its third Loiter holds to G5, where the
-  rig handed back 14 times.
+- The rail arm reproduces the rig's churn in kind, not in count: at 9eed35b
+  it hands corridor-drift-angles (8 m/s, -60 deg) back twice and its third
+  Loiter holds to G5, where sm1110_010 was handed back 14 times; and
+  wind-within-authority (lane 15, 5 m/s) once, where sm1110_045 was handed
+  back 8 times.
 - `HANDBACK_QUERIES` is unchanged (40): a guard tick costs the Orin what it
   did, up to about 40 ms of hold work in the rotate-spin world.
 

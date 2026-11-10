@@ -1466,13 +1466,15 @@ class HoldPlanner:
         self._req_key = self._req_rt = None     # what that answer was asked about
         self._request_last = False          # the last guard tick asked it
 
-    def handback(self, shield, state: State, action, *, fsm=None,
-                 raw=None) -> tuple[bool, bool | None]:
+    def handback(self, shield, state: State, action, *, fsm=None, raw=None,
+                 horizon_s: Any = "shield") -> tuple[bool, bool | None]:
         """Loiter's hand-back guard under the per-tick bound (class
         docstring): (handback_unsafe, handback_untrusted) for the FSM's
         TickInput. (True, None) while a search runs, nothing sampled. With
         `fsm` on handback_request "at_speed" and the request `raw`, the two
-        checks in turn; otherwise the path check alone, as until 2026-11-10."""
+        checks; otherwise the path check alone, as until 2026-11-10.
+        `horizon_s`: the theta basis a rail gives its own FSM (default the
+        Shield's), for the request check to judge by."""
         self.checked = None
         if self.units is not None and self.search is not None:
             self.guard = "search"
@@ -1501,7 +1503,8 @@ class HoldPlanner:
         fresh = (self._request is not None and key == self._req_key
                  and shield._rt is self._req_rt and shield.world_is_still())
         if not fresh and not self._request_last:
-            self._request = bool(shield.handback_untrusted(raw, at, fsm=fsm))
+            self._request = bool(shield.handback_untrusted(raw, at, fsm=fsm,
+                                                           horizon_s=horizon_s))
             self._req_key, self._req_rt = key, shield._rt
             self._request_last = True
             self.checked = "request"

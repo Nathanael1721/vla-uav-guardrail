@@ -3117,7 +3117,8 @@ if HAVE_ROS:
                     # back 14 times on a repair read from the held aircraft).
                     handback, hb_untrusted = (
                         self.hold_planner.handback(self.shield, st, decision.emitted,
-                                                   fsm=self.fsm, raw=decision.raw)
+                                                   fsm=self.fsm, raw=decision.raw,
+                                                   horizon_s=self.theta_horizon_s)
                         if (in_loiter and not hard_unsafe
                             and self.fsm.config.hold_horizon == "loiter")
                         else (None, None))
