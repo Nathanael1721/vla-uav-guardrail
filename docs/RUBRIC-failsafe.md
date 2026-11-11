@@ -356,7 +356,11 @@ need next, which is why it was not narrowed.
   (`State.fix_ok`), and the headless harness models a rail that does
   (`stress.fix_quality_reported`, default true); no flight rail reports it
   yet (docs/DESIGN-escalation-fsm.md, "Where each rail's signal lives"),
-  and ArduPilot's own EKF failsafe is still not modelled.
+  and ArduPilot's own EKF failsafe is still not modelled. (Since 2026-11-07
+  the hil node reports `fix_ok`; since 2026-11-12 the rail labels read a
+  denial as the rail realises it, EKF3's dead-reckoned estimate - section 8,
+  "2026-11-12" - and on the rig X8's 0.5 m/s drift allowance, not E3, is
+  what fires on lane 23.6 at 4-11 and 6-13 s: an open decision.)
 - E2 is a parameter clause (the declared wind against the harness's
   6.4 m/s authority), and the SITL airframe on the rig holds 8 m/s: its
   8 m/s cells are fail-safes by the operator timeout (G5), not by a hold
@@ -610,6 +614,72 @@ the rail flies. Those were 18 nightly cell-seeds (3 of the smoke's):
 nfz-head-on, dyn-nfz-rotate-step, time-window-opens-on-sideways-pilot and
 dyn-nfz-spawn-ahead 30 m at 2 m/s. Runs scored on such a label are named in
 every table (`longer`), with the count without them beside it.
+
+### 2026-11-12: a GPS denial is read as the rails fly it
+
+No clause changed. What changed is the physics the rail labels of gps-dropout
+are read on: the stressor as the rail realises it, which section 8 always
+asked for ("derived on the vehicle that flies them") and which the
+derivation had not done for this one stressor.
+
+**The finding.** Until today every rail flight of gps-dropout the tool read
+handed the Shield the FROZEN last fix, the headless model ("what a bridge that
+forwards the last pose would do"). No rail does that: the hil rig sets SITL's
+SIM_GPS_DISABLE and ArduPilot's EKF3 keeps estimating on its IMU, so the pose
+the Shield is handed keeps moving (sweep_scenarios, the rail stressors). The
+rig's own raw MAVLink (each bag's /uas1/mavlink_source) carries SITL's truth
+(SIMSTATE) beside EKF3's estimate (GLOBAL_POSITION_INT): over the 30 GPS
+denials the rig has flown (nt1111_550-573, rh03_039/040, sm1110_043/044,
+sm1111_043/044) the estimate stayed within 1.47 m of the aircraft (envelope
+0.37 m at 2 s, 0.77 m at 4 s, 1.35 m at 6 s), lagging along the track, and it
+reset when the fix came back. On nt1111's 24 gps-dropout flights E3 - read on
+that truth, tick by tick - holds on none: past the 1 m margin only in the last
+second of a 7 s window, with the aircraft 8.4 m or more from nfz-square (lane
+23.6, 2-9 s; at 4-11 s the error stayed at 0.94 m or less). The frozen model
+expected E3 on lane 23.6 at 2-9 s and 4-11 s: nt1111_565-567 scored "missed"
+for a fail-safe the physics never called for, and nt1111_568-570 "correct"
+for one it did not need either.
+
+**The reading.** On the rail vehicle a GPS denial hands the Shield the
+autopilot's dead-reckoned estimate: the true position less
+`RAIL_EKF_DRIFT_MPS` (0.23 m/s, the upper envelope of error / time since the
+loss on those 30 flights) x the time since the loss, along the ground track at
+the loss, with `fix_ok` False (sweep_scenarios GPS_DROPOUT_MODELS
+"dead_reckoned", in RAIL_VEHICLE; the ideal vehicle keeps the frozen fix, so
+the templates' labels do not move). On it the lane-23.6 cells fly as the rig
+flew them: the Shield brakes and slides along the ring, closest 2.85-2.88 m
+(the rig: 2.80-2.90 m). The labels do not hang on the rate: flown at 0,
+0.35 and 0.5 m/s, E3 holds on no cell and every label is the same.
+
+**Labels it moved** (`tools/failsafe_rubric.py --update-labels`, recorded in
+the artefact's `built.updates` with its commands at 49c455c; nightly 24
+cell-seeds, the smoke's 2 the same):
+
+| cells (nightly cell-seeds) | r and r2 | why |
+|---|---|---|
+| gps-dropout lane 23.6, 2-9 s and 4-11 s (6) | expected (E3) -> not expected | the estimate is never wrong by more than the margin while the aircraft is within that error of the zone |
+| gps-dropout lane 15, 2-9 s and 4-11 s (6) | expected (E3, E5) -> expected (E5) | the head-on planner still asks for an over-theta repair for 43.8-44.0 s on the prescribed flight |
+
+Every other reading of every cell is as it was (lane 15 at 2-4 and 6-13 s,
+lane 23.6 at 2-4 and 6-13 s keep their label; a and a2 are untouched).
+
+**nt1111 re-scored** (22d434b's flights, the same 591 folders): (r2) 555/567 =
+0.979 before and after. Before: 3 missed (565-567, lane 23.6 2-9 s), 3 false
+(571-573, lane 23.6 6-13 s) and the 6 wind-beyond-authority misses at 12 m/s.
+After: 6 false (568-573, lane 23.6 4-11 and 6-13 s) and the same 6 wind
+misses. The six false triggers are one mechanism, the FSM's X8 on the rail:
+the Shield dead-reckons on the commands it streamed and takes the difference
+from the handed pose as that pose's error, plus a 0.5 m/s drift allowance
+(shield.DR_DRIFT_MPS). On the rig the handed pose is EKF3's, wrong by
+0.13-0.78 m when X8 fired (9.3-10.4 s), while the Shield's command
+integration was 2.8-3.4 m off it - the rig flies the Brake's lateral repair
+and its release late - so X8 judged the pose "4.4-5.0 m off". Replayed on
+the logged flights, X8 still fires on these cells on the 0.5 m/s allowance
+alone (10.2 s at 4-11 s, 10.8 s at 6-13 s); at SITL's measured 0.23 m/s it
+would not, by 0.01 m on the closest trajectory (at 0.24 m/s it fires at
+13.2 s). The allowance is a judgement recorded with every X8, an eighth of
+the speed cap, and a real IMU drifts faster than SITL's; choosing it for a
+rail is a decision, not a label question, and nothing here changed it.
 
 ### The KPI-grade campaigns, scored
 

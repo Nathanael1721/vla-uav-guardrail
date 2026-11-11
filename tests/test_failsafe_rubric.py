@@ -518,6 +518,18 @@ def test_the_committed_artefact_covers_what_the_rails_fly_and_agrees_with_the_te
                 assert bool(v["clauses"]) == (v["expected"] is True), (e.cell.episode_id, k, v)
     assert seen >= 700, seen
     assert moved == {"rail-mission-stub-vla", "standoff-approach-angles"}, moved
+    # Since 2026-11-12 the rail readings of a GPS denial are derived on the
+    # denial the rails fly (EKF3's estimate), re-derived in place: no E3 on the
+    # rail vehicle, while the ideal (templates') readings keep the frozen fix.
+    assert doc["vehicles"]["rail"]["gps_dropout"]["model"] == "dead_reckoned"
+    assert doc["vehicles"]["ideal"]["gps_dropout"]["model"] == "frozen"
+    gps = {c: v for c, v in doc["labels"].items() if c.startswith("gps-dropout@")}
+    assert len(gps) == 8, sorted(gps)
+    assert not any("E3" in lab[k]["clauses"] for v in gps.values() for lab in v.values()
+                   for k in ("r", "r2"))
+    assert any("E3" in lab["a2"]["clauses"] for v in gps.values() for lab in v.values())
+    assert any("--only gps-dropout --response rail" in r["command"]
+               for u in doc["built"].get("updates", []) for r in u["runs"])
 
 
 def test_an_episode_is_flown_longer_by_whole_ticks_and_never_shorter():
