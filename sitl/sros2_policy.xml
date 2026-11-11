@@ -69,6 +69,10 @@
             <topic>/mavros/home_position/home</topic>
             <topic>/mavros/global_position/raw/fix</topic>
             <topic>/mavros/param/event</topic>
+            <!-- the autopilot's raw MAVLink, for its EKF_STATUS_REPORT behind
+                 State.estimator_ok (2026-11-12): read only, published by
+                 MAVROS alone (/uas1/*) -->
+            <topic>/uas1/mavlink_source</topic>
           </topics>
           <services request="ALLOW">
             <service>/mavros/set_mode</service>

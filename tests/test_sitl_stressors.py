@@ -527,6 +527,7 @@ def _node_module():
         fakes[n] = types.ModuleType(n)
     fakes["sensor_msgs.msg"].NavSatFix = type("NavSatFix", (R._Msg,), {})
     fakes["mavros_msgs.msg"].ParamEvent = type("ParamEvent", (R._Msg,), {})
+    fakes["mavros_msgs.msg"].Mavlink = type("Mavlink", (R._Msg,), {})
     saved = {k: sys.modules.get(k) for k in fakes}
     sys.modules.update(fakes)
     try:
@@ -611,9 +612,153 @@ def test_a_node_without_the_fix_topic_flies_as_before():
         clk.t += 0.1
         node._tick()
     assert all("fix_ok" not in r and "position_lost" not in r for r in node.rows)
+    assert all("estimator_ok" not in r and "ekf_flags" not in r for r in node.rows)
     node._finish("test over")
     met = json.loads((out / "metrics.json").read_text(encoding="utf-8"))
     assert met["fix_quality"]["messages"] == 0 and met["fix_quality"]["ticks_no_fix"] == 0
+    assert met["fix_quality"]["estimator"]["messages"] == 0
+    shutil.rmtree(out, ignore_errors=True)
+
+
+# --------------------------------------------------------------------------- #
+# the autopilot's own estimator behind State.estimator_ok (2026-11-12)
+# --------------------------------------------------------------------------- #
+
+def _ekf_words(flags=0x33F, ph=0.007, vv=0.022, airspeed=0.0):
+    """EKF_STATUS_REPORT as MAVLink 2 carries it (trailing zero bytes cut)
+    and mavros_msgs/Mavlink holds it: (len, payload64)."""
+    import struct
+    raw = struct.pack("<5fHf", vv, ph, 0.11, 0.03, 0.0, flags, airspeed).rstrip(b"\0")
+    pad = raw.ljust((len(raw) + 7) // 8 * 8, b"\0")
+    return len(raw), list(struct.unpack(f"<{len(pad) // 8}Q", pad))
+
+
+def test_ekf_status_report_is_read_from_the_raw_mavlink_feed():
+    """No MAVROS 2 plugin publishes ArduPilot's EKF_STATUS_REPORT (193), so
+    the node reads it from /uas1/mavlink_source: the autopilot's own report
+    only (system 1, component 1), fields in MAVLink's size order, a payload
+    MAVLink 2 truncated restored. Healthy is what ArduCopter navigates on
+    (EKF_POS_HORIZ_ABS, not EKF_CONST_POS_MODE), initialised, and the
+    position and velocity test ratios below FS_EKF_THRESH."""
+    import ros2_shield_node as N
+    assert N.MAVLINK_SOURCE_TOPIC == "/uas1/mavlink_source" and N.EKF_STATUS_REPORT_ID == 193
+    n, words = _ekf_words()
+    f = N.ekf_status_from_mavlink(193, 1, 1, n, words)
+    assert f["flags"] == 0x33F and math.isclose(f["pos_horiz_variance"], 0.007, rel_tol=1e-6)
+    assert math.isclose(f["velocity_variance"], 0.022, rel_tol=1e-6)
+    n25, w25 = _ekf_words(flags=0x25, ph=0.0, vv=0.0)   # the rig's 7 s timeout report
+    assert n25 < 22 and N.ekf_status_from_mavlink(193, 1, 1, n25, w25)["flags"] == 0x25
+    assert N.ekf_status_from_mavlink(24, 1, 1, n, words) is None          # GPS_RAW_INT
+    assert N.ekf_status_from_mavlink(193, 246, 25, n, words) is None      # the stressor
+    assert N.ekf_status_from_mavlink(193, 1, 191, n, words) is None
+    assert N.ekf_status_from_mavlink(193, 1, 1, n, ["x"]) is None
+    ok = N.ekf_position_healthy
+    assert ok(f) == (True, "absolute horizontal position valid")
+    assert not ok({**f, "flags": 0x25})[0] and "EKF_POS_HORIZ_ABS" in ok({**f, "flags": 0x25})[1]
+    assert not ok({**f, "flags": 0x33F | 128})[0] and not ok({**f, "flags": 0x33F | 1024})[0]
+    assert ok({**f, "flags": 0x33F | N.EKF_GPS_GLITCHING})[0], "the autopilot flies through it"
+    assert not ok({**f, "pos_horiz_variance": 0.8})[0] and ok({**f, "pos_horiz_variance": 0.79})[0]
+    assert not ok({**f, "velocity_variance": float("nan")})[0]
+    assert ok({**f, "pos_horiz_variance": 0.9}, thresh=1.0)[0]
+    assert N.ekf_thresh_from(None)[0] == 0.8 and "not read" in N.ekf_thresh_from(None)[1]
+    assert N.ekf_thresh_from(0.0)[0] == 0.8 and N.ekf_thresh_from(0.5) == (
+        0.5, "FS_EKF_THRESH (read from the autopilot)")
+
+
+def test_the_estimator_verdict_is_the_autopilots_own_failsafe_rule():
+    """EstimatorHealth: True while the autopilot vouches for its estimate;
+    False once unhealthy reports outweigh healthy ones by 1 s (ArduCopter's
+    ekf_check: 10 failing 10 Hz checks, each passing one taking one back),
+    until they are paid back; None before any report or once the last is
+    older than the pose timeout. The rig's 7 s GPS denials dropped the
+    absolute position for one or two reports before the GPS returned: never
+    a verdict."""
+    import ros2_shield_node as N
+    f = N.ekf_status_from_mavlink(193, 1, 1, *_ekf_words())
+    bad = {**f, "flags": 0x25}
+    h = N.EstimatorHealth()
+    assert h.verdict(0.0) is None
+    t = 0.0
+    for _ in range(68):                       # 6.8 s of a denial: healthy
+        h.report(t, f)
+        assert h.verdict(t + 0.05) is True
+        t += 0.1
+    for _ in range(2):                        # EKF3's 7 s timeout, as on the rig
+        h.report(t, bad)
+        assert h.verdict(t + 0.05) is True
+        t += 0.1
+    for _ in range(5):                        # the GPS back
+        h.report(t, f)
+        t += 0.1
+    assert h.bad_s < 1e-9 and h.verdict(t) is True and len(h.spells) == 1
+    assert h.spells[0]["reports"] == 2 and not h.declared_spells
+    verdicts = []
+    for _ in range(12):                       # position lost for good
+        h.report(t, bad)
+        verdicts.append(h.verdict(t + 0.01))
+        t += 0.1
+    assert verdicts[:9] == [True] * 9 and verdicts[9:] == [False] * 3, verdicts
+    back = []
+    for _ in range(12):                       # paid back report by report
+        h.report(t, f)
+        back.append(h.verdict(t + 0.01))
+        t += 0.1
+    assert back[:9] == [False] * 9 and back[9:] == [True] * 3, back
+    assert h.verdict(t + N.EKF_STALE_S + 0.01) is None, "a stale report is not a verdict"
+    s = h.summary(to_mission_t=lambda v: v - 1.0)
+    assert s["messages"] == 99 and s["unhealthy_reports"] == 14 and len(s["declared_spells"]) == 1
+    assert s["declared_spells"][0]["t_end"] is not None and s["thresh"] == 0.8
+    h.set_thresh(0.5)
+    assert h.thresh == 0.5 and "read from the autopilot" in h.thresh_source
+    for bad_arg in ({"failsafe_s": 0}, {"stale_s": float("nan")}, {"thresh": -1}):
+        try:
+            N.EstimatorHealth(**bad_arg)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(f"{bad_arg} accepted")
+
+
+def test_the_node_hands_the_shield_the_autopilots_verdict_and_x8_waits_for_it():
+    """On the node: the GPS fix lost at 1 s while the autopilot keeps
+    vouching for its estimate (EKF_STATUS_REPORT healthy) - no X8, where
+    the old law alone took it at 3.0-3.5 s (the test above); the autopilot
+    then reports its position lost from 4 s on, and X8 comes with its own
+    failsafe's rule, 1 s later, naming the autopilot."""
+    R, N = _node_module()
+    assert N.Mavlink is not None
+    node, clk, out = _node(R, N, [])
+    node.start_mission()
+    n, good = _ekf_words()
+    nb, bad = _ekf_words(flags=0x25)
+    for k in range(70):
+        node._on_fix(N.NavSatFix(status=R._Msg(status=0 if k < 10 else -1)))
+        node._on_mavlink(N.Mavlink(msgid=33, sysid=1, compid=1, len=28, payload64=[0] * 4))
+        node._on_mavlink(N.Mavlink(msgid=193, sysid=1, compid=1,
+                                   **({"len": n, "payload64": good} if k < 40
+                                      else {"len": nb, "payload64": bad})))
+        node._on_pose(R._pose_msg(N, node.state))
+        R._act(N, node, vx=0.0)
+        clk.t += 0.1
+        node._tick()
+    rows = node.rows
+    assert rows[20]["fix_ok"] is False and rows[20]["estimator_ok"] is True
+    assert rows[20]["ekf_flags"] == 0x33F and rows[20]["ekf_age_ms"] == 100.0
+    x8 = [r for r in rows if r.get("fsm_edge") == "X8"]
+    assert x8, [(r["t"], r.get("estimator_ok"), r.get("position_lost")) for r in rows[35:55]]
+    assert 4.8 <= x8[0]["t"] <= 5.2 and "autopilot reports" in x8[0]["position_lost"], \
+        (x8[0]["t"], x8[0]["position_lost"])
+    assert all(r.get("position_lost") is None for r in rows if r["t"] < x8[0]["t"] - 1e-6)
+    assert "RTL" in [m.data for m in node.pubs[N.TOPIC_MODE_REQUEST].sent]
+    node._finish("test over")
+    met = json.loads((out / "metrics.json").read_text(encoding="utf-8"))
+    est = met["fix_quality"]["estimator"]
+    assert est["topic"] == "/uas1/mavlink_source" and est["messages"] == 70
+    assert est["unhealthy_reports"] == 30 and len(est["declared_spells"]) == 1
+    assert est["ticks_lost"] > 0 and est["ticks_ok"] >= 40 and est["thresh"] == 0.8
+    assert 3.9 <= est["unhealthy_spells"][0]["t_start"] <= 4.1, est["unhealthy_spells"]
+    report = (out / "report.md").read_text(encoding="utf-8")
+    assert "Autopilot estimator" in report and "70 report(s)" in report
     shutil.rmtree(out, ignore_errors=True)
 
 

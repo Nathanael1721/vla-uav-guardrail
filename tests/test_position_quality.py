@@ -390,6 +390,139 @@ def test_the_false_trigger_invariant_leaves_x8_out_and_still_catches_a_logging_f
 
 
 # --------------------------------------------------------------------------- #
+# X8 on the autopilot's own estimator (2026-11-12)
+# --------------------------------------------------------------------------- #
+
+RAIL_POLICY = ROOT / "policies" / "sim_demo_policy.yaml"
+
+
+def _rail_denial(estimator, stream_vx=2.0, ticks=90, lost_at=10, fix=True):
+    """A rail Shield (no FSM of its own, as the ROS 2 node's) handed the
+    aircraft 2 m south of nfz-square's face (x 5, y 15), the GPS fix lost at
+    tick `lost_at`, and `estimator(k)` as the autopilot's verdict on tick k
+    (None: not reported). The rail says it streams `stream_vx` north every
+    tick (note_flown) while the pose it hands on stays put: the hil rig's
+    lane 23.6 cells in miniature, where the Shield's command dead reckoning
+    ran 3.0-3.5 m from the autopilot's estimate. Returns {k: position_lost}
+    for the ticks with a verdict."""
+    from guardrail import load_policy
+    from guardrail.replay import rail_shield
+    sh = rail_shield(load_policy(RAIL_POLICY), lookahead_s=5.0, dt=0.1)
+    out = {}
+    for k in range(ticks):
+        kw = {"fix_ok": (k < lost_at) if fix else None}
+        est = estimator(k)
+        if est is not None:
+            kw["estimator_ok"] = est
+        d = sh.filter(State(x=5.0, y=15.0, up=15.0, yaw_deg=0.0, **kw), Action4D(), t=k * 0.1)
+        sh.note_flown(Action4D(vx=stream_vx))
+        if d.position_lost:
+            out[k] = d.position_lost
+    return out
+
+
+def test_the_autopilots_verdict_certifies_its_estimate_through_a_gps_denial():
+    """While the autopilot vouches for the estimate it hands the Shield
+    (State.estimator_ok True: ArduPilot's EKF_STATUS_REPORT with an absolute
+    horizontal position), the position is certified, GPS or not: no dead
+    reckoning of the Shield's own is held against it, so the same flight
+    that takes X8 on the old law (no verdict reported) takes none."""
+    old = _rail_denial(lambda k: None)
+    assert old and min(old) < 40, sorted(old)[:3]
+    assert all(rid == "nfz-square" and "dead reckoning" in why for why, rid in old.values())
+    assert _rail_denial(lambda k: True) == {}
+    # Nor does the verdict change a tick whose fix is valid.
+    assert _rail_denial(lambda k: True, lost_at=10 ** 6) == {}
+    # A dump without the field is the old dump; with it, it is recorded.
+    assert "estimator_ok" not in State(x=1.0, y=2.0, up=3.0).model_dump()
+    assert State(x=1.0, y=2.0, up=3.0, estimator_ok=True).model_dump()["estimator_ok"] is True
+
+
+def test_the_autopilot_declaring_its_position_lost_is_x8_at_once():
+    """estimator_ok False (the autopilot reports no valid absolute horizontal
+    position for as long as its own EKF failsafe waits): the position
+    certifies no margin, so X8 fires on that tick, naming the nearest hard
+    P0 zone - with or without a GPS fix, however far the zone."""
+    lost = _rail_denial(lambda k: k < 20)
+    assert min(lost) == 20, sorted(lost)[:3]
+    why, rid = lost[20]
+    assert rid == "nfz-square" and "autopilot reports no valid absolute" in why, why
+    assert "certifies no margin" in why and "2.0 m from it" in why, why
+    with_fix = _rail_denial(lambda k: k < 20, lost_at=10 ** 6, stream_vx=0.0)
+    assert min(with_fix) == 20, sorted(with_fix)[:3]
+    # Far from every zone (the old law would wait for the error to reach one).
+    from guardrail import load_policy
+    from guardrail.replay import rail_shield
+    sh = rail_shield(load_policy(RAIL_POLICY), lookahead_s=5.0, dt=0.1)
+    d = sh.filter(State(x=-40.0, y=-40.0, up=15.0, fix_ok=False, estimator_ok=False),
+                  Action4D(), t=0.0)
+    assert d.position_lost and "autopilot reports" in d.position_lost[0], d.position_lost
+
+
+def test_a_verdict_that_stops_falls_back_on_the_dead_reckoning_from_the_last_certified_pose():
+    """A report that goes stale (estimator_ok None again) is not a verdict:
+    the old law takes over, anchored on the last position the autopilot
+    vouched for, not on the loss of the fix - X8 comes as many ticks after
+    the verdict stops as after the fix was lost with none reported."""
+    base = _rail_denial(lambda k: None)
+    stale = _rail_denial(lambda k: True if k < 30 else None)
+    assert base and stale, (base, stale)
+    assert min(stale) - 30 == min(base) - 10, (min(stale), min(base))
+    assert "no valid fix for" in stale[min(stale)][0]
+
+
+def test_on_the_rail_vehicle_the_autopilots_estimate_is_flown_as_the_rig_flew_it():
+    """The headless rail vehicle (RAIL_VEHICLE: the dead-reckoned denial)
+    hands the Shield the modelled autopilot's verdict with its estimate:
+    True until RAIL_EKF_POS_VALID_S after the loss (EKF3's 6.8 s, then the
+    autopilot's 1 s failsafe rule), so no 7 s window reaches False. On it
+    gps-dropout lane 23.6 at 4-11 s and 6-13 s fly as the rig's lane-23.6
+    flights without X8 did (G1, G7, no fail-safe), where the old law -
+    the verdict withheld - takes X8 at 10.3 s and 9.9 s (the rig's
+    nt1111_568-573: 10.2-10.4 s and 9.3-9.5 s). Lane 15 keeps its G5. A
+    frozen denial reports no verdict."""
+    seen = []
+
+    class Spy(Shield):
+        def filter(self, state, *a, **kw):
+            if getattr(state, "fix_ok", None) is False:
+                seen.append(getattr(state, "estimator_ok", None))
+            return super().filter(state, *a, **kw)
+
+    class Withheld(Shield):
+        def filter(self, state, *a, **kw):
+            return super().filter(state.model_copy(update={"estimator_ok": None}), *a, **kw)
+
+    kw = dict(response=SW.RAIL_VEHICLE["response"],
+              autopilot_hold=SW.RAIL_VEHICLE["autopilot_hold"],
+              gps_dropout=SW.RAIL_VEHICLE["gps_dropout"])
+    assert 7.0 < SW.RAIL_EKF_POS_VALID_S < 8.0
+    orig = SW.Shield
+    try:
+        for window, old_x8 in (([4.0, 11.0], 10.3), ([6.0, 13.0], 9.9)):
+            spec = _cell("gps-dropout", lane_y=23.6, window=window)
+            SW.Shield = Spy
+            seen.clear()
+            run = SW.run_episode(spec, DEFAULTS, 1001, **kw)
+            assert len(seen) == 70 and set(seen) == {True}, (window, len(seen), set(seen))
+            assert _edges(run) == [("G1", 5.4), ("G7", 8.6)], (window, _edges(run))
+            assert not run.extra["fsm"]["failsafe_triggered"]
+            assert run.extra["min_true_dist_to_fence_m"] > 2.5, run.extra["min_true_dist_to_fence_m"]
+            SW.Shield = Withheld
+            assert _x8_t(SW.run_episode(spec, DEFAULTS, 1001, **kw)) == old_x8, window
+        SW.Shield = orig
+        lane15 = SW.run_episode(_cell("gps-dropout", lane_y=15.0, window=[4.0, 11.0]),
+                                DEFAULTS, 1001, **kw)
+        assert [e for e, _ in _edges(lane15)][:3] == ["G1", "G3", "G5"], _edges(lane15)
+        SW.Shield = Spy
+        seen.clear()
+        SW.run_episode(_cell("gps-dropout", lane_y=23.6, window=[4.0, 11.0]), DEFAULTS, 1001)
+        assert seen and set(seen) == {None}, set(seen)
+    finally:
+        SW.Shield = orig
+
+
+# --------------------------------------------------------------------------- #
 # bundles
 # --------------------------------------------------------------------------- #
 

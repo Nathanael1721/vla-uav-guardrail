@@ -147,12 +147,13 @@ class State(BaseModel):
     # not - a stale pose (a bridge forwarding its last sample; the pose's own
     # stamp older than the monitor period), the autopilot reporting no 3D fix
     # (MAVLink GPS_RAW_INT.fix_type < 3; MAVROS /mavros/gpsstatus/gps1/raw or
-    # the NavSatFix status of /mavros/global_position/raw/fix), or an EKF
-    # without its absolute horizontal position (EKF_STATUS_REPORT flags). The
-    # Shield then dead-reckons on what it streamed since the last valid fix
-    # and escalates once the error can no longer be certified by a hard P0
-    # zone's margin (the FSM's X8; docs/RUBRIC-failsafe.md E3;
-    # docs/DESIGN-escalation-fsm.md, "X8" has where each rail's signal is).
+    # the NavSatFix status of /mavros/global_position/raw/fix). The Shield
+    # then dead-reckons on what it streamed since the last valid fix and
+    # escalates once the error can no longer be certified by a hard P0 zone's
+    # margin (the FSM's X8; docs/RUBRIC-failsafe.md E3;
+    # docs/DESIGN-escalation-fsm.md, "X8" has where each rail's signal is) -
+    # unless the rail also reports the autopilot's own verdict on its
+    # estimate (estimator_ok, below), which then decides.
     fix_ok: bool | None = None
     # Since 2026-11-06: the reported 1-sigma HORIZONTAL accuracy of (x, y), m -
     # GPS_RAW_INT.h_acc (a MAVLink 2 extension, in mm), the NavSatFix
@@ -165,6 +166,23 @@ class State(BaseModel):
     # accuracy requirement: a 1 m margin certifies a zone only while 3 sigma
     # <= 1 m. Sizing margins to a rail's real accuracy is a policy decision.
     pos_sigma_m: float | None = None
+    # Since 2026-11-12: the AUTOPILOT'S OWN VERDICT on the horizontal position
+    # estimate (x, y), on a rail that hands the Shield the autopilot's
+    # navigation solution. None (the default; every rail but the ROS 2 node):
+    # not reported, and fix_ok alone decides, exactly as before. True: the
+    # autopilot's estimator reports a valid absolute horizontal position
+    # (ArduPilot EKF_STATUS_REPORT: EKF_POS_HORIZ_ABS set, EKF_CONST_POS_MODE
+    # and EKF_UNINITIALIZED clear, the horizontal-position and velocity test
+    # ratios below FS_EKF_THRESH), so (x, y) is the estimate the autopilot
+    # itself navigates, returns and fences on, valid by its own test - also
+    # while its GPS is denied (fix_ok False: EKF3 dead-reckons on its IMU for
+    # up to 7 s, posRetryTimeNoVel_ms). False: it reports no valid absolute
+    # horizontal position for as long as its own EKF failsafe waits
+    # (ArduCopter ekf_check: 1 s), and the position certifies no zone.
+    # Reported, it decides X8's position input before fix_ok does
+    # (Shield._position_verdict; docs/DESIGN-escalation-fsm.md, "2026-11-12:
+    # X8 on the autopilot's own estimator").
+    estimator_ok: bool | None = None
 
     @model_serializer(mode="wrap")
     def _omit_absent_velocity(self, handler):
@@ -178,6 +196,8 @@ class State(BaseModel):
             out.pop("fix_ok")
         if isinstance(out, dict) and out.get("pos_sigma_m", 0) is None:
             out.pop("pos_sigma_m")
+        if isinstance(out, dict) and out.get("estimator_ok", 0) is None:
+            out.pop("estimator_ok")
         return out
 
 

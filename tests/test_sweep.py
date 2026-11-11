@@ -1289,6 +1289,12 @@ def test_on_a_rail_a_gps_dropout_hands_the_shield_the_autopilots_estimate():
     rec = run.events[0]["gps_dropout"]
     assert rec["model"] == "dead_reckoned" and rec["drift_mps"] == S.RAIL_EKF_DRIFT_MPS, rec
     assert "SIMSTATE" in rec["source"]
+    # And the autopilot's own verdict on that estimate (State.estimator_ok,
+    # 2026-11-12), as the ROS 2 node reads EKF_STATUS_REPORT: True until EKF3's
+    # 6.8 s plus the autopilot's 1 s failsafe rule, past every 7 s window.
+    assert rec["estimator_valid_s"] == S.RAIL_EKF_POS_VALID_S == 6.8 + 1.0, rec
+    assert "EKF_STATUS_REPORT" in rec["estimator_ok"]
+    assert "estimator_ok" not in S.gps_dropout_for("frozen")
     assert S.gps_dropout_for("frozen")["model"] == "frozen"
     try:
         S.run_episode(spec, DEFAULTS, 0, gps_dropout="ekf")

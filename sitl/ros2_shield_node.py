@@ -138,7 +138,8 @@ THE GPS FIX AND THE SIMULATOR'S STRESSORS (2026-11-07, X-14).
     than FIX_STALE_S - a rail without the topic flies exactly as before. The
     Shield judges X8's input from it (ShieldDecision.position_lost, its dead
     reckoning on what this node sent: Shield.note_flown) and this node's FSM
-    takes X8 (RTL). pos_sigma_m is NOT fed: with 1 m margins X8's sigma
+    takes X8 (RTL) - since 2026-11-12 only while the autopilot's own
+    estimator verdict is not reported ("THE AUTOPILOT'S ESTIMATOR"). pos_sigma_m is NOT fed: with 1 m margins X8's sigma
     branch needs sigma <= 0.33 m (SITL reports 0.3 m; a field receiver
     reports metres, and every mission passing near a zone would return);
     sizing margins to the rail's accuracy is a policy decision left open.
@@ -154,6 +155,38 @@ THE GPS FIX AND THE SIMULATOR'S STRESSORS (2026-11-07, X-14).
     records every change the autopilot broadcasts (/mavros/param/event) on
     its own mission clock - the measured alignment the stress harness checks
     (metrics.json `sim_params`).
+
+THE AUTOPILOT'S ESTIMATOR (2026-11-12). The pose this node hands the Shield
+is the autopilot's own navigation estimate (EKF3, through MAVROS), so whether
+it is valid is the autopilot's call, not the GPS receiver's:
+  * State.estimator_ok from ArduPilot's EKF_STATUS_REPORT (MAVLink 193),
+    read from MAVLINK_SOURCE_TOPIC (MAVROS's raw MAVLink feed to the UAS: no
+    MAVROS 2 plugin publishes the message). EstimatorHealth: healthy while
+    EKF_POS_HORIZ_ABS is set, EKF_CONST_POS_MODE and EKF_UNINITIALIZED are
+    clear and the horizontal-position and velocity test ratios are below
+    FS_EKF_THRESH (read from the autopilot at take-off, 0.8 when unread);
+    False once unhealthy reports have outweighed healthy ones for 1 s, the
+    autopilot's own EKF failsafe rule (ArduCopter ekf_check); None with no
+    report, or none for longer than the pose timeout.
+  * The Shield (Shield._position_verdict): True certifies the position even
+    with the GPS fix lost - EKF3 dead-reckons on its IMU, and the Shield
+    holds no command dead reckoning of its own against it; False is X8 (the
+    position certifies no hard P0 zone); None falls back on fix_ok and the
+    dead reckoning, as before.
+  * Measured on the rig (731 flights of nt1111, sm1111, sm1110 and rh03):
+    the 701 flights without a GPS denial never reported an unhealthy
+    estimate while armed (test ratios at most 0.05 / 0.08); in the 30 GPS
+    denials EKF3 kept its absolute position for 6.8-6.9 s, then dropped it
+    for 0.1-0.2 s until the GPS returned at 7 s (23 of the 24 7 s denials),
+    and was up to 1.47 m off SITL's truth meanwhile: a hard P0 margin
+    covers a denial only if it covers that error (a policy question).
+  * Rows carry estimator_ok, ekf_flags, ekf_pos_var, ekf_vel_var,
+    ekf_age_ms once a report has arrived; metrics.json
+    `fix_quality.estimator`; events.jsonl `ekf_failsafe` (FS_EKF_THRESH and
+    FS_EKF_ACTION as read). SROS 2: sitl/sros2_policy.xml grants the
+    subscription; a keystore made before it refuses it, recorded in
+    metrics.json (`fix_quality.estimator.refused`, `sim_params.inputs_refused`),
+    and the node flies on fix_ok as before.
 
 ZONE DWELL AND COST MAP (2026-10-11). `nfz_s` is the count every rail shares
 (guardrail.replay.zone_dwell, read from the Shield's rule checker): polygon
@@ -325,6 +358,7 @@ import argparse
 import gc
 import json
 import math
+import struct
 import sys
 import threading
 import time
@@ -557,6 +591,31 @@ EVENT_HEADING_MIN_MPS = 0.1
 FIX_TOPIC = "/mavros/global_position/raw/fix"
 NAVSAT_STATUS_FIX = 0
 FIX_STALE_S = POSE_TIMEOUT_S
+# The autopilot's own verdict on its horizontal position behind
+# State.estimator_ok (2026-11-12; module docstring, "THE AUTOPILOT'S
+# ESTIMATOR"). ArduPilot reports it in EKF_STATUS_REPORT (MAVLink 193,
+# ardupilotmega dialect), which no MAVROS 2 plugin publishes (sys_status
+# publishes ESTIMATOR_STATUS, 230, which ArduPilot does not send), so it is
+# read from MAVROS's raw MAVLink feed to the UAS - every message the autopilot
+# sent, as mavros_msgs/Mavlink - keeping only the autopilot's own reports
+# (MAVROS's default target, system 1 component 1). Flags: MAVLink's
+# EKF_STATUS_FLAGS (EKF_PRED_POS_HORIZ_ABS is 512, not 256).
+MAVLINK_SOURCE_TOPIC = "/uas1/mavlink_source"
+MAVLINK_SOURCE_DEPTH = 100
+EKF_STATUS_REPORT_ID = 193
+AUTOPILOT_IDS = (1, 1)
+EKF_POS_HORIZ_ABS = 16
+EKF_CONST_POS_MODE = 128
+EKF_UNINITIALIZED = 1024
+EKF_GPS_GLITCHING = 32768
+# ArduCopter's own EKF failsafe (ArduCopter/ekf_check.cpp, 4.5.7): FS_EKF_THRESH
+# on the test ratios (0.8 by default and on the rig), and 10 failing checks
+# at 10 Hz (EKF_CHECK_ITERATIONS_MAX: 1 s) before it is declared, each passing
+# check taking one back. A report older than the pose timeout is not a
+# report about this tick's pose.
+EKF_THRESH_DEFAULT = 0.8
+EKF_FAILSAFE_S = 1.0
+EKF_STALE_S = POSE_TIMEOUT_S
 # The simulator side's inputs and this node's announcement of its clock.
 PARAM_EVENT_TOPIC = "/mavros/param/event"
 STATUSTEXT_SEND_TOPIC = "/mavros/statustext/send"
@@ -791,6 +850,167 @@ def fix_spells(rows: list[dict]) -> list[dict]:
             cur["t_end"] = r.get("t")
             cur = None
     return out
+
+
+def ekf_status_from_mavlink(msgid, sysid, compid, length, payload64) -> dict | None:
+    """EKF_STATUS_REPORT's fields from one mavros_msgs/Mavlink (2026-11-12),
+    or None for any other message, or one not from the autopilot
+    (AUTOPILOT_IDS). MAVLink orders the fields by size, floats first:
+    velocity, pos_horiz, pos_vert, compass and terrain_alt variances (the
+    square roots of EKF3's innovation test ratios), then flags (uint16);
+    MAVLink 2 truncates trailing zero bytes, restored here. payload64 is the
+    payload as little-endian 64-bit words, `length` its byte count."""
+    try:
+        if int(msgid) != EKF_STATUS_REPORT_ID or (int(sysid), int(compid)) != AUTOPILOT_IDS:
+            return None
+        raw = b"".join(struct.pack("<Q", int(w) & 0xFFFFFFFFFFFFFFFF) for w in payload64)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    raw = raw[:max(0, int(length))].ljust(22, b"\0")
+    vv, ph, pv, cv, tv, flags = struct.unpack_from("<5fH", raw, 0)
+    return {"flags": int(flags), "velocity_variance": vv, "pos_horiz_variance": ph,
+            "pos_vert_variance": pv, "compass_variance": cv, "terrain_alt_variance": tv}
+
+
+def ekf_position_healthy(report: dict, thresh: float = EKF_THRESH_DEFAULT) -> tuple[bool, str]:
+    """(healthy, why): is the autopilot's absolute horizontal position valid by
+    its own test (2026-11-12)? ArduCopter navigates on it while
+    EKF_POS_HORIZ_ABS is set and EKF_CONST_POS_MODE clear
+    (ekf_has_absolute_position, armed). This also wants EKF_UNINITIALIZED
+    clear and the horizontal-position and velocity test ratios finite and
+    below `thresh` (FS_EKF_THRESH) - stricter than ArduCopter's
+    ekf_over_threshold, which needs two of compass / velocity / position (or
+    the velocity at twice it). EKF_GPS_GLITCHING is not read: the autopilot
+    keeps navigating through it, and its own failsafe does not count it."""
+    flags = int(report["flags"])
+    if not flags & EKF_POS_HORIZ_ABS:
+        return False, "no absolute horizontal position (EKF_POS_HORIZ_ABS clear)"
+    if flags & EKF_CONST_POS_MODE:
+        return False, "constant-position mode (EKF_CONST_POS_MODE)"
+    if flags & EKF_UNINITIALIZED:
+        return False, "not initialised (EKF_UNINITIALIZED)"
+    for key in ("pos_horiz_variance", "velocity_variance"):
+        v = float(report[key])
+        if not (math.isfinite(v) and v < thresh):
+            return False, f"{key} {v:.3g} not below {thresh:g}"
+    return True, "absolute horizontal position valid"
+
+
+def _round_or_none(v, nd: int):
+    """round(v, nd) for a finite number, None otherwise (a row's JSON)."""
+    try:
+        v = float(v)
+    except (TypeError, ValueError):
+        return None
+    return round(v, nd) if math.isfinite(v) else None
+
+
+def ekf_thresh_from(value) -> tuple[float, str]:
+    """The test-ratio threshold the estimator check uses, and why: the
+    autopilot's FS_EKF_THRESH when read and positive, else ArduCopter's
+    default (EKF_THRESH_DEFAULT) - a disabled variance check (0) on the
+    autopilot does not disable this one."""
+    try:
+        v = float(value)
+    except (TypeError, ValueError):
+        return EKF_THRESH_DEFAULT, "FS_EKF_THRESH not read: ArduCopter's default"
+    if not (math.isfinite(v) and v > 0.0):
+        return EKF_THRESH_DEFAULT, f"FS_EKF_THRESH {value!r} disables the autopilot's check: ArduCopter's default"
+    return v, "FS_EKF_THRESH (read from the autopilot)"
+
+
+class EstimatorHealth:
+    """State.estimator_ok from the autopilot's EKF_STATUS_REPORT stream, as the
+    autopilot's own EKF failsafe judges it (2026-11-12; module docstring,
+    "THE AUTOPILOT'S ESTIMATOR"). Pure: `report(t, fields)` per report
+    (receipt on one monotonic clock), `verdict(t)` per tick.
+
+    An unhealthy report (ekf_position_healthy) adds the time since the
+    previous report to a leaky account (at most the stale bound) and a
+    healthy one takes it back, as ArduCopter's ekf_check counts failing 10 Hz
+    checks up and passing ones down. The verdict is False from the report
+    that brings the account to `failsafe_s` until it is back at 0 (ekf_check
+    clears its failsafe at a zero count), True otherwise - the autopilot
+    still navigates on its estimate - and None with no report yet or the
+    latest older than `stale_s`: not a report, and the Shield falls back on
+    fix_ok. On the hil rig EKF3 dropped its absolute position 6.8-6.9 s into
+    23 of 24 7 s GPS denials, for 0.1-0.2 s, until the GPS came back: an
+    account of 0.2 s, never a verdict."""
+
+    def __init__(self, thresh: float = EKF_THRESH_DEFAULT,
+                 failsafe_s: float = EKF_FAILSAFE_S, stale_s: float = EKF_STALE_S) -> None:
+        for name, v in (("thresh", thresh), ("failsafe_s", failsafe_s), ("stale_s", stale_s)):
+            if not (isinstance(v, (int, float)) and math.isfinite(v) and v > 0):
+                raise ValueError(f"{name} must be a positive number, got {v!r}")
+        self.thresh = float(thresh)
+        self.thresh_source = "ArduCopter's default"
+        self.failsafe_s = float(failsafe_s)
+        self.stale_s = float(stale_s)
+        self.last: dict | None = None
+        self.last_why = ""
+        self.rx: float | None = None
+        self.n = 0
+        self.n_unhealthy = 0
+        self.bad_s = 0.0
+        self.declared = False
+        self.max_gap_s = 0.0
+        # Spells of unhealthy reports, and of a declared verdict (False):
+        # [{t_start, t_end, reports, why}], t_end None while running.
+        self.spells: list[dict] = []
+        self.declared_spells: list[dict] = []
+
+    def set_thresh(self, value) -> None:
+        self.thresh, self.thresh_source = ekf_thresh_from(value)
+
+    def report(self, t: float, fields: dict) -> None:
+        t = float(t)
+        healthy, why = ekf_position_healthy(fields, self.thresh)
+        dt = 0.0
+        if self.rx is not None:
+            gap = max(0.0, t - self.rx)
+            self.max_gap_s = max(self.max_gap_s, gap)
+            dt = min(gap, self.stale_s)
+        self.last, self.last_why, self.rx = dict(fields), why, t
+        self.n += 1
+        if healthy:
+            self.bad_s = max(0.0, self.bad_s - dt)
+            if self.spells and self.spells[-1]["t_end"] is None:
+                self.spells[-1]["t_end"] = t
+            if self.declared and self.bad_s <= 1e-9:
+                self.declared = False
+                self.declared_spells[-1]["t_end"] = t
+            return
+        self.n_unhealthy += 1
+        self.bad_s = min(self.failsafe_s, self.bad_s + dt)
+        if not self.spells or self.spells[-1]["t_end"] is not None:
+            self.spells.append({"t_start": t, "t_end": None, "reports": 0, "why": why})
+        self.spells[-1]["reports"] += 1
+        if not self.declared and self.bad_s >= self.failsafe_s - 1e-9:
+            self.declared = True
+            self.declared_spells.append({"t_start": t, "t_end": None, "why": why})
+
+    def age(self, t: float) -> float | None:
+        return None if self.rx is None else float(t) - self.rx
+
+    def verdict(self, t: float) -> bool | None:
+        age = self.age(t)
+        if age is None or not (math.isfinite(age) and 0.0 <= age <= self.stale_s):
+            return None
+        return not self.declared
+
+    def summary(self, to_mission_t=None) -> dict:
+        conv = to_mission_t or (lambda v: v)
+
+        def spell(s):
+            return {**s, "t_start": round(conv(s["t_start"]), 3),
+                    "t_end": None if s["t_end"] is None else round(conv(s["t_end"]), 3)}
+        return {"messages": self.n, "unhealthy_reports": self.n_unhealthy,
+                "thresh": self.thresh, "thresh_source": self.thresh_source,
+                "failsafe_s": self.failsafe_s, "stale_after_s": self.stale_s,
+                "max_gap_s": round(self.max_gap_s, 3),
+                "unhealthy_spells": [spell(s) for s in self.spells],
+                "declared_spells": [spell(s) for s in self.declared_spells],
+                "declared_at_end": self.declared}
 
 
 def shield_step(shield: Shield, state: State, body: Action4D, shield_on: bool):
@@ -1827,6 +2047,13 @@ try:
     except ImportError:
         NavSatFix = None
     try:
+        # The autopilot's raw MAVLink, for its EKF_STATUS_REPORT behind
+        # State.estimator_ok (2026-11-12); a stand-in ROS stack without it
+        # runs the node with estimator_ok None, as before.
+        from mavros_msgs.msg import Mavlink
+    except ImportError:
+        Mavlink = None
+    try:
         # SITL's stressor parameters as the autopilot broadcasts them.
         from mavros_msgs.msg import ParamEvent
     except ImportError:
@@ -2229,6 +2456,10 @@ if HAVE_ROS:
             self.fix_rx: float | None = None
             self.n_fix = 0
             self.n_position_lost = 0
+            # The autopilot's own verdict on its estimate (EKF_STATUS_REPORT
+            # from MAVLINK_SOURCE_TOPIC, 2026-11-12): fed per report, read per
+            # tick (State.estimator_ok).
+            self.estimator = EstimatorHealth()
             # SITL's stressor parameters: as read back at take-off, every
             # change the autopilot broadcast (on the mission clock), and the
             # t = 0 markers this node sent (module docstring).
@@ -2300,6 +2531,20 @@ if HAVE_ROS:
                                              qos_profile_sensor_data)
             except Exception as e:                               # noqa: BLE001
                 self._input_refused("fix", e)
+            try:
+                # Every MAVLink message MAVROS hands the UAS (about 300 a
+                # second on the rig, 1 in 30 an EKF_STATUS_REPORT); the
+                # callback keeps EKF_STATUS_REPORT. Best effort, with a queue
+                # deeper than the sensor-data profile's 5, so a tick that
+                # holds the executor does not cost the report.
+                if Mavlink is not None:
+                    best_effort = getattr(ReliabilityPolicy, "BEST_EFFORT", None)
+                    qos = (QoSProfile(depth=MAVLINK_SOURCE_DEPTH, reliability=best_effort)
+                           if best_effort is not None else qos_profile_sensor_data)
+                    self.create_subscription(Mavlink, MAVLINK_SOURCE_TOPIC,
+                                             self._on_mavlink, qos)
+            except Exception as e:                               # noqa: BLE001
+                self._input_refused("estimator", e)
             try:
                 if ParamEvent is not None:
                     self.create_subscription(ParamEvent, PARAM_EVENT_TOPIC,
@@ -2374,6 +2619,24 @@ if HAVE_ROS:
             """State.fix_ok for this tick (fix_ok_from)."""
             age = None if self.fix_rx is None else time.monotonic() - self.fix_rx
             return fix_ok_from(self.fix_status, age)
+
+        def _on_mavlink(self, msg) -> None:
+            # MAVLINK_SOURCE_TOPIC: every message the autopilot sent; only
+            # its EKF_STATUS_REPORT is read (the id first: the rest return
+            # at once). Receipt on the node's monotonic clock, as the pose's.
+            try:
+                if int(msg.msgid) != EKF_STATUS_REPORT_ID:
+                    return
+                fields = ekf_status_from_mavlink(msg.msgid, msg.sysid, msg.compid,
+                                                 msg.len, msg.payload64)
+            except (AttributeError, TypeError, ValueError):
+                return
+            if fields is not None:
+                self.estimator.report(time.monotonic(), fields)
+
+        def estimator_ok_now(self) -> bool | None:
+            """State.estimator_ok for this tick (EstimatorHealth.verdict)."""
+            return self.estimator.verdict(time.monotonic())
 
         def _on_param_event(self, msg) -> None:
             # A PARAM_VALUE the autopilot sent (MAVROS's pull at connect, or
@@ -2935,6 +3198,23 @@ if HAVE_ROS:
                 f"{self.sim_params_takeoff['speedup_wait_s']} s): " + ", ".join(
                     f"{k}={vals.get(k)}" for k in WATCHED_SIM_PARAMS))
 
+        def read_ekf_failsafe(self) -> None:
+            """FS_EKF_THRESH and FS_EKF_ACTION as the autopilot holds them
+            (2026-11-12): the threshold the estimator check uses
+            (EstimatorHealth.set_thresh; ArduCopter's default when unread),
+            and the action its own EKF failsafe takes, recorded. Read after
+            the fence read, by which time MAVROS holds the parameter list."""
+            try:
+                vals = self._get_params(self.cli_param, ["FS_EKF_THRESH", "FS_EKF_ACTION"])
+            except Exception as e:                               # noqa: BLE001
+                vals = {}
+                self.get_logger().warn(f"FS_EKF_* not read: {type(e).__name__}: {e}")
+            self.estimator.set_thresh(vals.get("FS_EKF_THRESH"))
+            self.rec.event("ekf_failsafe", t=None, FS_EKF_THRESH=vals.get("FS_EKF_THRESH"),
+                           FS_EKF_ACTION=vals.get("FS_EKF_ACTION"),
+                           thresh=self.estimator.thresh,
+                           thresh_source=self.estimator.thresh_source)
+
         def bring_up(self) -> None:
             log = self.get_logger()
             self.serve_hot_apply()
@@ -2981,6 +3261,9 @@ if HAVE_ROS:
             # SITL's stressor parameters as they stand before take-off (the
             # simulator side set its boot values before this node started).
             self.read_sim_params()
+            # The autopilot's own EKF failsafe threshold, for the estimator
+            # check behind State.estimator_ok (2026-11-12).
+            self.read_ekf_failsafe()
             pose_deadline = time.time() + 10.0
             while self.state is None and time.time() < pose_deadline:
                 rclpy.spin_once(self, timeout_sec=0.5)
@@ -3733,6 +4016,12 @@ if HAVE_ROS:
             fix_ok = self.fix_ok_now()
             if fix_ok is not None:
                 st_sh = st_sh.model_copy(update={"fix_ok": fix_ok})
+            # The autopilot's own verdict on that position (2026-11-12): it
+            # decides X8's input before fix_ok (None, no fresh report: as
+            # before).
+            est_ok = self.estimator_ok_now()
+            if est_ok is not None:
+                st_sh = st_sh.model_copy(update={"estimator_ok": est_ok})
             # The rule clock's reading for this tick's row (and, pinned, the
             # next tick's _prev_judgement): read once, right before the
             # Shield reads it.
@@ -3740,10 +4029,11 @@ if HAVE_ROS:
             decision, raw_w, em_w, em_body = shield_step(
                 self.shield, st_sh, body, self.shield_on)
             # X8's input, the Shield's own verdict on the position it was
-            # handed (ShieldDecision.position_lost: fix_ok False and the
-            # dead-reckoned error beyond a hard P0 margin near its boundary);
-            # None while the fix is valid or not reported. This node's FSM
-            # takes it below.
+            # handed (ShieldDecision.position_lost: the autopilot reporting its
+            # estimate invalid, or - with no estimator report - fix_ok False
+            # and the dead-reckoned error beyond a hard P0 margin near its
+            # boundary); None while the position is certified or nothing is
+            # reported. This node's FSM takes it below.
             lost = getattr(decision, "position_lost", None)
             self.n_position_lost += bool(lost)
             extra = episode_row_fields(self.shield, st, self.policy,
@@ -4060,6 +4350,18 @@ if HAVE_ROS:
                 fix_age = (None if self.fix_rx is None
                            else round((time.monotonic() - self.fix_rx) * 1000.0, 1))
                 row.update(fix_ok=fix_ok, fix_status=self.fix_status, fix_age_ms=fix_age,
+                           position_lost=(lost[0] if lost else None))
+            if self.estimator.n:
+                # The autopilot's estimator this tick handed the Shield
+                # (2026-11-12): only once its report has arrived, so a rail
+                # without it writes the rows it always did.
+                rep = self.estimator.last or {}
+                ekf_age = self.estimator.age(time.monotonic())
+                row.update(estimator_ok=est_ok, ekf_flags=rep.get("flags"),
+                           ekf_pos_var=_round_or_none(rep.get("pos_horiz_variance"), 4),
+                           ekf_vel_var=_round_or_none(rep.get("velocity_variance"), 4),
+                           ekf_age_ms=(None if ekf_age is None
+                                       else round(ekf_age * 1000.0, 1)),
                            position_lost=(lost[0] if lost else None))
             self._last_clock = clock_reading
             self._gen_after_tick = self.policy.generation
@@ -4418,6 +4720,28 @@ if HAVE_ROS:
                                               if r.get("fix_ok") is None),
                     "no_fix_spells": fix_spells(self.rows),
                     "position_lost_ticks": self.n_position_lost,
+                    # The autopilot's own verdict on its estimate (2026-11-12;
+                    # module docstring, "THE AUTOPILOT'S ESTIMATOR").
+                    "estimator": {
+                        "topic": MAVLINK_SOURCE_TOPIC,
+                        "source": ("EKF_STATUS_REPORT (MAVLink 193) from the autopilot "
+                                   "(system 1, component 1) in MAVROS's raw feed"),
+                        "healthy_when": ("EKF_POS_HORIZ_ABS set, EKF_CONST_POS_MODE and "
+                                         "EKF_UNINITIALIZED clear, pos_horiz and velocity "
+                                         "test ratios below the threshold"),
+                        # Why no report arrived, when the graph refused the
+                        # subscription (an SROS 2 keystore signed before the
+                        # policy granted it); None otherwise.
+                        "refused": self.inputs_refused.get("estimator"),
+                        **self.estimator.summary(
+                            to_mission_t=lambda v: v - (self.mission_t0 or 0.0)),
+                        "ticks_ok": sum(1 for r in self.rows
+                                        if r.get("estimator_ok") is True),
+                        "ticks_lost": sum(1 for r in self.rows
+                                          if r.get("estimator_ok") is False),
+                        "ticks_not_reported": sum(1 for r in self.rows
+                                                  if r.get("estimator_ok") is None),
+                    },
                     "pos_sigma_m": None,
                     "pos_sigma_m_why": ("not fed: with 1 m margins X8's sigma branch "
                                         "needs sigma <= 0.33 m (SITL reports 0.3 m, a "
@@ -4551,6 +4875,7 @@ if HAVE_ROS:
 | Action stream | {self.n_actions} received; {self.watchdog.summary()['n_spells']} stale spell(s) (timeout {self.watchdog.timeout_s:g} s) |
 | Pose stream | {metrics['pose_hz']} Hz; {len(self.pose_watchdog.spells)} stale spell(s) (timeout {self.pose_watchdog.timeout_s:g} s), {pose_stale_s:g} s of ticks on a stale pose |
 | GPS fix (`fix_ok`, {FIX_TOPIC}) | {f"{self.n_fix} message(s); {metrics['fix_quality']['ticks_no_fix']} tick(s) without a fix; X8 input on {self.n_position_lost} tick(s)" if self.n_fix else 'not reported (no message): fix_ok None, as before'} |
+| Autopilot estimator (`estimator_ok`, EKF_STATUS_REPORT on {MAVLINK_SOURCE_TOPIC}) | {f"{self.estimator.n} report(s), {self.estimator.n_unhealthy} unhealthy; {metrics['fix_quality']['estimator']['ticks_lost']} tick(s) declared lost (threshold {self.estimator.thresh:g}, {self.estimator.thresh_source})" if self.estimator.n else 'not reported (no report): estimator_ok None, fix_ok alone decides'} |
 | Simulator parameters | {f"at take-off {self.sim_params_takeoff.get('values')}; {sum(1 for e in self.sim_param_events if e['t'] is not None)} change(s) in flight" if (self.sim_params_takeoff or {}).get('sitl') else 'not SITL, or not read'} |
 | Tick latency (e2e p50 / p99 / max) | {metrics['tick_latency']['e2e_ms']['p50']} / {metrics['tick_latency']['e2e_ms']['p99']} / {metrics['tick_latency']['e2e_ms']['max']} ms, budget {TICK_BUDGET_MS:g} ms |
 | Topology | `{manifest['topology']}` |

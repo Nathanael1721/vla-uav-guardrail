@@ -865,6 +865,18 @@ RAIL_EKF_DRIFT_SOURCE = (
     "(30 flights, ArduCopter 4.5.7 SITL): SIMSTATE (truth) against "
     "GLOBAL_POSITION_INT (EKF3) in each run's raw MAVLink; upper envelope of "
     "error / time since the loss, along the track at the loss")
+# The autopilot's own verdict on that estimate (State.estimator_ok,
+# 2026-11-12), as the ROS 2 node reports it (sitl/ros2_shield_node.py
+# EstimatorHealth): on the same 30 denials EKF3's EKF_STATUS_REPORT kept
+# EKF_POS_HORIZ_ABS for 6.8-6.9 s after GPS_RAW_INT's loss (posRetryTimeNoVel_ms,
+# 7 s from its last GPS fusion), its test ratios frozen at their last fused
+# values (0.02 or less); the node declares the estimate lost once unhealthy
+# for the autopilot's own EKF failsafe time, 1 s (ArduCopter ekf_check). So a
+# dead-reckoned denial hands the Shield estimator_ok True until
+# RAIL_EKF_POS_VALID_S after the loss and False after it; a frozen one none
+# (no autopilot vouches for a bridge's last pose). Every library window is 7 s
+# or shorter: no cell reaches the False.
+RAIL_EKF_POS_VALID_S = 6.8 + 1.0
 
 
 def gps_dropout_for(model: str = DEFAULT_GPS_DROPOUT) -> dict[str, Any]:
@@ -877,7 +889,10 @@ def gps_dropout_for(model: str = DEFAULT_GPS_DROPOUT) -> dict[str, Any]:
     return {"model": model,
             "pose": ("the autopilot's dead-reckoned estimate: the true position less "
                      "drift_mps x the time since the loss, along the track at the loss"),
-            "drift_mps": RAIL_EKF_DRIFT_MPS, "source": RAIL_EKF_DRIFT_SOURCE}
+            "drift_mps": RAIL_EKF_DRIFT_MPS, "source": RAIL_EKF_DRIFT_SOURCE,
+            "estimator_ok": ("True until estimator_valid_s after the loss, then False "
+                             "(the autopilot's EKF_STATUS_REPORT, as the ROS 2 node reads it)"),
+            "estimator_valid_s": RAIL_EKF_POS_VALID_S}
 # The response arms whose modelled autopilot GIVES UP a moved hold's transit
 # as the rails do (since 2026-11-07, evening; guardrail/hold_flight.py,
 # GIVING UP): by the rails' own TransitWatch, judged on every tick of the plan
@@ -1810,15 +1825,21 @@ def _episode(sc, defaults, seed: int, arm: dict | None, box: dict,
                                    **({} if gps_dropout == DEFAULT_GPS_DROPOUT
                                       else {"model": gps_dropout})})
                 pose = frozen
+                quality = {"fix_ok": False}
                 if gps_dropout == "dead_reckoned":
                     lag = RAIL_EKF_DRIFT_MPS * (t_now - drop_t0)
                     pose = seen.model_copy(update={"x": seen.x - lag * drop_dir[0],
                                                    "y": seen.y - lag * drop_dir[1]})
+                    # The autopilot vouches for its own estimate until its
+                    # EKF failsafe would declare it lost (RAIL_EKF_POS_VALID_S,
+                    # 2026-11-12), as the ROS 2 node reports it.
+                    quality["estimator_ok"] = (t_now - drop_t0
+                                               < RAIL_EKF_POS_VALID_S - 1e-9)
                 # A rail that reports fix quality flags the pose as not a
                 # current fix (State.fix_ok False: the pose's stamp age,
                 # GPS_RAW_INT.fix_type); one that does not hands it on as is
                 # (Stress.fix_quality_reported, 2026-11-06).
-                seen = (pose.model_copy(update={"fix_ok": False})
+                seen = (pose.model_copy(update=quality)
                         if stress.fix_quality_reported else pose)
                 dropout_ticks += 1
             elif frozen is not None:
