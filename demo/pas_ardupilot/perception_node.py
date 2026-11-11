@@ -232,6 +232,30 @@ THE VLA FOLLOW (--pilot vla --mission follow; 2026-11-06)
     frames and the hint-gated spans apart. Never the decision rate or the
     request rate. --front-capture-interval-s renders FrontCamera's capture
     interval (0.1 s in the template) at scene render time.
+  * CAMERA TO SETPOINT (2026-11-11; grant WP3-13, and the meeting's "did
+    you measure the latency from camera input to action output?"). Every
+    row carries `t_pub`, the mission time its setpoint went out (read right
+    after link.send returned; None when nothing was sent), and `tick_ms`,
+    the tick's start to it (the hil Shield node's field of that name). A
+    VLA row also carries `cam_age_ms`, the age at that publication of the
+    camera frame behind the flown action (t_pub - the t_capture of the
+    decision being flown, vla_steps.jsonl), on every tick that decision's
+    action flew, and `cam_to_setpoint_ms`, the same on the FIRST tick that
+    flies it: camera input to action output, through the request, the
+    model, the step tracker, the Shield and the FSM. metrics.json
+    `camera_to_setpoint` gives p50 / p95 / p99 / max and the ticks over
+    the grant's 100 ms (tools/kpi_report.py pools the rows). CLOCK DOMAINS:
+    all of it is ONE clock, the loop's (`clock`, time.time unless
+    injected) - the frame's arrival (VLAFrames.put_front), the request's
+    t_capture / t_sent / t_received (RemoteVLA, the backend), the tick and
+    the publication. On this rail a capture's time is the frame's ARRIVAL
+    at the node, not its render: the pose ring is fed without simulator
+    stamps (put_pose_full here passes none), so VLAFrames times every
+    capture by arrival (`t_capture_basis` "arrival") and the render and
+    transport before it are NOT in cam_*: a lower bound of camera to
+    action. The frame's simulator stamp (vla_captures.jsonl `stamp_ns`) is
+    the simulator's clock and is never mixed in, and nothing here sees the
+    autopilot's receipt of the setpoint.
   * Run on the AGX Orin by deploy/orin/run_pas_perception.sh (the hil
     topology; docs/DESIGN-projectairsim-ardupilot.md has the order).
   * NOT FLOWN: tests/test_pas_vla.py drives it with the stand-in link and a
@@ -923,6 +947,9 @@ class VLAPilot:
         self._pilot_raw = None
         self._request: str | None = None
         self._no_hint_why: str | None = None
+        # The decision whose action last flew: the next tick that flies
+        # another is its first setpoint (cam_to_setpoint_ms).
+        self._seq_flown: int | None = None
 
     def hold(self, now: float) -> None:
         """The rail holds the aircraft between ticks (a stale-link span: one
@@ -997,7 +1024,12 @@ class VLAPilot:
                            "t_det": t_det}
 
     def after(self, now: float, st, *, flies: bool, touched: bool, shield_on: bool,
-              t_mission: float, fsm_stepped: bool = False) -> tuple:
+              t_mission: float, fsm_stepped: bool = False,
+              t_pub: float | None = None) -> tuple:
+        """`t_pub`: when this tick's setpoint went out, on the loop clock
+        (None: nothing was sent); with the capture time of the decision
+        behind the flown action it gives the row's camera-to-setpoint
+        fields (camera_age_fields)."""
         from guardrail.vla_link import Pose
         vm, tk = self.vm, self.last_tick
         pose = Pose.from_state(st)
@@ -1021,6 +1053,16 @@ class VLAPilot:
                # What the backend did about a request this tick (step).
                "vla_request": self._request,
                **vm.mission_fields(gd, gb, frac, det, det_age, self.detector_hint)}
+        # CAMERA TO SETPOINT (2026-11-11): the frame behind the flown action,
+        # aged at the publication. `cur` is the record of the decision being
+        # flown, the tick's own (same seq); its t_capture is its request's
+        # frame on the loop clock.
+        t_cap = (cur.get("t_capture") if tk.seq is not None and cur.get("seq") == tk.seq
+                 else None)
+        row.update(camera_age_fields(t_pub, t_cap, flies=flies,
+                                     fresh=tk.seq is not None and tk.seq != self._seq_flown))
+        if flies and tk.seq is not None and t_pub is not None:
+            self._seq_flown = tk.seq
         if self._request == "no_hint":
             row["vla_no_hint_why"] = self._no_hint_why
         if self.close_hold is not None:
@@ -4543,6 +4585,80 @@ def _p50_p95_max(vals) -> dict:
             "max": None if not v else round(max(v), 4)}
 
 
+# The grant's monitor tick budget, "<= 100 ms (10 Hz) end-to-end" (Safety
+# Shield p6): what the camera-to-setpoint figures are counted against.
+TICK_BUDGET_MS = 100.0
+
+
+def publish_latency_fields(t_tick: float, t_pub: float | None, t0: float) -> dict:
+    """The row's setpoint publication on the loop clock (CAMERA TO SETPOINT
+    in the module docstring): `t_pub` the mission time (s) at which this
+    tick's setpoint went out - read right after link.send returned - and
+    `tick_ms` the tick's start to it (the hil Shield node's field of the
+    same name). Both None on a tick that sent nothing."""
+    if t_pub is None:
+        return {"t_pub": None, "tick_ms": None}
+    return {"t_pub": round(t_pub - t0, 4), "tick_ms": round((t_pub - t_tick) * 1000.0, 3)}
+
+
+def camera_age_fields(t_pub: float | None, t_capture, *, flies: bool, fresh: bool) -> dict:
+    """The age of the camera frame behind the flown action at its
+    publication, on the loop clock: `cam_age_ms` = t_pub - the capture time
+    of the VLA decision whose action flew (vla_steps.jsonl `t_capture`, its
+    request's frame), on every tick that decision's action flew; and
+    `cam_to_setpoint_ms`, the same on the FIRST tick that flies it (`fresh`)
+    - camera input to action output. None where nothing was published, the
+    pilot's action did not fly (the FSM's brake, a stop it advised, a hold,
+    a fault, a takeover) or no decision with a capture time was behind it."""
+    if (t_pub is None or not flies or not isinstance(t_capture, (int, float))
+            or isinstance(t_capture, bool) or not math.isfinite(t_capture)):
+        return {"cam_age_ms": None, "cam_to_setpoint_ms": None}
+    age = round((t_pub - float(t_capture)) * 1000.0, 3)
+    return {"cam_age_ms": age, "cam_to_setpoint_ms": age if fresh else None}
+
+
+def _nearest_rank(vals: list[float], q: float):
+    """Nearest-rank percentile (tools/kpi_report.py's), None when empty."""
+    if not vals:
+        return None
+    s = sorted(vals)
+    return round(s[min(len(s) - 1, max(0, math.ceil(q * len(s)) - 1))], 3)
+
+
+def camera_to_setpoint_summary(rows: list[dict], *, t_capture_basis: dict | None = None,
+                               budget_ms: float = TICK_BUDGET_MS) -> dict:
+    """metrics.json `camera_to_setpoint`: n, p50, p95, p99, max (nearest
+    rank, as tools/kpi_report.py pools them) and the ticks over the grant's
+    100 ms of the rows' `cam_age_ms`, `cam_to_setpoint_ms` and `tick_ms`,
+    the authors behind the camera figures, and the clock they were read on
+    (module docstring, CAMERA TO SETPOINT). `t_capture_basis`: how the sent
+    captures were timed (vla_mission.VLAFrames.stats), "arrival" on this
+    rail. A measure no row carries has n 0 and None figures, never 0 ms."""
+    out: dict = {"budget_ms": budget_ms}
+    for key in ("cam_age_ms", "cam_to_setpoint_ms", "tick_ms"):
+        v = [float(r[key]) for r in rows if isinstance(r.get(key), (int, float))
+             and not isinstance(r.get(key), bool)]
+        out[key] = {"n": len(v), "p50": _nearest_rank(v, 0.5), "p95": _nearest_rank(v, 0.95),
+                    "p99": _nearest_rank(v, 0.99),
+                    "max": round(max(v), 3) if v else None,
+                    "over_budget": sum(1 for x in v if x > budget_ms)}
+    out["by_author"] = dict(collections.Counter(
+        str(r.get("author")) for r in rows if r.get("cam_age_ms") is not None))
+    out["t_capture_basis"] = t_capture_basis
+    out["clock"] = ("one clock, the loop's (time.time unless injected): the frame's "
+                    "arrival stamp (VLAFrames.put_front), the request's t_capture / "
+                    "t_sent / t_received, the tick's start and the publication (read "
+                    "right after link.send returned) all read it")
+    out["capture_is"] = ("the frame's ARRIVAL at this node, not its render: this rail's "
+                         "pose ring carries no simulator stamps (t_capture_basis "
+                         "'arrival'), so render and transport before arrival are not in "
+                         "cam_*: a lower bound of camera to action")
+    out["not_in_it"] = ("the autopilot's receipt of the setpoint (link.send returns on "
+                        "the hand-off to MAVROS / pymavlink); the frame's simulator "
+                        "stamp_ns is another clock and is not mixed in")
+    return out
+
+
 def vla_observation(captures: list[dict], rows: list[dict], *, t0: float,
                     span_s: float | None, front_source: str, camera: str,
                     camera_frames: int | None = None, capture_interval_s: float | None = None,
@@ -6326,9 +6442,13 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
                                kind="stop_advised")
                 flown = {"pass": flown_d.emitted if stop_advised else emitted,
                          "brake": Action4D(), "none": None}[setpoint]
+                # The publication's time on the loop clock (CAMERA TO
+                # SETPOINT): the row's t_pub / tick_ms and the age of the
+                # camera frame behind the flown action.
+                t_pub_abs = None
                 if flown is not None:
                     link.send(flown, raw_body=body)
-                    t_last_sent = clock()
+                    t_last_sent = t_pub_abs = clock()
                 streaming = flown is not None
                 # What was sent, for the own-velocity forecast's pipe (a
                 # setpoint is flown from the response's reaction time after it
@@ -6448,9 +6568,12 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
                         t_tick, st, flies=(flown is not None and setpoint == "pass"
                                            and not stop_advised),
                         touched=touched, shield_on=shield_on, t_mission=now,
-                        fsm_stepped=fsm_out is not None)
+                        fsm_stepped=fsm_out is not None, t_pub=t_pub_abs)
                 row = {
                     "t": round(now, 3), "tick": tick,
+                    # When this tick's setpoint went out, on the loop clock
+                    # (None: nothing sent), and the tick's start to it.
+                    **publish_latency_fields(t_tick, t_pub_abs, t0),
                     "x": round(st.x, 3), "y": round(st.y, 3), "up": round(st.up, 3),
                     "yaw_deg": round(st.yaw_deg, 2),
                     # The autopilot's measured velocity (North, East, up, m/s)
@@ -7094,6 +7217,16 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
                     capture_interval_s=(sim_cfg or {}).get("front_capture_interval_s"))
             except Exception as exc:                          # noqa: BLE001
                 metrics["vla_observation"] = {"error": f"{type(exc).__name__}: {exc}"}
+            # CAMERA TO SETPOINT (WP3-13; "did you measure the latency from
+            # camera input to action output?"): the rows' cam_age_ms,
+            # cam_to_setpoint_ms and tick_ms, summarised; tools/kpi_report.py
+            # pools the rows themselves.
+            try:
+                fs_ = vla_frames.stats() if callable(getattr(vla_frames, "stats", None)) else {}
+                metrics["camera_to_setpoint"] = camera_to_setpoint_summary(
+                    rows, t_capture_basis=(fs_ or {}).get("t_capture_basis"))
+            except Exception as exc:                          # noqa: BLE001
+                metrics["camera_to_setpoint"] = {"error": f"{type(exc).__name__}: {exc}"}
             if args.mission == "follow":
                 # This rail starts the mission clock at the start gate's
                 # acquisition, so its whole-mission follow proxy is the share
@@ -7373,6 +7506,14 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
                   f"{gs_.get('s')} s in {gs_.get('spans')} span(s); camera "
                   f"{(o_.get('camera_delivery') or {}).get('hz')} Hz delivered"
                   + (f"; *** {o_['error']}" if o_.get("error") else ""))
+            c_ = metrics.get("camera_to_setpoint") or {}
+            f_, a_ = c_.get("cam_to_setpoint_ms") or {}, c_.get("cam_age_ms") or {}
+            print(f"[report] camera to setpoint (frame ARRIVAL to publication, loop clock): "
+                  f"first setpoint p50 {f_.get('p50')} / p95 {f_.get('p95')} / p99 "
+                  f"{f_.get('p99')} / max {f_.get('max')} ms over {f_.get('n')} decision(s); "
+                  f"frame age at every setpoint p50 {a_.get('p50')} / max {a_.get('max')} ms, "
+                  f"{a_.get('over_budget')} of {a_.get('n')} over 100 ms"
+                  + (f"; *** {c_['error']}" if c_.get("error") else ""))
         # A hover that crashed was landed and recorded above, and is still a
         # failed run: the launchers count a non-zero exit as one; so is a VLA
         # mission that ended on a VLA failure (exit 3, as demo/vla_fly.py).
