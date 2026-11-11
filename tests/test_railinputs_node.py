@@ -53,6 +53,10 @@ from guardrail.models import State                                    # noqa: E4
 
 POLICY = ROOT / "policies" / "sim_demo_policy.yaml"
 SKIP = "SKIP"
+# A node these tests tick by hand (_build): the 10 Hz timer's tick, and
+# CPython's own garbage collector (sitl/ros2_shield_node.py --tick-trigger,
+# --gc-pacing; tests/test_sitl_rails.py and test_sitl_stressors.py use it too).
+HAND_TICKED = ["--tick-trigger", "timer", "--gc-pacing", "off"]
 # The four ConstraintBase fields a REST rule body states (IR schema 3.0.0:
 # constraint_type, priority, violation_action; 4.0.0: scope), at the values
 # the deprecated POST /nfz body means.
@@ -231,12 +235,18 @@ def _build(argv: list[str]):
 
     The stand-in MAVROS publishes the pose before every tick (the node's
     stale-pose watchdog, 2026-10-19, holds the aircraft once it stops);
-    `node.standin_pose_on = False` stops it."""
+    `node.standin_pose_on = False` stops it.
+
+    These tests tick by hand: the node is built on its 10 Hz timer
+    (--tick-trigger timer, so an action does not tick by itself) and with
+    CPython's own collector (--gc-pacing off: nothing frozen in the test
+    process). The defaults are tested in tests/test_sitl_rails.py; an argv
+    that names either flag overrides these."""
     N = _node_module()
     clk = _Clock()
     N.time = clk
     args, _ = N.make_parser().parse_known_args(
-        ["--policy", str(POLICY), "--dev-yaml"] + argv)
+        ["--policy", str(POLICY), "--dev-yaml"] + HAND_TICKED + argv)
     out = Path(tempfile.mkdtemp(prefix="ros2node_"))
     node = N.ShieldNode(args, out)
     node.state = State(x=0.0, y=0.0, up=15.0, yaw_deg=0.0)

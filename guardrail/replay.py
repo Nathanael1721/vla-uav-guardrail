@@ -1499,6 +1499,9 @@ class EpisodeRecord:
         self.moved = rotate_stale_episode(self.dir) if rotate else []
         self.events_path = self.dir / "events.jsonl"
         self._events_lock = threading.Lock()
+        # Lines one thread holds back (hold_events), and that thread.
+        self._held: list[str] | None = None
+        self._held_by: int | None = None
         self.generations: list[dict] = []
         self.episode_id: int = int(wall_ns())
         self.ended = False
@@ -1528,12 +1531,40 @@ class EpisodeRecord:
                    timespec="milliseconds")}
         for k, v in data.items():
             rec[f"data_{k}" if k in rec else k] = v
+        line = json.dumps(rec, default=str) + "\n"
         # One whole line per call: since 2026-10-12 a rail's REST hot-apply
         # thread writes events beside its ROS callbacks.
-        with self._events_lock, open(self.events_path, "a", encoding="utf-8",
-                                     newline="\n") as fh:
-            fh.write(json.dumps(rec, default=str) + "\n")
+        with self._events_lock:
+            if self._held is not None and self._held_by == threading.get_ident():
+                self._held.append(line)
+                return rec
+            with open(self.events_path, "a", encoding="utf-8", newline="\n") as fh:
+                fh.write(line)
         return rec
+
+    def hold_events(self) -> None:
+        """Hold back THIS thread's event lines until release_events(): a
+        rail's control tick holds them until its setpoint is published, so
+        no file append sits between a decision and its setpoint (2026-11-11,
+        sitl/ros2_shield_node.py). Each line keeps its own `wall` and `t`
+        from when event() was called; other threads (the REST hot-apply
+        thread) write theirs at once."""
+        with self._events_lock:
+            if self._held is None:
+                self._held = []
+            self._held_by = threading.get_ident()
+
+    def release_events(self) -> int:
+        """Append the held lines, in their order, and stop holding; the
+        number appended (0 when nothing was held). Safe to call twice; the
+        rail calls it again on every way out of a tick and before the
+        episode's end, so nothing held is lost to an early return."""
+        with self._events_lock:
+            lines, self._held, self._held_by = self._held or [], None, None
+            if lines:
+                with open(self.events_path, "a", encoding="utf-8", newline="\n") as fh:
+                    fh.write("".join(lines))
+        return len(lines)
 
     def write_generation(self, reason: str, t: float | None = None) -> dict:
         g = self.policy.generation
