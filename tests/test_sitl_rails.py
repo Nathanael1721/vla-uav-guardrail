@@ -1928,14 +1928,16 @@ CMAC = (-35.363261, 149.16523)
 def _scenario_node(argv):
     """sitl/ros2_shield_node.py on the stand-in ROS stack, built from its own
     parser with `argv` (the dev YAML sim_demo policy, frame origin CMAC) on a
-    virtual clock; nothing ticks until start_mission. (RN, N, node, clk, out)."""
+    virtual clock; nothing ticks until start_mission, and then only by hand
+    (RN.HAND_TICKED, unless `argv` names --tick-trigger / --gc-pacing).
+    (RN, N, node, clk, out)."""
     sys.path.insert(0, str(ROOT / "tests"))
     import test_railinputs_node as RN
     N = RN._node_module()
     clk = RN._Clock()
     N.time = clk
     args, _ = N.make_parser().parse_known_args(
-        ["--policy", str(POLICY), "--dev-yaml"] + list(argv))
+        ["--policy", str(POLICY), "--dev-yaml"] + RN.HAND_TICKED + list(argv))
     out = Path(tempfile.mkdtemp(prefix="scenario_node_"))
     return RN, N, N.ShieldNode(args, out), clk, out
 
@@ -2363,10 +2365,481 @@ def test_the_fence_read_waits_for_sim_speedup_and_a_doomed_takeoff_is_refused():
     assert r(15.0, 30.0, 2.0, True) is None, "every 15 m cell of the library"
     assert r(50.0, 30.0, 2.0, False) is None and r(50.0, 30.0, 2.0, None) is None
     assert r(50.0, None, 2.0, True) is None and r(None, 30.0, 2.0, True) is None
+    # Since the evening of 2026-11-11 the take-off wait for SIM_SPEEDUP
+    # answers before this read, and its answer stands in for the grace.
+    assert N.fence_read_done(fence, 0.0, speedup_polled=True)
+    assert not N.fence_read_done({**fence, "FENCE_ENABLE": None}, 99.0, speedup_polled=True)
     src = (SITL / "ros2_shield_node.py").read_text(encoding="utf-8")
-    assert "if fence_read_done(vals, time.time() - fence_since):" in src
+    assert "if fence_read_done(vals, time.time() - fence_since," in src
+    assert "speedup_polled=polled):" in src
     arm = src.index("self.cli_arm, CommandBool.Request")
     assert src.index("raise RuntimeError(refusal)") < arm, "refused before arming"
+
+
+# --------------------------------------------------------------------------- #
+# 2026-11-11 (shield-timing): one bounded wait for SIM_SPEEDUP, the tick on
+# the action, the paced garbage collector, the camera's age at the setpoint
+# --------------------------------------------------------------------------- #
+
+class _ParamClock:
+    """A MAVROS parameter set on a virtual clock: FENCE_* and SYSID_THISMAV
+    from the start, SIM_SPEEDUP (and SITL's stressor parameters) only from
+    `speedup_at` seconds on (None: never - a hardware autopilot)."""
+
+    def __init__(self, speedup_at=None, sysid=True):
+        self.t, self.speedup_at, self.sysid, self.reads = 0.0, speedup_at, sysid, 0
+
+    def now(self):
+        return self.t
+
+    def spin(self, dt=0.5):
+        self.t += dt
+
+    def get(self, names):
+        self.reads += 1
+        have = self.speedup_at is not None and self.t >= self.speedup_at
+        vals = {"FENCE_ENABLE": 1.0, "FENCE_TYPE": 5.0, "FENCE_ACTION": 1.0,
+                "FENCE_ALT_MAX": 30.0, "FENCE_MARGIN": 2.0, "AVOID_ENABLE": 0.0,
+                "SYSID_THISMAV": 1.0 if self.sysid else None,
+                "SIM_SPEEDUP": 1.0 if have else None}
+        from sitl_stressors import WATCHED_SIM_PARAMS
+        for k in WATCHED_SIM_PARAMS:
+            vals[k] = 0.0 if have else None
+        return {n: vals.get(n) for n in names}
+
+
+def test_one_bounded_wait_for_sim_speedup_feeds_the_fence_and_the_stressor_read():
+    """A1 (2026-11-11). The take-off read of SITL's stressor parameters read
+    SIM_SPEEDUP once and gave up, and the fence read gave it 5 s after the
+    FENCE_* values: on sm1111 (48 missions, 22d434b) 8 missions read neither
+    - two stressed ones (gps-dropout, wind@8) were then refused by the
+    harness - and 1 of 9 of hs06b. Their rosbags show the autopilot sent
+    SIM_SPEEDUP in its list ~0.5 s before FENCE_ALT_MAX on every run, and on
+    those 9 MAVROS took it only on its re-request, 11.3-23.0 s after FCU
+    connect. One bounded poll (takeoff_speedup, SIM_SPEEDUP_WAIT_S) now
+    answers both reads, which fail closed only after it."""
+    N = _node()
+    assert N.SIM_SPEEDUP_WAIT_S >= 1.5 * 23.03, "the latest answer seen, with margin"
+    # sm1111_031: readable 23.0 s after FCU connect.
+    pc = _ParamClock(speedup_at=23.0)
+    assert pc.get(["SIM_SPEEDUP"])["SIM_SPEEDUP"] is None, "the old single read: nothing"
+    short = N.takeoff_speedup(pc.get, pc.spin, now=pc.now, wait_s=20.0)
+    assert short["sim_speedup"] is None, "mavros_evidence's 20 s would have missed it"
+    pc = _ParamClock(speedup_at=23.0)
+    ans = N.takeoff_speedup(pc.get, pc.spin, now=pc.now)
+    assert ans["sim_speedup"] == 1.0 and ans["autopilot_kind"] == "sitl", ans
+    assert 23.0 <= ans["waited_s"] <= 23.5 and ans["wait_s"] == N.SIM_SPEEDUP_WAIT_S
+    rec = N.sim_params_record(pc.get, pc.spin, ans, now=pc.now)
+    assert rec["sitl"] is True and rec["stable"] and rec["reads"] == 2, rec
+    assert rec["values"] and all(v == 0.0 for v in rec["values"].values())
+    assert rec["sim_speedup"] == 1.0 and rec["speedup_wait_s"] == ans["waited_s"]
+    # Fail-closed after the whole wait: hardware (SYSID_THISMAV answers) ...
+    hw = _ParamClock(speedup_at=None)
+    ans = N.takeoff_speedup(hw.get, hw.spin, now=hw.now)
+    assert ans["sim_speedup"] is None and ans["autopilot_kind"] == "hardware"
+    assert ans["waited_s"] >= N.SIM_SPEEDUP_WAIT_S
+    rec = N.sim_params_record(hw.get, hw.spin, ans, now=hw.now)
+    assert rec["sitl"] is False and rec["values"] is None and "hardware" in rec["why"]
+    # ... or nothing known at all; and no answer given is no answer.
+    blank = _ParamClock(speedup_at=None, sysid=False)
+    ans = N.takeoff_speedup(blank.get, blank.spin, now=blank.now, wait_s=3.0)
+    rec = N.sim_params_record(blank.get, blank.spin, ans, now=blank.now)
+    assert rec["sitl"] is None and rec["values"] is None and "3" in rec["why"], rec
+    assert N.sim_params_record(blank.get, blank.spin, None, now=blank.now)["values"] is None
+    assert N.speedup_is_sitl(None, 1.0) and N.speedup_is_sitl(2.0)
+    assert not N.speedup_is_sitl(None, 0.0) and not N.speedup_is_sitl() \
+        and not N.speedup_is_sitl(1)
+    # The node: the wait runs once, before both reads, and its answer is theirs.
+    src = (SITL / "ros2_shield_node.py").read_text(encoding="utf-8")
+    bring = src[src.index("        def bring_up(self)"):src.index("        def check_home(self)")]
+    w, f, s = (bring.index("self.wait_sim_speedup()"), bring.index("self.read_autopilot_fence()"),
+               bring.index("self.read_sim_params()"))
+    assert w < f < s, "one wait, then the fence read, then the stressor read"
+    assert "is_sitl = speedup_is_sitl(vals.get(\"SIM_SPEEDUP\"), waited)" in src
+
+
+def test_the_node_raises_a_late_sitl_fence_after_the_wait_and_not_without_it():
+    """A1 on the node itself (stand-in ROS, virtual clock): SIM_SPEEDUP
+    readable only 23 s after connect. The fence read alone (the flow until
+    2026-11-11) stops after its 5 s grace without it, so the raise above
+    FENCE_ALT_MAX 30 m is not allowed; after the take-off wait the same
+    read takes SITL from the wait's answer at once, and the stressor read
+    records the boot values."""
+    RN, N, node, clk, out = _scenario_node([])
+    pc = _ParamClock(speedup_at=23.0)
+    clk.t = 0.0
+    pc.now = clk.monotonic
+    node._get_params = lambda client, names: pc.get(names)
+    spin0 = N.rclpy.spin_once
+
+    def spin(*a, **k):
+        clk.t += 0.5
+        pc.t = clk.t
+    N.rclpy.spin_once = spin
+    node._spin_evidence = spin
+    try:
+        node.read_autopilot_fence()
+        old = dict(node.autopilot_fence)
+        assert old["raise_allowed"] is False and old["sitl"] is False, old
+        assert 5.0 <= clk.t < 6.0, "the 5 s grace ran out first"
+        clk.t = pc.t = 0.0
+        node.wait_sim_speedup()
+        assert node.takeoff_speedup["sim_speedup"] == 1.0
+        t_wait = clk.t
+        assert 23.0 <= t_wait <= 23.5
+        node.read_autopilot_fence()
+        assert node.autopilot_fence["sitl"] is True and node.autopilot_fence["raise_allowed"]
+        assert clk.t == t_wait, "no grace once the wait has answered"
+        node.read_sim_params()
+        assert node.sim_params_takeoff["sitl"] is True and node.sim_params_takeoff["values"]
+        kinds = [e["kind"] for e in RN._events(out)]
+        assert "sim_speedup_wait" in kinds and kinds.count("sim_params") == 1, kinds
+    finally:
+        N.rclpy.spin_once = spin0
+
+
+def test_the_tick_scheduler_follows_the_pilot_and_keeps_10_hz_alone():
+    """A3 (2026-11-11), the pure schedule: a valid message ticks at once, a
+    message under min_gap after a tick is deferred to the first poll past
+    it, and with no message the poll ticks every period after a timer tick,
+    period + slack after a message's tick."""
+    N = _node()
+    S = N.TickScheduler
+    s = S()
+    assert s.on_message(0.0) is None and s.on_poll(5.0) is None, "nothing before start"
+    s.start(100.0)
+    assert s.on_poll(100.025) is None and s.on_poll(100.075) is None
+    assert s.on_poll(100.1) == "timer", "the first watchdog one period after start"
+    s = S()
+    s.start(100.0)
+    assert s.on_message(100.01) == "action"
+    s.ran(100.01, "action")
+    # A message 30 ms later waits for the gap; the poll runs it then.
+    assert s.on_message(100.04) is None and s.pending
+    assert s.on_poll(100.06) is None
+    assert s.on_poll(100.09) == "deferred"
+    s.ran(100.09, "deferred")
+    assert not s.pending
+    # No message: the watchdog waits period + slack after a message's tick ...
+    due = 100.09 + N.TICK + N.TIMER_SLACK_S
+    assert s.watchdog_due_at() == due
+    assert s.on_poll(due - N.TICK_POLL_S) is None and s.on_poll(due) == "timer"
+    s.ran(due, "timer")
+    # ... and one period after a timer tick: the 10 Hz of a quiet stream.
+    assert s.on_poll(due + 0.075) is None and s.on_poll(due + 0.1) == "timer"
+
+    def fly(arrivals, polls_until):
+        """Messages at `arrivals` (s), polls every TICK_POLL_S; the ticks."""
+        s = S()
+        s.start(0.0)
+        events = sorted([(t, "m") for t in arrivals]
+                        + [(k * N.TICK_POLL_S, "p")
+                           for k in range(1, int(polls_until / N.TICK_POLL_S) + 1)])
+        ticks = []
+        for t, kind in events:
+            why = s.on_message(t) if kind == "m" else s.on_poll(t)
+            if why:
+                s.ran(t, why)
+                ticks.append((t, why))
+        return ticks
+
+    import random
+    rnd = random.Random(7)
+    # A 10 Hz pilot with +-9 ms jitter (sm1111's receipts: 90.6 ms apart at
+    # p1, 109.3 ms at p99) at an arbitrary phase: one tick per message, at
+    # the message, and no timer tick.
+    msgs = [0.037 + 0.1 * k + rnd.uniform(-0.009, 0.009) for k in range(300)]
+    ticks = fly(msgs, 30.0)
+    assert [w for _, w in ticks] == ["action"] * 300, \
+        {w: sum(1 for _, x in ticks if x == w) for w in N.TICK_TRIGGERS}
+    assert [t for t, _ in ticks] == msgs
+    # A 20 Hz pilot never ticks faster than 1 / min_gap.
+    ticks = fly([0.01 + 0.05 * k for k in range(200)], 10.0)
+    gaps = [b[0] - a[0] for a, b in zip(ticks, ticks[1:])]
+    assert min(gaps) >= N.ACTION_TICK_MIN_GAP_S - 1e-9 and len(ticks) <= 10.0 / 0.08 + 1
+    # The pilot stops at 1 s: the watchdog keeps the old 10 Hz.
+    ticks = fly([0.02 + 0.1 * k for k in range(10)], 3.0)
+    timer = [t for t, w in ticks if w == "timer"]
+    assert len(timer) >= 18 and all(abs((b - a) - N.TICK) < 1e-6
+                                    for a, b in zip(timer, timer[1:]))
+    for bad in ({"period_s": 0.0}, {"min_gap_s": 0.2}, {"poll_s": 0.1},
+                {"slack_s": -1.0}, {"period_s": float("nan")}, {"poll_s": True}):
+        try:
+            S(**bad)
+        except ValueError:
+            continue
+        raise AssertionError(f"accepted {bad}")
+    assert N.TICK_POLL_S <= N.TICK / 4 and N.ACTION_TICK_MIN_GAP_S <= N.TICK
+
+
+def test_the_node_ticks_on_a_fresh_action_and_its_poll_watches_a_quiet_stream():
+    """A3 on the node (stand-in ROS, virtual clock): with the default
+    --tick-trigger action the action's own callback runs the tick (e2e is
+    the tick's work: 0 ms on a clock that stands still), the 40 Hz poll
+    re-flies nothing while the pilot streams, and ticks at 10 Hz once it is
+    quiet; metrics.json says what ran each tick and what e2e measures. Work
+    that does not decide the setpoint comes after its publication."""
+    RN, N, node, clk, out = _scenario_node(["--tick-trigger", "action",
+                                            "--gc-pacing", "off"])
+    assert node.tick_trigger == "action"
+    node.state = State(x=0.0, y=0.0, up=15.0, yaw_deg=0.0)
+    node.start_mission()
+    assert node.timers[-1] == (N.TICK_POLL_S, node._on_tick_poll), node.timers
+
+    def pose():
+        node._on_pose(RN._pose_msg(N, node.state))
+
+    def poll(n):
+        for _ in range(n):
+            clk.t = round(clk.t + N.TICK_POLL_S, 9)
+            pose()
+            node._on_tick_poll()
+
+    for k in range(5):                                  # a 10 Hz pilot
+        pose()
+        RN._act(N, node, vx=1.0)
+        assert len(node.rows) == k + 1 and node.rows[-1]["tick_trigger"] == "action"
+        assert node.rows[-1]["e2e_ms"] == 0.0, node.rows[-1]
+        poll(3)                                         # 75 ms: nothing to do
+        assert len(node.rows) == k + 1
+        clk.t = round(clk.t + 0.025, 9)
+    # Quiet: the first timer tick at period + slack after the last message,
+    # then every period; each re-flies the last action (no e2e).
+    poll(5)                                             # to 225 ms after it
+    assert [r["tick_trigger"] for r in node.rows[5:]] == ["timer"], node.rows[5:]
+    poll(8)                                             # to 425 ms
+    timer = [r for r in node.rows if r["tick_trigger"] == "timer"]
+    assert len(timer) == 3 and all(r["e2e_ms"] is None for r in timer)
+    assert abs(timer[2]["t"] - timer[1]["t"] - N.TICK) < 1e-3
+    # A message 25 ms after a tick is deferred to the first poll past the gap.
+    clk.t = round(clk.t + 0.01, 9)                      # 85 ms after the last tick
+    pose()
+    RN._act(N, node, vx=1.0)
+    n = len(node.rows)
+    assert node.rows[-1]["tick_trigger"] == "action"
+    clk.t = round(clk.t + 0.025, 9)
+    RN._act(N, node, vx=1.5)
+    assert len(node.rows) == n, "deferred, not run"
+    poll(3)                                             # polls 50, 75, 100 ms after the tick
+    assert node.rows[n]["tick_trigger"] == "deferred" and node.rows[n]["raw_body"]["vx"] == 1.5
+    assert node.rows[n]["e2e_ms"] == 75.0, node.rows[n]["e2e_ms"]
+    node._finish("test over")
+    met = json.loads((out / "metrics.json").read_text(encoding="utf-8"))
+    ts = met["tick_schedule"]
+    assert ts["mode"] == "action" and ts["ticks_by_trigger"]["deferred"] == 1, ts
+    assert ts["min_gap_s"] == N.ACTION_TICK_MIN_GAP_S and ts["poll_s"] == N.TICK_POLL_S
+    tl = met["tick_latency"]
+    assert tl["tick_trigger"] == "action" and "callback's entry" in tl["note"]
+    assert tl["e2e_ms"]["p95"] is not None
+    # With the stub there is no camera behind the actions: said, not zero.
+    cam = met["camera_to_setpoint"]
+    assert cam["applies"] is False and cam["p50"] is None and "four values" in cam["why"]
+    assert all("camera_age_ms" not in r for r in node.rows), "stub rows as they were"
+    # What waits for the setpoint, in the tick's source.
+    src = (SITL / "ros2_shield_node.py").read_text(encoding="utf-8")
+    tick = src[src.index("        def _tick_locked("):src.index("        def _standoff_metrics(")]
+    pub = tick.index("self._publish_body(flown)")
+    for after in ("self.rec.release_events()", "audit_tick(self.audit, tick_no",
+                  "self.pub_intercept.publish(", "self._recheck_deferred(st,",
+                  "self._check_publishers()", "self.cli_rate.call_async(StreamRate",
+                  "self.gc_pacer.after_publish(now)"):
+        assert tick.index(after) > pub, f"{after} runs before the setpoint"
+    # The hand-ticked timer mode: an action alone does not tick.
+    RN2, N2, node2, clk2, _ = _scenario_node([])
+    node2.state = State(x=0.0, y=0.0, up=15.0, yaw_deg=0.0)
+    node2.start_mission()
+    assert node2.timers[-1] == (N2.TICK, node2._tick) and node2._sched is None
+    RN2._act(N2, node2, vx=1.0)
+    assert node2.rows == []
+
+
+def test_the_episode_holds_a_threads_events_until_it_releases_them():
+    """A4: the control tick appends its events.jsonl lines after its
+    setpoint (EpisodeRecord.hold_events / release_events); each line keeps
+    the wall time it was made at, another thread writes at once, and
+    nothing held is lost."""
+    import threading
+    from guardrail.replay import EpisodeRecord
+    out = Path(tempfile.mkdtemp(prefix="hold_events_"))
+    rec = EpisodeRecord(out, load_policy(POLICY), None)
+
+    def kinds():
+        return [json.loads(x)["kind"] for x in
+                (out / "events.jsonl").read_text(encoding="utf-8").splitlines()]
+    base = kinds()
+    rec.hold_events()
+    rec.event("in_tick_1", t=1.0)
+    rec.event("in_tick_2", t=1.0)
+    th = threading.Thread(target=lambda: rec.event("rest_thread", t=1.0))
+    th.start()
+    th.join()
+    assert kinds() == base + ["rest_thread"], "only the holding thread waits"
+    assert rec.release_events() == 2 and kinds() == base + ["rest_thread", "in_tick_1",
+                                                            "in_tick_2"]
+    assert rec.release_events() == 0, "a second release is a no-op"
+    rec.event("after", t=2.0)
+    assert kinds()[-1] == "after"
+
+
+def test_the_gc_pacer_keeps_the_full_collection_out_of_the_tick():
+    """A4 (2026-11-11): one tick per long mission of the grant example sweep
+    (ge1110) took 107-120 ms at row 1305-1339 of every mission, inside
+    filter(): CPython's full collection walking the rows this node keeps.
+    GcPacer freezes the heap at mission start, switches the automatic full
+    collection off and runs it itself after a publication every
+    GC_FULL_EVERY_S; at the end everything is restored."""
+    N = _node()
+
+    class FakeGC:
+        def __init__(self):
+            self.calls, self.callbacks = [], []
+            self.threshold, self.frozen = (700, 10, 10), 0
+
+        def collect(self, *a):
+            self.calls.append("collect")
+            for cb in list(self.callbacks):
+                cb("start", {"generation": 2})
+                cb("stop", {"generation": 2, "collected": 0, "uncollectable": 0})
+            return 0
+
+        def freeze(self):
+            self.calls.append("freeze")
+            self.frozen += 100
+
+        def unfreeze(self):
+            self.calls.append("unfreeze")
+            self.frozen = 0
+
+        def get_freeze_count(self):
+            return self.frozen
+
+        def get_threshold(self):
+            return self.threshold
+
+        def set_threshold(self, *th):
+            self.threshold = tuple(th)
+
+    g = FakeGC()
+    p = N.GcPacer(10.0, gc_module=g)
+    p.start(0.0)
+    assert g.calls == ["collect", "freeze"] and g.threshold == (700, 10, N.GC_THRESHOLD_NEVER)
+    assert p.frozen_at_start == 100 and len(g.callbacks) == 1
+    assert p.after_publish(9.9) is None and g.calls == ["collect", "freeze"]
+    assert p.after_publish(10.0) is not None and g.calls[-2:] == ["collect", "freeze"]
+    assert p.after_publish(15.0) is None and p.after_publish(20.0) is not None
+    # A full collection the pacer did not run is counted (pacing keeps it 0).
+    g.callbacks[0]("start", {"generation": 2})
+    g.callbacks[0]("stop", {"generation": 2})
+    g.callbacks[0]("start", {"generation": 0})
+    g.callbacks[0]("stop", {"generation": 0})
+    s = p.summary()
+    assert s["paced_full_collections"] == 2 and s["automatic_full_collections"] == 1, s
+    assert s["collections_by_generation"]["0"]["n"] == 1
+    p.stop()
+    assert g.threshold == (700, 10, 10) and g.frozen == 0 and g.callbacks == []
+    assert p.after_publish(99.0) is None, "stopped"
+    # Watching only (--gc-pacing off): nothing frozen, nothing changed.
+    g2 = FakeGC()
+    w = N.GcPacer(gc_module=g2, pace=False)
+    w.start(0.0)
+    assert g2.calls == [] and g2.threshold == (700, 10, 10) and len(g2.callbacks) == 1
+    assert w.after_publish(100.0) is None
+    w.stop()
+    assert g2.callbacks == [] and w.summary()["mode"].startswith("cpython")
+    # A second pacer in one process never "restores" the switched-off threshold.
+    g3 = FakeGC()
+    a, b = N.GcPacer(gc_module=g3), N.GcPacer(gc_module=g3)
+    a.start(0.0)
+    b.start(0.0)
+    b.stop()
+    assert g3.threshold == (700, 10, 10)
+    a.stop()
+    for bad in (0.0, -1.0, float("inf"), True):
+        try:
+            N.GcPacer(bad)
+        except ValueError:
+            continue
+        raise AssertionError(f"accepted {bad!r}")
+    # The real collector, restored to exactly what it was.
+    import gc
+    before, frozen0 = gc.get_threshold(), gc.get_freeze_count()
+    real = N.GcPacer(0.001)
+    try:
+        real.start(0.0)
+        assert gc.get_threshold()[2] == N.GC_THRESHOLD_NEVER and gc.get_freeze_count() > frozen0
+        junk = [[i] for i in range(20000)]
+        assert real.after_publish(1.0) is not None and len(junk) == 20000
+    finally:
+        real.stop()
+    assert gc.get_threshold() == before and gc.get_freeze_count() == 0
+    assert real.summary()["paced_full_collections"] == 1
+    # The node starts it with the mission clock and stops it at the end.
+    RN, N3, node, clk, out = _scenario_node(["--gc-pacing", "on"])
+    node.state = State(x=0.0, y=0.0, up=15.0, yaw_deg=0.0)
+    try:
+        node.start_mission()
+        assert node.gc_pacer.active and node.gc_pacer.pace
+        for _ in range(2):
+            node._on_pose(RN._pose_msg(N3, node.state))
+            RN._act(N3, node, vx=1.0)
+            clk.t += 0.1
+            node._tick()
+    finally:
+        node._finish("test over")
+    assert not node.gc_pacer.active and gc.get_threshold() == before
+    met = json.loads((out / "metrics.json").read_text(encoding="utf-8"))
+    assert met["gc"]["mode"] == "paced" and met["gc"]["flag"] == "--gc-pacing on"
+
+
+def test_the_camera_age_behind_each_setpoint_is_two_durations_and_never_a_zero():
+    """A5 (2026-11-11, WP3-13): per setpoint flown from a camera-backed
+    action, camera_age_ms = the bridge's decision_age_s at its publication
+    + this node's receipt-to-publication, each on one monotonic clock; the
+    stub's runs, a hover / none tick and a stop for a stale input carry
+    none, and metrics.json says so instead of a zero."""
+    N = _node()
+    f = N.camera_age_ms
+    assert f(0.25, 1_000_000_000, 1_012_000_000) == 262.0
+    assert f(None, 1, 2) is None and f(0.25, None, 2) is None and f(0.25, 1, None) is None
+    assert f(-1.0, 1, 2) is None and f(float("nan"), 1, 2) is None
+    stub = N.camera_latency_summary([{"t": 0.1}], extended_messages=0)
+    assert stub["applies"] is False and stub["n"] == 0 and stub["p50"] is None
+    assert "four values" in stub["why"] and "clocks" in stub
+    none = N.camera_latency_summary([{"camera_age_ms": None}], extended_messages=5)
+    assert none["applies"] is False and "camera-backed" in none["why"]
+    rows = [{"camera_age_ms": 200.0 + k, "action_age_ms": 10.0} for k in range(100)]
+    s = N.camera_latency_summary(rows, extended_messages=100)
+    assert s["applies"] and s["n"] == 100 and s["p50"] == 249.0 and s["max"] == 299.0
+    assert s["p95"] == 294.0 and s["p99"] == 298.0 and s["node_part_ms_p50"] == 10.0
+    # On the node: a bridge's vla_step, a stale one held, a hover.
+    RN, N2, node, clk, out = _scenario_node(["--decision-timeout-s", "1.0"])
+    node.state = State(x=0.0, y=0.0, up=15.0, yaw_deg=0.0)
+    node.start_mission()
+
+    def send(age, seq, author, vx):
+        node._on_action(N2.Float32MultiArray(data=[vx, 0.0, 0.0, 0.0, age, seq,
+                                                    float(author), 0.0]))
+    for k in range(3):
+        node._on_pose(RN._pose_msg(N2, node.state))
+        send(0.3 + 0.1 * k, 7, 1, 1.0)                  # vla_step, decision 7
+        clk.t += 0.012
+        node._tick()
+        clk.t += 0.088
+    cams = [r["camera_age_ms"] for r in node.rows]
+    assert cams == [312.0, 412.0, 512.0], cams
+    node._on_pose(RN._pose_msg(N2, node.state))
+    send(-1.0, -1.0, 3, 0.0)                            # a hover: no decision
+    node._tick()
+    node._on_pose(RN._pose_msg(N2, node.state))
+    send(5.0, 8, 1, 1.0)                                # older than 1 s + grace: held
+    node._tick()
+    assert node.rows[-2]["camera_age_ms"] is None and node.rows[-1]["camera_age_ms"] is None
+    assert node.rows[-1]["decision_stale"] is True
+    node._finish("test over")
+    met = json.loads((out / "metrics.json").read_text(encoding="utf-8"))
+    cam = met["camera_to_setpoint"]
+    assert cam["applies"] and cam["n"] == 3 and cam["max"] == 512.0, cam
+    assert "monotonic" in cam["clocks"] and "lower bound" in cam["clocks"]
 
 
 def test_no_sitl_script_reads_a_name_nothing_binds():

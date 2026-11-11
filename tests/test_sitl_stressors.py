@@ -546,7 +546,9 @@ def _node_module():
 def _node(R, N, argv):
     clk = R._Clock()
     N.time = clk
-    args, _ = N.make_parser().parse_known_args(["--policy", str(POLICY), "--dev-yaml"] + argv)
+    # Ticked by hand (R.HAND_TICKED: the 10 Hz timer's tick, CPython's own GC).
+    args, _ = N.make_parser().parse_known_args(["--policy", str(POLICY), "--dev-yaml"]
+                                               + R.HAND_TICKED + argv)
     out = Path(tempfile.mkdtemp(prefix="ros2fix_"))
     node = N.ShieldNode(args, out)
     node.state = State(x=5.0, y=15.0, up=15.0, yaw_deg=0.0)
