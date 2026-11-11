@@ -82,6 +82,16 @@ WHAT IS BEING CLAIMED (to-do VLA-03 and VLA-07, wave V2b, 2026-10-23)
     front frames sent, apart from duplicates and hint-gated spans; and
     FrontCamera's capture interval renders only when asked, recorded.
 
+12. CAMERA TO SETPOINT (2026-11-11; WP3-13): every row carries its
+    setpoint's publication time `t_pub` and `tick_ms`, both on the loop
+    clock; a VLA row whose decision's action flew carries `cam_age_ms` =
+    the publication minus that decision's t_capture (vla_steps.jsonl), and
+    `cam_to_setpoint_ms` on the first tick that flies each decision only;
+    a held tick (the FSM's hold) carries neither; metrics.json
+    `camera_to_setpoint` summarises the rows (nearest rank, the count over
+    100 ms) and says which clock and that capture time is arrival time.
+    Shown failing first: against 0df7ee8 none of the fields existed.
+
 Shown failing first: against 5b00e6b (the tree before this change) every
 test below failed (0/16 of the first version of this file) - the parser
 had no --pilot, the robot config no VLA camera, vla_mission no hud_lines or
@@ -1749,6 +1759,98 @@ def test_the_observation_rate_counts_distinct_frames_sent_not_requests():
     assert o["distinct_frames"] == 0 and o["hz_per_wall_s"] is None
     assert o["gap_sim_s"] == {"n": 0, "p50": None, "p95": None, "max": None}
     assert o["below_grant"] == {"per_wall_s": None, "while_asking": None}
+
+
+# =========================================================================== #
+# 12. Camera to setpoint (WP3-13)
+# =========================================================================== #
+
+def test_the_camera_to_setpoint_fields_are_differences_on_one_clock():
+    """The row fields, on hand-made times: the publication against the
+    tick's start and the mission's, the frame's age at it, the first
+    setpoint of a decision only, and nothing where nothing flew."""
+    assert pn.publish_latency_fields(1000.20, None, 1000.0) == {"t_pub": None, "tick_ms": None}
+    assert pn.publish_latency_fields(1000.20, 1000.2125, 1000.0) == \
+        {"t_pub": 0.2125, "tick_ms": 12.5}
+    f = pn.camera_age_fields(1000.2125, 999.95, flies=True, fresh=True)
+    assert f == {"cam_age_ms": 262.5, "cam_to_setpoint_ms": 262.5}, f
+    f = pn.camera_age_fields(1000.3125, 999.95, flies=True, fresh=False)
+    assert f == {"cam_age_ms": 362.5, "cam_to_setpoint_ms": None}, f
+    none = {"cam_age_ms": None, "cam_to_setpoint_ms": None}
+    assert pn.camera_age_fields(1000.3, 999.9, flies=False, fresh=True) == none   # held
+    assert pn.camera_age_fields(None, 999.9, flies=True, fresh=True) == none      # not sent
+    assert pn.camera_age_fields(1000.3, None, flies=True, fresh=True) == none     # no decision
+    assert pn.camera_age_fields(1000.3, float("nan"), flies=True, fresh=True) == none
+    rows = ([{"author": "vla_step", "cam_age_ms": float(v), "cam_to_setpoint_ms": None,
+              "tick_ms": 2.0} for v in range(1, 101)]
+            + [{"author": "hover", "cam_age_ms": None, "tick_ms": None}])
+    rows[0]["cam_to_setpoint_ms"] = 150.0
+    s = pn.camera_to_setpoint_summary(rows, t_capture_basis={"arrival": 3})
+    a = s["cam_age_ms"]
+    assert (a["n"], a["p50"], a["p95"], a["p99"], a["max"], a["over_budget"]) == \
+        (100, 50.0, 95.0, 99.0, 100.0, 0), a
+    assert s["cam_to_setpoint_ms"]["n"] == 1 and s["cam_to_setpoint_ms"]["over_budget"] == 1
+    assert s["tick_ms"]["n"] == 100 and s["by_author"] == {"vla_step": 100}
+    assert s["t_capture_basis"] == {"arrival": 3} and "ARRIVAL" in s["capture_is"]
+    empty = pn.camera_to_setpoint_summary([])["cam_to_setpoint_ms"]
+    assert empty == {"n": 0, "p50": None, "p95": None, "p99": None, "max": None,
+                     "over_budget": 0}, "an empty measure is None, never 0 ms"
+
+
+def test_a_vla_flight_logs_its_publication_and_the_frame_behind_each_setpoint():
+    """A VLA GOTO on the stand-ins (the test's clock): every row says when
+    its setpoint went out; each tick a decision's action flew carries the
+    age of that decision's frame at the publication, which is the
+    publication minus the decision's t_capture in vla_steps.jsonl; the first
+    setpoint of each decision carries cam_to_setpoint_ms and no later one
+    does; the metrics summarise exactly the rows."""
+    r = _vfly(_real(F.goto_responder(GOAL, 8.0)))
+    assert r.rc == 0
+    m = _json(r.run, "metrics.json")
+    rows = _rows(r.run)
+    t0 = m["vla_observation"]["t0_wall"]
+    assert all(x["t_pub"] is not None and x["tick_ms"] is not None for x in rows)
+    # The test's clock stands still within a tick: published at the tick's start.
+    assert all(abs(x["t_pub"] - x["t"]) < 1e-3 and x["tick_ms"] == 0.0 for x in rows)
+    cap = {s["seq"]: s["t_capture"] for s in _steps(r.run)}
+    aged = [x for x in rows if x["cam_age_ms"] is not None]
+    assert len(aged) > len(rows) / 2, (len(aged), len(rows))
+    for x in aged:
+        assert x["vla_seq"] in cap and not x["pilot_held"], x
+        want = (x["t_pub"] + t0 - cap[x["vla_seq"]]) * 1000.0
+        assert abs(x["cam_age_ms"] - want) < 2.0, (x["cam_age_ms"], want)
+        assert x["cam_age_ms"] > 0.0
+    firsts = [x for x in rows if x["cam_to_setpoint_ms"] is not None]
+    seqs = [x["vla_seq"] for x in firsts]
+    assert seqs == sorted(set(seqs)) and set(seqs) == {x["vla_seq"] for x in aged}, seqs
+    for x in firsts:
+        assert x["cam_to_setpoint_ms"] == x["cam_age_ms"]
+        assert x is next(y for y in rows if y["vla_seq"] == x["vla_seq"]
+                         and y["cam_age_ms"] is not None)
+    # The answer comes back within one tick of the test's clock: its first
+    # setpoint is the next tick's.
+    assert {x["cam_to_setpoint_ms"] for x in firsts} <= {100.0}, \
+        sorted({x["cam_to_setpoint_ms"] for x in firsts})
+    s = m["camera_to_setpoint"]
+    assert s["cam_age_ms"]["n"] == len(aged) and s["cam_to_setpoint_ms"]["n"] == len(firsts)
+    assert s["cam_age_ms"]["max"] == max(x["cam_age_ms"] for x in aged)
+    assert s["tick_ms"]["n"] == len(rows) and s["budget_ms"] == 100.0
+    assert "one clock" in s["clock"] and "ARRIVAL" in s["capture_is"]
+    assert sum(s["by_author"].values()) == len(aged)
+
+
+def test_a_held_tick_carries_no_camera_age():
+    """The FSM's hold (LOITER_POLICY: Loiter from the first tick): the
+    rail's setpoint still goes out (t_pub), but no decision's action flew,
+    so no camera age is claimed for it."""
+    r = _vfly(_real(F.goto_responder(GOAL, 8.0)), policy=T.LOITER_POLICY, max_s="4")
+    rows = _rows(r.run)
+    held = [x for x in rows if x["pilot_held"]]
+    assert held, "the fixture must hold"
+    assert all(x["cam_age_ms"] is None and x["cam_to_setpoint_ms"] is None for x in held)
+    assert all(x["t_pub"] is not None for x in rows if x["flown_action"] is not None)
+    s = _json(r.run, "metrics.json")["camera_to_setpoint"]
+    assert s["cam_age_ms"]["n"] == sum(1 for x in rows if x["cam_age_ms"] is not None)
 
 
 def test_the_front_capture_interval_renders_only_when_asked_and_is_recorded():

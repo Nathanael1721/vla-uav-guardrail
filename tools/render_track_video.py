@@ -29,6 +29,24 @@ in the title instead of showing an FSM state it never had. The axes are the
 rows' own: x North (horizontal), y East (vertical); until this date they
 were labelled the other way round.
 
+Since 2026-11-11 a MOVING zone (a dynamic_nfz with a `motion`: yaw_rate_dps,
+vx_mps, vy_mps) is drawn where its motion has taken it at each frame's time,
+by the model's own geometry (guardrail.models.DynamicNFZ.ring_at), from the
+time it was last spawned or edited: the run's events.jsonl
+`policy_generation` record "hot_apply <id>" (zone_anchors); a zone the
+policy declared, or one no event names, moves from the first row of the
+generation that brought it. Until then every zone was drawn at its authored
+vertices and a spinning bar stood still. The age is read on the rows' clock
+(mission time); the Shield places the zone on its own tick clock (counted
+0.1 s ticks on the hil node, anchored at its last tick), so the drawing may
+lead the Shield's placement by about one tick: on hs06b_004_dyn-nfz-rotate-
+spin (a 40 m bar at 6 deg/s) the drawn bar's signed distance to the
+aircraft is within 0.21 m of the one the Shield logged (rows' `zone_d_m`)
+on every row, under a pixel at the drawing's scale. The footer names the log the
+frames replay by its real path (it said demo/out/<tag>/flight_log.jsonl for
+every run, wherever it was), and --stills draws chosen frames as PNGs
+instead of a video. `--tag` may name a nested run (hil_smoke/<run>).
+
 Writes demo/out/<tag>/<tag>_track.mp4 by default, through a .partial file
 that is checked (non-empty) before it replaces the target.
 """
@@ -96,11 +114,18 @@ def zones(policy: dict) -> list[dict]:
     for c in policy.get("constraints", []):
         t = c.get("type")
         if t in ("polygon_fence", "dynamic_nfz") and c.get("vertices"):
+            mo = c.get("motion") if t == "dynamic_nfz" else None
+            moving = isinstance(mo, dict) and any(
+                float(mo.get(k) or 0.0) for k in ("yaw_rate_dps", "vx_mps", "vy_mps"))
             out.append({"id": c.get("id"), "kind": "poly",
                         "xy": [point_xy(v, org) for v in c["vertices"]],
                         "margin": float(c.get("margin_m") or 0.0),
                         "hard": c.get("constraint_type", "hard") == "hard",
-                        "scheduled": bool(c.get("valid_time"))})
+                        "scheduled": bool(c.get("valid_time")),
+                        # A dynamic_nfz's declared motion (None: it stands
+                        # still once spawned): drawn by moving_ring.
+                        "motion": dict(mo) if moving else None,
+                        "rule": c if moving else None})
         elif t == "circle_fence" and c.get("center"):
             out.append({"id": c.get("id"), "kind": "circle",
                         "c": point_xy(c["center"], org),
@@ -109,6 +134,122 @@ def zones(policy: dict) -> list[dict]:
                         "hard": c.get("constraint_type", "hard") == "hard",
                         "scheduled": bool(c.get("valid_time"))})
     return out
+
+
+def load_events(run: Path) -> list[dict]:
+    """The run's events.jsonl records (EpisodeRecord.event), [] without one."""
+    p = run / "events.jsonl"
+    if not p.is_file():
+        return []
+    out = []
+    for line in p.read_text(encoding="utf-8").splitlines():
+        try:
+            e = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(e, dict):
+            out.append(e)
+    return out
+
+
+def zone_anchors(events: list[dict]) -> dict[int, dict[str, float]]:
+    """generation -> {zone id: the time its geometry was last set}: every
+    `policy_generation` record whose reason is "hot_apply <id>" (a spawn, a
+    move, a translate, a rotate, a scale - each re-anchors the zone where it
+    then was, guardrail.shield.Shield._edit_zone) on the rows' clock,
+    carried into every later generation until the next such record. A
+    record with no time (the take-off's) anchors nothing."""
+    gens = sorted((e for e in events if e.get("kind") == "policy_generation"
+                   and isinstance(e.get("generation"), int)),
+                  key=lambda e: e["generation"])
+    out: dict[int, dict[str, float]] = {}
+    cur: dict[str, float] = {}
+    for e in gens:
+        why = str(e.get("reason") or "")
+        if why.startswith("hot_apply ") and isinstance(e.get("t"), (int, float)):
+            cur = dict(cur, **{why[len("hot_apply "):].strip(): float(e["t"])})
+        out[e["generation"]] = dict(cur)
+    return out
+
+
+def zone_anchor(z: dict, gen: int, anchors: dict[int, dict[str, float]],
+                gen_start: dict[int, float]) -> tuple[float, str]:
+    """(the time zone `z` of generation `gen` started moving from, where
+    that time comes from): its last hot-apply (events.jsonl), else the first
+    row of the earliest generation that holds it unchanged up to `gen` -
+    for a zone the policy declared, the flight's first row, which is where
+    the Shield anchors one (its first tick)."""
+    a = (anchors.get(gen) or {}).get(z["id"])
+    if a is not None:
+        return a, "events.jsonl"
+    since = z.get("_since_gen", gen)
+    return gen_start.get(since, 0.0), f"first row of generation {since}"
+
+
+def generation_starts(rows: list[dict], gens) -> dict[int, float]:
+    """generation -> the time of the first row flown under it or a later one
+    (two generations applied on one tick leave rows of the later only)."""
+    out = {}
+    for g in sorted(gens):
+        t = next((r["t"] for r in rows if int(r.get("generation") or 0) >= g), None)
+        out[g] = float(rows[0]["t"] if t is None and g == min(gens) else
+                       t if t is not None else rows[-1]["t"])
+    return out
+
+
+def zones_by_generation(pols: dict[int, dict]) -> dict[int, list[dict]]:
+    """Each generation's zones (zones()), a moving one marked with the
+    earliest generation that holds it unchanged (`_since_gen`): the one
+    whose start it moves from when no event anchors it."""
+    out: dict[int, list[dict]] = {}
+    prev: dict[str, dict] = {}
+    for g in sorted(pols):
+        zs = zones(pols[g])
+        for z in zs:
+            p = prev.get(z["id"])
+            same = (p is not None and p.get("xy") == z.get("xy")
+                    and p.get("motion") == z.get("motion"))
+            z["_since_gen"] = p["_since_gen"] if same else g
+        prev = {z["id"]: z for z in zs}
+        out[g] = zs
+    return out
+
+
+def moving_ring(z: dict, age_s: float) -> list[tuple[float, float]]:
+    """A moving zone's polygon `age_s` after its anchor, by the model's own
+    geometry (guardrail.models.DynamicNFZ.ring_at: about the vertex mean,
+    rotated and translated), in the drawing's metres. The zone is built once
+    and kept on `z` (`_model`)."""
+    m = z.get("_model")
+    if m is None:
+        from guardrail.models import DynamicNFZ
+        r = z.get("rule") or {}
+        m = DynamicNFZ.model_validate({
+            "id": z["id"], "type": "dynamic_nfz",
+            "vertices": [{"x": float(x), "y": float(y)} for x, y in z["xy"]],
+            "motion": z["motion"],
+            "constraint_type": r.get("constraint_type", "hard"),
+            "priority": r.get("priority", "P0"), "scope": r.get("scope", "mission"),
+            "violation_action": r.get("violation_action", "project_fix"),
+            "margin_m": z.get("margin", 1.0)})
+        z["_model"] = m
+    return [(float(x), float(y)) for x, y in m.ring_at(max(0.0, float(age_s)))]
+
+
+def log_label(run: Path) -> str:
+    """The flight log the frames replay, by its real path: relative to this
+    repository when it is in it, else from the `demo/out` of the checkout
+    that holds it, else as given."""
+    p = (run / "flight_log.jsonl").resolve()
+    try:
+        return p.relative_to(ROOT.resolve()).as_posix()
+    except ValueError:
+        pass
+    parts = p.parts
+    for i in range(len(parts) - 2, -1, -1):
+        if parts[i] == "demo" and parts[i + 1] == "out":
+            return "/".join(parts[i:])
+    return p.as_posix()
 
 
 def switched_off(policy: dict) -> set[str]:
@@ -223,6 +364,17 @@ def bounds(rows, zs, target, pad=6.0):
 
 
 def render(run: Path, out: Path, fps: int = 10, step: int = 1) -> Path:
+    """The run's video at `out` (an .mp4 through ffmpeg)."""
+    return _render(run, out, fps, step, None)
+
+
+def render_stills(run: Path, out_dir: Path, times: list[float], step: int = 1) -> list[Path]:
+    """The frames nearest each of `times` (mission seconds) as PNGs in
+    `out_dir`, drawn exactly as the video draws them; no ffmpeg needed."""
+    return _render(run, out_dir, 10, step, [float(t) for t in times])
+
+
+def _render(run: Path, out: Path, fps: int, step: int, stills: list[float] | None):
     # The run's own inputs are judged before the drawing stack is imported: a
     # run with nothing to draw is refused the same way on a host without
     # matplotlib (found by the Python 3.12 CI env, 2026-11-06).
@@ -236,18 +388,29 @@ def render(run: Path, out: Path, fps: int = 10, step: int = 1) -> Path:
     import matplotlib.pyplot as plt
     from matplotlib import animation
     from matplotlib.patches import Circle, Polygon
-    from tools.encode_deliverable import find_ffmpeg
     g0 = pols[min(pols)]
     band = altitude_band(g0)
     target = mission_target(run)
-    allz = [z for p in pols.values() for z in zones(p)]
+    # Each generation's zones, a moving one with where its motion starts
+    # (zone_anchor: events.jsonl, else its generation's first row).
+    zbg = zones_by_generation(pols)
+    anchors = zone_anchors(load_events(run))
+    gstart = generation_starts(rows, pols)
+    allz = [z for zs in zbg.values() for z in zs]
+    # A moving zone's extent is everywhere it went while its generation flew.
+    swept = [{"kind": "poly", "xy": moving_ring(z, float(r["t"]) - zone_anchor(
+                 z, g, anchors, gstart)[0])}
+             for g, zs in zbg.items() for z in zs if z.get("motion")
+             for r in rows if int(r.get("generation") or 0) == g]
     allc = [{"id": c["id"], "kind": "poly", "xy": corridor_outline(c)}
             for p in pols.values() for c in corridors(p) if len(c["centerline"]) >= 2]
     wps = mission_waypoints(run)
-    x0, x1, y0, y1 = bounds(rows, allz + allc, target)
+    x0, x1, y0, y1 = bounds(rows, allz + swept + allc, target)
     has_fsm = any(r.get("fsm_state_after") for r in rows)
 
-    plt.rcParams["animation.ffmpeg_path"] = find_ffmpeg()
+    if stills is None:
+        from tools.encode_deliverable import find_ffmpeg
+        plt.rcParams["animation.ffmpeg_path"] = find_ffmpeg()
     fig = plt.figure(figsize=(12.8, 7.2), dpi=100)
     ax = fig.add_axes([0.04, 0.08, 0.52, 0.84])
     az = fig.add_axes([0.62, 0.55, 0.35, 0.37])
@@ -265,13 +428,30 @@ def render(run: Path, out: Path, fps: int = 10, step: int = 1) -> Path:
     az.set_title("altitude")
 
     zone_patches: dict[int, list] = {}
+    # generation -> [(zone, its polygon, its label)] of the zones that move
+    moving_patches: dict[int, list] = {}
 
-    def draw_zones(gen: int):
+    def place_moving(gen: int, t: float) -> list[str]:
+        """Each moving zone of `gen` where its motion has taken it at `t`
+        (DynamicNFZ.ring_at of its age); one info line per zone."""
+        lines = []
+        for z, poly, txt in moving_patches.get(gen, []):
+            a, src = zone_anchor(z, gen, anchors, gstart)
+            ring = moving_ring(z, t - a)
+            poly.set_xy(ring)
+            txt.set_position(ring[0])
+            mo = z["motion"]
+            lines.append(f"moving {z['id']}: {float(mo.get('yaw_rate_dps') or 0):g} deg/s, "
+                         f"v ({float(mo.get('vx_mps') or 0):g}, {float(mo.get('vy_mps') or 0):g})"
+                         f" m/s, age {max(0.0, t - a):.1f} s ({src})")
+        return lines
+
+    def draw_zones(gen: int, t: float) -> list[str]:
         for g, patches in zone_patches.items():
             for p in patches:
                 p.set_visible(g == gen)
         if gen in zone_patches:
-            return
+            return place_moving(gen, t)
         patches = []
         pol = pols.get(gen, g0)
         off = switched_off(pol)
@@ -283,7 +463,7 @@ def render(run: Path, out: Path, fps: int = 10, step: int = 1) -> Path:
             cx, cy = cor["centerline"][-1]
             label = cor["id"] + (f" (swap {cor['swapped_by']})" if cor["swapped_by"] else "")
             patches.append(ax.text(cx, cy, f"corridor {label}", fontsize=7, color="#2e7d32"))
-        for z in zones(pol):
+        for z in zbg.get(gen) or zones(pol):
             col = "#c62828" if z["hard"] else "#ef6c00"
             is_off = z["id"] in off
             # A zone with a schedule (valid_time) is in force only inside its
@@ -294,6 +474,7 @@ def render(run: Path, out: Path, fps: int = 10, step: int = 1) -> Path:
                   else dict(fc=col, alpha=0.25, ec=col))
             if z["kind"] == "poly":
                 patches.append(ax.add_patch(Polygon(z["xy"], closed=True, **kw)))
+                poly = patches[-1]
             else:
                 patches.append(ax.add_patch(Circle(z["c"], z["r"], **kw)))
                 if z["margin"]:
@@ -301,9 +482,13 @@ def render(run: Path, out: Path, fps: int = 10, step: int = 1) -> Path:
                                                        ec=col, ls="--", lw=0.8)))
             patches.append(ax.text(*(z["xy"][0] if z["kind"] == "poly" else z["c"]),
                                    z["id"] + (" (off)" if is_off else "")
-                                   + (" (valid_time schedule)" if sched else ""),
+                                   + (" (valid_time schedule)" if sched else "")
+                                   + (" (moving)" if z.get("motion") else ""),
                                    fontsize=8, color=col))
+            if z["kind"] == "poly" and z.get("motion"):
+                moving_patches.setdefault(gen, []).append((z, poly, patches[-1]))
         zone_patches[gen] = patches
+        return place_moving(gen, t)
 
     ax.set_xlim(x0, x1)
     ax.set_ylim(y0, y1)
@@ -332,8 +517,8 @@ def render(run: Path, out: Path, fps: int = 10, step: int = 1) -> Path:
                       width=0.006, label="Shield emitted (x2 s)")
     ax.legend(loc="lower right", fontsize=8)
     title = fig.text(0.04, 0.95, "", fontsize=13, weight="bold")
-    fig.text(0.04, 0.015, "Replay of the flight log (demo/out/%s/flight_log.jsonl), not a camera "
-             "recording." % run.name, fontsize=9, color="#616161")
+    fig.text(0.04, 0.015, "Replay of the flight log (%s), not a camera "
+             "recording." % log_label(run), fontsize=9, color="#616161")
     body = info.text(0.0, 1.0, "", va="top", family="monospace", fontsize=9)
 
     idx = list(range(0, len(rows), max(1, step)))
@@ -343,7 +528,7 @@ def render(run: Path, out: Path, fps: int = 10, step: int = 1) -> Path:
     def frame(k):
         i = idx[k]
         r = rows[i]
-        draw_zones(int(r.get("generation") or 0))
+        moving = draw_zones(int(r.get("generation") or 0), float(r["t"]))
         track.set_data([q["x"] for q in rows[: i + 1]], [q["y"] for q in rows[: i + 1]])
         dot.set_data([r["x"]], [r["y"]])
         alt_dot.set_data([r["t"]], [r["up"]])
@@ -387,8 +572,22 @@ def render(run: Path, out: Path, fps: int = 10, step: int = 1) -> Path:
             f"autopilot mode: {r.get('mode') or r.get('autopilot_set_mode') or '-'}"
             + (f"\nnext waypoint {r.get('next_wp_index')}: planned {r.get('next_wp_planned')}\n"
                f"  autopilot holds {nwp}  replaced {r.get('wp_replaced')}"
-               if r.get("next_wp_planned") is not None else ""))
+               if r.get("next_wp_planned") is not None else "")
+            + "".join(f"\n{m[:64]}" for m in moving))
         return track, dot, alt_dot, raw_q, emi_q, title, body, wp_hold, wp_line
+
+    if stills is not None:
+        # The frames nearest the times asked for, drawn by the same frame().
+        out.mkdir(parents=True, exist_ok=True)
+        written = []
+        for t in stills:
+            k = min(range(len(idx)), key=lambda j: abs(float(rows[idx[j]]["t"]) - t))
+            frame(k)
+            p = out / f"{run.name}_t{float(rows[idx[k]]['t']):07.2f}.png"
+            fig.savefig(p, dpi=100)
+            written.append(p)
+        plt.close(fig)
+        return written
 
     anim = animation.FuncAnimation(fig, frame, frames=len(idx), blit=False)
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -404,18 +603,28 @@ def render(run: Path, out: Path, fps: int = 10, step: int = 1) -> Path:
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    ap.add_argument("--tag", required=True, help="run folder under demo/out/")
+    ap.add_argument("--tag", required=True,
+                    help="run folder under demo/out/ (a nested one too: hil_smoke/<run>)")
     ap.add_argument("--demo-out", type=Path, default=ROOT / "demo" / "out")
     ap.add_argument("--fps", type=int, default=10,
                     help="frames per second; 10 with --step 1 is real time at the 10 Hz monitor")
     ap.add_argument("--step", type=int, default=1, help="draw every Nth tick")
-    ap.add_argument("--out", type=Path, default=None)
+    ap.add_argument("--out", type=Path, default=None,
+                    help="the video (default <run>/<run>_track.mp4); with --stills, the "
+                         "folder for the PNGs (default <run>/stills)")
+    ap.add_argument("--stills", default=None, metavar="T1,T2,...",
+                    help="draw only the frames nearest these mission times (s) as PNGs")
     a = ap.parse_args(argv)
     run = a.demo_out / a.tag
     if not run.is_dir():
         print(f"no run folder {run}", file=sys.stderr)
         return 2
-    out = a.out or run / f"{a.tag}_track.mp4"
+    if a.stills:
+        times = [float(x) for x in a.stills.split(",") if x.strip()]
+        for p in render_stills(run, a.out or run / "stills", times, step=a.step):
+            print(f"[still] {p}")
+        return 0
+    out = a.out or run / f"{run.name}_track.mp4"
     p = render(run, out, fps=a.fps, step=a.step)
     print(f"[video] {p} ({p.stat().st_size / 1e6:.2f} MB)")
     return 0

@@ -3,6 +3,8 @@
     python tools/kpi_report.py                                  # print it
     python tools/kpi_report.py --out <stem>                     # <stem>.md + .json
     python tools/kpi_report.py --runs 'demo/out/ros2_*' --no-sweep
+    python tools/kpi_report.py --campaign demo/out/hil_sm1111 \
+        --rescore-rail <rescore.json> --out <stem>              # a hil campaign
 
 WHAT THE GRANT ASKS FOR
 
@@ -89,6 +91,47 @@ SINCE 2026-10-20: COMPARISON CONFIGURATIONS ARE NOT HEADLINE FAILURES
     `demo/out/cmp_<profile>_<label>/` unless told otherwise, outside the
     `demo/out/stress_*/episode-*` glob this tool reads by default; give that
     folder in --runs to read it.
+
+SINCE 2026-11-11: A HIL CAMPAIGN IS THE KPI REPORT (WP4, due 30 Nov)
+
+The grant's "KPI report from a nightly stress run, with the P0 violation
+escape rate at 0" is written from a hil campaign (experiments/
+sweep_scenarios.py --backend hil), which leaves its flights under the hil
+store (demo/out/hil_smoke/<campaign>_NNN_<cell>) and its summary in
+demo/out/hil_<campaign>/sweep.json - neither of which the default globs
+reach. So:
+
+  * --campaign <dir or sweep.json> reads the campaign's sweep.json (its
+    command, revision, profile, counts) and takes the runs from its store
+    (`_scope.hil.config.store`/<campaign>_*) unless --runs is given; the
+    headless sweep JSON is not read unless --sweep names it. A run folder
+    the campaign did not ACCEPT (its result is an `error`: e.g. the cell's
+    stress was not realised) or does not list is demoted from KPI grade,
+    with the campaign's reason; the gate itself (is_kpi_grade plus the
+    signed replay bundle bound to the run, evidence_grade) is unchanged.
+  * --rescore-rail <json> (experiments/sweep_scenarios.py --rescore-rail
+    ... --out <json>) applies the adopted fail-safe label reading (r2 since
+    2026-11-10) to every run it names - the family table's fail-safe column
+    and the top-K then read r2 - and the report prints fail-safe trigger
+    correctness under every reading, (a), (r) and (r2), side by side, over
+    the KPI-grade Shield-on runs: the point estimate (the KPI; the grant
+    says ">= 99 %"), the Wilson 95 % lower bound (guardrail/fsm.py
+    score_failsafe_triggers: meets_target / meets_target_at_95), both nulls,
+    and by name the runs left out and the false and missed triggers.
+  * The tick budget ("<= 100 ms end-to-end", Safety Shield p6) is read from
+    every flown row over the WHOLE flight (a rail run's scenario window
+    cuts the performance KPIs, never this): `tick_ms` (tick start to the
+    setpoint's publication) and `e2e_ms` (an action's receipt to the first
+    setpoint flown from it) on the hil Shield node, and, on the perception
+    rail's VLA pilot, `cam_age_ms` / `cam_to_setpoint_ms` (the camera frame
+    behind the flown action at publication) - p50 / p95 / p99 / max
+    (nearest rank) and the ticks over 100 ms, pooled per rail; a measure no
+    row and no metrics.json summary carries is "not measured", never 0.
+  * A KPI summary leads the report (latency_section, kpi_summary): the P0
+    escape rate against the Shield-off control, fail-safe correctness on
+    the adopted reading, the tick budget, and the tracked KPIs - time to
+    safe, mission success, repairs per episode, repair magnitude, repair
+    success - over the KPI-grade Shield-on runs and per scenario template.
 """
 from __future__ import annotations
 
@@ -309,24 +352,95 @@ def _pct(vals: list[float], q: float) -> float | None:
     return round(s[min(len(s) - 1, max(0, math.ceil(q * len(s)) - 1))], 3)
 
 
-def tick_timing(rows: list[dict]) -> dict | None:
+# The grant's end-to-end measures a flown row can carry (2026-11-11), in the
+# order the report prints them. Each is milliseconds on ONE clock per rail:
+# the hil Shield node's time.monotonic_ns() (sitl/ros2_shield_node.py
+# latency_fields), the perception node's loop clock (demo/pas_ardupilot/
+# perception_node.py publish_latency_fields).
+LATENCY_FIELDS = (
+    ("tick_ms", "tick start to the setpoint's publication: the node's own work per tick"),
+    ("e2e_ms", "an action's receipt to the first setpoint flown from it (hil Shield "
+               "node; up to one 10 Hz period of it is the wait for the next tick)"),
+    ("cam_age_ms", "age of the camera frame behind the flown action at its publication "
+                   "(perception rail, VLA pilot), every tick a VLA decision's action flew"),
+    ("cam_to_setpoint_ms", "camera frame to the FIRST setpoint flown from its decision "
+                           "(perception rail, VLA pilot): camera input to action output"),
+)
+# Where a run's own metrics.json summarises them, when its rows do not.
+_METRICS_LATENCY = ("tick_latency", "camera_to_setpoint")
+
+
+def _num(v) -> bool:
+    return isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)
+
+
+def latency_stats(vals: list[float], budget_ms: float = TICK_BUDGET_MS) -> dict:
+    """n, p50, p95, p99, max (nearest rank) and the values over the budget."""
+    return {"n": len(vals), "p50": _pct(vals, 0.5), "p95": _pct(vals, 0.95),
+            "p99": _pct(vals, 0.99), "max": round(max(vals), 3) if vals else None,
+            "over_budget": sum(1 for v in vals if v > budget_ms)}
+
+
+def latency_values(rows: list[dict]) -> dict[str, list[float]]:
+    """Every LATENCY_FIELDS value the rows carry, per field (absent: none)."""
+    out: dict[str, list[float]] = {}
+    for key, _ in LATENCY_FIELDS:
+        v = [float(r[key]) for r in rows if _num(r.get(key))]
+        if v:
+            out[key] = v
+    return out
+
+
+def _metrics_latency(metrics: dict | None, key: str) -> dict | None:
+    """A run's own metrics.json summary of `key` (the hil node's
+    `tick_latency`, the perception rail's `camera_to_setpoint`), or None."""
+    for block in _METRICS_LATENCY:
+        b = (metrics or {}).get(block)
+        s = b.get(key) if isinstance(b, dict) else None
+        if isinstance(s, dict) and _num(s.get("n")) and s["n"] > 0:
+            return {"n": int(s["n"]), "p50": s.get("p50"), "p95": s.get("p95"),
+                    "p99": s.get("p99"), "max": s.get("max"),
+                    "over_budget": s.get("over_budget"),
+                    "source": f"metrics.json {block} (no per-tick values)"}
+    return None
+
+
+def tick_timing(rows: list[dict], metrics: dict | None = None) -> dict | None:
     """What a flown log says about the 100 ms tick budget: the Shield's own
     filter() time per tick (`shield_ms`, logged since 2026-10-06) and the
     loop period between logged ticks (the end-to-end rate the rail achieved).
-    Nearest-rank percentiles; None when the log has neither."""
+    Nearest-rank percentiles; None when the log has neither.
+
+    Since 2026-11-11 also the grant's end-to-end measures (LATENCY_FIELDS)
+    the rows carry, else the run's own metrics.json summary of them (its
+    `source` says so; it has no p95). A measure neither carries is absent,
+    never a 0. load_run passes the WHOLE flight's rows: a rail run's
+    scenario window cuts its performance KPIs, never the tick budget."""
     ms = [float(r["shield_ms"]) for r in rows
           if isinstance(r.get("shield_ms"), (int, float))
           and not isinstance(r.get("shield_ms"), bool)]
     ts = [float(r["t"]) for r in rows if isinstance(r.get("t"), (int, float))]
     per = [round(1000.0 * (b - a), 3) for a, b in zip(ts, ts[1:]) if b > a]
-    if not ms and not per:
+    lat: dict[str, dict] = {}
+    vals = latency_values(rows)
+    for key, _ in LATENCY_FIELDS:
+        if key in vals:
+            lat[key] = dict(latency_stats(vals[key]), source="flight_log.jsonl")
+        else:
+            s = _metrics_latency(metrics, key)
+            if s is not None:
+                lat[key] = s
+    if not ms and not per and not lat:
         return None
-    return {"shield_ms": {"n": len(ms), "p50": _pct(ms, 0.5), "p99": _pct(ms, 0.99),
+    return {"shield_ms": {"n": len(ms), "p50": _pct(ms, 0.5), "p95": _pct(ms, 0.95),
+                          "p99": _pct(ms, 0.99),
                           "max": round(max(ms), 3) if ms else None,
                           "over_budget": sum(1 for v in ms if v > TICK_BUDGET_MS)},
-            "period_ms": {"n": len(per), "p50": _pct(per, 0.5), "p99": _pct(per, 0.99),
+            "period_ms": {"n": len(per), "p50": _pct(per, 0.5), "p95": _pct(per, 0.95),
+                          "p99": _pct(per, 0.99),
                           "max": max(per) if per else None,
-                          "over_budget": sum(1 for v in per if v > TICK_BUDGET_MS)}}
+                          "over_budget": sum(1 for v in per if v > TICK_BUDGET_MS)},
+            **lat}
 
 
 def _arms_of(doc: dict) -> dict | None:
@@ -585,7 +699,12 @@ def load_run(run: Path, by_hash: dict, by_id: dict, trust_store=None) -> dict:
         # What the manifest alone said, before the replay bundle was checked
         # as evidence (evidence_grade), and the bundle that was checked.
         "kpi_grade_manifest": manifest_grade, "evidence_bundle": ev_bundle,
-        "tick_timing": tick_timing(rows),
+        # The whole flight's (rows_all): the tick budget holds on every tick,
+        # the scenario window's cut is the performance KPIs' (2026-11-11).
+        "tick_timing": tick_timing(rows_all, metrics),
+        # The per-tick values behind it, pooled by build_report and dropped
+        # from the episode before the report is written.
+        "_latency_values": latency_values(rows_all),
         # The verdict written at flight time, under the rule of that day. Kept
         # beside today's: is_kpi_grade has tightened since (2026-10-06: the
         # desktop canonical-hil rail now reads as 'dev'), and a reader must be
@@ -1046,6 +1165,261 @@ def load_sweep(path: Path) -> list[dict]:
 
 
 # --------------------------------------------------------------------------- #
+# a hil campaign and its fail-safe re-score (2026-11-11)
+# --------------------------------------------------------------------------- #
+
+GRANT_FAILSAFE_TARGET = 0.99    # Stress Testing p6: fail-safe trigger correctness >= 99 %
+RESCORE_SCHEMA = "rail-rescore/1"
+# experiments/sweep_scenarios.py RAIL_LABEL_READINGS, in its order: the
+# adopted reading is named by the table itself (`adopted_kpi_reading`).
+READING_ORDER = ("a", "r", "r2")
+# Why a Shield-on run has no verdict under a reading (rail_label_scores'
+# lists): never counted as correct, and named.
+READING_EXCLUDED = ("not_accepted", "not_measured", "censored", "undecided", "unlabelled")
+_MISSION_IN_ERROR = re.compile(r"\bmission (\S+?):")
+
+
+def load_campaign(path: str | Path) -> dict:
+    """A campaign of experiments/sweep_scenarios.py (--backend hil) from its
+    sweep.json (`path`, or the folder holding it): what was flown and how,
+    the run folders it ACCEPTED (a result with its `mission_tag`) and those
+    it did not (an `error` naming its mission: the flight happened, a check
+    of it failed - e.g. the cell's stress was not realised), and the glob of
+    its store, `_scope.hil.config.store`/<campaign>_* (else, the store
+    having moved, the folder of that name beside the summary's)."""
+    p = Path(path) if Path(path).is_absolute() else ROOT / path
+    sw = p / "sweep.json" if p.is_dir() else p
+    doc = _read_json(sw)
+    if not isinstance(doc.get("results"), list):
+        raise SystemExit(f"{sw}: not an experiments/sweep_scenarios.py result (no `results`)")
+    scope = doc.get("_scope") if isinstance(doc.get("_scope"), dict) else {}
+    hil = scope.get("hil") if isinstance(scope.get("hil"), dict) else {}
+    name = hil.get("campaign")
+    store = (hil.get("config") or {}).get("store")
+    accepted: dict[str, dict] = {}
+    not_accepted: dict[str, str] = {}
+    run_dirs: list[str] = []
+    for r in doc["results"]:
+        tag = r.get("mission_tag") or (Path(r["run"]).name if r.get("run") else None)
+        if tag and r.get("status") != "error":
+            accepted[tag] = {"status": r.get("status"), "cell": r.get("id"),
+                             "gates_failed": r.get("gates_failed") or [],
+                             "expect": r.get("expect")}
+            if r.get("run"):
+                run_dirs.append(str(r["run"]))
+        elif r.get("status") == "error":
+            m = _MISSION_IN_ERROR.search(str(r.get("error") or ""))
+            if m:
+                not_accepted[m.group(1)] = str(r.get("error"))
+    globs: list[str] = []
+    if name and store:
+        st = Path(store)
+        if not st.is_dir() and (sw.parent.parent / st.name).is_dir():
+            st = sw.parent.parent / st.name
+        globs = [(st / f"{name}_*").as_posix()]
+    elif run_dirs:
+        globs = run_dirs
+    statuses: dict[str, int] = {}
+    for r in doc["results"]:
+        statuses[str(r.get("status"))] = statuses.get(str(r.get("status")), 0) + 1
+    common = doc.get("_manifest_common") if isinstance(doc.get("_manifest_common"), dict) else {}
+    return {"path": _rel(sw), "campaign": name, "backend": doc.get("_backend"),
+            "profile": scope.get("profile"), "grant_scope": scope.get("grant_scope"),
+            "cadence": scope.get("cadence"), "command": doc.get("_command"),
+            "code_revision": common.get("code_revision"),
+            "runtime_s": doc.get("_runtime_s"), "results": len(doc["results"]),
+            "statuses": statuses, "flyable": hil.get("flyable"),
+            "refused_cells": len(hil.get("refused") or {}),
+            "runs_glob": globs, "accepted": accepted, "not_accepted": not_accepted,
+            # The campaign's own fail-safe figure, on the labels it flew with
+            # (reading (a) as of 2026-11-11): beside the re-scored readings.
+            "failsafe_at_flight": {k: (doc.get("_failsafe_labels") or {}).get(k) for k in (
+                "labelled", "correct", "fail_safe_correctness", "false_triggers",
+                "missed_triggers")}}
+
+
+def campaign_gate(e: dict, camp: dict) -> None:
+    """Demote a flown episode the campaign did not accept (or does not list)
+    from KPI grade, with the campaign's reason; record its status."""
+    name = Path(str(e.get("source") or e.get("id"))).name
+    got = camp["accepted"].get(name)
+    if got is not None:
+        e["campaign_status"] = got["status"]
+        return
+    why = camp["not_accepted"].get(name)
+    e["campaign_status"] = "not accepted" if why else "not in the campaign"
+    reason = (f"campaign {camp['campaign'] or camp['path']} did not accept this flight: {why}"
+              if why else f"not one of campaign {camp['campaign'] or camp['path']}'s "
+                          f"flights ({camp['path']} does not list it)")
+    e["kpi_grade"] = False
+    e["kpi_grade_reasons"] = list(e.get("kpi_grade_reasons") or []) + [reason]
+
+
+def load_rescore(path: str | Path) -> dict:
+    """The table of experiments/sweep_scenarios.py --rescore-rail ... --out
+    <path>: per run its re-scored fail-safe verdict and, per label reading
+    ((a), (r), (r2); READING_ORDER), its status there - "correct", "false",
+    "missed" (scored), or why it is left out (READING_EXCLUDED) - rebuilt
+    from the reading's named lists exactly as rail_label_scores made them.
+    Refused when it is not such a table or carries no label table."""
+    p = Path(path) if Path(path).is_absolute() else ROOT / path
+    doc = _read_json(p)
+    if doc.get("schema") != RESCORE_SCHEMA or not isinstance(doc.get("runs"), list):
+        raise SystemExit(f"{p}: not a {RESCORE_SCHEMA} table (experiments/sweep_scenarios.py "
+                         f"--rescore-rail <runs> --out <this file>)")
+    fl = doc.get("failsafe_labels")
+    if not isinstance(fl, dict) or not isinstance(fl.get("readings"), dict):
+        raise SystemExit(f"{p}: carries no fail-safe label table (the re-score found no "
+                         f"label artefact): no reading to apply")
+    readings = fl["readings"]
+    keys = ([k for k in READING_ORDER if k in readings]
+            + [k for k in readings if k not in READING_ORDER])
+    runs: dict[str, dict] = {}
+    for it in doc["runs"]:
+        if "error" in it:
+            runs[str(it.get("run"))] = {"error": it["error"]}
+            continue
+        d = it.get("doc") or {}
+        kpi = d.get("kpi") or {}
+        runs[str(it.get("run"))] = {
+            "cell": it.get("cell"), "seed": it.get("seed"),
+            "shield": (d.get("metrics") or {}).get("shield"),
+            "triggered": kpi.get("failsafe_triggered"),
+            "accepted": it.get("before") is not None, "readings": {}}
+    for key in keys:
+        rd = readings[key]
+        named: dict[str, tuple[str, list]] = {}
+        for kind in ("false", "missed") + READING_EXCLUDED:
+            for t in rd.get(kind) or []:
+                named[str(t.get("run"))] = (kind, t.get("label") or [])
+        longer = {str(t.get("run")) for t in rd.get("label_flown_longer") or []}
+        for name, rec in runs.items():
+            if "error" in rec or rec["shield"] != "on":
+                continue
+            kind, clauses = named.get(name, ("correct", []))
+            if kind in ("correct", "false", "missed"):
+                trig = bool(rec["triggered"])
+                rec["readings"][key] = {
+                    "status": kind, "triggered": trig, "clauses": clauses,
+                    "expected": {"false": False, "missed": True}.get(kind, trig),
+                    "label_flown_longer": name in longer}
+            else:
+                rec["readings"][key] = {"status": kind, "expected": None,
+                                        "triggered": rec["triggered"]}
+    return {"path": _rel(p), "schema": RESCORE_SCHEMA, "rail_gates": doc.get("rail_gates"),
+            "artefact": fl.get("artefact"), "built": fl.get("built"),
+            "adopted": fl.get("adopted_kpi_reading"), "keys": keys,
+            "shield_off_runs_left_out": fl.get("shield_off_runs_left_out"),
+            "readings": {k: {f: readings[k].get(f) for f in (
+                "reading", "adopted_kpi_reading", "runs", "scored", "correct",
+                "failsafe_trigger_correctness", "wilson_low_95", "at_scenario_length")}
+                for k in keys},
+            "runs": runs}
+
+
+def apply_rescore(e: dict, rs: dict) -> None:
+    """The adopted reading's label on one flown episode (its row's fail-safe
+    column and its top-K category then read it), every reading kept beside it
+    (`failsafe_readings`) and the label it flew with kept too
+    (`failsafe_at_flight`). An episode the table does not score under the
+    adopted reading - not in it, a Shield-off control, left out by the
+    reading - gets no label (`failsafe_matches_label` None, and
+    `failsafe_reading_status` says why): readings are never mixed in one
+    column."""
+    name = Path(str(e.get("source") or e.get("id"))).name
+    rec = rs["runs"].get(name)
+    e["failsafe_at_flight"] = {k: e.get(k) for k in (
+        "failsafe_label", "failsafe_clause", "failsafe_triggered", "failsafe_matches_label")}
+    e["failsafe_reading"] = rs["adopted"]
+    why = None
+    if rec is None:
+        why = f"not in the --rescore-rail table ({rs['path']})"
+    elif "error" in rec:
+        why = f"the re-score failed: {rec['error']}"
+    elif rec["shield"] != "on":
+        why = "Shield-off control: the readings score Shield-on runs"
+    e["failsafe_readings"] = None if why else rec["readings"]
+    ad = (rec or {}).get("readings", {}).get(rs["adopted"]) if not why else None
+    if ad is not None and ad["status"] in ("correct", "false", "missed"):
+        e.update(failsafe_triggered=ad["triggered"], failsafe_label=ad["expected"],
+                 failsafe_clause=",".join(ad.get("clauses") or []) or None,
+                 failsafe_matches_label=1.0 if ad["expected"] == ad["triggered"] else 0.0,
+                 failsafe_reading_status=ad["status"])
+    else:
+        e.update(failsafe_label=None, failsafe_matches_label=None,
+                 failsafe_reading_status=why or (ad or {}).get("status")
+                 or f"no reading {rs['adopted']!r} for it")
+
+
+def failsafe_score(pairs: list[tuple[bool, bool]]) -> dict:
+    """guardrail/fsm.py score_failsafe_triggers on (expected, triggered)
+    pairs at the grant's 99 %: the point estimate (the KPI), the Wilson 95 %
+    lower bound, both verdicts and both nulls."""
+    from guardrail.fsm import score_failsafe_triggers
+    s = score_failsafe_triggers(pairs, GRANT_FAILSAFE_TARGET)
+    return {k: s.get(k) for k in (
+        "scored", "true_triggers", "true_non_triggers", "false_triggers", "missed_triggers",
+        "expected_triggers", "expected_non_triggers", "failsafe_trigger_correctness",
+        "wilson_low_95", "meets_target", "meets_target_at_95", "null_always_trigger",
+        "null_never_trigger", "beats_null", "discriminating", "target",
+        "min_error_free_episodes_for_target_at_95", "warnings")}
+
+
+def failsafe_readings_section(episodes: list[dict], rs: dict) -> dict:
+    """Fail-safe trigger correctness under every reading of the re-score
+    table, over the KPI-grade Shield-on flights only (the contractual set),
+    each reading apart and nothing pooled across them. Per reading: the
+    score (failsafe_score), the runs left out by kind and by name, the false
+    and missed triggers by name, the runs whose label was read on the cell
+    flown as long as the rail flies and the count without them, and the
+    table's own figure beside (it scores every run the re-score read,
+    KPI-grade or not) with whether the two agree."""
+    eps = [e for e in episodes if e.get("kpi_grade") and e.get("arm") == "on"
+           and e.get("kind") == "flight"]
+    out = {"source": rs["path"], "artefact": rs["artefact"], "adopted": rs["adopted"],
+           "label_revisions": (rs.get("built") or {}).get("code_revisions"),
+           "target": GRANT_FAILSAFE_TARGET, "kpi_grade_shield_on_flights": len(eps),
+           "readings": {}}
+    known = {Path(str(e.get("source") or e.get("id"))).name for e in episodes}
+    out["rescore_runs_not_in_report"] = sorted(n for n in rs["runs"] if n not in known)
+    for key in rs["keys"]:
+        pairs, short = [], []
+        names: dict[str, list] = {k: [] for k in ("false", "missed", "label_flown_longer",
+                                                  "not_in_rescore", *READING_EXCLUDED)}
+        for e in eps:
+            rd = (e.get("failsafe_readings") or {}).get(key)
+            tag = {"run": Path(str(e.get("source") or e["id"])).name,
+                   "family": e.get("family")}
+            if rd is None:
+                names["not_in_rescore"].append(dict(tag, why=e.get("failsafe_reading_status")))
+                continue
+            if rd["status"] in READING_EXCLUDED:
+                names[rd["status"]].append(tag)
+                continue
+            pairs.append((rd["expected"], rd["triggered"]))
+            if rd.get("label_flown_longer"):
+                names["label_flown_longer"].append(tag)
+            else:
+                short.append((rd["expected"], rd["triggered"]))
+            if rd["status"] in ("false", "missed"):
+                names[rd["status"]].append(dict(tag, label=rd.get("clauses") or []))
+        stored = rs["readings"][key]
+        sc = failsafe_score(pairs)
+        out["readings"][key] = {
+            "reading": stored.get("reading"), "adopted_kpi_reading": key == rs["adopted"],
+            "correct": (sc["true_triggers"] or 0) + (sc["true_non_triggers"] or 0), **sc,
+            "at_scenario_length": {"scored": len(short),
+                                   "correct": sum(1 for a, b in short if a == b)},
+            **names,
+            "table": {f: stored.get(f) for f in ("runs", "scored", "correct",
+                                                 "failsafe_trigger_correctness",
+                                                 "wilson_low_95")},
+            "agrees_with_table": (stored.get("scored"), stored.get("correct")) == (
+                sc["scored"], (sc["true_triggers"] or 0) + (sc["true_non_triggers"] or 0))}
+    return out
+
+
+# --------------------------------------------------------------------------- #
 # revision check (informational)
 # --------------------------------------------------------------------------- #
 
@@ -1365,6 +1739,158 @@ def tick_budget_section(profile_glob: str, episodes: list[dict]) -> dict:
     return {"budget_ms": TICK_BUDGET_MS, "profiles": profiles, "flown_by_rail": rails}
 
 
+_NOT_MEASURED_WHY = {
+    "tick_ms": "no row and no metrics.json of these episodes carries it",
+    "e2e_ms": "no row and no metrics.json of these episodes carries it (the hil Shield "
+              "node logs it; on the perception rail the pilot runs inside the tick, "
+              "so there is no action receipt to time - see cam_to_setpoint_ms)",
+    "cam_age_ms": "no camera in this rail's loop, or a log from before 2026-11-11: the "
+                  "perception rail's VLA pilot logs it (demo/pas_ardupilot/"
+                  "perception_node.py --pilot vla); the hil Shield node flies an "
+                  "action topic and sees no camera",
+    "cam_to_setpoint_ms": "no camera in this rail's loop, or a log from before "
+                          "2026-11-11: the perception rail's VLA pilot logs it "
+                          "(demo/pas_ardupilot/perception_node.py --pilot vla); the "
+                          "hil Shield node flies an action topic and sees no camera",
+}
+
+
+def latency_section(episodes: list[dict], values: dict[str, dict]) -> dict:
+    """The grant's "<= 100 ms end-to-end" tick budget over the flown logs:
+    per group (KPI-grade episodes, then the rest - never pooled) and rail,
+    per LATENCY_FIELDS measure, the per-tick values of every episode pooled
+    (`values`: episode source -> latency_values) into n, p50, p95, p99, max
+    (nearest rank) and the ticks over 100 ms, with the episodes behind it.
+    An episode that has only its metrics.json summary of a measure is named
+    (`summary_only`), not pooled. A measure no episode carries is
+    {"status": "not measured", "why": ...}: never a 0."""
+    groups = {"kpi_grade": [e for e in episodes if e.get("kpi_grade")],
+              "not_kpi_grade": [e for e in episodes if not e.get("kpi_grade")]}
+    out = {"budget_ms": TICK_BUDGET_MS,
+           "method": "nearest rank over the per-tick values pooled per rail",
+           "measures": dict(LATENCY_FIELDS), "groups": {}}
+    for grp, eps in groups.items():
+        rails: dict[str, dict] = {}
+        for e in eps:
+            if e.get("kind") != "flight":
+                continue
+            rail = e.get("rail") or "unknown"
+            acc = rails.setdefault(rail, {"episodes": 0, "vals": {}, "eps": {}, "summary": {}})
+            acc["episodes"] += 1
+            v = values.get(e.get("source")) or {}
+            tt = e.get("tick_timing") or {}
+            for key, _ in LATENCY_FIELDS:
+                if v.get(key):
+                    acc["vals"].setdefault(key, []).extend(v[key])
+                    acc["eps"][key] = acc["eps"].get(key, 0) + 1
+                elif isinstance(tt.get(key), dict):
+                    acc["summary"].setdefault(key, []).append(
+                        {"id": e.get("id"), **tt[key]})
+        res = {}
+        for rail, acc in sorted(rails.items()):
+            r = {"episodes": acc["episodes"]}
+            for key, _ in LATENCY_FIELDS:
+                vals = acc["vals"].get(key)
+                if vals:
+                    r[key] = dict(latency_stats(vals), episodes=acc["eps"][key])
+                elif acc["summary"].get(key):
+                    r[key] = {"status": "summary only",
+                              "why": "the episodes' rows carry no per-tick values; their "
+                                     "metrics.json summaries are listed, not pooled"}
+                else:
+                    r[key] = {"status": "not measured", "why": _NOT_MEASURED_WHY[key]}
+                if acc["summary"].get(key):
+                    r[key]["summary_only"] = acc["summary"][key]
+            res[rail] = r
+        out["groups"][grp] = res
+    return out
+
+
+def _template_of(e: dict) -> str:
+    t = (e.get("params") or {}).get("template")
+    if t:
+        return str(t)
+    fam = str(e.get("family") or "")
+    return fam.split("/")[1] if fam.count("/") >= 2 else fam or "?"
+
+
+def kpi_summary(head_eps: list[dict], latency: dict | None,
+                readings: dict | None) -> dict:
+    """The grant's KPIs over the KPI-grade episodes, each beside its null:
+    the P0 violation escape rate of the Shield-on flights against the
+    Shield-off controls and the passthrough null; fail-safe trigger
+    correctness on the adopted reading (failsafe_readings_section) - else on
+    the labels the flights carry, said so; the tick budget (latency_section);
+    and the tracked KPIs - time to safe, mission success, repairs per
+    episode, repair magnitude, repair success - over the Shield-on flights
+    and per scenario template (`by_template`)."""
+    graded = [e for e in head_eps if e.get("kpi_grade")]
+    on = [e for e in graded if e.get("arm") == "on"]
+    off = [e for e in graded if e.get("arm") == "off"]
+    r_on = K.rollup(on) if on else None
+    r_off = K.rollup(off) if off else None
+
+    def p0(r, n):
+        if r is None:
+            return None
+        return {"episodes": n, "p0_escape_rate": r.get("p0_escape_rate"),
+                "p0_escapes": r.get("p0_escapes"), "ticks": r.get("ticks"),
+                "p0_violation_ticks": r.get("p0_violation_ticks"),
+                "p0_ticks_not_measurable": r.get("p0_ticks_not_measurable"),
+                "vacuous": "p0_escape_rate" in (r.get("vacuous_zeros") or {}),
+                "null_passthrough_p0_escape_rate": r.get("null_passthrough_p0_escape_rate")}
+    fs = None
+    if readings and readings.get("adopted") in (readings.get("readings") or {}):
+        a = readings["readings"][readings["adopted"]]
+        fs = dict(a, basis=f"adopted reading ({readings['adopted']}) of {readings['source']}")
+    elif on:
+        pairs = []
+        for e in on:
+            trig, match = e.get("failsafe_triggered"), e.get("failsafe_matches_label")
+            if isinstance(trig, bool) and _num(match):
+                pairs.append((trig if match == 1.0 else not trig, trig))
+        fs = dict(failsafe_score(pairs), correct=sum(1 for a, b in pairs if a == b),
+                  basis="the labels the flights carry (scenario_score.json); the adopted "
+                        "reading needs --rescore-rail")
+    lat = {}
+    for rail, r in ((latency or {}).get("groups", {}).get("kpi_grade") or {}).items():
+        lat[rail] = {k: r.get(k) for k, _ in LATENCY_FIELDS}
+
+    def tracked(r, n):
+        if r is None:
+            return None
+        return {"episodes": n,
+                "mean_time_to_safe_s": r.get("mean_time_to_safe_s"),
+                "max_time_to_safe_s": r.get("max_time_to_safe_s"),
+                "time_to_safe_episodes": r.get("time_to_safe_episodes"),
+                "time_to_safe_censored": r.get("time_to_safe_censored"),
+                "time_to_safe_status": r.get("time_to_safe_status"),
+                "episodes_time_to_safe_not_measurable":
+                    r.get("episodes_time_to_safe_not_measurable"),
+                "mission_successes": r.get("mission_successes"),
+                "episodes_mission_scored": r.get("episodes_mission_scored"),
+                "mission_success_rate": r.get("mission_success_rate"),
+                "null_hover_mission_success_rate": r.get("null_hover_mission_success_rate"),
+                "mean_repair_count_per_episode": r.get("mean_repair_count_per_episode"),
+                "mean_repair_magnitude_mps": r.get("mean_repair_magnitude_mps"),
+                "max_repair_magnitude_mps": r.get("max_repair_magnitude_mps"),
+                "repair_success_rate": r.get("repair_success_rate"),
+                "repair_success_status": r.get("repair_success_status"),
+                "repair_success_basis": r.get("repair_success_basis"),
+                "repair_attempt_ticks": r.get("repair_attempt_ticks"),
+                "repair_success_ticks": r.get("repair_success_ticks"),
+                "null_always_brake_repair_success_rate":
+                    r.get("null_always_brake_repair_success_rate")}
+    by_t: dict[str, list] = {}
+    for e in on:
+        by_t.setdefault(_template_of(e), []).append(e)
+    return {"kpi_grade_episodes": len(graded), "shield_on": len(on), "shield_off": len(off),
+            "p0": {"shield_on": p0(r_on, len(on)), "shield_off_control": p0(r_off, len(off))},
+            "failsafe": fs, "tick_budget": lat,
+            "tracked": tracked(r_on, len(on)),
+            "by_template": {t: tracked(K.rollup(g), len(g)) for t, g in sorted(by_t.items())}}
+
+
 def arms_sections(episodes: list[dict]) -> tuple[dict, dict]:
     """The Prefix Compiler's A/B (prefix on / off, same seed: "the KPI report
     shows the delta", Prefix Compiler p6) and WP4's per-paraphrase robustness.
@@ -1669,6 +2195,259 @@ def _render_tick_budget(t: dict | None) -> list[str]:
     return L
 
 
+_LAT_NAMES = {"tick_ms": "Tick to setpoint", "e2e_ms": "Action receipt to setpoint",
+              "cam_age_ms": "Camera frame age at setpoint",
+              "cam_to_setpoint_ms": "Camera to first setpoint"}
+
+
+def _lat_cells(s: dict | None) -> str:
+    """p50 / p95 / p99 / max and the count over budget, or why not."""
+    if not isinstance(s, dict):
+        return "n/m"
+    if s.get("status"):
+        return f"{s['status']}: {s.get('why')}"
+    return (f"p50 {_f(s['p50'], 1)} / p95 {_f(s.get('p95'), 1)} / p99 {_f(s['p99'], 1)} / "
+            f"max {_f(s['max'], 2)} ms; {s['over_budget']} of {s['n']} ticks over 100 ms")
+
+
+def _lat_verdict(s: dict | None) -> str:
+    if not isinstance(s, dict) or s.get("status"):
+        return "n/m"
+    if not s["over_budget"]:
+        return "within (max <= 100 ms)"
+    if (s.get("p99") or 0) <= TICK_BUDGET_MS:
+        return f"p99 within; {s['over_budget']} tick(s) over"
+    return f"p99 OVER 100 ms ({s['over_budget']} tick(s) over)"
+
+
+def _tts(s: dict) -> str:
+    st = s.get("time_to_safe_status")
+    txt = ("never unsafe" if st == "never_unsafe" else
+           "none recovered" if st == "never_recovered" else
+           f"{_f(s.get('mean_time_to_safe_s'), 2)} (max {_f(s.get('max_time_to_safe_s'), 2)}, "
+           f"{s.get('time_to_safe_episodes')} unsafe ep)")
+    if s.get("episodes_time_to_safe_not_measurable"):
+        txt += f" ({s['episodes_time_to_safe_not_measurable']} ep n/m)"
+    if s.get("time_to_safe_censored"):
+        txt += f" +{s['time_to_safe_censored']} never recovered"
+    return txt
+
+
+def _tracked_row(name: str, s: dict) -> str:
+    ms = ("n/m" if s.get("mission_success_rate") is None else
+          f"{s['mission_successes']}/{s['episodes_mission_scored']}")
+    reps = s.get("mean_repair_count_per_episode")
+    mag = "no repairs" if reps == 0 else _f(s.get("mean_repair_magnitude_mps"), 3)
+    rs_ = _rs(s)
+    if s.get("repair_success_rate") is not None:
+        rs_ += f" ({s.get('repair_success_ticks')}/{s.get('repair_attempt_ticks')} ticks)"
+    return (f"| {name} | {s['episodes']} | {ms} | {_tts(s)} | {_f(reps, 1)} | {mag} | "
+            f"{rs_} |")
+
+
+def _render_kpi_summary(rep: dict) -> list[str]:
+    """The KPI summary that leads the report (kpi_summary)."""
+    s = rep.get("kpi_summary")
+    if not s:
+        return []
+    L = ["## KPI summary", "",
+         f"The grant's acceptance KPIs over the {s['kpi_grade_episodes']} KPI-grade "
+         f"episodes ({s['shield_on']} Shield on, {s['shield_off']} Shield-off control"
+         f"{'' if s['shield_off'] == 1 else 's'}), each beside its null. Only KPI-grade "
+         f"episodes (`is_kpi_grade`, the signed replay bundle bound to the run"
+         + (", and the campaign's acceptance" if rep.get("campaign") else "")
+         + ") give contractual numbers; the rest is tabulated apart below.", ""]
+    if not s["kpi_grade_episodes"]:
+        return L + ["No KPI-grade episode: no contractual figure.", ""]
+    L += ["| KPI (grant) | Target | Measured | Null / control | Verdict |",
+          "|---|---|---|---|---|"]
+    on, off = s["p0"]["shield_on"], s["p0"]["shield_off_control"]
+    if on:
+        meas = ("vacuous (no P0 tick)" if on["vacuous"] else
+                f"{_f(on['p0_escape_rate'], 4)} ({on['p0_escapes']} escapes on "
+                f"{on['p0_violation_ticks']} P0-violation ticks, {on['episodes']} "
+                f"Shield-on flights)")
+        if on.get("p0_ticks_not_measurable"):
+            meas += f"; {on['p0_ticks_not_measurable']} P0 tick(s) not measurable"
+        ctrl = (f"Shield-off control {_f(off['p0_escape_rate'], 4)} ({off['p0_escapes']} "
+                f"escapes on {off['p0_violation_ticks']} P0-violation ticks, "
+                f"{off['episodes']} flight{'' if off['episodes'] == 1 else 's'})"
+                if off else "no Shield-off control flown")
+        ctrl += f"; passthrough null {_f(on.get('null_passthrough_p0_escape_rate'), 4)}"
+        verdict = ("vacuous" if on["vacuous"] else
+                   "meets: 0 escapes" if on["p0_escapes"] == 0 and not
+                   on.get("p0_ticks_not_measurable") else
+                   "not shown: P0 ticks not measurable" if on["p0_escapes"] == 0 else
+                   f"FAILS: {on['p0_escapes']} escape(s)")
+        L.append(f"| P0 violation escape rate (Stress Testing p6) | 0 | {meas} | {ctrl} | "
+                 f"{verdict} |")
+    fs = s.get("failsafe")
+    if fs:
+        name = ("Fail-safe trigger correctness, reading "
+                f"({rep['failsafe_readings']['adopted']}) adopted"
+                if rep.get("failsafe_readings") else
+                "Fail-safe trigger correctness, labels as flown")
+        if fs.get("failsafe_trigger_correctness") is None:
+            meas, verdict = "n/m (no scored run)", "n/m"
+        else:
+            meas = (f"{_f(fs['failsafe_trigger_correctness'], 3)} ({fs['correct']}/"
+                    f"{fs['scored']}): the point estimate, the KPI; Wilson 95 % lower "
+                    f"bound {_f(fs.get('wilson_low_95'), 3)}")
+            mt, m95 = fs.get("meets_target"), fs.get("meets_target_at_95")
+            verdict = ("not judged (the labels do not discriminate)" if mt is None else
+                       ("meets" if mt else "BELOW") + " 99 % (point); "
+                       + ("meets" if m95 else "not shown") + " at 95 % confidence"
+                       + ("" if m95 else " (needs "
+                          f"{fs.get('min_error_free_episodes_for_target_at_95')} "
+                          f"error-free episodes)"))
+        L.append(f"| {name} | >= 99 % | {meas} | always-trigger "
+                 f"{_f(fs.get('null_always_trigger'), 3)}, never-trigger "
+                 f"{_f(fs.get('null_never_trigger'), 3)} | {verdict} |")
+    for rail, r in sorted((s.get("tick_budget") or {}).items()):
+        for key, _ in LATENCY_FIELDS:
+            null = ("the node ticks on its own 10 Hz timer: up to one period of it is "
+                    "the wait for the next tick" if key == "e2e_ms" else
+                    "frame ARRIVAL at the node, not render: render and transport before "
+                    "it are not in it" if key.startswith("cam") else "-")
+            got = isinstance(r.get(key), dict) and not r[key].get("status")
+            L.append(f"| {_LAT_NAMES[key]} `{key}` ({rail}) | <= 100 ms end to end | "
+                     f"{_lat_cells(r.get(key))} | {null if got else '-'} | "
+                     f"{_lat_verdict(r.get(key))} |")
+    L += ["", "Tracked KPIs (Shield on, KPI-grade):", "",
+          "| Scope | Episodes | Mission success | Mean time to safe (s) | Mean repairs / ep | "
+          "Mean repair magnitude (m/s) | Repair success |",
+          "|---|---|---|---|---|---|---|"]
+    if s.get("tracked"):
+        L.append(_tracked_row("all Shield-on flights", s["tracked"]))
+    for t, row in (s.get("by_template") or {}).items():
+        L.append(_tracked_row(f"`{t}`", row))
+    tr = s.get("tracked") or {}
+    L += ["", f"Nulls: a hover would pass {_f(tr.get('null_hover_mission_success_rate'), pct=True)}"
+              f" of the missions; an always-brake Shield's repair success is "
+              f"{_f(tr.get('null_always_brake_repair_success_rate'), pct=True)}. "
+              f"Per (template, cell) the family tables below have every figure.", ""]
+    return L
+
+
+def _render_campaign(c: dict | None, episodes: list[dict]) -> list[str]:
+    if not c:
+        return []
+    st = ", ".join(f"{n} {k}" for k, n in sorted(c["statuses"].items()))
+    na = [e for e in episodes if e.get("campaign_status") in ("not accepted",
+                                                               "not in the campaign")]
+    fa = c.get("failsafe_at_flight") or {}
+    L = ["## Campaign", "",
+         f"- Campaign `{c['campaign']}`: experiments/sweep_scenarios.py --backend "
+         f"{c['backend']}, profile {c['profile']} (grant scope {c['grant_scope']!r}, "
+         f"cadence {c['cadence']!r}), flown at code revision `{c['code_revision']}` in "
+         f"{_f(c['runtime_s'], 0)} s.",
+         f"- Summary `{c['path']}`: {c['results']} results ({st}); {c['flyable']} flyable "
+         f"on the rail, {c['refused_cells']} cell(s) the rail refused before flight.",
+         f"- Runs read from: " + ", ".join(f"`{g}`" for g in c["runs_glob"]) + ".",
+         f"- Flights the campaign accepted: {len(c['accepted'])}. Run folders it did not "
+         f"accept or does not list: {len(na)} - NOT KPI-grade here, whatever their "
+         f"manifest says:"]
+    for e in na:
+        L.append(f"  - `{e['id']}`: {(e.get('kpi_grade_reasons') or ['?'])[-1]}")
+    if fa.get("labelled") is not None:
+        L.append(f"- The campaign's own fail-safe figure, on the labels it flew with: "
+                 f"{fa.get('correct')}/{fa.get('labelled')} = "
+                 f"{_f(fa.get('fail_safe_correctness'), 3)} ({fa.get('false_triggers')} false, "
+                 f"{fa.get('missed_triggers')} missed).")
+    L += ["", "```", str(c.get("command")), "```", ""]
+    return L
+
+
+def _render_failsafe_readings(fr: dict | None) -> list[str]:
+    if not fr:
+        return []
+    L = ["## Fail-safe trigger correctness by label reading", "",
+         f"Stress Testing p6: \"Fail-safe trigger correctness >= 99 %\" - triggered when "
+         f"expected, not when not expected. Over the {fr['kpi_grade_shield_on_flights']} "
+         f"KPI-grade Shield-on flights, under each reading of the label artefact "
+         f"`{fr['artefact']}` (labels derived at "
+         + ", ".join(f"`{str(r)[:12]}`" for r in fr.get("label_revisions") or ["?"])
+         + f"), re-scored in `{fr['source']}`. The adopted reading is the KPI; the others "
+         f"are printed beside it, never pooled. The point estimate is the KPI (the "
+         f"grant's wording); the Wilson 95 % lower bound says what the sample shows at "
+         f"95 % confidence (guardrail/fsm.py `score_failsafe_triggers`). A run a reading "
+         f"leaves out (not accepted, no verdict, censored in Loiter, label undecided or "
+         f"absent) is named, never counted as correct.", "",
+         "| Reading | Correct / scored | Correctness (point, the KPI) | Wilson 95 % low | "
+         ">= 99 % (point) | >= 99 % at 95 % | Nulls: always / never | Left out | "
+         "Label read on the longer flight | Re-score table's own |",
+         "|---|---|---|---|---|---|---|---|---|---|"]
+    yn = {True: "yes", False: "no", None: "not judged"}
+    for key, r in fr["readings"].items():
+        out = sum(len(r[k]) for k in (*READING_EXCLUDED, "not_in_rescore"))
+        s0 = r["at_scenario_length"]
+        lon = (f"{len(r['label_flown_longer'])} (without them {s0['correct']}/{s0['scored']})"
+               if r["label_flown_longer"] else "0")
+        tab = r["table"]
+        own = (f"{tab.get('correct')}/{tab.get('scored')} over {tab.get('runs')} runs"
+               + ("" if r["agrees_with_table"] else " (differs: it scores runs that are "
+                  "not KPI-grade here)"))
+        mark = " **adopted**" if r["adopted_kpi_reading"] else ""
+        L.append(f"| ({key}){mark} | {r['correct']}/{r['scored']} | "
+                 f"{_f(r['failsafe_trigger_correctness'], 3)} | {_f(r['wilson_low_95'], 3)} | "
+                 f"{yn[r['meets_target']]} | {yn[r['meets_target_at_95']]} | "
+                 f"{_f(r['null_always_trigger'], 3)} / {_f(r['null_never_trigger'], 3)} | "
+                 f"{out} | {lon} | {own} |")
+    L.append("")
+    for key, r in fr["readings"].items():
+        L.append(f"- ({key}) {r.get('reading')}:")
+        for kind, word in (("false", "false trigger"), ("missed", "missed trigger"),
+                           *((k, f"left out ({k.replace('_', ' ')})")
+                             for k in (*READING_EXCLUDED, "not_in_rescore")),
+                           ("label_flown_longer", "label read on the cell flown as long "
+                                                  "as the rail flies")):
+            for t in r[kind]:
+                lab = f" (label {', '.join(t['label'])})" if t.get("label") else ""
+                L.append(f"  - {word}: `{t['run']}`{lab}")
+    if fr.get("rescore_runs_not_in_report"):
+        L.append("- Runs in the re-score table that this report did not read: "
+                 + ", ".join(f"`{n}`" for n in fr["rescore_runs_not_in_report"]))
+    return L + [""]
+
+
+def _render_latency(lat: dict | None) -> list[str]:
+    if not lat:
+        return []
+    L = ["## End-to-end tick budget, per tick", "",
+         "Safety Shield p6: \"Monitor tick budget <= 100 ms (10 Hz) end-to-end\". Every "
+         "flown row's own timing over the whole flight, pooled per rail (nearest rank), "
+         "KPI-grade episodes apart from the rest. A measure no row and no metrics.json "
+         "carries is \"not measured\", never 0.", ""]
+    for key, what in LATENCY_FIELDS:
+        L.append(f"- `{key}`: {what}.")
+    L += ["", "Clocks: each measure is the difference of two readings of ONE clock - the "
+              "hil Shield node's `time.monotonic_ns()`, the perception node's loop clock "
+              "(the frame's arrival stamp, the tick and the publication all read it). On "
+              "the perception rail the camera frame's time is its ARRIVAL at the node (the "
+              "pose ring there carries no simulator stamps), so render and transport "
+              "before it are not in `cam_*`: a lower bound of camera to action.", ""]
+    for grp, title in (("kpi_grade", "KPI-grade episodes"),
+                       ("not_kpi_grade", "NOT KPI-grade episodes (functional evidence)")):
+        rails = lat["groups"].get(grp) or {}
+        if not rails:
+            continue
+        L += [f"{title}:", "",
+              "| Rail | Measure | Episodes | Ticks | p50 (ms) | p95 (ms) | p99 (ms) | "
+              "Max (ms) | Over 100 ms |", "|---|---|---|---|---|---|---|---|---|"]
+        for rail, r in rails.items():
+            for key, _ in LATENCY_FIELDS:
+                s = r.get(key) or {}
+                if s.get("status"):
+                    L.append(f"| {rail} | `{key}` | - | - | {s['status']}: {s['why']} "
+                             f"| | | | |")
+                    continue
+                L.append(f"| {rail} | `{key}` | {s['episodes']} of {r['episodes']} | "
+                         f"{s['n']} | {_f(s['p50'], 2)} | {_f(s['p95'], 2)} | "
+                         f"{_f(s['p99'], 2)} | {_f(s['max'], 2)} | {s['over_budget']} |")
+        L.append("")
+    return L
+
+
 def _render_arms(ab: dict | None, para: dict | None) -> list[str]:
     L = ["## A/B: prefix on / off", ""]
     if not ab or ab["status"] != "measured":
@@ -1874,6 +2653,12 @@ def render_markdown(rep: dict) -> str:
          "(\"KPI report\", acceptance KPIs) and Safety Shield p6 (\"Acceptance "
          "KPIs (locked)\").", ""]
 
+    # 2026-11-11: the grant's KPIs first, then the campaign they come from
+    # and the fail-safe readings behind the adopted one.
+    L += _render_kpi_summary(rep)
+    L += _render_campaign(rep.get("campaign"), rep.get("episodes") or [])
+    L += _render_failsafe_readings(rep.get("failsafe_readings"))
+
     if rep.get("headline"):
         L += ["## Read this first", ""] + [f"- {h}" for h in rep["headline"]] + [""]
 
@@ -1888,7 +2673,10 @@ def render_markdown(rep: dict) -> str:
           f"{c['kpi_grade']}** - the only episodes whose numbers may be quoted as "
           f"contractual KPIs.",
           f"- KPI-grade when flown but refused by today's rule: "
-          f"{c['kpi_grade_at_flight_only']}. Tabulated in their own section.",
+          f"{c['kpi_grade_at_flight_only']}. Tabulated in their own section."
+          + (f" Today's rule includes the campaign's acceptance: "
+             f"{c['campaign_not_accepted']} run(s) it did not accept are refused "
+             f"(listed under Campaign)." if c.get("campaign_not_accepted") else ""),
           f"- Everything else is functional evidence. The three groups are "
           f"tabulated separately and never pooled.", ""]
     if rep["kpi_grade_episodes"]:
@@ -1960,6 +2748,7 @@ def render_markdown(rep: dict) -> str:
     L += _render_wp1(rep.get("wp1"))
     L += _render_wp2(rep.get("wp2"))
     L += _render_tick_budget(rep.get("tick_budget"))
+    L += _render_latency(rep.get("latency"))
     L += _render_arms(rep.get("ab"), rep.get("paraphrase"))
     L += _render_baseline(rep.get("baseline"))
 
@@ -2582,18 +3371,28 @@ def build_report(run_globs: list[str], sweep_paths: list[str], top_k: int,
                  csp_json: str | Path | None = DEFAULT_CSP_JSON,
                  policies_dir: str | Path = "policies",
                  tick_profiles: str | None = DEFAULT_TICK_PROFILES,
-                 baseline: str | Path | None = None, trust_store=None) -> dict:
+                 baseline: str | Path | None = None, trust_store=None,
+                 campaign: str | Path | None = None,
+                 rescore: str | Path | None = None) -> dict:
     """The report as a dict (render_markdown prints it). The keyword arguments
     are the sections added on 2026-10-12: WP1 from `wp1_path`, WP2 (the
     budget scan takes seconds, so it is computed only with `wp2`; otherwise
     the stored `csp_json` is read and labelled as read), the tick budget
     from `tick_profiles`, a comparison against an earlier report JSON
     (`baseline`), and the trust store each replay bundle is checked against
-    as KPI evidence (None: guardrail.bundle's default)."""
+    as KPI evidence (None: guardrail.bundle's default). Since 2026-11-11:
+    a hil campaign's sweep.json (`campaign`, load_campaign: its runs when
+    `run_globs` is empty, and its acceptance as a gate, campaign_gate) and
+    a --rescore-rail table (`rescore`, load_rescore / apply_rescore)."""
     loaded = R.load_policies()
     by_hash, by_id = R.policies_by_hash(loaded), R.policies_by_id(loaded)
+    camp = load_campaign(campaign) if campaign else None
+    rs = load_rescore(rescore) if rescore else None
+    if camp is not None and not run_globs:
+        run_globs = list(camp["runs_glob"])
 
     episodes, skipped = [], []
+    lat_vals: dict[str, dict] = {}
     seen, kept = set(), {}
     for g in run_globs:
         pattern = g if Path(g).is_absolute() else str(ROOT / g)
@@ -2603,6 +3402,9 @@ def build_report(run_globs: list[str], sweep_paths: list[str], top_k: int,
                 continue
             seen.add(run.resolve())
             e = load_run(run, by_hash, by_id, trust_store)
+            lat = e.pop("_latency_values", None)
+            if lat:
+                lat_vals[e.get("source")] = lat
             key = e.pop("_dedupe", None)
             if key is not None and key in kept:
                 # The smoke profile re-flies the nightly profile's first seed;
@@ -2623,6 +3425,16 @@ def build_report(run_globs: list[str], sweep_paths: list[str], top_k: int,
             continue
         for e in load_sweep(path):
             (skipped if "skipped" in e else episodes).append(e)
+    # A hil campaign's own gate, then the adopted fail-safe reading: both
+    # before the episodes are grouped, so the KPI-grade tables, the family
+    # rows and the top-K all read them (2026-11-11).
+    for e in episodes:
+        if e.get("kind") != "flight":
+            continue
+        if camp is not None:
+            campaign_gate(e, camp)
+        if rs is not None:
+            apply_rescore(e, rs)
 
     def fams(eps):
         groups: dict[str, list] = {}
@@ -2671,6 +3483,16 @@ def build_report(run_globs: list[str], sweep_paths: list[str], top_k: int,
         wp2_doc = (dict(stored, read_from=_rel(Path(csp_json) if Path(csp_json).is_absolute()
                                                else ROOT / csp_json))
                    if isinstance(stored.get("default"), dict) else None)
+    readings = failsafe_readings_section(head_eps, rs) if rs is not None else None
+    latency = latency_section(episodes, lat_vals)
+    defs = dict(DEFINITIONS)
+    if rs is not None:
+        defs["Fail-safe, labelled episodes"] = (
+            DEFINITIONS["Fail-safe, labelled episodes"]
+            + f" In this report the labels are the ADOPTED reading ({rs['adopted']}) of "
+              f"{rs['path']} (--rescore-rail): a run that reading leaves out, or a "
+              f"Shield-off control, has no label here; every reading is in "
+              f"\"Fail-safe trigger correctness by label reading\".")
     rep = {
         "_what": "KPI rollup across episodes (Stress Testing p6: KPI report). "
                  "Flights recomputed from per-episode logs with "
@@ -2678,7 +3500,9 @@ def build_report(run_globs: list[str], sweep_paths: list[str], top_k: int,
         "generated": date.today().isoformat(),
         "command": command,
         "code_revision": code_revision(ROOT),
-        "inputs": {"runs": run_globs, "sweep": sweep_paths},
+        "inputs": {"runs": run_globs, "sweep": sweep_paths,
+                   "campaign": camp["path"] if camp else None,
+                   "rescore_rail": rs["path"] if rs else None},
         "counts": {"episodes": len(episodes),
                    "flights": sum(1 for e in episodes if e["kind"] == "flight"),
                    "stress_logs": sum(1 for e in episodes
@@ -2688,8 +3512,15 @@ def build_report(run_globs: list[str], sweep_paths: list[str], top_k: int,
                    "sweep": sum(1 for e in episodes if e["kind"] == "sweep-json"),
                    "kpi_grade": len(graded), "kpi_grade_at_flight_only": len(at_flight),
                    "comparison": len(cmp_eps),
+                   "campaign_not_accepted": sum(
+                       1 for e in episodes if e.get("campaign_status") in (
+                           "not accepted", "not in the campaign")),
                    "skipped": len(skipped)},
-        "definitions": DEFINITIONS,
+        "definitions": defs,
+        "campaign": camp,
+        "kpi_summary": kpi_summary(head_eps, latency, readings),
+        "failsafe_readings": readings,
+        "latency": latency,
         "headline": headline(head_eps),
         "kpi_grade_episodes": [{"id": e["id"], "family": e["family"],
                                 "seed": (e.get("params") or {}).get("seed"),
@@ -2742,11 +3573,21 @@ def write_csp_json(wp2: dict, path: str | Path, command: str) -> Path:
 def main(argv: list[str] | None = None) -> int:
     argv = sys.argv[1:] if argv is None else argv
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    ap.add_argument("--runs", nargs="*", default=DEFAULT_RUNS,
-                    help="run-folder globs, relative to the repo root")
-    ap.add_argument("--sweep", nargs="*", default=[DEFAULT_SWEEP],
-                    help="sweep result JSON files")
+    ap.add_argument("--runs", nargs="*", default=None,
+                    help="run-folder globs, relative to the repo root (default: "
+                         f"{' '.join(DEFAULT_RUNS)}; with --campaign, its store's runs)")
+    ap.add_argument("--sweep", nargs="*", default=None,
+                    help=f"headless sweep result JSON files (default {DEFAULT_SWEEP}; "
+                         "none with --campaign)")
     ap.add_argument("--no-sweep", action="store_true")
+    ap.add_argument("--campaign", default=None,
+                    help="a hil campaign: its folder (demo/out/hil_<campaign>) or its "
+                         "sweep.json. Its runs are read from its store unless --runs is "
+                         "given, and a run it did not accept is not KPI-grade")
+    ap.add_argument("--rescore-rail", default=None, metavar="JSON",
+                    help="the table of experiments/sweep_scenarios.py --rescore-rail ... "
+                         "--out JSON: its adopted fail-safe reading is applied, every "
+                         "reading printed")
     ap.add_argument("--out", help="output stem: writes <stem>.md and <stem>.json")
     ap.add_argument("--top-k", type=int, default=10)
     ap.add_argument("--include-controls", action="store_true",
@@ -2783,12 +3624,17 @@ def main(argv: list[str] | None = None) -> int:
         print("\n".join(_render_wp2(w)))
         print(f"wrote {_rel(out)}")
         return 0
-    rep = build_report(args.runs, [] if args.no_sweep else args.sweep,
+    runs = (args.runs if args.runs is not None
+            else [] if args.campaign else list(DEFAULT_RUNS))
+    sweep = ([] if args.no_sweep else args.sweep if args.sweep is not None
+             else [] if args.campaign else [DEFAULT_SWEEP])
+    rep = build_report(runs, sweep,
                        args.top_k, args.include_controls, command,
                        wp1_path=args.wp1, wp2=args.wp2,
                        csp_json=args.csp_json or DEFAULT_CSP_JSON,
                        policies_dir=args.policies, tick_profiles=args.tick_profiles,
-                       baseline=args.baseline, trust_store=args.trust_store)
+                       baseline=args.baseline, trust_store=args.trust_store,
+                       campaign=args.campaign, rescore=args.rescore_rail)
     nonfinite: list[str] = []
     rep = json_safe(rep, "", nonfinite)
     md = render_markdown(rep)
@@ -2812,7 +3658,21 @@ def main(argv: list[str] | None = None) -> int:
         print(md)
     c = rep["counts"]
     print(f"{c['episodes']} episodes ({c['kpi_grade']} KPI-grade), "
-          f"{c['skipped']} inputs skipped")
+          f"{c['skipped']} inputs skipped"
+          + (f", {c['campaign_not_accepted']} not accepted by the campaign"
+             if c.get("campaign_not_accepted") else ""))
+    s = rep.get("kpi_summary") or {}
+    p0 = (s.get("p0") or {}).get("shield_on")
+    if p0:
+        off = (s.get("p0") or {}).get("shield_off_control") or {}
+        print(f"P0 escape rate: {p0['p0_escape_rate']} Shield on ({p0['p0_escapes']} "
+              f"escapes, {p0['episodes']} flights) vs {off.get('p0_escape_rate')} Shield-off "
+              f"control")
+    fs = s.get("failsafe")
+    if fs and fs.get("scored"):
+        print(f"fail-safe trigger correctness ({fs.get('basis')}): {fs['correct']}/"
+              f"{fs['scored']} = {fs['failsafe_trigger_correctness']}, Wilson 95 % low "
+              f"{fs.get('wilson_low_95')}")
     if rep.get("baseline"):
         b = rep["baseline"]
         reg = sum(1 for r in b["new_failures"] if r.get("was") == "passing")

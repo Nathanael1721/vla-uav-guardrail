@@ -7,6 +7,14 @@ Run either way:
 What these guard against: a video that does not say it is a log replay (it
 could be taken for a camera recording), a run folder with no policy drawn as
 an empty map, and a failed writer leaving nothing while reporting success.
+
+Since 2026-11-11: a moving zone (a dynamic_nfz's `motion`) drawn where it is
+at each frame's time by DynamicNFZ.ring_at, from its last hot-apply in
+events.jsonl (else its generation's first row), not at its authored
+vertices; the footer naming the log by its real path, not
+demo/out/<tag>/flight_log.jsonl; and --stills drawing chosen frames as PNGs.
+Shown failing first: against 0df7ee8 zones() carried no motion, and
+zone_anchors, moving_ring, log_label and render_stills did not exist.
 """
 import json
 import sys
@@ -114,6 +122,119 @@ def test_the_mission_target_is_read_from_the_prompt():
     with tempfile.TemporaryDirectory() as d:
         run = _run(Path(d), [_row(0)])
         assert R.mission_target(run) == (12.0, 12.0)
+
+
+# A 40 m bar along y, spawned at t = 3 s and set spinning at 6 deg/s (the
+# hil rail's dyn-nfz-rotate-spin): generation 1 the spawn, 2 the spin.
+BAR = [{"x": -170.0, "y": 20.0}, {"x": -170.0, "y": -20.0}, {"x": -166.0, "y": -20.0},
+       {"x": -166.0, "y": 20.0}]
+
+
+def _bar(motion=None):
+    c = {"id": "bar", "type": "dynamic_nfz", "scope": "mission", "constraint_type": "hard",
+         "priority": "P0", "violation_action": "project_fix", "margin_m": 1.0,
+         "vertices": BAR}
+    if motion is not None:
+        c["motion"] = motion
+    return c
+
+
+SPIN = {"vx_mps": 0.0, "vy_mps": 0.0, "yaw_rate_dps": 6.0}
+EVENTS = [{"kind": "policy_generation", "t": None, "generation": 0, "reason": "take-off"},
+          {"kind": "policy_generation", "t": 3.0, "generation": 1, "reason": "hot_apply bar"},
+          {"kind": "policy_generation", "t": 3.0, "generation": 2, "reason": "hot_apply bar"},
+          {"kind": "policy_generation", "t": 9.0, "generation": 3,
+           "reason": "hot_apply other-zone"}]
+
+
+def test_a_moving_zone_carries_its_motion_and_a_still_one_does_not():
+    z = R.zones({"constraints": [_bar(SPIN), dict(_bar(), id="still"),
+                                 dict(_bar({"vx_mps": 0, "vy_mps": 0, "yaw_rate_dps": 0}),
+                                      id="zero")]})
+    assert z[0]["motion"] == SPIN and z[0]["rule"]["id"] == "bar"
+    assert z[1]["motion"] is None and z[2]["motion"] is None, "no motion, or a zero one"
+    assert all(q["motion"] is None for q in R.zones(POLICY) if q["kind"] == "poly")
+
+
+def test_a_zone_is_anchored_at_its_last_hot_apply_and_carried_forward():
+    a = R.zone_anchors(EVENTS)
+    assert a == {0: {}, 1: {"bar": 3.0}, 2: {"bar": 3.0},
+                 3: {"bar": 3.0, "other-zone": 9.0}}, a
+    # A later edit of the zone re-anchors it.
+    a = R.zone_anchors(EVENTS + [{"kind": "policy_generation", "t": 12.5, "generation": 4,
+                                  "reason": "hot_apply bar"}])
+    assert a[4]["bar"] == 12.5 and a[3]["bar"] == 3.0
+    assert R.zone_anchors([]) == {}
+
+
+def test_the_drawn_ring_is_the_models_ring_at_the_zones_age():
+    from guardrail.models import DynamicNFZ
+    (z,) = R.zones({"constraints": [_bar(SPIN)]})
+    # 15 s at 6 deg/s is a quarter turn about the vertex mean (-168, 0): the
+    # bar along y now lies along x.
+    ring = R.moving_ring(z, 15.0)
+    xs, ys = [p[0] for p in ring], [p[1] for p in ring]
+    assert abs((max(xs) - min(xs)) - 40.0) < 1e-6 and abs((max(ys) - min(ys)) - 4.0) < 1e-6
+    assert abs(sum(xs) / 4 + 168.0) < 1e-6 and abs(sum(ys) / 4) < 1e-6
+    want = DynamicNFZ.model_validate(_bar(SPIN)).ring_at(15.0)
+    assert ring == [(float(x), float(y)) for x, y in want]
+    assert R.moving_ring(z, -2.0) == R.moving_ring(z, 0.0), "no age before the anchor"
+    (t,) = R.zones({"constraints": [_bar({"vx_mps": 2.0, "vy_mps": -1.0, "yaw_rate_dps": 0.0})]})
+    moved = R.moving_ring(t, 5.0)
+    assert all(abs(mx - (x + 10.0)) < 1e-9 and abs(my - (y - 5.0)) < 1e-9
+               for (mx, my), (x, y) in zip(moved, R.moving_ring(t, 0.0)))
+
+
+def test_without_events_a_zone_moves_from_its_generations_first_row():
+    pols = {0: {"constraints": [_bar(SPIN)]}, 1: {"constraints": [_bar(SPIN)]},
+            2: {"constraints": [dict(_bar(SPIN), vertices=BAR[1:] + BAR[:1])]}}
+    zbg = R.zones_by_generation(pols)
+    assert [zbg[g][0]["_since_gen"] for g in (0, 1, 2)] == [0, 0, 2]
+    rows = [{"t": 0.1}, {"t": 0.2, "generation": 1}, {"t": 4.0, "generation": 2}]
+    gs = R.generation_starts(rows, pols)
+    assert gs == {0: 0.1, 1: 0.2, 2: 4.0}, gs
+    # A zone the policy declared moves from the flight's first row (the
+    # Shield anchors one at its first tick), an edited one from its edit.
+    assert R.zone_anchor(zbg[1][0], 1, {}, gs) == (0.1, "first row of generation 0")
+    assert R.zone_anchor(zbg[2][0], 2, {}, gs) == (4.0, "first row of generation 2")
+    assert R.zone_anchor(zbg[2][0], 2, {2: {"bar": 3.9}}, gs) == (3.9, "events.jsonl")
+
+
+def test_the_footer_names_the_log_by_its_real_path():
+    assert R.log_label(ROOT / "demo" / "out" / "x") == "demo/out/x/flight_log.jsonl"
+    with tempfile.TemporaryDirectory() as d:
+        other = Path(d) / "lab" / "demo" / "out" / "hil_smoke" / "hs06b_004"
+        assert R.log_label(other) == "demo/out/hil_smoke/hs06b_004/flight_log.jsonl"
+        loose = Path(d) / "runs" / "r1"
+        assert R.log_label(loose) == (loose / "flight_log.jsonl").resolve().as_posix()
+    src = (ROOT / "tools" / "render_track_video.py").read_text(encoding="utf-8")
+    assert "demo/out/%s/flight_log.jsonl" not in src
+
+
+def test_stills_draw_the_spinning_bar_where_it_is_at_each_time():
+    try:
+        import matplotlib                                      # noqa: F401
+    except ImportError as e:
+        print(f"      SKIP: no matplotlib ({e})")
+        return SKIP
+    with tempfile.TemporaryDirectory() as d:
+        rows = [dict(_row(i), generation=0 if i < 30 else 2, x=-200.0 + 0.4 * i, y=0.0)
+                for i in range(200)]
+        run = _run(Path(d), rows, policy={"constraints": [POLICY["constraints"][2]]})
+        (run / "policy_g1.json").write_text(json.dumps({"constraints": [_bar()]}),
+                                            encoding="utf-8")
+        (run / "policy_g2.json").write_text(json.dumps({"constraints": [_bar(SPIN)]}),
+                                            encoding="utf-8")
+        (run / "events.jsonl").write_text("".join(json.dumps(e) + "\n" for e in EVENTS),
+                                          encoding="utf-8")
+        out = Path(d) / "stills"
+        got = R.render_stills(run, out, [5.0, 18.0])
+        assert [p.name for p in got] == ["fake_run_t0005.00.png", "fake_run_t0018.00.png"]
+        assert all(p.is_file() and p.stat().st_size > 0 for p in got)
+        assert got[0].read_bytes() != got[1].read_bytes()
+        rc = R.main(["--tag", "fake_run", "--demo-out", str(run.parent), "--stills", "6",
+                     "--out", str(out / "cli")])
+        assert rc == 0 and (out / "cli" / "fake_run_t0006.00.png").is_file()
 
 
 def test_a_short_run_renders_a_non_empty_video_and_says_it_is_a_log_replay():
