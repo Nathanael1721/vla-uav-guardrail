@@ -47,6 +47,7 @@
 #        WP4, the stress harness and its outputs: test_scenario_spec,
 #          test_sweep, test_failsafe_rubric (the fail-safe labels and
 #          docs/RUBRIC-failsafe.md), test_kpi_magnitudes, test_kpi_report,
+#          test_kpi_campaign (the KPI report from a hil campaign),
 #          test_kpi_blind (off-map ticks and simulator contacts),
 #          test_harness_service, test_harnesstruth_*, test_wp4outputs_*,
 #          test_harness_rail (2026-11-10: the harness's rail sessions and
@@ -690,6 +691,7 @@ jobs:
               tests/test_occ_bands.py \
               tests/test_ros2_package.py \
               tests/test_kpi_report.py \
+              tests/test_kpi_campaign.py \
               tests/test_recorder.py \
               tests/test_track_truth.py \
               tests/test_camera_model.py \
