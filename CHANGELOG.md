@@ -54,7 +54,8 @@ holdpoint.py, hold_flight.py and sitl/ are those of 22d434b).
 - `experiments/sweep_scenarios.py --rescore-rail`: after the re-score, the
   campaign's fail-safe trigger correctness under (a), (r) and (r2) - count,
   rate, Wilson 95 % low, both nulls, and by name the censored, undecided
-  and unlabelled runs, the false and missed triggers and the runs judged on
+  and unlabelled runs, the runs the campaign did not accept (no
+  scenario_score.json), the false and missed triggers and the runs judged on
   a label read at the rail's length (with the count without them); (r2) is
   marked the adopted KPI reading; Shield-off runs are left out and counted;
   `--rail-labels` names another artefact; without one the table is not
@@ -86,6 +87,10 @@ holdpoint.py, hold_flight.py and sitl/ are those of 22d434b).
   dyn-nfz-rotate-step, time-window-opens-on-sideways-pilot,
   dyn-nfz-spawn-ahead 30 m at 2 m/s); no decided label is read differently
   there.
+- sm1111, the smoke at the commit that flies (22d434b), (a) / (r) / (r2):
+  39/45 = 0.867 (Wilson 0.738), 43/45 = 0.956 (0.852), 44/45 = 0.978
+  (0.884); under (r2) the one wrong run is sm1111_048 (wind-beyond-authority
+  12 m/s, missed); 2 runs the campaign did not accept are left out by name.
 - Campaigns, (a) / (r) / (r2): rh03 37/43, 41/43, 42/43 (38/40 and 39/40
   without the three labels read longer: the figures of 7 November); hs05 7/7
   on each with 2 censored; sm1110 40/45, 43/45, 44/45; ge1110 32/32 on each
@@ -98,8 +103,8 @@ holdpoint.py, hold_flight.py and sitl/ are those of 22d434b).
 - Decided rail labels were not all re-derived flown 35 s longer: the whole
   smoke profile and the four nightly families with an undecided cell were
   (0 differ); the rest of the nightly was not.
-- The smoke at the commit that flies (sm1111) was still in the air and the
-  nightly nt1111 had not flown when this was written.
+- The nightly nt1111 (22d434b, 591 missions) was still flying when this was
+  written.
 
 ### 2026-11-10 (the Orin's tick, and a hand-back judged at speed) — a tick pays for one kind of hold work, never two; Loiter hands back only a request whose repair can be trusted from its hold point at the speed it asks for
 

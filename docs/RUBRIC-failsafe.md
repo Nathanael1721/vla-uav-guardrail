@@ -552,12 +552,14 @@ re-scored verdict of each run against the artefact:
 
 | campaign | flown at | Shield-on runs | (a) | (r) | (r2), adopted | left out |
 |---|---|---|---|---|---|---|
+| **sm1111, smoke** | **22d434b** | 47 (45 accepted) | 39/45 = 0.867 (0.738) | 43/45 = 0.956 (0.852) | **44/45 = 0.978 (0.884)** | 2 not accepted (gps-dropout lane 23.6 4-11 s, wind-beyond-authority 8 m/s: their stress was not confirmed at take-off) |
 | rh03, smoke | fb96fe5 | 44 | 37/43 = 0.860 (0.727) | 41/43 = 0.953 (0.845) | 42/43 = 0.977 (0.879) | 1 censored (wind-beyond-authority at 12 m/s) |
 | hs05, the nine rotate-spin cells | 9eed35b | 9 | 7/7 (0.646) | 7/7 (0.646) | 7/7 (0.646) | 2 censored (6 deg/s, seeds 1001 and 1002) |
 | sm1110, smoke | 9eed35b | 47 | 40/45 = 0.889 (0.765) | 43/45 = 0.956 (0.852) | 44/45 = 0.978 (0.884) | 2 censored (corridor-drift-angles 8 m/s -60 deg, wind-within-authority 5 m/s: the hand-back churn) |
 | ge1110, grant example | 9eed35b | 32 (of 36; 4 folders hold no flight log) | 32/32 (0.893) | 32/32 (0.893) | 32/32 (0.893) | none |
 
-Wilson 95 % lower bound in brackets. Nulls under (r2): rh03 always-trigger
+Wilson 95 % lower bound in brackets. Nulls under (r2): sm1111 always-trigger
+0.489, never-trigger 0.511; rh03 always-trigger
 0.512, never-trigger 0.488; sm1110 0.489 and 0.511; hs05 and ge1110 fly no
 cell that expects a fail-safe (never-trigger 1.000), so their 7/7 and 32/32
 say nothing a Shield with no fail-safe would not also score.
@@ -575,8 +577,15 @@ say nothing a Shield with no fail-safe would not also score.
   smokes, rail-mission-stub-vla in both (section 7's cell: wrong under (r)
   too) and wind-within-authority at 5 m/s in rh03 - each a fail-safe the
   flight took that the ideal vehicle's labels do not expect.
-- The smoke at the commit that flies (sm1111, 22d434b) was in the air when
-  this was written; it is scored by the same command.
+- **sm1111** is the smoke at the commit that flies (22d434b). Its (a) is the
+  campaign's own line, 39/45 = 0.867 with the same 5 false and 1 missed. Its
+  two runs the campaign did not accept (sm1111_044, sm1111_047: no
+  scenario_score.json, the Shield node read no simulator parameters at
+  take-off) flew and triggered, but are not the cell's flights: they are left
+  out of every reading by name (`not_accepted`), as the campaign leaves them
+  out. Under (r2) its one wrong run is the same as sm1110's, sm1111_048
+  (wind-beyond-authority at 12 m/s, missed: E2); with the three labels read at
+  the rail's length left out it is 41/42.
 
 ### The draft of 7 November, as it was put to the decision
 

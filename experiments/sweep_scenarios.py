@@ -5013,14 +5013,19 @@ def rail_label_scores(runs: list[dict], labels: dict) -> dict:
     of the labels (RAIL_LABEL_READINGS: (a), (r) and the adopted (r2)).
 
     `runs`: one mapping per Shield-on run with `run`, `cell`, `seed`,
-    `triggered` (the re-scored failsafe_triggered) and `censored` (it ended
-    in Loiter before the operator timeout: not measured). Per reading: the
+    `triggered` (the re-scored failsafe_triggered), `censored` (it ended
+    in Loiter before the operator timeout: not measured) and, optionally,
+    `accepted` (False: the campaign did not accept the flight - its
+    scenario_score.json is missing because a check of the flight failed,
+    e.g. its stress was not realised - so it is not the cell's flight and
+    is left out, by name, as the campaign's own count leaves it out). Per
+    reading: the
     count and rate over the runs with a verdict AND a decided label, the
     Wilson 95 % lower bound and both nulls (guardrail.fsm.
     score_failsafe_triggers), and BY NAME the runs left out - censored,
     undecided (the label could not be decided in the scenario's length),
     unlabelled (the cell and seed are not in the artefact), not measured (no
-    FSM verdict) - and the false and missed triggers. Nothing is pooled
+    FSM verdict), not accepted - and the false and missed triggers. Nothing is pooled
     across readings and nothing left out is counted as correct.
 
     A rail flies 35 s longer than the scenario (rail_max_s) and its
@@ -5036,11 +5041,13 @@ def rail_label_scores(runs: list[dict], labels: dict) -> dict:
     for key, what in RAIL_LABEL_READINGS:
         pairs, short = [], []
         names = {k: [] for k in ("false", "missed", "censored", "undecided", "unlabelled",
-                                 "not_measured", "label_flown_longer")}
+                                 "not_measured", "not_accepted", "label_flown_longer")}
         for it in runs:
             tag = {"run": it["run"], "cell": it["cell"], "seed": it["seed"]}
             lab = ((labels["labels"].get(it["cell"]) or {}).get(str(it["seed"])) or {}).get(key)
-            if it.get("triggered") is None:
+            if it.get("accepted") is False:
+                names["not_accepted"].append(tag)
+            elif it.get("triggered") is None:
                 names["not_measured"].append(tag)
             elif it.get("censored"):
                 names["censored"].append(tag)
@@ -5092,16 +5099,18 @@ def rail_label_lines(scores: dict, labels: dict, path: Path) -> list[str]:
                  f"  Wilson 95 % low {f(sc['wilson_low_95'])}  nulls: always-trigger "
                  f"{f(sc['null_always_trigger'])}, never-trigger {f(sc['null_never_trigger'])}"
                  f"  | censored {len(sc['censored'])}, undecided {len(sc['undecided'])}, "
-                 f"unlabelled {len(sc['unlabelled'])}, no verdict {len(sc['not_measured'])}")
+                 f"unlabelled {len(sc['unlabelled'])}, no verdict {len(sc['not_measured'])}, "
+                 f"not accepted {len(sc['not_accepted'])}")
         if sc["label_flown_longer"]:
             s0 = sc["at_scenario_length"]
             L.append(f"      {len(sc['label_flown_longer'])} of them on a label undecided at the "
                      f"scenario's length, read on the cell flown as long as the rail flies; "
                      f"without them {s0['correct']}/{s0['scored']}")
         for kind in ("false", "missed", "censored", "undecided", "unlabelled",
-                     "label_flown_longer"):
+                     "not_measured", "not_accepted", "label_flown_longer"):
             for t in sc[kind]:
-                name = "longer" if kind == "label_flown_longer" else kind
+                name = {"label_flown_longer": "longer", "not_measured": "no verdict",
+                        "not_accepted": "not acc."}.get(kind, kind)
                 L.append(f"      {name:10} {t['run']}  ({t['cell']}, seed {t['seed']})")
     return L
 
@@ -5118,7 +5127,9 @@ def rescore_rail_main(globs: list[str], episodes, defaults, rail_gates: str,
     (a), (r) and (r2), the adopted KPI reading, from the label artefact
     (`labels_path`, default RAIL_LABELS). Without the artefact that table is
     not printed and the exit code is 1: a campaign scored on no labels is
-    not a score."""
+    not a score. A run the campaign did not accept (no scenario_score.json:
+    `before` None) is re-scored and printed like the others, but left out
+    of the label table by name (`not_accepted`)."""
     runs: list[Path] = []
     for g in globs:
         pat = g if Path(g).is_absolute() else str(ROOT / g)
@@ -5156,7 +5167,8 @@ def rescore_rail_main(globs: list[str], episodes, defaults, rail_gates: str,
     else:
         scored = [{"run": it["run"], "cell": it["cell"], "seed": it["seed"],
                    "triggered": (it["doc"].get("kpi") or {}).get("failsafe_triggered"),
-                   "censored": bool((it["doc"].get("kpi") or {}).get("failsafe_censored"))}
+                   "censored": bool((it["doc"].get("kpi") or {}).get("failsafe_censored")),
+                   "accepted": it["before"] is not None}
                   for it in table
                   if "error" not in it and (it["doc"].get("metrics") or {}).get("shield") == "on"]
         scores = rail_label_scores(scored, labels)

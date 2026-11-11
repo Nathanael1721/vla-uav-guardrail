@@ -3699,8 +3699,8 @@ def test_a_rail_campaign_is_scored_under_each_label_reading_and_names_what_it_le
     rail labels on the prescribed flight, the adopted KPI reading - each with
     its count, rate, Wilson bound and both nulls over the runs that have a
     verdict and a decided label, and BY NAME the runs it left out (censored,
-    undecided, unlabelled, no verdict) and the false and missed triggers.
-    Nothing left out is counted as correct."""
+    undecided, unlabelled, no verdict, not accepted by the campaign) and the
+    false and missed triggers. Nothing left out is counted as correct."""
     def lab(a, r, r2):
         def one(v):
             return {"expected": v, "clauses": ["E5"] if v else [], "e5_spell_s": 0.0,
@@ -3724,7 +3724,12 @@ def test_a_rail_campaign_is_scored_under_each_label_reading_and_names_what_it_le
             {"run": "c_006", "cell": "loit", "seed": 1001, "triggered": False, "censored": False},
             {"run": "c_007", "cell": "gone", "seed": 1001, "triggered": True, "censored": False},
             {"run": "c_008", "cell": "free", "seed": 1001, "triggered": None, "censored": False},
-            {"run": "c_009", "cell": "late", "seed": 1001, "triggered": True, "censored": False}]
+            {"run": "c_009", "cell": "late", "seed": 1001, "triggered": True, "censored": False},
+            # flown, but not accepted by the campaign (its stress was not
+            # realised, sm1111_044 and _047): not the cell's flight, whatever
+            # its trigger
+            {"run": "c_010", "cell": "held", "seed": 1001, "triggered": False, "censored": False,
+             "accepted": False}]
     sc = S.rail_label_scores(runs, labels)
     assert list(sc) == ["a", "r", "r2"] and [v["adopted_kpi_reading"] for v in sc.values()] == [
         False, False, True]
@@ -3754,17 +3759,19 @@ def test_a_rail_campaign_is_scored_under_each_label_reading_and_names_what_it_le
     assert a["at_scenario_length"] == {"scored": 6, "correct": 2} and not names(
         a, "label_flown_longer")
     for v in sc.values():
-        assert v["runs"] == 9
+        assert v["runs"] == 10
         assert names(v, "censored") == ["c_005"] and names(v, "unlabelled") == ["c_007"]
-        assert names(v, "not_measured") == ["c_008"]
-        left = sum(len(v[k]) for k in ("censored", "undecided", "unlabelled", "not_measured"))
-        assert v["scored"] + left == 9, v
+        assert names(v, "not_measured") == ["c_008"] and names(v, "not_accepted") == ["c_010"]
+        left = sum(len(v[k]) for k in ("censored", "undecided", "unlabelled", "not_measured",
+                                       "not_accepted"))
+        assert v["scored"] + left == 10, v
     lines = S.rail_label_lines(sc, {"built": {"code_revisions": ["f" * 40]}, **labels},
                                S.RAIL_LABELS)
     text = "\n".join(lines)
     assert "(r2)" in text and "THE ADOPTED KPI READING" in text and text.count("ADOPTED") == 1
     assert "4/5 = 0.800" in text and "missed     c_006" in text and "undecided  c_004" in text
     assert "without them 3/4" in text and "longer     c_009" in text
+    assert "not accepted 1" in text and "not acc.   c_010" in text
 
 
 def test_a_fetched_rail_run_is_rescored_offline_and_left_as_it_was():
