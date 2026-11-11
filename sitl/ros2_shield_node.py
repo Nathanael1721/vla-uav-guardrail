@@ -1688,6 +1688,7 @@ class TickScheduler:
         self.slack_s, self.poll_s = float(slack_s), float(poll_s)
         self.t0: float | None = None
         self.last_t: float | None = None
+        self.last_msg_t: float | None = None
         self.last_trigger: str | None = None
         self.pending = False
         self.counts = {k: 0 for k in TICK_TRIGGERS}
@@ -1706,9 +1707,16 @@ class TickScheduler:
         return base + self.period_s + (self.slack_s if led else 0.0)
 
     def on_message(self, t: float) -> str | None:
+        # The rate limit is judged on the gap between MESSAGES, not on the
+        # gap since the last tick: judged against a deferred tick's start, a
+        # pilot and a poll that are both exact (the rig's stub at 10 Hz, the
+        # 40 Hz poll) lock at one phase and every later message is deferred
+        # by the same 20-35 ms (hs07, 2026-11-12: 22 of 30 missions, e2e to
+        # 110.7 ms). A pilot faster than 1 / min_gap is still held to it.
         if self.t0 is None:
             return None
-        if self.last_t is None or t - self.last_t >= self.min_gap_s - _SCHED_EPS:
+        prev, self.last_msg_t = self.last_msg_t, float(t)
+        if self.last_t is None or prev is None or t - prev >= self.min_gap_s - _SCHED_EPS:
             return "action"
         self.pending = True
         return None

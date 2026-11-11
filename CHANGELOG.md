@@ -16,6 +16,43 @@ shipped change and recorded as one.
 
 ## [Unreleased]
 
+### 2026-11-12 (hs07 shakedown; the tick scheduler judged on message gaps) — the hil shakedown at dc8cd9c scored 30/30 on the adopted reading with tick_ms max 56.6 ms, and found the action-triggered tick locking into deferral; the rate limit now reads the gap between messages
+
+#### Flown
+- hs07 (dc8cd9c, hil, nightly cells on seed 1001, 30 missions: wind
+  beyond and within authority, gps-dropout, corridor-drift-angles,
+  dyn-nfz-rotate-spin, nfz-head-on; 70 min). P0 escape 0.0 over the 30
+  Shield-on missions. Under the adopted reading (r2) 30/30 = 1.000 (Wilson
+  95 % low 0.886): the wind-beyond-authority 12 m/s cells went home (X9)
+  and gps-dropout lane 23.6 took no X8.
+- `tick_ms` p50 9.5 / p99 31.8 / max 56.56 ms, 0 of 11386 over 100 ms
+  (sm1111: max 95.98 ms): the paced garbage collection held.
+- `e2e_ms` p99 98.7 / max 110.72 ms, 49 of 11386 over 100 ms.
+- wind-beyond-authority lane 20 at 12 m/s: after X9's RTL, ArduPilot's
+  return in the 12 m/s wind carried the aircraft into nfz-square (92 ticks
+  inside, autopilot-flown, not a Shield P0 escape). A wind beyond the
+  airframe's authority carries it whatever is commanded; how the fail-safe
+  should choose between RTL and Land in such a wind is open.
+
+#### Found
+- The tick scheduler's rate limit was judged against the last TICK's start.
+  With the rig's exact 10 Hz pilot and exact 40 Hz poll, once one tick was
+  deferred (an early burst), every later message arrived under min_gap after
+  that deferred tick and was deferred by the same 20-35 ms for the rest of
+  the mission: 22 of 30 hs07 missions ran every tick but one "deferred", and
+  all 49 ticks over 100 ms were deferred ones. Ticks run on arrival: p99
+  35.9 ms, max 56.7 ms, none over 100 ms.
+
+#### Changed
+- `sitl/ros2_shield_node.py` `TickScheduler.on_message` judges the rate limit
+  on the gap since the previous MESSAGE: an early burst defers one tick and
+  the next message ticks at once; a pilot faster than 1 / min_gap is still
+  held to it. `tests/test_sitl_rails.py`: an exact pilot with a burst at
+  every phase of the poll grid takes at most one deferral (the old rule:
+  1 action, 200 deferred).
+- `tools/kpi_report.py`: the e2e note no longer says the node ticks on its
+  own timer.
+
 ### 2026-11-12 (GPS denial as the rig flies it; X8 on the autopilot's own estimator) — the rail labels read a GPS denial as EKF3's inertial dead reckoning, and on the ROS 2 rail X8 fires when the autopilot declares its position lost instead of on the Shield's command dead reckoning plus a fixed drift allowance; replayed on the rig's own flights, not flown
 
 Branches gps-dropout-fix (49c455c, d673ed0, 635336a) and

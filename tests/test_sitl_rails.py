@@ -2572,6 +2572,52 @@ def test_the_tick_scheduler_follows_the_pilot_and_keeps_10_hz_alone():
     assert N.TICK_POLL_S <= N.TICK / 4 and N.ACTION_TICK_MIN_GAP_S <= N.TICK
 
 
+def test_the_tick_scheduler_never_locks_into_deferral_on_an_exact_pilot():
+    """hs07 (2026-11-12, dc8cd9c): with the rate limit judged against the last
+    TICK, an exact 10 Hz pilot and the exact 40 Hz poll locked at one phase:
+    once a tick was deferred, every later message came under min_gap after it
+    and was deferred by the same amount (22 of 30 missions, e2e to 110.7 ms).
+    Judged on the gap between MESSAGES, one early burst defers one tick and the
+    next message ticks at once."""
+    N = _node()
+    S = N.TickScheduler
+
+    def fly(arrivals, polls_until):
+        s = S()
+        s.start(0.0)
+        events = sorted([(round(t, 6), 0, "m") for t in arrivals]
+                        + [(round(k * N.TICK_POLL_S, 6), 1, "p")
+                           for k in range(1, int(polls_until / N.TICK_POLL_S) + 1)])
+        ticks, lag = [], []
+        last_msg = None
+        for t, _, kind in events:
+            if kind == "m":
+                last_msg = t
+            why = s.on_message(t) if kind == "m" else s.on_poll(t)
+            if why:
+                s.ran(t, why)
+                ticks.append((t, why))
+                if why in ("action", "deferred") and last_msg is not None:
+                    lag.append(t - last_msg)
+        return ticks, lag
+
+    # The rig's pattern: a burst at start, then an exact 10 Hz stream whose
+    # phase against the poll grid is the worst one (30 ms after a poll).
+    msgs = [0.01, 0.05] + [0.13 + 0.1 * k for k in range(200)]
+    ticks, lag = fly(msgs, msgs[-1] + 0.05)   # polls end with the stream
+    kinds = [w for _, w in ticks]
+    assert kinds.count("deferred") == 1, {w: kinds.count(w) for w in set(kinds)}
+    assert kinds.count("action") == 201 and "timer" not in kinds
+    assert max(lag) <= N.ACTION_TICK_MIN_GAP_S, max(lag)
+    # Every phase of an exact 10 Hz stream against the poll grid, each with a
+    # burst: never more than the burst's one deferral.
+    for phase_ms in range(0, 100, 5):
+        p = phase_ms / 1000.0
+        msgs = [p + 0.001, p + 0.04] + [p + 0.12 + 0.1 * k for k in range(100)]
+        ticks, _ = fly(msgs, 11.0)
+        assert sum(1 for _, w in ticks if w == "deferred") <= 1, phase_ms
+
+
 def test_the_node_ticks_on_a_fresh_action_and_its_poll_watches_a_quiet_stream():
     """A3 on the node (stand-in ROS, virtual clock): with the default
     --tick-trigger action the action's own callback runs the tick (e2e is

@@ -360,7 +360,8 @@ def _pct(vals: list[float], q: float) -> float | None:
 LATENCY_FIELDS = (
     ("tick_ms", "tick start to the setpoint's publication: the node's own work per tick"),
     ("e2e_ms", "an action's receipt to the first setpoint flown from it (hil Shield "
-               "node; up to one 10 Hz period of it is the wait for the next tick)"),
+               "node; since 2026-11-11 the tick runs on the action's arrival: a deferred or "
+               "timer tick adds the wait for its poll)"),
     ("cam_age_ms", "age of the camera frame behind the flown action at its publication "
                    "(perception rail, VLA pilot), every tick a VLA decision's action flew"),
     ("cam_to_setpoint_ms", "camera frame to the FIRST setpoint flown from its decision "
@@ -2305,8 +2306,9 @@ def _render_kpi_summary(rep: dict) -> list[str]:
                  f"{_f(fs.get('null_never_trigger'), 3)} | {verdict} |")
     for rail, r in sorted((s.get("tick_budget") or {}).items()):
         for key, _ in LATENCY_FIELDS:
-            null = ("the node ticks on its own 10 Hz timer: up to one period of it is "
-                    "the wait for the next tick" if key == "e2e_ms" else
+            null = ("a tick run on the action's arrival is the node's own work; a "
+                    "deferred tick or a --tick-trigger timer run adds the wait for its "
+                    "poll or timer" if key == "e2e_ms" else
                     "frame ARRIVAL at the node, not render: render and transport before "
                     "it are not in it" if key.startswith("cam") else "-")
             got = isinstance(r.get(key), dict) and not r[key].get("status")
