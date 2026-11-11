@@ -145,6 +145,96 @@ the desktop while this was written), and every test runs on the fake rig
 - fastapi and uvicorn in the Orin's mission image (above).
 - `DELETE /dynamic_nfz/{id}` is not forwarded (not on the grant's list).
 
+### 2026-11-10 (fail-safe labels adopted) — the KPI-grade fail-safe labels are the rubric's on the rail vehicle with E5 read on the prescribed flight (RUBRIC-failsafe sections 7 and 8); a committed label artefact, and `--rescore-rail` scores a fetched campaign under (a), (r) and (r2)
+
+Scoring side only: nothing that flies changed (guardrail/fsm.py, shield.py,
+holdpoint.py, hold_flight.py and sitl/ are those of 22d434b).
+
+#### Decided
+- The user, 9-10 November 2026 ("follow the best practice that meets the KPI
+  criteria"): the KPI-grade fail-safe labels are derived on the vehicle that
+  flies them (docs/RUBRIC-failsafe.md section 8), with E5 read on the flight
+  the grant prescribes (section 7). Adopted AFTER the rig had shown the
+  autopilot's lag (rh01, 7 November) and after hil campaigns had been scored
+  on the earlier reading: not a pre-registered reading. The earlier readings
+  are still scored and printed beside it, the false and missed cells of each
+  by name.
+
+#### Changed
+- docs/RUBRIC-failsafe.md: sections 7 and 8 are adopted and say so (who,
+  when, after which flights, what stays printed); the amendment is named at
+  the top and beside E5's row. Section 8 is re-derived on the rig's own
+  fitted response (`--response rail`, the harness's `RAIL_VEHICLE`) and on
+  the code that flies; the draft of 7 November is kept below it.
+- `tools/failsafe_rubric.py`: `--response rail`; the unsafe request's owner
+  as the FSM's G3 reads it since 7 November (`untrusted_owner` "chain");
+  `--build-labels` builds the label artefact from the tool's own `--json`
+  outputs: four readings per cell and seed (a, a2 on the ideal vehicle; r,
+  r2 on the rail vehicle; section 3's E5 and the prescribed flight's), the
+  clauses that hold, the E5 spell, the commands and the code revision of
+  each run. A rail label undecided at the scenario's length is read on the
+  cell flown 35 s longer, which is what a rail flies (`rail_max_s`); what
+  is undecided even then stays undecided, and a decided label the longer
+  flight would read differently is listed, never changed.
+- docs/data/failsafe_labels_rail.json: the artefact for the smoke,
+  grant_example and nightly profiles (708 cell-seeds; under r2 345 of the
+  nightly's 672 expect a fail-safe, 291 on the ideal vehicle; 36 readings read
+  on the flight as long as the rail flies, none left undecided).
+- `experiments/sweep_scenarios.py --rescore-rail`: after the re-score, the
+  campaign's fail-safe trigger correctness under (a), (r) and (r2) - count,
+  rate, Wilson 95 % low, both nulls, and by name the censored, undecided
+  and unlabelled runs, the runs the campaign did not accept (no
+  scenario_score.json), the false and missed triggers and the runs judged on
+  a label read at the rail's length (with the count without them); (r2) is
+  marked the adopted KPI reading; Shield-off runs are left out and counted;
+  `--rail-labels` names another artefact; without one the table is not
+  printed and the exit code is 1. The table is in the `--out` JSON
+  (`failsafe_labels`).
+- experiments/templates: rail-mission-stub-vla and standoff-approach-angles
+  7 m pedestrian are worded as adopted (their labels are the ones of
+  48abc9a).
+- Tests: tests/test_failsafe_rubric.py (the artefact's four readings and
+  what it marks undecided; what it refuses; the committed artefact covers
+  every cell the rails fly and agrees with the templates), tests/
+  test_sweep.py (a campaign scored under each reading, naming what it left
+  out; the offline re-score prints the table and refuses to score without
+  labels).
+
+#### Measured
+- No label moved because the code moved: the rail labels are those of the 7
+  November derivation on the rig's fit (smoke 56 and nightly 672 cell-seeds,
+  both readings), identical on the harness of 9eed35b and on the code that
+  flies (112 of 112 smoke readings), and the ideal labels are the templates'
+  (0 of 764 disagree).
+- Against 48abc9a's labels (the Copter-4.5.7 fit) the rig's fit moves 14
+  cell-seeds (smoke 2, nightly 12): corridor-drift-angles at 0 deg and
+  corridor-drift-out are not expected (entered from a hover the request is
+  never over theta), gps-dropout lane 23.6 window 6-13 s is not expected (E3
+  does not hold 4.36 m from the fence).
+- 18 nightly cell-seeds (3 of the smoke's) are undecided at the scenario's
+  length and E5 on the flight as long as the rail flies (nfz-head-on,
+  dyn-nfz-rotate-step, time-window-opens-on-sideways-pilot,
+  dyn-nfz-spawn-ahead 30 m at 2 m/s); no decided label is read differently
+  there.
+- sm1111, the smoke at the commit that flies (22d434b), (a) / (r) / (r2):
+  39/45 = 0.867 (Wilson 0.738), 43/45 = 0.956 (0.852), 44/45 = 0.978
+  (0.884); under (r2) the one wrong run is sm1111_048 (wind-beyond-authority
+  12 m/s, missed); 2 runs the campaign did not accept are left out by name.
+- Campaigns, (a) / (r) / (r2): rh03 37/43, 41/43, 42/43 (38/40 and 39/40
+  without the three labels read longer: the figures of 7 November); hs05 7/7
+  on each with 2 censored; sm1110 40/45, 43/45, 44/45; ge1110 32/32 on each
+  (no cell there expects a fail-safe).
+
+#### Not done
+- tools/kpi_report.py is unchanged: the label table lives in `--rescore-
+  rail`, which already re-scores fetched rail runs against the campaign's
+  cells.
+- Decided rail labels were not all re-derived flown 35 s longer: the whole
+  smoke profile and the four nightly families with an undecided cell were
+  (0 differ); the rest of the nightly was not.
+- The nightly nt1111 (22d434b, 591 missions) was still flying when this was
+  written.
+
 ### 2026-11-10 (the Orin's tick, and a hand-back judged at speed) — a tick pays for one kind of hold work, never two; Loiter hands back only a request whose repair can be trusted from its hold point at the speed it asks for
 
 #### Found

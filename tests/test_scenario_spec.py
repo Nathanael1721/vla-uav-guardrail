@@ -586,7 +586,11 @@ def test_a_known_failure_pin_names_the_gates_it_fails_and_only_real_ones():
     # 4 since 2026-11-06, when gps-noise-within-margin's two noise-flicker
     # pins came off (with the accuracy reported, a ring re-touched within 3
     # sigma is not a new onset: TickInput.noise_marginal).
-    assert len(pinned) >= 4, [f.scenario_id for f in pinned]
+    # 3 since 2026-11-10 (docs/RUBRIC-failsafe.md section 7 adopted: E5 read
+    # on the flight the grant prescribes): rail-mission-stub-vla's RTL is the
+    # fail-safe its label expects and its pin is off.
+    assert len(pinned) >= 3, [f.scenario_id for f in pinned]
+    assert "rail-mission-stub-vla" not in {f.scenario_id for f in pinned}
     assert "gps-noise-within-margin" not in {f.scenario_id for f in pinned}
     assert "time-window-opens-on-vehicle" not in {f.scenario_id for f in pinned}
 

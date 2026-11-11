@@ -5039,12 +5039,151 @@ def rescore_rail_run(run_dir: Path, ep, defaults, *, rail_gates: str = "ideal") 
             "seed": ep.seed, "before": before, "after": after, "doc": doc}
 
 
+# The fail-safe label artefact (tools/failsafe_rubric.py --build-labels): the
+# rubric's labels of every cell and seed on the ideal and the rail vehicle,
+# under both readings of E5 (docs/RUBRIC-failsafe.md sections 3, 7 and 8).
+RAIL_LABELS = ROOT / "docs" / "data" / "failsafe_labels_rail.json"
+RAIL_LABELS_SCHEMA = "failsafe-labels/1"
+# The readings a rail campaign's fail-safe correctness is printed under, in
+# this order: the adopted KPI reading last, the earlier ones beside it.
+RAIL_LABEL_READINGS = (
+    ("a", "ideal-vehicle labels, E5 on the flight without a fail-safe (section 3)"),
+    ("r", "rail-vehicle labels, E5 on the flight without a fail-safe (sections 3, 8)"),
+    ("r2", "rail-vehicle labels, E5 on the prescribed flight (sections 7, 8)"),
+)
+
+
+def load_rail_labels(path: Path | None = None) -> dict:
+    """The label artefact as built, refused when it is not one."""
+    path = Path(path) if path is not None else RAIL_LABELS
+    doc = json.loads(path.read_text(encoding="utf-8"))
+    if doc.get("schema") != RAIL_LABELS_SCHEMA or not isinstance(doc.get("labels"), dict):
+        raise ValueError(f"{path}: not a {RAIL_LABELS_SCHEMA} label artefact")
+    return doc
+
+
+def rail_label_scores(runs: list[dict], labels: dict) -> dict:
+    """Fail-safe trigger correctness of fetched rail runs under each reading
+    of the labels (RAIL_LABEL_READINGS: (a), (r) and the adopted (r2)).
+
+    `runs`: one mapping per Shield-on run with `run`, `cell`, `seed`,
+    `triggered` (the re-scored failsafe_triggered), `censored` (it ended
+    in Loiter before the operator timeout: not measured) and, optionally,
+    `accepted` (False: the campaign did not accept the flight - its
+    scenario_score.json is missing because a check of the flight failed,
+    e.g. its stress was not realised - so it is not the cell's flight and
+    is left out, by name, as the campaign's own count leaves it out). Per
+    reading: the
+    count and rate over the runs with a verdict AND a decided label, the
+    Wilson 95 % lower bound and both nulls (guardrail.fsm.
+    score_failsafe_triggers), and BY NAME the runs left out - censored,
+    undecided (the label could not be decided in the scenario's length),
+    unlabelled (the cell and seed are not in the artefact), not measured (no
+    FSM verdict), not accepted - and the false and missed triggers. Nothing is pooled
+    across readings and nothing left out is counted as correct.
+
+    A rail flies 35 s longer than the scenario (rail_max_s) and its
+    fail-safe is read over that whole flight, so the artefact reads a rail
+    label that is undecided at the scenario's length on the cell flown that
+    much longer (`length` "rail"). Runs scored on such a label are named
+    (`label_flown_longer`) and the count without them is kept beside the
+    reading's (`at_scenario_length`), so what the longer reading adds is
+    never hidden in the total."""
+    from guardrail.fsm import score_failsafe_triggers
+    adopted = labels.get("adopted_kpi_reading")
+    out = {}
+    for key, what in RAIL_LABEL_READINGS:
+        pairs, short = [], []
+        names = {k: [] for k in ("false", "missed", "censored", "undecided", "unlabelled",
+                                 "not_measured", "not_accepted", "label_flown_longer")}
+        for it in runs:
+            tag = {"run": it["run"], "cell": it["cell"], "seed": it["seed"]}
+            lab = ((labels["labels"].get(it["cell"]) or {}).get(str(it["seed"])) or {}).get(key)
+            if it.get("accepted") is False:
+                names["not_accepted"].append(tag)
+            elif it.get("triggered") is None:
+                names["not_measured"].append(tag)
+            elif it.get("censored"):
+                names["censored"].append(tag)
+            elif lab is None:
+                names["unlabelled"].append(tag)
+            elif lab.get("expected") is None:
+                names["undecided"].append(tag)
+            else:
+                exp, trig = bool(lab["expected"]), bool(it["triggered"])
+                pairs.append((exp, trig))
+                if lab.get("length") == "rail":
+                    names["label_flown_longer"].append(tag)
+                else:
+                    short.append((exp, trig))
+                if trig and not exp:
+                    names["false"].append({**tag, "label": lab.get("clauses") or []})
+                elif exp and not trig:
+                    names["missed"].append({**tag, "label": lab.get("clauses") or []})
+        sc = score_failsafe_triggers(pairs, GRANT_FAILSAFE_TARGET)
+        out[key] = {"reading": what, "adopted_kpi_reading": key == adopted,
+                    "runs": len(runs), "scored": sc["scored"],
+                    "correct": sc["true_triggers"] + sc["true_non_triggers"],
+                    "failsafe_trigger_correctness": sc["failsafe_trigger_correctness"],
+                    "wilson_low_95": sc.get("wilson_low_95"),
+                    "null_always_trigger": sc["null_always_trigger"],
+                    "null_never_trigger": sc["null_never_trigger"],
+                    "expected_triggers": sc["expected_triggers"],
+                    "expected_non_triggers": sc["expected_non_triggers"],
+                    "at_scenario_length": {
+                        "scored": len(short), "correct": sum(1 for e, t in short if e == t)},
+                    **{k: v for k, v in names.items()}}
+    return out
+
+
+def rail_label_lines(scores: dict, labels: dict, path: Path) -> list[str]:
+    """The printed form of rail_label_scores: one block per reading."""
+    built = labels.get("built") or {}
+    n = next(iter(scores.values()))["runs"] if scores else 0
+    revs = ", ".join(str(r)[:12] for r in built.get("code_revisions") or ["?"])
+    L = [f"fail-safe trigger correctness of {n} Shield-on run(s), by label reading "
+         f"({_show(path)}, derived at {revs}):"]
+
+    def f(x):
+        return "n/m" if x is None else f"{x:.3f}"
+    for key, sc in scores.items():
+        mark = "  <- THE ADOPTED KPI READING" if sc["adopted_kpi_reading"] else ""
+        L.append(f"  ({key}) {sc['reading']}{mark}")
+        L.append(f"      {sc['correct']}/{sc['scored']} = {f(sc['failsafe_trigger_correctness'])}"
+                 f"  Wilson 95 % low {f(sc['wilson_low_95'])}  nulls: always-trigger "
+                 f"{f(sc['null_always_trigger'])}, never-trigger {f(sc['null_never_trigger'])}"
+                 f"  | censored {len(sc['censored'])}, undecided {len(sc['undecided'])}, "
+                 f"unlabelled {len(sc['unlabelled'])}, no verdict {len(sc['not_measured'])}, "
+                 f"not accepted {len(sc['not_accepted'])}")
+        if sc["label_flown_longer"]:
+            s0 = sc["at_scenario_length"]
+            L.append(f"      {len(sc['label_flown_longer'])} of them on a label undecided at the "
+                     f"scenario's length, read on the cell flown as long as the rail flies; "
+                     f"without them {s0['correct']}/{s0['scored']}")
+        for kind in ("false", "missed", "censored", "undecided", "unlabelled",
+                     "not_measured", "not_accepted", "label_flown_longer"):
+            for t in sc[kind]:
+                name = {"label_flown_longer": "longer", "not_measured": "no verdict",
+                        "not_accepted": "not acc."}.get(kind, kind)
+                L.append(f"      {name:10} {t['run']}  ({t['cell']}, seed {t['seed']})")
+    return L
+
+
 def rescore_rail_main(globs: list[str], episodes, defaults, rail_gates: str,
-                      out: Path) -> int:
+                      out: Path, labels_path: Path | None = None) -> int:
     """`--rescore-rail`: every run folder the globs name (relative ones from
     the repository root) re-scored by rescore_rail_run, one line each, the
     whole table to `out`. Exit 0 when every run was re-scored, 1 when one
-    could not be (no scenario record, or a cell this expansion lacks)."""
+    could not be (no scenario record, or a cell this expansion lacks).
+
+    Since 2026-11-10 the runs' fail-safe trigger correctness is printed, and
+    written under `failsafe_labels`, by label reading (rail_label_scores):
+    (a), (r) and (r2), the adopted KPI reading, from the label artefact
+    (`labels_path`, default RAIL_LABELS). Without the artefact that table is
+    not printed and the exit code is 1: a campaign scored on no labels is
+    not a score. A run the campaign did not accept (no scenario_score.json:
+    `before` None) is re-scored and printed like the others, but left out
+    of the label table by name (`not_accepted`)."""
     runs: list[Path] = []
     for g in globs:
         pat = g if Path(g).is_absolute() else str(ROOT / g)
@@ -5071,12 +5210,37 @@ def rescore_rail_main(globs: list[str], episodes, defaults, rail_gates: str,
         cols = [f"before={b.get('status')}({len(b.get('gates_failed') or [])})"]
         cols += [f"{k}={v['status']}({len(v['gates_failed'])})" for k, v in item["after"].items()]
         print(f"  {run_dir.name:<44} " + "  ".join(cols))
+    doc = {"schema": "rail-rescore/1", "rail_gates": rail_gates, "runs": table}
+    labels_path = Path(labels_path) if labels_path is not None else RAIL_LABELS
+    no_labels = False
+    try:
+        labels = load_rail_labels(labels_path)
+    except (OSError, ValueError) as e:
+        no_labels = True
+        print(f"\nNO LABEL TABLE: {type(e).__name__}: {e}")
+    else:
+        scored = [{"run": it["run"], "cell": it["cell"], "seed": it["seed"],
+                   "triggered": (it["doc"].get("kpi") or {}).get("failsafe_triggered"),
+                   "censored": bool((it["doc"].get("kpi") or {}).get("failsafe_censored")),
+                   "accepted": it["before"] is not None}
+                  for it in table
+                  if "error" not in it and (it["doc"].get("metrics") or {}).get("shield") == "on"]
+        scores = rail_label_scores(scored, labels)
+        doc["failsafe_labels"] = {
+            "artefact": _show(labels_path), "built": labels.get("built"),
+            "adopted_kpi_reading": labels.get("adopted_kpi_reading"),
+            "shield_off_runs_left_out": sum(
+                1 for it in table if "error" not in it
+                and (it["doc"].get("metrics") or {}).get("shield") != "on"),
+            "readings": scores}
+        print()
+        for line in rail_label_lines(scores, labels, labels_path):
+            print(line)
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(json.dumps(_json_safe({"schema": "rail-rescore/1", "rail_gates": rail_gates,
-                                          "runs": table}), indent=1) + "\n",
+    out.write_text(json.dumps(_json_safe(doc), indent=1) + "\n",
                    encoding="utf-8", newline="\n")
     print(f"\n{len(table) - problems}/{len(table)} run(s) re-scored -> {_show(out)}")
-    return 1 if problems or not table else 0
+    return 1 if problems or not table or no_labels else 0
 
 
 def hil_plan(episodes, defaults, cfg: HilConfig, campaign: str,
@@ -6528,6 +6692,11 @@ def main(argv: list[str] | None = None) -> int:
                          "scenario record) with this checkout's scorer, against the "
                          "profile's or library's cells; writes nothing beside the runs "
                          "- the before / after table goes to --out (required)")
+    ap.add_argument("--rail-labels", default=None, metavar="JSON",
+                    help="with --rescore-rail: the fail-safe label artefact its "
+                         "correctness table reads (default docs/data/"
+                         "failsafe_labels_rail.json, tools/failsafe_rubric.py "
+                         "--build-labels)")
     ap.add_argument("--only", nargs="*")
     ap.add_argument("--out", default=None,
                     help="results JSON (default: demo/out/sweep/sweep.json, or "
@@ -6656,7 +6825,9 @@ def main(argv: list[str] | None = None) -> int:
                   "written beside the runs)")
             return 2
         return rescore_rail_main(args.rescore_rail, episodes, lib.defaults,
-                                 args.rail_gates, Path(args.out))
+                                 args.rail_gates, Path(args.out),
+                                 labels_path=(Path(args.rail_labels)
+                                              if args.rail_labels else None))
     if args.rail_gates != "ideal" and args.backend not in RAIL_BACKENDS:
         print("REFUSED: --rail-gates is for a rail's runs (--backend sitl / hil, "
               "--rescore-rail)")

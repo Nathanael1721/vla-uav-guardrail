@@ -495,7 +495,10 @@ def test_the_rail_mission_scored_from_the_rail_log_gets_the_headless_verdict():
     headless = S.episode_verdict(spec, res, {}, 0)
     # A known failure since 2026-11-02: past the Loiter timeout the FSM sends
     # it home, a false fail-safe by the rubric (N1), pinned on the label only.
-    assert headless[0] == "known_failure", headless
+    # Since 2026-11-10 (docs/RUBRIC-failsafe.md section 7 adopted: E5 read on
+    # the flight the grant prescribes) the same RTL is the fail-safe its label
+    # expects (E5), the pin is off, and the headless verdict is a pass.
+    assert headless[0] == "pass", headless
     rows = _as_rail_rows(run.rows)
     # what main() scored before: nothing measured, a FAIL for a clean flight
     old = S.score(spec, rows, {"seed_applied": True}, run.policy)
@@ -1531,13 +1534,14 @@ def test_a_new_failure_in_a_pinned_cell_is_a_failure_not_the_old_defect():
     Since 2026-11-02 the fail-safe rubric (docs/RUBRIC-failsafe.md) labels
     three-simultaneous-violations and dyn-nfz-spawn-ahead's theta cells as
     expecting the fail-safe they fly, and both pins came off. The cases are
-    the pins the library still carries: the rail mission's false fail-safe
-    (a whole-scenario pin on the label), standoff-approach-angles' 7 m
-    pedestrian cell (a cell pin on the goal, outcome and label), the
-    corridor-swap-shifted RTL that ends outside the swapped corridor (two
-    corridor gates) and the standoff wedge (the goal)."""
-    cases = (("rail-mission-stub-vla", {}),
-             ("standoff-approach-angles", {"offset_m": 7, "subject_class": "pedestrian",
+    the pins the library still carries: standoff-approach-angles' 7 m
+    pedestrian cell (a cell pin on the goal), the corridor-swap-shifted RTL
+    that ends outside the swapped corridor (two corridor gates) and the
+    standoff wedge (the goal). Since 2026-11-10 (docs/RUBRIC-failsafe.md
+    section 7 adopted: E5 read on the flight the grant prescribes) the rail
+    mission's pin on its label is off - its fail-safe is the one its label
+    expects - and the 7 m cell's pin keeps only the goal."""
+    cases = (("standoff-approach-angles", {"offset_m": 7, "subject_class": "pedestrian",
                                            "variant": 0}),
              ("corridor-swap-shifted", {}),
              ("standoff-wedge", {}))
@@ -3688,6 +3692,88 @@ def test_the_proposed_rail_gates_move_only_the_vehicle_pinned_bounds():
     assert S.episode_verdict(spec, {}, {}, 0, gates={})[0] != "pass", "gates={} skipped labels"
 
 
+def test_a_rail_campaign_is_scored_under_each_label_reading_and_names_what_it_left_out():
+    """rail_label_scores (2026-11-10, docs/RUBRIC-failsafe.md sections 7 and
+    8): a fetched campaign's fail-safe trigger correctness under (a) the
+    ideal labels, (r) the rail labels on section 3's reading and (r2) the
+    rail labels on the prescribed flight, the adopted KPI reading - each with
+    its count, rate, Wilson bound and both nulls over the runs that have a
+    verdict and a decided label, and BY NAME the runs it left out (censored,
+    undecided, unlabelled, no verdict, not accepted by the campaign) and the
+    false and missed triggers. Nothing left out is counted as correct."""
+    def lab(a, r, r2):
+        def one(v):
+            return {"expected": v, "clauses": ["E5"] if v else [], "e5_spell_s": 0.0,
+                    "undecided": v is None}
+        return {"a": one(a), "a2": one(a), "r": one(r), "r2": one(r2)}
+    labels = {"adopted_kpi_reading": "r2", "labels": {
+        "held": {"1001": lab(False, True, True)},        # the rail vehicle expects it
+        "moved": {"1001": lab(False, False, True)},      # section 7 moves it
+        "free": {"1001": lab(False, False, False)},
+        "open": {"1001": lab(False, None, None)},        # undecided on the rail vehicle
+        "loit": {"1001": lab(True, True, True)},
+        # undecided on the rail vehicle at the scenario's length; r2 read on
+        # the cell flown as long as the rail flies
+        "late": {"1001": lab(False, None, True)}}}
+    labels["labels"]["late"]["1001"]["r2"]["length"] = "rail"
+    runs = [{"run": "c_001", "cell": "held", "seed": 1001, "triggered": True, "censored": False},
+            {"run": "c_002", "cell": "moved", "seed": 1001, "triggered": True, "censored": False},
+            {"run": "c_003", "cell": "free", "seed": 1001, "triggered": False, "censored": False},
+            {"run": "c_004", "cell": "open", "seed": 1001, "triggered": False, "censored": False},
+            {"run": "c_005", "cell": "loit", "seed": 1001, "triggered": False, "censored": True},
+            {"run": "c_006", "cell": "loit", "seed": 1001, "triggered": False, "censored": False},
+            {"run": "c_007", "cell": "gone", "seed": 1001, "triggered": True, "censored": False},
+            {"run": "c_008", "cell": "free", "seed": 1001, "triggered": None, "censored": False},
+            {"run": "c_009", "cell": "late", "seed": 1001, "triggered": True, "censored": False},
+            # flown, but not accepted by the campaign (its stress was not
+            # realised, sm1111_044 and _047): not the cell's flight, whatever
+            # its trigger
+            {"run": "c_010", "cell": "held", "seed": 1001, "triggered": False, "censored": False,
+             "accepted": False}]
+    sc = S.rail_label_scores(runs, labels)
+    assert list(sc) == ["a", "r", "r2"] and [v["adopted_kpi_reading"] for v in sc.values()] == [
+        False, False, True]
+
+    def names(v, kind):
+        return [t["run"] for t in v[kind]]
+    a, r, r2 = sc["a"], sc["r"], sc["r2"]
+    # (a): 6 scored (held, moved, free, open, loit c_006, late); held, moved
+    # and late false, loit missed.
+    assert (a["correct"], a["scored"]) == (2, 6), a
+    assert names(a, "false") == ["c_001", "c_002", "c_009"] and names(a, "missed") == ["c_006"]
+    assert a["failsafe_trigger_correctness"] == round(2 / 6, 6)
+    assert (a["null_always_trigger"], a["null_never_trigger"]) == (round(1 / 6, 6),
+                                                                   round(5 / 6, 6)), a
+    # (r): the open and the late cell are undecided, not correct non-triggers.
+    assert (r["correct"], r["scored"]) == (2, 4), r
+    assert names(r, "false") == ["c_002"] and names(r, "missed") == ["c_006"]
+    assert names(r, "undecided") == ["c_004", "c_009"]
+    # (r2): the adopted reading; the late cell is scored on its label flown
+    # as long as the rail flies, named, and the count without it kept.
+    assert (r2["correct"], r2["scored"]) == (4, 5), r2
+    assert names(r2, "false") == [] and names(r2, "missed") == ["c_006"]
+    assert r2["failsafe_trigger_correctness"] == 0.8 and 0.0 < r2["wilson_low_95"] < 0.8
+    assert (r2["null_always_trigger"], r2["null_never_trigger"]) == (0.8, 0.2), r2
+    assert names(r2, "label_flown_longer") == ["c_009"]
+    assert r2["at_scenario_length"] == {"scored": 4, "correct": 3}, r2
+    assert a["at_scenario_length"] == {"scored": 6, "correct": 2} and not names(
+        a, "label_flown_longer")
+    for v in sc.values():
+        assert v["runs"] == 10
+        assert names(v, "censored") == ["c_005"] and names(v, "unlabelled") == ["c_007"]
+        assert names(v, "not_measured") == ["c_008"] and names(v, "not_accepted") == ["c_010"]
+        left = sum(len(v[k]) for k in ("censored", "undecided", "unlabelled", "not_measured",
+                                       "not_accepted"))
+        assert v["scored"] + left == 10, v
+    lines = S.rail_label_lines(sc, {"built": {"code_revisions": ["f" * 40]}, **labels},
+                               S.RAIL_LABELS)
+    text = "\n".join(lines)
+    assert "(r2)" in text and "THE ADOPTED KPI READING" in text and text.count("ADOPTED") == 1
+    assert "4/5 = 0.800" in text and "missed     c_006" in text and "undecided  c_004" in text
+    assert "without them 3/4" in text and "longer     c_009" in text
+    assert "not accepted 1" in text and "not acc.   c_010" in text
+
+
 def test_a_fetched_rail_run_is_rescored_offline_and_left_as_it_was():
     """--rescore-rail: a fetched run folder read again with this checkout's
     scorer - the campaign's own path (sitl_extra over the scenario's window,
@@ -3733,6 +3819,46 @@ def test_a_fetched_rail_run_is_rescored_offline_and_left_as_it_was():
         assert item["doc"]["gates_basis"] == "ardupilot-rest"
         assert item["doc"]["other_verdicts"]["ideal"]["status"] == "pass"
         assert item["doc"]["kpi"]["anticipated_ticks_nfz-school"] > 0
+        # The fail-safe label table (2026-11-10). The committed artefact
+        # holds the profiles' seeds, not the library's seed 0: the run is
+        # named unlabelled under every reading, never counted as correct.
+        fl = json.loads(out.read_text(encoding="utf-8"))["failsafe_labels"]
+        assert fl["adopted_kpi_reading"] == "r2" and list(fl["readings"]) == ["a", "r", "r2"]
+        for sc in fl["readings"].values():
+            assert (sc["scored"], [t["run"] for t in sc["unlabelled"]]) == (0, ["rs_001_twoov"])
+            assert sc["failsafe_trigger_correctness"] is None, sc
+        # With labels for it: one reading each way, and one undecided.
+        trig = item["doc"]["kpi"]["failsafe_triggered"]
+        assert trig in (True, False), trig
+
+        def lab(v):
+            return {"expected": v, "clauses": ["E5"] if v else [], "e5_spell_s": 0.0,
+                    "undecided": v is None}
+        art = Path(td) / "labels.json"
+        art.write_text(json.dumps({
+            "schema": S.RAIL_LABELS_SCHEMA, "adopted_kpi_reading": "r2",
+            "built": {"code_revisions": ["0" * 40]},
+            "labels": {ep.episode_id: {str(ep.seed): {
+                "a": lab(trig), "a2": lab(trig), "r": lab(None), "r2": lab(not trig)}}}}),
+            encoding="utf-8")
+        rc = S.main(["--seed", "0", "--only", spec_id, "--rescore-rail", str(rd),
+                     "--rail-labels", str(art), "--out", str(out)])
+        assert rc == 0, rc
+        rd3 = json.loads(out.read_text(encoding="utf-8"))["failsafe_labels"]["readings"]
+        assert (rd3["a"]["correct"], rd3["a"]["scored"]) == (1, 1), rd3["a"]
+        assert rd3["a"]["failsafe_trigger_correctness"] == 1.0 and not rd3["a"]["adopted_kpi_reading"]
+        assert rd3["r"]["scored"] == 0 and [t["run"] for t in rd3["r"]["undecided"]] == [
+            "rs_001_twoov"], rd3["r"]
+        assert (rd3["r2"]["correct"], rd3["r2"]["scored"]) == (0, 1) and rd3["r2"][
+            "adopted_kpi_reading"], rd3["r2"]
+        wrong = rd3["r2"]["false" if trig else "missed"]
+        assert [(t["run"], t["cell"], t["seed"]) for t in wrong] == [
+            ("rs_001_twoov", ep.episode_id, ep.seed)], rd3["r2"]
+        assert {p.name: p.read_bytes() for p in rd.iterdir()} == before, "the run was touched"
+        # No artefact, no score: said, and the exit code is 1.
+        rc = S.main(["--seed", "0", "--only", spec_id, "--rescore-rail", str(rd),
+                     "--rail-labels", str(Path(td) / "none.json"), "--out", str(out)])
+        assert rc == 1 and "failsafe_labels" not in json.loads(out.read_text(encoding="utf-8"))
         bad = Path(td) / "rs_002_bare"
         bad.mkdir()
         (bad / "metrics.json").write_text("{}", encoding="utf-8")
