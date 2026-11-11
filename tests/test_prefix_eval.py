@@ -35,6 +35,9 @@ aimed at one of them:
     replay that ignores the record fails one half), the constants only for a
     run that recorded none, and a run known to have flown another Shield, or
     one whose record cannot be rebuilt, refused before any model loads;
+  * a run whose Shield flew the FSM's previous default (before X9,
+    2026-11-11) is judged under that law, rebuilt exactly, and says so;
+    today's default is replayed as before and any other hash is refused;
   * the model is loaded at the flight's precision, and a replay at another
     one says so;
   * the flown half (tools/score_csp_flights.py): the plan is the A/B then
@@ -463,6 +466,65 @@ def test_a_shield_record_the_replay_cannot_rebuild_is_refused():
             raise AssertionError("a replay Shield without the flight's path_repair passed")
     finally:
         PE.shield_kwargs = real
+
+
+def test_a_run_flown_under_the_fsm_default_before_x9_is_judged_under_that_law():
+    """2026-11-11. X9 (FSMConfig.hold_kept) moved the default FSM's config
+    hash (sha256:e0d9267f... -> sha256:b9103b0d...), so a run whose Shield
+    flew the FSM on the previous default was refused as "not the defaults".
+    That hash names a law the replay can rebuild exactly (hold_kept "off"
+    hashes as the default did at 22d434b): the replay builds that law, never
+    today's (the read-back of the first replay Shield refuses today's for
+    it), and the report and the summary say which law judged the frames.
+    Today's default is replayed as before; a hash no named law has - here
+    the default of 9eed35b, hold_kept "off" with handback_request "as_held"
+    - is still refused."""
+    from guardrail.fsm import FSMConfig
+    old = FSMConfig(hold_kept="off")
+    assert old.digest.startswith("sha256:e0d9267f"), old.digest
+    assert FSMConfig().digest.startswith("sha256:b9103b0d"), FSMConfig().digest
+    grant = dict(lookahead_s=PE.LOOKAHEAD_S, dt=PE.LOOKAHEAD_DT_S)
+    rec = _shield_rec(escalation=old, **grant)
+    assert rec["escalation_fsm"] is True and rec["fsm_config_hash"] == old.digest, rec
+    cfg = PE.flight_shield_settings({"shield": rec})
+    esc = cfg["kwargs"]["escalation"]
+    assert isinstance(esc, FSMConfig) and esc.hold_kept == "off", esc
+    assert esc.digest == old.digest, esc.digest
+    assert cfg["fsm_law"] == {"recorded_hash": old.digest, "law": "previous default",
+                              "overrides": {"hold_kept": "off"},
+                              "was": PE.FSM_PREVIOUS_DEFAULTS[0][1]}, cfg["fsm_law"]
+    assert "22d434b" in cfg["note"] and "judged under that law" in cfg["note"], cfg["note"]
+    rep = PE.evaluate(PE.load_run(_run(shield=rec, states=FAR_SOUTH)), Deaf())
+    sh = rep["shield"]
+    assert sh["matches_flight"] is True, sh
+    assert sh["fsm_law"]["overrides"] == {"hold_kept": "off"}, sh["fsm_law"]
+    assert sh["replay_kwargs"]["escalation"]["hold_kept"] == "off", sh["replay_kwargs"]
+    assert sh["replay_kwargs"]["escalation"]["digest"] == old.digest, sh["replay_kwargs"]
+    json.dumps(rep)                                    # the report stays JSON
+    lines = PE.summary_lines(rep)
+    assert any("previous default" in ln and "hold_kept 'off'" in ln and old.digest in ln
+               for ln in lines), lines
+    # Rebuilding today's default for that hash is caught by the read-back.
+    today = PE.Shield(load_policy(URBAN), **dict(cfg["kwargs"], escalation=True))
+    try:
+        PE._check_replay_shield(today, cfg)
+    except ValueError as e:
+        assert "fsm_config_hash" in str(e), e
+    else:
+        raise AssertionError("today's default FSM passed for the flight's previous one")
+    # Today's default: replayed as before, nothing to say.
+    now = PE.flight_shield_settings({"shield": _shield_rec(escalation=True, **grant)})
+    assert now["kwargs"]["escalation"] is True and now["note"] is None, now
+    assert now["fsm_law"]["law"] == "default" and now["fsm_law"]["overrides"] == {}, now
+    # A hash no named law has: refused, before any model loads.
+    older = FSMConfig(hold_kept="off", handback_request="as_held")
+    assert older.digest.startswith("sha256:3b54b4e3"), older.digest
+    try:
+        PE.flight_shield_settings({"shield": _shield_rec(escalation=older, **grant)})
+    except ValueError as e:
+        assert older.digest in str(e) and "previous default" in str(e), e
+    else:
+        raise AssertionError(f"an FSM config {older.digest} no named law has was accepted")
 
 
 def test_the_replay_loads_the_model_at_the_flights_precision():

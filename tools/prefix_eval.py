@@ -41,9 +41,16 @@ settings now come from the run (`flight_shield_settings`):
     2026-11-07): the replay Shield is rebuilt from it, and the first one built
     is read back with the same function; any difference, or a setting the
     replay cannot give (a rule clock, an obstacle or road map, an FSM config
-    other than the defaults, a key it does not know) refuses the run. A
-    recorded forecast other than the grant's is replayed as flown and FLAGGED
-    (`shield.grant_forecast` false, a summary line).
+    that is neither today's default nor a previous default this file names,
+    a key it does not know) refuses the run. A recorded forecast other than
+    the grant's is replayed as flown and FLAGGED (`shield.grant_forecast`
+    false, a summary line).
+  * an FSM config hash that is a previous default (FSM_PREVIOUS_DEFAULTS,
+    since 2026-11-11): the run is judged under the law it flew, rebuilt
+    exactly (its hash is the recorded one), never under today's default, and
+    the report says which (`shield.fsm_law`, the note, a summary line). The
+    only one named is the default until X9 (FSMConfig.hold_kept, 2026-11-11):
+    `sha256:e0d9267f...`, the FSM at 22d434b, which hold_kept "off" hashes to.
   * no record: the demo's Shield of the time, Shield(policy, LOOKAHEAD_S,
     LOOKAHEAD_DT_S) with the FSM on (guardrail.shield's constants), flagged as
     unrecorded. A run that started before 8d1a0f3 flew 3 s / 0.5 s instead,
@@ -135,6 +142,16 @@ SHIELD_RECORD_KEYS = frozenset({
     "fsm_config_hash", "theta_horizon_s", "repair_mode", "path_repair",
     "segment_check", "repair_order", "hold_points", "recovery_law",
     "velocity_response", "clock", "obstacle_map", "road_map"})
+# Earlier default escalation-FSM laws a recorded Shield may name by its config
+# hash, each as the FSMConfig fields that rebuild it from today's defaults
+# (its digest is then the recorded hash: FSMConfig.digest leaves a field on
+# its legacy value out) and what it was. A run that names one is judged under
+# that law and the report says so; any other hash but today's is refused.
+FSM_PREVIOUS_DEFAULTS = (
+    ({"hold_kept": "off"},
+     "the default until 2026-11-11 (22d434b), before edge X9 judged whether a "
+     "Loiter's hold is kept (FSMConfig.hold_kept \"off\")"),
+)
 
 
 # --------------------------------------------------------------------------- #
@@ -185,10 +202,35 @@ def _run_policy(meta: dict):
 # The flight's Shield (module docstring, THE SHIELD IS THE FLIGHT'S)
 # --------------------------------------------------------------------------- #
 
+def recorded_fsm_law(rec: dict) -> dict | None:
+    """The escalation-FSM law a recorded Shield flew, from its config hash:
+    None when it flew no FSM, else {"recorded_hash", "law" ("default" or
+    "previous default"), "overrides" (the FSMConfig fields that rebuild it
+    from today's defaults; {} for today's), "was" (what it was, None for
+    today's), "config" (the FSMConfig to build; None: today's defaults)}.
+    ValueError for a hash that is neither today's default nor one of
+    FSM_PREVIOUS_DEFAULTS: this replay cannot rebuild it."""
+    if not rec.get("escalation_fsm"):
+        return None
+    want, default = rec.get("fsm_config_hash"), FSMConfig().digest
+    if want == default:
+        return {"recorded_hash": want, "law": "default", "overrides": {},
+                "was": None, "config": None}
+    for over, was in FSM_PREVIOUS_DEFAULTS:
+        cfg = FSMConfig(**over)
+        if want == cfg.digest:
+            return {"recorded_hash": want, "law": "previous default",
+                    "overrides": dict(over), "was": was, "config": cfg}
+    raise ValueError(f"the flight's escalation FSM config {want} is neither the "
+                     f"defaults' {default} nor a previous default this replay "
+                     f"knows (FSM_PREVIOUS_DEFAULTS); it cannot rebuild that FSM")
+
+
 def shield_kwargs(rec: dict) -> dict:
     """Shield(...) keyword arguments that rebuild a recorded Shield
     (real_vla_demo.shield_record). ValueError for anything this replay cannot
-    give a Shield: it would judge the frames with another one."""
+    give a Shield: it would judge the frames with another one. A recorded
+    previous default FSM law (recorded_fsm_law) is rebuilt as that law."""
     unknown = sorted(set(rec) - SHIELD_RECORD_KEYS)
     if unknown:
         raise ValueError(f"the run records Shield setting(s) {unknown} this replay "
@@ -200,14 +242,11 @@ def shield_kwargs(rec: dict) -> dict:
         raise ValueError(f"the flight's Shield had a rule clock ({rec['clock']}); this "
                          f"replay has none, so its time windows would read differently")
     kw: dict = {"lookahead_s": float(rec["lookahead_s"]), "dt": float(rec["dt_s"])}
-    if rec.get("escalation_fsm"):
-        want, default = rec.get("fsm_config_hash"), FSMConfig().digest
-        if want != default:
-            raise ValueError(f"the flight's escalation FSM config {want} is not the "
-                             f"defaults' {default}; this replay builds only the defaults")
-        kw["escalation"] = True
-    else:
+    law = recorded_fsm_law(rec)
+    if law is None:
         kw["escalation"] = False
+    else:
+        kw["escalation"] = True if law["config"] is None else law["config"]
     for k in ("theta_horizon_s", "repair_mode", "path_repair", "segment_check",
               "hold_points", "recovery_law"):
         if k in rec:
@@ -239,19 +278,29 @@ def flight_shield_settings(meta: dict, *, allow_mismatch: bool = False) -> dict:
     None, "source", "recorded", "matches_flight" (True: rebuilt from the
     record and checked against it when the first Shield is built; None: not
     recorded, the constants assumed; False: known to differ, replayed only
-    under allow_mismatch), "grant_forecast", "note"}. ValueError for a record
+    under allow_mismatch), "grant_forecast", "fsm_law", "note"}. fsm_law is
+    the escalation FSM's law the flight recorded (recorded_fsm_law without
+    the config object; None: no FSM, or no record). ValueError for a record
     that cannot be rebuilt, and for an unrecorded run known to have flown
     3 s / 0.5 s unless allow_mismatch."""
     rec = meta.get("shield")
     if rec is not None:
         kw = shield_kwargs(rec)
+        law = recorded_fsm_law(rec)
         grant = (kw["lookahead_s"] == LOOKAHEAD_S and kw["dt"] == LOOKAHEAD_DT_S)
+        notes = [] if grant else [
+            f"the flight's Shield forecast {kw['lookahead_s']:g} s at "
+            f"{kw['dt']:g} s, not the grant's {LOOKAHEAD_S:g} s at "
+            f"{LOOKAHEAD_DT_S:g} s; replayed as flown"]
+        if law is not None and law["config"] is not None:
+            notes.append(f"the flight's escalation FSM config {law['recorded_hash']} is "
+                         f"{law['was']}; judged under that law as flown, not today's "
+                         f"default {FSMConfig().digest}")
         return {"kwargs": kw, "record": rec, "source": "vla_run.json shield",
                 "recorded": True, "matches_flight": True, "grant_forecast": grant,
-                "note": None if grant else (
-                    f"the flight's Shield forecast {kw['lookahead_s']:g} s at "
-                    f"{kw['dt']:g} s, not the grant's {LOOKAHEAD_S:g} s at "
-                    f"{LOOKAHEAD_DT_S:g} s; replayed as flown")}
+                "fsm_law": (None if law is None
+                            else {k: v for k, v in law.items() if k != "config"}),
+                "note": "; ".join(notes) or None}
     kw = {"lookahead_s": LOOKAHEAD_S, "dt": LOOKAHEAD_DT_S}
     before = _started_before_constants(meta.get("started_utc"))
     if before:
@@ -264,9 +313,11 @@ def flight_shield_settings(meta: dict, *, allow_mismatch: bool = False) -> dict:
                                    "constants anyway, flagged")
         return {"kwargs": kw, "record": None, "source": "guardrail.shield constants",
                 "recorded": False, "matches_flight": False, "grant_forecast": True,
+                "fsm_law": None,
                 "note": why + "; replayed with the constants under --allow-shield-mismatch"}
     return {"kwargs": kw, "record": None, "source": "guardrail.shield constants",
             "recorded": False, "matches_flight": None, "grant_forecast": True,
+            "fsm_law": None,
             "note": ("the run records no Shield (vla_run.json before 2026-11-07); "
                      "assumed the demo's Shield of the time: the constants, FSM on")}
 
@@ -525,8 +576,9 @@ def evaluate(run: dict, model: Callable[[bytes, str], list], *, policy=None,
 
 def shield_report(cfg: dict) -> dict:
     """flight_shield_settings' answer, JSON-ready (the keyword arguments as
-    plain values)."""
+    plain values; an FSMConfig as its fields and its hash)."""
     kw = {k: (v.to_dict() if isinstance(v, VelocityResponse)
+              else v.to_dict() | {"digest": v.digest} if isinstance(v, FSMConfig)
               else list(v) if isinstance(v, tuple) else v)
           for k, v in cfg["kwargs"].items()}
     return {k: v for k, v in cfg.items() if k != "kwargs"} | {"replay_kwargs": kw}
@@ -546,6 +598,12 @@ def summary_lines(rep: dict) -> list[str]:
                    f"the flight's: {sh['matches_flight']}"
                    + ("" if sh["grant_forecast"] else "; NOT the grant's forecast")
                    + (f"; {sh['note']}" if sh.get("note") else ""))
+        law = sh.get("fsm_law")
+        if law:
+            over = ", ".join(f"{k} {v!r}" for k, v in law["overrides"].items())
+            out.append(f"escalation FSM law: {law['law']}"
+                       + (f" ({over}), judged under the law it flew" if over else "")
+                       + f"; config hash {law['recorded_hash']}")
     for arm, a in rep["arms"].items():
         out.append(f"  {arm:8s} repair {a['repairs']}/{a['frames']} "
                    f"(rate {a['repair_rate']}), size mean {a['repair_mps_mean']} "
