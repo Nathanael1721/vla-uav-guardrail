@@ -809,6 +809,24 @@ reporting an absolute position, so ArduCopter's EKF failsafe
 (`ArduCopter/ekf_check.cpp`, 1 s at 10 Hz, FS_EKF_ACTION 1) lands the
 aircraft - a takeover on the rail.
 
+**Since 2026-11-12 X8 waits for the autopilot.** The node reads
+ArduPilot's EKF_STATUS_REPORT from `/uas1/mavlink_source`
+(`State.estimator_ok`, docs/DESIGN-escalation-fsm.md "2026-11-12: X8 on the
+autopilot's own estimator"). While EKF3 reports an absolute position, the
+Shield takes the pose as certified and holds no dead reckoning against it.
+X8 fires when the autopilot declares the position lost, by its own failsafe
+rule. Before flying it:
+
+- Re-sign the SROS 2 keystore from `sitl/sros2_policy.xml`
+  (`bash tools/sros2_setup.sh --pki <lab PKI> --permissions-only`), which
+  now grants the Shield that subscription.
+- After a flight, check `fix_quality.estimator.messages` > 0 in
+  metrics.json.
+
+A refused subscription is recorded in metrics.json
+(`fix_quality.estimator.refused`), and the node then flies on `fix_ok` and
+the old dead reckoning.
+
 **Labels SITL's physics may not reach** (none relabelled; the rubric's labels
 stand, and a disagreement is a finding to report):
 

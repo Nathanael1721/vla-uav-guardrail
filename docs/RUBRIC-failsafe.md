@@ -360,7 +360,9 @@ need next, which is why it was not narrowed.
   the hil node reports `fix_ok`; since 2026-11-12 the rail labels read a
   denial as the rail realises it, EKF3's dead-reckoned estimate - section 8,
   "2026-11-12" - and on the rig X8's 0.5 m/s drift allowance, not E3, is
-  what fires on lane 23.6 at 4-11 and 6-13 s: an open decision.)
+  what fires on lane 23.6 at 4-11 and 6-13 s: an open decision. Later on
+  2026-11-12 the node reads the autopilot's own verdict instead, ArduPilot's
+  EKF failsafe input included: section 8.)
 - E2 is a parameter clause (the declared wind against the harness's
   6.4 m/s authority), and the SITL airframe on the rig holds 8 m/s: its
   8 m/s cells are fail-safes by the operator timeout (G5), not by a hold
@@ -681,6 +683,29 @@ would not, by 0.01 m on the closest trajectory (at 0.24 m/s it fires at
 13.2 s). The allowance is a judgement recorded with every X8, an eighth of
 the speed cap, and a real IMU drifts faster than SITL's; choosing it for a
 rail is a decision, not a label question, and nothing here changed it.
+
+**The answer taken (2026-11-12, later the same day): not the constant,
+the autopilot's own verdict.** The ROS 2 node now reads ArduPilot's
+EKF_STATUS_REPORT. While the autopilot reports a valid absolute horizontal
+position, the handed pose is certified: it is the estimate the autopilot
+itself navigates on. X8 fires when the autopilot declares that position
+lost, by its own EKF failsafe rule. The dead reckoning and its allowance
+remain the law only where no such verdict is reported
+(docs/DESIGN-escalation-fsm.md, "2026-11-12: X8 on the autopilot's own
+estimator").
+
+- No clause and no label changed.
+- On the 30 rig denials EKF3 kept its position for 6.8-6.9 s and dropped it
+  for at most 0.21 s before the GPS returned, so the verdict never went
+  against the position.
+- Replayed on all 731 rig flights, no flight takes X8 under it, including
+  nt1111_568-573.
+- The headless rail vehicle flies those cells as the rig flew their
+  lane-23.6 neighbours (G1, G7, no fail-safe).
+- Predicted (r2) for nt1111 with X9: 567/567. Not flown.
+
+What it leaves to the policy: while the autopilot vouches for its estimate,
+the estimate's error (up to 1.47 m on SITL) is covered by the margin alone.
 
 ### The KPI-grade campaigns, scored
 
