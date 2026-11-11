@@ -16,6 +16,235 @@ shipped change and recorded as one.
 
 ## [Unreleased]
 
+### 2026-11-11 (hil rig flights, 7-11 Nov) — the stress library flown on the hil rig: three KPI-grade smoke campaigns, the grant's example sweep and the hold shakedowns; P0 escapes 0 on every Shield-on mission; the rig-only defects they found, their fixes, and what is still open
+
+The rig of the 2026-11-06 (hil) entry: ArduCopter 4.5.7 SITL and
+mavlink-routerd in WSL on the desktop; MAVROS 2, the Shield node and the VLA
+stub in the companion container on the AGX Orin. Every mission was flown by
+`experiments/sweep_scenarios.py --backend hil`, one scenario per mission, and
+scored by the campaign (`score`, `episode_verdict`). The pilot is the stub
+(`guardrail/vla_stub.py`), not a learned model. Every flown run's manifest
+reads topology `hil`, sim_speedup 1.0 and a clean code revision, with the
+Orin's `hil_evidence` beside it, and every flown run folder holds its signed
+replay bundle (`<run>.replay.tar.gz`: the episode's manifest, flight log,
+rosbag2 bag, kpi.json and policy, and shield_audit.jsonl where the run wrote
+one) and, once its campaign accepted it, `scenario_score.json`. Run folders `demo/out/hil_smoke/<campaign>_*`; each
+campaign's `demo/out/hil_<campaign>/sweep.json` and `kpi_report.md` (the run
+store, not tracked).
+
+#### Flown
+
+| campaign | day | code | missions | what |
+|---|---|---|---|---|
+| rh03 | 7 Nov | fb96fe5 | 44 | the smoke profile (64 episodes; 16 the rail cannot fly as written, the Shield-off control not asked for, 3 stand-off cells whose signed bundle was not on disk) |
+| hs01 | 7 Nov | 5fc832b | 2 | hold shakedown; both missions died at FCU connect (below) |
+| hs02 | 7 Nov | d186077 | 9 | hold shakedown: rotate-step, rotate-spin@3, the sideways window, radius grow, corridor swap, the land zone, three violations, wind beyond authority 8 and 12 m/s |
+| hs03 | 7 Nov | 199cfdf | 11 | hs02's cells and corridor-drift-angles 8 m/s at -60 and 0 deg |
+| hs04 | 7 Nov | ee356c6 | 9 | dyn-nfz-rotate-spin at 3, 6 and 9 deg/s, seeds 1001-1003 (the nightly's nine cells) |
+| hs05 | 7 Nov | 9eed35b | 9 | hs04's nine |
+| nt1107 | 7 Nov | 9eed35b | 9 of 591 | the nightly profile; the campaign went no further than its ninth mission (no sweep.json) |
+| sm1110 | 10 Nov | 9eed35b | 48 | the smoke profile with the Shield-off control (`--hil-controls`; 16 the rail cannot fly as written) |
+| ge1110 | 10-11 Nov | 9eed35b | 36, 32 flew | the grant's example sweep (`--profile grant_example`, 50 m AGL) |
+| hs06a | 11 Nov | 22d434b | 4 | corridor-drift-angles 8 m/s at -60 and 0 deg, wind-within-authority 5 m/s in lanes 15 and 25 |
+| hs06b | 11 Nov | 22d434b | 9 | hs04's nine |
+| sm1111 | 11 Nov | 22d434b | 48 | the smoke profile with the control (16 the rail cannot fly as written) |
+
+The nightly campaign nt1111 (the nightly profile, 591 missions at 22d434b,
+`--hil-controls`) was launched on 11 Nov (first mission 05:59) and is still
+flying; nothing of it is reported here.
+
+#### Measured (the four KPI-grade campaigns)
+
+| | rh03 | sm1110 | ge1110 | sm1111 |
+|---|---|---|---|---|
+| code | fb96fe5 | 9eed35b | 9eed35b | 22d434b |
+| Shield-on missions scored | 44 | 47 (+1 control) | 32 (4 died before the mission) | 45 (+1 control; 2 failed closed) |
+| P0 escape rate, Shield on (highest of any mission) | 0.0 | 0.0 | 0.0 | 0.0 |
+| P0 escape rate, Shield-off control (nfz-head-on-control) | not flown | 0.646 (51 escapes) | not flown | 0.650 (52 escapes) |
+| breaches flown by the Shield | 0 | 0 | 0 | 0 |
+| mission success | 19/44 = 0.432 | 23/47 = 0.489 | 32/32 | 22/45 = 0.489 |
+| repairs per episode | 72.1 | 76.1 | 0 | 72.1 |
+| mean repair magnitude (mean over episodes) | 5.32 m/s | 5.28 m/s | no repair | 5.22 m/s |
+| mean time to safe (episodes with a spell; max) | 5.73 s (12; 10.4 s) | 3.65 s (11; 5.3 s) | no spell | 3.64 s (11; 5.3 s) |
+| fail-safe (a), ideal-vehicle labels | 37/43 | 40/45 | 32/32 | 39/45 |
+| fail-safe (r), rail-vehicle labels | 41/43 | 43/45 | 32/32 | 43/45 |
+| fail-safe (r2), rail + E5 on the prescribed flight | 42/43 (Wilson low 0.879) | 44/45 (0.884) | 32/32 (0.893) | 44/45 = 0.978 (0.884) |
+| tick: longest, over 100 ms | 74.25 ms, 0 of 7,716 | 94.1 ms, 0 of 16,268 | 120.4 ms, 29 of 82,971 | 95.98 ms, 0 of 15,050 |
+| e2e p99 (an action's receipt to its first setpoint) | 97.9 ms | 98.5 ms | 97.9 ms | 106.1 ms |
+| campaign time | 1.48 h | 1.64 h | 3.40 h | 1.64 h |
+
+- (a) is the campaign's own line, the ideal-vehicle labels its sweep prints.
+  (r) and (r2) are the label artefact `docs/data/failsafe_labels_rail.json`
+  scored with `--rescore-rail` on branch adopt-rail-labels (2b68516,
+  0df7ee8), which adopts (r2) as the KPI-grade reading; that branch is not
+  merged. Its commit records the adoption as the user's decision of 9-10 Nov,
+  taken after the rig had shown the autopilot's lag, not a pre-registered
+  reading. A run its campaign did not accept (sm1111_044, sm1111_047) is in no
+  reading. The 2026-11-07 (hold horizon) entry's rh03 figures, (r) 38/40 and
+  (r2) 39/40, were read on the proposal's labels before the artefact existed.
+- Under (r2): one false trigger, rh03_017 (dyn-nfz-rotate-spin@3 at fb96fe5,
+  holding in place: G1, G3, X6), and one miss in each later smoke campaign,
+  sm1110_048 and sm1111_048 (wind-beyond-authority, lane 15, 12 m/s: G1, G3,
+  then G8 at 14.3 / 15.3 s and no fail-safe). Under (a) the false triggers are
+  nfz-head-on, rail-mission-stub-vla, dyn-nfz-rotate-step and
+  time-window-opens-on-sideways-pilot in every smoke campaign, with
+  rotate-spin@3 and wind-within-authority (lane 15) in rh03 and
+  wind-within-authority (lane 15) in sm1111. ge1110's 32/32 decides nothing:
+  every label is N1, so never triggering scores the same.
+- What ArduPilot's own modes flew is outside the Shield's escape rate by
+  definition and reported apart: rh03 5 autopilot breaches in 5 episodes and
+  2 polygon entries; sm1110 and sm1111 5 and 1 each; ge1110 none.
+- `tick_ms` is the Shield node's whole tick; `e2e_ms` runs from an action's
+  receipt to the first setpoint flown from it and includes up to one 100 ms
+  tick period of waiting for the node's own 10 Hz timer (metrics.json's
+  `tick_latency` note). sm1111's e2e p99, 106.1 ms, is over WP3-13's 100 ms
+  (354 of 15,050 actions over); not fixed on master.
+- ge1110's 29 ticks over 100 ms: one in each of 29 of its 32 flown missions,
+  107.0-120.4 ms, every one a Normal tick at t = 130.5-133.9 s whose Shield
+  step (`shield_ms`) took 101.7-114.3 ms; the other three missions' longest
+  ticks are 95.9-96.9 ms. Not yet explained.
+
+#### Per campaign
+- **rh03** (fb96fe5): the first stressed missions on hil. Wind within
+  authority 5 m/s (lanes 15 and 25), beyond it 8 and 12 m/s (lane 15), GPS
+  denied 4-11 s (lanes 15 and 23.6): every SIM_* parameter read back as set,
+  every scheduled change seen on the node's clock within 0.09 s of its time,
+  no problem in any run's `sim_stressors_check`; the dropout reached the
+  Shield as a 7.0 s no-fix spell (4.3-11.3 s), and rh03_040 took X8 at
+  10.4 s, the first X8 on hil. The 12 m/s cell ended in Loiter (censored),
+  ArduPilot switching itself from BRAKE to RTL at 15.0 s
+  (`autopilot_took_over`). rh03_032 (failsafe-land-zone) took G12 to Land and
+  no G10: this build predates the EXTENDED_SYS_STATE request (a152a75).
+- **sm1110** (9eed35b): the first smoke campaign with the Shield-off control
+  and with the shakedowns' fixes (the per-tick bound, `TransitWatch`, the
+  Loiter held in GUIDED). Hand-back churn: sm1110_010 (corridor-drift-angles
+  8 m/s, -60 deg) entered Loiter 15 times, was handed back (G8) 14 times and
+  ended in the fifteenth, censored; sm1110_045 (wind-within-authority,
+  lane 15) 9 Loiters, 8 hand-backs, censored. 11 of its 48 runs read no
+  SIM_SPEEDUP at take-off, none of them a stressed cell.
+- **ge1110** (9eed35b): the grant's worked ScenarioSpec as the
+  `grant_example` profile, vehicle speed 6 / 8 / 10 / 12 m/s x wind 0 / 2 /
+  5 m/s x seeds 1001-1003 at 50 m AGL. The 32 missions that flew all
+  succeeded (W3 reached) with no repair and no time-to-safe spell, as
+  headless (2026-11-07 (grant example sweep)). 4 died before the mission
+  began: 012 (8 m/s, wind 0), 017 (8 m/s, wind 5), 030 (12 m/s, wind 0) and
+  031 (12 m/s, wind 2), the fence-raise race of the next entry.
+- **sm1111** (22d434b): the smoke campaign with the 10 Nov changes
+  (`TICK_QUERIES` 60, one kind of hold work a tick, a hand-back judged at
+  speed on the rail's theta basis) and 183bb3e. sm1110's churn cells flew one
+  Loiter each: sm1111_010 G1, G3, G5 at 41.3 s, G9; sm1111_045 G1, G3, G5,
+  G9; no episode censored in Loiter (sm1110: 2). The longest tick 95.98 ms
+  (sm1111_031), 0 of 15,050 over 100 ms. Two stressed missions failed closed:
+  sm1111_044 (gps-dropout, lane 23.6) and sm1111_047 (wind-beyond-authority,
+  8 m/s). The Shield node read no simulator parameters at take-off
+  (`sim_params.at_takeoff`: SIM_SPEEDUP had not answered), so the campaign
+  could not confirm the cells' boot values and errored both, unscored.
+  `read_sim_params` reads once and gives up when SIM_SPEEDUP has not answered
+  (8 of sm1111's 48 runs read none); not fixed on master.
+
+#### Found and fixed (the shakedowns; each fix has its own entry)
+- **hs01** (5fc832b): the Shield node died right after FCU connect, a
+  NameError in a152a75's EXTENDED_SYS_STATE request; no flight log. Fixed in
+  d186077 (2026-11-07 (G10 on the hil rig), "Fixed the same day").
+- **hs02** (d186077): G10 and X5 flown on hil for the first time: hs02_006
+  (failsafe-land-zone) G12 at 3.0 s and G10 "landed" at 30.1 s; hs02_007
+  (three-simultaneous-violations) X5 at 61.6 s, landed during RTL away from
+  home. The first moved hold on the rig (hs02_002, rotate-spin@3: G1, G3, G8,
+  G1, G7) was planned on a tick of 146.9 ms (`shield_ms` 13.0 ms), over the
+  100 ms tick, the search spending its whole budget on one tick -> the
+  per-tick bound (b8d71aa, 199cfdf; merged in e67d068), the search spread
+  over ticks. Its transit was given up 1.25 s after the plan -> a transit is
+  not given up while it closes.
+- **hs03** (199cfdf): hs03_004 (rotate-spin@3): the moved point's transit was
+  given up at 5.8 s while the aircraft was still braking out of the
+  hand-over; BRAKE held it about 4.3 m past the point, X6 at 31.1 s, RTL ->
+  `TransitWatch` (cc78677, ee356c6): given up only when stuck relative to its
+  point.
+- **hs04** (ee356c6): 7 of 9 without a fail-safe. hs04_005 and hs04_006
+  (6 deg/s, seeds 1002 and 1003): ArduCopter's BRAKE carried the aircraft
+  along GUIDED's last command (hs04_006: 1.7 m in 2.2 s and still creeping;
+  2.53 m in all on the response fitted to it) off the checked point into the
+  bar's sweep: X6, RTL, one autopilot keep-out breach each -> the Loiter held
+  in GUIDED by the companion on the plan's point (f5c31f8, 0759719), handed
+  to BRAKE only on a stale pose or a gap in the hold's own stream (9eed35b).
+  Two Brake ticks also passed 100 ms (hs04_001 121.6 ms, hs04_003 129.5 ms).
+- **hs05** (9eed35b): no X6 and no autopilot breach; 7 of 9 pass, hs05_004
+  and hs05_005 (6 deg/s, seeds 1001 and 1002) ended in Loiter at the
+  mission's time cap (censored). Six Loiter ticks of 100.7-122.8 ms, all in
+  those two, each paying a full search slice and the hand-back guard ->
+  `TICK_QUERIES` 60 and one kind of hold work a tick (6a03b1a, merged in
+  22d434b).
+- **sm1110**: the hand-back churn -> Loiter hands back only a request whose
+  repair can be trusted from its hold point at the speed it asks for
+  (`handback_request: at_speed`, 6a03b1a), judged on the rail's own theta
+  basis (b36c0e6).
+- **ge1110**: the fence-raise race -> 183bb3e (next entry).
+- **hs06a** (22d434b): sm1110's two churn cells flew one Loiter each and no
+  hand-back: corridor-drift-angles (8 m/s, -60 deg) G5 at 41.4 s and home,
+  the labelled fail-safe; wind-within-authority (lane 15) G5 at 35.9 s and
+  home, a fail-safe (a) does not expect and (r) and (r2) do.
+- **hs06b** (22d434b): 0 of 4,435 ticks over 100 ms, the longest 92.8 ms
+  (hs05: 6 of 4,803, the longest 122.8 ms); 8 of 9 pass; hs06b_006 (6 deg/s,
+  seed 1003) ended in Loiter at the mission's time cap, censored, as hs05_004
+  and hs05_005 did on the other two seeds.
+
+#### Not done
+- No KPI number for the report: each smoke campaign flies a cell once. The
+  numbers come from the nightly hil campaign and its KPI report (WP4-01,
+  WP4-17).
+- Fail-safe trigger correctness is under 0.99 on every reading of every
+  campaign whose labels discriminate; the best, (r2) 44/45, has a Wilson low
+  of 0.884, and 381 error-free episodes are needed to show 0.99 at 95 %.
+- dyn-nfz-rotate-spin at 6 deg/s still ends in Loiter at the time cap on one
+  seed or two (hs05, hs06b).
+- Open from 11 Nov: `read_sim_params` on a late SIM_SPEEDUP (sm1111_044,
+  sm1111_047), sm1111's e2e p99 over 100 ms, ge1110's tick at about 130 s.
+- No learned model has flown on hil: the stub reads no text (ARCH-20).
+
+### 2026-11-11 (fence read and take-off) — the hil Shield node's fence read waits for SIM_SPEEDUP, and a take-off the autopilot's GeoFence would end is refused before arming; unit-tested, not flown at a 50 m start
+
+#### Found
+- The grant example sweep on hil (ge1110, 9eed35b): 4 of 36 missions (012,
+  017, 030, 031) read every FENCE_* parameter before MAVROS had SIM_SPEEDUP.
+  The node took SITL for hardware, so the raise was not allowed: FENCE_ALT_MAX
+  stayed 30 m under the policy's 80 m ceiling, the node armed and climbed
+  toward its 50 m start, and ArduPilot's own fence ("Fence Breached") switched
+  to RTL before the mission began. No flight log; the campaign errored the
+  four. The other 32 read SIM_SPEEDUP in time, raised FENCE_ALT_MAX from
+  30 m to 85 m and flew.
+
+#### Changed (183bb3e)
+- `sitl/ros2_shield_node.py`: `fence_read_done` - the take-off fence read ends
+  once every FENCE_* value is read and SIM_SPEEDUP has answered, or
+  `SIM_SPEEDUP_GRACE_S` (5 s) after the fence values were complete: a hardware
+  autopilot never answers SIM_SPEEDUP, and there the read goes on as before.
+  `takeoff_fence_refusal` - with the backstop active, a take-off at or above
+  FENCE_ALT_MAX less FENCE_MARGIN (the line the fence acts on) is refused
+  before arming, with the reason in events.jsonl (`takeoff_refused`); nothing
+  is refused while the fence is off or unread. A cell starting below that line
+  (every smoke cell: 18 m at most) is never refused; its fence read may now
+  wait up to the grace.
+
+#### Tests
+- `tests/test_sitl_rails.py`
+  `test_the_fence_read_waits_for_sim_speedup_and_a_doomed_takeoff_is_refused`:
+  the read's end with and without SIM_SPEEDUP and after the grace, the
+  refusal at and below the line, a raised fence, a 15 m cell, the fence off
+  or unread, and the refusal placed before the arm call. In the lab CI at
+  8f83461 (145/145 files, 528e32e).
+
+#### Limits
+- Not flown at a 50 m start: the grant example sweep has not been flown
+  again. The wait has flown only at starts of 18 m or less (hs06a, hs06b and
+  sm1111 at 22d434b, which carries it). On 8 of sm1111's 48 runs and 1 of
+  hs06b's 9, SIM_SPEEDUP was still unread when the read ended (the record's
+  `raise_allowed` false), so the 5 s grace does not always cover the rig's
+  parameter pull; a 50 m start in that state is now refused before arming
+  instead of flown into the fence.
+- The stressor read-back at take-off (`read_sim_params`) is a separate read
+  and does not wait: sm1111_044 and sm1111_047 failed closed on it (previous
+  entry).
+
 ### 2026-11-10 (harness on the rails) — a harness session on a flight rail is one flown, scored episode with the grant's bundle, and zone edits go to the flying Shield as PATCH /dynamic_nfz; built and tested on a fake rig, not flown
 
 Audit cards WP4-03 and WP4-05, the code side. **Nothing here has flown**: no
