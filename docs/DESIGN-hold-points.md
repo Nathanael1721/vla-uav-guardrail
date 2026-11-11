@@ -1761,6 +1761,23 @@ episodes, three seeds each):
   at speed; and the two cells the GUIDED hold made worse on 7 November
   (wind-beyond-authority at 12 m/s, standoff-reclassified) are as they were.
 
+## Whether the hold is kept (2026-11-11)
+
+Until now nothing told the FSM whether its hold was holding: TransitWatch
+judges only a moved hold's transit, and only gives it up. On the hil smoke
+sm1111_048 (wind-beyond-authority, 12 m/s) the GUIDED hold commanded 4 m/s
+back to its point while the aircraft went 2-4 m/s away from it, round
+nfz-square with the position legal, and G8 handed it back on the far side.
+`HoldWatch` (guardrail/hold_flight.py, THE HOLD KEPT) now tells the FSM, on
+every Loiter tick, how far the aircraft is from the point the hold flies to
+(`HoldFlight.point`, else the plan, else where the Loiter began) and how far
+a kept hold can carry it (its distance when the point was set, plus the
+braking distance from its speed then on the rail Shield's stop model, plus
+3 m); the FSM's X9 sends the aircraft home when it has been beyond that for
+T_recover and is still receding. The ROS 2 node and the harness call it the
+same way; docs/DESIGN-escalation-fsm.md, "2026-11-11: X9, a hold that is
+not kept", has the measurements.
+
 ## What it does not do
 
 * Remove the 2 Shield escape ticks per opens-on-vehicle cell: they are

@@ -901,7 +901,10 @@ def test_in_place_holds_fly_c77c77ds_rows_exactly():
     judge the held aircraft's position, which changes three of these cells
     (dyn-nfz-rotate-spin at 3 and 6 deg/s, wind-beyond-authority lane 15 at
     12 m/s) - a change of the FSM's own. And on c77c77d's reading of an
-    untrusted repair (untrusted_owner "projected", until 2026-11-07)."""
+    untrusted repair (untrusted_owner "projected", until 2026-11-07). And
+    with no X9 (hold_kept "off", until 2026-11-11): the in-place hold of
+    every wind-beyond-authority cell is carried away by the excess wind, and
+    X9 sends it home before X7 would."""
     import sweep_scenarios as SW
     from guardrail.fsm import FSMConfig
     from guardrail.scenario_spec import Library
@@ -910,7 +913,8 @@ def test_in_place_holds_fly_c77c77ds_rows_exactly():
     got = {}
     orig = SW.Shield
     old_law = FSMConfig(loiter_clear="violation_free", loiter_x67="request",
-                        untrusted_owner="projected", hold_horizon="lookahead")
+                        untrusted_owner="projected", hold_horizon="lookahead",
+                        hold_kept="off")
 
     def shield_on_the_old_loiter_law(*a, escalation=True, **k):
         return orig(*a, escalation=old_law if escalation is True else escalation, **k)
@@ -1171,6 +1175,121 @@ def test_three_simultaneous_climbs_out_and_is_sent_home_by_the_loiter_timeout():
     climb = [r for r in run.rows if r.get("autopilot") == "LOITER" and r.get("emitted_violations")]
     assert len(climb) <= 2, len(climb)
     assert ex["ended_safe"] and ex["breaches"] == 0, ex
+
+
+# --------------------------------------------------------------------------- #
+# The hold kept (guardrail/hold_flight.py HoldWatch; the FSM's X9, 2026-11-11)
+# --------------------------------------------------------------------------- #
+
+def test_the_hold_watch_reach_is_the_rails_stop_plus_the_slack():
+    """A kept hold carries the aircraft no farther from its point than its
+    distance when the point was set, plus the braking distance from its
+    speed then on the rail Shield's own response model (0.45 s, 1.75
+    m/s^2), plus 3 m. The reach is set once per point; a new point sets it
+    from its own distance; a point given with no speed waits one tick for
+    the speed two positions give; no point is where the Loiter began."""
+    from guardrail.hold_flight import HOLD_KEPT_SLACK_M, HoldWatch, hold_reach
+    from guardrail.response import ARDUCOPTER_GUIDED as R
+    assert HOLD_KEPT_SLACK_M == 3.0
+    assert abs(hold_reach(0.0, 3.67) - (3.67 * R.reaction_s + 3.67 ** 2 / (2 * R.accel_mps2)
+                                        + 3.0)) < 1e-9
+    # sm1111_048 at entry: 3.67 m/s (and 0.4 m from the point on the first
+    # Loiter tick, so its reach was 8.9 m).
+    assert abs(hold_reach(0.0, 3.67) - 8.4998) < 1e-3
+    w = HoldWatch()
+    assert w.update((0.0, 0.0), 0.0, 0.0, 0.0) is None
+    off, reach = w.update((0.0, 0.0), 0.3, 0.0, 0.1)          # 3 m/s from two positions
+    assert abs(off - 0.3) < 1e-9 and abs(reach - hold_reach(0.3, 3.0)) < 1e-9, (off, reach)
+    assert w.update((0.0, 0.0), 5.0, 0.0, 0.2, speed_mps=10.0) == (5.0, reach)
+    off, reach = w.update((20.0, 0.0), 5.0, 0.0, 0.3, speed_mps=1.0)
+    assert off == 15.0 and abs(reach - hold_reach(15.0, 1.0)) < 1e-9, reach
+    w.reset()
+    assert w.update(None, 7.0, 7.0, 0.0, speed_mps=0.0) == (0.0, 3.0)
+    assert w.update(None, 8.0, 7.0, 0.1, speed_mps=0.0) == (1.0, 3.0)
+
+
+def test_the_hold_watch_judges_the_point_the_hold_flies_to():
+    """judge() reads the GUIDED hold's own target while the companion holds
+    the Loiter (HoldFlight.point), else the FSM's plan, else where the
+    Loiter began - and nothing outside Loiter, where it starts over."""
+    from guardrail.hold_flight import HoldFlight, HoldWatch
+    f = EscalationFSM()
+    w = HoldWatch()
+    assert w.judge(f, None, 1.0, 1.0, 0.0, 2.0) == (None, None)
+    _to_loiter(f)
+    hf = HoldFlight()
+    off, reach = w.judge(f, hf, 1.0, 1.0, 0.2, 2.0)           # no plan, no target
+    assert off == 0.0 and abs(reach - 3.0 - 2.0 * 0.45 - 4.0 / 3.5) < 1e-9, reach
+    plan = f.hold_at(HoldPoint("LOITER", "in_place", 4.0, 5.0, 15.0, legal=True))
+    assert w.judge(f, hf, 1.0, 1.0, 0.3, 0.0) == (5.0, 8.0)   # the plan's point
+    hf.tick(f, None, 1.0, 1.0, 15.0, 0.3, 0.1)                # the companion holds it
+    assert hf.point == (plan.x, plan.y, plan.up)
+    hf._target = type(hf._target)("LOITER", 1.0, 2.0, 15.0, 4.0, 2.0)
+    off, reach = w.judge(f, hf, 1.0, 1.0, 0.4, 0.0)           # HoldFlight's own target
+    assert (off, reach) == (1.0, 4.0), (off, reach)
+    hf.force_brake("a gap in the stream")
+    hf.tick(f, None, 1.0, 1.0, 15.0, 0.5, 0.1)
+    assert hf.point is None and w.judge(f, hf, 1.0, 1.0, 0.5, 0.0) == (5.0, 8.0)
+    f.tick(0.6, "blocked", [_hit(action="RTL")])
+    assert w.judge(f, hf, 1.0, 1.0, 0.7, 0.0) == (None, None) and w.point is None
+
+
+def _replay_rig_loiter(d: dict, cfg=None):
+    """One of the rig's Loiters (tests/fixtures/hil_sm1111_wind_loiters.json)
+    through HoldWatch and the FSM, held in Loiter by a `loiter` rule with no
+    operator timeout, so X9 is the only edge that can leave it. Returns the
+    first edge as (t, edge, record) or None."""
+    from guardrail.fsm import FSMConfig
+    from guardrail.hold_flight import HoldWatch
+    rows, pts = d["rows"], d["points"]
+    f = EscalationFSM(cfg or FSMConfig(loiter_timeout_s=None))
+    loiter = (_hit("hold", "loiter"),)
+    f.step(TickInput(t=rows[0][0] - 0.2, outcome="blocked", violations=loiter))
+    w = HoldWatch()
+    for t, x, y, vx, vy in rows:
+        here = [p for p in pts if p[0] < t - 1e-6]
+        point = (here[-1][1], here[-1][2]) if here else None
+        got = w.update(point, x, y, t, None if vx is None else math.hypot(vx, vy))
+        kw = {} if got is None else {"hold_off_m": got[0], "hold_reach_m": got[1]}
+        o = f.step(TickInput(t=t, outcome="blocked", violations=loiter, **kw))
+        if o.edge:
+            return round(t, 1), o.edge, o.record
+    return None
+
+
+def test_the_rigs_wind_loiters_are_lost_at_12_mps_only():
+    """REGRESSION (KPI-grade hil smoke sm1111, 22d434b: wind-beyond-authority
+    lane 15 at 12 m/s, sm1111_048, the one missed fail-safe of the smoke).
+    The rig's own Loiters, row for row, through HoldWatch and the FSM.
+    12 m/s: the companion's GUIDED hold held the point (-11.8, 15.0) from
+    5.8 s, the aircraft receded at 2-4 m/s, 8.9 m was its reach (0.4 m
+    from the point and 3.67 m/s on the first Loiter tick), and the rig
+    handed it back on the far side of nfz-square at 15.3 s (G8); X9 sends
+    it home at 11.3 s, 13.6 m out and receding at 2.2 m/s - 1.8 s before its
+    closest pass of the zone (2.4 m, 13.1 s). (The points are the node's
+    notes, rounded to 0.1 m.)
+    8 m/s (sm1111_047): the hold overshot 3.6 m and came back - never beyond
+    its reach, so the Loiter runs on (the rig: G5 at 35.8 s). Within
+    authority (sm1111_045, 5 m/s, lane 15): the same."""
+    import json
+    fx = json.loads((ROOT / "tests" / "fixtures" / "hil_sm1111_wind_loiters.json")
+                    .read_text(encoding="utf-8"))["runs"]
+    lost = _replay_rig_loiter(fx["sm1111_048_wind-beyond-authority"])
+    assert fx["sm1111_048_wind-beyond-authority"]["rig_edge_out"] == ["G8", 15.302]
+    assert lost is not None and lost[:2] == (11.3, "X9"), lost
+    rec = lost[2]
+    assert 13.0 < rec["hold_off_m"] < 14.0 and 8.8 < rec["hold_reach_m"] < 9.0, rec
+    assert rec["x9_unkept"]["slope_mps"] > 2.0, rec["x9_unkept"]
+    for run, edge in (("sm1111_047_wind-beyond-authority", "G5"),
+                      ("sm1111_045_wind-within-authority", "G5")):
+        assert fx[run]["rig_edge_out"][0] == edge, fx[run]["rig_edge_out"]
+        assert len(fx[run]["rows"]) == 300
+        assert _replay_rig_loiter(fx[run]) is None, run
+    assert fx["sm1111_046_wind-within-authority"]["loiter"] is None
+    # hold_kept "off": the FSM as it flew on the rig, nothing leaves the Loiter.
+    from guardrail.fsm import FSMConfig
+    assert _replay_rig_loiter(fx["sm1111_048_wind-beyond-authority"],
+                              FSMConfig(loiter_timeout_s=None, hold_kept="off")) is None
 
 
 if __name__ == "__main__":

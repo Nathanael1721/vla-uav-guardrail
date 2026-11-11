@@ -1626,6 +1626,11 @@ def _episode(sc, defaults, seed: int, arm: dict | None, box: dict,
                    if give_up_transits and esc and rsp is not None else None)
     hold_tick = None
     ap_brake = False
+    # X9's input (since 2026-11-11): how far the aircraft is from the point
+    # its Loiter holds, and how far a kept hold carries it - the rails' own
+    # HoldWatch, given the ground velocity the last tick flew.
+    kept_watch = HF.HoldWatch() if esc else None
+    ground_v: tuple[float, float] | None = None
     owner_ticks = {"shield": 0, "autopilot": 0, "pilot": 0}
     ap_mode_ticks: dict[str, int] = {}
     ap_p0_by_mode: dict[str, int] = {}
@@ -1765,6 +1770,14 @@ def _episode(sc, defaults, seed: int, arm: dict | None, box: dict,
                 # Defensive: the FSM leaves RTL only for Land or the end
                 # (G6, G9, X5), so an RTL is never re-entered today.
                 rtl_watch.reset()
+            # X9, the hold kept (guardrail/hold_flight.py HoldWatch): judged
+            # on the true position, as the rails' TransitWatch is here - the
+            # autopilot's own, which flies the hold.
+            off, reach = kept_watch.judge(
+                shield.fsm, hold_flight, st.x, st.y, t_now,
+                None if ground_v is None else math.hypot(ground_v[0], ground_v[1]))
+            if off is not None:
+                flags["hold_off_m"], flags["hold_reach_m"] = off, reach
         d = shield.filter(seen, raw, t=t_now, **flags)
         a_rec = auditor.record(i, d)
         if a_rec is not None:
@@ -2141,6 +2154,7 @@ def _episode(sc, defaults, seed: int, arm: dict | None, box: dict,
             gust_off[0] += (gx - px) * dt
             gust_off[1] += (gy - py) * dt
             vgx, vgy = ux + gx - px, uy + gy - py
+        ground_v = (vgx, vgy)
         prev_st = st
         up_next = st.up + fvz * dt
         if veh is not None and up_next < 0.0:

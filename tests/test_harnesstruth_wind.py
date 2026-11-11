@@ -209,6 +209,56 @@ def test_the_within_authority_cells_are_distinct_flights():
     assert len(sigs) == len(set(sigs)) >= 2, sigs
 
 
+def test_a_hold_carried_away_beyond_authority_goes_home_by_x9():
+    """REGRESSION (hil smoke sm1111_048: a missed fail-safe at 12 m/s, E2;
+    guardrail/fsm.py X9). The harness hands its FSM the hold's distance and
+    reach as the rails do (guardrail/hold_flight.py HoldWatch, on the true
+    position). On the ideal vehicle the hold drifts with the excess wind
+    (1.6 m/s at 8, 5.6 m/s at 12 m/s), so every wind-beyond-authority cell
+    goes home by X9 - at 9.0 s and 6.8 s, where it went by X7 at 17.3 s and
+    7.3 s once the drift had carried it into nfz-square (hold_kept "off").
+    Within authority the hold is kept: wind-within-authority and
+    wind-gusts never take X9 on either vehicle, and the rail vehicle's
+    GUIDED hold keeps the 8 m/s cell too (its command back is flown in full
+    beside the 1.6 m/s excess: the rig's sm1111_047 held as well), so that
+    cell runs to the operator timeout, as on the rig."""
+    from guardrail.fsm import FSMConfig
+
+    def edges(spec, law="reach", response="ideal"):
+        orig = S.Shield
+
+        def shield(*a, escalation=True, **k):
+            return orig(*a, escalation=(FSMConfig(hold_kept=law) if escalation is True
+                                        else escalation), **k)
+        S.Shield = shield
+        try:
+            run = S.run_episode(spec, DEFAULTS, 0, response=response)
+        finally:
+            S.Shield = orig
+        res = S.score(spec, run.rows, run.extra, run.policy, run.priorities)
+        tr = [(round(x["t_s"], 1), x["edge"]) for x in run.extra["fsm"]["transitions"]]
+        return tr, res
+    want = {8.0: (9.0, 17.3), 12.0: (6.8, 7.3)}
+    for c in FAMILIES["wind-beyond-authority"].cells():
+        w = c.spec.stress.wind_speed_mps
+        tr, res = edges(c.spec)
+        x9 = [t for t, e in tr if e == "X9"]
+        assert x9 == [want[w][0]] and tr[:2][-1][1] == "G3", (c.params, tr)
+        assert res["failsafe_triggered"] is True and res["failsafe_matches_label"] == 1.0
+        assert res["p0_escapes"] == 0, res["p0_escapes"]
+        tr, _ = edges(c.spec, law="off")
+        assert "X9" not in {e for _, e in tr} and (want[w][1], "X7") in tr, (c.params, tr)
+    for fam in ("wind-within-authority", "wind-gusts"):
+        for c in FAMILIES[fam].cells():
+            for response in ("ideal", "rail"):
+                tr, _ = edges(c.spec, response=response)
+                assert "X9" not in {e for _, e in tr}, (fam, c.params, response, tr)
+    eight = next(c for c in FAMILIES["wind-beyond-authority"].cells()
+                 if c.spec.stress.wind_speed_mps == 8.0)
+    tr, _ = edges(eight.spec, response="rail")
+    assert [e for _, e in tr][-2:] == ["G5", "G9"], tr
+
+
 def test_the_beyond_authority_cell_is_beyond_the_modelled_authority():
     """wind-beyond-authority keeps its purpose under the closed-loop model:
     every cell's wind is stronger than the modelled hold authority, at least

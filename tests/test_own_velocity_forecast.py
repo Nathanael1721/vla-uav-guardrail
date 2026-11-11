@@ -106,10 +106,11 @@ IDENTITY_FIELDS_OUT = ("policy_hash",)
 # lookahead ("lookahead"), whose ticks carry no `handback_unsafe`; and for
 # what Loiter's hand-back judges the request on (FSMConfig handback_request,
 # 2026-11-10): c77c77d judged it on the tick's own decision ("as_held"),
-# whose ticks carry no `handback_untrusted`.
+# whose ticks carry no `handback_untrusted`; and for whether Loiter judges
+# its hold kept (FSMConfig hold_kept, 2026-11-11): c77c77d did not ("off").
 C77_LOITER_LAW = dict(loiter_clear="violation_free", loiter_x67="request",
                       untrusted_owner="projected", hold_horizon="lookahead",
-                      handback_request="as_held")
+                      handback_request="as_held", hold_kept="off")
 LOITER_LAW_FIELDS = ("cleared_loiter_s",)
 
 

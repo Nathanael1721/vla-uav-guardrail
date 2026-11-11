@@ -345,7 +345,7 @@ from guardrail.fsm import (DEFAULT_THETA_HORIZON_S, FAILSAFE_STATES,     # noqa:
                            MODE_FOR, THETA_HORIZON_S, EscalationFSM, FSMConfig,
                            FSMState, tick_input_from_decision)
 from guardrail.geometry import fence_polygon                              # noqa: E402
-from guardrail.hold_flight import HoldFlight, body_command                # noqa: E402
+from guardrail.hold_flight import HoldFlight, HoldWatch, body_command     # noqa: E402
 from guardrail.response import HOLD_STREAM_GAP_S                          # noqa: E402
 from guardrail.kpi import compute_from_dir                                # noqa: E402
 from guardrail.manifest import (DEV_YAML_FLAG, UNRESOLVED,               # noqa: E402
@@ -2092,6 +2092,9 @@ if HAVE_ROS:
             self.hold_flight = HoldFlight(
                 guided_hold=(self.moved_holds
                              and getattr(args, "hold_flight", "guided") == "guided"))
+            # Whether the Loiter's hold is kept (the FSM's X9, 2026-11-11):
+            # the hold's distance and reach, judged before each FSM step.
+            self.hold_watch = HoldWatch()
             self._last_pub_ns: int | None = None   # the last setpoint published
             self.hold_planner = holdpoint.HoldPlanner()
             self._hold_work: dict | None = None    # this tick's, for its row
@@ -3749,6 +3752,7 @@ if HAVE_ROS:
             fsm_out = None
             stop_illegal = None
             unsafe_depth = None
+            hold_off = hold_reach = None
             setpoint = "pass"
             transit = None
             # Once the autopilot has taken the aircraft (a GeoFence RTL), the
@@ -3807,6 +3811,12 @@ if HAVE_ROS:
                     self._hold_work = ({"guard": self.hold_planner.guard,
                                         "checked": self.hold_planner.checked,
                                         "legal": hold_legal} if in_loiter else None)
+                    # X9's input (2026-11-11): how far the aircraft is from
+                    # the point its Loiter holds and how far a kept hold
+                    # carries it (guardrail/hold_flight.py HoldWatch).
+                    hold_off, hold_reach = self.hold_watch.judge(
+                        self.fsm, self.hold_flight, st.x, st.y, now,
+                        None if vel is None else math.hypot(vel[0], vel[1]))
                     inp = tick_input_from_decision(
                         now, decision, self.policy, horizon_s=self.theta_horizon_s,
                         rtl_failed=False,
@@ -3826,7 +3836,8 @@ if HAVE_ROS:
                         caps=self.shield.applied_caps or False,
                         position_lost=lost[0] if lost else None,
                         hold_legal=hold_legal, handback_unsafe=handback,
-                        handback_untrusted=hb_untrusted)
+                        handback_untrusted=hb_untrusted,
+                        hold_off_m=hold_off, hold_reach_m=hold_reach)
                     fsm_out = self.fsm.step(inp)
                     if self.moved_holds:
                         # Where the Loiter holds / the Land lands: the
@@ -4014,6 +4025,11 @@ if HAVE_ROS:
                 # The moved hold's transit, world frame (North, East, up);
                 # only on such rows (guardrail/hold_flight.py).
                 self.rows[-1]["hold_transit"] = [round(c, 3) for c in transit]
+            if hold_off is not None:
+                # X9's input (HoldWatch), only on Loiter rows that judged it;
+                # read back by fsm.tick_input_from_row.
+                self.rows[-1].update(hold_off_m=round(hold_off, 3),
+                                     hold_reach_m=round(hold_reach, 3))
             hold_work, self._hold_work = self._hold_work, None
             if hold_work is not None:
                 # The hold work this tick paid for (2026-11-10, THE PER-TICK
