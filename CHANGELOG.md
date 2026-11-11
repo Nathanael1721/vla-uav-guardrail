@@ -16,6 +16,80 @@ shipped change and recorded as one.
 
 ## [Unreleased]
 
+### 2026-11-12 (GPS denial as the rig flies it; X8 on the autopilot's own estimator) — the rail labels read a GPS denial as EKF3's inertial dead reckoning, and on the ROS 2 rail X8 fires when the autopilot declares its position lost instead of on the Shield's command dead reckoning plus a fixed drift allowance; replayed on the rig's own flights, not flown
+
+Branches gps-dropout-fix (49c455c, d673ed0, 635336a) and
+x8-estimator-health (1315a9b, b34bc39). **Nothing here has flown.**
+
+#### Found (nt1111, the KPI-grade hil nightly at 22d434b)
+- Under the adopted reading (r2) nt1111 scored 555/567 = 0.979 (Wilson
+  95 % low 0.963). Twelve errors: the six wind-beyond-authority 12 m/s
+  cells (lanes 15 and 20, which X9 answers: replayed, X9 fires on all six
+  at 11.0-11.2 s and on no other nt1111 run but nt1111_001, already
+  labelled expected) and six on gps-dropout lane 23.6.
+- The rig realises a GPS denial through SITL (`SIM_GPS_DISABLE`): EKF3
+  keeps estimating on the IMU, so the pose handed to the Shield keeps
+  moving. Against SITL's own truth (SIMSTATE in every run's bag) its error
+  was at most 1.47 m over the rig's 30 denials. The rail labels read a
+  frozen last fix that no rail hands the Shield.
+- X8 fired on lane 23.6 at 4-11 s and 6-13 s (nt1111_568-573) with EKF3
+  0.13-0.78 m from the truth and the aircraft 8.5-9.0 m from the zone: its
+  error budget was the Shield's own command dead reckoning (1.3-3.5 m from
+  EKF3's pose) plus the 0.5 m/s drift allowance. Tuning the allowance is a
+  knife edge (0.23 m/s, the measured envelope, clears by 0.01 m) and was
+  rejected.
+- Raw MAVLink of 731 rig flights: ArduPilot's EKF_STATUS_REPORT stayed
+  healthy (flags 0x33f, test ratios at most 0.049) on every flight; in 23
+  of the 24 7 s denials EKF3 dropped absolute horizontal position for
+  0.10-0.21 s at 6.8-6.9 s (its 7 s posRetryTimeNoVel timer) before the GPS
+  returned; ArduCopter's own 1 s ekf_check never declared the position bad.
+
+#### Changed
+- `experiments/sweep_scenarios.py`: `GPS_DROPOUT_MODELS` ("frozen", the
+  default, and "dead_reckoned": the truth lagging by the measured
+  `RAIL_EKF_DRIFT_MPS` 0.23 m/s along the track, `fix_ok` False);
+  `RAIL_VEHICLE` flies "dead_reckoned" and hands `estimator_ok` True until
+  `RAIL_EKF_POS_VALID_S` after the loss. Frozen-fix cells are unchanged.
+- `tools/failsafe_rubric.py --update-labels`: re-derives only the cells
+  given, keeps every other reading, logs why and what moved. The 24
+  gps-dropout rail cell-seeds in `docs/data/failsafe_labels_rail.json` were
+  re-derived: lane 23.6 at 2-9 and 4-11 s go from expected (E3) to not
+  expected; lane 15 keeps its fail-safe by E5. Nothing else moved.
+- `guardrail/models.py` `State.estimator_ok`; `guardrail/shield.py`
+  `_position_verdict` reads it first: while the autopilot vouches for its
+  estimate the handed pose is certified, with or without GPS; when the
+  autopilot declares it lost X8 fires at once; with no or a stale report
+  the old law (command dead reckoning + `DR_DRIFT_MPS`) runs from the last
+  certified pose.
+- `sitl/ros2_shield_node.py` subscribes `/uas1/mavlink_source` and keeps
+  EKF_STATUS_REPORT (id 193) from the autopilot; "lost" follows ArduCopter's
+  own rule (absolute horizontal position, no constant-position mode, test
+  ratios below FS_EKF_THRESH, for 1 s; FS_EKF_THRESH / FS_EKF_ACTION read at
+  take-off); rows and `metrics.json fix_quality.estimator` record it.
+  `sitl/sros2_policy.xml` grants the subscription (the hil topology runs
+  without SROS 2; a secured launch must re-sign its permissions).
+- The FSM config hash is unchanged (comments only in `guardrail/fsm.py`).
+
+#### Measured (replay, not flight)
+- The new law never returned "lost" or "not reported" over 899,299 armed
+  samples of the 731 bags, and returned healthy on all 1,798 ticks with
+  the GPS fix lost: no rig flight takes X8 under it; it removes the nine
+  logged X8s (nt1111_568-573, rh03_040, sm1110_044, sm1111_044).
+- nt1111 re-scored with the new labels: r2 555/567 unchanged in count (the
+  errors move to six X8 false triggers). Predicted with X9 and the new X8:
+  567/567 (Wilson 95 % low 0.993). Headless rail vehicle: lane 23.6 at
+  4-11 / 6-13 s fly G1, G7 and no fail-safe; lane 15 keeps G5 at
+  35.8-36.1 s (rig 35.8-36.0 s).
+
+#### Open
+- Not flown; the callback cost of ~300 MAVLink messages a second on the
+  Orin is to be measured on the rig.
+- While the autopilot reports healthy its error (up to 1.47 m on SITL; a
+  real IMU drifts faster) is covered only by the hard P0 margin: sizing
+  margins to the rail's accuracy is a policy decision.
+- A question for the PI: X8 is an extension edge, and on the ROS 2 rail it
+  now means "the autopilot says its position is lost".
+
 ### 2026-11-11 (Shield node timing) — the hil Shield node waits once, bounded, for SIM_SPEEDUP before its take-off fence and stressor reads, ticks on the pilot's action instead of its own timer, runs CPython's full garbage collection after a publication instead of inside a tick, and records the camera frame's age at each setpoint; not flown
 
 All of it is `sitl/ros2_shield_node.py` (3a3f505) and the event hold of
