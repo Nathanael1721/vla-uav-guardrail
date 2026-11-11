@@ -16,6 +16,214 @@ shipped change and recorded as one.
 
 ## [Unreleased]
 
+### 2026-11-11 (Shield node timing) — the hil Shield node waits once, bounded, for SIM_SPEEDUP before its take-off fence and stressor reads, ticks on the pilot's action instead of its own timer, runs CPython's full garbage collection after a publication instead of inside a tick, and records the camera frame's age at each setpoint; not flown
+
+All of it is `sitl/ros2_shield_node.py` (3a3f505) and the event hold of
+`guardrail/replay.py`. **Nothing here has flown**: the rig's numbers are to
+be measured (a KPI campaign was in the air while it was written).
+
+#### Found
+- sm1111 (22d434b): no tick took 100 ms (`tick_ms` max 95.98 ms, p99
+  43.2 ms), yet `e2e_ms` p99 was 106.1 ms: the tick ran on the node's own
+  10 Hz timer, at a phase unrelated to the pilot's 10 Hz stream, so a fresh
+  action waited up to one period for the next tick (91.6 ms of wait at p99).
+- ge1110 (9eed35b): its 29 ticks over 100 ms all sat at row 1305-1339 of
+  every long mission, inside the Shield's own `filter()`: CPython's full
+  (generation 2) collection, triggered by the rows and trajectory points the
+  node keeps for its report.
+- The rosbags of sm1111 (48) and hs06b (9): the autopilot sent SIM_SPEEDUP
+  ~0.5 s before FENCE_ALT_MAX on every run; on the 9 runs that missed it,
+  MAVROS took it only on its re-request, 11.3-23.0 s after FCU connect: past
+  the fence read's 5 s grace on all 9, past a 20 s wait on 5. The stressor
+  read (one read) then had no answer, and two stressed sm1111 missions
+  (sm1111_044, sm1111_047) were refused by the harness although their
+  stressors flew.
+
+#### Changed
+- **One bounded wait for SIM_SPEEDUP** (`takeoff_speedup`,
+  `SIM_SPEEDUP_WAIT_S` 40 s) runs once in bring-up, before the take-off
+  fence read and the stressor read; both take its answer
+  (`fence_read_done(speedup_polled)`, `speedup_is_sitl`,
+  `sim_params_record`) and fail closed only after it. On SITL it ends at the
+  first answer; only a hardware autopilot waits it out on the pad.
+  `autopilot_fence` records `sitl` and the wait.
+- **The tick on the action** (`--tick-trigger action`, the default;
+  `TickScheduler`): a valid `/vla/action_4d` message runs the tick in its
+  own callback; one under 80 ms after the previous tick is deferred to the
+  first 25 ms poll past the gap; with no message the poll ticks 100 ms after
+  a timer tick (150 ms after a message's tick). One tick per message at a
+  10 Hz pilot, never over 12.5 Hz, so e2e no longer includes up to 100 ms of
+  timer wait. The FSM, the watchdogs, the hold planner's slices and the
+  stale-action rule are unchanged; the receipt is stamped at the callback's
+  entry.
+- **The paced collector** (`--gc-pacing on`, the default; `GcPacer`): at
+  mission start everything alive is collected and frozen, the automatic full
+  collection is switched off, a full collection runs every 10 s right after
+  a publication and freezes what survived; CPython's own schedule comes back
+  at mission end, before the report.
+- **After the publication**: the audit record, the events.jsonl appends
+  (`EpisodeRecord.hold_events` / `release_events`, per thread), the
+  intercept topic, the deferred-fence re-check, the publisher count and the
+  stream-rate re-assert.
+- **The camera's age at the setpoint**: `camera_age_ms` on each setpoint
+  flown from a camera-backed action, the bridge's `decision_age_s` plus this
+  node's receipt-to-publication (two durations, each on one monotonic
+  clock).
+- Rows: `tick_trigger`, `camera_age_ms`. metrics.json: `tick_schedule`,
+  `gc`, `camera_to_setpoint` (p50 / p95 / p99 / max; it says there is no
+  camera behind a stub's actions instead of reading zero), and
+  `tick_latency` says what e2e measures (with p95).
+- `--tick-trigger timer` and `--gc-pacing off` fly the old behaviour (the
+  A/B on the rig).
+
+#### Measured (desktop, not the rig)
+- ge1110_001's 3502 ticks replayed through the node's per-tick code with its
+  rows kept (Python 3.12): a full collection at row 1320 took 15.0 ms inside
+  the tick with the replay's own heap (87k tracked objects) and 53.3 ms with
+  800k more standing in for the rig's ROS stack. Paced, none ran inside a
+  tick; the pacer's 34 ran after the publication in 0.37-0.58 ms each, and
+  its start (collect and freeze, before the mission clock) took 11.5 /
+  53.8 ms.
+
+#### Tests
+- `tests/test_sitl_rails.py`, 8 new. The hand-ticked stand-in builders pass
+  `--tick-trigger timer --gc-pacing off` (`HAND_TICKED` in
+  `tests/test_railinputs_node.py`, used by `tests/test_sitl_stressors.py`
+  too); the defaults are tested in `tests/test_sitl_rails.py`.
+
+#### Not done
+- Not flown: the rig's e2e under the action tick, the tick rate on a real
+  pilot stream, the pacer's cost on the Orin and the wait at a 50 m start.
+
+### 2026-11-11 (X9, a hold that is not kept) — Loiter goes home when the aircraft is carried beyond what a kept hold can carry it and is still receding: sm1111_048's missed fail-safe (wind beyond authority, 12 m/s) answered; replayed on the rig's own Loiters, not flown
+
+#### Found
+- sm1111_048 (wind-beyond-authority, lane 15, 12 m/s), the one wrong run of
+  sm1111 under the adopted reading (r2, 44/45), missed its fail-safe: G1 at
+  5.3 s, G3 at 5.8 s, then the companion's GUIDED hold commanded up to 4 m/s
+  back to its point while the SITL airframe receded from it at 2-4 m/s for
+  9.4 s, round nfz-square with the position legal throughout (2.4 m from its
+  face); X6 and X7 never ran, and G8 handed the aircraft back at 15.3 s.
+  Nothing told the FSM whether its hold was being kept.
+
+#### Changed (3146da6)
+- `guardrail/fsm.py`: edge X9 (Loiter -> RTL, an extension): the aircraft
+  beyond what a kept hold carries it (`TickInput.hold_reach_m`) on every
+  tick for T_recover, and its distance still growing by X7's fitted-trend
+  test. After G4, before G8. New law field `FSMConfig.hold_kept` ("reach",
+  the default; "off", the FSM at 22d434b): the default config hash is now
+  `sha256:b9103b0d...`; "off" hashes `sha256:e0d9267f...`, the default
+  before. Records carry `hold_off_m` / `hold_reach_m` / `x9_unkept` only on
+  Loiter ticks judged under the law; `tick_input_from_decision` and
+  `tick_input_from_row` pass the inputs through.
+- `guardrail/hold_flight.py`: `HoldWatch` and `hold_reach`: the distance
+  when the point was set, plus the braking distance from the speed then on
+  the rail's stop model (`ARDUCOPTER_GUIDED`: 0.45 s, 1.75 m/s^2), plus
+  3.0 m of settling (`HOLD_KEPT_SLACK_M`); `HoldFlight.point`.
+- `guardrail/shield.py`: `filter()` and `_escalate()` take the two inputs.
+- `experiments/sweep_scenarios.py`: the harness feeds `HoldWatch` the true
+  position and the last tick's ground velocity, as the rails do.
+- `sitl/ros2_shield_node.py`: the node asks its `HoldWatch` before each FSM
+  step and writes `hold_off_m` / `hold_reach_m` on Loiter rows. Merged with
+  the Shield node timing entry above: the X9 inputs are computed inside the
+  tick before the FSM steps, and the two row fields are written with the
+  other row fields after the publication.
+- `tools/prefix_eval.py` (merged with this entry, b42b22e): a recording
+  whose Shield flew the FSM on the previous default (`sha256:e0d9267f...`)
+  was refused as "not the defaults". It is now judged under the law it flew
+  (`hold_kept` "off", rebuilt exactly; `FSM_PREVIOUS_DEFAULTS`), never under
+  today's default, and the report says which (`shield.fsm_law`, the note, a
+  summary line). Any other non-default hash is still refused.
+- Docs: `docs/RUBRIC-failsafe.md` (no clause or label changed; X9 flagged as
+  a deviation question), `docs/DESIGN-escalation-fsm.md` (section, table
+  row, edge order, PI question 14), `docs/DESIGN-hold-points.md`, the wind
+  template's text.
+
+#### Measured (the rig's own logs replayed; not flown)
+- Replayed on all 413 Loiter spells the hil rig has flown, X9 fires on the
+  five 12 m/s lane-15 cells (hs02_009, hs03_011, rh03_044, sm1110_048,
+  sm1111_048; at 11.2-11.4 s) and on nt1111_001 (a SITL restart left the
+  hold 9.3 m past its point; r2 already expects a fail-safe there), never on
+  an 8 m/s or within-authority cell; the closest any other spell came to its
+  reach was 0.8 m short. Predicted for sm1111 under r2: 45/45.
+- Headless, the wind-beyond-authority cells on the ideal vehicle go home by
+  X9 (6.8 s at 12 m/s, 9.0 s at 8 m/s) instead of X7 (7.3 s, 17.3 s).
+
+#### Tests
+- `tests/test_fsm.py` (X9's semantics, the hashes, edge coverage),
+  `tests/test_hold_points.py` (`HoldWatch`; a replay of sm1111's own
+  Loiters, `tests/fixtures/hil_sm1111_wind_loiters.json`),
+  `tests/test_harnesstruth_wind.py` (the wind cells headless),
+  `tests/test_railinputs_node.py` (the node's wiring), the c77c77d identity
+  law pinned with `hold_kept` off (`tests/test_own_velocity_forecast.py`,
+  `tests/test_hold_points.py`), `tests/test_prefix_eval.py` (the previous
+  default judged under its law, today's unchanged, any other refused).
+
+#### Not done
+- X9 is an extension edge: the grant's FSM draws Loiter -> RTL only for
+  N-in-T persisting (G4) and the operator timeout (G5). A question for the
+  PI, a documented deviation (`docs/DESIGN-escalation-fsm.md`, question 14).
+- Not flown; the headless library, smoke and nightly profiles were not
+  re-run with it.
+
+### 2026-11-11 (KPI report from a hil campaign) — `tools/kpi_report.py --campaign` writes the WP4 KPI report from a hil campaign under the adopted fail-safe reading; the perception rail logs the camera frame's age at each setpoint; the track video draws moving zones where they were; not flown
+
+#### Added
+- `tools/kpi_report.py --campaign <demo/out/hil_<c>> --rescore-rail
+  <rescore.json>` writes the WP4 KPI report from a hil campaign (052620e,
+  fbb3f4f). `--campaign` takes the runs from the campaign's store
+  (`<store>/<campaign>_*`), which the default globs never reached; a run
+  the campaign did not accept or does not list is demoted from KPI grade
+  with the reason (the KPI-grade gate itself is unchanged). `--rescore-rail`
+  (the `--out` JSON of `experiments/sweep_scenarios.py --rescore-rail`)
+  applies the adopted label reading (r2) to the family table and the top-K,
+  keeping the label the run flew with beside it (`failsafe_at_flight`); a
+  new section scores (a), (r) and (r2) side by side over the KPI-grade
+  Shield-on runs: the point estimate, the Wilson 95 % lower bound, both
+  verdicts and nulls, the runs left out and the false and missed triggers by
+  name. A KPI summary leads the report; its Inputs line names the
+  campaign's acceptance.
+- The tick budget in that report reads `tick_ms` and `e2e_ms` (hil Shield
+  node) and the perception rail's `cam_age_ms` / `cam_to_setpoint_ms` from
+  every row of the whole flight, pooled per rail (p50 / p95 / p99 / max, the
+  count over 100 ms), KPI-grade apart; a measure nothing carries is "not
+  measured", never 0.
+- The perception rail (`demo/pas_ardupilot/perception_node.py --pilot vla`,
+  2c7d683; WP3-13): every row carries `t_pub` and `tick_ms`; a VLA row whose
+  decision's action flew carries `cam_age_ms` (`t_pub` minus that
+  decision's `t_capture`), and `cam_to_setpoint_ms` on the first tick that
+  flies each decision; metrics.json `camera_to_setpoint`. A lower bound: on
+  this rail a capture's time is the frame's arrival, not its render
+  (`t_capture_basis` "arrival").
+- `tools/render_track_video.py` (2c25c9f): a `dynamic_nfz` with `motion` is
+  drawn where it is at each frame, at `DynamicNFZ.ring_at` from its last
+  hot-apply (or, with none, the first row of the earliest generation
+  holding it); the footer names the run's real log path; `--tag` may name a
+  nested run; `--stills T1,T2` draws the nearest frames as PNGs (no ffmpeg).
+
+#### Measured
+- sm1111 (22d434b) with its re-score: 46 KPI-grade runs (2 not accepted);
+  P0 escape rate 0.0000 (0 of 2191 P0 ticks, 45 flights) against 0.6500 for
+  the Shield-off control; fail-safe (r2) 44/45 = 0.978, Wilson low 0.884
+  ((a) 39/45, (r) 43/45); `tick_ms` max 95.98 ms, 0 over 100 ms; `e2e_ms`
+  p99 106.4 ms, 351 of 14589 over (pooled over the KPI-grade runs' rows; the
+  campaign's own figure, 106.1 ms, is in the hil rig flights entry below).
+- The track video of hs06b_004 (dyn-nfz-rotate-spin): the drawn bar's signed
+  distance to the aircraft is within 0.21 m of the one the Shield logged
+  (`zone_d_m`) on all 355 rows of its generation.
+
+#### Tests
+- `tests/test_kpi_campaign.py` (new: 7, and 1 on the delivered data),
+  `tests/test_wp4outputs_kpi_report.py`, `tests/test_kpi_report.py`,
+  `tests/test_pas_vla.py` (the field arithmetic, a VLA GOTO on the
+  stand-ins, a held tick claims none), `tests/test_render_track_video.py`
+  (6 new).
+
+#### Not done
+- Not flown: no simulator or Orin run of the perception rail's new fields.
+  The report was made from a smoke campaign, one flight per cell: no KPI
+  number for the final report until the nightly hil campaign is scored.
+
 ### 2026-11-11 (hil rig flights, 7-11 Nov) — the stress library flown on the hil rig: three KPI-grade smoke campaigns, the grant's example sweep and the hold shakedowns; P0 escapes 0 on every Shield-on mission; the rig-only defects they found, their fixes, and what is still open
 
 The rig of the 2026-11-06 (hil) entry: ArduCopter 4.5.7 SITL and
@@ -76,8 +284,9 @@ flying; nothing of it is reported here.
 - (a) is the campaign's own line, the ideal-vehicle labels its sweep prints.
   (r) and (r2) are the label artefact `docs/data/failsafe_labels_rail.json`
   scored with `--rescore-rail` on branch adopt-rail-labels (2b68516,
-  0df7ee8), which adopts (r2) as the KPI-grade reading; that branch is not
-  merged. Its commit records the adoption as the user's decision of 9-10 Nov,
+  0df7ee8), which adopts (r2) as the KPI-grade reading; that branch merged
+  beside this entry (integrate/1112; its own entry is 2026-11-10 (fail-safe
+  labels adopted)). Its commit records the adoption as the user's decision of 9-10 Nov,
   taken after the rig had shown the autopilot's lag, not a pre-registered
   reading. A run its campaign did not accept (sm1111_044, sm1111_047) is in no
   reading. The 2026-11-07 (hold horizon) entry's rh03 figures, (r) 38/40 and
@@ -98,11 +307,14 @@ flying; nothing of it is reported here.
   receipt to the first setpoint flown from it and includes up to one 100 ms
   tick period of waiting for the node's own 10 Hz timer (metrics.json's
   `tick_latency` note). sm1111's e2e p99, 106.1 ms, is over WP3-13's 100 ms
-  (354 of 15,050 actions over); not fixed on master.
+  (354 of 15,050 actions over); the tick on the action addresses it in code
+  (2026-11-11 (Shield node timing)), not flown.
 - ge1110's 29 ticks over 100 ms: one in each of 29 of its 32 flown missions,
   107.0-120.4 ms, every one a Normal tick at t = 130.5-133.9 s whose Shield
   step (`shield_ms`) took 101.7-114.3 ms; the other three missions' longest
-  ticks are 95.9-96.9 ms. Not yet explained.
+  ticks are 95.9-96.9 ms. Explained since in 2026-11-11 (Shield node timing):
+  CPython's full garbage collection inside the tick, now paced after the
+  publication; not flown.
 
 #### Per campaign
 - **rh03** (fb96fe5): the first stressed missions on hil. Wind within
@@ -140,7 +352,8 @@ flying; nothing of it is reported here.
   (`sim_params.at_takeoff`: SIM_SPEEDUP had not answered), so the campaign
   could not confirm the cells' boot values and errored both, unscored.
   `read_sim_params` reads once and gives up when SIM_SPEEDUP has not answered
-  (8 of sm1111's 48 runs read none); not fixed on master.
+  (8 of sm1111's 48 runs read none); the bounded wait addresses it in code
+  (2026-11-11 (Shield node timing)), not flown.
 
 #### Found and fixed (the shakedowns; each fix has its own entry)
 - **hs01** (5fc832b): the Shield node died right after FCU connect, a
@@ -198,7 +411,10 @@ flying; nothing of it is reported here.
 - dyn-nfz-rotate-spin at 6 deg/s still ends in Loiter at the time cap on one
   seed or two (hs05, hs06b).
 - Open from 11 Nov: `read_sim_params` on a late SIM_SPEEDUP (sm1111_044,
-  sm1111_047), sm1111's e2e p99 over 100 ms, ge1110's tick at about 130 s.
+  sm1111_047), sm1111's e2e p99 over 100 ms, ge1110's tick at about 130 s;
+  each is addressed in code by 2026-11-11 (Shield node timing), and
+  sm1111_048's missed fail-safe by 2026-11-11 (X9, a hold that is not kept),
+  none of it flown yet.
 - No learned model has flown on hil: the stub reads no text (ARCH-20).
 
 ### 2026-11-11 (fence read and take-off) — the hil Shield node's fence read waits for SIM_SPEEDUP, and a take-off the autopilot's GeoFence would end is refused before arming; unit-tested, not flown at a 50 m start
@@ -243,7 +459,8 @@ flying; nothing of it is reported here.
   instead of flown into the fence.
 - The stressor read-back at take-off (`read_sim_params`) is a separate read
   and does not wait: sm1111_044 and sm1111_047 failed closed on it (previous
-  entry).
+  entry). Since 2026-11-11 (Shield node timing) both reads take one bounded
+  wait for SIM_SPEEDUP; not flown.
 
 ### 2026-11-10 (harness on the rails) — a harness session on a flight rail is one flown, scored episode with the grant's bundle, and zone edits go to the flying Shield as PATCH /dynamic_nfz; built and tested on a fake rig, not flown
 
@@ -457,7 +674,8 @@ holdpoint.py, hold_flight.py and sitl/ are those of 22d434b).
 #### Not done
 - tools/kpi_report.py is unchanged: the label table lives in `--rescore-
   rail`, which already re-scores fetched rail runs against the campaign's
-  cells.
+  cells. (Since 2026-11-11 (KPI report from a hil campaign) the report reads
+  that re-score with `--rescore-rail`.)
 - Decided rail labels were not all re-derived flown 35 s longer: the whole
   smoke profile and the four nightly families with an undecided cell were
   (0 differ); the rest of the nightly was not.
