@@ -112,7 +112,15 @@ scenarios:
       ground) G6 (no progress home into the wind) and lands off the zone,
       where it went G1 G3 G8 and was handed back on the far side at 8.9 s.
       The landing descends through the 10 m floor: 106 more autopilot LAND
-      ticks at the true state than the missed fail-safe flew. Until 2026-10-12
+      ticks at the true state than the missed fail-safe flew. Since
+      2026-11-11 the FSM also judges the hold itself (X9, guardrail/fsm.py):
+      a hold carried beyond its reach and still receding goes home, so every
+      cell goes G1 G3 X9 (6.8 s at 12 m/s, then G6; 9.0 s at 8 m/s, then
+      home) before the drift reaches the zone. On the hil rig the 12 m/s
+      hold (sm1111_048, 22d434b) was carried round the zone with the
+      position legal throughout and handed back by G8 at 15.3 s, a missed
+      fail-safe no position-based edge could see; X9 sends it home at
+      11.3 s. Until 2026-10-12
       this cell flew 5 m/s on the open-loop model, where the Shield's
       setpoints drifted with the wind and the modelled autopilot rejected it
       entirely; on the closed loop 5 m/s is within authority and is

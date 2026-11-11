@@ -140,7 +140,13 @@ the KPI with and without E5, so the weight of this choice is visible.
   fix validity and accuracy (`State.fix_ok`, `State.pos_sigma_m`) and the
   FSM answers E3 through X8 (docs/DESIGN-escalation-fsm.md); a rail that
   reports neither is still in the position this paragraph describes, and
-  the rubric's clauses did not change with it.
+  the rubric's clauses did not change with it. E2 had the same gap on the
+  hil rig until 2026-11-11: the FSM's only answer to a wind beyond the hold
+  authority was X7, which needs the aircraft pushed somewhere illegal, and
+  on sm1111_048 the hold was carried round the zone with the position legal
+  throughout. Since then the FSM judges the hold itself (X9: the aircraft
+  carried beyond what a kept hold can carry it, and still receding;
+  section 5, "2026-11-11"); the clauses and labels did not change with it.
 - The theta basis (decided separately: each repair's forecast depth in
   metres, reading A of docs/DESIGN-escalation-fsm.md).
 - The operator timeout (30 s, `loiter_timeout_s`): the rubric reads it as
@@ -275,6 +281,60 @@ cells, smoke 56, nightly 672 cell-seeds).
   lower bound; the library's 0.989 is one episode short of it (178/179 =
   0.994).
 
+### 2026-11-11: E2 on the rig, and X9 (a hold that is not kept)
+
+No clause and no label changed. What changed is the FSM
+(docs/DESIGN-escalation-fsm.md, "2026-11-11: X9, a hold that is not kept").
+
+**The miss.** On the KPI-grade hil smoke sm1111 (48 missions, 22d434b),
+read with the rail vehicle's labels and E5 (r2), the KPI is 44/45 = 0.978,
+and the one miss is sm1111_048: wind-beyond-authority, lane 15, 12 m/s,
+labelled expected by E2. The FSM went G1 (5.3 s), G3 (5.8 s: the repair
+over theta), and the companion held the point (-11.8, 15.0) in GUIDED,
+commanding up to 4 m/s back to it. The SITL airframe flew the mission's
+4 m/s with the 12 m/s tailwind (3.3-3.9 m/s over the ground) but could not
+hold still in it: from the Loiter's start the aircraft went 2.0-4.5 m/s
+away from its point, 28 m in 9.4 s, and sideways round nfz-square (2.4 m
+from its face at 13.1 s, never inside). The position stayed legal, so X6
+and X7 never ran; once the aircraft was past the zone the request turned
+clean, and G8 handed it back at 15.3 s. The mission then reached its goal
+downwind. The 8 m/s cell (sm1111_047) held: it overshot its point by 3.6 m
+and was back on it 6 s later, and the operator timeout sent it home (G5 at
+35.8 s, correct by E2). Within authority (5 m/s, sm1111_045 / 046) the hold
+was kept too (G5 on lane 15, which r2 expects; nothing on lane 25).
+
+**The answer, X9.** In Loiter, the FSM is told how far the aircraft is from
+the point its hold flies to and how far a kept hold can carry it (the
+distance when the point was set, plus the braking distance from the speed
+then on the rail Shield's own stop model, plus 3 m of settling;
+guardrail/hold_flight.py HoldWatch). Beyond that for T_recover and still
+receding (X7's own trend test on that distance), it returns: RTL, the
+rung after Loiter. Replayed on every Loiter the hil rig has flown (413
+spells, hs02 to nt1111), X9 fires on the five 12 m/s cells
+(hs02_009, hs03_011, rh03_044, sm1110_048, sm1111_048: at 11.2-11.4 s,
+12-15 m out, receding at 1.7-2.8 m/s) and on nt1111_001 (nfz-head-on, whose
+SITL restarted 2.5 s before the Loiter and handed the node a stale pose and
+velocity: the aircraft accelerated to 4 m/s inside its hold and went 9.3 m
+past its point; r2 expects a fail-safe there, which G5 gave at 38.8 s). It
+fires on no 8 m/s cell and no within-authority cell; the closest any other
+spell came to its reach was 0.8 m short (hs04_005 / 006, the BRAKE
+hand-over flow of 7 Nov). Predicted for sm1111 under r2: 45/45. Headless,
+the wind-beyond-authority cells on the ideal vehicle go home by X9 (6.8 s at
+12 m/s, 9.0 s at 8 m/s) instead of X7 (7.3 s, 17.3 s): the same label met,
+earlier, before the drift reaches the zone. The rail vehicle's GUIDED hold
+keeps the 8 m/s cell, as the rig did. Not re-run here: the library, smoke
+and nightly profiles (headless) and any hil flight.
+
+**A question for the PI (a documented deviation).** X9 is an extension
+edge; the grant's FSM draws Loiter -> RTL only for N-in-T persisting (G4)
+and the operator timeout (G5). It reads p1 ("trigger fail-safe (RTL / Land)
+when repair is unsafe") for the last repair the Shield has, the hold, as X7
+already did for a hold pushed into a zone. And it judges the hold, not E2's
+"acts toward a hard constraint": a wind beyond the hold authority blowing
+away from every constraint would trigger it too (no library cell has one).
+An aircraft that cannot hold still cannot keep any stop the Shield may
+need next, which is why it was not narrowed.
+
 ## 6. Open
 
 - No scenario has a planner that thrashes by changing its own request (N5):
@@ -285,4 +345,10 @@ cells, smoke 56, nightly 672 cell-seeds).
   (`stress.fix_quality_reported`, default true); no flight rail reports it
   yet (docs/DESIGN-escalation-fsm.md, "Where each rail's signal lives"),
   and ArduPilot's own EKF failsafe is still not modelled.
+- E2 is a parameter clause (the declared wind against the harness's
+  6.4 m/s authority), and the SITL airframe on the rig holds 8 m/s: its
+  8 m/s cells are fail-safes by the operator timeout (G5), not by a hold
+  lost. X9 (2026-11-11) judges the hold the rig flies, so it fires where the
+  airframe's own authority ends, not where the label's parameter says it
+  does; the two agree on every rig cell flown so far.
 - Nothing here is KPI-grade: the grant's KPI is measured on the hil topology.

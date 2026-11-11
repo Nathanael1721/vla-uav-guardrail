@@ -504,25 +504,33 @@ def test_the_old_loiter_law_hashes_as_every_earlier_record_did():
     "lookahead" on today's Loiter law hash as the default did before the
     fields existed, and each new reading alone has a hash of its own. And
     for handback_request (2026-11-10): "as_held" hashes as the default did
-    at 9eed35b, and today's default ("at_speed") has a hash of its own."""
+    at 9eed35b, and today's default ("at_speed") has a hash of its own. And
+    for hold_kept (2026-11-11): "off" hashes as the default did at 22d434b,
+    and today's default ("reach", X9) has a hash of its own."""
     old = FSMConfig(loiter_clear="violation_free", loiter_x67="request",
                     untrusted_owner="projected", hold_horizon="lookahead",
-                    handback_request="as_held")
+                    handback_request="as_held", hold_kept="off")
     assert old.digest.startswith("sha256:5ae67785"), old.digest
     assert FSMConfig().digest != old.digest
     assert FSMConfig(loiter_clear="violation_free").digest not in (old.digest,
                                                                    FSMConfig().digest)
     before = FSMConfig(untrusted_owner="projected", hold_horizon="lookahead",
-                       handback_request="as_held")
+                       handback_request="as_held", hold_kept="off")
     assert before.digest.startswith("sha256:d55e1bfe"), before.digest
-    chain_only = FSMConfig(hold_horizon="lookahead", handback_request="as_held")
+    chain_only = FSMConfig(hold_horizon="lookahead", handback_request="as_held",
+                           hold_kept="off")
     assert chain_only.digest.startswith("sha256:1e413c8b"), chain_only.digest
-    held = FSMConfig(handback_request="as_held")        # the default at 9eed35b
+    held = FSMConfig(handback_request="as_held", hold_kept="off")   # the default at 9eed35b
     assert held.digest.startswith("sha256:3b54b4e3"), held.digest
-    assert len({FSMConfig().digest, held.digest, before.digest, chain_only.digest}) == 4
+    unjudged = FSMConfig(hold_kept="off")               # the default at 22d434b
+    assert unjudged.digest.startswith("sha256:e0d9267f"), unjudged.digest
+    assert FSMConfig().digest.startswith("sha256:b9103b0d"), FSMConfig().digest
+    assert len({FSMConfig().digest, held.digest, before.digest, chain_only.digest,
+                unjudged.digest}) == 5
     raises(ValueError, FSMConfig, untrusted_owner="violated")
     raises(ValueError, FSMConfig, hold_horizon="forever")
     raises(ValueError, FSMConfig, handback_request="never")
+    raises(ValueError, FSMConfig, hold_kept="never")
 
 
 def test_g8_does_not_hand_back_an_unsafe_repair_or_a_loiter_rule():
@@ -1176,7 +1184,162 @@ def _edge_scripts():
                          (2.0, dict(stuck, unsafe_depth_m=2.0))]),
         # PROTOTYPE (2026-11-06): a position that can no longer be certified.
         "X8": run(None, [(0.0, rep), (0.1, dict(rep, position_lost="no valid fix"))]),
+        # 2026-11-11: a Loiter whose hold is carried away beyond its reach.
+        "X9": run(None, [(0.0, big), (0.1, big)]
+                  + [(0.2 + 0.1 * k, dict(big, hold_off_m=4.0 + 0.5 * k, hold_reach_m=3.0))
+                     for k in range(22)]),
     }
+
+
+def _hold(f, t0, offs, reach, kinds=None):
+    """Feed the Loiter `f` one tick every 0.1 s from t0, the hold's distance
+    `offs[k]` against `reach`; `kinds(t)` gives each tick's request (default
+    clean). Returns ((t, edge) of the first edge or None, its output)."""
+    o = None
+    for t, off in zip(clock(len(offs), t0=t0), offs):
+        kw = kinds(t) if kinds else {}
+        o = f.tick(t, hold_off_m=off, hold_reach_m=reach, **kw)
+        if o.edge:
+            return (round(t, 1), o.edge), o
+    return None, o
+
+
+def test_x9_sends_home_a_hold_the_wind_carries_away_before_g8_hands_it_back():
+    """REGRESSION (hil smoke sm1111_048, wind-beyond-authority, lane 15,
+    12 m/s, 22d434b: a missed fail-safe by its label, E2). The companion's
+    GUIDED hold commanded 4 m/s back to its point while the aircraft went
+    2-4 m/s away from it for 9.4 s; the position stayed legal (2.4 m from
+    nfz-square's face at the closest), so X6 / X7 never ran, and once the
+    aircraft had been carried round the zone the request turned clean and G8
+    handed it back on the far side (15.3 s). Here: the rig's reach (8.9 m:
+    0.4 m from the point and 3.67 m/s on the first Loiter tick, on the rail
+    model, 0.45 s and 1.75 m/s^2, plus 3 m;
+    tests/test_hold_points.py replays the rig's own rows),
+    the aircraft receding at 2.2 m/s, the request over theta until it is
+    carried past the zone (4.3 s) and clean after - so on the tick X9's
+    T_recover beyond the reach completes, G8's T_recover of an acceptable
+    request completes too. X9 wins (it comes before G8). Under hold_kept
+    "off" the same inputs are handed back by G8 on that tick, as on the rig."""
+    def fly(cfg):
+        f = EscalationFSM(cfg)
+        to_loiter_via_g3(f)
+        offs = [2.2 * (0.1 * k) for k in range(1, 300)]          # from 0.2 s
+        over = (lambda t: dict(outcome="repaired", violations=[hit()], magnitude=BIG)
+                if t < 4.2 - 1e-9 else {})
+        return f, _hold(f, 0.2, offs, 8.9, over)
+    f, (got, o) = fly(FSMConfig())
+    # Beyond 8.9 m from 4.2 s (9.02 m); T_recover later, receding at 2.2 m/s.
+    assert got == (6.2, "X9"), (got, o.reason)
+    assert (o.state, o.set_mode) == (S.RTL, "RTL"), o.reason
+    assert "hold not kept" in o.reason and "8.90 m a kept hold carries it" in o.reason, o.reason
+    rec = o.record
+    assert rec["edge"] == "X9" and rec["edge_source"] == "extension", rec
+    assert rec["hold_reach_m"] == 8.9 and rec["x9_unkept"]["unkept"] is True, rec
+    assert abs(rec["x9_unkept"]["slope_mps"] - 2.2) < 1e-6, rec["x9_unkept"]
+    assert f.summary()["outcome_label"] == "RTL_triggered"
+    _, (got, o) = fly(FSMConfig(hold_kept="off"))
+    assert got == (6.2, "G8"), (got, o.reason)
+    assert "hold_off_m" not in o.record and "x9_unkept" not in o.record, o.record
+
+
+def test_x9_leaves_alone_a_hold_that_overshoots_and_comes_back():
+    """The rig's 8 m/s cell (sm1111_047) kept its hold: entered at 3.80 m/s,
+    it overshot its point by 3.6 m in 1.8 s and was back on it 6 s later -
+    inside its 8.9 m reach throughout, and the Loiter ran to the operator
+    timeout (G5 at 30 s), as on the rig. A hold that overshoots past its
+    reach and turns back inside T_recover is left alone too: beyond the
+    reach is not enough, it has to be beyond it for T_recover AND still
+    receding."""
+    over = (lambda t: dict(outcome="repaired", violations=[hit()], magnitude=BIG))
+
+    def profile(peak, up_s, down_s):
+        n_up, n_dn = int(round(up_s / 0.1)), int(round(down_s / 0.1))
+        rise = [peak * k / n_up for k in range(1, n_up + 1)]
+        fall = [peak * (1 - k / n_dn) for k in range(1, n_dn + 1)]
+        return rise + fall + [0.0] * 400
+    f = EscalationFSM()
+    to_loiter_via_g3(f)
+    got, o = _hold(f, 0.2, profile(3.6, 1.8, 6.0), 8.9, over)
+    assert got == (30.1, "G5"), (got, o.reason)
+    # Past the reach for 1.5 s, then back: never T_recover beyond it.
+    f = EscalationFSM()
+    to_loiter_via_g3(f)
+    got, o = _hold(f, 0.2, profile(12.0, 4.0, 4.0), 8.9, over)
+    assert got == (30.1, "G5"), (got, o.reason)
+
+
+def test_x9_needs_the_hold_still_receding():
+    """X7's own guards, on the hold's distance: held beyond the reach at one
+    distance (a transit that cannot close; nothing carries it further) is
+    not a hold being lost, with or without 0.1 m of noise on every tick
+    (100 seeds); neither is a slow creep (0.2 m/s, 0.4 m in T_recover, under
+    the 0.5 m floor). Each runs to the timeout. The same noise over a 2 m/s
+    drift is shown at once. (The position X9 reads is the one the hold is
+    flown on: the autopilot's EKF pose on the node, centimetres of jitter in
+    a settled hold; the true state in the harness. Held off with 0.3 m of
+    white noise a tick, the trend test passes in 30 of 100 seeds over 29 s:
+    a rail with a position that noisy would need a stronger floor.)"""
+    over = (lambda t: dict(outcome="repaired", violations=[hit()], magnitude=BIG))
+    cases = {"held off": [12.0] * 400,
+             "creep": [9.0 + 0.02 * k for k in range(400)]}
+    for seed in range(100):
+        rnd = random.Random(seed)
+        cases[f"noise {seed}"] = [12.0 + rnd.gauss(0.0, 0.1) for k in range(400)]
+    for name, offs in cases.items():
+        f = EscalationFSM()
+        to_loiter_via_g3(f)
+        got, o = _hold(f, 0.2, offs, 8.9, over)
+        assert got == (30.1, "G5"), (name, got, o.reason)
+    rnd = random.Random(7)
+    f = EscalationFSM()
+    to_loiter_via_g3(f)
+    got, o = _hold(f, 0.2, [10.0 + 0.2 * k + rnd.gauss(0.0, 0.1) for k in range(400)],
+                   8.9, over)
+    assert got is not None and got[1] == "X9" and got[0] < 2.5, (got, o.reason)
+
+
+def test_x9_clock_restarts_on_a_tick_within_reach():
+    """Beyond the reach on EVERY tick for T_recover: one tick back within it
+    (or a new hold point, whose reach starts at least at its own distance)
+    restarts the clock."""
+    over = (lambda t: dict(outcome="repaired", violations=[hit()], magnitude=BIG))
+    offs = [10.0 + 0.3 * k for k in range(15)] + [5.0] + [10.0 + 0.3 * k for k in range(60)]
+    f = EscalationFSM()
+    to_loiter_via_g3(f)
+    got, o = _hold(f, 0.2, offs, 8.9, over)
+    # 0.2-1.6 s beyond, 1.7 s within, beyond again from 1.8 s: X9 at 3.8 s.
+    assert got == (3.8, "X9"), (got, o.reason)
+
+
+def test_x9_is_loiter_only_and_silent_without_its_input():
+    """X9 judges a hold, so only Loiter takes it: the same numbers in Normal
+    and Brake change nothing, and their records carry no X9 fields. A Loiter
+    tick without the input (a replay of an older log, a rail that does not
+    report it) is the FSM as it was, record and all. The input comes in
+    pairs of finite, non-negative metres."""
+    lost = dict(hold_off_m=20.0, hold_reach_m=1.0)
+    f = EscalationFSM()
+    for t in clock(40):
+        o = f.tick(t, "repaired", [hit()], SMALL, **lost)
+        assert o.state in (S.NORMAL, S.BRAKE) and o.edge in (None, "G1"), o.reason
+        assert "hold_off_m" not in o.record and "x9_unkept" not in o.record
+    f = EscalationFSM()
+    to_loiter_via_g3(f)
+    for t in clock(40, t0=0.2):
+        o = f.tick(t, "repaired", [hit()], BIG)
+        assert o.state == S.LOITER and "hold_off_m" not in o.record, o.reason
+    o = f.tick(4.2, "repaired", [hit()], BIG, **lost)
+    assert o.record["hold_off_m"] == 20.0 and o.record["x9_unkept"] is None, o.record
+    raises(ValueError, TickInput, t=0.0, outcome="clean", hold_off_m=1.0)
+    raises(ValueError, TickInput, t=0.0, outcome="clean", hold_reach_m=1.0)
+    raises(ValueError, TickInput, t=0.0, outcome="clean", hold_off_m=-1.0, hold_reach_m=1.0)
+    raises(ValueError, TickInput, t=0.0, outcome="clean", hold_off_m=math.inf,
+           hold_reach_m=1.0)
+    inp = tick_input_from_decision(0.0, SimpleNamespace(violations=[], repairs=[],
+                                                        braked=False, raw=None,
+                                                        emitted=None),
+                                   None, hold_off_m=2, hold_reach_m=3)
+    assert (inp.hold_off_m, inp.hold_reach_m) == (2.0, 3.0), inp
 
 
 def test_x8_returns_from_normal_brake_and_loiter_on_a_lost_position():

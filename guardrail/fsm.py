@@ -111,6 +111,26 @@ term.
       still navigates on its own estimate; G6 lands it if the return fails.
       A rail that reports no fix quality (every rail on that date) never
       takes it.
+  X9  Loiter -> RTL when the HOLD IS NOT KEPT (since 2026-11-11,
+      FSMConfig.hold_kept "reach"): the aircraft is farther from the point
+      its hold flies to (`hold_off_m`) than a kept hold can carry it
+      (`hold_reach_m`: its distance when the point was set, plus the
+      braking distance from its speed then on the rail's response model,
+      plus a settling slack; guardrail/hold_flight.py HoldWatch) on every
+      tick for >= T_recover, AND that distance is still GROWING - X7's own
+      test (a least-squares slope above x6_min_escape_mps at two standard
+      errors, and a fitted rise of at least x7_min_rise_m) on the hold's
+      distance instead of the illegal depth. A disturbance the aircraft
+      cannot reject is carrying it away from a hold that commands it back:
+      the rubric's E2 (docs/RUBRIC-failsafe.md), which X7 answers only once
+      the aircraft is pushed somewhere illegal. On the hil smoke sm1111_048
+      (wind-beyond-authority, 12 m/s, 22d434b) the GUIDED hold commanded
+      4 m/s back to its point while the aircraft receded from it at
+      2-4 m/s for 9.4 s, passed 2.4 m from nfz-square's face and was handed
+      back on the far side (G8 at 15.3 s): a missed fail-safe by its label,
+      with the position legal throughout. RTL, the grant's next rung after
+      Loiter; G6 lands it if the return fails. A rail that does not report
+      the hold's distance never takes it. Ours; a PI question.
 
 Interpretations of terms the grant uses but does not define:
 
@@ -153,6 +173,10 @@ Interpretations of terms the grant uses but does not define:
     "position", 2026-11-02). Their "hard rule violated on this tick" exists
     for Brake, where the Shield flies the request and a clean one is the
     pilot leaving on its own; in Loiter nobody flies it.
+  * X9 comes before G8 in Loiter (and after G4, a grant edge to the same
+    RTL): G8 hands GUIDED back to a flight whose every stop - the Brake's
+    zero, the next Loiter - is a hold the aircraft has just been shown not
+    to keep.
   * Window edges are INCLUSIVE: an onset exactly T seconds old still counts,
     and exactly T_recover of clearing is enough (p4 writes ">= T_recover").
     Floating-point slack is 1e-9 s.
@@ -505,10 +529,18 @@ HANDBACK_REQUESTS = ("at_speed", "as_held")
 # A Loiter with no operator timeout (loiter_timeout_s None) is held at most
 # this long for the hold horizon's purpose.
 HOLD_HORIZON_CAP_S = 60.0
+# Whether Loiter escalates a hold that is not kept (since 2026-11-11, edge X9;
+# docs/DESIGN-escalation-fsm.md, "2026-11-11: X9, a hold that is not kept"):
+#   reach  the aircraft farther from its hold point than a kept hold carries
+#          it (TickInput.hold_reach_m) for T_recover, and still receding: RTL.
+#          The default.
+#   off    the hold's distance is not judged: the FSM as it was at 22d434b.
+HOLD_KEPT_MODES = ("reach", "off")
 # Every law field and the value earlier records were written under: a config
 # on these values hashes as it did before the field existed.
 LEGACY_LAW = {**LEGACY_LOITER_LAW, "untrusted_owner": "projected",
-              "hold_horizon": "lookahead", "handback_request": "as_held"}
+              "hold_horizon": "lookahead", "handback_request": "as_held",
+              "hold_kept": "off"}
 
 # Every edge this FSM can take: id -> (from, to, source, label). The design
 # doc's transition table lists the same ids, and tests/test_fsm.py drives
@@ -557,6 +589,16 @@ EDGES: dict[str, tuple[str, str, str, str]] = {
            "position knowledge lost: the position error (stale or invalid fix, or "
            "reported accuracy) exceeds a hard P0 zone's margin with its boundary "
            "within that error"),
+    # Since 2026-11-11 (FSMConfig.hold_kept "reach"): the hold is not kept - the
+    # aircraft carried beyond what a kept hold can carry it from its point
+    # (hold_reach_m) for T_recover and still receding, X7's trend test on the
+    # hold's distance. The rubric's E2 (a disturbance the aircraft cannot
+    # reject) with the position still legal, where X7 cannot see it.
+    "X9": ("Loiter", "RTL", "extension",
+           "hold not kept: the aircraft farther from its hold point than a kept hold "
+           "carries it (hold_reach_m) on every tick for >= T_recover, and that "
+           "distance GROWING (fitted slope at two standard errors, and a minimum "
+           "rise)"),
 }
 
 
@@ -1096,6 +1138,15 @@ class TickInput:
                exit there sent the 12 m/s wind-beyond-authority cell UPWIND,
                where it made no headway (first measurement, 2026-10-19:
                132 ticks inside instead of 29, then X7 and a Land).
+    hold_off_m / hold_reach_m  in Loiter (edge X9, since 2026-11-11): how
+               far the aircraft is, horizontally, from the point its hold
+               flies to, and how far a hold that is being kept can carry it
+               from that point - its distance when the point was set, plus
+               the braking distance from its speed then on the rail's
+               response model, plus a settling slack (guardrail/
+               hold_flight.py HoldWatch). Both or neither; None when the
+               caller does not judge the hold (a replay of an older log, a
+               rail that does not report it), and then X9 never fires.
     """
     t: float
     outcome: str
@@ -1135,8 +1186,22 @@ class TickInput:
     # reads from the held aircraft. None when the caller does not judge it:
     # as before.
     handback_untrusted: bool | None = None
+    # In Loiter (since 2026-11-11, FSMConfig.hold_kept "reach"): the hold's
+    # distance and what a kept hold may reach (see the docstring). X9.
+    hold_off_m: float | None = None
+    hold_reach_m: float | None = None
 
     def __post_init__(self) -> None:
+        if (self.hold_off_m is None) != (self.hold_reach_m is None):
+            raise ValueError(f"hold_off_m and hold_reach_m come together, got "
+                             f"{self.hold_off_m!r} and {self.hold_reach_m!r}")
+        for name in ("hold_off_m", "hold_reach_m"):
+            v = getattr(self, name)
+            if v is not None:
+                if not _num_ok(v) or v < 0:
+                    raise ValueError(f"{name} must be a finite number >= 0 or None, "
+                                     f"got {v!r}")
+                object.__setattr__(self, name, float(v))
         if not isinstance(self.noise_marginal, bool):
             raise ValueError(f"noise_marginal must be a bool, got {self.noise_marginal!r}")
         if self.handback_untrusted is not None and not isinstance(self.handback_untrusted, bool):
@@ -1219,6 +1284,10 @@ class FSMConfig:
     handback_request (HANDBACK_REQUESTS) is what Loiter's hand-back judges
     the request on; it entered on 2026-11-10 (the hash changed again), and
     "as_held" hands back as before.
+    hold_kept (HOLD_KEPT_MODES) is whether Loiter escalates a hold that is
+    not kept (X9, on TickInput.hold_off_m / hold_reach_m, with X7's trend
+    thresholds over T_recover); it entered on 2026-11-11 (the hash changed
+    again), and "off" flies the FSM as it was.
     """
     n_violations: int = 3
     window_s: float = 5.0
@@ -1235,6 +1304,7 @@ class FSMConfig:
     untrusted_owner: str = "chain"
     hold_horizon: str = "loiter"
     handback_request: str = "at_speed"
+    hold_kept: str = "reach"
 
     # Grant symbols accepted in YAML, so a profile can be written the way p4
     # writes it ("N: 3, T: 5, T_recover: 2").
@@ -1287,6 +1357,9 @@ class FSMConfig:
         if self.handback_request not in HANDBACK_REQUESTS:
             raise ValueError(f"FSMConfig.handback_request {self.handback_request!r} "
                              f"is not one of {HANDBACK_REQUESTS}")
+        if self.hold_kept not in HOLD_KEPT_MODES:
+            raise ValueError(f"FSMConfig.hold_kept {self.hold_kept!r} "
+                             f"is not one of {HOLD_KEPT_MODES}")
         # At most one counted onset per onset_clear_s: N of them need
         # (N - 1) x onset_clear_s seconds, which must fit in T, or N-in-T (G2,
         # G4) could never fire and the config would quietly delete both edges.
@@ -1406,7 +1479,8 @@ class FSMConfig:
         do the same (LEGACY_LAW): "projected" and "lookahead" hash as every
         config did before them (today's Loiter law: `sha256:d55e1bfe...`),
         and so does handback_request (2026-11-10): "as_held" hashes as the
-        default did at 9eed35b."""
+        default did at 9eed35b. And hold_kept (2026-11-11): "off" hashes as
+        the default did at 22d434b (`sha256:e0d9267f...`)."""
         d = self.__dict__.get("_digest")
         if d is None:
             fields = {k: v for k, v in self.to_dict().items()
@@ -1560,6 +1634,11 @@ class EscalationFSM:
         # oldest first, pruned to the last sample at least max(T, T_recover)
         # old: the windows X6's and X7's fitted trends are read from.
         self._depths: list[tuple[float, float | None]] = []
+        # X9 (hold_kept "reach"): in Loiter, the aircraft beyond its hold's
+        # reach on every tick since, and (t, hold_off_m) on those ticks,
+        # pruned as _depths is: the window X9's fitted trend is read from.
+        self._unkept_since: float | None = None
+        self._offs: list[tuple[float, float]] = []
         self._n = 0
         self._transitions: list[dict[str, Any]] = []
         self._visited = [FSMState.NORMAL]
@@ -1908,6 +1987,23 @@ class EscalationFSM:
         stuck_s = None if self._stuck_since is None else t - self._stuck_since
         progress = self._x6_progress(t)
         losing = self._x7_losing(t)
+        # X9's clock (hold_kept "reach", since 2026-11-11): in Loiter, the
+        # aircraft farther from its hold point than a kept hold carries it on
+        # every tick since. A tick within reach, a tick with no input, and
+        # any tick outside Loiter restart it; so does a new hold point, whose
+        # reach starts at least its own distance (HoldWatch).
+        judge_hold = (cfg.hold_kept == "reach" and before is FSMState.LOITER
+                      and not self._terminal and inp.hold_off_m is not None)
+        if judge_hold and inp.hold_off_m > inp.hold_reach_m + EPS:
+            if self._unkept_since is None:
+                self._unkept_since = t
+            self._offs.append((t, inp.hold_off_m))
+            while len(self._offs) > 1 and self._offs[1][0] <= t - cfg.t_recover_s + EPS:
+                self._offs.pop(0)
+        else:
+            self._unkept_since = None
+            self._offs = []
+        unkept = self._hold_lost(t) if judge_hold else None
 
         # Clean streaks. Brake recovers when nothing enforced is violated;
         # Loiter when no HARD rule is, so a soft rule can never hold the
@@ -2009,7 +2105,8 @@ class EscalationFSM:
                                          untrusted, hard_untrusted, theta_exceeded,
                                          n_in_t, cleared_any, cleared_hard,
                                          hard_violated, stuck_s, progress, losing,
-                                         cleared_loiter, chain_owned=bool(chain))
+                                         cleared_loiter, chain_owned=bool(chain),
+                                         unkept=unkept)
 
         terminal_now = False
         if edge in ("G9", "G10", "X5"):
@@ -2120,6 +2217,13 @@ class EscalationFSM:
             # at the speed it asks for, could not be trusted (handback_request
             # "at_speed", 2026-11-10). Only on such ticks.
             record["handback_untrusted"] = True
+        if judge_hold:
+            # X9's input and trend (hold_kept "reach", 2026-11-11): only on
+            # Loiter ticks that carry the hold's distance under that law, so
+            # every other record is byte for byte what it was.
+            record["hold_off_m"] = round(inp.hold_off_m, 6)
+            record["hold_reach_m"] = round(inp.hold_reach_m, 6)
+            record["x9_unkept"] = unkept
         if before == FSMState.LOITER:
             # Loiter's own "cleared" clock (loiter_clear "acceptable",
             # 2026-11-02): the request acceptable and the position legal for
@@ -2141,9 +2245,12 @@ class EscalationFSM:
                          record=record)
 
     # ------------------------------------------------------------ internals
-    def _fit(self, t: float, window_s: float) -> dict[str, Any] | None:
+    def _fit(self, t: float, window_s: float,
+             samples: list[tuple[float, float | None]] | None = None
+             ) -> dict[str, Any] | None:
         """Least-squares line through the illegal-depth samples of the last
-        `window_s` (from the last sample at or before t - window_s to now).
+        `window_s` (from the last sample at or before t - window_s to now),
+        or through `samples` (X9: the hold's distance) when given.
 
         None when there is nothing to fit. `slope_mps` is None when a sample
         in the window has no depth (a caller that did not report one): no
@@ -2151,15 +2258,16 @@ class EscalationFSM:
         fit's own residuals (0 with fewer than three samples, where it cannot
         be estimated). Two samples T apart, as the first version read the
         trend, let 0.2-0.3 m of position noise decide X7 on its own."""
-        if not self._depths:
+        series = self._depths if samples is None else samples
+        if not series:
             return None
         i0 = 0
-        for i, s in enumerate(self._depths):
+        for i, s in enumerate(series):
             if s[0] <= t - window_s + EPS:
                 i0 = i
             else:
                 break
-        pts = self._depths[i0:]
+        pts = series[i0:]
         t0 = pts[0][0]
         span = pts[-1][0] - t0
         out: dict[str, Any] = {"from_t_s": round(t0, 6), "span_s": round(span, 6),
@@ -2227,6 +2335,30 @@ class EscalationFSM:
                 "losing": bool(shown > cfg.x6_min_escape_mps + EPS
                                and rose >= cfg.x7_min_rise_m - EPS)}
 
+    def _hold_lost(self, t: float) -> dict[str, Any] | None:
+        """Is the hold NOT being kept (X9)? None until the aircraft has been
+        beyond its hold's reach for T_recover. Otherwise X7's test on the
+        hold's distance instead of the illegal depth: its fitted slope over
+        the last T_recover, less two standard errors, above x6_min_escape_mps,
+        and a fitted rise of at least x7_min_rise_m. Beyond what the hold's
+        own braking and settling can carry it, and still receding: something
+        the hold cannot reject is carrying the aircraft away (a wind beyond
+        its authority)."""
+        cfg = self.config
+        if (self._unkept_since is None or not self._offs
+                or t - self._unkept_since < max(cfg.t_recover_s, CONTROL_PERIOD_S) - EPS):
+            return None
+        fit = self._fit(t, cfg.t_recover_s, self._offs)
+        if fit is None or fit["slope_mps"] is None:
+            return None
+        b, se = fit.pop("_b"), fit.pop("_se")
+        rose = b * fit.pop("_span")
+        shown = b - 2.0 * se
+        return {**fit, "rose_m": round(rose, 6), "beyond_s": round(t - self._unkept_since, 6),
+                "need_mps": cfg.x6_min_escape_mps, "need_m": cfg.x7_min_rise_m,
+                "unkept": bool(shown > cfg.x6_min_escape_mps + EPS
+                               and rose >= cfg.x7_min_rise_m - EPS)}
+
     def _enter(self, target: FSMState, t: float) -> None:
         self._state = target
         self._entered_at = t
@@ -2262,7 +2394,8 @@ class EscalationFSM:
                 cleared_any: float | None, cleared_hard: float | None,
                 hard_violated: bool = False, stuck_s: float | None = None,
                 progress: dict | None = None, losing: dict | None = None,
-                cleared_loiter: float | None = None, chain_owned: bool = False):
+                cleared_loiter: float | None = None, chain_owned: bool = False,
+                unkept: dict | None = None):
         """Return (target state or None, edge id or None, reason)."""
         cfg = self.config
         S = FSMState
@@ -2410,6 +2543,18 @@ class EscalationFSM:
             if n_in_t:
                 return (S.RTL, "G4", f"N-in-T persists: {len(self._events)} onsets "
                         f"in {cfg.window_s:g} s since Loiter entry")
+            if unkept and unkept.get("unkept"):
+                # X9 (since 2026-11-11), before G8: handing GUIDED back would
+                # give the flight to stops the aircraft has just been shown
+                # not to hold.
+                return S.RTL, "X9", (
+                    f"hold not kept: {inp.hold_off_m:.2f} m from its point, beyond "
+                    f"the {inp.hold_reach_m:.2f} m a kept hold carries it, for "
+                    f"{unkept['beyond_s']:.2f} s >= T_recover {cfg.t_recover_s:g} s, "
+                    f"and still receding: {unkept['rose_m']:.2f} m (fitted) in "
+                    f"{unkept['span_s']:.2f} s (slope {unkept['slope_mps']:+.2f} +/- "
+                    f"{2 * unkept['se_mps']:.2f} m/s); a disturbance the hold cannot "
+                    f"reject is carrying the aircraft away")
             if cfg.loiter_clear == "acceptable":
                 if cleared_loiter is not None and cleared_loiter >= cfg.t_recover_s - EPS:
                     return S.NORMAL, "G8", (
@@ -2568,7 +2713,9 @@ def tick_input_from_decision(t: float, decision: Any, policy: Any,
                              position_lost: str | None = None,
                              noise_marginal: bool = False,
                              handback_unsafe: bool | None = None,
-                             handback_untrusted: bool | None = None) -> TickInput:
+                             handback_untrusted: bool | None = None,
+                             hold_off_m: float | None = None,
+                             hold_reach_m: float | None = None) -> TickInput:
     """Map one `guardrail.shield.ShieldDecision` onto a TickInput.
 
     blocked   the Shield braked, or its own re-check of the emitted action is
@@ -2611,6 +2758,10 @@ def tick_input_from_decision(t: float, decision: Any, policy: Any,
 
     hold_legal: in Loiter, whether the FSM's hold point is still legal
     (TickInput.hold_legal); passed through. None: not judged.
+
+    hold_off_m / hold_reach_m: in Loiter, the hold's distance and what a
+    kept hold may reach (TickInput, X9; guardrail/hold_flight.py
+    HoldWatch.judge); passed through. None: not judged.
     """
     vios = list(getattr(decision, "violations", None) or [])
     repairs = list(getattr(decision, "repairs", None) or [])
@@ -2655,7 +2806,8 @@ def tick_input_from_decision(t: float, decision: Any, policy: Any,
                      unsafe_depth_m=unsafe_depth_m, hold_legal=hold_legal,
                      position_lost=position_lost, noise_marginal=bool(noise_marginal),
                      handback_unsafe=handback_unsafe,
-                     handback_untrusted=handback_untrusted)
+                     handback_untrusted=handback_untrusted,
+                     hold_off_m=hold_off_m, hold_reach_m=hold_reach_m)
 
 
 # --------------------------------------------------------------------------- #
@@ -2699,19 +2851,23 @@ def tick_input_from_row(row: Mapping[str, Any], policy: Any = None,
     # clean tick inside a zone keeps X6's clock running (a pilot already
     # leaving), and only a legal position restarts it.
     stop = _row_stop_illegal(row, policy)
+    # X9's input, when the rail logged it (Loiter rows since 2026-11-11).
+    off, reach = row.get("hold_off_m"), row.get("hold_reach_m")
+    hold = ({"hold_off_m": float(off), "hold_reach_m": float(reach)}
+            if _num_ok(off) and _num_ok(reach) and off >= 0 and reach >= 0 else {})
     if not hits:
         return TickInput(t=t, outcome="clean", stop_illegal=bool(stop),
-                         unsafe_depth_m=depth)
+                         unsafe_depth_m=depth, **hold)
     if not any(h.effective_action != "monitor_only" for h in hits):
         return TickInput(t=t, outcome="clean", violations=hits,
-                         stop_illegal=bool(stop), unsafe_depth_m=depth)
+                         stop_illegal=bool(stop), unsafe_depth_m=depth, **hold)
     braked = bool(row.get("braked"))
     ev = _still_enforced(policy, row.get("emitted_violations"), row.get("relaxed"))
     if braked or ev:
         return TickInput(t=t, outcome="blocked", violations=hits,
                          stop_illegal=(stop if stop is not None
                                        else _blocked_stop_illegal(braked, ev)),
-                         unsafe_depth_m=depth)
+                         unsafe_depth_m=depth, **hold)
     repairs = row.get("repairs")
     if not repairs:
         raise ValueError(f"row t={t}: violations but no repair. This is a shield-off "
@@ -2720,11 +2876,11 @@ def tick_input_from_row(row: Mapping[str, Any], policy: Any = None,
         why = ("a stop was legal" if stop is False
                else "the log does not record whether a stop was legal")
         return TickInput(t=t, outcome="blocked", violations=hits, stop_illegal=False,
-                         note=f"{_RESCUE_NOTE}; {why}", unsafe_depth_m=depth)
+                         note=f"{_RESCUE_NOTE}; {why}", unsafe_depth_m=depth, **hold)
     mag = repair_magnitude(repairs, row.get("raw"), row.get("emitted"), horizon_s,
                            caps=caps, stop_illegal=bool(stop))
     return TickInput(t=t, outcome="repaired", violations=hits, magnitude=mag,
-                     stop_illegal=bool(stop), unsafe_depth_m=depth)
+                     stop_illegal=bool(stop), unsafe_depth_m=depth, **hold)
 
 
 def replay_rows(rows: Iterable[Mapping[str, Any]], horizon_s: float | None = None,

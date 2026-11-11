@@ -95,6 +95,38 @@ A plan arrives on the tick its search ends (guardrail/holdpoint.py, THE
 PER-TICK BOUND, since 2026-11-07): until then the FSM's hold is None on entry,
 flown as in place, and on a re-plan an in-place plan, so the aircraft holds
 where it is while the search runs.
+
+THE HOLD KEPT (HoldWatch, since 2026-11-11; the FSM's edge X9). Whether the
+aircraft stays where its hold flies it is a fact about the flight, and the
+FSM is told it as two numbers on every Loiter tick (fsm.TickInput.hold_off_m
+/ hold_reach_m): how far the aircraft is, horizontally, from the point the
+hold flies to - HoldFlight's own target while it holds in GUIDED, else the
+FSM's plan, else where the Loiter began - and how far a hold that is being
+kept can carry it from there, set whenever the point is: its distance then,
+plus the braking distance from its speed then on the rail Shield's own
+response model (guardrail/response.py ARDUCOPTER_GUIDED: 0.45 s, 1.75
+m/s^2, chosen so its median braking error is not short - the stop the
+Shield forecasts), plus HOLD_KEPT_SLACK_M for the settling the model leaves
+out. The FSM escalates (X9) only when the aircraft has been beyond that
+reach for T_recover AND is still receding (X7's fitted-trend test), so a
+hold that overshoots and comes back never fires it, however far it
+overshot within its reach.
+
+Measured on every Loiter the hil rig flew with the companion's GUIDED hold
+(hs05, hs06, nt1107, sm1110, sm1111 and the nightly nt1111 so far: 324
+spells), the farthest any hold went beyond the stop model was 1.5 m
+(sm1110_045, wind-within-authority) - apart from the 12 m/s
+wind-beyond-authority cells (22-24 m: carried away at 2-4 m/s while the
+hold commanded 4 m/s back) and nt1111_001, whose SITL restarted 2.5 s
+before the Loiter and handed the node a stale pose and velocity at entry
+(4.9 m; the aircraft was still accelerating to 4 m/s, 1.5 s into the hold).
+ArduCopter's BRAKE after a GUIDED stream carries the aircraft by its
+integrator, |a0| x 1 s^2, up to the airframe's 2.5 m/s^2 x 1 s^2 = 2.5 m
+(the forced hand-over above; measured 2.4 m on hs04_005 / 006, the flow
+before the GUIDED hold). HOLD_KEPT_SLACK_M = 3.0 m clears the worst GUIDED
+hold by 1.5 m and a BRAKE hand-over by 0.5 m; with it no spell on any hil
+campaign since hs02 (413 spells) fires X9 but the five 12 m/s cells and
+nt1111_001.
 """
 from __future__ import annotations
 
@@ -152,6 +184,12 @@ REACHED_M = 0.5
 TRANSIT_STALL_S = 2.0
 TRANSIT_PROGRESS_M = 0.05
 TRANSIT_MAX_S = 10.0
+
+# What a kept hold may carry the aircraft past its point (module docstring,
+# THE HOLD KEPT): the rail Shield's own stop model, and the settling it
+# leaves out.
+HOLD_REACTION_S = ARDUCOPTER_GUIDED.reaction_s
+HOLD_KEPT_SLACK_M = 3.0
 
 _HOLD_STATES = (FSMState.LOITER, FSMState.LAND)
 # The speed and climb a GUIDED hold closes on a point with when its plan names
@@ -303,6 +341,17 @@ class HoldFlight:
         self.forced: str | None = None
         self.forced_count = 0
 
+    @property
+    def point(self) -> tuple[float, float, float] | None:
+        """Where the GUIDED hold is flying the aircraft to (north, east, up),
+        while the companion holds a Loiter in GUIDED; None otherwise (no
+        Loiter, a hold handed to the autopilot, or the old flow), where the
+        FSM's own plan says where the hold is (HoldWatch.judge)."""
+        tg = self._target
+        if not self.guiding or self.forced or tg is None:
+            return None
+        return (tg.x, tg.y, tg.up)
+
     def force_brake(self, why: str) -> bool:
         """The companion cannot stream the GUIDED hold (a gap in its stream):
         hand the hold to ArduCopter's BRAKE for the rest of this Loiter. True
@@ -412,3 +461,88 @@ class HoldFlight:
                         f"where it is, in GUIDED")
         return HoldTick(mode, transit_velocity(x, y, up, self._target, dt, self.accel_mps2,
                                                self.accel_z_mps2), moving, note)
+
+
+def hold_reach(d0_m: float, speed_mps: float, reaction_s: float = HOLD_REACTION_S,
+               accel_mps2: float = TRANSIT_ACCEL_MPS2,
+               slack_m: float = HOLD_KEPT_SLACK_M) -> float:
+    """How far from its point a hold that is being kept can carry the
+    aircraft (module docstring, THE HOLD KEPT): `d0_m`, its distance when the
+    point was set, plus the braking distance from `speed_mps` then - flown
+    `reaction_s` before the stop begins, then braked at `accel_mps2` - plus
+    `slack_m` of settling."""
+    v = max(0.0, float(speed_mps))
+    return float(d0_m) + v * reaction_s + v * v / (2.0 * accel_mps2) + slack_m
+
+
+class HoldWatch:
+    """The FSM's X9 input for one rail (module docstring, THE HOLD KEPT).
+
+    Call `judge(fsm, hold_flight, x, y, t, speed_mps)` once per tick, BEFORE
+    the FSM steps (it reads the state the FSM is in going into the tick),
+    with the aircraft's position and horizontal ground speed (None: from the
+    last two positions it was given). It returns (hold_off_m, hold_reach_m)
+    for fsm.TickInput, or (None, None) outside Loiter and on the one tick a
+    new point waits for a speed. One class for the rails (sitl/
+    ros2_shield_node.py) and the harness (experiments/sweep_scenarios.py), so
+    both hand the FSM the same numbers for the same flight."""
+
+    def __init__(self, reaction_s: float = HOLD_REACTION_S,
+                 accel_mps2: float = TRANSIT_ACCEL_MPS2,
+                 slack_m: float = HOLD_KEPT_SLACK_M) -> None:
+        self.reaction_s = float(reaction_s)
+        self.accel_mps2 = float(accel_mps2)
+        self.slack_m = float(slack_m)
+        self.reset()
+
+    def reset(self) -> None:
+        self.point: tuple[float, float] | None = None   # the point the reach is for
+        self.reach: float | None = None
+        self.d0: float | None = None                     # its distance, and the speed,
+        self.v0: float | None = None                     # when it was set
+        self._anchor: tuple[float, float] | None = None  # where the Loiter began
+        self._last: tuple[float, float, float] | None = None   # (t, x, y)
+
+    def update(self, point: tuple[float, float] | None, x: float, y: float, t: float,
+               speed_mps: float | None = None) -> tuple[float, float] | None:
+        """(distance from `point`, the reach) on this tick; None while a new
+        point has no speed to set its reach from. `point` None: where the
+        first update put the aircraft (a hold with no plan yet holds where the
+        Loiter began, as HoldFlight flies it)."""
+        if point is None:
+            if self._anchor is None:
+                self._anchor = (float(x), float(y))
+            point = self._anchor
+        if speed_mps is None or not math.isfinite(speed_mps):
+            last = self._last
+            speed_mps = (math.hypot(x - last[1], y - last[2]) / (t - last[0])
+                         if last is not None and t - last[0] > 1e-9 else None)
+        self._last = (float(t), float(x), float(y))
+        off = math.hypot(x - point[0], y - point[1])
+        if self.point is None or math.hypot(point[0] - self.point[0],
+                                            point[1] - self.point[1]) > 1e-6:
+            if speed_mps is None:
+                return None
+            self.point = (float(point[0]), float(point[1]))
+            self.d0, self.v0 = off, float(speed_mps)
+            self.reach = hold_reach(off, speed_mps, self.reaction_s, self.accel_mps2,
+                                    self.slack_m)
+        return off, self.reach
+
+    def judge(self, fsm, hold_flight: "HoldFlight | None", x: float, y: float, t: float,
+              speed_mps: float | None = None) -> tuple[float | None, float | None]:
+        """The hold's distance and reach for the FSM's tick (class
+        docstring). The point: `hold_flight`'s GUIDED target while it holds
+        a Loiter in GUIDED, else the FSM's plan (`fsm.hold`), else where the
+        Loiter began."""
+        if fsm is None or fsm.terminal or fsm.state is not FSMState.LOITER:
+            self.reset()
+            return None, None
+        point = None
+        held = hold_flight.point if hold_flight is not None else None
+        if held is not None:
+            point = (held[0], held[1])
+        elif fsm.hold is not None:
+            point = (fsm.hold.x, fsm.hold.y)
+        got = self.update(point, x, y, t, speed_mps)
+        return (None, None) if got is None else got

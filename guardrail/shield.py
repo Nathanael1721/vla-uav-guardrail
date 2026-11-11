@@ -5958,7 +5958,8 @@ class Shield:
 
     def filter(self, state: State, raw: Action4D, t: float | None = None, *,
                rtl_failed: bool = False, home_reached: bool = False,
-               landed: bool = False) -> ShieldDecision:
+               landed: bool = False, hold_off_m: float | None = None,
+               hold_reach_m: float | None = None) -> ShieldDecision:
         """One monitor tick: check, repair, re-check, the brake/rescue
         fallbacks, then the escalation FSM. Every decision, whichever branch
         produced it, goes into the sliding window (`history`) before it is
@@ -5970,7 +5971,11 @@ class Shield:
         rtl_failed / home_reached / landed: what the autopilot reports this
         tick, for the FSM's terminal edges (G6, G9, G10, X5). Only a caller
         that flies the Shield's own FSM verdict passes them; the flight rails
-        run their own FSM (guardrail/replay.py rail_shield) and leave them."""
+        run their own FSM (guardrail/replay.py rail_shield) and leave them.
+        hold_off_m / hold_reach_m: in Loiter, how far the aircraft is from the
+        point its hold flies to and how far a kept hold carries it (X9, since
+        2026-11-11; guardrail/hold_flight.py HoldWatch), from the caller that
+        flies the hold; None: not judged."""
         t0 = time.perf_counter()
         tick = self._begin_tick(t)
         if (getattr(state, "velocity", None) is not None and self.velocity_response is not None
@@ -6000,7 +6005,8 @@ class Shield:
             self._opened_on.update((decision.trace or {}).get("window_opens_on") or ())
             self._last_caps = self._applied_caps(tick, decision)
             decision = self._escalate(tick, dstate, decision, rtl_failed=rtl_failed,
-                                      home_reached=home_reached, landed=landed)
+                                      home_reached=home_reached, landed=landed,
+                                      hold_off_m=hold_off_m, hold_reach_m=hold_reach_m)
             # What this tick streams, for the dead reckoning while the
             # position is not a valid fix (State.fix_ok, X8).
             self._note_streamed(tick, decision, dstate)
@@ -7268,7 +7274,8 @@ class Shield:
 
     def _escalate(self, tick: _Tick, state: State, d: ShieldDecision, *,
                   rtl_failed: bool = False, home_reached: bool = False,
-                  landed: bool = False) -> ShieldDecision:
+                  landed: bool = False, hold_off_m: float | None = None,
+                  hold_reach_m: float | None = None) -> ShieldDecision:
         """Feed this tick to the escalation FSM and attach its verdict.
 
         Theta is applied by the FSM, to the repairs' own magnitude_m
@@ -7337,7 +7344,8 @@ class Shield:
                 hold_legal=self._hold_legal(tick),
                 position_lost=lost[0] if lost else None,
                 noise_marginal=self._noise_marginal(tick, state, d),
-                handback_unsafe=handback, handback_untrusted=hb_untrusted)
+                handback_unsafe=handback, handback_untrusted=hb_untrusted,
+                hold_off_m=hold_off_m, hold_reach_m=hold_reach_m)
             out = self.fsm.step(inp)
             rec = out.record
             if refused_for_search:

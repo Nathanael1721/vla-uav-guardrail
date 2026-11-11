@@ -784,6 +784,46 @@ def test_a_loiter_held_in_guided_goes_to_brake_on_a_stale_pose_and_comes_back():
     assert [e["edge"] for e in g8] == ["G8"], g8
 
 
+def test_the_node_hands_its_fsm_the_holds_distance_and_x9_sends_it_home():
+    """2026-11-11 (X9; hil smoke sm1111_048). Before each FSM step in Loiter
+    the node asks its HoldWatch for the hold's distance and reach - with its
+    own FSM and its own HoldFlight, whose GUIDED target is the point the
+    hold flies to - passes both to the FSM, and writes them on the row; a
+    hold carried away goes home by X9 (RTL through the adapter), before G8
+    can hand it back. Here the watch is a stand-in reporting an aircraft
+    beyond its reach from the first Loiter tick and receding at 3 m/s; the
+    real watch, on the stand-in pose that does not move, reports a kept
+    hold (distance 0)."""
+    N, node, clk, out = _build([])
+    node.start_mission()
+    _mode(N, node, "GUIDED")
+    _fly(N, node, clk, 1)
+    node.fsm._enter(FSMState.LOITER, node._t())
+    clk.t += 0.05
+    _fly(N, node, clk, 3)
+    kept = [r for r in node.rows[-3:] if "hold_off_m" in r]
+    assert kept and all(r["hold_off_m"] == 0.0 for r in kept), node.rows[-3:]
+    assert node.hold_flight.point is not None and node.fsm.state == FSMState.LOITER
+    real, seen = node.hold_watch.judge, []
+    t0 = node._t()
+
+    def carried_away(fsm, hold_flight, x, y, t, speed):
+        seen.append((fsm is node.fsm, hold_flight is node.hold_flight))
+        if real(fsm, hold_flight, x, y, t, speed) == (None, None):
+            return None, None                                # not in Loiter
+        return 10.0 + 3.0 * (t - t0), 5.0
+    node.hold_watch.judge = carried_away
+    _fly(N, node, clk, 25)
+    edges = [e for e in _events(out) if e["kind"] == "fsm_transition"]
+    assert [e["edge"] for e in edges] == ["X9"], edges
+    assert "hold not kept" in edges[0]["reason"], edges[0]["reason"]
+    assert seen and all(s == (True, True) for s in seen), seen
+    assert "RTL" in _modes(N, node), _modes(N, node)
+    rows = [r for r in node.rows if r.get("hold_reach_m") == 5.0]
+    assert rows and rows[-1]["fsm_edge"] == "X9", rows[-1]
+    assert node.fsm.summary()["outcome_label"] == "RTL_triggered"
+
+
 def _coalesced_post(port: int, pki: Path, name: str, body: dict) -> bytes:
     """POST /dynamic_nfz over mutual TLS as `name`, with the client's last
     handshake flight (certificate, verify, Finished) and the whole request in

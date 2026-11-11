@@ -132,6 +132,156 @@ record). The FSM's edges are unchanged. docs/DESIGN-hold-points.md, "The
 Orin's tick, and a hand-back judged at speed", has the rows, the calibration
 and the numbers.
 
+**Update 2026-11-11 (X9, a hold that is not kept).** A tenth extension edge,
+X9 (Loiter -> RTL), and a new law field, `FSMConfig.hold_kept`: "reach" (the
+default) or "off" (the FSM as it was at 22d434b). Two new inputs,
+`TickInput.hold_off_m` / `hold_reach_m`, from `guardrail/hold_flight.py`
+HoldWatch, which the ROS 2 node and the harness feed the same way. The
+config hash changes: the default is `sha256:b9103b0d...`; `hold_kept: off`
+hashes `sha256:e0d9267f...`, the default at 22d434b. The next section has
+the miss it answers (the hil smoke's sm1111_048), the design, the
+thresholds and the measurements.
+
+## 2026-11-11: X9, a hold that is not kept
+
+### The miss
+
+The KPI-grade hil smoke sm1111 (22d434b) has one missed fail-safe under the
+adopted reading (r2: the rail vehicle's labels and E5), 44/45: sm1111_048,
+wind-beyond-authority lane 15 at 12 m/s, labelled expected by the rubric's
+E2 (docs/RUBRIC-failsafe.md). What the flight log says, tick by tick:
+
+| t (s) | what | position (x, y) | ground velocity |
+|---|---|---|---|
+| 0-5.3 | Normal, the 4 m/s request flown in the 12 m/s tailwind | -30 to -13.7, 15.0 | 3.3-3.9 m/s along the lane |
+| 5.3 | G1 (nfz-square repaired, 0.29 m) | -13.7, 15.0 | 3.87 |
+| 5.8 | G3 (repair over theta, 2.23 m); the companion holds (-11.8, 15.0) in GUIDED | -11.8, 15.0 | 3.76 |
+| 5.9-15.3 | Loiter. The hold commands up to 4 m/s back to its point (the adapter's NED setpoints: -0.7 to -3.9 m/s north) | carried to (9.6, -3.2): 28 m from the point, 2.4 m from nfz-square's face at 13.1 s, never inside | 2.0-4.6 m/s, receding from the point at 2-4 m/s |
+| 15.3 | G8: the request clean (past the zone) and the position legal for T_recover | 9.6, -3.2 | 4.6 |
+| 15.3-31.8 | Normal to the goal, downwind | | |
+
+The SITL airframe makes 3.3-3.9 m/s over the ground with the tailwind but
+cannot hold still in it: holding needs 12 m/s of airspeed, and asked for
+4 m/s upwind it made 2 m/s downwind, about 10 m/s of airspeed. No edge
+could see it. X6 and X7 judge an illegal position, and this one stayed
+legal (the hold was carried sideways round the zone, an ArduPilot response
+to a saturated position loop the harness's model does not have: the
+headless hold drifts straight down the lane into the zone, where X7 sees
+it). N-in-T and the operator timeout need a request that stays bad, and
+this one turned clean past the zone. TransitWatch (guardrail/hold_flight.py)
+judges only a MOVED hold's transit, and only gives it up. The FSM was
+never told whether the hold was being kept.
+
+The 8 m/s cell (sm1111_047) held: it overshot its point by 3.6 m in 1.8 s,
+was back on it 6 s later, and the operator timeout sent it home (G5, 35.8 s;
+correct by E2). Within authority (5 m/s, sm1111_045 / 046) the hold was
+kept.
+
+### The edge
+
+X9, Loiter -> RTL: the aircraft is farther from the point its hold flies to
+than a kept hold can carry it, on every tick for T_recover, and that
+distance is still growing - X7's own test (a least-squares slope above
+`x6_min_escape_mps` at two standard errors, and a fitted rise of at least
+`x7_min_rise_m`) on the hold's distance instead of the illegal depth. It
+comes after G4 (the grant's own Loiter -> RTL) and before G8: handing GUIDED
+back would give the flight to stops - Brake's zero, the next Loiter - that
+the aircraft has just been shown not to hold. RTL, because it is the
+grant's next rung after Loiter; G6 lands the aircraft if the return fails.
+
+The FSM stays geometry-free: it is told two numbers on every Loiter tick
+(`TickInput.hold_off_m`, `hold_reach_m`), from `HoldWatch`
+(guardrail/hold_flight.py), which both the ROS 2 node and the harness call
+before each FSM step:
+
+- **The point** is the one the hold flies to: the companion's GUIDED target
+  (`HoldFlight.point`) while it holds the Loiter in GUIDED, else the FSM's
+  plan (`fsm.hold`: the old flow, a hold handed to BRAKE, the harness's
+  modelled autopilot), else where the Loiter began.
+- **The reach** is set whenever the point is: its distance then, plus the
+  braking distance from the horizontal speed then on the rail Shield's own
+  stop model (guardrail/response.py ARDUCOPTER_GUIDED: 0.45 s, then
+  1.75 m/s^2 - chosen so that its median braking error is not short), plus
+  `HOLD_KEPT_SLACK_M` = 3.0 m. A new point (a re-plan, a transit given up)
+  sets a new reach from its own distance, so it never starts beyond it.
+- **The position and speed** are the ones the hold is flown on: the node's
+  pose and measured velocity (the speed from two poses when the velocity is
+  stale), the harness's true state and the ground velocity its last tick
+  flew - the autopilot's own, as TransitWatch reads it there.
+
+Why a reach and a trend, and not a distance or a velocity error alone: a
+hold entered at speed overshoots its point by its braking distance (3.6 m at
+3.8 m/s on the rig; 46 m of model reach at 12 m/s), and a velocity error is
+largest exactly while it brakes; neither tells a hold that is braking from
+one that is being carried away. The reach bounds the overshoot by the
+Shield's own stop model; the trend separates "out there and still going"
+from "out there and coming back" (or stuck there, a transit that cannot
+close: TransitWatch's case).
+
+### The thresholds, from the rig
+
+Every Loiter the hil rig has flown (606 runs, 413 spells, hs02 to the nightly
+nt1111 so far), replayed through HoldWatch and the FSM
+(tests/test_hold_points.py replays sm1111's own rows):
+
+- The farthest any GUIDED-hold spell (hs05, hs06, nt1107, sm1110, sm1111,
+  nt1111: 324 spells) went beyond the stop model alone was 1.5 m
+  (sm1110_045, wind-within-authority) - apart from the 12 m/s cells (22-24 m)
+  and nt1111_001 (4.9 m, below).
+- ArduCopter's BRAKE after a GUIDED stream carries the aircraft by its
+  integrator, up to the airframe's 2.5 m/s^2 x 1 s^2 = 2.5 m (hold_flight.py,
+  WHY NOT BRAKE); measured 2.4 m past the stop model on hs04_005 / 006, the
+  flow before the GUIDED hold, which a stream fault still forces.
+- 3.0 m clears the worst GUIDED hold by 1.5 m and a BRAKE hand-over by
+  0.5 m. The closest any other spell then came to its reach was 0.8 m short
+  (hs04_005 / 006); rh03_039 (gps-dropout) 1.4 m, sm1110_045 1.5 m.
+- T_recover, 0.1 m/s at two standard errors and 0.5 m are X7's, unchanged:
+  the 12 m/s holds recede at 1.7-2.8 m/s (fitted, at the firing tick), the
+  harness's at 1.6 m/s (8 m/s) and 5.6 m/s (12 m/s).
+
+X9 fires on six spells: the five 12 m/s cells of lane 15 (hs02_009,
+hs03_011, rh03_044, sm1110_048, sm1111_048) at 11.2-11.4 s, 12-15 m out,
+5.2-5.6 s into the Loiter and 1.8 s before sm1111_048's closest pass of the
+zone; and nt1111_001 (nfz-head-on) at 12.9 s, whose SITL restarted 2.5 s
+before the Loiter and handed the node a stale pose and velocity: the
+aircraft accelerated to 4 m/s inside its hold and went 9.3 m past its point
+(a hold not kept, for a reason that is not wind; r2 expects a fail-safe
+there, which G5 gave at 38.8 s). It fires on no 8 m/s cell and no
+within-authority cell.
+
+Noise: the position X9 reads is the one the hold is flown on, a settled hold
+on the rig moves by centimetres. Held beyond its reach at one distance with
+0.1 m of white noise a tick, no seed of 100 fires X9 over 29 s; with 0.3 m,
+30 do. A rail whose position input is that noisy would need a stronger
+floor (tests/test_fsm.py, test_x9_needs_the_hold_still_receding).
+
+### Headless
+
+On the ideal vehicle the excess wind drifts the hold (1.6 m/s at 8 m/s,
+5.6 m/s at 12 m/s), so every wind-beyond-authority cell goes G1 G3 X9: 9.0 s
+at 8 m/s (then home, G9), 6.8 s at 12 m/s (then G6, no progress home), where
+`hold_kept: off` went X7 at 17.3 s and 7.3 s once the drift had carried it
+into nfz-square. The rail vehicle's GUIDED hold keeps the 8 m/s cell (its
+command back is flown in full beside the 1.6 m/s excess, the harness's
+"optimistic upwind"), which runs to G5 as on the rig; at 12 m/s it goes X7
+at 7.0 s, as before. wind-within-authority and wind-gusts take no X9 on
+either vehicle (tests/test_harnesstruth_wind.py). Other families: a Loiter
+moves its aircraft only by the hold's own braking (within the stop model:
+the response arms brake harder and sooner than it, 2.4-2.5 m/s^2 after
+0.08-0.13 s), a moved hold's transit (closing on a point whose reach starts
+at its distance), or BRAKE's carry (within the slack), so X9 should fire on
+no other family; the library, smoke and nightly profiles were not re-run
+with it (a KPI campaign was flying), and must be.
+
+### Not done
+
+- `sitl/run_sitl_demo.py` (the pymavlink rail) and the city loop do not pass
+  the input: X9 never fires there, as X8 never fires on a rail that reports
+  no fix quality.
+- G6 on the ROS 2 node still has no input (`rtl_failed` is False on every
+  tick): an X9 RTL that makes no headway home into the wind stays in RTL on
+  the rig, carried by the wind, where the harness lands it.
+
 ## 2026-11-07: the FSM on the rail vehicle
 
 The hil rail flies ArduCopter 4.5.7 SITL in GUIDED. Labelled on a vehicle
@@ -1081,14 +1231,16 @@ never presented as a contract term. One transition per tick at most.
 | X6 | Brake, Loiter → RTL | `stop_illegal` on every tick for ≥ T, a hard rule violated on this tick, and (since 2026-10-08) the illegal depth not falling at `x6_min_escape_mps` over that T | RTL | extension: p1 "trigger fail-safe when repair is unsafe". See "X6" below |
 | X7 | Brake, Loiter → RTL | `stop_illegal` for ≥ T_recover, a hard rule violated on this tick, and the illegal depth GROWING by ≥ `x6_min_escape_mps` over the last T_recover (since 2026-10-08) | RTL | extension: a recovery losing ground to something the forecast cannot see |
 | X8 | Normal, Brake, Loiter → RTL | `position_lost` (since 2026-11-06): the handed position's error (with `fix_ok` False: the dead-reckoned distance from the last valid fix plus `dr_drift_mps` × its age; with `pos_sigma_m` reported: at least 3 σ, at the position and along the request's forecast) exceeds a hard, enforced P0 zone's `margin_m` while that zone's boundary lies within the error. Never taken on a rail that reports neither field | RTL | extension: rubric E3 (a fail-safe when the position the Shield acts on is wrong by more than the margin near a hard P0 boundary); see "X8" above |
+| X9 | Loiter → RTL | `hold_off_m` > `hold_reach_m` on every tick for ≥ T_recover, and `hold_off_m` GROWING over the last T_recover (X7's test: slope above `x6_min_escape_mps` at two standard errors, rise ≥ `x7_min_rise_m`) (since 2026-11-11, `hold_kept` "reach"). Never taken on a rail that does not pass the hold's distance | RTL | extension: rubric E2 (a disturbance the aircraft cannot reject) where the position stays legal; see "X9" above |
 
 The order of checks inside each state is fixed, and it is the order the table
 is resolved in when two conditions hold at once. It follows the strongest
 response. **Normal, Brake and Loiter:** X8 first (since 2026-11-06), because
 every later answer was computed from the position X8 can no longer certify.
 **Brake:** direct land, direct RTL, X6, X7, direct loiter, then G3,
-G2, G7. **Loiter:** direct land/RTL, then G4, G8, G5, X6, X7. Recovery wins
-over the timeout when both hold on the same tick. **RTL:** G9, X5, G6, so a tick
+G2, G7. **Loiter:** direct land/RTL, then G4, X9 (since 2026-11-11), G8,
+G5, X6, X7. Recovery wins over the timeout when both hold on the same tick;
+a hold not kept wins over a hand-back. **RTL:** G9, X5, G6, so a tick
 that reports home together with an RTL failure is a finished RTL. In RTL and
 Land the pilot's proposals do not move the FSM. The autopilot is flying, and
 the grant draws no edge out of RTL for them.
@@ -1837,6 +1989,17 @@ hand back and where the aircraft is). The rest stand as written.
     so G8 never sees T_recover of hard-clean ticks. Should Loiter's
     "cleared for T_recover" judge the pilot's request (as now) or the
     position?
+14. **X9 (ours, 2026-11-11): a hold that is not kept.** The grant draws
+    Loiter -> RTL only for N-in-T persisting and the operator timeout. X9
+    adds one: the aircraft carried beyond what a kept hold can carry it
+    (its stop on the rail's own model plus 3 m) and still receding for
+    T_recover. On the hil smoke the 12 m/s wind carried the held aircraft
+    round nfz-square with the position legal and G8 handed it back, a
+    missed fail-safe by the rubric's E2. Is "the hold cannot be kept" an
+    acceptable reading of p1's "when repair is unsafe" for the Shield's last
+    repair? X9 judges the hold, not E2's "toward a hard constraint": should
+    a wind beyond authority that blows away from every constraint also end
+    the mission (as X9 does today)?
 
 ## Not done
 
