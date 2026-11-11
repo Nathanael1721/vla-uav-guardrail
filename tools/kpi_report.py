@@ -2673,7 +2673,10 @@ def render_markdown(rep: dict) -> str:
           f"{c['kpi_grade']}** - the only episodes whose numbers may be quoted as "
           f"contractual KPIs.",
           f"- KPI-grade when flown but refused by today's rule: "
-          f"{c['kpi_grade_at_flight_only']}. Tabulated in their own section.",
+          f"{c['kpi_grade_at_flight_only']}. Tabulated in their own section."
+          + (f" Today's rule includes the campaign's acceptance: "
+             f"{c['campaign_not_accepted']} run(s) it did not accept are refused "
+             f"(listed under Campaign)." if c.get("campaign_not_accepted") else ""),
           f"- Everything else is functional evidence. The three groups are "
           f"tabulated separately and never pooled.", ""]
     if rep["kpi_grade_episodes"]:
