@@ -142,6 +142,206 @@ hashes `sha256:e0d9267f...`, the default at 22d434b. The next section has
 the miss it answers (the hil smoke's sm1111_048), the design, the
 thresholds and the measurements.
 
+**Update 2026-11-12 (X8 on the autopilot's own estimator).** X8's input on
+the ROS 2 rail is the AUTOPILOT'S verdict on its position, not the GPS fix
+plus a drift constant. A new State field, `estimator_ok` (None, the default:
+not reported, and every rail but the ROS 2 node flies as before), which the
+node reads from ArduPilot's EKF_STATUS_REPORT. While the autopilot vouches
+for its estimate the position is certified, GPS or not; X8 fires when the
+autopilot declares it lost (its own EKF failsafe rule). The FSM, its edges
+and its config hash are unchanged; the Shield's verdict changed. The next
+section has the evidence (731 rig flights), the law and what it does not
+cover.
+
+## 2026-11-12: X8 on the autopilot's own estimator
+
+### The false triggers
+
+The KPI-grade hil nightly nt1111 scores (r2) 555/567 = 0.979. X9 removes 6
+of the 12 errors (561/567). The other 6 are the FSM's X8 on gps-dropout
+lane 23.6, windows 4-11 s and 6-13 s (nt1111_568-573, X8 at 9.3-10.4 s). The
+same edge fired in rh03_040, sm1110_044 and sm1111_044. Under the rail
+labels (docs/RUBRIC-failsafe.md section 8, "2026-11-12") no fail-safe is
+expected there: SITL's truth puts EKF3's estimate 0.13-0.78 m off the
+aircraft when X8 fired, under the 1 m margin.
+
+X8 fired because of the law, not because of the estimate. On a rail with no
+fix the Shield dead-reckoned on its own commands and took the gap from the
+handed pose, plus `dr_drift_mps` (0.5 m/s) × the time since the loss, as
+the pose's error. On this rail the handed pose is EKF3's live estimate. So
+the gap measured the Shield's command model against EKF3 (3.0-3.5 m: the rig
+flies the Brake's repair and its release late), not the pose's error, and X8
+read the pose as "4.4-5.0 m off". Even with a perfect reference the 0.5 m/s
+allowance alone fires. The measured EKF3 drift (0.23 m/s) clears the closest
+trajectory by 0.01 m, so tuning that constant would be a knife edge.
+
+### What the autopilot reports (the rig's raw MAVLink)
+
+Every run's rosbag holds the autopilot's raw MAVLink (/uas1/mavlink_source).
+That includes EKF_STATUS_REPORT (193, at the node's 10 Hz stream rate), with
+flags and the four "variances". The variances are the square roots of EKF3's
+innovation test ratios. The bags also hold GPS_RAW_INT, SITL's truth
+(SIMSTATE) and EKF3's estimate (GLOBAL_POSITION_INT). Read from 731 flights
+(nt1111, sm1111, sm1110, rh03):
+
+| | 701 flights without a GPS denial | 30 GPS denials (24 of 7 s, 6 of 2 s) |
+|---|---|---|
+| flags while armed | 0x33f on every report (attitude, horizontal/vertical velocity, relative and absolute horizontal position, vertical position, both predicted positions) | 0x33f from the loss until 6.80-6.92 s after GPS_RAW_INT's loss; then 0x25 (no horizontal velocity or position) for 1-2 reports, 0.10-0.21 s, in 23 of the 24 7 s denials, until the GPS returned at 7.0 s (nt1111_570, whose GPS_RAW_INT showed 6.8 s without a fix: none) |
+| pos_horiz / velocity test ratio | at most 0.049 / 0.080 | at most 0.013 / 0.023 inside the denials: frozen at their last fused value (without a measurement EKF3 computes no innovation) |
+| unhealthy for the autopilot's own failsafe rule (1 s) | never (no report unhealthy) | never (longest spell 0.21 s) |
+| ArduPilot EKF failsafe | none possible | none: no LAND, no EKF STATUSTEXT |
+| report gaps while armed | at most 0.62 s (one flight; all others 0.22 s or less) | at most 0.16 s |
+| EKF3's true error (SIMSTATE against GLOBAL_POSITION_INT) | at most 0.31 m (76 of them read) | after GPS_RAW_INT's loss 0.09-0.31 m at 2 s, 0.20-0.67 m at 4 s, 0.37-1.22 m at 6 s; at most 1.47 m before the GPS returned, and above the 1 m margin on 5 of the 24 7 s denials (peaks 1.06-1.47 m: lane 15 and lane 23.6 at 2-9 s, the aircraft 8.4 m or more from nfz-square) |
+
+What this says:
+
+- EKF3 keeps its absolute horizontal position through a denial for
+  posRetryTimeNoVel_ms (AP_NavEKF3.h: 7 s from its last GPS fusion). It
+  drops it at that timer and at nothing else.
+- The flags are clean: binary, the same on every flight, never near a
+  threshold.
+- The variances say nothing during a denial: no measurement, no innovation,
+  so they stay frozen.
+- ArduCopter declares its position bad (ekf_check: 10 failing checks at
+  10 Hz, 1 s, then FS_EKF_ACTION, 1 = Land on the rig) only after the timer.
+  So a 7 s denial ends in a race the GPS won every time, by 0.79 s or more
+  against the 1 s rule.
+- The separation the report makes is the autopilot's: "within my
+  dead-reckoning allowance" against "beyond it". It is not a bound on the
+  error. EKF3 vouched for its estimate while it was more than 1 m off on 5
+  denials (1.04-1.47 m at their peaks while vouched for).
+
+### The law
+
+`Shield._position_verdict` reads `State.estimator_ok` first, when a rail
+reports it:
+
+- **True** (the autopilot vouches for its estimate): the position is
+  certified - it is the estimate the autopilot navigates, returns and fences
+  on, valid by the autopilot's own test - also while the GPS fix is lost.
+  The Shield holds no dead reckoning of its own against it, and
+  `dr_drift_mps` is not read. The certified position anchors the dead
+  reckoning, should the certification lapse.
+- **False** (the autopilot declares its absolute horizontal position lost):
+  the error is unbounded and the position certifies no margin. X8 fires on
+  that tick if any hard, enforced P0 zone is in force at the altitude,
+  naming the nearest. This happens with or without a GPS fix: a position
+  the autopilot itself disowns is not certified by a fix.
+- **None** (not reported, or the report has gone stale): `fix_ok` decides
+  as before (2026-11-06). With the fix lost, the error is dead-reckoned on
+  the commands from the last certified position, plus `dr_drift_mps` × its
+  age. This is the law of the headless harness's frozen fix, of every rail
+  that reports no estimator, and of the ROS 2 node once its EKF reports
+  stop.
+
+On the ROS 2 node (`sitl/ros2_shield_node.py`, module docstring "THE
+AUTOPILOT'S ESTIMATOR"; pure helpers `ekf_status_from_mavlink`,
+`ekf_position_healthy`, `EstimatorHealth`, unit-tested):
+
+- **Source.** No MAVROS 2 plugin publishes EKF_STATUS_REPORT: sys_status
+  publishes ESTIMATOR_STATUS (230), which ArduPilot does not send, and
+  mavros_extras has no handler. So the node subscribes MAVROS's raw feed to
+  the UAS, `/uas1/mavlink_source` (mavros_msgs/Mavlink, about 300 messages a
+  second, best effort, queue 100). It keeps message 193 from system 1,
+  component 1. sitl/sros2_policy.xml grants the subscription; a keystore
+  signed before this change refuses it (re-sign with `tools/sros2_setup.sh
+  --pki <lab PKI> --permissions-only`). A refused or absent subscription
+  leaves `estimator_ok` None: the node flies on `fix_ok` as before.
+- **A healthy report** has EKF_POS_HORIZ_ABS set and EKF_CONST_POS_MODE
+  clear (what ArduCopter navigates on: `ekf_has_absolute_position`, armed).
+  It also needs EKF_UNINITIALIZED clear, and the horizontal-position and
+  velocity test ratios finite and below FS_EKF_THRESH (read from the
+  autopilot at take-off; 0.8 when unread or 0). That is stricter than
+  ArduCopter's `ekf_over_threshold`, which needs two of compass, velocity
+  and position, or velocity at twice the threshold. EKF_GPS_GLITCHING is
+  recorded and not read: the autopilot flies through it, and its failsafe
+  does not count it.
+- **The verdict** (`EstimatorHealth`) follows ArduCopter's ekf_check, in
+  time instead of checks. An unhealthy report adds the time since the
+  previous one to an account (capped at 1 s); a healthy one takes it back.
+  The verdict is False from the report that brings the account to 1 s
+  (`EKF_FAILSAFE_S`) until it is back at 0. It is None with no report, or
+  with none for longer than the pose timeout (`EKF_STALE_S`, 1 s).
+- **Records.** Rows carry `estimator_ok`, `ekf_flags`, `ekf_pos_var`,
+  `ekf_vel_var` and `ekf_age_ms` once a report has arrived. metrics.json has
+  `fix_quality.estimator` (spells on the mission clock; spells before t = 0
+  are the EKF's initialisation before take-off). events.jsonl has
+  `ekf_failsafe` (FS_EKF_THRESH and FS_EKF_ACTION as read), and report.md
+  has a row.
+
+**Stale is "not reported", not "lost".** The brief for this change read a
+stale report as unhealthy. That would put an X8 on any flight whose MAVLink
+feed paused for 1 s, GPS or not, and the old law already covers the case
+conservatively. A report that stops during a denial falls back on the dead
+reckoning from the last certified position, which fires near a zone within
+seconds.
+
+**Headless.** The harness's dead-reckoned denial (sweep_scenarios
+GPS_DROPOUT_MODELS "dead_reckoned", the rail vehicle's) hands the Shield the
+modelled autopilot's verdict with its estimate: True until
+`RAIL_EKF_POS_VALID_S` (6.8 s + the 1 s rule) after the loss, False after
+it. No library window is longer than 7 s, so no cell reaches False. The
+frozen fix reports none, so the templates' cells fly as before.
+
+### What it does not cover
+
+- **The margin must cover the autopilot's allowance.** While the autopilot
+  vouches for its estimate, that estimate's error is the autopilot's. No
+  Shield action flies on a better one: RTL returns on the same estimate,
+  and the autopilot's fence uses it too. On SITL that error reached 1.47 m in
+  6.9 s, beyond the shipped 1 m margins. A hard P0 margin certifies its zone
+  through a denial only if it covers the autopilot's dead-reckoning error
+  over its own allowance (about 1.5 m on SITL; a real IMU drifts faster and
+  must be measured). This is the same question as "Once a rail reports its
+  accuracy, a margin is an accuracy requirement" above: a policy decision,
+  and no policy was changed.
+- **E3 on the rig.** Read on SITL's truth, E3 held on none of the rig's
+  denials (rubric section 8). A cell that brings the aircraft within the
+  autopilot's error of a boundary in the last seconds of a denial would
+  expect a fail-safe that this law does not take until the autopilot's own
+  failsafe does. The library has no such cell.
+- **An unhealthy estimate with the GPS fix valid** (a GPS glitch EKF3
+  rejects, a velocity test ratio past the threshold) is now X8. No rig
+  flight showed one.
+- **Not flown.** Every number above is a replay of flights flown on the
+  old law (next subsection). The subscription's cost on the Orin (about 300
+  callbacks a second, each returning on the message id) is not measured.
+- **A deviation question for the PI.** X8 is itself an extension edge. This
+  change narrows when it fires on the ROS 2 rail, from "the Shield's own
+  model says the pose may be off" to "the autopilot says its position is
+  lost". That moves the E3 margin question from the FSM to the policy's
+  margins.
+
+### Replayed on the rig's flights
+
+`EstimatorHealth`, imported from this node, was fed every EKF_STATUS_REPORT
+of the 731 bags at its recorded receipt. Its verdict was read every 0.05 s
+over each armed span (899,299 samples) and at every logged tick whose fix
+was lost:
+
+- False 0 times, None 0 times.
+- On every one of the 1,798 fix-lost ticks of the 30 denials it was True.
+- So no flight can take X8 under the law, and the 9 logged X8s (nt1111_568-
+  573, rh03_040, sm1110_044, sm1111_044) go.
+- The law can only remove an X8 on these flights: a False or a None never
+  occurred while armed.
+
+What the flights do after the X8 they no longer take was flown headless.
+The rail vehicle (`--response rail`, moved holds, the dead-reckoned
+denial), FSM on, nightly seeds 1001-1003, all 24 gps-dropout cells:
+
+| cells | new law | old law (`estimator_ok` withheld) | rig (nt1111) |
+|---|---|---|---|
+| lane 23.6, 4-11 s | G1 5.4, G7 8.6, no fail-safe, closest 2.85 m | X8 10.3 s, home | X8 10.2-10.4 s |
+| lane 23.6, 6-13 s | G1 5.4, G7 8.6, no fail-safe, closest 2.85 m | X8 9.9 s, home | X8 9.3-9.5 s |
+| lane 23.6, 2-4 s and 2-9 s | G1, G7, no fail-safe | the same | G1, G7, no fail-safe (562-567) |
+| lane 15, every window | G1, G3, G5 at 35.8-36.1 s | the same | G1, G3, G5 at 35.8-36.0 s |
+
+The new law flies 568-573 as the rig flew their 2-9 s neighbours (565-567):
+correct non-triggers under the (r2) labels. Lane 15 keeps its G5 (expected
+by E5). Predicted nt1111 (r2), with X9: 567/567 = 1.000 (Wilson 95 % low
+0.993). This is not measured: the nightly must be flown on this code.
+
 ## 2026-11-11: X9, a hold that is not kept
 
 ### The miss
@@ -509,7 +709,9 @@ the library's autopilot breaches from 10 to 22 and its true-state P0 ticks
 from 1768 to 4741. Where the AUTOPILOT has lost its own fix (GPS_RAW_INT
 fix_type below 3, an EKF without absolute position) RTL cannot be flown and
 ArduPilot's own EKF failsafe lands (FS_EKF_ACTION = 1). That is a second
-input, not modelled: the headless autopilot has a perfect position.
+input, not modelled: the headless autopilot has a perfect position. (Since
+2026-11-12 the ROS 2 node reports it, `estimator_ok`, and the rail vehicle
+models it: "2026-11-12: X8 on the autopilot's own estimator".)
 
 **Precedence.** X8 comes before every rule's own answer in Normal, Brake and
 Loiter: each of those answers was computed from the position that can no
@@ -547,12 +749,12 @@ rail that flies it is a policy decision, and no policy was changed with this.
 
 ### Where each rail's signal lives
 
-| rail | fix validity (`fix_ok`) | accuracy (`pos_sigma_m`) | today |
-|---|---|---|---|
-| ROS 2 + MAVROS 2 (sitl/ros2_shield_node.py; the hil topology) | **wired 2026-11-07:** `/mavros/global_position/raw/fix`, the NavSatFix MAVROS 2's global_position plugin (core MAVROS, no mavros_extras needed) builds from GPS_RAW_INT: STATUS_FIX when fix_type > 2, else STATUS_NO_FIX; `fix_ok` = status >= STATUS_FIX while the message is no older than the pose timeout (1 s), None before the first one or once stale (`fix_ok_from`). Not used: `/mavros/gpsstatus/gps1/raw` (mavros_extras' gps_status plugin), EKF_STATUS_REPORT, the pose's stamp age | GPSRAW.h_acc, or the NavSatFix position_covariance MAVROS builds from h_acc / eph - **not fed**: a policy decision, below | `fix_ok` reported; `pos_sigma_m` None |
-| Project AirSim + ArduPilot (demo/pas_ardupilot/autopilot.py) | already parsed: GPS_RAW_INT.fix_type (`snap.gps_fix`), EKF_STATUS_REPORT flags (`snap.ekf_flags`, `ekf_ready()`), the position's receipt time (`snap.t_pos`) - used only as a pre-arm gate | GPS_RAW_INT.h_acc (not parsed yet) | not wired |
-| Project AirSim simple_flight (demo/follow_vlm.py and the city rails) | none: the State is `get_ground_truth_kinematics()`, a perfect position; only a configured GPS sensor, or injection, could report one | none | None (unobservable) |
-| headless harness (experiments/sweep_scenarios.py) | `stress.gps_dropout_s` with `stress.fix_quality_reported` (default true): False through the window | `stress.gps_noise_m` with the same flag | reported; withheld per scenario to keep "the Shield flying blind" measurable |
+| rail | fix validity (`fix_ok`) | the autopilot's verdict (`estimator_ok`, since 2026-11-12) | accuracy (`pos_sigma_m`) | today |
+|---|---|---|---|---|
+| ROS 2 + MAVROS 2 (sitl/ros2_shield_node.py; the hil topology) | **wired 2026-11-07:** `/mavros/global_position/raw/fix`, the NavSatFix MAVROS 2's global_position plugin (core MAVROS, no mavros_extras needed) builds from GPS_RAW_INT: STATUS_FIX when fix_type > 2, else STATUS_NO_FIX; `fix_ok` = status >= STATUS_FIX while the message is no older than the pose timeout (1 s), None before the first one or once stale (`fix_ok_from`). Not used: `/mavros/gpsstatus/gps1/raw` (mavros_extras' gps_status plugin), the pose's stamp age | **wired 2026-11-12:** ArduPilot's EKF_STATUS_REPORT from `/uas1/mavlink_source` (MAVROS's raw feed; no MAVROS 2 plugin publishes the message), as ArduCopter's own EKF failsafe judges it (`EstimatorHealth`; "2026-11-12: X8 on the autopilot's own estimator") | GPSRAW.h_acc, or the NavSatFix position_covariance MAVROS builds from h_acc / eph - **not fed**: a policy decision, below | `fix_ok` and `estimator_ok` reported (the latter decides); `pos_sigma_m` None |
+| Project AirSim + ArduPilot (demo/pas_ardupilot/autopilot.py) | already parsed: GPS_RAW_INT.fix_type (`snap.gps_fix`), the position's receipt time (`snap.t_pos`) - used only as a pre-arm gate | EKF_STATUS_REPORT flags already parsed (`snap.ekf_flags`, `ekf_ready()`), a pre-arm gate only | GPS_RAW_INT.h_acc (not parsed yet) | not wired |
+| Project AirSim simple_flight (demo/follow_vlm.py and the city rails) | none: the State is `get_ground_truth_kinematics()`, a perfect position; only a configured GPS sensor, or injection, could report one | none (no autopilot estimator) | none | None (unobservable) |
+| headless harness (experiments/sweep_scenarios.py) | `stress.gps_dropout_s` with `stress.fix_quality_reported` (default true): False through the window | the dead-reckoned denial (the rail vehicle's): True until `RAIL_EKF_POS_VALID_S` (7.8 s) after the loss, then False; the frozen fix (the templates'): not reported | `stress.gps_noise_m` with the same flag | reported; withheld per scenario to keep "the Shield flying blind" measurable |
 
 **On the ROS 2 rail (2026-11-07).** The node's Shield has no FSM of its own
 (guardrail.replay.rail_shield): the node runs THE FSM, because only it sees
@@ -579,7 +781,10 @@ reckoning instead of freezing, so X8 fires on the drift allowance alone,
 later than on the headless harness's frozen fix, and ArduCopter's own EKF
 failsafe lands the aircraft about 8 s after the GPS is lost (7 s
 posRetryTimeNoVel_ms, then 1 s of ekf_check) - the "second input, not
-modelled" above, which a flight now meets.
+modelled" above, which a flight now meets. Since 2026-11-12 the node reads
+that verdict and X8 waits for it ("2026-11-12: X8 on the autopilot's own
+estimator"): the drift-allowance X8 fired falsely on nt1111's lane-23.6
+cells.
 
 ### The KPI invariant
 
@@ -1230,7 +1435,7 @@ never presented as a contract term. One transition per tick at most.
 | X5 | RTL → [*] | `landed` during RTL without `home_reached` | – | extension: ArduPilot's RTL ends by landing at home |
 | X6 | Brake, Loiter → RTL | `stop_illegal` on every tick for ≥ T, a hard rule violated on this tick, and (since 2026-10-08) the illegal depth not falling at `x6_min_escape_mps` over that T | RTL | extension: p1 "trigger fail-safe when repair is unsafe". See "X6" below |
 | X7 | Brake, Loiter → RTL | `stop_illegal` for ≥ T_recover, a hard rule violated on this tick, and the illegal depth GROWING by ≥ `x6_min_escape_mps` over the last T_recover (since 2026-10-08) | RTL | extension: a recovery losing ground to something the forecast cannot see |
-| X8 | Normal, Brake, Loiter → RTL | `position_lost` (since 2026-11-06): the handed position's error (with `fix_ok` False: the dead-reckoned distance from the last valid fix plus `dr_drift_mps` × its age; with `pos_sigma_m` reported: at least 3 σ, at the position and along the request's forecast) exceeds a hard, enforced P0 zone's `margin_m` while that zone's boundary lies within the error. Never taken on a rail that reports neither field | RTL | extension: rubric E3 (a fail-safe when the position the Shield acts on is wrong by more than the margin near a hard P0 boundary); see "X8" above |
+| X8 | Normal, Brake, Loiter → RTL | `position_lost` (since 2026-11-06): the handed position's error (with `fix_ok` False: the dead-reckoned distance from the last certified position plus `dr_drift_mps` × its age; with `pos_sigma_m` reported: at least 3 σ, at the position and along the request's forecast) exceeds a hard, enforced P0 zone's `margin_m` while that zone's boundary lies within the error. Since 2026-11-12, where the rail reports the autopilot's own verdict (`estimator_ok`), it decides first: True certifies the position (no dead reckoning, GPS or not), False is X8 at once if any hard, enforced P0 zone is in force. Never taken on a rail that reports none of the three | RTL | extension: rubric E3 (a fail-safe when the position the Shield acts on is wrong by more than the margin near a hard P0 boundary); see "X8" above |
 | X9 | Loiter → RTL | `hold_off_m` > `hold_reach_m` on every tick for ≥ T_recover, and `hold_off_m` GROWING over the last T_recover (X7's test: slope above `x6_min_escape_mps` at two standard errors, rise ≥ `x7_min_rise_m`) (since 2026-11-11, `hold_kept` "reach"). Never taken on a rail that does not pass the hold's distance | RTL | extension: rubric E2 (a disturbance the aircraft cannot reject) where the position stays legal; see "X9" above |
 
 The order of checks inside each state is fixed, and it is the order the table

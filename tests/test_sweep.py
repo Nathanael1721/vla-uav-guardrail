@@ -1242,6 +1242,66 @@ def test_gps_dropout_freezes_the_pose_the_shield_sees_and_not_the_vehicle():
     assert all(r["perceived"]["x"] == r["x"] for r in after), "the fix never came back"
     kinds = [e["type"] for e in run.events]
     assert kinds.count("gps_dropout_start") == 1 and kinds.count("gps_dropout_end") == 1
+    assert "gps_dropout" not in run.events[0], "the default model's events changed"
+    assert "model" not in next(e for e in run.events if e["type"] == "gps_dropout_start")
+
+
+def test_on_a_rail_a_gps_dropout_hands_the_shield_the_autopilots_estimate():
+    """How the rails realise a GPS denial (GPS_DROPOUT_MODELS "dead_reckoned",
+    2026-11-12): SITL's GPS stops and EKF3 keeps estimating on its IMU, so the
+    pose the Shield is handed keeps moving and lags the true one by the
+    estimator's drift, RAIL_EKF_DRIFT_MPS x the time since the loss, along
+    the ground track at the loss - measured on the rig's 30 GPS denials
+    against SITL's own truth (SIMSTATE): 1.47 m at most after 6.5 s, along
+    the track. The Shield is told the fix is gone (fix_ok False) as with the
+    frozen pose; the fix returns exactly at the window's end. RAIL_VEHICLE
+    flies it, so the rail labels (tools/failsafe_rubric.py --response rail)
+    are derived on the dropout the rails fly, not on the frozen last fix. An
+    unknown model is refused before anything flies."""
+    import math
+    assert S.RAIL_VEHICLE["gps_dropout"] == "dead_reckoned" == S.GPS_DROPOUT_MODELS[1]
+    assert S.DEFAULT_GPS_DROPOUT == "frozen" and S.RAIL_EKF_DRIFT_MPS == 0.23
+    spec = _with(_cell("gps-dropout", lane_y=23.6, window=[2.0, 9.0]), escalation=False)
+    run = S.run_episode(spec, DEFAULTS, 0, gps_dropout="dead_reckoned")
+    inside = [r for r in run.rows if 2.0 - 1e-9 <= r["t"] < 9.0 - 1e-9]
+    assert len(inside) == 70 == run.extra["gps_dropout_ticks"]
+    seen = [(r["perceived"]["x"], r["perceived"]["y"]) for r in inside]
+    assert seen[-1][0] - seen[0][0] > 5.0, "the estimate froze: that is the other model"
+    # Along the ground track at the loss (the lane: +x), never across it, even
+    # after the Shield's repair turns the aircraft off the lane.
+    k = run.rows.index(inside[0])
+    gx, gy = run.rows[k]["x"] - run.rows[k - 1]["x"], run.rows[k]["y"] - run.rows[k - 1]["y"]
+    ux, uy = gx / math.hypot(gx, gy), gy / math.hypot(gx, gy)
+    assert ux > 0.99, (ux, uy)
+    turned = max(abs(r["y"] - inside[0]["y"]) for r in inside)
+    assert turned > 0.5, "the repair never turned the aircraft: the direction is untested"
+    for r in inside:
+        lag = S.RAIL_EKF_DRIFT_MPS * (r["t"] - inside[0]["t"])
+        ex, ey = r["x"] - r["perceived"]["x"], r["y"] - r["perceived"]["y"]
+        assert math.isclose(math.hypot(ex, ey), lag, abs_tol=1e-6), (r["t"], lag, ex, ey)
+        assert abs(ex * uy - ey * ux) < 1e-6, (r["t"], ex, ey)
+    assert 1.5 < math.hypot(inside[-1]["x"] - inside[-1]["perceived"]["x"],
+                            inside[-1]["y"] - inside[-1]["perceived"]["y"]) < 1.6
+    after = [r for r in run.rows if r["t"] >= 9.0 - 1e-9]
+    assert all(r["perceived"]["x"] == r["x"] for r in after), "the fix never came back"
+    start = next(e for e in run.events if e["type"] == "gps_dropout_start")
+    assert start["model"] == "dead_reckoned", start
+    rec = run.events[0]["gps_dropout"]
+    assert rec["model"] == "dead_reckoned" and rec["drift_mps"] == S.RAIL_EKF_DRIFT_MPS, rec
+    assert "SIMSTATE" in rec["source"]
+    # And the autopilot's own verdict on that estimate (State.estimator_ok,
+    # 2026-11-12), as the ROS 2 node reads EKF_STATUS_REPORT: True until EKF3's
+    # 6.8 s plus the autopilot's 1 s failsafe rule, past every 7 s window.
+    assert rec["estimator_valid_s"] == S.RAIL_EKF_POS_VALID_S == 6.8 + 1.0, rec
+    assert "EKF_STATUS_REPORT" in rec["estimator_ok"]
+    assert "estimator_ok" not in S.gps_dropout_for("frozen")
+    assert S.gps_dropout_for("frozen")["model"] == "frozen"
+    try:
+        S.run_episode(spec, DEFAULTS, 0, gps_dropout="ekf")
+    except ValueError as e:
+        assert "gps dropout model" in str(e), e
+    else:
+        raise AssertionError("an unknown dropout model was flown")
 
 
 def test_gps_dropout_on_the_head_on_lane_is_a_measured_polygon_entry():

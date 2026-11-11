@@ -762,7 +762,10 @@ DEFAULT_RECOVERY_LAW = "cap_all"
 # velocity error of a closed loop that holds a steady command - recorded with
 # every X8 reason and per harness episode, so a run on another value is told
 # apart; a rail that reports its own position variance should set it from
-# that. 0 reproduces the rubric's E3 exactly on the ideal vehicle.
+# that. 0 reproduces the rubric's E3 exactly on the ideal vehicle. Not read
+# while the autopilot vouches for its own estimate (State.estimator_ok True,
+# 2026-11-12): there the handed pose IS the autopilot's navigation estimate,
+# and a dead reckoning on commands is no measure of its error.
 DR_DRIFT_MPS = 0.5
 
 # Length of the sliding window of recent ticks. Safety Shield page, node
@@ -7130,18 +7133,36 @@ class Shield:
         the position the Shield is handed can no longer certify a hard P0
         zone's margin, else None.
 
-        WHAT A RAIL REPORTS (State.fix_ok, State.pos_sigma_m). Both None -
-        every rail today - and this returns None on every tick: the Shield
-        behaves exactly as before the fields existed.
-          * fix_ok False: the position is not a current valid fix (a stale
-            pose, no 3D fix, an EKF without absolute position). The aircraft
-            is dead-reckoned from the last valid fix on what this Shield
-            itself streamed since (`_note_streamed`: its command; a stop or
-            an in-place hold streams 0, a moved hold in transit its plan's
-            speed). The position handed in is wrong by err = |estimate -
-            handed| + u, where u = dr_drift_mps x the time since the last
-            valid fix is the drift the dead reckoning cannot see
-            (DR_DRIFT_MPS), and the boundary is taken to be u nearer.
+        WHAT A RAIL REPORTS (State.fix_ok, State.pos_sigma_m,
+        State.estimator_ok). All None - every rail but the ROS 2 node - and
+        this returns None on every tick: the Shield behaves exactly as before
+        the fields existed.
+          * estimator_ok (2026-11-12), when reported, decides first: it is the
+            AUTOPILOT'S OWN VERDICT on the estimate it hands the Shield.
+            True: the position is certified - it is the estimate the
+            autopilot navigates, returns and fences on, valid by the
+            autopilot's own test, also while its GPS is denied (fix_ok False:
+            EKF3 dead-reckons on its IMU). No dead reckoning of this Shield's
+            is held against it: that would measure the Shield's command model
+            against the autopilot's estimator, not the estimate's error (on
+            the hil rig the gap was 3.0-3.5 m where the estimate was 0.13-
+            0.78 m off the aircraft). False: the autopilot reports no valid
+            absolute horizontal position for as long as its own EKF failsafe
+            waits; the error is unbounded and no margin certifies anything,
+            so every hard, enforced P0 zone in force is beyond it (the
+            nearest is named).
+          * fix_ok False (with estimator_ok None): the position is not a
+            current valid fix (a stale pose, no 3D fix). The aircraft
+            is dead-reckoned from the last certified position on what this
+            Shield itself streamed since (`_note_streamed`: its command; a
+            stop or an in-place hold streams 0, a moved hold in transit its
+            plan's speed). The position handed in is wrong by err = |estimate
+            - handed| + u, where u = dr_drift_mps x the time since the last
+            certified position is the drift the dead reckoning cannot see
+            (DR_DRIFT_MPS), and the boundary is taken to be u nearer. This is
+            the law of a rail that reports no estimator health - the headless
+            harness's frozen fix, a bridge forwarding a stale pose - and of
+            the ROS 2 node once the autopilot's report goes stale.
           * pos_sigma_m: the rail's 1-sigma horizontal accuracy. Only when a
             rail reports it (None is "not reported", never "perfect"): err is
             at least 3 sigma, judged at the position and along the request's
@@ -7166,12 +7187,26 @@ class Shield:
         1 m (sigma <= 0.33 m, RTK class). With ordinary GNSS accuracy the
         request's forecast passing within 3 sigma of such a zone returns the
         aircraft. Sizing margins to the rail's real (EKF-fused) accuracy is a
-        policy decision; no policy was changed with this."""
+        policy decision; no policy was changed with this.
+
+        TRUSTING THE AUTOPILOT'S VERDICT IS NOT A BOUND ON ITS ERROR. While
+        estimator_ok is True the estimate's own error is the autopilot's,
+        and no Shield action flies on a better one (RTL returns on the same
+        estimate). On the hil rig (ArduCopter 4.5.7 SITL, 30 GPS denials)
+        EKF3 kept its absolute position for 6.8-6.9 s of each 7 s denial and
+        was up to 1.47 m off the aircraft meanwhile - more than a 1 m margin
+        - so a hard P0 margin certifies a zone through a denial only if it
+        covers the autopilot's dead-reckoning error over its own allowance:
+        a margin-sizing question for the policy, as with pos_sigma_m."""
         t = tick.t
         prev, self._pk_cmd = self._pk_cmd, None      # _note_streamed sets it again
         sigma = getattr(state, "pos_sigma_m", None)
         noise = 3.0 * float(sigma) if sigma is not None and sigma > 0 else 0.0
-        if getattr(state, "fix_ok", None) is not False:
+        est = getattr(state, "estimator_ok", None)
+        if est is True or (est is None and getattr(state, "fix_ok", None) is not False):
+            # Certified: a valid fix (or none reported), or the autopilot
+            # vouching for its own estimate. It anchors the dead reckoning,
+            # should the certification lapse.
             self._pk_good = (state.x, state.y, t)
             self._pk = None
             if not noise:
@@ -7188,6 +7223,8 @@ class Shield:
                 pk["dy"] += prev[2] * (t - prev[0])
             ex, ey = pk["anchor"][0] + pk["dx"], pk["anchor"][1] + pk["dy"]
             since = pk["since"]
+            if est is False:
+                return self._estimator_lost(tick, state, t - since)
             drift = self.dr_drift_mps * max(0.0, t - since)
             err = max(math.hypot(ex - state.x, ey - state.y) + drift, noise)
             plan = None
@@ -7218,6 +7255,33 @@ class Shield:
                         f"boundary within {dist:.1f} m of the estimate - the margin no "
                         f"longer certifies it", f.id)
         return None
+
+    def _estimator_lost(self, tick: _Tick, state: State,
+                        age_s: float) -> "tuple[str, str] | None":
+        """X8's input when the AUTOPILOT reports its own horizontal position
+        invalid (State.estimator_ok False, 2026-11-12; _position_verdict):
+        the error is unbounded, so the nearest hard, enforced P0 zone in
+        force at this altitude is named; None when there is none (nothing to
+        certify). `age_s` is the time since the last certified position."""
+        rt = tick.rt
+        p = Point(state.x, state.y)
+        best = None
+        for r in self._zones_now_in(tick, state.up):
+            f = r.rule
+            if not rt.hard.get(f.id, True) or self._act(rt, f.id) == "monitor_only":
+                continue
+            if getattr(f, "priority", "P0") != "P0":
+                continue
+            dist = r.polygon.distance(p)
+            if best is None or dist < best[0]:
+                best = (dist, f)
+        if best is None:
+            return None
+        dist, f = best
+        return (f"the autopilot reports no valid absolute horizontal position (its own "
+                f"estimator, {age_s:.1f} s after the last certified position): the "
+                f"position handed in certifies no margin - {f.id}'s boundary is "
+                f"{dist:.1f} m from it", f.id)
 
     def _noise_marginal(self, tick: _Tick, state: State, d: ShieldDecision) -> bool:
         """The FSM's onset hysteresis input (TickInput.noise_marginal,
@@ -7299,7 +7363,8 @@ class Shield:
             # states report none - every other rail, and the harness's
             # oracle on the true state - runs exactly as before.
             if (getattr(state, "fix_ok", None) is not None
-                    or getattr(state, "pos_sigma_m", None) is not None):
+                    or getattr(state, "pos_sigma_m", None) is not None
+                    or getattr(state, "estimator_ok", None) is not None):
                 upd["position_lost"] = self._position_verdict(tick, state, d.raw)
             return d.model_copy(update=upd)
         if self._fsm_fault is not None:

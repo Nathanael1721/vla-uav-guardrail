@@ -809,6 +809,24 @@ reporting an absolute position, so ArduCopter's EKF failsafe
 (`ArduCopter/ekf_check.cpp`, 1 s at 10 Hz, FS_EKF_ACTION 1) lands the
 aircraft - a takeover on the rail.
 
+**Since 2026-11-12 X8 waits for the autopilot.** The node reads
+ArduPilot's EKF_STATUS_REPORT from `/uas1/mavlink_source`
+(`State.estimator_ok`, docs/DESIGN-escalation-fsm.md "2026-11-12: X8 on the
+autopilot's own estimator"). While EKF3 reports an absolute position, the
+Shield takes the pose as certified and holds no dead reckoning against it.
+X8 fires when the autopilot declares the position lost, by its own failsafe
+rule. Before flying it:
+
+- Re-sign the SROS 2 keystore from `sitl/sros2_policy.xml`
+  (`bash tools/sros2_setup.sh --pki <lab PKI> --permissions-only`), which
+  now grants the Shield that subscription.
+- After a flight, check `fix_quality.estimator.messages` > 0 in
+  metrics.json.
+
+A refused subscription is recorded in metrics.json
+(`fix_quality.estimator.refused`), and the node then flies on `fix_ok` and
+the old dead reckoning.
+
 **Labels SITL's physics may not reach** (none relabelled; the rubric's labels
 stand, and a disagreement is a finding to report):
 
@@ -819,13 +837,19 @@ stand, and a disagreement is a finding to report):
   physically right flight and a "missed" one by the label. At 12 m/s the
   label should hold, but G6 (no progress home) cannot fire on the rail: the
   aircraft is in ArduPilot's RTL until the 40 s grace.
-- gps-dropout, the E3 cells (lane 15 windows 2-9 and 4-11, lane 23.6 windows
-  2-9, 4-11 and 6-13): X8 fires on the drift allowance alone (0.5 m/s), since
-  the EKF's pose is not frozen, so later than headless; it must fire before
-  ArduPilot's EKF failsafe (about 8 s after the GPS is lost) or the FSM's
-  label reads missed. The 7 s windows end at the EKF's 7 s: whether its
-  failsafe fires is a race between SITL's 5 Hz GPS returning and
-  posRetryTimeNoVel_ms.
+- gps-dropout, the E3 cells of the TEMPLATES (lane 15 windows 2-9 and 4-11,
+  lane 23.6 windows 2-9, 4-11 and 6-13): X8 fires on the drift allowance
+  alone (0.5 m/s), since the EKF's pose is not frozen, so later than
+  headless; it must fire before ArduPilot's EKF failsafe (about 8 s after
+  the GPS is lost) or the FSM's label reads missed. The 7 s windows end at
+  the EKF's 7 s: whether its failsafe fires is a race between SITL's 5 Hz
+  GPS returning and posRetryTimeNoVel_ms. RESOLVED for the KPI on
+  2026-11-12: the rail labels now read the denial the rail flies (EKF3's
+  estimate, within 1.47 m of SITL's truth on all 30 rig denials), and on it
+  no lane-23.6 cell expects a fail-safe; lane 15 keeps its by E5
+  (docs/RUBRIC-failsafe.md section 8, "2026-11-12"). nt1111 showed no EKF
+  failsafe in any 7 s window, and X8 firing on lane 23.6 at 4-11 and 6-13 s
+  (9.3-10.4 s) - false triggers under those labels.
 - gps-dropout lane 15 window 6-13 (N2): no X8 is expected and none should
   fire (the aircraft is held 20 m out), but the same EKF race can land it.
 - gps-dropout, the 2-4 s windows (N2, both lanes): should hold - 2 s of drift

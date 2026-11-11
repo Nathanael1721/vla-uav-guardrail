@@ -821,8 +821,78 @@ RESPONSE_ENTRY = {"ardupilot": "cruise", "rail": "rest"}
 # hold points flown as the rails fly them since 2026-11-07 (guardrail/
 # hold_flight.py: a moved point as a GUIDED transit, then the hold;
 # AUTOPILOT_HOLD_MODELS "moved_points"). Until then "in_place": ArduPilot's own
-# hold where the aircraft is, what every rail flew.
-RAIL_VEHICLE = {"response": "rail", "autopilot_hold": "moved_points"}
+# hold where the aircraft is, what every rail flew. Since 2026-11-12 also how
+# a GPS denial reaches the Shield on a rail (GPS_DROPOUT_MODELS below).
+RAIL_VEHICLE = {"response": "rail", "autopilot_hold": "moved_points",
+                "gps_dropout": "dead_reckoned"}
+# How a GPS denial (stress.gps_dropout_s) reaches the Shield (2026-11-12):
+#   frozen         the LAST FIX, held for the window while the aircraft flies
+#                  on - what a bridge that forwards the last pose would do. The
+#                  headless model since X-14 (sensor_degradation.yaml) and the
+#                  model of every label in experiments/templates.
+#   dead_reckoned  the AUTOPILOT'S OWN ESTIMATE, as the rails realise the
+#                  denial: SITL's GPS stops (SIM_GPS_DISABLE, rail_stress_plan)
+#                  and ArduPilot's EKF3 keeps estimating on its IMU, so the
+#                  pose the Shield is handed keeps moving and is wrong only by
+#                  the estimator's drift, RAIL_EKF_DRIFT_MPS x the time since
+#                  the loss, behind the true position along the ground track
+#                  at the loss. The Shield is told the fix is gone (fix_ok
+#                  False) exactly as with the frozen pose.
+# The rail labels (tools/failsafe_rubric.py --response rail) were derived on
+# the frozen pose until 2026-11-12, a pose no rail ever hands the Shield: on
+# the KPI-grade nightly nt1111 they expected a fail-safe (E3) on gps-dropout
+# lane 23.6 at 2-9 s and 4-11 s, where SITL's own truth puts EKF3's pose
+# within 0.94 m of the aircraft at 4-11 s (under the 1 m margin) and within
+# 1.39 m at 2-9 s, past 1 m only with the aircraft 8.4 m or more from
+# nfz-square: E3 holds on none of the 24 gps-dropout flights of nt1111
+# (docs/RUBRIC-failsafe.md, section 8, "2026-11-12").
+GPS_DROPOUT_MODELS = ("frozen", "dead_reckoned")
+DEFAULT_GPS_DROPOUT = "frozen"
+# EKF3's dead-reckoning drift on the hil rig, m/s: the upper envelope of
+# |EKF3 - truth| / time since the loss (>= 2 s) over every GPS denial the rig
+# has flown (nt1111_550-573, rh03_039/040, sm1110_043/044, sm1111_043/044:
+# 30 flights, ArduCopter 4.5.7 SITL), read from each run's raw MAVLink
+# (/uas1/mavlink_source in its bag: SITL's SIMSTATE, the simulator's true
+# position, against GLOBAL_POSITION_INT, EKF3's). Envelope 0.37 m at 2 s,
+# 0.77 m at 4 s, 1.35 m at 6 s, 1.47 m at 6.5 s; largest ratio 0.226 m/s; the
+# error lies along the track at the loss (the estimate lags; across the
+# track 0.18 m or less), and resets when the fix returns. A property of
+# SITL's sensors, as RAIL_RESPONSE is of its airframe: a real IMU drifts
+# faster, and a drone campaign re-measures it.
+RAIL_EKF_DRIFT_MPS = 0.23
+RAIL_EKF_DRIFT_SOURCE = (
+    "hil GPS denials nt1111_550-573, rh03_039/040, sm1110_043/044, sm1111_043/044 "
+    "(30 flights, ArduCopter 4.5.7 SITL): SIMSTATE (truth) against "
+    "GLOBAL_POSITION_INT (EKF3) in each run's raw MAVLink; upper envelope of "
+    "error / time since the loss, along the track at the loss")
+# The autopilot's own verdict on that estimate (State.estimator_ok,
+# 2026-11-12), as the ROS 2 node reports it (sitl/ros2_shield_node.py
+# EstimatorHealth): on the same 30 denials EKF3's EKF_STATUS_REPORT kept
+# EKF_POS_HORIZ_ABS for 6.8-6.9 s after GPS_RAW_INT's loss (posRetryTimeNoVel_ms,
+# 7 s from its last GPS fusion), its test ratios frozen at their last fused
+# values (0.02 or less); the node declares the estimate lost once unhealthy
+# for the autopilot's own EKF failsafe time, 1 s (ArduCopter ekf_check). So a
+# dead-reckoned denial hands the Shield estimator_ok True until
+# RAIL_EKF_POS_VALID_S after the loss and False after it; a frozen one none
+# (no autopilot vouches for a bridge's last pose). Every library window is 7 s
+# or shorter: no cell reaches the False.
+RAIL_EKF_POS_VALID_S = 6.8 + 1.0
+
+
+def gps_dropout_for(model: str = DEFAULT_GPS_DROPOUT) -> dict[str, Any]:
+    """How a GPS denial reaches the Shield under `model` (GPS_DROPOUT_MODELS),
+    as recorded in an episode's start event and the label artefact."""
+    if model not in GPS_DROPOUT_MODELS:
+        raise ValueError(f"gps dropout model {model!r}: one of {list(GPS_DROPOUT_MODELS)}")
+    if model == "frozen":
+        return {"model": model, "pose": "the last fix, held for the window"}
+    return {"model": model,
+            "pose": ("the autopilot's dead-reckoned estimate: the true position less "
+                     "drift_mps x the time since the loss, along the track at the loss"),
+            "drift_mps": RAIL_EKF_DRIFT_MPS, "source": RAIL_EKF_DRIFT_SOURCE,
+            "estimator_ok": ("True until estimator_valid_s after the loss, then False "
+                             "(the autopilot's EKF_STATUS_REPORT, as the ROS 2 node reads it)"),
+            "estimator_valid_s": RAIL_EKF_POS_VALID_S}
 # The response arms whose modelled autopilot GIVES UP a moved hold's transit
 # as the rails do (since 2026-11-07, evening; guardrail/hold_flight.py,
 # GIVING UP): by the rails' own TransitWatch, judged on every tick of the plan
@@ -1233,18 +1303,21 @@ def run_episode(sc, defaults=None, seed: int = 0, arm: dict | None = None, *,
                 autopilot_hold: str = DEFAULT_AUTOPILOT_HOLD,
                 response: str = DEFAULT_RESPONSE_ARM,
                 recovery: str = DEFAULT_RECOVERY_LAW,
-                entry: str | None = None) -> EpisodeRun:
+                entry: str | None = None,
+                gps_dropout: str = DEFAULT_GPS_DROPOUT) -> EpisodeRun:
     """One headless episode. `arm` (paraphrase / prefix record) is RECORDED in
     the episode_start event and changes nothing else: no headless pilot reads
     text. `forecast` (forecast_for), `wind_model` (WIND_MODELS),
     `autopilot_hold` (AUTOPILOT_HOLD_MODELS), `response` (RESPONSE_ARMS,
-    response_for), `recovery` (the Shield's recovery_law, RECOVERY_LAWS) and,
-    on a response arm, `entry` (ENTRY_STATES; None: the arm's own,
-    RESPONSE_ENTRY) DO change the flight. Flown by EpisodeRunner without a
+    response_for), `recovery` (the Shield's recovery_law, RECOVERY_LAWS), on a
+    response arm `entry` (ENTRY_STATES; None: the arm's own, RESPONSE_ENTRY),
+    and `gps_dropout` (GPS_DROPOUT_MODELS: how a declared GPS denial reaches
+    the Shield) DO change the flight. Flown by EpisodeRunner without a
     pause, so a stepped episode and this one share one integrator."""
     return EpisodeRunner(sc, defaults, seed, arm, forecast=forecast,
                          wind_model=wind_model, autopilot_hold=autopilot_hold,
-                         response=response, recovery=recovery, entry=entry).finish()
+                         response=response, recovery=recovery, entry=entry,
+                         gps_dropout=gps_dropout).finish()
 
 
 class EpisodeRunner:
@@ -1284,10 +1357,11 @@ class EpisodeRunner:
                  autopilot_hold: str = DEFAULT_AUTOPILOT_HOLD,
                  response: str = DEFAULT_RESPONSE_ARM,
                  recovery: str = DEFAULT_RECOVERY_LAW,
-                 entry: str | None = None):
+                 entry: str | None = None,
+                 gps_dropout: str = DEFAULT_GPS_DROPOUT):
         self._box: dict[str, Any] = {}
         self._gen = _episode(sc, defaults, seed, arm, self._box, forecast, wind_model,
-                             autopilot_hold, response, recovery, entry)
+                             autopilot_hold, response, recovery, entry, gps_dropout)
         self.result: EpisodeRun | None = None
         self.error: BaseException | None = None
         self._failed_t: float | None = None     # the tick that raised
@@ -1375,7 +1449,8 @@ def _episode(sc, defaults, seed: int, arm: dict | None, box: dict,
              autopilot_hold: str = DEFAULT_AUTOPILOT_HOLD,
              response: str = DEFAULT_RESPONSE_ARM,
              recovery: str = DEFAULT_RECOVERY_LAW,
-             entry: str | None = None):
+             entry: str | None = None,
+             gps_dropout: str = DEFAULT_GPS_DROPOUT):
     """The integrator behind run_episode and EpisodeRunner: a generator that
     yields (tick, t) at the start of every tick, before that tick's scheduled
     events are applied, and returns the EpisodeRun. `box` receives the
@@ -1431,6 +1506,8 @@ def _episode(sc, defaults, seed: int, arm: dict | None, box: dict,
                          f"mission.clock_start: with no clock the window is "
                          f"always in force")
     drop = spec.stress.gps_dropout_s
+    if gps_dropout not in GPS_DROPOUT_MODELS:
+        raise ValueError(f"gps dropout model {gps_dropout!r}: one of {list(GPS_DROPOUT_MODELS)}")
     if drop is not None and drop[0] > t_end + 1e-9:
         # Same reasoning as a late event: a dropout that starts after the last
         # tick would leave a "GPS denial" scenario that never denied anything.
@@ -1564,6 +1641,11 @@ def _episode(sc, defaults, seed: int, arm: dict | None, box: dict,
         # is degraded, so every other episode's events are as they were.
         events[0]["fix_quality_reported"] = stress.fix_quality_reported
         events[0]["dr_drift_mps"] = getattr(shield, "dr_drift_mps", None)
+    if drop is not None and gps_dropout != DEFAULT_GPS_DROPOUT:
+        # How the denial reaches the Shield (GPS_DROPOUT_MODELS, 2026-11-12):
+        # only off the default model, so every frozen-fix episode's events
+        # are as they were.
+        events[0]["gps_dropout"] = gps_dropout_for(gps_dropout)
     es = _EventState(shields=shields)
     generation_irs: dict[int, bytes] = {int(policy.generation): policy.canonical_bytes()}
     st = m.start
@@ -1607,6 +1689,10 @@ def _episode(sc, defaults, seed: int, arm: dict | None, box: dict,
         heading = (math.cos(r), math.sin(r))
     frozen: State | None = None
     dropout_ticks = 0
+    # The dead-reckoned denial (gps_dropout "dead_reckoned"): when the fix was
+    # lost and the ground-track direction the estimate lags along.
+    drop_t0: float | None = None
+    drop_dir = (1.0, 0.0)
     # The escalation FSM's hand-over, and the autopilot that flies it.
     ap_mode: str | None = None
     # Where the FSM's Loiter / Land holds (ShieldDecision.hold_point), whether
@@ -1717,24 +1803,48 @@ def _episode(sc, defaults, seed: int, arm: dict | None, box: dict,
                          pos_sigma_m=(sigma if sigma and stress.fix_quality_reported
                                       else None))
         if drop is not None:
-            # GPS denial: hold the last fix. The noise above is still drawn on
-            # these ticks, so the noise sequence after the window is the same
-            # one a run without the dropout would see on the same seed.
+            # GPS denial (GPS_DROPOUT_MODELS): "frozen" holds the last fix;
+            # "dead_reckoned" hands on the autopilot's estimate, the pose
+            # lagging the true one by RAIL_EKF_DRIFT_MPS x the time since the
+            # loss along the ground track at the loss (as EKF3 does on the
+            # rails). The noise above is still drawn on these ticks, so the
+            # noise sequence after the window is the same one a run without
+            # the dropout would see on the same seed.
             if drop[0] - 1e-9 <= t_now < drop[1] - 1e-9:
                 if frozen is None:
                     frozen = seen
+                    drop_t0 = t_now
+                    gv = ground_v if ground_v is not None else heading
+                    gn = math.hypot(gv[0], gv[1])
+                    if gn < 0.1:
+                        gv, gn = heading, math.hypot(heading[0], heading[1])
+                    drop_dir = (gv[0] / gn, gv[1] / gn)
                     events.append({"t": round(t_now, 4), "type": "gps_dropout_start",
                                    "held": [round(seen.x, 3), round(seen.y, 3),
-                                            round(seen.up, 3)]})
-                # A rail that reports fix quality flags the frozen pose as not
-                # a current fix (State.fix_ok False: the pose's stamp age,
+                                            round(seen.up, 3)],
+                                   **({} if gps_dropout == DEFAULT_GPS_DROPOUT
+                                      else {"model": gps_dropout})})
+                pose = frozen
+                quality = {"fix_ok": False}
+                if gps_dropout == "dead_reckoned":
+                    lag = RAIL_EKF_DRIFT_MPS * (t_now - drop_t0)
+                    pose = seen.model_copy(update={"x": seen.x - lag * drop_dir[0],
+                                                   "y": seen.y - lag * drop_dir[1]})
+                    # The autopilot vouches for its own estimate until its
+                    # EKF failsafe would declare it lost (RAIL_EKF_POS_VALID_S,
+                    # 2026-11-12), as the ROS 2 node reports it.
+                    quality["estimator_ok"] = (t_now - drop_t0
+                                               < RAIL_EKF_POS_VALID_S - 1e-9)
+                # A rail that reports fix quality flags the pose as not a
+                # current fix (State.fix_ok False: the pose's stamp age,
                 # GPS_RAW_INT.fix_type); one that does not hands it on as is
                 # (Stress.fix_quality_reported, 2026-11-06).
-                seen = (frozen.model_copy(update={"fix_ok": False})
-                        if stress.fix_quality_reported else frozen)
+                seen = (pose.model_copy(update=quality)
+                        if stress.fix_quality_reported else pose)
                 dropout_ticks += 1
             elif frozen is not None:
                 frozen = None
+                drop_t0 = None
                 events.append({"t": round(t_now, 4), "type": "gps_dropout_end"})
 
         raw = _pilot(m, kind, st, None if rsp is None else rsp.accel_mps2)
@@ -2277,8 +2387,9 @@ def _episode(sc, defaults, seed: int, arm: dict | None, box: dict,
         "harness_events": len(events) - 1,
         "policy_generation_final": shield.policy.generation,
         # None when the scenario declares no dropout; otherwise the ticks the
-        # Shield was really handed a frozen pose. A declared dropout that
-        # froze nothing reads 0, never None, so it cannot pass for "not run".
+        # Shield was really handed the dropout's pose (frozen or dead-
+        # reckoned, GPS_DROPOUT_MODELS). A declared dropout that froze
+        # nothing reads 0, never None, so it cannot pass for "not run".
         "gps_dropout_ticks": None if drop is None else dropout_ticks,
         # Ticks whose Shield decision named a window opening on the aircraft
         # (`window_opens_on` or `window_opened_on` in its trace), whatever

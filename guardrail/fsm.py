@@ -110,7 +110,12 @@ term.
       since each was computed from that position. RTL, because the autopilot
       still navigates on its own estimate; G6 lands it if the return fails.
       A rail that reports no fix quality (every rail on that date) never
-      takes it.
+      takes it. Since 2026-11-12 a rail that hands the Shield the
+      autopilot's own estimate may report the autopilot's verdict on it
+      (State.estimator_ok): while the autopilot vouches for it the position
+      is certified, GPS or not, and X8 fires once the autopilot declares it
+      lost (its EKF failsafe's own rule); the dead reckoning above is then
+      the law only where no such verdict is reported.
   X9  Loiter -> RTL when the HOLD IS NOT KEPT (since 2026-11-11,
       FSMConfig.hold_kept "reach"): the aircraft is farther from the point
       its hold flies to (`hold_off_m`) than a kept hold can carry it
@@ -584,7 +589,9 @@ EDGES: dict[str, tuple[str, str, str, str]] = {
     # return fails (rtl_path), G6 lands it, as for any RTL. (Where the
     # AUTOPILOT has lost its own fix - GPS_RAW_INT.fix_type < 3, an EKF without
     # absolute position - RTL cannot be flown and ArduPilot's EKF failsafe
-    # lands, FS_EKF_ACTION = 1: a second input, not modelled here.)
+    # lands, FS_EKF_ACTION = 1. Since 2026-11-12 the Shield reads that verdict
+    # where a rail reports it (State.estimator_ok): X8 fires with it, and the
+    # autopilot's own failsafe, on the same rule, lands the aircraft.)
     "X8": ("Normal|Brake|Loiter", "RTL", "extension",
            "position knowledge lost: the position error (stale or invalid fix, or "
            "reported accuracy) exceeds a hard P0 zone's margin with its boundary "
@@ -1162,7 +1169,7 @@ class TickInput:
     # Why the position can no longer be certified (edge X8, 2026-11-06), or
     # None - every caller before it, and every tick whose rail reports no
     # fix quality or a good one. Set by Shield._position_verdict from
-    # State.fix_ok / State.pos_sigma_m.
+    # State.estimator_ok / State.fix_ok / State.pos_sigma_m.
     position_lost: str | None = None
     # A clean tick whose request is clean of a hard zone by less than 3 sigma
     # of the REPORTED position accuracy (Shield._noise_marginal, 2026-11-06).

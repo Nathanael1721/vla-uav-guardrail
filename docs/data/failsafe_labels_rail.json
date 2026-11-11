@@ -83,17 +83,587 @@
   ],
   "code_revisions": [
    "442397ff60a6a60437102728081656f3f634dc35",
+   "49c455ccd07c5067c5bf5341477bfe1acfa62c06",
    "897dac7a2d1f3b55bef33f88f18ed900ae6d8873"
   ],
   "resolved_flown_longer": 36,
   "differ_flown_longer": [],
-  "then": "python tools/failsafe_rubric.py --build-labels <this file> <out> ..."
+  "then": "python tools/failsafe_rubric.py --build-labels <this file> <out> ...",
+  "updates": [
+   {
+    "why": "2026-11-12: on the rail vehicle a GPS denial reaches the Shield as the rails realise it - EKF3's dead-reckoned estimate (sweep_scenarios GPS_DROPOUT_MODELS 'dead_reckoned', RAIL_EKF_DRIFT_MPS 0.23 m/s measured against SITL's SIMSTATE on 30 hil denials) - not the frozen last fix no rail hands it; docs/RUBRIC-failsafe.md section 8, '2026-11-12'",
+    "runs": [
+     {
+      "profile": "smoke",
+      "vehicle": "rail",
+      "cell_seeds": 2,
+      "extend_s": 0.0,
+      "code_revision": "49c455ccd07c5067c5bf5341477bfe1acfa62c06",
+      "command": "python tools/failsafe_rubric.py --profile smoke --only gps-dropout --response rail --no-fsm --json <out>"
+     },
+     {
+      "profile": "nightly",
+      "vehicle": "rail",
+      "cell_seeds": 24,
+      "extend_s": 0.0,
+      "code_revision": "49c455ccd07c5067c5bf5341477bfe1acfa62c06",
+      "command": "python tools/failsafe_rubric.py --profile nightly --only gps-dropout --response rail --no-fsm --json <out>"
+     }
+    ],
+    "cell_seeds": 24,
+    "readings_moved": [
+     {
+      "cell": "gps-dropout@lane_y=15,window=2-9",
+      "seed": 1001,
+      "reading": "r",
+      "was": {
+       "expected": true,
+       "clauses": [
+        "E3",
+        "E5"
+       ],
+       "e5_spell_s": 37.1
+      },
+      "now": {
+       "expected": true,
+       "clauses": [
+        "E5"
+       ],
+       "e5_spell_s": 43.8
+      }
+     },
+     {
+      "cell": "gps-dropout@lane_y=15,window=2-9",
+      "seed": 1001,
+      "reading": "r2",
+      "was": {
+       "expected": true,
+       "clauses": [
+        "E3",
+        "E5"
+       ],
+       "e5_spell_s": 31.2
+      },
+      "now": {
+       "expected": true,
+       "clauses": [
+        "E5"
+       ],
+       "e5_spell_s": 43.8
+      }
+     },
+     {
+      "cell": "gps-dropout@lane_y=15,window=2-9",
+      "seed": 1002,
+      "reading": "r",
+      "was": {
+       "expected": true,
+       "clauses": [
+        "E3",
+        "E5"
+       ],
+       "e5_spell_s": 37.1
+      },
+      "now": {
+       "expected": true,
+       "clauses": [
+        "E5"
+       ],
+       "e5_spell_s": 43.8
+      }
+     },
+     {
+      "cell": "gps-dropout@lane_y=15,window=2-9",
+      "seed": 1002,
+      "reading": "r2",
+      "was": {
+       "expected": true,
+       "clauses": [
+        "E3",
+        "E5"
+       ],
+       "e5_spell_s": 31.2
+      },
+      "now": {
+       "expected": true,
+       "clauses": [
+        "E5"
+       ],
+       "e5_spell_s": 43.8
+      }
+     },
+     {
+      "cell": "gps-dropout@lane_y=15,window=2-9",
+      "seed": 1003,
+      "reading": "r",
+      "was": {
+       "expected": true,
+       "clauses": [
+        "E3",
+        "E5"
+       ],
+       "e5_spell_s": 37.1
+      },
+      "now": {
+       "expected": true,
+       "clauses": [
+        "E5"
+       ],
+       "e5_spell_s": 43.8
+      }
+     },
+     {
+      "cell": "gps-dropout@lane_y=15,window=2-9",
+      "seed": 1003,
+      "reading": "r2",
+      "was": {
+       "expected": true,
+       "clauses": [
+        "E3",
+        "E5"
+       ],
+       "e5_spell_s": 31.2
+      },
+      "now": {
+       "expected": true,
+       "clauses": [
+        "E5"
+       ],
+       "e5_spell_s": 43.8
+      }
+     },
+     {
+      "cell": "gps-dropout@lane_y=15,window=4-11",
+      "seed": 1001,
+      "reading": "r",
+      "was": {
+       "expected": true,
+       "clauses": [
+        "E3",
+        "E5"
+       ],
+       "e5_spell_s": 34.0
+      },
+      "now": {
+       "expected": true,
+       "clauses": [
+        "E5"
+       ],
+       "e5_spell_s": 44.0
+      }
+     },
+     {
+      "cell": "gps-dropout@lane_y=15,window=4-11",
+      "seed": 1001,
+      "reading": "r2",
+      "was": {
+       "expected": true,
+       "clauses": [
+        "E3",
+        "E5"
+       ],
+       "e5_spell_s": 34.0
+      },
+      "now": {
+       "expected": true,
+       "clauses": [
+        "E5"
+       ],
+       "e5_spell_s": 44.0
+      }
+     },
+     {
+      "cell": "gps-dropout@lane_y=15,window=4-11",
+      "seed": 1002,
+      "reading": "r",
+      "was": {
+       "expected": true,
+       "clauses": [
+        "E3",
+        "E5"
+       ],
+       "e5_spell_s": 34.0
+      },
+      "now": {
+       "expected": true,
+       "clauses": [
+        "E5"
+       ],
+       "e5_spell_s": 44.0
+      }
+     },
+     {
+      "cell": "gps-dropout@lane_y=15,window=4-11",
+      "seed": 1002,
+      "reading": "r2",
+      "was": {
+       "expected": true,
+       "clauses": [
+        "E3",
+        "E5"
+       ],
+       "e5_spell_s": 34.0
+      },
+      "now": {
+       "expected": true,
+       "clauses": [
+        "E5"
+       ],
+       "e5_spell_s": 44.0
+      }
+     },
+     {
+      "cell": "gps-dropout@lane_y=15,window=4-11",
+      "seed": 1003,
+      "reading": "r",
+      "was": {
+       "expected": true,
+       "clauses": [
+        "E3",
+        "E5"
+       ],
+       "e5_spell_s": 34.0
+      },
+      "now": {
+       "expected": true,
+       "clauses": [
+        "E5"
+       ],
+       "e5_spell_s": 44.0
+      }
+     },
+     {
+      "cell": "gps-dropout@lane_y=15,window=4-11",
+      "seed": 1003,
+      "reading": "r2",
+      "was": {
+       "expected": true,
+       "clauses": [
+        "E3",
+        "E5"
+       ],
+       "e5_spell_s": 34.0
+      },
+      "now": {
+       "expected": true,
+       "clauses": [
+        "E5"
+       ],
+       "e5_spell_s": 44.0
+      }
+     },
+     {
+      "cell": "gps-dropout@lane_y=23.6,window=2-9",
+      "seed": 1001,
+      "reading": "r",
+      "was": {
+       "expected": true,
+       "clauses": [
+        "E3"
+       ],
+       "e5_spell_s": 0.0
+      },
+      "now": {
+       "expected": false,
+       "clauses": [],
+       "e5_spell_s": 0.0
+      }
+     },
+     {
+      "cell": "gps-dropout@lane_y=23.6,window=2-9",
+      "seed": 1001,
+      "reading": "r2",
+      "was": {
+       "expected": true,
+       "clauses": [
+        "E3"
+       ],
+       "e5_spell_s": 0.0
+      },
+      "now": {
+       "expected": false,
+       "clauses": [],
+       "e5_spell_s": 0.0
+      }
+     },
+     {
+      "cell": "gps-dropout@lane_y=23.6,window=2-9",
+      "seed": 1002,
+      "reading": "r",
+      "was": {
+       "expected": true,
+       "clauses": [
+        "E3"
+       ],
+       "e5_spell_s": 0.0
+      },
+      "now": {
+       "expected": false,
+       "clauses": [],
+       "e5_spell_s": 0.0
+      }
+     },
+     {
+      "cell": "gps-dropout@lane_y=23.6,window=2-9",
+      "seed": 1002,
+      "reading": "r2",
+      "was": {
+       "expected": true,
+       "clauses": [
+        "E3"
+       ],
+       "e5_spell_s": 0.0
+      },
+      "now": {
+       "expected": false,
+       "clauses": [],
+       "e5_spell_s": 0.0
+      }
+     },
+     {
+      "cell": "gps-dropout@lane_y=23.6,window=2-9",
+      "seed": 1003,
+      "reading": "r",
+      "was": {
+       "expected": true,
+       "clauses": [
+        "E3"
+       ],
+       "e5_spell_s": 0.0
+      },
+      "now": {
+       "expected": false,
+       "clauses": [],
+       "e5_spell_s": 0.0
+      }
+     },
+     {
+      "cell": "gps-dropout@lane_y=23.6,window=2-9",
+      "seed": 1003,
+      "reading": "r2",
+      "was": {
+       "expected": true,
+       "clauses": [
+        "E3"
+       ],
+       "e5_spell_s": 0.0
+      },
+      "now": {
+       "expected": false,
+       "clauses": [],
+       "e5_spell_s": 0.0
+      }
+     },
+     {
+      "cell": "gps-dropout@lane_y=23.6,window=4-11",
+      "seed": 1001,
+      "reading": "r",
+      "was": {
+       "expected": true,
+       "clauses": [
+        "E3"
+       ],
+       "e5_spell_s": 0.0
+      },
+      "now": {
+       "expected": false,
+       "clauses": [],
+       "e5_spell_s": 0.0
+      }
+     },
+     {
+      "cell": "gps-dropout@lane_y=23.6,window=4-11",
+      "seed": 1001,
+      "reading": "r2",
+      "was": {
+       "expected": true,
+       "clauses": [
+        "E3"
+       ],
+       "e5_spell_s": 0.0
+      },
+      "now": {
+       "expected": false,
+       "clauses": [],
+       "e5_spell_s": 0.0
+      }
+     },
+     {
+      "cell": "gps-dropout@lane_y=23.6,window=4-11",
+      "seed": 1002,
+      "reading": "r",
+      "was": {
+       "expected": true,
+       "clauses": [
+        "E3"
+       ],
+       "e5_spell_s": 0.0
+      },
+      "now": {
+       "expected": false,
+       "clauses": [],
+       "e5_spell_s": 0.0
+      }
+     },
+     {
+      "cell": "gps-dropout@lane_y=23.6,window=4-11",
+      "seed": 1002,
+      "reading": "r2",
+      "was": {
+       "expected": true,
+       "clauses": [
+        "E3"
+       ],
+       "e5_spell_s": 0.0
+      },
+      "now": {
+       "expected": false,
+       "clauses": [],
+       "e5_spell_s": 0.0
+      }
+     },
+     {
+      "cell": "gps-dropout@lane_y=23.6,window=4-11",
+      "seed": 1003,
+      "reading": "r",
+      "was": {
+       "expected": true,
+       "clauses": [
+        "E3"
+       ],
+       "e5_spell_s": 0.0
+      },
+      "now": {
+       "expected": false,
+       "clauses": [],
+       "e5_spell_s": 0.0
+      }
+     },
+     {
+      "cell": "gps-dropout@lane_y=23.6,window=4-11",
+      "seed": 1003,
+      "reading": "r2",
+      "was": {
+       "expected": true,
+       "clauses": [
+        "E3"
+       ],
+       "e5_spell_s": 0.0
+      },
+      "now": {
+       "expected": false,
+       "clauses": [],
+       "e5_spell_s": 0.0
+      }
+     },
+     {
+      "cell": "gps-dropout@lane_y=23.6,window=6-13",
+      "seed": 1001,
+      "reading": "r",
+      "was": {
+       "expected": false,
+       "clauses": [],
+       "e5_spell_s": 2.4
+      },
+      "now": {
+       "expected": false,
+       "clauses": [],
+       "e5_spell_s": 0.0
+      }
+     },
+     {
+      "cell": "gps-dropout@lane_y=23.6,window=6-13",
+      "seed": 1001,
+      "reading": "r2",
+      "was": {
+       "expected": false,
+       "clauses": [],
+       "e5_spell_s": 4.5
+      },
+      "now": {
+       "expected": false,
+       "clauses": [],
+       "e5_spell_s": 0.0
+      }
+     },
+     {
+      "cell": "gps-dropout@lane_y=23.6,window=6-13",
+      "seed": 1002,
+      "reading": "r",
+      "was": {
+       "expected": false,
+       "clauses": [],
+       "e5_spell_s": 2.4
+      },
+      "now": {
+       "expected": false,
+       "clauses": [],
+       "e5_spell_s": 0.0
+      }
+     },
+     {
+      "cell": "gps-dropout@lane_y=23.6,window=6-13",
+      "seed": 1002,
+      "reading": "r2",
+      "was": {
+       "expected": false,
+       "clauses": [],
+       "e5_spell_s": 4.5
+      },
+      "now": {
+       "expected": false,
+       "clauses": [],
+       "e5_spell_s": 0.0
+      }
+     },
+     {
+      "cell": "gps-dropout@lane_y=23.6,window=6-13",
+      "seed": 1003,
+      "reading": "r",
+      "was": {
+       "expected": false,
+       "clauses": [],
+       "e5_spell_s": 2.4
+      },
+      "now": {
+       "expected": false,
+       "clauses": [],
+       "e5_spell_s": 0.0
+      }
+     },
+     {
+      "cell": "gps-dropout@lane_y=23.6,window=6-13",
+      "seed": 1003,
+      "reading": "r2",
+      "was": {
+       "expected": false,
+       "clauses": [],
+       "e5_spell_s": 4.5
+      },
+      "now": {
+       "expected": false,
+       "clauses": [],
+       "e5_spell_s": 0.0
+      }
+     }
+    ],
+    "readings_unchanged": 18,
+    "resolved_flown_longer": 0,
+    "differ_flown_longer": [],
+    "fsm_config_hash": "sha256:b9103b0d98c701bc4303711e99873db9795bd99bb824d758b93e093ee30a2e75",
+    "then": "python tools/failsafe_rubric.py --update-labels <this file> <in> ... --why <reason>"
+   }
+  ]
  },
  "vehicles": {
   "ideal": {
    "arm": "ideal",
    "model": "commanded ground velocity, every tick",
-   "params": null
+   "params": null,
+   "gps_dropout": {
+    "model": "frozen",
+    "pose": "the last fix, held for the window"
+   }
   },
   "rail": {
    "arm": "rail",
@@ -110,7 +680,13 @@
    "model": "delayed command, jerk- and acceleration-limited target, first-order airframe lag (sweep_scenarios.VehicleResponse)",
    "source": "tools/measure_vehicle_response.py --rig 'demo/out/hil_smoke/rh01_*' (RIG_EXCLUDE: *near-edge-at-12mps*)",
    "entry": "rest",
-   "fitted_to": "hil rehearsal rh01, 7 Nov 2026: 32 flights, 6570 samples"
+   "fitted_to": "hil rehearsal rh01, 7 Nov 2026: 32 flights, 6570 samples",
+   "gps_dropout": {
+    "model": "dead_reckoned",
+    "pose": "the autopilot's dead-reckoned estimate: the true position less drift_mps x the time since the loss, along the track at the loss",
+    "drift_mps": 0.23,
+    "source": "hil GPS denials nt1111_550-573, rh03_039/040, sm1110_043/044, sm1111_043/044 (30 flights, ArduCopter 4.5.7 SITL): SIMSTATE (truth) against GLOBAL_POSITION_INT (EKF3) in each run's raw MAVLink; upper envelope of error / time since the loss, along the track at the loss"
+   }
   }
  },
  "labels": {
@@ -10131,20 +10707,18 @@
     "r2": {
      "expected": true,
      "clauses": [
-      "E3",
       "E5"
      ],
-     "e5_spell_s": 31.2,
+     "e5_spell_s": 43.8,
      "undecided": false,
      "length": "scenario"
     },
     "r": {
      "expected": true,
      "clauses": [
-      "E3",
       "E5"
      ],
-     "e5_spell_s": 37.1,
+     "e5_spell_s": 43.8,
      "undecided": false,
      "length": "scenario"
     }
@@ -10173,20 +10747,18 @@
     "r2": {
      "expected": true,
      "clauses": [
-      "E3",
       "E5"
      ],
-     "e5_spell_s": 31.2,
+     "e5_spell_s": 43.8,
      "undecided": false,
      "length": "scenario"
     },
     "r": {
      "expected": true,
      "clauses": [
-      "E3",
       "E5"
      ],
-     "e5_spell_s": 37.1,
+     "e5_spell_s": 43.8,
      "undecided": false,
      "length": "scenario"
     }
@@ -10215,20 +10787,18 @@
     "r2": {
      "expected": true,
      "clauses": [
-      "E3",
       "E5"
      ],
-     "e5_spell_s": 31.2,
+     "e5_spell_s": 43.8,
      "undecided": false,
      "length": "scenario"
     },
     "r": {
      "expected": true,
      "clauses": [
-      "E3",
       "E5"
      ],
-     "e5_spell_s": 37.1,
+     "e5_spell_s": 43.8,
      "undecided": false,
      "length": "scenario"
     }
@@ -10259,20 +10829,18 @@
     "r2": {
      "expected": true,
      "clauses": [
-      "E3",
       "E5"
      ],
-     "e5_spell_s": 34.0,
+     "e5_spell_s": 44.0,
      "undecided": false,
      "length": "scenario"
     },
     "r": {
      "expected": true,
      "clauses": [
-      "E3",
       "E5"
      ],
-     "e5_spell_s": 34.0,
+     "e5_spell_s": 44.0,
      "undecided": false,
      "length": "scenario"
     }
@@ -10301,20 +10869,18 @@
     "r2": {
      "expected": true,
      "clauses": [
-      "E3",
       "E5"
      ],
-     "e5_spell_s": 34.0,
+     "e5_spell_s": 44.0,
      "undecided": false,
      "length": "scenario"
     },
     "r": {
      "expected": true,
      "clauses": [
-      "E3",
       "E5"
      ],
-     "e5_spell_s": 34.0,
+     "e5_spell_s": 44.0,
      "undecided": false,
      "length": "scenario"
     }
@@ -10343,20 +10909,18 @@
     "r2": {
      "expected": true,
      "clauses": [
-      "E3",
       "E5"
      ],
-     "e5_spell_s": 34.0,
+     "e5_spell_s": 44.0,
      "undecided": false,
      "length": "scenario"
     },
     "r": {
      "expected": true,
      "clauses": [
-      "E3",
       "E5"
      ],
-     "e5_spell_s": 34.0,
+     "e5_spell_s": 44.0,
      "undecided": false,
      "length": "scenario"
     }
@@ -10579,19 +11143,15 @@
      "length": "scenario"
     },
     "r2": {
-     "expected": true,
-     "clauses": [
-      "E3"
-     ],
+     "expected": false,
+     "clauses": [],
      "e5_spell_s": 0.0,
      "undecided": false,
      "length": "scenario"
     },
     "r": {
-     "expected": true,
-     "clauses": [
-      "E3"
-     ],
+     "expected": false,
+     "clauses": [],
      "e5_spell_s": 0.0,
      "undecided": false,
      "length": "scenario"
@@ -10617,19 +11177,15 @@
      "length": "scenario"
     },
     "r2": {
-     "expected": true,
-     "clauses": [
-      "E3"
-     ],
+     "expected": false,
+     "clauses": [],
      "e5_spell_s": 0.0,
      "undecided": false,
      "length": "scenario"
     },
     "r": {
-     "expected": true,
-     "clauses": [
-      "E3"
-     ],
+     "expected": false,
+     "clauses": [],
      "e5_spell_s": 0.0,
      "undecided": false,
      "length": "scenario"
@@ -10655,19 +11211,15 @@
      "length": "scenario"
     },
     "r2": {
-     "expected": true,
-     "clauses": [
-      "E3"
-     ],
+     "expected": false,
+     "clauses": [],
      "e5_spell_s": 0.0,
      "undecided": false,
      "length": "scenario"
     },
     "r": {
-     "expected": true,
-     "clauses": [
-      "E3"
-     ],
+     "expected": false,
+     "clauses": [],
      "e5_spell_s": 0.0,
      "undecided": false,
      "length": "scenario"
@@ -10697,19 +11249,15 @@
      "length": "scenario"
     },
     "r2": {
-     "expected": true,
-     "clauses": [
-      "E3"
-     ],
+     "expected": false,
+     "clauses": [],
      "e5_spell_s": 0.0,
      "undecided": false,
      "length": "scenario"
     },
     "r": {
-     "expected": true,
-     "clauses": [
-      "E3"
-     ],
+     "expected": false,
+     "clauses": [],
      "e5_spell_s": 0.0,
      "undecided": false,
      "length": "scenario"
@@ -10737,19 +11285,15 @@
      "length": "scenario"
     },
     "r2": {
-     "expected": true,
-     "clauses": [
-      "E3"
-     ],
+     "expected": false,
+     "clauses": [],
      "e5_spell_s": 0.0,
      "undecided": false,
      "length": "scenario"
     },
     "r": {
-     "expected": true,
-     "clauses": [
-      "E3"
-     ],
+     "expected": false,
+     "clauses": [],
      "e5_spell_s": 0.0,
      "undecided": false,
      "length": "scenario"
@@ -10777,19 +11321,15 @@
      "length": "scenario"
     },
     "r2": {
-     "expected": true,
-     "clauses": [
-      "E3"
-     ],
+     "expected": false,
+     "clauses": [],
      "e5_spell_s": 0.0,
      "undecided": false,
      "length": "scenario"
     },
     "r": {
-     "expected": true,
-     "clauses": [
-      "E3"
-     ],
+     "expected": false,
+     "clauses": [],
      "e5_spell_s": 0.0,
      "undecided": false,
      "length": "scenario"
@@ -10819,14 +11359,14 @@
     "r2": {
      "expected": false,
      "clauses": [],
-     "e5_spell_s": 4.5,
+     "e5_spell_s": 0.0,
      "undecided": false,
      "length": "scenario"
     },
     "r": {
      "expected": false,
      "clauses": [],
-     "e5_spell_s": 2.4,
+     "e5_spell_s": 0.0,
      "undecided": false,
      "length": "scenario"
     }
@@ -10853,14 +11393,14 @@
     "r2": {
      "expected": false,
      "clauses": [],
-     "e5_spell_s": 4.5,
+     "e5_spell_s": 0.0,
      "undecided": false,
      "length": "scenario"
     },
     "r": {
      "expected": false,
      "clauses": [],
-     "e5_spell_s": 2.4,
+     "e5_spell_s": 0.0,
      "undecided": false,
      "length": "scenario"
     }
@@ -10887,14 +11427,14 @@
     "r2": {
      "expected": false,
      "clauses": [],
-     "e5_spell_s": 4.5,
+     "e5_spell_s": 0.0,
      "undecided": false,
      "length": "scenario"
     },
     "r": {
      "expected": false,
      "clauses": [],
-     "e5_spell_s": 2.4,
+     "e5_spell_s": 0.0,
      "undecided": false,
      "length": "scenario"
     }

@@ -2842,6 +2842,28 @@ def test_the_camera_age_behind_each_setpoint_is_two_durations_and_never_a_zero()
     assert "monotonic" in cam["clocks"] and "lower bound" in cam["clocks"]
 
 
+def test_the_shield_node_may_read_the_autopilots_estimator_and_does():
+    """2026-11-12: State.estimator_ok comes from ArduPilot's EKF_STATUS_REPORT,
+    which no MAVROS 2 plugin publishes, so the Shield node subscribes MAVROS's
+    raw feed to the UAS. Under SROS 2 Enforce a subscription the policy does
+    not grant is refused when it is created: the Shield's profile grants the
+    topic (read only - /uas1/* is still published by MAVROS alone), the node
+    creates the subscription on that name and hands the verdict to the
+    Shield, and its record says where it came from."""
+    N = _node()
+    pol = (SITL / "sros2_policy.xml").read_text(encoding="utf-8")
+    shield = pol.split('<profile ns="/" node="safety_shield">')[1].split("</profile>")[0]
+    subs = shield.split('<topics subscribe="ALLOW">')[1].split("</topics>")[0]
+    assert f"<topic>{N.MAVLINK_SOURCE_TOPIC}</topic>" in subs
+    pubs = shield.split('<topics publish="ALLOW">')[1].split("</topics>")[0]
+    assert "/uas1" not in pubs
+    src = (SITL / "ros2_shield_node.py").read_text(encoding="utf-8")
+    assert "self.create_subscription(Mavlink, MAVLINK_SOURCE_TOPIC," in src
+    assert 'st_sh.model_copy(update={"estimator_ok": est_ok})' in src
+    assert "self.read_ekf_failsafe()" in src
+    assert '"estimator": {' in src and "MAVLINK_SOURCE_TOPIC" in src
+
+
 def test_no_sitl_script_reads_a_name_nothing_binds():
     """The ROS node classes exist only where rclpy imports, so no desktop test
     runs their methods. a152a75's request_extended_state logged through

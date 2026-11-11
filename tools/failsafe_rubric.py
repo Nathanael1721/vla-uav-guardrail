@@ -18,8 +18,11 @@ the aircraft - never the FSM's state, edges or outcome:
   E3  the position the Shield acts on is wrong by more than the margin of the
       hard P0 polygon fences while the aircraft is within that error of one:
       noise (3 sigma) or latency (ticks x dt x the planned speed, capped)
-      against the closest true approach to a fence, or - for a frozen fix -
-      tick by tick, |true - seen| against the true distance to the fence;
+      against the closest true approach to a fence, or - for a GPS denial -
+      tick by tick, |true - seen| against the true distance to the fence
+      (seen: the frozen last fix on the ideal vehicle, the autopilot's dead-
+      reckoned estimate on the rail vehicle, as the rails realise it;
+      2026-11-12);
   E5  the longest unbroken spell of planner requests the Shield may not fly
       (a hard rule's repair over theta or not converged, or a hard `loiter`
       rule violated), against loiter_timeout_s + one control period. Read
@@ -43,7 +46,10 @@ not a pre-registered reading, and the earlier readings are still printed.
     response (sweep_scenarios.RAIL_VEHICLE: the response fitted to the hil
     rig's flights, entered from a hover; `ardupilot` is the Copter-4.5.7
     fit the proposal of 7 November used). A held aircraft is a zero setpoint
-    flown through that response. The headless labels (experiments/templates)
+    flown through that response. Since 2026-11-12 a GPS denial on the rail
+    vehicle reaches the Shield as the rails realise it - EKF3's dead-
+    reckoned estimate, drifting at the rig's measured RAIL_EKF_DRIFT_MPS -
+    not as the frozen last fix (`_rail_kw`). The headless labels (experiments/templates)
     stay the ideal vehicle's.
   * `--extend-s S` flies every episode S seconds longer than the scenario
     does, to show what a spell still running at its end would have become
@@ -65,7 +71,11 @@ built by `--build-labels OUT IN.json ...` from this tool's own `--json`
 outputs (one per profile and vehicle; the command lines and the code
 revision they ran at are written into it), and read by `experiments/
 sweep_scenarios.py --rescore-rail` to print a fetched campaign's fail-safe
-correctness under (a), (r) and (r2).
+correctness under (a), (r) and (r2). A change that bears on some cells only
+re-derives those in place (`--update-labels ART IN.json ... --why ...`,
+since 2026-11-12): their readings are replaced, every other one is kept,
+and the update - why, its commands and revisions, every reading it moved,
+before and after - is appended to `built.updates`.
 
 The derived label is "expected" when any E clause holds. A cell whose
 declared label differs is listed; the exit code is 1 if any does, 0 if none,
@@ -168,7 +178,11 @@ def e3_facts(spec, run, dt: float) -> dict:
             err = math.hypot(r["x"] - p["x"], r["y"] - p["y"])
             if err > margin and dist(r["x"], r["y"]) <= err:   # "within" that error: inclusive
                 worst = max(worst or 0.0, err)
-        return {"holds": worst is not None, "kind": "frozen fix", "margin_m": margin,
+        model = ((run.events[0] if run.events else {}).get("gps_dropout") or {}).get(
+            "model", SW.DEFAULT_GPS_DROPOUT)
+        return {"holds": worst is not None,
+                "kind": "frozen fix" if model == "frozen" else "dead-reckoned fix",
+                "margin_m": margin,
                 "worst_error_m": None if worst is None else round(worst, 2),
                 "closest_true_m": round(closest, 2)}
     # White noise and latency are judged against the mission's PLANNED route
@@ -193,6 +207,17 @@ def e3_facts(spec, run, dt: float) -> dict:
             "error_m": round(err, 2), "margin_m": margin,
             "route_to_boundary_m": None if route_d is None else round(route_d, 2),
             "closest_true_m": round(closest, 2)}
+
+
+def _rail_kw(response: str) -> dict:
+    """What the rail vehicle flies besides its response (sweep_scenarios.
+    RAIL_VEHICLE): a GPS denial reaches the Shield as the autopilot's own
+    dead-reckoned estimate, as SITL's EKF3 hands it on the rails, not as the
+    frozen last fix the headless library models (2026-11-12; GPS_DROPOUT_MODELS).
+    Nothing for any other vehicle."""
+    if response == SW.RAIL_VEHICLE["response"]:
+        return {"gps_dropout": SW.RAIL_VEHICLE["gps_dropout"]}
+    return {}
 
 
 def counterfactual(spec, lib, seed: int, response: str = SW.DEFAULT_RESPONSE_ARM):
@@ -224,7 +249,7 @@ def counterfactual(spec, lib, seed: int, response: str = SW.DEFAULT_RESPONSE_ARM
     SW.Shield, SH.Shield.filter = factory, rec_filter
     try:
         run = SW.run_episode(spec.model_copy(update={"escalation": False}),
-                             lib.defaults, seed, response=response)
+                             lib.defaults, seed, response=response, **_rail_kw(response))
     finally:
         SW.Shield, SH.Shield.filter = orig_cls, orig_filter
     return run, log
@@ -273,7 +298,7 @@ def prescribed(spec, lib, seed: int, response: str = SW.DEFAULT_RESPONSE_ARM):
     SW.Shield, SH.Shield.filter = factory, held_filter
     try:
         run = SW.run_episode(spec.model_copy(update={"escalation": False}),
-                             lib.defaults, seed, response=response)
+                             lib.defaults, seed, response=response, **_rail_kw(response))
     finally:
         SW.Shield, SH.Shield.filter = orig_cls, orig_filter
     return run, log
@@ -326,7 +351,7 @@ def judge(e, lib, timeout_s: float, with_fsm: bool = True,
     hold = (SW.RAIL_VEHICLE["autopilot_hold"] if response == SW.RAIL_VEHICLE["response"]
             else SW.DEFAULT_AUTOPILOT_HOLD)
     flown = (SW.run_episode(spec, lib.defaults, e.seed, response=response,
-                            autopilot_hold=hold)
+                            autopilot_hold=hold, **_rail_kw(response))
              if with_fsm else None)
     dt = float(spec.dt or lib.defaults.dt)
     spells = {"no-failsafe": _spell(log, dt), "prescribed": _spell(held_log, dt)}
@@ -409,18 +434,14 @@ def rail_extend_s() -> float:
     return float(SW.rail_max_s(0.0))
 
 
-def build_labels(inputs: list[Path]) -> dict:
-    """The label artefact from `--json` outputs of this tool (module
-    docstring, THE LABEL ARTEFACT). Inputs are on the ideal or the rail
-    vehicle, each at a clean code revision (named per run), at the scenario's
-    length; a cell and seed judged twice (a seed two profiles share) must
-    agree. An input on the rail vehicle flown rail_extend_s() longer RESOLVES
-    the rail readings left undecided at the scenario's length (section 8:
-    the rail flies that long, and its run's fail-safe is read over the whole
-    flight): such a reading says `length` "rail" instead of "scenario". A
-    reading already decided at the scenario's length is never replaced; one
-    that the longer flight reads differently is listed (`built.
-    differ_flown_longer`), not changed."""
+def _read_inputs(inputs: list[Path]) -> tuple[dict, dict, list, float | None]:
+    """The readings in `--json` outputs of this tool, by build_labels' rules:
+    (labels {cell: {seed: {reading: ...}}} read at the scenario's length,
+    longer {(cell, seed, reading): ...} read on the rail's longer flight,
+    the runs they came from, the E5 need). Refused: an input not on one
+    profile and the ideal or the rail vehicle, not at one clean code
+    revision, flown longer by anything but the rail's own rail_extend_s(),
+    or a cell and seed two inputs read differently."""
     labels: dict[str, dict[str, dict]] = {}
     longer: dict[tuple, dict] = {}
     runs = []
@@ -434,6 +455,7 @@ def build_labels(inputs: list[Path]) -> dict:
         prof = {r.get("profile") for r in rows}
         revs = {r.get("code_revision") for r in rows}
         exts = {float(r.get("extend_s") or 0.0) for r in rows}
+        only = {tuple(r.get("only") or ()) for r in rows}
         if len(veh) != 1 or len(prof) != 1 or next(iter(veh)) not in ("ideal", "rail"):
             raise ValueError(f"{path}: one profile on the ideal or the rail vehicle, got "
                              f"{sorted(prof, key=str)} on {sorted(veh)}")
@@ -445,10 +467,12 @@ def build_labels(inputs: list[Path]) -> dict:
             raise ValueError(f"{path}: flown longer by {sorted(exts)} s on the {veh} vehicle; "
                              f"only the rail vehicle's own {ext:g} s resolves a label")
         need = rows[0]["e5_need_s"]
+        sel = next(iter(only)) if len(only) == 1 else ()
         runs.append({"profile": prof, "vehicle": veh, "cell_seeds": len(rows),
                      "extend_s": x, "code_revision": next(iter(revs)),
                      "command": (f"python tools/failsafe_rubric.py"
                                  + ("" if prof == "library" else f" --profile {prof}")
+                                 + (f" --only {' '.join(sel)}" if sel else "")
                                  + f" --response {veh} --no-fsm"
                                  + (f" --extend-s {x:g}" if x else "") + " --json <out>")})
         for r in rows:
@@ -466,10 +490,14 @@ def build_labels(inputs: list[Path]) -> dict:
                     raise ValueError(f"{r['episode']} seed {r['seed']} reading {key}: "
                                      f"{slot[key]} in one input, {got} in {path}")
                 slot[key] = got
-    short = [(c, s) for c, v in labels.items() for s, lab in v.items() if set(lab) != set(READINGS)]
-    if short:
-        raise ValueError(f"{len(short)} cell-seeds lack a reading (both vehicles are "
-                         f"needed), e.g. {short[:3]}")
+    return labels, longer, runs, need
+
+
+def _resolve_longer(labels: dict, longer: dict) -> tuple[int, list]:
+    """The rail's longer flight applied to `labels` in place: a reading left
+    undecided at the scenario's length takes the longer flight's decision; a
+    decided one is never replaced, and a difference is listed. Returns
+    (resolved, differ)."""
     resolved, differ = 0, []
     for (cell, seed, key), got in sorted(longer.items()):
         base = (labels.get(cell) or {}).get(seed, {}).get(key)
@@ -484,6 +512,37 @@ def build_labels(inputs: list[Path]) -> dict:
                            "scenario": base["expected"], "flown_longer": got["expected"],
                            "clauses_flown_longer": got["clauses"],
                            "e5_spell_s_flown_longer": got["e5_spell_s"]})
+    return resolved, differ
+
+
+def vehicle_record(vehicle: str) -> dict:
+    """The vehicle a reading was derived on, as the artefact records it: its
+    response (sweep_scenarios.response_for) and, since 2026-11-12, how a GPS
+    denial reaches its Shield (sweep_scenarios.gps_dropout_for)."""
+    return {**SW.response_for(vehicle),
+            "gps_dropout": SW.gps_dropout_for(
+                _rail_kw(vehicle).get("gps_dropout", SW.DEFAULT_GPS_DROPOUT))}
+
+
+def build_labels(inputs: list[Path]) -> dict:
+    """The label artefact from `--json` outputs of this tool (module
+    docstring, THE LABEL ARTEFACT). Inputs are on the ideal or the rail
+    vehicle, each at a clean code revision (named per run), at the scenario's
+    length; a cell and seed judged twice (a seed two profiles share) must
+    agree. An input on the rail vehicle flown rail_extend_s() longer RESOLVES
+    the rail readings left undecided at the scenario's length (section 8:
+    the rail flies that long, and its run's fail-safe is read over the whole
+    flight): such a reading says `length` "rail" instead of "scenario". A
+    reading already decided at the scenario's length is never replaced; one
+    that the longer flight reads differently is listed (`built.
+    differ_flown_longer`), not changed."""
+    labels, longer, runs, need = _read_inputs(inputs)
+    ext = rail_extend_s()
+    short = [(c, s) for c, v in labels.items() for s, lab in v.items() if set(lab) != set(READINGS)]
+    if short:
+        raise ValueError(f"{len(short)} cell-seeds lack a reading (both vehicles are "
+                         f"needed), e.g. {short[:3]}")
+    resolved, differ = _resolve_longer(labels, longer)
     return {
         "schema": LABELS_SCHEMA,
         "what": ("Fail-safe labels of the scenario library's cells, derived by "
@@ -510,9 +569,62 @@ def build_labels(inputs: list[Path]) -> dict:
                   "code_revisions": sorted({r["code_revision"] for r in runs}),
                   "resolved_flown_longer": resolved, "differ_flown_longer": differ,
                   "then": "python tools/failsafe_rubric.py --build-labels <this file> <out> ..."},
-        "vehicles": {"ideal": SW.response_for("ideal"), "rail": SW.response_for("rail")},
+        "vehicles": {"ideal": vehicle_record("ideal"), "rail": vehicle_record("rail")},
         "labels": {c: {s: labels[c][s] for s in sorted(labels[c])} for c in sorted(labels)},
     }
+
+
+def update_labels(doc: dict, inputs: list[Path], why: str) -> dict:
+    """`doc` (a built artefact) with the readings in `inputs` RE-DERIVED
+    (2026-11-12): every reading the inputs give, for a cell and seed the
+    artefact already holds, replaces the one there; every other reading stays
+    as it was. The inputs follow build_labels' rules (one clean code revision
+    each, the scenario's length or the rail's own longer flight, one answer
+    per reading), and a longer flight resolves only what was re-derived with
+    it. For a change that bears on some cells only - how the rail realises a
+    stressor - without re-flying the whole library. Recorded in
+    `built.updates`: why, the runs (commands and revisions) and every reading
+    it moved, before and after; the revisions join `built.code_revisions`,
+    and `vehicles` becomes the current record. Returns a new document."""
+    if not str(why).strip():
+        raise ValueError("an update says why it was made")
+    new, longer, runs, need = _read_inputs(inputs)
+    if not new:
+        raise ValueError("an update needs readings at the scenario's length")
+    if need != doc["built"]["e5_need_s"]:
+        raise ValueError(f"E5 needs {need} s in the inputs, {doc['built']['e5_need_s']} s in "
+                         f"the artefact: not the same rubric")
+    for cell, seeds in new.items():
+        for seed in seeds:
+            if seed not in (doc["labels"].get(cell) or {}):
+                raise ValueError(f"{cell} seed {seed}: not in the artefact; an update "
+                                 f"re-derives cells, it does not add them")
+    resolved, differ = _resolve_longer(new, longer)
+    out = json.loads(json.dumps(doc))
+    moved, same = [], 0
+    for cell in sorted(new):
+        for seed in sorted(new[cell]):
+            for key in sorted(new[cell][seed]):
+                was, now = out["labels"][cell][seed].get(key), new[cell][seed][key]
+                if was == now:
+                    same += 1
+                    continue
+                out["labels"][cell][seed][key] = now
+                moved.append({"cell": cell, "seed": int(seed), "reading": key,
+                              "was": None if was is None else
+                              {k: was[k] for k in ("expected", "clauses", "e5_spell_s")},
+                              "now": {k: now[k] for k in ("expected", "clauses", "e5_spell_s")}})
+    b = out["built"]
+    b.setdefault("updates", []).append({
+        "why": str(why), "runs": runs, "cell_seeds": sum(len(v) for v in new.values()),
+        "readings_moved": moved, "readings_unchanged": same,
+        "resolved_flown_longer": resolved, "differ_flown_longer": differ,
+        "fsm_config_hash": F.FSMConfig().digest,
+        "then": ("python tools/failsafe_rubric.py --update-labels <this file> <in> ... "
+                 "--why <reason>")})
+    b["code_revisions"] = sorted(set(b["code_revisions"]) | {r["code_revision"] for r in runs})
+    out["vehicles"] = {"ideal": vehicle_record("ideal"), "rail": vehicle_record("rail")}
+    return out
 
 
 def write_labels(path: Path, doc: dict) -> None:
@@ -538,9 +650,29 @@ def main(argv=None) -> int:
     ap.add_argument("--build-labels", nargs="+", default=None, metavar=("OUT", "IN"),
                     help="build the label artefact OUT from this tool's --json outputs "
                          "IN ... (one per profile and vehicle) and stop")
+    ap.add_argument("--update-labels", nargs="+", default=None, metavar=("ART", "IN"),
+                    help="re-derive, in the artefact ART, the readings this tool's --json "
+                         "outputs IN ... give (cells already in it; --why says why) and stop")
+    ap.add_argument("--why", default="", help="the reason an --update-labels is made")
     ap.add_argument("--extend-s", type=float, default=0.0,
                     help="fly every episode this many seconds longer than it declares")
     args = ap.parse_args(argv)
+    if args.update_labels is not None:
+        if len(args.update_labels) < 2:
+            ap.error("--update-labels needs ART and at least one IN.json")
+        art = Path(args.update_labels[0])
+        doc = update_labels(json.loads(art.read_text(encoding="utf-8")),
+                            [Path(x) for x in args.update_labels[1:]], args.why)
+        write_labels(art, doc)
+        u = doc["built"]["updates"][-1]
+        print(f"{u['cell_seeds']} cell-seeds re-derived; {len(u['readings_moved'])} reading(s) "
+              f"moved, {u['readings_unchanged']} unchanged -> {art}")
+        for m in u["readings_moved"]:
+            was = m["was"] or {}
+            print(f"  {m['cell'][:70]:70} s{m['seed']:<5} {m['reading']:3} "
+                  f"{was.get('expected')!s:5} {','.join(was.get('clauses') or []) or '-':7} -> "
+                  f"{m['now']['expected']!s:5} {','.join(m['now']['clauses']) or '-'}")
+        return 0
     if args.build_labels is not None:
         if len(args.build_labels) < 2:
             ap.error("--build-labels needs OUT and at least one IN.json")
@@ -570,6 +702,8 @@ def main(argv=None) -> int:
         j = judge(e, lib, timeout, with_fsm=not args.no_fsm, e5_flight=args.e5_flight,
                   response=args.response, extend_s=args.extend_s)
         j["profile"], j["code_revision"] = args.profile or "library", revision
+        if args.only:
+            j["only"] = list(args.only)
         out.append(j)
         mark = ""
         if j["e5_censored"] and not j["derived"]:

@@ -270,6 +270,42 @@ def test_labels_can_be_derived_on_the_rail_vehicle_and_flown_longer():
     assert "G5" in longer["fsm_edges"].split(" > "), longer
 
 
+def test_on_the_rail_vehicle_e3_reads_the_gps_dropout_the_rails_fly():
+    """E3 for a GPS denial reads |true - seen| tick by tick against the true
+    distance to the fence, on the flight without a fail-safe. What `seen` is
+    depends on how the denial reaches the Shield (2026-11-12): on the ideal
+    vehicle the frozen last fix (the templates' model), on the rail vehicle
+    the autopilot's dead-reckoned estimate, as SITL's EKF3 hands it on the
+    rails (sweep_scenarios RAIL_VEHICLE, RAIL_EKF_DRIFT_MPS). Lane 23.6 at
+    2-9 s: frozen 33 m out, the blind Shield lets the aircraft fly on and the
+    error is metres beside the zone (E3); handed the estimate, the Shield
+    brakes and slides along the ring as it does with GPS, closest 2.9 m, the
+    error never past 1.6 m - no clause holds, as SITL's truth showed on the
+    rig's own three flights of the cell (nt1111_565-567: EKF3 within 1.39 m,
+    past 1 m only 8.4 m or more out). Lane 15 at 2-9 s keeps its fail-safe on
+    the rail vehicle, by E5 alone."""
+    import failsafe_rubric as R
+    from guardrail.scenario_spec import expand
+    timeout = FSMConfig().loiter_timeout_s
+    eps, _ = expand(LIB, None, None, ["gps-dropout"])
+    by = {e.cell.episode_id: e for e in eps if not e.comparison and e.prefix == "on"
+          and e.paraphrase_arm in (None, -1)}
+    edge = by["gps-dropout@lane_y=23.6,window=2-9"]
+    ideal = R.judge(edge, LIB, timeout, with_fsm=False, response="ideal")
+    assert ideal["clauses_held"] == ["E3"] and ideal["e3"]["kind"] == "frozen fix", ideal["e3"]
+    rail = R.judge(edge, LIB, timeout, with_fsm=False, response="rail")
+    assert rail["derived"] is False and rail["clauses_held"] == [], rail
+    assert rail["e3"]["kind"] == "dead-reckoned fix" and rail["e3"]["worst_error_m"] is None
+    assert 2.5 < rail["e3"]["closest_true_m"] < 3.5, rail["e3"]
+    head = R.judge(by["gps-dropout@lane_y=15,window=2-9"], LIB, timeout, with_fsm=False,
+                   response="rail")
+    assert head["clauses_held"] == ["E5"], head
+    assert R._rail_kw("rail") == {"gps_dropout": "dead_reckoned"} and R._rail_kw("ideal") == {}
+    rec = R.vehicle_record("rail")
+    assert rec["arm"] == "rail" and rec["gps_dropout"]["model"] == "dead_reckoned", rec
+    assert R.vehicle_record("ideal")["gps_dropout"]["model"] == "frozen"
+
+
 def _row(ep, seed, veh, *, pres, free, prof="smoke", rev="abc123", extend=0.0):
     """One --json row of tools/failsafe_rubric.py: `pres` / `free` are the
     (derived, e5_censored, clauses, spell) of the prescribed and the
@@ -381,6 +417,67 @@ def test_the_label_artefact_refuses_what_it_cannot_stand_behind():
         _refused(lambda: _labels_from(t, {"i.json": ideal, "r.json": []}), "no cells")
 
 
+def test_the_label_artefact_is_re_derived_in_place_for_the_cells_given():
+    """`--update-labels` (2026-11-12): the readings an input gives replace
+    those of the same cell and seed, every other reading is kept as it was,
+    and the document it was given is not touched. The update records why,
+    its runs (the command with its --only) and every reading it moved, before
+    and after; its revision joins the artefact's. Refused rather than merged:
+    no reason given, a cell the artefact does not hold (an update re-derives,
+    it does not add), a dirty revision, another rubric's E5 need."""
+    import json
+    import tempfile
+    import failsafe_rubric as R
+    no, e5, e3 = (False, False, [], 0.0), (True, False, ["E5"], 49.9), (True, False, ["E3"], 0.0)
+    why = "the rail realises a GPS denial as EKF3's estimate"
+    with tempfile.TemporaryDirectory() as td:
+        t = Path(td)
+        doc = _labels_from(t, {
+            "i.json": [_row("cell-a", 1001, "ideal", pres=e3, free=e3),
+                       _row("cell-b", 1001, "ideal", pres=no, free=no)],
+            "r.json": [_row("cell-a", 1001, "rail", pres=e3, free=e3),
+                       _row("cell-b", 1001, "rail", pres=e5, free=e5)]})
+        before = json.loads(json.dumps(doc))
+
+        def inp(name, rows):
+            q = t / name
+            q.write_text(json.dumps(rows), encoding="utf-8")
+            return q
+        upd = inp("u.json", [dict(_row("cell-a", 1001, "rail", pres=no, free=no,
+                                       prof="nightly", rev="fed789"), only=["cell-a"])])
+        out = R.update_labels(doc, [upd], why)
+        assert doc == before, "the artefact it was given changed"
+        a = out["labels"]["cell-a"]["1001"]
+        assert a["r"]["expected"] is False and a["r2"]["expected"] is False, a
+        assert a["a"] == before["labels"]["cell-a"]["1001"]["a"]
+        assert a["a2"] == before["labels"]["cell-a"]["1001"]["a2"]
+        assert out["labels"]["cell-b"] == before["labels"]["cell-b"]
+        u = out["built"]["updates"][-1]
+        assert u["why"] == why and u["cell_seeds"] == 1 and u["readings_unchanged"] == 0
+        assert sorted(m["reading"] for m in u["readings_moved"]) == ["r", "r2"]
+        m = u["readings_moved"][0]
+        assert m["was"]["clauses"] == ["E3"] and m["now"] == {"expected": False, "clauses": [],
+                                                              "e5_spell_s": 0.0}, m
+        cmd = u["runs"][0]["command"]
+        assert "--profile nightly --only cell-a --response rail" in cmd, cmd
+        assert out["built"]["code_revisions"] == ["abc123", "fed789"]
+        assert out["built"]["runs"] == before["built"]["runs"]
+        assert out["vehicles"]["rail"]["gps_dropout"]["model"] == "dead_reckoned"
+        # Applied again: nothing moves, and the update still says so.
+        again = R.update_labels(out, [upd], why)
+        assert again["built"]["updates"][-1]["readings_moved"] == []
+        assert again["built"]["updates"][-1]["readings_unchanged"] == 2
+        _refused(lambda: R.update_labels(doc, [upd], " "), "says why")
+        _refused(lambda: R.update_labels(doc, [inp("z.json", [
+            _row("cell-z", 1001, "rail", pres=no, free=no)])], why), "not in the artefact")
+        _refused(lambda: R.update_labels(doc, [inp("d.json", [
+            _row("cell-a", 1001, "rail", pres=no, free=no, rev="fed789-dirty")])], why),
+            "one clean code")
+        _refused(lambda: R.update_labels(doc, [inp("n.json", [
+            dict(_row("cell-a", 1001, "rail", pres=no, free=no), e5_need_s=31.0)])], why),
+            "not the same rubric")
+
+
 def test_the_committed_artefact_covers_what_the_rails_fly_and_agrees_with_the_templates():
     """docs/data/failsafe_labels_rail.json as committed: every Shield-on,
     FSM-on cell and seed of the smoke, grant_example and nightly profiles
@@ -421,6 +518,18 @@ def test_the_committed_artefact_covers_what_the_rails_fly_and_agrees_with_the_te
                 assert bool(v["clauses"]) == (v["expected"] is True), (e.cell.episode_id, k, v)
     assert seen >= 700, seen
     assert moved == {"rail-mission-stub-vla", "standoff-approach-angles"}, moved
+    # Since 2026-11-12 the rail readings of a GPS denial are derived on the
+    # denial the rails fly (EKF3's estimate), re-derived in place: no E3 on the
+    # rail vehicle, while the ideal (templates') readings keep the frozen fix.
+    assert doc["vehicles"]["rail"]["gps_dropout"]["model"] == "dead_reckoned"
+    assert doc["vehicles"]["ideal"]["gps_dropout"]["model"] == "frozen"
+    gps = {c: v for c, v in doc["labels"].items() if c.startswith("gps-dropout@")}
+    assert len(gps) == 8, sorted(gps)
+    assert not any("E3" in lab[k]["clauses"] for v in gps.values() for lab in v.values()
+                   for k in ("r", "r2"))
+    assert any("E3" in lab["a2"]["clauses"] for v in gps.values() for lab in v.values())
+    assert any("--only gps-dropout --response rail" in r["command"]
+               for u in doc["built"].get("updates", []) for r in u["runs"])
 
 
 def test_an_episode_is_flown_longer_by_whole_ticks_and_never_shorter():
