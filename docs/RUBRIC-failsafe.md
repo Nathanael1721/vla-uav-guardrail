@@ -672,8 +672,9 @@ the Shield dead-reckons on the commands it streamed and takes the difference
 from the handed pose as that pose's error, plus a 0.5 m/s drift allowance
 (shield.DR_DRIFT_MPS). On the rig the handed pose is EKF3's, wrong by
 0.13-0.78 m when X8 fired (9.3-10.4 s), while the Shield's command
-integration was 2.8-3.4 m off it - the rig flies the Brake's lateral repair
-and its release late - so X8 judged the pose "4.4-5.0 m off". Replayed on
+integration was 1.3-1.5 m off it at 4-11 s and 3.0-3.5 m at 6-13 s - the rig
+flies the Brake's lateral repair and its release late - so with the allowance
+X8 judged the pose "4.4-5.0 m off". Replayed on
 the logged flights, X8 still fires on these cells on the 0.5 m/s allowance
 alone (10.2 s at 4-11 s, 10.8 s at 6-13 s); at SITL's measured 0.23 m/s it
 would not, by 0.01 m on the closest trajectory (at 0.24 m/s it fires at
