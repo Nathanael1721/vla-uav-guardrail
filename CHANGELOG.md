@@ -16,6 +16,48 @@ shipped change and recorded as one.
 
 ## [Unreleased]
 
+### 2026-11-13 (the KPI-grade hil nightly ntFIN2 and its supplement; the contract outline re-assessed) — 591 missions at 116214f on the hil rig: P0 escape 0 over 586 Shield-on flights, fail-safe trigger correctness 566/567 = 0.998 under the adopted reading (Wilson 95 % low 0.990), slowest Shield tick 74.06 ms
+
+#### Flown
+- ntFIN2 (116214f, hil, nightly profile with `--hil-controls`, launched
+  detached from the session after a first attempt, ntFIN, was stopped at
+  176 of 591 missions when the session ended; 19.4 h): 583 run folders, 580
+  KPI-grade episodes. The last 8 missions (wind-beyond-authority) never flew:
+  the desktop ran out of commit memory at 13:40 (WinError 1455 "the paging
+  file is too small", then dwm.exe and the browsers failed with out-of-memory
+  codes); 3 gps-dropout missions were not accepted (the stress was not
+  realised in time).
+- ntFIN2s (the same commit and profile): the affected cells on all seeds,
+  15 missions, 11 accepted; gps-dropout lane 15, 6-13 s, seeds 1002 and 1003
+  were again not accepted (SIM_GPS_DISABLE=0 applied 0.29-0.60 s late).
+
+#### Measured (tools/kpi_report.py --campaign ntFIN2 --campaign ntFIN2s)
+- 589 KPI-grade episodes (580 from ntFIN2, 9 from ntFIN2s; 4 supplement
+  flights superseded, not counted).
+- P0 violation escape rate 0.0 over 586 Shield-on flights (16,760
+  P0-violation ticks); Shield-off control 0.6375.
+- Fail-safe trigger correctness, adopted reading (r2): 566/567 = 0.998,
+  Wilson 95 % low 0.990; (a) 495/567, (r) 554/567. The one miss is
+  ntFIN2_177 (dyn-nfz-spawn-ahead, E5). 19 runs ended still holding
+  (censored, not scored).
+- `tick_ms` p99 29.5 / max 74.06 ms, 0 of 173,410 over 100 ms. `e2e_ms` p99
+  30.3 / max 121.93 ms: 13 ticks over 100 ms, all row 2 at t = 0.101 s (the
+  start-up backlog, fixed in the section below, not yet flown).
+- Tracked: mean time to safe 3.23 s; repair success 98.2 %; mission success
+  252/577; 55.4 repairs per Shield-on mission (ntFIN2).
+- Read with care: no flown cell uses its seed, so a cell's three seeds are
+  three repeats of one deterministic flight (389 distinct results over 580
+  ntFIN2 episodes) and the Wilson bound treats them as independent; in 21
+  Shield-on missions ArduPilot (its GeoFence backstop or its RTL leg), not the
+  Shield, carried the aircraft into a P0 zone.
+
+#### Changed
+- docs/FINAL-REPORT-outline.md Appendix A re-assessed on ntFIN2 against the
+  grant's own words: WP3-14, WP3-16, WP3-17, WP3-20, X-02, X-03, WP4-08 and
+  WP4-12 to DONE (78 DONE / 51 PARTIAL / 6 DRIFT / 1 MISSING); WP3-15, WP3-13
+  and WP4-17 stay PARTIAL with their remaining gaps stated; an
+  independent-review note lists what a reviewer may still dispute.
+
 ### 2026-11-13 (the start-up tick; a KPI report from a campaign and its supplements) — ntFIN2's only ticks over 100 ms end to end were each mission's row 2, deferred behind the backlog of the node's own start-up work, which is now delivered before the mission clock starts; `tools/kpi_report.py` reads a main campaign and its re-flown supplement by one episode choice
 
 Branch kpi-merge-startup (5f5009c, 72dd535). **The start-up change has not
