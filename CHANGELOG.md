@@ -16,6 +16,142 @@ shipped change and recorded as one.
 
 ## [Unreleased]
 
+### 2026-11-14 (a harness-driven hil episode) — the harness can drive a library scenario's own zone events into a flying hil Shield over REST (spawn as POST /hot_apply, rotate / translate / scale as PATCH /dynamic_nfz/<id>), EmitEvent works on a rail episode, and tools/harness_hil_episode.py flies or dry-runs one such episode; built and tested on the fake rig, not flown
+
+Audit cards WP4-03, WP4-05 and WP4-11, the code side. **Nothing here has
+flown**: no SITL, WSL, docker, ssh or Orin was touched (flights were on the
+rig while this was written), and every test runs on the fake rig
+`tests/test_harness_rail.py` flies on.
+
+#### Found
+- Since 2026-11-10 a rail session launches its mission through `run_hil`,
+  forwards HotApply bodies (zone edits as PATCH /dynamic_nfz) at their
+  mission times and writes the grant's six names, but the zone events a
+  library scenario declares were still applied by the MISSION, from its
+  `--events` file: the harness drove only events a client wrote by hand
+  beside them (the design note's proposal flew five hand-placed bodies
+  over speed-cap, "where to put it is the flight's own decision"). The
+  grant's WP4-03 wording is the harness driving the scenario's events.
+- EmitEvent on a rail episode answered UNIMPLEMENTED for every event,
+  including the step forms that do have a REST body (translate dx/dy,
+  rotate angle_deg, scale factor).
+- A ScenarioEvent's REST form is not always the obvious one: a spawn's
+  `violation_action` must be stated (the REST handler refuses a
+  dynamic_nfz without it, 422; the mission writes `repair` for it), and a
+  translate's payload says `dx_m` / `dy_m` where the PATCH body says
+  `dx` / `dy`.
+
+#### Added
+- **`rest_body_of_event`** (`guardrail/harness_service.py`): the REST body
+  that makes a flying Shield apply a ScenarioEvent as the mission node
+  applies the same event from `--events` (`guardrail.scenario_events.
+  apply_event`, `shield_t=None`): a spawn with `vertices` (every field the
+  mission defaults written out), a translate / rotate / scale step, a
+  switch (with the window's id rule), a corridor swap. No REST form,
+  UNIMPLEMENTED with why: a zone placed against the vehicle
+  (`ahead_of_vehicle_m`), a change of motion (`mps`, `deg_per_s`: the
+  mission restarts it from the ring the flying Shield holds then), an
+  expected refusal. `scenario_rest_timeline(spec)` is a scenario's events in
+  flight order with their bodies and routes, the spawn counter and the last
+  zone resolved as the mission's EventState would.
+- **StartEpisode `drive_scenario_events`** (proto field 11): in a rail
+  session bound to the mission's listener, the mission is launched with the
+  scenario MINUS its events (no `--events`, no events.json pushed) and each
+  event is queued as a forward at its mission time (source `scenario`). A
+  scenario with an event that has no REST form is FAILED_PRECONDITION,
+  naming every one, nothing launched. After the flight every scenario event
+  must have reached the Shield with a generation; one refused or never sent
+  makes the episode FAILED_PRECONDITION, unscored and unbundled - the
+  campaign's own rule for its `--events` (`hil_flight_problems`). The
+  bundle says who applied the events (`kpi.json` harness.rail
+  `scenario_events_via`, `scenario_events`; `harness_events.jsonl`
+  episode_start), and each forward carries its source and the ScenarioEvent
+  it stands for. `EpisodeRef` / `EpisodeStatus.scenario_events_via`,
+  `AppliedEvent.source`.
+- **EmitEvent on a rail episode**: validated as a ScenarioEvent, turned into
+  its REST body, queued and forwarded like a HotApply (`EventAck.pending`,
+  `forwarded_method`, `forwarded_to`, `rest_body_json`); on a rail it names
+  its zone (`id`).
+- **`Harness.plan_rail_episode`**: what a rail StartEpisode would launch and
+  forward, through the same `_resolve` and `_rail_prepare`, with nothing
+  launched, no session or episode created and nothing sent: the mission's
+  arguments as `run_hil` builds them plus the listener's flags, every
+  forward with its route and body, the run folder and the bundle.
+- **`tools/harness_hil_episode.py`**: a thin client that flies one
+  harness-driven hil episode (StartSession hil, StartEpisode with
+  `drive_scenario_events`, EndEpisode, StopSession) and checks the six
+  names; default `dyn-nfz-rotate-step` (spawn of the bar at 3 s, POST; its
+  90-degree turn at 8 s, PATCH /dynamic_nfz/bar rotate) on
+  https://10.42.0.3:8071. `--dry-run` prints the plan and the server command
+  it needs, and sends nothing.
+- `tools/harness_client.py run --drive-scenario-events`; `--event` on a rail
+  is sent (it was refused client-side).
+
+#### Changed
+- `start_episode` is split into `_resolve` (the cell, seed and arm, every
+  refusal as before) and `_open_episode`; `Harness._rail_hot_args` and the
+  rail endpoint checks of `start_session` are module / method helpers
+  (`rail_hotapply_args`, `_check_rail_endpoint`) the plan shares. Nothing a
+  client sees changed but the new fields: `tests/test_harness_service.py`
+  62/62, `tests/test_wp4outputs_harness.py` 16/16 unchanged.
+- `tests/test_harness_rail.py`: its EmitEvent-on-a-rail check now sends a
+  form with no REST body (UNIMPLEMENTED, as before) and one naming no zone
+  (INVALID_ARGUMENT), since a step form is now forwarded.
+- `experiments/sweep_scenarios.py`, `guardrail/api.py`, `shield.py`,
+  `scenario_events.py`, `fsm.py` and the `sitl/` nodes are untouched.
+
+#### Tests
+- `tests/test_harness_hil.py`, 9/9 (in the CI loop; its gRPC test SKIPs on
+  the requirements-only job): the REST bodies and routes of every event
+  form, and the refusals; on all 13 library cells whose events all have a
+  REST form, a Shield given the events as the mission node gives them and a
+  twin given the REST bodies through `guardrail/api.py`'s handlers hold the
+  same policy hash and generation after each event (and the null: the spawn
+  body without the mission's `violation_action` is refused, 422); the
+  timeline of dyn-nfz-rotate-step and radius-scaling-shrink, dyn-nfz-
+  rotate-spin refused naming both events; a harness-driven episode on the
+  fake rig launched without its events, its four events forwarded at their
+  mission times, scored as the campaign scores it, the six names written,
+  generations 0-4 packed, each forward marked `scenario` (the null: the same
+  cell with the mission applying them carries `--events` and its
+  events.json); a scenario event never sent fails the episode unscored and
+  unbundled; EmitEvent translate / rotate / scale forwarded as PATCH; the
+  plan equal to what StartEpisode launches, writing nothing; the tool's
+  `--dry-run` and, over gRPC, radius-scaling-shrink@factor=0.5 flown and
+  checked to 6/6 names.
+- Deliberate breaks, each applied alone at run time: the events not taken
+  off the mission, a translate POSTed, the acceptance check dropped, the
+  forwards not marked `scenario`, the plan without the listener's flags, an
+  edit with no id left unresolved, a spawn's default margin changed - each
+  fails at least one of the tests above. (A spawn's `violation_action`
+  `project_fix` instead of `repair` is not a break: `repair` is its legacy
+  spelling, the same policy hash.)
+- `tests/test_harness_rail.py` 11/11, `tests/test_harness_service.py` 62/62
+  (the committed stubs are the regenerated ones), `tests/test_wp4outputs_
+  harness.py` 16/16, `tests/test_harnesstruth_ci.py` 35/35.
+
+#### Limits
+- The fake rig flies the library cell headless and its rows carry no
+  `rule_events`, so a cell whose gates read the phases between rule changes
+  (dyn-nfz-rotate-step's `phase1/phase2_violation_ticks_bar`) reads "not
+  measured" and fails there; a real Shield node records each REST
+  hot-apply in its rows. The gRPC test flies radius-scaling-shrink instead.
+- A forward is late by at most one GET /health poll (0.2 s) plus a round
+  trip against the mission's own clock, never early; the mission applies
+  its `--events` on its own tick. A harness-driven flight and a
+  campaign-driven one of the same cell are therefore not the same flight
+  to the tick; the bundle keeps both clocks (`t`, `rail.t`).
+
+#### Not done
+- **No harness-driven episode has flown.** The command (the dry run prints
+  it) is in docs/DESIGN-harness-grpc.md, "A harness-driven hil episode".
+- The Orin's mission image still has no fastapi or uvicorn
+  (`deploy/docker/companion.Dockerfile`; 2026-11-10 entry): a mission
+  launched with `--hotapply-port` cannot start its listener until the image
+  carries both. Not changed here (the image is built on the Orin).
+- The tracker's update log (tracker/data, the lab checkout's) has no entry
+  for this; it is added when the branch is merged there.
+
 ### 2026-11-14 (WP3-07: an RTL-failure input for G6 on the ROS 2 Shield node; scenarios for G2, G4, X2, X3; not flown)
 
 ntFIN2 never took the grant's G2, G4 and G6, nor X2 and X3. Why, and what

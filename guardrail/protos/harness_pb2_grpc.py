@@ -193,7 +193,9 @@ class StressHarnessServicer:
         BACKEND_HIL) the mission is LAUNCHED by this call on the server's rig
         (the sweep's own rail transport), one at a time (a second one while it
         flies is RESOURCE_EXHAUSTED); a scenario the rail cannot fly as written
-        is FAILED_PRECONDITION with the rail's reason, nothing launched.
+        is FAILED_PRECONDITION with the rail's reason, nothing launched. With
+        `drive_scenario_events` the scenario's own events are the harness's to
+        forward over REST instead of the mission's to apply (2026-11-14).
         """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -211,9 +213,13 @@ class StressHarnessServicer:
 
     def EmitEvent(self, request, context):
         """A ScenarioEvent (the grant's seven event types), at `at_sim_t` (or, on a
-        live episode with `now`, at the next tick). A rail episode takes none
-        (UNIMPLEMENTED): its scenario's own events are flown by the mission, and
-        mid-flight changes go over REST (HotApply).
+        live episode with `now`, at the next tick). On a rail episode
+        (2026-11-14; UNIMPLEMENTED until then) it is turned into the REST body
+        that makes the flying Shield apply it as the mission would - a
+        translate / rotate / scale of a zone as PATCH /dynamic_nfz/<id> - and
+        forwarded at its mission time (EventAck.pending); it must name its zone
+        (`id`), and a form with no REST body (a zone placed against the
+        vehicle, a change of motion, an expected refusal) is UNIMPLEMENTED.
         """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')

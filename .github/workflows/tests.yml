@@ -52,7 +52,11 @@
 #          test_harness_service, test_harnesstruth_*, test_wp4outputs_*,
 #          test_harness_rail (2026-11-10: the harness's rail sessions and
 #          zone edits over PATCH /dynamic_nfz, on test_sweep's fake hil rig;
-#          its gRPC test SKIPs on the requirements-only job).
+#          its gRPC test SKIPs on the requirements-only job),
+#          test_harness_hil (2026-11-14: a scenario's own events driven by
+#          the harness over REST, EmitEvent on a rail, the dry run of
+#          tools/harness_hil_episode.py, on the same fake rig; its gRPC test
+#          SKIPs on the requirements-only job).
 #        The flying rails: test_railinputs_*, test_flight_pas_ap_20261008 (on
 #          its tests/fixtures/ copy of the 8 Oct flight), test_pas_ardupilot,
 #          test_sitl_rails, test_sitl_stressors (the simulator's stressors on
@@ -653,6 +657,7 @@ jobs:
               tests/test_wp4outputs_kpi_report.py \
               tests/test_wp4outputs_exporters.py \
               tests/test_wp4outputs_harness.py               tests/test_harness_rail.py \
+              tests/test_harness_hil.py \
               tests/test_railvideo_truth_frame.py \
               tests/test_railvideo_recording.py \
               tests/test_railvideo_compare.py \

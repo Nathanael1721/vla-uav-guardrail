@@ -117,7 +117,9 @@ service StressHarness {
   // BACKEND_HIL) the mission is LAUNCHED by this call on the server's rig
   // (the sweep's own rail transport), one at a time (a second one while it
   // flies is RESOURCE_EXHAUSTED); a scenario the rail cannot fly as written
-  // is FAILED_PRECONDITION with the rail's reason, nothing launched.
+  // is FAILED_PRECONDITION with the rail's reason, nothing launched. With
+  // `drive_scenario_events` the scenario's own events are the harness's to
+  // forward over REST instead of the mission's to apply (2026-11-14).
   rpc StartEpisode (StartEpisodeRequest) returns (EpisodeRef);
 
   // The natural-language task, for an ARMED episode or for the session's
@@ -127,9 +129,13 @@ service StressHarness {
   rpc IssueTask (IssueTaskRequest) returns (TaskAck);
 
   // A ScenarioEvent (the grant's seven event types), at `at_sim_t` (or, on a
-  // live episode with `now`, at the next tick). A rail episode takes none
-  // (UNIMPLEMENTED): its scenario's own events are flown by the mission, and
-  // mid-flight changes go over REST (HotApply).
+  // live episode with `now`, at the next tick). On a rail episode
+  // (2026-11-14; UNIMPLEMENTED until then) it is turned into the REST body
+  // that makes the flying Shield apply it as the mission would - a
+  // translate / rotate / scale of a zone as PATCH /dynamic_nfz/<id> - and
+  // forwarded at its mission time (EventAck.pending); it must name its zone
+  // (`id`), and a form with no REST body (a zone placed against the
+  // vehicle, a change of motion, an expected refusal) is UNIMPLEMENTED.
   rpc EmitEvent (EmitEventRequest) returns (EventAck);
 
   rpc GetStatus (EpisodeRef) returns (EpisodeStatus);
@@ -254,6 +260,15 @@ message StartEpisodeRequest {
   // Live: simulated seconds per wall second. Unset: 1.0 (real time); 0: as
   // fast as the host flies it.
   optional double pace = 10;
+  // A rail episode (sitl, hil) in a session bound to the mission's listener
+  // (2026-11-14): the harness applies the scenario's OWN events. Each is
+  // taken off the mission (no --events file) and forwarded over REST at its
+  // mission time - a translate / rotate / scale of a zone as PATCH
+  // /dynamic_nfz/<id> - so the flying Shield gets each once, from the
+  // harness. FAILED_PRECONDITION, nothing launched, when one has no REST form
+  // (a zone placed against the vehicle, a change of motion, an expected
+  // refusal). The episode fails, unscored, if one does not reach the Shield.
+  bool drive_scenario_events = 11;
 }
 
 // Returned by StartEpisode; only `episode_id` is read when it is sent back.
@@ -273,6 +288,9 @@ message EpisodeRef {
   bool live = 11;
   // headless | sitl | hil
   string backend = 12;
+  // A rail episode: who applies the scenario's own events, "mission" (its
+  // --events file) or "harness" (drive_scenario_events); "" headless.
+  string scenario_events_via = 13;
 }
 
 message HotApplyRequest {
@@ -357,6 +375,13 @@ message EventAck {
   int32 queue_index = 2;
   double at_sim_t = 3;
   string type = 4;
+  // A rail episode (2026-11-14): the event is queued for its mission time
+  // and forwarded then, as this REST body, by this route; the endpoint's
+  // receipt follows in the event stream and the bundle.
+  bool pending = 5;
+  string forwarded_method = 6;
+  string forwarded_to = 7;
+  string rest_body_json = 8;
 }
 
 enum EpisodeState {
@@ -371,7 +396,7 @@ message QueuedEvent {
   int32 index = 1;
   double at_sim_t = 2;
   string type = 3;
-  string source = 4;      // "hot_apply" | "emit_event"
+  string source = 4;      // "hot_apply" | "emit_event" | "scenario" (drive_scenario_events)
   string rule_id = 5;
 }
 
@@ -406,6 +431,8 @@ message EpisodeStatus {
   // A rail episode: launching | awaiting_endpoint | awaiting_mission_start |
   // mission | fetched | scored ("" on the headless backend).
   string rail_phase = 21;
+  // As EpisodeRef.scenario_events_via.
+  string scenario_events_via = 22;
 }
 
 // One row of the Stress Testing KPI report ("per-scenario-family stats
@@ -447,6 +474,10 @@ message AppliedEvent {
   // via "rest": the endpoint's answer as JSON (its receipt: applied, op,
   // type, generation, policy_hash), or "" when it refused.
   string receipt_json = 9;
+  // via "rest" (2026-11-14): who asked for it - scenario (the scenario's own
+  // event, drive_scenario_events), episode (a HotApply to the episode),
+  // emit_event, or session (a session HotApply); "" on the headless backend.
+  string source = 10;
 }
 
 // A RAIL episode's bundle (2026-11-10) is the grant's six items under the

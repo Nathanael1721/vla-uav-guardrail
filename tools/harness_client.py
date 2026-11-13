@@ -50,8 +50,16 @@ hour), scores it with the sweep's rail scorer and returns the bundle under
 the grant's names. A --hot-apply body may be an edit of a zone, which the
 server sends as PATCH /dynamic_nfz/<id>: {"type": "dynamic_nfz", "op":
 "translate", "id": "nfz-1", "dx": 5, "dy": 0} (rotate: angle_deg; scale:
-factor). --event is refused on a rail (UNIMPLEMENTED). The same bodies work
-in a `drive` timeline and with `forward`.
+factor). Since 2026-11-14 an --event on a rail is turned by the server into
+the REST body that applies it (translate_polygon_fence {"id", "dx_m",
+"dy_m"} as PATCH translate, rotate_polygon_fence {"id", "angle_deg"},
+scale_radius {"id", "factor"}, a spawn with vertices, a switch, a swap) and
+forwarded at its mission time; one with no REST form (a zone placed against
+the vehicle, a change of motion) is UNIMPLEMENTED. --drive-scenario-events
+has the server forward the scenario's OWN events over REST instead of the
+mission applying them (tools/harness_hil_episode.py flies one such episode
+and dry-runs it). The same bodies work in a `drive` timeline and with
+`forward`.
 
 `drive` (2026-11-03, WP4-03) is the harness driving a FLYING rail: it opens
 a session bound to the rail's REST hot-apply endpoint (the Shield node's
@@ -184,10 +192,14 @@ class HarnessClient:
                       cell_id: str = "", seed: int | None = None, profile: str = "",
                       arm: str = "", keep_flight_log: bool = False,
                       session_id: str = "", live: bool = False,
-                      pace: float | None = None):
+                      pace: float | None = None, drive_scenario_events: bool = False):
+        """`drive_scenario_events` (a rail session bound to the mission's
+        listener, 2026-11-14): the harness forwards the scenario's own events
+        over REST instead of the mission applying them from --events."""
         pb = self._M.pb
         kw = {"cell_id": cell_id, "profile": profile, "arm": arm,
-              "keep_flight_log": keep_flight_log, "session_id": session_id, "live": live}
+              "keep_flight_log": keep_flight_log, "session_id": session_id, "live": live,
+              "drive_scenario_events": bool(drive_scenario_events)}
         if scenario_id:
             kw["scenario_id"] = scenario_id
         if scenario_yaml:
@@ -283,7 +295,7 @@ def render_bundle(b) -> str:
             f"generation {a.generation} {a.policy_hash[:19]}"
         out.append(f"  t={a.t:.2f} s {a.event} {a.rule_id}"
                    + (f" (over {a.via})" if a.via and a.via != "runner" else "")
-                   + f": {what}")
+                   + f": {what}" + (f" [from {a.source}]" if a.source else ""))
     for name in sorted(b.bundle_files):
         out.append(f"  {name:<22} {b.bundle_files[name]}")
     out.append(render_kpi(b.kpi))
@@ -501,6 +513,10 @@ def main(argv: list[str] | None = None) -> int:
                         "a rail backend)")
     r.add_argument("--pace", type=float, default=None,
                    help="live: simulated seconds per wall second (default 1.0; 0 unpaced)")
+    r.add_argument("--drive-scenario-events", action="store_true",
+                   help="a rail backend: the harness forwards the scenario's own events "
+                        "over REST at their mission times (the mission flies none of "
+                        "them from --events); needs --rest-endpoint")
     f = sub.add_parser("forward", help="send one HotApply through a session bound to a "
                                        "REST hot-apply endpoint")
     f.add_argument("--rest-endpoint", required=True)
@@ -552,12 +568,11 @@ def main(argv: list[str] | None = None) -> int:
         if rail and (args.live or args.pace is not None):
             raise ValueError("--live / --pace are the headless backend's: a rail flies "
                              "in real time")
-        if rail and evs:
-            raise ValueError("--event is refused on a rail (UNIMPLEMENTED): send the "
-                             "change as a --hot-apply body")
-        if rail and hot and not args.rest_endpoint:
-            raise ValueError("--hot-apply on a rail needs --rest-endpoint: the mission's "
-                             "listener is started on it")
+        if rail and (hot or evs or args.drive_scenario_events) and not args.rest_endpoint:
+            raise ValueError("--hot-apply, --event and --drive-scenario-events on a rail "
+                             "need --rest-endpoint: the mission's listener is started on it")
+        if args.cmd == "run" and args.drive_scenario_events and not rail:
+            raise ValueError("--drive-scenario-events goes with --backend sitl or hil")
         yml = (Path(args.scenario_file).read_text(encoding="utf-8")
                if args.cmd == "run" and args.scenario_file else "")
         client = HarnessClient(args.target, insecure=args.insecure, pki_dir=args.pki,
@@ -603,12 +618,15 @@ def main(argv: list[str] | None = None) -> int:
                                        profile=args.profile, arm=args.arm,
                                        keep_flight_log=args.keep_log,
                                        session_id=session or "", live=args.live,
-                                       pace=args.pace if args.live else None)
+                                       pace=args.pace if args.live else None,
+                                       drive_scenario_events=args.drive_scenario_events)
             armed = None if args.live or rail else ref.episode_id
             print(f"started {ref.episode_id}: {ref.run_id} seed {ref.seed}"
                   + (f" profile {ref.profile}" if ref.profile else "")
                   + (" (live, flying)" if ref.live else "")
                   + (f" (launched on the {ref.backend} rail)" if rail else "")
+                  + (", the scenario's own events forwarded by the harness over REST"
+                     if ref.scenario_events_via == "harness" else "")
                   + f", ends at {ref.run_end_sim_t:.1f} s")
             for at, body in hot:
                 ack = client.hot_apply(ref.episode_id, at, body)
@@ -618,7 +636,9 @@ def main(argv: list[str] | None = None) -> int:
                          if ack.pending else ""))
             for at, t, payload in evs:
                 ack = client.emit_event(ref.episode_id, at, t, payload)
-                print(f"  event #{ack.queue_index} at {ack.at_sim_t} s: {ack.type}")
+                print(f"  event #{ack.queue_index} at {ack.at_sim_t} s: {ack.type}"
+                      + (f" queued for {ack.forwarded_method} {ack.forwarded_to} "
+                         f"{ack.rest_body_json}" if ack.pending else ""))
             armed = None
             b = client.end_episode(ref.episode_id, timeout=(
                 args.end_timeout if args.end_timeout is not None
