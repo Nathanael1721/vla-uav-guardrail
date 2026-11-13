@@ -6,6 +6,17 @@
 #   .\scripts\run_pas_ardupilot.ps1 -Step node -SaveView # ... and record the demo video
 #   .\scripts\run_pas_ardupilot.ps1 -Step scene          # load the scene only, leave it running
 #   .\scripts\run_pas_ardupilot.ps1 -Step sitl           # SITL + router (+ -Mavros) after -Step scene
+#   .\scripts\run_pas_ardupilot.ps1 -Step scene -VlaCameras -Stress night   # a perception-stress scene
+#
+# PERCEPTION STRESS (-Stress day|dusk|night|rain|fog; demo\pas_ardupilot\
+# perception_stress.py, WP4-16 / WP4-18): -Step scene, -Step node and -Step
+# check render the stressor into the scene (the cameras' exposure for dusk /
+# night, the scene's own id for all), and the scene / node steps set its
+# weather after the load and read it back. A node ATTACHING to that scene
+# (the AGX Orin's run_pas_perception.sh) must be given the same stressor
+# (STRESS=night there): it attaches only to that stressor's scene id. A
+# stressed run is never KPI-grade; tools\perception_stress_report.py scores
+# the runs per scenario.
 #
 # What runs where (docs/DESIGN-projectairsim-ardupilot.md has the diagram):
 #   Windows : Unreal + Project AirSim (CityLife_Day), Mission Planner, the node / G1 script
@@ -79,6 +90,9 @@ param(
     [switch]$Mavros,                    # -Step sitl: also start MAVROS 2 in WSL (dev)
     [switch]$VlaCameras,                # -Step scene: render AerialVLA's VLAFront/VLADown for an attaching --pilot vla node
     [double]$FrontCaptureIntervalS = 0, # -Step scene / node: FrontCamera's capture interval in s (0 = the template's 0.1; 0.066 is about 15 Hz)
+    # -Step scene / node / check: a perception stressor ("" = none; perception_stress.py)
+    [ValidateSet("", "day", "dusk", "night", "rain", "fog")]
+    [string]$Stress  = "",
     [switch]$SkipSim,
     [switch]$KeepSim
 )
@@ -252,6 +266,16 @@ function Set-ViewJunction([string]$RunTag) {
 if ($SaveView -and $Step -ne "node") {
     throw "-SaveView records the perception node's flight; it needs -Step node"
 }
+# A perception stressor is rendered into the scene the scene / node steps
+# load (and the check step's dry run); G1 qualifies the rail on its own
+# scene, and -Step sitl starts ArduPilot after a scene that already has it.
+$stressArgs = @()
+if ($Stress) {
+    if ($Step -notin @("scene", "node", "check")) {
+        throw "-Stress $Stress is rendered into the scene of -Step scene, node or check, not -Step $Step"
+    }
+    $stressArgs = @("--stress", $Stress)
+}
 
 if ($Step -eq "g1-summary") {
     # Summarising a tag nobody named would summarise an empty, fresh folder.
@@ -305,7 +329,7 @@ if ($Step -eq "check") {
     wsl.exe -d $Distro -- bash "$(ConvertTo-WslPath $Root)/sitl/setup_sitl.sh" --verify
     Say "node dry run (renders this run's configs, lists missing Python packages)"
     $pol = Get-PolicyArgs
-    & $Py $Node --dry-run --tag "$Tag" --link $Link @net @pol
+    & $Py $Node --dry-run --tag "$Tag" --link $Link @net @pol @stressArgs
     exit $LASTEXITCODE
 }
 
@@ -337,9 +361,13 @@ try {
             # desktop loads; an attaching node is given the same value
             # (perception_node --front-capture-interval-s) and measures what arrives.
             if ($FrontCaptureIntervalS -gt 0) { $sceneExtra += @("--front-capture-interval-s", "$FrontCaptureIntervalS") }
+            # A perception stressor: rendered into the scene, its weather set
+            # after the load and read back (the node refuses one that is not).
+            $sceneExtra += $stressArgs
             & $Py $Node --scene-only --tag $Tag @net @sceneExtra
             if ($LASTEXITCODE -ne 0) { throw "scene load exited $LASTEXITCODE" }
             Say "scene loaded and left running. Next: -Step sitl -SkipSim (ArduPilot AFTER the scene, never before a reload)"
+            if ($Stress) { Say "perception stress '$Stress' is in this scene: give the attaching node the same (STRESS=$Stress on the Orin)" }
         }
         "sitl" {
             # Needs a scene loaded first (-Step scene); reloading it
@@ -357,6 +385,7 @@ try {
             $a += @("--hold-mode", $HoldMode)
             if ($ClockStart) { $a += @("--clock-start", $ClockStart) }
             if ($FrontCaptureIntervalS -gt 0) { $a += @("--front-capture-interval-s", "$FrontCaptureIntervalS") }
+            $a += $stressArgs
             if ($NodeArgs) { Say "node args: $($NodeArgs -join ' ')"; $a += $NodeArgs }
             if (-not $G1Verdict) {
                 $v = Get-ChildItem (Join-Path $Out "g1_*\g1_verdict.json") -ErrorAction SilentlyContinue |

@@ -440,6 +440,26 @@ def _front_interval_record(robot: dict, asked: float | None, attach: bool) -> di
             "front_capture_interval_source": src}
 
 
+def _pstress():
+    """perception_stress (beside this file), imported only for a stressed
+    render, so every other use of this module is as it was."""
+    try:
+        import perception_stress
+    except ImportError:
+        sys.path.insert(0, str(HERE))
+        import perception_stress
+    return perception_stress
+
+
+def _stressed(robot: dict, scene: dict, stress: str | None) -> tuple[dict, dict, dict | None]:
+    """(robot, scene, record) with the perception stressor `stress` rendered
+    in (perception_stress.render: the cameras' exposure, the scene's id);
+    the configs unchanged and no record when `stress` is None."""
+    if stress is None:
+        return robot, scene, None
+    return _pstress().render(robot, scene, stress)
+
+
 def render_robot_config(template: dict, plan: NetworkPlan, vla_cameras: bool = False,
                         front_capture_interval_s: float | None = None) -> dict:
     """The template with this run's two addresses (and AerialVLA's cameras
@@ -475,7 +495,8 @@ def write_sim_configs(out_dir: str | Path, plan: NetworkPlan,
                       scene_path: str | Path = SCENE_TEMPLATE,
                       robot_path: str | Path = ROBOT_TEMPLATE,
                       vla_cameras: bool = False,
-                      front_capture_interval_s: float | None = None) -> dict:
+                      front_capture_interval_s: float | None = None,
+                      stress: str | None = None) -> dict:
     """Render this run's scene + robot config into `out_dir` (plain JSON, so
     any JSONC reader accepts them) and return where they went and their hashes.
 
@@ -484,7 +505,10 @@ def write_sim_configs(out_dir: str | Path, plan: NetworkPlan,
     run - evidence, not a reconstruction. `vla_cameras`: whether AerialVLA's
     cameras are in it (select_vla_cameras), recorded as such;
     `front_capture_interval_s`: FrontCamera's capture interval when it is not
-    the template's (FRONT_CAMERA_ID), recorded with where it came from.
+    the template's (FRONT_CAMERA_ID), recorded with where it came from;
+    `stress`: a perception stressor (perception_stress.NAMES) rendered in -
+    the cameras' exposure and the scene's id - recorded as `stress` (no key
+    without one).
     """
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
@@ -494,6 +518,7 @@ def write_sim_configs(out_dir: str | Path, plan: NetworkPlan,
     robot = render_robot_config(robot_t, plan, vla_cameras=vla_cameras,
                                 front_capture_interval_s=front_capture_interval_s)
     scene = render_scene(scene_t, robot_name)
+    robot, scene, stress_rec = _stressed(robot, scene, stress)
     scene_file = out / Path(scene_path).name
     robot_file = out / robot_name
     for path, obj in ((scene_file, scene), (robot_file, robot)):
@@ -513,6 +538,7 @@ def write_sim_configs(out_dir: str | Path, plan: NetworkPlan,
             "clock_ratio": scene_clock_ratio(scene),
             "vla_cameras": bool(vla_cameras),
             **_front_interval_record(robot, front_capture_interval_s, attach=False),
+            **({} if stress_rec is None else {"stress": stress_rec}),
             "network": plan.to_dict()}
 
 
@@ -520,7 +546,8 @@ def write_attach_configs(out_dir: str | Path,
                          scene_path: str | Path = SCENE_TEMPLATE,
                          robot_path: str | Path = ROBOT_TEMPLATE,
                          vla_cameras: bool = False,
-                         front_capture_interval_s: float | None = None) -> dict:
+                         front_capture_interval_s: float | None = None,
+                         stress: str | None = None) -> dict:
     """The configs a node that ATTACHES to an already-loaded scene keeps.
 
     The hil node on the Jetson Orin must not load the scene: a reload resets
@@ -532,7 +559,11 @@ def write_attach_configs(out_dir: str | Path,
     (AerialVLA's cameras only with `vla_cameras`: what the node expects the
     desktop to have loaded; perception_node checks the live topics; and
     FrontCamera's capture interval only with `front_capture_interval_s`, what
-    the desktop's scene step was told: the node measures what arrived).
+    the desktop's scene step was told: the node measures what arrived; and a
+    perception stressor only with `stress`, what the desktop's scene step was
+    told: its scene id is the stressed one, so the node attaches only to a
+    scene loaded with the same stressor - perception_stress, WHICH SCENE A
+    NODE ATTACHES TO).
     """
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
@@ -545,6 +576,7 @@ def write_attach_configs(out_dir: str | Path,
         raise ValueError("robot template cannot be flown by ArduPilot: "
                          + "; ".join(problems))
     scene = render_scene(load_jsonc(scene_path), robot_name)
+    robot, scene, stress_rec = _stressed(robot, scene, stress)
     net = {"mode": "attach",
            "note": "the scene was loaded by another host (run_pas_ardupilot.ps1 "
                    "-Step scene), which rendered the addresses; this node only "
@@ -563,6 +595,7 @@ def write_attach_configs(out_dir: str | Path,
             "clock_ratio": scene_clock_ratio(scene),
             "vla_cameras": bool(vla_cameras),
             **_front_interval_record(robot, front_capture_interval_s, attach=True),
+            **({} if stress_rec is None else {"stress": stress_rec}),
             "network": net}
 
 

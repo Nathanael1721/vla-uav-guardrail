@@ -27,11 +27,16 @@
 # --scene-mode / --scene-only, --sim-host, --camera), in any abbreviation
 # argparse would take. Environment knobs:
 #   G1_VERDICT  the desktop's demo/out/g1_*/g1_verdict.json, copied here (required)
-#   TAG         the run folder under demo/out/ (default pas_hil_aiot_<date>)
+#   TAG         the run folder under demo/out/ (default pas_hil_aiot_<date>,
+#               pas_hil_aiot_<stress>_<date> with STRESS)
 #   SECONDS_    mission length in s (default 420)
 #   BUNDLE      a signed policy bundle (default: the node's own, follow_car_citylife's)
 #   FRONT_CAPTURE_INTERVAL_S  FrontCamera's capture interval the desktop's scene
 #               step was given (-FrontCaptureIntervalS), recorded with the run
+#   STRESS      the perception stressor the desktop's scene step was given
+#               (-Stress day|dusk|night|rain|fog; demo/pas_ardupilot/
+#               perception_stress.py): the node attaches only to that
+#               stressor's scene and reads its weather back; never KPI-grade
 #   VLA_PORT    the AIOT-VLA server's port on 127.0.0.1 (default 8791)
 #   VENV        the Python environment (default ~/vla-drone-env)
 #   ROS_SETUP   ROS 2's setup script (default /opt/ros/jazzy/setup.bash)
@@ -68,7 +73,7 @@ done
 [ -f "$G1_VERDICT" ] || die 66 "no G1 verdict at $G1_VERDICT (copy the desktop's demo/out/g1_*/g1_verdict.json here)"
 # Absolute: the node runs from the checkout's root (cd below), not from here.
 G1_VERDICT="$(cd "$(dirname "$G1_VERDICT")" && pwd)/$(basename "$G1_VERDICT")"
-TAG="${TAG:-pas_hil_aiot_$(date +%Y%m%d_%H%M%S)}"
+TAG="${TAG:-pas_hil_aiot_${STRESS:+${STRESS}_}$(date +%Y%m%d_%H%M%S)}"
 case "$TAG" in
   ""|*/*|.*) die 64 "TAG '$TAG' must be a plain directory name under demo/out" ;;
 esac
@@ -101,6 +106,12 @@ if [ -n "${BUNDLE:-}" ]; then
 fi
 if [ -n "${FRONT_CAPTURE_INTERVAL_S:-}" ]; then
   args+=(--front-capture-interval-s "$FRONT_CAPTURE_INTERVAL_S")
+fi
+if [ -n "${STRESS:-}" ]; then
+  case "$STRESS" in
+    day|dusk|night|rain|fog) args+=(--stress "$STRESS") ;;
+    *) die 64 "STRESS '$STRESS' is none of day dusk night rain fog (perception_stress.py)" ;;
+  esac
 fi
 args+=("$@")
 
