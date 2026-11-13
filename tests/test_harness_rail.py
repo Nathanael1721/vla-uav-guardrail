@@ -475,9 +475,14 @@ def test_a_hil_session_is_one_flown_scored_episode_with_the_grants_bundle():
     seen: dict = {}
 
     def during(s, eid):
-        # While it flies: the rig is taken, and a rail episode takes no EmitEvent.
+        # While it flies: the rig is taken, and a rail episode takes no EmitEvent
+        # without a REST form (since 2026-11-14 one with a REST form is
+        # forwarded: tests/test_harness_hil.py), nor one that does not name
+        # its zone.
         seen["busy"] = _refused(h.start_episode, scenario_id="speed-cap", session_id=s)
-        seen["emit"] = _refused(h.emit_event, eid, 1.0, "scale_radius", {"factor": 2})
+        seen["emit"] = _refused(h.emit_event, eid, 1.0, "spawn_polygon_fence",
+                                {"width_m": 10, "height_m": 10, "ahead_of_vehicle_m": 20})
+        seen["emit_noid"] = _refused(h.emit_event, eid, 1.0, "scale_radius", {"factor": 2})
         seen["status"] = h.status(eid)
         seen["far"] = _refused(h.hot_apply, eid, 9999.0, ZONE)
         seen["live"] = _refused(h.start_episode, scenario_id="speed-cap", session_id=s,
@@ -494,6 +499,7 @@ def test_a_hil_session_is_one_flown_scored_episode_with_the_grants_bundle():
 
     # ---- launched through the sweep's own transport, with the campaign's arguments
     assert seen["busy"][0] == "RESOURCE_EXHAUSTED" and seen["emit"][0] == "UNIMPLEMENTED", seen
+    assert seen["emit_noid"][0] == "INVALID_ARGUMENT" and "`id`" in seen["emit_noid"][1], seen
     assert seen["far"][0] == "OUT_OF_RANGE" and seen["live"][0] == "INVALID_ARGUMENT", seen
     assert seen["status"]["state"] == "RUNNING" and seen["status"]["backend"] == "hil"
     assert ref["backend"] == "hil" and not h._rail_busy.locked()

@@ -79,14 +79,22 @@ scored episode with its bundle:
   StartEpisode   LAUNCHES the mission (the scenario's own arguments, plus
                  the listener's flags when there is an endpoint); a scenario
                  the rail cannot fly as written is FAILED_PRECONDITION and
-                 nothing is launched; one mission at a time;
+                 nothing is launched; one mission at a time. With
+                 `drive_scenario_events` (2026-11-14) the scenario's own
+                 events are taken off the mission (no --events) and
+                 forwarded by the harness at their mission times
+                 (scenario_rest_timeline; one with no REST form refuses the
+                 episode, one that never reaches the Shield fails it,
+                 unscored);
   HotApply       to the episode: queued for mission time `at_sim_t` and
                  forwarded then to the mission's listener (the ack says
                  `pending`); to the session: forwarded at once. Either is
                  kept, with its generation and the endpoint's receipt, for
-                 the episode's harness_events.jsonl. EmitEvent is
-                 UNIMPLEMENTED: a ScenarioEvent placed against the flying
-                 vehicle has no REST form;
+                 the episode's harness_events.jsonl. EmitEvent (since
+                 2026-11-14) is turned into its REST body
+                 (rest_body_of_event) and queued the same way; a form with
+                 no REST body (a zone placed against the flying vehicle, a
+                 change of motion) is UNIMPLEMENTED;
   EndEpisode     waits for the mission, scores the fetched run as a
                  `--backend hil` campaign does (score, rail_gate_set on the
                  cell's own gates, episode_verdict, scenario_score.json
@@ -237,7 +245,9 @@ STATUS CODES (what a client can rely on)
                          server
     UNIMPLEMENTED        a hot-apply field the headless runner cannot carry;
                          a rail backend (sitl, hil) on a server with no rig
-                         for it; EmitEvent on a rail episode
+                         for it; on a rail episode, an EmitEvent with no
+                         REST form (with drive_scenario_events, a scenario
+                         event with none is FAILED_PRECONDITION)
     RESOURCE_EXHAUSTED   too many open episodes or sessions, events in one
                          episode, or an InjectPolicy archive too large; a
                          rail StartEpisode while the rig flies another
@@ -872,6 +882,219 @@ def rest_route(body) -> tuple[str, str, dict]:
     return "POST", "/hot_apply", body
 
 
+# The fields guardrail.scenario_events.apply_event writes on a rule it builds
+# from a switch or swap event (IR schema 3.0.0 / 4.0.0's required fields, at
+# the values they defaulted to): a REST body has to state them.
+_EVENT_RULE_BASE = {"constraint_type": "hard", "priority": "P0",
+                    "violation_action": "project_fix", "scope": "mission"}
+# Why a ScenarioEvent form has no REST body (rest_body_of_event).
+_NO_REST_FORM = {
+    "vehicle": ("a zone placed against the flying vehicle (width_m / height_m / "
+                "ahead_of_vehicle_m / anchor): only the mission knows where the aircraft "
+                "is when the event fires, and a REST body carries vertices; give the "
+                "zone its `vertices`"),
+    "motion": ("a change of a zone's motion (translate `mps` with a direction or "
+               "bearing, rotate `deg_per_s`): the mission restarts it from the ring the "
+               "flying Shield holds at that instant (Shield.zone_ring_at), and PATCH "
+               "/dynamic_nfz move takes vertices only the mission knows then; use a "
+               "step (dx_m / dy_m, angle_deg) or spawn the zone with its `motion`"),
+    "expect_refused": ("an event the scenario expects the Shield to refuse "
+                       "(expect_refused): the REST endpoint answers a refusal as an "
+                       "error, with no `expected` to judge it by (the mission's own "
+                       "--events does)"),
+}
+
+
+def rest_body_of_event(ev, *, zone_k: int | None = None,
+                       last_zone: str | None = None) -> dict:
+    """The REST hot-apply body (guardrail/api.py) that makes a flying Shield
+    apply ScenarioEvent `ev` as the rail's mission node applies the same event
+    from its --events file (2026-11-14, WP4-03): guardrail.scenario_events.
+    apply_event with shield_t=None, so the Shield stamps both with its own
+    last tick. Route it with rest_route.
+
+        spawn_polygon_fence {vertices, ...}      POST /hot_apply dynamic_nfz,
+                                                 every field spawn_zone defaults
+                                                 written out (P0, hard, repair,
+                                                 mission, 0-1000 m, 1 m margin)
+        translate_polygon_fence {dx_m, dy_m}     PATCH /dynamic_nfz/<id> translate
+        rotate_polygon_fence {angle_deg}         PATCH /dynamic_nfz/<id> rotate
+        scale_radius {factor}                    PATCH /dynamic_nfz/<id> scale
+        activate_rule / deactivate_rule          POST /hot_apply time_window_switch
+        swap_corridor                            POST /hot_apply corridor_swap
+
+    Each builds the rule (or edits the ring) through the same Shield method
+    the mission node's call does (spawn_nfz / hot_apply -> _spawn; translate_,
+    rotate_, scale_nfz; set_rule_active and hot_apply -> _switch; hot_apply ->
+    _swap), with the same ids: a switch with no window and no id gets
+    Shield.set_rule_active's default, which the REST handler shares.
+
+    `zone_k` and `last_zone` resolve what the payload leaves out, as the
+    mission's EventState would: a spawn with no `id` is dyn-nfz-<k> (k spawns
+    before it), an edit with no `id` edits the last zone spawned. None: the
+    payload must name it (INVALID_ARGUMENT otherwise).
+
+    Raises HarnessError UNIMPLEMENTED for a form with no REST body (a zone
+    placed against the vehicle, a change of motion, an expected refusal:
+    _NO_REST_FORM says why), INVALID_ARGUMENT for a payload neither the
+    mission nor the endpoint could apply."""
+    t, p = ev.type, dict(ev.payload or {})
+    if p.get("expect_refused"):
+        raise HarnessError("UNIMPLEMENTED", f"{t}: " + _NO_REST_FORM["expect_refused"])
+
+    def zone_id(default: str | None, what: str) -> str:
+        zid = p.get("id") or default
+        if not isinstance(zid, str) or not zid.strip():
+            raise HarnessError("INVALID_ARGUMENT", f"{t}: name the zone it {what} (`id`): "
+                                                   f"nothing here says which it is")
+        return zid
+
+    def num(key: str, default=None) -> float:
+        v = p.get(key, default)
+        if v is None:
+            raise HarnessError("INVALID_ARGUMENT", f"{t}: `{key}` is required")
+        return _finite(v, f"{t} {key}")
+
+    if t == "spawn_polygon_fence":
+        if "vertices" not in p:
+            raise HarnessError("UNIMPLEMENTED", f"{t}: " + _NO_REST_FORM["vehicle"])
+        verts = p["vertices"]
+        if not isinstance(verts, list) or len(verts) < 3:
+            raise HarnessError("INVALID_ARGUMENT", f"{t}: vertices must be a list of at "
+                                                   f"least three {{x, y}} points")
+        try:
+            pts = [{"x": _finite(v["x"], f"{t} vertex x"), "y": _finite(v["y"], f"{t} vertex y")}
+                   for v in verts]
+        except (KeyError, TypeError):
+            raise HarnessError("INVALID_ARGUMENT", f"{t}: every vertex is {{x, y}} in "
+                                                   f"metres") from None
+        body: dict[str, Any] = {
+            "type": "dynamic_nfz",
+            "id": zone_id(None if zone_k is None else f"dyn-nfz-{zone_k}", "spawns"),
+            "vertices": pts,
+            "priority": p.get("priority", "P0"),
+            "constraint_type": p.get("constraint_type", "hard"),
+            "violation_action": p.get("violation_action", "repair"),
+            "scope": p.get("scope", "mission"),
+            "altitude_floor_m": num("altitude_floor_m", 0.0),
+            "altitude_ceiling_m": num("altitude_ceiling_m", 1000.0),
+            "margin_m": num("margin_m", 1.0)}
+        if p.get("motion") is not None:
+            body["motion"] = dict(p["motion"])
+        return body
+    if t in ("translate_polygon_fence", "rotate_polygon_fence", "scale_radius"):
+        if (t == "translate_polygon_fence" and "mps" in p) or \
+                (t == "rotate_polygon_fence" and "deg_per_s" in p):
+            raise HarnessError("UNIMPLEMENTED", f"{t}: " + _NO_REST_FORM["motion"])
+        zid = zone_id(last_zone, "edits")
+        if t == "translate_polygon_fence":
+            return {"type": "dynamic_nfz", "op": "translate", "id": zid,
+                    "dx": num("dx_m", 0.0), "dy": num("dy_m", 0.0)}
+        if t == "rotate_polygon_fence":
+            return {"type": "dynamic_nfz", "op": "rotate", "id": zid,
+                    "angle_deg": num("angle_deg")}
+        return {"type": "dynamic_nfz", "op": "scale", "id": zid, "factor": num("factor")}
+    if t in ("activate_rule", "deactivate_rule"):
+        active = t == "activate_rule"
+        rid = p.get("rule_id")
+        if not isinstance(rid, str) or not rid:
+            raise HarnessError("INVALID_ARGUMENT", f"{t}: `rule_id` is required")
+        body = {"type": "time_window_switch", **_EVENT_RULE_BASE, "target_id": rid,
+                "active": active}
+        win = p.get("window")
+        if win is None:
+            if p.get("id"):
+                body["id"] = p["id"]
+        else:
+            body["id"] = p.get("id") or f"sw-{rid}-{'on' if active else 'off'}"
+            body["valid_time"] = {"recurrence": dict(win)}
+        return body
+    if t == "swap_corridor":
+        tgt = p.get("target_id")
+        if not isinstance(tgt, str) or not tgt:
+            raise HarnessError("INVALID_ARGUMENT", f"{t}: `target_id` is required")
+        cl = []
+        for v in p.get("centerline") or []:
+            x, y = (v["x"], v["y"]) if isinstance(v, dict) else (v[0], v[1])
+            cl.append({"x": _finite(x, f"{t} centerline x"), "y": _finite(y, f"{t} centerline y")})
+        body = {"type": "corridor_swap", **_EVENT_RULE_BASE, "id": p.get("id") or f"swap-{tgt}",
+                "target_id": tgt, "centerline": cl, "width_m": num("width_m")}
+        for k in ("altitude_floor_m", "altitude_ceiling_m"):
+            if k in p:
+                body[k] = num(k)
+        if p.get("window") is not None:
+            body["valid_time"] = {"recurrence": dict(p["window"])}
+        return body
+    raise HarnessError("INVALID_ARGUMENT", f"event type {t!r} has no REST hot-apply form")
+
+
+def scenario_rest_timeline(spec) -> list[dict]:
+    """A scenario's own events as the REST forwards a harness-driven rail
+    episode makes (StartEpisode drive_scenario_events, 2026-11-14): in the
+    order the mission applies them (by at_sim_t, ties as written: run_episode's
+    and the node's stable sort), each with its body (rest_body_of_event) and
+    route (rest_route). Each entry: {index, at_sim_t, type, payload, body,
+    method, path}.
+
+    Raises FAILED_PRECONDITION naming every event that has no REST form (the
+    scenario then flies only with the mission's own --events), and
+    INVALID_ARGUMENT when the scenario has no events to drive."""
+    order = sorted(enumerate(spec.events), key=lambda x: x[1].at_sim_t)
+    k, last = 0, None
+    out, problems = [], []
+    for i, ev in order:
+        try:
+            body = rest_body_of_event(ev, zone_k=k, last_zone=last)
+        except HarnessError as err:
+            problems.append(f"#{i} {ev.type} at {ev.at_sim_t:g} s ({err.code}: {err.message})")
+            body = None
+        if ev.type == "spawn_polygon_fence":
+            last = (body or {}).get("id") or ev.payload.get("id") or f"dyn-nfz-{k}"
+            k += 1
+        if body is not None:
+            method, path, _ = rest_route(body)
+            out.append({"index": i, "at_sim_t": float(ev.at_sim_t), "type": ev.type,
+                        "payload": ev.model_dump(mode="json")["payload"], "body": body,
+                        "method": method, "path": path})
+    if problems:
+        raise HarnessError("FAILED_PRECONDITION",
+                           f"the harness cannot drive {spec.scenario_id}'s own events over "
+                           f"REST: " + "; ".join(problems) + " (fly it with the mission's "
+                           f"own --events: drive_scenario_events off)")
+    if not out:
+        raise HarnessError("INVALID_ARGUMENT", f"{spec.scenario_id} has no events of its own "
+                                               f"for the harness to drive")
+    return out
+
+
+def rail_hotapply_args(endpoint: str, rig) -> list[str]:
+    """The Shield node's hot-apply listener flags for a rail session's
+    `endpoint` ([] when it names none: the mission then takes no REST event).
+    Off loopback the node serves mutual TLS from the rig's PKI folder, as the
+    node sees it (RailRig.hotapply_pki, hotapply_server_cert,
+    hotapply_clients). Harness._rail_hot_args and the dry run of
+    tools/harness_hil_episode.py both use it."""
+    if not endpoint:
+        return []
+    u = urllib.parse.urlsplit(endpoint)
+    local = is_loopback(u.hostname)
+    args = [f"--hotapply-port={u.port}"]
+    host = rig.hotapply_host or ("" if local else u.hostname)
+    if host:
+        args.append(f"--hotapply-host={host}")
+    if not local or u.scheme == "https":
+        if not rig.hotapply_pki:
+            raise HarnessError("FAILED_PRECONDITION",
+                               f"rest_endpoint {endpoint} needs mutual TLS on the mission's "
+                               f"listener, and this server's rig names no PKI folder for "
+                               f"it (serve --rail-hotapply-pki)")
+        args.append(f"--hotapply-pki={rig.hotapply_pki}")
+        if rig.hotapply_server_cert:
+            args.append(f"--hotapply-server-cert={rig.hotapply_server_cert}")
+        args += [f"--hotapply-client={cn}" for cn in rig.hotapply_clients]
+    return args
+
+
 @dataclass
 class RailRig:
     """The rig a server flies rail sessions on (`Harness(rail=...)`, `serve
@@ -914,7 +1137,15 @@ class _RailFlight:
     endpoint: str = ""
     tag: str = ""
     phase: str = "launching"
-    scheduled: list = field(default_factory=list)   # (at | None, index, body), unsent
+    # Who applies the scenario's own events (2026-11-14): "mission" (its
+    # --events file, as a campaign flies it) or "harness" (taken off the
+    # mission and forwarded over REST at their mission times; `timeline` is
+    # scenario_rest_timeline's list, `spec` then has no events).
+    events_via: str = "mission"
+    timeline: list = field(default_factory=list)
+    # (at | None, index, body, source, extra), unsent; source: episode (a
+    # HotApply), emit_event, scenario.
+    scheduled: list = field(default_factory=list)
     forwarded: list = field(default_factory=list)   # records, in the order sent
     not_sent: list = field(default_factory=list)
     t0: float | None = None          # time.monotonic() at mission time 0
@@ -1300,7 +1531,8 @@ class Harness:
                       cell_id: str = "", seed: int | None = None, profile: str = "",
                       arm: str = "", keep_flight_log: bool = False,
                       client: str = "", session_id: str = "", live: bool = False,
-                      pace: float | None = None) -> dict:
+                      pace: float | None = None,
+                      drive_scenario_events: bool = False) -> dict:
         if bool(scenario_id) == bool(scenario_yaml):
             raise HarnessError("INVALID_ARGUMENT",
                                "give exactly one of scenario_id or scenario_yaml")
@@ -1310,12 +1542,59 @@ class Harness:
             raise HarnessError("INVALID_ARGUMENT",
                                f"a {sess.backend} rail episode flies in real time on the "
                                f"rig: `live` and `pace` are the headless backend's")
+        if drive_scenario_events and not rail:
+            raise HarnessError("INVALID_ARGUMENT",
+                               "drive_scenario_events is a rail episode's (a sitl or hil "
+                               "session): the headless runner applies a scenario's own "
+                               "events itself")
         if live:
             pace = DEFAULT_PACE if pace is None else _finite(pace, "pace")
             if pace < 0:
                 raise HarnessError("INVALID_ARGUMENT", f"pace {pace} must be >= 0 (0: unpaced)")
         elif pace is not None:
             raise HarnessError("INVALID_ARGUMENT", "pace applies to a live episode only")
+        r = self._resolve(scenario_id=scenario_id, scenario_yaml=scenario_yaml,
+                          cell_id=cell_id, seed=seed, profile=profile, arm=arm, sess=sess)
+        prof, lib, spec, ep, t_end = r.prof, r.lib, r.spec, r.ep, r.t_end
+        # A session's injected policy replaces the scenario's (InjectPolicy).
+        policy_ref = sess.policy["ref"] if sess is not None and sess.policy else None
+        try:
+            policy, _source = (policy_ref or spec.policy).load_with_source(ROOT)
+        except FileNotFoundError as e:
+            raise HarnessError("NOT_FOUND", f"policy: {e}") from None
+        except (ValidationError, ValueError, OSError) as e:
+            raise HarnessError("INVALID_ARGUMENT",
+                               f"policy {(policy_ref or spec.policy).source!r}: {e}") from None
+        arm_record = self._arm_record(ep, policy if policy_ref is not None else None)
+        flight = (self._rail_prepare(sess, spec, ep, lib.defaults,
+                                     drive=bool(drive_scenario_events)) if rail else None)
+
+        eid = "ep-" + uuid.uuid4().hex[:12]
+        e = _Episode(episode_id=eid, ep=ep, profile=prof.profile if prof else "",
+                     defaults=lib.defaults, keep_log=bool(keep_flight_log), t_end=t_end,
+                     policy=policy.model_copy(deep=True), policy_hash=policy.policy_hash,
+                     request={"scenario_id": scenario_id or None,
+                              "scenario_yaml": scenario_yaml or None,
+                              "cell_id": cell_id or None,
+                              "seed": None if seed is None else int(seed),
+                              "profile": profile or None, "arm": arm or None,
+                              "keep_flight_log": bool(keep_flight_log),
+                              "session_id": session_id or None, "live": bool(live),
+                              "pace": pace,
+                              "drive_scenario_events": bool(drive_scenario_events)},
+                     client=client, dry=None, arm_record=arm_record,
+                     session_id=session_id, policy_ref=policy_ref,
+                     task=dict(sess.task) if sess is not None and sess.task else None,
+                     live=bool(live), pace=float(pace) if live else DEFAULT_PACE)
+        return self._open_episode(e, sess, rail=rail, flight=flight, live=bool(live))
+
+    def _resolve(self, *, scenario_id: str, scenario_yaml: str, cell_id: str,
+                 seed: int | None, profile: str, arm: str, sess) -> SimpleNamespace:
+        """StartEpisode's request resolved to what flies: the profile, the
+        library, the cell, its spec, the seed, the arm (scenario_spec.Episode)
+        and the run's last tick, with every refusal start_episode gives about
+        them. Shared with plan_rail_episode, so a dry run resolves exactly what
+        StartEpisode would."""
         prof = self._profile(profile)
         lib = self._library(prof.library if prof else None)
         if scenario_id:
@@ -1389,38 +1668,35 @@ class Harness:
         probs = schedule_problems(spec, t_end)
         if probs:
             raise HarnessError("INVALID_ARGUMENT", "; ".join(probs))
-        # A session's injected policy replaces the scenario's (InjectPolicy).
-        policy_ref = sess.policy["ref"] if sess is not None and sess.policy else None
-        try:
-            policy, _source = (policy_ref or spec.policy).load_with_source(ROOT)
-        except FileNotFoundError as e:
-            raise HarnessError("NOT_FOUND", f"policy: {e}") from None
-        except (ValidationError, ValueError, OSError) as e:
-            raise HarnessError("INVALID_ARGUMENT",
-                               f"policy {(policy_ref or spec.policy).source!r}: {e}") from None
-        arm_record = self._arm_record(ep, policy if policy_ref is not None else None)
-        flight = self._rail_prepare(sess, spec, ep, lib.defaults) if rail else None
+        return SimpleNamespace(prof=prof, lib=lib, fam=fam, cell=cell, spec=spec, ep=ep,
+                               t_end=t_end)
 
-        eid = "ep-" + uuid.uuid4().hex[:12]
-        e = _Episode(episode_id=eid, ep=ep, profile=prof.profile if prof else "",
-                     defaults=lib.defaults, keep_log=bool(keep_flight_log), t_end=t_end,
-                     policy=policy.model_copy(deep=True), policy_hash=policy.policy_hash,
-                     request={"scenario_id": scenario_id or None,
-                              "scenario_yaml": scenario_yaml or None,
-                              "cell_id": cell_id or None,
-                              "seed": None if seed is None else int(seed),
-                              "profile": profile or None, "arm": arm or None,
-                              "keep_flight_log": bool(keep_flight_log),
-                              "session_id": session_id or None, "live": bool(live),
-                              "pace": pace},
-                     client=client, dry=None, arm_record=arm_record,
-                     session_id=session_id, policy_ref=policy_ref,
-                     task=dict(sess.task) if sess is not None and sess.task else None,
-                     live=bool(live), pace=float(pace) if live else DEFAULT_PACE)
+    def _open_episode(self, e: _Episode, sess, *, rail: bool, flight, live: bool) -> dict:
+        """start_episode's second half: the episode set up (a live runner, a
+        rail flight and the scenario events it drives), counted, registered
+        and started. Nothing is held or launched when it raises."""
+        eid, ep, arm_record = e.episode_id, e.ep, e.arm_record
         e.dry = self._dry_shield(e, [])[0]
         if rail:
             e.backend, e.rail = sess.backend, flight
             e.state = "RUNNING"          # launched below, once the rig is taken
+            # A harness-driven scenario (drive_scenario_events): its own
+            # events are queued as forwards at their mission times, before
+            # the mission is launched, so none can be missed.
+            for item in flight.timeline:
+                idx = len(e.queued)
+                e.queued.append(_Queued(
+                    index=idx, source="scenario",
+                    event=SimpleNamespace(at_sim_t=item["at_sim_t"], type=item["type"]),
+                    rule_id=str(item["body"].get("id") or item["body"].get("target_id") or ""),
+                    received={"rpc": "StartEpisode", "drive_scenario_events": True,
+                              "at_sim_t": item["at_sim_t"],
+                              "scenario_event": {"index": item["index"], "type": item["type"],
+                                                 "payload": item["payload"]},
+                              "body": item["body"]}))
+                flight.scheduled.append((item["at_sim_t"], idx, dict(item["body"]), "scenario",
+                                         {"scenario_event": item["type"],
+                                          "scenario_event_index": item["index"]}))
         if live:
             # Set up now (EpisodeRunner flies its setup to the start of tick
             # 0), so a scenario the runner refuses creates no episode.
@@ -1569,7 +1845,8 @@ class Harness:
                 "cell_id": e.ep.episode_id, "run_id": e.ep.run_id, "seed": e.ep.seed,
                 "arm": e.ep.arm_tag, "profile": e.profile,
                 "run_end_sim_t": round(e.t_end, 6), "policy_hash": e.policy_hash,
-                "session_id": e.session_id, "live": e.live, "backend": e.backend}
+                "session_id": e.session_id, "live": e.live, "backend": e.backend,
+                "scenario_events_via": e.rail.events_via if e.rail is not None else ""}
 
     def _at(self, e: _Episode, at_sim_t) -> float:
         at = _finite(at_sim_t, "at_sim_t")
@@ -1674,12 +1951,7 @@ class Harness:
                    payload: dict, *, now: bool = False) -> dict:
         e = self._get(episode_id)
         if e.rail is not None:
-            raise HarnessError("UNIMPLEMENTED",
-                               f"episode {episode_id} flies on the {e.backend} rail: its "
-                               f"scenario's own events are flown by the mission, and a "
-                               f"mid-flight change goes over REST (HotApply); a "
-                               f"ScenarioEvent placed against the flying vehicle "
-                               f"(ahead_of_vehicle_m, a direction) has no REST form")
+            return self._rail_emit_event(e, at_sim_t, type_, payload, now)
         with e.lock:
             self._armed(e)
             at = self._when(e, at_sim_t, now)
@@ -2020,25 +2292,7 @@ class Harness:
         for x in open_sessions:
             self._expire_session_if_idle(x, now)
         if backend in RAIL_BACKENDS and endpoint:
-            # The mission's own listener is started on this address
-            # (--hotapply-port): it needs the port, and off loopback the node
-            # serves mutual TLS only.
-            u = urllib.parse.urlsplit(endpoint)
-            if u.port is None:
-                raise HarnessError("INVALID_ARGUMENT",
-                                   f"rest_endpoint {endpoint}: a {backend} session's "
-                                   f"endpoint names the port the mission's hot-apply "
-                                   f"listener is started on")
-            if not is_loopback(u.hostname) and u.scheme != "https":
-                raise HarnessError("INVALID_ARGUMENT",
-                                   f"rest_endpoint {endpoint}: off loopback the mission's "
-                                   f"listener serves mutual TLS only (https)")
-            if not is_loopback(u.hostname) and not self.rail.hotapply_pki:
-                raise HarnessError("FAILED_PRECONDITION",
-                                   f"rest_endpoint {endpoint} is off loopback, and this "
-                                   f"server's rig names no PKI folder for the mission's "
-                                   f"listener (serve --rail-hotapply-pki: the lab PKI as "
-                                   f"the node sees it)")
+            self._check_rail_endpoint(backend, endpoint)
         sid = "ss-" + uuid.uuid4().hex[:12]
         s = _Session(session_id=sid, backend=backend, scene=scene, airframe=airframe,
                      seed=None if seed is None else int(seed), rest_endpoint=endpoint,
@@ -2052,6 +2306,27 @@ class Harness:
         self._emit(s, "session_started", "", {**self._session_ref(s), "scene": scene,
                                               "airframe": airframe, "label": label})
         return self._session_ref(s)
+
+    def _check_rail_endpoint(self, backend: str, endpoint: str) -> None:
+        """A rail session's endpoint is where the mission's own listener is
+        started (--hotapply-port): it needs the port, and off loopback the
+        node serves mutual TLS only, from the rig's PKI folder."""
+        u = urllib.parse.urlsplit(endpoint)
+        if u.port is None:
+            raise HarnessError("INVALID_ARGUMENT",
+                               f"rest_endpoint {endpoint}: a {backend} session's "
+                               f"endpoint names the port the mission's hot-apply "
+                               f"listener is started on")
+        if not is_loopback(u.hostname) and u.scheme != "https":
+            raise HarnessError("INVALID_ARGUMENT",
+                               f"rest_endpoint {endpoint}: off loopback the mission's "
+                               f"listener serves mutual TLS only (https)")
+        if not is_loopback(u.hostname) and not self.rail.hotapply_pki:
+            raise HarnessError("FAILED_PRECONDITION",
+                               f"rest_endpoint {endpoint} is off loopback, and this "
+                               f"server's rig names no PKI folder for the mission's "
+                               f"listener (serve --rail-hotapply-pki: the lab PKI as "
+                               f"the node sees it)")
 
     def stop_session(self, session_id: str, *,
                      first: tuple[str, dict] | None = None) -> dict:
@@ -2371,14 +2646,18 @@ class Harness:
 
     def _forward(self, s: _Session, body, *, episode: "_Episode | None" = None,
                  at_sim_t: float | None = None, queue_index: int | None = None,
-                 source: str = "session") -> tuple[dict, dict]:
+                 source: str = "session", extra: dict | None = None) -> tuple[dict, dict]:
         """One hot-apply body to the session's REST endpoint, by its own route
         (rest_route: POST /hot_apply, or PATCH /dynamic_nfz/<id> for an edit
         of a zone), with the endpoint's answer. Returns (the PolicyAck, the
         record); a refusal is recorded and re-raised. With `episode` (a rail
         episode in flight) the record - its mission time as this server
         reckons it, the request, the generation and the endpoint's receipt,
-        or the refusal - is kept for the episode's harness_events.jsonl."""
+        or the refusal - is kept for the episode's harness_events.jsonl.
+        `source` says who asked: session, episode (a HotApply to it),
+        emit_event, or scenario (the scenario's own event, StartEpisode
+        drive_scenario_events); `extra` (the ScenarioEvent's type and index)
+        goes into the record as it is."""
         method, path, payload = rest_route(body)
         url = s.rest_endpoint + path
         rf = episode.rail if episode is not None else None
@@ -2390,12 +2669,12 @@ class Harness:
             "wall_time": round(time.time(), 4), "method": method, "url": url,
             "body": body, "event": str(body.get("type") or ""),
             "op": str(body.get("op") or ""),
-            "rule_id": str(body.get("id") or body.get("target_id") or "")}
+            "rule_id": str(body.get("id") or body.get("target_id") or ""), **(extra or {})}
         detail = {"url": url, "body": body}
         if method != "POST":
             detail["method"] = method
         if episode is not None:
-            detail.update(mission_t=rec["t"], at_sim_t=at_sim_t, source=source)
+            detail.update(mission_t=rec["t"], at_sim_t=at_sim_t, source=source, **(extra or {}))
         eid = episode.episode_id if episode is not None else ""
         try:
             res = self._rest(s, method, path, payload)
@@ -2449,34 +2728,24 @@ class Harness:
         """The Shield node's hot-apply listener flags for the session's
         endpoint ([] when it names none: the mission then takes no REST
         event). Off loopback the node serves mutual TLS from the rig's PKI
-        folder, as the node sees it."""
-        if not sess.rest_endpoint:
-            return []
-        rig = self.rail
-        u = urllib.parse.urlsplit(sess.rest_endpoint)
-        local = is_loopback(u.hostname)
-        args = [f"--hotapply-port={u.port}"]
-        host = rig.hotapply_host or ("" if local else u.hostname)
-        if host:
-            args.append(f"--hotapply-host={host}")
-        if not local or u.scheme == "https":
-            if not rig.hotapply_pki:
-                raise HarnessError("FAILED_PRECONDITION",
-                                   f"rest_endpoint {sess.rest_endpoint} needs mutual TLS on "
-                                   f"the mission's listener, and this server's rig names "
-                                   f"no PKI folder for it (serve --rail-hotapply-pki)")
-            args.append(f"--hotapply-pki={rig.hotapply_pki}")
-            if rig.hotapply_server_cert:
-                args.append(f"--hotapply-server-cert={rig.hotapply_server_cert}")
-            args += [f"--hotapply-client={cn}" for cn in rig.hotapply_clients]
-        return args
+        folder, as the node sees it (rail_hotapply_args)."""
+        return rail_hotapply_args(sess.rest_endpoint, self.rail)
 
-    def _rail_prepare(self, sess: _Session, spec, ep, defaults) -> _RailFlight:
+    def _rail_prepare(self, sess: _Session, spec, ep, defaults, *,
+                      drive: bool = False) -> _RailFlight:
         """What a rail StartEpisode launches, or why it cannot: the sweep's own
         refusal (rail_refusal: what neither rail can realise), a Shield-off
         control arm the rig is not set to fly, a policy the rail cannot be
         pinned to, an argument a node would drop. Nothing is launched, and
-        no episode created, when it raises."""
+        no episode created, when it raises.
+
+        `drive` (StartEpisode drive_scenario_events, 2026-11-14, WP4-03): the
+        scenario's own events are the HARNESS's to apply. Each must have a
+        REST form (scenario_rest_timeline; one that has none refuses the
+        episode, naming it), the session must be bound to the mission's
+        listener, and the mission is launched with the same scenario minus
+        its events - no --events file - so the flying Shield gets each one
+        exactly once, over REST, at its mission time."""
         S, rig, backend = self._S, self.rail, sess.backend
         rail_ref = (sess.policy or {}).get("rail_ref")
         rspec = spec.model_copy(update={"policy": rail_ref}) if rail_ref is not None else spec
@@ -2492,6 +2761,15 @@ class Harness:
                    "GeoFence backstop may take the aircraft)")
         if why:
             raise HarnessError("FAILED_PRECONDITION", why)
+        timeline: list[dict] = []
+        if drive:
+            if not sess.rest_endpoint:
+                raise HarnessError("FAILED_PRECONDITION",
+                                   "drive_scenario_events forwards the scenario's events to "
+                                   "the mission's REST listener, and this session names no "
+                                   "rest_endpoint to start it on")
+            timeline = scenario_rest_timeline(rspec)
+            rspec = rspec.model_copy(update={"events": []})
         hot = self._rail_hot_args(sess)
         try:
             cfg = self._hil_cfg() if backend == "hil" else None
@@ -2506,21 +2784,160 @@ class Harness:
                                "sitl/run_ros2_demo.sh, sitl/ros2_shield_node.py)")
         dt = float(rspec.dt or defaults.dt)
         ticks = int(rspec.ticks or defaults.ticks)
+        max_s = float(S.rail_max_s(ticks * dt))
+        late = [x for x in timeline if x["at_sim_t"] > max_s + 1e-9]
+        if late:
+            raise HarnessError("FAILED_PRECONDITION",
+                               f"scenario event #{late[0]['index']} at {late[0]['at_sim_t']:g} s "
+                               f"is past the rail's time cap {max_s:.1f} s: it would never be "
+                               f"forwarded")
         return _RailFlight(spec=rspec, hot_args=hot, endpoint=sess.rest_endpoint,
-                           max_s=float(S.rail_max_s(ticks * dt)))
+                           max_s=max_s, events_via="harness" if drive else "mission",
+                           timeline=timeline)
+
+    def plan_rail_episode(self, *, backend: str = "hil", rest_endpoint: str = "",
+                          scenario_id: str = "", scenario_yaml: str = "", cell_id: str = "",
+                          seed: int | None = None, profile: str = "", arm: str = "",
+                          drive_scenario_events: bool = False, hot_apply=(), emit=(),
+                          k: int = 1) -> dict:
+        """What one rail session's StartEpisode would launch and forward,
+        launching nothing (2026-11-14; tools/harness_hil_episode.py --dry-run).
+        No session or episode is created, the rig is not taken, and nothing
+        goes over a network: the request is resolved by start_episode's own
+        _resolve, refused by its own _rail_prepare (a HarnessError, as
+        StartEpisode would answer), and the mission's arguments are built as
+        run_hil builds them (rail_node_args with the campaign files' paths,
+        plus the listener's flags) for mission number `k` of this server's
+        campaign. `hot_apply`: (at_sim_t, body) HotApplys to the episode;
+        `emit`: (at_sim_t, type, payload) EmitEvents. Returns {cell, seed,
+        arm, tag, sitl_home, node_args, scenario_events_via, timeline (every
+        forward in mission-time order: source, at_sim_t, method, url,
+        payload), run_dir, bundle_dir, bundle_files}. What it cannot see: the
+        server's REST TLS identity, the Orin, the mission's image."""
+        S, rig = self._S, self.rail
+        if backend not in RAIL_BACKENDS or rig is None or backend not in rig.backends:
+            raise HarnessError("UNIMPLEMENTED", f"backend {backend}: this server drives no "
+                                                f"{backend} rail (serve --rail {backend})")
+        if bool(scenario_id) == bool(scenario_yaml):
+            raise HarnessError("INVALID_ARGUMENT",
+                               "give exactly one of scenario_id or scenario_yaml")
+        endpoint = check_endpoint(rest_endpoint, self.rest_hosts) if rest_endpoint else ""
+        if endpoint:
+            self._check_rail_endpoint(backend, endpoint)
+        sess = _Session(session_id="(plan)", backend=backend, scene="", airframe="",
+                        seed=None if seed is None else int(seed), rest_endpoint=endpoint,
+                        label="", client="")
+        r = self._resolve(scenario_id=scenario_id, scenario_yaml=scenario_yaml,
+                          cell_id=cell_id, seed=seed, profile=profile, arm=arm, sess=sess)
+        defaults = r.lib.defaults
+        flight = self._rail_prepare(sess, r.spec, r.ep, defaults,
+                                    drive=bool(drive_scenario_events))
+        if (hot_apply or emit) and not endpoint:
+            raise HarnessError("FAILED_PRECONDITION",
+                               "a HotApply or EmitEvent to a rail episode needs the session "
+                               "bound to the mission's listener (rest_endpoint)")
+        mission = flight.spec
+        cfg = self._hil_cfg() if backend == "hil" else None
+        tag = S.hil_run_id(self._rail_campaign, int(k), mission)
+        rel = f"{S.CAMPAIGN_DIR}/{tag}"
+        try:
+            args = S.rail_node_args(mission, r.ep.seed, defaults, backend=backend,
+                                    events=(f"{rel}/events.json" if mission.events else None),
+                                    meta=f"{rel}/scenario.json",
+                                    bundles_dir=cfg.bundles_dir if cfg else None)
+            args += S.rail_extra_args(flight.hot_args)
+            home = S.sitl_home(mission, mission.policy.load(ROOT), defaults, r.ep.seed)
+        except S.UnsupportedScenario as err:
+            raise HarnessError("FAILED_PRECONDITION", str(err)) from None
+
+        def item(source: str, at: float, body: dict, **more) -> dict:
+            method, path, payload = rest_route(body)
+            return {"source": source, "at_sim_t": at, "method": method,
+                    "url": endpoint + path, "payload": payload, **more}
+
+        def when(at) -> float:
+            a = _finite(at, "at_sim_t")
+            if a < 0 or a > flight.max_s + 1e-9:
+                raise HarnessError("OUT_OF_RANGE", f"at_sim_t {a} s is outside the mission "
+                                                   f"(0 to the rail's cap {flight.max_s:.1f} s)")
+            return a
+
+        timeline = [item("scenario", x["at_sim_t"], x["body"], scenario_event=x["type"],
+                         scenario_event_index=x["index"]) for x in flight.timeline]
+        timeline += [item("episode", when(at), dict(body)) for at, body in hot_apply]
+        for at, typ, payload in emit:
+            try:
+                ev = ScenarioEvent.model_validate({"at_sim_t": when(at), "type": typ,
+                                                   "payload": dict(payload or {})})
+            except ValidationError as err:
+                raise HarnessError("INVALID_ARGUMENT",
+                                   f"ScenarioEvent refused: {err}") from None
+            timeline.append(item("emit_event", ev.at_sim_t, rest_body_of_event(ev),
+                                 scenario_event=ev.type))
+        timeline.sort(key=lambda x: x["at_sim_t"])            # stable: ties as queued
+        store = (Path(rig.store or (cfg.store if cfg else None) or self.runs_dir / "rail_runs")
+                 if backend == "hil" else
+                 Path(rig.sitl_out) if rig.sitl_out else ROOT / "demo" / "out")
+        if not store.is_absolute():
+            store = ROOT / store
+        return {"backend": backend, "scenario_id": r.ep.cell.scenario_id,
+                "cell_id": r.ep.episode_id, "seed": r.ep.seed, "arm": r.ep.arm_tag,
+                "policy": mission.policy.source, "tag": tag, "sitl_home": home,
+                "shield": "on" if mission.shield else "off",
+                "rail_max_s": flight.max_s, "node_args": args,
+                "listener_args": list(flight.hot_args), "rest_endpoint": endpoint or None,
+                "scenario_events_via": flight.events_via,
+                "mission_events": len(mission.events), "timeline": timeline,
+                "run_dir": (store / tag).as_posix(),
+                "bundle_dir": (self.runs_dir / "<episode_id>"
+                               / r.ep.dir_name("<UTC time>")).as_posix(),
+                "bundle_files": ["manifest.json", POLICY_BUNDLE_FILE, EPISODE_BAG_DIR + "/",
+                                 "shield_audit.jsonl", "harness_events.jsonl", "kpi.json"]}
 
     def _rail_phase(self, e: _Episode, phase: str, **detail) -> None:
         e.rail.phase = phase
         self._emit_episode(e, "rail_phase", {"phase": phase, **detail})
 
-    def _rail_hot_apply(self, e: _Episode, at_sim_t, body, now: bool) -> dict:
+    def _rail_emit_event(self, e: _Episode, at_sim_t, type_: str, payload, now: bool) -> dict:
+        """An EmitEvent addressed to a rail episode (2026-11-14, WP4-03; until
+        then UNIMPLEMENTED): the ScenarioEvent is validated as everywhere,
+        turned into the REST body that makes the flying Shield apply it as
+        the mission would (rest_body_of_event: a translate / rotate / scale
+        of a zone is PATCH /dynamic_nfz/<id>), and queued for its mission
+        time like a HotApply to the episode. On a rail the event names its
+        zone (`id`): the mission's own spawn counter and last zone are not
+        this server's to guess. A form with no REST body (a zone placed
+        against the vehicle, a change of motion, an expected refusal) is
+        UNIMPLEMENTED, with why."""
+        try:
+            ev = ScenarioEvent.model_validate({"at_sim_t": 0.0 if now else at_sim_t,
+                                               "type": type_, "payload": dict(payload or {})})
+        except ValidationError as err:
+            raise HarnessError("INVALID_ARGUMENT", f"ScenarioEvent refused: {err}") from None
+        body = rest_body_of_event(ev)
+        ack = self._rail_hot_apply(
+            e, at_sim_t, body, now, source="emit_event", kind=ev.type,
+            extra={"scenario_event": ev.type},
+            received={"rpc": "EmitEvent", "at_sim_t": None if now else at_sim_t,
+                      "now": bool(now), "type": type_, "payload": payload, "body": body})
+        return {"episode_id": ack["episode_id"], "queue_index": ack["queue_index"],
+                "at_sim_t": ack["at_sim_t"], "type": ev.type, "pending": True,
+                "forwarded_method": ack["forwarded_method"],
+                "forwarded_to": ack["forwarded_to"],
+                "rest_body_json": json.dumps(body, sort_keys=True)}
+
+    def _rail_hot_apply(self, e: _Episode, at_sim_t, body, now: bool, *,
+                        source: str = "episode", kind: str = "",
+                        extra: dict | None = None, received: dict | None = None) -> dict:
         """A HotApply addressed to a rail episode: queued for mission time
         `at_sim_t` (`now`: sent as soon as the mission's listener answers),
         then forwarded by the episode's driver to the endpoint the mission
         serves. The endpoint is the validator - it holds the flying Shield,
         the scenario's own events included, which the headless dry run never
         knew - so the ack is `pending`, and the receipt (or the refusal)
-        follows as a hot_apply_forwarded event and in the bundle."""
+        follows as a hot_apply_forwarded event and in the bundle. `source`
+        (episode, emit_event), `kind`, `extra` and `received` are what an
+        EmitEvent records instead of a HotApply's own."""
         s = self._flight_session(e)
         rf = e.rail
         if s is None or not s.rest_endpoint:
@@ -2563,15 +2980,16 @@ class Harness:
                                        f"`now`)")
             idx = len(e.queued)
             rid = str(body.get("id") or body.get("target_id") or "")
-            kind = str(body.get("type")) + (f"/{body['op']}" if body.get("op") else "")
+            kind = kind or (str(body.get("type")) + (f"/{body['op']}" if body.get("op") else ""))
             q = _Queued(index=idx,
                         event=SimpleNamespace(at_sim_t=0.0 if at is None else at, type=kind),
-                        source="hot_apply", rule_id=rid,
-                        received={"rpc": "HotApply", "at_sim_t": at, "now": bool(now),
-                                  "body": body})
+                        source="emit_event" if source == "emit_event" else "hot_apply",
+                        rule_id=rid,
+                        received=received or {"rpc": "HotApply", "at_sim_t": at,
+                                              "now": bool(now), "body": body})
             e.queued.append(q)
             with rf.cond:
-                rf.scheduled.append((at, idx, dict(body)))
+                rf.scheduled.append((at, idx, dict(body), source, dict(extra or {})))
                 rf.cond.notify_all()
             e.idle_since = time.monotonic()
             ack = {"episode_id": e.episode_id, "queue_index": idx,
@@ -2579,7 +2997,9 @@ class Harness:
                    "op": str(body.get("op") or ""), "type": str(body.get("type") or ""),
                    "session_id": e.session_id, "pending": True,
                    "forwarded_to": s.rest_endpoint + path, "forwarded_method": method}
-        self._emit_episode(e, "hot_apply", {**ack, "now": bool(now)})
+        self._emit_episode(e, "emit_event" if source == "emit_event" else "hot_apply",
+                           {**ack, "now": bool(now), **({"body": body} if source == "emit_event"
+                                                       else {}), **(extra or {})})
         return ack
 
     def _rail_loop(self, e: _Episode) -> None:
@@ -2666,11 +3086,11 @@ class Harness:
                 for x in due:
                     rf.scheduled.remove(x)
             # `now` bodies in arrival order first, then by mission time.
-            for at, idx, body in sorted(due, key=lambda x: (x[0] is not None, x[0] or 0.0,
-                                                            x[1])):
+            for at, idx, body, source, extra in sorted(
+                    due, key=lambda x: (x[0] is not None, x[0] or 0.0, x[1])):
                 try:
                     self._forward(s, body, episode=e, at_sim_t=at, queue_index=idx,
-                                  source="episode")
+                                  source=source, extra=extra)
                 except HarnessError:
                     pass                    # recorded, and streamed, by _forward
             with rf.cond:
@@ -2696,12 +3116,13 @@ class Harness:
         why = rf.endpoint_problem or (
             "the mission ended before its mission time" if rf.t0 is not None else
             "the mission ended before its listener reported mission_started")
-        for at, idx, body in left:
-            rec = {"type": "hot_apply", "via": "rest", "source": "episode", "t": None,
+        for at, idx, body, source, extra in left:
+            rec = {"type": "hot_apply", "via": "rest", "source": source, "t": None,
                    "at_sim_t": at, "queue_index": idx, "wall_time": round(time.time(), 4),
                    "body": body, "event": str(body.get("type") or ""),
                    "op": str(body.get("op") or ""),
                    "rule_id": str(body.get("id") or body.get("target_id") or ""),
+                   **extra,
                    "refused": True, "sent": False, "code": "NOT_SENT", "reason": why}
             with rf.cond:
                 rf.forwarded.append(rec)
@@ -2723,6 +3144,7 @@ class Harness:
                 if rf.driver is not None:
                     rf.driver.join(REST_TIMEOUT_S + 10.0)
             self._rail_phase(e, "fetched", run=Path(run["run_dir"]).as_posix())
+            self._rail_scenario_check(e, run)
             result = self._bundle_rail(e, s, run)
         except HarnessError as err:
             msg = err.message
@@ -2741,6 +3163,43 @@ class Harness:
             return
         if self._finish(e, "FAILED", error=msg):
             self._emit_episode(e, "episode_failed", {"error": msg})
+
+    @staticmethod
+    def _rail_scenario_check(e: _Episode, run: dict) -> None:
+        """A harness-driven scenario (drive_scenario_events) flew as the
+        scenario only if every one of its own events reached the flying
+        Shield: each forwarded once and applied, with a generation. One the
+        endpoint refused, or that was never sent (the mission ended first,
+        the listener never reported its start), makes it another flight -
+        the campaign's own rule for the mission's --events
+        (sweep_scenarios.hil_flight_problems: an error, never scored). So the
+        episode is FAILED_PRECONDITION with which and why, and nothing is
+        bundled; the run folder keeps everything the mission recorded."""
+        rf = e.rail
+        if rf.events_via != "harness":
+            return
+        with rf.cond:
+            recs = [r for r in rf.forwarded if r.get("source") == "scenario"]
+        ok = {r.get("queue_index") for r in recs
+              if not r.get("refused") and r.get("generation") is not None}
+        want = [q for q in e.queued if q.source == "scenario"]
+        bad = []
+        for q in want:
+            if q.index in ok:
+                continue
+            r = next((x for x in recs if x.get("queue_index") == q.index), None)
+            why = ("never forwarded" if r is None else
+                   f"{r.get('code')}: {r.get('reason')}")
+            bad.append(f"#{q.received['scenario_event']['index']} {q.event.type} at "
+                       f"{q.event.at_sim_t:g} s ({why})")
+        if bad:
+            raise HarnessError(
+                "FAILED_PRECONDITION",
+                f"the scenario's own event(s) the harness drove did not all reach the "
+                f"flying Shield: {'; '.join(bad)}. The flight is not the scenario's, so it "
+                f"is not scored (the campaign's rule for its --events); nothing is "
+                f"bundled under this episode (its run folder: "
+                f"{Path(run['run_dir']).as_posix()})")
 
     def _rail_run(self, e: _Episode) -> dict:
         """Fly the episode's mission on the rig and return the sweep's own
@@ -2958,7 +3417,8 @@ class Harness:
                    "rail_run": run.get("tag"), "rest_endpoint": rf.endpoint or None,
                    "endpoint_policy_hash": rf.endpoint_policy_hash or None,
                    "mission_t0_wall_time": rf.t0_wall,
-                   "mission_t0_basis": (MISSION_T0_BASIS if rf.endpoint else None)}]
+                   "mission_t0_basis": (MISSION_T0_BASIS if rf.endpoint else None),
+                   "scenario_events_via": rf.events_via}]
         events += forwarded
         events.append({"t": (rows[-1].get("t") if rows else None), "type": "episode_end",
                        "generation": last,
@@ -2999,11 +3459,21 @@ class Harness:
                             "scenario_score": (Path(score_path).as_posix()
                                                if score_path else None),
                             "scored_by": "experiments/sweep_scenarios.py (score, "
-                                         "rail_gate_set ideal, episode_verdict)"},
+                                         "rail_gate_set ideal, episode_verdict)",
+                            # Who applied the scenario's own events: the
+                            # mission (--events) or this server over REST
+                            # (drive_scenario_events), each with its route.
+                            "scenario_events_via": rf.events_via,
+                            "scenario_events": [
+                                {k: x[k] for k in ("index", "at_sim_t", "type", "payload",
+                                                   "body", "method", "path")}
+                                for x in rf.timeline] if rf.events_via == "harness"
+                            else len(e.ep.cell.spec.events)},
                    "events_forwarded": [{k: r.get(k) for k in (
-                       "queue_index", "source", "t", "at_sim_t", "method", "url", "event",
-                       "op", "rule_id", "generation", "policy_hash", "refused", "code",
-                       "reason", "rtt_ms")} for r in forwarded],
+                       "queue_index", "source", "scenario_event", "scenario_event_index",
+                       "t", "at_sim_t", "method", "url", "event", "op", "rule_id",
+                       "generation", "policy_hash", "refused", "code", "reason", "rtt_ms")}
+                       for r in forwarded],
                    "bundle_files": files, "episode_bag": bag_info}
         kpi_doc = _json_safe({
             **common, "status": status, "gates_failed": bad, "kpi_grade": bool(grade),
@@ -3047,7 +3517,8 @@ class Harness:
                     "generation": int(r.get("generation") or 0),
                     "policy_hash": str(r.get("policy_hash") or ""), "via": "rest",
                     "receipt_json": (json.dumps(_json_safe(r["receipt"]), sort_keys=True)
-                                     if r.get("receipt") is not None else "")}
+                                     if r.get("receipt") is not None else ""),
+                    "source": str(r.get("source") or "")}
                    for r in forwarded]
         return {"backend": e.backend, "rail_run_path": run_dir.as_posix(),
                 "bundle_files": dict(files),
@@ -3365,7 +3836,8 @@ class StressHarnessServicer:
                 profile=request.profile, arm=request.arm,
                 keep_flight_log=request.keep_flight_log, client=client,
                 session_id=request.session_id, live=request.live,
-                pace=request.pace if request.HasField("pace") else None)
+                pace=request.pace if request.HasField("pace") else None,
+                drive_scenario_events=request.drive_scenario_events)
             return pb.EpisodeRef(**ref)
         return self._call(context, run)
 

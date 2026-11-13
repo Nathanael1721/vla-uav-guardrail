@@ -18,9 +18,15 @@ backends were built (a session on a rail is one flown, scored episode with
 its bundle, through the sweep's own rail backends), zone edits are forwarded
 as PATCH /dynamic_nfz, and the bundle carries the grant's `episode.bag2/` and
 every hot-apply generation ("Rail sessions" below): code and headless tests,
-**not flown**. On 3 Nov a REST-bound session forwarded hot-applies into a
-flying desktop rail that was started outside the harness; nothing else here
-has flown, and the headless harness's episodes are never KPI-grade.
+**not flown**. On 2026-11-14 a rail episode could have its scenario's own
+events driven by the harness over REST instead of the mission
+(`drive_scenario_events`), EmitEvent was forwarded on a rail, and
+`tools/harness_hil_episode.py` was written to fly or dry-run one such
+episode ("A scenario's own events, driven by the harness" below): code and
+fake-rig tests, **not flown**. On 3 Nov a REST-bound session forwarded
+hot-applies into a flying desktop rail that was started outside the harness;
+nothing else here has flown, and the headless harness's episodes are never
+KPI-grade.
 
 ## What the grant asks
 
@@ -50,6 +56,8 @@ dashboards, scenario authoring).
 | `tests/test_harness_service.py` | 56 tests, standalone runner; the logic tests drive `Harness` without gRPC |
 | `tests/test_wp4outputs_harness.py` | 16 tests: live mode, sessions, InjectPolicy, IssueTask, REST forwarding, the streams, the lifecycle over mTLS |
 | `tests/test_harness_rail.py` | 11 tests (2026-11-10), on a fake rig: zone edits as PATCH /dynamic_nfz, a hil and a sitl session flown, scored and bundled under the grant's names, every generation in policy_bundle.tar.gz, the refusals, the client tool's `run --backend hil` over gRPC |
+| `tools/harness_hil_episode.py` | (2026-11-14) one harness-driven hil episode: a hil session, StartEpisode with `drive_scenario_events`, EndEpisode, the six names checked; `--dry-run` prints the plan and sends nothing |
+| `tests/test_harness_hil.py` | 9 tests (2026-11-14), on the same fake rig: every event form's REST body and route, the REST handler applying each library event as the mission node does, a harness-driven episode flown, scored and bundled, an unsent scenario event failing it, EmitEvent forwarded on a rail, the dry run, the tool over gRPC |
 
 Regenerating the stubs, from the repository root:
 
@@ -75,7 +83,7 @@ messages is unchanged, so a client built against those stubs still works.
 | HotApply | to an episode: the Policy DSL's REST hot-apply body, validated by `guardrail.api.apply_event`, flown at `at_sim_t` (or `now`, live); to a REST-bound session: POSTed to `<endpoint>/hot_apply`, or, for an edit of a zone, sent as `PATCH <endpoint>/dynamic_nfz/<id>` (2026-11-10) |
 | StartEpisode | arms one ScenarioSpec cell with a seed, an arm, optionally a profile and a session; `live` starts it flying at `pace` |
 | IssueTask | records the prompt's SHA-256 (manifest_extras.json) for an ARMED episode or the session's later ones; the headless pilot reads no text |
-| EmitEvent | a ScenarioEvent, the grant's seven types, at `at_sim_t` (or `now`, live) |
+| EmitEvent | a ScenarioEvent, the grant's seven types, at `at_sim_t` (or `now`, live); on a rail episode (2026-11-14) its REST body, forwarded at its mission time |
 | EndEpisode | flies (or lets a live episode finish, unpaced), scores, writes the episode bundle (three of the grant's six items, see below), returns it with the KPI row |
 | StreamTelemetry | every tick of the session's episodes: a clock frame per live tick, then each episode's flown rows |
 | StreamEvents | the session's lifecycle and each episode's run events (hot-applies with generation and hash, refusals), from the start |
@@ -403,7 +411,7 @@ the test resets a common name off its own allow-list to show it.
 | OUT_OF_RANGE | an event after the episode's last tick, or before the next tick a live episode flies |
 | PERMISSION_DENIED | a client certificate not on the allow-list; a policy (a client-sent scenario's, an InjectPolicy path) outside `policies/` and `bundles/`; a REST endpoint off loopback the server does not allow |
 | FAILED_PRECONDITION | an event for an episode no longer taking them (ended, failed, expired, or a scheduled one being flown); an episode the runner refused in flight (GetStatus says why); a paraphrase arm this server cannot draw; a hot-apply that would make an earlier-acknowledged one fail later in the flight; a stopped session; a session HotApply with no endpoint bound; an injected policy that does not hash to `expected_hash`, or an endpoint flying another policy; an `https` endpoint the server has no REST TLS identity for, or whose TLS handshake fails (certificate not the lab CA's, wrong host); a package or source file missing on the server; on a rail: a scenario the rail cannot fly as written, a control arm the rig is not set to fly, a HotApply to an episode whose mission has ended or whose endpoint flies another policy, a flight the rig could not complete or accept, a mission that flew another policy |
-| UNIMPLEMENTED | a hot-apply field the runner cannot carry; a rail backend (SITL, HIL) on a server with no rig for it; EmitEvent on a rail episode |
+| UNIMPLEMENTED | a hot-apply field the runner cannot carry; a rail backend (SITL, HIL) on a server with no rig for it; on a rail episode, an EmitEvent form with no REST body (a zone placed against the vehicle, a change of motion, an expected refusal; until 2026-11-14 every EmitEvent on a rail) |
 | RESOURCE_EXHAUSTED | 256 open episodes, 64 open sessions, 512 events in one episode, or an InjectPolicy archive over 16 MiB; a rail StartEpisode while the rig flies another |
 | UNAVAILABLE | (gRPC) a failed TLS handshake: no client certificate, one from another CA, plaintext on the TLS port; (service) a bound REST endpoint that does not answer, or answers 5xx |
 
@@ -590,10 +598,10 @@ endpoint launches exactly `rail_node_args`' list. The transport is injected
 | StartSession | `backend` SITL or HIL; `rest_endpoint` is the address the **mission's own** listener will be started on (it needs the port; off loopback it must be `https`, the server needs `--rest-pki`, `--allow-rest-host` and `--rail-hotapply-pki`). UNIMPLEMENTED on a server with no rig for the backend |
 | InjectPolicy | a file both hosts hold (`bundle_path`; uploaded bytes are INVALID_ARGUMENT). Nothing flies yet, so `GET /health` is not asked: the mission is launched pinned to the hash (`--expected-hash`), the endpoint is checked against it when it first answers, and the fetched run's manifest is checked again before anything is bundled |
 | IssueTask | recorded, as on the headless backend (the rails' VLA stub reads no text either) |
-| StartEpisode | **launches the mission** and returns; the episode is RUNNING. What the rail cannot fly as written (`rail_refusal`), a Shield-off control arm on a rig without `--rail-controls`, a policy the rail cannot be pinned to, `live` / `pace`: refused, nothing launched. One mission at a time: a second StartEpisode while one flies is RESOURCE_EXHAUSTED |
+| StartEpisode | **launches the mission** and returns; the episode is RUNNING. What the rail cannot fly as written (`rail_refusal`), a Shield-off control arm on a rig without `--rail-controls`, a policy the rail cannot be pinned to, `live` / `pace`: refused, nothing launched. One mission at a time: a second StartEpisode while one flies is RESOURCE_EXHAUSTED. With `drive_scenario_events` (2026-11-14) the scenario's own events are the harness's to forward (below) |
 | HotApply (episode) | queued for mission time `at_sim_t` (or `now`), `PolicyAck.pending`; forwarded then by the episode's driver, by the body's own route (below). The endpoint is the validator: it holds the flying Shield, the scenario's own events included, which the headless dry run never knew |
 | HotApply (session) | forwarded at once, as before; while a rail episode of the session flies it is also recorded in that episode's bundle |
-| EmitEvent | UNIMPLEMENTED: the scenario's own events are flown by the mission (`--events`), and a ScenarioEvent placed against the flying vehicle (`ahead_of_vehicle_m`, a direction) has no REST form |
+| EmitEvent | (2026-11-14; UNIMPLEMENTED until then) turned into its REST body (`rest_body_of_event`) and queued like a HotApply to the episode, `EventAck.pending` with the route and the body; it names its zone (`id`). A form with no REST body - a zone placed against the flying vehicle (`ahead_of_vehicle_m`), a change of motion (`mps`, `deg_per_s`), an expected refusal - is UNIMPLEMENTED |
 | GetStatus | `backend`, and `rail_phase`: launching, awaiting_endpoint, awaiting_mission_start, mission, fetched, scored |
 | EndEpisode | **blocks** until the mission has ended and its folder is fetched (minutes), scores it, writes the bundle. A flight the rig could not complete or accept, or one whose manifest names another policy, is FAILED_PRECONDITION with the reason; nothing is bundled and the rig is free |
 | StopSession | waits for a flying rail episode (it cannot be called back) |
@@ -633,6 +641,64 @@ identity for an `https` endpoint, the same code mapping (409 / 404 / 422).
 the grant's "scale radius" on a polygon zone: `Shield.scale_nfz` scales the
 ring about its vertex mean. Not forwarded: `DELETE /dynamic_nfz/{id}` (expiry is
 not on the grant's list; a switch-off does it).
+
+### A scenario's own events, driven by the harness (2026-11-14)
+
+Until this date a library scenario's events on a rail were the mission's:
+`run_hil` writes them to `--events` and the Shield node applies them on its
+own tick (`guardrail.scenario_events.apply_event`). The harness could add
+hand-written bodies beside them, not drive them. StartEpisode's
+`drive_scenario_events` hands them to the harness:
+
+1. `scenario_rest_timeline(spec)` turns each event into the REST body that
+   makes the flying Shield apply it as the mission would
+   (`rest_body_of_event`), in flight order: a spawn with `vertices` is
+   POST /hot_apply with every field the mission defaults written out (P0,
+   hard, `repair`, mission, 0-1000 m, 1 m margin; the REST handler refuses
+   a dynamic_nfz without a `violation_action`); a translate (`dx_m`,
+   `dy_m` -> `dx`, `dy`), rotate (`angle_deg`) or scale (`factor`) step is
+   PATCH /dynamic_nfz/<id>; a switch and a swap are POST /hot_apply with
+   the ids the mission would give them. A zone with no `id` is
+   `dyn-nfz-<k>` and an edit with none edits the last spawn, as the
+   mission's EventState counts them.
+2. What has no REST form refuses the episode, naming every such event,
+   nothing launched: a zone placed against the flying vehicle
+   (`ahead_of_vehicle_m`: only the mission knows where the aircraft is), a
+   change of motion (`mps`, `deg_per_s`: the mission restarts it from the
+   ring the flying Shield holds at that instant), an event the scenario
+   expects refused. So dyn-nfz-spawn-*, dyn-nfz-translate, dyn-nfz-rotate-
+   spin, grant-example-sweep and the failsafe zones still fly only with the
+   mission applying them; dyn-nfz-rotate-step, radius-scaling-*,
+   time-window-switch-event, rule-*-mid-run and corridor-swap-* (13 cells)
+   can be driven.
+3. The mission is launched with the same scenario minus its events: no
+   `--events`, no events.json pushed. Each event is queued at its mission
+   time (source `scenario`) and forwarded by the episode's driver, so the
+   flying Shield gets each once, from the harness.
+4. After the flight each scenario event must have reached the Shield with a
+   generation. One the endpoint refused, or that was never sent (the
+   mission ended first, the listener never reported its start), makes the
+   flight another one - the campaign's own rule for `--events`
+   (`hil_flight_problems`) - so the episode is FAILED_PRECONDITION, not
+   scored, nothing bundled; the run folder keeps what the mission recorded.
+
+`tests/test_harness_hil.py` checks step 1 on every library cell it applies
+to: a Shield given the events as the mission node gives them and a twin
+given the REST bodies through `guardrail/api.py`'s handlers hold the same
+policy hash and generation after each event. What differs is the clock: the
+mission applies `--events` on its own tick, the harness forwards late by at
+most one /health poll plus a round trip, and the bundle keeps both times.
+
+**EmitEvent on a rail** goes the same way: the ScenarioEvent's REST body,
+queued like a HotApply to the episode (`EventAck.pending`, the route and
+the body); on a rail it names its zone.
+
+**The dry run** (`Harness.plan_rail_episode`, `tools/harness_hil_episode.py
+--dry-run`) resolves and refuses the request with StartEpisode's own
+`_resolve` and `_rail_prepare`, builds the mission's arguments as `run_hil`
+does (plus the listener's flags), and lists every forward, the run folder
+and the bundle. It creates no session or episode, takes no rig and sends
+nothing.
 
 ### The bundle, under the grant's names
 
@@ -756,12 +822,38 @@ What to read afterwards: the client's exit code and KPI row; in the bundle,
 sweep's own dry run (`experiments/sweep_scenarios.py --backend hil
 --hil-dry-run --only speed-cap`; the harness adds the `--hotapply-*` flags).
 
+**A harness-driven hil episode (2026-11-14)** replaces the hand-placed
+bodies above with a library scenario's own events, driven by the harness
+(the section before "The bundle"). The same window 1, then (window 2, Git
+Bash, the lab checkout, the same once-only PKI steps):
+
+    python tools/harness_hil_episode.py --dry-run     # sends nothing
+    python tools/harness_hil_episode.py               # flies it
+
+Defaults: `dyn-nfz-rotate-step`, seed 1001, endpoint
+`https://10.42.0.3:8071`, the scenario's own policy (its signed bundle on
+both hosts). The server launches the mission with no `--events` and the
+listener's flags, and forwards the bar's spawn at 3 s (POST /hot_apply) and
+its 90-degree turn at 8 s (PATCH /dynamic_nfz/bar, `{"op": "rotate",
+"angle_deg": 90.0}`). Its gates (P0 escape 0, the bar inert before the turn
+and binding after it, no breach, no polygon entry) are the library's, and
+its nightly cells have flown on hil with the mission applying both events,
+so the harness-driven flight has a campaign twin. Read afterwards: the
+tool's last line (`grant bundle: 6/6 names written`) and exit code;
+`harness_events.jsonl` (two forwards, source `scenario`, generations 1-2,
+each `rail.t` no earlier than its `at_sim_t`); `kpi.json`
+`harness.rail.scenario_events_via` (`harness`); the run folder under the
+server's `--rail-store` (default `<runs>/rail_runs/<tag>`), whose
+`scenario.json` records no events. The scale case is
+`--scenario radius-scaling-shrink --cell radius-scaling-shrink@factor=0.5`.
+
 ## What is not done
 
 - **A rail session flown.** `BACKEND_SITL` and `BACKEND_HIL` are built and
-  tested on a fake rig (2026-11-10, "Rail sessions" above); no session has
-  driven the real one, and the Orin's mission image lacks fastapi and
-  uvicorn for the listener. The pymavlink rail is not a backend.
+  tested on a fake rig (2026-11-10, "Rail sessions" above; the
+  harness-driven scenario events, 2026-11-14); no session has driven the
+  real one, and the Orin's mission image lacks fastapi and uvicorn for the
+  listener. The pymavlink rail is not a backend.
 - **Pose in the live telemetry.** `EpisodeRunner` exposes no per-tick row
   while it flies; live frames carry the clock and the pose comes with the
   flown rows when the episode ends.
