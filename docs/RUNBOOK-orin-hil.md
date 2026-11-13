@@ -765,9 +765,15 @@ recorded per row; `SIM_GPS_LAG_MS` delays the GPS into the EKF, which
 compensates it), `gust_mps` (`SIM_WIND_TURB` redraws its azimuth every
 physics step and low-passes SITL's own random speed, `SIM_Aircraft.cpp:785-
 800`: neither the process nor the seed's draw of the harness's per-tick
-gust), `battery_critical_at_s` (the node's FSM has no RTL watch, so G6
-cannot fire; SITL's battery drives ArduPilot's own BATT_FS_*), and a dropout
-flown blind (`fix_quality_reported: false`: the rail reports its fix).
+gust), `battery_critical_at_s` (since 2026-11-14 the node's RTL watch reads
+ArduPilot's own battery verdict, BATTERY_STATUS charge_state CRITICAL, but
+SITL's battery reaches it only through the firmware's BATT_CRT_VOLT /
+BATT_CRT_MAH - 0, disabled, by default - which the simulator side never
+sets), and a dropout flown blind (`fix_quality_reported: false`: the rail
+reports its fix). A gate on `rtl_failed_ticks` is no longer refused: the
+node writes `rtl_failed` on every RTL row (failsafe-rtl-blocked flies; the
+FSM edges G2, G4, G6, X2 and X3 have a profile of their own,
+`--profile fsm_edges`, experiments/profiles/fsm_edges.yaml).
 
 **The episode's clock.** The node announces its mission clock on every
 scenario mission: a STATUSTEXT `GRDL T0 <nonce8> t=<s>` through MAVROS at

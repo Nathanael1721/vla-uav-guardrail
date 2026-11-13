@@ -16,6 +16,78 @@ shipped change and recorded as one.
 
 ## [Unreleased]
 
+### 2026-11-14 (WP3-07: an RTL-failure input for G6 on the ROS 2 Shield node; scenarios for G2, G4, X2, X3; not flown)
+
+ntFIN2 never took the grant's G2, G4 and G6, nor X2 and X3. Why, and what
+now flies them, is in docs/DESIGN-escalation-fsm.md, "2026-11-14: the edges
+the rails had never taken". The FSM (guardrail/fsm.py), its thresholds and
+its config hash are unchanged, and no headless episode changes.
+
+#### Added
+- `sitl/ros2_shield_node.py`, THE RTL WATCH: `RTLFailureWatch` feeds the
+  FSM's `rtl_failed` (G6) on every tick the FSM is in RTL, where the node
+  passed `False` until now. The RTL fails on a blocked leg home
+  (`guardrail.rtl_path.check_leg` on the Shield's hard P0 zones and band:
+  the harness's test), no progress home while `/mavros/state` reads RTL
+  outside RTL_ALT / RTL_CONE_SLOPE of home (`rtl_path.ProgressMonitor`:
+  0.5 m in 5 s), ArduPilot's battery failsafe at CRITICAL or worse
+  (`BatteryHealth`, from BATTERY_STATUS `charge_state` in the raw MAVLink
+  feed the node already reads for EKF_STATUS_REPORT; fresh within 5 s), or
+  an RTL the autopilot has not entered 5 s after the request. Every
+  threshold errs toward not failing a return: no progress is judged before
+  the autopilot reports RTL nor inside the home radius, LOW battery fails
+  nothing, and an error while reading the rules is recorded and fails
+  nothing. RTL_ALT, RTL_CONE_SLOPE, BATT_CRT_VOLT, BATT_CRT_MAH and
+  BATT_FS_CRT_ACT are read at take-off (`read_rtl_params`, events.jsonl
+  `rtl_watch`). Rows carry `rtl_failed` / `rtl_confirmed` on each judged
+  RTL tick (the reasons on a failed one, also an `rtl_failed` event);
+  metrics.json `rtl_watch`; G6's reason names them ("RTL failed: ...").
+- `experiments/profiles/fsm_edges.yaml` and three families flown by it
+  alone (`profiles: [fsm_edges]`, experiments/templates/
+  failsafe_escalation.yaml): failsafe-rtl-from-hold (X2) and
+  failsafe-land-from-hold (X3) - nfz-head-on's hold, then an RTL / land
+  zone over nfz-square at 8 s - and fsm-n-in-t-flicker (G2, G4) - a `brake`
+  zone switched off and on every 1.4 s, unlabelled on purpose (the rubric's
+  N1 and the grant's G4 disagree on it; a PI question). The profile adds
+  failsafe-rtl-blocked (G6, blocked path) and wind-beyond-authority at
+  lane 15, 12 m/s (G6, no progress home on the rail vehicle).
+  `grant_kpi_bearing: false`; no library, smoke, nightly or broad cell
+  count moves (169 / 57 / 225 / 2990).
+
+#### Changed
+- `experiments/sweep_scenarios.py`: `sitl_extra` counts `rtl_failed_ticks`
+  from the node's rows when its metrics carry `rtl_watch` (left out - "not
+  measured" - for an older node), and `rail_refusal` no longer refuses a
+  gate on it: failsafe-rtl-blocked flies on both rails. The battery hook
+  (`battery_critical_at_s`, failsafe-low-battery) stays refused, with a new
+  reason: the node reads ArduPilot's verdict, but SITL's battery reaches
+  CRITICAL only through the firmware's BATT_CRT_* (0, disabled, by
+  default), which the simulator side never sets.
+- docs/RUNBOOK-orin-hil.md step 14's refusal list, the design doc's
+  integration note and its 2026-11-11 "Not done".
+
+#### Measured (headless, not KPI-grade; seed 1001, ideal / rail vehicle)
+- failsafe-rtl-from-hold G1 X2 G9 / G1 G3 X2 G9; failsafe-land-from-hold
+  G1 X3 G10 / G1 G3 X3 G10; fsm-n-in-t-flicker X1 G2 G4 G9 on both;
+  failsafe-rtl-blocked G11 G6 G10 on both; wind-beyond-authority lane 15,
+  12 m/s, G1 G3 X9 G6 / G1 G3 X7 G6. No breach, no polygon entry.
+
+#### Not done / risk
+- Not flown. On hil: `python experiments/sweep_scenarios.py --profile
+  fsm_edges --backend hil` (keep its runs out of a KPI report's campaigns).
+- On a KPI campaign the watch can turn an RTL into a landing: an RTL whose
+  straight leg home crosses a P0 zone now lands in place at its first tick
+  (G6), as the harness always did - ntFIN2 counted 21 Shield-on missions in
+  which ArduPilot's GeoFence or its RTL leg carried the aircraft into a P0
+  zone - and one making no headway home lands 5 s after the autopilot
+  confirms RTL (wind beyond authority). Both are still fail-safes, so
+  fail-safe trigger correctness does not move; a cell's outcome label
+  (RTL_triggered) can. Not re-measured on the rig.
+- failsafe-low-battery stays refused (above); the pymavlink rail
+  (`sitl/run_sitl_demo.py`) still passes no `rtl_failed`; the node does not
+  apply `FSMConfig.for_decision_period`, which matters only for a pilot
+  slower than 1.1 s a decision.
+
 ### 2026-11-14 (perception stress on Project AirSim: day, dusk, night, rain and fog for the PAS follow, and a per-scenario perception metric) — the PAS + ArduPilot follow (the red car, AIOT-VLA on the AGX Orin) gains a `--stress` option and five named scenarios, each non-KPI; darkness is the cameras' exposure because CityLife_Day has no SunSky actor; not flown
 
 Branch pas-perception-stress. **Nothing here has flown**: code and offline

@@ -3056,9 +3056,12 @@ RAIL_STRESS_REFUSALS = {
         "axis drawn from the episode's seed - neither the process nor the draw is the "
         "cell's"),
     "battery_critical_at_s": (
-        "the node feeds its escalation FSM no RTL watch (rtl_failed is False on every "
-        "tick), so the grant's G6 cannot fire; SITL's battery drives ArduPilot's own "
-        "BATT_FS_* failsafe instead, another edge"),
+        "the Shield node's RTL watch reads ArduPilot's own battery verdict (BATTERY_STATUS "
+        "charge_state CRITICAL, since 2026-11-14), but nothing on the simulator side makes "
+        "ArduPilot declare it at the cell's time: SITL's battery (SIM_BATT_VOLTAGE) reaches "
+        "CRITICAL only through the firmware's BATT_CRT_VOLT / BATT_CRT_MAH (0, disabled, "
+        "by default) and, for a voltage, BATT_LOW_TIMER (10 s) - parameters of the "
+        "firmware under test, which the simulator side never sets"),
 }
 
 
@@ -3390,8 +3393,6 @@ def rail_refusal(spec: ScenarioSpec, backend: str = "sitl", *, episode=None,
       * a relabel schedule (the node declares one subject class);
       * a non-finite pilot action (the node refuses to fly or count one:
         the action-contract family stays headless);
-      * a gate on rtl_failed_ticks (the node feeds its FSM no RTL watch, so
-        an RTL that fails - G6 - cannot happen there);
       * a start altitude below RAIL_MIN_START_UP_M, or at or above the
         autopilot's FENCE_ALT_MAX less its margin (the backstop would fire
         at take-off);
@@ -3405,7 +3406,12 @@ def rail_refusal(spec: ScenarioSpec, backend: str = "sitl", *, episode=None,
     _mission_mismatch: the pad, StubVLA, 15 m), and every scenario but
     rail-mission-stub-vla was refused; the clock refusal had been stale
     since the node took --clock-start (2026-10-12). Until 2026-11-07 every
-    stressor was refused ("no SIM_* wind or GPS stressor is wired")."""
+    stressor was refused ("no SIM_* wind or GPS stressor is wired"). Until
+    2026-11-14 a gate on rtl_failed_ticks was refused too (the node fed its
+    FSM no RTL watch, so G6 could not fire there); the node's RTL watch
+    (sitl/ros2_shield_node.py, THE RTL WATCH) now writes `rtl_failed` on
+    every RTL row and sitl_extra counts them, so failsafe-rtl-blocked flies.
+    The battery hook stays refused (RAIL_STRESS_REFUSALS says why)."""
     if backend not in RAIL_BACKENDS:
         raise ValueError(f"backend {backend!r} is not a flight rail ({RAIL_BACKENDS})")
     why: list[str] = []
@@ -3420,9 +3426,6 @@ def rail_refusal(spec: ScenarioSpec, backend: str = "sitl", *, episode=None,
     if any(not math.isfinite(float(v)) for v in act.values()):
         why.append("a non-finite pilot action (the Shield node refuses to fly or count "
                    "a non-finite /vla/action_4d; the action contract stays headless)")
-    if "rtl_failed_ticks" in spec.gates:
-        why.append("an RTL that fails (a gate on rtl_failed_ticks: the node feeds its "
-                   "escalation FSM no RTL watch, so G6 cannot fire on the rail)")
     try:
         pol = policy if policy is not None else spec.policy.load(ROOT)
     except Exception as e:                               # noqa: BLE001
@@ -4457,6 +4460,13 @@ def sitl_extra(spec: ScenarioSpec, rows: list[dict], metrics: dict, policy,
         # flight on which the denial never reached the Shield, so the cell's
         # gate (min 1) fails rather than score a clean run.
         extra["gps_dropout_ticks"] = sum(1 for r in win if r.get("fix_ok") is False)
+    if spec.shield and isinstance(metrics.get("rtl_watch"), dict):
+        # The rail's measure of the headless `rtl_failed_ticks` (2026-11-14):
+        # rows on which the Shield node's RTL watch failed the FSM's RTL
+        # (G6's input; sitl/ros2_shield_node.py, THE RTL WATCH), over the
+        # whole flight, as the FSM record it feeds. A node without the watch
+        # (no `rtl_watch` in metrics.json) leaves it out: "not measured".
+        extra["rtl_failed_ticks"] = sum(1 for r in rows if r.get("rtl_failed") is True)
     # ---- the safety invariants: the whole flight --------------------------
     # Keep-outs over every row, the landing included (a landing in a zone is
     # an entry); unsafe positions and departures up to the mission's end:

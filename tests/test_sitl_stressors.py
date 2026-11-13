@@ -443,6 +443,13 @@ def test_the_rails_fly_wind_dropout_and_jitter_and_refuse_the_rest_with_why():
         assert "gps_noise_m" in noise and "SIM_GPS_NOISE" in noise and "latency_ticks" in noise
         assert "gust_mps" in why(BY_ID["wind-gusts"]) and "SIM_WIND_TURB" in why(BY_ID["wind-gusts"])
         assert "battery_critical_at_s" in why(BY_ID["failsafe-low-battery"])
+        # 2026-11-14: the node's RTL watch reads ArduPilot's battery verdict,
+        # but no SIM_* stressor makes ArduPilot declare it at the cell's
+        # time (the firmware's BATT_CRT_*), so the battery hook stays
+        # refused for that reason; the blocked return home now flies.
+        assert "BATT_CRT_VOLT" in why(BY_ID["failsafe-low-battery"])
+        assert "no RTL watch" not in why(BY_ID["failsafe-low-battery"])
+        assert not why(BY_ID["failsafe-rtl-blocked"]), why(BY_ID["failsafe-rtl-blocked"])
         blind = _with(BY_ID["gps-dropout"], **{"stress.fix_quality_reported": False})
         assert "fix_quality_reported false" in why(blind)
         late = _with(BY_ID["gps-dropout"], **{"stress.gps_dropout_s": [70.0, 80.0]})
@@ -760,6 +767,381 @@ def test_the_node_hands_the_shield_the_autopilots_verdict_and_x8_waits_for_it():
     report = (out / "report.md").read_text(encoding="utf-8")
     assert "Autopilot estimator" in report and "70 report(s)" in report
     shutil.rmtree(out, ignore_errors=True)
+
+
+# --------------------------------------------------------------------------- #
+# the RTL watch behind the FSM's G6, "RTL fails (battery / blocked path)"
+# (2026-11-14; sitl/ros2_shield_node.py, THE RTL WATCH)
+# --------------------------------------------------------------------------- #
+
+def _battery_words(charge_state=1, volts_mv=12600, remaining=80, bid=0, consumed=500,
+                   current_ca=1000, extensions=True):
+    """BATTERY_STATUS (147) as MAVLink 2 carries it - base fields in size
+    order, then time_remaining and charge_state, trailing zero bytes cut -
+    and mavros_msgs/Mavlink holds it: (len, payload64)."""
+    import struct
+    cells = [volts_mv] + [0xFFFF] * 9
+    raw = struct.pack("<iih10HhBBBb", consumed, -1, 2500, *cells, current_ca, bid, 0, 0,
+                      remaining)
+    if extensions:
+        raw += struct.pack("<iB", 600, charge_state)
+    raw = raw.rstrip(b"\0")
+    pad = raw.ljust((len(raw) + 7) // 8 * 8, b"\0")
+    return len(raw), list(struct.unpack(f"<{len(pad) // 8}Q", pad))
+
+
+def test_battery_status_is_read_from_the_raw_mavlink_feed():
+    """ArduPilot reports its battery failsafe state in BATTERY_STATUS's
+    charge_state (AP_BattMonitor::get_mavlink_charge_state: LOW, CRITICAL);
+    the node reads it from the raw feed it already reads EKF_STATUS_REPORT
+    from: the autopilot's own report only, fields in MAVLink's order, a
+    payload MAVLink 2 cut restored (a message without the extension reads
+    UNDEFINED, never CRITICAL)."""
+    import ros2_shield_node as N
+    assert N.BATTERY_STATUS_ID == 147 and N.BATTERY_STATUS_LEN == 41
+    n, w = _battery_words(charge_state=3)
+    f = N.battery_status_from_mavlink(147, 1, 1, n, w)
+    assert f == {"id": 0, "charge_state": 3, "remaining_pct": 80, "voltage_v": 12.6,
+                 "current_a": 10.0, "consumed_mah": 500}, f
+    n0, w0 = _battery_words(charge_state=0)
+    assert n0 < N.BATTERY_STATUS_LEN
+    assert N.battery_status_from_mavlink(147, 1, 1, n0, w0)["charge_state"] == 0
+    nb, wb = _battery_words(extensions=False)                 # MAVLink 1's base only
+    assert nb == 36 and N.battery_status_from_mavlink(147, 1, 1, nb, wb)["charge_state"] == 0
+    nu, wu = _battery_words(volts_mv=0xFFFF, remaining=-1, consumed=-1, current_ca=-1, bid=1)
+    u = N.battery_status_from_mavlink(147, 1, 1, nu, wu)
+    assert (u["voltage_v"], u["remaining_pct"], u["consumed_mah"], u["current_a"], u["id"]) == (
+        None, None, None, None, 1), u
+    assert N.battery_status_from_mavlink(193, 1, 1, n, w) is None          # EKF_STATUS_REPORT
+    assert N.battery_status_from_mavlink(147, 246, 25, n, w) is None       # the stressor
+    assert N.battery_status_from_mavlink(147, 1, 191, n, w) is None
+    assert N.battery_status_from_mavlink(147, 1, 1, n, ["x"]) is None
+    assert N.charge_state_name(3) == "CRITICAL" and N.charge_state_name(9) == "9"
+    assert [N.BATTERY_CHARGE_STATES[s] for s in N.BATTERY_FAILED_STATES] == [
+        "CRITICAL", "EMERGENCY", "FAILED"]
+
+
+def test_the_battery_verdict_is_ardupilots_own_failsafe_state_while_fresh():
+    """BatteryHealth: True while a fresh report of any battery is CRITICAL or
+    worse, False while every fresh one is not - LOW is ArduPilot's reason to
+    START an RTL, UNHEALTHY a monitor fault - and None with no report or a
+    stale one: not reported, never a failure."""
+    import ros2_shield_node as N
+
+    def rep(state, bid=0):
+        return N.battery_status_from_mavlink(147, 1, 1, *_battery_words(charge_state=state,
+                                                                        bid=bid))
+    h = N.BatteryHealth()
+    assert h.verdict(0.0) == (None, "no BATTERY_STATUS from the autopilot")
+    h.report(0.0, rep(1))
+    assert h.verdict(0.1)[0] is False
+    h.report(1.0, rep(2))
+    assert h.verdict(1.1)[0] is False and "LOW" in h.verdict(1.1)[1]
+    h.report(2.0, rep(6))
+    assert h.verdict(2.1)[0] is False
+    h.report(3.0, rep(3))
+    crit, why = h.verdict(3.1)
+    assert crit is True and "battery 0 CRITICAL" in why and "12.6 V" in why, why
+    assert h.verdict(3.0 + N.BATTERY_STALE_S + 0.01)[0] is None, "a stale report is no verdict"
+    assert "within 5 s" in h.verdict(3.0 + N.BATTERY_STALE_S + 0.01)[1]
+    h.report(4.0, rep(4))
+    assert h.verdict(4.1)[0] is True
+    h.report(5.0, rep(1))
+    assert h.verdict(5.1)[0] is False
+    two = N.BatteryHealth()
+    two.report(0.0, rep(1, bid=0))
+    two.report(0.0, rep(3, bid=1))
+    assert two.verdict(0.1)[0] is True and "battery 1" in two.verdict(0.1)[1]
+    s = h.summary(to_mission_t=lambda v: v - 1.0)
+    assert s["messages"] == 6 and s["charge_states_seen"] == {
+        "OK": 2, "LOW": 1, "UNHEALTHY": 1, "CRITICAL": 1, "EMERGENCY": 1}, s
+    assert s["failed_spells"] == [{"t_start": 2.0, "t_end": 4.0, "id": 0, "state": "CRITICAL"}]
+    assert s["fails_rtl_at"] == ["CRITICAL", "EMERGENCY", "FAILED"]
+    for bad in (0, -1.0, float("nan"), True):
+        try:
+            N.BatteryHealth(stale_s=bad)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(f"stale_s={bad!r} accepted")
+
+
+def _assess(w, path, mode="RTL", zones=(), battery=(None, ""), t0=0.0, dt=0.1):
+    """RTLFailureWatch.assess over a path of (x, y, up), one tick each;
+    `mode` a mode or a function of t."""
+    out = []
+    for k, (x, y, up) in enumerate(path):
+        t = t0 + k * dt
+        m = mode(t) if callable(mode) else mode
+        out.append(w.assess(t, x, y, up, m, None if zones is None else list(zones), None,
+                            battery))
+    return out
+
+
+def test_the_rtl_watch_fails_a_return_only_for_its_four_reasons():
+    """RTLFailureWatch (G6's input): a blocked leg (the harness's check_leg,
+    from the FSM's RTL on), no progress home while the autopilot reports
+    RTL outside the home radius (the harness's ProgressMonitor: 0.5 m in
+    5 s), ArduPilot's battery at CRITICAL, or an RTL the autopilot never
+    entered within 5 s. The nulls are the ordinary returns: flying home, the
+    climb before it, the loiter and descent over home, a creep just fast
+    enough, a zone beside the leg, a battery at LOW or unreported, a leg
+    check that breaks."""
+    import ros2_shield_node as N
+    from shapely.geometry import Polygon
+    from guardrail.rtl_path import Zone
+    W = N.RTLFailureWatch
+    # The ordinary return: home from 60 m at 4 m/s, then 15 s over home.
+    path = [(max(0.0, 60.0 - 0.4 * k), 0.0, 15.0) for k in range(300)]
+    assert not any(c.failed for c in _assess(W((0.0, 0.0)), path))
+    # Its end, inside the home radius: loiter and descend, never judged.
+    cs = _assess(W((0.0, 0.0)), [(3.0, 0.0, 15.0 - 0.05 * k) for k in range(300)])
+    assert not any(c.failed or c.judged_progress for c in cs)
+    # The climb before the return is progress (10 -> 15 m at 2 m/s, 20 m out).
+    climb = [(20.0, 0.0, min(15.0, 10.0 + 0.2 * k)) for k in range(26)]
+    climb += [(20.0 - 0.4 * k, 0.0, 15.0) for k in range(1, 50)]
+    assert not any(c.failed for c in _assess(W((0.0, 0.0)), climb))
+    # No progress: held 20 m out in RTL fails once a whole window is seen.
+    cs = _assess(W((0.0, 0.0)), [(20.0, 0.0, 15.0)] * 60)
+    first = next(i for i, c in enumerate(cs) if c.failed)
+    assert first == 50 and cs[first].kinds == ("no_progress",), (first, cs[first])
+    assert "no progress home" in cs[first].note and cs[first].confirmed
+    # 0.09 m/s fails, 0.11 m/s does not (the threshold, X6's 0.1 m/s).
+    assert any(c.failed for c in _assess(W((0.0, 0.0)),
+                                         [(20.0 - 0.009 * k, 0.0, 15.0) for k in range(80)]))
+    assert not any(c.failed for c in _assess(W((0.0, 0.0)),
+                                             [(20.0 - 0.011 * k, 0.0, 15.0) for k in range(80)]))
+    # The window starts when the autopilot reports RTL, not at the request.
+    cs = _assess(W((0.0, 0.0)), [(20.0, 0.0, 15.0)] * 80,
+                 mode=lambda t: "GUIDED" if t < 1.0 - 1e-9 else "RTL")
+    assert not cs[5].confirmed and cs[10].confirmed
+    assert next(i for i, c in enumerate(cs) if c.failed) == 60
+    # Never entered: the autopilot still in GUIDED 5 s after the request.
+    cs = _assess(W((0.0, 0.0)), [(0.0, 0.0, 15.0)] * 60, mode="GUIDED")
+    assert not any(c.failed for c in cs[:50]), [c for c in cs[:50] if c.failed][:1]
+    assert cs[50].kinds == ("not_entered",) and "still reports GUIDED 5.0 s" in cs[50].note
+    # A blocked leg fails the first tick, whatever the mode; one beside it not.
+    across = Zone("nfz-across", Polygon([(8, -5), (12, -5), (12, 5), (8, 5)]), 0.0, 100.0)
+    beside = Zone("nfz-beside", Polygon([(8, 5), (12, 5), (12, 10), (8, 10)]), 0.0, 100.0)
+    c = _assess(W((0.0, 0.0)), [(20.0, 0.0, 15.0)], mode="GUIDED", zones=[across])[0]
+    assert c.failed and c.kinds == ("blocked_path",) and "nfz-across" in c.note, c
+    assert not _assess(W((0.0, 0.0)), [(20.0, 0.0, 15.0)], zones=[beside])[0].failed
+    # The battery: CRITICAL fails, LOW or unreported does not.
+    cs = _assess(W((0.0, 0.0)), [(3.0, 0.0, 15.0)] * 3,
+                 battery=(True, "ArduPilot reports battery 0 CRITICAL"))
+    assert all(c.failed and c.kinds == ("battery",) for c in cs)
+    assert "battery critical: ArduPilot reports" in cs[0].note
+    for b in ((False, "battery 0 LOW"), (None, "no report"), None):
+        assert not _assess(W((0.0, 0.0)), [(3.0, 0.0, 15.0)], battery=b)[0].failed
+    # Every reason at once is named, in order.
+    c = _assess(W((0.0, 0.0)), [(20.0, 0.0, 15.0)] * 51, mode="GUIDED", zones=[across],
+                battery=(True, "x"))[50]
+    assert c.kinds == ("blocked_path", "not_entered", "battery"), c.kinds
+    # A leg check that breaks fails nothing and is recorded; no rules: unjudged.
+    w = W((0.0, 0.0))
+    c = w.assess(0.0, 20.0, 0.0, 15.0, "RTL", [object()], None, (None, ""))
+    assert not c.failed and w.n_errors == 1 and "AttributeError" in w.errors[0], w.errors
+    assert not w.assess(0.1, 20.0, 0.0, 15.0, "RTL", None, None, (None, "")).failed
+    # A new RTL starts every clock again.
+    w = W((0.0, 0.0))
+    _assess(w, [(20.0, 0.0, 15.0)] * 45)
+    w.reset()
+    assert not any(c.failed for c in _assess(w, [(20.0, 0.0, 15.0)] * 45, t0=4.5))
+    s = w.summary()
+    assert s["rtls_judged"] == 2 and s["ticks_judged"] == 90 and s["ticks_failed"] == 0
+    assert (s["rtl_alt_m"], s["cone_slope"], s["home_radius_m"]) == (15.0, 3.0, 5.0)
+    assert (s["progress_window_s"], s["min_progress_mps"], s["entry_timeout_s"]) == (5.0, 0.1, 5.0)
+    # The autopilot's RTL_ALT and cone set the radius (RTL_ALT / slope, at least 5 m).
+    w.configure(30.0, 3.0, "read")
+    assert (w.rtl_alt_m, w.home_radius_m, w.source) == (30.0, 10.0, "read")
+    w.configure(15.0, 0.0)
+    assert w.home_radius_m == 5.0
+    w.configure(float("nan"), -1.0)
+    assert (w.rtl_alt_m, w.cone_slope) == (15.0, 3.0)
+    w.configure(0.0, 3.0)
+    assert w.rtl_alt_m == 0.0 and w.home_radius_m == 5.0      # RTL_ALT 0: the current altitude
+    for bad in ({"window_s": 0}, {"entry_timeout_s": float("nan")}):
+        try:
+            W((0.0, 0.0), **bad)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(f"{bad} accepted")
+    try:
+        W((float("inf"), 0.0))
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("a home at infinity accepted")
+
+
+def test_the_rtl_watch_reads_the_autopilots_return_and_battery_parameters():
+    """RTL_ALT (cm) and RTL_CONE_SLOPE configure the watch (ArduCopter's
+    defaults unread; a slope under RTL_MIN_CONE_SLOPE is no cone), and the
+    BATT_CRT_* / BATT_FS_CRT_ACT are recorded in words: with both
+    thresholds 0 - the copter default - ArduPilot never declares CRITICAL."""
+    import ros2_shield_node as N
+    assert N.rtl_watch_config({"RTL_ALT": 1500.0, "RTL_CONE_SLOPE": 3.0}) == (
+        15.0, 3.0, "read from the autopilot: RTL_ALT, RTL_CONE_SLOPE")
+    assert N.rtl_watch_config({"RTL_ALT": 3000.0, "RTL_CONE_SLOPE": 0.2})[:2] == (30.0, 0.0)
+    a, s, why = N.rtl_watch_config({"RTL_ALT": 2000.0})
+    assert (a, s) == (20.0, None) and why == ("read from the autopilot: RTL_ALT; "
+                                              "ArduCopter's default for RTL_CONE_SLOPE")
+    assert N.rtl_watch_config({}) == (None, None, "ArduCopter's default for RTL_ALT, "
+                                                  "RTL_CONE_SLOPE")
+    assert N.rtl_watch_config({"RTL_ALT": -5.0, "RTL_CONE_SLOPE": "x"})[:2] == (None, None)
+    note = N.battery_failsafe_note
+    assert "cannot fire" in note({"BATT_CRT_VOLT": 0.0, "BATT_CRT_MAH": 0.0,
+                                  "BATT_FS_CRT_ACT": 0.0})
+    assert "not read" in note({})
+    lands = note({"BATT_CRT_VOLT": 10.5, "BATT_CRT_MAH": 0.0, "BATT_FS_CRT_ACT": 0.0})
+    assert "below 10.5 V" in lands and "the FSM's G6 lands the RTL" in lands, lands
+    own = note({"BATT_CRT_VOLT": 0.0, "BATT_CRT_MAH": 500.0, "BATT_FS_CRT_ACT": 1.0})
+    assert "below 500 mAh" in own and "Land" in own and "takeover" in own, own
+    assert set(N.RTL_WATCH_PARAMS) == {"RTL_ALT", "RTL_CONE_SLOPE", "BATT_FS_CRT_ACT",
+                                       "BATT_CRT_VOLT", "BATT_CRT_MAH"}
+
+
+def _rtl_node(R, N, x, y):
+    """A started stand-in node at (x, y, 15 m) - home is the policy frame's
+    origin - with its FSM put in RTL as G11 would: the request sent through
+    the adapter, the autopilot still in GUIDED."""
+    from guardrail.fsm import FSMState
+    node, clk, out = _node(R, N, [])
+    node.state = State(x=x, y=y, up=15.0, yaw_deg=0.0)
+    node.start_mission()
+    node._on_state(N.MavState(connected=True, armed=True, mode="GUIDED"))
+    node.fsm._enter(FSMState.RTL, node._t())
+    node._request_mode("RTL", "test: the FSM's RTL")
+    return node, clk, out
+
+
+def _rtl_ticks(R, N, node, clk, n, toward_home=0.0, battery=None):
+    for _ in range(n):
+        if battery is not None:
+            bl, bw = _battery_words(charge_state=battery)
+            node._on_mavlink(N.Mavlink(msgid=147, sysid=1, compid=1, len=bl, payload64=bw))
+        if toward_home:
+            st = node.state
+            d = math.hypot(st.x, st.y)
+            k = max(0.0, d - toward_home) / d if d > 0 else 0.0
+            node.state = st.model_copy(update={"x": st.x * k, "y": st.y * k})
+        node._on_pose(R._pose_msg(N, node.state))
+        R._act(N, node, vx=0.0)
+        clk.t += 0.1
+        node._tick()
+
+
+def test_the_node_feeds_its_fsm_an_rtl_that_fails_and_g6_lands_it():
+    """On the node (the stand-in ROS stack): until 2026-11-14 rtl_failed was
+    False on every tick, so G6 never fired on a rail. Each of the watch's
+    reasons now reaches the FSM, which takes G6 and asks for LAND through
+    the adapter; the RTL rows carry rtl_failed / rtl_confirmed, the failing
+    one its reasons, events.jsonl an `rtl_failed`, metrics.json `rtl_watch`.
+    The null: an RTL flying home is never failed."""
+    R, N = _node_module()
+
+    def g6(node):
+        return [r for r in node.rows if r.get("fsm_edge") == "G6"]
+
+    def modes(node):
+        return [m.data for m in node.pubs[N.TOPIC_MODE_REQUEST].sent]
+
+    # The autopilot never enters RTL: G6 5 s after the request.
+    node, clk, out = _rtl_node(R, N, -30.0, 15.0)
+    t0 = node._t()
+    _rtl_ticks(R, N, node, clk, 60)
+    rows = g6(node)
+    assert len(rows) == 1 and rows[0]["rtl_fail_kinds"] == ["not_entered"], rows
+    assert abs(rows[0]["t"] - t0 - 5.0) < 0.15, (rows[0]["t"], t0)
+    assert modes(node) == ["RTL", "LAND"], modes(node)
+    judged = [r for r in node.rows if "rtl_failed" in r]
+    assert [r["rtl_failed"] for r in judged] == [False] * (len(judged) - 1) + [True]
+    assert all(r["rtl_confirmed"] is False for r in judged)
+    assert "RTL failed: RTL not entered" in [e for e in R._events(out)
+                                            if e["kind"] == "fsm_transition"][-1]["reason"]
+    assert len([e for e in R._events(out) if e["kind"] == "rtl_failed"]) == 1
+    node._finish("test over")
+    met = json.loads((out / "metrics.json").read_text(encoding="utf-8"))
+    rw = met["rtl_watch"]
+    assert rw["ticks_rtl_failed"] == 1 and rw["ticks_failed"] == 1 and rw["rtls_judged"] == 1
+    assert rw["failures"][0]["kinds"] == ["not_entered"] and rw["errors_n"] == 0
+    assert rw["battery"]["messages"] == 0 and rw["params"] is None
+    assert rw["battery"]["topic"] == "/uas1/mavlink_source"
+    assert met["fsm"]["outcome_label"] == "Land_triggered", met["fsm"]["outcome_label"]
+    shutil.rmtree(out, ignore_errors=True)
+    # In RTL but no headway home (a wind it cannot beat): G6 for no progress.
+    node, clk, out = _rtl_node(R, N, -30.0, 15.0)
+    node._on_state(N.MavState(connected=True, armed=True, mode="RTL"))
+    assert node.takeover is None
+    _rtl_ticks(R, N, node, clk, 60)
+    rows = g6(node)
+    assert len(rows) == 1 and rows[0]["rtl_fail_kinds"] == ["no_progress"], rows
+    assert rows[0]["rtl_confirmed"] is True and modes(node) == ["RTL", "LAND"]
+    shutil.rmtree(out, ignore_errors=True)
+    # The null: the same RTL flying home at 4 m/s - never failed.
+    node, clk, out = _rtl_node(R, N, -30.0, 15.0)
+    node._on_state(N.MavState(connected=True, armed=True, mode="RTL"))
+    _rtl_ticks(R, N, node, clk, 70, toward_home=0.4)
+    assert not g6(node) and modes(node) == ["RTL"], modes(node)
+    assert all(r["rtl_failed"] is False for r in node.rows if "rtl_failed" in r)
+    # ... until ArduPilot declares its battery CRITICAL: G6 on the next tick.
+    _rtl_ticks(R, N, node, clk, 2, toward_home=0.4, battery=1)
+    assert not g6(node)
+    _rtl_ticks(R, N, node, clk, 1, toward_home=0.4, battery=3)
+    rows = g6(node)
+    assert len(rows) == 1 and rows[0]["rtl_fail_kinds"] == ["battery"], rows
+    assert "CRITICAL" in rows[0]["rtl_fail_reasons"][0]
+    node._finish("test over")
+    met = json.loads((out / "metrics.json").read_text(encoding="utf-8"))
+    assert met["rtl_watch"]["battery"]["messages"] == 3
+    assert met["rtl_watch"]["battery"]["charge_states_seen"] == {"OK": 2, "CRITICAL": 1}
+    shutil.rmtree(out, ignore_errors=True)
+    # The leg home crosses nfz-square (7-23 m North and East; home the
+    # origin): G6 on the first RTL tick, before the autopilot confirms.
+    node, clk, out = _rtl_node(R, N, 30.0, 15.0)
+    _rtl_ticks(R, N, node, clk, 1)
+    rows = g6(node)
+    assert len(rows) == 1 and rows[0]["rtl_fail_kinds"] == ["blocked_path"], node.rows[-1]
+    assert "nfz-square" in rows[0]["rtl_fail_reasons"][0]
+    shutil.rmtree(out, ignore_errors=True)
+    # The take-off read configures the watch from the autopilot's values.
+    node, clk, out = _rtl_node(R, N, -30.0, 15.0)
+    node._get_params = lambda client, names: {"RTL_ALT": 2000.0, "RTL_CONE_SLOPE": 2.0,
+                                              "BATT_CRT_VOLT": 0.0, "BATT_CRT_MAH": 0.0,
+                                              "BATT_FS_CRT_ACT": 0.0}
+    node.read_rtl_params()
+    assert (node.rtl_watch.rtl_alt_m, node.rtl_watch.home_radius_m) == (20.0, 10.0)
+    ev = [e for e in R._events(out) if e["kind"] == "rtl_watch"][-1]
+    assert ev["RTL_ALT"] == 2000.0 and ev["home_radius_m"] == 10.0 and "cannot fire" in ev["battery"]
+    node._finish("test over")
+    met = json.loads((out / "metrics.json").read_text(encoding="utf-8"))
+    assert met["rtl_watch"]["params"]["RTL_CONE_SLOPE"] == 2.0
+    assert "cannot fire" in met["rtl_watch"]["battery"]["note"]
+    shutil.rmtree(out, ignore_errors=True)
+
+
+def test_a_rail_run_counts_the_rtl_failed_ticks_its_node_wrote():
+    """sitl_extra's rtl_failed_ticks (the gate failsafe-rtl-blocked carries,
+    min 1): the RTL rows the node's watch failed, over the whole flight; left
+    out - "not measured" - when the node had no watch (no `rtl_watch` in its
+    metrics), so an older node's flight cannot pass the gate."""
+    spec = BY_ID["failsafe-rtl-blocked"]
+    rows = [{"t": round(0.1 * k, 3), "x": -180.0, "y": 0.0, "up": 15.0} for k in range(60)]
+    rows[51]["rtl_failed"] = False
+    rows[52].update(rtl_failed=True, rtl_fail_kinds=["blocked_path"])
+    pol = spec.policy.load(ROOT)
+    extra = S.sitl_extra(spec, rows, {"rtl_watch": {"ticks_failed": 1}}, pol)
+    assert extra["rtl_failed_ticks"] == 1
+    assert not [g for g, _ in S.check_gates_keyed(spec.gates, extra) if g == "rtl_failed_ticks"]
+    old = S.sitl_extra(spec, rows, {}, pol)
+    assert "rtl_failed_ticks" not in old
+    assert ("rtl_failed_ticks", "rtl_failed_ticks: not measured") in S.check_gates_keyed(
+        spec.gates, old)
+    none = S.sitl_extra(spec, [dict(r, rtl_failed=False) for r in rows], {"rtl_watch": {}}, pol)
+    assert none["rtl_failed_ticks"] == 0
+    assert ("rtl_failed_ticks", "rtl_failed_ticks=0 < min 1") in S.check_gates_keyed(
+        spec.gates, none)
 
 
 # --------------------------------------------------------------------------- #

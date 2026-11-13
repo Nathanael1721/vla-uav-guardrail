@@ -153,6 +153,108 @@ and its config hash are unchanged; the Shield's verdict changed. The next
 section has the evidence (731 rig flights), the law and what it does not
 cover.
 
+**Update 2026-11-14 (the edges the rails had never taken).** The KPI-grade
+hil nightly ntFIN2 took neither the grant's G2, G4 and G6 nor X2 and X3.
+G6 had no input on the ROS 2 node (`rtl_failed=False` on every tick); it
+has one now, the node's RTL watch, built from what ArduPilot reports. The
+others were scenario gaps, not FSM or rail gaps. The FSM, its edges, its
+thresholds and its config hash are unchanged, and so is every headless
+episode. The next section says why each edge never fired and what flies it.
+
+## 2026-11-14: the edges the rails had never taken
+
+### Why each one never fired on hil
+
+- **G6 (RTL -> Land, "RTL fails (battery / blocked path)").** The FSM reads
+  `TickInput.rtl_failed`; the headless harness has fed it from
+  `guardrail/rtl_path.py` RTLWatch since 2026-10-12, the ROS 2 Shield node
+  passed `False` on every tick. So G6 could not fire on the rig, an RTL that
+  made no headway home into a wind beyond authority stayed an RTL ("Not
+  done" of 2026-11-11), and `rail_refusal` refused the two cells that take
+  G6 (failsafe-rtl-blocked, a gate on `rtl_failed_ticks`;
+  failsafe-low-battery, the battery hook).
+- **X2 / X3 (Brake / Loiter -> RTL / Land on a direct rule).** No library
+  cell violates an RTL or land rule while the FSM is in Brake or Loiter:
+  every one (failsafe-rtl-zone, -land-zone, -rtl-blocked, -low-battery) is
+  violated from Normal, which is G11 / G12. They never fired headless
+  either (the 4 Nov published sweep: no X2, no X3).
+- **G2 / G4 (N-in-T).** N-in-T counts hard-violation ONSETS, at most one per
+  `onset_clear_s` (1 s), three within T (5 s). The rail ticks at the
+  pilot's 10 Hz (the stub, `--tick-trigger action`), so (N - 1) x 1 s = 2 s
+  fits in T and the edges are reachable there: not a tick or decision-period
+  gap. In the published headless sweep (4 Nov, ideal vehicle) G2 fires on
+  nine cells and G4 on eight: G4 only through GPS noise
+  (gps-noise-beyond-margin; `gps_noise_m` is refused on the rails), G2
+  through GPS noise or a noise-free forecast re-touching a ring on the
+  ideal vehicle (near-edge-at-12mps, corridor-drift-angles at -60 deg) or a
+  bar sweeping across it (dyn-nfz-rotate-spin). The nightly profile flies
+  those families and ntFIN2, on the rig's own response, took no G2. A steady
+  pilot makes one onset and holds it. (For a pilot slower than 1.1 s a decision, N-in-T needs
+  `FSMConfig.for_decision_period`, which the node does not apply yet; the
+  stub and the VLA at 1 s are not affected: T stays 5 s.)
+
+### G6's input on the ROS 2 node: the RTL watch
+
+`sitl/ros2_shield_node.py` RTLFailureWatch, judged on every tick the FSM
+is in RTL (reset on every other tick); the module docstring, THE RTL WATCH,
+has the detail. The RTL fails on the first tick on which one of these holds:
+
+| reason | test | threshold, and why |
+|---|---|---|
+| blocked path | `rtl_path.check_leg` on the Shield's hard, enforced P0 zones and band in force now | the harness's own test, from the FSM's RTL on (the leg is where ArduCopter's RTL will fly, whatever the mode reads yet) |
+| no progress home | `rtl_path.ProgressMonitor` on the climb plus the distance home, only while `/mavros/state` reads RTL and the aircraft is outside RTL_ALT / RTL_CONE_SLOPE of home (5 m by default) | the harness's 0.5 m in 5 s (T, X6's 0.1 m/s); waiting for the autopilot's own RTL keeps the mode change and the brake out of the window, and inside the cone ArduCopter cuts the climb and loiters and lands over home - an RTL that is ending, never judged |
+| battery | ArduPilot's BATTERY_STATUS `charge_state` CRITICAL or worse, fresh within 5 s | ArduPilot's own failsafe verdict (BATT_CRT_VOLT / BATT_CRT_MAH); LOW is its reason to start an RTL, not to abandon one |
+| RTL not entered | `/mavros/state` has not read RTL 5 s after the FSM entered it | five 1 Hz heartbeats: a refused mode change (no position, no home) never confirms |
+
+Every threshold errs toward not failing a return; an error while reading
+the rules is recorded and fails nothing. RTL_ALT, RTL_CONE_SLOPE and the
+BATT_* failsafe parameters are read at take-off and recorded. Rows carry
+`rtl_failed` / `rtl_confirmed` on every judged RTL tick, and
+`sweep_scenarios.sitl_extra` counts `rtl_failed_ticks` from them when the
+node's metrics carry `rtl_watch`, so `rail_refusal` no longer refuses a
+gate on it: failsafe-rtl-blocked flies. failsafe-low-battery stays
+refused: the node reads the battery, but SITL's battery reaches CRITICAL
+only through the firmware's BATT_CRT_* (0, disabled, by default), which the
+simulator side, setting SIM_* parameters only, never sets. Flying it needs a
+decision: give the rig's autopilot a critical threshold (with
+BATT_FS_CRT_ACT 0, so the FSM and not ArduPilot acts) and schedule
+SIM_BATT_VOLTAGE below it BATT_LOW_TIMER before the cell's time.
+
+### What flies them: experiments/profiles/fsm_edges.yaml
+
+Five cells, seed 1001; three new families flown by this profile alone
+(`profiles: [fsm_edges]`: no library, smoke, nightly or broad number
+moves), measured headless on the ideal and the rail vehicle
+(RAIL_VEHICLE):
+
+| cell | ideal | rail vehicle |
+|---|---|---|
+| failsafe-rtl-from-hold (nfz-head-on, an RTL zone over nfz-square at 8 s) | G1 X2 G9 | G1 G3 X2 G9 |
+| failsafe-land-from-hold (the same, `land`) | G1 X3 G10 | G1 G3 X3 G10 |
+| fsm-n-in-t-flicker (a `brake` zone 16 m ahead, switched off 0.9 s / on every 1.4 s) | X1 G2 G4 G9 | X1 G2 G4 G9 |
+| failsafe-rtl-blocked | G11 G6 G10 | G11 G6 G10 |
+| wind-beyond-authority, lane 15, 12 m/s | G1 G3 X9 G6 | G1 G3 X7 G6 |
+
+The flicker's zone acts `brake`, so a switch-on is answered by the rule's
+own stop and never by an untrusted repair (which would take G3 first);
+onsets 1.4 s apart survive 0.4 s of tick jitter against the 1 s rate limit,
+and each 0.9 s switch-off is under T_recover, so neither Brake nor Loiter
+clears between them. It carries NO fail-safe label: the rubric's N1 expects
+none for a planner every request of which is answered by a stop or a
+trusted repair, and the grant's G4 sends home a Loiter whose N-in-T persists.
+Which should govern is a question for the PI; until then the cell is the
+edges' flight, not a KPI cell, and the profile says `grant_kpi_bearing:
+false`.
+
+### Not done
+
+- Not flown: every number above is headless. On hil: `--profile fsm_edges
+  --backend hil` (or `--only failsafe-rtl-from-hold failsafe-land-from-hold
+  fsm-n-in-t-flicker failsafe-rtl-blocked wind-beyond-authority` under it).
+- The pymavlink rail (`sitl/run_sitl_demo.py`) still passes no `rtl_failed`.
+- The battery reason has never fired: no rig flight has had a critical
+  threshold.
+
 ## 2026-11-12: X8 on the autopilot's own estimator
 
 ### The false triggers
@@ -480,7 +582,9 @@ with it (a KPI campaign was flying), and must be.
   no fix quality.
 - G6 on the ROS 2 node still has no input (`rtl_failed` is False on every
   tick): an X9 RTL that makes no headway home into the wind stays in RTL on
-  the rig, carried by the wind, where the harness lands it.
+  the rig, carried by the wind, where the harness lands it. (Done
+  2026-11-14: the node's RTL watch, "2026-11-14: the edges the rails had
+  never taken".)
 
 ## 2026-11-07: the FSM on the rail vehicle
 
@@ -1971,7 +2075,11 @@ range(_REPAIR_PASSES):` loop. It is separate from the FSM.
   reading RTL without `home_reached`, or `shield.state_is_unsafe(st)` holds a
   hard geofence violation (the RTL track is blocked), or battery is below the
   failsafe level. Which of these counts is an integration choice, and it
-  should be written into the manifest.
+  should be written into the manifest. (As built on 2026-11-14,
+  RTLFailureWatch: a blocked leg, no progress home while the autopilot
+  reports RTL, ArduPilot's battery at CRITICAL, or an RTL never entered; an
+  autopilot that leaves RTL by itself is a takeover, after which the FSM no
+  longer steps. "2026-11-14: the edges the rails had never taken".)
 - **rows** (`self.rows.append({...})`): add `"fsm_state_before":
   out.before.value`, `"fsm_state_after": out.state.value` (the grant's audit
   field names, and what `guardrail/kpi.py` `_escalated` / `_held` read),

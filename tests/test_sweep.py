@@ -281,7 +281,9 @@ def test_the_rails_refuse_only_what_they_cannot_realise():
         assert not why(BY_ID["wind-within-authority"]), why(BY_ID["wind-within-authority"])
         assert "gust_mps" in why(BY_ID["wind-gusts"])
         assert "battery_critical_at_s" in why(BY_ID["failsafe-low-battery"])
-        assert "rtl_failed_ticks" in why(BY_ID["failsafe-rtl-blocked"])
+        # Since 2026-11-14 the node's RTL watch feeds G6 and writes
+        # rtl_failed per RTL row, so a gate on rtl_failed_ticks is flown.
+        assert not why(BY_ID["failsafe-rtl-blocked"]), why(BY_ID["failsafe-rtl-blocked"])
         assert "relabel" in why(BY_ID["standoff-reclassified"])
         assert "non-finite pilot action" in why(BY_ID["nonfinite-action"])
         low = _cell("altitude-recovery-depth", start_up=0.5)
@@ -3171,14 +3173,19 @@ def test_the_hil_dry_run_lists_every_mission_and_flies_nothing():
     after = set((ROOT / S.CAMPAIGN_DIR).glob("*")) if (ROOT / S.CAMPAIGN_DIR).is_dir() else set()
     assert rc == 0 and not made and after == before, (rc, made, after - before)
     # 41 / 23 until 2026-11-07, when the two GPS-dropout, two wind-within-
-    # authority and two wind-beyond-authority cells began to fly.
-    assert "47 mission(s) to fly, 17 refused" in out, out[:300]
+    # authority and two wind-beyond-authority cells began to fly; 47 / 17
+    # until 2026-11-14, when failsafe-rtl-blocked did (the node's RTL watch
+    # feeds G6 and writes the rtl_failed its gate counts).
+    assert "48 mission(s) to fly, 16 refused" in out, out[:300]
+    flown, _, refused = out.partition("\n  refused:")
+    assert "_failsafe-rtl-blocked  failsafe-rtl-blocked" in flown, "the blocked return flies"
+    assert "REF  failsafe-low-battery" in refused and "BATT_CRT_VOLT" in refused
     assert "dry_001_nfz-head-on" in out and "SITL_HOME  -35.36344066,149.16539523,584,0.00" in out
     assert "--start=-20,15,15" in out and "hil_desktop.sh" in out
     # The simulator's stressors, as the desktop side will set them.
     assert "SIM_GPS_DISABLE=1 at 4 s" in out and "SIM_WIND_DIR=180" in out
     assert "--stress-plan" in out and "--stress-record" in out
-    for why in ("gps_noise_m", "gust_mps", "rtl_failed_ticks", "non-finite",
+    for why in ("gps_noise_m", "gust_mps", "battery_critical_at_s", "non-finite",
                 "start altitude 30 m", "relabel", "paraphrase / prefix arm",
                 "Shield-off control arm"):
         assert why in out, why
@@ -3929,6 +3936,60 @@ def test_a_fetched_rail_run_is_rescored_offline_and_left_as_it_was():
         rc = S.main(["--seed", "0", "--only", spec_id, "--rescore-rail", str(bad),
                      "--out", str(out)])
         assert rc == 1 and "no scenario record" in out.read_text(encoding="utf-8")
+
+
+def test_the_fsm_edges_profile_flies_the_edges_no_rail_had_taken():
+    """experiments/profiles/fsm_edges.yaml (2026-11-14, WP3-07): the KPI
+    nightly ntFIN2 never took G2, G4, G6, X2 or X3. Its five cells take them
+    headless on the ideal vehicle and on the rail vehicle (RAIL_VEHICLE,
+    the rig's fitted response), and no rail refuses any of them - the
+    blocked return home included, now that the node's RTL watch feeds G6.
+    The three new families are flown by this profile alone, so no library,
+    smoke or nightly number moves; fsm-n-in-t-flicker carries no fail-safe
+    label (the rubric's N1 and the grant's G4 disagree on it)."""
+    from guardrail.scenario_spec import expand, load_profile
+    prof = load_profile(ROOT / "experiments" / "profiles" / "fsm_edges.yaml")
+    assert prof.grant_kpi_bearing is False
+    eps, info = expand(LIBRARY, prof)
+    assert info["cells"] == 5 and info["cells_within_expected"] and not info["duplicate_cells"]
+    new = ("failsafe-rtl-from-hold", "failsafe-land-from-hold", "fsm-n-in-t-flicker")
+    for name in ("smoke", "nightly"):
+        _, other = expand(LIBRARY, load_profile(ROOT / "experiments" / "profiles" / f"{name}.yaml"))
+        assert not set(new) & set(other["cells_per_family"]), name
+    _, lib = expand(LIBRARY)
+    assert not set(new) & set(lib["cells_per_family"])
+    assert BY_ID["fsm-n-in-t-flicker"].expected_failsafe is None
+    assert [(BY_ID[s].expected_failsafe, BY_ID[s].failsafe_clause, BY_ID[s].expected_outcome)
+            for s in new[:2]] == [(True, "E1", "RTL_triggered"), (True, "E1", "Land_triggered")]
+    want = {"failsafe-rtl-from-hold": (["X2"], "RTL_triggered"),
+            "failsafe-land-from-hold": (["X3"], "Land_triggered"),
+            "fsm-n-in-t-flicker": (["G2", "G4"], "RTL_triggered"),
+            "failsafe-rtl-blocked": (["G11", "G6"], "Land_triggered")}
+    seen = set()
+    for e in eps:
+        spec = e.cell.spec
+        for backend in S.RAIL_BACKENDS:
+            assert S.rail_refusal(spec, backend) is None, (e.cell.episode_id, backend)
+        sid = e.cell.episode_id.split("@")[0]
+        if sid not in want:
+            assert sid == "wind-beyond-authority" and (
+                e.cell.params["lane_y"], e.cell.params["wind_speed_mps"]) == (15.0, 12.0), \
+                e.cell.params
+            continue
+        edges, outcome = want[sid]
+        for arm in ({}, dict(S.RAIL_VEHICLE)):
+            run = S.run_episode(spec, DEFAULTS, e.seed, **arm)
+            fsm = run.extra["fsm"]
+            taken = [t["edge"] for t in fsm["transitions"]]
+            it = iter(taken)
+            assert all(edge in it for edge in edges), (sid, arm, taken)
+            assert fsm["outcome_label"] == outcome, (sid, arm, fsm["outcome_label"])
+            assert run.extra["breaches"] == 0 and run.extra["polygon_entries"] == 0, (
+                sid, arm, run.extra["breaches"], run.extra["polygon_entries"])
+            if sid == "failsafe-rtl-blocked":
+                assert run.extra["rtl_failed_ticks"] >= 1
+        seen.add(sid)
+    assert seen == set(want), seen
 
 
 if __name__ == "__main__":
