@@ -85,7 +85,11 @@
 #          perception_node --pilot vla, and its VLA cameras, on that rail's
 #          stand-ins against the
 #          loopback fake server; its Pillow drawing check and its CityLife
-#          map check SKIP here). test_follow_dataset (the follow expert's
+#          map check SKIP here). test_pas_perception_stress (that rail's
+#          perception stressors, perception_node --stress, the launchers'
+#          -Stress / STRESS and tools/perception_stress_report.py; its
+#          client checks need projectairsim and its luma check Pillow, and
+#          SKIP here). test_follow_dataset (the follow expert's
 #          AerialVLA recording, demo/vla_record.py and follow_vlm
 #          --record-vla, and the step-label builder,
 #          tools/build_follow_dataset.py: the label arithmetic, the codec
@@ -713,6 +717,7 @@ jobs:
               tests/test_vla_follow_smooth.py \
               tests/test_finetune_follow.py \
               tests/test_pas_vla.py \
+              tests/test_pas_perception_stress.py \
               tests/test_follow_dataset.py \
               tests/test_vla_dagger.py \
               tests/test_vla_prev_front_rate.py \

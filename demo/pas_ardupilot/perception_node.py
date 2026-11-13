@@ -307,6 +307,9 @@ RUN
     #   ... --policy policies/follow_car_citylife_nfz.yaml --dev-yaml \
     #       --clock-start 2026-10-12T17:29:50 --hold-mode LOITER
     # the demo video: ... --save-view   (scripts/run_pas_ardupilot.ps1 -SaveView)
+    # a perception-stress variant, never KPI-grade (perception_stress.py):
+    #   ... --stress night   (scripts/run_pas_ardupilot.ps1 -Step scene -Stress night,
+    #                         then STRESS=night deploy/orin/run_pas_perception.sh)
 """
 from __future__ import annotations
 
@@ -392,6 +395,7 @@ from mavlink_adapter_node import (DEFAULT_HOLD_MODE, FENCE_MARGIN_M,   # noqa: E
                                   autopilot_mode, fence_alt_plan,
                                   fence_items, policy_ceiling_m)
 
+import perception_stress as pstress                                   # noqa: E402
 import rail                                                           # noqa: E402
 import topology as topo                                               # noqa: E402
 from autopilot import FrameAnchor, PymavlinkLink, body_to_world       # noqa: E402
@@ -2109,20 +2113,31 @@ class ProjectAirSimCamera:
                   demo/vla_fly.py does; VLAFront is then not subscribed and
                   only VLADown is required, in the robot and among the live
                   topics an attached node checks).
+    stress        (--stress) a perception stressor's name (perception_stress):
+                  its weather is SET after a load and READ BACK after an
+                  attach (the desktop's scene step set it), recorded as
+                  scene_record["stress"]; start() refuses on any problem, so
+                  a stressed run never flies a scene without its stressor.
+                  The exposure and the scene id are in the rendered configs.
     """
 
     def __init__(self, obs, sim_cfg: dict, address: str = "127.0.0.1",
                  projectairsim=None, view_switch: int = 1,
                  robot: str = rail.ROBOT_NAME, attach: bool = False,
-                 chase: bool = False, vla_frames=None, vla_front_source: str = "vla"):
+                 chase: bool = False, vla_frames=None, vla_front_source: str = "vla",
+                 stress: str | None = None):
         if vla_front_source not in ("vla", "detector"):
             raise ValueError(f"vla_front_source {vla_front_source!r} is not vla or detector")
+        if stress is not None:
+            pstress.stressor(stress)                          # refuses an unknown name
         self.obs, self.cfg, self.address = obs, sim_cfg, address
         self.pas = projectairsim
         self.view_switch, self.robot, self.attach = view_switch, robot, attach
         self.chase = chase
         self.vla_frames = vla_frames
         self.vla_front_source = vla_front_source
+        self.stress = stress
+        self.stress_record: dict | None = None
         self._live_topics: list | None = None
         self.client = self.world = self.drone = None
         self.collisions: list[dict] = []
@@ -2152,12 +2167,33 @@ class ProjectAirSimCamera:
         self.scene_record.update(parent_topic=world.parent_topic,
                                  robot_topics_live=None if live is None else len(live))
         if live is not None and not live:
+            # A stressed scene has its own id (perception_stress.scene_id_for),
+            # so this is also what refuses a stressor the desktop was not given.
+            how = ("-Step scene" if self.stress is None
+                   else f"-Step scene -Stress {self.stress}")
             raise RuntimeError(
                 f"attach: the simulator at {self.address} serves no topic under "
                 f"{prefix}, so scene {data['id']!r} is not the one loaded there. "
-                f"Load it on the desktop first (run_pas_ardupilot.ps1 -Step scene), "
+                f"Load it on the desktop first (run_pas_ardupilot.ps1 {how}), "
                 f"start ArduPilot after it (-Step sitl), then start this node")
         return world
+
+    def _stress_weather(self) -> None:
+        """--stress: the stressor's weather, set on the scene this node loaded
+        or read back from the one it attached to; refused on any problem."""
+        fn = pstress.check_weather if self.attach else pstress.apply_weather
+        rec = fn(self.world, self.stress)
+        self.stress_record = rec
+        self.scene_record["stress"] = {"name": self.stress,
+                                       "scenario_id": pstress.scenario_id(self.stress),
+                                       "weather": rec}
+        if not rec["ok"]:
+            fix = (f" (load the scene on the desktop with run_pas_ardupilot.ps1 -Step "
+                   f"scene -Stress {self.stress})" if self.attach else "")
+            raise RuntimeError(f"--stress {self.stress}: the weather is not the "
+                               f"stressor's: {'; '.join(rec['problems'])}{fix}")
+        seen = {k: (rec["read_back"] or {}).get(k) for k in pstress.WEATHER_CHECKED}
+        print(f"[stress] {self.stress}: weather {rec['mode']}, read back {seen}")
 
     def start(self) -> None:
         pas = self.pas or importlib.import_module("projectairsim")
@@ -2178,6 +2214,8 @@ class ProjectAirSimCamera:
                 except Exception as exc:                      # noqa: BLE001
                     print(f"[view] could not switch the main view: {exc}")
                     break
+        if self.stress is not None:
+            self._stress_weather()
         self.drone = pas.Drone(self.client, self.world, self.robot)
         t0 = time.time()
 
@@ -3951,6 +3989,15 @@ def build_parser() -> argparse.ArgumentParser:
                          "default the template's 0.1 s. Recorded (sim_config). An attaching "
                          "node records what the desktop's scene step was given the same "
                          "flag; what arrived is measured (vla_observation)")
+    ap.add_argument("--stress", choices=list(pstress.NAMES), default=None,
+                    help="a perception stressor (perception_stress.py; WP4-16, WP4-18): "
+                         "day (the baseline, weather reset), dusk / night (every scene "
+                         "capture exposed 2 / 4 EV down), rain / fog (the plugin's weather "
+                         "effects). Rendered into the scene (its own scene id) and, for "
+                         "weather, set after the load and read back; a node attaching "
+                         "(--scene-mode attach) only reads it back and needs the desktop's "
+                         "scene step to have been given the same stressor. Recorded "
+                         "(metrics.json perception_stress) and never KPI-grade")
     # pilot (follow_vlm's defaults; cruise 8 m as the CityLife launcher flies)
     ap.add_argument("--cruise-alt", type=float, default=8.0)
     ap.add_argument("--yaw-gain", type=float, default=1.2)
@@ -4148,6 +4195,9 @@ def check_args(args) -> None:
     if fci is not None and args.camera != "projectairsim":
         raise SystemExit("--front-capture-interval-s renders the simulator's FrontCamera; "
                          "--camera ros2 has none")
+    if getattr(args, "stress", None) is not None and args.camera != "projectairsim":
+        raise SystemExit("--stress renders and sets the Project AirSim scene's cameras "
+                         "and weather; --camera ros2 has neither")
     # `not (0 < x <= max)` also refuses inf and nan (START_TIMEOUT_MAX_S).
     if getattr(args, "start_when_seen", 0) < 0 or not (
             0.0 < getattr(args, "start_timeout_s", 1.0) <= START_TIMEOUT_MAX_S):
@@ -4505,7 +4555,7 @@ def _vla_refusal_records(args, out: Path, VM, exc: "PreArmRefused", *, rec, poli
                    "object", "cruise_alt", "seed", "link", "camera", "scene_mode", "pilot",
                    "mission", "goal", "vla_object", "cadence", "vla_decision_timeout_s",
                    "first_decision_timeout_s", "warmup_max_latency_s", "late_reply_wait_s",
-                   *VLA_PARAMS)}}
+                   "stress", *VLA_PARAMS)}}
     try:
         metrics.update(_vla_records(args, out, VM, None, backend, srv, identity, vla_rec,
                                     warmup, frames, saver, [], exc.kind))
@@ -5089,12 +5139,38 @@ def sim_configs(args, out: Path):
     # FrontCamera's capture interval, when one is asked for (--front-capture-
     # interval-s): rendered, and recorded as sim_config.front_capture_interval_s.
     fci = getattr(args, "front_capture_interval_s", None)
+    # A perception stressor (--stress): the cameras' exposure and the scene's
+    # own id, rendered; recorded as sim_config.stress (perception_stress).
+    stress = getattr(args, "stress", None)
     if args.scene_mode == "attach":
         return rail.write_attach_configs(out / "pas_config", vla_cameras=vla_cams,
-                                         front_capture_interval_s=fci), None
+                                         front_capture_interval_s=fci,
+                                         stress=stress), None
     plan = rail.plan_network(args.network, args.windows_ip, args.wsl_ip)
     return rail.write_sim_configs(out / "pas_config", plan, vla_cameras=vla_cams,
-                                  front_capture_interval_s=fci), plan
+                                  front_capture_interval_s=fci, stress=stress), plan
+
+
+def perception_stress_record(args, sim_cfg: dict | None, camera) -> dict | None:
+    """metrics.json `perception_stress` (None without --stress): the stressor,
+    its suite scenario, what was rendered (sim_config.stress: the exposure,
+    the scene id), the weather as set or read back (the camera's
+    scene_record), who applied it, and the non-KPI label
+    (tools/perception_stress_report.py groups runs by `name`)."""
+    name = getattr(args, "stress", None)
+    if name is None:
+        return None
+    scene_part = (getattr(camera, "scene_record", None) or {}).get("stress") or {}
+    attach = getattr(args, "scene_mode", "load") == "attach"
+    return {"name": name, "scenario_id": pstress.scenario_id(name),
+            "what": pstress.stressor(name)["what"],
+            "rendered": (sim_cfg or {}).get("stress"),
+            "weather": scene_part.get("weather"),
+            "applied_by": ("the desktop's scene step (run_pas_ardupilot.ps1 -Step scene "
+                           f"-Stress {name}); this node attached to its scene id and read "
+                           "the weather back" if attach else
+                           "this node: it loaded the scene and set the weather"),
+            "kpi": "non-KPI", "kpi_reason": pstress.non_kpi_reason(name)}
 
 
 def dry_run(args, out: Path) -> dict:
@@ -5150,11 +5226,19 @@ def dry_run(args, out: Path) -> dict:
 
 class SceneLoader:
     """Loads the rendered scene and nothing else (no camera subscriptions):
-    what `-Step scene` needs before ArduPilot is started."""
+    what `-Step scene` needs before ArduPilot is started. With `stress` (a
+    perception stressor, --stress) it then sets the stressor's weather and
+    reads it back (perception_stress.apply_weather), into `stress_record`;
+    start() refuses on any problem, before ArduPilot is started."""
 
-    def __init__(self, sim_cfg: dict, address: str = "127.0.0.1", projectairsim=None):
+    def __init__(self, sim_cfg: dict, address: str = "127.0.0.1", projectairsim=None,
+                 stress: str | None = None):
+        if stress is not None:
+            pstress.stressor(stress)                          # refuses an unknown name
         self.cfg, self.address, self.pas = sim_cfg, address, projectairsim
-        self.client = None
+        self.client = self.world = None
+        self.stress = stress
+        self.stress_record: dict | None = None
 
     def start(self) -> None:
         pas = self.pas or importlib.import_module("projectairsim")
@@ -5162,10 +5246,17 @@ class SceneLoader:
         self.client.connect()
         world = pas.World(self.client, self.cfg["scene"], delay_after_load_sec=2,
                           sim_config_path=self.cfg["dir"])
+        self.world = world
         try:
             world.switch_streaming_view()
         except Exception:                                     # noqa: BLE001
             pass
+        if self.stress is not None:
+            rec = pstress.apply_weather(world, self.stress)
+            self.stress_record = rec
+            if not rec["ok"]:
+                raise RuntimeError(f"--stress {self.stress}: the weather was not set: "
+                                   + "; ".join(rec["problems"]))
 
     def stop(self) -> None:
         try:
@@ -5179,15 +5270,26 @@ def load_scene_only(args, out: Path, camera=None) -> int:
     """`-Step scene`: render, load, record, exit. The scene stays loaded in
     the simulator for ArduPilot (-Step sitl) and an attaching node."""
     sim_cfg, plan = sim_configs(args, out)
-    camera = camera or SceneLoader(sim_cfg, address=args.sim_host)
+    stress = getattr(args, "stress", None)
+    camera = camera or SceneLoader(sim_cfg, address=args.sim_host, stress=stress)
     try:
         camera.start()
         rec = {"scene": sim_cfg, "loaded_wall": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
                "next": "start ArduPilot now (run_pas_ardupilot.ps1 -Step sitl); "
                        "reloading this scene while it runs drives its clock backwards"}
+        if stress is not None:
+            # The stressor as rendered (sim_config.stress) and its weather as
+            # set and read back (SceneLoader.stress_record).
+            rec["stress"] = {"name": stress, "scenario_id": pstress.scenario_id(stress),
+                             "weather": getattr(camera, "stress_record", None),
+                             "attach_with": f"--stress {stress} (run_pas_perception.sh: "
+                                            f"STRESS={stress})"}
         (out / "scene_load.json").write_text(json.dumps(rec, indent=2), encoding="utf-8")
         print(f"[scene]  {sim_cfg['scene_id']} loaded from {sim_cfg['dir']}; "
               f"start ArduPilot now, never before a reload")
+        if stress is not None:
+            print(f"[stress] {stress}: {pstress.stressor(stress)['what']}; an attaching "
+                  f"node must be given --stress {stress} (STRESS={stress} on the Orin)")
         return 0
     finally:
         camera.stop()
@@ -5405,6 +5507,10 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
                   f"sends to {plan.ardupilot_ip}:{rail.SITL_SENSOR_PORT})")
         else:
             print(f"[sim]    attaching to scene {sim_cfg['scene_id']} on {args.sim_host}")
+        if getattr(args, "stress", None) is not None:
+            print(f"[stress] {args.stress} ({pstress.scenario_id(args.stress)}): "
+                  f"{pstress.stressor(args.stress)['what']}; scene {sim_cfg['scene_id']}; "
+                  f"a perception-stress run, never KPI-grade")
     scene_home = rail.home_geo_point(scene) if scene else None
     # The policy's own origin, else the scene's home-geo-point; with neither,
     # the EKF's first fix (set at the pre-arm step below).
@@ -5459,7 +5565,8 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
                                      chase=save_view,
                                      vla_frames=vla_frames if vla_on else None,
                                      vla_front_source=(args.vla_front_source if vla_on
-                                                       else "vla"))
+                                                       else "vla"),
+                                     stress=getattr(args, "stress", None))
     recorder = view_dir = rhud = None
     rec_why = None if save_view else "--save-view not given"
     rec_summary = None
@@ -6940,6 +7047,9 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
             # The key guardrail.manifest.is_kpi_grade re-checks a hil label on.
             "hil_evidence": ev["topology_evidence"],
             "scene": None if camera is None else getattr(camera, "scene_record", None),
+            # The perception stressor (--stress; None: none): what was
+            # rendered and set, and its non-KPI label (perception_stress).
+            "perception_stress": perception_stress_record(args, sim_cfg, camera),
             "shield": args.shield, "ticks": len(rows), "ticks_without_state": n_no_state,
             "ticks_flown": sum(1 for r in rows if r.get("flown")),
             "ticks_not_flown": sum(1 for r in rows if r.get("flown") is False),
@@ -7197,7 +7307,7 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
         metrics["params"].update({k: getattr(args, k, None) for k in (
             "start_when_seen", "start_max_range_m", "start_timeout_s",
             "start_timeout_action", "negative_query", "identity", "lock_gate",
-            "no_lock_target", "pilot", "mission", "front_capture_interval_s")})
+            "no_lock_target", "pilot", "mission", "front_capture_interval_s", "stress")})
         if vla_on:
             metrics["params"].update({k: getattr(args, k, None) for k in VLA_PARAMS})
             # THE OBSERVATION RATE (the grant's 10 Hz observation, X-05 /
@@ -7332,6 +7442,10 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
         if policy_source.get("dev_yaml"):
             why.append(f"the policy was flown from YAML under {DEV_YAML_FLAG}: "
                        f"unsigned, not its issued bundle")
+        if getattr(args, "stress", None) is not None:
+            # A perception-stress run is reported per scenario, never as a
+            # KPI (perception_stress.NON_KPI_REASON; WP4-16).
+            why.append(pstress.non_kpi_reason(args.stress))
         if no_mission is not None:
             why.append(f"no mission was flown: {no_mission}")
         elif gate_rec.get("enabled") and not gate_rec.get("reached"):

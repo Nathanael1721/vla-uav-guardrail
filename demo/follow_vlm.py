@@ -3207,6 +3207,28 @@ def subject_scores_with_negatives(logits, scores, labels, thresh: float):
                   "count_unknown": None}, n_sup
 
 
+# The frame's mean grey level in detections.jsonl (`luma`, 0-255), from a
+# copy LUMA_STEP times smaller each way (768x432 -> 96x54): what tells a
+# perception-stress run that was really dark (demo/pas_ardupilot/
+# perception_stress.py, dusk / night) from one that only said so, and what
+# tools/perception_stress_report.py compares across scenarios.
+LUMA_STEP = 8
+
+
+def frame_luma(img, step: int = LUMA_STEP):
+    """Mean grey level (0-255, one decimal) of a PIL image, from a copy
+    reduced `step` times each way; None when it cannot be measured. Never
+    raises: it rides on the detector's log line, not its decision."""
+    try:
+        small = img.reduce(int(step)) if step and int(step) > 1 else img
+        grey = np.asarray(small.convert("L"), dtype=np.float32)
+        if grey.size == 0:
+            return None
+        return round(float(grey.mean()), 1)
+    except Exception:                                           # noqa: BLE001
+        return None
+
+
 class Grounder:
     """Open-vocabulary detector in a background thread: text in, box out.
 
@@ -3713,6 +3735,9 @@ class Grounder:
             if self.log_path is not None:
                 rec = {"seq": self._seq, "t": self._t, "infer_ms": round(ms, 1),
                        "query": self.query,
+                       # The frame's mean grey level (frame_luma): how dark
+                       # what the detector saw was.
+                       "luma": frame_luma(img),
                        "switched": bool(switched),
                        "det": (None if det is None else
                                {"cx": round(det[0], 1), "cy": round(det[1], 1),

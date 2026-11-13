@@ -16,7 +16,87 @@ shipped change and recorded as one.
 
 ## [Unreleased]
 
-### 2026-11-13 (the KPI-grade hil nightly ntFIN2 and its supplement; the contract outline re-assessed) — 591 missions at 116214f on the hil rig: P0 escape 0 over 586 Shield-on flights, fail-safe trigger correctness 566/567 = 0.998 under the adopted reading (Wilson 95 % low 0.990), slowest Shield tick 74.06 ms
+### 2026-11-14 (perception stress on Project AirSim: day, dusk, night, rain and fog for the PAS follow, and a per-scenario perception metric) — the PAS + ArduPilot follow (the red car, AIOT-VLA on the AGX Orin) gains a `--stress` option and five named scenarios, each non-KPI; darkness is the cameras' exposure because CityLife_Day has no SunSky actor; not flown
+
+Branch pas-perception-stress. **Nothing here has flown**: code and offline
+tests only (WP4-16, WP4-18; the PI's darkness test of 11 Nov).
+
+#### Found (the installed Project AirSim client and the plugin source on this desktop)
+- Project AirSim's time-of-day and sun calls cannot darken CityLife.
+  `World.set_time_of_day`, `set_sun_position_from_date_time`,
+  `set_sunlight_intensity` and `set_cloud_shadow_strength` all act on an
+  actor named "SunSky" (plugin `World/TimeofDay.cpp`), and CityLife_Day has
+  none: the simulator logged "No SunSky objects found. TimeOfDay settings
+  would ignored/not applied" when it loaded SceneCityLifeArduPilot on
+  2026-11-13. `set_time_of_day` then answers true and changes nothing, and
+  `set_sun_position_from_date_time` would dereference the missing actor.
+  `set_light_object_intensity` finds only Project AirSim's own light actors,
+  never the level's DirectionalLight.
+- What does work: the robot config's capture setting `auto-exposure-bias`
+  (Unreal's exposure compensation in EV, `Sensors/UnrealCamera.cpp`), and
+  the plugin's weather effects (`World.enable_weather_visual_effects`,
+  `set_weather_visual_effects_param`, `get_weather_visual_effects_param`;
+  a WeatherActor the simulator attaches 5 m above each robot at every scene
+  load).
+
+#### Added
+- `demo/pas_ardupilot/perception_stress.py`: the stressor table, one variable
+  each: `day` (the baseline, the weather reset and read back as off), `dusk`
+  and `night` (every scene capture of every camera exposed 2 and 4 EV down;
+  depth untouched), `rain` (RAIN 0.8), `fog` (FOG 0.6). A stressed scene is
+  rendered under its own scene id (`SceneCityLifeArduPilotStressNight`, ...),
+  so a node attaching on the Orin with another stressor, or none, finds no
+  topics under its id and refuses: the exposure, which no RPC reads back, is
+  bound by the scene id. The weather is set enabled-first and read back
+  (a parameter set while the effects are off is written as 0). The suite
+  names the scenarios `pas-follow-redcar-<stressor>`. The module's docstring
+  cites each client (`world.py`, `types.py`) and plugin source line.
+- `perception_node.py --stress {day,dusk,night,rain,fog}`: rendered into the
+  scene step's and the node's configs (`sim_config.stress`); the weather set
+  after a load (`-Step scene`, a desktop `-Step node`) or only read back
+  after an attach, and the run refused on any mismatch, before ArduPilot
+  starts; recorded in `scene_load.json` and `metrics.json`
+  `perception_stress`; every stressed run gets a kpi.json reason
+  ("a perception-stress run ... non-KPI evidence"), `day` included.
+- `scripts/run_pas_ardupilot.ps1 -Stress <name>` (the scene, node and check
+  steps; refused on the others) and `deploy/orin/run_pas_perception.sh`
+  `STRESS=<name>` (passes `--stress`, refuses an unknown name, and names the
+  default tag `pas_hil_aiot_<stressor>_<date>`).
+- `detections.jsonl` records each frame's mean grey level, `luma`
+  (`follow_vlm.frame_luma`, from a copy 8 times smaller each way), so a dark
+  run that was not really dark shows.
+- `tools/perception_stress_report.py`: per run, from what it logged
+  (metrics.json, flight_log.jsonl, detections.jsonl, kpi.json), the
+  detector's hit rate, box score, switches and frame luma over the mission's
+  inferences (the rows' det_seq span); estimate share; target lock (an
+  estimate within 6 m of the truth, of the ticks whose truth was read); the
+  estimate-on-subject share (perception_node's truth_view figure); track
+  losses (the lock gone at least 1 s after it was held) and the longest; the
+  share within 30 m, the range and the estimate's error. Per scenario: the
+  mean over its runs, the delta from `day` (else the unstressed runs), and
+  checks (a dusk or night scenario not darker than the baseline, a weather
+  not verified, a stressed run graded KPI, no truth). On three stored runs
+  its estimate-on-subject share equals the node's own figure (0.0, 0.5846,
+  1.0).
+
+#### Not done
+- Novel textures (`World.set_object_material`, `swap_object_texture`): the
+  level's actor names and packaged materials are not enumerated; WP4-18
+  keeps that part open. No sensor noise, no combined stressors.
+- Not a ScenarioSpec family: `guardrail/scenario_spec.py`'s `Stress` is the
+  headless harness's, and its library is flown by
+  `experiments/sweep_scenarios.py` on rails with no camera.
+
+#### Tests
+- `tests/test_pas_perception_stress.py` (new): 21/21; listed in the
+  per-build loop and header of `.github/workflows/tests.yml` (its
+  projectairsim and Pillow checks SKIP on jobs without them). The five
+  header checks of `tests/test_harnesstruth_ci.py`: 5/5.
+- 13 existing tests over the changed paths, called one by one (the config
+  renderers, attach, the scene step, the dry run, a flown stand-in run, the
+  VLA cameras, the capture interval, the Orin script): 13/13. The full files
+  and `tools/ci_local.py` were not run: flights were running on the rig.
+ — 591 missions at 116214f on the hil rig: P0 escape 0 over 586 Shield-on flights, fail-safe trigger correctness 566/567 = 0.998 under the adopted reading (Wilson 95 % low 0.990), slowest Shield tick 74.06 ms
 
 #### Flown
 - ntFIN2 (116214f, hil, nightly profile with `--hil-controls`, launched

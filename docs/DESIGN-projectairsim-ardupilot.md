@@ -437,6 +437,20 @@ What the VLA follow records beside the rail's usual records (CHANGELOG 2026-11-0
 
 In attach mode the node never loads the scene. It checks that the simulator serves `/Sim/SceneCityLifeArduPilot/robots/Drone1/...` topics, and refuses with "Load it on the desktop first" if not. The named remote in `fcu_url` is what the hil evidence check reads. MAVROS's UDP transport replies to the address the router's packets come from, so replies reach the router even though its source port is not 14555; this has not been run here. The runbook recommends WSL mirrored networking when ArduPilot runs natively in WSL, so the Orin can reach it. Under NAT the router's outbound UDP to the Orin should pass, but that is unverified. The desktop must allow inbound TCP 8989/8990 from the Orin for the camera streams.
 
+**Perception stress (since 2026-11-14; WP4-16, WP4-18; not flown yet).** One stressor per run, named in the suite as `pas-follow-redcar-<stressor>`: `day` (the baseline, the weather reset), `dusk` and `night` (every scene capture exposed 2 and 4 EV down), `rain` (RAIN 0.8) and `fog` (FOG 0.6). CityLife_Day has no `SunSky` actor, so Project AirSim's time-of-day and sun calls do nothing there ("No SunSky objects found" in the server log); darkness is therefore the cameras' exposure (`auto-exposure-bias` in the robot config's capture settings), and the level's lamps and car lights stay off. Rain and fog are the plugin's weather effects, set after the load and read back. A stressed scene has its own scene id (`SceneCityLifeArduPilotStressNight`, ...), so an attaching node told another stressor, or none, refuses it. `demo/pas_ardupilot/perception_stress.py` names every client and server source line behind this. A stressed run is never KPI-grade (kpi.json says why). `tools/perception_stress_report.py` scores the runs per scenario from what they log: detector hit rate and box score, the frames' mean grey level (`luma`, new in `detections.jsonl`), target lock (an estimate within 6 m of the truth), track losses, the range and the estimate's error.
+
+```powershell
+# desktop: one stressor per scene load (night here; day for the baseline)
+.\scripts\run_pas_ardupilot.ps1 -Step scene -VlaCameras -Stress night
+.\scripts\run_pas_ardupilot.ps1 -Step sitl -SkipSim -Orin 10.42.0.3
+```
+
+```bash
+# AGX Orin, with the server and MAVROS up as above
+G1_VERDICT=~/g1_verdict.json STRESS=night TAG=pas_stress_night_01 bash deploy/orin/run_pas_perception.sh
+python tools/perception_stress_report.py demo/out/pas_stress_* --md demo/out/pas_stress_report.md
+```
+
 ## What has not been verified yet
 
 Settled by the runs of 2026-10-08 and moved to "Measured 2026-10-08": whether the level holds the physics step with ArduPilot in the loop (not at 3 ms; at 5 ms it ran at 0.951-0.967 of real time), whether the EKF converges on Project AirSim's sensors (p95 0.81-0.82 m), whether the airframe tuning flies in CityLife (an AUTO square within 1 m of every corner), whether the default G1 square clears the buildings (it does not at 10 m; it does at 15 m), and whether the stream to Mission Planner's port carries a flight (19.0 Hz). Still open:
