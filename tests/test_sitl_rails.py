@@ -2699,6 +2699,177 @@ def test_the_node_ticks_on_a_fresh_action_and_its_poll_watches_a_quiet_stream():
     assert node2.rows == []
 
 
+def test_the_start_up_backlog_is_held_and_the_first_live_message_ticks_at_once():
+    """THE START-UP TICK (2026-11-13), the pure schedule. ntFIN2 (116214f):
+    13 of 171,393 ticks over 100 ms end to end, all row 2 of a mission at
+    t 0.101 s, "deferred". The message the pilot published during
+    start_mission's own work was delivered at +3 ms and ticked; the pilot's
+    next one, 12 ms later, was rate-limited to the poll at +100 ms. Received
+    BEFORE the start (the node now delivers that backlog first), a message is
+    held: no tick, not counted by the rate limit, and the first live message
+    ticks at once. The watchdog gives a live stream its slack at the start;
+    the steady state is the same schedule as before.
+
+    Shown failing first: against 116214f on_message before start recorded
+    nothing (no `held_n`, no `start_record`) and the first watchdog came one
+    period after the start whatever had been received."""
+    N = _node()
+    S = N.TickScheduler
+    # As flown on ntFIN2: the backlog arrives after t = 0 and is taken for a
+    # live message; the next one is deferred 85 ms - the scheduler alone
+    # cannot tell a backlog from a pilot faster than 1 / min_gap.
+    s = S()
+    s.start(0.0)
+    assert s.on_message(0.003) == "action"
+    s.ran(0.003, "action")
+    assert s.on_message(0.015) is None and s.pending
+    got = [(t, s.on_poll(t)) for t in (0.025, 0.05, 0.075, 0.1)]
+    assert got[-1] == (0.1, "deferred") and all(w is None for _, w in got[:-1]), got
+    # Delivered before the start: held. The live message ticks at once.
+    s = S()
+    assert s.on_message(-0.004) is None and s.on_poll(-0.001) is None
+    assert s.held_n == 1 and s.last_msg_t is None and not s.pending
+    s.start(0.0)
+    assert s.on_message(0.012) == "action", "the first live message waits for nothing"
+    s.ran(0.012, "action")
+    # ... and from there the steady state, unchanged: the rate limit counts
+    # the gap from the first LIVE message.
+    assert s.on_message(0.04) is None and s.pending
+    assert s.on_poll(0.1) == "deferred"
+    rec = S()
+    rec.on_message(9.98)
+    rec.start(10.0)
+    assert rec.start_record() == {
+        "held_before_start": 1, "held_age_ms": 20.0,
+        "first_watchdog_after_s": round(N.TICK + N.TIMER_SLACK_S, 6)}, rec.start_record()
+    # The first watchdog: a live stream (a message within one period before
+    # the start) gets the slack, as after a message's tick; a message long
+    # before the start, or none, does not.
+    for held, due in ((-0.03, N.TICK + N.TIMER_SLACK_S), (-0.25, N.TICK), (None, N.TICK)):
+        s = S()
+        if held is not None:
+            s.on_message(held)
+        s.start(0.0)
+        assert abs(s.watchdog_due_at() - due) < 1e-9, (held, s.watchdog_due_at())
+        assert s.on_poll(round(due - N.TICK_POLL_S, 6)) is None, held
+        assert s.on_poll(round(due, 6)) == "timer", held
+    # A 10 Hz pilot whose message queued during the start-up work, then on
+    # time at every phase against the poll grid: every live message ticks at
+    # once, none deferred, no timer tick.
+    for phase_ms in range(0, 100, 5):
+        p = phase_ms / 1000.0
+        s = S()
+        s.on_message(-0.001)                       # the backlog, delivered first
+        s.start(0.0)
+        events = sorted([(round(p + 0.001 + 0.1 * k, 6), 0, "m") for k in range(50)]
+                        + [(round(k * N.TICK_POLL_S, 6), 1, "p") for k in range(1, 200)])
+        kinds = []
+        for t, _, kind in events:
+            why = s.on_message(t) if kind == "m" else s.on_poll(t)
+            if why:
+                s.ran(t, why)
+                kinds.append(why)
+        assert kinds[:50] == ["action"] * 50, (phase_ms, kinds[:5])
+
+
+def test_the_node_delivers_its_start_up_backlog_before_t0_and_e2e_at_start_is_the_tick():
+    """THE START-UP TICK on the node (stand-in ROS, virtual clock; each
+    setpoint's publication takes 12 ms of tick work). The pilot message that
+    queued while start_mission warmed up and collected is delivered by its
+    drain before the mission clock starts (held, no row), and the pilot's
+    next message ticks at once: e2e equals tick_ms, the tick's own work.
+    The control: the same backlog delivered after t = 0, as on ntFIN2, makes
+    the live message wait 85 ms for the poll (e2e 97 ms of which 12 are
+    work). A message held from longer ago than the stale-action timeout is
+    never flown: the first watchdog tick holds.
+
+    Shown failing first: against 116214f start_mission spun nothing before
+    the clock started, so the backlog was the burst after t = 0 (no
+    `start_backlog`, the live message deferred)."""
+    work_s = 0.012
+
+    def build(backlog):
+        RN, N, node, clk, out = _scenario_node(["--tick-trigger", "action",
+                                                "--gc-pacing", "off"])
+        node.state = State(x=0.0, y=0.0, up=15.0, yaw_deg=0.0)
+        queue = list(backlog)
+
+        def spin_once(*a, **kw):                  # the executor: one ready callback
+            if queue:
+                queue.pop(0)(RN, N, node)
+        N.rclpy.spin_once = spin_once
+        pub = node._publish_body
+
+        def publish(body):                        # the tick's own work, then out
+            clk.t = round(clk.t + work_s, 9)
+            pub(body)
+        node._publish_body = publish
+        return RN, N, node, clk, out
+
+    def act(RN, N, node, vx):
+        node._on_pose(RN._pose_msg(N, node.state))
+        RN._act(N, node, vx=vx)
+
+    def polls(RN, N, node, clk, t0, n):
+        for k in range(1, n + 1):
+            clk.t = round(t0 + k * N.TICK_POLL_S, 9)
+            node._on_pose(RN._pose_msg(N, node.state))
+            node._on_tick_poll()
+
+    # The backlog queued during start_mission: delivered by the drain.
+    RN, N, node, clk, out = build([lambda RN, N, node: act(RN, N, node, 1.0)])
+    node.start_mission()
+    t0 = node._sched.t0
+    assert node.rows == [], "nothing ticks before the mission clock starts"
+    assert node.start_backlog["actions"] == 1 and node._sched.held_n == 1, node.start_backlog
+    start_ev = [e for e in RN._events(out) if e["kind"] == "mission_start"][-1]
+    assert start_ev["start_backlog"]["actions"] == 1, start_ev
+    clk.t = round(t0 + 0.012, 9)                  # the pilot's next message, on time
+    act(RN, N, node, 1.5)
+    assert len(node.rows) == 1, node.rows
+    r = node.rows[0]
+    assert r["tick_trigger"] == "action" and r["raw_body"]["vx"] == 1.5, r
+    assert r["tick_ms"] == 12.0 and r["e2e_ms"] == r["tick_ms"], (r["e2e_ms"], r["tick_ms"])
+    node._finish("test over")
+    met = json.loads((out / "metrics.json").read_text(encoding="utf-8"))
+    st = met["tick_schedule"]["start"]
+    assert st["held_before_start"] == 1 and st["backlog"]["actions"] == 1, st
+    assert st["first_watchdog_after_s"] == round(N.TICK + N.TIMER_SLACK_S, 6), st
+    assert met["tick_latency"]["e2e_ms"]["max"] == 12.0, met["tick_latency"]
+
+    # The control, as ntFIN2 flew it: the drain finds nothing, the backlog
+    # arrives at +3 ms and is taken for a live message.
+    RN, N, node, clk, out = build([])
+    node.start_mission()
+    t0 = node._sched.t0
+    assert node._sched.held_n == 0 and node.start_backlog["actions"] == 0
+    clk.t = round(t0 + 0.003, 9)
+    act(RN, N, node, 1.0)                         # ticks; its work ends at +15 ms
+    act(RN, N, node, 1.5)                         # the live one: deferred
+    assert [r["tick_trigger"] for r in node.rows] == ["action"]
+    polls(RN, N, node, clk, t0, 4)
+    r = node.rows[-1]
+    assert r["tick_trigger"] == "deferred" and r["raw_body"]["vx"] == 1.5, node.rows
+    assert r["tick_ms"] == 12.0 and abs(r["e2e_ms"] - 97.0) < 1e-6, r["e2e_ms"]
+    node._finish("test over")
+
+    # A message held from before the stale-action timeout, then a quiet
+    # pilot: the first watchdog tick (one period: the stream is not live)
+    # holds; it does not fly the old action.
+    RN, N, node, clk, out = build([])
+    act(RN, N, node, 2.0)
+    clk.t = round(clk.t + node.watchdog.timeout_s + 0.1, 9)
+    node.start_mission()
+    t0 = node._sched.t0
+    assert node._sched.held_n == 1 and not node._sched.held_live()
+    polls(RN, N, node, clk, t0, 4)
+    assert [r["tick_trigger"] for r in node.rows] == ["timer"], node.rows
+    r = node.rows[0]
+    assert r["action_stale"] is True and r["e2e_ms"] is None, r
+    assert r["raw_body"]["vx"] == 0.0, r["raw_body"]
+    node._finish("test over")
+
+
 def test_the_episode_holds_a_threads_events_until_it_releases_them():
     """A4: the control tick appends its events.jsonl lines after its
     setpoint (EpisodeRecord.hold_events / release_events); each line keeps
