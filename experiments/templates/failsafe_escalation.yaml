@@ -205,3 +205,144 @@ scenarios:
     expected_outcome: Land_triggered
     expected_failsafe: true
     failsafe_clause: E1
+
+  # ---- the FSM's edges the rails had never taken (2026-11-14) ------------- #
+  # The KPI-grade hil nightly ntFIN2 (13 Nov) took neither the FSM's X2 / X3
+  # (Brake / Loiter -> RTL / Land on a direct rule) nor the grant's N-in-T
+  # edges G2 / G4, and no library cell asks for them on a rail: every RTL or
+  # land rule in the library is violated from Normal (G11 / G12), and the
+  # only cells that take G2 / G4 headless do it through GPS noise (refused on
+  # the rails) or a forecast flickering at a ring on the ideal vehicle, which
+  # the rig's own response does not flicker. These three cells take them on
+  # purpose. They are flown only by experiments/profiles/fsm_edges.yaml
+  # (`profiles`): no library run, smoke, nightly or broad profile flies them,
+  # so no published number moves.
+  - scenario_id: failsafe-rtl-from-hold
+    template: failsafe_escalation
+    profiles: [fsm_edges]
+    description: >
+      X2 (Brake / Loiter -> RTL on a violated RTL rule). nfz-head-on's flight:
+      the pilot flies straight at nfz-square and keeps asking to fly through
+      it, so the Shield holds the aircraft short of it - Brake on a trusted
+      repair on the ideal vehicle (G1 at 1.6 s), Loiter on an untrusted one on
+      the rail vehicle (G1 2.8 s, G3 3.3 s), never back to Normal while the
+      request keeps pressing. At 8 s a zone whose breach action is RTL is
+      hot-applied over nfz-square's own footprint (7-23 m North and East, the
+      same ring), so the request that was being repaired now violates an RTL
+      rule, and the FSM goes home from the state it is in: X2 at 8.0 s on
+      both vehicles, then home behind the aircraft (G9). The zone is placed
+      on the ground the request is already pressing into, so the edge does
+      not depend on where the rig's hold stopped. Labelled RTL_triggered
+      with a fail-safe expected (E1, the RTL rule demands it); the aircraft
+      must never enter either zone.
+    mission:
+      start_pose: { x: -20.0, y: 15.0, up: 15.0 }
+      target: { x: 40.0, y: 15.0, up: 15.0 }
+      pilot: { type: goto, speed: 4.0 }
+    policy: { path: policies/sim_demo_policy.yaml }
+    events:
+      - at_sim_t: 8.0
+        type: spawn_polygon_fence
+        payload:
+          id: rtl-core
+          violation_action: RTL
+          vertices: [{ x: 7.0, y: 7.0 }, { x: 23.0, y: 7.0 },
+                     { x: 23.0, y: 23.0 }, { x: 7.0, y: 23.0 }]
+    ticks: 400
+    expected_kpis:
+      P0_escape_rate: 0
+      breaches: { max: 0 }
+      polygon_entries: { max: 0 }
+      autopilot_polygon_entries: { max: 0 }
+    expected_outcome: RTL_triggered
+    expected_failsafe: true
+    failsafe_clause: E1
+
+  - scenario_id: failsafe-land-from-hold
+    template: failsafe_escalation
+    profiles: [fsm_edges]
+    description: >
+      X3 (Brake / Loiter -> Land on a violated land rule): the flight of
+      failsafe-rtl-from-hold with breach action `land`. X3 at 8.0 s on both
+      vehicles, then the autopilot descends where the Shield held the
+      aircraft, short of nfz-square, until it is down (G10, 38.0 s ideal,
+      38.6 s rail). Labelled Land_triggered with a fail-safe expected (E1).
+      WHY ITS LABEL ACCEPTS P0 TICKS UNDER THE AUTOPILOT: the LAND descent
+      goes through the demo policy's 10 m floor, as in failsafe-land-zone,
+      so its LAND ticks whose forecast crosses the floor are P0 ticks the
+      autopilot flew; no zone is entered.
+    mission:
+      start_pose: { x: -20.0, y: 15.0, up: 15.0 }
+      target: { x: 40.0, y: 15.0, up: 15.0 }
+      pilot: { type: goto, speed: 4.0 }
+    policy: { path: policies/sim_demo_policy.yaml }
+    events:
+      - at_sim_t: 8.0
+        type: spawn_polygon_fence
+        payload:
+          id: land-core
+          violation_action: land
+          vertices: [{ x: 7.0, y: 7.0 }, { x: 23.0, y: 7.0 },
+                     { x: 23.0, y: 23.0 }, { x: 7.0, y: 23.0 }]
+    ticks: 450
+    expected_kpis:
+      P0_escape_rate: 0
+      breaches: { max: 0 }
+      polygon_entries: { max: 0 }
+      autopilot_polygon_entries: { max: 0 }
+    expected_outcome: Land_triggered
+    expected_failsafe: true
+    failsafe_clause: E1
+
+  - scenario_id: fsm-n-in-t-flicker
+    template: failsafe_escalation
+    profiles: [fsm_edges]
+    description: >
+      The grant's N-in-T edges, G2 (Brake -> Loiter, "N-in-T threshold") and
+      G4 (Loiter -> RTL, "N-in-T persists"). N-in-T counts ONSETS of a hard
+      violation, at most one per second (fsm.ONSET_CLEAR_S), three in 5 s;
+      a steady pilot on the rig's smooth response makes one onset and holds
+      it, so here the world makes them: a hard zone whose breach action is
+      `brake` is hot-applied 16 m ahead at 3 s and then switched off and on
+      again (deactivate_rule / activate_rule, a time-window switch each)
+      every 1.4 s, the pilot asking to fly into it throughout. Each switch-on
+      is an onset; a brake rule is answered by its own stop where a stop is
+      legal, so no onset is an untrusted repair (no G3), and each switch-off
+      lasts 0.9 s, under T_recover, so neither Brake nor Loiter clears in
+      between. Onsets at 3.0 s (Normal -> Brake, X1: the rule asks for
+      brake), 4.4 s and 5.8 s (three in 2.8 s: G2), then 7.2, 8.6 and 10.0 s
+      inside the Loiter (G4, the onsets that caused the Loiter cleared on
+      entry), then home behind the aircraft (G9), on the ideal and the rail
+      vehicle alike; 1.4 s apart, each onset survives 0.4 s of tick jitter
+      against the 1 s rate limit. NO FAIL-SAFE LABEL, on purpose: the
+      rubric (docs/RUBRIC-failsafe.md) expects none for a planner whose
+      every request is answered by a stop or a trusted repair (N1), while
+      the grant's G4 sends a Loiter whose N-in-T persists home. The cell is
+      the edges' flight, not a KPI cell; which of the two should govern a
+      thrash of trusted stops is a question for the PI.
+    mission:
+      start_pose: { x: -200.0, y: 0.0, up: 15.0 }
+      target: { x: -80.0, y: 0.0, up: 15.0 }
+      pilot: { type: goto, speed: 4.0 }
+    policy: { path: policies/sim_demo_policy.yaml }
+    events:
+      - at_sim_t: 3.0
+        type: spawn_polygon_fence
+        payload: { id: flicker-zone, width_m: 30, height_m: 20,
+                   ahead_of_vehicle_m: 16, violation_action: brake }
+      - { at_sim_t: 3.5, type: deactivate_rule, payload: { rule_id: flicker-zone } }
+      - { at_sim_t: 4.4, type: activate_rule, payload: { rule_id: flicker-zone } }
+      - { at_sim_t: 4.9, type: deactivate_rule, payload: { rule_id: flicker-zone } }
+      - { at_sim_t: 5.8, type: activate_rule, payload: { rule_id: flicker-zone } }
+      - { at_sim_t: 6.3, type: deactivate_rule, payload: { rule_id: flicker-zone } }
+      - { at_sim_t: 7.2, type: activate_rule, payload: { rule_id: flicker-zone } }
+      - { at_sim_t: 7.7, type: deactivate_rule, payload: { rule_id: flicker-zone } }
+      - { at_sim_t: 8.6, type: activate_rule, payload: { rule_id: flicker-zone } }
+      - { at_sim_t: 9.1, type: deactivate_rule, payload: { rule_id: flicker-zone } }
+      - { at_sim_t: 10.0, type: activate_rule, payload: { rule_id: flicker-zone } }
+    ticks: 300
+    expected_kpis:
+      P0_escape_rate: 0
+      breaches: { max: 0 }
+      polygon_entries: { max: 0 }
+      autopilot_polygon_entries: { max: 0 }

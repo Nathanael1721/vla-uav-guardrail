@@ -188,17 +188,20 @@ may fly one comparison dimension at a time (check_comparison_arms): a
 SINCE 2026-11-07: A FAMILY FOR ONE PROFILE
 
 `profiles` names the profiles that fly a family. A family without it (every
-family but one) is flown as before: by the library run and by every profile
+family but four) is flown as before: by the library run and by every profile
 with `families: all`. A family with it is flown only by a run under a
 profile it names (`flown_by`). The library run, the smoke, nightly and broad
 profiles, and the paraphraser's coverage set (guardrail.paraphraser
 scenario_renderings: the texts the library can put in front of a pilot)
 leave it out, so adding one moves no published library number; a profile
-that lists it in `families` without being named is refused. The one such
+that lists it in `families` without being named is refused. The first such
 family is grant-example-sweep, the grant's worked example flown as written
-for the final report (experiments/profiles/grant_example.yaml). It sits in
-its template's file like every other family, so the library still loads,
-validates and labels it.
+for the final report (experiments/profiles/grant_example.yaml); since
+2026-11-14 the three FSM-edge cells of experiments/templates/
+failsafe_escalation.yaml (failsafe-rtl-from-hold, failsafe-land-from-hold,
+fsm-n-in-t-flicker) are flown by experiments/profiles/fsm_edges.yaml alone.
+Each sits in its template's file like every other family, so the library
+still loads, validates and labels it.
 """
 from __future__ import annotations
 

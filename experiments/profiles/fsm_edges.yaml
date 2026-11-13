@@ -1,0 +1,64 @@
+# FSM edges profile: the escalation FSM's edges no KPI campaign had taken on a rail.
+#
+# WHY THIS PROFILE EXISTS (2026-11-14, contract item WP3-07)
+#
+# The KPI-grade hil nightly ntFIN2 (13 Nov, 583 missions) took G1, G3, G5,
+# G7, G8, G9, G10, G11, G12, X1, X4, X5 and X9, and never G2, G4, G6, X2 or
+# X3 (docs/FINAL-REPORT-outline.md, the WP3-07 row). Why, edge by edge
+# (docs/DESIGN-escalation-fsm.md, "2026-11-14: the edges the rails had never
+# taken"):
+#   G6  the Shield node fed its FSM rtl_failed = False on every tick, and the
+#       hil campaign refused the two cells that take it (failsafe-rtl-blocked,
+#       failsafe-low-battery). The node's RTL watch gives it a real input
+#       now (sitl/ros2_shield_node.py, THE RTL WATCH): failsafe-rtl-blocked
+#       (blocked path) flies; failsafe-low-battery stays refused
+#       (sweep_scenarios.RAIL_STRESS_REFUSALS says why); wind-beyond-authority
+#       at 12 m/s on lane 15 returns into a wind it cannot beat and takes G6
+#       for no progress home on the rail vehicle (X7 at 7.0 s, G6 at 12.1 s).
+#   X2  no library cell violates an RTL / land rule while the FSM is in Brake
+#   X3  or Loiter: every one is violated from Normal (G11 / G12).
+#       failsafe-rtl-from-hold and failsafe-land-from-hold do.
+#   G2  N-in-T counts onsets (one per second at most, three in 5 s). The only
+#   G4  library cells that take them headless do it through GPS noise
+#       (refused on the rails) or a forecast flickering at a ring on the
+#       ideal vehicle; ntFIN2 flew those geometries on the rig and none
+#       flickered. fsm-n-in-t-flicker makes the onsets with a zone switched
+#       off and on. The rail ticks at the pilot's 10 Hz, so N-in-T is
+#       reachable there: it was the scenarios, not the rail.
+#
+# WHAT IT IS NOT
+#
+# Not a grant scheduling row and not a KPI set (`grant_kpi_bearing: false`):
+# the three new cells are flown by this profile alone (their `profiles`
+# field), so no library, smoke, nightly or broad number moves, and
+# fsm-n-in-t-flicker carries no fail-safe label (its description says why).
+# Keep its runs out of a KPI report's campaigns.
+#
+#   python experiments/sweep_scenarios.py --profile fsm_edges
+#   python experiments/sweep_scenarios.py --profile fsm_edges --response-arms ideal rail
+#   python experiments/sweep_scenarios.py --profile fsm_edges --backend hil --hil-dry-run
+#
+# Measured headless on 2026-11-14 (seed 1001, the grant's forecast; ideal
+# vehicle / rail vehicle - the rig's fitted response, ArduPilot's hold in place):
+#   failsafe-rtl-from-hold   G1 X2 G9          / G1 G3 X2 G9
+#   failsafe-land-from-hold  G1 X3 G10         / G1 G3 X3 G10
+#   fsm-n-in-t-flicker       X1 G2 G4 G9       / X1 G2 G4 G9
+#   failsafe-rtl-blocked     G11 G6 G10        / G11 G6 G10
+#   wind-beyond-authority (lane 15, 12 m/s)
+#                            G1 G3 X9 G6       / G1 G3 X7 G6 G10
+
+profile: fsm_edges
+cadence: on demand (WP3-07, the FSM's edges on the rails)
+grant_scope: "not a grant row: the escalation FSM's G2, G4, G6, X2 and X3 flown on a rail"
+grant_sim_speedup: "1.0 on the hil rail - NOT met headless (measured speedup >> 1)"
+grant_kpi_bearing: false
+library: experiments/scenarios.yaml
+seeds: [1001]
+samples_per_family: 1
+families: [failsafe-rtl-from-hold, failsafe-land-from-hold, fsm-n-in-t-flicker,
+           failsafe-rtl-blocked, wind-beyond-authority]
+sweep_overrides:
+  wind-beyond-authority:
+    lane_y: [15.0]
+    wind_speed_mps: [12.0]
+expected_cells: [5, 5]

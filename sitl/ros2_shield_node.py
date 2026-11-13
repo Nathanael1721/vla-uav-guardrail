@@ -188,6 +188,48 @@ it is valid is the autopilot's call, not the GPS receiver's:
     metrics.json (`fix_quality.estimator.refused`, `sim_params.inputs_refused`),
     and the node flies on fix_ok as before.
 
+THE RTL WATCH (2026-11-14, WP3-07 edge G6). The grant's RTL -> Land edge,
+"RTL fails (battery / blocked path)" (Safety Shield p4), takes `rtl_failed`
+from the autopilot's side, and until this date this node passed False on
+every tick: G6 could not fire on a rail, an RTL that made no headway home
+into a wind beyond authority stayed an RTL, and the hil campaigns refused
+the two library cells that take G6 (failsafe-rtl-blocked,
+failsafe-low-battery). Now RTLFailureWatch judges every tick the FSM is in
+RTL (and is reset on every other tick); the RTL fails on the first tick on
+which any of these holds:
+  * blocked path - guardrail.rtl_path.check_leg on the Shield's own hard,
+    enforced P0 zones and band in force now (zones_from_shield,
+    band_from_shield): the climb to the return altitude or the straight leg
+    home crosses a zone's ring or leaves the band. The stress harness's own
+    test, from the FSM's RTL on, as the harness judges it.
+  * no progress home - while the autopilot REPORTS RTL (/mavros/state) and
+    the aircraft is farther from home than RTL_ALT / RTL_CONE_SLOPE (5 m by
+    default; RTL_HOME_RADIUS_M at least): the climb plus the distance home
+    (rtl_path.remaining_to_home) fell by less than 0.5 m over 5 s
+    (rtl_path.ProgressMonitor: the grant's T, X6's 0.1 m/s). Inside that
+    radius ArduCopter's cone cuts the climb and the RTL loiters and lands
+    over home: an RTL that is ending, never judged.
+  * battery - ArduPilot's own battery failsafe at CRITICAL or worse:
+    BATTERY_STATUS (MAVLink 147) charge_state, read from
+    MAVLINK_SOURCE_TOPIC beside EKF_STATUS_REPORT (BatteryHealth; a report
+    older than BATTERY_STALE_S is not a report). LOW does not fail an RTL:
+    it is ArduPilot's reason to start one. With BATT_CRT_VOLT and
+    BATT_CRT_MAH at 0 (the copter default) ArduPilot never declares
+    CRITICAL and this reason cannot fire.
+  * RTL not entered - the autopilot has not reported RTL
+    RTL_ENTRY_TIMEOUT_S (5 s, five heartbeats) after the FSM entered it.
+Every threshold errs toward NOT failing a return: the progress test waits
+for the autopilot's own RTL and a full window and leaves the end of the
+return alone; nothing but these four reasons fails one; an error while
+reading the rules is recorded and fails nothing. RTL_ALT, RTL_CONE_SLOPE,
+BATT_CRT_VOLT, BATT_CRT_MAH and BATT_FS_CRT_ACT are read at take-off
+(read_rtl_params; ArduCopter's defaults when unread) and recorded
+(events.jsonl `rtl_watch`). Each judged row carries rtl_failed and
+rtl_confirmed (and the reasons when it failed, also an `rtl_failed`
+event); metrics.json `rtl_watch` has the configuration, the failures and
+the battery reports. G6's own reason in the FSM record names them ("RTL
+failed: ...").
+
 ZONE DWELL AND COST MAP (2026-10-11). `nfz_s` is the count every rail shares
 (guardrail.replay.zone_dwell, read from the Shield's rule checker): polygon
 and circle fences and every dynamic_nfz that does not move, the hot-applied
@@ -379,6 +421,7 @@ import sys
 import threading
 import time
 from pathlib import Path
+from typing import NamedTuple
 
 ROOT = Path(__file__).resolve().parents[1]
 for _p in (ROOT, ROOT / "sitl"):
@@ -404,7 +447,10 @@ from guardrail.manifest import (DEV_YAML_FLAG, UNRESOLVED,               # noqa:
 from guardrail.models import (AltitudeEnvelope, PolygonFence,             # noqa: E402
                               SubjectStandoff, XY)
 from guardrail.projection import LocalProjection                          # noqa: E402
-from guardrail.rtl_path import home_reached                               # noqa: E402
+from guardrail.rtl_path import (MIN_PROGRESS_MPS, PROGRESS_WINDOW_S,     # noqa: E402
+                                RTL_ALT_M, ProgressMonitor, band_from_shield,
+                                check_leg, home_reached, remaining_to_home,
+                                zones_from_shield)
 from guardrail.replay import (EpisodeRecord, audit_tick,                  # noqa: E402
                               episode_row_fields, flown_fields,
                               kpi_evidence_grade, rail_shield, rule_clock,
@@ -639,6 +685,58 @@ STATUSTEXT_INFO = 6                   # MAV_SEVERITY_INFO
 # Parameter events kept in metrics.json (MAVROS's pull at connect sends one
 # per parameter; only the watched SIM_* ones are kept, and at most these).
 SIM_PARAM_EVENTS_MAX = 200
+# THE RTL WATCH (2026-11-14; module docstring): the FSM's input for G6, "RTL
+# fails (battery / blocked path)" (Safety Shield p4), from what the autopilot
+# reports. Until this date the node passed rtl_failed=False on every tick.
+#
+# The battery, as ArduPilot itself judges it: BATTERY_STATUS (MAVLink 147)
+# `charge_state` is AP_BattMonitor::get_mavlink_charge_state - LOW for its
+# Failsafe::Low, CRITICAL for Failsafe::Critical (the BATT_LOW_* / BATT_CRT_*
+# thresholds, a voltage only after BATT_LOW_TIMER). Read from
+# MAVLINK_SOURCE_TOPIC like EKF_STATUS_REPORT: the topic is already granted
+# (SROS 2), and MAVROS 2's sensor_msgs/BatteryState has no charge state.
+BATTERY_STATUS_ID = 147
+# The base payload (36 bytes) and the two extension fields ArduPilot fills
+# first, time_remaining (int32) and charge_state (uint8); MAVLink 2 truncates
+# trailing zero bytes, restored here.
+BATTERY_STATUS_LEN = 41
+BATTERY_CHARGE_STATES = {0: "UNDEFINED", 1: "OK", 2: "LOW", 3: "CRITICAL",
+                         4: "EMERGENCY", 5: "FAILED", 6: "UNHEALTHY", 7: "CHARGING"}
+# The charge states that fail an RTL: CRITICAL and worse, the level at which
+# ArduPilot's own critical action (BATT_FS_CRT_ACT) lands. LOW is ArduPilot's
+# reason to START an RTL (BATT_FS_LOW_ACT), not to abandon one; UNHEALTHY is
+# a monitor fault, not a charge.
+BATTERY_FAILED_STATES = (3, 4, 5)
+# A report older than this is not about the battery now (BATTERY_STATUS rides
+# the extended-status stream, which this node asks for at 10 Hz).
+BATTERY_STALE_S = 5.0
+# No progress home: guardrail.rtl_path.ProgressMonitor, the harness's own test
+# (the grant's T = 5 s, X6's 0.1 m/s: under 0.5 m of the climb plus the
+# distance home made good in 5 s), judged only while the autopilot reports
+# RTL, and not within RTL_HOME_RADIUS_M of home, where ArduCopter's RTL no
+# longer flies what remaining_to_home counts: its return-altitude cone
+# (RTL_CONE_SLOPE, mode_rtl.cpp) cuts the climb within RTL_ALT / RTL_CONE_SLOPE
+# of home (15 m / 3 = 5 m by default), and over home it loiters RTL_LOIT_TIME
+# and descends - an RTL that is ending, not failing (such a return ends by X5:
+# landed, home_reached never read at the full return altitude).
+RTL_PROGRESS_WINDOW_S = PROGRESS_WINDOW_S
+RTL_MIN_PROGRESS_MPS = MIN_PROGRESS_MPS
+RTL_HOME_RADIUS_M = 5.0
+RTL_CONE_SLOPE_DEFAULT = 3.0
+# RTL not entered: the FSM asked for RTL and the autopilot still reports
+# another mode this long after. /mavros/state follows ArduPilot's 1 Hz
+# HEARTBEAT, so this is five heartbeats - a request that went through is
+# confirmed within about one; one ArduCopter refused (RTL needs a position
+# estimate and a home) never is.
+RTL_ENTRY_TIMEOUT_S = 5.0
+# Read from the autopilot at take-off and recorded (read_rtl_params): RTL_ALT
+# (cm) and RTL_CONE_SLOPE size the climb and the home radius; the BATT_*
+# say whether ArduPilot can declare CRITICAL at all (BATT_CRT_VOLT and
+# BATT_CRT_MAH both 0 disable it, the copter default) and what it then does.
+RTL_WATCH_PARAMS = ("RTL_ALT", "RTL_CONE_SLOPE", "BATT_FS_CRT_ACT", "BATT_CRT_VOLT",
+                    "BATT_CRT_MAH")
+# RTL failures kept with their reasons in metrics.json (the rest counted).
+RTL_FAILURES_KEPT = 20
 
 
 # --------------------------------------------------------------------------- #
@@ -1027,6 +1125,326 @@ class EstimatorHealth:
                 "unhealthy_spells": [spell(s) for s in self.spells],
                 "declared_spells": [spell(s) for s in self.declared_spells],
                 "declared_at_end": self.declared}
+
+
+def battery_status_from_mavlink(msgid, sysid, compid, length, payload64) -> dict | None:
+    """BATTERY_STATUS's fields from one mavros_msgs/Mavlink (2026-11-14), or
+    None for any other message, or one not from the autopilot
+    (AUTOPILOT_IDS). MAVLink orders the base fields by size -
+    current_consumed and energy_consumed (int32), temperature (int16),
+    voltages[10] (uint16), current_battery (int16), id, battery_function,
+    type (uint8), battery_remaining (int8) - and appends the extensions as
+    declared: time_remaining (int32), then charge_state (uint8). MAVLink 2
+    truncates trailing zero bytes, restored here, so a charge_state the
+    message does not carry reads 0, UNDEFINED. payload64 is the payload as
+    little-endian 64-bit words, `length` its byte count."""
+    try:
+        if int(msgid) != BATTERY_STATUS_ID or (int(sysid), int(compid)) != AUTOPILOT_IDS:
+            return None
+        raw = b"".join(struct.pack("<Q", int(w) & 0xFFFFFFFFFFFFFFFF) for w in payload64)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    raw = raw[:max(0, int(length))].ljust(BATTERY_STATUS_LEN, b"\0")
+    consumed, _energy, _temp = struct.unpack_from("<iih", raw, 0)
+    cells = struct.unpack_from("<10H", raw, 10)
+    current_ca, = struct.unpack_from("<h", raw, 30)
+    bid, _function, _type, remaining = struct.unpack_from("<BBBb", raw, 32)
+    _time_remaining, charge = struct.unpack_from("<iB", raw, 36)
+    mv = [c for c in cells if c != 0xFFFF]
+    return {"id": int(bid), "charge_state": int(charge),
+            "remaining_pct": None if remaining < 0 else int(remaining),
+            "voltage_v": round(sum(mv) / 1000.0, 3) if mv else None,
+            "current_a": None if current_ca == -1 else round(current_ca / 100.0, 2),
+            "consumed_mah": None if consumed == -1 else int(consumed)}
+
+
+def charge_state_name(state) -> str:
+    """MAV_BATTERY_CHARGE_STATE's name for `state` (its number for one
+    MAVLink does not define)."""
+    return BATTERY_CHARGE_STATES.get(int(state), str(int(state)))
+
+
+class BatteryHealth:
+    """Is the battery the autopilot's own reason to give up a return
+    (2026-11-14; module docstring, THE RTL WATCH)? Pure: `report(t, fields)`
+    per BATTERY_STATUS (battery_status_from_mavlink; receipt on one
+    monotonic clock), `verdict(t)` per tick: (True, why) while the latest
+    report of any battery instance fresher than `stale_s` is in
+    BATTERY_FAILED_STATES (ArduPilot's own battery failsafe at CRITICAL or
+    worse), (False, why) while every fresh one is not, and (None, why) with
+    no fresh report: not reported, and the RTL watch judges no battery."""
+
+    def __init__(self, stale_s: float = BATTERY_STALE_S) -> None:
+        if isinstance(stale_s, bool) or not isinstance(stale_s, (int, float)) \
+                or not math.isfinite(stale_s) or stale_s <= 0:
+            raise ValueError(f"stale_s must be a positive number, got {stale_s!r}")
+        self.stale_s = float(stale_s)
+        self.latest: dict[int, tuple[float, dict]] = {}
+        self.n = 0
+        self.states_seen: dict[str, int] = {}
+        # Spells of a failed state as reported: [{t_start, t_end, id, state}].
+        self.spells: list[dict] = []
+
+    def report(self, t: float, fields: dict) -> None:
+        t, bid = float(t), int(fields["id"])
+        state = int(fields["charge_state"])
+        self.latest[bid] = (t, dict(fields))
+        self.n += 1
+        name = charge_state_name(state)
+        self.states_seen[name] = self.states_seen.get(name, 0) + 1
+        bad = state in BATTERY_FAILED_STATES
+        open_ = [s for s in self.spells if s["id"] == bid and s["t_end"] is None]
+        if bad and not open_:
+            self.spells.append({"t_start": t, "t_end": None, "id": bid, "state": name})
+        elif not bad and open_:
+            open_[0]["t_end"] = t
+
+    def verdict(self, t: float) -> tuple[bool | None, str]:
+        t = float(t)
+        fresh = [f for rx, f in self.latest.values()
+                 if math.isfinite(t - rx) and 0.0 <= t - rx <= self.stale_s]
+        if not fresh:
+            return None, (f"no BATTERY_STATUS from the autopilot within {self.stale_s:g} s"
+                          if self.n else "no BATTERY_STATUS from the autopilot")
+        bad = [f for f in fresh if f["charge_state"] in BATTERY_FAILED_STATES]
+        f = bad[0] if bad else fresh[0]
+        why = (f"ArduPilot reports battery {f['id']} {charge_state_name(f['charge_state'])} "
+               f"(BATTERY_STATUS charge_state; {f.get('voltage_v')} V, "
+               f"{f.get('remaining_pct')} % remaining)")
+        return bool(bad), why
+
+    def summary(self, to_mission_t=None) -> dict:
+        conv = to_mission_t or (lambda v: v)
+        return {"messages": self.n, "stale_after_s": self.stale_s,
+                "fails_rtl_at": [BATTERY_CHARGE_STATES[s] for s in BATTERY_FAILED_STATES],
+                "charge_states_seen": dict(self.states_seen),
+                "failed_spells": [{**s, "t_start": round(conv(s["t_start"]), 3),
+                                   "t_end": (None if s["t_end"] is None
+                                             else round(conv(s["t_end"]), 3))}
+                                  for s in self.spells],
+                "last": {str(k): {**f, "rx_t": round(conv(rx), 3)}
+                         for k, (rx, f) in sorted(self.latest.items())}}
+
+
+class RTLCheck(NamedTuple):
+    """One RTL tick's verdict (RTLFailureWatch.assess). `failed` is the FSM's
+    rtl_failed; `kinds` names each reason's test (blocked_path, no_progress,
+    battery, not_entered); `confirmed` whether the autopilot has reported
+    RTL since the FSM entered it; `judged_progress` whether this tick fed the
+    progress test. (A NamedTuple, not a dataclass: the tests load this file
+    under another module name.)"""
+    failed: bool
+    reasons: tuple = ()
+    kinds: tuple = ()
+    confirmed: bool = False
+    judged_progress: bool = False
+
+    @property
+    def note(self) -> str:
+        return "; ".join(self.reasons)
+
+
+class RTLFailureWatch:
+    """rtl_failed for this node's FSM, edge G6 (RTL -> Land, "RTL fails
+    (battery / blocked path)", Safety Shield p4; 2026-11-14, module
+    docstring THE RTL WATCH). Pure: `assess` on every tick the FSM is in RTL,
+    before it steps; `reset` on every other tick. An RTL fails when, on that
+    tick:
+      blocked_path  the straight leg ArduCopter's RTL flies home - the climb
+                    to the return altitude, then straight home at it -
+                    crosses a hard, enforced P0 zone's ring or leaves the P0
+                    band: guardrail.rtl_path.check_leg on the Shield's own
+                    rules, the stress harness's test, judged from the FSM's
+                    RTL on (the leg does not depend on the mode);
+      no_progress   the autopilot reports RTL, the aircraft is farther than
+                    `home_radius_m` from home, and the climb plus the
+                    distance home (remaining_to_home) fell by less than
+                    min_rate_mps per second over window_s
+                    (rtl_path.ProgressMonitor, the harness's test; the window
+                    restarts whenever either condition lapses);
+      battery       the battery verdict handed in is True (BatteryHealth:
+                    ArduPilot's own battery failsafe at CRITICAL or worse);
+      not_entered   the autopilot has not reported RTL entry_timeout_s after
+                    the FSM entered it.
+    Nothing else fails one: an exception inside the leg check is recorded
+    (`errors`) and fails nothing - a watch that breaks must not land a
+    return that is working."""
+
+    def __init__(self, home, rtl_alt_m: float = RTL_ALT_M, *,
+                 cone_slope: float = RTL_CONE_SLOPE_DEFAULT,
+                 window_s: float = RTL_PROGRESS_WINDOW_S,
+                 min_rate_mps: float = RTL_MIN_PROGRESS_MPS,
+                 entry_timeout_s: float = RTL_ENTRY_TIMEOUT_S) -> None:
+        hx, hy = float(home[0]), float(home[1])
+        for name, v in (("home x", hx), ("home y", hy)):
+            if not math.isfinite(v):
+                raise ValueError(f"{name} must be finite, got {v!r}")
+        for name, v in (("window_s", window_s), ("entry_timeout_s", entry_timeout_s)):
+            if isinstance(v, bool) or not isinstance(v, (int, float)) \
+                    or not math.isfinite(v) or v <= 0:
+                raise ValueError(f"{name} must be a positive number, got {v!r}")
+        self.home = (hx, hy)
+        self.window_s = float(window_s)
+        self.min_rate_mps = float(min_rate_mps)
+        self.entry_timeout_s = float(entry_timeout_s)
+        self._progress = ProgressMonitor(self.window_s, self.min_rate_mps)
+        self.configure(rtl_alt_m, cone_slope, "ArduCopter's defaults (not read)")
+        self._entered: float | None = None
+        self._confirmed: float | None = None
+        self.n_rtls = self.n_judged = self.n_failed = self.n_errors = 0
+        self.failures: list[dict] = []
+        self.errors: list[str] = []
+
+    def configure(self, rtl_alt_m=None, cone_slope=None, source: str = "") -> None:
+        """The return altitude (metres) and RTL_CONE_SLOPE the autopilot flies:
+        a value that is missing, not finite or negative keeps ArduCopter's
+        default (RTL_ALT_M, RTL_CONE_SLOPE_DEFAULT); a slope of 0 is no cone.
+        The home radius is the cone's, RTL_ALT / RTL_CONE_SLOPE, never under
+        RTL_HOME_RADIUS_M."""
+        def num(v, lo):
+            try:
+                v = float(v)
+            except (TypeError, ValueError):
+                return None
+            return v if math.isfinite(v) and v >= lo else None
+        alt = num(rtl_alt_m, 0.0)            # 0: ArduCopter returns at the current altitude
+        slope = num(cone_slope, 0.0)
+        self.rtl_alt_m = RTL_ALT_M if alt is None else alt
+        self.cone_slope = RTL_CONE_SLOPE_DEFAULT if slope is None else slope
+        self.home_radius_m = max(RTL_HOME_RADIUS_M,
+                                 self.rtl_alt_m / self.cone_slope if self.cone_slope > 0
+                                 else 0.0)
+        self.source = source or "given"
+
+    def reset(self) -> None:
+        self._progress.reset()
+        self._entered = None
+        self._confirmed = None
+
+    def note_error(self, t: float, e: Exception) -> None:
+        """An error while judging the leg: recorded (the first
+        RTL_FAILURES_KEPT), and it fails nothing."""
+        self.n_errors += 1
+        if len(self.errors) < RTL_FAILURES_KEPT:
+            self.errors.append(f"t={float(t):.3f}: {type(e).__name__}: {e}")
+
+    def assess(self, t: float, x: float, y: float, up: float, mode: str | None,
+               zones, band=None, battery: tuple = (None, "")) -> RTLCheck:
+        t = float(t)
+        if self._entered is None:
+            self._entered = t
+            self.n_rtls += 1
+        reasons: list[str] = []
+        kinds: list[str] = []
+        leg = None
+        if zones is not None:          # None: the rules could not be read (note_error)
+            try:
+                leg = check_leg(x, y, up, self.home, zones, band, self.rtl_alt_m)
+            except Exception as e:                           # noqa: BLE001
+                self.note_error(t, e)
+        if leg is not None and not leg.clear:
+            kinds.append("blocked_path")
+            reasons.extend(f"blocked path: {r}" for r in leg.reasons)
+        in_rtl = mode == "RTL"
+        if in_rtl and self._confirmed is None:
+            self._confirmed = t
+        judged = in_rtl and math.hypot(x - self.home[0], y - self.home[1]) > self.home_radius_m
+        if judged:
+            stuck, why = self._progress.update(
+                t, remaining_to_home(x, y, up, self.home, self.rtl_alt_m))
+            if stuck:
+                kinds.append("no_progress")
+                reasons.append(f"{why}, the autopilot in RTL")
+        else:
+            self._progress.reset()
+        if self._confirmed is None and t - self._entered >= self.entry_timeout_s - 1e-9:
+            kinds.append("not_entered")
+            reasons.append(f"RTL not entered: the autopilot still reports "
+                           f"{mode or 'no mode'} {t - self._entered:.1f} s after the FSM "
+                           f"asked for RTL")
+        crit, why = battery if battery else (None, "")
+        if crit:
+            kinds.append("battery")
+            reasons.append(f"battery critical: {why}")
+        self.n_judged += 1
+        if reasons:
+            self.n_failed += 1
+            if len(self.failures) < RTL_FAILURES_KEPT:
+                self.failures.append({"t": round(t, 3), "kinds": list(kinds),
+                                      "reasons": list(reasons)})
+        return RTLCheck(failed=bool(reasons), reasons=tuple(reasons), kinds=tuple(kinds),
+                        confirmed=self._confirmed is not None, judged_progress=judged)
+
+    def summary(self, to_mission_t=None) -> dict:
+        conv = to_mission_t or (lambda v: v)
+        return {"rtl_alt_m": self.rtl_alt_m, "cone_slope": self.cone_slope,
+                "source": self.source, "home": list(self.home),
+                "home_radius_m": round(self.home_radius_m, 3),
+                "progress_window_s": self.window_s, "min_progress_mps": self.min_rate_mps,
+                "entry_timeout_s": self.entry_timeout_s,
+                "rtls_judged": self.n_rtls, "ticks_judged": self.n_judged,
+                "ticks_failed": self.n_failed,
+                "failures": [{**f, "t": round(conv(f["t"]), 3)} for f in self.failures],
+                "errors_n": self.n_errors, "errors": list(self.errors)}
+
+
+# ArduCopter ignores a cone slope below this (mode_rtl.cpp RTL_MIN_CONE_SLOPE).
+RTL_MIN_CONE_SLOPE = 0.5
+# BATT_FS_CRT_ACT's values on ArduCopter 4.5 (AP_BattMonitor, Copter's list).
+BATT_FS_ACTIONS = {0: "none", 1: "Land", 2: "RTL", 3: "SmartRTL or RTL",
+                   4: "SmartRTL or Land", 5: "Terminate", 6: "Auto DO_LAND_START or RTL",
+                   7: "Brake or Land"}
+
+
+def _param_num(vals: dict, name: str) -> float | None:
+    try:
+        v = float(vals.get(name))
+    except (TypeError, ValueError):
+        return None
+    return v if math.isfinite(v) else None
+
+
+def rtl_watch_config(vals: dict) -> tuple[float | None, float | None, str]:
+    """(return altitude in metres, cone slope, source) for RTLFailureWatch.
+    configure from the autopilot's RTL_ALT (centimetres; 0 returns at the
+    current altitude) and RTL_CONE_SLOPE (below RTL_MIN_CONE_SLOPE ArduCopter
+    flies no cone: 0 here); None for one not read, which keeps ArduCopter's
+    default."""
+    alt = _param_num(vals, "RTL_ALT")
+    slope = _param_num(vals, "RTL_CONE_SLOPE")
+    alt_m = None if alt is None or alt < 0 else alt / 100.0
+    if slope is not None and slope < RTL_MIN_CONE_SLOPE:
+        slope = 0.0
+    read = [k for k, v in (("RTL_ALT", alt_m), ("RTL_CONE_SLOPE", slope)) if v is not None]
+    missing = [k for k in ("RTL_ALT", "RTL_CONE_SLOPE") if k not in read]
+    parts = ((["read from the autopilot: " + ", ".join(read)] if read else [])
+             + (["ArduCopter's default for " + ", ".join(missing)] if missing else []))
+    return alt_m, slope, "; ".join(parts)
+
+
+def battery_failsafe_note(vals: dict) -> str:
+    """What the autopilot's BATT_CRT_* / BATT_FS_CRT_ACT mean for the RTL
+    watch's battery reason, in words for the record: whether ArduPilot can
+    declare CRITICAL at all, and what it then does on its own (a mode it
+    switches to itself is a takeover here, after which the FSM no longer
+    steps)."""
+    volt, mah = _param_num(vals, "BATT_CRT_VOLT"), _param_num(vals, "BATT_CRT_MAH")
+    act = _param_num(vals, "BATT_FS_CRT_ACT")
+    if volt is None and mah is None:
+        return ("BATT_CRT_VOLT / BATT_CRT_MAH not read: whether ArduPilot can declare its "
+                "battery CRITICAL is not known")
+    if not (volt or 0.0) > 0 and not (mah or 0.0) > 0:
+        return ("BATT_CRT_VOLT and BATT_CRT_MAH are 0: ArduPilot never declares its battery "
+                "CRITICAL, so the battery reason cannot fire")
+    what = " / ".join(s for s in ((f"{volt:g} V" if volt else ""),
+                                  (f"{mah:g} mAh" if mah else "")) if s)
+    name = BATT_FS_ACTIONS.get(int(act)) if act is not None else None
+    own = ("its own critical action is none: the FSM's G6 lands the RTL"
+           if act == 0 else
+           f"its own critical action is {name or act} (BATT_FS_CRT_ACT): a mode it "
+           f"switches to itself is a takeover here" if act is not None else
+           "BATT_FS_CRT_ACT not read")
+    return f"ArduPilot declares its battery CRITICAL below {what}; {own}"
 
 
 def shield_step(shield: Shield, state: State, body: Action4D, shield_on: bool):
@@ -2539,6 +2957,13 @@ if HAVE_ROS:
             # from MAVLINK_SOURCE_TOPIC, 2026-11-12): fed per report, read per
             # tick (State.estimator_ok).
             self.estimator = EstimatorHealth()
+            # THE RTL WATCH (2026-11-14): the autopilot's battery verdict
+            # (BATTERY_STATUS from the same feed) and the FSM's rtl_failed
+            # (G6), judged on every tick the FSM is in RTL. Home is --start's
+            # position in the policy frame, as for home_reached.
+            self.battery = BatteryHealth()
+            self.rtl_watch = RTLFailureWatch(self.start_xy)
+            self.rtl_params: dict | None = None
             # SITL's stressor parameters: as read back at take-off, every
             # change the autopilot broadcast (on the mission clock), and the
             # t = 0 markers this node sent (module docstring).
@@ -2701,17 +3126,25 @@ if HAVE_ROS:
 
         def _on_mavlink(self, msg) -> None:
             # MAVLINK_SOURCE_TOPIC: every message the autopilot sent; only
-            # its EKF_STATUS_REPORT is read (the id first: the rest return
-            # at once). Receipt on the node's monotonic clock, as the pose's.
+            # its EKF_STATUS_REPORT and (2026-11-14, THE RTL WATCH) its
+            # BATTERY_STATUS are read (the id first: the rest return at
+            # once). Receipt on the node's monotonic clock, as the pose's.
             try:
-                if int(msg.msgid) != EKF_STATUS_REPORT_ID:
+                mid = int(msg.msgid)
+                if mid == EKF_STATUS_REPORT_ID:
+                    fields, sink = ekf_status_from_mavlink(
+                        msg.msgid, msg.sysid, msg.compid, msg.len,
+                        msg.payload64), self.estimator
+                elif mid == BATTERY_STATUS_ID:
+                    fields, sink = battery_status_from_mavlink(
+                        msg.msgid, msg.sysid, msg.compid, msg.len,
+                        msg.payload64), self.battery
+                else:
                     return
-                fields = ekf_status_from_mavlink(msg.msgid, msg.sysid, msg.compid,
-                                                 msg.len, msg.payload64)
             except (AttributeError, TypeError, ValueError):
                 return
             if fields is not None:
-                self.estimator.report(time.monotonic(), fields)
+                sink.report(time.monotonic(), fields)
 
         def estimator_ok_now(self) -> bool | None:
             """State.estimator_ok for this tick (EstimatorHealth.verdict)."""
@@ -3070,6 +3503,28 @@ if HAVE_ROS:
             """The FSM's "landed" (G10, X5): landed_from on this node's view."""
             return landed_from(self.mode, self.landed, self.armed, self._flew_armed)
 
+        def _rtl_check(self, now: float, st: State) -> "RTLCheck | None":
+            """This tick's RTLCheck while the FSM is in RTL (THE RTL WATCH),
+            None on every other tick (the watch reset). The zones and band are
+            the Shield's hard, enforced P0 rules in force now (rtl_path.
+            zones_from_shield / band_from_shield, as the harness reads them).
+            Reading them is guarded: the watch never faults the FSM - an
+            error is recorded and the leg goes unjudged on that tick."""
+            if self.fsm is None or self.fsm.terminal or self.fsm.state is not FSMState.RTL:
+                self.rtl_watch.reset()
+                return None
+            try:
+                zones, band = zones_from_shield(self.shield), band_from_shield(self.shield, st)
+            except Exception as e:                               # noqa: BLE001
+                zones = band = None
+                self.rtl_watch.note_error(now, e)
+            chk = self.rtl_watch.assess(now, st.x, st.y, st.up, self.mode, zones, band,
+                                        self.battery.verdict(time.monotonic()))
+            if chk.failed:
+                self.rec.event("rtl_failed", t=now, kinds=list(chk.kinds),
+                               reasons=list(chk.reasons), mode=self.mode)
+            return chk
+
         def _call(self, client, req, timeout: float = 5.0):
             if not client.wait_for_service(timeout_sec=timeout):
                 return None
@@ -3294,6 +3749,31 @@ if HAVE_ROS:
                            thresh=self.estimator.thresh,
                            thresh_source=self.estimator.thresh_source)
 
+        def read_rtl_params(self) -> None:
+            """RTL_WATCH_PARAMS as the autopilot holds them (2026-11-14, THE
+            RTL WATCH): RTL_ALT and RTL_CONE_SLOPE configure the watch's
+            climb, leg altitude and home radius (rtl_watch_config;
+            ArduCopter's defaults when unread), and the BATT_* are recorded
+            with what they mean for the battery reason. Read after the
+            EKF failsafe's, by which time MAVROS holds the parameter list."""
+            try:
+                vals = self._get_params(self.cli_param, list(RTL_WATCH_PARAMS))
+            except Exception as e:                               # noqa: BLE001
+                vals = {}
+                self.get_logger().warn(f"RTL_* / BATT_* not read: {type(e).__name__}: {e}")
+            alt_m, slope, source = rtl_watch_config(vals)
+            self.rtl_watch.configure(alt_m, slope, source)
+            self.rtl_params = {k: vals.get(k) for k in RTL_WATCH_PARAMS}
+            self.rec.event("rtl_watch", t=None, **self.rtl_params,
+                           rtl_alt_m=self.rtl_watch.rtl_alt_m,
+                           cone_slope=self.rtl_watch.cone_slope,
+                           home_radius_m=self.rtl_watch.home_radius_m, source=source,
+                           battery=battery_failsafe_note(vals))
+            self.get_logger().info(
+                f"RTL watch: return altitude {self.rtl_watch.rtl_alt_m:g} m, home radius "
+                f"{self.rtl_watch.home_radius_m:g} m ({source}); "
+                f"{battery_failsafe_note(vals)}")
+
         def bring_up(self) -> None:
             log = self.get_logger()
             self.serve_hot_apply()
@@ -3343,6 +3823,9 @@ if HAVE_ROS:
             # The autopilot's own EKF failsafe threshold, for the estimator
             # check behind State.estimator_ok (2026-11-12).
             self.read_ekf_failsafe()
+            # The return the RTL watch judges, and the battery failsafe it
+            # reads (2026-11-14).
+            self.read_rtl_params()
             pose_deadline = time.time() + 10.0
             while self.state is None and time.time() < pose_deadline:
                 rclpy.spin_once(self, timeout_sec=0.5)
@@ -4149,6 +4632,7 @@ if HAVE_ROS:
             stop_illegal = None
             unsafe_depth = None
             hold_off = hold_reach = None
+            rtl_check = None
             setpoint = "pass"
             transit = None
             # Once the autopilot has taken the aircraft (a GeoFence RTL), the
@@ -4213,9 +4697,19 @@ if HAVE_ROS:
                     hold_off, hold_reach = self.hold_watch.judge(
                         self.fsm, self.hold_flight, st.x, st.y, now,
                         None if vel is None else math.hypot(vel[0], vel[1]))
+                    # G6's input (2026-11-14, THE RTL WATCH): on every tick
+                    # the FSM is in RTL, the leg home on the Shield's own P0
+                    # rules, the progress the autopilot's RTL makes,
+                    # ArduPilot's battery failsafe and whether the autopilot
+                    # entered RTL at all; reset on every other tick. Until
+                    # then rtl_failed was False on every tick, and an RTL
+                    # that could not get home stayed an RTL.
+                    rtl_check = self._rtl_check(now, st)
                     inp = tick_input_from_decision(
                         now, decision, self.policy, horizon_s=self.theta_horizon_s,
-                        rtl_failed=False,
+                        rtl_failed=bool(rtl_check is not None and rtl_check.failed),
+                        note=(rtl_check.note if rtl_check is not None and rtl_check.failed
+                              else ""),
                         # Home is --start's position in the policy frame,
                         # reached at the end of RTL's return leg: over it
                         # AFTER the climb (guardrail.rtl_path.home_reached,
@@ -4426,6 +4920,16 @@ if HAVE_ROS:
                 # read back by fsm.tick_input_from_row.
                 self.rows[-1].update(hold_off_m=round(hold_off, 3),
                                      hold_reach_m=round(hold_reach, 3))
+            if rtl_check is not None:
+                # G6's input (THE RTL WATCH), only on the RTL rows that judged
+                # it: the stress harness counts rtl_failed_ticks from it
+                # (sweep_scenarios.sitl_extra); rtl_confirmed is whether the
+                # autopilot had reported RTL by then.
+                self.rows[-1].update(rtl_failed=rtl_check.failed,
+                                     rtl_confirmed=rtl_check.confirmed)
+                if rtl_check.failed:
+                    self.rows[-1].update(rtl_fail_kinds=list(rtl_check.kinds),
+                                         rtl_fail_reasons=list(rtl_check.reasons))
             hold_work, self._hold_work = self._hold_work, None
             if hold_work is not None:
                 # The hold work this tick paid for (2026-11-10, THE PER-TICK
@@ -4770,6 +5274,25 @@ if HAVE_ROS:
                                                     else "in_place"),
                                          "moved_transits": self.hold_flight.transits}}
                         if self.fsm else None),
+                # G6's input (2026-11-14; module docstring, THE RTL WATCH):
+                # how the watch was configured, what it judged and why each
+                # RTL failed; the autopilot's battery reports behind it.
+                # Present on every run of this node, so the stress harness
+                # reads rtl_failed_ticks as measured (0 included).
+                "rtl_watch": ({**self.rtl_watch.summary(),
+                               "params": self.rtl_params,
+                               "battery": {
+                                   "topic": MAVLINK_SOURCE_TOPIC,
+                                   "source": ("BATTERY_STATUS (MAVLink 147) charge_state "
+                                              "from the autopilot (system 1, component 1) "
+                                              "in MAVROS's raw feed"),
+                                   "note": battery_failsafe_note(self.rtl_params or {}),
+                                   "refused": self.inputs_refused.get("estimator"),
+                                   **self.battery.summary(
+                                       to_mission_t=lambda v: v - (self.mission_t0 or 0.0))},
+                               "ticks_rtl_failed": sum(1 for r in self.rows
+                                                       if r.get("rtl_failed") is True)}
+                              if self.fsm else None),
                 "autopilot_took_over": self.takeover,
                 # After the FSM's terminal edge the rail logged on to the
                 # landing (2026-11-07): when the edge came, and how it ended
