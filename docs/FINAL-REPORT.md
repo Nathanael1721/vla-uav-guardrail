@@ -124,6 +124,9 @@ section 2):
 - **Pipeline.** Bundle → CSP → pilot → Shield (+ FSM) → MAVROS 2 →
   ArduPilot, with ArduPilot's GeoFence as the last backstop, set by the GCS
   since 3 Nov (WP3-10, ARCH-09).
+- **AP_DDS (ARCH-08).** The optional Q3 migration to ArduPilot's AP_DDS was
+  deferred: no AP_DDS code exists, and MAVROS 2 remains the ROS 2 bridge to
+  ArduPilot.
 - **Topologies** (ARCH-11 to ARCH-14):
 
 | Topology | Grant definition | State on 2026-11-13 |
@@ -365,14 +368,71 @@ to its signed replay bundle in the KPI report.
 ## 6. VLA backend measurement set (ARCH-30, X-04)
 
 The grant asks for a measurement set before a default VLA backend is
-chosen. What exists is the follow comparison on Project AirSim CityLife
-(simple_flight, outside the ArduPilot architecture, never KPI evidence).
-Every model flew pure-VLA and hierarchical (the VLA chooses the intent, the
-hand-written controller flies it), on the desktop and on the Jetson Orin
-Nano, 27-29 Oct. Score: share of the mission within 30 m of the car (pure
-VLA from its first acquisition). Runs `demo/out/cmp_*`, `cmp2_*`, `rep3_*`
-to `rep5_*`, `orin_*`; n is the number of flights, std the sample standard
-deviation.
+chosen. The protocol table in the repository
+(deploy/evidence/vla_backend_table.md, `vla-backend-protocol/1`) still
+says "Default backend: none" and has empty Orin columns. This section folds
+into it the follow comparison of 27-29 Oct, the AGX Orin timings of 3-6 Nov
+and the lab's own AIoT-VLA.
+
+All follow flights are on Project AirSim CityLife with simple_flight:
+outside the ArduPilot architecture (ARCH-02) and never KPI evidence. The
+score is the share of the mission within 30 m of the red car: hierarchical
+flights (the VLA chooses the intent, the hand-written controller flies it)
+from the start gate, end-to-end flights from the first acquisition
+(CHANGELOG 2026-10-28).
+
+### 6.1 Protocol table
+
+| Backend | Host, precision | Decision time | Follow, hierarchical | Follow, end to end | Sources |
+|---|---|---|---|---|---|
+| Stub P-controller (no model; the KPI campaigns fly stub pilots) | desktop | p50 0.0013 ms (n=50) | - | - | [T] |
+| Hand-written follow (OWL-ViT + controller; no VLA) | PC; AGX Orin | - | PC 0.972 (n=5, std 0.012); AGX 0.952 (n=1) | - | [C29] [C4] |
+| AerialVLA original (OpenVLA-7B + LoRA) | PC RTX 4090, bf16 / sdpa / merged | bench p50 259 ms; in flight 0.49-0.63 s p50 | 0.854 (n=5, std 0.305; median 0.987) | 0.539, 0.153 | [T] [C29] [C28] |
+| AerialVLA original | AGX Orin, bf16 / sdpa / merged | bench p50 1073.9 ms (n=50; unmerged 1520.3 ms); in flight 1.44 s | 1.000 (n=1) | 0.048 | [E1] [C4] |
+| AerialVLA QLoRA fine-tunes r1-r4 | PC, bf16 / sdpa / merged | in flight 0.48 s (r1), 0.66 s (r3) | 0.882-0.917 (n=2-3 each) | 0.018-0.065 | [C27] [C29] [C28] |
+| DroneCATS-2B | PC, bf16 | bench p50 1.00-1.12 s; in flight 1.45 s | 0.933 (n=5, std 0.006) | 0.132, 0.086 | [C27] [C29] [C28] |
+| DroneCATS-2B | AGX Orin, bf16 | in flight 2.64 s | 0.941 (n=1) | 0.000 | [C4] |
+| DroneCATS-2B | Orin Nano, int4 | 9.6 s; beside the detector it timed out 34 of 36 times | - | - | [C28n] |
+| RaceVLA-7B | PC | bench nf4 0.33 s; in flight 0.40-0.42 s | 0.720 (n=2) | 0.099, 0.084 | [C27] [C28] |
+| RaceVLA-7B | AGX Orin, bf16 | in flight 1.22 s | 0.715 (n=1) | 0.055 | [C4] |
+| OpenVLA-7B (base; reads the CSP prompt) | AGX Orin, bf16 | median 0.975 s (8 answers, timed after the first) | not flown on the follow | not flown on the follow | [C3e] |
+| OpenVLA-7B (base) | desktop, nf4 / bf16 | warm 0.86 s / 3.35 s (load probes, 14 Jul, n far below 50) | - | - | [T] |
+| AIoT-VLA (the lab's own: frozen OWL-ViT + trained head; reads the object's words, not the CSP) | RTX 4090 (v1) | model time p50 10.3 ms | - | v10b with the stand-off feed, red car: 0.969, 0.960, 0.955 (n=3, P0 escape 0.0) | [D] [C1] |
+| AIoT-VLA | Orin Nano Super (v1) | model time p50 48.4 ms (600 captures, server alone) | - | - | [D] |
+| AIoT-VLA v10b | AGX Orin, fp16 | model time p50 32.6 ms, round trip p50 39.6 ms (n=300, server alone) | - | `TODO(hil flights pas_hil_aiot_01-03)` | [E2] |
+| CognitiveDrone, BitVLA (named by the grant) | - | weights not obtained | - | - | [T] |
+
+Sources:
+
+- [T] deploy/evidence/vla_backend_table.md (generated 2026-10-06; the
+  AerialVLA serving section 2026-10-21 from docs/data/aerialvla_serving_4090.json).
+- [C1] CHANGELOG 2026-11-01 (late): runs aiot_v10bs_01-03; flown from the
+  clean master 55faad0, signed copies in bundles/ (CHANGELOG 2026-11-06
+  (contract)).
+- [C27] CHANGELOG 2026-10-27 (flown): runs `demo/out/cmp_*`.
+- [C28] CHANGELOG 2026-10-28: runs `cmp2_*` and the Orin Nano client runs.
+- [C28n] CHANGELOG 2026-10-28 (night).
+- [C29] CHANGELOG 2026-10-29 (later): runs `rep3_*` to `rep5_*`.
+- [C3e] CHANGELOG 2026-11-03 (evening): deploy/orin/vla_bf16_check.py,
+  verdict in deploy/evidence/hil/vla_bf16_check.json.
+- [C4] CHANGELOG 2026-11-04: the 28 Oct matrix re-flown with every VLA
+  served on the AGX Orin (MAXN, 6da813d).
+- [D] docs/DESIGN-aiotvla.md ("On the Jetson Orin Nano", the serving check).
+- [E1] deploy/evidence/hil/aerialvla_serving_bench_agx_merged.json and
+  aerialvla_serving_bench_agx.json.
+- [E2] deploy/evidence/hil/aiotvla_v10b_bench_agx.json (6 Nov).
+
+Read with care: one to five flights per configuration; the AIoT-VLA
+flights (1 Nov) used the stand-off feed added that day, so they are not
+the same configuration as the 27-29 Oct matrix; a server-alone time leaves
+out the camera, the detector and the transport.
+
+### 6.2 Flights per configuration, 27-29 Oct
+
+On the PC the whole loop ran on the desktop. On the Orin Nano only the
+flight client ran on the board; every VLA answered from the desktop's GPU
+(CHANGELOG 2026-10-28, Limits). n is the number of flights, std the sample
+standard deviation.
 
 | Platform | Mode | Model | n | Mean | Std | Min-max |
 |---|---|---|---|---|---|---|
@@ -408,23 +468,56 @@ How to read it:
 - No VLA beats the hand-written controller consistently. The fine-tuned
   AerialVLA runs (r1-r4) sit below the original in both modes.
 
-AGX Orin (replaced the Orin Nano as the `hil` machine on 3 Nov; CHANGELOG
-2026-11-03 (evening), (night), (late night) and 2026-11-04):
+### 6.3 AGX Orin
 
-- OpenVLA-7B unquantized in bf16 on the board at about 1 s per action;
-  OWL-ViT at 61 ms.
+The AGX Orin replaced the Orin Nano as the `hil` machine on 3 Nov
+(CHANGELOG 2026-11-03 (evening), (night), (late night) and 2026-11-04).
+
+- OpenVLA-7B unquantized in bf16 on the board: median 0.975 s per action;
+  OWL-ViT at 61 ms per frame (192 ms on the Orin Nano).
 - The first follow flown from the AGX Orin (`agx_follow_01`, hand-written
   controller): 0.952 within 30 m, detector 2.57 Hz.
-- AerialVLA on the board: 1.52 s per decision; hierarchical follow 0.988;
-  end-to-end follow 0.213 with one P0 escape against a phantom subject (the
-  phantom is refused on replay since 4 Nov).
-- The 28 Oct Jetson matrix re-flown with every VLA served on the AGX: the
-  hierarchical follows hold their Orin Nano scores at a median 2.4 times
-  the latency.
+- AerialVLA unmerged on the board: 1.52 s per decision; hierarchical follow
+  0.988; end-to-end follow 0.213 with one P0 escape against a phantom
+  subject (the phantom is refused on replay since 4 Nov).
+- The 28 Oct matrix re-flown with every VLA served on the AGX: the served
+  latency was 2.1 to 3.9 times the Nano matrix's (median 2.4); over the six
+  hierarchical VLA models flown in full on both, the mean score is 0.888 on
+  the AGX and 0.891 on the Nano.
 
 `TODO(the lab's AIoT-VLA on the AGX Orin in the hil topology:
 pas_hil_aiot_01-03, Shield on, with video and camera-to-setpoint latency)`
-`TODO(choose a default backend with the PI, ARCH-30)`
+
+### 6.4 Default backend: PI to choose
+
+The choice is the PI's (ARCH-30, X-04; section 9, item 12).
+
+**Recommendation: AIoT-VLA v10b as the default for the follow mission on
+the perception and `hil` rails, with OpenVLA-7B kept as the text-reading
+backend for the CSP experiments (WP2).**
+
+Reasons:
+
+- It is the only learned model in the table that holds the car end to end:
+  0.955-0.969 within 30 m over 3 flights. Every other model flown end to
+  end (the published models and our AerialVLA fine-tunes) scored
+  0.000-0.539.
+- It is the only one whose decision time on the AGX Orin fits inside the
+  grant's 100 ms tick: 32.6 ms p50, server alone. The other learned models
+  served on the board took 0.975 s (OpenVLA-7B bench) to 2.64 s
+  (DroneCATS-2B in flight) per decision.
+- In hierarchical mode no VLA beats the hand-written follow consistently
+  (CHANGELOG 2026-10-28), so a larger model buys no score there.
+
+Against it:
+
+- It reads the object's words, not the CSP, so it cannot carry WP2's
+  prefix. That is why OpenVLA-7B stays for the CSP A/B.
+- It is trained on CityLife follows of a few targets.
+- Its flights so far are on simple_flight; it has not flown on `hil`
+  (TODO above).
+- The grant's reference backends (CognitiveDrone, BitVLA) were not
+  obtained, so they are not in the comparison.
 
 ## 7. Deviations register
 
@@ -432,7 +525,7 @@ pas_hil_aiot_01-03, Shield on, with video and camera-to-setpoint latency)`
 |---|---|---|---|
 | WP1-25, WP2-19, X-06 | Python 3.11+ | the AGX Orin companion runs Python 3.12.3 on every `hil` flight; the desktop flight env vla-real is Python 3.10.20 | move vla-real to 3.11+, or a written acceptance |
 | WP1-14 | WGS84 canonical, ENU/NED computed lazily | all 32 shipped policies stored and hashed in WGS84 since 3 Nov; a metre document still loads (the legacy read form, also what REST and the harness's spawned zones write) | convert metre input at ingest, or record it |
-| WP1-21, WP3-01, ARCH-15, ARCH-17 | dated gates: mid-term 2026-07-20, G1 2026-06-30 | IR committed 2026-10-06; ROS 2 Shield node from 2026-08-19/24; G1 passed 2026-10-08 over SIM_AirSim JSON, not HIL_* | state the actual dates; a PI ruling on G1's swap rule |
+| WP1-21, WP3-01, ARCH-15, ARCH-17 | dated gates: mid-term 2026-07-20, G1 2026-06-30 | IR committed 2026-10-06; ROS 2 Shield node first in git 2026-08-24; G1 passed 2026-10-08 over SIM_AirSim JSON, not HIL_* (section 7.1) | actual dates stated in section 7.1; a PI ruling on G1's swap rule |
 | ARCH-16 | Gazebo Harmonic functional rail at mid-term | first flown end to end on 2026-11-02 (`dev`); no sweep | late; state the dates |
 | WP3-04, ARCH-04 | body-frame action; one body-to-NED boundary in the adapter | the Shield takes the body frame at its boundary since 4 Nov; NED conversion only in the adapter on the ROS 2 rail; the dev rails still hand world-frame actions | PARTIAL; finish the dev rails, or a written acceptance |
 | WP3-06 | repair operator order with PathRepair | PathRepair off by default, with its measurement | recorded deviation |
@@ -450,6 +543,25 @@ pas_hil_aiot_01-03, Shield on, with video and camera-to-setpoint latency)`
 Closed deviations (no action left): WP1-01 (IR 4.0.0, 6 Nov), WP3-11 (audit
 record version 4, 2 Nov), WP2-16 (the bundle ships the multi-scale
 geometry, 2 Nov), WP1-22 and X-09 (IR bump on every shape change, 2 Nov).
+
+### 7.1 Dated gates: the grant's dates and the actual ones
+
+Dates from git (`git log --reverse --follow --format=%ci -- <file>`, the
+first commit that holds the file) and from the run folders and CHANGELOG
+sections named. The repository's first commit is 2026-08-24 (2fef997,
+"Track the Guardrail source that actually runs"), so git dates nothing
+earlier: work done before it, if any, has no dated evidence. The mid-term
+report was delivered in August (docs/MIDTERM-REPORT-Aug2026.md, in that
+first commit) and reviewed on 19 Aug (docs/MEETING-PACK-Sept2026.md,
+"Answers to the 19 August review").
+
+| Items | Grant gate | What the gate asks | Actual | Late by |
+|---|---|---|---|---|
+| WP1-21, ARCH-17 | mid-term, 2026-07-20 | Policy DSL + IR shipped | DSL code (guardrail/compiler.py, guardrail/models.py) first in git 2026-08-24 (2fef997); the typed IR, guardrail/ir.py, first committed 2026-10-06 (401305a) | 35 days (DSL in git); 78 days (IR) |
+| WP3-01, ARCH-17 | mid-term, 2026-07-20 | Safety Shield ROS 2 node with at least one projection operator | sitl/ros2_shield_node.py and guardrail/shield.py first in git 2026-08-24 (2fef997) | 35 days |
+| ARCH-16, ARCH-17 | mid-term, 2026-07-20 | Gazebo Harmonic functional rail demoable end to end | setup scripts (sitl/setup_gazebo.sh, sitl/run_gazebo_demo.sh) in git 2026-08-24 (2fef997); first flown end to end 2026-11-02, over pymavlink at e74eae3 and over MAVROS 2 at 0207af0 (demo/out/gazebo_shield_on_20261102, gazebo_ros2_shield_on_20261102; CHANGELOG 2026-11-02 (evening)) | 105 days |
+| ARCH-15 | G1, 2026-06-30 | HIL bridge adapter, the Q1 critical item, and its fallback gate | demo/pas_ardupilot/g1_check.py first committed 2026-10-07 (9bdc331); G1 passed 2026-10-08 (demo/out/g1_20261008_223259/g1_verdict.md) and again 2026-10-13 (g1_20261013_203404), over Project AirSim JSON frames to ArduPilot SIM_AirSim, not MAVLink HIL_* (CHANGELOG 2026-10-08) | 100 days; the gate's own swap rule fired (section 9, item 4) |
+| ARCH-23 | Q3 (Aug-Oct) | the paraphraser deliverable | stored paraphrase sets, validator and CLI first committed 2026-10-06 (guardrail/paraphraser.py, 401305a), inside the window; the separate gRPC service the grant names first committed 2026-11-02 (guardrail/paraphraser_service.py, 01df1b1) | the service: 2 days after 31 Oct |
 
 ## 8. Findings and corrections
 
