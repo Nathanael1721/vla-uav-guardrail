@@ -6586,6 +6586,18 @@ def write_bundle(ep_dir: Path, manifest: dict, kpi_doc: dict, events: list[dict]
             "".join(json.dumps(_json_safe(a)) + "\n" for a in audit), encoding="utf-8")
 
 
+def runner_facts() -> dict:
+    """The interpreter this sweep ran under (WP1-25 / X-06: the grant's non-VLA
+    stack is Python 3.11+). On a hil campaign the Shield node records the
+    companion's own Python in each run's metrics; this is the desktop side
+    that drives the campaign and scores it."""
+    import platform
+    return {"python": platform.python_version(),
+            "implementation": platform.python_implementation(),
+            "env": Path(sys.prefix).name,
+            "platform": platform.platform(terse=True)}
+
+
 def _show(p: Path) -> str:
     """Repo-relative when it can be, always with forward slashes. Used to call
     relative_to unconditionally, which raised AFTER the results were written
@@ -7355,6 +7367,7 @@ def main(argv: list[str] | None = None) -> int:
                     "behavioural variety: float jitter in repair counts splits "
                     "symmetric copies"},
         "_runtime_s": runtime,
+        "_runner": runner_facts(),
         "_manifest_common": base,
         "_seeds": {"episodes_consuming_seed": sum(1 for r in scored
                                                   if r.get("seed_consumed")),
