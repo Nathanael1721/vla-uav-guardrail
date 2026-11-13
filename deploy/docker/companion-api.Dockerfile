@@ -1,4 +1,3 @@
-# syntax=docker/dockerfile:1
 # The companion image plus the Policy DSL's REST hot-apply server (guardrail/api.py, the
 # pyproject `api` extra: fastapi + uvicorn), which the stress harness drives on a hil
 # episode (WP4-03 / WP4-05 / WP4-11, tools/harness_hil_episode.py). It is a layer on the
@@ -7,6 +6,9 @@
 # `pip download`, docs/RUNBOOK-orin-hil.md "REST hot-apply in the companion"), installed
 # with --no-index and pinned by constraints-companion-api.txt, the versions WSL
 # ~/venv-ros ran its REST hot-apply flights with (docs/DESIGN-python-versions.md).
+#
+# No `# syntax=` line: that would pull a frontend image, and the Orin cannot; the built-in
+# BuildKit frontend reads RUN --mount and named contexts.
 #
 #   docker build --build-context wheels="$HOME/wheelhouse-api" \
 #       -f deploy/docker/companion-api.Dockerfile -t vlaguard/companion:jazzy-api .
