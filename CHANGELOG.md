@@ -16,6 +16,22 @@ shipped change and recorded as one.
 
 ## [Unreleased]
 
+### 2026-11-14 (the desktop side on Python 3.12) — a sweep records the interpreter that drove and scored it, so a hil campaign run from the `guardrail-py312` environment shows the grant's non-VLA stack on Python 3.11+ on both machines
+
+#### Changed
+- `experiments/sweep_scenarios.py`: every sweep.json carries `_runner`
+  (`python`, `implementation`, `env`, `platform`) beside `_manifest_common`.
+  On a hil campaign the Shield node already records the companion's Python
+  (3.12.3 on the AGX Orin) in each run; `_runner` is the desktop process
+  that plans the campaign, drives SITL and scores the runs (WP1-25, WP2-19,
+  X-06). The OpenVLA / AerialVLA runtime stays outside it, as the grant
+  scopes the 3.11+ decision to the non-VLA stack
+  (docs/DESIGN-python-versions.md).
+
+#### Tests
+- `tests/test_sweep.py`: the sweep's `_runner` names the running interpreter;
+  122/123 (1 skipped) under both `guardrail-py312` (3.12.16) and `vla-real`
+  (3.10.20).
 ### 2026-11-13 (the final KPI report committed; hs09 confirms the start-up tick) — the WP4 KPI report over the KPI-grade nightly ntFIN2 and its supplement ntFIN2s is now in docs/data/kpi_ntFIN2, generated at a clean revision from re-scores committed beside it; the shakedown hs09 at 2f22116 flew 17 missions with no tick over 100 ms end to end
 
 #### Added

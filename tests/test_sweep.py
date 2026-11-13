@@ -1477,6 +1477,10 @@ def test_a_sweep_writes_one_bundle_per_episode_and_survives_an_out_outside_the_r
         assert rc == 0 and out.is_file()
         doc = json.loads(out.read_text(encoding="utf-8"))
         assert doc["_counts"]["pass"] == 1, doc["_counts"]
+        # WP1-25: the sweep names the interpreter that drove and scored it.
+        import platform
+        assert doc["_runner"]["python"] == platform.python_version(), doc.get("_runner")
+        assert doc["_runner"]["env"] == Path(sys.prefix).name, doc["_runner"]
         dirs = [p for p in runs.iterdir() if p.is_dir()]
         assert len(dirs) == 1 and dirs[0].name.endswith("--speed-cap--seed1001"), dirs
         man = json.loads((dirs[0] / "manifest.json").read_text(encoding="utf-8"))
