@@ -32,6 +32,7 @@ shipped change and recorded as one.
 - `tests/test_sweep.py`: the sweep's `_runner` names the running interpreter;
   122/123 (1 skipped) under both `guardrail-py312` (3.12.16) and `vla-real`
   (3.10.20).
+
 ### 2026-11-13 (the final KPI report committed; hs09 confirms the start-up tick) — the WP4 KPI report over the KPI-grade nightly ntFIN2 and its supplement ntFIN2s is now in docs/data/kpi_ntFIN2, generated at a clean revision from re-scores committed beside it; the shakedown hs09 at 2f22116 flew 17 missions with no tick over 100 ms end to end
 
 #### Added
