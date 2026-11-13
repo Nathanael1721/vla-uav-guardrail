@@ -288,6 +288,22 @@ inside a tick (GcPacer, THE GARBAGE COLLECTOR; --gc-pacing). Rows carry
 `tick_trigger`; metrics.json `tick_schedule` and `gc`. --tick-trigger timer
 and --gc-pacing off fly the old behaviour (an A/B on the rig).
 
+THE START-UP TICK (2026-11-13). On the final nightly ntFIN2 (116214f) the
+only ticks over 100 ms end to end were 13 of 171,393, every one row 2 of its
+mission (t 0.101 s, "deferred", e2e 100.6-121.9 ms). start_mission does
+~90 ms of work without spinning (the Shield warm-up, the collector's start),
+so the pilot message published meanwhile waited in the DDS queue and was
+delivered just after t = 0 (+2-3 ms), ticked as if live, and the pilot's
+next message, 12-18 ms later, was taken for a pilot faster than 1 / min_gap
+and deferred to the poll 80-86 ms on (row 2 of 418 of the 583 missions; the
+13 are those whose deferred tick took 15-36 ms of work). Now that backlog is
+delivered BEFORE the mission clock starts (START_BACKLOG_S, a bounded drain
+of the executor), a message received before the start is held and never
+ticked, the first message after it ticks at once whatever its gap to the held
+one, and the first watchdog tick gives a live stream the slack it gives one
+after a message's tick (TickScheduler). The held action is flown only by that
+watchdog, for a quiet stream, under the stale-action rule as every tick.
+
 CAMERA TO SETPOINT (2026-11-11, WP3-13). With the VLA bridge, each row whose
 setpoint was flown from a camera-backed action carries `camera_age_ms`: the
 age of the camera frame behind it at the setpoint's publication, the
@@ -1655,11 +1671,23 @@ def sim_params_record(get, spin, speedup: dict | None, *, now=time.time,
 # metrics.json turns into seconds (x TICK) keep their meaning. Rows carry
 # `tick_trigger`; metrics.json `tick_schedule`. --tick-trigger timer flies the
 # old 10 Hz timer unchanged (the A/B on the rig).
+#
+# THE START-UP TICK (2026-11-13, module docstring). A message received before
+# the mission clock starts is HELD: it ticks nothing, and the rate limit does
+# not count it, so the first message after the start ticks at once. The first
+# watchdog tick is due one period after the start, plus TIMER_SLACK_S when a
+# message came within one period before it (the stream is live and its next
+# message is due; as after a message's tick). The node delivers what queued
+# during its own start-up work before the clock starts (start_mission's
+# bounded drain: START_BACKLOG_SPINS spins of no wait, START_BACKLOG_S at
+# most), so that backlog is held, not taken for a burst after t = 0.
 TICK_POLL_S = TICK / 4.0
 ACTION_TICK_MIN_GAP_S = 0.8 * TICK
 TIMER_SLACK_S = 0.5 * TICK
 TICK_TRIGGERS = ("action", "deferred", "timer")
 _SCHED_EPS = 1e-9
+START_BACKLOG_SPINS = 200
+START_BACKLOG_S = 0.03
 
 
 class TickScheduler:
@@ -1668,7 +1696,8 @@ class TickScheduler:
     `on_poll(t)` from its TICK_POLL_S timer, `t` on its monotonic clock in
     seconds; each returns the trigger to tick with now, or None. `ran(t,
     trigger)` is called as each tick starts. Nothing ticks before `start(t)`
-    (bring-up's spins deliver messages too)."""
+    (bring-up's spins deliver messages too): a message before it is held
+    (`held_t`, THE START-UP TICK) and never counted by the rate limit."""
 
     def __init__(self, period_s: float = TICK, min_gap_s: float = ACTION_TICK_MIN_GAP_S,
                  slack_s: float = TIMER_SLACK_S, poll_s: float = TICK_POLL_S) -> None:
@@ -1691,20 +1720,44 @@ class TickScheduler:
         self.last_msg_t: float | None = None
         self.last_trigger: str | None = None
         self.pending = False
+        # The last message received before start(t): held, never ticked.
+        self.held_t: float | None = None
+        self.held_n = 0
         self.counts = {k: 0 for k in TICK_TRIGGERS}
 
     def start(self, t: float) -> None:
-        """The mission clock starts at `t`: the first message ticks at once,
-        the first timer tick is due one period later."""
+        """The mission clock starts at `t`: the first message after it ticks
+        at once (a held one is not counted by the rate limit), the first timer
+        tick is due one period later, plus the slack for a live stream
+        (`held_live`)."""
         self.t0 = float(t)
+
+    def held_live(self) -> bool:
+        """Did a message come within one period before the start? Then the
+        stream is live and its next message is due within the period."""
+        return (self.t0 is not None and self.held_t is not None
+                and self.t0 - self.held_t < self.period_s - _SCHED_EPS)
 
     def watchdog_due_at(self) -> float | None:
         """When the poll ticks if no message comes first."""
         base = self.last_t if self.last_t is not None else self.t0
         if base is None:
             return None
-        led = self.last_trigger in ("action", "deferred")
+        led = (self.last_trigger in ("action", "deferred") if self.last_t is not None
+               else self.held_live())
         return base + self.period_s + (self.slack_s if led else 0.0)
+
+    def start_record(self) -> dict:
+        """metrics.json `tick_schedule.start`: the messages held before the
+        start, the last one's age at it, and when the first watchdog was due."""
+        due = None
+        if self.t0 is not None:
+            led = self.held_live()
+            due = round(self.period_s + (self.slack_s if led else 0.0), 6)
+        return {"held_before_start": self.held_n,
+                "held_age_ms": (None if self.held_t is None or self.t0 is None
+                                else round((self.t0 - self.held_t) * 1000.0, 3)),
+                "first_watchdog_after_s": due}
 
     def on_message(self, t: float) -> str | None:
         # The rate limit is judged on the gap between MESSAGES, not on the
@@ -1714,6 +1767,9 @@ class TickScheduler:
         # by the same 20-35 ms (hs07, 2026-11-12: 22 of 30 missions, e2e to
         # 110.7 ms). A pilot faster than 1 / min_gap is still held to it.
         if self.t0 is None:
+            # Before the start: held, never ticked, and not the previous
+            # message of the first one after it (THE START-UP TICK).
+            self.held_t, self.held_n = float(t), self.held_n + 1
             return None
         prev, self.last_msg_t = self.last_msg_t, float(t)
         if self.last_t is None or prev is None or t - prev >= self.min_gap_s - _SCHED_EPS:
@@ -1745,10 +1801,13 @@ class TickScheduler:
 
 
 def tick_schedule_summary(rows: list[dict], mode: str,
-                          sched: TickScheduler | None = None) -> dict:
+                          sched: TickScheduler | None = None,
+                          start_backlog: dict | None = None) -> dict:
     """metrics.json `tick_schedule`: which trigger ran each tick, the rate,
     and the interval between tick starts (from the rows' mission time `t`,
-    ms resolution)."""
+    ms resolution); with the action trigger, THE START-UP TICK's record
+    (`start`: the messages held before the start and the backlog the node
+    delivered before it)."""
     ts = [float(r["t"]) for r in rows if isinstance(r.get("t"), (int, float))]
     gaps = [round((b - a) * 1000.0, 3) for a, b in zip(ts, ts[1:])]
     span = ts[-1] - ts[0] if len(ts) > 1 else 0.0
@@ -1767,7 +1826,13 @@ def tick_schedule_summary(rows: list[dict], mode: str,
         out["rule"] = ("a valid /vla/action_4d message ticks at once unless the previous "
                        "tick started under min_gap_s ago (then at the first poll past it: "
                        "deferred); with no message the poll ticks period_s after a timer "
-                       "tick, period_s + slack_s after a message's tick")
+                       "tick, period_s + slack_s after a message's tick; a message "
+                       "received before the mission clock starts is held (the backlog of "
+                       "the node's start-up work is delivered before it), the first one "
+                       "after the start ticks at once, and the first watchdog waits "
+                       "period_s + slack_s when one came within period_s before the start")
+        out["start"] = dict(sched.start_record() if sched is not None else {},
+                            backlog=start_backlog)
     else:
         out.update(period_s=TICK, rule="the node's own 10 Hz timer (--tick-trigger timer)")
     return out
@@ -2290,10 +2355,16 @@ if HAVE_ROS:
             self._lock = threading.RLock()
             # What runs the tick (THE TICK SCHEDULE: a pilot message, or the
             # 10 Hz timer with --tick-trigger timer); the scheduler exists
-            # once the mission clock starts. And the collector's pacing (THE
-            # GARBAGE COLLECTOR), started with the mission clock.
+            # from here, so a message bring-up's spins deliver is held (THE
+            # START-UP TICK), and ticks nothing until the mission clock
+            # starts. And the collector's pacing (THE GARBAGE COLLECTOR),
+            # started with the mission clock.
             self.tick_trigger = getattr(args, "tick_trigger", "action")
-            self._sched: TickScheduler | None = None
+            self._sched: TickScheduler | None = (
+                None if self.tick_trigger == "timer" else TickScheduler())
+            # THE START-UP TICK: the backlog start_mission delivered before
+            # the mission clock started (None with --tick-trigger timer).
+            self.start_backlog: dict | None = None
             self._in_tick = False
             self.gc_pacer = GcPacer(pace=getattr(args, "gc_pacing", "on") == "on")
             self.hot = None             # guardrail.api.FlightHotApply, if served
@@ -3481,6 +3552,11 @@ if HAVE_ROS:
                            start_collect_ms=self.gc_pacer.start_collect_ms,
                            frozen=self.gc_pacer.frozen_at_start,
                            every_s=self.gc_pacer.every_s)
+            if self._sched is not None:
+                # THE START-UP TICK: what queued while this node did not
+                # spin is delivered now, held (never ticked, not counted by
+                # the rate limit), not as a burst after t = 0.
+                self.start_backlog = self._deliver_backlog()
             self.mission_t0 = time.monotonic()
             # The episode's t = 0 for the simulator side (a scenario mission
             # only), sent the moment the mission clock starts.
@@ -3516,16 +3592,38 @@ if HAVE_ROS:
                            scenario=((self.scenario_meta or {}).get("run_id")
                                      if self.scenario_meta else None),
                            scenario_events_declared=self._ev_declared,
-                           tick_trigger=self.tick_trigger)
+                           tick_trigger=self.tick_trigger,
+                           start_backlog=self.start_backlog)
             if self.tick_trigger == "timer":
                 # The node's own 10 Hz timer, as every run until 2026-11-11.
                 self.create_timer(TICK, self._tick)
                 return
             # THE TICK SCHEDULE: a pilot message ticks (_on_action), and this
             # poll keeps the 10 Hz watchdog for a quiet stream.
-            self._sched = TickScheduler()
             self._sched.start(time.monotonic())
             self.create_timer(TICK_POLL_S, self._on_tick_poll)
+
+        def _deliver_backlog(self) -> dict:
+            """THE START-UP TICK: deliver what queued while this node did not
+            spin - bring-up's last service call, the Shield warm-up, the
+            collector's start - before the mission clock starts, so a pilot
+            message published meanwhile is received (and held) before t = 0
+            instead of arriving as a burst after it. Spins of no wait, at most
+            START_BACKLOG_SPINS of them and START_BACKLOG_S in all: a stream
+            that never runs dry (MAVROS's MAVLink source, ~300 a second) ends
+            it by the time bound. Returns its record for the mission_start
+            event and metrics.json `tick_schedule.start.backlog`."""
+            t_start = time.monotonic()
+            n0 = self.n_actions
+            spins = 0
+            while spins < START_BACKLOG_SPINS:
+                rclpy.spin_once(self, timeout_sec=0.0)
+                spins += 1
+                if time.monotonic() - t_start >= START_BACKLOG_S:
+                    break
+            return {"spins": spins, "ms": round((time.monotonic() - t_start) * 1000.0, 3),
+                    "actions": self.n_actions - n0,
+                    "max_spins": START_BACKLOG_SPINS, "max_s": START_BACKLOG_S}
 
         def serve_hot_apply(self) -> None:
             """The REST hot-apply API on this Shield (--hotapply-port), started
@@ -4706,7 +4804,7 @@ if HAVE_ROS:
                 "tick_latency": latency_summary(self.rows, trigger=self.tick_trigger),
                 # What ran the ticks and how often (THE TICK SCHEDULE).
                 "tick_schedule": tick_schedule_summary(self.rows, self.tick_trigger,
-                                                       self._sched),
+                                                       self._sched, self.start_backlog),
                 # The camera frame's age behind each setpoint flown from a
                 # camera-backed action (THE CAMERA'S AGE AT THE SETPOINT).
                 "camera_to_setpoint": camera_latency_summary(self.rows,
