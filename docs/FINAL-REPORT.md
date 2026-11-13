@@ -1,10 +1,11 @@
 # Final Report
 
 Semantic-Spatial Translation and Safety-Constrained VLA for ArduPilot UAVs ·
-NTUT AIoT Lab · draft v0.1, 2026-11-13
+NTUT AIoT Lab · draft v0.2, 2026-11-14
 
 > **Status: DRAFT, not signed.** Written from docs/FINAL-REPORT-outline.md at
-> 2f22116. The grant's final-delivery gate is 2026-11-30 (a signed final
+> 2f22116; updated 14 Nov for the `hil` runs hs10 and ge1113, the CI on
+> Python 3.12 and the committed KPI report (branch evidence-1114). The grant's final-delivery gate is 2026-11-30 (a signed final
 > report, X-01). The signer and the signing CA are not named yet (PI, 12 Oct,
 > Q5). Places that wait for a later number or a later decision are marked
 > `TODO(...)`; no value is filled in for them. Every number below names the
@@ -33,8 +34,13 @@ NTUT AIoT Lab · draft v0.1, 2026-11-13
   - Shield tick (`tick_ms`): max 74.06 ms, 0 of 173,410 ticks over 100 ms.
   - Action receipt to setpoint (`e2e_ms`): p99 30.3 ms, max 121.93 ms;
     13 ticks over 100 ms, all the second tick of a mission. The fix
-    (5f5009c) is on master; the shakedown hs09 at 2f22116 flew 17 missions
-    with e2e max 24.55 ms and P0 escapes 0 (section 5.6).
+    (5f5009c) is on master; at the fixed commit 2f22116 the grant-example
+    campaign ge1113 (36 KPI-grade missions) had 0 of 95,160 ticks over
+    100 ms (max 66.37 ms) and the shakedown hs09 (17 missions) e2e max
+    24.55 ms with P0 escapes 0 (section 5.6).
+- Every edge of the grant's escalation ladder has flown on `hil`: G2, G4,
+  G6, X2 and X3, the edges no rail had taken, in hs10 at 8a473fa on 14 Nov
+  (section 4.3; CHANGELOG 2026-11-14 (hs10 ...)).
 - Every KPI-grade run flies a stub pilot (guardrail/vla_stub.py), not a
   learned model. Learned models have flown on other rails, none KPI-grade:
   AerialVLA on ArduPilot SITL over pymavlink (29 Oct; Appendix A ARCH-07,
@@ -42,12 +48,11 @@ NTUT AIoT Lab · draft v0.1, 2026-11-13
   CHANGELOG 2026-11-07 (CSP flights)), and the follow comparisons on Project
   AirSim CityLife with simple_flight (section 6).
 - What this report cannot claim: a learned VLA on `hil` (ARCH-20), the
-  `flight` topology (ARCH-14), Gazebo sweeps (WP4-04), the grant's FSM edges
-  G2, G4 and G6 in flight (WP3-07), CI per build or per release (WP3-19,
+  `flight` topology (ARCH-14), Gazebo sweeps (WP4-04), CI per build or per release (WP3-19,
   WP4-06, WP4-14), observations at 10 Hz into the VLA (X-05, DRIFT).
 
-`TODO(summary: final wording after ge1113, the AIoT-VLA hil flights and the
-PI's answers)`
+`TODO(summary: final wording after the AIoT-VLA hil flights and the PI's
+answers)`
 
 ## 2. Scope and acceptance criteria
 
@@ -85,7 +90,7 @@ MAVROS 2, the Shield and the stub pilots on the Orin.
 |---|---|---|---|
 | P0 violation escape rate (WP3-14) | 0 | 0.0000: 0 escapes on 16,760 P0-violation ticks, 586 Shield-on flights; Shield-off control 0.6375 (153 of 153 P0 ticks, 3 flights); passthrough null 0.2122 | meets |
 | Fail-safe trigger correctness (WP3-15) | ≥ 0.99 | (r2, adopted): 566/567 = 0.998, Wilson 95 % low 0.990; (r) 554/567 = 0.977; (a) 495/567 = 0.873; 19 runs censored, not scored | meets as a point estimate |
-| Monitor tick ≤ 100 ms end to end (WP3-13) | ≤ 100 ms | `tick_ms` p50 8.1 / p99 29.5 / max 74.06 ms, 0 of 173,410 over 100; `e2e_ms` p50 8.2 / p99 30.3 / max 121.93 ms, 13 over 100 | `tick_ms` within; `e2e_ms` 13 start-up ticks over (fixed after the campaign, section 5.6) |
+| Monitor tick ≤ 100 ms end to end (WP3-13) | ≤ 100 ms | `tick_ms` p50 8.1 / p99 29.5 / max 74.06 ms, 0 of 173,410 over 100; `e2e_ms` p50 8.2 / p99 30.3 / max 121.93 ms, 13 over 100 | `tick_ms` within; `e2e_ms` 13 start-up ticks over (fixed after the campaign; at the fixed commit ge1113 had 0 of 95,160 over 100 ms, section 5.6) |
 | Mean time to safe (WP3-17) | tracked | 3.35 s mean, max 10.90 s, over 172 recovered unsafe spells; 75 spells never recovered (counted, not averaged) | tracked |
 | Repair success rate (WP3-20, X-02) | tracked | 98.1 % (26,521 of 27,025 repair ticks) | tracked |
 | Mean repair magnitude (WP3-16) | tracked | 6.405 m/s (translational, pooled over repaired ticks; yaw rate apart) | tracked |
@@ -93,10 +98,13 @@ MAVROS 2, the Shield and the stub pilots on the Orin.
 | Mission success rate (WP4-08) | tracked | 252/586 Shield on (our rule is stricter than the grant's: no dwell in a zone, no unsafe position entered, goal reached) | tracked |
 
 Source of the merged figures: the KPI report generated on 13 Nov
-(`tools/kpi_report.py`, two campaigns, two re-score tables; output named
-`kpi_ntFIN2_plus_s.md`). It was generated at `72dd5357b65b-dirty` and is
-not in the repository yet: `TODO(regenerate the merged KPI report from a
-clean tree and commit it with its re-score tables, WP4-17)`. The ntFIN2-only
+(`tools/kpi_report.py`, two campaigns, two re-score tables), regenerated
+on 13 Nov evening from a clean tree and committed:
+docs/data/kpi_ntFIN2/kpi_report_ntFIN2_2026-11-13.md and .json, code
+revision f505f1403bef, with the re-score tables beside it
+(docs/data/kpi_ntFIN2/rescore_r2_ntFIN2.json, rescore_r2_ntFIN2s.json and
+their .txt summaries; CHANGELOG 2026-11-13 (the final KPI report
+committed)). The ntFIN2-only
 figures are in docs/FINAL-REPORT-outline.md section 2 and CHANGELOG
 2026-11-13 (3.23 s, 98.2 %, 252/577, 55.4).
 
@@ -165,8 +173,9 @@ remains. The per-obligation rows are in Appendix A.
 - Open: the signing authority (WP1-04); compatibility with the PI's
   reference implementation (WP1-05); distance_envelope for people other than
   the tracked subject (WP1-07); the metre read form still accepted (WP1-14);
-  the perception rail's hot-apply listener (WP1-15); Python 3.11+ for the
-  desktop flight env (WP1-25).
+  the perception rail's hot-apply listener (WP1-15); one Project AirSim
+  scene step on Python 3.12 (WP1-25: the desktop's non-VLA side moved to
+  3.12 on 14 Nov, section 7).
 
 ### 4.2 WP2 Prefix Compiler (19 obligations)
 
@@ -181,7 +190,7 @@ remains. The per-obligation rows are in Appendix A.
   prefix's (CHANGELOG 2026-11-07 (CSP flights)).
 - The WP2 and WP4 correction notes were approved by the PI on 6 Oct and
   sent to ITRI (confirmed 2 Nov; WP2-12, WP4-21).
-- Open: Python 3.11+ for the desktop flight env (WP2-19).
+- Open: one Project AirSim scene step on Python 3.12 (WP2-19, as WP1-25).
 
 ### 4.3 WP3 Safety Shield (24 obligations)
 
@@ -196,16 +205,29 @@ remains. The per-obligation rows are in Appendix A.
 - Escalation FSM edges taken in ntFIN2 (from each run's metrics.json `fsm`;
   Appendix A WP3-07): G1 348, G3 334, G5 253, G9 216, X1 146, G7 93, G8 64,
   X5 54, G11 18, G10 3, G12 3, X4 3, X9 1. X6, X7 and X8 flew on `hil`
-  before (rh01, rh03, 6-7 Nov). **G2, G4 and G6 have not flown on any
-  rail.** G6 (RTL → Land when RTL fails) has no input: the ROS 2 node feeds
-  the FSM `rtl_failed=False` (sitl/ros2_shield_node.py).
+  before (rh01, rh03, 6-7 Nov).
+- The edges no rail had taken flew on 14 Nov in hs10 (8a473fa, `hil`,
+  profile `fsm_edges`, one seed per cell; demo/out/hil_hs10/sweep.json, runs
+  demo/out/hil_smoke/hs10_*; CHANGELOG 2026-11-14 (hs10 ...)): G2 and G4 on
+  fsm-n-in-t-flicker (hs10_003: X1, G2 at 5.8 s "N-in-T: 3 onsets in 5 s",
+  G4 at 10.0 s, RTL, G9); X2 (hs10_001) and X3 (hs10_002) from a hold; G6
+  on a blocked leg home (hs10_004: G11, G6, G10) and on no progress home
+  under wind beyond authority (hs10_005: G1, G3, X9, G6, G10). G6's input
+  is the node's RTL watch (`RTLFailureWatch`, sitl/ros2_shield_node.py;
+  CHANGELOG 2026-11-14 (WP3-07)), which replaced `rtl_failed=False`. P0
+  escape 0 and 0 polygon entries over the 5 missions; `e2e_ms` max 41.3 ms
+  over 2,181 ticks. The campaign was planned, driven and scored on Python
+  3.12 (sweep.json `_runner`).
 - Built differently: the mid-term Shield node came after the 20 July gate
   (WP3-01, DRIFT); PathRepair is off by default, a measured deviation
   (WP3-06); the PAS rail bypasses the MAVLink adapter (WP3-09); planning
   and analysis code still measures zone geometry of its own (WP3-22).
-- Open: G2, G4, G6 (WP3-07); fail-safe correctness on the 19 censored runs
-  and 2 unaccepted cell-seeds (WP3-15); the tick budget on a full campaign
-  at the fixed commit (WP3-13); the smoke matrix per build (WP3-19).
+- Open: G6's battery reason, not flown (failsafe-low-battery stays
+  refused: SITL reaches CRITICAL only through BATT_CRT_* thresholds the rig
+  leaves at 0) and the label of fsm-n-in-t-flicker (the rubric's N1 expects
+  no fail-safe where the grant's G4 sends the aircraft home; section 9)
+  (WP3-07, DONE); fail-safe correctness on the 19 censored runs and 2
+  unaccepted cell-seeds (WP3-15); the smoke matrix per build (WP3-19).
 
 ### 4.4 WP4 Stress Testing (21 obligations)
 
@@ -219,9 +241,17 @@ remains. The per-obligation rows are in Appendix A.
   fixed in 183bb3e (CHANGELOG 2026-11-11 (hil rig flights, 7-11 Nov) and
   (fence read and take-off)). Its "mean time to safe ≤ 2.0 s" holds only
   vacuously: no episode is ever unsafe (CHANGELOG 2026-11-07 (grant example
-  sweep)). `TODO(ge1113: the same sweep at 2f22116, in flight on 13 Nov)`
+  sweep)). The same sweep flew again at 2f22116 as ge1113 (13-14 Nov, 36
+  missions, all KPI-grade; demo/out/hil_ge1113/sweep.json; CHANGELOG
+  2026-11-14 (hs10 ...)): 36 passed, mission success 27/36, no
+  P0-violation tick, no repair and no unsafe spell, so its P0 rate is
+  vacuous and its fail-safe labels (36/36, all "no fail-safe") do not
+  discriminate (`tools/kpi_report.py --campaign demo/out/hil_ge1113`, not
+  committed). It is latency evidence at the fixed commit (section 5.6), not
+  Shield evidence.
 - Built differently: the smoke set has never run per release (WP4-14).
-- Open: the written KPI report (WP4-17); the zone edits translate, rotate
+- Open: the KPI report's delivery with this report (WP4-17; the report
+  itself is committed, section 2); the zone edits translate, rotate
   and scale driven by the harness into a flight (WP4-03); Gazebo functional
   sweeps (WP4-04); the gRPC harness driving a rail episode (WP4-05); CI
   smoke per build and a nightly cadence (WP4-06); the grant's bundle names
@@ -339,10 +369,21 @@ to its signed replay bundle in the KPI report.
   flew with, one cell failed (hs09_001, nfz-head-on canonical arm: labelled
   not to trigger, triggered RTL). Re-scored with the label artefact
   (`experiments/sweep_scenarios.py --profile nightly --rescore-rail`; output
-  hs09_r2.json, not committed): (r2) 17/17 = 1.000, Wilson 95 % low 0.816;
+  docs/data/kpi_ntFIN2/rescore_r2_hs09.json): (r2) 17/17 = 1.000, Wilson 95 % low 0.816;
   (r) 17/17; (a) 16/17 = 0.941, the false trigger hs09_001. Under (r) and
   (r2), hs09_001's label is read on the cell flown as long as the rail
   flies; without it 16/16.
+- A full campaign at the fixed commit: the grant-example sweep ge1113 at
+  2f22116 (`hil`, 36 missions, all KPI-grade; demo/out/hil_ge1113/sweep.json;
+  `tools/kpi_report.py --campaign demo/out/hil_ge1113`, not committed):
+  over 95,160 ticks `tick_ms` p50 7.2 / p95 8.7 / p99 9.8 / max 66.28 ms and
+  `e2e_ms` p50 7.3 / p95 8.8 / p99 9.8 / max 66.37 ms; 0 ticks over 100 ms.
+  Its missions never came near a zone (no P0-violation tick, no repair), so
+  it shows the tick budget at the fixed commit and nothing about the
+  Shield's other KPIs (section 4.4).
+- hs10 at 8a473fa (section 4.3): `e2e_ms` max 41.3 ms over 2,181 ticks.
+- WP3-13 is DONE on these runs (Appendix A). ntFIN2's 13 start-up ticks
+  stay in sections 5.4 and 5.7 as flown, before the fix.
 
 ### 5.7 Read with care
 
@@ -523,7 +564,7 @@ Against it:
 
 | Item | Grant | What we do | State |
 |---|---|---|---|
-| WP1-25, WP2-19, X-06 | Python 3.11+ | the AGX Orin companion runs Python 3.12.3 on every `hil` flight; the desktop flight env vla-real is Python 3.10.20 | move vla-real to 3.11+, or a written acceptance |
+| WP1-25, WP2-19, X-06 | Python 3.11+ | the AGX Orin companion runs Python 3.12.3 on every `hil` flight; since 14 Nov the desktop's non-VLA side runs Python 3.12.16 (guardrail-py312): the full CI at 8a473fa, 148/148 files (docs/data/ci_local/8a473fa0172e-py312.json), the `hil` campaign hs10 planned, driven and scored by it (sweep.json `_runner`), and the PAS launcher's scene / check / g1 steps (scripts/run_pas_ardupilot.ps1, not yet run on a live scene); vla-real (Python 3.10.20) stays for the VLA runtime (torch, transformers), which the grant scopes out of the 3.11+ decision (docs/DESIGN-python-versions.md) | one PAS scene step on 3.12; the PI to confirm that the VLA runtime is outside the floor |
 | WP1-14 | WGS84 canonical, ENU/NED computed lazily | all 32 shipped policies stored and hashed in WGS84 since 3 Nov; a metre document still loads (the legacy read form, also what REST and the harness's spawned zones write) | convert metre input at ingest, or record it |
 | WP1-21, WP3-01, ARCH-15, ARCH-17 | dated gates: mid-term 2026-07-20, G1 2026-06-30 | IR committed 2026-10-06; ROS 2 Shield node first in git 2026-08-24; G1 passed 2026-10-08 over SIM_AirSim JSON, not HIL_* (section 7.1) | actual dates stated in section 7.1; a PI ruling on G1's swap rule |
 | ARCH-16 | Gazebo Harmonic functional rail at mid-term | first flown end to end on 2026-11-02 (`dev`); no sweep | late; state the dates |
@@ -600,27 +641,30 @@ Still needed:
 | 5 | Team size | ARCH-24 | the grant names five people; the work was done by one |
 | 6 | Accept the FSM extensions X8 and X9 | WP3-07 | both are edges the grant does not list; both change fail-safe outcomes |
 | 7 | Accept the GUIDED hold for Loiter | WP3-07, WP3-09 | the grant says SET_MODE LOITER; the rails hold in GUIDED |
-| 8 | Python 3.10 on the desktop flight env | WP1-25, WP2-19, X-06 | PI said follow the grant (6 Oct); move vla-real to 3.11+ or accept in writing |
+| 8 | Python 3.10 for the VLA runtime on the desktop | WP1-25, WP2-19, X-06 | PI said follow the grant (6 Oct); since 14 Nov the non-VLA desktop side runs 3.12 (section 7); vla-real (3.10) remains for torch / transformers, which the grant's "non-VLA stack" wording leaves outside the floor: confirm that reading |
 | 9 | Push to GitHub so CI runs per build | WP3-19, WP4-06, WP4-14 | nothing is pushed; "code will not be published" vs a public repository is to be confirmed |
 | 10 | Observation rate below 10 Hz | X-05, ARCH-25 | G3 ruling (12 / 21 Oct, Q3) |
 | 11 | The five final-demo scenarios | WP4-19 | settled 2 Nov as "after the VLA and the system are mature"; the five are not named yet (6 Oct, Q2) |
 | 12 | Default VLA backend | ARCH-30, X-04 | after the AGX Orin timings |
+| 13 | G4 on a flickering brake rule | WP3-07, WP3-15 | hs10's fsm-n-in-t-flicker took G2 and G4 and went home (RTL), as the grant's N-in-T edge says; the fail-safe rubric's N1 expects no fail-safe there, so the cell is left unlabelled until the PI says which governs |
 
 ## 10. Limitations and open items
 
 - **No learned VLA in the KPI-grade evidence.** The `hil` campaigns fly
   stub pilots. A learned model over MAVROS 2 in one run (ARCH-18, ARCH-20)
   has not flown. `TODO(AIoT-VLA hil flights)`
-- **FSM edges G2, G4, G6 not flown** on any rail (WP3-07). G6 has no input
-  on the ROS 2 node.
+- **G6's battery reason not flown** (WP3-07, DONE on the other edges): SITL
+  reaches a CRITICAL battery only through BATT_CRT_* thresholds the rig
+  leaves at 0, so failsafe-low-battery stays refused; the reason is
+  unit-tested.
 - **Fail-safe correctness rests on 567 scored runs.** 19 censored runs and
   2 cell-seeds with no accepted flight are not scored (WP3-15).
 - **Seeds are not independent** (section 5.7).
 - **ArduPilot's own modes** carried the aircraft into a P0 zone in 21
   ntFIN2 missions and 3 ntFIN2s missions, outside the grant's escape count;
   the 12 m/s RTL drift (lane 20) is open (section 5.2).
-- **Tick budget.** The start-up fix flew in a 17-mission shakedown, not in
-  a full campaign (WP3-13).
+- **Tick budget at the fixed commit rests on stub-pilot runs** (ge1113,
+  hs09, hs10): no learned VLA's decision time is in `e2e_ms` (ARCH-03).
 - **No `flight` topology**, no flight firmware bit-identity (ARCH-14,
   ARCH-31).
 - **No Gazebo sweep** (WP4-04).
@@ -634,18 +678,22 @@ Still needed:
   into a flight (WP4-03); the gRPC harness does not start a rail episode
   (WP4-05).
 - **Observation rate** below 10 Hz (X-05).
-- **Python 3.10** on the desktop flight env (WP1-25).
+- **Python 3.10** for the VLA runtime on the desktop (vla-real); the
+  non-VLA side runs 3.12 since 14 Nov, one PAS scene step on 3.12 still to
+  run (WP1-25).
 - **AP_DDS** not done (ARCH-08, MISSING).
 
 ## 11. Plan to 2026-11-30
 
-1. ge1113: the grant example sweep at 2f22116. `TODO(results)`
-2. AIoT-VLA on the AGX Orin in the `hil` topology, 3 flights with video
-   and camera-to-setpoint latency; a Mission Planner screenshot (ARCH-10).
-3. Commit the merged KPI report from a clean tree with its re-score tables
-   (WP4-17); write section 5 from the committed copy.
-4. Fly G2, G4 and G6 on the rail (WP3-07), after G6 gets an input.
-5. The PI's decisions (section 9); then sign (X-01).
+Done 13-14 Nov: ge1113, the grant example sweep at 2f22116 (section 4.4,
+5.6); the merged KPI report committed from a clean tree with its re-score
+tables (WP4-17, section 2); G2, G4, G6, X2 and X3 flown on `hil` in hs10
+(WP3-07); the full CI on Python 3.12 (WP1-25).
+
+1. AIoT-VLA on the AGX Orin in the `hil` topology, 3 flights with video
+   and camera-to-setpoint latency, with a PAS scene step on Python 3.12
+   (WP1-25); a Mission Planner screenshot (ARCH-10).
+2. The PI's decisions (section 9); then sign (X-01).
 
 ## Appendix A — obligations, evidence and what remains
 
@@ -832,7 +880,7 @@ Copied from docs/FINAL-REPORT-outline.md (re-assessed 14 Nov after the hil runs 
 
 ## Appendix B — independent-review note
 
-Copied from docs/FINAL-REPORT-outline.md at 2f22116. Point 7 is out of date: the start-up fix is on master (d7bb6a2) and flew in hs09 (section 5.6), and the supplement is merged into the KPI report (section 2).
+Copied from docs/FINAL-REPORT-outline.md at 2f22116, the 13 Nov note. Out of date since: point 7 (the start-up fix is on master since d7bb6a2 and flew in hs09 and in the full campaign ge1113 with no tick over 100 ms, section 5.6); the supplement is merged (WP3-15 holds on 567 scored runs, section 2); on 14 Nov WP3-07 (every FSM edge flown on `hil` in hs10, section 4.3) and WP3-13 moved to DONE, and WP4-17's report is committed from a clean tree, so only its delivery remains (Appendix A: 80 DONE, 49 PARTIAL, 6 DRIFT, 1 MISSING).
 
 
 Re-assessed against the grant pages' own words (kuanting-vla-uav-guardrail/docs/,

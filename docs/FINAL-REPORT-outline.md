@@ -49,7 +49,12 @@ mean time to safe (WP3-17), repair success (WP3-20, X-02), repair count
 (X-03), mission success (WP4-08) - and the six-field manifest (WP4-12) to
 DONE; fail-safe trigger correctness (WP3-15), the tick budget (WP3-13), the
 written KPI report (WP4-17) and the rows that need a push, a release or
-another rail stay PARTIAL, each with its gap.
+another rail stay PARTIAL, each with its gap. On 14 Nov two more moved to
+DONE: WP3-07 (hs10 at 8a473fa flew G2, G4, G6, X2 and X3, the edges no rail
+had taken) and WP3-13 (the grant-example campaign ge1113 at the fixed commit
+2f22116: 0 of 95,160 ticks over 100 ms end to end); WP4-17's report is
+committed from a clean tree (docs/data/kpi_ntFIN2), its delivery remains
+(CHANGELOG 2026-11-14 (hs10 ...)).
 **80 DONE, 49 PARTIAL, 6 DRIFT, 1 MISSING.** DONE means the code
 or the artefact the grant names exists and matches the grant's words; for a
 KPI row it means a KPI-grade value meets them; for any other row it never
@@ -83,10 +88,7 @@ Points the summary will carry, each already backed by section 4:
 - What the report cannot claim yet: fail-safe trigger correctness >= 99 %
   without a qualifier (566/567 = 0.998 on the adopted reading over the 567
   runs scored with the supplement; 19 censored runs and 2 cell-seeds with
-  no accepted flight unscored, WP3-15), every tick within 100 ms end to
-  end on a full campaign (13 start-up ticks over in ntFIN2; the fix,
-  5f5009c, is on master since d7bb6a2 and flew only in the 17-mission
-  shakedown hs09, no tick over 100 ms, WP3-13), a learned VLA on `hil` (the KPI campaigns fly a stub pilot,
+  no accepted flight unscored, WP3-15), a learned VLA on `hil` (the KPI campaigns fly a stub pilot,
   ARCH-20), the Gazebo functional rail (ARCH-16), the `flight` topology
   (ARCH-14).
 
@@ -137,7 +139,7 @@ ge1110 and the first nightly nt1111 (22d434b, 11-12 Nov).
 | Average repair count per episode (X-03) | tracked | **KPI-grade, ntFIN2: 55.4 per Shield-on mission**, per template 1.0 to 300.7 and per cell | - (DONE: tracked) |
 | Mission success rate (WP4-08) | tracked | **KPI-grade, ntFIN2: 252/577 = 0.437 Shield on**, per family; hover null 0. Our rule is stricter than the grant's (no dwell in a zone, no unsafe position entered, the goal reached) | - (DONE: tracked) |
 | Per-paraphrase robustness (WP4-09) | outcome stability across paraphrases | 7/8 with OpenVLA-7B: the canonical CSP-on mission and 8 paraphrases issued by the paraphraser service, utterance 4/4, verb_phrase 3/4 (7 Nov, one mission on AirSimNH, not KPI-grade); paraphrase arms in the harness; the paraphraser a separate gRPC service since 2 Nov; validator on a held-out set (heldout_2026_11_02): 1/50 false accepts, 14/44 false refusals, before that set's own misses were tuned on (0/50, 3/44 after, a dev figure) | the hil rail's pilot is a stub that reads no text, so the KPI-grade campaign refuses paraphrase arms (ntFIN2: 69 paraphrase / prefix arms refused; G3 ruling on a text-reading KPI pilot) |
-| Monitor tick ≤ 100 ms at 10 Hz; geometry query ≤ 5 ms at ~50 rules x 50 poses (WP3-13) | budget | **KPI-grade, ntFIN2, 171,393 ticks: `tick_ms` (tick start to the setpoint) p99 29.5 / max 74.06 ms, 0 over 100 ms; `e2e_ms` (pilot message received to the first setpoint flown from it) p99 30.4 / max 121.93 ms, 13 over 100 ms, each the second tick of its mission (t = 0.101-0.102 s; those ticks' own work 15-36 ms).** hs08 (116214f, 12 missions, 9,899 ticks): e2e max 96.8 ms. hs09 (2f22116, the start-up fix 5f5009c, 17 missions, 7,083 ticks; demo/out/hil_smoke/hs09_*): e2e p99 16.75 / max 24.55 ms, tick_ms max 24.46 ms, 0 over 100 ms. AGX Orin profile (6 Nov): query p99 0.977 ms, Shield step p99 22.647 ms at 50 rules x 51 poses | the start-up fix (5f5009c) is on master since d7bb6a2 and flew in the shakedown hs09 with no tick over 100 ms; left: a full `hil` campaign at the fixed commit with no tick over 100 ms |
+| Monitor tick ≤ 100 ms at 10 Hz; geometry query ≤ 5 ms at ~50 rules x 50 poses (WP3-13) | budget | **KPI-grade, ntFIN2, 171,393 ticks: `tick_ms` (tick start to the setpoint) p99 29.5 / max 74.06 ms, 0 over 100 ms; `e2e_ms` (pilot message received to the first setpoint flown from it) p99 30.4 / max 121.93 ms, 13 over 100 ms, each the second tick of its mission (t = 0.101-0.102 s; those ticks' own work 15-36 ms).** hs08 (116214f, 12 missions, 9,899 ticks): e2e max 96.8 ms. hs09 (2f22116, the start-up fix 5f5009c, 17 missions, 7,083 ticks; demo/out/hil_smoke/hs09_*): e2e p99 16.75 / max 24.55 ms, tick_ms max 24.46 ms, 0 over 100 ms. **KPI-grade at the fixed commit, ge1113 (2f22116, grant_example, 36 missions, 95,160 ticks; tools/kpi_report.py --campaign demo/out/hil_ge1113): `tick_ms` and `e2e_ms` p99 9.8 / max 66.37 ms, 0 over 100 ms.** hs10 (8a473fa, 2,181 ticks): e2e max 41.3 ms. AGX Orin profile (6 Nov): query p99 0.977 ms, Shield step p99 22.647 ms at 50 rules x 51 poses | - (DONE since 14 Nov: no tick over 100 ms in ge1113 at the fixed commit; ntFIN2's 13 start-up ticks stay as flown) |
 | DSL acceptance: schema pass 100 %, golden 100 %, cold start ≤ 1 s, hot-apply ≤ 50 ms, query ≤ 5 ms (WP1-19) | budget | **AGX Orin: cold start p95 590 ms (fresh processes, imports included), hot-apply p99 3.86 ms, query p99 0.977 ms**; schema 100 % and golden 100 % (desktop, docs/data/wp1_roundtrip.json); in flight, REST receipt to swap 0.444-4.443 ms (desktop WSL, 29 Oct) | - (DONE) |
 | Policy load round-trip (WP1-17) | 100 % | docs/data/wp1_roundtrip.json, regenerated 6 Nov from the clean tree 4edd5d1 (IR schema 4.0.0): round-trip 32/32, tamper 32/32, negative corpus 39/39 refused, the accept-everything null 0/32 and 0/39; 404/404 stored manifests of the lab checkout resolve | - (DONE) |
 | Bundle replayability (WP1-18) | load the bundle whose hash matches | hil_smoke_03 (KPI-grade, clean git checkout on the Orin): its signed replay bundle verifies and re-derives its KPIs; kept in bundles/ | - (DONE) |
@@ -198,7 +200,9 @@ the subsections are written from.
   distance_envelope for people other than the tracked subject (WP1-07), the
   perception rail's hot-apply listener (WP1-15; corridor_swap flown over
   REST on 3 Nov),
-  Python 3.11+ for the desktop flight env (WP1-25).
+  one Project AirSim scene step on Python 3.12 (WP1-25: the desktop's
+  non-VLA side runs 3.12 since 14 Nov; vla-real 3.10 stays for the VLA
+  runtime).
 - 4.2 WP2 Prefix Compiler: 19 obligations. The CSP model and its schema
   (since 29 Oct it accepts the spec's own example), budget, coverage,
   relevance explanations, the adapters (the cost map now also as YAML),
@@ -219,8 +223,8 @@ the subsections are written from.
   2026-11-07 (CSP flights)). The bundle ships the multi-scale geometry
   since 2 Nov (WP2-16, DONE), and the correction note was sent to ITRI
   (WP2-12, DONE, confirmed 2 Nov). The stress harness's own prefix A/B
-  with a text-reading pilot is WP4-15. Open: Python 3.11+ for the desktop
-  flight env (WP2-19).
+  with a text-reading pilot is WP4-15. Open: one Project AirSim scene step
+  on Python 3.12 (WP2-19, as WP1-25).
 - 4.3 WP3 Safety Shield: 24 obligations. Monitor / filter / projection
   (WP3-02), the 10 Hz ROS 2 interface (WP3-03), the IR invariant (WP3-21)
   and the package (WP3-24) are DONE, and since 29 Oct so are the REST
@@ -242,12 +246,11 @@ the subsections are written from.
   rate 0 (WP3-14) and the tracked KPIs - repair magnitude, time to safe,
   repair success (WP3-16, WP3-17, WP3-20) - all DONE. Open:
   PathRepair off by default, a measured deviation (WP3-06),
-  the grant's FSM edges G2, G4 and G6 not yet flown (WP3-07),
-  13 start-up ticks over the 100 ms end-to-end budget in ntFIN2 (WP3-13;
-  the fix, on master since d7bb6a2, flew only in the shakedown hs09, no
-  tick over 100 ms), and fail-safe trigger correctness on the 19 censored
+  and fail-safe trigger correctness on the 19 censored
   runs and the 2 cell-seeds with no accepted flight (WP3-15; 566/567 on the
-  567 scored with the supplement).
+  567 scored with the supplement). Since 14 Nov also DONE: every FSM edge
+  flown on `hil` (WP3-07; hs10: G2, G4, G6, X2, X3) and the tick budget at
+  the fixed commit (WP3-13; ge1113, 0 of 95,160 ticks over 100 ms).
 - 4.4 WP4 Stress Testing: 21 obligations. The scenario library (WP4-02),
   the KPI report generator (WP4-07) and, since 30 Oct, the Shield audit in
   every harness bundle (WP4-20, shield_audit.jsonl) are DONE, and since
@@ -281,9 +284,11 @@ failures linked to their signed replay bundles, and the tick budget. The
 supplement ntFIN2s was folded in the same day (`--campaign` twice, one
 episode choice; 589 KPI-grade episodes, P0 escape 0 over 586 Shield-on
 flights, fail-safe (r2) 566/567), from a tree with uncommitted changes
-(`72dd5357b65b-dirty`). Still to do: regenerate from a clean tree, commit
-it with its re-score tables, and write this section from it (due
-2026-11-30). Nothing in this
+(`72dd5357b65b-dirty`). Regenerated from a clean tree on 13 Nov evening
+and committed with its re-score tables: docs/data/kpi_ntFIN2/
+kpi_report_ntFIN2_2026-11-13.md and .json (code revision f505f1403bef);
+docs/FINAL-REPORT.md section 5 is written from it; its delivery is due
+2026-11-30. Nothing in this
 section may come from a `dev`, pymavlink or simple_flight run unless the PI
 waives it in writing (21 Oct, #4: the dated fallback, unanswered).
 
@@ -340,7 +345,7 @@ Each deviation, the grant text it departs from, and its state:
 
 | Item | Grant | What we do | State |
 |---|---|---|---|
-| WP1-25, WP2-19, X-06 | Python 3.11+ | 3.10 (the Jetson's JetPack Python, and the AerialVLA stack) | PI said follow the grant (6 Oct): run the stack on 3.11+ in the Orin container, or a written acceptance |
+| WP1-25, WP2-19, X-06 | Python 3.11+ | the AGX Orin companion runs 3.12.3 on every `hil` flight; since 14 Nov the desktop's non-VLA side runs 3.12.16 (guardrail-py312: the full CI at 8a473fa, docs/data/ci_local/8a473fa0172e-py312.json; hs10 planned, driven and scored by it; the PAS launcher's scene / check / g1 steps); vla-real 3.10.20 stays for the VLA runtime (torch, transformers) | PI said follow the grant (6 Oct); the grant scopes 3.11+ to the non-VLA stack (docs/DESIGN-python-versions.md): one PAS scene step on 3.12 left, and the PI to confirm that reading |
 | WP1-14 | WGS84 canonical, AGL default, ENU/NED computed lazily | since 3 Nov all 32 policies are stored and hashed in WGS84 with a stated origin, the local metres a lazy per-origin view (IR 3.1.0), MSL an opt-in with a ground; a metre document still loads (the legacy read form; also what REST, the Shield's zone edits and the harness's spawned zones write) | conformed for the stored policies (tools/convert_policies_wgs84.py, CHANGELOG 2026-11-03 (F)); deviation 1 now covers only the metre read form: convert metre input at ingest, or record it |
 | WP1-01 | ConstraintBase: constraint_type, scope, priority, violation_action required | since IR schema 3.0.0 (2 Nov) constraint_type, priority and violation_action are required and the action is one of the grant's six ('repair' is read as project_fix); since IR schema 4.0.0 (6 Nov) `scope` too: a rule without it is refused at every DSL entry, every shipped rule states `scope: mission` (scope follows the authoring layer, and every shipped rule is a mission-layer rule), and a stored document of an earlier era is read in its own era, scope absent, so it re-derives its recorded hash | closed 6 Nov: conformed (IR bump), no waiver (docs/IR-MIGRATIONS.md, the 4.0.0 row) |
 | WP1-21, WP3-01, ARCH-15, ARCH-17 | dated gates: mid-term 2026-07-20, G1 2026-06-30 | IR committed 2026-10-06; ROS 2 Shield node from 2026-08-19/24; G1 passed 2026-10-08 over SIM_AirSim JSON, not HIL_* | state the actual dates; a PI ruling on G1's swap rule |
@@ -393,9 +398,8 @@ is pushed meanwhile); the `flight` waiver above.
 
 1. `hil`: Docker on the Jetson (user, sudo), then the runbook's bring-up and
    a first KPI-grade episode. Done 6 Nov (hil_smoke_03).
-2. The sim items that need no PI ruling: the FSM
-   edges not yet flown, G2, G4 and G6 (WP3-07; G10 flown on hil since
-   7 Nov); Mission Planner on
+2. The sim items that need no PI ruling: done 14 Nov, the FSM edges G2,
+   G4, G6, X2 and X3 on `hil` (WP3-07, hs10; G10 since 7 Nov); Mission Planner on
    a PAS + ArduPilot run (ARCH-10); the VLA pilot over MAVROS 2 (ARCH-18,
    ARCH-20: needs the VLA server reachable from WSL). Done 29 Oct: REST
    hot-apply in flight (WP3-12, WP2-15), one flown zone per breach action
@@ -414,16 +418,17 @@ is pushed meanwhile); the `flight` waiver above.
    13 Nov, ntFIN2 flown and scored, and its supplement ntFIN2s flown and
    merged the same day. Left: the 19 censored fail-safe runs flown long
    enough to show their outcome, and the 2 cell-seeds with no accepted
-   flight (WP3-15); the start-up tick fix in a full `hil` campaign (WP3-13;
-   on master since d7bb6a2, flown in the shakedown hs09); the KPI report
-   regenerated from a clean tree and committed (WP4-17); the AGX Orin
-   timings (ARCH-03, ARCH-30); then this report.
+   flight (WP3-15); the AGX Orin timings (ARCH-03, ARCH-30); then this
+   report. Done 13-14 Nov: the start-up tick fix in a full `hil` campaign
+   (WP3-13, ge1113 at 2f22116); the KPI report regenerated from a clean tree
+   and committed (WP4-17, docs/data/kpi_ntFIN2).
 
 ## Appendix A — obligations, evidence and what remains
 
 Generated from the audit's status map (28 Oct) with the 28-29 Oct changes
 applied; regenerate it before the report is written. The rows the KPI-grade
-nightly `hil` campaign ntFIN2 touches were re-assessed on 13 Nov, each
+nightly `hil` campaign ntFIN2 touches were re-assessed on 13 Nov, and WP3-07,
+WP3-13 and WP4-17 again on 14 Nov after hs10 and ge1113, each
 against a quoted line of the grant pages (kuanting-vla-uav-guardrail/docs/);
 the note at the end says what moved and what a reviewer may still dispute.
 
@@ -627,17 +632,18 @@ WP3-08, WP3-11.
 **Why the rest stay PARTIAL.** WP3-15: 0.998 holds on the 567 runs scored
 with the supplement ntFIN2s (566/567); 21 are unscored (19 censored in
 Loiter, 2 cell-seeds with no accepted flight) and 5 errors among them would
-take it below 0.99. WP3-13: 13 start-up ticks over 100 ms in ntFIN2; the
-fix flew only in the 17-mission shakedown hs09 (no tick over 100 ms).
-WP4-17 and ARCH-19: the KPI report and the final report
-are not written. WP4-06, WP4-14, WP3-19: per build and per release need a
+take it below 0.99. WP3-13 (DONE 14 Nov): 13 start-up ticks over 100 ms
+in ntFIN2; the fix then flew in hs09 and in the full campaign ge1113 with no
+tick over 100 ms. WP4-17 and ARCH-19: the KPI report is committed from a
+clean tree since 13 Nov evening (docs/data/kpi_ntFIN2); the final report is
+a draft (docs/FINAL-REPORT.md), not signed or delivered. WP4-06, WP4-14, WP3-19: per build and per release need a
 push and a release, and GPS noise / latency has no rail. WP4-01: the
 paraphrase and prefix KPIs have no `hil` value. WP4-04: no Gazebo sweep.
 WP4-11: the grant's bundle names not flown. ARCH-31: no flight firmware.
-WP3-07: G2, G4 and G6 not flown. Would complete: the 19 censored runs
-flown long enough and the 2 unaccepted cell-seeds flown again, WP3-15 (if
-4 errors or fewer); the start-up fix in a full `hil` campaign, WP3-13; both
-in a committed clean-tree report and section 5 written from it, WP4-17.
+WP3-07 (DONE 14 Nov): G2, G4, G6, X2 and X3 flew in hs10; G6's battery
+reason is not flown. Would complete: the 19 censored runs flown long enough
+and the 2 unaccepted cell-seeds flown again, WP3-15 (if 4 errors or fewer);
+the report's delivery, WP4-17.
 
 **What an external reviewer might still dispute.**
 
