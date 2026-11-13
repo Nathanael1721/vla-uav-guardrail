@@ -251,8 +251,10 @@ re-scored with `experiments/sweep_scenarios.py --profile nightly
   note, point 2). In the merged report's table "What the autopilot flew on
   the rail runs", the three supplement missions ntFIN2s_013-015
   (wind-beyond-authority, lane 20, 12 m/s) each show one autopilot keep-out
-  breach and one polygon entry. This is the RTL drift in a 12 m/s wind that
-  the shakedown hs07 first showed; it is open.
+  breach and one polygon entry; demo/out/hil_ntFIN2s/sweep.json
+  `_true_state` counts them as 3 autopilot-entered P0 polygons, so 24 of
+  the 586 merged Shield-on flights. This is the RTL drift in a 12 m/s wind
+  that the shakedown hs07 first showed; it is open.
 
 ### 5.3 Fail-safe trigger correctness
 
@@ -331,8 +333,13 @@ to its signed replay bundle in the KPI report.
   max 24.46 ms; no tick over 100 ms; row 2 of all 17 missions ticked on the
   action; P0 escape rate 0 on every Shield-on mission.
 - hs09 is a shakedown of three templates, not the nightly. On the labels it
-  flew with, one cell failed (nfz-head-on canonical arm: labelled not to
-  trigger, triggered RTL); it was not re-scored under (r2).
+  flew with, one cell failed (hs09_001, nfz-head-on canonical arm: labelled
+  not to trigger, triggered RTL). Re-scored with the label artefact
+  (`experiments/sweep_scenarios.py --profile nightly --rescore-rail`; output
+  hs09_r2.json, not committed): (r2) 17/17 = 1.000, Wilson 95 % low 0.816;
+  (r) 17/17; (a) 16/17 = 0.941, the false trigger hs09_001. Under (r) and
+  (r2), hs09_001's label is read on the cell flown as long as the rail
+  flies; without it 16/16.
 
 ### 5.7 Read with care
 
@@ -498,8 +505,8 @@ Still needed:
   2 cell-seeds with no accepted flight are not scored (WP3-15).
 - **Seeds are not independent** (section 5.7).
 - **ArduPilot's own modes** carried the aircraft into a P0 zone in 21
-  ntFIN2 missions, outside the grant's escape count; the 12 m/s RTL drift
-  (lane 20) is open (section 5.2).
+  ntFIN2 missions and 3 ntFIN2s missions, outside the grant's escape count;
+  the 12 m/s RTL drift (lane 20) is open (section 5.2).
 - **Tick budget.** The start-up fix flew in a 17-mission shakedown, not in
   a full campaign (WP3-13).
 - **No `flight` topology**, no flight firmware bit-identity (ARCH-14,
