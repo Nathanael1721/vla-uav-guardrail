@@ -1,0 +1,5 @@
+# Build context of companion-api.Dockerfile (BuildKit reads <Dockerfile>.dockerignore next to
+# the Dockerfile): the repository root, everything excluded but the one file the Dockerfile
+# copies. The wheels come from the named build context `wheels`, not from here.
+*
+!deploy/docker/constraints-companion-api.txt

@@ -1,0 +1,13 @@
+# The REST hot-apply server's packages in the companion image (companion-api.Dockerfile), at
+# the versions WSL ~/venv-ros ran its REST hot-apply flights with
+# (docs/DESIGN-python-versions.md, "What runs where", read 2026-11-14). pydantic stays the
+# companion's own pin (constraints-companion.txt). tests/test_deploy_configs.py checks this
+# list against that table.
+fastapi==0.162.0
+uvicorn==0.54.0
+starlette==1.10.0
+anyio==4.15.1
+h11==0.16.0
+click==8.1.6
+idna==3.6
+pydantic==2.13.4

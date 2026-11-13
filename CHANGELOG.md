@@ -16,6 +16,25 @@ shipped change and recorded as one.
 
 ## [Unreleased]
 
+### 2026-11-14 (the companion's REST hot-apply layer) — fastapi and uvicorn as a layer on the built companion image, from pinned wheels, so the harness-driven hil episode can run on an Orin with no internet route
+
+#### Added
+- `deploy/docker/companion-api.Dockerfile` (+ its `.dockerignore`): `FROM
+  ${COMPANION_IMAGE}` (default `vlaguard/companion:jazzy`), the wheels from
+  the named build context `wheels` (`--mount=type=bind`), `pip install
+  --no-index` under `constraints-companion-api.txt`, then an import check.
+- `deploy/docker/constraints-companion-api.txt`: fastapi 0.162.0, uvicorn
+  0.54.0, starlette 1.10.0, anyio 4.15.1, h11 0.16.0, click 8.1.6, idna 3.6,
+  the versions WSL `~/venv-ros` ran (recorded in
+  docs/DESIGN-python-versions.md), and the companion's own pydantic 2.13.4.
+- docs/RUNBOOK-orin-hil.md section 15a: the wheelhouse on the desktop, the
+  base image kept as `jazzy-base`, the layer built as `jazzy`.
+
+#### Tests
+- `tests/test_deploy_configs.py`: the layer installs offline from the named
+  context under pins equal to the venv-ros row, and keeps the companion's
+  pydantic; 70/71 (1 skipped).
+
 ### 2026-11-14 (a harness-driven hil episode) — the harness can drive a library scenario's own zone events into a flying hil Shield over REST (spawn as POST /hot_apply, rotate / translate / scale as PATCH /dynamic_nfz/<id>), EmitEvent works on a rail episode, and tools/harness_hil_episode.py flies or dry-runs one such episode; built and tested on the fake rig, not flown
 
 Audit cards WP4-03, WP4-05 and WP4-11, the code side. **Nothing here has
