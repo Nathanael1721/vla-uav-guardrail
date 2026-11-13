@@ -5,6 +5,9 @@
     python tools/kpi_report.py --runs 'demo/out/ros2_*' --no-sweep
     python tools/kpi_report.py --campaign demo/out/hil_sm1111 \
         --rescore-rail <rescore.json> --out <stem>              # a hil campaign
+    python tools/kpi_report.py --campaign demo/out/hil_ntFIN2 \
+        --campaign demo/out/hil_ntFIN2s --rescore-rail <main.json> \
+        --rescore-rail <supplement.json> --out <stem>           # + a supplement
 
 WHAT THE GRANT ASKS FOR
 
@@ -132,6 +135,31 @@ reach. So:
     the adopted reading, the tick budget, and the tracked KPIs - time to
     safe, mission success, repairs per episode, repair magnitude, repair
     success - over the KPI-grade Shield-on runs and per scenario template.
+
+SINCE 2026-11-13: A CAMPAIGN AND ITS SUPPLEMENTS
+
+The final nightly ntFIN2 lost 11 missions to the rig (8 never flown after
+the desktop ran out of memory, 3 gps-dropout flights whose stress was not
+realised); they were flown again, at the same commit, as the campaign
+ntFIN2s. --campaign is repeatable: the first is the main campaign, every
+later one a supplement, and the rules (campaign_merge, EPISODE_CHOICE_RULES)
+are printed in the report's Inputs section:
+
+  * every campaign is at the same code revision (its sweep.json
+    `_manifest_common`, and the manifest of every run it lists) and the same
+    profile and backend - refused otherwise, by name;
+  * an episode is (cell id, seed, Shield arm); the main campaign's ACCEPTED
+    episode wins, and a supplement's is counted only where no earlier
+    campaign has an accepted one (not flown, errored, not accepted);
+  * a supplement flight of an episode an earlier campaign accepted is
+    superseded: listed by name, never read, scored or counted;
+  * the report says which episodes came from which campaign;
+  * --rescore-rail is repeatable too (sweep_scenarios.py writes one table
+    per campaign): the tables must agree on the label artefact, its build,
+    the adopted reading and the rail gates; they are merged per run, and the
+    table's own figure is recomputed over the same episode choice;
+  * the KPI-grade gate (is_kpi_grade, the signed replay bundle bound to the
+    run) is unchanged and applies to every counted flight.
 """
 from __future__ import annotations
 
@@ -1200,18 +1228,29 @@ def load_campaign(path: str | Path) -> dict:
     accepted: dict[str, dict] = {}
     not_accepted: dict[str, str] = {}
     run_dirs: list[str] = []
+    # Every result as an episode (campaign_episode_key) and what became of
+    # it here, for the episode choice across campaigns (campaign_merge).
+    episodes: list[dict] = []
     for r in doc["results"]:
         tag = r.get("mission_tag") or (Path(r["run"]).name if r.get("run") else None)
+        ep = {"key": campaign_episode_key(r), "tag": None, "status": r.get("status"),
+              "state": "not flown", "why": r.get("reason")}
         if tag and r.get("status") != "error":
             accepted[tag] = {"status": r.get("status"), "cell": r.get("id"),
                              "gates_failed": r.get("gates_failed") or [],
                              "expect": r.get("expect")}
+            ep.update(tag=tag, state="accepted", why=None)
             if r.get("run"):
                 run_dirs.append(str(r["run"]))
         elif r.get("status") == "error":
             m = _MISSION_IN_ERROR.search(str(r.get("error") or ""))
+            ep["why"] = str(r.get("error"))
             if m:
                 not_accepted[m.group(1)] = str(r.get("error"))
+                ep.update(tag=m.group(1), state="not accepted")
+            else:
+                ep["state"] = "errored before flight"
+        episodes.append(ep)
     globs: list[str] = []
     if name and store:
         st = Path(store)
@@ -1236,22 +1275,170 @@ def load_campaign(path: str | Path) -> dict:
             # (reading (a) as of 2026-11-11): beside the re-scored readings.
             "failsafe_at_flight": {k: (doc.get("_failsafe_labels") or {}).get(k) for k in (
                 "labelled", "correct", "fail_safe_correctness", "false_triggers",
-                "missed_triggers")}}
+                "missed_triggers")},
+            # Internal (keys of tuples; not written to the report).
+            "_episodes": episodes}
+
+
+def campaign_episode_key(r: dict) -> tuple:
+    """An episode's identity across campaigns of one profile and revision:
+    (cell id, seed, Shield arm). The cell id is the result's `id` - the cell
+    with its text-arm label where the family has one (`nfz-head-on#canonical,
+    prefix-on`), and a comparison arm's tag (`/forecast-3s`) - so one key is
+    one flight of the expansion."""
+    return (str(r.get("id") or r.get("id_cell")), r.get("seed"), r.get("arm"))
+
+
+# The episode choice across a main campaign and its supplements (2026-11-13),
+# as the report prints it.
+EPISODE_CHOICE_RULES = (
+    "every campaign is flown at the same code revision (its sweep.json "
+    "`_manifest_common` and the manifest of every run it lists) and the same profile "
+    "and backend; checked, and the report refused otherwise",
+    "an episode is (cell id, seed, Shield arm); the main campaign's ACCEPTED episode "
+    "wins, and a supplement's is counted only where no earlier campaign has an accepted "
+    "one (not flown, errored before flight, or not accepted)",
+    "a supplement flight of an episode an earlier campaign accepted is superseded: "
+    "listed by name, not read, scored or counted",
+    "a not-accepted flight stays what it was (not KPI-grade, functional evidence), "
+    "with the supplement flight that replaced it named",
+    "the KPI-grade gate is unchanged: is_kpi_grade plus the signed replay bundle bound "
+    "to the run, for every counted flight",
+    "several --rescore-rail tables must share the label artefact, its build, the "
+    "adopted reading and the rail gates; they are merged per run, and the tables' own "
+    "figure is recomputed over the same episode choice")
+
+
+def _campaign_name(c: dict) -> str:
+    return str(c.get("campaign") or c.get("path"))
+
+
+def campaign_merge(camps: list[dict]) -> dict:
+    """A main campaign (`camps[0]`, load_campaign) and its supplements as one
+    campaign for the report (EPISODE_CHOICE_RULES). Refused (SystemExit) when
+    a supplement is the main campaign again, or flew at another code revision,
+    profile or backend - or one of them cannot be checked. Returns the main
+    campaign's record with the merged acceptance (`accepted`: the counted
+    flights only, each with its `campaign`; `not_accepted` of every campaign;
+    `superseded`: run -> what superseded it), every campaign's store
+    (`runs_glob`), `supplements` (their records) and `episode_choice` (the
+    rules, the count per campaign, the episodes taken from a supplement and
+    what the main campaign had for each, the superseded flights, and the
+    not-accepted flights a supplement replaced)."""
+    main = camps[0]
+    seen: dict[str, str] = {}
+    for c in camps:
+        for ident in (c["path"], f"campaign {c.get('campaign')}" if c.get("campaign") else None):
+            if ident and ident in seen:
+                raise SystemExit(f"--campaign {c['path']}: {ident} is given twice (as "
+                                 f"{seen[ident]} too): a supplement is another campaign")
+            if ident:
+                seen[ident] = c["path"]
+    for c in camps[1:]:
+        for field, what in (("code_revision", "code revision"), ("profile", "profile"),
+                            ("backend", "backend")):
+            a, b = main.get(field), c.get(field)
+            if a is None or b is None or a != b:
+                raise SystemExit(
+                    f"--campaign {c['path']} cannot supplement {main['path']}: its {what} is "
+                    f"{b!r}, the main campaign's {a!r}. Every campaign of one report must be "
+                    f"flown at the same code revision and profile"
+                    + (" (a missing value cannot be checked)" if a is None or b is None
+                       else ""))
+    names = [_campaign_name(c) for c in camps]
+    winner: dict[tuple, tuple[int, str]] = {}
+    for i, c in enumerate(camps):
+        for ep in c["_episodes"]:
+            if ep["state"] == "accepted" and ep["key"] not in winner:
+                winner[ep["key"]] = (i, ep["tag"])
+    main_by_key: dict[tuple, dict] = {}
+    for ep in main["_episodes"]:
+        main_by_key.setdefault(ep["key"], ep)
+    accepted: dict[str, dict] = {}
+    not_accepted: dict[str, str] = {}
+    superseded: dict[str, dict] = {}
+    tag_campaign: dict[str, str] = {}
+    from_supplements: list[dict] = []
+    replaced: dict[str, str] = {}
+    counted = {n: 0 for n in names}
+    for i, c in enumerate(camps):
+        for ep in c["_episodes"]:
+            tag = ep["tag"]
+            if tag is None:
+                continue
+            cell, seed, arm = ep["key"]
+            tag_campaign[tag] = names[i]
+            w = winner.get(ep["key"])
+            if w is not None and (w[0] < i or (w[0] == i and w[1] != tag
+                                                and ep["state"] == "accepted")):
+                superseded[tag] = {"campaign": names[i], "cell": cell, "seed": seed,
+                                   "arm": arm, "status": ep["status"], "by": w[1],
+                                   "by_campaign": names[w[0]]}
+            elif ep["state"] == "accepted":
+                accepted[tag] = dict(c["accepted"][tag], campaign=names[i])
+                counted[names[i]] += 1
+                if i > 0:
+                    m = main_by_key.get(ep["key"])
+                    had = ("not in the main campaign" if m is None else
+                           m["state"] + (f": {m['why']}" if m.get("why") else ""))
+                    from_supplements.append({"run": tag, "campaign": names[i], "cell": cell,
+                                             "seed": seed, "arm": arm, "main": had,
+                                             "main_run": (m or {}).get("tag")})
+            else:
+                not_accepted[tag] = c["not_accepted"].get(tag) or str(ep.get("why"))
+                if w is not None:
+                    replaced[tag] = w[1]
+    supplements = [{k: v for k, v in c.items() if not k.startswith("_")} for c in camps[1:]]
+    out = dict(main)
+    out.update(
+        accepted=accepted, not_accepted=not_accepted, superseded=superseded,
+        _tag_campaign=tag_campaign,
+        runs_glob=[g for c in camps for g in c["runs_glob"]],
+        main_accepted=len(main["accepted"]), supplements=supplements,
+        episode_choice={
+            "rules": list(EPISODE_CHOICE_RULES), "campaigns": names,
+            "counted_by_campaign": counted, "from_supplements": from_supplements,
+            "superseded": [dict(v, run=k) for k, v in sorted(superseded.items())],
+            "not_accepted_replaced": replaced})
+    return out
+
+
+def load_campaigns(paths: list) -> dict | None:
+    """--campaign, once or more: one campaign (load_campaign) as it always
+    was, or a main campaign and its supplements merged (campaign_merge)."""
+    if not paths:
+        return None
+    camps = [load_campaign(p) for p in paths]
+    return camps[0] if len(camps) == 1 else campaign_merge(camps)
 
 
 def campaign_gate(e: dict, camp: dict) -> None:
     """Demote a flown episode the campaign did not accept (or does not list)
-    from KPI grade, with the campaign's reason; record its status."""
+    from KPI grade, with the campaign's reason; record its status and, with
+    supplements, the campaign it came from."""
     name = Path(str(e.get("source") or e.get("id"))).name
+    who = (camp.get("_tag_campaign") or {}).get(name) or _campaign_name(camp)
     got = camp["accepted"].get(name)
     if got is not None:
         e["campaign_status"] = got["status"]
+        if got.get("campaign"):
+            e["campaign"] = got["campaign"]
         return
     why = camp["not_accepted"].get(name)
     e["campaign_status"] = "not accepted" if why else "not in the campaign"
-    reason = (f"campaign {camp['campaign'] or camp['path']} did not accept this flight: {why}"
-              if why else f"not one of campaign {camp['campaign'] or camp['path']}'s "
-                          f"flights ({camp['path']} does not list it)")
+    if camp.get("supplements"):
+        e["campaign"] = who if why else None
+        names = " + ".join([_campaign_name(camp)] + [_campaign_name(s)
+                                                     for s in camp["supplements"]])
+        repl = (camp.get("episode_choice") or {}).get("not_accepted_replaced", {}).get(name)
+        reason = (f"campaign {who} did not accept this flight: {why}"
+                  + (f" (replaced by {repl})" if repl else "") if why else
+                  f"not one of campaigns {names}'s flights (none of their summaries "
+                  f"lists it)")
+    else:
+        reason = (f"campaign {who} did not accept this flight: {why}"
+                  if why else f"not one of campaign {who}'s "
+                              f"flights ({camp['path']} does not list it)")
     e["kpi_grade"] = False
     e["kpi_grade_reasons"] = list(e.get("kpi_grade_reasons") or []) + [reason]
 
@@ -1307,7 +1494,8 @@ def load_rescore(path: str | Path) -> dict:
             else:
                 rec["readings"][key] = {"status": kind, "expected": None,
                                         "triggered": rec["triggered"]}
-    return {"path": _rel(p), "schema": RESCORE_SCHEMA, "rail_gates": doc.get("rail_gates"),
+    return {"path": _rel(p), "paths": [_rel(p)], "schema": RESCORE_SCHEMA,
+            "rail_gates": doc.get("rail_gates"),
             "artefact": fl.get("artefact"), "built": fl.get("built"),
             "adopted": fl.get("adopted_kpi_reading"), "keys": keys,
             "shield_off_runs_left_out": fl.get("shield_off_runs_left_out"),
@@ -1316,6 +1504,84 @@ def load_rescore(path: str | Path) -> dict:
                 "failsafe_trigger_correctness", "wilson_low_95", "at_scenario_length")}
                 for k in keys},
             "runs": runs}
+
+
+_TABLE_FIGURE = ("runs", "scored", "correct", "failsafe_trigger_correctness", "wilson_low_95")
+
+
+def load_rescores(paths: list) -> dict | None:
+    """--rescore-rail, once or more (experiments/sweep_scenarios.py
+    --rescore-rail writes one table per campaign): one table (load_rescore)
+    as it always was, or several merged per run. Refused (SystemExit) when
+    the tables disagree on what a verdict means - the label artefact, its
+    build, the adopted reading, the readings, the rail gates - or when one
+    run carries two different verdicts. The merged table's `path` names
+    every file (`paths` lists them) and `tables` keeps each file's own
+    figure; the figure over the runs the report counts is recomputed by
+    failsafe_readings_section, with the campaigns' episode choice."""
+    if not paths:
+        return None
+    tables = [load_rescore(p) for p in paths]
+    first = tables[0]
+    if len(tables) == 1:
+        return first
+    given = [t["path"] for t in tables]
+    twice = sorted({p for p in given if given.count(p) > 1})
+    if twice:
+        raise SystemExit(f"--rescore-rail {twice[0]} is given twice")
+    for t in tables[1:]:
+        for f, what in (("artefact", "label artefact"), ("built", "label build"),
+                        ("adopted", "adopted KPI reading"), ("keys", "label readings"),
+                        ("rail_gates", "rail gates")):
+            if t[f] != first[f]:
+                raise SystemExit(
+                    f"--rescore-rail {t['path']} and {first['path']} disagree on the {what} "
+                    f"({t[f]!r} vs {first[f]!r}): re-score every campaign with one checkout "
+                    f"and one label artefact before merging them")
+    runs: dict[str, dict] = {}
+    origin: dict[str, str] = {}
+    for t in tables:
+        for name, rec in t["runs"].items():
+            if name in runs and runs[name] != rec:
+                raise SystemExit(f"run {name} is in --rescore-rail {origin[name]} and "
+                                 f"{t['path']} with different verdicts")
+            if name not in runs:
+                runs[name], origin[name] = rec, t["path"]
+    out = dict(first)
+    out.update(
+        path=" + ".join(t["path"] for t in tables), paths=[t["path"] for t in tables],
+        runs=runs,
+        shield_off_runs_left_out=sum(1 for r in runs.values()
+                                     if "error" not in r and r["shield"] != "on"),
+        readings={k: dict(first["readings"][k], **{f: None for f in _TABLE_FIGURE})
+                  for k in first["keys"]},
+        tables=[{"path": t["path"], "runs": len(t["runs"]),
+                 "readings": {k: {f: t["readings"][k].get(f) for f in _TABLE_FIGURE}
+                              for k in t["keys"]}} for t in tables])
+    return out
+
+
+def rescore_table_figure(rs: dict, key: str, superseded: set) -> dict:
+    """The re-score tables' own figure under reading `key`, recomputed from
+    their per-run verdicts as rail_label_scores counts them (every Shield-on
+    run re-scored without error; scored = correct, false or missed), leaving
+    out the runs the campaigns' episode choice superseded."""
+    pairs, n = [], 0
+    for name, rec in rs["runs"].items():
+        if name in superseded or "error" in rec or rec.get("shield") != "on":
+            continue
+        n += 1
+        rd = (rec.get("readings") or {}).get(key)
+        if rd is not None and rd["status"] in ("correct", "false", "missed"):
+            pairs.append((rd["expected"], rd["triggered"]))
+    sc = failsafe_score(pairs)
+    return {"runs": n, "scored": sc["scored"],
+            "correct": (sc["true_triggers"] or 0) + (sc["true_non_triggers"] or 0),
+            "failsafe_trigger_correctness": sc["failsafe_trigger_correctness"],
+            "wilson_low_95": sc["wilson_low_95"],
+            "basis": (f"{len(rs.get('paths') or [])} table(s) merged per run"
+                      + (f", {sum(1 for x in rs['runs'] if x in superseded)} superseded "
+                         f"run(s) left out" if superseded else ""))}
 
 
 def apply_rescore(e: dict, rs: dict) -> None:
@@ -1366,7 +1632,8 @@ def failsafe_score(pairs: list[tuple[bool, bool]]) -> dict:
         "min_error_free_episodes_for_target_at_95", "warnings")}
 
 
-def failsafe_readings_section(episodes: list[dict], rs: dict) -> dict:
+def failsafe_readings_section(episodes: list[dict], rs: dict,
+                              superseded: set | None = None) -> dict:
     """Fail-safe trigger correctness under every reading of the re-score
     table, over the KPI-grade Shield-on flights only (the contractual set),
     each reading apart and nothing pooled across them. Per reading: the
@@ -1374,15 +1641,25 @@ def failsafe_readings_section(episodes: list[dict], rs: dict) -> dict:
     and missed triggers by name, the runs whose label was read on the cell
     flown as long as the rail flies and the count without them, and the
     table's own figure beside (it scores every run the re-score read,
-    KPI-grade or not) with whether the two agree."""
+    KPI-grade or not) with whether the two agree. With several tables, or a
+    run the campaigns superseded (`superseded`, run names) in it, that
+    figure is recomputed over the episode choice (rescore_table_figure),
+    and the superseded runs are named apart."""
+    superseded = set(superseded or ())
     eps = [e for e in episodes if e.get("kpi_grade") and e.get("arm") == "on"
            and e.get("kind") == "flight"]
     out = {"source": rs["path"], "artefact": rs["artefact"], "adopted": rs["adopted"],
            "label_revisions": (rs.get("built") or {}).get("code_revisions"),
            "target": GRANT_FAILSAFE_TARGET, "kpi_grade_shield_on_flights": len(eps),
            "readings": {}}
+    if len(rs.get("paths") or [rs["path"]]) > 1:
+        out["tables"] = rs.get("tables")
     known = {Path(str(e.get("source") or e.get("id"))).name for e in episodes}
-    out["rescore_runs_not_in_report"] = sorted(n for n in rs["runs"] if n not in known)
+    out["rescore_runs_not_in_report"] = sorted(n for n in rs["runs"]
+                                               if n not in known and n not in superseded)
+    out["rescore_runs_superseded"] = sorted(n for n in rs["runs"] if n in superseded)
+    recompute = (len(rs.get("paths") or [rs["path"]]) > 1
+                 or bool(out["rescore_runs_superseded"]))
     for key in rs["keys"]:
         pairs, short = [], []
         names: dict[str, list] = {k: [] for k in ("false", "missed", "label_flown_longer",
@@ -1406,16 +1683,16 @@ def failsafe_readings_section(episodes: list[dict], rs: dict) -> dict:
                 names[rd["status"]].append(dict(tag, label=rd.get("clauses") or []))
         stored = rs["readings"][key]
         sc = failsafe_score(pairs)
+        tab = (rescore_table_figure(rs, key, superseded) if recompute
+               else {f: stored.get(f) for f in _TABLE_FIGURE})
         out["readings"][key] = {
             "reading": stored.get("reading"), "adopted_kpi_reading": key == rs["adopted"],
             "correct": (sc["true_triggers"] or 0) + (sc["true_non_triggers"] or 0), **sc,
             "at_scenario_length": {"scored": len(short),
                                    "correct": sum(1 for a, b in short if a == b)},
             **names,
-            "table": {f: stored.get(f) for f in ("runs", "scored", "correct",
-                                                 "failsafe_trigger_correctness",
-                                                 "wilson_low_95")},
-            "agrees_with_table": (stored.get("scored"), stored.get("correct")) == (
+            "table": tab,
+            "agrees_with_table": (tab.get("scored"), tab.get("correct")) == (
                 sc["scored"], (sc["true_triggers"] or 0) + (sc["true_non_triggers"] or 0))}
     return out
 
@@ -2338,25 +2615,66 @@ def _render_campaign(c: dict | None, episodes: list[dict]) -> list[str]:
     na = [e for e in episodes if e.get("campaign_status") in ("not accepted",
                                                                "not in the campaign")]
     fa = c.get("failsafe_at_flight") or {}
+    ch = c.get("episode_choice")
     L = ["## Campaign", "",
-         f"- Campaign `{c['campaign']}`: experiments/sweep_scenarios.py --backend "
+         f"- {'Main campaign' if ch else 'Campaign'} `{c['campaign']}`: "
+         f"experiments/sweep_scenarios.py --backend "
          f"{c['backend']}, profile {c['profile']} (grant scope {c['grant_scope']!r}, "
          f"cadence {c['cadence']!r}), flown at code revision `{c['code_revision']}` in "
          f"{_f(c['runtime_s'], 0)} s.",
          f"- Summary `{c['path']}`: {c['results']} results ({st}); {c['flyable']} flyable "
-         f"on the rail, {c['refused_cells']} cell(s) the rail refused before flight.",
-         f"- Runs read from: " + ", ".join(f"`{g}`" for g in c["runs_glob"]) + ".",
-         f"- Flights the campaign accepted: {len(c['accepted'])}. Run folders it did not "
-         f"accept or does not list: {len(na)} - NOT KPI-grade here, whatever their "
-         f"manifest says:"]
+         f"on the rail, {c['refused_cells']} cell(s) the rail refused before flight."]
+    for s in c.get("supplements") or []:
+        sst = ", ".join(f"{n} {k}" for k, n in sorted(s["statuses"].items()))
+        L.append(f"- Supplement `{s['campaign']}`: profile {s['profile']}, code revision "
+                 f"`{s['code_revision']}`, {_f(s['runtime_s'], 0)} s; summary `{s['path']}`: "
+                 f"{s['results']} results ({sst}), {len(s['accepted'])} flight(s) it "
+                 f"accepted, {len(s['not_accepted'])} it did not.")
+    L += [f"- Runs read from: " + ", ".join(f"`{g}`" for g in c["runs_glob"]) + ".",
+          (f"- Flights counted: {len(c['accepted'])} ("
+           + ", ".join(f"{n} from `{name}`" for name, n in ch["counted_by_campaign"].items())
+           + f"; the main campaign accepted {c.get('main_accepted')}). Run folders not "
+             f"accepted or not listed: {len(na)} - NOT KPI-grade here, whatever their "
+             f"manifest says:" if ch else
+           f"- Flights the campaign accepted: {len(c['accepted'])}. Run folders it did not "
+           f"accept or does not list: {len(na)} - NOT KPI-grade here, whatever their "
+           f"manifest says:")]
     for e in na:
         L.append(f"  - `{e['id']}`: {(e.get('kpi_grade_reasons') or ['?'])[-1]}")
     if fa.get("labelled") is not None:
-        L.append(f"- The campaign's own fail-safe figure, on the labels it flew with: "
+        L.append(f"- The {'main ' if ch else ''}campaign's own fail-safe figure, on the "
+                 f"labels it flew with: "
                  f"{fa.get('correct')}/{fa.get('labelled')} = "
                  f"{_f(fa.get('fail_safe_correctness'), 3)} ({fa.get('false_triggers')} false, "
                  f"{fa.get('missed_triggers')} missed).")
     L += ["", "```", str(c.get("command")), "```", ""]
+    for s in c.get("supplements") or []:
+        L += [f"Supplement `{s['campaign']}`:", "", "```", str(s.get("command")), "```", ""]
+    if ch:
+        L += ["### Episodes by campaign", "",
+              "Which campaign each counted episode comes from (the rules are under "
+              "Inputs). Every counted flight not listed here is the main campaign's "
+              f"(`{c['campaign']}`).", ""]
+        if ch["from_supplements"]:
+            L += ["| Episode (cell) | Seed | Shield | Counted run | From | The main campaign "
+                  "had |", "|---|---|---|---|---|---|"]
+            for x in ch["from_supplements"]:
+                had = str(x["main"]).replace("|", "/")
+                if x.get("main_run"):
+                    had = f"`{x['main_run']}`: {had}"
+                L.append(f"| `{x['cell']}` | {x['seed']} | {x['arm']} | `{x['run']}` | "
+                         f"`{x['campaign']}` | {had} |")
+            L.append("")
+        else:
+            L += ["No episode was taken from a supplement.", ""]
+        if ch["superseded"]:
+            L += [f"Superseded, not counted ({len(ch['superseded'])}): a supplement flight "
+                  f"of an episode an earlier campaign accepted - not read, not scored.", ""]
+            for x in ch["superseded"]:
+                L.append(f"- `{x['run']}` (`{x['campaign']}`, {x['cell']} seed {x['seed']}, "
+                         f"Shield {x['arm']}, {x['status']}): superseded by `{x['by']}` "
+                         f"(`{x['by_campaign']}`)")
+            L.append("")
     return L
 
 
@@ -2387,6 +2705,7 @@ def _render_failsafe_readings(fr: dict | None) -> list[str]:
                if r["label_flown_longer"] else "0")
         tab = r["table"]
         own = (f"{tab.get('correct')}/{tab.get('scored')} over {tab.get('runs')} runs"
+               + (f" ({tab['basis']})" if tab.get("basis") else "")
                + ("" if r["agrees_with_table"] else " (differs: it scores runs that are "
                   "not KPI-grade here)"))
         mark = " **adopted**" if r["adopted_kpi_reading"] else ""
@@ -2409,6 +2728,14 @@ def _render_failsafe_readings(fr: dict | None) -> list[str]:
     if fr.get("rescore_runs_not_in_report"):
         L.append("- Runs in the re-score table that this report did not read: "
                  + ", ".join(f"`{n}`" for n in fr["rescore_runs_not_in_report"]))
+    if fr.get("rescore_runs_superseded"):
+        L.append("- Runs in the re-score tables that the campaigns' episode choice "
+                 "superseded (not counted, not in the tables' own figure above): "
+                 + ", ".join(f"`{n}`" for n in fr["rescore_runs_superseded"]))
+    for t in fr.get("tables") or []:
+        figs = "; ".join(f"({k}) {v.get('correct')}/{v.get('scored')} over {v.get('runs')} "
+                         f"runs" for k, v in t["readings"].items())
+        L.append(f"- Re-score table `{t['path']}` on its own ({t['runs']} runs): {figs}.")
     return L + [""]
 
 
@@ -2681,6 +3008,21 @@ def render_markdown(rep: dict) -> str:
              f"(listed under Campaign)." if c.get("campaign_not_accepted") else ""),
           f"- Everything else is functional evidence. The three groups are "
           f"tabulated separately and never pooled.", ""]
+    camp = rep.get("campaign") or {}
+    ch = camp.get("episode_choice")
+    if ch:
+        sup = camp.get("supplements") or []
+        L += [f"Campaigns: main `{camp['campaign']}` (`{camp['path']}`), "
+              + ", ".join(f"supplement `{s['campaign']}` (`{s['path']}`)" for s in sup)
+              + f"; all at code revision `{camp['code_revision']}`, profile "
+                f"{camp['profile']}. One episode is counted once, by these rules:", ""]
+        L += [f"{i}. {r}." for i, r in enumerate(ch["rules"], 1)]
+        L += ["", f"Flights the episode choice takes: "
+              + ", ".join(f"{n} from `{name}`" for name, n in
+                          ch["counted_by_campaign"].items())
+              + f"; {len(ch['from_supplements'])} episode(s) taken from a supplement and "
+                f"{len(ch['superseded'])} supplement flight(s) superseded (listed under "
+                f"Campaign).", ""]
     if rep["kpi_grade_episodes"]:
         L += ["| Episode | Graded today | Graded at flight | Seed | Code revision | "
               "On HEAD? | Why refused today |", "|---|---|---|---|---|---|---|"]
@@ -3374,8 +3716,8 @@ def build_report(run_globs: list[str], sweep_paths: list[str], top_k: int,
                  policies_dir: str | Path = "policies",
                  tick_profiles: str | None = DEFAULT_TICK_PROFILES,
                  baseline: str | Path | None = None, trust_store=None,
-                 campaign: str | Path | None = None,
-                 rescore: str | Path | None = None) -> dict:
+                 campaign: str | Path | list | None = None,
+                 rescore: str | Path | list | None = None) -> dict:
     """The report as a dict (render_markdown prints it). The keyword arguments
     are the sections added on 2026-10-12: WP1 from `wp1_path`, WP2 (the
     budget scan takes seconds, so it is computed only with `wp2`; otherwise
@@ -3385,11 +3727,19 @@ def build_report(run_globs: list[str], sweep_paths: list[str], top_k: int,
     as KPI evidence (None: guardrail.bundle's default). Since 2026-11-11:
     a hil campaign's sweep.json (`campaign`, load_campaign: its runs when
     `run_globs` is empty, and its acceptance as a gate, campaign_gate) and
-    a --rescore-rail table (`rescore`, load_rescore / apply_rescore)."""
+    a --rescore-rail table (`rescore`, load_rescore / apply_rescore). Since
+    2026-11-13 either may be a list: a main campaign and its supplements
+    (campaign_merge, EPISODE_CHOICE_RULES) and one re-score table per
+    campaign (load_rescores)."""
     loaded = R.load_policies()
     by_hash, by_id = R.policies_by_hash(loaded), R.policies_by_id(loaded)
-    camp = load_campaign(campaign) if campaign else None
-    rs = load_rescore(rescore) if rescore else None
+    camp_paths = ([] if campaign is None else list(campaign)
+                  if isinstance(campaign, (list, tuple)) else [campaign])
+    rs_paths = ([] if rescore is None else list(rescore)
+                if isinstance(rescore, (list, tuple)) else [rescore])
+    camp = load_campaigns([c for c in camp_paths if c])
+    rs = load_rescores([r for r in rs_paths if r])
+    superseded = dict((camp or {}).get("superseded") or {})
     if camp is not None and not run_globs:
         run_globs = list(camp["runs_glob"])
 
@@ -3403,6 +3753,17 @@ def build_report(run_globs: list[str], sweep_paths: list[str], top_k: int,
             if not run.is_dir() or run.resolve() in seen:
                 continue
             seen.add(run.resolve())
+            if run.name in superseded:
+                # A supplement's flight of an episode an earlier campaign
+                # accepted: named, never read or counted (campaign_merge).
+                s = superseded[run.name]
+                skipped.append({"id": run.name, "source": _rel(run),
+                                "skipped": f"superseded, not counted: campaign "
+                                           f"{s['campaign']} flew {s['cell']} seed "
+                                           f"{s['seed']} (Shield {s['arm']}) again, and "
+                                           f"campaign {s['by_campaign']} accepted it as "
+                                           f"{s['by']}"})
+                continue
             e = load_run(run, by_hash, by_id, trust_store)
             lat = e.pop("_latency_values", None)
             if lat:
@@ -3427,6 +3788,19 @@ def build_report(run_globs: list[str], sweep_paths: list[str], top_k: int,
             continue
         for e in load_sweep(path):
             (skipped if "skipped" in e else episodes).append(e)
+    if camp is not None and camp.get("supplements"):
+        # Every campaign at one code revision: the summaries were compared
+        # (campaign_merge); here the manifest of every run they list.
+        rev, tags = camp["code_revision"], camp.get("_tag_campaign") or {}
+        off = sorted(f"{e['id']} ({tags[e['id']]}: {e.get('code_revision')})"
+                     for e in episodes if e.get("kind") == "flight" and e["id"] in tags
+                     and e.get("code_revision") is not None
+                     and e.get("code_revision") != rev)
+        if off:
+            raise SystemExit(f"{len(off)} run(s) of these campaigns were flown at another "
+                             f"code revision than {rev}: " + ", ".join(off[:10])
+                             + (" ..." if len(off) > 10 else "")
+                             + ". Every campaign of one report must be flown at one revision")
     # A hil campaign's own gate, then the adopted fail-safe reading: both
     # before the episodes are grouped, so the KPI-grade tables, the family
     # rows and the top-K all read them (2026-11-11).
@@ -3485,7 +3859,8 @@ def build_report(run_globs: list[str], sweep_paths: list[str], top_k: int,
         wp2_doc = (dict(stored, read_from=_rel(Path(csp_json) if Path(csp_json).is_absolute()
                                                else ROOT / csp_json))
                    if isinstance(stored.get("default"), dict) else None)
-    readings = failsafe_readings_section(head_eps, rs) if rs is not None else None
+    readings = (failsafe_readings_section(head_eps, rs, set(superseded))
+                if rs is not None else None)
     latency = latency_section(episodes, lat_vals)
     defs = dict(DEFINITIONS)
     if rs is not None:
@@ -3504,7 +3879,10 @@ def build_report(run_globs: list[str], sweep_paths: list[str], top_k: int,
         "code_revision": code_revision(ROOT),
         "inputs": {"runs": run_globs, "sweep": sweep_paths,
                    "campaign": camp["path"] if camp else None,
-                   "rescore_rail": rs["path"] if rs else None},
+                   "campaign_supplements": [s["path"] for s in
+                                            (camp or {}).get("supplements") or []],
+                   "rescore_rail": rs["path"] if rs else None,
+                   "rescore_rail_tables": list(rs["paths"]) if rs else []},
         "counts": {"episodes": len(episodes),
                    "flights": sum(1 for e in episodes if e["kind"] == "flight"),
                    "stress_logs": sum(1 for e in episodes
@@ -3517,9 +3895,12 @@ def build_report(run_globs: list[str], sweep_paths: list[str], top_k: int,
                    "campaign_not_accepted": sum(
                        1 for e in episodes if e.get("campaign_status") in (
                            "not accepted", "not in the campaign")),
+                   "campaign_superseded": sum(1 for s in skipped
+                                              if s.get("id") in superseded),
                    "skipped": len(skipped)},
         "definitions": defs,
-        "campaign": camp,
+        "campaign": ({k: v for k, v in camp.items() if not k.startswith("_")}
+                     if camp is not None else None),
         "kpi_summary": kpi_summary(head_eps, latency, readings),
         "failsafe_readings": readings,
         "latency": latency,
@@ -3529,7 +3910,9 @@ def build_report(run_globs: list[str], sweep_paths: list[str], top_k: int,
                                 "code_revision": e.get("code_revision"),
                                 "kpi_grade": e.get("kpi_grade"),
                                 "kpi_grade_at_flight": e.get("kpi_grade_at_flight"),
-                                "kpi_grade_reasons": e.get("kpi_grade_reasons")}
+                                "kpi_grade_reasons": e.get("kpi_grade_reasons"),
+                                **({"campaign": e["campaign"]} if e.get("campaign")
+                                   else {})}
                                for e in graded + at_flight],
         "revisions_on_head": revs,
         "families": {"kpi_grade": fams(graded), "kpi_grade_at_flight_only": fams(at_flight),
@@ -3582,14 +3965,18 @@ def main(argv: list[str] | None = None) -> int:
                     help=f"headless sweep result JSON files (default {DEFAULT_SWEEP}; "
                          "none with --campaign)")
     ap.add_argument("--no-sweep", action="store_true")
-    ap.add_argument("--campaign", default=None,
+    ap.add_argument("--campaign", action="append", default=None,
                     help="a hil campaign: its folder (demo/out/hil_<campaign>) or its "
                          "sweep.json. Its runs are read from its store unless --runs is "
-                         "given, and a run it did not accept is not KPI-grade")
-    ap.add_argument("--rescore-rail", default=None, metavar="JSON",
+                         "given, and a run it did not accept is not KPI-grade. Repeat it "
+                         "for supplements: the first is the main campaign, a later one "
+                         "counts only the episodes no earlier campaign accepted (same "
+                         "code revision and profile, or refused)")
+    ap.add_argument("--rescore-rail", action="append", default=None, metavar="JSON",
                     help="the table of experiments/sweep_scenarios.py --rescore-rail ... "
                          "--out JSON: its adopted fail-safe reading is applied, every "
-                         "reading printed")
+                         "reading printed. Repeat it for one table per campaign: merged "
+                         "per run, with the campaigns' episode choice")
     ap.add_argument("--out", help="output stem: writes <stem>.md and <stem>.json")
     ap.add_argument("--top-k", type=int, default=10)
     ap.add_argument("--include-controls", action="store_true",
@@ -3662,7 +4049,15 @@ def main(argv: list[str] | None = None) -> int:
     print(f"{c['episodes']} episodes ({c['kpi_grade']} KPI-grade), "
           f"{c['skipped']} inputs skipped"
           + (f", {c['campaign_not_accepted']} not accepted by the campaign"
-             if c.get("campaign_not_accepted") else ""))
+             if c.get("campaign_not_accepted") else "")
+          + (f", {c['campaign_superseded']} superseded (not counted)"
+             if c.get("campaign_superseded") else ""))
+    ch = (rep.get("campaign") or {}).get("episode_choice")
+    if ch:
+        print("episodes counted by campaign: " + ", ".join(
+            f"{name} {n}" for name, n in ch["counted_by_campaign"].items())
+            + f"; {len(ch['from_supplements'])} taken from a supplement, "
+              f"{len(ch['superseded'])} superseded")
     s = rep.get("kpi_summary") or {}
     p0 = (s.get("p0") or {}).get("shield_on")
     if p0:

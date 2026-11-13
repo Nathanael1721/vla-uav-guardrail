@@ -33,11 +33,22 @@ the P0 violation escape rate at 0", due 30 Nov)
    absent; KPI_CAMPAIGN_DEMO_OUT points the test at another checkout's
    demo/out): P0 0.0 Shield on vs 0.65 control, r2 44/45, tick_ms max
    95.984 ms, e2e_ms p99 about 106 ms.
+6. (2026-11-13) --campaign and --rescore-rail are repeatable: a main
+   campaign and its supplements. Every campaign at one code revision (the
+   summaries and every listed run's manifest) and one profile, else refused;
+   an episode is (cell id, seed, Shield arm), the main campaign's accepted
+   episode wins and a supplement's counts only where no earlier campaign
+   accepted one; a supplement's flight of an accepted episode is superseded
+   (named, never read or counted); the report says which campaign each
+   counted episode came from; the re-score tables merge per run with the
+   same choice, and tables that disagree on the labels are refused.
 
 Shown failing first: against 0df7ee8 (the tree before this change) every
 test here fails - kpi_report has no load_campaign, load_rescore,
 apply_rescore, latency_section or kpi_summary, tick_timing reads neither
-tick_ms nor e2e_ms, and main() has no --campaign or --rescore-rail.
+tick_ms nor e2e_ms, and main() has no --campaign or --rescore-rail. The
+tests of claim 6 fail against 116214f: no campaign_merge or load_rescores,
+and a second --campaign replaced the first.
 """
 import contextlib
 import io
@@ -453,6 +464,260 @@ def test_the_delivered_campaign_sm1111_reads_as_flown():
         assert rep["counts"]["campaign_not_accepted"] == 2
     finally:
         shutil.rmtree(d, ignore_errors=True)
+
+
+# =========================================================================== #
+# 6. a main campaign and its supplements (2026-11-13)
+# =========================================================================== #
+
+REV = "4418ae0abcde"            # the revision W._hil_run's manifests carry
+
+
+def _res(name, k, cell, status="pass", *, seed=1001, arm="on", error=None):
+    """One result of a campaign's sweep.json: flown and accepted (a status
+    with its mission tag), or an `error`."""
+    r = {"id": cell, "id_cell": cell, "seed": seed, "arm": arm, "status": status}
+    if status == "error":
+        r["error"] = error
+    else:
+        r["mission_tag"] = f"{name}_{k:03d}_{cell}"
+    return r
+
+
+def _summary(root: Path, store: Path, name: str, results, *, rev=REV, profile="nightly",
+             backend="hil") -> Path:
+    summ = root / f"hil_{name}"
+    summ.mkdir(parents=True, exist_ok=True)
+    doc = {"_command": f"python experiments/sweep_scenarios.py --backend hil "
+                       f"--hil-campaign {name}",
+           "_backend": backend, "_runtime_s": 10.0,
+           "_manifest_common": {"code_revision": rev},
+           "_scope": {"profile": profile, "grant_scope": "~200 scenarios x 3 seeds",
+                      "cadence": "nightly",
+                      "hil": {"campaign": name, "flyable": len(results), "refused": {},
+                              "config": {"store": store.as_posix()}}},
+           "results": results}
+    (summ / "sweep.json").write_text(json.dumps(doc), encoding="utf-8")
+    return summ
+
+
+def _rescore_table(path: Path, runs, *, artefact="docs/data/failsafe_labels_rail.json",
+                   built=("442397ff60a6aa",), adopted="r2") -> Path:
+    """A --rescore-rail table with the adopted reading (r2) only. `runs`:
+    (run, shield, triggered, status) with status correct / false / missed /
+    not_accepted."""
+    def tag(t):
+        return {"run": t, "cell": t.split("_", 2)[2], "seed": 1001}
+    lists = {k: [] for k in ("false", "missed", "censored", "undecided", "unlabelled",
+                             "not_measured", "not_accepted", "label_flown_longer")}
+    for t, shield, _, st in runs:
+        if shield == "on" and st != "correct":
+            lists[st].append(dict(tag(t), label=[]) if st in ("false", "missed") else tag(t))
+    on = [r for r in runs if r[1] == "on"]
+    scored = [r for r in on if r[3] in ("correct", "false", "missed")]
+    good = sum(1 for r in scored if r[3] == "correct")
+    doc = {"schema": "rail-rescore/1", "rail_gates": "ideal",
+           "runs": [{**tag(t), "before": None if st == "not_accepted" else {"status": "pass"},
+                     "after": {}, "doc": {"metrics": {"shield": shield},
+                                          "kpi": {"failsafe_triggered": trig}}}
+                    for t, shield, trig, st in runs],
+           "failsafe_labels": {
+               "artefact": artefact, "built": {"code_revisions": list(built)},
+               "adopted_kpi_reading": adopted, "shield_off_runs_left_out": len(runs) - len(on),
+               "readings": {"r2": {
+                   **lists, "reading": "rail labels, prescribed flight",
+                   "adopted_kpi_reading": adopted == "r2", "runs": len(on),
+                   "scored": len(scored), "correct": good,
+                   "failsafe_trigger_correctness": good / len(scored) if scored else None,
+                   "wilson_low_95": None,
+                   "at_scenario_length": {"scored": len(scored), "correct": good}}}}}
+    path.write_text(json.dumps(doc), encoding="utf-8")
+    return path
+
+
+def _two_campaigns():
+    """The main campaign mx and its supplement mxs, one store:
+      a  mx accepted                       mxs accepted again  -> superseded
+      b  mx not flown (the desktop's OOM)  mxs accepted        -> from mxs
+      c  mx flown, stress not realised     mxs accepted (fail) -> from mxs
+      d  mx accepted                       mxs not accepted    -> superseded
+    and one re-score table per campaign (r2): mxs_001_a, the superseded
+    duplicate, is a false trigger there; mxs_003_c a missed one."""
+    pol = load_policy(W.POLICY)
+    root = W._tmp("kr_supplement_")
+    signer, trust = W._signer(root / "keys")
+    store = root / "hil_smoke"
+    for name in ("mx_001_a", "mx_003_c", "mx_004_d", "mxs_001_a", "mxs_002_b", "mxs_003_c",
+                 "mxs_004_d"):
+        _run(store, name, pol, signer, _rows(10))
+    main = _summary(root, store, "mx", [
+        _res("mx", 1, "a"),
+        _res("mx", 2, "b", "error", error="[WinError 1455] The paging file is too small"),
+        _res("mx", 3, "c", "error",
+             error="mission mx_003_c: the cell's stress was not realised"),
+        _res("mx", 4, "d"),
+        {"id": "e", "id_cell": "e", "seed": 1001, "arm": "on", "status": "skipped",
+         "reason": "the hil rail cannot fly this scenario"}])
+    supp = _summary(root, store, "mxs", [
+        _res("mxs", 1, "a"), _res("mxs", 2, "b"), _res("mxs", 3, "c", "fail"),
+        _res("mxs", 4, "d", "error",
+             error="mission mxs_004_d: the cell's stress was not realised")])
+    rs_main = _rescore_table(root / "rescore_mx.json", [
+        ("mx_001_a", "on", True, "correct"), ("mx_003_c", "on", False, "not_accepted"),
+        ("mx_004_d", "on", False, "correct")])
+    rs_supp = _rescore_table(root / "rescore_mxs.json", [
+        ("mxs_001_a", "on", True, "false"), ("mxs_002_b", "on", False, "correct"),
+        ("mxs_003_c", "on", False, "missed"), ("mxs_004_d", "on", True, "not_accepted")])
+    return root, trust, store, main, supp, rs_main, rs_supp
+
+
+def test_a_supplement_counts_only_the_episodes_the_main_campaign_did_not_accept():
+    root, trust, store, main, supp, rs_main, rs_supp = _two_campaigns()
+    try:
+        c = KR.load_campaigns([main, supp])
+        ch = c["episode_choice"]
+        assert set(c["accepted"]) == {"mx_001_a", "mx_004_d", "mxs_002_b", "mxs_003_c"}, \
+            c["accepted"]
+        assert c["accepted"]["mxs_003_c"]["campaign"] == "mxs"
+        assert set(c["superseded"]) == {"mxs_001_a", "mxs_004_d"}, c["superseded"]
+        assert c["superseded"]["mxs_001_a"]["by"] == "mx_001_a"
+        assert c["superseded"]["mxs_004_d"]["by"] == "mx_004_d", "a not-accepted duplicate too"
+        assert ch["counted_by_campaign"] == {"mx": 2, "mxs": 2}, ch["counted_by_campaign"]
+        got = {x["cell"]: x for x in ch["from_supplements"]}
+        assert set(got) == {"b", "c"}
+        assert got["b"]["main"].startswith("errored before flight: [WinError 1455]")
+        assert got["c"]["main_run"] == "mx_003_c" and got["c"]["main"].startswith(
+            "not accepted: mission mx_003_c")
+        assert ch["not_accepted_replaced"] == {"mx_003_c": "mxs_003_c"}
+        assert c["runs_glob"] == [(store / "mx_*").as_posix(), (store / "mxs_*").as_posix()]
+        # The report: every counted flight graded by the gate it always had.
+        rep = _report([main, supp], [rs_main, rs_supp], trust)
+        ids = sorted(e["id"] for e in rep["episodes"])
+        assert ids == ["mx_001_a", "mx_003_c", "mx_004_d", "mxs_002_b", "mxs_003_c"], ids
+        for n, camp in (("mx_001_a", None), ("mx_004_d", None), ("mxs_002_b", "mxs"),
+                        ("mxs_003_c", "mxs")):
+            e = _ep(rep, n)
+            assert e["kpi_grade"] is True, (n, e["kpi_grade_reasons"])
+            assert e.get("campaign") == (camp or "mx"), (n, e.get("campaign"))
+        old = _ep(rep, "mx_003_c")
+        assert old["kpi_grade"] is False and old["campaign_status"] == "not accepted"
+        assert "replaced by mxs_003_c" in old["kpi_grade_reasons"][-1], old["kpi_grade_reasons"]
+        sk = {s["id"]: s["skipped"] for s in rep["skipped"]}
+        assert set(sk) == {"mxs_001_a", "mxs_004_d"}, sk
+        assert sk["mxs_001_a"].startswith("superseded, not counted") and "mx_001_a" in \
+            sk["mxs_001_a"]
+        assert rep["counts"]["campaign_superseded"] == 2
+        assert rep["counts"]["campaign_not_accepted"] == 1 and rep["counts"]["kpi_grade"] == 4
+        assert rep["inputs"]["campaign"].endswith("hil_mx/sweep.json")
+        assert [p.split("/")[-2] for p in rep["inputs"]["campaign_supplements"]] == ["hil_mxs"]
+        assert {e["id"]: e.get("campaign") for e in rep["kpi_grade_episodes"]} == {
+            "mx_001_a": "mx", "mx_004_d": "mx", "mxs_002_b": "mxs", "mxs_003_c": "mxs"}
+        # The tables merge per run with the same choice: the superseded false
+        # trigger counts nowhere; their own figure is recomputed over it.
+        fr = rep["failsafe_readings"]
+        r2 = fr["readings"]["r2"]
+        assert (r2["correct"], r2["scored"]) == (3, 4), (r2["correct"], r2["scored"])
+        assert [x["run"] for x in r2["missed"]] == ["mxs_003_c"] and r2["false"] == []
+        assert r2["table"]["scored"] == 4 and r2["table"]["correct"] == 3 \
+            and r2["table"]["runs"] == 5, r2["table"]
+        assert r2["agrees_with_table"] is True
+        assert fr["rescore_runs_superseded"] == ["mxs_001_a", "mxs_004_d"]
+        assert fr["rescore_runs_not_in_report"] == []
+        assert [t["readings"]["r2"]["correct"] for t in fr["tables"]] == [2, 1]
+        md = KR.render_markdown(KR.json_safe(rep))
+        inputs = md.split("## Inputs")[1].split("## Definitions")[0]
+        assert "Campaigns: main `mx`" in inputs and "supplement `mxs`" in inputs, inputs
+        assert "the main campaign's ACCEPTED episode wins" in inputs
+        assert "2 from `mx`, 2 from `mxs`" in inputs, inputs
+        assert "### Episodes by campaign" in md
+        assert "| `b` | 1001 | on | `mxs_002_b` | `mxs` | errored before flight:" in md, md
+        assert "- `mxs_001_a` (`mxs`, a seed 1001, Shield on, pass): superseded by " \
+               "`mx_001_a` (`mx`)" in md, md
+        assert "mxs_001_a`: superseded, not counted" in md.split("## Inputs skipped")[1]
+        # The same through main(), each flag given twice.
+        stem = root / "out" / "kpi"
+        with W._trust_store(trust), contextlib.redirect_stdout(io.StringIO()) as buf:
+            assert KR.main(["--campaign", str(main), "--campaign", str(supp),
+                            "--rescore-rail", str(rs_main), "--rescore-rail", str(rs_supp),
+                            "--wp1", "", "--tick-profiles", "", "--out", str(stem)]) == 0
+        out = buf.getvalue()
+        assert "2 superseded (not counted)" in out and "mx 2, mxs 2" in out, out
+        back = json.loads(stem.with_suffix(".json").read_text(encoding="utf-8"))
+        assert back["campaign"]["episode_choice"]["counted_by_campaign"] == {"mx": 2, "mxs": 2}
+        assert not any(k.startswith("_") for k in back["campaign"]), list(back["campaign"])
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def test_campaigns_at_another_revision_or_profile_are_refused():
+    root, trust, store, main, supp, rs_main, rs_supp = _two_campaigns()
+    try:
+        def refused(paths, word):
+            try:
+                with W._trust_store(trust):
+                    KR.build_report([], [], 10, False, "cmd", wp1_path=None, csp_json=None,
+                                    tick_profiles=None, campaign=paths)
+            except SystemExit as e:
+                assert word in str(e), (word, str(e))
+                return str(e)
+            raise AssertionError(f"accepted: {paths}")
+        other = _summary(root / "rev", store, "mxs", json.loads(
+            (supp / "sweep.json").read_text(encoding="utf-8"))["results"], rev="0badc0ffee00")
+        msg = refused([main, other], "code revision")
+        assert "'0badc0ffee00'" in msg and f"'{REV}'" in msg, msg
+        prof = _summary(root / "prof", store, "mxs", [], profile="smoke")
+        refused([main, prof], "profile")
+        none = _summary(root / "none", store, "mxs", [], rev=None)
+        assert "cannot be checked" in refused([main, none], "code revision")
+        refused([main, main], "given twice")
+        # A summary at the right revision whose run was flown at another one:
+        # every listed run's manifest is checked too.
+        m = json.loads((store / "mxs_002_b" / "manifest.json").read_text(encoding="utf-8"))
+        m["code_revision"] = "0badc0ffee00"
+        (store / "mxs_002_b" / "manifest.json").write_text(json.dumps(m), encoding="utf-8")
+        assert "mxs_002_b (mxs: 0badc0ffee00)" in refused([main, supp], "another code revision")
+        # One campaign alone is read as it always was (no such check).
+        with W._trust_store(trust):
+            KR.build_report([], [], 10, False, "cmd", wp1_path=None, csp_json=None,
+                            tick_profiles=None, campaign=supp)
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def test_rescore_tables_that_disagree_on_the_labels_are_refused():
+    root, trust, store, main, supp, rs_main, rs_supp = _two_campaigns()
+    try:
+        one = KR.load_rescores([rs_main])
+        assert one["paths"] == [one["path"]] and "tables" not in one
+        both = KR.load_rescores([rs_main, rs_supp])
+        assert len(both["runs"]) == 7 and both["path"].count(" + ") == 1
+        assert both["readings"]["r2"]["scored"] is None, "no stored figure for a merge"
+        for kw, word in (({"artefact": "docs/data/other.json"}, "label artefact"),
+                         ({"built": ("ffffffffffff",)}, "label build"),
+                         ({"adopted": "r"}, "adopted KPI reading")):
+            p = _rescore_table(root / "bad.json", [("mxs_002_b", "on", False, "correct")],
+                               **kw)
+            try:
+                KR.load_rescores([rs_main, p])
+            except SystemExit as e:
+                assert word in str(e), (word, str(e))
+            else:
+                raise AssertionError(f"merged tables that disagree: {kw}")
+        clash = _rescore_table(root / "clash.json", [("mx_001_a", "on", False, "missed")])
+        try:
+            KR.load_rescores([rs_main, clash])
+        except SystemExit as e:
+            assert "different verdicts" in str(e), str(e)
+        else:
+            raise AssertionError("one run with two verdicts was merged")
+        try:
+            KR.load_rescores([rs_main, rs_main])
+        except SystemExit as e:
+            assert "given twice" in str(e), str(e)
+        else:
+            raise AssertionError("one table given twice was merged")
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
 
 
 if __name__ == "__main__":
