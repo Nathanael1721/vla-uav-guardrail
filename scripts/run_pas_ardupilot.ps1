@@ -99,7 +99,12 @@ param(
 
 $ErrorActionPreference = "Stop"
 $Root = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
-$Py   = "C:\Users\natha\.conda\envs\vla-real\python.exe"
+# The non-VLA steps (scene, check, g1, the policy hash, the node's dry run) run on the grant's
+# Python 3.11+ (WP1-25 / X-06): guardrail-py312 carries the guardrail and the Project AirSim
+# client. The node step itself loads the detector and the VLA pilot (torch, transformers), the
+# VLA runtime the grant leaves outside that floor, so it keeps vla-real (3.10).
+$Py    = "C:\Users\natha\.conda\envs\guardrail-py312\python.exe"
+$PyVla = "C:\Users\natha\.conda\envs\vla-real\python.exe"
 $Proj = Join-Path $Root "PASBlocks\Blocks.uproject"
 $Map  = "/Game/CityLife/Maps/CityLife_Day"
 $Node = Join-Path $Root "demo\pas_ardupilot\perception_node.py"
@@ -398,7 +403,7 @@ try {
                 Set-ViewJunction $Tag
                 $a += @("--save-view")
             }
-            & $Py @a
+            & $PyVla @a
             if ($LASTEXITCODE -ne 0) { throw "perception node exited $LASTEXITCODE" }
             if ($SaveView) {
                 $side = Join-Path $Out "$Tag\view\recorder.json"
