@@ -37,7 +37,8 @@ shipped change and recorded as one.
     blown into nfz-square now lands where the RTL failed.
   - `e2e_ms` max 41.3 ms over 2,181 ticks.
 - ge1113 (2f22116, hil, profile `grant_example`, 36 missions, all
-  KPI-grade; `tools/kpi_report.py --campaign demo/out/hil_ge1113`):
+  KPI-grade; `tools/kpi_report.py --campaign demo/out/hil_ge1113`, committed as
+  `docs/data/kpi_ge1113/kpi_report_ge1113_2026-11-14.md`, revision 181b75cdaad3):
   36 passed; `tick_ms` and `e2e_ms` p50 7.2-7.3 / p99 9.8 / max 66.37 ms,
   0 of 95,160 ticks over 100 ms. Read with care: no mission came near a zone
   (0 P0-violation ticks, 0 repairs, never unsafe), so its P0 rate is vacuous

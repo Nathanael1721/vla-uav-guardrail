@@ -375,7 +375,7 @@ to its signed replay bundle in the KPI report.
   flies; without it 16/16.
 - A full campaign at the fixed commit: the grant-example sweep ge1113 at
   2f22116 (`hil`, 36 missions, all KPI-grade; demo/out/hil_ge1113/sweep.json;
-  `tools/kpi_report.py --campaign demo/out/hil_ge1113`, not committed):
+  `tools/kpi_report.py --campaign demo/out/hil_ge1113`, committed as docs/data/kpi_ge1113/kpi_report_ge1113_2026-11-14.md, code revision 181b75cdaad3):
   over 95,160 ticks `tick_ms` p50 7.2 / p95 8.7 / p99 9.8 / max 66.28 ms and
   `e2e_ms` p50 7.3 / p95 8.8 / p99 9.8 / max 66.37 ms; 0 ticks over 100 ms.
   Its missions never came near a zone (no P0-violation tick, no repair), so
