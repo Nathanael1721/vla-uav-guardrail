@@ -59,7 +59,18 @@ shipped change and recorded as one.
   policy-bundle check, the node's dry run) run on `guardrail-py312`, which
   now carries the Project AirSim client; the node step, which loads the
   detector and the VLA pilot, keeps `vla-real` (`$PyVla`). Not yet run on a
-  live scene.
+  live scene. `-SimMaxFps <n>` caps the simulator's renderer (`t.MaxFPS`, as
+  `run_citylife_follow.ps1`); 0, the default, leaves it uncapped as before.
+
+#### Found
+- Three desktop losses (13 Nov 13:40, 14 Nov 03:34, and a load at 07:30 that
+  was stopped in time) were the kernel's ETW pools, not a process: `EtwD`
+  (paged) 20.8 GB and `Etwr` (nonpaged) 3.3 GB, 132.7 M events allocated and
+  43.4 M still queued after the simulator was stopped, freed at about 11,500
+  per second. The queue grows only while the Unreal simulator runs, and the
+  scene configs of the stable 13 Nov 20:02 load and the 14 Nov 07:30 load
+  are identical, so the producer is the simulator's run and the slow reader
+  is an ETW real-time session on this desktop, not yet named.
 
 ### 2026-11-14 (a harness-driven hil episode) — the harness can drive a library scenario's own zone events into a flying hil Shield over REST (spawn as POST /hot_apply, rotate / translate / scale as PATCH /dynamic_nfz/<id>), EmitEvent works on a rail episode, and tools/harness_hil_episode.py flies or dry-runs one such episode; built and tested on the fake rig, not flown
 

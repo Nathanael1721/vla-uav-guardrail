@@ -84,6 +84,7 @@ param(
     [string]$Orin    = "",              # Jetson Orin address: adds a MAVLink UDP output to it
     [int]$SimWidth   = 960,
     [int]$SimHeight  = 540,
+    [int]$SimMaxFps  = 0,      # t.MaxFPS for the simulator's renderer (0 = uncapped, as before)
     [switch]$SaveView,                  # -Step node: record the demo video (--save-view)
     # Frames go to C: through a junction, as run_citylife_follow.ps1; "" = under demo\out.
     [string]$OffloadRoot = "D:\vla_drone_offload\demo_out",   # outside OneDrive; C: filled up on 23 Oct
@@ -207,7 +208,11 @@ function Start-Sim {
     }
     Stop-OurGameSim
     Start-Sleep -Seconds 4
-    Start-Process -FilePath $UE -ArgumentList "`"$Proj`"", $Map, '-game', '-windowed', "-ResX=$SimWidth", "-ResY=$SimHeight" | Out-Null
+    $ueArgs = @("`"$Proj`"", $Map, '-game', '-windowed', "-ResX=$SimWidth", "-ResY=$SimHeight")
+    # A capped renderer (as run_citylife_follow.ps1 -SimMaxFps): fewer frames, fewer per-frame
+    # driver events; the cameras' own capture intervals are unchanged.
+    if ($SimMaxFps -gt 0) { $ueArgs += "-ExecCmds=`"t.MaxFPS $SimMaxFps`"" }
+    Start-Process -FilePath $UE -ArgumentList $ueArgs | Out-Null
     Say "simulator starting on $Map ..."
     for ($i = 0; $i -lt 90; $i++) {
         Start-Sleep -Seconds 5
