@@ -16,6 +16,99 @@ shipped change and recorded as one.
 
 ## [Unreleased]
 
+### 2026-11-13 (the start-up tick; a KPI report from a campaign and its supplements) — ntFIN2's only ticks over 100 ms end to end were each mission's row 2, deferred behind the backlog of the node's own start-up work, which is now delivered before the mission clock starts; `tools/kpi_report.py` reads a main campaign and its re-flown supplement by one episode choice
+
+Branch kpi-merge-startup (5f5009c, 72dd535). **The start-up change has not
+flown**; the report change was run on ntFIN2 and ntFIN2s (below).
+
+#### Found (ntFIN2, the final KPI-grade hil nightly at 116214f)
+- 13 of 171,393 ticks over 100 ms end to end (e2e 100.6-121.9 ms), every
+  one row 2 of its mission at t 0.101 s, `deferred`. `start_mission` runs
+  ~90 ms without spinning (the Shield warm-up ~12 ms, the collector's start
+  ~75 ms), so the pilot message published meanwhile waited in the DDS queue,
+  was delivered at +2-3 ms after t = 0 and ticked as live; the pilot's next
+  message, 12-18 ms later (its receipt is the row's t + tick_ms - e2e,
+  +15-21 ms), was then taken for a pilot faster than 1 / min_gap and
+  deferred to the poll 80-86 ms on. Row 2 was deferred so on 418 of the 583
+  missions; the 13 over budget are the ones whose deferred tick took 15-36
+  ms of work.
+- ntFIN2 lost 11 missions to the rig: 8 wind-beyond-authority missions
+  never flown (a SITL that did not come up, an `Errno 22`, then `WinError
+  1455` / `1450` once the desktop ran out of memory) and 3 gps-dropout
+  flights whose stress was not realised. They were flown again
+  at the same commit as ntFIN2s, on all 3 seeds of the 5 cells (15
+  missions, 4 of them cell-seeds ntFIN2 had already flown and accepted).
+  Until now the report took one campaign, and a run that campaign did not
+  list was not KPI-grade.
+
+#### Changed
+- `sitl/ros2_shield_node.py` (THE START-UP TICK): with `--tick-trigger
+  action` the `TickScheduler` exists from the node's start and holds a
+  message received before the mission clock starts (`held_t`; never ticked,
+  not counted by the rate limit), so the first message after the start
+  ticks at once; the first watchdog tick waits period + slack when a
+  message came within one period before the start (a live stream, as after
+  a message's tick). `start_mission` delivers what queued during its own
+  work before the clock starts (`_deliver_backlog`: spins of no wait, at
+  most 200 and 30 ms). The held action is flown only by that watchdog, for
+  a quiet stream, under the stale-action rule. The steady state (the
+  message-gap rate limit, the 10 Hz watchdog) is unchanged; `--tick-trigger
+  timer` is unchanged. Recorded in the `mission_start` event
+  (`start_backlog`) and metrics.json `tick_schedule.start`.
+- `tools/kpi_report.py`: `--campaign` and `--rescore-rail` are repeatable.
+  The first campaign is the main one, later ones supplements, by rules the
+  report prints under Inputs (`EPISODE_CHOICE_RULES`): every campaign at the
+  same code revision (the summaries' `_manifest_common` and every listed
+  run's manifest), profile and backend, refused otherwise; an episode is
+  (cell id, seed, Shield arm); the main campaign's accepted episode wins and
+  a supplement's counts only where no earlier campaign has an accepted one;
+  a supplement flight of an accepted episode is superseded (listed, not
+  read, not counted); a not-accepted flight stays functional evidence with
+  its replacement named. The Campaign section lists the episodes taken from
+  a supplement and what the main campaign had for each. Several re-score
+  tables must share the label artefact, its build, the adopted reading and
+  the rail gates; they merge per run, and their own figure is recomputed
+  over the same episode choice. The KPI-grade gate (`is_kpi_grade`, the
+  signed bundle bound to the run) is unchanged. One campaign reads as
+  before.
+
+#### Run (ntFIN2 + ntFIN2s, both at 116214f; read-only, report not committed)
+- ntFIN2s flew 15 missions: 11 accepted, 4 gps-dropout lane 15 not
+  accepted (the denial's end applied 0.29-0.60 s late).
+- `python tools/kpi_report.py --campaign demo/out/hil_ntFIN2 --campaign
+  demo/out/hil_ntFIN2s --rescore-rail <ntFIN2.json> --rescore-rail
+  <ntFIN2s.json>` (each table from `experiments/sweep_scenarios.py
+  --profile nightly --rescore-rail`): 594 episodes, 589 KPI-grade (580 from
+  ntFIN2, 9 from ntFIN2s: wind-beyond-authority lane 15 at 12 m/s seeds
+  1002-1003, lane 20 at 8 and 12 m/s all seeds, gps-dropout lane 15 4-11 s
+  seed 1003); 4 ntFIN2s flights superseded (two accepted, two not, all of
+  cell-seeds ntFIN2 accepted); 5 not accepted (gps-dropout lane 15 6-13 s
+  seeds 1002 and 1003 have no accepted flight in either campaign).
+- P0 escape rate 0.0 over 586 Shield-on flights (0 escapes on 16,760
+  P0-violation ticks) against 0.6375 on the 3 Shield-off controls.
+- Fail-safe trigger correctness, adopted reading (r2): 566/567 = 0.998,
+  Wilson 95 % low 0.990 (ntFIN2 alone: 557/558); the one miss is
+  ntFIN2_177 (dyn-nfz-spawn-ahead, E5). The tables' own figure over the
+  same episode choice agrees (566/567 over 591 runs).
+- `tick_ms` max 74.06 ms, 0 of 173,410 ticks over 100 ms; `e2e_ms` p99
+  30.3 / max 121.93 ms, 13 over 100 ms - the 13 start-up ticks above (the
+  supplement flew the same commit).
+
+#### Tests
+- `tests/test_sitl_rails.py`: the start-up case on the pure schedule (as
+  flown, the backlog after t = 0 defers the live message to the poll at
+  +100 ms; held before the start, the live message ticks at once at every
+  phase of the poll grid) and on the stand-in node (the drain delivers the
+  backlog before t = 0, and the next message's e2e equals its tick_ms: 12.0
+  of 12.0 ms of work; the control without the drain: 97 ms; a held message
+  older than the stale-action timeout is not flown).
+- `tests/test_kpi_campaign.py`: two synthetic campaigns and their re-score
+  tables: precedence, duplicates superseded (an accepted and a
+  not-accepted one), which campaign each counted episode came from, the
+  merged readings with the superseded false trigger left out, refusal on
+  another code revision (summary or run manifest), profile, a missing
+  revision, a campaign or table given twice, and tables that disagree.
+
 ### 2026-11-12 (hs07 shakedown; the tick scheduler judged on message gaps) — the hil shakedown at dc8cd9c scored 30/30 on the adopted reading with tick_ms max 56.6 ms, and found the action-triggered tick locking into deferral; the rate limit now reads the gap between messages
 
 #### Flown
