@@ -1,0 +1,32 @@
+  hs09_001_nfz-head-on                         before=fail(1)  ideal=fail(1)
+  hs09_002_corridor-drift-angles               before=pass(0)  ideal=pass(0)
+  hs09_003_corridor-drift-angles               before=pass(0)  ideal=pass(0)
+  hs09_004_corridor-drift-angles               before=pass(0)  ideal=pass(0)
+  hs09_005_corridor-drift-angles               before=pass(0)  ideal=pass(0)
+  hs09_006_corridor-drift-angles               before=pass(0)  ideal=pass(0)
+  hs09_007_corridor-drift-angles               before=pass(0)  ideal=pass(0)
+  hs09_008_corridor-drift-angles               before=pass(0)  ideal=pass(0)
+  hs09_009_corridor-drift-angles               before=pass(0)  ideal=pass(0)
+  hs09_010_corridor-drift-angles               before=pass(0)  ideal=pass(0)
+  hs09_011_corridor-drift-angles               before=pass(0)  ideal=pass(0)
+  hs09_012_corridor-drift-angles               before=pass(0)  ideal=pass(0)
+  hs09_013_corridor-drift-angles               before=pass(0)  ideal=pass(0)
+  hs09_014_wind-beyond-authority               before=tracked(0)  ideal=tracked(0)
+  hs09_015_wind-beyond-authority               before=tracked(0)  ideal=tracked(0)
+  hs09_016_wind-beyond-authority               before=tracked(0)  ideal=tracked(0)
+  hs09_017_wind-beyond-authority               before=tracked(0)  ideal=tracked(0)
+
+fail-safe trigger correctness of 17 Shield-on run(s), by label reading (docs/data/failsafe_labels_rail.json, derived at 442397ff60a6, 49c455ccd07c, 897dac7a2d1f):
+  (a) ideal-vehicle labels, E5 on the flight without a fail-safe (section 3)
+      16/17 = 0.941  Wilson 95 % low 0.730  nulls: always-trigger 0.824, never-trigger 0.176  | censored 0, undecided 0, unlabelled 0, no verdict 0, not accepted 0
+      false      hs09_001_nfz-head-on  (nfz-head-on, seed 1001)
+  (r) rail-vehicle labels, E5 on the flight without a fail-safe (sections 3, 8)
+      17/17 = 1.000  Wilson 95 % low 0.816  nulls: always-trigger 0.882, never-trigger 0.118  | censored 0, undecided 0, unlabelled 0, no verdict 0, not accepted 0
+      1 of them on a label undecided at the scenario's length, read on the cell flown as long as the rail flies; without them 16/16
+      longer     hs09_001_nfz-head-on  (nfz-head-on, seed 1001)
+  (r2) rail-vehicle labels, E5 on the prescribed flight (sections 7, 8)  <- THE ADOPTED KPI READING
+      17/17 = 1.000  Wilson 95 % low 0.816  nulls: always-trigger 0.882, never-trigger 0.118  | censored 0, undecided 0, unlabelled 0, no verdict 0, not accepted 0
+      1 of them on a label undecided at the scenario's length, read on the cell flown as long as the rail flies; without them 16/16
+      longer     hs09_001_nfz-head-on  (nfz-head-on, seed 1001)
+
+17/17 run(s) re-scored -> C:/Users/natha/AppData/Local/Temp/claude/5bd7027074b20450/b55be76a-a840-4098-ad3f-198de66a78a2/scratchpad/lb/hs09_r2.json
