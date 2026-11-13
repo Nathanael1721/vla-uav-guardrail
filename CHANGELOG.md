@@ -16,6 +16,37 @@ shipped change and recorded as one.
 
 ## [Unreleased]
 
+### 2026-11-13 (the final KPI report committed; hs09 confirms the start-up tick) — the WP4 KPI report over the KPI-grade nightly ntFIN2 and its supplement ntFIN2s is now in docs/data/kpi_ntFIN2, generated at a clean revision from re-scores committed beside it; the shakedown hs09 at 2f22116 flew 17 missions with no tick over 100 ms end to end
+
+#### Added
+- `docs/data/kpi_ntFIN2/kpi_report_ntFIN2_2026-11-13.md` and `.json`:
+  `tools/kpi_report.py --campaign demo/out/hil_ntFIN2 --campaign
+  demo/out/hil_ntFIN2s --rescore-rail
+  docs/data/kpi_ntFIN2/rescore_r2_ntFIN2.json --rescore-rail
+  docs/data/kpi_ntFIN2/rescore_r2_ntFIN2s.json`, code revision f505f1403bef
+  (clean). 589 KPI-grade episodes (580 ntFIN2, 9 ntFIN2s, 4 superseded):
+  P0 violation escape rate 0.0 over 586 Shield-on flights (Shield-off
+  control 0.6375); fail-safe trigger correctness (r2) 566/567 = 0.998,
+  Wilson 95 % low 0.990; `tick_ms` max 74.06 ms, 0 of 173,410 over 100 ms;
+  `e2e_ms` p99 30.3 ms, 13 ticks over 100 ms (the start-up backlog, below).
+  Tracked, merged over both campaigns: mean time to safe 3.35 s, repair
+  success 98.1 %, mission success 252/586, 54.6 repairs per Shield-on
+  mission.
+- `docs/data/kpi_ntFIN2/rescore_r2_*.json` / `.txt`: the adopted-reading
+  re-scores of ntFIN2, ntFIN2s and hs09
+  (`experiments/sweep_scenarios.py --profile nightly --rescore-rail`).
+
+#### Flown
+- hs09 (2f22116, hil, nightly profile `--only nfz-head-on
+  corridor-drift-angles wind-beyond-authority --seed 1001`): 17 missions,
+  every mission's row 2 ticked on its action (`tick_trigger` action 17/17,
+  deferred 0), `e2e_ms` p99 16.8 / max 24.6 ms, P0 escape 0. Under the
+  adopted reading 17/17 = 1.000 (Wilson 95 % low 0.816); the sweep's own
+  ideal labels fail nfz-head-on canonical (RTL triggered where the ideal
+  label expects none), the rail-vehicle case the r2 reading covers. The
+  start-up fix (5f5009c) is therefore flown; ntFIN2's 13 start-up e2e ticks
+  stay in its report as flown.
+
 ### 2026-11-13 (the KPI-grade hil nightly ntFIN2 and its supplement; the contract outline re-assessed) — 591 missions at 116214f on the hil rig: P0 escape 0 over 586 Shield-on flights, fail-safe trigger correctness 566/567 = 0.998 under the adopted reading (Wilson 95 % low 0.990), slowest Shield tick 74.06 ms
 
 #### Flown
