@@ -1,7 +1,7 @@
 # Final Report
 
 Semantic-Spatial Translation and Safety-Constrained VLA for ArduPilot UAVs ·
-NTUT AIoT Lab · draft v0.2, 2026-11-14
+NTUT AIoT Lab · draft v0.3, 2026-11-14
 
 > **Status: DRAFT, not signed.** Written from docs/FINAL-REPORT-outline.md at
 > 2f22116; updated 14 Nov for the `hil` runs hs10 and ge1113, the CI on
@@ -43,18 +43,27 @@ NTUT AIoT Lab · draft v0.2, 2026-11-14
   (section 4.3; CHANGELOG 2026-11-14 (hs10 ...)). WP3-07 stays PARTIAL:
   the grant names SET_MODE LOITER, and on `hil` the FSM's Loiter is held
   in GUIDED by the companion (section 9, decision 7).
-- Every KPI-grade run flies a stub pilot (guardrail/vla_stub.py), not a
-  learned model. Learned models have flown on other rails, none KPI-grade:
-  AerialVLA on ArduPilot SITL over pymavlink (29 Oct; Appendix A ARCH-07,
-  ARCH-18), OpenVLA-7B with the CSP in its prompt on AirSimNH (7 Nov;
-  CHANGELOG 2026-11-07 (CSP flights)), and the follow comparisons on Project
-  AirSim CityLife with simple_flight (section 6).
-- What this report cannot claim: a learned VLA on `hil` (ARCH-20), the
-  `flight` topology (ARCH-14), Gazebo sweeps (WP4-04), CI per build or per release (WP3-19,
-  WP4-06, WP4-14), observations at 10 Hz into the VLA (X-05, DRIFT).
-
-`TODO(summary: final wording after the AIoT-VLA hil flights and the PI's
-answers)`
+- The KPI campaigns fly a stub pilot (guardrail/vla_stub.py). A learned
+  model flew in the `hil` topology on 14 Nov: the lab's AIoT-VLA v10b on the
+  AGX Orin, through MAVROS 2, with the Shield on (section 6;
+  docs/data/pas_aiot_hil_20261114/flights.md). Seven missions, 0 P0 escape
+  ticks in every one, 22-297 Shield interventions each; two of them
+  KPI-grade (pas_hil_aiot_kpi_01: 420 s, 119 interventions, VLA 7.75
+  decisions/s, camera to first setpoint p50 161.7 ms). Under perception
+  stress, darkness breaks detection: at -4 EV no red car was found in 330 s
+  and the mission refused to start.
+- Follow quality on that rail is weak: target lock 0.04-0.82 against
+  0.955-0.969 on simple_flight. The VLA stands still when the detector has
+  no fresh box of the car (in pas_hil_aiot_kpi_01 its own command was 0 m/s
+  at the median), and the city rail's target estimator and re-acquisition
+  are not in the PAS node yet; `--identity` without that estimator lost
+  the car after 107 s (pas_hil_aiot_kpi_02). Not a locked KPI; stated as a
+  limitation (section 10).
+- What this report cannot claim: a learned VLA deciding at 10 Hz (6.9-7.9
+  decisions/s; ARCH-01, ARCH-03), observations at 10 Hz into the VLA (9.1-9.5
+  Hz while it is asked; X-05, DRIFT), the `flight` topology (ARCH-14),
+  Gazebo sweeps (WP4-04), CI per build or per release (WP3-19, WP4-06,
+  WP4-14).
 
 ## 2. Scope and acceptance criteria
 
@@ -150,8 +159,9 @@ section 2):
   simple_flight (the follow comparisons, outside the ArduPilot architecture,
   ARCH-02); Gazebo Harmonic (flown end to end on 2 Nov, no sweep, ARCH-16).
 
-`TODO(topology figure: hardware + software placement, from
-docs/share/2026-11-11-Progress/What-Runs-Where.png)`
+![What runs where in the hil topology](img/what-runs-where.png)
+
+*What runs where in the `hil` topology (the 11 Nov progress-deck figure): the desktop PC runs Project AirSim and ArduPilot SITL 4.5.7 with mavlink-router and the scenario tools; the AGX Orin runs the pilot (AIoT-VLA with its OWL-ViT detector, or the stub), the Shield with its escalation FSM, and MAVROS 2 in the companion container. The dashed boxes (Project AirSim, AIoT-VLA) were built but not yet flown on the rig when it was drawn; they flew on 14 Nov (section 6; docs/data/pas_aiot_hil_20261114/flights.md). The KPI campaigns fly the solid boxes with the stub pilot.*
 
 ## 4. Results by work package
 
@@ -713,6 +723,15 @@ Still needed:
   run (WP1-25).
 - **AP_DDS** not done (ARCH-08, MISSING).
 
+- **The learned VLA's follow on the `hil` rail is weak** (target lock
+  0.04-0.82; docs/data/pas_aiot_hil_20261114/perception_stress_report.md).
+  The PAS perception node does not yet carry the city rail's target
+  estimator, strict lock and re-acquisition (`follow_vlm.fly()`;
+  docs/DESIGN-projectairsim-ardupilot.md, "Not reused yet"), so the VLA
+  stands still when the detector loses the car; `--identity` alone, without
+  the estimator, lost it sooner (pas_hil_aiot_kpi_02, 107 s). Porting the
+  estimator is the next step; the Shield's own figures on these flights
+  (P0 0, every intervention logged) do not depend on it.
 ## 11. Plan to 2026-11-30
 
 Done 13-14 Nov: ge1113, the grant example sweep at 2f22116 (section 4.4,

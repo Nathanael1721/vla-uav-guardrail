@@ -16,6 +16,32 @@ shipped change and recorded as one.
 
 ## [Unreleased]
 
+### 2026-11-14 (why the learned VLA's follow is weak on hil; the final report v0.3) — the VLA stands still whenever the detector has no fresh box of the car, and the PAS node lacks the city rail's target estimator; one more KPI-grade AIoT-VLA mission with --identity; the report's summary, topology figure and limitations written
+
+#### Found
+- pas_hil_aiot_kpi_01: the car drove at 3.2 m/s (median) and stopped at
+  signals; the aircraft moved at 0.5 m/s (median) and the gap reached 166 m.
+  The VLA's own command was 0 m/s at the median: its hint was `fresh` on 942
+  of 4,192 ticks, `search` on 1,325 and `memory` on 1,206. In rain_01 the
+  hint was `fresh` on 3,148 ticks, the VLA's command 2.49 m/s at the median
+  and the gap 35 m (median).
+- The PAS perception node does not carry follow_vlm's target estimator,
+  strict lock and re-acquisition (docs/DESIGN-projectairsim-ardupilot.md,
+  "Not reused yet").
+
+#### Flown
+- pas_hil_aiot_kpi_02 (f77efae, unstressed, `--identity --negative-query
+  "a traffic light"`): KPI-grade, car acquired after 155.2 s, target lost
+  after 1,070 ticks; 42 interventions, 0 P0 escape ticks; VLA 2.47
+  decisions/s; the node said "strict lock not used (identity without an
+  estimator)". docs/data/pas_aiot_hil_20261114/flights.md now has seven rows.
+
+#### Changed
+- docs/FINAL-REPORT.md v0.3: the summary states the hil VLA flights, the
+  weak follow and what cannot be claimed; the topology figure
+  (docs/img/what-runs-where.png, the 11 Nov deck figure, its dashed boxes
+  flown since) replaces its TODO; section 10 adds the follow limitation.
+
 ### 2026-11-14 (a test clock that ran behind) — tests/test_harness_rail.py's fake rig took its mission time 0 after its first Shield tick, so a forward sent on time could read a few ms early and the lab CI at 08e9907 failed once (148/149)
 
 #### Fixed

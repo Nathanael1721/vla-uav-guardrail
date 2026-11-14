@@ -17,6 +17,23 @@
   "cam_to_setpoint_p99_ms": "287.102"
  },
  {
+  "run": "pas_hil_aiot_kpi_02",
+  "stress": "none",
+  "acquired_s": "155.2",
+  "ticks_hz": "9.99",
+  "ticks": "1070",
+  "interventions": "42",
+  "p0_escape_ticks": "0",
+  "ended": "target_lost",
+  "rtf": "0.964",
+  "kpi_grade": "yes",
+  "vla_hz": "2.466092760197986",
+  "vla_latency_p50_s": "0.1145",
+  "obs_hz_asked": "8.926",
+  "cam_to_setpoint_p50_ms": "165.491",
+  "cam_to_setpoint_p99_ms": "303.021"
+ },
+ {
   "run": "pas_hil_aiot_day_02",
   "stress": "day",
   "acquired_s": "138.1",
