@@ -144,11 +144,12 @@ def test_the_weather_mirror_and_the_calls_are_the_installed_clients():
                          "set_light_object_intensity"}, called
 
 
-def test_the_table_names_five_stressors_one_variable_each():
-    assert ps.NAMES == ("day", "dusk", "night", "rain", "fog")
+def test_the_table_names_seven_stressors_one_variable_each():
+    assert ps.NAMES == ("day", "dusk", "night", "rain", "fog", "shadow", "texture")
     for n, s in ps.STRESSORS.items():
-        assert not (s["exposure_bias_ev"] is not None and s["weather"]), \
-            f"{n} changes two things at once"
+        changed = [s["exposure_bias_ev"] is not None, bool(s["weather"]),
+                   bool(s.get("texture")), bool(s.get("sun"))]
+        assert sum(changed) <= 1, f"{n} changes two things at once"
         assert ps.scenario_id(n) == f"pas-follow-redcar-{n}"
         for p in s["weather"]:
             assert p in ps.WEATHER_PARAMS and p != "ENABLED", p
@@ -315,13 +316,263 @@ def test_an_attached_node_only_reads_the_weather_back():
 
 
 # --------------------------------------------------------------------------- #
+# Novel textures (the texture stressor, 2026-11-15)
+# --------------------------------------------------------------------------- #
+
+class TextureSim:
+    """The level's actors as World.list_objects and
+    set_object_texture_from_file see them: the regex is matched whole
+    (std::regex_match), a missing actor answers false, `refuse` actors
+    answer false too, and every PNG the call was given is kept."""
+
+    def __init__(self, actors=("SM_Road_01", "SM_Road_02", "BP_Car_07", "SM_Building_3"),
+                 refuse=(), list_fails=False):
+        self.actors, self.refuse, self.list_fails = list(actors), set(refuse), list_fails
+        self.set, self.pngs = [], []
+
+    def list_objects(self, name_regex):
+        import re
+        if self.list_fails:
+            raise TimeoutError("no answer")
+        return [a for a in self.actors if re.fullmatch(name_regex, a)]
+
+    def set_object_texture_from_file(self, object_name, path):
+        with open(path, "rb") as fh:
+            self.pngs.append(fh.read())
+        if object_name not in self.actors or object_name in self.refuse:
+            return False
+        self.set.append(object_name)
+        return True
+
+
+
+class SunSim:
+    """The level's DirectionalLight_0 as World.get_object_pose /
+    set_object_pose see it: starts at the level's own aim (or `start`, a
+    (roll, pitch, yaw) in degrees), a set moves it unless `refuse`, and a
+    missing actor raises as WorldSimApi::setObjectPose does."""
+
+    def __init__(self, start=None, refuse=False, missing=False):
+        rpy = start or ps.LEVEL_SUN_RPY_DEG
+        self.pose = {"translation": {"x": 0.0, "y": 0.0, "z": -4.0},
+                     "rotation": ps.rpy_deg_to_quaternion(*rpy)}
+        self.refuse, self.missing, self.sets = refuse, missing, []
+
+    def get_object_pose(self, name):
+        if self.missing or name != ps.SUN_ACTOR:
+            raise RuntimeError(f"No objects of name {name}")
+        return {k: dict(v) for k, v in self.pose.items()}
+
+    def set_object_pose(self, name, pose, teleport):
+        if self.missing or name != ps.SUN_ACTOR:
+            raise RuntimeError(f"SetObjectPose failed. No objects of name {name}")
+        self.sets.append(pose)
+        if self.refuse:
+            return False
+        self.pose = {"translation": dict(pose["translation"]),
+                     "rotation": dict(pose["rotation"])}
+        return True
+
+def _png_pixels(png: bytes):
+    """(width, height, rows of RGB tuples) of an 8-bit RGB PNG with filter 0
+    on every row, decoded with the stdlib."""
+    import zlib
+    assert png[:8] == b"\x89PNG\r\n\x1a\n"
+    pos, idat, w = 8, b"", None
+    while pos < len(png):
+        n = struct.unpack(">I", png[pos:pos + 4])[0]
+        tag, data = png[pos + 4:pos + 8], png[pos + 8:pos + 8 + n]
+        crc = struct.unpack(">I", png[pos + 8 + n:pos + 12 + n])[0]
+        import zlib as z
+        assert z.crc32(tag + data) & 0xFFFFFFFF == crc, tag
+        if tag == b"IHDR":
+            w, h, depth, ctype = struct.unpack(">IIBB", data[:10])
+            assert (depth, ctype) == (8, 2)
+        elif tag == b"IDAT":
+            idat += data
+        pos += 12 + n
+    raw = zlib.decompress(idat)
+    rows, stride = [], 1 + 3 * w
+    for y in range(h):
+        line = raw[y * stride:(y + 1) * stride]
+        assert line[0] == 0
+        rows.append([tuple(line[1 + 3 * x:4 + 3 * x]) for x in range(w)])
+    return w, h, rows
+
+
+def test_the_texture_is_a_striped_png_written_by_the_stdlib():
+    png = ps.texture_png()
+    w, h, rows = _png_pixels(png)
+    assert (w, h) == (ps.TEXTURE_SIZE_PX, ps.TEXTURE_SIZE_PX)
+    on, off = ps.TEXTURE_COLOURS
+    assert rows[0][0] == on and rows[0][ps.TEXTURE_STRIPE_PX] == off
+    assert rows[1][ps.TEXTURE_STRIPE_PX - 1] == off            # the diagonal
+    assert ps.texture_png() == png, "the same bytes on every run"
+    _raises(ps.texture_png, 0, contains="positive")
+    s = ps.stressor("texture")
+    assert s["exposure_bias_ev"] is None and s["weather"] == {}
+    assert s["texture"]["objects"] == ps.TEXTURE_OBJECTS
+
+
+def test_the_texture_stressor_reskins_the_matching_actors_and_records_each_call():
+    sim = TextureSim()
+    rec = ps.apply_texture(sim, "texture", png_dir=str(_tmp()))
+    assert rec["ok"] and rec["mode"] == "set", rec
+    assert rec["matched"] == 2 and rec["set"] == 2 and sim.set == ["SM_Road_01", "SM_Road_02"]
+    assert all(p == ps.texture_png() for p in sim.pngs)
+    assert rec["png_sha256"].startswith("sha256:") and "no call" in rec["read_back"]
+    # Every other stressor leaves the actors alone.
+    for n in ps.NAMES:
+        if n != "texture":
+            other = TextureSim()
+            assert ps.apply_texture(other, n) == {"mode": "none", "ok": True, "problems": []}
+            assert other.set == [] and other.pngs == []
+    # Nothing matched, none took it, the listing failed: refused with why.
+    rec = ps.apply_texture(TextureSim(actors=["BP_Car_07"]), "texture", png_dir=str(_tmp()))
+    assert not rec["ok"] and "matches" in rec["problems"][0], rec
+    rec = ps.apply_texture(TextureSim(refuse={"SM_Road_01", "SM_Road_02"}), "texture",
+                           png_dir=str(_tmp()))
+    assert not rec["ok"] and rec["n_failed"] == 2 and "none of the 2" in rec["problems"][0]
+    rec = ps.apply_texture(TextureSim(list_fails=True), "texture", png_dir=str(_tmp()))
+    assert not rec["ok"] and "list_objects" in rec["problems"][0], rec
+    # One refusal among several is recorded, not fatal.
+    rec = ps.apply_texture(TextureSim(refuse={"SM_Road_02"}), "texture", png_dir=str(_tmp()))
+    assert rec["ok"] and rec["set"] == 1 and rec["failed"][0]["object"] == "SM_Road_02"
+    # The cap: the first TEXTURE_MAX_OBJECTS by name, the rest counted.
+    many = [f"SM_Road_{i:04d}" for i in range(ps.TEXTURE_MAX_OBJECTS + 5)]
+    rec = ps.apply_texture(TextureSim(actors=many), "texture", png_dir=str(_tmp()))
+    assert rec["asked"] == ps.TEXTURE_MAX_OBJECTS and rec["dropped_over_cap"] == 5
+    att = ps.texture_attached("texture")
+    assert att["ok"] and att["png_sha256"] == rec["png_sha256"] and "attached" in att["mode"]
+    assert ps.texture_attached("rain")["mode"] == "none"
+
+
+
+def test_the_rotation_maths_is_the_clients():
+    """quaternion_to_rpy_deg / rpy_deg_to_quaternion are projectairsim.utils'
+    conversions in degrees: the level's light as read on 15 Nov round-trips."""
+    level = (0.5346341133117676, 0.7304362058639526, -0.29992732405662537,
+             0.30111947655677795)
+    rpy = ps.quaternion_to_rpy_deg(*level)
+    assert all(abs(a - b) < 1e-3 for a, b in zip(rpy, ps.LEVEL_SUN_RPY_DEG)), rpy
+    q = ps.rpy_deg_to_quaternion(*rpy)
+    # The simulator sends float32 values, a unit quaternion to about 1e-7.
+    assert all(abs(q[k] - v) < 1e-6 for k, v in zip("wxyz", level)), q
+    try:
+        from projectairsim.utils import quaternion_to_rpy, rpy_to_quaternion
+    except Exception:                                         # noqa: BLE001
+        return
+    import math
+    for r, pch, y in ((10.0, -30.0, 75.0), (112.36, -8.0, 49.69), (-170.0, 45.0, -120.0)):
+        w, x, yy, z = rpy_to_quaternion(*(math.radians(a) for a in (r, pch, y)))
+        mine = ps.rpy_deg_to_quaternion(r, pch, y)
+        assert all(abs(mine[k] - v) < 1e-12 for k, v in zip("wxyz", (w, x, yy, z)))
+        theirs = [math.degrees(a) for a in quaternion_to_rpy(w, x, yy, z)]
+        assert all(abs(a - b) < 1e-9 for a, b in zip(ps.quaternion_to_rpy_deg(w, x, yy, z),
+                                                    theirs))
+
+
+def test_the_shadow_stressor_turns_the_sun_and_every_stressor_reads_it_back():
+    sun = SunSim()
+    rec = ps.apply_sun(sun, "shadow")
+    assert rec["ok"] and rec["mode"] == "set", rec
+    roll, pitch, yaw = rec["read_back"]["rpy_deg"]
+    assert abs(pitch - -8.0) < 1e-6 and abs(yaw - 49.691) < 1e-6
+    assert abs(roll - ps.LEVEL_SUN_RPY_DEG[0]) < 1e-3, "the roll is kept"
+    assert sun.sets[0]["translation"] == {"x": 0.0, "y": 0.0, "z": -4.0}
+    # An attaching node reads the turned sun back: ok for shadow, refused for
+    # a "day" that would fly under it (a simulator not restarted).
+    assert ps.check_sun(sun, "shadow")["ok"]
+    rec = ps.check_sun(sun, "day")
+    assert not rec["ok"] and "the level's own" in rec["problems"][0], rec
+    assert "restarted" in rec["problems"][0]
+    # Every other stressor only reads it back and finds the level's.
+    for n in ps.NAMES:
+        if n != "shadow":
+            fresh = SunSim()
+            rec = ps.apply_sun(fresh, n)
+            assert rec["ok"] and rec["mode"] == "checked" and fresh.sets == [], (n, rec)
+    # Refused, missing, or not where it was asked: refused with why.
+    rec = ps.apply_sun(SunSim(refuse=True), "shadow")
+    assert not rec["ok"] and "answered False" in rec["problems"][0], rec
+    rec = ps.apply_sun(SunSim(missing=True), "shadow")
+    assert not rec["ok"] and "get_object_pose" in rec["problems"][0], rec
+    rec = ps.check_sun(SunSim(missing=True), "night")
+    assert not rec["ok"] and rec["read_back"] is None
+    assert ps.sun_wanted("shadow") == (-8.0, 49.691)
+    assert ps.sun_wanted("rain") == ps.LEVEL_SUN_RPY_DEG[1:]
+
+def test_the_scene_step_and_the_nodes_take_the_texture_stressor():
+    plan = rail.plan_network("mirrored")
+    # A node that loads the scene re-skins the actors and records it.
+    cfg = rail.write_sim_configs(_tmp(), plan, stress="texture")
+    pas, client = _pas()
+    cam = pn.ProjectAirSimCamera(T.FakeObs(), cfg, projectairsim=pas, stress="texture")
+    cam.start()
+    tex = cam.scene_record["stress"]["texture"]
+    assert tex["ok"] and tex["set"] == 2 and client.textures.set == ["SM_Road_01", "SM_Road_02"]
+    # ... refused when no actor matches.
+    pas, _ = _pas(textures=TextureSim(actors=["BP_Car_07"]))
+    cam = pn.ProjectAirSimCamera(T.FakeObs(), cfg, projectairsim=pas, stress="texture")
+    _raises(cam.start, contains="the texture was not set")
+    # The desktop's scene step (SceneLoader) does the same before ArduPilot.
+    pas, client = _pas()
+    loader = pn.SceneLoader(cfg, projectairsim=pas, stress="texture")
+    loader.start()
+    assert loader.stress_record["texture"]["set"] == 2 and loader.stress_record["ok"]
+    pas, _ = _pas(textures=TextureSim(actors=[]))
+    _raises(pn.SceneLoader(cfg, projectairsim=pas, stress="texture").start,
+            contains="the texture was not set")
+    # An attaching node changes nothing and records what the desktop set.
+    orin = rail.write_attach_configs(_tmp(), stress="texture")
+    pas, client = _pas(topics=_live(BASE_ID + "StressTexture"))
+    cam = pn.ProjectAirSimCamera(T.FakeObs(), orin, projectairsim=pas, attach=True,
+                                 stress="texture")
+    cam.start()
+    assert client.textures.set == [] and client.textures.pngs == []
+    assert "attached" in cam.scene_record["stress"]["texture"]["mode"]
+    assert cam.scene_record["stress"]["sun"]["ok"]
+
+
+def test_the_scene_step_and_the_nodes_take_the_shadow_stressor():
+    plan = rail.plan_network("mirrored")
+    cfg = rail.write_sim_configs(_tmp(), plan, stress="shadow")
+    # The desktop's scene step turns the sun and reads it back.
+    pas, client = _pas()
+    loader = pn.SceneLoader(cfg, projectairsim=pas, stress="shadow")
+    loader.start()
+    assert loader.stress_record["sun"]["ok"] and len(client.sun.sets) == 1
+    pas, _ = _pas(sun=SunSim(refuse=True))
+    _raises(pn.SceneLoader(cfg, projectairsim=pas, stress="shadow").start,
+            contains="the sun is not the stressor's")
+    # The node attached to the shadow scene reads the turned sun back ...
+    orin = rail.write_attach_configs(_tmp(), stress="shadow")
+    turned = SunSim(start=(ps.LEVEL_SUN_RPY_DEG[0], -8.0, 49.691))
+    pas, client = _pas(topics=_live(BASE_ID + "StressShadow"), sun=turned)
+    cam = pn.ProjectAirSimCamera(T.FakeObs(), orin, projectairsim=pas, attach=True,
+                                 stress="shadow")
+    cam.start()
+    assert cam.scene_record["stress"]["sun"]["ok"] and turned.sets == []
+    # ... and one attached to a day scene whose sun was left turned refuses.
+    day = rail.write_attach_configs(_tmp(), stress="day")
+    pas, _ = _pas(topics=_live(BASE_ID + "StressDay"),
+                  sun=SunSim(start=(ps.LEVEL_SUN_RPY_DEG[0], -8.0, 49.691)))
+    cam = pn.ProjectAirSimCamera(T.FakeObs(), day, projectairsim=pas, attach=True,
+                                 stress="day")
+    _raises(cam.start, contains="freshly started simulator")
+
+
+# --------------------------------------------------------------------------- #
 # The node
 # --------------------------------------------------------------------------- #
 
 class _Client(T.FakeClient2):
-    def __init__(self, address="127.0.0.1", topics=None, weather=None):
+    def __init__(self, address="127.0.0.1", topics=None, weather=None, textures=None,
+                 sun=None):
         super().__init__(address, topics)
         self.weather = weather or WeatherSim()
+        self.textures = textures or TextureSim()
+        self.sun = sun or SunSim()
 
 
 class _World:
@@ -352,9 +603,21 @@ class _World:
     def get_weather_visual_effects_param(self):
         return self.client.weather.get_weather_visual_effects_param()
 
+    def list_objects(self, name_regex):
+        return self.client.textures.list_objects(name_regex)
 
-def _pas(topics=None, weather=None):
-    client = _Client(topics=topics, weather=weather)
+    def get_object_pose(self, object_name):
+        return self.client.sun.get_object_pose(object_name)
+
+    def set_object_pose(self, object_name, pose, teleport):
+        return self.client.sun.set_object_pose(object_name, pose, teleport)
+
+    def set_object_texture_from_file(self, object_name, path):
+        return self.client.textures.set_object_texture_from_file(object_name, path)
+
+
+def _pas(topics=None, weather=None, textures=None, sun=None):
+    client = _Client(topics=topics, weather=weather, textures=textures, sun=sun)
     return SimpleNamespace(ProjectAirSimClient=lambda address: client, World=_World,
                            Drone=T.FakeDrone), client
 
@@ -549,7 +812,7 @@ def test_the_orin_script_passes_stress_on_and_names_the_run_after_it():
 
 def test_the_desktop_launcher_passes_stress_to_the_scene_node_and_check_steps():
     src = (ROOT / "scripts" / "run_pas_ardupilot.ps1").read_text(encoding="utf-8")
-    assert '[ValidateSet("", "day", "dusk", "night", "rain", "fog")]' in src
+    assert '[ValidateSet("", "day", "dusk", "night", "rain", "fog", "shadow", "texture")]' in src
     assert '$stressArgs = @("--stress", $Stress)' in src
     scene = src[src.index('"scene" {'):src.index('"sitl" {')]
     node = src[src.index('"node" {'):src.index('"g1" {')]

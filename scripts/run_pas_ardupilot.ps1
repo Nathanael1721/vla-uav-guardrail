@@ -8,7 +8,7 @@
 #   .\scripts\run_pas_ardupilot.ps1 -Step sitl           # SITL + router (+ -Mavros) after -Step scene
 #   .\scripts\run_pas_ardupilot.ps1 -Step scene -VlaCameras -Stress night   # a perception-stress scene
 #
-# PERCEPTION STRESS (-Stress day|dusk|night|rain|fog; demo\pas_ardupilot\
+# PERCEPTION STRESS (-Stress day|dusk|night|rain|fog|shadow|texture; demo\pas_ardupilot\
 # perception_stress.py, WP4-16 / WP4-18): -Step scene, -Step node and -Step
 # check render the stressor into the scene (the cameras' exposure for dusk /
 # night, the scene's own id for all), and the scene / node steps set its
@@ -92,7 +92,7 @@ param(
     [switch]$VlaCameras,                # -Step scene: render AerialVLA's VLAFront/VLADown for an attaching --pilot vla node
     [double]$FrontCaptureIntervalS = 0, # -Step scene / node: FrontCamera's capture interval in s (0 = the template's 0.1; 0.066 is about 15 Hz)
     # -Step scene / node / check: a perception stressor ("" = none; perception_stress.py)
-    [ValidateSet("", "day", "dusk", "night", "rain", "fog")]
+    [ValidateSet("", "day", "dusk", "night", "rain", "fog", "shadow", "texture")]
     [string]$Stress  = "",
     [switch]$SkipSim,
     [switch]$KeepSim

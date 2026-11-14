@@ -2268,14 +2268,38 @@ class ProjectAirSimCamera:
         fn = pstress.check_weather if self.attach else pstress.apply_weather
         rec = fn(self.world, self.stress)
         self.stress_record = rec
+        # The texture (the texture stressor): set here on a scene this node
+        # loaded, or the desktop scene step's, which nothing reads back.
+        tex = (pstress.texture_attached(self.stress) if self.attach
+               else pstress.apply_texture(self.world, self.stress))
+        # The level's sun (the shadow stressor turns it; every stressor
+        # reads it back, here or on the scene this node attached to).
+        sun = (pstress.check_sun if self.attach else pstress.apply_sun)(self.world,
+                                                                        self.stress)
         self.scene_record["stress"] = {"name": self.stress,
                                        "scenario_id": pstress.scenario_id(self.stress),
-                                       "weather": rec}
+                                       "weather": rec, "texture": tex, "sun": sun}
         if not rec["ok"]:
             fix = (f" (load the scene on the desktop with run_pas_ardupilot.ps1 -Step "
                    f"scene -Stress {self.stress})" if self.attach else "")
             raise RuntimeError(f"--stress {self.stress}: the weather is not the "
                                f"stressor's: {'; '.join(rec['problems'])}{fix}")
+        if not tex["ok"]:
+            raise RuntimeError(f"--stress {self.stress}: the texture was not set: "
+                               + "; ".join(tex["problems"]))
+        if not sun["ok"]:
+            fix = (f" (load the scene on the desktop with run_pas_ardupilot.ps1 -Step "
+                   f"scene -Stress {self.stress}, in a freshly started simulator)"
+                   if self.attach else "")
+            raise RuntimeError(f"--stress {self.stress}: the sun is not the stressor's: "
+                               f"{'; '.join(sun['problems'])}{fix}")
+        print(f"[stress] {self.stress}: sun {sun['mode']}, {pstress.SUN_ACTOR} at "
+              f"{(sun['read_back'] or {}).get('rpy_deg')} deg (roll, pitch, yaw)")
+        if tex["mode"] != "none":
+            print(f"[stress] {self.stress}: texture {tex['mode']}"
+                  + (f", {tex.get('set')}/{tex.get('asked')} actor(s) of "
+                     f"{tex.get('matched')} matching {tex.get('objects_regex')!r}"
+                     if tex.get("asked") is not None else ""))
         seen = {k: (rec["read_back"] or {}).get(k) for k in pstress.WEATHER_CHECKED}
         print(f"[stress] {self.stress}: weather {rec['mode']}, read back {seen}")
 
@@ -5473,6 +5497,17 @@ class SceneLoader:
             if not rec["ok"]:
                 raise RuntimeError(f"--stress {self.stress}: the weather was not set: "
                                    + "; ".join(rec["problems"]))
+            # The texture stressor's re-skinned actors (none for the others).
+            tex = pstress.apply_texture(world, self.stress)
+            # The level's sun: turned for the shadow stressor, read back always.
+            sun = pstress.apply_sun(world, self.stress)
+            self.stress_record = {**rec, "texture": tex, "sun": sun}
+            if not tex["ok"]:
+                raise RuntimeError(f"--stress {self.stress}: the texture was not set: "
+                                   + "; ".join(tex["problems"]))
+            if not sun["ok"]:
+                raise RuntimeError(f"--stress {self.stress}: the sun is not the "
+                                   f"stressor's: " + "; ".join(sun["problems"]))
 
     def stop(self) -> None:
         try:

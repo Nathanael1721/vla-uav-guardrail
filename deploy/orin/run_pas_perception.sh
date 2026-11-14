@@ -34,7 +34,7 @@
 #   FRONT_CAPTURE_INTERVAL_S  FrontCamera's capture interval the desktop's scene
 #               step was given (-FrontCaptureIntervalS), recorded with the run
 #   STRESS      the perception stressor the desktop's scene step was given
-#               (-Stress day|dusk|night|rain|fog; demo/pas_ardupilot/
+#               (-Stress day|dusk|night|rain|fog|shadow|texture; demo/pas_ardupilot/
 #               perception_stress.py): the node attaches only to that
 #               stressor's scene and reads its weather back; never KPI-grade
 #   VLA_PORT    the AIOT-VLA server's port on 127.0.0.1 (default 8791)
@@ -109,8 +109,8 @@ if [ -n "${FRONT_CAPTURE_INTERVAL_S:-}" ]; then
 fi
 if [ -n "${STRESS:-}" ]; then
   case "$STRESS" in
-    day|dusk|night|rain|fog) args+=(--stress "$STRESS") ;;
-    *) die 64 "STRESS '$STRESS' is none of day dusk night rain fog (perception_stress.py)" ;;
+    day|dusk|night|rain|fog|shadow|texture) args+=(--stress "$STRESS") ;;
+    *) die 64 "STRESS '$STRESS' is none of day dusk night rain fog shadow texture (perception_stress.py)" ;;
   esac
 fi
 args+=("$@")
