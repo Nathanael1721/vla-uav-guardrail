@@ -921,6 +921,28 @@ KPI-bearing run.
 | Clock offset | step 6 | `deploy/evidence/hil/chrony_<date>.txt` |
 | Router endpoints | step 9 | the router log, saved beside the session's evidence |
 
+## 15a. REST hot-apply in the companion (the harness-driven hil episode)
+
+The stress harness drives a hil episode's zone events through the Policy DSL's REST
+hot-apply server (guardrail/api.py, fastapi + uvicorn; `tools/harness_hil_episode.py`,
+docs/DESIGN-harness-grpc.md). The companion image does not carry them, and the Orin has no
+internet route, so they are a layer on the built image (`deploy/docker/companion-api.Dockerfile`),
+installed from wheels made on the desktop at the pinned versions
+(`deploy/docker/constraints-companion-api.txt`, what WSL `~/venv-ros` ran):
+
+```bash
+# desktop (any Python 3.12 with pip): the aarch64 wheels, pins from the constraints file
+python -m pip download fastapi==0.162.0 uvicorn==0.54.0 starlette==1.10.0 anyio==4.15.1     h11==0.16.0 click==8.1.6 idna==3.6 pydantic==2.13.4 pydantic-core==2.46.4     typing_extensions==4.16.0 --platform manylinux2014_aarch64 --python-version 3.12     --implementation cp --only-binary=:all: -d wheelhouse-api
+scp -r wheelhouse-api nathan-agxiot@10.42.0.3:
+# Orin, in the checkout: keep the image the KPI campaigns flew, then build the layer and
+# make it the image hil.env names
+docker tag vlaguard/companion:jazzy vlaguard/companion:jazzy-base
+docker build --build-context wheels="$HOME/wheelhouse-api"     --build-arg COMPANION_IMAGE=vlaguard/companion:jazzy-base     -f deploy/docker/companion-api.Dockerfile -t vlaguard/companion:jazzy .
+```
+
+The layer only adds packages; the Shield, MAVROS and the router are the base image's. A
+campaign flown on it records the image like any other (section 15).
+
 ## 16. Moving to the drone (flight)
 
 Nothing is rebuilt. The same `vlaguard/companion:jazzy` arm64 image and the

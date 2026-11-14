@@ -235,15 +235,17 @@ class _Rig(TS._FakeRig):
     what the Shield node's run folder holds beside the fake's own files:
     manifest.json, shield_audit.jsonl, bag/ (two files), policy_g<N>.json of
     every generation, and metrics.json `hot_apply` with the mission's own
-    time for each accepted event. `manifest_hash` makes the manifest name
-    another policy; `bare` writes none of the extras."""
+    time for each accepted event. As the Shield node does, the manifest names
+    the policy the mission ENDED with (its last generation). `start_policy`
+    makes the mission start on another policy (policy_g0.json); `bare` writes
+    none of the extras."""
 
-    def __init__(self, cfg, pad_s=0.2, mission_s=0.3, expect=0, manifest_hash=None,
+    def __init__(self, cfg, pad_s=0.2, mission_s=0.3, expect=0, start_policy=None,
                  bare=False, pre_started=False, **kw):
         super().__init__(cfg, **kw)
         self.pad_s, self.mission_s, self.expect = pad_s, mission_s, expect
         self.pre_started = pre_started
-        self.manifest_hash, self.bare = manifest_hash, bare
+        self.start_policy, self.bare = start_policy, bare
         self.applied: list[dict] = []
         self.requests: list[tuple] = []
         self.t0 = None
@@ -253,7 +255,8 @@ class _Rig(TS._FakeRig):
         out = self.remote / "demo" / "out" / tag
         port = next((int(a.split("=", 1)[1]) for a in args
                      if a.startswith("--hotapply-port=")), None)
-        g0 = (out / "policy_g0.json").read_bytes()
+        if self.start_policy is not None:      # the mission started on another policy
+            (out / "policy_g0.json").write_bytes(self.start_policy)
         if port is not None:
             def on_applied(res):
                 now = time.monotonic()
@@ -284,9 +287,10 @@ class _Rig(TS._FakeRig):
         metrics = json.loads((out / "metrics.json").read_text(encoding="utf-8"))
         metrics["hot_apply"] = {"n_applied": len(self.applied), "events": self.applied}
         (out / "metrics.json").write_text(json.dumps(metrics), encoding="utf-8")
+        last = max(out.glob("policy_g*.json"), key=lambda f: int(f.stem[len("policy_g"):]))
         (out / "manifest.json").write_bytes(json.dumps({
             "code_revision": "fake-rig", "vla_model_hash": "fake",
-            "policy_hash": self.manifest_hash or _sha(g0), "random_seed": 1001,
+            "policy_hash": _sha(last.read_bytes()), "random_seed": 1001,
             "sim_speedup": 1.0, "topology": "hil"}, indent=2).encode("utf-8") + b"\n")
         (out / "shield_audit.jsonl").write_bytes(b'{"t": 0.1, "violations": []}\n')
         (out / "bag").mkdir()
@@ -706,7 +710,7 @@ def test_what_a_rail_cannot_fly_launches_nothing():
 
 def test_a_flight_the_rig_cannot_complete_fails_the_episode_and_frees_the_rig():
     """An unfinished mission (the fake writes no mission_end) is refused by
-    accept_hil_run, a manifest naming another policy by the harness: both are
+    accept_hil_run, a mission that started on another policy by the harness: both are
     FAILED_PRECONDITION at EndEpisode with the reason, nothing is bundled,
     and the rig takes the next episode."""
     h, rigs, _ = _rail_harness(finish=False, bare=True)
@@ -717,7 +721,8 @@ def test_a_flight_the_rig_cannot_complete_fails_the_episode_and_frees_the_rig():
     assert not list((h.runs_dir / ref["episode_id"]).glob("*")), "a failed flight was bundled"
     h.stop_session(s)
 
-    h2, rigs2, _ = _rail_harness(manifest_hash="sha256:" + "0" * 64)
+    h2, rigs2, _ = _rail_harness(
+        start_policy=load_policy(ROOT / "policies" / "demo_policy.yaml").canonical_bytes())
     s2, ref2, _ = _fly_hil(h2, rigs2, 0)
     code, why = _refused(h2.end_episode, ref2["episode_id"])
     assert code == "FAILED_PRECONDITION" and "flew policy" in why, (code, why)

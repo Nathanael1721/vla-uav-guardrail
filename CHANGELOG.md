@@ -16,6 +16,42 @@ shipped change and recorded as one.
 
 ## [Unreleased]
 
+### 2026-11-14 (the companion's REST hot-apply layer) — fastapi and uvicorn as a layer on the built companion image, from pinned wheels, so the harness-driven hil episode can run on an Orin with no internet route
+
+#### Added
+- `deploy/docker/companion-api.Dockerfile` (+ its `.dockerignore`): `FROM
+  ${COMPANION_IMAGE}` (default `vlaguard/companion:jazzy`), the wheels from
+  the named build context `wheels` (`--mount=type=bind`), `pip install
+  --no-index` under `constraints-companion-api.txt`, then an import check.
+- `deploy/docker/constraints-companion-api.txt`: fastapi 0.162.0, uvicorn
+  0.54.0, starlette 1.10.0, anyio 4.15.1, h11 0.16.0, click 8.1.6, idna 3.6,
+  the versions WSL `~/venv-ros` ran (recorded in
+  docs/DESIGN-python-versions.md), and the companion's own pydantic 2.13.4.
+- docs/RUNBOOK-orin-hil.md section 15a: the wheelhouse on the desktop, the
+  base image kept as `jazzy-base`, the layer built as `jazzy`.
+
+#### Fixed
+- `guardrail/harness_service.py` (`flown_start_policy_hash`): the harness
+  checked the episode's starting policy against manifest.json's
+  `policy_hash`, which the Shield node writes as the policy the mission ENDED
+  with. The first harness-driven hil flight, hh01_001 (dyn-nfz-rotate-step,
+  seed 1001, cbeaa79), applied both REST forwards (a spawn at 3 s, a rotate
+  at 8 s: generations 1 and 2) and was then refused: its policy_g0.json was
+  the episode's sha256:b665adba..., the manifest named generation 2,
+  sha256:cd8a6d12.... The start is now read from policy_g0.json; the
+  manifest only when no g0 file came back. The fake rig in
+  tests/test_harness_rail.py now writes the manifest as the node does (the
+  last generation), and its wrong-policy case starts the mission on another
+  policy.
+
+#### Tests
+- `tests/test_deploy_configs.py`: the layer installs offline from the named
+  context under pins equal to the venv-ros row, and keeps the companion's
+  pydantic; 70/71 (1 skipped).
+- `tests/test_harness_hil.py` 10/10 (the start policy read from generation
+  0), `tests/test_harness_rail.py` 11/11, `tests/test_harness_service.py`
+  62/62, `tests/test_wp4outputs_harness.py` 16/16.
+
 ### 2026-11-14 (hs10 flies every FSM edge the rails had never taken; ge1113 and the CI on Python 3.12) — G2, G4, G6, X2 and X3 flew on the hil rig for the first time, from a campaign planned, driven and scored on Python 3.12; the grant-example re-fly at the start-up fix had no tick over 100 ms in 95,160
 
 #### Flown

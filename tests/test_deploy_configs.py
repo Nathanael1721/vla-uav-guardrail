@@ -935,6 +935,33 @@ def test_companion_pins_are_the_kpi_rails_versions():
         assert f"{k.lower()} {v}" in row, f"{k}=={v} is not what ~/venv-ros ran"
 
 
+def test_the_companion_api_layer_installs_pinned_wheels_offline():
+    """The REST hot-apply server (fastapi + uvicorn) is a layer on the built companion
+    image, because the Orin has no internet route: its wheels come from a named build
+    context, installed with --no-index under pins that are what ~/venv-ros ran its REST
+    hot-apply flights with, and the companion's own pydantic pin is kept."""
+    df = (DOCKER_DIR / "companion-api.Dockerfile").read_text(encoding="utf-8")
+    assert re.search(r"^ARG COMPANION_IMAGE=vlaguard/companion:jazzy$", df, flags=re.M), \
+        "the layer must default to the companion image hil.env names"
+    assert "FROM ${COMPANION_IMAGE}" in df
+    flat = df.replace("\\\n", " ")
+    m = re.search(r"/opt/venv/bin/pip install ([^&\n]+)", flat)
+    assert m, "no pip install in companion-api.Dockerfile"
+    args = shlex.split(m.group(1))
+    assert "--no-index" in args and "--find-links" in args, args
+    assert args[args.index("--find-links") + 1] == "/tmp/wheels", args
+    assert "--mount=type=bind,from=wheels,target=/tmp/wheels" in flat, "wheels from the named context"
+    assert {"fastapi", "uvicorn"} <= set(args), args
+    assert args[args.index("-c") + 1] == "/tmp/req/constraints-companion-api.txt", args
+    row = _design_row("venv-ros").lower()
+    pins = _pins(DOCKER_DIR / "constraints-companion-api.txt")
+    assert {"fastapi", "uvicorn", "starlette", "pydantic"} <= set(pins), pins
+    for k, v in pins.items():
+        assert f"{k.lower()} {v}" in row, f"{k}=={v} is not what ~/venv-ros ran"
+    base = _pins(DOCKER_DIR / "constraints-companion.txt")
+    assert pins["pydantic"] == base["pydantic"], "the api layer would move the companion's pydantic"
+
+
 def test_vla_pins_are_vla_reals_versions():
     row = _design_row("vla-real").lower()
     pins = _pins(DOCKER_DIR / "requirements-vla.txt")
