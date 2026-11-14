@@ -3424,7 +3424,9 @@ class FenceBackstop:
         ROS 2 adapter pushes), unless it is known to be empty already: a
         list left from an earlier run or another policy would otherwise stay
         enforced under FENCE_TYPE's polygon bit, stricter than and unrelated
-        to the flown policy;
+        to the flown policy (since 2026-11-15 a clear over MAVROS is judged
+        by the read-back alone: MAVROS 2 answers a zero-item push with
+        failure although the autopilot takes it - MavrosLink.upload_fence);
       * an upload in flight (`recheck`) gets MIDFLIGHT_FENCE_TIMEOUT_S per
         phase, and its cost against the 100 ms tick is recorded."""
 

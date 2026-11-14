@@ -1151,6 +1151,62 @@ def test_the_adapter_node_writes_each_update_whole_and_queues_the_next():
             assert all("upload timeout" in s["push_note"] for s in ups)
 
 
+class FakeFence:
+    """/mavros/geofence/push and /pull as measured 15 Nov 2026 on the AGX
+    (MAVROS 2 against ArduPilot 4.5.7 SITL): a push replaces the list and
+    answers success; a zero-item push clears it too, but MAVROS answers
+    success=False, wp_transfered 1. `take=False`: the autopilot keeps its
+    list (the clear did not happen)."""
+
+    def __init__(self, node):
+        self.node, self.held, self.take = node, [], True
+
+    def push(self, req):
+        if self.take or req.waypoints:
+            self.held = list(req.waypoints)
+        n = len(req.waypoints)
+        fut = _Future(_Msg(success=n > 0, wp_transfered=n if n else 1))
+        self.node.mav.pending.append(fut)
+        return fut
+
+    def pull(self, req):
+        fut = _Future(_Msg(success=True, wp_received=len(self.held)))
+        self.node.mav.pending.append(fut)
+        return fut
+
+
+def test_the_adapter_judges_a_fence_clear_by_its_read_back():
+    """An expired zone leaves no zone to upload: the empty push clears the
+    autopilot's list, and MAVROS 2 answers it with success=False. The
+    verdict is the read-back (0 items), never that answer; a clear the list
+    did not take stays a failure. Before 2026-11-15 every clear was recorded
+    as failed (pas_hil_hotapply_01's generation 2 on the perception rail)."""
+    M = _adapter_module()
+    # A ROS request's sequence field starts as an empty list.
+    M.WaypointPush.Request = staticmethod(lambda **kw: _Msg(**{"waypoints": [], **kw}))
+    node = M.MavlinkAdapterNode(None)
+    fake = FakeFence(node)
+    node.cli_push, node.cli_pull = _Client(fake.push), _Client(fake.pull)
+    node._on_home(_Msg(geo=_Msg(latitude=HOME[0], longitude=HOME[1]),
+                       position=_Msg(x=0.0, y=0.0, z=0.0)))
+    zone = {"kind": "circle", "id": "nfz-rest-1", "center": [30.0, 30.0],
+            "radius_m": 5.0}
+    node._on_fences(_Msg(data=json.dumps({"fences": [zone], "generation": 1})))
+    _settle(node)
+    node._on_fences(_Msg(data=json.dumps({"fences": [], "generation": 2})))
+    _settle(node)
+    fake.held = [object()]
+    fake.take = False
+    node._on_fences(_Msg(data=json.dumps({"fences": [], "generation": 3})))
+    _settle(node)
+    ups = {s["generation"]: s for s in _statuses(M, node) if s["kind"] == "fence_upload"}
+    assert ups[1]["success"] and ups[1]["read_back"] == 1, ups[1]
+    assert "push_success" not in ups[1], "a non-empty push is judged by both"
+    assert ups[2]["success"] and ups[2]["read_back"] == 0, ups[2]
+    assert ups[2]["push_success"] is False and ups[2]["transferred"] == 1, ups[2]
+    assert not ups[3]["success"] and ups[3]["read_back"] == 1, ups[3]
+
+
 def test_the_mission_update_flag_defaults_to_the_full_write():
     src = (ROOT / "sitl" / "mavlink_adapter_node.py").read_text(encoding="utf-8")
     main = src[src.index("def main("):]

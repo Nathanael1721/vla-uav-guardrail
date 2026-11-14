@@ -1075,16 +1075,23 @@ if HAVE_ROS:
                 r = f.result()
                 ok = bool(r and r.success)
                 n = int(r.wp_transfered) if r else 0
-                if not ok or not self.cli_pull.service_is_ready():
+                # A CLEAR (no item) is judged by the read-back alone: MAVROS 2
+                # answers success=False to a zero-item push that the autopilot
+                # takes (measured 15 Nov 2026 on the AGX against ArduPilot
+                # 4.5.7 SITL: False in 54 ms, the list read back 0 items).
+                clear = not items and r is not None
+                if (not ok and not clear) or not self.cli_pull.service_is_ready():
                     self._status({**base, "success": ok, "transferred": n})
                     return
                 fut2 = self.cli_pull.call_async(WaypointPull.Request())
 
                 def pulled(f2):
                     r2 = f2.result()
-                    got = int(r2.wp_received) if r2 else None
-                    self._status({**base, "success": ok and got == len(items),
-                                  "transferred": n, "read_back": got})
+                    got = (int(r2.wp_received) if r2 and getattr(r2, "success", True)
+                           else None)
+                    self._status({**base, "success": (ok or clear) and got == len(items),
+                                  "transferred": n, "read_back": got,
+                                  **({"push_success": ok} if clear else {})})
                     self.get_logger().info(
                         f"fence g{doc.get('generation')}: {len(items)} item(s) "
                         f"pushed, {got} read back")

@@ -960,6 +960,28 @@ def test_the_mavros_link_pushes_the_fence_and_reads_it_back():
                                                                      wp_received=0)
     res = link.upload_fence([], timeout=0.1)
     assert res["success"] and node.clients["/mavros/geofence/push"].requests[-1].waypoints == []
+    # MAVROS 2 answers a zero-item push with success=False (wp_transfered 1)
+    # although the autopilot takes it (measured 15 Nov on the AGX): the clear
+    # is judged by the read-back, never by that answer.
+    node.clients["/mavros/geofence/push"].response = SimpleNamespace(success=False,
+                                                                     wp_transfered=1)
+    res = link.upload_fence([], timeout=0.1)
+    assert res["success"] and res["read_back"] == 0 and res["push_success"] is False, res
+    assert "read back empty" in res["why"], res
+    # ...and a clear the list did NOT take is a failure.
+    node.clients["/mavros/geofence/pull"].response = SimpleNamespace(success=True,
+                                                                     wp_received=2)
+    res = link.upload_fence([], timeout=0.1)
+    assert not res["success"] and "read back 2 item(s), not the 0" in res["why"], res
+    node.clients["/mavros/geofence/pull"].response = SimpleNamespace(success=False,
+                                                                     wp_received=0)
+    res = link.upload_fence([], timeout=0.1)
+    assert not res["success"] and "did not read the list back" in res["why"], res
+    # A refused push of real items is still refused, whatever the pull says.
+    node.clients["/mavros/geofence/pull"].response = SimpleNamespace(success=True,
+                                                                     wp_received=3)
+    res = link.upload_fence(items, timeout=0.1)
+    assert not res["success"] and "refused the push" in res["why"], res
 
 
 def test_the_param_file_enforces_uploaded_zones_and_keeps_g1_s_values():

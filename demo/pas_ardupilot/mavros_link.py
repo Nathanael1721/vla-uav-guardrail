@@ -629,15 +629,30 @@ class MavrosLink:
         if res is None:
             return done(False, "/mavros/geofence/push is not available")
         out["transferred"] = int(getattr(res, "wp_transfered", 0) or 0)
-        if not getattr(res, "success", False):
+        out["push_success"] = pushed_ok = bool(getattr(res, "success", False))
+        if not pushed_ok and n:
             return done(False, f"MAVROS refused the push after {out['transferred']}/{n}")
+        # A CLEAR (n == 0) is judged by the read-back alone: MAVROS 2 answers
+        # success=False to a zero-item push that the autopilot takes. Measured
+        # 15 Nov on the AGX against ArduPilot 4.5.7 SITL: the push answered
+        # False in 54 ms and the list read back 0 items (pas_hil_hotapply_01's
+        # generation 2 was recorded as a failed upload for that reason).
         pulled = self._call(self.cli_fence_pull, m.WaypointPull.Request(), timeout)
         if pulled is None or not getattr(pulled, "success", False):
-            return done(False, "pushed, but /mavros/geofence/pull did not read it back")
+            return done(False, "pushed, but /mavros/geofence/pull did not read it back"
+                        if pushed_ok else
+                        f"MAVROS answered the clear with failure after "
+                        f"{out['transferred']}/0, and /mavros/geofence/pull did not "
+                        f"read the list back to tell whether it took")
         out["read_back"] = got = int(pulled.wp_received)
         out["read_back_match"] = got == n
-        return done(got == n, None if got == n else
-                    f"read back {got} item(s), not the {n} pushed")
+        if got != n:
+            return done(False, f"read back {got} item(s), not the {n} pushed"
+                        + ("" if pushed_ok else
+                           " (MAVROS answered the clear with failure)"))
+        return done(True, None if pushed_ok else
+                    "cleared: MAVROS answered the zero-item push with failure, "
+                    "and the autopilot's list read back empty")
 
     def read_fence(self, timeout: float = 5.0) -> dict:
         """The fence list the autopilot holds NOW, before the node replaces
