@@ -275,8 +275,14 @@ class _Rig(TS._FakeRig):
                 _wait_until(lambda: ep.health_n >= 1, 30.0)     # on the pad
                 time.sleep(self.pad_s)
                 with ep.lock:
+                    # The mission's own time 0 is the start of its first tick. It
+                    # used to be taken after the filter returned, so this clock ran
+                    # the filter's few ms behind any clock started from the
+                    # mission's start, and a forward sent on time read as up to
+                    # 6 ms early (lab CI at 08e9907, 14 Nov: scale at 1.094 s for
+                    # its 1.1 s).
+                    self.t0 = time.monotonic()
                     ep.shield.filter(State(x=-50.0, y=-50.0, up=15.0), Action4D())
-                    self.t0 = time.monotonic()          # the mission's own time 0
                 _wait_until(lambda: len(ep.requests) >= self.expect, 30.0)
                 time.sleep(self.mission_s)
             finally:

@@ -16,6 +16,16 @@ shipped change and recorded as one.
 
 ## [Unreleased]
 
+### 2026-11-14 (a test clock that ran behind) — tests/test_harness_rail.py's fake rig took its mission time 0 after its first Shield tick, so a forward sent on time could read a few ms early and the lab CI at 08e9907 failed once (148/149)
+
+#### Fixed
+- `tests/test_harness_rail.py` (`_Rig.run_mission`): time 0 is taken at the
+  start of the mission's first tick, as a mission's own clock starts, not
+  after the filter returns. The failing assertion was the "never early"
+  check of a scenario forward: scale at 1.094 s on the fake's clock for its
+  1.1 s (the harness's own clock had it on time). 11/11 three times in a
+  row; tests/test_harness_hil.py 10/10. No product code changed.
+
 ### 2026-11-14 (AIoT-VLA flown on the hil rig; the ETW pool cause found) — the lab's own VLA on the AGX Orin flew the Project AirSim + ArduPilot follow through MAVROS 2 with the Shield on, one mission KPI-grade, five under perception stress; the desktop's memory losses were the Plaud app reading ETW too slowly
 
 #### Found
