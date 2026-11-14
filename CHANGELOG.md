@@ -16,6 +16,24 @@ shipped change and recorded as one.
 
 ## [Unreleased]
 
+### 2026-11-14 (the harness's mission time 0 is the health answer's receipt) — a scenario forward could leave a few ms before its mission time; the lab CI at e07ff4b caught it (148/149) after the test-clock fix
+
+#### Fixed
+- `guardrail/harness_service.py` (`_rail_driver`): mission time 0 was the
+  time the GET /health request that first saw `mission_started` was SENT.
+  A request in flight across the mission's start (on the fake rig, one
+  waiting for the lock the first tick held) put time 0 before the
+  mission's own, and a forward could leave early: a spawn at 0.187 s of the
+  mission's clock for its 0.2 s. Time 0 is now the answer's RECEIPT, which
+  follows the start, so every forward is late by at most one poll period
+  plus a round trip and never early, as the docstring promised. On the hil
+  rig the error was at most one REST round trip (a few ms); hh02's applied
+  times are unaffected in kind.
+
+#### Tests
+- `tests/test_harness_rail.py` 11/11 three times in a row; test_harness_hil
+  10/10, test_harness_service 62/62, test_wp4outputs_harness 16/16.
+
 ### 2026-11-14 (why the learned VLA's follow is weak on hil; the final report v0.3) — the VLA stands still whenever the detector has no fresh box of the car, and the PAS node lacks the city rail's target estimator; one more KPI-grade AIoT-VLA mission with --identity; the report's summary, topology figure and limitations written
 
 #### Found

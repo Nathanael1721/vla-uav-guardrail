@@ -3047,9 +3047,14 @@ class Harness:
         MISSION TIME 0 is when GET <endpoint>/health first reports
         `mission_started` (the Shield's first filter() tick), polled every
         RAIL_HEALTH_POLL_S and only until then: the clock is the time the
-        request that saw it was SENT, so this server's mission time runs late
-        by at most one poll period plus that request's round trip, and an
-        event is forwarded that much late, never early. The rail's own
+        answer that saw it was RECEIVED. The listener answered after the
+        mission started, so this server's mission time runs late by at most
+        one poll period plus that request's round trip, and an event is
+        forwarded that much late, never early. (Until 14 Nov the clock was the
+        time the request was SENT; a request in flight across the start - on
+        the fake rig, one waiting for the lock the first tick held - put time
+        0 before the mission's own, and the lab CI at e07ff4b caught a spawn
+        forwarded at 0.187 s of the mission's clock for its 0.2 s.) The rail's own
         record of each applied event carries its true mission time
         (metrics.json hot_apply.events), and the bundle keeps it beside this
         server's (`rail`). An endpoint whose FIRST answer already says
@@ -3060,7 +3065,6 @@ class Harness:
         up = False
         while not rf.over.is_set():
             if not up or rf.t0 is None:
-                asked, wall = time.monotonic(), time.time()
                 try:
                     h = self._rest(s, "GET", "/health")
                 except HarnessError as err:
@@ -3088,7 +3092,9 @@ class Harness:
                     self._rail_phase(e, "awaiting_mission_start", endpoint=rf.endpoint,
                                      endpoint_policy_hash=rf.endpoint_policy_hash)
                 elif h is not None and h.get("mission_started"):
-                    rf.t0, rf.t0_wall = asked, wall
+                    # The receipt, not the send: the start may fall while this
+                    # request is in flight, never after its answer.
+                    rf.t0, rf.t0_wall = time.monotonic(), time.time()
                     self._rail_phase(e, "mission", mission_t0_wall=wall)
             now = time.monotonic()
             with rf.cond:
