@@ -1,0 +1,86 @@
+  ntFIN2_178_dyn-nfz-spawn-ahead               before=fail(3)  ideal=fail(3)
+  ntFIN2_179_dyn-nfz-spawn-ahead               before=fail(3)  ideal=fail(3)
+  ntFIN2_180_dyn-nfz-spawn-ahead               before=fail(3)  ideal=fail(3)
+  ntFIN2_181_dyn-nfz-spawn-ahead               before=fail(3)  ideal=fail(3)
+  ntFIN2_182_dyn-nfz-spawn-ahead               before=fail(3)  ideal=fail(3)
+  ntFIN2_183_dyn-nfz-spawn-ahead               before=fail(3)  ideal=fail(3)
+  ntFIN2_184_dyn-nfz-spawn-ahead               before=fail(3)  ideal=fail(3)
+  ntFIN2_185_dyn-nfz-spawn-ahead               before=fail(3)  ideal=fail(3)
+  ntFIN2_186_dyn-nfz-spawn-ahead               before=fail(3)  ideal=fail(3)
+  ntFIN2_214_dyn-nfz-spawn-ahead               before=fail(3)  ideal=fail(3)
+  ntFIN2_215_dyn-nfz-spawn-ahead               before=fail(3)  ideal=fail(3)
+  ntFIN2_216_dyn-nfz-spawn-ahead               before=fail(3)  ideal=fail(3)
+  ntFIN2_217_dyn-nfz-spawn-ahead               before=fail(3)  ideal=fail(3)
+  ntFIN2_218_dyn-nfz-spawn-ahead               before=fail(3)  ideal=fail(3)
+  ntFIN2_219_dyn-nfz-spawn-ahead               before=fail(3)  ideal=fail(3)
+  ntFIN2_220_dyn-nfz-spawn-ahead               before=fail(3)  ideal=fail(3)
+  ntFIN2_221_dyn-nfz-spawn-ahead               before=fail(3)  ideal=fail(3)
+  ntFIN2_222_dyn-nfz-spawn-ahead               before=fail(3)  ideal=fail(3)
+  ntFIN2_374_corridor-swap-shifted             before=fail(1)  ideal=fail(1)
+
+fail-safe trigger correctness of 19 Shield-on run(s), by label reading (docs/data/failsafe_labels_rail.json, derived at 442397ff60a6, 49c455ccd07c, 897dac7a2d1f):
+  (a) ideal-vehicle labels, E5 on the flight without a fail-safe (section 3)
+      0/0 = n/m  Wilson 95 % low n/m  nulls: always-trigger n/m, never-trigger n/m  | censored 19, undecided 0, unlabelled 0, no verdict 0, not accepted 0
+      censored   ntFIN2_178_dyn-nfz-spawn-ahead  (dyn-nfz-spawn-ahead@ahead_m=3,variant=0,vehicle_speed_mps=4, seed 1001)  - the autopilot took the aircraft; flying longer will not decide it
+      censored   ntFIN2_179_dyn-nfz-spawn-ahead  (dyn-nfz-spawn-ahead@ahead_m=3,variant=0,vehicle_speed_mps=4, seed 1002)  - the autopilot took the aircraft; flying longer will not decide it
+      censored   ntFIN2_180_dyn-nfz-spawn-ahead  (dyn-nfz-spawn-ahead@ahead_m=3,variant=0,vehicle_speed_mps=4, seed 1003)  - the autopilot took the aircraft; flying longer will not decide it
+      censored   ntFIN2_181_dyn-nfz-spawn-ahead  (dyn-nfz-spawn-ahead@ahead_m=3,variant=1,vehicle_speed_mps=4, seed 1001)  - the autopilot took the aircraft; flying longer will not decide it
+      censored   ntFIN2_182_dyn-nfz-spawn-ahead  (dyn-nfz-spawn-ahead@ahead_m=3,variant=1,vehicle_speed_mps=4, seed 1002)  - the autopilot took the aircraft; flying longer will not decide it
+      censored   ntFIN2_183_dyn-nfz-spawn-ahead  (dyn-nfz-spawn-ahead@ahead_m=3,variant=1,vehicle_speed_mps=4, seed 1003)  - the autopilot took the aircraft; flying longer will not decide it
+      censored   ntFIN2_184_dyn-nfz-spawn-ahead  (dyn-nfz-spawn-ahead@ahead_m=3,variant=2,vehicle_speed_mps=4, seed 1001)  - the autopilot took the aircraft; flying longer will not decide it
+      censored   ntFIN2_185_dyn-nfz-spawn-ahead  (dyn-nfz-spawn-ahead@ahead_m=3,variant=2,vehicle_speed_mps=4, seed 1002)  - the autopilot took the aircraft; flying longer will not decide it
+      censored   ntFIN2_186_dyn-nfz-spawn-ahead  (dyn-nfz-spawn-ahead@ahead_m=3,variant=2,vehicle_speed_mps=4, seed 1003)  - the autopilot took the aircraft; flying longer will not decide it
+      censored   ntFIN2_214_dyn-nfz-spawn-ahead  (dyn-nfz-spawn-ahead@ahead_m=3,variant=0,vehicle_speed_mps=8, seed 1001)  - the autopilot took the aircraft; flying longer will not decide it
+      censored   ntFIN2_215_dyn-nfz-spawn-ahead  (dyn-nfz-spawn-ahead@ahead_m=3,variant=0,vehicle_speed_mps=8, seed 1002)  - the autopilot took the aircraft; flying longer will not decide it
+      censored   ntFIN2_216_dyn-nfz-spawn-ahead  (dyn-nfz-spawn-ahead@ahead_m=3,variant=0,vehicle_speed_mps=8, seed 1003)  - the autopilot took the aircraft; flying longer will not decide it
+      censored   ntFIN2_217_dyn-nfz-spawn-ahead  (dyn-nfz-spawn-ahead@ahead_m=3,variant=1,vehicle_speed_mps=8, seed 1001)  - the autopilot took the aircraft; flying longer will not decide it
+      censored   ntFIN2_218_dyn-nfz-spawn-ahead  (dyn-nfz-spawn-ahead@ahead_m=3,variant=1,vehicle_speed_mps=8, seed 1002)  - the autopilot took the aircraft; flying longer will not decide it
+      censored   ntFIN2_219_dyn-nfz-spawn-ahead  (dyn-nfz-spawn-ahead@ahead_m=3,variant=1,vehicle_speed_mps=8, seed 1003)  - the autopilot took the aircraft; flying longer will not decide it
+      censored   ntFIN2_220_dyn-nfz-spawn-ahead  (dyn-nfz-spawn-ahead@ahead_m=3,variant=2,vehicle_speed_mps=8, seed 1001)  - the autopilot took the aircraft; flying longer will not decide it
+      censored   ntFIN2_221_dyn-nfz-spawn-ahead  (dyn-nfz-spawn-ahead@ahead_m=3,variant=2,vehicle_speed_mps=8, seed 1002)  - the autopilot took the aircraft; flying longer will not decide it
+      censored   ntFIN2_222_dyn-nfz-spawn-ahead  (dyn-nfz-spawn-ahead@ahead_m=3,variant=2,vehicle_speed_mps=8, seed 1003)  - the autopilot took the aircraft; flying longer will not decide it
+      censored   ntFIN2_374_corridor-swap-shifted  (corridor-swap-shifted, seed 1002)  - ended still holding
+  (r) rail-vehicle labels, E5 on the flight without a fail-safe (sections 3, 8)
+      0/0 = n/m  Wilson 95 % low n/m  nulls: always-trigger n/m, never-trigger n/m  | censored 19, undecided 0, unlabelled 0, no verdict 0, not accepted 0
+      censored   ntFIN2_178_dyn-nfz-spawn-ahead  (dyn-nfz-spawn-ahead@ahead_m=3,variant=0,vehicle_speed_mps=4, seed 1001)  - the autopilot took the aircraft; flying longer will not decide it
+      censored   ntFIN2_179_dyn-nfz-spawn-ahead  (dyn-nfz-spawn-ahead@ahead_m=3,variant=0,vehicle_speed_mps=4, seed 1002)  - the autopilot took the aircraft; flying longer will not decide it
+      censored   ntFIN2_180_dyn-nfz-spawn-ahead  (dyn-nfz-spawn-ahead@ahead_m=3,variant=0,vehicle_speed_mps=4, seed 1003)  - the autopilot took the aircraft; flying longer will not decide it
+      censored   ntFIN2_181_dyn-nfz-spawn-ahead  (dyn-nfz-spawn-ahead@ahead_m=3,variant=1,vehicle_speed_mps=4, seed 1001)  - the autopilot took the aircraft; flying longer will not decide it
+      censored   ntFIN2_182_dyn-nfz-spawn-ahead  (dyn-nfz-spawn-ahead@ahead_m=3,variant=1,vehicle_speed_mps=4, seed 1002)  - the autopilot took the aircraft; flying longer will not decide it
+      censored   ntFIN2_183_dyn-nfz-spawn-ahead  (dyn-nfz-spawn-ahead@ahead_m=3,variant=1,vehicle_speed_mps=4, seed 1003)  - the autopilot took the aircraft; flying longer will not decide it
+      censored   ntFIN2_184_dyn-nfz-spawn-ahead  (dyn-nfz-spawn-ahead@ahead_m=3,variant=2,vehicle_speed_mps=4, seed 1001)  - the autopilot took the aircraft; flying longer will not decide it
+      censored   ntFIN2_185_dyn-nfz-spawn-ahead  (dyn-nfz-spawn-ahead@ahead_m=3,variant=2,vehicle_speed_mps=4, seed 1002)  - the autopilot took the aircraft; flying longer will not decide it
+      censored   ntFIN2_186_dyn-nfz-spawn-ahead  (dyn-nfz-spawn-ahead@ahead_m=3,variant=2,vehicle_speed_mps=4, seed 1003)  - the autopilot took the aircraft; flying longer will not decide it
+      censored   ntFIN2_214_dyn-nfz-spawn-ahead  (dyn-nfz-spawn-ahead@ahead_m=3,variant=0,vehicle_speed_mps=8, seed 1001)  - the autopilot took the aircraft; flying longer will not decide it
+      censored   ntFIN2_215_dyn-nfz-spawn-ahead  (dyn-nfz-spawn-ahead@ahead_m=3,variant=0,vehicle_speed_mps=8, seed 1002)  - the autopilot took the aircraft; flying longer will not decide it
+      censored   ntFIN2_216_dyn-nfz-spawn-ahead  (dyn-nfz-spawn-ahead@ahead_m=3,variant=0,vehicle_speed_mps=8, seed 1003)  - the autopilot took the aircraft; flying longer will not decide it
+      censored   ntFIN2_217_dyn-nfz-spawn-ahead  (dyn-nfz-spawn-ahead@ahead_m=3,variant=1,vehicle_speed_mps=8, seed 1001)  - the autopilot took the aircraft; flying longer will not decide it
+      censored   ntFIN2_218_dyn-nfz-spawn-ahead  (dyn-nfz-spawn-ahead@ahead_m=3,variant=1,vehicle_speed_mps=8, seed 1002)  - the autopilot took the aircraft; flying longer will not decide it
+      censored   ntFIN2_219_dyn-nfz-spawn-ahead  (dyn-nfz-spawn-ahead@ahead_m=3,variant=1,vehicle_speed_mps=8, seed 1003)  - the autopilot took the aircraft; flying longer will not decide it
+      censored   ntFIN2_220_dyn-nfz-spawn-ahead  (dyn-nfz-spawn-ahead@ahead_m=3,variant=2,vehicle_speed_mps=8, seed 1001)  - the autopilot took the aircraft; flying longer will not decide it
+      censored   ntFIN2_221_dyn-nfz-spawn-ahead  (dyn-nfz-spawn-ahead@ahead_m=3,variant=2,vehicle_speed_mps=8, seed 1002)  - the autopilot took the aircraft; flying longer will not decide it
+      censored   ntFIN2_222_dyn-nfz-spawn-ahead  (dyn-nfz-spawn-ahead@ahead_m=3,variant=2,vehicle_speed_mps=8, seed 1003)  - the autopilot took the aircraft; flying longer will not decide it
+      censored   ntFIN2_374_corridor-swap-shifted  (corridor-swap-shifted, seed 1002)  - ended still holding
+  (r2) rail-vehicle labels, E5 on the prescribed flight (sections 7, 8)  <- THE ADOPTED KPI READING
+      0/0 = n/m  Wilson 95 % low n/m  nulls: always-trigger n/m, never-trigger n/m  | censored 19, undecided 0, unlabelled 0, no verdict 0, not accepted 0
+      censored   ntFIN2_178_dyn-nfz-spawn-ahead  (dyn-nfz-spawn-ahead@ahead_m=3,variant=0,vehicle_speed_mps=4, seed 1001)  - the autopilot took the aircraft; flying longer will not decide it
+      censored   ntFIN2_179_dyn-nfz-spawn-ahead  (dyn-nfz-spawn-ahead@ahead_m=3,variant=0,vehicle_speed_mps=4, seed 1002)  - the autopilot took the aircraft; flying longer will not decide it
+      censored   ntFIN2_180_dyn-nfz-spawn-ahead  (dyn-nfz-spawn-ahead@ahead_m=3,variant=0,vehicle_speed_mps=4, seed 1003)  - the autopilot took the aircraft; flying longer will not decide it
+      censored   ntFIN2_181_dyn-nfz-spawn-ahead  (dyn-nfz-spawn-ahead@ahead_m=3,variant=1,vehicle_speed_mps=4, seed 1001)  - the autopilot took the aircraft; flying longer will not decide it
+      censored   ntFIN2_182_dyn-nfz-spawn-ahead  (dyn-nfz-spawn-ahead@ahead_m=3,variant=1,vehicle_speed_mps=4, seed 1002)  - the autopilot took the aircraft; flying longer will not decide it
+      censored   ntFIN2_183_dyn-nfz-spawn-ahead  (dyn-nfz-spawn-ahead@ahead_m=3,variant=1,vehicle_speed_mps=4, seed 1003)  - the autopilot took the aircraft; flying longer will not decide it
+      censored   ntFIN2_184_dyn-nfz-spawn-ahead  (dyn-nfz-spawn-ahead@ahead_m=3,variant=2,vehicle_speed_mps=4, seed 1001)  - the autopilot took the aircraft; flying longer will not decide it
+      censored   ntFIN2_185_dyn-nfz-spawn-ahead  (dyn-nfz-spawn-ahead@ahead_m=3,variant=2,vehicle_speed_mps=4, seed 1002)  - the autopilot took the aircraft; flying longer will not decide it
+      censored   ntFIN2_186_dyn-nfz-spawn-ahead  (dyn-nfz-spawn-ahead@ahead_m=3,variant=2,vehicle_speed_mps=4, seed 1003)  - the autopilot took the aircraft; flying longer will not decide it
+      censored   ntFIN2_214_dyn-nfz-spawn-ahead  (dyn-nfz-spawn-ahead@ahead_m=3,variant=0,vehicle_speed_mps=8, seed 1001)  - the autopilot took the aircraft; flying longer will not decide it
+      censored   ntFIN2_215_dyn-nfz-spawn-ahead  (dyn-nfz-spawn-ahead@ahead_m=3,variant=0,vehicle_speed_mps=8, seed 1002)  - the autopilot took the aircraft; flying longer will not decide it
+      censored   ntFIN2_216_dyn-nfz-spawn-ahead  (dyn-nfz-spawn-ahead@ahead_m=3,variant=0,vehicle_speed_mps=8, seed 1003)  - the autopilot took the aircraft; flying longer will not decide it
+      censored   ntFIN2_217_dyn-nfz-spawn-ahead  (dyn-nfz-spawn-ahead@ahead_m=3,variant=1,vehicle_speed_mps=8, seed 1001)  - the autopilot took the aircraft; flying longer will not decide it
+      censored   ntFIN2_218_dyn-nfz-spawn-ahead  (dyn-nfz-spawn-ahead@ahead_m=3,variant=1,vehicle_speed_mps=8, seed 1002)  - the autopilot took the aircraft; flying longer will not decide it
+      censored   ntFIN2_219_dyn-nfz-spawn-ahead  (dyn-nfz-spawn-ahead@ahead_m=3,variant=1,vehicle_speed_mps=8, seed 1003)  - the autopilot took the aircraft; flying longer will not decide it
+      censored   ntFIN2_220_dyn-nfz-spawn-ahead  (dyn-nfz-spawn-ahead@ahead_m=3,variant=2,vehicle_speed_mps=8, seed 1001)  - the autopilot took the aircraft; flying longer will not decide it
+      censored   ntFIN2_221_dyn-nfz-spawn-ahead  (dyn-nfz-spawn-ahead@ahead_m=3,variant=2,vehicle_speed_mps=8, seed 1002)  - the autopilot took the aircraft; flying longer will not decide it
+      censored   ntFIN2_222_dyn-nfz-spawn-ahead  (dyn-nfz-spawn-ahead@ahead_m=3,variant=2,vehicle_speed_mps=8, seed 1003)  - the autopilot took the aircraft; flying longer will not decide it
+      censored   ntFIN2_374_corridor-swap-shifted  (corridor-swap-shifted, seed 1002)  - ended still holding
+
+19/19 run(s) re-scored -> C:/Users/natha/AppData/Local/Temp/claude/5bd7027074b20450/b55be76a-a840-4098-ad3f-198de66a78a2/scratchpad/flylonger_ntFIN2_censored19.json

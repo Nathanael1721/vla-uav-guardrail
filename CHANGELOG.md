@@ -16,6 +16,26 @@ shipped change and recorded as one.
 
 ## [Unreleased]
 
+### 2026-11-14 (WP3-15's censored runs read three ways; demo A flown) — 18 of ntFIN2's 19 censored fail-safe runs are ArduPilot GeoFence takeovers that no flight length decides, so the KPI is stated under three readings and the question goes to the PI; the professor-demo mission flew at master
+
+#### Found
+- docs/data/kpi_ntFIN2/censored19_rescore_2f0837d.txt (the 19 re-scored at
+  2f0837d): 18 dyn-nfz-spawn-ahead runs (ntFIN2_178-186, 214-222) end with
+  ArduPilot's GeoFence taking the aircraft, GUIDED to RTL at 5.67-5.80 s,
+  0.5-0.7 s after the FSM's Loiter; the FSM stops stepping after a takeover,
+  so the run stays censored however long it flies. ntFIN2_374
+  (corridor-swap-shifted) flew its whole cap and re-enters Loiter about every
+  6 s. Fail-safe trigger correctness read three ways: counted as triggered
+  584/585 = 0.998; counted as missed 566/585 = 0.968; excluded as censored,
+  the adopted rubric, 566/567 = 0.998. docs/FINAL-REPORT.md section 9, PI
+  decision 14.
+
+#### Flown
+- demoA (e1d3a54, hil, profile fsm_edges, failsafe-rtl-blocked): G11, G6
+  (RTL failed: blocked path), G10; fail-safe 1/1, P0 0 - the mission of the
+  professor-demo runbook (docs/share, local). Before it, WSL refused every
+  command with Wsl/Service/E_UNEXPECTED until `wsl --shutdown`.
+
 ### 2026-11-14 (a lengthened hil campaign for the censored fail-safe runs; WP3-15) — `--hil-max-s-add` flies a hil campaign past the rail's cap and says so everywhere; 18 of ntFIN2's 19 censored runs were frozen by the autopilot's GeoFence RTL, which no flight length decides; not flown
 
 #### Found
