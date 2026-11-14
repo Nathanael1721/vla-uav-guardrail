@@ -208,6 +208,12 @@
 #          flown policy at the grant's forecast; nothing SKIPs).
 #          test_held_box_gate (2026-11-04: a held box the subject could not
 #          have reached is refused, so a phantom box is not the subject).
+#          test_subject_track (2026-11-15: demo/subject_track.SubjectTrack,
+#          follow_vlm.fly()'s target estimator, strict-lock prior, lapse and
+#          anchored re-acquisition on follow_vlm's own rules, which fly()
+#          calls too; the VLA's memory hint toward the predicted subject;
+#          the Project AirSim node's --target-estimator on the stand-ins,
+#          the Shield's subject unchanged; nothing SKIPs).
 #        The CityLife level, checked offline (the level itself is
 #          gitignored): test_citylife_*, test_car_speed, test_drive_signals_dsl,
 #          test_ped_walk_plan, test_parked_cars.
@@ -741,6 +747,7 @@ jobs:
               tests/test_follow_teacher.py \
               tests/test_vla_standoff_feed.py \
               tests/test_held_box_gate.py \
+              tests/test_subject_track.py \
               tests/test_citylife_peds.py \
               tests/test_citylife_routes.py \
               tests/test_citylife_signal_lamps.py \

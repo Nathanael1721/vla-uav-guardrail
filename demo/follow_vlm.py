@@ -892,6 +892,104 @@ def estimator_measurement(det, g: dict, tick_pose, identity_on: bool,
     return t_now, x, y, yaw, b, newest_range, "tick"
 
 
+# --------------------------------------------------------------------------- #
+# THE SUBJECT IN THE WORLD, AS RULES (2026-11-15). fly()'s identity path keeps
+# its subject with the target estimator, the strict lock's prior and the
+# Reacquirer, and decides five things about them: the estimator and the trail
+# it is built with, the seed of a commit, which SOFT box may feed it, where a
+# lapse anchors the re-acquisition, and the snapshot the strict lock leans on.
+# Those decisions were inline in fly(); they are here, unchanged, so a rail
+# whose pilot is not this file's controller - the Project AirSim + ArduPilot
+# perception node's VLA follow, through demo/subject_track.SubjectTrack - runs
+# the same code instead of a copy. fly() calls every one of them.
+# --------------------------------------------------------------------------- #
+# A SOFT box (identity: may continue a track, never start one) feeds the
+# estimator only while the estimate's last update is under SOFT_EST_AGE_S
+# older than the box's capture and an OK box was accepted under
+# SOFT_OK_WITHIN_S ago.
+SOFT_EST_AGE_S = 1.5
+SOFT_OK_WITHIN_S = 3.0
+# --trail-follow's breadcrumbs (demo/trail.py): one every 1.5 m, the last 120 m.
+TRAIL_SPACING_M = 1.5
+TRAIL_MAX_LEN_M = 120.0
+
+
+def subject_estimator(subject_class) -> TargetState:
+    """The follow's target estimator: demo/target_state.TargetState with the
+    class's physical speed ceiling (SUBJECT_VMAX_MPS; no ceiling for a class
+    it does not name)."""
+    return TargetState(v_max=SUBJECT_VMAX_MPS.get(subject_class))
+
+
+def subject_trail():
+    """The breadcrumbs the estimator lays (--trail-follow; demo/trail.py)."""
+    return trail_mod.Trail(spacing_m=TRAIL_SPACING_M, max_len_m=TRAIL_MAX_LEN_M)
+
+
+def seed_estimate(estimator, pf: dict, cap_pose, t_capture: float) -> tuple:
+    """A subject committed by the start gate or a re-acquisition: the
+    estimator (None: none) reset and seeded from the committing sighting's
+    features `pf` (identity's: rng_h, bearing, P) at its capture's pose and
+    time. Returns (seeded, P0): whether the estimator took the seed, and the
+    subject's place now - the estimator's posterior when seeded, else the
+    sighting's own map point, else None."""
+    seeded = False
+    if estimator is not None:
+        estimator.reset()
+        if (cap_pose is not None and pf.get("rng_h") is not None
+                and pf.get("bearing") is not None):
+            b0 = pf["bearing"] - cap_pose["yaw"]
+            b0 = math.atan2(math.sin(b0), math.cos(b0))
+            seeded = bool(estimator.update(t_capture, cap_pose["x"], cap_pose["y"],
+                                           cap_pose["yaw"], b0, float(pf["rng_h"])))
+    if seeded:
+        P0 = (float(estimator._xu[0]), float(estimator._xu[1]))
+    elif pf.get("P") is not None:
+        P0 = (float(pf["P"][0]), float(pf["P"][1]))
+    else:
+        P0 = None
+    return seeded, P0
+
+
+def soft_may_continue(t_meas: float, t_last_update, now: float, t_ok_last: float) -> bool:
+    """May a SOFT box captured at `t_meas` feed the estimator at `now`? Only
+    to CONTINUE a live track: the estimate's last update (`t_last_update`,
+    None: no estimate) under SOFT_EST_AGE_S before it, and an OK box
+    accepted (`t_ok_last`) under SOFT_OK_WITHIN_S before now."""
+    est_age = t_meas - t_last_update if t_last_update is not None else 1e9
+    return est_age < SOFT_EST_AGE_S and now - t_ok_last < SOFT_OK_WITHIN_S
+
+
+def lapse_anchor(estimator, last_acc, t_meas_last_cap, t_meas_last, last_meas_speed,
+                 v_prior) -> dict | None:
+    """Where a LAPSE (no accepted measurement for lapse_s) anchors the
+    re-acquisition (Reacquirer.start): {t, P, v} - the estimator's posterior
+    and its time when there is one, else the last accepted place
+    (`last_acc`) at the capture time of its measurement (else the time it
+    was taken); the last measured speed, else the one before the last commit.
+    None when nothing places the subject."""
+    have_est = estimator is not None and estimator._xu is not None
+    P_a = ((float(estimator._xu[0]), float(estimator._xu[1])) if have_est else last_acc)
+    if P_a is None:
+        return None
+    return {"t": (estimator.t_last_update if have_est and estimator.t_last_update is not None
+                  else (t_meas_last_cap if t_meas_last_cap is not None else t_meas_last)),
+            "P": P_a,
+            "v": (last_meas_speed if last_meas_speed is not None else v_prior)}
+
+
+def estimator_prior(estimator, centre_up_m: float) -> dict | None:
+    """The snapshot the strict lock leans on (Grounder.set_prior): the
+    estimator's posterior {t, x, y, vx, vy, t_upd} with the subject's centre
+    height `up` for the projection into a frame; None with no posterior."""
+    xu = None if estimator is None else estimator._xu
+    if xu is None:
+        return None
+    return {"t": estimator.t_last_update, "x": float(xu[0]), "y": float(xu[1]),
+            "vx": float(xu[2]), "vy": float(xu[3]), "t_upd": estimator.t_last_update,
+            "up": centre_up_m}
+
+
 def servo_want_width(want_range_m: float, object_width_m: float,
                      hfov_deg: float = None) -> float:
     """The box fraction the box servo must hold to stand off `want_range_m`.
@@ -5385,15 +5483,13 @@ async def fly(args) -> int:
         last_verdict = "UNSURE"
         # Servo on an ESTIMATE of the target rather than the latest box. See
         # demo/target_state.py for the measurements that forced this.
-        estimator = (TargetState(v_max=SUBJECT_VMAX_MPS.get(subject_class))
-                     if args.target_estimator else None)
+        estimator = (subject_estimator(subject_class) if args.target_estimator else None)
         # WHERE THE SUBJECT DROVE (--trail-follow; demo/trail.py).
         #
         # Built from the estimator's own position after each accepted update,
         # so it carries no ground truth. Needs the estimator: the box servo has
         # no position to lay a breadcrumb at.
-        trail = (trail_mod.Trail(spacing_m=1.5, max_len_m=120.0)
-                 if args.trail_follow and estimator is not None else None)
+        trail = (subject_trail() if args.trail_follow and estimator is not None else None)
         if args.trail_follow and trail is None:
             print("[trail] *** --trail-follow needs the target estimator; "
                   "flying along the nose")
@@ -5410,21 +5506,7 @@ async def fly(args) -> int:
             nonlocal t_meas_last, subject_committed, v_prior, t_meas_last_cap
             cp = (ic or {}).get("pose")
             t_c = (ic or {}).get("t_capture") or (ic or {}).get("t_cap") or time.time()
-            seeded = False
-            if estimator is not None:
-                estimator.reset()
-                if (cp is not None and pf.get("rng_h") is not None
-                        and pf.get("bearing") is not None):
-                    b0 = pf["bearing"] - cp["yaw"]
-                    b0 = math.atan2(math.sin(b0), math.cos(b0))
-                    seeded = bool(estimator.update(t_c, cp["x"], cp["y"], cp["yaw"],
-                                                   b0, float(pf["rng_h"])))
-            if seeded:
-                P0 = (float(estimator._xu[0]), float(estimator._xu[1]))
-            elif pf.get("P") is not None:
-                P0 = (float(pf["P"][0]), float(pf["P"][1]))
-            else:
-                P0 = None
+            seeded, P0 = seed_estimate(estimator, pf, cp, t_c)
             if last_meas_speed is not None:
                 v_prior = last_meas_speed
             last_meas_speed = None          # a streak's ~3 m jitter is no speed
@@ -5765,17 +5847,8 @@ async def fly(args) -> int:
                 # fire, and the flight sat with nothing held for good.
                 elif (subject_committed and t_meas_last is not None
                       and time.time() - t_meas_last > args.lapse_s):
-                    have_est = estimator is not None and estimator._xu is not None
-                    P_a = ((float(estimator._xu[0]), float(estimator._xu[1]))
-                           if have_est else last_acc)
-                    anchor = (None if P_a is None else
-                              {"t": (estimator.t_last_update if have_est
-                                     and estimator.t_last_update is not None
-                                     else (t_meas_last_cap if t_meas_last_cap is not None
-                                           else t_meas_last)),
-                               "P": P_a,
-                               "v": (last_meas_speed if last_meas_speed is not None
-                                     else v_prior)})
+                    anchor = lapse_anchor(estimator, last_acc, t_meas_last_cap, t_meas_last,
+                                          last_meas_speed, v_prior)
                     if estimator is not None:
                         estimator.reset()
                     subject_committed = False
@@ -5792,14 +5865,9 @@ async def fly(args) -> int:
                     print(f"[identity] t+{time.time() - t0:.1f}s subject LOST "
                           f"(> {args.lapse_s:.1f} s unseen) - re-acquiring", flush=True)
                 if reacq is None and estimator is not None and estimator._xu is not None:
-                    xu = estimator._xu
-                    grounder.set_prior({"t": estimator.t_last_update,
-                                        "x": float(xu[0]), "y": float(xu[1]),
-                                        "vx": float(xu[2]), "vy": float(xu[3]),
-                                        "t_upd": estimator.t_last_update,
-                                        # the subject's centre height, for the
-                                        # projection into the frame
-                                        "up": SUBJECT_CENTRE_UP_M.get(subject_class, 0.75)})
+                    # the subject's centre height, for the projection into the frame
+                    grounder.set_prior(estimator_prior(
+                        estimator, SUBJECT_CENTRE_UP_M.get(subject_class, 0.75)))
                 else:
                     grounder.set_prior(None)
             if args.presence_gates_control and det is not None and id_cfg is None:
@@ -5902,9 +5970,8 @@ async def fly(args) -> int:
                 if id_cfg is not None:
                     if g.get("tier") != "ok":
                         # SOFT: may CONTINUE a live track only.
-                        est_age = (t_meas - estimator.t_last_update
-                                   if estimator.t_last_update is not None else 1e9)
-                        feed = est_age < 1.5 and time.time() - t_ok_last < 3.0
+                        feed = soft_may_continue(t_meas, estimator.t_last_update,
+                                                 time.time(), t_ok_last)
                         n_soft_fed += int(feed)
                         n_soft_refused += int(not feed)
                 if r_meas is None:

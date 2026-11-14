@@ -16,6 +16,98 @@ shipped change and recorded as one.
 
 ## [Unreleased]
 
+### 2026-11-15 (the PAS node gets follow_vlm's target estimator) — `--target-estimator` gives the Project AirSim + ArduPilot VLA follow follow_vlm.fly()'s estimate between boxes, strict lock and re-acquisition, through one component built on follow_vlm's own rules; not flown
+
+#### Found
+- pas_hil_aiot_kpi_01's flight log, read again with the subject truth: on
+  the 942 `fresh` ticks the car was a median 97.1 m from the aircraft
+  (`memory` 124.9 m, `search` 135.8 m), so most fresh boxes were on
+  something else. The VLA's own horizontal command was 0.00 m/s at the
+  median on the 719 ticks with no hint (no request sent), and 0.24 m/s on
+  `fresh`, 0.78 m/s on `memory` and 2.24 m/s on `search` ticks. Its
+  component toward the car was 0.00 m/s at the median for every kind.
+- AIOT-VLA ignores the compass phrase (`demo/vla_server_foreign.py`, as
+  for every foreign family). For it the hint only decides whether a
+  request is sent. A better memory phrase turns a phrase-reading model
+  (AerialVLA) toward the car, and changes nothing AIOT-VLA does with an
+  answer.
+
+#### Added
+- `demo/subject_track.py` (`SubjectTrack`): follow_vlm.fly()'s identity
+  path as one object stepped once per tick on the Grounder's answer. It
+  keeps the target estimator, the strict lock's prior, the lapse and the
+  anchored `Reacquirer`, and the trail. Its defaults (lapse 3 s, 4
+  sightings, 45 m) are read from follow_vlm's parser.
+  `memory_bearing` points a pilot with no fresh box at the predicted
+  subject while the estimate is served (`estimate`, up to 3 s after its
+  last update). After that it points along the trail, a little past the
+  last sighting (`trail`, fly()'s coast look), while the Reacquirer's
+  anchor still says where the subject is. Then it gives nothing.
+- `demo/pas_ardupilot/perception_node.py --target-estimator` (with
+  `--identity`, for `--pilot vla --mission follow` only, refused
+  otherwise): the Grounder holds follow_vlm's strict `TargetLock`, which
+  leans on the estimate. The start gate's pick seeds the estimate
+  (`StartGate.pick_feat`, `pick_cap`). `VLAPilot.step` steps the track
+  before the backend acts, and a fault in it is counted, never raised.
+- `vla_mission.DetectorHint(estimate=...)` and
+  `follow_hint_step(estimate=...)`: with no fresh box, the memory hint
+  aims at the estimate for as long as the estimate is given. The
+  sighting's memory and search then turn toward where the subject was
+  last predicted. Without the argument every hint and its stats are as
+  before.
+- Records: rows `est_state`, `est_xy`, `est_age_s`, `est_speed_mps`,
+  `est_memory`, `lock_why`, `reacq_streak`, `hint_memory_src`, and
+  `est_gap_m` against the truth (evaluation only; quarantined with the
+  other truth fields). `metrics.json` `subject_track` holds the estimator,
+  the measurements, the commits, lapses and re-acquisitions (mission
+  seconds), the ticks per state, the served share, the estimate's age,
+  the memory ticks by source, the trail, the lock's counters, the faults,
+  and `truth.est_lock_frac` (the stress report's target lock, on the
+  estimate). It says `on: false` and why when the flag is off.
+  `detector_hint.memory_by_source`; `params.target_estimator`; one
+  `[report]` line.
+
+#### Changed
+- `demo/follow_vlm.py`: six decisions fly() made inline about its subject
+  are now module functions that fly() calls, computing what they
+  computed: `subject_estimator`, `subject_trail`, `seed_estimate`,
+  `soft_may_continue`, `lapse_anchor` and `estimator_prior`. The city
+  rail's behaviour is unchanged; `SubjectTrack` calls the same functions,
+  not a copy.
+- The Shield's subject is unchanged: the fresh box, placed from its own
+  capture. The estimate is not given to the Shield on this rail.
+- docs/DESIGN-projectairsim-ardupilot.md: "Not reused yet" now names only
+  fly()'s control law; the estimator, strict lock and re-acquisition are
+  under "Reused since 2026-11-15".
+
+#### Tests
+- `tests/test_subject_track.py` (new, 14/14, in the CI loop): the rules
+  against fly()'s old expressions, and fly() and SubjectTrack calling
+  them. A car at 3.2 m/s hidden for 2.5 s is predicted within 1.5 m. A
+  6 s loss lapses at 6.8 s and is taken back in 4 sightings where it was
+  predicted. A static out-of-reach box and a SOFT box are never taken
+  back. The hint's memory follows the estimate, then the sighting. The
+  node refuses the flag where it cannot run. Two stand-in VLA follows (with
+  and without the start gate) record the fields, keep the Shield's subject
+  on fresh boxes only, and have the estimate within 6 m of the truth on
+  0.79 and 0.87 of the ticks (on 100 % of the ticks with an estimate).
+- Unchanged and passing: test_pas_vla 40/41 (1 SKIP, lab-only map),
+  test_pas_ardupilot 148/149 (1 SKIP), test_follow_hint_modes 12/12,
+  test_vla_follow_reacquire 13/13, test_target_state 20/22 (2 SKIP,
+  recorded flights), test_pas_perception_stress 21/21, test_follow_motion
+  22/23 (1 SKIP, fixture), test_identity_lock 30/30, test_vla_fly 62/63
+  (1 SKIP, lab-only map), test_vla_fly_fakesim 14/14, test_replay_pipeline
+  11/12 (1 SKIP, recorded flight), test_vla_standoff_feed 11/11,
+  test_held_box_gate 10/10, test_trail 18/18, test_follow_dataset 39/39,
+  test_vla_dagger 18/18, test_live_status 20/20, test_harnesstruth_ci
+  35/35, test_ci_local 10/10. tools/ci_local.py was not run.
+
+#### Not flown
+- Nothing here has run against Unreal, ArduPilot or a model. The
+  verification mission is the hil follow with
+  `--identity --negative-query "a traffic light" --target-estimator`
+  (deploy/orin/run_pas_perception.sh passes node flags through).
+
 ### 2026-11-14 (fog on the PAS follow) — with the plugin's fog at 0.6 the detector never found the red car, and the mission refused to start, as it did at night
 
 #### Flown
