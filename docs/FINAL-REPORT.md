@@ -180,14 +180,20 @@ remains. The per-obligation rows are in Appendix A.
 - Since 3 Nov every shipped policy is stored and hashed in WGS84 with a lazy
   local view (WP1-14); distance_envelope is enforced for buildings, roads and
   the tracked person (WP1-07).
+- Mid-flight hot-apply over REST (WP1-15) is flown on every rail: the ROS 2
+  rail (29 Oct: dynamic_nfz, time_window_switch; 3 Nov: corridor_swap
+  through the harness) and, on 15 Nov, the `hil` perception rail on the AGX
+  Orin: 14 dynamic_nfz events in three KPI-grade missions, each a new
+  generation with its policy and CSP written, the GeoFence re-uploaded
+  after each, P0 escape 0. Receipt to swap was 0.81-6.35 ms over the last 10
+  events; one earlier spawn took 53.0 ms because the loop held the rail's
+  lock through the whole tick, which was fixed (section 8,
+  docs/data/pas_hil_hotapply_20261115/).
 - Built differently: the 20 July gate was missed; the IR was first committed
   2026-10-06 (WP1-21, DRIFT).
 - Open: the signing authority (WP1-04); compatibility with the PI's
   reference implementation (WP1-05); distance_envelope for people other than
-  the tracked subject (WP1-07); the metre read form still accepted (WP1-14);
-  the perception rail's hot-apply listener (WP1-15); one Project AirSim
-  scene step on Python 3.12 (WP1-25: the desktop's non-VLA side moved to
-  3.12 on 14 Nov, section 7).
+  the tracked subject (WP1-07); the metre read form still accepted (WP1-14).
 
 ### 4.2 WP2 Prefix Compiler (19 obligations)
 
@@ -202,7 +208,8 @@ remains. The per-obligation rows are in Appendix A.
   prefix's (CHANGELOG 2026-11-07 (CSP flights)).
 - The WP2 and WP4 correction notes were approved by the PI on 6 Oct and
   sent to ITRI (confirmed 2 Nov; WP2-12, WP4-21).
-- Open: one Project AirSim scene step on Python 3.12 (WP2-19, as WP1-25).
+- The Project AirSim scene steps ran on Python 3.12 for the AIoT-VLA `hil`
+  missions (14 Nov), closing WP2-19 with WP1-25.
 
 ### 4.3 WP3 Safety Shield (24 obligations)
 
@@ -210,7 +217,11 @@ remains. The per-obligation rows are in Appendix A.
   interface (WP3-03), the REST listener driven in flight (WP3-12), one flown
   zone per breach action (WP3-08), the audit record with the grant's fields
   (WP3-11, shield_audit.jsonl), the node architecture (WP3-23), the IR
-  invariant (WP3-21), the package (WP3-24).
+  invariant (WP3-21), the package (WP3-24), the MAVLink adapter (WP3-09:
+  since 15 Nov an in-flight mission update is written whole -
+  MISSION_COUNT, MISSION_ITEM_INT per item, ACK ACCEPTED - flown in AUTO on
+  mission_wp_20261115b, and the perception rail's setpoint can go through the
+  adapter, flown KPI-grade on `hil` as pas_hil_adapter_01).
 - KPI-grade on `hil` (ntFIN2): P0 escape rate 0 (WP3-14); the tracked KPIs
   repair magnitude, time to safe and repair success (WP3-16, WP3-17,
   WP3-20).
@@ -241,7 +252,8 @@ remains. The per-obligation rows are in Appendix A.
   3.12 (sweep.json `_runner`).
 - Built differently: the mid-term Shield node came after the 20 July gate
   (WP3-01, DRIFT); PathRepair is off by default, a measured deviation
-  (WP3-06); the PAS rail bypasses the MAVLink adapter (WP3-09); planning
+  (WP3-06); the PAS rail publishes its own setpoint by default, the adapter
+  route being opt-in (WP3-09); planning
   and analysis code still measures zone geometry of its own (WP3-22).
 - Open: WP3-07 stays PARTIAL: SET_MODE LOITER is driven on no `hil` flight
   (the GUIDED hold awaits decision 7, section 9); G6's battery reason is not
@@ -655,6 +667,16 @@ first commit) and reviewed on 19 Aug (docs/MEETING-PACK-Sept2026.md,
   (hs07)); the start-up backlog deferred row 2 (fixed in 5f5009c, section
   5.6); the desktop ran out of commit memory and lost 8 missions (re-flown
   as ntFIN2s).
+- 15 Nov, from the first REST events on `hil`: MAVROS 2 answers a GeoFence
+  push of zero items with failure although ArduPilot takes it (measured on
+  the AGX: answered False in 53.9 ms, the list then read back empty; MAVROS 2
+  serves no fence-clear service), so every clear after an expired zone was
+  recorded as a failed upload and the node stopped re-uploading; a clear is
+  now judged by its read-back (5b3db86). The perception loop held the
+  hot-apply lock through its whole tick (p50 29.5 ms, p95 56.5 ms on the
+  Orin, the Shield's part about 4 ms), so one spawn waited 53.0 ms against
+  the 50 ms target; the lock now covers the Shield's decision and its
+  records only (00264ef), and the next 10 events took 0.81-6.35 ms.
 
 ## 9. Decisions for the PI
 
@@ -682,6 +704,7 @@ Still needed:
 | 12 | Default VLA backend | ARCH-30, X-04 | after the AGX Orin timings |
 | 13 | G4 on a flickering brake rule | WP3-07, WP3-15 | hs10's fsm-n-in-t-flicker took G2 and G4 and went home (RTL), as the grant's N-in-T edge says; the fail-safe rubric's N1 expects no fail-safe there, so the cell is left unlabelled until the PI says which governs |
 | 14 | An autopilot GeoFence RTL with the FSM in Loiter: a fail-safe triggered, or a miss? | WP3-15 | 18 of ntFIN2's 19 censored runs (dyn-nfz-spawn-ahead, a zone spawned 3 m ahead) end with ArduPilot's GeoFence taking the aircraft to RTL 0.5-0.7 s after the FSM's Loiter; the FSM then stops stepping, so no flight length decides them (docs/data/kpi_ntFIN2/censored19_rescore_2f0837d.txt). Counted as triggered, fail-safe correctness is 584/585 = 0.998; counted as missed, 566/585 = 0.968; excluded as censored (the adopted rubric, section 3), 566/567 = 0.998 |
+| 15 | Accept the body-frame boundary where the grant's path runs | WP3-04, ARCH-04 | the ROS 2 / `hil` rail hands the Shield the VLA's body-frame action (Shield.filter_body) and only the MAVLink adapter converts to local NED; the city, pymavlink and PAS test rails still hand it world-frame actions through the same frames.py conversions |
 
 ## 10. Limitations and open items
 
@@ -740,9 +763,14 @@ tables (WP4-17, section 2); G2, G4, G6, X2 and X3 flown on `hil` in hs10
 (WP3-07, still PARTIAL on the GUIDED hold); the full CI on Python 3.12
 (WP1-25).
 
-1. AIoT-VLA on the AGX Orin in the `hil` topology, 3 flights with video
-   and camera-to-setpoint latency, with a PAS scene step on Python 3.12
-   (WP1-25); a Mission Planner screenshot (ARCH-10).
+Done 14-15 Nov: AIoT-VLA on the AGX Orin in the `hil` topology with video
+and camera-to-setpoint latency, the PAS scene steps on Python 3.12 (WP1-25),
+the target estimator flown (pas_hil_aiot_est_01); REST hot-apply flown on
+`hil` and the in-flight mission update written whole in AUTO (WP1-15,
+WP3-09 to DONE).
+
+1. A Mission Planner screenshot on a PAS + ArduPilot run (ARCH-10), at the
+   professor's demo.
 2. The PI's decisions (section 9); then sign (X-01).
 
 ## Appendix A — obligations, evidence and what remains
