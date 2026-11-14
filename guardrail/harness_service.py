@@ -3095,7 +3095,7 @@ class Harness:
                     # The receipt, not the send: the start may fall while this
                     # request is in flight, never after its answer.
                     rf.t0, rf.t0_wall = time.monotonic(), time.time()
-                    self._rail_phase(e, "mission", mission_t0_wall=wall)
+                    self._rail_phase(e, "mission", mission_t0_wall=rf.t0_wall)
             now = time.monotonic()
             with rf.cond:
                 due = [x for x in rf.scheduled
