@@ -707,6 +707,32 @@ reported (`autopilot_departures`; docs/DESIGN-harness-vehicle-response.md,
 / X5) the Shield node logs on until the autopilot has landed or disarmed, or
 the time cap, so RTL's flight to its end is in the log.
 
+A cell still censored at that length can be flown longer by a LENGTHENED
+campaign (since 2026-11-14): `--hil-max-s-add SECONDS` flies every mission
+SECONDS past the rail's cap (35 gives a Loiter entered at the cap its timeout
+and margin again; at most 600). The scenario's own cap still bounds the
+performance window; the fail-safe and the safety invariants are read over the
+whole, longer flight. The campaign's sweep.json (`_scope.hil.max_s_add`,
+`flight_length`), every mission's scenario record (`max_s_add`,
+`rail_max_s_profile`, `flight_length`) and its KPI rows
+(`hil-stress/<template>/<cell>/shield-on/flown-longer-<S>s`) say so. It flies
+another flight than the profile's, so it is a separate campaign: re-score it
+on its own (`--rescore-rail` refuses a table that mixes flight lengths) and
+report it beside the KPI campaign, never merged into its figure
+(`tools/kpi_report.py` refuses it as a supplement, a re-score table of
+another length, or one report over runs of two lengths). A run whose Loiter
+the autopilot froze cannot be decided this way: when ArduPilot's GeoFence
+takes the aircraft (RTL), the FSM stops stepping and the node ends the
+mission 25 s later (`TAKEOVER_GRACE_S`) whatever its cap; the scorer names
+that cause (`autopilot_took_over` in `rail_window`, "the autopilot took the
+aircraft" in the label failure and the re-score). 18 of the 19 runs ntFIN2
+left censored ended that way.
+
+```bash
+python experiments/sweep_scenarios.py --profile nightly --backend hil --hil-dry-run \
+    --hil-campaign ntFIN2L --hil-max-s-add 35 --seed 1002 --only corridor-swap-shifted
+```
+
 Fetched runs can be scored again with the current scorer, offline, nothing
 written beside them (the same profile as the campaign; `--rail-gates rail`
 adds the PROPOSED, not adopted, rail gates derived on the rig's own fitted

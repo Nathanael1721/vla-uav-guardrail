@@ -2906,12 +2906,85 @@ RAIL_REACH_M = GOAL_TOL_M
 # nfz-head-on, 30 s cap) entered Loiter at 3.4 s and ended there, censored.
 # A mission that reaches its target still ends at the target.
 RAIL_RESOLVE_MARGIN_S = 5.0
+# THE LENGTHENED HIL CAMPAIGN (2026-11-14, WP3-15). `--hil-max-s-add S` flies
+# every mission of a hil campaign S seconds past its rail cap (rail_max_s), so
+# that a cell whose Loiter is still timing out when the rail's own length runs
+# out (docs/RUBRIC-failsafe.md section 3: censored, "fly it longer") can show
+# its outcome. The scenario's own cap (`max_s`) is unchanged: the performance
+# measures are still read over it (rail_window), the fail-safe and the safety
+# invariants over the whole, longer flight, as on every rail run. The
+# lengthening is recorded in the campaign's sweep.json (`_scope.hil`), in every
+# mission's scenario record (`max_s_add`, `rail_max_s_profile`,
+# `flight_length`, a family row of its own) and in tools/kpi_report.py's
+# inputs. A lengthened campaign flies another flight than the profile's, so it
+# is a SEPARATE campaign: reported beside the KPI campaign, never merged into
+# its figure (kpi_report refuses it as a supplement, --rescore-rail refuses a
+# table that mixes flight lengths). It cannot help a run whose FSM stopped
+# stepping because the autopilot took the aircraft (a GeoFence RTL): that
+# flight ends TAKEOVER_GRACE_S after the takeover whatever its cap, and the
+# censored reading names the takeover (label_failures_keyed).
+HIL_MAX_S_ADD_MAX = 600.0
 
 
-def rail_max_s(max_s: float) -> float:
-    """The rail's --max-s for a scenario whose own cap is `max_s`."""
+def rail_max_s(max_s: float, add: float = 0.0) -> float:
+    """The rail's --max-s for a scenario whose own cap is `max_s`; `add`
+    seconds more on a lengthened hil campaign (--hil-max-s-add)."""
     from guardrail.fsm import FSMConfig
-    return float(max_s) + float(FSMConfig().loiter_timeout_s or 0.0) + RAIL_RESOLVE_MARGIN_S
+    return (float(max_s) + float(FSMConfig().loiter_timeout_s or 0.0) + RAIL_RESOLVE_MARGIN_S
+            + float(add or 0.0))
+
+
+def check_hil_max_s_add(v) -> float:
+    """--hil-max-s-add as a number of seconds: finite, above 0 and at most
+    HIL_MAX_S_ADD_MAX (a mission's container times out at its cap plus
+    HilConfig.mission_margin_s, and an hour-long Loiter is not a test).
+    Raises ValueError otherwise."""
+    try:
+        x = float(v)
+    except (TypeError, ValueError):
+        raise ValueError(f"--hil-max-s-add {v!r}: not a number of seconds") from None
+    if not (math.isfinite(x) and 0.0 < x <= HIL_MAX_S_ADD_MAX):
+        raise ValueError(f"--hil-max-s-add {v!r}: must be finite, above 0 and at most "
+                         f"{HIL_MAX_S_ADD_MAX:g} s")
+    return x
+
+
+def flight_max_s_add(record: dict | None) -> float:
+    """How many seconds past its rail cap a rail run was flown, from its
+    scenario record (rail_meta's `max_s_add`; a score document's `scenario`,
+    or a `rail_window`): 0.0 for a run flown at the profile's own length -
+    every run before the option existed, and every one since without it."""
+    v = (record or {}).get("max_s_add")
+    try:
+        x = float(v) if v is not None else 0.0
+    except (TypeError, ValueError):
+        return 0.0
+    return x if math.isfinite(x) and x > 0.0 else 0.0
+
+
+def hil_flight_length(add: float) -> dict:
+    """A hil campaign's flight length as its sweep.json records it
+    (`_scope.hil.flight_length`): the profile's own, or lengthened by `add`
+    seconds past the rail's cap, with the merge rule beside it."""
+    from guardrail.fsm import FSMConfig
+    rail = (f"the scenario's max_s + the Loiter operator timeout "
+            f"({float(FSMConfig().loiter_timeout_s or 0.0):g} s) + {RAIL_RESOLVE_MARGIN_S:g} s")
+    if not add:
+        return {"lengthened": False, "max_s_add": 0.0, "cap": rail}
+    return {"lengthened": True, "max_s_add": float(add), "cap": f"{rail} + {float(add):g} s",
+            "merge": ("a separate campaign: reported beside the KPI campaign at the "
+                      "profile's length, never merged into its figure (the flight differs); "
+                      "tools/kpi_report.py refuses it as a supplement and --rescore-rail a "
+                      "table that mixes flight lengths"),
+            "family_suffix": lengthened_suffix(add)}
+
+
+def lengthened_suffix(add: float) -> str:
+    """The family term of a lengthened run ("/flown-longer-35s"), "" at the
+    profile's length: a lengthened run never shares a KPI row with the
+    profile's flight of the same cell (tools/kpi_report.py scenario_family
+    writes the same term)."""
+    return f"/flown-longer-{float(add):g}s" if add else ""
 # What each node must declare for what the harness sends it (check_rail_
 # flags). Both get every argument (the entrypoint's mission role and
 # run_ros2_demo.sh hand the same list to the Shield node and the VLA stub)
@@ -3650,13 +3723,16 @@ def rail_policy_args(spec: ScenarioSpec, backend: str = "sitl",
 def rail_node_args(spec: ScenarioSpec, seed: int = 0, defaults=None, *,
                    backend: str = "sitl", events: str | None = None,
                    meta: str | None = None,
-                   bundles_dir: str | Path | None = None) -> list[str]:
+                   bundles_dir: str | Path | None = None,
+                   max_s_add: float = 0.0) -> list[str]:
     """The arguments both nodes get for one scenario (the Shield node and the
     VLA stub read the same list, each its own flags). Coordinates go as
     `--flag=value`, so a negative first value never reads as an option;
     `--seed` and the policy reference keep their own tokens (the scripts
     that forward them look for `--bundle <path>`). `events` / `meta` are the
-    repo-relative paths of the mission's --events / --scenario-meta files."""
+    repo-relative paths of the mission's --events / --scenario-meta files.
+    `max_s_add`: a lengthened hil campaign's seconds past the rail cap
+    (--hil-max-s-add; 0, the profile's length, otherwise)."""
     pargs = rail_policy_args(spec, backend, bundles_dir)
     try:
         pol = spec.policy.load(ROOT)
@@ -3682,7 +3758,7 @@ def rail_node_args(spec: ScenarioSpec, seed: int = 0, defaults=None, *,
         a = rm["action"] or {}
         args.append("--action=" + _pts(*(a.get(k, 0.0) for k in VS.CONSTANT_CHANNELS)))
     args.append(f"--speed={_num(rm['speed'])}")
-    args.append(f"--max-s={_num(rail_max_s(rm['max_s']))}")
+    args.append(f"--max-s={_num(rail_max_s(rm['max_s'], max_s_add))}")
     if rm["subject"] is not None:
         args.append(f"--subject={_pts(*rm['subject'])}")
         if rm["subject_class"]:
@@ -4518,6 +4594,23 @@ def sitl_extra(spec: ScenarioSpec, rows: list[dict], metrics: dict, policy,
                       "autopilot's counted apart, gated on keep-outs, its corridor and "
                       "altitude-band departures reported - ended safe, speed, finite "
                       "actions): the whole flight; the FSM record: the whole flight")}
+    scen = metrics.get("scenario") if isinstance(metrics.get("scenario"), dict) else {}
+    add = flight_max_s_add(scen)
+    if add:
+        # A lengthened hil campaign's flight (--hil-max-s-add, 2026-11-14):
+        # the cap it flew to and by how much that is past the profile's
+        # length. The performance window above is still the scenario's own.
+        extra["rail_window"].update(max_s_add=add, rail_max_s=scen.get("rail_max_s"),
+                                    rail_max_s_profile=scen.get("rail_max_s_profile"))
+    took = metrics.get("autopilot_took_over")
+    if isinstance(took, dict) and isinstance(took.get("t"), (int, float)):
+        # The autopilot took the aircraft (a GeoFence RTL, ...): the FSM
+        # stopped stepping then (sitl/ros2_shield_node.py) and the flight
+        # ended TAKEOVER_GRACE_S later, whatever its cap. A Loiter it froze
+        # is censored for a reason flying longer does not touch.
+        extra["rail_window"]["autopilot_took_over"] = {
+            "t": round(float(took["t"]), 3), "mode": took.get("mode"),
+            "previous": took.get("previous")}
     if landing:
         # What the autopilot flew after the mission's end (RTL's descent and
         # landing): measured, its keep-out and polygon entries in the counts
@@ -4561,7 +4654,8 @@ def write_campaign_files(spec: ScenarioSpec, meta: dict, root: Path | None = Non
 
 
 def rail_meta(spec: ScenarioSpec, ep, seed: int, backend: str, run_id: str,
-              nonce: str, home: str | None, campaign: str | None, defaults=None) -> dict:
+              nonce: str, home: str | None, campaign: str | None, defaults=None,
+              max_s_add: float = 0.0) -> dict:
     """The record a rail mission carries of its scenario (--scenario-meta;
     metrics.json `scenario`): which cell of which template, seed and arm,
     the family row tools/kpi_report.py files it under
@@ -4570,24 +4664,37 @@ def rail_meta(spec: ScenarioSpec, ep, seed: int, backend: str, run_id: str,
     since 2026-11-07 with the stress it realises (`stress`: the cell's
     stressors, the start jitter drawn for the seed, the wind as SITL is
     given it, the dropout window; how the simulator side applied them is in
-    its own plan and record, rail_stress_check)."""
+    its own plan and record, rail_stress_check).
+
+    A lengthened hil campaign (`max_s_add` > 0, --hil-max-s-add, 2026-11-14)
+    says so on every mission: `rail_max_s` is the cap it flew to,
+    `rail_max_s_profile` the rail's own for the cell, `max_s_add` the
+    difference, `flight_length` "lengthened", and its family row ends in
+    "/flown-longer-<S>s". `max_s` stays the scenario's own cap (the
+    performance window). A mission at the profile's length carries none of
+    these keys, exactly as before."""
     pol = spec.policy.load(ROOT)
     rm = rail_mission(spec, pol, defaults, seed)
     arm = "on" if spec.shield else "off"
     cell = ep.episode_id if ep is not None else spec.scenario_id
+    add = float(max_s_add or 0.0)
+    length = ({"rail_max_s_profile": rail_max_s(rm["max_s"]), "max_s_add": add,
+               "flight_length": "lengthened"} if add else {})
     return {"schema": "rail-scenario/1", "backend": backend, "run_id": run_id,
             "run_nonce": nonce, "campaign": campaign,
             "scenario_id": spec.scenario_id, "template": spec.template, "cell": cell,
             "params": ep.cell.params if ep is not None else {},
             "seed": int(seed), "arm": arm,
             "arm_tag": ep.arm_tag if ep is not None else "",
-            "family": f"{backend}-stress/{spec.template}/{cell}/shield-{arm}",
+            "family": (f"{backend}-stress/{spec.template}/{cell}/shield-{arm}"
+                       + lengthened_suffix(add)),
             "expect": spec.expect, "expected_outcome": spec.expected_outcome,
             "expected_failsafe": spec.expected_failsafe,
             "sitl_home": home, "start": list(rm["start"]), "yaw_deg": rm["yaw_deg"],
             "target": None if rm["target"] is None else list(rm["target"]),
             "pilot": rm["pilot"], "action": rm["action"], "speed_mps": rm["speed"],
-            "max_s": rm["max_s"], "rail_max_s": rail_max_s(rm["max_s"]),
+            "max_s": rm["max_s"], "rail_max_s": rail_max_s(rm["max_s"], add),
+            **length,
             "events": len(spec.events),
             "stress": {"declared": spec.stress.model_dump(mode="json", exclude_defaults=True),
                        "start_jitter_m": [round(v, 6) for v in rm["jitter_m"]],
@@ -4945,7 +5052,8 @@ def hil_flight_problems(metrics: dict) -> list[str]:
 
 
 def run_hil(spec: ScenarioSpec, ep, seed: int, defaults, cfg: HilConfig, transport,
-            campaign: str, k: int, store: Path, *, extra_args=None) -> dict:
+            campaign: str, k: int, store: Path, *, extra_args=None,
+            max_s_add: float = 0.0) -> dict:
     """One scenario on the hil rail: boot SITL at its start, copy its files
     to the Orin, restart MAVROS, fly the mission container, fetch the run
     folder into `store`, accept it by its own records and score it with the
@@ -4966,7 +5074,11 @@ def run_hil(spec: ScenarioSpec, ep, seed: int, defaults, cfg: HilConfig, transpo
     (rail_extra_args), appended to the scenario's own arguments for the gRPC
     harness's rail episode, which hot-applies into the flight over REST. A
     campaign (`--backend hil`) passes none, and its missions are the ones
-    they were."""
+    they were.
+
+    `max_s_add` (2026-11-14): a lengthened campaign's seconds past the rail
+    cap (--hil-max-s-add), on the node's --max-s, in the scenario record
+    (rail_meta) and on the mission's timeout; 0 is the profile's length."""
     why = rail_refusal(spec, "hil", episode=ep, defaults=defaults)
     if why:
         raise UnsupportedScenario(why)
@@ -4974,10 +5086,11 @@ def run_hil(spec: ScenarioSpec, ep, seed: int, defaults, cfg: HilConfig, transpo
     tag = hil_run_id(campaign, k, spec)
     nonce = uuid.uuid4().hex
     home = sitl_home(spec, pol, defaults, seed)
-    meta = rail_meta(spec, ep, seed, "hil", tag, nonce, home, campaign, defaults)
+    meta = rail_meta(spec, ep, seed, "hil", tag, nonce, home, campaign, defaults,
+                     max_s_add=max_s_add)
     events, meta_rel = write_campaign_files(spec, meta)
     args = rail_node_args(spec, seed, defaults, backend="hil", events=events, meta=meta_rel,
-                          bundles_dir=cfg.bundles_dir)
+                          bundles_dir=cfg.bundles_dir, max_s_add=max_s_add)
     if extra_args:
         args = args + rail_extra_args(extra_args)
     plan = rail_stress_plan(spec, seed, defaults, run_id=tag, nonce=nonce)
@@ -5223,23 +5336,38 @@ def rail_label_scores(runs: list[dict], labels: dict) -> dict:
     much longer (`length` "rail"). Runs scored on such a label are named
     (`label_flown_longer`) and the count without them is kept beside the
     reading's (`at_scenario_length`), so what the longer reading adds is
-    never hidden in the total."""
+    never hidden in the total.
+
+    A LENGTHENED RUN (2026-11-14; a run's `max_s_add` > 0, --hil-max-s-add)
+    flew past the rail's own cap. Its cell and seed keep their label - a
+    label is the cell's, decided at the scenario's length or the rail's, and
+    what is undecided there stays undecided, never read off the longer
+    flight - and its trigger is the FSM's over its whole flight. Such runs
+    are named (`run_flown_longer`) and the count without them is kept beside
+    (`at_profile_length`); --rescore-rail never mixes them with runs at the
+    profile's length in one table, so a lengthened table is all of them. A
+    run still censored after flying longer is named censored, as any other,
+    with its `cause` (censored_cause) and its `max_s_add` when given."""
     from guardrail.fsm import score_failsafe_triggers
     adopted = labels.get("adopted_kpi_reading")
     out = {}
     for key, what in RAIL_LABEL_READINGS:
-        pairs, short = [], []
+        pairs, short, at_profile = [], [], []
         names = {k: [] for k in ("false", "missed", "censored", "undecided", "unlabelled",
-                                 "not_measured", "not_accepted", "label_flown_longer")}
+                                 "not_measured", "not_accepted", "label_flown_longer",
+                                 "run_flown_longer")}
         for it in runs:
             tag = {"run": it["run"], "cell": it["cell"], "seed": it["seed"]}
+            add = float(it.get("max_s_add") or 0.0)
             lab = ((labels["labels"].get(it["cell"]) or {}).get(str(it["seed"])) or {}).get(key)
             if it.get("accepted") is False:
                 names["not_accepted"].append(tag)
             elif it.get("triggered") is None:
                 names["not_measured"].append(tag)
             elif it.get("censored"):
-                names["censored"].append(tag)
+                names["censored"].append({**tag, **({"cause": it["cause"]} if it.get("cause")
+                                                    else {}),
+                                          **({"max_s_add": add} if add else {})})
             elif lab is None:
                 names["unlabelled"].append(tag)
             elif lab.get("expected") is None:
@@ -5251,6 +5379,10 @@ def rail_label_scores(runs: list[dict], labels: dict) -> dict:
                     names["label_flown_longer"].append(tag)
                 else:
                     short.append((exp, trig))
+                if add:
+                    names["run_flown_longer"].append({**tag, "max_s_add": add})
+                else:
+                    at_profile.append((exp, trig))
                 if trig and not exp:
                     names["false"].append({**tag, "label": lab.get("clauses") or []})
                 elif exp and not trig:
@@ -5267,6 +5399,9 @@ def rail_label_scores(runs: list[dict], labels: dict) -> dict:
                     "expected_non_triggers": sc["expected_non_triggers"],
                     "at_scenario_length": {
                         "scored": len(short), "correct": sum(1 for e, t in short if e == t)},
+                    "at_profile_length": {
+                        "scored": len(at_profile),
+                        "correct": sum(1 for e, t in at_profile if e == t)},
                     **{k: v for k, v in names.items()}}
     return out
 
@@ -5295,12 +5430,25 @@ def rail_label_lines(scores: dict, labels: dict, path: Path) -> list[str]:
             L.append(f"      {len(sc['label_flown_longer'])} of them on a label undecided at the "
                      f"scenario's length, read on the cell flown as long as the rail flies; "
                      f"without them {s0['correct']}/{s0['scored']}")
+        if sc.get("run_flown_longer"):
+            s1 = sc.get("at_profile_length") or {}
+            adds = sorted({t["max_s_add"] for t in sc["run_flown_longer"]})
+            L.append(f"      {len(sc['run_flown_longer'])} of them FLOWN LONGER than the profile "
+                     f"(+{', +'.join(f'{a:g}' for a in adds)} s past the rail's cap, "
+                     f"--hil-max-s-add): a lengthened campaign, reported beside the KPI "
+                     f"campaign, never merged into it; without them "
+                     f"{s1.get('correct')}/{s1.get('scored')}")
         for kind in ("false", "missed", "censored", "undecided", "unlabelled",
                      "not_measured", "not_accepted", "label_flown_longer"):
             for t in sc[kind]:
                 name = {"label_flown_longer": "longer", "not_measured": "no verdict",
                         "not_accepted": "not acc."}.get(kind, kind)
-                L.append(f"      {name:10} {t['run']}  ({t['cell']}, seed {t['seed']})")
+                why = ("" if kind != "censored" or not t.get("cause") else
+                       "  - the autopilot took the aircraft; flying longer will not decide it"
+                       if t["cause"] == "autopilot_takeover" else
+                       "  - ended still holding" + (f" after +{t['max_s_add']:g} s"
+                                                    if t.get("max_s_add") else ""))
+                L.append(f"      {name:10} {t['run']}  ({t['cell']}, seed {t['seed']}){why}")
     return L
 
 
@@ -5318,11 +5466,37 @@ def rescore_rail_main(globs: list[str], episodes, defaults, rail_gates: str,
     not printed and the exit code is 1: a campaign scored on no labels is
     not a score. A run the campaign did not accept (no scenario_score.json:
     `before` None) is re-scored and printed like the others, but left out
-    of the label table by name (`not_accepted`)."""
+    of the label table by name (`not_accepted`).
+
+    ONE FLIGHT LENGTH PER TABLE (2026-11-14): runs of a lengthened hil
+    campaign (--hil-max-s-add; their scenario record's `max_s_add`) and runs
+    at the profile's length - or two lengthenings - are refused together
+    (exit 2, nothing written): a table's figure is one campaign's flight.
+    The table says which length it is (`flight_length`)."""
     runs: list[Path] = []
     for g in globs:
         pat = g if Path(g).is_absolute() else str(ROOT / g)
         runs += [Path(p) for p in sorted(glob.glob(pat)) if Path(p).is_dir()]
+    lengths: dict[float, list[str]] = {}
+    for run_dir in runs:
+        try:
+            m0 = json.loads((run_dir / "metrics.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue                    # reported by the re-score below
+        sc0 = m0.get("scenario") if isinstance(m0, dict) else None
+        if isinstance(sc0, dict):
+            lengths.setdefault(flight_max_s_add(sc0), []).append(run_dir.name)
+    if len(lengths) > 1:
+        def said(a):
+            return f"+{a:g} s past the rail cap" if a else "the profile's own length"
+        print("REFUSED: these runs were flown at " + str(len(lengths)) + " flight lengths ("
+              + "; ".join(f"{said(a)}: {len(v)} run(s), e.g. {v[0]}"
+                          for a, v in sorted(lengths.items()))
+              + "). A lengthened campaign (--hil-max-s-add) is re-scored on its own, never "
+                "in one table with the profile's flights: give each campaign's runs "
+                "separately. Nothing was written.")
+        return 2
+    table_add = next(iter(lengths), 0.0)
     table, problems = [], 0
     for run_dir in runs:
         try:
@@ -5345,7 +5519,16 @@ def rescore_rail_main(globs: list[str], episodes, defaults, rail_gates: str,
         cols = [f"before={b.get('status')}({len(b.get('gates_failed') or [])})"]
         cols += [f"{k}={v['status']}({len(v['gates_failed'])})" for k, v in item["after"].items()]
         print(f"  {run_dir.name:<44} " + "  ".join(cols))
-    doc = {"schema": "rail-rescore/1", "rail_gates": rail_gates, "runs": table}
+    doc = {"schema": "rail-rescore/1", "rail_gates": rail_gates, "runs": table,
+           # The flight length of every run in it (one per table, above).
+           "flight_length": {
+               "max_s_add": table_add,
+               "lengthened": bool(table_add),
+               "what": (f"a LENGTHENED campaign: every run flown {table_add:g} s past the "
+                        f"rail's cap (--hil-max-s-add); reported beside the KPI campaign, "
+                        f"never merged into it" if table_add else
+                        "the profile's own length: every run flown to the rail's cap "
+                        "(the scenario's max_s + the Loiter operator timeout + 5 s)")}}
     labels_path = Path(labels_path) if labels_path is not None else RAIL_LABELS
     no_labels = False
     try:
@@ -5357,6 +5540,8 @@ def rescore_rail_main(globs: list[str], episodes, defaults, rail_gates: str,
         scored = [{"run": it["run"], "cell": it["cell"], "seed": it["seed"],
                    "triggered": (it["doc"].get("kpi") or {}).get("failsafe_triggered"),
                    "censored": bool((it["doc"].get("kpi") or {}).get("failsafe_censored")),
+                   "cause": censored_cause(it["doc"].get("kpi") or {}),
+                   "max_s_add": flight_max_s_add(it["doc"].get("scenario")),
                    "accepted": it["before"] is not None}
                   for it in table
                   if "error" not in it and (it["doc"].get("metrics") or {}).get("shield") == "on"]
@@ -5375,14 +5560,19 @@ def rescore_rail_main(globs: list[str], episodes, defaults, rail_gates: str,
     out.write_text(json.dumps(_json_safe(doc), indent=1) + "\n",
                    encoding="utf-8", newline="\n")
     print(f"\n{len(table) - problems}/{len(table)} run(s) re-scored -> {_show(out)}")
+    if table_add:
+        print(f"FLIGHT LENGTH: {doc['flight_length']['what']}")
     return 1 if problems or not table or no_labels else 0
 
 
 def hil_plan(episodes, defaults, cfg: HilConfig, campaign: str,
-             controls: bool = False) -> list[dict]:
+             controls: bool = False, max_s_add: float = 0.0) -> list[dict]:
     """The hil campaign before anything flies: per episode, the mission it
     would be (its tag, SITL_HOME and the arguments both nodes get) or why
-    it is refused. The dry run prints this and stops."""
+    it is refused. The dry run prints this and stops. `max_s_add`: a
+    lengthened campaign's seconds past the rail cap (--hil-max-s-add), on
+    every mission's --max-s (`max_s`: the scenario's own cap, `rail_max_s`:
+    the cap flown)."""
     plan = []
     k = 0
     for ep in episodes:
@@ -5403,11 +5593,14 @@ def hil_plan(episodes, defaults, cfg: HilConfig, campaign: str,
                 args = rail_node_args(spec, ep.seed, defaults, backend="hil",
                                       events=(f"{rel}/events.json" if spec.events else None),
                                       meta=f"{rel}/scenario.json",
-                                      bundles_dir=cfg.bundles_dir)
+                                      bundles_dir=cfg.bundles_dir, max_s_add=max_s_add)
                 stress = rail_stress_plan(spec, ep.seed, defaults, run_id=tag)
                 jx, jy = start_jitter(spec, ep.seed)
+                dfl = _as_defaults(defaults)
+                cap = (spec.ticks or dfl.ticks) * (spec.dt or dfl.dt)     # rail_mission's
                 item.update(fly=True, tag=tag,
                             sitl_home=sitl_home(spec, pol, defaults, ep.seed),
+                            max_s=cap, rail_max_s=rail_max_s(cap, max_s_add),
                             shield="on" if spec.shield else "off", args=args,
                             stress=None if stress is None else {
                                 "boot": stress["boot"], "schedule": stress["schedule"],
@@ -5430,18 +5623,27 @@ def hil_config_record(cfg: HilConfig) -> dict:
     return d
 
 
-def print_hil_plan(plan: list[dict], cfg: HilConfig) -> None:
+def print_hil_plan(plan: list[dict], cfg: HilConfig, max_s_add: float = 0.0) -> None:
     """The dry run's listing: every mission with its SITL_HOME and the exact
-    commands each step runs, every refusal with its reason, and the counts."""
+    commands each step runs, every refusal with its reason, and the counts;
+    a lengthened campaign (`max_s_add`, --hil-max-s-add) says so first and
+    gives each mission's cap beside the scenario's."""
     fly = [p for p in plan if p["fly"]]
     print(f"hil campaign plan: {len(plan)} episode(s), {len(fly)} mission(s) to fly, "
           f"{len(plan) - len(fly)} refused (nothing flown, nothing written)\n")
+    if max_s_add:
+        print(f"  LENGTHENED CAMPAIGN (--hil-max-s-add {max_s_add:g}): every mission flies "
+              f"{max_s_add:g} s past the rail's cap. Not the profile's flight: a separate "
+              f"campaign, reported beside the KPI campaign and never merged into it\n")
     tr = SubprocessTransport(cfg)
     helper = tr._helper()
     for p in plan:
         if not p["fly"]:
             continue
-        print(f"  FLY  {p['tag']}  {p['id']}  seed={p['seed']}")
+        print(f"  FLY  {p['tag']}  {p['id']}  seed={p['seed']}"
+              + (f"  (cap {p['rail_max_s']:g} s: the scenario's {p['max_s']:g} s, the "
+                 f"rail's {p['rail_max_s'] - max_s_add:g} s, +{max_s_add:g} s)"
+                 if max_s_add and p.get("rail_max_s") is not None else ""))
         print(f"       SITL_HOME  {p['sitl_home'] or 'start_sitl.sh default (CMAC)'}"
               + (f"  (start jitter {p['start_jitter_m'][0]:+.3f}, "
                  f"{p['start_jitter_m'][1]:+.3f} m)" if p.get("start_jitter_m") else ""))
@@ -5592,6 +5794,36 @@ def score(spec: ScenarioSpec, rows: list[dict], extra: dict, policy,
     return res
 
 
+def censored_cause(res: dict) -> str | None:
+    """Why a censored episode (`failsafe_censored`) never showed its outcome,
+    from what its rail flight recorded (sitl_extra's `rail_window`):
+    "autopilot_takeover" - the autopilot took the aircraft (a GeoFence RTL)
+    and the FSM stopped stepping, its Loiter frozen; the flight ends
+    TAKEOVER_GRACE_S later whatever its cap - or "flight_ended" - the flight
+    ended (its cap, else the mission's end) with the FSM still holding. None
+    for an episode that is not censored. A headless episode records no
+    takeover, so it is always "flight_ended"."""
+    if not res.get("failsafe_censored"):
+        return None
+    took = (res.get("rail_window") or {}).get("autopilot_took_over")
+    return "autopilot_takeover" if took else "flight_ended"
+
+
+def censored_remedy(res: dict) -> str:
+    """What would decide a censored episode, in words: fly it longer, unless
+    the autopilot's takeover froze the FSM (no length helps), saying how
+    much longer a lengthened hil campaign already flew it."""
+    win = res.get("rail_window") or {}
+    add = flight_max_s_add(win)
+    longer = (f" (already flown {add:g} s past the rail's cap, --hil-max-s-add)"
+              if add else "")
+    if censored_cause(res) == "autopilot_takeover":
+        took = win.get("autopilot_took_over") or {}
+        return (f"the autopilot took the aircraft ({took.get('mode')} at {took.get('t')} s) "
+                f"and the FSM stopped stepping, so flying longer will not show it{longer}")
+    return f"fly it longer{longer}"
+
+
 def label_failures(spec: ScenarioSpec, res: dict) -> list[str]:
     return [msg for _, msg in label_failures_keyed(spec, res)]
 
@@ -5611,8 +5843,8 @@ def label_failures_keyed(spec: ScenarioSpec, res: dict) -> list[tuple[str, str]]
             held = (res.get("fsm") or {}).get("ended_holding") or {}
             bad.append(("failsafe", f"fail-safe: labelled, but the episode ended in "
                         f"Loiter {held.get('dwell_s')} s into a {held.get('timeout_s')} s "
-                        f"operator timeout - censored, not measured; fly it longer "
-                        f"(docs/RUBRIC-failsafe.md, section 3)"))
+                        f"operator timeout - censored, not measured; "
+                        f"{censored_remedy(res)} (docs/RUBRIC-failsafe.md, section 3)"))
         elif res.get("failsafe_matches_label") != 1.0:
             bad.append(("failsafe", f"fail-safe: labelled "
                         f"{'expected' if spec.expected_failsafe else 'not expected'}, "
@@ -5939,6 +6171,12 @@ def failsafe_summary(scored: list[dict]) -> dict:
         "labelled": n, "unlabelled": len(scored) - n - len(censored),
         "censored_in_loiter": len(censored),
         "censored_episodes": sorted(r.get("id") or "?" for r in censored),
+        # Why each never showed its outcome (censored_cause, 2026-11-14): a
+        # flight that ended still holding may be decided by flying it longer
+        # (--hil-max-s-add); one the autopilot took cannot.
+        "censored_by_cause": {c: sorted(r.get("id") or "?" for r in censored
+                                        if censored_cause(r["kpi"]) == c)
+                              for c in ("flight_ended", "autopilot_takeover")},
         "by_rubric_clause": dict(sorted(by_clause.items())),
         "labelled_expected": expected, "labelled_not_expected": n - expected,
         "correct": correct, "false_triggers": false_t, "missed_triggers": missed,
@@ -6827,6 +7065,15 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--hil-campaign", default=None, metavar="NAME",
                     help="--backend hil: the campaign's name, the prefix of every "
                          "mission tag (default hil<UTC stamp>)")
+    ap.add_argument("--hil-max-s-add", default=None, metavar="SECONDS",
+                    help="--backend hil: a LENGTHENED campaign - every mission flies "
+                         "SECONDS past the rail's cap (the scenario's max_s + the Loiter "
+                         "operator timeout + 5 s), so a cell censored in Loiter can show "
+                         "its fail-safe outcome (docs/RUBRIC-failsafe.md section 3); 35 "
+                         "gives a Loiter entered at the rail's cap its timeout and margin "
+                         "again. Recorded in sweep.json and every mission's scenario "
+                         "record; a separate campaign, never merged into the profile's "
+                         f"KPI figure (at most {HIL_MAX_S_ADD_MAX:g} s)")
     ap.add_argument("--rail-gates", choices=RAIL_GATE_BASES, default="ideal",
                     help="the gates a rail run's verdict uses: ideal (the cell's own, "
                          "the default) or, PROPOSED, NOT ADOPTED, each vehicle-pinned "
@@ -6954,9 +7201,16 @@ def main(argv: list[str] | None = None) -> int:
         print("REFUSED: --publish writes the headless library run")
         return 2
     if args.backend != "hil" and (args.hil_config or args.hil_dry_run or args.hil_controls
-                                  or args.hil_campaign):
+                                  or args.hil_campaign or args.hil_max_s_add is not None):
         print("REFUSED: the --hil-* options are for --backend hil")
         return 2
+    hil_max_s_add = 0.0
+    if args.hil_max_s_add is not None:
+        try:
+            hil_max_s_add = check_hil_max_s_add(args.hil_max_s_add)
+        except ValueError as e:
+            print(f"REFUSED: {e}")
+            return 2
     try:
         hil_cfg = HilConfig.load(args.hil_config) if args.backend == "hil" else None
     except (OSError, ValueError, TypeError) as e:
@@ -6970,6 +7224,10 @@ def main(argv: list[str] | None = None) -> int:
         if not args.out:
             print("REFUSED: --rescore-rail needs --out (its table's JSON; nothing is "
                   "written beside the runs)")
+            return 2
+        if args.hil_max_s_add is not None:
+            print("REFUSED: --hil-max-s-add chooses how long a campaign flies; "
+                  "--rescore-rail reads each run's own length from its scenario record")
             return 2
         return rescore_rail_main(args.rescore_rail, episodes, lib.defaults,
                                  args.rail_gates, Path(args.out),
@@ -7032,13 +7290,23 @@ def main(argv: list[str] | None = None) -> int:
             print(f"REFUSED: --hil-campaign {hil_campaign!r} must be a short plain name "
                   f"(letters, digits, - and _; it prefixes every mission tag)")
             return 2
-        plan = hil_plan(episodes, lib.defaults, hil_cfg, hil_campaign, args.hil_controls)
+        plan = hil_plan(episodes, lib.defaults, hil_cfg, hil_campaign, args.hil_controls,
+                        max_s_add=hil_max_s_add)
         info["hil"] = {"campaign": hil_campaign, "config": hil_config_record(hil_cfg),
                        "flyable": sum(1 for p in plan if p["fly"]),
-                       "refused": {p["id"]: p["refused"] for p in plan if not p["fly"]}}
+                       "refused": {p["id"]: p["refused"] for p in plan if not p["fly"]},
+                       # How long its missions flew (--hil-max-s-add, 2026-11-14):
+                       # 0 is the profile's own length. tools/kpi_report.py reads
+                       # it and never merges a lengthened campaign with another.
+                       "max_s_add": hil_max_s_add,
+                       "flight_length": hil_flight_length(hil_max_s_add)}
         if args.hil_dry_run:
-            print_hil_plan(plan, hil_cfg)
+            print_hil_plan(plan, hil_cfg, hil_max_s_add)
             return 0
+        if hil_max_s_add:
+            print(f"LENGTHENED CAMPAIGN {hil_campaign}: every mission flies "
+                  f"{hil_max_s_add:g} s past the rail's cap (--hil-max-s-add); a separate "
+                  f"campaign, never merged into the profile's KPI figure\n")
         hil_store = (Path(hil_cfg.store) if hil_cfg.store else
                      ROOT / "demo" / "out" / f"hil_{tag or 'library'}")
         if not hil_store.is_absolute():
@@ -7101,7 +7369,8 @@ def main(argv: list[str] | None = None) -> int:
                 hil_k += 1
                 try:
                     hil_run = run_hil(spec, ep, ep.seed, lib.defaults, hil_cfg,
-                                      hil_transport, hil_campaign, hil_k, hil_store)
+                                      hil_transport, hil_campaign, hil_k, hil_store,
+                                      max_s_add=hil_max_s_add)
                 except UnsupportedScenario:
                     hil_k -= 1
                     raise

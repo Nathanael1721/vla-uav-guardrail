@@ -160,6 +160,19 @@ are printed in the report's Inputs section:
     table's own figure is recomputed over the same episode choice;
   * the KPI-grade gate (is_kpi_grade, the signed replay bundle bound to the
     run) is unchanged and applies to every counted flight.
+
+SINCE 2026-11-14: A LENGTHENED CAMPAIGN IS NEVER MERGED
+
+experiments/sweep_scenarios.py --hil-max-s-add S flies every mission of a
+hil campaign S seconds past the rail's cap, so a cell censored in Loiter at
+the profile's length can show its fail-safe outcome (docs/RUBRIC-failsafe.md
+section 3). Its sweep.json says so (`_scope.hil.max_s_add`), as does every
+run's scenario record (`max_s_add`). It flies another flight than the
+profile's, so the report keeps it apart: its runs' rows end in
+"/flown-longer-<S>s" (scenario_family), the Campaign section and the Inputs
+(`campaign_max_s_add`) name the length, and a campaign, supplement or
+re-score table of another length is refused (campaign_merge, load_rescores,
+build_report). It is reported on its own, beside the KPI campaign.
 """
 from __future__ import annotations
 
@@ -546,14 +559,32 @@ def rail_scored_rows(rows: list[dict], cap: float) -> list[dict]:
                           if float(r.get("t") or 0.0) >= cap - 1e-9), len(mission))]
 
 
+def max_s_add(record: dict | None) -> float:
+    """How many seconds past the rail's cap a rail run (its scenario record,
+    `max_s_add`) or a hil campaign (its `_scope.hil`, `max_s_add`) was flown
+    (experiments/sweep_scenarios.py --hil-max-s-add, flight_max_s_add): 0.0
+    at the profile's own length, which every record without the key is."""
+    v = (record or {}).get("max_s_add")
+    try:
+        x = float(v) if v is not None else 0.0
+    except (TypeError, ValueError):
+        return 0.0
+    return x if math.isfinite(x) and x > 0.0 else 0.0
+
+
 def scenario_family(scenario: dict, arm: str) -> str:
     """The KPI report's row of a rail run of the stress library:
     "<backend>-stress/<template>/<cell>/shield-<arm>" (hil-stress/... for the
     hil rail), the stress bundles' row with the rail named where the
-    harness's "stress-bundle" stands."""
+    harness's "stress-bundle" stands. A run of a LENGTHENED hil campaign
+    (2026-11-14, `max_s_add` in its scenario record) gets a row of its own,
+    "/flown-longer-<S>s" after the arm (sweep_scenarios.lengthened_suffix):
+    it flew another flight than the profile's, so it never pools with it."""
     backend = scenario.get("backend") or "hil"
+    add = max_s_add(scenario)
     return (f"{backend}-stress/{scenario.get('template')}/"
-            f"{scenario.get('cell') or scenario.get('scenario_id')}/shield-{arm}")
+            f"{scenario.get('cell') or scenario.get('scenario_id')}/shield-{arm}"
+            + (f"/flown-longer-{add:g}s" if add else ""))
 
 
 def load_run(run: Path, by_hash: dict, by_id: dict, trust_store=None) -> dict:
@@ -776,6 +807,9 @@ def load_run(run: Path, by_hash: dict, by_id: dict, trust_store=None) -> dict:
             # None: every row) and the gates the verdict used (2026-11-07).
             "rail_window": (sc_doc or {}).get("rail_window"),
             "scenario_gates_basis": (sc_doc or {}).get("gates_basis"),
+            # Seconds flown past the rail's cap (a lengthened hil campaign,
+            # 2026-11-14; 0.0 at the profile's length): its family says so too.
+            "max_s_add": max_s_add(scenario),
         })
     return k
 
@@ -1267,6 +1301,12 @@ def load_campaign(path: str | Path) -> dict:
             "profile": scope.get("profile"), "grant_scope": scope.get("grant_scope"),
             "cadence": scope.get("cadence"), "command": doc.get("_command"),
             "code_revision": common.get("code_revision"),
+            # How long its missions flew (2026-11-14): 0.0 at the profile's own
+            # length (every campaign before --hil-max-s-add existed), else the
+            # seconds past the rail's cap of a LENGTHENED campaign, which is
+            # never merged with a campaign of another length (campaign_merge).
+            "max_s_add": max_s_add(hil),
+            "flight_length": hil.get("flight_length"),
             "runtime_s": doc.get("_runtime_s"), "results": len(doc["results"]),
             "statuses": statuses, "flyable": hil.get("flyable"),
             "refused_cells": len(hil.get("refused") or {}),
@@ -1302,6 +1342,9 @@ EPISODE_CHOICE_RULES = (
     "listed by name, not read, scored or counted",
     "a not-accepted flight stays what it was (not KPI-grade, functional evidence), "
     "with the supplement flight that replaced it named",
+    "every campaign flew the same length: a LENGTHENED campaign (experiments/"
+    "sweep_scenarios.py --hil-max-s-add) flies another flight than the profile's and "
+    "is reported beside it, never merged into its figure; refused otherwise",
     "the KPI-grade gate is unchanged: is_kpi_grade plus the signed replay bundle bound "
     "to the run, for every counted flight",
     "several --rescore-rail tables must share the label artefact, its build, the "
@@ -1345,6 +1388,16 @@ def campaign_merge(camps: list[dict]) -> dict:
                     f"flown at the same code revision and profile"
                     + (" (a missing value cannot be checked)" if a is None or b is None
                        else ""))
+        a, b = max_s_add(main), max_s_add(c)
+        if a != b:
+            def said(x):
+                return (f"LENGTHENED, {x:g} s past the rail's cap (--hil-max-s-add)" if x
+                        else "the profile's own length")
+            raise SystemExit(
+                f"--campaign {c['path']} cannot supplement {main['path']}: it was flown at "
+                f"{said(b)}, the main campaign at {said(a)}. A lengthened campaign flies "
+                f"another flight than the profile's: report it on its own, beside the KPI "
+                f"campaign, never merged into its figure")
     names = [_campaign_name(c) for c in camps]
     winner: dict[tuple, tuple[int, str]] = {}
     for i, c in enumerate(camps):
@@ -1463,17 +1516,29 @@ def load_rescore(path: str | Path) -> dict:
     keys = ([k for k in READING_ORDER if k in readings]
             + [k for k in readings if k not in READING_ORDER])
     runs: dict[str, dict] = {}
+    adds: dict[float, list[str]] = {}
     for it in doc["runs"]:
         if "error" in it:
             runs[str(it.get("run"))] = {"error": it["error"]}
             continue
         d = it.get("doc") or {}
         kpi = d.get("kpi") or {}
+        add = max_s_add(d.get("scenario"))
+        adds.setdefault(add, []).append(str(it.get("run")))
         runs[str(it.get("run"))] = {
             "cell": it.get("cell"), "seed": it.get("seed"),
             "shield": (d.get("metrics") or {}).get("shield"),
             "triggered": kpi.get("failsafe_triggered"),
             "accepted": it.get("before") is not None, "readings": {}}
+    declared = (doc.get("flight_length") or {}).get("max_s_add")
+    if len(adds) > 1 or (declared is not None and adds
+                         and set(adds) != {max_s_add({"max_s_add": declared})}):
+        # One flight length per table (sweep_scenarios.rescore_rail_main
+        # refuses to write another since 2026-11-14).
+        raise SystemExit(f"{p}: its runs were flown at more than one flight length "
+                         f"({sorted(adds)} s past the rail's cap; declared {declared!r}): a "
+                         f"lengthened campaign is re-scored and reported on its own")
+    table_add = next(iter(adds), max_s_add({"max_s_add": declared}))
     for key in keys:
         rd = readings[key]
         named: dict[str, tuple[str, list]] = {}
@@ -1495,7 +1560,7 @@ def load_rescore(path: str | Path) -> dict:
                 rec["readings"][key] = {"status": kind, "expected": None,
                                         "triggered": rec["triggered"]}
     return {"path": _rel(p), "paths": [_rel(p)], "schema": RESCORE_SCHEMA,
-            "rail_gates": doc.get("rail_gates"),
+            "rail_gates": doc.get("rail_gates"), "max_s_add": table_add,
             "artefact": fl.get("artefact"), "built": fl.get("built"),
             "adopted": fl.get("adopted_kpi_reading"), "keys": keys,
             "shield_off_runs_left_out": fl.get("shield_off_runs_left_out"),
@@ -1532,7 +1597,9 @@ def load_rescores(paths: list) -> dict | None:
     for t in tables[1:]:
         for f, what in (("artefact", "label artefact"), ("built", "label build"),
                         ("adopted", "adopted KPI reading"), ("keys", "label readings"),
-                        ("rail_gates", "rail gates")):
+                        ("rail_gates", "rail gates"),
+                        ("max_s_add", "flight length (seconds past the rail's cap, "
+                                      "--hil-max-s-add)")):
             if t[f] != first[f]:
                 raise SystemExit(
                     f"--rescore-rail {t['path']} and {first['path']} disagree on the {what} "
@@ -2623,7 +2690,15 @@ def _render_campaign(c: dict | None, episodes: list[dict]) -> list[str]:
          f"cadence {c['cadence']!r}), flown at code revision `{c['code_revision']}` in "
          f"{_f(c['runtime_s'], 0)} s.",
          f"- Summary `{c['path']}`: {c['results']} results ({st}); {c['flyable']} flyable "
-         f"on the rail, {c['refused_cells']} cell(s) the rail refused before flight."]
+         f"on the rail, {c['refused_cells']} cell(s) the rail refused before flight.",
+         (f"- **LENGTHENED campaign**: every mission flew {max_s_add(c):g} s past the "
+          f"rail's cap (experiments/sweep_scenarios.py --hil-max-s-add), so a cell censored "
+          f"in Loiter at the profile's length could show its fail-safe outcome. Not the "
+          f"profile's flight: its rows are `.../flown-longer-{max_s_add(c):g}s`, and it is "
+          f"reported beside the KPI campaign, never merged into its figure."
+          if max_s_add(c) else
+          "- Flight length: the profile's own (each mission to the rail's cap: the "
+          "scenario's max_s + the Loiter operator timeout + 5 s).")]
     for s in c.get("supplements") or []:
         sst = ", ".join(f"{n} {k}" for k, n in sorted(s["statuses"].items()))
         L.append(f"- Supplement `{s['campaign']}`: profile {s['profile']}, code revision "
@@ -3223,6 +3298,11 @@ def render_sweep_markdown(doc: dict, top_k: int = 10) -> str:
         L += [f"**Not KPI-grade:** {doc['_not_kpi_grade']}. The grant's smoke and "
               f"nightly rows ask for sim_speedup 1.0 in the hil topology; this run "
               f"reproduces their scope, not their rail.", ""]
+    add = max_s_add(scope.get("hil") if isinstance(scope.get("hil"), dict) else None)
+    if add:
+        L += [f"**LENGTHENED campaign:** every mission flew {add:g} s past the rail's cap "
+              f"(--hil-max-s-add), not the profile's own length. Reported beside the KPI "
+              f"campaign, never merged into its figure.", ""]
     prof = scope.get("profile")
     arms = scope.get("arms") or {}
     L += ["## Run", "",
@@ -3730,7 +3810,9 @@ def build_report(run_globs: list[str], sweep_paths: list[str], top_k: int,
     a --rescore-rail table (`rescore`, load_rescore / apply_rescore). Since
     2026-11-13 either may be a list: a main campaign and its supplements
     (campaign_merge, EPISODE_CHOICE_RULES) and one re-score table per
-    campaign (load_rescores)."""
+    campaign (load_rescores). Since 2026-11-14 a campaign and its re-score
+    tables must be of one flight length (a LENGTHENED campaign, --hil-max-s-
+    add, with its own table), else refused."""
     loaded = R.load_policies()
     by_hash, by_id = R.policies_by_hash(loaded), R.policies_by_id(loaded)
     camp_paths = ([] if campaign is None else list(campaign)
@@ -3739,6 +3821,12 @@ def build_report(run_globs: list[str], sweep_paths: list[str], top_k: int,
                 if isinstance(rescore, (list, tuple)) else [rescore])
     camp = load_campaigns([c for c in camp_paths if c])
     rs = load_rescores([r for r in rs_paths if r])
+    if camp is not None and rs is not None and max_s_add(camp) != max_s_add(rs):
+        raise SystemExit(
+            f"--campaign {camp['path']} flew {max_s_add(camp):g} s past the rail's cap and "
+            f"--rescore-rail {rs['path']} re-scored runs flown {max_s_add(rs):g} s past it: "
+            f"a lengthened campaign (--hil-max-s-add) is reported with its own re-score, "
+            f"never with the profile's")
     superseded = dict((camp or {}).get("superseded") or {})
     if camp is not None and not run_globs:
         run_globs = list(camp["runs_glob"])
@@ -3788,6 +3876,21 @@ def build_report(run_globs: list[str], sweep_paths: list[str], top_k: int,
             continue
         for e in load_sweep(path):
             (skipped if "skipped" in e else episodes).append(e)
+    lengths: dict[float, list[str]] = {}
+    for e in episodes:
+        if e.get("kind") == "flight" and e.get("scenario_id") is not None:
+            lengths.setdefault(float(e.get("max_s_add") or 0.0), []).append(str(e["id"]))
+    if len(lengths) > 1:
+        # One report, one flight length (2026-11-14): a lengthened campaign's
+        # runs (--hil-max-s-add) never pool with the profile's, whatever globs
+        # brought them in.
+        def said(a):
+            return f"{a:g} s past the rail's cap" if a else "at the profile's own length"
+        raise SystemExit(
+            "these rail runs were flown at more than one length: "
+            + "; ".join(f"{len(v)} {said(a)} (e.g. {v[0]})" for a, v in sorted(lengths.items()))
+            + ". A lengthened campaign (--hil-max-s-add) is reported on its own, beside the "
+              "KPI campaign, never in one report with the profile's flights")
     if camp is not None and camp.get("supplements"):
         # Every campaign at one code revision: the summaries were compared
         # (campaign_merge); here the manifest of every run they list.
@@ -3881,6 +3984,11 @@ def build_report(run_globs: list[str], sweep_paths: list[str], top_k: int,
                    "campaign": camp["path"] if camp else None,
                    "campaign_supplements": [s["path"] for s in
                                             (camp or {}).get("supplements") or []],
+                   # Seconds every campaign mission flew past the rail's cap
+                   # (--hil-max-s-add; 0.0 the profile's own length, None
+                   # without a campaign), and of every re-score table's runs.
+                   "campaign_max_s_add": max_s_add(camp) if camp else None,
+                   "rescore_rail_max_s_add": rs.get("max_s_add") if rs else None,
                    "rescore_rail": rs["path"] if rs else None,
                    "rescore_rail_tables": list(rs["paths"]) if rs else []},
         "counts": {"episodes": len(episodes),

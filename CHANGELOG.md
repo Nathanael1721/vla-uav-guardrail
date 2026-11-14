@@ -16,6 +16,84 @@ shipped change and recorded as one.
 
 ## [Unreleased]
 
+### 2026-11-14 (a lengthened hil campaign for the censored fail-safe runs; WP3-15) — `--hil-max-s-add` flies a hil campaign past the rail's cap and says so everywhere; 18 of ntFIN2's 19 censored runs were frozen by the autopilot's GeoFence RTL, which no flight length decides; not flown
+
+#### Found
+- Re-scored read-only at this branch (`--profile nightly --rescore-rail` over
+  the 19 runs), ntFIN2's 19 censored runs end two different ways:
+  - the 18 dyn-nfz-spawn-ahead runs (3 m ahead, 4 and 8 m/s, variants 0-2,
+    seeds 1001-1003): the FSM entered Loiter at 5.0-5.2 s (X1 or G1, then
+    G3), and 0.5-0.7 s later ArduPilot's GeoFence took the aircraft (GUIDED ->
+    RTL at 5.67-5.80 s, `autopilot_took_over` in metrics.json). From then the
+    FSM no longer steps (sitl/ros2_shield_node.py), so its record ends in
+    Loiter 0.50-0.70 s into the 30 s timeout, and the node ended each mission
+    25 s later (`TAKEOVER_GRACE_S`, flight 30.7-30.9 s) - well inside its 75 s
+    cap. Flying longer cannot change these: the cap never ended them;
+  - ntFIN2_374 (corridor-swap-shifted, seed 1002) flew its whole 85 s cap
+    and ended 1.6 s into a Loiter it re-entered every ~6 s (G8, G1, G3 at
+    76.8, 76.9, 77.3 s and 82.9, 83.0, 83.3 s): the one run a longer flight
+    can decide.
+- All 19 are labelled "expected" (E5) under (a), (r) and the adopted (r2).
+  Whether ArduPilot's GeoFence RTL with the FSM frozen in Loiter counts as
+  the fail-safe triggering is a rubric decision (docs/RUBRIC-failsafe.md);
+  this change does not make it. Scored as not triggered they would be 18
+  missed triggers.
+
+#### Added
+- `experiments/sweep_scenarios.py --backend hil --hil-max-s-add SECONDS`: a
+  LENGTHENED campaign. Every mission's `--max-s` and timeout are the rail's
+  cap (the scenario's max_s + the 30 s Loiter timeout + 5 s, `rail_max_s`)
+  plus SECONDS (finite, above 0, at most 600; refused with another backend
+  or with `--rescore-rail`). Recorded in sweep.json (`_scope.hil.max_s_add`
+  and `flight_length`, 0.0 / not lengthened for every other hil campaign),
+  in every mission's scenario record (`max_s_add`, `rail_max_s_profile`,
+  `flight_length` "lengthened", the family row ending `/flown-longer-<S>s`;
+  a profile-length mission's record is unchanged) and in scenario_score.json
+  (`rail_window`). `max_s` stays the scenario's own cap, so the performance
+  window is unchanged; the fail-safe and the safety invariants are read over
+  the whole flight, as on every rail run. The dry run prints each mission's
+  cap beside the scenario's and the rail's.
+- The scorer names why a run is censored (`censored_cause`): a flight that
+  ended still holding ("fly it longer", with "already flown S s past the
+  rail's cap" on a lengthened run) or the autopilot's takeover ("the
+  autopilot took the aircraft (RTL at 5.78 s) and the FSM stopped stepping,
+  so flying longer will not show it"; `rail_window.autopilot_took_over`).
+  A censored run is still censored, flown longer or not: never scored, never
+  a correct non-trigger. sweep.json's `_failsafe_labels.censored_by_cause`
+  lists both kinds.
+- `--rescore-rail`: a lengthened run keeps its cell's label (keyed by cell
+  and seed; what is undecided stays undecided), is named `run_flown_longer`
+  with the count without it (`at_profile_length`), and a censored run is
+  named with its `cause` and `max_s_add`. A table says its length
+  (`flight_length`), and runs of two lengths are refused together (exit 2,
+  nothing written).
+- tests/test_hil_fly_longer.py (in the CI loop), on test_sweep's fake hil
+  rig: the option recorded everywhere and absent without it; the label read
+  on the longer flight; a lengthened run still ending in Loiter censored,
+  with and without the takeover; kpi_report keeping a lengthened campaign
+  apart; the refusals and the dry run. 4/4.
+
+#### Changed
+- tools/kpi_report.py: a lengthened campaign is a SEPARATE campaign,
+  reported beside the KPI campaign and never merged into its figure (the
+  flight differs). Its rows are `hil-stress/<template>/<cell>/shield-on/
+  flown-longer-<S>s`, the Campaign section and the inputs
+  (`campaign_max_s_add`, `rescore_rail_max_s_add`) name the length, and a
+  supplement, re-score table or run glob of another length is refused
+  (EPISODE_CHOICE_RULES gains the rule). The KPI figure of ntFIN2 + ntFIN2s
+  is untouched.
+
+#### To fly (not flown here)
+- The 18 dyn-nfz-spawn-ahead cell-seeds and ntFIN2_374's, as two lengthened
+  campaigns at one revision (dry-run at this branch: 18 missions at
+  `--max-s=110`, 1 at `--max-s=120`): `fly_campaign.sh <sha> nightly ntFIN2L
+  --hil-max-s-add 35 --only <the six dyn-nfz-spawn-ahead@ahead_m=3 cells at
+  4 and 8 m/s>` and `fly_campaign.sh <sha> nightly ntFIN2Lc --hil-max-s-add 35
+  --seed 1002 --only corridor-swap-shifted`. Expect the 18 to come back
+  censored by the takeover unless the rubric question above is answered or
+  the cells stop provoking the GeoFence; corridor-swap-shifted may churn
+  again past 120 s.
+
 ### 2026-11-14 (hh02: the first harness-driven hil episodes) — the stress harness flew six library episodes on the hil rig and sent every kind of zone event the grant names over mTLS REST into the flying Shield; each episode wrote the grant's six bundle names; WP4-03 and WP4-05 to DONE (81 DONE / 48 PARTIAL / 6 DRIFT / 1 MISSING)
 
 #### Flown
