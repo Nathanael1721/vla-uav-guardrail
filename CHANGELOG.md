@@ -16,6 +16,65 @@ shipped change and recorded as one.
 
 ## [Unreleased]
 
+### 2026-11-15 (texture and shadow stressors) — the last two perception stressors the grant names flown on the hil rig: the novel road texture broke the follow, the low sun cost little; WP4-18 to DONE
+
+#### Added
+- **`texture`** (`demo/pas_ardupilot/perception_stress.py`, `-Stress texture`
+  / `STRESS=texture`): the level's road meshes (World.list_objects
+  `.*[Rr]oad.*`: 347 in CityLife_Day) re-skinned with the engine's
+  `/Engine/EngineMaterials/WorldGridMaterial` through
+  World.set_object_material; every call's answer is recorded, and the scene
+  step refuses when nothing matched or nothing took it. Nothing reads a
+  material back, so an attaching node records the desktop's scene step and
+  is bound to it by the scene id, as the exposure is.
+- **`shadow`**: the level's own sun, `DirectionalLight_0` (CityLife_Day has no
+  SunSky), turned with World.set_object_pose to 8 deg above the horizon and
+  60 deg round, roll and position kept, and read back with get_object_pose by
+  the desktop and again by the node on the Orin. Every stressor reads the sun
+  back and refuses one that is not its own, so a light left turned in a
+  simulator that was not restarted cannot darken the next run.
+- `scripts/run_pas_ardupilot.ps1` and `deploy/orin/run_pas_perception.sh`
+  take both names; tests/test_pas_perception_stress.py 27/27 (the rotation
+  maths against projectairsim.utils, apply / check / refusals, the scene step
+  and both node paths).
+
+#### Found
+- `set_object_texture_from_file` answered false for all 347 road actors on
+  the first texture scene load: it builds on the plugin's
+  `/ProjectAirSim/Runtime/RuntimeMeshMaterial`, which this desktop could not
+  read (the Unreal log: "Cannot load RuntimeMeshMaterial", "The summary for
+  the package ... is invalid"; the file is a cloud-only OneDrive placeholder
+  with the OneDrive client not running). The scene step refused itself, as
+  designed; the engine's own material answered true and is used instead.
+- Before the stressor was written, the sun was turned by hand on the running
+  scene: the Chase camera's mean grey level went from 98.5 to 60.8 and back to
+  100.8 when the light was put back.
+
+#### Flown
+- AIoT-VLA v10b and the target estimator on the AGX Orin, Project AirSim
+  CityLife + ArduPilot SITL 4.5.7 on the desktop, the same flags as the
+  unstressed pas_hil_aiot_est_01 (`--identity --negative-query "a traffic
+  light" --target-estimator`), commit 8c9448e on both hosts:
+  - **pas_hil_aiot_texture_01**: 347 of 347 road meshes re-skinned; the start
+    gate found the car, the detector then found it on 0.095 of frames
+    (0.865 unstressed), target lock 0.094 (0.823), and the mission ended
+    target_lost after 1,008 ticks at 9.985 Hz; 24 interventions, 0 P0 escape
+    ticks.
+  - **pas_hil_aiot_shadow_01**: the node read the sun back at pitch -8.0, yaw
+    49.691 deg; frame luma 69.1 (96.4 unstressed), detector hit rate 0.820,
+    target lock 0.775, max_s reached, 4,186 ticks at 9.963 Hz, 300
+    interventions, 0 P0 escape ticks.
+  - Both non-KPI by design (perception stress); per-scenario table:
+    docs/data/pas_hil_stress_20261115/perception_stress_report.md (from
+    tools/perception_stress_report.py over the three runs).
+
+#### Changed
+- Appendix A: WP4-18 to DONE (every stressor kind the grant names flown on
+  Project AirSim with a per-scenario metric; one run each, non-KPI);
+  91 DONE / 38 PARTIAL / 6 DRIFT / 1 MISSING. The report's limitations say
+  what the texture did to the follow, and drop the harness item (WP4-03 and
+  WP4-05 have been DONE since 14 Nov).
+
 ### 2026-11-15 (hot-apply on hil; WP3-09 flown) — REST events flown into the hil Shield on the AGX Orin; a GeoFence clear over MAVROS 2 was recorded as failed although it took, and a spawn waited for a whole tick (53.0 ms against 50 ms), both fixed and flown again; the in-flight mission update written whole in AUTO; WP1-15 and WP3-09 to DONE
 
 #### Flown

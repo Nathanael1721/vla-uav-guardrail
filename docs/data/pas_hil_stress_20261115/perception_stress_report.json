@@ -1,0 +1,262 @@
+{
+  "label": "non-KPI (perception-stress evidence, WP4-16 / WP4-18)",
+  "baseline": "unstressed",
+  "definitions": {
+    "near_m": 6.0,
+    "follow_range_m": 30.0,
+    "loss_min_s": 1.0,
+    "dark_max_ratio": 0.85
+  },
+  "scenarios": [
+    {
+      "stress": "unstressed",
+      "scenario_id": null,
+      "runs": 1,
+      "run_names": [
+        "pas_hil_aiot_est_01"
+      ],
+      "mean": {
+        "det_hit_rate": 0.8653,
+        "det_conf_mean": 0.1143,
+        "det_hz": 2.633,
+        "luma_mean": 96.4,
+        "estimate_frac": 0.8992,
+        "lock_frac": 0.8225,
+        "estimate_on_subject_frac": 0.9147,
+        "track_losses": 8.0,
+        "longest_loss_s": 14.79,
+        "within_30m_frac": 0.3512,
+        "range_median_m": 34.44,
+        "estimate_err_median_m": 4.4
+      },
+      "baseline": null,
+      "delta_vs_baseline": null,
+      "checks": []
+    },
+    {
+      "stress": "shadow",
+      "scenario_id": "pas-follow-redcar-shadow",
+      "runs": 1,
+      "run_names": [
+        "pas_hil_aiot_shadow_01"
+      ],
+      "mean": {
+        "det_hit_rate": 0.82,
+        "det_conf_mean": 0.1037,
+        "det_hz": 2.616,
+        "luma_mean": 69.1,
+        "estimate_frac": 0.8638,
+        "lock_frac": 0.7747,
+        "estimate_on_subject_frac": 0.8968,
+        "track_losses": 9.0,
+        "longest_loss_s": 29.8,
+        "within_30m_frac": 0.3423,
+        "range_median_m": 34.21,
+        "estimate_err_median_m": 4.39
+      },
+      "baseline": "unstressed",
+      "delta_vs_baseline": {
+        "det_hit_rate": -0.0453,
+        "det_conf_mean": -0.0106,
+        "det_hz": -0.017,
+        "luma_mean": -27.3,
+        "estimate_frac": -0.0354,
+        "lock_frac": -0.0478,
+        "estimate_on_subject_frac": -0.0179,
+        "track_losses": 1.0,
+        "longest_loss_s": 15.01,
+        "within_30m_frac": -0.0089,
+        "range_median_m": -0.23,
+        "estimate_err_median_m": -0.01
+      },
+      "checks": []
+    },
+    {
+      "stress": "texture",
+      "scenario_id": "pas-follow-redcar-texture",
+      "runs": 1,
+      "run_names": [
+        "pas_hil_aiot_texture_01"
+      ],
+      "mean": {
+        "det_hit_rate": 0.0952,
+        "det_conf_mean": 0.256,
+        "det_hz": 2.486,
+        "luma_mean": 101.8,
+        "estimate_frac": 0.1012,
+        "lock_frac": 0.0942,
+        "estimate_on_subject_frac": 0.9314,
+        "track_losses": 1.0,
+        "longest_loss_s": 90.14,
+        "within_30m_frac": 0.1468,
+        "range_median_m": 117.28,
+        "estimate_err_median_m": 3.12
+      },
+      "baseline": "unstressed",
+      "delta_vs_baseline": {
+        "det_hit_rate": -0.7701,
+        "det_conf_mean": 0.1417,
+        "det_hz": -0.147,
+        "luma_mean": 5.4,
+        "estimate_frac": -0.798,
+        "lock_frac": -0.7283,
+        "estimate_on_subject_frac": 0.0167,
+        "track_losses": -7.0,
+        "longest_loss_s": 75.35,
+        "within_30m_frac": -0.2044,
+        "range_median_m": 82.84,
+        "estimate_err_median_m": -1.28
+      },
+      "checks": []
+    }
+  ],
+  "runs": [
+    {
+      "run": "pas_hil_aiot_est_01",
+      "path": "D:\\OneDrive\\College\\S2-TaipeiTech\\Lab\\VLA Drone\\demo\\out\\pas_hil_aiot_est_01",
+      "stress": "unstressed",
+      "scenario_id": null,
+      "label": "non-KPI (perception-stress evidence, WP4-16 / WP4-18)",
+      "kpi_grade": true,
+      "scene_id": "SceneCityLifeArduPilot",
+      "weather_ok": null,
+      "weather_read_back": null,
+      "end_reason": "max_s reached",
+      "mission_s": 420.13,
+      "detector": {
+        "window": "seq 567-1672 (the flight log's det_seq span)",
+        "inferences": 1106,
+        "hits": 957,
+        "det_hit_rate": 0.8653,
+        "det_conf_mean": 0.1143,
+        "det_conf_median": 0.1234,
+        "det_switches": 0,
+        "luma_n": 1106,
+        "luma_mean": 96.4,
+        "luma_median": 94.9,
+        "det_hz": 2.633
+      },
+      "track": {
+        "ticks": 4186,
+        "truth_ticks": 4186,
+        "estimate_frac": 0.8992,
+        "lock_frac": 0.8225,
+        "estimate_on_subject_frac": 0.9147,
+        "track_losses": 8,
+        "longest_loss_s": 14.79,
+        "estimate_dropouts": 4,
+        "within_30m_frac": 0.3512,
+        "range_median_m": 34.44,
+        "range_p90_m": 42.62,
+        "estimate_err_median_m": 4.4,
+        "estimate_err_p90_m": 5.89,
+        "near_m": 6.0,
+        "loss_min_s": 1.0
+      }
+    },
+    {
+      "run": "pas_hil_aiot_texture_01",
+      "path": "D:\\OneDrive\\College\\S2-TaipeiTech\\Lab\\VLA Drone\\demo\\out\\pas_hil_aiot_texture_01",
+      "stress": "texture",
+      "scenario_id": "pas-follow-redcar-texture",
+      "label": "non-KPI (perception-stress evidence, WP4-16 / WP4-18)",
+      "kpi_grade": false,
+      "scene_id": "SceneCityLifeArduPilotStressTexture",
+      "weather_ok": true,
+      "weather_read_back": {
+        "RAIN": 0.0,
+        "ROAD_WETNESS": 0.0,
+        "SNOW": 0.0,
+        "ROAD_SNOW": 0.0,
+        "MAPLE_LEAF": 0.0,
+        "ROAD_LEAF": 0.0,
+        "DUST": 0.0,
+        "FOG": 0.0
+      },
+      "end_reason": "target_lost",
+      "mission_s": 100.95,
+      "detector": {
+        "window": "seq 624-875 (the flight log's det_seq span)",
+        "inferences": 252,
+        "hits": 24,
+        "det_hit_rate": 0.0952,
+        "det_conf_mean": 0.256,
+        "det_conf_median": 0.237,
+        "det_switches": 0,
+        "luma_n": 252,
+        "luma_mean": 101.8,
+        "luma_median": 101.6,
+        "det_hz": 2.486
+      },
+      "track": {
+        "ticks": 1008,
+        "truth_ticks": 1008,
+        "estimate_frac": 0.1012,
+        "lock_frac": 0.0942,
+        "estimate_on_subject_frac": 0.9314,
+        "track_losses": 1,
+        "longest_loss_s": 90.14,
+        "estimate_dropouts": 1,
+        "within_30m_frac": 0.1468,
+        "range_median_m": 117.28,
+        "range_p90_m": 164.81,
+        "estimate_err_median_m": 3.12,
+        "estimate_err_p90_m": 5.55,
+        "near_m": 6.0,
+        "loss_min_s": 1.0
+      }
+    },
+    {
+      "run": "pas_hil_aiot_shadow_01",
+      "path": "D:\\OneDrive\\College\\S2-TaipeiTech\\Lab\\VLA Drone\\demo\\out\\pas_hil_aiot_shadow_01",
+      "stress": "shadow",
+      "scenario_id": "pas-follow-redcar-shadow",
+      "label": "non-KPI (perception-stress evidence, WP4-16 / WP4-18)",
+      "kpi_grade": false,
+      "scene_id": "SceneCityLifeArduPilotStressShadow",
+      "weather_ok": true,
+      "weather_read_back": {
+        "RAIN": 0.0,
+        "ROAD_WETNESS": 0.0,
+        "SNOW": 0.0,
+        "ROAD_SNOW": 0.0,
+        "MAPLE_LEAF": 0.0,
+        "ROAD_LEAF": 0.0,
+        "DUST": 0.0,
+        "FOG": 0.0
+      },
+      "end_reason": "max_s reached",
+      "mission_s": 420.13,
+      "detector": {
+        "window": "seq 528-1627 (the flight log's det_seq span)",
+        "inferences": 1100,
+        "hits": 902,
+        "det_hit_rate": 0.82,
+        "det_conf_mean": 0.1037,
+        "det_conf_median": 0.1035,
+        "det_switches": 0,
+        "luma_n": 1100,
+        "luma_mean": 69.1,
+        "luma_median": 69.1,
+        "det_hz": 2.616
+      },
+      "track": {
+        "ticks": 4186,
+        "truth_ticks": 4186,
+        "estimate_frac": 0.8638,
+        "lock_frac": 0.7747,
+        "estimate_on_subject_frac": 0.8968,
+        "track_losses": 9,
+        "longest_loss_s": 29.8,
+        "estimate_dropouts": 5,
+        "within_30m_frac": 0.3423,
+        "range_median_m": 34.21,
+        "range_p90_m": 41.19,
+        "estimate_err_median_m": 4.39,
+        "estimate_err_p90_m": 6.01,
+        "near_m": 6.0,
+        "loss_min_s": 1.0
+      }
+    }
+  ]
+}
