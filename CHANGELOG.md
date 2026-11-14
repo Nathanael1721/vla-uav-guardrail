@@ -31,11 +31,18 @@ shipped change and recorded as one.
     8.0 s, G10 landed.
   - hs10_004 failsafe-rtl-blocked: G11, then G6 0.1 s later ("RTL failed:
     blocked path", the leg home at 15.0 m crosses home-side-zone), G10 landed.
+    The blocked path is the Shield's own check of the leg home against its
+    hard P0 zones, not a failure ArduPilot reported.
   - hs10_005 wind-beyond-authority (lane 15, 12 m/s): G1, G3, X9 at 11.2 s
     (hold not kept, 14.29 m from its point), G6 at 16.3 s ("no progress home:
-    -12.57 m in 5.0 s"), G10 landed. The hs07 case where ArduPilot's RTL was
-    blown into nfz-square now lands where the RTL failed.
-  - `e2e_ms` max 41.3 ms over 2,181 ticks.
+    -12.57 m in 5.0 s", progress home judged while ArduPilot reports RTL:
+    our RTL-failure reason, not one the grant names), G10 landed. The hs07
+    case where ArduPilot's RTL was blown into nfz-square now lands where the
+    RTL failed.
+  - The Loiter in hs10 is held in GUIDED by the companion, not SET_MODE
+    LOITER (hs10_003 events.jsonl t = 5.828 s), so WP3-07 stays PARTIAL
+    on that point (PI decision 7).
+  - `e2e_ms` max 41.3 ms over 423 setpoint ticks (2,181 rows).
 - ge1113 (2f22116, hil, profile `grant_example`, 36 missions, all
   KPI-grade; `tools/kpi_report.py --campaign demo/out/hil_ge1113`, committed as
   `docs/data/kpi_ge1113/kpi_report_ge1113_2026-11-14.md`, revision 181b75cdaad3):
