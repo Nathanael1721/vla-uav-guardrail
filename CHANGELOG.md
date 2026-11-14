@@ -16,6 +16,23 @@ shipped change and recorded as one.
 
 ## [Unreleased]
 
+### 2026-11-15 (the target estimator flown on hil) — with follow_vlm's estimator, strict lock and re-acquisition in the PAS node, the KPI-grade AIoT-VLA follow kept its estimate on the car and the aircraft within about 34 m of it
+
+#### Flown
+- pas_hil_aiot_est_01 (3918965 on the AGX Orin, unstressed, `--identity
+  --negative-query "a traffic light" --target-estimator`): KPI-grade, 420 s,
+  0 P0 escape ticks, 266 interventions, VLA 7.83 decisions/s; the estimate
+  within 6 m of the car on 0.907 of ticks (subject_track.truth.est_lock_frac;
+  0.971 of the ticks it served), median error 2.8 m; 5 lapses, 5
+  re-acquisitions, 0 tracker faults; aircraft-to-car gap median 34.4 m, p90
+  42.6 m, within 30 m 0.351 (pas_hil_aiot_kpi_01: 112.9 / 166.1 m, 0.112).
+  docs/data/pas_aiot_hil_20261114/flights.md has the row.
+
+#### Changed
+- Appendix A: ARCH-18 and ARCH-20 record the estimator flight; WP1-15 and
+  WP3-09 record the 15 Nov code (still PARTIAL until flown). The report's
+  summary states the follow before and after the estimator.
+
 ### 2026-11-15 (WP1-15, C-16, WP3-09) — the perception rail serves the REST hot-apply listener on its own Shield; the dynamic_nfz file hold is lifted for a zone without motion; an in-flight mission update is written whole, so ArduPilot's 8 s upload timeout is gone; the perception rail's setpoint can go through the MAVLink adapter. Code and tests only, nothing flown
 
 #### Added
