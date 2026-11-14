@@ -90,16 +90,21 @@ Server: PASBlocks/Plugins/ProjectAirSim/Source/ProjectAirSim/Private.
     round - the exposure, which no RPC reads back, is bound by the scene id.
     The weather it reads back as well (check_weather).
 
-  * NOVEL TEXTURES ARE THE LEVEL'S OWN ACTORS RE-SKINNED (texture, since
+  * NOVEL TEXTURES ARE THE LEVEL'S OWN ROADS RE-SKINNED (texture, since
     2026-11-15). World.list_objects(regex) (world.py:351; std::regex_match
     on each actor's GetName, UnrealHelpers::ListMatchingActors) picks the
-    actors, and World.set_object_texture_from_file (world.py:803) gives
-    every static mesh component of each one a dynamic instance of the
-    plugin's RuntimeMeshMaterial with the PNG as its base colour
-    (WorldSimApi::setObjectTexture). The PNG is written here (texture_png:
-    yellow / black diagonal stripes, stdlib only), so the stressor is the
-    same bytes on every run (png_sha256 in the record). Nothing reads a
-    texture back: the record holds each call's answer, and an attaching
+    actors - 347 road meshes (SM_jcRoad*) in CityLife_Day - and
+    World.set_object_material (world.py:765; WorldSimApi::setMaterial:
+    StaticLoadObject of a UMaterial, set on slot 0 of every static mesh
+    component) gives each the engine's own WorldGridMaterial, the grey and
+    white grid of an untextured Unreal level. Why the engine's material and
+    not a texture: set_object_texture_from_file / _from_packaged_asset
+    build on the plugin's /ProjectAirSim/Runtime/RuntimeMeshMaterial, which
+    this desktop could not read (15 Nov: "Cannot load RuntimeMeshMaterial",
+    LoadErrors "the summary for the package ... is invalid"; the file is a
+    cloud-only OneDrive placeholder), so both answered false for every
+    actor; WorldGridMaterial ships with the engine install. Nothing reads
+    a material back: the record holds each call's answer, and an attaching
     node trusts the desktop's scene step for it, bound by the scene id as
     the exposure is.
 
@@ -114,12 +119,7 @@ the project's environments.
 from __future__ import annotations
 
 import copy
-import hashlib
 import math
-import os
-import struct
-import tempfile
-import zlib
 
 # The base scene id of the template (scene_citylife_ardupilot.jsonc). A
 # stressed scene is rendered as BASE + "Stress" + Name.
@@ -141,13 +141,10 @@ SCENE_IMAGE_TYPE = 0
 
 # The texture stressor (module docstring, NOVEL TEXTURES): which actors
 # (an ECMAScript regex matched whole against each actor's name, so no inline
-# flags), at most how many, and the PNG.
+# flags), at most how many, and the material.
 TEXTURE_OBJECTS = r".*[Rr]oad.*"
 TEXTURE_MAX_OBJECTS = 400
-TEXTURE_SIZE_PX = 64
-TEXTURE_STRIPE_PX = 8
-TEXTURE_COLOURS = ((255, 210, 0), (16, 16, 16))
-TEXTURE_FILE = "pas_stress_texture.png"
+TEXTURE_MATERIAL = "/Engine/EngineMaterials/WorldGridMaterial"
 
 # The sun (module docstring, THE SUN IS THE LEVEL'S OWN DirectionalLight_0):
 # the actor, its (roll, pitch, yaw) in the level as read back on 15 Nov
@@ -183,9 +180,10 @@ STRESSORS: dict[str, dict] = {
                 "round from the day's: low light, long shadows from another side"},
     "texture": {
         "exposure_bias_ev": None, "weather": {},
-        "texture": {"objects": TEXTURE_OBJECTS, "pattern": "yellow/black diagonal stripes"},
-        "what": "the level's road actors re-skinned with yellow / black diagonal "
-                "stripes (novel textures)"},
+        "texture": {"objects": TEXTURE_OBJECTS, "material": TEXTURE_MATERIAL,
+                    "pattern": "the engine's grey / white world grid"},
+        "what": "the level's road meshes re-skinned with the engine's grey / white "
+                "world grid (novel textures)"},
 }
 NAMES = tuple(STRESSORS)
 
@@ -377,42 +375,19 @@ def non_kpi_reason(name: str) -> str:
 # Novel textures (module docstring, NOVEL TEXTURES)
 # --------------------------------------------------------------------------- #
 
-def texture_png(size: int = TEXTURE_SIZE_PX, stripe: int = TEXTURE_STRIPE_PX,
-                colours=TEXTURE_COLOURS) -> bytes:
-    """The stressor's texture: an 8-bit RGB PNG of diagonal stripes, `stripe`
-    pixels wide, in `colours` (stdlib only: zlib and struct)."""
-    if size < 1 or stripe < 1:
-        raise ValueError("a texture needs a positive size and stripe width")
-    on, off = bytes(colours[0]), bytes(colours[1])
-    raw = bytearray()
-    for y in range(size):
-        raw.append(0)                                         # filter: none
-        for x in range(size):
-            raw += on if ((x + y) // stripe) % 2 == 0 else off
-
-    def chunk(tag: bytes, data: bytes) -> bytes:
-        return (struct.pack(">I", len(data)) + tag + data
-                + struct.pack(">I", zlib.crc32(tag + data) & 0xFFFFFFFF))
-    return (b"\x89PNG\r\n\x1a\n"
-            + chunk(b"IHDR", struct.pack(">IIBBBBB", size, size, 8, 2, 0, 0, 0))
-            + chunk(b"IDAT", zlib.compress(bytes(raw), 9)) + chunk(b"IEND", b""))
-
-
-def apply_texture(world, name: str, png_dir: str | None = None) -> dict:
+def apply_texture(world, name: str) -> dict:
     """Re-skin the stressor's actors on a loaded scene's World (module
     docstring, NOVEL TEXTURES). Never raises: the record's `problems` says
-    what failed (no actor matched, none took the texture), and the caller
+    what failed (no actor matched, none took the material), and the caller
     refuses the run on any. A stressor without a texture answers ok with
     mode "none"."""
     spec = stressor(name).get("texture")
     if not spec:
         return {"mode": "none", "ok": True, "problems": []}
     problems: list[str] = []
-    png = texture_png()
-    rec = {"mode": "set", "objects_regex": spec["objects"], "pattern": spec["pattern"],
-           "png_sha256": "sha256:" + hashlib.sha256(png).hexdigest(),
-           "png_size_px": TEXTURE_SIZE_PX, "stripe_px": TEXTURE_STRIPE_PX,
-           "read_back": "none: Project AirSim has no call that reads a texture back"}
+    rec = {"mode": "set", "objects_regex": spec["objects"], "material": spec["material"],
+           "pattern": spec["pattern"],
+           "read_back": "none: Project AirSim has no call that reads a material back"}
     found, err = _status(world.list_objects, spec["objects"])
     if err is not None:
         problems.append(f"list_objects({spec['objects']!r}) failed ({err})")
@@ -421,36 +396,33 @@ def apply_texture(world, name: str, png_dir: str | None = None) -> dict:
     chosen = names[:TEXTURE_MAX_OBJECTS]
     rec.update(matched=len(names), asked=len(chosen),
                dropped_over_cap=len(names) - len(chosen), sample=chosen[:10])
-    path = os.path.join(png_dir or tempfile.gettempdir(), TEXTURE_FILE)
     n_set, failed = 0, []
-    if chosen:
-        with open(path, "wb") as fh:
-            fh.write(png)
-        for obj in chosen:
-            ans, err = _status(world.set_object_texture_from_file, obj, path)
-            if ans is True:
-                n_set += 1
-            else:
-                failed.append({"object": obj, "answer": ans, "error": err})
+    for obj in chosen:
+        ans, call_err = _status(world.set_object_material, obj, spec["material"])
+        if ans is True:
+            n_set += 1
+        else:
+            failed.append({"object": obj, "answer": ans, "error": call_err})
     rec.update(set=n_set, n_failed=len(failed), failed=failed[:20])
     if err is None and not names:
         problems.append(f"no actor's name matches {spec['objects']!r}")
     elif chosen and not n_set:
-        problems.append(f"none of the {len(chosen)} matched actor(s) took the texture")
+        problems.append(f"none of the {len(chosen)} matched actor(s) took "
+                        f"{spec['material']}")
     rec.update(ok=not problems, problems=problems)
     return rec
 
 
 def texture_attached(name: str) -> dict:
-    """The record of an attaching node: the texture was set by the desktop's
-    scene step, which this node cannot read back (the scene id binds it)."""
+    """The record of an attaching node: the material was set by the
+    desktop's scene step, which this node cannot read back (the scene id
+    binds it)."""
     spec = stressor(name).get("texture")
     if not spec:
         return {"mode": "none", "ok": True, "problems": []}
     return {"mode": "attached (set by the desktop's scene step; no read-back call)",
-            "objects_regex": spec["objects"], "pattern": spec["pattern"],
-            "png_sha256": "sha256:" + hashlib.sha256(texture_png()).hexdigest(),
-            "ok": True, "problems": []}
+            "objects_regex": spec["objects"], "material": spec["material"],
+            "pattern": spec["pattern"], "ok": True, "problems": []}
 
 
 # --------------------------------------------------------------------------- #

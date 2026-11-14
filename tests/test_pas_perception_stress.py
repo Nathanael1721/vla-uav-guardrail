@@ -320,15 +320,15 @@ def test_an_attached_node_only_reads_the_weather_back():
 # --------------------------------------------------------------------------- #
 
 class TextureSim:
-    """The level's actors as World.list_objects and
-    set_object_texture_from_file see them: the regex is matched whole
-    (std::regex_match), a missing actor answers false, `refuse` actors
-    answer false too, and every PNG the call was given is kept."""
+    """The level's actors as World.list_objects and set_object_material see
+    them: the regex is matched whole (std::regex_match), a missing actor or
+    a `refuse` actor answers false, and every material asked for is kept."""
 
-    def __init__(self, actors=("SM_Road_01", "SM_Road_02", "BP_Car_07", "SM_Building_3"),
+    def __init__(self, actors=("SM_jcRoad22mA_0", "SM_jcRoad22mA_1", "BP_Car_07",
+                               "SM_jctFarBuildings_5402"),
                  refuse=(), list_fails=False):
         self.actors, self.refuse, self.list_fails = list(actors), set(refuse), list_fails
-        self.set, self.pngs = [], []
+        self.set, self.materials = [], []
 
     def list_objects(self, name_regex):
         import re
@@ -336,15 +336,12 @@ class TextureSim:
             raise TimeoutError("no answer")
         return [a for a in self.actors if re.fullmatch(name_regex, a)]
 
-    def set_object_texture_from_file(self, object_name, path):
-        with open(path, "rb") as fh:
-            self.pngs.append(fh.read())
+    def set_object_material(self, object_name, material_path):
+        self.materials.append(material_path)
         if object_name not in self.actors or object_name in self.refuse:
             return False
         self.set.append(object_name)
         return True
-
-
 
 class SunSim:
     """The level's DirectionalLight_0 as World.get_object_pose /
@@ -373,80 +370,45 @@ class SunSim:
                      "rotation": dict(pose["rotation"])}
         return True
 
-def _png_pixels(png: bytes):
-    """(width, height, rows of RGB tuples) of an 8-bit RGB PNG with filter 0
-    on every row, decoded with the stdlib."""
-    import zlib
-    assert png[:8] == b"\x89PNG\r\n\x1a\n"
-    pos, idat, w = 8, b"", None
-    while pos < len(png):
-        n = struct.unpack(">I", png[pos:pos + 4])[0]
-        tag, data = png[pos + 4:pos + 8], png[pos + 8:pos + 8 + n]
-        crc = struct.unpack(">I", png[pos + 8 + n:pos + 12 + n])[0]
-        import zlib as z
-        assert z.crc32(tag + data) & 0xFFFFFFFF == crc, tag
-        if tag == b"IHDR":
-            w, h, depth, ctype = struct.unpack(">IIBB", data[:10])
-            assert (depth, ctype) == (8, 2)
-        elif tag == b"IDAT":
-            idat += data
-        pos += 12 + n
-    raw = zlib.decompress(idat)
-    rows, stride = [], 1 + 3 * w
-    for y in range(h):
-        line = raw[y * stride:(y + 1) * stride]
-        assert line[0] == 0
-        rows.append([tuple(line[1 + 3 * x:4 + 3 * x]) for x in range(w)])
-    return w, h, rows
-
-
-def test_the_texture_is_a_striped_png_written_by_the_stdlib():
-    png = ps.texture_png()
-    w, h, rows = _png_pixels(png)
-    assert (w, h) == (ps.TEXTURE_SIZE_PX, ps.TEXTURE_SIZE_PX)
-    on, off = ps.TEXTURE_COLOURS
-    assert rows[0][0] == on and rows[0][ps.TEXTURE_STRIPE_PX] == off
-    assert rows[1][ps.TEXTURE_STRIPE_PX - 1] == off            # the diagonal
-    assert ps.texture_png() == png, "the same bytes on every run"
-    _raises(ps.texture_png, 0, contains="positive")
+def test_the_texture_stressor_is_the_engines_world_grid_on_the_roads():
     s = ps.stressor("texture")
-    assert s["exposure_bias_ev"] is None and s["weather"] == {}
-    assert s["texture"]["objects"] == ps.TEXTURE_OBJECTS
+    assert s["exposure_bias_ev"] is None and s["weather"] == {} and not s.get("sun")
+    assert s["texture"]["objects"] == ps.TEXTURE_OBJECTS == r".*[Rr]oad.*"
+    assert s["texture"]["material"] == "/Engine/EngineMaterials/WorldGridMaterial"
 
 
 def test_the_texture_stressor_reskins_the_matching_actors_and_records_each_call():
     sim = TextureSim()
-    rec = ps.apply_texture(sim, "texture", png_dir=str(_tmp()))
+    rec = ps.apply_texture(sim, "texture")
     assert rec["ok"] and rec["mode"] == "set", rec
-    assert rec["matched"] == 2 and rec["set"] == 2 and sim.set == ["SM_Road_01", "SM_Road_02"]
-    assert all(p == ps.texture_png() for p in sim.pngs)
-    assert rec["png_sha256"].startswith("sha256:") and "no call" in rec["read_back"]
+    assert rec["matched"] == 2 and rec["set"] == 2
+    assert sim.set == ["SM_jcRoad22mA_0", "SM_jcRoad22mA_1"]
+    assert set(sim.materials) == {ps.TEXTURE_MATERIAL} and "no call" in rec["read_back"]
     # Every other stressor leaves the actors alone.
     for n in ps.NAMES:
         if n != "texture":
             other = TextureSim()
             assert ps.apply_texture(other, n) == {"mode": "none", "ok": True, "problems": []}
-            assert other.set == [] and other.pngs == []
-    # Nothing matched, none took it, the listing failed: refused with why.
-    rec = ps.apply_texture(TextureSim(actors=["BP_Car_07"]), "texture", png_dir=str(_tmp()))
+            assert other.set == [] and other.materials == []
+    # Nothing matched, none took it (the 15 Nov RuntimeMeshMaterial case), the
+    # listing failed: refused with why.
+    rec = ps.apply_texture(TextureSim(actors=["BP_Car_07"]), "texture")
     assert not rec["ok"] and "matches" in rec["problems"][0], rec
-    rec = ps.apply_texture(TextureSim(refuse={"SM_Road_01", "SM_Road_02"}), "texture",
-                           png_dir=str(_tmp()))
+    rec = ps.apply_texture(TextureSim(refuse={"SM_jcRoad22mA_0", "SM_jcRoad22mA_1"}),
+                           "texture")
     assert not rec["ok"] and rec["n_failed"] == 2 and "none of the 2" in rec["problems"][0]
-    rec = ps.apply_texture(TextureSim(list_fails=True), "texture", png_dir=str(_tmp()))
+    rec = ps.apply_texture(TextureSim(list_fails=True), "texture")
     assert not rec["ok"] and "list_objects" in rec["problems"][0], rec
     # One refusal among several is recorded, not fatal.
-    rec = ps.apply_texture(TextureSim(refuse={"SM_Road_02"}), "texture", png_dir=str(_tmp()))
-    assert rec["ok"] and rec["set"] == 1 and rec["failed"][0]["object"] == "SM_Road_02"
+    rec = ps.apply_texture(TextureSim(refuse={"SM_jcRoad22mA_1"}), "texture")
+    assert rec["ok"] and rec["set"] == 1 and rec["failed"][0]["object"] == "SM_jcRoad22mA_1"
     # The cap: the first TEXTURE_MAX_OBJECTS by name, the rest counted.
-    many = [f"SM_Road_{i:04d}" for i in range(ps.TEXTURE_MAX_OBJECTS + 5)]
-    rec = ps.apply_texture(TextureSim(actors=many), "texture", png_dir=str(_tmp()))
+    many = [f"SM_jcRoad_{i:04d}" for i in range(ps.TEXTURE_MAX_OBJECTS + 5)]
+    rec = ps.apply_texture(TextureSim(actors=many), "texture")
     assert rec["asked"] == ps.TEXTURE_MAX_OBJECTS and rec["dropped_over_cap"] == 5
     att = ps.texture_attached("texture")
-    assert att["ok"] and att["png_sha256"] == rec["png_sha256"] and "attached" in att["mode"]
+    assert att["ok"] and att["material"] == ps.TEXTURE_MATERIAL and "attached" in att["mode"]
     assert ps.texture_attached("rain")["mode"] == "none"
-
-
 
 def test_the_rotation_maths_is_the_clients():
     """quaternion_to_rpy_deg / rpy_deg_to_quaternion are projectairsim.utils'
@@ -510,7 +472,8 @@ def test_the_scene_step_and_the_nodes_take_the_texture_stressor():
     cam = pn.ProjectAirSimCamera(T.FakeObs(), cfg, projectairsim=pas, stress="texture")
     cam.start()
     tex = cam.scene_record["stress"]["texture"]
-    assert tex["ok"] and tex["set"] == 2 and client.textures.set == ["SM_Road_01", "SM_Road_02"]
+    assert tex["ok"] and tex["set"] == 2
+    assert client.textures.set == ["SM_jcRoad22mA_0", "SM_jcRoad22mA_1"]
     # ... refused when no actor matches.
     pas, _ = _pas(textures=TextureSim(actors=["BP_Car_07"]))
     cam = pn.ProjectAirSimCamera(T.FakeObs(), cfg, projectairsim=pas, stress="texture")
@@ -529,7 +492,7 @@ def test_the_scene_step_and_the_nodes_take_the_texture_stressor():
     cam = pn.ProjectAirSimCamera(T.FakeObs(), orin, projectairsim=pas, attach=True,
                                  stress="texture")
     cam.start()
-    assert client.textures.set == [] and client.textures.pngs == []
+    assert client.textures.set == [] and client.textures.materials == []
     assert "attached" in cam.scene_record["stress"]["texture"]["mode"]
     assert cam.scene_record["stress"]["sun"]["ok"]
 
@@ -612,8 +575,8 @@ class _World:
     def set_object_pose(self, object_name, pose, teleport):
         return self.client.sun.set_object_pose(object_name, pose, teleport)
 
-    def set_object_texture_from_file(self, object_name, path):
-        return self.client.textures.set_object_texture_from_file(object_name, path)
+    def set_object_material(self, object_name, material_path):
+        return self.client.textures.set_object_material(object_name, material_path)
 
 
 def _pas(topics=None, weather=None, textures=None, sun=None):
