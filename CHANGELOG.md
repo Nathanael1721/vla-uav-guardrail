@@ -16,6 +16,69 @@ shipped change and recorded as one.
 
 ## [Unreleased]
 
+### 2026-11-14 (hs10 flies every FSM edge the rails had never taken; ge1113 and the CI on Python 3.12) — G2, G4, G6, X2 and X3 flew on the hil rig for the first time, from a campaign planned, driven and scored on Python 3.12; the grant-example re-fly at the start-up fix had no tick over 100 ms in 95,160
+
+#### Flown
+- hs10 (8a473fa, hil, profile `fsm_edges`, one seed per cell, the desktop
+  side on `guardrail-py312`: sweep.json `_runner` python 3.12.16), 5 missions,
+  P0 escape 0, 0 polygon entries, fail-safe labels 4/4 (fsm-n-in-t-flicker
+  unlabelled, below):
+  - hs10_003 fsm-n-in-t-flicker: X1, then G2 at 5.8 s ("N-in-T: 3 onsets in
+    5 s >= N=3") and G4 at 10.0 s ("N-in-T persists: 3 onsets in 5 s since
+    Loiter entry"), RTL, G9 home reached.
+  - hs10_001 failsafe-rtl-from-hold: G1, G3, X2 at 8.1 s (an RTL rule over
+    the held aircraft), G9. hs10_002 failsafe-land-from-hold: G1, G3, X3 at
+    8.0 s, G10 landed.
+  - hs10_004 failsafe-rtl-blocked: G11, then G6 0.1 s later ("RTL failed:
+    blocked path", the leg home at 15.0 m crosses home-side-zone), G10 landed.
+    The blocked path is the Shield's own check of the leg home against its
+    hard P0 zones, not a failure ArduPilot reported.
+  - hs10_005 wind-beyond-authority (lane 15, 12 m/s): G1, G3, X9 at 11.2 s
+    (hold not kept, 14.29 m from its point), G6 at 16.3 s ("no progress home:
+    -12.57 m in 5.0 s", progress home judged while ArduPilot reports RTL:
+    our RTL-failure reason, not one the grant names), G10 landed. The hs07
+    case where ArduPilot's RTL was blown into nfz-square now lands where the
+    RTL failed.
+  - The Loiter in hs10 is held in GUIDED by the companion, not SET_MODE
+    LOITER (hs10_003 events.jsonl t = 5.828 s), so WP3-07 stays PARTIAL
+    on that point (PI decision 7).
+  - `e2e_ms` max 41.3 ms over 423 setpoint ticks (2,181 rows).
+- ge1113 (2f22116, hil, profile `grant_example`, 36 missions, all
+  KPI-grade; `tools/kpi_report.py --campaign demo/out/hil_ge1113`, committed as
+  `docs/data/kpi_ge1113/kpi_report_ge1113_2026-11-14.md`, revision 181b75cdaad3):
+  36 passed; `tick_ms` and `e2e_ms` p50 7.2-7.3 / p99 9.8 / max 66.37 ms,
+  0 of 95,160 ticks over 100 ms. Read with care: no mission came near a zone
+  (0 P0-violation ticks, 0 repairs, never unsafe), so its P0 rate is vacuous
+  and its fail-safe labels (36/36, all "no fail-safe") do not discriminate;
+  it is latency evidence at the fixed commit, not Shield evidence. Mission
+  success 27/36.
+
+#### Measured
+- The full CI at 8a473fa on both desktop interpreters:
+  `docs/data/ci_local/8a473fa0172e.json` (vla-real, Python 3.10.20: 148/148
+  files, 3,769/3,903 tests) and `8a473fa0172e-py312.json` (guardrail-py312,
+  Python 3.12.16: 148/148 files, 3,771/3,902 tests), claims and smoke rc 0
+  on both. `dc8cd9cb197d.json` (the clean CI at dc8cd9c of 12 Nov) is
+  committed with them.
+
+#### Changed
+- `scripts/run_pas_ardupilot.ps1`: the non-VLA steps (scene, check, g1, the
+  policy-bundle check, the node's dry run) run on `guardrail-py312`, which
+  now carries the Project AirSim client; the node step, which loads the
+  detector and the VLA pilot, keeps `vla-real` (`$PyVla`). Not yet run on a
+  live scene. `-SimMaxFps <n>` caps the simulator's renderer (`t.MaxFPS`, as
+  `run_citylife_follow.ps1`); 0, the default, leaves it uncapped as before.
+
+#### Found
+- Three desktop losses (13 Nov 13:40, 14 Nov 03:34, and a load at 07:30 that
+  was stopped in time) were the kernel's ETW pools, not a process: `EtwD`
+  (paged) 20.8 GB and `Etwr` (nonpaged) 3.3 GB, 132.7 M events allocated and
+  43.4 M still queued after the simulator was stopped, freed at about 11,500
+  per second. The queue grows only while the Unreal simulator runs, and the
+  scene configs of the stable 13 Nov 20:02 load and the 14 Nov 07:30 load
+  are identical, so the producer is the simulator's run and the slow reader
+  is an ETW real-time session on this desktop, not yet named.
+
 ### 2026-11-14 (a harness-driven hil episode) — the harness can drive a library scenario's own zone events into a flying hil Shield over REST (spawn as POST /hot_apply, rotate / translate / scale as PATCH /dynamic_nfz/<id>), EmitEvent works on a rail episode, and tools/harness_hil_episode.py flies or dry-runs one such episode; built and tested on the fake rig, not flown
 
 Audit cards WP4-03, WP4-05 and WP4-11, the code side. **Nothing here has

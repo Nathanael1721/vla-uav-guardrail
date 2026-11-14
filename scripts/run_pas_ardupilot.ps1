@@ -84,6 +84,7 @@ param(
     [string]$Orin    = "",              # Jetson Orin address: adds a MAVLink UDP output to it
     [int]$SimWidth   = 960,
     [int]$SimHeight  = 540,
+    [int]$SimMaxFps  = 0,      # t.MaxFPS for the simulator's renderer (0 = uncapped, as before)
     [switch]$SaveView,                  # -Step node: record the demo video (--save-view)
     # Frames go to C: through a junction, as run_citylife_follow.ps1; "" = under demo\out.
     [string]$OffloadRoot = "D:\vla_drone_offload\demo_out",   # outside OneDrive; C: filled up on 23 Oct
@@ -99,7 +100,12 @@ param(
 
 $ErrorActionPreference = "Stop"
 $Root = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
-$Py   = "C:\Users\natha\.conda\envs\vla-real\python.exe"
+# The non-VLA steps (scene, check, g1, the policy hash, the node's dry run) run on the grant's
+# Python 3.11+ (WP1-25 / X-06): guardrail-py312 carries the guardrail and the Project AirSim
+# client. The node step itself loads the detector and the VLA pilot (torch, transformers), the
+# VLA runtime the grant leaves outside that floor, so it keeps vla-real (3.10).
+$Py    = "C:\Users\natha\.conda\envs\guardrail-py312\python.exe"
+$PyVla = "C:\Users\natha\.conda\envs\vla-real\python.exe"
 $Proj = Join-Path $Root "PASBlocks\Blocks.uproject"
 $Map  = "/Game/CityLife/Maps/CityLife_Day"
 $Node = Join-Path $Root "demo\pas_ardupilot\perception_node.py"
@@ -202,7 +208,11 @@ function Start-Sim {
     }
     Stop-OurGameSim
     Start-Sleep -Seconds 4
-    Start-Process -FilePath $UE -ArgumentList "`"$Proj`"", $Map, '-game', '-windowed', "-ResX=$SimWidth", "-ResY=$SimHeight" | Out-Null
+    $ueArgs = @("`"$Proj`"", $Map, '-game', '-windowed', "-ResX=$SimWidth", "-ResY=$SimHeight")
+    # A capped renderer (as run_citylife_follow.ps1 -SimMaxFps): fewer frames, fewer per-frame
+    # driver events; the cameras' own capture intervals are unchanged.
+    if ($SimMaxFps -gt 0) { $ueArgs += "-ExecCmds=`"t.MaxFPS $SimMaxFps`"" }
+    Start-Process -FilePath $UE -ArgumentList $ueArgs | Out-Null
     Say "simulator starting on $Map ..."
     for ($i = 0; $i -lt 90; $i++) {
         Start-Sleep -Seconds 5
@@ -398,7 +408,7 @@ try {
                 Set-ViewJunction $Tag
                 $a += @("--save-view")
             }
-            & $Py @a
+            & $PyVla @a
             if ($LASTEXITCODE -ne 0) { throw "perception node exited $LASTEXITCODE" }
             if ($SaveView) {
                 $side = Join-Path $Out "$Tag\view\recorder.json"
