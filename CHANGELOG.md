@@ -16,6 +16,46 @@ shipped change and recorded as one.
 
 ## [Unreleased]
 
+### 2026-11-14 (AIoT-VLA flown on the hil rig; the ETW pool cause found) — the lab's own VLA on the AGX Orin flew the Project AirSim + ArduPilot follow through MAVROS 2 with the Shield on, one mission KPI-grade, five under perception stress; the desktop's memory losses were the Plaud app reading ETW too slowly
+
+#### Found
+- The kernel's ETW pool exhaustion (CHANGELOG 2026-11-14 (hs10), "Found")
+  was the Plaud desktop app: while a queue drained it used 2-4 s of CPU per
+  10 s and 0.25 s once the queue was empty. With it closed, the simulator
+  still emits about 800,000 events per second at start-up, and none queue
+  (pool 0.00 GB). Keep it closed during simulator runs.
+
+#### Flown (docs/data/pas_aiot_hil_20261114/flights.md)
+- master f77efae on the desktop and the AGX Orin; AIoT-VLA v10b served on
+  the Orin; perception node `--link mavros --pilot vla --mission follow`;
+  Project AirSim CityLife and ArduPilot SITL 4.5.7 on the desktop; the
+  scene steps on guardrail-py312. Six missions:
+  - pas_hil_aiot_kpi_01 (unstressed): **KPI-grade**, 420 s, Shield 9.98 Hz,
+    119 interventions, 0 P0 escape ticks, VLA 7.75 decisions/s, frames to
+    the VLA 9.50 Hz while asked, camera to first setpoint p50 161.7 / p99
+    287.1 ms, ArduPilot real-time factor 0.968.
+  - day_02, day_03, day_04 (perception stress `day`, non-KPI): 118, 113 and
+    105 interventions, P0 0; day_03 lost the car, day_04 ended with
+    ArduPilot's GeoFence (radius 400 m) taking the aircraft home at 398 m.
+  - dusk_01 (-2 EV): car found after 169.8 s, lost; 22 interventions, P0 0.
+  - night_01 (-4 EV): no red car found in 330 s; the mission refused to
+    start and landed.
+  - rain_01 (RAIN 0.8): 297 interventions, P0 0, the full 420 s.
+  - day_01 was stopped before take-off (the detector tried to reach
+    huggingface.co from the offline Orin; the node now runs with
+    HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1).
+- Perception metric (tools/perception_stress_report.py,
+  docs/data/pas_aiot_hil_20261114/perception_stress_report.md): mean frame
+  luma 97.9 day, 43.0 dusk, 13.5 night, 97.6 rain; target lock 0.060
+  unstressed, 0.106 day, 0.038 dusk, 0.818 rain. The follow is weak on this
+  rail against 0.955-0.969 on simple_flight; not investigated yet.
+
+#### Changed
+- Appendix A: ARCH-07, ARCH-18, ARCH-20, WP4-16, WP1-25, WP2-19 and X-06 to
+  DONE (88 DONE / 41 PARTIAL / 6 DRIFT / 1 MISSING); ARCH-01, ARCH-03,
+  ARCH-21, ARCH-25, X-05 and WP4-18 updated with the measured rates and
+  stay open (the VLA decides at 6.9-7.9 Hz; texture stressors not flown).
+
 ### 2026-11-14 (WP3-15's censored runs read three ways; demo A flown) — 18 of ntFIN2's 19 censored fail-safe runs are ArduPilot GeoFence takeovers that no flight length decides, so the KPI is stated under three readings and the question goes to the PI; the professor-demo mission flew at master
 
 #### Found
