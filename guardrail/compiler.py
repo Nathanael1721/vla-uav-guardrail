@@ -2769,10 +2769,13 @@ class ConstraintCompiler:
                 "policy_id": pack["policy_id"],
                 "policy_hash": pack["policy_hash"],
                 # The shorthands the demos already read, kept so this stays a
-                # drop-in replacement...
+                # drop-in replacement... Every keep-out zone that stays where
+                # it is declared: since 2026-11-15 a dynamic_nfz without
+                # motion too (Policy.static_keepout_zones, C-16); a moving one
+                # is in the summary pack below.
                 "no_fly_zones": [
                     {"id": f.id, "vertices": [{"x": v.x, "y": v.y} for v in f.vertices]}
-                    for f in self.policy.by_type(PolygonFence)],
+                    for f in self.policy.static_keepout_zones()],
                 "altitude_band_m": (
                     [alts[0].alt_min_m, alts[0].alt_max_m] if alts else None),
                 "speed_max_mps": kins[0].speed_max_mps if kins else None,

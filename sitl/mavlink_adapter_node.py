@@ -65,21 +65,27 @@ WHAT ELSE GOES THROUGH HERE (the MAVROS-facing side, WP3-09)
     (/mavros/mission/pull). MAVROS 2 writes them with the mission protocol,
     as MISSION_ITEM_INT (the rail's bag carries the raw frames on
     /uas1/mavlink_sink). Since 2026-11-03.
-  * /shield/mission_update (std_msgs/String JSON) -> /mavros/mission/push
-    with start_index = the item's seq: ONE item replaced in the autopilot's
-    mission (MISSION_WRITE_PARTIAL_LIST, then that item as MISSION_ITEM_INT),
-    the grant's "replaces or updates the next waypoint". ArduCopter 4.5.7
-    applies the item as it arrives and, when it is the item being flown,
-    restarts it ("Auto mission changed, restarted command"): the new
-    waypoint is flown at once. The item is then read back and compared, and
-    that read-back - not MAVROS's push result - is the update's verdict:
+  * /shield/mission_update (std_msgs/String JSON) -> /mavros/mission/push:
+    ONE item replaced in the autopilot's mission, the grant's "replaces or
+    updates the next waypoint". ArduCopter 4.5.7 applies the item as it
+    arrives and, when it is the item being flown, restarts it ("Auto mission
+    changed, restarted command"): the new waypoint is flown at once. The
+    items written are then read back and compared, and that read-back - not
+    MAVROS's push result - is the update's verdict. Since 2026-11-15 the
+    update is written as the WHOLE mission with that item replaced
+    (start_index 0: MISSION_COUNT, every item as MISSION_ITEM_INT,
+    MISSION_ACK ACCEPTED), one update at a time (MissionPushQueue). Until
+    then it went with start_index = the item's seq, a partial write, and
     MAVROS 2.14 writes MISSION_WRITE_PARTIAL_LIST with end_index = start +
     count, which MAVLink and ArduPilot read as the last index INCLUDED, so
-    ArduPilot asks for one item more, MAVROS refuses it as out of range, and
-    the push ends in ArduPilot's 8 s upload timeout (MISSION_ACK 15) with the
+    ArduPilot asked for one item more, MAVROS refused it as out of range, and
+    the push ended in ArduPilot's 8 s upload timeout (MISSION_ACK 15) with the
     item already written (flown 2026-11-03: mission_wp_20261103c, decoded
-    from its bag's /uas1/mavlink_sink and /uas1/mavlink_source).
-    sitl/ros2_mission_node.py, the mission-style Shield, sends both.
+    from its bag's /uas1/mavlink_sink and /uas1/mavlink_source); a second
+    update inside those 8 s would have been refused. MISSION_UPDATE_WRITES
+    says why the full write; `--mission-update-write partial` re-flies the
+    old one. sitl/ros2_mission_node.py, the mission-style Shield, sends both
+    topics.
   * /mavlink_adapter/status (std_msgs/String JSON, latched): every upload and
     mode request result, which the Shield node writes into events.jsonl.
   * <out>/adapter_log.jsonl: every setpoint in, the heading used, the NED
@@ -161,6 +167,35 @@ FIRST_WAYPOINT_SEQ = 2
 SPEED_TYPE_GROUND = 1.0
 # NAV_WAYPOINT param1 is the hold time in seconds.
 MAX_HOLD_S = 3600.0
+
+# HOW AN IN-FLIGHT UPDATE IS WRITTEN (2026-11-15, WP3-09).
+#
+#   full     (default) the whole mission the autopilot holds, with the one
+#            item replaced, through /mavros/mission/push with start_index 0:
+#            MAVROS 2 sends MISSION_COUNT(n), ArduPilot asks for every item
+#            (MISSION_REQUEST 0 .. n-1), MAVROS answers each with
+#            MISSION_ITEM_INT, ArduPilot ends the transfer with MISSION_ACK
+#            ACCEPTED - the exchange the pre-flight upload has always used,
+#            flown and read back since 2026-11-03.
+#   partial  the one item at start_index = seq: MAVROS 2.14 sends
+#            MISSION_WRITE_PARTIAL_LIST(seq, seq + 1), which MAVLink and
+#            ArduPilot read as the last index INCLUDED, so ArduPilot writes
+#            the item, asks for seq + 1, which MAVROS refuses as out of range,
+#            and ends the transfer 8 s later with MISSION_ACK 15 (operation
+#            cancelled, "Mission upload timeout"): flown on 2026-11-03
+#            (mission_wp_20261103c / _d, decoded from the bags). The item
+#            lands, but a second update inside those 8 s would be refused.
+#
+# The full write is what a ground station does when a plan is edited in
+# flight, and the only one MAVROS 2.14 completes. The items it rewrites
+# unchanged should not disturb the flight: ArduCopter's ModeAuto restarts
+# the current command only when the CONTENT of the upcoming nav commands
+# changes (AP_Mission_ChangeDetector, read from the ArduPilot 4.5 source,
+# not yet seen in a flight with this write), as it did for the partial write
+# ("Auto mission changed, restarted command"). The partial write is kept,
+# behind --mission-update-write partial, to re-fly the 3 Nov behaviour.
+MISSION_UPDATE_WRITES = ("full", "partial")
+DEFAULT_MISSION_UPDATE_WRITE = "full"
 
 # The modes the adapter forwards: those the escalation FSM can ask for (Normal
 # and Brake fly GUIDED; Loiter, RTL, Land), which include the mission-end LAND.
@@ -696,6 +731,59 @@ def mission_update(doc: dict, n_items: int | None, home_lat: float, home_lon: fl
     return seq, waypoint_item(doc["waypoint"], home_lat, home_lon, home_local_ne)
 
 
+def update_push(sent: list[dict], seq: int, item: dict,
+                write: str = DEFAULT_MISSION_UPDATE_WRITE) -> dict:
+    """The /mavros/mission/push request that puts `item` at `seq` in the
+    mission the autopilot holds (`sent`: what was last written there, item
+    by item): {"write", "start_index", "items", "check"}, `check` the items
+    the read-back compares. "full" (MISSION_UPDATE_WRITES) writes every item
+    of `sent` with `seq` replaced, from start_index 0, and checks them all;
+    "partial" writes the one item at start_index = seq and checks it. A full
+    write needs `sent` to hold the item it replaces."""
+    if write not in MISSION_UPDATE_WRITES:
+        raise ValueError(f"write {write!r} is not one of {MISSION_UPDATE_WRITES}")
+    seq = int(seq)
+    if write == "partial":
+        return {"write": "partial", "start_index": seq, "items": [item], "check": [seq]}
+    if not 0 <= seq < len(sent):
+        raise ValueError(f"seq {seq}: the adapter holds {len(sent)} item(s) of the "
+                         f"mission, so a full write cannot replace it")
+    items = list(sent)
+    items[seq] = item
+    return {"write": "full", "start_index": 0, "items": items,
+            "check": list(range(len(items)))}
+
+
+class MissionPushQueue:
+    """One mission write at a time, the updates that arrive meanwhile in
+    order (2026-11-15). MAVROS 2's waypoint plugin answers a push made while
+    another transfer is in progress - a push, or the read-back's pull - with
+    success false and nothing sent (its state is not IDLE), so an update that
+    arrived during the previous one's write or read-back was lost, while the
+    mission node believed it sent. `offer(doc)` says whether to write it now;
+    `done()`, called once a write has its verdict, hands over the next one
+    (still busy) or None (idle)."""
+
+    def __init__(self) -> None:
+        self.busy = False
+        self.waiting: list[dict] = []
+        self.n_queued = 0
+
+    def offer(self, doc: dict) -> bool:
+        if self.busy:
+            self.waiting.append(doc)
+            self.n_queued += 1
+            return False
+        self.busy = True
+        return True
+
+    def done(self) -> dict | None:
+        if self.waiting:
+            return self.waiting.pop(0)
+        self.busy = False
+        return None
+
+
 def same_item(a: dict, b: dict, tol_deg: float = 2e-7) -> bool:
     """Does a read-back item hold what was sent? Command, hold time and
     position (to the 1e-7 degree MISSION_ITEM_INT carries); the altitude to
@@ -738,11 +826,19 @@ if HAVE_ROS:
     class MavlinkAdapterNode(Node):
         def __init__(self, out: Path | None, upload_fences: bool = True,
                      hold_mode: str = DEFAULT_HOLD_MODE,
-                     fences_by_gcs: bool = False) -> None:
+                     fences_by_gcs: bool = False,
+                     mission_update_write: str = DEFAULT_MISSION_UPDATE_WRITE) -> None:
             super().__init__(ADAPTER_NODE_NAME)
             if hold_mode not in HOLD_MODES:
                 raise ValueError(f"hold_mode {hold_mode!r} is not one of {HOLD_MODES}")
+            if mission_update_write not in MISSION_UPDATE_WRITES:
+                raise ValueError(f"mission_update_write {mission_update_write!r} is not "
+                                 f"one of {MISSION_UPDATE_WRITES}")
             self.hold_mode = hold_mode
+            # How a /shield/mission_update is written (MISSION_UPDATE_WRITES),
+            # one at a time (MissionPushQueue).
+            self.mission_update_write = mission_update_write
+            self._mq = MissionPushQueue()
             for name in ("IGNORE_PX", "IGNORE_PY", "IGNORE_PZ", "IGNORE_AFX",
                          "IGNORE_AFY", "IGNORE_AFZ", "IGNORE_YAW",
                          "FRAME_LOCAL_NED"):
@@ -1073,68 +1169,105 @@ if HAVE_ROS:
                 self._status({"kind": "mission_update", "success": False,
                               "why": "unreadable /shield/mission_update message"})
                 return
+            # One write at a time (MissionPushQueue): MAVROS refuses a push
+            # while the previous write or its read-back is in progress.
+            if not self._mq.offer(doc):
+                self._status({"kind": "mission_update_queued", "seq": doc.get("seq"),
+                              "update_id": doc.get("update_id"),
+                              "waiting": len(self._mq.waiting),
+                              "why": "the previous update's write or read-back is "
+                                     "in progress"})
+                return
+            self._write_update(doc)
+
+        def _update_done(self) -> None:
+            """An update has its verdict: the next queued one is written."""
+            nxt = self._mq.done()
+            if nxt is not None:
+                self._write_update(nxt)
+
+        def _write_update(self, doc: dict) -> None:
             base = {"kind": "mission_update", "seq": doc.get("seq"),
                     "generation": doc.get("generation"), "reason": doc.get("reason"),
-                    "update_id": doc.get("update_id")}
+                    "update_id": doc.get("update_id"),
+                    "write": self.mission_update_write}
+
+            def refuse(why: str) -> None:
+                self._status({**base, "success": False, "why": why})
+                self._update_done()
             if self.home is None:
-                self._status({**base, "success": False, "why": "no home position yet"})
+                refuse("no home position yet")
                 return
             lat, lon, ne = self.home
             try:
                 seq, item = mission_update(doc, self.mission_n, lat, lon, ne)
+                plan = update_push(self.mission_sent, seq, item,
+                                   self.mission_update_write)
             except (KeyError, TypeError, ValueError) as e:
-                self._status({**base, "success": False, "why": str(e)})
+                refuse(str(e))
                 return
             if not self.cli_mpush.service_is_ready():
-                self._status({**base, "success": False,
-                              "why": "/mavros/mission/push not available"})
+                refuse("/mavros/mission/push not available")
                 return
-            # A partial write: MAVROS sends MISSION_WRITE_PARTIAL_LIST
-            # (seq, seq + 1: see the module docstring) and then the item, as
-            # MISSION_ITEM_INT.
-            req = WaypointPush.Request(start_index=seq)
-            req.waypoints = [self._wp(item)]
+            # "full" (the default): the whole mission with the item replaced,
+            # from start_index 0 (MISSION_COUNT, then every item as
+            # MISSION_ITEM_INT, ACK ACCEPTED). "partial": start_index = seq,
+            # which MAVROS 2.14 sends as MISSION_WRITE_PARTIAL_LIST(seq,
+            # seq + 1) and ArduPilot ends in its 8 s upload timeout
+            # (MISSION_UPDATE_WRITES).
+            req = WaypointPush.Request(start_index=plan["start_index"])
+            req.waypoints = [self._wp(it) for it in plan["items"]]
             self._log({"t": round(time.monotonic(), 4), "mission_push": {
-                "start_index": seq, "items": [item],
+                "write": plan["write"], "start_index": plan["start_index"],
+                "items": plan["items"], "seq": seq,
                 "update_id": doc.get("update_id")}})
             fut = self.cli_mpush.call_async(req)
 
-            def pushed(f, seq=seq, item=item):
+            def pushed(f, seq=seq, item=item, plan=plan):
                 r = f.result()
                 ok = bool(r and r.success)
                 n = int(r.wp_transfered) if r else 0
-                st = {**base, "push_success": ok, "transferred": n, "item": item}
+                st = {**base, "push_success": ok, "transferred": n, "item": item,
+                      "items_written": len(plan["items"])}
                 if not ok:
                     st["push_note"] = (
                         "MAVROS reported the partial push failed; the item is read "
                         "back to see whether the autopilot holds it (MAVROS 2.14 sends "
                         "end_index = start + count, ArduPilot reads it inclusive and "
-                        "waits for one item more until its upload timeout)")
+                        "waits for one item more until its upload timeout)"
+                        if plan["write"] == "partial" else
+                        "MAVROS reported the full write failed; the mission is read "
+                        "back to see what the autopilot holds")
                 if not ok and n < 1:
                     self._status({**st, "success": False})
+                    self._update_done()
                     return
-                # The verdict is the autopilot's own copy of the item.
+                # The verdict is the autopilot's own copy of the items written.
                 prev = self.mission_sent[seq] if seq < len(self.mission_sent) else None
                 if seq < len(self.mission_sent):
                     self.mission_sent[seq] = item
-                self._read_back_mission(st, [seq], restore=(seq, prev))
+                self._read_back_mission(st, plan["check"], restore=(seq, prev),
+                                        on_done=self._update_done)
             fut.add_done_callback(pushed)
-            self.get_logger().info(f"mission item {seq} replaced "
-                                   f"({doc.get('reason')})")
+            self.get_logger().info(f"mission item {seq} replaced ({plan['write']} write, "
+                                   f"{len(plan['items'])} item(s); {doc.get('reason')})")
 
         def _read_back_mission(self, status: dict, check: list[int],
-                               restore: tuple | None = None) -> None:
+                               restore: tuple | None = None, on_done=None) -> None:
             """Pull the mission back and compare the items in `check` with
             what was sent; the status carries the verdict. For an update the
             verdict IS the comparison (`success`); `restore` (seq, item) puts
             back what the autopilot held when the read-back shows the new item
-            did not land."""
+            did not land. `on_done()` runs once the verdict is published (the
+            next queued update)."""
             if not check or not self.cli_mpull.service_is_ready():
                 if status.get("kind") == "mission_update":
                     status = {**status, "success": False,
                               "why": status.get("why") or "no read-back: /mavros/mission/pull "
                                                           "not available"}
                 self._status(status)
+                if on_done is not None:
+                    on_done()
                 return
             self.mission_list = None
             fut = self.cli_mpull.call_async(WaypointPull.Request())
@@ -1162,10 +1295,13 @@ if HAVE_ROS:
                         rec["success"] = not bad
                         if bad and restore is not None and restore[1] is not None:
                             self.mission_sent[restore[0]] = restore[1]
-                    if status.get("kind") == "mission_update" and check and check[0] < len(lst):
-                        rec["read_back_item"] = self._as_dict(lst[check[0]])
+                    if status.get("kind") == "mission_update" and restore is not None \
+                            and restore[0] < len(lst):
+                        rec["read_back_item"] = self._as_dict(lst[restore[0]])
                     self._status(rec)
                     self._log({"t": round(time.monotonic(), 4), "mission_status": rec})
+                    if on_done is not None:
+                        on_done()
                 timer = self.create_timer(0.25, compare)
             fut.add_done_callback(pulled)
 
@@ -1190,6 +1326,13 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--hold-mode", choices=HOLD_MODES, default=DEFAULT_HOLD_MODE,
                     help="ArduCopter mode for the FSM's LOITER: BRAKE (default; holds "
                          "with no pilot input) or LOITER (needs the throttle centred)")
+    ap.add_argument("--mission-update-write", choices=MISSION_UPDATE_WRITES,
+                    default=DEFAULT_MISSION_UPDATE_WRITE,
+                    help="how /shield/mission_update reaches the autopilot: full "
+                         "(default; the whole mission with the item replaced, "
+                         "MISSION_COUNT + MISSION_ITEM_INT) or partial (one item, "
+                         "MISSION_WRITE_PARTIAL_LIST, which MAVROS 2.14 sends one "
+                         "past the item: ArduPilot's 8 s upload timeout follows)")
     args, ros_args = ap.parse_known_args(argv)
     if not HAVE_ROS:
         raise SystemExit("mavlink_adapter_node needs rclpy and mavros_msgs: "
@@ -1199,7 +1342,8 @@ def main(argv: list[str] | None = None) -> None:
     node = MavlinkAdapterNode(Path(args.out) if args.out else None,
                               upload_fences=not args.no_fences,
                               hold_mode=args.hold_mode,
-                              fences_by_gcs=args.fences_by_gcs)
+                              fences_by_gcs=args.fences_by_gcs,
+                              mission_update_write=args.mission_update_write)
     try:
         rclpy.spin(node)
     except (KeyboardInterrupt, Exception) as e:          # noqa: BLE001

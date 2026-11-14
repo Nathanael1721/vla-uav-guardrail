@@ -334,7 +334,6 @@ def legal_approach(rows: list[dict], tx: float, ty: float, policy_path: Path,
     """
     from guardrail import load_policy
     from guardrail.geometry import fence_polygon
-    from guardrail.models import PolygonFence
     from shapely.geometry import Point
 
     x = np.array([r["x"] for r in rows], float)
@@ -345,7 +344,9 @@ def legal_approach(rows: list[dict], tx: float, ty: float, policy_path: Path,
     polys = []
     try:
         pol = load_policy(str(policy_path))
-        polys = [fence_polygon(f).buffer(f.margin_m) for f in pol.by_type(PolygonFence)]
+        # Every keep-out zone that stays put: since 2026-11-15 a dynamic_nfz
+        # without motion too (Policy.static_keepout_zones, C-16).
+        polys = [fence_polygon(f).buffer(f.margin_m) for f in pol.static_keepout_zones()]
     except Exception:
         pass
     if any(p.contains(Point(tx, ty)) for p in polys):
@@ -383,12 +384,13 @@ def actual_violations(rows: list[dict], policy_path: Path, citymap: Path,
     """
     from guardrail import load_policy
     from guardrail.geometry import fence_polygon
-    from guardrail.models import AltitudeEnvelope, ObstacleClearance, PolygonFence
+    from guardrail.models import AltitudeEnvelope, ObstacleClearance
     from shapely.geometry import Point
     import city_planner
 
     pol = load_policy(str(policy_path))
-    fences = [(f, fence_polygon(f)) for f in pol.by_type(PolygonFence)]
+    # Polygon and circle fences and a dynamic_nfz without motion (C-16).
+    fences = [(f, fence_polygon(f)) for f in pol.static_keepout_zones()]
     bands = pol.by_type(AltitudeEnvelope)
     clears = pol.by_type(ObstacleClearance)
     cmap = city_planner.load_occ(str(citymap))
@@ -706,7 +708,6 @@ def emit_figures(res: list[dict], cfg: dict, outdir: Path) -> None:
     import matplotlib.pyplot as plt
     from guardrail import load_policy
     from guardrail.geometry import fence_polygon
-    from guardrail.models import PolygonFence
 
     outdir.mkdir(parents=True, exist_ok=True)
     cells = {c["tag"]: c for c in cfg["cells"]}
@@ -715,7 +716,7 @@ def emit_figures(res: list[dict], cfg: dict, outdir: Path) -> None:
 
     try:
         pol = load_policy(str(ROOT / cfg["defaults"]["policy"]))
-        fences = [(f, fence_polygon(f)) for f in pol.by_type(PolygonFence)]
+        fences = [(f, fence_polygon(f)) for f in pol.static_keepout_zones()]
     except Exception:
         fences = []
 

@@ -2319,8 +2319,9 @@ MON = datetime(2026, 10, 5)                     # a Monday
 
 
 def _hot():
-    """HOT as a declaration (DSL lint applied). Not for flight: its two
-    dynamic_nfz are held back from policy files (models.FLIGHT_HELD_TYPES)."""
+    """HOT as a declaration (DSL lint applied). Not for flight: its moving
+    dynamic_nfz is held back from policy files (models.FLIGHT_HELD_TYPES;
+    the one without motion flies since 2026-11-15, C-16)."""
     from guardrail.models import policy_from_raw
     return policy_from_raw(json.loads(json.dumps(HOT)), source="HOT", runtime=False)
 
@@ -2334,28 +2335,32 @@ def test_the_hot_apply_types_compile_and_a_switch_or_swap_flies():
     CSPUnenforcedRules on the same rules.
 
     A policy FILE with a switch or a swap loads for flight. One declaring a
-    dynamic_nfz does not (models.FLIGHT_HELD_TYPES, found in review on
-    2026-10-08): the Shield enforces the zone, but the flight rails' dwell
-    metric (nfz_s) counts polygon and circle fences only and would score it
-    0 s. The refusal names each zone and that reason."""
+    MOVING dynamic_nfz does not (models.FLIGHT_HELD_TYPES, found in review on
+    2026-10-08): the Shield enforces the zone, but no rail can score the time
+    inside a zone that moves, so nfz_s would read 0 s. The refusal names the
+    zone and that reason. Since 2026-11-15 (C-16) a dynamic_nfz without
+    motion is no longer held: every rail and offline reader counts it."""
     _need()
     from guardrail.models import FLIGHT_HELD_TYPES, RUNTIME_TYPES, policy_from_raw
     assert {"dynamic_nfz", "time_window_switch", "corridor_swap"} <= RUNTIME_TYPES
     assert set(FLIGHT_HELD_TYPES) == {"dynamic_nfz"}
     pol = _hot()
     held = pol.flight_problems()
-    assert sorted(p.split(":")[0] for p in held) == ["dyn", "dyn-still"], held
-    assert all("nfz_s" in p for p in held), held
+    assert sorted(p.split(":")[0] for p in held) == ["dyn"], held
+    assert all("nfz_s" in p and "moves" in p for p in held), held
     try:
         policy_from_raw(json.loads(json.dumps(HOT)), source="HOT")   # the flight gate
     except ValueError as e:
-        assert "dyn:" in str(e) and "dyn-still:" in str(e) and "nfz_s" in str(e), str(e)
+        assert "dyn:" in str(e) and "dyn-still:" not in str(e) and "nfz_s" in str(e), str(e)
     else:
-        raise AssertionError("a policy file declaring a dynamic_nfz loaded for flight")
+        raise AssertionError("a policy file declaring a moving dynamic_nfz loaded for flight")
     no_zones = {**HOT, "constraints": [c for c in HOT["constraints"]
                                        if c["type"] != "dynamic_nfz"]}
     flies = policy_from_raw(json.loads(json.dumps(no_zones)), source="HOT-no-zones")
     assert flies.flight_problems() == []
+    still = {**HOT, "constraints": [c for c in HOT["constraints"] if c["id"] != "dyn"]}
+    flies = policy_from_raw(json.loads(json.dumps(still)), source="HOT-still")
+    assert flies.flight_problems() == [], "a zone without motion flies (C-16)"
     csp = ConstraintCompiler(pol).compile_csp(_mission(**HOT_MISSION),
                                               now=MON.replace(hour=8, minute=15),
                                               budget_tokens=1000)

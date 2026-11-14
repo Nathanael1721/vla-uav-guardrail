@@ -453,6 +453,9 @@ and every dynamic_nfz that does not move, and names a moving one in
 `nfz_moving_not_counted` instead of scoring it. On 2026-10-11 the hold is
 still in place, with its pre-2026-10-11 reason; what the rails still cannot
 score is a moving zone (`docs/DESIGN-policy-dsl-grant-form.md`, decision 5).
+Since 2026-11-15 (C-16) the hold covers a MOVING dynamic_nfz only: one
+without motion flies from a policy file, read by every keep-out reader
+through `Policy.static_keepout_zones`.
 A dynamic_nfz injected mid-flight with `hot_apply` is unaffected.
 
 Mid-flight hot-apply latency on the 50-rule load, after mission start: a

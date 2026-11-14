@@ -62,6 +62,9 @@
 #          SKIPs on the requirements-only job).
 #        The flying rails: test_railinputs_*, test_flight_pas_ap_20261008 (on
 #          its tests/fixtures/ copy of the 8 Oct flight), test_pas_ardupilot,
+#          test_pas_hotapply (2026-11-15, WP1-15: the perception rail's REST
+#          hot-apply listener, on test_pas_ardupilot's stand-ins; its
+#          real-HTTP and mTLS tests SKIP without fastapi, uvicorn and httpx),
 #          test_sitl_rails, test_sitl_stressors (the simulator's stressors on
 #          the rails, X-14, 2026-11-07), test_mavlink_adapter,
 #          test_ros2_vla_bridge (the
@@ -289,7 +292,10 @@
 #          there: those two files are that job's `no_skip`, and a SKIP line
 #          from either fails the job. Until 2026-10-19 no job installed
 #          uvicorn, so they SKIPped on every run while the job stayed green.
-#          On the other two jobs they SKIP (no fastapi, no uvicorn).
+#          On the other two jobs they SKIP (no fastapi, no uvicorn). Since
+#          2026-11-15 test_pas_hotapply (the perception rail's listener over
+#          real HTTP and mutual TLS, 2 of its 8 tests) is that job's
+#          `no_skip` too, for the same reason.
 #        - test_api's route tests need FastAPI and httpx (3.11 extras only),
 #          so test_api is in that job's `no_skip` too (14/14 in its WSL venv).
 #        - test_harness_service (the stress harness's gRPC control plane,
@@ -589,7 +595,7 @@ jobs:
             no_skip: "tests/test_harness_service.py tests/test_paraphraser_service.py"
           - python: "3.11"
             extras: "cryptography fastapi httpx uvicorn==0.50.2 jsonschema==4.26.0 grpcio==1.84.0 'protobuf>=7.35.1' grpcio-tools==1.84.0 pyarrow==26.0.0"
-            no_skip: "tests/test_railinputs_node.py tests/test_railinputs_hotapply.py tests/test_api.py tests/test_harness_service.py tests/test_paraphraser_service.py tests/test_wp4outputs_exporters.py"
+            no_skip: "tests/test_railinputs_node.py tests/test_railinputs_hotapply.py tests/test_pas_hotapply.py tests/test_api.py tests/test_harness_service.py tests/test_paraphraser_service.py tests/test_wp4outputs_exporters.py"
           - python: "3.11"
             extras: ""
             no_skip: ""
@@ -692,6 +698,7 @@ jobs:
               tests/test_identity.py \
               tests/test_identity_lock.py \
               tests/test_pas_ardupilot.py \
+              tests/test_pas_hotapply.py \
               tests/test_sitl_rails.py \
               tests/test_sitl_stressors.py \
               tests/test_mavlink_adapter.py \

@@ -1634,7 +1634,8 @@ def resolve_run_generation_chain(run_dir, recorded: str | None, candidates) -> s
     policy_g0.json resolves to a candidate (resolve_run_policy: it started
     from a known policy) and one of its own generations hashes to `recorded`.
     The chain is read without the flight loaders' runtime gate (a REST zone
-    is a dynamic_nfz, which a policy FILE may not fly, C-16)."""
+    is a dynamic_nfz, and one that moves may not fly from a policy FILE,
+    C-16; one without motion may since 2026-11-15)."""
     if not recorded:
         return None
     from guardrail.models import era_context, policy_from_raw

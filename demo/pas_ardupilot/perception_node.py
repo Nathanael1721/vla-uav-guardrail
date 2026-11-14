@@ -429,6 +429,7 @@ from mavlink_adapter_node import (DEFAULT_HOLD_MODE, FENCE_MARGIN_M,   # noqa: E
 
 import perception_stress as pstress                                   # noqa: E402
 import rail                                                           # noqa: E402
+import rail_hotapply                                                  # noqa: E402
 import topology as topo                                               # noqa: E402
 from autopilot import FrameAnchor, PymavlinkLink, body_to_world       # noqa: E402
 
@@ -3462,6 +3463,10 @@ class FenceBackstop:
                 timeout: float | None = None) -> dict:
         """Choose the zones for `position` and upload them (`timeout` per
         phase: given in flight; None before arming, the link's default)."""
+        # The generation first: a REST hot-apply on the listener's thread
+        # writes the rules before it bumps the generation (Shield._commit),
+        # so an upload never records a generation newer than its zones.
+        gen, gen_hash = self.policy.generation, self.policy.policy_hash
         zones, skipped = policy_zones(self.policy,
                                       now=self.now() if self.now else None,
                                       column_m=self.column_m)
@@ -3481,8 +3486,8 @@ class FenceBackstop:
         self.deferred = sorted(h["id"] for h in held)
         over_home = (None if self.home_xy is None else
                      zones_near(zones, self.home_xy[0], self.home_xy[1], self.margin_m))
-        out = {"reason": reason, "generation": self.policy.generation,
-               "policy_hash": self.policy.policy_hash,
+        out = {"reason": reason, "generation": gen,
+               "policy_hash": gen_hash,
                "fence_alt_max_m": self.column_m, "margin_m": self.margin_m,
                "position": None if position is None else [round(float(position[0]), 2),
                                                           round(float(position[1]), 2)],
@@ -3551,7 +3556,19 @@ class FenceBackstop:
 
     def recheck(self, position, unsafe_rules, t: float | None = None) -> dict | None:
         """Upload held-back zones the aircraft is now clear of (in flight: a
-        short timeout per phase, MIDFLIGHT_FENCE_TIMEOUT_S)."""
+        short timeout per phase, MIDFLIGHT_FENCE_TIMEOUT_S).
+
+        Since 2026-11-15 (WP1-15) also a policy generation the fence has not
+        had: a REST hot-apply (rail_hotapply) swaps the rules on its own
+        thread, which never touches the link, so the first call after it -
+        the hover's or the loop's tick - uploads that generation's zones, a
+        zone the aircraft is near held back as for every upload. One upload
+        per generation; none after a failed one (as for deferred zones)."""
+        if (position is not None and self.uploads and not self.failed
+                and self.uploads[-1].get("generation") != self.policy.generation):
+            return self.publish(position, f"generation {self.policy.generation}: the "
+                                f"policy changed in flight (hot-apply)", t,
+                                timeout=MIDFLIGHT_FENCE_TIMEOUT_S)
         if not self.deferred or not self.enabled or self.failed or position is None:
             return None
         _, held = defer_near(self.zones, position, self.margin_m)
@@ -4006,6 +4023,9 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--clock-tz", default=None,
                     help="the mission's time zone for the wall rule clock: a UTC "
                          "offset (+08:00, the default: Taiwan) or an IANA name")
+    # The REST hot-apply listener on this Shield (WP1-15): the ROS 2 node's
+    # five flags (rail_hotapply.add_arguments).
+    rail_hotapply.add_arguments(ap)
     ap.add_argument("--subject-actor", default="auto",
                     help="the level actor tag of the followed subject, whose "
                          "simulator pose is logged for EVALUATION only (never given "
@@ -4055,6 +4075,13 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--windows-ip", default=None)
     ap.add_argument("--wsl-ip", default=None)
     ap.add_argument("--link", choices=["pymavlink", "mavros"], default="pymavlink")
+    ap.add_argument("--setpoint-via", choices=["mavros", "adapter"], default="mavros",
+                    help="with --link mavros: where the Shield's emitted action goes - "
+                         "mavros (default; this node's own PositionTarget on "
+                         "/mavros/setpoint_raw/local) or adapter (the body action on "
+                         "/shield/setpoint for sitl/mavlink_adapter_node.py, started "
+                         "with --no-fences, to convert; refused before arming when no "
+                         "adapter listens: mavros_link.SETPOINT_VIA)")
     ap.add_argument("--mavlink-url", default=None,
                     help="default: the router's TCP server as this network plan reaches it")
     ap.add_argument("--start-sitl", action="store_true",
@@ -4268,6 +4295,10 @@ def check_args(args) -> None:
     """Combinations that cannot work, refused before anything starts."""
     if args.camera == "ros2" and args.link != "mavros":
         raise SystemExit("--camera ros2 needs --link mavros (one ROS 2 node)")
+    if getattr(args, "setpoint_via", "mavros") == "adapter" and args.link != "mavros":
+        raise SystemExit("--setpoint-via adapter needs --link mavros: the MAVLink adapter "
+                         "is a ROS 2 node (sitl/mavlink_adapter_node.py) that writes "
+                         "MAVROS's setpoint topic")
     if args.scene_mode == "attach" and args.start_sitl:
         raise SystemExit("--scene-mode attach means the desktop already loaded the "
                          "scene and started ArduPilot after it (-Step scene, then "
@@ -5789,7 +5820,15 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
     # and which request can explain a mode change (ModeRequests): one record
     # from the take-off on - the hover's, the loop's and the net's.
     asks = ModeRequests(hold_mode)
+    # The REST hot-apply listener and the lock it swaps the Shield's rules
+    # under (rail_hotapply; None without --hotapply-port).
+    hot = hot_gate = None
     try:
+        # THE REST HOT-APPLY LISTENER (WP1-15), first: one that cannot start
+        # (rail_hotapply.start says why) stops the run before anything flies.
+        hot, hot_gate = rail_hotapply.start(
+            args, shield, rec,
+            mission_t=lambda: None if mission_t0[0] is None else clock() - mission_t0[0])
         if vla_on:
             # THE VLA SERVER, started first (or attached): a bf16 cold load
             # can take many minutes (vla_mission.HELLO_TIMEOUT_S) and runs
@@ -5870,7 +5909,7 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
                 link.connect(timeout=180.0)
             else:
                 from mavros_link import MavrosLink, Ros2ImageSource
-                link = MavrosLink()
+                link = MavrosLink(setpoint_via=getattr(args, "setpoint_via", "mavros"))
                 if args.camera == "ros2":
                     Ros2ImageSource(link.node, obs, args.image_topic)
         if vla_on and "before_arm" not in inspect.signature(link.bring_up).parameters:
@@ -6092,6 +6131,12 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
         # past every LAND. The takeover test starts from GUIDED (HoverWatch):
         # a bring-up that ended in another mode is a takeover already.
         stage = "the hover before the mission"
+        if hot_gate is not None:
+            # From the hover on, the Shield is this thread's except while it
+            # sleeps: a REST event lands between two ticks (rail_hotapply,
+            # THE LOCK). Released in the loop's finally (rail_hotapply.stop).
+            sleep = hot_gate.sleeper(sleep)
+            hot_gate.hold()
         watch = HoverWatch(link, anchor, obs, shield, asks, subject_class=subject_class,
                            act=shield_on, backstop=backstop, rec=rec, rule_now=rule_now,
                            t0=clock())
@@ -7119,6 +7164,9 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
                     vla.close()
                 except Exception as exc:                          # noqa: BLE001
                     print(f"[vla]    close failed: {type(exc).__name__}: {exc}")
+            # The REST listener closes first: a later event would land after
+            # this episode's records (503 from here; rail_hotapply.stop).
+            rail_hotapply.stop(hot, hot_gate, f"the episode ended ({end_reason})")
             # EpisodeRecord.end(): the one mission_end write_replay requires
             # before it packs an episode.
             rec.end(end_reason, t=round(clock() - t0, 3))
@@ -7175,7 +7223,10 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
         traj_s = point_durations(traj_t, TICK,
                                  ends=[gap_from.get(i) for i in range(len(traj))])
         dwell_gap_s = sum(max(0.0, b - a - w) for a, b, w in zip(traj_t, traj_t[1:], traj_s))
-        dwell = zone_dwell(shield, traj, TICK, clock_key="clock", point_s=traj_s)
+        # A zone spawned over REST counts from its arrival (its mission time,
+        # on the trajectory's 0.01 s grid: FlightHotApply.live_from).
+        dwell = zone_dwell(shield, traj, TICK, clock_key="clock", point_s=traj_s,
+                           live_from=rail_hotapply.live_from(hot))
         nfz_ticks = dwell["nfz_ticks"]
         # The subject's true range (evaluation only): the stand-off dwell and
         # the follow proxy from the simulator's pose, None when never read.
@@ -7450,6 +7501,9 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
             "fences_still_deferred": None if backstop is None else backstop.deferred,
             "fence_upload_phase": pre_arm.get("phase"),
             "generations": rec.generations,
+            # The REST hot-apply listener's events (rail_hotapply; None when
+            # not served), as the ROS 2 node records them.
+            "hot_apply": None if hot is None else hot.summary(),
             # Every contact the simulator reported, take-off and landing included
             # (g1_check.airborne_collisions separates those); None = not subscribed.
             "sim_contacts_all": (None if camera is None
@@ -7782,6 +7836,8 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
             print(f"[report] GeoFence zones uploaded {backstop.uploaded} "
                   f"({pre_arm.get('phase')}); still held back {backstop.deferred}"
                   + (f"; last: {last.get('why')}" if last.get("why") else ""))
+        if hot is not None:
+            print(f"[report] {rail_hotapply.report_line(metrics['hot_apply'])}")
         print(f"[report] topology stamped {manifest['topology']!r}; grant label "
               f"{cls['grant']!r}: " + "; ".join(cls["reasons"] + withheld))
         if refusal:
@@ -7883,6 +7939,9 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
                                         fsm=fsm, throttle=throttle, t=t_net)
                 except Exception as exc:                              # noqa: BLE001
                     _say(f"[node]   *** the net failed: {type(exc).__name__}: {exc}")
+            # The REST hot-apply listener does not outlive the run either (a
+            # no-op when the loop's finally already closed it).
+            rail_hotapply.stop(hot, hot_gate, "the run ended", log=_say)
             # Whatever happened above - a refused arm, an EKF that never
             # converged, Ctrl+C - the simulator connection and the SITL this
             # run started do not outlive it. Nor does the recorder thread: it

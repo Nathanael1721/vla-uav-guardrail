@@ -13,6 +13,7 @@ message MAVROS reads as ENU would do. They also cover the GeoFence side: which
 zones reach the autopilot and when, the altitude fence against every policy's
 ceiling, and the modes the adapter forwards.
 """
+import json
 import math
 import sys
 import tempfile
@@ -776,6 +777,461 @@ def test_a_negative_start_and_action_parse_as_values():
     vs, rest = V.make_parser().parse_known_args(["--events=e.json", "--reach-m=3",
                                                  "--action", "-3,0,0,0"])
     assert vs.action == "-3,0,0,0" and rest == ["--events=e.json", "--reach-m=3"], rest
+
+
+# --------------------------------------------------------------------------- #
+# The in-flight mission update: a full write, one at a time (2026-11-15)
+#
+# What MAVROS 2.14 and ArduPilot 4.5.7 put on the wire for a push, modelled
+# from the 3 Nov flights' bags (mission_wp_20261103c / _d, decoded with
+# tools/bag_mission_protocol.py; CHANGELOG 2026-11-03, Found): MAVROS starts
+# a full push with MISSION_COUNT and a partial one with
+# MISSION_WRITE_PARTIAL_LIST(start, start + count); ArduPilot reads end_index
+# as INCLUDED, asks for each item with MISSION_REQUEST, re-asks for one it is
+# not sent, and gives up 8 s after the last item it received with MISSION_ACK
+# 15 ("Mission upload timeout"); MAVROS answers a request only for an item it
+# was given (MISSION_ITEM_INT), and reports the push failed without an
+# accepted ACK. Shown failing first on 478dcc7: update_push and
+# MissionPushQueue do not exist, and the node pushed start_index = seq.
+# --------------------------------------------------------------------------- #
+
+MAV_MISSION_ACCEPTED = 0
+MAV_MISSION_OPERATION_CANCELLED = 15
+AP_UPLOAD_TIMEOUT_S = 8.0
+AP_REQUEST_RESEND_S = 0.9            # nine requests for the missing item in 8 s
+
+
+def wire_exchange(held: list[dict], start_index: int, items: list[dict]) -> dict:
+    """One /mavros/mission/push against the autopilot's mission `held`
+    (changed in place): the messages each side sends, in order, with their
+    time from the push, MAVROS's result and the ACK that ended it."""
+    t, wire = 0.0, []
+
+    def say(who, name, **f):
+        wire.append({"t": round(t, 3), "from": who, "msg": name, **f})
+    if start_index == 0:
+        say("mavros", "MISSION_COUNT", count=len(items))
+        del held[len(items):]
+        first, last = 0, len(items) - 1
+        serve = dict(enumerate(items))
+    else:
+        end = start_index + len(items)                  # MAVROS 2.14's end_index
+        say("mavros", "MISSION_WRITE_PARTIAL_LIST", start_index=start_index,
+            end_index=end)
+        if start_index >= len(held) or end > len(held) or end < start_index:
+            say("ardupilot", "MISSION_ACK", type=1)       # MAV_MISSION_ERROR
+            return {"wire": wire, "success": False, "transferred": 0, "ack": 1, "t": t}
+        first, last = start_index, end                  # ArduPilot: end included
+        serve = {start_index + i: it for i, it in enumerate(items)}
+    seq, t_rx, sent = first, 0.0, 0
+    while True:
+        say("ardupilot", "MISSION_REQUEST", seq=seq)
+        if seq in serve:
+            t += 0.01
+            say("mavros", "MISSION_ITEM_INT", seq=seq)
+            if seq < len(held):
+                held[seq] = dict(serve[seq])
+            else:
+                held.append(dict(serve[seq]))
+            sent, t_rx = sent + 1, t
+            if seq == last:
+                say("ardupilot", "MISSION_ACK", type=MAV_MISSION_ACCEPTED)
+                return {"wire": wire, "success": True, "transferred": sent,
+                        "ack": MAV_MISSION_ACCEPTED, "t": t}
+            seq += 1
+            continue
+        # MAVROS refuses a request out of what it was given: nothing is sent.
+        t += AP_REQUEST_RESEND_S
+        if t - t_rx >= AP_UPLOAD_TIMEOUT_S:
+            t = t_rx + AP_UPLOAD_TIMEOUT_S
+            say("ardupilot", "MISSION_ACK", type=MAV_MISSION_OPERATION_CANCELLED)
+            say("ardupilot", "STATUSTEXT", text="Mission upload timeout")
+            return {"wire": wire, "success": False, "transferred": sent,
+                    "ack": MAV_MISSION_OPERATION_CANCELLED, "t": t}
+
+
+def _mission():
+    doc = {"waypoints": [{"x": 0, "y": 30, "up": 15}, {"x": 30, "y": 30, "up": 15}],
+           "speed_mps": 4.0}
+    return A.mission_items(doc, *HOME)
+
+
+def test_an_update_is_written_as_the_whole_mission_with_one_item_replaced():
+    items = _mission()
+    seq, held_pt = A.mission_update({"seq": 2, "waypoint": {"x": 0, "y": 15.1, "up": 15,
+                                                            "hold_s": 600}}, 4, *HOME)
+    assert A.DEFAULT_MISSION_UPDATE_WRITE == "full"
+    plan = A.update_push(items, seq, held_pt)
+    assert plan["write"] == "full" and plan["start_index"] == 0
+    assert plan["items"][2] is held_pt and plan["items"][:2] == items[:2]
+    assert plan["items"][3] == items[3] and plan["check"] == [0, 1, 2, 3]
+    assert items[2] is not held_pt, "the adapter's copy is not changed by planning"
+    part = A.update_push(items, seq, held_pt, "partial")
+    assert part == {"write": "partial", "start_index": 2, "items": [held_pt], "check": [2]}
+    for bad in ((items, 4, held_pt, "full"), ([], 2, held_pt, "full"),
+                (items, 2, held_pt, "neither")):
+        try:
+            A.update_push(*bad)
+        except ValueError:
+            continue
+        raise AssertionError(f"planned {bad[1:]}")
+
+
+def test_the_full_write_completes_where_mavros_partial_write_times_out():
+    """The message sequence. Partial (as flown 3 Nov): the item lands, then
+    ArduPilot asks for one item more until its 8 s timeout, ACK 15, MAVROS
+    reports failure. Full: MISSION_COUNT, every item asked for and sent as
+    MISSION_ITEM_INT, ACK ACCEPTED at once - and the write back right after
+    is accepted too, where the partial write's 8 s window refused one."""
+    items = _mission()
+    _, held_pt = A.mission_update({"seq": 2, "waypoint": {"x": 0, "y": 15.1, "up": 15,
+                                                          "hold_s": 600}}, 4, *HOME)
+    ap = [dict(i) for i in items]
+    p = A.update_push(items, 2, held_pt, "partial")
+    got = wire_exchange(ap, p["start_index"], p["items"])
+    msgs = [(w["from"], w["msg"], w.get("seq", w.get("start_index"))) for w in got["wire"]]
+    assert msgs[:4] == [("mavros", "MISSION_WRITE_PARTIAL_LIST", 2),
+                        ("ardupilot", "MISSION_REQUEST", 2),
+                        ("mavros", "MISSION_ITEM_INT", 2),
+                        ("ardupilot", "MISSION_REQUEST", 3)], msgs
+    assert got["wire"][0]["end_index"] == 3, "MAVROS 2.14: start + count"
+    asks3 = [m for m in msgs if m == ("ardupilot", "MISSION_REQUEST", 3)]
+    assert len(asks3) >= 8 and ("mavros", "MISSION_ITEM_INT", 3) not in msgs
+    assert got["ack"] == MAV_MISSION_OPERATION_CANCELLED and got["t"] >= AP_UPLOAD_TIMEOUT_S
+    assert got["success"] is False and A.same_item(held_pt, ap[2]), "the item landed anyway"
+    ap = [dict(i) for i in items]
+    f = A.update_push(items, 2, held_pt)
+    got = wire_exchange(ap, f["start_index"], f["items"])
+    msgs = [(w["from"], w["msg"], w.get("seq", w.get("count"))) for w in got["wire"]]
+    want = [("mavros", "MISSION_COUNT", 4)]
+    for s in range(4):
+        want += [("ardupilot", "MISSION_REQUEST", s), ("mavros", "MISSION_ITEM_INT", s)]
+    want += [("ardupilot", "MISSION_ACK", None)]
+    assert msgs == want, msgs
+    assert got["ack"] == MAV_MISSION_ACCEPTED and got["success"] and got["t"] < 0.1
+    assert "MISSION_WRITE_PARTIAL_LIST" not in {w["msg"] for w in got["wire"]}
+    assert all(A.same_item(a, b) for a, b in zip(f["items"], ap)) and len(ap) == 4
+    # The write back, at once: accepted, the original flown again.
+    back = A.update_push(f["items"], 2, items[2])
+    again = wire_exchange(ap, back["start_index"], back["items"])
+    assert again["ack"] == MAV_MISSION_ACCEPTED and A.same_item(ap[2], items[2])
+
+
+def test_updates_are_written_one_at_a_time_in_order():
+    q = A.MissionPushQueue()
+    assert q.offer({"update_id": "u1"}) is True and q.busy
+    assert q.offer({"update_id": "u2"}) is False
+    assert q.offer({"update_id": "u3"}) is False and q.n_queued == 2
+    assert q.done() == {"update_id": "u2"} and q.busy
+    assert q.done() == {"update_id": "u3"} and q.busy
+    assert q.done() is None and not q.busy
+    assert q.offer({"update_id": "u4"}) is True
+
+
+# A stand-in ROS stack for the adapter node (tests/test_railinputs_node.py
+# builds one for the Shield node the same way).
+
+class _Msg:
+    def __init__(self, **kw):
+        self.__dict__.update(kw)
+
+
+class _Srv:
+    Request = _Msg
+
+
+class _Pub:
+    def __init__(self):
+        self.sent = []
+
+    def publish(self, msg):
+        self.sent.append(msg)
+
+
+class _Future:
+    def __init__(self, result):
+        self._result, self._cbs, self.done = result, [], False
+
+    def result(self):
+        return self._result
+
+    def add_done_callback(self, cb):
+        self._cbs.append(cb)
+        if self.done:
+            cb(self)
+
+    def complete(self):
+        self.done = True
+        for cb in self._cbs:
+            cb(self)
+
+
+class _Timer:
+    def __init__(self, cb):
+        self.cb, self.cancelled = cb, False
+
+    def cancel(self):
+        self.cancelled = True
+
+
+class FakeMavros:
+    """/mavros/mission/push and /pull against an ArduPilot holding `held`:
+    each push runs wire_exchange; futures complete when the test says (so a
+    second update can arrive while the first is in flight)."""
+
+    def __init__(self):
+        self.held: list[dict] = []
+        self.pushes, self.pending = [], []
+        self.node = None
+
+    def push(self, req):
+        items = [{**self.node._as_dict(w), "param3": w.param3, "param4": w.param4}
+                 for w in req.waypoints]
+        ex = wire_exchange(self.held, int(req.start_index), items)
+        self.pushes.append({"start_index": int(req.start_index), "n": len(items), **ex})
+        fut = _Future(_Msg(success=ex["success"], wp_transfered=(
+            ex["transferred"] if req.start_index == 0 else max(ex["transferred"], 1))))
+        self.pending.append(fut)
+        return fut
+
+    def pull(self, req):
+        wps = [self.node._wp({"autocontinue": True, **it}) for it in self.held]
+        self.node._on_waypoints(_Msg(waypoints=wps))
+        fut = _Future(_Msg(success=True, wp_received=len(wps)))
+        self.pending.append(fut)
+        return fut
+
+
+class _Client:
+    def __init__(self, fn):
+        self.fn = fn
+
+    def service_is_ready(self):
+        return self.fn is not None
+
+    def call_async(self, req):
+        return self.fn(req)
+
+
+def _adapter_module():
+    import importlib.util
+    import types
+    names = ("rclpy", "rclpy.node", "rclpy.qos", "geometry_msgs", "geometry_msgs.msg",
+             "std_msgs", "std_msgs.msg", "mavros_msgs", "mavros_msgs.msg",
+             "mavros_msgs.srv")
+    m = {n: types.ModuleType(n) for n in names}
+
+    class Node:
+        def __init__(self, name):
+            self.timers, self.pubs = [], {}
+            self.mav = FakeMavros()
+            self.mav.node = self
+
+        def get_logger(self):
+            return types.SimpleNamespace(info=lambda s: None, warn=lambda s: None,
+                                         error=lambda s: None)
+
+        def create_subscription(self, *a, **k):
+            return None
+
+        def create_publisher(self, typ, topic, qos):
+            self.pubs[topic] = _Pub()
+            return self.pubs[topic]
+
+        def create_client(self, typ, name):
+            return _Client({"/mavros/mission/push": self.mav.push,
+                            "/mavros/mission/pull": self.mav.pull}.get(name))
+
+        def create_timer(self, period, cb):
+            t = _Timer(cb)
+            self.timers.append(t)
+            return t
+    m["rclpy.node"].Node = Node
+    q = m["rclpy.qos"]
+    q.QoSProfile = _Msg
+    q.DurabilityPolicy = types.SimpleNamespace(TRANSIENT_LOCAL=1)
+    q.ReliabilityPolicy = types.SimpleNamespace(RELIABLE=1)
+    q.qos_profile_sensor_data = None
+    for mod, ns in (("geometry_msgs.msg", ("PoseStamped",)),
+                    ("std_msgs.msg", ("Float32MultiArray", "String")),
+                    ("mavros_msgs.msg", ("HomePosition", "PositionTarget", "Waypoint",
+                                         "WaypointList"))):
+        for n in ns:
+            setattr(m[mod], n, type(n, (_Msg,), {}))
+    pt = m["mavros_msgs.msg"].PositionTarget
+    for k in ("IGNORE_PX", "IGNORE_PY", "IGNORE_PZ", "IGNORE_AFX", "IGNORE_AFY",
+              "IGNORE_AFZ", "IGNORE_YAW", "FRAME_LOCAL_NED"):
+        setattr(pt, k, getattr(A, k))
+    for n in ("SetMode", "WaypointPull", "WaypointPush"):
+        setattr(m["mavros_msgs.srv"], n, type(n, (_Srv,), {}))
+    saved = {k: sys.modules.get(k) for k in m}
+    sys.modules.update(m)
+    try:
+        spec = importlib.util.spec_from_file_location(
+            "mavlink_adapter_node_standin", ROOT / "sitl" / "mavlink_adapter_node.py")
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+    finally:
+        for k, v in saved.items():
+            if v is None:
+                sys.modules.pop(k, None)
+            else:
+                sys.modules[k] = v
+    assert mod.HAVE_ROS, "the stand-in ROS stack did not import"
+    return mod
+
+
+def _settle(node):
+    """Complete every outstanding MAVROS call and run the read-back timers,
+    until nothing is left."""
+    for _ in range(200):
+        moved = False
+        while node.mav.pending:
+            node.mav.pending.pop(0).complete()
+            moved = True
+        for t in list(node.timers):
+            if not t.cancelled:
+                t.cb()
+                moved = True
+        if not moved:
+            return
+    raise AssertionError("the adapter never settled")
+
+
+def _statuses(M, node):
+    return [json.loads(m.data) for m in node.pubs[M.TOPIC_STATUS].sent]
+
+
+def test_the_adapter_node_writes_each_update_whole_and_queues_the_next():
+    """The node itself, on a stand-in ROS stack: the mission goes up whole,
+    an update is a full write (no MISSION_WRITE_PARTIAL_LIST on the wire, ACK
+    ACCEPTED), a second update sent while the first is in flight waits and
+    then goes, both verdicts are their read-backs; with
+    mission_update_write="partial" the 3 Nov exchange comes back."""
+    M = _adapter_module()
+    for write in ("full", "partial"):
+        node = M.MavlinkAdapterNode(None, mission_update_write=write)
+        node._on_home(_Msg(geo=_Msg(latitude=HOME[0], longitude=HOME[1]),
+                           position=_Msg(x=0.0, y=0.0, z=0.0)))
+        node._on_mission(_Msg(data=json.dumps({
+            "waypoints": [{"x": 0, "y": 30, "up": 15}, {"x": 30, "y": 30, "up": 15}],
+            "speed_mps": 4.0, "generation": 0})))
+        _settle(node)
+        up = [s for s in _statuses(M, node) if s["kind"] == "mission_upload"]
+        assert up and up[-1]["success"] and up[-1]["match"], up
+        assert node.mission_n == 4 and len(node.mav.held) == 4
+        u1 = {"seq": 2, "waypoint": {"x": 0, "y": 15.1, "up": 15, "hold_s": 600},
+              "update_id": "u1", "generation": 1}
+        u2 = {"seq": 3, "waypoint": {"x": 20, "y": 30, "up": 15, "hold_s": 0},
+              "update_id": "u2", "generation": 1}
+        node._on_mission_update(_Msg(data=json.dumps(u1)))
+        node._on_mission_update(_Msg(data=json.dumps(u2)))    # while u1 is in flight
+        assert len(node.mav.pushes) == 2, "u2 was pushed beside u1"
+        queued = [s for s in _statuses(M, node) if s["kind"] == "mission_update_queued"]
+        assert [q["update_id"] for q in queued] == ["u2"], queued
+        _settle(node)
+        ups = [s for s in _statuses(M, node) if s["kind"] == "mission_update"]
+        assert [(s["update_id"], s["success"], s["write"]) for s in ups] == \
+            [("u1", True, write), ("u2", True, write)], ups
+        it1, it2 = A.mission_update(u1, 4, *HOME)[1], A.mission_update(u2, 4, *HOME)[1]
+        assert A.same_item(node.mav.held[2], it1) and A.same_item(node.mav.held[3], it2)
+        assert abs(ups[0]["read_back_item"]["y_long"] - it1["y_long"]) < 1e-12
+        p1, p2 = node.mav.pushes[1:3]
+        if write == "full":
+            assert (p1["start_index"], p1["n"], p1["ack"]) == (0, 4, MAV_MISSION_ACCEPTED)
+            # u2's full write carries u1's item: one write never undoes another.
+            assert (p2["start_index"], p2["n"], p2["ack"]) == (0, 4, MAV_MISSION_ACCEPTED)
+            assert all(s["push_success"] for s in ups) and p1["t"] < 1.0
+            assert not any(w["msg"] == "MISSION_WRITE_PARTIAL_LIST"
+                           for p in node.mav.pushes for w in p["wire"])
+        else:
+            assert (p1["start_index"], p1["n"]) == (2, 1)
+            assert p1["ack"] == MAV_MISSION_OPERATION_CANCELLED and p1["t"] >= 8.0
+            assert not any(s["push_success"] for s in ups), "MAVROS reports the timeout"
+            assert all("upload timeout" in s["push_note"] for s in ups)
+
+
+def test_the_mission_update_flag_defaults_to_the_full_write():
+    src = (ROOT / "sitl" / "mavlink_adapter_node.py").read_text(encoding="utf-8")
+    main = src[src.index("def main("):]
+    assert "--mission-update-write" in main and "DEFAULT_MISSION_UPDATE_WRITE" in main
+    assert A.MISSION_UPDATE_WRITES == ("full", "partial")
+
+
+# --------------------------------------------------------------------------- #
+# The perception rail's setpoint through the adapter (2026-11-15, opt-in)
+# --------------------------------------------------------------------------- #
+
+def _pas_link(setpoint_via, subscribers=1, publishers=1):
+    for p in (ROOT / "demo" / "pas_ardupilot", ROOT / "demo", ROOT / "tests"):
+        if str(p) not in sys.path:
+            sys.path.insert(0, str(p))
+    import mavros_link as ML
+    import test_pas_ardupilot as T
+
+    class Node(T.FakeNode):
+        def count_subscribers(self, topic):
+            return subscribers
+
+        def count_publishers(self, topic):
+            return publishers
+    node = Node()
+    link = ML.MavrosLink(node=node, rclpy=T.FAKE_RCLPY, msgs=T.FAKE_MSGS,
+                         clock=T.Clock(0.01), setpoint_via=setpoint_via)
+    return ML, link, node
+
+
+def test_the_pas_setpoint_through_the_adapter_reaches_the_same_ned():
+    """--setpoint-via adapter: the PAS link publishes the BODY action on the
+    adapter's input and no PositionTarget of its own; the adapter's
+    conversion at the same heading gives exactly the NED setpoint the direct
+    path sends (enu_position_target, through MAVROS's ENU -> NED), for every
+    heading. The default route is unchanged."""
+    from guardrail.models import Action4D
+    ML, direct, dnode = _pas_link("mavros")
+    assert ML.TOPIC_SETPOINT in dnode.pubs and ML.TOPIC_ADAPTER_SETPOINT not in dnode.pubs
+    assert direct.setpoint_path().startswith(ML.TOPIC_SETPOINT)
+    ML, link, node = _pas_link("adapter")
+    assert ML.TOPIC_ADAPTER_SETPOINT == A.TOPIC_SETPOINT
+    assert ML.TOPIC_SETPOINT not in node.pubs, "the adapter is the only PositionTarget writer"
+    assert ML.TOPIC_ADAPTER_SETPOINT in node.pubs
+    a = Action4D(vx=2.5, vy=-1.25, vz_up=0.4, yaw_rate=0.3)
+    for heading in range(0, 360, 30):
+        link.snap.yaw = direct.snap.yaw = math.radians(heading)
+        link.send(a, raw_body=(1, 2, 3, 4))
+        body = node.pubs[ML.TOPIC_ADAPTER_SETPOINT].msgs[-1].data
+        via_adapter = A.mavros_sends(A.setpoint_from_body(body, heading)["fields"])
+        direct.send(a)
+        pt = dnode.pubs[ML.TOPIC_SETPOINT].msgs[-1]
+        f = {"coordinate_frame": pt.coordinate_frame, "type_mask": pt.type_mask,
+             "velocity": (pt.velocity.x, pt.velocity.y, pt.velocity.z),
+             "yaw_rate": pt.yaw_rate}
+        assert _close(via_adapter, A.mavros_sends(f), 1e-9), (heading, via_adapter)
+    assert node.pubs[ML.TOPIC_SAFE_ACTION].msgs[-1].data == [2.5, -1.25, 0.4, 0.3]
+    assert link.evidence()["setpoint_path"].startswith(ML.TOPIC_ADAPTER_SETPOINT)
+
+
+def test_the_pas_adapter_route_refuses_to_arm_without_one_adapter_and_one_publisher():
+    for subs, pubs, ok, why in ((1, 1, True, None), (0, 1, False, "nothing subscribes"),
+                                (1, 2, False, "2 publishers")):
+        ML, link, node = _pas_link("adapter", subs, pubs)
+        got = link.check_adapter(wait_s=0.05)
+        assert got["ok"] is ok and (why is None or why in got["why"]), got
+    try:
+        ML.MavrosLink(node=node, rclpy=None, msgs=None, setpoint_via="both")
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("an unknown setpoint route was accepted")
+    import perception_node as pn
+    args = pn.build_parser().parse_args(["--setpoint-via", "adapter"])
+    try:
+        pn.check_args(args)
+    except SystemExit as e:
+        assert "--link mavros" in str(e)
+    else:
+        raise AssertionError("--setpoint-via adapter was accepted with --link pymavlink")
+    assert pn.build_parser().parse_args([]).setpoint_via == "mavros"
 
 
 if __name__ == "__main__":

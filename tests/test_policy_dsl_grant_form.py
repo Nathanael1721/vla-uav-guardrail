@@ -1611,8 +1611,9 @@ def test_the_loaders_never_hand_the_shield_a_rule_it_does_not_enforce():
     an over-refusal (safe), printed so it is not forgotten. From 2026-10-07 to
     2026-10-08 the three hot-apply classes were over-refused while they waited
     for compiler templates; since then RUNTIME_TYPES equals ENFORCED_TYPES,
-    and the one over-refusal left is FLIGHT_HELD_TYPES (dynamic_nfz in a
-    policy FILE), held for a stated reason: the rails' dwell metric."""
+    and the one over-refusal left is FLIGHT_HELD_TYPES (a MOVING dynamic_nfz
+    in a policy FILE, since 2026-11-15; until then any dynamic_nfz), held for
+    a stated reason: the rails' dwell metric."""
     from guardrail import shield as S
     from guardrail.models import FLIGHT_HELD_TYPES
     assert RUNTIME_TYPES <= S.ENFORCED_TYPES, RUNTIME_TYPES - S.ENFORCED_TYPES
@@ -1639,7 +1640,7 @@ def test_the_loaders_never_hand_the_shield_a_rule_it_does_not_enforce():
     assert pol.unenforced_rules() and Shield.unenforceable(pol)
     print(f"      over-refused (the Shield enforces them, the loaders wait for the "
           f"compiler): {sorted(S.ENFORCED_TYPES - RUNTIME_TYPES)}; held from policy "
-          f"files until the rails measure them: {sorted(FLIGHT_HELD_TYPES)}")
+          f"files until the rails measure them: {sorted(FLIGHT_HELD_TYPES)} (moving only)")
 
 
 def _strip_manifest_keys(src, dst, *keys):
@@ -1804,21 +1805,37 @@ def test_a_reference_form_bundle_is_verified_by_both_loaders():
 
 def test_a_dynamic_zone_in_a_policy_file_is_held_until_the_rails_measure_it():
     """dynamic_nfz joined RUNTIME_TYPES on 2026-10-08 (the Shield enforces it,
-    the compiler renders it), but a policy FILE declaring one is refused for
+    the compiler renders it), but a policy FILE declaring one was refused for
     flight (models.FLIGHT_HELD_TYPES): every flight rail but follow_vlm
-    computes its zone-dwell metric nfz_s - which guardrail/kpi.py reads for
+    computed its zone-dwell metric nfz_s - which guardrail/kpi.py reads for
     the mission outcome - from policy.by_type(PolygonFence), so the zone
     would score 0 s however long the aircraft spent in it. Found in review
     the day it joined; the refusal names the zone and that reason, by every
     flight loader (YAML and bundle). The declaration still loads, bundles and
     records a start conflict (until 2026-10-08 start_conflicts looked at
-    polygon fences only). A policy file with a switch and a swap flies."""
-    raw = _raw(constraints=[
+    polygon fences only). A policy file with a switch and a swap flies.
+
+    Since 2026-11-15 (C-16) the hold is on a MOVING zone only: every rail
+    counts a zone without motion (zone_dwell) and every offline reader takes
+    it with the polygon fences (Policy.static_keepout_zones), so the same
+    zone declared without motion flies, while one with motion is refused as
+    before - no rail records the Shield's clock to place it per point."""
+    still = _raw(constraints=[
         {"id": "alt", "type": "altitude_envelope", **HARD_P0, "alt_min_m": 5, "alt_max_m": 30},
         {"id": "dz", "type": "dynamic_nfz", **HARD_P0,
          "vertices": [{"x": -5, "y": -5}, {"x": 5, "y": -5}, {"x": 5, "y": 5}]}])
+    ps = _yaml(json.dumps(still), "dz_still.json")
+    flies = load_policy(ps)
+    assert flies.flight_problems() == [] and [c.id for c in flies.static_keepout_zones()] == ["dz"]
+    assert B.load_for_flight(None, ps)[0].policy_hash == flies.policy_hash
+    raw = _raw(constraints=[
+        {"id": "alt", "type": "altitude_envelope", **HARD_P0, "alt_min_m": 5, "alt_max_m": 30},
+        {"id": "dz", "type": "dynamic_nfz", **HARD_P0,
+         "vertices": [{"x": -5, "y": -5}, {"x": 5, "y": -5}, {"x": 5, "y": 5}],
+         "motion": {"vx_mps": 1.0}}])
     p = _yaml(json.dumps(raw), "dz.json")
-    _refused(lambda: load_policy(p), "dz: dynamic_nfz is enforced by the Shield", "nfz_s")
+    _refused(lambda: load_policy(p), "dz: dynamic_nfz is enforced by the Shield", "nfz_s",
+             "moves")
     _refused(lambda: B.load_for_flight(None, p), "nfz_s")
     pol = load_policy(p, runtime=False)
     assert [g.split(":")[0] for g in pol.flight_problems()] == ["dz"]
@@ -1850,6 +1867,61 @@ def test_a_dynamic_zone_in_a_policy_file_is_held_until_the_rails_measure_it():
     flown, _ = B.load_for_flight(B.write_bundle(flies, _tmp("sw.tar.gz"), signer=None),
                                  allow_unverified=True)
     assert flown.policy_hash == flies.policy_hash
+
+
+def test_every_reader_of_keep_out_zones_takes_a_dynamic_zone_without_motion():
+    """C-16, lifted for a zone without motion (2026-11-15): the readers the
+    hold named - experiments/analyze_semantic_ab.py's legal-approach bound,
+    dwell and overlay, training/features.make_fences (the BC pilots'
+    features) and the prompt's no_fly_zones - take the polygon and circle
+    fences AND every dynamic_nfz without motion (Policy.static_keepout_zones),
+    never a moving one. Shown failing on 478dcc7: they read
+    by_type(PolygonFence), the static zone was not there (make_fences [],
+    no_fly_zones without it, the approach bound 0.0 m because load_policy
+    refused the file)."""
+    from guardrail.compiler import ConstraintCompiler
+    from guardrail.models import DynamicNFZ
+    raw = _raw(constraints=[
+        {"id": "alt", "type": "altitude_envelope", **HARD_P0, "alt_min_m": 5, "alt_max_m": 30},
+        _square("poly", 40, 40, 10),
+        {"id": "disc", "type": "circle_fence", **HARD_P0, "center": {"x": -40, "y": 0},
+         "radius_m": 5},
+        {"id": "still", "type": "dynamic_nfz", **HARD_P0, "margin_m": 1.0,
+         "vertices": [{"x": 15, "y": -5}, {"x": 25, "y": -5}, {"x": 25, "y": 5},
+                      {"x": 15, "y": 5}]},
+        {"id": "zero", "type": "dynamic_nfz", **HARD_P0,
+         "vertices": [{"x": 60, "y": -5}, {"x": 70, "y": -5}, {"x": 70, "y": 5}],
+         "motion": {"vx_mps": 0.0, "vy_mps": 0.0, "yaw_rate_dps": 0.0}}])
+    p = _yaml(json.dumps(raw), "still.json")
+    pol = load_policy(p)                              # flies: nothing held
+    assert [c.id for c in pol.static_keepout_zones()] == ["poly", "disc", "still", "zero"]
+    moving = DynamicNFZ.model_validate({**raw["constraints"][3], "id": "mov",
+                                        "motion": {"vx_mps": 1.0}})
+    assert moving.moves and not pol.constraints[3].moves and not pol.constraints[4].moves
+    assert "mov" not in [c.id for c in pol.model_copy(update={
+        "constraints": pol.constraints + [moving]}).static_keepout_zones()]
+    # The BC pilots' features.
+    sys.path.insert(0, str(ROOT))
+    from training.features import encode, make_fences
+    fences = make_fences(pol)
+    assert [f.id for f, _ in fences] == ["poly", "disc", "still", "zero"]
+    assert encode(State(x=20.0, y=0.0, up=10.0), 100.0, 0.0, 10.0, fences)[6] == 1.0, \
+        "inside the static dynamic_nfz is 'inside an NFZ'"
+    # The prompt's shorthand.
+    from guardrail.compiler import Mission
+    mission = Mission(task_text="fly to the pad", target_x=100.0, target_y=0.0,
+                      cruise_alt_m=10.0, speed_pref_mps=3.0)
+    doc = __import__("yaml").safe_load(ConstraintCompiler(pol).build_prompt(mission))
+    assert [z["id"] for z in doc["constraints"]["no_fly_zones"]] == \
+        ["poly", "disc", "still", "zero"], doc["constraints"]["no_fly_zones"]
+    # Offline analysis: the approach bound for a target inside the static zone.
+    sys.path.insert(0, str(ROOT / "experiments"))
+    import analyze_semantic_ab as S
+    got = S.legal_approach([{"x": 0.0, "y": 0.0}, {"x": 8.0, "y": 0.0}], 20.0, 0.0, p,
+                           ROOT / "no_map.npz")
+    assert got["d_bound"] >= 5.0, got
+    src = (ROOT / "experiments" / "analyze_semantic_ab.py").read_text(encoding="utf-8")
+    assert "by_type(PolygonFence)" not in src and src.count("static_keepout_zones()") == 3
 
 
 def test_the_lint_compares_every_pair_of_hard_height_limits():
