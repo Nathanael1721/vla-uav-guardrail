@@ -16,6 +16,41 @@ shipped change and recorded as one.
 
 ## [Unreleased]
 
+### 2026-11-14 (hh02: the first harness-driven hil episodes) — the stress harness flew six library episodes on the hil rig and sent every kind of zone event the grant names over mTLS REST into the flying Shield; each episode wrote the grant's six bundle names; WP4-03 and WP4-05 to DONE (81 DONE / 48 PARTIAL / 6 DRIFT / 1 MISSING)
+
+#### Flown
+- hh02 (bc04e4a on the desktop and the AGX Orin, hil, sim_speedup 1.0, all
+  six KPI-grade; `python -m guardrail.harness_service serve --rail hil
+  --rail-campaign hh02 ...` and `tools/harness_hil_episode.py`; the Orin's
+  listener in the companion's api layer; bundles kept in
+  demo/out/harness/hh02/):
+  - hh02_001 dyn-nfz-rotate-step: POST /hot_apply spawn at 3.00 s, PATCH
+    /dynamic_nfz/bar rotate at 8.00 s (generations 1, 2).
+  - hh02_002 radius-scaling-grow-deep: spawn at 0.05 s, scale at 10.00 s.
+  - hh02_003 time-window-switch-event: switch_off at 1.02 s.
+  - hh02_004 rule-activated-mid-run@at=2: switch_on at 2.00 s.
+  - hh02_005 corridor-swap-shifted: swap at 5.02 s.
+  - hh02_006 dyn-nfz-rotate-step with an EmitEvent translate of `bar` by
+    5 m at 12.02 s after the scenario's spawn and rotate (generation 3).
+  - Each: StartEpisode launched the mission without its events, the harness
+    forwarded them at their mission times, EndEpisode scored the flight and
+    wrote manifest.json, policy_bundle.tar.gz (every generation),
+    episode.bag2/ (the run's rosbag2), shield_audit.jsonl,
+    harness_events.jsonl (each forward with its source, `scenario` or
+    `emit_event`) and kpi.json. P0 escape 0. Fail-safe under the adopted
+    reading 5/5, 1 censored (corridor-swap-shifted ended in Loiter, as its
+    ntFIN2 cells did).
+- hh01_001 (cbeaa79) flew the same rotate-step episode first; both forwards
+  applied, then the harness refused it on the start-policy check fixed in
+  bc04e4a.
+
+#### Changed
+- docs/FINAL-REPORT-outline.md and docs/FINAL-REPORT.md Appendix A: WP4-03
+  and WP4-05 to DONE; WP4-11's first gap (no flown session wrote the six
+  names) closed, the bit-for-bit replay still open. The per-section counts
+  are recomputed from the rows (WP3 16 / 7 / 1, WP4 11 / 10); an earlier
+  edit had put WP3's change on WP4's count line.
+
 ### 2026-11-14 (the companion's REST hot-apply layer) — fastapi and uvicorn as a layer on the built companion image, from pinned wheels, so the harness-driven hil episode can run on an Orin with no internet route
 
 #### Added
