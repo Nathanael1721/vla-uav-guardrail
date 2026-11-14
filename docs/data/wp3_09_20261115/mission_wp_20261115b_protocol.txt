@@ -1,0 +1,103 @@
+wsl: Failed to start the systemd user session for 'nathan'. See journalctl for more details.
+   0.000 ->FCU MISSION_COUNT                1/191 {'count': 4, 'tsys': 1, 'tcomp': 1, 'mission_type': 0}
+   0.004 <-FCU MISSION_REQUEST              1/1 {'seq': 0, 'tsys': 1, 'tcomp': 191, 'mission_type': 0}
+   0.004 ->FCU MISSION_ITEM_INT             1/191 {'seq': 0, 'command': 16, 'frame': 0, 'p1': 0.0, 'p2': 0.0, 'x': -353632610, 'y': 1491652299, 'z': 0.0, 'mission_type': 0}
+   0.010 <-FCU MISSION_REQUEST              1/1 {'seq': 1, 'tsys': 1, 'tcomp': 191, 'mission_type': 0}
+   0.010 ->FCU MISSION_ITEM_INT             1/191 {'seq': 1, 'command': 178, 'frame': 2, 'p1': 1.0, 'p2': 4.0, 'x': 0, 'y': 0, 'z': 0.0, 'mission_type': 0}
+   0.040 <-FCU MISSION_REQUEST              1/1 {'seq': 2, 'tsys': 1, 'tcomp': 191, 'mission_type': 0}
+   0.040 ->FCU MISSION_ITEM_INT             1/191 {'seq': 2, 'command': 16, 'frame': 3, 'p1': 0.0, 'p2': 0.0, 'x': -353632610, 'y': 1491655603, 'z': 15.0, 'mission_type': 0}
+   0.045 <-FCU MISSION_REQUEST              1/1 {'seq': 3, 'tsys': 1, 'tcomp': 191, 'mission_type': 0}
+   0.045 ->FCU MISSION_ITEM_INT             1/191 {'seq': 3, 'command': 16, 'frame': 3, 'p1': 0.0, 'p2': 0.0, 'x': -353629915, 'y': 1491655603, 'z': 15.0, 'mission_type': 0}
+   0.051 <-FCU MISSION_ACK                  1/1 {'tsys': 1, 'tcomp': 191, 'type': 0, 'mission_type': 0}
+   0.057 <-FCU MISSION_COUNT                1/1 {'count': 4, 'tsys': 1, 'tcomp': 191, 'mission_type': 0}
+   0.057 ->FCU MISSION_REQUEST_INT          1/191 {'seq': 0, 'tsys': 1, 'tcomp': 1, 'mission_type': 0}
+   0.063 <-FCU MISSION_ITEM_INT             1/1 {'seq': 0, 'command': 16, 'frame': 0, 'p1': 0.0, 'p2': 0.0, 'x': -353632611, 'y': 1491652300, 'z': 584.0499877929688, 'mission_type': 0}
+   0.063 ->FCU MISSION_REQUEST_INT          1/191 {'seq': 1, 'tsys': 1, 'tcomp': 1, 'mission_type': 0}
+   0.069 <-FCU MISSION_ITEM_INT             1/1 {'seq': 1, 'command': 178, 'frame': 0, 'p1': 1.0, 'p2': 4.0, 'x': 0, 'y': 0, 'z': 0.0, 'mission_type': 0}
+   0.069 ->FCU MISSION_REQUEST_INT          1/191 {'seq': 2, 'tsys': 1, 'tcomp': 1, 'mission_type': 0}
+   0.075 <-FCU MISSION_ITEM_INT             1/1 {'seq': 2, 'command': 16, 'frame': 3, 'p1': 0.0, 'p2': 0.0, 'x': -353632610, 'y': 1491655603, 'z': 15.0, 'mission_type': 0}
+   0.075 ->FCU MISSION_REQUEST_INT          1/191 {'seq': 3, 'tsys': 1, 'tcomp': 1, 'mission_type': 0}
+   0.080 <-FCU MISSION_ITEM_INT             1/1 {'seq': 3, 'command': 16, 'frame': 3, 'p1': 0.0, 'p2': 0.0, 'x': -353629915, 'y': 1491655603, 'z': 15.0, 'mission_type': 0}
+   0.081 ->FCU MISSION_ACK                  1/191 {'tsys': 1, 'tcomp': 1, 'type': 0, 'mission_type': 0}
+   3.096 <-FCU MISSION_COUNT                1/1 {'count': 4, 'tsys': 1, 'tcomp': 191, 'mission_type': 0}
+   3.096 ->FCU MISSION_REQUEST_INT          1/191 {'seq': 0, 'tsys': 1, 'tcomp': 1, 'mission_type': 0}
+   3.102 <-FCU MISSION_ITEM_INT             1/1 {'seq': 0, 'command': 16, 'frame': 0, 'p1': 0.0, 'p2': 0.0, 'x': -353632611, 'y': 1491652300, 'z': 584.0499877929688, 'mission_type': 0}
+   3.102 ->FCU MISSION_REQUEST_INT          1/191 {'seq': 1, 'tsys': 1, 'tcomp': 1, 'mission_type': 0}
+   3.108 <-FCU MISSION_ITEM_INT             1/1 {'seq': 1, 'command': 178, 'frame': 0, 'p1': 1.0, 'p2': 4.0, 'x': 0, 'y': 0, 'z': 0.0, 'mission_type': 0}
+   3.108 ->FCU MISSION_REQUEST_INT          1/191 {'seq': 2, 'tsys': 1, 'tcomp': 1, 'mission_type': 0}
+   3.113 <-FCU MISSION_ITEM_INT             1/1 {'seq': 2, 'command': 16, 'frame': 3, 'p1': 0.0, 'p2': 0.0, 'x': -353632610, 'y': 1491655603, 'z': 15.0, 'mission_type': 0}
+   3.114 ->FCU MISSION_REQUEST_INT          1/191 {'seq': 3, 'tsys': 1, 'tcomp': 1, 'mission_type': 0}
+   3.119 <-FCU MISSION_ITEM_INT             1/1 {'seq': 3, 'command': 16, 'frame': 3, 'p1': 0.0, 'p2': 0.0, 'x': -353629915, 'y': 1491655603, 'z': 15.0, 'mission_type': 0}
+   3.119 ->FCU MISSION_ACK                  1/191 {'tsys': 1, 'tcomp': 1, 'type': 0, 'mission_type': 0}
+   8.099 <-FCU MISSION_COUNT                1/1 {'count': 0, 'tsys': 1, 'tcomp': 191, 'mission_type': 2}
+   8.100 ->FCU MISSION_ACK                  1/191 {'tsys': 1, 'tcomp': 1, 'type': 0, 'mission_type': 2}
+  11.004 <-FCU STATUSTEXT                   1/1 {'text': 'Mission: 1 ChangeSpeed'}
+  11.004 <-FCU STATUSTEXT                   1/1 {'text': 'Mission: 2 WP'}
+  12.642 ->FCU MISSION_COUNT                1/191 {'count': 4, 'tsys': 1, 'tcomp': 1, 'mission_type': 0}
+  12.648 <-FCU MISSION_REQUEST              1/1 {'seq': 0, 'tsys': 1, 'tcomp': 191, 'mission_type': 0}
+  12.648 ->FCU MISSION_ITEM_INT             1/191 {'seq': 0, 'command': 16, 'frame': 0, 'p1': 0.0, 'p2': 0.0, 'x': -353632610, 'y': 1491652299, 'z': 0.0, 'mission_type': 0}
+  12.654 <-FCU MISSION_REQUEST              1/1 {'seq': 1, 'tsys': 1, 'tcomp': 191, 'mission_type': 0}
+  12.654 ->FCU MISSION_ITEM_INT             1/191 {'seq': 1, 'command': 178, 'frame': 2, 'p1': 1.0, 'p2': 4.0, 'x': 0, 'y': 0, 'z': 0.0, 'mission_type': 0}
+  12.654 <-FCU STATUSTEXT                   1/1 {'text': 'Mission: 2 WP'}
+  12.654 <-FCU STATUSTEXT                   1/1 {'text': 'Auto mission changed, restarted command'}
+  12.660 <-FCU MISSION_REQUEST              1/1 {'seq': 2, 'tsys': 1, 'tcomp': 191, 'mission_type': 0}
+  12.660 <-FCU STATUSTEXT                   1/1 {'text': 'Mission: 2 WP'}
+  12.660 <-FCU STATUSTEXT                   1/1 {'text': 'Auto mission changed, restarted command'}
+  12.660 ->FCU MISSION_ITEM_INT             1/191 {'seq': 2, 'command': 16, 'frame': 3, 'p1': 600.0, 'p2': 0.0, 'x': -353632609, 'y': 1491653967, 'z': 14.991999626159668, 'mission_type': 0}
+  12.666 <-FCU MISSION_REQUEST              1/1 {'seq': 3, 'tsys': 1, 'tcomp': 191, 'mission_type': 0}
+  12.666 <-FCU STATUSTEXT                   1/1 {'text': 'Mission: 2 WP'}
+  12.666 <-FCU STATUSTEXT                   1/1 {'text': 'Auto mission changed, restarted command'}
+  12.666 ->FCU MISSION_ITEM_INT             1/191 {'seq': 3, 'command': 16, 'frame': 3, 'p1': 0.0, 'p2': 0.0, 'x': -353629915, 'y': 1491655603, 'z': 15.0, 'mission_type': 0}
+  12.671 <-FCU MISSION_ACK                  1/1 {'tsys': 1, 'tcomp': 191, 'type': 0, 'mission_type': 0}
+  12.671 <-FCU STATUSTEXT                   1/1 {'text': 'Mission: 2 WP'}
+  12.671 <-FCU STATUSTEXT                   1/1 {'text': 'Auto mission changed, restarted command'}
+  12.677 <-FCU MISSION_COUNT                1/1 {'count': 4, 'tsys': 1, 'tcomp': 191, 'mission_type': 0}
+  12.677 ->FCU MISSION_REQUEST_INT          1/191 {'seq': 0, 'tsys': 1, 'tcomp': 1, 'mission_type': 0}
+  12.683 <-FCU MISSION_ITEM_INT             1/1 {'seq': 0, 'command': 16, 'frame': 0, 'p1': 0.0, 'p2': 0.0, 'x': -353632611, 'y': 1491652300, 'z': 584.0499877929688, 'mission_type': 0}
+  12.683 ->FCU MISSION_REQUEST_INT          1/191 {'seq': 1, 'tsys': 1, 'tcomp': 1, 'mission_type': 0}
+  12.700 <-FCU MISSION_ITEM_INT             1/1 {'seq': 1, 'command': 178, 'frame': 0, 'p1': 1.0, 'p2': 4.0, 'x': 0, 'y': 0, 'z': 0.0, 'mission_type': 0}
+  12.701 ->FCU MISSION_REQUEST_INT          1/191 {'seq': 2, 'tsys': 1, 'tcomp': 1, 'mission_type': 0}
+  12.706 <-FCU MISSION_ITEM_INT             1/1 {'seq': 2, 'command': 16, 'frame': 3, 'p1': 600.0, 'p2': 0.0, 'x': -353632609, 'y': 1491653967, 'z': 14.989999771118164, 'mission_type': 0}
+  12.706 ->FCU MISSION_REQUEST_INT          1/191 {'seq': 3, 'tsys': 1, 'tcomp': 1, 'mission_type': 0}
+  12.712 <-FCU MISSION_ITEM_INT             1/1 {'seq': 3, 'command': 16, 'frame': 3, 'p1': 0.0, 'p2': 0.0, 'x': -353629915, 'y': 1491655603, 'z': 15.0, 'mission_type': 0}
+  12.712 ->FCU MISSION_ACK                  1/191 {'tsys': 1, 'tcomp': 1, 'type': 0, 'mission_type': 0}
+  13.097 <-FCU MISSION_COUNT                1/1 {'count': 4, 'tsys': 1, 'tcomp': 191, 'mission_type': 1}
+  13.097 ->FCU MISSION_REQUEST_INT          1/191 {'seq': 0, 'tsys': 1, 'tcomp': 1, 'mission_type': 1}
+  13.103 <-FCU MISSION_ITEM_INT             1/1 {'seq': 0, 'command': 5002, 'frame': 0, 'p1': 4.0, 'p2': 0.0, 'x': -353631981, 'y': 1491653070, 'z': 0.0, 'mission_type': 1}
+  13.103 ->FCU MISSION_REQUEST_INT          1/191 {'seq': 1, 'tsys': 1, 'tcomp': 1, 'mission_type': 1}
+  13.109 <-FCU MISSION_ITEM_INT             1/1 {'seq': 1, 'command': 5002, 'frame': 0, 'p1': 4.0, 'p2': 0.0, 'x': -353630544, 'y': 1491653070, 'z': 0.0, 'mission_type': 1}
+  13.109 ->FCU MISSION_REQUEST_INT          1/191 {'seq': 2, 'tsys': 1, 'tcomp': 1, 'mission_type': 1}
+  13.114 <-FCU MISSION_ITEM_INT             1/1 {'seq': 2, 'command': 5002, 'frame': 0, 'p1': 4.0, 'p2': 0.0, 'x': -353630544, 'y': 1491654833, 'z': 0.0, 'mission_type': 1}
+  13.115 ->FCU MISSION_REQUEST_INT          1/191 {'seq': 3, 'tsys': 1, 'tcomp': 1, 'mission_type': 1}
+  13.120 <-FCU MISSION_ITEM_INT             1/1 {'seq': 3, 'command': 5002, 'frame': 0, 'p1': 4.0, 'p2': 0.0, 'x': -353631981, 'y': 1491654833, 'z': 0.0, 'mission_type': 1}
+  13.120 ->FCU MISSION_ACK                  1/191 {'tsys': 1, 'tcomp': 1, 'type': 0, 'mission_type': 1}
+  25.116 ->FCU MISSION_COUNT                1/191 {'count': 4, 'tsys': 1, 'tcomp': 1, 'mission_type': 0}
+  25.121 <-FCU MISSION_REQUEST              1/1 {'seq': 0, 'tsys': 1, 'tcomp': 191, 'mission_type': 0}
+  25.121 ->FCU MISSION_ITEM_INT             1/191 {'seq': 0, 'command': 16, 'frame': 0, 'p1': 0.0, 'p2': 0.0, 'x': -353632610, 'y': 1491652299, 'z': 0.0, 'mission_type': 0}
+  25.127 <-FCU MISSION_REQUEST              1/1 {'seq': 1, 'tsys': 1, 'tcomp': 191, 'mission_type': 0}
+  25.127 <-FCU STATUSTEXT                   1/1 {'text': 'Mission: 2 WP'}
+  25.127 <-FCU STATUSTEXT                   1/1 {'text': 'Auto mission changed, restarted command'}
+  25.127 ->FCU MISSION_ITEM_INT             1/191 {'seq': 1, 'command': 178, 'frame': 2, 'p1': 1.0, 'p2': 4.0, 'x': 0, 'y': 0, 'z': 0.0, 'mission_type': 0}
+  25.133 <-FCU MISSION_REQUEST              1/1 {'seq': 2, 'tsys': 1, 'tcomp': 191, 'mission_type': 0}
+  25.133 <-FCU STATUSTEXT                   1/1 {'text': 'Mission: 2 WP'}
+  25.133 <-FCU STATUSTEXT                   1/1 {'text': 'Auto mission changed, restarted command'}
+  25.133 ->FCU MISSION_ITEM_INT             1/191 {'seq': 2, 'command': 16, 'frame': 3, 'p1': 0.0, 'p2': 0.0, 'x': -353632610, 'y': 1491655603, 'z': 15.0, 'mission_type': 0}
+  25.139 <-FCU MISSION_REQUEST              1/1 {'seq': 3, 'tsys': 1, 'tcomp': 191, 'mission_type': 0}
+  25.139 <-FCU STATUSTEXT                   1/1 {'text': 'Mission: 2 WP'}
+  25.139 <-FCU STATUSTEXT                   1/1 {'text': 'Auto mission changed, restarted command'}
+  25.139 ->FCU MISSION_ITEM_INT             1/191 {'seq': 3, 'command': 16, 'frame': 3, 'p1': 0.0, 'p2': 0.0, 'x': -353629915, 'y': 1491655603, 'z': 15.0, 'mission_type': 0}
+  25.145 <-FCU MISSION_ACK                  1/1 {'tsys': 1, 'tcomp': 191, 'type': 0, 'mission_type': 0}
+  25.145 <-FCU STATUSTEXT                   1/1 {'text': 'Mission: 2 WP'}
+  25.145 <-FCU STATUSTEXT                   1/1 {'text': 'Auto mission changed, restarted command'}
+  25.151 <-FCU MISSION_COUNT                1/1 {'count': 4, 'tsys': 1, 'tcomp': 191, 'mission_type': 0}
+  25.151 ->FCU MISSION_REQUEST_INT          1/191 {'seq': 0, 'tsys': 1, 'tcomp': 1, 'mission_type': 0}
+  25.156 <-FCU MISSION_ITEM_INT             1/1 {'seq': 0, 'command': 16, 'frame': 0, 'p1': 0.0, 'p2': 0.0, 'x': -353632611, 'y': 1491652300, 'z': 584.0499877929688, 'mission_type': 0}
+  25.157 ->FCU MISSION_REQUEST_INT          1/191 {'seq': 1, 'tsys': 1, 'tcomp': 1, 'mission_type': 0}
+  25.162 <-FCU MISSION_ITEM_INT             1/1 {'seq': 1, 'command': 178, 'frame': 0, 'p1': 1.0, 'p2': 4.0, 'x': 0, 'y': 0, 'z': 0.0, 'mission_type': 0}
+  25.162 ->FCU MISSION_REQUEST_INT          1/191 {'seq': 2, 'tsys': 1, 'tcomp': 1, 'mission_type': 0}
+  25.168 <-FCU MISSION_ITEM_INT             1/1 {'seq': 2, 'command': 16, 'frame': 3, 'p1': 0.0, 'p2': 0.0, 'x': -353632610, 'y': 1491655603, 'z': 15.0, 'mission_type': 0}
+  25.168 ->FCU MISSION_REQUEST_INT          1/191 {'seq': 3, 'tsys': 1, 'tcomp': 1, 'mission_type': 0}
+  25.174 <-FCU MISSION_ITEM_INT             1/1 {'seq': 3, 'command': 16, 'frame': 3, 'p1': 0.0, 'p2': 0.0, 'x': -353629915, 'y': 1491655603, 'z': 15.0, 'mission_type': 0}
+  25.174 ->FCU MISSION_ACK                  1/191 {'tsys': 1, 'tcomp': 1, 'type': 0, 'mission_type': 0}
+  31.752 <-FCU STATUSTEXT                   1/1 {'text': 'Mission: 3 WP'}
+{'->FCU MISSION_ACK': 6, '->FCU MISSION_COUNT': 3, '->FCU MISSION_ITEM_INT': 12, '->FCU MISSION_REQUEST_INT': 20, '<-FCU MISSION_ACK': 3, '<-FCU MISSION_COUNT': 6, '<-FCU MISSION_CURRENT': 444, '<-FCU MISSION_ITEM_INT': 20, '<-FCU MISSION_REQUEST': 12, '<-FCU STATUSTEXT': 19}

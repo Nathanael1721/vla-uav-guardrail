@@ -1,0 +1,28 @@
+MAVROS 2 GeoFence clear probe, 15 Nov 2026, AGX Orin (nathan-agxiot), MAVROS 2 in
+vlaguard/companion:jazzy (container vlaguard-orin-mavros-1) against ArduPilot
+Copter 4.5.7 SITL on the desktop (Project AirSim CityLife scene loaded), before
+pas_hil_adapter_01. Script: mavros_fence_clear_probe.py (rclpy, ROS 2 Jazzy, hil.env).
+
+1. The geofence services MAVROS 2 serves (ros2 service list | grep geofence):
+   /mavros/geofence/pull, /mavros/geofence/push and the parameter services;
+   no /mavros/geofence/clear.
+
+2. Probe output (second run; the first run read the list as empty before the
+   first push, then the same push / empty-push answers):
+   mavros ids sys/comp/tsys/tcomp [1, 191, 1, 1]
+   pull before True 0
+   push 1 True 1
+   pull after push True 1
+   push EMPTY False 1 ms 53.9
+   pull after empty push True 0
+   push 1 again True 1
+   pull before CLEAR_ALL True 1
+   subs on sink: 1
+   pull after CLEAR_ALL True 0
+
+Reading: a zero-item /mavros/geofence/push is answered success=False,
+wp_transfered 1, yet the autopilot's fence list reads back empty after it; a
+MISSION_CLEAR_ALL (mission_type FENCE) published as a raw frame on
+/uas1/mavlink_sink clears it too. The node keeps the empty push (the same
+service as every upload) and judges a clear by the read-back alone
+(demo/pas_ardupilot/mavros_link.py upload_fence; sitl/mavlink_adapter_node.py).

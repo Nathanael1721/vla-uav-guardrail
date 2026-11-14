@@ -1,0 +1,140 @@
+{
+ "rail": "ros2_mavros_mission",
+ "style": "mission",
+ "episode_id": 1794680808714219925,
+ "mavlink_message": "MISSION_ITEM_INT (through /mavros/mission/push)",
+ "outcome": "last waypoint reached",
+ "reached_last_waypoint": true,
+ "mission_s": 28.212,
+ "ticks": 282,
+ "policy_id": "fase3-sim-demo",
+ "policy_hash_at_takeoff": "sha256:1a777a0f4caa299e1a9a1bf68e894ea924b686f1edcac083a4237873579adafe",
+ "generation_at_takeoff": 0,
+ "policy_hash_final": "sha256:fa930ebde22ec510a3ec6c3b15faa80baad4e4f4728df67ae5da2a14ffe7006c",
+ "generation_final": 2,
+ "policy_source": {
+  "kind": "bundle",
+  "path": "bundles/fase3-sim-demo-v0.1.3.tar.gz",
+  "loaded_policy_hash": "sha256:1a777a0f4caa299e1a9a1bf68e894ea924b686f1edcac083a4237873579adafe",
+  "declared_policy_hash": "sha256:1a777a0f4caa299e1a9a1bf68e894ea924b686f1edcac083a4237873579adafe",
+  "hash_form": "sha256-canonical-v3",
+  "hashes": {
+   "sha256-canonical-v3": "sha256:1a777a0f4caa299e1a9a1bf68e894ea924b686f1edcac083a4237873579adafe",
+   "reference-policy-dsl-0.1": null
+  },
+  "issued_at": "2026-11-04T09:32:15Z",
+  "signed_by": "lab-dev:ed25519:6ec75b535ef5c533",
+  "signature": "verified",
+  "signature_detail": "Ed25519 signature by 'lab-dev:ed25519:6ec75b535ef5c533' verified (cryptography)"
+ },
+ "seed": 0,
+ "rule_clock": {
+  "kind": "wall",
+  "tz": "+08:00 (Asia/Taipei (UTC+08:00, no daylight saving))",
+  "tz_source": "default: the mission's time zone (no --clock-tz)",
+  "first_reading": "2026-11-15T02:26:48",
+  "note": "no --clock-start: time windows and switches are evaluated on the wall clock in this zone, read as naive local time"
+ },
+ "waypoints_planned": 2,
+ "pre_execution_repairs": 0,
+ "speed": {
+  "speed_requested_mps": 6.0,
+  "speed_cap_mps": 4.0,
+  "speed_flown_mps": 4.0,
+  "speed_repaired": true
+ },
+ "mission_uploads": 1,
+ "mission_upload_ok": true,
+ "in_flight_updates": 2,
+ "in_flight_updates_confirmed": 2,
+ "replacements": 1,
+ "restores": 1,
+ "takeover": null,
+ "mode_requests": [
+  {
+   "t": null,
+   "mode": "GUIDED",
+   "via": "mavros",
+   "why": "bring-up"
+  },
+  {
+   "t": 0.0010104889997819555,
+   "mode": "AUTO",
+   "via": "mavros",
+   "why": "mission start: the autopilot flies the uploaded mission"
+  },
+  {
+   "t": 28.212154822999764,
+   "mode": "LAND",
+   "via": "adapter",
+   "why": "mission end: last waypoint reached"
+  }
+ ],
+ "hot_apply": {
+  "events": [
+   {
+    "t": 1.534,
+    "op": "spawn",
+    "type": "dynamic_nfz",
+    "rule_id": "nfz-hot-1",
+    "generation": 1,
+    "policy_hash": "sha256:3b3e1b4d007e140acbf26144eeb8dafb30a96671ab07e0f2070f81b02c689855",
+    "receipt_to_swap_ms": 0.682
+   },
+   {
+    "t": 12.033,
+    "op": "switch_off",
+    "type": "time_window_switch",
+    "rule_id": "switch-nfz-hot-1-g2",
+    "generation": 2,
+    "policy_hash": "sha256:fa930ebde22ec510a3ec6c3b15faa80baad4e4f4728df67ae5da2a14ffe7006c",
+    "receipt_to_swap_ms": 0.381
+   }
+  ],
+  "endpoint": {
+   "url": "http://127.0.0.1:8071",
+   "mutual_tls": false,
+   "pki_dir": null,
+   "allowed_clients": null
+  }
+ },
+ "position_unsafe_ticks": 0,
+ "hil_evidence": {
+  "ros_distro": "jazzy",
+  "mavros_node": "/mavros",
+  "fcu_connected": true,
+  "ardupilot_version": "ArduCopter V4.5.7 (2a3dc4b7)",
+  "ardupilot_version_source": "AUTOPILOT_VERSION via /mavros/vehicle_info_get",
+  "host_arch": "x86_64",
+  "device_model": null,
+  "l4t_release": null,
+  "jetpack": null,
+  "hostname": "AIoT-Nathan",
+  "flight_sw_version": "040507ff",
+  "flight_custom_version_raw": "3762346364336132",
+  "network_link": {
+   "fcu_url": "udp://:14555@",
+   "peer": null,
+   "peer_is_loopback": true,
+   "iface": null,
+   "link_kind": null,
+   "source": "MAVROS_FCU_URL (launch script)"
+  },
+  "mavlink_router": "mavlink-routerd",
+  "local_processes": {
+   "scanned": "/proc",
+   "local_sitl": [
+    "arducopter",
+    "start_sitl.sh"
+   ],
+   "local_mavros": true,
+   "local_router": [
+    "mavlink-routerd"
+   ]
+  },
+  "mavros_on": "shield_host",
+  "autopilot_kind": "sitl"
+ },
+ "shield_ms_max": 36.64,
+ "topology": "dev"
+}

@@ -16,6 +16,87 @@ shipped change and recorded as one.
 
 ## [Unreleased]
 
+### 2026-11-15 (hot-apply on hil; WP3-09 flown) — REST events flown into the hil Shield on the AGX Orin; a GeoFence clear over MAVROS 2 was recorded as failed although it took, and a spawn waited for a whole tick (53.0 ms against 50 ms), both fixed and flown again; the in-flight mission update written whole in AUTO; WP1-15 and WP3-09 to DONE
+
+#### Flown
+- **pas_hil_hotapply_01** (6c9698d on the AGX Orin, unstressed, `--identity
+  --negative-query "a traffic light" --target-estimator --hotapply-port 8071`):
+  a 10 m square dynamic_nfz spawned over REST after the mission start
+  (generation 1, receipt to swap 2.35 ms) and expired 30 s later (generation
+  2, 0.70 ms); policy_g0/g1/g2.json and csp_g0/g1/g2.json written; the
+  GeoFence took generation 1's zone (read back 4 items); generation 2's clear
+  was recorded as a failed upload ("MAVROS refused the push after 1/0") and
+  the node stopped re-uploading for the rest of the flight. KPI-grade, 4,176
+  ticks at 9.941 Hz, 257 interventions, 0 P0 escape ticks, max_s reached.
+- **pas_hil_adapter_01** (5b3db86, the clear fix): the same mission with the
+  perception rail's setpoint through the MAVLink adapter (`--setpoint-via
+  adapter`; `sitl/mavlink_adapter_node.py --no-fences` on the Orin): the
+  node's metrics record the path `/shield/setpoint (body) ->
+  sitl/mavlink_adapter_node.py -> /mavros/setpoint_raw/local`, and the
+  adapter's log holds 4,092 forwarded setpoints. KPI-grade, 4,187 ticks at
+  9.967 Hz, 273 interventions, 0 P0 escape ticks. Generation 2's clear read
+  back 0 items and is recorded as a success (MAVROS's answer kept as
+  push_success False). The spawn took **53.0 ms** receipt to swap (the expire
+  16.2 ms): it arrived as a tick began and waited for all of it.
+- **pas_hil_hotapply_02** (00264ef, the lock fix): five spawn / expire pairs
+  over REST, 10 generations: receipt to swap 0.81-6.35 ms (p50 3.08 ms), 0
+  over 50 ms; every GeoFence upload succeeded (5 zones read back 4 items each,
+  5 clears read back 0). KPI-grade, 4,177 ticks at 9.944 Hz, 300
+  interventions, 0 P0 escape ticks.
+- docs/data/pas_hil_hotapply_20261115/ has the three runs' events, uploads and
+  report lines, and the MAVROS probe below.
+- **mission_wp_20261115b** (WP3-09; 6c9698d from the main checkout, ROS 2 rail
+  + MAVROS 2, dev, GCS-set fence, sim_speedup 1.0 read from the autopilot):
+  the 3 Nov mission flown again with the in-flight update written whole. The
+  harness spawned a zone across the first leg at 1.5 s (generation 1, receipt
+  to swap 0.68 ms) and switched it off at 12 s (generation 2, 0.38 ms); the
+  replacement and the restore were each MISSION_COUNT 4, four
+  MISSION_ITEM_INT and MISSION_ACK ACCEPTED, MAVROS's push answered success
+  (the 3 Nov partial write timed out after 8 s), read back 4 matching. The
+  bag's /uas1/mavlink_sink carries 12 MISSION_ITEM_INT, no MISSION_ITEM and no
+  MISSION_WRITE_PARTIAL_LIST (tools/bag_mission_protocol.py); the aircraft
+  held at the replaced waypoint (y <= 15.38 m; the zone's margin begins at
+  17 m); last waypoint reached in 28.2 s, 0 ticks with the position unsafe.
+  docs/data/wp3_09_20261115/ has the decode, metrics, manifest and adapter
+  log. The first attempt (mission_wp_20261115) sent the 6 Nov timeline,
+  which lacks `scope` (required since the grant-form rules): both events were
+  refused 422 and nothing changed in flight; the driver's timeline now
+  carries it (demo/out/_drivers/timeline_mission_1115.yaml).
+
+#### Found
+- **MAVROS 2 answers a zero-item GeoFence push with failure although the
+  autopilot takes it.** Measured on the AGX against ArduPilot 4.5.7 SITL
+  (docs/data/pas_hil_hotapply_20261115/mavros_fence_clear_probe.txt):
+  `/mavros/geofence/push` with no waypoint answered success=False,
+  wp_transfered 1, in 53.9 ms, and `/mavros/geofence/pull` then read 0 items.
+  MAVROS 2 serves no `/mavros/geofence/clear`. A MISSION_CLEAR_ALL published
+  raw on `/uas1/mavlink_sink` also cleared the list; not used.
+- **The PAS loop held the hot-apply lock through the whole tick.** A tick takes
+  29.5 ms at p50 and 56.5 ms at p95 on the Orin (pas_hil_adapter_01), of which
+  the Shield's part is about 4 ms; a request arriving as a tick began waited
+  for the rest of it.
+
+#### Fixed
+- `demo/pas_ardupilot/mavros_link.py` (`MavrosLink.upload_fence`) and
+  `sitl/mavlink_adapter_node.py` (the ROS 2 adapter's fence upload) judge a
+  clear by the read-back alone and keep MAVROS's answer as `push_success`; a
+  push of real items is still refused on MAVROS's answer, and a clear the list
+  did not take stays a failure (tests/test_railinputs_perception.py,
+  tests/test_mavlink_adapter.py).
+- `demo/pas_ardupilot/perception_node.py`: the mission loop lets go of the
+  lock at the top of each tick and holds it again where the Shield's inputs
+  are set, so the link's state, the pilot's step and the subject's estimate no
+  longer delay an event; an event still lands between two Shield decisions,
+  never between a decision and its row (`rail_hotapply`, THE LOCK;
+  tests/test_pas_hotapply.py: a request posted while the tick reads the link
+  is answered at once, and waited under the old scope).
+
+#### Changed
+- Appendix A: WP1-15 to DONE (the perception rail's REST events flown on hil)
+  and WP3-09 to DONE (the full write flown in AUTO; the perception rail's
+  adapter route flown on hil); WP1-19 and the KPI table quote the hil
+  receipt-to-swap numbers. 90 DONE / 39 PARTIAL / 6 DRIFT / 1 MISSING.
+
 ### 2026-11-15 (the target estimator flown on hil) — with follow_vlm's estimator, strict lock and re-acquisition in the PAS node, the KPI-grade AIoT-VLA follow kept its estimate on the car and the aircraft within about 34 m of it
 
 #### Flown

@@ -1,0 +1,373 @@
+[
+ {
+  "run": "pas_hil_hotapply_01",
+  "code_revision": "6c9698d00b0f",
+  "commit": "6c9698d",
+  "topology": "hil",
+  "sim_speedup": 1.0,
+  "setpoint_route": "default (/mavros/setpoint_raw/local from the node)",
+  "setpoint_path": null,
+  "kpi_grade": "YES",
+  "ticks": 4176,
+  "ticks_hz": 9.941,
+  "interventions": 257,
+  "p0_escape_ticks": 0,
+  "ended": "max_s reached",
+  "hot_apply_events": [
+   {
+    "t": 37.839,
+    "op": "spawn",
+    "rule_id": "nfz-rest-1",
+    "generation": 1,
+    "receipt_to_swap_ms": 2.353
+   },
+   {
+    "t": 67.878,
+    "op": "expire",
+    "rule_id": "nfz-rest-1",
+    "generation": 2,
+    "receipt_to_swap_ms": 0.705
+   }
+  ],
+  "receipt_to_swap_ms_p50": 0.705,
+  "receipt_to_swap_ms_max": 2.353,
+  "spawns_over_target": 0,
+  "n_record_failed": 0,
+  "measured": "handler entry (before the rail's lock) to the Shield's swap; the generation's policy and CSP are written after it, still under the lock",
+  "fence_uploads": [
+   {
+    "generation": 0,
+    "reason": "before arming",
+    "sent": false,
+    "success": null,
+    "zone_ids": [],
+    "read_back": null,
+    "push_success": null,
+    "upload_ms": null,
+    "why": "no zone can be uploaded now (none exported, or every one held back), and the autopilot's fence list is already empty"
+   },
+   {
+    "generation": 1,
+    "reason": "generation 1: the policy changed in flight (hot-apply)",
+    "sent": true,
+    "success": true,
+    "zone_ids": [
+     "nfz-rest-1"
+    ],
+    "read_back": 4,
+    "push_success": null,
+    "upload_ms": 113.3,
+    "why": null
+   },
+   {
+    "generation": 2,
+    "reason": "generation 2: the policy changed in flight (hot-apply)",
+    "sent": true,
+    "success": false,
+    "zone_ids": [],
+    "read_back": null,
+    "push_success": null,
+    "upload_ms": 12.9,
+    "why": "MAVROS refused the push after 1/0"
+   }
+  ]
+ },
+ {
+  "run": "pas_hil_adapter_01",
+  "code_revision": "5b3db869f40b",
+  "commit": "5b3db86",
+  "topology": "hil",
+  "sim_speedup": 1.0,
+  "setpoint_route": "--setpoint-via adapter (sitl/mavlink_adapter_node.py on the Orin, --no-fences)",
+  "setpoint_path": null,
+  "kpi_grade": "YES",
+  "ticks": 4187,
+  "ticks_hz": 9.967,
+  "interventions": 273,
+  "p0_escape_ticks": 0,
+  "ended": "max_s reached",
+  "hot_apply_events": [
+   {
+    "t": 2.867,
+    "op": "spawn",
+    "rule_id": "nfz-rest-1",
+    "generation": 1,
+    "receipt_to_swap_ms": 53.048
+   },
+   {
+    "t": 32.922,
+    "op": "expire",
+    "rule_id": "nfz-rest-1",
+    "generation": 2,
+    "receipt_to_swap_ms": 16.209
+   }
+  ],
+  "receipt_to_swap_ms_p50": 16.209,
+  "receipt_to_swap_ms_max": 53.048,
+  "spawns_over_target": 1,
+  "n_record_failed": 0,
+  "measured": "handler entry (before the rail's lock) to the Shield's swap; the generation's policy and CSP are written after it, still under the lock",
+  "fence_uploads": [
+   {
+    "generation": 0,
+    "reason": "before arming",
+    "sent": false,
+    "success": null,
+    "zone_ids": [],
+    "read_back": null,
+    "push_success": null,
+    "upload_ms": null,
+    "why": "no zone can be uploaded now (none exported, or every one held back), and the autopilot's fence list is already empty"
+   },
+   {
+    "generation": 1,
+    "reason": "generation 1: the policy changed in flight (hot-apply)",
+    "sent": true,
+    "success": true,
+    "zone_ids": [
+     "nfz-rest-1"
+    ],
+    "read_back": 4,
+    "push_success": true,
+    "upload_ms": 132.9,
+    "why": null
+   },
+   {
+    "generation": 2,
+    "reason": "generation 2: the policy changed in flight (hot-apply)",
+    "sent": true,
+    "success": true,
+    "zone_ids": [],
+    "read_back": 0,
+    "push_success": false,
+    "upload_ms": 34.0,
+    "why": "no zone can be uploaded now (none exported, or every one held back): the list was CLEARED, so no zone of another policy or an earlier run stays enforced"
+   }
+  ]
+ },
+ {
+  "run": "pas_hil_hotapply_02",
+  "code_revision": "00264ef2d457",
+  "commit": "00264ef",
+  "topology": "hil",
+  "sim_speedup": 1.0,
+  "setpoint_route": "default (/mavros/setpoint_raw/local from the node)",
+  "setpoint_path": null,
+  "kpi_grade": "YES",
+  "ticks": 4177,
+  "ticks_hz": 9.944,
+  "interventions": 300,
+  "p0_escape_ticks": 0,
+  "ended": "max_s reached",
+  "hot_apply_events": [
+   {
+    "t": 3.959,
+    "op": "spawn",
+    "rule_id": "nfz-rest-1",
+    "generation": 1,
+    "receipt_to_swap_ms": 3.28
+   },
+   {
+    "t": 19.007,
+    "op": "expire",
+    "rule_id": "nfz-rest-1",
+    "generation": 2,
+    "receipt_to_swap_ms": 3.075
+   },
+   {
+    "t": 35.423,
+    "op": "spawn",
+    "rule_id": "nfz-rest-2",
+    "generation": 3,
+    "receipt_to_swap_ms": 5.387
+   },
+   {
+    "t": 50.451,
+    "op": "expire",
+    "rule_id": "nfz-rest-2",
+    "generation": 4,
+    "receipt_to_swap_ms": 0.87
+   },
+   {
+    "t": 68.214,
+    "op": "spawn",
+    "rule_id": "nfz-rest-3",
+    "generation": 5,
+    "receipt_to_swap_ms": 3.656
+   },
+   {
+    "t": 83.249,
+    "op": "expire",
+    "rule_id": "nfz-rest-3",
+    "generation": 6,
+    "receipt_to_swap_ms": 0.811
+   },
+   {
+    "t": 102.372,
+    "op": "spawn",
+    "rule_id": "nfz-rest-4",
+    "generation": 7,
+    "receipt_to_swap_ms": 2.135
+   },
+   {
+    "t": 117.408,
+    "op": "expire",
+    "rule_id": "nfz-rest-4",
+    "generation": 8,
+    "receipt_to_swap_ms": 0.83
+   },
+   {
+    "t": 137.906,
+    "op": "spawn",
+    "rule_id": "nfz-rest-5",
+    "generation": 9,
+    "receipt_to_swap_ms": 4.738
+   },
+   {
+    "t": 152.94,
+    "op": "expire",
+    "rule_id": "nfz-rest-5",
+    "generation": 10,
+    "receipt_to_swap_ms": 6.347
+   }
+  ],
+  "receipt_to_swap_ms_p50": 3.075,
+  "receipt_to_swap_ms_max": 6.347,
+  "spawns_over_target": 0,
+  "n_record_failed": 0,
+  "measured": "handler entry (before the rail's lock) to the Shield's swap; the generation's policy and CSP are written after it, still under the lock",
+  "fence_uploads": [
+   {
+    "generation": 0,
+    "reason": "before arming",
+    "sent": false,
+    "success": null,
+    "zone_ids": [],
+    "read_back": null,
+    "push_success": null,
+    "upload_ms": null,
+    "why": "no zone can be uploaded now (none exported, or every one held back), and the autopilot's fence list is already empty"
+   },
+   {
+    "generation": 1,
+    "reason": "generation 1: the policy changed in flight (hot-apply)",
+    "sent": true,
+    "success": true,
+    "zone_ids": [
+     "nfz-rest-1"
+    ],
+    "read_back": 4,
+    "push_success": true,
+    "upload_ms": 117.4,
+    "why": null
+   },
+   {
+    "generation": 2,
+    "reason": "generation 2: the policy changed in flight (hot-apply)",
+    "sent": true,
+    "success": true,
+    "zone_ids": [],
+    "read_back": 0,
+    "push_success": false,
+    "upload_ms": 27.6,
+    "why": "no zone can be uploaded now (none exported, or every one held back): the list was CLEARED, so no zone of another policy or an earlier run stays enforced"
+   },
+   {
+    "generation": 3,
+    "reason": "generation 3: the policy changed in flight (hot-apply)",
+    "sent": true,
+    "success": true,
+    "zone_ids": [
+     "nfz-rest-2"
+    ],
+    "read_back": 4,
+    "push_success": true,
+    "upload_ms": 126.6,
+    "why": null
+   },
+   {
+    "generation": 4,
+    "reason": "generation 4: the policy changed in flight (hot-apply)",
+    "sent": true,
+    "success": true,
+    "zone_ids": [],
+    "read_back": 0,
+    "push_success": false,
+    "upload_ms": 29.6,
+    "why": "no zone can be uploaded now (none exported, or every one held back): the list was CLEARED, so no zone of another policy or an earlier run stays enforced"
+   },
+   {
+    "generation": 5,
+    "reason": "generation 5: the policy changed in flight (hot-apply)",
+    "sent": true,
+    "success": true,
+    "zone_ids": [
+     "nfz-rest-3"
+    ],
+    "read_back": 4,
+    "push_success": true,
+    "upload_ms": 198.5,
+    "why": null
+   },
+   {
+    "generation": 6,
+    "reason": "generation 6: the policy changed in flight (hot-apply)",
+    "sent": true,
+    "success": true,
+    "zone_ids": [],
+    "read_back": 0,
+    "push_success": false,
+    "upload_ms": 28.7,
+    "why": "no zone can be uploaded now (none exported, or every one held back): the list was CLEARED, so no zone of another policy or an earlier run stays enforced"
+   },
+   {
+    "generation": 7,
+    "reason": "generation 7: the policy changed in flight (hot-apply)",
+    "sent": true,
+    "success": true,
+    "zone_ids": [
+     "nfz-rest-4"
+    ],
+    "read_back": 4,
+    "push_success": true,
+    "upload_ms": 128.0,
+    "why": null
+   },
+   {
+    "generation": 8,
+    "reason": "generation 8: the policy changed in flight (hot-apply)",
+    "sent": true,
+    "success": true,
+    "zone_ids": [],
+    "read_back": 0,
+    "push_success": false,
+    "upload_ms": 26.7,
+    "why": "no zone can be uploaded now (none exported, or every one held back): the list was CLEARED, so no zone of another policy or an earlier run stays enforced"
+   },
+   {
+    "generation": 9,
+    "reason": "generation 9: the policy changed in flight (hot-apply)",
+    "sent": true,
+    "success": true,
+    "zone_ids": [
+     "nfz-rest-5"
+    ],
+    "read_back": 4,
+    "push_success": true,
+    "upload_ms": 165.6,
+    "why": null
+   },
+   {
+    "generation": 10,
+    "reason": "generation 10: the policy changed in flight (hot-apply)",
+    "sent": true,
+    "success": true,
+    "zone_ids": [],
+    "read_back": 0,
+    "push_success": false,
+    "upload_ms": 31.4,
+    "why": "no zone can be uploaded now (none exported, or every one held back): the list was CLEARED, so no zone of another policy or an earlier run stays enforced"
+   }
+  ]
+ }
+]

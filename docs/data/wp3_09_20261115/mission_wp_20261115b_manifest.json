@@ -1,0 +1,8 @@
+{
+  "code_revision": "6c9698d00b0f",
+  "vla_model_hash": "none:hand-written-controller",
+  "policy_hash": "sha256:fa930ebde22ec510a3ec6c3b15faa80baad4e4f4728df67ae5da2a14ffe7006c",
+  "random_seed": 0,
+  "sim_speedup": 1.0,
+  "topology": "dev"
+}
