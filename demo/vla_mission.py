@@ -290,7 +290,9 @@ class HintStep:
              None too when the frame's heading is unknown).
     since_seen_s, seen_rel_rad  memory / search: the time since the
              sighting's frame and its bearing relative to the current
-             heading (None otherwise)."""
+             heading (None otherwise).
+    from_estimate  a "memory" toward the caller's target ESTIMATE
+             (follow_hint_step's `estimate`), not the remembered sighting."""
     kind: str | None
     box: str
     phrase: str | None = None
@@ -301,12 +303,14 @@ class HintStep:
     yaw_correction_rad: float | None = None
     since_seen_s: float | None = None
     seen_rel_rad: float | None = None
+    from_estimate: bool = False
 
 
 def follow_hint_step(box, t_capture: float, yaw_capture: float,
                      seen: tuple[float, float] | None, bridge, *, fresh_s: float,
                      memory_s: float = 0.0, search_s: float = 0.0,
-                     close: "BoxClose | None" = None) -> HintStep:
+                     close: "BoxClose | None" = None,
+                     estimate: float | None = None) -> HintStep:
     """THE hint rule of a detector mission (DetectorHint's decision, once the
     start gate is open), pure but for the bridge's phrase counter:
     `box` = (det, t_box, yaw_box) as unpack_box gives them (det None: no
@@ -328,13 +332,29 @@ def follow_hint_step(box, t_capture: float, yaw_capture: float,
         its frame is at most memory_s ("memory"); then, up to memory_s +
         search_s, a quarter turn toward the side that re-read gives now
         ("search"); else nothing. Both 0: M2's rule (no fresh box, no
-        request)."""
+        request).
+      NO FRESH BOX, WITH AN ESTIMATE (2026-11-15): `estimate` is the world
+        bearing of where the caller's target estimate puts the subject at
+        this capture (demo/subject_track.SubjectTrack, through DetectorHint's
+        `estimate`; None: none). It is the "memory" for as long as it is
+        given, whatever memory_s says - the estimate decides how long it is
+        good for - and it becomes the sighting's bearing (its time stays the
+        sighting's), so the memory and search after it turn toward where the
+        subject was last predicted, not where it was last seen. None: every
+        step exactly as above."""
     from vla_bridge import bearing_from_box
     det, t_box, yaw_box = box
     t_capture, yaw_capture = float(t_capture), float(yaw_capture)
     age = None if det is None or t_box is None else t_capture - float(t_box)
     if age is None or age > fresh_s:
         state = "none" if age is None else "stale"
+        if estimate is not None:
+            world = float(estimate)
+            rel = wrap_pi(world - yaw_capture)
+            since = None if seen is None else t_capture - seen[1]
+            seen = None if seen is None else (world, seen[1])
+            return HintStep("memory", state, bridge.phrase_for_bearing(rel), rel, seen, age,
+                            since_seen_s=since, seen_rel_rad=rel, from_estimate=True)
         if seen is None or (memory_s <= 0 and search_s <= 0):
             return HintStep(None, state, seen=seen, age_s=age)
         world, t_seen = seen
@@ -388,7 +408,8 @@ class DetectorHint:
                  memory_s: float = 0.0, search_s: float = 0.0,
                  close: "BoxClose | None" = None,
                  start_gate: tuple[int, float] | None = None,
-                 record_kind: bool = False):
+                 record_kind: bool = False,
+                 estimate: Callable[[Capture], tuple[float, str] | None] | None = None):
         if not fresh_s > 0:
             raise ValueError("fresh_s must be positive")
         if not (memory_s >= 0 and search_s >= 0):
@@ -413,6 +434,17 @@ class DetectorHint:
         # "detector": the phrase still comes only from the detector's boxes.
         self.memory_s = float(memory_s)
         self.search_s = float(search_s)
+        # FOLLOW WITH A TARGET ESTIMATE (2026-11-15; the Project AirSim
+        # rail's --target-estimator): `estimate(capture)` -> (the world
+        # bearing of where the subject is predicted at that capture, from its
+        # pose; the estimate's source word) or None. With no fresh box it is
+        # the "memory" (follow_hint_step's `estimate`) for as long as it is
+        # given; the sighting's memory and search follow it. None: every
+        # hint exactly as before. `last_memory_src` says what the last
+        # memory hint aimed at: the estimate's source word, or "sighting".
+        self.estimate = estimate
+        self.memory_by_source: Counter = Counter()
+        self.last_memory_src: str | None = None
         self.close = close
         # FOLLOW's start gate (as follow_vlm's --start-when-seen): no request
         # until `n` successive detector frames gave a fresh box at least
@@ -467,6 +499,7 @@ class DetectorHint:
         self.last_detector_latency_s = None
         self.last_kind = None
         self.last_step = None
+        self.last_memory_src = None
         if det is not None and self.box_ignored(t_box):
             # The box a reset dropped, still published (fresh for fresh_s,
             # kept by the Grounder up to its drop_after): no box at all.
@@ -486,11 +519,17 @@ class DetectorHint:
         # The decision itself - fresh, close, memory, search or nothing, the
         # phrase and the sighting kept - is follow_hint_step's, the one rule
         # tools/build_follow_dataset.py emulates over a recording.
+        est = self.estimate(capture) if self.estimate is not None else None
         step = follow_hint_step((det, t_box, yaw_box), capture.t_capture, capture.pose.yaw_rad,
                                 self._seen, self.bridge, fresh_s=self.fresh_s,
-                                memory_s=self.memory_s, search_s=self.search_s, close=self.close)
+                                memory_s=self.memory_s, search_s=self.search_s, close=self.close,
+                                estimate=None if est is None else est[0])
         self.last_step = step
         self._seen = step.seen
+        if step.kind == "memory":
+            self.last_memory_src = str(est[1]) if step.from_estimate else "sighting"
+            if self.estimate is not None:
+                self.memory_by_source[self.last_memory_src] += 1
         if step.box == "fresh":
             if yaw_box is None:
                 self.n_no_yaw += 1
@@ -576,6 +615,10 @@ class DetectorHint:
                "start_gate": gate}
         if self.record_kind or self._ignore_until is not None:
             out["ignored_after_reset"] = self.n_ignored
+        if self.estimate is not None:
+            # The memory hints by what they aimed at: the target estimate's
+            # source ("estimate", "trail") or the remembered sighting.
+            out["memory_by_source"] = dict(self.memory_by_source)
         return {**out,
                 "close_rule": None if self.close is None else self.close.as_dict(),
                 "hints": self.n_hints, "stale": self.n_stale,

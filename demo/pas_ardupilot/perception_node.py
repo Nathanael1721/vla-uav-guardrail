@@ -261,13 +261,45 @@ THE VLA FOLLOW (--pilot vla --mission follow; 2026-11-06)
   * NOT FLOWN: tests/test_pas_vla.py drives it with the stand-in link and a
     scripted protocol-v2 server announcing an aiotvla identity.
 
-WHAT THIS IS NOT. follow_vlm.fly()'s further layers - the target estimator,
-the strict lock and its re-acquisition, trail following, the fence guard, the
-landing site - live inside that 2,500-line function and are not reused here;
-moving them needs a refactor of follow_vlm.py. Until then this node tracks
-with the servo law on the detector's box, and its numbers are not comparable
-with the simple_flight CityLife flights. Its tracking score comes from the
-subject truth above when the scene provides it (None otherwise).
+THE TARGET ESTIMATOR (--target-estimator, with --identity, for --pilot vla
+--mission follow; 2026-11-15)
+
+  follow_vlm.fly()'s subject handling, which this rail lacked (pas_hil_aiot_
+  kpi_01: the detector's box fresh on 942 of 4,192 ticks, on those ticks the
+  car a median 97 m away; kpi_02 with --identity held no lock at all):
+  demo/subject_track.SubjectTrack, stepped by VLAPilot.step once per tick on
+  the Grounder's answer before the backend acts, built from follow_vlm's own
+  functions (the estimator, its seed, the SOFT rule, the lapse anchor, the
+  strict lock's prior, the Reacquirer, the trail), not a copy of them.
+  * The Grounder holds follow_vlm's STRICT lock (build_grounder): seeded by
+    the start gate's pick, leaning on the estimate between boxes, and never
+    adopting a box that is not where the subject should be.
+  * Between boxes the estimate (demo/target_state.TargetState, a constant-
+    velocity model on identity's range and bearing at each box's own
+    capture) predicts where the subject is; after lapse_s with no accepted
+    measurement it is dropped and follow_vlm.Reacquirer takes the subject
+    back, anchored where it was predicted, only on identity-OK evidence.
+  * The VLA's hint with no fresh box (vla_mission.DetectorHint's
+    `estimate`): "memory" toward the PREDICTED subject while the estimate is
+    served, then toward fly()'s coast look along the trail while the subject
+    is still held in memory, then the sighting's own memory and search, as
+    before. A model that reads the compass phrase is turned toward where the
+    subject went; one that ignores it (AIOT-VLA, demo/vla_server_foreign.py:
+    "the compass phrase ... ignored") gets only the requests it gates.
+  * Recorded: the rows' est_state, est_xy, est_age_s, est_speed_mps,
+    est_memory, lock_why, reacq_streak and hint_memory_src, est_gap_m
+    against the truth (evaluation only); metrics.json `subject_track` (the
+    estimator, the commits, lapses and re-acquisitions, the ticks per state,
+    the estimate's age, the memory's sources, est_lock_frac against the
+    truth). The Shield's subject is unchanged: the fresh box placed from its
+    own capture, as before.
+
+WHAT THIS IS NOT. follow_vlm.fly()'s control law - its servo on the estimate,
+the stand-off speed, trail FOLLOWING, the fence guard, the landing site -
+lives inside that function and is not reused here: this node's pilots are
+the servo law on the detector's box and the VLA. Its numbers are not
+comparable with the simple_flight CityLife flights. Its tracking score comes
+from the subject truth above when the scene provides it (None otherwise).
 
 TOPOLOGY. topology.classify() decides the label the evidence supports. The
 grant label is OFFERED to build_manifest only when the rail is qualified: gate
@@ -699,7 +731,7 @@ VLA_FOLLOW_ONLY = ("vla_step_as_rate", "follow_memory_s", "follow_search_s",
 VLA_PARAMS = ("vla_front_source", "vla_step_as_rate", "vla_rate_yaw", "follow_memory_s",
               "follow_search_s", "close_bottom_frac", "close_width_frac", "lost_timeout_s",
               "vla_cruise_mps", "vla_speed_cap_mps", "allow_unstamped_pipelined",
-              "front_capture_interval_s")
+              "front_capture_interval_s", "target_estimator")
 # Exit codes beside 0 and 1 (demo/vla_fly.py's): a VLA failure ended the
 # mission (vla_mission.VLA_FAILURE_ENDS), and a run refused before arming.
 EXIT_VLA_FAILURE = 3
@@ -915,12 +947,20 @@ class VLAPilot:
     the same box. Every tick also records what the backend did about a
     request (`vla_request`: sent / no_hint / no_capture / error / None for no
     attempt), from its counts - the observation-rate summary reads it.
+
+    THE TARGET ESTIMATOR (`track`, demo/subject_track.SubjectTrack;
+    --target-estimator): stepped in step() on that same Grounder answer
+    BEFORE the backend acts, so the hint the backend asks for this tick
+    (DetectorHint's `estimate`) reads this tick's estimate; after() adds its
+    est_* fields and the hint's memory source to the row. A fault in it is
+    counted (`track_errors`, the first one kept and printed), never raised:
+    the 10 Hz loop and the Shield go on.
     """
 
     def __init__(self, backend, monitor, *, mission: str, goal_xy=None, detections=None,
                  hint_source=None, detector_hint=None, stale_s: float = DETECTION_STALE_S,
                  server_alive=lambda: True, vm=None, model_label: str | None = None,
-                 close_hold=None):
+                 close_hold=None, track=None):
         self.vm = vm or _vm()
         # The VLA panel's name for the model (vla_mission.model_label).
         self.model_label = model_label
@@ -931,6 +971,10 @@ class VLAPilot:
         self.hint_source, self.detector_hint = hint_source, detector_hint
         self.close_hold = close_hold
         self.server_alive = server_alive
+        # The target estimator (class docstring), and its faults.
+        self.track = track
+        self.track_errors = 0
+        self.track_error: str | None = None
         self.last_tick = None
         self.n_held = 0
         # Ticks the escalation FSM stepped on a raw action the rail itself had
@@ -970,6 +1014,18 @@ class VLAPilot:
         tk = self.last_tick
         return None if tk is None else f"VLA {tk.author} #{tk.seq}"
 
+    def _track_call(self, fn, *a):
+        """The target estimator's call, its fault counted and never raised
+        (class docstring); None on a fault."""
+        try:
+            return fn(*a)
+        except Exception as exc:                                  # noqa: BLE001
+            self.track_errors += 1
+            if self.track_error is None:
+                self.track_error = f"{type(exc).__name__}: {exc}"
+                print(f"[track]  *** {self.track_error} (counted; the loop goes on)")
+            return None
+
     def _close_now(self, now: float) -> bool:
         """A fresh box that counts as close this tick (the follow's close
         hold): MissionLoop's rule, on this tick's box."""
@@ -992,6 +1048,10 @@ class VLAPilot:
         # The Grounder read ONCE per tick: the close hold here, the stop rules
         # and the row in after() all see this box.
         self._box = box_of(lat) if self.detections is not None else None
+        if self.track is not None:
+            # The estimate first: the hint the backend may ask for below reads it.
+            self._track_call(self.track.step, lat, now,
+                             (float(st.x), float(st.y), math.radians(float(st.yaw_deg))))
         close_now = self._close_now(now)
         counts = getattr(self.backend, "counts", None)
         before = dict(counts) if isinstance(counts, dict) else None
@@ -1079,6 +1139,14 @@ class VLAPilot:
             row["hint_kind"] = cur.get("hint_kind")
             row["hint_sent_kind"] = ((self.hint_source.last or {}).get("kind")
                                      if self.hint_source is not None else None)
+        if self.track is not None:
+            # THE TARGET ESTIMATOR's fields (SubjectTrack.row), and what the
+            # hint rule's last memory aimed at: the estimate, the trail or
+            # the remembered sighting (None: its last decision was no memory).
+            row.update(self._track_call(self.track.row, now, float(st.x), float(st.y),
+                                        math.radians(float(st.yaw_deg)))
+                       or {"est_state": None})
+            row["hint_memory_src"] = getattr(self.detector_hint, "last_memory_src", None)
         tracker = getattr(self.backend, "tracker", None)
         if getattr(getattr(tracker, "cfg", None), "rate_horizon_s", None) is not None:
             # RATE EXECUTION: the commanded speed and yaw rate of a step
@@ -1194,6 +1262,11 @@ class StartGate:
             self.acq_w.start(None)
         self.pick = None
         self.pick_yaw = None
+        # With identity, the pick's features (P, rng_h, bearing: the
+        # Reacquirer's pick_feat) and its inference's capture (pose, times):
+        # what the target estimator is seeded from (SubjectTrack.start).
+        self.pick_feat = None
+        self.pick_cap = None
         self.rejected_by: dict = {}
 
     def _count_rejections(self) -> None:
@@ -1234,6 +1307,9 @@ class StartGate:
         if reached:
             self.pick = pick
             self.pick_yaw = (ic.get("pose") or {}).get("yaw")
+            if self.identity:
+                self.pick_feat = self.acq_w.pick_feat
+                self.pick_cap = dict(ic) if ic else None
         return bool(reached)
 
     def record(self) -> dict:
@@ -1772,9 +1848,12 @@ def build_grounder(args, obs, out: Path, fv, hfov_deg: float) -> tuple:
         and depth (demo/identity.py; the street mask next to --citymap), the
         HARD ones dropped and only an OK one published. follow_vlm then also
         makes the lock strict, which only lets go of a subject through its
-        estimator and Reacquirer; this rail has neither, so with --identity
-        it holds no lock (a strict lock would never re-adopt the car after a
-        2 s loss) and steers on the best OK box;
+        estimator and Reacquirer. Without --target-estimator this rail has
+        neither, so it holds no lock (a strict lock would never re-adopt the
+        car after a 2 s loss) and steers on the best OK box; with it
+        (2026-11-15) the lock is follow_vlm's strict one, leaning on
+        demo/subject_track.SubjectTrack's estimate (Grounder.set_prior) and
+        taken back through its Reacquirer;
       * --negative-query P (repeatable): P asked beside the subject phrase,
         a box that looks more like P is no candidate
         (follow_vlm.negative_suppress)."""
@@ -1792,13 +1871,17 @@ def build_grounder(args, obs, out: Path, fv, hfov_deg: float) -> tuple:
                   "path": str(getattr(args, "identity_thresholds", None)
                               or identity_mod.DEFAULT_THRESHOLDS),
                   "nouns": {args.object: identity_mod.noun_of(args.object)}}
-    elif not getattr(args, "no_lock_target", False):
+    strict = id_cfg is not None and bool(getattr(args, "target_estimator", False))
+    if strict or (id_cfg is None and not getattr(args, "no_lock_target", False)):
         lock = fv.TargetLock(hfov_deg=hfov_deg, gate_frac=getattr(args, "lock_gate", 0.12))
     negs = [n for n in (getattr(args, "negative_query", None) or []) if str(n).strip()]
     g = fv.Grounder(obs, args.object, thresh=args.det_thresh, colour_min=args.colour_min,
                     log_path=out / "detections.jsonl", lock=lock, identity=id_cfg,
                     negatives=negs)
-    rec = {"lock": ("strict lock not used (identity without an estimator)" if id_cfg
+    rec = {"lock": ({"kind": "TargetLock", "strict": True, "gate_frac": lock.gate_frac,
+                     "prior": "the target estimator (--target-estimator: "
+                              "demo/subject_track.SubjectTrack)"} if strict else
+                    "strict lock not used (identity without an estimator)" if id_cfg
                     else None if lock is None else
                     {"kind": "TargetLock", "gate_frac": lock.gate_frac}),
            "identity": (None if id_cfg is None else
@@ -3116,7 +3199,7 @@ def truth_view(rows: list[dict], hfov_deg: float | None, width_m: float | None =
 
 TRUTH_POSITION_FIELDS = ("subject_truth", "tgt_x", "tgt_y", "subject_range_m",
                          "subject_gap_m", "subject_truth_off_nose_deg",
-                         "subject_bearing_gap_deg")
+                         "subject_bearing_gap_deg", "est_gap_m")
 
 
 def quarantine_truth_rows(rows: list[dict], why: str) -> int:
@@ -4149,6 +4232,14 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--no-lock-target", action="store_true",
                     help="no TargetLock: the best-ranked box every inference, as "
                          "before 2026-10-21")
+    ap.add_argument("--target-estimator", action="store_true",
+                    help="--pilot vla --mission follow with --identity: follow_vlm's "
+                         "target estimator, strict lock and re-acquisition "
+                         "(demo/subject_track.SubjectTrack): the subject predicted "
+                         "between boxes, the VLA's memory hint toward where it is "
+                         "predicted, a lost subject taken back where it was predicted "
+                         "on identity-OK evidence; est_* fields in the flight log, "
+                         "metrics.json subject_track. Off: as before 2026-11-15")
     ap.add_argument("--dry-run", action="store_true",
                     help="render configs, print the plan and the commands, exit")
     # the demo video, as follow_vlm records it (demo/recorder.py)
@@ -4206,6 +4297,29 @@ def check_args(args) -> None:
                          f"airborne hover before the mission is capped "
                          f"(START_TIMEOUT_MAX_S)")
     check_pilot_args(args)
+    check_estimator_args(args)
+
+
+def check_estimator_args(args) -> None:
+    """--target-estimator (THE TARGET ESTIMATOR, module docstring) only where
+    it can run as follow_vlm runs it: the VLA follow (the servo pilot steers
+    on the box, and the estimate is the VLA's memory hint), with --identity
+    (the estimator is fed identity's range and bearing at each box's own
+    capture, and the strict lock and the Reacquirer judge identity tiers),
+    and with its strict lock (not --no-lock-target)."""
+    if not getattr(args, "target_estimator", False):
+        return
+    if getattr(args, "pilot", "servo") != "vla" or getattr(args, "mission", None) != "follow":
+        raise SystemExit("--target-estimator is the VLA follow's (--pilot vla --mission "
+                         "follow): its estimate is the VLA's memory hint, and the servo "
+                         "pilot steers on the detector's box")
+    if not getattr(args, "identity", False):
+        raise SystemExit("--target-estimator needs --identity: the estimator is fed "
+                         "identity's range and bearing at each box's own capture, and the "
+                         "strict lock and the re-acquisition take only identity-OK boxes")
+    if getattr(args, "no_lock_target", False):
+        raise SystemExit("--target-estimator holds follow_vlm's strict lock (leaning on its "
+                         "estimate): drop --no-lock-target")
 
 
 def _goal_xy(v) -> tuple[float, float]:
@@ -4425,6 +4539,42 @@ def follow_tracker_config(vargs, pilot_band):
     except ValueError as exc:
         raise SystemExit(f"--pilot vla --mission follow: the step tracker refuses this follow "
                          f"({exc})") from None
+
+
+def make_subject_track(args, grounder, fv=None):
+    """THE TARGET ESTIMATOR (--target-estimator): demo/subject_track.
+    SubjectTrack over this run's Grounder, for the subject the object words
+    name (follow_vlm.subject_width: the class picks the estimator's speed
+    ceiling, the width ranges a box with no depth range of its own); its
+    lapse and re-acquisition numbers are follow_vlm's parser defaults."""
+    fv = fv or _fv()
+    from subject_track import SubjectTrack
+    width_m, subject_class = fv.subject_width(args.object)
+    return SubjectTrack(grounder, subject_class, object_width_m=width_m, fv=fv)
+
+
+def subject_track_record(track, rows: list[dict]) -> dict:
+    """metrics.json `subject_track`: SubjectTrack.summary(), and - read after
+    the flight, EVALUATION only, never fed back - the estimate against the
+    subject's truth on the rows that carry both: est_lock_frac (ticks with an
+    estimate within ESTIMATE_NEAR_M of the truth / ticks whose truth was
+    read: tools/perception_stress_report.py's target lock, on the estimate
+    instead of the Shield's subject), est_on_subject_frac (the same / ticks
+    with an estimate) and est_gap_m (|estimate - truth|). `rows` are the
+    flight log's (est_xy, subject_truth, est_gap_m)."""
+    rec = track.summary()
+    truth = [r for r in rows if r.get("subject_truth") is not None]
+    both = [r for r in truth if r.get("est_xy") is not None]
+    near = sum(1 for r in both if math.hypot(r["est_xy"][0] - r["subject_truth"][0],
+                                             r["est_xy"][1] - r["subject_truth"][1])
+               <= ESTIMATE_NEAR_M)
+    rec["truth"] = {"near_m": ESTIMATE_NEAR_M, "truth_ticks": len(truth),
+                    "ticks_with_estimate": len(both),
+                    "est_lock_frac": round(near / len(truth), 4) if truth else None,
+                    "est_on_subject_frac": round(near / len(both), 4) if both else None,
+                    "est_gap_m": spread([r["est_gap_m"] for r in both
+                                         if r.get("est_gap_m") is not None])}
+    return rec
 
 
 def join_cli(argv) -> list[str]:
@@ -4935,9 +5085,13 @@ def _vla_bring_up(args, out: Path, VM, srv, policy, shield_on: bool, grounder, h
             raise SystemExit(f"[vla]    *** the link failed before take-off: {exc}") from None
         if identity_of(client.identity) != identity_of(identity):
             raise SystemExit("[vla]    *** the pinned identity is not the hello's")
-        det_hint = close_rule = follow_rec = None
+        det_hint = close_rule = follow_rec = track = None
         follow = args.mission == "follow"
         vargs = vla_fly_follow(args)[0] if follow else None
+        if follow and getattr(args, "target_estimator", False):
+            # THE TARGET ESTIMATOR (module docstring), on this run's Grounder;
+            # started at the mission's start with the start gate's pick.
+            track = make_subject_track(args, grounder)
         if args.mission == "goto":
             hint_src = VM.goto_hint_source(args.goal, args.arrive_radius_m)
         else:
@@ -4945,13 +5099,15 @@ def _vla_bring_up(args, out: Path, VM, srv, policy, shield_on: bool, grounder, h
             bridge = VLABridge(args.object, hfov_deg=hfov, bearing_gain=args.bearing_gain)
             if follow:
                 # vla_fly's M3 hint: the sighting's memory, the search turn,
-                # the close rule; each hint records its kind.
+                # the close rule; each hint records its kind. With the target
+                # estimator the memory aims at the predicted subject first.
                 close_rule = VM.BoxClose(vargs.close_bottom_frac, vargs.close_width_frac)
                 det_hint = VM.DetectorHint(grounder_box_source(grounder), bridge,
                                            fresh_s=args.det_fresh_s,
                                            memory_s=vargs.follow_memory_s,
                                            search_s=vargs.follow_search_s,
-                                           close=close_rule, record_kind=True)
+                                           close=close_rule, record_kind=True,
+                                           estimate=None if track is None else track.hint_memory)
             else:
                 det_hint = VM.DetectorHint(grounder_box_source(grounder), bridge,
                                            fresh_s=args.det_fresh_s)
@@ -4970,7 +5126,10 @@ def _vla_bring_up(args, out: Path, VM, srv, policy, shield_on: bool, grounder, h
                           "lost_timeout_s": args.lost_timeout_s,
                           "from": ("demo/vla_fly.py: its parser and resolve_args on this "
                                    "flight's values, then vla_fly.tracker_config "
-                                   "(perception_node.vla_fly_follow)")}
+                                   "(perception_node.vla_fly_follow)"),
+                          # --target-estimator: SubjectTrack's configuration
+                          # (None: the hint's memory is the sighting's alone).
+                          "target_estimator": None if track is None else track.config()}
         else:
             tcfg = TrackerConfig(cruise_mps=args.vla_cruise_mps,
                                  speed_cap_mps=args.vla_speed_cap_mps,
@@ -5001,9 +5160,17 @@ def _vla_bring_up(args, out: Path, VM, srv, policy, shield_on: bool, grounder, h
               + (f"; steps flown as rates over {follow_rec['step_as_rate_s']:g} s (yaw "
                  f"{follow_rec['rate_yaw']})" if follow_rec["step_as_rate_s"] else "")
               + f"; lost after {args.lost_timeout_s:g} s")
+        if track is not None:
+            c = track.config()
+            print(f"[track]  target estimator ON ({c['subject_class'] or 'unclassified'}, "
+                  f"v_max {c['v_max_mps']}): strict lock on its estimate, lapse after "
+                  f"{c['lapse_s']:g} s, re-acquired on {c['reacq_need']} identity-OK "
+                  f"sightings within {c['reacq_max_range_m']:g} m; the memory hint aims at "
+                  f"the predicted subject")
     return identity, backend, {"is_vla": is_vla, "why_not": why_not,
                                "weight_paths": weight_paths, "client": client,
                                "hint_source": hint_src, "detector_hint": det_hint,
+                               "track": track,
                                "close_rule": close_rule, "follow": follow_rec,
                                "front_source": front_check, "object_words": words,
                                "vla_host": vla_host,
@@ -5059,7 +5226,23 @@ def _vla_records(args, out: Path, VM, vla, backend, srv, identity, rec: dict, wa
     # What the object words were to the model that answered (THE VLA FOLLOW):
     # AerialVLA's inert slot, AIOT-VLA's grounding phrase.
     words = rec.get("object_words") or VM.object_words_record(identity)
+    # THE TARGET ESTIMATOR (a follow's; None for goto and approach): its
+    # record and its faults, or why there was none - never silence.
+    track = rec.get("track")
+    if args.mission != "follow":
+        track_rec = None
+    elif track is None:
+        track_rec = {"on": False, "why": "--target-estimator not given: the hint's memory is "
+                                         "the remembered sighting's, no estimate is kept"}
+    else:
+        try:
+            track_rec = subject_track_record(track, rows)
+        except Exception as exc:                                  # noqa: BLE001
+            track_rec = {"on": True, "record_error": f"{type(exc).__name__}: {exc}"}
+        track_rec["errors"] = None if vla is None else vla.track_errors
+        track_rec["first_error"] = None if vla is None else vla.track_error
     return {
+        "subject_track": track_rec,
         "end_reason_means": VM.END_REASONS.get(end_reason),
         "pilot": pilot,
         "vla": {"mission": {"kind": args.mission, "goal_xy": None if goal is None else list(goal),
@@ -5218,7 +5401,7 @@ def dry_run(args, out: Path) -> dict:
                          "lost_timeout_s": args.lost_timeout_s,
                          "follow": (None if args.mission != "follow" else
                                     {k: getattr(args, k) for k in VLA_FOLLOW_ONLY
-                                     + ("vla_rate_yaw",)}),
+                                     + ("vla_rate_yaw", "target_estimator")}),
                          "server": {"mode": "started" if srv.started_here else "attached",
                                     "addr": f"{srv.host}:{srv.port}", "argv": srv.argv}}
     return report
@@ -6133,6 +6316,21 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
                   fsm=None if fsm is None else fsm.config.to_dict(),
                   rule_clock_reading=rule_now().isoformat(timespec="seconds"))
         if vla_on and no_mission is None:
+            track = vla_rec.get("track")
+            if track is not None:
+                # THE TARGET ESTIMATOR starts with the mission: committed to
+                # the start gate's pick (its identity features at its own
+                # capture), else - no gate, or none confirmed - looking for
+                # the subject by the Reacquirer with no anchor.
+                picked = bool(gate_rec.get("reached")) and gate is not None \
+                    and gate.pick_feat is not None
+                track.start(gate.pick_feat if picked else None,
+                            gate.pick_cap if picked else None, now=t0, t0=t0)
+                print("[track]  " + ("committed to the start gate's pick"
+                                     + (" (estimate seeded)" if track.estimator._xu is not None
+                                        else " (no range: not seeded)")
+                                     if picked else
+                                     "no confirmed pick: re-acquiring with no anchor"))
             # THE VLA PILOT, on the mission's clock: its stop rules
             # (vla_mission.MissionMonitor) start now.
             vla = VLAPilot(vla_backend, VM.MissionMonitor(args.vla_monitor, t0),
@@ -6142,7 +6340,7 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
                            detector_hint=vla_rec["detector_hint"], stale_s=args.det_fresh_s,
                            server_alive=lambda: vla_srv.alive, vm=VM,
                            model_label=VM.model_label(vla_identity),
-                           close_hold=vla_rec.get("close_rule"))
+                           close_hold=vla_rec.get("close_rule"), track=track)
             print(f"[vla]    mission {args.mission}: {VM.model_words(vla_identity)} flies"
                   + (f" to {args.goal}" if vla_goto else f", hint from the box on {args.object!r}")
                   + " - every tick through the Shield"
@@ -6770,6 +6968,10 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
                     row["fsm_state_after"] = None
                 if vla_row is not None:
                     row.update(vla_row)
+                    if truth_xy is not None and row.get("est_xy") is not None:
+                        # The target estimate's error (evaluation only).
+                        row["est_gap_m"] = round(math.hypot(row["est_xy"][0] - truth_xy[0],
+                                                            row["est_xy"][1] - truth_xy[1]), 3)
                 rows.append(row)
                 if recorder is not None:
                     # The demo video's state, handed over AFTER the setpoint
@@ -7307,7 +7509,8 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
         metrics["params"].update({k: getattr(args, k, None) for k in (
             "start_when_seen", "start_max_range_m", "start_timeout_s",
             "start_timeout_action", "negative_query", "identity", "lock_gate",
-            "no_lock_target", "pilot", "mission", "front_capture_interval_s", "stress")})
+            "no_lock_target", "pilot", "mission", "front_capture_interval_s", "stress",
+            "target_estimator")})
         if vla_on:
             metrics["params"].update({k: getattr(args, k, None) for k in VLA_PARAMS})
             # THE OBSERVATION RATE (the grant's 10 Hz observation, X-05 /
@@ -7628,6 +7831,18 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
                   f"frame age at every setpoint p50 {a_.get('p50')} / max {a_.get('max')} ms, "
                   f"{a_.get('over_budget')} of {a_.get('n')} over 100 ms"
                   + (f"; *** {c_['error']}" if c_.get("error") else ""))
+            st_ = metrics.get("subject_track")
+            if st_ and st_.get("on"):
+                tt_ = st_.get("truth") or {}
+                print(f"[report] target estimator: served on {st_.get('ticks_served')} of "
+                      f"{st_.get('ticks')} ticks (age p50 "
+                      f"{(st_.get('est_age_s') or {}).get('p50')} s); ticks by state "
+                      f"{st_.get('ticks_by_state')}; lapses {st_.get('lapses')}, "
+                      f"re-acquisitions {st_.get('reacquisitions')}; memory "
+                      f"{st_.get('memory_ticks')}; estimate within {tt_.get('near_m')} m of "
+                      f"the truth on {tt_.get('est_lock_frac')} of the ticks read"
+                      + (f"; *** {st_['errors']} fault(s): {st_.get('first_error')}"
+                         if st_.get("errors") else ""))
         # A hover that crashed was landed and recorded above, and is still a
         # failed run: the launchers count a non-zero exit as one; so is a VLA
         # mission that ended on a VLA failure (exit 3, as demo/vla_fly.py).
