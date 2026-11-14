@@ -309,6 +309,39 @@ def test_an_event_lands_between_two_ticks_and_is_a_generation():
     assert FakeListener.last.server.should_exit is True
 
 
+def test_an_event_lands_while_the_tick_reads_the_link_without_waiting_for_it():
+    """Since 2026-11-15 the node's thread holds the lock from the Shield's
+    inputs to the tick's records, not through the whole tick: a request that
+    arrives while the tick reads the link's state is applied at once (on hil
+    a spawn waited 53 ms for a tick in progress, pas_hil_adapter_01), and
+    still lands between two Shield decisions."""
+    with _Patched() as P:
+        done = []
+
+        class StateLink(T.FakeLink):
+            def state(self, anchor):
+                hot = P.hot
+                mt = None if hot is None else hot.mission_t()
+                if not done and mt is not None and mt >= 1.0:
+                    # Synchronous: the node's thread waits here for the answer.
+                    done.append(FakeListener.last.post(
+                        A.apply_dynamic_nfz, _zone("nfz-far", 200, 200, 210, 210),
+                        wait_s=2.0))
+                return super().state(anchor)
+        rc, run, link = T._fly("off", link_cls=StateLink,
+                               extra=["--hotapply-port", "18072"])
+    assert rc == 0 and done, done
+    assert done[0] is not None, "the request waited on the lock while the tick read the link"
+    status, body = done[0]
+    assert status == 200 and body["generation"] == 1, body
+    rows = T._rows(run)
+    gens = [r["generation"] for r in rows]
+    k = gens.index(1)
+    assert k > 0 and set(gens[:k]) == {0} and set(gens[k:]) == {1}, gens
+    ev_t = T._json(run, "metrics.json")["hot_apply"]["events"][0]["t"]
+    assert rows[k - 1]["t"] < ev_t <= rows[k]["t"], (rows[k - 1]["t"], ev_t, rows[k]["t"])
+
+
 def test_the_geofence_follows_the_new_generation_with_a_near_zone_held_back():
     """The listener's thread never touches the link: the first tick after
     the event uploads generation 1's zones (FenceBackstop.recheck), the zone

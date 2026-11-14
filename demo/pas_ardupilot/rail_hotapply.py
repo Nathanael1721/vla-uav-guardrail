@@ -33,10 +33,17 @@ THE LOCK. The perception node is one thread: the hover's checks and the
 mission loop call the Shield from it. The listener is a second thread, which
 swaps the Shield's rules (Shield.hot_apply) under `LoopLock.lock`. From the
 hover before the mission to the episode's end the node's thread HOLDS that
-lock and lets go of it only while it sleeps (`LoopLock.sleeper` wraps the
-`sleep` every wait and the loop's pacing use), so an event lands between two
-ticks - never between a decision and its row, nor between a hover check and
-its record - as on the pymavlink rail. A sleep shorter than LOCK_YIELD_S (an
+lock and lets go of it while it sleeps (`LoopLock.sleeper` wraps the
+`sleep` every wait and the loop's pacing use) and, in the mission loop,
+through each tick's first part - the link's state, the pilot's step, the
+subject's estimate - which asks nothing of the Shield: the loop lets go at
+the top of the tick and holds again where the Shield's inputs are set. An
+event lands between two Shield decisions - never between a decision and its
+row, nor between a hover check and its record - as on the pymavlink rail.
+(Until 2026-11-15 the loop held the lock through the whole tick, and on hil
+a spawn that arrived as a tick began waited for all of it: 53.0 ms receipt
+to swap against the 50 ms target, pas_hil_adapter_01; the Shield's part of
+a tick is ~4 ms of its ~30 ms.) A sleep shorter than LOCK_YIELD_S (an
 overrunning loop sleeps 0) is followed by a wall-clock yield of
 LOCK_YIELD_S, because the lock is not fair: without it the node's thread
 would take the lock straight back and a waiting request could wait for as

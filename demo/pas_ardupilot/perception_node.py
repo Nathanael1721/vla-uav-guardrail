@@ -6404,6 +6404,13 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
         stage = "the mission"
         try:
             while no_mission is None and clock() - t0 < args.max_s:
+                if hot_gate is not None:
+                    # The tick's first part - the link's state, the pilot's
+                    # step, the subject's estimate - asks nothing of the
+                    # Shield, so a REST event may land through it; the lock is
+                    # taken again where the Shield's inputs are set
+                    # (rail_hotapply, THE LOCK; since 2026-11-15).
+                    hot_gate.let_go()
                 t_tick = clock()
                 tick_starts.append(t_tick - t0)
                 live.beat(progress=(t_tick - t0) / max(float(args.max_s), 1.0),  # memory only
@@ -6554,6 +6561,10 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
                     pairing_depth[pairing["depth"]] = pairing_depth.get(pairing["depth"], 0) + 1
                     if pairing["box_age_s"] is not None:
                         box_ages.append(pairing["box_age_s"])
+                if hot_gate is not None:
+                    # From the Shield's inputs to the tick's records the
+                    # Shield is this thread's (rail_hotapply, THE LOCK).
+                    hot_gate.hold()
                 # With no class (unclassified) only the catch-all rules bind:
                 # SubjectStandoff.binds(None) is True for "*" alone.
                 if subj is not None:
