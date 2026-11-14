@@ -23,7 +23,7 @@ from __future__ import annotations
 from shapely.geometry import Point
 
 from guardrail.geometry import fence_polygon, point_in_fence
-from guardrail.models import Policy, PolygonFence, State
+from guardrail.models import Policy, State
 
 ACTION_SCALE = 4.0     # divisor for labels; matches the policy speed cap
 
@@ -58,8 +58,15 @@ def decode_action(y0: float, y1: float, y2: float,
 
 
 def make_fences(policy: Policy):
-    """Pre-build (fence, polygon) pairs once — same trick the Shield uses."""
-    return [(f, fence_polygon(f)) for f in policy.by_type(PolygonFence)]
+    """Pre-build (fence, polygon) pairs once — same trick the Shield uses.
+
+    Every keep-out zone that stays where it is declared: polygon and circle
+    fences and, since 2026-11-15, a dynamic_nfz without motion
+    (Policy.static_keepout_zones, C-16; until then polygon fences only, so a
+    declared static zone was invisible to the BC pilots). A moving zone has
+    no one place for these time-free features: a policy file may not declare
+    one (models.FLIGHT_HELD_TYPES)."""
+    return [(f, fence_polygon(f)) for f in policy.static_keepout_zones()]
 
 
 def encode(state: State, target_x: float, target_y: float, cruise_alt: float,

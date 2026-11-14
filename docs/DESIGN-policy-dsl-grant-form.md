@@ -271,6 +271,21 @@ policy FILE may carry for flight:
   The grant's own route for this type, a zone injected mid-flight
   (`Shield.hot_apply`), does not pass through these loaders and is
   unchanged.
+- **Lifted for a zone without motion on 2026-11-15 (contract item C-16).**
+  The readers that still took polygon fences only -
+  `experiments/analyze_semantic_ab.py` (the legal-approach bound, the dwell
+  and the overlay), `training/features.make_fences` (the BC pilots'
+  features) and the `build_prompt` `no_fly_zones` shorthand - read
+  `Policy.static_keepout_zones()`, which holds every dynamic_nfz without
+  motion beside the polygon and circle fences. `Policy.unmeasured_rules`
+  holds a dynamic_nfz only while it moves (`DynamicNFZ.moves`,
+  `models.flight_held`), and `FLIGHT_HELD_TYPES` states that reason: the
+  Shield places a moving zone at its own monitor clock (`filter()`'s `t`,
+  or the tick count x 0.1 s on a rail that passes none, as the perception
+  rail does), no rail records that clock per trajectory point, so
+  `zone_dwell` cannot place the zone at each point, and the BC features
+  take no time. A moving zone flies as the grant has it, injected
+  mid-flight over REST.
 
 `runtime=False` still loads, bundles and exports a file with a dynamic_nfz.
 A test keeps `RUNTIME_TYPES` inside the Shield's `ENFORCED_TYPES` and checks

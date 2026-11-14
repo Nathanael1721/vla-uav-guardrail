@@ -3,7 +3,7 @@ ROS 2 node: the Safety Shield for MISSION-STYLE flight - a pre-planned
 waypoint mission that ArduPilot flies in AUTO, guarded waypoint by waypoint.
 
     [this node] --/shield/mission (JSON)--------> [mavlink_adapter] --/mavros/mission/push--> MAVROS 2 --MISSION_ITEM_INT--> ArduPilot (AUTO)
-                --/shield/mission_update (JSON)-> [mavlink_adapter] --push, start_index=seq--> MAVROS 2 --MISSION_WRITE_PARTIAL_LIST + MISSION_ITEM_INT-->
+                --/shield/mission_update (JSON)-> [mavlink_adapter] --push, the mission with that item replaced--> MAVROS 2 --MISSION_COUNT + MISSION_ITEM_INT-->
                 --/shield/mode_request--------->  [mavlink_adapter] --/mavros/set_mode-->
 
 WHAT THE GRANT ASKS FOR (WP3-09)
@@ -34,15 +34,16 @@ WHAT THIS NODE DOES
     aircraft's position under the rules in force now - a REST hot-apply
     (--hotapply-port, guardrail.api.FlightHotApply) or a time window may
     have changed them. If its leg has become illegal, that one item is
-    REPLACED in the autopilot (/shield/mission_update: a partial write, one
-    MISSION_ITEM_INT) by the stop-short point; once the original leg has
-    been legal for T_RECOVER_S, the original waypoint is written back the
-    same way (UPDATED). This is the grant's "replaces or updates the next
-    waypoint", literally: one item, in place, while ArduPilot flies AUTO;
-    ArduCopter restarts the item it is flying when it changes. The adapter's
-    read-back of the item is the update's verdict (MAVROS 2.14's partial
-    push ends in an ArduPilot upload timeout after the item has landed:
-    sitl/mavlink_adapter_node.py says why).
+    REPLACED in the autopilot (/shield/mission_update) by the stop-short
+    point; once the original leg has been legal for T_RECOVER_S, the
+    original waypoint is written back the same way (UPDATED). This is the
+    grant's "replaces or updates the next waypoint": one item changed, in
+    place, while ArduPilot flies AUTO; ArduCopter restarts the item it is
+    flying when it changes. The adapter writes it as the whole mission with
+    that item replaced (since 2026-11-15; until then a partial write, which
+    MAVROS 2.14 sends one item too long, so each update ended in ArduPilot's
+    8 s upload timeout: sitl/mavlink_adapter_node.py, MISSION_UPDATE_WRITES),
+    and its read-back of the items is the update's verdict.
   * The position itself illegal (a zone hot-applied over the aircraft): the
     FSM's LOITER is asked of the adapter (flown as BRAKE) and recorded; AUTO
     is asked again once the position is legal. This node runs no escalation

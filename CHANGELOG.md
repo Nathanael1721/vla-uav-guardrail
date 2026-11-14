@@ -16,6 +16,127 @@ shipped change and recorded as one.
 
 ## [Unreleased]
 
+### 2026-11-15 (WP1-15, C-16, WP3-09) — the perception rail serves the REST hot-apply listener on its own Shield; the dynamic_nfz file hold is lifted for a zone without motion; an in-flight mission update is written whole, so ArduPilot's 8 s upload timeout is gone; the perception rail's setpoint can go through the MAVLink adapter. Code and tests only, nothing flown
+
+#### Added
+- **The REST hot-apply listener on the perception rail (WP1-15).**
+  `demo/pas_ardupilot/perception_node.py` serves `guardrail.api.FlightHotApply`
+  on the Shield it flies, as `sitl/ros2_shield_node.py` and
+  `sitl/run_sitl_demo.py` do (`demo/pas_ardupilot/rail_hotapply.py`): the ROS 2
+  node's five flags (`--hotapply-port`, `--hotapply-host` default 127.0.0.1,
+  `--hotapply-pki`, `--hotapply-server-cert`, `--hotapply-client`), the same
+  transport rules (plaintext on loopback only; mutual TLS with the harness CA
+  and the client common-name allow-list otherwise), each accepted event a
+  generation written as `policy_g<N>.json` / `csp_g<N>.json` with a
+  `hot_apply_rest` event, `metrics.json` `hot_apply` (FlightHotApply's
+  summary), a zone spawned in flight counted in the dwell from its arrival,
+  and one `[report]` line. The listener starts first in the run, so one that
+  cannot start stops the run before anything flies; it is closed before the
+  episode's end is written (503 after). The node is one thread, so from the
+  hover on it holds the listener's lock and lets go only while it sleeps
+  (`LoopLock`, with a 1 ms wall-clock yield after a zero sleep): an event
+  lands between two ticks, never between a decision and its row, as on the
+  pymavlink rail. The GeoFence follows the generation: `FenceBackstop.recheck`,
+  which the hover and the loop call every tick, uploads the new generation's
+  zones on the first tick after the event (a zone the aircraft is near held
+  back); the listener's thread never touches the MAVLink link. Without
+  `--hotapply-port` nothing changes.
+- **The perception rail's setpoint through the MAVLink adapter (WP3-09,
+  opt-in).** `perception_node.py --link mavros --setpoint-via adapter`:
+  `MavrosLink` publishes the Shield's emitted action in the BODY frame on
+  `/shield/setpoint` (`guardrail.frames.to_body` at the heading the tick
+  rotated with) and creates no PositionTarget publisher, so
+  `sitl/mavlink_adapter_node.py` (run with `--no-fences`) is the one body ->
+  local-NED boundary, as on the ROS 2 rail. `bring_up` refuses to arm unless
+  an adapter subscribes the topic and the node is its only publisher;
+  `metrics.json` `link_evidence` names the `setpoint_path` and the
+  pre-arm `adapter_check`. Mode requests, the mission-end LAND and the
+  GeoFence upload stay the link's own MAVROS calls (they need ArduCopter's
+  mode names and LAND's result at once). `--setpoint-via adapter` with
+  `--link pymavlink` is refused before anything starts. The default
+  (`mavros`) is unchanged.
+- `--mission-update-write {full,partial}` on `sitl/mavlink_adapter_node.py`
+  (default `full`).
+
+#### Fixed
+- **ArduPilot's 8 s mission upload timeout after every in-flight waypoint
+  update (WP3-09).** MAVROS 2.14 sends a partial write as
+  MISSION_WRITE_PARTIAL_LIST(seq, seq + 1), which ArduPilot reads with the
+  end index included: it wrote the item, asked for one more, and ended each
+  update with MISSION_ACK 15 eight seconds later (3 Nov, decoded from the
+  bags), during which a second update would have been refused. The adapter
+  now writes the update as the whole mission with that item replaced
+  (start_index 0: MISSION_COUNT, every item as MISSION_ITEM_INT, ACK
+  ACCEPTED), the exchange its pre-flight upload has always used
+  (`update_push`, `MISSION_UPDATE_WRITES`); the verdict is still the
+  read-back, now of every item. `--mission-update-write partial` re-flies the
+  old write.
+- **An update sent while the previous one was still being written or read
+  back was lost.** MAVROS answers a push made during another transfer with
+  success false and nothing sent, while `sitl/ros2_mission_node.py` believed
+  it sent. Updates now go one at a time (`MissionPushQueue`): a later one
+  waits (status `mission_update_queued`) and is written once the previous
+  one has its verdict.
+
+#### Changed
+- **The dynamic_nfz file hold (contract item C-16) is lifted for a zone
+  without motion.** The readers the hold named, which took polygon fences
+  only, read `Policy.static_keepout_zones()` (polygon and circle fences and
+  every dynamic_nfz without motion): `experiments/analyze_semantic_ab.py`
+  (legal-approach bound, dwell, overlay), `training/features.make_fences`
+  (the BC pilots' features; `demo/run_demo.py --dynamic` refreshes them, so
+  a BC pilot now sees its hot-applied zone) and the prompt's
+  `no_fly_zones`. `Policy.unmeasured_rules` holds a dynamic_nfz only while
+  it moves (`DynamicNFZ.moves`, `models.flight_held`), so a policy file or
+  bundle declaring a zone without motion flies. **Kept for a moving zone**,
+  with the reason restated in `FLIGHT_HELD_TYPES`: the Shield places it at
+  its own monitor clock (filter()'s t, or the tick count x 0.1 s where a
+  rail passes none - the perception rail), no rail records that clock per
+  trajectory point, so `zone_dwell` names it (`nfz_moving_not_counted`)
+  instead of scoring it, and the BC features take no time. A moving zone
+  flies as the grant has it, injected mid-flight over REST.
+- `sitl/ros2_mission_node.py`'s and the adapter's docstrings describe the
+  full write; `docs/DESIGN-policy-dsl-grant-form.md` (decision 5) and
+  `docs/DESIGN-shield-enforcement.md` the lifted hold.
+
+#### Tests
+- New `tests/test_pas_hotapply.py` (in the CI loop, and in the 3.11 extras
+  job's `no_skip`): the flags against the ROS 2 node's parser, the lock let
+  go only in a sleep, an event between two ticks through a stand-in listener
+  on its own thread (generations, records, metrics, dwell from the arrival,
+  503 after the episode), the GeoFence following the generation with a near
+  zone held back, no listener without the flag, a listener that cannot start
+  stopping the run before arming, and the listener over real HTTP and mutual
+  TLS on loopback. 6/8 with 2 SKIP under Python 3.10.20 (vla-real: no
+  fastapi, uvicorn, httpx); 8/8 under 3.11 (vla-drone).
+- `tests/test_mavlink_adapter.py` 47/47 (7 new): the full and partial plans,
+  the message sequence of both writes against models of MAVROS 2.14's push
+  and ArduPilot 4.5.7's receiver (partial: the item, then the request for
+  seq + 1 repeated and ACK 15 at 8 s; full: COUNT, REQUEST / ITEM_INT for
+  every item, ACK ACCEPTED, and an immediate write back accepted), the push
+  queue, the adapter node itself on a stand-in ROS stack (two updates, the
+  second queued, both verdicts from the read-back, either write), the flag's
+  default, and the perception rail's adapter route (the same NED setpoint
+  for every heading, no PositionTarget of its own, the pre-arm refusals).
+- `tests/test_policy_dsl_grant_form.py` 58/70 (12 SKIP: the reference
+  repository and jsonschema), with every keep-out reader taking a static
+  dynamic_nfz and a moving one still refused; `tests/test_csp.py` 104/104.
+- Re-run, unchanged in count: test_pas_ardupilot 148/149 (1 SKIP),
+  test_pas_vla 40/41 (1 SKIP), test_pas_perception_stress 21/21,
+  test_railinputs_perception 35/35, test_own_velocity_forecast 29/29,
+  test_railinputs_hotapply 2/6 (4 SKIP, no fastapi), test_geo_to_policy
+  25/25, test_bundle 57/58, test_replay 40/61, test_manifest 67/68,
+  test_sitl_rails 82/82, test_harnesstruth_ci 35/35, test_check_claims
+  22/22, test_public_docs 7/7 (each skip as before: files outside the
+  repository or packages not in the environment).
+
+#### Not flown
+- No flight, SITL or Unreal run: the perception rail's listener, its
+  adapter route and the full mission write have run only against stand-ins.
+  The full write in AUTO is the ArduPilot 4.5 source's reading (the change
+  detector restarts the current command only when the upcoming nav items'
+  content changes) until a mission-style flight shows it.
+
 ### 2026-11-14 (fog on the PAS follow) — with the plugin's fog at 0.6 the detector never found the red car, and the mission refused to start, as it did at night
 
 #### Flown

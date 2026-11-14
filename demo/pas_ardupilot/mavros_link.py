@@ -87,6 +87,7 @@ from guardrail.manifest import (collect_host_evidence,               # noqa: E40
                                 describe_autopilot_version,
                                 mavros_location, network_link_evidence,
                                 scan_local_processes)
+from guardrail.frames import to_body                                 # noqa: E402
 from guardrail.models import Action4D, State                         # noqa: E402
 
 from autopilot import (COPTER_MODES, FENCE_PARAMS, RC_OVERRIDE_IGNORE,  # noqa: E402
@@ -104,6 +105,39 @@ TOPIC_SAFE_ACTION = "/pas/safe_action_4d"
 # publishes nothing there).
 TOPIC_RC_OVERRIDE = "/mavros/rc/override"
 LANDED_STATE_ON_GROUND = 1
+
+# THE SETPOINT THROUGH THE MAVLINK ADAPTER (2026-11-15, WP3-09; opt-in).
+#
+#   mavros   (default) this node publishes the Shield's emitted action itself,
+#            a PositionTarget on /mavros/setpoint_raw/local (enu_position_
+#            target), as every perception-rail flight has.
+#   adapter  this node publishes the emitted action in the BODY frame on the
+#            adapter's input, /shield/setpoint (std_msgs/Float32MultiArray
+#            [vx_fwd, vy_right, vz_up, yaw_rate]: guardrail.frames.to_body at
+#            the heading the tick rotated with), and sitl/mavlink_adapter_
+#            node.py - the grant's single body -> local-NED boundary, as on the
+#            ROS 2 rail - turns it into the PositionTarget. No PositionTarget
+#            publisher is created here, so the adapter is the only writer of
+#            /mavros/setpoint_raw/local. The adapter rotates with its own
+#            heading from /mavros/local_position/pose, the topic this link
+#            reads the heading from, so the two rotations differ by at most
+#            one pose message, as on the ROS 2 rail.
+#
+# With `adapter`, bring_up refuses to arm unless an adapter subscribes
+# /shield/setpoint and this node is that topic's only publisher (the adapter
+# stops forwarding with two: sitl/mavlink_adapter_node.py, ONLY THE SHIELD
+# FLIES), waiting ADAPTER_WAIT_S. The mode requests, the mission-end LAND and
+# the GeoFence upload stay this link's own MAVROS service calls: the FSM's
+# requests here are ArduCopter's mode names (the hold already mapped) and
+# LAND's result is read back at once, which the adapter's fire-and-report
+# status topic does not give. If the adapter dies in flight, setpoints stop
+# reaching ArduPilot, which stops in GUIDED after its GUID_TIMEOUT; the FSM's
+# mode requests still go straight to MAVROS.
+SETPOINT_VIA = ("mavros", "adapter")
+DEFAULT_SETPOINT_VIA = "mavros"
+# The adapter's input topic (sitl/mavlink_adapter_node.py TOPIC_SETPOINT).
+TOPIC_ADAPTER_SETPOINT = "/shield/setpoint"
+ADAPTER_WAIT_S = 10.0
 
 
 def load_msgs() -> SimpleNamespace:
@@ -159,7 +193,13 @@ class MavrosLink:
     name = "mavros"
 
     def __init__(self, node=None, rclpy=None, msgs=None, clock=time.time,
-                 node_name: str = "pas_perception_node"):
+                 node_name: str = "pas_perception_node",
+                 setpoint_via: str = DEFAULT_SETPOINT_VIA):
+        if setpoint_via not in SETPOINT_VIA:
+            raise ValueError(f"setpoint_via {setpoint_via!r} is not one of {SETPOINT_VIA}")
+        self.setpoint_via = setpoint_via
+        # What bring_up found on the adapter route (None on the default one).
+        self.adapter_check: dict | None = None
         if rclpy is None:
             import rclpy as _rclpy                  # deferred: only on a ROS host
             rclpy = _rclpy
@@ -218,7 +258,14 @@ class MavrosLink:
         node.create_subscription(m.TimeReference, "/mavros/time_reference",
                                  self._on_time_ref, m.qos_sensor)
         node.create_subscription(m.RCIn, "/mavros/rc/in", self._on_rc_in, 10)
-        self.pub_sp = node.create_publisher(m.PositionTarget, TOPIC_SETPOINT, 10)
+        # The setpoint's way out (SETPOINT_VIA): a PositionTarget of our own,
+        # or the body action to the MAVLink adapter, never both.
+        self.pub_sp = self.pub_body = None
+        if setpoint_via == "adapter":
+            self.pub_body = node.create_publisher(m.Float32MultiArray,
+                                                  TOPIC_ADAPTER_SETPOINT, 10)
+        else:
+            self.pub_sp = node.create_publisher(m.PositionTarget, TOPIC_SETPOINT, 10)
         self.pub_raw = node.create_publisher(m.Float32MultiArray, TOPIC_RAW_ACTION, 10)
         self.pub_safe = node.create_publisher(m.Float32MultiArray, TOPIC_SAFE_ACTION, 10)
         self.pub_rc = None
@@ -450,6 +497,11 @@ class MavrosLink:
         if not self.wait(lambda s: s.snap.lat is not None and s.snap.rel_alt is not None,
                          timeout=timeout):
             raise RuntimeError("no global position from MAVROS (EKF not ready?)")
+        if self.setpoint_via == "adapter":
+            # Nothing is armed for setpoints nobody turns into a PositionTarget.
+            self.adapter_check = self.check_adapter()
+            if not self.adapter_check["ok"]:
+                raise RuntimeError(f"not arming: {self.adapter_check['why']}")
         if before_arm is not None:
             before_arm()
         for name, req, ok in (
@@ -468,14 +520,57 @@ class MavrosLink:
         if not self.wait(lambda s: (s.snap.rel_alt or 0.0) >= alt_m - 1.0, timeout=60.0):
             raise RuntimeError(f"take-off did not reach {alt_m} m")
 
+    def check_adapter(self, wait_s: float = ADAPTER_WAIT_S) -> dict:
+        """On the adapter route: does a MAVLink adapter subscribe
+        /shield/setpoint, and is this node its only publisher? Waits up to
+        `wait_s` for the adapter. {"ok", "subscribers", "publishers", "why"}."""
+        node = self.node
+        counts = {}
+
+        def look(_s=None) -> bool:
+            counts["subscribers"] = int(node.count_subscribers(TOPIC_ADAPTER_SETPOINT))
+            counts["publishers"] = int(node.count_publishers(TOPIC_ADAPTER_SETPOINT))
+            return counts["subscribers"] >= 1
+        found = look() or self.wait(look, timeout=wait_s)
+        out = {"topic": TOPIC_ADAPTER_SETPOINT, **counts, "waited_s_max": wait_s}
+        if not found:
+            out.update(ok=False, why=(
+                f"--setpoint-via adapter: nothing subscribes {TOPIC_ADAPTER_SETPOINT} "
+                f"after {wait_s:g} s - start sitl/mavlink_adapter_node.py (with "
+                f"--no-fences: this link uploads the GeoFence) on this ROS graph"))
+        elif counts["publishers"] != 1:
+            out.update(ok=False, why=(
+                f"--setpoint-via adapter: {counts['publishers']} publishers on "
+                f"{TOPIC_ADAPTER_SETPOINT}; the adapter forwards only while there is "
+                f"one (a second may be an unshielded action), so this node must be it"))
+        else:
+            out.update(ok=True, why=None)
+        return out
+
+    def setpoint_path(self) -> str:
+        if self.setpoint_via == "adapter":
+            return (f"{TOPIC_ADAPTER_SETPOINT} (body) -> sitl/mavlink_adapter_node.py "
+                    f"-> {TOPIC_SETPOINT}")
+        return f"{TOPIC_SETPOINT} (PositionTarget, this node)"
+
     def send(self, a: Action4D, raw_body: tuple | None = None) -> dict:
         f = enu_position_target(a)
-        msg = self.msgs.PositionTarget()
-        msg.coordinate_frame = f["coordinate_frame"]
-        msg.type_mask = f["type_mask"]
-        msg.velocity.x, msg.velocity.y, msg.velocity.z = f["velocity"]
-        msg.yaw_rate = f["yaw_rate"]
-        self.pub_sp.publish(msg)
+        if self.pub_body is not None:
+            # SETPOINT_VIA "adapter": the world action back to the body frame
+            # at the heading this tick rotated the pilot's action with (the
+            # snapshot state() read it from), for the adapter to rotate to NED.
+            body = to_body(a, math.degrees(self.snap.yaw or 0.0))
+            out = self.msgs.Float32MultiArray()
+            out.data = [float(v) for v in body]
+            self.pub_body.publish(out)
+            f = {**f, "via": TOPIC_ADAPTER_SETPOINT, "body": list(out.data)}
+        else:
+            msg = self.msgs.PositionTarget()
+            msg.coordinate_frame = f["coordinate_frame"]
+            msg.type_mask = f["type_mask"]
+            msg.velocity.x, msg.velocity.y, msg.velocity.z = f["velocity"]
+            msg.yaw_rate = f["yaw_rate"]
+            self.pub_sp.publish(msg)
         safe = self.msgs.Float32MultiArray()
         safe.data = [float(a.vx), float(a.vy), float(a.vz_up), float(a.yaw_rate)]
         self.pub_safe.publish(safe)
@@ -647,6 +742,10 @@ class MavrosLink:
                 "fence_status": "not available over MAVROS 2 (no FENCE_STATUS "
                                 "topic); a fence action shows as a takeover",
                 "fcu_clock_source": self.snap.fcu_clock_source,
+                # Where the Shield's emitted action went (SETPOINT_VIA), and
+                # what the pre-arm check found on the adapter route.
+                "setpoint_path": self.setpoint_path(),
+                "adapter_check": self.adapter_check,
                 "topology_evidence": dict(self.hil_evidence)}
 
 

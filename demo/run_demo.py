@@ -241,9 +241,11 @@ def main() -> int:
         if args.dynamic and spawn_t is None and now >= DYNAMIC_AT_S:
             apply_dynamic_zone(shield, DYNAMIC_FENCE)
             if hasattr(vla, "refresh_fences"):
-                # The BC pilots' features read polygon fences only
-                # (training/features.make_fences), so they do not see a
-                # dynamic_nfz; the Shield enforces it either way.
+                # The BC pilots' features (training/features.make_fences)
+                # see the zone once refreshed: since 2026-11-15 they read
+                # every keep-out zone that does not move, this dynamic_nfz
+                # included (until then polygon fences only); the Shield
+                # enforces it either way.
                 vla.refresh_fences(policy)
             # No restamp: AuditLogger holds the policy and reads its hash at
             # log time (the property is read-only; assigning it raised).

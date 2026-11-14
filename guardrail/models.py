@@ -32,10 +32,13 @@ home, at the frame origin).
 dynamic_nfz, time_window_switch and corridor_swap since 2026-10-07
 (guardrail/shield.py, ENFORCED_TYPES); since 2026-10-08 the compiler renders
 them too (guardrail/templates/), so a policy declaring a switch or a swap
-flies. A policy FILE declaring a dynamic_nfz is still refused for flight
-(FLIGHT_HELD_TYPES): the Shield enforces it and the rails count it, but
-offline analysis and the BC features would not. distance_envelope, the last
-declarable-only type, flies since 2026-11-03.
+flies. A policy FILE declaring a MOVING dynamic_nfz is still refused for
+flight (FLIGHT_HELD_TYPES): the Shield enforces it, but no rail can score
+the time spent inside it. A dynamic_nfz that does not move flies from a file
+since 2026-11-15 (contract item C-16): the rails count it and offline
+analysis, the BC features and the prompt read it with the polygon fences
+(`Policy.static_keepout_zones`). distance_envelope, the last declarable-only
+type, flies since 2026-11-03.
 
 Every rule may carry `valid_time`, a recurring schedule; that is a FIELD, as in
 the grant's ConstraintBase, not a class.
@@ -1321,9 +1324,11 @@ class DynamicNFZ(_Banded, _CanonicalRing, ConstraintBase):
     The Shield enforces it, motion included, since 2026-10-07
     (guardrail/shield.py, hot-apply); since 2026-10-08 the compiler renders it
     (RUNTIME_TYPES), so a hot-applied generation holding one compiles a CSP.
-    The flight loaders still refuse a policy FILE that declares one
-    (FLIGHT_HELD_TYPES): offline analysis and the BC features do not read
-    it yet. `ring_at(t)` is the declared motion's geometry."""
+    The flight loaders refuse a policy FILE that declares one that MOVES
+    (FLIGHT_HELD_TYPES, `moves`): no rail can score the time spent inside a
+    moving zone. One without motion flies from a file since 2026-11-15
+    (C-16; Policy.static_keepout_zones). `ring_at(t)` is the declared
+    motion's geometry."""
     type: Literal["dynamic_nfz"]
     vertices: list[XY] = Field(min_length=3)
     altitude_floor_m: float = 0.0
@@ -1350,6 +1355,14 @@ class DynamicNFZ(_Banded, _CanonicalRing, ConstraintBase):
         # MEAN, which reordering does not move, so the motion is unchanged.
         self._canonicalise_ring()
         return self
+
+    @property
+    def moves(self) -> bool:
+        """A motion that is not zero on every channel (guardrail.ir.is_moving's
+        rule: the Shield moves only such a zone)."""
+        m = self.motion
+        return m is not None and any(abs(v) > 0.0 for v in
+                                     (m.vx_mps, m.vy_mps, m.yaw_rate_dps))
 
     def ring_at(self, t_s: float) -> list[tuple[float, float]]:
         """The polygon t_s seconds after it appeared, in the policy frame."""
@@ -1427,7 +1440,7 @@ Constraint = Annotated[
 # the Shield enforces it through its clearance and stand-off runtime
 # (DistanceEnvelope.runtime_rule) and the compiler renders it. An MSL altitude
 # is refused separately, by name (unenforced_rules).
-# A flight may carry every type here except those in FLIGHT_HELD_TYPES.
+# A flight may carry every type here except a rule FLIGHT_HELD_TYPES holds.
 RUNTIME_TYPES: frozenset[str] = frozenset({
     "polygon_fence", "circle_fence", "altitude_envelope", "kinematic_envelope",
     "obstacle_clearance", "subject_standoff", "corridor",
@@ -1436,7 +1449,7 @@ RUNTIME_TYPES: frozenset[str] = frozenset({
 # (Policy.unmeasured_rules). Not a gap in the Shield, which enforces them,
 # nor in the compiler, which renders them: a gap in what the flight rails
 # MEASURE. Found in review on 2026-10-08, the day dynamic_nfz joined
-# RUNTIME_TYPES: every rail except demo/follow_vlm.py computes its zone-dwell
+# RUNTIME_TYPES: every rail except demo/follow_vlm.py computed its zone-dwell
 # metric (nfz_s, which guardrail/kpi.compute reads for the mission outcome)
 # from policy.by_type(PolygonFence), and a DynamicNFZ is not a PolygonFence,
 # so a declared zone would add 0 s of dwell however long the aircraft spent
@@ -1444,20 +1457,43 @@ RUNTIME_TYPES: frozenset[str] = frozenset({
 # "injected mid-flight" (Shield.hot_apply), does not pass through these
 # loaders and is unchanged. Since 2026-10-11 every flight rail counts zone
 # dwell through guardrail.replay.zone_dwell (polygon, circle and non-moving
-# dynamic_nfz; a moving zone is named in nfz_moving_not_counted, not scored),
-# so the rails no longer drop it. The hold stays because other consumers
-# still read polygon fences only: experiments/analyze_semantic_ab.py's dwell
-# and overlay, training/features.make_fences (the BC pilots' features) and
-# the build_prompt no_fly_zones shorthand. Remove the entry once they read
-# zone_dwell / the Shield's rule checker too.
+# dynamic_nfz), so the rails no longer drop a zone that does not move.
+#
+# LIFTED FOR A ZONE THAT DOES NOT MOVE (2026-11-15, contract item C-16). The
+# other consumers that read polygon fences only - experiments/
+# analyze_semantic_ab.py's dwell and overlay, training/features.make_fences
+# (the BC pilots' features) and the build_prompt no_fly_zones shorthand -
+# read `Policy.static_keepout_zones()` now, which holds every dynamic_nfz
+# without motion beside the polygon and circle fences, so such a zone is
+# measured everywhere a polygon fence is, and a policy file may declare it.
+#
+# KEPT FOR A MOVING ZONE (`DynamicNFZ.moves`), because no consumer can place
+# it where it was: the Shield places it at its monitor clock (filter()'s t,
+# or the tick count x 0.1 s on a rail that passes none - the perception
+# rail does - from its anchor, the first tick or the hot-apply), and no rail
+# records that clock per trajectory point, so zone_dwell names the zone in
+# nfz_moving_not_counted instead of scoring it; the BC features (encode)
+# take no time at all; the offline overlay draws one position. Lifting it
+# needs each rail to record the Shield's clock per point and zone_dwell to
+# score `ring_at(age)` from it. Until then a moving zone flies as the grant
+# has it, injected mid-flight (Shield.hot_apply; every rail's REST listener).
 FLIGHT_HELD_TYPES: dict[str, str] = {
     "dynamic_nfz": (
-        "the rails' dwell metric (nfz_s, guardrail.replay.zone_dwell) names a "
-        "moving zone without scoring it, and offline analysis "
-        "(experiments/analyze_semantic_ab.py) and the BC pilots' features read "
-        "polygon fences only, so time inside it could score 0 s; inject it "
-        "mid-flight (Shield.hot_apply) instead"),
+        "it moves, and no rail records the Shield's monitor clock per "
+        "trajectory point, so the dwell metric (nfz_s, guardrail.replay."
+        "zone_dwell) names a moving zone without scoring it and the BC "
+        "pilots' features cannot place it: time inside it could score 0 s; "
+        "inject it mid-flight (Shield.hot_apply, the REST hot-apply API) "
+        "instead, or declare it without motion"),
 }
+
+
+def flight_held(rule) -> bool:
+    """Is `rule` held back from a policy FILE (FLIGHT_HELD_TYPES)? A
+    dynamic_nfz only while it moves (2026-11-15, C-16)."""
+    if rule.type not in FLIGHT_HELD_TYPES:
+        return False
+    return bool(getattr(rule, "moves", True))
 # The grant's nine (Policy DSL page, taxonomy table).
 GRANT_TYPES: tuple[str, ...] = (
     "polygon_fence", "circle_fence", "corridor", "altitude_envelope",
@@ -1825,6 +1861,19 @@ class Policy(BaseModel):
     def by_type(self, cls) -> list:
         return [c for c in self.constraints if isinstance(c, cls)]
 
+    def static_keepout_zones(self) -> list:
+        """The keep-out zones that stay where they are declared, in policy
+        order: every polygon_fence and circle_fence (by_type(PolygonFence))
+        and every dynamic_nfz without motion (DynamicNFZ.moves). Each has
+        `vertices`, the altitude band and `margin_m`, so geometry.fence_polygon
+        and point_in_fence take it as they take a polygon fence. The readers
+        that took polygon fences only (offline analysis, the BC features, the
+        prompt's no_fly_zones) read this since 2026-11-15 (C-16); a moving
+        zone is not here: it has no one place (FLIGHT_HELD_TYPES)."""
+        return [c for c in self.constraints
+                if isinstance(c, PolygonFence)
+                or (isinstance(c, DynamicNFZ) and not c.moves)]
+
     # ------------------------------------------------------------------ #
     # The reference implementation's form (cross-loading, WP1-05)
     # ------------------------------------------------------------------ #
@@ -2102,12 +2151,13 @@ class Policy(BaseModel):
 
     def unmeasured_rules(self) -> list[str]:
         """Rules the Shield enforces but the flight rails would not MEASURE,
-        with the reason (FLIGHT_HELD_TYPES). A flight loader refuses a policy
+        with the reason (FLIGHT_HELD_TYPES; `flight_held`: a dynamic_nfz only
+        while it moves, since 2026-11-15). A flight loader refuses a policy
         file for which this is non-empty: a dwell metric that cannot see a
         zone reads 0 s, which is indistinguishable from a clean flight."""
         return [f"{c.id}: {c.type} is enforced by the Shield, but "
                 f"{FLIGHT_HELD_TYPES[c.type]}"
-                for c in self.constraints if c.type in FLIGHT_HELD_TYPES]
+                for c in self.constraints if flight_held(c)]
 
     def flight_problems(self, ground=None) -> list[str]:
         """Everything that keeps this policy off a flight rail: unenforced
