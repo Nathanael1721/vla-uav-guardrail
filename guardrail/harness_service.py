@@ -1067,6 +1067,18 @@ def scenario_rest_timeline(spec) -> list[dict]:
     return out
 
 
+def flown_start_policy_hash(manifest: dict | None, held: dict) -> str | None:
+    """The policy a rail mission STARTED with, to check against the episode's. The
+    run's policy_g0.json is that policy byte for byte (the Shield node writes it at
+    its start); manifest.json's policy_hash names the policy the mission ENDED with,
+    which for a mission whose zones were edited by hot-apply is a later generation
+    (hh01_001, 14 Nov: g0 sha256:b665..., the manifest's sha256:cd8a... = g2 after
+    a spawn and a rotate). The manifest is read only when no g0 file came back."""
+    if 0 in held:
+        return "sha256:" + hashlib.sha256(held[0]).hexdigest()
+    return (manifest or {}).get("policy_hash")
+
+
 def rail_hotapply_args(endpoint: str, rig) -> list[str]:
     """The Shield node's hot-apply listener flags for a rail session's
     `endpoint` ([] when it names none: the mission then takes no REST event).
@@ -3293,8 +3305,7 @@ class Harness:
                 manifest = None
             if not isinstance(manifest, dict):
                 manifest = None
-        flown = ((manifest or {}).get("policy_hash")
-                 or ("sha256:" + hashlib.sha256(held[0]).hexdigest() if 0 in held else None))
+        flown = flown_start_policy_hash(manifest, held)
         if flown and not e.policy.matches_hash(flown):
             raise HarnessError("FAILED_PRECONDITION",
                                f"the mission flew policy {flown}, not the episode's "

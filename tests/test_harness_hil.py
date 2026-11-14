@@ -617,6 +617,23 @@ def test_the_thin_client_flies_a_library_scale_cell_over_grpc():
         err.getvalue()
 
 
+def test_the_started_policy_is_read_from_generation_0_not_the_manifest():
+    """REGRESSION (hh01_001, 14 Nov, the first harness-driven hil flight): the Shield
+    node's manifest.json names the policy the mission ENDED with - after a REST spawn
+    and rotate, generation 2 - so checking it against the episode's starting policy
+    refused a flight whose policy_g0.json was exactly the episode's. The start is
+    generation 0; the manifest is the fallback only when no g0 file came back."""
+    import hashlib
+    g0, g2 = b'{"generation": 0}', b'{"generation": 2}'
+    h0 = "sha256:" + hashlib.sha256(g0).hexdigest()
+    h2 = "sha256:" + hashlib.sha256(g2).hexdigest()
+    assert H.flown_start_policy_hash({"policy_hash": h2}, {0: g0, 2: g2}) == h0
+    assert H.flown_start_policy_hash({"policy_hash": h2}, {}) == h2      # no g0: the manifest
+    assert H.flown_start_policy_hash(None, {}) is None
+    # the null: a g0 that is NOT the episode's is still caught (it is what is compared)
+    assert H.flown_start_policy_hash({"policy_hash": h0}, {0: g2}) == h2
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")
            and (len(sys.argv) < 2 or any(a in k for a in sys.argv[1:]))]
