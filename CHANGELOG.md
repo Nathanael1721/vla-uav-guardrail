@@ -44,6 +44,25 @@ shipped change and recorded as one.
   applied, then the harness refused it on the start-policy check fixed in
   bc04e4a.
 
+#### Measured (WP3-13, the independent review's two re-runs)
+- The ~50-rule Shield profile on the AGX Orin at bc04e4a (MAXN, clocks not
+  locked, MAVROS stopped;
+  `deploy/evidence/hil/shield_tick_profile_20261114.json`): `_check` p99
+  0.994 ms (max 1.056, 0 of 1,301 over 5 ms), `filter` p99 26.709 ms (max
+  48.814); 6 Nov at d0e91bb it was 0.977 / 22.647 ms.
+- hs11 (bc04e4a, nightly cells dyn-nfz-spawn-ahead, three-simultaneous-
+  violations and radius-scaling-grow-deep, `--seed 1001`): the plan was 55
+  missions; the launcher's 40-minute limit stopped it after 16 complete
+  dyn-nfz-spawn-ahead missions (the 17th incomplete, not scored): e2e p99
+  37.1 / max 66.08 ms over 5,121 ticks, 0 over 100 ms.
+  three-simultaneous-violations was not reached. hh02's radius-scaling-
+  grow-deep flew the grow-deep cell: e2e max 83.57 ms (its REST scale tick).
+- The desktop lost no memory to the ETW pools during any of these hil
+  flights (EtwD +92 k allocations in 23 min); a simulator start at 09:13,
+  capped at 20 FPS and rendering offscreen, surged again (+1.09 M in 5 s)
+  before any scene load and was stopped: the producer is the simulator's
+  start-up, not its frame rate.
+
 #### Changed
 - docs/FINAL-REPORT-outline.md and docs/FINAL-REPORT.md Appendix A: WP4-03
   and WP4-05 to DONE; WP4-11's first gap (no flown session wrote the six
