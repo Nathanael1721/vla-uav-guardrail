@@ -7,7 +7,9 @@ Baseline: day. Means over each scenario's runs; lock = estimate within 6 m of th
 | pas-follow-redcar-dusk | 1 | 0.123 | 0.135 | 2.5 | 43.0 | 0.175 | 0.038 | 0.217 | 3.0 | 207.7 | 0.111 | 105.8 | 131.4 |
 | pas-follow-redcar-night | 1 | 0.214 | 0.029 | - | 13.5 | - | - | - | - | - | - | - | - |
 | pas-follow-redcar-rain | 1 | 0.913 | 0.095 | 2.7 | 97.6 | 0.958 | 0.818 | 0.853 | 8.0 | 22.3 | 0.279 | 34.8 | 4.5 |
-| unstressed | 1 | 0.230 | 0.111 | 2.4 | 90.8 | 0.298 | 0.060 | 0.201 | 4.0 | 208.8 | 0.112 | 112.9 | 83.4 |
+| pas-follow-redcar-fog | 1 | 0.011 | 0.029 | - | 110.1 | - | - | - | - | - | - | - | - |
+| unstressed | 2 | 0.169 | 0.174 | 2.3 | 91.2 | 0.208 | 0.084 | 0.561 | 2.5 | 151.5 | 0.168 | 101.0 | 43.0 |
 
 Checks:
 - pas-follow-redcar-night: no subject truth read on ['pas_hil_aiot_night_01']: lock and range not measured
+- pas-follow-redcar-fog: no subject truth read on ['pas_hil_aiot_fog_01']: lock and range not measured

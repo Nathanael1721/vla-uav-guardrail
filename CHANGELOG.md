@@ -16,6 +16,19 @@ shipped change and recorded as one.
 
 ## [Unreleased]
 
+### 2026-11-14 (fog on the PAS follow) — with the plugin's fog at 0.6 the detector never found the red car, and the mission refused to start, as it did at night
+
+#### Flown
+- pas_hil_aiot_fog_01 (f77efae on the AGX Orin, `-Stress fog`, FOG 0.6 read
+  back by the attaching node): 844 inferences in 330 s, best streak 0, the
+  start gate timed out and the aircraft landed; no mission, no P0 tick.
+  Detector hit rate 0.011 against 0.169 unstressed (two missions), mean
+  frame luma 110.1 (docs/data/pas_aiot_hil_20261114/perception_stress_report.md,
+  flights.md now eight rows).
+
+#### Changed
+- Appendix A WP4-18: fog flown; texture and shadow stressors stay open.
+
 ### 2026-11-14 (the harness's mission time 0 is the health answer's receipt) — a scenario forward could leave a few ms before its mission time; the lab CI at e07ff4b caught it (148/149) after the test-clock fix
 
 #### Fixed

@@ -152,40 +152,81 @@
       "checks": []
     },
     {
-      "stress": "unstressed",
-      "scenario_id": null,
+      "stress": "fog",
+      "scenario_id": "pas-follow-redcar-fog",
       "runs": 1,
       "run_names": [
-        "pas_hil_aiot_kpi_01"
+        "pas_hil_aiot_fog_01"
       ],
       "mean": {
-        "det_hit_rate": 0.23,
-        "det_conf_mean": 0.1108,
-        "det_hz": 2.411,
-        "luma_mean": 90.8,
-        "estimate_frac": 0.2977,
-        "lock_frac": 0.0599,
-        "estimate_on_subject_frac": 0.2011,
-        "track_losses": 4.0,
-        "longest_loss_s": 208.78,
-        "within_30m_frac": 0.1119,
-        "range_median_m": 112.86,
-        "estimate_err_median_m": 83.38
+        "det_hit_rate": 0.0113,
+        "det_conf_mean": 0.0286,
+        "det_hz": null,
+        "luma_mean": 110.1,
+        "estimate_frac": null,
+        "lock_frac": null,
+        "estimate_on_subject_frac": null,
+        "track_losses": null,
+        "longest_loss_s": null,
+        "within_30m_frac": null,
+        "range_median_m": null,
+        "estimate_err_median_m": null
       },
       "baseline": "day",
       "delta_vs_baseline": {
-        "det_hit_rate": -0.0104,
-        "det_conf_mean": 0.0288,
-        "det_hz": -0.4833,
-        "luma_mean": -7.1,
-        "estimate_frac": -0.0552,
-        "lock_frac": -0.0464,
-        "estimate_on_subject_frac": -0.0568,
-        "track_losses": 0.6667,
-        "longest_loss_s": -70.3433,
-        "within_30m_frac": 0.0267,
-        "range_median_m": -30.4333,
-        "estimate_err_median_m": -32.7233
+        "det_hit_rate": -0.2291,
+        "det_conf_mean": -0.0534,
+        "det_hz": null,
+        "luma_mean": 12.2,
+        "estimate_frac": null,
+        "lock_frac": null,
+        "estimate_on_subject_frac": null,
+        "track_losses": null,
+        "longest_loss_s": null,
+        "within_30m_frac": null,
+        "range_median_m": null,
+        "estimate_err_median_m": null
+      },
+      "checks": [
+        "no subject truth read on ['pas_hil_aiot_fog_01']: lock and range not measured"
+      ]
+    },
+    {
+      "stress": "unstressed",
+      "scenario_id": null,
+      "runs": 2,
+      "run_names": [
+        "pas_hil_aiot_kpi_01",
+        "pas_hil_aiot_kpi_02"
+      ],
+      "mean": {
+        "det_hit_rate": 0.1689,
+        "det_conf_mean": 0.1745,
+        "det_hz": 2.326,
+        "luma_mean": 91.2,
+        "estimate_frac": 0.2078,
+        "lock_frac": 0.0842,
+        "estimate_on_subject_frac": 0.5608,
+        "track_losses": 2.5,
+        "longest_loss_s": 151.54,
+        "within_30m_frac": 0.1676,
+        "range_median_m": 101.03,
+        "estimate_err_median_m": 43.005
+      },
+      "baseline": "day",
+      "delta_vs_baseline": {
+        "det_hit_rate": -0.0715,
+        "det_conf_mean": 0.0925,
+        "det_hz": -0.5683,
+        "luma_mean": -6.7,
+        "estimate_frac": -0.1451,
+        "lock_frac": -0.0221,
+        "estimate_on_subject_frac": 0.3029,
+        "track_losses": -0.8333,
+        "longest_loss_s": -127.5833,
+        "within_30m_frac": 0.0824,
+        "range_median_m": -42.2633,
+        "estimate_err_median_m": -73.0983
       },
       "checks": []
     }
@@ -230,6 +271,49 @@
         "range_p90_m": 166.05,
         "estimate_err_median_m": 83.38,
         "estimate_err_p90_m": 205.91,
+        "near_m": 6.0,
+        "loss_min_s": 1.0
+      }
+    },
+    {
+      "run": "pas_hil_aiot_kpi_02",
+      "path": "D:\\OneDrive\\College\\S2-TaipeiTech\\Lab\\VLA Drone\\demo\\out\\pas_hil_aiot_kpi_02",
+      "stress": "unstressed",
+      "scenario_id": null,
+      "label": "non-KPI (perception-stress evidence, WP4-16 / WP4-18)",
+      "kpi_grade": true,
+      "scene_id": "SceneCityLifeArduPilot",
+      "weather_ok": null,
+      "weather_read_back": null,
+      "end_reason": "target_lost",
+      "mission_s": 107.11,
+      "detector": {
+        "window": "seq 543-783 (the flight log's det_seq span)",
+        "inferences": 241,
+        "hits": 26,
+        "det_hit_rate": 0.1079,
+        "det_conf_mean": 0.2382,
+        "det_conf_median": 0.2358,
+        "det_switches": 0,
+        "luma_n": 241,
+        "luma_mean": 91.6,
+        "luma_median": 89.6,
+        "det_hz": 2.241
+      },
+      "track": {
+        "ticks": 1070,
+        "truth_ticks": 1070,
+        "estimate_frac": 0.1178,
+        "lock_frac": 0.1084,
+        "estimate_on_subject_frac": 0.9206,
+        "track_losses": 1,
+        "longest_loss_s": 94.3,
+        "estimate_dropouts": 1,
+        "within_30m_frac": 0.2234,
+        "range_median_m": 89.2,
+        "range_p90_m": 161.7,
+        "estimate_err_median_m": 2.63,
+        "estimate_err_p90_m": 3.29,
         "near_m": 6.0,
         "loss_min_s": 1.0
       }
@@ -530,6 +614,44 @@
         "estimate_err_p90_m": 6.83,
         "near_m": 6.0,
         "loss_min_s": 1.0
+      }
+    },
+    {
+      "run": "pas_hil_aiot_fog_01",
+      "path": "D:\\OneDrive\\College\\S2-TaipeiTech\\Lab\\VLA Drone\\demo\\out\\pas_hil_aiot_fog_01",
+      "stress": "fog",
+      "scenario_id": "pas-follow-redcar-fog",
+      "label": "non-KPI (perception-stress evidence, WP4-16 / WP4-18)",
+      "kpi_grade": false,
+      "scene_id": "SceneCityLifeArduPilotStressFog",
+      "weather_ok": true,
+      "weather_read_back": {
+        "RAIN": 0.0,
+        "ROAD_WETNESS": 0.0,
+        "SNOW": 0.0,
+        "ROAD_SNOW": 0.0,
+        "MAPLE_LEAF": 0.0,
+        "ROAD_LEAF": 0.0,
+        "DUST": 0.0,
+        "FOG": 0.6
+      },
+      "end_reason": "no mission: start gate timed out after 330.0 s: no plausible 'a red car' within 30 m on 5 inferences in a row",
+      "mission_s": 0.01,
+      "detector": {
+        "window": "every inference (no flight-log row carries det_seq)",
+        "inferences": 972,
+        "hits": 11,
+        "det_hit_rate": 0.0113,
+        "det_conf_mean": 0.0286,
+        "det_conf_median": 0.0238,
+        "det_switches": 0,
+        "luma_n": 972,
+        "luma_mean": 110.1,
+        "luma_median": 113.6,
+        "det_hz": null
+      },
+      "track": {
+        "ticks": 0
       }
     }
   ]

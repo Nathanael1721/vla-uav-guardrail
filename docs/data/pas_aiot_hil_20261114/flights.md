@@ -12,3 +12,4 @@ Parsed from each run's node log (`<run>.node.log`, its `[report]` lines); run fo
 | pas_hil_aiot_dusk_01 | dusk | 169.8 | 9.982 | 3094 | 22 | 0 | target_lost | 0.967 | no | 6.899190613610521 | 0.1098 | 9.494 | 159.353 | 282.239 |
 | pas_hil_aiot_night_01 | night | - | - | 0 | 0 | 0 | no mission: start gate timed out after 330.0 s: no plausible 'a red car' within 30 m on 5 inferences in a row | - | no | - | - | - | - | - |
 | pas_hil_aiot_rain_01 | rain | 161.6 | 9.963 | 4185 | 297 | 0 | max_s reached | 0.969 | no | 7.666601847258118 | 0.1106 | 9.098 | 163.095 | 296.445 |
+| pas_hil_aiot_fog_01 | fog | - | - | 0 | 0 | 0 | no mission: start gate timed out after 330.0 s: no plausible 'a red car' within 30 m on 5 inferences in a row | - | no | - | - | - | - | - |
