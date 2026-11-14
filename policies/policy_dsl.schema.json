@@ -1734,7 +1734,7 @@
           ]
         }
       ],
-      "description": "Grant: hot-applicable \"Polygon with motion (translate / rotate) injected\nmid-flight\".\n\nThe Shield enforces it, motion included, since 2026-10-07\n(guardrail/shield.py, hot-apply); since 2026-10-08 the compiler renders it\n(RUNTIME_TYPES), so a hot-applied generation holding one compiles a CSP.\nThe flight loaders still refuse a policy FILE that declares one\n(FLIGHT_HELD_TYPES): offline analysis and the BC features do not read\nit yet. `ring_at(t)` is the declared motion's geometry.",
+      "description": "Grant: hot-applicable \"Polygon with motion (translate / rotate) injected\nmid-flight\".\n\nThe Shield enforces it, motion included, since 2026-10-07\n(guardrail/shield.py, hot-apply); since 2026-10-08 the compiler renders it\n(RUNTIME_TYPES), so a hot-applied generation holding one compiles a CSP.\nThe flight loaders refuse a policy FILE that declares one that MOVES\n(FLIGHT_HELD_TYPES, `moves`): no rail can score the time spent inside a\nmoving zone. One without motion flies from a file since 2026-11-15\n(C-16; Policy.static_keepout_zones). `ring_at(t)` is the declared\nmotion's geometry.",
       "properties": {
         "altitude_ceiling_m": {
           "default": 1000.0,
@@ -2676,7 +2676,7 @@
     },
     "IR.DynamicNFZ": {
       "additionalProperties": false,
-      "description": "Grant: hot-applicable \"Polygon with motion (translate / rotate) injected\nmid-flight\".\n\nThe Shield enforces it, motion included, since 2026-10-07\n(guardrail/shield.py, hot-apply); since 2026-10-08 the compiler renders it\n(RUNTIME_TYPES), so a hot-applied generation holding one compiles a CSP.\nThe flight loaders still refuse a policy FILE that declares one\n(FLIGHT_HELD_TYPES): offline analysis and the BC features do not read\nit yet. `ring_at(t)` is the declared motion's geometry.",
+      "description": "Grant: hot-applicable \"Polygon with motion (translate / rotate) injected\nmid-flight\".\n\nThe Shield enforces it, motion included, since 2026-10-07\n(guardrail/shield.py, hot-apply); since 2026-10-08 the compiler renders it\n(RUNTIME_TYPES), so a hot-applied generation holding one compiles a CSP.\nThe flight loaders refuse a policy FILE that declares one that MOVES\n(FLIGHT_HELD_TYPES, `moves`): no rail can score the time spent inside a\nmoving zone. One without motion flies from a file since 2026-11-15\n(C-16; Policy.static_keepout_zones). `ring_at(t)` is the declared\nmotion's geometry.",
       "properties": {
         "altitude_ceiling_m": {
           "default": 1000.0,

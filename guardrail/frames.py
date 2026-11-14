@@ -74,6 +74,11 @@ updated.) As of that date:
     2026-10-23): `to_body` of the step tracker's world-frame action, for the
     row's `body` and MAVROS's record copy only; the action itself enters the
     Shield in world frame, never rotated.
+  * `demo/pas_ardupilot/mavros_link.py` (`--setpoint-via adapter`,
+    2026-11-15): `to_body` of the Shield's emitted world-frame action, once,
+    at the pose's heading, published on /shield/setpoint for
+    `sitl/mavlink_adapter_node.py` to cross to local NED; the default route
+    publishes its own PositionTarget and rotates nothing here.
   * `demo/real_vla_demo.py`: `from_body` for the OpenVLA action.
   * `guardrail/audit.py`: `to_body` writes each audit record's raw and
     emitted actions in the grant's body-frame keys, at the tick's heading.
