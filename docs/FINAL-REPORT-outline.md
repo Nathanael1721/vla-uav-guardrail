@@ -87,9 +87,10 @@ Points the summary will carry, each already backed by section 4:
   (7 Nov, AirSimNH, not KPI-grade); on base OpenVLA the CSP's effect on
   repairs is no larger than a rule-free prefix's (WP2-01, WP2-09).
 - What the report cannot claim yet: fail-safe trigger correctness >= 99 %
-  without a qualifier (566/567 = 0.998 on the adopted reading over the 567
-  runs scored with the supplement; 19 censored runs and 2 cell-seeds with
-  no accepted flight unscored, WP3-15), a learned VLA on `hil` (the KPI campaigns fly a stub pilot,
+  without a qualifier (584/585 = 0.998 on the adopted reading with the
+  GeoFence backstop rule of 15 Nov, settled by the lab and not yet
+  confirmed by the PI; 566/567 before that rule; 1 censored run and 2
+  cell-seeds with no accepted flight unscored, WP3-15), a learned VLA on `hil` (the KPI campaigns fly a stub pilot,
   ARCH-20), the Gazebo functional rail (ARCH-16), the `flight` topology
   (ARCH-14).
 
@@ -134,7 +135,7 @@ ge1110 and the first nightly nt1111 (22d434b, 11-12 Nov).
 |---|---|---|---|
 | P0 violation escape rate (WP3-14) | 0, hard limit | **KPI-grade, ntFIN2: 0.0000 - 0 escapes on 16,703 P0-violation ticks over 577 Shield-on missions; Shield-off control 0.6375 (153 of 153 P0 ticks, 3 missions); passthrough null 0.213.** On the true position no Shield-flown tick entered a P0 zone; in 21 missions ArduPilot carried the aircraft into one (18 GeoFence breaches with RTL on a zone spawned 3 m ahead, 3 RTL legs through a time-windowed zone), outside the grant's count ("Counter from Shield repair log"). Before: 0 on every Shield-on mission of the hil campaigns since 7 Nov (nt1111: 587), and on the non-KPI evidence (harness library 179 Shield-on episodes, the 45 city flights of 27-28 Oct, the PAS+ArduPilot flights of 12-21 and 29 Oct) | - (DONE); with the supplement ntFIN2s: 0 escapes on 16,760 P0 ticks over 586 Shield-on flights, and ArduPilot carried 3 more missions into a P0 zone (ntFIN2s_013-015, wind-beyond-authority lane 20 at 12 m/s; demo/out/hil_ntFIN2s/sweep.json `_true_state`) |
 | Mean time to safe (WP3-17) | tracked (the grant's KPI table); its one figure, ≤ 2.0 s, is the example sweep's: met there with no spell (ge1110, hil) | **KPI-grade, ntFIN2: 3.23 s mean (max 5.39 s) over the 169 Shield-on missions whose unsafe spell recovered; 75 more never recovered before an RTL or Land (54 three-simultaneous-violations, 18 dynamic_nfz_movement, 3 failsafe_escalation), counted, not averaged.** Library (headless) 2.926 s over 39 recoveries | - (DONE: tracked) |
-| Fail-safe trigger correctness (WP3-15) | ≥ 0.99 | **KPI-grade, ntFIN2, the adopted reading (r2: rail-vehicle labels, E5 on the prescribed flight; docs/RUBRIC-failsafe.md sections 7-8, adopted 10 Nov): 557/558 = 0.998, Wilson 95 % low 0.9899, one missed trigger (ntFIN2_177); (r) 545/558 = 0.977; (a) 486/558 = 0.871; on the labels the campaign flew with 498/558 = 0.892; 19 runs censored in Loiter left out.** With the supplement ntFIN2s (13 Nov): r2 566/567 = 0.998, Wilson 95 % low 0.990; (r) 554/567; (a) 495/567. nt1111 (22d434b): r2 555/567 = 0.979; hs07 (dc8cd9c, 30 missions): 30/30; hs09 (2f22116, 17 missions): 17/17, Wilson 95 % low 0.816 | the 19 censored runs flown long enough to show their outcome (the rubric's section 3; the hil rail flies the scenario's max_s); the 2 cell-seeds with no accepted flight (gps-dropout lane 15, 6-13 s, seeds 1002 and 1003) |
+| Fail-safe trigger correctness (WP3-15) | ≥ 0.99 | **KPI-grade, ntFIN2, the adopted reading (r2: rail-vehicle labels, E5 on the prescribed flight; docs/RUBRIC-failsafe.md sections 7-8, adopted 10 Nov): 557/558 = 0.998, Wilson 95 % low 0.9899, one missed trigger (ntFIN2_177); (r) 545/558 = 0.977; (a) 486/558 = 0.871; on the labels the campaign flew with 498/558 = 0.892; 19 runs censored in Loiter left out.** With the supplement ntFIN2s (13 Nov): r2 566/567 = 0.998, Wilson 95 % low 0.990; (r) 554/567; (a) 495/567. With the GeoFence backstop rule (decision 14, settled by the lab on 15 Nov; docs/data/kpi_ntFIN2_20261115/), the KPI: **r2 584/585 = 0.998, Wilson 95 % low 0.990, 18 triggered by the backstop**; (r) 572/585; (a) 513/585. nt1111 (22d434b): r2 555/567 = 0.979; hs07 (dc8cd9c, 30 missions): 30/30; hs09 (2f22116, 17 missions): 17/17, Wilson 95 % low 0.816 | the PI's confirmation of the backstop rule; ntFIN2_374, still censored; the 2 cell-seeds with no accepted flight (gps-dropout lane 15, 6-13 s, seeds 1002 and 1003) |
 | Repair success rate (WP3-20, X-02) | tracked | **KPI-grade, ntFIN2: 98.2 % (26,473 of 26,968 repair ticks, 577 Shield-on missions); always-brake null 0 %.** Theta (2.0 m / 0.5 m, forecast depth, decided 2 Nov) judged about a third of the converged ticks; the rest carried only repairs theta does not judge (kinematic clamps, recoveries) | - (DONE: tracked) |
 | Mean repair magnitude (WP3-16) | tracked | **KPI-grade, ntFIN2: 6.407 m/s** (translational \|emitted − raw\| pooled over repaired ticks; yaw rate reported apart), per family and by priority and operator class | - (DONE: tracked) |
 | Average repair count per episode (X-03) | tracked | **KPI-grade, ntFIN2: 55.4 per Shield-on mission**, per template 1.0 to 300.7 and per cell | - (DONE: tracked) |
@@ -634,10 +635,11 @@ WP3-07, WP3-13, WP3-15, WP3-19, WP4-01, WP4-04, WP4-06, WP4-11, WP4-14,
 WP4-17, ARCH-19, ARCH-22, ARCH-31, X-14, and the open notes of WP2-15,
 WP3-08, WP3-11.
 
-**Why the rest stay PARTIAL.** WP3-15: 0.998 holds on the 567 runs scored
-with the supplement ntFIN2s (566/567); 21 are unscored (19 censored in
-Loiter, 2 cell-seeds with no accepted flight) and 5 errors among them would
-take it below 0.99. WP3-13 (DONE 14 Nov): 13 start-up ticks over 100 ms
+**Why the rest stay PARTIAL.** WP3-15 (DONE 15 Nov on the backstop rule,
+584/585): until then 0.998 held on the 567 runs scored with the supplement
+ntFIN2s (566/567) and 21 were unscored (19 censored in Loiter, 2 cell-seeds
+with no accepted flight); 3 remain unscored, and were all 3 errors it would
+be 584/588 = 0.993. WP3-13 (DONE 14 Nov): 13 start-up ticks over 100 ms
 in ntFIN2; the fix then flew in hs09 and in the full campaign ge1113 with no
 tick over 100 ms. WP4-17 and ARCH-19: the KPI report is committed from a
 clean tree since 13 Nov evening (docs/data/kpi_ntFIN2); the final report is

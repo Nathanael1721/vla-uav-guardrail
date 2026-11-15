@@ -16,6 +16,17 @@ shipped change and recorded as one.
 
 ## [Unreleased]
 
+### 2026-11-15 (outline figures) — the outline's fail-safe lines brought to the KPI as it stands since the backstop rule
+
+#### Changed
+- docs/FINAL-REPORT-outline.md: the "cannot claim yet" line, the KPI table row
+  and the note on WP3-15 quoted 566/567 as the current figure. They now give
+  584/585 = 0.998 (the adopted reading with the GeoFence backstop rule,
+  settled by the lab and not yet confirmed by the PI), keep 566/567 as the
+  figure before the rule, and name what is still unscored (1 censored run,
+  2 cell-seeds; 584/588 = 0.993 were all 3 errors). No status changes.
+- The lab CI record of 54994fa (151/151 files) is committed.
+
 ### 2026-11-15 (PI decisions) — the 15 open decisions settled by the lab under the PI's instruction of 6 Oct (follow the grant; best practice where it is silent); two of them change the fail-safe scoring: the grant's G4 gets a rubric clause, and a GeoFence RTL with the FSM holding counts as a fail-safe triggered by the backstop (584/585 = 0.998); WP3-15 to DONE
 
 None of this is the PI's signature. Each row of docs/FINAL-REPORT.md section 9
