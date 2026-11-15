@@ -405,6 +405,7 @@ from guardrail.bundle import load_for_flight                          # noqa: E4
 from guardrail.compiler import ConstraintCompiler, Mission            # noqa: E402
 from guardrail.fence_export import (defer_near, is_enforced,       # noqa: E402
                                     policy_zones, zone_clearance_m, zones_near)
+from guardrail.gc_pacing import GcPacer                               # noqa: E402
 from guardrail.fsm import (DEFAULT_THETA_HORIZON_S, FAILSAFE_STATES,  # noqa: E402
                            THETA_HORIZON_S, EscalationFSM, FSMConfig,
                            FSMState, tick_input_from_decision)
@@ -4102,6 +4103,11 @@ def build_parser() -> argparse.ArgumentParser:
                          "BRAKE as before; the velocity is logged (state_v) either way")
     ap.add_argument("--seed", type=int, default=20261006)
     ap.add_argument("--max-s", type=float, default=120.0)
+    ap.add_argument("--gc-pacing", choices=["on", "off"], default="on",
+                    help="on (default): the garbage collector's full collection is kept "
+                         "out of the 10 Hz tick (guardrail.gc_pacing.GcPacer, as the "
+                         "Shield node's): frozen at mission start, run by the loop after "
+                         "a tick's work every 10 s; off: CPython's own schedule, counted")
     # where things are
     ap.add_argument("--camera", choices=["projectairsim", "ros2"], default="projectairsim")
     ap.add_argument("--scene-mode", choices=["load", "attach"], default="load",
@@ -4255,9 +4261,12 @@ def build_parser() -> argparse.ArgumentParser:
                          "new front frame also goes to the model between ticks (pipelined "
                          "only), so observations reach it faster than the loop ticks - the "
                          "grant's 10 Hz observation (X-05). Answers still enter on ticks")
-    ap.add_argument("--vla-feed-max-hz", type=float, default=12.0,
-                    help="--vla-feed stream: at most this many requests a second from the "
-                         "feed between ticks (0: no cap)")
+    ap.add_argument("--vla-feed-max-hz", type=float, default=0.0,
+                    help="--vla-feed stream: at most this many requests a second (0, the "
+                         "default: no cap, every new frame once the model is free). On "
+                         "the AGX Orin (2026-11-15, camera 14.7 Hz): a cap of 12 gave "
+                         "10.0 frames/s while the model was asked, no cap 12.4-13.2, the "
+                         "detector's rate and the tick's work unchanged")
     ap.add_argument("--vla-decision-timeout-s", type=float, default=10.0)
     ap.add_argument("--warmup-max-latency-s", type=float, default=5.0,
                     help="refuse to arm when the last warm-up inference's round trip is "
@@ -6498,6 +6507,11 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
         # baa4603, N2: a Ctrl+C in the loop's finally after a 30-tick mission
         # read "interrupted during the mission's start").
         stage = "the mission"
+        # THE GARBAGE COLLECTOR (guardrail.gc_pacing): a full collection is
+        # the loop's own, after a tick's work, never inside one.
+        gc_pacer = GcPacer(pace=getattr(args, "gc_pacing", "on") == "on")
+        if no_mission is None:
+            gc_pacer.start(0.0)
         try:
             while no_mission is None and clock() - t0 < args.max_s:
                 if hot_gate is not None:
@@ -7194,6 +7208,8 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
                 _now = clock()
                 _work = _now - t_tick
                 work_ms.append(_work * 1000.0)
+                # After the tick's work, in its wait (GcPacer.after_publish).
+                gc_pacer.after_publish(_now - t0)
                 tick_deadline = next_tick_deadline(tick_deadline, t_tick, _now)
                 if vla is not None and getattr(args, "vla_feed", "tick") == "stream":
                     # THE FEED BETWEEN TICKS (pace_feeding): the same deadline.
@@ -7212,6 +7228,8 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
             raise
         finally:
             stage = "the mission's end"
+            # The collector's own schedule back, before the landing and the report.
+            gc_pacer.stop()
             live.beat(progress=1.0, phase="landing", detail="episode over; landing")  # memory only
             if vla is not None:
                 # The decision rate's span ends with the mission, not with the
@@ -7458,6 +7476,8 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
             "mission_end_land_accepted": land_accepted,
             # Each tick's work before its sleep (the 100 ms budget's used part).
             "tick_work_ms": spread([round(v, 3) for v in work_ms]),
+            # The collector over the mission (guardrail.gc_pacing; --gc-pacing).
+            "gc": gc_pacer.summary(),
             # The demo video (--save-view): the recorder's own summary (its
             # measured rate is in view/recorder.json, which
             # tools/make_demo_video.py reads), what the HUD cost the loop per

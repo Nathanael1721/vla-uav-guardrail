@@ -38,6 +38,10 @@
 #               perception_stress.py): the node attaches only to that
 #               stressor's scene and reads its weather back; never KPI-grade
 #   VLA_PORT    the AIOT-VLA server's port on 127.0.0.1 (default 8791)
+#   VLA_FEED    stream (default): a new front frame goes to the model between
+#               ticks too, the grant's 10 Hz observation (needs the scene's
+#               -FrontCaptureIntervalS 0.05: a 15 Hz camera); tick: one request
+#               per 10 Hz tick at most, as every flight before 2026-11-15
 #   VENV        the Python environment (default ~/vla-drone-env)
 #   ROS_SETUP   ROS 2's setup script (default /opt/ros/jazzy/setup.bash)
 # VLAGUARD_DRY_RUN=1 prints the graph's values (ENV:) and the command (EXEC:)
@@ -100,6 +104,7 @@ args=(demo/pas_ardupilot/perception_node.py
       --pilot vla --mission follow --vla-server "127.0.0.1:$VLA_PORT"
       --vla-front-source detector --vla-step-as-rate 0.5 --vla-rate-yaw rate
       --cadence pipelined --allow-unstamped-pipelined
+      --vla-feed "${VLA_FEED:-stream}"
       --vla-cruise-mps 4.5 --vla-speed-cap-mps 5)
 if [ -n "${BUNDLE:-}" ]; then
   args+=(--bundle "$BUNDLE")

@@ -2401,6 +2401,8 @@ def test_the_perception_rail_hil_script_joins_hil_envs_graph_and_flies_no_dev_po
     assert (opts["--vla-front-source"], opts["--vla-step-as-rate"], opts["--vla-rate-yaw"],
             opts["--cadence"]) == ("detector", "0.5", "rate", "pipelined"), opts
     assert opts["--allow-unstamped-pipelined"] is True and opts["--g1-verdict"], opts
+    # The feed between ticks is the rig's default since 2026-11-15 (X-05).
+    assert opts["--vla-feed"] == "stream", opts
     assert "--dev-yaml" not in argv and "--start-sitl" not in argv, argv
     # The node's own parser takes it, and the VLA follow resolves (in a child
     # process: the node puts demo/ on sys.path, which this file's later tests
