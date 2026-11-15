@@ -28,6 +28,17 @@ the aircraft - never the FSM's state, edges or outcome:
       rule violated), against loiter_timeout_s + one control period. Read
       from the Shield's decision at the state it was given: the TRUE state
       unless the cell degrades perception (then flagged `seen`).
+  E6  (since 2026-11-15, the rubric's section 9: "N-in-T persists", the
+      grant's G4) hard-violation onsets MADE BY THE WORLD recur at the
+      N-in-T rate through a Loiter: onsets that start on the tick a world
+      event of the episode's own record puts the violated hard rule in force
+      or changes it (`e6_facts`), 2 x N of them, every N consecutive ones
+      within T, the request never clear of a hard violation for T_recover in
+      between. An onset on no world event - a forecast re-touching a ring
+      (N1), noise in the Shield's view of the position (N2) - is never
+      counted. Decided 2026-11-15 by the lab under the PI's instruction of
+      6 Oct (follow the grant; best practice where it is silent), the PI's
+      confirmation still to be recorded, and AFTER the flown run hs10_003.
 
 ADOPTED 2026-11-10 (docs/RUBRIC-failsafe.md sections 7 and 8; the user's
 decision of 9-10 November, "follow the best practice that meets the KPI
@@ -77,7 +88,8 @@ since 2026-11-12): their readings are replaced, every other one is kept,
 and the update - why, its commands and revisions, every reading it moved,
 before and after - is appended to `built.updates`.
 
-The derived label is "expected" when any E clause holds. A cell whose
+The derived label is "expected" when any E clause holds (E1-E3, E5, E6; no
+cell is judged under E4). A cell whose
 declared label differs is listed; the exit code is 1 if any does, 0 if none,
 2 if nothing was judged. The FSM's own trigger is printed beside it for the
 reader, and read by nothing here.
@@ -207,6 +219,111 @@ def e3_facts(spec, run, dt: float) -> dict:
             "error_m": round(err, 2), "margin_m": margin,
             "route_to_boundary_m": None if route_d is None else round(route_d, 2),
             "closest_true_m": round(closest, 2)}
+
+
+# E6 (2026-11-15; docs/RUBRIC-failsafe.md sections 2 and 9). The harness's
+# hot-apply operations that can START a hard violation on the tick they land:
+# a rule spawned, switched on, swapped, resized or set moving. (A time window
+# opening by the clock is the episode's `time_window_switch` record; a
+# switch-off ends a violation and starts none.)
+E6_WORLD_OPS = ("spawn", "switch_on", "swap", "scale", "move")
+
+
+def _hard_rules(rec: dict) -> set:
+    """The hard, enforced rules the planner's request violates on one tick
+    (the FSM's own `hard_violated`: not monitor_only), by id."""
+    return {str(v.get("rule_id")) for v in rec.get("violations") or []
+            if v.get("constraint_type") == "hard"
+            and v.get("effective_action") != "monitor_only"}
+
+
+def world_changes(events: list[dict]) -> list[tuple[float, set]]:
+    """(when, the rules it names) for every world event of an episode's own
+    record (run.events) that puts a rule in force or changes it: an accepted
+    hot-apply of E6_WORLD_OPS (its `rule_id`, `target` and `zone`) or a time
+    window opening (`time_window_switch`, its `activated`)."""
+    out = []
+    for ev in events or []:
+        t = ev.get("t")
+        if isinstance(t, bool) or not isinstance(t, (int, float)) or ev.get("refused"):
+            continue
+        if ev.get("type") == "hot_apply" and ev.get("op") in E6_WORLD_OPS:
+            names = {str(ev[k]) for k in ("rule_id", "target", "zone") if ev.get(k)}
+        elif ev.get("type") == "time_window_switch":
+            names = {str(x) for x in ev.get("activated") or []}
+        else:
+            continue
+        if names:
+            out.append((float(t), names))
+    return out
+
+
+def e6_facts(events: list[dict], log: list[dict], dt: float, cfg=None) -> dict:
+    """The rubric's E6 (section 9, 2026-11-15; the grant's G4, "N-in-T
+    persists"), from one flight's decision records `log` (one per tick, as
+    `counterfactual` returns them) and its event record `events`.
+
+    An ONSET is a tick whose request violates a hard, enforced rule after a
+    tick whose request violated none. It is WORLD-MADE when a world event
+    (`world_changes`) recorded since the previous tick names a rule violated
+    on that tick - the world switched the rule on or over the request - and
+    it is counted at most once per `onset_clear_s`, as the grant's N-in-T is
+    counted. E6 holds on a run of 2 x N counted world-made onsets in which
+    every N consecutive ones lie within T (the N-in-T rate: the N of the
+    grant's G2 and N more after them, G4) and no spell without a hard
+    violation between two of them lasts T_recover (the grant's "cleared for
+    >= T_recover" would end the hold there). N, T, T_recover and
+    onset_clear_s are the FSM's CONFIGURED values (`cfg`, FSMConfig), as E5
+    reads its timeout; nothing here reads the FSM's state, edges or counters
+    (the record's own `n_in_t` among them). An onset on no world event - a
+    forecast re-touching a ring (N1), noise in the Shield's view of the
+    position (N2) - is counted in `onsets` and never in `world_onsets`."""
+    cfg = cfg or F.FSMConfig()
+    n, win = int(cfg.n_violations), float(cfg.window_s)
+    clear_s, t_rec = float(cfg.onset_clear_s), float(cfg.t_recover_s)
+    changes = world_changes(events)
+    onsets: list[float] = []                # every onset of a hard violation
+    world: list[float] = []                 # the counted world-made ones
+    clean: list[tuple[float, float]] = []   # every spell with no hard violation
+    prev = False
+    t_prev = clean_from = last = None
+    for i, rec in enumerate(log):
+        t = rec.get("t_s")
+        if isinstance(t, bool) or not isinstance(t, (int, float)):
+            t = round(i * dt, 6)
+        t = float(t)
+        hard = _hard_rules(rec)
+        if hard:
+            if clean_from is not None:
+                clean.append((clean_from, t_prev))
+                clean_from = None
+            if not prev:
+                onsets.append(t)
+                since = t - dt if t_prev is None else t_prev
+                made = any(since + F.EPS < ct <= t + F.EPS and names & hard
+                           for ct, names in changes)
+                if made and (last is None or t - last >= clear_s - F.EPS):
+                    world.append(t)
+                    last = t
+        elif clean_from is None:
+            clean_from = t
+        prev, t_prev = bool(hard), t
+    if clean_from is not None:
+        clean.append((clean_from, t_prev))
+
+    def cleared(a: float, b: float) -> bool:
+        return any(a < c0 and c1 < b and c1 - c0 >= t_rec - F.EPS for c0, c1 in clean)
+    best = start = 0
+    for k in range(len(world)):
+        if k and cleared(world[k - 1], world[k]):
+            start = k
+        if k - start + 1 >= n and world[k] - world[k - n + 1] > win + F.EPS:
+            start = k - n + 2
+        best = max(best, k - start + 1)
+    return {"holds": best >= 2 * n, "need": 2 * n, "n": n, "window_s": win,
+            "t_recover_s": t_rec, "onset_clear_s": clear_s,
+            "world_events": len(changes), "onsets": len(onsets),
+            "world_onsets": [round(x, 3) for x in world], "longest_run": best}
 
 
 def _rail_kw(response: str) -> dict:
@@ -362,13 +479,18 @@ def judge(e, lib, timeout_s: float, with_fsm: bool = True,
     e2 = spec.stress.wind_speed_mps > SW.AP_HOLD_AUTHORITY_MPS
     e3 = e3_facts(spec, run, dt)
     e5 = spell >= need - 1e-9
+    # E6 (2026-11-15): read, like E1, on the flight without a fail-safe; the
+    # same on both readings of E5.
+    e6 = e6_facts(run.events, log, dt)
     # A spell still running when the episode ends, shorter than the timeout:
     # E5 is undecided, and the family must fly longer (rubric, section 3).
     e5_censored = bool(cur) and tail < need - 1e-9
-    held = [c for c, h in (("E1", e1), ("E2", e2), ("E3", e3["holds"]), ("E5", e5)) if h]
+    held = [c for c, h in (("E1", e1), ("E2", e2), ("E3", e3["holds"]), ("E5", e5),
+                           ("E6", e6["holds"])) if h]
     o_spell, o_tail, o_cur = spells[other]
     o_e5 = o_spell >= need - 1e-9
-    o_held = [c for c, h in (("E1", e1), ("E2", e2), ("E3", e3["holds"]), ("E5", o_e5)) if h]
+    o_held = [c for c, h in (("E1", e1), ("E2", e2), ("E3", e3["holds"]), ("E5", o_e5),
+                             ("E6", e6["holds"])) if h]
     fsm = (flown.extra.get("fsm") or {}) if flown is not None else {}
     censored = None
     if flown is not None:
@@ -385,7 +507,7 @@ def judge(e, lib, timeout_s: float, with_fsm: bool = True,
             "other": {"e5_flight": other, "e5_spell_s": o_spell,
                       "e5_censored": bool(o_cur) and o_tail < need - 1e-9,
                       "derived": bool(o_held), "clauses_held": o_held},
-            "e3": e3, "wind_mps": spec.stress.wind_speed_mps,
+            "e3": e3, "e6": e6, "wind_mps": spec.stress.wind_speed_mps,
             "episode_s": round(len(run.rows) * dt, 1),
             "fsm_triggered": fsm.get("failsafe_triggered"),
             "fsm_censored": censored,
@@ -722,6 +844,7 @@ def main(argv=None) -> int:
               f"{','.join(j['clauses_held']) or '-':8} E5 {j['e5_spell_s']:5.1f}/"
               f"{j['e5_need_s']} ({j['e5_judged_at']}, {j['e5_flight']}; {o['e5_flight']} "
               f"{o['e5_spell_s']:.1f}{' FLIPS' if o['derived'] != j['derived'] else ''}) "
+              f"E6 {j['e6']['longest_run']}/{j['e6']['need']} "
               f"ep {j['episode_s']:5.1f} s fsm {j['fsm_triggered']}"
               f"{' CENSORED-IN-LOITER' if j['fsm_censored'] else ''} {j['fsm_edges']}")
         sys.stdout.flush()

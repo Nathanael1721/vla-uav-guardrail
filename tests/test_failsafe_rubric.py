@@ -551,6 +551,122 @@ def test_an_episode_is_flown_longer_by_whole_ticks_and_never_shorter():
         raise AssertionError(f"extend_s {bad} accepted")
 
 
+# =========================================================================== #
+# E6, "N-in-T persists (the grant's G4)" - added 2026-11-15 (rubric section 9)
+# =========================================================================== #
+
+def _e6_log(on: list[tuple[float, float]], *, ticks=150, dt=0.1, rule="z",
+            kind="hard", action="brake") -> list[dict]:
+    """Decision records, one per tick: `rule` violated on [a, b) for every
+    (a, b) of `on`, nothing violated otherwise."""
+    log = []
+    for i in range(ticks):
+        t = round(i * dt, 6)
+        vio = ([{"rule_id": rule, "constraint_type": kind, "effective_action": action}]
+               if any(a - 1e-9 <= t < b - 1e-9 for a, b in on) else [])
+        log.append({"t_s": t, "violations": vio})
+    return log
+
+
+def _switch_on(t: float, rule="z") -> dict:
+    return {"t": t, "type": "hot_apply", "op": "switch_on", "rule_id": f"switch-{rule}",
+            "target": rule}
+
+
+def test_e6_counts_the_onsets_the_world_makes_at_the_n_in_t_rate_and_no_others():
+    """docs/RUBRIC-failsafe.md sections 2 and 9 (2026-11-15): E6 holds on
+    2 x N hard-violation onsets MADE BY THE WORLD - each starting on the tick
+    a world event puts the violated rule in force - every N consecutive ones
+    within T, with no T_recover of clear request between them. The boundary
+    to N1 and N2 is who makes the onset: the same six onsets with no world
+    event behind them (a forecast re-touching a ring, or noise in the
+    Shield's view of the position) are counted as onsets and never for E6."""
+    import failsafe_rubric as R
+    cfg = FSMConfig()
+    assert (cfg.n_violations, cfg.window_s, cfg.t_recover_s, cfg.onset_clear_s) == (
+        3, 5.0, 2.0, 1.0), "the grant's N-in-T, as E6 reads it"
+    starts = [3.0, 4.4, 5.8, 7.2, 8.6, 10.0]              # fsm-n-in-t-flicker's
+    on = [(s, s + 0.5) for s in starts]
+    made = [_switch_on(s) for s in starts]
+    got = R.e6_facts(made, _e6_log(on), 0.1)
+    assert got["holds"] and got["world_onsets"] == starts and got["longest_run"] == 6, got
+    assert (got["need"], got["n"], got["onsets"]) == (6, 3, 6), got
+    # N1 / N2: the same onsets on no world event.
+    none = R.e6_facts([], _e6_log(on), 0.1)
+    assert not none["holds"] and none["onsets"] == 6 and none["world_onsets"] == [], none
+    # ... or on a world event that names another rule, or one the Shield refused.
+    other = R.e6_facts([_switch_on(s, rule="elsewhere") for s in starts], _e6_log(on), 0.1)
+    assert not other["holds"] and other["world_onsets"] == [], other
+    refused = R.e6_facts([dict(e, refused=True) for e in made], _e6_log(on), 0.1)
+    assert not refused["holds"] and refused["world_onsets"] == [], refused
+    # A switch-off starts no violation; a window opening by the clock does.
+    off = [{"t": s, "type": "hot_apply", "op": "switch_off", "rule_id": "switch-z",
+            "target": "z"} for s in starts]
+    assert R.e6_facts(off, _e6_log(on), 0.1)["world_onsets"] == []
+    clock = [{"t": s, "type": "time_window_switch", "activated": ["z"], "deactivated": []}
+             for s in starts]
+    assert R.e6_facts(clock, _e6_log(on), 0.1)["holds"]
+    # One short of 2 x N: the grant's G2 alone, a hold (N5).
+    five = R.e6_facts(made[:5], _e6_log(on[:5]), 0.1)
+    assert not five["holds"] and five["longest_run"] == 5, five
+    # The request clear for T_recover between the third and the fourth: the
+    # grant's "cleared for >= T_recover" ends the hold, so nothing persists.
+    gap = [3.0, 4.4, 5.8, 8.4, 9.8, 11.2]
+    broken = R.e6_facts([_switch_on(s) for s in gap], _e6_log([(s, s + 0.5) for s in gap]), 0.1)
+    assert not broken["holds"] and broken["longest_run"] == 3, broken
+    assert len(broken["world_onsets"]) == 6, broken
+    # Below the N-in-T rate: three in 6 s, never three in 5 s (the violation
+    # held between the onsets, so only the rate fails).
+    slow = [3.0, 6.0, 9.0, 12.0, 15.0, 18.0]
+    lazy = R.e6_facts([_switch_on(s) for s in slow],
+                      _e6_log([(s, s + 2.5) for s in slow], ticks=220), 0.1)
+    assert not lazy["holds"] and lazy["longest_run"] == 2, lazy
+    # An onset less than onset_clear_s after the last counted one is the same
+    # switch, not a new onset: twelve switches 0.7 s apart count as six.
+    fast = [round(3.0 + 0.7 * k, 1) for k in range(12)]
+    quick = R.e6_facts([_switch_on(s) for s in fast],
+                       _e6_log([(s, s + 0.4) for s in fast]), 0.1)
+    assert quick["world_onsets"] == fast[::2] and quick["holds"], quick
+    # Soft and monitor_only rules make no onset (the FSM's hard_violated).
+    for kw in ({"kind": "soft"}, {"action": "monitor_only"}):
+        soft = R.e6_facts(made, _e6_log(on, **kw), 0.1)
+        assert not soft["holds"] and soft["onsets"] == 0, (kw, soft)
+
+
+def test_the_flicker_cell_is_e6_on_both_vehicles_and_the_only_cell_labelled_so():
+    """fsm-n-in-t-flicker (experiments/templates/failsafe_escalation.yaml):
+    unlabelled until 2026-11-15, expected by E6 since. The tool derives
+    exactly E6 for it, on the ideal and on the rail vehicle, from the flight
+    WITHOUT a fail-safe: its six switch-ons, 1.4 s apart, each answered by the
+    `brake` rule's trusted stop (no E5 spell at all). No other family of the
+    library is labelled E6, and a clause that contradicts its label is
+    refused for E6 as for the others."""
+    import failsafe_rubric as R
+    import sweep_scenarios as SW
+    from guardrail.scenario_spec import expand
+    assert "E6" in RUBRIC_EXPECTED and RUBRIC_EXPECTED[-1] == "E6"
+    spec = FAMS["fsm-n-in-t-flicker"].cells()[0].spec
+    assert (spec.expected_failsafe, spec.failsafe_clause) == (True, "E6")
+    labelled = sorted({c.episode_id for f in LIB.families for c in f.cells()
+                       if c.spec.failsafe_clause == "E6"})
+    assert labelled == ["fsm-n-in-t-flicker"], labelled
+    prof = SW._resolve_profile("fsm_edges")
+    eps, _ = expand(LIB, prof, None, ["fsm-n-in-t-flicker"])
+    assert len(eps) == 1
+    timeout = FSMConfig().loiter_timeout_s
+    for response in ("ideal", "rail"):
+        j = R.judge(eps[0], LIB, timeout, with_fsm=False, response=response)
+        assert j["declared"] is True and j["clause"] == "E6", j
+        assert j["derived"] is True and j["clauses_held"] == ["E6"], (response, j)
+        assert j["other"]["clauses_held"] == ["E6"], (response, j)
+        assert j["e5_spell_s"] == 0.0 and not j["e5_censored"], (response, j)
+        assert j["e6"]["world_onsets"] == [3.0, 4.4, 5.8, 7.2, 8.6, 10.0], (response, j["e6"])
+    _refused(lambda: ScenarioSpec.model_validate(
+        {k: v for k, v in _minimal(failsafe_clause="E6").items() if k != "parameter_sweep"}
+        | {"mission": {**_minimal()["mission"], "pilot": {"type": "goto", "speed": 2}}}),
+        "says a fail-safe is expected")
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     failed = 0

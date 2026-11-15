@@ -30,9 +30,15 @@
 #
 # Not a grant scheduling row and not a KPI set (`grant_kpi_bearing: false`):
 # the three new cells are flown by this profile alone (their `profiles`
-# field), so no library, smoke, nightly or broad number moves, and
-# fsm-n-in-t-flicker carries no fail-safe label (its description says why).
-# Keep its runs out of a KPI report's campaigns.
+# field), so no library, smoke, nightly or broad number moves. Until
+# 2026-11-15 fsm-n-in-t-flicker carried no fail-safe label (the rubric's N1
+# against the grant's G4). Since then it is labelled expected by the rubric's
+# clause E6, "N-in-T persists (the grant's G4)": decided 2026-11-15 by the lab
+# under the PI's instruction of 6 Oct (follow the grant; best practice where
+# it is silent), the PI's confirmation still to be recorded, and AFTER the
+# flown run hs10_003 (docs/RUBRIC-failsafe.md, section 9; the cell's
+# description). The profile is still no KPI set: keep its runs out of a KPI
+# report's campaigns.
 #
 #   python experiments/sweep_scenarios.py --profile fsm_edges
 #   python experiments/sweep_scenarios.py --profile fsm_edges --response-arms ideal rail

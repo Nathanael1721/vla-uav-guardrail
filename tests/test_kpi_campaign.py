@@ -42,6 +42,14 @@ the P0 violation escape rate at 0", due 30 Nov)
    (named, never read or counted); the report says which campaign each
    counted episode came from; the re-score tables merge per run with the
    same choice, and tables that disagree on the labels are refused.
+7. (2026-11-15) The GeoFence backstop (docs/RUBRIC-failsafe.md sections 1
+   and 9): a run whose fail-safe the autopilot's GeoFence triggered while
+   the FSM held is scored like any trigger, named and counted beside the KPI
+   in the summary and under every reading, with the same runs read as
+   before the rule (left out as censored) and counted as not triggered; a
+   table written before the rule says "not recorded" and is never merged
+   with one written after. Against 9dfe254 that test fails: load_rescore
+   keeps no `backstop_rule`.
 
 Shown failing first: against 0df7ee8 (the tree before this change) every
 test here fails - kpi_report has no load_campaign, load_rescore,
@@ -305,6 +313,101 @@ def test_the_adopted_reading_is_applied_and_every_reading_scored_side_by_side():
         assert "| (r2) **adopted** | 2/2 | 1.000 |" in md, md
         assert "false trigger: `cx_001_a`" in md
         assert "In this report the labels are the ADOPTED reading (r2)" in md
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def _rescore_backstop(path: Path) -> Path:
+    """_rescore's table as experiments/sweep_scenarios.py writes it since
+    2026-11-15 (BACKSTOP_RULE): cx_001's fail-safe was triggered by the
+    autopilot's GeoFence while the FSM held in Loiter - scored as a trigger,
+    named `backstop` under every reading - and the table says which rule it
+    was scored under."""
+    _rescore(path)
+    doc = json.loads(path.read_text(encoding="utf-8"))
+    fl = doc["failsafe_labels"]
+    fl["backstop_rule"] = {
+        "since": "2026-11-15", "rule": "a run in which the autopilot took the aircraft ...",
+        "before": "such a run was left out as censored ...",
+        "decided": "2026-11-15 by the lab ...", "doc": "docs/RUBRIC-failsafe.md"}
+    took = {"run": "cx_001_a", "cell": "a", "seed": 1001, "mode": "RTL", "t": 5.78,
+            "fsm_state": "Loiter", "fsm_censored": True}
+    fl["readings"]["a"]["backstop"] = [dict(took, expected=False, verdict="false")]
+    fl["readings"]["r2"]["backstop"] = [dict(took, expected=True, verdict="correct")]
+    doc["runs"][0]["doc"]["kpi"]["failsafe_by"] = "autopilot_geofence"
+    path.write_text(json.dumps(doc), encoding="utf-8")
+    return path
+
+
+def test_the_geofence_backstop_is_counted_beside_the_kpi_and_the_old_readings_kept():
+    """2026-11-15 (docs/RUBRIC-failsafe.md sections 1 and 9): a run whose
+    fail-safe the autopilot's GeoFence triggered while the FSM held is scored
+    like any trigger under every reading, named, and counted beside the KPI
+    - in the summary's row and in the readings table - with the same runs
+    read the two earlier ways beside it: as before the rule (left out as
+    censored) and counted as not triggered. A table written before the rule
+    says "not recorded", never 0, and is not merged with one written after."""
+    root, trust, summ, rs_old = _fixture()
+    try:
+        rs = _rescore_backstop(root / "rescore_backstop.json")
+        t = KR.load_rescore(rs)
+        assert t["backstop_rule"]["since"] == "2026-11-15"
+        assert t["runs"]["cx_001_a"]["readings"]["r2"]["backstop"] == {
+            "mode": "RTL", "t": 5.78, "fsm_state": "Loiter", "fsm_censored": True}
+        assert "backstop" not in t["runs"]["cx_002_b"]["readings"]["r2"]
+        rep = _report(summ, rs, trust)
+        e = _ep(rep, "cx_001_a")
+        assert (e["failsafe_by"], e["failsafe_triggered"], e["failsafe_matches_label"]) == (
+            "autopilot_geofence", True, 1.0), e
+        assert _ep(rep, "cx_002_b")["failsafe_by"] is None
+        fr = rep["failsafe_readings"]
+        assert fr["backstop_rule"]["since"] == "2026-11-15"
+        ra, r2 = fr["readings"]["a"], fr["readings"]["r2"]
+        # (r2), adopted: the backstop's trigger is correct, 2/2; before the
+        # rule the run was left out (1/1); counted as not triggered, missed.
+        assert (r2["correct"], r2["scored"]) == (2, 2), r2
+        assert [(x["run"], x["verdict"], x["mode"]) for x in r2["backstop"]] == [
+            ("cx_001_a", "correct", "RTL")]
+        assert r2["triggered_by"] == {"fsm": 0, "autopilot_geofence": 1}
+        b0, b1 = r2["before_backstop_rule"], r2["backstop_as_not_triggered"]
+        assert (b0["correct"], b0["scored"], b0["left_out_as_censored"]) == (1, 1, 1), b0
+        assert (b1["correct"], b1["scored"], b1["missed_triggers"]) == (1, 2, 1), b1
+        # (a) does not expect it: the backstop's trigger is a false trigger.
+        assert (ra["correct"], ra["scored"]) == (1, 2) and ra["backstop"][0]["verdict"] == "false"
+        assert ra["backstop_as_not_triggered"]["correct"] == 2
+        fs = rep["kpi_summary"]["failsafe"]
+        assert len(fs["backstop"]) == 1 and fs["correct"] == 2
+        md = KR.render_markdown(KR.json_safe(rep))
+        assert "**The GeoFence backstop (since 2026-11-15).**" in md
+        assert "| By the GeoFence backstop |" in md
+        assert "| 1 (1 correct, 0 false) | 1/1 = 1.000 (Wilson 95 % low" in md, md
+        assert "triggered by the GeoFence backstop: `cx_001_a` (RTL at 5.78 s, the FSM " \
+               "in Loiter; a fail-safe expected: correct)" in md
+        assert "1 of the scored fail-safes triggered by the autopilot's GeoFence backstop " \
+               "while the FSM held (counted since 2026-11-15)" in md
+        assert "(1 left out as censored): 1.000 (1/1)" in md \
+            and "counted as not triggered: 0.500 (1/2)" in md, md
+        # The campaign's own figure was scored when it flew, before the rule.
+        assert "scored before the GeoFence backstop rule of 2026-11-15" in md, md
+        # A table written before the rule: not recorded, never a 0.
+        old = _report(summ, rs_old, trust)
+        o2 = old["failsafe_readings"]["readings"]["r2"]
+        assert old["failsafe_readings"]["backstop_rule"] is None
+        assert o2["backstop"] is None and o2["before_backstop_rule"] is None, o2
+        assert "failsafe_by" not in _ep(old, "cx_001_a")
+        md0 = KR.render_markdown(KR.json_safe(old))
+        assert "**The GeoFence backstop: not recorded.**" in md0
+        assert "| not recorded | not recorded | not recorded |" in md0
+        assert "GeoFence backstop while the FSM held: not recorded (the re-score table " \
+               "predates the rule of 2026-11-15" in md0
+        assert "of the scored fail-safes triggered" not in md0
+        # Tables scored under different rules are never merged.
+        try:
+            KR.load_rescores([rs, rs_old])
+        except SystemExit as err:
+            assert "GeoFence backstop rule" in str(err), str(err)
+        else:
+            raise AssertionError("a table from before the rule was merged with one after")
     finally:
         shutil.rmtree(root, ignore_errors=True)
 

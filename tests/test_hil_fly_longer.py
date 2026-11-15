@@ -37,6 +37,13 @@ WHAT IS BEING CLAIMED
    rows, its length in the Campaign section and the inputs, and a campaign,
    supplement, re-score table or run glob of another length refused.
 5. The option is refused where it cannot apply, and the dry run shows it.
+6. (2026-11-15, docs/RUBRIC-failsafe.md sections 1 and 9) A takeover the
+   autopilot's own "Fence Breached" stands beside - RTL or LAND, the FSM
+   holding in Brake or Loiter - is no longer censored: it is a fail-safe
+   triggered by the GeoFence backstop (`failsafe_by` "autopilot_geofence"),
+   scored against the label, counted beside the figure, with the reading
+   before that rule printed beside. The takeover of claim 3 has no fence
+   breach on record and stays censored.
 
 Shown failing first: against e1d3a54 (the tree before this change) every test
 here fails - main() has no --hil-max-s-add, rail_max_s takes no `add`, and
@@ -105,6 +112,20 @@ class _HeldRig(TS._FakeRig):
 
 class _TakenRig(_HeldRig):
     took_over = True
+
+
+class _FencedRig(_TakenRig):
+    """The taken rig, with what the Shield node recorded on ntFIN2's 18
+    takeovers: ArduPilot's own "Fence Breached" STATUSTEXT 2 ms after the mode
+    change, in events.jsonl."""
+
+    def run_mission(self, args, tag, shield, timeout_s):
+        rc, out = super().run_mission(args, tag, shield, timeout_s)
+        p = self.remote / "demo" / "out" / tag / "events.jsonl"
+        with open(p, "a", encoding="utf-8", newline="\n") as f:
+            f.write(json.dumps({"kind": "autopilot_text", "t": 5.782, "severity": 5,
+                                "text": "Fence Breached"}) + "\n")
+        return rc, out
 
 
 def _campaign(argv, td: Path, rig_cls=TS._FakeRig):
@@ -312,6 +333,72 @@ def test_a_lengthened_run_that_still_ends_in_loiter_is_still_censored():
     # A headless episode records no takeover: "fly it longer", as it always said.
     assert S.censored_remedy({"failsafe_censored": True}) == "fly it longer"
     assert S.censored_cause({"failsafe_censored": False}) is None
+
+
+def test_a_geofence_takeover_of_a_held_flight_is_the_backstops_fail_safe():
+    """2026-11-15 (docs/RUBRIC-failsafe.md sections 1 and 9; sweep_scenarios
+    BACKSTOP_RULE). The takeover above carried no fence breach on record, so
+    it stays censored. The same flight with ArduPilot's "Fence Breached" in
+    its events.jsonl - what ntFIN2's 18 dyn-nfz-spawn-ahead runs recorded -
+    is a fail-safe triggered by the backstop: scored against the cell's
+    label by the campaign and by the re-score, named, counted beside the
+    figure, with the reading before the rule (left out as censored) and the
+    one that counts it as not triggered printed beside."""
+    with tempfile.TemporaryDirectory() as td:
+        td = Path(td)
+        rc, doc, _, out = _campaign(["--only", CELL, "--hil-campaign", "tstfl5"], td,
+                                    _FencedRig)
+        res = doc["results"][0]
+        k = res["kpi"]
+        assert (k["failsafe_triggered"], k["failsafe_by"], k["failsafe_censored"],
+                k["failsafe_matches_label"]) == (True, "autopilot_geofence", False, 1.0), k
+        assert k["rail_window"]["autopilot_took_over"] == {
+            "t": 5.78, "mode": "RTL", "previous": "GUIDED"}
+        assert k["rail_window"]["takeover_fence_breach"] == {
+            "found": True, "t": 5.782, "text": "Fence Breached", "severity": 5,
+            "after_takeover_s": 0.002}
+        b = k["failsafe_backstop"]
+        assert b["counts"] and b["fsm_state"] == "Loiter" and b["fsm_censored"] is True, b
+        assert not [g for g in res["gates_failed"] if g.startswith("fail-safe:")], res
+        fl = doc["_failsafe_labels"]
+        assert (fl["labelled"], fl["correct"], fl["censored_in_loiter"]) == (1, 1, 0), fl
+        assert fl["triggered_by"] == {"fsm": 0, "autopilot_geofence": 1}
+        assert fl["backstop_triggered_episodes"] == [CELL]
+        assert fl["before_backstop_rule"] == {
+            "labelled": 0, "correct": 0, "fail_safe_correctness": None,
+            "left_out_as_censored": 1}, fl["before_backstop_rule"]
+        assert fl["backstop_as_not_triggered"] == {
+            "labelled": 1, "correct": 0, "fail_safe_correctness": 0.0}
+        assert [e for e in fl["triggers_by_edge"]["true"] if e.endswith("autopilot GeoFence")], \
+            fl["triggers_by_edge"]
+        assert "of them triggered by the autopilot's GeoFence backstop while the FSM held " \
+               "(counted since 2026-11-15): 1; the same runs read as before that rule " \
+               "(1 left out as censored): 0/0 = None; counted as not triggered: 0/1 = 0.0" \
+            in out, out
+        run_dir = td / "store" / "tstfl5_001_rail-mission-stub-vla"
+        stored = json.loads((run_dir / S.SCENARIO_SCORE).read_text(encoding="utf-8"))
+        assert stored["kpi"]["failsafe_by"] == "autopilot_geofence"
+        tab = td / "table.json"
+        rc2, out2 = _rescore([run_dir], _labels(td / "labels.json", CELL, 1001, True), tab)
+        fl2 = json.loads(tab.read_text(encoding="utf-8"))["failsafe_labels"]
+        assert rc2 == 0 and fl2["backstop_rule"]["since"] == "2026-11-15", out2
+        for key, sc in fl2["readings"].items():
+            assert (sc["correct"], sc["scored"], sc["censored"]) == (1, 1, []), (key, sc)
+            assert [(t["run"], t["mode"], t["verdict"]) for t in sc["backstop"]] == [
+                (run_dir.name, "RTL", "correct")], sc["backstop"]
+            assert sc["before_backstop_rule"]["scored"] == 0 \
+                and sc["before_backstop_rule"]["left_out_as_censored"] == 1, sc
+            assert (sc["backstop_as_not_triggered"]["scored"],
+                    sc["backstop_as_not_triggered"]["missed_triggers"]) == (1, 1), sc
+        assert f"backstop   {run_dir.name}  ({CELL}, seed 1001)  - the autopilot's GeoFence " \
+               f"took it (RTL at 5.78 s) with the FSM in Loiter: a fail-safe expected, " \
+               f"correct" in out2, out2
+        # The same flight on a label that expects none: a false trigger.
+        rc3, out3 = _rescore([run_dir], _labels(td / "labels0.json", CELL, 1001, False), tab)
+        r2 = json.loads(tab.read_text(encoding="utf-8"))["failsafe_labels"]["readings"]["r2"]
+        assert (r2["correct"], r2["scored"]) == (0, 1) and [t["run"] for t in r2["false"]] == [
+            run_dir.name], r2
+        assert r2["backstop"][0]["verdict"] == "false" and "a false trigger" in out3, out3
 
 
 # =========================================================================== #

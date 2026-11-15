@@ -11,12 +11,22 @@ KPI-grade labels are derived on the vehicle that flies them. Unlike the
 rubric of 2 November, that amendment came AFTER flights it bears on (the rig
 showed the autopilot's lag on 7 November), so it is not a pre-registered
 reading; the readings of sections 2-5 are still scored and printed beside it.
+**Amended 2026-11-15:** section 9, two decisions: a sixth clause, E6 "N-in-T
+persists (the grant's G4)", and an ArduPilot GeoFence RTL / LAND taken while
+the FSM holds counted as a fail-safe triggered by the backstop. Decided
+2026-11-15 by the lab under the PI's instruction of 6 Oct (follow the grant;
+best practice where it is silent); the PI's confirmation is still to be
+recorded. Both came AFTER flights they bear on (hs10_003 on 14 November,
+ntFIN2 on 13 November), so neither is a pre-registered reading, and the
+readings before them are still scored and printed beside them.
 **KPI:** WP3-15, "Fail-safe trigger correctness | >= 99 % | Triggered when
 expected, not when not expected" (Stress Testing, Acceptance KPIs).
 **Code:** `guardrail/fsm.py` (`FAILSAFE_STATES`, `score_failsafe_triggers`),
-`experiments/sweep_scenarios.py` (`score`, `failsafe_summary`),
+`experiments/sweep_scenarios.py` (`score`, `failsafe_summary`; since
+2026-11-15 `failsafe_backstop` and `BACKSTOP_RULE`),
 `guardrail/scenario_spec.py` (the labels and their clauses),
-`tools/failsafe_rubric.py` (the clause facts, measured per cell).
+`tools/failsafe_rubric.py` (the clause facts, measured per cell; since
+2026-11-15 `e6_facts`).
 
 ## 1. What counts as "the fail-safe triggered"
 
@@ -42,10 +52,21 @@ Why, from the grant's own text:
   ultimate backstop") lists the autopilot modes the Shield may command, not
   the KPI's trigger. Counting Loiter would make every N-in-T hold a "trigger".
 
+**Since 2026-11-15 (section 9, decision 14): also the autopilot's GeoFence
+taking the aircraft to RTL or LAND on a fence breach while the FSM holds in
+Brake or Loiter.** That is a fail-safe triggered by the grant's backstop, not
+by the FSM: recorded as such (`failsafe_by` "autopilot_geofence", against
+"fsm"), scored against the scenario's label like any other trigger - correct
+where a fail-safe is expected, a false trigger where it is not - and counted
+beside the KPI wherever the KPI is printed, with the reading before it (such
+a run left out as censored) printed beside. A hold the autopilot did not take
+is unchanged: Brake and Loiter are still holds, and an episode that ends in
+Loiter with its timeout running is still censored (section 3).
+
 ## 2. When a scenario expects a fail-safe
 
-A scenario expects a fail-safe if **any** clause E1-E5 holds within the
-episode. Each clause is read from the scenario's physics, its pilot, its
+A scenario expects a fail-safe if **any** clause E1-E6 holds within the
+episode (E6 since 2026-11-15, section 9). Each clause is read from the scenario's physics, its pilot, its
 policy and its ground truth (the true state, the true wind, the true
 position error), **never from what the FSM did**: not from its state, its
 edges or its outcome.
@@ -58,9 +79,12 @@ edges or its outcome.
 | **E4 No legal continuation** | no action within the kinematic caps keeps or makes the aircraft legal at all (every exit is out of reach before the constraint binds, and stays so) | p1. No library cell is judged under it today; it is listed so a future scenario has a clause |
 | **E5 Unsafe repair that persists** | the planner keeps requesting, without a break, an action the Shield may not fly - a hard rule's repair over theta on the decided basis (each repair's forecast depth in metres; theta 2.0 m lateral / 0.5 m vertical) or one no operator converges on, or a violation of a hard rule whose action is `loiter` - for at least the operator's Loiter timeout plus one control period (`loiter_timeout_s` + 0.1 s = 30.1 s), judged from the Shield's decision on the request at the true position, on the episode **flown without a fail-safe** (the Shield's projection flown every tick; section 3) | p1 "trigger fail-safe (RTL / Land) when repair is unsafe"; p4 "Conservative cap. If ... > threshold, or no operator converges, the Shield abandons projection and triggers fail-safe", and "Loiter -> RTL: ... operator-defined timeout"; run-time assurance practice (a supervised function that stays untrusted past a bounded wait ends the mission) |
 
+| **E6 N-in-T persists (the grant's G4)** | hard-violation ONSETS **made by the world** recur at or above the FSM's N-in-T rate through a Loiter: a hard, enforced rule is switched on or over the planner's request again and again (spawned, activated, its window opened, swapped, resized or set moving: a world event of the scenario lands on the very tick the violation starts, and names the violated rule), at least 2 x N times, every N consecutive ones within T, with the request never free of a hard violation for `t_recover_s` between them (N = 3, T = 5 s, T_recover = 2 s; at most one onset per `onset_clear_s` = 1 s, as the grant's N-in-T is counted) - the N that take the grant's G2 (Brake -> Loiter) and N more after them (G4) - judged from the Shield's decision on the request at the true position, on the flight without a fail-safe (section 3) | p4, the FSM: "Brake -> Loiter: N-in-T threshold", "Loiter -> RTL: N-in-T persists". Added 2026-11-15, after the flown run hs10_003 (section 9) |
+
 (E5's flight since 2026-11-10: the prescribed one, section 7. The row above
 is kept as written on 2 November; it is the reading (a) and (r) are still
-scored on.)
+scored on. E6 was added on 2026-11-15: section 9 says why, and that the label
+it gives followed the flight.)
 
 **Not expected**, stated so that no reader has to infer it:
 
@@ -82,9 +106,35 @@ scored on.)
   StandoffRecover, the altitude recovery), not a fail-safe's. (E5 can still
   hold afterwards, if the planner then keeps asking for an unsafe repair.)
 - **N5** N-in-T on its own. The grant's G2 (Brake -> Loiter) is a hold. An
-  RTL reached by "N-in-T persists" (G4) is a correct trigger only where E1-E5
-  holds; a planner that changes its OWN request in and out of a violation
-  (deliberate thrash) is not in the library (open, section 6).
+  RTL reached by "N-in-T persists" (G4) is a correct trigger only where E1-E6
+  holds (until 2026-11-15: E1-E5; E6 now names the one case in which G4 is
+  itself the reason, onsets made by the world); a planner that changes its
+  OWN request in and out of a violation (deliberate thrash) is not in the
+  library (open, section 6).
+
+**The boundary between E6 and N1 / N2** (2026-11-15). N1 and N2 are as
+written above for everything else; E6 is narrow, and what separates it from
+them is who makes the onsets:
+
+- **E6**: the WORLD makes them. Each counted onset starts on the tick a
+  world event of the scenario puts the violated hard rule in force or changes
+  it (a hot-apply that spawns, activates, swaps, resizes or sets moving that
+  rule, or its time window opening), 2 x N of them at the N-in-T rate with no
+  T_recover of clear request in between. How the Shield answers each onset
+  does not matter: fsm-n-in-t-flicker's are each answered by the `brake`
+  rule's own trusted stop, which under N1 alone would expect no fail-safe.
+- **N1**: the planner's forecast makes them. A rule that is simply in force,
+  whose margin ring the forecast leaves and re-touches as the aircraft or the
+  zone moves, starts an onset on a tick with no such world event; those
+  onsets are never counted for E6, however many there are, and a planner
+  that is otherwise repairable stays N1.
+- **N2**: the Shield's view of the position makes them. An onset that exists
+  only because the position the Shield acts on is noisy, late or frozen
+  lands on no world event either, and is never counted for E6.
+- A single world event (one spawn, one window opening, one swap: N4) is one
+  onset, far from 2 x N; E6 needs the switch to recur. An onset fewer than
+  `onset_clear_s` after the last counted one is the same switch, not a new
+  onset.
 
 Why E5 and not a physics-only rubric: under a rubric of physics alone
 (E1-E4), every Loiter -> RTL edge the grant draws - the operator timeout and
@@ -109,7 +159,7 @@ the KPI with and without E5, so the weight of this choice is visible.
   (rail-mission-stub-vla and altitude-ceiling-hold ended 0.1 s before it).
 - **Per cell.** A family's label holds for every cell unless a cell is
   listed with its own label and clause (`failsafe_cells`). Every label names
-  its clause (`failsafe_clause`), E1-E5 or N1-N5.
+  its clause (`failsafe_clause`), E1-E6 or N1-N5.
 - **On the flight without a fail-safe.** Where a clause reads the episode
   (E1, E3's frozen fix and closest approach, E5), it reads the cell flown
   with the escalation FSM's verdict ignored: the Shield's projection is
@@ -131,7 +181,14 @@ the KPI with and without E5, so the weight of this choice is visible.
   check flew gps-noise-beyond-margin latency 5 / pass_y 23.2 / sigma 1 a
   few millimetres beyond its 3.0 m error on seed 1003 and to 2.7 m on
   seeds 1001 and 1002, one cell with two labels, which this section
-  forbids. No label changed with the amendment.) `tools/failsafe_rubric.py`
+  forbids. No label changed with the amendment.) E6 (since 2026-11-15) from
+  the same decisions and the episode's own event record: the onsets of a
+  hard violation (a tick whose request violates a hard, enforced rule after
+  a tick whose request violated none), kept where a world event recorded
+  since the previous tick names a rule violated on that tick, at most one
+  per `onset_clear_s`; E6 holds on a run of 2 x N of them in which every N
+  consecutive ones lie within T and no spell without a hard violation
+  between them lasts `t_recover_s`. `tools/failsafe_rubric.py`
   prints these facts per cell and the label they give, beside the declared
   one, and exits non-zero when they disagree or when a spell is still
   running at the end of an episode too short to decide it.
@@ -351,6 +408,10 @@ need next, which is why it was not narrowed.
 
 - No scenario has a planner that thrashes by changing its own request (N5):
   N-in-T persisting (G4) is exercised only by the harness's position noise.
+  (Since 2026-11-14 also by fsm-n-in-t-flicker, flown by the fsm_edges
+  profile alone, whose onsets the WORLD makes; since 2026-11-15 that cell is
+  expected by E6, section 9. A planner thrashing its own request is still
+  not in the library, and E6 does not cover it.)
 - E3's frozen fix is a ground-truth clause the Shield could not observe
   until 2026-11-06. It now can where a rail reports fix validity
   (`State.fix_ok`), and the headless harness models a rail that does
@@ -842,3 +903,151 @@ false one under (a). shk01_001 predates the float32 cap-slack fix (8bfe08f):
 its G1 at 0.3 s was the kinematic cap's own spurious violation and its
 Loiter came from N-in-T on those onsets (G2 at 2.9 s), so it is evidence
 of the bug, not of either label set.
+
+## 9. Two decisions of 2026-11-15: clause E6, and the GeoFence backstop as a fail-safe
+
+**Status: decided 2026-11-15 by the lab under the PI's instruction of 6 Oct
+(follow the grant; best practice where it is silent); the PI's confirmation
+is still to be recorded.** These were the two questions the final report had
+left open for the PI (docs/FINAL-REPORT.md, PI decisions 13 and 14). Three
+things a reader must know about them, as for sections 7 and 8:
+
+- **Neither is a pre-registered reading.** Each was decided AFTER the flights
+  it bears on: hs10_003 (14 November) for the first, the KPI nightly ntFIN2
+  (13 November) for the second. The grant's text is the basis of both; the
+  flights are what raised the questions.
+- **The readings before them are still printed.** A cell labelled by E6 says
+  so (`failsafe_clause`), and the tool prints E6's facts for every cell. Every
+  figure that counts a fail-safe triggered by the backstop prints the count
+  and, beside it, the figure with those runs read as before the rule and with
+  them counted as not triggered.
+- **What changed is named below**, label by label and field by field.
+
+### 9.1 Decision 13: the grant's G4 governs a thrash of onsets the world makes (E6)
+
+**The question.** fsm-n-in-t-flicker (experiments/templates/
+failsafe_escalation.yaml, flown by experiments/profiles/fsm_edges.yaml alone)
+takes the grant's N-in-T edges on purpose: a hard `brake` zone is hot-applied
+ahead of the aircraft and switched off and on again every 1.4 s, the planner
+asking to fly into it throughout. Each switch-on is an onset; three in 5 s
+take G2 (Brake -> Loiter), three more inside the Loiter take G4 (Loiter ->
+RTL, "N-in-T persists"), and the aircraft goes home. Every one of those
+requests is answered by the rule's own trusted stop, so under N1 no fail-safe
+is expected - and the grant's FSM text sends the aircraft home all the same.
+The cell carried no fail-safe label, on purpose, from 14 to 15 November.
+
+**The decision.** The grant's G4 governs: p4 draws "Loiter -> RTL: N-in-T
+persists" as an edge of its own, beside the operator timeout, and a rubric
+under which that edge can only ever be a false trigger contradicts the text
+it scores (the argument section 2 already makes for E5). It enters the rubric
+as a new, narrow clause, **E6 "N-in-T persists (the grant's G4)"** (section 2,
+the table): hard-violation onsets made by the world, recurring at or above
+the N-in-T rate through a Loiter.
+
+**Why narrow.** N-in-T on its own stays a hold (N5), and the two ways the
+library had reached G4 before stay "not expected": noise in the Shield's view
+of the position (N2; since 2026-11-06 such a return is not even a new onset)
+and a forecast re-touching a margin ring by a planner that is otherwise
+repairable (N1). E6 counts only onsets that start on the tick a world event
+puts the violated rule in force or changes it; section 2 states the boundary.
+A planner that thrashes its OWN request in and out of a violation is still
+not judged: no scenario has one (section 6).
+
+**How it is read** (section 3, "Mechanically"; `tools/failsafe_rubric.py`
+`e6_facts`): from the Shield's decision on the request, tick by tick, on the
+flight without a fail-safe, and from the episode's own event record. N, T,
+T_recover and the onset rate limit are the FSM's configured values, as E5
+reads its timeout; nothing reads the FSM's state, edges or counters.
+
+**The label it changed** (one):
+
+| scenario | was -> now | clause | the fact, on the flight without a fail-safe |
+|---|---|---|---|
+| fsm-n-in-t-flicker | unlabelled -> **true** | E6 | six world-made onsets at 3.0, 4.4, 5.8, 7.2, 8.6 and 10.0 s (2 x N = 6 needed), each on a switch-on of flicker-zone, every three within 2.8 s, the request clear for 0.8 s at most between them; no E5 spell (0.0 s) |
+
+No outcome label was added. No other label changed: every cell of the
+library and of every profile (library 180 episodes, smoke 64, nightly 744,
+grant_example 36, fsm_edges 5, broad 14,950) was dumped with its label, its
+clause and its outcome label before and after the change, and the two dumps
+differ in that one cell.
+
+**The label followed the flight.** hs10_003 flew the cell on the hil rig on
+14 November (8a473fa): X1 at 3.03 s, G2 at 5.83 s ("N-in-T: 3 onsets in
+5 s"), G4 at 10.03 s ("N-in-T persists"), home at 18.83 s (G9). Re-scored on
+the label it now has, it is a correct trigger; when it flew it had none. It
+is not in a KPI figure either way: the fsm_edges profile is
+`grant_kpi_bearing: false`, and no smoke, nightly or broad run flies the
+cell.
+
+### 9.2 Decision 14: a GeoFence RTL / LAND while the FSM holds is a fail-safe triggered by the backstop
+
+**The question.** In ntFIN2, 19 KPI-grade Shield-on runs ended "censored in
+Loiter" and were left out of the adopted reading (r2). One of them,
+ntFIN2_374 (corridor-swap-shifted), flew its whole cap and ended in a Loiter
+it had re-entered: section 3's censoring, which a longer flight can decide.
+The other 18 are dyn-nfz-spawn-ahead cells (a zone hot-applied 3 m ahead at
+4 and 8 m/s; three variants, three seeds): the FSM entered Loiter at
+5.0-5.2 s (X1 or G1, then G3), and 0.6-0.8 s later ArduPilot's own GeoFence
+took the aircraft, GUIDED to RTL at 5.67-5.80 s, with its "Fence Breached"
+text 1-18 ms after the mode change. The Shield node stops stepping its FSM
+after a takeover, so the Loiter was frozen 0.5-0.7 s into its 30 s timeout,
+and no flight length decides such a run. The KPI was therefore stated three
+ways (CHANGELOG, 2026-11-14): those 18 counted as triggered, counted as
+missed, or left out as censored.
+
+**The decision.** The autopilot's GeoFence is the grant's backstop (Grant
+overview, the WP3 row: "ArduPilot fence / RTL / Land / Loiter as ultimate
+backstop"), and the KPI's own words - "triggered when expected, not when not
+expected", with the outcome vocabulary `RTL_triggered | Land_triggered` - do
+not say by whom. So a run in which the autopilot took the aircraft to RTL or
+LAND on a fence breach while the FSM was in Brake or Loiter **is a fail-safe
+that triggered**: by the backstop, not by the FSM. It is scored against the
+scenario's label like any other trigger - correct where a fail-safe is
+expected, a false trigger where it is not.
+
+**The rule, from each run's own records** (`experiments/sweep_scenarios.py`
+`failsafe_backstop`, `BACKSTOP_RULE`; never a list of runs). All three must
+hold:
+
+- metrics.json `autopilot_took_over`: the autopilot entered a mode the node
+  had not asked for, and that mode is RTL or LAND;
+- events.jsonl: the autopilot's own STATUSTEXT naming a fence breach ("Fence
+  Breached") within 2 s of that mode change (MAVROS relays the mode with the
+  1 Hz heartbeat and the text as it is sent, so either may arrive first);
+- metrics.json `fsm`: the FSM had triggered no fail-safe of its own and was
+  in Brake or Loiter when it stopped stepping.
+
+The run's score then says `failsafe_by: "autopilot_geofence"` (an FSM
+trigger says `"fsm"`), with the takeover it was derived from
+(`failsafe_backstop`: the mode, the time, the FSM's state, the breach text),
+`failsafe_triggered` true and `failsafe_censored` false.
+
+**What is not counted, and stays what it was.** A takeover into any other
+mode (LOITER, BRAKE, SMART_RTL, a pilot's mode change), one with no fence
+breach on record (a run whose events.jsonl was not read included), and one
+with the FSM in Normal: each keeps the verdict it had - censored where the
+FSM held in Loiter with its timeout pending, named with its cause - and its
+record says why it does not count (`failsafe_backstop.why_not`). ntFIN2_374
+had no takeover and stays censored.
+
+**What is unchanged.** How a fail-safe the FSM triggers is scored. Section
+3's censoring of a flight that ends still holding. Brake and Loiter as holds.
+The labels: no clause and no label moved with this decision. The outcome
+label (`mission_outcome`): still the FSM's `RTL_triggered` / `Land_triggered`
+or fail / success, so a backstop run's outcome is what it was (the 18 are
+`fail`); whether the grant's outcome vocabulary should name a backstop RTL is
+not decided here. And every measure of what the autopilot flew: a fence
+breach means the aircraft crossed a fence the Shield's hold did not keep it
+out of (the 18 runs spent 3.4-3.6 s inside the hot-applied zone,
+metrics.json `nfz_by_zone_s`), which the P0 escape rate and the autopilot's
+keep-out entries report in their own rows. This decision makes the trigger
+correct; it does not make the breach go away.
+
+**Where it is printed.** Wherever the fail-safe KPI is: a sweep's summary
+line and `_failsafe_labels` (`triggered_by`, `backstop_triggered_episodes`,
+`before_backstop_rule`, `backstop_as_not_triggered`); `--rescore-rail`, under
+each of (a), (r) and (r2), with every backstop run named; and
+tools/kpi_report.py - the KPI summary's row and the readings table. A
+re-score table written before the rule carries no `backstop_rule`:
+kpi_report prints "not recorded" for the count, never 0, and refuses to merge
+such a table with one written after.

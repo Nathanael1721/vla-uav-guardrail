@@ -314,12 +314,20 @@ scenarios:
       inside the Loiter (G4, the onsets that caused the Loiter cleared on
       entry), then home behind the aircraft (G9), on the ideal and the rail
       vehicle alike; 1.4 s apart, each onset survives 0.4 s of tick jitter
-      against the 1 s rate limit. NO FAIL-SAFE LABEL, on purpose: the
+      against the 1 s rate limit. Labelled with a fail-safe expected (E6,
+      "N-in-T persists": the grant's G4) SINCE 2026-11-15; no outcome label.
+      Until then the cell carried no fail-safe label, on purpose: the
       rubric (docs/RUBRIC-failsafe.md) expects none for a planner whose
       every request is answered by a stop or a trusted repair (N1), while
-      the grant's G4 sends a Loiter whose N-in-T persists home. The cell is
-      the edges' flight, not a KPI cell; which of the two should govern a
-      thrash of trusted stops is a question for the PI.
+      the grant's G4 sends a Loiter whose N-in-T persists home. Decided
+      2026-11-15 by the lab under the PI's instruction of 6 Oct (follow the
+      grant; best practice where it is silent), the PI's confirmation still
+      to be recorded: the grant's G4 governs a thrash of onsets the world
+      makes, as the rubric's clause E6 (its section 9). The label FOLLOWED
+      the flight: hs10_003 flew these edges on the hil rig on 14 November
+      (X1, G2, G4, G9), before the clause existed; the grant's text is the
+      basis, not that run. Still flown by the fsm_edges profile alone
+      (grant_kpi_bearing false): no KPI campaign's number moves.
     mission:
       start_pose: { x: -200.0, y: 0.0, up: 15.0 }
       target: { x: -80.0, y: 0.0, up: 15.0 }
@@ -346,3 +354,5 @@ scenarios:
       breaches: { max: 0 }
       polygon_entries: { max: 0 }
       autopilot_polygon_entries: { max: 0 }
+    expected_failsafe: true
+    failsafe_clause: E6

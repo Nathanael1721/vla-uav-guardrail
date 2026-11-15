@@ -938,11 +938,14 @@ class KnownFailureCell(_Strict):
         return True
 
 
-# The fail-safe rubric's clauses (docs/RUBRIC-failsafe.md, 2026-11-02): E1-E5
+# The fail-safe rubric's clauses (docs/RUBRIC-failsafe.md, 2026-11-02): E1-E6
 # say a fail-safe (RTL / Land) is expected, N1-N5 say it is not. Every label in
 # the library names the clause it was derived from (`failsafe_clause`, and per
 # cell `failsafe_cells`), so a label can be traced to its reason and re-derived.
-RUBRIC_EXPECTED = ("E1", "E2", "E3", "E4", "E5")
+# E6 since 2026-11-15 (the rubric's section 9): "N-in-T persists", the grant's
+# G4 - hard-violation onsets made by the world, recurring at the N-in-T rate
+# through a Loiter. One cell carries it, fsm-n-in-t-flicker.
+RUBRIC_EXPECTED = ("E1", "E2", "E3", "E4", "E5", "E6")
 RUBRIC_NOT_EXPECTED = ("N1", "N2", "N3", "N4", "N5")
 RUBRIC_CLAUSES = RUBRIC_EXPECTED + RUBRIC_NOT_EXPECTED
 

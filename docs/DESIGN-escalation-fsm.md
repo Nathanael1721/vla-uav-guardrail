@@ -246,6 +246,15 @@ Which should govern is a question for the PI; until then the cell is the
 edges' flight, not a KPI cell, and the profile says `grant_kpi_bearing:
 false`.
 
+(Since 2026-11-15 the cell is labelled: a fail-safe expected, by the rubric's
+new clause E6, "N-in-T persists (the grant's G4)" - hard-violation onsets
+made by the world, recurring at the N-in-T rate through a Loiter. Decided
+2026-11-15 by the lab under the PI's instruction of 6 Oct (follow the grant;
+best practice where it is silent); the PI's confirmation is still to be
+recorded. The label followed the flight hs10_003 of 14 November; the grant's
+text is the basis. docs/RUBRIC-failsafe.md, sections 2 and 9. The profile is
+still `grant_kpi_bearing: false`.)
+
 ### Not done
 
 - Not flown: every number above is headless. On hil: `--profile fsm_edges

@@ -508,6 +508,11 @@ SCENARIO_FIELDS = ("failsafe_triggered", "failsafe_matches_label", "mission_outc
                    "outcome_matches_label", "breaches", "polygon_entries",
                    "true_p0_flown_ticks", "min_true_dist_to_fence_m", "reached_goal",
                    "failsafe_label", "failsafe_clause", "failsafe_censored",
+                   # Who triggered the fail-safe (2026-11-15): "fsm", or
+                   # "autopilot_geofence" for the GeoFence backstop taking the
+                   # aircraft while the FSM held (sweep_scenarios.BACKSTOP_RULE).
+                   # Absent from a score written before that rule.
+                   "failsafe_by",
                    # What the autopilot flew, counted apart (2026-11-07): its
                    # keep-out breaches and polygon entries (gated), its
                    # corridor / altitude-band departures (reported).
@@ -1239,6 +1244,17 @@ READING_ORDER = ("a", "r", "r2")
 # Why a Shield-on run has no verdict under a reading (rail_label_scores'
 # lists): never counted as correct, and named.
 READING_EXCLUDED = ("not_accepted", "not_measured", "censored", "undecided", "unlabelled")
+# THE GEOFENCE BACKSTOP (2026-11-15; docs/RUBRIC-failsafe.md sections 1 and 9,
+# experiments/sweep_scenarios.py BACKSTOP_RULE). A run in which the autopilot's
+# GeoFence took the aircraft to RTL / LAND while the FSM held is a fail-safe
+# triggered by the backstop: scored against its label under every reading,
+# named (`backstop`), counted beside the KPI wherever the KPI is printed, and
+# read beside it the two earlier ways - as before the rule (left out as
+# censored) and counted as not triggered. A re-score table written before the
+# rule carries no `backstop_rule`; its runs were scored the earlier way, and
+# the report says "not recorded" for the count instead of printing a 0.
+FAILSAFE_BY_GEOFENCE = "autopilot_geofence"
+BACKSTOP_SINCE = "2026-11-15"
 _MISSION_IN_ERROR = re.compile(r"\bmission (\S+?):")
 
 
@@ -1313,9 +1329,12 @@ def load_campaign(path: str | Path) -> dict:
             "runs_glob": globs, "accepted": accepted, "not_accepted": not_accepted,
             # The campaign's own fail-safe figure, on the labels it flew with
             # (reading (a) as of 2026-11-11): beside the re-scored readings.
+            # `triggered_by` (2026-11-15): who triggered the fail-safes it scored,
+            # the GeoFence backstop's among them; None in a summary written
+            # before that rule, whose figure left such runs out as censored.
             "failsafe_at_flight": {k: (doc.get("_failsafe_labels") or {}).get(k) for k in (
                 "labelled", "correct", "fail_safe_correctness", "false_triggers",
-                "missed_triggers")},
+                "missed_triggers", "triggered_by")},
             # Internal (keys of tuples; not written to the report).
             "_episodes": episodes}
 
@@ -1546,6 +1565,10 @@ def load_rescore(path: str | Path) -> dict:
             for t in rd.get(kind) or []:
                 named[str(t.get("run"))] = (kind, t.get("label") or [])
         longer = {str(t.get("run")) for t in rd.get("label_flown_longer") or []}
+        # Triggered by the GeoFence backstop (2026-11-15): named by the
+        # reading, with its takeover and what the reading before the rule
+        # made of it (`fsm_censored`: left out as censored).
+        backstop = {str(t.get("run")): t for t in rd.get("backstop") or []}
         for name, rec in runs.items():
             if "error" in rec or rec["shield"] != "on":
                 continue
@@ -1556,6 +1579,10 @@ def load_rescore(path: str | Path) -> dict:
                     "status": kind, "triggered": trig, "clauses": clauses,
                     "expected": {"false": False, "missed": True}.get(kind, trig),
                     "label_flown_longer": name in longer}
+                if name in backstop:
+                    b = backstop[name]
+                    rec["readings"][key]["backstop"] = {
+                        k: b.get(k) for k in ("mode", "t", "fsm_state", "fsm_censored")}
             else:
                 rec["readings"][key] = {"status": kind, "expected": None,
                                         "triggered": rec["triggered"]}
@@ -1563,6 +1590,9 @@ def load_rescore(path: str | Path) -> dict:
             "rail_gates": doc.get("rail_gates"), "max_s_add": table_add,
             "artefact": fl.get("artefact"), "built": fl.get("built"),
             "adopted": fl.get("adopted_kpi_reading"), "keys": keys,
+            # The GeoFence backstop rule the table was scored under (None: a
+            # table written before 2026-11-15, scored the earlier way).
+            "backstop_rule": fl.get("backstop_rule"),
             "shield_off_runs_left_out": fl.get("shield_off_runs_left_out"),
             "readings": {k: {f: readings[k].get(f) for f in (
                 "reading", "adopted_kpi_reading", "runs", "scored", "correct",
@@ -1598,6 +1628,8 @@ def load_rescores(paths: list) -> dict | None:
         for f, what in (("artefact", "label artefact"), ("built", "label build"),
                         ("adopted", "adopted KPI reading"), ("keys", "label readings"),
                         ("rail_gates", "rail gates"),
+                        ("backstop_rule", "GeoFence backstop rule (a table written before "
+                                          "2026-11-15 has none)"),
                         ("max_s_add", "flight length (seconds past the rail's cap, "
                                       "--hil-max-s-add)")):
             if t[f] != first[f]:
@@ -1679,6 +1711,10 @@ def apply_rescore(e: dict, rs: dict) -> None:
                  failsafe_clause=",".join(ad.get("clauses") or []) or None,
                  failsafe_matches_label=1.0 if ad["expected"] == ad["triggered"] else 0.0,
                  failsafe_reading_status=ad["status"])
+        if rs.get("backstop_rule") is not None:
+            # Who triggered it (2026-11-15): the FSM, or the GeoFence backstop.
+            e["failsafe_by"] = (FAILSAFE_BY_GEOFENCE if ad.get("backstop") else
+                                "fsm" if ad["triggered"] else None)
     else:
         e.update(failsafe_label=None, failsafe_matches_label=None,
                  failsafe_reading_status=why or (ad or {}).get("status")
@@ -1699,6 +1735,18 @@ def failsafe_score(pairs: list[tuple[bool, bool]]) -> dict:
         "min_error_free_episodes_for_target_at_95", "warnings")}
 
 
+def _backstop_figure(pairs: list[tuple[bool, bool]], **more) -> dict:
+    """The figure of one earlier reading of the GeoFence backstop's runs
+    (failsafe_readings_section): scored, correct, the point estimate and the
+    Wilson 95 % lower bound, false and missed."""
+    s = failsafe_score(pairs)
+    return {"scored": s["scored"],
+            "correct": (s["true_triggers"] or 0) + (s["true_non_triggers"] or 0),
+            "failsafe_trigger_correctness": s["failsafe_trigger_correctness"],
+            "wilson_low_95": s["wilson_low_95"], "false_triggers": s["false_triggers"],
+            "missed_triggers": s["missed_triggers"], **more}
+
+
 def failsafe_readings_section(episodes: list[dict], rs: dict,
                               superseded: set | None = None) -> dict:
     """Fail-safe trigger correctness under every reading of the re-score
@@ -1711,13 +1759,26 @@ def failsafe_readings_section(episodes: list[dict], rs: dict,
     KPI-grade or not) with whether the two agree. With several tables, or a
     run the campaigns superseded (`superseded`, run names) in it, that
     figure is recomputed over the episode choice (rescore_table_figure),
-    and the superseded runs are named apart."""
+    and the superseded runs are named apart.
+
+    THE GEOFENCE BACKSTOP (2026-11-15; the block at READING_EXCLUDED). A run
+    whose fail-safe the autopilot's GeoFence triggered while the FSM held is
+    scored like any trigger, named per reading (`backstop`) and counted
+    (`triggered_by`), with the figure of the two earlier readings of those
+    runs beside it: `before_backstop_rule` (left out as censored where the
+    FSM held in Loiter with its timeout pending, else scored as not
+    triggered) and `backstop_as_not_triggered`. `backstop_rule` is the rule
+    the table was scored under; None means it was written before the rule,
+    its runs were scored the earlier way, and `backstop` is None (not
+    recorded), never an empty list."""
     superseded = set(superseded or ())
     eps = [e for e in episodes if e.get("kpi_grade") and e.get("arm") == "on"
            and e.get("kind") == "flight"]
+    ruled = rs.get("backstop_rule") is not None
     out = {"source": rs["path"], "artefact": rs["artefact"], "adopted": rs["adopted"],
            "label_revisions": (rs.get("built") or {}).get("code_revisions"),
            "target": GRANT_FAILSAFE_TARGET, "kpi_grade_shield_on_flights": len(eps),
+           "backstop_rule": rs.get("backstop_rule"),
            "readings": {}}
     if len(rs.get("paths") or [rs["path"]]) > 1:
         out["tables"] = rs.get("tables")
@@ -1729,6 +1790,8 @@ def failsafe_readings_section(episodes: list[dict], rs: dict,
                  or bool(out["rescore_runs_superseded"]))
     for key in rs["keys"]:
         pairs, short = [], []
+        before, as_missed, backstop = [], [], []
+        by_who = {"fsm": 0, FAILSAFE_BY_GEOFENCE: 0}
         names: dict[str, list] = {k: [] for k in ("false", "missed", "label_flown_longer",
                                                   "not_in_rescore", *READING_EXCLUDED)}
         for e in eps:
@@ -1742,6 +1805,19 @@ def failsafe_readings_section(episodes: list[dict], rs: dict,
                 names[rd["status"]].append(tag)
                 continue
             pairs.append((rd["expected"], rd["triggered"]))
+            b = rd.get("backstop")
+            if b is not None:
+                # Triggered by the GeoFence backstop: in `pairs` like any
+                # trigger; the two earlier readings of it kept beside.
+                by_who[FAILSAFE_BY_GEOFENCE] += 1
+                backstop.append(dict(tag, **b, expected=rd["expected"], verdict=rd["status"]))
+                as_missed.append((rd["expected"], False))
+                if not b.get("fsm_censored"):
+                    before.append((rd["expected"], False))
+            else:
+                by_who["fsm"] += int(bool(rd["triggered"]))
+                before.append((rd["expected"], rd["triggered"]))
+                as_missed.append((rd["expected"], rd["triggered"]))
             if rd.get("label_flown_longer"):
                 names["label_flown_longer"].append(tag)
             else:
@@ -1758,6 +1834,14 @@ def failsafe_readings_section(episodes: list[dict], rs: dict,
             "at_scenario_length": {"scored": len(short),
                                    "correct": sum(1 for a, b in short if a == b)},
             **names,
+            # The GeoFence backstop (2026-11-15): None where the table was
+            # written before the rule (not recorded, not "none").
+            "backstop": backstop if ruled else None,
+            "triggered_by": by_who if ruled else None,
+            "before_backstop_rule": (_backstop_figure(
+                before, left_out_as_censored=sum(1 for t in backstop if t.get("fsm_censored")))
+                if ruled else None),
+            "backstop_as_not_triggered": _backstop_figure(as_missed) if ruled else None,
             "table": tab,
             "agrees_with_table": (tab.get("scored"), tab.get("correct")) == (
                 sc["scored"], (sc["true_triggers"] or 0) + (sc["true_non_triggers"] or 0))}
@@ -2196,7 +2280,15 @@ def kpi_summary(head_eps: list[dict], latency: dict | None,
                 pairs.append((trig if match == 1.0 else not trig, trig))
         fs = dict(failsafe_score(pairs), correct=sum(1 for a, b in pairs if a == b),
                   basis="the labels the flights carry (scenario_score.json); the adopted "
-                        "reading needs --rescore-rail")
+                        "reading needs --rescore-rail",
+                  # Fail-safes the GeoFence backstop triggered (2026-11-15), as
+                  # the flights' own scores say (`failsafe_by`); None when no
+                  # score carries the field (written before the rule).
+                  triggered_by_backstop=(
+                      sum(1 for e in on if e.get("failsafe_by") == FAILSAFE_BY_GEOFENCE
+                          and isinstance(e.get("failsafe_triggered"), bool)
+                          and _num(e.get("failsafe_matches_label")))
+                      if any("failsafe_by" in e for e in on) else None))
     lat = {}
     for rail, r in ((latency or {}).get("groups", {}).get("kpi_grade") or {}).items():
         lat[rail] = {k: r.get(k) for k, _ in LATENCY_FIELDS}
@@ -2637,7 +2729,7 @@ def _render_kpi_summary(rep: dict) -> list[str]:
         else:
             meas = (f"{_f(fs['failsafe_trigger_correctness'], 3)} ({fs['correct']}/"
                     f"{fs['scored']}): the point estimate, the KPI; Wilson 95 % lower "
-                    f"bound {_f(fs.get('wilson_low_95'), 3)}")
+                    f"bound {_f(fs.get('wilson_low_95'), 3)}" + _backstop_note(fs))
             mt, m95 = fs.get("meets_target"), fs.get("meets_target_at_95")
             verdict = ("not judged (the labels do not discriminate)" if mt is None else
                        ("meets" if mt else "BELOW") + " 99 % (point); "
@@ -2673,6 +2765,36 @@ def _render_kpi_summary(rep: dict) -> list[str]:
               f"{_f(tr.get('null_always_brake_repair_success_rate'), pct=True)}. "
               f"Per (template, cell) the family tables below have every figure.", ""]
     return L
+
+
+def _backstop_note(fs: dict) -> str:
+    """What the fail-safe KPI's row says about the GeoFence backstop
+    (2026-11-15; the block at READING_EXCLUDED): how many of the scored
+    fail-safes it triggered and the figure with those runs read the two
+    earlier ways - or that the count was not recorded, never a 0 for a table
+    or score written before the rule."""
+    what = "triggered by the autopilot's GeoFence backstop while the FSM held"
+    if "backstop" in fs:                         # the adopted reading of a re-score table
+        bs = fs["backstop"]
+        if bs is None:
+            return (f"; fail-safes {what}: not recorded (the re-score table predates the "
+                    f"rule of {BACKSTOP_SINCE}; such runs are left out as censored here)")
+        if not bs:
+            return f"; 0 of the scored fail-safes {what} (counted since {BACKSTOP_SINCE})"
+        b0, b1 = fs["before_backstop_rule"], fs["backstop_as_not_triggered"]
+        return (f"; {len(bs)} of the scored fail-safes {what} (counted since "
+                f"{BACKSTOP_SINCE}). The same runs read as before that rule "
+                f"({b0['left_out_as_censored']} left out as censored): "
+                f"{_f(b0['failsafe_trigger_correctness'], 3)} ({b0['correct']}/"
+                f"{b0['scored']}), Wilson 95 % low {_f(b0['wilson_low_95'], 3)}; counted "
+                f"as not triggered: {_f(b1['failsafe_trigger_correctness'], 3)} "
+                f"({b1['correct']}/{b1['scored']}), Wilson 95 % low "
+                f"{_f(b1['wilson_low_95'], 3)}")
+    n = fs.get("triggered_by_backstop")
+    if n is None:
+        return (f"; fail-safes {what}: not recorded (the flights' scores predate the "
+                f"rule of {BACKSTOP_SINCE})")
+    return f"; {n} of the scored fail-safes {what} (counted since {BACKSTOP_SINCE})"
 
 
 def _render_campaign(c: dict | None, episodes: list[dict]) -> list[str]:
@@ -2721,7 +2843,12 @@ def _render_campaign(c: dict | None, episodes: list[dict]) -> list[str]:
                  f"labels it flew with: "
                  f"{fa.get('correct')}/{fa.get('labelled')} = "
                  f"{_f(fa.get('fail_safe_correctness'), 3)} ({fa.get('false_triggers')} false, "
-                 f"{fa.get('missed_triggers')} missed).")
+                 f"{fa.get('missed_triggers')} missed); "
+                 + (f"{(fa['triggered_by'] or {}).get(FAILSAFE_BY_GEOFENCE, 0)} of its "
+                    f"fail-safes triggered by the autopilot's GeoFence backstop."
+                    if isinstance(fa.get("triggered_by"), dict) else
+                    f"scored before the GeoFence backstop rule of {BACKSTOP_SINCE}: a run "
+                    f"the backstop took while the FSM held is left out of it as censored."))
     L += ["", "```", str(c.get("command")), "```", ""]
     for s in c.get("supplements") or []:
         L += [f"Supplement `{s['campaign']}`:", "", "```", str(s.get("command")), "```", ""]
@@ -2767,17 +2894,49 @@ def _render_failsafe_readings(fr: dict | None) -> list[str]:
          f"grant's wording); the Wilson 95 % lower bound says what the sample shows at "
          f"95 % confidence (guardrail/fsm.py `score_failsafe_triggers`). A run a reading "
          f"leaves out (not accepted, no verdict, censored in Loiter, label undecided or "
-         f"absent) is named, never counted as correct.", "",
-         "| Reading | Correct / scored | Correctness (point, the KPI) | Wilson 95 % low | "
-         ">= 99 % (point) | >= 99 % at 95 % | Nulls: always / never | Left out | "
-         "Label read on the longer flight | Re-score table's own |",
-         "|---|---|---|---|---|---|---|---|---|---|"]
+         f"absent) is named, never counted as correct.", ""]
+    rule = fr.get("backstop_rule")
+    if rule:
+        said = str(rule.get("rule") or "?")
+        L += [f"**The GeoFence backstop (since {rule.get('since')}).** {said[0].upper()}"
+              f"{said[1:]}: correct where the label expects a fail-safe, a "
+              f"false trigger where it does not. Decided {rule.get('decided')} "
+              f"({rule.get('doc')}). Before that, {rule.get('before')}. Each reading below "
+              f"counts such runs (\"By the GeoFence backstop\") and gives the figure with "
+              f"them read as before the rule and with them counted as not triggered; they "
+              f"are named under the table.", ""]
+    else:
+        L += [f"**The GeoFence backstop: not recorded.** The re-score table was written "
+              f"before the rule of {BACKSTOP_SINCE} (a run the autopilot's GeoFence took to "
+              f"RTL / LAND while the FSM held counts as a fail-safe triggered by the "
+              f"backstop): here such a run is left out as censored where the FSM held in "
+              f"Loiter. Re-score the campaign (experiments/sweep_scenarios.py "
+              f"--rescore-rail) to count them.", ""]
+    L += ["| Reading | Correct / scored | Correctness (point, the KPI) | Wilson 95 % low | "
+          ">= 99 % (point) | >= 99 % at 95 % | Nulls: always / never | Left out | "
+          "Label read on the longer flight | By the GeoFence backstop | Those runs as "
+          f"before {BACKSTOP_SINCE} (left out as censored) | Those runs counted as not "
+          "triggered | Re-score table's own |",
+          "|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
     yn = {True: "yes", False: "no", None: "not judged"}
+
+    def fig(b):
+        return (f"{b['correct']}/{b['scored']} = {_f(b['failsafe_trigger_correctness'], 3)} "
+                f"(Wilson 95 % low {_f(b['wilson_low_95'], 3)})")
     for key, r in fr["readings"].items():
         out = sum(len(r[k]) for k in (*READING_EXCLUDED, "not_in_rescore"))
         s0 = r["at_scenario_length"]
         lon = (f"{len(r['label_flown_longer'])} (without them {s0['correct']}/{s0['scored']})"
                if r["label_flown_longer"] else "0")
+        bs = r.get("backstop")
+        if bs is None:
+            bcols = "not recorded | not recorded | not recorded"
+        else:
+            bcols = (f"{len(bs)} ({sum(1 for t in bs if t['verdict'] == 'correct')} correct, "
+                     f"{sum(1 for t in bs if t['verdict'] == 'false')} false) | "
+                     f"{fig(r['before_backstop_rule'])}; "
+                     f"{r['before_backstop_rule']['left_out_as_censored']} left out | "
+                     f"{fig(r['backstop_as_not_triggered'])}")
         tab = r["table"]
         own = (f"{tab.get('correct')}/{tab.get('scored')} over {tab.get('runs')} runs"
                + (f" ({tab['basis']})" if tab.get("basis") else "")
@@ -2788,10 +2947,15 @@ def _render_failsafe_readings(fr: dict | None) -> list[str]:
                  f"{_f(r['failsafe_trigger_correctness'], 3)} | {_f(r['wilson_low_95'], 3)} | "
                  f"{yn[r['meets_target']]} | {yn[r['meets_target_at_95']]} | "
                  f"{_f(r['null_always_trigger'], 3)} / {_f(r['null_never_trigger'], 3)} | "
-                 f"{out} | {lon} | {own} |")
+                 f"{out} | {lon} | {bcols} | {own} |")
     L.append("")
     for key, r in fr["readings"].items():
         L.append(f"- ({key}) {r.get('reading')}:")
+        for t in r.get("backstop") or []:
+            L.append(f"  - triggered by the GeoFence backstop: `{t['run']}` ({t.get('mode')} "
+                     f"at {t.get('t')} s, the FSM in {t.get('fsm_state')}; "
+                     + ("a fail-safe expected: correct" if t.get("expected") else
+                        "no fail-safe expected: a false trigger") + ")")
         for kind, word in (("false", "false trigger"), ("missed", "missed trigger"),
                            *((k, f"left out ({k.replace('_', ' ')})")
                              for k in (*READING_EXCLUDED, "not_in_rescore")),
@@ -3972,7 +4136,13 @@ def build_report(run_globs: list[str], sweep_paths: list[str], top_k: int,
             + f" In this report the labels are the ADOPTED reading ({rs['adopted']}) of "
               f"{rs['path']} (--rescore-rail): a run that reading leaves out, or a "
               f"Shield-off control, has no label here; every reading is in "
-              f"\"Fail-safe trigger correctness by label reading\".")
+              f"\"Fail-safe trigger correctness by label reading\"."
+            + (f" Since {BACKSTOP_SINCE} \"triggered\" is the FSM entering RTL or Land, or "
+               f"the autopilot's GeoFence taking the aircraft to RTL / LAND on a fence "
+               f"breach while the FSM held in Brake or Loiter (`failsafe_by` "
+               f"\"{FAILSAFE_BY_GEOFENCE}\"): the backstop's triggers are counted beside "
+               f"the figure, and the figure without them is printed beside it."
+               if rs.get("backstop_rule") else ""))
     rep = {
         "_what": "KPI rollup across episodes (Stress Testing p6: KPI report). "
                  "Flights recomputed from per-episode logs with "
@@ -4177,7 +4347,7 @@ def main(argv: list[str] | None = None) -> int:
     if fs and fs.get("scored"):
         print(f"fail-safe trigger correctness ({fs.get('basis')}): {fs['correct']}/"
               f"{fs['scored']} = {fs['failsafe_trigger_correctness']}, Wilson 95 % low "
-              f"{fs.get('wilson_low_95')}")
+              f"{fs.get('wilson_low_95')}" + _backstop_note(fs))
     if rep.get("baseline"):
         b = rep["baseline"]
         reg = sum(1 for r in b["new_failures"] if r.get("was") == "passing")
