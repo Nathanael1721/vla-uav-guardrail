@@ -1,0 +1,584 @@
+{
+ "run": "ntFIN2_010_altitude-floor-recovery",
+ "source": "demo/out/hil_smoke/ntFIN2_010_altitude-floor-recovery",
+ "verdict": "identical",
+ "first_difference": null,
+ "bag": {
+  "dir": "bag",
+  "reader": "rosbags 0.10.11",
+  "messages": 32084,
+  "topics_read": {
+   "/vla/action_4d": 798,
+   "/shield/setpoint": 650,
+   "/shield/intercept": 48,
+   "/shield/fences": 1,
+   "/shield/mode_request": 1,
+   "/mavros/setpoint_raw/local": 650,
+   "/mavros/local_position/pose": 800,
+   "/mavros/state": 92,
+   "/uas1/mavlink_sink": 789
+  },
+  "problems": []
+ },
+ "window": {
+  "tick_source": "/vla/action_4d messages",
+  "first_tick": {
+   "action_index": 109,
+   "log_time_ns": 1794479924758197013,
+   "source": "the action the Shield's first message answers"
+  },
+  "last_evidenced_tick": {
+   "action_index": 758,
+   "log_time_ns": 1794479989658375675,
+   "source": "the last message the Shield published"
+  },
+  "actions_before_the_first_tick": 108,
+  "actions_after_the_last_evidenced_tick": 40,
+  "t0_ns": 1794479924749337842,
+  "t0_source": "mission time on /shield/intercept (median)",
+  "markers": [
+   {
+    "log_time_ns": 1794479924751637904,
+    "nonce": "0407b07f",
+    "t": 0.0
+   },
+   {
+    "log_time_ns": 1794479925761404124,
+    "nonce": "0407b07f",
+    "t": 1.01
+   },
+   {
+    "log_time_ns": 1794479926761624625,
+    "nonce": "0407b07f",
+    "t": 2.009
+   },
+   {
+    "log_time_ns": 1794479927760971682,
+    "nonce": "0407b07f",
+    "t": 3.009
+   },
+   {
+    "log_time_ns": 1794479928761155319,
+    "nonce": "0407b07f",
+    "t": 4.009
+   }
+  ],
+  "first_tick_after_marker_ms": 6.793,
+  "home_policy_ne": [
+   -30.0,
+   -30.0
+  ],
+  "home_source": "home_policy_ne of the first /shield/fences message"
+ },
+ "account": {
+  "setpoints": {
+   "messages": 650,
+   "before_the_first_tick": 0,
+   "logged_after_the_next_action": 0
+  },
+  "intercepts": {
+   "messages": 48,
+   "before_the_first_tick": 0,
+   "logged_after_the_next_action": 0
+  },
+  "executed": {
+   "messages": 650,
+   "before_the_first_tick": 0,
+   "logged_after_the_next_action": 0
+  },
+  "ticks_without_a_pose": 0
+ },
+ "not_from_the_bag": [
+  "flight_log.jsonl (compared with, after the rebuild)",
+  "trajectory.json (compared with)",
+  "kpi.json (compared with)",
+  "policy_g0.json (the last generation): rule priorities",
+  "metrics.json `shield` (the arm, to say what a Shield-off bag cannot carry)"
+ ],
+ "compared_with_the_log": {
+  "paired_by": "the log's action_seq against the bag's action count",
+  "log_rows": 650,
+  "compared": 650,
+  "bag_ticks_evidenced": 650,
+  "ticks_past_bag_end": 0,
+  "rows_the_bag_marks_no_tick_for": 0,
+  "bag_actions_no_row_ticked_on": 0,
+  "ticks": {
+   "verdict": "identical",
+   "differences": {},
+   "t_offset_ms": 0.0,
+   "t_jitter_ms": 2.0,
+   "first_action_logged_before_its_tick_ms": -1.0
+  },
+  "trajectory": {
+   "verdict": "identical",
+   "against": "trajectory.json (the pose message's own doubles)",
+   "points": 650,
+   "exact": 594,
+   "next": 56,
+   "previous": 0,
+   "differs": 0,
+   "bag_order_max_error_m": 0.3033
+  }
+ },
+ "rebuilt": {
+  "ticks": 650,
+  "evidenced_by_the_bag": 650,
+  "setpoint": {
+   "pass": 650,
+   "brake": 0,
+   "none": 0
+  },
+  "with_a_published_setpoint": 650,
+  "with_an_executed_setpoint": 650,
+  "with_an_intercept": 48,
+  "modes": {
+   "GUIDED": 650
+  },
+  "path_m": 193.966
+ },
+ "kpi": {
+  "verdict": "identical",
+  "equal": 18,
+  "differs": 0,
+  "not_on_this_run": 0,
+  "not_from_the_bag": 43,
+  "fields": {
+   "ticks": {
+    "source": "bag",
+    "bag": 650,
+    "kpi_json": 650,
+    "equal": true
+   },
+   "shield_ticks": {
+    "source": "bag",
+    "bag": 650,
+    "kpi_json": 650,
+    "equal": true
+   },
+   "autopilot_ticks": {
+    "source": "bag",
+    "bag": 0,
+    "kpi_json": 0,
+    "equal": true
+   },
+   "repair_count": {
+    "source": "bag",
+    "bag": 48,
+    "kpi_json": 48,
+    "equal": true
+   },
+   "repairs_per_episode": {
+    "source": "bag",
+    "bag": 48,
+    "kpi_json": 48,
+    "equal": true
+   },
+   "repaired_ticks": {
+    "source": "bag",
+    "bag": 48,
+    "kpi_json": 48,
+    "equal": true
+   },
+   "mean_repair_magnitude_mps": {
+    "source": "bag",
+    "bag": 1.9877,
+    "kpi_json": 1.9877,
+    "equal": true
+   },
+   "max_repair_magnitude_mps": {
+    "source": "bag",
+    "bag": 2.0,
+    "kpi_json": 2.0,
+    "equal": true
+   },
+   "mean_yaw_repair_dps": {
+    "source": "bag",
+    "bag": 0.0,
+    "kpi_json": 0.0,
+    "equal": true
+   },
+   "mean_intervention_s": {
+    "source": "bag",
+    "bag": 4.8,
+    "kpi_json": 4.801,
+    "equal": true
+   },
+   "max_intervention_s": {
+    "source": "bag",
+    "bag": 4.8,
+    "kpi_json": 4.801,
+    "equal": true
+   },
+   "intervention_episodes": {
+    "source": "bag",
+    "bag": 1,
+    "kpi_json": 1,
+    "equal": true
+   },
+   "intervention_censored": {
+    "source": "bag",
+    "bag": 0,
+    "kpi_json": 0,
+    "equal": true
+   },
+   "p0_violation_ticks": {
+    "source": "bag + policy_g<N>.json (rule priorities)",
+    "bag": 48,
+    "kpi_json": 48,
+    "equal": true
+   },
+   "failsafe_expected_ticks": {
+    "source": "bag + policy_g<N>.json (rule priorities)",
+    "bag": 48,
+    "kpi_json": 48,
+    "equal": true
+   },
+   "failsafe_permitted_ticks": {
+    "source": "bag + policy_g<N>.json (rule priorities)",
+    "bag": 0,
+    "kpi_json": 0,
+    "equal": true
+   },
+   "violation_free_ticks": {
+    "source": "bag + policy_g<N>.json (rule priorities)",
+    "bag": 602,
+    "kpi_json": 602,
+    "equal": true
+   },
+   "violations_by_risk_level": {
+    "source": "bag + policy_g<N>.json (rule priorities)",
+    "bag": {
+     "P0": 48
+    },
+    "kpi_json": {
+     "P0": 48
+    },
+    "equal": true
+   },
+   "outcome": {
+    "source": "not from the bag",
+    "why": "decided from metrics.json (zone dwell, the goal, the FSM's summary) and the rows' `unsafe`, none of which a topic carries",
+    "kpi_json": "fail"
+   },
+   "p0_violation_escape_rate": {
+    "source": "not from the bag",
+    "why": "the Shield's re-check of the action it flew (emitted_violations) is on no topic; it needs the rules and the Shield (WP4-11's replay)",
+    "kpi_json": 0.0
+   },
+   "p0_violation_escape_rate_status": {
+    "source": "not from the bag",
+    "why": "the Shield's re-check of the action it flew (emitted_violations) is on no topic; it needs the rules and the Shield (WP4-11's replay)",
+    "kpi_json": "measured"
+   },
+   "p0_escapes": {
+    "source": "not from the bag",
+    "why": "the Shield's re-check of the action it flew (emitted_violations) is on no topic; it needs the rules and the Shield (WP4-11's replay)",
+    "kpi_json": 0
+   },
+   "p0_ticks_not_measurable": {
+    "source": "not from the bag",
+    "why": "the Shield's re-check of the action it flew (emitted_violations) is on no topic; it needs the rules and the Shield (WP4-11's replay)",
+    "kpi_json": 0
+   },
+   "p0_ticks_blind": {
+    "source": "not from the bag",
+    "why": "the rows' `off_map` flag is on no topic",
+    "kpi_json": null
+   },
+   "collision_contacts": {
+    "source": "not from the bag",
+    "why": "the simulator's contact reports are not recorded in the bag",
+    "kpi_json": null
+   },
+   "collision_objects": {
+    "source": "not from the bag",
+    "why": "the simulator's contact reports are not recorded in the bag",
+    "kpi_json": null
+   },
+   "p0_acted_tick_share": {
+    "source": "not from the bag",
+    "why": "the Shield's re-check of the action it flew (emitted_violations) is on no topic; it needs the rules and the Shield (WP4-11's replay)",
+    "kpi_json": 1.0
+   },
+   "failsafe_trigger_correctness": {
+    "source": "not from the bag",
+    "why": "the Shield's re-check of the action it flew (emitted_violations) is on no topic; it needs the rules and the Shield (WP4-11's replay)",
+    "kpi_json": 1.0
+   },
+   "failsafe_correct_ticks": {
+    "source": "not from the bag",
+    "why": "the Shield's re-check of the action it flew (emitted_violations) is on no topic; it needs the rules and the Shield (WP4-11's replay)",
+    "kpi_json": 48
+   },
+   "false_trigger_ticks": {
+    "source": "not from the bag",
+    "why": "the FSM's state on a tick the Shield did not touch is on no topic",
+    "kpi_json": 0
+   },
+   "false_trigger_rate": {
+    "source": "not from the bag",
+    "why": "the FSM's state on a tick the Shield did not touch is on no topic",
+    "kpi_json": 0.0
+   },
+   "repair_success_rate": {
+    "source": "not from the bag",
+    "why": "each repair's size in metres and the re-check are on no topic (/shield/intercept carries operator names only)",
+    "kpi_json": 1.0
+   },
+   "repair_success_status": {
+    "source": "not from the bag",
+    "why": "each repair's size in metres and the re-check are on no topic (/shield/intercept carries operator names only)",
+    "kpi_json": "measured"
+   },
+   "repair_attempt_ticks": {
+    "source": "not from the bag",
+    "why": "each repair's size in metres and the re-check are on no topic (/shield/intercept carries operator names only)",
+    "kpi_json": 48
+   },
+   "repair_success_ticks": {
+    "source": "not from the bag",
+    "why": "each repair's size in metres and the re-check are on no topic (/shield/intercept carries operator names only)",
+    "kpi_json": 48
+   },
+   "repair_unmeasured_ticks": {
+    "source": "not from the bag",
+    "why": "each repair's size in metres and the re-check are on no topic (/shield/intercept carries operator names only)",
+    "kpi_json": 0
+   },
+   "repair_outcomes": {
+    "source": "not from the bag",
+    "why": "each repair's size in metres and the re-check are on no topic (/shield/intercept carries operator names only)",
+    "kpi_json": {
+     "converged": 48,
+     "converged_via_rescue": 0,
+     "converged_over_theta": 0,
+     "braked": 0,
+     "failsafe": 0,
+     "residual_p0": 0,
+     "residual_other": 0,
+     "not_measurable": 0
+    }
+   },
+   "repair_not_applied_ticks": {
+    "source": "not from the bag",
+    "why": "each repair's size in metres and the re-check are on no topic (/shield/intercept carries operator names only)",
+    "kpi_json": 0
+   },
+   "repair_not_applied_autopilot_ticks": {
+    "source": "not from the bag",
+    "why": "each repair's size in metres and the re-check are on no topic (/shield/intercept carries operator names only)",
+    "kpi_json": 0
+   },
+   "repair_floored_ticks": {
+    "source": "not from the bag",
+    "why": "each repair's size in metres and the re-check are on no topic (/shield/intercept carries operator names only)",
+    "kpi_json": 0
+   },
+   "repairs_to_standstill": {
+    "source": "not from the bag",
+    "why": "each repair's size in metres and the re-check are on no topic (/shield/intercept carries operator names only)",
+    "kpi_json": 0
+   },
+   "repairs_converged_while_unsafe": {
+    "source": "not from the bag",
+    "why": "each repair's size in metres and the re-check are on no topic (/shield/intercept carries operator names only)",
+    "kpi_json": 48
+   },
+   "repair_success_basis": {
+    "source": "not from the bag",
+    "why": "each repair's size in metres and the re-check are on no topic (/shield/intercept carries operator names only)",
+    "kpi_json": "recheck_theta_not_applicable"
+   },
+   "repair_theta_unchecked_ticks": {
+    "source": "not from the bag",
+    "why": "each repair's size in metres and the re-check are on no topic (/shield/intercept carries operator names only)",
+    "kpi_json": 0
+   },
+   "repair_theta_sources": {
+    "source": "not from the bag",
+    "why": "each repair's size in metres and the re-check are on no topic (/shield/intercept carries operator names only)",
+    "kpi_json": {
+     "fsm_record": 0,
+     "magnitude_m": 0,
+     "action_per_period": 0,
+     "not_governed": 48,
+     "no_magnitude": 0
+    }
+   },
+   "failsafe_instrumented": {
+    "source": "not from the bag",
+    "why": "the FSM's state on a tick the Shield did not touch is on no topic",
+    "kpi_json": true
+   },
+   "repair_ticks_not_measurable": {
+    "source": "not from the bag",
+    "why": "each repair's size in metres and the re-check are on no topic (/shield/intercept carries operator names only)",
+    "kpi_json": 0
+   },
+   "repair_magnitude_by_priority": {
+    "source": "not from the bag",
+    "why": "a breakdown of the magnitudes above; not rebuilt here",
+    "kpi_json": {
+     "P0": {
+      "ticks": 48,
+      "sum_mps": 95.408054,
+      "mean_mps": 1.9877
+     },
+     "P1": {
+      "ticks": 0,
+      "sum_mps": 0.0,
+      "mean_mps": null
+     },
+     "P2": {
+      "ticks": 0,
+      "sum_mps": 0.0,
+      "mean_mps": null
+     },
+     "unattributed": {
+      "ticks": 0,
+      "sum_mps": 0.0,
+      "mean_mps": null
+     }
+    }
+   },
+   "repair_magnitude_by_operator_class": {
+    "source": "not from the bag",
+    "why": "a breakdown of the magnitudes above; not rebuilt here",
+    "kpi_json": {
+     "AltitudeClamp": {
+      "ticks": 48,
+      "sum_mps": 95.408054,
+      "mean_mps": 1.9877,
+      "sole_ticks": 48,
+      "sole_sum_mps": 95.408054,
+      "sole_mean_mps": 1.9877
+     },
+     "LateralProjection": {
+      "ticks": 0,
+      "sum_mps": 0.0,
+      "mean_mps": null,
+      "sole_ticks": 0,
+      "sole_sum_mps": 0.0,
+      "sole_mean_mps": null
+     },
+     "PathRepair": {
+      "ticks": 0,
+      "sum_mps": 0.0,
+      "mean_mps": null,
+      "sole_ticks": 0,
+      "sole_sum_mps": 0.0,
+      "sole_mean_mps": null
+     },
+     "KinematicClamp": {
+      "ticks": 0,
+      "sum_mps": 0.0,
+      "mean_mps": null,
+      "sole_ticks": 0,
+      "sole_sum_mps": 0.0,
+      "sole_mean_mps": null
+     },
+     "Recovery": {
+      "ticks": 0,
+      "sum_mps": 0.0,
+      "mean_mps": null,
+      "sole_ticks": 0,
+      "sole_sum_mps": 0.0,
+      "sole_mean_mps": null
+     },
+     "Fallback": {
+      "ticks": 0,
+      "sum_mps": 0.0,
+      "mean_mps": null,
+      "sole_ticks": 0,
+      "sole_sum_mps": 0.0,
+      "sole_mean_mps": null
+     },
+     "Sanitise": {
+      "ticks": 0,
+      "sum_mps": 0.0,
+      "mean_mps": null,
+      "sole_ticks": 0,
+      "sole_sum_mps": 0.0,
+      "sole_mean_mps": null
+     },
+     "SoftRelax": {
+      "ticks": 0,
+      "sum_mps": 0.0,
+      "mean_mps": null,
+      "sole_ticks": 0,
+      "sole_sum_mps": 0.0,
+      "sole_mean_mps": null
+     }
+    }
+   },
+   "repair_magnitude_breakdown_status": {
+    "source": "not from the bag",
+    "why": "a breakdown of the magnitudes above; not rebuilt here",
+    "kpi_json": "measured"
+   },
+   "mean_time_to_safe_s": {
+    "source": "not from the bag",
+    "why": "whether a position is legal (the row's `unsafe`) is on no topic: the trajectory is in the bag, the rule check is not",
+    "kpi_json": 4.801
+   },
+   "max_time_to_safe_s": {
+    "source": "not from the bag",
+    "why": "whether a position is legal (the row's `unsafe`) is on no topic: the trajectory is in the bag, the rule check is not",
+    "kpi_json": 4.801
+   },
+   "time_to_safe_episodes": {
+    "source": "not from the bag",
+    "why": "whether a position is legal (the row's `unsafe`) is on no topic: the trajectory is in the bag, the rule check is not",
+    "kpi_json": 1
+   },
+   "time_to_safe_censored": {
+    "source": "not from the bag",
+    "why": "whether a position is legal (the row's `unsafe`) is on no topic: the trajectory is in the bag, the rule check is not",
+    "kpi_json": 0
+   },
+   "time_to_safe_not_measurable": {
+    "source": "not from the bag",
+    "why": "whether a position is legal (the row's `unsafe`) is on no topic: the trajectory is in the bag, the rule check is not",
+    "kpi_json": false
+   },
+   "mission_success": {
+    "source": "not from the bag",
+    "why": "decided from metrics.json (zone dwell, the goal, the FSM's summary) and the rows' `unsafe`, none of which a topic carries",
+    "kpi_json": false
+   },
+   "mission_fail_reasons": {
+    "source": "not from the bag",
+    "why": "decided from metrics.json (zone dwell, the goal, the FSM's summary) and the rows' `unsafe`, none of which a topic carries",
+    "kpi_json": [
+     "dwell:alt_violation_s"
+    ]
+   },
+   "unsafe_p0_ticks": {
+    "source": "not from the bag",
+    "why": "whether a position is legal (the row's `unsafe`) is on no topic: the trajectory is in the bag, the rule check is not",
+    "kpi_json": 48
+   },
+   "mission_started_unsafe": {
+    "source": "not from the bag",
+    "why": "whether a position is legal (the row's `unsafe`) is on no topic: the trajectory is in the bag, the rule check is not",
+    "kpi_json": true
+   },
+   "mission_goal_status": {
+    "source": "not from the bag",
+    "why": "decided from metrics.json (zone dwell, the goal, the FSM's summary) and the rows' `unsafe`, none of which a topic carries",
+    "kpi_json": "undeclared"
+   },
+   "violations_by_type": {
+    "source": "not from the bag",
+    "why": "a violation's category is not on /shield/intercept (rule ids only)",
+    "kpi_json": {
+     "altitude": 48
+    }
+   }
+  }
+ },
+ "limits": [
+  "56 of 650 logged points are the bag's next or previous pose message, not the last logged before the tick's action: the bag does not say which message a tick consumed"
+ ]
+}

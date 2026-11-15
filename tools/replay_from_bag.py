@@ -50,8 +50,17 @@ WHAT THE BAG DOES NOT HOLD (each is reported per run, never filled in)
     flight log's point is the bag's NEXT (or previous) pose message, bit for
     bit, the tick is counted as `neighbour`, not as a difference: the logged
     trajectory is still a sequence of the bag's own messages.
-  * The mission's end. The first tick is the action the Shield's first
-    message answers. After the last message the Shield published, a tick
+  * The mission's start as a message. The first tick is the action the
+    Shield's first message answers: the last one logged before it, or the
+    one before that when the order of the Shield's messages needs the room
+    (one a tick, in order: `place`). On the 28 runs of ntFIN2 this was
+    developed on, the node's first tick ran on an action the recorder had
+    logged up to 96 ms earlier (`first_action_logged_before_its_tick_ms`
+    in each record), so a tick's time is compared to within T_JITTER_S, not
+    to the millisecond. The t = 0 marker the node sends through MAVROS is in
+    the bag (/uas1/mavlink_sink) but is logged late by MAVROS's relay; it
+    is recorded beside the first tick, not used to place it.
+  * The mission's end. After the last message the Shield published, a tick
     that streamed nothing and touched nothing (the autopilot flying an RTL
     with a clean request) leaves no message at all. The bag holds the
     actions and poses of those ticks, not the fact that the node ticked on
@@ -91,9 +100,11 @@ WHAT "IDENTICAL" MEANS
 
 Every tick of the flight log has a tick in the bag with the same action
 (float32, bit for bit), the same published setpoint, the same verdict of who
-flew it, mode, violated rules, operators and FSM state; every logged point
-is a pose message of the bag; and every KPI field the bag can carry equals
-kpi.json. Otherwise the verdict is `differs` with the first differing layer,
+flew it, mode, violated rules, operators and FSM state, with what MAVROS was
+sent agreeing with what the log says was streamed; every logged point is a
+pose message of the bag; and every KPI field the bag can carry on that run
+equals kpi.json (counts exactly, a magnitude to kpi.json's fourth decimal,
+a duration to T_JITTER_S). Otherwise the verdict is `differs` with the first differing layer,
 field and tick. `not_replayable` is a run with no bag, no action or no
 Shield message.
 
@@ -198,7 +209,7 @@ class BagStreams:
     fences: list = field(default_factory=list)        # the JSON document
     mode_requests: list = field(default_factory=list)
     executed: list = field(default_factory=list)      # PositionTarget fields (export_episodes)
-    poses: list = field(default_factory=list)         # {north, east, up, yaw_deg} about the EKF origin
+    poses: list = field(default_factory=list)         # {north, east, up, yaw_deg}, EKF origin
     states: list = field(default_factory=list)        # {mode, armed, connected}
     markers: list = field(default_factory=list)       # (nonce8, mission seconds)
     problems: list = field(default_factory=list)
@@ -845,6 +856,7 @@ class Episode:
     name: str
     source: str
     bag_dir: Path | None
+    bag_label: str | None = None        # where the bag is, when not a folder of the run
     rows: list | None = None
     trajectory: list | None = None
     kpi: dict | None = None
@@ -852,6 +864,15 @@ class Episode:
     priority_source: str | None = None
     arm: str | None = None
     not_from_bag: list = field(default_factory=list)
+
+
+def _rel(p: Path | str) -> str:
+    """A path as the records carry it: relative to this checkout when it is
+    under it, else as it was given."""
+    try:
+        return Path(p).resolve().relative_to(ROOT).as_posix()
+    except (ValueError, OSError):
+        return Path(p).as_posix()
 
 
 def _jsonl(text: str) -> list[dict]:
@@ -881,7 +902,7 @@ def _last_generation_priorities(policies: dict) -> dict | None:
 def load_run(run: Path) -> Episode:
     """A run folder: its bag/ (or episode.bag2/) and the records beside it."""
     from guardrail.replay import _generation_files, generation_table
-    ep = Episode(name=run.name, source=str(run), bag_dir=find_bag(run))
+    ep = Episode(name=run.name, source=_rel(run), bag_dir=find_bag(run))
     log = run / "flight_log.jsonl"
     if log.is_file():
         ep.rows = _jsonl(log.read_text(encoding="utf-8"))
@@ -921,8 +942,8 @@ def load_bundle(path: Path, into: Path) -> Episode:
         raise ReplayError(f"{path}: {type(e).__name__}: {e}") from None
     declared = got["index"].get("members") or {}
     prefix = EPISODE + BAG_DIR + "/"
-    ep = Episode(name=path.name.replace(".replay.tar.gz", ""), source=str(path), bag_dir=None,
-                 rows=got["rows"], kpi=got["kpi"])
+    ep = Episode(name=path.name.replace(".replay.tar.gz", ""), source=_rel(path),
+                 bag_dir=None, rows=got["rows"], kpi=got["kpi"])
     ep.not_from_bag += ["the bundle's flight_log.jsonl (compared with)",
                         "the bundle's kpi.json (compared with)"]
     with tarfile.open(path, "r:gz") as tar:
@@ -933,7 +954,7 @@ def load_bundle(path: Path, into: Path) -> Episode:
             # A rosbag2 folder is flat: each file by its own name only.
             (into / Path(name[len(prefix):]).name).write_bytes(data)
     if (into / "metadata.yaml").is_file():
-        ep.bag_dir = into
+        ep.bag_dir, ep.bag_label = into, f"{prefix} in the bundle (digests checked)"
     pols = dict(got["generation_policies"]) or {0: got["policy"]}
     ep.priorities = _last_generation_priorities(pols)
     ep.priority_source = "the bundle's last policy generation"
@@ -958,7 +979,7 @@ def replay(ep: Episode) -> tuple[dict, list[dict] | None]:
     except ReplayError as e:
         rec.update(verdict="not_replayable", why=str(e))
         return rec, None
-    rec["bag"] = {"dir": ep.bag_dir.name, "reader": s.reader,
+    rec["bag"] = {"dir": ep.bag_label or ep.bag_dir.name, "reader": s.reader,
                   "messages": sum(s.topics.values()),
                   "topics_read": {t: s.topics.get(t, 0) for t in READ_TOPICS},
                   "problems": s.problems}
@@ -1032,10 +1053,10 @@ def replay_path(path: Path) -> tuple[dict, list[dict] | None]:
             try:
                 ep = load_bundle(path, Path(td))
             except ReplayError as e:
-                return {"run": path.name, "source": str(path), "verdict": "not_replayable",
+                return {"run": path.name, "source": _rel(path), "verdict": "not_replayable",
                         "first_difference": None, "why": str(e)}, None
             return replay(ep)
-    return {"run": path.name, "source": str(path), "verdict": "not_replayable",
+    return {"run": path.name, "source": _rel(path), "verdict": "not_replayable",
             "first_difference": None,
             "why": "neither a run folder nor a .replay.tar.gz bundle"}, None
 
@@ -1189,7 +1210,11 @@ def main(argv: list[str] | None = None) -> int:
                           newline="\n") as fh:
                     for r in ticks:
                         fh.write(json.dumps(X.json_safe(r)) + "\n")
-    cmd = "python tools/replay_from_bag.py " + " ".join(argv if argv is not None else sys.argv[1:])
+    cmd = " ".join(["python tools/replay_from_bag.py", *(_rel(p) for p in a.runs),
+                    *(f"--campaign {_rel(c)}" for c in a.campaign),
+                    *([f"--out {_rel(out)}"] if out is not None else []),
+                    *(["--write-ticks"] if a.write_ticks else []),
+                    *([f"--limit {a.limit}"] if a.limit is not None else [])])
     summary = summarise(records, cmd, time.time() - started)
     if out is not None:
         _dump(out / "summary.json", summary)
@@ -1199,7 +1224,7 @@ def main(argv: list[str] | None = None) -> int:
         if counts:
             print(f"  {layer}: " + ", ".join(f"{n} {v}" for v, n in sorted(counts.items())))
     if out is not None:
-        print(f"  written to {out}")
+        print(f"  written to {_rel(out)}")
     if summary["verdicts"].get("not_replayable"):
         return 2
     return 1 if summary["verdicts"].get("differs") else 0

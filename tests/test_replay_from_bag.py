@@ -687,6 +687,8 @@ def test_a_replay_bundles_bag_is_unpacked_from_the_verified_archive():
         rec, ticks = R.replay_path(out)
     assert seen == [["bag_0.mcap", "metadata.yaml"]], seen
     assert rec["run"] == "r" and rec["verdict"] in ("identical", "differs")
+    assert rec["bag"]["dir"] == "episode/bag/ in the bundle (digests checked)"
+    assert rec["source"].endswith("r.replay.tar.gz")
     assert rec["compared_with_the_log"]["log_rows"] == len(rows)
     assert any("bundle's last policy generation" in x for x in rec["not_from_the_bag"])
     # a bundle that does not verify is not replayed
