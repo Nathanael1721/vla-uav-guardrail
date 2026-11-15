@@ -700,6 +700,63 @@ def test_a_replay_bundles_bag_is_unpacked_from_the_verified_archive():
     assert rec["verdict"] == "not_replayable" and "neither a run folder" in rec["why"]
 
 
+def _replay_cli(*argv) -> tuple[int, str]:
+    from guardrail.replay import _main as replay_main
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        rc = replay_main([str(a) for a in argv])
+    return rc, buf.getvalue()
+
+
+def test_the_replay_cli_checks_a_bundle_against_its_bag_only_when_asked():
+    """python -m guardrail.replay verify --from-bag: the bundle's bag against
+    the bundle's log and KPI table, after the usual verification; without the
+    flag `verify` prints and returns what it always did."""
+    import test_replay as RP
+    from guardrail.replay import verify_from_bag, verify_replay, write_replay
+    root = _tmp("rfb_verify_")
+    run, policy, rec0, rows = RP._episode(root, hot=False)
+    RP._bag(run, rec0.episode_id - int(20e9))
+    out = write_replay(run, policy, root / "v.replay.tar.gz", signer=None)
+    s, srows, straj, skpi = _episode(["pass"] * 4)
+    with _bag_is(s) as seen:
+        rc, plain = _replay_cli("verify", out)
+        assert rc == 0 and plain.startswith("OK: ") and "from the bag" not in plain, plain
+        assert seen == [], "a plain verify read the bag"
+        ok, why = verify_replay(out)
+        assert ok and len(plain.splitlines()) == 1 + len(why)
+        # asked: the stand-in bag is another flight's, and the check says so
+        rc, text = _replay_cli("verify", out, "--from-bag")
+        assert rc == 1 and text.startswith(plain) and "FAILED from the bag" in text, text
+        assert "first difference: ticks." in text and "not on any topic" in text, text
+        assert seen == [["bag_0.mcap", "metadata.yaml"]], seen
+    # a bag with no action: not replayable, which is not a pass
+    with _bag_is(R.BagStreams(reader="stand-in")):
+        same, lines = verify_from_bag(out)
+    assert same is False and "not replayable from its bag" in lines[0], lines
+    # identical: the lines say what was compared and what was not re-derived
+    good, _ = _replay(s, srows, straj, skpi)
+    real = R.replay_path
+    R.replay_path = lambda p: (good, None)
+    try:
+        rc, text = _replay_cli("verify", out, "--from-bag")
+    finally:
+        R.replay_path = real
+    assert rc == 0 and "OK from the bag" in text, text
+    assert "ticks identical: 4 of 4 log rows have their tick in the bag" in text, text
+    assert "trajectory identical: 4 of 4 points are the bag's pose message" in text, text
+    assert f"{len(R.FROM_BAG)} field(s) from the bag equal, 0 differ" in text, text
+    # a bundle that fails the usual verification is not taken further
+    idx_forged = root / "f.replay.tar.gz"
+    idx_forged.write_bytes(out.read_bytes()[:200])
+    with _bag_is(s) as seen:
+        try:
+            rc, text = _replay_cli("verify", idx_forged, "--from-bag")
+        except EOFError:
+            rc, text = 1, ""                 # verify_replay's own answer to a truncated file
+        assert rc == 1 and "from the bag" not in text and seen == [], (rc, text, seen)
+
+
 # --------------------------------------------------------------------------- #
 # a real rosbag2, written and read with rosbags
 # --------------------------------------------------------------------------- #

@@ -335,8 +335,8 @@
 #          exit 3), which is what proves the JSONL needs no optional package.
 #        - rosbags (optional, in no job's install; the lab's vla-real
 #          environment has 0.10.11): test_replay_from_bag's round trip
-#          through a real rosbag2, 1 of its 17 tests, SKIPs on every job
-#          (17/17 on the lab desktop on 2026-11-16; 16 passed and 1 skipped
+#          through a real rosbag2, 1 of its 18 tests, SKIPs on every job
+#          (18/18 on the lab desktop on 2026-11-16; 17 passed and 1 skipped
 #          there with the package blocked).
 #        - Files outside this repository: test_policy_dsl_grant_form's 10
 #          checks and test_manifest's fork check against the reference
