@@ -1935,6 +1935,94 @@ def test_the_front_capture_interval_renders_only_when_asked_and_is_recorded():
     assert "[double]$FrontCaptureIntervalS" in ps1 and '"--front-capture-interval-s"' in ps1
 
 
+def test_the_wait_for_the_next_tick_pumps_the_feed_and_keeps_the_deadline():
+    """--vla-feed stream (pace_feeding, 2026-11-15): the loop's wait for its
+    absolute deadline is cut into slices with a pump() before each, none in
+    the last FEED_GUARD_S, and it ends on the deadline like the plain sleep
+    it replaces; a pump that overruns the deadline is not followed by a
+    sleep."""
+    t = {"now": 0.0}
+    calls: list[float] = []
+
+    def clock():
+        return t["now"]
+
+    def sleep(s):
+        assert s > 0.0
+        t["now"] += s
+
+    def pump():
+        calls.append(t["now"])
+        t["now"] += 0.001
+    n = pn.pace_feeding(0.05, pump, clock, sleep)
+    assert n == len(calls) and n >= 5, calls
+    assert abs(t["now"] - 0.05) < 1e-6, t
+    assert all(c < 0.05 - pn.FEED_GUARD_S + 1e-9 for c in calls), calls
+    assert pn.pace_feeding(0.05, pump, clock, sleep) == 0 and len(calls) == n   # nothing left
+
+    def slow():
+        calls.append(t["now"])
+        t["now"] += 0.2
+    slept: list[float] = []
+    assert pn.pace_feeding(0.15, slow, clock, slept.append) == 1 and not slept
+
+
+def test_a_request_the_feed_sent_between_ticks_is_on_the_next_row():
+    """VLAPilot.step reads the backend's counts since its LAST step, so a
+    request pump() sent between two ticks reaches the next row's
+    `vla_request` (the observation-rate summary counts the seconds the model
+    was asked from it); pump() is the backend's, and a backend without one
+    is left alone."""
+    from guardrail.models import Action4D, State
+    from guardrail.vla_link import Tick
+
+    class Backend:
+        cadence = "pipelined"
+        last_link_failure = None
+
+        def __init__(self):
+            self.tracker = SimpleNamespace(current_record=None, smoothing=False,
+                                           cfg=SimpleNamespace(rate_horizon_s=None))
+            self.counts = {"requests": 0, "no_hint": 0, "no_capture": 0, "request_errors": 0}
+            self.last_tick = None
+
+        def act(self, st, hold_horizontal=False):
+            self.counts["no_hint"] += 1                 # the tick itself sends nothing
+            self.last_tick = Tick(Action4D(vx=1.0, vy=0.0, vz_up=0.0, yaw_rate=0.0),
+                                  "vla_step", "translate", seq=1)
+            return self.last_tick.action
+
+        def pump(self):
+            self.counts["requests"] += 1
+            return True
+
+        def suspend(self):
+            pass
+
+        def resume(self):
+            pass
+
+    class NoPump(Backend):
+        pump = None
+    st = State(x=0.0, y=0.0, up=8.0, yaw_deg=0.0)
+
+    def pilot(be):
+        return pn.VLAPilot(be, VM.MissionMonitor(VM.MonitorConfig(mission="goto"), 0.0),
+                           mission="goto", goal_xy=(50.0, 0.0), vm=VM)
+    p = pilot(Backend())
+    p.step(10.0, st)
+    _, row, _ = p.after(10.0, st, flies=True, touched=False, shield_on=True, t_mission=10.0)
+    assert row["vla_request"] == "no_hint", row["vla_request"]
+    assert p.pump() is True                             # between the ticks
+    p.step(10.1, st)
+    _, row, _ = p.after(10.1, st, flies=True, touched=False, shield_on=True, t_mission=10.1)
+    assert row["vla_request"] == "sent", row["vla_request"]
+    p.step(10.2, st)                                    # no pump in between: the tick's own word
+    _, row, _ = p.after(10.2, st, flies=True, touched=False, shield_on=True, t_mission=10.2)
+    assert row["vla_request"] == "no_hint", row["vla_request"]
+    assert pilot(NoPump()).pump() is False
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     failed = skipped = 0

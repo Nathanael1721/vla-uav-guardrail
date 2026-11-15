@@ -1618,6 +1618,14 @@ class VLAFrames:
         with self._lock:
             self._down = (msg, self.clock())
 
+    def front_token(self) -> float | None:
+        """A token of the freshest front frame (its arrival on this clock),
+        None before the first: what RemoteVLABackend's feed between ticks
+        (`new_frame`) compares, so a frame is considered for a request once."""
+        with self._lock:
+            f = self._front
+        return None if f is None else f[1]
+
     def latest_msg(self, which: str):
         with self._lock:
             got = self._front if which == "front" else self._down

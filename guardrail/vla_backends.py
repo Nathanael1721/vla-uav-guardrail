@@ -124,6 +124,25 @@ class RemoteVLABackend:
     out. `last_link_failure` is the latest reply that was no answer at all
     ({"kind": the client's failure - timeout / link / protocol / internal -,
     "seq", "t", "detail"}), so a rail can tell a slow model from a dead one.
+
+    THE FEED BETWEEN TICKS (`new_frame`, `pump()`; 2026-11-15, the grant's
+    "Camera / IMU / GPS - 10 Hz observation", X-05). act() sends at most one
+    request per tick, so a 10 Hz loop that runs at 9.98 Hz can never hand the
+    model 10 observations a second, however fast the camera and the server
+    are (pas_hil_obs_02: camera 14.7 Hz, round trip p50 58 ms, 9.58 frames/s
+    reached the model while it was asked). With `new_frame` given (a callable
+    returning a token of the freshest front frame, None for none) the rail
+    may call `pump()` between ticks, on the loop's own thread: it takes a
+    finished reply off the link and KEEPS it for the next act(), and sends
+    the next request if the frame is one not yet considered. Nothing else
+    moves: answers still enter the tracker in act(), at that tick's pose, in
+    the order they were sent (an older one is superseded by the newer in the
+    same tick, with its line); one request is outstanding at a time; the
+    stop rules, the suspension, LAND and the back-off hold as in act().
+    `feed_max_hz` caps the requests pump() sends (None: no cap). Only the
+    pipelined cadence is fed: stop-and-go asks after a completed step, by
+    definition. `feed` counts the calls, the requests sent between ticks and
+    the replies kept; it is None in stats() when no `new_frame` was given.
     """
 
     CADENCES = ("pipelined", "stop_and_go")
@@ -134,8 +153,12 @@ class RemoteVLABackend:
                  csp_text: str | None = None, cadence: str = "pipelined",
                  settle_s: float | None = None, steps_log=None,
                  on_submit: Callable | None = None,
-                 clock: Callable[[], float] = time.monotonic):
+                 clock: Callable[[], float] = time.monotonic,
+                 new_frame: Callable | None = None,
+                 feed_max_hz: float | None = None):
         from .vla_link import (CSP_MODES, UPSTREAM_SETTLE_S, StepLog, StepTracker)
+        if feed_max_hz is not None and not float(feed_max_hz) > 0.0:
+            raise ValueError(f"feed_max_hz {feed_max_hz!r} must be positive (None: no cap)")
         if cadence not in self.CADENCES:
             raise ValueError(f"cadence {cadence!r} is not one of {self.CADENCES}")
         if csp_mode not in CSP_MODES:
@@ -171,6 +194,15 @@ class RemoteVLABackend:
         self.answers: Counter = Counter()
         self.last_errors: dict[str, str] = {}
         self._t0: float | None = None
+        # The feed between ticks (class docstring): the freshest frame's
+        # token, the token of the last frame considered for a request, the
+        # replies pump() took off the link for the next act(), in order.
+        self.new_frame = new_frame
+        self.feed_min_s = None if feed_max_hz is None else 1.0 / float(feed_max_hz)
+        self.feed: dict[str, int] = {"calls": 0, "sent": 0, "replies_kept": 0}
+        self._fed = None
+        self._t_submit: float | None = None
+        self._early: list = []
 
     # -- the slot ------------------------------------------------------------ #
     def act(self, state: State, hold_horizontal: bool = False) -> Action4D:
@@ -197,6 +229,37 @@ class RemoteVLABackend:
         self._flush()
         self.last_tick = tick
         return tick.action
+
+    def pump(self) -> bool:
+        """Between two ticks, on the loop's thread (class docstring, THE FEED
+        BETWEEN TICKS): keep a finished reply for the next act() and send
+        the next request if there is a frame not yet considered. True when a
+        request went out. Never raises (as act(): counted in
+        `request_errors`); a no-op without `new_frame`, on stop-and-go and
+        before the first act()."""
+        if self.new_frame is None or self.cadence != "pipelined" or self._t0 is None:
+            return False
+        self.feed["calls"] += 1
+        try:
+            now = self.clock()
+            res = self.client.poll()
+            if res is not None:
+                self._early.append(res)
+                self.feed["replies_kept"] += 1
+            if (self.feed_min_s is not None and self._t_submit is not None
+                    and now - self._t_submit < self.feed_min_s):
+                return False
+            tok = self.new_frame()
+            if tok is None or tok == self._fed:
+                return False
+            before = self.counts["requests"]
+            self._maybe_request(now)
+            sent = self.counts["requests"] > before
+            self.feed["sent"] += int(sent)
+            return sent
+        except Exception as exc:                                  # noqa: BLE001
+            self._error("request_errors", exc)
+            return False
 
     def refresh_fences(self, policy) -> None:
         """A hot-applied policy: the tracker clamps altitude targets into the
@@ -303,6 +366,9 @@ class RemoteVLABackend:
                 "requests": dict(self.counts), "link": dict(self.client.counts),
                 "last_link_failure": self.last_link_failure,
                 "last_submit_hook_error": self.last_errors.get("submit_hook_errors"),
+                "feed": (None if self.new_frame is None else
+                         {**self.feed, "max_hz": (None if self.feed_min_s is None
+                                                  else round(1.0 / self.feed_min_s, 3))}),
                 "late_replies": list(getattr(self.client, "late", None) or []),
                 "identity": getattr(self.client, "identity", None)}
 
@@ -321,10 +387,17 @@ class RemoteVLABackend:
             self.tracker.link_lost(now, f"drain: {type(exc).__name__}: {exc}")
 
     def _drain(self, now: float, pose_now=None) -> None:
-        from .vla_link import decision_from_result, make_record
+        """The replies pump() kept, oldest first, then the link's own. A
+        reply is taken off the list before it is handed on, so one that
+        cannot be handed to the tracker is not tried again."""
+        while self._early:
+            self._take(self._early.pop(0), now, pose_now)
         res = self.client.poll()
-        if res is None:
-            return
+        if res is not None:
+            self._take(res, now, pose_now)
+
+    def _take(self, res, now: float, pose_now=None) -> None:
+        from .vla_link import decision_from_result, make_record
         # A reply to a seq this backend never sent raises KeyError here: no
         # request is owed a line, and it is no answer (`answers` counts the
         # replies to requests sent).
@@ -381,6 +454,11 @@ class RemoteVLABackend:
         if getattr(self.client, "backing_off", False):
             return
         cap = self.get_capture()
+        if self.new_frame is not None:
+            # The frame this attempt considered, read AFTER the capture: a
+            # frame that arrived in between is then skipped by pump(), never
+            # sent twice.
+            self._fed = self.new_frame()
         if cap is None:
             self.counts["no_capture"] += 1
             return
@@ -394,6 +472,7 @@ class RemoteVLABackend:
         if seq is not None:
             self._meta[seq] = meta
             self.counts["requests"] += 1
+            self._t_submit = now
             if self.on_submit is not None:
                 try:
                     self.on_submit(cap, hint, seq)
@@ -456,7 +535,8 @@ def _make_remote(mission, policy, *, get_capture, get_hint=None, hint: str | Non
                         f"runs in the VLA server (demo/vla_server.py, protocol v2), "
                         f"frames come from get_capture with their capture pose, and "
                         f"the decision rate is the server's")
-    allowed = {"csp_mode", "csp_text", "cadence", "settle_s", "steps_log", "on_submit", "clock"}
+    allowed = {"csp_mode", "csp_text", "cadence", "settle_s", "steps_log", "on_submit", "clock",
+               "new_frame", "feed_max_hz"}
     unknown = sorted(set(kw) - allowed)
     if unknown:
         raise TypeError(f"make_backend('aerovla') got unknown arguments {unknown}")

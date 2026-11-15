@@ -751,6 +751,96 @@ def test_the_log_counts_say_when_nothing_was_measured_or_is_still_queued():
             be.steps_log.close()
 
 
+def test_the_feed_between_ticks_sends_new_frames_and_keeps_their_answers_for_act():
+    """THE FEED BETWEEN TICKS (RemoteVLABackend.pump, 2026-11-15; the grant's
+    10 Hz observation, X-05): between two act() calls a frame not yet
+    considered goes to the model, the same frame is never sent twice, and the
+    answers wait for the next act(), which takes them in the order they were
+    sent. Before the first act() and without `new_frame` pump() does nothing.
+    Without pump() (at 4166750) the three frames below need three ticks."""
+    sim = _Sim()
+    frame = {"n": 1}
+    with F.FakeVLAServer(lambda req: F.step_reply(req, 2.0, 0.0, 0.0)) as srv:
+        be = _backend(srv, sim, new_frame=lambda: frame["n"])
+        try:
+            assert be.pump() is False and be.feed["calls"] == 0     # before the first act()
+            be.act(sim.state())
+            assert be.client.wait_idle(3.0) and len(srv.requests) == 1
+            # The same frame: its answer is kept, nothing is sent, and the
+            # tracker has not seen the answer.
+            assert be.pump() is False and len(srv.requests) == 1
+            assert be.feed["replies_kept"] == 1 and sum(be.answers.values()) == 0
+            frame["n"] = 2
+            assert be.pump() is True and be.client.wait_idle(3.0)
+            assert be.pump() is False                               # no newer frame
+            frame["n"] = 3
+            assert be.pump() is True and be.client.wait_idle(3.0)
+            assert len(srv.requests) == 3
+            assert be.feed == {"calls": 4, "sent": 2, "replies_kept": 2}, be.feed
+            assert be.tracker.counts.get("kind_step", 0) == 0
+            be.act(sim.state())                                     # takes 1, 2 and 3, in order
+            assert be.answers["step"] == 3 and be.tracker.counts["kind_step"] == 3
+            assert be.last_tick.author == "vla_step" and be.last_tick.seq == 3
+            assert be.stats()["feed"] == {"calls": 4, "sent": 2, "replies_kept": 2,
+                                          "max_hz": None}
+        finally:
+            be.close()
+        _one_line_per_request(be)
+        done = {r["seq"]: r for r in be.records}
+        assert done[1]["accepted"] and done[2]["accepted"] and done[3]["accepted"], done
+    # No `new_frame`: nothing to feed, and stats() says so.
+    sim = _Sim()
+    with F.FakeVLAServer(lambda req: F.step_reply(req, 2.0, 0.0, 0.0)) as srv:
+        be = _backend(srv, sim)
+        try:
+            be.act(sim.state())
+            assert be.client.wait_idle(3.0)
+            assert be.pump() is False and len(srv.requests) == 1 and be.feed["calls"] == 0
+            assert be.stats()["feed"] is None
+        finally:
+            be.close()
+
+
+def test_the_feed_is_capped_and_never_asks_where_act_would_not():
+    """pump() sends no more than `feed_max_hz` a second, nothing on
+    stop-and-go (which asks after a completed step) and nothing while the
+    rail holds the pilot; a cap that is not positive is refused."""
+    frame = {"n": 1}
+    sim = _Sim()
+    with F.FakeVLAServer(lambda req: F.step_reply(req, 2.0, 0.0, 0.0)) as srv:
+        be = _backend(srv, sim, new_frame=lambda: frame["n"], feed_max_hz=10.0)
+        try:
+            be.act(sim.state())                                     # sent at t = 0
+            assert be.client.wait_idle(3.0)
+            frame["n"], sim.t = 2, 0.05
+            assert be.pump() is False and len(srv.requests) == 1    # 0.05 s after the last
+            assert be.feed["replies_kept"] == 1                     # the answer is kept all the same
+            sim.t = 0.1
+            assert be.pump() is True and be.client.wait_idle(3.0) and len(srv.requests) == 2
+            assert be.stats()["feed"]["max_hz"] == 10.0
+            be.suspend()                                            # a rail hold
+            frame["n"], sim.t = 3, 0.5
+            assert be.pump() is False and len(srv.requests) == 2
+        finally:
+            be.close()
+    sim = _Sim()
+    with F.FakeVLAServer(lambda req: F.step_reply(req, 2.0, 0.0, 0.0)) as srv:
+        be = _backend(srv, sim, new_frame=lambda: frame["n"], cadence="stop_and_go")
+        try:
+            be.act(sim.state())
+            frame["n"] = 4
+            assert be.pump() is False and be.feed["calls"] == 0
+        finally:
+            be.close()
+        for bad in (0, -1.0):
+            try:
+                _backend(srv, sim, new_frame=lambda: 1, feed_max_hz=bad)
+            except ValueError as e:
+                assert "feed_max_hz" in str(e), e
+            else:
+                raise AssertionError(f"feed_max_hz={bad} was accepted")
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     failed = skipped = 0

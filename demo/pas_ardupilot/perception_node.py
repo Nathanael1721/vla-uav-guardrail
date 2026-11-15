@@ -732,7 +732,7 @@ VLA_FOLLOW_ONLY = ("vla_step_as_rate", "follow_memory_s", "follow_search_s",
 VLA_PARAMS = ("vla_front_source", "vla_step_as_rate", "vla_rate_yaw", "follow_memory_s",
               "follow_search_s", "close_bottom_frac", "close_width_frac", "lost_timeout_s",
               "vla_cruise_mps", "vla_speed_cap_mps", "allow_unstamped_pipelined",
-              "front_capture_interval_s", "target_estimator")
+              "front_capture_interval_s", "target_estimator", "vla_feed", "vla_feed_max_hz")
 # Exit codes beside 0 and 1 (demo/vla_fly.py's): a VLA failure ended the
 # mission (vla_mission.VLA_FAILURE_ENDS), and a run refused before arming.
 EXIT_VLA_FAILURE = 3
@@ -996,6 +996,9 @@ class VLAPilot:
         self._pilot_raw = None
         self._request: str | None = None
         self._no_hint_why: str | None = None
+        # The backend's counts as the last step() left them: a request the
+        # feed between ticks sent (pump) belongs to the next row.
+        self._counts_mark: dict | None = None
         # The decision whose action last flew: the next tick that flies
         # another is its first setpoint (cam_to_setpoint_ms).
         self._seq_flown: int | None = None
@@ -1009,6 +1012,14 @@ class VLAPilot:
         self.backend.suspend()
         self.monitor.hold(now)
         self._t_last = now
+
+    def pump(self) -> bool:
+        """Between two ticks (--vla-feed stream; RemoteVLABackend.pump, THE
+        FEED BETWEEN TICKS): a new front frame goes to the model without
+        waiting for the tick. True when a request went out; a backend with
+        no pump() is left alone."""
+        fn = getattr(self.backend, "pump", None)
+        return bool(fn()) if callable(fn) else False
 
     def detail(self) -> str | None:
         """The Dashboard heartbeat's word for the last tick."""
@@ -1055,7 +1066,10 @@ class VLAPilot:
                              (float(st.x), float(st.y), math.radians(float(st.yaw_deg))))
         close_now = self._close_now(now)
         counts = getattr(self.backend, "counts", None)
-        before = dict(counts) if isinstance(counts, dict) else None
+        # Since the last step(): what pump() sent between the two ticks is
+        # this row's too (with no feed the counts did not move in between).
+        before = (self._counts_mark if self._counts_mark is not None else
+                  dict(counts) if isinstance(counts, dict) else None)
         tracker = getattr(self.backend, "tracker", None)
         held_close = False
         if self.close_hold is not None and bool(getattr(tracker, "smoothing", False)):
@@ -1073,7 +1087,9 @@ class VLAPilot:
         self.n_close_hold += int(held_close)
         self._close = (held_close, close_now)
         self._pilot_raw = pilot_raw
-        self._request = request_outcome(before, getattr(self.backend, "counts", None))
+        after_counts = getattr(self.backend, "counts", None)
+        self._request = request_outcome(before, after_counts)
+        self._counts_mark = dict(after_counts) if isinstance(after_counts, dict) else None
         self._no_hint_why = None
         if self._request == "no_hint":
             kind = getattr(self.detector_hint, "last_kind", None)
@@ -4234,6 +4250,14 @@ def build_parser() -> argparse.ArgumentParser:
                     help="stop_and_go (default): upstream's, the next image only after the "
                          "step is flown and held 0.5 s; pipelined: the next image while a "
                          "step is flown")
+    ap.add_argument("--vla-feed", choices=["tick", "stream"], default="tick",
+                    help="tick (default): one request per 10 Hz tick at most; stream: a "
+                         "new front frame also goes to the model between ticks (pipelined "
+                         "only), so observations reach it faster than the loop ticks - the "
+                         "grant's 10 Hz observation (X-05). Answers still enter on ticks")
+    ap.add_argument("--vla-feed-max-hz", type=float, default=12.0,
+                    help="--vla-feed stream: at most this many requests a second from the "
+                         "feed between ticks (0: no cap)")
     ap.add_argument("--vla-decision-timeout-s", type=float, default=10.0)
     ap.add_argument("--warmup-max-latency-s", type=float, default=5.0,
                     help="refuse to arm when the last warm-up inference's round trip is "
@@ -4486,6 +4510,12 @@ def check_pilot_args(args) -> None:
                          "pose at its arrival, not its capture (no sim stamps): 0.1-0.4 m "
                          "and 3-9 deg off in flight. Fly stop_and_go, or pass "
                          "--allow-unstamped-pipelined to fly it recorded as such")
+    if getattr(args, "vla_feed", "tick") == "stream":
+        if args.cadence != "pipelined":
+            raise SystemExit("--vla-feed stream feeds the pipelined cadence only: "
+                             "stop_and_go asks after a completed step, by definition")
+        if not float(args.vla_feed_max_hz) >= 0.0:
+            raise SystemExit(f"--vla-feed-max-hz {args.vla_feed_max_hz} is negative")
     for k in ("vla_decision_timeout_s", "warmup_max_latency_s", "vla_cruise_mps",
               "vla_speed_cap_mps", "vla_hello_timeout_s"):
         v = getattr(args, k)
@@ -5196,7 +5226,10 @@ def _vla_bring_up(args, out: Path, VM, srv, policy, shield_on: bool, grounder, h
                                get_hint=hint_src, client=client, object_text=args.vla_object,
                                tracker_config=tcfg, cadence=args.cadence,
                                steps_log=out / "vla_steps.jsonl", on_submit=frames.commit,
-                               clock=clock)
+                               clock=clock,
+                               **({"new_frame": frames.front_token,
+                                   "feed_max_hz": (float(args.vla_feed_max_hz) or None)}
+                                  if getattr(args, "vla_feed", "tick") == "stream" else {}))
     except BaseException:
         try:
             client.close()
@@ -5559,6 +5592,34 @@ def next_tick_deadline(deadline: float | None, t_tick: float, now: float,
     the deadline restarts from now instead."""
     deadline = (t_tick if deadline is None else deadline) + tick
     return now if deadline < now - tick else deadline
+
+
+# THE FEED BETWEEN TICKS (--vla-feed stream; guardrail.vla_backends.
+# RemoteVLABackend.pump): the loop's wait for its next deadline, cut into
+# slices with a pump() before each. No pump in the last FEED_GUARD_S: a
+# capture's JPEG encoding must not make the tick itself late.
+FEED_SLICE_S = 0.004
+FEED_GUARD_S = 0.015
+
+
+def pace_feeding(deadline: float, pump, clock, sleep, *, slice_s: float = FEED_SLICE_S,
+                 guard_s: float = FEED_GUARD_S) -> int:
+    """Wait to the tick's ABSOLUTE `deadline` (next_tick_deadline), calling
+    `pump()` every `slice_s` while more than `guard_s` is left. Returns the
+    number of pump() calls. With nothing left it returns at once, like the
+    plain sleep(max(0, deadline - now)) it replaces."""
+    n = 0
+    while True:
+        left = deadline - clock()
+        if left <= 0.0:
+            return n
+        if left > guard_s:
+            pump()
+            n += 1
+            left = deadline - clock()
+            if left <= 0.0:
+                return n
+        sleep(min(slice_s, left))
 
 
 def link_staleness(link) -> tuple[str | None, dict | None]:
@@ -7134,7 +7195,11 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
                 _work = _now - t_tick
                 work_ms.append(_work * 1000.0)
                 tick_deadline = next_tick_deadline(tick_deadline, t_tick, _now)
-                sleep(max(0.0, tick_deadline - _now))
+                if vla is not None and getattr(args, "vla_feed", "tick") == "stream":
+                    # THE FEED BETWEEN TICKS (pace_feeding): the same deadline.
+                    pace_feeding(tick_deadline, vla.pump, clock, sleep)
+                else:
+                    sleep(max(0.0, tick_deadline - _now))
         except KeyboardInterrupt:
             end_reason = "interrupted"
             interrupted = True                 # the Dashboard row ends "stopped"
