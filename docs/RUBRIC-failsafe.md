@@ -971,6 +971,21 @@ grant_example 36, fsm_edges 5, broad 14,950) was dumped with its label, its
 clause and its outcome label before and after the change, and the two dumps
 differ in that one cell.
 
+**The tool, after the change** (`tools/failsafe_rubric.py` at f08f16d; the
+ideal vehicle unless said): library 168 cells (seed 0), smoke 56, nightly
+672 cell-seeds (seeds 1001-1003; flown as ten `--only` parts that together
+are the profile), grant_example 36, and fsm_edges 5 on the ideal and on the
+rail vehicle: 0 declared labels disagree with the rubric, and none is
+undecided in its length. E6 holds on fsm-n-in-t-flicker, on both vehicles, and on no other
+cell: no other cell has more than 1 world-made onset (a single spawn, window
+or swap) against the 6 needed, and none has more than 2 world events at all.
+The rail label artefact (docs/data/failsafe_labels_rail.json) holds the
+smoke, grant_example and nightly cells, which E6 does not touch (a world
+event falls when the scenario says, on either vehicle), and was not
+rebuilt. It holds no fsm_edges cell, so `--rescore-rail` names an fsm_edges
+run "unlabelled" under (a), (r) and (r2); such a run's fail-safe verdict is
+the campaign's own, on the template's label.
+
 **The label followed the flight.** hs10_003 flew the cell on the hil rig on
 14 November (8a473fa): X1 at 3.03 s, G2 at 5.83 s ("N-in-T: 3 onsets in
 5 s"), G4 at 10.03 s ("N-in-T persists"), home at 18.83 s (G9). Re-scored on
@@ -1051,3 +1066,52 @@ tools/kpi_report.py - the KPI summary's row and the readings table. A
 re-score table written before the rule carries no `backstop_rule`:
 kpi_report prints "not recorded" for the count, never 0, and refuses to merge
 such a table with one written after.
+
+**Applied to ntFIN2 and its supplement ntFIN2s** (docs/data/
+kpi_ntFIN2_20261115/, generated at f08f16d from the run folders flown on
+12-13 November; nothing was re-flown, and docs/data/kpi_ntFIN2/ keeps the
+report of 13 November as it was). The commands are the ones of 13 November:
+`experiments/sweep_scenarios.py --profile nightly --rescore-rail` over each
+campaign's run folders, then `tools/kpi_report.py --campaign <ntFIN2>
+--campaign <ntFIN2s> --rescore-rail <table> --rescore-rail <table>`. Over
+the 586 KPI-grade Shield-on flights, Wilson 95 % lower bound in brackets:
+
+| reading | the backstop's triggers counted (since 2026-11-15) | those 18 runs as before the rule: left out as censored | those 18 runs counted as not triggered |
+|---|---|---|---|
+| (a) | 513/585 = 0.877 (0.848) | 495/567 = 0.873 (0.843) | 495/585 = 0.846 (0.815) |
+| (r) | 572/585 = 0.978 (0.962) | 554/567 = 0.977 (0.961) | 554/585 = 0.947 (0.926) |
+| (r2), adopted | **584/585 = 0.998 (0.990)** | 566/567 = 0.998 (0.990) | 566/585 = 0.968 (0.950) |
+
+- **The KPI under the adopted reading is 584/585 = 0.998291**, Wilson 95 %
+  lower bound 0.990382 (before the rule 0.998236 and 0.990078; with the 18
+  counted as not triggered 0.967521 and 0.949832). Nulls: always-trigger
+  0.513, never-trigger 0.487.
+- **Triggered by the backstop: 18**, all dyn-nfz-spawn-ahead, a zone
+  hot-applied 3 m ahead: 9 at 4 m/s (ntFIN2_178-186) and 9 at 8 m/s
+  (ntFIN2_214-222), three variants by three seeds each. Every one: GUIDED to
+  RTL at 5.67-5.80 s, the FSM in Loiter, "Fence Breached" 1-18 ms after the
+  mode change. All 18 are labelled expected (E5) under (a), (r) and (r2):
+  18 correct, 0 false.
+- **Still left out: 1**, ntFIN2_374 (corridor-swap-shifted, seed 1002): no
+  takeover, the flight ended still holding. Censored, as before.
+- **Still wrong: 1**, ntFIN2_177 (dyn-nfz-spawn-ahead 30 m ahead at 2 m/s,
+  seed 1003; E5): a missed trigger, as on 13 November.
+- **Nothing else moved.** Against the tables of 13 November
+  (docs/data/kpi_ntFIN2/rescore_r2_*.json), compared run by run over the 583
+  ntFIN2 and 15 ntFIN2s folders, the re-score changed `failsafe_triggered`,
+  `failsafe_censored` and `failsafe_matches_label` on those 18 runs and
+  took the "censored, not measured" fail-safe gate off their lists of failed
+  gates; each still fails on the gates it failed before
+  (`time_to_safe_episodes`, `autopilot_keepout_breaches` = 1: the autopilot
+  flew into the zone). Beyond the fields added since 13 November
+  (`rail_window.autopilot_took_over` on 14 November; `failsafe_by`,
+  `failsafe_backstop` and `rail_window.takeover_fence_breach` now), no other
+  field of any run's score and no other run's verdict differs. Three
+  Shield-off control runs (ntFIN2_004-006) were also taken by the GeoFence;
+  they fly no FSM, are not counted by the rule, and a Shield-off run is
+  outside this KPI anyway. No takeover in either campaign was into a mode
+  other than RTL or lacked the fence-breach text.
+- **Read with care**, as on 13 November: no flown cell uses its seed, so the
+  18 are six cells flown three times each, and the Wilson bound treats
+  repeats as independent. The bound is above 0.99 under the adopted reading
+  with and without the rule, by 0.0004 and 0.0001.
