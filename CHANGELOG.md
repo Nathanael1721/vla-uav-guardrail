@@ -16,6 +16,44 @@ shipped change and recorded as one.
 
 ## [Unreleased]
 
+### 2026-11-15 (paraphrases on hil) — per-paraphrase robustness measured KPI-grade on hil with a text-reading pilot: AIoT-VLA follows the car on its noun phrase and on 2 of 6 paraphrases, and loses it on the source sentence
+
+#### Flown
+- The PAS follow mission (AIoT-VLA v10b on the AGX Orin, Project AirSim
+  CityLife + ArduPilot SITL 4.5.7 on the desktop, `--identity --negative-query
+  "a traffic light" --target-estimator`, de7e748 on both hosts), once per
+  text, the text given as the VLA's grounding phrase (`--vla-object`): the
+  source "follow a red car" and the paraphraser's 8 stored paraphrases of it
+  (guardrail/paraphraser.py, store set `follow a red car`). The detector's
+  start-gate query stays "a red car". 11 runs, pas_hil_para_00 to _10, 0 P0
+  escape ticks in every one:
+  - the source, flown twice (pas_hil_para_00, _10): target_lost after about
+    90 s both times, the VLA asked 20 times before the detector lost the car;
+  - the model's own noun phrase "a red car" as a control (pas_hil_para_09):
+    held the car to max_s (4,186 ticks, 244 interventions, estimate within 6 m
+    on 0.9157 of ticks), as pas_hil_aiot_est_01 did;
+  - of the 8 paraphrases, 2 never started (pas_hil_para_03 and _07: the start
+    gate, which reads no paraphrase, found no car within 30 m in 330 s); of
+    the 6 that started, 4 ended target_lost as the source did and 2 held the
+    car to max_s ("track a red car", 0.828; "Your task is to keep tracking a
+    red car wherever it goes.", 0.8994).
+  - docs/data/pas_hil_paraphrase_20261115/flights.md / .json; one flight per
+    paraphrase. Run folders without camera frames on
+    E:\vla_drone_offload\jetson_runs (the frames stay on the Orin).
+
+#### Found
+- AIoT-VLA grounds its text with a frozen OWL-ViT backbone and is trained on
+  object words: the task sentence "follow a red car" broke the follow where
+  the noun phrase held it (2 of 2 each way).
+
+#### Changed
+- Appendix A: WP4-09 records the hil measurement; WP4-01 says per-paraphrase
+  robustness has a KPI-grade hil value from a text-reading pilot and the
+  prefix A/B still has none (AIoT-VLA reads no CSP prefix). The report's KPI
+  table gives both measurements.
+- docs/data/ci_local/de7e7489dfaf.json: the lab checkout's CI at de7e748,
+  151/151 files.
+
 ### 2026-11-15 (texture and shadow stressors) — the last two perception stressors the grant names flown on the hil rig: the novel road texture broke the follow, the low sun cost little; WP4-18 to DONE
 
 #### Added
