@@ -38,10 +38,14 @@ Bundles are build products (bundles/*.tar.gz is gitignored), byte-derivable
 from the policy and the issue time: `--issued-at` (or SOURCE_DATE_EPOCH)
 pins it; by default the policy's own `issued_at`, else now.
 
-The signing key is the lab's DEVELOPMENT key. Which authority signs the
-delivered bundles (the lab or ITRI) is a question put to the PI
-(docs/PI-DECISIONS-2026-10-06.md, Q4.8) and not answered; swapping the key
-changes the trust store, not this tool.
+The signing key is the lab's bundle key. Since 2026-11-16 it can be certified
+by the lab root CA (`python -m guardrail.bundle issue-cert`, run once where the
+CA's key is): from then on `load_signer` signs as `lab-ca:<CA>:ed25519:<key>`
+and each bundle ships the signer's certificate, so re-running this tool is the
+re-sign; until then it signs under the bare `lab-dev` label. Which authority
+signs the delivered bundles (the lab or ITRI) is a question put to the PI
+(docs/PI-DECISIONS-2026-10-06.md, Q4.8) and not answered; swapping the
+authority changes the trust store, not this tool.
 """
 from __future__ import annotations
 
