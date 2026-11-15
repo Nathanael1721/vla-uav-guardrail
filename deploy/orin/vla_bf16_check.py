@@ -35,6 +35,21 @@ PROMPT = "In: What action should the robot take to fly forward and avoid restric
 UNNORM_KEY = "bridge_orig"
 
 
+def load_bf16(model_dir: str):
+    """(processor, model, torch): the checkpoint in bfloat16 with no
+    quantization, on the GPU. The one bf16 loader: this check's, and R1's for
+    the `openvla_7b_bf16` row (tools/vla_backend_table.py measure), so the
+    rate is timed on the model this check passed. It needs no bitsandbytes,
+    which the AGX's native environment does not install."""
+    import torch
+    from transformers import AutoModelForVision2Seq, AutoProcessor
+    proc = AutoProcessor.from_pretrained(model_dir, trust_remote_code=True)
+    model = AutoModelForVision2Seq.from_pretrained(
+        model_dir, attn_implementation="eager", torch_dtype=torch.bfloat16,
+        low_cpu_mem_usage=True, trust_remote_code=True).to("cuda").eval()
+    return proc, model, torch
+
+
 def collect(model_dir: str, frame: Path = FRAME, repeats: int = 8) -> dict:
     """Load, ask `repeats` times, and read the facts. Every failure is
     recorded as a string, never raised, so the report is always complete."""
@@ -43,7 +58,9 @@ def collect(model_dir: str, frame: Path = FRAME, repeats: int = 8) -> dict:
     try:
         import torch
         from PIL import Image
-        from transformers import AutoModelForVision2Seq, AutoProcessor
+        # imported here so a stack that does not import is an import_error,
+        # not a run_error of load_bf16
+        from transformers import AutoModelForVision2Seq, AutoProcessor  # noqa: F401
     except Exception as e:                                   # noqa: BLE001
         facts["import_error"] = f"{type(e).__name__}: {e}"
         return facts
@@ -56,10 +73,7 @@ def collect(model_dir: str, frame: Path = FRAME, repeats: int = 8) -> dict:
     facts["device_name"] = torch.cuda.get_device_name(0)
     try:
         t0 = time.perf_counter()
-        proc = AutoProcessor.from_pretrained(model_dir, trust_remote_code=True)
-        model = AutoModelForVision2Seq.from_pretrained(
-            model_dir, attn_implementation="eager", torch_dtype=torch.bfloat16,
-            low_cpu_mem_usage=True, trust_remote_code=True).to("cuda").eval()
+        proc, model, _ = load_bf16(model_dir)
         torch.cuda.synchronize()
         facts["load_s"] = round(time.perf_counter() - t0, 2)
         p = next(model.parameters())
