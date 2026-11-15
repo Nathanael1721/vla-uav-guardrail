@@ -916,8 +916,9 @@ def load_bundle(path: Path, into: Path) -> Episode:
     from guardrail.replay import BAG_DIR, EPISODE, read_replay
     try:
         got = read_replay(path)
-    except (ValueError, KeyError, tarfile.TarError, OSError) as e:
-        raise ReplayError(f"{path}: {e}") from None
+    except (ValueError, KeyError, tarfile.TarError, OSError, EOFError) as e:
+        # EOFError: a truncated .tar.gz, which gzip raises past tarfile.
+        raise ReplayError(f"{path}: {type(e).__name__}: {e}") from None
     declared = got["index"].get("members") or {}
     prefix = EPISODE + BAG_DIR + "/"
     ep = Episode(name=path.name.replace(".replay.tar.gz", ""), source=str(path), bag_dir=None,
@@ -1154,10 +1155,6 @@ def main(argv: list[str] | None = None) -> int:
                     help="with --out: also <run>.bag_ticks.jsonl, the rebuilt ticks")
     ap.add_argument("--limit", type=int, default=None, help="only the first N runs")
     a = ap.parse_args(argv)
-    if not X.have_rosbags():
-        print(f"replay_from_bag: `rosbags` is not installed ({X.ROSBAGS_INSTALL_HINT})",
-              file=sys.stderr)
-        return 3
     paths = [Path(p) for p in a.runs]
     try:
         for c in a.campaign:
@@ -1171,6 +1168,10 @@ def main(argv: list[str] | None = None) -> int:
         ap.error("no run given (a run folder, a bundle, or --campaign)")
     if a.write_ticks and not a.out:
         ap.error("--write-ticks needs --out")
+    if not X.have_rosbags():
+        print(f"replay_from_bag: `rosbags` is not installed ({X.ROSBAGS_INSTALL_HINT})",
+              file=sys.stderr)
+        return 3
     out = Path(a.out) if a.out else None
     started = time.time()
     records = []
