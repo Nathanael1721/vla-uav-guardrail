@@ -139,10 +139,16 @@ class RemoteVLABackend:
     the order they were sent (an older one is superseded by the newer in the
     same tick, with its line); one request is outstanding at a time; the
     stop rules, the suspension, LAND and the back-off hold as in act().
-    `feed_max_hz` caps the requests pump() sends (None: no cap). Only the
-    pipelined cadence is fed: stop-and-go asks after a completed step, by
-    definition. `feed` counts the calls, the requests sent between ticks and
-    the replies kept; it is None in stats() when no `new_frame` was given.
+    `feed_max_hz` caps the requests (None: no cap). While the rail pumps,
+    act()'s own request passes the SAME gate (the cap, a frame not yet
+    considered): with the cap on pump() alone a tick's request re-armed it
+    every 100 ms and the feed stayed locked to the tick (pas_hil_feed_01 /
+    _02, 2026-11-15: cap 12 Hz, 20-38 requests of 283-293 sent between
+    ticks, 9.83-9.97 frames/s). A rail that never pumps is asked on every
+    tick, as before. Only the pipelined cadence is fed: stop-and-go asks
+    after a completed step, by definition. `feed` counts the calls, the
+    requests sent between ticks and the replies kept; it is None in stats()
+    when no `new_frame` was given.
     """
 
     CADENCES = ("pipelined", "stop_and_go")
@@ -203,6 +209,7 @@ class RemoteVLABackend:
         self._fed = None
         self._t_submit: float | None = None
         self._early: list = []
+        self._feed_calls_seen = 0
 
     # -- the slot ------------------------------------------------------------ #
     def act(self, state: State, hold_horizontal: bool = False) -> Action4D:
@@ -219,7 +226,12 @@ class RemoteVLABackend:
         tick = self.tracker.tick(now, pose_now, pending=bool(getattr(self.client, "busy", False)),
                                  hold_horizontal=hold_horizontal)
         try:
-            self._maybe_request(now)
+            # While the rail pumps between ticks (a pump() since the last
+            # act()), this tick's request passes the feed's gate too.
+            pumping = self.feed["calls"] != self._feed_calls_seen
+            self._feed_calls_seen = self.feed["calls"]
+            if not pumping or self._feed_due(now):
+                self._maybe_request(now)
         except Exception as exc:                                  # noqa: BLE001
             # get_capture / get_hint are the caller's; Hint() and
             # build_infer_fields refuse bad values by raising. None of it may
@@ -246,11 +258,7 @@ class RemoteVLABackend:
             if res is not None:
                 self._early.append(res)
                 self.feed["replies_kept"] += 1
-            if (self.feed_min_s is not None and self._t_submit is not None
-                    and now - self._t_submit < self.feed_min_s):
-                return False
-            tok = self.new_frame()
-            if tok is None or tok == self._fed:
+            if not self._feed_due(now):
                 return False
             before = self.counts["requests"]
             self._maybe_request(now)
@@ -260,6 +268,15 @@ class RemoteVLABackend:
         except Exception as exc:                                  # noqa: BLE001
             self._error("request_errors", exc)
             return False
+
+    def _feed_due(self, now: float) -> bool:
+        """The feed's gate: the cap allows a request now, and the freshest
+        front frame is one not yet considered."""
+        if (self.feed_min_s is not None and self._t_submit is not None
+                and now - self._t_submit < self.feed_min_s):
+            return False
+        tok = self.new_frame()
+        return tok is not None and tok != self._fed
 
     def refresh_fences(self, policy) -> None:
         """A hot-applied policy: the tracker clamps altitude targets into the

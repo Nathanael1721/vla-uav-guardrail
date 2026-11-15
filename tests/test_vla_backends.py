@@ -818,9 +818,19 @@ def test_the_feed_is_capped_and_never_asks_where_act_would_not():
             sim.t = 0.1
             assert be.pump() is True and be.client.wait_idle(3.0) and len(srv.requests) == 2
             assert be.stats()["feed"]["max_hz"] == 10.0
+            # While the rail pumps, a tick's own request passes the same
+            # gate: 0.02 s after the feed's, it is not sent (sent, it re-arms
+            # the cap every tick and the feed stays locked to the tick:
+            # pas_hil_feed_01). With no pump since, the next tick asks as ever.
+            frame["n"], sim.t = 3, 0.12
+            be.act(sim.state())
+            assert len(srv.requests) == 2, len(srv.requests)
+            sim.t = 0.2
+            be.act(sim.state())
+            assert be.client.wait_idle(3.0) and len(srv.requests) == 3
             be.suspend()                                            # a rail hold
-            frame["n"], sim.t = 3, 0.5
-            assert be.pump() is False and len(srv.requests) == 2
+            frame["n"], sim.t = 4, 0.5
+            assert be.pump() is False and len(srv.requests) == 3
         finally:
             be.close()
     sim = _Sim()
@@ -828,7 +838,7 @@ def test_the_feed_is_capped_and_never_asks_where_act_would_not():
         be = _backend(srv, sim, new_frame=lambda: frame["n"], cadence="stop_and_go")
         try:
             be.act(sim.state())
-            frame["n"] = 4
+            frame["n"] = 5
             assert be.pump() is False and be.feed["calls"] == 0
         finally:
             be.close()
