@@ -2,7 +2,7 @@
 
 The PAS follow mission (AIoT-VLA v10b on the AGX Orin, Project AirSim CityLife + ArduPilot SITL 4.5.7, `--identity --negative-query "a traffic light" --target-estimator`) flown once per paraphrase: the source "follow a red car" and the paraphraser's 8 stored paraphrases of it (guardrail/paraphraser.py, store set `follow a red car`), each given as the VLA's grounding phrase (`--vla-object`); the detector's start-gate query stays "a red car". Outcome = how the mission ended.
 
-The source, flown twice: target_lost, target_lost. The model's own noun phrase "a red car" (the default every other AIoT-VLA flight used), flown as a control: held to max_s. Of the 8 paraphrases, 2 never started (the start gate, whose detector query is the fixed "a red car" and reads no paraphrase, found no car within 30 m in 330 s); of the 6 that started, **4/6 ended as the source did** and 2/6 held the car to max_s. P0 escape ticks over all 11 runs: 0. One flight per paraphrase.
+The source, flown twice: target_lost, target_lost. The model's own noun phrase "a red car" (the default every other AIoT-VLA flight used), flown as a control: held to max_s. All 8 paraphrases flew a mission (2 runs whose start gate never passed - its detector query is the fixed "a red car" and reads no paraphrase - were flown again): **6/8 ended as the source did** and 2/8 held the car to max_s. P0 escape ticks over all 13 runs: 0. One started mission per paraphrase.
 
 | run | paraphrase | text | KPI-grade | ended | ticks (Hz) | interventions | P0 escape ticks | estimate within 6 m |
 |---|---|---|---|---|---|---|---|---|
@@ -17,3 +17,5 @@ The source, flown twice: target_lost, target_lost. The model's own noun phrase "
 | pas_hil_para_08 | pp-0e58648d12901083 | Your task is to keep tracking a red car wherever it goes. | YES | max_s reached | 4184 (9.958) | 206 | 0 | 0.8994 |
 | pas_hil_para_09 | noun-phrase | a red car | YES | max_s reached | 4186 (9.964) | 244 | 0 | 0.9157 |
 | pas_hil_para_10 | source-repeat | follow a red car | YES | target_lost | 900 (9.98) | 4 | 0 | 0.0133 |
+| pas_hil_para_11 | pp-7c3e1816a4183abe | pursue a red automobile through the streets | YES | target_lost | 960 (9.987) | 20 | 0 | 0.0604 |
+| pas_hil_para_12 | pp-5bf613700c32e8b3 | There's a red car - I'd like you to follow it. | YES | target_lost | 935 (9.983) | 10 | 0 | 0.0481 |

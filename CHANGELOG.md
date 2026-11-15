@@ -16,6 +16,35 @@ shipped change and recorded as one.
 
 ## [Unreleased]
 
+### 2026-11-15 (Mission Planner; paraphrase retries) — Mission Planner recorded on a hil flight beside MAVROS 2 (ARCH-10 to DONE); the two paraphrases whose start gate never passed flown again, so all 8 have a mission: 6 ended as the source did, 2 held the car
+
+#### Flown
+- **pas_hil_para_11** and **pas_hil_para_12** (693fb28 on the desktop, de7e748
+  on the AGX Orin, which differ in documents only): the paraphrases of
+  pas_hil_para_03 and _07, whose start gate found no car within 30 m, flown
+  again. Both started and ended target_lost (960 and 935 ticks, 20 and 10
+  interventions, 0 P0 escape ticks), KPI-grade. With them every one of the 8
+  stored paraphrases has a started mission: 6 of 8 ended as the source
+  "follow a red car" did, 2 of 8 held the car to max_s; 0 P0 escape ticks
+  over the 13 runs (docs/data/pas_hil_paraphrase_20261115/flights.md).
+
+#### Added
+- **Mission Planner on a hil flight (ARCH-10).** Mission Planner 1.3.83 on the
+  desktop, started while pas_hil_para_11 was coming up, connected by itself to
+  mavlink-router's UDP 14550 fan-out (its AutoConnect entry; no click) while
+  MAVROS 2 on the Orin flew the aircraft: title bar "ArduCopter V4.5.7
+  (2a3dc4b7) on UDP14550-1-QUADROTOR". Two screenshots in
+  docs/data/arch10_20261115/: connected before arming (Guided, DISARMED, GPS
+  fix) and in flight (Guided, 7.99 m, 2.81 m/s). Mission Planner only watched;
+  it was closed before pas_hil_para_12.
+
+#### Changed
+- Appendix A: ARCH-10 to DONE; WP4-09 states 6 of 8; 92 DONE / 37 PARTIAL /
+  6 DRIFT / 1 MISSING. The report's limitation and plan items about the
+  Mission Planner screenshot are gone.
+- docs/data/ci_local/693fb288095f.json: the lab checkout's CI at 693fb28, 151/151
+  files.
+
 ### 2026-11-15 (paraphrases on hil) — per-paraphrase robustness measured KPI-grade on hil with a text-reading pilot: AIoT-VLA follows the car on its noun phrase and on 2 of 6 paraphrases, and loses it on the source sentence
 
 #### Flown
