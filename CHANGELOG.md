@@ -16,6 +16,60 @@ shipped change and recorded as one.
 
 ## [Unreleased]
 
+### 2026-11-15 (PI decisions) — the 15 open decisions settled by the lab under the PI's instruction of 6 Oct (follow the grant; best practice where it is silent); two of them change the fail-safe scoring: the grant's G4 gets a rubric clause, and a GeoFence RTL with the FSM holding counts as a fail-safe triggered by the backstop (584/585 = 0.998); WP3-15 to DONE
+
+None of this is the PI's signature. Each row of docs/FINAL-REPORT.md section 9
+says what the project now does; the PI's confirmation is still to be recorded,
+and an item whose grant wording is not met keeps its status.
+
+#### Changed
+- **Decision 13: the grant's G4 governs a thrash of N-in-T onsets.** New
+  rubric clause **E6 "N-in-T persists"** (docs/RUBRIC-failsafe.md): onsets of
+  a hard violation made by the world (a hard rule switched on or over the
+  request, a world event on the tick the violation starts) recur at the FSM's
+  N-in-T rate through a Loiter. A planner's forecast re-touching a ring stays
+  N1, noise in the Shield's view of position stays N2. `fsm-n-in-t-flicker`
+  is labelled expected (E6); over every family cell and every episode of the
+  library, smoke, nightly, grant_example, fsm_edges and broad profiles it is
+  the only label that changed. The clause was written after hs10_003 flew,
+  which it scores as a correct trigger. tools/failsafe_rubric.py: 0 label
+  mismatches on every profile.
+- **Decision 14: an ArduPilot GeoFence RTL or LAND while the FSM holds is a
+  fail-safe triggered by the backstop.** `experiments/sweep_scenarios.py`
+  `failsafe_backstop` derives it per run from the run's own records (the
+  takeover's mode, a fence-breach text within 2 s of it, the FSM in Brake or
+  Loiter with no fail-safe of its own) and scores it against the scenario's
+  label like any other; `failsafe_by` names who triggered it, and the count
+  of backstop runs and both earlier readings are printed wherever the KPI is.
+- **The KPI re-scored** (ntFIN2 + ntFIN2s, 586 KPI-grade Shield-on flights,
+  at f08f16d; docs/data/kpi_ntFIN2_20261115/): reading (r2), adopted,
+  **584/585 = 0.998**, Wilson 95 % lower bound 0.990; 18 of them triggered by
+  the backstop, all dyn-nfz-spawn-ahead with the zone 3 m ahead and all
+  expected (18 correct, 0 false). With the 18 left out, as before: 566/567;
+  with them as missed: 566/585 = 0.968. Still censored: ntFIN2_374. Still
+  missed: ntFIN2_177. P0 escape, the tracked KPIs and the tick budget are as
+  in the 13 Nov report. The 18 runs still fail their own gates (3.4-3.6 s
+  inside the hot-applied zone); the rule changes who is credited with the
+  fail-safe, not the breach.
+- Appendix A: WP3-15 to DONE (584/585; were the censored run and the 2
+  unflown gps-dropout cell-seeds all errors the point estimate would be
+  584/588 = 0.993); 93 DONE / 36 PARTIAL / 6 DRIFT / 1 MISSING. The report's
+  section 9 lists the 15 decisions as settled, names the five final-demo
+  scenarios (9.1) and says what only the PI or ITRI can give.
+
+#### Flown
+- **pas_hil_obs_02** (decision 10; 9dfe254 on the desktop, de7e748 on the AGX
+  Orin, which differ in documents only; the PAS follow with AIoT-VLA,
+  `-FrontCaptureIntervalS 0.05` instead of 0.066): KPI-grade, 968 ticks at
+  9.981 Hz, 15 interventions, 0 P0 escape ticks, ended target_lost. The
+  camera delivered 14.712 Hz (12.823 on pas_hil_adapter_01) and frames
+  reached the VLA at 9.584 Hz while it was asked (9.266 there; 9.10-9.50 on
+  14 Nov): a faster camera does not reach the grant's 10 Hz, the pilot's
+  asking cadence bounds it. X-05 stays DRIFT. pas_hil_obs_01 never started
+  (the start gate found no car within 30 m). Run folders, without camera
+  frames, on F:\vla_drone_offload\jetson_runs (new offload folder; E: is
+  98 % full).
+
 ### 2026-11-15 (Mission Planner; paraphrase retries) — Mission Planner recorded on a hil flight beside MAVROS 2 (ARCH-10 to DONE); the two paraphrases whose start gate never passed flown again, so all 8 have a mission: 6 ended as the source did, 2 held the car
 
 #### Flown
