@@ -16,6 +16,63 @@ shipped change and recorded as one.
 
 ## [Unreleased]
 
+### 2026-11-15 (10 Hz observation) — a new camera frame goes to the VLA between the loop's ticks: 12.4-13.2 frames/s reach AIoT-VLA on the AGX Orin while it is asked (9.58 before) and it decides 10.6-10.9 times a second over two full missions; X-05, ARCH-25, ARCH-01, ARCH-21 to DONE; the perception node's collector paced out of the tick
+
+The grant asks for camera observations into the VLA at 10 Hz or faster. The
+pilot sent at most one request per tick and the loop ticks at 9.98 Hz, so
+the rate could not reach 10 however fast the camera (14.7 Hz) and the
+server (round trip p50 58 ms) were.
+
+#### Added
+- **The feed between ticks** (`--vla-feed stream`; guardrail/vla_backends.py
+  `RemoteVLABackend.pump`, `new_frame`, `feed_max_hz`; demo/pas_ardupilot/
+  perception_node.py `pace_feeding`, `VLAPilot.pump`; demo/vla_mission.py
+  `VLAFrames.front_token`). In its wait for the next tick the node pumps the
+  backend every 4 ms (not in the last 15 ms): a finished reply is kept for
+  the next act(), and the next request goes out when the front frame is one
+  not yet considered. Answers still enter the tracker in act(), at that
+  tick's pose, in the order sent; one request is outstanding at a time; a
+  rail hold, LAND, the stop rules and the back-off hold as before. The node's
+  default stays `tick`; deploy/orin/run_pas_perception.sh passes `stream`
+  (VLA_FEED=tick for the old behaviour). `--vla-feed-max-hz` caps it
+  (default 0: no cap).
+- **The collector paced in the PAS perception node** (`--gc-pacing on`, the
+  default; metrics.json `gc`). GcPacer moved unchanged from
+  sitl/ros2_shield_node.py to guardrail/gc_pacing.py and both nodes use it.
+- Tests: tests/test_vla_backends.py (2), tests/test_pas_vla.py (2),
+  tests/test_deploy_configs.py (the rig's default).
+
+#### Flown (hil, AIoT-VLA v10b on the AGX Orin, KPI-grade, camera at a 0.05 s capture interval; docs/data/pas_hil_feed_20261115/)
+- **pas_hil_feed_01 / _02** (ea8ef42, cap 12 Hz): 9.97 and 9.83 frames/s
+  while the model was asked. The first version capped the feed alone, so
+  the tick's own request re-armed the cap every 100 ms and the feed stayed
+  locked to the tick (38 of 293 and 20 of 283 requests sent between ticks).
+  Fixed in d9f5ea0: one gate for both.
+- **pas_hil_feed_03 / _04** (d9f5ea0, cap 12 Hz): 10.03 and 10.01.
+- **pas_hil_feed_05 / _06** (d9f5ea0, no cap): 13.23 and 12.39, the
+  detector's rate (2.70 and 2.31 Hz) and the tick's work (median 35.9 and
+  37.9 ms) as without the feed (2.18 Hz, 35.5 ms on pas_hil_obs_02). Desktop
+  tests ran beside these two flights for a few minutes.
+- **pas_hil_feed_07 / _08** (deac4b3, the rig's default since: no cap, the
+  collector paced): both flew the full 420 s with the car held. 13.15 and
+  13.22 frames/s while asked, 11.07 and 10.72 over the whole mission;
+  decisions parsed 10.93 and 10.62 per second over the mission; 284 and 332
+  interventions, 0 P0 escapes; camera to first setpoint p50 134 and 130 ms
+  (158 on pas_hil_obs_02).
+- **The collector**: before the pacing the loop had one tick of 227-454 ms
+  every 65-80 s (pas_hil_feed_04: 7 of 4014 ticks over 100 ms,
+  pas_hil_feed_05: 6 of 3192). Paced: 0 automatic full collections, the 41
+  paced ones at most 19.9 ms, run after the tick's work; ticks over 100 ms 3
+  of 4058 (152, 112, 148 ms; not collections) and 0 of 4096.
+
+#### Changed
+- Appendix A: X-05 (was DRIFT), ARCH-25, ARCH-01 and ARCH-21 to DONE;
+  ARCH-03 stays PARTIAL (the 7B backends do not decide at 10 Hz).
+  97 DONE / 33 PARTIAL / 5 DRIFT / 1 MISSING. What the DONE rests on: a
+  15 Hz camera, and the detector having the target (while it has no box the
+  model is not asked, by design; the detector runs at 2.3-2.7 Hz); the
+  mission-wide rates are from n = 2 full-length flights.
+
 ### 2026-11-15 (outline figures) — the outline's fail-safe lines brought to the KPI as it stands since the backstop rule
 
 #### Changed
