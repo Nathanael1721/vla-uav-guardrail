@@ -1970,6 +1970,67 @@ def test_issue_cert_adds_a_server_certificate_for_another_host():
         raise AssertionError(f"certificate name {bad!r} accepted")
 
 
+def test_a_policy_signer_certificate_is_code_signing_only_and_expires_with_the_ca():
+    """issue_policy_signer (WP1-04, 2026-11-16): the certificate that puts a
+    policy-bundle key under the root CA. It is issued from the PUBLIC key
+    alone and writes nothing into the CA folder; it is a codeSigning leaf, not
+    a TLS identity (so the harness would not take it for a client, and
+    guardrail.bundle does not take a TLS leaf for a signer); and it runs to
+    the CA's own notAfter, where every other leaf here gets 365 days: a signed
+    bundle is evidence that has to verify for as long as its authority does."""
+    try:
+        from cryptography import x509
+        from cryptography.hazmat.primitives import serialization
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+        from cryptography.x509.oid import ExtendedKeyUsageOID as EKU
+    except ImportError:
+        return SKIP
+    d = _tmpdir("pki_signer_")
+    files = H.generate_pki(d)
+    before = sorted(p.name for p in d.iterdir())
+    key = Ed25519PrivateKey.generate()
+    raw = key.public_key().public_bytes(serialization.Encoding.Raw,
+                                        serialization.PublicFormat.Raw)
+    pem = H.issue_policy_signer(d, raw)
+    assert sorted(p.name for p in d.iterdir()) == before, "it wrote into the CA folder"
+    assert pem.startswith(b"-----BEGIN CERTIFICATE-----") and b"PRIVATE" not in pem
+    leaf = x509.load_pem_x509_certificate(pem)
+    ca = x509.load_pem_x509_certificate(Path(files["ca_cert"]).read_bytes())
+    leaf.verify_directly_issued_by(ca)
+    assert leaf.public_key().public_bytes(serialization.Encoding.Raw,
+                                          serialization.PublicFormat.Raw) == raw
+    assert list(leaf.extensions.get_extension_for_class(x509.ExtendedKeyUsage).value) \
+        == [EKU.CODE_SIGNING]
+    assert not leaf.extensions.get_extension_for_class(x509.BasicConstraints).value.ca
+    ku = leaf.extensions.get_extension_for_class(x509.KeyUsage).value
+    assert ku.digital_signature and not ku.key_cert_sign
+    assert H._validity(leaf)[1] == H._validity(ca)[1], (H._validity(leaf), H._validity(ca))
+    cn = leaf.subject.get_attributes_for_oid(x509.oid.NameOID.COMMON_NAME)[0].value
+    assert cn == "policy-signer-" + hashlib.sha256(raw).hexdigest()[:16], cn
+    # the same from a public-key object, and under a chosen name
+    named = x509.load_pem_x509_certificate(
+        H.issue_policy_signer(d, key.public_key(), name="policy-signer-orin"))
+    assert named.subject.get_attributes_for_oid(x509.oid.NameOID.COMMON_NAME)[0].value \
+        == "policy-signer-orin"
+    assert named.serial_number != leaf.serial_number
+    # Refused: a key of the wrong size, a PRIVATE key, a bad name, and a CA
+    # key that is not the key of the CA certificate beside it.
+    other = _tmpdir("pki_signer_other_")
+    H.generate_pki(other)
+    mixed = _tmpdir("pki_signer_mixed_")
+    shutil.copy(d / "ca.cert.pem", mixed / "ca.cert.pem")
+    shutil.copy(other / "ca.key.pem", mixed / "ca.key.pem")
+    for call, exc in ((lambda: H.issue_policy_signer(d, raw[:31]), ValueError),
+                      (lambda: H.issue_policy_signer(d, key), TypeError),
+                      (lambda: H.issue_policy_signer(d, raw, name="a b"), ValueError),
+                      (lambda: H.issue_policy_signer(mixed, raw), ValueError)):
+        try:
+            call()
+        except exc:
+            continue
+        raise AssertionError(f"issue_policy_signer accepted what it must refuse ({exc.__name__})")
+
+
 def test_the_default_pki_folder_is_outside_the_checkout_and_unsynced():
     """The CA key is unencrypted and is meant to seed SROS 2 keystores. Until
     9 Oct its default folder was demo/out/harness_pki/ in the checkout:
