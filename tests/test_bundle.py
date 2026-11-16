@@ -1538,6 +1538,78 @@ def test_the_issue_cert_command_certifies_every_pinned_key_from_public_keys_only
     assert trust.read_bytes() == was
 
 
+def test_the_evidence_record_says_what_this_machine_established():
+    """tools/bundle_ca_evidence.py, the record the integrator writes on the
+    desktop and on the AGX Orin after `issue-cert`: on a throw-away store and
+    a throw-away bundles folder it names the authority by the SHA-256 of its
+    certificate, gives each signer its standing as checked here, and counts
+    the bundles by signature and chain. Without `cryptography` it must say
+    "not-checked-here", never "verified"; it reads public data and writes
+    only the file it is told to."""
+    if not B.HAVE_CRYPTO:
+        return SKIP
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "bundle_ca_evidence", ROOT / "tools" / "bundle_ca_evidence.py")
+    E = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(E)
+    signer, trust, _, ca_pem, bare = _certified()
+    pol = load_policy(DEMO)
+    folder = Path(tempfile.mkdtemp())
+    write_bundle(pol, folder / "a-ca.tar.gz", signer=signer, issued_at=ISSUED)
+    write_bundle(pol, folder / "b-before.tar.gz", signer=bare, issued_at=ISSUED)
+    write_bundle(pol, folder / "c-since.tar.gz", signer=bare)       # issued now
+    write_bundle(pol, folder / "d-unsigned.tar.gz", signer=None, issued_at=ISSUED)
+    was = trust.read_bytes()
+
+    rec = E.collect(trust, folder)
+    fp = _der_sha256(ca_pem)
+    assert [(a["name"], a["sha256"], a["fingerprint_matches_record"])
+            for a in rec["authorities"]] == [("lab-ca", fp, True)], rec["authorities"]
+    by = {s["identity"]: s for s in rec["signers"]}
+    assert by[signer.identity]["accepted_here"] and by[signer.identity]["chain"] == "verified"
+    assert by[signer.identity]["issuer"] == "lab-ca" and not by[signer.identity]["retired_on"]
+    assert by[bare.identity]["accepted_here"] and by[bare.identity]["chain"] == "none"
+    assert by[bare.identity]["superseded_by"] == signer.identity and by[bare.identity]["retired_on"]
+    assert rec["bundles"]["counts"] == {
+        "policy / unsigned / chain none": 1,
+        "policy / untrusted-signer / chain none": 1,
+        "policy / verified / chain none": 1,
+        "policy / verified / chain verified": 1}, rec["bundles"]["counts"]
+    rows = {r["file"]: r for r in rec["bundles"]["policy"]}
+    assert rows["a-ca.tar.gz"]["signer"]["ca_fingerprint"] == "sha256:" + fp
+    assert rows["a-ca.tar.gz"]["signed_by"] == signer.identity
+    assert "retired on" in rows["c-since.tar.gz"]["detail"], rows["c-since.tar.gz"]
+    assert rec["summary"] == {
+        "authorities": 1, "certified_signers": 1,
+        "certified_signers_chain_verified_here": 1,
+        "bare_signers_in_force": 0, "bare_signers_retired": 1,
+        "bundles": rec["bundles"]["counts"]}, rec["summary"]
+    assert rec["drill"].startswith("not run") and rec["machine"]["cryptography"]
+
+    with _no_crypto():
+        there = E.collect(trust, folder)
+    assert there["machine"]["cryptography"] is None
+    assert there["machine"]["ed25519_verifier"] == "pure-python"
+    assert there["summary"]["certified_signers_chain_verified_here"] == 0
+    assert {s["identity"]: s["chain"] for s in there["signers"]} == \
+        {signer.identity: "not-checked-here", bare.identity: "none"}, there["signers"]
+    assert there["bundles"]["counts"]["policy / verified / chain not-checked-here"] == 1
+
+    # An authority that is gone is said per signer, not only per bundle.
+    doc = _store(trust)
+    del doc["authorities"]["lab-ca"]
+    loose = trust.parent / "no_authority.json"
+    loose.write_text(json.dumps(doc), encoding="utf-8")
+    lost = {s["identity"]: s for s in E.collect(loose, folder)["signers"]}[signer.identity]
+    assert not lost["accepted_here"] and "is not listed" in lost["why"], lost
+
+    out = folder / "record" / "evidence.json"
+    assert E.main(["--trust", str(trust), "--bundles", str(folder), "--out", str(out)]) == 0
+    assert json.loads(out.read_text(encoding="utf-8"))["summary"] == rec["summary"]
+    assert trust.read_bytes() == was and "PRIVATE" not in out.read_text(encoding="utf-8")
+
+
 def test_one_command_issues_the_certificates_and_re_signs_the_flight_bundles():
     """`python tools/build_flight_bundles.py --issue-cert`: the integrator's
     single step. Run here against a throw-away CA, key, trust store and

@@ -29,7 +29,11 @@ give it meaning, and states the zero-skill null outright:
 
   round_trip       every policies/*.yaml: load -> write_bundle -> check_bundle
                    gives the same policy_hash, the same canonical IR and the
-                   same full model dump;
+                   same full model dump; beside each signature status, who
+                   signed (`signed_by`) and what this machine established
+                   about the signer's certificate (`chain`, since 2026-11-16:
+                   "verified" only where the leaf chained to a listed
+                   certificate authority here);
   tamper_refusal   for each of those bundles, one rule field is altered in the
                    archived IR and the reader must refuse it;
   negative_corpus  policies/negative/*.yaml are deliberately broken policies
@@ -223,7 +227,7 @@ def round_trip(policies_dir: Path, signer="auto") -> dict:
         # Zero policies would make every count below 0/0 - a pass by silence.
         raise SystemExit(f"no policies in {policies_dir}; refusing to report 0/0")
     tmp = _scratch("wp1rt_")
-    rows, sig = [], Counter()
+    rows, sig, chains, who = [], Counter(), Counter(), set()
     for f in files:
         row = {"file": f.name}
         try:
@@ -241,10 +245,16 @@ def round_trip(policies_dir: Path, signer="auto") -> dict:
                 "same_model_dump": back.model_dump() == pol.model_dump(),
                 "same_rule_count": len(back.constraints) == len(pol.constraints),
                 "signature": chk.signature,
+                # Who signed and what was established about the signer's
+                # certificate here (2026-11-16): "verified" only where the
+                # leaf was chained to a listed authority on this machine.
+                "signed_by": chk.signed_by, "chain": chk.chain,
             })
             row["ok"] = all(row[k] for k in ("same_hash", "same_canonical_ir",
                                              "same_model_dump", "same_rule_count"))
             sig[chk.signature] += 1
+            chains[chk.chain] += 1
+            who.add(chk.signed_by)
             bad = tmp / f"{f.stem}.tampered.tar.gz"
             if _tamper(b, bad):
                 try:
@@ -264,6 +274,7 @@ def round_trip(policies_dir: Path, signer="auto") -> dict:
     t_ref = sum(1 for r in t_run if r["tamper"] == "refused")
     return {"n": n, "passed": ok, "rate": round(ok / n, 4),
             "signatures": dict(sig),
+            "signed_by": sorted(who), "chains": dict(chains),
             "tamper_refusal": {"run": len(t_run), "refused": t_ref,
                                "rate": round(t_ref / len(t_run), 4) if t_run else None},
             "rows": rows}

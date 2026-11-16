@@ -44,6 +44,11 @@ def _tmp(prefix: str) -> Path:
     return d
 
 
+def gb_unsigned() -> str:
+    import guardrail.bundle as gb
+    return gb.UNSIGNED
+
+
 def test_every_policy_round_trips_and_every_tamper_is_refused():
     rt = W.round_trip(ROOT / "policies", signer=None)
     assert rt["n"] == N_POLICIES and N_POLICIES >= 20, rt["n"]
@@ -53,6 +58,11 @@ def test_every_policy_round_trips_and_every_tamper_is_refused():
     assert t["run"] == rt["n"] and t["refused"] == t["run"], t
     assert rt["signatures"] == {"unsigned": N_POLICIES}, (
         "written unsigned on purpose here; the column must say so")
+    # ...and so must who signed and the signer's certificate chain (WP1-04):
+    # nobody, and none - never a chain the run did not establish.
+    assert rt["signed_by"] == [gb_unsigned()] and rt["chains"] == {"none": N_POLICIES}, (
+        rt["signed_by"], rt["chains"])
+    assert all(r["chain"] == "none" and r["signed_by"] == gb_unsigned() for r in rt["rows"])
 
 
 def test_the_negative_corpus_headers_say_what_the_loader_really_does():
