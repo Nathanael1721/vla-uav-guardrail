@@ -26,10 +26,16 @@
 # server at a time, on VLA_PORT. The option sets are the ones each family
 # flew with on demo/vla_fly.py in the 3-4 November AGX matrix (each run's
 # metrics.json `params`), on this node's own follow defaults:
-#   aiotvla    (default) exactly the options of every flight so far: the
-#              detector's FrontCamera frame, each step flown as a rate over
-#              its 0.5 s label horizon with the yaw as a rate, pipelined, the
-#              feed between ticks (VLA_FEED stream).
+#   aiotvla    (default) exactly the option set this script passed before
+#              FAMILY existed (afd040c): the detector's FrontCamera frame,
+#              each step flown as a rate over its 0.5 s label horizon with
+#              the yaw as a rate, pipelined, the feed between ticks
+#              (VLA_FEED stream). The stream feed is the default since
+#              2026-11-15: the hil follows before it flew one request per
+#              tick (what VLA_FEED=tick gives; their params predate the
+#              option), and pas_hil_feed_01 .. _04 a stream capped at 12 Hz,
+#              so reproducing one of those takes VLA_FEED=tick, or the node
+#              argument --vla-feed-max-hz 12 (each run's metrics.json params).
 #              Server: the command above (demo/vla_server_foreign.py serve
 #              --model aiotvla --weights <v10b folder> --port <VLA_PORT>
 #              --front-source detector --horizon-s 0.5; ~/vla-drone-env)
@@ -50,8 +56,11 @@
 #   racevla    VLAFront, each step flown as a rate over 1.0 s (the server's
 #              --horizon-s default), pipelined, one request per tick.
 #              Server: demo/vla_server_foreign.py serve --model racevla
-#              --weights <drone6_all folder> --port <VLA_PORT>
-#              (~/vla-drone-env)
+#              --weights <drone6_all>/<run folder> --port <VLA_PORT>
+#              (~/vla-drone-env). The checkpoint is the run folder one level
+#              under drone6_all (openvla-7b+drone_set6_all+...), as that
+#              server's own docstring gives it; the server names the model
+#              drone6_all from the parent either way.
 # WHAT EACH FAMILY STILL LACKS HERE (2026-11-16). Only aiotvla has flown this
 # node's follow, on any rail. For the other three the option set parses and
 # the node's own checks accept it (tests/test_deploy_configs.py), and that is

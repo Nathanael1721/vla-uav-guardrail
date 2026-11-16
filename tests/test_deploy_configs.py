@@ -2452,8 +2452,10 @@ def test_the_perception_rail_hil_script_joins_hil_envs_graph_and_flies_no_dev_po
 
 # --- the FAMILY switch of the perception rail's hil script (2026-11-16) --------- #
 # What the script passed after --vla-server before the switch existed (afd040c),
-# word for word and in its order: AIOT-VLA's option set, flown by every hil
-# follow so far (the KPI-grade ones included).
+# word for word and in its order: AIOT-VLA's option set. The stream feed in it
+# is the default since 2026-11-15; the hil follows before that flew one request
+# per tick (their params predate --vla-feed), pas_hil_feed_01 .. _04 a stream
+# capped at 12 Hz.
 _PAS_AIOT_OPTIONS = ["--vla-front-source", "detector", "--vla-step-as-rate", "0.5",
                      "--vla-rate-yaw", "rate", "--cadence", "pipelined",
                      "--allow-unstamped-pipelined", "--vla-feed", "stream",
@@ -2494,9 +2496,9 @@ def _node_reads(argv: list[str]) -> list:
 def test_the_family_switch_leaves_aiotvla_as_it_flew_and_gives_each_family_its_options():
     """deploy/orin/run_pas_perception.sh FAMILY=<family> (ARCH-06): the node
     and the code are the same for every family, only the option set changes.
-    Without FAMILY, and with FAMILY=aiotvla, the command is the one every hil
-    follow so far was flown with - the same options in the same order - so
-    those runs stay reproducible. The other families get the options their
+    Without FAMILY, and with FAMILY=aiotvla, the command is the one the
+    script passed at afd040c - the same options in the same order - so the
+    flights made with it stay reproducible. The other families get the options their
     model needs, which the node's own parser and checks accept together with
     the node arguments the backend protocol's C2 adds; the feed each family
     defaults to is the one that protocol names; an unknown family starts
