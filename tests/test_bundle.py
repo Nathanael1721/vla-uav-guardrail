@@ -1760,6 +1760,52 @@ def test_the_bundles_already_on_disk_still_open():
                                  B.SIG_UNVERIFIABLE), (p.name, chk.signature)
 
 
+def test_the_bundles_on_disk_still_open_after_the_lab_keys_are_certified():
+    """WP1-04: certifying the keys must not strand what they signed before.
+    The repository's trust store is COPIED (public data; the copy is the only
+    store written) and every key it has in force is certified by a
+    throw-away CA made here, listed as `drill-ca` (so this holds before the
+    integrator's `issue-cert` and after it, when `lab-ca` is already taken):
+    no bare identity is left in force, and every bundle and replay bundle in
+    bundles/ opens with the status it had under the store as committed.
+    Neither the lab's CA key nor its trust store is touched. Without
+    bundles/ (a fresh worktree, CI) only the store half runs, and the test
+    says SKIP."""
+    if not B.HAVE_CRYPTO:
+        return SKIP
+    from guardrail.replay import read_replay
+    lab_store = B.DEFAULT_TRUST_STORE.read_bytes()
+    pinned = {e["public_key_hex"] for e in B.load_trust_store(B.DEFAULT_TRUST_STORE).values()
+              if not e.get("retired_on")}
+    assert pinned, "the repository's trust store pins no key in force"
+    copy = Path(tempfile.mkdtemp()) / "trusted_signers.json"
+    copy.write_bytes(lab_store)
+    pki, ca_pem = _ca("Drill Root CA")
+    rows = B.issue_signer_certificates(pki, copy, authority="drill-ca")
+    ref = "drill-ca:" + _der_sha256(ca_pem)[:16]
+    assert {r["public_key_hex"] for r in rows} == pinned, rows
+    assert all(r["issued"] and r["identity"].startswith(ref + ":") for r in rows), rows
+    after = B.load_trust_store(copy)
+    in_force = sorted(k for k, v in after.items() if not v.get("issuer") and not v.get("retired_on"))
+    assert not in_force, f"bare identities still in force after certifying: {in_force}"
+    for r in rows:
+        st = B.signer_standing(r["identity"], copy)
+        assert st.ok and st.chain == B.CHAIN_VERIFIED, (r["identity"], st)
+    assert B.DEFAULT_TRUST_STORE.read_bytes() == lab_store, "the lab's trust store changed"
+
+    found = sorted((ROOT / "bundles").glob("*.tar.gz"))
+    if not found:
+        return SKIP
+    for p in found:
+        if p.name.endswith(".replay.tar.gz"):
+            was = read_replay(p)["signature"]["status"]
+            now = read_replay(p, copy)["signature"]["status"]
+        else:
+            was = check_bundle(p).signature
+            now = check_bundle(p, copy).signature
+        assert now == was, (p.name, was, now)
+
+
 def _in_git_checkout(root: Path) -> bool | None:
     """True inside a git work tree, False outside one, None when git cannot run.
 
