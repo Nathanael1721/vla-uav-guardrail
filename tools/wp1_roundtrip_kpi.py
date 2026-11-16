@@ -746,6 +746,15 @@ def reference_cross_load(run_reference_loader: bool = True) -> dict:
 # sits in a trust store FILE written beside them, so the signature status is
 # "verified" on any machine, with or without the lab's private key.
 #
+# AND THE CERTIFIED SIGNER (2026-11-16). That fixture key is a bare pinned key;
+# a flight bundle signed after the lab keys are certified also has its leaf
+# chained (X.509, the CA's signature, the record). Where `cryptography` is
+# installed the typical bundle is signed once more by the same key certified
+# by a throw-away CA and timed on the same path (`certified_signer`), its
+# chain required to read "verified" in every run, and its p95 is part of the
+# verdict's worst case. Without `cryptography` no chain is checked, and the
+# record says the row was not run.
+#
 # WHY A FAST NUMBER IS NOT ENOUGH ("silence reads as success"). A path that
 # skipped the signature, the hash or the IR would post the best time in the
 # table. So every timed run must also return a VERIFIED signature, the
@@ -781,6 +790,9 @@ COLD_START_RULES = 50
 COLD_START_AUTHORITY = "wp1-cold-start-bench"
 COLD_START_SEED = hashlib.sha256(b"wp1 cold-start timing fixture key").digest()
 COLD_START_POLICIES = ("typical", "grid")
+# The throw-away CA the certified row's fixture key is certified by
+# (2026-11-16): made in the timing's temp folder, never the lab's.
+COLD_START_CA = "wp1-cold-start-ca"
 # Fresh-interpreter child: times its own imports, then the first call of the
 # flight path, then the same path once more in the same process. It must not
 # import this tool (whose top level imports guardrail before any timer starts).
@@ -803,6 +815,7 @@ t4 = time.perf_counter()
 print(json.dumps({"import_ms": (t1 - t0) * 1e3, "load_for_flight_ms": (t2 - t1) * 1e3,
                   "shield_ms": (t3 - t2) * 1e3, "second_call_ms": (t4 - t3) * 1e3,
                   "signature": rec["signature"], "verifier": verifier_name(),
+                  "chain": rec.get("chain"),
                   "policy_hash": rec["loaded_policy_hash"],
                   "rules": len(pol.constraints), "fences": len(sh._rt.ir.fences)}))
 """
@@ -911,6 +924,28 @@ def _cold_start_signer(seed: bytes = COLD_START_SEED):
     return gb.Signer(authority=COLD_START_AUTHORITY, private_key=key)
 
 
+def _certified_fixture(tmp: Path, signer):
+    """(trust store, signer) for the SAME fixture key certified by a
+    throw-away CA made in `tmp` (guardrail.harness_service.generate_pki, then
+    guardrail.bundle.issue_signer_certificates): the path a flight takes once
+    the lab keys are certified - the X.509 parse, the CA's signature on the
+    leaf and the record match on top of the Ed25519 check. None where
+    `cryptography` is absent: there the chain is never checked, and a flight
+    records "not-checked-here" (the bare path above is then the one flown)."""
+    import guardrail.bundle as gb
+    if not gb.HAVE_CRYPTO:
+        return None
+    import guardrail.harness_service as H
+    pki = tmp / "pki"
+    H.generate_pki(pki)
+    store = _trust_store_file(tmp / "trusted_signers_certified.json", signer)
+    row = gb.issue_signer_certificates(pki, store, authority=COLD_START_CA)[0]
+    ent = gb.load_trust_store(store)[row["identity"]]
+    ca = gb.load_authorities(store)[COLD_START_CA]
+    return store, gb.certified_signer(signer.private_key, ent["certificate_pem"],
+                                      COLD_START_CA, ca["certificate_pem"])
+
+
 def _trust_store_file(path: Path, signer) -> Path:
     path.write_text(json.dumps({"signers": {signer.identity: {
         "authority": signer.authority, "algorithm": "ed25519",
@@ -1010,9 +1045,9 @@ def _cold_start_in(tmp: Path, warm_runs: int, fresh_runs: int,
             raise SystemExit(f"cold-start fixture {name} has {len(pol.constraints)} "
                              f"rules, not {COLD_START_RULES}")
 
-    def flight_path(b):
+    def flight_path(b, st=store):
         t0 = time.perf_counter()
-        pol, rec = load_for_flight(b, trust_store=store)
+        pol, rec = load_for_flight(b, trust_store=st)
         t1 = time.perf_counter()
         sh = rail_shield(pol, lookahead_s=LOOKAHEAD_S, dt=LOOKAHEAD_DT_S)
         t2 = time.perf_counter()
@@ -1169,20 +1204,100 @@ def _cold_start_in(tmp: Path, warm_runs: int, fresh_runs: int,
                 "whole_process_wall": _ms_stats([r["wall_ms"] for r in rs]),
                 "second_call_same_process": _ms_stats([r["second_call_ms"] for r in rs])}
 
+    # THE CERTIFIED SIGNER (2026-11-16, WP1-04). The two bundles above are
+    # signed by a bare pinned key; once the lab keys are certified, every
+    # flown bundle also pays for the X.509 parse, the CA's signature on the
+    # leaf and the record match. The typical bundle is signed again by the
+    # same key certified by a throw-away CA and timed on the same path, with
+    # the chain required to come out "verified" in every run; its p95 joins
+    # the verdict's worst case, so the KPI covers the path that flies.
+    certified: dict = {"note": "not run: no 'cryptography' here, so no chain can be "
+                               "checked (a flight here records not-checked-here and "
+                               "flies the path timed above)"}
+    cfix = _certified_fixture(tmp, signer)
+    cert_ok = True
+    if cfix is not None:
+        cstore, csigner = cfix
+        cf = fixtures["typical"]
+        cb = write_bundle(pols["typical"][0], tmp / "typical_certified.tar.gz",
+                          changelog="wp1 cold-start timing, certified signer",
+                          issued_at="2026-01-01T00:00:00Z", signer=csigner)
+        ctot, cbad, cdetail = [], 0, ""
+        for i in range(warm_runs):
+            try:
+                a, s, pol, rec, sh = flight_path(cb, cstore)
+            except ValueError as exc:               # refused: a failed check, not a crash
+                cbad += 1
+                cdetail = cdetail or f"REFUSED: {str(exc)[:300]}"
+                continue
+            ctot.append(a + s)
+            cbad += not (proof("typical", rec, pol, sh) and rec.get("chain") == "verified")
+            if not cdetail:
+                cdetail = rec.get("signature_detail", "")
+        cfresh: dict = {}
+        if fresh_runs > 0:
+            crs = []
+            for _ in range(fresh_runs):
+                t0 = time.perf_counter()
+                cp = subprocess.run([py, "-c", _COLD_CHILD, str(ROOT), str(cb), str(cstore)],
+                                    cwd=str(tmp), capture_output=True, text=True,
+                                    timeout=120, env=env)
+                wall_ms = (time.perf_counter() - t0) * 1e3
+                if cp.returncode != 0:
+                    raise SystemExit(f"cold-start child failed (typical, certified): "
+                                     f"{(cp.stderr.strip().splitlines() or ['?'])[-1]}")
+                r = json.loads(cp.stdout.strip().splitlines()[-1])
+                r["wall_ms"] = wall_ms
+                crs.append(r)
+            cbad_fresh = sum(1 for r in crs if not (
+                r["signature"] == "verified" and r.get("chain") == "verified"
+                and r["policy_hash"] == cf["policy_hash"] and r["rules"] == COLD_START_RULES
+                and r["fences"] == cf["zones"]))
+            cfresh = {"runs": len(crs), "runs_failing_a_check": cbad_fresh,
+                      "import": _ms_stats([r["import_ms"] for r in crs]),
+                      "path_first_call": _ms_stats([r["load_for_flight_ms"] + r["shield_ms"]
+                                                    for r in crs]),
+                      "ingest_with_imports": _ms_stats([r["import_ms"] + r["load_for_flight_ms"]
+                                                        + r["shield_ms"] for r in crs]),
+                      "whole_process_wall": _ms_stats([r["wall_ms"] for r in crs])}
+            cbad += cbad_fresh
+        cert_ok = cbad == 0
+        certified = {
+            "what": "the typical bundle signed by the same fixture key, certified by a "
+                    "throw-away CA made for the timing; load_for_flight chains its leaf "
+                    "(X.509 parse, the CA's signature, the record match) on top of the "
+                    "Ed25519 check",
+            "signed_by": csigner.identity, "chain": "verified" if cert_ok else "FAILED",
+            "verifier": cdetail, "runs_failing_a_check": cbad,
+            "in_process": {"total": _ms_stats(ctot) if ctot else {"n": 0}},
+            "fresh_process": cfresh or {"note": "skipped (fresh_runs=0)"}}
+
     all_checks = (all(c["runs_failing_a_check"] == 0 and c["geofence_raised_inside_first_fence"]
                       and c.get("fresh_runs_failing_a_check", 0) == 0
                       for c in checks.values())
-                  and all(v == "refused" for v in refusals.values()))
+                  and all(v == "refused" for v in refusals.values())
+                  and cert_ok)
+    cert_p95 = None
+    if "in_process" in certified and certified["in_process"]["total"].get("n"):
+        cert_p95 = (certified["fresh_process"]["ingest_with_imports"]["p95_ms"]
+                    if fresh else certified["in_process"]["total"]["p95_ms"])
     if fresh:
         head = max(fresh.values(), key=lambda v: v["ingest_with_imports"]["p95_ms"])
-        p95 = head["ingest_with_imports"]["p95_ms"]
-        wall = max(v["whole_process_wall"]["p95_ms"] for v in fresh.values())
+        p95 = max([head["ingest_with_imports"]["p95_ms"]]
+                  + ([cert_p95] if cert_p95 is not None else []))
+        wall = max([v["whole_process_wall"]["p95_ms"] for v in fresh.values()]
+                   + ([certified["fresh_process"]["whole_process_wall"]["p95_ms"]]
+                      if cert_p95 is not None else []))
         reading = "fresh process, imports + verify + parse + IR + Shield (worst bundle)"
     else:
-        p95 = max(v["total"]["p95_ms"] for v in in_proc.values())
+        p95 = max([v["total"]["p95_ms"] for v in in_proc.values()]
+                  + ([cert_p95] if cert_p95 is not None else []))
         wall = None
         reading = "in process only (fresh runs skipped): verify + parse + IR + Shield"
+    if cert_p95 is not None:
+        reading += ", the certified signer's chain check included"
     verdict = {"reading": reading, "p95_ms": p95, "whole_process_wall_p95_ms": wall,
+               "certified_signer_p95_ms": cert_p95,
                "budget_ms": COLD_START_BUDGET_MS, "checks_hold": all_checks,
                "within_budget": bool(all_checks and p95 <= COLD_START_BUDGET_MS)}
     for f in fixtures.values():
@@ -1203,6 +1318,7 @@ def _cold_start_in(tmp: Path, warm_runs: int, fresh_runs: int,
         "bundles": fixtures, "in_process": in_proc,
         "pure_python_verifier": py_verify, "author_side": author,
         "fresh_process": fresh if fresh else {"note": "skipped (fresh_runs=0)"},
+        "certified_signer": certified,
         "checks": checks, "refusals": refusals, "verdict": verdict,
         "null_before_2026_10_19": ("only Shield construction was timed (median 4.7 ms "
                                    "at 50 rules, docs/DESIGN-shield-enforcement.md): no "
@@ -1222,6 +1338,9 @@ def _cold_start_kpi(cs: dict | None) -> dict:
     text = f"p95 {v['p95_ms']:.0f} ms <= {v['budget_ms']:.0f} ms ({v['reading']})"
     if v["whole_process_wall_p95_ms"] is not None:
         text += f"; whole process incl. interpreter start p95 {v['whole_process_wall_p95_ms']:.0f} ms"
+    if v.get("certified_signer_p95_ms") is not None:
+        text += (f"; certified signer, chain checked: p95 "
+                 f"{v['certified_signer_p95_ms']:.0f} ms")
     if v["p95_ms"] > v["budget_ms"]:
         text = text.replace(" <= ", " > ")
     return {"cold_start_50_rules": text, "cold_start_within_budget": v["within_budget"]}

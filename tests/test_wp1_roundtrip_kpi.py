@@ -369,6 +369,50 @@ def test_the_cold_start_fits_the_grants_budget_and_proves_it_did_the_work():
         for n, fr in cs["fresh_process"].items()) + f" (bound {bound:g} ms)")
 
 
+def test_the_cold_start_also_times_a_certified_signer_with_its_chain_checked():
+    """Review of the bundle-ca branch (2026-11-16): the locked cold-start KPI
+    was timed with a bare pinned fixture key, so once the lab keys are
+    certified it no longer measured the path that flies (the leaf's X.509
+    parse, the CA's signature on it, the record match). Where `cryptography`
+    is installed the typical bundle is now also signed by the same key
+    certified by a throw-away CA and timed on the same path, its chain
+    required to come out verified in every run, and its p95 is part of the
+    verdict's worst case (and named in the KPI text)."""
+    import guardrail.bundle as gb
+    if not gb.HAVE_CRYPTO:
+        return
+    cs = W.cold_start(warm_runs=3, fresh_runs=1)
+    c = cs["certified_signer"]
+    assert c["chain"] == "verified" and c["runs_failing_a_check"] == 0, c
+    assert c["signed_by"].startswith(W.COLD_START_CA + ":"), c["signed_by"]
+    assert "chains to authority" in c["verifier"], c["verifier"]
+    assert c["fresh_process"]["runs"] == 1, c["fresh_process"]
+    v = cs["verdict"]
+    assert v["certified_signer_p95_ms"] == c["fresh_process"]["ingest_with_imports"]["p95_ms"]
+    assert v["p95_ms"] >= v["certified_signer_p95_ms"], v
+    assert v["checks_hold"] is True and "certified signer" in v["reading"], v
+    assert "certified signer, chain checked" in W._cold_start_kpi(cs)["cold_start_50_rules"]
+    # In process only: the certified row still joins the verdict.
+    cs0 = W.cold_start(warm_runs=2, fresh_runs=0)
+    assert cs0["verdict"]["certified_signer_p95_ms"] == \
+        cs0["certified_signer"]["in_process"]["total"]["p95_ms"], cs0["verdict"]
+    # A chain that does not verify on the timed path (the fixture is made
+    # first, with the real check) fails the checks, not just the row.
+    real_check, real_fixture = gb._chain_problem, W._certified_fixture
+
+    def fixture_then_break(*a, **k):
+        out = real_fixture(*a, **k)
+        gb._chain_problem = lambda *x, **y: "refused for the test"
+        return out
+    W._certified_fixture = fixture_then_break
+    try:
+        bad = W.cold_start(warm_runs=2, fresh_runs=0)
+    finally:
+        gb._chain_problem, W._certified_fixture = real_check, real_fixture
+    assert bad["certified_signer"]["runs_failing_a_check"] > 0, bad["certified_signer"]
+    assert bad["verdict"]["checks_hold"] is False, bad["verdict"]
+
+
 def test_a_cold_start_that_skips_the_work_is_not_within_budget():
     """The null: a loader that verifies nothing, and a Shield that compiles no
     zone, are both FASTER than the real path. Each must read as a failure
