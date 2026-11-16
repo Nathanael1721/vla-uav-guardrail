@@ -16,6 +16,63 @@ shipped change and recorded as one.
 
 ## [Unreleased]
 
+### 2026-11-16 (evening: prefix A/B and C2 flown on hil) — the prefix A/B campaign pab1 and the backend table's C2 flights, a corner cut found and fixed in the CSP-consuming pilot, and the C2 null made flyable
+
+#### Added
+- **The prefix A/B on hil, campaign pab1** (WP4-15;
+  docs/data/kpi_prefix_ab_20261116/). 33 missions of the prefix_ab profile
+  flown at c7257f1, all 33 KPI-grade: P0 escapes 0 on 2223 P0 ticks; tick
+  max 24.23 ms and end-to-end max 24.32 ms (0 of 14756 ticks over 100 ms);
+  fail-safe reading r2 15/15 on the labelled prefix-off arm (Wilson 95 % low
+  0.796; the prefix-on arm carries labels_not_applied). On vs off: mission
+  success 0.600 / 0.600, repairs per episode 6.6 / 130.5 (A/A largest pair
+  7), mean repair magnitude 1.78 / 9.38 m/s. The pilot is the hand-written
+  CSP-consuming adapter, not a learned VLA, so part of the delta holds by
+  construction (the report says so).
+- **The backend table's C2 flights** (ARCH-30, X-04, ARCH-06;
+  deploy/evidence/vla_backend_table.md regenerated). Flown on hil at c7257f1,
+  each after a 60 s shakedown: AerialVLA bf16 3 flights, DroneCATS-2B 3,
+  RaceVLA 1 (2 more never started: the start gate found no red car within
+  30 m in 330 s), AIoT-VLA v10b 1 (3 with feed_07/_08). P0 escapes 0 on every
+  flight. Every C2 flight of 16 Nov lost the car (target_lost) before 420 s.
+  Share of ticks within 30 m of the car: AIoT-VLA 0.211-0.352, AerialVLA
+  0.052-0.163, DroneCATS 0.132-0.189, RaceVLA 0.060. The table still names no
+  default.
+- **FAMILY=servo** in deploy/orin/run_pas_perception.sh: the hand-written
+  follow (--pilot servo), the protocol's C2 null, which the script could not
+  fly before (no VLA option, no server check).
+
+#### Fixed
+- **The CSP-consuming pilot cut a dog-leg's inner corner between its
+  samples** (guardrail/prefix_consumer.py). On pab1's corridor-drift-out the
+  prefix-on arm ended in RTL 3/3 (off: success). Reproduced headless to
+  5e-4 m on every repair tick of pab1_008: the consumer tested admissibility
+  every 0.5 s, so its 60-degree heading cut the corner for 0.21 s and about
+  0.25 m between two samples; the Shield's 0.1 s forecast caught it, and
+  CorridorReturn sized the cut as a straight line along the nearest leg,
+  2.48 m, over theta 2.0 m: G3 Loiter, X1, then G5 RTL on the loiter timeout.
+  The consumer now tests the whole straight path to the lookahead against the
+  Shield's corridor tube and the zones' margin rings. Headless,
+  corridor-drift-out's prefix-on arm has 0 repairs and no FSM edge, and
+  nfz-head-on's (the same mechanism at a zone's ring) 0 repairs where it had
+  19 and two Loiters. A rig whose consumer does not announce the path test is
+  refused as not the arm's flight. The Shield is unchanged: its corner sizing
+  (about 10x the true excursion, the safe direction) is pinned by a test as
+  found; changing it would move the certified readings, so it waits until
+  after 30 Nov. pab1 was flown before this fix; its prefix-on arms are to
+  re-fly.
+- **kpi_report read an unlabelled run as correct** (tools/kpi_report.py): a
+  run the re-score names in no reading list (the prefix-on arm) counted as
+  correct, so the first pab1 report showed 33/33 where the table has 15/15.
+  Such runs are left out by name, under every reading and in a merged
+  table's run count.
+
+#### Found, not fixed
+- The node log of 5 of 53 AGX flights ends "terminate called without an
+  active exception" after the report is written (pas_hil_aiot_fog_01,
+  _night_01, pas_hil_obs_01, the RaceVLA shakedown and c2_01): an abort at
+  process exit; no record is lost.
+
 ### 2026-11-16 (engineering for eight open rows) — the backend measurement set to protocol 2, the bundle signer under the lab CA, a replay check from the rosbag2 capture, and a pilot that consumes the CSP for the prefix A/B; no row changes status until the rig steps are run
 
 Four branches built from the verified plans of the contract re-read
