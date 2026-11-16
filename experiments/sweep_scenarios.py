@@ -7068,6 +7068,10 @@ def prefix_consumer_summary(consuming: list[dict]) -> dict:
     on = [r["kpi"] for v in pairs.values() for r in v["on"]]
     off = [r["kpi"] for v in pairs.values() for r in v["off"]]
     aa_tables = [(v["on"][0]["kpi"], v["aa"][0]["kpi"]) for v in aa.values()]
+    # Per pair, its cell and two flights: how many pairs are distinct flights
+    # (headless, a seed does not vary a cell: 15 pairs of 5 cells are 5).
+    flown = [(k[0], v["on"][0]["kpi"], v["off"][0]["kpi"]) for k, v in sorted(pairs.items())]
+    figures = kpi_report.prefix_ab_figures(on, off, aa_tables, pairs=flown) if pairs else None
     consumers = sorted({str((r["arm_record"].get("consumer") or {}).get("id"))
                         for r in consuming})
     per_cell = [{"cell": k[0], "seed": k[1],
@@ -7083,13 +7087,14 @@ def prefix_consumer_summary(consuming: list[dict]) -> dict:
         "consumers": consumers,
         "episodes": len(consuming),
         "pairs": len(pairs),
+        "distinct_pairs": (figures or {}).get("distinct", {}).get("pairs", 0),
         "pairs_that_differ": [label(k) for k, v in sorted(pairs.items())
                               if {kpi_signature(x) for x in v["on"]}
                               != {kpi_signature(x) for x in v["off"]}],
         "aa_pairs": len(aa),
         "aa_pairs_that_differ": [label(k) for k, v in sorted(aa.items())
                                  if kpi_signature(v["on"][0]) != kpi_signature(v["aa"][0])],
-        "figures": kpi_report.prefix_ab_figures(on, off, aa_tables) if pairs else None,
+        "figures": figures,
         "per_cell": per_cell,
         "labels_not_applied_to_prefix_on": LABELS_NOT_APPLIED,
         "note": kpi_report.PREFIX_CONSUMER_NOTE,
@@ -8595,7 +8600,8 @@ def main(argv: list[str] | None = None) -> int:
     if arms_doc and arms_doc.get("prefix_consumer"):
         pc = arms_doc["prefix_consumer"]
         print(f"prefix A/B through a pilot that consumes the CSP ({', '.join(pc['consumers'])}): "
-              f"{pc['pairs']} on / off pair(s), {len(pc['pairs_that_differ'])} differ; "
+              f"{pc['pairs']} on / off pair(s) ({pc.get('distinct_pairs')} distinct "
+              f"flight pair(s)), {len(pc['pairs_that_differ'])} differ; "
               f"{pc['aa_pairs']} A/A pair(s), {len(pc['aa_pairs_that_differ'])} differ"
               + ("" if args.backend != "headless" else
                  " (headless: functional, not KPI-grade; an A/A pair that differs is a "

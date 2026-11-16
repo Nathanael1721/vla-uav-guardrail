@@ -1230,6 +1230,50 @@ def test_the_kpi_report_measures_the_ab_of_a_consuming_pilot_with_its_noise_floo
     assert f3["mean_repair_magnitude_mps"]["pairs_one_side_unmeasured"] == 1
 
 
+def test_seeds_that_fly_alike_are_counted_as_one_flight():
+    """Headless, a seed does not vary a cell: three seeds of one cell are one
+    flight three times. The sweep's summary, its console figures and the KPI
+    report give the number of distinct flight pairs (and distinct time-to-
+    safe episodes) beside the number of pairs, so 15 pairs of five cells are
+    never quoted as 15 pieces of evidence. Pairs that differ are counted
+    apart; the figures themselves are unchanged."""
+    rows = []
+    for seed in (1001, 1002, 1003):
+        rows += [_scored("c", seed, "on", 2, consumer=True),
+                 _scored("c", seed, "off", 40, consumer=True, ok=False)]
+    rows += [_scored("d", 1001, "on", 0, consumer=True), _scored("d", 1001, "off", 10,
+                                                                 consumer=True),
+             _scored("d", 1002, "on", 1, consumer=True), _scored("d", 1002, "off", 11,
+                                                                 consumer=True)]
+    pc = S.arms_summary(rows)["prefix_consumer"]
+    assert (pc["pairs"], pc["distinct_pairs"]) == (5, 3), pc
+    d = pc["figures"]["distinct"]
+    assert d["flights"] == {"on": 3, "off": 3} and d["pairs"] == 3, d
+    assert pc["figures"]["measures"]["mean_repair_count_per_episode"]["on"] == round(7 / 5, 3)
+    lines = KR.prefix_ab_lines(pc["figures"])
+    assert any("5 pair(s), 3 distinct flight pair(s)" in x for x in lines), lines
+    # all distinct: said so
+    one = S.arms_summary(rows[6:])["prefix_consumer"]
+    assert (one["pairs"], one["distinct_pairs"]) == (2, 2)
+    assert "- Distinct evidence: all 2 pair(s) are distinct flights." in \
+        KR.prefix_ab_lines(one["figures"])
+    # the KPI report over episodes: distinct per rail and cell; time to safe
+    # over distinct episodes
+    eps = []
+    for seed in (1001, 1002, 1003):
+        eps += [_ep("c", seed, "on", 4, t2s=3.0, rail="headless-kinematic", grade=False),
+                _ep("c", seed, "off", 60, ok=False, t2s=5.0, rail="headless-kinematic",
+                    grade=False)]
+    ab, para = KR.arms_sections(eps)
+    fig = ab["consumer"]["figures"]
+    assert ab["consumer"]["pairs"] == 3 and fig["distinct"]["pairs"] == 1, fig["distinct"]
+    assert fig["time_to_safe_episodes"] == {"on": 3, "off": 3}
+    assert fig["distinct"]["time_to_safe_episodes"] == {"on": 1, "off": 1}
+    md = "\n".join(KR._render_arms(ab, para))
+    assert "- 3 pair(s) of one cell and seed (1 distinct flight pair(s))" in md, md
+    assert "time to safe is over 1 distinct episode(s) with the prefix on, 1 off" in md, md
+
+
 def test_the_note_quotes_the_learned_vla_ab_as_its_file_records_it():
     """Every A/B through the consumer is printed beside the one A/B flown by
     a learned VLA reading the CSP (verifier's plan for WP4-15, step 6), and

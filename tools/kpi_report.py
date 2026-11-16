@@ -2412,7 +2412,43 @@ def _val(v):
     return v if _num(v) else None
 
 
-def prefix_ab_figures(on: list[dict], off: list[dict], aa=()) -> dict:
+# What makes two flights of one cell the same flight for the A/B's count of
+# distinct evidence (ab_flight_key): every figure the A/B reads, and what the
+# flight did. Two seeds of a cell that fly alike in all of these (a
+# deterministic backend whose seed does not vary the cell) are one flight.
+AB_FLIGHT_FIELDS = ("ticks", "p0_escapes", "p0_violation_ticks", "repair_count",
+                    "repaired_ticks", "mean_repair_magnitude_mps", "mean_time_to_safe_s",
+                    "max_time_to_safe_s", "time_to_safe_episodes", "mission_success",
+                    "reached_goal", "mission_goal_status", "mission_outcome")
+
+
+def ab_flight_key(t: dict) -> tuple:
+    """One flight's KPI table reduced to AB_FLIGHT_FIELDS (floats to 6
+    places): equal keys of one cell are one flight counted twice."""
+    return tuple(round(v, 6) if isinstance(v, float) else v
+                 for v in (t.get(k) for k in AB_FLIGHT_FIELDS))
+
+
+def distinct_ab_pairs(pairs) -> dict:
+    """How much distinct evidence the A/B's pairs hold: `pairs` is
+    (cell, on table, off table) per pair (the cell with its rail where pairs
+    of two rails are pooled). Returns the number of distinct pairs (one
+    cell's pairs whose two flights are each alike count once), the distinct
+    flights per side, and the distinct unsafe-position episodes that time to
+    safe is over per side. Headless, where a seed does not vary a cell, 15
+    pairs of five cells are 5 distinct pairs."""
+    pairs = list(pairs)
+    ons = {(c, ab_flight_key(a)): a for c, a, _ in pairs}
+    offs = {(c, ab_flight_key(b)): b for c, _, b in pairs}
+
+    def t2s(flights):
+        return sum(int(t.get("time_to_safe_episodes") or 0) for t in flights.values())
+    return {"pairs": len({(c, ab_flight_key(a), ab_flight_key(b)) for c, a, b in pairs}),
+            "flights": {"on": len(ons), "off": len(offs)},
+            "time_to_safe_episodes": {"on": t2s(ons), "off": t2s(offs)}}
+
+
+def prefix_ab_figures(on: list[dict], off: list[dict], aa=(), pairs=None) -> dict:
     """The prefix A/B of a pilot that consumes the CSP, from the KPI tables
     of its paired episodes: `on` and `off` (the prefix-on arm's first flight
     and the prefix-off arm of the same cells and seeds), and `aa`, the A/A
@@ -2427,7 +2463,11 @@ def prefix_ab_figures(on: list[dict], off: list[dict], aa=()) -> dict:
     the first flights and of the repeats, their absolute difference, and the
     largest difference inside one pair. On a deterministic backend it is 0;
     on a real-time rail it is what a same-seed pair differs by with nothing
-    changed, and a delta inside it is not a finding."""
+    changed, and a delta inside it is not a finding.
+
+    `pairs` ((cell, on table, off table) per pair, distinct_ab_pairs) adds
+    `distinct`: how many of the pairs are distinct flights, so a count of
+    pairs is never read as that much evidence when seeds flew alike."""
     r_on, r_off = K.rollup(on), K.rollup(off)
     measures = {}
     for key, _ in PREFIX_AB_MEASURES:
@@ -2440,6 +2480,8 @@ def prefix_ab_figures(on: list[dict], off: list[dict], aa=()) -> dict:
                                      "off": r_off.get("time_to_safe_episodes")},
            "kpi_grade_episodes": {"on": sum(1 for e in on if e.get("kpi_grade") is True),
                                   "off": sum(1 for e in off if e.get("kpi_grade") is True)}}
+    if pairs is not None:
+        out["distinct"] = distinct_ab_pairs(pairs)
     aa = list(aa)
     if not aa:
         out["aa"] = {"status": "n/m", "pairs": 0,
@@ -2497,6 +2539,21 @@ def prefix_ab_lines(fig: dict | None) -> list[str]:
     tts = fig.get("time_to_safe_episodes") or {}
     L += ["", f"- Time to safe is over the unsafe-position episodes that ended: "
               f"{tts.get('on')} with the prefix on, {tts.get('off')} off (n/m with none)."]
+    d = fig.get("distinct")
+    if d:
+        n = fig.get("pairs_on")
+        dt = d.get("time_to_safe_episodes") or {}
+        if min(d["pairs"], d["flights"]["on"], d["flights"]["off"]) < (n or 0):
+            L.append(f"- Distinct evidence: {n} pair(s), {d['pairs']} distinct flight "
+                     f"pair(s) ({d['flights']['on']} distinct flights with the prefix on, "
+                     f"{d['flights']['off']} off): flights of one cell whose seeds flew alike "
+                     f"in every A/B measure are one flight counted more than once (a "
+                     f"deterministic backend whose seed does not vary the cell), so the "
+                     f"evidence is {d['pairs']} pair(s), and time to safe is over "
+                     f"{dt.get('on')} distinct episode(s) with the prefix on, "
+                     f"{dt.get('off')} off.")
+        else:
+            L.append(f"- Distinct evidence: all {n} pair(s) are distinct flights.")
     if aa.get("status") == "measured":
         L.append(f"- A/A (the noise floor): {aa['pairs']} pair(s) of the prefix-on arm "
                  f"flown twice on one seed. The column gives, per measure, the difference "
@@ -2580,7 +2637,10 @@ def arms_sections(episodes: list[dict]) -> tuple[dict, dict]:
                 "rails": sorted({str(e.get("rail")) for p in eat_pairs
                                  for e in p["on"] + p["off"]}),
                 "pairs": len(eat_pairs),
-                "figures": prefix_ab_figures(c_on, c_off, eat_aa),
+                "figures": prefix_ab_figures(
+                    c_on, c_off, eat_aa,
+                    pairs=[((p["on"][0].get("rail"), p["on"][0]["arms"].get("cell")),
+                            p["on"][0], p["off"][0]) for p in eat_pairs]),
                 "per_cell": [{"cell": p["on"][0]["arms"].get("cell"),
                               "seed": p["on"][0]["arms"].get("seed"),
                               "rail": p["on"][0].get("rail"),
@@ -3321,8 +3381,11 @@ def _render_consumer_ab(c: dict | None) -> list[str]:
     kg = fig.get("kpi_grade_episodes") or {}
     n_on, n_off = fig.get("pairs_on"), fig.get("pairs_off")
     graded = (kg.get("on") == n_on and kg.get("off") == n_off)
+    d = fig.get("distinct") or {}
     L = [f"### Flown by a pilot that consumes the CSP ({', '.join(c['consumers'])})", "",
-         f"- {c['pairs']} pair(s) of one cell and seed, prefix on against prefix off, on "
+         f"- {c['pairs']} pair(s) of one cell and seed"
+         + (f" ({d['pairs']} distinct flight pair(s))" if d else "")
+         + f", prefix on against prefix off, on "
          f"{', '.join(c['rails'])}. KPI-grade flights: {kg.get('on')} of {n_on} with the "
          f"prefix on, {kg.get('off')} of {n_off} off"
          + ("." if graded else " - FUNCTIONAL EVIDENCE, NOT KPI-GRADE, wherever a flight "
@@ -3914,7 +3977,10 @@ def render_sweep_markdown(doc: dict, top_k: int = 10) -> str:
         headless = doc.get("_backend") == "headless"
         L += [f"## A/B: prefix on / off, flown by a pilot that consumes the CSP", "",
               f"- Pilot: {', '.join(pc['consumers'])}. {pc['pairs']} pair(s) of one cell "
-              f"and seed (prefix on against prefix off), {len(pc['pairs_that_differ'])} "
+              f"and seed (prefix on against prefix off"
+              + (f"; {pc['distinct_pairs']} distinct flight pair(s)"
+                 if pc.get("distinct_pairs") is not None else "")
+              + f"), {len(pc['pairs_that_differ'])} "
               f"of them differing; {pc['aa_pairs']} A/A pair(s) (prefix on flown twice on "
               f"one seed), {len(pc['aa_pairs_that_differ'])} differing"
               + (" - on this deterministic backend an A/A pair that differs is a harness "
