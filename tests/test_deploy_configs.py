@@ -1082,6 +1082,14 @@ def test_the_launchs_manifest_fields_go_into_the_bag_only_when_asked():
     assert pairs[CD.RANDOM_SEED_KEY] == "9" and pairs[CD.TOPOLOGY_DECLARED_KEY] == "hil"
     assert printed(r) == printed(dry_run(ENTRYPOINT, args, _env_for("hil"))), \
         "the launch changed with the switch"
+    # the dry run computes the pairs and writes no file (the helper's log
+    # goes to /dev/null; a run writes $RUNTIME_DIR/bag_custom_data.log)
+    env = _base_env(_env_for("hil", VLAGUARD_BAG_MANIFEST="1"))
+    runtime = Path(env["VLAGUARD_RUNTIME_DIR"])
+    r = subprocess.run([find_bash(), ENTRYPOINT.as_posix(), *args], env=env,
+                       capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0 and "--custom-data" in printed(r, "BAG"), r.stderr
+    assert sorted(p.name for p in runtime.iterdir()) == [], list(runtime.iterdir())
     # a policy the node would refuse: the other fields are still recorded
     r = dry_run(ENTRYPOINT, ["mission", "--bundle", "/nowhere/none.tar.gz"],
                 _env_for("dev", VLAGUARD_BAG_MANIFEST="1"))

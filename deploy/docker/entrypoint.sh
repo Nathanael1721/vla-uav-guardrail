@@ -43,8 +43,12 @@
 # VLAGUARD_DRY_RUN=1 prints the commands, shell-quoted, instead of running
 # them; the tests use it to check every role against every topology without
 # Docker or ROS. (With VLAGUARD_BAG_MANIFEST=1 the dry run does compute the
-# custom_data pairs, which reads the checkout and writes nothing, so the
-# command it prints is the command a run would start.)
+# custom_data pairs, which reads the checkout, so the command it prints is
+# the command a run would start; the helper's stderr then goes to /dev/null,
+# not to $RUNTIME_DIR/bag_custom_data.log, so the dry run writes no file.
+# The helper runs guardrail.manifest.code_revision(), whose `git status` has
+# taken over 20 s on a slow tree: under the switch the recorder starts that
+# much later, so time it in a shakedown before a campaign uses the switch.)
 #
 # Exit codes: 64 bad configuration, 66 repository not mounted, 68 a host name
 # did not resolve, 77 refused for safety.
@@ -222,13 +226,15 @@ case "$role" in
     # that cannot be computed is left out; none at all records as before.
     if [ "${VLAGUARD_BAG:-1}" = "1" ] && [ "${VLAGUARD_BAG_MANIFEST:-0}" = "1" ]; then
       custom=()
+      custom_log="$RUNTIME_DIR/bag_custom_data.log"
+      [ "$DRY" = "1" ] && custom_log=/dev/null       # a dry run writes no file
       mapfile -t custom < <("$PY" "$ROOT/sitl/bag_custom_data.py" \
         --topology "$VLAGUARD_TOPOLOGY" -- "${shield_args[@]}" \
-        2> "$RUNTIME_DIR/bag_custom_data.log" || true)
+        2> "$custom_log" || true)
       if [ "${#custom[@]}" -gt 0 ]; then
         bag+=(--custom-data "${custom[@]}")
       else
-        echo "vlaguard-entrypoint: VLAGUARD_BAG_MANIFEST=1 but no field could be computed ($RUNTIME_DIR/bag_custom_data.log): recording without custom_data" >&2
+        echo "vlaguard-entrypoint: VLAGUARD_BAG_MANIFEST=1 but no field could be computed ($custom_log): recording without custom_data" >&2
       fi
     fi
     # What the Shield node records as the link (it reads MAVROS's own fcu_url
