@@ -1056,15 +1056,41 @@ def test_the_note_quotes_the_learned_vla_ab_as_its_file_records_it():
     a learned VLA reading the CSP (verifier's plan for WP4-15, step 6), and
     with that A/B's own reading: the CSP's effect on the repair rate was not
     above a rule-free neutral prefix's. The figures in the note are the
-    file's, so the note cannot drift from the evidence it cites."""
+    file's, so the note cannot drift from the evidence it cites.
+
+    The note also carries the adverse on-versus-off figures of the same
+    file, so it does not quote only the replay's least adverse reading: the
+    FLOWN A/B (score.ab: mission success on / off over its valid pairs, the
+    fail reason of every failed prefix-on flight, and the mean on-minus-off
+    repair rate) and the replay's CSP-minus-off repair rate, the replay
+    labelled as replayed open loop, not flown."""
     doc = json.loads((ROOT / "docs" / "data" / "csp_flights_20261107.json")
                      .read_text(encoding="utf-8"))
     rs = doc["replay_summary"]
     mean = rs["csp_minus_neutral"]["mean"]
     note = KR.PREFIX_CONSUMER_NOTE
     assert "docs/data/csp_flights_20261107.json" in note
-    assert f"mean {mean:.4f} over {rs['runs']} runs" in note, (mean, rs["runs"], note)
-    assert mean <= 0 and "not above a rule-free neutral prefix" in note
+    assert f"({rs['runs']} runs, not flown)" in note and "Replayed open loop" in note, note
+    assert f"minus a rule-free neutral prefix of its length mean {mean:.4f}" in note, (
+        mean, note)
+    assert mean <= 0 and "not above the neutral prefix's" in note
+    off_mean = rs["csp_minus_off_repair_rate"]["mean"]
+    assert f"repair rate CSP minus off mean {off_mean:+.4f}" in note, (off_mean, note)
+    # The flown A/B, from score.ab
+    ab = doc["score"]["ab"]
+    valid = [p for p in ab["pairs"] if p["valid"]]
+    assert len(valid) == ab["valid_pairs"]
+    won = sum(1 for p in valid if p["on"]["mission_success"] is True)
+    woff = sum(1 for p in valid if p["off"]["mission_success"] is True)
+    assert (f"over {len(valid)} seeds: mission success {won}/{len(valid)} on against "
+            f"{woff}/{len(valid)} off") in note, (won, woff, note)
+    reasons = {r for p in valid if p["on"]["mission_success"] is False
+               for r in p["on"]["fail_reasons"]}
+    assert won == 0 and reasons == {"unsafe_position_entered"}
+    assert "every prefix-on flight failed with unsafe_position_entered" in note
+    rr = ab["mean_delta_on_minus_off"]["repair_rate"]
+    assert f"repair rate on minus off mean {rr:+.4f}" in note, (rr, note)
+    assert rr > 0 and off_mean > 0 and "the CSP did not help" in note
     assert "not a learned VLA" in note and "by construction" in note
 
 
