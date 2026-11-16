@@ -1056,6 +1056,11 @@ def test_a_replay_bundle_follows_its_signers_standing_under_a_ca():
     assert signer.identity == rows[0]["identity"] and signer.identity.startswith("lab-ca:")
     sig = read_replay(before, trust)["signature"]
     assert sig["status"] == B.SIG_VERIFIED and "could not be applied" in sig["detail"], sig
+    # The record says what was established, as a policy bundle's does: no
+    # chain for a bare key, and that it was accepted under a retired one.
+    retired_on = json.loads(trust.read_text(encoding="utf-8"))["signers"][bare.identity]["retired_on"]
+    assert (sig["chain"], sig["authority"], sig["retired_on"]) == \
+        (B.CHAIN_NONE, None, retired_on), sig
     ok, why = verify_replay(before, trust, require_signature=True)
     assert ok, why
 
@@ -1064,8 +1069,27 @@ def test_a_replay_bundle_follows_its_signers_standing_under_a_ca():
     sig = read_replay(after, trust)["signature"]
     assert sig["signed_by"] == signer.identity and sig["status"] == B.SIG_VERIFIED, sig
     assert "chains to authority 'lab-ca'" in sig["detail"], sig["detail"]
+    assert (sig["chain"], sig["authority"], sig["retired_on"]) == \
+        (B.CHAIN_VERIFIED, "lab-ca", None), sig
     ok, why = verify_replay(after, trust, require_signature=True)
     assert ok, why
+
+    # The swap drill's replay half (tests/test_bundle.py has the policy
+    # bundle's): a second CA's leaf for the same key, pinned with
+    # register-cert, and the replay bundle re-signed under it. It ships no
+    # certificate, so it is trusted through the leaf the store pins.
+    H.generate_pki(d / "pki2", ca_cn="ITRI Test Root CA")
+    (d / "leaf2.pem").write_bytes(H.issue_policy_signer(d / "pki2", signer.public_raw))
+    assert B._main(["register-cert", "--authority", "itri-ca",
+                    "--ca-cert", str(d / "pki2" / "ca.cert.pem"), "--cert", str(d / "leaf2.pem"),
+                    "--identity", signer.identity, "--trust", str(trust)]) == 0
+    signer2 = B.load_signer(trust.parent / "k.pem", trust, authority="itri-ca")
+    assert signer2.identity.startswith("itri-ca:") and signer2.key_id == signer.key_id
+    swapped = write_replay(run, policy, d / "itri.tar.gz", signer=signer2)
+    sig = read_replay(swapped, trust)["signature"]
+    assert (sig["signed_by"], sig["status"], sig["chain"], sig["authority"]) == \
+        (signer2.identity, B.SIG_VERIFIED, B.CHAIN_VERIFIED, "itri-ca"), sig
+    assert read_replay(after, trust)["signature"]["chain"] == B.CHAIN_VERIFIED
 
     doc = json.loads(trust.read_text(encoding="utf-8"))
     del doc["authorities"]["lab-ca"]

@@ -750,8 +750,9 @@ def read_replay(path: str | Path,
     Raises `ValueError` on the first member whose bytes do not match the index,
     naming it, and on an Ed25519 signature that is present and wrong. Returns
     `{"index", "policy", "hash_form", "signature", "rows", "metrics", "kpi",
-    "manifest"}`; `signature` is `{"status", "signed_by", "detail"}` with one
-    of the statuses defined in `guardrail/bundle.py`.
+    "manifest"}`; `signature` is `{"status", "signed_by", "detail", "chain",
+    "authority", "retired_on"}` with one of the statuses (and of the chain
+    statuses) defined in `guardrail/bundle.py`.
     """
     with tarfile.open(path, "r:gz") as tar:
         index_bytes = _read(tar, INDEX_NAME)
@@ -834,8 +835,11 @@ def read_replay(path: str | Path,
                  if n.startswith(EPISODE) and _is_generation_file(n[len(EPISODE):])}
     _, gen_policies, gen_problems = generation_table(gen_blobs)
     return {"index": index, "policy": policy, "hash_form": form,
+            # chain / authority / retired_on (2026-11-16): what verify_signer
+            # established about the signer, as a policy bundle's record has.
             "signature": {"status": status, "signed_by": signed_by,
-                          "detail": detail},
+                          "detail": detail, "chain": res.chain,
+                          "authority": res.authority, "retired_on": res.retired_on},
             "rows": rows,
             "metrics": _json(EPISODE + "metrics.json", {}),
             "kpi": _json(EPISODE + "kpi.json"),

@@ -21,7 +21,9 @@ WHAT IT RECORDS
                authority here, "not-checked-here" where it is absent
   bundles      every bundle in bundles/: for a policy bundle its identity,
                signer, signature status and chain status (check_bundle); for
-               a replay bundle its signer and signature status (read_replay)
+               a replay bundle its signer, signature status and chain status
+               (read_replay); a retired identity accepted for either is named
+               (`retired_on`, a policy bundle's in `signer_retired_on`)
   drill        with --drill: the CA tests of tests/test_bundle.py run in this
                process on throw-away CAs (the swap of authority, the refused
                certificates, the retired key, the no-cryptography record),
@@ -57,6 +59,9 @@ DRILL_TESTS = (
     "test_a_certificate_that_does_not_chain_to_a_listed_authority_is_refused",
     "test_a_retired_bare_key_is_accepted_only_for_what_was_issued_before",
     "test_without_cryptography_the_chain_is_recorded_as_not_checked_never_as_verified",
+    "test_a_ca_reference_without_its_signer_record_is_refused",
+    "test_an_authority_vouches_only_for_pinned_keys_unless_its_entry_says_otherwise",
+    "test_a_key_certified_twice_signs_under_the_authority_named_never_by_file_order",
 )
 
 
@@ -130,11 +135,14 @@ def bundles(bundles_dir: Path, trust_store=None) -> dict:
                 from guardrail.replay import read_replay
                 sig = read_replay(p, trust_store)["signature"]
                 row = {"file": p.name, "signed_by": sig["signed_by"],
-                       "signature": sig["status"], "detail": sig["detail"]}
+                       "signature": sig["status"], "chain": sig["chain"],
+                       "authority": sig["authority"], "retired_on": sig["retired_on"],
+                       "detail": sig["detail"]}
             except (ValueError, KeyError, OSError, tarfile.TarError) as exc:
-                row = {"file": p.name, "signature": "REFUSED", "detail": str(exc)}
+                row = {"file": p.name, "signature": "REFUSED", "chain": "none",
+                       "detail": str(exc)}
             replay.append(row)
-            counts[f"replay / {row['signature']}"] += 1
+            counts[f"replay / {row['signature']} / chain {row['chain']}"] += 1
             continue
         try:
             chk = B.check_bundle(p, trust_store)
@@ -144,6 +152,7 @@ def bundles(bundles_dir: Path, trust_store=None) -> dict:
                    "issued_at": chk.manifest.get("issued_at"),
                    "signed_by": chk.signed_by, "signature": chk.signature,
                    "chain": chk.chain, "authority": chk.authority,
+                   "signer_retired_on": chk.retired_on,
                    "signer": chk.manifest.get("signer"), "detail": chk.detail}
         except (ValueError, OSError, tarfile.TarError) as exc:
             row = {"file": p.name, "signature": "REFUSED", "chain": "none",

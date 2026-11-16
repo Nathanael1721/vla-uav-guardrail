@@ -53,7 +53,10 @@ new identity. On a machine without the CA's key (the Orin), sync the trust
 store and run the tool without the flag. Which authority
 signs the delivered bundles (the lab or ITRI) is a question put to the PI
 (docs/PI-DECISIONS-2026-10-06.md, Q4.8) and not answered; swapping the
-authority changes the trust store, not this tool.
+authority changes the trust store, not this tool: `python -m guardrail.bundle
+register-cert` pins the leaf the other CA issued, and a key certified by two
+authorities is re-signed here with `--authority <name>` (or
+$VLAGUARD_SIGNING_AUTHORITY), never under one picked by file order.
 """
 from __future__ import annotations
 
@@ -183,6 +186,11 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--pki", default=None,
                     help="with --issue-cert: the CA's folder (default: the lab "
                          "PKI folder of guardrail.harness_service)")
+    ap.add_argument("--authority", default=None,
+                    help="sign under this listed authority's certificate when "
+                         "the key is certified by more than one (default "
+                         "$VLAGUARD_SIGNING_AUTHORITY; with neither, such a key "
+                         "is refused rather than one picked by file order)")
     args = ap.parse_args(argv)
     out_dir = Path(args.out_dir) if args.out_dir else None
     if args.pki and not args.issue_cert:
@@ -207,7 +215,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0 if all(r["ok"] for r in rows) else 1
 
     try:
-        signer = B.load_signer(args.key)
+        signer = B.load_signer(args.key, authority=args.authority)
         rows = build(args.policies, out_dir, signer=signer,
                      issued_at=args.issued_at)
     except (ValueError, RuntimeError, OSError) as exc:
