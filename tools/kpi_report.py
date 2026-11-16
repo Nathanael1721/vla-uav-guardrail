@@ -2398,7 +2398,9 @@ PREFIX_CONSUMER_NOTE = (
     "learned VLA. It reads the CSP's ranges, altitude band and forbidden polygons - the "
     "ones the Shield enforces - so part of the on / off delta holds by construction. The "
     "one A/B flown by a learned VLA reading the CSP as text (OpenVLA-7B, 7 Nov 2026, "
-    "outside this harness and not KPI-grade) is docs/data/csp_flights_20261107.json")
+    "outside this harness and not KPI-grade) is docs/data/csp_flights_20261107.json, "
+    "and there the CSP's effect was not above a rule-free neutral prefix's (repair "
+    "rate, CSP minus neutral, mean -0.0319 over 14 runs replayed open loop)")
 
 
 def _val(v):

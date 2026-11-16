@@ -1051,6 +1051,23 @@ def test_the_kpi_report_measures_the_ab_of_a_consuming_pilot_with_its_noise_floo
     assert f3["mean_repair_magnitude_mps"]["pairs_one_side_unmeasured"] == 1
 
 
+def test_the_note_quotes_the_learned_vla_ab_as_its_file_records_it():
+    """Every A/B through the consumer is printed beside the one A/B flown by
+    a learned VLA reading the CSP (verifier's plan for WP4-15, step 6), and
+    with that A/B's own reading: the CSP's effect on the repair rate was not
+    above a rule-free neutral prefix's. The figures in the note are the
+    file's, so the note cannot drift from the evidence it cites."""
+    doc = json.loads((ROOT / "docs" / "data" / "csp_flights_20261107.json")
+                     .read_text(encoding="utf-8"))
+    rs = doc["replay_summary"]
+    mean = rs["csp_minus_neutral"]["mean"]
+    note = KR.PREFIX_CONSUMER_NOTE
+    assert "docs/data/csp_flights_20261107.json" in note
+    assert f"mean {mean:.4f} over {rs['runs']} runs" in note, (mean, rs["runs"], note)
+    assert mean <= 0 and "not above a rule-free neutral prefix" in note
+    assert "not a learned VLA" in note and "by construction" in note
+
+
 def test_the_ab_section_is_unchanged_without_a_consuming_pilot():
     """Episodes of pilots that read nothing: n/m, with the section's text
     and the dict's keys exactly as before; a pilot that reads TEXT: measured
