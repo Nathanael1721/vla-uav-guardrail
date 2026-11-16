@@ -50,7 +50,8 @@ ITS OWN MODULE, NOT guardrail/vla_stub.py: that file's source is the
 `vla_model_hash` of the three stub pilots (guardrail.manifest.model_hash
 pins a code-only pilot by its module's bytes), and every KPI-grade campaign
 flown so far carries it. This pilot announces its own id, MODEL_ID, pinned
-by THIS file's source.
+by THIS file's source; the law it wraps is pinned beside it, by that law's
+own source, in its record (`wraps_model_hash`, consumer_record).
 
 STATIC POLICIES ONLY (`static_csp`). The CSP is compiled once, before
 take-off, from the policy the pilot's node loaded, with the spatial filter
@@ -204,13 +205,24 @@ def consumer_record(arm: str, csp: CSP | None, wraps: str | None = None) -> dict
     """What a prefix arm's pilot is, as the harness's arm record and the
     node's /vla/identity both write it: this module's id and adapter, the arm
     ("on": the CSP is consumed; "off": the same pilot without it), the law it
-    wraps, the fan and horizons, and the CSP's identity (csp_record)."""
+    wraps and that law's own source pin (`wraps_model_hash`:
+    guardrail.manifest.model_hash of its id), the fan and horizons, and the
+    CSP's identity (csp_record).
+
+    The pin is here because a consumer flight announces THIS module's id, so
+    the manifest's vla_model_hash pins prefix_consumer.py only: the wrapped
+    law (guardrail/vla_stub.py), which flies every action of the prefix-off
+    arm and the candidate of the prefix-on arm, would otherwise be pinned by
+    name alone, and a goto cell and a constant cell would share one
+    vla_model_hash."""
     if arm not in ("on", "off"):
         raise ValueError(f"prefix arm {arm!r} is not on or off")
     if (arm == "on") != (csp is not None):
         raise ValueError(f"prefix arm {arm!r} with {'a' if csp is not None else 'no'} CSP: "
                          f"the on arm consumes one, the off arm none")
+    from .manifest import model_hash
     return {"id": MODEL_ID, "adapter": ADAPTER, "arm": arm, "wraps": wraps,
+            "wraps_model_hash": model_hash(wraps) if wraps else None,
             "fan_deg": list(FAN_DEG), "horizon_step_s": HORIZON_STEP_S,
             **csp_record(csp)}
 

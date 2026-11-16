@@ -299,6 +299,19 @@ def test_the_consumer_is_its_own_model_and_the_stubs_keep_theirs():
     stub_src = (ROOT / "guardrail" / "vla_stub.py").read_text(encoding="utf-8")
     assert "prefix" not in stub_src.lower(), "guardrail/vla_stub.py must not change for this"
     assert SP.PREFIX_CONSUMERS == PC.ADAPTERS
+    # The law it wraps is pinned by ITS source, in the consumer's record: a
+    # consumer flight's vla_model_hash pins prefix_consumer.py only, so
+    # without this the law that flies the prefix-off arm is pinned by name.
+    vs_digest = hashlib.sha256((ROOT / "guardrail" / "vla_stub.py").read_bytes()).hexdigest()
+    pins = {}
+    for kind, mid in VS.MODEL_IDS.items():
+        rec = PC.consumer_record("off", None, mid)
+        assert rec["wraps_model_hash"] == model_hash(mid) == f"{mid}@src:{vs_digest}", rec
+        pins[kind] = rec["wraps_model_hash"]
+    assert len(set(pins.values())) == 3, "a goto and a constant cell share no pin"
+    assert PC.PrefixConsumer(_Law(Action4D()), wraps=VS.MODEL_IDS["goto"]).record()[
+        "wraps_model_hash"] == pins["goto"]
+    assert PC.consumer_record("off", None)["wraps_model_hash"] is None
 
 
 def test_the_csp_file_is_the_csp_that_is_consumed():
@@ -751,6 +764,51 @@ def test_the_rail_arguments_gain_one_flag_and_only_for_a_consumer():
             S.sitl_node_flags = saved
 
 
+def test_a_lengthened_campaign_checks_the_csp_over_the_flight_the_stub_is_sent():
+    """--hil-max-s-add sends the stub a longer --max-s, which its CSP must be
+    static over. corridor-drift-out at 17:29:30 on a Friday: nfz-school's
+    window (to 17:30) holds over the rail's own 65 s but not over 35 s more.
+    The stub refuses the lengthened arguments (the null: what the rig would
+    have done after SITL booted); rail_node_args - the dry run's and the
+    mission's - now refuses both arms first. At the cell's own clock the
+    lengthened mission is sent as before."""
+    arms = _arms("corridor-drift-out")
+    on, off = arms["prefix-on"], arms["prefix-off"]
+    spec = on.cell.spec
+    late = spec.model_copy(update={"mission": spec.mission.model_copy(
+        update={"clock_start": datetime(2026, 9, 4, 17, 29, 30)})})
+    S.prefix_csp(late, None, DEFAULTS, 1001)
+    try:
+        S.prefix_csp(late, None, DEFAULTS, 1001, max_s_add=35.0)
+    except ValueError as e:
+        assert "17:31:00" in str(e), e
+    else:
+        raise AssertionError("not static over the lengthened flight, yet compiled")
+    args = S.rail_node_args(late, 1001, DEFAULTS, backend="sitl", episode=on)
+    longer = [a if not a.startswith("--max-s=") else
+              f"--max-s={S._num(S.rail_max_s(30.0, 35.0))}" for a in args]
+    vs, _ = V.make_parser().parse_known_args(longer)
+    vs.policy = str(ROOT / vs.policy)
+    assert V.flight_length_from(vs.max_s) == S.rail_max_s(30.0) + 35.0
+    try:
+        V.prefix_preflight(vs)
+    except ValueError as e:
+        assert "a rule switches" in str(e), e
+    else:
+        raise AssertionError("the stub flew a CSP that is not static over its --max-s")
+    for ep in (on, off):
+        try:
+            S.rail_node_args(late, 1001, DEFAULTS, backend="sitl", episode=ep, max_s_add=35.0)
+        except S.UnsupportedScenario as e:
+            assert "--hil-max-s-add" in str(e) and ep.arm_tag in str(e), e
+        else:
+            raise AssertionError(f"{ep.arm_tag}: a lengthened mission the stub refuses was sent")
+    # no consumer, no check; the cell's own clock, the lengthened flight as before
+    assert S.rail_node_args(late, 1001, DEFAULTS, backend="sitl", max_s_add=35.0)
+    got = S.rail_node_args(spec, 1001, DEFAULTS, backend="sitl", episode=on, max_s_add=35.0)
+    assert f"--max-s={S._num(S.rail_max_s(30.0, 35.0))}" in got and got[-1] == "--prefix=on"
+
+
 def test_a_rail_flight_that_did_not_fly_its_arm_is_not_that_arms_flight():
     """The scenario record of a consumer mission names the arm and the CSP
     the node must announce; a node that announced no prefix arm (it flew its
@@ -784,12 +842,20 @@ def test_a_rail_flight_that_did_not_fly_its_arm_is_not_that_arms_flight():
                                                       "kind": "stub"}}, meta)
     assert len(none) == 1 and "announced no prefix arm" in none[0], none
     assert "announced no prefix arm" in S.prefix_flight_problems({}, meta)[0]
+    assert c["wraps_model_hash"].startswith(VS.MODEL_IDS["constant"] + "@src:"), c
     for change, word in (({"arm": "off"}, "prefix arm"),
                          ({"action_set_sha256": "sha256:" + "1" * 64}, "action sets"),
                          ({"wraps": VS.MODEL_IDS["goto"]}, "pilot law"),
+                         # the same law's id from another source (vla_stub.py
+                         # changed on the rig), and a node that pins none
+                         ({"wraps_model_hash": VS.MODEL_IDS["constant"] + "@src:" + "3" * 64},
+                          "source pin"),
+                         ({"wraps_model_hash": None}, "source pin"),
                          ({"policy_hash": "sha256:" + "2" * 64}, "policy")):
         got = S.prefix_flight_problems(ident(**change), meta)
         assert len(got) == 1 and word in got[0], (change, got)
+    assert S.manifest_extras(meta["arm_record"])["prefix_wraps_model_hash"] == \
+        c["wraps_model_hash"]
     wrong_model = {"vla_identity": {"model_id": VS.MODEL_IDS["constant"], "prefix": c}}
     assert any("model" in p for p in S.prefix_flight_problems(wrong_model, meta))
     # No consumer: the record it always was, and nothing to check.

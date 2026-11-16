@@ -2636,7 +2636,9 @@ def manifest_extras(arm: dict | None) -> dict | None:
     with the consumer's own source pin (`prefix_consumer_model_hash`:
     guardrail.manifest.model_hash of its id - a headless manifest's
     vla_model_hash names this harness's pilot function, not the consumer's
-    module), its adapter, the action sets it flew and the A/A repeat."""
+    module), its adapter, the wrapped law's own source pin
+    (`prefix_wraps_model_hash`), the action sets it flew and the A/A
+    repeat."""
     if not arm:
         return None
     out = dict(arm.get("manifest_extras") or {})
@@ -2649,6 +2651,7 @@ def manifest_extras(arm: dict | None) -> dict | None:
                    prefix_consumer_model_hash=(model_hash(c["id"]) if c.get("id")
                                                else None),
                    prefix_consumer_adapter=c.get("adapter"),
+                   prefix_wraps_model_hash=c.get("wraps_model_hash"),
                    prefix_action_set_sha256=c.get("action_set_sha256"),
                    prefix_repeat=arm.get("repeat", 0))
     return out
@@ -2677,7 +2680,8 @@ def prefix_consumer_refusal(spec: ScenarioSpec) -> str | None:
     return None
 
 
-def prefix_csp(spec: ScenarioSpec, policy=None, defaults=None, seed: int = 0):
+def prefix_csp(spec: ScenarioSpec, policy=None, defaults=None, seed: int = 0, *,
+               max_s_add: float = 0.0):
     """The CSP the prefix consumer flies this cell and seed on: compiled from
     the cell's policy for the mission as the rails are told it (rail_mission,
     each number as rail_node_args writes it), at the scenario's clock, static
@@ -2685,8 +2689,12 @@ def prefix_csp(spec: ScenarioSpec, policy=None, defaults=None, seed: int = 0):
     VLA stub compiles its own from the same arguments
     (sitl/ros2_vla_stub_node.py --prefix on), so a cell and seed fly one CSP
     headless and on a rail, and run_hil checks the node's against this one.
-    Raises ValueError when no such CSP exists (a rule switching in flight,
-    the P0 rules over the token budget, a rule the Shield does not enforce)."""
+    `max_s_add`: a lengthened hil campaign's seconds past the rail cap
+    (--hil-max-s-add), which the stub is sent in --max-s and checks over; the
+    CSP itself does not depend on it, only whether it is static that long
+    (rail_node_args checks it so, before the rig is touched). Raises
+    ValueError when no such CSP exists (a rule switching in flight, the P0
+    rules over the token budget, a rule the Shield does not enforce)."""
     from guardrail.csp import CSPBudgetExceeded, CSPUnenforcedRules
     pol = policy if policy is not None else spec.policy.load(ROOT)
     rm = rail_mission(spec, pol, defaults, seed)
@@ -2697,7 +2705,7 @@ def prefix_csp(spec: ScenarioSpec, policy=None, defaults=None, seed: int = 0):
     mission = PC.consumer_mission(tuple(r(v) for v in rm["start"]), target, r(rm["speed"]))
     try:
         return PC.static_csp(pol, mission, now=rm["clock_start"],
-                             duration_s=rail_max_s(rm["max_s"]))
+                             duration_s=rail_max_s(rm["max_s"], max_s_add))
     except (CSPBudgetExceeded, CSPUnenforcedRules) as e:
         raise ValueError(f"{spec.scenario_id}: no CSP for the prefix consumer "
                          f"({type(e).__name__}: {e})") from e
@@ -2777,7 +2785,9 @@ def prefix_flight_problems(metrics: dict, meta: dict) -> list[str]:
         out.append(f"the VLA node's model is {ident.get('model_id')!r}, the arm's "
                    f"{c.get('id')!r}")
     for key, what in (("id", "consumer"), ("adapter", "adapter"), ("arm", "prefix arm"),
-                      ("wraps", "wrapped pilot law"), ("policy_hash", "CSP's policy"),
+                      ("wraps", "wrapped pilot law"),
+                      ("wraps_model_hash", "wrapped law's source pin"),
+                      ("policy_hash", "CSP's policy"),
                       ("action_set_sha256", "CSP's action sets")):
         if got.get(key) != c.get(key):
             out.append(f"the VLA node's {what} is {got.get(key)!r}, the arm's "
@@ -4040,6 +4050,18 @@ def rail_node_args(spec: ScenarioSpec, seed: int = 0, defaults=None, *,
     if meta:
         args.append(f"--scenario-meta={meta}")
     if episode is not None and getattr(episode, "prefix_consumer", None):
+        if max_s_add:
+            # The stub checks its CSP is static over the --max-s above, the
+            # lengthened one; the arm record was checked over the rail's own
+            # length. Checked here too, so the dry run and the mission refuse
+            # it before SITL boots - both arms, so no unpaired off arm flies.
+            try:
+                prefix_csp(spec, pol, defaults, seed, max_s_add=max_s_add)
+            except Exception as e:                       # noqa: BLE001
+                raise UnsupportedScenario(
+                    f"prefix-consumer arm {getattr(episode, 'arm_tag', episode.prefix)} "
+                    f"flown {float(max_s_add):g} s longer (--hil-max-s-add): its CSP is not "
+                    f"static over the lengthened flight ({type(e).__name__}: {e})") from e
         args.append(f"--prefix={episode.prefix}")
     check_rail_flags(args)
     return args

@@ -53,7 +53,9 @@ and refused unless its action sets hold for the whole flight (--max-s):
 static policies only - and `off` with none, the same pilot without its
 Prefix. Either way the node announces the consumer's own model id
 (guardrail.prefix_consumer.MODEL_ID) and, under `prefix` on /vla/identity,
-the arm, the law it wraps and the identity of the CSP it flies (its policy
+the arm, the law it wraps with that law's own source pin (`wraps_model_hash`:
+the manifest's vla_model_hash pins the consumer's module only) and the
+identity of the CSP it flies (its policy
 hash, its action sets' SHA-256, its content hash); the CSP is written to
 demo/out/<--tag>/vla_prefix/csp_g0.json. Without `--prefix` - every mission
 flown until this date - nothing here runs: the law is published as it
