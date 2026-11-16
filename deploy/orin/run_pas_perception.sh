@@ -53,6 +53,12 @@
 #              --weights <DroneCATS-Cosmos3-Edge-2B folder> --port <VLA_PORT>
 #              --front-source detector  (its OWN venv, ~/vla-dronecats-env,
 #              deploy/orin/agx_dronecats_env.sh: transformers 5)
+#   servo      NO VLA: the node's hand-written detector follow (--pilot servo
+#              --mission follow), the backend table's C2 null
+#              (tools/vla_backend_table.py). No VLA option is passed, no VLA
+#              server is needed or checked, and --target-estimator (the VLA
+#              follow's) is refused by the node; --identity and
+#              --negative-query are the follow's own and pass through.
 #   racevla    VLAFront, each step flown as a rate over 1.0 s (the server's
 #              --horizon-s default), pipelined, one request per tick.
 #              Server: demo/vla_server_foreign.py serve --model racevla
@@ -61,23 +67,24 @@
 #              under drone6_all (openvla-7b+drone_set6_all+...), as that
 #              server's own docstring gives it; the server names the model
 #              drone6_all from the parent either way.
-# WHAT EACH FAMILY STILL LACKS HERE (2026-11-16). Only aiotvla has flown this
-# node's follow, on any rail. For the other three the option set parses and
-# the node's own checks accept it (tests/test_deploy_configs.py), and that is
-# all that is known:
-#   aerialvla  has flown this node as a GOTO and an approach on ArduPilot at
-#              dev (CHANGELOG 2026-10-29), never its follow and never on hil.
-#              It answers in about 1.1 s on the board (bf16, merged), so the
-#              feed between ticks is left off; --target-estimator's memory
-#              hint is a compass phrase it reads, which has not been flown.
-#   dronecats  has never been driven through this node (its flights went
-#              through demo/vla_fly.py). Its server runs from another venv
-#              than the node. It keeps a history per connection and answers
-#              `think` and `finished`; how this node's hold and close rules
-#              meet them is unflown.
-#   racevla    has never been driven through this node either. Its forward
-#              commands stayed under 0.3 m/s on simple_flight (CHANGELOG
-#              2026-10-27), so a car at 4.5 m/s is expected to pull away.
+# WHAT EACH FAMILY STILL LACKS HERE (updated 2026-11-16 evening, after the
+# backend table's C2 flights; deploy/evidence/vla_backend_table.md has each
+# flight). Every family below has now flown this node's follow on hil, with
+# P0 escapes 0 on every flight; none of the three followed the car the way
+# aiotvla does:
+#   aerialvla  a shakedown and 3 C2 flights; each lost the car (target_lost),
+#              within 30 m of it on 0.05-0.16 of the ticks. It answers in
+#              about 1.1 s on the board (bf16, merged), so the feed between
+#              ticks is left off.
+#   dronecats  a shakedown and 3 C2 flights; each lost the car, within 30 m
+#              on 0.13-0.19 of the ticks. Its server runs from another venv
+#              than the node.
+#   racevla    a shakedown and 1 C2 flight that lost the car (within 30 m on
+#              0.06 of the ticks); 2 more flights never started: the start
+#              gate (the detector's, not the model's) found no red car within
+#              30 m in 330 s. Its forward commands stayed under 0.3 m/s on
+#              simple_flight (CHANGELOG 2026-10-27).
+#   servo      the C2 null: not yet flown through this script.
 # A first flight of each needs a shakedown (SECONDS_=60) before a 420 s one,
 # with _shake in its TAG (TAG=pas_hil_<family>_shake_01): the backend table
 # (tools/vla_backend_table.py, C2) does not count a flight so marked.
@@ -91,7 +98,8 @@
 # --scene-mode / --scene-only, --sim-host, --camera), in any abbreviation
 # argparse would take. Environment knobs:
 #   G1_VERDICT  the desktop's demo/out/g1_*/g1_verdict.json, copied here (required)
-#   FAMILY      aiotvla (default), aerialvla, dronecats or racevla: above
+#   FAMILY      aiotvla (default), aerialvla, dronecats, racevla, or servo (no VLA,
+#               the C2 null): above
 #   TAG         the run folder under demo/out/ (default pas_hil_aiot_<date>,
 #               pas_hil_aiot_<stress>_<date> with STRESS; pas_hil_<family>_...
 #               for another family)
@@ -180,8 +188,11 @@ case "$FAMILY" in
                  --cadence pipelined --allow-unstamped-pipelined
                  --vla-feed "${VLA_FEED:-tick}"
                  --vla-cruise-mps 4.5 --vla-speed-cap-mps 5) ;;
+  servo)
+    tag_family=servo
+    family_args=() ;;
   *)
-    die 64 "FAMILY '$FAMILY' is none of aiotvla aerialvla dronecats racevla" ;;
+    die 64 "FAMILY '$FAMILY' is none of aiotvla aerialvla dronecats racevla servo" ;;
 esac
 TAG="${TAG:-pas_hil_${tag_family}_${STRESS:+${STRESS}_}$(date +%Y%m%d_%H%M%S)}"
 case "$TAG" in
@@ -214,7 +225,14 @@ args=(demo/pas_ardupilot/perception_node.py
       --link mavros --scene-mode attach --sim-host "$DESKTOP_IP"
       --g1-verdict "$G1_VERDICT" --tag "$TAG" --max-s "$SECONDS_"
       --pilot vla --mission follow --vla-server "127.0.0.1:$VLA_PORT"
-      "${family_args[@]}")
+      ${family_args[@]+"${family_args[@]}"})
+# The C2 null flies the hand-written follow: no VLA pilot, no server.
+if [ "$FAMILY" = servo ]; then
+  args=(demo/pas_ardupilot/perception_node.py
+        --link mavros --scene-mode attach --sim-host "$DESKTOP_IP"
+        --g1-verdict "$G1_VERDICT" --tag "$TAG" --max-s "$SECONDS_"
+        --pilot servo --mission follow)
+fi
 if [ -n "${BUNDLE:-}" ]; then
   args+=(--bundle "$BUNDLE")
 fi
@@ -276,9 +294,10 @@ python - "$DESKTOP_IP" "$VLA_PORT" "$FAMILY" <<'EOF'
 import socket
 import sys
 desk, vla_port, family = sys.argv[1], int(sys.argv[2]), sys.argv[3]
-for host, port, what in ((desk, 8989, "Project AirSim (topics)"),
-                         (desk, 8990, "Project AirSim (services)"),
-                         ("127.0.0.1", vla_port, f"the VLA server (FAMILY={family})")):
+ends = [(desk, 8989, "Project AirSim (topics)"), (desk, 8990, "Project AirSim (services)")]
+if family != "servo":
+    ends.append(("127.0.0.1", vla_port, f"the VLA server (FAMILY={family})"))
+for host, port, what in ends:
     s = socket.socket()
     s.settimeout(3)
     try:
@@ -288,7 +307,9 @@ for host, port, what in ((desk, 8989, "Project AirSim (topics)"),
                  f"simulator, does the desktop's firewall let the Orin in)?")
     finally:
         s.close()
-print(f"==> Project AirSim {desk} (8989, 8990) and the VLA server 127.0.0.1:{vla_port} reachable")
+print(f"==> Project AirSim {desk} (8989, 8990)"
+      + ("" if family == "servo" else f" and the VLA server 127.0.0.1:{vla_port}")
+      + " reachable")
 EOF
 
 echo "==> ROS_DOMAIN_ID=$ROS_DOMAIN_ID RMW_IMPLEMENTATION=$RMW_IMPLEMENTATION peers" \

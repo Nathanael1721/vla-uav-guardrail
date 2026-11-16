@@ -2651,6 +2651,19 @@ def test_the_family_switch_leaves_aiotvla_as_it_flew_and_gives_each_family_its_o
         # the feed can still be asked for, and extra node arguments pass through
         o = options(printed(_pas_perception(["--seed", "7"], FAMILY=fam, VLA_FEED="stream")))
         assert (o["--vla-feed"], o["--seed"]) == ("stream", "7"), (fam, o)
+    # FAMILY=servo: the C2 null, the hand-written follow - no VLA pilot, no
+    # VLA option, no server; the node accepts it with the follow's own C2
+    # arguments (identity, negative query) and refuses the VLA's estimator
+    r = _pas_perception([], FAMILY="servo", TAG=None)
+    assert r.returncode == 0, r.stderr
+    av = printed(r)
+    o = options(av)
+    assert av[:9] == fixed and (o["--pilot"], o["--mission"]) == ("servo", "follow"), av
+    assert o["--tag"].startswith("pas_hil_servo_2"), o["--tag"]
+    assert not [a for a in av if a.startswith("--vla")], av
+    null_args = [a for a in c2_args if a != "--target-estimator"]
+    assert _node_reads(av[2:] + null_args)[:2] == ["servo", "follow"]
+    assert _node_reads(av[2:] + null_args)[8] is True, "--identity is the follow's own"
     for bad in ("openvla", "AIOTVLA", "aiotvla "):
         r = _pas_perception([], FAMILY=bad)
         assert r.returncode == 64 and "FAMILY" in r.stderr and "EXEC:" not in r.stdout, \
