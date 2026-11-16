@@ -1302,6 +1302,24 @@ def test_the_hud_panel_is_the_city_rails_fed_per_tick():
     assert VM.panel_lines({k: v for k, v in h.items() if k != "rail_label"}) == lines
 
 
+def test_a_vla_flight_records_no_track_label_its_frames_never_drew():
+    """On a VLA flight the VLA panel replaces the rail's mode words (only
+    the FSM part is kept): metrics.json recording.policy_hud.track_label
+    names a track label only when a frame drew it. Here none did (the rail's
+    rows are all "vla" ticks, and the panel stands in for its words), so it
+    is None with 0 ticks - before, every VLA flight recorded TARGET LOCKED,
+    words no frame of its video showed."""
+    SpyRecorder.made.clear()
+    out = _follow(recorder_cls=SpyRecorder, max_s="20", extra=("--save-view",),
+                  camera=FrameCam(None))
+    assert out.rc == 0 and len(SpyRecorder.made) == 1
+    assert {r.get("mode") for r in _rows(out.run)} == {"vla"}
+    huds = SpyRecorder.made[0].huds
+    assert huds and all(h.get("rail_label") for h in huds), huds[0]
+    ph = _json(out.run, "metrics.json")["recording"]["policy_hud"]
+    assert ph["track_label"] is None and ph["track_label_ticks"] == 0, ph
+
+
 def test_the_vla_panel_draws_on_this_rails_frames():
     """The recorder thread's annotate (vla_mission.annotate_vla) on the HUD
     dicts this rail hands it: Pillow only (lab; CI installs none: SKIP)."""

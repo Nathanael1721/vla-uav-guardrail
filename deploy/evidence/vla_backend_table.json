@@ -55,7 +55,7 @@
   "C2_follow_closed_loop": {
    "added": "2026-11-16",
    "added_after_the_choice": "C2 was added on 16 November 2026, after the lab named AIoT-VLA v10b for the follow task on 15 November 2026. It was added because that choice rests on a follow, and C1 is a GOTO to a coordinate that a follow-only model cannot fly. A test written after the choice it bears on is not a prediction: C2 describes the chosen backend, and compares it only with backends that flew the same test",
-   "scenario": "the Project AirSim follow: 'follow a red car' in CityLife under the perception node's default signed bundle (follow_car_citylife), cruise altitude 8 m; the mission clock starts when the start gate passes (5 detector inferences in a row with a plausible box within 30 m)",
+   "scenario": "the Project AirSim follow: 'follow a red car' in CityLife under the perception node's default signed bundle (follow_car_citylife), cruise altitude 8 m; the mission clock starts when the start gate passes. With --identity, as C2 flies, the gate is follow_vlm.Reacquirer with no anchor: 10 identity-ok boxes in a row within 30 m (twice the node's --start-when-seen 5), of one object (each within 3 m + 3 m/s x the time since the last pick) and seen moving, an inference with no acceptable box or a box of another place restarting the streak, a place seen not to move refused; its streak and refusals are metrics.json start_gate.identity_gate. A run flown with --identity whose metrics.json start_gate records no `rule` was flown before the node stated this rule: its [start] line printed the pixel gate's streak and a timeout's end_reason reads '5 inferences in a row', though the rule above is the one that decided",
    "rail": "hil: Project AirSim and ArduPilot SITL on the desktop; MAVROS 2, the perception node (demo/pas_ardupilot/perception_node.py --pilot vla --mission follow), the Shield and the VLA server on the Jetson Orin",
    "launch": {
     "script": "deploy/orin/run_pas_perception.sh FAMILY=<family>",
@@ -77,10 +77,10 @@
    "counts_as_c2": [
     "KPI-grade by the run's own kpi.json (hil, sim_speedup 1, signed bundle, clean commit)",
     "no perception stressor, no policy hot-applied in flight, the scenario's own instruction (not a paraphrase)",
-    "--identity and --target-estimator on, the family's feed, and for the stream feed a FrontCamera capture interval of 0.05 s, each as the run's params record it",
+    "--identity and --target-estimator on, the start gate at the node's defaults (--start-when-seen 5, --start-max-range-m 30), the family's feed, and for the stream feed a FrontCamera capture interval of 0.05 s, each as the run's params record it",
     "the negative query ['a traffic light'] in the run's params, and the node's default signed bundle (follow-car-citylife-v<version>) as the run's policy_source",
     "flown alone: nothing else of the lab's running on the desktop or the Orin (no run folder records this; the flights known not to be are listed by hand in tools/vla_backend_table.py C2_NOT_ALONE)",
-    "the start gate passed (a flight that never started has no mission to score)",
+    "the start gate passed (a flight that never started has no mission to score; one that would be C2 but for a gate that timed out is censored: shown beside its backend's C2 flights as 'gate timed out N: censored, not scored, not counted toward the 3', so a backend's n is never silently smaller; the protocol flies another in its place, and the C2 count against the 3 says whether that is done)",
     "the 420 s limit, by the limit the run's mission monitor records it was given: a flight given that limit is C2 however it ended, one given another is not; where a folder records no limit, a flight that ran to a shorter one or ended early without losing the car is not C2; and a shakedown is not C2 (the operator marks it '_shake' in its tag)"
    ],
    "flights_per_backend": 3,
@@ -94,12 +94,15 @@
    ],
    "reported": "every flight on its own line and the range over the backend's C2 flights; a flight that lost the car is a C2 flight, not a discard; a value a run did not record is shown as '-', never as 0",
    "nulls": [
-    "the hand-written follow on the same rail (--pilot servo): the no-learning reference"
+    "the hand-written follow on the same rail (--pilot servo, FAMILY=servo): the no-learning reference as flown - the perception node's FollowPilot, a box-width P-servo with no target estimator, no target lock and no lost end"
    ],
+   "null_as_flown": "The null is the perception node's FollowPilot (demo/pas_ardupilot/perception_node.py, --pilot servo --mission follow --identity, no --target-estimator: the node refuses one for the servo): a box-width P-servo (follow_vlm.servo) at the node's defaults, want_width 0.10 and speed_max 4.0 m/s, which deploy/orin/run_pas_perception.sh does not override. It has no target estimator, no target lock (with --identity and no estimator the Grounder runs no lock), and no lost end: with no fresh box it searches - forward 0, a yaw sweep - and flies on to max_s. It is NOT the follow_vlm estimator follow (want_width 0.16, speed_max 5.0, a target estimator, catch-up and a search planner, e.g. agx_manual_20261103 on simple_flight) behind the older hand-written numbers of 0.95-0.98 within 30 m",
+   "null_under_the_vla_end_rule": "the null has no lost end, so beside its share as flown each null flight is replayed under the VLAs' own end rule from its own files: a tick's wall time is its flight_log.jsonl `t` plus the one offset that puts every tick at or after the detections.jsonl row its `det_seq` names (the largest row t - tick t); a tick has a fresh box when the newest detections.jsonl row with a box published by then was captured (t_capture, else t_cap) at most det_fresh_s before it; the flight ends on the first tick lost_timeout_s after the last tick with a fresh box (after the first tick if none had one); and the share within 30 m is the node's, over the ticks up to that one whose subject pose was read. lost_timeout_s and det_fresh_s are the ones every C2 VLA flight records (metrics.json vla.mission.monitor.config); the column is shown only when they all record them and the same replay ends each C2 VLA flight within 5 s of where its own monitor did",
+   "gate_timeouts": "a flight that would be C2 but for a start gate that timed out (its only other faults the ones a flight with no mission gets: its rail's topology stamp, and kpi.json grade reasons that say no mission was flown) is censored: listed, counted beside its backend's C2 flights, not scored and not counted toward its 3; the protocol flies another in its place. A flight of the null is never censored, and one of a backend that is not a row is never listed as censored: neither has a C2 count to stand beside (a timed-out flight of either is in the list of flights that are not C2)",
    "not_separated": "the detector supplies the hint, and while it has no box the model is not asked: a C2 score is the model's and the detector's together"
   }
  },
- "created_utc": "2026-11-16T12:07:20Z",
+ "created_utc": "2026-11-16T17:48:21Z",
  "model_root": "D:/models",
  "rows": [
   {
@@ -474,7 +477,7 @@
      "source": {
       "file": "models/vla_policy_v2.metrics.json",
       "sha256": "91442029f993ac3e7128485494ebcd4f9a65a1f9b3da3187d0b4c0bd16d33810",
-      "file_date": "2026-11-16"
+      "file_date": "2026-11-17"
      }
     }
    ],
@@ -929,7 +932,7 @@
      "source": {
       "file": "deploy/evidence/hil/vla_bf16_check.json",
       "sha256": "5b9ab4aa66b30d325709a90a62ea4a8d1e575b005aa7c5c146133a7111c21cce",
-      "file_date": "2026-11-16"
+      "file_date": "2026-11-17"
      }
     }
    ],
@@ -1444,7 +1447,7 @@
      "source": {
       "file": "training/eval_base_deploy.json",
       "sha256": "10738bd6a7170310720b2df9a8b22e1804d4e9d5d840f66a7fdd0adf0360e374",
-      "file_date": "2026-11-16"
+      "file_date": "2026-11-17"
      }
     },
     {
@@ -1468,7 +1471,7 @@
      "source": {
       "file": "training/eval_baseline.json",
       "sha256": "3365b7e9cf7d67ce9a60c5f2c5fefba76177bad47e6a49966bdbcd1df7a4f7da",
-      "file_date": "2026-11-16"
+      "file_date": "2026-11-17"
      }
     }
    ],
@@ -1573,7 +1576,7 @@
      "source": {
       "file": "training/eval_ft2_deploy.json",
       "sha256": "024c26d0bcbd3a38aea5533f1899333b10914f76c9900210b89135fa638dca38",
-      "file_date": "2026-11-16"
+      "file_date": "2026-11-17"
      }
     },
     {
@@ -1597,7 +1600,7 @@
      "source": {
       "file": "training/eval_ft2_e1.json",
       "sha256": "c04c142da9be1ff2a31cb183552212bcbd9856fcc976b8f9c427296f68ab2a68",
-      "file_date": "2026-11-16"
+      "file_date": "2026-11-17"
      }
     },
     {
@@ -1621,7 +1624,7 @@
      "source": {
       "file": "training/eval_ft2_yg04.json",
       "sha256": "61abe931ac79f610bef7cbd20bf223e8445b953b511db42dba07ba9531ec6c64",
-      "file_date": "2026-11-16"
+      "file_date": "2026-11-17"
      }
     }
    ],
@@ -1703,7 +1706,7 @@
      "source": {
       "file": "deploy/evidence/hil/aerialvla_serving_bench_agx.json",
       "sha256": "9e9c616bb5c365fba8baed6907b1ba788dddd087dc29d4a6cd488c3784afe587",
-      "file_date": "2026-11-16"
+      "file_date": "2026-11-17"
      }
     },
     {
@@ -1740,7 +1743,7 @@
      "source": {
       "file": "deploy/evidence/hil/aerialvla_serving_bench_agx_merged.json",
       "sha256": "97265fad42709b293185edf4797d55e3db0aafb7b81b1a0717f431a495105cc1",
-      "file_date": "2026-11-16"
+      "file_date": "2026-11-17"
      }
     },
     {
@@ -1783,6 +1786,39 @@
      "bundle": "follow-car-citylife-v0.1.3.tar.gz",
      "max_s_given": 420.0,
      "start_gate_reached": true,
+     "gate_outcome": "reached",
+     "gate_identity_best_streak": 22,
+     "gate_identity_refused": {
+      "too far": 57,
+      "not ok": 12
+     },
+     "gate_needed": 5.0,
+     "gate_identity_need_in_a_row": null,
+     "gate_identity_outcomes": null,
+     "gate_identity_moving_test_refused": null,
+     "gate_identity_static_unjudged": null,
+     "start_when_seen": 5.0,
+     "start_max_range_m": 30.0,
+     "gate_identity_closest_not_moving": null,
+     "gate_identity_last_not_moving": null,
+     "gate_rule": null,
+     "grant_topology": "hil",
+     "kpi_grade_reasons": [],
+     "pilot_param": "vla",
+     "identity_param": true,
+     "target_estimator_param": true,
+     "want_width": 0.1,
+     "speed_max": 4.0,
+     "lock": {
+      "kind": "TargetLock",
+      "strict": true,
+      "gate_frac": 0.12,
+      "prior": "the target estimator (--target-estimator: demo/subject_track.SubjectTrack)"
+     },
+     "monitor_end_rule": {
+      "lost_timeout_s": 90.0,
+      "det_fresh_s": 1.0
+     },
      "summary_only": false,
      "source": {
       "file": "F:/vla_drone_offload/jetson_runs/pas_hil_aerialvla_c2_01_20261116/metrics.json",
@@ -1790,7 +1826,22 @@
       "file_date": "2026-11-16"
      },
      "not_c2": [],
-     "protocol": "C2"
+     "protocol": "C2",
+     "c2_censored": false,
+     "end_rule_replay": {
+      "ends": true,
+      "end_tick": 1530,
+      "end_t_s": 153.18,
+      "last_t_s": 155.38,
+      "ticks": 1552,
+      "max_gap_s": 90.1,
+      "final_gap_s": 90.1,
+      "frac_within_30m": 0.1650294695481336,
+      "within_30m": 252,
+      "ticks_read": 1527,
+      "lost_timeout_s": 90.0,
+      "det_fresh_s": 1.0
+     }
     },
     {
      "backend": "aerialvla_bf16",
@@ -1834,6 +1885,40 @@
      "bundle": "follow-car-citylife-v0.1.3.tar.gz",
      "max_s_given": 420.0,
      "start_gate_reached": true,
+     "gate_outcome": "reached",
+     "gate_identity_best_streak": 21,
+     "gate_identity_refused": {
+      "too far": 44,
+      "not ok": 8,
+      "static": 18
+     },
+     "gate_needed": 5.0,
+     "gate_identity_need_in_a_row": null,
+     "gate_identity_outcomes": null,
+     "gate_identity_moving_test_refused": null,
+     "gate_identity_static_unjudged": null,
+     "start_when_seen": 5.0,
+     "start_max_range_m": 30.0,
+     "gate_identity_closest_not_moving": null,
+     "gate_identity_last_not_moving": null,
+     "gate_rule": null,
+     "grant_topology": "hil",
+     "kpi_grade_reasons": [],
+     "pilot_param": "vla",
+     "identity_param": true,
+     "target_estimator_param": true,
+     "want_width": 0.1,
+     "speed_max": 4.0,
+     "lock": {
+      "kind": "TargetLock",
+      "strict": true,
+      "gate_frac": 0.12,
+      "prior": "the target estimator (--target-estimator: demo/subject_track.SubjectTrack)"
+     },
+     "monitor_end_rule": {
+      "lost_timeout_s": 90.0,
+      "det_fresh_s": 1.0
+     },
      "summary_only": false,
      "source": {
       "file": "F:/vla_drone_offload/jetson_runs/pas_hil_aerialvla_c2_02_20261116/metrics.json",
@@ -1841,7 +1926,22 @@
       "file_date": "2026-11-16"
      },
      "not_c2": [],
-     "protocol": "C2"
+     "protocol": "C2",
+     "c2_censored": false,
+     "end_rule_replay": {
+      "ends": false,
+      "end_tick": 899,
+      "end_t_s": 90.07,
+      "last_t_s": 90.07,
+      "ticks": 899,
+      "max_gap_s": 89.8,
+      "final_gap_s": 89.8,
+      "frac_within_30m": 0.10233592880978866,
+      "within_30m": 92,
+      "ticks_read": 899,
+      "lost_timeout_s": 90.0,
+      "det_fresh_s": 1.0
+     }
     },
     {
      "backend": "aerialvla_bf16",
@@ -1885,6 +1985,40 @@
      "bundle": "follow-car-citylife-v0.1.3.tar.gz",
      "max_s_given": 420.0,
      "start_gate_reached": true,
+     "gate_outcome": "reached",
+     "gate_identity_best_streak": 22,
+     "gate_identity_refused": {
+      "not ok": 18,
+      "too far": 55,
+      "static": 19
+     },
+     "gate_needed": 5.0,
+     "gate_identity_need_in_a_row": null,
+     "gate_identity_outcomes": null,
+     "gate_identity_moving_test_refused": null,
+     "gate_identity_static_unjudged": null,
+     "start_when_seen": 5.0,
+     "start_max_range_m": 30.0,
+     "gate_identity_closest_not_moving": null,
+     "gate_identity_last_not_moving": null,
+     "gate_rule": null,
+     "grant_topology": "hil",
+     "kpi_grade_reasons": [],
+     "pilot_param": "vla",
+     "identity_param": true,
+     "target_estimator_param": true,
+     "want_width": 0.1,
+     "speed_max": 4.0,
+     "lock": {
+      "kind": "TargetLock",
+      "strict": true,
+      "gate_frac": 0.12,
+      "prior": "the target estimator (--target-estimator: demo/subject_track.SubjectTrack)"
+     },
+     "monitor_end_rule": {
+      "lost_timeout_s": 90.0,
+      "det_fresh_s": 1.0
+     },
      "summary_only": false,
      "source": {
       "file": "F:/vla_drone_offload/jetson_runs/pas_hil_aerialvla_c2_03_20261116/metrics.json",
@@ -1892,7 +2026,22 @@
       "file_date": "2026-11-16"
      },
      "not_c2": [],
-     "protocol": "C2"
+     "protocol": "C2",
+     "c2_censored": false,
+     "end_rule_replay": {
+      "ends": false,
+      "end_tick": 899,
+      "end_t_s": 90.08,
+      "last_t_s": 90.08,
+      "ticks": 899,
+      "max_gap_s": 89.8,
+      "final_gap_s": 89.8,
+      "frac_within_30m": 0.05228031145717464,
+      "within_30m": 47,
+      "ticks_read": 899,
+      "lost_timeout_s": 90.0,
+      "det_fresh_s": 1.0
+     }
     },
     {
      "backend": "aerialvla_bf16",
@@ -1936,6 +2085,40 @@
      "bundle": "follow-car-citylife-v0.1.3.tar.gz",
      "max_s_given": 60.0,
      "start_gate_reached": true,
+     "gate_outcome": "reached",
+     "gate_identity_best_streak": 18,
+     "gate_identity_refused": {
+      "too far": 46,
+      "not ok": 3,
+      "static": 1
+     },
+     "gate_needed": 5.0,
+     "gate_identity_need_in_a_row": null,
+     "gate_identity_outcomes": null,
+     "gate_identity_moving_test_refused": null,
+     "gate_identity_static_unjudged": null,
+     "start_when_seen": 5.0,
+     "start_max_range_m": 30.0,
+     "gate_identity_closest_not_moving": null,
+     "gate_identity_last_not_moving": null,
+     "gate_rule": null,
+     "grant_topology": "hil",
+     "kpi_grade_reasons": [],
+     "pilot_param": "vla",
+     "identity_param": true,
+     "target_estimator_param": true,
+     "want_width": 0.1,
+     "speed_max": 4.0,
+     "lock": {
+      "kind": "TargetLock",
+      "strict": true,
+      "gate_frac": 0.12,
+      "prior": "the target estimator (--target-estimator: demo/subject_track.SubjectTrack)"
+     },
+     "monitor_end_rule": {
+      "lost_timeout_s": 90.0,
+      "det_fresh_s": 1.0
+     },
      "summary_only": false,
      "source": {
       "file": "F:/vla_drone_offload/jetson_runs/pas_hil_aerialvla_shake_01_20261116/metrics.json",
@@ -1946,7 +2129,9 @@
       "a shakedown by its tag ('_shake')",
       "given a time limit of 60 s, not C2's 420 s"
      ],
-     "protocol": "not C2"
+     "protocol": "not C2",
+     "c2_censored": false,
+     "end_rule_replay": null
     },
     {
      "backend": "aerialvla_bf16",
@@ -2025,7 +2210,7 @@
      "source": {
       "file": "docs/data/progress_1028.json",
       "sha256": "5586c5733c2615f9cb627b08e233299d4b4fb19b7283cc61e4d2718e78685daf",
-      "file_date": "2026-11-16"
+      "file_date": "2026-11-17"
      }
     },
     {
@@ -2211,7 +2396,7 @@
      "source": {
       "file": "deploy/evidence/hil/aiotvla_v10b_bench_agx.json",
       "sha256": "117157b7232894c90a2b905190f403bfa6b012a1183573bd55416d56dbbc15b8",
-      "file_date": "2026-11-16"
+      "file_date": "2026-11-17"
      }
     },
     {
@@ -2256,6 +2441,40 @@
      "bundle": "follow-car-citylife-v0.1.3.tar.gz",
      "max_s_given": 420.0,
      "start_gate_reached": true,
+     "gate_outcome": "reached",
+     "gate_identity_best_streak": 18,
+     "gate_identity_refused": {
+      "too far": 61,
+      "not ok": 10,
+      "static": 1
+     },
+     "gate_needed": 5.0,
+     "gate_identity_need_in_a_row": null,
+     "gate_identity_outcomes": null,
+     "gate_identity_moving_test_refused": null,
+     "gate_identity_static_unjudged": null,
+     "start_when_seen": 5.0,
+     "start_max_range_m": 30.0,
+     "gate_identity_closest_not_moving": null,
+     "gate_identity_last_not_moving": null,
+     "gate_rule": null,
+     "grant_topology": "hil",
+     "kpi_grade_reasons": [],
+     "pilot_param": "vla",
+     "identity_param": true,
+     "target_estimator_param": true,
+     "want_width": 0.1,
+     "speed_max": 4.0,
+     "lock": {
+      "kind": "TargetLock",
+      "strict": true,
+      "gate_frac": 0.12,
+      "prior": "the target estimator (--target-estimator: demo/subject_track.SubjectTrack)"
+     },
+     "monitor_end_rule": {
+      "lost_timeout_s": 90.0,
+      "det_fresh_s": 1.0
+     },
      "summary_only": false,
      "source": {
       "file": "demo/out/pas_hil_adapter_01/metrics.json",
@@ -2267,7 +2486,9 @@
       "feed tick, not the family's C2 feed (stream, no cap)",
       "FrontCamera capture interval 0.066 s, not the 0.05 s the stream feed needs"
      ],
-     "protocol": "not C2"
+     "protocol": "not C2",
+     "c2_censored": false,
+     "end_rule_replay": null
     },
     {
      "backend": "aiotvla_v10b",
@@ -2309,6 +2530,36 @@
      "bundle": "follow-car-citylife-v0.1.3.tar.gz",
      "max_s_given": 420.0,
      "start_gate_reached": true,
+     "gate_outcome": "reached",
+     "gate_identity_best_streak": null,
+     "gate_identity_refused": null,
+     "gate_needed": 5.0,
+     "gate_identity_need_in_a_row": null,
+     "gate_identity_outcomes": null,
+     "gate_identity_moving_test_refused": null,
+     "gate_identity_static_unjudged": null,
+     "start_when_seen": 5.0,
+     "start_max_range_m": 30.0,
+     "gate_identity_closest_not_moving": null,
+     "gate_identity_last_not_moving": null,
+     "gate_rule": null,
+     "grant_topology": "hil",
+     "kpi_grade_reasons": [
+      "a perception-stress run (--stress day, scenario pas-follow-redcar-day): Project AirSim is the grant's perception-stress rail, and its runs are reported per scenario as non-KPI evidence (WP4-16, WP4-18)"
+     ],
+     "pilot_param": "vla",
+     "identity_param": false,
+     "target_estimator_param": null,
+     "want_width": 0.1,
+     "speed_max": 4.0,
+     "lock": {
+      "kind": "TargetLock",
+      "gate_frac": 0.12
+     },
+     "monitor_end_rule": {
+      "lost_timeout_s": 90.0,
+      "det_fresh_s": 1.0
+     },
      "summary_only": false,
      "source": {
       "file": "demo/out/pas_hil_aiot_day_02/metrics.json",
@@ -2323,7 +2574,9 @@
       "feed tick, not the family's C2 feed (stream, no cap)",
       "FrontCamera capture interval 0.066 s, not the 0.05 s the stream feed needs"
      ],
-     "protocol": "not C2"
+     "protocol": "not C2",
+     "c2_censored": false,
+     "end_rule_replay": null
     },
     {
      "backend": "aiotvla_v10b",
@@ -2365,6 +2618,36 @@
      "bundle": "follow-car-citylife-v0.1.3.tar.gz",
      "max_s_given": 420.0,
      "start_gate_reached": true,
+     "gate_outcome": "reached",
+     "gate_identity_best_streak": null,
+     "gate_identity_refused": null,
+     "gate_needed": 5.0,
+     "gate_identity_need_in_a_row": null,
+     "gate_identity_outcomes": null,
+     "gate_identity_moving_test_refused": null,
+     "gate_identity_static_unjudged": null,
+     "start_when_seen": 5.0,
+     "start_max_range_m": 30.0,
+     "gate_identity_closest_not_moving": null,
+     "gate_identity_last_not_moving": null,
+     "gate_rule": null,
+     "grant_topology": "hil",
+     "kpi_grade_reasons": [
+      "a perception-stress run (--stress day, scenario pas-follow-redcar-day): Project AirSim is the grant's perception-stress rail, and its runs are reported per scenario as non-KPI evidence (WP4-16, WP4-18)"
+     ],
+     "pilot_param": "vla",
+     "identity_param": false,
+     "target_estimator_param": null,
+     "want_width": 0.1,
+     "speed_max": 4.0,
+     "lock": {
+      "kind": "TargetLock",
+      "gate_frac": 0.12
+     },
+     "monitor_end_rule": {
+      "lost_timeout_s": 90.0,
+      "det_fresh_s": 1.0
+     },
      "summary_only": false,
      "source": {
       "file": "demo/out/pas_hil_aiot_day_03/metrics.json",
@@ -2379,7 +2662,9 @@
       "feed tick, not the family's C2 feed (stream, no cap)",
       "FrontCamera capture interval 0.066 s, not the 0.05 s the stream feed needs"
      ],
-     "protocol": "not C2"
+     "protocol": "not C2",
+     "c2_censored": false,
+     "end_rule_replay": null
     },
     {
      "backend": "aiotvla_v10b",
@@ -2422,6 +2707,36 @@
      "bundle": "follow-car-citylife-v0.1.3.tar.gz",
      "max_s_given": 420.0,
      "start_gate_reached": true,
+     "gate_outcome": "reached",
+     "gate_identity_best_streak": null,
+     "gate_identity_refused": null,
+     "gate_needed": 5.0,
+     "gate_identity_need_in_a_row": null,
+     "gate_identity_outcomes": null,
+     "gate_identity_moving_test_refused": null,
+     "gate_identity_static_unjudged": null,
+     "start_when_seen": 5.0,
+     "start_max_range_m": 30.0,
+     "gate_identity_closest_not_moving": null,
+     "gate_identity_last_not_moving": null,
+     "gate_rule": null,
+     "grant_topology": "hil",
+     "kpi_grade_reasons": [
+      "a perception-stress run (--stress day, scenario pas-follow-redcar-day): Project AirSim is the grant's perception-stress rail, and its runs are reported per scenario as non-KPI evidence (WP4-16, WP4-18)"
+     ],
+     "pilot_param": "vla",
+     "identity_param": false,
+     "target_estimator_param": null,
+     "want_width": 0.1,
+     "speed_max": 4.0,
+     "lock": {
+      "kind": "TargetLock",
+      "gate_frac": 0.12
+     },
+     "monitor_end_rule": {
+      "lost_timeout_s": 90.0,
+      "det_fresh_s": 1.0
+     },
      "summary_only": false,
      "source": {
       "file": "demo/out/pas_hil_aiot_day_04/metrics.json",
@@ -2436,7 +2751,9 @@
       "feed tick, not the family's C2 feed (stream, no cap)",
       "FrontCamera capture interval 0.066 s, not the 0.05 s the stream feed needs"
      ],
-     "protocol": "not C2"
+     "protocol": "not C2",
+     "c2_censored": false,
+     "end_rule_replay": null
     },
     {
      "backend": "aiotvla_v10b",
@@ -2478,6 +2795,36 @@
      "bundle": "follow-car-citylife-v0.1.3.tar.gz",
      "max_s_given": 420.0,
      "start_gate_reached": true,
+     "gate_outcome": "reached",
+     "gate_identity_best_streak": null,
+     "gate_identity_refused": null,
+     "gate_needed": 5.0,
+     "gate_identity_need_in_a_row": null,
+     "gate_identity_outcomes": null,
+     "gate_identity_moving_test_refused": null,
+     "gate_identity_static_unjudged": null,
+     "start_when_seen": 5.0,
+     "start_max_range_m": 30.0,
+     "gate_identity_closest_not_moving": null,
+     "gate_identity_last_not_moving": null,
+     "gate_rule": null,
+     "grant_topology": "hil",
+     "kpi_grade_reasons": [
+      "a perception-stress run (--stress dusk, scenario pas-follow-redcar-dusk): Project AirSim is the grant's perception-stress rail, and its runs are reported per scenario as non-KPI evidence (WP4-16, WP4-18)"
+     ],
+     "pilot_param": "vla",
+     "identity_param": false,
+     "target_estimator_param": null,
+     "want_width": 0.1,
+     "speed_max": 4.0,
+     "lock": {
+      "kind": "TargetLock",
+      "gate_frac": 0.12
+     },
+     "monitor_end_rule": {
+      "lost_timeout_s": 90.0,
+      "det_fresh_s": 1.0
+     },
      "summary_only": false,
      "source": {
       "file": "demo/out/pas_hil_aiot_dusk_01/metrics.json",
@@ -2492,7 +2839,9 @@
       "feed tick, not the family's C2 feed (stream, no cap)",
       "FrontCamera capture interval 0.066 s, not the 0.05 s the stream feed needs"
      ],
-     "protocol": "not C2"
+     "protocol": "not C2",
+     "c2_censored": false,
+     "end_rule_replay": null
     },
     {
      "backend": "aiotvla_v10b",
@@ -2534,6 +2883,40 @@
      "bundle": "follow-car-citylife-v0.1.3.tar.gz",
      "max_s_given": 420.0,
      "start_gate_reached": true,
+     "gate_outcome": "reached",
+     "gate_identity_best_streak": 18,
+     "gate_identity_refused": {
+      "too far": 56,
+      "not ok": 7,
+      "static": 21
+     },
+     "gate_needed": 5.0,
+     "gate_identity_need_in_a_row": null,
+     "gate_identity_outcomes": null,
+     "gate_identity_moving_test_refused": null,
+     "gate_identity_static_unjudged": null,
+     "start_when_seen": 5.0,
+     "start_max_range_m": 30.0,
+     "gate_identity_closest_not_moving": null,
+     "gate_identity_last_not_moving": null,
+     "gate_rule": null,
+     "grant_topology": "hil",
+     "kpi_grade_reasons": [],
+     "pilot_param": "vla",
+     "identity_param": true,
+     "target_estimator_param": true,
+     "want_width": 0.1,
+     "speed_max": 4.0,
+     "lock": {
+      "kind": "TargetLock",
+      "strict": true,
+      "gate_frac": 0.12,
+      "prior": "the target estimator (--target-estimator: demo/subject_track.SubjectTrack)"
+     },
+     "monitor_end_rule": {
+      "lost_timeout_s": 90.0,
+      "det_fresh_s": 1.0
+     },
      "summary_only": false,
      "source": {
       "file": "demo/out/pas_hil_aiot_est_01/metrics.json",
@@ -2544,7 +2927,9 @@
       "feed tick, not the family's C2 feed (stream, no cap)",
       "FrontCamera capture interval 0.066 s, not the 0.05 s the stream feed needs"
      ],
-     "protocol": "not C2"
+     "protocol": "not C2",
+     "c2_censored": false,
+     "end_rule_replay": null
     },
     {
      "backend": "aiotvla_v10b",
@@ -2587,6 +2972,37 @@
      "bundle": "follow-car-citylife-v0.1.3.tar.gz",
      "max_s_given": null,
      "start_gate_reached": false,
+     "gate_outcome": "timed_out",
+     "gate_identity_best_streak": null,
+     "gate_identity_refused": null,
+     "gate_needed": 5.0,
+     "gate_identity_need_in_a_row": null,
+     "gate_identity_outcomes": null,
+     "gate_identity_moving_test_refused": null,
+     "gate_identity_static_unjudged": null,
+     "start_when_seen": 5.0,
+     "start_max_range_m": 30.0,
+     "gate_identity_closest_not_moving": null,
+     "gate_identity_last_not_moving": null,
+     "gate_rule": null,
+     "grant_topology": "hil",
+     "kpi_grade_reasons": [
+      "topology is 'projectairsim-ardupilot-mavros', not the grant's 'hil' (nor a waivable 'dev'): functional-rail evidence, not a contractual KPI number",
+      "ArduPilot's measured real-time factor is None (band (0.95, 1.05)); the scene's declared 1.0 is not what flew",
+      "a perception-stress run (--stress fog, scenario pas-follow-redcar-fog): Project AirSim is the grant's perception-stress rail, and its runs are reported per scenario as non-KPI evidence (WP4-16, WP4-18)",
+      "no mission was flown: start gate timed out after 330.0 s: no plausible 'a red car' within 30 m on 5 inferences in a row",
+      "the follow is not scored: the subject's pose was read on 0/0 ticks (needs 95%; never read)"
+     ],
+     "pilot_param": "vla",
+     "identity_param": false,
+     "target_estimator_param": null,
+     "want_width": 0.1,
+     "speed_max": 4.0,
+     "lock": {
+      "kind": "TargetLock",
+      "gate_frac": 0.12
+     },
+     "monitor_end_rule": null,
      "summary_only": false,
      "source": {
       "file": "demo/out/pas_hil_aiot_fog_01/metrics.json",
@@ -2603,7 +3019,9 @@
       "feed tick, not the family's C2 feed (stream, no cap)",
       "FrontCamera capture interval 0.066 s, not the 0.05 s the stream feed needs"
      ],
-     "protocol": "not C2"
+     "protocol": "not C2",
+     "c2_censored": false,
+     "end_rule_replay": null
     },
     {
      "backend": "aiotvla_v10b",
@@ -2645,6 +3063,34 @@
      "bundle": "follow-car-citylife-v0.1.3.tar.gz",
      "max_s_given": 420.0,
      "start_gate_reached": true,
+     "gate_outcome": "reached",
+     "gate_identity_best_streak": null,
+     "gate_identity_refused": null,
+     "gate_needed": 5.0,
+     "gate_identity_need_in_a_row": null,
+     "gate_identity_outcomes": null,
+     "gate_identity_moving_test_refused": null,
+     "gate_identity_static_unjudged": null,
+     "start_when_seen": 5.0,
+     "start_max_range_m": 30.0,
+     "gate_identity_closest_not_moving": null,
+     "gate_identity_last_not_moving": null,
+     "gate_rule": null,
+     "grant_topology": "hil",
+     "kpi_grade_reasons": [],
+     "pilot_param": "vla",
+     "identity_param": false,
+     "target_estimator_param": null,
+     "want_width": 0.1,
+     "speed_max": 4.0,
+     "lock": {
+      "kind": "TargetLock",
+      "gate_frac": 0.12
+     },
+     "monitor_end_rule": {
+      "lost_timeout_s": 90.0,
+      "det_fresh_s": 1.0
+     },
      "summary_only": false,
      "source": {
       "file": "demo/out/pas_hil_aiot_kpi_01/metrics.json",
@@ -2657,7 +3103,9 @@
       "feed tick, not the family's C2 feed (stream, no cap)",
       "FrontCamera capture interval 0.066 s, not the 0.05 s the stream feed needs"
      ],
-     "protocol": "not C2"
+     "protocol": "not C2",
+     "c2_censored": false,
+     "end_rule_replay": null
     },
     {
      "backend": "aiotvla_v10b",
@@ -2702,6 +3150,34 @@
      "bundle": "follow-car-citylife-v0.1.3.tar.gz",
      "max_s_given": 420.0,
      "start_gate_reached": true,
+     "gate_outcome": "reached",
+     "gate_identity_best_streak": 10,
+     "gate_identity_refused": {
+      "too far": 54,
+      "not ok": 1
+     },
+     "gate_needed": 5.0,
+     "gate_identity_need_in_a_row": null,
+     "gate_identity_outcomes": null,
+     "gate_identity_moving_test_refused": null,
+     "gate_identity_static_unjudged": null,
+     "start_when_seen": 5.0,
+     "start_max_range_m": 30.0,
+     "gate_identity_closest_not_moving": null,
+     "gate_identity_last_not_moving": null,
+     "gate_rule": null,
+     "grant_topology": "hil",
+     "kpi_grade_reasons": [],
+     "pilot_param": "vla",
+     "identity_param": true,
+     "target_estimator_param": null,
+     "want_width": 0.1,
+     "speed_max": 4.0,
+     "lock": "strict lock not used (identity without an estimator)",
+     "monitor_end_rule": {
+      "lost_timeout_s": 90.0,
+      "det_fresh_s": 1.0
+     },
      "summary_only": false,
      "source": {
       "file": "demo/out/pas_hil_aiot_kpi_02/metrics.json",
@@ -2713,7 +3189,9 @@
       "feed tick, not the family's C2 feed (stream, no cap)",
       "FrontCamera capture interval 0.066 s, not the 0.05 s the stream feed needs"
      ],
-     "protocol": "not C2"
+     "protocol": "not C2",
+     "c2_censored": false,
+     "end_rule_replay": null
     },
     {
      "backend": "aiotvla_v10b",
@@ -2756,6 +3234,37 @@
      "bundle": "follow-car-citylife-v0.1.3.tar.gz",
      "max_s_given": null,
      "start_gate_reached": false,
+     "gate_outcome": "timed_out",
+     "gate_identity_best_streak": null,
+     "gate_identity_refused": null,
+     "gate_needed": 5.0,
+     "gate_identity_need_in_a_row": null,
+     "gate_identity_outcomes": null,
+     "gate_identity_moving_test_refused": null,
+     "gate_identity_static_unjudged": null,
+     "start_when_seen": 5.0,
+     "start_max_range_m": 30.0,
+     "gate_identity_closest_not_moving": null,
+     "gate_identity_last_not_moving": null,
+     "gate_rule": null,
+     "grant_topology": "hil",
+     "kpi_grade_reasons": [
+      "topology is 'projectairsim-ardupilot-mavros', not the grant's 'hil' (nor a waivable 'dev'): functional-rail evidence, not a contractual KPI number",
+      "ArduPilot's measured real-time factor is None (band (0.95, 1.05)); the scene's declared 1.0 is not what flew",
+      "a perception-stress run (--stress night, scenario pas-follow-redcar-night): Project AirSim is the grant's perception-stress rail, and its runs are reported per scenario as non-KPI evidence (WP4-16, WP4-18)",
+      "no mission was flown: start gate timed out after 330.0 s: no plausible 'a red car' within 30 m on 5 inferences in a row",
+      "the follow is not scored: the subject's pose was read on 0/0 ticks (needs 95%; never read)"
+     ],
+     "pilot_param": "vla",
+     "identity_param": false,
+     "target_estimator_param": null,
+     "want_width": 0.1,
+     "speed_max": 4.0,
+     "lock": {
+      "kind": "TargetLock",
+      "gate_frac": 0.12
+     },
+     "monitor_end_rule": null,
      "summary_only": false,
      "source": {
       "file": "demo/out/pas_hil_aiot_night_01/metrics.json",
@@ -2772,7 +3281,9 @@
       "feed tick, not the family's C2 feed (stream, no cap)",
       "FrontCamera capture interval 0.066 s, not the 0.05 s the stream feed needs"
      ],
-     "protocol": "not C2"
+     "protocol": "not C2",
+     "c2_censored": false,
+     "end_rule_replay": null
     },
     {
      "backend": "aiotvla_v10b",
@@ -2814,6 +3325,36 @@
      "bundle": "follow-car-citylife-v0.1.3.tar.gz",
      "max_s_given": 420.0,
      "start_gate_reached": true,
+     "gate_outcome": "reached",
+     "gate_identity_best_streak": null,
+     "gate_identity_refused": null,
+     "gate_needed": 5.0,
+     "gate_identity_need_in_a_row": null,
+     "gate_identity_outcomes": null,
+     "gate_identity_moving_test_refused": null,
+     "gate_identity_static_unjudged": null,
+     "start_when_seen": 5.0,
+     "start_max_range_m": 30.0,
+     "gate_identity_closest_not_moving": null,
+     "gate_identity_last_not_moving": null,
+     "gate_rule": null,
+     "grant_topology": "hil",
+     "kpi_grade_reasons": [
+      "a perception-stress run (--stress rain, scenario pas-follow-redcar-rain): Project AirSim is the grant's perception-stress rail, and its runs are reported per scenario as non-KPI evidence (WP4-16, WP4-18)"
+     ],
+     "pilot_param": "vla",
+     "identity_param": false,
+     "target_estimator_param": null,
+     "want_width": 0.1,
+     "speed_max": 4.0,
+     "lock": {
+      "kind": "TargetLock",
+      "gate_frac": 0.12
+     },
+     "monitor_end_rule": {
+      "lost_timeout_s": 90.0,
+      "det_fresh_s": 1.0
+     },
      "summary_only": false,
      "source": {
       "file": "demo/out/pas_hil_aiot_rain_01/metrics.json",
@@ -2828,7 +3369,9 @@
       "feed tick, not the family's C2 feed (stream, no cap)",
       "FrontCamera capture interval 0.066 s, not the 0.05 s the stream feed needs"
      ],
-     "protocol": "not C2"
+     "protocol": "not C2",
+     "c2_censored": false,
+     "end_rule_replay": null
     },
     {
      "backend": "aiotvla_v10b",
@@ -2872,6 +3415,41 @@
      "bundle": "follow-car-citylife-v0.1.3.tar.gz",
      "max_s_given": 420.0,
      "start_gate_reached": true,
+     "gate_outcome": "reached",
+     "gate_identity_best_streak": 12,
+     "gate_identity_refused": {
+      "not ok": 202,
+      "too far": 218
+     },
+     "gate_needed": 5.0,
+     "gate_identity_need_in_a_row": null,
+     "gate_identity_outcomes": null,
+     "gate_identity_moving_test_refused": null,
+     "gate_identity_static_unjudged": null,
+     "start_when_seen": 5.0,
+     "start_max_range_m": 30.0,
+     "gate_identity_closest_not_moving": null,
+     "gate_identity_last_not_moving": null,
+     "gate_rule": null,
+     "grant_topology": "hil",
+     "kpi_grade_reasons": [
+      "a perception-stress run (--stress shadow, scenario pas-follow-redcar-shadow): Project AirSim is the grant's perception-stress rail, and its runs are reported per scenario as non-KPI evidence (WP4-16, WP4-18)"
+     ],
+     "pilot_param": "vla",
+     "identity_param": true,
+     "target_estimator_param": true,
+     "want_width": 0.1,
+     "speed_max": 4.0,
+     "lock": {
+      "kind": "TargetLock",
+      "strict": true,
+      "gate_frac": 0.12,
+      "prior": "the target estimator (--target-estimator: demo/subject_track.SubjectTrack)"
+     },
+     "monitor_end_rule": {
+      "lost_timeout_s": 90.0,
+      "det_fresh_s": 1.0
+     },
      "summary_only": false,
      "source": {
       "file": "demo/out/pas_hil_aiot_shadow_01/metrics.json",
@@ -2884,7 +3462,9 @@
       "feed tick, not the family's C2 feed (stream, no cap)",
       "FrontCamera capture interval 0.066 s, not the 0.05 s the stream feed needs"
      ],
-     "protocol": "not C2"
+     "protocol": "not C2",
+     "c2_censored": false,
+     "end_rule_replay": null
     },
     {
      "backend": "aiotvla_v10b",
@@ -2926,6 +3506,41 @@
      "bundle": "follow-car-citylife-v0.1.3.tar.gz",
      "max_s_given": 420.0,
      "start_gate_reached": true,
+     "gate_outcome": "reached",
+     "gate_identity_best_streak": 20,
+     "gate_identity_refused": {
+      "too far": 165,
+      "not ok": 1
+     },
+     "gate_needed": 5.0,
+     "gate_identity_need_in_a_row": null,
+     "gate_identity_outcomes": null,
+     "gate_identity_moving_test_refused": null,
+     "gate_identity_static_unjudged": null,
+     "start_when_seen": 5.0,
+     "start_max_range_m": 30.0,
+     "gate_identity_closest_not_moving": null,
+     "gate_identity_last_not_moving": null,
+     "gate_rule": null,
+     "grant_topology": "hil",
+     "kpi_grade_reasons": [
+      "a perception-stress run (--stress texture, scenario pas-follow-redcar-texture): Project AirSim is the grant's perception-stress rail, and its runs are reported per scenario as non-KPI evidence (WP4-16, WP4-18)"
+     ],
+     "pilot_param": "vla",
+     "identity_param": true,
+     "target_estimator_param": true,
+     "want_width": 0.1,
+     "speed_max": 4.0,
+     "lock": {
+      "kind": "TargetLock",
+      "strict": true,
+      "gate_frac": 0.12,
+      "prior": "the target estimator (--target-estimator: demo/subject_track.SubjectTrack)"
+     },
+     "monitor_end_rule": {
+      "lost_timeout_s": 90.0,
+      "det_fresh_s": 1.0
+     },
      "summary_only": false,
      "source": {
       "file": "demo/out/pas_hil_aiot_texture_01/metrics.json",
@@ -2938,7 +3553,9 @@
       "feed tick, not the family's C2 feed (stream, no cap)",
       "FrontCamera capture interval 0.066 s, not the 0.05 s the stream feed needs"
      ],
-     "protocol": "not C2"
+     "protocol": "not C2",
+     "c2_censored": false,
+     "end_rule_replay": null
     },
     {
      "backend": "aiotvla_v10b",
@@ -2982,6 +3599,40 @@
      "bundle": "follow-car-citylife-v0.1.3.tar.gz",
      "max_s_given": 420.0,
      "start_gate_reached": true,
+     "gate_outcome": "reached",
+     "gate_identity_best_streak": 27,
+     "gate_identity_refused": {
+      "too far": 47,
+      "not ok": 9,
+      "static": 16
+     },
+     "gate_needed": 5.0,
+     "gate_identity_need_in_a_row": null,
+     "gate_identity_outcomes": null,
+     "gate_identity_moving_test_refused": null,
+     "gate_identity_static_unjudged": null,
+     "start_when_seen": 5.0,
+     "start_max_range_m": 30.0,
+     "gate_identity_closest_not_moving": null,
+     "gate_identity_last_not_moving": null,
+     "gate_rule": null,
+     "grant_topology": "hil",
+     "kpi_grade_reasons": [],
+     "pilot_param": "vla",
+     "identity_param": true,
+     "target_estimator_param": true,
+     "want_width": 0.1,
+     "speed_max": 4.0,
+     "lock": {
+      "kind": "TargetLock",
+      "strict": true,
+      "gate_frac": 0.12,
+      "prior": "the target estimator (--target-estimator: demo/subject_track.SubjectTrack)"
+     },
+     "monitor_end_rule": {
+      "lost_timeout_s": 90.0,
+      "det_fresh_s": 1.0
+     },
      "summary_only": false,
      "source": {
       "file": "demo/out/pas_hil_feed_07/metrics.json",
@@ -2989,7 +3640,22 @@
       "file_date": "2026-11-15"
      },
      "not_c2": [],
-     "protocol": "C2"
+     "protocol": "C2",
+     "c2_censored": false,
+     "end_rule_replay": {
+      "ends": false,
+      "end_tick": 4198,
+      "end_t_s": 419.98,
+      "last_t_s": 419.98,
+      "ticks": 4198,
+      "max_gap_s": 11.5,
+      "final_gap_s": 0.0,
+      "frac_within_30m": 0.3523106241067175,
+      "within_30m": 1479,
+      "ticks_read": 4198,
+      "lost_timeout_s": 90.0,
+      "det_fresh_s": 1.0
+     }
     },
     {
      "backend": "aiotvla_v10b",
@@ -3033,6 +3699,39 @@
      "bundle": "follow-car-citylife-v0.1.3.tar.gz",
      "max_s_given": 420.0,
      "start_gate_reached": true,
+     "gate_outcome": "reached",
+     "gate_identity_best_streak": 10,
+     "gate_identity_refused": {
+      "too far": 62,
+      "not ok": 9
+     },
+     "gate_needed": 5.0,
+     "gate_identity_need_in_a_row": null,
+     "gate_identity_outcomes": null,
+     "gate_identity_moving_test_refused": null,
+     "gate_identity_static_unjudged": null,
+     "start_when_seen": 5.0,
+     "start_max_range_m": 30.0,
+     "gate_identity_closest_not_moving": null,
+     "gate_identity_last_not_moving": null,
+     "gate_rule": null,
+     "grant_topology": "hil",
+     "kpi_grade_reasons": [],
+     "pilot_param": "vla",
+     "identity_param": true,
+     "target_estimator_param": true,
+     "want_width": 0.1,
+     "speed_max": 4.0,
+     "lock": {
+      "kind": "TargetLock",
+      "strict": true,
+      "gate_frac": 0.12,
+      "prior": "the target estimator (--target-estimator: demo/subject_track.SubjectTrack)"
+     },
+     "monitor_end_rule": {
+      "lost_timeout_s": 90.0,
+      "det_fresh_s": 1.0
+     },
      "summary_only": false,
      "source": {
       "file": "demo/out/pas_hil_hotapply_01/metrics.json",
@@ -3044,7 +3743,9 @@
       "feed tick, not the family's C2 feed (stream, no cap)",
       "FrontCamera capture interval 0.066 s, not the 0.05 s the stream feed needs"
      ],
-     "protocol": "not C2"
+     "protocol": "not C2",
+     "c2_censored": false,
+     "end_rule_replay": null
     },
     {
      "backend": "aiotvla_v10b",
@@ -3088,6 +3789,39 @@
      "bundle": "follow-car-citylife-v0.1.3.tar.gz",
      "max_s_given": 420.0,
      "start_gate_reached": true,
+     "gate_outcome": "reached",
+     "gate_identity_best_streak": 13,
+     "gate_identity_refused": {
+      "too far": 55,
+      "not ok": 5
+     },
+     "gate_needed": 5.0,
+     "gate_identity_need_in_a_row": null,
+     "gate_identity_outcomes": null,
+     "gate_identity_moving_test_refused": null,
+     "gate_identity_static_unjudged": null,
+     "start_when_seen": 5.0,
+     "start_max_range_m": 30.0,
+     "gate_identity_closest_not_moving": null,
+     "gate_identity_last_not_moving": null,
+     "gate_rule": null,
+     "grant_topology": "hil",
+     "kpi_grade_reasons": [],
+     "pilot_param": "vla",
+     "identity_param": true,
+     "target_estimator_param": true,
+     "want_width": 0.1,
+     "speed_max": 4.0,
+     "lock": {
+      "kind": "TargetLock",
+      "strict": true,
+      "gate_frac": 0.12,
+      "prior": "the target estimator (--target-estimator: demo/subject_track.SubjectTrack)"
+     },
+     "monitor_end_rule": {
+      "lost_timeout_s": 90.0,
+      "det_fresh_s": 1.0
+     },
      "summary_only": false,
      "source": {
       "file": "demo/out/pas_hil_hotapply_02/metrics.json",
@@ -3099,7 +3833,9 @@
       "feed tick, not the family's C2 feed (stream, no cap)",
       "FrontCamera capture interval 0.066 s, not the 0.05 s the stream feed needs"
      ],
-     "protocol": "not C2"
+     "protocol": "not C2",
+     "c2_censored": false,
+     "end_rule_replay": null
     },
     {
      "backend": "aiotvla_v10b",
@@ -3144,6 +3880,42 @@
      "bundle": "follow-car-citylife-v0.1.3.tar.gz",
      "max_s_given": null,
      "start_gate_reached": false,
+     "gate_outcome": "timed_out",
+     "gate_identity_best_streak": 29,
+     "gate_identity_refused": {
+      "too far": 50,
+      "not ok": 20,
+      "static": 24
+     },
+     "gate_needed": 5.0,
+     "gate_identity_need_in_a_row": null,
+     "gate_identity_outcomes": null,
+     "gate_identity_moving_test_refused": null,
+     "gate_identity_static_unjudged": null,
+     "start_when_seen": 5.0,
+     "start_max_range_m": 30.0,
+     "gate_identity_closest_not_moving": null,
+     "gate_identity_last_not_moving": null,
+     "gate_rule": null,
+     "grant_topology": "hil",
+     "kpi_grade_reasons": [
+      "topology is 'projectairsim-ardupilot-mavros', not the grant's 'hil' (nor a waivable 'dev'): functional-rail evidence, not a contractual KPI number",
+      "ArduPilot's measured real-time factor is None (band (0.95, 1.05)); the scene's declared 1.0 is not what flew",
+      "no mission was flown: start gate timed out after 330.1 s: no plausible 'a red car' within 30 m on 5 inferences in a row",
+      "the follow is not scored: the subject's pose was read on 0/0 ticks (needs 95%; never read)"
+     ],
+     "pilot_param": "vla",
+     "identity_param": true,
+     "target_estimator_param": true,
+     "want_width": 0.1,
+     "speed_max": 4.0,
+     "lock": {
+      "kind": "TargetLock",
+      "strict": true,
+      "gate_frac": 0.12,
+      "prior": "the target estimator (--target-estimator: demo/subject_track.SubjectTrack)"
+     },
+     "monitor_end_rule": null,
      "summary_only": false,
      "source": {
       "file": "demo/out/pas_hil_obs_01/metrics.json",
@@ -3156,7 +3928,9 @@
       "the start gate never passed: no mission",
       "feed tick, not the family's C2 feed (stream, no cap)"
      ],
-     "protocol": "not C2"
+     "protocol": "not C2",
+     "c2_censored": false,
+     "end_rule_replay": null
     },
     {
      "backend": "aiotvla_v10b",
@@ -3198,6 +3972,39 @@
      "bundle": "follow-car-citylife-v0.1.3.tar.gz",
      "max_s_given": 420.0,
      "start_gate_reached": true,
+     "gate_outcome": "reached",
+     "gate_identity_best_streak": 10,
+     "gate_identity_refused": {
+      "too far": 122,
+      "not ok": 1
+     },
+     "gate_needed": 5.0,
+     "gate_identity_need_in_a_row": null,
+     "gate_identity_outcomes": null,
+     "gate_identity_moving_test_refused": null,
+     "gate_identity_static_unjudged": null,
+     "start_when_seen": 5.0,
+     "start_max_range_m": 30.0,
+     "gate_identity_closest_not_moving": null,
+     "gate_identity_last_not_moving": null,
+     "gate_rule": null,
+     "grant_topology": "hil",
+     "kpi_grade_reasons": [],
+     "pilot_param": "vla",
+     "identity_param": true,
+     "target_estimator_param": true,
+     "want_width": 0.1,
+     "speed_max": 4.0,
+     "lock": {
+      "kind": "TargetLock",
+      "strict": true,
+      "gate_frac": 0.12,
+      "prior": "the target estimator (--target-estimator: demo/subject_track.SubjectTrack)"
+     },
+     "monitor_end_rule": {
+      "lost_timeout_s": 90.0,
+      "det_fresh_s": 1.0
+     },
      "summary_only": false,
      "source": {
       "file": "demo/out/pas_hil_obs_02/metrics.json",
@@ -3207,7 +4014,9 @@
      "not_c2": [
       "feed tick, not the family's C2 feed (stream, no cap)"
      ],
-     "protocol": "not C2"
+     "protocol": "not C2",
+     "c2_censored": false,
+     "end_rule_replay": null
     },
     {
      "backend": "aiotvla_v10b",
@@ -3249,6 +4058,40 @@
      "bundle": "follow-car-citylife-v0.1.3.tar.gz",
      "max_s_given": 420.0,
      "start_gate_reached": true,
+     "gate_outcome": "reached",
+     "gate_identity_best_streak": 30,
+     "gate_identity_refused": {
+      "too far": 43,
+      "not ok": 8,
+      "static": 26
+     },
+     "gate_needed": 5.0,
+     "gate_identity_need_in_a_row": null,
+     "gate_identity_outcomes": null,
+     "gate_identity_moving_test_refused": null,
+     "gate_identity_static_unjudged": null,
+     "start_when_seen": 5.0,
+     "start_max_range_m": 30.0,
+     "gate_identity_closest_not_moving": null,
+     "gate_identity_last_not_moving": null,
+     "gate_rule": null,
+     "grant_topology": "hil",
+     "kpi_grade_reasons": [],
+     "pilot_param": "vla",
+     "identity_param": true,
+     "target_estimator_param": true,
+     "want_width": 0.1,
+     "speed_max": 4.0,
+     "lock": {
+      "kind": "TargetLock",
+      "strict": true,
+      "gate_frac": 0.12,
+      "prior": "the target estimator (--target-estimator: demo/subject_track.SubjectTrack)"
+     },
+     "monitor_end_rule": {
+      "lost_timeout_s": 90.0,
+      "det_fresh_s": 1.0
+     },
      "summary_only": false,
      "source": {
       "file": "demo/out/pas_hil_para_00/metrics.json",
@@ -3259,7 +4102,9 @@
       "feed tick, not the family's C2 feed (stream, no cap)",
       "FrontCamera capture interval 0.066 s, not the 0.05 s the stream feed needs"
      ],
-     "protocol": "not C2"
+     "protocol": "not C2",
+     "c2_censored": false,
+     "end_rule_replay": null
     },
     {
      "backend": "aiotvla_v10b",
@@ -3303,6 +4148,40 @@
      "bundle": "follow-car-citylife-v0.1.3.tar.gz",
      "max_s_given": 420.0,
      "start_gate_reached": true,
+     "gate_outcome": "reached",
+     "gate_identity_best_streak": 27,
+     "gate_identity_refused": {
+      "too far": 73,
+      "static": 18,
+      "not ok": 5
+     },
+     "gate_needed": 5.0,
+     "gate_identity_need_in_a_row": null,
+     "gate_identity_outcomes": null,
+     "gate_identity_moving_test_refused": null,
+     "gate_identity_static_unjudged": null,
+     "start_when_seen": 5.0,
+     "start_max_range_m": 30.0,
+     "gate_identity_closest_not_moving": null,
+     "gate_identity_last_not_moving": null,
+     "gate_rule": null,
+     "grant_topology": "hil",
+     "kpi_grade_reasons": [],
+     "pilot_param": "vla",
+     "identity_param": true,
+     "target_estimator_param": true,
+     "want_width": 0.1,
+     "speed_max": 4.0,
+     "lock": {
+      "kind": "TargetLock",
+      "strict": true,
+      "gate_frac": 0.12,
+      "prior": "the target estimator (--target-estimator: demo/subject_track.SubjectTrack)"
+     },
+     "monitor_end_rule": {
+      "lost_timeout_s": 90.0,
+      "det_fresh_s": 1.0
+     },
      "summary_only": false,
      "source": {
       "file": "demo/out/pas_hil_para_01/metrics.json",
@@ -3314,7 +4193,9 @@
       "feed tick, not the family's C2 feed (stream, no cap)",
       "FrontCamera capture interval 0.066 s, not the 0.05 s the stream feed needs"
      ],
-     "protocol": "not C2"
+     "protocol": "not C2",
+     "c2_censored": false,
+     "end_rule_replay": null
     },
     {
      "backend": "aiotvla_v10b",
@@ -3356,6 +4237,39 @@
      "bundle": "follow-car-citylife-v0.1.3.tar.gz",
      "max_s_given": 420.0,
      "start_gate_reached": true,
+     "gate_outcome": "reached",
+     "gate_identity_best_streak": 14,
+     "gate_identity_refused": {
+      "too far": 75,
+      "not ok": 4
+     },
+     "gate_needed": 5.0,
+     "gate_identity_need_in_a_row": null,
+     "gate_identity_outcomes": null,
+     "gate_identity_moving_test_refused": null,
+     "gate_identity_static_unjudged": null,
+     "start_when_seen": 5.0,
+     "start_max_range_m": 30.0,
+     "gate_identity_closest_not_moving": null,
+     "gate_identity_last_not_moving": null,
+     "gate_rule": null,
+     "grant_topology": "hil",
+     "kpi_grade_reasons": [],
+     "pilot_param": "vla",
+     "identity_param": true,
+     "target_estimator_param": true,
+     "want_width": 0.1,
+     "speed_max": 4.0,
+     "lock": {
+      "kind": "TargetLock",
+      "strict": true,
+      "gate_frac": 0.12,
+      "prior": "the target estimator (--target-estimator: demo/subject_track.SubjectTrack)"
+     },
+     "monitor_end_rule": {
+      "lost_timeout_s": 90.0,
+      "det_fresh_s": 1.0
+     },
      "summary_only": false,
      "source": {
       "file": "demo/out/pas_hil_para_02/metrics.json",
@@ -3367,7 +4281,9 @@
       "feed tick, not the family's C2 feed (stream, no cap)",
       "FrontCamera capture interval 0.066 s, not the 0.05 s the stream feed needs"
      ],
-     "protocol": "not C2"
+     "protocol": "not C2",
+     "c2_censored": false,
+     "end_rule_replay": null
     },
     {
      "backend": "aiotvla_v10b",
@@ -3412,6 +4328,42 @@
      "bundle": "follow-car-citylife-v0.1.3.tar.gz",
      "max_s_given": null,
      "start_gate_reached": false,
+     "gate_outcome": "timed_out",
+     "gate_identity_best_streak": 18,
+     "gate_identity_refused": {
+      "too far": 49,
+      "static": 8,
+      "not ok": 7
+     },
+     "gate_needed": 5.0,
+     "gate_identity_need_in_a_row": null,
+     "gate_identity_outcomes": null,
+     "gate_identity_moving_test_refused": null,
+     "gate_identity_static_unjudged": null,
+     "start_when_seen": 5.0,
+     "start_max_range_m": 30.0,
+     "gate_identity_closest_not_moving": null,
+     "gate_identity_last_not_moving": null,
+     "gate_rule": null,
+     "grant_topology": "hil",
+     "kpi_grade_reasons": [
+      "topology is 'projectairsim-ardupilot-mavros', not the grant's 'hil' (nor a waivable 'dev'): functional-rail evidence, not a contractual KPI number",
+      "ArduPilot's measured real-time factor is None (band (0.95, 1.05)); the scene's declared 1.0 is not what flew",
+      "no mission was flown: start gate timed out after 330.1 s: no plausible 'a red car' within 30 m on 5 inferences in a row",
+      "the follow is not scored: the subject's pose was read on 0/0 ticks (needs 95%; never read)"
+     ],
+     "pilot_param": "vla",
+     "identity_param": true,
+     "target_estimator_param": true,
+     "want_width": 0.1,
+     "speed_max": 4.0,
+     "lock": {
+      "kind": "TargetLock",
+      "strict": true,
+      "gate_frac": 0.12,
+      "prior": "the target estimator (--target-estimator: demo/subject_track.SubjectTrack)"
+     },
+     "monitor_end_rule": null,
      "summary_only": false,
      "source": {
       "file": "demo/out/pas_hil_para_03/metrics.json",
@@ -3426,7 +4378,9 @@
       "feed tick, not the family's C2 feed (stream, no cap)",
       "FrontCamera capture interval 0.066 s, not the 0.05 s the stream feed needs"
      ],
-     "protocol": "not C2"
+     "protocol": "not C2",
+     "c2_censored": false,
+     "end_rule_replay": null
     },
     {
      "backend": "aiotvla_v10b",
@@ -3468,6 +4422,39 @@
      "bundle": "follow-car-citylife-v0.1.3.tar.gz",
      "max_s_given": 420.0,
      "start_gate_reached": true,
+     "gate_outcome": "reached",
+     "gate_identity_best_streak": 10,
+     "gate_identity_refused": {
+      "too far": 180,
+      "not ok": 6
+     },
+     "gate_needed": 5.0,
+     "gate_identity_need_in_a_row": null,
+     "gate_identity_outcomes": null,
+     "gate_identity_moving_test_refused": null,
+     "gate_identity_static_unjudged": null,
+     "start_when_seen": 5.0,
+     "start_max_range_m": 30.0,
+     "gate_identity_closest_not_moving": null,
+     "gate_identity_last_not_moving": null,
+     "gate_rule": null,
+     "grant_topology": "hil",
+     "kpi_grade_reasons": [],
+     "pilot_param": "vla",
+     "identity_param": true,
+     "target_estimator_param": true,
+     "want_width": 0.1,
+     "speed_max": 4.0,
+     "lock": {
+      "kind": "TargetLock",
+      "strict": true,
+      "gate_frac": 0.12,
+      "prior": "the target estimator (--target-estimator: demo/subject_track.SubjectTrack)"
+     },
+     "monitor_end_rule": {
+      "lost_timeout_s": 90.0,
+      "det_fresh_s": 1.0
+     },
      "summary_only": false,
      "source": {
       "file": "demo/out/pas_hil_para_04/metrics.json",
@@ -3479,7 +4466,9 @@
       "feed tick, not the family's C2 feed (stream, no cap)",
       "FrontCamera capture interval 0.066 s, not the 0.05 s the stream feed needs"
      ],
-     "protocol": "not C2"
+     "protocol": "not C2",
+     "c2_censored": false,
+     "end_rule_replay": null
     },
     {
      "backend": "aiotvla_v10b",
@@ -3521,6 +4510,39 @@
      "bundle": "follow-car-citylife-v0.1.3.tar.gz",
      "max_s_given": 420.0,
      "start_gate_reached": true,
+     "gate_outcome": "reached",
+     "gate_identity_best_streak": 10,
+     "gate_identity_refused": {
+      "too far": 146,
+      "not ok": 3
+     },
+     "gate_needed": 5.0,
+     "gate_identity_need_in_a_row": null,
+     "gate_identity_outcomes": null,
+     "gate_identity_moving_test_refused": null,
+     "gate_identity_static_unjudged": null,
+     "start_when_seen": 5.0,
+     "start_max_range_m": 30.0,
+     "gate_identity_closest_not_moving": null,
+     "gate_identity_last_not_moving": null,
+     "gate_rule": null,
+     "grant_topology": "hil",
+     "kpi_grade_reasons": [],
+     "pilot_param": "vla",
+     "identity_param": true,
+     "target_estimator_param": true,
+     "want_width": 0.1,
+     "speed_max": 4.0,
+     "lock": {
+      "kind": "TargetLock",
+      "strict": true,
+      "gate_frac": 0.12,
+      "prior": "the target estimator (--target-estimator: demo/subject_track.SubjectTrack)"
+     },
+     "monitor_end_rule": {
+      "lost_timeout_s": 90.0,
+      "det_fresh_s": 1.0
+     },
      "summary_only": false,
      "source": {
       "file": "demo/out/pas_hil_para_05/metrics.json",
@@ -3532,7 +4554,9 @@
       "feed tick, not the family's C2 feed (stream, no cap)",
       "FrontCamera capture interval 0.066 s, not the 0.05 s the stream feed needs"
      ],
-     "protocol": "not C2"
+     "protocol": "not C2",
+     "c2_censored": false,
+     "end_rule_replay": null
     },
     {
      "backend": "aiotvla_v10b",
@@ -3574,6 +4598,39 @@
      "bundle": "follow-car-citylife-v0.1.3.tar.gz",
      "max_s_given": 420.0,
      "start_gate_reached": true,
+     "gate_outcome": "reached",
+     "gate_identity_best_streak": 14,
+     "gate_identity_refused": {
+      "too far": 42,
+      "not ok": 6
+     },
+     "gate_needed": 5.0,
+     "gate_identity_need_in_a_row": null,
+     "gate_identity_outcomes": null,
+     "gate_identity_moving_test_refused": null,
+     "gate_identity_static_unjudged": null,
+     "start_when_seen": 5.0,
+     "start_max_range_m": 30.0,
+     "gate_identity_closest_not_moving": null,
+     "gate_identity_last_not_moving": null,
+     "gate_rule": null,
+     "grant_topology": "hil",
+     "kpi_grade_reasons": [],
+     "pilot_param": "vla",
+     "identity_param": true,
+     "target_estimator_param": true,
+     "want_width": 0.1,
+     "speed_max": 4.0,
+     "lock": {
+      "kind": "TargetLock",
+      "strict": true,
+      "gate_frac": 0.12,
+      "prior": "the target estimator (--target-estimator: demo/subject_track.SubjectTrack)"
+     },
+     "monitor_end_rule": {
+      "lost_timeout_s": 90.0,
+      "det_fresh_s": 1.0
+     },
      "summary_only": false,
      "source": {
       "file": "demo/out/pas_hil_para_06/metrics.json",
@@ -3585,7 +4642,9 @@
       "feed tick, not the family's C2 feed (stream, no cap)",
       "FrontCamera capture interval 0.066 s, not the 0.05 s the stream feed needs"
      ],
-     "protocol": "not C2"
+     "protocol": "not C2",
+     "c2_censored": false,
+     "end_rule_replay": null
     },
     {
      "backend": "aiotvla_v10b",
@@ -3630,6 +4689,41 @@
      "bundle": "follow-car-citylife-v0.1.3.tar.gz",
      "max_s_given": null,
      "start_gate_reached": false,
+     "gate_outcome": "timed_out",
+     "gate_identity_best_streak": 18,
+     "gate_identity_refused": {
+      "too far": 49,
+      "not ok": 9
+     },
+     "gate_needed": 5.0,
+     "gate_identity_need_in_a_row": null,
+     "gate_identity_outcomes": null,
+     "gate_identity_moving_test_refused": null,
+     "gate_identity_static_unjudged": null,
+     "start_when_seen": 5.0,
+     "start_max_range_m": 30.0,
+     "gate_identity_closest_not_moving": null,
+     "gate_identity_last_not_moving": null,
+     "gate_rule": null,
+     "grant_topology": "hil",
+     "kpi_grade_reasons": [
+      "topology is 'projectairsim-ardupilot-mavros', not the grant's 'hil' (nor a waivable 'dev'): functional-rail evidence, not a contractual KPI number",
+      "ArduPilot's measured real-time factor is None (band (0.95, 1.05)); the scene's declared 1.0 is not what flew",
+      "no mission was flown: start gate timed out after 330.1 s: no plausible 'a red car' within 30 m on 5 inferences in a row",
+      "the follow is not scored: the subject's pose was read on 0/0 ticks (needs 95%; never read)"
+     ],
+     "pilot_param": "vla",
+     "identity_param": true,
+     "target_estimator_param": true,
+     "want_width": 0.1,
+     "speed_max": 4.0,
+     "lock": {
+      "kind": "TargetLock",
+      "strict": true,
+      "gate_frac": 0.12,
+      "prior": "the target estimator (--target-estimator: demo/subject_track.SubjectTrack)"
+     },
+     "monitor_end_rule": null,
      "summary_only": false,
      "source": {
       "file": "demo/out/pas_hil_para_07/metrics.json",
@@ -3644,7 +4738,9 @@
       "feed tick, not the family's C2 feed (stream, no cap)",
       "FrontCamera capture interval 0.066 s, not the 0.05 s the stream feed needs"
      ],
-     "protocol": "not C2"
+     "protocol": "not C2",
+     "c2_censored": false,
+     "end_rule_replay": null
     },
     {
      "backend": "aiotvla_v10b",
@@ -3688,6 +4784,40 @@
      "bundle": "follow-car-citylife-v0.1.3.tar.gz",
      "max_s_given": 420.0,
      "start_gate_reached": true,
+     "gate_outcome": "reached",
+     "gate_identity_best_streak": 20,
+     "gate_identity_refused": {
+      "too far": 72,
+      "not ok": 4,
+      "static": 18
+     },
+     "gate_needed": 5.0,
+     "gate_identity_need_in_a_row": null,
+     "gate_identity_outcomes": null,
+     "gate_identity_moving_test_refused": null,
+     "gate_identity_static_unjudged": null,
+     "start_when_seen": 5.0,
+     "start_max_range_m": 30.0,
+     "gate_identity_closest_not_moving": null,
+     "gate_identity_last_not_moving": null,
+     "gate_rule": null,
+     "grant_topology": "hil",
+     "kpi_grade_reasons": [],
+     "pilot_param": "vla",
+     "identity_param": true,
+     "target_estimator_param": true,
+     "want_width": 0.1,
+     "speed_max": 4.0,
+     "lock": {
+      "kind": "TargetLock",
+      "strict": true,
+      "gate_frac": 0.12,
+      "prior": "the target estimator (--target-estimator: demo/subject_track.SubjectTrack)"
+     },
+     "monitor_end_rule": {
+      "lost_timeout_s": 90.0,
+      "det_fresh_s": 1.0
+     },
      "summary_only": false,
      "source": {
       "file": "demo/out/pas_hil_para_08/metrics.json",
@@ -3699,7 +4829,9 @@
       "feed tick, not the family's C2 feed (stream, no cap)",
       "FrontCamera capture interval 0.066 s, not the 0.05 s the stream feed needs"
      ],
-     "protocol": "not C2"
+     "protocol": "not C2",
+     "c2_censored": false,
+     "end_rule_replay": null
     },
     {
      "backend": "aiotvla_v10b",
@@ -3741,6 +4873,40 @@
      "bundle": "follow-car-citylife-v0.1.3.tar.gz",
      "max_s_given": 420.0,
      "start_gate_reached": true,
+     "gate_outcome": "reached",
+     "gate_identity_best_streak": 21,
+     "gate_identity_refused": {
+      "too far": 59,
+      "not ok": 7,
+      "static": 11
+     },
+     "gate_needed": 5.0,
+     "gate_identity_need_in_a_row": null,
+     "gate_identity_outcomes": null,
+     "gate_identity_moving_test_refused": null,
+     "gate_identity_static_unjudged": null,
+     "start_when_seen": 5.0,
+     "start_max_range_m": 30.0,
+     "gate_identity_closest_not_moving": null,
+     "gate_identity_last_not_moving": null,
+     "gate_rule": null,
+     "grant_topology": "hil",
+     "kpi_grade_reasons": [],
+     "pilot_param": "vla",
+     "identity_param": true,
+     "target_estimator_param": true,
+     "want_width": 0.1,
+     "speed_max": 4.0,
+     "lock": {
+      "kind": "TargetLock",
+      "strict": true,
+      "gate_frac": 0.12,
+      "prior": "the target estimator (--target-estimator: demo/subject_track.SubjectTrack)"
+     },
+     "monitor_end_rule": {
+      "lost_timeout_s": 90.0,
+      "det_fresh_s": 1.0
+     },
      "summary_only": false,
      "source": {
       "file": "demo/out/pas_hil_para_09/metrics.json",
@@ -3752,7 +4918,9 @@
       "feed tick, not the family's C2 feed (stream, no cap)",
       "FrontCamera capture interval 0.066 s, not the 0.05 s the stream feed needs"
      ],
-     "protocol": "not C2"
+     "protocol": "not C2",
+     "c2_censored": false,
+     "end_rule_replay": null
     },
     {
      "backend": "aiotvla_v10b",
@@ -3796,6 +4964,40 @@
      "bundle": "follow-car-citylife-v0.1.3.tar.gz",
      "max_s_given": 420.0,
      "start_gate_reached": true,
+     "gate_outcome": "reached",
+     "gate_identity_best_streak": 20,
+     "gate_identity_refused": {
+      "too far": 36,
+      "not ok": 11,
+      "static": 21
+     },
+     "gate_needed": 5.0,
+     "gate_identity_need_in_a_row": null,
+     "gate_identity_outcomes": null,
+     "gate_identity_moving_test_refused": null,
+     "gate_identity_static_unjudged": null,
+     "start_when_seen": 5.0,
+     "start_max_range_m": 30.0,
+     "gate_identity_closest_not_moving": null,
+     "gate_identity_last_not_moving": null,
+     "gate_rule": null,
+     "grant_topology": "hil",
+     "kpi_grade_reasons": [],
+     "pilot_param": "vla",
+     "identity_param": true,
+     "target_estimator_param": true,
+     "want_width": 0.1,
+     "speed_max": 4.0,
+     "lock": {
+      "kind": "TargetLock",
+      "strict": true,
+      "gate_frac": 0.12,
+      "prior": "the target estimator (--target-estimator: demo/subject_track.SubjectTrack)"
+     },
+     "monitor_end_rule": {
+      "lost_timeout_s": 90.0,
+      "det_fresh_s": 1.0
+     },
      "summary_only": false,
      "source": {
       "file": "demo/out/pas_hil_para_10/metrics.json",
@@ -3806,7 +5008,9 @@
       "feed tick, not the family's C2 feed (stream, no cap)",
       "FrontCamera capture interval 0.066 s, not the 0.05 s the stream feed needs"
      ],
-     "protocol": "not C2"
+     "protocol": "not C2",
+     "c2_censored": false,
+     "end_rule_replay": null
     },
     {
      "backend": "aiotvla_v10b",
@@ -3851,6 +5055,39 @@
      "bundle": "follow-car-citylife-v0.1.3.tar.gz",
      "max_s_given": 420.0,
      "start_gate_reached": true,
+     "gate_outcome": "reached",
+     "gate_identity_best_streak": 12,
+     "gate_identity_refused": {
+      "not ok": 2,
+      "too far": 130
+     },
+     "gate_needed": 5.0,
+     "gate_identity_need_in_a_row": null,
+     "gate_identity_outcomes": null,
+     "gate_identity_moving_test_refused": null,
+     "gate_identity_static_unjudged": null,
+     "start_when_seen": 5.0,
+     "start_max_range_m": 30.0,
+     "gate_identity_closest_not_moving": null,
+     "gate_identity_last_not_moving": null,
+     "gate_rule": null,
+     "grant_topology": "hil",
+     "kpi_grade_reasons": [],
+     "pilot_param": "vla",
+     "identity_param": true,
+     "target_estimator_param": true,
+     "want_width": 0.1,
+     "speed_max": 4.0,
+     "lock": {
+      "kind": "TargetLock",
+      "strict": true,
+      "gate_frac": 0.12,
+      "prior": "the target estimator (--target-estimator: demo/subject_track.SubjectTrack)"
+     },
+     "monitor_end_rule": {
+      "lost_timeout_s": 90.0,
+      "det_fresh_s": 1.0
+     },
      "summary_only": false,
      "source": {
       "file": "demo/out/pas_hil_para_11/metrics.json",
@@ -3862,7 +5099,9 @@
       "feed tick, not the family's C2 feed (stream, no cap)",
       "FrontCamera capture interval 0.066 s, not the 0.05 s the stream feed needs"
      ],
-     "protocol": "not C2"
+     "protocol": "not C2",
+     "c2_censored": false,
+     "end_rule_replay": null
     },
     {
      "backend": "aiotvla_v10b",
@@ -3904,6 +5143,40 @@
      "bundle": "follow-car-citylife-v0.1.3.tar.gz",
      "max_s_given": 420.0,
      "start_gate_reached": true,
+     "gate_outcome": "reached",
+     "gate_identity_best_streak": 25,
+     "gate_identity_refused": {
+      "too far": 46,
+      "static": 20,
+      "not ok": 14
+     },
+     "gate_needed": 5.0,
+     "gate_identity_need_in_a_row": null,
+     "gate_identity_outcomes": null,
+     "gate_identity_moving_test_refused": null,
+     "gate_identity_static_unjudged": null,
+     "start_when_seen": 5.0,
+     "start_max_range_m": 30.0,
+     "gate_identity_closest_not_moving": null,
+     "gate_identity_last_not_moving": null,
+     "gate_rule": null,
+     "grant_topology": "hil",
+     "kpi_grade_reasons": [],
+     "pilot_param": "vla",
+     "identity_param": true,
+     "target_estimator_param": true,
+     "want_width": 0.1,
+     "speed_max": 4.0,
+     "lock": {
+      "kind": "TargetLock",
+      "strict": true,
+      "gate_frac": 0.12,
+      "prior": "the target estimator (--target-estimator: demo/subject_track.SubjectTrack)"
+     },
+     "monitor_end_rule": {
+      "lost_timeout_s": 90.0,
+      "det_fresh_s": 1.0
+     },
      "summary_only": false,
      "source": {
       "file": "demo/out/pas_hil_para_12/metrics.json",
@@ -3915,7 +5188,9 @@
       "feed tick, not the family's C2 feed (stream, no cap)",
       "FrontCamera capture interval 0.066 s, not the 0.05 s the stream feed needs"
      ],
-     "protocol": "not C2"
+     "protocol": "not C2",
+     "c2_censored": false,
+     "end_rule_replay": null
     },
     {
      "backend": "aiotvla_v10b",
@@ -3959,6 +5234,40 @@
      "bundle": "follow-car-citylife-v0.1.3.tar.gz",
      "max_s_given": 420.0,
      "start_gate_reached": true,
+     "gate_outcome": "reached",
+     "gate_identity_best_streak": 29,
+     "gate_identity_refused": {
+      "too far": 45,
+      "static": 23,
+      "not ok": 8
+     },
+     "gate_needed": 5.0,
+     "gate_identity_need_in_a_row": null,
+     "gate_identity_outcomes": null,
+     "gate_identity_moving_test_refused": null,
+     "gate_identity_static_unjudged": null,
+     "start_when_seen": 5.0,
+     "start_max_range_m": 30.0,
+     "gate_identity_closest_not_moving": null,
+     "gate_identity_last_not_moving": null,
+     "gate_rule": null,
+     "grant_topology": "hil",
+     "kpi_grade_reasons": [],
+     "pilot_param": "vla",
+     "identity_param": true,
+     "target_estimator_param": true,
+     "want_width": 0.1,
+     "speed_max": 4.0,
+     "lock": {
+      "kind": "TargetLock",
+      "strict": true,
+      "gate_frac": 0.12,
+      "prior": "the target estimator (--target-estimator: demo/subject_track.SubjectTrack)"
+     },
+     "monitor_end_rule": {
+      "lost_timeout_s": 90.0,
+      "det_fresh_s": 1.0
+     },
      "summary_only": false,
      "source": {
       "file": "F:/vla_drone_offload/jetson_runs/pas_hil_aiot_c2_01_20261116/metrics.json",
@@ -3966,7 +5275,22 @@
       "file_date": "2026-11-16"
      },
      "not_c2": [],
-     "protocol": "C2"
+     "protocol": "C2",
+     "c2_censored": false,
+     "end_rule_replay": {
+      "ends": true,
+      "end_tick": 2065,
+      "end_t_s": 206.67,
+      "last_t_s": 208.17,
+      "ticks": 2080,
+      "max_gap_s": 90.0,
+      "final_gap_s": 90.0,
+      "frac_within_30m": 0.21259079903147698,
+      "within_30m": 439,
+      "ticks_read": 2065,
+      "lost_timeout_s": 90.0,
+      "det_fresh_s": 1.0
+     }
     },
     {
      "backend": "aiotvla_v10b",
@@ -4010,6 +5334,39 @@
      "bundle": "follow-car-citylife-v0.1.3.tar.gz",
      "max_s_given": 420.0,
      "start_gate_reached": true,
+     "gate_outcome": "reached",
+     "gate_identity_best_streak": 31,
+     "gate_identity_refused": {
+      "too far": 58,
+      "not ok": 4
+     },
+     "gate_needed": 5.0,
+     "gate_identity_need_in_a_row": null,
+     "gate_identity_outcomes": null,
+     "gate_identity_moving_test_refused": null,
+     "gate_identity_static_unjudged": null,
+     "start_when_seen": 5.0,
+     "start_max_range_m": 30.0,
+     "gate_identity_closest_not_moving": null,
+     "gate_identity_last_not_moving": null,
+     "gate_rule": null,
+     "grant_topology": "hil",
+     "kpi_grade_reasons": [],
+     "pilot_param": "vla",
+     "identity_param": true,
+     "target_estimator_param": true,
+     "want_width": 0.1,
+     "speed_max": 4.0,
+     "lock": {
+      "kind": "TargetLock",
+      "strict": true,
+      "gate_frac": 0.12,
+      "prior": "the target estimator (--target-estimator: demo/subject_track.SubjectTrack)"
+     },
+     "monitor_end_rule": {
+      "lost_timeout_s": 90.0,
+      "det_fresh_s": 1.0
+     },
      "summary_only": false,
      "source": {
       "file": "F:/vla_drone_offload/jetson_runs/pas_hil_feed_01/metrics.json",
@@ -4019,7 +5376,9 @@
      "not_c2": [
       "feed stream capped at 12 Hz, not the family's C2 feed (stream, no cap)"
      ],
-     "protocol": "not C2"
+     "protocol": "not C2",
+     "c2_censored": false,
+     "end_rule_replay": null
     },
     {
      "backend": "aiotvla_v10b",
@@ -4061,6 +5420,39 @@
      "bundle": "follow-car-citylife-v0.1.3.tar.gz",
      "max_s_given": 420.0,
      "start_gate_reached": true,
+     "gate_outcome": "reached",
+     "gate_identity_best_streak": 10,
+     "gate_identity_refused": {
+      "too far": 120,
+      "not ok": 1
+     },
+     "gate_needed": 5.0,
+     "gate_identity_need_in_a_row": null,
+     "gate_identity_outcomes": null,
+     "gate_identity_moving_test_refused": null,
+     "gate_identity_static_unjudged": null,
+     "start_when_seen": 5.0,
+     "start_max_range_m": 30.0,
+     "gate_identity_closest_not_moving": null,
+     "gate_identity_last_not_moving": null,
+     "gate_rule": null,
+     "grant_topology": "hil",
+     "kpi_grade_reasons": [],
+     "pilot_param": "vla",
+     "identity_param": true,
+     "target_estimator_param": true,
+     "want_width": 0.1,
+     "speed_max": 4.0,
+     "lock": {
+      "kind": "TargetLock",
+      "strict": true,
+      "gate_frac": 0.12,
+      "prior": "the target estimator (--target-estimator: demo/subject_track.SubjectTrack)"
+     },
+     "monitor_end_rule": {
+      "lost_timeout_s": 90.0,
+      "det_fresh_s": 1.0
+     },
      "summary_only": false,
      "source": {
       "file": "F:/vla_drone_offload/jetson_runs/pas_hil_feed_02/metrics.json",
@@ -4070,7 +5462,9 @@
      "not_c2": [
       "feed stream capped at 12 Hz, not the family's C2 feed (stream, no cap)"
      ],
-     "protocol": "not C2"
+     "protocol": "not C2",
+     "c2_censored": false,
+     "end_rule_replay": null
     },
     {
      "backend": "aiotvla_v10b",
@@ -4114,6 +5508,38 @@
      "bundle": "follow-car-citylife-v0.1.3.tar.gz",
      "max_s_given": 420.0,
      "start_gate_reached": true,
+     "gate_outcome": "reached",
+     "gate_identity_best_streak": 10,
+     "gate_identity_refused": {
+      "too far": 149
+     },
+     "gate_needed": 5.0,
+     "gate_identity_need_in_a_row": null,
+     "gate_identity_outcomes": null,
+     "gate_identity_moving_test_refused": null,
+     "gate_identity_static_unjudged": null,
+     "start_when_seen": 5.0,
+     "start_max_range_m": 30.0,
+     "gate_identity_closest_not_moving": null,
+     "gate_identity_last_not_moving": null,
+     "gate_rule": null,
+     "grant_topology": "hil",
+     "kpi_grade_reasons": [],
+     "pilot_param": "vla",
+     "identity_param": true,
+     "target_estimator_param": true,
+     "want_width": 0.1,
+     "speed_max": 4.0,
+     "lock": {
+      "kind": "TargetLock",
+      "strict": true,
+      "gate_frac": 0.12,
+      "prior": "the target estimator (--target-estimator: demo/subject_track.SubjectTrack)"
+     },
+     "monitor_end_rule": {
+      "lost_timeout_s": 90.0,
+      "det_fresh_s": 1.0
+     },
      "summary_only": false,
      "source": {
       "file": "F:/vla_drone_offload/jetson_runs/pas_hil_feed_03/metrics.json",
@@ -4123,7 +5549,9 @@
      "not_c2": [
       "feed stream capped at 12 Hz, not the family's C2 feed (stream, no cap)"
      ],
-     "protocol": "not C2"
+     "protocol": "not C2",
+     "c2_censored": false,
+     "end_rule_replay": null
     },
     {
      "backend": "aiotvla_v10b",
@@ -4165,6 +5593,39 @@
      "bundle": "follow-car-citylife-v0.1.3.tar.gz",
      "max_s_given": 420.0,
      "start_gate_reached": true,
+     "gate_outcome": "reached",
+     "gate_identity_best_streak": 10,
+     "gate_identity_refused": {
+      "too far": 103,
+      "not ok": 5
+     },
+     "gate_needed": 5.0,
+     "gate_identity_need_in_a_row": null,
+     "gate_identity_outcomes": null,
+     "gate_identity_moving_test_refused": null,
+     "gate_identity_static_unjudged": null,
+     "start_when_seen": 5.0,
+     "start_max_range_m": 30.0,
+     "gate_identity_closest_not_moving": null,
+     "gate_identity_last_not_moving": null,
+     "gate_rule": null,
+     "grant_topology": "hil",
+     "kpi_grade_reasons": [],
+     "pilot_param": "vla",
+     "identity_param": true,
+     "target_estimator_param": true,
+     "want_width": 0.1,
+     "speed_max": 4.0,
+     "lock": {
+      "kind": "TargetLock",
+      "strict": true,
+      "gate_frac": 0.12,
+      "prior": "the target estimator (--target-estimator: demo/subject_track.SubjectTrack)"
+     },
+     "monitor_end_rule": {
+      "lost_timeout_s": 90.0,
+      "det_fresh_s": 1.0
+     },
      "summary_only": false,
      "source": {
       "file": "F:/vla_drone_offload/jetson_runs/pas_hil_feed_04/metrics.json",
@@ -4174,7 +5635,9 @@
      "not_c2": [
       "feed stream capped at 12 Hz, not the family's C2 feed (stream, no cap)"
      ],
-     "protocol": "not C2"
+     "protocol": "not C2",
+     "c2_censored": false,
+     "end_rule_replay": null
     },
     {
      "backend": "aiotvla_v10b",
@@ -4218,6 +5681,40 @@
      "bundle": "follow-car-citylife-v0.1.3.tar.gz",
      "max_s_given": 420.0,
      "start_gate_reached": true,
+     "gate_outcome": "reached",
+     "gate_identity_best_streak": 17,
+     "gate_identity_refused": {
+      "too far": 54,
+      "not ok": 6,
+      "static": 30
+     },
+     "gate_needed": 5.0,
+     "gate_identity_need_in_a_row": null,
+     "gate_identity_outcomes": null,
+     "gate_identity_moving_test_refused": null,
+     "gate_identity_static_unjudged": null,
+     "start_when_seen": 5.0,
+     "start_max_range_m": 30.0,
+     "gate_identity_closest_not_moving": null,
+     "gate_identity_last_not_moving": null,
+     "gate_rule": null,
+     "grant_topology": "hil",
+     "kpi_grade_reasons": [],
+     "pilot_param": "vla",
+     "identity_param": true,
+     "target_estimator_param": true,
+     "want_width": 0.1,
+     "speed_max": 4.0,
+     "lock": {
+      "kind": "TargetLock",
+      "strict": true,
+      "gate_frac": 0.12,
+      "prior": "the target estimator (--target-estimator: demo/subject_track.SubjectTrack)"
+     },
+     "monitor_end_rule": {
+      "lost_timeout_s": 90.0,
+      "det_fresh_s": 1.0
+     },
      "summary_only": false,
      "source": {
       "file": "F:/vla_drone_offload/jetson_runs/pas_hil_feed_05/metrics.json",
@@ -4227,7 +5724,9 @@
      "not_c2": [
       "not flown alone: desktop tests ran beside it (docs/data/pas_hil_feed_20261115/flights.md)"
      ],
-     "protocol": "not C2"
+     "protocol": "not C2",
+     "c2_censored": false,
+     "end_rule_replay": null
     },
     {
      "backend": "aiotvla_v10b",
@@ -4272,6 +5771,39 @@
      "bundle": "follow-car-citylife-v0.1.3.tar.gz",
      "max_s_given": 420.0,
      "start_gate_reached": true,
+     "gate_outcome": "reached",
+     "gate_identity_best_streak": 13,
+     "gate_identity_refused": {
+      "too far": 43,
+      "not ok": 3
+     },
+     "gate_needed": 5.0,
+     "gate_identity_need_in_a_row": null,
+     "gate_identity_outcomes": null,
+     "gate_identity_moving_test_refused": null,
+     "gate_identity_static_unjudged": null,
+     "start_when_seen": 5.0,
+     "start_max_range_m": 30.0,
+     "gate_identity_closest_not_moving": null,
+     "gate_identity_last_not_moving": null,
+     "gate_rule": null,
+     "grant_topology": "hil",
+     "kpi_grade_reasons": [],
+     "pilot_param": "vla",
+     "identity_param": true,
+     "target_estimator_param": true,
+     "want_width": 0.1,
+     "speed_max": 4.0,
+     "lock": {
+      "kind": "TargetLock",
+      "strict": true,
+      "gate_frac": 0.12,
+      "prior": "the target estimator (--target-estimator: demo/subject_track.SubjectTrack)"
+     },
+     "monitor_end_rule": {
+      "lost_timeout_s": 90.0,
+      "det_fresh_s": 1.0
+     },
      "summary_only": false,
      "source": {
       "file": "F:/vla_drone_offload/jetson_runs/pas_hil_feed_06/metrics.json",
@@ -4281,7 +5813,9 @@
      "not_c2": [
       "not flown alone: desktop tests ran beside it (docs/data/pas_hil_feed_20261115/flights.md)"
      ],
-     "protocol": "not C2"
+     "protocol": "not C2",
+     "c2_censored": false,
+     "end_rule_replay": null
     },
     {
      "backend": "aiotvla_v10b",
@@ -4325,6 +5859,40 @@
      "bundle": "follow-car-citylife-v0.1.3.tar.gz",
      "max_s_given": 420.0,
      "start_gate_reached": true,
+     "gate_outcome": "reached",
+     "gate_identity_best_streak": 19,
+     "gate_identity_refused": {
+      "too far": 46,
+      "static": 13,
+      "not ok": 9
+     },
+     "gate_needed": 5.0,
+     "gate_identity_need_in_a_row": null,
+     "gate_identity_outcomes": null,
+     "gate_identity_moving_test_refused": null,
+     "gate_identity_static_unjudged": null,
+     "start_when_seen": 5.0,
+     "start_max_range_m": 30.0,
+     "gate_identity_closest_not_moving": null,
+     "gate_identity_last_not_moving": null,
+     "gate_rule": null,
+     "grant_topology": "hil",
+     "kpi_grade_reasons": [],
+     "pilot_param": "vla",
+     "identity_param": true,
+     "target_estimator_param": true,
+     "want_width": 0.1,
+     "speed_max": 4.0,
+     "lock": {
+      "kind": "TargetLock",
+      "strict": true,
+      "gate_frac": 0.12,
+      "prior": "the target estimator (--target-estimator: demo/subject_track.SubjectTrack)"
+     },
+     "monitor_end_rule": {
+      "lost_timeout_s": 90.0,
+      "det_fresh_s": 1.0
+     },
      "summary_only": false,
      "source": {
       "file": "F:/vla_drone_offload/jetson_runs/pas_hil_feed_08/metrics.json",
@@ -4332,7 +5900,22 @@
       "file_date": "2026-11-15"
      },
      "not_c2": [],
-     "protocol": "C2"
+     "protocol": "C2",
+     "c2_censored": false,
+     "end_rule_replay": {
+      "ends": false,
+      "end_tick": 4198,
+      "end_t_s": 419.98,
+      "last_t_s": 419.98,
+      "ticks": 4198,
+      "max_gap_s": 50.9,
+      "final_gap_s": 50.9,
+      "frac_within_30m": 0.2694140066698428,
+      "within_30m": 1131,
+      "ticks_read": 4198,
+      "lost_timeout_s": 90.0,
+      "det_fresh_s": 1.0
+     }
     }
    ],
    "orin_timed": true,
@@ -4413,7 +5996,7 @@
      "source": {
       "file": "deploy/evidence/hil/dronecats_2b_bench_agx.json",
       "sha256": "547f86644a7fe97eb1cd1c2cc9f4950e69c2a7713b6cd380137f6653f5c42a85",
-      "file_date": "2026-11-16"
+      "file_date": "2026-11-17"
      }
     },
     {
@@ -4458,6 +6041,40 @@
      "bundle": "follow-car-citylife-v0.1.3.tar.gz",
      "max_s_given": 420.0,
      "start_gate_reached": true,
+     "gate_outcome": "reached",
+     "gate_identity_best_streak": 16,
+     "gate_identity_refused": {
+      "too far": 71,
+      "not ok": 6,
+      "static": 24
+     },
+     "gate_needed": 5.0,
+     "gate_identity_need_in_a_row": null,
+     "gate_identity_outcomes": null,
+     "gate_identity_moving_test_refused": null,
+     "gate_identity_static_unjudged": null,
+     "start_when_seen": 5.0,
+     "start_max_range_m": 30.0,
+     "gate_identity_closest_not_moving": null,
+     "gate_identity_last_not_moving": null,
+     "gate_rule": null,
+     "grant_topology": "hil",
+     "kpi_grade_reasons": [],
+     "pilot_param": "vla",
+     "identity_param": true,
+     "target_estimator_param": true,
+     "want_width": 0.1,
+     "speed_max": 4.0,
+     "lock": {
+      "kind": "TargetLock",
+      "strict": true,
+      "gate_frac": 0.12,
+      "prior": "the target estimator (--target-estimator: demo/subject_track.SubjectTrack)"
+     },
+     "monitor_end_rule": {
+      "lost_timeout_s": 90.0,
+      "det_fresh_s": 1.0
+     },
      "summary_only": false,
      "source": {
       "file": "F:/vla_drone_offload/jetson_runs/pas_hil_dronecats_c2_01_20261116/metrics.json",
@@ -4465,7 +6082,22 @@
       "file_date": "2026-11-16"
      },
      "not_c2": [],
-     "protocol": "C2"
+     "protocol": "C2",
+     "c2_censored": false,
+     "end_rule_replay": {
+      "ends": true,
+      "end_tick": 1457,
+      "end_t_s": 145.87,
+      "last_t_s": 145.87,
+      "ticks": 1457,
+      "max_gap_s": 90.1,
+      "final_gap_s": 90.1,
+      "frac_within_30m": 0.13177762525737818,
+      "within_30m": 192,
+      "ticks_read": 1457,
+      "lost_timeout_s": 90.0,
+      "det_fresh_s": 1.0
+     }
     },
     {
      "backend": "dronecats_2b",
@@ -4507,6 +6139,39 @@
      "bundle": "follow-car-citylife-v0.1.3.tar.gz",
      "max_s_given": 420.0,
      "start_gate_reached": true,
+     "gate_outcome": "reached",
+     "gate_identity_best_streak": 10,
+     "gate_identity_refused": {
+      "too far": 101,
+      "not ok": 2
+     },
+     "gate_needed": 5.0,
+     "gate_identity_need_in_a_row": null,
+     "gate_identity_outcomes": null,
+     "gate_identity_moving_test_refused": null,
+     "gate_identity_static_unjudged": null,
+     "start_when_seen": 5.0,
+     "start_max_range_m": 30.0,
+     "gate_identity_closest_not_moving": null,
+     "gate_identity_last_not_moving": null,
+     "gate_rule": null,
+     "grant_topology": "hil",
+     "kpi_grade_reasons": [],
+     "pilot_param": "vla",
+     "identity_param": true,
+     "target_estimator_param": true,
+     "want_width": 0.1,
+     "speed_max": 4.0,
+     "lock": {
+      "kind": "TargetLock",
+      "strict": true,
+      "gate_frac": 0.12,
+      "prior": "the target estimator (--target-estimator: demo/subject_track.SubjectTrack)"
+     },
+     "monitor_end_rule": {
+      "lost_timeout_s": 90.0,
+      "det_fresh_s": 1.0
+     },
      "summary_only": false,
      "source": {
       "file": "F:/vla_drone_offload/jetson_runs/pas_hil_dronecats_c2_02_20261116/metrics.json",
@@ -4514,7 +6179,22 @@
       "file_date": "2026-11-16"
      },
      "not_c2": [],
-     "protocol": "C2"
+     "protocol": "C2",
+     "c2_censored": false,
+     "end_rule_replay": {
+      "ends": true,
+      "end_tick": 1438,
+      "end_t_s": 143.97,
+      "last_t_s": 143.97,
+      "ticks": 1438,
+      "max_gap_s": 90.0,
+      "final_gap_s": 90.0,
+      "frac_within_30m": 0.18845618915159945,
+      "within_30m": 271,
+      "ticks_read": 1438,
+      "lost_timeout_s": 90.0,
+      "det_fresh_s": 1.0
+     }
     },
     {
      "backend": "dronecats_2b",
@@ -4556,6 +6236,39 @@
      "bundle": "follow-car-citylife-v0.1.3.tar.gz",
      "max_s_given": 420.0,
      "start_gate_reached": true,
+     "gate_outcome": "reached",
+     "gate_identity_best_streak": 11,
+     "gate_identity_refused": {
+      "too far": 118,
+      "not ok": 1
+     },
+     "gate_needed": 5.0,
+     "gate_identity_need_in_a_row": null,
+     "gate_identity_outcomes": null,
+     "gate_identity_moving_test_refused": null,
+     "gate_identity_static_unjudged": null,
+     "start_when_seen": 5.0,
+     "start_max_range_m": 30.0,
+     "gate_identity_closest_not_moving": null,
+     "gate_identity_last_not_moving": null,
+     "gate_rule": null,
+     "grant_topology": "hil",
+     "kpi_grade_reasons": [],
+     "pilot_param": "vla",
+     "identity_param": true,
+     "target_estimator_param": true,
+     "want_width": 0.1,
+     "speed_max": 4.0,
+     "lock": {
+      "kind": "TargetLock",
+      "strict": true,
+      "gate_frac": 0.12,
+      "prior": "the target estimator (--target-estimator: demo/subject_track.SubjectTrack)"
+     },
+     "monitor_end_rule": {
+      "lost_timeout_s": 90.0,
+      "det_fresh_s": 1.0
+     },
      "summary_only": false,
      "source": {
       "file": "F:/vla_drone_offload/jetson_runs/pas_hil_dronecats_c2_03_20261116/metrics.json",
@@ -4563,7 +6276,22 @@
       "file_date": "2026-11-16"
      },
      "not_c2": [],
-     "protocol": "C2"
+     "protocol": "C2",
+     "c2_censored": false,
+     "end_rule_replay": {
+      "ends": true,
+      "end_tick": 946,
+      "end_t_s": 94.77,
+      "last_t_s": 96.38,
+      "ticks": 962,
+      "max_gap_s": 90.0,
+      "final_gap_s": 90.0,
+      "frac_within_30m": 0.17124735729386892,
+      "within_30m": 162,
+      "ticks_read": 946,
+      "lost_timeout_s": 90.0,
+      "det_fresh_s": 1.0
+     }
     },
     {
      "backend": "dronecats_2b",
@@ -4605,6 +6333,39 @@
      "bundle": "follow-car-citylife-v0.1.3.tar.gz",
      "max_s_given": 60.0,
      "start_gate_reached": true,
+     "gate_outcome": "reached",
+     "gate_identity_best_streak": 13,
+     "gate_identity_refused": {
+      "too far": 150,
+      "not ok": 1
+     },
+     "gate_needed": 5.0,
+     "gate_identity_need_in_a_row": null,
+     "gate_identity_outcomes": null,
+     "gate_identity_moving_test_refused": null,
+     "gate_identity_static_unjudged": null,
+     "start_when_seen": 5.0,
+     "start_max_range_m": 30.0,
+     "gate_identity_closest_not_moving": null,
+     "gate_identity_last_not_moving": null,
+     "gate_rule": null,
+     "grant_topology": "hil",
+     "kpi_grade_reasons": [],
+     "pilot_param": "vla",
+     "identity_param": true,
+     "target_estimator_param": true,
+     "want_width": 0.1,
+     "speed_max": 4.0,
+     "lock": {
+      "kind": "TargetLock",
+      "strict": true,
+      "gate_frac": 0.12,
+      "prior": "the target estimator (--target-estimator: demo/subject_track.SubjectTrack)"
+     },
+     "monitor_end_rule": {
+      "lost_timeout_s": 90.0,
+      "det_fresh_s": 1.0
+     },
      "summary_only": false,
      "source": {
       "file": "F:/vla_drone_offload/jetson_runs/pas_hil_dronecats_shake_01_20261116/metrics.json",
@@ -4615,7 +6376,9 @@
       "a shakedown by its tag ('_shake')",
       "given a time limit of 60 s, not C2's 420 s"
      ],
-     "protocol": "not C2"
+     "protocol": "not C2",
+     "c2_censored": false,
+     "end_rule_replay": null
     },
     {
      "backend": "dronecats_2b",
@@ -4694,7 +6457,7 @@
      "source": {
       "file": "docs/data/progress_1028.json",
       "sha256": "5586c5733c2615f9cb627b08e233299d4b4fb19b7283cc61e4d2718e78685daf",
-      "file_date": "2026-11-16"
+      "file_date": "2026-11-17"
      }
     },
     {
@@ -4790,7 +6553,7 @@
     "rate_orin": "not R1 - round trip through its server: p50 838.9 ms (1.19 Hz), p95 843.4 ms, n=50; the model alone p50 835.5 ms, p95 839.9 ms [deploy/evidence/hil/racevla_7b_bench_agx.json]; R1 does not cover a model served over protocol v2 (`measure` refuses it): its Orin timing is its server's bench (python tools/bench_foreign_vla.py --server 127.0.0.1:<port> against demo/vla_server_foreign.py serve --model racevla)",
     "closed_loop_desktop": "not C1 - see records",
     "closed_loop_hil_c1": "not flown: its instruction is 'fly to <the object>' on a camera frame, not a goal coordinate; it has been flown as a follow only",
-    "closed_loop_hil_c2": "C2, 1 flight (1 target_lost): within 30 m 0.060; decisions/s over the mission 0.0222; interventions per 100 ticks 0; P0 escapes 0; KPI outcome 1 success; ticks in a P0-unsafe position 0; P0 ticks not measurable / blind 0/-; the protocol asks for 3: 2 more to fly; 3 more hil follows outside C2 (see the C2 section)"
+    "closed_loop_hil_c2": "C2, 2 flights (2 target_lost): within 30 m 0.060-0.168 (median 0.114); decisions/s over the mission 0.0222-0.0328 (median 0.0275); interventions per 100 ticks 0; P0 escapes 0; KPI outcome 2 success; ticks in a P0-unsafe position 0, 0; P0 ticks not measurable / blind 0/-, 0/-; the protocol asks for 3: 1 more to fly; gate timed out 3: censored, not scored, not counted toward the 3; 4 more hil follows outside C2 (the 3 censored among them) (see the C2 section)"
    },
    "records": [
     {
@@ -4835,7 +6598,7 @@
      "source": {
       "file": "deploy/evidence/hil/racevla_7b_bench_agx.json",
       "sha256": "a3076dee1c7d79ab253f4d360143d990433ee6623bff3d58989c699ca38d8615",
-      "file_date": "2026-11-16"
+      "file_date": "2026-11-17"
      }
     },
     {
@@ -4881,6 +6644,41 @@
      "bundle": "follow-car-citylife-v0.1.3.tar.gz",
      "max_s_given": null,
      "start_gate_reached": false,
+     "gate_outcome": "timed_out",
+     "gate_identity_best_streak": 15,
+     "gate_identity_refused": {
+      "too far": 43,
+      "not ok": 4
+     },
+     "gate_needed": 5.0,
+     "gate_identity_need_in_a_row": null,
+     "gate_identity_outcomes": null,
+     "gate_identity_moving_test_refused": null,
+     "gate_identity_static_unjudged": null,
+     "start_when_seen": 5.0,
+     "start_max_range_m": 30.0,
+     "gate_identity_closest_not_moving": null,
+     "gate_identity_last_not_moving": null,
+     "gate_rule": null,
+     "grant_topology": "hil",
+     "kpi_grade_reasons": [
+      "topology is 'projectairsim-ardupilot-mavros', not the grant's 'hil' (nor a waivable 'dev'): functional-rail evidence, not a contractual KPI number",
+      "ArduPilot's measured real-time factor is None (band (0.95, 1.05)); the scene's declared 1.0 is not what flew",
+      "no mission was flown: start gate timed out after 330.1 s: no plausible 'a red car' within 30 m on 5 inferences in a row",
+      "the follow is not scored: the subject's pose was read on 0/0 ticks (needs 95%; never read)"
+     ],
+     "pilot_param": "vla",
+     "identity_param": true,
+     "target_estimator_param": true,
+     "want_width": 0.1,
+     "speed_max": 4.0,
+     "lock": {
+      "kind": "TargetLock",
+      "strict": true,
+      "gate_frac": 0.12,
+      "prior": "the target estimator (--target-estimator: demo/subject_track.SubjectTrack)"
+     },
+     "monitor_end_rule": null,
      "summary_only": false,
      "source": {
       "file": "F:/vla_drone_offload/jetson_runs/pas_hil_racevla_c2_01_20261116/metrics.json",
@@ -4892,7 +6690,9 @@
       "not KPI-grade by its kpi.json",
       "the start gate never passed: no mission"
      ],
-     "protocol": "not C2"
+     "protocol": "not C2",
+     "c2_censored": true,
+     "end_rule_replay": null
     },
     {
      "backend": "racevla_7b",
@@ -4937,6 +6737,41 @@
      "bundle": "follow-car-citylife-v0.1.3.tar.gz",
      "max_s_given": null,
      "start_gate_reached": false,
+     "gate_outcome": "timed_out",
+     "gate_identity_best_streak": 12,
+     "gate_identity_refused": {
+      "too far": 99,
+      "not ok": 8
+     },
+     "gate_needed": 5.0,
+     "gate_identity_need_in_a_row": null,
+     "gate_identity_outcomes": null,
+     "gate_identity_moving_test_refused": null,
+     "gate_identity_static_unjudged": null,
+     "start_when_seen": 5.0,
+     "start_max_range_m": 30.0,
+     "gate_identity_closest_not_moving": null,
+     "gate_identity_last_not_moving": null,
+     "gate_rule": null,
+     "grant_topology": "hil",
+     "kpi_grade_reasons": [
+      "topology is 'projectairsim-ardupilot-mavros', not the grant's 'hil' (nor a waivable 'dev'): functional-rail evidence, not a contractual KPI number",
+      "ArduPilot's measured real-time factor is None (band (0.95, 1.05)); the scene's declared 1.0 is not what flew",
+      "no mission was flown: start gate timed out after 330.1 s: no plausible 'a red car' within 30 m on 5 inferences in a row",
+      "the follow is not scored: the subject's pose was read on 0/0 ticks (needs 95%; never read)"
+     ],
+     "pilot_param": "vla",
+     "identity_param": true,
+     "target_estimator_param": true,
+     "want_width": 0.1,
+     "speed_max": 4.0,
+     "lock": {
+      "kind": "TargetLock",
+      "strict": true,
+      "gate_frac": 0.12,
+      "prior": "the target estimator (--target-estimator: demo/subject_track.SubjectTrack)"
+     },
+     "monitor_end_rule": null,
      "summary_only": false,
      "source": {
       "file": "F:/vla_drone_offload/jetson_runs/pas_hil_racevla_c2_02_20261116/metrics.json",
@@ -4948,7 +6783,9 @@
       "not KPI-grade by its kpi.json",
       "the start gate never passed: no mission"
      ],
-     "protocol": "not C2"
+     "protocol": "not C2",
+     "c2_censored": true,
+     "end_rule_replay": null
     },
     {
      "backend": "racevla_7b",
@@ -4990,6 +6827,39 @@
      "bundle": "follow-car-citylife-v0.1.3.tar.gz",
      "max_s_given": 420.0,
      "start_gate_reached": true,
+     "gate_outcome": "reached",
+     "gate_identity_best_streak": 17,
+     "gate_identity_refused": {
+      "too far": 48,
+      "not ok": 3
+     },
+     "gate_needed": 5.0,
+     "gate_identity_need_in_a_row": null,
+     "gate_identity_outcomes": null,
+     "gate_identity_moving_test_refused": null,
+     "gate_identity_static_unjudged": null,
+     "start_when_seen": 5.0,
+     "start_max_range_m": 30.0,
+     "gate_identity_closest_not_moving": null,
+     "gate_identity_last_not_moving": null,
+     "gate_rule": null,
+     "grant_topology": "hil",
+     "kpi_grade_reasons": [],
+     "pilot_param": "vla",
+     "identity_param": true,
+     "target_estimator_param": true,
+     "want_width": 0.1,
+     "speed_max": 4.0,
+     "lock": {
+      "kind": "TargetLock",
+      "strict": true,
+      "gate_frac": 0.12,
+      "prior": "the target estimator (--target-estimator: demo/subject_track.SubjectTrack)"
+     },
+     "monitor_end_rule": {
+      "lost_timeout_s": 90.0,
+      "det_fresh_s": 1.0
+     },
      "summary_only": false,
      "source": {
       "file": "F:/vla_drone_offload/jetson_runs/pas_hil_racevla_c2_03_20261116/metrics.json",
@@ -4997,7 +6867,212 @@
       "file_date": "2026-11-16"
      },
      "not_c2": [],
-     "protocol": "C2"
+     "protocol": "C2",
+     "c2_censored": false,
+     "end_rule_replay": {
+      "ends": false,
+      "end_tick": 899,
+      "end_t_s": 90.07,
+      "last_t_s": 90.07,
+      "ticks": 899,
+      "max_gap_s": 89.8,
+      "final_gap_s": 89.8,
+      "frac_within_30m": 0.060066740823136816,
+      "within_30m": 54,
+      "ticks_read": 899,
+      "lost_timeout_s": 90.0,
+      "det_fresh_s": 1.0
+     }
+    },
+    {
+     "backend": "racevla_7b",
+     "family": "racevla",
+     "metric": "hil_follow",
+     "tag": "pas_hil_racevla_c2_04_20261116",
+     "model_id": "racevla/drone6_all@03f3bb48",
+     "topology": "hil",
+     "kpi_grade": true,
+     "code_revision": "63fffcf606be",
+     "date": "2026-11-16",
+     "ticks": 916,
+     "end_reason": "target_lost",
+     "mission_s": 91.91,
+     "frac_within_30m": 0.1679,
+     "decision_hz_mission": 0.03275519246384669,
+     "decision_hz_asked": 0.6247396917950855,
+     "asking_s": 4.802,
+     "interventions": 0,
+     "interventions_per_100_ticks": 0.0,
+     "p0_escapes": 0,
+     "p0_violation_escape_rate": 0.0,
+     "kpi_outcome": "success",
+     "mission_fail_reasons": [],
+     "unsafe_p0_ticks": 0,
+     "p0_ticks_not_measurable": 0,
+     "p0_ticks_blind": null,
+     "detector_hz": 2.285,
+     "stress": null,
+     "hot_apply": false,
+     "identity": true,
+     "target_estimator": true,
+     "vla_feed": "tick",
+     "vla_feed_max_hz": 0.0,
+     "negative_query": [
+      "a traffic light"
+     ],
+     "front_capture_interval_s": null,
+     "bundle": "follow-car-citylife-v0.1.3.tar.gz",
+     "max_s_given": 420.0,
+     "start_gate_reached": true,
+     "gate_outcome": "reached",
+     "gate_identity_best_streak": 10,
+     "gate_identity_refused": {
+      "too far": 149,
+      "not ok": 1
+     },
+     "gate_needed": 5.0,
+     "gate_identity_need_in_a_row": null,
+     "gate_identity_outcomes": null,
+     "gate_identity_moving_test_refused": null,
+     "gate_identity_static_unjudged": null,
+     "start_when_seen": 5.0,
+     "start_max_range_m": 30.0,
+     "gate_identity_closest_not_moving": null,
+     "gate_identity_last_not_moving": null,
+     "gate_rule": null,
+     "grant_topology": "hil",
+     "kpi_grade_reasons": [],
+     "pilot_param": "vla",
+     "identity_param": true,
+     "target_estimator_param": true,
+     "want_width": 0.1,
+     "speed_max": 4.0,
+     "lock": {
+      "kind": "TargetLock",
+      "strict": true,
+      "gate_frac": 0.12,
+      "prior": "the target estimator (--target-estimator: demo/subject_track.SubjectTrack)"
+     },
+     "monitor_end_rule": {
+      "lost_timeout_s": 90.0,
+      "det_fresh_s": 1.0
+     },
+     "summary_only": false,
+     "source": {
+      "file": "F:/vla_drone_offload/jetson_runs/pas_hil_racevla_c2_04_20261116/metrics.json",
+      "sha256": "cea1c78f5b1b461b887a2d51203e0499101d073317e33a92875f15c7b1c7c8b5",
+      "file_date": "2026-11-16"
+     },
+     "not_c2": [],
+     "protocol": "C2",
+     "c2_censored": false,
+     "end_rule_replay": {
+      "ends": true,
+      "end_tick": 916,
+      "end_t_s": 91.77,
+      "last_t_s": 91.77,
+      "ticks": 916,
+      "max_gap_s": 90.0,
+      "final_gap_s": 90.0,
+      "frac_within_30m": 0.16794731064763996,
+      "within_30m": 153,
+      "ticks_read": 911,
+      "lost_timeout_s": 90.0,
+      "det_fresh_s": 1.0
+     }
+    },
+    {
+     "backend": "racevla_7b",
+     "family": "racevla",
+     "metric": "hil_follow",
+     "tag": "pas_hil_racevla_c2_05_20261116",
+     "model_id": "racevla/drone6_all@03f3bb48",
+     "topology": "projectairsim-ardupilot-mavros",
+     "kpi_grade": false,
+     "code_revision": "63fffcf606be",
+     "date": "2026-11-16",
+     "ticks": 0,
+     "end_reason": "no mission: start gate timed out after 330.1 s: no plausible 'a red car' within 30 m on 5 inferences in a row",
+     "mission_s": 0.01,
+     "frac_within_30m": null,
+     "decision_hz_mission": null,
+     "decision_hz_asked": null,
+     "asking_s": 0.0,
+     "interventions": null,
+     "interventions_per_100_ticks": null,
+     "p0_escapes": 0,
+     "p0_violation_escape_rate": null,
+     "kpi_outcome": "fail",
+     "mission_fail_reasons": [
+      "no_rows",
+      "follow_not_scored"
+     ],
+     "unsafe_p0_ticks": 0,
+     "p0_ticks_not_measurable": 0,
+     "p0_ticks_blind": null,
+     "detector_hz": null,
+     "stress": null,
+     "hot_apply": false,
+     "identity": true,
+     "target_estimator": true,
+     "vla_feed": "tick",
+     "vla_feed_max_hz": 0.0,
+     "negative_query": [
+      "a traffic light"
+     ],
+     "front_capture_interval_s": null,
+     "bundle": "follow-car-citylife-v0.1.3.tar.gz",
+     "max_s_given": null,
+     "start_gate_reached": false,
+     "gate_outcome": "timed_out",
+     "gate_identity_best_streak": 16,
+     "gate_identity_refused": {
+      "too far": 62,
+      "not ok": 3
+     },
+     "gate_needed": 5.0,
+     "gate_identity_need_in_a_row": null,
+     "gate_identity_outcomes": null,
+     "gate_identity_moving_test_refused": null,
+     "gate_identity_static_unjudged": null,
+     "start_when_seen": 5.0,
+     "start_max_range_m": 30.0,
+     "gate_identity_closest_not_moving": null,
+     "gate_identity_last_not_moving": null,
+     "gate_rule": null,
+     "grant_topology": "hil",
+     "kpi_grade_reasons": [
+      "topology is 'projectairsim-ardupilot-mavros', not the grant's 'hil' (nor a waivable 'dev'): functional-rail evidence, not a contractual KPI number",
+      "ArduPilot's measured real-time factor is None (band (0.95, 1.05)); the scene's declared 1.0 is not what flew",
+      "no mission was flown: start gate timed out after 330.1 s: no plausible 'a red car' within 30 m on 5 inferences in a row",
+      "the follow is not scored: the subject's pose was read on 0/0 ticks (needs 95%; never read)"
+     ],
+     "pilot_param": "vla",
+     "identity_param": true,
+     "target_estimator_param": true,
+     "want_width": 0.1,
+     "speed_max": 4.0,
+     "lock": {
+      "kind": "TargetLock",
+      "strict": true,
+      "gate_frac": 0.12,
+      "prior": "the target estimator (--target-estimator: demo/subject_track.SubjectTrack)"
+     },
+     "monitor_end_rule": null,
+     "summary_only": false,
+     "source": {
+      "file": "F:/vla_drone_offload/jetson_runs/pas_hil_racevla_c2_05_20261116/metrics.json",
+      "sha256": "f00f428a7a30a75f73afb8126bf8305d329b6d8ece0d8aef3faed41819c9e89a",
+      "file_date": "2026-11-16"
+     },
+     "not_c2": [
+      "topology 'projectairsim-ardupilot-mavros', not hil",
+      "not KPI-grade by its kpi.json",
+      "the start gate never passed: no mission"
+     ],
+     "protocol": "not C2",
+     "c2_censored": true,
+     "end_rule_replay": null
     },
     {
      "backend": "racevla_7b",
@@ -5039,6 +7114,39 @@
      "bundle": "follow-car-citylife-v0.1.3.tar.gz",
      "max_s_given": 60.0,
      "start_gate_reached": true,
+     "gate_outcome": "reached",
+     "gate_identity_best_streak": 10,
+     "gate_identity_refused": {
+      "too far": 52,
+      "not ok": 8
+     },
+     "gate_needed": 5.0,
+     "gate_identity_need_in_a_row": null,
+     "gate_identity_outcomes": null,
+     "gate_identity_moving_test_refused": null,
+     "gate_identity_static_unjudged": null,
+     "start_when_seen": 5.0,
+     "start_max_range_m": 30.0,
+     "gate_identity_closest_not_moving": null,
+     "gate_identity_last_not_moving": null,
+     "gate_rule": null,
+     "grant_topology": "hil",
+     "kpi_grade_reasons": [],
+     "pilot_param": "vla",
+     "identity_param": true,
+     "target_estimator_param": true,
+     "want_width": 0.1,
+     "speed_max": 4.0,
+     "lock": {
+      "kind": "TargetLock",
+      "strict": true,
+      "gate_frac": 0.12,
+      "prior": "the target estimator (--target-estimator: demo/subject_track.SubjectTrack)"
+     },
+     "monitor_end_rule": {
+      "lost_timeout_s": 90.0,
+      "det_fresh_s": 1.0
+     },
      "summary_only": false,
      "source": {
       "file": "F:/vla_drone_offload/jetson_runs/pas_hil_racevla_shake_01_20261116/metrics.json",
@@ -5049,7 +7157,9 @@
       "a shakedown by its tag ('_shake')",
       "given a time limit of 60 s, not C2's 420 s"
      ],
-     "protocol": "not C2"
+     "protocol": "not C2",
+     "c2_censored": false,
+     "end_rule_replay": null
     },
     {
      "backend": "racevla_7b",
@@ -5128,7 +7238,7 @@
      "source": {
       "file": "docs/data/progress_1028.json",
       "sha256": "5586c5733c2615f9cb627b08e233299d4b4fb19b7283cc61e4d2718e78685daf",
-      "file_date": "2026-11-16"
+      "file_date": "2026-11-17"
      }
     },
     {
@@ -5271,7 +7381,7 @@
    "source": {
     "file": "training/eval_ft3_deploy.json",
     "sha256": "4865cdcd105690aa8576661855fe8ff484e0f343b3fc643e872728ff6527e5b3",
-    "file_date": "2026-11-16"
+    "file_date": "2026-11-17"
    }
   },
   {
@@ -5295,7 +7405,7 @@
    "source": {
     "file": "training/eval_ft_e0.json",
     "sha256": "d4e0026630eb12ec68df9bea5f7bf3276e76e8cb8a7cb57592793af6b19c8077",
-    "file_date": "2026-11-16"
+    "file_date": "2026-11-17"
    }
   },
   {
@@ -5319,8 +7429,377 @@
    "source": {
     "file": "training/eval_ft_e1.json",
     "sha256": "64e25a06bcb6cf9505b3accba049231ba66e05bea724fe2f40fb406c7d1a97ad",
-    "file_date": "2026-11-16"
+    "file_date": "2026-11-17"
    }
+  },
+  {
+   "backend": "hand_written_follow",
+   "family": null,
+   "metric": "hil_follow",
+   "tag": "pas_hil_servo_c2_01_20261116",
+   "model_id": null,
+   "topology": "hil",
+   "kpi_grade": true,
+   "code_revision": "63fffcf606be",
+   "date": null,
+   "ticks": 4198,
+   "end_reason": "max_s reached",
+   "mission_s": 420.19,
+   "frac_within_30m": 0.1051,
+   "decision_hz_mission": null,
+   "decision_hz_asked": null,
+   "asking_s": null,
+   "interventions": 162,
+   "interventions_per_100_ticks": 3.858980466888995,
+   "p0_escapes": 0,
+   "p0_violation_escape_rate": 0.0,
+   "kpi_outcome": "fail",
+   "mission_fail_reasons": [
+    "dwell:standoff_s",
+    "unsafe_position_entered"
+   ],
+   "unsafe_p0_ticks": 21,
+   "p0_ticks_not_measurable": 0,
+   "p0_ticks_blind": null,
+   "detector_hz": 3.001,
+   "stress": null,
+   "hot_apply": false,
+   "identity": true,
+   "target_estimator": false,
+   "vla_feed": "tick",
+   "vla_feed_max_hz": null,
+   "negative_query": [
+    "a traffic light"
+   ],
+   "front_capture_interval_s": null,
+   "bundle": "follow-car-citylife-v0.1.3.tar.gz",
+   "max_s_given": null,
+   "start_gate_reached": true,
+   "gate_outcome": "reached",
+   "gate_identity_best_streak": 19,
+   "gate_identity_refused": {
+    "too far": 50,
+    "not ok": 7,
+    "static": 19
+   },
+   "gate_needed": 5.0,
+   "gate_identity_need_in_a_row": null,
+   "gate_identity_outcomes": null,
+   "gate_identity_moving_test_refused": null,
+   "gate_identity_static_unjudged": null,
+   "start_when_seen": 5.0,
+   "start_max_range_m": 30.0,
+   "gate_identity_closest_not_moving": null,
+   "gate_identity_last_not_moving": null,
+   "gate_rule": null,
+   "grant_topology": "hil",
+   "kpi_grade_reasons": [],
+   "pilot_param": "servo",
+   "identity_param": true,
+   "target_estimator_param": false,
+   "want_width": 0.1,
+   "speed_max": 4.0,
+   "lock": "strict lock not used (identity without an estimator)",
+   "monitor_end_rule": null,
+   "summary_only": false,
+   "source": {
+    "file": "F:/vla_drone_offload/jetson_runs/pas_hil_servo_c2_01_20261116/metrics.json",
+    "sha256": "4e5329ab570cff8b3ad24483b407b826ed6880d0c3965b07542039484777a691",
+    "file_date": "2026-11-16"
+   },
+   "not_c2": [
+    "the hand-written follow: C2's null, not a backend"
+   ],
+   "protocol": "not C2",
+   "c2_censored": false,
+   "end_rule_replay": {
+    "ends": false,
+    "end_tick": 4198,
+    "end_t_s": 419.98,
+    "last_t_s": 419.98,
+    "ticks": 4198,
+    "max_gap_s": 83.6,
+    "final_gap_s": 61.6,
+    "frac_within_30m": 0.10505002382086708,
+    "within_30m": 441,
+    "ticks_read": 4198,
+    "lost_timeout_s": 90.0,
+    "det_fresh_s": 1.0
+   }
+  },
+  {
+   "backend": "hand_written_follow",
+   "family": null,
+   "metric": "hil_follow",
+   "tag": "pas_hil_servo_c2_02_20261116",
+   "model_id": null,
+   "topology": "hil",
+   "kpi_grade": true,
+   "code_revision": "63fffcf606be",
+   "date": null,
+   "ticks": 4198,
+   "end_reason": "max_s reached",
+   "mission_s": 420.17,
+   "frac_within_30m": 0.0653,
+   "decision_hz_mission": null,
+   "decision_hz_asked": null,
+   "asking_s": null,
+   "interventions": 10,
+   "interventions_per_100_ticks": 0.23820867079561697,
+   "p0_escapes": 0,
+   "p0_violation_escape_rate": 0.0,
+   "kpi_outcome": "success",
+   "mission_fail_reasons": [],
+   "unsafe_p0_ticks": 0,
+   "p0_ticks_not_measurable": 0,
+   "p0_ticks_blind": null,
+   "detector_hz": 2.766,
+   "stress": null,
+   "hot_apply": false,
+   "identity": true,
+   "target_estimator": false,
+   "vla_feed": "tick",
+   "vla_feed_max_hz": null,
+   "negative_query": [
+    "a traffic light"
+   ],
+   "front_capture_interval_s": null,
+   "bundle": "follow-car-citylife-v0.1.3.tar.gz",
+   "max_s_given": null,
+   "start_gate_reached": true,
+   "gate_outcome": "reached",
+   "gate_identity_best_streak": 13,
+   "gate_identity_refused": {
+    "too far": 116,
+    "not ok": 4
+   },
+   "gate_needed": 5.0,
+   "gate_identity_need_in_a_row": null,
+   "gate_identity_outcomes": null,
+   "gate_identity_moving_test_refused": null,
+   "gate_identity_static_unjudged": null,
+   "start_when_seen": 5.0,
+   "start_max_range_m": 30.0,
+   "gate_identity_closest_not_moving": null,
+   "gate_identity_last_not_moving": null,
+   "gate_rule": null,
+   "grant_topology": "hil",
+   "kpi_grade_reasons": [],
+   "pilot_param": "servo",
+   "identity_param": true,
+   "target_estimator_param": false,
+   "want_width": 0.1,
+   "speed_max": 4.0,
+   "lock": "strict lock not used (identity without an estimator)",
+   "monitor_end_rule": null,
+   "summary_only": false,
+   "source": {
+    "file": "F:/vla_drone_offload/jetson_runs/pas_hil_servo_c2_02_20261116/metrics.json",
+    "sha256": "1bfd880b87a32355a10afad7d8ac789809cfa30e9b9cca47f91a12173cbd9e2d",
+    "file_date": "2026-11-16"
+   },
+   "not_c2": [
+    "the hand-written follow: C2's null, not a backend"
+   ],
+   "protocol": "not C2",
+   "c2_censored": false,
+   "end_rule_replay": {
+    "ends": true,
+    "end_tick": 1918,
+    "end_t_s": 191.97,
+    "last_t_s": 419.97,
+    "ticks": 4198,
+    "max_gap_s": 90.1,
+    "final_gap_s": 90.1,
+    "frac_within_30m": 0.029718456725755994,
+    "within_30m": 57,
+    "ticks_read": 1918,
+    "lost_timeout_s": 90.0,
+    "det_fresh_s": 1.0
+   }
+  },
+  {
+   "backend": "hand_written_follow",
+   "family": null,
+   "metric": "hil_follow",
+   "tag": "pas_hil_servo_c2_03_20261116",
+   "model_id": null,
+   "topology": "hil",
+   "kpi_grade": true,
+   "code_revision": "63fffcf606be",
+   "date": null,
+   "ticks": 4198,
+   "end_reason": "max_s reached",
+   "mission_s": 420.17,
+   "frac_within_30m": 0.1108,
+   "decision_hz_mission": null,
+   "decision_hz_asked": null,
+   "asking_s": null,
+   "interventions": 172,
+   "interventions_per_100_ticks": 4.0971891376846115,
+   "p0_escapes": 0,
+   "p0_violation_escape_rate": 0.0,
+   "kpi_outcome": "fail",
+   "mission_fail_reasons": [
+    "unsafe_position_entered"
+   ],
+   "unsafe_p0_ticks": 9,
+   "p0_ticks_not_measurable": 0,
+   "p0_ticks_blind": null,
+   "detector_hz": 2.951,
+   "stress": null,
+   "hot_apply": false,
+   "identity": true,
+   "target_estimator": false,
+   "vla_feed": "tick",
+   "vla_feed_max_hz": null,
+   "negative_query": [
+    "a traffic light"
+   ],
+   "front_capture_interval_s": null,
+   "bundle": "follow-car-citylife-v0.1.3.tar.gz",
+   "max_s_given": null,
+   "start_gate_reached": true,
+   "gate_outcome": "reached",
+   "gate_identity_best_streak": 10,
+   "gate_identity_refused": {
+    "not ok": 6,
+    "too far": 172
+   },
+   "gate_needed": 5.0,
+   "gate_identity_need_in_a_row": null,
+   "gate_identity_outcomes": null,
+   "gate_identity_moving_test_refused": null,
+   "gate_identity_static_unjudged": null,
+   "start_when_seen": 5.0,
+   "start_max_range_m": 30.0,
+   "gate_identity_closest_not_moving": null,
+   "gate_identity_last_not_moving": null,
+   "gate_rule": null,
+   "grant_topology": "hil",
+   "kpi_grade_reasons": [],
+   "pilot_param": "servo",
+   "identity_param": true,
+   "target_estimator_param": false,
+   "want_width": 0.1,
+   "speed_max": 4.0,
+   "lock": "strict lock not used (identity without an estimator)",
+   "monitor_end_rule": null,
+   "summary_only": false,
+   "source": {
+    "file": "F:/vla_drone_offload/jetson_runs/pas_hil_servo_c2_03_20261116/metrics.json",
+    "sha256": "2738ec7331b6daa5185ed82925ad7b8b9dfe2eeeaae21a52c194e5a4085b8dcb",
+    "file_date": "2026-11-16"
+   },
+   "not_c2": [
+    "the hand-written follow: C2's null, not a backend"
+   ],
+   "protocol": "not C2",
+   "c2_censored": false,
+   "end_rule_replay": {
+    "ends": true,
+    "end_tick": 2392,
+    "end_t_s": 239.38,
+    "last_t_s": 419.98,
+    "ticks": 4198,
+    "max_gap_s": 90.0,
+    "final_gap_s": 90.0,
+    "frac_within_30m": 0.09949832775919733,
+    "within_30m": 238,
+    "ticks_read": 2392,
+    "lost_timeout_s": 90.0,
+    "det_fresh_s": 1.0
+   }
+  },
+  {
+   "backend": "hand_written_follow",
+   "family": null,
+   "metric": "hil_follow",
+   "tag": "pas_hil_servo_shake_01_20261116",
+   "model_id": null,
+   "topology": "projectairsim-ardupilot-mavros",
+   "kpi_grade": false,
+   "code_revision": "63fffcf606be",
+   "date": null,
+   "ticks": 0,
+   "end_reason": "no mission: start gate timed out after 330.1 s: no plausible 'a red car' within 30 m on 5 inferences in a row",
+   "mission_s": 0.02,
+   "frac_within_30m": null,
+   "decision_hz_mission": null,
+   "decision_hz_asked": null,
+   "asking_s": null,
+   "interventions": null,
+   "interventions_per_100_ticks": null,
+   "p0_escapes": 0,
+   "p0_violation_escape_rate": null,
+   "kpi_outcome": "fail",
+   "mission_fail_reasons": [
+    "no_rows",
+    "follow_not_scored"
+   ],
+   "unsafe_p0_ticks": 0,
+   "p0_ticks_not_measurable": 0,
+   "p0_ticks_blind": null,
+   "detector_hz": null,
+   "stress": null,
+   "hot_apply": false,
+   "identity": true,
+   "target_estimator": false,
+   "vla_feed": "tick",
+   "vla_feed_max_hz": null,
+   "negative_query": [
+    "a traffic light"
+   ],
+   "front_capture_interval_s": null,
+   "bundle": "follow-car-citylife-v0.1.3.tar.gz",
+   "max_s_given": null,
+   "start_gate_reached": false,
+   "gate_outcome": "timed_out",
+   "gate_identity_best_streak": 9,
+   "gate_identity_refused": {
+    "too far": 117,
+    "not ok": 7
+   },
+   "gate_needed": 5.0,
+   "gate_identity_need_in_a_row": null,
+   "gate_identity_outcomes": null,
+   "gate_identity_moving_test_refused": null,
+   "gate_identity_static_unjudged": null,
+   "start_when_seen": 5.0,
+   "start_max_range_m": 30.0,
+   "gate_identity_closest_not_moving": null,
+   "gate_identity_last_not_moving": null,
+   "gate_rule": null,
+   "grant_topology": "hil",
+   "kpi_grade_reasons": [
+    "topology is 'projectairsim-ardupilot-mavros', not the grant's 'hil' (nor a waivable 'dev'): functional-rail evidence, not a contractual KPI number",
+    "ArduPilot's measured real-time factor is None (band (0.95, 1.05)); the scene's declared 1.0 is not what flew",
+    "no mission was flown: start gate timed out after 330.1 s: no plausible 'a red car' within 30 m on 5 inferences in a row",
+    "the follow is not scored: the subject's pose was read on 0/0 ticks (needs 95%; never read)"
+   ],
+   "pilot_param": "servo",
+   "identity_param": true,
+   "target_estimator_param": false,
+   "want_width": 0.1,
+   "speed_max": 4.0,
+   "lock": "strict lock not used (identity without an estimator)",
+   "monitor_end_rule": null,
+   "summary_only": false,
+   "source": {
+    "file": "F:/vla_drone_offload/jetson_runs/pas_hil_servo_shake_01_20261116/metrics.json",
+    "sha256": "595d84c7637351e4fe11d268e32acc41e29ba45f81f6ea5b05531f0a35f7cc6a",
+    "file_date": "2026-11-16"
+   },
+   "not_c2": [
+    "the hand-written follow: C2's null, not a backend",
+    "topology 'projectairsim-ardupilot-mavros', not hil",
+    "not KPI-grade by its kpi.json",
+    "the start gate never passed: no mission",
+    "a shakedown by its tag ('_shake')"
+   ],
+   "protocol": "not C2",
+   "c2_censored": false,
+   "end_rule_replay": null
   },
   {
    "backend": "aerialvla_ft:r1",
@@ -5388,7 +7867,7 @@
    "source": {
     "file": "docs/data/progress_1028.json",
     "sha256": "5586c5733c2615f9cb627b08e233299d4b4fb19b7283cc61e4d2718e78685daf",
-    "file_date": "2026-11-16"
+    "file_date": "2026-11-17"
    }
   },
   {
@@ -5446,7 +7925,7 @@
    "source": {
     "file": "docs/data/progress_1028.json",
     "sha256": "5586c5733c2615f9cb627b08e233299d4b4fb19b7283cc61e4d2718e78685daf",
-    "file_date": "2026-11-16"
+    "file_date": "2026-11-17"
    }
   },
   {
@@ -5515,7 +7994,7 @@
    "source": {
     "file": "docs/data/progress_1028.json",
     "sha256": "5586c5733c2615f9cb627b08e233299d4b4fb19b7283cc61e4d2718e78685daf",
-    "file_date": "2026-11-16"
+    "file_date": "2026-11-17"
    }
   },
   {
@@ -5573,7 +8052,7 @@
    "source": {
     "file": "docs/data/progress_1028.json",
     "sha256": "5586c5733c2615f9cb627b08e233299d4b4fb19b7283cc61e4d2718e78685daf",
-    "file_date": "2026-11-16"
+    "file_date": "2026-11-17"
    }
   },
   {
@@ -5620,7 +8099,7 @@
    "source": {
     "file": "docs/data/progress_1028.json",
     "sha256": "5586c5733c2615f9cb627b08e233299d4b4fb19b7283cc61e4d2718e78685daf",
-    "file_date": "2026-11-16"
+    "file_date": "2026-11-17"
    }
   },
   {
@@ -5667,7 +8146,7 @@
    "source": {
     "file": "docs/data/progress_1028.json",
     "sha256": "5586c5733c2615f9cb627b08e233299d4b4fb19b7283cc61e4d2718e78685daf",
-    "file_date": "2026-11-16"
+    "file_date": "2026-11-17"
    }
   },
   {
@@ -6607,6 +9086,6 @@
  "default_backend": null,
  "decision": "The grant defers the choice to this measurement set, and the Orin rate column holds R1 for 3 of the 7 backends `measure` can time, and a bench that is not R1, labelled as such, for 4 backends; a recorded attempt with no timing for 1 more (R1 does not cover the 4 backends served over protocol v2: their Orin timing is their server's bench). On hil, C1 has been flown by no backend and C2 by 4 (the protocol asks for 3 flights of each). The stored dev-rail runs (demo/out/ros2_*, not KPI-bearing: the grant takes KPI figures from hil) were flown by the stub.",
  "comparison_gaps": [
-  "racevla_7b: 1 of 3 C2 flights"
+  "racevla_7b: 2 of 3 C2 flights"
  ]
 }

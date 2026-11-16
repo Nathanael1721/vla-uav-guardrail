@@ -118,7 +118,12 @@ THE START GATE, THE DETECTOR, THE LOOP'S TIMING (2026-10-21)
     pick, and - read after the decision, evaluation only - whether it was the
     subject. Replayed on the 21 Oct flight's boxes it never opens.
   * --identity (follow_vlm's identity tiers: only an OK box may start or
-    steer; the start decided in the world, seen moving); --negative-query
+    steer; the start decided in the world, seen moving: follow_vlm.Reacquirer
+    asks its moving test of 2 x --start-when-seen OK boxes in a row, 10 at
+    the default, and the record, the [start] lines and a timeout's reason
+    say that rule - StartGate.rule - with the Reacquirer's own streak,
+    refusals and what each of its steps decided (the moving test's refusals
+    among them), metrics.json start_gate.identity_gate); --negative-query
     (a box that looks more like "a traffic light" is no candidate).
   * The detector starts as soon as the camera is up, so OWL-ViT loads while
     SITL boots and the aircraft takes off, and the mission waits for its
@@ -1286,6 +1291,19 @@ class StartGate:
         self.pick_feat = None
         self.pick_cap = None
         self.rejected_by: dict = {}
+        # With identity, what each Reacquirer step decided (its last_outcome:
+        # "committed", "streak", "short pass", "not moving", ...), and the
+        # closest a streak came to its motion bar while refused "not moving",
+        # and the last time it was: bookkeeping only, so a timed-out gate
+        # says what refused it (Reacquirer.refused never counts the moving
+        # test).
+        self.identity_outcomes: dict = {}
+        # "static" outcomes whose streak was too short for the moving test
+        # to be asked (fewer than 2 x need boxes: Reacquirer.moved_m None),
+        # marked static only for spanning static_after_s
+        self.static_unjudged = 0
+        self.closest_not_moving = None
+        self.last_not_moving = None
 
     def _count_rejections(self) -> None:
         for why in self.acq.last_reasons:
@@ -1311,9 +1329,11 @@ class StartGate:
             # identity-OK box may start the mission (follow_vlm, as flown).
             fr = {id(c): (f or {}).get("r") for c, f in zip(cands, feats)}
             self.acq.step(cands, lambda c: fr.get(id(c)), ground=None, tiers=tiers)
+            pre_len = len(self.acq_w.trace)
             reached = self.acq_w.step(cands, tiers, feats,
                                       ic.get("t_capture") or ic.get("t_cap")
                                       or (t if t is not None else time.time()))
+            self._count_identity_outcome(pre_len)
             pick = self.acq_w.pick
         else:
             fv = self.fv
@@ -1330,10 +1350,137 @@ class StartGate:
                 self.pick_cap = dict(ic) if ic else None
         return bool(reached)
 
+    def _count_identity_outcome(self, pre_len: int | None = None) -> None:
+        """Bookkeeping of the Reacquirer's last step (no decision changes).
+        `pre_len`: its trace's length before the step. A "static" step has
+        reset the streak, so whether its moving test was asked is told from
+        that: a static streak continued the one before (a new streak is 1
+        box, under `need`), so it held min(pre_len + 1, trace_max) boxes,
+        and moved_m answers only from 2 x need (Reacquirer._halves)."""
+        w = self.acq_w
+        o = str(w.last_outcome)
+        self.identity_outcomes[o] = self.identity_outcomes.get(o, 0) + 1
+        if o == "static" and pre_len is not None \
+                and min(pre_len + 1, w.trace_max) < 2 * w.need:
+            self.static_unjudged += 1
+        if o == "not moving":
+            moved, bar = w.moved_m(), w.motion_bar_m()
+            if moved is not None:
+                self.last_not_moving = (float(moved), float(bar), int(w.streak))
+                if (self.closest_not_moving is None
+                        or bar - moved < self.closest_not_moving[1]
+                        - self.closest_not_moving[0]):
+                    self.closest_not_moving = self.last_not_moving
+
+    @staticmethod
+    def _not_moving_rec(c):
+        return (None if c is None else
+                {"moved_m": round(c[0], 2), "bar_m": round(c[1], 2), "streak": c[2]})
+
+    def _closest_not_moving_rec(self):
+        return self._not_moving_rec(self.closest_not_moving)
+
+    def moving_refusals(self) -> int:
+        """How many times the Reacquirer's moving test was asked and refused
+        a streak: "not moving", and a "static" whose streak was long enough
+        to be judged (2 x need boxes). A static place marked from a shorter
+        streak - one that spanned static_after_s before the test could be
+        asked - is not counted (static_unjudged)."""
+        o = self.identity_outcomes
+        return (int(o.get("not moving", 0)) + int(o.get("static", 0))
+                - int(self.static_unjudged))
+
+    def identity_need(self) -> tuple[int, bool]:
+        """(boxes in a row, seen moving?) the identity gate commits on, read
+        off its Reacquirer: with no anchor and a motion bar (motion_m > 0)
+        the moving test applies, and it is asked only of a streak of
+        2 x need (Reacquirer.moved_m: its trace restarts with the streak),
+        so 2 x need identity-OK boxes in a row; without a motion bar,
+        `need`."""
+        w = self.acq_w
+        moving = w.motion_m > 0 and w.reach_m(0.0) is None
+        return (2 * w.need if moving else w.need), moving
+
+    def rule(self) -> str:
+        """The rule this gate decides by, in words, from its own objects:
+        with --identity follow_vlm.Reacquirer's (identity-OK boxes, in a row
+        within its range, of one object - each within step_m + v_r dt of the
+        last pick, else the streak restarts - seen moving), else the pixel
+        Acquirer's (`need` inferences in a row within `max_range_m`)."""
+        if self.acq_w is None:
+            return f"{self.need} inferences in a row {self._pixel_range()}"
+        w = self.acq_w
+        n, moving = self.identity_need()
+        return (f"{n} identity-ok boxes in a row within {w.max_range_m:g} m, of one object "
+                f"(each within {w.step_m:g} m + {w.v_reach():g} m/s x the time since the "
+                f"last, else the streak restarts)"
+                + (f" (a gap of up to {w.gap_s:g} s with none acceptable does not restart "
+                   f"the streak)" if w.gap_s > 0 else "")
+                + (" and seen moving" if moving else ""))
+
+    def _pixel_range(self) -> str:
+        """The pixel Acquirer's range in words: 0 (or less) is no limit."""
+        return (f"within {self.max_range_m:g} m" if self.max_range_m > 0
+                else "at any range")
+
+    def start_text(self) -> str:
+        """What the hover waits for (the [start] line)."""
+        if self.acq_w is None:
+            return f"on {self.need} inferences in a row {self._pixel_range()}"
+        return f"as {self.rule()}"
+
+    def timeout_text(self, obj: str, wait_s) -> str:
+        """Why no mission was flown when the gate timed out (the run's
+        end_reason, `no_mission`)."""
+        if self.acq_w is None:
+            return (f"start gate timed out after {wait_s} s: no plausible {obj!r} "
+                    f"{self._pixel_range()} on {self.need} inferences in a row")
+        return f"start gate timed out after {wait_s} s: no {obj!r} seen as {self.rule()}"
+
+    def streak_text(self) -> str:
+        """The deciding streak and refusals for the [start] report line:
+        the identity gate's when it decides, else the pixel Acquirer's. A
+        best streak at or over the boxes in a row the identity gate needs is
+        not a pass: its moving test is asked then, and what it decided is in
+        the step counts (identity_outcomes), and the line says so."""
+        if self.acq_w is None:
+            return (f"best streak {self.acq.best_streak}, refused "
+                    f"{dict(self.rejected_by)}")
+        w = self.acq_w
+        n, moving = self.identity_need()
+        c = self._closest_not_moving_rec()
+        last = self._not_moving_rec(self.last_not_moving)
+        k = self.moving_refusals()
+        why = ""
+        if moving and w.best_streak >= n and k:
+            why = (f"; it reached {n} in a row and the moving test refused it {k} "
+                   f"time{'s' if k != 1 else ''}"
+                   + ("" if last is None else
+                      f" (last: moved {last['moved_m']:g} m < bar {last['bar_m']:g} m)"))
+        elif w.best_streak < n:
+            why = f"; no streak reached {n}"
+        if self.static_unjudged:
+            why += (f"; {self.static_unjudged} shorter streak"
+                    f"{'s' if self.static_unjudged != 1 else ''} marked static for spanning "
+                    f"{w.static_after_s:g} s before the moving test could be asked")
+        return (f"identity gate: best streak {w.best_streak} (it needs {n} in a row"
+                + (", then seen moving" if moving else "") + f"), refused {dict(w.refused)}, "
+                f"steps {dict(self.identity_outcomes)}"
+                + ("" if c is None else
+                   f", closest to moving {c['moved_m']:g} m against a bar of {c['bar_m']:g} m")
+                + why
+                + f" (pixel gate, counters only: best streak {self.acq.best_streak})")
+
     def record(self) -> dict:
         a = self.acq
         rec = {"needed": self.need, "max_range_m": self.max_range_m,
                "identity": self.identity,
+               # The rule that decided, in words, and the object that decided:
+               # with identity the Reacquirer (its counts in identity_gate),
+               # and the pixel Acquirer's counts below are counters only.
+               "rule": self.rule(),
+               "decided_by": ("follow_vlm.Reacquirer (identity_gate)" if self.acq_w is not None
+                              else "follow_vlm.Acquirer"),
                "inferences_judged": a.n, "inferences_with_plausible": a.n_plausible,
                "candidates_judged": a.n_candidates, "best_streak": a.best_streak,
                "plausible_but_too_far": a.n_too_far,
@@ -1349,8 +1496,19 @@ class StartGate:
                          "img_w": int(self.pick[5])})}
         if self.acq_w is not None:
             w = self.acq_w
+            n, moving = self.identity_need()
             rec["identity_gate"] = {
                 "refused": dict(w.refused), "best_streak": w.best_streak,
+                "need_in_a_row": n, "seen_moving": moving,
+                "max_range_m": w.max_range_m, "gap_s": w.gap_s,
+                # each step's decision (Reacquirer.last_outcome), and the
+                # nearest a streak came to the motion bar while refused
+                "outcomes": dict(self.identity_outcomes),
+                "moving_test_refused": self.moving_refusals(),
+                # "static" steps whose streak the moving test never judged
+                "static_unjudged": int(self.static_unjudged),
+                "closest_not_moving": self._closest_not_moving_rec(),
+                "last_not_moving": self._not_moving_rec(self.last_not_moving),
                 "static_places": [[round(v, 1) for v in sp[:2]] for sp in w.static],
                 "pick_P": (None if w.pick_feat is None or w.pick_feat.get("P") is None
                            else [round(v, 1) for v in w.pick_feat["P"][:2]])}
@@ -3777,6 +3935,28 @@ SHIELD_OFF_WORDS = (("P0 RULE STILL BROKEN AFTER SHIELD", "P0 RULE BROKEN, FLOWN
                     ("MONITORED, NOT CORRECTED", "FLOWN UNCORRECTED"))
 SHIELD_OFF_IDLE = "SHIELD OFF - CONTROL ARM, RAW COMMANDS FLOWN"
 TRACK_WORDS = {"track": "TARGET LOCKED", "search": "SEARCHING ..."}
+# A "track" tick of a pilot whose detector holds no lock: the servo steers on
+# the Grounder's best box (with --identity, the best identity-OK one), and
+# nothing binds it to one instance - with --identity and no
+# --target-estimator build_grounder runs no lock at all ("strict lock not
+# used (identity without an estimator)"), as C2's null flies. TARGET LOCKED
+# there claimed a lock the flight never held.
+TRACK_NO_LOCK = "TRACKING BOX (NO LOCK)"
+
+
+def track_words(mode, locked: bool) -> str:
+    """The HUD's words for the pilot's mode: TRACK_WORDS, except a track
+    tick with no lock held (TRACK_NO_LOCK); anything else is scanning."""
+    if mode == "track" and not locked:
+        return TRACK_NO_LOCK
+    return TRACK_WORDS.get(mode, "SCANNING for target")
+
+
+def grounder_holds_lock(grounder) -> bool:
+    """Whether the detector runs a target lock (follow_vlm.TargetLock: its
+    `lock`, as build_grounder sets it and metrics.json detector_selection
+    reports it). A stand-in with no `lock` holds none."""
+    return getattr(grounder, "lock", None) is not None
 
 
 def fsm_label(state, hold_ap_mode: str = DEFAULT_HOLD_MODE) -> str:
@@ -3893,12 +4073,23 @@ class RailHud:
     a latched one never hides a policy banner at HOLD or above. A fault in
     the indicator stops it for the rest of the flight - the frames go on
     with the plain HUD - and is recorded (`error`), never raised into the
-    loop."""
+    loop.
+
+    `locked`: whether the detector holds a target lock (grounder_holds_lock).
+    A track tick reads TARGET LOCKED only then, else TRACKING BOX (NO LOCK)
+    (track_words); the label is the HUD's only - nothing flown reads it.
+    On a VLA flight the VLA panel replaces those words (run() keeps only the
+    FSM part, vla_mission.panel_lines); run() says so per tick
+    (panel_replaced), so summary() records a track label only when a frame
+    drew it."""
 
     def __init__(self, indicator, *, query: str, shield_on: bool,
-                 hold_ap_mode: str = DEFAULT_HOLD_MODE):
+                 hold_ap_mode: str = DEFAULT_HOLD_MODE, locked: bool = True):
         self.ind = indicator
         self.query, self.shield_on, self.hold_ap_mode = query, shield_on, hold_ap_mode
+        self.locked = bool(locked)
+        self.track_ticks = 0        # track ticks labelled by tick()
+        self.track_replaced = 0     # ... whose words the VLA panel replaced
         self.hold_s = float(getattr(indicator, "hold_s", 1.5) or 1.5)
         self.error: str | None = None
         self._latch: tuple[dict, str, float] | None = None
@@ -3964,17 +4155,31 @@ class RailHud:
         bearing = info.get("bearing")
         fwd = (0.0 if flown is None else
                float(flown.vx) * math.cos(yaw_rad) + float(flown.vy) * math.sin(yaw_rad))
+        if info.get("mode") == "track":
+            self.track_ticks += 1
         return {"t": float(now), "sep": sep_m,
                 "brg": 0.0 if bearing is None else math.degrees(bearing),
                 "fwd": fwd, "alt": float(state.up), "shield": bool(touched),
                 "query": self.query, "mode": info.get("mode"),
-                "mode_label": f"{TRACK_WORDS.get(info.get('mode'), 'SCANNING for target')} | {arm}",
+                "mode_label": f"{track_words(info.get('mode'), self.locked)} | {arm}",
                 "tier": None, "fence_d": None, "fence_hold": False, "fence_mode": None,
                 "fence_kind": None, "policy": pol}
 
+    def panel_replaced(self, hud: dict) -> None:
+        """run(): the VLA panel replaced this tick's mode words (bookkeeping
+        only)."""
+        if hud.get("mode") == "track":
+            self.track_replaced += 1
+
     def summary(self) -> dict:
         ind = self.ind
+        drawn = self.track_ticks - self.track_replaced
         return {"enabled": ind is not None, "error": self.error,
+                # what a track tick drawn with the rail's words was labelled
+                # (a lock held or not); None when no frame drew them - none
+                # was a track tick, or the VLA panel replaced every one
+                "track_label": track_words("track", self.locked) if drawn > 0 else None,
+                "track_label_ticks": drawn,
                 "banners_shown": dict(self.shown),
                 "counts": None if ind is None else dict(ind.counts),
                 "banner_ticks": None if ind is None else dict(ind.banner_ticks)}
@@ -4292,7 +4497,10 @@ def build_parser() -> argparse.ArgumentParser:
                     help="hover after take-off until the detector has produced this "
                          "many fresh inferences in a row with a plausible box near "
                          "enough (follow_vlm's start gate), then start the mission "
-                         f"clock; 0 = no gate (default {START_WHEN_SEEN})")
+                         "clock; with --identity follow_vlm.Reacquirer decides instead: "
+                         "twice this many identity-OK boxes in a row of one object, near "
+                         "enough, and seen moving (StartGate.rule); "
+                         f"0 = no gate (default {START_WHEN_SEEN})")
     ap.add_argument("--start-max-range-m", type=float, default=START_MAX_RANGE_M,
                     help="the gate accepts a box only this near (depth, else the "
                          "subject width's range); 0 = any range "
@@ -5992,7 +6200,9 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
                     print(f"[hud]    no policy indicator ({type(exc).__name__}: {exc}); "
                           f"the plain HUD is drawn")
                 rhud = RailHud(ind, query=args.object, shield_on=shield_on,
-                               hold_ap_mode=hold_ap_mode)
+                               hold_ap_mode=hold_ap_mode,
+                               # TARGET LOCKED only where the detector holds a lock
+                               locked=grounder_holds_lock(grounder))
         if vla_on:
             # ---- the VLA server's hello and the pilot, before ArduPilot starts
             vla_identity, vla_backend, vla_rec = _vla_bring_up(
@@ -6305,8 +6515,7 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
                     # The budget left: an airborne detector wait came out of it.
                     budget = max(0.0, args.start_timeout_s - watch.hover_s(clock()))
                     print(f"[start]  hovering until the detector has seen {args.object!r} "
-                          f"on {args.start_when_seen} inferences in a row within "
-                          f"{args.start_max_range_m:g} m (at most {budget:g} s), the "
+                          f"{gate.start_text()} (at most {budget:g} s), the "
                           f"hover watched")
                     # A reader of its own, so the flight's truth counters stay per tick.
                     gate_truth = SubjectTruth(camera, actor, actor_why, scene_home, anchor,
@@ -6332,18 +6541,18 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
                         no_mission = gate_rec["aborted"]
                     elif (gate_rec["outcome"] == "timed_out"
                           and args.start_timeout_action == "land"):
-                        no_mission = (f"start gate timed out after {gate_rec['wait_s']} s: "
-                                      f"no plausible {args.object!r} within "
-                                      f"{args.start_max_range_m:g} m on "
-                                      f"{args.start_when_seen} inferences in a row")
+                        no_mission = gate.timeout_text(args.object, gate_rec["wait_s"])
                 rec.event("start_gate", **{k: gate_rec.get(k) for k in (
                     "reached", "outcome", "wait_s", "first_candidate_s", "inferences_judged",
                     "inferences_with_plausible", "best_streak", "rejected_by", "pick",
-                    "aborted", "timeout_action", "truth_at_decision")})
+                    "aborted", "timeout_action", "truth_at_decision", "rule",
+                    "decided_by", "identity_gate")})
                 print(f"[start]  {'subject acquired' if gate_rec['reached'] else '*** NO SUBJECT ***'}"
                       f" after {gate_rec['wait_s']} s ({gate_rec['outcome']}): "
-                      f"{gate_rec.get('inferences_judged', 0)} inferences judged, best streak "
-                      f"{gate_rec.get('best_streak', 0)}, refused {gate_rec.get('rejected_by', {})}"
+                      f"{gate_rec.get('inferences_judged', 0)} inferences judged, "
+                      + (gate.streak_text() if gate is not None else
+                         f"best streak {gate_rec.get('best_streak', 0)}, refused "
+                         f"{gate_rec.get('rejected_by', {})}")
                       + ("" if gate_rec["reached"] else
                          f" - {no_mission}" if no_mission else
                          " - the hover broke a rule: the mission starts, so the Shield and "
@@ -7176,6 +7385,7 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
                             # this rail's own label kept: the FSM's state, an
                             # autopilot that took over, SHIELD OFF
                             # (vla_mission.panel_lines; review of 4a0da6d, P3-14).
+                            rhud.panel_replaced(hud)
                             hud.update(vla_hud,
                                        rail_label=str(hud.get("mode_label") or "")
                                        .split(" | ", 1)[-1] or None)

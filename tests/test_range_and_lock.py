@@ -1583,6 +1583,210 @@ def test_the_loop_timing_shows_the_stall_the_median_hid():
     assert ci["max_s"] == 0.4, ci
 
 
+def _screen_as_it_was(sc, bx, thresh, W, H, last, acquiring, jump_frac,
+                      colour_of, colour_gated, colour_min, clock):
+    """Grounder._worker's screen before screen_candidates took it out of the
+    loop (16 Nov 2026), word for word on the tensors: the reference the new
+    path's passing set must equal."""
+    cands = []
+    if len(sc):
+        for i in sc.argsort(descending=True)[:12]:
+            s = float(sc[i])
+            if s < thresh:
+                break
+            x0, y0, x1, y1 = [float(v) for v in bx[i].tolist()]
+            cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
+            if (last is not None and not acquiring
+                    and (clock() - last[1]) < 1.5):
+                if abs(cx - last[0]) > jump_frac * W:
+                    continue          # too far from where it just was
+            cm = colour_of((x0, y0, x1, y1))
+            if colour_gated and cm < colour_min:
+                continue              # right shape, wrong colour
+            cands.append((cx, cy, x1 - x0, y1 - y0, s, W, H, cm))
+    return cands
+
+
+def _screen_now(sc, bx, thresh, W, H, **kw):
+    """The worker's path now: screen_inputs on the tensors, then the screen."""
+    from follow_vlm import screen_candidates, screen_inputs
+    top_s, top_b, n_above, below = screen_inputs(sc, bx, thresh)
+    return screen_candidates(top_s, top_b, thresh, W, H, above_thresh=n_above,
+                             below=below, **kw)
+
+
+def test_the_screen_records_what_it_dropped_and_passes_the_same_boxes():
+    """detections.jsonl `drops` (follow_vlm.screen_candidates). Three RaceVLA
+    C2 flights of 16 Nov 2026 timed out at the start gate, each lost to one
+    inference whose `id` list was empty mid-crossing; the row could not say
+    whether OWL-ViT scored its boxes under det_thresh or the colour gate
+    dropped them. Now it says which stage took boxes away, with the best
+    score and place of each (not whether that box was the car: the row
+    does not hold the car's image box), and the boxes that pass are the
+    ones that passed before - checked against the old loop on the tensors,
+    ties included."""
+    try:
+        import torch
+    except ImportError:
+        return SKIP
+    from follow_vlm import SCREEN_TOP_K
+    W, H = 768, 432
+    # box: (x0, y0, x1, y1); colour by box index
+    boxes = [[100, 200, 180, 240],     # 0.30, red enough: passes
+             [300, 200, 380, 240],     # 0.25, grey: the colour gate drops it
+             [650, 200, 730, 240],     # 0.10, 590 px from the last box: the jump gate
+             [400, 200, 480, 240],     # 0.015: under the threshold
+             [500, 200, 560, 230],     # 0.012: under it too
+             [10, 10, 20, 20]]         # 0.0: a box a negative phrase won
+    scores = [0.30, 0.25, 0.10, 0.015, 0.012, 0.0]
+    sc, bx = torch.tensor(scores), torch.tensor(boxes, dtype=torch.float32)
+    colours = {100.0: 0.5, 300.0: 0.05, 650.0: 0.4, 400.0: 0.6, 500.0: 0.6, 10.0: 0.0}
+    now = 1000.0
+    kw = dict(last=(140.0, now - 0.5), acquiring=False, jump_frac=0.35,
+              colour_of=lambda b: colours[b[0]], colour_gated=True, colour_min=0.10,
+              clock=lambda: now)
+
+    def old(sc_, bx_, k):
+        return _screen_as_it_was(sc_, bx_, 0.02, W, H, k["last"], k["acquiring"], 0.35,
+                                 k["colour_of"], k["colour_gated"], 0.10, k["clock"])
+    cands, drops = _screen_now(sc, bx, 0.02, W, H, **kw)
+    assert cands == old(sc, bx, kw)
+    assert [round(c[4], 4) for c in cands] == [0.30]
+    assert drops == {"thresh": 0.02, "above_thresh": 3,
+                     "below_thresh_best": 0.015, "below_thresh_box": [440.0, 220.0, 80.0, 40.0],
+                     "jump": 1, "colour": {"n": 1, "best_score": 0.25, "best_colour": 0.05,
+                                           "best_box": [340.0, 220.0, 80.0, 40.0]}}, drops
+    # acquiring: no jump gate, so the far box passes - as before
+    kw["acquiring"] = True
+    cands, drops = _screen_now(sc, bx, 0.02, W, H, **kw)
+    assert cands == old(sc, bx, kw)
+    assert [round(c[4], 4) for c in cands] == [0.30, 0.10] and drops["jump"] == 0
+    # no colour gate (no colour named): nothing dropped for colour, colour still measured
+    kw_nc = dict(kw, colour_gated=False)
+    cands, drops = _screen_now(sc, bx, 0.02, W, H, **kw_nc)
+    assert cands == old(sc, bx, kw_nc)
+    assert [round(c[4], 4) for c in cands] == [0.30, 0.25, 0.10] and drops["colour"] is None
+    assert cands[1][7] == 0.05
+    # every box under the threshold: the row says the best score under it,
+    # and where that box was - of any box, not necessarily the car's
+    cands, drops = _screen_now(sc[3:], bx[3:], 0.02, W, H, **kw)
+    assert cands == [] and drops["below_thresh_best"] == 0.015 and drops["colour"] is None
+    assert drops["above_thresh"] == 0 and drops["below_thresh_box"] == [440.0, 220.0, 80.0, 40.0]
+    # nothing under the threshold: None, never 0; no box at all: the same, and no drop
+    cands, drops = _screen_now(sc[:1], bx[:1], 0.02, W, H, **kw)
+    assert drops["below_thresh_best"] is None and drops["below_thresh_box"] is None
+    assert len(cands) == 1
+    cands, drops = _screen_now(torch.zeros(0), torch.zeros((0, 4)), 0.02, W, H, **kw)
+    assert cands == [] and drops == {"thresh": 0.02, "above_thresh": 0,
+                                     "below_thresh_best": None, "below_thresh_box": None,
+                                     "jump": 0, "colour": None}
+    # only the first SCREEN_TOP_K are screened, in the tensors' own order
+    # among equal scores; the count over the threshold is of every box
+    n = SCREEN_TOP_K + 3
+    many = torch.full((n,), 0.5)
+    spread = torch.tensor([[20.0 * i, 10, 20.0 * i + 15, 25] for i in range(n)])
+    kw_any = dict(kw_nc, colour_of=lambda b: b[0] / 1000.0)
+    cands, drops = _screen_now(many, spread, 0.02, W, H, **kw_any)
+    assert len(cands) == SCREEN_TOP_K and drops["above_thresh"] == n
+    assert cands == old(many, spread, kw_any)
+
+
+def test_a_detections_row_carries_what_the_screen_dropped():
+    """The `drops` key reaches detections.jsonl: the real Grounder._worker
+    runs one inference against a stand-in OWL-ViT (CPU tensors, no model
+    loaded) on a grey frame with one red block. Of four boxes the red one
+    passes and is published, the grey one is dropped by the colour gate,
+    two score under det_thresh - and the row says so, place included."""
+    try:
+        import torch
+        from PIL import Image
+    except ImportError:
+        return SKIP
+    import json
+    import tempfile
+    import types
+    import follow_vlm as fv
+    w_, h_ = 400, 225
+    img = Image.new("RGB", (w_, h_), (128, 128, 128))
+    img.paste((220, 20, 20), (40, 100, 120, 140))
+    scores = torch.tensor([0.30, 0.25, 0.015, 0.012])
+    boxes = torch.tensor([[40, 100, 120, 140], [200, 100, 280, 140],
+                          [300, 100, 360, 140], [10, 10, 30, 30]], dtype=torch.float32)
+
+    class Inputs(dict):
+        def to(self, _dev):
+            return self
+
+    class Proc:
+        @classmethod
+        def from_pretrained(cls, _name):
+            return cls()
+
+        def __call__(self, text, images, return_tensors):
+            return Inputs()
+
+        def post_process_object_detection(self, out, threshold, target_sizes):
+            return [{"scores": scores.clone(), "boxes": boxes.clone(),
+                     "labels": torch.zeros(4, dtype=torch.long)}]
+
+    class Model:
+        @classmethod
+        def from_pretrained(cls, _name):
+            return cls()
+
+        def to(self, _dev):
+            return self
+
+        def eval(self):
+            return self
+
+        def __call__(self, **kw):
+            return types.SimpleNamespace(logits=None)
+
+    class Obs:
+        g = None
+
+        def get_front_native(self):
+            self.g._stop = True               # one inference, then the loop ends
+            return img
+
+        def get_depth(self):
+            return None
+
+    tf = types.ModuleType("transformers")
+    tf.OwlViTProcessor, tf.OwlViTForObjectDetection = Proc, Model
+    log = Path(tempfile.mkdtemp()) / "detections.jsonl"
+    obs = Obs()
+    g = fv.Grounder(obs, "a red car", thresh=0.02, log_path=log)
+    obs.g = g
+    saved_tf = sys.modules.get("transformers")
+    to0, sync0, mem0 = torch.Tensor.to, torch.cuda.synchronize, torch.cuda.memory_allocated
+
+    def to(self, *a, **k):                    # "cuda" stays on the CPU here
+        return self if a and a[0] == "cuda" else to0(self, *a, **k)
+    try:
+        sys.modules["transformers"] = tf
+        torch.Tensor.to = to
+        torch.cuda.synchronize = lambda *a, **k: None
+        torch.cuda.memory_allocated = lambda *a, **k: 0
+        g._worker()
+    finally:
+        torch.Tensor.to, torch.cuda.synchronize, torch.cuda.memory_allocated = to0, sync0, mem0
+        if saved_tf is None:
+            sys.modules.pop("transformers", None)
+        else:
+            sys.modules["transformers"] = saved_tf
+    rows = [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines()]
+    assert len(rows) == 1, rows
+    r = rows[0]
+    assert r["n_cands"] == 1 and r["det"]["cx"] == 80.0 and r["det"]["score"] == 0.3, r
+    d = r["drops"]
+    assert d["above_thresh"] == 2 and d["jump"] == 0, d
+    assert d["colour"]["n"] == 1 and d["colour"]["best_score"] == 0.25, d
+    assert d["colour"]["best_box"] == [240.0, 120.0, 80.0, 40.0], d
+    assert d["below_thresh_best"] == 0.015 and d["below_thresh_box"] == [330.0, 120.0, 60.0, 40.0]
+
+
 if __name__ == "__main__":
     # A test that short-circuits on a missing fixture must NOT print PASS - on a
     # clean clone demo/out/ is gitignored and those tests assert nothing. See

@@ -732,6 +732,78 @@ def test_a_violation_with_no_repair_is_not_a_correction():
     assert snap["counts"]["repaired"] == 0
 
 
+def test_a_rerendered_track_tick_says_target_locked_only_with_a_lock():
+    """tools/rerender_policy_hud.py rebuilds the status lines from a log row.
+    A perception-node flight records whether its detector held a lock
+    (metrics.json detector_selection.lock): C2's null, --identity with no
+    --target-estimator, records "strict lock not used (identity without an
+    estimator)" and steered on the best identity-OK box - its track ticks
+    are TRACKING BOX (NO LOCK), never TARGET LOCKED. A run that does not say
+    (follow_vlm's own) keeps the old label."""
+    sys.path.insert(0, str(ROOT / "tools"))
+    import rerender_policy_hud as rr
+    assert rr.lock_held({"detector_selection": {
+        "lock": "strict lock not used (identity without an estimator)"}}) is False
+    assert rr.lock_held({"detector_selection": {"lock": None}}) is False
+    assert rr.lock_held({"detector_selection": {"lock": {"kind": "TargetLock",
+                                                         "gate_frac": 0.12}}}) is True
+    assert rr.lock_held({}) is None and rr.lock_held(None) is None
+    row = {"t": 1.0, "up": 8.0, "x": 0.0, "y": 0.0, "emitted": {"vx": 1.0, "vy": 0.0},
+           "mode": "track"}
+    assert rr.status_lines(row, False)[-1] == "TRACKING BOX (NO LOCK)"
+    assert rr.status_lines(row, True)[-1] == "TARGET LOCKED"
+    assert rr.status_lines(row)[-1] == "TARGET LOCKED"
+    assert rr.status_lines(dict(row, mode="search"), False)[-1] == "SEARCHING ..."
+    assert rr.status_lines(dict(row, tier="soft"), False)[-1] == "TRACKING (PARTLY HIDDEN)"
+
+
+def test_rerender_main_draws_the_runs_own_lock_on_its_frames():
+    """main() reads the run's metrics.json and passes its lock to the lines
+    it draws: a frame of C2's null (no lock) is drawn TRACKING BOX (NO
+    LOCK), a run holding a TargetLock TARGET LOCKED - on a tiny run folder
+    of its own (--runs), never demo/out."""
+    import json
+    import tempfile
+    try:
+        from PIL import Image
+    except ImportError:
+        print("SKIP  PIL not installed")
+        return
+    sys.path.insert(0, str(ROOT / "tools"))
+    import rerender_policy_hud as rr
+    act = {"vx": 1.0, "vy": 0.0, "vz_up": 0.0, "yaw_rate": 0.0}
+    row = {"tick": 1, "t": 0.0, "x": 0.0, "y": 0.0, "up": 8.0, "psi": 0.0, "mode": "track",
+           "raw": act, "emitted": act}
+    runs = Path(tempfile.mkdtemp(prefix="rerender_"))
+    drawn: list = []
+    real = rr.draw_status_box
+
+    def spy(im, lines):
+        drawn.append(list(lines))
+        return real(im, lines)
+    rr.draw_status_box = spy
+    try:
+        for tag, lock, want in (
+                ("null", "strict lock not used (identity without an estimator)",
+                 "TRACKING BOX (NO LOCK)"),
+                ("locked", {"kind": "TargetLock"}, "TARGET LOCKED")):
+            run = runs / tag
+            (run / "view" / "fpv").mkdir(parents=True)
+            (run / "flight_log.jsonl").write_text(json.dumps(row) + "\n", encoding="utf-8")
+            (run / "metrics.json").write_text(json.dumps(
+                {"params": {}, "detector_selection": {"lock": lock}}), encoding="utf-8")
+            (run / "view" / "recorder.json").write_text(json.dumps(
+                {"achieved_hz": 20.0, "frame_t": [0.0]}), encoding="utf-8")
+            Image.new("RGB", (640, 360)).save(run / "view" / "fpv" / "00000.jpg")
+            drawn.clear()
+            rc = rr.main(["--tag", tag, "--runs", str(runs), "--policy", str(CITY),
+                          "--citymap", "", "--out", str(run / "frame.jpg")])
+            assert rc == 0 and (run / "frame.jpg").is_file()
+            assert drawn and drawn[-1][-1] == want, (tag, drawn)
+    finally:
+        rr.draw_status_box = real
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     failed = 0

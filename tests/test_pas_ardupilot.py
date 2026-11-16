@@ -3301,6 +3301,44 @@ def test_a_gate_that_never_sees_the_subject_flies_no_mission():
                for w in _json(run, "kpi.json")["kpi_grade_reasons"])
 
 
+def test_an_identity_gate_that_times_out_says_the_rule_that_decided():
+    """run() with --identity (as C2 flies): the gate is follow_vlm.Reacquirer,
+    and the hover line, the result line, the end_reason, the start_gate
+    event and metrics.json all say its rule - 10 identity-OK boxes in a row
+    within 30 m and seen moving - with its own streak, refusals and steps;
+    the stand-in offers no identity tier, so every inference is refused."""
+    import contextlib
+    import io
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        rc, run, link = _fly(grounder_cls=GateDetections,
+                             extra=("--start-when-seen", "5", "--start-timeout-s", "2",
+                                    "--identity"))
+    assert rc == 0
+    rule = pn.StartGate(5, "a red car", 0.10, max_range_m=30.0, width_m=4.0, hfov_deg=90.0,
+                        identity=True).rule()
+    assert rule == ("10 identity-ok boxes in a row within 30 m, of one object (each within "
+                    "3 m + 3 m/s x the time since the last, else the streak restarts) and "
+                    "seen moving"), rule
+    m = _json(run, "metrics.json")
+    assert m["end_reason"] == (f"no mission: start gate timed out after 2.0 s: no 'a red car' "
+                               f"seen as {rule}"), m["end_reason"]
+    sg = m["start_gate"]
+    assert sg["rule"] == rule and sg["decided_by"] == "follow_vlm.Reacquirer (identity_gate)"
+    ig = sg["identity_gate"]
+    assert (ig["need_in_a_row"], ig["seen_moving"], ig["best_streak"]) == (10, True, 0), ig
+    assert ig["refused"] == {"not ok": sg["inferences_judged"]}, ig
+    assert ig["outcomes"] == {"none acceptable": sg["inferences_judged"]}, ig
+    events = [json.loads(l) for l in (run / "events.jsonl").read_text().splitlines()]
+    ev = [e for e in events if e["kind"] == "start_gate"]
+    assert len(ev) == 1 and ev[0]["rule"] == rule, ev
+    assert ev[0]["decided_by"] == sg["decided_by"] and ev[0]["identity_gate"] == ig, ev
+    out = buf.getvalue()
+    assert f"hovering until the detector has seen 'a red car' as {rule}" in out, out
+    assert "identity gate: best streak 0 (it needs 10 in a row, then seen moving)" in out, out
+    assert "on 5 inferences in a row" not in out, out
+
+
 def test_negative_phrases_take_away_only_the_boxes_they_win():
     """--negative-query (follow_vlm.negative_suppress). OWL-ViT scores each
     (box, phrase) pair on its own, so asking "a traffic light" beside "a red
@@ -3378,6 +3416,162 @@ def test_the_identity_gate_starts_only_on_an_ok_box_seen_moving():
             break
     assert reached and g.pick == CAR_BOX and g.pick_yaw == 0.1
     assert g.record()["identity_gate"]["refused"].get("not ok") == 1
+
+
+def test_the_pixel_gate_states_its_own_rule_as_before():
+    """Without --identity the pixel Acquirer decides, and the gate's words
+    are what they were: N inferences in a row within the range, its best
+    streak and refusals."""
+    g = pn.StartGate(5, "a red car", 0.10, max_range_m=30.0, width_m=4.0, hfov_deg=90.0)
+    assert g.rule() == "5 inferences in a row within 30 m"
+    assert g.start_text() == "on 5 inferences in a row within 30 m"
+    assert g.timeout_text("a red car", 330.1) == (
+        "start gate timed out after 330.1 s: no plausible 'a red car' within 30 m "
+        "on 5 inferences in a row")
+    rec = g.record()
+    assert rec["rule"] == g.rule() and rec["decided_by"] == "follow_vlm.Acquirer"
+    assert "identity_gate" not in rec
+    assert g.streak_text() == "best streak 0, refused {}"
+    # the words come from the object, not from a constant
+    g7 = pn.StartGate(7, "a red car", 0.10, max_range_m=15.0, width_m=4.0, hfov_deg=90.0)
+    assert g7.rule() == "7 inferences in a row within 15 m"
+    # --start-max-range-m 0 is no limit (follow_vlm.Acquirer), not "within 0 m"
+    g0 = pn.StartGate(5, "a red car", 0.10, max_range_m=0.0, width_m=4.0, hfov_deg=90.0)
+    assert g0.rule() == "5 inferences in a row at any range"
+    assert g0.timeout_text("a red car", 2) == (
+        "start gate timed out after 2 s: no plausible 'a red car' at any range on 5 "
+        "inferences in a row")
+
+
+def test_the_identity_gate_states_the_rule_the_reacquirer_decides_by():
+    """--identity (C2 flies it): follow_vlm.Reacquirer decides, with no
+    anchor, so its moving test is asked of 2 x need identity-OK boxes in a
+    row (10 at the default 5) within its range, and an inference with no
+    acceptable box restarts the streak. The record, the [start] lines and
+    the timeout's reason (the run's end_reason) said "5 inferences in a
+    row" and printed the pixel Acquirer's streak; they now say the rule the
+    Reacquirer decides by, with its own streak, refusals and step outcomes.
+    The stated number is pinned to the decision itself: the identity_need()
+    -th moving OK box commits and the one before does not, and that many
+    boxes of a place that does not move never commit."""
+    g = pn.StartGate(5, "a red car", 0.10, max_range_m=30.0, width_m=4.0,
+                     hfov_deg=90.0, identity=True)
+    assert g.identity_need() == (10, True)
+    rule = ("10 identity-ok boxes in a row within 30 m, of one object (each within 3 m + "
+            "3 m/s x the time since the last, else the streak restarts) and seen moving")
+    assert g.rule() == rule, g.rule()
+    assert g.start_text() == "as " + rule
+    assert g.timeout_text("a red car", 330.1) == (
+        "start gate timed out after 330.1 s: no 'a red car' seen as " + rule)
+    # an OK box, 12 m out, driving east: 9 in a row do not start it, and a
+    # miss (no acceptable box) restarts the streak
+    t = 1.0
+    for i in range(9):
+        t += 0.2
+        assert not g.judge({"seq": i, "cands": [CAR_BOX], "cand_tiers": ["ok"],
+                            "cand_feats": [{"P": (12.0, 3.0 * t), "rng_h": 12.0, "r": 12.0}],
+                            "inf_cap": {"t_capture": t, "pose": {"yaw": 0.0}}})
+    assert not g.judge({"seq": 9, "cands": [CAR_BOX], "cand_tiers": ["soft"],
+                        "cand_feats": [{"P": (12.0, 3.0 * t), "rng_h": 12.0, "r": 12.0}],
+                        "inf_cap": {"t_capture": t + 0.2, "pose": {"yaw": 0.0}}})
+    rec = g.record()
+    assert rec["rule"] == g.rule()
+    assert rec["decided_by"] == "follow_vlm.Reacquirer (identity_gate)"
+    ig = rec["identity_gate"]
+    assert (ig["best_streak"], ig["need_in_a_row"], ig["seen_moving"], ig["max_range_m"],
+            ig["gap_s"]) == (9, 10, True, 30.0, 0.0), ig
+    assert ig["refused"] == {"not ok": 1}, ig
+    assert ig["outcomes"] == {"streak": 4, "short pass": 5, "none acceptable": 1}, ig
+    assert ig["closest_not_moving"] is None and ig["last_not_moving"] is None, ig
+    assert ig["moving_test_refused"] == 0, ig
+    said = g.streak_text()
+    assert said.startswith("identity gate: best streak 9 (it needs 10 in a row, then seen "
+                           "moving), refused {'not ok': 1}, steps {"), said
+    assert "; no streak reached 10" in said and "moving test refused" not in said, said
+
+    def box(i, t, east):
+        return {"seq": i, "cands": [CAR_BOX], "cand_tiers": ["ok"],
+                "cand_feats": [{"P": (12.0, east), "rng_h": 12.0, "r": 12.0}],
+                "inf_cap": {"t_capture": t, "pose": {"yaw": 0.0}}}
+    # the stated number IS the decision: moving OK boxes commit on exactly the
+    # identity_need()-th, not before
+    for need in (5, 4, 3):
+        gm = pn.StartGate(need, "a red car", 0.10, max_range_m=30.0, width_m=4.0,
+                          hfov_deg=90.0, identity=True)
+        n_stated = gm.identity_need()[0]
+        committed_at, t = None, 1.0
+        for i in range(1, 4 * need + 1):
+            t += 0.2
+            if gm.judge(box(i, t, 6.0 * t)):          # 6 m/s: past the bar at any need here
+                committed_at = i
+                break
+        assert committed_at == n_stated == 2 * need, (need, committed_at, n_stated)
+        assert gm.identity_outcomes.get("committed") == 1
+    # ...and "seen moving" is part of it: as many OK boxes, and more, of a
+    # place that does not move never commit, and the record says the moving
+    # test refused them (a streak past the need is no pass)
+    gs = pn.StartGate(5, "a red car", 0.10, max_range_m=30.0, width_m=4.0,
+                      hfov_deg=90.0, identity=True)
+    t = 1.0
+    for i in range(1, 16):
+        t += 0.2
+        assert not gs.judge(box(i, t, 0.5 * (i % 2)))
+    igs = gs.record()["identity_gate"]
+    assert igs["best_streak"] == 15 and igs["outcomes"].get("not moving") == 6, igs
+    near = igs["closest_not_moving"]
+    assert near["moved_m"] < near["bar_m"] and near["streak"] >= 10, near
+    last = igs["last_not_moving"]
+    assert last["moved_m"] < last["bar_m"] and last["streak"] == 15, last
+    assert igs["moving_test_refused"] == 6, igs
+    st = gs.streak_text()
+    assert "best streak 15 (it needs 10 in a row, then seen moving)" in st, st
+    assert "'not moving': 6" in st and "closest to moving" in st, st
+    # a best streak past the need is said to be no pass: the moving test refused it
+    assert (f"; it reached 10 in a row and the moving test refused it 6 times (last: moved "
+            f"{last['moved_m']:g} m < bar {last['bar_m']:g} m)") in st, st
+    # "of one object": OK boxes every inference, each from another place
+    # (20 m apart, past 3 m + 3 m/s x 0.2 s), restart the streak each time -
+    # 15 in a row of them is a best streak of 1, never "10 in a row"
+    gj = pn.StartGate(5, "a red car", 0.10, max_range_m=30.0, width_m=4.0,
+                      hfov_deg=90.0, identity=True)
+    t = 1.0
+    for i in range(1, 16):
+        t += 0.2
+        assert not gj.judge(box(i, t, 20.0 * (i % 2)))
+    igj = gj.record()["identity_gate"]
+    assert igj["best_streak"] == 1 and igj["refused"] == {"discontinuous": 14}, igj
+    assert "; no streak reached 10" in gj.streak_text()
+    # a "static" step the moving test never judged is not counted as its
+    # refusal: at ~0.83 Hz a still box's streak spans the 8 s at 8 boxes,
+    # under the 10 the test needs, and its place is marked static all the same
+    gu = pn.StartGate(5, "a red car", 0.10, max_range_m=30.0, width_m=4.0,
+                      hfov_deg=90.0, identity=True)
+    t = 1.0
+    for i in range(1, 9):
+        t += 1.2
+        assert not gu.judge(box(i, t, 0.0))
+    # then a still box elsewhere at 5 Hz: the moving test is asked and refuses
+    for i in range(9, 24):
+        t += 0.2
+        assert not gu.judge(box(i, t, 15.0 + 0.5 * (i % 2)))
+    igu = gu.record()["identity_gate"]
+    assert igu["outcomes"].get("static") == 1 and igu["static_unjudged"] == 1, igu
+    assert igu["outcomes"].get("not moving") == 6 and igu["moving_test_refused"] == 6, igu
+    su = gu.streak_text()
+    assert "the moving test refused it 6 times" in su, su
+    assert ("; 1 shorter streak marked static for spanning 8 s before the moving test "
+            "could be asked") in su, su
+    # the numbers come from the objects: another need, another range, a gap
+    g4 = pn.StartGate(4, "a red car", 0.10, max_range_m=0.0, width_m=4.0,
+                      hfov_deg=90.0, identity=True)
+    assert g4.rule() == ("8 identity-ok boxes in a row within 45 m, of one object (each "
+                         "within 3 m + 3 m/s x the time since the last, else the streak "
+                         "restarts) and seen moving"), g4.rule()
+    g4.acq_w.gap_s = 1.5
+    assert ("(a gap of up to 1.5 s with none acceptable does not restart the streak)"
+            in g4.rule())
+    g4.acq_w.motion_m = 0.0
+    assert g4.identity_need() == (4, False) and not g4.rule().endswith("seen moving")
 
 
 def test_a_slow_simulator_rpc_never_holds_the_loop():

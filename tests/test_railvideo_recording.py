@@ -147,7 +147,7 @@ class FailingRecorder(SpyRecorder):
 
 def _fly(policy: str = T.CAP_POLICY, *, shield="on", max_s="3", extra=(),
          save=True, real=False, camera_cls=None, recorder_cls=None, link_kw=None,
-         link_cls=None, out=None):
+         link_cls=None, out=None, grounder=None):
     out = out or _tmp()
     pol = out / "policy.yaml"
     pol.write_text(policy, encoding="utf-8")
@@ -161,7 +161,8 @@ def _fly(policy: str = T.CAP_POLICY, *, shield="on", max_s="3", extra=(),
     anchor = ap.FrameAnchor(*ANCHOR, "scene.home-geo-point")
     link = (link_cls or T.FakeLink)(clk, anchor, **(link_kw or {}))
     cam = (camera_cls or FrameCamera)(link)
-    rc = pn.run(args, link=link, camera=cam, grounder=T.FakeDetections(clk),
+    rc = pn.run(args, link=link, camera=cam,
+                grounder=(grounder(clk) if grounder else T.FakeDetections(clk)),
                 obs=T.FakeObs(), clock=clk, sleep=clk.sleep, recorder_cls=recorder_cls)
     run = out / "run"
     return rc, run, json.loads((run / "metrics.json").read_text()), link, cam
@@ -499,6 +500,71 @@ def test_a_one_tick_escalation_stays_on_screen_for_the_hold_time():
     assert tick(1.6, F.NORMAL)["text"] == "POLICY OK", "latched past hold_s"
     assert hud.shown["fsm:Brake"] == 1 and hud.shown["policy_latched"] == 0
     assert hud.shown["fsm:Brake_latched"] == 2, dict(hud.shown)
+
+
+def test_a_track_tick_says_target_locked_only_when_a_lock_is_held():
+    """C2's null (--pilot servo --identity, no --target-estimator) runs no
+    lock: build_grounder records "strict lock not used (identity without an
+    estimator)" and the servo steers on the best identity-OK box. Its HUD
+    said TARGET LOCKED on every track tick all the same. A track tick now
+    reads TARGET LOCKED only where the detector holds a lock, else TRACKING
+    BOX (NO LOCK); search and scan read as before, and nothing flown
+    changes."""
+    from guardrail.models import State
+    st = State(x=0.0, y=0.0, up=8.0)
+
+    def label(hud, mode):
+        return hud.tick(0.0, decision=None, state=st, yaw_rad=0.0, info={"mode": mode},
+                        fsm_state=pn.FSMState.NORMAL)["mode_label"]
+    locked = pn.RailHud(None, query="a red car", shield_on=True)          # default: held
+    free = pn.RailHud(None, query="a red car", shield_on=True, locked=False)
+    assert label(locked, "track") == "TARGET LOCKED | FSM Normal"
+    assert label(free, "track") == "TRACKING BOX (NO LOCK) | FSM Normal"
+    for hud in (locked, free):
+        assert label(hud, "search") == "SEARCHING ... | FSM Normal"
+        assert label(hud, "vla") == "SCANNING for target | FSM Normal"
+    assert free.summary()["track_label"] == pn.TRACK_NO_LOCK
+    assert locked.summary()["track_label"] == "TARGET LOCKED"
+    # a VLA flight's panel replaces the rail's words (run(): panel_replaced):
+    # a track label no frame drew is not recorded as shown
+    vla = pn.RailHud(None, query="a red car", shield_on=True)
+    for _ in range(3):
+        vla.panel_replaced(vla.tick(0.0, decision=None, state=st, yaw_rad=0.0,
+                                    info={"mode": "track"}, fsm_state=pn.FSMState.NORMAL))
+    s = vla.summary()
+    assert s["track_label"] is None and s["track_label_ticks"] == 0, s
+    label(vla, "track")
+    assert vla.summary()["track_label"] == "TARGET LOCKED"
+    assert vla.summary()["track_label_ticks"] == 1
+    assert pn.RailHud(None, query="a red car", shield_on=True).summary()["track_label"] is None
+    # what decides it is the detector's own lock (build_grounder: None with
+    # --identity and no --target-estimator, a TargetLock otherwise)
+    assert not pn.grounder_holds_lock(SimpleNamespace(lock=None))
+    assert not pn.grounder_holds_lock(SimpleNamespace())
+    assert pn.grounder_holds_lock(SimpleNamespace(lock=object()))
+    if not _have_pil():
+        return SKIP
+    # run()'s wiring: the stand-in detector holds no lock, so its track ticks
+    # say so; one that holds a lock gets TARGET LOCKED - and the two fly the same
+    spy, run, m, link, _ = _huds()
+    rows = T._rows(run)
+    track = [h for h, r in zip(spy.huds, rows) if r["mode"] == "track"]
+    assert track and all(h["mode_label"].startswith("TRACKING BOX (NO LOCK) | ")
+                         for h in track), track[0]["mode_label"]
+    assert m["recording"]["policy_hud"]["track_label"] == pn.TRACK_NO_LOCK
+
+    class Locked(T.FakeDetections):
+        lock = object()
+    SpyRecorder.made.clear()
+    rc, run2, m2, link2, _ = _fly(recorder_cls=SpyRecorder, grounder=Locked)
+    assert rc == 0
+    spy2 = SpyRecorder.made[0]
+    rows2 = T._rows(run2)
+    track2 = [h for h, r in zip(spy2.huds, rows2) if r["mode"] == "track"]
+    assert track2 and all(h["mode_label"].startswith("TARGET LOCKED | ") for h in track2)
+    assert m2["recording"]["policy_hud"]["track_label"] == "TARGET LOCKED"
+    assert [s.model_dump() for s in link2.sent] == [s.model_dump() for s in link.sent], \
+        "the label changed the flight"
 
 
 def test_the_hud_speed_is_the_flown_velocity_along_the_heading():

@@ -765,15 +765,21 @@ def _pas_run(root: Path, tag: str, *, model="aiotvla/v10b@35259bd1", feed="strea
              rail="projectairsim-ardupilot", mission_s=420.17,
              negq=("a traffic light",), capture=0.05,
              bundle="follow-car-citylife-v0.1.3.tar.gz", max_s=420.0, outcome="fail",
-             fail_reasons=("unsafe_position_entered",), unsafe=3, t0=T0_15_NOV) -> Path:
+             fail_reasons=("unsafe_position_entered",), unsafe=3, t0=T0_15_NOV,
+             start_when_seen=5, start_range=30.0) -> Path:
     """A perception-rail follow's run folder with the fields the C2 reader
     reads, shaped as the node writes them (metrics.json, kpi.json; the
     defaults are pas_hil_feed_07's). `max_s=None` writes no mission-monitor
-    limit, as a run with no VLA mission block has none; `negq`, `capture`
-    or `bundle` None leaves that record out."""
+    limit, as a run with no VLA mission block has none; `negq`, `capture`,
+    `bundle`, `start_when_seen` or `start_range` None leaves that record
+    out."""
     d = root / tag
     d.mkdir(parents=True)
     feed_params = {} if feed is None else {"vla_feed": feed, "vla_feed_max_hz": cap}
+    if start_when_seen is not None:
+        feed_params["start_when_seen"] = start_when_seen
+    if start_range is not None:
+        feed_params["start_max_range_m"] = start_range
     if negq is not None:
         feed_params["negative_query"] = list(negq)
     if capture is not None:
@@ -1009,6 +1015,11 @@ def test_c2_scores_only_the_flights_that_meet_it_and_lists_the_rest_with_the_rea
     _pas_run(out, "pas_hil_nobundle_01", bundle=None)
     _pas_run(out, "pas_hil_nocam_01", capture=None)
     _pas_run(out, "pas_hil_cam66_01", capture=0.066)
+    # the gate the scenario states (10 in a row within 30 m): another one, or
+    # none recorded, is not C2's
+    _pas_run(out, "pas_hil_sws3_01", start_when_seen=3)
+    _pas_run(out, "pas_hil_range0_01", start_range=0.0)
+    _pas_run(out, "pas_hil_nogate_01", start_when_seen=None, start_range=None)
     _pas_run(out, "pas_hil_rain_01", stress="rain", kpi_grade=False)
     _pas_run(out, "pas_hil_hot_01", hot=True)
     _pas_run(out, "pas_hil_tick_01", feed="tick")
@@ -1075,12 +1086,19 @@ def test_c2_scores_only_the_flights_that_meet_it_and_lists_the_rest_with_the_rea
                       ("pas_hil_nobundle_01", "records no policy bundle"),
                       ("pas_hil_nocam_01", "FrontCamera capture interval - s, not the 0.05 s"),
                       ("pas_hil_cam66_01", "FrontCamera capture interval 0.066 s"),
+                      ("pas_hil_sws3_01", "start gate --start-when-seen 3 / "
+                                          "--start-max-range-m 30, not C2's 5 / 30"),
+                      ("pas_hil_range0_01", "start gate --start-when-seen 5 / "
+                                            "--start-max-range-m 0, not C2's 5 / 30"),
+                      ("pas_hil_nogate_01", "start gate --start-when-seen - / "
+                                            "--start-max-range-m -, not C2's 5 / 30"),
                       ("pas_hil_summary_01", "only its committed summary")):
         assert said in why[tag], (tag, why[tag])
     # each of those is not C2 for that reason alone
     for tag in ("pas_hil_short_02", "pas_hil_early_01", "pas_hil_nonq_01", "pas_hil_otherq_01",
                 "pas_hil_nfz_01", "pas_hil_nobundle_01", "pas_hil_nocam_01",
-                "pas_hil_cam66_01"):
+                "pas_hil_cam66_01", "pas_hil_sws3_01", "pas_hil_range0_01",
+                "pas_hil_nogate_01"):
         assert len(flights[tag]["not_c2"]) == 1, (tag, flights[tag]["not_c2"])
     # the tick feed asks no 15 Hz camera: another family's flight is not held to it
     assert flights["pas_hil_c2_01"]["max_s_given"] == 420.0
@@ -1127,9 +1145,9 @@ def test_c2_scores_only_the_flights_that_meet_it_and_lists_the_rest_with_the_rea
     # a flight that never flew a tick has no P0 count to show: '-', never 0
     gate = next(ln for ln in md.splitlines() if ln.startswith("| pas_hil_gate_01 |"))
     assert gate.endswith("| - | - (no mission) |"), gate
-    assert "C2's null (the hand-written follow on the same rail (--pilot servo): the " \
-           "no-learning reference): 1 hil follow of it on disk, listed below." in md
-    assert "no flight of it on disk" in V.render_markdown(_build())
+    null_head = f"C2's null ({V.PROTOCOL['C2_follow_closed_loop']['nulls'][0]})"
+    assert f"{null_head}: 1 hil follow of it on disk, 1 flown as C2" in md, md
+    assert f"{null_head}: no flight of it on disk." in V.render_markdown(_build())
     # a count a run did not record is said, never summed as 0
     assert V.p0_escapes_text([{"p0_escapes": 0}, {"p0_escapes": None}]) == \
         "P0 escapes 0 (not recorded for 1 of 2)"
@@ -1155,6 +1173,412 @@ def test_the_committed_note_still_says_which_flights_did_not_fly_alone():
         text = " ".join(doc.read_text(encoding="utf-8").split())
         assert "Desktop tests were run beside pas_hil_feed_05 / _06" in text, doc
         assert tag in ("pas_hil_feed_05", "pas_hil_feed_06")
+
+
+T0_WALL = 1794842155.0
+
+
+def _follow_logs(d: Path, *, seconds: float, box_until_s: float, range_m) -> None:
+    """flight_log.jsonl and detections.jsonl of a follow, shaped as the node
+    writes them: ticks every 0.1 s (t from the mission start, det_seq the
+    detector's latest inference), inferences every 0.3 s (t on the wall
+    clock, a box while t <= box_until_s, captured 0.2 s before), the
+    subject's range at each tick from range_m(t)."""
+    rows, dets = [], []
+    seq, t_inf = 0, T0_WALL + 0.05
+    t = 0.0
+    while t < seconds - 1e-9:
+        t = round(t + 0.1, 3)
+        while t_inf <= T0_WALL + t:
+            seq += 1
+            rel = t_inf - T0_WALL
+            dets.append({"seq": seq, "t": round(t_inf, 3), "t_capture": round(t_inf - 0.2, 3),
+                         "det": ({"cx": 300.0, "w": 40.0} if rel <= box_until_s else None),
+                         "id": []})
+            t_inf += 0.3
+        rows.append({"t": t, "tick": len(rows) + 1, "det_seq": seq,
+                     "subject_truth": [0.0, 0.0], "subject_range_m": float(range_m(t))})
+    (d / "flight_log.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows),
+                                        encoding="utf-8")
+    (d / "detections.jsonl").write_text("".join(json.dumps(r) + "\n" for r in dets),
+                                        encoding="utf-8")
+
+
+def _null_run(root: Path, tag: str, **kw) -> Path:
+    """A flight of C2's null as FAMILY=servo flies it (the 16 Nov records):
+    --pilot servo, no target estimator, --identity, the node's servo
+    defaults, no lock, no VLA mission block, to max_s."""
+    d = _pas_run(root, tag, pilot_kind="servo", model=None, feed=None, max_s=None,
+                 mission_s=420.19, end="max_s reached", **kw)
+    m = json.loads((d / "metrics.json").read_text(encoding="utf-8"))
+    m.pop("pilot")
+    m.pop("vla_observation")
+    m["params"].update(pilot="servo", want_width=0.1, speed_max=4.0, target_estimator=False,
+                       identity=True)
+    m["detector_selection"] = {"lock": "strict lock not used (identity without an estimator)"}
+    (d / "metrics.json").write_text(json.dumps(m), encoding="utf-8")
+    return d
+
+
+def _vla_rule(d: Path, lost=90.0, fresh=1.0) -> None:
+    m = json.loads((d / "metrics.json").read_text(encoding="utf-8"))
+    m["vla"]["mission"]["monitor"]["config"].update(lost_timeout_s=lost, det_fresh_s=fresh)
+    (d / "metrics.json").write_text(json.dumps(m), encoding="utf-8")
+
+
+def _truncate_log(d: Path, ticks: int) -> None:
+    p = d / "flight_log.jsonl"
+    lines = p.read_text(encoding="utf-8").splitlines(keepends=True)[:ticks]
+    p.write_text("".join(lines), encoding="utf-8")
+
+
+def test_c2_shows_its_null_as_flown_in_a_table_of_its_own_and_in_no_backend():
+    """The 16 Nov null (pas_hil_servo_c2_*): the run's own record says what
+    flew - the servo, its width target and speed cap, no estimator, no lock,
+    to max_s - and the section says plainly it is not the estimator follow
+    behind the older hand-written numbers. Its C2 flights are in a table of
+    their own, never in a backend's row, numbers or count."""
+    out = _tmp()
+    _pas_run(out, "pas_hil_c2_01")
+    _pas_run(out, "pas_hil_c2_02", w30=0.2694)
+    _pas_run(out, "pas_hil_c2_03", w30=0.211)
+    for i, w in enumerate((0.1051, 0.0653, 0.1108), 1):
+        _null_run(out, f"pas_hil_servo_c2_0{i}", w30=w)
+    _null_run(out, "pas_hil_servo_shake_01", ticks=0, reached=False, kpi_grade=False,
+              topology="projectairsim-ardupilot-mavros")
+    t = _build(demo_out=out)
+    c2p = t["protocol"]["C2_follow_closed_loop"]
+    said = c2p["null_as_flown"]
+    for needed in ("FollowPilot", "box-width P-servo", "want_width 0.10", "speed_max 4.0",
+                   "no target estimator", "no target lock", "no lost end", "max_s",
+                   "NOT the follow_vlm estimator follow", "want_width 0.16", "speed_max 5.0",
+                   "0.95-0.98"):
+        assert needed in said, needed
+    assert "no lost end" in c2p["nulls"][0] and "--pilot servo" in c2p["nulls"][0]
+    # never a backend: no row holds it, the decision counts it nowhere
+    aiot = _row(t, "aiotvla_v10b")
+    assert not any(f.get("backend") == V.HAND_WRITTEN for r in t["rows"] for f in r["records"])
+    cell = aiot["cells"]["closed_loop_hil_c2"]
+    assert cell.startswith("C2, 3 flights (3 max_s reached): within 30 m 0.211-0.352 "
+                           "(median 0.269)"), cell
+    assert "outside C2" not in cell, cell
+    assert "C2 by 1 " in t["decision"], t["decision"]
+    nulls = {f["tag"]: f for f in t["other_records"] if f.get("backend") == V.HAND_WRITTEN}
+    assert set(nulls) == {"pas_hil_servo_c2_01", "pas_hil_servo_c2_02", "pas_hil_servo_c2_03",
+                          "pas_hil_servo_shake_01"}
+    f = nulls["pas_hil_servo_c2_02"]
+    assert f["not_c2"] == [V.C2_NULL_WHY] and f["protocol"] == "not C2"
+    assert (f["pilot_param"], f["want_width"], f["speed_max"], f["target_estimator_param"],
+            f["identity_param"]) == ("servo", 0.1, 4.0, False, True)
+    assert f["lock"] == "strict lock not used (identity without an estimator)"
+    md = V.render_markdown(t)
+    sec = md.split("## C2 on hil")[1].split("## C1 on hil")[0]
+    assert ("pilot servo (params.pilot); want_width 0.1 and speed_max 4 m/s (params); target "
+            "estimator off (params.target_estimator); --identity on (params.identity); the "
+            "detector's lock: strict lock not used (identity without an estimator) "
+            "(detector_selection.lock); ended 3 max_s reached after 420 s (mission_s)") in sec, sec
+    assert said in sec
+    assert ("4 hil follows of it on disk, 3 flown as C2 (every condition of C2 that applies "
+            "to the null, --identity among them; the VLA-only ones - --target-estimator, "
+            "which the node refuses for the servo, and the family's feed - do not)") in sec, sec
+    # a value the params do not record is said so, never read as "off"
+    assert V._said([None, None]) == "not recorded" and V._said([False]) == "off"
+    # its own table: tag, commit, ticks, ended, within 30 m as flown
+    assert "| Flight | Commit | Ticks | Ended | Within 30 m, as flown |" in sec, sec
+    assert "| pas_hil_servo_c2_02 | deac4b3 | 4198 | max_s reached | 0.065 |" in sec, sec
+    # ... and only there: not among the backends' C2 lines, not in the not-C2 list,
+    # where the shakedown (no mission) still is
+    not_c2 = sec.split("hil follow flights that are not C2")[1]
+    assert "| pas_hil_servo_c2_0" not in not_c2 and "| pas_hil_servo_shake_01 |" in not_c2
+    assert sec.count("| pas_hil_servo_c2_02 |") == 1
+    # where the backends' spans lie against it, as flown, said as relations only
+    assert ("Within 30 m as flown, the null's 0.065-0.111 (median 0.105) against the "
+            "backends' C2 flights (each under its own end rule): wholly above it: "
+            "AIoT-VLA v10b (0.211-0.352).") in sec, sec
+    # the VLA flights record no end rule here: the column is left out, and why
+    assert "Within 30 m under the VLAs' end rule" not in sec
+    assert ("Its share under the VLAs' end rule is not shown: pas_hil_c2_01 records its "
+            "monitor's end rule as") in sec, sec
+    # the null flies C2's --identity: one flown without it is not C2 for that
+    # (not in its table), and a timed-out flight of the null is never censored
+    # - the null has no C2 count to stand beside
+    d = _null_run(out, "pas_hil_servo_c2_04", w30=0.3)
+    m = json.loads((d / "metrics.json").read_text(encoding="utf-8"))
+    m["params"]["identity"] = False
+    (d / "metrics.json").write_text(json.dumps(m), encoding="utf-8")
+    t = _build(demo_out=out)
+    f4 = next(f for f in t["other_records"] if f.get("tag") == "pas_hil_servo_c2_04")
+    assert f4["not_c2"] == [V.C2_NULL_WHY, "flown without --identity"], f4["not_c2"]
+    sec = V.render_markdown(t).split("## C2 on hil")[1].split("## C1 on hil")[0]
+    assert "5 hil follows of it on disk, 3 flown as C2" in sec, sec
+    assert "| pas_hil_servo_c2_04 |" in sec.split("hil follow flights that are not C2")[1]
+    # params that do not record a value are said so in the facts, never read
+    # as "off" (target_estimator: the null is C2 without it); one that does not
+    # record --identity is not flown as C2 (it may not have flown it)
+    out3 = _tmp()
+    for tag in ("pas_hil_servo_c2_01", "pas_hil_servo_c2_02"):
+        d = _null_run(out3, tag, w30=0.1)
+        m = json.loads((d / "metrics.json").read_text(encoding="utf-8"))
+        m["params"].pop("target_estimator")
+        if tag.endswith("_02"):
+            m["params"].pop("identity")
+        (d / "metrics.json").write_text(json.dumps(m), encoding="utf-8")
+    t3 = _build(demo_out=out3)
+    sec3 = V.render_markdown(t3).split("## C2 on hil")[1].split("## C1 on hil")[0]
+    assert ("target estimator not recorded (params.target_estimator); --identity on "
+            "(params.identity)") in sec3, sec3
+    f02 = next(f for f in t3["other_records"] if f.get("tag") == "pas_hil_servo_c2_02")
+    assert f02["identity_param"] is None and f02["target_estimator_param"] is None, f02
+    assert f02["not_c2"] == [V.C2_NULL_WHY, "flown without --identity"], f02["not_c2"]
+    timed = dict(nulls["pas_hil_servo_c2_02"], ticks=0, start_gate_reached=False,
+                 gate_outcome=V.C2_GATE_TIMEOUT, grant_topology="hil", kpi_grade=True)
+    assert not V.c2_censored_by_gate(timed)
+    assert V.c2_censored_by_gate(dict(timed, backend="racevla_7b", identity=True,
+                                      target_estimator=True, family="racevla",
+                                      vla_feed="tick")), V.c2_exclusions(
+        dict(timed, backend="racevla_7b", identity=True, target_estimator=True,
+             family="racevla", vla_feed="tick"))
+
+
+def test_the_null_is_replayed_under_the_vlas_end_rule_only_when_the_replay_checks_out():
+    """The null has no lost end. Replayed from its own files under the end
+    rule every C2 VLA flight records (90 s with no fresh box, a box fresh for
+    1 s), and only when that replay ends each C2 VLA flight within 5 s of
+    where its own monitor did; else the column is left out, with the reason."""
+    out = _tmp()
+    # a VLA flight that lost the car: a box for its first 10 s, and its own
+    # monitor ended it 90 s after the last fresh box
+    vla = _pas_run(out, "pas_hil_c2_lost", ticks=1010, end="target_lost", mission_s=101.0,
+                   w30=0.2)
+    _vla_rule(vla)
+    _follow_logs(vla, seconds=200.0, box_until_s=10.0, range_m=lambda t: 20.0)
+    rp = V.replay_vla_end_rule(vla)
+    assert rp["ends"] and 100.0 < rp["end_t_s"] < 101.5, rp
+    _truncate_log(vla, rp["end_tick"] + 30)          # its monitor ended it 3 s later
+    # a VLA flight that ran to max_s, a box all along: the replay never ends it
+    full = _pas_run(out, "pas_hil_c2_full")
+    _vla_rule(full)
+    _follow_logs(full, seconds=60.0, box_until_s=1e9, range_m=lambda t: 20.0)
+    assert V.replay_vla_end_rule(full)["ends"] is False
+    # the null: a box for 30 s (within 30 m), then none; the car far from 40 s
+    # to 150 s, then back past the hovering aircraft
+    null = _null_run(out, "pas_hil_servo_c2_01", w30=0.5)
+    _follow_logs(null, seconds=200.0, box_until_s=30.0,
+                 range_m=lambda t: 20.0 if t <= 40.0 or t > 150.0 else 60.0)
+    rn = V.replay_vla_end_rule(null)
+    assert rn["ends"] and 120.0 < rn["end_t_s"] < 122.0, rn
+    # within 30 m up to the end: the first 40 s of ~121 s, against 90 of 200 as
+    # flown - kept unrounded, so the page rounds it once
+    assert rn["frac_within_30m"] == 400 / rn["end_tick"] and rn["within_30m"] == 400, rn
+    # 238 of 2392 = 0.09950: rounded to 4 places first it would read 0.100
+    # at 3; rounded once it reads 0.099
+    null2 = _null_run(out, "pas_hil_servo_c2_02", w30=0.1)
+    _follow_logs(null2, seconds=239.2, box_until_s=1e9,
+                 range_m=lambda t: 20.0 if t <= 23.8 + 1e-6 else 60.0)
+    r2 = V.replay_vla_end_rule(null2)
+    assert (r2["within_30m"], r2["ticks_read"], r2["ends"]) == (238, 2392, False), r2
+    # box rows with no capture time (detections.jsonl written without
+    # --identity): freshness cannot be told - no replay, never every box stale
+    nocap = _tmp()
+    _follow_logs(nocap, seconds=5.0, box_until_s=1e9, range_m=lambda t: 20.0)
+    p = nocap / "detections.jsonl"
+    rows_ = [json.loads(ln) for ln in p.read_text(encoding="utf-8").splitlines()]
+    p.write_text("".join(json.dumps({k: v for k, v in r.items() if k != "t_capture"}) + "\n"
+                         for r in rows_), encoding="utf-8")
+    assert V.replay_vla_end_rule(nocap) is None
+    t = _build(demo_out=out)
+    check = V.end_rule_check([f for f in _row(t, "aiotvla_v10b")["records"]
+                              if f.get("metric") == "hil_follow" and not f["not_c2"]])
+    assert check["ok"] and check["flights"] == 2 and 2.5 < check["max_off_s"] < 3.5, check
+    sec = V.render_markdown(t).split("## C2 on hil")[1].split("## C1 on hil")[0]
+    assert "| Within 30 m under the VLAs' end rule |" in sec, sec
+    line = next(ln for ln in sec.splitlines() if ln.startswith("| pas_hil_servo_c2_01 |"))
+    assert line.endswith(f"| 0.500 | {rn['frac_within_30m']:.3f} (ends "
+                         f"{rn['end_t_s']:.0f} s in, tick {rn['end_tick']}) |"), line
+    line2 = next(ln for ln in sec.splitlines() if ln.startswith("| pas_hil_servo_c2_02 |"))
+    assert line2.endswith("| 0.099 (never 90 s without a fresh box: as flown) |"), line2
+    assert "Replayed on the 2 C2 VLA flights, the rule ends each within" in sec, sec
+    assert t["protocol"]["C2_follow_closed_loop"]["null_under_the_vla_end_rule"] in sec
+    # its monitor ended it 8 s after the replay would: past the 5 s, no column
+    _follow_logs(vla, seconds=200.0, box_until_s=10.0, range_m=lambda t: 20.0)
+    _truncate_log(vla, rp["end_tick"] + 80)
+    sec = V.render_markdown(_build(demo_out=out)).split("## C2 on hil")[1]
+    assert "Within 30 m under the VLAs' end rule |" not in sec
+    assert "Its share under the VLAs' end rule is not shown: replayed on the 2 C2 VLA " \
+           "flights the rule ends one 8 s off its own monitor's end, more than 5 s." in sec, sec
+    # another end rule recorded by a C2 VLA flight: no column either
+    _truncate_log(vla, rp["end_tick"] + 30)
+    _vla_rule(full, lost=15.0)
+    sec = V.render_markdown(_build(demo_out=out)).split("## C2 on hil")[1]
+    assert "Its share under the VLAs' end rule is not shown: pas_hil_c2_full records its " \
+           "monitor's end rule as {'lost_timeout_s': 15.0, 'det_fresh_s': 1.0}" in sec, sec
+    # files missing: None, never a number
+    assert V.replay_vla_end_rule(_tmp()) is None
+    # a target_lost flight the replay does not end is judged by its gap at its
+    # LAST tick, where its monitor ended it - not by the longest gap anywhere:
+    # an 89 s gap mid-flight, then a box, then 30 s without one at the end, is
+    # 60 s short of the monitor's end, not 1 s
+    rule = {"lost_timeout_s": 90.0, "det_fresh_s": 1.0}
+    mid = {"tag": "pas_hil_mid_gap", "end_reason": "target_lost", "monitor_end_rule": rule,
+           "end_rule_replay": {"ends": False, "last_t_s": 300.0, "end_t_s": 300.0,
+                               "lost_timeout_s": 90.0, "max_gap_s": 89.0,
+                               "final_gap_s": 30.0}}
+    chk = V.end_rule_check([mid])
+    assert not chk["ok"] and chk["max_off_s"] == 60.0, chk
+    tail = dict(mid, end_rule_replay=dict(mid["end_rule_replay"], final_gap_s=89.0))
+    assert V.end_rule_check([tail])["ok"] and V.end_rule_check([tail])["max_off_s"] == 1.0
+    # the replay records that last gap: the null above ends on its own, and
+    # the 'full' VLA flight (a box all along) ends its log on a fresh box
+    assert rn["final_gap_s"] >= 90.0 and rn["final_gap_s"] == rn["max_gap_s"], rn
+    assert V.replay_vla_end_rule(full)["final_gap_s"] < 1.5
+
+
+def test_a_flight_that_would_be_c2_but_for_a_timed_out_gate_is_censored_not_dropped():
+    """pas_hil_racevla_c2_01 / _02 / _05 (16 Nov): the start gate timed out,
+    so no mission, the rail's topology stamp and a KPI grade refused for
+    having no mission. Each is shown beside RaceVLA's C2 flights - "gate
+    timed out N: censored, not scored, not counted toward the 3" - so its n
+    is never silently smaller; never scored. The text claims no re-flight:
+    on 16 Nov _05 had none, so two timeouts here with one later C2 flight
+    must not read "re-flown". A timeout with any other fault is not C2 and
+    not censored. What decided each gate is said from its own record: a
+    best streak at or over the 10 the identity gate needs, with no static
+    place, was refused by the moving test."""
+    no_mission = ["topology is 'projectairsim-ardupilot-mavros', not the grant's 'hil' (nor a "
+                  "waivable 'dev'): functional-rail evidence, not a contractual KPI number",
+                  "ArduPilot's measured real-time factor is None (band (0.95, 1.05)); the "
+                  "scene's declared 1.0 is not what flew",
+                  "no mission was flown: start gate timed out after 330.1 s: no plausible "
+                  "'a red car' within 30 m on 5 inferences in a row",
+                  "the follow is not scored: the subject's pose was read on 0/0 ticks (needs "
+                  "95%; never read)"]
+
+    def timed_out(tag, reasons=no_mission, **kw):
+        d = _pas_run(out, tag, model="racevla/drone6_all@03f3bb48", feed="tick", reached=False,
+                     ticks=0, kpi_grade=False, topology="projectairsim-ardupilot-mavros",
+                     end="no mission: start gate timed out after 330.1 s", **kw)
+        m = json.loads((d / "metrics.json").read_text(encoding="utf-8"))
+        m["start_gate"] = {"reached": False, "outcome": "timed_out", "needed": 5,
+                           "identity": True, "best_streak": 3,
+                           "identity_gate": {"best_streak": 15,
+                                             "refused": {"too far": 43, "not ok": 4}}}
+        (d / "metrics.json").write_text(json.dumps(m), encoding="utf-8")
+        k = json.loads((d / "kpi.json").read_text(encoding="utf-8"))
+        k["kpi_grade_reasons"] = list(reasons)
+        (d / "kpi.json").write_text(json.dumps(k), encoding="utf-8")
+        return d
+
+    out = _tmp()
+    _pas_run(out, "pas_hil_racevla_c2_03", model="racevla/drone6_all@03f3bb48", feed="tick",
+             ticks=899, end="target_lost", mission_s=90.0, w30=0.0601)
+    timed_out("pas_hil_racevla_c2_01")
+    timed_out("pas_hil_racevla_c2_02")
+    # not censored: a stressor; a grade refused for a fault of its own; a shakedown;
+    # and a rail never offered hil is no hil follow at all
+    timed_out("pas_hil_racevla_rain_01", stress="rain")
+    timed_out("pas_hil_racevla_dirty_01",
+              reasons=no_mission + ["code_revision is 'c7257f1-dirty': the working tree had "
+                                    "uncommitted changes"])
+    timed_out("pas_hil_racevla_shake_01")
+    d = timed_out("pas_hil_racevla_dev_01")
+    m = json.loads((d / "metrics.json").read_text(encoding="utf-8"))
+    m["grant_topology"] = None
+    (d / "metrics.json").write_text(json.dumps(m), encoding="utf-8")
+    t = _build(demo_out=out)
+    rv = _row(t, "racevla_7b")
+    fl = {f["tag"]: f for f in rv["records"] if f.get("metric") == "hil_follow"}
+    assert {tag for tag, f in fl.items() if f["c2_censored"]} == {
+        "pas_hil_racevla_c2_01", "pas_hil_racevla_c2_02"}, fl
+    assert "pas_hil_racevla_dev_01" not in fl and len(fl) == 6
+    assert not V.c2_censored_by_gate(dict(fl["pas_hil_racevla_c2_01"], grant_topology=None))
+    # censored is not scored: still not C2, its exclusions unchanged
+    assert all(V.C2_GATE_NEVER_PASSED in f["not_c2"] for f in fl.values() if f["c2_censored"])
+    assert {tag for tag, f in fl.items() if not f["not_c2"]} == {"pas_hil_racevla_c2_03"}
+    cell = rv["cells"]["closed_loop_hil_c2"]
+    assert cell.startswith("C2, 1 flight (1 target_lost): within 30 m 0.060"), cell
+    assert ("the protocol asks for 3: 2 more to fly; gate timed out 2: censored, not scored, "
+            "not counted toward the 3; 5 more hil follows outside C2 (the 2 censored among "
+            "them) (see the C2 section)") in cell, cell
+    assert "C2 by 1 " in t["decision"]
+    sec = V.render_markdown(t).split("## C2 on hil")[1].split("## C1 on hil")[0]
+    assert "re-flown" not in cell and "re-flown" not in sec, sec
+    said = ("identity-gate best streak 15 of the 10 in a row it needs, then seen moving "
+            "(2 x start_gate.needed), refused {'too far': 43, 'not ok': 4}; it reached the "
+            "10 in a row, so the moving test refused it (derived from the streak: this run "
+            "records no step outcomes, so not how often nor by how much)")
+    assert (f"- RaceVLA drone6_all: gate timed out 2: censored, not scored, not counted "
+            f"toward the 3 - pas_hil_racevla_c2_01 ({said}); pas_hil_racevla_c2_02 "
+            f"({said})") in sec, sec
+    # the pre-fix end_reason below ('5 inferences in a row') is explained where it is seen
+    assert ("These runs record no start_gate.rule: they were flown before the node stated "
+            "the rule, so their end_reason in the list below reads '5 inferences in a row'"
+            ) in sec, sec
+    # the rule as the Reacquirer decides it: of one object, else the streak
+    # restarts (a box of another place is no continuation); the scenario's
+    # note on old records is about runs flown with --identity only (without
+    # it the pixel gate decided, and their end_reason is right); the jump
+    # gate's drops are a count only
+    assert ("within 30 m, of one object (each within 3 m + 3 m/s x the time since the last "
+            "pick), once its moving test passes") in sec, sec
+    assert "or whose boxes are all of another place, restarts the streak" in sec
+    scen = t["protocol"]["C2_follow_closed_loop"]["scenario"]
+    assert ("10 identity-ok boxes in a row within 30 m (twice the node's --start-when-seen "
+            "5), of one object") in scen, scen
+    assert "A run flown with --identity whose metrics.json start_gate records no" in scen
+    assert "the jump gate's is a count only" in sec, sec
+    assert "gate timed out 2: censored, not scored, not counted toward the 3" in \
+        t["protocol"]["C2_follow_closed_loop"]["counts_as_c2"][5].replace("N", "2")
+    # a record that keeps the gate's step outcomes says them itself (how often
+    # the moving test refused, the last refused streak's moved_m and bar); a
+    # streak short of the need says that and no moving test
+    f1 = fl["pas_hil_racevla_c2_01"]
+    new = dict(f1, gate_identity_need_in_a_row=10, gate_rule="10 identity-ok ...",
+               gate_identity_outcomes={"streak": 8, "short pass": 10, "not moving": 5,
+                                       "static": 1},
+               gate_identity_moving_test_refused=6, gate_identity_static_unjudged=0,
+               gate_identity_closest_not_moving={"moved_m": 2.7, "bar_m": 3.0, "streak": 15},
+               gate_identity_last_not_moving={"moved_m": 0.31, "bar_m": 2.52, "streak": 12})
+    assert V.identity_gate_said(new) == (
+        "identity-gate best streak 15 of the 10 in a row it needs, then seen moving, refused "
+        "{'too far': 43, 'not ok': 4}; it reached the 10 in a row and the moving test refused "
+        "it 6 times (last: moved 0.3 m < bar 2.5 m); its steps decided {'streak': 8, "
+        "'short pass': 10, 'not moving': 5, 'static': 1} (closest to moving: 2.7 m against a "
+        "bar of 3.0 m)")
+    # a "static" from a streak the moving test never judged (the node's
+    # static_unjudged) is not counted as its refusal, and is said apart
+    unj = V.identity_gate_said(dict(new, gate_identity_moving_test_refused=5,
+                                    gate_identity_static_unjudged=1))
+    assert ("the moving test refused it 5 times (last: moved 0.3 m < bar 2.5 m); 1 shorter "
+            "streak marked static before the moving test could be asked; its steps") in unj, unj
+    # outcomes without the node's count: only "not moving" is surely the
+    # test's, so it is a floor
+    floor = V.identity_gate_said({k: v for k, v in new.items()
+                                  if k != "gate_identity_moving_test_refused"})
+    assert "the moving test refused it at least 5 times" in floor, floor
+    short = V.identity_gate_said(dict(f1, gate_identity_best_streak=7))
+    assert short.endswith("; no streak reached the 10") and "moving test" not in short
+    short_new = V.identity_gate_said(dict(new, gate_identity_best_streak=7))
+    assert "; no streak reached the 10; its steps decided" in short_new, short_new
+    assert "moving test" not in short_new
+    # only a backend that is a row has C2 flights to stand beside: a censored
+    # flight of one that is not (other_records), or of the null, is not listed
+    # as "counted beside the backend's C2 flights"
+    assert f1["c2_censored"]
+    assert V.render_c2_censored(t, [dict(f1, _label="x (not a row)"),
+                                    dict(f1, _label="y", _in_row=True,
+                                         backend=V.HAND_WRITTEN)]) == []
+    assert V.render_c2_censored(t, [dict(f1, _label="RaceVLA drone6_all", _in_row=True)])
+    # each is also listed among the flights that are not C2, with its reasons
+    assert "| pas_hil_racevla_c2_01 | RaceVLA drone6_all |" in sec.split(
+        "hil follow flights that are not C2")[1]
+    # a backend with no C2 flight still shows its censored ones
+    out2 = _tmp()
+    out = out2
+    timed_out("pas_hil_racevla_c2_01")
+    cell = _row(_build(demo_out=out2), "racevla_7b")["cells"]["closed_loop_hil_c2"]
+    assert cell == ("to fly on hil (C2): no flight of it on disk is C2; gate timed out 1: "
+                    "censored, not scored, not counted toward the 3; 1 more hil follow "
+                    "outside C2 (the 1 censored among them) (see the C2 section)"), cell
 
 
 def test_the_follow_matrices_are_records_outside_c1_and_c2():

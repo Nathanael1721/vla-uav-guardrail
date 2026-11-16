@@ -50,8 +50,11 @@ from policy_hud import (PolicyIndicator, draw_policy_overlay,  # noqa: E402
                         draw_status_box, render_base_map)
 
 
-def load_rows(tag: str) -> list[dict]:
-    p = ROOT / "demo" / "out" / tag / "flight_log.jsonl"
+RUNS = ROOT / "demo" / "out"
+
+
+def load_rows(tag: str, runs: Path = RUNS) -> list[dict]:
+    p = Path(runs) / tag / "flight_log.jsonl"
     rows = [json.loads(ln) for ln in p.read_text(encoding="utf-8").splitlines() if ln.strip()]
     return [r for r in rows if "tick" in r and "raw" in r]
 
@@ -64,9 +67,23 @@ def decision_of(r: dict) -> ShieldDecision:
         "emitted_violations": r.get("emitted_violations") or []})
 
 
-def status_lines(r: dict) -> list[str]:
+def lock_held(metrics: dict | None) -> bool | None:
+    """Whether the flight's detector held a target lock, as the perception
+    node's metrics.json says it (detector_selection.lock: a dict is the
+    TargetLock; a string - "strict lock not used (identity without an
+    estimator)" - or None is no lock). None when the run does not say
+    (follow_vlm's own runs, older ones): the label is then as before."""
+    ds = (metrics or {}).get("detector_selection")
+    if not isinstance(ds, dict) or "lock" not in ds:
+        return None
+    return isinstance(ds["lock"], dict)
+
+
+def status_lines(r: dict, locked: bool | None = None) -> list[str]:
     """The top-left flight lines, rebuilt from a log row. Covers the old HUD's
-    burned-in text on frames recorded before the indicator existed."""
+    burned-in text on frames recorded before the indicator existed. A track
+    tick of a flight that held no lock (`locked` False, lock_held) reads
+    TRACKING BOX (NO LOCK), never TARGET LOCKED."""
     import math
     sep = None
     pts = (r.get("truth") or {}).get("pts") or []
@@ -75,6 +92,8 @@ def status_lines(r: dict) -> list[str]:
     mode = {"track": "TARGET LOCKED", "coast": "COASTING on last motion",
             "search": "SEARCHING ...", "scan": "SCANNING for target"}.get(
         r.get("mode"), str(r.get("mode") or "").upper())
+    if r.get("mode") == "track" and locked is False:
+        mode = "TRACKING BOX (NO LOCK)"
     if r.get("mode") == "track" and r.get("tier") == "soft":
         mode = "TRACKING (PARTLY HIDDEN)"
     return [f"t {r['t']:5.1f}s   alt {r['up']:4.1f} m",
@@ -119,9 +138,11 @@ def snapshots(rows, policy, citymap: Path | None):
     return out, ind
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--tag", required=True)
+    ap.add_argument("--runs", default=str(RUNS),
+                    help="the folder holding the run folder <tag> (default demo/out)")
     ap.add_argument("--policy", required=True)
     ap.add_argument("--citymap", default=str(ROOT / "demo/out/citymap_citylife/occ_day.npz"))
     ap.add_argument("--from-s", type=float, default=0.0)
@@ -129,17 +150,21 @@ def main() -> int:
     ap.add_argument("--out", help="write ONE frame (the first in range) here")
     ap.add_argument("--video", help="write the range as an mp4 here (needs ffmpeg)")
     ap.add_argument("--fps", type=float, default=20.0)
-    args = ap.parse_args()
+    args = ap.parse_args(argv)
 
-    rows = load_rows(args.tag)
+    run = Path(args.runs) / args.tag
+    rows = load_rows(args.tag, args.runs)
     policy = load_policy(args.policy)
     cmap = Path(args.citymap) if args.citymap else None
-    mp = ROOT / "demo" / "out" / args.tag / "metrics.json"
+    mp = run / "metrics.json"
+    locked = None
     if mp.is_file():
-        flown = (json.loads(mp.read_text(encoding="utf-8")).get("params") or {}).get("citymap")
+        mjs = json.loads(mp.read_text(encoding="utf-8"))
+        flown = (mjs.get("params") or {}).get("citymap")
         if flown and Path(flown).is_file():
             cmap = Path(flown)
-    log = ROOT / "demo" / "out" / args.tag / "flight_log.jsonl"
+        locked = lock_held(mjs)
+    log = run / "flight_log.jsonl"
     if cmap is not None and cmap.is_file() and cmap.stat().st_mtime > log.stat().st_mtime:
         print(f"[rerender] WARNING {cmap} is newer than this flight; clearance and "
               f"BREACH are drawn from a map the flight's Shield did not use")
@@ -147,7 +172,7 @@ def main() -> int:
     ts = [r["t"] for r in rows]
     print(f"[rerender] {len(rows)} ticks; counts {ind.counts}; banner ticks {ind.banner_ticks}")
 
-    vdir = ROOT / "demo" / "out" / args.tag / "view"
+    vdir = run / "view"
     rec = json.loads((vdir / "recorder.json").read_text(encoding="utf-8"))
     hz = float(rec.get("achieved_hz") or rec.get("target_hz") or 20.0)
     # Recorders from 2026-10-03 stamp each frame with the flight time it
@@ -175,7 +200,7 @@ def main() -> int:
         from PIL import ImageDraw
         sc = im.size[0] / 1280.0
         ImageDraw.Draw(im).rectangle([0, 0, 336 * sc, 112 * sc], fill=(12, 12, 16))
-        box = draw_status_box(im, status_lines(rows[k]))
+        box = draw_status_box(im, status_lines(rows[k], locked))
         draw_policy_overlay(im, snaps[k], avoid=[box])
         return im
 
@@ -183,7 +208,7 @@ def main() -> int:
         render(pick[0]).save(args.out, quality=92)
         print(f"[rerender] wrote {args.out}")
     if args.video:
-        tmp = ROOT / "demo" / "out" / args.tag / "rerender_hud"
+        tmp = run / "rerender_hud"
         tmp.mkdir(exist_ok=True)
         # A shorter range must not pick up the last render's frames at its tail.
         for old in tmp.glob("*.jpg"):

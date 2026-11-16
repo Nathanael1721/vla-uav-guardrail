@@ -3305,6 +3305,105 @@ def subject_scores_with_negatives(logits, scores, labels, thresh: float):
                   "count_unknown": None}, n_sup
 
 
+# How many of the detector's best boxes the screen looks at, per inference.
+SCREEN_TOP_K = 12
+# How long a published box keeps the jump gate shut on a box too far from it.
+JUMP_GATE_S = 1.5
+
+
+def _box_place(b) -> list:
+    """[cx, cy, w, h] of an (x0, y0, x1, y1) box, to 0.1 px: where a dropped
+    box was, for detections.jsonl `drops`."""
+    x0, y0, x1, y1 = [float(v) for v in b]
+    return [round((x0 + x1) / 2, 1), round((y0 + y1) / 2, 1), round(x1 - x0, 1),
+            round(y1 - y0, 1)]
+
+
+def screen_inputs(sc, bx, thresh: float):
+    """What the screen needs of one inference's boxes (torch tensors, any
+    device): `(top_scores, top_boxes, above_thresh, below)`. The top are the
+    SCREEN_TOP_K best, best first, as plain lists - argsort on the tensors'
+    own device, as the worker's loop always did, so ties keep that order;
+    `above_thresh` counts every box at or over `thresh`, and `below` is
+    (score, (x0, y0, x1, y1)) of the best box under it, or None - over all
+    the boxes, on the tensors, so only SCREEN_TOP_K of them become Python
+    lists (OWL-ViT base/32 gives 576 per frame)."""
+    if not len(sc):
+        return [], [], 0, None
+    top = sc.argsort(descending=True)[:SCREEN_TOP_K]
+    sd = sc.double()                        # as the screen compares: in double
+    under = sd < float(thresh)
+    n_under = int(under.sum())
+    below = None
+    if n_under:
+        j = int(sd.masked_fill(~under, float("-inf")).argmax())
+        below = (float(sc[j]), [float(v) for v in bx[j].tolist()])
+    return sc[top].tolist(), bx[top].tolist(), int(len(sc)) - n_under, below
+
+
+def screen_candidates(scores, boxes, thresh: float, W: int, H: int, *,
+                      above_thresh: int, below=None,
+                      last=None, acquiring: bool = False, jump_frac: float = 0.35,
+                      colour_of=None, colour_gated: bool = False,
+                      colour_min: float = 0.0, clock=time.time):
+    """The detector's screen before any gate (Grounder._worker): `(cands,
+    drops)`.
+
+    `scores` / `boxes`: the SCREEN_TOP_K best boxes' subject scores and
+    (x0, y0, x1, y1), best first (screen_inputs). Walking them, the screen
+    stops at the first box under `thresh`; a box more than `jump_frac` of
+    the frame from the last published box (`last` = (cx, t)) within
+    JUMP_GATE_S of it, while not acquiring, is skipped (the jump gate);
+    `colour_of(box)` is measured on the rest, and with `colour_gated` a box
+    under `colour_min` is skipped (right shape, wrong colour). Each
+    survivor is (cx, cy, w, h, score, W, H, colour), in order.
+
+    `drops` (detections.jsonl `drops`) says which stage took boxes away,
+    without changing what passes: `thresh`; `above_thresh`, how many of ALL
+    the inference's boxes were at or over it (screen_inputs; only the first
+    SCREEN_TOP_K are screened); `below_thresh_best` and `below_thresh_box`
+    ([cx, cy, w, h]), the best score of ANY box under the threshold and
+    where it was (None: no box was under it; a box a negative phrase won
+    scores 0, see subject_scores_with_negatives); `jump`, how many the jump
+    gate skipped; and `colour` - {n, best_score, best_colour, best_box} of
+    the boxes the colour gate skipped (best = the highest detector score
+    among them), None when it skipped none. None of these says the box was
+    the subject: with ~575 patch boxes under det_thresh the best of them is
+    usually background, and telling whether a dropped box was the car needs
+    the car's own image box (e.g. the previous inference's `id` box at the
+    same place), which this row does not hold."""
+    cands = []
+    n_jump = 0
+    col = []
+    for s, b in zip(scores, boxes):
+        s = float(s)
+        if s < thresh:
+            break
+        x0, y0, x1, y1 = [float(v) for v in b]
+        cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
+        if (last is not None and not acquiring
+                and (clock() - last[1]) < JUMP_GATE_S):
+            if abs(cx - last[0]) > jump_frac * W:
+                n_jump += 1
+                continue          # too far from where it just was
+        cm = colour_of((x0, y0, x1, y1)) if colour_of is not None else 0.0
+        if colour_gated and cm < colour_min:
+            col.append((s, float(cm), (x0, y0, x1, y1)))
+            continue              # right shape, wrong colour
+        cands.append((cx, cy, x1 - x0, y1 - y0, s, W, H, cm))
+    best_col = max(col, key=lambda c: c[0]) if col else None
+    drops = {"thresh": thresh,
+             "above_thresh": int(above_thresh),
+             "below_thresh_best": None if below is None else round(float(below[0]), 4),
+             "below_thresh_box": None if below is None else _box_place(below[1]),
+             "jump": n_jump,
+             "colour": (None if not col else
+                        {"n": len(col), "best_score": round(best_col[0], 4),
+                         "best_colour": round(best_col[1], 3),
+                         "best_box": _box_place(best_col[2])})}
+    return cands, drops
+
+
 # The frame's mean grey level in detections.jsonl (`luma`, 0-255), from a
 # copy LUMA_STEP times smaller each way (768x432 -> 96x54): what tells a
 # perception-stress run that was really dark (demo/pas_ardupilot/
@@ -3675,27 +3774,21 @@ class Grounder:
             else:
                 dep, dep_src, dep_dt = None, "none", None
             self.depth_src[dep_src] = self.depth_src.get(dep_src, 0) + 1
-            det, switched, cands = None, False, []
-            if len(sc):
-                # Score every plausible box, do not just take the detector's top
-                # one. Ranking by detector score alone is what let a city object
-                # win and hold the aircraft 60 m from the car.
-                for i in sc.argsort(descending=True)[:12]:
-                    s = float(sc[i])
-                    if s < self.thresh:
-                        break
-                    x0, y0, x1, y1 = [float(v) for v in bx[i].tolist()]
-                    cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
-                    if (last is not None and not acquiring
-                            and (time.time() - last[1]) < 1.5):
-                        if abs(cx - last[0]) > self.jump_frac * W:
-                            continue          # too far from where it just was
-                    cm = colour_match(img, (x0, y0, x1, y1), self.colour,
-                                      depth=dep, stats=self.mask_stats,
-                                      legacy_sat=self.legacy_sat)
-                    if self.colour is not None and cm < self.colour_min:
-                        continue              # right shape, wrong colour
-                    cands.append((cx, cy, x1 - x0, y1 - y0, s, W, H, cm))
+            det, switched = None, False
+            # Score every plausible box, do not just take the detector's top
+            # one. Ranking by detector score alone is what let a city object
+            # win and hold the aircraft 60 m from the car. The screen
+            # (threshold, jump gate, colour gate) is screen_candidates, which
+            # also says what it dropped and why (detections.jsonl `drops`).
+            top_s, top_b, n_above, below = screen_inputs(sc, bx, self.thresh)
+            cands, drops = screen_candidates(
+                top_s, top_b, self.thresh, W, H, above_thresh=n_above, below=below,
+                last=last, acquiring=acquiring, jump_frac=self.jump_frac,
+                colour_of=lambda b: colour_match(img, b, self.colour, depth=dep,
+                                                 stats=self.mask_stats,
+                                                 legacy_sat=self.legacy_sat),
+                colour_gated=self.colour is not None, colour_min=self.colour_min,
+                clock=time.time)
             teacher_feat = None
             if self.teacher is not None:
                 tb = self._teacher_box(cap_pose, t_capture, W, H)
@@ -3864,6 +3957,14 @@ class Grounder:
                                       "w": round(cands[1][2], 1),
                                       "score": round(cands[1][4], 4),
                                       "colour": round(cands[1][7], 3)})}
+                # Which stage took boxes away before any gate
+                # (screen_candidates): how many boxes were over det_thresh,
+                # the best one under it and where, and what the jump and
+                # colour gates dropped (count, best score, place) - so an
+                # inference with an empty `id` list says which stage emptied
+                # it. Whether a dropped box was the car is not in the row:
+                # that needs the car's own image box.
+                rec["drops"] = drops
                 if neg_rec is not None:
                     # What the negative phrases took away on this frame: how
                     # many boxes over the threshold, and the best of them
