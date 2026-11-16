@@ -16,6 +16,8 @@ Shield.
 Frames: NED metres, x = North, y = East.
 """
 import math
+import os
+import re
 import sys
 from pathlib import Path
 
@@ -62,8 +64,24 @@ def test_every_rule_of_the_policy_gets_a_row_in_policy_order():
     # The policy's own version: pinned as "v0.1.0" until the file moved to
     # 0.1.1 on 2026-11-02 (a7763e5) and to 0.1.2 with the WGS84 conversion of
     # 2026-11-03; this test, outside the CI loop for want of Pillow, failed unseen.
-    assert snap["policy"] == f"follow-car-citylife-nfz v{pol.version}"
-    assert pol.version == "0.1.2"
+    # It failed unseen a second time when 4ae620a (IR schema 4.0.0) moved the
+    # file to 0.1.3. By then the file ran in the 3.10 job's Pillow step
+    # (since 2026-11-04), so the reason was no longer Pillow: nothing had been
+    # pushed, GitHub never ran that step, and tools/ci_local.py ran only the
+    # loop (it runs the Pillow step's files too since 17 Nov).
+    # A pinned literal tests the file's history, not the panel: what matters
+    # is that the panel shows the version the file itself says, so the
+    # expected value is read from the YAML's own `version:` line, as text,
+    # without going through load_policy.
+    raw = re.search(r"^version:\s*['\"]?([^'\"\s#]+)", NFZ.read_text(encoding="utf-8"), re.M)
+    assert raw, f"{NFZ.name} has no top-level version line"
+    assert pol.version and pol.version == raw.group(1), (pol.version, raw.group(1))
+    assert snap["policy"] == f"follow-car-citylife-nfz v{raw.group(1)}"
+    # ...and that the panel reads it from the policy, not a literal that happens
+    # to equal every file's version today: a version no file has shows as such.
+    other = pol.model_copy(update={"version": "9.9.9"})
+    snap = PolicyIndicator(other).update(0.0, _dec(), State(x=44, y=0, up=8))
+    assert snap["policy"] == "follow-car-citylife-nfz v9.9.9", snap["policy"]
 
 
 def test_rule_labels_carry_the_policy_numbers():
@@ -767,6 +785,10 @@ def test_rerender_main_draws_the_runs_own_lock_on_its_frames():
     try:
         from PIL import Image
     except ImportError:
+        # CI's Pillow step sets this: there a missing Pillow is a broken
+        # install, not an absent package (as tests/test_vla_server.py does).
+        assert os.environ.get("GUARDRAIL_REQUIRE_PILLOW") != "1", \
+            "GUARDRAIL_REQUIRE_PILLOW=1 and Pillow does not import"
         print("SKIP  PIL not installed")
         return
     sys.path.insert(0, str(ROOT / "tools"))

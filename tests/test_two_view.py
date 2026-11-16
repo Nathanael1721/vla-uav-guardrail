@@ -15,6 +15,7 @@ nothing is normal - `get_chase_native()` yields None until the first message
 arrives on its topic - and the recorder counts those as empty rather than
 failing, so the layout has to survive one panel being absent.
 """
+import ast
 import sys
 from pathlib import Path
 
@@ -105,7 +106,29 @@ def test_pil_conversion_swaps_the_channel_order():
 def test_the_video_tool_and_the_live_window_use_the_same_function():
     """Not a style check: the whole reason this module exists."""
     src = (ROOT / "tools" / "make_demo_video.py").read_text(encoding="utf-8")
-    assert "from two_view import side_by_side" in src
+    # The import as Python reads it, not its spelling: since 63f9072 it also
+    # imports picture_in_picture ("from two_view import picture_in_picture,
+    # side_by_side"), and the literal "from two_view import side_by_side"
+    # failed unseen, this file being outside the CI loop.
+    tree = ast.parse(src)
+    bound = {a.asname or a.name: a.name for n in ast.walk(tree)
+             if isinstance(n, ast.ImportFrom) and n.module == "two_view" for a in n.names}
+    local = [a for a, name in bound.items() if name == "side_by_side"]
+    assert local, "make_demo_video.py does not import side_by_side from two_view"
+    # ...and nothing in the file rebinds that name to a layout of its own.
+    for n in ast.walk(tree):
+        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            names = {n.name}
+        elif isinstance(n, ast.Assign):
+            names = {t.id for t in n.targets if isinstance(t, ast.Name)}
+        elif isinstance(n, (ast.AnnAssign, ast.AugAssign)) and isinstance(n.target, ast.Name):
+            names = {n.target.id}
+        else:
+            continue
+        assert not names & set(local), (
+            f"make_demo_video.py rebinds {sorted(names & set(local))} at line {n.lineno}")
+    assert any(isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id in local
+               for n in ast.walk(tree)), "make_demo_video.py never calls side_by_side"
     assert "np.hstack" not in src, (
         "make_demo_video.py open-codes the layout again; it must call "
         "two_view.side_by_side so the window and the video cannot diverge")

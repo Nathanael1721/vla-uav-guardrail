@@ -801,7 +801,9 @@ jobs:
               tests/test_live_status.py \
               tests/test_todo.py \
               tests/test_encode_deliverable.py \
-              tests/test_make_demo_video.py \n              tests/test_ci_local.py \n              tests/test_render_track_video.py; do
+              tests/test_make_demo_video.py \
+              tests/test_ci_local.py \
+              tests/test_render_track_video.py; do
             echo "::group::$t"
             python "$t" 2>&1 | tee "$out"
             rc=${PIPESTATUS[0]}
