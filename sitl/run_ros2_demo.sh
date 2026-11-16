@@ -52,6 +52,10 @@
 #   ROUTER=1           SITL -> router -> MAVROS over UDP; 0 = MAVROS on SITL
 #                      tcp 5760 as every run before 2026-10-06
 #   BAG=1              record the rosbag; 0 = no bag
+#   BAG_MANIFEST=0     1 = the manifest fields known before the recorder
+#                      starts (code revision, seed, the launch's policy hash;
+#                      sitl/bag_custom_data.py) go into the bag's
+#                      metadata.yaml as custom_data; 0 records as before
 #   USE_LAUNCH=1       start the nodes with ros2 launch
 #                      (sitl/ros2_ws/src/safety_shield/launch/guardrail_rail.launch.py);
 #                      0 = plain background processes
@@ -436,6 +440,24 @@ if [ "${BAG:-1}" = "1" ]; then
   # /uas1/mavlink_sink (to it, SET_POSITION_TARGET_LOCAL_NED among them), as
   # mavros_msgs/Mavlink. Keep deploy/docker/entrypoint.sh's BAG_TOPICS equal
   # (tests/test_deploy_configs.py).
+  # BAG_MANIFEST=1 (off by default; ARCH-22, 2026-11-16): what the launch
+  # knows of the manifest, as KEY=VALUE pairs after --custom-data, which
+  # rosbag2 writes into metadata.yaml when it closes the bag. The option takes
+  # every argument after it, so it stays LAST. A field that cannot be
+  # computed is left out (bag_custom_data.log); none at all records as before.
+  BAG_CUSTOM=()
+  if [ "${BAG_MANIFEST:-0}" = "1" ]; then
+    BAG_DYN=()
+    [ -n "$DYN" ] && BAG_DYN=("$DYN")
+    mapfile -t BAG_CUSTOM < <("$PY" "$DIR/bag_custom_data.py" -- --shield "$SHIELD" \
+      "${BAG_DYN[@]}" "${EXTRA[@]}" 2> ~/sitl-run/bag_custom_data.log || true)
+    if [ "${#BAG_CUSTOM[@]}" -gt 0 ]; then
+      echo "[bag] custom_data: ${BAG_CUSTOM[*]}"
+      BAG_CUSTOM=(--custom-data "${BAG_CUSTOM[@]}")
+    else
+      echo "[bag] BAG_MANIFEST=1 but no field could be computed (~/sitl-run/bag_custom_data.log): recording without custom_data"
+    fi
+  fi
   nohup "${ENC_BAG[@]}" ros2 bag record -s mcap -o "$OUT/bag" \
     /vla/action_4d /vla/identity /shield/setpoint /shield/intercept \
     /shield/mode_request /shield/fences /mavlink_adapter/status \
@@ -446,7 +468,7 @@ if [ "${BAG:-1}" = "1" ]; then
     /mavros/global_position/global /mavros/global_position/rel_alt \
     /mavros/altitude /mavros/battery /mavros/home_position/home \
     /camera/front/image_raw /camera/down/image_raw \
-    /uas1/mavlink_source /uas1/mavlink_sink "${BAG_EXTRA[@]}" \
+    /uas1/mavlink_source /uas1/mavlink_sink "${BAG_EXTRA[@]}" "${BAG_CUSTOM[@]}" \
     > ~/sitl-run/bag.log 2>&1 &
   BAG_PID=$!
   sleep 2

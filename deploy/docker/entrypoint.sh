@@ -35,9 +35,20 @@
 # (read-only), so guardrail.manifest.code_revision() reads the real git
 # checkout and a run on the Orin names the commit that flew.
 #
+# VLAGUARD_BAG_MANIFEST=1 (off by default; ARCH-22, 2026-11-16): the mission's
+# bag also carries, in its metadata.yaml `custom_data`, the manifest fields
+# known before the recorder starts (sitl/bag_custom_data.py: code revision,
+# seed, the launch's policy hash, the topology this file was configured for).
+#
 # VLAGUARD_DRY_RUN=1 prints the commands, shell-quoted, instead of running
 # them; the tests use it to check every role against every topology without
-# Docker or ROS.
+# Docker or ROS. (With VLAGUARD_BAG_MANIFEST=1 the dry run does compute the
+# custom_data pairs, which reads the checkout, so the command it prints is
+# the command a run would start; the helper's stderr then goes to /dev/null,
+# not to $RUNTIME_DIR/bag_custom_data.log, so the dry run writes no file.
+# The helper runs guardrail.manifest.code_revision(), whose `git status` has
+# taken over 20 s on a slow tree: under the switch the recorder starts that
+# much later, so time it in a shakedown before a campaign uses the switch.)
 #
 # Exit codes: 64 bad configuration, 66 repository not mounted, 68 a host name
 # did not resolve, 77 refused for safety.
@@ -211,6 +222,21 @@ case "$role" in
             "shield_args:=$(printf '%q ' "${shield_args[@]}")" "vla_args:=$vla_args")
     pack=("$PY" -m guardrail.replay pack "$out")
     bag=(ros2 bag record -s mcap -o "$out/bag" "${BAG_TOPICS[@]}")
+    # --custom-data takes every argument after it, so it stays last. A field
+    # that cannot be computed is left out; none at all records as before.
+    if [ "${VLAGUARD_BAG:-1}" = "1" ] && [ "${VLAGUARD_BAG_MANIFEST:-0}" = "1" ]; then
+      custom=()
+      custom_log="$RUNTIME_DIR/bag_custom_data.log"
+      [ "$DRY" = "1" ] && custom_log=/dev/null       # a dry run writes no file
+      mapfile -t custom < <("$PY" "$ROOT/sitl/bag_custom_data.py" \
+        --topology "$VLAGUARD_TOPOLOGY" -- "${shield_args[@]}" \
+        2> "$custom_log" || true)
+      if [ "${#custom[@]}" -gt 0 ]; then
+        bag+=(--custom-data "${custom[@]}")
+      else
+        echo "vlaguard-entrypoint: VLAGUARD_BAG_MANIFEST=1 but no field could be computed ($custom_log): recording without custom_data" >&2
+      fi
+    fi
     # What the Shield node records as the link (it reads MAVROS's own fcu_url
     # parameter first and falls back to this) and which router carried it.
     export MAVROS_FCU_URL="${FCU_URL:-}"

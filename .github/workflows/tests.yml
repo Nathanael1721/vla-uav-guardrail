@@ -59,7 +59,15 @@
 #          test_harness_hil (2026-11-14: a scenario's own events driven by
 #          the harness over REST, EmitEvent on a rail, the dry run of
 #          tools/harness_hil_episode.py, on the same fake rig; its gRPC test
-#          SKIPs on the requirements-only job).
+#          SKIPs on the requirements-only job),
+#          test_replay_from_bag (2026-11-16, ARCH-22: an episode's ticks,
+#          trajectory and the KPI fields its topics carry rebuilt from the
+#          rosbag2 alone and compared with the flight log and kpi.json,
+#          tools/replay_from_bag.py; on a stand-in for the bag reader, so it
+#          needs no rosbags; its round trip through a real rosbag2 SKIPs
+#          here, where no job installs rosbags; also the manifest fields a
+#          launch passes into the bag's metadata, sitl/bag_custom_data.py,
+#          and their comparison with manifest.json).
 #        The flying rails: test_railinputs_*, test_flight_pas_ap_20261008 (on
 #          its tests/fixtures/ copy of the 8 Oct flight), test_pas_ardupilot,
 #          test_pas_hotapply (2026-11-15, WP1-15: the perception rail's REST
@@ -327,6 +335,11 @@
 #          2026-10-20); the 3.10 and requirements-only jobs still run only
 #          the absent-pyarrow paths (the SKIP line, the stale-file removal,
 #          exit 3), which is what proves the JSONL needs no optional package.
+#        - rosbags (optional, in no job's install; the lab's vla-real
+#          environment has 0.10.11): test_replay_from_bag's round trip
+#          through a real rosbag2, 1 of its 22 tests, SKIPs on every job
+#          (22/22 on the lab desktop on 2026-11-16; 21 passed and 1 skipped
+#          there with the package blocked).
 #        - Files outside this repository: test_policy_dsl_grant_form's 10
 #          checks and test_manifest's fork check against the reference
 #          repository (kuanting-vla-uav-guardrail is a separate checkout, not
@@ -673,6 +686,7 @@ jobs:
               tests/test_wp4outputs_exporters.py \
               tests/test_wp4outputs_harness.py               tests/test_harness_rail.py \
               tests/test_harness_hil.py \
+              tests/test_replay_from_bag.py \
               tests/test_railvideo_truth_frame.py \
               tests/test_railvideo_recording.py \
               tests/test_railvideo_compare.py \

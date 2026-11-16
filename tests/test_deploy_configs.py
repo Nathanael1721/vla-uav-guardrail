@@ -1062,6 +1062,67 @@ def test_entrypoint_mission_runs_the_launch_file_then_packs_the_replay():
     assert "BAG:" not in r.stdout, r.stdout
 
 
+def test_the_launchs_manifest_fields_go_into_the_bag_only_when_asked():
+    """ARCH-22 (2026-11-16). VLAGUARD_BAG_MANIFEST=1 appends what the launch
+    knows of the manifest (sitl/bag_custom_data.py) to the record command as
+    `--custom-data KEY=VALUE ...`, which rosbag2 writes into metadata.yaml.
+    Off - the value in every topology file - the command is the one every
+    campaign up to ntFIN2 ran. The option takes every argument after it, so
+    it is last; a field that cannot be computed is left out and the bag is
+    recorded all the same."""
+    sys.path.insert(0, str(ROOT / "sitl"))
+    import bag_custom_data as CD
+    for t in TOPOLOGIES:
+        assert read_env(t)["VLAGUARD_BAG_MANIFEST"] == "0", t
+    for name in ("docker-compose.dev.yml", "docker-compose.orin.yml"):
+        env = load_compose(compose_files()[name])["x-companion-env"]
+        assert env["VLAGUARD_BAG_MANIFEST"] == "${VLAGUARD_BAG_MANIFEST:-0}", (name, env)
+    # the native rail: the same helper, off by default, last on the command
+    native = RUN_ROS2_DEMO.read_text(encoding="utf-8")
+    block = native.split('ros2 bag record -s mcap -o "$OUT/bag"', 1)[1].split(">", 1)[0]
+    assert block.split()[-2:] == ['"${BAG_CUSTOM[@]}"', "\\"], block.split()[-4:]
+    assert 'if [ "${BAG_MANIFEST:-0}" = "1" ]; then' in native
+    assert '"$DIR/bag_custom_data.py" -- --shield "$SHIELD"' in native
+    assert 'BAG_CUSTOM=(--custom-data "${BAG_CUSTOM[@]}")' in native
+    assert (ROOT / "sitl" / "bag_custom_data.py").is_file()
+    if not find_bash():
+        return SKIP
+    args = ["mission", "--shield", "on", "--tag", "hil_smoke_01", "--seed", "9", "--dev-yaml"]
+    plain = printed(dry_run(ENTRYPOINT, args, _env_for("hil")), "BAG")
+    assert "--custom-data" not in plain, plain
+    r = dry_run(ENTRYPOINT, args, _env_for("hil", VLAGUARD_BAG_MANIFEST="1"))
+    assert r.returncode == 0, r.stderr
+    bag = printed(r, "BAG")
+    at = bag.index("--custom-data")
+    assert bag[:at] == plain and bag.count("--custom-data") == 1, bag
+    pairs = dict(p.split("=", 1) for p in bag[at + 1:])
+    assert tuple(pairs) == CD.KEYS and all(p.count("=") == 1 for p in bag[at + 1:]), bag
+    want, notes = CD.launch_fields(["--shield", "on", *args[3:]], "hil")
+    assert pairs == want and notes == [], (pairs, want, notes)
+    assert pairs[CD.RANDOM_SEED_KEY] == "9" and pairs[CD.TOPOLOGY_DECLARED_KEY] == "hil"
+    assert printed(r) == printed(dry_run(ENTRYPOINT, args, _env_for("hil"))), \
+        "the launch changed with the switch"
+    # the dry run computes the pairs and writes no file (the helper's log
+    # goes to /dev/null; a run writes $RUNTIME_DIR/bag_custom_data.log)
+    env = _base_env(_env_for("hil", VLAGUARD_BAG_MANIFEST="1"))
+    runtime = Path(env["VLAGUARD_RUNTIME_DIR"])
+    r = subprocess.run([find_bash(), ENTRYPOINT.as_posix(), *args], env=env,
+                       capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0 and "--custom-data" in printed(r, "BAG"), r.stderr
+    assert sorted(p.name for p in runtime.iterdir()) == [], list(runtime.iterdir())
+    # a policy the node would refuse: the other fields are still recorded
+    r = dry_run(ENTRYPOINT, ["mission", "--bundle", "/nowhere/none.tar.gz"],
+                _env_for("dev", VLAGUARD_BAG_MANIFEST="1"))
+    assert r.returncode == 0, r.stderr
+    bag = printed(r, "BAG")
+    keys = [p.split("=", 1)[0] for p in bag[bag.index("--custom-data") + 1:]]
+    assert keys == [CD.CODE_REVISION_KEY, CD.RANDOM_SEED_KEY, CD.TOPOLOGY_DECLARED_KEY], keys
+    # no bag, no custom data, whatever the switch says
+    r = dry_run(ENTRYPOINT, ["mission"], _env_for("dev", VLAGUARD_BAG="0",
+                                                  VLAGUARD_BAG_MANIFEST="1"))
+    assert r.returncode == 0 and "BAG:" not in r.stdout, r.stdout
+
+
 def test_entrypoint_mission_tags_follow_the_shield_nodes_rule():
     if not find_bash():
         return SKIP

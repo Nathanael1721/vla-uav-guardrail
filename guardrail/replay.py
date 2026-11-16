@@ -1671,6 +1671,86 @@ def last_generation_policy(run_dir: str | Path) -> Policy:
     return policies[max(policies)]
 
 
+def verify_from_bag(bundle: str | Path,
+                    trust_store: str | Path | dict | None = None,
+                    *, require_signature: bool = False) -> tuple[bool, list[str]]:
+    """`verify --from-bag` (2026-11-16, ARCH-22): the bundle's rosbag2 against
+    the bundle's own log and KPI table. `(identical, lines)`. The bundle is
+    read with the same `trust_store` and `require_signature` as verify_replay,
+    and the signature's status is one of the lines.
+
+    verify_replay re-scores the log, a file the Shield node wrote about
+    itself. This rebuilds each tick, the trajectory and the KPI fields the
+    topics carry from the bag a second process recorded, with
+    tools/replay_from_bag.py, which says what the bag cannot carry and never
+    copies such a field from the table. It is not a re-flight: the Shield and
+    the FSM are not run again.
+
+    The tool is loaded by path, as guardrail.harness_service loads the source
+    tree's tools (pyproject.toml packages only guardrail/); it needs
+    `rosbags`. Never called unless asked for: `pack` and a plain `verify`
+    are as they were."""
+    import importlib.util
+    import sys
+    path = Path(__file__).resolve().parents[1] / "tools" / "replay_from_bag.py"
+    mod = sys.modules.get("replay_from_bag")
+    if mod is None or Path(getattr(mod, "__file__", "")).resolve() != path.resolve():
+        if not path.is_file():
+            return False, [f"{path} is missing: --from-bag runs the source tree's tool"]
+        spec = importlib.util.spec_from_file_location("replay_from_bag", path)
+        mod = importlib.util.module_from_spec(spec)
+        sys.modules["replay_from_bag"] = mod
+        try:
+            spec.loader.exec_module(mod)
+        except BaseException:
+            sys.modules.pop("replay_from_bag", None)
+            raise
+    rec, _ = mod.replay_path(Path(bundle), trust_store=trust_store,
+                             require_signature=require_signature)
+    if rec["verdict"] == "not_replayable":
+        return False, [f"not replayable from its bag: {rec.get('why')}"]
+    lines = []
+    sig = (rec.get("bag") or {}).get("bundle_signature")
+    if sig:
+        lines.append(f"bag read from the bundle with its signature {sig.get('status')}"
+                     + ("" if sig.get("status") == SIG_VERIFIED else
+                        ": the digests cannot rule out a consistent rewrite of log, "
+                        "KPI table and bag"))
+    cmp_ = rec.get("compared_with_the_log") or {}
+    if cmp_:
+        tr = cmp_["trajectory"]
+        lines.append(f"ticks {cmp_['ticks']['verdict']}: {cmp_['compared']} of "
+                     f"{cmp_['log_rows']} log rows have their tick in the bag"
+                     + (f", {cmp_['ticks_past_bag_end']} of them after the Shield's last "
+                        f"message (their number is the log's)"
+                        if cmp_["ticks_past_bag_end"] else ""))
+        absent = cmp_["ticks"].get("log_fields_absent") or {}
+        if absent:
+            lines.append("not compared, the log row lacks the key: " + ", ".join(
+                f"{k} on {n} row(s)" for k, n in sorted(absent.items())))
+        lines.append(f"trajectory {tr['verdict']}: {tr['exact']} of {tr['points']} points "
+                     f"are the bag's pose message, {tr['next'] + tr['previous']} its "
+                     f"neighbour, {tr['differs']} neither")
+    kp = rec["kpi"]
+    lines.append(f"KPI table {kp['verdict']}: {kp['equal']} field(s) from the bag equal, "
+                 f"{kp['differs']} differ, {kp['not_on_this_run']} out of reach on this "
+                 f"run, {kp['not_from_the_bag']} not on any topic (not re-derived)")
+    man = rec.get("manifest_in_the_bag") or {}
+    if man.get("verdict") == "absent":
+        lines.append("manifest: no field of it is in this bag's metadata (recorded "
+                     "without --custom-data)")
+    elif man:
+        lines.append(f"manifest fields in the bag's metadata {man['verdict']}: "
+                     f"{man['equal']} equal, {man['differs']} differ, "
+                     f"{man['not_compared']} not compared; "
+                     f"{', '.join(sorted(man['not_known_at_launch']))} are in no bag")
+    fd = rec.get("first_difference")
+    if fd:
+        lines.append(f"first difference: {fd['layer']}.{fd['field']} at tick "
+                     f"{fd.get('tick')}: bag {fd.get('bag')!r}, log {fd.get('log')!r}")
+    return rec["verdict"] == "identical", lines
+
+
 def _main(argv: list[str] | None = None) -> int:
     import argparse
     ap = argparse.ArgumentParser(
@@ -1688,6 +1768,11 @@ def _main(argv: list[str] | None = None) -> int:
     v = sub.add_parser("verify", help="verify a bundle and print every note")
     v.add_argument("bundle")
     v.add_argument("--require-signature", action="store_true")
+    v.add_argument("--from-bag", action="store_true",
+                   help="also rebuild the ticks, the trajectory and the KPI fields "
+                        "the topics carry from the bundle's rosbag2 alone and "
+                        "compare them with the bundle's log and KPI table "
+                        "(tools/replay_from_bag.py; needs rosbags; not a re-flight)")
     args = ap.parse_args(argv)
 
     if args.cmd == "pack":
@@ -1719,11 +1804,36 @@ def _main(argv: list[str] | None = None) -> int:
         for w in why:
             print(f"[replay]   - {w}")
         return 0 if ok else 1
-    ok, why = verify_replay(args.bundle, require_signature=args.require_signature)
-    print(f"{'OK' if ok else 'FAILED'}: {args.bundle}")
-    for w in why:
-        print(f"  - {w}")
-    return 0 if ok else 1
+    if not args.from_bag:
+        ok, why = verify_replay(args.bundle, require_signature=args.require_signature)
+        print(f"{'OK' if ok else 'FAILED'}: {args.bundle}")
+        for w in why:
+            print(f"  - {w}")
+        return 0 if ok else 1
+    # --from-bag reads the bundle twice (verify_replay, then the bag). Both
+    # read one copy taken once, so the file cannot change between them, and
+    # the second read checks the signature as the first did.
+    with tempfile.TemporaryDirectory(prefix="verify-from-bag-") as td:
+        snap = Path(td) / Path(args.bundle).name
+        try:
+            shutil.copyfile(args.bundle, snap)
+        except OSError as exc:
+            print(f"FAILED: {args.bundle}\n  - {exc}")
+            return 1
+
+        def named(text: str) -> str:
+            return text.replace(str(snap), str(args.bundle))
+        ok, why = verify_replay(snap, require_signature=args.require_signature)
+        print(f"{'OK' if ok else 'FAILED'}: {args.bundle}")
+        for w in why:
+            print(f"  - {named(w)}")
+        if not ok:
+            return 1
+        same, lines = verify_from_bag(snap, require_signature=args.require_signature)
+        print(f"{'OK' if same else 'FAILED'} from the bag: {args.bundle}")
+        for w in lines:
+            print(f"  - {named(w)}")
+        return 0 if same else 1
 
 
 if __name__ == "__main__":
