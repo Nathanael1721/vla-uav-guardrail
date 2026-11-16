@@ -353,6 +353,26 @@ def test_flight_has_no_link_until_someone_sets_it_and_never_arms_by_default():
     assert f["FCU_URL"] == "", "flight must not ship a guessed autopilot link"
 
 
+def test_the_chain_requirement_reaches_the_companion_and_ships_switched_off():
+    """VLAGUARD_REQUIRE_CHAIN (WP1-04, 2026-11-16): with 1 the companion flies
+    only a bundle whose signer's certificate chained to a listed authority
+    there. Every companion service gets the variable, so the rig turns it on
+    without editing a launch file; and the topology files ship 0, because
+    until the bundle keys are certified every bundle is signed by a bare key
+    and 1 would ground the rig (the stored runs flew with it unset)."""
+    from guardrail.bundle import REQUIRE_CHAIN_ENV
+    for t in TOPOLOGIES:
+        assert read_env(t)[REQUIRE_CHAIN_ENV] == "0", t
+    for f in ("docker-compose.orin.yml", "docker-compose.dev.yml"):
+        doc = load_compose(COMPOSE_DIR / f)
+        assert doc["x-companion-env"][REQUIRE_CHAIN_ENV] == "${%s:-0}" % REQUIRE_CHAIN_ENV, f
+        services = {n: s for n, s in companion_services(doc).items()
+                    if "VLAGUARD_ALLOW_FLIGHT_MISSION" in (s.get("environment") or {})}
+        assert services, f"{f}: no companion service found"
+        for name, svc in services.items():
+            assert REQUIRE_CHAIN_ENV in svc["environment"], (f, name)
+
+
 # --------------------------------------------------------------------------- #
 # the label: what guardrail.manifest will say about a run made this way
 # --------------------------------------------------------------------------- #
