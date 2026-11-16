@@ -345,6 +345,14 @@ def test_a_prefix_on_run_without_labels_is_left_out_never_read_as_correct():
         md = KR.render_markdown(KR.json_safe(rep))
         assert "| (r2) **adopted** | 1/1 | 1.000 |" in md, md
         assert "left out, labels not applied" in md and "`cx_002_b`" in md
+        # the table's own figure, recomputed (a merge or a superseded run),
+        # counts its runs as rescore_rail_main does: without that run
+        whole = KR.rescore_table_figure(t, "r2", set())
+        on = [k for k, r in t["runs"].items() if "error" not in r and r["shield"] == "on"]
+        assert "cx_002_b" in on and len(on) >= 2, on
+        assert (whole["runs"], whole["scored"], whole["correct"]) == (
+            len(on) - 1, 1, 1), whole
+        assert "1 run(s) with labels not applied left out" in whole["basis"], whole
     finally:
         shutil.rmtree(root, ignore_errors=True)
 

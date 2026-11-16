@@ -69,9 +69,9 @@
 #              drone6_all from the parent either way.
 # WHAT EACH FAMILY STILL LACKS HERE (updated 2026-11-16 evening, after the
 # backend table's C2 flights; deploy/evidence/vla_backend_table.md has each
-# flight). Every family below has now flown this node's follow on hil, with
-# P0 escapes 0 on every flight; none of the three followed the car the way
-# aiotvla does:
+# flight). aerialvla, dronecats and racevla have now flown this node's
+# follow on hil, with P0 escapes 0 on every flight; none of the three
+# followed the car the way aiotvla does; servo (the C2 null) has not flown:
 #   aerialvla  a shakedown and 3 C2 flights; each lost the car (target_lost),
 #              within 30 m of it on 0.05-0.16 of the ticks. It answers in
 #              about 1.1 s on the board (bf16, merged), so the feed between

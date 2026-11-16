@@ -2787,6 +2787,7 @@ def prefix_flight_problems(metrics: dict, meta: dict) -> list[str]:
     for key, what in (("id", "consumer"), ("adapter", "adapter"), ("arm", "prefix arm"),
                       ("wraps", "wrapped pilot law"),
                       ("wraps_model_hash", "wrapped law's source pin"),
+                      ("corridor_path_test", "path test"),
                       ("policy_hash", "CSP's policy"),
                       ("action_set_sha256", "CSP's action sets")):
         if got.get(key) != c.get(key):

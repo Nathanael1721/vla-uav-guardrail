@@ -1719,10 +1719,15 @@ def rescore_table_figure(rs: dict, key: str, superseded: set) -> dict:
     """The re-score tables' own figure under reading `key`, recomputed from
     their per-run verdicts as rail_label_scores counts them (every Shield-on
     run re-scored without error; scored = correct, false or missed), leaving
-    out the runs the campaigns' episode choice superseded."""
-    pairs, n = [], 0
+    out the runs the campaigns' episode choice superseded and those whose
+    labels are not applied (rescore_rail_main drops them before
+    rail_label_scores counts its runs)."""
+    pairs, n, na = [], 0, 0
     for name, rec in rs["runs"].items():
         if name in superseded or "error" in rec or rec.get("shield") != "on":
+            continue
+        if rec.get("labels_not_applied"):
+            na += 1
             continue
         n += 1
         rd = (rec.get("readings") or {}).get(key)
@@ -1735,7 +1740,8 @@ def rescore_table_figure(rs: dict, key: str, superseded: set) -> dict:
             "wilson_low_95": sc["wilson_low_95"],
             "basis": (f"{len(rs.get('paths') or [])} table(s) merged per run"
                       + (f", {sum(1 for x in rs['runs'] if x in superseded)} superseded "
-                         f"run(s) left out" if superseded else ""))}
+                         f"run(s) left out" if superseded else "")
+                      + (f", {na} run(s) with labels not applied left out" if na else ""))}
 
 
 LABELS_NOT_APPLIED_WHY = ("the prefix-on arm of a pilot that consumes the CSP: the cell's "

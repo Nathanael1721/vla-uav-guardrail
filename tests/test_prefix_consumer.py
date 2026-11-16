@@ -704,9 +704,12 @@ def test_the_two_arms_are_one_pilot_with_and_without_its_prefix():
     k_off = S.score(spec, off.rows, off.extra, off.policy, off.priorities)
     assert (on.extra["reached_goal"], off.extra["reached_goal"]) == (True, False)
     assert k_on["p0_escapes"] == 0 and k_off["p0_escapes"] == 0
-    assert 0 < k_on["repair_count"] < k_off["repair_count"] / 4, (
+    # Since the path test (2026-11-16) the prefix-on arm clips no ring
+    # between samples: no repair at all (19 before, two Loiters).
+    assert k_on["repair_count"] < k_off["repair_count"] / 4, (
         k_on["repair_count"], k_off["repair_count"])
-    assert k_on["mean_repair_magnitude_mps"] < k_off["mean_repair_magnitude_mps"]
+    assert k_on["repair_count"] == 0 and k_on["mean_repair_magnitude_mps"] is None, k_on
+    assert k_off["mean_repair_magnitude_mps"] > 0
     # A record whose CSP is not the cell's is refused, not flown.
     forged = json.loads(json.dumps(recs["prefix-on"]))
     forged["consumer"]["action_set_sha256"] = "sha256:" + "0" * 64
@@ -935,6 +938,8 @@ def test_a_rail_flight_that_did_not_fly_its_arm_is_not_that_arms_flight():
                          ({"wraps_model_hash": VS.MODEL_IDS["constant"] + "@src:" + "3" * 64},
                           "source pin"),
                          ({"wraps_model_hash": None}, "source pin"),
+                         # a rig checkout from before the path test
+                         ({"corridor_path_test": None}, "path test"),
                          ({"policy_hash": "sha256:" + "2" * 64}, "policy")):
         got = S.prefix_flight_problems(ident(**change), meta)
         assert len(got) == 1 and word in got[0], (change, got)
@@ -1467,13 +1472,21 @@ def test_the_headless_profile_reports_the_delta_end_to_end():
         m = pc["figures"]["measures"]
         assert m["mission_success_rate"]["on"] == 1.0 and m["mission_success_rate"]["off"] == 0.5
         assert m["mean_repair_count_per_episode"]["delta_on_minus_off"] < -50
-        assert m["mean_repair_magnitude_mps"]["delta_on_minus_off"] < 0
+        # no repair on the prefix-on arms (the path test, 2026-11-16): no
+        # magnitude to compare, said so rather than read as 0
+        assert m["mean_repair_magnitude_mps"]["on"] is None, m["mean_repair_magnitude_mps"]
+        assert m["mean_repair_magnitude_mps"]["off"] > 0
         assert m["p0_escapes"] == {"on": 0, "off": 0, "delta_on_minus_off": 0}
         # altitude-floor-recovery starts 7 m below the floor: a time to safe
         # in both arms (the consumer climbs at the cap, as the Shield does)
         assert pc["figures"]["time_to_safe_episodes"] == {"on": 1, "off": 1}
         assert m["mean_time_to_safe_s"]["on"] is not None
-        assert all(v["abs_diff"] in (0, 0.0) for v in pc["figures"]["aa"]["measures"].values())
+        aa = pc["figures"]["aa"]["measures"]
+        # every A/A measure identical; the repair magnitude has none to
+        # compare on an arm with no repair (None, not 0)
+        assert all(v["abs_diff"] in (0, 0.0) for k, v in aa.items()
+                   if k != "mean_repair_magnitude_mps"), aa
+        assert aa["mean_repair_magnitude_mps"]["abs_diff"] is None, aa
         on = next(r for r in doc["results"] if r["id"] == "nfz-head-on#prefix-on")
         assert on["labels_not_applied"] == S.LABELS_NOT_APPLIED and on["prefix_consumer"]
         keys = set(doc["_cell_rollup"])
