@@ -102,6 +102,25 @@ AND ON 2026-10-07: THE SHIELD'S EVENTS, ITS FSM, AND THE ARMS
     of an episode is the same flight: the sweep checks that it is, and
     reports the arms as plumbing, never as a robustness number.
 
+THE PREFIX CONSUMER (2026-11-16, WP4-15)
+
+A profile with `prefix_consumer: action_set` flies every episode's pilot law
+through guardrail.prefix_consumer.PrefixConsumer (the grant's default
+action-set adapter): the prefix-on arm with the Prefix Compiler's CSP for the
+cell (prefix_csp: compiled once, before take-off, for static policies only),
+the prefix-off arm without it. The two arms then differ by the Prefix alone,
+so for such a pilot a differing pair is the measurement, not a defect
+(arms_summary keeps "the arms must be one flight" for every other pilot),
+and the rails fly both arms (`--prefix on|off` to the VLA stub; rail_refusal
+still refuses the prefix-off and paraphrase arms of a pilot that reads
+nothing). `prefix_aa` flies the prefix-on arm of the cells it names twice on
+one seed: the A/A pair, identical headless (this harness is deterministic)
+and the noise of a same-seed pair on a real-time rail, the floor a delta is
+read against. A cell's outcome and fail-safe labels were derived for its
+rule-ignorant pilot, so the prefix-on arm of a consuming pilot is scored
+without them (scoring_spec); its gates, the safety invariants, still apply.
+No run without the key builds, names or flies an episode differently.
+
 THE HEADLESS BACKEND, AND WHAT IT IS NOT
 
 Shield plus a plain kinematic integrator: no simulator, no GPU, no autopilot, no
@@ -338,6 +357,7 @@ sys.path.insert(0, str(ROOT))
 
 from guardrail import hold_flight as HF                            # noqa: E402
 from guardrail import kpi as K                                     # noqa: E402
+from guardrail import prefix_consumer as PC                        # noqa: E402
 from guardrail import rtl_path as RP                               # noqa: E402
 from guardrail import scenario_events as SE                        # noqa: E402
 from guardrail import vla_stub as VS                               # noqa: E402
@@ -1307,7 +1327,9 @@ def run_episode(sc, defaults=None, seed: int = 0, arm: dict | None = None, *,
                 gps_dropout: str = DEFAULT_GPS_DROPOUT) -> EpisodeRun:
     """One headless episode. `arm` (paraphrase / prefix record) is RECORDED in
     the episode_start event and changes nothing else: no headless pilot reads
-    text. `forecast` (forecast_for), `wind_model` (WIND_MODELS),
+    text - unless it names a prefix consumer (`pilot_reads_prefix`, module
+    docstring THE PREFIX CONSUMER), whose pilot is then flown through the
+    cell's CSP on the prefix-on arm. `forecast` (forecast_for), `wind_model` (WIND_MODELS),
     `autopilot_hold` (AUTOPILOT_HOLD_MODELS), `response` (RESPONSE_ARMS,
     response_for), `recovery` (the Shield's recovery_law, RECOVERY_LAWS), on a
     response arm `entry` (ENTRY_STATES; None: the arm's own, RESPONSE_ENTRY),
@@ -1592,6 +1614,15 @@ def _episode(sc, defaults, seed: int, arm: dict | None, box: dict,
     sigma = stress.gps_noise_m
 
     kind = spec.mission.pilot.type
+    # THE PREFIX CONSUMER (module docstring): an arm record that names one
+    # flies the pilot law through it - with the cell's CSP on the prefix-on
+    # arm, untouched on the prefix-off arm. None for every other episode,
+    # whose pilot is called exactly as before.
+    consumer = None
+    if arm and arm.get("pilot_reads_prefix"):
+        consumer = arm_consumer(
+            spec, policy, dfl, seed, arm,
+            lambda s: _pilot(m, kind, s, None if rsp is None else rsp.accel_mps2))
     subj = spec.mission.subject
     relabels = sorted(subj.reclassify if subj else [], key=lambda r: r.at_s)
     subj_class = subj.class_ if subj else None
@@ -1765,6 +1796,14 @@ def _episode(sc, defaults, seed: int, arm: dict | None, box: dict,
         # ---- scheduled harness events -----------------------------------
         while pending and pending[0].at_sim_t <= t_now + 1e-9:
             ev = pending.pop(0)
+            if consumer is not None:
+                # Reached only by an event injected into a stepped episode: a
+                # scenario that declares events is refused before take-off
+                # (prefix_consumer_refusal).
+                raise ValueError(f"{ev.type} at {ev.at_sim_t:g} s: the prefix consumer "
+                                 f"flies the CSP compiled before take-off, and an event "
+                                 f"changes the rules under it (generation N's CSP "
+                                 f"reaching the pilot is not built: audit card WP4-19)")
             rec = apply_event(ev, es, st, heading, t_now)
             for rid, prio in K.rule_priorities(shield.policy).items():
                 priorities.setdefault(rid, prio)
@@ -1847,7 +1886,8 @@ def _episode(sc, defaults, seed: int, arm: dict | None, box: dict,
                 drop_t0 = None
                 events.append({"t": round(t_now, 4), "type": "gps_dropout_end"})
 
-        raw = _pilot(m, kind, st, None if rsp is None else rsp.accel_mps2)
+        raw = (consumer.act(st) if consumer is not None
+               else _pilot(m, kind, st, None if rsp is None else rsp.accel_mps2))
         if rsp is not None and veh is None:
             veh = VehicleResponse(rsp, v0=(entry_velocity(raw, policy) if entry == "cruise"
                                            else (0.0, 0.0, 0.0)), t0=t_now)
@@ -2434,6 +2474,9 @@ def _episode(sc, defaults, seed: int, arm: dict | None, box: dict,
         **boundary,
         **phases,
     }
+    if consumer is not None:
+        # Only on a prefix-consumer episode: what the consumer was and did.
+        extra["prefix_consumer"] = dict(consumer.record(), stats=dict(consumer.stats))
     if veh is not None:
         # Only under a response arm, so a headline episode's table carries
         # exactly the keys it always did (plus its `vehicle_response` label).
@@ -2513,7 +2556,7 @@ def csp_text(spec: ScenarioSpec, policy) -> str:
 _ARM_CACHE: dict = {}
 
 
-def build_arm(ep, policy=None, drawn=None) -> dict | None:
+def build_arm(ep, policy=None, drawn=None, defaults=None) -> dict | None:
     """The arm record of one episode, or None when it has none.
 
     paraphrase: guardrail.paraphraser.paraphrase(text, k, seed, backend) for the
@@ -2526,9 +2569,21 @@ def build_arm(ep, policy=None, drawn=None) -> dict | None:
     - the stress harness gets it from the paraphraser service
     (guardrail/harness_service.py, WP4-10) - anything with `text`,
     `to_record()` and `manifest_extras()`. Used for a paraphrase arm (index
-    >= 0) only; this sweep's own batch runs still draw in process."""
+    >= 0) only; this sweep's own batch runs still draw in process.
+
+    A PREFIX-CONSUMER episode (2026-11-16, `ep.prefix_consumer`; module
+    docstring) always has a record, and it alone carries three more keys:
+    `pilot_reads_prefix` True (separate from `pilot_reads_text`, which stays
+    False: the pilot reads the CSP's action sets, not its words), `consumer`
+    (guardrail.prefix_consumer.consumer_record: the pilot's id, its adapter,
+    the arm, the law it wraps and, on the prefix-on arm, the identity of the
+    CSP it flies - prefix_csp, compiled here with `defaults`, the library's)
+    and `repeat` (1 on an A/A repeat). Raises ValueError for a scenario the
+    consumer cannot fly (prefix_consumer_refusal, a policy that is not
+    static)."""
     spec = ep.cell.spec
-    if ep.paraphrase_arm is None and ep.prefix == "on" and not ep.ab:
+    consumer = getattr(ep, "prefix_consumer", None)
+    if ep.paraphrase_arm is None and ep.prefix == "on" and not ep.ab and not consumer:
         return None
     from guardrail import paraphraser as P
     if policy is None:
@@ -2561,6 +2616,15 @@ def build_arm(ep, policy=None, drawn=None) -> dict | None:
     rec["prompt_sha256"] = "sha256:" + hashlib.sha256(prompt.encode("utf-8")).hexdigest()
     rec["prefix_sha256"] = ("sha256:" + hashlib.sha256(csp.encode("utf-8")).hexdigest()
                             if csp else None)
+    if consumer:
+        why = prefix_consumer_refusal(spec)
+        if why:
+            raise ValueError(why)
+        held = prefix_csp(spec, policy, defaults, ep.seed) if ep.prefix == "on" else None
+        rec.update(pilot_reads_prefix=True,
+                   consumer=PC.consumer_record(ep.prefix, held,
+                                               VS.MODEL_IDS[spec.mission.pilot.type]),
+                   repeat=int(getattr(ep, "repeat", 0) or 0))
     return rec
 
 
@@ -2568,13 +2632,211 @@ def manifest_extras(arm: dict | None) -> dict | None:
     """The flat keys written beside the six-field manifest
     (manifest_extras.json): the paraphrase's own (paraphraser.manifest_extras)
     and the prefix arm. The manifest itself stays the grant's six fields
-    (guardrail/manifest.py)."""
+    (guardrail/manifest.py). A prefix-consumer arm also names its consumer,
+    with the consumer's own source pin (`prefix_consumer_model_hash`:
+    guardrail.manifest.model_hash of its id - a headless manifest's
+    vla_model_hash names this harness's pilot function, not the consumer's
+    module), its adapter, the wrapped law's own source pin
+    (`prefix_wraps_model_hash`), the action sets it flew and the A/A
+    repeat."""
     if not arm:
         return None
     out = dict(arm.get("manifest_extras") or {})
     out.update(prefix_arm=arm["prefix"], prompt_sha256=arm["prompt_sha256"],
                pilot_reads_text=arm["pilot_reads_text"])
+    if arm.get("pilot_reads_prefix"):
+        c = arm.get("consumer") or {}
+        from guardrail.manifest import model_hash
+        out.update(pilot_reads_prefix=True, prefix_consumer=c.get("id"),
+                   prefix_consumer_model_hash=(model_hash(c["id"]) if c.get("id")
+                                               else None),
+                   prefix_consumer_adapter=c.get("adapter"),
+                   prefix_wraps_model_hash=c.get("wraps_model_hash"),
+                   prefix_action_set_sha256=c.get("action_set_sha256"),
+                   prefix_repeat=arm.get("repeat", 0))
     return out
+
+
+# --------------------------------------------------------------------------- #
+# the prefix consumer (module docstring, THE PREFIX CONSUMER; 2026-11-16)
+# --------------------------------------------------------------------------- #
+
+# What a prefix-on arm of a consuming pilot is scored without, and why.
+LABELS_NOT_APPLIED = ("the cell's outcome and fail-safe labels were derived for its "
+                      "rule-ignorant pilot; this is the prefix-on arm of a pilot that "
+                      "consumes the CSP, so they are not applied (its gates are)")
+
+
+def prefix_consumer_refusal(spec: ScenarioSpec) -> str | None:
+    """Why the prefix consumer cannot fly this scenario, or None. It flies
+    one CSP, compiled before take-off: a scenario whose rules change in
+    flight (any mid-flight event) needs generation N's CSP at the pilot,
+    which is audit card WP4-19's plumbing and is not built."""
+    if spec.events:
+        return (f"{spec.scenario_id}: a prefix-consumer arm of a scenario with "
+                f"{len(spec.events)} mid-flight event(s): the consumer flies the CSP "
+                f"compiled before take-off, and generation N's CSP reaching the pilot is "
+                f"not built (audit card WP4-19); static families only")
+    return None
+
+
+def prefix_csp(spec: ScenarioSpec, policy=None, defaults=None, seed: int = 0, *,
+               max_s_add: float = 0.0):
+    """The CSP the prefix consumer flies this cell and seed on: compiled from
+    the cell's policy for the mission as the rails are told it (rail_mission,
+    each number as rail_node_args writes it), at the scenario's clock, static
+    over the rail's flight length (guardrail.prefix_consumer.static_csp). The
+    VLA stub compiles its own from the same arguments
+    (sitl/ros2_vla_stub_node.py --prefix on), so a cell and seed fly one CSP
+    headless and on a rail, and run_hil checks the node's against this one.
+    `max_s_add`: a lengthened hil campaign's seconds past the rail cap
+    (--hil-max-s-add), which the stub is sent in --max-s and checks over; the
+    CSP itself does not depend on it, only whether it is static that long
+    (rail_node_args checks it so, before the rig is touched). Raises
+    ValueError when no such CSP exists (a rule switching in flight, the P0
+    rules over the token budget, a rule the Shield does not enforce)."""
+    from guardrail.csp import CSPBudgetExceeded, CSPUnenforcedRules
+    pol = policy if policy is not None else spec.policy.load(ROOT)
+    rm = rail_mission(spec, pol, defaults, seed)
+
+    def r(v):
+        return None if v is None else float(_num(v))
+    target = None if rm["target"] is None else tuple(r(v) for v in rm["target"])
+    mission = PC.consumer_mission(tuple(r(v) for v in rm["start"]), target, r(rm["speed"]))
+    try:
+        return PC.static_csp(pol, mission, now=rm["clock_start"],
+                             duration_s=rail_max_s(rm["max_s"], max_s_add))
+    except (CSPBudgetExceeded, CSPUnenforcedRules) as e:
+        raise ValueError(f"{spec.scenario_id}: no CSP for the prefix consumer "
+                         f"({type(e).__name__}: {e})") from e
+
+
+def arm_consumer(spec: ScenarioSpec, policy, defaults, seed: int, arm: dict, law):
+    """The PrefixConsumer an arm record names, around `law` (the cell's
+    pilot): with the cell's CSP on the prefix-on arm - which must be the one
+    the record was built with (`consumer.action_set_sha256`), else the
+    episode is refused rather than flown on another CSP under its id - and
+    with none on the prefix-off arm."""
+    rec = arm.get("consumer") if isinstance(arm.get("consumer"), dict) else {}
+    if rec.get("id") != PC.MODEL_ID or rec.get("adapter") not in PC.ADAPTERS:
+        raise ValueError(f"the arm record names prefix consumer {rec.get('id')!r} "
+                         f"(adapter {rec.get('adapter')!r}); this harness flies "
+                         f"{PC.MODEL_ID} ({', '.join(PC.ADAPTERS)})")
+    why = prefix_consumer_refusal(spec)
+    if why:
+        raise ValueError(why)
+    wraps = VS.MODEL_IDS[spec.mission.pilot.type]
+    if arm.get("prefix") != "on":
+        return PC.PrefixConsumer(law, wraps=wraps)
+    csp = prefix_csp(spec, policy, defaults, seed)
+    got = PC.action_set_sha256(csp)
+    if rec.get("action_set_sha256") != got:
+        raise ValueError(f"the arm record's CSP ({rec.get('action_set_sha256')}) is not "
+                         f"the one this cell and seed compile to ({got})")
+    return PC.PrefixConsumer(law, csp, policy, wraps=wraps)
+
+
+def scoring_spec(spec: ScenarioSpec, ep) -> ScenarioSpec:
+    """The spec an episode is SCORED against: the cell's own, except on the
+    prefix-on arm of a pilot that consumes the CSP, where the outcome and
+    fail-safe labels are dropped (LABELS_NOT_APPLIED: they say what the
+    cell's rule-ignorant pilot provokes - a fail-safe after 30 s of asking
+    for the unsafe thing - and a pilot that reads the rules does not ask).
+    The gates (the safety invariants) and every pin are unchanged."""
+    if (ep is None or not getattr(ep, "prefix_consumer", None) or ep.prefix != "on"
+            or (spec.expected_outcome is None and spec.expected_failsafe is None)):
+        return spec
+    return spec.model_copy(update={"expected_outcome": None, "expected_failsafe": None,
+                                   "failsafe_clause": None})
+
+
+def prefix_family_suffix(ep) -> str:
+    """The KPI-row term of a prefix-consumer episode, "/prefix-consumer-on" /
+    "-off" ("" for every other episode): a consuming pilot's arms never pool
+    with each other or with the cell's own pilot (tools/kpi_report.py
+    consumer_suffix writes the same term)."""
+    if ep is None or not getattr(ep, "prefix_consumer", None):
+        return ""
+    return f"/prefix-consumer-{ep.prefix}"
+
+
+def prefix_flight_problems(metrics: dict, meta: dict) -> list[str]:
+    """Why a rail flight is not the prefix arm its scenario record names
+    (`arm_record`, rail_meta): the VLA node announced no prefix arm at all
+    (it flew its plain pilot: an old checkout on the rig, a dropped flag),
+    another arm, another consumer, or - on the prefix-on arm - a CSP whose
+    action sets are not the ones this cell and seed compile to. [] for a
+    flight that is, and for every flight without a prefix consumer. The
+    whole-CSP content hash is compared too, but recorded, not required
+    (prefix_flight_record): its prose and risk grades hold computed
+    distances, which two hosts need not round alike."""
+    want = meta.get("arm_record") if isinstance(meta.get("arm_record"), dict) else {}
+    if not want.get("pilot_reads_prefix"):
+        return []
+    c = want.get("consumer") or {}
+    ident = metrics.get("vla_identity") if isinstance(metrics.get("vla_identity"), dict) else {}
+    got = ident.get("prefix") if isinstance(ident.get("prefix"), dict) else None
+    if got is None:
+        return [f"the VLA node announced no prefix arm on /vla/identity (model "
+                f"{ident.get('model_id')!r}): the mission flew its plain pilot, not the "
+                f"prefix-{c.get('arm')} arm of {c.get('id')}"]
+    out = []
+    if ident.get("model_id") != c.get("id"):
+        out.append(f"the VLA node's model is {ident.get('model_id')!r}, the arm's "
+                   f"{c.get('id')!r}")
+    for key, what in (("id", "consumer"), ("adapter", "adapter"), ("arm", "prefix arm"),
+                      ("wraps", "wrapped pilot law"),
+                      ("wraps_model_hash", "wrapped law's source pin"),
+                      ("policy_hash", "CSP's policy"),
+                      ("action_set_sha256", "CSP's action sets")):
+        if got.get(key) != c.get(key):
+            out.append(f"the VLA node's {what} is {got.get(key)!r}, the arm's "
+                       f"{c.get(key)!r}")
+    return out
+
+
+def prefix_generation_problems(meta: dict, generations: dict | None,
+                               rows=()) -> list[str]:
+    """Why a rail flight of a prefix-consumer arm is not that arm's flight
+    because its rules changed in flight: the Shield flew a generation above
+    0 (a policy_g<N>.json of the run, `generations`, or a log row's
+    `generation`) while the consumer flew generation 0's CSP, which
+    prefix_flight_problems alone cannot see - the node announces the CSP it
+    took off with. The harness refuses such a change up front
+    (guardrail/harness_service.py _consumer_takes_no_events, and
+    prefix_consumer_refusal for a scenario's own events); this is the
+    backstop for one that reached the Shield anyway (a client of the
+    mission's REST endpoint, an old harness). [] for every flight without a
+    prefix consumer."""
+    want = meta.get("arm_record") if isinstance(meta.get("arm_record"), dict) else {}
+    if not want.get("pilot_reads_prefix"):
+        return []
+    above = {int(g) for g in (generations or {}) if isinstance(g, int) and g > 0}
+    above |= {int(r["generation"]) for r in rows
+              if isinstance(r, dict) and isinstance(r.get("generation"), int)
+              and not isinstance(r.get("generation"), bool) and r["generation"] > 0}
+    if not above:
+        return []
+    return [f"the Shield's rules changed in flight (generation(s) {sorted(above)}) while "
+            f"the prefix consumer flew generation 0's CSP: a prefix-consumer arm takes no "
+            f"mid-flight rule change (generation N's CSP at the pilot is audit card "
+            f"WP4-19, not built)"]
+
+
+def prefix_flight_record(metrics: dict, meta: dict) -> dict | None:
+    """What a rail flight's VLA node announced of its prefix arm beside what
+    the harness expected (None without a prefix consumer): the node's record,
+    and whether its whole-CSP content hash is the harness's."""
+    want = meta.get("arm_record") if isinstance(meta.get("arm_record"), dict) else {}
+    if not want.get("pilot_reads_prefix"):
+        return None
+    c = want.get("consumer") or {}
+    ident = metrics.get("vla_identity") if isinstance(metrics.get("vla_identity"), dict) else {}
+    got = ident.get("prefix") if isinstance(ident.get("prefix"), dict) else {}
+    return {"announced": got or None, "expected": c,
+            "csp_content_hash_agrees": (None if c.get("csp_content_hash") is None
+                                        else got.get("csp_content_hash")
+                                        == c.get("csp_content_hash"))}
 
 
 # The version of the self-contained keys episode_extras() adds; a reader
@@ -2996,6 +3258,11 @@ RAIL_SHIELD_FLAGS = ("--seed", "--bundle", "--expected-hash", "--policy", "--dev
                      "--events", "--scenario-meta")
 RAIL_STUB_FLAGS = ("--seed", "--bundle", "--policy", "--start", "--target", "--no-target",
                    "--speed", "--pilot", "--action")
+# What the VLA stub must also read when it is sent a prefix arm (`--prefix`,
+# 2026-11-16): the arm, and the clock and flight length its CSP is compiled
+# and checked static over. Checked only for a mission that carries --prefix,
+# so every other mission's check is the one it was.
+RAIL_STUB_PREFIX_FLAGS = ("--prefix", "--clock-start", "--max-s")
 # The Shield node's REST hot-apply listener (sitl/ros2_shield_node.py,
 # "HOT-APPLY ON THE FLYING SHIELD"). A campaign sends none of these; the gRPC
 # harness's rail episode (guardrail/harness_service.py, 2026-11-10) asks for
@@ -3475,6 +3742,10 @@ def rail_refusal(spec: ScenarioSpec, backend: str = "sitl", *, episode=None,
         cannot be booted there;
       * with `episode`, a paraphrase or prefix-off arm: the stub reads no
         text, so it would re-fly the canonical arm's flight under another id.
+        Since 2026-11-16 the prefix arms of a PREFIX-CONSUMER episode are
+        flown (`--prefix on|off`: the stub's pilot through the CSP, or
+        without it), unless the scenario has mid-flight events
+        (prefix_consumer_refusal); its paraphrase arms stay refused.
     Until 2026-11-06 the rail flew its own mission only (sitl_refusal and
     _mission_mismatch: the pad, StubVLA, 15 m), and every scenario but
     rail-mission-stub-vla was refused; the clock refusal had been stale
@@ -3530,10 +3801,16 @@ def rail_refusal(spec: ScenarioSpec, backend: str = "sitl", *, episode=None,
         why.append(f"an event at {late[0].at_sim_t:g} s, after the run's last tick "
                    f"({t_end:g} s; the headless harness refuses it too)")
     if episode is not None:
-        if episode.paraphrase_arm not in (None, -1) or episode.prefix != "on":
+        consumer = getattr(episode, "prefix_consumer", None)
+        if episode.paraphrase_arm not in (None, -1) or (episode.prefix != "on"
+                                                        and not consumer):
             why.append(f"a paraphrase / prefix arm ({episode.arm_tag}): the rail's VLA "
                        f"stub reads no text, so it would fly the canonical arm's "
                        f"flight again under another id")
+        if consumer:
+            no = prefix_consumer_refusal(spec)
+            if no:
+                why.append(no)
         if episode.comparison:
             why.append(f"a comparison arm ({episode.arm_tag}): the rail flies the "
                        f"node's own Shield on ArduPilot itself")
@@ -3600,8 +3877,9 @@ def check_rail_flags(args: list[str]) -> None:
     if unknown:
         raise UnsupportedScenario(f"neither {SITL_NODE} nor {SITL_STUB} declares "
                                   f"{unknown}: the nodes would drop them")
+    stub_wanted = RAIL_STUB_FLAGS + (RAIL_STUB_PREFIX_FLAGS if "--prefix" in emitted else ())
     for name, wanted, have in (("Shield node", RAIL_SHIELD_FLAGS, node),
-                               ("VLA stub", RAIL_STUB_FLAGS, stub)):
+                               ("VLA stub", stub_wanted, stub)):
         missing = sorted((emitted & set(wanted)) - have)
         if missing:
             raise UnsupportedScenario(f"the {name} does not declare {missing}, which it "
@@ -3724,7 +4002,7 @@ def rail_node_args(spec: ScenarioSpec, seed: int = 0, defaults=None, *,
                    backend: str = "sitl", events: str | None = None,
                    meta: str | None = None,
                    bundles_dir: str | Path | None = None,
-                   max_s_add: float = 0.0) -> list[str]:
+                   max_s_add: float = 0.0, episode=None) -> list[str]:
     """The arguments both nodes get for one scenario (the Shield node and the
     VLA stub read the same list, each its own flags). Coordinates go as
     `--flag=value`, so a negative first value never reads as an option;
@@ -3732,7 +4010,9 @@ def rail_node_args(spec: ScenarioSpec, seed: int = 0, defaults=None, *,
     that forward them look for `--bundle <path>`). `events` / `meta` are the
     repo-relative paths of the mission's --events / --scenario-meta files.
     `max_s_add`: a lengthened hil campaign's seconds past the rail cap
-    (--hil-max-s-add; 0, the profile's length, otherwise)."""
+    (--hil-max-s-add; 0, the profile's length, otherwise). `episode`: for a
+    prefix-consumer episode the list ends in `--prefix=on|off`, the VLA
+    stub's arm; for every other episode (and None) it is the list it was."""
     pargs = rail_policy_args(spec, backend, bundles_dir)
     try:
         pol = spec.policy.load(ROOT)
@@ -3769,13 +4049,28 @@ def rail_node_args(spec: ScenarioSpec, seed: int = 0, defaults=None, *,
         args.append(f"--events={events}")
     if meta:
         args.append(f"--scenario-meta={meta}")
+    if episode is not None and getattr(episode, "prefix_consumer", None):
+        if max_s_add:
+            # The stub checks its CSP is static over the --max-s above, the
+            # lengthened one; the arm record was checked over the rail's own
+            # length. Checked here too, so the dry run and the mission refuse
+            # it before SITL boots - both arms, so no unpaired off arm flies.
+            try:
+                prefix_csp(spec, pol, defaults, seed, max_s_add=max_s_add)
+            except Exception as e:                       # noqa: BLE001
+                raise UnsupportedScenario(
+                    f"prefix-consumer arm {getattr(episode, 'arm_tag', episode.prefix)} "
+                    f"flown {float(max_s_add):g} s longer (--hil-max-s-add): its CSP is not "
+                    f"static over the lengthened flight ({type(e).__name__}: {e})") from e
+        args.append(f"--prefix={episode.prefix}")
     check_rail_flags(args)
     return args
 
 
 def build_sitl_cmd(spec: ScenarioSpec, tag: str, seed: int = 0,
                    defaults=None, *, events: str | None = None,
-                   meta: str | None = None, extra_args=None) -> list[str]:
+                   meta: str | None = None, extra_args=None,
+                   episode=None) -> list[str]:
     """The command line for one scenario on the desktop's MAVROS 2 rail.
 
     Until 2026-10-06 this passed `--out` to sitl/run_sitl_demo.py, which has no
@@ -3815,7 +4110,7 @@ def build_sitl_cmd(spec: ScenarioSpec, tag: str, seed: int = 0,
     return (["wsl", "bash", SITL_SCRIPT, "on" if spec.shield else "off", "",
              "--tag", tag]
             + rail_node_args(spec, seed, defaults, backend="sitl", events=events,
-                             meta=meta)
+                             meta=meta, episode=episode)
             + rail_extra_args(extra_args))
 
 
@@ -4683,7 +4978,14 @@ def rail_meta(spec: ScenarioSpec, ep, seed: int, backend: str, run_id: str,
     difference, `flight_length` "lengthened", and its family row ends in
     "/flown-longer-<S>s". `max_s` stays the scenario's own cap (the
     performance window). A mission at the profile's length carries none of
-    these keys, exactly as before."""
+    these keys, exactly as before.
+
+    A PREFIX-CONSUMER episode (2026-11-16) carries its arm record
+    (`arm_record`: build_arm's, with the CSP identity the VLA node must
+    announce - prefix_flight_problems), a family row of its own
+    ("/prefix-consumer-on" / "-off" after the Shield arm) and, on the
+    prefix-on arm, no outcome or fail-safe label (`labels_not_applied`,
+    scoring_spec). Every other mission carries none of these keys."""
     pol = spec.policy.load(ROOT)
     rm = rail_mission(spec, pol, defaults, seed)
     arm = "on" if spec.shield else "off"
@@ -4691,6 +4993,12 @@ def rail_meta(spec: ScenarioSpec, ep, seed: int, backend: str, run_id: str,
     add = float(max_s_add or 0.0)
     length = ({"rail_max_s_profile": rail_max_s(rm["max_s"]), "max_s_add": add,
                "flight_length": "lengthened"} if add else {})
+    consumer = ep is not None and bool(getattr(ep, "prefix_consumer", None))
+    scored = scoring_spec(spec, ep)
+    if consumer:
+        length = dict(length, arm_record=build_arm(ep, pol, defaults=defaults),
+                      **({"labels_not_applied": LABELS_NOT_APPLIED}
+                         if scored is not spec else {}))
     return {"schema": "rail-scenario/1", "backend": backend, "run_id": run_id,
             "run_nonce": nonce, "campaign": campaign,
             "scenario_id": spec.scenario_id, "template": spec.template, "cell": cell,
@@ -4698,9 +5006,9 @@ def rail_meta(spec: ScenarioSpec, ep, seed: int, backend: str, run_id: str,
             "seed": int(seed), "arm": arm,
             "arm_tag": ep.arm_tag if ep is not None else "",
             "family": (f"{backend}-stress/{spec.template}/{cell}/shield-{arm}"
-                       + lengthened_suffix(add)),
-            "expect": spec.expect, "expected_outcome": spec.expected_outcome,
-            "expected_failsafe": spec.expected_failsafe,
+                       + prefix_family_suffix(ep) + lengthened_suffix(add)),
+            "expect": spec.expect, "expected_outcome": scored.expected_outcome,
+            "expected_failsafe": scored.expected_failsafe,
             "sitl_home": home, "start": list(rm["start"]), "yaw_deg": rm["yaw_deg"],
             "target": None if rm["target"] is None else list(rm["target"]),
             "pilot": rm["pilot"], "action": rm["action"], "speed_mps": rm["speed"],
@@ -4742,7 +5050,7 @@ def run_sitl(sc, tag: str, seed: int = 0, defaults=None,
     meta = rail_meta(spec, episode, seed, "sitl", tag, nonce, home, None, defaults)
     events, meta_rel = write_campaign_files(spec, meta)
     cmd = build_sitl_cmd(spec, tag, seed, defaults, events=events, meta=meta_rel,
-                         extra_args=extra_args)
+                         extra_args=extra_args, episode=episode)
     env = dict(os.environ)
     wslenv = [env.get("WSLENV", "")]
     if home is not None:
@@ -4773,11 +5081,18 @@ def run_sitl(sc, tag: str, seed: int = 0, defaults=None,
     if problems:
         raise RuntimeError(f"{tag}: the cell's stress was not realised: "
                            + "; ".join(problems))
-    extra = sitl_extra(spec, rows, metrics, pol, run_generations(out_dir),
+    gens = run_generations(out_dir)
+    not_the_arm = (prefix_flight_problems(metrics, meta)
+                   + prefix_generation_problems(meta, gens, rows))
+    if not_the_arm:
+        raise RuntimeError(f"{tag}: not the prefix arm's flight: " + "; ".join(not_the_arm))
+    extra = sitl_extra(spec, rows, metrics, pol, gens,
                        max_s=meta["max_s"], dt=spec.dt or _as_defaults(defaults).dt,
                        autopilot_texts=run_autopilot_texts(out_dir))
     extra["sim_stressors"] = stress["entries"]
     extra["sim_stressors_check"] = stress
+    if meta.get("arm_record"):
+        extra["prefix_consumer"] = prefix_flight_record(metrics, meta)
     # score() reads the scenario's own window, as sitl_extra did.
     return rail_scored_rows(rows, meta["max_s"]), extra
 
@@ -5151,7 +5466,7 @@ def run_hil(spec: ScenarioSpec, ep, seed: int, defaults, cfg: HilConfig, transpo
                      max_s_add=max_s_add)
     events, meta_rel = write_campaign_files(spec, meta)
     args = rail_node_args(spec, seed, defaults, backend="hil", events=events, meta=meta_rel,
-                          bundles_dir=cfg.bundles_dir, max_s_add=max_s_add)
+                          bundles_dir=cfg.bundles_dir, max_s_add=max_s_add, episode=ep)
     if extra_args:
         args = args + rail_extra_args(extra_args)
     plan = rail_stress_plan(spec, seed, defaults, run_id=tag, nonce=nonce)
@@ -5186,14 +5501,22 @@ def run_hil(spec: ScenarioSpec, ep, seed: int, defaults, cfg: HilConfig, transpo
     problems = hil_flight_problems(metrics) + hil_chain_problems(metrics, cfg.chain_required())
     if stress_problems:
         problems.append("the cell's stress was not realised: " + "; ".join(stress_problems))
+    gens = run_generations(run_dir)
+    not_the_arm = (prefix_flight_problems(metrics, meta)
+                   + prefix_generation_problems(meta, gens, rows))
+    if not_the_arm:
+        # Fail closed: a mission that did not fly the arm it is named for is
+        # an error, never a scored episode of that arm.
+        problems.append("not the prefix arm's flight: " + "; ".join(not_the_arm))
     if problems:
         raise RuntimeError(f"mission {tag}: " + "; ".join(problems))
-    gens = run_generations(run_dir)
     extra = sitl_extra(spec, rows, metrics, pol, gens, max_s=meta["max_s"],
                        dt=spec.dt or _as_defaults(defaults).dt,
                        autopilot_texts=run_autopilot_texts(run_dir))
     extra["sim_stressors"] = stress["entries"]
     extra["sim_stressors_check"] = stress
+    if meta.get("arm_record"):
+        extra["prefix_consumer"] = prefix_flight_record(metrics, meta)
     prios = rail_rule_priorities(pol, gens)
     # `rows`: the scenario's own window, which score() reads (rail_scored_rows);
     # `rows_all`: the whole flight, past the cap to the fail-safe's outcome.
@@ -5275,6 +5598,10 @@ def score_document(meta: dict, res: dict, extra: dict, status: str, bad: list,
            "other_verdicts": other_verdicts or None,
            "kpi": res,
            "scored_by": "experiments/sweep_scenarios.py (score, episode_verdict)"}
+    if extra.get("prefix_consumer") is not None:
+        # A prefix-consumer mission only: what its VLA node announced of the
+        # arm beside what the harness expected (prefix_flight_record).
+        doc["prefix_consumer"] = extra["prefix_consumer"]
     return doc
 
 
@@ -5309,7 +5636,7 @@ def rescore_rail_run(run_dir: Path, ep, defaults, *, rail_gates: str = "ideal") 
     verdict on every derived basis of RAIL_GATE_BASES), doc (the score
     document it would write, its verdict on `rail_gates`)}."""
     run_dir = Path(run_dir)
-    spec = ep.cell.spec
+    spec = scoring_spec(ep.cell.spec, ep)
     metrics = json.loads((run_dir / "metrics.json").read_text(encoding="utf-8"))
     meta = metrics.get("scenario") if isinstance(metrics.get("scenario"), dict) else {}
     rows = [json.loads(x) for x in (run_dir / "flight_log.jsonl").read_text(
@@ -5688,7 +6015,10 @@ def rescore_rail_main(globs: list[str], episodes, defaults, rail_gates: str,
                    "max_s_add": flight_max_s_add(it["doc"].get("scenario")),
                    "accepted": it["before"] is not None}
                   for it in table
-                  if "error" not in it and (it["doc"].get("metrics") or {}).get("shield") == "on"]
+                  if "error" not in it and (it["doc"].get("metrics") or {}).get("shield") == "on"
+                  # The prefix-on arm of a consuming pilot carries no label
+                  # (scoring_spec): the artefact's are its cell's own pilot's.
+                  and not (it["doc"].get("scenario") or {}).get("labels_not_applied")]
         scores = rail_label_scores(scored, labels)
         doc["failsafe_labels"] = {
             "artefact": _show(labels_path), "built": labels.get("built"),
@@ -5740,7 +6070,8 @@ def hil_plan(episodes, defaults, cfg: HilConfig, campaign: str,
                 args = rail_node_args(spec, ep.seed, defaults, backend="hil",
                                       events=(f"{rel}/events.json" if spec.events else None),
                                       meta=f"{rel}/scenario.json",
-                                      bundles_dir=cfg.bundles_dir, max_s_add=max_s_add)
+                                      bundles_dir=cfg.bundles_dir, max_s_add=max_s_add,
+                                      episode=ep)
                 stress = rail_stress_plan(spec, ep.seed, defaults, run_id=tag)
                 jx, jy = start_jitter(spec, ep.seed)
                 dfl = _as_defaults(defaults)
@@ -6707,10 +7038,22 @@ def arms_summary(scored: list[dict]) -> dict | None:
     the plumbing perturbs the run. The per-paraphrase success rates
     (guardrail.kpi.per_paraphrase_robustness, canonical wording as the null)
     are printed as plumbing, with `pilot_reads_text: false`: they are not a
-    robustness measurement and must not be quoted as one."""
+    robustness measurement and must not be quoted as one.
+
+    THE EXCEPTION, PER PILOT (2026-11-16): an episode whose arm record says
+    `pilot_reads_prefix` was flown by a pilot that consumes the CSP (module
+    docstring, THE PREFIX CONSUMER). Its prefix-on and prefix-off arms are
+    two flights by design, so they are left out of the "must be identical"
+    checks above - which hold as before for every other pilot - and reported
+    under `prefix_consumer` (prefix_consumer_summary): the on / off figures
+    and their delta, and the A/A pairs beside them."""
     armed = [r for r in scored if r.get("arm_record")]
     if not armed:
         return None
+    consuming = [r for r in armed if r["arm_record"].get("pilot_reads_prefix")]
+    all_groups = {(r["id_cell"], r["seed"]) for r in armed}
+    armed_all, armed = armed, [r for r in armed
+                               if not r["arm_record"].get("pilot_reads_prefix")]
     groups: dict[tuple, list] = {}
     for r in armed:
         groups.setdefault((r["id_cell"], r["seed"]), []).append(r)
@@ -6730,9 +7073,9 @@ def arms_summary(scored: list[dict]) -> dict | None:
     ab = [(k, v) for k, v in pairs.items() if "on" in v and "off" in v]
     ab_diff = [f"{c} seed={s}" for (c, s), v in ab
                if {kpi_signature(x) for x in v["on"]} != {kpi_signature(x) for x in v["off"]}]
-    return {
-        "episodes_with_arms": len(armed),
-        "cell_seed_groups": len(groups),
+    out = {
+        "episodes_with_arms": len(armed_all),
+        "cell_seed_groups": len(all_groups),
         "groups_whose_arms_flew_differently": differ,
         "paraphrase_trials": len(trials),
         "per_paraphrase": rob,
@@ -6743,6 +7086,71 @@ def arms_summary(scored: list[dict]) -> dict | None:
                  "arms are the same flight by construction and any difference "
                  "would be a harness defect. A robustness number needs a pilot "
                  "that reads language."),
+    }
+    if consuming:
+        # Only on a run that flew a prefix consumer, so every other run's
+        # `_arms` block is the one it always was.
+        out["prefix_consumer"] = prefix_consumer_summary(consuming)
+    return out
+
+
+def prefix_consumer_summary(consuming: list[dict]) -> dict:
+    """The prefix A/B of a pilot that consumes the CSP (arms_summary's
+    `prefix_consumer`), over scored episodes whose arm record says
+    `pilot_reads_prefix`: per (cell, seed), the prefix-on arm's first flight
+    against the prefix-off arm - mission success, P0 escapes, repairs per
+    episode, mean repair magnitude and time to safe, each on, off and
+    on minus off, from tools/kpi_report.py prefix_ab_figures (one
+    implementation for this summary and the KPI report) - the pairs whose two
+    arms scored alike (a null: the Prefix changed nothing there), and the A/A
+    pairs (the prefix-on arm flown twice on one seed) with the pairs that
+    differ. Headless an A/A pair that differs is a harness defect (the
+    integrator is deterministic); on a rail it is the noise floor."""
+    sys.path.insert(0, str(ROOT / "tools"))
+    import kpi_report
+    by: dict[tuple, dict] = {}
+    for r in consuming:
+        a = r["arm_record"]
+        side = "aa" if a.get("repeat") else a["prefix"]
+        by.setdefault((r["id_cell"], r["seed"]), {}).setdefault(side, []).append(r)
+    pairs = {k: v for k, v in by.items() if "on" in v and "off" in v}
+    aa = {k: v for k, v in by.items() if "on" in v and "aa" in v}
+
+    def label(k) -> str:
+        return f"{k[0]} seed={k[1]}"
+    on = [r["kpi"] for v in pairs.values() for r in v["on"]]
+    off = [r["kpi"] for v in pairs.values() for r in v["off"]]
+    aa_tables = [(v["on"][0]["kpi"], v["aa"][0]["kpi"]) for v in aa.values()]
+    # Per pair, its cell and two flights: how many pairs are distinct flights
+    # (headless, a seed does not vary a cell: 15 pairs of 5 cells are 5).
+    flown = [(k[0], v["on"][0]["kpi"], v["off"][0]["kpi"]) for k, v in sorted(pairs.items())]
+    figures = kpi_report.prefix_ab_figures(on, off, aa_tables, pairs=flown) if pairs else None
+    consumers = sorted({str((r["arm_record"].get("consumer") or {}).get("id"))
+                        for r in consuming})
+    per_cell = [{"cell": k[0], "seed": k[1],
+                 **{f"{side}_{f}": v[side][0]["kpi"].get(f)
+                    for side in ("on", "off")
+                    for f in ("repair_count", "mean_repair_magnitude_mps",
+                              "mean_time_to_safe_s", "p0_escapes", "mission_outcome")},
+                 "on_mission_success": K.mission_success_with_goal(v["on"][0]["kpi"]),
+                 "off_mission_success": K.mission_success_with_goal(v["off"][0]["kpi"])}
+                for k, v in sorted(pairs.items())]
+    return {
+        "pilot_reads_prefix": True,
+        "consumers": consumers,
+        "episodes": len(consuming),
+        "pairs": len(pairs),
+        "distinct_pairs": (figures or {}).get("distinct", {}).get("pairs", 0),
+        "pairs_that_differ": [label(k) for k, v in sorted(pairs.items())
+                              if {kpi_signature(x) for x in v["on"]}
+                              != {kpi_signature(x) for x in v["off"]}],
+        "aa_pairs": len(aa),
+        "aa_pairs_that_differ": [label(k) for k, v in sorted(aa.items())
+                                 if kpi_signature(v["on"][0]) != kpi_signature(v["aa"][0])],
+        "figures": figures,
+        "per_cell": per_cell,
+        "labels_not_applied_to_prefix_on": LABELS_NOT_APPLIED,
+        "note": kpi_report.PREFIX_CONSUMER_NOTE,
     }
 
 
@@ -7347,7 +7755,11 @@ def cell_key(table: dict) -> str:
     ArduPilot vehicle-response arm likewise, `/response-ardupilot` (since
     2026-10-19). A headline row's key is what it always was."""
     key = f"{table['family']}/{table['cell']}/shield-{table['arm']}"
-    if table.get("prefix") == "off":
+    if table.get("prefix_consumer"):
+        # A prefix-consumer run's rows (2026-11-16): another pilot than the
+        # cell's own, and its two arms are two experiments.
+        key += f"/prefix-consumer-{table.get('prefix')}"
+    elif table.get("prefix") == "off":
         key += "/prefix-off"
     if table.get("forecast_arm", "grant") != "grant":
         key += f"/forecast-{table['forecast_arm']}"
@@ -7583,6 +7995,12 @@ def main(argv: list[str] | None = None) -> int:
         print("REFUSED: --rail-gates is for a rail's runs (--backend sitl / hil, "
               "--rescore-rail)")
         return 2
+    if args.rail_gates != "ideal" and profile is not None and profile.prefix_consumer:
+        # The derived bounds come from a headless flight of the cell's own
+        # pilot; a consuming pilot flies another flight.
+        print("REFUSED: --rail-gates derives its bounds on the cell's own pilot; a "
+              "prefix-consumer profile is judged on the cells' own gates (ideal)")
+        return 2
     info["wind_model"] = args.wind_model
     # The autopilot model behind every autopilot-flown number of this run
     # (AUTOPILOT_HOLD_MODELS; review of T1c, P3).
@@ -7683,6 +8101,9 @@ def main(argv: list[str] | None = None) -> int:
 
     for i_ep, ep in enumerate(episodes):
         spec = ep.cell.spec
+        # What the episode is scored against: the cell's own spec, less its
+        # labels on the prefix-on arm of a consuming pilot (scoring_spec).
+        sspec = scoring_spec(spec, ep)
         eid = ep.run_id
         kind = ("forecast" if ep.forecast != "grant"
                 else "response" if ep.response != "ideal" else None)
@@ -7698,6 +8119,11 @@ def main(argv: list[str] | None = None) -> int:
                   "forecast_arm": ep.forecast,
                   "response_arm": ep.response,
                   "why": spec.description.strip()}
+        if ep.prefix_consumer:
+            # A prefix-consumer run only (every other result keeps its keys).
+            common.update(prefix_consumer=ep.prefix_consumer, repeat=ep.repeat)
+            if sspec is not spec:
+                common["labels_not_applied"] = LABELS_NOT_APPLIED
         run = None
         arm_record = None
         hil_run = None
@@ -7723,6 +8149,9 @@ def main(argv: list[str] | None = None) -> int:
                 rows, extra = hil_run["rows"], hil_run["extra"]
                 policy, prios = hil_run["policy"], hil_run["prios"]
                 events, hash0, sim_s, wall_s, consumed = [], policy.policy_hash, 0, 0, False
+                # A prefix-consumer mission's arm record (rail_meta's); None
+                # for every other mission, as before.
+                arm_record = hil_run["meta"].get("arm_record")
             elif args.backend == "sitl":
                 got = run_sitl(spec, "sweep_" + ep.dir_name("x")[len("episode-x--"):],
                                ep.seed, lib.defaults, episode=ep)
@@ -7736,8 +8165,13 @@ def main(argv: list[str] | None = None) -> int:
                 policy = spec.policy.load(ROOT)
                 prios = K.rule_priorities(policy)
                 events, hash0, sim_s, wall_s, consumed = [], policy.policy_hash, 0, 0, False
+                if ep.prefix_consumer:
+                    arm_record = build_arm(ep, policy, defaults=lib.defaults)
             else:
-                arm_record = build_arm(ep)
+                no_consumer = prefix_consumer_refusal(spec) if ep.prefix_consumer else None
+                if no_consumer:
+                    raise UnsupportedScenario(no_consumer)
+                arm_record = build_arm(ep, defaults=lib.defaults)
                 run = run_episode(spec, lib.defaults, ep.seed, arm=arm_record,
                                   forecast=ep.forecast, wind_model=args.wind_model,
                                   autopilot_hold=args.autopilot_hold,
@@ -7763,7 +8197,7 @@ def main(argv: list[str] | None = None) -> int:
             sink.append({**common, "status": "error", "error": str(e)})
             continue
 
-        res = score(spec, rows, extra, policy, prios)
+        res = score(sspec, rows, extra, policy, prios)
         gates_used = derivation = other = None
         basis_used = "ideal"
         if args.backend in RAIL_BACKENDS:
@@ -7774,7 +8208,7 @@ def main(argv: list[str] | None = None) -> int:
             gates_used, _ = rail_gate_set("ideal", spec, ep.seed, lib.defaults)
             if args.rail_gates != "ideal":
                 other = {"ideal": verdict_record(*episode_verdict(
-                    spec, res, ep.cell.params, ep.seed, gates=gates_used))}
+                    sspec, res, ep.cell.params, ep.seed, gates=gates_used))}
                 try:
                     gates_used, derivation = rail_gate_set(args.rail_gates, spec, ep.seed,
                                                            lib.defaults)
@@ -7783,11 +8217,11 @@ def main(argv: list[str] | None = None) -> int:
                     derivation = {"error": f"{type(e).__name__}: {e} (the cell's own "
                                            f"gates used)"}
         status, bad, labels_failed, known_why = episode_verdict(
-            spec, res, ep.cell.params, ep.seed, gates=gates_used)
+            sspec, res, ep.cell.params, ep.seed, gates=gates_used)
         if hil_run is not None:
             # Beside the fetched run, for tools/kpi_report.py (load_run).
             write_scenario_score(hil_run["run_dir"], hil_run["meta"], res, extra, status,
-                                 bad, labels_failed, known_why, prios, spec,
+                                 bad, labels_failed, known_why, prios, sspec,
                                  gates_basis=basis_used, gates=gates_used,
                                  derivation=derivation, other_verdicts=other)
             common["run"] = _show(hil_run["run_dir"])
@@ -7868,6 +8302,8 @@ def main(argv: list[str] | None = None) -> int:
                  "arm": common["arm"], "prefix": ep.prefix, "params": ep.cell.params,
                  "forecast_arm": ep.forecast, "response_arm": ep.response,
                  "bundle": bundle, "kpi_grade": False}
+        if ep.prefix_consumer:
+            table["prefix_consumer"] = ep.prefix_consumer     # cell_key's row term
         table["worst_tick"] = _json_safe(K.worst_tick(rows, prios))
         table["null_hover_mission"] = K.null_hover_mission(
             rows, {"reached_goal": extra.get("reached_goal")})
@@ -8204,13 +8640,30 @@ def main(argv: list[str] | None = None) -> int:
                  f"{b0['fail_safe_correctness']}; counted as not triggered: "
                  f"{b1['correct']}/{b1['labelled']} = {b1['fail_safe_correctness']}"
                  if nb else ""))
-    if arms_doc:
+    if arms_doc and (arms_doc["episodes_with_arms"]
+                     > (arms_doc.get("prefix_consumer") or {}).get("episodes", 0)):
+        # (Not printed for a run whose only arms are a prefix consumer's: it
+        # has no plumbing pair, and its A/B is printed below.)
         print(f"arms: {arms_doc['episodes_with_arms']} episodes in "
               f"{arms_doc['cell_seed_groups']} (cell, seed) groups; flew differently: "
               f"{len(arms_doc['groups_whose_arms_flew_differently'])}; prefix A/B pairs "
               f"{arms_doc['prefix_ab_pairs']} (differ: "
               f"{len(arms_doc['prefix_ab_pairs_that_differ'])}) - plumbing only, the "
               f"headless pilot reads no text")
+    if arms_doc and arms_doc.get("prefix_consumer"):
+        pc = arms_doc["prefix_consumer"]
+        print(f"prefix A/B through a pilot that consumes the CSP ({', '.join(pc['consumers'])}): "
+              f"{pc['pairs']} on / off pair(s) ({pc.get('distinct_pairs')} distinct "
+              f"flight pair(s)), {len(pc['pairs_that_differ'])} differ; "
+              f"{pc['aa_pairs']} A/A pair(s), {len(pc['aa_pairs_that_differ'])} differ"
+              + ("" if args.backend != "headless" else
+                 " (headless: functional, not KPI-grade; an A/A pair that differs is a "
+                 "harness defect)"))
+        sys.path.insert(0, str(ROOT / "tools"))
+        import kpi_report
+        for line in kpi_report.prefix_ab_lines(pc.get("figures")):
+            if line:
+                print("  " + line)
     if n_known:
         print("Known failures are open defects, not passes. See the scenario's "
               "`description` for what is broken.")

@@ -324,8 +324,8 @@ from typing import Any
 import yaml
 from pydantic import ValidationError
 
-from .scenario_spec import (Episode, Family, Library, PolicyRef, ScenarioEvent,
-                            episode_arms, load_profile)
+from .scenario_spec import (Episode, Family, Library, PolicyRef, ScenarioEvent,  # noqa: F401
+                            arm_episodes, episode_arms, load_profile)
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_PORT = 50051
@@ -1583,7 +1583,8 @@ class Harness:
         except (ValidationError, ValueError, OSError) as e:
             raise HarnessError("INVALID_ARGUMENT",
                                f"policy {(policy_ref or spec.policy).source!r}: {e}") from None
-        arm_record = self._arm_record(ep, policy if policy_ref is not None else None)
+        arm_record = self._arm_record(ep, policy if policy_ref is not None else None,
+                                      defaults=lib.defaults)
         flight = (self._rail_prepare(sess, spec, ep, lib.defaults,
                                      drive=bool(drive_scenario_events)) if rail else None)
 
@@ -1668,9 +1669,14 @@ class Harness:
         else:
             s = int(declared[0]) if declared else 0
 
-        pp, prefixes = episode_arms(spec, prof)
-        arms = [Episode(cell=cell, seed=s, paraphrase_arm=pa, prefix=pfx,
-                        ab=len(prefixes) > 1) for pfx in prefixes for pa in pp]
+        # The sweep's own arms of this cell and seed (scenario_spec.
+        # arm_episodes): one per prefix and paraphrase arm and, under a
+        # prefix-consumer profile (2026-11-16), each with its consumer and
+        # the A/A repeat of a cell the profile names ("prefix-on,aa1").
+        try:
+            arms = arm_episodes(cell, s, prof)
+        except ValueError as e:
+            raise HarnessError("INVALID_ARGUMENT", str(e)) from None
         if arm:
             chosen = [a for a in arms if a.arm_tag == arm]
             if not chosen:
@@ -1779,7 +1785,7 @@ class Harness:
             upd["policy"] = e.policy_ref
         return e.ep.cell.spec.model_copy(update=upd)
 
-    def _arm_record(self, ep, policy=None) -> dict | None:
+    def _arm_record(self, ep, policy=None, defaults=None) -> dict | None:
         """The episode's arm record (its paraphrase draw and prefix key), built
         now rather than at EndEpisode, so a scenario this server cannot draw
         an arm for is refused before an episode exists. A paraphrase arm is
@@ -1789,13 +1795,19 @@ class Harness:
         client for, a `stored` source it holds no set of - is
         FAILED_PRECONDITION with the service's own words, as it was when the
         draw was in process. The draw is a function of (cell, seed, arm), so
-        building it early changes nothing that flies."""
+        building it early changes nothing that flies.
+
+        A prefix-consumer episode's record (2026-11-16: the sweep's
+        `pilot_reads_prefix`, `consumer`, `repeat`) is the sweep's too, with
+        the CSP its pilot flies compiled here for `defaults` (the library's);
+        a scenario that pilot cannot fly (mid-flight events, a policy that is
+        not static) is INVALID_ARGUMENT, before an episode exists."""
         drawn = None
         if ep.paraphrase_arm is not None and ep.paraphrase_arm >= 0:
             drawn = self._service_draw(ep, policy)
         try:
             with self._run_lock:                 # the sweep's arm cache is module state
-                return self._S.build_arm(ep, policy, drawn=drawn)
+                return self._S.build_arm(ep, policy, drawn=drawn, defaults=defaults)
         except OSError as err:
             raise HarnessError("FAILED_PRECONDITION",
                                f"arm {ep.arm_tag}: {type(err).__name__}: {err}") from None
@@ -1911,17 +1923,40 @@ class Harness:
             raise HarnessError("FAILED_PRECONDITION", f"live episode {e.episode_id}: "
                                                       f"{err}") from None
 
+    @staticmethod
+    def _consumer_takes_no_events(e: _Episode, rpc: str) -> None:
+        """Refuse a mid-flight rule change (HotApply, EmitEvent, a session
+        HotApply forwarded while it flies) to an episode whose pilot consumes
+        the CSP (2026-11-16, profile `prefix_consumer`), before anything is
+        queued, forwarded or acked: the pilot flies the CSP compiled before
+        take-off, so a Shield that moved to generation N while the pilot kept
+        generation 0's CSP would be scored and bundled as the arm's flight -
+        the reason a scenario with mid-flight events is refused for the
+        consumer (experiments/sweep_scenarios.py prefix_consumer_refusal).
+        Both arms are refused alike, so the pair stays one scenario."""
+        if getattr(e.ep, "prefix_consumer", None):
+            raise HarnessError(
+                "FAILED_PRECONDITION",
+                f"{rpc} refused: episode {e.episode_id} is arm {e.ep.arm_tag} of a pilot "
+                f"that consumes the CSP (guardrail.prefix_consumer, profile "
+                f"{e.profile or '?'}), which flies the CSP compiled before take-off; a "
+                f"mid-flight rule change needs generation N's CSP at the pilot, which is "
+                f"not built (audit card WP4-19). Its rules cannot change in flight")
+
     def hot_apply(self, episode_id: str = "", at_sim_t: float = 0.0,
                   body: dict | None = None, *, session_id: str = "",
                   now: bool = False) -> dict:
         """A REST hot-apply body for an episode (scheduled or live), or, with
-        `session_id` instead, forwarded to the session's REST endpoint."""
+        `session_id` instead, forwarded to the session's REST endpoint. An
+        episode of a pilot that consumes the CSP takes none
+        (_consumer_takes_no_events)."""
         if session_id and episode_id:
             raise HarnessError("INVALID_ARGUMENT", "address a HotApply to an episode_id or "
                                                    "to a session_id, not both")
         if session_id:
             return self._forward_hot_apply(session_id, body)
         e = self._get(episode_id)
+        self._consumer_takes_no_events(e, "HotApply")
         if e.rail is not None:
             return self._rail_hot_apply(e, at_sim_t, body, now)
         with e.lock:
@@ -1968,6 +2003,7 @@ class Harness:
     def emit_event(self, episode_id: str, at_sim_t: float, type_: str,
                    payload: dict, *, now: bool = False) -> dict:
         e = self._get(episode_id)
+        self._consumer_takes_no_events(e, "EmitEvent")
         if e.rail is not None:
             return self._rail_emit_event(e, at_sim_t, type_, payload, now)
         with e.lock:
@@ -2652,7 +2688,12 @@ class Harness:
                                f"address the HotApply to an episode_id instead")
         # A rail episode of this session that is flying: the forward is also
         # recorded in ITS bundle (harness_events.jsonl), at its mission time.
-        return self._forward(s, body, episode=self._rail_episode_of(s))[0]
+        # Its endpoint is that mission's flying Shield, so an episode of a
+        # pilot that consumes the CSP refuses it as it refuses its own.
+        flying = self._rail_episode_of(s)
+        if flying is not None:
+            self._consumer_takes_no_events(flying, "HotApply to the session")
+        return self._forward(s, body, episode=flying)[0]
 
     def _rail_episode_of(self, s: _Session) -> "_Episode | None":
         with self._lock:
@@ -2792,7 +2833,7 @@ class Harness:
         try:
             cfg = self._hil_cfg() if backend == "hil" else None
             S.rail_node_args(rspec, ep.seed, defaults, backend=backend,
-                             bundles_dir=cfg.bundles_dir if cfg else None)
+                             bundles_dir=cfg.bundles_dir if cfg else None, episode=ep)
             S.rail_extra_args(hot)
         except S.UnsupportedScenario as err:
             raise HarnessError("FAILED_PRECONDITION", str(err)) from None
@@ -2862,7 +2903,8 @@ class Harness:
             args = S.rail_node_args(mission, r.ep.seed, defaults, backend=backend,
                                     events=(f"{rel}/events.json" if mission.events else None),
                                     meta=f"{rel}/scenario.json",
-                                    bundles_dir=cfg.bundles_dir if cfg else None)
+                                    bundles_dir=cfg.bundles_dir if cfg else None,
+                                    episode=r.ep)
             args += S.rail_extra_args(flight.hot_args)
             home = S.sitl_home(mission, mission.policy.load(ROOT), defaults, r.ep.seed)
         except S.UnsupportedScenario as err:
@@ -3324,16 +3366,19 @@ class Harness:
                                f"{e.policy_hash}; nothing is bundled under this episode "
                                f"(its run folder: {run_dir.as_posix()})")
 
-        res = S.score(spec, rows, extra, policy, prios)
+        # Scored as the sweep scores it: against the cell's spec, less its
+        # labels on the prefix-on arm of a consuming pilot (scoring_spec).
+        sspec = S.scoring_spec(spec, ep)
+        res = S.score(sspec, rows, extra, policy, prios)
         gates, _ = S.rail_gate_set("ideal", spec, ep.seed, e.defaults)
         status, bad, labels_failed, known_why = S.episode_verdict(
-            spec, res, ep.cell.params, ep.seed, gates=gates)
+            sspec, res, ep.cell.params, ep.seed, gates=gates)
         score_path = None
         if e.backend == "hil" and meta:
             # Beside the fetched run, as the campaign writes it (kpi_report.py).
             score_path = S.write_scenario_score(
                 run_dir, meta, res, extra, status, bad, labels_failed, known_why, prios,
-                spec, gates_basis="ideal", gates=gates)
+                sspec, gates_basis="ideal", gates=gates)
 
         stamp = _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H-%M-%SZ")
         ep_dir = self.runs_dir / e.episode_id / ep.dir_name(stamp)
@@ -3627,11 +3672,12 @@ class Harness:
                                f"({e.policy_hash}) and EndEpisode "
                                f"({run.policy_hash_start}); start a new episode")
 
-        res = S.score(spec, run.rows, run.extra, run.policy, run.priorities)
+        sspec = S.scoring_spec(spec, ep)      # the sweep's (a consumer's prefix-on arm)
+        res = S.score(sspec, run.rows, run.extra, run.policy, run.priorities)
         # The sweep's own verdict function, the one its main() calls (until
         # 2026-10-11 this module carried a copy of it).
         status, bad, labels_failed, known_why = S.episode_verdict(
-            spec, res, ep.cell.params, ep.seed)
+            sspec, res, ep.cell.params, ep.seed)
 
         manifest = S.episode_manifest(self._manifest_base, run.policy_hash_start, ep.seed,
                                       run.sim_s, run.wall_s)

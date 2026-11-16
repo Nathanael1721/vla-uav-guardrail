@@ -76,7 +76,18 @@ SINCE 2026-10-12 (the WP4 outputs the final report rests on)
     by --wp2-only, recomputed for a report by --wp2, else read from that
     file and labelled as read), the tick budget (stored profiles and the
     flown logs' `shield_ms`), and the A/B and per-paraphrase sections, n/m
-    until a pilot that reads the prompt flies them.
+    until a pilot that reads the prompt flies them. Since 2026-11-16 the A/B
+    is also measured over pairs flown by a pilot that CONSUMES the CSP
+    (`pilot_reads_prefix`, guardrail/prefix_consumer.py; experiments/
+    sweep_scenarios.py, THE PREFIX CONSUMER): mission success, P0 escapes,
+    repairs per episode, mean repair magnitude and time to safe, each on,
+    off and on minus off, with the A/A pairs (prefix on flown twice on one
+    seed) beside them as the noise floor. The per-paraphrase section is not
+    touched by such a pilot: it reads no words. A campaign flown by such a
+    pilot is another pilot's campaign, and half its flights carry no Prefix:
+    its Campaign section says so (`prefix_consumer`), its rows are
+    `.../prefix-consumer-on|off`, and its rail flights never share a report
+    with flights of the library's own pilots (mixed_pilots_refusal).
   * --baseline <report.json>: new, fixed and gone failures and per-family
     deltas against an earlier report; the JSON now carries `failures` for
     the next comparison.
@@ -492,10 +503,28 @@ def _arms_of(doc: dict) -> dict | None:
     if not isinstance(rec, dict):
         return None
     para = rec.get("paraphrase") if isinstance(rec.get("paraphrase"), dict) else {}
-    return {"arm": rec.get("arm"), "prefix": rec.get("prefix"),
-            "pilot_reads_text": rec.get("pilot_reads_text"),
-            "paraphrase_id": para.get("paraphrase_id"), "backend": para.get("backend"),
-            "cell": doc.get("id_cell") or doc.get("id"), "seed": doc.get("seed")}
+    out = {"arm": rec.get("arm"), "prefix": rec.get("prefix"),
+           "pilot_reads_text": rec.get("pilot_reads_text"),
+           "paraphrase_id": para.get("paraphrase_id"), "backend": para.get("backend"),
+           "cell": doc.get("id_cell") or doc.get("id"), "seed": doc.get("seed")}
+    if rec.get("pilot_reads_prefix") is True:
+        # A pilot that consumes the CSP (2026-11-16): only such a record
+        # carries these keys, so every other episode's `arms` is unchanged.
+        c = rec.get("consumer") if isinstance(rec.get("consumer"), dict) else {}
+        out.update(pilot_reads_prefix=True, consumer=c.get("id"),
+                   adapter=c.get("adapter"), repeat=int(rec.get("repeat") or 0))
+    return out
+
+
+def consumer_suffix(arm_record) -> str:
+    """The family term of an episode flown by a pilot that consumes the CSP:
+    "/prefix-consumer-on" / "-off" after the Shield arm (experiments/
+    sweep_scenarios.py prefix_family_suffix writes the same), "" for every
+    other episode. Another pilot than the cell's own, and its two arms are
+    two experiments: neither pools with the cell's row or with the other."""
+    if not (isinstance(arm_record, dict) and arm_record.get("pilot_reads_prefix") is True):
+        return ""
+    return f"/prefix-consumer-{arm_record.get('prefix')}"
 
 
 # A rail run of the stress library (experiments/sweep_scenarios.py --backend
@@ -589,6 +618,7 @@ def scenario_family(scenario: dict, arm: str) -> str:
     add = max_s_add(scenario)
     return (f"{backend}-stress/{scenario.get('template')}/"
             f"{scenario.get('cell') or scenario.get('scenario_id')}/shield-{arm}"
+            + consumer_suffix(scenario.get("arm_record"))
             + (f"/flown-longer-{add:g}s" if add else ""))
 
 
@@ -816,6 +846,13 @@ def load_run(run: Path, by_hash: dict, by_id: dict, trust_store=None) -> dict:
             # 2026-11-14; 0.0 at the profile's length): its family says so too.
             "max_s_add": max_s_add(scenario),
         })
+        if isinstance(scenario.get("arm_record"), dict):
+            # A prefix-consumer mission (2026-11-16): the arm its scenario
+            # record names, for the A/B section. No other rail run has one.
+            k["arms"] = _arms_of({"arm_record": scenario["arm_record"],
+                                  "id_cell": scenario.get("cell"),
+                                  "seed": scenario.get("seed")})
+            k["prefix"] = scenario["arm_record"].get("prefix")
     return k
 
 
@@ -961,7 +998,9 @@ def _run_labels(*docs) -> str:
 def _bundle_family(doc: dict, sid, params: dict, arm: str, start: dict | None = None) -> str:
     template = doc.get("template") or str(sid).split("-")[0]
     fam = f"stress-bundle/{template}/{cell_name(sid, params)}/shield-{arm}"
-    if doc.get("prefix") == "off":
+    if consumer_suffix(doc.get("arm_record")):
+        fam += consumer_suffix(doc.get("arm_record"))
+    elif doc.get("prefix") == "off":
         fam += "/prefix-off"
     return fam + _run_labels(doc, start)
 
@@ -1207,7 +1246,8 @@ def load_sweep(path: Path) -> list[dict]:
             "id": r.get("id") or sid, "scenario_id": sid, "source": _rel(path),
             "kind": "sweep-json", "recomputed": False,
             "family": (f"sweep-json/{template}/{cell_name(sid, cell)}/shield-{arm}"
-                       + ("/prefix-off" if r.get("prefix") == "off" else "")
+                       + (consumer_suffix(r.get("arm_record"))
+                          or ("/prefix-off" if r.get("prefix") == "off" else ""))
                        + _run_labels(r, r.get("kpi"))),
             "arm": arm, "rail": "headless-kinematic",
             "kpi_grade": False,
@@ -1313,7 +1353,8 @@ def load_campaign(path: str | Path) -> dict:
     for r in doc["results"]:
         statuses[str(r.get("status"))] = statuses.get(str(r.get("status")), 0) + 1
     common = doc.get("_manifest_common") if isinstance(doc.get("_manifest_common"), dict) else {}
-    return {"path": _rel(sw), "campaign": name, "backend": doc.get("_backend"),
+    arms = scope.get("arms") if isinstance(scope.get("arms"), dict) else {}
+    out = {"path": _rel(sw), "campaign": name, "backend": doc.get("_backend"),
             "profile": scope.get("profile"), "grant_scope": scope.get("grant_scope"),
             "cadence": scope.get("cadence"), "command": doc.get("_command"),
             "code_revision": common.get("code_revision"),
@@ -1337,6 +1378,14 @@ def load_campaign(path: str | Path) -> dict:
                 "missed_triggers", "triggered_by")},
             # Internal (keys of tuples; not written to the report).
             "_episodes": episodes}
+    if arms.get("prefix_consumer"):
+        # A campaign flown by a pilot that consumes the CSP (2026-11-16,
+        # `_scope.arms.prefix_consumer`): only such a campaign carries this
+        # key, so every other campaign's record is the one it always was.
+        out["prefix_consumer"] = {"adapter": arms["prefix_consumer"],
+                                  "prefix_off_episodes": arms.get("prefix_off_episodes"),
+                                  "aa_episodes": arms.get("prefix_aa_episodes")}
+    return out
 
 
 def campaign_episode_key(r: dict) -> tuple:
@@ -2328,16 +2377,214 @@ def kpi_summary(head_eps: list[dict], latency: dict | None,
             "by_template": {t: tracked(K.rollup(g), len(g)) for t, g in sorted(by_t.items())}}
 
 
+# The measures of the prefix A/B of a pilot that consumes the CSP
+# (prefix_ab_figures): rollup() keys, and how the report names them.
+PREFIX_AB_MEASURES = (("mission_success_rate", "mission success rate"),
+                      ("p0_escapes", "P0 escapes"),
+                      ("mean_repair_count_per_episode", "repairs per episode"),
+                      ("mean_repair_magnitude_mps", "mean repair magnitude (m/s)"),
+                      ("mean_time_to_safe_s", "mean time to safe (s)"))
+# The same measure of ONE episode (a compute() table), for an A/A pair.
+_PREFIX_AB_EPISODE = {"p0_escapes": "p0_escapes",
+                      "mean_repair_count_per_episode": "repair_count",
+                      "mean_repair_magnitude_mps": "mean_repair_magnitude_mps",
+                      "mean_time_to_safe_s": "mean_time_to_safe_s"}
+# Printed with every A/B measured through the consumer, in the report and in
+# the sweep's own summary: what the pilot is, so the delta is not read as a
+# learned model's.
+PREFIX_CONSUMER_NOTE = (
+    "the pilot is guardrail/prefix_consumer.py PrefixConsumer, the grant's default "
+    "action-set adapter around the cell's own pilot law: a hand-written adapter, not a "
+    "learned VLA. It reads the CSP's ranges, altitude band and forbidden polygons - the "
+    "ones the Shield enforces - so part of the on / off delta holds by construction. The "
+    "one A/B flown by a learned VLA reading the CSP as text (OpenVLA-7B, 7 Nov 2026, "
+    "AirSimNH, outside this harness and not KPI-grade) is "
+    "docs/data/csp_flights_20261107.json, and there the CSP did not help. Flown, CSP on "
+    "against off over 3 seeds: mission success 0/3 on against 3/3 off (every prefix-on "
+    "flight failed with unsafe_position_entered), repair rate on minus off mean +0.2006. "
+    "Replayed open loop on the flights' own frames (14 runs, not flown): repair rate CSP "
+    "minus off mean +0.0973, and CSP minus a rule-free neutral prefix of its length mean "
+    "-0.0319, so the CSP's effect was not above the neutral prefix's")
+
+
+def _val(v):
+    """`v` when it is a finite number (never a bool), else None."""
+    return v if _num(v) else None
+
+
+# What makes two flights of one cell the same flight for the A/B's count of
+# distinct evidence (ab_flight_key): every figure the A/B reads, and what the
+# flight did. Two seeds of a cell that fly alike in all of these (a
+# deterministic backend whose seed does not vary the cell) are one flight.
+AB_FLIGHT_FIELDS = ("ticks", "p0_escapes", "p0_violation_ticks", "repair_count",
+                    "repaired_ticks", "mean_repair_magnitude_mps", "mean_time_to_safe_s",
+                    "max_time_to_safe_s", "time_to_safe_episodes", "mission_success",
+                    "reached_goal", "mission_goal_status", "mission_outcome")
+
+
+def ab_flight_key(t: dict) -> tuple:
+    """One flight's KPI table reduced to AB_FLIGHT_FIELDS (floats to 6
+    places): equal keys of one cell are one flight counted twice."""
+    return tuple(round(v, 6) if isinstance(v, float) else v
+                 for v in (t.get(k) for k in AB_FLIGHT_FIELDS))
+
+
+def distinct_ab_pairs(pairs) -> dict:
+    """How much distinct evidence the A/B's pairs hold: `pairs` is
+    (cell, on table, off table) per pair (the cell with its rail where pairs
+    of two rails are pooled). Returns the number of distinct pairs (one
+    cell's pairs whose two flights are each alike count once), the distinct
+    flights per side, and the distinct unsafe-position episodes that time to
+    safe is over per side. Headless, where a seed does not vary a cell, 15
+    pairs of five cells are 5 distinct pairs."""
+    pairs = list(pairs)
+    ons = {(c, ab_flight_key(a)): a for c, a, _ in pairs}
+    offs = {(c, ab_flight_key(b)): b for c, _, b in pairs}
+
+    def t2s(flights):
+        return sum(int(t.get("time_to_safe_episodes") or 0) for t in flights.values())
+    return {"pairs": len({(c, ab_flight_key(a), ab_flight_key(b)) for c, a, b in pairs}),
+            "flights": {"on": len(ons), "off": len(offs)},
+            "time_to_safe_episodes": {"on": t2s(ons), "off": t2s(offs)}}
+
+
+def prefix_ab_figures(on: list[dict], off: list[dict], aa=(), pairs=None) -> dict:
+    """The prefix A/B of a pilot that consumes the CSP, from the KPI tables
+    of its paired episodes: `on` and `off` (the prefix-on arm's first flight
+    and the prefix-off arm of the same cells and seeds), and `aa`, the A/A
+    pairs - (first, repeat) tables of the prefix-on arm flown twice on one
+    seed.
+
+    Per measure of PREFIX_AB_MEASURES: guardrail.kpi.rollup of each side (the
+    report's own family figures: mission success with its goal, repairs per
+    episode, the magnitude pooled over repaired ticks, time to safe pooled
+    over unsafe episodes; None where a side cannot answer, never 0) and
+    on minus off. `aa` gives the noise floor: per measure the same figure of
+    the first flights and of the repeats, their absolute difference, and the
+    largest difference inside one pair. On a deterministic backend it is 0;
+    on a real-time rail it is what a same-seed pair differs by with nothing
+    changed, and a delta inside it is not a finding.
+
+    `pairs` ((cell, on table, off table) per pair, distinct_ab_pairs) adds
+    `distinct`: how many of the pairs are distinct flights, so a count of
+    pairs is never read as that much evidence when seeds flew alike."""
+    r_on, r_off = K.rollup(on), K.rollup(off)
+    measures = {}
+    for key, _ in PREFIX_AB_MEASURES:
+        a, b = _val(r_on.get(key)), _val(r_off.get(key))
+        measures[key] = {"on": a, "off": b,
+                         "delta_on_minus_off": (round(a - b, 6)
+                                                if a is not None and b is not None else None)}
+    out = {"pairs_on": len(on), "pairs_off": len(off), "measures": measures,
+           "time_to_safe_episodes": {"on": r_on.get("time_to_safe_episodes"),
+                                     "off": r_off.get("time_to_safe_episodes")},
+           "kpi_grade_episodes": {"on": sum(1 for e in on if e.get("kpi_grade") is True),
+                                  "off": sum(1 for e in off if e.get("kpi_grade") is True)}}
+    if pairs is not None:
+        out["distinct"] = distinct_ab_pairs(pairs)
+    aa = list(aa)
+    if not aa:
+        out["aa"] = {"status": "n/m", "pairs": 0,
+                     "why": "no A/A pair (prefix on flown twice on one seed) was flown, "
+                            "so there is no noise floor to read the delta against"}
+        return out
+    r1, r2 = K.rollup([a for a, _ in aa]), K.rollup([b for _, b in aa])
+    floor = {}
+    for key, _ in PREFIX_AB_MEASURES:
+        a, b = _val(r1.get(key)), _val(r2.get(key))
+        diffs = []
+        for first, rep in aa:
+            if key == "mission_success_rate":
+                x, y = K.mission_success_with_goal(first), K.mission_success_with_goal(rep)
+                x, y = (None if x is None else float(x)), (None if y is None else float(y))
+            else:
+                x, y = (_val(first.get(_PREFIX_AB_EPISODE[key])),
+                        _val(rep.get(_PREFIX_AB_EPISODE[key])))
+            if x is not None and y is not None:
+                diffs.append(abs(x - y))
+            elif (x is None) != (y is None):
+                # One flight has the measure and the other none at all (a
+                # repair in one, none in the other): a difference with no size.
+                diffs.append(None)
+        floor[key] = {"first": a, "repeat": b,
+                      "abs_diff": (round(abs(a - b), 6)
+                                   if a is not None and b is not None else None),
+                      "max_pair_abs_diff": (round(max(d for d in diffs if d is not None), 6)
+                                            if any(d is not None for d in diffs) else None),
+                      "pairs_one_side_unmeasured": sum(1 for d in diffs if d is None)}
+    out["aa"] = {"status": "measured", "pairs": len(aa), "measures": floor,
+                 "kpi_grade_episodes": sum(1 for a, b in aa for e in (a, b)
+                                           if e.get("kpi_grade") is True)}
+    return out
+
+
+def prefix_ab_lines(fig: dict | None) -> list[str]:
+    """prefix_ab_figures as Markdown ([] for None): a table with one row per
+    measure - prefix on, prefix off, on minus off, and the A/A pairs'
+    absolute difference of the same figure (the noise floor) - a blank line,
+    and two bullets: what time to safe is over, and what the A/A column is."""
+    if not fig:
+        return []
+    aa = fig.get("aa") or {}
+    fl = aa.get("measures") or {}
+    L = ["| Measure | Prefix on | Prefix off | On minus off | A/A abs. difference "
+         "(largest in one pair) |", "|---|---|---|---|---|"]
+    for key, name in PREFIX_AB_MEASURES:
+        m = fig["measures"][key]
+        f = fl.get(key) or {}
+        noise = ("n/m" if aa.get("status") != "measured" else
+                 f"{_f(f.get('abs_diff'))} ({_f(f.get('max_pair_abs_diff'))})")
+        L.append(f"| {name} | {_f(m['on'])} | {_f(m['off'])} | "
+                 f"{_f(m['delta_on_minus_off'])} | {noise} |")
+    tts = fig.get("time_to_safe_episodes") or {}
+    L += ["", f"- Time to safe is over the unsafe-position episodes that ended: "
+              f"{tts.get('on')} with the prefix on, {tts.get('off')} off (n/m with none)."]
+    d = fig.get("distinct")
+    if d:
+        n = fig.get("pairs_on")
+        dt = d.get("time_to_safe_episodes") or {}
+        if min(d["pairs"], d["flights"]["on"], d["flights"]["off"]) < (n or 0):
+            L.append(f"- Distinct evidence: {n} pair(s), {d['pairs']} distinct flight "
+                     f"pair(s) ({d['flights']['on']} distinct flights with the prefix on, "
+                     f"{d['flights']['off']} off): flights of one cell whose seeds flew alike "
+                     f"in every A/B measure are one flight counted more than once (a "
+                     f"deterministic backend whose seed does not vary the cell), so the "
+                     f"evidence is {d['pairs']} pair(s), and time to safe is over "
+                     f"{dt.get('on')} distinct episode(s) with the prefix on, "
+                     f"{dt.get('off')} off.")
+        else:
+            L.append(f"- Distinct evidence: all {n} pair(s) are distinct flights.")
+    if aa.get("status") == "measured":
+        L.append(f"- A/A (the noise floor): {aa['pairs']} pair(s) of the prefix-on arm "
+                 f"flown twice on one seed. The column gives, per measure, the difference "
+                 f"between the first flights' figure and the repeats', and the largest "
+                 f"difference inside one pair; a delta no larger than it is not a finding.")
+    else:
+        L.append(f"- A/A (the noise floor): n/m - {aa.get('why')}.")
+    return L
+
+
 def arms_sections(episodes: list[dict]) -> tuple[dict, dict]:
     """The Prefix Compiler's A/B (prefix on / off, same seed: "the KPI report
     shows the delta", Prefix Compiler p6) and WP4's per-paraphrase robustness.
     Measured only over episodes whose pilot READS the prompt
     (`pilot_reads_text`): a headless pilot ignores text, so its arms are one
     flight by construction and their pairs are plumbing checks. Until such
-    episodes are flown both sections are n/m, with the headless count beside."""
+    episodes are flown both sections are n/m, with the headless count beside.
+
+    SINCE 2026-11-16 the A/B (never the per-paraphrase section) is also
+    measured over episodes whose pilot CONSUMES the CSP (`pilot_reads_prefix`,
+    a key apart from `pilot_reads_text`: guardrail/prefix_consumer.py reads
+    the action sets, not words). Its pairs are per rail, cell and seed - the
+    prefix-on arm's first flight against the prefix-off arm - and the A/B
+    then also carries `consumer` (prefix_ab_figures: every measure on, off
+    and on minus off, and the A/A pairs as the noise floor)."""
     armed = [e for e in episodes if isinstance(e.get("arms"), dict)]
     reads = [e for e in armed if e["arms"].get("pilot_reads_text") is True]
-    blind = [e for e in armed if e["arms"].get("pilot_reads_text") is not True]
+    eats = [e for e in armed if e["arms"].get("pilot_reads_prefix") is True
+            and e["arms"].get("pilot_reads_text") is not True]
+    blind = [e for e in armed if e["arms"].get("pilot_reads_text") is not True
+             and e["arms"].get("pilot_reads_prefix") is not True]
 
     def pairs(eps):
         g: dict[tuple, dict] = {}
@@ -2352,7 +2599,21 @@ def arms_sections(episodes: list[dict]) -> tuple[dict, dict]:
         v = [x for x in v if x is not None]
         return (round(sum(v) / len(v), 6), len(v)) if v else (None, 0)
 
-    flown, headless = pairs(reads), pairs(blind)
+    # The consuming pilot's pairs: one rail's flights only (a headless pair
+    # and a hil pair of one cell are two pairs), the A/A repeat set apart.
+    eaten: dict[tuple, dict] = {}
+    for e in eats:
+        a = e["arms"]
+        side = "aa" if a.get("repeat") else a.get("prefix")
+        eaten.setdefault((e.get("rail"), a.get("cell"), a.get("seed")),
+                         {}).setdefault(side, []).append(e)
+    eat_pairs = [v for _, v in sorted(eaten.items(), key=lambda kv: str(kv[0]))
+                 if "on" in v and "off" in v]
+    eat_aa = [(v["on"][0], v["aa"][0]) for _, v in sorted(eaten.items(),
+                                                          key=lambda kv: str(kv[0]))
+              if "on" in v and "aa" in v]
+
+    flown, headless = pairs(reads) + eat_pairs, pairs(blind)
     if flown:
         on = [e for p in flown for e in p["on"]]
         off = [e for p in flown for e in p["off"]]
@@ -2365,6 +2626,27 @@ def arms_sections(episodes: list[dict]) -> tuple[dict, dict]:
               "p0_escapes_prefix_on": sum(e.get("p0_escapes") or 0 for e in on),
               "p0_escapes_prefix_off": sum(e.get("p0_escapes") or 0 for e in off),
               "headless_pairs": len(headless)}
+        if eat_pairs:
+            # Only when a consuming pilot flew pairs, so an A/B measured by a
+            # pilot that reads text alone keeps exactly these keys.
+            c_on = [e for p in eat_pairs for e in p["on"]]
+            c_off = [e for p in eat_pairs for e in p["off"]]
+            ab["consumer"] = {
+                "pilot_reads_prefix": True,
+                "consumers": sorted({str(e["arms"].get("consumer")) for e in eats}),
+                "rails": sorted({str(e.get("rail")) for p in eat_pairs
+                                 for e in p["on"] + p["off"]}),
+                "pairs": len(eat_pairs),
+                "figures": prefix_ab_figures(
+                    c_on, c_off, eat_aa,
+                    pairs=[((p["on"][0].get("rail"), p["on"][0]["arms"].get("cell")),
+                            p["on"][0], p["off"][0]) for p in eat_pairs]),
+                "per_cell": [{"cell": p["on"][0]["arms"].get("cell"),
+                              "seed": p["on"][0]["arms"].get("seed"),
+                              "rail": p["on"][0].get("rail"),
+                              "on": _ab_episode(p["on"][0]), "off": _ab_episode(p["off"][0])}
+                             for p in eat_pairs],
+                "note": PREFIX_CONSUMER_NOTE}
     else:
         ab = {"status": "n/m", "pairs": 0, "headless_pairs": len(headless),
               "why": "no prefix on/off pair has been flown by a pilot that reads "
@@ -2383,6 +2665,40 @@ def arms_sections(episodes: list[dict]) -> tuple[dict, dict]:
                 "why": "no paraphrase arm has been flown by a pilot that reads the "
                        "prompt; per-paraphrase robustness needs one"}
     return ab, para
+
+
+def mixed_pilots_refusal(episodes: list[dict]) -> str | None:
+    """Why these episodes cannot make one report, or None: one report, one
+    pilot per rail scenario flight (2026-11-16). A prefix-consumer campaign
+    flies ANOTHER PILOT than the stress library's own, and half its flights
+    without the Prefix, so its rail flights never pool with a campaign of the
+    library's own pilots, whatever globs brought them in (two campaigns of
+    one report are also of one profile: campaign_merge). Rail flights of the
+    stress library only (`scenario_id`): a report of other runs, or of a
+    headless sweep, is the one it always was."""
+    eats, plain = [], []
+    for e in episodes:
+        if e.get("kind") != "flight" or e.get("scenario_id") is None:
+            continue
+        arms = e.get("arms") if isinstance(e.get("arms"), dict) else {}
+        (eats if arms.get("pilot_reads_prefix") is True else plain).append(str(e.get("id")))
+    if not (eats and plain):
+        return None
+    return (f"these rail runs were flown by two pilots: {len(eats)} by a pilot that "
+            f"consumes the CSP (guardrail/prefix_consumer.py; e.g. {eats[0]}) and "
+            f"{len(plain)} by the stress library's own (e.g. {plain[0]}). A prefix-consumer "
+            f"campaign is reported on its own, beside the KPI campaign, never in one "
+            f"report with its flights")
+
+
+def _ab_episode(e: dict) -> dict:
+    """One episode of a consumer A/B pair, as the per-cell table prints it."""
+    return {"id": e.get("id"), "mission_success": K.mission_success_with_goal(e),
+            "mission_outcome": e.get("mission_outcome"),
+            "p0_escapes": e.get("p0_escapes"), "repair_count": e.get("repair_count"),
+            "mean_repair_magnitude_mps": e.get("mean_repair_magnitude_mps"),
+            "mean_time_to_safe_s": e.get("mean_time_to_safe_s"),
+            "kpi_grade": e.get("kpi_grade")}
 
 
 # Family figures the baseline comparison reports (rollup() keys).
@@ -2821,6 +3137,19 @@ def _render_campaign(c: dict | None, episodes: list[dict]) -> list[str]:
           if max_s_add(c) else
           "- Flight length: the profile's own (each mission to the rail's cap: the "
           "scenario's max_s + the Loiter operator timeout + 5 s).")]
+    pc = c.get("prefix_consumer")
+    if pc:
+        # Only a campaign flown by a pilot that consumes the CSP has the key.
+        L.append(
+            f"- **PREFIX-CONSUMER campaign**: every mission's pilot law was flown through "
+            f"guardrail/prefix_consumer.py PrefixConsumer (adapter `{pc.get('adapter')}`), "
+            f"with the Prefix Compiler's CSP on the prefix-on arm and without it on the "
+            f"prefix-off arm ({pc.get('prefix_off_episodes')} prefix-off episode(s), "
+            f"{pc.get('aa_episodes')} A/A repeat(s) in the expansion). Another pilot than "
+            f"the stress library's own, and half its flights carry no Prefix: its rows are "
+            f"`.../prefix-consumer-on` and `.../prefix-consumer-off`, the headline figures "
+            f"below pool both arms and are NOT the KPI campaign's, and the measurement "
+            f"this campaign exists for is the section \"A/B: prefix on / off\".")
     for s in c.get("supplements") or []:
         sst = ", ".join(f"{n} {k}" for k, n in sorted(s["statuses"].items()))
         L.append(f"- Supplement `{s['campaign']}`: profile {s['profile']}, code revision "
@@ -3027,6 +3356,7 @@ def _render_arms(ab: dict | None, para: dict | None) -> list[str]:
               f"off {_f(ab['mission_success_prefix_off'], pct=True)} ({ab['scored_off']}); "
               f"delta {_f(ab['delta_on_minus_off'])}; P0 escapes on "
               f"{ab['p0_escapes_prefix_on']}, off {ab['p0_escapes_prefix_off']}.", ""]
+        L += _render_consumer_ab(ab.get("consumer"))
     L += ["## Per-paraphrase robustness", ""]
     if not para or para["status"] != "measured":
         L += [f"n/m - {(para or {}).get('why', 'not computed')} "
@@ -3038,6 +3368,47 @@ def _render_arms(ab: dict | None, para: dict | None) -> list[str]:
               f"arms, min {_f(para.get('paraphrase_min_success_rate'), pct=True)}, worst "
               f"drop {_f(para.get('worst_drop_vs_canonical'))}.", ""]
     return L
+
+
+def _render_consumer_ab(c: dict | None) -> list[str]:
+    """The A/B flown by a pilot that consumes the CSP (arms_sections'
+    `consumer`): who the pilot is, how many of its flights are KPI-grade,
+    the measures on / off / on minus off with the A/A noise floor, and one
+    row per pair. [] when no such pair was flown."""
+    if not c:
+        return []
+    fig = c["figures"]
+    kg = fig.get("kpi_grade_episodes") or {}
+    n_on, n_off = fig.get("pairs_on"), fig.get("pairs_off")
+    graded = (kg.get("on") == n_on and kg.get("off") == n_off)
+    d = fig.get("distinct") or {}
+    L = [f"### Flown by a pilot that consumes the CSP ({', '.join(c['consumers'])})", "",
+         f"- {c['pairs']} pair(s) of one cell and seed"
+         + (f" ({d['pairs']} distinct flight pair(s))" if d else "")
+         + f", prefix on against prefix off, on "
+         f"{', '.join(c['rails'])}. KPI-grade flights: {kg.get('on')} of {n_on} with the "
+         f"prefix on, {kg.get('off')} of {n_off} off"
+         + ("." if graded else " - FUNCTIONAL EVIDENCE, NOT KPI-GRADE, wherever a flight "
+                               "is not."),
+         f"- {c['note'][0].upper()}{c['note'][1:]}.",
+         "- A cell's outcome and fail-safe labels were derived for its own rule-ignorant "
+         "pilot and are not applied to the prefix-on arm; its gates (the safety "
+         "invariants) are.", ""]
+    L += prefix_ab_lines(fig) + [""]
+    L += ["| Cell | Seed | Rail | Repairs on / off | Repair magnitude on / off (m/s) | "
+          "Time to safe on / off (s) | P0 escapes on / off | Mission success on / off | "
+          "Outcome on / off |", "|---|---|---|---|---|---|---|---|---|"]
+    for p in c.get("per_cell") or []:
+        a, b = p["on"], p["off"]
+        L.append(f"| `{p['cell']}` | {p['seed']} | {p['rail']} | "
+                 f"{_f(a['repair_count'])} / {_f(b['repair_count'])} | "
+                 f"{_f(a['mean_repair_magnitude_mps'])} / "
+                 f"{_f(b['mean_repair_magnitude_mps'])} | "
+                 f"{_f(a['mean_time_to_safe_s'])} / {_f(b['mean_time_to_safe_s'])} | "
+                 f"{_f(a['p0_escapes'])} / {_f(b['p0_escapes'])} | "
+                 f"{_f(a['mission_success'])} / {_f(b['mission_success'])} | "
+                 f"{a['mission_outcome']} / {b['mission_outcome']} |")
+    return L + [""]
 
 
 def _render_magnitudes(groups: dict[str, dict]) -> list[str]:
@@ -3599,6 +3970,44 @@ def render_sweep_markdown(doc: dict, top_k: int = 10) -> str:
               f"{pp.get('paraphrase_arms')}, min {_f(pp.get('paraphrase_min_success_rate'))}"
               f", worst drop {_f(pp.get('worst_drop_vs_canonical'))}.",
               f"- {ad['note']}", ""]
+    pc = (ad or {}).get("prefix_consumer")
+    if pc:
+        # A run that flew a pilot consuming the CSP (2026-11-16): its A/B is
+        # a measurement of THIS run's backend, said beside it.
+        headless = doc.get("_backend") == "headless"
+        L += [f"## A/B: prefix on / off, flown by a pilot that consumes the CSP", "",
+              f"- Pilot: {', '.join(pc['consumers'])}. {pc['pairs']} pair(s) of one cell "
+              f"and seed (prefix on against prefix off"
+              + (f"; {pc['distinct_pairs']} distinct flight pair(s)"
+                 if pc.get("distinct_pairs") is not None else "")
+              + f"), {len(pc['pairs_that_differ'])} "
+              f"of them differing; {pc['aa_pairs']} A/A pair(s) (prefix on flown twice on "
+              f"one seed), {len(pc['aa_pairs_that_differ'])} differing"
+              + (" - on this deterministic backend an A/A pair that differs is a harness "
+                 "defect." if headless else "."),
+              ("- Backend headless: FUNCTIONAL EVIDENCE, NOT KPI-GRADE (kinematic "
+               "integrator, no autopilot)." if headless else
+               f"- Backend {doc.get('_backend')}: KPI grade is judged per run "
+               f"(tools/kpi_report.py --campaign)."),
+              f"- {pc['note'][0].upper()}{pc['note'][1:]}.",
+              f"- Labels: {pc['labels_not_applied_to_prefix_on']}.", ""]
+        L += prefix_ab_lines(pc.get("figures")) + [""]
+        if pc.get("per_cell"):
+            L += ["| Cell | Seed | Repairs on / off | Repair magnitude on / off (m/s) | "
+                  "Time to safe on / off (s) | P0 escapes on / off | Mission success "
+                  "on / off | Outcome on / off |", "|---|---|---|---|---|---|---|---|"]
+            for p in pc["per_cell"]:
+                L.append(
+                    f"| `{p['cell']}` | {p['seed']} | {_f(p['on_repair_count'])} / "
+                    f"{_f(p['off_repair_count'])} | "
+                    f"{_f(p['on_mean_repair_magnitude_mps'])} / "
+                    f"{_f(p['off_mean_repair_magnitude_mps'])} | "
+                    f"{_f(p['on_mean_time_to_safe_s'])} / "
+                    f"{_f(p['off_mean_time_to_safe_s'])} | {_f(p['on_p0_escapes'])} / "
+                    f"{_f(p['off_p0_escapes'])} | {_f(p['on_mission_success'])} / "
+                    f"{_f(p['off_mission_success'])} | {p['on_mission_outcome']} / "
+                    f"{p['off_mission_outcome']} |")
+            L.append("")
     top = (doc.get("_top_failures") or [])[:top_k]
     L += [f"## Top-{top_k} failure cases", "",
           "Ranked by guardrail.kpi.top_failures (P0 escapes first). Shield-off "
@@ -4055,6 +4464,9 @@ def build_report(run_globs: list[str], sweep_paths: list[str], top_k: int,
             + "; ".join(f"{len(v)} {said(a)} (e.g. {v[0]})" for a, v in sorted(lengths.items()))
             + ". A lengthened campaign (--hil-max-s-add) is reported on its own, beside the "
               "KPI campaign, never in one report with the profile's flights")
+    refusal = mixed_pilots_refusal(episodes)
+    if refusal:
+        raise SystemExit(refusal)
     if camp is not None and camp.get("supplements"):
         # Every campaign at one code revision: the summaries were compared
         # (campaign_merge); here the manifest of every run they list.
