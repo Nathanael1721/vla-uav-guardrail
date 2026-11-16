@@ -380,7 +380,8 @@ def test_the_cold_start_also_times_a_certified_signer_with_its_chain_checked():
     verdict's worst case (and named in the KPI text)."""
     import guardrail.bundle as gb
     if not gb.HAVE_CRYPTO:
-        return
+        print("      skip: the 'cryptography' package is not installed, so no chain can be checked")
+        return SKIP
     cs = W.cold_start(warm_runs=3, fresh_runs=1)
     c = cs["certified_signer"]
     assert c["chain"] == "verified" and c["runs_failing_a_check"] == 0, c
