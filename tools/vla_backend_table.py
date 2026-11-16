@@ -66,7 +66,14 @@ THE PROTOCOL (vla-backend-protocol/2; `protocol` prints it in full)
       into one figure: the share of the mission within 30 m of the car,
       decisions per second over the mission and while the model was asked,
       Shield interventions per 100 ticks, P0 escapes (must be 0), how it
-      ended.
+      ended, and the flight's own KPI verdict from its kpi.json (outcome,
+      fail reasons, the ticks spent in a P0-unsafe position). What C2 fixes
+      - the negative query, the default signed bundle, the camera interval
+      of the stream feed, the 420 s limit - is checked from the run's own
+      record, not taken from the launch command.
+      R1 DOES NOT COVER A SERVED BACKEND: `measure` loads the model in its own
+      process, and the four backends served over protocol v2 are timed only
+      by their servers' benches, which this table labels "not R1".
       C2 WAS ADDED AFTER THE CHOICE IT BEARS ON: the lab named AIoT-VLA v10b
       for the follow task on 15 November 2026, the test is dated 16 November.
       It was added because that choice rests on a follow and C1 is a GOTO to
@@ -100,10 +107,13 @@ THE DEFAULT LINE
   --default-scope and --default-date. It is refused when the date is before
   the newest measurement the set holds or before the protocol's own date
   (a default is named after the set, not before), when the date is in the
-  future, or when the set holds no Orin rate or no hil closed-loop flight
-  for that backend. The line then carries the backend's own numbers, good or
-  not, and says who named it: the lab, with this tool. It never records
-  anyone's confirmation.
+  future, or when the set is not a comparison: every backend with a launch
+  family (the four that can fly C2) needs an Orin timing and the protocol's
+  C2 flights, and the stub - R1's floor - an R1 on an Orin. Dates are the
+  lab's local dates (UTC+8): a measurement's UTC time is brought to that
+  zone before it is compared. The line then carries the backend's own
+  numbers, good or not, and says who named it: the lab, with this tool. It
+  never records anyone's confirmation.
 
 WHAT `measure` WILL AND WILL NOT DO
 
@@ -120,7 +130,9 @@ refused, not timed. `openvla_7b_int8wo` is an ATTEMPT at the precision the
 grant's gate G3 names: the bf16 load, then torchao's int8 weight-only
 quantisation. Where torchao is absent, or the quantisation or the first
 inference fails, the result file records the refusal, its stage and its
-cause (status "refused", no timing) and the table shows it as that. The
+cause (status "refused", no timing) and the table shows it as that. A bf16
+load that fails (a wrong --model-root, a GPU another process holds) is not
+an int8 result: the run fails, exit 1, and writes nothing. The
 backends served over protocol v2 (AerialVLA bf16, AIoT-VLA, DroneCATS,
 RaceVLA) are timed by their servers' own benches, not here.
 The OpenVLA prompt is the
@@ -149,7 +161,7 @@ import shlex
 import statistics
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -167,6 +179,12 @@ PROTOCOL_ID = "vla-backend-protocol/2"
 # The day /2 was written, as the lab's local date (UTC+8). A default cannot be
 # dated before it (THE DEFAULT LINE).
 PROTOCOL_DATE = "2026-11-16"
+# The lab's clock. The dates a default is compared with - the protocol's, the
+# one given with --default-date, today's - are the lab's local dates, so a
+# measurement's time (stored in UTC) is brought to this zone before it is
+# compared with them: a flight flown at 07:30 on the 17th here is of the 17th,
+# although its UTC timestamp still reads the 16th.
+LAB_TZ = timezone(timedelta(hours=8))
 # R1 and C1 are word for word /1's, so a rate result made under either id is R1.
 R1_PROTOCOLS = ("vla-backend-protocol/1", PROTOCOL_ID)
 
@@ -189,14 +207,30 @@ C2_NODE_ARGS = ("--identity", "--negative-query", "a traffic light", "--target-e
 C2_FEED = {"aiotvla": "stream", "aerialvla": "tick", "dronecats": "tick", "racevla": "tick"}
 C2_FLIGHTS_PER_BACKEND = 3
 C2_RANGE_M = 30.0
-# C2's mission limit (the launch script's default). The node does not write
-# the limit it was given, so a shorter one shows only in a flight that ran to
-# it: "max_s reached" with a mission shorter than this by more than the slack.
-# A shakedown that ended sooner for another reason cannot be told from its
-# folder; it is told by its tag, which the operator gives it (the mark below).
+# What C2 fixes beside the family's option set, each read back from the run's
+# own record (metrics.json), never taken on trust from the launch command:
+#   the negative query         params.negative_query
+#   the policy                 policy_source: the node's default signed bundle,
+#                              follow-car-citylife-v<version> (not the -nfz*
+#                              bundles, which put a no-fly zone on the route)
+#   the camera for the stream  params.front_capture_interval_s: the feed
+#   feed                       between ticks needs a 15 Hz FrontCamera
+C2_NEGATIVE_QUERY = [C2_NODE_ARGS[C2_NODE_ARGS.index("--negative-query") + 1]]
+C2_BUNDLE = re.compile(r"^follow-car-citylife-v\d")
+C2_STREAM_CAPTURE_INTERVAL_S = 0.05
+# C2's mission limit (the launch script's default). A VLA mission records the
+# limit it was given (metrics.json vla.mission.monitor.config.max_s), and that
+# record decides: a flight given another limit is not C2, and a flight given
+# this one is C2 however it ended - an autopilot takeover after 200 s is a
+# result, not a discard. Only a folder with no such record falls back on how
+# the flight ended: one that ran to a shorter limit ("max_s reached" with a
+# mission shorter than this by more than the slack) or that ended early
+# without losing the car cannot be told from a shakedown and is not C2. A
+# shakedown is also told by its tag, which the operator gives it (the mark).
 C2_MAX_S = 420
 C2_MAX_S_SLACK_S = 5.0
 C2_SHAKEDOWN_MARK = "_shake"
+C2_LOST_THE_CAR = "target_lost"
 # Flights known NOT to have flown alone: something else of the lab's ran on the
 # rig beside them. No run folder records that, so it is kept here, by hand,
 # with the committed note that says so (tests/test_vla_backend_table.py checks
@@ -213,7 +247,9 @@ PROTOCOL = {
     "id": PROTOCOL_ID,
     "date": PROTOCOL_DATE,
     "changes_from_1": "R1 and C1 are unchanged. C2 is new. The table's Orin rate column also "
-                      "takes benches that are not R1, each labelled with what makes it so",
+                      "takes benches that are not R1, each labelled with what makes it so. "
+                      "R1 is stated not to cover a backend served over protocol v2: its "
+                      "Orin timing is its server's bench",
     "R1_rate": {
         "kind": "open loop",
         "inputs": {
@@ -233,6 +269,11 @@ PROTOCOL = {
         "reference": f"the grant's {CONTRACT_HZ:g} Hz VLA -> Shield rate ({CONTRACT_MS:g} ms)",
         "floor": "the stub on the same host",
         "hosts": ["desktop (dev)", "Jetson Orin (hil), same container image definition"],
+        "served_backends": "not covered: a backend served over protocol v2 (AerialVLA bf16, "
+                           "AIoT-VLA, DroneCATS, RaceVLA) runs in its server's process, which "
+                           "`measure` does not load; its Orin timing is its server's own bench "
+                           "(demo/vla_server_v2.py bench, tools/bench_foreign_vla.py), shown "
+                           "as 'not R1' with what makes it so",
     },
     "C1_closed_loop": {
         "scenario": "policies/urban_demo_policy.yaml; instruction 'fly to (40, 40) at 6 m/s "
@@ -248,8 +289,9 @@ PROTOCOL = {
         "nulls": ["hover (zero action): reached 0/N by construction",
                   "stub P-controller, given the target coordinates: the no-learning "
                   "reference a learned backend has to beat"],
-        "status": "not flown on hil by any backend; each row of the table states why "
-                  "(BACKENDS[<backend>]['c1'])",
+        "status": "this tool reads no C1 flight: a row states why it has not flown C1 "
+                  "(BACKENDS[<backend>]['c1']), and the table counts the rows with a C1 "
+                  "record",
     },
     "C2_follow_closed_loop": {
         "added": PROTOCOL_DATE,
@@ -268,20 +310,29 @@ PROTOCOL = {
                 "follow), the Shield and the VLA server on the Jetson Orin",
         "launch": {"script": f"{PAS_LAUNCHER} FAMILY=<family>",
                    "node_args": list(C2_NODE_ARGS), "feed": dict(C2_FEED),
-                   "max_s": C2_MAX_S},
+                   "max_s": C2_MAX_S,
+                   "front_capture_interval_s_for_the_stream_feed":
+                       C2_STREAM_CAPTURE_INTERVAL_S},
         "counts_as_c2": [
             "KPI-grade by the run's own kpi.json (hil, sim_speedup 1, signed bundle, clean "
             "commit)",
             "no perception stressor, no policy hot-applied in flight, the scenario's own "
             "instruction (not a paraphrase)",
-            "--identity and --target-estimator on, the family's feed",
+            "--identity and --target-estimator on, the family's feed, and for the stream "
+            f"feed a FrontCamera capture interval of {C2_STREAM_CAPTURE_INTERVAL_S:g} s, "
+            "each as the run's params record it",
+            f"the negative query {C2_NEGATIVE_QUERY!r} in the run's params, and the node's "
+            "default signed bundle (follow-car-citylife-v<version>) as the run's "
+            "policy_source",
             "flown alone: nothing else of the lab's running on the desktop or the Orin "
             "(no run folder records this; the flights known not to be are listed by hand "
             "in tools/vla_backend_table.py C2_NOT_ALONE)",
             "the start gate passed (a flight that never started has no mission to score)",
-            f"the {C2_MAX_S} s limit: a flight that ran to a shorter limit is not C2, and a "
-            f"shakedown is not C2 (the operator marks it '{C2_SHAKEDOWN_MARK}' in its tag: "
-            f"the run folder does not record the limit it was given)"],
+            f"the {C2_MAX_S} s limit, by the limit the run's mission monitor records it was "
+            f"given: a flight given that limit is C2 however it ended, one given another is "
+            f"not; where a folder records no limit, a flight that ran to a shorter one or "
+            f"ended early without losing the car is not C2; and a shakedown is not C2 (the "
+            f"operator marks it '{C2_SHAKEDOWN_MARK}' in its tag)"],
         "flights_per_backend": C2_FLIGHTS_PER_BACKEND,
         "outputs": [
             f"frac_within_30m: share of the mission's ticks with the aircraft within "
@@ -290,9 +341,15 @@ PROTOCOL = {
             "decision_hz_mission: answers the model parsed per second over the mission; "
             "decision_hz_asked: the same while it was being asked (not held by the rail, "
             "not withheld because the detector had no box)",
-            "interventions_per_100_ticks", "p0_escapes (must be 0)", "ticks, end_reason"],
+            "interventions_per_100_ticks", "p0_escapes (must be 0)", "ticks, end_reason",
+            "the flight's own KPI verdict, from its kpi.json: outcome (success or fail) "
+            "with mission_fail_reasons; unsafe_p0_ticks, the ticks the aircraft was in a "
+            "position a P0 rule calls unsafe (position-based: 0 P0 escapes does not imply "
+            "0 of these); p0_ticks_not_measurable and p0_ticks_blind, the ticks on which "
+            "the escape count could not be measured"],
         "reported": "every flight on its own line and the range over the backend's C2 "
-                    "flights; a flight that lost the car is a C2 flight, not a discard",
+                    "flights; a flight that lost the car is a C2 flight, not a discard; a "
+                    "value a run did not record is shown as '-', never as 0",
         "nulls": ["the hand-written follow on the same rail (--pilot servo): the "
                   "no-learning reference"],
         "not_separated": "the detector supplies the hint, and while it has no box the model "
@@ -402,8 +459,8 @@ BACKENDS = {
         "code": "demo/vla_server_v2.py (serve and bench, --precision bf16)",
         "class_7b": True, "family": "aerialvla",
         "measured_by": "python demo/vla_server_v2.py bench --precision bf16 --attn sdpa "
-                       "--merge | --no-merge (the R1 frames, 5 + 50, through the server's "
-                       "protocol core)",
+                       "with --merge or --no-merge (the R1 frames, 5 + 50, through the "
+                       "server's protocol core)",
         "c1": _C1_AERIAL,
     },
     "aiotvla_v10b": {
@@ -621,6 +678,34 @@ def _num(v) -> float | None:
     except (TypeError, ValueError):
         return None
     return f if math.isfinite(f) else None
+
+
+def lab_date(when) -> str | None:
+    """The lab's local date (LAB_TZ, YYYY-MM-DD) of a moment: a Unix time,
+    or a UTC timestamp as the files write it ("2026-11-16T23:30:00Z"). The
+    dates a default is compared with are the lab's, so every measurement's
+    date is this one, never the UTC date. None for what is not a time."""
+    if when is None or when == "":
+        return None
+    try:
+        if isinstance(when, (int, float)) and not isinstance(when, bool):
+            t = datetime.fromtimestamp(float(when), timezone.utc)
+        else:
+            s = str(when).strip().replace("Z", "+00:00")
+            t = datetime.fromisoformat(s)
+            if t.tzinfo is None:                      # a bare stamp is UTC here
+                t = t.replace(tzinfo=timezone.utc)
+    except (TypeError, ValueError, OverflowError, OSError):
+        return None
+    return t.astimezone(LAB_TZ).strftime("%Y-%m-%d")
+
+
+def _bundle_name(policy) -> str | None:
+    """The file name of the signed bundle a run's policy_source names (a
+    path written on the Orin or on Windows), or None when it names none."""
+    if not isinstance(policy, dict) or not policy.get("path"):
+        return None
+    return re.split(r"[\\/]", str(policy["path"]))[-1] or None
 
 
 def _sha256(p: Path) -> str:
@@ -976,13 +1061,34 @@ def backend_of_pilot(pilot: dict | None) -> tuple[str, str | None]:
 # --------------------------------------------------------------------------- #
 AERIAL_BENCH_SCHEMA = "vlaguard.aerialvla_serving_bench/1"
 FOREIGN_BENCH_SCHEMA = "vlaguard.foreign_vla_bench/1"
-_NO_POWER_MODE = ("the file records no power mode (deploy/evidence/README.md states the "
-                  "session's: MAXN setting, clocks not locked; docs/RUNBOOK-orin-hil.md "
-                  "step 4 times in a budgeted mode with the clocks locked)")
-# The AIoT-VLA bench of 6 November: no power mode in the file, and none stated
-# for that session in deploy/evidence/README.md or CHANGELOG 2026-11-06.
-_POWER_MODE_UNKNOWN = ("the file records no power mode and none is stated for the session "
-                       "elsewhere (deploy/evidence/README.md)")
+# The bench files carry no power mode. What deploy/evidence/README.md states
+# for the session of each file committed before protocol /2, by file name;
+# any other file is said to record none, and nothing more (a later session's
+# mode is the operator's to note, and is not guessed here).
+_README_POWER_MODE = {
+    "aerialvla_serving_bench_agx.json": "deploy/evidence/README.md states that session's: "
+                                        "MAXN setting, clocks not locked",
+    "aerialvla_serving_bench_agx_merged.json": "deploy/evidence/README.md states that "
+                                               "session's: MAXN setting, clocks not locked",
+    "vla_bf16_check.json": "deploy/evidence/README.md states that session's: MAXN setting, "
+                           "clocks not locked",
+    "aiotvla_v10b_bench_agx.json": "deploy/evidence/README.md states none for that session "
+                                   "('Power mode not recorded')",
+}
+_RUNBOOK_POWER = "docs/RUNBOOK-orin-hil.md step 4 times in a budgeted mode with the clocks locked"
+
+
+def _power_mode_reason(p: Path, d: dict) -> str:
+    """What a bench file says of the Orin's power mode: a mode it records
+    (a `power_mode` field, or the --note R1 results carry), else that it
+    records none, with what the evidence README states for the committed
+    sessions it names."""
+    said = d.get("power_mode") or d.get("note")
+    if said:
+        return f"power mode as the file records it: {said}"
+    known = _README_POWER_MODE.get(Path(p).name)
+    return ("the file records no power mode" + (f" ({known})" if known else "")
+            + f"; {_RUNBOOK_POWER}")
 
 
 def _orin_by_host_block(host) -> tuple[bool, str]:
@@ -1015,7 +1121,7 @@ def _aerial_bench_record(p: Path, d: dict) -> dict:
     is_orin, basis = _orin_by_host_block(host)
     own = not _is_r1_frames(d.get("frames"))
     why = ["timed through the server's protocol core (demo/vla_server_v2.py bench), not "
-           "by `measure`", _NO_POWER_MODE]
+           "by `measure`", _power_mode_reason(p, d)]
     if own:
         why.insert(0, f"own inputs: the frames of '{Path(str(d.get('frames'))).name}', "
                       f"not the R1 frames")
@@ -1032,7 +1138,7 @@ def _aerial_bench_record(p: Path, d: dict) -> dict:
         "stats": _stats_of(d.get("stats_latency")),
         "parse_fail_timed": d.get("parse_fail_timed"),
         "peak_vram_gb": (d.get("vram") or {}).get("inference_peak_allocated_gb"),
-        "why_not_r1": why,
+        "why_not_r1": why, "power_mode": d.get("power_mode") or d.get("note"),
         "conditions": "AerialVLA served in process by demo/vla_server_v2.py bench; "
                       + "; ".join(why),
         "source": _src(p)}
@@ -1052,7 +1158,7 @@ def _foreign_bench_record(p: Path, d: dict) -> dict:
                                          PROTOCOL["R1_rate"]["timed"]):
         why.append(f"{d.get('warmup')} warm-up + {d.get('n')} timed, not R1's 5 + 50")
     why += ["a round trip over TCP on 127.0.0.1 through demo/vla_server_foreign.py "
-            "(tools/bench_foreign_vla.py), not `measure`", _POWER_MODE_UNKNOWN]
+            "(tools/bench_foreign_vla.py), not `measure`", _power_mode_reason(p, d)]
     return {
         "backend": backend, "metric": "bench", "protocol": "not R1",
         "tool": "bench_foreign_vla",
@@ -1065,7 +1171,7 @@ def _foreign_bench_record(p: Path, d: dict) -> dict:
         "stats": _stats_of(d.get("roundtrip")),
         "server_latency": _stats_of(d.get("server_latency")),
         "parse_fail_timed": d.get("parse_fail"), "refused": d.get("refused"),
-        "why_not_r1": why,
+        "why_not_r1": why, "power_mode": d.get("power_mode") or d.get("note"),
         "conditions": "served by demo/vla_server_foreign.py; the headline is the round trip, "
                       "the server's own model time is beside it; " + "; ".join(why),
         "source": _src(p)}
@@ -1082,7 +1188,7 @@ def _bf16_check_record(p: Path, d: dict) -> dict:
            f"({facts.get('frame')}), the first cold, not 5 + 50 on both",
            f"the host is named by torch's device name only ('{by_torch}'): the file "
            f"carries no host block, so guardrail.manifest's Orin rule was not applied",
-           _NO_POWER_MODE]
+           _power_mode_reason(p, d)]
     return {
         "backend": "openvla_7b_bf16", "metric": "bench", "protocol": "not R1",
         "tool": "vla_bf16_check",
@@ -1097,7 +1203,7 @@ def _bf16_check_record(p: Path, d: dict) -> dict:
         "warm_median_s": facts.get("warm_median_s"),
         "load_s": facts.get("load_s"), "peak_vram_gb": facts.get("peak_memory_gb"),
         "param_dtype": facts.get("param_dtype"), "torch": facts.get("torch"),
-        "why_not_r1": why,
+        "why_not_r1": why, "power_mode": d.get("power_mode") or d.get("note"),
         "conditions": "deploy/orin/vla_bf16_check.py (the loader R1's openvla_7b_bf16 key "
                       "uses); " + "; ".join(why),
         "source": _src(p)}
@@ -1149,7 +1255,9 @@ def bench_cell(rec: dict) -> str:
         return f"not R1 - {what}: {head}{model} [{src}]"
     what = f"{rec['config']} through demo/vla_server_v2.py bench, " + (
         f"{rec['inputs']}, " if rec["own_inputs"] else "the R1 frames, ") + \
-        f"{rec['warmup']} + {rec['timed']}, power mode not in the file"
+        f"{rec['warmup']} + {rec['timed']}, " + (
+            f"power mode {rec['power_mode']}" if rec.get("power_mode")
+            else "power mode not in the file")
     return f"not R1 - {what}: {head} [{src}]"
 
 
@@ -1201,10 +1309,30 @@ def c2_exclusions(f: dict, paraphrases: dict[str, str] | None = None) -> list[st
         why.append("the start gate never passed: no mission")
     if C2_SHAKEDOWN_MARK in str(f.get("tag") or ""):
         why.append(f"a shakedown by its tag ('{C2_SHAKEDOWN_MARK}')")
-    ran = f.get("mission_s")
-    if f.get("end_reason") == "max_s reached" and ran is not None \
-            and ran < C2_MAX_S - C2_MAX_S_SLACK_S:
-        why.append(f"ran to a time limit of about {ran:.0f} s, under C2's {C2_MAX_S} s")
+    ran, given = f.get("mission_s"), f.get("max_s_given")
+    if given is not None:
+        # The limit the mission monitor records it was given decides.
+        if abs(float(given) - C2_MAX_S) > 1e-6:
+            why.append(f"given a time limit of {float(given):g} s, not C2's {C2_MAX_S} s")
+    elif f.get("ticks"):
+        # No record of the limit: told only by how the flight ended.
+        if f.get("end_reason") == "max_s reached" and ran is not None \
+                and ran < C2_MAX_S - C2_MAX_S_SLACK_S:
+            why.append(f"ran to a time limit of about {ran:.0f} s, under C2's {C2_MAX_S} s")
+        elif f.get("end_reason") not in ("max_s reached", C2_LOST_THE_CAR) and (
+                ran is None or ran < C2_MAX_S - C2_MAX_S_SLACK_S):
+            why.append(f"ended after {_show(ran, '.0f')} s ({f.get('end_reason')}) without "
+                       f"losing the car, and the run records no time limit: it cannot be "
+                       f"told from a shakedown")
+    if f.get("negative_query") != C2_NEGATIVE_QUERY:
+        why.append(f"negative query {f.get('negative_query')!r}, not C2's "
+                   f"{C2_NEGATIVE_QUERY!r}")
+    bundle = f.get("bundle")
+    if not bundle:
+        why.append("the run records no policy bundle (policy_source)")
+    elif not C2_BUNDLE.match(bundle):
+        why.append(f"policy bundle {bundle}, not the node's default "
+                   f"follow-car-citylife-v<version>")
     if f.get("backend") != HAND_WRITTEN:
         if not (f.get("identity") and f.get("target_estimator")):
             why.append("flown without --identity and --target-estimator")
@@ -1215,6 +1343,11 @@ def c2_exclusions(f: dict, paraphrases: dict[str, str] | None = None) -> list[st
                        + (f" capped at {f['vla_feed_max_hz']:g} Hz" if capped else "")
                        + f", not the family's C2 feed ({want}"
                        + (", no cap)" if want == "stream" else ")"))
+        cap_s = f.get("front_capture_interval_s")
+        if want == "stream" and (cap_s is None or not math.isclose(
+                float(cap_s), C2_STREAM_CAPTURE_INTERVAL_S, rel_tol=0, abs_tol=1e-9)):
+            why.append(f"FrontCamera capture interval {_show(cap_s, 'g')} s, not the "
+                       f"{C2_STREAM_CAPTURE_INTERVAL_S:g} s the stream feed needs")
     return why
 
 
@@ -1242,14 +1375,16 @@ def hil_follow_flight(run_dir: Path, paraphrases: dict[str, str] | None = None) 
     stress = m.get("perception_stress")
     interventions = m.get("interventions")
     t0 = _num(obs.get("t0_wall"))
+    monitor = ((m.get("vla") or {}).get("mission") or {}).get("monitor") or {}
+    policy = m.get("policy_source") or kpi.get("policy_source") or {}
     f = {
         "backend": backend, "family": family, "metric": "hil_follow",
         "tag": str(m.get("tag") or Path(run_dir).name),
         "model_id": (pilot.get("server_identity") or {}).get("id"),
         "topology": m.get("topology"), "kpi_grade": kpi.get("kpi_grade"),
         "code_revision": (kpi.get("manifest") or {}).get("code_revision"),
-        "date": (datetime.fromtimestamp(t0, timezone.utc).strftime("%Y-%m-%d")
-                 if t0 else None),
+        # the lab's local date of the mission start (LAB_TZ)
+        "date": lab_date(t0) if t0 else None,
         "ticks": ticks, "end_reason": m.get("end_reason"),
         "mission_s": _num(m.get("mission_s")),
         "frac_within_30m": _num(m.get("frac_within_30m")),
@@ -1261,6 +1396,12 @@ def hil_follow_flight(run_dir: Path, paraphrases: dict[str, str] | None = None) 
                                         if ticks and interventions is not None else None),
         "p0_escapes": kpi.get("p0_escapes"),
         "p0_violation_escape_rate": kpi.get("p0_violation_escape_rate"),
+        # the flight's own KPI verdict (kpi.json), beside the escape count
+        "kpi_outcome": kpi.get("outcome"),
+        "mission_fail_reasons": kpi.get("mission_fail_reasons"),
+        "unsafe_p0_ticks": kpi.get("unsafe_p0_ticks"),
+        "p0_ticks_not_measurable": kpi.get("p0_ticks_not_measurable"),
+        "p0_ticks_blind": kpi.get("p0_ticks_blind"),
         "detector_hz": _num(m.get("det_hz")),
         "stress": (stress.get("name") if isinstance(stress, dict) else stress)
         or params.get("stress"),
@@ -1269,6 +1410,10 @@ def hil_follow_flight(run_dir: Path, paraphrases: dict[str, str] | None = None) 
         "target_estimator": bool(params.get("target_estimator")),
         "vla_feed": params.get("vla_feed") or "tick",
         "vla_feed_max_hz": _num(params.get("vla_feed_max_hz")),
+        "negative_query": params.get("negative_query"),
+        "front_capture_interval_s": _num(params.get("front_capture_interval_s")),
+        "bundle": _bundle_name(policy),
+        "max_s_given": _num((monitor.get("config") or {}).get("max_s")),
         "start_gate_reached": (m.get("start_gate") or {}).get("reached"),
         "summary_only": False,
         "source": _src(Path(run_dir) / "metrics.json"),
@@ -1328,11 +1473,18 @@ def extract_hil_follow_summaries(docs_data: Path, have: set[str]) -> list[dict]:
                                                 if ticks and inter is not None else None),
                 "p0_escapes": int(_num(p0)) if _num(p0) is not None else None,
                 "p0_violation_escape_rate": _num(r.get("p0_violation_escape_rate")),
+                "kpi_outcome": r.get("outcome"),
+                "mission_fail_reasons": r.get("mission_fail_reasons"),
+                "unsafe_p0_ticks": r.get("unsafe_p0_ticks"),
+                "p0_ticks_not_measurable": r.get("p0_ticks_not_measurable"),
+                "p0_ticks_blind": r.get("p0_ticks_blind"),
                 "detector_hz": _num(r.get("detector_hz")),
                 "stress": None if r.get("stress") in (None, "none") else r.get("stress"),
                 "hot_apply": bool(r.get("hot_apply_events")),
                 "identity": None, "target_estimator": None,
                 "vla_feed": r.get("vla_feed"), "vla_feed_max_hz": _num(r.get("vla_feed_max_hz")),
+                "negative_query": None, "front_capture_interval_s": None, "bundle": None,
+                "max_s_given": None,
                 "start_gate_reached": None, "summary_only": True,
                 "source": _src(p),
             }
@@ -1376,6 +1528,50 @@ def _span(vals: list[float], fmt: str = ".3f") -> str:
             f"(median {format(statistics.median(vals), fmt)})")
 
 
+def p0_escapes_text(flights: list[dict]) -> str:
+    """The P0 escapes of these flights, summed only over the flights that
+    recorded the count: a missing count is said, never added as 0."""
+    known = [int(f["p0_escapes"]) for f in flights if f.get("p0_escapes") is not None]
+    gap = len(flights) - len(known)
+    if not known:
+        return "P0 escapes not recorded"
+    return f"P0 escapes {sum(known)}" + (f" (not recorded for {gap} of {len(flights)})"
+                                         if gap else "")
+
+
+def kpi_outcome_text(f: dict) -> str:
+    """One flight's own KPI verdict: outcome and fail reasons, '-' when its
+    kpi.json does not record one."""
+    if f.get("kpi_outcome") is None:
+        return "-"
+    reasons = f.get("mission_fail_reasons") or []
+    return str(f["kpi_outcome"]) + (f" ({', '.join(map(str, reasons))})" if reasons else "")
+
+
+def kpi_verdict_text(flights: list[dict]) -> str:
+    """The flights' own KPI verdicts (kpi.json): how many succeeded and how
+    many failed, and why; the ticks spent in a P0-unsafe position (position-
+    based, so 0 escapes does not make it 0); the ticks the escape count could
+    not see. A value a run did not record is said to be missing."""
+    outs: dict[str, int] = {}
+    reasons: dict[str, int] = {}
+    for f in flights:
+        o = str(f.get("kpi_outcome")) if f.get("kpi_outcome") is not None else "not recorded"
+        outs[o] = outs.get(o, 0) + 1
+        for why in f.get("mission_fail_reasons") or []:
+            reasons[str(why)] = reasons.get(str(why), 0) + 1
+    text = "KPI outcome " + ", ".join(f"{n} {o}" for o, n in sorted(outs.items()))
+    if reasons:
+        text += " (" + ", ".join(f"{w} {n}" for w, n in sorted(reasons.items())) + ")"
+    unsafe = [f.get("unsafe_p0_ticks") for f in flights]
+    text += "; ticks in a P0-unsafe position " + (
+        ", ".join(_count(u) for u in unsafe))
+    blind = [(f.get("p0_ticks_not_measurable"), f.get("p0_ticks_blind")) for f in flights]
+    text += "; P0 ticks not measurable / blind " + ", ".join(
+        f"{_count(a)}/{_count(b)}" for a, b in blind)
+    return text
+
+
 def c2_cell(flights: list[dict], spec: dict) -> str:
     """The hil C2 cell of one backend: its C2 flights as a range (the lines
     themselves are in the C2 section), how they ended, how many more are
@@ -1396,7 +1592,7 @@ def c2_cell(flights: list[dict], spec: dict) -> str:
                 + _span([f["decision_hz_mission"] for f in c2], ".3g")
                 + "; interventions per 100 ticks "
                 + _span([f["interventions_per_100_ticks"] for f in c2], ".3g")
-                + f"; P0 escapes {sum(int(f['p0_escapes'] or 0) for f in c2)}")
+                + "; " + p0_escapes_text(c2) + "; " + kpi_verdict_text(c2))
         if len(c2) < C2_FLIGHTS_PER_BACKEND:
             text += (f"; the protocol asks for {C2_FLIGHTS_PER_BACKEND}: "
                      f"{C2_FLIGHTS_PER_BACKEND - len(c2)} more to fly")
@@ -1412,14 +1608,21 @@ def c2_cell(flights: list[dict], spec: dict) -> str:
 # --------------------------------------------------------------------------- #
 _NOT_ARDUPILOT = ("Project AirSim CityLife with simple_flight: not ArduPilot, not hil, never "
                   "KPI-grade. One flight per configuration unless more are listed, and one "
-                  "flight can differ widely from the next")
+                  "flight can differ widely from the next; flights at another commit or "
+                  "under another policy bundle are not repeats of one configuration "
+                  "(where a run folder names them, the table shows both)")
 _MATRIX_MODEL = {"aerovla": "aerialvla_bf16", "dronecats": "dronecats_2b",
                  "racevla": "racevla_7b", "manual": HAND_WRITTEN, "fixed12": STAND_IN}
 _MATRIX_KIND = {"pure": "pure (the VLA flies every step)",
                 "hier": "hierarchical (the VLA sets the intent, the controller flies)",
                 "manual": "hand-written follow (no VLA)",
                 "fixed12": "hierarchical, a scripted 12 m stand-in (no VLA)"}
-_AGX_MATRIX_TAG = re.compile(r"^(nfz3b_)?agx_.+_2026110[34]$")
+# The 3-4 November matrix (agx_*_2026110[34], and nfz3b_agx_*: the same
+# configuration under another bundle, which each flight's own policy record
+# names), and the first AGX Orin follows of 3 November before it
+# (agx_follow_01, agx_e2e_aerovla_01, agx_hier_aerovla_01: an earlier commit,
+# which each flight's own record names).
+_AGX_MATRIX_TAG = re.compile(r"^(nfz3b_)?agx_.+_(2026110[34]|\d\d)$")
 
 
 def _matrix_records(by: dict[str, list[dict]], matrix: str, conditions: str,
@@ -1469,7 +1672,8 @@ def extract_matrix_1028(docs_data: Path, run_roots: list[Path] | tuple = ()) -> 
                 r.get("platform"), r.get("platform")),
             "kind": kind, "note": note,
             "within_30m": r.get("score"), "latency_p50_s": r.get("latency_p50_s"),
-            "p0_escape_rate": r.get("p0_escape_rate")})
+            "p0_escape_rate": r.get("p0_escape_rate"),
+            "bundle": None, "code_revision": None})          # the file names neither
     return _matrix_records(
         by, "27-28 October 2026",
         _NOT_ARDUPILOT + ". The file names the models, not the server configurations; "
@@ -1505,14 +1709,18 @@ def simple_flight_follow(run_dir: Path) -> dict | None:
             "config": (f"{sid.get('precision')}/{sid.get('attn')}/"
                        f"{'merged' if sid.get('merged') else 'unmerged'}" if sid else None),
             "topology": (kpi.get("manifest") or {}).get("topology"),
-            "code_revision": (kpi.get("manifest") or {}).get("code_revision")}
+            "code_revision": (kpi.get("manifest") or {}).get("code_revision"),
+            "bundle": _bundle_name(m.get("policy_source") or kpi.get("policy_source"))}
 
 
 def extract_matrix_agx(run_roots: list[Path]) -> list[dict]:
     """The 28 October matrix re-flown on 3-4 November 2026 with the flight
     client and every VLA server on the AGX Orin (run folders
-    agx_*_2026110[34] and nfz3b_agx_*; CHANGELOG 2026-11-04). Every folder
-    found is listed, a configuration flown twice twice."""
+    agx_*_2026110[34] and nfz3b_agx_*; CHANGELOG 2026-11-04), and the first
+    AGX follows of 3 November before it (agx_*_01). Every folder found is
+    listed, a configuration flown twice twice, each with the commit and the
+    policy bundle its own record names: flights under different bundles are
+    not run-to-run spread of one configuration."""
     by: dict[str, list[dict]] = {}
     seen: set[str] = set()
     where = None
@@ -1533,16 +1741,23 @@ def extract_matrix_agx(run_roots: list[Path]) -> list[dict]:
                         "the 4 November AGX Orin re-flight of the follow matrix")]
     return _matrix_records(
         by, "3-4 November 2026",
-        _NOT_ARDUPILOT + ". The simulator ran on the PC; identities and scores are each "
-        "run's own metrics.json and kpi.json. Pure flights are scored from the first "
+        _NOT_ARDUPILOT + ". The simulator ran on the PC; identities, scores, commits and "
+        "policy bundles are each run's own metrics.json and kpi.json. The agx_*_01 flights "
+        "are the first AGX follows of 3 November, at an earlier commit than the matrix; the "
+        "nfz3b_ flights flew another bundle (a no-fly zone on the route), so they are "
+        "another scenario, not a repeat. Pure flights are scored from the first "
         "acquisition, the others from the start gate",
-        {"file": f"{where}/agx_*_2026110[34]/metrics.json", "runs": len(seen)})
+        {"file": f"{where}/*agx_*/metrics.json (tags *_2026110[34] and *_01)",
+         "runs": len(seen)})
 
 
 # --------------------------------------------------------------------------- #
 # Measurements made with the protocol
 # --------------------------------------------------------------------------- #
 def load_rate_results(root: Path = EVIDENCE) -> list[dict]:
+    """The `measure` results under <root>/<topology>/. Each is marked with
+    whether it was made under a protocol whose R1 this one's is (R1_PROTOCOLS):
+    a result under any other id is kept and listed, never shown as R1."""
     out = []
     for p in sorted(Path(root).glob("*/vla_rate_*.json")):
         try:
@@ -1551,8 +1766,17 @@ def load_rate_results(root: Path = EVIDENCE) -> list[dict]:
             continue
         if d.get("schema") == RATE_SCHEMA:
             d["_file"] = _rel(p)
+            d["_is_r1"] = d.get("protocol") in R1_PROTOCOLS and d.get("test", "R1") == "R1"
             out.append(d)
     return out
+
+
+def _other_protocol_record(r: dict) -> dict:
+    """A rate result made under a protocol whose R1 is not this one's."""
+    return {"backend": r.get("backend"), "metric": "rate_other_protocol",
+            "status": (f"a rate result under {r.get('protocol')!r} (test {r.get('test')!r}), "
+                       f"not R1 of {', '.join(R1_PROTOCOLS)}: not shown as R1"),
+            "source": {"file": r.get("_file")}, "what": "a rate result"}
 
 
 def _protocol_states(n: int):
@@ -1724,10 +1948,13 @@ def _torchao_int8_weight_only():
 
 def load_openvla_int8wo(model_dir, load=None, quantizer=None, find_spec=None):
     """(processor, model, torch) for the int8 weight-only ATTEMPT: the bf16
-    load, then torchao's int8 weight-only quantisation in place. Every way it
-    can fail is a MeasureRefused naming the stage - "import" (no torchao, or
-    one that does not import), "load", "quantize" - and torchao is looked for
-    BEFORE the 15 GB load, so an environment without it refuses at once.
+    load, then torchao's int8 weight-only quantisation in place. What int8
+    itself stops at is a MeasureRefused naming the stage - "import" (no
+    torchao, or one that does not import), "quantize" - and torchao is looked
+    for BEFORE the 15 GB load, so an environment without it refuses at once.
+    A bf16 load that fails is NOT an int8 result (a wrong --model-root, a GPU
+    another process holds, a model off the GPU): it is a RuntimeError, so the
+    run fails with exit 1 and writes no result file.
     `quantizer(model)` and `find_spec` stand in for torchao in tests."""
     if quantizer is None:
         import importlib.util
@@ -1740,7 +1967,10 @@ def load_openvla_int8wo(model_dir, load=None, quantizer=None, find_spec=None):
     try:
         proc, model, torch = load_openvla_bf16(model_dir, load=load)
     except Exception as exc:                              # noqa: BLE001
-        raise MeasureRefused("load", f"{type(exc).__name__}: {exc}") from exc
+        raise RuntimeError(f"the bf16 load the int8 attempt starts from failed "
+                           f"({type(exc).__name__}: {exc}); that is not an int8 result, so "
+                           f"nothing is recorded: check --model-root and that no other "
+                           f"process holds the GPU") from exc
     try:
         quantizer(model)
     except Exception as exc:                              # noqa: BLE001
@@ -2375,28 +2605,61 @@ class DefaultRefused(ValueError):
 
 
 def newest_measurement(t: dict) -> str | None:
-    """The date (UTC, YYYY-MM-DD) of the newest measurement the set holds, by
-    the timestamps inside the files: R1 results, benches, C2 flights. File
-    modification times are not used (a checkout rewrites them)."""
+    """The lab's local date (LAB_TZ, YYYY-MM-DD) of the newest measurement
+    the set holds, by the timestamps inside the files: R1 results, benches,
+    hil flights. File modification times are not used (a checkout rewrites
+    them). A UTC timestamp is brought to the lab's zone first: a flight at
+    07:30 on the 17th in the lab is of the 17th, though its UTC date is the
+    16th."""
     dates = []
     for r in t["rows"]:
-        dates += [str(x.get("created_utc"))[:10] for x in r["r1_results"] if x.get("created_utc")]
+        dates += [lab_date(x.get("created_utc")) for x in r["r1_results"]]
         for rec in r["records"]:
-            if rec.get("metric") == "bench" and rec.get("created_utc"):
-                dates.append(str(rec["created_utc"])[:10])
-            if rec.get("metric") == "hil_follow" and rec.get("date"):
-                dates.append(rec["date"])
+            if rec.get("metric") == "bench":
+                dates.append(lab_date(rec.get("created_utc")))
+            if rec.get("metric") == "hil_follow":
+                dates.append(rec.get("date"))
+    dates = [d for d in dates if d]
     return max(dates) if dates else None
+
+
+def comparison_gaps(t: dict) -> list[str]:
+    """What the set lacks to compare the backends on the same tests - the
+    grant's "Q2 measurement set" - each as '<row>: <what>': every row with a
+    launch family (the backends that can fly C2) needs an Orin timing (R1, or
+    its server's bench where R1 does not cover it) and the protocol's count
+    of C2 flights; the stub, R1's floor, needs an R1 on an Orin."""
+    gaps = []
+    for r in t["rows"]:
+        if r.get("unavailable"):
+            continue
+        cells = r["cells"]
+        if r.get("family"):
+            lacks = []
+            if not r.get("orin_timed"):
+                lacks.append("no Orin timing")
+            n = sum(1 for f in r["records"] if f.get("metric") == "hil_follow"
+                    and not f["not_c2"])
+            if n < C2_FLIGHTS_PER_BACKEND:
+                lacks.append(f"{n} of {C2_FLIGHTS_PER_BACKEND} C2 flights")
+            if lacks:
+                gaps.append(f"{r['backend']}: " + ", ".join(lacks))
+        if r["backend"] == "stub" and not cells["rate_orin"].startswith("R1"):
+            gaps.append("stub: no R1 on an Orin (R1's floor on the same host)")
+    return gaps
 
 
 def name_default(t: dict, backend: str, scope: str | None, date: str | None,
                  today: str | None = None) -> dict:
     """The default-backend record for table `t`, or DefaultRefused saying why
     it is refused. The grant: no default "until the Q2 measurement set lands".
-    So the named backend must be a row the set holds an Orin rate and hil
-    closed-loop flights for (C1, or the protocol's count of C2 flights), and
-    the date must be after the set: later than its newest measurement, not
-    before the protocol, not in the future."""
+    So the named backend must be a row the set holds an Orin timing and the
+    protocol's count of C2 flights for; the set must compare it with the
+    others on the same tests (comparison_gaps: every backend that can fly C2
+    measured the same way, and the stub's R1 on an Orin); and the date must
+    be after the set: later than its newest measurement, not before the
+    protocol, not in the future - all as the lab's local dates (LAB_TZ).
+    This tool reads no C1 flight, so C1 cannot stand in for C2 here."""
     row = next((r for r in t["rows"] if r["backend"] == backend), None)
     if row is None:
         raise DefaultRefused(f"--default {backend!r} is not a row of the table "
@@ -2410,7 +2673,7 @@ def name_default(t: dict, backend: str, scope: str | None, date: str | None,
         day = datetime.strptime(str(date), "%Y-%m-%d").strftime("%Y-%m-%d")
     except ValueError:
         raise DefaultRefused(f"--default needs --default-date YYYY-MM-DD, got {date!r}") from None
-    today = today or datetime.now().strftime("%Y-%m-%d")
+    today = today or datetime.now(LAB_TZ).strftime("%Y-%m-%d")
     newest = newest_measurement(t)
     if day > today:
         raise DefaultRefused(f"--default-date {day} is in the future (today is {today})")
@@ -2421,16 +2684,17 @@ def name_default(t: dict, backend: str, scope: str | None, date: str | None,
         raise DefaultRefused(f"--default-date {day} is not after the set's newest measurement "
                          f"({newest}): a default is named after the set")
     cells = row["cells"]
-    orin_ok = cells["rate_orin"].startswith(("R1", "not R1"))
     c2 = [f for f in row["records"] if f.get("metric") == "hil_follow" and not f["not_c2"]]
-    c1 = [f for f in row["records"] if f.get("protocol") == "C1"]
-    if not orin_ok:
+    if not row.get("orin_timed"):
         raise DefaultRefused(f"--default {backend}: the set holds no Orin rate for it "
                          f"({cells['rate_orin']})")
-    if not c1 and len(c2) < C2_FLIGHTS_PER_BACKEND:
-        raise DefaultRefused(f"--default {backend}: the set holds no C1 flight and {len(c2)} C2 "
-                         f"flight(s) of it on hil; the protocol asks for "
-                         f"{C2_FLIGHTS_PER_BACKEND}")
+    if len(c2) < C2_FLIGHTS_PER_BACKEND:
+        raise DefaultRefused(f"--default {backend}: the set holds {len(c2)} C2 flight(s) of "
+                         f"it on hil; the protocol asks for {C2_FLIGHTS_PER_BACKEND}")
+    gaps = comparison_gaps(t)
+    if gaps:
+        raise DefaultRefused(f"--default {backend}: the set does not yet compare it with the "
+                         f"other backends on the same tests - " + "; ".join(gaps))
     return {"backend": backend, "label": row["label"], "scope": scope.strip(), "date": day,
             "named_by": "the lab",
             "recorded_with": "python tools/vla_backend_table.py table --default",
@@ -2469,9 +2733,11 @@ def build_table(demo_out: Path = ROOT / "demo" / "out",
                    + hil_flights
                    + extract_matrix_1028(Path(docs_data), run_roots)
                    + extract_matrix_agx(run_roots))
-        rates = load_rate_results(evidence)
+        all_rates = load_rate_results(evidence)
     finally:
         del _ALIASES[len(_ALIASES) - len(added):]
+    rates = [r for r in all_rates if r["_is_r1"]]
+    records += [_other_protocol_record(r) for r in all_rates if not r["_is_r1"]]
     serving = load_serving(serving_json)
     rows = []
     for bid, spec in BACKENDS.items():
@@ -2505,6 +2771,14 @@ def build_table(demo_out: Path = ROOT / "demo" / "out",
             cells["rate_orin"] = _r1_cell(orin)
         elif spec.get("unavailable"):
             cells["rate_orin"] = "weights not obtained"
+        elif bid in SERVED_BACKENDS:
+            # R1 does not cover a served model (PROTOCOL R1 served_backends):
+            # its Orin timing is its server's bench, and no R1 is owed.
+            no_r1 = (f"R1 does not cover a model served over protocol v2 (`measure` refuses "
+                     f"it): its Orin timing is its server's bench ({spec['measured_by']})")
+            parts = [bench_cell(b) for b in benches]
+            cells["rate_orin"] = ("; ".join(parts + [no_r1]) if parts
+                                  else "no Orin bench yet; " + no_r1)
         else:
             # No R1 from an Orin: an attempt that was refused, then the benches
             # that are not R1, each with its label, then what is still owed.
@@ -2527,18 +2801,32 @@ def build_table(demo_out: Path = ROOT / "demo" / "out",
         rows.append({"backend": bid, **{k: v for k, v in spec.items()},
                      "weights_status": weights_status(bid, model_root, repo_weights),
                      "cells": cells, "records": mine,
+                     # timed on an Orin at all: an R1 result, or a labelled bench
+                     "orin_timed": bool(orin or benches),
+                     "orin_r1": bool(orin), "orin_bench": bool(benches) and not orin,
+                     "orin_attempt_only": bool(orin_no) and not orin,
                      "r1_results": [{k: v for k, v in r.items() if k not in ("latency_s",)}
                                     for r in r1]})
     listed = set(BACKENDS)
-    n_r1 = sum(1 for r in rows if r["cells"]["rate_orin"].startswith("R1"))
-    n_bench = sum(1 for r in rows if r["cells"]["rate_orin"].startswith(("not R1", "attempted")))
+    timeable = [r for r in rows if not r.get("unavailable")
+                and r["backend"] not in SERVED_BACKENDS]
+    n_r1 = sum(1 for r in rows if r["orin_r1"])
+    n_bench = sum(1 for r in rows if r["orin_bench"])
+    n_attempt = sum(1 for r in rows if r["orin_attempt_only"])
     n_c2 = sum(1 for r in rows if r["cells"]["closed_loop_hil_c2"].startswith("C2,"))
-    n_real = sum(1 for sp in BACKENDS.values() if not sp.get("unavailable"))
-    if n_r1 or n_bench:
-        orin_says = (f"the Orin rate column holds R1 for {n_r1} of the {n_real} backends with "
-                     f"weights and a bench that is not R1, labelled as such, for {n_bench} more")
+    n_c1 = sum(1 for r in rows if any(m.get("protocol") == "C1" for m in r["records"]))
+    if n_r1 or n_bench or n_attempt:
+        orin_says = (f"the Orin rate column holds R1 for {n_r1} of the {len(timeable)} "
+                     f"backends `measure` can time, and a bench that is not R1, labelled as "
+                     f"such, for {n_bench} backends"
+                     + (f"; a recorded attempt with no timing for {n_attempt} more"
+                        if n_attempt else "")
+                     + f" (R1 does not cover the {len(SERVED_BACKENDS)} backends served over "
+                       f"protocol v2: their Orin timing is their server's bench)")
     else:
         orin_says = "the Orin columns are empty"
+    c1_says = (f"C1 has been flown by {n_c1} backend{'s' if n_c1 != 1 else ''}" if n_c1
+               else "C1 has been flown by no backend")
     urban = sorted(q.name for q in Path(bundles).glob("*urban*")) if Path(bundles).is_dir() \
         else []
     t = {
@@ -2559,11 +2847,12 @@ def build_table(demo_out: Path = ROOT / "demo" / "out",
         "default_backend": None,
         "decision": (
             "The grant defers the choice to this measurement set, and " + orin_says
-            + f". On hil, C1 has been flown by no backend and C2 by {n_c2} (the protocol "
+            + f". On hil, {c1_says} and C2 by {n_c2} (the protocol "
               f"asks for {C2_FLIGHTS_PER_BACKEND} flights of each)"
             + ". The stored dev-rail runs (demo/out/ros2_*, not KPI-bearing: the grant "
               "takes KPI figures from hil) were flown by the stub."),
     }
+    t["comparison_gaps"] = comparison_gaps(t)
     if default:
         t["default_backend"] = name_default(t, default.get("backend"), default.get("scope"),
                                             default.get("date"), today=today)
@@ -2622,6 +2911,15 @@ def _show(v, fmt: str = ".3g", none: str = "-") -> str:
     return none if v is None else format(v, fmt)
 
 
+def _count(v, none: str = "-") -> str:
+    """A count as a file wrote it (an int, or a float that is whole); '-'
+    when the file did not record it, never 0."""
+    n = _num(v)
+    if n is None:
+        return none
+    return str(int(n)) if n.is_integer() else format(n, "g")
+
+
 def _all_records(t: dict, metric: str) -> list[dict]:
     """Every record of one kind, rows first, then the backends that are not
     rows; each with the label it is shown under."""
@@ -2659,17 +2957,31 @@ def render_c2(t: dict) -> list[str]:
     no = sorted((f for f in flights if f["not_c2"]), key=lambda f: (f["_label"], f["tag"]))
     if yes:
         out += ["| Flight | Backend | Commit | Ticks | Ended | Within 30 m | Decisions/s, mission "
-                "| Decisions/s, asked | Interventions per 100 ticks | P0 escapes | Detector Hz |",
-                "|---|---|---|---|---|---|---|---|---|---|---|"]
+                "| Decisions/s, asked | Interventions per 100 ticks | P0 escapes "
+                "| KPI outcome (kpi.json) | Ticks in a P0-unsafe position "
+                "| P0 ticks not measurable / blind | Detector Hz |",
+                "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
         for f in yes:
             out.append(
                 f"| {f['tag']} | {f['_label']} | {str(f.get('code_revision') or '-')[:7]} "
                 f"| {f['ticks']} | {f['end_reason']} | {_show(f['frac_within_30m'], '.3f')} "
                 f"| {_show(f['decision_hz_mission'])} | {_show(f['decision_hz_asked'])} "
-                f"| {_show(f['interventions_per_100_ticks'])} | {_show(f['p0_escapes'], 'd')} "
+                f"| {_show(f['interventions_per_100_ticks'])} | {_count(f['p0_escapes'])} "
+                f"| {kpi_outcome_text(f)} | {_count(f.get('unsafe_p0_ticks'))} "
+                f"| {_count(f.get('p0_ticks_not_measurable'))} / "
+                f"{_count(f.get('p0_ticks_blind'))} "
                 f"| {_show(f['detector_hz'])} |")
+        out += ["", "A P0 escape is a tick on which a P0 rule was violated and the action "
+                    "flown still violated it after the Shield (guardrail/kpi.py); a tick in a "
+                    "P0-unsafe position is counted by where the aircraft was. A flight can "
+                    "have 0 escapes and still fail its KPI on position: the outcome column is "
+                    "the flight's own verdict."]
     else:
         out.append("No C2 flight is on disk.")
+    nulls = [f for f in flights if f.get("backend") == HAND_WRITTEN]
+    out += ["", f"C2's null ({c2p['nulls'][0]}): "
+            + (f"{len(nulls)} hil follow{'s' if len(nulls) != 1 else ''} of it on disk, "
+               f"listed below" if nulls else "no flight of it on disk") + "."]
     owed = [f"{r['label']}: {r['cells']['closed_loop_hil_c2']}" for r in t["rows"]
             if r.get("family") and not r["cells"]["closed_loop_hil_c2"].startswith("C2,")]
     if owed:
@@ -2679,18 +2991,25 @@ def render_c2(t: dict) -> list[str]:
         out += ["", f"hil follow flights that are not C2 ({len(no)}), listed so none is "
                     f"dropped silently; they are not scored here:", "",
                 "| Flight | Backend | Why it is not C2 | Ticks | Ended | Within 30 m "
-                "| P0 escapes |", "|---|---|---|---|---|---|---|"]
+                "| P0 escapes | KPI outcome |", "|---|---|---|---|---|---|---|---|"]
         for f in no:
+            # a flight with no tick flew no mission: its counts are not 0, they
+            # do not exist
+            flew = bool(f.get("ticks"))
             out.append(f"| {f['tag']} | {f['_label']} | {'; '.join(f['not_c2'])} | {f['ticks']} "
                        f"| {f['end_reason']} | {_show(f['frac_within_30m'], '.3f')} "
-                       f"| {_show(f['p0_escapes'], 'd')} |")
+                       f"| {_count(f['p0_escapes']) if flew else '-'} "
+                       f"| {kpi_outcome_text(f) if flew else '- (no mission)'} |")
     out.append("")
     return out
 
 
 def render_c1(t: dict) -> list[str]:
     b = t.get("c1_bundles") or {}
-    out = ["## C1 on hil: flown by no backend, and why", "",
+    flown = [r["label"] for r in t["rows"]
+             if any(m.get("protocol") == "C1" for m in r["records"])]
+    out = [("## C1 on hil: flown by " + ", ".join(flown) if flown
+            else "## C1 on hil: flown by no backend, and why"), "",
            f"C1 stays in the protocol as it was. Signed bundles of `{b.get('policy')}` in "
            f"`{b.get('looked_in')}` on this host: "
            + (", ".join(f"`{n}`" for n in b.get("found") or []) or "none") + ".", ""]
@@ -2710,13 +3029,16 @@ def render_matrices(t: dict) -> list[str]:
         group = [r for r in recs if r.get("matrix") == matrix and not r.get("status")]
         out += [f"**{matrix}.** {group[0]['conditions']}. Source: "
                 f"`{group[0]['source']['file']}`.", "",
-                "| Model | Flight | Where | Kind | Within 30 m | VLA latency p50 (s) "
-                "| P0 escape rate |", "|---|---|---|---|---|---|---|"]
+                "| Model | Flight | Where | Kind | Commit | Policy bundle | Within 30 m "
+                "| VLA latency p50 (s) | P0 escape rate |",
+                "|---|---|---|---|---|---|---|---|---|"]
         for r in group:
             for f in r["flights"]:
                 kind = f"{f.get('kind')}" + (f" ({f['note']})" if f.get("note") else "")
                 out.append(f"| {r['_label']} | {f.get('tag')} | {f.get('platform')} "
-                           f"| {kind} | {_show(f.get('within_30m'), '.3f')} "
+                           f"| {kind} | {str(f.get('code_revision') or '-')[:7]} "
+                           f"| {f.get('bundle') or '-'} "
+                           f"| {_show(f.get('within_30m'), '.3f')} "
                            f"| {_show(f.get('latency_p50_s'))} "
                            f"| {_show(f.get('p0_escape_rate'))} |")
         out.append("")
@@ -2777,6 +3099,11 @@ def render_markdown(t: dict) -> str:
             f"{d['confirmation'][0].upper() + d['confirmation'][1:]}. {t['decision']}")
     else:
         default_line = f"**Default backend:** none. {t['decision']}"
+        gaps = t.get("comparison_gaps")
+        if gaps:
+            default_line += (" What the set lacks before `table --default` names one (the same "
+                             "tests for every backend that can fly C2, and R1's floor): "
+                             + "; ".join(gaps) + ".")
     out = ["# VLA backend comparison - measurement table",
            "",
            f"Generated by `python tools/vla_backend_table.py table` on {t['created_utc']}. "
@@ -2889,13 +3216,14 @@ def main(argv=None) -> int:
                      help="the checkout whose models/ holds the weight files that are not in "
                           "git (default: this one)")
     p_t.add_argument("--default", default=None, metavar="BACKEND",
-                     help="name a default backend; refused unless the set holds an Orin rate "
-                          "and hil closed-loop flights for it and --default-date is after "
-                          "the set (module docstring, THE DEFAULT LINE)")
+                     help="name a default backend; refused unless the set holds an Orin "
+                          "timing and the C2 flights of every backend that can fly C2, the "
+                          "stub's R1 on an Orin, and --default-date (the lab's local date) is "
+                          "after the set (module docstring, THE DEFAULT LINE)")
     p_t.add_argument("--default-scope", default=None,
                      help="what it is the default for, e.g. \"the follow task\"")
     p_t.add_argument("--default-date", default=None, metavar="YYYY-MM-DD",
-                     help="the day the lab named it")
+                     help="the day the lab named it, as the lab's local date (UTC+8)")
     p_v = sub.add_parser("serving", help="summarise demo/vla_server_v2.py bench results into "
                                          "docs/data and add them to the committed table")
     p_v.add_argument("--bench", type=Path, nargs="+", required=True,

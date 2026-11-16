@@ -3,7 +3,7 @@
  "protocol": {
   "id": "vla-backend-protocol/2",
   "date": "2026-11-16",
-  "changes_from_1": "R1 and C1 are unchanged. C2 is new. The table's Orin rate column also takes benches that are not R1, each labelled with what makes it so",
+  "changes_from_1": "R1 and C1 are unchanged. C2 is new. The table's Orin rate column also takes benches that are not R1, each labelled with what makes it so. R1 is stated not to cover a backend served over protocol v2: its Orin timing is its server's bench",
   "R1_rate": {
    "kind": "open loop",
    "inputs": {
@@ -29,7 +29,8 @@
    "hosts": [
     "desktop (dev)",
     "Jetson Orin (hil), same container image definition"
-   ]
+   ],
+   "served_backends": "not covered: a backend served over protocol v2 (AerialVLA bf16, AIoT-VLA, DroneCATS, RaceVLA) runs in its server's process, which `measure` does not load; its Orin timing is its server's own bench (demo/vla_server_v2.py bench, tools/bench_foreign_vla.py), shown as 'not R1' with what makes it so"
   },
   "C1_closed_loop": {
    "scenario": "policies/urban_demo_policy.yaml; instruction 'fly to (40, 40) at 6 m/s altitude 20'; spawn (0, 0); the policy's no-fly zone lies on the straight line",
@@ -49,7 +50,7 @@
     "hover (zero action): reached 0/N by construction",
     "stub P-controller, given the target coordinates: the no-learning reference a learned backend has to beat"
    ],
-   "status": "not flown on hil by any backend; each row of the table states why (BACKENDS[<backend>]['c1'])"
+   "status": "this tool reads no C1 flight: a row states why it has not flown C1 (BACKENDS[<backend>]['c1']), and the table counts the rows with a C1 record"
   },
   "C2_follow_closed_loop": {
    "added": "2026-11-16",
@@ -70,15 +71,17 @@
      "dronecats": "tick",
      "racevla": "tick"
     },
-    "max_s": 420
+    "max_s": 420,
+    "front_capture_interval_s_for_the_stream_feed": 0.05
    },
    "counts_as_c2": [
     "KPI-grade by the run's own kpi.json (hil, sim_speedup 1, signed bundle, clean commit)",
     "no perception stressor, no policy hot-applied in flight, the scenario's own instruction (not a paraphrase)",
-    "--identity and --target-estimator on, the family's feed",
+    "--identity and --target-estimator on, the family's feed, and for the stream feed a FrontCamera capture interval of 0.05 s, each as the run's params record it",
+    "the negative query ['a traffic light'] in the run's params, and the node's default signed bundle (follow-car-citylife-v<version>) as the run's policy_source",
     "flown alone: nothing else of the lab's running on the desktop or the Orin (no run folder records this; the flights known not to be are listed by hand in tools/vla_backend_table.py C2_NOT_ALONE)",
     "the start gate passed (a flight that never started has no mission to score)",
-    "the 420 s limit: a flight that ran to a shorter limit is not C2, and a shakedown is not C2 (the operator marks it '_shake' in its tag: the run folder does not record the limit it was given)"
+    "the 420 s limit, by the limit the run's mission monitor records it was given: a flight given that limit is C2 however it ended, one given another is not; where a folder records no limit, a flight that ran to a shorter one or ended early without losing the car is not C2; and a shakedown is not C2 (the operator marks it '_shake' in its tag)"
    ],
    "flights_per_backend": 3,
    "outputs": [
@@ -86,16 +89,17 @@
     "decision_hz_mission: answers the model parsed per second over the mission; decision_hz_asked: the same while it was being asked (not held by the rail, not withheld because the detector had no box)",
     "interventions_per_100_ticks",
     "p0_escapes (must be 0)",
-    "ticks, end_reason"
+    "ticks, end_reason",
+    "the flight's own KPI verdict, from its kpi.json: outcome (success or fail) with mission_fail_reasons; unsafe_p0_ticks, the ticks the aircraft was in a position a P0 rule calls unsafe (position-based: 0 P0 escapes does not imply 0 of these); p0_ticks_not_measurable and p0_ticks_blind, the ticks on which the escape count could not be measured"
    ],
-   "reported": "every flight on its own line and the range over the backend's C2 flights; a flight that lost the car is a C2 flight, not a discard",
+   "reported": "every flight on its own line and the range over the backend's C2 flights; a flight that lost the car is a C2 flight, not a discard; a value a run did not record is shown as '-', never as 0",
    "nulls": [
     "the hand-written follow on the same rail (--pilot servo): the no-learning reference"
    ],
    "not_separated": "the detector supplies the hint, and while it has no box the model is not asked: a C2 score is the model's and the detector's together"
   }
  },
- "created_utc": "2026-11-16T00:00:24Z",
+ "created_utc": "2026-11-16T05:07:50Z",
  "model_root": "D:/models",
  "rows": [
   {
@@ -167,6 +171,10 @@
      }
     }
    ],
+   "orin_timed": false,
+   "orin_r1": false,
+   "orin_bench": false,
+   "orin_attempt_only": false,
    "r1_results": [
     {
      "schema": "vlaguard.vla_rate/2",
@@ -239,7 +247,8 @@
      ],
      "note": "lab desktop, i7-14700, performance cores, one logical CPU per core, CPU only",
      "command": "python tools/vla_backend_table.py measure --backend stub --topology dev --cpus 0,2,4,6,8,10,12,14 --note 'lab desktop, i7-14700, performance cores, one logical CPU per core, CPU only'",
-     "_file": "deploy/evidence/dev/vla_rate_stub.json"
+     "_file": "deploy/evidence/dev/vla_rate_stub.json",
+     "_is_r1": true
     }
    ]
   },
@@ -295,6 +304,10 @@
      }
     }
    ],
+   "orin_timed": false,
+   "orin_r1": false,
+   "orin_bench": false,
+   "orin_attempt_only": false,
    "r1_results": [
     {
      "schema": "vlaguard.vla_rate/2",
@@ -384,7 +397,8 @@
      ],
      "note": "lab desktop, i7-14700, performance cores, one logical CPU per core, CPU only",
      "command": "python tools/vla_backend_table.py measure --backend bc_v3 --topology dev --cpus 0,2,4,6,8,10,12,14 --note 'lab desktop, i7-14700, performance cores, one logical CPU per core, CPU only'",
-     "_file": "deploy/evidence/dev/vla_rate_bc_v3.json"
+     "_file": "deploy/evidence/dev/vla_rate_bc_v3.json",
+     "_is_r1": true
     }
    ]
   },
@@ -472,6 +486,10 @@
      }
     }
    ],
+   "orin_timed": false,
+   "orin_r1": false,
+   "orin_bench": false,
+   "orin_attempt_only": false,
    "r1_results": []
   },
   {
@@ -539,9 +557,10 @@
      "why_not_r1": [
       "a gate check, not a rate: 8 answers on one R1 frame (present_+00.png), the first cold, not 5 + 50 on both",
       "the host is named by torch's device name only ('Orin'): the file carries no host block, so guardrail.manifest's Orin rule was not applied",
-      "the file records no power mode (deploy/evidence/README.md states the session's: MAXN setting, clocks not locked; docs/RUNBOOK-orin-hil.md step 4 times in a budgeted mode with the clocks locked)"
+      "the file records no power mode (deploy/evidence/README.md states that session's: MAXN setting, clocks not locked); docs/RUNBOOK-orin-hil.md step 4 times in a budgeted mode with the clocks locked"
      ],
-     "conditions": "deploy/orin/vla_bf16_check.py (the loader R1's openvla_7b_bf16 key uses); a gate check, not a rate: 8 answers on one R1 frame (present_+00.png), the first cold, not 5 + 50 on both; the host is named by torch's device name only ('Orin'): the file carries no host block, so guardrail.manifest's Orin rule was not applied; the file records no power mode (deploy/evidence/README.md states the session's: MAXN setting, clocks not locked; docs/RUNBOOK-orin-hil.md step 4 times in a budgeted mode with the clocks locked)",
+     "power_mode": null,
+     "conditions": "deploy/orin/vla_bf16_check.py (the loader R1's openvla_7b_bf16 key uses); a gate check, not a rate: 8 answers on one R1 frame (present_+00.png), the first cold, not 5 + 50 on both; the host is named by torch's device name only ('Orin'): the file carries no host block, so guardrail.manifest's Orin rule was not applied; the file records no power mode (deploy/evidence/README.md states that session's: MAXN setting, clocks not locked); docs/RUNBOOK-orin-hil.md step 4 times in a budgeted mode with the clocks locked",
      "source": {
       "file": "deploy/evidence/hil/vla_bf16_check.json",
       "sha256": "5b9ab4aa66b30d325709a90a62ea4a8d1e575b005aa7c5c146133a7111c21cce",
@@ -549,6 +568,10 @@
      }
     }
    ],
+   "orin_timed": true,
+   "orin_r1": false,
+   "orin_bench": true,
+   "orin_attempt_only": false,
    "r1_results": []
   },
   {
@@ -583,6 +606,10 @@
     "closed_loop_hil_c2": "n/a: it takes no follow hint and no server speaks protocol v2 for it"
    },
    "records": [],
+   "orin_timed": false,
+   "orin_r1": false,
+   "orin_bench": false,
+   "orin_attempt_only": false,
    "r1_results": []
   },
   {
@@ -701,6 +728,10 @@
      }
     }
    ],
+   "orin_timed": false,
+   "orin_r1": false,
+   "orin_bench": false,
+   "orin_attempt_only": false,
    "r1_results": []
   },
   {
@@ -850,6 +881,10 @@
      }
     }
    ],
+   "orin_timed": false,
+   "orin_r1": false,
+   "orin_bench": false,
+   "orin_attempt_only": false,
    "r1_results": []
   },
   {
@@ -866,7 +901,7 @@
    "code": "demo/vla_server_v2.py (serve and bench, --precision bf16)",
    "class_7b": true,
    "family": "aerialvla",
-   "measured_by": "python demo/vla_server_v2.py bench --precision bf16 --attn sdpa --merge | --no-merge (the R1 frames, 5 + 50, through the server's protocol core)",
+   "measured_by": "python demo/vla_server_v2.py bench --precision bf16 --attn sdpa with --merge or --no-merge (the R1 frames, 5 + 50, through the server's protocol core)",
    "c1": "not flown on hil: AerialVLA has flown a GOTO on ArduPilot at dev only (pas_vla_goto_01 / _02, CHANGELOG 2026-10-29, another goal and policy); on hil the perception node could fly it (--pilot vla --mission goto), but no signed bundle of policies/urban_demo_policy.yaml is placed in its scene",
    "weights_status": [
     {
@@ -884,7 +919,7 @@
    ],
    "cells": {
     "rate_desktop": "R1 via demo/vla_server_v2.py: bf16/sdpa/unmerged p50 485.8 ms (2.06 Hz), p95 527.4 ms, n=50; bf16/sdpa/merged p50 258.7 ms (3.87 Hz), p95 293.9 ms, n=50 [docs/data/aerialvla_serving_4090.json]",
-    "rate_orin": "not R1 - bf16/sdpa/unmerged through demo/vla_server_v2.py bench, the R1 frames, 5 + 50, power mode not in the file: p50 1520 ms (0.658 Hz), p95 1538 ms, n=50 [deploy/evidence/hil/aerialvla_serving_bench_agx.json]; not R1 - bf16/sdpa/merged through demo/vla_server_v2.py bench, the R1 frames, 5 + 50, power mode not in the file: p50 1074 ms (0.931 Hz), p95 1100 ms, n=50 [deploy/evidence/hil/aerialvla_serving_bench_agx_merged.json]; R1: to measure on the Orin",
+    "rate_orin": "not R1 - bf16/sdpa/unmerged through demo/vla_server_v2.py bench, the R1 frames, 5 + 50, power mode not in the file: p50 1520 ms (0.658 Hz), p95 1538 ms, n=50 [deploy/evidence/hil/aerialvla_serving_bench_agx.json]; not R1 - bf16/sdpa/merged through demo/vla_server_v2.py bench, the R1 frames, 5 + 50, power mode not in the file: p50 1074 ms (0.931 Hz), p95 1100 ms, n=50 [deploy/evidence/hil/aerialvla_serving_bench_agx_merged.json]; R1 does not cover a model served over protocol v2 (`measure` refuses it): its Orin timing is its server's bench (python demo/vla_server_v2.py bench --precision bf16 --attn sdpa with --merge or --no-merge (the R1 frames, 5 + 50, through the server's protocol core))",
     "closed_loop_desktop": "not C1 - see records",
     "closed_loop_hil_c1": "not flown on hil: AerialVLA has flown a GOTO on ArduPilot at dev only (pas_vla_goto_01 / _02, CHANGELOG 2026-10-29, another goal and policy); on hil the perception node could fly it (--pilot vla --mission goto), but no signed bundle of policies/urban_demo_policy.yaml is placed in its scene",
     "closed_loop_hil_c2": "to fly on hil (C2)"
@@ -917,9 +952,10 @@
      "peak_vram_gb": 15.934,
      "why_not_r1": [
       "timed through the server's protocol core (demo/vla_server_v2.py bench), not by `measure`",
-      "the file records no power mode (deploy/evidence/README.md states the session's: MAXN setting, clocks not locked; docs/RUNBOOK-orin-hil.md step 4 times in a budgeted mode with the clocks locked)"
+      "the file records no power mode (deploy/evidence/README.md states that session's: MAXN setting, clocks not locked); docs/RUNBOOK-orin-hil.md step 4 times in a budgeted mode with the clocks locked"
      ],
-     "conditions": "AerialVLA served in process by demo/vla_server_v2.py bench; timed through the server's protocol core (demo/vla_server_v2.py bench), not by `measure`; the file records no power mode (deploy/evidence/README.md states the session's: MAXN setting, clocks not locked; docs/RUNBOOK-orin-hil.md step 4 times in a budgeted mode with the clocks locked)",
+     "power_mode": null,
+     "conditions": "AerialVLA served in process by demo/vla_server_v2.py bench; timed through the server's protocol core (demo/vla_server_v2.py bench), not by `measure`; the file records no power mode (deploy/evidence/README.md states that session's: MAXN setting, clocks not locked); docs/RUNBOOK-orin-hil.md step 4 times in a budgeted mode with the clocks locked",
      "source": {
       "file": "deploy/evidence/hil/aerialvla_serving_bench_agx.json",
       "sha256": "9e9c616bb5c365fba8baed6907b1ba788dddd087dc29d4a6cd488c3784afe587",
@@ -953,9 +989,10 @@
      "peak_vram_gb": 15.471,
      "why_not_r1": [
       "timed through the server's protocol core (demo/vla_server_v2.py bench), not by `measure`",
-      "the file records no power mode (deploy/evidence/README.md states the session's: MAXN setting, clocks not locked; docs/RUNBOOK-orin-hil.md step 4 times in a budgeted mode with the clocks locked)"
+      "the file records no power mode (deploy/evidence/README.md states that session's: MAXN setting, clocks not locked); docs/RUNBOOK-orin-hil.md step 4 times in a budgeted mode with the clocks locked"
      ],
-     "conditions": "AerialVLA served in process by demo/vla_server_v2.py bench; timed through the server's protocol core (demo/vla_server_v2.py bench), not by `measure`; the file records no power mode (deploy/evidence/README.md states the session's: MAXN setting, clocks not locked; docs/RUNBOOK-orin-hil.md step 4 times in a budgeted mode with the clocks locked)",
+     "power_mode": null,
+     "conditions": "AerialVLA served in process by demo/vla_server_v2.py bench; timed through the server's protocol core (demo/vla_server_v2.py bench), not by `measure`; the file records no power mode (deploy/evidence/README.md states that session's: MAXN setting, clocks not locked); docs/RUNBOOK-orin-hil.md step 4 times in a budgeted mode with the clocks locked",
      "source": {
       "file": "deploy/evidence/hil/aerialvla_serving_bench_agx_merged.json",
       "sha256": "97265fad42709b293185edf4797d55e3db0aafb7b81b1a0717f431a495105cc1",
@@ -975,7 +1012,9 @@
        "note": null,
        "within_30m": 0.153,
        "latency_p50_s": 0.62,
-       "p0_escape_rate": 0.0
+       "p0_escape_rate": 0.0,
+       "bundle": null,
+       "code_revision": null
       },
       {
        "tag": "cmp2_hier_aerovla_20261028",
@@ -984,7 +1023,9 @@
        "note": null,
        "within_30m": 0.309,
        "latency_p50_s": 0.63,
-       "p0_escape_rate": 0.0
+       "p0_escape_rate": 0.0,
+       "bundle": null,
+       "code_revision": null
       },
       {
        "tag": "cmp_e2e_aerovla_20261027",
@@ -993,7 +1034,9 @@
        "note": null,
        "within_30m": 0.539,
        "latency_p50_s": 0.46,
-       "p0_escape_rate": 0.0
+       "p0_escape_rate": 0.0,
+       "bundle": null,
+       "code_revision": null
       },
       {
        "tag": "cmp_hier_aerovla_20261027",
@@ -1002,7 +1045,9 @@
        "note": null,
        "within_30m": 0.987,
        "latency_p50_s": 0.49,
-       "p0_escape_rate": 0.0
+       "p0_escape_rate": 0.0,
+       "bundle": null,
+       "code_revision": null
       },
       {
        "tag": "orin_e2e_aerovla_20261028",
@@ -1011,7 +1056,9 @@
        "note": null,
        "within_30m": 0.102,
        "latency_p50_s": 0.6,
-       "p0_escape_rate": 0.0
+       "p0_escape_rate": 0.0,
+       "bundle": null,
+       "code_revision": null
       },
       {
        "tag": "orin_hier_aerovla_20261028",
@@ -1020,10 +1067,12 @@
        "note": null,
        "within_30m": 0.989,
        "latency_p50_s": 0.63,
-       "p0_escape_rate": 0.0
+       "p0_escape_rate": 0.0,
+       "bundle": null,
+       "code_revision": null
       }
      ],
-     "conditions": "Project AirSim CityLife with simple_flight: not ArduPilot, not hil, never KPI-grade. One flight per configuration unless more are listed, and one flight can differ widely from the next. The file names the models, not the server configurations; CHANGELOG 2026-11-04 states them (the AerialVLA family bf16/sdpa/merged, DroneCATS and RaceVLA bf16). Pure flights are scored from the first acquisition, the others from the start gate",
+     "conditions": "Project AirSim CityLife with simple_flight: not ArduPilot, not hil, never KPI-grade. One flight per configuration unless more are listed, and one flight can differ widely from the next; flights at another commit or under another policy bundle are not repeats of one configuration (where a run folder names them, the table shows both). The file names the models, not the server configurations; CHANGELOG 2026-11-04 states them (the AerialVLA family bf16/sdpa/merged, DroneCATS and RaceVLA bf16). Pure flights are scored from the first acquisition, the others from the start gate",
      "source": {
       "file": "docs/data/progress_1028.json",
       "sha256": "5586c5733c2615f9cb627b08e233299d4b4fb19b7283cc61e4d2718e78685daf",
@@ -1037,6 +1086,21 @@
      "matrix": "3-4 November 2026",
      "flights": [
       {
+       "tag": "agx_e2e_aerovla_01",
+       "platform": "AGX Orin (client and VLA server)",
+       "kind": "pure (the VLA flies every step)",
+       "within_30m": 0.184,
+       "latency_p50_s": 1.8237,
+       "p0_escape_rate": 0.000238,
+       "ticks": 4200,
+       "end_reason": "timeout",
+       "model_id": "aerialvla-lora/aero_vla@unknown",
+       "config": "bf16/sdpa/unmerged",
+       "topology": "projectairsim-remote-sim",
+       "code_revision": "07cee03f0049",
+       "bundle": "follow-car-citylife-nfz-v0.1.1.tar.gz"
+      },
+      {
        "tag": "agx_e2e_aerovla_20261103",
        "platform": "AGX Orin (client and VLA server)",
        "kind": "pure (the VLA flies every step)",
@@ -1048,7 +1112,23 @@
        "model_id": "aerialvla-lora/aero_vla@unknown",
        "config": "bf16/sdpa/merged",
        "topology": "projectairsim-remote-sim",
-       "code_revision": "6da813de8ad7"
+       "code_revision": "6da813de8ad7",
+       "bundle": "follow-car-citylife-nfz-v0.1.1.tar.gz"
+      },
+      {
+       "tag": "agx_hier_aerovla_01",
+       "platform": "AGX Orin (client and VLA server)",
+       "kind": "hierarchical (the VLA sets the intent, the controller flies)",
+       "within_30m": 0.988,
+       "latency_p50_s": 1.8804,
+       "p0_escape_rate": 0.0,
+       "ticks": 4197,
+       "end_reason": null,
+       "model_id": "aerialvla-lora/aero_vla@unknown",
+       "config": "bf16/sdpa/unmerged",
+       "topology": "projectairsim-remote-sim",
+       "code_revision": "07cee03f0049",
+       "bundle": "follow-car-citylife-nfz-v0.1.1.tar.gz"
       },
       {
        "tag": "agx_hier_aerovla_20261103",
@@ -1062,7 +1142,8 @@
        "model_id": "aerialvla-lora/aero_vla@unknown",
        "config": "bf16/sdpa/merged",
        "topology": "projectairsim-remote-sim",
-       "code_revision": "6da813de8ad7"
+       "code_revision": "6da813de8ad7",
+       "bundle": "follow-car-citylife-nfz-v0.1.1.tar.gz"
       },
       {
        "tag": "nfz3b_agx_hier_aerovla_20261103",
@@ -1076,7 +1157,8 @@
        "model_id": "aerialvla-lora/aero_vla@unknown",
        "config": "bf16/sdpa/merged",
        "topology": "projectairsim-remote-sim",
-       "code_revision": "6da813de8ad7"
+       "code_revision": "6da813de8ad7",
+       "bundle": "follow-car-citylife-nfz3b-v0.1.1.tar.gz"
       },
       {
        "tag": "nfz3b_agx_hier_aerovla_20261104",
@@ -1090,16 +1172,21 @@
        "model_id": "aerialvla-lora/aero_vla@unknown",
        "config": "bf16/sdpa/merged",
        "topology": "projectairsim-remote-sim",
-       "code_revision": "989f96724b74"
+       "code_revision": "989f96724b74",
+       "bundle": "follow-car-citylife-nfz3b-v0.1.1.tar.gz"
       }
      ],
-     "conditions": "Project AirSim CityLife with simple_flight: not ArduPilot, not hil, never KPI-grade. One flight per configuration unless more are listed, and one flight can differ widely from the next. The simulator ran on the PC; identities and scores are each run's own metrics.json and kpi.json. Pure flights are scored from the first acquisition, the others from the start gate",
+     "conditions": "Project AirSim CityLife with simple_flight: not ArduPilot, not hil, never KPI-grade. One flight per configuration unless more are listed, and one flight can differ widely from the next; flights at another commit or under another policy bundle are not repeats of one configuration (where a run folder names them, the table shows both). The simulator ran on the PC; identities, scores, commits and policy bundles are each run's own metrics.json and kpi.json. The agx_*_01 flights are the first AGX follows of 3 November, at an earlier commit than the matrix; the nfz3b_ flights flew another bundle (a no-fly zone on the route), so they are another scenario, not a repeat. Pure flights are scored from the first acquisition, the others from the start gate",
      "source": {
-      "file": "demo/out/agx_*_2026110[34]/metrics.json",
-      "runs": 21
+      "file": "demo/out/*agx_*/metrics.json (tags *_2026110[34] and *_01)",
+      "runs": 24
      }
     }
    ],
+   "orin_timed": true,
+   "orin_r1": false,
+   "orin_bench": true,
+   "orin_attempt_only": false,
    "r1_results": []
   },
   {
@@ -1125,10 +1212,10 @@
    ],
    "cells": {
     "rate_desktop": "not measured",
-    "rate_orin": "not R1 - own inputs (aiot_frames), round trip through its server: p50 39.6 ms (25.3 Hz), p95 41.7 ms, n=300; the model alone p50 32.6 ms, p95 33.9 ms [deploy/evidence/hil/aiotvla_v10b_bench_agx.json]; R1: to measure on the Orin",
+    "rate_orin": "not R1 - own inputs (aiot_frames), round trip through its server: p50 39.6 ms (25.3 Hz), p95 41.7 ms, n=300; the model alone p50 32.6 ms, p95 33.9 ms [deploy/evidence/hil/aiotvla_v10b_bench_agx.json]; R1 does not cover a model served over protocol v2 (`measure` refuses it): its Orin timing is its server's bench (python tools/bench_foreign_vla.py --server 127.0.0.1:<port> against demo/vla_server_foreign.py serve --model aiotvla)",
     "closed_loop_desktop": "not measured",
     "closed_loop_hil_c1": "cannot fly C1: a follow-only model. Its input is a camera frame and object words, the request's direction phrase is ignored (recorded under native.ignored), and it is given no goal coordinate. Its closed-loop test is C2",
-    "closed_loop_hil_c2": "C2, 2 flights (2 max_s reached): within 30 m 0.269-0.352 (median 0.311); decisions/s over the mission 10.6-10.9 (median 10.8); interventions per 100 ticks 6.77-7.91 (median 7.34); P0 escapes 0; the protocol asks for 3: 1 more to fly; 36 more hil follows outside C2 (see the C2 section)"
+    "closed_loop_hil_c2": "C2, 2 flights (2 max_s reached): within 30 m 0.269-0.352 (median 0.311); decisions/s over the mission 10.6-10.9 (median 10.8); interventions per 100 ticks 6.77-7.91 (median 7.34); P0 escapes 0; KPI outcome 2 fail (unsafe_position_entered 2); ticks in a P0-unsafe position 3, 21; P0 ticks not measurable / blind 0/-, 0/-; the protocol asks for 3: 1 more to fly; 36 more hil follows outside C2 (see the C2 section)"
    },
    "records": [
     {
@@ -1168,9 +1255,10 @@
       "own inputs: 300 frames of 'aiot_frames' sent as the model's front camera, object 'a red car' (not the R1 frames)",
       "3 warm-up + 300 timed, not R1's 5 + 50",
       "a round trip over TCP on 127.0.0.1 through demo/vla_server_foreign.py (tools/bench_foreign_vla.py), not `measure`",
-      "the file records no power mode and none is stated for the session elsewhere (deploy/evidence/README.md)"
+      "the file records no power mode (deploy/evidence/README.md states none for that session ('Power mode not recorded')); docs/RUNBOOK-orin-hil.md step 4 times in a budgeted mode with the clocks locked"
      ],
-     "conditions": "served by demo/vla_server_foreign.py; the headline is the round trip, the server's own model time is beside it; own inputs: 300 frames of 'aiot_frames' sent as the model's front camera, object 'a red car' (not the R1 frames); 3 warm-up + 300 timed, not R1's 5 + 50; a round trip over TCP on 127.0.0.1 through demo/vla_server_foreign.py (tools/bench_foreign_vla.py), not `measure`; the file records no power mode and none is stated for the session elsewhere (deploy/evidence/README.md)",
+     "power_mode": null,
+     "conditions": "served by demo/vla_server_foreign.py; the headline is the round trip, the server's own model time is beside it; own inputs: 300 frames of 'aiot_frames' sent as the model's front camera, object 'a red car' (not the R1 frames); 3 warm-up + 300 timed, not R1's 5 + 50; a round trip over TCP on 127.0.0.1 through demo/vla_server_foreign.py (tools/bench_foreign_vla.py), not `measure`; the file records no power mode (deploy/evidence/README.md states none for that session ('Power mode not recorded')); docs/RUNBOOK-orin-hil.md step 4 times in a budgeted mode with the clocks locked",
      "source": {
       "file": "deploy/evidence/hil/aiotvla_v10b_bench_agx.json",
       "sha256": "117157b7232894c90a2b905190f403bfa6b012a1183573bd55416d56dbbc15b8",
@@ -1186,7 +1274,7 @@
      "topology": "hil",
      "kpi_grade": true,
      "code_revision": "5b3db869f40b",
-     "date": "2026-11-14",
+     "date": "2026-11-15",
      "ticks": 4187,
      "end_reason": "max_s reached",
      "mission_s": 420.07,
@@ -1198,6 +1286,13 @@
      "interventions_per_100_ticks": 6.520181514210652,
      "p0_escapes": 0,
      "p0_violation_escape_rate": 0.0,
+     "kpi_outcome": "fail",
+     "mission_fail_reasons": [
+      "unsafe_position_entered"
+     ],
+     "unsafe_p0_ticks": 23,
+     "p0_ticks_not_measurable": 0,
+     "p0_ticks_blind": null,
      "detector_hz": 2.73,
      "stress": null,
      "hot_apply": true,
@@ -1205,6 +1300,12 @@
      "target_estimator": true,
      "vla_feed": "tick",
      "vla_feed_max_hz": null,
+     "negative_query": [
+      "a traffic light"
+     ],
+     "front_capture_interval_s": 0.066,
+     "bundle": "follow-car-citylife-v0.1.3.tar.gz",
+     "max_s_given": 420.0,
      "start_gate_reached": true,
      "summary_only": false,
      "source": {
@@ -1214,7 +1315,8 @@
      },
      "not_c2": [
       "a policy was hot-applied in flight",
-      "feed tick, not the family's C2 feed (stream, no cap)"
+      "feed tick, not the family's C2 feed (stream, no cap)",
+      "FrontCamera capture interval 0.066 s, not the 0.05 s the stream feed needs"
      ],
      "protocol": "not C2"
     },
@@ -1239,6 +1341,13 @@
      "interventions_per_100_ticks": 2.816901408450704,
      "p0_escapes": 0,
      "p0_violation_escape_rate": 0.0,
+     "kpi_outcome": "fail",
+     "mission_fail_reasons": [
+      "dwell:standoff_s"
+     ],
+     "unsafe_p0_ticks": 0,
+     "p0_ticks_not_measurable": 0,
+     "p0_ticks_blind": null,
      "detector_hz": 3.042,
      "stress": "day",
      "hot_apply": false,
@@ -1246,6 +1355,10 @@
      "target_estimator": false,
      "vla_feed": "tick",
      "vla_feed_max_hz": null,
+     "negative_query": null,
+     "front_capture_interval_s": 0.066,
+     "bundle": "follow-car-citylife-v0.1.3.tar.gz",
+     "max_s_given": 420.0,
      "start_gate_reached": true,
      "summary_only": false,
      "source": {
@@ -1256,8 +1369,10 @@
      "not_c2": [
       "not KPI-grade by its kpi.json",
       "perception stressor 'day'",
+      "negative query None, not C2's ['a traffic light']",
       "flown without --identity and --target-estimator",
-      "feed tick, not the family's C2 feed (stream, no cap)"
+      "feed tick, not the family's C2 feed (stream, no cap)",
+      "FrontCamera capture interval 0.066 s, not the 0.05 s the stream feed needs"
      ],
      "protocol": "not C2"
     },
@@ -1282,6 +1397,13 @@
      "interventions_per_100_ticks": 2.7453838678328473,
      "p0_escapes": 0,
      "p0_violation_escape_rate": 0.0,
+     "kpi_outcome": "fail",
+     "mission_fail_reasons": [
+      "unsafe_position_entered"
+     ],
+     "unsafe_p0_ticks": 36,
+     "p0_ticks_not_measurable": 0,
+     "p0_ticks_blind": null,
      "detector_hz": 2.468,
      "stress": "day",
      "hot_apply": false,
@@ -1289,6 +1411,10 @@
      "target_estimator": false,
      "vla_feed": "tick",
      "vla_feed_max_hz": null,
+     "negative_query": null,
+     "front_capture_interval_s": 0.066,
+     "bundle": "follow-car-citylife-v0.1.3.tar.gz",
+     "max_s_given": 420.0,
      "start_gate_reached": true,
      "summary_only": false,
      "source": {
@@ -1299,8 +1425,10 @@
      "not_c2": [
       "not KPI-grade by its kpi.json",
       "perception stressor 'day'",
+      "negative query None, not C2's ['a traffic light']",
       "flown without --identity and --target-estimator",
-      "feed tick, not the family's C2 feed (stream, no cap)"
+      "feed tick, not the family's C2 feed (stream, no cap)",
+      "FrontCamera capture interval 0.066 s, not the 0.05 s the stream feed needs"
      ],
      "protocol": "not C2"
     },
@@ -1325,6 +1453,14 @@
      "interventions_per_100_ticks": 2.886201209455745,
      "p0_escapes": 0,
      "p0_violation_escape_rate": 0.0,
+     "kpi_outcome": "fail",
+     "mission_fail_reasons": [
+      "unsafe_position_entered",
+      "follow_proxy"
+     ],
+     "unsafe_p0_ticks": 26,
+     "p0_ticks_not_measurable": 0,
+     "p0_ticks_blind": null,
      "detector_hz": 3.173,
      "stress": "day",
      "hot_apply": false,
@@ -1332,6 +1468,10 @@
      "target_estimator": false,
      "vla_feed": "tick",
      "vla_feed_max_hz": null,
+     "negative_query": null,
+     "front_capture_interval_s": 0.066,
+     "bundle": "follow-car-citylife-v0.1.3.tar.gz",
+     "max_s_given": 420.0,
      "start_gate_reached": true,
      "summary_only": false,
      "source": {
@@ -1342,8 +1482,10 @@
      "not_c2": [
       "not KPI-grade by its kpi.json",
       "perception stressor 'day'",
+      "negative query None, not C2's ['a traffic light']",
       "flown without --identity and --target-estimator",
-      "feed tick, not the family's C2 feed (stream, no cap)"
+      "feed tick, not the family's C2 feed (stream, no cap)",
+      "FrontCamera capture interval 0.066 s, not the 0.05 s the stream feed needs"
      ],
      "protocol": "not C2"
     },
@@ -1368,6 +1510,13 @@
      "interventions_per_100_ticks": 0.7110536522301228,
      "p0_escapes": 0,
      "p0_violation_escape_rate": 0.0,
+     "kpi_outcome": "fail",
+     "mission_fail_reasons": [
+      "unsafe_position_entered"
+     ],
+     "unsafe_p0_ticks": 7,
+     "p0_ticks_not_measurable": 0,
+     "p0_ticks_blind": null,
      "detector_hz": 2.51,
      "stress": "dusk",
      "hot_apply": false,
@@ -1375,6 +1524,10 @@
      "target_estimator": false,
      "vla_feed": "tick",
      "vla_feed_max_hz": null,
+     "negative_query": null,
+     "front_capture_interval_s": 0.066,
+     "bundle": "follow-car-citylife-v0.1.3.tar.gz",
+     "max_s_given": 420.0,
      "start_gate_reached": true,
      "summary_only": false,
      "source": {
@@ -1385,8 +1538,10 @@
      "not_c2": [
       "not KPI-grade by its kpi.json",
       "perception stressor 'dusk'",
+      "negative query None, not C2's ['a traffic light']",
       "flown without --identity and --target-estimator",
-      "feed tick, not the family's C2 feed (stream, no cap)"
+      "feed tick, not the family's C2 feed (stream, no cap)",
+      "FrontCamera capture interval 0.066 s, not the 0.05 s the stream feed needs"
      ],
      "protocol": "not C2"
     },
@@ -1411,6 +1566,11 @@
      "interventions_per_100_ticks": 6.354515050167224,
      "p0_escapes": 0,
      "p0_violation_escape_rate": 0.0,
+     "kpi_outcome": "success",
+     "mission_fail_reasons": [],
+     "unsafe_p0_ticks": 0,
+     "p0_ticks_not_measurable": 0,
+     "p0_ticks_blind": null,
      "detector_hz": 2.633,
      "stress": null,
      "hot_apply": false,
@@ -1418,6 +1578,12 @@
      "target_estimator": true,
      "vla_feed": "tick",
      "vla_feed_max_hz": null,
+     "negative_query": [
+      "a traffic light"
+     ],
+     "front_capture_interval_s": 0.066,
+     "bundle": "follow-car-citylife-v0.1.3.tar.gz",
+     "max_s_given": 420.0,
      "start_gate_reached": true,
      "summary_only": false,
      "source": {
@@ -1426,7 +1592,8 @@
       "file_date": "2026-11-14"
      },
      "not_c2": [
-      "feed tick, not the family's C2 feed (stream, no cap)"
+      "feed tick, not the family's C2 feed (stream, no cap)",
+      "FrontCamera capture interval 0.066 s, not the 0.05 s the stream feed needs"
      ],
      "protocol": "not C2"
     },
@@ -1451,6 +1618,14 @@
      "interventions_per_100_ticks": null,
      "p0_escapes": 0,
      "p0_violation_escape_rate": null,
+     "kpi_outcome": "fail",
+     "mission_fail_reasons": [
+      "no_rows",
+      "follow_not_scored"
+     ],
+     "unsafe_p0_ticks": 0,
+     "p0_ticks_not_measurable": 0,
+     "p0_ticks_blind": null,
      "detector_hz": null,
      "stress": "fog",
      "hot_apply": false,
@@ -1458,6 +1633,10 @@
      "target_estimator": false,
      "vla_feed": "tick",
      "vla_feed_max_hz": null,
+     "negative_query": null,
+     "front_capture_interval_s": 0.066,
+     "bundle": "follow-car-citylife-v0.1.3.tar.gz",
+     "max_s_given": null,
      "start_gate_reached": false,
      "summary_only": false,
      "source": {
@@ -1470,8 +1649,10 @@
       "not KPI-grade by its kpi.json",
       "perception stressor 'fog'",
       "the start gate never passed: no mission",
+      "negative query None, not C2's ['a traffic light']",
       "flown without --identity and --target-estimator",
-      "feed tick, not the family's C2 feed (stream, no cap)"
+      "feed tick, not the family's C2 feed (stream, no cap)",
+      "FrontCamera capture interval 0.066 s, not the 0.05 s the stream feed needs"
      ],
      "protocol": "not C2"
     },
@@ -1496,6 +1677,13 @@
      "interventions_per_100_ticks": 2.838740458015267,
      "p0_escapes": 0,
      "p0_violation_escape_rate": 0.0,
+     "kpi_outcome": "fail",
+     "mission_fail_reasons": [
+      "unsafe_position_entered"
+     ],
+     "unsafe_p0_ticks": 59,
+     "p0_ticks_not_measurable": 0,
+     "p0_ticks_blind": null,
      "detector_hz": 2.411,
      "stress": null,
      "hot_apply": false,
@@ -1503,6 +1691,10 @@
      "target_estimator": false,
      "vla_feed": "tick",
      "vla_feed_max_hz": null,
+     "negative_query": null,
+     "front_capture_interval_s": 0.066,
+     "bundle": "follow-car-citylife-v0.1.3.tar.gz",
+     "max_s_given": 420.0,
      "start_gate_reached": true,
      "summary_only": false,
      "source": {
@@ -1511,8 +1703,10 @@
       "file_date": "2026-11-14"
      },
      "not_c2": [
+      "negative query None, not C2's ['a traffic light']",
       "flown without --identity and --target-estimator",
-      "feed tick, not the family's C2 feed (stream, no cap)"
+      "feed tick, not the family's C2 feed (stream, no cap)",
+      "FrontCamera capture interval 0.066 s, not the 0.05 s the stream feed needs"
      ],
      "protocol": "not C2"
     },
@@ -1537,6 +1731,14 @@
      "interventions_per_100_ticks": 3.925233644859813,
      "p0_escapes": 0,
      "p0_violation_escape_rate": 0.0,
+     "kpi_outcome": "fail",
+     "mission_fail_reasons": [
+      "dwell:standoff_s",
+      "unsafe_position_entered"
+     ],
+     "unsafe_p0_ticks": 9,
+     "p0_ticks_not_measurable": 0,
+     "p0_ticks_blind": null,
      "detector_hz": 2.241,
      "stress": null,
      "hot_apply": false,
@@ -1544,6 +1746,12 @@
      "target_estimator": false,
      "vla_feed": "tick",
      "vla_feed_max_hz": null,
+     "negative_query": [
+      "a traffic light"
+     ],
+     "front_capture_interval_s": 0.066,
+     "bundle": "follow-car-citylife-v0.1.3.tar.gz",
+     "max_s_given": 420.0,
      "start_gate_reached": true,
      "summary_only": false,
      "source": {
@@ -1553,7 +1761,8 @@
      },
      "not_c2": [
       "flown without --identity and --target-estimator",
-      "feed tick, not the family's C2 feed (stream, no cap)"
+      "feed tick, not the family's C2 feed (stream, no cap)",
+      "FrontCamera capture interval 0.066 s, not the 0.05 s the stream feed needs"
      ],
      "protocol": "not C2"
     },
@@ -1578,6 +1787,14 @@
      "interventions_per_100_ticks": null,
      "p0_escapes": 0,
      "p0_violation_escape_rate": null,
+     "kpi_outcome": "fail",
+     "mission_fail_reasons": [
+      "no_rows",
+      "follow_not_scored"
+     ],
+     "unsafe_p0_ticks": 0,
+     "p0_ticks_not_measurable": 0,
+     "p0_ticks_blind": null,
      "detector_hz": null,
      "stress": "night",
      "hot_apply": false,
@@ -1585,6 +1802,10 @@
      "target_estimator": false,
      "vla_feed": "tick",
      "vla_feed_max_hz": null,
+     "negative_query": null,
+     "front_capture_interval_s": 0.066,
+     "bundle": "follow-car-citylife-v0.1.3.tar.gz",
+     "max_s_given": null,
      "start_gate_reached": false,
      "summary_only": false,
      "source": {
@@ -1597,8 +1818,10 @@
       "not KPI-grade by its kpi.json",
       "perception stressor 'night'",
       "the start gate never passed: no mission",
+      "negative query None, not C2's ['a traffic light']",
       "flown without --identity and --target-estimator",
-      "feed tick, not the family's C2 feed (stream, no cap)"
+      "feed tick, not the family's C2 feed (stream, no cap)",
+      "FrontCamera capture interval 0.066 s, not the 0.05 s the stream feed needs"
      ],
      "protocol": "not C2"
     },
@@ -1623,6 +1846,13 @@
      "interventions_per_100_ticks": 7.096774193548387,
      "p0_escapes": 0,
      "p0_violation_escape_rate": 0.0,
+     "kpi_outcome": "fail",
+     "mission_fail_reasons": [
+      "unsafe_position_entered"
+     ],
+     "unsafe_p0_ticks": 25,
+     "p0_ticks_not_measurable": 0,
+     "p0_ticks_blind": null,
      "detector_hz": 2.735,
      "stress": "rain",
      "hot_apply": false,
@@ -1630,6 +1860,10 @@
      "target_estimator": false,
      "vla_feed": "tick",
      "vla_feed_max_hz": null,
+     "negative_query": null,
+     "front_capture_interval_s": 0.066,
+     "bundle": "follow-car-citylife-v0.1.3.tar.gz",
+     "max_s_given": 420.0,
      "start_gate_reached": true,
      "summary_only": false,
      "source": {
@@ -1640,8 +1874,10 @@
      "not_c2": [
       "not KPI-grade by its kpi.json",
       "perception stressor 'rain'",
+      "negative query None, not C2's ['a traffic light']",
       "flown without --identity and --target-estimator",
-      "feed tick, not the family's C2 feed (stream, no cap)"
+      "feed tick, not the family's C2 feed (stream, no cap)",
+      "FrontCamera capture interval 0.066 s, not the 0.05 s the stream feed needs"
      ],
      "protocol": "not C2"
     },
@@ -1654,7 +1890,7 @@
      "topology": "hil",
      "kpi_grade": false,
      "code_revision": "8c9448e2118c",
-     "date": "2026-11-14",
+     "date": "2026-11-15",
      "ticks": 4186,
      "end_reason": "max_s reached",
      "mission_s": 420.13,
@@ -1666,6 +1902,13 @@
      "interventions_per_100_ticks": 7.16674629718108,
      "p0_escapes": 0,
      "p0_violation_escape_rate": 0.0,
+     "kpi_outcome": "fail",
+     "mission_fail_reasons": [
+      "unsafe_position_entered"
+     ],
+     "unsafe_p0_ticks": 15,
+     "p0_ticks_not_measurable": 0,
+     "p0_ticks_blind": null,
      "detector_hz": 2.616,
      "stress": "shadow",
      "hot_apply": false,
@@ -1673,6 +1916,12 @@
      "target_estimator": true,
      "vla_feed": "tick",
      "vla_feed_max_hz": null,
+     "negative_query": [
+      "a traffic light"
+     ],
+     "front_capture_interval_s": 0.066,
+     "bundle": "follow-car-citylife-v0.1.3.tar.gz",
+     "max_s_given": 420.0,
      "start_gate_reached": true,
      "summary_only": false,
      "source": {
@@ -1683,7 +1932,8 @@
      "not_c2": [
       "not KPI-grade by its kpi.json",
       "perception stressor 'shadow'",
-      "feed tick, not the family's C2 feed (stream, no cap)"
+      "feed tick, not the family's C2 feed (stream, no cap)",
+      "FrontCamera capture interval 0.066 s, not the 0.05 s the stream feed needs"
      ],
      "protocol": "not C2"
     },
@@ -1696,7 +1946,7 @@
      "topology": "hil",
      "kpi_grade": false,
      "code_revision": "8c9448e2118c",
-     "date": "2026-11-14",
+     "date": "2026-11-15",
      "ticks": 1008,
      "end_reason": "target_lost",
      "mission_s": 100.95,
@@ -1708,6 +1958,11 @@
      "interventions_per_100_ticks": 2.380952380952381,
      "p0_escapes": 0,
      "p0_violation_escape_rate": 0.0,
+     "kpi_outcome": "success",
+     "mission_fail_reasons": [],
+     "unsafe_p0_ticks": 0,
+     "p0_ticks_not_measurable": 0,
+     "p0_ticks_blind": null,
      "detector_hz": 2.486,
      "stress": "texture",
      "hot_apply": false,
@@ -1715,6 +1970,12 @@
      "target_estimator": true,
      "vla_feed": "tick",
      "vla_feed_max_hz": null,
+     "negative_query": [
+      "a traffic light"
+     ],
+     "front_capture_interval_s": 0.066,
+     "bundle": "follow-car-citylife-v0.1.3.tar.gz",
+     "max_s_given": 420.0,
      "start_gate_reached": true,
      "summary_only": false,
      "source": {
@@ -1725,7 +1986,8 @@
      "not_c2": [
       "not KPI-grade by its kpi.json",
       "perception stressor 'texture'",
-      "feed tick, not the family's C2 feed (stream, no cap)"
+      "feed tick, not the family's C2 feed (stream, no cap)",
+      "FrontCamera capture interval 0.066 s, not the 0.05 s the stream feed needs"
      ],
      "protocol": "not C2"
     },
@@ -1750,6 +2012,13 @@
      "interventions_per_100_ticks": 6.765126250595522,
      "p0_escapes": 0,
      "p0_violation_escape_rate": 0.0,
+     "kpi_outcome": "fail",
+     "mission_fail_reasons": [
+      "unsafe_position_entered"
+     ],
+     "unsafe_p0_ticks": 3,
+     "p0_ticks_not_measurable": 0,
+     "p0_ticks_blind": null,
      "detector_hz": 2.494,
      "stress": null,
      "hot_apply": false,
@@ -1757,6 +2026,12 @@
      "target_estimator": true,
      "vla_feed": "stream",
      "vla_feed_max_hz": 0.0,
+     "negative_query": [
+      "a traffic light"
+     ],
+     "front_capture_interval_s": 0.05,
+     "bundle": "follow-car-citylife-v0.1.3.tar.gz",
+     "max_s_given": 420.0,
      "start_gate_reached": true,
      "summary_only": false,
      "source": {
@@ -1776,7 +2051,7 @@
      "topology": "hil",
      "kpi_grade": true,
      "code_revision": "6c9698d00b0f",
-     "date": "2026-11-14",
+     "date": "2026-11-15",
      "ticks": 4176,
      "end_reason": "max_s reached",
      "mission_s": 420.09,
@@ -1788,6 +2063,13 @@
      "interventions_per_100_ticks": 6.154214559386973,
      "p0_escapes": 0,
      "p0_violation_escape_rate": 0.0,
+     "kpi_outcome": "fail",
+     "mission_fail_reasons": [
+      "unsafe_position_entered"
+     ],
+     "unsafe_p0_ticks": 9,
+     "p0_ticks_not_measurable": 0,
+     "p0_ticks_blind": null,
      "detector_hz": 2.671,
      "stress": null,
      "hot_apply": true,
@@ -1795,6 +2077,12 @@
      "target_estimator": true,
      "vla_feed": "tick",
      "vla_feed_max_hz": null,
+     "negative_query": [
+      "a traffic light"
+     ],
+     "front_capture_interval_s": 0.066,
+     "bundle": "follow-car-citylife-v0.1.3.tar.gz",
+     "max_s_given": 420.0,
      "start_gate_reached": true,
      "summary_only": false,
      "source": {
@@ -1804,7 +2092,8 @@
      },
      "not_c2": [
       "a policy was hot-applied in flight",
-      "feed tick, not the family's C2 feed (stream, no cap)"
+      "feed tick, not the family's C2 feed (stream, no cap)",
+      "FrontCamera capture interval 0.066 s, not the 0.05 s the stream feed needs"
      ],
      "protocol": "not C2"
     },
@@ -1817,7 +2106,7 @@
      "topology": "hil",
      "kpi_grade": true,
      "code_revision": "00264ef2d457",
-     "date": "2026-11-14",
+     "date": "2026-11-15",
      "ticks": 4177,
      "end_reason": "max_s reached",
      "mission_s": 420.04,
@@ -1829,6 +2118,13 @@
      "interventions_per_100_ticks": 7.182188173330141,
      "p0_escapes": 0,
      "p0_violation_escape_rate": 0.0,
+     "kpi_outcome": "fail",
+     "mission_fail_reasons": [
+      "unsafe_position_entered"
+     ],
+     "unsafe_p0_ticks": 13,
+     "p0_ticks_not_measurable": 0,
+     "p0_ticks_blind": null,
      "detector_hz": 2.645,
      "stress": null,
      "hot_apply": true,
@@ -1836,6 +2132,12 @@
      "target_estimator": true,
      "vla_feed": "tick",
      "vla_feed_max_hz": null,
+     "negative_query": [
+      "a traffic light"
+     ],
+     "front_capture_interval_s": 0.066,
+     "bundle": "follow-car-citylife-v0.1.3.tar.gz",
+     "max_s_given": 420.0,
      "start_gate_reached": true,
      "summary_only": false,
      "source": {
@@ -1845,7 +2147,8 @@
      },
      "not_c2": [
       "a policy was hot-applied in flight",
-      "feed tick, not the family's C2 feed (stream, no cap)"
+      "feed tick, not the family's C2 feed (stream, no cap)",
+      "FrontCamera capture interval 0.066 s, not the 0.05 s the stream feed needs"
      ],
      "protocol": "not C2"
     },
@@ -1870,6 +2173,14 @@
      "interventions_per_100_ticks": null,
      "p0_escapes": 0,
      "p0_violation_escape_rate": null,
+     "kpi_outcome": "fail",
+     "mission_fail_reasons": [
+      "no_rows",
+      "follow_not_scored"
+     ],
+     "unsafe_p0_ticks": 0,
+     "p0_ticks_not_measurable": 0,
+     "p0_ticks_blind": null,
      "detector_hz": null,
      "stress": null,
      "hot_apply": false,
@@ -1877,6 +2188,12 @@
      "target_estimator": true,
      "vla_feed": "tick",
      "vla_feed_max_hz": null,
+     "negative_query": [
+      "a traffic light"
+     ],
+     "front_capture_interval_s": 0.05,
+     "bundle": "follow-car-citylife-v0.1.3.tar.gz",
+     "max_s_given": null,
      "start_gate_reached": false,
      "summary_only": false,
      "source": {
@@ -1913,6 +2230,11 @@
      "interventions_per_100_ticks": 1.5495867768595042,
      "p0_escapes": 0,
      "p0_violation_escape_rate": 0.0,
+     "kpi_outcome": "success",
+     "mission_fail_reasons": [],
+     "unsafe_p0_ticks": 0,
+     "p0_ticks_not_measurable": 0,
+     "p0_ticks_blind": null,
      "detector_hz": 2.176,
      "stress": null,
      "hot_apply": false,
@@ -1920,6 +2242,12 @@
      "target_estimator": true,
      "vla_feed": "tick",
      "vla_feed_max_hz": null,
+     "negative_query": [
+      "a traffic light"
+     ],
+     "front_capture_interval_s": 0.05,
+     "bundle": "follow-car-citylife-v0.1.3.tar.gz",
+     "max_s_given": 420.0,
      "start_gate_reached": true,
      "summary_only": false,
      "source": {
@@ -1941,7 +2269,7 @@
      "topology": "hil",
      "kpi_grade": true,
      "code_revision": "de7e7489dfaf",
-     "date": "2026-11-14",
+     "date": "2026-11-15",
      "ticks": 899,
      "end_reason": "target_lost",
      "mission_s": 90.13,
@@ -1953,6 +2281,11 @@
      "interventions_per_100_ticks": 0.0,
      "p0_escapes": 0,
      "p0_violation_escape_rate": 0.0,
+     "kpi_outcome": "success",
+     "mission_fail_reasons": [],
+     "unsafe_p0_ticks": 0,
+     "p0_ticks_not_measurable": 0,
+     "p0_ticks_blind": null,
      "detector_hz": 2.485,
      "stress": null,
      "hot_apply": false,
@@ -1960,6 +2293,12 @@
      "target_estimator": true,
      "vla_feed": "tick",
      "vla_feed_max_hz": null,
+     "negative_query": [
+      "a traffic light"
+     ],
+     "front_capture_interval_s": 0.066,
+     "bundle": "follow-car-citylife-v0.1.3.tar.gz",
+     "max_s_given": 420.0,
      "start_gate_reached": true,
      "summary_only": false,
      "source": {
@@ -1968,7 +2307,8 @@
       "file_date": "2026-11-15"
      },
      "not_c2": [
-      "feed tick, not the family's C2 feed (stream, no cap)"
+      "feed tick, not the family's C2 feed (stream, no cap)",
+      "FrontCamera capture interval 0.066 s, not the 0.05 s the stream feed needs"
      ],
      "protocol": "not C2"
     },
@@ -1981,7 +2321,7 @@
      "topology": "hil",
      "kpi_grade": true,
      "code_revision": "de7e7489dfaf",
-     "date": "2026-11-14",
+     "date": "2026-11-15",
      "ticks": 4186,
      "end_reason": "max_s reached",
      "mission_s": 420.08,
@@ -1993,6 +2333,13 @@
      "interventions_per_100_ticks": 5.590062111801243,
      "p0_escapes": 0,
      "p0_violation_escape_rate": 0.0,
+     "kpi_outcome": "fail",
+     "mission_fail_reasons": [
+      "unsafe_position_entered"
+     ],
+     "unsafe_p0_ticks": 16,
+     "p0_ticks_not_measurable": 0,
+     "p0_ticks_blind": null,
      "detector_hz": 2.79,
      "stress": null,
      "hot_apply": false,
@@ -2000,6 +2347,12 @@
      "target_estimator": true,
      "vla_feed": "tick",
      "vla_feed_max_hz": null,
+     "negative_query": [
+      "a traffic light"
+     ],
+     "front_capture_interval_s": 0.066,
+     "bundle": "follow-car-citylife-v0.1.3.tar.gz",
+     "max_s_given": 420.0,
      "start_gate_reached": true,
      "summary_only": false,
      "source": {
@@ -2009,7 +2362,8 @@
      },
      "not_c2": [
       "paraphrased instruction ('track a red car')",
-      "feed tick, not the family's C2 feed (stream, no cap)"
+      "feed tick, not the family's C2 feed (stream, no cap)",
+      "FrontCamera capture interval 0.066 s, not the 0.05 s the stream feed needs"
      ],
      "protocol": "not C2"
     },
@@ -2022,7 +2376,7 @@
      "topology": "hil",
      "kpi_grade": true,
      "code_revision": "de7e7489dfaf",
-     "date": "2026-11-14",
+     "date": "2026-11-15",
      "ticks": 899,
      "end_reason": "target_lost",
      "mission_s": 90.06,
@@ -2034,6 +2388,11 @@
      "interventions_per_100_ticks": 0.0,
      "p0_escapes": 0,
      "p0_violation_escape_rate": 0.0,
+     "kpi_outcome": "success",
+     "mission_fail_reasons": [],
+     "unsafe_p0_ticks": 0,
+     "p0_ticks_not_measurable": 0,
+     "p0_ticks_blind": null,
      "detector_hz": 2.343,
      "stress": null,
      "hot_apply": false,
@@ -2041,6 +2400,12 @@
      "target_estimator": true,
      "vla_feed": "tick",
      "vla_feed_max_hz": null,
+     "negative_query": [
+      "a traffic light"
+     ],
+     "front_capture_interval_s": 0.066,
+     "bundle": "follow-car-citylife-v0.1.3.tar.gz",
+     "max_s_given": 420.0,
      "start_gate_reached": true,
      "summary_only": false,
      "source": {
@@ -2050,7 +2415,8 @@
      },
      "not_c2": [
       "paraphrased instruction ('keep up with a red car')",
-      "feed tick, not the family's C2 feed (stream, no cap)"
+      "feed tick, not the family's C2 feed (stream, no cap)",
+      "FrontCamera capture interval 0.066 s, not the 0.05 s the stream feed needs"
      ],
      "protocol": "not C2"
     },
@@ -2063,7 +2429,7 @@
      "topology": "projectairsim-ardupilot-mavros",
      "kpi_grade": false,
      "code_revision": "de7e7489dfaf",
-     "date": "2026-11-14",
+     "date": "2026-11-15",
      "ticks": 0,
      "end_reason": "no mission: start gate timed out after 330.1 s: no plausible 'a red car' within 30 m on 5 inferences in a row",
      "mission_s": 0.03,
@@ -2075,6 +2441,14 @@
      "interventions_per_100_ticks": null,
      "p0_escapes": 0,
      "p0_violation_escape_rate": null,
+     "kpi_outcome": "fail",
+     "mission_fail_reasons": [
+      "no_rows",
+      "follow_not_scored"
+     ],
+     "unsafe_p0_ticks": 0,
+     "p0_ticks_not_measurable": 0,
+     "p0_ticks_blind": null,
      "detector_hz": null,
      "stress": null,
      "hot_apply": false,
@@ -2082,6 +2456,12 @@
      "target_estimator": true,
      "vla_feed": "tick",
      "vla_feed_max_hz": null,
+     "negative_query": [
+      "a traffic light"
+     ],
+     "front_capture_interval_s": 0.066,
+     "bundle": "follow-car-citylife-v0.1.3.tar.gz",
+     "max_s_given": null,
      "start_gate_reached": false,
      "summary_only": false,
      "source": {
@@ -2094,7 +2474,8 @@
       "not KPI-grade by its kpi.json",
       "paraphrased instruction ('pursue a red automobile through the streets')",
       "the start gate never passed: no mission",
-      "feed tick, not the family's C2 feed (stream, no cap)"
+      "feed tick, not the family's C2 feed (stream, no cap)",
+      "FrontCamera capture interval 0.066 s, not the 0.05 s the stream feed needs"
      ],
      "protocol": "not C2"
     },
@@ -2107,7 +2488,7 @@
      "topology": "hil",
      "kpi_grade": true,
      "code_revision": "de7e7489dfaf",
-     "date": "2026-11-14",
+     "date": "2026-11-15",
      "ticks": 900,
      "end_reason": "target_lost",
      "mission_s": 90.14,
@@ -2119,6 +2500,11 @@
      "interventions_per_100_ticks": 0.0,
      "p0_escapes": 0,
      "p0_violation_escape_rate": 0.0,
+     "kpi_outcome": "success",
+     "mission_fail_reasons": [],
+     "unsafe_p0_ticks": 0,
+     "p0_ticks_not_measurable": 0,
+     "p0_ticks_blind": null,
      "detector_hz": 2.518,
      "stress": null,
      "hot_apply": false,
@@ -2126,6 +2512,12 @@
      "target_estimator": true,
      "vla_feed": "tick",
      "vla_feed_max_hz": null,
+     "negative_query": [
+      "a traffic light"
+     ],
+     "front_capture_interval_s": 0.066,
+     "bundle": "follow-car-citylife-v0.1.3.tar.gz",
+     "max_s_given": 420.0,
      "start_gate_reached": true,
      "summary_only": false,
      "source": {
@@ -2135,7 +2527,8 @@
      },
      "not_c2": [
       "paraphrased instruction ('tail a red car as it drives')",
-      "feed tick, not the family's C2 feed (stream, no cap)"
+      "feed tick, not the family's C2 feed (stream, no cap)",
+      "FrontCamera capture interval 0.066 s, not the 0.05 s the stream feed needs"
      ],
      "protocol": "not C2"
     },
@@ -2148,7 +2541,7 @@
      "topology": "hil",
      "kpi_grade": true,
      "code_revision": "de7e7489dfaf",
-     "date": "2026-11-14",
+     "date": "2026-11-15",
      "ticks": 900,
      "end_reason": "target_lost",
      "mission_s": 90.18,
@@ -2160,6 +2553,11 @@
      "interventions_per_100_ticks": 0.0,
      "p0_escapes": 0,
      "p0_violation_escape_rate": 0.0,
+     "kpi_outcome": "success",
+     "mission_fail_reasons": [],
+     "unsafe_p0_ticks": 0,
+     "p0_ticks_not_measurable": 0,
+     "p0_ticks_blind": null,
      "detector_hz": 2.506,
      "stress": null,
      "hot_apply": false,
@@ -2167,6 +2565,12 @@
      "target_estimator": true,
      "vla_feed": "tick",
      "vla_feed_max_hz": null,
+     "negative_query": [
+      "a traffic light"
+     ],
+     "front_capture_interval_s": 0.066,
+     "bundle": "follow-car-citylife-v0.1.3.tar.gz",
+     "max_s_given": 420.0,
      "start_gate_reached": true,
      "summary_only": false,
      "source": {
@@ -2176,7 +2580,8 @@
      },
      "not_c2": [
       "paraphrased instruction ('Please follow a red car.')",
-      "feed tick, not the family's C2 feed (stream, no cap)"
+      "feed tick, not the family's C2 feed (stream, no cap)",
+      "FrontCamera capture interval 0.066 s, not the 0.05 s the stream feed needs"
      ],
      "protocol": "not C2"
     },
@@ -2189,7 +2594,7 @@
      "topology": "hil",
      "kpi_grade": true,
      "code_revision": "de7e7489dfaf",
-     "date": "2026-11-14",
+     "date": "2026-11-15",
      "ticks": 2077,
      "end_reason": "target_lost",
      "mission_s": 208.08,
@@ -2201,6 +2606,11 @@
      "interventions_per_100_ticks": 3.8998555609051517,
      "p0_escapes": 0,
      "p0_violation_escape_rate": 0.0,
+     "kpi_outcome": "success",
+     "mission_fail_reasons": [],
+     "unsafe_p0_ticks": 0,
+     "p0_ticks_not_measurable": 0,
+     "p0_ticks_blind": null,
      "detector_hz": 3.009,
      "stress": null,
      "hot_apply": false,
@@ -2208,6 +2618,12 @@
      "target_estimator": true,
      "vla_feed": "tick",
      "vla_feed_max_hz": null,
+     "negative_query": [
+      "a traffic light"
+     ],
+     "front_capture_interval_s": 0.066,
+     "bundle": "follow-car-citylife-v0.1.3.tar.gz",
+     "max_s_given": 420.0,
      "start_gate_reached": true,
      "summary_only": false,
      "source": {
@@ -2217,7 +2633,8 @@
      },
      "not_c2": [
       "paraphrased instruction ('Could you shadow a red car for me?')",
-      "feed tick, not the family's C2 feed (stream, no cap)"
+      "feed tick, not the family's C2 feed (stream, no cap)",
+      "FrontCamera capture interval 0.066 s, not the 0.05 s the stream feed needs"
      ],
      "protocol": "not C2"
     },
@@ -2230,7 +2647,7 @@
      "topology": "projectairsim-ardupilot-mavros",
      "kpi_grade": false,
      "code_revision": "de7e7489dfaf",
-     "date": "2026-11-14",
+     "date": "2026-11-15",
      "ticks": 0,
      "end_reason": "no mission: start gate timed out after 330.1 s: no plausible 'a red car' within 30 m on 5 inferences in a row",
      "mission_s": 0.02,
@@ -2242,6 +2659,14 @@
      "interventions_per_100_ticks": null,
      "p0_escapes": 0,
      "p0_violation_escape_rate": null,
+     "kpi_outcome": "fail",
+     "mission_fail_reasons": [
+      "no_rows",
+      "follow_not_scored"
+     ],
+     "unsafe_p0_ticks": 0,
+     "p0_ticks_not_measurable": 0,
+     "p0_ticks_blind": null,
      "detector_hz": null,
      "stress": null,
      "hot_apply": false,
@@ -2249,6 +2674,12 @@
      "target_estimator": true,
      "vla_feed": "tick",
      "vla_feed_max_hz": null,
+     "negative_query": [
+      "a traffic light"
+     ],
+     "front_capture_interval_s": 0.066,
+     "bundle": "follow-car-citylife-v0.1.3.tar.gz",
+     "max_s_given": null,
      "start_gate_reached": false,
      "summary_only": false,
      "source": {
@@ -2261,7 +2692,8 @@
       "not KPI-grade by its kpi.json",
       "paraphrased instruction (\"There's a red car - I'd like you to follow it.\")",
       "the start gate never passed: no mission",
-      "feed tick, not the family's C2 feed (stream, no cap)"
+      "feed tick, not the family's C2 feed (stream, no cap)",
+      "FrontCamera capture interval 0.066 s, not the 0.05 s the stream feed needs"
      ],
      "protocol": "not C2"
     },
@@ -2274,7 +2706,7 @@
      "topology": "hil",
      "kpi_grade": true,
      "code_revision": "de7e7489dfaf",
-     "date": "2026-11-14",
+     "date": "2026-11-15",
      "ticks": 4184,
      "end_reason": "max_s reached",
      "mission_s": 420.15,
@@ -2286,6 +2718,13 @@
      "interventions_per_100_ticks": 4.923518164435946,
      "p0_escapes": 0,
      "p0_violation_escape_rate": 0.0,
+     "kpi_outcome": "fail",
+     "mission_fail_reasons": [
+      "unsafe_position_entered"
+     ],
+     "unsafe_p0_ticks": 11,
+     "p0_ticks_not_measurable": 0,
+     "p0_ticks_blind": null,
      "detector_hz": 2.601,
      "stress": null,
      "hot_apply": false,
@@ -2293,6 +2732,12 @@
      "target_estimator": true,
      "vla_feed": "tick",
      "vla_feed_max_hz": null,
+     "negative_query": [
+      "a traffic light"
+     ],
+     "front_capture_interval_s": 0.066,
+     "bundle": "follow-car-citylife-v0.1.3.tar.gz",
+     "max_s_given": 420.0,
      "start_gate_reached": true,
      "summary_only": false,
      "source": {
@@ -2302,7 +2747,8 @@
      },
      "not_c2": [
       "paraphrased instruction ('Your task is to keep tracking a red car wherever it goes.')",
-      "feed tick, not the family's C2 feed (stream, no cap)"
+      "feed tick, not the family's C2 feed (stream, no cap)",
+      "FrontCamera capture interval 0.066 s, not the 0.05 s the stream feed needs"
      ],
      "protocol": "not C2"
     },
@@ -2315,7 +2761,7 @@
      "topology": "hil",
      "kpi_grade": true,
      "code_revision": "de7e7489dfaf",
-     "date": "2026-11-14",
+     "date": "2026-11-15",
      "ticks": 4186,
      "end_reason": "max_s reached",
      "mission_s": 420.13,
@@ -2327,6 +2773,11 @@
      "interventions_per_100_ticks": 5.828953655040611,
      "p0_escapes": 0,
      "p0_violation_escape_rate": 0.0,
+     "kpi_outcome": "success",
+     "mission_fail_reasons": [],
+     "unsafe_p0_ticks": 0,
+     "p0_ticks_not_measurable": 0,
+     "p0_ticks_blind": null,
      "detector_hz": 2.652,
      "stress": null,
      "hot_apply": false,
@@ -2334,6 +2785,12 @@
      "target_estimator": true,
      "vla_feed": "tick",
      "vla_feed_max_hz": null,
+     "negative_query": [
+      "a traffic light"
+     ],
+     "front_capture_interval_s": 0.066,
+     "bundle": "follow-car-citylife-v0.1.3.tar.gz",
+     "max_s_given": 420.0,
      "start_gate_reached": true,
      "summary_only": false,
      "source": {
@@ -2343,7 +2800,8 @@
      },
      "not_c2": [
       "paraphrased instruction ('a red car')",
-      "feed tick, not the family's C2 feed (stream, no cap)"
+      "feed tick, not the family's C2 feed (stream, no cap)",
+      "FrontCamera capture interval 0.066 s, not the 0.05 s the stream feed needs"
      ],
      "protocol": "not C2"
     },
@@ -2368,6 +2826,13 @@
      "interventions_per_100_ticks": 0.4444444444444444,
      "p0_escapes": 0,
      "p0_violation_escape_rate": 0.0,
+     "kpi_outcome": "fail",
+     "mission_fail_reasons": [
+      "unsafe_position_entered"
+     ],
+     "unsafe_p0_ticks": 4,
+     "p0_ticks_not_measurable": 0,
+     "p0_ticks_blind": null,
      "detector_hz": 2.096,
      "stress": null,
      "hot_apply": false,
@@ -2375,6 +2840,12 @@
      "target_estimator": true,
      "vla_feed": "tick",
      "vla_feed_max_hz": null,
+     "negative_query": [
+      "a traffic light"
+     ],
+     "front_capture_interval_s": 0.066,
+     "bundle": "follow-car-citylife-v0.1.3.tar.gz",
+     "max_s_given": 420.0,
      "start_gate_reached": true,
      "summary_only": false,
      "source": {
@@ -2383,7 +2854,8 @@
       "file_date": "2026-11-15"
      },
      "not_c2": [
-      "feed tick, not the family's C2 feed (stream, no cap)"
+      "feed tick, not the family's C2 feed (stream, no cap)",
+      "FrontCamera capture interval 0.066 s, not the 0.05 s the stream feed needs"
      ],
      "protocol": "not C2"
     },
@@ -2408,6 +2880,14 @@
      "interventions_per_100_ticks": 2.0833333333333335,
      "p0_escapes": 0,
      "p0_violation_escape_rate": 0.0,
+     "kpi_outcome": "fail",
+     "mission_fail_reasons": [
+      "dwell:standoff_s",
+      "unsafe_position_entered"
+     ],
+     "unsafe_p0_ticks": 5,
+     "p0_ticks_not_measurable": 0,
+     "p0_ticks_blind": null,
      "detector_hz": 2.382,
      "stress": null,
      "hot_apply": false,
@@ -2415,6 +2895,12 @@
      "target_estimator": true,
      "vla_feed": "tick",
      "vla_feed_max_hz": null,
+     "negative_query": [
+      "a traffic light"
+     ],
+     "front_capture_interval_s": 0.066,
+     "bundle": "follow-car-citylife-v0.1.3.tar.gz",
+     "max_s_given": 420.0,
      "start_gate_reached": true,
      "summary_only": false,
      "source": {
@@ -2424,7 +2910,8 @@
      },
      "not_c2": [
       "paraphrased instruction ('pursue a red automobile through the streets')",
-      "feed tick, not the family's C2 feed (stream, no cap)"
+      "feed tick, not the family's C2 feed (stream, no cap)",
+      "FrontCamera capture interval 0.066 s, not the 0.05 s the stream feed needs"
      ],
      "protocol": "not C2"
     },
@@ -2449,6 +2936,11 @@
      "interventions_per_100_ticks": 1.0695187165775402,
      "p0_escapes": 0,
      "p0_violation_escape_rate": 0.0,
+     "kpi_outcome": "success",
+     "mission_fail_reasons": [],
+     "unsafe_p0_ticks": 0,
+     "p0_ticks_not_measurable": 0,
+     "p0_ticks_blind": null,
      "detector_hz": 2.659,
      "stress": null,
      "hot_apply": false,
@@ -2456,6 +2948,12 @@
      "target_estimator": true,
      "vla_feed": "tick",
      "vla_feed_max_hz": null,
+     "negative_query": [
+      "a traffic light"
+     ],
+     "front_capture_interval_s": 0.066,
+     "bundle": "follow-car-citylife-v0.1.3.tar.gz",
+     "max_s_given": 420.0,
      "start_gate_reached": true,
      "summary_only": false,
      "source": {
@@ -2465,7 +2963,8 @@
      },
      "not_c2": [
       "paraphrased instruction (\"There's a red car - I'd like you to follow it.\")",
-      "feed tick, not the family's C2 feed (stream, no cap)"
+      "feed tick, not the family's C2 feed (stream, no cap)",
+      "FrontCamera capture interval 0.066 s, not the 0.05 s the stream feed needs"
      ],
      "protocol": "not C2"
     },
@@ -2490,6 +2989,13 @@
      "interventions_per_100_ticks": 1.443298969072165,
      "p0_escapes": 0,
      "p0_violation_escape_rate": 0.0,
+     "kpi_outcome": "fail",
+     "mission_fail_reasons": [
+      "dwell:standoff_s"
+     ],
+     "unsafe_p0_ticks": 0,
+     "p0_ticks_not_measurable": 0,
+     "p0_ticks_blind": null,
      "detector_hz": 2.388,
      "stress": null,
      "hot_apply": false,
@@ -2497,6 +3003,12 @@
      "target_estimator": true,
      "vla_feed": "stream",
      "vla_feed_max_hz": 12.0,
+     "negative_query": [
+      "a traffic light"
+     ],
+     "front_capture_interval_s": 0.05,
+     "bundle": "follow-car-citylife-v0.1.3.tar.gz",
+     "max_s_given": 420.0,
      "start_gate_reached": true,
      "summary_only": false,
      "source": {
@@ -2530,6 +3042,11 @@
      "interventions_per_100_ticks": 2.8361344537815127,
      "p0_escapes": 0,
      "p0_violation_escape_rate": 0.0,
+     "kpi_outcome": "success",
+     "mission_fail_reasons": [],
+     "unsafe_p0_ticks": 0,
+     "p0_ticks_not_measurable": 0,
+     "p0_ticks_blind": null,
      "detector_hz": 2.097,
      "stress": null,
      "hot_apply": false,
@@ -2537,6 +3054,12 @@
      "target_estimator": true,
      "vla_feed": "stream",
      "vla_feed_max_hz": 12.0,
+     "negative_query": [
+      "a traffic light"
+     ],
+     "front_capture_interval_s": 0.05,
+     "bundle": "follow-car-citylife-v0.1.3.tar.gz",
+     "max_s_given": 420.0,
      "start_gate_reached": true,
      "summary_only": false,
      "source": {
@@ -2570,6 +3093,13 @@
      "interventions_per_100_ticks": 3.319919517102616,
      "p0_escapes": 0,
      "p0_violation_escape_rate": 0.0,
+     "kpi_outcome": "fail",
+     "mission_fail_reasons": [
+      "unsafe_position_entered"
+     ],
+     "unsafe_p0_ticks": 6,
+     "p0_ticks_not_measurable": 0,
+     "p0_ticks_blind": null,
      "detector_hz": 2.302,
      "stress": null,
      "hot_apply": false,
@@ -2577,6 +3107,12 @@
      "target_estimator": true,
      "vla_feed": "stream",
      "vla_feed_max_hz": 12.0,
+     "negative_query": [
+      "a traffic light"
+     ],
+     "front_capture_interval_s": 0.05,
+     "bundle": "follow-car-citylife-v0.1.3.tar.gz",
+     "max_s_given": 420.0,
      "start_gate_reached": true,
      "summary_only": false,
      "source": {
@@ -2610,6 +3146,11 @@
      "interventions_per_100_ticks": 7.789725209080048,
      "p0_escapes": 0,
      "p0_violation_escape_rate": 0.0,
+     "kpi_outcome": "success",
+     "mission_fail_reasons": [],
+     "unsafe_p0_ticks": 0,
+     "p0_ticks_not_measurable": 0,
+     "p0_ticks_blind": null,
      "detector_hz": 2.502,
      "stress": null,
      "hot_apply": false,
@@ -2617,6 +3158,12 @@
      "target_estimator": true,
      "vla_feed": "stream",
      "vla_feed_max_hz": 12.0,
+     "negative_query": [
+      "a traffic light"
+     ],
+     "front_capture_interval_s": 0.05,
+     "bundle": "follow-car-citylife-v0.1.3.tar.gz",
+     "max_s_given": 420.0,
      "start_gate_reached": true,
      "summary_only": false,
      "source": {
@@ -2650,6 +3197,13 @@
      "interventions_per_100_ticks": 6.210045662100456,
      "p0_escapes": 0,
      "p0_violation_escape_rate": 0.0,
+     "kpi_outcome": "fail",
+     "mission_fail_reasons": [
+      "unsafe_position_entered"
+     ],
+     "unsafe_p0_ticks": 16,
+     "p0_ticks_not_measurable": 0,
+     "p0_ticks_blind": null,
      "detector_hz": 2.696,
      "stress": null,
      "hot_apply": false,
@@ -2657,6 +3211,12 @@
      "target_estimator": true,
      "vla_feed": "stream",
      "vla_feed_max_hz": 0.0,
+     "negative_query": [
+      "a traffic light"
+     ],
+     "front_capture_interval_s": 0.05,
+     "bundle": "follow-car-citylife-v0.1.3.tar.gz",
+     "max_s_given": 420.0,
      "start_gate_reached": true,
      "summary_only": false,
      "source": {
@@ -2690,6 +3250,14 @@
      "interventions_per_100_ticks": 3.979591836734694,
      "p0_escapes": 0,
      "p0_violation_escape_rate": 0.0,
+     "kpi_outcome": "fail",
+     "mission_fail_reasons": [
+      "dwell:standoff_s",
+      "unsafe_position_entered"
+     ],
+     "unsafe_p0_ticks": 8,
+     "p0_ticks_not_measurable": 0,
+     "p0_ticks_blind": null,
      "detector_hz": 2.313,
      "stress": null,
      "hot_apply": false,
@@ -2697,6 +3265,12 @@
      "target_estimator": true,
      "vla_feed": "stream",
      "vla_feed_max_hz": 0.0,
+     "negative_query": [
+      "a traffic light"
+     ],
+     "front_capture_interval_s": 0.05,
+     "bundle": "follow-car-citylife-v0.1.3.tar.gz",
+     "max_s_given": 420.0,
      "start_gate_reached": true,
      "summary_only": false,
      "source": {
@@ -2730,6 +3304,13 @@
      "interventions_per_100_ticks": 7.908527870414483,
      "p0_escapes": 0,
      "p0_violation_escape_rate": 0.0,
+     "kpi_outcome": "fail",
+     "mission_fail_reasons": [
+      "unsafe_position_entered"
+     ],
+     "unsafe_p0_ticks": 21,
+     "p0_ticks_not_measurable": 0,
+     "p0_ticks_blind": null,
      "detector_hz": 2.641,
      "stress": null,
      "hot_apply": false,
@@ -2737,6 +3318,12 @@
      "target_estimator": true,
      "vla_feed": "stream",
      "vla_feed_max_hz": 0.0,
+     "negative_query": [
+      "a traffic light"
+     ],
+     "front_capture_interval_s": 0.05,
+     "bundle": "follow-car-citylife-v0.1.3.tar.gz",
+     "max_s_given": 420.0,
      "start_gate_reached": true,
      "summary_only": false,
      "source": {
@@ -2748,6 +3335,10 @@
      "protocol": "C2"
     }
    ],
+   "orin_timed": true,
+   "orin_r1": false,
+   "orin_bench": true,
+   "orin_attempt_only": false,
    "r1_results": []
   },
   {
@@ -2774,7 +3365,7 @@
    ],
    "cells": {
     "rate_desktop": "not R1 - see records",
-    "rate_orin": "to measure on the Orin (R1)",
+    "rate_orin": "no Orin bench yet; R1 does not cover a model served over protocol v2 (`measure` refuses it): its Orin timing is its server's bench (python tools/bench_foreign_vla.py --server 127.0.0.1:<port> against demo/vla_server_foreign.py serve --model dronecats)",
     "closed_loop_desktop": "not C1 - see records",
     "closed_loop_hil_c1": "not flown: its command is 'go to <the object>' on a camera frame, not a goal coordinate; it has been flown as a follow only",
     "closed_loop_hil_c2": "to fly on hil (C2)"
@@ -2793,7 +3384,9 @@
        "note": null,
        "within_30m": 0.086,
        "latency_p50_s": 1.2,
-       "p0_escape_rate": 0.0
+       "p0_escape_rate": 0.0,
+       "bundle": null,
+       "code_revision": null
       },
       {
        "tag": "cmp2_hier_dronecats_20261028",
@@ -2802,7 +3395,9 @@
        "note": null,
        "within_30m": 0.929,
        "latency_p50_s": 2.14,
-       "p0_escape_rate": 0.0
+       "p0_escape_rate": 0.0,
+       "bundle": null,
+       "code_revision": null
       },
       {
        "tag": "cmp_e2e_dronecats_20261027",
@@ -2811,7 +3406,9 @@
        "note": null,
        "within_30m": 0.132,
        "latency_p50_s": 1.02,
-       "p0_escape_rate": 0.0
+       "p0_escape_rate": 0.0,
+       "bundle": null,
+       "code_revision": null
       },
       {
        "tag": "cmp_hier_dronecats_20261027",
@@ -2820,7 +3417,9 @@
        "note": null,
        "within_30m": 0.939,
        "latency_p50_s": 1.45,
-       "p0_escape_rate": 0.0
+       "p0_escape_rate": 0.0,
+       "bundle": null,
+       "code_revision": null
       },
       {
        "tag": "orin_e2e_dronecats_20261028",
@@ -2829,7 +3428,9 @@
        "note": null,
        "within_30m": 0.076,
        "latency_p50_s": 0.78,
-       "p0_escape_rate": 0.0
+       "p0_escape_rate": 0.0,
+       "bundle": null,
+       "code_revision": null
       },
       {
        "tag": "orin_hier_dronecats_20261028",
@@ -2838,10 +3439,12 @@
        "note": null,
        "within_30m": 0.969,
        "latency_p50_s": 1.24,
-       "p0_escape_rate": 0.0
+       "p0_escape_rate": 0.0,
+       "bundle": null,
+       "code_revision": null
       }
      ],
-     "conditions": "Project AirSim CityLife with simple_flight: not ArduPilot, not hil, never KPI-grade. One flight per configuration unless more are listed, and one flight can differ widely from the next. The file names the models, not the server configurations; CHANGELOG 2026-11-04 states them (the AerialVLA family bf16/sdpa/merged, DroneCATS and RaceVLA bf16). Pure flights are scored from the first acquisition, the others from the start gate",
+     "conditions": "Project AirSim CityLife with simple_flight: not ArduPilot, not hil, never KPI-grade. One flight per configuration unless more are listed, and one flight can differ widely from the next; flights at another commit or under another policy bundle are not repeats of one configuration (where a run folder names them, the table shows both). The file names the models, not the server configurations; CHANGELOG 2026-11-04 states them (the AerialVLA family bf16/sdpa/merged, DroneCATS and RaceVLA bf16). Pure flights are scored from the first acquisition, the others from the start gate",
      "source": {
       "file": "docs/data/progress_1028.json",
       "sha256": "5586c5733c2615f9cb627b08e233299d4b4fb19b7283cc61e4d2718e78685daf",
@@ -2866,7 +3469,8 @@
        "model_id": "dronecats/DroneCATS-Cosmos3-Edge-2B@5080e727",
        "config": "bf16/sdpa/unmerged",
        "topology": "projectairsim-remote-sim",
-       "code_revision": "6da813de8ad7"
+       "code_revision": "6da813de8ad7",
+       "bundle": "follow-car-citylife-nfz-v0.1.1.tar.gz"
       },
       {
        "tag": "agx_e2e_dronecats_t30_20261103",
@@ -2880,7 +3484,8 @@
        "model_id": "dronecats/DroneCATS-Cosmos3-Edge-2B@5080e727",
        "config": "bf16/sdpa/unmerged",
        "topology": "projectairsim-remote-sim",
-       "code_revision": "6da813de8ad7"
+       "code_revision": "6da813de8ad7",
+       "bundle": "follow-car-citylife-nfz-v0.1.1.tar.gz"
       },
       {
        "tag": "agx_hier_dronecats_20261103",
@@ -2894,16 +3499,21 @@
        "model_id": "dronecats/DroneCATS-Cosmos3-Edge-2B@5080e727",
        "config": "bf16/sdpa/unmerged",
        "topology": "projectairsim-remote-sim",
-       "code_revision": "6da813de8ad7"
+       "code_revision": "6da813de8ad7",
+       "bundle": "follow-car-citylife-nfz-v0.1.1.tar.gz"
       }
      ],
-     "conditions": "Project AirSim CityLife with simple_flight: not ArduPilot, not hil, never KPI-grade. One flight per configuration unless more are listed, and one flight can differ widely from the next. The simulator ran on the PC; identities and scores are each run's own metrics.json and kpi.json. Pure flights are scored from the first acquisition, the others from the start gate",
+     "conditions": "Project AirSim CityLife with simple_flight: not ArduPilot, not hil, never KPI-grade. One flight per configuration unless more are listed, and one flight can differ widely from the next; flights at another commit or under another policy bundle are not repeats of one configuration (where a run folder names them, the table shows both). The simulator ran on the PC; identities, scores, commits and policy bundles are each run's own metrics.json and kpi.json. The agx_*_01 flights are the first AGX follows of 3 November, at an earlier commit than the matrix; the nfz3b_ flights flew another bundle (a no-fly zone on the route), so they are another scenario, not a repeat. Pure flights are scored from the first acquisition, the others from the start gate",
      "source": {
-      "file": "demo/out/agx_*_2026110[34]/metrics.json",
-      "runs": 21
+      "file": "demo/out/*agx_*/metrics.json (tags *_2026110[34] and *_01)",
+      "runs": 24
      }
     }
    ],
+   "orin_timed": false,
+   "orin_r1": false,
+   "orin_bench": false,
+   "orin_attempt_only": false,
    "r1_results": []
   },
   {
@@ -2931,7 +3541,7 @@
    ],
    "cells": {
     "rate_desktop": "not R1 - see records",
-    "rate_orin": "to measure on the Orin (R1)",
+    "rate_orin": "no Orin bench yet; R1 does not cover a model served over protocol v2 (`measure` refuses it): its Orin timing is its server's bench (python tools/bench_foreign_vla.py --server 127.0.0.1:<port> against demo/vla_server_foreign.py serve --model racevla)",
     "closed_loop_desktop": "not C1 - see records",
     "closed_loop_hil_c1": "not flown: its instruction is 'fly to <the object>' on a camera frame, not a goal coordinate; it has been flown as a follow only",
     "closed_loop_hil_c2": "to fly on hil (C2)"
@@ -2950,7 +3560,9 @@
        "note": null,
        "within_30m": 0.084,
        "latency_p50_s": 0.52,
-       "p0_escape_rate": 0.0
+       "p0_escape_rate": 0.0,
+       "bundle": null,
+       "code_revision": null
       },
       {
        "tag": "cmp2_hier_racevla_20261028",
@@ -2959,7 +3571,9 @@
        "note": null,
        "within_30m": 0.721,
        "latency_p50_s": 0.57,
-       "p0_escape_rate": 0.0
+       "p0_escape_rate": 0.0,
+       "bundle": null,
+       "code_revision": null
       },
       {
        "tag": "cmp_e2e_racevla_20261027",
@@ -2968,7 +3582,9 @@
        "note": null,
        "within_30m": 0.099,
        "latency_p50_s": 0.42,
-       "p0_escape_rate": 0.0
+       "p0_escape_rate": 0.0,
+       "bundle": null,
+       "code_revision": null
       },
       {
        "tag": "cmp_hier_racevla_20261027",
@@ -2977,7 +3593,9 @@
        "note": null,
        "within_30m": 0.719,
        "latency_p50_s": 0.4,
-       "p0_escape_rate": 0.0
+       "p0_escape_rate": 0.0,
+       "bundle": null,
+       "code_revision": null
       },
       {
        "tag": "orin_e2e_racevla_20261028",
@@ -2986,7 +3604,9 @@
        "note": null,
        "within_30m": 0.083,
        "latency_p50_s": 0.51,
-       "p0_escape_rate": 0.0
+       "p0_escape_rate": 0.0,
+       "bundle": null,
+       "code_revision": null
       },
       {
        "tag": "orin_hier_racevla_20261028",
@@ -2995,10 +3615,12 @@
        "note": null,
        "within_30m": 0.704,
        "latency_p50_s": 0.51,
-       "p0_escape_rate": 0.0
+       "p0_escape_rate": 0.0,
+       "bundle": null,
+       "code_revision": null
       }
      ],
-     "conditions": "Project AirSim CityLife with simple_flight: not ArduPilot, not hil, never KPI-grade. One flight per configuration unless more are listed, and one flight can differ widely from the next. The file names the models, not the server configurations; CHANGELOG 2026-11-04 states them (the AerialVLA family bf16/sdpa/merged, DroneCATS and RaceVLA bf16). Pure flights are scored from the first acquisition, the others from the start gate",
+     "conditions": "Project AirSim CityLife with simple_flight: not ArduPilot, not hil, never KPI-grade. One flight per configuration unless more are listed, and one flight can differ widely from the next; flights at another commit or under another policy bundle are not repeats of one configuration (where a run folder names them, the table shows both). The file names the models, not the server configurations; CHANGELOG 2026-11-04 states them (the AerialVLA family bf16/sdpa/merged, DroneCATS and RaceVLA bf16). Pure flights are scored from the first acquisition, the others from the start gate",
      "source": {
       "file": "docs/data/progress_1028.json",
       "sha256": "5586c5733c2615f9cb627b08e233299d4b4fb19b7283cc61e4d2718e78685daf",
@@ -3023,7 +3645,8 @@
        "model_id": "racevla/drone6_all@03f3bb48",
        "config": "bf16/sdpa/unmerged",
        "topology": "projectairsim-remote-sim",
-       "code_revision": "6da813de8ad7"
+       "code_revision": "6da813de8ad7",
+       "bundle": "follow-car-citylife-nfz-v0.1.1.tar.gz"
       },
       {
        "tag": "agx_e2e_racevla_20261104",
@@ -3037,7 +3660,8 @@
        "model_id": "racevla/drone6_all@03f3bb48",
        "config": "bf16/sdpa/unmerged",
        "topology": "projectairsim-remote-sim",
-       "code_revision": "989f96724b74"
+       "code_revision": "989f96724b74",
+       "bundle": "follow-car-citylife-nfz-v0.1.1.tar.gz"
       },
       {
        "tag": "agx_hier_racevla_20261103",
@@ -3051,16 +3675,21 @@
        "model_id": "racevla/drone6_all@03f3bb48",
        "config": "bf16/sdpa/unmerged",
        "topology": "projectairsim-remote-sim",
-       "code_revision": "6da813de8ad7"
+       "code_revision": "6da813de8ad7",
+       "bundle": "follow-car-citylife-nfz-v0.1.1.tar.gz"
       }
      ],
-     "conditions": "Project AirSim CityLife with simple_flight: not ArduPilot, not hil, never KPI-grade. One flight per configuration unless more are listed, and one flight can differ widely from the next. The simulator ran on the PC; identities and scores are each run's own metrics.json and kpi.json. Pure flights are scored from the first acquisition, the others from the start gate",
+     "conditions": "Project AirSim CityLife with simple_flight: not ArduPilot, not hil, never KPI-grade. One flight per configuration unless more are listed, and one flight can differ widely from the next; flights at another commit or under another policy bundle are not repeats of one configuration (where a run folder names them, the table shows both). The simulator ran on the PC; identities, scores, commits and policy bundles are each run's own metrics.json and kpi.json. The agx_*_01 flights are the first AGX follows of 3 November, at an earlier commit than the matrix; the nfz3b_ flights flew another bundle (a no-fly zone on the route), so they are another scenario, not a repeat. Pure flights are scored from the first acquisition, the others from the start gate",
      "source": {
-      "file": "demo/out/agx_*_2026110[34]/metrics.json",
-      "runs": 21
+      "file": "demo/out/*agx_*/metrics.json (tags *_2026110[34] and *_01)",
+      "runs": 24
      }
     }
    ],
+   "orin_timed": false,
+   "orin_r1": false,
+   "orin_bench": false,
+   "orin_attempt_only": false,
    "r1_results": []
   },
   {
@@ -3083,6 +3712,10 @@
     "closed_loop_hil_c2": "weights not obtained"
    },
    "records": [],
+   "orin_timed": false,
+   "orin_r1": false,
+   "orin_bench": false,
+   "orin_attempt_only": false,
    "r1_results": []
   },
   {
@@ -3105,6 +3738,10 @@
     "closed_loop_hil_c2": "weights not obtained"
    },
    "records": [],
+   "orin_timed": false,
+   "orin_r1": false,
+   "orin_bench": false,
+   "orin_attempt_only": false,
    "r1_results": []
   }
  ],
@@ -3194,7 +3831,9 @@
      "note": null,
      "within_30m": 0.018,
      "latency_p50_s": 0.65,
-     "p0_escape_rate": 0.0
+     "p0_escape_rate": 0.0,
+     "bundle": null,
+     "code_revision": null
     },
     {
      "tag": "cmp2_hier_r1_20261028",
@@ -3203,7 +3842,9 @@
      "note": null,
      "within_30m": 0.884,
      "latency_p50_s": 0.68,
-     "p0_escape_rate": 0.0
+     "p0_escape_rate": 0.0,
+     "bundle": null,
+     "code_revision": null
     },
     {
      "tag": "cmp_hier_r1_20261027",
@@ -3212,7 +3853,9 @@
      "note": null,
      "within_30m": 0.884,
      "latency_p50_s": 0.48,
-     "p0_escape_rate": 0.0
+     "p0_escape_rate": 0.0,
+     "bundle": null,
+     "code_revision": null
     },
     {
      "tag": "orin_e2e_r1_20261028",
@@ -3221,7 +3864,9 @@
      "note": null,
      "within_30m": 0.113,
      "latency_p50_s": 0.58,
-     "p0_escape_rate": 0.0
+     "p0_escape_rate": 0.0,
+     "bundle": null,
+     "code_revision": null
     },
     {
      "tag": "orin_hier_r1_20261028",
@@ -3230,10 +3875,12 @@
      "note": null,
      "within_30m": 0.89,
      "latency_p50_s": 0.62,
-     "p0_escape_rate": 0.0
+     "p0_escape_rate": 0.0,
+     "bundle": null,
+     "code_revision": null
     }
    ],
-   "conditions": "Project AirSim CityLife with simple_flight: not ArduPilot, not hil, never KPI-grade. One flight per configuration unless more are listed, and one flight can differ widely from the next. The file names the models, not the server configurations; CHANGELOG 2026-11-04 states them (the AerialVLA family bf16/sdpa/merged, DroneCATS and RaceVLA bf16). Pure flights are scored from the first acquisition, the others from the start gate",
+   "conditions": "Project AirSim CityLife with simple_flight: not ArduPilot, not hil, never KPI-grade. One flight per configuration unless more are listed, and one flight can differ widely from the next; flights at another commit or under another policy bundle are not repeats of one configuration (where a run folder names them, the table shows both). The file names the models, not the server configurations; CHANGELOG 2026-11-04 states them (the AerialVLA family bf16/sdpa/merged, DroneCATS and RaceVLA bf16). Pure flights are scored from the first acquisition, the others from the start gate",
    "source": {
     "file": "docs/data/progress_1028.json",
     "sha256": "5586c5733c2615f9cb627b08e233299d4b4fb19b7283cc61e4d2718e78685daf",
@@ -3253,7 +3900,9 @@
      "note": null,
      "within_30m": 0.065,
      "latency_p50_s": 0.64,
-     "p0_escape_rate": 0.0
+     "p0_escape_rate": 0.0,
+     "bundle": null,
+     "code_revision": null
     },
     {
      "tag": "cmp2_hier_r2_20261028",
@@ -3262,7 +3911,9 @@
      "note": null,
      "within_30m": 0.918,
      "latency_p50_s": 0.66,
-     "p0_escape_rate": 0.0
+     "p0_escape_rate": 0.0,
+     "bundle": null,
+     "code_revision": null
     },
     {
      "tag": "orin_e2e_r2_20261028",
@@ -3271,7 +3922,9 @@
      "note": null,
      "within_30m": 0.017,
      "latency_p50_s": 0.58,
-     "p0_escape_rate": 0.0
+     "p0_escape_rate": 0.0,
+     "bundle": null,
+     "code_revision": null
     },
     {
      "tag": "orin_hier_r2_20261028",
@@ -3280,10 +3933,12 @@
      "note": null,
      "within_30m": 0.924,
      "latency_p50_s": 0.52,
-     "p0_escape_rate": 0.0
+     "p0_escape_rate": 0.0,
+     "bundle": null,
+     "code_revision": null
     }
    ],
-   "conditions": "Project AirSim CityLife with simple_flight: not ArduPilot, not hil, never KPI-grade. One flight per configuration unless more are listed, and one flight can differ widely from the next. The file names the models, not the server configurations; CHANGELOG 2026-11-04 states them (the AerialVLA family bf16/sdpa/merged, DroneCATS and RaceVLA bf16). Pure flights are scored from the first acquisition, the others from the start gate",
+   "conditions": "Project AirSim CityLife with simple_flight: not ArduPilot, not hil, never KPI-grade. One flight per configuration unless more are listed, and one flight can differ widely from the next; flights at another commit or under another policy bundle are not repeats of one configuration (where a run folder names them, the table shows both). The file names the models, not the server configurations; CHANGELOG 2026-11-04 states them (the AerialVLA family bf16/sdpa/merged, DroneCATS and RaceVLA bf16). Pure flights are scored from the first acquisition, the others from the start gate",
    "source": {
     "file": "docs/data/progress_1028.json",
     "sha256": "5586c5733c2615f9cb627b08e233299d4b4fb19b7283cc61e4d2718e78685daf",
@@ -3303,7 +3958,9 @@
      "note": null,
      "within_30m": 0.053,
      "latency_p50_s": 0.61,
-     "p0_escape_rate": 0.0
+     "p0_escape_rate": 0.0,
+     "bundle": null,
+     "code_revision": null
     },
     {
      "tag": "cmp2_hier_r3_20261028",
@@ -3312,7 +3969,9 @@
      "note": null,
      "within_30m": 0.934,
      "latency_p50_s": 0.68,
-     "p0_escape_rate": 0.0
+     "p0_escape_rate": 0.0,
+     "bundle": null,
+     "code_revision": null
     },
     {
      "tag": "cmp_hier_r3_20261027",
@@ -3321,7 +3980,9 @@
      "note": null,
      "within_30m": 0.869,
      "latency_p50_s": 0.66,
-     "p0_escape_rate": 0.0
+     "p0_escape_rate": 0.0,
+     "bundle": null,
+     "code_revision": null
     },
     {
      "tag": "orin_e2e_r3_20261028",
@@ -3330,7 +3991,9 @@
      "note": null,
      "within_30m": 0.076,
      "latency_p50_s": 0.39,
-     "p0_escape_rate": 0.0
+     "p0_escape_rate": 0.0,
+     "bundle": null,
+     "code_revision": null
     },
     {
      "tag": "orin_hier_r3_20261028",
@@ -3339,10 +4002,12 @@
      "note": null,
      "within_30m": 0.876,
      "latency_p50_s": 0.62,
-     "p0_escape_rate": 0.0
+     "p0_escape_rate": 0.0,
+     "bundle": null,
+     "code_revision": null
     }
    ],
-   "conditions": "Project AirSim CityLife with simple_flight: not ArduPilot, not hil, never KPI-grade. One flight per configuration unless more are listed, and one flight can differ widely from the next. The file names the models, not the server configurations; CHANGELOG 2026-11-04 states them (the AerialVLA family bf16/sdpa/merged, DroneCATS and RaceVLA bf16). Pure flights are scored from the first acquisition, the others from the start gate",
+   "conditions": "Project AirSim CityLife with simple_flight: not ArduPilot, not hil, never KPI-grade. One flight per configuration unless more are listed, and one flight can differ widely from the next; flights at another commit or under another policy bundle are not repeats of one configuration (where a run folder names them, the table shows both). The file names the models, not the server configurations; CHANGELOG 2026-11-04 states them (the AerialVLA family bf16/sdpa/merged, DroneCATS and RaceVLA bf16). Pure flights are scored from the first acquisition, the others from the start gate",
    "source": {
     "file": "docs/data/progress_1028.json",
     "sha256": "5586c5733c2615f9cb627b08e233299d4b4fb19b7283cc61e4d2718e78685daf",
@@ -3362,7 +4027,9 @@
      "note": null,
      "within_30m": 0.033,
      "latency_p50_s": 0.63,
-     "p0_escape_rate": 0.0
+     "p0_escape_rate": 0.0,
+     "bundle": null,
+     "code_revision": null
     },
     {
      "tag": "cmp2_hier_r4_20261028",
@@ -3371,7 +4038,9 @@
      "note": null,
      "within_30m": 0.873,
      "latency_p50_s": 0.68,
-     "p0_escape_rate": 0.0
+     "p0_escape_rate": 0.0,
+     "bundle": null,
+     "code_revision": null
     },
     {
      "tag": "orin_e2e_r4_20261028",
@@ -3380,7 +4049,9 @@
      "note": null,
      "within_30m": 0.077,
      "latency_p50_s": 0.46,
-     "p0_escape_rate": 0.0
+     "p0_escape_rate": 0.0,
+     "bundle": null,
+     "code_revision": null
     },
     {
      "tag": "orin_hier_r4_20261028",
@@ -3389,10 +4060,12 @@
      "note": null,
      "within_30m": 0.882,
      "latency_p50_s": 0.49,
-     "p0_escape_rate": 0.0
+     "p0_escape_rate": 0.0,
+     "bundle": null,
+     "code_revision": null
     }
    ],
-   "conditions": "Project AirSim CityLife with simple_flight: not ArduPilot, not hil, never KPI-grade. One flight per configuration unless more are listed, and one flight can differ widely from the next. The file names the models, not the server configurations; CHANGELOG 2026-11-04 states them (the AerialVLA family bf16/sdpa/merged, DroneCATS and RaceVLA bf16). Pure flights are scored from the first acquisition, the others from the start gate",
+   "conditions": "Project AirSim CityLife with simple_flight: not ArduPilot, not hil, never KPI-grade. One flight per configuration unless more are listed, and one flight can differ widely from the next; flights at another commit or under another policy bundle are not repeats of one configuration (where a run folder names them, the table shows both). The file names the models, not the server configurations; CHANGELOG 2026-11-04 states them (the AerialVLA family bf16/sdpa/merged, DroneCATS and RaceVLA bf16). Pure flights are scored from the first acquisition, the others from the start gate",
    "source": {
     "file": "docs/data/progress_1028.json",
     "sha256": "5586c5733c2615f9cb627b08e233299d4b4fb19b7283cc61e4d2718e78685daf",
@@ -3412,7 +4085,9 @@
      "note": null,
      "within_30m": 0.999,
      "latency_p50_s": 0.09,
-     "p0_escape_rate": 0.0
+     "p0_escape_rate": 0.0,
+     "bundle": null,
+     "code_revision": null
     },
     {
      "tag": "cmp_hier_fixed12_20261027",
@@ -3421,7 +4096,9 @@
      "note": "labelled 'manual' in progress_1028.json; listed by its run folder's own pilot record (fake:scripted)",
      "within_30m": 0.98,
      "latency_p50_s": 0.08,
-     "p0_escape_rate": 0.0
+     "p0_escape_rate": 0.0,
+     "bundle": null,
+     "code_revision": null
     },
     {
      "tag": "orin_hier_fixed12_20261028",
@@ -3430,10 +4107,12 @@
      "note": null,
      "within_30m": 0.799,
      "latency_p50_s": 0.1,
-     "p0_escape_rate": 0.0
+     "p0_escape_rate": 0.0,
+     "bundle": null,
+     "code_revision": null
     }
    ],
-   "conditions": "Project AirSim CityLife with simple_flight: not ArduPilot, not hil, never KPI-grade. One flight per configuration unless more are listed, and one flight can differ widely from the next. The file names the models, not the server configurations; CHANGELOG 2026-11-04 states them (the AerialVLA family bf16/sdpa/merged, DroneCATS and RaceVLA bf16). Pure flights are scored from the first acquisition, the others from the start gate",
+   "conditions": "Project AirSim CityLife with simple_flight: not ArduPilot, not hil, never KPI-grade. One flight per configuration unless more are listed, and one flight can differ widely from the next; flights at another commit or under another policy bundle are not repeats of one configuration (where a run folder names them, the table shows both). The file names the models, not the server configurations; CHANGELOG 2026-11-04 states them (the AerialVLA family bf16/sdpa/merged, DroneCATS and RaceVLA bf16). Pure flights are scored from the first acquisition, the others from the start gate",
    "source": {
     "file": "docs/data/progress_1028.json",
     "sha256": "5586c5733c2615f9cb627b08e233299d4b4fb19b7283cc61e4d2718e78685daf",
@@ -3453,7 +4132,9 @@
      "note": null,
      "within_30m": 0.966,
      "latency_p50_s": null,
-     "p0_escape_rate": 0.0
+     "p0_escape_rate": 0.0,
+     "bundle": null,
+     "code_revision": null
     },
     {
      "tag": "cmp_manual_20261027",
@@ -3462,7 +4143,9 @@
      "note": null,
      "within_30m": 0.954,
      "latency_p50_s": null,
-     "p0_escape_rate": 0.0
+     "p0_escape_rate": 0.0,
+     "bundle": null,
+     "code_revision": null
     },
     {
      "tag": "orin_manual_20261028",
@@ -3471,10 +4154,12 @@
      "note": null,
      "within_30m": 0.976,
      "latency_p50_s": null,
-     "p0_escape_rate": 0.0
+     "p0_escape_rate": 0.0,
+     "bundle": null,
+     "code_revision": null
     }
    ],
-   "conditions": "Project AirSim CityLife with simple_flight: not ArduPilot, not hil, never KPI-grade. One flight per configuration unless more are listed, and one flight can differ widely from the next. The file names the models, not the server configurations; CHANGELOG 2026-11-04 states them (the AerialVLA family bf16/sdpa/merged, DroneCATS and RaceVLA bf16). Pure flights are scored from the first acquisition, the others from the start gate",
+   "conditions": "Project AirSim CityLife with simple_flight: not ArduPilot, not hil, never KPI-grade. One flight per configuration unless more are listed, and one flight can differ widely from the next; flights at another commit or under another policy bundle are not repeats of one configuration (where a run folder names them, the table shows both). The file names the models, not the server configurations; CHANGELOG 2026-11-04 states them (the AerialVLA family bf16/sdpa/merged, DroneCATS and RaceVLA bf16). Pure flights are scored from the first acquisition, the others from the start gate",
    "source": {
     "file": "docs/data/progress_1028.json",
     "sha256": "5586c5733c2615f9cb627b08e233299d4b4fb19b7283cc61e4d2718e78685daf",
@@ -3499,7 +4184,8 @@
      "model_id": "aerialvla-ft-follow/follow_v2_r1/epoch4@72cd9ae4",
      "config": "bf16/sdpa/merged",
      "topology": "projectairsim-remote-sim",
-     "code_revision": "6da813de8ad7"
+     "code_revision": "6da813de8ad7",
+     "bundle": "follow-car-citylife-nfz-v0.1.1.tar.gz"
     },
     {
      "tag": "agx_hier_r1_20261103",
@@ -3513,13 +4199,14 @@
      "model_id": "aerialvla-ft-follow/follow_v2_r1/epoch4@72cd9ae4",
      "config": "bf16/sdpa/merged",
      "topology": "projectairsim-remote-sim",
-     "code_revision": "6da813de8ad7"
+     "code_revision": "6da813de8ad7",
+     "bundle": "follow-car-citylife-nfz-v0.1.1.tar.gz"
     }
    ],
-   "conditions": "Project AirSim CityLife with simple_flight: not ArduPilot, not hil, never KPI-grade. One flight per configuration unless more are listed, and one flight can differ widely from the next. The simulator ran on the PC; identities and scores are each run's own metrics.json and kpi.json. Pure flights are scored from the first acquisition, the others from the start gate",
+   "conditions": "Project AirSim CityLife with simple_flight: not ArduPilot, not hil, never KPI-grade. One flight per configuration unless more are listed, and one flight can differ widely from the next; flights at another commit or under another policy bundle are not repeats of one configuration (where a run folder names them, the table shows both). The simulator ran on the PC; identities, scores, commits and policy bundles are each run's own metrics.json and kpi.json. The agx_*_01 flights are the first AGX follows of 3 November, at an earlier commit than the matrix; the nfz3b_ flights flew another bundle (a no-fly zone on the route), so they are another scenario, not a repeat. Pure flights are scored from the first acquisition, the others from the start gate",
    "source": {
-    "file": "demo/out/agx_*_2026110[34]/metrics.json",
-    "runs": 21
+    "file": "demo/out/*agx_*/metrics.json (tags *_2026110[34] and *_01)",
+    "runs": 24
    }
   },
   {
@@ -3540,7 +4227,8 @@
      "model_id": "aerialvla-ft-follow/follow_v3_pf_r1/epoch1@948ff887",
      "config": "bf16/sdpa/merged",
      "topology": "projectairsim-remote-sim",
-     "code_revision": "6da813de8ad7"
+     "code_revision": "6da813de8ad7",
+     "bundle": "follow-car-citylife-nfz-v0.1.1.tar.gz"
     },
     {
      "tag": "agx_hier_r2_20261103",
@@ -3554,13 +4242,14 @@
      "model_id": "aerialvla-ft-follow/follow_v3_pf_r1/epoch1@948ff887",
      "config": "bf16/sdpa/merged",
      "topology": "projectairsim-remote-sim",
-     "code_revision": "6da813de8ad7"
+     "code_revision": "6da813de8ad7",
+     "bundle": "follow-car-citylife-nfz-v0.1.1.tar.gz"
     }
    ],
-   "conditions": "Project AirSim CityLife with simple_flight: not ArduPilot, not hil, never KPI-grade. One flight per configuration unless more are listed, and one flight can differ widely from the next. The simulator ran on the PC; identities and scores are each run's own metrics.json and kpi.json. Pure flights are scored from the first acquisition, the others from the start gate",
+   "conditions": "Project AirSim CityLife with simple_flight: not ArduPilot, not hil, never KPI-grade. One flight per configuration unless more are listed, and one flight can differ widely from the next; flights at another commit or under another policy bundle are not repeats of one configuration (where a run folder names them, the table shows both). The simulator ran on the PC; identities, scores, commits and policy bundles are each run's own metrics.json and kpi.json. The agx_*_01 flights are the first AGX follows of 3 November, at an earlier commit than the matrix; the nfz3b_ flights flew another bundle (a no-fly zone on the route), so they are another scenario, not a repeat. Pure flights are scored from the first acquisition, the others from the start gate",
    "source": {
-    "file": "demo/out/agx_*_2026110[34]/metrics.json",
-    "runs": 21
+    "file": "demo/out/*agx_*/metrics.json (tags *_2026110[34] and *_01)",
+    "runs": 24
    }
   },
   {
@@ -3581,7 +4270,8 @@
      "model_id": "aerialvla-ft-follow/follow_v4_r3/epoch1@8c132f16",
      "config": "bf16/sdpa/merged",
      "topology": "projectairsim-remote-sim",
-     "code_revision": "6da813de8ad7"
+     "code_revision": "6da813de8ad7",
+     "bundle": "follow-car-citylife-nfz-v0.1.1.tar.gz"
     },
     {
      "tag": "agx_e2e_r3_20261104",
@@ -3595,7 +4285,8 @@
      "model_id": "aerialvla-ft-follow/follow_v4_r3/epoch1@8c132f16",
      "config": "bf16/sdpa/merged",
      "topology": "projectairsim-remote-sim",
-     "code_revision": "989f96724b74"
+     "code_revision": "989f96724b74",
+     "bundle": "follow-car-citylife-nfz-v0.1.1.tar.gz"
     },
     {
      "tag": "agx_hier_r3_20261103",
@@ -3609,13 +4300,14 @@
      "model_id": "aerialvla-ft-follow/follow_v4_r3/epoch1@8c132f16",
      "config": "bf16/sdpa/merged",
      "topology": "projectairsim-remote-sim",
-     "code_revision": "6da813de8ad7"
+     "code_revision": "6da813de8ad7",
+     "bundle": "follow-car-citylife-nfz-v0.1.1.tar.gz"
     }
    ],
-   "conditions": "Project AirSim CityLife with simple_flight: not ArduPilot, not hil, never KPI-grade. One flight per configuration unless more are listed, and one flight can differ widely from the next. The simulator ran on the PC; identities and scores are each run's own metrics.json and kpi.json. Pure flights are scored from the first acquisition, the others from the start gate",
+   "conditions": "Project AirSim CityLife with simple_flight: not ArduPilot, not hil, never KPI-grade. One flight per configuration unless more are listed, and one flight can differ widely from the next; flights at another commit or under another policy bundle are not repeats of one configuration (where a run folder names them, the table shows both). The simulator ran on the PC; identities, scores, commits and policy bundles are each run's own metrics.json and kpi.json. The agx_*_01 flights are the first AGX follows of 3 November, at an earlier commit than the matrix; the nfz3b_ flights flew another bundle (a no-fly zone on the route), so they are another scenario, not a repeat. Pure flights are scored from the first acquisition, the others from the start gate",
    "source": {
-    "file": "demo/out/agx_*_2026110[34]/metrics.json",
-    "runs": 21
+    "file": "demo/out/*agx_*/metrics.json (tags *_2026110[34] and *_01)",
+    "runs": 24
    }
   },
   {
@@ -3636,7 +4328,8 @@
      "model_id": "aerialvla-ft-follow/follow_v5_r4/epoch1@8e21f930",
      "config": "bf16/sdpa/merged",
      "topology": "projectairsim-remote-sim",
-     "code_revision": "6da813de8ad7"
+     "code_revision": "6da813de8ad7",
+     "bundle": "follow-car-citylife-nfz-v0.1.1.tar.gz"
     },
     {
      "tag": "agx_hier_r4_20261103",
@@ -3650,13 +4343,57 @@
      "model_id": "aerialvla-ft-follow/follow_v5_r4/epoch1@8e21f930",
      "config": "bf16/sdpa/merged",
      "topology": "projectairsim-remote-sim",
-     "code_revision": "6da813de8ad7"
+     "code_revision": "6da813de8ad7",
+     "bundle": "follow-car-citylife-nfz-v0.1.1.tar.gz"
     }
    ],
-   "conditions": "Project AirSim CityLife with simple_flight: not ArduPilot, not hil, never KPI-grade. One flight per configuration unless more are listed, and one flight can differ widely from the next. The simulator ran on the PC; identities and scores are each run's own metrics.json and kpi.json. Pure flights are scored from the first acquisition, the others from the start gate",
+   "conditions": "Project AirSim CityLife with simple_flight: not ArduPilot, not hil, never KPI-grade. One flight per configuration unless more are listed, and one flight can differ widely from the next; flights at another commit or under another policy bundle are not repeats of one configuration (where a run folder names them, the table shows both). The simulator ran on the PC; identities, scores, commits and policy bundles are each run's own metrics.json and kpi.json. The agx_*_01 flights are the first AGX follows of 3 November, at an earlier commit than the matrix; the nfz3b_ flights flew another bundle (a no-fly zone on the route), so they are another scenario, not a repeat. Pure flights are scored from the first acquisition, the others from the start gate",
    "source": {
-    "file": "demo/out/agx_*_2026110[34]/metrics.json",
-    "runs": 21
+    "file": "demo/out/*agx_*/metrics.json (tags *_2026110[34] and *_01)",
+    "runs": 24
+   }
+  },
+  {
+   "backend": "hand_written_follow",
+   "metric": "follow_matrix",
+   "protocol": "not C1, not C2",
+   "matrix": "3-4 November 2026",
+   "flights": [
+    {
+     "tag": "agx_follow_01",
+     "platform": "AGX Orin (client and VLA server)",
+     "kind": "hand-written follow (no VLA)",
+     "within_30m": 0.952,
+     "latency_p50_s": null,
+     "p0_escape_rate": 0.0,
+     "ticks": 4195,
+     "end_reason": null,
+     "model_id": null,
+     "config": null,
+     "topology": "projectairsim-remote-sim",
+     "code_revision": "a609cf8ca632",
+     "bundle": "follow-car-citylife-nfz-v0.1.1.tar.gz"
+    },
+    {
+     "tag": "agx_manual_20261103",
+     "platform": "AGX Orin (client and VLA server)",
+     "kind": "hand-written follow (no VLA)",
+     "within_30m": 0.952,
+     "latency_p50_s": null,
+     "p0_escape_rate": 0.0,
+     "ticks": 4197,
+     "end_reason": null,
+     "model_id": null,
+     "config": null,
+     "topology": "projectairsim-remote-sim",
+     "code_revision": "6da813de8ad7",
+     "bundle": "follow-car-citylife-nfz-v0.1.1.tar.gz"
+    }
+   ],
+   "conditions": "Project AirSim CityLife with simple_flight: not ArduPilot, not hil, never KPI-grade. One flight per configuration unless more are listed, and one flight can differ widely from the next; flights at another commit or under another policy bundle are not repeats of one configuration (where a run folder names them, the table shows both). The simulator ran on the PC; identities, scores, commits and policy bundles are each run's own metrics.json and kpi.json. The agx_*_01 flights are the first AGX follows of 3 November, at an earlier commit than the matrix; the nfz3b_ flights flew another bundle (a no-fly zone on the route), so they are another scenario, not a repeat. Pure flights are scored from the first acquisition, the others from the start gate",
+   "source": {
+    "file": "demo/out/*agx_*/metrics.json (tags *_2026110[34] and *_01)",
+    "runs": 24
    }
   },
   {
@@ -3677,40 +4414,14 @@
      "model_id": "fake:scripted",
      "config": "fake/none/unmerged",
      "topology": "projectairsim-remote-sim",
-     "code_revision": "6da813de8ad7"
+     "code_revision": "6da813de8ad7",
+     "bundle": "follow-car-citylife-nfz-v0.1.1.tar.gz"
     }
    ],
-   "conditions": "Project AirSim CityLife with simple_flight: not ArduPilot, not hil, never KPI-grade. One flight per configuration unless more are listed, and one flight can differ widely from the next. The simulator ran on the PC; identities and scores are each run's own metrics.json and kpi.json. Pure flights are scored from the first acquisition, the others from the start gate",
+   "conditions": "Project AirSim CityLife with simple_flight: not ArduPilot, not hil, never KPI-grade. One flight per configuration unless more are listed, and one flight can differ widely from the next; flights at another commit or under another policy bundle are not repeats of one configuration (where a run folder names them, the table shows both). The simulator ran on the PC; identities, scores, commits and policy bundles are each run's own metrics.json and kpi.json. The agx_*_01 flights are the first AGX follows of 3 November, at an earlier commit than the matrix; the nfz3b_ flights flew another bundle (a no-fly zone on the route), so they are another scenario, not a repeat. Pure flights are scored from the first acquisition, the others from the start gate",
    "source": {
-    "file": "demo/out/agx_*_2026110[34]/metrics.json",
-    "runs": 21
-   }
-  },
-  {
-   "backend": "hand_written_follow",
-   "metric": "follow_matrix",
-   "protocol": "not C1, not C2",
-   "matrix": "3-4 November 2026",
-   "flights": [
-    {
-     "tag": "agx_manual_20261103",
-     "platform": "AGX Orin (client and VLA server)",
-     "kind": "hand-written follow (no VLA)",
-     "within_30m": 0.952,
-     "latency_p50_s": null,
-     "p0_escape_rate": 0.0,
-     "ticks": 4197,
-     "end_reason": null,
-     "model_id": null,
-     "config": null,
-     "topology": "projectairsim-remote-sim",
-     "code_revision": "6da813de8ad7"
-    }
-   ],
-   "conditions": "Project AirSim CityLife with simple_flight: not ArduPilot, not hil, never KPI-grade. One flight per configuration unless more are listed, and one flight can differ widely from the next. The simulator ran on the PC; identities and scores are each run's own metrics.json and kpi.json. Pure flights are scored from the first acquisition, the others from the start gate",
-   "source": {
-    "file": "demo/out/agx_*_2026110[34]/metrics.json",
-    "runs": 21
+    "file": "demo/out/*agx_*/metrics.json (tags *_2026110[34] and *_01)",
+    "runs": 24
    }
   }
  ],
@@ -4305,10 +5016,10 @@
       "p95_ms": null,
       "in_flight_p50_ms": [
        1393.5,
-       1440.3999999999999
+       1880.4
       ],
-      "n": 4,
-      "file": "demo/out/agx_*_2026110[34]/metrics.json"
+      "n": 6,
+      "file": "demo/out/*agx_*/metrics.json (tags *_2026110[34] and *_01)"
      }
     ]
    },
@@ -4324,7 +5035,7 @@
        1216.9
       ],
       "n": 3,
-      "file": "demo/out/agx_*_2026110[34]/metrics.json"
+      "file": "demo/out/*agx_*/metrics.json (tags *_2026110[34] and *_01)"
      }
     ]
    }
@@ -4354,7 +5065,7 @@
        2638.1
       ],
       "n": 3,
-      "file": "demo/out/agx_*_2026110[34]/metrics.json"
+      "file": "demo/out/*agx_*/metrics.json (tags *_2026110[34] and *_01)"
      }
     ]
    }
@@ -4364,5 +5075,12 @@
   "decision": "not recorded by this tool"
  },
  "default_backend": null,
- "decision": "The grant defers the choice to this measurement set, and the Orin rate column holds R1 for 0 of the 11 backends with weights and a bench that is not R1, labelled as such, for 3 more. On hil, C1 has been flown by no backend and C2 by 1 (the protocol asks for 3 flights of each). The stored dev-rail runs (demo/out/ros2_*, not KPI-bearing: the grant takes KPI figures from hil) were flown by the stub."
+ "decision": "The grant defers the choice to this measurement set, and the Orin rate column holds R1 for 0 of the 7 backends `measure` can time, and a bench that is not R1, labelled as such, for 3 backends (R1 does not cover the 4 backends served over protocol v2: their Orin timing is their server's bench). On hil, C1 has been flown by no backend and C2 by 1 (the protocol asks for 3 flights of each). The stored dev-rail runs (demo/out/ros2_*, not KPI-bearing: the grant takes KPI figures from hil) were flown by the stub.",
+ "comparison_gaps": [
+  "stub: no R1 on an Orin (R1's floor on the same host)",
+  "aerialvla_bf16: 0 of 3 C2 flights",
+  "aiotvla_v10b: 2 of 3 C2 flights",
+  "dronecats_2b: no Orin timing, 0 of 3 C2 flights",
+  "racevla_7b: no Orin timing, 0 of 3 C2 flights"
+ ]
 }
