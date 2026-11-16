@@ -2383,6 +2383,31 @@ def _pas_perception(args: list[str], cwd: str | None = None, **env) -> subproces
                           capture_output=True, text=True, timeout=60, cwd=cwd)
 
 
+def test_the_perception_rail_hil_script_hands_on_the_chain_requirement():
+    """Review of the bundle-ca branch (2026-11-16): the perception node runs
+    natively on the Orin, outside compose, and also loads its bundle with
+    guardrail.bundle.load_for_flight - but nothing handed it
+    VLAGUARD_REQUIRE_CHAIN, so turning the requirement on in hil.env (or for
+    the compose companion) left this rail flying without it. The script now
+    reads it from hil.env (0 there), lets the caller's value win (as
+    compose's ${...:-0} does), and exports it to the node."""
+    if not find_bash():
+        return SKIP
+    from guardrail.bundle import REQUIRE_CHAIN_ENV
+
+    def env_of(**kw):
+        r = _pas_perception([], **kw)
+        assert r.returncode == 0, (r.stdout, r.stderr)
+        return dict(line[len("ENV: "):].split("=", 1) for line in r.stdout.splitlines()
+                    if line.startswith("ENV: "))
+    hil = read_env("hil")
+    assert env_of(**{REQUIRE_CHAIN_ENV: None})[REQUIRE_CHAIN_ENV] == hil[REQUIRE_CHAIN_ENV] == "0"
+    assert env_of(**{REQUIRE_CHAIN_ENV: "1"})[REQUIRE_CHAIN_ENV] == "1"
+    exports = [ln for ln in RUN_PAS_PERCEPTION.read_text(encoding="utf-8").splitlines()
+               if ln.startswith("export ")]
+    assert any(REQUIRE_CHAIN_ENV in ln.split() for ln in exports), exports
+
+
 def test_the_perception_rail_hil_script_joins_hil_envs_graph_and_flies_no_dev_policy():
     """deploy/orin/run_pas_perception.sh runs the perception node natively on
     the Orin beside MAVROS in the companion container, so both must be on ONE

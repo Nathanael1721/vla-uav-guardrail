@@ -3260,6 +3260,66 @@ def test_the_hil_transport_runs_the_rig_commands_it_names():
     assert "xargs -r docker kill" in [c for c in calls if c[0] == "run"][-1][1][-1]
 
 
+def test_the_hil_transport_hands_the_chain_requirement_to_the_mission_container():
+    """Review of the bundle-ca branch (2026-11-16): VLAGUARD_REQUIRE_CHAIN=1
+    exported in the desktop's shell before a hil campaign never reached the
+    Orin - ssh forwards no variable, and the mission container read hil.env's
+    0 - so a mission meant to fly "with the chain required" flew without it,
+    while its record still read chain verified. The mission is now launched
+    with `-e VLAGUARD_REQUIRE_CHAIN=<0|1>` when the hil config's
+    `require_chain` or this desktop's variable asks, and with nothing added
+    otherwise (the command is the one every campaign flew); and a mission
+    launched with 1 whose own policy_source does not say require_chain true
+    and chain verified is not accepted as that flight."""
+    sent = []
+
+    class _Done:
+        returncode, stdout, stderr = 0, "ok", ""
+
+    def run(cmd, **kw):
+        sent.append(cmd)
+        return _Done()
+    saved = os.environ.pop("VLAGUARD_REQUIRE_CHAIN", None)
+    try:
+        for cfg_value, env_value, want in (
+                (None, None, ""), (None, "", ""),
+                (True, None, "-e VLAGUARD_REQUIRE_CHAIN=1 "),
+                (None, "1", "-e VLAGUARD_REQUIRE_CHAIN=1 "),
+                (None, "0", "-e VLAGUARD_REQUIRE_CHAIN=0 "),
+                (False, "1", "-e VLAGUARD_REQUIRE_CHAIN=0 ")):
+            if env_value is None:
+                os.environ.pop("VLAGUARD_REQUIRE_CHAIN", None)
+            else:
+                os.environ["VLAGUARD_REQUIRE_CHAIN"] = env_value
+            cfg = S.HilConfig(require_chain=cfg_value)
+            S.SubprocessTransport(cfg, run=run).run_mission(["--x"], "tag", "on", 5.0)
+            remote = sent[-1][-1]
+            assert ("docker-compose.orin.yml run --rm -T " + want
+                    + "mission mission --shield on --tag tag --x") in remote, \
+                (cfg_value, env_value, remote)
+            assert S.hil_config_record(cfg)["require_chain_launched"] == \
+                (None if not want else want.endswith("=1 ")), (cfg_value, env_value)
+    finally:
+        os.environ.pop("VLAGUARD_REQUIRE_CHAIN", None)
+        if saved is not None:
+            os.environ["VLAGUARD_REQUIRE_CHAIN"] = saved
+    # The hil config file takes the key.
+    p = Path(tempfile.mkdtemp()) / "rig.json"
+    p.write_text(json.dumps({"require_chain": True}), encoding="utf-8")
+    assert S.HilConfig.load(p).require_chain is True
+    # Accepting the run: its own record must show the requirement in force.
+    good = {"policy_source": {"signature": "verified", "chain": "verified",
+                              "require_chain": True}}
+    assert S.hil_chain_problems(good, True) == []
+    assert S.hil_chain_problems({}, None) == [] and S.hil_chain_problems({}, False) == []
+    lost = {"policy_source": dict(good["policy_source"], require_chain=False)}
+    assert any("did not reach the flight loader" in x for x in S.hil_chain_problems(lost, True))
+    old = {"policy_source": {"signature": "verified", "chain": "verified"}}   # before the key
+    assert S.hil_chain_problems(old, True), "a record without require_chain passed"
+    bare = {"policy_source": dict(good["policy_source"], chain="none")}
+    assert any("chain 'none'" in x for x in S.hil_chain_problems(bare, True))
+
+
 # --------------------------------------------------------------------------- #
 # the rail scorer (2026-11-07): the rule readings from the rail's own log, the
 # scenario's window, the proposed rail gates, the offline re-score

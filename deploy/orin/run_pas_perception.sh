@@ -44,6 +44,12 @@
 #               per 10 Hz tick at most, as every flight before 2026-11-15
 #   VENV        the Python environment (default ~/vla-drone-env)
 #   ROS_SETUP   ROS 2's setup script (default /opt/ros/jazzy/setup.bash)
+#   VLAGUARD_REQUIRE_CHAIN  1 = the node flies the bundle only if its signer's
+#               certificate chained to a listed authority here (guardrail.bundle
+#               load_for_flight, WP1-04); default hil.env's value (0 when it sets
+#               none). The node runs natively, outside compose, so this script
+#               is what hands it on; the run's policy_source records it
+#               (require_chain)
 # VLAGUARD_DRY_RUN=1 prints the graph's values (ENV:) and the command (EXEC:)
 # and starts nothing (tests/test_deploy_configs.py).
 set -euo pipefail
@@ -95,8 +101,14 @@ VLAGUARD_DDS_PEER_B="$(topo VLAGUARD_DDS_PEER_B)"
 MAVROS_FCU_URL="$(topo FCU_URL)"
 DESKTOP_IP="$(topo DESKTOP_IP)"
 CYCLONEDDS_URI="file://$ROOT/deploy/dds/cyclonedds.xml"
+# The caller's value wins, as compose's ${VLAGUARD_REQUIRE_CHAIN:-0} lets the
+# shell's win there; else hil.env's; else 0 (a hil.env from before 2026-11-16).
+if [ -z "${VLAGUARD_REQUIRE_CHAIN:-}" ]; then
+  VLAGUARD_REQUIRE_CHAIN="$(sed -n 's/^VLAGUARD_REQUIRE_CHAIN=//p' "$HIL_ENV" | tail -n 1 | tr -d '\r')"
+  VLAGUARD_REQUIRE_CHAIN="${VLAGUARD_REQUIRE_CHAIN:-0}"
+fi
 export ROS_DOMAIN_ID RMW_IMPLEMENTATION VLAGUARD_DDS_PEER_A VLAGUARD_DDS_PEER_B
-export MAVROS_FCU_URL CYCLONEDDS_URI
+export MAVROS_FCU_URL CYCLONEDDS_URI VLAGUARD_REQUIRE_CHAIN
 
 args=(demo/pas_ardupilot/perception_node.py
       --link mavros --scene-mode attach --sim-host "$DESKTOP_IP"
@@ -123,7 +135,7 @@ args+=("$@")
 cd "$ROOT"
 if [ "$DRY" = "1" ]; then
   for k in ROS_DOMAIN_ID RMW_IMPLEMENTATION VLAGUARD_DDS_PEER_A VLAGUARD_DDS_PEER_B \
-           MAVROS_FCU_URL CYCLONEDDS_URI; do
+           MAVROS_FCU_URL CYCLONEDDS_URI VLAGUARD_REQUIRE_CHAIN; do
     printf 'ENV: %s=%s\n' "$k" "${!k}"
   done
   printf 'EXEC: python'
@@ -183,7 +195,8 @@ print(f"==> Project AirSim {desk} (8989, 8990) and the VLA server 127.0.0.1:{vla
 EOF
 
 echo "==> ROS_DOMAIN_ID=$ROS_DOMAIN_ID RMW_IMPLEMENTATION=$RMW_IMPLEMENTATION peers" \
-     "$VLAGUARD_DDS_PEER_A $VLAGUARD_DDS_PEER_B; MAVROS fcu_url $MAVROS_FCU_URL"
+     "$VLAGUARD_DDS_PEER_A $VLAGUARD_DDS_PEER_B; MAVROS fcu_url $MAVROS_FCU_URL;" \
+     "VLAGUARD_REQUIRE_CHAIN=$VLAGUARD_REQUIRE_CHAIN"
 rm -f "demo/out/$TAG/metrics.json"
 echo "==> python ${args[*]}"
 exec python "${args[@]}"
