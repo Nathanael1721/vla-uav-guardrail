@@ -38,7 +38,18 @@ The admissibility test is `guardrail.compiler.action_violations` - the
 Shield's own point verdicts over the CSP's rule ids, against
 compiled_ir(policy): the zones and corridors with the Shield's buffered
 margins - at the lookahead and at every HORIZON_STEP_S before it (an
-end-point test alone steps over a zone narrower than speed x lookahead). No
+end-point test alone steps over a zone narrower than speed x lookahead).
+A corridor is also tested along the whole straight path to the lookahead
+(since 2026-11-16): the path must stay inside the corridor's tube
+(guardrail.geometry.corridor_tube, exactly the set the Shield's distance
+check accepts) wherever it starts inside it. A sampled test steps over a
+short cut across a dog-leg's inner corner - the hil prefix A/B pab1
+(2026-11-16) flew a 0.21 s, 0.25 m cut between two 0.5 s samples, which the
+Shield's 0.1 s forecast caught and CorridorReturn sized at 2.48 m along the
+nearest leg, over theta: Loiter, then RTL on the loiter timeout. "Do not
+translate out of the corridor" is a statement about the path, so the path is
+what is tested. Polygons keep the sampled test: their margin rings are the
+Shield's buffer, and the A/B's polygon cells are unchanged by this. No other
 geometry is written here, but the turn reads the Shield's geometry, so the
 action-set adapter's ids and ranges alone would not steer this pilot: that
 is part of why its on / off delta holds by construction.
@@ -78,9 +89,13 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+import shapely
+from shapely.geometry import LineString, Point
+
 from .compiler import (DEFAULT_LOOKAHEAD_S, ConstraintCompiler, Mission,
                        action_set_adapter, action_violations, compiled_ir)
 from .csp import CSP, csp_content_hash
+from .geometry import corridor_tube
 from .models import Action4D, State
 
 # The id this pilot announces (/vla/identity `model_id`, the manifest's
@@ -96,6 +111,9 @@ FAN_STEP_DEG = 15.0
 FAN_DEG = tuple(FAN_STEP_DEG * k for k in range(1, 13))
 # The horizons the admissibility test is made at, up to the CSP's lookahead.
 HORIZON_STEP_S = 0.5
+# A corridor is tested along the whole straight path to the lookahead as well
+# (module docstring): the run's consumer record says which test it flew.
+CORRIDOR_PATH_TEST = "segment"
 # The file the pilot's node writes its CSP to, under <run dir>/PREFIX_DIR/:
 # apart from the Shield node's own csp_g<N>.json in the run directory (the
 # episode record's, compiled at the Shield's clock with the spatial filter).
@@ -231,6 +249,7 @@ def consumer_record(arm: str, csp: CSP | None, wraps: str | None = None) -> dict
     return {"id": MODEL_ID, "adapter": ADAPTER, "arm": arm, "wraps": wraps,
             "wraps_model_hash": model_hash(wraps) if wraps else None,
             "fan_deg": list(FAN_DEG), "horizon_step_s": HORIZON_STEP_S,
+            "corridor_path_test": CORRIDOR_PATH_TEST,
             **csp_record(csp)}
 
 
@@ -289,6 +308,7 @@ class PrefixConsumer:
                                       "max_turn_deg": 0.0}
         self._ir = None
         self._horizons: tuple[float, ...] = ()
+        self._tubes: tuple = ()
         if csp is not None:
             if policy is None:
                 raise ValueError("a CSP is consumed with the policy it was compiled from "
@@ -300,6 +320,13 @@ class PrefixConsumer:
             look = float(csp.lookahead_s)
             n = max(1, int(math.ceil(look / HORIZON_STEP_S - 1e-9)))
             self._horizons = tuple(look * (k + 1) / n for k in range(n))
+            by_id = {c.id: c for c in policy.constraints}
+            tubes = []
+            for cid in csp.forbidden_action_set.no_translate_out_of_corridors:
+                tube = corridor_tube(by_id[cid])
+                shapely.prepare(tube)
+                tubes.append((cid, tube))
+            self._tubes = tuple(tubes)
 
     def record(self) -> dict[str, Any]:
         return consumer_record(self.arm, self.csp, self.wraps)
@@ -344,14 +371,26 @@ class PrefixConsumer:
     def inadmissible(self, a: Action4D, state: State) -> list[str]:
         """The polygons `a` would translate into and the corridors it would
         leave within the lookahead ("polygon:<id>" / "corridor:<id>", as
-        action_violations names them), at the first horizon that has any."""
+        action_violations names them), at the first horizon that has any;
+        then the corridors whose tube the straight path to the lookahead
+        leaves, of those it starts inside (module docstring: a path from
+        outside is the Shield's to recover, and is judged as before)."""
         for h in self._horizons:
             geo = [v for v in action_violations(a, self.csp, state, self.policy,
                                                 dt=h, ir=self._ir)
                    if v.startswith(_GEO)]
             if geo:
                 return geo
-        return []
+        if not self._tubes or not (math.isfinite(state.x) and math.isfinite(state.y)):
+            return []
+        look = float(self.csp.lookahead_s)
+        x1, y1 = state.x + a.vx * look, state.y + a.vy * look
+        if math.hypot(x1 - state.x, y1 - state.y) <= 1e-9:
+            return []
+        start = Point(state.x, state.y)
+        path = LineString([(state.x, state.y), (x1, y1)])
+        return [f"corridor:{cid}" for cid, tube in self._tubes
+                if tube.covers(start) and not tube.covers(path)]
 
     def act(self, state: State) -> Action4D:
         a = self._law(state)

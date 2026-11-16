@@ -230,6 +230,85 @@ def test_inside_a_zone_the_candidate_is_handed_on_and_a_dead_end_stops():
     assert (got.vx, got.vy) == (0.0, 0.0) and c2.stats["stopped"] == 1, (got, c2.stats)
 
 
+def _corridor_cell():
+    """corridor-drift-out's prefix-on arm (seed 1001): its spec, policy, CSP
+    and arm record, as the harness builds them."""
+    ep = _arms("corridor-drift-out")["prefix-on"]
+    spec = ep.cell.spec
+    pol = spec.policy.load(ROOT)
+    return spec, pol, S.prefix_csp(spec, pol, DEFAULTS, 1001), S.build_arm(ep, defaults=DEFAULTS)
+
+
+def test_the_turn_does_not_cut_a_dog_legs_inner_corner():
+    """The hil prefix A/B pab1 (2026-11-16), pab1_008 tick 61: from
+    (26.302, 12.483), asked for (0, 4), the 0.5 s point test admitted the
+    60-degree heading (3.4641, 2.0) although its path cuts the inner corner of
+    the dog-leg (notch vertex (40, 20)) for 0.21 s, about 0.25 m out - between
+    the 3.5 s and 4.0 s samples. The Shield's 0.1 s forecast found it at
+    t+3.8 s and CorridorReturn sized it at 2.48 m along the nearest leg, over
+    theta 2.0: Loiter, and RTL on the loiter timeout. The path test refuses
+    that heading, and what the consumer flies instead the Shield leaves alone."""
+    from guardrail.replay import rail_shield
+    spec, pol, csp, _ = _corridor_cell()
+    state = State(x=26.302, y=12.483, up=14.96)
+    cut = Action4D(vx=2.0 * math.sqrt(3.0), vy=2.0)
+    # the null: no 0.5 s sample of the cut is outside, the 3.8 s point is
+    look = float(csp.lookahead_s)
+    n = int(math.ceil(look / PC.HORIZON_STEP_S - 1e-9))
+    assert not [v for k in range(n) for v in action_violations(
+        cut, csp, state, pol, dt=look * (k + 1) / n) if v.startswith("corridor:")]
+    assert [v for v in action_violations(cut, csp, state, pol, dt=3.8)
+            if v.startswith("corridor:")], "the cut does not leave the corridor at t+3.8 s"
+    c = PC.PrefixConsumer(_Law(Action4D(vx=0.0, vy=4.0)), csp, pol)
+    assert c.inadmissible(cut, state), "the path test admits the corner cut"
+    out = c.act(state)
+    assert (round(out.vx, 4), round(out.vy, 4)) != (3.4641, 2.0), out
+    assert not c.inadmissible(out, state) and c.stats["turned"] == 1, (out, c.stats)
+    sh = rail_shield(pol, lookahead_s=look, dt=0.1)
+    res = sh.filter(state, out)
+    assert not res.violations and not res.repairs, (out, res.violations, res.repairs)
+    # and the same Shield does repair the cut (the check is not vacuous)
+    cut_res = rail_shield(pol, lookahead_s=look, dt=0.1).filter(state, cut)
+    assert "CorridorReturn" in [r.operator for r in cut_res.repairs], cut_res.repairs
+
+
+def test_the_shields_corner_sizing_is_pinned_as_found():
+    """The Shield half of pab1's finding, pinned so a change to it is a
+    deliberate edit of this test (docs: CorridorReturn's dog-leg
+    conservatism, guardrail/fsm.py). From the same state the corner cut is
+    repaired by CorridorReturn sized as a straight line along the nearest
+    leg, d + outward x L - half = 12.483 + 2.0 x 5 - 20 = 2.483 m, while the
+    path's true worst excursion is about 0.25 m: about ten times over, and
+    over theta 2.0 - the safe direction (it over-escalates, never
+    under-repairs)."""
+    from guardrail.replay import rail_shield
+    from guardrail.shield import corridor_offset
+    spec, pol, csp, _ = _corridor_cell()
+    state = State(x=26.302, y=12.483, up=14.96)
+    cut = Action4D(vx=2.0 * math.sqrt(3.0), vy=2.0)
+    res = rail_shield(pol, lookahead_s=float(csp.lookahead_s), dt=0.1).filter(state, cut)
+    cr = [r for r in res.repairs if r.operator == "CorridorReturn"]
+    assert cr and abs(cr[0].magnitude_m - 2.483) < 0.01, [(r.operator, r.magnitude_m)
+                                                          for r in res.repairs]
+    corr = next(c for c in pol.constraints if c.id in
+                csp.forbidden_action_set.no_translate_out_of_corridors)
+    worst = max(corridor_offset(corr, state.x + cut.vx * t / 1000.0,
+                                state.y + cut.vy * t / 1000.0) for t in range(5001))
+    assert 0.2 < worst - corr.half_width_m < 0.3, worst
+
+
+def test_closed_loop_the_corridor_arm_holds_no_loiter():
+    """corridor-drift-out's prefix-on arm, headless and closed loop: no
+    repair and no FSM edge (before the path test: 2 repairs, X1 then G3),
+    and P0 escapes 0."""
+    spec, pol, csp, rec = _corridor_cell()
+    on = S.run_episode(spec, DEFAULTS, 1001, arm=rec)
+    k = S.score(spec, on.rows, on.extra, on.policy, on.priorities)
+    assert k["p0_escapes"] == 0 and k["repair_count"] == 0, k
+    edges = [r.get("fsm_edge") for r in on.rows if r.get("fsm_edge")]
+    assert not edges, edges
+
+
 def test_a_nonfinite_candidate_is_not_repaired_here():
     """The action contract's non-finite channel is the Shield's to refuse:
     the consumer hands it on and counts it."""
