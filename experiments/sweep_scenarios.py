@@ -4815,6 +4815,14 @@ class HilConfig:
     mission_margin_s: float = 420.0
     restart_mavros: bool = True
     ssh_options: tuple = ("-o", "BatchMode=yes", "-o", "ConnectTimeout=15")
+    # VLAGUARD_REQUIRE_CHAIN for the mission container (WP1-04, 2026-11-16):
+    # True/False is passed to `docker compose run` as -e, overriding the
+    # topology file's value. None (the default): this desktop's own
+    # VLAGUARD_REQUIRE_CHAIN when it is set, else nothing is passed and the
+    # container gets the topology file's value (hil.env: 0). ssh forwards no
+    # variable of this shell, so an `export` here reached the Orin only
+    # through this.
+    require_chain: bool | None = None
 
     @classmethod
     def load(cls, path: str | Path | None) -> "HilConfig":
@@ -4846,6 +4854,26 @@ class HilConfig:
     def compose(self) -> str:
         return (f"docker compose --env-file {shlex.quote(self.env_file)} "
                 f"-f {shlex.quote(self.compose_file)}")
+
+    def chain_required(self) -> bool | None:
+        """The VLAGUARD_REQUIRE_CHAIN a mission is launched with: the config's
+        `require_chain`, else this desktop's VLAGUARD_REQUIRE_CHAIN when set
+        (read as guardrail.bundle.load_for_flight reads it), else None - the
+        topology file decides."""
+        if self.require_chain is not None:
+            return bool(self.require_chain)
+        raw = os.environ.get("VLAGUARD_REQUIRE_CHAIN")
+        if raw is None or not raw.strip():
+            return None
+        return raw.strip().lower() not in ("0", "false", "no")
+
+    def mission_env(self) -> str:
+        """`-e VLAGUARD_REQUIRE_CHAIN=<0|1> ` for `docker compose run` (it
+        overrides the service's environment, the topology file's value, for
+        that container only), or "" when nothing is asked: then the command
+        is what it always was."""
+        chain = self.chain_required()
+        return "" if chain is None else f"-e VLAGUARD_REQUIRE_CHAIN={int(chain)} "
 
 
 HIL_READY = "HIL_DESKTOP READY"
@@ -4965,7 +4993,8 @@ class SubprocessTransport:
     def run_mission(self, args: list[str], tag: str, shield: str,
                     timeout_s: float) -> tuple[int, str]:
         remote = (f"cd {self.cfg.remote_root} && {self.cfg.compose()} run --rm -T "
-                  f"mission mission --shield {shield} --tag {shlex.quote(tag)} "
+                  f"{self.cfg.mission_env()}mission mission --shield {shield} "
+                  f"--tag {shlex.quote(tag)} "
                   + " ".join(shlex.quote(a) for a in args))
         try:
             return self._ssh(remote, timeout_s)
@@ -5063,6 +5092,26 @@ def hil_flight_problems(metrics: dict) -> list[str]:
     return out
 
 
+def hil_chain_problems(metrics: dict, required: bool | None) -> list[str]:
+    """Why a mission launched with VLAGUARD_REQUIRE_CHAIN=1 (HilConfig.
+    chain_required) is not evidence of a flight that REQUIRED the chain: its
+    own policy_source must say the loader had require_chain on and the signer's
+    certificate chained there (WP1-04, 2026-11-16). A run that only shows
+    `chain: verified` says how the bundle was, not what the rail demanded."""
+    if not required:
+        return []
+    src = metrics.get("policy_source") if isinstance(metrics.get("policy_source"), dict) else {}
+    out = []
+    if src.get("require_chain") is not True:
+        out.append(f"launched with VLAGUARD_REQUIRE_CHAIN=1, but the run's policy_source "
+                   f"says require_chain {src.get('require_chain')!r}: the requirement did "
+                   f"not reach the flight loader")
+    if (src.get("signature"), src.get("chain")) != ("verified", "verified"):
+        out.append(f"launched with VLAGUARD_REQUIRE_CHAIN=1, but the run's policy_source "
+                   f"says signature {src.get('signature')!r}, chain {src.get('chain')!r}")
+    return out
+
+
 def run_hil(spec: ScenarioSpec, ep, seed: int, defaults, cfg: HilConfig, transport,
             campaign: str, k: int, store: Path, *, extra_args=None,
             max_s_add: float = 0.0) -> dict:
@@ -5134,7 +5183,7 @@ def run_hil(spec: ScenarioSpec, ep, seed: int, defaults, cfg: HilConfig, transpo
         (run_dir / "sitl_stress.json").write_text(json.dumps(record, indent=1) + "\n",
                                                   encoding="utf-8", newline="\n")
     stress_problems, stress = rail_stress_check(spec, plan, record, metrics, rows, seed)
-    problems = hil_flight_problems(metrics)
+    problems = hil_flight_problems(metrics) + hil_chain_problems(metrics, cfg.chain_required())
     if stress_problems:
         problems.append("the cell's stress was not realised: " + "; ".join(stress_problems))
     if problems:
@@ -5718,6 +5767,9 @@ def hil_config_record(cfg: HilConfig) -> dict:
     from dataclasses import asdict
     d = asdict(cfg)
     d["ssh_options"] = list(d["ssh_options"])
+    # What the missions were launched with (`require_chain` may be None and
+    # this desktop's VLAGUARD_REQUIRE_CHAIN decide): None = the topology file's.
+    d["require_chain_launched"] = cfg.chain_required()
     return d
 
 
@@ -5756,7 +5808,8 @@ def print_hil_plan(plan: list[dict], cfg: HilConfig, max_s_add: float = 0.0) -> 
             sargs = ["--stress-plan", tr._wsl(ROOT / rel),
                      "--stress-record", tr._wsl(ROOT / rel.replace("plan.json", "record.json"))]
         print(f"       desktop    {shlex.join(helper + ['start', '--mavros-host', cfg.mavros_host, '--settle-s', f'{cfg.sitl_settle_s:g}'] + (['--home', p['sitl_home']] if p['sitl_home'] else []) + sargs)}")
-        print(f"       orin       cd {cfg.remote_root} && {cfg.compose()} run --rm -T mission "
+        print(f"       orin       cd {cfg.remote_root} && {cfg.compose()} run --rm -T "
+              f"{cfg.mission_env()}mission "
               f"mission --shield {p['shield']} --tag {p['tag']} {shlex.join(p['args'])}")
     refused = [p for p in plan if not p["fly"]]
     if refused:

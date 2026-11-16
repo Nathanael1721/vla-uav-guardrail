@@ -99,6 +99,15 @@ x-companion-env: &companion-env
   VLAGUARD_BAG: ${VLAGUARD_BAG:?}
   VLAGUARD_ALLOW_FLIGHT_MISSION: ${VLAGUARD_ALLOW_FLIGHT_MISSION:?}
   VLAGUARD_EVIDENCE_OUT: /opt/vlaguard/deploy/evidence/incoming
+  # 1 = fly only a policy bundle whose signer's certificate chained to a listed
+  # certificate authority in this container (guardrail.bundle.load_for_flight,
+  # require_chain; WP1-04). The topology files set 0: it refuses every bundle
+  # signed by a bare key, so it is for after the bundle keys are certified and
+  # the flight bundles re-signed (tools/build_flight_bundles.py --issue-cert).
+  # A value in the caller's shell overrides the topology file's; a topology
+  # file written before 2026-11-16 has none, and that is 0 too (:-0), so a
+  # stale copy on the rig still launches as it did.
+  VLAGUARD_REQUIRE_CHAIN: ${VLAGUARD_REQUIRE_CHAIN:-0}
 
 x-companion-volumes: &companion-volumes
   - ../..:/opt/vlaguard:ro

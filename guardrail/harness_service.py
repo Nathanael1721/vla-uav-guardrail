@@ -284,6 +284,12 @@ would let any node's certificate drive the harness. The server therefore also
 requires the client certificate's common name to be on an allow-list
 (default: harness-client) and answers PERMISSION_DENIED otherwise.
 
+The same root also certifies the keys that sign policy bundles
+(`issue_policy_signer`, 2026-11-16): a codeSigning-only leaf over the bundle's
+Ed25519 public key, valid as long as the CA is, which guardrail.bundle records
+in its trust store and ships in each bundle, so a bundle's `signed_by` names
+this CA (`python -m guardrail.bundle issue-cert`).
+
 STUBS
 
 guardrail/protos/harness_pb2.py and harness_pb2_grpc.py are generated (see
@@ -4248,6 +4254,94 @@ def issue_cert(pki_dir: str | Path, name: str, *, server_hosts=None, client: boo
     _write_pem(cert_p, cert.public_bytes(C.serialization.Encoding.PEM))
     _write_pem(key_p, _key_pem(C, key), private=True)
     return cert_p, key_p
+
+
+POLICY_SIGNER_CN = "policy-signer"
+
+
+def _validity(cert) -> tuple[_dt.datetime, _dt.datetime]:
+    """(not before, not after) of a certificate as aware UTC datetimes, on
+    cryptography 41 (naive properties only) and 42+ (the *_utc ones)."""
+    nb = getattr(cert, "not_valid_before_utc", None)
+    na = getattr(cert, "not_valid_after_utc", None)
+    if nb is None or na is None:
+        nb = cert.not_valid_before.replace(tzinfo=_dt.timezone.utc)
+        na = cert.not_valid_after.replace(tzinfo=_dt.timezone.utc)
+    return nb, na
+
+
+def issue_policy_signer(pki_dir: str | Path, ed25519_public, *,
+                        name: str | None = None) -> bytes:
+    """The certificate (PEM) that puts a policy-bundle signing key under the
+    lab root CA in `pki_dir`: what makes a bundle's `signed_by` a "Lab CA
+    reference" (grant, Policy DSL page) instead of a bare key label.
+
+    `ed25519_public` is the PUBLIC half of the bundle key - its 32 raw bytes,
+    or a cryptography Ed25519PublicKey. Nothing private is asked for, created
+    or written: the AGX Orin's key is certified from the public key the trust
+    store already holds, and its private key never leaves the Orin. The CA's
+    private key is read from `pki_dir` (it exists on the desktop only) and the
+    certificate is returned, not written: it is public data, and
+    guardrail.bundle records it in the trust store.
+
+    The leaf: subject CN `policy-signer-<first 16 hex of sha256(public key)>`
+    (the bundle's key id; `name` overrides it), basicConstraints CA:FALSE,
+    keyUsage digitalSignature, extendedKeyUsage codeSigning only (it is not a
+    TLS identity: the harness allow-list never sees it, and a TLS leaf is not
+    accepted as a bundle signer). notBefore is the CA's own notBefore (a
+    verifier with a clock behind the issuer's still accepts it), and notAfter
+    is the CA's own notAfter, not 365
+    days: a bundle and the KPI runs flown under it are evidence that has to
+    verify for as long as its authority does, and a replay bundle states no
+    issue time against which an expired leaf could be excused. When the CA is
+    replaced, the new one is a new authority entry and a new leaf."""
+    C = _crypto()
+    from cryptography.hazmat.primitives.asymmetric import ed25519
+    if isinstance(ed25519_public, (bytes, bytearray)):
+        if len(ed25519_public) != 32:
+            raise ValueError("an Ed25519 public key is 32 bytes")
+        pub = ed25519.Ed25519PublicKey.from_public_bytes(bytes(ed25519_public))
+    elif isinstance(ed25519_public, ed25519.Ed25519PublicKey):
+        pub = ed25519_public
+    else:
+        raise TypeError("ed25519_public: 32 raw bytes or an Ed25519PublicKey (the "
+                        "public half; a private key is never passed here)")
+    raw = pub.public_bytes(C.serialization.Encoding.Raw, C.serialization.PublicFormat.Raw)
+    cn = name or f"{POLICY_SIGNER_CN}-{hashlib.sha256(raw).hexdigest()[:16]}"
+    if not _NAME.match(cn):
+        raise ValueError(f"certificate name {cn!r}: letters, digits, . _ - only")
+    d = Path(pki_dir)
+    ca_cert = C.x509.load_pem_x509_certificate((d / "ca.cert.pem").read_bytes())
+    ca_key = C.serialization.load_pem_private_key((d / "ca.key.pem").read_bytes(),
+                                                  password=None)
+    spki = (C.serialization.Encoding.DER, C.serialization.PublicFormat.SubjectPublicKeyInfo)
+    if ca_key.public_key().public_bytes(*spki) != ca_cert.public_key().public_bytes(*spki):
+        raise ValueError(f"{d / 'ca.key.pem'} is not the key of {d / 'ca.cert.pem'}")
+    ca_from, ca_until = _validity(ca_cert)
+    now = _dt.datetime.now(_dt.timezone.utc)
+    if not ca_from <= now < ca_until:
+        raise ValueError(f"the CA in {d} is valid {ca_from:%Y-%m-%d} to "
+                         f"{ca_until:%Y-%m-%d}: it signs nothing today")
+    cert = (C.x509.CertificateBuilder()
+            .subject_name(_name(C, cn)).issuer_name(ca_cert.subject)
+            .public_key(pub).serial_number(C.x509.random_serial_number())
+            # From the CA's own notBefore, not "now minus 5 minutes": a
+            # verifier whose clock runs behind the desktop's (the Orin, a
+            # container) would otherwise refuse a freshly re-signed bundle as
+            # "not valid now", which a bare pinned key never was. The leaf
+            # claims nothing the CA did not already: same window, end to end.
+            .not_valid_before(ca_from)
+            .not_valid_after(ca_until)
+            .add_extension(C.x509.BasicConstraints(ca=False, path_length=None), critical=True)
+            .add_extension(_key_usage(C, ca=False), critical=True)
+            .add_extension(C.x509.ExtendedKeyUsage([C.EKU.CODE_SIGNING]), critical=False)
+            .add_extension(C.x509.SubjectKeyIdentifier.from_public_key(pub), critical=False)
+            .add_extension(C.x509.AuthorityKeyIdentifier.from_issuer_public_key(
+                ca_key.public_key()), critical=False)
+            # an Ed25519 CA (not what generate_pki writes) signs without a digest
+            .sign(ca_key, None if isinstance(ca_key, ed25519.Ed25519PrivateKey)
+                  else C.hashes.SHA256()))
+    return cert.public_bytes(C.serialization.Encoding.PEM)
 
 
 def fingerprint(cert_path: str | Path) -> str:

@@ -1032,6 +1032,76 @@ def test_kpi_evidence_can_demand_a_signature():
     shutil.rmtree(d, ignore_errors=True)
 
 
+def test_a_replay_bundle_follows_its_signers_standing_under_a_ca():
+    """2026-11-16 (WP1-04): the index is checked with verify_signer, so a
+    replay bundle obeys the same authority rules as a policy bundle. Signed
+    before the key was certified, it still verifies once the bare identity is
+    retired (the index states no issue time, and the detail says the date
+    could not be applied); signed under the CA, it verifies through the
+    certificate the trust store pins (it ships none); and it is refused when
+    that authority leaves the trust store. The CA is made here, in a temp
+    folder."""
+    if not B.HAVE_CRYPTO:
+        return SKIP
+    import guardrail.harness_service as H
+    d = _tmp()
+    run, policy, _, _ = _episode(d)
+    bare, trust = _test_key()
+    before = write_replay(run, policy, d / "before.tar.gz", signer=bare)
+    assert read_replay(before, trust)["signature"]["status"] == B.SIG_VERIFIED
+
+    H.generate_pki(d / "pki")
+    rows = B.issue_signer_certificates(d / "pki", trust)
+    signer = B.load_signer(trust.parent / "k.pem", trust)
+    assert signer.identity == rows[0]["identity"] and signer.identity.startswith("lab-ca:")
+    sig = read_replay(before, trust)["signature"]
+    assert sig["status"] == B.SIG_VERIFIED and "could not be applied" in sig["detail"], sig
+    # The record says what was established, as a policy bundle's does: no
+    # chain for a bare key, and that it was accepted under a retired one.
+    retired_on = json.loads(trust.read_text(encoding="utf-8"))["signers"][bare.identity]["retired_on"]
+    assert (sig["chain"], sig["authority"], sig["retired_on"]) == \
+        (B.CHAIN_NONE, None, retired_on), sig
+    ok, why = verify_replay(before, trust, require_signature=True)
+    assert ok, why
+
+    after = write_replay(run, policy, d / "after.tar.gz", signer=signer)
+    assert not any(n.endswith(".pem") for n in tarfile.open(after).getnames())
+    sig = read_replay(after, trust)["signature"]
+    assert sig["signed_by"] == signer.identity and sig["status"] == B.SIG_VERIFIED, sig
+    assert "chains to authority 'lab-ca'" in sig["detail"], sig["detail"]
+    assert (sig["chain"], sig["authority"], sig["retired_on"]) == \
+        (B.CHAIN_VERIFIED, "lab-ca", None), sig
+    ok, why = verify_replay(after, trust, require_signature=True)
+    assert ok, why
+
+    # The swap drill's replay half (tests/test_bundle.py has the policy
+    # bundle's): a second CA's leaf for the same key, pinned with
+    # register-cert, and the replay bundle re-signed under it. It ships no
+    # certificate, so it is trusted through the leaf the store pins.
+    H.generate_pki(d / "pki2", ca_cn="ITRI Test Root CA")
+    (d / "leaf2.pem").write_bytes(H.issue_policy_signer(d / "pki2", signer.public_raw))
+    assert B._main(["register-cert", "--authority", "itri-ca",
+                    "--ca-cert", str(d / "pki2" / "ca.cert.pem"), "--cert", str(d / "leaf2.pem"),
+                    "--identity", signer.identity, "--trust", str(trust)]) == 0
+    signer2 = B.load_signer(trust.parent / "k.pem", trust, authority="itri-ca")
+    assert signer2.identity.startswith("itri-ca:") and signer2.key_id == signer.key_id
+    swapped = write_replay(run, policy, d / "itri.tar.gz", signer=signer2)
+    sig = read_replay(swapped, trust)["signature"]
+    assert (sig["signed_by"], sig["status"], sig["chain"], sig["authority"]) == \
+        (signer2.identity, B.SIG_VERIFIED, B.CHAIN_VERIFIED, "itri-ca"), sig
+    assert read_replay(after, trust)["signature"]["chain"] == B.CHAIN_VERIFIED
+
+    doc = json.loads(trust.read_text(encoding="utf-8"))
+    del doc["authorities"]["lab-ca"]
+    gone = d / "no_authority.json"
+    gone.write_text(json.dumps(doc), encoding="utf-8")
+    sig = read_replay(after, gone)["signature"]
+    assert sig["status"] == B.SIG_UNTRUSTED and "is not listed" in sig["detail"], sig
+    ok, why = verify_replay(after, gone, require_signature=True)
+    assert not ok, why
+    shutil.rmtree(d, ignore_errors=True)
+
+
 def test_the_pack_cli_rebuilds_a_bundle_from_the_episode_alone():
     """run_ros2_demo.sh re-packs after the rosbag is closed. The CLI has no
     policy in memory; it reads the last generation the episode wrote."""

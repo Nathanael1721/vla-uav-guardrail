@@ -353,6 +353,26 @@ def test_flight_has_no_link_until_someone_sets_it_and_never_arms_by_default():
     assert f["FCU_URL"] == "", "flight must not ship a guessed autopilot link"
 
 
+def test_the_chain_requirement_reaches_the_companion_and_ships_switched_off():
+    """VLAGUARD_REQUIRE_CHAIN (WP1-04, 2026-11-16): with 1 the companion flies
+    only a bundle whose signer's certificate chained to a listed authority
+    there. Every companion service gets the variable, so the rig turns it on
+    without editing a launch file; and the topology files ship 0, because
+    until the bundle keys are certified every bundle is signed by a bare key
+    and 1 would ground the rig (the stored runs flew with it unset)."""
+    from guardrail.bundle import REQUIRE_CHAIN_ENV
+    for t in TOPOLOGIES:
+        assert read_env(t)[REQUIRE_CHAIN_ENV] == "0", t
+    for f in ("docker-compose.orin.yml", "docker-compose.dev.yml"):
+        doc = load_compose(COMPOSE_DIR / f)
+        assert doc["x-companion-env"][REQUIRE_CHAIN_ENV] == "${%s:-0}" % REQUIRE_CHAIN_ENV, f
+        services = {n: s for n, s in companion_services(doc).items()
+                    if "VLAGUARD_ALLOW_FLIGHT_MISSION" in (s.get("environment") or {})}
+        assert services, f"{f}: no companion service found"
+        for name, svc in services.items():
+            assert REQUIRE_CHAIN_ENV in svc["environment"], (f, name)
+
+
 # --------------------------------------------------------------------------- #
 # the label: what guardrail.manifest will say about a run made this way
 # --------------------------------------------------------------------------- #
@@ -2362,6 +2382,31 @@ def _pas_perception(args: list[str], cwd: str | None = None, **env) -> subproces
             full[k] = v
     return subprocess.run([find_bash(), RUN_PAS_PERCEPTION.as_posix(), *args], env=full,
                           capture_output=True, text=True, timeout=60, cwd=cwd)
+
+
+def test_the_perception_rail_hil_script_hands_on_the_chain_requirement():
+    """Review of the bundle-ca branch (2026-11-16): the perception node runs
+    natively on the Orin, outside compose, and also loads its bundle with
+    guardrail.bundle.load_for_flight - but nothing handed it
+    VLAGUARD_REQUIRE_CHAIN, so turning the requirement on in hil.env (or for
+    the compose companion) left this rail flying without it. The script now
+    reads it from hil.env (0 there), lets the caller's value win (as
+    compose's ${...:-0} does), and exports it to the node."""
+    if not find_bash():
+        return SKIP
+    from guardrail.bundle import REQUIRE_CHAIN_ENV
+
+    def env_of(**kw):
+        r = _pas_perception([], **kw)
+        assert r.returncode == 0, (r.stdout, r.stderr)
+        return dict(line[len("ENV: "):].split("=", 1) for line in r.stdout.splitlines()
+                    if line.startswith("ENV: "))
+    hil = read_env("hil")
+    assert env_of(**{REQUIRE_CHAIN_ENV: None})[REQUIRE_CHAIN_ENV] == hil[REQUIRE_CHAIN_ENV] == "0"
+    assert env_of(**{REQUIRE_CHAIN_ENV: "1"})[REQUIRE_CHAIN_ENV] == "1"
+    exports = [ln for ln in RUN_PAS_PERCEPTION.read_text(encoding="utf-8").splitlines()
+               if ln.startswith("export ")]
+    assert any(REQUIRE_CHAIN_ENV in ln.split() for ln in exports), exports
 
 
 def test_the_perception_rail_hil_script_joins_hil_envs_graph_and_flies_no_dev_policy():

@@ -44,6 +44,11 @@ def _tmp(prefix: str) -> Path:
     return d
 
 
+def gb_unsigned() -> str:
+    import guardrail.bundle as gb
+    return gb.UNSIGNED
+
+
 def test_every_policy_round_trips_and_every_tamper_is_refused():
     rt = W.round_trip(ROOT / "policies", signer=None)
     assert rt["n"] == N_POLICIES and N_POLICIES >= 20, rt["n"]
@@ -53,6 +58,11 @@ def test_every_policy_round_trips_and_every_tamper_is_refused():
     assert t["run"] == rt["n"] and t["refused"] == t["run"], t
     assert rt["signatures"] == {"unsigned": N_POLICIES}, (
         "written unsigned on purpose here; the column must say so")
+    # ...and so must who signed and the signer's certificate chain (WP1-04):
+    # nobody, and none - never a chain the run did not establish.
+    assert rt["signed_by"] == [gb_unsigned()] and rt["chains"] == {"none": N_POLICIES}, (
+        rt["signed_by"], rt["chains"])
+    assert all(r["chain"] == "none" and r["signed_by"] == gb_unsigned() for r in rt["rows"])
 
 
 def test_the_negative_corpus_headers_say_what_the_loader_really_does():
@@ -357,6 +367,50 @@ def test_the_cold_start_fits_the_grants_budget_and_proves_it_did_the_work():
         f"{n} imports {fr['import']['p95_ms']:.0f} + path "
         f"{fr['path_first_call']['p95_ms']:.0f} ms (wall {fr['whole_process_wall']['p95_ms']:.0f})"
         for n, fr in cs["fresh_process"].items()) + f" (bound {bound:g} ms)")
+
+
+def test_the_cold_start_also_times_a_certified_signer_with_its_chain_checked():
+    """Review of the bundle-ca branch (2026-11-16): the locked cold-start KPI
+    was timed with a bare pinned fixture key, so once the lab keys are
+    certified it no longer measured the path that flies (the leaf's X.509
+    parse, the CA's signature on it, the record match). Where `cryptography`
+    is installed the typical bundle is now also signed by the same key
+    certified by a throw-away CA and timed on the same path, its chain
+    required to come out verified in every run, and its p95 is part of the
+    verdict's worst case (and named in the KPI text)."""
+    import guardrail.bundle as gb
+    if not gb.HAVE_CRYPTO:
+        return
+    cs = W.cold_start(warm_runs=3, fresh_runs=1)
+    c = cs["certified_signer"]
+    assert c["chain"] == "verified" and c["runs_failing_a_check"] == 0, c
+    assert c["signed_by"].startswith(W.COLD_START_CA + ":"), c["signed_by"]
+    assert "chains to authority" in c["verifier"], c["verifier"]
+    assert c["fresh_process"]["runs"] == 1, c["fresh_process"]
+    v = cs["verdict"]
+    assert v["certified_signer_p95_ms"] == c["fresh_process"]["ingest_with_imports"]["p95_ms"]
+    assert v["p95_ms"] >= v["certified_signer_p95_ms"], v
+    assert v["checks_hold"] is True and "certified signer" in v["reading"], v
+    assert "certified signer, chain checked" in W._cold_start_kpi(cs)["cold_start_50_rules"]
+    # In process only: the certified row still joins the verdict.
+    cs0 = W.cold_start(warm_runs=2, fresh_runs=0)
+    assert cs0["verdict"]["certified_signer_p95_ms"] == \
+        cs0["certified_signer"]["in_process"]["total"]["p95_ms"], cs0["verdict"]
+    # A chain that does not verify on the timed path (the fixture is made
+    # first, with the real check) fails the checks, not just the row.
+    real_check, real_fixture = gb._chain_problem, W._certified_fixture
+
+    def fixture_then_break(*a, **k):
+        out = real_fixture(*a, **k)
+        gb._chain_problem = lambda *x, **y: "refused for the test"
+        return out
+    W._certified_fixture = fixture_then_break
+    try:
+        bad = W.cold_start(warm_runs=2, fresh_runs=0)
+    finally:
+        gb._chain_problem, W._certified_fixture = real_check, real_fixture
+    assert bad["certified_signer"]["runs_failing_a_check"] > 0, bad["certified_signer"]
+    assert bad["verdict"]["checks_hold"] is False, bad["verdict"]
 
 
 def test_a_cold_start_that_skips_the_work_is_not_within_budget():

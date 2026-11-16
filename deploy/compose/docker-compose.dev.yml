@@ -42,6 +42,10 @@ x-companion-env: &companion-env
   GCS_UDP_PORT: ${GCS_UDP_PORT:?}
   VLAGUARD_BAG: ${VLAGUARD_BAG:?}
   VLAGUARD_ALLOW_FLIGHT_MISSION: ${VLAGUARD_ALLOW_FLIGHT_MISSION:?}
+  # 1 = fly only a bundle whose signer's certificate chained to a listed
+  # authority in this container (docker-compose.orin.yml says more). dev.env
+  # sets 0.
+  VLAGUARD_REQUIRE_CHAIN: ${VLAGUARD_REQUIRE_CHAIN:-0}
 
 x-companion-volumes: &companion-volumes
   - ../..:/opt/vlaguard:ro

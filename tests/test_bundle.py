@@ -24,11 +24,20 @@ missing (the 3.11 env, the WSL flight venvs) the key is the pure-Python RFC
 RUN there, which is the point: those are the environments the fallback is for.
 The fallback is pinned to the RFC's own test vectors on every interpreter.
 
+Since 2026-11-16 the bundle key is certified by a root CA (WP1-04 / X-10), so
+there is a second thing to refuse: a certificate that the listed authority did
+not issue for the key that signed. Those tests make their own CAs in temp
+folders with the function that made the lab's root; the lab's CA key is never
+read and the repository's trust store is never written. They need
+`cryptography` (X.509 is not re-implemented) and SKIP without it; what an
+interpreter without it must do is tested by switching it off.
+
 The projection tests are mostly about the axis order. The reference
 implementation returns (east, north); this project's frame is x = North,
 y = East. A straight copy of its call would rotate every constraint ninety
 degrees with nothing in the schema to object.
 """
+import contextlib
 import hashlib
 import io
 import json
@@ -886,6 +895,1089 @@ def test_a_manifest_naming_another_signer_than_the_signature_is_refused():
         raise AssertionError("a manifest naming another signer was accepted")
 
 
+# --------------------------------------------------------------------------- #
+# bundle: the signer under a certificate authority (WP1-04 / X-10, 2026-11-16)
+# --------------------------------------------------------------------------- #
+#
+# Every CA below is made by the test in a temp folder
+# (guardrail.harness_service.generate_pki, the function that made the lab's
+# root). The lab's own CA key and trust-store entries are never read or
+# written here: test_the_issue_cert_command_... checks the repository's trust
+# store is byte for byte what it was.
+
+def _ca(ca_cn: str | None = None):
+    """A throw-away root CA: (its folder, its certificate as PEM text)."""
+    import guardrail.harness_service as H
+    d = Path(tempfile.mkdtemp()) / "pki"
+    H.generate_pki(d, **({"ca_cn": ca_cn} if ca_cn else {}))
+    return d, (d / "ca.cert.pem").read_text(encoding="ascii")
+
+
+def _certified(authority: str = "lab-ca", **kw):
+    """A throw-away key certified by a throw-away CA and pinned in a throw-away
+    trust store: (signer, trust store, CA folder, CA PEM, the bare signer the
+    key was before)."""
+    bare, trust = _test_key()
+    pki, ca_pem = _ca()
+    rows = B.issue_signer_certificates(pki, trust, authority=authority, **kw)
+    assert [r["issued"] for r in rows] == [True], rows
+    signer = B.load_signer(trust.parent / "k.pem", trust)
+    assert signer.identity == rows[0]["identity"], (signer.identity, rows)
+    return signer, trust, pki, ca_pem, bare
+
+
+def _x509(pem):
+    from cryptography import x509
+    return x509.load_pem_x509_certificate(pem.encode() if isinstance(pem, str) else pem)
+
+
+def _der_sha256(pem) -> str:
+    """SHA-256 of a certificate's DER by `cryptography`, not by the code under
+    test."""
+    from cryptography.hazmat.primitives import hashes
+    return _x509(pem).fingerprint(hashes.SHA256()).hex()
+
+
+def _store(trust: Path) -> dict:
+    return json.loads(trust.read_text(encoding="utf-8"))
+
+
+def _refused_as(load, status: str, *words: str):
+    """`load` must raise BundleSignatureError naming `status` and `words`."""
+    try:
+        load()
+    except BundleSignatureError as e:
+        assert status in str(e), e
+        for w in words:
+            assert w in str(e), (w, str(e))
+    else:
+        raise AssertionError(f"accepted; expected a refusal as {status}")
+
+
+def _corrupt(load, *words: str):
+    """`load` must raise ValueError (integrity, not trust) naming `words`."""
+    try:
+        load()
+    except BundleSignatureError as e:
+        raise AssertionError(f"refused as merely untrusted: {e}")
+    except ValueError as e:
+        for w in words:
+            assert w in str(e), (w, str(e))
+    else:
+        raise AssertionError("accepted; expected an integrity refusal")
+
+
+def test_a_key_under_a_ca_signs_as_a_ca_reference_and_its_chain_verifies():
+    """WP1-04: the bundle key is certified by a root CA, so `signed_by` names
+    the CA, the bundle ships the certificate, and the reader chains it."""
+    if not B.HAVE_CRYPTO:
+        return SKIP
+    from cryptography.x509.oid import ExtendedKeyUsageOID as EKU
+    bare, trust = _test_key()
+    pol = load_policy(DEMO)
+    before = check_bundle(write_bundle(pol, _tmp(), signer=bare, issued_at=ISSUED), trust)
+    assert (before.signature, before.chain) == (B.SIG_VERIFIED, B.CHAIN_NONE), before
+    assert before.source_record()["chain"] == "none"
+
+    pki, ca_pem = _ca()
+    rows = B.issue_signer_certificates(pki, trust)
+    fp = _der_sha256(ca_pem)
+    ident = f"lab-ca:{fp[:16]}:{bare.key_id}"
+    assert [(r["identity"], r["issued"], r["retired"]) for r in rows] == \
+        [(ident, True, [bare.identity])], rows
+    store = _store(trust)
+    assert store["authorities"]["lab-ca"]["sha256"] == fp
+    assert "`authorities`" in store["_doc"], "the store's own description is stale"
+    assert store["signers"][ident]["issuer"] == "lab-ca"
+    assert store["signers"][ident]["public_key_hex"] == bare.public_raw.hex(), \
+        "the key stays pinned, so the Ed25519 check needs no certificate parser"
+    assert "PRIVATE KEY" not in trust.read_text(encoding="utf-8")
+
+    signer = B.load_signer(trust.parent / "k.pem", trust)
+    assert signer.identity == ident and signer.identity.endswith(":" + signer.key_id)
+    assert ident in B.load_trust_store(trust), "signed_by is still a trust-store key"
+    p = write_bundle(pol, _tmp(), signer=signer, issued_at=ISSUED)
+    assert write_bundle(pol, _tmp("again.tar.gz"), signer=signer,
+                        issued_at=ISSUED).read_bytes() == p.read_bytes()
+    m = _members(p)
+    assert set(m) == {IR_NAME, MANIFEST_NAME, SIGNATURE_NAME, B.MULTISCALE_NAME,
+                      B.SIGNER_CERT_NAME}, sorted(m)
+    assert m[SIGNATURE_NAME].decode().splitlines()[0] == f"{pol.policy_hash} {ident}"
+
+    chk = check_bundle(p, trust)
+    assert (chk.signature, chk.chain, chk.authority) == \
+        (B.SIG_VERIFIED, B.CHAIN_VERIFIED, "lab-ca"), (chk.signature, chk.detail)
+    assert "chains to authority 'lab-ca'" in chk.detail, chk.detail
+    assert load_bundle(p, trust_store=trust).policy_hash == pol.policy_hash
+    _, src = B.load_for_flight(p, trust_store=trust, require_chain=True)
+    assert (src["signature"], src["chain"], src["signed_by"]) == \
+        ("verified", "verified", ident), src
+
+    # The leaf: this key, code signing only, issued by this CA, to its notAfter.
+    leaf, ca = _x509(m[B.SIGNER_CERT_NAME]), _x509(ca_pem)
+    leaf.verify_directly_issued_by(ca)
+    assert B._leaf_public_raw(leaf) == bare.public_raw
+    from cryptography import x509
+    assert list(leaf.extensions.get_extension_for_class(x509.ExtendedKeyUsage).value) \
+        == [EKU.CODE_SIGNING]
+    assert not leaf.extensions.get_extension_for_class(x509.BasicConstraints).value.ca
+    assert B._cert_window(leaf)[1] == B._cert_window(ca)[1], \
+        "the leaf must live exactly as long as its CA, not 365 days"
+    assert leaf.subject.rfc4514_string().startswith(
+        "CN=policy-signer-" + bare.key_id.split(":")[1])
+
+    # Certifying again changes nothing: no second leaf, the same file.
+    was = trust.read_bytes()
+    again = B.issue_signer_certificates(pki, trust)
+    assert [r["issued"] for r in again] == [False] and trust.read_bytes() == was, again
+
+
+def test_the_manifest_carries_the_five_grant_fields_with_a_ca_reference():
+    """X-10. The grant's Policy DSL page: `policy_hash` "SHA-256 over the
+    canonicalised IR (post-merge, pre-sign)", `signed_by` "Lab CA or ITRI CA
+    reference", `changelog` "Human-readable diff vs the previous version", and
+    its worked example's `issued_at` and `layers_merged`. All five, on one
+    signed bundle of a merged policy; `signed_by` was the one that failed - a
+    key label, `lab-dev:ed25519:<id>`, is not a reference to a CA."""
+    if not B.HAVE_CRYPTO:
+        return SKIP
+    from guardrail.models import load_layered
+    rule = ("{{id: alt, type: altitude_envelope, layer: {layer}, constraint_type: hard, "
+            "scope: mission, priority: P0, violation_action: project_fix, "
+            "alt_min_m: {lo}, alt_max_m: {hi}}}")
+
+    def layer(name, text):
+        f = Path(tempfile.mkdtemp()) / name
+        f.write_text(text, encoding="utf-8")
+        return f
+
+    reg = layer("reg.yaml", "policy_id: reg\nversion: 1.0.0\nconstraints:\n  - "
+                + rule.format(layer="regulation", lo=5, hi=120) + "\n")
+    old = load_layered([reg, layer("m1.yaml", "policy_id: m\nversion: 0.1.0\nconstraints:\n  - "
+                                   + rule.format(layer="mission", lo=10, hi=40) + "\n")])
+    new = load_layered([reg, layer("m2.yaml", "policy_id: m\nversion: 0.2.0\nconstraints:\n  - "
+                                   + rule.format(layer="mission", lo=10, hi=50) + "\n")])
+    signer, trust, _, ca_pem, _ = _certified()
+    p = write_bundle(new, _tmp(), signer=signer, issued_at=ISSUED, previous=old)
+    m = _members(p)
+    man, ir = json.loads(m[MANIFEST_NAME]), json.loads(m[IR_NAME])
+
+    # 1. policy_hash: the full SHA-256 of the canonical IR, post-merge.
+    assert man["policy_hash"] == "sha256:" + hashlib.sha256(m[IR_NAME]).hexdigest()
+    assert man["policy_hash"] == new.policy_hash and len(man["policy_hash"]) == 7 + 64
+    # 2. signed_by: a reference to the CA - its name and the fingerprint of
+    #    its certificate - that still ends in the key id; the record beside it
+    #    gives the fingerprint in full and the certificate it issued.
+    fp = _der_sha256(ca_pem)
+    assert man["signed_by"] == f"lab-ca:{fp[:16]}:{signer.key_id}", man["signed_by"]
+    assert not man["signed_by"].startswith("lab-dev:")
+    leaf = _x509(m[B.SIGNER_CERT_NAME])
+    assert man["signer"] == {
+        "authority": "lab-ca", "ca_fingerprint": "sha256:" + fp,
+        "leaf_serial": format(leaf.serial_number, "x"),
+        "leaf_subject": leaf.subject.rfc4514_string(),
+        "key_id": signer.key_id,
+        "certificate_sha256": "sha256:" + _der_sha256(m[B.SIGNER_CERT_NAME])}, man["signer"]
+    # 3. changelog: the diff against the previous version, readable and exact.
+    assert man["changelog"].startswith(f"against m 0.1.0 ({old.policy_hash[:12]})"), man
+    assert "changed alt (alt_max_m)" in man["changelog"], man["changelog"]
+    assert man["changelog_diff"]["against"]["policy_hash"] == old.policy_hash
+    assert man["changelog_diff"]["changed"] == {"alt": ["alt_max_m"]}
+    # 4. issued_at, 5. layers_merged (in the policy the hash is over).
+    assert man["issued_at"] == ISSUED
+    assert ir["layers_merged"] == ["regulation", "mission"] == list(new.layers_merged), ir
+    # ...and all of it is under the signature, checked through the chain.
+    chk = check_bundle(p, trust)
+    assert (chk.signature, chk.chain) == (B.SIG_VERIFIED, B.CHAIN_VERIFIED), chk.detail
+    for field, value in (("changelog", "approved by ITRI"), ("issued_at", "2026-01-01T00:00:00Z")):
+        edited = dict(man, **{field: value})
+        _corrupt(lambda: check_bundle(_repack(p, _tmp("e.tar.gz"), {
+            MANIFEST_NAME: json.dumps(edited, indent=2, sort_keys=True).encode()}), trust),
+            "Ed25519 verification failed")
+    # A bare key's manifest is what it was: no `signer`, no certificate.
+    bare, _ = _test_key()
+    mb = _members(write_bundle(new, _tmp(), signer=bare, issued_at=ISSUED))
+    assert "signer" not in json.loads(mb[MANIFEST_NAME]) and B.SIGNER_CERT_NAME not in mb
+
+
+def _build_flight_bundles_tool():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "build_flight_bundles_drill", ROOT / "tools" / "build_flight_bundles.py")
+    T = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(T)
+    return T
+
+
+@contextlib.contextmanager
+def _env(**values):
+    """Set (or, with None, unset) environment variables for a block."""
+    saved = {k: os.environ.get(k) for k in values}
+    try:
+        for k, v in values.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+        yield
+    finally:
+        for k, v in saved.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+
+
+def test_swapping_the_authority_is_one_registry_entry_and_a_re_sign():
+    """The swap drill promised on 2 Nov: "another CA is one entry and a
+    re-sign", through the tools the lab would use, with no line of guardrail/
+    changed. A second CA ("ITRI's") is made here, and only what it would hand
+    over leaves its folder: its certificate and the leaf it issued for the
+    lab key's PUBLIC half. `register-cert` lists that CA and pins the leaf -
+    one authority entry and one signer entry, nothing else in the store
+    changes. The key is then certified twice, so the re-sign
+    (tools/build_flight_bundles.py, load_signer) refuses to pick a CA by file
+    order and signs under the one named (--authority, or
+    VLAGUARD_SIGNING_AUTHORITY). A replay bundle re-signs the same way
+    (tests/test_replay.py). Then the first authority is removed: its bundle is
+    refused, and the key signs under the remaining one unasked."""
+    if not B.HAVE_CRYPTO:
+        return SKIP
+    import guardrail.harness_service as H
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+    from guardrail.manifest import flight_bundle_path
+    signer, trust, _, ca1_pem, _ = _certified()
+    key = trust.parent / "k.pem"
+    pol = load_policy(DEMO)
+    b1 = write_bundle(pol, _tmp("ca1.tar.gz"), signer=signer, issued_at=ISSUED)
+    assert check_bundle(b1, trust).chain == B.CHAIN_VERIFIED
+
+    pki2, ca2_pem = _ca("ITRI Test Root CA")
+    handed = Path(tempfile.mkdtemp())                     # what ITRI hands over
+    (handed / "itri-ca.cert.pem").write_text(ca2_pem, encoding="ascii")
+    (handed / "leaf.cert.pem").write_bytes(H.issue_policy_signer(pki2, signer.public_raw))
+    before = _store(trust)
+    assert B._main(["register-cert", "--authority", "itri-ca",
+                    "--ca-cert", str(handed / "itri-ca.cert.pem"),
+                    "--cert", str(handed / "leaf.cert.pem"),
+                    "--identity", signer.identity, "--trust", str(trust)]) == 0
+    after = _store(trust)
+    ref2 = "itri-ca:" + _der_sha256(ca2_pem)[:16]
+    ident2 = f"{ref2}:{signer.key_id}"
+    assert set(after["authorities"]) == set(before["authorities"]) | {"itri-ca"}
+    assert after["authorities"]["lab-ca"] == before["authorities"]["lab-ca"]
+    assert "accept_unpinned" not in after["authorities"]["itri-ca"]
+    assert set(after["signers"]) == set(before["signers"]) | {ident2}, sorted(after["signers"])
+    assert all(after["signers"][k] == v for k, v in before["signers"].items()), \
+        "the swap rewrote a signer that was there"
+    assert after["signers"][ident2]["issuer"] == "itri-ca"
+    # Refused by register-cert: a leaf for another key, and an authority
+    # that is not listed and comes with no certificate.
+    other = B.Signer("test-lab", Ed25519PrivateKey.generate())
+    B.register_public_key(other, trust)
+    was = trust.read_bytes()
+    assert B._main(["register-cert", "--authority", "itri-ca", "--cert",
+                    str(handed / "leaf.cert.pem"), "--identity", other.identity,
+                    "--trust", str(trust)]) == 2
+    assert B._main(["register-cert", "--authority", "nobody-ca", "--cert",
+                    str(handed / "leaf.cert.pem"), "--identity", signer.identity,
+                    "--trust", str(trust)]) == 2
+    assert trust.read_bytes() == was
+
+    # Certified twice: the order of a file never picks the CA.
+    with _env(**{B.SIGNING_AUTHORITY_ENV: None}):
+        try:
+            B.load_signer(key, trust)
+        except ValueError as e:
+            assert "more than one authority" in str(e) and B.SIGNING_AUTHORITY_ENV in str(e), e
+        else:
+            raise AssertionError("a key certified by two authorities signed under one "
+                                 "picked by file order")
+        assert B.load_signer(key, trust, authority="itri-ca").identity == ident2
+        assert B.load_signer(key, trust, authority="lab-ca").identity == signer.identity
+    with _env(**{B.SIGNING_AUTHORITY_ENV: "itri-ca"}):
+        assert B.load_signer(key, trust).identity == ident2
+
+    # The re-sign, through the tool that signs the flight bundles.
+    T = _build_flight_bundles_tool()
+    out = Path(tempfile.mkdtemp())
+    args = ["sim_demo_policy", "--key", str(key), "--out-dir", str(out), "--issued-at", ISSUED]
+    with _env(VLAGUARD_TRUST_STORE=str(trust), **{B.SIGNING_AUTHORITY_ENV: None}):
+        assert T.main(args) == 2, "the tool picked a CA by itself"
+        assert T.main(args + ["--authority", "itri-ca"]) == 0
+    b2 = flight_bundle_path(load_policy(DEMO, runtime=False), out)
+    chk2 = check_bundle(b2, trust)
+    assert (chk2.signed_by, chk2.signature, chk2.chain, chk2.authority) == \
+        (ident2, B.SIG_VERIFIED, B.CHAIN_VERIFIED, "itri-ca"), chk2.detail
+    assert chk2.manifest["signer"]["ca_fingerprint"] == "sha256:" + _der_sha256(ca2_pem)
+    _, src = B.load_for_flight(b2, trust_store=trust, require_chain=True)
+    assert (src["signed_by"], src["chain"], src["require_chain"]) == (ident2, "verified", True)
+    assert check_bundle(b1, trust).chain == B.CHAIN_VERIFIED, "both authorities stand"
+    signer2 = B.load_signer(key, trust, authority="itri-ca")
+
+    # The first authority goes: one entry removed, and what it certified is
+    # refused - with or without `cryptography`, since no parser is needed to
+    # see that an authority is not listed.
+    doc = _store(trust)
+    del doc["authorities"]["lab-ca"]
+    trust.write_text(json.dumps(doc, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    for ctx in (contextlib.nullcontext(), _no_crypto()):
+        with ctx:
+            gone = check_bundle(b1, trust)
+            assert (gone.signature, gone.chain) == (B.SIG_UNTRUSTED, B.CHAIN_NONE), gone
+            assert "'lab-ca' is not listed" in gone.detail, gone.detail
+            _refused_as(lambda: load_bundle(b1, trust_store=trust), "untrusted-signer")
+            _refused_as(lambda: B.load_for_flight(b1, trust_store=trust), "untrusted-signer")
+            # the same for a document that ships no certificate (a replay
+            # bundle's index): the key is still pinned, its authority is gone
+            idx = B.verify_signer(signer.identity, signer.sign(b"index"), b"index", trust)
+            assert idx.status == B.SIG_UNTRUSTED and "is not listed" in idx.detail, idx
+    assert check_bundle(b2, trust).chain == B.CHAIN_VERIFIED
+    idx = B.verify_signer(signer2.identity, signer2.sign(b"index"), b"index", trust)
+    assert (idx.status, idx.chain, idx.authority) == (B.SIG_VERIFIED, B.CHAIN_VERIFIED, "itri-ca")
+    # With one authority left, the key signs under it without being told.
+    with _env(**{B.SIGNING_AUTHORITY_ENV: None}):
+        assert B.load_signer(key, trust).identity == ident2
+        try:
+            B.load_signer(key, trust, authority="lab-ca")
+        except ValueError as e:
+            assert "'lab-ca'" in str(e), e
+        else:
+            raise AssertionError("signed under an authority that is no longer listed")
+
+    # Another CA may not take a listed name: its bundles name another
+    # fingerprint, and the listed CA's would stop verifying without a word.
+    try:
+        B.register_authority("itri-ca", ca1_pem, trust)
+    except ValueError as e:
+        assert "another CA takes another name" in str(e), e
+    else:
+        raise AssertionError("a second CA was put under a listed authority's name")
+    # ...and a bundle that names the listed authority with another CA's
+    # fingerprint is not that authority's.
+    stale = B.certified_signer(signer.private_key, signer.certificate_pem, "itri-ca", ca1_pem)
+    worn = check_bundle(write_bundle(pol, _tmp(), signer=stale, issued_at=ISSUED), trust)
+    assert worn.signature == B.SIG_UNTRUSTED and "not the CA" in worn.detail, worn.detail
+
+
+def test_a_certificate_that_does_not_chain_to_a_listed_authority_is_refused():
+    """What a CA adds over a pinned key is only worth having if a certificate
+    it did not issue is refused. Each bundle below is consistent and carries a
+    valid Ed25519 signature by the key it names; what is wrong is the
+    certificate: forged (issued by a look-alike CA, or edited after issue),
+    issued by a CA that is not listed, or issued for another key."""
+    if not B.HAVE_CRYPTO:
+        return SKIP
+    import base64
+    import guardrail.harness_service as H
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+    signer, trust, pki, ca_pem, _ = _certified()
+    pol = load_policy(DEMO)
+
+    def flown(sgn, name="x.tar.gz"):
+        return write_bundle(pol, _tmp(name), signer=sgn, issued_at=ISSUED)
+
+    def untrusted(sgn, *words):
+        p = flown(sgn)
+        chk = check_bundle(p, trust)
+        assert (chk.signature, chk.chain) == (B.SIG_UNTRUSTED, B.CHAIN_NONE), \
+            (chk.signature, chk.chain, chk.detail)
+        for w in words:
+            assert w in chk.detail, (w, chk.detail)
+        _refused_as(lambda: load_bundle(p, trust_store=trust), "untrusted-signer")
+        _refused_as(lambda: B.load_for_flight(p, trust_store=trust), "untrusted-signer")
+        _refused_as(lambda: B.load_for_flight(p, trust_store=trust, allow_unverified=True,
+                                              require_chain=True), "untrusted-signer")
+
+    # 1. A forged leaf: an attacker's key, certified by an attacker's CA that
+    #    copies the listed CA's name, presented under the listed CA's reference.
+    rogue_pki, rogue_pem = _ca()
+    assert _x509(rogue_pem).subject == _x509(ca_pem).subject, "same name, another key"
+    thief = Ed25519PrivateKey.generate()
+    thief_raw = B.Signer("x", thief).public_raw
+    forged = H.issue_policy_signer(rogue_pki, thief_raw)
+    # (The thief's key is not pinned, and lab-ca vouches only for pinned keys
+    # by default, so it is refused before its certificate is read; the
+    # certificate itself is refused below, where the CA would vouch.)
+    untrusted(B.certified_signer(thief, forged, "lab-ca", ca_pem),
+              "vouches only for keys the trust store pins")
+    assert B._issued_by_manual(_x509(signer.certificate_pem), _x509(ca_pem)) is True
+    assert B._issued_by_manual(_x509(forged), _x509(ca_pem)) is False
+
+    # 1b. A forged leaf: the genuine certificate with its subject edited (the
+    #     CA's signature no longer covers it).
+    der = B._pem_der(signer.certificate_pem)
+    assert der.count(b"policy-signer-") == 1
+    edited = ("-----BEGIN CERTIFICATE-----\n"
+              + base64.encodebytes(der.replace(b"policy-signer-", b"policy-forger-")).decode()
+              + "-----END CERTIFICATE-----\n")
+    unpinned = _store(trust)
+    pinned_entry = unpinned["signers"].pop(signer.identity)
+    # the CA listed, no key pinned, and the CA allowed to vouch for keys the
+    # store does not pin (off by default: see test_an_authority_vouches_...)
+    unpinned["authorities"]["lab-ca"]["accept_unpinned"] = True
+    loose = trust.parent / "authority_only.json"
+    loose.write_text(json.dumps(unpinned), encoding="utf-8")
+    got = check_bundle(flown(B.certified_signer(thief, forged, "lab-ca", ca_pem)), loose)
+    assert (got.signature, got.chain) == (B.SIG_UNTRUSTED, B.CHAIN_NONE), got.detail
+    assert "was not issued by this authority" in got.detail, got.detail
+    p = flown(B.certified_signer(signer.private_key, edited, "lab-ca", ca_pem))
+    got = check_bundle(p, loose)
+    assert got.signature == B.SIG_UNTRUSTED and "was not issued by" in got.detail, got.detail
+    #     ...and where the key IS pinned, a certificate that is not the pinned
+    #     one is refused before any parsing (so without `cryptography` too).
+    for ctx in (contextlib.nullcontext(), _no_crypto()):
+        with ctx:
+            got = check_bundle(p, trust)
+            assert got.signature == B.SIG_UNTRUSTED and "is not the one the trust store" \
+                in got.detail, got.detail
+    #     The genuine certificate, unpinned, is accepted through the CA alone.
+    ok = check_bundle(flown(signer), loose)
+    assert (ok.signature, ok.chain) == (B.SIG_VERIFIED, B.CHAIN_VERIFIED), ok.detail
+
+    # 2. A wrong-CA leaf: the same key, certified by a real CA that this
+    #    trust store does not list - named honestly, and passed off as lab-ca.
+    other_pki, other_pem = _ca("Somebody Else Root CA")
+    foreign = H.issue_policy_signer(other_pki, signer.public_raw)
+    for store in (trust, loose):
+        got = check_bundle(flown(B.certified_signer(signer.private_key, foreign,
+                                                    "other-ca", other_pem)), store)
+        assert got.signature == B.SIG_UNTRUSTED and "'other-ca' is not listed" in got.detail, \
+            got.detail
+    got = check_bundle(flown(B.certified_signer(signer.private_key, foreign, "lab-ca", ca_pem)),
+                       loose)
+    assert got.signature == B.SIG_UNTRUSTED and "was not issued by" in got.detail, got.detail
+
+    # 3. Leaf / key mismatch: another key signs and ships the genuine leaf of
+    #    the certified key. Said honestly (the record names the signing key)...
+    _corrupt(lambda: check_bundle(flown(B.certified_signer(thief, signer.certificate_pem,
+                                                           "lab-ca", ca_pem)), trust),
+             "does not describe the certificate", "key_id")
+    #    ...or with the genuine record under the thief's identity...
+    liar = B.Signer(authority=signer.authority, private_key=thief,
+                    certificate_pem=signer.certificate_pem, record=signer.record)
+    _corrupt(lambda: check_bundle(flown(liar), trust), "does not belong to this signer")
+    #    ...or with everything naming the certified key, and the thief's
+    #    signature under it.
+    class _As:                                   # signs as `signer`, with another key
+        public_raw = signer.public_raw
+        sign = staticmethod(lambda data: thief.sign(data))
+    imposter = B.Signer(authority=signer.authority, private_key=_As,
+                        certificate_pem=signer.certificate_pem, record=signer.record)
+    assert imposter.identity == signer.identity
+    _corrupt(lambda: check_bundle(flown(imposter), trust), "Ed25519 verification failed")
+    #    The verifier itself, below check_bundle's record check: a certificate
+    #    for another key certifies nothing about this one.
+    thief_ident = f"{signer.authority}:{B._key_id(thief_raw)}"
+    res = B.verify_signer(thief_ident, thief.sign(b"doc").hex(), b"doc", loose,
+                          certificate=signer.certificate_pem)
+    assert res.status == B.SIG_UNTRUSTED and "not the key this identity names" in res.detail
+    try:
+        B.register_certificate(thief_raw, signer.certificate_pem, "lab-ca", trust)
+    except ValueError as e:
+        assert "not the key that signed" in str(e), e
+    else:
+        raise AssertionError("the store pinned a certificate issued for another key")
+
+    # 4. A TLS identity from the same CA is not a bundle signer.
+    why = B._chain_problem((pki / "harness-client.cert.pem").read_text(encoding="ascii"),
+                           ca_pem, signer.public_raw)
+    assert why and "code signing" in why, why
+    assert B._chain_problem(signer.certificate_pem, ca_pem, signer.public_raw) is None
+    #    ...and a leaf is not an authority.
+    try:
+        B.register_authority("leaf-ca", signer.certificate_pem, trust)
+    except ValueError as e:
+        assert "not a CA certificate" in str(e), e
+    else:
+        raise AssertionError("a leaf certificate was listed as an authority")
+
+    # 5. Validity is judged when the bundle is verified: after the CA's (and
+    #    so the leaf's) notAfter the chain no longer stands.
+    good = flown(signer)
+    assert check_bundle(good, trust).chain == B.CHAIN_VERIFIED
+    real_now = B._utcnow
+    B._utcnow = lambda: datetime(2040, 1, 1, tzinfo=real_now().tzinfo)
+    try:
+        late = check_bundle(good, trust)
+    finally:
+        B._utcnow = real_now
+    assert late.signature == B.SIG_UNTRUSTED and "not valid now" in late.detail, late.detail
+
+    # 6. The certificate is covered by the signature: dropped, swapped or
+    #    added, the bundle is no longer the one that was signed.
+    m = _members(good)
+    stripped = _tmp("nocert.tar.gz")
+    with tarfile.open(stripped, "w:gz") as tar:
+        for name, data in m.items():
+            if name != B.SIGNER_CERT_NAME:
+                info = tarfile.TarInfo(name=name)
+                info.size = len(data)
+                tar.addfile(info, io.BytesIO(data))
+    _corrupt(lambda: check_bundle(stripped, trust), "ships no signer.cert.pem")
+    _corrupt(lambda: check_bundle(_repack(good, _tmp("swap.tar.gz"),
+                                          {B.SIGNER_CERT_NAME: forged}), trust),
+             "not the certificate that was signed for")
+    _corrupt(lambda: check_bundle(_repack(good, _tmp("two.tar.gz"), {
+        B.SIGNER_CERT_NAME: m[B.SIGNER_CERT_NAME] + forged}), trust),
+        "not exactly one PEM certificate")
+    bare, bare_trust = _test_key()
+    _corrupt(lambda: check_bundle(_repack(flown(bare), _tmp("added.tar.gz"),
+                                          {B.SIGNER_CERT_NAME: forged}), bare_trust),
+             "a certificate nothing signed")
+    assert pinned_entry["certificate_sha256"] == _der_sha256(signer.certificate_pem)
+
+
+def test_a_retired_bare_key_is_accepted_only_for_what_was_issued_before():
+    """Certifying a key retires its bare `lab-dev`-style identity, or the CA
+    would add nothing: the old label would stay as good as the new one for
+    ever. What was issued before the retirement still verifies - every stored
+    bundle and the runs flown from them - and what says it was issued since
+    is refused under the old label, on every interpreter."""
+    if not B.HAVE_CRYPTO:
+        return SKIP
+    bare, trust = _test_key()
+    pol = load_policy(DEMO)
+    old = write_bundle(pol, _tmp("old.tar.gz"), signer=bare, issued_at=ISSUED)
+    pki, _ = _ca()
+    B.issue_signer_certificates(pki, trust, retired_on="2026-11-16T00:00:00Z")
+    entry = _store(trust)["signers"][bare.identity]
+    assert entry["retired_on"] == "2026-11-16T00:00:00Z" and \
+        entry["superseded_by"].startswith("lab-ca:"), entry
+    # The entry no longer says "put it under a CA": it says that happened,
+    # and keeps what it said before.
+    assert entry["note"].startswith("RETIRED 2026-11-16T00:00:00Z") and \
+        entry["superseded_by"] in entry["note"], entry["note"]
+    assert "issue-cert" in entry["note_before_retirement"], entry
+    at = write_bundle(pol, _tmp("at.tar.gz"), signer=bare, issued_at="2026-11-16T00:00:00Z")
+    late = write_bundle(pol, _tmp("late.tar.gz"), signer=bare, issued_at="2026-12-01T08:00:00Z")
+    for ctx in (contextlib.nullcontext(), _no_crypto()):
+        with ctx:
+            chk = check_bundle(old, trust)
+            assert (chk.signature, chk.chain) == (B.SIG_VERIFIED, B.CHAIN_NONE), chk.detail
+            assert "before this identity was retired (2026-11-16T00:00:00Z)" in chk.detail
+            assert load_bundle(old, trust_store=trust).policy_hash == pol.policy_hash
+            for p in (at, late):
+                got = check_bundle(p, trust)
+                assert got.signature == B.SIG_UNTRUSTED and "retired on" in got.detail, got
+                assert "signed as 'lab-ca:" in got.detail, got.detail
+                _refused_as(lambda: load_bundle(p, trust_store=trust),
+                            "untrusted-signer", "no longer accepted")
+                _refused_as(lambda: B.load_for_flight(p, trust_store=trust), "untrusted-signer")
+    # From now on the key signs under the CA: load_signer picks the identity
+    # in force, not the retired one.
+    now = B.load_signer(trust.parent / "k.pem", trust)
+    assert now.identity == entry["superseded_by"] and now.record["authority"] == "lab-ca"
+    assert check_bundle(write_bundle(pol, _tmp(), signer=now, issued_at="2026-12-01T08:00:00Z"),
+                        trust).chain == B.CHAIN_VERIFIED
+    # A document that states no issue time (a replay bundle's index): the
+    # date cannot be applied, the signature still verifies, and the detail
+    # says which of the two happened.
+    sig = bare.sign(b"index")
+    res = B.verify_signer(bare.identity, sig, b"index", trust)
+    assert res.status == B.SIG_VERIFIED and "could not be applied" in res.detail, res
+    res = B.verify_signer(now.identity, now.sign(b"index"), b"index", trust)
+    assert (res.status, res.chain) == (B.SIG_VERIFIED, B.CHAIN_VERIFIED) and \
+        "chains to authority 'lab-ca'" in res.detail, res
+    # verify_signature is the pinned-key check alone, its call and its two
+    # words as before: it knows nothing of authorities or retirement.
+    assert B.verify_signature(bare.identity, sig, b"index", trust) == \
+        (B.SIG_VERIFIED, f"Ed25519 signature by {bare.identity!r} verified (cryptography)")
+    # An entry whose date cannot be read is refused, not waved through.
+    doc = _store(trust)
+    doc["signers"][bare.identity]["retired_on"] = "soon"
+    assert B.verify_signer(bare.identity, sig, b"index", doc, issued_at=ISSUED).status \
+        == B.SIG_UNTRUSTED
+    # --keep-legacy: certified, and the bare identity left in force.
+    kept, kept_trust = _test_key()
+    B.issue_signer_certificates(pki, kept_trust, authority="lab-ca", retire_legacy=False)
+    assert "retired_on" not in _store(kept_trust)["signers"][kept.identity]
+
+
+def test_without_cryptography_the_chain_is_recorded_as_not_checked_never_as_verified():
+    """No ASN.1 or P-256 is re-implemented for the trust path, so an
+    interpreter without `cryptography` cannot chain a certificate. It must say
+    so: the Ed25519 signature is still checked against the pinned key (pure
+    Python), `chain` reads "not-checked-here" in the flight's record, a rail
+    that requires the chain refuses, and a key that is NOT pinned - trusted
+    through its certificate alone - is "unverifiable-here"."""
+    if not B.HAVE_CRYPTO:
+        return SKIP
+    signer, trust, _, _, _ = _certified()
+    pol = load_policy(DEMO)
+    p = write_bundle(pol, _tmp(), signer=signer, issued_at=ISSUED)
+    doc = _store(trust)
+    del doc["signers"][signer.identity]
+    doc["authorities"]["lab-ca"]["accept_unpinned"] = True      # see the test below
+    loose = trust.parent / "authority_only.json"
+    loose.write_text(json.dumps(doc), encoding="utf-8")
+    bare, bare_trust = _test_key()
+    plain = write_bundle(pol, _tmp(), signer=bare, issued_at=ISSUED)
+    other = _certified()[0].certificate_pem.encode()     # another key's genuine leaf
+    saved = os.environ.pop(B.REQUIRE_CHAIN_ENV, None)
+    try:
+        with _no_crypto():
+            chk = check_bundle(p, trust)
+            assert (chk.signature, chk.chain, chk.authority) == \
+                (B.SIG_VERIFIED, B.CHAIN_NOT_CHECKED, "lab-ca"), (chk.signature, chk.detail)
+            assert "pure-python" in chk.detail and "NOT checked here" in chk.detail, chk.detail
+            _, src = B.load_for_flight(p, trust_store=trust)
+            assert (src["signature"], src["chain"]) == ("verified", "not-checked-here"), src
+            _refused_as(lambda: B.load_for_flight(p, trust_store=trust, require_chain=True),
+                        "certificate chain not-checked-here")
+            os.environ[B.REQUIRE_CHAIN_ENV] = "1"
+            _refused_as(lambda: B.load_for_flight(p, trust_store=trust),
+                        "certificate chain not-checked-here", B.REQUIRE_CHAIN_ENV)
+            del os.environ[B.REQUIRE_CHAIN_ENV]
+            # not pinned: only the certificate could vouch for it
+            got = check_bundle(p, loose)
+            assert (got.signature, got.chain) == (B.SIG_UNVERIFIABLE, B.CHAIN_NOT_CHECKED), got
+            assert "NOT checked" in got.detail and "cryptography" in got.detail, got.detail
+            _refused_as(lambda: load_bundle(p, trust_store=loose), "unverifiable-here")
+            _refused_as(lambda: B.load_for_flight(p, trust_store=loose), "unverifiable-here")
+            # what needs no parser is still checked: the certificate's digest
+            _corrupt(lambda: check_bundle(_repack(p, _tmp("swap.tar.gz"),
+                                                  {B.SIGNER_CERT_NAME: other}), trust),
+                     "not the certificate that was signed for")
+        with _no_crypto(fallback=False):
+            got = check_bundle(p, trust)
+            assert (got.signature, got.chain) == (B.SIG_UNVERIFIABLE, B.CHAIN_NOT_CHECKED), got
+        # With `cryptography` back: the rule is opt-in, and under it a bare
+        # key or an unsigned bundle does not fly, flag or no flag.
+        assert B.load_for_flight(plain, trust_store=bare_trust)[1]["chain"] == "none"
+        os.environ[B.REQUIRE_CHAIN_ENV] = "1"
+        assert B.load_for_flight(p, trust_store=trust)[1]["chain"] == "verified"
+        _refused_as(lambda: B.load_for_flight(plain, trust_store=bare_trust),
+                    "certificate chain none")
+        _refused_as(lambda: B.load_for_flight(_unsigned(pol), allow_unverified=True),
+                    "signature unsigned")
+        os.environ[B.REQUIRE_CHAIN_ENV] = "0"
+        assert B.load_for_flight(plain, trust_store=bare_trust)[1]["signature"] == "verified"
+    finally:
+        os.environ.pop(B.REQUIRE_CHAIN_ENV, None)
+        if saved is not None:
+            os.environ[B.REQUIRE_CHAIN_ENV] = saved
+
+
+def test_a_ca_reference_without_its_signer_record_is_refused():
+    """Review of the bundle-ca branch (2026-11-16): a bundle whose signed_by
+    names a CA but whose manifest has no `signer` record, and which ships no
+    signer.cert.pem, was chained against the PINNED leaf and read "signature
+    verified, chain verified" - and a Signer built from the identity string
+    alone (what load_signer fell back to for an unreadable entry) wrote
+    exactly that. It is not a layout any signer here writes, so it is refused
+    as corrupt on every interpreter; and load_signer no longer signs under a
+    CA reference without its certificate."""
+    if not B.HAVE_CRYPTO:
+        return SKIP
+    signer, trust, _, _, _ = _certified()
+    pol = load_policy(DEMO)
+    naked = B.Signer(authority=signer.authority, private_key=signer.private_key)
+    assert naked.identity == signer.identity and naked.record is None
+    p = write_bundle(pol, _tmp("naked.tar.gz"), signer=naked, issued_at=ISSUED)
+    m = _members(p)
+    assert B.SIGNER_CERT_NAME not in m and "signer" not in json.loads(m[MANIFEST_NAME])
+    for ctx in (contextlib.nullcontext(), _no_crypto()):
+        with ctx:
+            _corrupt(lambda: check_bundle(p, trust), "names a certificate authority",
+                     "no `signer` record")
+            _corrupt(lambda: B.load_for_flight(p, trust_store=trust, allow_unverified=True),
+                     "no `signer` record")
+    # A bare identity has neither, as it always had.
+    bare, bare_trust = _test_key()
+    plain = check_bundle(write_bundle(pol, _tmp(), signer=bare, issued_at=ISSUED), bare_trust)
+    assert (plain.signature, plain.chain) == (B.SIG_VERIFIED, B.CHAIN_NONE), plain.detail
+    # load_signer: a certified entry whose certificate cannot be read.
+    doc = _store(trust)
+    doc["signers"][signer.identity]["certificate_pem"] = "not a certificate"
+    broken = trust.parent / "broken.json"
+    broken.write_text(json.dumps(doc), encoding="utf-8")
+    try:
+        B.load_signer(trust.parent / "k.pem", broken)
+    except ValueError as e:
+        assert "not signing under a CA reference" in str(e), e
+    else:
+        raise AssertionError("load_signer signed under a CA reference without its certificate")
+
+
+def test_an_authority_vouches_only_for_pinned_keys_unless_its_entry_says_otherwise():
+    """Review of the bundle-ca branch (2026-11-16): accepting an UNPINNED key
+    on the strength of its certificate made any Ed25519 key holding a
+    codeSigning leaf from a listed authority a trusted signer on the default
+    path - and the lab root is also the mTLS and SROS 2 root, so whoever
+    holds its key (a copy made for enclave issuance, a backup) could mint a
+    bundle signer no trust store lists. An authority now vouches only for
+    keys the store pins unless its entry says `accept_unpinned: true`, which
+    nothing here writes unless asked; the refusal needs no parser, so it is
+    the same on every interpreter. And a leaf whose keyUsage does not allow
+    signatures is no signer, pinned or not."""
+    if not B.HAVE_CRYPTO:
+        return SKIP
+    import guardrail.harness_service as H
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+    signer, trust, pki, ca_pem, _ = _certified()
+    pol = load_policy(DEMO)
+    assert "accept_unpinned" not in _store(trust)["authorities"]["lab-ca"]
+    # A key nobody pinned, certified by the listed CA (what its key's holder can do).
+    outsider = Ed25519PrivateKey.generate()
+    minted = B.certified_signer(outsider, H.issue_policy_signer(pki, B.Signer("x", outsider)
+                                                                .public_raw), "lab-ca", ca_pem)
+    assert minted.identity not in B.load_trust_store(trust)
+    p = write_bundle(pol, _tmp("minted.tar.gz"), signer=minted, issued_at=ISSUED)
+    for ctx in (contextlib.nullcontext(), _no_crypto()):
+        with ctx:
+            got = check_bundle(p, trust)
+            assert (got.signature, got.chain) == (B.SIG_UNTRUSTED, B.CHAIN_NONE), got.detail
+            assert "vouches only for keys the trust store pins" in got.detail, got.detail
+            _refused_as(lambda: B.load_for_flight(p, trust_store=trust), "untrusted-signer")
+    # Opted in, on purpose, in the store: the certificate alone vouches.
+    doc = _store(trust)
+    doc["authorities"]["lab-ca"]["accept_unpinned"] = True
+    opted = trust.parent / "opted.json"
+    opted.write_text(json.dumps(doc), encoding="utf-8")
+    ok = check_bundle(p, opted)
+    assert (ok.signature, ok.chain) == (B.SIG_VERIFIED, B.CHAIN_VERIFIED), ok.detail
+    # register_authority writes the flag only when asked, and listing a CA
+    # again leaves its entry as it is.
+    s = Path(tempfile.mkdtemp()) / "s.json"
+    B.register_authority("lab-ca", ca_pem, s, accept_unpinned=True)
+    B.register_authority("lab-ca", ca_pem, s)
+    assert _store(s)["authorities"]["lab-ca"]["accept_unpinned"] is True
+    s2 = Path(tempfile.mkdtemp()) / "s.json"
+    B.register_authority("lab-ca", ca_pem, s2)
+    assert "accept_unpinned" not in _store(s2)["authorities"]["lab-ca"]
+
+    # keyUsage: a codeSigning leaf for the pinned key whose keyUsage leaves
+    # out digitalSignature is refused by the chain check and by the store.
+    ca_key = serialization.load_pem_private_key((pki / "ca.key.pem").read_bytes(), None)
+    ca_cert = _x509(ca_pem)
+    nb, na = B._cert_window(ca_cert)
+    no_sig = (x509.CertificateBuilder()
+              .subject_name(x509.Name([x509.NameAttribute(x509.oid.NameOID.COMMON_NAME,
+                                                          "policy-signer-nosig")]))
+              .issuer_name(ca_cert.subject).public_key(signer.private_key.public_key())
+              .serial_number(x509.random_serial_number())
+              .not_valid_before(nb).not_valid_after(na)
+              .add_extension(x509.BasicConstraints(ca=False, path_length=None), critical=True)
+              .add_extension(x509.KeyUsage(digital_signature=False, content_commitment=True,
+                                           key_encipherment=False, data_encipherment=False,
+                                           key_agreement=False, key_cert_sign=False,
+                                           crl_sign=False, encipher_only=False,
+                                           decipher_only=False), critical=True)
+              .add_extension(x509.ExtendedKeyUsage([x509.oid.ExtendedKeyUsageOID.CODE_SIGNING]),
+                             critical=False)
+              .sign(ca_key, hashes.SHA256())).public_bytes(serialization.Encoding.PEM).decode()
+    why = B._chain_problem(no_sig, ca_pem, signer.public_raw)
+    assert why and "digitalSignature" in why, why
+    assert B._chain_problem(signer.certificate_pem, ca_pem, signer.public_raw) is None
+    try:
+        B.register_certificate(signer.public_raw, no_sig, "lab-ca", trust)
+    except ValueError as e:
+        assert "digitalSignature" in str(e), e
+    else:
+        raise AssertionError("the store pinned a leaf whose key may not make signatures")
+
+
+def test_a_key_certified_twice_signs_under_the_authority_named_never_by_file_order():
+    """Review of the bundle-ca branch (2026-11-16): load_signer chose among a
+    key's certified identities by the trust store's order, so running
+    `issue-cert --authority <x>` on a machine whose key the lab CA had
+    already certified silently switched which CA every later bundle named.
+    Now a key certified by two listed authorities signs only under the one
+    named (load_signer `authority`, $VLAGUARD_SIGNING_AUTHORITY,
+    build_flight_bundles --authority) and is refused otherwise; naming one
+    that has not certified it is refused too."""
+    if not B.HAVE_CRYPTO:
+        return SKIP
+    from guardrail.manifest import flight_bundle_path
+    signer, trust, _, _, _ = _certified()                   # lab-ca
+    key = trust.parent / "k.pem"
+    pki2, _ = _ca("Second Root CA")
+    rows = B.issue_signer_certificates(pki2, trust, authority="aaa-ca")  # sorts first
+    second = rows[0]["identity"]
+    assert second.startswith("aaa-ca:") and second.endswith(signer.key_id), rows
+    T = _build_flight_bundles_tool()
+    out = Path(tempfile.mkdtemp())
+    with _env(VLAGUARD_TRUST_STORE=str(trust), **{B.SIGNING_AUTHORITY_ENV: None}):
+        try:
+            B.load_signer(key, trust)
+        except ValueError as e:
+            assert "more than one authority" in str(e) and "aaa-ca:" in str(e), e
+        else:
+            raise AssertionError("signed under a CA picked by file order")
+        assert T.main(["sim_demo_policy", "--key", str(key), "--out-dir", str(out)]) == 2
+        assert not flight_bundle_path(load_policy(DEMO, runtime=False), out).exists()
+        assert B.load_signer(key, trust, authority="aaa-ca").identity == second
+        assert B.load_signer(key, trust, authority="lab-ca").identity == signer.identity
+        try:
+            B.load_signer(key, trust, authority="zzz-ca")
+        except ValueError as e:
+            assert "'zzz-ca'" in str(e), e
+        else:
+            raise AssertionError("signed under an authority that never certified the key")
+        assert T.main(["sim_demo_policy", "--key", str(key), "--out-dir", str(out),
+                       "--authority", "lab-ca"]) == 0
+        assert check_bundle(flight_bundle_path(load_policy(DEMO, runtime=False), out),
+                            trust).signed_by == signer.identity
+    with _env(**{B.SIGNING_AUTHORITY_ENV: "aaa-ca"}):
+        assert B.load_signer(key, trust).identity == second
+
+
+def test_a_flight_record_says_what_its_loader_required_and_whom_it_accepted():
+    """Review of the bundle-ca branch (2026-11-16). (1) Nothing in a run said
+    whether the chain was REQUIRED, only how the bundle was: a mission flown
+    with VLAGUARD_REQUIRE_CHAIN never reaching its loader still read
+    "signature verified, chain verified". policy_source now carries
+    `require_chain`, the value in force for that load, for a bundle and a
+    YAML alike. (2) A bundle accepted under a retired identity (its
+    issued_at, the signer's own word, before retired_on) records
+    `signer_retired_on`. (3) A YAML policy's record carries `chain: none`,
+    the key a bundle's record has."""
+    if not B.HAVE_CRYPTO:
+        return SKIP
+    signer, trust, _, _, bare = _certified()                # bare: retired now
+    pol = load_policy(DEMO)
+    p = write_bundle(pol, _tmp(), signer=signer, issued_at=ISSUED)
+    with _env(**{B.REQUIRE_CHAIN_ENV: None}):
+        src = B.load_for_flight(p, trust_store=trust)[1]
+        assert (src["require_chain"], src["chain"], src["signer_retired_on"]) == \
+            (False, "verified", None), src
+        assert B.load_for_flight(p, trust_store=trust, require_chain=True)[1]["require_chain"] \
+            is True
+        _, y = B.load_for_flight(yaml_path=DEMO)
+        assert (y["kind"], y["signature"], y["chain"], y["require_chain"]) == \
+            ("yaml", "unsigned", "none", False), y
+    for value, want in (("1", True), ("0", False)):
+        with _env(**{B.REQUIRE_CHAIN_ENV: value}):
+            assert B.load_for_flight(p, trust_store=trust)[1]["require_chain"] is want, value
+    retired_on = _store(trust)["signers"][bare.identity]["retired_on"]
+    old = write_bundle(pol, _tmp("old.tar.gz"), signer=bare, issued_at=ISSUED)
+    chk = check_bundle(old, trust)
+    assert chk.verified and chk.retired_on == retired_on, (chk.signature, chk.detail)
+    with _env(**{B.REQUIRE_CHAIN_ENV: None}):
+        src = B.load_for_flight(old, trust_store=trust)[1]
+    assert (src["signed_by"], src["signer_retired_on"], src["chain"]) == \
+        (bare.identity, retired_on, "none"), src
+
+
+def test_the_issue_cert_command_certifies_every_pinned_key_from_public_keys_only():
+    """The integrator's step, on throw-away material: one command lists the
+    CA, certifies the desktop's key AND a key whose private half is on another
+    machine (the AGX Orin's, known here by its public key alone), and retires
+    both bare identities. Nothing private is written, the lab's own trust
+    store is not touched, and a second run is a no-op."""
+    if not B.HAVE_CRYPTO:
+        return SKIP
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+    lab_store = B.DEFAULT_TRUST_STORE.read_bytes()
+    desktop, trust = _test_key()
+    orin_key = Ed25519PrivateKey.generate()                 # "on the Orin"
+    orin = B.Signer(authority="test-lab", private_key=orin_key)
+    B.register_public_key(orin, trust, note="the other machine's key: public half only")
+    pki, ca_pem = _ca()
+    pki_before = sorted(f.name for f in pki.iterdir())
+
+    assert B._main(["issue-cert", "--pki", str(pki), "--trust", str(trust)]) == 0
+    store = _store(trust)
+    fp = _der_sha256(ca_pem)
+    want = {f"lab-ca:{fp[:16]}:{s.key_id}": s for s in (desktop, orin)}
+    certified = {k: v for k, v in store["signers"].items() if v.get("issuer")}
+    assert set(certified) == set(want), sorted(certified)
+    for ident, s in want.items():
+        e = certified[ident]
+        assert e["public_key_hex"] == s.public_raw.hex() and e["issuer"] == "lab-ca"
+        assert B._chain_problem(e["certificate_pem"], ca_pem, s.public_raw) is None
+        assert store["signers"][s.identity]["superseded_by"] == ident
+        assert store["signers"][s.identity]["retired_on"].endswith("Z")
+    assert sorted(f.name for f in pki.iterdir()) == pki_before, "the CA folder changed"
+    assert "PRIVATE" not in trust.read_text(encoding="utf-8")
+    assert B.DEFAULT_TRUST_STORE.read_bytes() == lab_store, "the lab's trust store changed"
+
+    was = trust.read_bytes()
+    assert B._main(["issue-cert", "--pki", str(pki), "--trust", str(trust)]) == 0
+    assert trust.read_bytes() == was, "a second run re-issued or rewrote something"
+
+    # The other machine, with the synced trust store and its own key: what it
+    # signs is under the CA, and verifies here.
+    there = Path(tempfile.mkdtemp()) / "orin.pem"
+    there.write_bytes(orin_key.private_bytes(serialization.Encoding.PEM,
+                                             serialization.PrivateFormat.PKCS8,
+                                             serialization.NoEncryption()))
+    orin_ca = B.load_signer(there, trust)
+    assert orin_ca.identity in want and orin_ca.identity != orin.identity
+    pol = load_policy(DEMO)
+    p = write_bundle(pol, _tmp("orin.tar.gz"), signer=orin_ca)
+    chk = check_bundle(p, trust)
+    assert (chk.signature, chk.chain) == (B.SIG_VERIFIED, B.CHAIN_VERIFIED), chk.detail
+    assert B._main(["verify", str(p), "--trust", str(trust), "--require-chain"]) == 0
+    # A bundle issued NOW under the retired bare label is refused...
+    stale = write_bundle(pol, _tmp("stale.tar.gz"), signer=orin)
+    assert check_bundle(stale, trust).signature == B.SIG_UNTRUSTED
+    assert B._main(["verify", str(stale), "--trust", str(trust)]) == 1
+    # ...and `verify --require-chain` says no to a bare key that verifies.
+    bare, bare_trust = _test_key()
+    plain = write_bundle(pol, _tmp("plain.tar.gz"), signer=bare)
+    assert B._main(["verify", str(plain), "--trust", str(bare_trust)]) == 0
+    assert B._main(["verify", str(plain), "--trust", str(bare_trust), "--require-chain"]) == 1
+
+    # One key by identity, and one by its public key alone.
+    lone, lone_trust = _test_key()
+    extra = B.Signer("x", Ed25519PrivateKey.generate()).public_raw
+    assert B._main(["issue-cert", "--pki", str(pki), "--trust", str(lone_trust),
+                    "--identity", lone.identity, "--public-key-hex", extra.hex(),
+                    "--keep-legacy"]) == 0
+    got = _store(lone_trust)["signers"]
+    assert {v["public_key_hex"] for v in got.values() if v.get("issuer")} == \
+        {lone.public_raw.hex(), extra.hex()}
+    assert "retired_on" not in got[lone.identity]
+    # Refusals: another CA under the name already listed; a folder with no CA.
+    other_pki, _ = _ca()
+    assert B._main(["issue-cert", "--pki", str(other_pki), "--trust", str(trust)]) == 2
+    assert B._main(["issue-cert", "--pki", str(Path(tempfile.mkdtemp())),
+                    "--trust", str(trust)]) == 2
+    assert trust.read_bytes() == was
+
+
+def test_the_evidence_record_says_what_this_machine_established():
+    """tools/bundle_ca_evidence.py, the record the integrator writes on the
+    desktop and on the AGX Orin after `issue-cert`: on a throw-away store and
+    a throw-away bundles folder it names the authority by the SHA-256 of its
+    certificate, gives each signer its standing as checked here, and counts
+    the bundles by signature and chain. Without `cryptography` it must say
+    "not-checked-here", never "verified"; it reads public data and writes
+    only the file it is told to."""
+    if not B.HAVE_CRYPTO:
+        return SKIP
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "bundle_ca_evidence", ROOT / "tools" / "bundle_ca_evidence.py")
+    E = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(E)
+    signer, trust, _, ca_pem, bare = _certified()
+    pol = load_policy(DEMO)
+    folder = Path(tempfile.mkdtemp())
+    write_bundle(pol, folder / "a-ca.tar.gz", signer=signer, issued_at=ISSUED)
+    write_bundle(pol, folder / "b-before.tar.gz", signer=bare, issued_at=ISSUED)
+    write_bundle(pol, folder / "c-since.tar.gz", signer=bare)       # issued now
+    write_bundle(pol, folder / "d-unsigned.tar.gz", signer=None, issued_at=ISSUED)
+    was = trust.read_bytes()
+
+    rec = E.collect(trust, folder)
+    fp = _der_sha256(ca_pem)
+    assert [(a["name"], a["sha256"], a["fingerprint_matches_record"])
+            for a in rec["authorities"]] == [("lab-ca", fp, True)], rec["authorities"]
+    by = {s["identity"]: s for s in rec["signers"]}
+    assert by[signer.identity]["accepted_here"] and by[signer.identity]["chain"] == "verified"
+    assert by[signer.identity]["issuer"] == "lab-ca" and not by[signer.identity]["retired_on"]
+    assert by[bare.identity]["accepted_here"] and by[bare.identity]["chain"] == "none"
+    assert by[bare.identity]["superseded_by"] == signer.identity and by[bare.identity]["retired_on"]
+    assert rec["bundles"]["counts"] == {
+        "policy / unsigned / chain none": 1,
+        "policy / untrusted-signer / chain none": 1,
+        "policy / verified / chain none": 1,
+        "policy / verified / chain verified": 1}, rec["bundles"]["counts"]
+    rows = {r["file"]: r for r in rec["bundles"]["policy"]}
+    assert rows["a-ca.tar.gz"]["signer"]["ca_fingerprint"] == "sha256:" + fp
+    assert rows["a-ca.tar.gz"]["signed_by"] == signer.identity
+    assert "retired on" in rows["c-since.tar.gz"]["detail"], rows["c-since.tar.gz"]
+    assert rec["summary"] == {
+        "authorities": 1, "certified_signers": 1,
+        "certified_signers_chain_verified_here": 1,
+        "bare_signers_in_force": 0, "bare_signers_retired": 1,
+        "bundles": rec["bundles"]["counts"]}, rec["summary"]
+    assert rec["drill"].startswith("not run") and rec["machine"]["cryptography"]
+
+    with _no_crypto():
+        there = E.collect(trust, folder)
+    assert there["machine"]["cryptography"] is None
+    assert there["machine"]["ed25519_verifier"] == "pure-python"
+    assert there["summary"]["certified_signers_chain_verified_here"] == 0
+    assert {s["identity"]: s["chain"] for s in there["signers"]} == \
+        {signer.identity: "not-checked-here", bare.identity: "none"}, there["signers"]
+    assert there["bundles"]["counts"]["policy / verified / chain not-checked-here"] == 1
+
+    # An authority that is gone is said per signer, not only per bundle.
+    doc = _store(trust)
+    del doc["authorities"]["lab-ca"]
+    loose = trust.parent / "no_authority.json"
+    loose.write_text(json.dumps(doc), encoding="utf-8")
+    lost = {s["identity"]: s for s in E.collect(loose, folder)["signers"]}[signer.identity]
+    assert not lost["accepted_here"] and "is not listed" in lost["why"], lost
+
+    out = folder / "record" / "evidence.json"
+    assert E.main(["--trust", str(trust), "--bundles", str(folder), "--out", str(out)]) == 0
+    assert json.loads(out.read_text(encoding="utf-8"))["summary"] == rec["summary"]
+    assert trust.read_bytes() == was and "PRIVATE" not in out.read_text(encoding="utf-8")
+
+
+def test_one_command_issues_the_certificates_and_re_signs_the_flight_bundles():
+    """`python tools/build_flight_bundles.py --issue-cert`: the integrator's
+    single step. Run here against a throw-away CA, key, trust store and
+    output folder (the tool's own defaults are the lab's, which this test
+    never touches): the flight bundle that was signed under the bare label is
+    re-signed under the CA and flies with the chain required, the other
+    machine's key is certified from its public half in the same step, and a
+    folder with no CA stops the command before anything is signed."""
+    if not B.HAVE_CRYPTO:
+        return SKIP
+    import importlib.util
+    from guardrail.manifest import flight_bundle_path
+    spec = importlib.util.spec_from_file_location(
+        "build_flight_bundles_ca", ROOT / "tools" / "build_flight_bundles.py")
+    T = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(T)
+    desktop, trust = _test_key()
+    orin = B.Signer(authority="test-lab", private_key=B._PyEd25519TestKey(os.urandom(32)))
+    B.register_public_key(orin, trust, note="the other machine's key: public half only")
+    pki, ca_pem = _ca()
+    out = Path(tempfile.mkdtemp())
+    key = str(trust.parent / "k.pem")
+    bundle = flight_bundle_path(load_policy(DEMO, runtime=False), out)
+    lab_store = B.DEFAULT_TRUST_STORE.read_bytes()
+    saved = os.environ.get("VLAGUARD_TRUST_STORE")
+    os.environ["VLAGUARD_TRUST_STORE"] = str(trust)
+    try:
+        args = ["sim_demo_policy", "--key", key, "--out-dir", str(out)]
+        assert T.main(args) == 0
+        was = check_bundle(bundle)
+        assert (was.signed_by, was.signature, was.chain) == \
+            (desktop.identity, B.SIG_VERIFIED, B.CHAIN_NONE), was.detail
+        old_bytes = bundle.read_bytes()
+
+        # No CA in the folder: refused, and the bundle on disk is not touched.
+        assert T.main(args + ["--issue-cert", "--pki", str(Path(tempfile.mkdtemp()))]) == 2
+        assert bundle.read_bytes() == old_bytes and not _store(trust).get("authorities")
+
+        assert T.main(args + ["--issue-cert", "--pki", str(pki)]) == 0
+        ref = "lab-ca:" + _der_sha256(ca_pem)[:16]
+        now = check_bundle(bundle)
+        assert (now.signed_by, now.signature, now.chain, now.authority) == \
+            (f"{ref}:{desktop.key_id}", B.SIG_VERIFIED, B.CHAIN_VERIFIED, "lab-ca"), now.detail
+        assert now.policy.policy_hash == was.policy.policy_hash, "the re-sign changed the policy"
+        assert B.load_for_flight(bundle, require_chain=True)[1]["chain"] == "verified"
+        signers = _store(trust)["signers"]
+        assert signers[f"{ref}:{orin.key_id}"]["issuer"] == "lab-ca", sorted(signers)
+        assert signers[orin.identity]["retired_on"] and signers[desktop.identity]["retired_on"]
+        # Again: nothing is re-issued, and the bundle is the same bytes when
+        # the issue time is pinned.
+        store_bytes = trust.read_bytes()
+        pinned = args + ["--issued-at", ISSUED]
+        assert T.main(pinned) == 0
+        first = bundle.read_bytes()
+        assert T.main(pinned + ["--issue-cert", "--pki", str(pki)]) == 0
+        assert trust.read_bytes() == store_bytes and bundle.read_bytes() == first
+        assert T.main(["sim_demo_policy", "--check", "--out-dir", str(out)]) == 0
+    finally:
+        if saved is None:
+            os.environ.pop("VLAGUARD_TRUST_STORE", None)
+        else:
+            os.environ["VLAGUARD_TRUST_STORE"] = saved
+    assert B.DEFAULT_TRUST_STORE.read_bytes() == lab_store, "the lab's trust store changed"
+
+
 def _legacy_bundle(pol, ir_obj=None) -> Path:
     """The pre-2026-10-06 format: 16-hex hash over model_dump() with nulls, IR
     with nulls, placeholder signer."""
@@ -969,6 +2061,52 @@ def test_the_bundles_already_on_disk_still_open():
         assert chk.hash_form, p.name
         assert chk.signature in (B.SIG_UNSIGNED, B.SIG_VERIFIED,
                                  B.SIG_UNVERIFIABLE), (p.name, chk.signature)
+
+
+def test_the_bundles_on_disk_still_open_after_the_lab_keys_are_certified():
+    """WP1-04: certifying the keys must not strand what they signed before.
+    The repository's trust store is COPIED (public data; the copy is the only
+    store written) and every key it has in force is certified by a
+    throw-away CA made here, listed as `drill-ca` (so this holds before the
+    integrator's `issue-cert` and after it, when `lab-ca` is already taken):
+    no bare identity is left in force, and every bundle and replay bundle in
+    bundles/ opens with the status it had under the store as committed.
+    Neither the lab's CA key nor its trust store is touched. Without
+    bundles/ (a fresh worktree, CI) only the store half runs, and the test
+    says SKIP."""
+    if not B.HAVE_CRYPTO:
+        return SKIP
+    from guardrail.replay import read_replay
+    lab_store = B.DEFAULT_TRUST_STORE.read_bytes()
+    pinned = {e["public_key_hex"] for e in B.load_trust_store(B.DEFAULT_TRUST_STORE).values()
+              if not e.get("retired_on")}
+    assert pinned, "the repository's trust store pins no key in force"
+    copy = Path(tempfile.mkdtemp()) / "trusted_signers.json"
+    copy.write_bytes(lab_store)
+    pki, ca_pem = _ca("Drill Root CA")
+    rows = B.issue_signer_certificates(pki, copy, authority="drill-ca")
+    ref = "drill-ca:" + _der_sha256(ca_pem)[:16]
+    assert {r["public_key_hex"] for r in rows} == pinned, rows
+    assert all(r["issued"] and r["identity"].startswith(ref + ":") for r in rows), rows
+    after = B.load_trust_store(copy)
+    in_force = sorted(k for k, v in after.items() if not v.get("issuer") and not v.get("retired_on"))
+    assert not in_force, f"bare identities still in force after certifying: {in_force}"
+    for r in rows:
+        st = B.signer_standing(r["identity"], copy)
+        assert st.ok and st.chain == B.CHAIN_VERIFIED, (r["identity"], st)
+    assert B.DEFAULT_TRUST_STORE.read_bytes() == lab_store, "the lab's trust store changed"
+
+    found = sorted((ROOT / "bundles").glob("*.tar.gz"))
+    if not found:
+        return SKIP
+    for p in found:
+        if p.name.endswith(".replay.tar.gz"):
+            was = read_replay(p)["signature"]["status"]
+            now = read_replay(p, copy)["signature"]["status"]
+        else:
+            was = check_bundle(p).signature
+            now = check_bundle(p, copy).signature
+        assert now == was, (p.name, was, now)
 
 
 def _in_git_checkout(root: Path) -> bool | None:

@@ -38,10 +38,25 @@ Bundles are build products (bundles/*.tar.gz is gitignored), byte-derivable
 from the policy and the issue time: `--issued-at` (or SOURCE_DATE_EPOCH)
 pins it; by default the policy's own `issued_at`, else now.
 
-The signing key is the lab's DEVELOPMENT key. Which authority signs the
-delivered bundles (the lab or ITRI) is a question put to the PI
-(docs/PI-DECISIONS-2026-10-06.md, Q4.8) and not answered; swapping the key
-changes the trust store, not this tool.
+The signing key is the lab's bundle key. Since 2026-11-16 it can be certified
+by the lab root CA (`python -m guardrail.bundle issue-cert`, run once where the
+CA's key is): from then on `load_signer` signs as `lab-ca:<CA>:ed25519:<key>`
+and each bundle ships the signer's certificate, so re-running this tool is the
+re-sign; until then it signs under the bare `lab-dev` label.
+
+    python tools/build_flight_bundles.py --issue-cert
+
+does both in one step, on the machine that holds the CA's key: it certifies
+every key the trust store pins (this machine's and, from its public key
+alone, the AGX Orin's), then builds, signs and verifies the bundles under the
+new identity. On a machine without the CA's key (the Orin), sync the trust
+store and run the tool without the flag. Which authority
+signs the delivered bundles (the lab or ITRI) is a question put to the PI
+(docs/PI-DECISIONS-2026-10-06.md, Q4.8) and not answered; swapping the
+authority changes the trust store, not this tool: `python -m guardrail.bundle
+register-cert` pins the leaf the other CA issued, and a key certified by two
+authorities is re-signed here with `--authority <name>` (or
+$VLAGUARD_SIGNING_AUTHORITY), never under one picked by file order.
 """
 from __future__ import annotations
 
@@ -163,8 +178,32 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--issued-at", default=None,
                     help="ISO 8601; default the policy's own issued_at, else "
                          "SOURCE_DATE_EPOCH, else now")
+    ap.add_argument("--issue-cert", action="store_true",
+                    help="first put every key the trust store pins under the "
+                         "lab root CA (python -m guardrail.bundle issue-cert; "
+                         "needs the CA's key, so the desktop), then build and "
+                         "sign under the new identity")
+    ap.add_argument("--pki", default=None,
+                    help="with --issue-cert: the CA's folder (default: the lab "
+                         "PKI folder of guardrail.harness_service)")
+    ap.add_argument("--authority", default=None,
+                    help="sign under this listed authority's certificate when "
+                         "the key is certified by more than one (default "
+                         "$VLAGUARD_SIGNING_AUTHORITY; with neither, such a key "
+                         "is refused rather than one picked by file order)")
     args = ap.parse_args(argv)
     out_dir = Path(args.out_dir) if args.out_dir else None
+    if args.pki and not args.issue_cert:
+        ap.error("--pki is the CA folder of --issue-cert")
+    if args.issue_cert:
+        if args.check:
+            ap.error("--issue-cert issues and signs; --check writes nothing")
+        # The same step as the command of its own; a refusal there (no CA key
+        # here, another CA under the listed name) stops before anything is
+        # signed.
+        rc = B._main(["issue-cert"] + (["--pki", args.pki] if args.pki else []))
+        if rc:
+            return rc
 
     if args.check:
         rows = [check_one(n, out_dir) for n in args.policies]
@@ -176,7 +215,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0 if all(r["ok"] for r in rows) else 1
 
     try:
-        signer = B.load_signer(args.key)
+        signer = B.load_signer(args.key, authority=args.authority)
         rows = build(args.policies, out_dir, signer=signer,
                      issued_at=args.issued_at)
     except (ValueError, RuntimeError, OSError) as exc:

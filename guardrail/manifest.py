@@ -1484,6 +1484,9 @@ def policy_source_record(kind: str, path: str | None, policy_hash: str,
         rec["signature_detail"] = ("loaded from YAML, not from a signed bundle; "
                                    "the policy hash identifies it but nothing "
                                    "attests who issued it")
+        # The key a bundle's record carries (guardrail.bundle source_record,
+        # 2026-11-16): no signer, so no certificate chain.
+        rec["chain"] = "none"
     rec.update(extra)
     return rec
 

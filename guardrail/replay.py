@@ -149,7 +149,7 @@ from typing import Any, Callable
 
 from .bundle import (LEGACY_PLACEHOLDER_SIGNER, SIG_BAD, SIG_VERIFIED,
                      _resolve_signer, manifest_for, parse_signature,
-                     signature_text, verify_signature)
+                     signature_text, verify_signer)
 from .kpi import compute, rule_priorities
 from .models import Policy, era_context
 
@@ -750,8 +750,9 @@ def read_replay(path: str | Path,
     Raises `ValueError` on the first member whose bytes do not match the index,
     naming it, and on an Ed25519 signature that is present and wrong. Returns
     `{"index", "policy", "hash_form", "signature", "rows", "metrics", "kpi",
-    "manifest"}`; `signature` is `{"status", "signed_by", "detail"}` with one
-    of the statuses defined in `guardrail/bundle.py`.
+    "manifest"}`; `signature` is `{"status", "signed_by", "detail", "chain",
+    "authority", "retired_on"}` with one of the statuses (and of the chain
+    statuses) defined in `guardrail/bundle.py`.
     """
     with tarfile.open(path, "r:gz") as tar:
         index_bytes = _read(tar, INDEX_NAME)
@@ -761,8 +762,13 @@ def read_replay(path: str | Path,
             raise ValueError(
                 f"{path}: signature does not match the index; the bundle has "
                 f"been modified or truncated.")
-        status, detail = verify_signature(signed_by, sig_hex, index_bytes,
-                                          trust_store)
+        # verify_signer: the signature AND the signer's standing (its authority
+        # listed, its certificate chained where `cryptography` is). A replay
+        # bundle ships no certificate and its index states no issue time, so
+        # a certified signer is held to the certificate the trust store pins
+        # and a retired identity is accepted with the detail saying so.
+        res = verify_signer(signed_by, sig_hex, index_bytes, trust_store)
+        status, detail = res.status, res.detail
         if status == SIG_BAD:
             raise ValueError(
                 f"{path}: signature check failed - {detail}. The index was "
@@ -829,8 +835,11 @@ def read_replay(path: str | Path,
                  if n.startswith(EPISODE) and _is_generation_file(n[len(EPISODE):])}
     _, gen_policies, gen_problems = generation_table(gen_blobs)
     return {"index": index, "policy": policy, "hash_form": form,
+            # chain / authority / retired_on (2026-11-16): what verify_signer
+            # established about the signer, as a policy bundle's record has.
             "signature": {"status": status, "signed_by": signed_by,
-                          "detail": detail},
+                          "detail": detail, "chain": res.chain,
+                          "authority": res.authority, "retired_on": res.retired_on},
             "rows": rows,
             "metrics": _json(EPISODE + "metrics.json", {}),
             "kpi": _json(EPISODE + "kpi.json"),
