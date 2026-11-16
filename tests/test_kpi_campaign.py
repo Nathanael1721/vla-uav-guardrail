@@ -317,6 +317,38 @@ def test_the_adopted_reading_is_applied_and_every_reading_scored_side_by_side():
         shutil.rmtree(root, ignore_errors=True)
 
 
+def test_a_prefix_on_run_without_labels_is_left_out_never_read_as_correct():
+    """2026-11-16 (pab1): the re-score table scores no reading on the
+    prefix-on arm of a pilot that consumes the CSP (the cell's labels are its
+    own pilot's, `labels_not_applied`), so the run is named in none of a
+    reading's lists. The report read "named nowhere" as correct and scored
+    33/33 where the table scored 15/15. It is left out, by name and reason."""
+    root, trust, summ, rs = _fixture()
+    try:
+        doc = json.loads(rs.read_text(encoding="utf-8"))
+        doc["runs"][1]["doc"]["scenario"] = {"labels_not_applied": "the cell's labels ..."}
+        rs.write_text(json.dumps(doc), encoding="utf-8")
+        t = KR.load_rescore(rs)
+        assert t["runs"]["cx_002_b"]["labels_not_applied"] is True
+        assert t["runs"]["cx_002_b"]["readings"] == {}
+        assert t["runs"]["cx_001_a"]["readings"]["r2"]["status"] == "correct"
+        rep = _report(summ, rs, trust)
+        e = _ep(rep, "cx_002_b")
+        assert e["failsafe_matches_label"] is None and e["failsafe_label"] is None
+        assert e["failsafe_reading_status"] == KR.LABELS_NOT_APPLIED_WHY
+        r2 = rep["failsafe_readings"]["readings"]["r2"]
+        assert (r2["correct"], r2["scored"]) == (1, 1), r2
+        assert [x["run"] for x in r2["labels_not_applied"]] == ["cx_002_b"]
+        assert r2["not_in_rescore"] == []
+        fs = rep["kpi_summary"]["failsafe"]
+        assert fs["correct"] == 1, fs
+        md = KR.render_markdown(KR.json_safe(rep))
+        assert "| (r2) **adopted** | 1/1 | 1.000 |" in md, md
+        assert "left out, labels not applied" in md and "`cx_002_b`" in md
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
 def _rescore_backstop(path: Path) -> Path:
     """_rescore's table as experiments/sweep_scenarios.py writes it since
     2026-11-15 (BACKSTOP_RULE): cx_001's fail-safe was triggered by the

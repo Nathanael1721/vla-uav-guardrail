@@ -1597,7 +1597,13 @@ def load_rescore(path: str | Path) -> dict:
             "cell": it.get("cell"), "seed": it.get("seed"),
             "shield": (d.get("metrics") or {}).get("shield"),
             "triggered": kpi.get("failsafe_triggered"),
-            "accepted": it.get("before") is not None, "readings": {}}
+            "accepted": it.get("before") is not None,
+            # The prefix-on arm of a pilot that consumes the CSP (2026-11-16):
+            # the cell's labels are its own pilot's, so the table scores it
+            # under no reading (sweep_scenarios.rescore_rail_main). Absent
+            # from every reading's lists, it must not read as "correct".
+            "labels_not_applied": bool((d.get("scenario") or {}).get("labels_not_applied")),
+            "readings": {}}
     declared = (doc.get("flight_length") or {}).get("max_s_add")
     if len(adds) > 1 or (declared is not None and adds
                          and set(adds) != {max_s_add({"max_s_add": declared})}):
@@ -1619,7 +1625,7 @@ def load_rescore(path: str | Path) -> dict:
         # made of it (`fsm_censored`: left out as censored).
         backstop = {str(t.get("run")): t for t in rd.get("backstop") or []}
         for name, rec in runs.items():
-            if "error" in rec or rec["shield"] != "on":
+            if "error" in rec or rec["shield"] != "on" or rec["labels_not_applied"]:
                 continue
             kind, clauses = named.get(name, ("correct", []))
             if kind in ("correct", "false", "missed"):
@@ -1732,6 +1738,11 @@ def rescore_table_figure(rs: dict, key: str, superseded: set) -> dict:
                          f"run(s) left out" if superseded else ""))}
 
 
+LABELS_NOT_APPLIED_WHY = ("the prefix-on arm of a pilot that consumes the CSP: the cell's "
+                          "fail-safe label was derived for its own pilot, so it is not "
+                          "applied (experiments/sweep_scenarios.py LABELS_NOT_APPLIED)")
+
+
 def apply_rescore(e: dict, rs: dict) -> None:
     """The adopted reading's label on one flown episode (its row's fail-safe
     column and its top-K category then read it), every reading kept beside it
@@ -1753,6 +1764,8 @@ def apply_rescore(e: dict, rs: dict) -> None:
         why = f"the re-score failed: {rec['error']}"
     elif rec["shield"] != "on":
         why = "Shield-off control: the readings score Shield-on runs"
+    elif rec.get("labels_not_applied"):
+        why = LABELS_NOT_APPLIED_WHY
     e["failsafe_readings"] = None if why else rec["readings"]
     ad = (rec or {}).get("readings", {}).get(rs["adopted"]) if not why else None
     if ad is not None and ad["status"] in ("correct", "false", "missed"):
@@ -1842,11 +1855,15 @@ def failsafe_readings_section(episodes: list[dict], rs: dict,
         before, as_missed, backstop = [], [], []
         by_who = {"fsm": 0, FAILSAFE_BY_GEOFENCE: 0}
         names: dict[str, list] = {k: [] for k in ("false", "missed", "label_flown_longer",
-                                                  "not_in_rescore", *READING_EXCLUDED)}
+                                                  "not_in_rescore", "labels_not_applied",
+                                                  *READING_EXCLUDED)}
         for e in eps:
             rd = (e.get("failsafe_readings") or {}).get(key)
             tag = {"run": Path(str(e.get("source") or e["id"])).name,
                    "family": e.get("family")}
+            if e.get("failsafe_reading_status") == LABELS_NOT_APPLIED_WHY:
+                names["labels_not_applied"].append(tag)
+                continue
             if rd is None:
                 names["not_in_rescore"].append(dict(tag, why=e.get("failsafe_reading_status")))
                 continue
@@ -3253,7 +3270,8 @@ def _render_failsafe_readings(fr: dict | None) -> list[str]:
         return (f"{b['correct']}/{b['scored']} = {_f(b['failsafe_trigger_correctness'], 3)} "
                 f"(Wilson 95 % low {_f(b['wilson_low_95'], 3)})")
     for key, r in fr["readings"].items():
-        out = sum(len(r[k]) for k in (*READING_EXCLUDED, "not_in_rescore"))
+        out = sum(len(r[k]) for k in (*READING_EXCLUDED, "not_in_rescore",
+                                      "labels_not_applied"))
         s0 = r["at_scenario_length"]
         lon = (f"{len(r['label_flown_longer'])} (without them {s0['correct']}/{s0['scored']})"
                if r["label_flown_longer"] else "0")
@@ -3269,8 +3287,8 @@ def _render_failsafe_readings(fr: dict | None) -> list[str]:
         tab = r["table"]
         own = (f"{tab.get('correct')}/{tab.get('scored')} over {tab.get('runs')} runs"
                + (f" ({tab['basis']})" if tab.get("basis") else "")
-               + ("" if r["agrees_with_table"] else " (differs: it scores runs that are "
-                  "not KPI-grade here)"))
+               + ("" if r["agrees_with_table"] else " (differs: it scores another set "
+                  "of runs - runs not KPI-grade here, or runs this report leaves out)"))
         mark = " **adopted**" if r["adopted_kpi_reading"] else ""
         L.append(f"| ({key}){mark} | {r['correct']}/{r['scored']} | "
                  f"{_f(r['failsafe_trigger_correctness'], 3)} | {_f(r['wilson_low_95'], 3)} | "
@@ -3293,6 +3311,10 @@ def _render_failsafe_readings(fr: dict | None) -> list[str]:
             for t in r[kind]:
                 lab = f" (label {', '.join(t['label'])})" if t.get("label") else ""
                 L.append(f"  - {word}: `{t['run']}`{lab}")
+        if r.get("labels_not_applied"):
+            L.append(f"  - left out, labels not applied ({LABELS_NOT_APPLIED_WHY}): "
+                     f"{len(r['labels_not_applied'])} run(s), "
+                     + ", ".join(f"`{t['run']}`" for t in r["labels_not_applied"]))
     if fr.get("rescore_runs_not_in_report"):
         L.append("- Runs in the re-score table that this report did not read: "
                  + ", ".join(f"`{n}`" for n in fr["rescore_runs_not_in_report"]))
