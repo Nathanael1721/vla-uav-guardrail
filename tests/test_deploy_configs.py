@@ -2352,7 +2352,8 @@ def _pas_perception(args: list[str], cwd: str | None = None, **env) -> subproces
     g1.write_text("{}", encoding="utf-8")
     full = {k: v for k, v in os.environ.items()
             if k not in ("VLAGUARD_DRY_RUN", "G1_VERDICT", "TAG", "BUNDLE", "VLA_PORT",
-                         "FRONT_CAPTURE_INTERVAL_S", "SECONDS_")}
+                         "FRONT_CAPTURE_INTERVAL_S", "SECONDS_", "FAMILY", "VLA_FEED",
+                         "STRESS")}
     full.update({"VLAGUARD_DRY_RUN": "1", "G1_VERDICT": g1.as_posix()})
     for k, v in env.items():
         if v is None:
@@ -2447,6 +2448,112 @@ def test_the_perception_rail_hil_script_joins_hil_envs_graph_and_flies_no_dev_po
     r = _pas_perception([], cwd=str(here), G1_VERDICT="g1_verdict.json")
     got = options(printed(r))["--g1-verdict"]
     assert got.startswith("/") and got.endswith("/g1_verdict.json"), got
+
+
+# --- the FAMILY switch of the perception rail's hil script (2026-11-16) --------- #
+# What the script passed after --vla-server before the switch existed (afd040c),
+# word for word and in its order: AIOT-VLA's option set. The stream feed in it
+# is the default since 2026-11-15; the hil follows before that flew one request
+# per tick (their params predate --vla-feed), pas_hil_feed_01 .. _04 a stream
+# capped at 12 Hz.
+_PAS_AIOT_OPTIONS = ["--vla-front-source", "detector", "--vla-step-as-rate", "0.5",
+                     "--vla-rate-yaw", "rate", "--cadence", "pipelined",
+                     "--allow-unstamped-pipelined", "--vla-feed", "stream",
+                     "--vla-cruise-mps", "4.5", "--vla-speed-cap-mps", "5"]
+# What each other family's model needs, as it flew on demo/vla_fly.py in the
+# 3-4 November AGX matrix: (front source, step-as-rate, yaw mode, answer timeout).
+_PAS_FAMILIES = {
+    "aerialvla": ("vla", None, "heading", 10.0),
+    "dronecats": ("detector", None, "heading", 30.0),
+    "racevla": ("vla", 1.0, "heading", 10.0),
+}
+
+
+def _backend_table_module():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "vlaguard_vla_backend_table", ROOT / "tools" / "vla_backend_table.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def _node_reads(argv: list[str]) -> list:
+    """What the perception node's own parser and checks make of an argv (in a
+    child process: the node puts demo/ on sys.path)."""
+    import json
+    code = ("import json, sys; sys.path.insert(0, sys.argv[1]); import perception_node as pn; "
+            "a = pn.build_parser().parse_args(sys.argv[2:]); pn.check_args(a); "
+            "print(json.dumps([a.pilot, a.mission, a.vla_front_source, a.vla_step_as_rate, "
+            "a.vla_rate_yaw, a.vla_decision_timeout_s, a.cadence, a.vla_feed, a.identity, "
+            "a.target_estimator, a.vla_cruise_mps, a.vla_speed_cap_mps]))")
+    c = subprocess.run([sys.executable, "-c", code, str(ROOT / "demo" / "pas_ardupilot"),
+                        *argv], capture_output=True, text=True, timeout=120, cwd=str(ROOT))
+    assert c.returncode == 0, c.stderr[-2000:]
+    return json.loads(c.stdout.strip().splitlines()[-1])
+
+
+def test_the_family_switch_leaves_aiotvla_as_it_flew_and_gives_each_family_its_options():
+    """deploy/orin/run_pas_perception.sh FAMILY=<family> (ARCH-06): the node
+    and the code are the same for every family, only the option set changes.
+    Without FAMILY, and with FAMILY=aiotvla, the command is the one the
+    script passed at afd040c - the same options in the same order - so the
+    flights made with it stay reproducible. The other families get the options their
+    model needs, which the node's own parser and checks accept together with
+    the node arguments the backend protocol's C2 adds; the feed each family
+    defaults to is the one that protocol names; an unknown family starts
+    nothing."""
+    if not find_bash():
+        return SKIP
+    hil = read_env("hil")
+    r = _pas_perception([], TAG="pin_tag")
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    argv = printed(r)
+    fixed = ["python", "demo/pas_ardupilot/perception_node.py", "--link", "mavros",
+             "--scene-mode", "attach", "--sim-host", hil["DESKTOP_IP"], "--g1-verdict"]
+    after = ["--tag", "pin_tag", "--max-s", "420", "--pilot", "vla", "--mission", "follow",
+             "--vla-server", "127.0.0.1:8791"]
+    assert argv[:9] == fixed and argv[10:20] == after, argv
+    assert argv[20:] == _PAS_AIOT_OPTIONS, f"the default option set changed: {argv[20:]}"
+    named = printed(_pas_perception([], TAG="pin_tag", FAMILY="aiotvla"))
+    assert named[10:] == argv[10:], "FAMILY=aiotvla is not the default"
+    # the default run folder keeps its name, a stressor's too
+    assert options(printed(_pas_perception([], TAG=None)))["--tag"].startswith("pas_hil_aiot_2")
+    assert options(printed(_pas_perception([], TAG=None, STRESS="rain")))["--tag"].startswith(
+        "pas_hil_aiot_rain_2")
+    V = _backend_table_module()
+    assert set(V.C2_FEED) == {"aiotvla", *_PAS_FAMILIES}, V.C2_FEED
+    assert options(argv)["--vla-feed"] == V.C2_FEED["aiotvla"] == "stream"
+    c2_args = list(V.C2_NODE_ARGS)
+    assert _node_reads(argv[2:] + c2_args) == [
+        "vla", "follow", "detector", 0.5, "rate", 10.0, "pipelined", "stream", True, True,
+        4.5, 5.0]
+    for fam, (front, step_rate, yaw, timeout) in _PAS_FAMILIES.items():
+        r = _pas_perception([], FAMILY=fam, TAG=None)
+        assert r.returncode == 0, (fam, r.stderr)
+        av = printed(r)
+        o = options(av)
+        assert av[:9] == fixed and (o["--pilot"], o["--mission"], o["--vla-server"]) == \
+            ("vla", "follow", "127.0.0.1:8791"), (fam, av)
+        assert o["--tag"].startswith(f"pas_hil_{fam}_2"), (fam, o["--tag"])
+        assert o["--vla-feed"] == V.C2_FEED[fam] == "tick", (fam, o)
+        assert ("--vla-step-as-rate" in o) == (step_rate is not None), (fam, o)
+        assert "--vla-rate-yaw" not in o, (fam, "the node's default yaw mode, heading", o)
+        assert _node_reads(av[2:] + c2_args) == [
+            "vla", "follow", front, step_rate, yaw, timeout, "pipelined", "tick", True, True,
+            4.5, 5.0], fam
+        # the feed can still be asked for, and extra node arguments pass through
+        o = options(printed(_pas_perception(["--seed", "7"], FAMILY=fam, VLA_FEED="stream")))
+        assert (o["--vla-feed"], o["--seed"]) == ("stream", "7"), (fam, o)
+    for bad in ("openvla", "AIOTVLA", "aiotvla "):
+        r = _pas_perception([], FAMILY=bad)
+        assert r.returncode == 64 and "FAMILY" in r.stderr and "EXEC:" not in r.stdout, \
+            (bad, r.returncode, r.stderr)
+    # the header says plainly what each family still lacks on this node
+    text = RUN_PAS_PERCEPTION.read_text(encoding="utf-8")
+    assert "WHAT EACH FAMILY STILL LACKS" in text
+    for fam in _PAS_FAMILIES:
+        assert text.count(f"#   {fam} ") >= 2, f"{fam}: its options and its gaps are not both stated"
 
 
 if __name__ == "__main__":

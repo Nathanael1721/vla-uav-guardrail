@@ -1,14 +1,16 @@
 #!/usr/bin/env bash
-# The perception rail's hil follow flown by the lab's own VLA, AIOT-VLA, ON THE
-# AGX ORIN (docs/DESIGN-projectairsim-ardupilot.md, "hil"): the perception node
+# The perception rail's hil follow flown by a VLA - by default the lab's own,
+# AIOT-VLA - ON THE AGX ORIN (docs/DESIGN-projectairsim-ardupilot.md, "hil"):
+# the perception node
 # (demo/pas_ardupilot/perception_node.py --pilot vla --mission follow) runs
 # natively on the Orin - ROS 2 Jazzy's rclpy and mavros_msgs from apt, and
 # ~/vla-drone-env for torch, the detector and the Project AirSim client, which
 # the companion image never carries - beside MAVROS 2 in the companion
-# container on the same Orin and the AIOT-VLA server on 127.0.0.1; Project
+# container on the same Orin and the VLA server on 127.0.0.1; Project
 # AirSim CityLife and ArduPilot SITL run on the desktop.
 #
 #   G1_VERDICT=~/g1_verdict.json TAG=pas_hil_aiot_01 bash deploy/orin/run_pas_perception.sh [node args...]
+#   FAMILY=aerialvla G1_VERDICT=~/g1_verdict.json bash deploy/orin/run_pas_perception.sh [node args...]
 #
 # First, in this order (the design doc has each command):
 #   desktop  .\scripts\run_pas_ardupilot.ps1 -Step scene -VlaCameras
@@ -17,6 +19,68 @@
 #                -f deploy/compose/docker-compose.orin.yml up -d mavros
 #            ~/vla-drone-env/bin/python demo/vla_server_foreign.py serve --model aiotvla \
 #                --weights ~/models/aiotvla/v10b --port 8791 --front-source detector --horizon-s 0.5
+#
+# FAMILY: WHICH MODEL THE SERVER AT VLA_PORT IS (default aiotvla). The node is
+# the same and no code changes between families; what changes is the option
+# set a family's model needs, and the server started before this script. One
+# server at a time, on VLA_PORT. The option sets are the ones each family
+# flew with on demo/vla_fly.py in the 3-4 November AGX matrix (each run's
+# metrics.json `params`), on this node's own follow defaults:
+#   aiotvla    (default) exactly the option set this script passed before
+#              FAMILY existed (afd040c): the detector's FrontCamera frame,
+#              each step flown as a rate over its 0.5 s label horizon with
+#              the yaw as a rate, pipelined, the feed between ticks
+#              (VLA_FEED stream). The stream feed is the default since
+#              2026-11-15: the hil follows before it flew one request per
+#              tick (what VLA_FEED=tick gives; their params predate the
+#              option), and pas_hil_feed_01 .. _04 a stream capped at 12 Hz,
+#              so reproducing one of those takes VLA_FEED=tick, or the node
+#              argument --vla-feed-max-hz 12 (each run's metrics.json params).
+#              Server: the command above (demo/vla_server_foreign.py serve
+#              --model aiotvla --weights <v10b folder> --port <VLA_PORT>
+#              --front-source detector --horizon-s 0.5; ~/vla-drone-env)
+#   aerialvla  VLAFront + VLADown (the scene step's -VlaCameras), steps flown
+#              as steps, pipelined, one request per tick.
+#              Server: demo/vla_server_v2.py serve --base ~/models/openvla-7b
+#              --adapter ~/models/aerialvla-lora/aero_vla --precision bf16
+#              --attn sdpa --merge --missing-down refuse --port <VLA_PORT>
+#              (~/vla-drone-env)
+#   dronecats  the detector's FrontCamera frame, steps flown as steps,
+#              pipelined, one request per tick, a 30 s answer timeout (its
+#              planning answers outlasted 10 s on the board, CHANGELOG
+#              2026-11-04).
+#              Server: demo/vla_server_foreign.py serve --model dronecats
+#              --weights <DroneCATS-Cosmos3-Edge-2B folder> --port <VLA_PORT>
+#              --front-source detector  (its OWN venv, ~/vla-dronecats-env,
+#              deploy/orin/agx_dronecats_env.sh: transformers 5)
+#   racevla    VLAFront, each step flown as a rate over 1.0 s (the server's
+#              --horizon-s default), pipelined, one request per tick.
+#              Server: demo/vla_server_foreign.py serve --model racevla
+#              --weights <drone6_all>/<run folder> --port <VLA_PORT>
+#              (~/vla-drone-env). The checkpoint is the run folder one level
+#              under drone6_all (openvla-7b+drone_set6_all+...), as that
+#              server's own docstring gives it; the server names the model
+#              drone6_all from the parent either way.
+# WHAT EACH FAMILY STILL LACKS HERE (2026-11-16). Only aiotvla has flown this
+# node's follow, on any rail. For the other three the option set parses and
+# the node's own checks accept it (tests/test_deploy_configs.py), and that is
+# all that is known:
+#   aerialvla  has flown this node as a GOTO and an approach on ArduPilot at
+#              dev (CHANGELOG 2026-10-29), never its follow and never on hil.
+#              It answers in about 1.1 s on the board (bf16, merged), so the
+#              feed between ticks is left off; --target-estimator's memory
+#              hint is a compass phrase it reads, which has not been flown.
+#   dronecats  has never been driven through this node (its flights went
+#              through demo/vla_fly.py). Its server runs from another venv
+#              than the node. It keeps a history per connection and answers
+#              `think` and `finished`; how this node's hold and close rules
+#              meet them is unflown.
+#   racevla    has never been driven through this node either. Its forward
+#              commands stayed under 0.3 m/s on simple_flight (CHANGELOG
+#              2026-10-27), so a car at 4.5 m/s is expected to pull away.
+# A first flight of each needs a shakedown (SECONDS_=60) before a 420 s one,
+# with _shake in its TAG (TAG=pas_hil_<family>_shake_01): the backend table
+# (tools/vla_backend_table.py, C2) does not count a flight so marked.
 #
 # The ROS 2 graph is hil.env's, read from it here and never copied: the domain,
 # the RMW, the Cyclone DDS peers (deploy/dds/cyclonedds.xml expands them), and
@@ -27,8 +91,10 @@
 # --scene-mode / --scene-only, --sim-host, --camera), in any abbreviation
 # argparse would take. Environment knobs:
 #   G1_VERDICT  the desktop's demo/out/g1_*/g1_verdict.json, copied here (required)
+#   FAMILY      aiotvla (default), aerialvla, dronecats or racevla: above
 #   TAG         the run folder under demo/out/ (default pas_hil_aiot_<date>,
-#               pas_hil_aiot_<stress>_<date> with STRESS)
+#               pas_hil_aiot_<stress>_<date> with STRESS; pas_hil_<family>_...
+#               for another family)
 #   SECONDS_    mission length in s (default 420)
 #   BUNDLE      a signed policy bundle (default: the node's own, follow_car_citylife's)
 #   FRONT_CAPTURE_INTERVAL_S  FrontCamera's capture interval the desktop's scene
@@ -37,11 +103,12 @@
 #               (-Stress day|dusk|night|rain|fog|shadow|texture; demo/pas_ardupilot/
 #               perception_stress.py): the node attaches only to that
 #               stressor's scene and reads its weather back; never KPI-grade
-#   VLA_PORT    the AIOT-VLA server's port on 127.0.0.1 (default 8791)
-#   VLA_FEED    stream (default): a new front frame goes to the model between
-#               ticks too, the grant's 10 Hz observation (needs the scene's
-#               -FrontCaptureIntervalS 0.05: a 15 Hz camera); tick: one request
-#               per 10 Hz tick at most, as every flight before 2026-11-15
+#   VLA_PORT    the VLA server's port on 127.0.0.1 (default 8791, every family)
+#   VLA_FEED    stream (aiotvla's default): a new front frame goes to the model
+#               between ticks too, the grant's 10 Hz observation (needs the
+#               scene's -FrontCaptureIntervalS 0.05: a 15 Hz camera); tick (the
+#               other families' default): one request per 10 Hz tick at most,
+#               as every flight before 2026-11-15
 #   VENV        the Python environment (default ~/vla-drone-env)
 #   ROS_SETUP   ROS 2's setup script (default /opt/ros/jazzy/setup.bash)
 # VLAGUARD_DRY_RUN=1 prints the graph's values (ENV:) and the command (EXEC:)
@@ -77,7 +144,40 @@ done
 [ -f "$G1_VERDICT" ] || die 66 "no G1 verdict at $G1_VERDICT (copy the desktop's demo/out/g1_*/g1_verdict.json here)"
 # Absolute: the node runs from the checkout's root (cd below), not from here.
 G1_VERDICT="$(cd "$(dirname "$G1_VERDICT")" && pwd)/$(basename "$G1_VERDICT")"
-TAG="${TAG:-pas_hil_aiot_${STRESS:+${STRESS}_}$(date +%Y%m%d_%H%M%S)}"
+
+# The family's option set (header, FAMILY). aiotvla's is word for word the
+# set this script passed before the switch existed, in the same order, so a
+# run without FAMILY is the run it always was.
+FAMILY="${FAMILY:-aiotvla}"
+case "$FAMILY" in
+  aiotvla)
+    tag_family=aiot
+    family_args=(--vla-front-source detector --vla-step-as-rate 0.5 --vla-rate-yaw rate
+                 --cadence pipelined --allow-unstamped-pipelined
+                 --vla-feed "${VLA_FEED:-stream}"
+                 --vla-cruise-mps 4.5 --vla-speed-cap-mps 5) ;;
+  aerialvla)
+    tag_family=aerialvla
+    family_args=(--vla-front-source vla
+                 --cadence pipelined --allow-unstamped-pipelined
+                 --vla-feed "${VLA_FEED:-tick}"
+                 --vla-cruise-mps 4.5 --vla-speed-cap-mps 5) ;;
+  dronecats)
+    tag_family=dronecats
+    family_args=(--vla-front-source detector
+                 --cadence pipelined --allow-unstamped-pipelined
+                 --vla-feed "${VLA_FEED:-tick}" --vla-decision-timeout-s 30
+                 --vla-cruise-mps 4.5 --vla-speed-cap-mps 5) ;;
+  racevla)
+    tag_family=racevla
+    family_args=(--vla-front-source vla --vla-step-as-rate 1.0
+                 --cadence pipelined --allow-unstamped-pipelined
+                 --vla-feed "${VLA_FEED:-tick}"
+                 --vla-cruise-mps 4.5 --vla-speed-cap-mps 5) ;;
+  *)
+    die 64 "FAMILY '$FAMILY' is none of aiotvla aerialvla dronecats racevla" ;;
+esac
+TAG="${TAG:-pas_hil_${tag_family}_${STRESS:+${STRESS}_}$(date +%Y%m%d_%H%M%S)}"
 case "$TAG" in
   ""|*/*|.*) die 64 "TAG '$TAG' must be a plain directory name under demo/out" ;;
 esac
@@ -102,10 +202,7 @@ args=(demo/pas_ardupilot/perception_node.py
       --link mavros --scene-mode attach --sim-host "$DESKTOP_IP"
       --g1-verdict "$G1_VERDICT" --tag "$TAG" --max-s "$SECONDS_"
       --pilot vla --mission follow --vla-server "127.0.0.1:$VLA_PORT"
-      --vla-front-source detector --vla-step-as-rate 0.5 --vla-rate-yaw rate
-      --cadence pipelined --allow-unstamped-pipelined
-      --vla-feed "${VLA_FEED:-stream}"
-      --vla-cruise-mps 4.5 --vla-speed-cap-mps 5)
+      "${family_args[@]}")
 if [ -n "${BUNDLE:-}" ]; then
   args+=(--bundle "$BUNDLE")
 fi
@@ -163,13 +260,13 @@ if bad:
 print(f"==> rclpy, mavros_msgs, torch, transformers and projectairsim import "
       f"(Python {sys.version.split()[0]})")
 EOF
-python - "$DESKTOP_IP" "$VLA_PORT" <<'EOF'
+python - "$DESKTOP_IP" "$VLA_PORT" "$FAMILY" <<'EOF'
 import socket
 import sys
-desk, vla_port = sys.argv[1], int(sys.argv[2])
+desk, vla_port, family = sys.argv[1], int(sys.argv[2]), sys.argv[3]
 for host, port, what in ((desk, 8989, "Project AirSim (topics)"),
                          (desk, 8990, "Project AirSim (services)"),
-                         ("127.0.0.1", vla_port, "the AIOT-VLA server")):
+                         ("127.0.0.1", vla_port, f"the VLA server (FAMILY={family})")):
     s = socket.socket()
     s.settimeout(3)
     try:

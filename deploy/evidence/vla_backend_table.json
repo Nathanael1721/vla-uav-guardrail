@@ -1,7 +1,9 @@
 {
- "schema": "vlaguard.vla_backend_table/2",
+ "schema": "vlaguard.vla_backend_table/3",
  "protocol": {
-  "id": "vla-backend-protocol/1",
+  "id": "vla-backend-protocol/2",
+  "date": "2026-11-16",
+  "changes_from_1": "R1 and C1 are unchanged. C2 is new. The table's Orin rate column also takes benches that are not R1, each labelled with what makes it so. R1 is stated not to cover a backend served over protocol v2: its Orin timing is its server's bench",
   "R1_rate": {
    "kind": "open loop",
    "inputs": {
@@ -27,7 +29,8 @@
    "hosts": [
     "desktop (dev)",
     "Jetson Orin (hil), same container image definition"
-   ]
+   ],
+   "served_backends": "not covered: a backend served over protocol v2 (AerialVLA bf16, AIoT-VLA, DroneCATS, RaceVLA) runs in its server's process, which `measure` does not load; its Orin timing is its server's own bench (demo/vla_server_v2.py bench, tools/bench_foreign_vla.py), shown as 'not R1' with what makes it so"
   },
   "C1_closed_loop": {
    "scenario": "policies/urban_demo_policy.yaml; instruction 'fly to (40, 40) at 6 m/s altitude 20'; spawn (0, 0); the policy's no-fly zone lies on the straight line",
@@ -46,10 +49,57 @@
    "nulls": [
     "hover (zero action): reached 0/N by construction",
     "stub P-controller, given the target coordinates: the no-learning reference a learned backend has to beat"
-   ]
+   ],
+   "status": "this tool reads no C1 flight: a row states why it has not flown C1 (BACKENDS[<backend>]['c1']), and the table counts the rows with a C1 record"
+  },
+  "C2_follow_closed_loop": {
+   "added": "2026-11-16",
+   "added_after_the_choice": "C2 was added on 16 November 2026, after the lab named AIoT-VLA v10b for the follow task on 15 November 2026. It was added because that choice rests on a follow, and C1 is a GOTO to a coordinate that a follow-only model cannot fly. A test written after the choice it bears on is not a prediction: C2 describes the chosen backend, and compares it only with backends that flew the same test",
+   "scenario": "the Project AirSim follow: 'follow a red car' in CityLife under the perception node's default signed bundle (follow_car_citylife), cruise altitude 8 m; the mission clock starts when the start gate passes (5 detector inferences in a row with a plausible box within 30 m)",
+   "rail": "hil: Project AirSim and ArduPilot SITL on the desktop; MAVROS 2, the perception node (demo/pas_ardupilot/perception_node.py --pilot vla --mission follow), the Shield and the VLA server on the Jetson Orin",
+   "launch": {
+    "script": "deploy/orin/run_pas_perception.sh FAMILY=<family>",
+    "node_args": [
+     "--identity",
+     "--negative-query",
+     "a traffic light",
+     "--target-estimator"
+    ],
+    "feed": {
+     "aiotvla": "stream",
+     "aerialvla": "tick",
+     "dronecats": "tick",
+     "racevla": "tick"
+    },
+    "max_s": 420,
+    "front_capture_interval_s_for_the_stream_feed": 0.05
+   },
+   "counts_as_c2": [
+    "KPI-grade by the run's own kpi.json (hil, sim_speedup 1, signed bundle, clean commit)",
+    "no perception stressor, no policy hot-applied in flight, the scenario's own instruction (not a paraphrase)",
+    "--identity and --target-estimator on, the family's feed, and for the stream feed a FrontCamera capture interval of 0.05 s, each as the run's params record it",
+    "the negative query ['a traffic light'] in the run's params, and the node's default signed bundle (follow-car-citylife-v<version>) as the run's policy_source",
+    "flown alone: nothing else of the lab's running on the desktop or the Orin (no run folder records this; the flights known not to be are listed by hand in tools/vla_backend_table.py C2_NOT_ALONE)",
+    "the start gate passed (a flight that never started has no mission to score)",
+    "the 420 s limit, by the limit the run's mission monitor records it was given: a flight given that limit is C2 however it ended, one given another is not; where a folder records no limit, a flight that ran to a shorter one or ended early without losing the car is not C2; and a shakedown is not C2 (the operator marks it '_shake' in its tag)"
+   ],
+   "flights_per_backend": 3,
+   "outputs": [
+    "frac_within_30m: share of the mission's ticks with the aircraft within 30 m of the car's true position (metrics.json; the simulator's pose, evaluation only)",
+    "decision_hz_mission: answers the model parsed per second over the mission; decision_hz_asked: the same while it was being asked (not held by the rail, not withheld because the detector had no box)",
+    "interventions_per_100_ticks",
+    "p0_escapes (must be 0)",
+    "ticks, end_reason",
+    "the flight's own KPI verdict, from its kpi.json: outcome (success or fail) with mission_fail_reasons; unsafe_p0_ticks, the ticks the aircraft was in a position a P0 rule calls unsafe (position-based: 0 P0 escapes does not imply 0 of these); p0_ticks_not_measurable and p0_ticks_blind, the ticks on which the escape count could not be measured"
+   ],
+   "reported": "every flight on its own line and the range over the backend's C2 flights; a flight that lost the car is a C2 flight, not a discard; a value a run did not record is shown as '-', never as 0",
+   "nulls": [
+    "the hand-written follow on the same rail (--pilot servo): the no-learning reference"
+   ],
+   "not_separated": "the detector supplies the hint, and while it has no box the model is not asked: a C2 score is the model's and the detector's together"
   }
  },
- "created_utc": "2026-10-06T22:10:27Z",
+ "created_utc": "2026-11-16T05:07:50Z",
  "model_root": "D:/models",
  "rows": [
   {
@@ -61,12 +111,15 @@
    "weights_root": [],
    "code": "guardrail/vla_stub.py",
    "role": "the null; pilot of the stored dev-rail runs (demo/out/ros2_*, not KPI-bearing: the grant takes KPI figures from hil)",
+   "c1": "not flown: the hil rail's stub node (sitl/ros2_vla_stub_node.py) can fly it once a signed bundle of policies/urban_demo_policy.yaml exists",
+   "c2": "n/a: the stub is given coordinates and has no follow; C2's null is the hand-written follow (--pilot servo)",
    "weights_status": [],
    "cells": {
     "rate_desktop": "R1: p50 0.0013 ms (7.69e+05 Hz), p95 0.0016 ms, n=50 [deploy/evidence/dev/vla_rate_stub.json]",
     "rate_orin": "to measure on the Orin (R1)",
     "closed_loop_desktop": "not C1 - see records",
-    "closed_loop_hil": "to measure on hil (C1)"
+    "closed_loop_hil_c1": "not flown: the hil rail's stub node (sitl/ros2_vla_stub_node.py) can fly it once a signed bundle of policies/urban_demo_policy.yaml exists",
+    "closed_loop_hil_c2": "n/a: the stub is given coordinates and has no follow; C2's null is the hand-written follow (--pilot servo)"
    },
    "records": [
     {
@@ -118,6 +171,10 @@
      }
     }
    ],
+   "orin_timed": false,
+   "orin_r1": false,
+   "orin_bench": false,
+   "orin_attempt_only": false,
    "r1_results": [
     {
      "schema": "vlaguard.vla_rate/2",
@@ -190,7 +247,8 @@
      ],
      "note": "lab desktop, i7-14700, performance cores, one logical CPU per core, CPU only",
      "command": "python tools/vla_backend_table.py measure --backend stub --topology dev --cpus 0,2,4,6,8,10,12,14 --note 'lab desktop, i7-14700, performance cores, one logical CPU per core, CPU only'",
-     "_file": "deploy/evidence/dev/vla_rate_stub.json"
+     "_file": "deploy/evidence/dev/vla_rate_stub.json",
+     "_is_r1": true
     }
    ]
   },
@@ -205,6 +263,8 @@
    ],
    "weights_root": [],
    "code": "guardrail/vla_bc.py (BCVLAv3)",
+   "c1": "not flown: no node on the hil rail loads this policy (the rail's pilot node is the stub's, sitl/ros2_vla_stub_node.py)",
+   "c2": "n/a: a state policy, no camera and no follow",
    "weights_status": [
     {
      "path": "models/vla_policy_v2.pt",
@@ -223,7 +283,8 @@
     "rate_desktop": "R1: p50 0.307 ms (3.26e+03 Hz), p95 0.373 ms, n=50 [deploy/evidence/dev/vla_rate_bc_v3.json]",
     "rate_orin": "to measure on the Orin (R1)",
     "closed_loop_desktop": "not C1 - see records",
-    "closed_loop_hil": "to measure on hil (C1)"
+    "closed_loop_hil_c1": "not flown: no node on the hil rail loads this policy (the rail's pilot node is the stub's, sitl/ros2_vla_stub_node.py)",
+    "closed_loop_hil_c2": "n/a: a state policy, no camera and no follow"
    },
    "records": [
     {
@@ -239,10 +300,14 @@
      "source": {
       "file": "models/vla_policy_v2.metrics.json",
       "sha256": "91442029f993ac3e7128485494ebcd4f9a65a1f9b3da3187d0b4c0bd16d33810",
-      "file_date": "2026-07-09"
+      "file_date": "2026-11-16"
      }
     }
    ],
+   "orin_timed": false,
+   "orin_r1": false,
+   "orin_bench": false,
+   "orin_attempt_only": false,
    "r1_results": [
     {
      "schema": "vlaguard.vla_rate/2",
@@ -332,7 +397,8 @@
      ],
      "note": "lab desktop, i7-14700, performance cores, one logical CPU per core, CPU only",
      "command": "python tools/vla_backend_table.py measure --backend bc_v3 --topology dev --cpus 0,2,4,6,8,10,12,14 --note 'lab desktop, i7-14700, performance cores, one logical CPU per core, CPU only'",
-     "_file": "deploy/evidence/dev/vla_rate_bc_v3.json"
+     "_file": "deploy/evidence/dev/vla_rate_bc_v3.json",
+     "_is_r1": true
     }
    ]
   },
@@ -347,6 +413,10 @@
    ],
    "hf_id": "openvla/openvla-7b",
    "code": "demo/real_vla_demo.py (OpenVLABackend)",
+   "class_7b": true,
+   "needs": "bitsandbytes",
+   "c1": "not flown: base OpenVLA is arm-trained and is given no target, so 'reached (40, 40)' is not defined for it; and nothing on the hil SITL rail publishes the camera topics the ROS 2 VLA bridge reads (sitl/ros2_vla_bridge_node.py)",
+   "c2": "n/a: it takes no follow hint and no server speaks protocol v2 for it",
    "weights_status": [
     {
      "path": "<model-root>/openvla-7b",
@@ -357,9 +427,10 @@
    ],
    "cells": {
     "rate_desktop": "not R1 - see records",
-    "rate_orin": "to measure on the Orin (R1)",
+    "rate_orin": "to measure on the Orin (R1); needs bitsandbytes, which the AGX Orin's native environment does not install (deploy/orin/agx_vla_env.sh)",
     "closed_loop_desktop": "not C1 - see records",
-    "closed_loop_hil": "to measure on hil (C1)"
+    "closed_loop_hil_c1": "not flown: base OpenVLA is arm-trained and is given no target, so 'reached (40, 40)' is not defined for it; and nothing on the hil SITL rail publishes the camera topics the ROS 2 VLA bridge reads (sitl/ros2_vla_bridge_node.py)",
+    "closed_loop_hil_c2": "n/a: it takes no follow hint and no server speaks protocol v2 for it"
    },
    "records": [
     {
@@ -411,10 +482,134 @@
      "value": "553 ticks of a 10 Hz control loop, 10 Shield interventions, NFZ 0.0 s",
      "conditions": "the 10 Hz is the control loop, which held the last action between inferences; base OpenVLA was not given a target, so there is no success criterion; no run directory of this flight is on this machine",
      "source": {
-      "file": "docs/MIDTERM-REPORT-Aug2026.md:325"
+      "file": "docs/MIDTERM-REPORT-Aug2026.md:347"
      }
     }
    ],
+   "orin_timed": false,
+   "orin_r1": false,
+   "orin_bench": false,
+   "orin_attempt_only": false,
+   "r1_results": []
+  },
+  {
+   "backend": "openvla_7b_bf16",
+   "label": "OpenVLA-7B, bf16 (unquantised)",
+   "kind": "camera + language VLA (arm-trained; unnorm_key bridge_orig)",
+   "inputs": "224x224 image + instruction",
+   "weights_repo": [],
+   "weights_root": [
+    "openvla-7b"
+   ],
+   "hf_id": "openvla/openvla-7b",
+   "code": "deploy/orin/vla_bf16_check.py (load_bf16) with demo/real_vla_demo.py's prompt and predict call",
+   "class_7b": true,
+   "c1": "not flown: base OpenVLA is arm-trained and is given no target, so 'reached (40, 40)' is not defined for it; and nothing on the hil SITL rail publishes the camera topics the ROS 2 VLA bridge reads (sitl/ros2_vla_bridge_node.py)",
+   "c2": "n/a: it takes no follow hint and no server speaks protocol v2 for it",
+   "weights_status": [
+    {
+     "path": "<model-root>/openvla-7b",
+     "where": "D:/models",
+     "present": true,
+     "bytes": 15085155847
+    }
+   ],
+   "cells": {
+    "rate_desktop": "not measured",
+    "rate_orin": "not R1 - gate check, 8 answers on one R1 frame (the first, cold, 2.06 s): the others 0.972-0.999 s, warm median 0.975 s (1.03 Hz) [deploy/evidence/hil/vla_bf16_check.json]; R1: to measure on the Orin",
+    "closed_loop_desktop": "not measured",
+    "closed_loop_hil_c1": "not flown: base OpenVLA is arm-trained and is given no target, so 'reached (40, 40)' is not defined for it; and nothing on the hil SITL rail publishes the camera topics the ROS 2 VLA bridge reads (sitl/ros2_vla_bridge_node.py)",
+    "closed_loop_hil_c2": "n/a: it takes no follow hint and no server speaks protocol v2 for it"
+   },
+   "records": [
+    {
+     "backend": "openvla_7b_bf16",
+     "metric": "bench",
+     "protocol": "not R1",
+     "tool": "vla_bf16_check",
+     "host_is_orin": true,
+     "host_basis": "torch.cuda.get_device_name(0) = 'Orin' in the file (no host block)",
+     "created_utc": null,
+     "config": "bf16/eager",
+     "verdict": "ok",
+     "inputs": "one R1 frame (present_+00.png, front half), the flight prompt",
+     "own_inputs": false,
+     "warmup": 0,
+     "timed": 8,
+     "values_s": [
+      2.0646,
+      0.9994,
+      0.9722,
+      0.9715,
+      0.9751,
+      0.9745,
+      0.9812,
+      0.9806
+     ],
+     "first_s": 2.0646,
+     "rest_min_s": 0.9715,
+     "rest_max_s": 0.9994,
+     "warm_median_s": 0.9751,
+     "load_s": 8.83,
+     "peak_vram_gb": 15.47,
+     "param_dtype": "torch.bfloat16",
+     "torch": "2.14.1+cu132",
+     "why_not_r1": [
+      "a gate check, not a rate: 8 answers on one R1 frame (present_+00.png), the first cold, not 5 + 50 on both",
+      "the host is named by torch's device name only ('Orin'): the file carries no host block, so guardrail.manifest's Orin rule was not applied",
+      "the file records no power mode (deploy/evidence/README.md states that session's: MAXN setting, clocks not locked); docs/RUNBOOK-orin-hil.md step 4 times in a budgeted mode with the clocks locked"
+     ],
+     "power_mode": null,
+     "conditions": "deploy/orin/vla_bf16_check.py (the loader R1's openvla_7b_bf16 key uses); a gate check, not a rate: 8 answers on one R1 frame (present_+00.png), the first cold, not 5 + 50 on both; the host is named by torch's device name only ('Orin'): the file carries no host block, so guardrail.manifest's Orin rule was not applied; the file records no power mode (deploy/evidence/README.md states that session's: MAXN setting, clocks not locked); docs/RUNBOOK-orin-hil.md step 4 times in a budgeted mode with the clocks locked",
+     "source": {
+      "file": "deploy/evidence/hil/vla_bf16_check.json",
+      "sha256": "5b9ab4aa66b30d325709a90a62ea4a8d1e575b005aa7c5c146133a7111c21cce",
+      "file_date": "2026-11-16"
+     }
+    }
+   ],
+   "orin_timed": true,
+   "orin_r1": false,
+   "orin_bench": true,
+   "orin_attempt_only": false,
+   "r1_results": []
+  },
+  {
+   "backend": "openvla_7b_int8wo",
+   "label": "OpenVLA-7B, int8 weight-only (torchao): an attempt",
+   "kind": "camera + language VLA (arm-trained; unnorm_key bridge_orig)",
+   "inputs": "224x224 image + instruction",
+   "weights_repo": [],
+   "weights_root": [
+    "openvla-7b"
+   ],
+   "hf_id": "openvla/openvla-7b",
+   "code": "tools/vla_backend_table.py (load_openvla_int8wo: the bf16 load, then torchao's int8 weight-only)",
+   "class_7b": true,
+   "needs": "torchao",
+   "attempt": "the precision the grant's candidate gate G3 names. One per-layer figure exists, on the Orin Nano (CHANGELOG 2026-10-28 (night): one 2048x6144 layer, int8 weight-only 7.7 ms against bf16 9.9 ms); the whole model has not been timed in int8 anywhere",
+   "c1": "not flown: base OpenVLA is arm-trained and is given no target, so 'reached (40, 40)' is not defined for it; and nothing on the hil SITL rail publishes the camera topics the ROS 2 VLA bridge reads (sitl/ros2_vla_bridge_node.py)",
+   "c2": "n/a: it takes no follow hint and no server speaks protocol v2 for it",
+   "weights_status": [
+    {
+     "path": "<model-root>/openvla-7b",
+     "where": "D:/models",
+     "present": true,
+     "bytes": 15085155847
+    }
+   ],
+   "cells": {
+    "rate_desktop": "not measured",
+    "rate_orin": "to measure on the Orin (R1); needs torchao, which the AGX Orin's native environment does not install (deploy/orin/agx_vla_env.sh)",
+    "closed_loop_desktop": "not measured",
+    "closed_loop_hil_c1": "not flown: base OpenVLA is arm-trained and is given no target, so 'reached (40, 40)' is not defined for it; and nothing on the hil SITL rail publishes the camera topics the ROS 2 VLA bridge reads (sitl/ros2_vla_bridge_node.py)",
+    "closed_loop_hil_c2": "n/a: it takes no follow hint and no server speaks protocol v2 for it"
+   },
+   "records": [],
+   "orin_timed": false,
+   "orin_r1": false,
+   "orin_bench": false,
+   "orin_attempt_only": false,
    "r1_results": []
   },
   {
@@ -429,6 +624,10 @@
    ],
    "hf_id": "XuPeng23/AerialVLA",
    "code": "demo/aerialvla_demo.py (AerialVLABackend)",
+   "class_7b": true,
+   "needs": "bitsandbytes",
+   "c1": "not flown on hil: AerialVLA has flown a GOTO on ArduPilot at dev only (pas_vla_goto_01 / _02, CHANGELOG 2026-10-29, another goal and policy); on hil the perception node could fly it (--pilot vla --mission goto), but no signed bundle of policies/urban_demo_policy.yaml is placed in its scene",
+   "c2": "not flyable on the AGX Orin as built: the 4-bit load needs bitsandbytes, which its environment does not install (deploy/orin/agx_vla_env.sh); AerialVLA's C2 is the bf16 row's",
    "weights_status": [
     {
      "path": "<model-root>/openvla-7b",
@@ -445,9 +644,10 @@
    ],
    "cells": {
     "rate_desktop": "R1 via demo/vla_server_v2.py, nf4/sdpa/merged (the measured low-VRAM option, not a default; agrees with bf16/eager/unmerged on 31% of 48 probe inputs): p50 516.8 ms (1.94 Hz), p95 542.5 ms, n=50 [docs/data/aerialvla_serving_4090.json]",
-    "rate_orin": "to measure on the Orin (R1)",
+    "rate_orin": "to measure on the Orin (R1); needs bitsandbytes, which the AGX Orin's native environment does not install (deploy/orin/agx_vla_env.sh)",
     "closed_loop_desktop": "not C1 - see records",
-    "closed_loop_hil": "to measure on hil (C1)"
+    "closed_loop_hil_c1": "not flown on hil: AerialVLA has flown a GOTO on ArduPilot at dev only (pas_vla_goto_01 / _02, CHANGELOG 2026-10-29, another goal and policy); on hil the perception node could fly it (--pilot vla --mission goto), but no signed bundle of policies/urban_demo_policy.yaml is placed in its scene",
+    "closed_loop_hil_c2": "not flyable on the AGX Orin as built: the 4-bit load needs bitsandbytes, which its environment does not install (deploy/orin/agx_vla_env.sh); AerialVLA's C2 is the bf16 row's"
    },
    "records": [
     {
@@ -500,7 +700,7 @@
      "source": {
       "file": "training/eval_base_deploy.json",
       "sha256": "10738bd6a7170310720b2df9a8b22e1804d4e9d5d840f66a7fdd0adf0360e374",
-      "file_date": "2026-07-17"
+      "file_date": "2026-11-16"
      }
     },
     {
@@ -524,10 +724,14 @@
      "source": {
       "file": "training/eval_baseline.json",
       "sha256": "3365b7e9cf7d67ce9a60c5f2c5fefba76177bad47e6a49966bdbcd1df7a4f7da",
-      "file_date": "2026-07-17"
+      "file_date": "2026-11-16"
      }
     }
    ],
+   "orin_timed": false,
+   "orin_r1": false,
+   "orin_bench": false,
+   "orin_attempt_only": false,
    "r1_results": []
   },
   {
@@ -543,6 +747,10 @@
     "aerialvla-ft/run2/epoch1"
    ],
    "code": "demo/aerialvla_demo.py (AerialVLABackend, --adapter)",
+   "class_7b": true,
+   "needs": "bitsandbytes",
+   "c1": "not flown on hil: AerialVLA has flown a GOTO on ArduPilot at dev only (pas_vla_goto_01 / _02, CHANGELOG 2026-10-29, another goal and policy); on hil the perception node could fly it (--pilot vla --mission goto), but no signed bundle of policies/urban_demo_policy.yaml is placed in its scene",
+   "c2": "not flyable on the AGX Orin as built: the 4-bit load needs bitsandbytes, which its environment does not install (deploy/orin/agx_vla_env.sh); AerialVLA's C2 is the bf16 row's",
    "weights_status": [
     {
      "path": "models/aerialvla_deploy_manifest.json",
@@ -565,9 +773,10 @@
    ],
    "cells": {
     "rate_desktop": "not R1 - see records",
-    "rate_orin": "to measure on the Orin (R1)",
+    "rate_orin": "to measure on the Orin (R1); needs bitsandbytes, which the AGX Orin's native environment does not install (deploy/orin/agx_vla_env.sh)",
     "closed_loop_desktop": "not C1 - see records",
-    "closed_loop_hil": "to measure on hil (C1)"
+    "closed_loop_hil_c1": "not flown on hil: AerialVLA has flown a GOTO on ArduPilot at dev only (pas_vla_goto_01 / _02, CHANGELOG 2026-10-29, another goal and policy); on hil the perception node could fly it (--pilot vla --mission goto), but no signed bundle of policies/urban_demo_policy.yaml is placed in its scene",
+    "closed_loop_hil_c2": "not flyable on the AGX Orin as built: the 4-bit load needs bitsandbytes, which its environment does not install (deploy/orin/agx_vla_env.sh); AerialVLA's C2 is the bf16 row's"
    },
    "records": [
     {
@@ -620,7 +829,7 @@
      "source": {
       "file": "training/eval_ft2_deploy.json",
       "sha256": "024c26d0bcbd3a38aea5533f1899333b10914f76c9900210b89135fa638dca38",
-      "file_date": "2026-07-17"
+      "file_date": "2026-11-16"
      }
     },
     {
@@ -644,7 +853,7 @@
      "source": {
       "file": "training/eval_ft2_e1.json",
       "sha256": "c04c142da9be1ff2a31cb183552212bcbd9856fcc976b8f9c427296f68ab2a68",
-      "file_date": "2026-07-17"
+      "file_date": "2026-11-16"
      }
     },
     {
@@ -668,10 +877,2819 @@
      "source": {
       "file": "training/eval_ft2_yg04.json",
       "sha256": "61abe931ac79f610bef7cbd20bf223e8445b953b511db42dba07ba9531ec6c64",
-      "file_date": "2026-07-17"
+      "file_date": "2026-11-16"
      }
     }
    ],
+   "orin_timed": false,
+   "orin_r1": false,
+   "orin_bench": false,
+   "orin_attempt_only": false,
+   "r1_results": []
+  },
+  {
+   "backend": "aerialvla_bf16",
+   "label": "AerialVLA LoRA on OpenVLA-7B, bf16 (served over protocol v2)",
+   "kind": "camera + language VLA, UAV-trained adapter",
+   "inputs": "224x448 front+down mosaic + direction phrase + object phrase",
+   "weights_repo": [],
+   "weights_root": [
+    "openvla-7b",
+    "aerialvla-lora/aero_vla"
+   ],
+   "hf_id": "XuPeng23/AerialVLA",
+   "code": "demo/vla_server_v2.py (serve and bench, --precision bf16)",
+   "class_7b": true,
+   "family": "aerialvla",
+   "measured_by": "python demo/vla_server_v2.py bench --precision bf16 --attn sdpa with --merge or --no-merge (the R1 frames, 5 + 50, through the server's protocol core)",
+   "c1": "not flown on hil: AerialVLA has flown a GOTO on ArduPilot at dev only (pas_vla_goto_01 / _02, CHANGELOG 2026-10-29, another goal and policy); on hil the perception node could fly it (--pilot vla --mission goto), but no signed bundle of policies/urban_demo_policy.yaml is placed in its scene",
+   "weights_status": [
+    {
+     "path": "<model-root>/openvla-7b",
+     "where": "D:/models",
+     "present": true,
+     "bytes": 15085155847
+    },
+    {
+     "path": "<model-root>/aerialvla-lora/aero_vla",
+     "where": "D:/models",
+     "present": true,
+     "bytes": 462655797
+    }
+   ],
+   "cells": {
+    "rate_desktop": "R1 via demo/vla_server_v2.py: bf16/sdpa/unmerged p50 485.8 ms (2.06 Hz), p95 527.4 ms, n=50; bf16/sdpa/merged p50 258.7 ms (3.87 Hz), p95 293.9 ms, n=50 [docs/data/aerialvla_serving_4090.json]",
+    "rate_orin": "not R1 - bf16/sdpa/unmerged through demo/vla_server_v2.py bench, the R1 frames, 5 + 50, power mode not in the file: p50 1520 ms (0.658 Hz), p95 1538 ms, n=50 [deploy/evidence/hil/aerialvla_serving_bench_agx.json]; not R1 - bf16/sdpa/merged through demo/vla_server_v2.py bench, the R1 frames, 5 + 50, power mode not in the file: p50 1074 ms (0.931 Hz), p95 1100 ms, n=50 [deploy/evidence/hil/aerialvla_serving_bench_agx_merged.json]; R1 does not cover a model served over protocol v2 (`measure` refuses it): its Orin timing is its server's bench (python demo/vla_server_v2.py bench --precision bf16 --attn sdpa with --merge or --no-merge (the R1 frames, 5 + 50, through the server's protocol core))",
+    "closed_loop_desktop": "not C1 - see records",
+    "closed_loop_hil_c1": "not flown on hil: AerialVLA has flown a GOTO on ArduPilot at dev only (pas_vla_goto_01 / _02, CHANGELOG 2026-10-29, another goal and policy); on hil the perception node could fly it (--pilot vla --mission goto), but no signed bundle of policies/urban_demo_policy.yaml is placed in its scene",
+    "closed_loop_hil_c2": "to fly on hil (C2)"
+   },
+   "records": [
+    {
+     "backend": "aerialvla_bf16",
+     "metric": "bench",
+     "protocol": "not R1",
+     "tool": "vla_server_v2 bench",
+     "host_is_orin": true,
+     "host_basis": "guardrail.manifest's Orin rule on the file's own host block (NVIDIA Jetson AGX Orin Developer Kit, L4T R39.2.1)",
+     "created_utc": "2026-11-03T13:08:02Z",
+     "config": "bf16/sdpa/unmerged",
+     "model_id": "aerialvla-lora/aero_vla@unknown",
+     "weights_sha256": "ca9e87012a098435f9e67040f90c8b94be153a990fabc4e10400d477ca19b9e0",
+     "inputs": "the R1 frames",
+     "own_inputs": false,
+     "warmup": 5,
+     "timed": 50,
+     "stats": {
+      "n": 50,
+      "p50_ms": 1520.3,
+      "p95_ms": 1537.8,
+      "max_ms": 1546.7,
+      "mean_ms": 1522.3,
+      "hz_at_p50": 0.658
+     },
+     "parse_fail_timed": 0,
+     "peak_vram_gb": 15.934,
+     "why_not_r1": [
+      "timed through the server's protocol core (demo/vla_server_v2.py bench), not by `measure`",
+      "the file records no power mode (deploy/evidence/README.md states that session's: MAXN setting, clocks not locked); docs/RUNBOOK-orin-hil.md step 4 times in a budgeted mode with the clocks locked"
+     ],
+     "power_mode": null,
+     "conditions": "AerialVLA served in process by demo/vla_server_v2.py bench; timed through the server's protocol core (demo/vla_server_v2.py bench), not by `measure`; the file records no power mode (deploy/evidence/README.md states that session's: MAXN setting, clocks not locked); docs/RUNBOOK-orin-hil.md step 4 times in a budgeted mode with the clocks locked",
+     "source": {
+      "file": "deploy/evidence/hil/aerialvla_serving_bench_agx.json",
+      "sha256": "9e9c616bb5c365fba8baed6907b1ba788dddd087dc29d4a6cd488c3784afe587",
+      "file_date": "2026-11-16"
+     }
+    },
+    {
+     "backend": "aerialvla_bf16",
+     "metric": "bench",
+     "protocol": "not R1",
+     "tool": "vla_server_v2 bench",
+     "host_is_orin": true,
+     "host_basis": "guardrail.manifest's Orin rule on the file's own host block (NVIDIA Jetson AGX Orin Developer Kit, L4T R39.2.1)",
+     "created_utc": "2026-11-03T15:17:31Z",
+     "config": "bf16/sdpa/merged",
+     "model_id": "aerialvla-lora/aero_vla@unknown",
+     "weights_sha256": "ca9e87012a098435f9e67040f90c8b94be153a990fabc4e10400d477ca19b9e0",
+     "inputs": "the R1 frames",
+     "own_inputs": false,
+     "warmup": 5,
+     "timed": 50,
+     "stats": {
+      "n": 50,
+      "p50_ms": 1073.9,
+      "p95_ms": 1099.6,
+      "max_ms": 1134.3,
+      "mean_ms": 1075.5,
+      "hz_at_p50": 0.931
+     },
+     "parse_fail_timed": 0,
+     "peak_vram_gb": 15.471,
+     "why_not_r1": [
+      "timed through the server's protocol core (demo/vla_server_v2.py bench), not by `measure`",
+      "the file records no power mode (deploy/evidence/README.md states that session's: MAXN setting, clocks not locked); docs/RUNBOOK-orin-hil.md step 4 times in a budgeted mode with the clocks locked"
+     ],
+     "power_mode": null,
+     "conditions": "AerialVLA served in process by demo/vla_server_v2.py bench; timed through the server's protocol core (demo/vla_server_v2.py bench), not by `measure`; the file records no power mode (deploy/evidence/README.md states that session's: MAXN setting, clocks not locked); docs/RUNBOOK-orin-hil.md step 4 times in a budgeted mode with the clocks locked",
+     "source": {
+      "file": "deploy/evidence/hil/aerialvla_serving_bench_agx_merged.json",
+      "sha256": "97265fad42709b293185edf4797d55e3db0aafb7b81b1a0717f431a495105cc1",
+      "file_date": "2026-11-16"
+     }
+    },
+    {
+     "backend": "aerialvla_bf16",
+     "metric": "follow_matrix",
+     "protocol": "not C1, not C2",
+     "matrix": "27-28 October 2026",
+     "flights": [
+      {
+       "tag": "cmp2_e2e_aerovla_20261028",
+       "platform": "PC",
+       "kind": "pure (the VLA flies every step)",
+       "note": null,
+       "within_30m": 0.153,
+       "latency_p50_s": 0.62,
+       "p0_escape_rate": 0.0,
+       "bundle": null,
+       "code_revision": null
+      },
+      {
+       "tag": "cmp2_hier_aerovla_20261028",
+       "platform": "PC",
+       "kind": "hierarchical (the VLA sets the intent, the controller flies)",
+       "note": null,
+       "within_30m": 0.309,
+       "latency_p50_s": 0.63,
+       "p0_escape_rate": 0.0,
+       "bundle": null,
+       "code_revision": null
+      },
+      {
+       "tag": "cmp_e2e_aerovla_20261027",
+       "platform": "PC",
+       "kind": "pure (the VLA flies every step)",
+       "note": null,
+       "within_30m": 0.539,
+       "latency_p50_s": 0.46,
+       "p0_escape_rate": 0.0,
+       "bundle": null,
+       "code_revision": null
+      },
+      {
+       "tag": "cmp_hier_aerovla_20261027",
+       "platform": "PC",
+       "kind": "hierarchical (the VLA sets the intent, the controller flies)",
+       "note": null,
+       "within_30m": 0.987,
+       "latency_p50_s": 0.49,
+       "p0_escape_rate": 0.0,
+       "bundle": null,
+       "code_revision": null
+      },
+      {
+       "tag": "orin_e2e_aerovla_20261028",
+       "platform": "Jetson Orin Nano (client; VLA on the PC)",
+       "kind": "pure (the VLA flies every step)",
+       "note": null,
+       "within_30m": 0.102,
+       "latency_p50_s": 0.6,
+       "p0_escape_rate": 0.0,
+       "bundle": null,
+       "code_revision": null
+      },
+      {
+       "tag": "orin_hier_aerovla_20261028",
+       "platform": "Jetson Orin Nano (client; VLA on the PC)",
+       "kind": "hierarchical (the VLA sets the intent, the controller flies)",
+       "note": null,
+       "within_30m": 0.989,
+       "latency_p50_s": 0.63,
+       "p0_escape_rate": 0.0,
+       "bundle": null,
+       "code_revision": null
+      }
+     ],
+     "conditions": "Project AirSim CityLife with simple_flight: not ArduPilot, not hil, never KPI-grade. One flight per configuration unless more are listed, and one flight can differ widely from the next; flights at another commit or under another policy bundle are not repeats of one configuration (where a run folder names them, the table shows both). The file names the models, not the server configurations; CHANGELOG 2026-11-04 states them (the AerialVLA family bf16/sdpa/merged, DroneCATS and RaceVLA bf16). Pure flights are scored from the first acquisition, the others from the start gate",
+     "source": {
+      "file": "docs/data/progress_1028.json",
+      "sha256": "5586c5733c2615f9cb627b08e233299d4b4fb19b7283cc61e4d2718e78685daf",
+      "file_date": "2026-11-16"
+     }
+    },
+    {
+     "backend": "aerialvla_bf16",
+     "metric": "follow_matrix",
+     "protocol": "not C1, not C2",
+     "matrix": "3-4 November 2026",
+     "flights": [
+      {
+       "tag": "agx_e2e_aerovla_01",
+       "platform": "AGX Orin (client and VLA server)",
+       "kind": "pure (the VLA flies every step)",
+       "within_30m": 0.184,
+       "latency_p50_s": 1.8237,
+       "p0_escape_rate": 0.000238,
+       "ticks": 4200,
+       "end_reason": "timeout",
+       "model_id": "aerialvla-lora/aero_vla@unknown",
+       "config": "bf16/sdpa/unmerged",
+       "topology": "projectairsim-remote-sim",
+       "code_revision": "07cee03f0049",
+       "bundle": "follow-car-citylife-nfz-v0.1.1.tar.gz"
+      },
+      {
+       "tag": "agx_e2e_aerovla_20261103",
+       "platform": "AGX Orin (client and VLA server)",
+       "kind": "pure (the VLA flies every step)",
+       "within_30m": 0.048,
+       "latency_p50_s": 1.412,
+       "p0_escape_rate": 0.0,
+       "ticks": 4201,
+       "end_reason": "timeout",
+       "model_id": "aerialvla-lora/aero_vla@unknown",
+       "config": "bf16/sdpa/merged",
+       "topology": "projectairsim-remote-sim",
+       "code_revision": "6da813de8ad7",
+       "bundle": "follow-car-citylife-nfz-v0.1.1.tar.gz"
+      },
+      {
+       "tag": "agx_hier_aerovla_01",
+       "platform": "AGX Orin (client and VLA server)",
+       "kind": "hierarchical (the VLA sets the intent, the controller flies)",
+       "within_30m": 0.988,
+       "latency_p50_s": 1.8804,
+       "p0_escape_rate": 0.0,
+       "ticks": 4197,
+       "end_reason": null,
+       "model_id": "aerialvla-lora/aero_vla@unknown",
+       "config": "bf16/sdpa/unmerged",
+       "topology": "projectairsim-remote-sim",
+       "code_revision": "07cee03f0049",
+       "bundle": "follow-car-citylife-nfz-v0.1.1.tar.gz"
+      },
+      {
+       "tag": "agx_hier_aerovla_20261103",
+       "platform": "AGX Orin (client and VLA server)",
+       "kind": "hierarchical (the VLA sets the intent, the controller flies)",
+       "within_30m": 1.0,
+       "latency_p50_s": 1.4404,
+       "p0_escape_rate": 0.0,
+       "ticks": 4197,
+       "end_reason": null,
+       "model_id": "aerialvla-lora/aero_vla@unknown",
+       "config": "bf16/sdpa/merged",
+       "topology": "projectairsim-remote-sim",
+       "code_revision": "6da813de8ad7",
+       "bundle": "follow-car-citylife-nfz-v0.1.1.tar.gz"
+      },
+      {
+       "tag": "nfz3b_agx_hier_aerovla_20261103",
+       "platform": "AGX Orin (client and VLA server)",
+       "kind": "hierarchical (the VLA sets the intent, the controller flies)",
+       "within_30m": 0.152,
+       "latency_p50_s": 1.3935,
+       "p0_escape_rate": 0.0,
+       "ticks": 4160,
+       "end_reason": null,
+       "model_id": "aerialvla-lora/aero_vla@unknown",
+       "config": "bf16/sdpa/merged",
+       "topology": "projectairsim-remote-sim",
+       "code_revision": "6da813de8ad7",
+       "bundle": "follow-car-citylife-nfz3b-v0.1.1.tar.gz"
+      },
+      {
+       "tag": "nfz3b_agx_hier_aerovla_20261104",
+       "platform": "AGX Orin (client and VLA server)",
+       "kind": "hierarchical (the VLA sets the intent, the controller flies)",
+       "within_30m": 0.494,
+       "latency_p50_s": 1.439,
+       "p0_escape_rate": 0.0,
+       "ticks": 4186,
+       "end_reason": null,
+       "model_id": "aerialvla-lora/aero_vla@unknown",
+       "config": "bf16/sdpa/merged",
+       "topology": "projectairsim-remote-sim",
+       "code_revision": "989f96724b74",
+       "bundle": "follow-car-citylife-nfz3b-v0.1.1.tar.gz"
+      }
+     ],
+     "conditions": "Project AirSim CityLife with simple_flight: not ArduPilot, not hil, never KPI-grade. One flight per configuration unless more are listed, and one flight can differ widely from the next; flights at another commit or under another policy bundle are not repeats of one configuration (where a run folder names them, the table shows both). The simulator ran on the PC; identities, scores, commits and policy bundles are each run's own metrics.json and kpi.json. The agx_*_01 flights are the first AGX follows of 3 November, at an earlier commit than the matrix; the nfz3b_ flights flew another bundle (a no-fly zone on the route), so they are another scenario, not a repeat. Pure flights are scored from the first acquisition, the others from the start gate",
+     "source": {
+      "file": "demo/out/*agx_*/metrics.json (tags *_2026110[34] and *_01)",
+      "runs": 24
+     }
+    }
+   ],
+   "orin_timed": true,
+   "orin_r1": false,
+   "orin_bench": true,
+   "orin_attempt_only": false,
+   "r1_results": []
+  },
+  {
+   "backend": "aiotvla_v10b",
+   "label": "AIoT-VLA v10b (the lab's own: frozen OWL-ViT + a trained head)",
+   "kind": "camera + object words follow model (not a 7 B model)",
+   "inputs": "FrontCamera frame (768x432) + object words + pose",
+   "weights_repo": [],
+   "weights_root": [
+    "aiotvla/v10b"
+   ],
+   "code": "demo/vla_server_foreign.py (family aiotvla; the model: training/aiotvla)",
+   "family": "aiotvla",
+   "measured_by": "python tools/bench_foreign_vla.py --server 127.0.0.1:<port> against demo/vla_server_foreign.py serve --model aiotvla",
+   "c1": "cannot fly C1: a follow-only model. Its input is a camera frame and object words, the request's direction phrase is ignored (recorded under native.ignored), and it is given no goal coordinate. Its closed-loop test is C2",
+   "weights_status": [
+    {
+     "path": "<model-root>/aiotvla/v10b",
+     "where": "D:/models",
+     "present": true,
+     "bytes": 7383808
+    }
+   ],
+   "cells": {
+    "rate_desktop": "not measured",
+    "rate_orin": "not R1 - own inputs (aiot_frames), round trip through its server: p50 39.6 ms (25.3 Hz), p95 41.7 ms, n=300; the model alone p50 32.6 ms, p95 33.9 ms [deploy/evidence/hil/aiotvla_v10b_bench_agx.json]; R1 does not cover a model served over protocol v2 (`measure` refuses it): its Orin timing is its server's bench (python tools/bench_foreign_vla.py --server 127.0.0.1:<port> against demo/vla_server_foreign.py serve --model aiotvla)",
+    "closed_loop_desktop": "not measured",
+    "closed_loop_hil_c1": "cannot fly C1: a follow-only model. Its input is a camera frame and object words, the request's direction phrase is ignored (recorded under native.ignored), and it is given no goal coordinate. Its closed-loop test is C2",
+    "closed_loop_hil_c2": "C2, 2 flights (2 max_s reached): within 30 m 0.269-0.352 (median 0.311); decisions/s over the mission 10.6-10.9 (median 10.8); interventions per 100 ticks 6.77-7.91 (median 7.34); P0 escapes 0; KPI outcome 2 fail (unsafe_position_entered 2); ticks in a P0-unsafe position 3, 21; P0 ticks not measurable / blind 0/-, 0/-; the protocol asks for 3: 1 more to fly; 36 more hil follows outside C2 (see the C2 section)"
+   },
+   "records": [
+    {
+     "backend": "aiotvla_v10b",
+     "metric": "bench",
+     "protocol": "not R1",
+     "tool": "bench_foreign_vla",
+     "host_is_orin": true,
+     "host_basis": "guardrail.manifest's Orin rule on the file's own host block (NVIDIA Jetson AGX Orin Developer Kit, L4T R39.2.1)",
+     "created_utc": "2026-11-06T13:08:33Z",
+     "config": "fp16/sdpa",
+     "model_id": "aiotvla/v10b@35259bd1",
+     "weights_sha256": "35259bd1b17bc3b3ef0ad385d5d4ed9e316596e72e5a3805865aeb383b0424a2",
+     "inputs": "own: aiot_frames",
+     "own_inputs": true,
+     "warmup": 3,
+     "timed": 300,
+     "stats": {
+      "n": 300,
+      "p50_ms": 39.6,
+      "p95_ms": 41.7,
+      "max_ms": 44.1,
+      "mean_ms": 37.8,
+      "hz_at_p50": 25.259
+     },
+     "server_latency": {
+      "n": 300,
+      "p50_ms": 32.6,
+      "p95_ms": 33.9,
+      "max_ms": 35.8,
+      "mean_ms": 32.6,
+      "hz_at_p50": 30.683
+     },
+     "parse_fail_timed": 0,
+     "refused": 0,
+     "why_not_r1": [
+      "own inputs: 300 frames of 'aiot_frames' sent as the model's front camera, object 'a red car' (not the R1 frames)",
+      "3 warm-up + 300 timed, not R1's 5 + 50",
+      "a round trip over TCP on 127.0.0.1 through demo/vla_server_foreign.py (tools/bench_foreign_vla.py), not `measure`",
+      "the file records no power mode (deploy/evidence/README.md states none for that session ('Power mode not recorded')); docs/RUNBOOK-orin-hil.md step 4 times in a budgeted mode with the clocks locked"
+     ],
+     "power_mode": null,
+     "conditions": "served by demo/vla_server_foreign.py; the headline is the round trip, the server's own model time is beside it; own inputs: 300 frames of 'aiot_frames' sent as the model's front camera, object 'a red car' (not the R1 frames); 3 warm-up + 300 timed, not R1's 5 + 50; a round trip over TCP on 127.0.0.1 through demo/vla_server_foreign.py (tools/bench_foreign_vla.py), not `measure`; the file records no power mode (deploy/evidence/README.md states none for that session ('Power mode not recorded')); docs/RUNBOOK-orin-hil.md step 4 times in a budgeted mode with the clocks locked",
+     "source": {
+      "file": "deploy/evidence/hil/aiotvla_v10b_bench_agx.json",
+      "sha256": "117157b7232894c90a2b905190f403bfa6b012a1183573bd55416d56dbbc15b8",
+      "file_date": "2026-11-16"
+     }
+    },
+    {
+     "backend": "aiotvla_v10b",
+     "family": "aiotvla",
+     "metric": "hil_follow",
+     "tag": "pas_hil_adapter_01",
+     "model_id": "aiotvla/v10b@35259bd1",
+     "topology": "hil",
+     "kpi_grade": true,
+     "code_revision": "5b3db869f40b",
+     "date": "2026-11-15",
+     "ticks": 4187,
+     "end_reason": "max_s reached",
+     "mission_s": 420.07,
+     "frac_within_30m": 0.2923,
+     "decision_hz_mission": 7.4524220555922485,
+     "decision_hz_asked": 9.26616659715818,
+     "asking_s": 340.486,
+     "interventions": 273,
+     "interventions_per_100_ticks": 6.520181514210652,
+     "p0_escapes": 0,
+     "p0_violation_escape_rate": 0.0,
+     "kpi_outcome": "fail",
+     "mission_fail_reasons": [
+      "unsafe_position_entered"
+     ],
+     "unsafe_p0_ticks": 23,
+     "p0_ticks_not_measurable": 0,
+     "p0_ticks_blind": null,
+     "detector_hz": 2.73,
+     "stress": null,
+     "hot_apply": true,
+     "identity": true,
+     "target_estimator": true,
+     "vla_feed": "tick",
+     "vla_feed_max_hz": null,
+     "negative_query": [
+      "a traffic light"
+     ],
+     "front_capture_interval_s": 0.066,
+     "bundle": "follow-car-citylife-v0.1.3.tar.gz",
+     "max_s_given": 420.0,
+     "start_gate_reached": true,
+     "summary_only": false,
+     "source": {
+      "file": "demo/out/pas_hil_adapter_01/metrics.json",
+      "sha256": "64550f8b3628ee20359cb3151f337487ea330539d61df1ea95b2c47a1ac5105c",
+      "file_date": "2026-11-15"
+     },
+     "not_c2": [
+      "a policy was hot-applied in flight",
+      "feed tick, not the family's C2 feed (stream, no cap)",
+      "FrontCamera capture interval 0.066 s, not the 0.05 s the stream feed needs"
+     ],
+     "protocol": "not C2"
+    },
+    {
+     "backend": "aiotvla_v10b",
+     "family": "aiotvla",
+     "metric": "hil_follow",
+     "tag": "pas_hil_aiot_day_02",
+     "model_id": "aiotvla/v10b@35259bd1",
+     "topology": "hil",
+     "kpi_grade": false,
+     "code_revision": "f77efaee4c56",
+     "date": "2026-11-14",
+     "ticks": 4189,
+     "end_reason": "max_s reached",
+     "mission_s": 420.08,
+     "frac_within_30m": 0.1112,
+     "decision_hz_mission": 7.940969474172927,
+     "decision_hz_asked": 9.358363687307369,
+     "asking_s": 356.9,
+     "interventions": 118,
+     "interventions_per_100_ticks": 2.816901408450704,
+     "p0_escapes": 0,
+     "p0_violation_escape_rate": 0.0,
+     "kpi_outcome": "fail",
+     "mission_fail_reasons": [
+      "dwell:standoff_s"
+     ],
+     "unsafe_p0_ticks": 0,
+     "p0_ticks_not_measurable": 0,
+     "p0_ticks_blind": null,
+     "detector_hz": 3.042,
+     "stress": "day",
+     "hot_apply": false,
+     "identity": false,
+     "target_estimator": false,
+     "vla_feed": "tick",
+     "vla_feed_max_hz": null,
+     "negative_query": null,
+     "front_capture_interval_s": 0.066,
+     "bundle": "follow-car-citylife-v0.1.3.tar.gz",
+     "max_s_given": 420.0,
+     "start_gate_reached": true,
+     "summary_only": false,
+     "source": {
+      "file": "demo/out/pas_hil_aiot_day_02/metrics.json",
+      "sha256": "2bad4be1353c633e4c9319798dfcf3cbfca3f3aa9f94293bf31d7af195f395e7",
+      "file_date": "2026-11-14"
+     },
+     "not_c2": [
+      "not KPI-grade by its kpi.json",
+      "perception stressor 'day'",
+      "negative query None, not C2's ['a traffic light']",
+      "flown without --identity and --target-estimator",
+      "feed tick, not the family's C2 feed (stream, no cap)",
+      "FrontCamera capture interval 0.066 s, not the 0.05 s the stream feed needs"
+     ],
+     "protocol": "not C2"
+    },
+    {
+     "backend": "aiotvla_v10b",
+     "family": "aiotvla",
+     "metric": "hil_follow",
+     "tag": "pas_hil_aiot_day_03",
+     "model_id": "aiotvla/v10b@35259bd1",
+     "topology": "hil",
+     "kpi_grade": false,
+     "code_revision": "f77efaee4c56",
+     "date": "2026-11-14",
+     "ticks": 4116,
+     "end_reason": "target_lost",
+     "mission_s": 412.44,
+     "frac_within_30m": 0.1013,
+     "decision_hz_mission": 7.565415822137767,
+     "decision_hz_asked": 9.406720204273975,
+     "asking_s": 332.103,
+     "interventions": 113,
+     "interventions_per_100_ticks": 2.7453838678328473,
+     "p0_escapes": 0,
+     "p0_violation_escape_rate": 0.0,
+     "kpi_outcome": "fail",
+     "mission_fail_reasons": [
+      "unsafe_position_entered"
+     ],
+     "unsafe_p0_ticks": 36,
+     "p0_ticks_not_measurable": 0,
+     "p0_ticks_blind": null,
+     "detector_hz": 2.468,
+     "stress": "day",
+     "hot_apply": false,
+     "identity": false,
+     "target_estimator": false,
+     "vla_feed": "tick",
+     "vla_feed_max_hz": null,
+     "negative_query": null,
+     "front_capture_interval_s": 0.066,
+     "bundle": "follow-car-citylife-v0.1.3.tar.gz",
+     "max_s_given": 420.0,
+     "start_gate_reached": true,
+     "summary_only": false,
+     "source": {
+      "file": "demo/out/pas_hil_aiot_day_03/metrics.json",
+      "sha256": "40a156583d6a95c1267abf9281fae69f6053c1be02d33d69d960fdf4fe339f2e",
+      "file_date": "2026-11-14"
+     },
+     "not_c2": [
+      "not KPI-grade by its kpi.json",
+      "perception stressor 'day'",
+      "negative query None, not C2's ['a traffic light']",
+      "flown without --identity and --target-estimator",
+      "feed tick, not the family's C2 feed (stream, no cap)",
+      "FrontCamera capture interval 0.066 s, not the 0.05 s the stream feed needs"
+     ],
+     "protocol": "not C2"
+    },
+    {
+     "backend": "aiotvla_v10b",
+     "family": "aiotvla",
+     "metric": "hil_follow",
+     "tag": "pas_hil_aiot_day_04",
+     "model_id": "aiotvla/v10b@35259bd1",
+     "topology": "hil",
+     "kpi_grade": false,
+     "code_revision": "f77efaee4c56",
+     "date": "2026-11-14",
+     "ticks": 3638,
+     "end_reason": "autopilot took over (RTL)",
+     "mission_s": 364.67,
+     "frac_within_30m": 0.0432,
+     "decision_hz_mission": 7.712883898345167,
+     "decision_hz_asked": 9.392928619079386,
+     "asking_s": 299.8,
+     "interventions": 105,
+     "interventions_per_100_ticks": 2.886201209455745,
+     "p0_escapes": 0,
+     "p0_violation_escape_rate": 0.0,
+     "kpi_outcome": "fail",
+     "mission_fail_reasons": [
+      "unsafe_position_entered",
+      "follow_proxy"
+     ],
+     "unsafe_p0_ticks": 26,
+     "p0_ticks_not_measurable": 0,
+     "p0_ticks_blind": null,
+     "detector_hz": 3.173,
+     "stress": "day",
+     "hot_apply": false,
+     "identity": false,
+     "target_estimator": false,
+     "vla_feed": "tick",
+     "vla_feed_max_hz": null,
+     "negative_query": null,
+     "front_capture_interval_s": 0.066,
+     "bundle": "follow-car-citylife-v0.1.3.tar.gz",
+     "max_s_given": 420.0,
+     "start_gate_reached": true,
+     "summary_only": false,
+     "source": {
+      "file": "demo/out/pas_hil_aiot_day_04/metrics.json",
+      "sha256": "a448472b917d78b1a61e589564f7a89ec83182bee0a5a2991affdaf6e4430ad6",
+      "file_date": "2026-11-14"
+     },
+     "not_c2": [
+      "not KPI-grade by its kpi.json",
+      "perception stressor 'day'",
+      "negative query None, not C2's ['a traffic light']",
+      "flown without --identity and --target-estimator",
+      "feed tick, not the family's C2 feed (stream, no cap)",
+      "FrontCamera capture interval 0.066 s, not the 0.05 s the stream feed needs"
+     ],
+     "protocol": "not C2"
+    },
+    {
+     "backend": "aiotvla_v10b",
+     "family": "aiotvla",
+     "metric": "hil_follow",
+     "tag": "pas_hil_aiot_dusk_01",
+     "model_id": "aiotvla/v10b@35259bd1",
+     "topology": "hil",
+     "kpi_grade": false,
+     "code_revision": "f77efaee4c56",
+     "date": "2026-11-14",
+     "ticks": 3094,
+     "end_reason": "target_lost",
+     "mission_s": 309.96,
+     "frac_within_30m": 0.1105,
+     "decision_hz_mission": 6.899190613610521,
+     "decision_hz_asked": 9.494190354080061,
+     "asking_s": 225.401,
+     "interventions": 22,
+     "interventions_per_100_ticks": 0.7110536522301228,
+     "p0_escapes": 0,
+     "p0_violation_escape_rate": 0.0,
+     "kpi_outcome": "fail",
+     "mission_fail_reasons": [
+      "unsafe_position_entered"
+     ],
+     "unsafe_p0_ticks": 7,
+     "p0_ticks_not_measurable": 0,
+     "p0_ticks_blind": null,
+     "detector_hz": 2.51,
+     "stress": "dusk",
+     "hot_apply": false,
+     "identity": false,
+     "target_estimator": false,
+     "vla_feed": "tick",
+     "vla_feed_max_hz": null,
+     "negative_query": null,
+     "front_capture_interval_s": 0.066,
+     "bundle": "follow-car-citylife-v0.1.3.tar.gz",
+     "max_s_given": 420.0,
+     "start_gate_reached": true,
+     "summary_only": false,
+     "source": {
+      "file": "demo/out/pas_hil_aiot_dusk_01/metrics.json",
+      "sha256": "b9ee11e03fbb8c6d441d2aaf20e1d574b5772c078aebcc087c946b3cb1091622",
+      "file_date": "2026-11-14"
+     },
+     "not_c2": [
+      "not KPI-grade by its kpi.json",
+      "perception stressor 'dusk'",
+      "negative query None, not C2's ['a traffic light']",
+      "flown without --identity and --target-estimator",
+      "feed tick, not the family's C2 feed (stream, no cap)",
+      "FrontCamera capture interval 0.066 s, not the 0.05 s the stream feed needs"
+     ],
+     "protocol": "not C2"
+    },
+    {
+     "backend": "aiotvla_v10b",
+     "family": "aiotvla",
+     "metric": "hil_follow",
+     "tag": "pas_hil_aiot_est_01",
+     "model_id": "aiotvla/v10b@35259bd1",
+     "topology": "hil",
+     "kpi_grade": true,
+     "code_revision": "3918965a4108",
+     "date": "2026-11-14",
+     "ticks": 4186,
+     "end_reason": "max_s reached",
+     "mission_s": 420.13,
+     "frac_within_30m": 0.3512,
+     "decision_hz_mission": 7.830178927464151,
+     "decision_hz_asked": 9.175733131948537,
+     "asking_s": 361.497,
+     "interventions": 266,
+     "interventions_per_100_ticks": 6.354515050167224,
+     "p0_escapes": 0,
+     "p0_violation_escape_rate": 0.0,
+     "kpi_outcome": "success",
+     "mission_fail_reasons": [],
+     "unsafe_p0_ticks": 0,
+     "p0_ticks_not_measurable": 0,
+     "p0_ticks_blind": null,
+     "detector_hz": 2.633,
+     "stress": null,
+     "hot_apply": false,
+     "identity": true,
+     "target_estimator": true,
+     "vla_feed": "tick",
+     "vla_feed_max_hz": null,
+     "negative_query": [
+      "a traffic light"
+     ],
+     "front_capture_interval_s": 0.066,
+     "bundle": "follow-car-citylife-v0.1.3.tar.gz",
+     "max_s_given": 420.0,
+     "start_gate_reached": true,
+     "summary_only": false,
+     "source": {
+      "file": "demo/out/pas_hil_aiot_est_01/metrics.json",
+      "sha256": "5c353bf45cd699961af8772daaf67babf0ff38ed96f5a8ea94509e5dbf26a6b4",
+      "file_date": "2026-11-14"
+     },
+     "not_c2": [
+      "feed tick, not the family's C2 feed (stream, no cap)",
+      "FrontCamera capture interval 0.066 s, not the 0.05 s the stream feed needs"
+     ],
+     "protocol": "not C2"
+    },
+    {
+     "backend": "aiotvla_v10b",
+     "family": "aiotvla",
+     "metric": "hil_follow",
+     "tag": "pas_hil_aiot_fog_01",
+     "model_id": "aiotvla/v10b@35259bd1",
+     "topology": "projectairsim-ardupilot-mavros",
+     "kpi_grade": false,
+     "code_revision": "f77efaee4c56",
+     "date": "2026-11-14",
+     "ticks": 0,
+     "end_reason": "no mission: start gate timed out after 330.0 s: no plausible 'a red car' within 30 m on 5 inferences in a row",
+     "mission_s": 0.01,
+     "frac_within_30m": null,
+     "decision_hz_mission": null,
+     "decision_hz_asked": null,
+     "asking_s": 0.0,
+     "interventions": null,
+     "interventions_per_100_ticks": null,
+     "p0_escapes": 0,
+     "p0_violation_escape_rate": null,
+     "kpi_outcome": "fail",
+     "mission_fail_reasons": [
+      "no_rows",
+      "follow_not_scored"
+     ],
+     "unsafe_p0_ticks": 0,
+     "p0_ticks_not_measurable": 0,
+     "p0_ticks_blind": null,
+     "detector_hz": null,
+     "stress": "fog",
+     "hot_apply": false,
+     "identity": false,
+     "target_estimator": false,
+     "vla_feed": "tick",
+     "vla_feed_max_hz": null,
+     "negative_query": null,
+     "front_capture_interval_s": 0.066,
+     "bundle": "follow-car-citylife-v0.1.3.tar.gz",
+     "max_s_given": null,
+     "start_gate_reached": false,
+     "summary_only": false,
+     "source": {
+      "file": "demo/out/pas_hil_aiot_fog_01/metrics.json",
+      "sha256": "d297090c0d787fc230daff7dbf5919d0f519b777d5c2f80ea33650de296cae33",
+      "file_date": "2026-11-14"
+     },
+     "not_c2": [
+      "topology 'projectairsim-ardupilot-mavros', not hil",
+      "not KPI-grade by its kpi.json",
+      "perception stressor 'fog'",
+      "the start gate never passed: no mission",
+      "negative query None, not C2's ['a traffic light']",
+      "flown without --identity and --target-estimator",
+      "feed tick, not the family's C2 feed (stream, no cap)",
+      "FrontCamera capture interval 0.066 s, not the 0.05 s the stream feed needs"
+     ],
+     "protocol": "not C2"
+    },
+    {
+     "backend": "aiotvla_v10b",
+     "family": "aiotvla",
+     "metric": "hil_follow",
+     "tag": "pas_hil_aiot_kpi_01",
+     "model_id": "aiotvla/v10b@35259bd1",
+     "topology": "hil",
+     "kpi_grade": true,
+     "code_revision": "f77efaee4c56",
+     "date": "2026-11-14",
+     "ticks": 4192,
+     "end_reason": "max_s reached",
+     "mission_s": 420.09,
+     "frac_within_30m": 0.1119,
+     "decision_hz_mission": 7.747015789214826,
+     "decision_hz_asked": 9.504317759080122,
+     "asking_s": 343.002,
+     "interventions": 119,
+     "interventions_per_100_ticks": 2.838740458015267,
+     "p0_escapes": 0,
+     "p0_violation_escape_rate": 0.0,
+     "kpi_outcome": "fail",
+     "mission_fail_reasons": [
+      "unsafe_position_entered"
+     ],
+     "unsafe_p0_ticks": 59,
+     "p0_ticks_not_measurable": 0,
+     "p0_ticks_blind": null,
+     "detector_hz": 2.411,
+     "stress": null,
+     "hot_apply": false,
+     "identity": false,
+     "target_estimator": false,
+     "vla_feed": "tick",
+     "vla_feed_max_hz": null,
+     "negative_query": null,
+     "front_capture_interval_s": 0.066,
+     "bundle": "follow-car-citylife-v0.1.3.tar.gz",
+     "max_s_given": 420.0,
+     "start_gate_reached": true,
+     "summary_only": false,
+     "source": {
+      "file": "demo/out/pas_hil_aiot_kpi_01/metrics.json",
+      "sha256": "a9bfb353db513bff382a0620a3e4faa6cdee28fa5ab8fec30b6cdfef5173ed23",
+      "file_date": "2026-11-14"
+     },
+     "not_c2": [
+      "negative query None, not C2's ['a traffic light']",
+      "flown without --identity and --target-estimator",
+      "feed tick, not the family's C2 feed (stream, no cap)",
+      "FrontCamera capture interval 0.066 s, not the 0.05 s the stream feed needs"
+     ],
+     "protocol": "not C2"
+    },
+    {
+     "backend": "aiotvla_v10b",
+     "family": "aiotvla",
+     "metric": "hil_follow",
+     "tag": "pas_hil_aiot_kpi_02",
+     "model_id": "aiotvla/v10b@35259bd1",
+     "topology": "hil",
+     "kpi_grade": true,
+     "code_revision": "f77efaee4c56",
+     "date": "2026-11-14",
+     "ticks": 1070,
+     "end_reason": "target_lost",
+     "mission_s": 107.11,
+     "frac_within_30m": 0.2234,
+     "decision_hz_mission": 2.466092760197986,
+     "decision_hz_asked": 8.92557546473391,
+     "asking_s": 29.802,
+     "interventions": 42,
+     "interventions_per_100_ticks": 3.925233644859813,
+     "p0_escapes": 0,
+     "p0_violation_escape_rate": 0.0,
+     "kpi_outcome": "fail",
+     "mission_fail_reasons": [
+      "dwell:standoff_s",
+      "unsafe_position_entered"
+     ],
+     "unsafe_p0_ticks": 9,
+     "p0_ticks_not_measurable": 0,
+     "p0_ticks_blind": null,
+     "detector_hz": 2.241,
+     "stress": null,
+     "hot_apply": false,
+     "identity": true,
+     "target_estimator": false,
+     "vla_feed": "tick",
+     "vla_feed_max_hz": null,
+     "negative_query": [
+      "a traffic light"
+     ],
+     "front_capture_interval_s": 0.066,
+     "bundle": "follow-car-citylife-v0.1.3.tar.gz",
+     "max_s_given": 420.0,
+     "start_gate_reached": true,
+     "summary_only": false,
+     "source": {
+      "file": "demo/out/pas_hil_aiot_kpi_02/metrics.json",
+      "sha256": "f17fb71fc3e61d99609f1450d2103923308de2985f5662f63286f886a3bce180",
+      "file_date": "2026-11-14"
+     },
+     "not_c2": [
+      "flown without --identity and --target-estimator",
+      "feed tick, not the family's C2 feed (stream, no cap)",
+      "FrontCamera capture interval 0.066 s, not the 0.05 s the stream feed needs"
+     ],
+     "protocol": "not C2"
+    },
+    {
+     "backend": "aiotvla_v10b",
+     "family": "aiotvla",
+     "metric": "hil_follow",
+     "tag": "pas_hil_aiot_night_01",
+     "model_id": "aiotvla/v10b@35259bd1",
+     "topology": "projectairsim-ardupilot-mavros",
+     "kpi_grade": false,
+     "code_revision": "f77efaee4c56",
+     "date": "2026-11-14",
+     "ticks": 0,
+     "end_reason": "no mission: start gate timed out after 330.0 s: no plausible 'a red car' within 30 m on 5 inferences in a row",
+     "mission_s": 0.02,
+     "frac_within_30m": null,
+     "decision_hz_mission": null,
+     "decision_hz_asked": null,
+     "asking_s": 0.0,
+     "interventions": null,
+     "interventions_per_100_ticks": null,
+     "p0_escapes": 0,
+     "p0_violation_escape_rate": null,
+     "kpi_outcome": "fail",
+     "mission_fail_reasons": [
+      "no_rows",
+      "follow_not_scored"
+     ],
+     "unsafe_p0_ticks": 0,
+     "p0_ticks_not_measurable": 0,
+     "p0_ticks_blind": null,
+     "detector_hz": null,
+     "stress": "night",
+     "hot_apply": false,
+     "identity": false,
+     "target_estimator": false,
+     "vla_feed": "tick",
+     "vla_feed_max_hz": null,
+     "negative_query": null,
+     "front_capture_interval_s": 0.066,
+     "bundle": "follow-car-citylife-v0.1.3.tar.gz",
+     "max_s_given": null,
+     "start_gate_reached": false,
+     "summary_only": false,
+     "source": {
+      "file": "demo/out/pas_hil_aiot_night_01/metrics.json",
+      "sha256": "5bedda004267972826fa083ae232a6ee89228f5d0fbd1534637927e223609e76",
+      "file_date": "2026-11-14"
+     },
+     "not_c2": [
+      "topology 'projectairsim-ardupilot-mavros', not hil",
+      "not KPI-grade by its kpi.json",
+      "perception stressor 'night'",
+      "the start gate never passed: no mission",
+      "negative query None, not C2's ['a traffic light']",
+      "flown without --identity and --target-estimator",
+      "feed tick, not the family's C2 feed (stream, no cap)",
+      "FrontCamera capture interval 0.066 s, not the 0.05 s the stream feed needs"
+     ],
+     "protocol": "not C2"
+    },
+    {
+     "backend": "aiotvla_v10b",
+     "family": "aiotvla",
+     "metric": "hil_follow",
+     "tag": "pas_hil_aiot_rain_01",
+     "model_id": "aiotvla/v10b@35259bd1",
+     "topology": "hil",
+     "kpi_grade": false,
+     "code_revision": "f77efaee4c56",
+     "date": "2026-11-14",
+     "ticks": 4185,
+     "end_reason": "max_s reached",
+     "mission_s": 420.06,
+     "frac_within_30m": 0.2793,
+     "decision_hz_mission": 7.666601847258118,
+     "decision_hz_asked": 9.098467818019445,
+     "asking_s": 357.203,
+     "interventions": 297,
+     "interventions_per_100_ticks": 7.096774193548387,
+     "p0_escapes": 0,
+     "p0_violation_escape_rate": 0.0,
+     "kpi_outcome": "fail",
+     "mission_fail_reasons": [
+      "unsafe_position_entered"
+     ],
+     "unsafe_p0_ticks": 25,
+     "p0_ticks_not_measurable": 0,
+     "p0_ticks_blind": null,
+     "detector_hz": 2.735,
+     "stress": "rain",
+     "hot_apply": false,
+     "identity": false,
+     "target_estimator": false,
+     "vla_feed": "tick",
+     "vla_feed_max_hz": null,
+     "negative_query": null,
+     "front_capture_interval_s": 0.066,
+     "bundle": "follow-car-citylife-v0.1.3.tar.gz",
+     "max_s_given": 420.0,
+     "start_gate_reached": true,
+     "summary_only": false,
+     "source": {
+      "file": "demo/out/pas_hil_aiot_rain_01/metrics.json",
+      "sha256": "d16c671f55ca6c9ee1e5eb61e40feedbf3e06a00c91c58846f4b697e654f18b3",
+      "file_date": "2026-11-14"
+     },
+     "not_c2": [
+      "not KPI-grade by its kpi.json",
+      "perception stressor 'rain'",
+      "negative query None, not C2's ['a traffic light']",
+      "flown without --identity and --target-estimator",
+      "feed tick, not the family's C2 feed (stream, no cap)",
+      "FrontCamera capture interval 0.066 s, not the 0.05 s the stream feed needs"
+     ],
+     "protocol": "not C2"
+    },
+    {
+     "backend": "aiotvla_v10b",
+     "family": "aiotvla",
+     "metric": "hil_follow",
+     "tag": "pas_hil_aiot_shadow_01",
+     "model_id": "aiotvla/v10b@35259bd1",
+     "topology": "hil",
+     "kpi_grade": false,
+     "code_revision": "8c9448e2118c",
+     "date": "2026-11-15",
+     "ticks": 4186,
+     "end_reason": "max_s reached",
+     "mission_s": 420.13,
+     "frac_within_30m": 0.3423,
+     "decision_hz_mission": 7.551094022842545,
+     "decision_hz_asked": 9.267829869949553,
+     "asking_s": 345.712,
+     "interventions": 300,
+     "interventions_per_100_ticks": 7.16674629718108,
+     "p0_escapes": 0,
+     "p0_violation_escape_rate": 0.0,
+     "kpi_outcome": "fail",
+     "mission_fail_reasons": [
+      "unsafe_position_entered"
+     ],
+     "unsafe_p0_ticks": 15,
+     "p0_ticks_not_measurable": 0,
+     "p0_ticks_blind": null,
+     "detector_hz": 2.616,
+     "stress": "shadow",
+     "hot_apply": false,
+     "identity": true,
+     "target_estimator": true,
+     "vla_feed": "tick",
+     "vla_feed_max_hz": null,
+     "negative_query": [
+      "a traffic light"
+     ],
+     "front_capture_interval_s": 0.066,
+     "bundle": "follow-car-citylife-v0.1.3.tar.gz",
+     "max_s_given": 420.0,
+     "start_gate_reached": true,
+     "summary_only": false,
+     "source": {
+      "file": "demo/out/pas_hil_aiot_shadow_01/metrics.json",
+      "sha256": "1248685c6c3b8f0546fa5fa1adecb5e6a8a03f9eac7bf5dba180d39586c493a9",
+      "file_date": "2026-11-15"
+     },
+     "not_c2": [
+      "not KPI-grade by its kpi.json",
+      "perception stressor 'shadow'",
+      "feed tick, not the family's C2 feed (stream, no cap)",
+      "FrontCamera capture interval 0.066 s, not the 0.05 s the stream feed needs"
+     ],
+     "protocol": "not C2"
+    },
+    {
+     "backend": "aiotvla_v10b",
+     "family": "aiotvla",
+     "metric": "hil_follow",
+     "tag": "pas_hil_aiot_texture_01",
+     "model_id": "aiotvla/v10b@35259bd1",
+     "topology": "hil",
+     "kpi_grade": false,
+     "code_revision": "8c9448e2118c",
+     "date": "2026-11-15",
+     "ticks": 1008,
+     "end_reason": "target_lost",
+     "mission_s": 100.95,
+     "frac_within_30m": 0.1468,
+     "decision_hz_mission": 2.755738186930986,
+     "decision_hz_asked": 8.825396825396826,
+     "asking_s": 31.5,
+     "interventions": 24,
+     "interventions_per_100_ticks": 2.380952380952381,
+     "p0_escapes": 0,
+     "p0_violation_escape_rate": 0.0,
+     "kpi_outcome": "success",
+     "mission_fail_reasons": [],
+     "unsafe_p0_ticks": 0,
+     "p0_ticks_not_measurable": 0,
+     "p0_ticks_blind": null,
+     "detector_hz": 2.486,
+     "stress": "texture",
+     "hot_apply": false,
+     "identity": true,
+     "target_estimator": true,
+     "vla_feed": "tick",
+     "vla_feed_max_hz": null,
+     "negative_query": [
+      "a traffic light"
+     ],
+     "front_capture_interval_s": 0.066,
+     "bundle": "follow-car-citylife-v0.1.3.tar.gz",
+     "max_s_given": 420.0,
+     "start_gate_reached": true,
+     "summary_only": false,
+     "source": {
+      "file": "demo/out/pas_hil_aiot_texture_01/metrics.json",
+      "sha256": "7a58f01f6d988c26ddaf9b8b19fb7ba18bcb70598d866c2b10389d0ff86402c0",
+      "file_date": "2026-11-15"
+     },
+     "not_c2": [
+      "not KPI-grade by its kpi.json",
+      "perception stressor 'texture'",
+      "feed tick, not the family's C2 feed (stream, no cap)",
+      "FrontCamera capture interval 0.066 s, not the 0.05 s the stream feed needs"
+     ],
+     "protocol": "not C2"
+    },
+    {
+     "backend": "aiotvla_v10b",
+     "family": "aiotvla",
+     "metric": "hil_follow",
+     "tag": "pas_hil_feed_07",
+     "model_id": "aiotvla/v10b@35259bd1",
+     "topology": "hil",
+     "kpi_grade": true,
+     "code_revision": "deac4b3a5b16",
+     "date": "2026-11-15",
+     "ticks": 4198,
+     "end_reason": "max_s reached",
+     "mission_s": 420.17,
+     "frac_within_30m": 0.3523,
+     "decision_hz_mission": 10.930064576512892,
+     "decision_hz_asked": 13.152495946439235,
+     "asking_s": 353.393,
+     "interventions": 284,
+     "interventions_per_100_ticks": 6.765126250595522,
+     "p0_escapes": 0,
+     "p0_violation_escape_rate": 0.0,
+     "kpi_outcome": "fail",
+     "mission_fail_reasons": [
+      "unsafe_position_entered"
+     ],
+     "unsafe_p0_ticks": 3,
+     "p0_ticks_not_measurable": 0,
+     "p0_ticks_blind": null,
+     "detector_hz": 2.494,
+     "stress": null,
+     "hot_apply": false,
+     "identity": true,
+     "target_estimator": true,
+     "vla_feed": "stream",
+     "vla_feed_max_hz": 0.0,
+     "negative_query": [
+      "a traffic light"
+     ],
+     "front_capture_interval_s": 0.05,
+     "bundle": "follow-car-citylife-v0.1.3.tar.gz",
+     "max_s_given": 420.0,
+     "start_gate_reached": true,
+     "summary_only": false,
+     "source": {
+      "file": "demo/out/pas_hil_feed_07/metrics.json",
+      "sha256": "80221de2770888ab92c9da6b05dc297b109a672202168a699cd77e7024b08b8e",
+      "file_date": "2026-11-15"
+     },
+     "not_c2": [],
+     "protocol": "C2"
+    },
+    {
+     "backend": "aiotvla_v10b",
+     "family": "aiotvla",
+     "metric": "hil_follow",
+     "tag": "pas_hil_hotapply_01",
+     "model_id": "aiotvla/v10b@35259bd1",
+     "topology": "hil",
+     "kpi_grade": true,
+     "code_revision": "6c9698d00b0f",
+     "date": "2026-11-15",
+     "ticks": 4176,
+     "end_reason": "max_s reached",
+     "mission_s": 420.09,
+     "frac_within_30m": 0.2639,
+     "decision_hz_mission": 7.016246518164047,
+     "decision_hz_asked": 9.109930987225294,
+     "asking_s": 326.896,
+     "interventions": 257,
+     "interventions_per_100_ticks": 6.154214559386973,
+     "p0_escapes": 0,
+     "p0_violation_escape_rate": 0.0,
+     "kpi_outcome": "fail",
+     "mission_fail_reasons": [
+      "unsafe_position_entered"
+     ],
+     "unsafe_p0_ticks": 9,
+     "p0_ticks_not_measurable": 0,
+     "p0_ticks_blind": null,
+     "detector_hz": 2.671,
+     "stress": null,
+     "hot_apply": true,
+     "identity": true,
+     "target_estimator": true,
+     "vla_feed": "tick",
+     "vla_feed_max_hz": null,
+     "negative_query": [
+      "a traffic light"
+     ],
+     "front_capture_interval_s": 0.066,
+     "bundle": "follow-car-citylife-v0.1.3.tar.gz",
+     "max_s_given": 420.0,
+     "start_gate_reached": true,
+     "summary_only": false,
+     "source": {
+      "file": "demo/out/pas_hil_hotapply_01/metrics.json",
+      "sha256": "e88add96136874836af00a43ff58d7ae6ea7d11f7c491b9ff0063cfb16275a9a",
+      "file_date": "2026-11-15"
+     },
+     "not_c2": [
+      "a policy was hot-applied in flight",
+      "feed tick, not the family's C2 feed (stream, no cap)",
+      "FrontCamera capture interval 0.066 s, not the 0.05 s the stream feed needs"
+     ],
+     "protocol": "not C2"
+    },
+    {
+     "backend": "aiotvla_v10b",
+     "family": "aiotvla",
+     "metric": "hil_follow",
+     "tag": "pas_hil_hotapply_02",
+     "model_id": "aiotvla/v10b@35259bd1",
+     "topology": "hil",
+     "kpi_grade": true,
+     "code_revision": "00264ef2d457",
+     "date": "2026-11-15",
+     "ticks": 4177,
+     "end_reason": "max_s reached",
+     "mission_s": 420.04,
+     "frac_within_30m": 0.3079,
+     "decision_hz_mission": 7.211910628516294,
+     "decision_hz_asked": 9.114789095647144,
+     "asking_s": 335.389,
+     "interventions": 300,
+     "interventions_per_100_ticks": 7.182188173330141,
+     "p0_escapes": 0,
+     "p0_violation_escape_rate": 0.0,
+     "kpi_outcome": "fail",
+     "mission_fail_reasons": [
+      "unsafe_position_entered"
+     ],
+     "unsafe_p0_ticks": 13,
+     "p0_ticks_not_measurable": 0,
+     "p0_ticks_blind": null,
+     "detector_hz": 2.645,
+     "stress": null,
+     "hot_apply": true,
+     "identity": true,
+     "target_estimator": true,
+     "vla_feed": "tick",
+     "vla_feed_max_hz": null,
+     "negative_query": [
+      "a traffic light"
+     ],
+     "front_capture_interval_s": 0.066,
+     "bundle": "follow-car-citylife-v0.1.3.tar.gz",
+     "max_s_given": 420.0,
+     "start_gate_reached": true,
+     "summary_only": false,
+     "source": {
+      "file": "demo/out/pas_hil_hotapply_02/metrics.json",
+      "sha256": "b288958d022019cc510ac47ee99e3e372020577d03291a44897e56f3a116f92e",
+      "file_date": "2026-11-15"
+     },
+     "not_c2": [
+      "a policy was hot-applied in flight",
+      "feed tick, not the family's C2 feed (stream, no cap)",
+      "FrontCamera capture interval 0.066 s, not the 0.05 s the stream feed needs"
+     ],
+     "protocol": "not C2"
+    },
+    {
+     "backend": "aiotvla_v10b",
+     "family": "aiotvla",
+     "metric": "hil_follow",
+     "tag": "pas_hil_obs_01",
+     "model_id": "aiotvla/v10b@35259bd1",
+     "topology": "projectairsim-ardupilot-mavros",
+     "kpi_grade": false,
+     "code_revision": "de7e7489dfaf",
+     "date": "2026-11-15",
+     "ticks": 0,
+     "end_reason": "no mission: start gate timed out after 330.1 s: no plausible 'a red car' within 30 m on 5 inferences in a row",
+     "mission_s": 0.02,
+     "frac_within_30m": null,
+     "decision_hz_mission": null,
+     "decision_hz_asked": null,
+     "asking_s": 0.0,
+     "interventions": null,
+     "interventions_per_100_ticks": null,
+     "p0_escapes": 0,
+     "p0_violation_escape_rate": null,
+     "kpi_outcome": "fail",
+     "mission_fail_reasons": [
+      "no_rows",
+      "follow_not_scored"
+     ],
+     "unsafe_p0_ticks": 0,
+     "p0_ticks_not_measurable": 0,
+     "p0_ticks_blind": null,
+     "detector_hz": null,
+     "stress": null,
+     "hot_apply": false,
+     "identity": true,
+     "target_estimator": true,
+     "vla_feed": "tick",
+     "vla_feed_max_hz": null,
+     "negative_query": [
+      "a traffic light"
+     ],
+     "front_capture_interval_s": 0.05,
+     "bundle": "follow-car-citylife-v0.1.3.tar.gz",
+     "max_s_given": null,
+     "start_gate_reached": false,
+     "summary_only": false,
+     "source": {
+      "file": "demo/out/pas_hil_obs_01/metrics.json",
+      "sha256": "172749b48781135fa7f05c4389f06aa071a8651231eba42fb86d56ce61a7645f",
+      "file_date": "2026-11-15"
+     },
+     "not_c2": [
+      "topology 'projectairsim-ardupilot-mavros', not hil",
+      "not KPI-grade by its kpi.json",
+      "the start gate never passed: no mission",
+      "feed tick, not the family's C2 feed (stream, no cap)"
+     ],
+     "protocol": "not C2"
+    },
+    {
+     "backend": "aiotvla_v10b",
+     "family": "aiotvla",
+     "metric": "hil_follow",
+     "tag": "pas_hil_obs_02",
+     "model_id": "aiotvla/v10b@35259bd1",
+     "topology": "hil",
+     "kpi_grade": true,
+     "code_revision": "de7e7489dfaf",
+     "date": "2026-11-15",
+     "ticks": 968,
+     "end_reason": "target_lost",
+     "mission_s": 96.98,
+     "frac_within_30m": 0.1343,
+     "decision_hz_mission": 2.836614563086938,
+     "decision_hz_asked": 9.583998888811724,
+     "asking_s": 28.798,
+     "interventions": 15,
+     "interventions_per_100_ticks": 1.5495867768595042,
+     "p0_escapes": 0,
+     "p0_violation_escape_rate": 0.0,
+     "kpi_outcome": "success",
+     "mission_fail_reasons": [],
+     "unsafe_p0_ticks": 0,
+     "p0_ticks_not_measurable": 0,
+     "p0_ticks_blind": null,
+     "detector_hz": 2.176,
+     "stress": null,
+     "hot_apply": false,
+     "identity": true,
+     "target_estimator": true,
+     "vla_feed": "tick",
+     "vla_feed_max_hz": null,
+     "negative_query": [
+      "a traffic light"
+     ],
+     "front_capture_interval_s": 0.05,
+     "bundle": "follow-car-citylife-v0.1.3.tar.gz",
+     "max_s_given": 420.0,
+     "start_gate_reached": true,
+     "summary_only": false,
+     "source": {
+      "file": "demo/out/pas_hil_obs_02/metrics.json",
+      "sha256": "ab72dac326f91ab4a9e873f0b06b803f017fd9b91ade9dd446dd5515d2bf8270",
+      "file_date": "2026-11-15"
+     },
+     "not_c2": [
+      "feed tick, not the family's C2 feed (stream, no cap)"
+     ],
+     "protocol": "not C2"
+    },
+    {
+     "backend": "aiotvla_v10b",
+     "family": "aiotvla",
+     "metric": "hil_follow",
+     "tag": "pas_hil_para_00",
+     "model_id": "aiotvla/v10b@35259bd1",
+     "topology": "hil",
+     "kpi_grade": true,
+     "code_revision": "de7e7489dfaf",
+     "date": "2026-11-15",
+     "ticks": 899,
+     "end_reason": "target_lost",
+     "mission_s": 90.13,
+     "frac_within_30m": 0.0667,
+     "decision_hz_mission": 0.22207768275546808,
+     "decision_hz_asked": 8.695652173913045,
+     "asking_s": 2.3,
+     "interventions": 0,
+     "interventions_per_100_ticks": 0.0,
+     "p0_escapes": 0,
+     "p0_violation_escape_rate": 0.0,
+     "kpi_outcome": "success",
+     "mission_fail_reasons": [],
+     "unsafe_p0_ticks": 0,
+     "p0_ticks_not_measurable": 0,
+     "p0_ticks_blind": null,
+     "detector_hz": 2.485,
+     "stress": null,
+     "hot_apply": false,
+     "identity": true,
+     "target_estimator": true,
+     "vla_feed": "tick",
+     "vla_feed_max_hz": null,
+     "negative_query": [
+      "a traffic light"
+     ],
+     "front_capture_interval_s": 0.066,
+     "bundle": "follow-car-citylife-v0.1.3.tar.gz",
+     "max_s_given": 420.0,
+     "start_gate_reached": true,
+     "summary_only": false,
+     "source": {
+      "file": "demo/out/pas_hil_para_00/metrics.json",
+      "sha256": "72bea05d819dda430745037029206eeabb6a1abf15987875f84103be89c0261c",
+      "file_date": "2026-11-15"
+     },
+     "not_c2": [
+      "feed tick, not the family's C2 feed (stream, no cap)",
+      "FrontCamera capture interval 0.066 s, not the 0.05 s the stream feed needs"
+     ],
+     "protocol": "not C2"
+    },
+    {
+     "backend": "aiotvla_v10b",
+     "family": "aiotvla",
+     "metric": "hil_follow",
+     "tag": "pas_hil_para_01",
+     "model_id": "aiotvla/v10b@35259bd1",
+     "topology": "hil",
+     "kpi_grade": true,
+     "code_revision": "de7e7489dfaf",
+     "date": "2026-11-15",
+     "ticks": 4186,
+     "end_reason": "max_s reached",
+     "mission_s": 420.08,
+     "frac_within_30m": 0.3055,
+     "decision_hz_mission": 7.721171081839548,
+     "decision_hz_asked": 9.295842098961806,
+     "asking_s": 350.802,
+     "interventions": 234,
+     "interventions_per_100_ticks": 5.590062111801243,
+     "p0_escapes": 0,
+     "p0_violation_escape_rate": 0.0,
+     "kpi_outcome": "fail",
+     "mission_fail_reasons": [
+      "unsafe_position_entered"
+     ],
+     "unsafe_p0_ticks": 16,
+     "p0_ticks_not_measurable": 0,
+     "p0_ticks_blind": null,
+     "detector_hz": 2.79,
+     "stress": null,
+     "hot_apply": false,
+     "identity": true,
+     "target_estimator": true,
+     "vla_feed": "tick",
+     "vla_feed_max_hz": null,
+     "negative_query": [
+      "a traffic light"
+     ],
+     "front_capture_interval_s": 0.066,
+     "bundle": "follow-car-citylife-v0.1.3.tar.gz",
+     "max_s_given": 420.0,
+     "start_gate_reached": true,
+     "summary_only": false,
+     "source": {
+      "file": "demo/out/pas_hil_para_01/metrics.json",
+      "sha256": "0605bf52d92af662f4a679604db92d28f12a9055f4ac28105a2f28c21a1d6219",
+      "file_date": "2026-11-15"
+     },
+     "not_c2": [
+      "paraphrased instruction ('track a red car')",
+      "feed tick, not the family's C2 feed (stream, no cap)",
+      "FrontCamera capture interval 0.066 s, not the 0.05 s the stream feed needs"
+     ],
+     "protocol": "not C2"
+    },
+    {
+     "backend": "aiotvla_v10b",
+     "family": "aiotvla",
+     "metric": "hil_follow",
+     "tag": "pas_hil_para_02",
+     "model_id": "aiotvla/v10b@35259bd1",
+     "topology": "hil",
+     "kpi_grade": true,
+     "code_revision": "de7e7489dfaf",
+     "date": "2026-11-15",
+     "ticks": 899,
+     "end_reason": "target_lost",
+     "mission_s": 90.06,
+     "frac_within_30m": 0.0812,
+     "decision_hz_mission": 0.2110896888444425,
+     "decision_hz_asked": 8.25727944372012,
+     "asking_s": 2.301,
+     "interventions": 0,
+     "interventions_per_100_ticks": 0.0,
+     "p0_escapes": 0,
+     "p0_violation_escape_rate": 0.0,
+     "kpi_outcome": "success",
+     "mission_fail_reasons": [],
+     "unsafe_p0_ticks": 0,
+     "p0_ticks_not_measurable": 0,
+     "p0_ticks_blind": null,
+     "detector_hz": 2.343,
+     "stress": null,
+     "hot_apply": false,
+     "identity": true,
+     "target_estimator": true,
+     "vla_feed": "tick",
+     "vla_feed_max_hz": null,
+     "negative_query": [
+      "a traffic light"
+     ],
+     "front_capture_interval_s": 0.066,
+     "bundle": "follow-car-citylife-v0.1.3.tar.gz",
+     "max_s_given": 420.0,
+     "start_gate_reached": true,
+     "summary_only": false,
+     "source": {
+      "file": "demo/out/pas_hil_para_02/metrics.json",
+      "sha256": "c477a5da43b023cc8e2bb0640b8fb0b4773bb8214d467a1a023ff4659605c809",
+      "file_date": "2026-11-15"
+     },
+     "not_c2": [
+      "paraphrased instruction ('keep up with a red car')",
+      "feed tick, not the family's C2 feed (stream, no cap)",
+      "FrontCamera capture interval 0.066 s, not the 0.05 s the stream feed needs"
+     ],
+     "protocol": "not C2"
+    },
+    {
+     "backend": "aiotvla_v10b",
+     "family": "aiotvla",
+     "metric": "hil_follow",
+     "tag": "pas_hil_para_03",
+     "model_id": "aiotvla/v10b@35259bd1",
+     "topology": "projectairsim-ardupilot-mavros",
+     "kpi_grade": false,
+     "code_revision": "de7e7489dfaf",
+     "date": "2026-11-15",
+     "ticks": 0,
+     "end_reason": "no mission: start gate timed out after 330.1 s: no plausible 'a red car' within 30 m on 5 inferences in a row",
+     "mission_s": 0.03,
+     "frac_within_30m": null,
+     "decision_hz_mission": null,
+     "decision_hz_asked": null,
+     "asking_s": 0.0,
+     "interventions": null,
+     "interventions_per_100_ticks": null,
+     "p0_escapes": 0,
+     "p0_violation_escape_rate": null,
+     "kpi_outcome": "fail",
+     "mission_fail_reasons": [
+      "no_rows",
+      "follow_not_scored"
+     ],
+     "unsafe_p0_ticks": 0,
+     "p0_ticks_not_measurable": 0,
+     "p0_ticks_blind": null,
+     "detector_hz": null,
+     "stress": null,
+     "hot_apply": false,
+     "identity": true,
+     "target_estimator": true,
+     "vla_feed": "tick",
+     "vla_feed_max_hz": null,
+     "negative_query": [
+      "a traffic light"
+     ],
+     "front_capture_interval_s": 0.066,
+     "bundle": "follow-car-citylife-v0.1.3.tar.gz",
+     "max_s_given": null,
+     "start_gate_reached": false,
+     "summary_only": false,
+     "source": {
+      "file": "demo/out/pas_hil_para_03/metrics.json",
+      "sha256": "703763200c74d9e6f669816ccf11a3b0e29eea9b4e2a3f5abf7d898942c243b5",
+      "file_date": "2026-11-15"
+     },
+     "not_c2": [
+      "topology 'projectairsim-ardupilot-mavros', not hil",
+      "not KPI-grade by its kpi.json",
+      "paraphrased instruction ('pursue a red automobile through the streets')",
+      "the start gate never passed: no mission",
+      "feed tick, not the family's C2 feed (stream, no cap)",
+      "FrontCamera capture interval 0.066 s, not the 0.05 s the stream feed needs"
+     ],
+     "protocol": "not C2"
+    },
+    {
+     "backend": "aiotvla_v10b",
+     "family": "aiotvla",
+     "metric": "hil_follow",
+     "tag": "pas_hil_para_04",
+     "model_id": "aiotvla/v10b@35259bd1",
+     "topology": "hil",
+     "kpi_grade": true,
+     "code_revision": "de7e7489dfaf",
+     "date": "2026-11-15",
+     "ticks": 900,
+     "end_reason": "target_lost",
+     "mission_s": 90.14,
+     "frac_within_30m": 0.0744,
+     "decision_hz_mission": 0.2109695734517167,
+     "decision_hz_asked": 7.3076923076923075,
+     "asking_s": 2.6,
+     "interventions": 0,
+     "interventions_per_100_ticks": 0.0,
+     "p0_escapes": 0,
+     "p0_violation_escape_rate": 0.0,
+     "kpi_outcome": "success",
+     "mission_fail_reasons": [],
+     "unsafe_p0_ticks": 0,
+     "p0_ticks_not_measurable": 0,
+     "p0_ticks_blind": null,
+     "detector_hz": 2.518,
+     "stress": null,
+     "hot_apply": false,
+     "identity": true,
+     "target_estimator": true,
+     "vla_feed": "tick",
+     "vla_feed_max_hz": null,
+     "negative_query": [
+      "a traffic light"
+     ],
+     "front_capture_interval_s": 0.066,
+     "bundle": "follow-car-citylife-v0.1.3.tar.gz",
+     "max_s_given": 420.0,
+     "start_gate_reached": true,
+     "summary_only": false,
+     "source": {
+      "file": "demo/out/pas_hil_para_04/metrics.json",
+      "sha256": "ffd9299c387a0d4cd42bde63348a1299ba629fe762caf07caa3a61bf9ffabb6c",
+      "file_date": "2026-11-15"
+     },
+     "not_c2": [
+      "paraphrased instruction ('tail a red car as it drives')",
+      "feed tick, not the family's C2 feed (stream, no cap)",
+      "FrontCamera capture interval 0.066 s, not the 0.05 s the stream feed needs"
+     ],
+     "protocol": "not C2"
+    },
+    {
+     "backend": "aiotvla_v10b",
+     "family": "aiotvla",
+     "metric": "hil_follow",
+     "tag": "pas_hil_para_05",
+     "model_id": "aiotvla/v10b@35259bd1",
+     "topology": "hil",
+     "kpi_grade": true,
+     "code_revision": "de7e7489dfaf",
+     "date": "2026-11-15",
+     "ticks": 900,
+     "end_reason": "target_lost",
+     "mission_s": 90.18,
+     "frac_within_30m": 0.0622,
+     "decision_hz_mission": 0.16644993013644246,
+     "decision_hz_asked": 6.518904823989569,
+     "asking_s": 2.301,
+     "interventions": 0,
+     "interventions_per_100_ticks": 0.0,
+     "p0_escapes": 0,
+     "p0_violation_escape_rate": 0.0,
+     "kpi_outcome": "success",
+     "mission_fail_reasons": [],
+     "unsafe_p0_ticks": 0,
+     "p0_ticks_not_measurable": 0,
+     "p0_ticks_blind": null,
+     "detector_hz": 2.506,
+     "stress": null,
+     "hot_apply": false,
+     "identity": true,
+     "target_estimator": true,
+     "vla_feed": "tick",
+     "vla_feed_max_hz": null,
+     "negative_query": [
+      "a traffic light"
+     ],
+     "front_capture_interval_s": 0.066,
+     "bundle": "follow-car-citylife-v0.1.3.tar.gz",
+     "max_s_given": 420.0,
+     "start_gate_reached": true,
+     "summary_only": false,
+     "source": {
+      "file": "demo/out/pas_hil_para_05/metrics.json",
+      "sha256": "ccbb90afc43a7d4f086aeff44cb307db565bf45497716639d262bc43d0e3536f",
+      "file_date": "2026-11-15"
+     },
+     "not_c2": [
+      "paraphrased instruction ('Please follow a red car.')",
+      "feed tick, not the family's C2 feed (stream, no cap)",
+      "FrontCamera capture interval 0.066 s, not the 0.05 s the stream feed needs"
+     ],
+     "protocol": "not C2"
+    },
+    {
+     "backend": "aiotvla_v10b",
+     "family": "aiotvla",
+     "metric": "hil_follow",
+     "tag": "pas_hil_para_06",
+     "model_id": "aiotvla/v10b@35259bd1",
+     "topology": "hil",
+     "kpi_grade": true,
+     "code_revision": "de7e7489dfaf",
+     "date": "2026-11-15",
+     "ticks": 2077,
+     "end_reason": "target_lost",
+     "mission_s": 208.08,
+     "frac_within_30m": 0.2711,
+     "decision_hz_mission": 5.600209310733505,
+     "decision_hz_asked": 9.362475199400802,
+     "asking_s": 125.501,
+     "interventions": 81,
+     "interventions_per_100_ticks": 3.8998555609051517,
+     "p0_escapes": 0,
+     "p0_violation_escape_rate": 0.0,
+     "kpi_outcome": "success",
+     "mission_fail_reasons": [],
+     "unsafe_p0_ticks": 0,
+     "p0_ticks_not_measurable": 0,
+     "p0_ticks_blind": null,
+     "detector_hz": 3.009,
+     "stress": null,
+     "hot_apply": false,
+     "identity": true,
+     "target_estimator": true,
+     "vla_feed": "tick",
+     "vla_feed_max_hz": null,
+     "negative_query": [
+      "a traffic light"
+     ],
+     "front_capture_interval_s": 0.066,
+     "bundle": "follow-car-citylife-v0.1.3.tar.gz",
+     "max_s_given": 420.0,
+     "start_gate_reached": true,
+     "summary_only": false,
+     "source": {
+      "file": "demo/out/pas_hil_para_06/metrics.json",
+      "sha256": "149476515bedac7ce77b8be2602a899ca63fa2c474c71bb1fd69af194d53e36c",
+      "file_date": "2026-11-15"
+     },
+     "not_c2": [
+      "paraphrased instruction ('Could you shadow a red car for me?')",
+      "feed tick, not the family's C2 feed (stream, no cap)",
+      "FrontCamera capture interval 0.066 s, not the 0.05 s the stream feed needs"
+     ],
+     "protocol": "not C2"
+    },
+    {
+     "backend": "aiotvla_v10b",
+     "family": "aiotvla",
+     "metric": "hil_follow",
+     "tag": "pas_hil_para_07",
+     "model_id": "aiotvla/v10b@35259bd1",
+     "topology": "projectairsim-ardupilot-mavros",
+     "kpi_grade": false,
+     "code_revision": "de7e7489dfaf",
+     "date": "2026-11-15",
+     "ticks": 0,
+     "end_reason": "no mission: start gate timed out after 330.1 s: no plausible 'a red car' within 30 m on 5 inferences in a row",
+     "mission_s": 0.02,
+     "frac_within_30m": null,
+     "decision_hz_mission": null,
+     "decision_hz_asked": null,
+     "asking_s": 0.0,
+     "interventions": null,
+     "interventions_per_100_ticks": null,
+     "p0_escapes": 0,
+     "p0_violation_escape_rate": null,
+     "kpi_outcome": "fail",
+     "mission_fail_reasons": [
+      "no_rows",
+      "follow_not_scored"
+     ],
+     "unsafe_p0_ticks": 0,
+     "p0_ticks_not_measurable": 0,
+     "p0_ticks_blind": null,
+     "detector_hz": null,
+     "stress": null,
+     "hot_apply": false,
+     "identity": true,
+     "target_estimator": true,
+     "vla_feed": "tick",
+     "vla_feed_max_hz": null,
+     "negative_query": [
+      "a traffic light"
+     ],
+     "front_capture_interval_s": 0.066,
+     "bundle": "follow-car-citylife-v0.1.3.tar.gz",
+     "max_s_given": null,
+     "start_gate_reached": false,
+     "summary_only": false,
+     "source": {
+      "file": "demo/out/pas_hil_para_07/metrics.json",
+      "sha256": "e3122265c34135e064cd910f268fd311a21f0e25660e425661f1bd8f7575bd5f",
+      "file_date": "2026-11-15"
+     },
+     "not_c2": [
+      "topology 'projectairsim-ardupilot-mavros', not hil",
+      "not KPI-grade by its kpi.json",
+      "paraphrased instruction (\"There's a red car - I'd like you to follow it.\")",
+      "the start gate never passed: no mission",
+      "feed tick, not the family's C2 feed (stream, no cap)",
+      "FrontCamera capture interval 0.066 s, not the 0.05 s the stream feed needs"
+     ],
+     "protocol": "not C2"
+    },
+    {
+     "backend": "aiotvla_v10b",
+     "family": "aiotvla",
+     "metric": "hil_follow",
+     "tag": "pas_hil_para_08",
+     "model_id": "aiotvla/v10b@35259bd1",
+     "topology": "hil",
+     "kpi_grade": true,
+     "code_revision": "de7e7489dfaf",
+     "date": "2026-11-15",
+     "ticks": 4184,
+     "end_reason": "max_s reached",
+     "mission_s": 420.15,
+     "frac_within_30m": 0.2835,
+     "decision_hz_mission": 8.381957834165135,
+     "decision_hz_asked": 9.338252552130445,
+     "asking_s": 379.193,
+     "interventions": 206,
+     "interventions_per_100_ticks": 4.923518164435946,
+     "p0_escapes": 0,
+     "p0_violation_escape_rate": 0.0,
+     "kpi_outcome": "fail",
+     "mission_fail_reasons": [
+      "unsafe_position_entered"
+     ],
+     "unsafe_p0_ticks": 11,
+     "p0_ticks_not_measurable": 0,
+     "p0_ticks_blind": null,
+     "detector_hz": 2.601,
+     "stress": null,
+     "hot_apply": false,
+     "identity": true,
+     "target_estimator": true,
+     "vla_feed": "tick",
+     "vla_feed_max_hz": null,
+     "negative_query": [
+      "a traffic light"
+     ],
+     "front_capture_interval_s": 0.066,
+     "bundle": "follow-car-citylife-v0.1.3.tar.gz",
+     "max_s_given": 420.0,
+     "start_gate_reached": true,
+     "summary_only": false,
+     "source": {
+      "file": "demo/out/pas_hil_para_08/metrics.json",
+      "sha256": "2019d8707d6b50121ad3b5f15216138060c386b553021fb862edae1d710cb1b0",
+      "file_date": "2026-11-15"
+     },
+     "not_c2": [
+      "paraphrased instruction ('Your task is to keep tracking a red car wherever it goes.')",
+      "feed tick, not the family's C2 feed (stream, no cap)",
+      "FrontCamera capture interval 0.066 s, not the 0.05 s the stream feed needs"
+     ],
+     "protocol": "not C2"
+    },
+    {
+     "backend": "aiotvla_v10b",
+     "family": "aiotvla",
+     "metric": "hil_follow",
+     "tag": "pas_hil_para_09",
+     "model_id": "aiotvla/v10b@35259bd1",
+     "topology": "hil",
+     "kpi_grade": true,
+     "code_revision": "de7e7489dfaf",
+     "date": "2026-11-15",
+     "ticks": 4186,
+     "end_reason": "max_s reached",
+     "mission_s": 420.13,
+     "frac_within_30m": 0.3548,
+     "decision_hz_mission": 7.794098823825099,
+     "decision_hz_asked": 9.200111482720178,
+     "asking_s": 358.8,
+     "interventions": 244,
+     "interventions_per_100_ticks": 5.828953655040611,
+     "p0_escapes": 0,
+     "p0_violation_escape_rate": 0.0,
+     "kpi_outcome": "success",
+     "mission_fail_reasons": [],
+     "unsafe_p0_ticks": 0,
+     "p0_ticks_not_measurable": 0,
+     "p0_ticks_blind": null,
+     "detector_hz": 2.652,
+     "stress": null,
+     "hot_apply": false,
+     "identity": true,
+     "target_estimator": true,
+     "vla_feed": "tick",
+     "vla_feed_max_hz": null,
+     "negative_query": [
+      "a traffic light"
+     ],
+     "front_capture_interval_s": 0.066,
+     "bundle": "follow-car-citylife-v0.1.3.tar.gz",
+     "max_s_given": 420.0,
+     "start_gate_reached": true,
+     "summary_only": false,
+     "source": {
+      "file": "demo/out/pas_hil_para_09/metrics.json",
+      "sha256": "f65e79fee6650f47b7ee226c111fc8999cef7eec2adfe17b716ddf82f5f02370",
+      "file_date": "2026-11-15"
+     },
+     "not_c2": [
+      "paraphrased instruction ('a red car')",
+      "feed tick, not the family's C2 feed (stream, no cap)",
+      "FrontCamera capture interval 0.066 s, not the 0.05 s the stream feed needs"
+     ],
+     "protocol": "not C2"
+    },
+    {
+     "backend": "aiotvla_v10b",
+     "family": "aiotvla",
+     "metric": "hil_follow",
+     "tag": "pas_hil_para_10",
+     "model_id": "aiotvla/v10b@35259bd1",
+     "topology": "hil",
+     "kpi_grade": true,
+     "code_revision": "de7e7489dfaf",
+     "date": "2026-11-15",
+     "ticks": 900,
+     "end_reason": "target_lost",
+     "mission_s": 90.18,
+     "frac_within_30m": 0.0733,
+     "decision_hz_mission": 0.16647484506088528,
+     "decision_hz_asked": 6.25,
+     "asking_s": 2.4,
+     "interventions": 4,
+     "interventions_per_100_ticks": 0.4444444444444444,
+     "p0_escapes": 0,
+     "p0_violation_escape_rate": 0.0,
+     "kpi_outcome": "fail",
+     "mission_fail_reasons": [
+      "unsafe_position_entered"
+     ],
+     "unsafe_p0_ticks": 4,
+     "p0_ticks_not_measurable": 0,
+     "p0_ticks_blind": null,
+     "detector_hz": 2.096,
+     "stress": null,
+     "hot_apply": false,
+     "identity": true,
+     "target_estimator": true,
+     "vla_feed": "tick",
+     "vla_feed_max_hz": null,
+     "negative_query": [
+      "a traffic light"
+     ],
+     "front_capture_interval_s": 0.066,
+     "bundle": "follow-car-citylife-v0.1.3.tar.gz",
+     "max_s_given": 420.0,
+     "start_gate_reached": true,
+     "summary_only": false,
+     "source": {
+      "file": "demo/out/pas_hil_para_10/metrics.json",
+      "sha256": "98c2b9cce1d18b2b1f122a6c40f17b32662da5058986c49af63b970878dc6ad0",
+      "file_date": "2026-11-15"
+     },
+     "not_c2": [
+      "feed tick, not the family's C2 feed (stream, no cap)",
+      "FrontCamera capture interval 0.066 s, not the 0.05 s the stream feed needs"
+     ],
+     "protocol": "not C2"
+    },
+    {
+     "backend": "aiotvla_v10b",
+     "family": "aiotvla",
+     "metric": "hil_follow",
+     "tag": "pas_hil_para_11",
+     "model_id": "aiotvla/v10b@35259bd1",
+     "topology": "hil",
+     "kpi_grade": true,
+     "code_revision": "de7e7489dfaf",
+     "date": "2026-11-15",
+     "ticks": 960,
+     "end_reason": "target_lost",
+     "mission_s": 96.13,
+     "frac_within_30m": 0.1302,
+     "decision_hz_mission": 2.498581792236735,
+     "decision_hz_asked": 8.63830244811642,
+     "asking_s": 27.899,
+     "interventions": 20,
+     "interventions_per_100_ticks": 2.0833333333333335,
+     "p0_escapes": 0,
+     "p0_violation_escape_rate": 0.0,
+     "kpi_outcome": "fail",
+     "mission_fail_reasons": [
+      "dwell:standoff_s",
+      "unsafe_position_entered"
+     ],
+     "unsafe_p0_ticks": 5,
+     "p0_ticks_not_measurable": 0,
+     "p0_ticks_blind": null,
+     "detector_hz": 2.382,
+     "stress": null,
+     "hot_apply": false,
+     "identity": true,
+     "target_estimator": true,
+     "vla_feed": "tick",
+     "vla_feed_max_hz": null,
+     "negative_query": [
+      "a traffic light"
+     ],
+     "front_capture_interval_s": 0.066,
+     "bundle": "follow-car-citylife-v0.1.3.tar.gz",
+     "max_s_given": 420.0,
+     "start_gate_reached": true,
+     "summary_only": false,
+     "source": {
+      "file": "demo/out/pas_hil_para_11/metrics.json",
+      "sha256": "997ad4b8a0a4d1f8813dd9d9cf3fffe580730950e2d5fe66366a1171c7121637",
+      "file_date": "2026-11-15"
+     },
+     "not_c2": [
+      "paraphrased instruction ('pursue a red automobile through the streets')",
+      "feed tick, not the family's C2 feed (stream, no cap)",
+      "FrontCamera capture interval 0.066 s, not the 0.05 s the stream feed needs"
+     ],
+     "protocol": "not C2"
+    },
+    {
+     "backend": "aiotvla_v10b",
+     "family": "aiotvla",
+     "metric": "hil_follow",
+     "tag": "pas_hil_para_12",
+     "model_id": "aiotvla/v10b@35259bd1",
+     "topology": "hil",
+     "kpi_grade": true,
+     "code_revision": "de7e7489dfaf",
+     "date": "2026-11-15",
+     "ticks": 935,
+     "end_reason": "target_lost",
+     "mission_s": 93.66,
+     "frac_within_30m": 0.0856,
+     "decision_hz_mission": 2.3619272932112096,
+     "decision_hz_asked": 9.214114535988761,
+     "asking_s": 24.202,
+     "interventions": 10,
+     "interventions_per_100_ticks": 1.0695187165775402,
+     "p0_escapes": 0,
+     "p0_violation_escape_rate": 0.0,
+     "kpi_outcome": "success",
+     "mission_fail_reasons": [],
+     "unsafe_p0_ticks": 0,
+     "p0_ticks_not_measurable": 0,
+     "p0_ticks_blind": null,
+     "detector_hz": 2.659,
+     "stress": null,
+     "hot_apply": false,
+     "identity": true,
+     "target_estimator": true,
+     "vla_feed": "tick",
+     "vla_feed_max_hz": null,
+     "negative_query": [
+      "a traffic light"
+     ],
+     "front_capture_interval_s": 0.066,
+     "bundle": "follow-car-citylife-v0.1.3.tar.gz",
+     "max_s_given": 420.0,
+     "start_gate_reached": true,
+     "summary_only": false,
+     "source": {
+      "file": "demo/out/pas_hil_para_12/metrics.json",
+      "sha256": "86596db8d20d9fadd3bb57aceba4db6aaf9fc791bc338ed2e000acde3e00e039",
+      "file_date": "2026-11-15"
+     },
+     "not_c2": [
+      "paraphrased instruction (\"There's a red car - I'd like you to follow it.\")",
+      "feed tick, not the family's C2 feed (stream, no cap)",
+      "FrontCamera capture interval 0.066 s, not the 0.05 s the stream feed needs"
+     ],
+     "protocol": "not C2"
+    },
+    {
+     "backend": "aiotvla_v10b",
+     "family": "aiotvla",
+     "metric": "hil_follow",
+     "tag": "pas_hil_feed_01",
+     "model_id": "aiotvla/v10b@35259bd1",
+     "topology": "hil",
+     "kpi_grade": true,
+     "code_revision": "ea8ef42a7a49",
+     "date": "2026-11-15",
+     "ticks": 970,
+     "end_reason": "target_lost",
+     "mission_s": 97.16,
+     "frac_within_30m": 0.1804,
+     "decision_hz_mission": 2.997224803908202,
+     "decision_hz_asked": 9.965986394557824,
+     "asking_s": 29.4,
+     "interventions": 14,
+     "interventions_per_100_ticks": 1.443298969072165,
+     "p0_escapes": 0,
+     "p0_violation_escape_rate": 0.0,
+     "kpi_outcome": "fail",
+     "mission_fail_reasons": [
+      "dwell:standoff_s"
+     ],
+     "unsafe_p0_ticks": 0,
+     "p0_ticks_not_measurable": 0,
+     "p0_ticks_blind": null,
+     "detector_hz": 2.388,
+     "stress": null,
+     "hot_apply": false,
+     "identity": true,
+     "target_estimator": true,
+     "vla_feed": "stream",
+     "vla_feed_max_hz": 12.0,
+     "negative_query": [
+      "a traffic light"
+     ],
+     "front_capture_interval_s": 0.05,
+     "bundle": "follow-car-citylife-v0.1.3.tar.gz",
+     "max_s_given": 420.0,
+     "start_gate_reached": true,
+     "summary_only": false,
+     "source": {
+      "file": "F:/vla_drone_offload/jetson_runs/pas_hil_feed_01/metrics.json",
+      "sha256": "5871a351a0a695dc922de7ba1d1e649d3c9a74162032b4e55831b023997d0a4b",
+      "file_date": "2026-11-15"
+     },
+     "not_c2": [
+      "feed stream capped at 12 Hz, not the family's C2 feed (stream, no cap)"
+     ],
+     "protocol": "not C2"
+    },
+    {
+     "backend": "aiotvla_v10b",
+     "family": "aiotvla",
+     "metric": "hil_follow",
+     "tag": "pas_hil_feed_02",
+     "model_id": "aiotvla/v10b@35259bd1",
+     "topology": "hil",
+     "kpi_grade": true,
+     "code_revision": "ea8ef42a7a49",
+     "date": "2026-11-15",
+     "ticks": 952,
+     "end_reason": "target_lost",
+     "mission_s": 95.38,
+     "frac_within_30m": 0.1176,
+     "decision_hz_mission": 2.947988495495537,
+     "decision_hz_asked": 9.826730094794959,
+     "asking_s": 28.799,
+     "interventions": 27,
+     "interventions_per_100_ticks": 2.8361344537815127,
+     "p0_escapes": 0,
+     "p0_violation_escape_rate": 0.0,
+     "kpi_outcome": "success",
+     "mission_fail_reasons": [],
+     "unsafe_p0_ticks": 0,
+     "p0_ticks_not_measurable": 0,
+     "p0_ticks_blind": null,
+     "detector_hz": 2.097,
+     "stress": null,
+     "hot_apply": false,
+     "identity": true,
+     "target_estimator": true,
+     "vla_feed": "stream",
+     "vla_feed_max_hz": 12.0,
+     "negative_query": [
+      "a traffic light"
+     ],
+     "front_capture_interval_s": 0.05,
+     "bundle": "follow-car-citylife-v0.1.3.tar.gz",
+     "max_s_given": 420.0,
+     "start_gate_reached": true,
+     "summary_only": false,
+     "source": {
+      "file": "F:/vla_drone_offload/jetson_runs/pas_hil_feed_02/metrics.json",
+      "sha256": "f1b38b30e6dc06ad72707cd3a519e1edb83d244252ad9528bc4a38c4c8f81833",
+      "file_date": "2026-11-15"
+     },
+     "not_c2": [
+      "feed stream capped at 12 Hz, not the family's C2 feed (stream, no cap)"
+     ],
+     "protocol": "not C2"
+    },
+    {
+     "backend": "aiotvla_v10b",
+     "family": "aiotvla",
+     "metric": "hil_follow",
+     "tag": "pas_hil_feed_03",
+     "model_id": "aiotvla/v10b@35259bd1",
+     "topology": "hil",
+     "kpi_grade": true,
+     "code_revision": "d9f5ea0a6c80",
+     "date": "2026-11-15",
+     "ticks": 994,
+     "end_reason": "target_lost",
+     "mission_s": 99.5,
+     "frac_within_30m": 0.1368,
+     "decision_hz_mission": 3.07654159401185,
+     "decision_hz_asked": 10.032246506628448,
+     "asking_s": 30.701,
+     "interventions": 33,
+     "interventions_per_100_ticks": 3.319919517102616,
+     "p0_escapes": 0,
+     "p0_violation_escape_rate": 0.0,
+     "kpi_outcome": "fail",
+     "mission_fail_reasons": [
+      "unsafe_position_entered"
+     ],
+     "unsafe_p0_ticks": 6,
+     "p0_ticks_not_measurable": 0,
+     "p0_ticks_blind": null,
+     "detector_hz": 2.302,
+     "stress": null,
+     "hot_apply": false,
+     "identity": true,
+     "target_estimator": true,
+     "vla_feed": "stream",
+     "vla_feed_max_hz": 12.0,
+     "negative_query": [
+      "a traffic light"
+     ],
+     "front_capture_interval_s": 0.05,
+     "bundle": "follow-car-citylife-v0.1.3.tar.gz",
+     "max_s_given": 420.0,
+     "start_gate_reached": true,
+     "summary_only": false,
+     "source": {
+      "file": "F:/vla_drone_offload/jetson_runs/pas_hil_feed_03/metrics.json",
+      "sha256": "4d9d40c668d3146a2c676aa5d0f05b64b37033f91aa79b8fb09539865f2f61b0",
+      "file_date": "2026-11-15"
+     },
+     "not_c2": [
+      "feed stream capped at 12 Hz, not the family's C2 feed (stream, no cap)"
+     ],
+     "protocol": "not C2"
+    },
+    {
+     "backend": "aiotvla_v10b",
+     "family": "aiotvla",
+     "metric": "hil_follow",
+     "tag": "pas_hil_feed_04",
+     "model_id": "aiotvla/v10b@35259bd1",
+     "topology": "hil",
+     "kpi_grade": true,
+     "code_revision": "d9f5ea0a6c80",
+     "date": "2026-11-15",
+     "ticks": 4185,
+     "end_reason": "max_s reached",
+     "mission_s": 420.13,
+     "frac_within_30m": 0.3216,
+     "decision_hz_mission": 8.258370671101448,
+     "decision_hz_asked": 10.008321334139906,
+     "asking_s": 352.107,
+     "interventions": 326,
+     "interventions_per_100_ticks": 7.789725209080048,
+     "p0_escapes": 0,
+     "p0_violation_escape_rate": 0.0,
+     "kpi_outcome": "success",
+     "mission_fail_reasons": [],
+     "unsafe_p0_ticks": 0,
+     "p0_ticks_not_measurable": 0,
+     "p0_ticks_blind": null,
+     "detector_hz": 2.502,
+     "stress": null,
+     "hot_apply": false,
+     "identity": true,
+     "target_estimator": true,
+     "vla_feed": "stream",
+     "vla_feed_max_hz": 12.0,
+     "negative_query": [
+      "a traffic light"
+     ],
+     "front_capture_interval_s": 0.05,
+     "bundle": "follow-car-citylife-v0.1.3.tar.gz",
+     "max_s_given": 420.0,
+     "start_gate_reached": true,
+     "summary_only": false,
+     "source": {
+      "file": "F:/vla_drone_offload/jetson_runs/pas_hil_feed_04/metrics.json",
+      "sha256": "39eef94a2799ec4bea81393643aa90f2d0566f88bdd48dcfd04f74f1fe80a412",
+      "file_date": "2026-11-15"
+     },
+     "not_c2": [
+      "feed stream capped at 12 Hz, not the family's C2 feed (stream, no cap)"
+     ],
+     "protocol": "not C2"
+    },
+    {
+     "backend": "aiotvla_v10b",
+     "family": "aiotvla",
+     "metric": "hil_follow",
+     "tag": "pas_hil_feed_05",
+     "model_id": "aiotvla/v10b@35259bd1",
+     "topology": "hil",
+     "kpi_grade": true,
+     "code_revision": "d9f5ea0a6c80",
+     "date": "2026-11-15",
+     "ticks": 3285,
+     "end_reason": "target_lost",
+     "mission_s": 329.76,
+     "frac_within_30m": 0.1586,
+     "decision_hz_mission": 8.759824553147991,
+     "decision_hz_asked": 13.22740544577986,
+     "asking_s": 220.905,
+     "interventions": 204,
+     "interventions_per_100_ticks": 6.210045662100456,
+     "p0_escapes": 0,
+     "p0_violation_escape_rate": 0.0,
+     "kpi_outcome": "fail",
+     "mission_fail_reasons": [
+      "unsafe_position_entered"
+     ],
+     "unsafe_p0_ticks": 16,
+     "p0_ticks_not_measurable": 0,
+     "p0_ticks_blind": null,
+     "detector_hz": 2.696,
+     "stress": null,
+     "hot_apply": false,
+     "identity": true,
+     "target_estimator": true,
+     "vla_feed": "stream",
+     "vla_feed_max_hz": 0.0,
+     "negative_query": [
+      "a traffic light"
+     ],
+     "front_capture_interval_s": 0.05,
+     "bundle": "follow-car-citylife-v0.1.3.tar.gz",
+     "max_s_given": 420.0,
+     "start_gate_reached": true,
+     "summary_only": false,
+     "source": {
+      "file": "F:/vla_drone_offload/jetson_runs/pas_hil_feed_05/metrics.json",
+      "sha256": "32ef5cb2be1c799ca24b0bebac6583adb1fb9df89248532cc61559cb02dbc0e2",
+      "file_date": "2026-11-15"
+     },
+     "not_c2": [
+      "not flown alone: desktop tests ran beside it (docs/data/pas_hil_feed_20261115/flights.md)"
+     ],
+     "protocol": "not C2"
+    },
+    {
+     "backend": "aiotvla_v10b",
+     "family": "aiotvla",
+     "metric": "hil_follow",
+     "tag": "pas_hil_feed_06",
+     "model_id": "aiotvla/v10b@35259bd1",
+     "topology": "hil",
+     "kpi_grade": true,
+     "code_revision": "d9f5ea0a6c80",
+     "date": "2026-11-15",
+     "ticks": 980,
+     "end_reason": "target_lost",
+     "mission_s": 98.16,
+     "frac_within_30m": 0.1378,
+     "decision_hz_mission": 3.446585179792724,
+     "decision_hz_asked": 12.390406492283168,
+     "asking_s": 27.602,
+     "interventions": 39,
+     "interventions_per_100_ticks": 3.979591836734694,
+     "p0_escapes": 0,
+     "p0_violation_escape_rate": 0.0,
+     "kpi_outcome": "fail",
+     "mission_fail_reasons": [
+      "dwell:standoff_s",
+      "unsafe_position_entered"
+     ],
+     "unsafe_p0_ticks": 8,
+     "p0_ticks_not_measurable": 0,
+     "p0_ticks_blind": null,
+     "detector_hz": 2.313,
+     "stress": null,
+     "hot_apply": false,
+     "identity": true,
+     "target_estimator": true,
+     "vla_feed": "stream",
+     "vla_feed_max_hz": 0.0,
+     "negative_query": [
+      "a traffic light"
+     ],
+     "front_capture_interval_s": 0.05,
+     "bundle": "follow-car-citylife-v0.1.3.tar.gz",
+     "max_s_given": 420.0,
+     "start_gate_reached": true,
+     "summary_only": false,
+     "source": {
+      "file": "F:/vla_drone_offload/jetson_runs/pas_hil_feed_06/metrics.json",
+      "sha256": "127e058ac4af87fa0e666322f3a1368e801122cd48e6e4b9a87b7f1a9672f02a",
+      "file_date": "2026-11-15"
+     },
+     "not_c2": [
+      "not flown alone: desktop tests ran beside it (docs/data/pas_hil_feed_20261115/flights.md)"
+     ],
+     "protocol": "not C2"
+    },
+    {
+     "backend": "aiotvla_v10b",
+     "family": "aiotvla",
+     "metric": "hil_follow",
+     "tag": "pas_hil_feed_08",
+     "model_id": "aiotvla/v10b@35259bd1",
+     "topology": "hil",
+     "kpi_grade": true,
+     "code_revision": "deac4b3a5b16",
+     "date": "2026-11-15",
+     "ticks": 4198,
+     "end_reason": "max_s reached",
+     "mission_s": 420.22,
+     "frac_within_30m": 0.2694,
+     "decision_hz_mission": 10.624621993432129,
+     "decision_hz_asked": 13.21946963487825,
+     "asking_s": 340.407,
+     "interventions": 332,
+     "interventions_per_100_ticks": 7.908527870414483,
+     "p0_escapes": 0,
+     "p0_violation_escape_rate": 0.0,
+     "kpi_outcome": "fail",
+     "mission_fail_reasons": [
+      "unsafe_position_entered"
+     ],
+     "unsafe_p0_ticks": 21,
+     "p0_ticks_not_measurable": 0,
+     "p0_ticks_blind": null,
+     "detector_hz": 2.641,
+     "stress": null,
+     "hot_apply": false,
+     "identity": true,
+     "target_estimator": true,
+     "vla_feed": "stream",
+     "vla_feed_max_hz": 0.0,
+     "negative_query": [
+      "a traffic light"
+     ],
+     "front_capture_interval_s": 0.05,
+     "bundle": "follow-car-citylife-v0.1.3.tar.gz",
+     "max_s_given": 420.0,
+     "start_gate_reached": true,
+     "summary_only": false,
+     "source": {
+      "file": "F:/vla_drone_offload/jetson_runs/pas_hil_feed_08/metrics.json",
+      "sha256": "6524af82e3efae7b96a6d08b4061c96992db7a0c1a81f628abda9e8d44c32713",
+      "file_date": "2026-11-15"
+     },
+     "not_c2": [],
+     "protocol": "C2"
+    }
+   ],
+   "orin_timed": true,
+   "orin_r1": false,
+   "orin_bench": true,
+   "orin_attempt_only": false,
+   "r1_results": []
+  },
+  {
+   "backend": "dronecats_2b",
+   "label": "DroneCATS-Cosmos3-Edge-2B (NAVER), bf16",
+   "kind": "camera + language drone VLA, 2 B (go / rotate / think / finished)",
+   "inputs": "one frame (at most 640 px wide) + 'go to <object>' + its last 5 actions",
+   "weights_repo": [],
+   "weights_root": [
+    "dronecats/DroneCATS-Cosmos3-Edge-2B"
+   ],
+   "hf_id": "naver-ai/DroneCATS-Cosmos3-Edge-2B",
+   "code": "demo/vla_server_foreign.py (family dronecats)",
+   "family": "dronecats",
+   "measured_by": "python tools/bench_foreign_vla.py --server 127.0.0.1:<port> against demo/vla_server_foreign.py serve --model dronecats",
+   "c1": "not flown: its command is 'go to <the object>' on a camera frame, not a goal coordinate; it has been flown as a follow only",
+   "weights_status": [
+    {
+     "path": "<model-root>/dronecats/DroneCATS-Cosmos3-Edge-2B",
+     "where": "D:/models",
+     "present": true,
+     "bytes": 4892476634
+    }
+   ],
+   "cells": {
+    "rate_desktop": "not R1 - see records",
+    "rate_orin": "no Orin bench yet; R1 does not cover a model served over protocol v2 (`measure` refuses it): its Orin timing is its server's bench (python tools/bench_foreign_vla.py --server 127.0.0.1:<port> against demo/vla_server_foreign.py serve --model dronecats)",
+    "closed_loop_desktop": "not C1 - see records",
+    "closed_loop_hil_c1": "not flown: its command is 'go to <the object>' on a camera frame, not a goal coordinate; it has been flown as a follow only",
+    "closed_loop_hil_c2": "to fly on hil (C2)"
+   },
+   "records": [
+    {
+     "backend": "dronecats_2b",
+     "metric": "follow_matrix",
+     "protocol": "not C1, not C2",
+     "matrix": "27-28 October 2026",
+     "flights": [
+      {
+       "tag": "cmp2_e2e_dronecats_20261028",
+       "platform": "PC",
+       "kind": "pure (the VLA flies every step)",
+       "note": null,
+       "within_30m": 0.086,
+       "latency_p50_s": 1.2,
+       "p0_escape_rate": 0.0,
+       "bundle": null,
+       "code_revision": null
+      },
+      {
+       "tag": "cmp2_hier_dronecats_20261028",
+       "platform": "PC",
+       "kind": "hierarchical (the VLA sets the intent, the controller flies)",
+       "note": null,
+       "within_30m": 0.929,
+       "latency_p50_s": 2.14,
+       "p0_escape_rate": 0.0,
+       "bundle": null,
+       "code_revision": null
+      },
+      {
+       "tag": "cmp_e2e_dronecats_20261027",
+       "platform": "PC",
+       "kind": "pure (the VLA flies every step)",
+       "note": null,
+       "within_30m": 0.132,
+       "latency_p50_s": 1.02,
+       "p0_escape_rate": 0.0,
+       "bundle": null,
+       "code_revision": null
+      },
+      {
+       "tag": "cmp_hier_dronecats_20261027",
+       "platform": "PC",
+       "kind": "hierarchical (the VLA sets the intent, the controller flies)",
+       "note": null,
+       "within_30m": 0.939,
+       "latency_p50_s": 1.45,
+       "p0_escape_rate": 0.0,
+       "bundle": null,
+       "code_revision": null
+      },
+      {
+       "tag": "orin_e2e_dronecats_20261028",
+       "platform": "Jetson Orin Nano (client; VLA on the PC)",
+       "kind": "pure (the VLA flies every step)",
+       "note": null,
+       "within_30m": 0.076,
+       "latency_p50_s": 0.78,
+       "p0_escape_rate": 0.0,
+       "bundle": null,
+       "code_revision": null
+      },
+      {
+       "tag": "orin_hier_dronecats_20261028",
+       "platform": "Jetson Orin Nano (client; VLA on the PC)",
+       "kind": "hierarchical (the VLA sets the intent, the controller flies)",
+       "note": null,
+       "within_30m": 0.969,
+       "latency_p50_s": 1.24,
+       "p0_escape_rate": 0.0,
+       "bundle": null,
+       "code_revision": null
+      }
+     ],
+     "conditions": "Project AirSim CityLife with simple_flight: not ArduPilot, not hil, never KPI-grade. One flight per configuration unless more are listed, and one flight can differ widely from the next; flights at another commit or under another policy bundle are not repeats of one configuration (where a run folder names them, the table shows both). The file names the models, not the server configurations; CHANGELOG 2026-11-04 states them (the AerialVLA family bf16/sdpa/merged, DroneCATS and RaceVLA bf16). Pure flights are scored from the first acquisition, the others from the start gate",
+     "source": {
+      "file": "docs/data/progress_1028.json",
+      "sha256": "5586c5733c2615f9cb627b08e233299d4b4fb19b7283cc61e4d2718e78685daf",
+      "file_date": "2026-11-16"
+     }
+    },
+    {
+     "backend": "dronecats_2b",
+     "metric": "follow_matrix",
+     "protocol": "not C1, not C2",
+     "matrix": "3-4 November 2026",
+     "flights": [
+      {
+       "tag": "agx_e2e_dronecats_20261103",
+       "platform": "AGX Orin (client and VLA server)",
+       "kind": "pure (the VLA flies every step)",
+       "within_30m": 0.0,
+       "latency_p50_s": 1.6054,
+       "p0_escape_rate": 0.0,
+       "ticks": 384,
+       "end_reason": "server_slow",
+       "model_id": "dronecats/DroneCATS-Cosmos3-Edge-2B@5080e727",
+       "config": "bf16/sdpa/unmerged",
+       "topology": "projectairsim-remote-sim",
+       "code_revision": "6da813de8ad7",
+       "bundle": "follow-car-citylife-nfz-v0.1.1.tar.gz"
+      },
+      {
+       "tag": "agx_e2e_dronecats_t30_20261103",
+       "platform": "AGX Orin (client and VLA server)",
+       "kind": "pure (the VLA flies every step)",
+       "within_30m": 0.081,
+       "latency_p50_s": 1.6292,
+       "p0_escape_rate": 0.0,
+       "ticks": 4201,
+       "end_reason": "timeout",
+       "model_id": "dronecats/DroneCATS-Cosmos3-Edge-2B@5080e727",
+       "config": "bf16/sdpa/unmerged",
+       "topology": "projectairsim-remote-sim",
+       "code_revision": "6da813de8ad7",
+       "bundle": "follow-car-citylife-nfz-v0.1.1.tar.gz"
+      },
+      {
+       "tag": "agx_hier_dronecats_20261103",
+       "platform": "AGX Orin (client and VLA server)",
+       "kind": "hierarchical (the VLA sets the intent, the controller flies)",
+       "within_30m": 0.941,
+       "latency_p50_s": 2.6381,
+       "p0_escape_rate": 0.0,
+       "ticks": 4197,
+       "end_reason": null,
+       "model_id": "dronecats/DroneCATS-Cosmos3-Edge-2B@5080e727",
+       "config": "bf16/sdpa/unmerged",
+       "topology": "projectairsim-remote-sim",
+       "code_revision": "6da813de8ad7",
+       "bundle": "follow-car-citylife-nfz-v0.1.1.tar.gz"
+      }
+     ],
+     "conditions": "Project AirSim CityLife with simple_flight: not ArduPilot, not hil, never KPI-grade. One flight per configuration unless more are listed, and one flight can differ widely from the next; flights at another commit or under another policy bundle are not repeats of one configuration (where a run folder names them, the table shows both). The simulator ran on the PC; identities, scores, commits and policy bundles are each run's own metrics.json and kpi.json. The agx_*_01 flights are the first AGX follows of 3 November, at an earlier commit than the matrix; the nfz3b_ flights flew another bundle (a no-fly zone on the route), so they are another scenario, not a repeat. Pure flights are scored from the first acquisition, the others from the start gate",
+     "source": {
+      "file": "demo/out/*agx_*/metrics.json (tags *_2026110[34] and *_01)",
+      "runs": 24
+     }
+    }
+   ],
+   "orin_timed": false,
+   "orin_r1": false,
+   "orin_bench": false,
+   "orin_attempt_only": false,
+   "r1_results": []
+  },
+  {
+   "backend": "racevla_7b",
+   "label": "RaceVLA drone6_all (Skoltech; an OpenVLA-7B fine-tune), bf16",
+   "kind": "camera + language drone VLA, 7 B (body velocities + yaw)",
+   "inputs": "224x224 grey frame + 'fly to <object>'",
+   "weights_repo": [],
+   "weights_root": [
+    "racevla/RaceVLA_models/drone6_all"
+   ],
+   "hf_id": "SerValera/RaceVLA_models",
+   "code": "demo/vla_server_foreign.py (family racevla)",
+   "family": "racevla",
+   "class_7b": true,
+   "measured_by": "python tools/bench_foreign_vla.py --server 127.0.0.1:<port> against demo/vla_server_foreign.py serve --model racevla",
+   "c1": "not flown: its instruction is 'fly to <the object>' on a camera frame, not a goal coordinate; it has been flown as a follow only",
+   "weights_status": [
+    {
+     "path": "<model-root>/racevla/RaceVLA_models/drone6_all",
+     "where": "D:/models",
+     "present": true,
+     "bytes": 15085151787
+    }
+   ],
+   "cells": {
+    "rate_desktop": "not R1 - see records",
+    "rate_orin": "no Orin bench yet; R1 does not cover a model served over protocol v2 (`measure` refuses it): its Orin timing is its server's bench (python tools/bench_foreign_vla.py --server 127.0.0.1:<port> against demo/vla_server_foreign.py serve --model racevla)",
+    "closed_loop_desktop": "not C1 - see records",
+    "closed_loop_hil_c1": "not flown: its instruction is 'fly to <the object>' on a camera frame, not a goal coordinate; it has been flown as a follow only",
+    "closed_loop_hil_c2": "to fly on hil (C2)"
+   },
+   "records": [
+    {
+     "backend": "racevla_7b",
+     "metric": "follow_matrix",
+     "protocol": "not C1, not C2",
+     "matrix": "27-28 October 2026",
+     "flights": [
+      {
+       "tag": "cmp2_e2e_racevla_20261028",
+       "platform": "PC",
+       "kind": "pure (the VLA flies every step)",
+       "note": null,
+       "within_30m": 0.084,
+       "latency_p50_s": 0.52,
+       "p0_escape_rate": 0.0,
+       "bundle": null,
+       "code_revision": null
+      },
+      {
+       "tag": "cmp2_hier_racevla_20261028",
+       "platform": "PC",
+       "kind": "hierarchical (the VLA sets the intent, the controller flies)",
+       "note": null,
+       "within_30m": 0.721,
+       "latency_p50_s": 0.57,
+       "p0_escape_rate": 0.0,
+       "bundle": null,
+       "code_revision": null
+      },
+      {
+       "tag": "cmp_e2e_racevla_20261027",
+       "platform": "PC",
+       "kind": "pure (the VLA flies every step)",
+       "note": null,
+       "within_30m": 0.099,
+       "latency_p50_s": 0.42,
+       "p0_escape_rate": 0.0,
+       "bundle": null,
+       "code_revision": null
+      },
+      {
+       "tag": "cmp_hier_racevla_20261027",
+       "platform": "PC",
+       "kind": "hierarchical (the VLA sets the intent, the controller flies)",
+       "note": null,
+       "within_30m": 0.719,
+       "latency_p50_s": 0.4,
+       "p0_escape_rate": 0.0,
+       "bundle": null,
+       "code_revision": null
+      },
+      {
+       "tag": "orin_e2e_racevla_20261028",
+       "platform": "Jetson Orin Nano (client; VLA on the PC)",
+       "kind": "pure (the VLA flies every step)",
+       "note": null,
+       "within_30m": 0.083,
+       "latency_p50_s": 0.51,
+       "p0_escape_rate": 0.0,
+       "bundle": null,
+       "code_revision": null
+      },
+      {
+       "tag": "orin_hier_racevla_20261028",
+       "platform": "Jetson Orin Nano (client; VLA on the PC)",
+       "kind": "hierarchical (the VLA sets the intent, the controller flies)",
+       "note": null,
+       "within_30m": 0.704,
+       "latency_p50_s": 0.51,
+       "p0_escape_rate": 0.0,
+       "bundle": null,
+       "code_revision": null
+      }
+     ],
+     "conditions": "Project AirSim CityLife with simple_flight: not ArduPilot, not hil, never KPI-grade. One flight per configuration unless more are listed, and one flight can differ widely from the next; flights at another commit or under another policy bundle are not repeats of one configuration (where a run folder names them, the table shows both). The file names the models, not the server configurations; CHANGELOG 2026-11-04 states them (the AerialVLA family bf16/sdpa/merged, DroneCATS and RaceVLA bf16). Pure flights are scored from the first acquisition, the others from the start gate",
+     "source": {
+      "file": "docs/data/progress_1028.json",
+      "sha256": "5586c5733c2615f9cb627b08e233299d4b4fb19b7283cc61e4d2718e78685daf",
+      "file_date": "2026-11-16"
+     }
+    },
+    {
+     "backend": "racevla_7b",
+     "metric": "follow_matrix",
+     "protocol": "not C1, not C2",
+     "matrix": "3-4 November 2026",
+     "flights": [
+      {
+       "tag": "agx_e2e_racevla_20261103",
+       "platform": "AGX Orin (client and VLA server)",
+       "kind": "pure (the VLA flies every step)",
+       "within_30m": 0.055,
+       "latency_p50_s": 1.1406,
+       "p0_escape_rate": 0.0,
+       "ticks": 4200,
+       "end_reason": "timeout",
+       "model_id": "racevla/drone6_all@03f3bb48",
+       "config": "bf16/sdpa/unmerged",
+       "topology": "projectairsim-remote-sim",
+       "code_revision": "6da813de8ad7",
+       "bundle": "follow-car-citylife-nfz-v0.1.1.tar.gz"
+      },
+      {
+       "tag": "agx_e2e_racevla_20261104",
+       "platform": "AGX Orin (client and VLA server)",
+       "kind": "pure (the VLA flies every step)",
+       "within_30m": 0.079,
+       "latency_p50_s": 1.1331,
+       "p0_escape_rate": 0.0,
+       "ticks": 4200,
+       "end_reason": "timeout",
+       "model_id": "racevla/drone6_all@03f3bb48",
+       "config": "bf16/sdpa/unmerged",
+       "topology": "projectairsim-remote-sim",
+       "code_revision": "989f96724b74",
+       "bundle": "follow-car-citylife-nfz-v0.1.1.tar.gz"
+      },
+      {
+       "tag": "agx_hier_racevla_20261103",
+       "platform": "AGX Orin (client and VLA server)",
+       "kind": "hierarchical (the VLA sets the intent, the controller flies)",
+       "within_30m": 0.715,
+       "latency_p50_s": 1.2169,
+       "p0_escape_rate": 0.0,
+       "ticks": 4197,
+       "end_reason": null,
+       "model_id": "racevla/drone6_all@03f3bb48",
+       "config": "bf16/sdpa/unmerged",
+       "topology": "projectairsim-remote-sim",
+       "code_revision": "6da813de8ad7",
+       "bundle": "follow-car-citylife-nfz-v0.1.1.tar.gz"
+      }
+     ],
+     "conditions": "Project AirSim CityLife with simple_flight: not ArduPilot, not hil, never KPI-grade. One flight per configuration unless more are listed, and one flight can differ widely from the next; flights at another commit or under another policy bundle are not repeats of one configuration (where a run folder names them, the table shows both). The simulator ran on the PC; identities, scores, commits and policy bundles are each run's own metrics.json and kpi.json. The agx_*_01 flights are the first AGX follows of 3 November, at an earlier commit than the matrix; the nfz3b_ flights flew another bundle (a no-fly zone on the route), so they are another scenario, not a repeat. Pure flights are scored from the first acquisition, the others from the start gate",
+     "source": {
+      "file": "demo/out/*agx_*/metrics.json (tags *_2026110[34] and *_01)",
+      "runs": 24
+     }
+    }
+   ],
+   "orin_timed": false,
+   "orin_r1": false,
+   "orin_bench": false,
+   "orin_attempt_only": false,
    "r1_results": []
   },
   {
@@ -683,14 +3701,21 @@
    "weights_root": [],
    "code": null,
    "unavailable": "no checkpoint on this machine. The saved project page (source/pages/cognitivedrone.html) links a dataset (huggingface ArtemLykov/cognitiveDrone_dataset) and a data-collector repository, no model weights; the paper is source/papers/2503.02572-CognitiveDrone.pdf",
+   "c1": "not flown: weights not obtained",
+   "c2": "weights not obtained",
    "weights_status": [],
    "cells": {
     "rate_desktop": "n/a (no weights here)",
     "rate_orin": "weights not obtained",
     "closed_loop_desktop": "n/a (no weights here)",
-    "closed_loop_hil": "weights not obtained"
+    "closed_loop_hil_c1": "weights not obtained",
+    "closed_loop_hil_c2": "weights not obtained"
    },
    "records": [],
+   "orin_timed": false,
+   "orin_r1": false,
+   "orin_bench": false,
+   "orin_attempt_only": false,
    "r1_results": []
   },
   {
@@ -702,14 +3727,21 @@
    "weights_root": [],
    "code": null,
    "unavailable": "no checkpoint and no loader in this repository. The grant lists it with CognitiveDrone, OpenVLA and in-house stubs as backends the slot must accept (Architecture constraints p.2-3); the reference design names it as a smaller backend to swap in if a 7 B model misses 10 Hz on the Orin (docs/04-risks-and-fallbacks/fallback-gates.md), with its citation still to be added",
+   "c1": "not flown: weights not obtained",
+   "c2": "weights not obtained",
    "weights_status": [],
    "cells": {
     "rate_desktop": "n/a (no weights here)",
     "rate_orin": "weights not obtained",
     "closed_loop_desktop": "n/a (no weights here)",
-    "closed_loop_hil": "weights not obtained"
+    "closed_loop_hil_c1": "weights not obtained",
+    "closed_loop_hil_c2": "weights not obtained"
    },
    "records": [],
+   "orin_timed": false,
+   "orin_r1": false,
+   "orin_bench": false,
+   "orin_attempt_only": false,
    "r1_results": []
   }
  ],
@@ -735,7 +3767,7 @@
    "source": {
     "file": "training/eval_ft3_deploy.json",
     "sha256": "4865cdcd105690aa8576661855fe8ff484e0f343b3fc643e872728ff6527e5b3",
-    "file_date": "2026-07-17"
+    "file_date": "2026-11-16"
    }
   },
   {
@@ -759,7 +3791,7 @@
    "source": {
     "file": "training/eval_ft_e0.json",
     "sha256": "d4e0026630eb12ec68df9bea5f7bf3276e76e8cb8a7cb57592793af6b19c8077",
-    "file_date": "2026-07-17"
+    "file_date": "2026-11-16"
    }
   },
   {
@@ -783,14 +3815,620 @@
    "source": {
     "file": "training/eval_ft_e1.json",
     "sha256": "64e25a06bcb6cf9505b3accba049231ba66e05bea724fe2f40fb406c7d1a97ad",
-    "file_date": "2026-07-17"
+    "file_date": "2026-11-16"
+   }
+  },
+  {
+   "backend": "aerialvla_ft:r1",
+   "metric": "follow_matrix",
+   "protocol": "not C1, not C2",
+   "matrix": "27-28 October 2026",
+   "flights": [
+    {
+     "tag": "cmp2_e2e_r1_20261028",
+     "platform": "PC",
+     "kind": "pure (the VLA flies every step)",
+     "note": null,
+     "within_30m": 0.018,
+     "latency_p50_s": 0.65,
+     "p0_escape_rate": 0.0,
+     "bundle": null,
+     "code_revision": null
+    },
+    {
+     "tag": "cmp2_hier_r1_20261028",
+     "platform": "PC",
+     "kind": "hierarchical (the VLA sets the intent, the controller flies)",
+     "note": null,
+     "within_30m": 0.884,
+     "latency_p50_s": 0.68,
+     "p0_escape_rate": 0.0,
+     "bundle": null,
+     "code_revision": null
+    },
+    {
+     "tag": "cmp_hier_r1_20261027",
+     "platform": "PC",
+     "kind": "hierarchical (the VLA sets the intent, the controller flies)",
+     "note": null,
+     "within_30m": 0.884,
+     "latency_p50_s": 0.48,
+     "p0_escape_rate": 0.0,
+     "bundle": null,
+     "code_revision": null
+    },
+    {
+     "tag": "orin_e2e_r1_20261028",
+     "platform": "Jetson Orin Nano (client; VLA on the PC)",
+     "kind": "pure (the VLA flies every step)",
+     "note": null,
+     "within_30m": 0.113,
+     "latency_p50_s": 0.58,
+     "p0_escape_rate": 0.0,
+     "bundle": null,
+     "code_revision": null
+    },
+    {
+     "tag": "orin_hier_r1_20261028",
+     "platform": "Jetson Orin Nano (client; VLA on the PC)",
+     "kind": "hierarchical (the VLA sets the intent, the controller flies)",
+     "note": null,
+     "within_30m": 0.89,
+     "latency_p50_s": 0.62,
+     "p0_escape_rate": 0.0,
+     "bundle": null,
+     "code_revision": null
+    }
+   ],
+   "conditions": "Project AirSim CityLife with simple_flight: not ArduPilot, not hil, never KPI-grade. One flight per configuration unless more are listed, and one flight can differ widely from the next; flights at another commit or under another policy bundle are not repeats of one configuration (where a run folder names them, the table shows both). The file names the models, not the server configurations; CHANGELOG 2026-11-04 states them (the AerialVLA family bf16/sdpa/merged, DroneCATS and RaceVLA bf16). Pure flights are scored from the first acquisition, the others from the start gate",
+   "source": {
+    "file": "docs/data/progress_1028.json",
+    "sha256": "5586c5733c2615f9cb627b08e233299d4b4fb19b7283cc61e4d2718e78685daf",
+    "file_date": "2026-11-16"
+   }
+  },
+  {
+   "backend": "aerialvla_ft:r2",
+   "metric": "follow_matrix",
+   "protocol": "not C1, not C2",
+   "matrix": "27-28 October 2026",
+   "flights": [
+    {
+     "tag": "cmp2_e2e_r2_20261028",
+     "platform": "PC",
+     "kind": "pure (the VLA flies every step)",
+     "note": null,
+     "within_30m": 0.065,
+     "latency_p50_s": 0.64,
+     "p0_escape_rate": 0.0,
+     "bundle": null,
+     "code_revision": null
+    },
+    {
+     "tag": "cmp2_hier_r2_20261028",
+     "platform": "PC",
+     "kind": "hierarchical (the VLA sets the intent, the controller flies)",
+     "note": null,
+     "within_30m": 0.918,
+     "latency_p50_s": 0.66,
+     "p0_escape_rate": 0.0,
+     "bundle": null,
+     "code_revision": null
+    },
+    {
+     "tag": "orin_e2e_r2_20261028",
+     "platform": "Jetson Orin Nano (client; VLA on the PC)",
+     "kind": "pure (the VLA flies every step)",
+     "note": null,
+     "within_30m": 0.017,
+     "latency_p50_s": 0.58,
+     "p0_escape_rate": 0.0,
+     "bundle": null,
+     "code_revision": null
+    },
+    {
+     "tag": "orin_hier_r2_20261028",
+     "platform": "Jetson Orin Nano (client; VLA on the PC)",
+     "kind": "hierarchical (the VLA sets the intent, the controller flies)",
+     "note": null,
+     "within_30m": 0.924,
+     "latency_p50_s": 0.52,
+     "p0_escape_rate": 0.0,
+     "bundle": null,
+     "code_revision": null
+    }
+   ],
+   "conditions": "Project AirSim CityLife with simple_flight: not ArduPilot, not hil, never KPI-grade. One flight per configuration unless more are listed, and one flight can differ widely from the next; flights at another commit or under another policy bundle are not repeats of one configuration (where a run folder names them, the table shows both). The file names the models, not the server configurations; CHANGELOG 2026-11-04 states them (the AerialVLA family bf16/sdpa/merged, DroneCATS and RaceVLA bf16). Pure flights are scored from the first acquisition, the others from the start gate",
+   "source": {
+    "file": "docs/data/progress_1028.json",
+    "sha256": "5586c5733c2615f9cb627b08e233299d4b4fb19b7283cc61e4d2718e78685daf",
+    "file_date": "2026-11-16"
+   }
+  },
+  {
+   "backend": "aerialvla_ft:r3",
+   "metric": "follow_matrix",
+   "protocol": "not C1, not C2",
+   "matrix": "27-28 October 2026",
+   "flights": [
+    {
+     "tag": "cmp2_e2e_r3_20261028",
+     "platform": "PC",
+     "kind": "pure (the VLA flies every step)",
+     "note": null,
+     "within_30m": 0.053,
+     "latency_p50_s": 0.61,
+     "p0_escape_rate": 0.0,
+     "bundle": null,
+     "code_revision": null
+    },
+    {
+     "tag": "cmp2_hier_r3_20261028",
+     "platform": "PC",
+     "kind": "hierarchical (the VLA sets the intent, the controller flies)",
+     "note": null,
+     "within_30m": 0.934,
+     "latency_p50_s": 0.68,
+     "p0_escape_rate": 0.0,
+     "bundle": null,
+     "code_revision": null
+    },
+    {
+     "tag": "cmp_hier_r3_20261027",
+     "platform": "PC",
+     "kind": "hierarchical (the VLA sets the intent, the controller flies)",
+     "note": null,
+     "within_30m": 0.869,
+     "latency_p50_s": 0.66,
+     "p0_escape_rate": 0.0,
+     "bundle": null,
+     "code_revision": null
+    },
+    {
+     "tag": "orin_e2e_r3_20261028",
+     "platform": "Jetson Orin Nano (client; VLA on the PC)",
+     "kind": "pure (the VLA flies every step)",
+     "note": null,
+     "within_30m": 0.076,
+     "latency_p50_s": 0.39,
+     "p0_escape_rate": 0.0,
+     "bundle": null,
+     "code_revision": null
+    },
+    {
+     "tag": "orin_hier_r3_20261028",
+     "platform": "Jetson Orin Nano (client; VLA on the PC)",
+     "kind": "hierarchical (the VLA sets the intent, the controller flies)",
+     "note": null,
+     "within_30m": 0.876,
+     "latency_p50_s": 0.62,
+     "p0_escape_rate": 0.0,
+     "bundle": null,
+     "code_revision": null
+    }
+   ],
+   "conditions": "Project AirSim CityLife with simple_flight: not ArduPilot, not hil, never KPI-grade. One flight per configuration unless more are listed, and one flight can differ widely from the next; flights at another commit or under another policy bundle are not repeats of one configuration (where a run folder names them, the table shows both). The file names the models, not the server configurations; CHANGELOG 2026-11-04 states them (the AerialVLA family bf16/sdpa/merged, DroneCATS and RaceVLA bf16). Pure flights are scored from the first acquisition, the others from the start gate",
+   "source": {
+    "file": "docs/data/progress_1028.json",
+    "sha256": "5586c5733c2615f9cb627b08e233299d4b4fb19b7283cc61e4d2718e78685daf",
+    "file_date": "2026-11-16"
+   }
+  },
+  {
+   "backend": "aerialvla_ft:r4",
+   "metric": "follow_matrix",
+   "protocol": "not C1, not C2",
+   "matrix": "27-28 October 2026",
+   "flights": [
+    {
+     "tag": "cmp2_e2e_r4_20261028",
+     "platform": "PC",
+     "kind": "pure (the VLA flies every step)",
+     "note": null,
+     "within_30m": 0.033,
+     "latency_p50_s": 0.63,
+     "p0_escape_rate": 0.0,
+     "bundle": null,
+     "code_revision": null
+    },
+    {
+     "tag": "cmp2_hier_r4_20261028",
+     "platform": "PC",
+     "kind": "hierarchical (the VLA sets the intent, the controller flies)",
+     "note": null,
+     "within_30m": 0.873,
+     "latency_p50_s": 0.68,
+     "p0_escape_rate": 0.0,
+     "bundle": null,
+     "code_revision": null
+    },
+    {
+     "tag": "orin_e2e_r4_20261028",
+     "platform": "Jetson Orin Nano (client; VLA on the PC)",
+     "kind": "pure (the VLA flies every step)",
+     "note": null,
+     "within_30m": 0.077,
+     "latency_p50_s": 0.46,
+     "p0_escape_rate": 0.0,
+     "bundle": null,
+     "code_revision": null
+    },
+    {
+     "tag": "orin_hier_r4_20261028",
+     "platform": "Jetson Orin Nano (client; VLA on the PC)",
+     "kind": "hierarchical (the VLA sets the intent, the controller flies)",
+     "note": null,
+     "within_30m": 0.882,
+     "latency_p50_s": 0.49,
+     "p0_escape_rate": 0.0,
+     "bundle": null,
+     "code_revision": null
+    }
+   ],
+   "conditions": "Project AirSim CityLife with simple_flight: not ArduPilot, not hil, never KPI-grade. One flight per configuration unless more are listed, and one flight can differ widely from the next; flights at another commit or under another policy bundle are not repeats of one configuration (where a run folder names them, the table shows both). The file names the models, not the server configurations; CHANGELOG 2026-11-04 states them (the AerialVLA family bf16/sdpa/merged, DroneCATS and RaceVLA bf16). Pure flights are scored from the first acquisition, the others from the start gate",
+   "source": {
+    "file": "docs/data/progress_1028.json",
+    "sha256": "5586c5733c2615f9cb627b08e233299d4b4fb19b7283cc61e4d2718e78685daf",
+    "file_date": "2026-11-16"
+   }
+  },
+  {
+   "backend": "scripted_stand_in",
+   "metric": "follow_matrix",
+   "protocol": "not C1, not C2",
+   "matrix": "27-28 October 2026",
+   "flights": [
+    {
+     "tag": "cmp2_hier_fixed12_20261028",
+     "platform": "PC",
+     "kind": "hierarchical, a scripted 12 m stand-in (no VLA)",
+     "note": null,
+     "within_30m": 0.999,
+     "latency_p50_s": 0.09,
+     "p0_escape_rate": 0.0,
+     "bundle": null,
+     "code_revision": null
+    },
+    {
+     "tag": "cmp_hier_fixed12_20261027",
+     "platform": "PC",
+     "kind": "hierarchical, a scripted 12 m stand-in (no VLA)",
+     "note": "labelled 'manual' in progress_1028.json; listed by its run folder's own pilot record (fake:scripted)",
+     "within_30m": 0.98,
+     "latency_p50_s": 0.08,
+     "p0_escape_rate": 0.0,
+     "bundle": null,
+     "code_revision": null
+    },
+    {
+     "tag": "orin_hier_fixed12_20261028",
+     "platform": "Jetson Orin Nano (client; VLA on the PC)",
+     "kind": "hierarchical, a scripted 12 m stand-in (no VLA)",
+     "note": null,
+     "within_30m": 0.799,
+     "latency_p50_s": 0.1,
+     "p0_escape_rate": 0.0,
+     "bundle": null,
+     "code_revision": null
+    }
+   ],
+   "conditions": "Project AirSim CityLife with simple_flight: not ArduPilot, not hil, never KPI-grade. One flight per configuration unless more are listed, and one flight can differ widely from the next; flights at another commit or under another policy bundle are not repeats of one configuration (where a run folder names them, the table shows both). The file names the models, not the server configurations; CHANGELOG 2026-11-04 states them (the AerialVLA family bf16/sdpa/merged, DroneCATS and RaceVLA bf16). Pure flights are scored from the first acquisition, the others from the start gate",
+   "source": {
+    "file": "docs/data/progress_1028.json",
+    "sha256": "5586c5733c2615f9cb627b08e233299d4b4fb19b7283cc61e4d2718e78685daf",
+    "file_date": "2026-11-16"
+   }
+  },
+  {
+   "backend": "hand_written_follow",
+   "metric": "follow_matrix",
+   "protocol": "not C1, not C2",
+   "matrix": "27-28 October 2026",
+   "flights": [
+    {
+     "tag": "cmp2_manual_20261028",
+     "platform": "PC",
+     "kind": "hand-written follow (no VLA)",
+     "note": null,
+     "within_30m": 0.966,
+     "latency_p50_s": null,
+     "p0_escape_rate": 0.0,
+     "bundle": null,
+     "code_revision": null
+    },
+    {
+     "tag": "cmp_manual_20261027",
+     "platform": "PC",
+     "kind": "hand-written follow (no VLA)",
+     "note": null,
+     "within_30m": 0.954,
+     "latency_p50_s": null,
+     "p0_escape_rate": 0.0,
+     "bundle": null,
+     "code_revision": null
+    },
+    {
+     "tag": "orin_manual_20261028",
+     "platform": "Jetson Orin Nano (client; VLA on the PC)",
+     "kind": "hand-written follow (no VLA)",
+     "note": null,
+     "within_30m": 0.976,
+     "latency_p50_s": null,
+     "p0_escape_rate": 0.0,
+     "bundle": null,
+     "code_revision": null
+    }
+   ],
+   "conditions": "Project AirSim CityLife with simple_flight: not ArduPilot, not hil, never KPI-grade. One flight per configuration unless more are listed, and one flight can differ widely from the next; flights at another commit or under another policy bundle are not repeats of one configuration (where a run folder names them, the table shows both). The file names the models, not the server configurations; CHANGELOG 2026-11-04 states them (the AerialVLA family bf16/sdpa/merged, DroneCATS and RaceVLA bf16). Pure flights are scored from the first acquisition, the others from the start gate",
+   "source": {
+    "file": "docs/data/progress_1028.json",
+    "sha256": "5586c5733c2615f9cb627b08e233299d4b4fb19b7283cc61e4d2718e78685daf",
+    "file_date": "2026-11-16"
+   }
+  },
+  {
+   "backend": "aerialvla_ft:follow_v2_r1/epoch4",
+   "metric": "follow_matrix",
+   "protocol": "not C1, not C2",
+   "matrix": "3-4 November 2026",
+   "flights": [
+    {
+     "tag": "agx_e2e_r1_20261103",
+     "platform": "AGX Orin (client and VLA server)",
+     "kind": "pure (the VLA flies every step)",
+     "within_30m": 0.034,
+     "latency_p50_s": 1.3597,
+     "p0_escape_rate": 0.0,
+     "ticks": 4200,
+     "end_reason": "timeout",
+     "model_id": "aerialvla-ft-follow/follow_v2_r1/epoch4@72cd9ae4",
+     "config": "bf16/sdpa/merged",
+     "topology": "projectairsim-remote-sim",
+     "code_revision": "6da813de8ad7",
+     "bundle": "follow-car-citylife-nfz-v0.1.1.tar.gz"
+    },
+    {
+     "tag": "agx_hier_r1_20261103",
+     "platform": "AGX Orin (client and VLA server)",
+     "kind": "hierarchical (the VLA sets the intent, the controller flies)",
+     "within_30m": 0.647,
+     "latency_p50_s": 1.4669,
+     "p0_escape_rate": 0.0,
+     "ticks": 4197,
+     "end_reason": null,
+     "model_id": "aerialvla-ft-follow/follow_v2_r1/epoch4@72cd9ae4",
+     "config": "bf16/sdpa/merged",
+     "topology": "projectairsim-remote-sim",
+     "code_revision": "6da813de8ad7",
+     "bundle": "follow-car-citylife-nfz-v0.1.1.tar.gz"
+    }
+   ],
+   "conditions": "Project AirSim CityLife with simple_flight: not ArduPilot, not hil, never KPI-grade. One flight per configuration unless more are listed, and one flight can differ widely from the next; flights at another commit or under another policy bundle are not repeats of one configuration (where a run folder names them, the table shows both). The simulator ran on the PC; identities, scores, commits and policy bundles are each run's own metrics.json and kpi.json. The agx_*_01 flights are the first AGX follows of 3 November, at an earlier commit than the matrix; the nfz3b_ flights flew another bundle (a no-fly zone on the route), so they are another scenario, not a repeat. Pure flights are scored from the first acquisition, the others from the start gate",
+   "source": {
+    "file": "demo/out/*agx_*/metrics.json (tags *_2026110[34] and *_01)",
+    "runs": 24
+   }
+  },
+  {
+   "backend": "aerialvla_ft:follow_v3_pf_r1/epoch1",
+   "metric": "follow_matrix",
+   "protocol": "not C1, not C2",
+   "matrix": "3-4 November 2026",
+   "flights": [
+    {
+     "tag": "agx_e2e_r2_20261103",
+     "platform": "AGX Orin (client and VLA server)",
+     "kind": "pure (the VLA flies every step)",
+     "within_30m": 0.13,
+     "latency_p50_s": 1.3925,
+     "p0_escape_rate": 0.0,
+     "ticks": 4197,
+     "end_reason": "timeout",
+     "model_id": "aerialvla-ft-follow/follow_v3_pf_r1/epoch1@948ff887",
+     "config": "bf16/sdpa/merged",
+     "topology": "projectairsim-remote-sim",
+     "code_revision": "6da813de8ad7",
+     "bundle": "follow-car-citylife-nfz-v0.1.1.tar.gz"
+    },
+    {
+     "tag": "agx_hier_r2_20261103",
+     "platform": "AGX Orin (client and VLA server)",
+     "kind": "hierarchical (the VLA sets the intent, the controller flies)",
+     "within_30m": 0.92,
+     "latency_p50_s": 1.457,
+     "p0_escape_rate": 0.0,
+     "ticks": 4197,
+     "end_reason": null,
+     "model_id": "aerialvla-ft-follow/follow_v3_pf_r1/epoch1@948ff887",
+     "config": "bf16/sdpa/merged",
+     "topology": "projectairsim-remote-sim",
+     "code_revision": "6da813de8ad7",
+     "bundle": "follow-car-citylife-nfz-v0.1.1.tar.gz"
+    }
+   ],
+   "conditions": "Project AirSim CityLife with simple_flight: not ArduPilot, not hil, never KPI-grade. One flight per configuration unless more are listed, and one flight can differ widely from the next; flights at another commit or under another policy bundle are not repeats of one configuration (where a run folder names them, the table shows both). The simulator ran on the PC; identities, scores, commits and policy bundles are each run's own metrics.json and kpi.json. The agx_*_01 flights are the first AGX follows of 3 November, at an earlier commit than the matrix; the nfz3b_ flights flew another bundle (a no-fly zone on the route), so they are another scenario, not a repeat. Pure flights are scored from the first acquisition, the others from the start gate",
+   "source": {
+    "file": "demo/out/*agx_*/metrics.json (tags *_2026110[34] and *_01)",
+    "runs": 24
+   }
+  },
+  {
+   "backend": "aerialvla_ft:follow_v4_r3/epoch1",
+   "metric": "follow_matrix",
+   "protocol": "not C1, not C2",
+   "matrix": "3-4 November 2026",
+   "flights": [
+    {
+     "tag": "agx_e2e_r3_20261103",
+     "platform": "AGX Orin (client and VLA server)",
+     "kind": "pure (the VLA flies every step)",
+     "within_30m": 0.098,
+     "latency_p50_s": 1.3928,
+     "p0_escape_rate": 0.0,
+     "ticks": 4200,
+     "end_reason": "timeout",
+     "model_id": "aerialvla-ft-follow/follow_v4_r3/epoch1@8c132f16",
+     "config": "bf16/sdpa/merged",
+     "topology": "projectairsim-remote-sim",
+     "code_revision": "6da813de8ad7",
+     "bundle": "follow-car-citylife-nfz-v0.1.1.tar.gz"
+    },
+    {
+     "tag": "agx_e2e_r3_20261104",
+     "platform": "AGX Orin (client and VLA server)",
+     "kind": "pure (the VLA flies every step)",
+     "within_30m": 0.285,
+     "latency_p50_s": 1.3862,
+     "p0_escape_rate": 0.0,
+     "ticks": 4200,
+     "end_reason": "timeout",
+     "model_id": "aerialvla-ft-follow/follow_v4_r3/epoch1@8c132f16",
+     "config": "bf16/sdpa/merged",
+     "topology": "projectairsim-remote-sim",
+     "code_revision": "989f96724b74",
+     "bundle": "follow-car-citylife-nfz-v0.1.1.tar.gz"
+    },
+    {
+     "tag": "agx_hier_r3_20261103",
+     "platform": "AGX Orin (client and VLA server)",
+     "kind": "hierarchical (the VLA sets the intent, the controller flies)",
+     "within_30m": 0.843,
+     "latency_p50_s": 1.4587,
+     "p0_escape_rate": 0.0,
+     "ticks": 4198,
+     "end_reason": null,
+     "model_id": "aerialvla-ft-follow/follow_v4_r3/epoch1@8c132f16",
+     "config": "bf16/sdpa/merged",
+     "topology": "projectairsim-remote-sim",
+     "code_revision": "6da813de8ad7",
+     "bundle": "follow-car-citylife-nfz-v0.1.1.tar.gz"
+    }
+   ],
+   "conditions": "Project AirSim CityLife with simple_flight: not ArduPilot, not hil, never KPI-grade. One flight per configuration unless more are listed, and one flight can differ widely from the next; flights at another commit or under another policy bundle are not repeats of one configuration (where a run folder names them, the table shows both). The simulator ran on the PC; identities, scores, commits and policy bundles are each run's own metrics.json and kpi.json. The agx_*_01 flights are the first AGX follows of 3 November, at an earlier commit than the matrix; the nfz3b_ flights flew another bundle (a no-fly zone on the route), so they are another scenario, not a repeat. Pure flights are scored from the first acquisition, the others from the start gate",
+   "source": {
+    "file": "demo/out/*agx_*/metrics.json (tags *_2026110[34] and *_01)",
+    "runs": 24
+   }
+  },
+  {
+   "backend": "aerialvla_ft:follow_v5_r4/epoch1",
+   "metric": "follow_matrix",
+   "protocol": "not C1, not C2",
+   "matrix": "3-4 November 2026",
+   "flights": [
+    {
+     "tag": "agx_e2e_r4_20261103",
+     "platform": "AGX Orin (client and VLA server)",
+     "kind": "pure (the VLA flies every step)",
+     "within_30m": 0.077,
+     "latency_p50_s": 1.3965,
+     "p0_escape_rate": 0.0,
+     "ticks": 4201,
+     "end_reason": "timeout",
+     "model_id": "aerialvla-ft-follow/follow_v5_r4/epoch1@8e21f930",
+     "config": "bf16/sdpa/merged",
+     "topology": "projectairsim-remote-sim",
+     "code_revision": "6da813de8ad7",
+     "bundle": "follow-car-citylife-nfz-v0.1.1.tar.gz"
+    },
+    {
+     "tag": "agx_hier_r4_20261103",
+     "platform": "AGX Orin (client and VLA server)",
+     "kind": "hierarchical (the VLA sets the intent, the controller flies)",
+     "within_30m": 0.911,
+     "latency_p50_s": 1.4603,
+     "p0_escape_rate": 0.0,
+     "ticks": 4195,
+     "end_reason": null,
+     "model_id": "aerialvla-ft-follow/follow_v5_r4/epoch1@8e21f930",
+     "config": "bf16/sdpa/merged",
+     "topology": "projectairsim-remote-sim",
+     "code_revision": "6da813de8ad7",
+     "bundle": "follow-car-citylife-nfz-v0.1.1.tar.gz"
+    }
+   ],
+   "conditions": "Project AirSim CityLife with simple_flight: not ArduPilot, not hil, never KPI-grade. One flight per configuration unless more are listed, and one flight can differ widely from the next; flights at another commit or under another policy bundle are not repeats of one configuration (where a run folder names them, the table shows both). The simulator ran on the PC; identities, scores, commits and policy bundles are each run's own metrics.json and kpi.json. The agx_*_01 flights are the first AGX follows of 3 November, at an earlier commit than the matrix; the nfz3b_ flights flew another bundle (a no-fly zone on the route), so they are another scenario, not a repeat. Pure flights are scored from the first acquisition, the others from the start gate",
+   "source": {
+    "file": "demo/out/*agx_*/metrics.json (tags *_2026110[34] and *_01)",
+    "runs": 24
+   }
+  },
+  {
+   "backend": "hand_written_follow",
+   "metric": "follow_matrix",
+   "protocol": "not C1, not C2",
+   "matrix": "3-4 November 2026",
+   "flights": [
+    {
+     "tag": "agx_follow_01",
+     "platform": "AGX Orin (client and VLA server)",
+     "kind": "hand-written follow (no VLA)",
+     "within_30m": 0.952,
+     "latency_p50_s": null,
+     "p0_escape_rate": 0.0,
+     "ticks": 4195,
+     "end_reason": null,
+     "model_id": null,
+     "config": null,
+     "topology": "projectairsim-remote-sim",
+     "code_revision": "a609cf8ca632",
+     "bundle": "follow-car-citylife-nfz-v0.1.1.tar.gz"
+    },
+    {
+     "tag": "agx_manual_20261103",
+     "platform": "AGX Orin (client and VLA server)",
+     "kind": "hand-written follow (no VLA)",
+     "within_30m": 0.952,
+     "latency_p50_s": null,
+     "p0_escape_rate": 0.0,
+     "ticks": 4197,
+     "end_reason": null,
+     "model_id": null,
+     "config": null,
+     "topology": "projectairsim-remote-sim",
+     "code_revision": "6da813de8ad7",
+     "bundle": "follow-car-citylife-nfz-v0.1.1.tar.gz"
+    }
+   ],
+   "conditions": "Project AirSim CityLife with simple_flight: not ArduPilot, not hil, never KPI-grade. One flight per configuration unless more are listed, and one flight can differ widely from the next; flights at another commit or under another policy bundle are not repeats of one configuration (where a run folder names them, the table shows both). The simulator ran on the PC; identities, scores, commits and policy bundles are each run's own metrics.json and kpi.json. The agx_*_01 flights are the first AGX follows of 3 November, at an earlier commit than the matrix; the nfz3b_ flights flew another bundle (a no-fly zone on the route), so they are another scenario, not a repeat. Pure flights are scored from the first acquisition, the others from the start gate",
+   "source": {
+    "file": "demo/out/*agx_*/metrics.json (tags *_2026110[34] and *_01)",
+    "runs": 24
+   }
+  },
+  {
+   "backend": "scripted_stand_in",
+   "metric": "follow_matrix",
+   "protocol": "not C1, not C2",
+   "matrix": "3-4 November 2026",
+   "flights": [
+    {
+     "tag": "agx_hier_fixed12_20261103",
+     "platform": "AGX Orin (client and VLA server)",
+     "kind": "hierarchical, a scripted 12 m stand-in (no VLA)",
+     "within_30m": 0.374,
+     "latency_p50_s": 0.0894,
+     "p0_escape_rate": 0.0,
+     "ticks": 4194,
+     "end_reason": null,
+     "model_id": "fake:scripted",
+     "config": "fake/none/unmerged",
+     "topology": "projectairsim-remote-sim",
+     "code_revision": "6da813de8ad7",
+     "bundle": "follow-car-citylife-nfz-v0.1.1.tar.gz"
+    }
+   ],
+   "conditions": "Project AirSim CityLife with simple_flight: not ArduPilot, not hil, never KPI-grade. One flight per configuration unless more are listed, and one flight can differ widely from the next; flights at another commit or under another policy bundle are not repeats of one configuration (where a run folder names them, the table shows both). The simulator ran on the PC; identities, scores, commits and policy bundles are each run's own metrics.json and kpi.json. The agx_*_01 flights are the first AGX follows of 3 November, at an earlier commit than the matrix; the nfz3b_ flights flew another bundle (a no-fly zone on the route), so they are another scenario, not a repeat. Pure flights are scored from the first acquisition, the others from the start gate",
+   "source": {
+    "file": "demo/out/*agx_*/metrics.json (tags *_2026110[34] and *_01)",
+    "runs": 24
    }
   }
  ],
  "contradictions": [
   {
-   "doc": "docs/MIDTERM-REPORT-Aug2026.md:327",
-   "claim": "| QLoRA fine-tunes (ours) | Trained on self-collected expert flights | 100 % reached, mean efficiency 0.996, goal assist off |",
+   "doc": "docs/MIDTERM-REPORT-Aug2026.md:7",
+   "claim": "> mean efficiency 0.996, goal assist off\" (section 6.4): those three",
    "contradicted_by": "training/eval_ft2_deploy.json",
    "field": "results[*].params.goal_blend",
    "value": [
@@ -884,204 +4522,8 @@
      "mean_efficiency": 0.211
     }
    ]
-  },
-  {
-   "doc": "tools/build_report_results.py:260",
-   "claim": "\"reached, mean efficiency 0.996, goal assist off |\",",
-   "contradicted_by": "training/eval_ft2_deploy.json",
-   "field": "results[*].params.goal_blend",
-   "value": [
-    0.55
-   ],
-   "note": "generates docs/MIDTERM-REPORT-Aug2026.md section 6.4, so a hand fix to the report would be overwritten",
-   "why": "the fine-tune's 5/5 reached and 0.996 efficiency (training/eval_ft2_deploy.json) were flown with goal_blend 0.55, i.e. with the mission-direction assist ON. Its null does not separate it from the adapter before fine-tuning: under the same assist the original AerialVLA adapter also reached 5/5 (efficiency 0.942, training/eval_base_deploy.json), and the run3 fine-tune also reached 5/5 (training/eval_ft3_deploy.json). Without the assist (goal_blend 0) the run2 fine-tune reached 0/5 at yaw gain 1.0 (training/eval_ft2_e1.json) and 1/5 at yaw gain 0.4 (training/eval_ft2_yg04.json), and the original adapter 1/5 (training/eval_baseline.json). Correct statement: 5/5 reached (efficiency 0.996) with mission-direction assist (goal_blend 0.55); the original adapter under the same assist also reached 5/5 (0.942); without assist 0/5 (yaw gain 1.0) and 1/5 (yaw gain 0.4)",
-   "evidence": [
-    {
-     "file": "training/eval_ft2_deploy.json",
-     "adapter": "D:/models/aerialvla-ft/run2/epoch1",
-     "reached": 5,
-     "episodes": 5,
-     "goal_blend": [
-      0.55
-     ],
-     "yaw_gain": [
-      0.4
-     ],
-     "assisted": true,
-     "mean_efficiency": 0.996
-    },
-    {
-     "file": "training/eval_base_deploy.json",
-     "adapter": "D:/models/aerialvla-lora/aero_vla",
-     "reached": 5,
-     "episodes": 5,
-     "goal_blend": [
-      0.55
-     ],
-     "yaw_gain": [
-      0.4
-     ],
-     "assisted": true,
-     "mean_efficiency": 0.942
-    },
-    {
-     "file": "training/eval_ft3_deploy.json",
-     "adapter": "D:/models/aerialvla-ft/run3/epoch1",
-     "reached": 5,
-     "episodes": 5,
-     "goal_blend": [
-      0.55
-     ],
-     "yaw_gain": [
-      0.4
-     ],
-     "assisted": true,
-     "mean_efficiency": 1.013
-    },
-    {
-     "file": "training/eval_ft2_e1.json",
-     "adapter": "D:/models/aerialvla-ft/run2/epoch1",
-     "reached": 0,
-     "episodes": 5,
-     "goal_blend": [
-      0.0
-     ],
-     "yaw_gain": [
-      1.0
-     ],
-     "assisted": false,
-     "mean_efficiency": 0.0
-    },
-    {
-     "file": "training/eval_ft2_yg04.json",
-     "adapter": "D:/models/aerialvla-ft/run2/epoch1",
-     "reached": 1,
-     "episodes": 5,
-     "goal_blend": [
-      0.0
-     ],
-     "yaw_gain": [
-      0.4
-     ],
-     "assisted": false,
-     "mean_efficiency": 0.049
-    },
-    {
-     "file": "training/eval_baseline.json",
-     "adapter": "D:/models/aerialvla-lora/aero_vla",
-     "reached": 1,
-     "episodes": 5,
-     "goal_blend": [
-      0.0
-     ],
-     "yaw_gain": [
-      1.0
-     ],
-     "assisted": false,
-     "mean_efficiency": 0.211
-    }
-   ]
-  },
-  {
-   "doc": "tools/deck/build_midterm_deck.js:515",
-   "claim": "[\"Our QLoRA fine-tunes\", \"Self-collected expert flights\", \"100 % reached, efficiency 0.996\"],",
-   "contradicted_by": "training/eval_ft2_deploy.json",
-   "field": "results[*].params.goal_blend",
-   "value": [
-    0.55
-   ],
-   "note": "states 0.996 with no assist condition",
-   "why": "the fine-tune's 5/5 reached and 0.996 efficiency (training/eval_ft2_deploy.json) were flown with goal_blend 0.55, i.e. with the mission-direction assist ON. Its null does not separate it from the adapter before fine-tuning: under the same assist the original AerialVLA adapter also reached 5/5 (efficiency 0.942, training/eval_base_deploy.json), and the run3 fine-tune also reached 5/5 (training/eval_ft3_deploy.json). Without the assist (goal_blend 0) the run2 fine-tune reached 0/5 at yaw gain 1.0 (training/eval_ft2_e1.json) and 1/5 at yaw gain 0.4 (training/eval_ft2_yg04.json), and the original adapter 1/5 (training/eval_baseline.json). Correct statement: 5/5 reached (efficiency 0.996) with mission-direction assist (goal_blend 0.55); the original adapter under the same assist also reached 5/5 (0.942); without assist 0/5 (yaw gain 1.0) and 1/5 (yaw gain 0.4)",
-   "evidence": [
-    {
-     "file": "training/eval_ft2_deploy.json",
-     "adapter": "D:/models/aerialvla-ft/run2/epoch1",
-     "reached": 5,
-     "episodes": 5,
-     "goal_blend": [
-      0.55
-     ],
-     "yaw_gain": [
-      0.4
-     ],
-     "assisted": true,
-     "mean_efficiency": 0.996
-    },
-    {
-     "file": "training/eval_base_deploy.json",
-     "adapter": "D:/models/aerialvla-lora/aero_vla",
-     "reached": 5,
-     "episodes": 5,
-     "goal_blend": [
-      0.55
-     ],
-     "yaw_gain": [
-      0.4
-     ],
-     "assisted": true,
-     "mean_efficiency": 0.942
-    },
-    {
-     "file": "training/eval_ft3_deploy.json",
-     "adapter": "D:/models/aerialvla-ft/run3/epoch1",
-     "reached": 5,
-     "episodes": 5,
-     "goal_blend": [
-      0.55
-     ],
-     "yaw_gain": [
-      0.4
-     ],
-     "assisted": true,
-     "mean_efficiency": 1.013
-    },
-    {
-     "file": "training/eval_ft2_e1.json",
-     "adapter": "D:/models/aerialvla-ft/run2/epoch1",
-     "reached": 0,
-     "episodes": 5,
-     "goal_blend": [
-      0.0
-     ],
-     "yaw_gain": [
-      1.0
-     ],
-     "assisted": false,
-     "mean_efficiency": 0.0
-    },
-    {
-     "file": "training/eval_ft2_yg04.json",
-     "adapter": "D:/models/aerialvla-ft/run2/epoch1",
-     "reached": 1,
-     "episodes": 5,
-     "goal_blend": [
-      0.0
-     ],
-     "yaw_gain": [
-      0.4
-     ],
-     "assisted": false,
-     "mean_efficiency": 0.049
-    },
-    {
-     "file": "training/eval_baseline.json",
-     "adapter": "D:/models/aerialvla-lora/aero_vla",
-     "reached": 1,
-     "episodes": 5,
-     "goal_blend": [
-      0.0
-     ],
-     "yaw_gain": [
-      1.0
-     ],
-     "assisted": false,
-     "mean_efficiency": 0.211
-    }
-   ]
   }
  ],
- "default_backend": null,
- "decision": "The grant defers the choice to this measurement set, and the Orin columns are empty. The stored dev-rail runs (demo/out/ros2_*, not KPI-bearing: the grant takes KPI figures from hil) were flown by the stub.",
  "aerialvla_serving": {
   "schema": "vlaguard.aerialvla_serving/1",
   "created_utc": "2026-10-21T18:25:13Z",
@@ -1509,5 +4951,136 @@
   "choice_note": "Why there is no default, and what each option costs (decided 2026-10-22, review of V1a). The precision changes what the model says: bf16 reproduces the upstream-precision reference - bf16/sdpa/unmerged gives the reference's output on 96 % of the 48 probe inputs, the merged bf16 rows on 88-90 % (greedy near-ties) - while every nf4 row agrees on only 25-33 % exactly and 48-50 % within 3 bins; 4-bit quantisation, not the attention kernel or the merge, is what moves the outputs. On the no-hint phrase every bf16 row and both nf4 merged rows answer '00 49 49 LAND' on 5 of 6 frames, while the nf4 unmerged loader (the one every earlier AerialVLA script here used) reproduces two of the 4 Aug malformed landing outputs ('00 49 4949', '00 49 494 49'); the strict reader turns those into holds. nf4/sdpa/merged is kept as the measured low-VRAM option (p50 517 ms; about 7.9 GB held by the process, 5.4 GB of it allocated by torch), not as a default that silently changes behaviour. A bf16 process holds about 16.8-16.9 GB: bf16/sdpa/unmerged (p50 486 ms) is the closest to the reference, bf16/sdpa/merged the fastest (p50 259 ms, below the paper's 0.35 s; its nvidia-smi reading failed, so its process VRAM is not recorded). The 10 GB budget behind the low-VRAM rule is an assumption, not a measurement: the card has 24 GB, desktop applications held about 3.4 GB before the runs (one reading, subtracted from every row's nvidia-smi figure), OWL-ViT takes 0.61 GB, and CityLife's own VRAM has never been logged. Measuring CityLife's VRAM beside the model is what decides which configuration flies (next wave); until then the server loads none by default.",
   "probe_outputs_in": "docs/data/aerialvla_serving_4090.json"
  },
- "serving_added_utc": "2026-10-21T18:25:13Z"
+ "c1_bundles": {
+  "policy": "policies/urban_demo_policy.yaml",
+  "looked_in": "bundles/",
+  "found": []
+ },
+ "g3": {
+  "gate": "If the chosen 7B-class VLA backend cannot produce 4-D actions at 10 Hz on the Orin in `int8` quantization, a gate could be added: \"if Orin inference latency > 100 ms p95 by 2026-08-01, swap to a smaller / quantized backend (e.g. BitVLA, TinyVLA).\" Whether to add this gate depends on Q2 measurement.",
+  "source": "docs/04-risks-and-fallbacks/fallback-gates.md of the reference design",
+  "threshold_ms": 100.0,
+  "gate_date": "2026-08-01",
+  "seven_b": [
+   {
+    "backend": "openvla_7b_4bit",
+    "label": "OpenVLA-7B, 4-bit NF4",
+    "orin": []
+   },
+   {
+    "backend": "openvla_7b_bf16",
+    "label": "OpenVLA-7B, bf16 (unquantised)",
+    "orin": [
+     {
+      "what": "not R1: gate check, slowest answer after the first",
+      "p95_ms": null,
+      "slowest_ms": 999.4,
+      "n": 8,
+      "file": "deploy/evidence/hil/vla_bf16_check.json"
+     }
+    ]
+   },
+   {
+    "backend": "openvla_7b_int8wo",
+    "label": "OpenVLA-7B, int8 weight-only (torchao): an attempt",
+    "orin": []
+   },
+   {
+    "backend": "aerialvla_lora",
+    "label": "AerialVLA LoRA on OpenVLA-7B, 4-bit",
+    "orin": []
+   },
+   {
+    "backend": "aerialvla_ft_run2",
+    "label": "AerialVLA + our QLoRA fine-tune (run2/epoch1), 4-bit",
+    "orin": []
+   },
+   {
+    "backend": "aerialvla_bf16",
+    "label": "AerialVLA LoRA on OpenVLA-7B, bf16 (served over protocol v2)",
+    "orin": [
+     {
+      "what": "not R1: bf16/sdpa/unmerged",
+      "p95_ms": 1537.8,
+      "n": 50,
+      "file": "deploy/evidence/hil/aerialvla_serving_bench_agx.json"
+     },
+     {
+      "what": "not R1: bf16/sdpa/merged",
+      "p95_ms": 1099.6,
+      "n": 50,
+      "file": "deploy/evidence/hil/aerialvla_serving_bench_agx_merged.json"
+     },
+     {
+      "what": "not R1: in flight, 3-4 November 2026, the server's latency p50 per flight",
+      "p95_ms": null,
+      "in_flight_p50_ms": [
+       1393.5,
+       1880.4
+      ],
+      "n": 6,
+      "file": "demo/out/*agx_*/metrics.json (tags *_2026110[34] and *_01)"
+     }
+    ]
+   },
+   {
+    "backend": "racevla_7b",
+    "label": "RaceVLA drone6_all (Skoltech; an OpenVLA-7B fine-tune), bf16",
+    "orin": [
+     {
+      "what": "not R1: in flight, 3-4 November 2026, the server's latency p50 per flight",
+      "p95_ms": null,
+      "in_flight_p50_ms": [
+       1133.1,
+       1216.9
+      ],
+      "n": 3,
+      "file": "demo/out/*agx_*/metrics.json (tags *_2026110[34] and *_01)"
+     }
+    ]
+   }
+  ],
+  "smaller": [
+   {
+    "backend": "aiotvla_v10b",
+    "label": "AIoT-VLA v10b (the lab's own: frozen OWL-ViT + a trained head)",
+    "orin": [
+     {
+      "what": "not R1: fp16/sdpa, own inputs",
+      "p95_ms": 41.7,
+      "n": 300,
+      "file": "deploy/evidence/hil/aiotvla_v10b_bench_agx.json"
+     }
+    ]
+   },
+   {
+    "backend": "dronecats_2b",
+    "label": "DroneCATS-Cosmos3-Edge-2B (NAVER), bf16",
+    "orin": [
+     {
+      "what": "not R1: in flight, 3-4 November 2026, the server's latency p50 per flight",
+      "p95_ms": null,
+      "in_flight_p50_ms": [
+       1605.3999999999999,
+       2638.1
+      ],
+      "n": 3,
+      "file": "demo/out/*agx_*/metrics.json (tags *_2026110[34] and *_01)"
+     }
+    ]
+   }
+  ],
+  "int8_on_orin": "not attempted",
+  "int8_note": "the precision the grant's candidate gate G3 names. One per-layer figure exists, on the Orin Nano (CHANGELOG 2026-10-28 (night): one 2048x6144 layer, int8 weight-only 7.7 ms against bf16 9.9 ms); the whole model has not been timed in int8 anywhere",
+  "decision": "not recorded by this tool"
+ },
+ "default_backend": null,
+ "decision": "The grant defers the choice to this measurement set, and the Orin rate column holds R1 for 0 of the 7 backends `measure` can time, and a bench that is not R1, labelled as such, for 3 backends (R1 does not cover the 4 backends served over protocol v2: their Orin timing is their server's bench). On hil, C1 has been flown by no backend and C2 by 1 (the protocol asks for 3 flights of each). The stored dev-rail runs (demo/out/ros2_*, not KPI-bearing: the grant takes KPI figures from hil) were flown by the stub.",
+ "comparison_gaps": [
+  "stub: no R1 on an Orin (R1's floor on the same host)",
+  "aerialvla_bf16: 0 of 3 C2 flights",
+  "aiotvla_v10b: 2 of 3 C2 flights",
+  "dronecats_2b: no Orin timing, 0 of 3 C2 flights",
+  "racevla_7b: no Orin timing, 0 of 3 C2 flights"
+ ]
 }

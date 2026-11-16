@@ -15,6 +15,23 @@ prompt's, chooses no default backend, flags every place that still states the
 assisted 0.996 result without its condition, and refuses to load a 7 B model
 unless told to.
 
+Protocol 2 (2026-11-16) adds, and the tests at the end hold it to:
+  * C2, the Project AirSim follow on hil, with the sentence that it was added
+    after the choice it bears on; R1 and C1 are word for word what they were,
+    and every row states why C1 was not flown;
+  * the AGX Orin benches that are not R1 reach the Orin column each with its
+    label (own inputs, count, server in the path), never as "R1", and only
+    when the file's own host block passes the Orin rule;
+  * a hil follow is scored as C2 only when it meets every condition of C2; a
+    stressor, a hot-applied policy, a paraphrase, another feed, a flight not
+    flown alone or one that never started is listed with its reason;
+  * the 28 October and 4 November matrices are records "not C1, not C2";
+  * the default line is "none" until `--default` names a backend the set
+    holds an Orin rate and three C2 flights for, with a date after the set;
+  * OpenVLA-7B bf16 is timed through deploy/orin/vla_bf16_check.py's loader
+    and refused off the GPU or out of bf16; the int8 weight-only key records
+    a refusal with its stage and cause instead of a timing.
+
 No test here loads a GPU model. The GPU paths are exercised with fakes that
 stand in for exactly the loader and the backend class the flight scripts use,
 and the OpenVLA fake refuses an attention mask: passing one crashes OpenVLA's
@@ -467,7 +484,9 @@ def test_the_csp_arm_times_the_longer_prompt_the_flight_script_builds():
     try:
         V.measure("stub", "dev", csp="on")
     except ValueError as exc:
-        assert "openvla_7b_4bit only" in str(exc)
+        # since 2026-11-16 the prompt arm is every OpenVLA-7B key's (4-bit,
+        # bf16, the int8 attempt): the refusal names them
+        assert "the OpenVLA-7B keys only" in str(exc) and "openvla_7b_4bit" in str(exc), exc
     else:
         raise AssertionError("--csp on was accepted for a backend that reads no prompt")
 
@@ -713,6 +732,1005 @@ def test_the_committed_table_still_matches_the_files_it_cites():
             col = "rate_orin" if res["host"]["jetson"]["is_orin"] else "rate_desktop"
             assert r["cells"][col].startswith("R1"), (r["backend"], col, r["cells"])
     assert checked > 0 or not (ROOT / "training" / "eval_ft2_deploy.json").is_file()
+
+
+# --------------------------------------------------------------------------- #
+# protocol 2 (2026-11-16): C2, the Orin benches, the matrices, the default line
+# --------------------------------------------------------------------------- #
+HIL_EVIDENCE = V.EVIDENCE / "hil"
+T0_15_NOV = 1794750528.0                 # pas_hil_feed_07's own mission start (UTC 2026-11-15)
+T0_UTC_16_NOV_2330 = 1794871800.0        # 2026-11-16 23:30 UTC = 2026-11-17 07:30 in the lab
+
+
+def _build(**kw):
+    """build_table with every folder empty unless named."""
+    empty = _tmp()
+    args = dict(demo_out=empty, experiments_out=empty, model_root=empty, evidence=empty,
+                docs_data=empty, bundles=empty)
+    args.update(kw)
+    return V.build_table(**args)
+
+
+def _row(t: dict, bid: str) -> dict:
+    return next(r for r in t["rows"] if r["backend"] == bid)
+
+
+def _pas_run(root: Path, tag: str, *, model="aiotvla/v10b@35259bd1", feed="stream", cap=0.0,
+             kpi_grade=True, topology="hil", stress=None, hot=False, identity=True,
+             estimator=True, reached=True, ticks=4198, end="max_s reached", w30=0.3523,
+             dec_hz=10.93, interventions=284, p0=0, pilot_kind="vla",
+             rail="projectairsim-ardupilot", mission_s=420.17,
+             negq=("a traffic light",), capture=0.05,
+             bundle="follow-car-citylife-v0.1.3.tar.gz", max_s=420.0, outcome="fail",
+             fail_reasons=("unsafe_position_entered",), unsafe=3, t0=T0_15_NOV) -> Path:
+    """A perception-rail follow's run folder with the fields the C2 reader
+    reads, shaped as the node writes them (metrics.json, kpi.json; the
+    defaults are pas_hil_feed_07's). `max_s=None` writes no mission-monitor
+    limit, as a run with no VLA mission block has none; `negq`, `capture`
+    or `bundle` None leaves that record out."""
+    d = root / tag
+    d.mkdir(parents=True)
+    feed_params = {} if feed is None else {"vla_feed": feed, "vla_feed_max_hz": cap}
+    if negq is not None:
+        feed_params["negative_query"] = list(negq)
+    if capture is not None:
+        feed_params["front_capture_interval_s"] = capture
+    m = {"tag": tag, "rail": rail, "topology": topology, "grant_topology": "hil",
+         "ticks": ticks, "end_reason": end, "mission_s": mission_s if ticks else 0.0,
+         "frac_within_30m": w30 if ticks else None,
+         "interventions": interventions if ticks else None, "det_hz": 2.49,
+         "perception_stress": {"name": stress} if stress else None,
+         "hot_apply": {"n_applied": 2} if hot else None,
+         "mission": {"task": "follow a red car"}, "start_gate": {"reached": reached},
+         "params": {"pilot": "vla", "mission": "follow", "identity": identity,
+                    "target_estimator": estimator, "stress": stress, **feed_params},
+         "pilot": {"kind": pilot_kind,
+                   "server_identity": {"id": model, "precision": "bf16"},
+                   "summary": {"decision_hz": dec_hz, "answers_by_kind": {"step": 4648},
+                               "parse_fail": 0}},
+         "vla_observation": {"asking_s": 353.393, "t0_wall": t0}}
+    if bundle is not None:
+        m["policy_source"] = {"kind": "bundle", "default_bundle": True,
+                              "path": f"/home/nathan-agxiot/vla-drone/bundles/{bundle}"}
+    if max_s is not None and ticks:
+        m["vla"] = {"mission": {"monitor": {"config": {"mission": "follow", "max_s": max_s}}}}
+    k = {"kpi_grade": kpi_grade, "p0_escapes": p0, "p0_violation_escape_rate": 0.0,
+         "outcome": outcome, "mission_fail_reasons": list(fail_reasons or ()),
+         "unsafe_p0_ticks": unsafe if ticks else 0, "p0_ticks_not_measurable": 0,
+         "p0_ticks_blind": None,
+         "manifest": {"code_revision": "deac4b3a5b16", "topology": topology}}
+    (d / "metrics.json").write_text(json.dumps(m), encoding="utf-8")
+    (d / "kpi.json").write_text(json.dumps(k), encoding="utf-8")
+    return d
+
+
+def test_protocol_2_keeps_r1_and_c1_and_says_c2_came_after_the_choice():
+    p = V.PROTOCOL
+    assert V.PROTOCOL_ID == p["id"] == "vla-backend-protocol/2" and p["date"] == V.PROTOCOL_DATE
+    # R1 and C1 are the tests of protocol 1
+    assert (p["R1_rate"]["warmup"], p["R1_rate"]["timed"]) == (5, 50)
+    c1 = p["C1_closed_loop"]
+    assert (c1["seeds"], c1["time_limit_s"], c1["reached_radius_m"]) == (5, 120, 3.0)
+    assert "fly to (40, 40) at 6 m/s altitude 20" in c1["scenario"]
+    assert "unchanged" in p["changes_from_1"]
+    c2 = p["C2_follow_closed_loop"]
+    said = c2["added_after_the_choice"]
+    assert c2["added"] == V.PROTOCOL_DATE == "2026-11-16"
+    assert "after the lab named AIoT-VLA v10b" in said and "15 November 2026" in said
+    assert "follow-only model cannot fly" in said and "not a prediction" in said
+    # never the PI's: the choice is the lab's, in this tool's words
+    assert "PI" not in said and "accepted" not in said and "approved" not in said
+    outs = " ".join(c2["outputs"])
+    for needed in ("within", "30 m", "decision_hz_mission", "interventions_per_100_ticks",
+                   "p0_escapes"):
+        assert needed in outs, needed
+    assert "hil" in c2["rail"] and "MAVROS 2" in c2["rail"] and "Jetson Orin" in c2["rail"]
+    assert c2["flights_per_backend"] == 3
+    assert (ROOT / V.PAS_LAUNCHER).is_file() and V.PAS_LAUNCHER in c2["launch"]["script"]
+    assert c2["launch"]["node_args"] == ["--identity", "--negative-query", "a traffic light",
+                                         "--target-estimator"]
+    assert any("servo" in n for n in c2["nulls"])
+    md = V.render_markdown(_build())
+    assert said in md and "## C2 on hil" in md and "## What R1, C1 and C2 are" in md
+    assert "No C2 flight is on disk." in md
+
+
+def test_every_row_states_why_c1_was_not_flown_and_the_new_backends_are_rows():
+    assert set(V.BACKENDS) >= {"aiotvla_v10b", "dronecats_2b", "racevla_7b", "aerialvla_bf16",
+                               "openvla_7b_bf16", "openvla_7b_int8wo"}
+    t = _build()
+    for r in t["rows"]:
+        c1 = r["cells"]["closed_loop_hil_c1"]
+        assert c1 and c1 != V.C1_TO_FLY == "to measure on hil (C1)", \
+            (r["backend"], "no reason for C1")
+        assert c1.startswith(("not flown", "cannot fly", "weights not obtained")), (r["backend"], c1)
+        assert "closed_loop_hil" not in r["cells"], "the hil cell is two cells since /3"
+    assert "follow-only" in _row(t, "aiotvla_v10b")["cells"]["closed_loop_hil_c1"]
+    assert "C2" in _row(t, "aiotvla_v10b")["cells"]["closed_loop_hil_c1"]
+    assert t["c1_bundles"]["found"] == [] and "urban_demo_policy" in t["c1_bundles"]["policy"]
+    md = V.render_markdown(t)
+    assert "## C1 on hil: flown by no backend, and why" in md
+    # a signed urban_demo bundle, once there, is named
+    b = _tmp()
+    (b / "urban-demo-v0.1.0.tar.gz").write_bytes(b"x")
+    assert _build(bundles=b)["c1_bundles"]["found"] == ["urban-demo-v0.1.0.tar.gz"]
+    # the served families measure through their servers' benches, and say which
+    for bid in V.SERVED_BACKENDS:
+        try:
+            V.measure(bid, "dev")
+        except ValueError as exc:
+            assert "bench" in str(exc), exc
+        else:
+            raise AssertionError(f"{bid} was timed by `measure`")
+
+
+def test_the_agx_benches_reach_the_orin_column_each_with_its_label():
+    if not (HIL_EVIDENCE / "aiotvla_v10b_bench_agx.json").is_file():
+        return SKIP
+    recs = V.extract_orin_benches(V.EVIDENCE)
+    by = {}
+    for r in recs:
+        by.setdefault(r["backend"], []).append(r)
+    assert set(by) >= {"aerialvla_bf16", "aiotvla_v10b", "openvla_7b_bf16"}, set(by)
+    assert all(r["protocol"] == "not R1" and r["why_not_r1"] for r in recs)
+    assert all(r["host_is_orin"] for r in recs), [r["host_basis"] for r in recs]
+    # AIoT-VLA: its own frames, said so, and both the round trip and the model
+    aiot = by["aiotvla_v10b"][0]
+    raw = json.loads((HIL_EVIDENCE / "aiotvla_v10b_bench_agx.json").read_text(encoding="utf-8"))
+    assert aiot["own_inputs"] is True and "aiot_frames" in aiot["inputs"]
+    assert aiot["stats"]["p95_ms"] == raw["roundtrip"]["p95_ms"] == 41.7
+    assert aiot["server_latency"]["p95_ms"] == raw["server_latency"]["p95_ms"]
+    assert aiot["timed"] == raw["n"] == 300
+    cell = V.bench_cell(aiot)
+    assert cell.startswith("not R1 - own inputs (aiot_frames)") and "p95 41.7 ms" in cell
+    # AerialVLA: the R1 frames at 5 + 50, still not R1 (the server, the power mode)
+    cfgs = {r["config"]: r for r in by["aerialvla_bf16"]}
+    assert set(cfgs) == {"bf16/sdpa/unmerged", "bf16/sdpa/merged"}
+    assert all(not r["own_inputs"] and (r["warmup"], r["timed"]) == (5, 50)
+               for r in cfgs.values())
+    assert cfgs["bf16/sdpa/merged"]["stats"]["p50_ms"] == 1073.9
+    assert "own inputs" not in V.bench_cell(cfgs["bf16/sdpa/merged"])
+    assert any("power mode" in w for w in cfgs["bf16/sdpa/merged"]["why_not_r1"])
+    # the bf16 gate check: eight answers, the first cold, no host block
+    gate = by["openvla_7b_bf16"][0]
+    assert gate["timed"] == 8 and gate["first_s"] > gate["rest_max_s"] > 0.9
+    assert "no host block" in gate["host_basis"]
+    assert V.bench_cell(gate).startswith("not R1 - gate check, 8 answers")
+    # in the table: labelled, never counted as R1; R1 still owed where `measure`
+    # can time the model, and said not to cover a served model, which it cannot
+    t = _build(evidence=V.EVIDENCE)
+    cell = _row(t, "openvla_7b_bf16")["cells"]["rate_orin"]
+    assert cell.startswith("not R1 - ") and cell.endswith("R1: to measure on the Orin"), cell
+    for bid in ("aiotvla_v10b", "aerialvla_bf16"):
+        cell = _row(t, bid)["cells"]["rate_orin"]
+        assert cell.startswith("not R1 - ") and "to measure" not in cell, cell
+        assert "R1 does not cover a model served over protocol v2 (`measure` refuses it): " \
+               "its Orin timing is its server's bench (" in cell, cell
+    assert "bf16/sdpa/unmerged" in _row(t, "aerialvla_bf16")["cells"]["rate_orin"]
+    assert "bf16/sdpa/merged" in _row(t, "aerialvla_bf16")["cells"]["rate_orin"]
+    assert "holds R1 for 0 of the 7 backends `measure` can time" in t["decision"], t["decision"]
+    assert "not R1, labelled as such, for 3 backends" in t["decision"], t["decision"]
+    assert "R1 does not cover the 4 backends served over protocol v2" in t["decision"]
+    assert "recorded attempt" not in t["decision"], t["decision"]
+    # rows with no Orin measurement still say so, with what the board lacks
+    assert _row(t, "dronecats_2b")["cells"]["rate_orin"].startswith(
+        "no Orin bench yet; R1 does not cover a model served over protocol v2")
+    assert _row(t, "stub")["cells"]["rate_orin"] == "to measure on the Orin (R1)"
+    assert _row(t, "openvla_7b_4bit")["cells"]["rate_orin"].startswith(
+        "to measure on the Orin (R1); needs bitsandbytes")
+    assert "torchao" in _row(t, "openvla_7b_int8wo")["cells"]["rate_orin"]
+
+
+def test_a_bench_from_another_host_or_on_the_r1_frames_is_labelled_as_what_it_is():
+    src = HIL_EVIDENCE / "aiotvla_v10b_bench_agx.json"
+    if not src.is_file():
+        return SKIP
+    raw = json.loads(src.read_text(encoding="utf-8"))
+    raw.pop("rows", None)
+    ev = _tmp()
+    (ev / "hil").mkdir()
+    # the same bench made on a desktop, lying in the hil folder: not an Orin's
+    desk = json.loads(json.dumps(raw))
+    desk["identity"]["host"] = {"host_arch": "AMD64", "device_model": None,
+                                "l4t_release": None, "jetpack": None}
+    (ev / "hil" / "desk.json").write_text(json.dumps(desk), encoding="utf-8")
+    rec = V.extract_orin_benches(ev)[0]
+    assert rec["host_is_orin"] is False and "aarch64" in rec["host_basis"]
+    row = _row(_build(evidence=ev), "aiotvla_v10b")
+    assert row["cells"]["rate_orin"].startswith("no Orin bench yet; ") and not row["orin_timed"]
+    # no host block at all is not an Orin either
+    desk["identity"].pop("host")
+    (ev / "hil" / "desk.json").write_text(json.dumps(desk), encoding="utf-8")
+    assert V.extract_orin_benches(ev)[0]["host_is_orin"] is False
+    # the R1 frames through the foreign bench: no "own inputs", still not R1
+    r1f = json.loads(json.dumps(raw))
+    r1f["frames"] = "/home/x/vla-drone/deploy/evidence/vla_protocol_frames"
+    (ev / "hil" / "desk.json").write_text(json.dumps(r1f), encoding="utf-8")
+    rec = V.extract_orin_benches(ev)[0]
+    assert rec["own_inputs"] is False and rec["protocol"] == "not R1"
+    assert "own inputs" not in V.bench_cell(rec) and V.bench_cell(rec).startswith("not R1 - ")
+    assert any("3 warm-up + 300 timed, not R1's 5 + 50" in w for w in rec["why_not_r1"])
+    # ... and at R1's own counts it is still not R1 (the server is in the path),
+    # but it is no longer said to differ in its counts
+    r1f["warmup"], r1f["n"] = 5, 50
+    (ev / "hil" / "desk.json").write_text(json.dumps(r1f), encoding="utf-8")
+    rec = V.extract_orin_benches(ev)[0]
+    assert rec["protocol"] == "not R1" and not any("5 + 50" in w for w in rec["why_not_r1"])
+    assert any("round trip over TCP" in w for w in rec["why_not_r1"]), rec["why_not_r1"]
+    # a file this tool does not know says only that it records no power mode;
+    # a file that records one is quoted (never the README's word for another session)
+    assert any(w.startswith("the file records no power mode; ") for w in rec["why_not_r1"])
+    assert not any("README" in w for w in rec["why_not_r1"]), rec["why_not_r1"]
+    r1f["power_mode"] = "MODE_30W (ID 2), jetson_clocks on"
+    (ev / "hil" / "desk.json").write_text(json.dumps(r1f), encoding="utf-8")
+    rec = V.extract_orin_benches(ev)[0]
+    assert "power mode as the file records it: MODE_30W (ID 2), jetson_clocks on" in \
+        rec["why_not_r1"]
+    known = V.extract_orin_benches(V.EVIDENCE)
+    aiot_known = next(r for r in known if r["backend"] == "aiotvla_v10b")
+    assert any("states none for that session" in w for w in aiot_known["why_not_r1"])
+    # an R1 result from an Orin takes the cell; the bench stays in the records
+    (ev / "hil" / "vla_rate_aiotvla_v10b.json").write_text(
+        json.dumps(_rate(True, "aiotvla_v10b")), encoding="utf-8")
+    row = _row(_build(evidence=ev), "aiotvla_v10b")
+    assert row["cells"]["rate_orin"].startswith("R1: "), row["cells"]
+    assert any(m["metric"] == "bench" for m in row["records"])
+
+
+def test_c2_scores_only_the_flights_that_meet_it_and_lists_the_rest_with_the_reason():
+    out = _tmp()
+    docs = _tmp()
+    _pas_run(out, "pas_hil_c2_01")
+    _pas_run(out, "pas_hil_c2_02", w30=0.2694, dec_hz=10.62, interventions=332)
+    _pas_run(out, "pas_hil_lost_01", ticks=980, end="target_lost", w30=0.1378, dec_hz=3.45,
+             interventions=39, mission_s=98.1, outcome="success", fail_reasons=(),
+             unsafe=0)                                          # lost the car: still C2
+    # given C2's 420 s, it is C2 however it ended: a takeover is a result
+    _pas_run(out, "pas_hil_takeover_01", ticks=2000, end="autopilot took over (RTL)",
+             mission_s=200.3, w30=0.4)
+    # a shakedown: one that ran to its 60 s limit (no record of the limit, then
+    # one that records it), one that the tag marks, and one that ended early
+    # for another reason with no record of its limit
+    _pas_run(out, "pas_hil_short_01", ticks=600, mission_s=60.1, w30=0.9, max_s=None)
+    _pas_run(out, "pas_hil_short_02", ticks=600, mission_s=60.1, w30=0.9, max_s=60.0)
+    _pas_run(out, "pas_hil_shake_01", ticks=300, end="target_lost", mission_s=30.2, w30=0.9)
+    _pas_run(out, "pas_hil_early_01", ticks=200, end="autopilot took over (RTL)",
+             mission_s=20.1, w30=0.9, max_s=None)
+    # what C2 fixes beside the option set, read back from the run's own record
+    _pas_run(out, "pas_hil_nonq_01", negq=None)
+    _pas_run(out, "pas_hil_otherq_01", negq=("a bus",))
+    _pas_run(out, "pas_hil_nfz_01", bundle="follow-car-citylife-nfz3b-v0.1.1.tar.gz")
+    _pas_run(out, "pas_hil_nobundle_01", bundle=None)
+    _pas_run(out, "pas_hil_nocam_01", capture=None)
+    _pas_run(out, "pas_hil_cam66_01", capture=0.066)
+    _pas_run(out, "pas_hil_rain_01", stress="rain", kpi_grade=False)
+    _pas_run(out, "pas_hil_hot_01", hot=True)
+    _pas_run(out, "pas_hil_tick_01", feed="tick")
+    _pas_run(out, "pas_hil_old_01", feed=None)                 # before the feed existed
+    _pas_run(out, "pas_hil_cap_01", cap=12.0)
+    _pas_run(out, "pas_hil_noest_01", identity=False, estimator=False)
+    _pas_run(out, "pas_hil_gate_01", reached=False, ticks=0, kpi_grade=False,
+             topology="projectairsim-ardupilot-mavros", end="no mission: start gate timed out")
+    _pas_run(out, "pas_hil_para_01")
+    _pas_run(out, "pas_hil_feed_05")                           # C2_NOT_ALONE
+    _pas_run(out, "pas_hil_dirty_01", kpi_grade=False)
+    _pas_run(out, "pas_hil_dc_01", model="dronecats/DroneCATS-Cosmos3-Edge-2B@5080e727",
+             feed="tick", w30=0.5, dec_hz=0.4)
+    _pas_run(out, "pas_hil_servo_01", pilot_kind="servo", model=None, feed=None, w30=0.9)
+    # not hil at all, and not this rail: neither is a hil follow
+    d = _pas_run(out, "pas_dev_mavros_09", topology="dev")
+    m = json.loads((d / "metrics.json").read_text(encoding="utf-8"))
+    m["grant_topology"] = "dev"
+    (d / "metrics.json").write_text(json.dumps(m), encoding="utf-8")
+    _pas_run(out, "pas_other_rail_01", rail="projectairsim-simple_flight")
+    (docs / "pas_hil_paraphrase_x").mkdir()
+    (docs / "pas_hil_paraphrase_x" / "flights.json").write_text(json.dumps({"runs": [
+        {"run": "pas_hil_c2_01", "paraphrase_id": "source", "text": "follow a red car"},
+        # the source instruction flown again under another id is not a paraphrase
+        {"run": "pas_hil_c2_02", "paraphrase_id": "source-repeat", "text": "follow a red car"},
+        {"run": "pas_hil_para_01", "paraphrase_id": "pp-1", "text": "track a red car"}]}),
+        encoding="utf-8")
+    assert V.paraphrase_flights(docs) == {"pas_hil_para_01": "track a red car"}
+    # a flight known only by its committed summary: listed, never scored
+    (docs / "pas_hil_feed_x").mkdir()
+    (docs / "pas_hil_feed_x" / "flights.json").write_text(json.dumps({
+        "what": "AIoT-VLA v10b on the AGX Orin", "flights": [
+            {"tag": "pas_hil_summary_01", "kpi_grade": True, "topology": "hil", "ticks": 970,
+             "interventions": 14, "p0_escapes": 0, "decision_hz_mission": 2.997,
+             "end_reason": "target_lost", "vla_feed": "stream"},
+            {"tag": "pas_hil_c2_01", "kpi_grade": True, "ticks": 1}]}), encoding="utf-8")
+    t = _build(demo_out=out, docs_data=docs)
+    aiot = _row(t, "aiotvla_v10b")
+    flights = {f["tag"]: f for f in aiot["records"] if f["metric"] == "hil_follow"}
+    c2 = {tag for tag, f in flights.items() if not f["not_c2"]}
+    assert c2 == {"pas_hil_c2_01", "pas_hil_c2_02", "pas_hil_lost_01", "pas_hil_takeover_01"}, c2
+    assert all(flights[tag]["protocol"] == "C2" for tag in c2)
+    why = {tag: " | ".join(f["not_c2"]) for tag, f in flights.items() if f["not_c2"]}
+    for tag, said in (("pas_hil_rain_01", "stressor 'rain'"),
+                      ("pas_hil_hot_01", "hot-applied"),
+                      ("pas_hil_tick_01", "feed tick, not the family's C2 feed (stream"),
+                      ("pas_hil_old_01", "feed tick"),
+                      ("pas_hil_cap_01", "capped at 12 Hz"),
+                      ("pas_hil_noest_01", "--identity and --target-estimator"),
+                      ("pas_hil_gate_01", "start gate never passed"),
+                      ("pas_hil_para_01", "paraphrased instruction ('track a red car')"),
+                      ("pas_hil_feed_05", "not flown alone"),
+                      ("pas_hil_dirty_01", "not KPI-grade"),
+                      ("pas_hil_short_01", "ran to a time limit of about 60 s, under C2's 420 s"),
+                      ("pas_hil_short_02", "given a time limit of 60 s, not C2's 420 s"),
+                      ("pas_hil_shake_01", "a shakedown by its tag ('_shake')"),
+                      ("pas_hil_early_01", "ended after 20 s (autopilot took over (RTL)) "
+                                           "without losing the car, and the run records no "
+                                           "time limit"),
+                      ("pas_hil_nonq_01", "negative query None, not C2's ['a traffic light']"),
+                      ("pas_hil_otherq_01", "negative query ['a bus']"),
+                      ("pas_hil_nfz_01", "policy bundle follow-car-citylife-nfz3b-v0.1.1.tar.gz, "
+                                         "not the node's default"),
+                      ("pas_hil_nobundle_01", "records no policy bundle"),
+                      ("pas_hil_nocam_01", "FrontCamera capture interval - s, not the 0.05 s"),
+                      ("pas_hil_cam66_01", "FrontCamera capture interval 0.066 s"),
+                      ("pas_hil_summary_01", "only its committed summary")):
+        assert said in why[tag], (tag, why[tag])
+    # each of those is not C2 for that reason alone
+    for tag in ("pas_hil_short_02", "pas_hil_early_01", "pas_hil_nonq_01", "pas_hil_otherq_01",
+                "pas_hil_nfz_01", "pas_hil_nobundle_01", "pas_hil_nocam_01",
+                "pas_hil_cam66_01"):
+        assert len(flights[tag]["not_c2"]) == 1, (tag, flights[tag]["not_c2"])
+    # the tick feed asks no 15 Hz camera: another family's flight is not held to it
+    assert flights["pas_hil_c2_01"]["max_s_given"] == 420.0
+    assert flights["pas_hil_c2_01"]["bundle"] == "follow-car-citylife-v0.1.3.tar.gz"
+    assert "not KPI-grade" in why["pas_hil_rain_01"] and "not hil" in why["pas_hil_gate_01"]
+    assert flights["pas_hil_summary_01"]["frac_within_30m"] is None
+    assert flights["pas_hil_summary_01"]["summary_only"] is True
+    assert sum(1 for f in flights.values() if f["tag"] == "pas_hil_c2_01") == 1
+    assert "pas_dev_mavros_09" not in flights and "pas_other_rail_01" not in flights
+    # what C2 reports, per flight
+    f = flights["pas_hil_c2_01"]
+    assert f["frac_within_30m"] == 0.3523 and f["decision_hz_mission"] == 10.93
+    assert math.isclose(f["decision_hz_asked"], 4648 / 353.393)
+    assert math.isclose(f["interventions_per_100_ticks"], 100 * 284 / 4198)
+    assert f["p0_escapes"] == 0 and f["date"] == "2026-11-15" and f["kpi_grade"] is True
+    # the flight's own KPI verdict is read beside the escape count
+    assert (f["kpi_outcome"], f["mission_fail_reasons"], f["unsafe_p0_ticks"]) == \
+        ("fail", ["unsafe_position_entered"], 3)
+    assert f["p0_ticks_not_measurable"] == 0 and f["p0_ticks_blind"] is None
+    # cited by its name in a checkout, not by this machine's path to it
+    assert f["source"]["file"] == "demo/out/pas_hil_c2_01/metrics.json", f["source"]
+    cell = aiot["cells"]["closed_loop_hil_c2"]
+    assert cell.startswith("C2, 4 flights (1 autopilot took over (RTL), 2 max_s reached, "
+                           "1 target_lost): within 30 m 0.138-0.400 (median 0.311)"), cell
+    assert "P0 escapes 0" in cell and "more to fly" not in cell
+    assert "KPI outcome 3 fail, 1 success (unsafe_position_entered 3)" in cell, cell
+    assert "ticks in a P0-unsafe position 3, 3, 0, 3" in cell, cell
+    assert "P0 ticks not measurable / blind 0/-, 0/-, 0/-, 0/-" in cell, cell
+    assert f"{len(flights) - 4} more hil follows outside C2" in cell, cell
+    # another family's flight is its own row's, with its own feed
+    dc = _row(t, "dronecats_2b")
+    assert dc["cells"]["closed_loop_hil_c2"].startswith("C2, 1 flight (1 max_s reached)")
+    assert "the protocol asks for 3: 2 more to fly" in dc["cells"]["closed_loop_hil_c2"]
+    # the hand-written follow is the null: kept, not a row, never a C2 flight
+    servo = [r for r in t["other_records"] if r.get("tag") == "pas_hil_servo_01"]
+    assert servo and servo[0]["backend"] == V.HAND_WRITTEN and "null" in servo[0]["not_c2"][0]
+    assert "C2 by 2 " in t["decision"], t["decision"]
+    md = V.render_markdown(t)
+    assert "| pas_hil_lost_01 | AIoT-VLA v10b |" in md and "| pas_hil_rain_01 |" in md
+    assert "hil follow flights that are not C2" in md
+    row = next(ln for ln in md.splitlines() if ln.startswith("| pas_hil_c2_01 |"))
+    assert "| 0 | fail (unsafe_position_entered) | 3 | 0 / - |" in row, row
+    assert "0 escapes and still fail its KPI on position" in md
+    # a flight that never flew a tick has no P0 count to show: '-', never 0
+    gate = next(ln for ln in md.splitlines() if ln.startswith("| pas_hil_gate_01 |"))
+    assert gate.endswith("| - | - (no mission) |"), gate
+    assert "C2's null (the hand-written follow on the same rail (--pilot servo): the " \
+           "no-learning reference): 1 hil follow of it on disk, listed below." in md
+    assert "no flight of it on disk" in V.render_markdown(_build())
+    # a count a run did not record is said, never summed as 0
+    assert V.p0_escapes_text([{"p0_escapes": 0}, {"p0_escapes": None}]) == \
+        "P0 escapes 0 (not recorded for 1 of 2)"
+    assert V.p0_escapes_text([{"p0_escapes": None}]) == "P0 escapes not recorded"
+    assert "KPI outcome 1 not recorded" in V.kpi_verdict_text([{"kpi_outcome": None}])
+    # a stored tag is not a path component the reader trusts: a second root
+    # that holds the same tag does not replace the first
+    other = _tmp()
+    _pas_run(other, "pas_hil_c2_01", w30=0.99)
+    _pas_run(other, "pas_hil_c2_03", w30=0.31)
+    t2 = _build(demo_out=out, docs_data=docs, runs=[other])
+    fl = {f["tag"]: f for f in _row(t2, "aiotvla_v10b")["records"] if f["metric"] == "hil_follow"}
+    assert fl["pas_hil_c2_01"]["frac_within_30m"] == 0.3523
+    assert fl["pas_hil_c2_03"]["source"]["file"] == \
+        f"{other.as_posix()}/pas_hil_c2_03/metrics.json"
+
+
+def test_the_committed_note_still_says_which_flights_did_not_fly_alone():
+    """C2_NOT_ALONE is kept by hand; the note it cites must still say it."""
+    for tag, why in V.C2_NOT_ALONE.items():
+        doc = ROOT / why.split("(")[1].rstrip(")")
+        assert doc.is_file(), doc
+        text = " ".join(doc.read_text(encoding="utf-8").split())
+        assert "Desktop tests were run beside pas_hil_feed_05 / _06" in text, doc
+        assert tag in ("pas_hil_feed_05", "pas_hil_feed_06")
+
+
+def test_the_follow_matrices_are_records_outside_c1_and_c2():
+    # 27-28 October: the committed file
+    recs = V.extract_matrix_1028(V.DOCS_DATA)
+    by = {r["backend"]: r for r in recs}
+    assert {"aerialvla_bf16", "dronecats_2b", "racevla_7b", V.HAND_WRITTEN, V.STAND_IN} <= set(by)
+    assert all(r["protocol"] == "not C1, not C2" and "not ArduPilot" in r["conditions"]
+               for r in recs)
+    aero = {f["tag"]: f for f in by["aerialvla_bf16"]["flights"]}
+    assert aero["cmp2_hier_aerovla_20261028"]["within_30m"] == 0.309
+    assert aero["orin_hier_aerovla_20261028"]["within_30m"] == 0.989
+    assert aero["orin_hier_aerovla_20261028"]["platform"].startswith("Jetson Orin Nano")
+    raw = json.loads((V.DOCS_DATA / "progress_1028.json").read_text(encoding="utf-8"))
+    assert sum(len(r["flights"]) for r in recs) == len(raw["matrix_rows"]) == 42
+    # A row the file labels hand-written but which records a server latency:
+    # the label is contradicted by its own row. Without the run folder it
+    # keeps the label and says so; with it, the folder's pilot record decides.
+    odd = [r for r in raw["matrix_rows"]
+           if r["model"] == "manual" and r.get("latency_p50_s") is not None]
+    assert [r["tag"] for r in odd] == ["cmp_hier_fixed12_20261027"], odd
+    hand = {f["tag"]: f for f in by[V.HAND_WRITTEN]["flights"]}
+    assert "label stands unchecked" in hand["cmp_hier_fixed12_20261027"]["note"]
+    assert hand["cmp_manual_20261027"]["note"] is None
+    folders = _tmp()
+    (folders / "cmp_hier_fixed12_20261027").mkdir()
+    (folders / "cmp_hier_fixed12_20261027" / "metrics.json").write_text(json.dumps({
+        "tag": "cmp_hier_fixed12_20261027", "frac_within_30m": 0.98,
+        "vla_hierarchy": {"latency_s": {"p50": 0.08}},
+        "pilot": {"kind": "stub", "server_identity": {"id": "fake:scripted"}}}), encoding="utf-8")
+    checked = {r["backend"]: r for r in V.extract_matrix_1028(V.DOCS_DATA, [folders])}
+    moved = {f["tag"]: f for f in checked[V.STAND_IN]["flights"]}["cmp_hier_fixed12_20261027"]
+    assert "fake:scripted" in moved["note"] and "scripted 12 m stand-in" in moved["kind"]
+    assert moved["within_30m"] == 0.98, "the score is still the file's"
+    assert "cmp_hier_fixed12_20261027" not in {
+        f["tag"] for f in checked[V.HAND_WRITTEN]["flights"]}
+    assert sum(len(r["flights"]) for r in checked.values()) == 42
+    # 3-4 November: run folders, every one found, a tag outside the matrix not
+    out = _tmp()
+
+    def run(tag, metrics, rate=0.0, bundle="follow-car-citylife-nfz-v0.1.1.tar.gz",
+            commit="6da813de8ad7"):
+        (out / tag).mkdir()
+        (out / tag / "metrics.json").write_text(json.dumps(dict(
+            metrics, tag=tag, policy_source={"path": f"/home/x/vla-drone/bundles/{bundle}"})),
+            encoding="utf-8")
+        (out / tag / "kpi.json").write_text(json.dumps(
+            {"p0_violation_escape_rate": rate,
+             "manifest": {"topology": "projectairsim-remote-sim",
+                          "code_revision": commit}}), encoding="utf-8")
+
+    aero_id = {"id": "aerialvla-lora/aero_vla@unknown", "precision": "bf16", "attn": "sdpa",
+               "merged": True}
+    run("agx_e2e_aerovla_20261103", {
+        "rail": "projectairsim-simple_flight", "frac_within_30m": 0.213,
+        "frac_within_30m_after_acquire": 0.048,
+        "pilot": {"kind": "vla", "server_identity": aero_id,
+                  "summary": {"latency_server_s": {"median": 1.412}}}})
+    run("agx_hier_aerovla_20261103", {
+        "frac_within_30m": 1.0, "vla_hierarchy": {"latency_s": {"p50": 1.44}},
+        "pilot": {"kind": "vla", "server_identity": aero_id}})
+    run("agx_hier_fixed12_20261103", {
+        "frac_within_30m": 0.374, "vla_hierarchy": {"latency_s": {"p50": 0.09}},
+        "pilot": {"kind": "stub", "server_identity": {"id": "fake:scripted"}}})
+    run("agx_manual_20261103", {"frac_within_30m": 0.952, "pilot": {"kind": "none"}})
+    # the first AGX follow of 3 November, at an earlier commit: listed, with it
+    run("agx_e2e_aerovla_01", {"frac_within_30m_after_acquire": 0.184,
+                               "pilot": {"kind": "vla", "server_identity": aero_id}},
+        commit="07cee03f0049")
+    # the same configuration under another bundle: listed, with the bundle
+    run("nfz3b_agx_hier_aerovla_20261104", {
+        "frac_within_30m": 0.494, "vla_hierarchy": {"latency_s": {"p50": 1.4}},
+        "pilot": {"kind": "vla", "server_identity": aero_id}},
+        bundle="follow-car-citylife-nfz3b-v0.1.1.tar.gz", commit="989f96724b74")
+    # a tag outside the matrix: not listed
+    run("agx_scratch_e2e_aerovla", {"frac_within_30m_after_acquire": 0.5,
+                                    "pilot": {"kind": "vla", "server_identity": aero_id}})
+    recs = V.extract_matrix_agx([out])
+    by = {r["backend"]: r for r in recs}
+    flights = {f["tag"]: f for f in by["aerialvla_bf16"]["flights"]}
+    assert set(flights) == {"agx_e2e_aerovla_20261103", "agx_hier_aerovla_20261103",
+                            "agx_e2e_aerovla_01", "nfz3b_agx_hier_aerovla_20261104"}, set(flights)
+    assert flights["agx_e2e_aerovla_01"]["within_30m"] == 0.184
+    assert flights["agx_e2e_aerovla_01"]["code_revision"] == "07cee03f0049"
+    assert flights["nfz3b_agx_hier_aerovla_20261104"]["bundle"] == \
+        "follow-car-citylife-nfz3b-v0.1.1.tar.gz"
+    assert flights["agx_hier_aerovla_20261103"]["bundle"] == \
+        "follow-car-citylife-nfz-v0.1.1.tar.gz"
+    # a pure flight is scored after acquisition, a hierarchical one from the gate
+    assert flights["agx_e2e_aerovla_20261103"]["within_30m"] == 0.048
+    assert flights["agx_e2e_aerovla_20261103"]["latency_p50_s"] == 1.412
+    assert flights["agx_hier_aerovla_20261103"]["within_30m"] == 1.0
+    assert flights["agx_hier_aerovla_20261103"]["config"] == "bf16/sdpa/merged"
+    assert by[V.STAND_IN]["flights"][0]["tag"] == "agx_hier_fixed12_20261103"
+    assert by[V.HAND_WRITTEN]["flights"][0]["within_30m"] == 0.952
+    assert all(r["protocol"] == "not C1, not C2" for r in recs)
+    # no folder here: a record that says so, not silence
+    gone = V.extract_matrix_agx([_tmp()])
+    assert gone[0]["status"] == "source missing on this host", gone
+    # in the table they are neither C1 nor C2, and they are not ArduPilot
+    t = _build(demo_out=out, docs_data=V.DOCS_DATA)
+    row = _row(t, "aerialvla_bf16")
+    assert row["cells"]["closed_loop_hil_c2"] == "to fly on hil (C2)"
+    assert row["cells"]["closed_loop_hil_c1"].startswith("not flown")
+    assert row["cells"]["closed_loop_desktop"] == "not C1 - see records"
+    assert not any(r["cells"]["closed_loop_hil_c2"].startswith("C2,") for r in t["rows"])
+    md = V.render_markdown(t)
+    assert "## Follow flights on Project AirSim simple_flight (not ArduPilot: not C1, not C2)" \
+        in md
+    assert "**27-28 October 2026.**" in md and "**3-4 November 2026.**" in md
+    assert "| Hand-written follow (no VLA) | agx_manual_20261103 |" in md
+    # each AGX flight shows its commit and bundle, so another scenario is not
+    # read as run-to-run spread of one configuration
+    assert "| Commit | Policy bundle |" in md
+    nfz = next(ln for ln in md.splitlines() if "| nfz3b_agx_hier_aerovla_20261104 |" in ln)
+    assert "| 989f967 | follow-car-citylife-nfz3b-v0.1.1.tar.gz |" in nfz, nfz
+    assert "another scenario, not a repeat" in md
+
+
+# Every backend that can fly C2: (identity id, feed), as its server reports it.
+_C2_FAMILIES = {"aiotvla_v10b": ("aiotvla/v10b@35259bd1", "stream"),
+                "aerialvla_bf16": ("aerialvla-lora/aero_vla@unknown", "tick"),
+                "dronecats_2b": ("dronecats/DroneCATS-Cosmos3-Edge-2B@5080e727", "tick"),
+                "racevla_7b": ("racevla/drone6_all@03f3bb48", "tick")}
+
+
+def _default_set(n_c2: int = 3, others: bool = True, stub_r1: bool = True):
+    """A set that holds AIoT-VLA's AGX bench and `n_c2` C2 flights of it;
+    with `others`, an Orin bench and three C2 flights of every other backend
+    that can fly C2 (the AerialVLA benches as committed, a foreign bench for
+    DroneCATS and RaceVLA made from AIoT-VLA's file with the identity
+    changed); with `stub_r1`, the stub's R1 on an Orin."""
+    ev, out = _tmp(), _tmp()
+    (ev / "hil").mkdir()
+    raw = json.loads((HIL_EVIDENCE / "aiotvla_v10b_bench_agx.json").read_text(encoding="utf-8"))
+    raw.pop("rows", None)
+    (ev / "hil" / "aiotvla_v10b_bench_agx.json").write_text(json.dumps(raw), encoding="utf-8")
+    for k in range(n_c2):
+        _pas_run(out, f"pas_hil_c2_0{k + 1}", w30=0.2 + 0.05 * k)
+    if others:
+        for name in ("aerialvla_serving_bench_agx.json", "aerialvla_serving_bench_agx_merged.json"):
+            (ev / "hil" / name).write_bytes((HIL_EVIDENCE / name).read_bytes())
+        for bid in ("dronecats_2b", "racevla_7b"):
+            other = json.loads(json.dumps(raw))
+            other["identity"]["id"] = _C2_FAMILIES[bid][0]
+            (ev / "hil" / f"{bid}_bench_agx.json").write_text(json.dumps(other),
+                                                              encoding="utf-8")
+        for bid in ("aerialvla_bf16", "dronecats_2b", "racevla_7b"):
+            model, feed = _C2_FAMILIES[bid]
+            for k in range(3):
+                _pas_run(out, f"pas_hil_c2_{bid}_0{k + 1}", model=model, feed=feed,
+                         w30=0.1 + 0.1 * k)
+    if stub_r1:
+        (ev / "hil" / "vla_rate_stub.json").write_text(json.dumps(_rate(True)),
+                                                       encoding="utf-8")
+    return dict(evidence=ev, demo_out=out)
+
+
+def test_the_default_line_is_none_until_a_default_is_named_after_the_set():
+    if not (HIL_EVIDENCE / "aiotvla_v10b_bench_agx.json").is_file():
+        return SKIP
+    kw = _default_set()
+    t = _build(**kw)
+    assert t["default_backend"] is None
+    assert "**Default backend:** none." in V.render_markdown(t)
+    assert V.newest_measurement(t) == "2026-11-15"
+
+    def named(backend="aiotvla_v10b", scope="the follow task", date="2026-11-17",
+              today="2026-11-18", **over):
+        return _build(default={"backend": backend, "scope": scope, "date": date},
+                      today=today, **{**kw, **over})
+
+    def refused(said, **a):
+        try:
+            named(**a)
+        except V.DefaultRefused as exc:
+            assert said in str(exc), (said, str(exc))
+        else:
+            raise AssertionError(f"a default was named although: {said} ({a})")
+
+    # not before the set: its newest flight is of 15 November, the protocol of the 16th
+    refused("before vla-backend-protocol/2", date="2026-11-15")
+    refused("before vla-backend-protocol/2", date="2026-11-14")
+    refused("in the future", date="2026-11-19")
+    refused("YYYY-MM-DD", date="17 Nov")
+    refused("--default-scope", scope=" ")
+    refused("not a row", backend="gpt")
+    refused("no checkpoint", backend="bitvla")
+    refused("no Orin rate", backend="dronecats_2b", **_default_set(others=False))
+    refused("2 C2 flight(s)", **_default_set(2))
+    # the default's own numbers are not enough: the set must compare it with
+    # every other backend that can fly C2 on the same tests, and hold R1's floor
+    refused("does not yet compare it with the other backends on the same tests - "
+            "stub: no R1 on an Orin (R1's floor on the same host); aerialvla_bf16: no Orin "
+            "timing, 0 of 3 C2 flights; dronecats_2b: no Orin timing, 0 of 3 C2 flights; "
+            "racevla_7b: no Orin timing, 0 of 3 C2 flights",
+            **_default_set(others=False, stub_r1=False))
+    refused("stub: no R1 on an Orin", **_default_set(stub_r1=False))
+    short = _default_set()
+    import shutil
+    shutil.rmtree(short["demo_out"] / "pas_hil_c2_racevla_7b_03")
+    refused("racevla_7b: 2 of 3 C2 flights", **short)
+    partial = _build(**_default_set(others=False))
+    assert "racevla_7b: no Orin timing, 0 of 3 C2 flights" in partial["comparison_gaps"]
+    assert "What the set lacks before `table --default` names one" in \
+        V.render_markdown(partial)
+    # dates are the lab's (UTC+8): a flight at 07:30 on the 17th in the lab is
+    # 23:30 UTC on the 16th, and the set's newest measurement is of the 17th
+    assert V.lab_date(T0_UTC_16_NOV_2330) == "2026-11-17"
+    assert V.lab_date("2026-11-16T23:30:00Z") == "2026-11-17"
+    assert V.lab_date("2026-11-16T15:59:59Z") == "2026-11-16" and V.lab_date(None) is None
+    early = _default_set()
+    _pas_run(early["demo_out"], "pas_hil_c2_04", t0=T0_UTC_16_NOV_2330)
+    assert V.newest_measurement(_build(**early)) == "2026-11-17"
+    refused("not after the set's newest measurement (2026-11-17)", date="2026-11-17",
+            today="2026-11-18", **early)
+    # a flight newer than the date: the default would be before the set
+    late = _default_set()
+    d = late["demo_out"] / "pas_hil_c2_01" / "metrics.json"
+    m = json.loads(d.read_text(encoding="utf-8"))
+    m["vla_observation"]["t0_wall"] = T0_15_NOV + 3 * 86400          # 18 November
+    d.write_text(json.dumps(m), encoding="utf-8")
+    refused("not after the set's newest measurement (2026-11-18)", date="2026-11-18",
+            today="2026-11-20", **late)
+    # named after the set: the line carries the backend's own numbers and no one's approval
+    t = named()
+    d = t["default_backend"]
+    assert (d["backend"], d["scope"], d["date"]) == ("aiotvla_v10b", "the follow task",
+                                                     "2026-11-17")
+    assert d["set_newest_measurement"] == "2026-11-15" and d["named_by"] == "the lab"
+    assert d["closed_loop_hil_c2"].startswith("C2, 3 flights")
+    assert d["rate_orin"].startswith("not R1 - own inputs")
+    md = V.render_markdown(t)
+    line = next(ln for ln in md.splitlines() if ln.startswith("**Default backend:**"))
+    assert "AIoT-VLA v10b" in line and "for the follow task" in line and "2026-11-17" in line
+    assert "named by the lab on 2026-11-17" in line and "within 30 m 0.200-0.300" in line, line
+    assert "records no confirmation of the choice by anyone" in line
+    for word in ("the PI", " PI ", "approved", "accepted", "confirmed by"):
+        assert word not in line, (word, line)
+    # the command line: a refusal writes nothing and exits 2
+    oj, om = _tmp() / "t.json", _tmp() / "t.md"
+    rc = V.main(["table", "--demo-out", str(kw["demo_out"]), "--experiments-out", str(_tmp()),
+                 "--out-json", str(oj), "--out-md", str(om), "--default", "aiotvla_v10b",
+                 "--default-scope", "the follow task", "--default-date", "2026-11-10"])
+    assert rc == 2 and not oj.exists() and not om.exists()
+    rc = V.main(["table", "--demo-out", str(kw["demo_out"]), "--experiments-out", str(_tmp()),
+                 "--out-json", str(oj), "--out-md", str(om), "--default-date", "2026-11-17"])
+    assert rc == 2 and not oj.exists(), "a date with no backend named one"
+
+
+def test_g3_is_reported_as_measurements_and_never_as_a_decision():
+    if not (HIL_EVIDENCE / "aerialvla_serving_bench_agx.json").is_file():
+        return SKIP
+    t = _build(evidence=V.EVIDENCE)
+    g = t["g3"]
+    assert "100 ms p95 by 2026-08-01" in g["gate"] and "could be added" in g["gate"]
+    assert g["threshold_ms"] == 100.0 and g["decision"] == "not recorded by this tool"
+    seven = {b["backend"]: b["orin"] for b in g["seven_b"]}
+    assert {o["p95_ms"] for o in seven["aerialvla_bf16"]} == {1537.8, 1099.6}
+    assert all(o["what"].startswith("not R1") for o in seven["aerialvla_bf16"])
+    assert seven["openvla_7b_bf16"][0]["p95_ms"] is None      # eight answers have no p95
+    assert seven["racevla_7b"] == [] and "aiotvla_v10b" not in seven
+    small = {b["backend"]: b["orin"] for b in g["smaller"]}
+    assert small["aiotvla_v10b"][0]["p95_ms"] == 41.7
+    assert g["int8_on_orin"] == "not attempted"
+    md = V.render_markdown(t)
+    assert "Whether the gate is added and applied is not recorded by this tool." in md
+    for claim in ("gate applied", "gate is applied", "the PI"):
+        assert claim not in md, claim
+
+
+# --------------------------------------------------------------------------- #
+# the measure keys: OpenVLA-7B bf16 and the int8 weight-only attempt
+# --------------------------------------------------------------------------- #
+class _Par:
+    def __init__(self, dtype, device):
+        self.dtype, self.device = dtype, device
+
+
+class _FakeTorch:
+    bfloat16 = "bf16"
+
+    class _NG:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    def no_grad(self):
+        return self._NG()
+
+
+class _FakeVLA:
+    """A model with parameters, answering seven finite numbers."""
+
+    def __init__(self, dtype="torch.bfloat16", device="cuda:0", fail_at=None):
+        self.par, self.calls, self.fail_at = _Par(dtype, device), 0, fail_at
+
+    def parameters(self):
+        return iter([self.par])
+
+    def predict_action(self, **kw):
+        assert set(kw) == {"input_ids", "pixel_values", "unnorm_key", "do_sample"}, kw
+        self.calls += 1
+        if self.fail_at == self.calls:
+            raise RuntimeError("quantized linear has no kernel for this device")
+        return [0.0] * 6 + [1.0]
+
+
+def _fake_proc(prompt, img):
+    return _FakeInputs(input_ids=[1], pixel_values=[0])
+
+
+_FRAMES = ([_FakeImg()], {"frames": [{"file": "a.png"}]})
+
+
+def test_openvla_bf16_is_timed_through_the_orin_checks_loader_and_refused_out_of_bf16():
+    import real_vla_demo as RV
+    check = V._bf16_check_module()
+    # one bf16 loader: the Orin gate check's own, which that check itself uses
+    src = (ROOT / "deploy" / "orin" / "vla_bf16_check.py").read_text(encoding="utf-8")
+    assert callable(check.load_bf16) and "proc, model, _ = load_bf16(model_dir)" in src
+    assert "bitsandbytes" not in src.split("def load_bf16")[1].split("def collect")[0].replace(
+        "It needs no bitsandbytes", "")
+    assert src.count("AutoModelForVision2Seq.from_pretrained(") == 1, "a second loader"
+    # R1 for this key asks what the gate check asked: its prompt and its unnorm key
+    assert RV.build_openvla_prompt("fly forward and avoid restricted areas") == check.PROMPT
+    assert RV.UNNORM_KEY == check.UNNORM_KEY
+    seen = []
+
+    def load(model_dir):
+        seen.append(model_dir)
+        return _fake_proc, _FakeVLA(), _FakeTorch()
+
+    proc, model, torch = V.load_openvla_bf16(Path("/models/openvla-7b"), load=load)
+    assert seen and seen[0].replace("\\", "/").endswith("/models/openvla-7b")
+    for dtype, device in (("torch.bfloat16", "cpu"), ("torch.float32", "cuda:0"),
+                          ("torch.uint8", "cuda:0")):
+        try:
+            V.load_openvla_bf16("/m", load=lambda d: (_fake_proc, _FakeVLA(dtype, device),
+                                                      _FakeTorch()))
+        except RuntimeError as exc:
+            assert "refusing to time it as bf16" in str(exc), exc
+        else:
+            raise AssertionError(f"{dtype} on {device} was accepted as the bf16 row")
+    # through `measure`: a GPU key (refused without --allow-gpu), recorded as bf16
+    assert V.OPENVLA_PRECISION["openvla_7b_bf16"] == "bf16"
+    assert "openvla_7b_bf16" in V.GPU_BACKENDS
+    res = V.measure("openvla_7b_bf16", "dev", model_root=Path("/models"), allow_gpu=True,
+                    warmup=5, timed=50, frames=_FRAMES,
+                    loader=lambda: (_fake_proc, _FakeVLA(), _FakeTorch()))
+    assert res["status"] == "measured" and res["precision"] == "bf16"
+    assert "vla_bf16_check.py" in res["loader"] and res["stats"]["n"] == 50
+    assert res["param"] == {"param_dtype": "torch.bfloat16", "param_device": "cuda:0"}
+    assert res["protocol"] == V.PROTOCOL_ID and res["test"] == "R1"
+    # the 4-bit key still loads through the flight script's loader
+    assert "real_vla_demo.py" in V._OPENVLA_LOADER_TEXT["nf4"]
+    try:
+        V.measure_openvla(Path("/models"), precision="int8", frames=_FRAMES,
+                          loader=lambda: (_fake_proc, _FakeVLA(), _FakeTorch()))
+    except ValueError as exc:
+        assert "not one of" in str(exc)
+    else:
+        raise AssertionError("an unknown precision was timed")
+
+
+def test_the_int8_attempt_records_its_refusal_with_stage_and_cause():
+    loads = []
+
+    def load(model_dir):
+        loads.append(model_dir)
+        return _fake_proc, _FakeVLA(), _FakeTorch()
+
+    # no torchao: refused before the 15 GB load is even started
+    try:
+        V.load_openvla_int8wo("/m", load=load, find_spec=lambda name: None)
+    except V.MeasureRefused as exc:
+        assert exc.stage == "import" and "torchao is not installed" in exc.cause
+    else:
+        raise AssertionError("int8 weight-only without torchao was not refused")
+    assert loads == [], "the model was loaded although torchao is absent"
+
+    def no_kernel(model):
+        raise NotImplementedError("no int8 kernel for sm_87")
+
+    try:
+        V.load_openvla_int8wo("/m", load=load, quantizer=no_kernel)
+    except V.MeasureRefused as exc:
+        assert exc.stage == "quantize" and "NotImplementedError: no int8 kernel" in exc.cause
+    else:
+        raise AssertionError("a failed quantisation was not refused")
+    # a bf16 load that fails is not an int8 result: a failed run, not a refusal
+    def no_weights(model_dir):
+        raise OSError(f"{model_dir} does not appear to have a file named config.json")
+    for bad in (lambda d: (_fake_proc, _FakeVLA(device="cpu"), _FakeTorch()), no_weights):
+        try:
+            V.load_openvla_int8wo("/m", quantizer=lambda m: None, load=bad)
+        except V.MeasureRefused as exc:
+            raise AssertionError(f"a failed bf16 load was recorded as an int8 refusal at "
+                                 f"{exc.stage}") from None
+        except RuntimeError as exc:
+            assert "not an int8 result" in str(exc) and "--model-root" in str(exc), exc
+        else:
+            raise AssertionError("a model off the GPU was quantised and timed")
+    # ... and the command fails (exit 1) and writes no result file
+    out = _tmp() / "int8.json"
+    real = V.load_openvla_int8wo
+    V.load_openvla_int8wo = lambda d, **k: real(d, quantizer=lambda m: None, load=no_weights)
+    try:
+        rc = V.main(["measure", "--backend", "openvla_7b_int8wo", "--topology", "dev",
+                     "--allow-gpu", "--model-root", "/nowhere", "--out", str(out)])
+    finally:
+        V.load_openvla_int8wo = real
+    assert rc == 1 and not out.exists(), rc
+    # a quantised model that cannot answer: stage inference; a bf16 one just raises
+    def broken():
+        return _fake_proc, _FakeVLA(fail_at=2), _FakeTorch()
+    try:
+        V.measure_openvla(Path("/models"), warmup=1, timed=3, precision="int8wo",
+                          frames=_FRAMES, loader=broken)
+    except V.MeasureRefused as exc:
+        assert exc.stage == "inference" and "inference 2" in exc.cause
+    else:
+        raise AssertionError("a failing int8 inference was not refused")
+    try:
+        V.measure_openvla(Path("/models"), warmup=1, timed=3, precision="bf16",
+                          frames=_FRAMES, loader=broken)
+    except V.MeasureRefused:
+        raise AssertionError("a bf16 failure was recorded as an int8 refusal") from None
+    except RuntimeError:
+        pass
+    # `measure` turns the refusal into the result: no timing, the cause, what is installed
+    def refuse():
+        raise V.MeasureRefused("import", "torchao is not installed in this environment")
+    res = V.measure("openvla_7b_int8wo", "dev", model_root=Path("/models"), allow_gpu=True,
+                    frames=_FRAMES, loader=refuse)
+    assert res["status"] == "refused" and res["stats"] == {"n": 0} and res["latency_s"] == []
+    assert res["refusal"]["stage"] == "import" and "torchao" in res["refusal"]["cause"]
+    assert set(res["refusal"]["packages"]) >= {"torch", "torchao", "bitsandbytes"}
+    assert res["precision"] == "int8wo" and res["undecodable_outputs"] is None
+    # and when it does quantise, it is timed like any other key
+    done = []
+    res = V.measure("openvla_7b_int8wo", "dev", model_root=Path("/models"), allow_gpu=True,
+                    warmup=2, timed=4, frames=_FRAMES,
+                    loader=lambda: V.load_openvla_int8wo("/m", load=load,
+                                                         quantizer=done.append))
+    assert res["status"] == "measured" and res["stats"]["n"] == 4 and len(done) == 1
+    try:
+        V.measure("openvla_7b_int8wo", "dev", model_root=Path("/models"))
+    except PermissionError as exc:
+        assert "--allow-gpu" in str(exc)
+    else:
+        raise AssertionError("the int8 attempt would have loaded a 7 B model unasked")
+
+
+def test_a_recorded_refusal_shows_in_the_table_as_an_attempt_not_as_a_rate():
+    def refused(is_orin):
+        r = _rate(is_orin, "openvla_7b_int8wo")
+        r.update({"status": "refused", "stats": {"n": 0}, "created_utc": "2026-11-17T03:00:00Z",
+                  "refusal": {"stage": "import",
+                              "cause": "torchao is not installed in this environment",
+                              "packages": {"torchao": None}}})
+        return r
+    ev = _tmp()
+    (ev / "hil").mkdir()
+    (ev / "hil" / "vla_rate_openvla_7b_int8wo.json").write_text(json.dumps(refused(True)),
+                                                               encoding="utf-8")
+    t = _build(evidence=ev)
+    cell = _row(t, "openvla_7b_int8wo")["cells"]["rate_orin"]
+    assert cell.startswith("attempted 2026-11-17, refused at import: torchao is not installed"), cell
+    assert cell.endswith("R1: to measure on the Orin; needs torchao, which the AGX Orin's "
+                         "native environment does not install (deploy/orin/agx_vla_env.sh)")
+    assert "holds R1 for 0 of" in t["decision"], t["decision"]
+    # an attempt with no timing is counted apart, never as a bench
+    assert "labelled as such, for 0 backends; a recorded attempt with no timing for 1 more" \
+        in t["decision"], t["decision"]
+    assert not _row(t, "openvla_7b_int8wo")["orin_timed"]
+    assert t["g3"]["int8_on_orin"] == "refused"
+    line = next(b for b in t["g3"]["seven_b"] if b["backend"] == "openvla_7b_int8wo")["orin"][0]
+    assert line["what"] == "attempt refused" and line["stage"] == "import"
+    md = V.render_markdown(t)
+    assert "refused at import: torchao is not installed" in md and "int8 on an Orin: refused" in md
+    # the command writes the refusal and ends cleanly
+    out = _tmp() / "r.json"
+    real = V.measure
+    V.measure = lambda *a, **k: dict(refused(False), protocol=V.PROTOCOL_ID)
+    try:
+        rc = V.main(["measure", "--backend", "openvla_7b_int8wo", "--topology", "dev",
+                     "--allow-gpu", "--model-root", "/models", "--out", str(out)])
+    finally:
+        V.measure = real
+    assert rc == 0 and json.loads(out.read_text(encoding="utf-8"))["status"] == "refused"
+
+
+def test_the_committed_table_is_protocol_2_with_real_cells_only():
+    if not COMMITTED_TABLE.is_file():
+        return SKIP
+    t = json.loads(COMMITTED_TABLE.read_text(encoding="utf-8"))
+    assert t["protocol"]["id"] == "vla-backend-protocol/2" and t["default_backend"] is None
+    md = (ROOT / "deploy" / "evidence" / "vla_backend_table.md").read_text(encoding="utf-8")
+    assert "**Default backend:** none." in md
+    assert t["protocol"]["C2_follow_closed_loop"]["added_after_the_choice"] in md
+    benches = {r["source"]["file"]: r for r in V.extract_orin_benches(V.EVIDENCE)}
+    for r in t["rows"]:
+        cell = r["cells"]["rate_orin"]
+        # an Orin cell is an R1 result made on an Orin, a labelled bench whose
+        # file is committed and still says the same, an attempt, or "to measure"
+        has_r1 = any(x["host"]["jetson"]["is_orin"] and x.get("status") != "refused"
+                     for x in r["r1_results"])
+        assert cell.startswith("R1") == has_r1, (r["backend"], cell)
+        for rec in r["records"]:
+            if rec.get("metric") == "bench" and rec.get("host_is_orin"):
+                now = benches[rec["source"]["file"]]
+                assert V.bench_cell(now) in cell, (r["backend"], V.bench_cell(now))
+                assert now["source"]["sha256"] == rec["source"]["sha256"], rec["source"]["file"]
+        if not has_r1 and not r.get("unavailable"):
+            if r["backend"] in V.SERVED_BACKENDS:
+                assert "R1 does not cover a model served over protocol v2" in cell, cell
+                assert "to measure" not in cell, (r["backend"], cell)
+            else:
+                assert "to measure on the Orin" in cell, (r["backend"], cell)
+        # C2: only flights that meet it are in the cell's count, each with
+        # what C2 fixes as its own record states it, and its own KPI verdict
+        c2 = [f for f in r["records"] if f.get("metric") == "hil_follow" and not f["not_c2"]]
+        for f in c2:
+            assert f["kpi_grade"] is True and f["topology"] == "hil" and not f["stress"], f["tag"]
+            assert f["identity"] and f["target_estimator"] and f["tag"] not in V.C2_NOT_ALONE
+            assert f["frac_within_30m"] is not None and f["p0_escapes"] is not None, f["tag"]
+            assert f["negative_query"] == V.C2_NEGATIVE_QUERY and f["max_s_given"] == V.C2_MAX_S
+            assert V.C2_BUNDLE.match(f["bundle"]), f["bundle"]
+            if f["vla_feed"] == "stream":
+                assert f["front_capture_interval_s"] == V.C2_STREAM_CAPTURE_INTERVAL_S
+            assert f["kpi_outcome"] in ("success", "fail") and \
+                f["unsafe_p0_ticks"] is not None, f["tag"]
+            line = next(ln for ln in md.splitlines() if ln.startswith(f"| {f['tag']} |"))
+            assert f"| {V.kpi_outcome_text(f)} | {f['unsafe_p0_ticks']} |" in line, line
+        c2_cell = r["cells"]["closed_loop_hil_c2"]
+        assert c2_cell.startswith("C2, ") == bool(c2), (r["backend"], c2_cell)
+        if c2:
+            assert c2_cell.startswith(f"C2, {len(c2)} flight"), c2_cell
+            assert V.kpi_verdict_text(c2) in c2_cell, c2_cell
+        # a flight that flew no tick shows no P0 count
+        for f in r["records"]:
+            if f.get("metric") == "hil_follow" and f["not_c2"] and not f["ticks"]:
+                line = next(ln for ln in md.splitlines() if ln.startswith(f"| {f['tag']} |"))
+                assert line.endswith("| - | - (no mission) |"), line
+        assert not any(f.get("protocol") == "C1" for f in r["records"]), "no C1 has been flown"
+    assert all(rec["protocol"] == "not C1, not C2"
+               for rec in sum((r["records"] for r in t["rows"]), []) + t["other_records"]
+               if rec.get("metric") == "follow_matrix" and not rec.get("status"))
+    # no default is named while the set does not compare the backends
+    assert t["comparison_gaps"] and "What the set lacks before" in md
+
+
+def test_a_rate_result_under_another_protocol_is_listed_not_shown_as_r1():
+    ev = _tmp()
+    (ev / "hil").mkdir()
+    r = _rate(True)
+    r["protocol"] = "vla-backend-protocol/9"
+    (ev / "hil" / "vla_rate_stub.json").write_text(json.dumps(r), encoding="utf-8")
+    stub = _row(_build(evidence=ev), "stub")
+    assert stub["cells"]["rate_orin"] == "to measure on the Orin (R1)", stub["cells"]
+    other = [m for m in stub["records"] if m["metric"] == "rate_other_protocol"]
+    assert other and "'vla-backend-protocol/9'" in other[0]["status"], stub["records"]
+    # a result made under /1 is R1 of /2 as well (R1 is word for word /1's)
+    r["protocol"] = "vla-backend-protocol/1"
+    (ev / "hil" / "vla_rate_stub.json").write_text(json.dumps(r), encoding="utf-8")
+    assert _row(_build(evidence=ev), "stub")["cells"]["rate_orin"].startswith("R1: ")
+    assert set(V.R1_PROTOCOLS) == {"vla-backend-protocol/1", V.PROTOCOL_ID}
+
+
+def test_the_c1_sentences_are_counted_from_the_records_not_written_in():
+    t = _build()
+    assert "C1 has been flown by no backend" in t["decision"]
+    assert "## C1 on hil: flown by no backend, and why" in V.render_markdown(t)
+    # a C1 record, once a reader yields one, is counted and named
+    row = _row(t, "stub")
+    row["records"].append({"backend": "stub", "metric": "closed_loop", "protocol": "C1",
+                           "source": {"file": "x"}, "status": "test"})
+    assert "## C1 on hil: flown by " + row["label"] in V.render_markdown(t)
+    assert "not flown on hil by any backend" not in json.dumps(V.PROTOCOL)
 
 
 if __name__ == "__main__":
