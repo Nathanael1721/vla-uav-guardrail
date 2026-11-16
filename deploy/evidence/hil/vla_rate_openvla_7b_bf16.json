@@ -1,0 +1,247 @@
+{
+ "schema": "vlaguard.vla_rate/2",
+ "protocol": "vla-backend-protocol/2",
+ "test": "R1",
+ "backend": "openvla_7b_bf16",
+ "topology": "hil",
+ "created_utc": "2026-11-16T05:50:16Z",
+ "host": {
+  "os": "Linux",
+  "os_release": "6.8.12-1021-tegra",
+  "machine": "aarch64",
+  "cpu_model": "ARM CPU part 0xd42",
+  "cpu_count": 12,
+  "python": "3.12.3",
+  "in_container": false,
+  "ros_distro": null,
+  "topology_env": null,
+  "libs": {
+   "numpy": "1.26.4",
+   "shapely": "2.1.2",
+   "pydantic": "2.13.4",
+   "yaml": "6.0.3",
+   "geos": "3.13.1"
+  },
+  "perf_counter_resolution_s": 1e-09,
+  "jetson": {
+   "is_orin": true,
+   "missing": [],
+   "host_arch": "aarch64",
+   "device_model": "NVIDIA Jetson AGX Orin Developer Kit",
+   "l4t_release": "R39.2.1",
+   "jetpack": null,
+   "nvpmodel": "NV Power Mode: MAXN | 0"
+  },
+  "power": {
+   "nvpmodel": {
+    "source": "/var/lib/nvpmodel/status",
+    "raw": "pmode:0000",
+    "mode_id": 0,
+    "mode_name": "MAXN",
+    "why": null
+   },
+   "cpufreq": {
+    "source": "/sys/devices/system/cpu/cpu<N>/cpufreq",
+    "online": "0-11",
+    "cpus": {
+     "0": {
+      "governor": "schedutil",
+      "scaling_min_khz": 729600,
+      "scaling_max_khz": 2201600,
+      "cpuinfo_min_khz": 115200,
+      "cpuinfo_max_khz": 2201600,
+      "cur_khz": 729600
+     },
+     "1": {
+      "governor": "schedutil",
+      "scaling_min_khz": 729600,
+      "scaling_max_khz": 2201600,
+      "cpuinfo_min_khz": 115200,
+      "cpuinfo_max_khz": 2201600,
+      "cur_khz": 729600
+     },
+     "2": {
+      "governor": "schedutil",
+      "scaling_min_khz": 729600,
+      "scaling_max_khz": 2201600,
+      "cpuinfo_min_khz": 115200,
+      "cpuinfo_max_khz": 2201600,
+      "cur_khz": 729600
+     },
+     "3": {
+      "governor": "schedutil",
+      "scaling_min_khz": 729600,
+      "scaling_max_khz": 2201600,
+      "cpuinfo_min_khz": 115200,
+      "cpuinfo_max_khz": 2201600,
+      "cur_khz": 729600
+     },
+     "4": {
+      "governor": "schedutil",
+      "scaling_min_khz": 729600,
+      "scaling_max_khz": 2201600,
+      "cpuinfo_min_khz": 115200,
+      "cpuinfo_max_khz": 2201600,
+      "cur_khz": 1113600
+     },
+     "5": {
+      "governor": "schedutil",
+      "scaling_min_khz": 729600,
+      "scaling_max_khz": 2201600,
+      "cpuinfo_min_khz": 115200,
+      "cpuinfo_max_khz": 2201600,
+      "cur_khz": 960000
+     },
+     "6": {
+      "governor": "schedutil",
+      "scaling_min_khz": 729600,
+      "scaling_max_khz": 2201600,
+      "cpuinfo_min_khz": 115200,
+      "cpuinfo_max_khz": 2201600,
+      "cur_khz": 960000
+     },
+     "7": {
+      "governor": "schedutil",
+      "scaling_min_khz": 729600,
+      "scaling_max_khz": 2201600,
+      "cpuinfo_min_khz": 115200,
+      "cpuinfo_max_khz": 2201600,
+      "cur_khz": 960000
+     },
+     "8": {
+      "governor": "schedutil",
+      "scaling_min_khz": 729600,
+      "scaling_max_khz": 2201600,
+      "cpuinfo_min_khz": 115200,
+      "cpuinfo_max_khz": 2201600,
+      "cur_khz": 2201600
+     },
+     "9": {
+      "governor": "schedutil",
+      "scaling_min_khz": 729600,
+      "scaling_max_khz": 2201600,
+      "cpuinfo_min_khz": 115200,
+      "cpuinfo_max_khz": 2201600,
+      "cur_khz": 2201600
+     },
+     "10": {
+      "governor": "schedutil",
+      "scaling_min_khz": 729600,
+      "scaling_max_khz": 2201600,
+      "cpuinfo_min_khz": 115200,
+      "cpuinfo_max_khz": 2201600,
+      "cur_khz": 2201600
+     },
+     "11": {
+      "governor": "schedutil",
+      "scaling_min_khz": 729600,
+      "scaling_max_khz": 2201600,
+      "cpuinfo_min_khz": 115200,
+      "cpuinfo_max_khz": 2201600,
+      "cur_khz": 2201600
+     }
+    },
+    "why": null
+   }
+  }
+ },
+ "warmup": 5,
+ "timed": 50,
+ "stats": {
+  "n": 50,
+  "p50_ms": 956.4202985202428,
+  "p95_ms": 969.0432669594884,
+  "max_ms": 976.6479189856909,
+  "mean_ms": 958.1534481386188,
+  "hz_at_p50": 1.0455654292858307,
+  "meets_contract_p95": false
+ },
+ "weights": [
+  {
+   "path": "<model-root>/openvla-7b",
+   "where": "/home/nathan-agxiot/models",
+   "present": true,
+   "bytes": 15085155847
+  }
+ ],
+ "load_s": 26.90677246003179,
+ "undecodable_outputs": 0,
+ "peak_vram_gb": 15.474370048,
+ "prompt": "In: What action should the robot take to fly forward and avoid restricted areas?\nOut:",
+ "prompt_arm": {
+  "csp": "off"
+ },
+ "prompt_tokens": {
+  "n": 20,
+  "method": "openvla_tokenizer"
+ },
+ "precision": "bf16",
+ "loader": "deploy/orin/vla_bf16_check.py load_bf16 (bfloat16, unquantised)",
+ "param": {
+  "param_dtype": "torch.bfloat16",
+  "param_device": "cuda:0"
+ },
+ "inputs": {
+  "frames": [
+   "present_+00.png",
+   "absent_+00.png"
+  ],
+  "crop": "front 224x224"
+ },
+ "status": "measured",
+ "latency_s": [
+  0.955205907986965,
+  0.974158463999629,
+  0.9683974399813451,
+  0.9659988660132512,
+  0.9576819859794341,
+  0.9634885800187476,
+  0.9578518429771066,
+  0.9766479189856909,
+  0.9637343410286121,
+  0.9568150700069964,
+  0.9576748500112444,
+  0.9533370659919456,
+  0.9573347840341739,
+  0.9613070949562825,
+  0.9651027640211396,
+  0.9539015170303173,
+  0.954327279003337,
+  0.9561097850091755,
+  0.9503904249868356,
+  0.9540352449985221,
+  0.9591842989902943,
+  0.9671699770260602,
+  0.9517491839942522,
+  0.9530173189705238,
+  0.9529374479898252,
+  0.9514282540185377,
+  0.9590159460203722,
+  0.9533118489780463,
+  0.9524280679761432,
+  0.9524746930110268,
+  0.9552465159795247,
+  0.9617692729807459,
+  0.9673685380257666,
+  0.9645470819668844,
+  0.9531332879560068,
+  0.9616399930091575,
+  0.9551182920113206,
+  0.9519859860301949,
+  0.9512151969829574,
+  0.9515176630229689,
+  0.9690432669594884,
+  0.9556916709989309,
+  0.9550404039910063,
+  0.9558782319654711,
+  0.95312931999797,
+  0.9572980480152182,
+  0.9579631710075773,
+  0.9557281190063804,
+  0.9614092709962279,
+  0.95673081203131
+ ],
+ "cpu_affinity": null,
+ "note": "NV Power Mode: MAXN 0 ; jetson_clocks state not changed by this session",
+ "command": "python tools/vla_backend_table.py measure --backend openvla_7b_bf16 --allow-gpu --model-root /home/nathan-agxiot/models --topology hil --note 'NV Power Mode: MAXN 0 ; jetson_clocks state not changed by this session'"
+}

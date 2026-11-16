@@ -99,7 +99,7 @@
    "not_separated": "the detector supplies the hint, and while it has no box the model is not asked: a C2 score is the model's and the detector's together"
   }
  },
- "created_utc": "2026-11-16T05:07:50Z",
+ "created_utc": "2026-11-16T05:58:24Z",
  "model_root": "D:/models",
  "rows": [
   {
@@ -116,7 +116,7 @@
    "weights_status": [],
    "cells": {
     "rate_desktop": "R1: p50 0.0013 ms (7.69e+05 Hz), p95 0.0016 ms, n=50 [deploy/evidence/dev/vla_rate_stub.json]",
-    "rate_orin": "to measure on the Orin (R1)",
+    "rate_orin": "R1: p50 0.00341 ms (2.93e+05 Hz), p95 0.00419 ms, n=50 [deploy/evidence/hil/vla_rate_stub.json]",
     "closed_loop_desktop": "not C1 - see records",
     "closed_loop_hil_c1": "not flown: the hil rail's stub node (sitl/ros2_vla_stub_node.py) can fly it once a signed bundle of policies/urban_demo_policy.yaml exists",
     "closed_loop_hil_c2": "n/a: the stub is given coordinates and has no follow; C2's null is the hand-written follow (--pilot servo)"
@@ -171,8 +171,8 @@
      }
     }
    ],
-   "orin_timed": false,
-   "orin_r1": false,
+   "orin_timed": true,
+   "orin_r1": true,
    "orin_bench": false,
    "orin_attempt_only": false,
    "r1_results": [
@@ -249,6 +249,180 @@
      "command": "python tools/vla_backend_table.py measure --backend stub --topology dev --cpus 0,2,4,6,8,10,12,14 --note 'lab desktop, i7-14700, performance cores, one logical CPU per core, CPU only'",
      "_file": "deploy/evidence/dev/vla_rate_stub.json",
      "_is_r1": true
+    },
+    {
+     "schema": "vlaguard.vla_rate/2",
+     "protocol": "vla-backend-protocol/2",
+     "test": "R1",
+     "backend": "stub",
+     "topology": "hil",
+     "created_utc": "2026-11-16T05:48:22Z",
+     "host": {
+      "os": "Linux",
+      "os_release": "6.8.12-1021-tegra",
+      "machine": "aarch64",
+      "cpu_model": "ARM CPU part 0xd42",
+      "cpu_count": 12,
+      "python": "3.12.3",
+      "in_container": false,
+      "ros_distro": null,
+      "topology_env": null,
+      "libs": {
+       "numpy": "1.26.4",
+       "shapely": "2.1.2",
+       "pydantic": "2.13.4",
+       "yaml": "6.0.3",
+       "geos": "3.13.1"
+      },
+      "perf_counter_resolution_s": 1e-09,
+      "jetson": {
+       "is_orin": true,
+       "missing": [],
+       "host_arch": "aarch64",
+       "device_model": "NVIDIA Jetson AGX Orin Developer Kit",
+       "l4t_release": "R39.2.1",
+       "jetpack": null,
+       "nvpmodel": "NV Power Mode: MAXN | 0"
+      },
+      "power": {
+       "nvpmodel": {
+        "source": "/var/lib/nvpmodel/status",
+        "raw": "pmode:0000",
+        "mode_id": 0,
+        "mode_name": "MAXN",
+        "why": null
+       },
+       "cpufreq": {
+        "source": "/sys/devices/system/cpu/cpu<N>/cpufreq",
+        "online": "0-11",
+        "cpus": {
+         "0": {
+          "governor": "schedutil",
+          "scaling_min_khz": 729600,
+          "scaling_max_khz": 2201600,
+          "cpuinfo_min_khz": 115200,
+          "cpuinfo_max_khz": 2201600,
+          "cur_khz": 729600
+         },
+         "1": {
+          "governor": "schedutil",
+          "scaling_min_khz": 729600,
+          "scaling_max_khz": 2201600,
+          "cpuinfo_min_khz": 115200,
+          "cpuinfo_max_khz": 2201600,
+          "cur_khz": 729600
+         },
+         "2": {
+          "governor": "schedutil",
+          "scaling_min_khz": 729600,
+          "scaling_max_khz": 2201600,
+          "cpuinfo_min_khz": 115200,
+          "cpuinfo_max_khz": 2201600,
+          "cur_khz": 729600
+         },
+         "3": {
+          "governor": "schedutil",
+          "scaling_min_khz": 729600,
+          "scaling_max_khz": 2201600,
+          "cpuinfo_min_khz": 115200,
+          "cpuinfo_max_khz": 2201600,
+          "cur_khz": 729600
+         },
+         "4": {
+          "governor": "schedutil",
+          "scaling_min_khz": 729600,
+          "scaling_max_khz": 2201600,
+          "cpuinfo_min_khz": 115200,
+          "cpuinfo_max_khz": 2201600,
+          "cur_khz": 960000
+         },
+         "5": {
+          "governor": "schedutil",
+          "scaling_min_khz": 729600,
+          "scaling_max_khz": 2201600,
+          "cpuinfo_min_khz": 115200,
+          "cpuinfo_max_khz": 2201600,
+          "cur_khz": 1958400
+         },
+         "6": {
+          "governor": "schedutil",
+          "scaling_min_khz": 729600,
+          "scaling_max_khz": 2201600,
+          "cpuinfo_min_khz": 115200,
+          "cpuinfo_max_khz": 2201600,
+          "cur_khz": 1958400
+         },
+         "7": {
+          "governor": "schedutil",
+          "scaling_min_khz": 729600,
+          "scaling_max_khz": 2201600,
+          "cpuinfo_min_khz": 115200,
+          "cpuinfo_max_khz": 2201600,
+          "cur_khz": 1958400
+         },
+         "8": {
+          "governor": "schedutil",
+          "scaling_min_khz": 729600,
+          "scaling_max_khz": 2201600,
+          "cpuinfo_min_khz": 115200,
+          "cpuinfo_max_khz": 2201600,
+          "cur_khz": 2201600
+         },
+         "9": {
+          "governor": "schedutil",
+          "scaling_min_khz": 729600,
+          "scaling_max_khz": 2201600,
+          "cpuinfo_min_khz": 115200,
+          "cpuinfo_max_khz": 2201600,
+          "cur_khz": 2201600
+         },
+         "10": {
+          "governor": "schedutil",
+          "scaling_min_khz": 729600,
+          "scaling_max_khz": 2201600,
+          "cpuinfo_min_khz": 115200,
+          "cpuinfo_max_khz": 2201600,
+          "cur_khz": 2201600
+         },
+         "11": {
+          "governor": "schedutil",
+          "scaling_min_khz": 729600,
+          "scaling_max_khz": 2201600,
+          "cpuinfo_min_khz": 115200,
+          "cpuinfo_max_khz": 2201600,
+          "cur_khz": 2201600
+         }
+        },
+        "why": null
+       }
+      }
+     },
+     "warmup": 5,
+     "timed": 50,
+     "stats": {
+      "n": 50,
+      "p50_ms": 0.00340802944265306,
+      "p95_ms": 0.004191999323666096,
+      "max_ms": 0.005184032488614321,
+      "mean_ms": 0.00350527698174119,
+      "hz_at_p50": 293424.69506998354,
+      "meets_contract_p95": true
+     },
+     "weights": [],
+     "load_s": 0.028298017976339906,
+     "inputs": {
+      "file": "deploy/evidence/shield_tick_pack.json",
+      "flight": "ros2_shield_on",
+      "rows": 55
+     },
+     "undecodable_outputs": 0,
+     "device": "cpu",
+     "status": "measured",
+     "cpu_affinity": null,
+     "note": "NV Power Mode: MAXN 0 ; jetson_clocks state not changed by this session",
+     "command": "python tools/vla_backend_table.py measure --backend stub --topology hil --note 'NV Power Mode: MAXN 0 ; jetson_clocks state not changed by this session'",
+     "_file": "deploy/evidence/hil/vla_rate_stub.json",
+     "_is_r1": true
     }
    ]
   },
@@ -281,7 +455,7 @@
    ],
    "cells": {
     "rate_desktop": "R1: p50 0.307 ms (3.26e+03 Hz), p95 0.373 ms, n=50 [deploy/evidence/dev/vla_rate_bc_v3.json]",
-    "rate_orin": "to measure on the Orin (R1)",
+    "rate_orin": "R1: p50 1.44 ms (696 Hz), p95 4.52 ms, n=50 [deploy/evidence/hil/vla_rate_bc_v3.json]",
     "closed_loop_desktop": "not C1 - see records",
     "closed_loop_hil_c1": "not flown: no node on the hil rail loads this policy (the rail's pilot node is the stub's, sitl/ros2_vla_stub_node.py)",
     "closed_loop_hil_c2": "n/a: a state policy, no camera and no follow"
@@ -304,8 +478,8 @@
      }
     }
    ],
-   "orin_timed": false,
-   "orin_r1": false,
+   "orin_timed": true,
+   "orin_r1": true,
    "orin_bench": false,
    "orin_attempt_only": false,
    "r1_results": [
@@ -398,6 +572,197 @@
      "note": "lab desktop, i7-14700, performance cores, one logical CPU per core, CPU only",
      "command": "python tools/vla_backend_table.py measure --backend bc_v3 --topology dev --cpus 0,2,4,6,8,10,12,14 --note 'lab desktop, i7-14700, performance cores, one logical CPU per core, CPU only'",
      "_file": "deploy/evidence/dev/vla_rate_bc_v3.json",
+     "_is_r1": true
+    },
+    {
+     "schema": "vlaguard.vla_rate/2",
+     "protocol": "vla-backend-protocol/2",
+     "test": "R1",
+     "backend": "bc_v3",
+     "topology": "hil",
+     "created_utc": "2026-11-16T05:48:25Z",
+     "host": {
+      "os": "Linux",
+      "os_release": "6.8.12-1021-tegra",
+      "machine": "aarch64",
+      "cpu_model": "ARM CPU part 0xd42",
+      "cpu_count": 12,
+      "python": "3.12.3",
+      "in_container": false,
+      "ros_distro": null,
+      "topology_env": null,
+      "libs": {
+       "numpy": "1.26.4",
+       "shapely": "2.1.2",
+       "pydantic": "2.13.4",
+       "yaml": "6.0.3",
+       "geos": "3.13.1"
+      },
+      "perf_counter_resolution_s": 1e-09,
+      "jetson": {
+       "is_orin": true,
+       "missing": [],
+       "host_arch": "aarch64",
+       "device_model": "NVIDIA Jetson AGX Orin Developer Kit",
+       "l4t_release": "R39.2.1",
+       "jetpack": null,
+       "nvpmodel": "NV Power Mode: MAXN | 0"
+      },
+      "power": {
+       "nvpmodel": {
+        "source": "/var/lib/nvpmodel/status",
+        "raw": "pmode:0000",
+        "mode_id": 0,
+        "mode_name": "MAXN",
+        "why": null
+       },
+       "cpufreq": {
+        "source": "/sys/devices/system/cpu/cpu<N>/cpufreq",
+        "online": "0-11",
+        "cpus": {
+         "0": {
+          "governor": "schedutil",
+          "scaling_min_khz": 729600,
+          "scaling_max_khz": 2201600,
+          "cpuinfo_min_khz": 115200,
+          "cpuinfo_max_khz": 2201600,
+          "cur_khz": 1036800
+         },
+         "1": {
+          "governor": "schedutil",
+          "scaling_min_khz": 729600,
+          "scaling_max_khz": 2201600,
+          "cpuinfo_min_khz": 115200,
+          "cpuinfo_max_khz": 2201600,
+          "cur_khz": 1036800
+         },
+         "2": {
+          "governor": "schedutil",
+          "scaling_min_khz": 729600,
+          "scaling_max_khz": 2201600,
+          "cpuinfo_min_khz": 115200,
+          "cpuinfo_max_khz": 2201600,
+          "cur_khz": 1036800
+         },
+         "3": {
+          "governor": "schedutil",
+          "scaling_min_khz": 729600,
+          "scaling_max_khz": 2201600,
+          "cpuinfo_min_khz": 115200,
+          "cpuinfo_max_khz": 2201600,
+          "cur_khz": 2201600
+         },
+         "4": {
+          "governor": "schedutil",
+          "scaling_min_khz": 729600,
+          "scaling_max_khz": 2201600,
+          "cpuinfo_min_khz": 115200,
+          "cpuinfo_max_khz": 2201600,
+          "cur_khz": 729600
+         },
+         "5": {
+          "governor": "schedutil",
+          "scaling_min_khz": 729600,
+          "scaling_max_khz": 2201600,
+          "cpuinfo_min_khz": 115200,
+          "cpuinfo_max_khz": 2201600,
+          "cur_khz": 729600
+         },
+         "6": {
+          "governor": "schedutil",
+          "scaling_min_khz": 729600,
+          "scaling_max_khz": 2201600,
+          "cpuinfo_min_khz": 115200,
+          "cpuinfo_max_khz": 2201600,
+          "cur_khz": 729600
+         },
+         "7": {
+          "governor": "schedutil",
+          "scaling_min_khz": 729600,
+          "scaling_max_khz": 2201600,
+          "cpuinfo_min_khz": 115200,
+          "cpuinfo_max_khz": 2201600,
+          "cur_khz": 729600
+         },
+         "8": {
+          "governor": "schedutil",
+          "scaling_min_khz": 729600,
+          "scaling_max_khz": 2201600,
+          "cpuinfo_min_khz": 115200,
+          "cpuinfo_max_khz": 2201600,
+          "cur_khz": 729600
+         },
+         "9": {
+          "governor": "schedutil",
+          "scaling_min_khz": 729600,
+          "scaling_max_khz": 2201600,
+          "cpuinfo_min_khz": 115200,
+          "cpuinfo_max_khz": 2201600,
+          "cur_khz": 729600
+         },
+         "10": {
+          "governor": "schedutil",
+          "scaling_min_khz": 729600,
+          "scaling_max_khz": 2201600,
+          "cpuinfo_min_khz": 115200,
+          "cpuinfo_max_khz": 2201600,
+          "cur_khz": 729600
+         },
+         "11": {
+          "governor": "schedutil",
+          "scaling_min_khz": 729600,
+          "scaling_max_khz": 2201600,
+          "cpuinfo_min_khz": 115200,
+          "cpuinfo_max_khz": 2201600,
+          "cur_khz": 729600
+         }
+        },
+        "why": null
+       }
+      }
+     },
+     "warmup": 5,
+     "timed": 50,
+     "stats": {
+      "n": 50,
+      "p50_ms": 1.4358320040628314,
+      "p95_ms": 4.5174339902587235,
+      "max_ms": 5.429086973890662,
+      "mean_ms": 2.104578436119482,
+      "hz_at_p50": 696.4603081491422,
+      "meets_contract_p95": true
+     },
+     "weights": [
+      {
+       "path": "models/vla_policy_v2.pt",
+       "where": "repository",
+       "present": true,
+       "bytes": 2173407
+      },
+      {
+       "path": "models/vla_policy_v2.onnx",
+       "where": "repository",
+       "present": false,
+       "bytes": null
+      }
+     ],
+     "load_s": 2.0965692959725857,
+     "inputs": {
+      "file": "deploy/evidence/shield_tick_pack.json",
+      "flight": "ros2_shield_on",
+      "rows": 55
+     },
+     "undecodable_outputs": 0,
+     "device": "cpu",
+     "param_devices": [
+      "cpu"
+     ],
+     "params": 540675,
+     "status": "measured",
+     "cpu_affinity": null,
+     "note": "NV Power Mode: MAXN 0 ; jetson_clocks state not changed by this session",
+     "command": "python tools/vla_backend_table.py measure --backend bc_v3 --topology hil --note 'NV Power Mode: MAXN 0 ; jetson_clocks state not changed by this session'",
+     "_file": "deploy/evidence/hil/vla_rate_bc_v3.json",
      "_is_r1": true
     }
    ]
@@ -516,7 +881,7 @@
    ],
    "cells": {
     "rate_desktop": "not measured",
-    "rate_orin": "not R1 - gate check, 8 answers on one R1 frame (the first, cold, 2.06 s): the others 0.972-0.999 s, warm median 0.975 s (1.03 Hz) [deploy/evidence/hil/vla_bf16_check.json]; R1: to measure on the Orin",
+    "rate_orin": "R1: p50 956 ms (1.05 Hz), p95 969 ms, n=50 [deploy/evidence/hil/vla_rate_openvla_7b_bf16.json]",
     "closed_loop_desktop": "not measured",
     "closed_loop_hil_c1": "not flown: base OpenVLA is arm-trained and is given no target, so 'reached (40, 40)' is not defined for it; and nothing on the hil SITL rail publishes the camera topics the ROS 2 VLA bridge reads (sitl/ros2_vla_bridge_node.py)",
     "closed_loop_hil_c2": "n/a: it takes no follow hint and no server speaks protocol v2 for it"
@@ -569,10 +934,208 @@
     }
    ],
    "orin_timed": true,
-   "orin_r1": false,
-   "orin_bench": true,
+   "orin_r1": true,
+   "orin_bench": false,
    "orin_attempt_only": false,
-   "r1_results": []
+   "r1_results": [
+    {
+     "schema": "vlaguard.vla_rate/2",
+     "protocol": "vla-backend-protocol/2",
+     "test": "R1",
+     "backend": "openvla_7b_bf16",
+     "topology": "hil",
+     "created_utc": "2026-11-16T05:50:16Z",
+     "host": {
+      "os": "Linux",
+      "os_release": "6.8.12-1021-tegra",
+      "machine": "aarch64",
+      "cpu_model": "ARM CPU part 0xd42",
+      "cpu_count": 12,
+      "python": "3.12.3",
+      "in_container": false,
+      "ros_distro": null,
+      "topology_env": null,
+      "libs": {
+       "numpy": "1.26.4",
+       "shapely": "2.1.2",
+       "pydantic": "2.13.4",
+       "yaml": "6.0.3",
+       "geos": "3.13.1"
+      },
+      "perf_counter_resolution_s": 1e-09,
+      "jetson": {
+       "is_orin": true,
+       "missing": [],
+       "host_arch": "aarch64",
+       "device_model": "NVIDIA Jetson AGX Orin Developer Kit",
+       "l4t_release": "R39.2.1",
+       "jetpack": null,
+       "nvpmodel": "NV Power Mode: MAXN | 0"
+      },
+      "power": {
+       "nvpmodel": {
+        "source": "/var/lib/nvpmodel/status",
+        "raw": "pmode:0000",
+        "mode_id": 0,
+        "mode_name": "MAXN",
+        "why": null
+       },
+       "cpufreq": {
+        "source": "/sys/devices/system/cpu/cpu<N>/cpufreq",
+        "online": "0-11",
+        "cpus": {
+         "0": {
+          "governor": "schedutil",
+          "scaling_min_khz": 729600,
+          "scaling_max_khz": 2201600,
+          "cpuinfo_min_khz": 115200,
+          "cpuinfo_max_khz": 2201600,
+          "cur_khz": 729600
+         },
+         "1": {
+          "governor": "schedutil",
+          "scaling_min_khz": 729600,
+          "scaling_max_khz": 2201600,
+          "cpuinfo_min_khz": 115200,
+          "cpuinfo_max_khz": 2201600,
+          "cur_khz": 729600
+         },
+         "2": {
+          "governor": "schedutil",
+          "scaling_min_khz": 729600,
+          "scaling_max_khz": 2201600,
+          "cpuinfo_min_khz": 115200,
+          "cpuinfo_max_khz": 2201600,
+          "cur_khz": 729600
+         },
+         "3": {
+          "governor": "schedutil",
+          "scaling_min_khz": 729600,
+          "scaling_max_khz": 2201600,
+          "cpuinfo_min_khz": 115200,
+          "cpuinfo_max_khz": 2201600,
+          "cur_khz": 729600
+         },
+         "4": {
+          "governor": "schedutil",
+          "scaling_min_khz": 729600,
+          "scaling_max_khz": 2201600,
+          "cpuinfo_min_khz": 115200,
+          "cpuinfo_max_khz": 2201600,
+          "cur_khz": 1113600
+         },
+         "5": {
+          "governor": "schedutil",
+          "scaling_min_khz": 729600,
+          "scaling_max_khz": 2201600,
+          "cpuinfo_min_khz": 115200,
+          "cpuinfo_max_khz": 2201600,
+          "cur_khz": 960000
+         },
+         "6": {
+          "governor": "schedutil",
+          "scaling_min_khz": 729600,
+          "scaling_max_khz": 2201600,
+          "cpuinfo_min_khz": 115200,
+          "cpuinfo_max_khz": 2201600,
+          "cur_khz": 960000
+         },
+         "7": {
+          "governor": "schedutil",
+          "scaling_min_khz": 729600,
+          "scaling_max_khz": 2201600,
+          "cpuinfo_min_khz": 115200,
+          "cpuinfo_max_khz": 2201600,
+          "cur_khz": 960000
+         },
+         "8": {
+          "governor": "schedutil",
+          "scaling_min_khz": 729600,
+          "scaling_max_khz": 2201600,
+          "cpuinfo_min_khz": 115200,
+          "cpuinfo_max_khz": 2201600,
+          "cur_khz": 2201600
+         },
+         "9": {
+          "governor": "schedutil",
+          "scaling_min_khz": 729600,
+          "scaling_max_khz": 2201600,
+          "cpuinfo_min_khz": 115200,
+          "cpuinfo_max_khz": 2201600,
+          "cur_khz": 2201600
+         },
+         "10": {
+          "governor": "schedutil",
+          "scaling_min_khz": 729600,
+          "scaling_max_khz": 2201600,
+          "cpuinfo_min_khz": 115200,
+          "cpuinfo_max_khz": 2201600,
+          "cur_khz": 2201600
+         },
+         "11": {
+          "governor": "schedutil",
+          "scaling_min_khz": 729600,
+          "scaling_max_khz": 2201600,
+          "cpuinfo_min_khz": 115200,
+          "cpuinfo_max_khz": 2201600,
+          "cur_khz": 2201600
+         }
+        },
+        "why": null
+       }
+      }
+     },
+     "warmup": 5,
+     "timed": 50,
+     "stats": {
+      "n": 50,
+      "p50_ms": 956.4202985202428,
+      "p95_ms": 969.0432669594884,
+      "max_ms": 976.6479189856909,
+      "mean_ms": 958.1534481386188,
+      "hz_at_p50": 1.0455654292858307,
+      "meets_contract_p95": false
+     },
+     "weights": [
+      {
+       "path": "<model-root>/openvla-7b",
+       "where": "/home/nathan-agxiot/models",
+       "present": true,
+       "bytes": 15085155847
+      }
+     ],
+     "load_s": 26.90677246003179,
+     "undecodable_outputs": 0,
+     "peak_vram_gb": 15.474370048,
+     "prompt": "In: What action should the robot take to fly forward and avoid restricted areas?\nOut:",
+     "prompt_arm": {
+      "csp": "off"
+     },
+     "prompt_tokens": {
+      "n": 20,
+      "method": "openvla_tokenizer"
+     },
+     "precision": "bf16",
+     "loader": "deploy/orin/vla_bf16_check.py load_bf16 (bfloat16, unquantised)",
+     "param": {
+      "param_dtype": "torch.bfloat16",
+      "param_device": "cuda:0"
+     },
+     "inputs": {
+      "frames": [
+       "present_+00.png",
+       "absent_+00.png"
+      ],
+      "crop": "front 224x224"
+     },
+     "status": "measured",
+     "cpu_affinity": null,
+     "note": "NV Power Mode: MAXN 0 ; jetson_clocks state not changed by this session",
+     "command": "python tools/vla_backend_table.py measure --backend openvla_7b_bf16 --allow-gpu --model-root /home/nathan-agxiot/models --topology hil --note 'NV Power Mode: MAXN 0 ; jetson_clocks state not changed by this session'",
+     "_file": "deploy/evidence/hil/vla_rate_openvla_7b_bf16.json",
+     "_is_r1": true
+    }
+   ]
   },
   {
    "backend": "openvla_7b_int8wo",
@@ -600,7 +1163,7 @@
    ],
    "cells": {
     "rate_desktop": "not measured",
-    "rate_orin": "to measure on the Orin (R1); needs torchao, which the AGX Orin's native environment does not install (deploy/orin/agx_vla_env.sh)",
+    "rate_orin": "attempted 2026-11-16, refused at import: torchao is not installed in this environment [deploy/evidence/hil/vla_rate_openvla_7b_int8wo.json]; R1: to measure on the Orin; needs torchao, which the AGX Orin's native environment does not install (deploy/orin/agx_vla_env.sh)",
     "closed_loop_desktop": "not measured",
     "closed_loop_hil_c1": "not flown: base OpenVLA is arm-trained and is given no target, so 'reached (40, 40)' is not defined for it; and nothing on the hil SITL rail publishes the camera topics the ROS 2 VLA bridge reads (sitl/ros2_vla_bridge_node.py)",
     "closed_loop_hil_c2": "n/a: it takes no follow hint and no server speaks protocol v2 for it"
@@ -609,8 +1172,189 @@
    "orin_timed": false,
    "orin_r1": false,
    "orin_bench": false,
-   "orin_attempt_only": false,
-   "r1_results": []
+   "orin_attempt_only": true,
+   "r1_results": [
+    {
+     "schema": "vlaguard.vla_rate/2",
+     "protocol": "vla-backend-protocol/2",
+     "test": "R1",
+     "backend": "openvla_7b_int8wo",
+     "topology": "hil",
+     "created_utc": "2026-11-16T05:50:20Z",
+     "host": {
+      "os": "Linux",
+      "os_release": "6.8.12-1021-tegra",
+      "machine": "aarch64",
+      "cpu_model": "ARM CPU part 0xd42",
+      "cpu_count": 12,
+      "python": "3.12.3",
+      "in_container": false,
+      "ros_distro": null,
+      "topology_env": null,
+      "libs": {
+       "numpy": "1.26.4",
+       "shapely": "2.1.2",
+       "pydantic": "2.13.4",
+       "yaml": "6.0.3",
+       "geos": "3.13.1"
+      },
+      "perf_counter_resolution_s": 1e-09,
+      "jetson": {
+       "is_orin": true,
+       "missing": [],
+       "host_arch": "aarch64",
+       "device_model": "NVIDIA Jetson AGX Orin Developer Kit",
+       "l4t_release": "R39.2.1",
+       "jetpack": null,
+       "nvpmodel": "NV Power Mode: MAXN | 0"
+      },
+      "power": {
+       "nvpmodel": {
+        "source": "/var/lib/nvpmodel/status",
+        "raw": "pmode:0000",
+        "mode_id": 0,
+        "mode_name": "MAXN",
+        "why": null
+       },
+       "cpufreq": {
+        "source": "/sys/devices/system/cpu/cpu<N>/cpufreq",
+        "online": "0-11",
+        "cpus": {
+         "0": {
+          "governor": "schedutil",
+          "scaling_min_khz": 729600,
+          "scaling_max_khz": 2201600,
+          "cpuinfo_min_khz": 115200,
+          "cpuinfo_max_khz": 2201600,
+          "cur_khz": 1804800
+         },
+         "1": {
+          "governor": "schedutil",
+          "scaling_min_khz": 729600,
+          "scaling_max_khz": 2201600,
+          "cpuinfo_min_khz": 115200,
+          "cpuinfo_max_khz": 2201600,
+          "cur_khz": 1804800
+         },
+         "2": {
+          "governor": "schedutil",
+          "scaling_min_khz": 729600,
+          "scaling_max_khz": 2201600,
+          "cpuinfo_min_khz": 115200,
+          "cpuinfo_max_khz": 2201600,
+          "cur_khz": 1804800
+         },
+         "3": {
+          "governor": "schedutil",
+          "scaling_min_khz": 729600,
+          "scaling_max_khz": 2201600,
+          "cpuinfo_min_khz": 115200,
+          "cpuinfo_max_khz": 2201600,
+          "cur_khz": 1804800
+         },
+         "4": {
+          "governor": "schedutil",
+          "scaling_min_khz": 729600,
+          "scaling_max_khz": 2201600,
+          "cpuinfo_min_khz": 115200,
+          "cpuinfo_max_khz": 2201600,
+          "cur_khz": 1190400
+         },
+         "5": {
+          "governor": "schedutil",
+          "scaling_min_khz": 729600,
+          "scaling_max_khz": 2201600,
+          "cpuinfo_min_khz": 115200,
+          "cpuinfo_max_khz": 2201600,
+          "cur_khz": 1190400
+         },
+         "6": {
+          "governor": "schedutil",
+          "scaling_min_khz": 729600,
+          "scaling_max_khz": 2201600,
+          "cpuinfo_min_khz": 115200,
+          "cpuinfo_max_khz": 2201600,
+          "cur_khz": 1190400
+         },
+         "7": {
+          "governor": "schedutil",
+          "scaling_min_khz": 729600,
+          "scaling_max_khz": 2201600,
+          "cpuinfo_min_khz": 115200,
+          "cpuinfo_max_khz": 2201600,
+          "cur_khz": 1190400
+         },
+         "8": {
+          "governor": "schedutil",
+          "scaling_min_khz": 729600,
+          "scaling_max_khz": 2201600,
+          "cpuinfo_min_khz": 115200,
+          "cpuinfo_max_khz": 2201600,
+          "cur_khz": 2201600
+         },
+         "9": {
+          "governor": "schedutil",
+          "scaling_min_khz": 729600,
+          "scaling_max_khz": 2201600,
+          "cpuinfo_min_khz": 115200,
+          "cpuinfo_max_khz": 2201600,
+          "cur_khz": 2201600
+         },
+         "10": {
+          "governor": "schedutil",
+          "scaling_min_khz": 729600,
+          "scaling_max_khz": 2201600,
+          "cpuinfo_min_khz": 115200,
+          "cpuinfo_max_khz": 2201600,
+          "cur_khz": 2201600
+         },
+         "11": {
+          "governor": "schedutil",
+          "scaling_min_khz": 729600,
+          "scaling_max_khz": 2201600,
+          "cpuinfo_min_khz": 115200,
+          "cpuinfo_max_khz": 2201600,
+          "cur_khz": 2201600
+         }
+        },
+        "why": null
+       }
+      }
+     },
+     "warmup": 5,
+     "timed": 50,
+     "stats": {
+      "n": 0
+     },
+     "weights": [
+      {
+       "path": "<model-root>/openvla-7b",
+       "where": "/home/nathan-agxiot/models",
+       "present": true,
+       "bytes": 15085155847
+      }
+     ],
+     "status": "refused",
+     "undecodable_outputs": null,
+     "precision": "int8wo",
+     "loader": "deploy/orin/vla_bf16_check.py load_bf16, then torchao int8 weight-only",
+     "refusal": {
+      "stage": "import",
+      "cause": "torchao is not installed in this environment",
+      "packages": {
+       "torch": "2.14.1+cu132",
+       "transformers": "4.40.1",
+       "torchao": null,
+       "bitsandbytes": null
+      }
+     },
+     "cpu_affinity": null,
+     "note": "NV Power Mode: MAXN 0 ; jetson_clocks state not changed by this session",
+     "command": "python tools/vla_backend_table.py measure --backend openvla_7b_int8wo --allow-gpu --model-root /home/nathan-agxiot/models --topology hil --note 'NV Power Mode: MAXN 0 ; jetson_clocks state not changed by this session'",
+     "_file": "deploy/evidence/hil/vla_rate_openvla_7b_int8wo.json",
+     "_is_r1": true
+    }
+   ]
   },
   {
    "backend": "aerialvla_lora",
@@ -3365,12 +4109,57 @@
    ],
    "cells": {
     "rate_desktop": "not R1 - see records",
-    "rate_orin": "no Orin bench yet; R1 does not cover a model served over protocol v2 (`measure` refuses it): its Orin timing is its server's bench (python tools/bench_foreign_vla.py --server 127.0.0.1:<port> against demo/vla_server_foreign.py serve --model dronecats)",
+    "rate_orin": "not R1 - round trip through its server: p50 1348 ms (0.742 Hz), p95 1.753e+04 ms, n=50; the model alone p50 1345 ms, p95 1.753e+04 ms [deploy/evidence/hil/dronecats_2b_bench_agx.json]; R1 does not cover a model served over protocol v2 (`measure` refuses it): its Orin timing is its server's bench (python tools/bench_foreign_vla.py --server 127.0.0.1:<port> against demo/vla_server_foreign.py serve --model dronecats)",
     "closed_loop_desktop": "not C1 - see records",
     "closed_loop_hil_c1": "not flown: its command is 'go to <the object>' on a camera frame, not a goal coordinate; it has been flown as a follow only",
     "closed_loop_hil_c2": "to fly on hil (C2)"
    },
    "records": [
+    {
+     "backend": "dronecats_2b",
+     "metric": "bench",
+     "protocol": "not R1",
+     "tool": "bench_foreign_vla",
+     "host_is_orin": true,
+     "host_basis": "guardrail.manifest's Orin rule on the file's own host block (NVIDIA Jetson AGX Orin Developer Kit, L4T R39.2.1)",
+     "created_utc": "2026-11-16T05:55:18Z",
+     "config": "bf16/sdpa",
+     "model_id": "dronecats/DroneCATS-Cosmos3-Edge-2B@5080e727",
+     "weights_sha256": "5080e7275eef1ce9ed5fd8380b432a9f85711d077edd7da86de7f2b6146ea2ff",
+     "inputs": "the R1 frames (front tile)",
+     "own_inputs": false,
+     "warmup": 5,
+     "timed": 50,
+     "stats": {
+      "n": 50,
+      "p50_ms": 1348.4,
+      "p95_ms": 17529.1,
+      "max_ms": 17599.6,
+      "mean_ms": 5380.8,
+      "hz_at_p50": 0.742
+     },
+     "server_latency": {
+      "n": 50,
+      "p50_ms": 1345.2,
+      "p95_ms": 17525.9,
+      "max_ms": 17596.4,
+      "mean_ms": 5377.5,
+      "hz_at_p50": 0.743
+     },
+     "parse_fail_timed": 0,
+     "refused": 0,
+     "why_not_r1": [
+      "a round trip over TCP on 127.0.0.1 through demo/vla_server_foreign.py (tools/bench_foreign_vla.py), not `measure`",
+      "the file records no power mode; docs/RUNBOOK-orin-hil.md step 4 times in a budgeted mode with the clocks locked"
+     ],
+     "power_mode": null,
+     "conditions": "served by demo/vla_server_foreign.py; the headline is the round trip, the server's own model time is beside it; a round trip over TCP on 127.0.0.1 through demo/vla_server_foreign.py (tools/bench_foreign_vla.py), not `measure`; the file records no power mode; docs/RUNBOOK-orin-hil.md step 4 times in a budgeted mode with the clocks locked",
+     "source": {
+      "file": "deploy/evidence/hil/dronecats_2b_bench_agx.json",
+      "sha256": "547f86644a7fe97eb1cd1c2cc9f4950e69c2a7713b6cd380137f6653f5c42a85",
+      "file_date": "2026-11-16"
+     }
+    },
     {
      "backend": "dronecats_2b",
      "metric": "follow_matrix",
@@ -3510,9 +4299,9 @@
      }
     }
    ],
-   "orin_timed": false,
+   "orin_timed": true,
    "orin_r1": false,
-   "orin_bench": false,
+   "orin_bench": true,
    "orin_attempt_only": false,
    "r1_results": []
   },
@@ -3541,12 +4330,57 @@
    ],
    "cells": {
     "rate_desktop": "not R1 - see records",
-    "rate_orin": "no Orin bench yet; R1 does not cover a model served over protocol v2 (`measure` refuses it): its Orin timing is its server's bench (python tools/bench_foreign_vla.py --server 127.0.0.1:<port> against demo/vla_server_foreign.py serve --model racevla)",
+    "rate_orin": "not R1 - round trip through its server: p50 838.9 ms (1.19 Hz), p95 843.4 ms, n=50; the model alone p50 835.5 ms, p95 839.9 ms [deploy/evidence/hil/racevla_7b_bench_agx.json]; R1 does not cover a model served over protocol v2 (`measure` refuses it): its Orin timing is its server's bench (python tools/bench_foreign_vla.py --server 127.0.0.1:<port> against demo/vla_server_foreign.py serve --model racevla)",
     "closed_loop_desktop": "not C1 - see records",
     "closed_loop_hil_c1": "not flown: its instruction is 'fly to <the object>' on a camera frame, not a goal coordinate; it has been flown as a follow only",
     "closed_loop_hil_c2": "to fly on hil (C2)"
    },
    "records": [
+    {
+     "backend": "racevla_7b",
+     "metric": "bench",
+     "protocol": "not R1",
+     "tool": "bench_foreign_vla",
+     "host_is_orin": true,
+     "host_basis": "guardrail.manifest's Orin rule on the file's own host block (NVIDIA Jetson AGX Orin Developer Kit, L4T R39.2.1)",
+     "created_utc": "2026-11-16T05:56:37Z",
+     "config": "bf16/sdpa",
+     "model_id": "racevla/drone6_all@03f3bb48",
+     "weights_sha256": "03f3bb48a2d8c694260f02b7ed5cd5ff6eb8c0b9a108a5700b18a23b2fd8db19",
+     "inputs": "the R1 frames (front tile)",
+     "own_inputs": false,
+     "warmup": 5,
+     "timed": 50,
+     "stats": {
+      "n": 50,
+      "p50_ms": 838.9,
+      "p95_ms": 843.4,
+      "max_ms": 844.5,
+      "mean_ms": 839.3,
+      "hz_at_p50": 1.192
+     },
+     "server_latency": {
+      "n": 50,
+      "p50_ms": 835.5,
+      "p95_ms": 839.9,
+      "max_ms": 841.1,
+      "mean_ms": 835.9,
+      "hz_at_p50": 1.197
+     },
+     "parse_fail_timed": 0,
+     "refused": 0,
+     "why_not_r1": [
+      "a round trip over TCP on 127.0.0.1 through demo/vla_server_foreign.py (tools/bench_foreign_vla.py), not `measure`",
+      "the file records no power mode; docs/RUNBOOK-orin-hil.md step 4 times in a budgeted mode with the clocks locked"
+     ],
+     "power_mode": null,
+     "conditions": "served by demo/vla_server_foreign.py; the headline is the round trip, the server's own model time is beside it; a round trip over TCP on 127.0.0.1 through demo/vla_server_foreign.py (tools/bench_foreign_vla.py), not `measure`; the file records no power mode; docs/RUNBOOK-orin-hil.md step 4 times in a budgeted mode with the clocks locked",
+     "source": {
+      "file": "deploy/evidence/hil/racevla_7b_bench_agx.json",
+      "sha256": "a3076dee1c7d79ab253f4d360143d990433ee6623bff3d58989c699ca38d8615",
+      "file_date": "2026-11-16"
+     }
+    },
     {
      "backend": "racevla_7b",
      "metric": "follow_matrix",
@@ -3686,9 +4520,9 @@
      }
     }
    ],
-   "orin_timed": false,
+   "orin_timed": true,
    "orin_r1": false,
-   "orin_bench": false,
+   "orin_bench": true,
    "orin_attempt_only": false,
    "r1_results": []
   },
@@ -4972,6 +5806,12 @@
     "label": "OpenVLA-7B, bf16 (unquantised)",
     "orin": [
      {
+      "what": "R1",
+      "p95_ms": 969.0432669594884,
+      "n": 50,
+      "file": "deploy/evidence/hil/vla_rate_openvla_7b_bf16.json"
+     },
+     {
       "what": "not R1: gate check, slowest answer after the first",
       "p95_ms": null,
       "slowest_ms": 999.4,
@@ -4983,7 +5823,15 @@
    {
     "backend": "openvla_7b_int8wo",
     "label": "OpenVLA-7B, int8 weight-only (torchao): an attempt",
-    "orin": []
+    "orin": [
+     {
+      "what": "attempt refused",
+      "p95_ms": null,
+      "stage": "import",
+      "cause": "torchao is not installed in this environment",
+      "file": "deploy/evidence/hil/vla_rate_openvla_7b_int8wo.json"
+     }
+    ]
    },
    {
     "backend": "aerialvla_lora",
@@ -5028,6 +5876,12 @@
     "label": "RaceVLA drone6_all (Skoltech; an OpenVLA-7B fine-tune), bf16",
     "orin": [
      {
+      "what": "not R1: bf16/sdpa",
+      "p95_ms": 843.4,
+      "n": 50,
+      "file": "deploy/evidence/hil/racevla_7b_bench_agx.json"
+     },
+     {
       "what": "not R1: in flight, 3-4 November 2026, the server's latency p50 per flight",
       "p95_ms": null,
       "in_flight_p50_ms": [
@@ -5058,6 +5912,12 @@
     "label": "DroneCATS-Cosmos3-Edge-2B (NAVER), bf16",
     "orin": [
      {
+      "what": "not R1: bf16/sdpa",
+      "p95_ms": 17529.1,
+      "n": 50,
+      "file": "deploy/evidence/hil/dronecats_2b_bench_agx.json"
+     },
+     {
       "what": "not R1: in flight, 3-4 November 2026, the server's latency p50 per flight",
       "p95_ms": null,
       "in_flight_p50_ms": [
@@ -5070,17 +5930,16 @@
     ]
    }
   ],
-  "int8_on_orin": "not attempted",
+  "int8_on_orin": "refused",
   "int8_note": "the precision the grant's candidate gate G3 names. One per-layer figure exists, on the Orin Nano (CHANGELOG 2026-10-28 (night): one 2048x6144 layer, int8 weight-only 7.7 ms against bf16 9.9 ms); the whole model has not been timed in int8 anywhere",
   "decision": "not recorded by this tool"
  },
  "default_backend": null,
- "decision": "The grant defers the choice to this measurement set, and the Orin rate column holds R1 for 0 of the 7 backends `measure` can time, and a bench that is not R1, labelled as such, for 3 backends (R1 does not cover the 4 backends served over protocol v2: their Orin timing is their server's bench). On hil, C1 has been flown by no backend and C2 by 1 (the protocol asks for 3 flights of each). The stored dev-rail runs (demo/out/ros2_*, not KPI-bearing: the grant takes KPI figures from hil) were flown by the stub.",
+ "decision": "The grant defers the choice to this measurement set, and the Orin rate column holds R1 for 3 of the 7 backends `measure` can time, and a bench that is not R1, labelled as such, for 4 backends; a recorded attempt with no timing for 1 more (R1 does not cover the 4 backends served over protocol v2: their Orin timing is their server's bench). On hil, C1 has been flown by no backend and C2 by 1 (the protocol asks for 3 flights of each). The stored dev-rail runs (demo/out/ros2_*, not KPI-bearing: the grant takes KPI figures from hil) were flown by the stub.",
  "comparison_gaps": [
-  "stub: no R1 on an Orin (R1's floor on the same host)",
   "aerialvla_bf16: 0 of 3 C2 flights",
   "aiotvla_v10b: 2 of 3 C2 flights",
-  "dronecats_2b: no Orin timing, 0 of 3 C2 flights",
-  "racevla_7b: no Orin timing, 0 of 3 C2 flights"
+  "dronecats_2b: 0 of 3 C2 flights",
+  "racevla_7b: 0 of 3 C2 flights"
  ]
 }

@@ -1,0 +1,241 @@
+{
+ "schema": "vlaguard.vla_rate/2",
+ "protocol": "vla-backend-protocol/2",
+ "test": "R1",
+ "backend": "bc_v3",
+ "topology": "hil",
+ "created_utc": "2026-11-16T05:48:25Z",
+ "host": {
+  "os": "Linux",
+  "os_release": "6.8.12-1021-tegra",
+  "machine": "aarch64",
+  "cpu_model": "ARM CPU part 0xd42",
+  "cpu_count": 12,
+  "python": "3.12.3",
+  "in_container": false,
+  "ros_distro": null,
+  "topology_env": null,
+  "libs": {
+   "numpy": "1.26.4",
+   "shapely": "2.1.2",
+   "pydantic": "2.13.4",
+   "yaml": "6.0.3",
+   "geos": "3.13.1"
+  },
+  "perf_counter_resolution_s": 1e-09,
+  "jetson": {
+   "is_orin": true,
+   "missing": [],
+   "host_arch": "aarch64",
+   "device_model": "NVIDIA Jetson AGX Orin Developer Kit",
+   "l4t_release": "R39.2.1",
+   "jetpack": null,
+   "nvpmodel": "NV Power Mode: MAXN | 0"
+  },
+  "power": {
+   "nvpmodel": {
+    "source": "/var/lib/nvpmodel/status",
+    "raw": "pmode:0000",
+    "mode_id": 0,
+    "mode_name": "MAXN",
+    "why": null
+   },
+   "cpufreq": {
+    "source": "/sys/devices/system/cpu/cpu<N>/cpufreq",
+    "online": "0-11",
+    "cpus": {
+     "0": {
+      "governor": "schedutil",
+      "scaling_min_khz": 729600,
+      "scaling_max_khz": 2201600,
+      "cpuinfo_min_khz": 115200,
+      "cpuinfo_max_khz": 2201600,
+      "cur_khz": 1036800
+     },
+     "1": {
+      "governor": "schedutil",
+      "scaling_min_khz": 729600,
+      "scaling_max_khz": 2201600,
+      "cpuinfo_min_khz": 115200,
+      "cpuinfo_max_khz": 2201600,
+      "cur_khz": 1036800
+     },
+     "2": {
+      "governor": "schedutil",
+      "scaling_min_khz": 729600,
+      "scaling_max_khz": 2201600,
+      "cpuinfo_min_khz": 115200,
+      "cpuinfo_max_khz": 2201600,
+      "cur_khz": 1036800
+     },
+     "3": {
+      "governor": "schedutil",
+      "scaling_min_khz": 729600,
+      "scaling_max_khz": 2201600,
+      "cpuinfo_min_khz": 115200,
+      "cpuinfo_max_khz": 2201600,
+      "cur_khz": 2201600
+     },
+     "4": {
+      "governor": "schedutil",
+      "scaling_min_khz": 729600,
+      "scaling_max_khz": 2201600,
+      "cpuinfo_min_khz": 115200,
+      "cpuinfo_max_khz": 2201600,
+      "cur_khz": 729600
+     },
+     "5": {
+      "governor": "schedutil",
+      "scaling_min_khz": 729600,
+      "scaling_max_khz": 2201600,
+      "cpuinfo_min_khz": 115200,
+      "cpuinfo_max_khz": 2201600,
+      "cur_khz": 729600
+     },
+     "6": {
+      "governor": "schedutil",
+      "scaling_min_khz": 729600,
+      "scaling_max_khz": 2201600,
+      "cpuinfo_min_khz": 115200,
+      "cpuinfo_max_khz": 2201600,
+      "cur_khz": 729600
+     },
+     "7": {
+      "governor": "schedutil",
+      "scaling_min_khz": 729600,
+      "scaling_max_khz": 2201600,
+      "cpuinfo_min_khz": 115200,
+      "cpuinfo_max_khz": 2201600,
+      "cur_khz": 729600
+     },
+     "8": {
+      "governor": "schedutil",
+      "scaling_min_khz": 729600,
+      "scaling_max_khz": 2201600,
+      "cpuinfo_min_khz": 115200,
+      "cpuinfo_max_khz": 2201600,
+      "cur_khz": 729600
+     },
+     "9": {
+      "governor": "schedutil",
+      "scaling_min_khz": 729600,
+      "scaling_max_khz": 2201600,
+      "cpuinfo_min_khz": 115200,
+      "cpuinfo_max_khz": 2201600,
+      "cur_khz": 729600
+     },
+     "10": {
+      "governor": "schedutil",
+      "scaling_min_khz": 729600,
+      "scaling_max_khz": 2201600,
+      "cpuinfo_min_khz": 115200,
+      "cpuinfo_max_khz": 2201600,
+      "cur_khz": 729600
+     },
+     "11": {
+      "governor": "schedutil",
+      "scaling_min_khz": 729600,
+      "scaling_max_khz": 2201600,
+      "cpuinfo_min_khz": 115200,
+      "cpuinfo_max_khz": 2201600,
+      "cur_khz": 729600
+     }
+    },
+    "why": null
+   }
+  }
+ },
+ "warmup": 5,
+ "timed": 50,
+ "stats": {
+  "n": 50,
+  "p50_ms": 1.4358320040628314,
+  "p95_ms": 4.5174339902587235,
+  "max_ms": 5.429086973890662,
+  "mean_ms": 2.104578436119482,
+  "hz_at_p50": 696.4603081491422,
+  "meets_contract_p95": true
+ },
+ "weights": [
+  {
+   "path": "models/vla_policy_v2.pt",
+   "where": "repository",
+   "present": true,
+   "bytes": 2173407
+  },
+  {
+   "path": "models/vla_policy_v2.onnx",
+   "where": "repository",
+   "present": false,
+   "bytes": null
+  }
+ ],
+ "load_s": 2.0965692959725857,
+ "inputs": {
+  "file": "deploy/evidence/shield_tick_pack.json",
+  "flight": "ros2_shield_on",
+  "rows": 55
+ },
+ "undecodable_outputs": 0,
+ "device": "cpu",
+ "param_devices": [
+  "cpu"
+ ],
+ "params": 540675,
+ "status": "measured",
+ "latency_s": [
+  0.0045174339902587235,
+  0.004113111994229257,
+  0.00435292097972706,
+  0.0014517519739456475,
+  0.0013179589877836406,
+  0.001279400021303445,
+  0.0012795270304195583,
+  0.00124819902703166,
+  0.0034785480238497257,
+  0.0014121679705567658,
+  0.001326023950241506,
+  0.001277255010791123,
+  0.0012414790107868612,
+  0.0015488089993596077,
+  0.005429086973890662,
+  0.004118776007089764,
+  0.004954491974785924,
+  0.004020918975584209,
+  0.0039727590046823025,
+  0.0029827370308339596,
+  0.0012798469979315996,
+  0.001446344016585499,
+  0.0014253199915401638,
+  0.0032044349936768413,
+  0.001398439984768629,
+  0.001325607008766383,
+  0.0012827920145355165,
+  0.0012499909498728812,
+  0.0012666949769482017,
+  0.003513108007609844,
+  0.001385512005072087,
+  0.0012785670114681125,
+  0.0012614160077646375,
+  0.0014794960152357817,
+  0.0014558160328306258,
+  0.0033047550241462886,
+  0.0016172579489648342,
+  0.0014759439509361982,
+  0.0014734480064362288,
+  0.0012908880016766489,
+  0.0028654559864662588,
+  0.0014887130237184465,
+  0.001314022985752672,
+  0.001262758974917233,
+  0.001263911952264607,
+  0.001265607017558068,
+  0.0012628230033442378,
+  0.0029248810024000704,
+  0.0013892879942432046,
+  0.0014524239813908935
+ ],
+ "cpu_affinity": null,
+ "note": "NV Power Mode: MAXN 0 ; jetson_clocks state not changed by this session",
+ "command": "python tools/vla_backend_table.py measure --backend bc_v3 --topology hil --note 'NV Power Mode: MAXN 0 ; jetson_clocks state not changed by this session'"
+}

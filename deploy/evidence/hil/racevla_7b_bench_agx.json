@@ -1,0 +1,6310 @@
+{
+ "schema": "vlaguard.foreign_vla_bench/1",
+ "created_utc": "2026-11-16T05:56:37Z",
+ "server": "127.0.0.1:8791",
+ "identity": {
+  "id": "racevla/drone6_all@03f3bb48",
+  "base": "openvla-7b+drone_set6_all+b16+lr-0.0005+lora-r32+dropout-0.0+drone_set6_all+b16+lr-0.0005+lora-r32+dropout-0.0@unknown",
+  "weights_sha256": "03f3bb48a2d8c694260f02b7ed5cd5ff6eb8c0b9a108a5700b18a23b2fd8db19",
+  "precision": "bf16",
+  "attn": "sdpa",
+  "merged": false,
+  "agreement": null,
+  "variant": "foreign",
+  "foreign": {
+   "family": "racevla",
+   "model": "drone6_all",
+   "upstream": {
+    "model": "SerValera/RaceVLA_models drone6_all",
+    "revision": "d14f98f99c045cb51fa598b3086470d30222437a",
+    "base_model": "openvla/openvla-7b (full fine-tune, merged)",
+    "license": null,
+    "paper": "arXiv 2503.02572",
+    "code": "github.com/SerValera/RaceVLA@46f7e27a206d3bf7adb247ba8cda586377a8172a server/server.py, drone/vla_ws/src/vlm_drone/scripts/drone.py"
+   },
+   "bottom_tile": "none",
+   "speed_words": null,
+   "front_source": "vla",
+   "camera": {
+    "camera": "VLAFront",
+    "hfov_deg": 90.0,
+    "pitch_deg": 0.0
+   },
+   "native_output": "7 OpenVLA action tokens -> 7 un-normalised floats; vx, vy, vz = a[0..2], delta_yaw = a[5] (server.py:43-50)",
+   "mapping": "racevla_velocity/1",
+   "config": {
+    "instruction": "fly to {target}",
+    "prompt": "In: What action should the robot take to {instruction}?\nOut:",
+    "unnorm_key": "drone_set6_all",
+    "stats": {
+     "q01": [
+      -0.006217191461473703,
+      -0.05500700186938048,
+      -0.009723014812916517,
+      0.0,
+      0.0,
+      -0.16078203916549683,
+      0.0
+     ],
+     "q99": [
+      0.2754399082064624,
+      0.04424422681331627,
+      0.01447663133032611,
+      0.0,
+      0.0,
+      0.11089330911636353,
+      0.0
+     ],
+     "mask": [
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      false
+     ]
+    },
+    "horizon_s": 1.0,
+    "gains": {
+     "xy": 1.875,
+     "z": 0.5,
+     "yaw": 1.5
+    },
+    "gray": true,
+    "vocab_size": 32000,
+    "n_bins": 256,
+    "history_gap_s": 5.0,
+    "model_norm_stats_agree": true
+   }
+  },
+  "load": {
+   "load_total_s": 21.666698954999447
+  },
+  "digest": {
+   "source": "sidecar",
+   "sidecar": "/home/nathan-agxiot/.cache/guardrail/vla_server_weights.json",
+   "key": "bdbb7a562dce9d8372ac6f5e1e0ca1804b58f6df73d737a152a1a4934b3a54b7",
+   "computed_utc": "2026-11-03T15:18:21Z"
+  },
+  "weight_files": [
+   "/home/nathan-agxiot/models/racevla/RaceVLA_models/drone6_all/openvla-7b+drone_set6_all+b16+lr-0.0005+lora-r32+dropout-0.0+drone_set6_all+b16+lr-0.0005+lora-r32+dropout-0.0/model-00001-of-00004.safetensors",
+   "/home/nathan-agxiot/models/racevla/RaceVLA_models/drone6_all/openvla-7b+drone_set6_all+b16+lr-0.0005+lora-r32+dropout-0.0+drone_set6_all+b16+lr-0.0005+lora-r32+dropout-0.0/model-00002-of-00004.safetensors",
+   "/home/nathan-agxiot/models/racevla/RaceVLA_models/drone6_all/openvla-7b+drone_set6_all+b16+lr-0.0005+lora-r32+dropout-0.0+drone_set6_all+b16+lr-0.0005+lora-r32+dropout-0.0/model-00003-of-00004.safetensors",
+   "/home/nathan-agxiot/models/racevla/RaceVLA_models/drone6_all/openvla-7b+drone_set6_all+b16+lr-0.0005+lora-r32+dropout-0.0+drone_set6_all+b16+lr-0.0005+lora-r32+dropout-0.0/model-00004-of-00004.safetensors",
+   "/home/nathan-agxiot/models/racevla/RaceVLA_models/drone6_all/openvla-7b+drone_set6_all+b16+lr-0.0005+lora-r32+dropout-0.0+drone_set6_all+b16+lr-0.0005+lora-r32+dropout-0.0/dataset_statistics.json"
+  ],
+  "libraries": {
+   "python": "3.12.3",
+   "torch": "2.14.1+cu132",
+   "transformers": "4.40.1",
+   "peft": "0.11.1",
+   "bitsandbytes": null,
+   "torchao": null,
+   "accelerate": "0.32.1",
+   "PIL": "13.0.0",
+   "cuda": "13.2",
+   "gpu": "Orin"
+  },
+  "protocol": 2,
+  "server": "demo/vla_server_foreign.py",
+  "host": {
+   "host_arch": "aarch64",
+   "device_model": "NVIDIA Jetson AGX Orin Developer Kit",
+   "l4t_release": "R39.2.1",
+   "jetpack": null,
+   "hostname": "localhost.localdomain"
+  }
+ },
+ "warmup": 5,
+ "frames": "/home/nathan-agxiot/vla-drone/deploy/evidence/vla_protocol_frames",
+ "object": "a red car",
+ "n": 50,
+ "roundtrip": {
+  "n": 50,
+  "p50_ms": 838.9,
+  "p95_ms": 843.4,
+  "max_ms": 844.5,
+  "mean_ms": 839.3,
+  "hz_at_p50": 1.192
+ },
+ "server_latency": {
+  "n": 50,
+  "p50_ms": 835.5,
+  "p95_ms": 839.9,
+  "max_ms": 841.1,
+  "mean_ms": 835.9,
+  "hz_at_p50": 1.197
+ },
+ "server_time": {
+  "n": 50,
+  "p50_ms": 837.3,
+  "p95_ms": 841.7,
+  "max_ms": 842.9,
+  "mean_ms": 837.7,
+  "hz_at_p50": 1.194
+ },
+ "native_kinds": {
+  "velocity": 50
+ },
+ "step_texts": {
+  "06 49 54</s>": 25,
+  "03 49 48</s>": 25
+ },
+ "parse_fail": 0,
+ "refused": 0,
+ "errors": [],
+ "rows": [
+  {
+   "frame": "absent_+00.png",
+   "rtt_s": 0.8367260950035416,
+   "ok": true,
+   "error": null,
+   "kind": "velocity",
+   "raw_text": "06 49 54</s>",
+   "parse_ok": true,
+   "latency_s": 0.83332,
+   "server_s": 0.835079,
+   "native": {
+    "family": "racevla",
+    "ok": true,
+    "action": {
+     "action": [
+      0.15228396070460015,
+      0.017971842750249496,
+      -0.002558021543054485,
+      0.0,
+      0.0,
+      -0.07395246706756892,
+      0.0
+     ],
+     "normalized": [
+      0.12549019607843137,
+      0.47058823529411764,
+      -0.40784313725490196,
+      0.0,
+      0.0,
+      -0.36078431372549025,
+      0.0
+     ]
+    },
+    "reason": null,
+    "tokens": [
+     31856,
+     31812,
+     31924,
+     31872,
+     31872,
+     31918,
+     31872
+    ],
+    "unnorm_key": "drone_set6_all",
+    "text": "31856 31812 31924 31872 31872 31918 31872",
+    "tokens_outside_action_bins": 0,
+    "command": "fly to the red car",
+    "history": null,
+    "history_reset": null,
+    "camera_aux": null,
+    "image": {
+     "src_size": [
+      224,
+      224
+     ],
+     "model_size": [
+      224,
+      224
+     ],
+     "gray": true
+    },
+    "ignored": {
+     "phrase": "straight ahead ",
+     "hint_source": "detector",
+     "down_jpg": "sent, ignored (bottom_tile 'none')"
+    }
+   },
+   "mapping": {
+    "rule": "racevla_velocity/1",
+    "kind": "velocity",
+    "requested": {
+     "fwd_m": 0.2855324263211253,
+     "down_m": 0.0012790107715272424,
+     "dpsi_rad": 0.11092870060135337
+    },
+    "clipped": [],
+    "bins": [
+     6,
+     49,
+     54
+    ],
+    "flown": {
+     "fwd_m": 0.30612244897959184,
+     "down_m": 0.0,
+     "dpsi_rad": 0.11224489795918347
+    },
+    "land": false,
+    "quantize": "nearest bin, round((v - lo) / (hi - lo) * 98), after clipping to the codec's range; the client decodes the bin's lower edge, so the flown step is within half a bin of the requested one",
+    "geometry": {
+     "vx": 0.15228396070460015,
+     "vy": 0.017971842750249496,
+     "vz": -0.002558021543054485,
+     "delta_yaw": -0.07395246706756892,
+     "unused": {
+      "3": 0.0,
+      "4": 0.0,
+      "6": 0.0
+     },
+     "gains": {
+      "xy": 1.875,
+      "z": 0.5,
+      "yaw": 1.5
+     },
+     "forward_mps": 0.2855324263211253,
+     "left_mps": 0.033697205156717806,
+     "climb_mps": -0.0012790107715272424,
+     "yaw_rate_ccw_rad_s": -0.11092870060135337,
+     "horizon_s": 1.0,
+     "lateral_left_m_dropped": 0.033697205156717806
+    },
+    "camera": {
+     "camera": "VLAFront",
+     "hfov_deg": 90.0,
+     "pitch_deg": 0.0
+    },
+    "horizon_s": 1.0,
+    "gains": {
+     "xy": 1.875,
+     "z": 0.5,
+     "yaw": 1.5
+    }
+   }
+  },
+  {
+   "frame": "present_+00.png",
+   "rtt_s": 0.837745173019357,
+   "ok": true,
+   "error": null,
+   "kind": "velocity",
+   "raw_text": "03 49 48</s>",
+   "parse_ok": true,
+   "latency_s": 0.834321,
+   "server_s": 0.836061,
+   "native": {
+    "family": "racevla",
+    "ok": true,
+    "action": {
+     "action": [
+      0.09042985254222986,
+      -0.0034352850048419703,
+      0.0004787967964896885,
+      0.0,
+      0.0,
+      0.00808283417832617,
+      0.0
+     ],
+     "normalized": [
+      -0.3137254901960784,
+      0.039215686274509776,
+      -0.1568627450980392,
+      0.0,
+      0.0,
+      0.2431372549019608,
+      0.0
+     ]
+    },
+    "reason": null,
+    "tokens": [
+     31912,
+     31867,
+     31892,
+     31872,
+     31872,
+     31841,
+     31872
+    ],
+    "unnorm_key": "drone_set6_all",
+    "text": "31912 31867 31892 31872 31872 31841 31872",
+    "tokens_outside_action_bins": 0,
+    "command": "fly to the red car",
+    "history": null,
+    "history_reset": null,
+    "camera_aux": null,
+    "image": {
+     "src_size": [
+      224,
+      224
+     ],
+     "model_size": [
+      224,
+      224
+     ],
+     "gray": true
+    },
+    "ignored": {
+     "phrase": "straight ahead ",
+     "hint_source": "detector",
+     "down_jpg": "sent, ignored (bottom_tile 'none')"
+    }
+   },
+   "mapping": {
+    "rule": "racevla_velocity/1",
+    "kind": "velocity",
+    "requested": {
+     "fwd_m": 0.169555973516681,
+     "down_m": -0.00023939839824484426,
+     "dpsi_rad": -0.012124251267489256
+    },
+    "clipped": [],
+    "bins": [
+     3,
+     49,
+     48
+    ],
+    "flown": {
+     "fwd_m": 0.15306122448979592,
+     "down_m": 0.0,
+     "dpsi_rad": -0.022448979591836782
+    },
+    "land": false,
+    "quantize": "nearest bin, round((v - lo) / (hi - lo) * 98), after clipping to the codec's range; the client decodes the bin's lower edge, so the flown step is within half a bin of the requested one",
+    "geometry": {
+     "vx": 0.09042985254222986,
+     "vy": -0.0034352850048419703,
+     "vz": 0.0004787967964896885,
+     "delta_yaw": 0.00808283417832617,
+     "unused": {
+      "3": 0.0,
+      "4": 0.0,
+      "6": 0.0
+     },
+     "gains": {
+      "xy": 1.875,
+      "z": 0.5,
+      "yaw": 1.5
+     },
+     "forward_mps": 0.169555973516681,
+     "left_mps": -0.006441159384078694,
+     "climb_mps": 0.00023939839824484426,
+     "yaw_rate_ccw_rad_s": 0.012124251267489256,
+     "horizon_s": 1.0,
+     "lateral_left_m_dropped": -0.006441159384078694
+    },
+    "camera": {
+     "camera": "VLAFront",
+     "hfov_deg": 90.0,
+     "pitch_deg": 0.0
+    },
+    "horizon_s": 1.0,
+    "gains": {
+     "xy": 1.875,
+     "z": 0.5,
+     "yaw": 1.5
+    }
+   }
+  },
+  {
+   "frame": "absent_+00.png",
+   "rtt_s": 0.8378816529875621,
+   "ok": true,
+   "error": null,
+   "kind": "velocity",
+   "raw_text": "06 49 54</s>",
+   "parse_ok": true,
+   "latency_s": 0.834399,
+   "server_s": 0.836336,
+   "native": {
+    "family": "racevla",
+    "ok": true,
+    "action": {
+     "action": [
+      0.15228396070460015,
+      0.017971842750249496,
+      -0.002558021543054485,
+      0.0,
+      0.0,
+      -0.07395246706756892,
+      0.0
+     ],
+     "normalized": [
+      0.12549019607843137,
+      0.47058823529411764,
+      -0.40784313725490196,
+      0.0,
+      0.0,
+      -0.36078431372549025,
+      0.0
+     ]
+    },
+    "reason": null,
+    "tokens": [
+     31856,
+     31812,
+     31924,
+     31872,
+     31872,
+     31918,
+     31872
+    ],
+    "unnorm_key": "drone_set6_all",
+    "text": "31856 31812 31924 31872 31872 31918 31872",
+    "tokens_outside_action_bins": 0,
+    "command": "fly to the red car",
+    "history": null,
+    "history_reset": null,
+    "camera_aux": null,
+    "image": {
+     "src_size": [
+      224,
+      224
+     ],
+     "model_size": [
+      224,
+      224
+     ],
+     "gray": true
+    },
+    "ignored": {
+     "phrase": "straight ahead ",
+     "hint_source": "detector",
+     "down_jpg": "sent, ignored (bottom_tile 'none')"
+    }
+   },
+   "mapping": {
+    "rule": "racevla_velocity/1",
+    "kind": "velocity",
+    "requested": {
+     "fwd_m": 0.2855324263211253,
+     "down_m": 0.0012790107715272424,
+     "dpsi_rad": 0.11092870060135337
+    },
+    "clipped": [],
+    "bins": [
+     6,
+     49,
+     54
+    ],
+    "flown": {
+     "fwd_m": 0.30612244897959184,
+     "down_m": 0.0,
+     "dpsi_rad": 0.11224489795918347
+    },
+    "land": false,
+    "quantize": "nearest bin, round((v - lo) / (hi - lo) * 98), after clipping to the codec's range; the client decodes the bin's lower edge, so the flown step is within half a bin of the requested one",
+    "geometry": {
+     "vx": 0.15228396070460015,
+     "vy": 0.017971842750249496,
+     "vz": -0.002558021543054485,
+     "delta_yaw": -0.07395246706756892,
+     "unused": {
+      "3": 0.0,
+      "4": 0.0,
+      "6": 0.0
+     },
+     "gains": {
+      "xy": 1.875,
+      "z": 0.5,
+      "yaw": 1.5
+     },
+     "forward_mps": 0.2855324263211253,
+     "left_mps": 0.033697205156717806,
+     "climb_mps": -0.0012790107715272424,
+     "yaw_rate_ccw_rad_s": -0.11092870060135337,
+     "horizon_s": 1.0,
+     "lateral_left_m_dropped": 0.033697205156717806
+    },
+    "camera": {
+     "camera": "VLAFront",
+     "hfov_deg": 90.0,
+     "pitch_deg": 0.0
+    },
+    "horizon_s": 1.0,
+    "gains": {
+     "xy": 1.875,
+     "z": 0.5,
+     "yaw": 1.5
+    }
+   }
+  },
+  {
+   "frame": "present_+00.png",
+   "rtt_s": 0.8354474639636464,
+   "ok": true,
+   "error": null,
+   "kind": "velocity",
+   "raw_text": "03 49 48</s>",
+   "parse_ok": true,
+   "latency_s": 0.831972,
+   "server_s": 0.83372,
+   "native": {
+    "family": "racevla",
+    "ok": true,
+    "action": {
+     "action": [
+      0.09042985254222986,
+      -0.0034352850048419703,
+      0.0004787967964896885,
+      0.0,
+      0.0,
+      0.00808283417832617,
+      0.0
+     ],
+     "normalized": [
+      -0.3137254901960784,
+      0.039215686274509776,
+      -0.1568627450980392,
+      0.0,
+      0.0,
+      0.2431372549019608,
+      0.0
+     ]
+    },
+    "reason": null,
+    "tokens": [
+     31912,
+     31867,
+     31892,
+     31872,
+     31872,
+     31841,
+     31872
+    ],
+    "unnorm_key": "drone_set6_all",
+    "text": "31912 31867 31892 31872 31872 31841 31872",
+    "tokens_outside_action_bins": 0,
+    "command": "fly to the red car",
+    "history": null,
+    "history_reset": null,
+    "camera_aux": null,
+    "image": {
+     "src_size": [
+      224,
+      224
+     ],
+     "model_size": [
+      224,
+      224
+     ],
+     "gray": true
+    },
+    "ignored": {
+     "phrase": "straight ahead ",
+     "hint_source": "detector",
+     "down_jpg": "sent, ignored (bottom_tile 'none')"
+    }
+   },
+   "mapping": {
+    "rule": "racevla_velocity/1",
+    "kind": "velocity",
+    "requested": {
+     "fwd_m": 0.169555973516681,
+     "down_m": -0.00023939839824484426,
+     "dpsi_rad": -0.012124251267489256
+    },
+    "clipped": [],
+    "bins": [
+     3,
+     49,
+     48
+    ],
+    "flown": {
+     "fwd_m": 0.15306122448979592,
+     "down_m": 0.0,
+     "dpsi_rad": -0.022448979591836782
+    },
+    "land": false,
+    "quantize": "nearest bin, round((v - lo) / (hi - lo) * 98), after clipping to the codec's range; the client decodes the bin's lower edge, so the flown step is within half a bin of the requested one",
+    "geometry": {
+     "vx": 0.09042985254222986,
+     "vy": -0.0034352850048419703,
+     "vz": 0.0004787967964896885,
+     "delta_yaw": 0.00808283417832617,
+     "unused": {
+      "3": 0.0,
+      "4": 0.0,
+      "6": 0.0
+     },
+     "gains": {
+      "xy": 1.875,
+      "z": 0.5,
+      "yaw": 1.5
+     },
+     "forward_mps": 0.169555973516681,
+     "left_mps": -0.006441159384078694,
+     "climb_mps": 0.00023939839824484426,
+     "yaw_rate_ccw_rad_s": 0.012124251267489256,
+     "horizon_s": 1.0,
+     "lateral_left_m_dropped": -0.006441159384078694
+    },
+    "camera": {
+     "camera": "VLAFront",
+     "hfov_deg": 90.0,
+     "pitch_deg": 0.0
+    },
+    "horizon_s": 1.0,
+    "gains": {
+     "xy": 1.875,
+     "z": 0.5,
+     "yaw": 1.5
+    }
+   }
+  },
+  {
+   "frame": "absent_+00.png",
+   "rtt_s": 0.8411582799744792,
+   "ok": true,
+   "error": null,
+   "kind": "velocity",
+   "raw_text": "06 49 54</s>",
+   "parse_ok": true,
+   "latency_s": 0.837732,
+   "server_s": 0.839494,
+   "native": {
+    "family": "racevla",
+    "ok": true,
+    "action": {
+     "action": [
+      0.15228396070460015,
+      0.017971842750249496,
+      -0.002558021543054485,
+      0.0,
+      0.0,
+      -0.07395246706756892,
+      0.0
+     ],
+     "normalized": [
+      0.12549019607843137,
+      0.47058823529411764,
+      -0.40784313725490196,
+      0.0,
+      0.0,
+      -0.36078431372549025,
+      0.0
+     ]
+    },
+    "reason": null,
+    "tokens": [
+     31856,
+     31812,
+     31924,
+     31872,
+     31872,
+     31918,
+     31872
+    ],
+    "unnorm_key": "drone_set6_all",
+    "text": "31856 31812 31924 31872 31872 31918 31872",
+    "tokens_outside_action_bins": 0,
+    "command": "fly to the red car",
+    "history": null,
+    "history_reset": null,
+    "camera_aux": null,
+    "image": {
+     "src_size": [
+      224,
+      224
+     ],
+     "model_size": [
+      224,
+      224
+     ],
+     "gray": true
+    },
+    "ignored": {
+     "phrase": "straight ahead ",
+     "hint_source": "detector",
+     "down_jpg": "sent, ignored (bottom_tile 'none')"
+    }
+   },
+   "mapping": {
+    "rule": "racevla_velocity/1",
+    "kind": "velocity",
+    "requested": {
+     "fwd_m": 0.2855324263211253,
+     "down_m": 0.0012790107715272424,
+     "dpsi_rad": 0.11092870060135337
+    },
+    "clipped": [],
+    "bins": [
+     6,
+     49,
+     54
+    ],
+    "flown": {
+     "fwd_m": 0.30612244897959184,
+     "down_m": 0.0,
+     "dpsi_rad": 0.11224489795918347
+    },
+    "land": false,
+    "quantize": "nearest bin, round((v - lo) / (hi - lo) * 98), after clipping to the codec's range; the client decodes the bin's lower edge, so the flown step is within half a bin of the requested one",
+    "geometry": {
+     "vx": 0.15228396070460015,
+     "vy": 0.017971842750249496,
+     "vz": -0.002558021543054485,
+     "delta_yaw": -0.07395246706756892,
+     "unused": {
+      "3": 0.0,
+      "4": 0.0,
+      "6": 0.0
+     },
+     "gains": {
+      "xy": 1.875,
+      "z": 0.5,
+      "yaw": 1.5
+     },
+     "forward_mps": 0.2855324263211253,
+     "left_mps": 0.033697205156717806,
+     "climb_mps": -0.0012790107715272424,
+     "yaw_rate_ccw_rad_s": -0.11092870060135337,
+     "horizon_s": 1.0,
+     "lateral_left_m_dropped": 0.033697205156717806
+    },
+    "camera": {
+     "camera": "VLAFront",
+     "hfov_deg": 90.0,
+     "pitch_deg": 0.0
+    },
+    "horizon_s": 1.0,
+    "gains": {
+     "xy": 1.875,
+     "z": 0.5,
+     "yaw": 1.5
+    }
+   }
+  },
+  {
+   "frame": "present_+00.png",
+   "rtt_s": 0.8411456090398133,
+   "ok": true,
+   "error": null,
+   "kind": "velocity",
+   "raw_text": "03 49 48</s>",
+   "parse_ok": true,
+   "latency_s": 0.837824,
+   "server_s": 0.839573,
+   "native": {
+    "family": "racevla",
+    "ok": true,
+    "action": {
+     "action": [
+      0.09042985254222986,
+      -0.0034352850048419703,
+      0.0004787967964896885,
+      0.0,
+      0.0,
+      0.00808283417832617,
+      0.0
+     ],
+     "normalized": [
+      -0.3137254901960784,
+      0.039215686274509776,
+      -0.1568627450980392,
+      0.0,
+      0.0,
+      0.2431372549019608,
+      0.0
+     ]
+    },
+    "reason": null,
+    "tokens": [
+     31912,
+     31867,
+     31892,
+     31872,
+     31872,
+     31841,
+     31872
+    ],
+    "unnorm_key": "drone_set6_all",
+    "text": "31912 31867 31892 31872 31872 31841 31872",
+    "tokens_outside_action_bins": 0,
+    "command": "fly to the red car",
+    "history": null,
+    "history_reset": null,
+    "camera_aux": null,
+    "image": {
+     "src_size": [
+      224,
+      224
+     ],
+     "model_size": [
+      224,
+      224
+     ],
+     "gray": true
+    },
+    "ignored": {
+     "phrase": "straight ahead ",
+     "hint_source": "detector",
+     "down_jpg": "sent, ignored (bottom_tile 'none')"
+    }
+   },
+   "mapping": {
+    "rule": "racevla_velocity/1",
+    "kind": "velocity",
+    "requested": {
+     "fwd_m": 0.169555973516681,
+     "down_m": -0.00023939839824484426,
+     "dpsi_rad": -0.012124251267489256
+    },
+    "clipped": [],
+    "bins": [
+     3,
+     49,
+     48
+    ],
+    "flown": {
+     "fwd_m": 0.15306122448979592,
+     "down_m": 0.0,
+     "dpsi_rad": -0.022448979591836782
+    },
+    "land": false,
+    "quantize": "nearest bin, round((v - lo) / (hi - lo) * 98), after clipping to the codec's range; the client decodes the bin's lower edge, so the flown step is within half a bin of the requested one",
+    "geometry": {
+     "vx": 0.09042985254222986,
+     "vy": -0.0034352850048419703,
+     "vz": 0.0004787967964896885,
+     "delta_yaw": 0.00808283417832617,
+     "unused": {
+      "3": 0.0,
+      "4": 0.0,
+      "6": 0.0
+     },
+     "gains": {
+      "xy": 1.875,
+      "z": 0.5,
+      "yaw": 1.5
+     },
+     "forward_mps": 0.169555973516681,
+     "left_mps": -0.006441159384078694,
+     "climb_mps": 0.00023939839824484426,
+     "yaw_rate_ccw_rad_s": 0.012124251267489256,
+     "horizon_s": 1.0,
+     "lateral_left_m_dropped": -0.006441159384078694
+    },
+    "camera": {
+     "camera": "VLAFront",
+     "hfov_deg": 90.0,
+     "pitch_deg": 0.0
+    },
+    "horizon_s": 1.0,
+    "gains": {
+     "xy": 1.875,
+     "z": 0.5,
+     "yaw": 1.5
+    }
+   }
+  },
+  {
+   "frame": "absent_+00.png",
+   "rtt_s": 0.8393756779842079,
+   "ok": true,
+   "error": null,
+   "kind": "velocity",
+   "raw_text": "06 49 54</s>",
+   "parse_ok": true,
+   "latency_s": 0.835829,
+   "server_s": 0.837655,
+   "native": {
+    "family": "racevla",
+    "ok": true,
+    "action": {
+     "action": [
+      0.15228396070460015,
+      0.017971842750249496,
+      -0.002558021543054485,
+      0.0,
+      0.0,
+      -0.07395246706756892,
+      0.0
+     ],
+     "normalized": [
+      0.12549019607843137,
+      0.47058823529411764,
+      -0.40784313725490196,
+      0.0,
+      0.0,
+      -0.36078431372549025,
+      0.0
+     ]
+    },
+    "reason": null,
+    "tokens": [
+     31856,
+     31812,
+     31924,
+     31872,
+     31872,
+     31918,
+     31872
+    ],
+    "unnorm_key": "drone_set6_all",
+    "text": "31856 31812 31924 31872 31872 31918 31872",
+    "tokens_outside_action_bins": 0,
+    "command": "fly to the red car",
+    "history": null,
+    "history_reset": null,
+    "camera_aux": null,
+    "image": {
+     "src_size": [
+      224,
+      224
+     ],
+     "model_size": [
+      224,
+      224
+     ],
+     "gray": true
+    },
+    "ignored": {
+     "phrase": "straight ahead ",
+     "hint_source": "detector",
+     "down_jpg": "sent, ignored (bottom_tile 'none')"
+    }
+   },
+   "mapping": {
+    "rule": "racevla_velocity/1",
+    "kind": "velocity",
+    "requested": {
+     "fwd_m": 0.2855324263211253,
+     "down_m": 0.0012790107715272424,
+     "dpsi_rad": 0.11092870060135337
+    },
+    "clipped": [],
+    "bins": [
+     6,
+     49,
+     54
+    ],
+    "flown": {
+     "fwd_m": 0.30612244897959184,
+     "down_m": 0.0,
+     "dpsi_rad": 0.11224489795918347
+    },
+    "land": false,
+    "quantize": "nearest bin, round((v - lo) / (hi - lo) * 98), after clipping to the codec's range; the client decodes the bin's lower edge, so the flown step is within half a bin of the requested one",
+    "geometry": {
+     "vx": 0.15228396070460015,
+     "vy": 0.017971842750249496,
+     "vz": -0.002558021543054485,
+     "delta_yaw": -0.07395246706756892,
+     "unused": {
+      "3": 0.0,
+      "4": 0.0,
+      "6": 0.0
+     },
+     "gains": {
+      "xy": 1.875,
+      "z": 0.5,
+      "yaw": 1.5
+     },
+     "forward_mps": 0.2855324263211253,
+     "left_mps": 0.033697205156717806,
+     "climb_mps": -0.0012790107715272424,
+     "yaw_rate_ccw_rad_s": -0.11092870060135337,
+     "horizon_s": 1.0,
+     "lateral_left_m_dropped": 0.033697205156717806
+    },
+    "camera": {
+     "camera": "VLAFront",
+     "hfov_deg": 90.0,
+     "pitch_deg": 0.0
+    },
+    "horizon_s": 1.0,
+    "gains": {
+     "xy": 1.875,
+     "z": 0.5,
+     "yaw": 1.5
+    }
+   }
+  },
+  {
+   "frame": "present_+00.png",
+   "rtt_s": 0.8381256549619138,
+   "ok": true,
+   "error": null,
+   "kind": "velocity",
+   "raw_text": "03 49 48</s>",
+   "parse_ok": true,
+   "latency_s": 0.834684,
+   "server_s": 0.836462,
+   "native": {
+    "family": "racevla",
+    "ok": true,
+    "action": {
+     "action": [
+      0.09042985254222986,
+      -0.0034352850048419703,
+      0.0004787967964896885,
+      0.0,
+      0.0,
+      0.00808283417832617,
+      0.0
+     ],
+     "normalized": [
+      -0.3137254901960784,
+      0.039215686274509776,
+      -0.1568627450980392,
+      0.0,
+      0.0,
+      0.2431372549019608,
+      0.0
+     ]
+    },
+    "reason": null,
+    "tokens": [
+     31912,
+     31867,
+     31892,
+     31872,
+     31872,
+     31841,
+     31872
+    ],
+    "unnorm_key": "drone_set6_all",
+    "text": "31912 31867 31892 31872 31872 31841 31872",
+    "tokens_outside_action_bins": 0,
+    "command": "fly to the red car",
+    "history": null,
+    "history_reset": null,
+    "camera_aux": null,
+    "image": {
+     "src_size": [
+      224,
+      224
+     ],
+     "model_size": [
+      224,
+      224
+     ],
+     "gray": true
+    },
+    "ignored": {
+     "phrase": "straight ahead ",
+     "hint_source": "detector",
+     "down_jpg": "sent, ignored (bottom_tile 'none')"
+    }
+   },
+   "mapping": {
+    "rule": "racevla_velocity/1",
+    "kind": "velocity",
+    "requested": {
+     "fwd_m": 0.169555973516681,
+     "down_m": -0.00023939839824484426,
+     "dpsi_rad": -0.012124251267489256
+    },
+    "clipped": [],
+    "bins": [
+     3,
+     49,
+     48
+    ],
+    "flown": {
+     "fwd_m": 0.15306122448979592,
+     "down_m": 0.0,
+     "dpsi_rad": -0.022448979591836782
+    },
+    "land": false,
+    "quantize": "nearest bin, round((v - lo) / (hi - lo) * 98), after clipping to the codec's range; the client decodes the bin's lower edge, so the flown step is within half a bin of the requested one",
+    "geometry": {
+     "vx": 0.09042985254222986,
+     "vy": -0.0034352850048419703,
+     "vz": 0.0004787967964896885,
+     "delta_yaw": 0.00808283417832617,
+     "unused": {
+      "3": 0.0,
+      "4": 0.0,
+      "6": 0.0
+     },
+     "gains": {
+      "xy": 1.875,
+      "z": 0.5,
+      "yaw": 1.5
+     },
+     "forward_mps": 0.169555973516681,
+     "left_mps": -0.006441159384078694,
+     "climb_mps": 0.00023939839824484426,
+     "yaw_rate_ccw_rad_s": 0.012124251267489256,
+     "horizon_s": 1.0,
+     "lateral_left_m_dropped": -0.006441159384078694
+    },
+    "camera": {
+     "camera": "VLAFront",
+     "hfov_deg": 90.0,
+     "pitch_deg": 0.0
+    },
+    "horizon_s": 1.0,
+    "gains": {
+     "xy": 1.875,
+     "z": 0.5,
+     "yaw": 1.5
+    }
+   }
+  },
+  {
+   "frame": "absent_+00.png",
+   "rtt_s": 0.8422046540072188,
+   "ok": true,
+   "error": null,
+   "kind": "velocity",
+   "raw_text": "06 49 54</s>",
+   "parse_ok": true,
+   "latency_s": 0.83873,
+   "server_s": 0.84052,
+   "native": {
+    "family": "racevla",
+    "ok": true,
+    "action": {
+     "action": [
+      0.15228396070460015,
+      0.017971842750249496,
+      -0.002558021543054485,
+      0.0,
+      0.0,
+      -0.07395246706756892,
+      0.0
+     ],
+     "normalized": [
+      0.12549019607843137,
+      0.47058823529411764,
+      -0.40784313725490196,
+      0.0,
+      0.0,
+      -0.36078431372549025,
+      0.0
+     ]
+    },
+    "reason": null,
+    "tokens": [
+     31856,
+     31812,
+     31924,
+     31872,
+     31872,
+     31918,
+     31872
+    ],
+    "unnorm_key": "drone_set6_all",
+    "text": "31856 31812 31924 31872 31872 31918 31872",
+    "tokens_outside_action_bins": 0,
+    "command": "fly to the red car",
+    "history": null,
+    "history_reset": null,
+    "camera_aux": null,
+    "image": {
+     "src_size": [
+      224,
+      224
+     ],
+     "model_size": [
+      224,
+      224
+     ],
+     "gray": true
+    },
+    "ignored": {
+     "phrase": "straight ahead ",
+     "hint_source": "detector",
+     "down_jpg": "sent, ignored (bottom_tile 'none')"
+    }
+   },
+   "mapping": {
+    "rule": "racevla_velocity/1",
+    "kind": "velocity",
+    "requested": {
+     "fwd_m": 0.2855324263211253,
+     "down_m": 0.0012790107715272424,
+     "dpsi_rad": 0.11092870060135337
+    },
+    "clipped": [],
+    "bins": [
+     6,
+     49,
+     54
+    ],
+    "flown": {
+     "fwd_m": 0.30612244897959184,
+     "down_m": 0.0,
+     "dpsi_rad": 0.11224489795918347
+    },
+    "land": false,
+    "quantize": "nearest bin, round((v - lo) / (hi - lo) * 98), after clipping to the codec's range; the client decodes the bin's lower edge, so the flown step is within half a bin of the requested one",
+    "geometry": {
+     "vx": 0.15228396070460015,
+     "vy": 0.017971842750249496,
+     "vz": -0.002558021543054485,
+     "delta_yaw": -0.07395246706756892,
+     "unused": {
+      "3": 0.0,
+      "4": 0.0,
+      "6": 0.0
+     },
+     "gains": {
+      "xy": 1.875,
+      "z": 0.5,
+      "yaw": 1.5
+     },
+     "forward_mps": 0.2855324263211253,
+     "left_mps": 0.033697205156717806,
+     "climb_mps": -0.0012790107715272424,
+     "yaw_rate_ccw_rad_s": -0.11092870060135337,
+     "horizon_s": 1.0,
+     "lateral_left_m_dropped": 0.033697205156717806
+    },
+    "camera": {
+     "camera": "VLAFront",
+     "hfov_deg": 90.0,
+     "pitch_deg": 0.0
+    },
+    "horizon_s": 1.0,
+    "gains": {
+     "xy": 1.875,
+     "z": 0.5,
+     "yaw": 1.5
+    }
+   }
+  },
+  {
+   "frame": "present_+00.png",
+   "rtt_s": 0.8407520379987545,
+   "ok": true,
+   "error": null,
+   "kind": "velocity",
+   "raw_text": "03 49 48</s>",
+   "parse_ok": true,
+   "latency_s": 0.837318,
+   "server_s": 0.839106,
+   "native": {
+    "family": "racevla",
+    "ok": true,
+    "action": {
+     "action": [
+      0.09042985254222986,
+      -0.0034352850048419703,
+      0.0004787967964896885,
+      0.0,
+      0.0,
+      0.00808283417832617,
+      0.0
+     ],
+     "normalized": [
+      -0.3137254901960784,
+      0.039215686274509776,
+      -0.1568627450980392,
+      0.0,
+      0.0,
+      0.2431372549019608,
+      0.0
+     ]
+    },
+    "reason": null,
+    "tokens": [
+     31912,
+     31867,
+     31892,
+     31872,
+     31872,
+     31841,
+     31872
+    ],
+    "unnorm_key": "drone_set6_all",
+    "text": "31912 31867 31892 31872 31872 31841 31872",
+    "tokens_outside_action_bins": 0,
+    "command": "fly to the red car",
+    "history": null,
+    "history_reset": null,
+    "camera_aux": null,
+    "image": {
+     "src_size": [
+      224,
+      224
+     ],
+     "model_size": [
+      224,
+      224
+     ],
+     "gray": true
+    },
+    "ignored": {
+     "phrase": "straight ahead ",
+     "hint_source": "detector",
+     "down_jpg": "sent, ignored (bottom_tile 'none')"
+    }
+   },
+   "mapping": {
+    "rule": "racevla_velocity/1",
+    "kind": "velocity",
+    "requested": {
+     "fwd_m": 0.169555973516681,
+     "down_m": -0.00023939839824484426,
+     "dpsi_rad": -0.012124251267489256
+    },
+    "clipped": [],
+    "bins": [
+     3,
+     49,
+     48
+    ],
+    "flown": {
+     "fwd_m": 0.15306122448979592,
+     "down_m": 0.0,
+     "dpsi_rad": -0.022448979591836782
+    },
+    "land": false,
+    "quantize": "nearest bin, round((v - lo) / (hi - lo) * 98), after clipping to the codec's range; the client decodes the bin's lower edge, so the flown step is within half a bin of the requested one",
+    "geometry": {
+     "vx": 0.09042985254222986,
+     "vy": -0.0034352850048419703,
+     "vz": 0.0004787967964896885,
+     "delta_yaw": 0.00808283417832617,
+     "unused": {
+      "3": 0.0,
+      "4": 0.0,
+      "6": 0.0
+     },
+     "gains": {
+      "xy": 1.875,
+      "z": 0.5,
+      "yaw": 1.5
+     },
+     "forward_mps": 0.169555973516681,
+     "left_mps": -0.006441159384078694,
+     "climb_mps": 0.00023939839824484426,
+     "yaw_rate_ccw_rad_s": 0.012124251267489256,
+     "horizon_s": 1.0,
+     "lateral_left_m_dropped": -0.006441159384078694
+    },
+    "camera": {
+     "camera": "VLAFront",
+     "hfov_deg": 90.0,
+     "pitch_deg": 0.0
+    },
+    "horizon_s": 1.0,
+    "gains": {
+     "xy": 1.875,
+     "z": 0.5,
+     "yaw": 1.5
+    }
+   }
+  },
+  {
+   "frame": "absent_+00.png",
+   "rtt_s": 0.838806651008781,
+   "ok": true,
+   "error": null,
+   "kind": "velocity",
+   "raw_text": "06 49 54</s>",
+   "parse_ok": true,
+   "latency_s": 0.83545,
+   "server_s": 0.837249,
+   "native": {
+    "family": "racevla",
+    "ok": true,
+    "action": {
+     "action": [
+      0.15228396070460015,
+      0.017971842750249496,
+      -0.002558021543054485,
+      0.0,
+      0.0,
+      -0.07395246706756892,
+      0.0
+     ],
+     "normalized": [
+      0.12549019607843137,
+      0.47058823529411764,
+      -0.40784313725490196,
+      0.0,
+      0.0,
+      -0.36078431372549025,
+      0.0
+     ]
+    },
+    "reason": null,
+    "tokens": [
+     31856,
+     31812,
+     31924,
+     31872,
+     31872,
+     31918,
+     31872
+    ],
+    "unnorm_key": "drone_set6_all",
+    "text": "31856 31812 31924 31872 31872 31918 31872",
+    "tokens_outside_action_bins": 0,
+    "command": "fly to the red car",
+    "history": null,
+    "history_reset": null,
+    "camera_aux": null,
+    "image": {
+     "src_size": [
+      224,
+      224
+     ],
+     "model_size": [
+      224,
+      224
+     ],
+     "gray": true
+    },
+    "ignored": {
+     "phrase": "straight ahead ",
+     "hint_source": "detector",
+     "down_jpg": "sent, ignored (bottom_tile 'none')"
+    }
+   },
+   "mapping": {
+    "rule": "racevla_velocity/1",
+    "kind": "velocity",
+    "requested": {
+     "fwd_m": 0.2855324263211253,
+     "down_m": 0.0012790107715272424,
+     "dpsi_rad": 0.11092870060135337
+    },
+    "clipped": [],
+    "bins": [
+     6,
+     49,
+     54
+    ],
+    "flown": {
+     "fwd_m": 0.30612244897959184,
+     "down_m": 0.0,
+     "dpsi_rad": 0.11224489795918347
+    },
+    "land": false,
+    "quantize": "nearest bin, round((v - lo) / (hi - lo) * 98), after clipping to the codec's range; the client decodes the bin's lower edge, so the flown step is within half a bin of the requested one",
+    "geometry": {
+     "vx": 0.15228396070460015,
+     "vy": 0.017971842750249496,
+     "vz": -0.002558021543054485,
+     "delta_yaw": -0.07395246706756892,
+     "unused": {
+      "3": 0.0,
+      "4": 0.0,
+      "6": 0.0
+     },
+     "gains": {
+      "xy": 1.875,
+      "z": 0.5,
+      "yaw": 1.5
+     },
+     "forward_mps": 0.2855324263211253,
+     "left_mps": 0.033697205156717806,
+     "climb_mps": -0.0012790107715272424,
+     "yaw_rate_ccw_rad_s": -0.11092870060135337,
+     "horizon_s": 1.0,
+     "lateral_left_m_dropped": 0.033697205156717806
+    },
+    "camera": {
+     "camera": "VLAFront",
+     "hfov_deg": 90.0,
+     "pitch_deg": 0.0
+    },
+    "horizon_s": 1.0,
+    "gains": {
+     "xy": 1.875,
+     "z": 0.5,
+     "yaw": 1.5
+    }
+   }
+  },
+  {
+   "frame": "present_+00.png",
+   "rtt_s": 0.8428306420100853,
+   "ok": true,
+   "error": null,
+   "kind": "velocity",
+   "raw_text": "03 49 48</s>",
+   "parse_ok": true,
+   "latency_s": 0.839263,
+   "server_s": 0.841251,
+   "native": {
+    "family": "racevla",
+    "ok": true,
+    "action": {
+     "action": [
+      0.09042985254222986,
+      -0.0034352850048419703,
+      0.0004787967964896885,
+      0.0,
+      0.0,
+      0.00808283417832617,
+      0.0
+     ],
+     "normalized": [
+      -0.3137254901960784,
+      0.039215686274509776,
+      -0.1568627450980392,
+      0.0,
+      0.0,
+      0.2431372549019608,
+      0.0
+     ]
+    },
+    "reason": null,
+    "tokens": [
+     31912,
+     31867,
+     31892,
+     31872,
+     31872,
+     31841,
+     31872
+    ],
+    "unnorm_key": "drone_set6_all",
+    "text": "31912 31867 31892 31872 31872 31841 31872",
+    "tokens_outside_action_bins": 0,
+    "command": "fly to the red car",
+    "history": null,
+    "history_reset": null,
+    "camera_aux": null,
+    "image": {
+     "src_size": [
+      224,
+      224
+     ],
+     "model_size": [
+      224,
+      224
+     ],
+     "gray": true
+    },
+    "ignored": {
+     "phrase": "straight ahead ",
+     "hint_source": "detector",
+     "down_jpg": "sent, ignored (bottom_tile 'none')"
+    }
+   },
+   "mapping": {
+    "rule": "racevla_velocity/1",
+    "kind": "velocity",
+    "requested": {
+     "fwd_m": 0.169555973516681,
+     "down_m": -0.00023939839824484426,
+     "dpsi_rad": -0.012124251267489256
+    },
+    "clipped": [],
+    "bins": [
+     3,
+     49,
+     48
+    ],
+    "flown": {
+     "fwd_m": 0.15306122448979592,
+     "down_m": 0.0,
+     "dpsi_rad": -0.022448979591836782
+    },
+    "land": false,
+    "quantize": "nearest bin, round((v - lo) / (hi - lo) * 98), after clipping to the codec's range; the client decodes the bin's lower edge, so the flown step is within half a bin of the requested one",
+    "geometry": {
+     "vx": 0.09042985254222986,
+     "vy": -0.0034352850048419703,
+     "vz": 0.0004787967964896885,
+     "delta_yaw": 0.00808283417832617,
+     "unused": {
+      "3": 0.0,
+      "4": 0.0,
+      "6": 0.0
+     },
+     "gains": {
+      "xy": 1.875,
+      "z": 0.5,
+      "yaw": 1.5
+     },
+     "forward_mps": 0.169555973516681,
+     "left_mps": -0.006441159384078694,
+     "climb_mps": 0.00023939839824484426,
+     "yaw_rate_ccw_rad_s": 0.012124251267489256,
+     "horizon_s": 1.0,
+     "lateral_left_m_dropped": -0.006441159384078694
+    },
+    "camera": {
+     "camera": "VLAFront",
+     "hfov_deg": 90.0,
+     "pitch_deg": 0.0
+    },
+    "horizon_s": 1.0,
+    "gains": {
+     "xy": 1.875,
+     "z": 0.5,
+     "yaw": 1.5
+    }
+   }
+  },
+  {
+   "frame": "absent_+00.png",
+   "rtt_s": 0.8415560750290751,
+   "ok": true,
+   "error": null,
+   "kind": "velocity",
+   "raw_text": "06 49 54</s>",
+   "parse_ok": true,
+   "latency_s": 0.838205,
+   "server_s": 0.839991,
+   "native": {
+    "family": "racevla",
+    "ok": true,
+    "action": {
+     "action": [
+      0.15228396070460015,
+      0.017971842750249496,
+      -0.002558021543054485,
+      0.0,
+      0.0,
+      -0.07395246706756892,
+      0.0
+     ],
+     "normalized": [
+      0.12549019607843137,
+      0.47058823529411764,
+      -0.40784313725490196,
+      0.0,
+      0.0,
+      -0.36078431372549025,
+      0.0
+     ]
+    },
+    "reason": null,
+    "tokens": [
+     31856,
+     31812,
+     31924,
+     31872,
+     31872,
+     31918,
+     31872
+    ],
+    "unnorm_key": "drone_set6_all",
+    "text": "31856 31812 31924 31872 31872 31918 31872",
+    "tokens_outside_action_bins": 0,
+    "command": "fly to the red car",
+    "history": null,
+    "history_reset": null,
+    "camera_aux": null,
+    "image": {
+     "src_size": [
+      224,
+      224
+     ],
+     "model_size": [
+      224,
+      224
+     ],
+     "gray": true
+    },
+    "ignored": {
+     "phrase": "straight ahead ",
+     "hint_source": "detector",
+     "down_jpg": "sent, ignored (bottom_tile 'none')"
+    }
+   },
+   "mapping": {
+    "rule": "racevla_velocity/1",
+    "kind": "velocity",
+    "requested": {
+     "fwd_m": 0.2855324263211253,
+     "down_m": 0.0012790107715272424,
+     "dpsi_rad": 0.11092870060135337
+    },
+    "clipped": [],
+    "bins": [
+     6,
+     49,
+     54
+    ],
+    "flown": {
+     "fwd_m": 0.30612244897959184,
+     "down_m": 0.0,
+     "dpsi_rad": 0.11224489795918347
+    },
+    "land": false,
+    "quantize": "nearest bin, round((v - lo) / (hi - lo) * 98), after clipping to the codec's range; the client decodes the bin's lower edge, so the flown step is within half a bin of the requested one",
+    "geometry": {
+     "vx": 0.15228396070460015,
+     "vy": 0.017971842750249496,
+     "vz": -0.002558021543054485,
+     "delta_yaw": -0.07395246706756892,
+     "unused": {
+      "3": 0.0,
+      "4": 0.0,
+      "6": 0.0
+     },
+     "gains": {
+      "xy": 1.875,
+      "z": 0.5,
+      "yaw": 1.5
+     },
+     "forward_mps": 0.2855324263211253,
+     "left_mps": 0.033697205156717806,
+     "climb_mps": -0.0012790107715272424,
+     "yaw_rate_ccw_rad_s": -0.11092870060135337,
+     "horizon_s": 1.0,
+     "lateral_left_m_dropped": 0.033697205156717806
+    },
+    "camera": {
+     "camera": "VLAFront",
+     "hfov_deg": 90.0,
+     "pitch_deg": 0.0
+    },
+    "horizon_s": 1.0,
+    "gains": {
+     "xy": 1.875,
+     "z": 0.5,
+     "yaw": 1.5
+    }
+   }
+  },
+  {
+   "frame": "present_+00.png",
+   "rtt_s": 0.8406052850186825,
+   "ok": true,
+   "error": null,
+   "kind": "velocity",
+   "raw_text": "03 49 48</s>",
+   "parse_ok": true,
+   "latency_s": 0.837214,
+   "server_s": 0.838993,
+   "native": {
+    "family": "racevla",
+    "ok": true,
+    "action": {
+     "action": [
+      0.09042985254222986,
+      -0.0034352850048419703,
+      0.0004787967964896885,
+      0.0,
+      0.0,
+      0.00808283417832617,
+      0.0
+     ],
+     "normalized": [
+      -0.3137254901960784,
+      0.039215686274509776,
+      -0.1568627450980392,
+      0.0,
+      0.0,
+      0.2431372549019608,
+      0.0
+     ]
+    },
+    "reason": null,
+    "tokens": [
+     31912,
+     31867,
+     31892,
+     31872,
+     31872,
+     31841,
+     31872
+    ],
+    "unnorm_key": "drone_set6_all",
+    "text": "31912 31867 31892 31872 31872 31841 31872",
+    "tokens_outside_action_bins": 0,
+    "command": "fly to the red car",
+    "history": null,
+    "history_reset": null,
+    "camera_aux": null,
+    "image": {
+     "src_size": [
+      224,
+      224
+     ],
+     "model_size": [
+      224,
+      224
+     ],
+     "gray": true
+    },
+    "ignored": {
+     "phrase": "straight ahead ",
+     "hint_source": "detector",
+     "down_jpg": "sent, ignored (bottom_tile 'none')"
+    }
+   },
+   "mapping": {
+    "rule": "racevla_velocity/1",
+    "kind": "velocity",
+    "requested": {
+     "fwd_m": 0.169555973516681,
+     "down_m": -0.00023939839824484426,
+     "dpsi_rad": -0.012124251267489256
+    },
+    "clipped": [],
+    "bins": [
+     3,
+     49,
+     48
+    ],
+    "flown": {
+     "fwd_m": 0.15306122448979592,
+     "down_m": 0.0,
+     "dpsi_rad": -0.022448979591836782
+    },
+    "land": false,
+    "quantize": "nearest bin, round((v - lo) / (hi - lo) * 98), after clipping to the codec's range; the client decodes the bin's lower edge, so the flown step is within half a bin of the requested one",
+    "geometry": {
+     "vx": 0.09042985254222986,
+     "vy": -0.0034352850048419703,
+     "vz": 0.0004787967964896885,
+     "delta_yaw": 0.00808283417832617,
+     "unused": {
+      "3": 0.0,
+      "4": 0.0,
+      "6": 0.0
+     },
+     "gains": {
+      "xy": 1.875,
+      "z": 0.5,
+      "yaw": 1.5
+     },
+     "forward_mps": 0.169555973516681,
+     "left_mps": -0.006441159384078694,
+     "climb_mps": 0.00023939839824484426,
+     "yaw_rate_ccw_rad_s": 0.012124251267489256,
+     "horizon_s": 1.0,
+     "lateral_left_m_dropped": -0.006441159384078694
+    },
+    "camera": {
+     "camera": "VLAFront",
+     "hfov_deg": 90.0,
+     "pitch_deg": 0.0
+    },
+    "horizon_s": 1.0,
+    "gains": {
+     "xy": 1.875,
+     "z": 0.5,
+     "yaw": 1.5
+    }
+   }
+  },
+  {
+   "frame": "absent_+00.png",
+   "rtt_s": 0.8418039159732871,
+   "ok": true,
+   "error": null,
+   "kind": "velocity",
+   "raw_text": "06 49 54</s>",
+   "parse_ok": true,
+   "latency_s": 0.838514,
+   "server_s": 0.840287,
+   "native": {
+    "family": "racevla",
+    "ok": true,
+    "action": {
+     "action": [
+      0.15228396070460015,
+      0.017971842750249496,
+      -0.002558021543054485,
+      0.0,
+      0.0,
+      -0.07395246706756892,
+      0.0
+     ],
+     "normalized": [
+      0.12549019607843137,
+      0.47058823529411764,
+      -0.40784313725490196,
+      0.0,
+      0.0,
+      -0.36078431372549025,
+      0.0
+     ]
+    },
+    "reason": null,
+    "tokens": [
+     31856,
+     31812,
+     31924,
+     31872,
+     31872,
+     31918,
+     31872
+    ],
+    "unnorm_key": "drone_set6_all",
+    "text": "31856 31812 31924 31872 31872 31918 31872",
+    "tokens_outside_action_bins": 0,
+    "command": "fly to the red car",
+    "history": null,
+    "history_reset": null,
+    "camera_aux": null,
+    "image": {
+     "src_size": [
+      224,
+      224
+     ],
+     "model_size": [
+      224,
+      224
+     ],
+     "gray": true
+    },
+    "ignored": {
+     "phrase": "straight ahead ",
+     "hint_source": "detector",
+     "down_jpg": "sent, ignored (bottom_tile 'none')"
+    }
+   },
+   "mapping": {
+    "rule": "racevla_velocity/1",
+    "kind": "velocity",
+    "requested": {
+     "fwd_m": 0.2855324263211253,
+     "down_m": 0.0012790107715272424,
+     "dpsi_rad": 0.11092870060135337
+    },
+    "clipped": [],
+    "bins": [
+     6,
+     49,
+     54
+    ],
+    "flown": {
+     "fwd_m": 0.30612244897959184,
+     "down_m": 0.0,
+     "dpsi_rad": 0.11224489795918347
+    },
+    "land": false,
+    "quantize": "nearest bin, round((v - lo) / (hi - lo) * 98), after clipping to the codec's range; the client decodes the bin's lower edge, so the flown step is within half a bin of the requested one",
+    "geometry": {
+     "vx": 0.15228396070460015,
+     "vy": 0.017971842750249496,
+     "vz": -0.002558021543054485,
+     "delta_yaw": -0.07395246706756892,
+     "unused": {
+      "3": 0.0,
+      "4": 0.0,
+      "6": 0.0
+     },
+     "gains": {
+      "xy": 1.875,
+      "z": 0.5,
+      "yaw": 1.5
+     },
+     "forward_mps": 0.2855324263211253,
+     "left_mps": 0.033697205156717806,
+     "climb_mps": -0.0012790107715272424,
+     "yaw_rate_ccw_rad_s": -0.11092870060135337,
+     "horizon_s": 1.0,
+     "lateral_left_m_dropped": 0.033697205156717806
+    },
+    "camera": {
+     "camera": "VLAFront",
+     "hfov_deg": 90.0,
+     "pitch_deg": 0.0
+    },
+    "horizon_s": 1.0,
+    "gains": {
+     "xy": 1.875,
+     "z": 0.5,
+     "yaw": 1.5
+    }
+   }
+  },
+  {
+   "frame": "present_+00.png",
+   "rtt_s": 0.8439268720103428,
+   "ok": true,
+   "error": null,
+   "kind": "velocity",
+   "raw_text": "03 49 48</s>",
+   "parse_ok": true,
+   "latency_s": 0.840639,
+   "server_s": 0.842414,
+   "native": {
+    "family": "racevla",
+    "ok": true,
+    "action": {
+     "action": [
+      0.09042985254222986,
+      -0.0034352850048419703,
+      0.0004787967964896885,
+      0.0,
+      0.0,
+      0.00808283417832617,
+      0.0
+     ],
+     "normalized": [
+      -0.3137254901960784,
+      0.039215686274509776,
+      -0.1568627450980392,
+      0.0,
+      0.0,
+      0.2431372549019608,
+      0.0
+     ]
+    },
+    "reason": null,
+    "tokens": [
+     31912,
+     31867,
+     31892,
+     31872,
+     31872,
+     31841,
+     31872
+    ],
+    "unnorm_key": "drone_set6_all",
+    "text": "31912 31867 31892 31872 31872 31841 31872",
+    "tokens_outside_action_bins": 0,
+    "command": "fly to the red car",
+    "history": null,
+    "history_reset": null,
+    "camera_aux": null,
+    "image": {
+     "src_size": [
+      224,
+      224
+     ],
+     "model_size": [
+      224,
+      224
+     ],
+     "gray": true
+    },
+    "ignored": {
+     "phrase": "straight ahead ",
+     "hint_source": "detector",
+     "down_jpg": "sent, ignored (bottom_tile 'none')"
+    }
+   },
+   "mapping": {
+    "rule": "racevla_velocity/1",
+    "kind": "velocity",
+    "requested": {
+     "fwd_m": 0.169555973516681,
+     "down_m": -0.00023939839824484426,
+     "dpsi_rad": -0.012124251267489256
+    },
+    "clipped": [],
+    "bins": [
+     3,
+     49,
+     48
+    ],
+    "flown": {
+     "fwd_m": 0.15306122448979592,
+     "down_m": 0.0,
+     "dpsi_rad": -0.022448979591836782
+    },
+    "land": false,
+    "quantize": "nearest bin, round((v - lo) / (hi - lo) * 98), after clipping to the codec's range; the client decodes the bin's lower edge, so the flown step is within half a bin of the requested one",
+    "geometry": {
+     "vx": 0.09042985254222986,
+     "vy": -0.0034352850048419703,
+     "vz": 0.0004787967964896885,
+     "delta_yaw": 0.00808283417832617,
+     "unused": {
+      "3": 0.0,
+      "4": 0.0,
+      "6": 0.0
+     },
+     "gains": {
+      "xy": 1.875,
+      "z": 0.5,
+      "yaw": 1.5
+     },
+     "forward_mps": 0.169555973516681,
+     "left_mps": -0.006441159384078694,
+     "climb_mps": 0.00023939839824484426,
+     "yaw_rate_ccw_rad_s": 0.012124251267489256,
+     "horizon_s": 1.0,
+     "lateral_left_m_dropped": -0.006441159384078694
+    },
+    "camera": {
+     "camera": "VLAFront",
+     "hfov_deg": 90.0,
+     "pitch_deg": 0.0
+    },
+    "horizon_s": 1.0,
+    "gains": {
+     "xy": 1.875,
+     "z": 0.5,
+     "yaw": 1.5
+    }
+   }
+  },
+  {
+   "frame": "absent_+00.png",
+   "rtt_s": 0.8401419859728776,
+   "ok": true,
+   "error": null,
+   "kind": "velocity",
+   "raw_text": "06 49 54</s>",
+   "parse_ok": true,
+   "latency_s": 0.836654,
+   "server_s": 0.838469,
+   "native": {
+    "family": "racevla",
+    "ok": true,
+    "action": {
+     "action": [
+      0.15228396070460015,
+      0.017971842750249496,
+      -0.002558021543054485,
+      0.0,
+      0.0,
+      -0.07395246706756892,
+      0.0
+     ],
+     "normalized": [
+      0.12549019607843137,
+      0.47058823529411764,
+      -0.40784313725490196,
+      0.0,
+      0.0,
+      -0.36078431372549025,
+      0.0
+     ]
+    },
+    "reason": null,
+    "tokens": [
+     31856,
+     31812,
+     31924,
+     31872,
+     31872,
+     31918,
+     31872
+    ],
+    "unnorm_key": "drone_set6_all",
+    "text": "31856 31812 31924 31872 31872 31918 31872",
+    "tokens_outside_action_bins": 0,
+    "command": "fly to the red car",
+    "history": null,
+    "history_reset": null,
+    "camera_aux": null,
+    "image": {
+     "src_size": [
+      224,
+      224
+     ],
+     "model_size": [
+      224,
+      224
+     ],
+     "gray": true
+    },
+    "ignored": {
+     "phrase": "straight ahead ",
+     "hint_source": "detector",
+     "down_jpg": "sent, ignored (bottom_tile 'none')"
+    }
+   },
+   "mapping": {
+    "rule": "racevla_velocity/1",
+    "kind": "velocity",
+    "requested": {
+     "fwd_m": 0.2855324263211253,
+     "down_m": 0.0012790107715272424,
+     "dpsi_rad": 0.11092870060135337
+    },
+    "clipped": [],
+    "bins": [
+     6,
+     49,
+     54
+    ],
+    "flown": {
+     "fwd_m": 0.30612244897959184,
+     "down_m": 0.0,
+     "dpsi_rad": 0.11224489795918347
+    },
+    "land": false,
+    "quantize": "nearest bin, round((v - lo) / (hi - lo) * 98), after clipping to the codec's range; the client decodes the bin's lower edge, so the flown step is within half a bin of the requested one",
+    "geometry": {
+     "vx": 0.15228396070460015,
+     "vy": 0.017971842750249496,
+     "vz": -0.002558021543054485,
+     "delta_yaw": -0.07395246706756892,
+     "unused": {
+      "3": 0.0,
+      "4": 0.0,
+      "6": 0.0
+     },
+     "gains": {
+      "xy": 1.875,
+      "z": 0.5,
+      "yaw": 1.5
+     },
+     "forward_mps": 0.2855324263211253,
+     "left_mps": 0.033697205156717806,
+     "climb_mps": -0.0012790107715272424,
+     "yaw_rate_ccw_rad_s": -0.11092870060135337,
+     "horizon_s": 1.0,
+     "lateral_left_m_dropped": 0.033697205156717806
+    },
+    "camera": {
+     "camera": "VLAFront",
+     "hfov_deg": 90.0,
+     "pitch_deg": 0.0
+    },
+    "horizon_s": 1.0,
+    "gains": {
+     "xy": 1.875,
+     "z": 0.5,
+     "yaw": 1.5
+    }
+   }
+  },
+  {
+   "frame": "present_+00.png",
+   "rtt_s": 0.8388250830466859,
+   "ok": true,
+   "error": null,
+   "kind": "velocity",
+   "raw_text": "03 49 48</s>",
+   "parse_ok": true,
+   "latency_s": 0.835318,
+   "server_s": 0.837136,
+   "native": {
+    "family": "racevla",
+    "ok": true,
+    "action": {
+     "action": [
+      0.09042985254222986,
+      -0.0034352850048419703,
+      0.0004787967964896885,
+      0.0,
+      0.0,
+      0.00808283417832617,
+      0.0
+     ],
+     "normalized": [
+      -0.3137254901960784,
+      0.039215686274509776,
+      -0.1568627450980392,
+      0.0,
+      0.0,
+      0.2431372549019608,
+      0.0
+     ]
+    },
+    "reason": null,
+    "tokens": [
+     31912,
+     31867,
+     31892,
+     31872,
+     31872,
+     31841,
+     31872
+    ],
+    "unnorm_key": "drone_set6_all",
+    "text": "31912 31867 31892 31872 31872 31841 31872",
+    "tokens_outside_action_bins": 0,
+    "command": "fly to the red car",
+    "history": null,
+    "history_reset": null,
+    "camera_aux": null,
+    "image": {
+     "src_size": [
+      224,
+      224
+     ],
+     "model_size": [
+      224,
+      224
+     ],
+     "gray": true
+    },
+    "ignored": {
+     "phrase": "straight ahead ",
+     "hint_source": "detector",
+     "down_jpg": "sent, ignored (bottom_tile 'none')"
+    }
+   },
+   "mapping": {
+    "rule": "racevla_velocity/1",
+    "kind": "velocity",
+    "requested": {
+     "fwd_m": 0.169555973516681,
+     "down_m": -0.00023939839824484426,
+     "dpsi_rad": -0.012124251267489256
+    },
+    "clipped": [],
+    "bins": [
+     3,
+     49,
+     48
+    ],
+    "flown": {
+     "fwd_m": 0.15306122448979592,
+     "down_m": 0.0,
+     "dpsi_rad": -0.022448979591836782
+    },
+    "land": false,
+    "quantize": "nearest bin, round((v - lo) / (hi - lo) * 98), after clipping to the codec's range; the client decodes the bin's lower edge, so the flown step is within half a bin of the requested one",
+    "geometry": {
+     "vx": 0.09042985254222986,
+     "vy": -0.0034352850048419703,
+     "vz": 0.0004787967964896885,
+     "delta_yaw": 0.00808283417832617,
+     "unused": {
+      "3": 0.0,
+      "4": 0.0,
+      "6": 0.0
+     },
+     "gains": {
+      "xy": 1.875,
+      "z": 0.5,
+      "yaw": 1.5
+     },
+     "forward_mps": 0.169555973516681,
+     "left_mps": -0.006441159384078694,
+     "climb_mps": 0.00023939839824484426,
+     "yaw_rate_ccw_rad_s": 0.012124251267489256,
+     "horizon_s": 1.0,
+     "lateral_left_m_dropped": -0.006441159384078694
+    },
+    "camera": {
+     "camera": "VLAFront",
+     "hfov_deg": 90.0,
+     "pitch_deg": 0.0
+    },
+    "horizon_s": 1.0,
+    "gains": {
+     "xy": 1.875,
+     "z": 0.5,
+     "yaw": 1.5
+    }
+   }
+  },
+  {
+   "frame": "absent_+00.png",
+   "rtt_s": 0.8396087670116685,
+   "ok": true,
+   "error": null,
+   "kind": "velocity",
+   "raw_text": "06 49 54</s>",
+   "parse_ok": true,
+   "latency_s": 0.836145,
+   "server_s": 0.837948,
+   "native": {
+    "family": "racevla",
+    "ok": true,
+    "action": {
+     "action": [
+      0.15228396070460015,
+      0.017971842750249496,
+      -0.002558021543054485,
+      0.0,
+      0.0,
+      -0.07395246706756892,
+      0.0
+     ],
+     "normalized": [
+      0.12549019607843137,
+      0.47058823529411764,
+      -0.40784313725490196,
+      0.0,
+      0.0,
+      -0.36078431372549025,
+      0.0
+     ]
+    },
+    "reason": null,
+    "tokens": [
+     31856,
+     31812,
+     31924,
+     31872,
+     31872,
+     31918,
+     31872
+    ],
+    "unnorm_key": "drone_set6_all",
+    "text": "31856 31812 31924 31872 31872 31918 31872",
+    "tokens_outside_action_bins": 0,
+    "command": "fly to the red car",
+    "history": null,
+    "history_reset": null,
+    "camera_aux": null,
+    "image": {
+     "src_size": [
+      224,
+      224
+     ],
+     "model_size": [
+      224,
+      224
+     ],
+     "gray": true
+    },
+    "ignored": {
+     "phrase": "straight ahead ",
+     "hint_source": "detector",
+     "down_jpg": "sent, ignored (bottom_tile 'none')"
+    }
+   },
+   "mapping": {
+    "rule": "racevla_velocity/1",
+    "kind": "velocity",
+    "requested": {
+     "fwd_m": 0.2855324263211253,
+     "down_m": 0.0012790107715272424,
+     "dpsi_rad": 0.11092870060135337
+    },
+    "clipped": [],
+    "bins": [
+     6,
+     49,
+     54
+    ],
+    "flown": {
+     "fwd_m": 0.30612244897959184,
+     "down_m": 0.0,
+     "dpsi_rad": 0.11224489795918347
+    },
+    "land": false,
+    "quantize": "nearest bin, round((v - lo) / (hi - lo) * 98), after clipping to the codec's range; the client decodes the bin's lower edge, so the flown step is within half a bin of the requested one",
+    "geometry": {
+     "vx": 0.15228396070460015,
+     "vy": 0.017971842750249496,
+     "vz": -0.002558021543054485,
+     "delta_yaw": -0.07395246706756892,
+     "unused": {
+      "3": 0.0,
+      "4": 0.0,
+      "6": 0.0
+     },
+     "gains": {
+      "xy": 1.875,
+      "z": 0.5,
+      "yaw": 1.5
+     },
+     "forward_mps": 0.2855324263211253,
+     "left_mps": 0.033697205156717806,
+     "climb_mps": -0.0012790107715272424,
+     "yaw_rate_ccw_rad_s": -0.11092870060135337,
+     "horizon_s": 1.0,
+     "lateral_left_m_dropped": 0.033697205156717806
+    },
+    "camera": {
+     "camera": "VLAFront",
+     "hfov_deg": 90.0,
+     "pitch_deg": 0.0
+    },
+    "horizon_s": 1.0,
+    "gains": {
+     "xy": 1.875,
+     "z": 0.5,
+     "yaw": 1.5
+    }
+   }
+  },
+  {
+   "frame": "present_+00.png",
+   "rtt_s": 0.8432514439919032,
+   "ok": true,
+   "error": null,
+   "kind": "velocity",
+   "raw_text": "03 49 48</s>",
+   "parse_ok": true,
+   "latency_s": 0.83992,
+   "server_s": 0.841689,
+   "native": {
+    "family": "racevla",
+    "ok": true,
+    "action": {
+     "action": [
+      0.09042985254222986,
+      -0.0034352850048419703,
+      0.0004787967964896885,
+      0.0,
+      0.0,
+      0.00808283417832617,
+      0.0
+     ],
+     "normalized": [
+      -0.3137254901960784,
+      0.039215686274509776,
+      -0.1568627450980392,
+      0.0,
+      0.0,
+      0.2431372549019608,
+      0.0
+     ]
+    },
+    "reason": null,
+    "tokens": [
+     31912,
+     31867,
+     31892,
+     31872,
+     31872,
+     31841,
+     31872
+    ],
+    "unnorm_key": "drone_set6_all",
+    "text": "31912 31867 31892 31872 31872 31841 31872",
+    "tokens_outside_action_bins": 0,
+    "command": "fly to the red car",
+    "history": null,
+    "history_reset": null,
+    "camera_aux": null,
+    "image": {
+     "src_size": [
+      224,
+      224
+     ],
+     "model_size": [
+      224,
+      224
+     ],
+     "gray": true
+    },
+    "ignored": {
+     "phrase": "straight ahead ",
+     "hint_source": "detector",
+     "down_jpg": "sent, ignored (bottom_tile 'none')"
+    }
+   },
+   "mapping": {
+    "rule": "racevla_velocity/1",
+    "kind": "velocity",
+    "requested": {
+     "fwd_m": 0.169555973516681,
+     "down_m": -0.00023939839824484426,
+     "dpsi_rad": -0.012124251267489256
+    },
+    "clipped": [],
+    "bins": [
+     3,
+     49,
+     48
+    ],
+    "flown": {
+     "fwd_m": 0.15306122448979592,
+     "down_m": 0.0,
+     "dpsi_rad": -0.022448979591836782
+    },
+    "land": false,
+    "quantize": "nearest bin, round((v - lo) / (hi - lo) * 98), after clipping to the codec's range; the client decodes the bin's lower edge, so the flown step is within half a bin of the requested one",
+    "geometry": {
+     "vx": 0.09042985254222986,
+     "vy": -0.0034352850048419703,
+     "vz": 0.0004787967964896885,
+     "delta_yaw": 0.00808283417832617,
+     "unused": {
+      "3": 0.0,
+      "4": 0.0,
+      "6": 0.0
+     },
+     "gains": {
+      "xy": 1.875,
+      "z": 0.5,
+      "yaw": 1.5
+     },
+     "forward_mps": 0.169555973516681,
+     "left_mps": -0.006441159384078694,
+     "climb_mps": 0.00023939839824484426,
+     "yaw_rate_ccw_rad_s": 0.012124251267489256,
+     "horizon_s": 1.0,
+     "lateral_left_m_dropped": -0.006441159384078694
+    },
+    "camera": {
+     "camera": "VLAFront",
+     "hfov_deg": 90.0,
+     "pitch_deg": 0.0
+    },
+    "horizon_s": 1.0,
+    "gains": {
+     "xy": 1.875,
+     "z": 0.5,
+     "yaw": 1.5
+    }
+   }
+  },
+  {
+   "frame": "absent_+00.png",
+   "rtt_s": 0.843398581026122,
+   "ok": true,
+   "error": null,
+   "kind": "velocity",
+   "raw_text": "06 49 54</s>",
+   "parse_ok": true,
+   "latency_s": 0.839943,
+   "server_s": 0.841713,
+   "native": {
+    "family": "racevla",
+    "ok": true,
+    "action": {
+     "action": [
+      0.15228396070460015,
+      0.017971842750249496,
+      -0.002558021543054485,
+      0.0,
+      0.0,
+      -0.07395246706756892,
+      0.0
+     ],
+     "normalized": [
+      0.12549019607843137,
+      0.47058823529411764,
+      -0.40784313725490196,
+      0.0,
+      0.0,
+      -0.36078431372549025,
+      0.0
+     ]
+    },
+    "reason": null,
+    "tokens": [
+     31856,
+     31812,
+     31924,
+     31872,
+     31872,
+     31918,
+     31872
+    ],
+    "unnorm_key": "drone_set6_all",
+    "text": "31856 31812 31924 31872 31872 31918 31872",
+    "tokens_outside_action_bins": 0,
+    "command": "fly to the red car",
+    "history": null,
+    "history_reset": null,
+    "camera_aux": null,
+    "image": {
+     "src_size": [
+      224,
+      224
+     ],
+     "model_size": [
+      224,
+      224
+     ],
+     "gray": true
+    },
+    "ignored": {
+     "phrase": "straight ahead ",
+     "hint_source": "detector",
+     "down_jpg": "sent, ignored (bottom_tile 'none')"
+    }
+   },
+   "mapping": {
+    "rule": "racevla_velocity/1",
+    "kind": "velocity",
+    "requested": {
+     "fwd_m": 0.2855324263211253,
+     "down_m": 0.0012790107715272424,
+     "dpsi_rad": 0.11092870060135337
+    },
+    "clipped": [],
+    "bins": [
+     6,
+     49,
+     54
+    ],
+    "flown": {
+     "fwd_m": 0.30612244897959184,
+     "down_m": 0.0,
+     "dpsi_rad": 0.11224489795918347
+    },
+    "land": false,
+    "quantize": "nearest bin, round((v - lo) / (hi - lo) * 98), after clipping to the codec's range; the client decodes the bin's lower edge, so the flown step is within half a bin of the requested one",
+    "geometry": {
+     "vx": 0.15228396070460015,
+     "vy": 0.017971842750249496,
+     "vz": -0.002558021543054485,
+     "delta_yaw": -0.07395246706756892,
+     "unused": {
+      "3": 0.0,
+      "4": 0.0,
+      "6": 0.0
+     },
+     "gains": {
+      "xy": 1.875,
+      "z": 0.5,
+      "yaw": 1.5
+     },
+     "forward_mps": 0.2855324263211253,
+     "left_mps": 0.033697205156717806,
+     "climb_mps": -0.0012790107715272424,
+     "yaw_rate_ccw_rad_s": -0.11092870060135337,
+     "horizon_s": 1.0,
+     "lateral_left_m_dropped": 0.033697205156717806
+    },
+    "camera": {
+     "camera": "VLAFront",
+     "hfov_deg": 90.0,
+     "pitch_deg": 0.0
+    },
+    "horizon_s": 1.0,
+    "gains": {
+     "xy": 1.875,
+     "z": 0.5,
+     "yaw": 1.5
+    }
+   }
+  },
+  {
+   "frame": "present_+00.png",
+   "rtt_s": 0.8399601290002465,
+   "ok": true,
+   "error": null,
+   "kind": "velocity",
+   "raw_text": "03 49 48</s>",
+   "parse_ok": true,
+   "latency_s": 0.836649,
+   "server_s": 0.838427,
+   "native": {
+    "family": "racevla",
+    "ok": true,
+    "action": {
+     "action": [
+      0.09042985254222986,
+      -0.0034352850048419703,
+      0.0004787967964896885,
+      0.0,
+      0.0,
+      0.00808283417832617,
+      0.0
+     ],
+     "normalized": [
+      -0.3137254901960784,
+      0.039215686274509776,
+      -0.1568627450980392,
+      0.0,
+      0.0,
+      0.2431372549019608,
+      0.0
+     ]
+    },
+    "reason": null,
+    "tokens": [
+     31912,
+     31867,
+     31892,
+     31872,
+     31872,
+     31841,
+     31872
+    ],
+    "unnorm_key": "drone_set6_all",
+    "text": "31912 31867 31892 31872 31872 31841 31872",
+    "tokens_outside_action_bins": 0,
+    "command": "fly to the red car",
+    "history": null,
+    "history_reset": null,
+    "camera_aux": null,
+    "image": {
+     "src_size": [
+      224,
+      224
+     ],
+     "model_size": [
+      224,
+      224
+     ],
+     "gray": true
+    },
+    "ignored": {
+     "phrase": "straight ahead ",
+     "hint_source": "detector",
+     "down_jpg": "sent, ignored (bottom_tile 'none')"
+    }
+   },
+   "mapping": {
+    "rule": "racevla_velocity/1",
+    "kind": "velocity",
+    "requested": {
+     "fwd_m": 0.169555973516681,
+     "down_m": -0.00023939839824484426,
+     "dpsi_rad": -0.012124251267489256
+    },
+    "clipped": [],
+    "bins": [
+     3,
+     49,
+     48
+    ],
+    "flown": {
+     "fwd_m": 0.15306122448979592,
+     "down_m": 0.0,
+     "dpsi_rad": -0.022448979591836782
+    },
+    "land": false,
+    "quantize": "nearest bin, round((v - lo) / (hi - lo) * 98), after clipping to the codec's range; the client decodes the bin's lower edge, so the flown step is within half a bin of the requested one",
+    "geometry": {
+     "vx": 0.09042985254222986,
+     "vy": -0.0034352850048419703,
+     "vz": 0.0004787967964896885,
+     "delta_yaw": 0.00808283417832617,
+     "unused": {
+      "3": 0.0,
+      "4": 0.0,
+      "6": 0.0
+     },
+     "gains": {
+      "xy": 1.875,
+      "z": 0.5,
+      "yaw": 1.5
+     },
+     "forward_mps": 0.169555973516681,
+     "left_mps": -0.006441159384078694,
+     "climb_mps": 0.00023939839824484426,
+     "yaw_rate_ccw_rad_s": 0.012124251267489256,
+     "horizon_s": 1.0,
+     "lateral_left_m_dropped": -0.006441159384078694
+    },
+    "camera": {
+     "camera": "VLAFront",
+     "hfov_deg": 90.0,
+     "pitch_deg": 0.0
+    },
+    "horizon_s": 1.0,
+    "gains": {
+     "xy": 1.875,
+     "z": 0.5,
+     "yaw": 1.5
+    }
+   }
+  },
+  {
+   "frame": "absent_+00.png",
+   "rtt_s": 0.8423990230076015,
+   "ok": true,
+   "error": null,
+   "kind": "velocity",
+   "raw_text": "06 49 54</s>",
+   "parse_ok": true,
+   "latency_s": 0.838796,
+   "server_s": 0.840725,
+   "native": {
+    "family": "racevla",
+    "ok": true,
+    "action": {
+     "action": [
+      0.15228396070460015,
+      0.017971842750249496,
+      -0.002558021543054485,
+      0.0,
+      0.0,
+      -0.07395246706756892,
+      0.0
+     ],
+     "normalized": [
+      0.12549019607843137,
+      0.47058823529411764,
+      -0.40784313725490196,
+      0.0,
+      0.0,
+      -0.36078431372549025,
+      0.0
+     ]
+    },
+    "reason": null,
+    "tokens": [
+     31856,
+     31812,
+     31924,
+     31872,
+     31872,
+     31918,
+     31872
+    ],
+    "unnorm_key": "drone_set6_all",
+    "text": "31856 31812 31924 31872 31872 31918 31872",
+    "tokens_outside_action_bins": 0,
+    "command": "fly to the red car",
+    "history": null,
+    "history_reset": null,
+    "camera_aux": null,
+    "image": {
+     "src_size": [
+      224,
+      224
+     ],
+     "model_size": [
+      224,
+      224
+     ],
+     "gray": true
+    },
+    "ignored": {
+     "phrase": "straight ahead ",
+     "hint_source": "detector",
+     "down_jpg": "sent, ignored (bottom_tile 'none')"
+    }
+   },
+   "mapping": {
+    "rule": "racevla_velocity/1",
+    "kind": "velocity",
+    "requested": {
+     "fwd_m": 0.2855324263211253,
+     "down_m": 0.0012790107715272424,
+     "dpsi_rad": 0.11092870060135337
+    },
+    "clipped": [],
+    "bins": [
+     6,
+     49,
+     54
+    ],
+    "flown": {
+     "fwd_m": 0.30612244897959184,
+     "down_m": 0.0,
+     "dpsi_rad": 0.11224489795918347
+    },
+    "land": false,
+    "quantize": "nearest bin, round((v - lo) / (hi - lo) * 98), after clipping to the codec's range; the client decodes the bin's lower edge, so the flown step is within half a bin of the requested one",
+    "geometry": {
+     "vx": 0.15228396070460015,
+     "vy": 0.017971842750249496,
+     "vz": -0.002558021543054485,
+     "delta_yaw": -0.07395246706756892,
+     "unused": {
+      "3": 0.0,
+      "4": 0.0,
+      "6": 0.0
+     },
+     "gains": {
+      "xy": 1.875,
+      "z": 0.5,
+      "yaw": 1.5
+     },
+     "forward_mps": 0.2855324263211253,
+     "left_mps": 0.033697205156717806,
+     "climb_mps": -0.0012790107715272424,
+     "yaw_rate_ccw_rad_s": -0.11092870060135337,
+     "horizon_s": 1.0,
+     "lateral_left_m_dropped": 0.033697205156717806
+    },
+    "camera": {
+     "camera": "VLAFront",
+     "hfov_deg": 90.0,
+     "pitch_deg": 0.0
+    },
+    "horizon_s": 1.0,
+    "gains": {
+     "xy": 1.875,
+     "z": 0.5,
+     "yaw": 1.5
+    }
+   }
+  },
+  {
+   "frame": "present_+00.png",
+   "rtt_s": 0.8380441819899715,
+   "ok": true,
+   "error": null,
+   "kind": "velocity",
+   "raw_text": "03 49 48</s>",
+   "parse_ok": true,
+   "latency_s": 0.834547,
+   "server_s": 0.836357,
+   "native": {
+    "family": "racevla",
+    "ok": true,
+    "action": {
+     "action": [
+      0.09042985254222986,
+      -0.0034352850048419703,
+      0.0004787967964896885,
+      0.0,
+      0.0,
+      0.00808283417832617,
+      0.0
+     ],
+     "normalized": [
+      -0.3137254901960784,
+      0.039215686274509776,
+      -0.1568627450980392,
+      0.0,
+      0.0,
+      0.2431372549019608,
+      0.0
+     ]
+    },
+    "reason": null,
+    "tokens": [
+     31912,
+     31867,
+     31892,
+     31872,
+     31872,
+     31841,
+     31872
+    ],
+    "unnorm_key": "drone_set6_all",
+    "text": "31912 31867 31892 31872 31872 31841 31872",
+    "tokens_outside_action_bins": 0,
+    "command": "fly to the red car",
+    "history": null,
+    "history_reset": null,
+    "camera_aux": null,
+    "image": {
+     "src_size": [
+      224,
+      224
+     ],
+     "model_size": [
+      224,
+      224
+     ],
+     "gray": true
+    },
+    "ignored": {
+     "phrase": "straight ahead ",
+     "hint_source": "detector",
+     "down_jpg": "sent, ignored (bottom_tile 'none')"
+    }
+   },
+   "mapping": {
+    "rule": "racevla_velocity/1",
+    "kind": "velocity",
+    "requested": {
+     "fwd_m": 0.169555973516681,
+     "down_m": -0.00023939839824484426,
+     "dpsi_rad": -0.012124251267489256
+    },
+    "clipped": [],
+    "bins": [
+     3,
+     49,
+     48
+    ],
+    "flown": {
+     "fwd_m": 0.15306122448979592,
+     "down_m": 0.0,
+     "dpsi_rad": -0.022448979591836782
+    },
+    "land": false,
+    "quantize": "nearest bin, round((v - lo) / (hi - lo) * 98), after clipping to the codec's range; the client decodes the bin's lower edge, so the flown step is within half a bin of the requested one",
+    "geometry": {
+     "vx": 0.09042985254222986,
+     "vy": -0.0034352850048419703,
+     "vz": 0.0004787967964896885,
+     "delta_yaw": 0.00808283417832617,
+     "unused": {
+      "3": 0.0,
+      "4": 0.0,
+      "6": 0.0
+     },
+     "gains": {
+      "xy": 1.875,
+      "z": 0.5,
+      "yaw": 1.5
+     },
+     "forward_mps": 0.169555973516681,
+     "left_mps": -0.006441159384078694,
+     "climb_mps": 0.00023939839824484426,
+     "yaw_rate_ccw_rad_s": 0.012124251267489256,
+     "horizon_s": 1.0,
+     "lateral_left_m_dropped": -0.006441159384078694
+    },
+    "camera": {
+     "camera": "VLAFront",
+     "hfov_deg": 90.0,
+     "pitch_deg": 0.0
+    },
+    "horizon_s": 1.0,
+    "gains": {
+     "xy": 1.875,
+     "z": 0.5,
+     "yaw": 1.5
+    }
+   }
+  },
+  {
+   "frame": "absent_+00.png",
+   "rtt_s": 0.8410023110336624,
+   "ok": true,
+   "error": null,
+   "kind": "velocity",
+   "raw_text": "06 49 54</s>",
+   "parse_ok": true,
+   "latency_s": 0.837395,
+   "server_s": 0.839315,
+   "native": {
+    "family": "racevla",
+    "ok": true,
+    "action": {
+     "action": [
+      0.15228396070460015,
+      0.017971842750249496,
+      -0.002558021543054485,
+      0.0,
+      0.0,
+      -0.07395246706756892,
+      0.0
+     ],
+     "normalized": [
+      0.12549019607843137,
+      0.47058823529411764,
+      -0.40784313725490196,
+      0.0,
+      0.0,
+      -0.36078431372549025,
+      0.0
+     ]
+    },
+    "reason": null,
+    "tokens": [
+     31856,
+     31812,
+     31924,
+     31872,
+     31872,
+     31918,
+     31872
+    ],
+    "unnorm_key": "drone_set6_all",
+    "text": "31856 31812 31924 31872 31872 31918 31872",
+    "tokens_outside_action_bins": 0,
+    "command": "fly to the red car",
+    "history": null,
+    "history_reset": null,
+    "camera_aux": null,
+    "image": {
+     "src_size": [
+      224,
+      224
+     ],
+     "model_size": [
+      224,
+      224
+     ],
+     "gray": true
+    },
+    "ignored": {
+     "phrase": "straight ahead ",
+     "hint_source": "detector",
+     "down_jpg": "sent, ignored (bottom_tile 'none')"
+    }
+   },
+   "mapping": {
+    "rule": "racevla_velocity/1",
+    "kind": "velocity",
+    "requested": {
+     "fwd_m": 0.2855324263211253,
+     "down_m": 0.0012790107715272424,
+     "dpsi_rad": 0.11092870060135337
+    },
+    "clipped": [],
+    "bins": [
+     6,
+     49,
+     54
+    ],
+    "flown": {
+     "fwd_m": 0.30612244897959184,
+     "down_m": 0.0,
+     "dpsi_rad": 0.11224489795918347
+    },
+    "land": false,
+    "quantize": "nearest bin, round((v - lo) / (hi - lo) * 98), after clipping to the codec's range; the client decodes the bin's lower edge, so the flown step is within half a bin of the requested one",
+    "geometry": {
+     "vx": 0.15228396070460015,
+     "vy": 0.017971842750249496,
+     "vz": -0.002558021543054485,
+     "delta_yaw": -0.07395246706756892,
+     "unused": {
+      "3": 0.0,
+      "4": 0.0,
+      "6": 0.0
+     },
+     "gains": {
+      "xy": 1.875,
+      "z": 0.5,
+      "yaw": 1.5
+     },
+     "forward_mps": 0.2855324263211253,
+     "left_mps": 0.033697205156717806,
+     "climb_mps": -0.0012790107715272424,
+     "yaw_rate_ccw_rad_s": -0.11092870060135337,
+     "horizon_s": 1.0,
+     "lateral_left_m_dropped": 0.033697205156717806
+    },
+    "camera": {
+     "camera": "VLAFront",
+     "hfov_deg": 90.0,
+     "pitch_deg": 0.0
+    },
+    "horizon_s": 1.0,
+    "gains": {
+     "xy": 1.875,
+     "z": 0.5,
+     "yaw": 1.5
+    }
+   }
+  },
+  {
+   "frame": "present_+00.png",
+   "rtt_s": 0.8382313189795241,
+   "ok": true,
+   "error": null,
+   "kind": "velocity",
+   "raw_text": "03 49 48</s>",
+   "parse_ok": true,
+   "latency_s": 0.834782,
+   "server_s": 0.836562,
+   "native": {
+    "family": "racevla",
+    "ok": true,
+    "action": {
+     "action": [
+      0.09042985254222986,
+      -0.0034352850048419703,
+      0.0004787967964896885,
+      0.0,
+      0.0,
+      0.00808283417832617,
+      0.0
+     ],
+     "normalized": [
+      -0.3137254901960784,
+      0.039215686274509776,
+      -0.1568627450980392,
+      0.0,
+      0.0,
+      0.2431372549019608,
+      0.0
+     ]
+    },
+    "reason": null,
+    "tokens": [
+     31912,
+     31867,
+     31892,
+     31872,
+     31872,
+     31841,
+     31872
+    ],
+    "unnorm_key": "drone_set6_all",
+    "text": "31912 31867 31892 31872 31872 31841 31872",
+    "tokens_outside_action_bins": 0,
+    "command": "fly to the red car",
+    "history": null,
+    "history_reset": null,
+    "camera_aux": null,
+    "image": {
+     "src_size": [
+      224,
+      224
+     ],
+     "model_size": [
+      224,
+      224
+     ],
+     "gray": true
+    },
+    "ignored": {
+     "phrase": "straight ahead ",
+     "hint_source": "detector",
+     "down_jpg": "sent, ignored (bottom_tile 'none')"
+    }
+   },
+   "mapping": {
+    "rule": "racevla_velocity/1",
+    "kind": "velocity",
+    "requested": {
+     "fwd_m": 0.169555973516681,
+     "down_m": -0.00023939839824484426,
+     "dpsi_rad": -0.012124251267489256
+    },
+    "clipped": [],
+    "bins": [
+     3,
+     49,
+     48
+    ],
+    "flown": {
+     "fwd_m": 0.15306122448979592,
+     "down_m": 0.0,
+     "dpsi_rad": -0.022448979591836782
+    },
+    "land": false,
+    "quantize": "nearest bin, round((v - lo) / (hi - lo) * 98), after clipping to the codec's range; the client decodes the bin's lower edge, so the flown step is within half a bin of the requested one",
+    "geometry": {
+     "vx": 0.09042985254222986,
+     "vy": -0.0034352850048419703,
+     "vz": 0.0004787967964896885,
+     "delta_yaw": 0.00808283417832617,
+     "unused": {
+      "3": 0.0,
+      "4": 0.0,
+      "6": 0.0
+     },
+     "gains": {
+      "xy": 1.875,
+      "z": 0.5,
+      "yaw": 1.5
+     },
+     "forward_mps": 0.169555973516681,
+     "left_mps": -0.006441159384078694,
+     "climb_mps": 0.00023939839824484426,
+     "yaw_rate_ccw_rad_s": 0.012124251267489256,
+     "horizon_s": 1.0,
+     "lateral_left_m_dropped": -0.006441159384078694
+    },
+    "camera": {
+     "camera": "VLAFront",
+     "hfov_deg": 90.0,
+     "pitch_deg": 0.0
+    },
+    "horizon_s": 1.0,
+    "gains": {
+     "xy": 1.875,
+     "z": 0.5,
+     "yaw": 1.5
+    }
+   }
+  },
+  {
+   "frame": "absent_+00.png",
+   "rtt_s": 0.8414423780050129,
+   "ok": true,
+   "error": null,
+   "kind": "velocity",
+   "raw_text": "06 49 54</s>",
+   "parse_ok": true,
+   "latency_s": 0.837813,
+   "server_s": 0.839904,
+   "native": {
+    "family": "racevla",
+    "ok": true,
+    "action": {
+     "action": [
+      0.15228396070460015,
+      0.017971842750249496,
+      -0.002558021543054485,
+      0.0,
+      0.0,
+      -0.07395246706756892,
+      0.0
+     ],
+     "normalized": [
+      0.12549019607843137,
+      0.47058823529411764,
+      -0.40784313725490196,
+      0.0,
+      0.0,
+      -0.36078431372549025,
+      0.0
+     ]
+    },
+    "reason": null,
+    "tokens": [
+     31856,
+     31812,
+     31924,
+     31872,
+     31872,
+     31918,
+     31872
+    ],
+    "unnorm_key": "drone_set6_all",
+    "text": "31856 31812 31924 31872 31872 31918 31872",
+    "tokens_outside_action_bins": 0,
+    "command": "fly to the red car",
+    "history": null,
+    "history_reset": null,
+    "camera_aux": null,
+    "image": {
+     "src_size": [
+      224,
+      224
+     ],
+     "model_size": [
+      224,
+      224
+     ],
+     "gray": true
+    },
+    "ignored": {
+     "phrase": "straight ahead ",
+     "hint_source": "detector",
+     "down_jpg": "sent, ignored (bottom_tile 'none')"
+    }
+   },
+   "mapping": {
+    "rule": "racevla_velocity/1",
+    "kind": "velocity",
+    "requested": {
+     "fwd_m": 0.2855324263211253,
+     "down_m": 0.0012790107715272424,
+     "dpsi_rad": 0.11092870060135337
+    },
+    "clipped": [],
+    "bins": [
+     6,
+     49,
+     54
+    ],
+    "flown": {
+     "fwd_m": 0.30612244897959184,
+     "down_m": 0.0,
+     "dpsi_rad": 0.11224489795918347
+    },
+    "land": false,
+    "quantize": "nearest bin, round((v - lo) / (hi - lo) * 98), after clipping to the codec's range; the client decodes the bin's lower edge, so the flown step is within half a bin of the requested one",
+    "geometry": {
+     "vx": 0.15228396070460015,
+     "vy": 0.017971842750249496,
+     "vz": -0.002558021543054485,
+     "delta_yaw": -0.07395246706756892,
+     "unused": {
+      "3": 0.0,
+      "4": 0.0,
+      "6": 0.0
+     },
+     "gains": {
+      "xy": 1.875,
+      "z": 0.5,
+      "yaw": 1.5
+     },
+     "forward_mps": 0.2855324263211253,
+     "left_mps": 0.033697205156717806,
+     "climb_mps": -0.0012790107715272424,
+     "yaw_rate_ccw_rad_s": -0.11092870060135337,
+     "horizon_s": 1.0,
+     "lateral_left_m_dropped": 0.033697205156717806
+    },
+    "camera": {
+     "camera": "VLAFront",
+     "hfov_deg": 90.0,
+     "pitch_deg": 0.0
+    },
+    "horizon_s": 1.0,
+    "gains": {
+     "xy": 1.875,
+     "z": 0.5,
+     "yaw": 1.5
+    }
+   }
+  },
+  {
+   "frame": "present_+00.png",
+   "rtt_s": 0.8388777549844235,
+   "ok": true,
+   "error": null,
+   "kind": "velocity",
+   "raw_text": "03 49 48</s>",
+   "parse_ok": true,
+   "latency_s": 0.835553,
+   "server_s": 0.837324,
+   "native": {
+    "family": "racevla",
+    "ok": true,
+    "action": {
+     "action": [
+      0.09042985254222986,
+      -0.0034352850048419703,
+      0.0004787967964896885,
+      0.0,
+      0.0,
+      0.00808283417832617,
+      0.0
+     ],
+     "normalized": [
+      -0.3137254901960784,
+      0.039215686274509776,
+      -0.1568627450980392,
+      0.0,
+      0.0,
+      0.2431372549019608,
+      0.0
+     ]
+    },
+    "reason": null,
+    "tokens": [
+     31912,
+     31867,
+     31892,
+     31872,
+     31872,
+     31841,
+     31872
+    ],
+    "unnorm_key": "drone_set6_all",
+    "text": "31912 31867 31892 31872 31872 31841 31872",
+    "tokens_outside_action_bins": 0,
+    "command": "fly to the red car",
+    "history": null,
+    "history_reset": null,
+    "camera_aux": null,
+    "image": {
+     "src_size": [
+      224,
+      224
+     ],
+     "model_size": [
+      224,
+      224
+     ],
+     "gray": true
+    },
+    "ignored": {
+     "phrase": "straight ahead ",
+     "hint_source": "detector",
+     "down_jpg": "sent, ignored (bottom_tile 'none')"
+    }
+   },
+   "mapping": {
+    "rule": "racevla_velocity/1",
+    "kind": "velocity",
+    "requested": {
+     "fwd_m": 0.169555973516681,
+     "down_m": -0.00023939839824484426,
+     "dpsi_rad": -0.012124251267489256
+    },
+    "clipped": [],
+    "bins": [
+     3,
+     49,
+     48
+    ],
+    "flown": {
+     "fwd_m": 0.15306122448979592,
+     "down_m": 0.0,
+     "dpsi_rad": -0.022448979591836782
+    },
+    "land": false,
+    "quantize": "nearest bin, round((v - lo) / (hi - lo) * 98), after clipping to the codec's range; the client decodes the bin's lower edge, so the flown step is within half a bin of the requested one",
+    "geometry": {
+     "vx": 0.09042985254222986,
+     "vy": -0.0034352850048419703,
+     "vz": 0.0004787967964896885,
+     "delta_yaw": 0.00808283417832617,
+     "unused": {
+      "3": 0.0,
+      "4": 0.0,
+      "6": 0.0
+     },
+     "gains": {
+      "xy": 1.875,
+      "z": 0.5,
+      "yaw": 1.5
+     },
+     "forward_mps": 0.169555973516681,
+     "left_mps": -0.006441159384078694,
+     "climb_mps": 0.00023939839824484426,
+     "yaw_rate_ccw_rad_s": 0.012124251267489256,
+     "horizon_s": 1.0,
+     "lateral_left_m_dropped": -0.006441159384078694
+    },
+    "camera": {
+     "camera": "VLAFront",
+     "hfov_deg": 90.0,
+     "pitch_deg": 0.0
+    },
+    "horizon_s": 1.0,
+    "gains": {
+     "xy": 1.875,
+     "z": 0.5,
+     "yaw": 1.5
+    }
+   }
+  },
+  {
+   "frame": "absent_+00.png",
+   "rtt_s": 0.8404821169679053,
+   "ok": true,
+   "error": null,
+   "kind": "velocity",
+   "raw_text": "06 49 54</s>",
+   "parse_ok": true,
+   "latency_s": 0.836716,
+   "server_s": 0.838773,
+   "native": {
+    "family": "racevla",
+    "ok": true,
+    "action": {
+     "action": [
+      0.15228396070460015,
+      0.017971842750249496,
+      -0.002558021543054485,
+      0.0,
+      0.0,
+      -0.07395246706756892,
+      0.0
+     ],
+     "normalized": [
+      0.12549019607843137,
+      0.47058823529411764,
+      -0.40784313725490196,
+      0.0,
+      0.0,
+      -0.36078431372549025,
+      0.0
+     ]
+    },
+    "reason": null,
+    "tokens": [
+     31856,
+     31812,
+     31924,
+     31872,
+     31872,
+     31918,
+     31872
+    ],
+    "unnorm_key": "drone_set6_all",
+    "text": "31856 31812 31924 31872 31872 31918 31872",
+    "tokens_outside_action_bins": 0,
+    "command": "fly to the red car",
+    "history": null,
+    "history_reset": null,
+    "camera_aux": null,
+    "image": {
+     "src_size": [
+      224,
+      224
+     ],
+     "model_size": [
+      224,
+      224
+     ],
+     "gray": true
+    },
+    "ignored": {
+     "phrase": "straight ahead ",
+     "hint_source": "detector",
+     "down_jpg": "sent, ignored (bottom_tile 'none')"
+    }
+   },
+   "mapping": {
+    "rule": "racevla_velocity/1",
+    "kind": "velocity",
+    "requested": {
+     "fwd_m": 0.2855324263211253,
+     "down_m": 0.0012790107715272424,
+     "dpsi_rad": 0.11092870060135337
+    },
+    "clipped": [],
+    "bins": [
+     6,
+     49,
+     54
+    ],
+    "flown": {
+     "fwd_m": 0.30612244897959184,
+     "down_m": 0.0,
+     "dpsi_rad": 0.11224489795918347
+    },
+    "land": false,
+    "quantize": "nearest bin, round((v - lo) / (hi - lo) * 98), after clipping to the codec's range; the client decodes the bin's lower edge, so the flown step is within half a bin of the requested one",
+    "geometry": {
+     "vx": 0.15228396070460015,
+     "vy": 0.017971842750249496,
+     "vz": -0.002558021543054485,
+     "delta_yaw": -0.07395246706756892,
+     "unused": {
+      "3": 0.0,
+      "4": 0.0,
+      "6": 0.0
+     },
+     "gains": {
+      "xy": 1.875,
+      "z": 0.5,
+      "yaw": 1.5
+     },
+     "forward_mps": 0.2855324263211253,
+     "left_mps": 0.033697205156717806,
+     "climb_mps": -0.0012790107715272424,
+     "yaw_rate_ccw_rad_s": -0.11092870060135337,
+     "horizon_s": 1.0,
+     "lateral_left_m_dropped": 0.033697205156717806
+    },
+    "camera": {
+     "camera": "VLAFront",
+     "hfov_deg": 90.0,
+     "pitch_deg": 0.0
+    },
+    "horizon_s": 1.0,
+    "gains": {
+     "xy": 1.875,
+     "z": 0.5,
+     "yaw": 1.5
+    }
+   }
+  },
+  {
+   "frame": "present_+00.png",
+   "rtt_s": 0.8375485319993459,
+   "ok": true,
+   "error": null,
+   "kind": "velocity",
+   "raw_text": "03 49 48</s>",
+   "parse_ok": true,
+   "latency_s": 0.834128,
+   "server_s": 0.835896,
+   "native": {
+    "family": "racevla",
+    "ok": true,
+    "action": {
+     "action": [
+      0.09042985254222986,
+      -0.0034352850048419703,
+      0.0004787967964896885,
+      0.0,
+      0.0,
+      0.00808283417832617,
+      0.0
+     ],
+     "normalized": [
+      -0.3137254901960784,
+      0.039215686274509776,
+      -0.1568627450980392,
+      0.0,
+      0.0,
+      0.2431372549019608,
+      0.0
+     ]
+    },
+    "reason": null,
+    "tokens": [
+     31912,
+     31867,
+     31892,
+     31872,
+     31872,
+     31841,
+     31872
+    ],
+    "unnorm_key": "drone_set6_all",
+    "text": "31912 31867 31892 31872 31872 31841 31872",
+    "tokens_outside_action_bins": 0,
+    "command": "fly to the red car",
+    "history": null,
+    "history_reset": null,
+    "camera_aux": null,
+    "image": {
+     "src_size": [
+      224,
+      224
+     ],
+     "model_size": [
+      224,
+      224
+     ],
+     "gray": true
+    },
+    "ignored": {
+     "phrase": "straight ahead ",
+     "hint_source": "detector",
+     "down_jpg": "sent, ignored (bottom_tile 'none')"
+    }
+   },
+   "mapping": {
+    "rule": "racevla_velocity/1",
+    "kind": "velocity",
+    "requested": {
+     "fwd_m": 0.169555973516681,
+     "down_m": -0.00023939839824484426,
+     "dpsi_rad": -0.012124251267489256
+    },
+    "clipped": [],
+    "bins": [
+     3,
+     49,
+     48
+    ],
+    "flown": {
+     "fwd_m": 0.15306122448979592,
+     "down_m": 0.0,
+     "dpsi_rad": -0.022448979591836782
+    },
+    "land": false,
+    "quantize": "nearest bin, round((v - lo) / (hi - lo) * 98), after clipping to the codec's range; the client decodes the bin's lower edge, so the flown step is within half a bin of the requested one",
+    "geometry": {
+     "vx": 0.09042985254222986,
+     "vy": -0.0034352850048419703,
+     "vz": 0.0004787967964896885,
+     "delta_yaw": 0.00808283417832617,
+     "unused": {
+      "3": 0.0,
+      "4": 0.0,
+      "6": 0.0
+     },
+     "gains": {
+      "xy": 1.875,
+      "z": 0.5,
+      "yaw": 1.5
+     },
+     "forward_mps": 0.169555973516681,
+     "left_mps": -0.006441159384078694,
+     "climb_mps": 0.00023939839824484426,
+     "yaw_rate_ccw_rad_s": 0.012124251267489256,
+     "horizon_s": 1.0,
+     "lateral_left_m_dropped": -0.006441159384078694
+    },
+    "camera": {
+     "camera": "VLAFront",
+     "hfov_deg": 90.0,
+     "pitch_deg": 0.0
+    },
+    "horizon_s": 1.0,
+    "gains": {
+     "xy": 1.875,
+     "z": 0.5,
+     "yaw": 1.5
+    }
+   }
+  },
+  {
+   "frame": "absent_+00.png",
+   "rtt_s": 0.8388703630189411,
+   "ok": true,
+   "error": null,
+   "kind": "velocity",
+   "raw_text": "06 49 54</s>",
+   "parse_ok": true,
+   "latency_s": 0.835279,
+   "server_s": 0.837108,
+   "native": {
+    "family": "racevla",
+    "ok": true,
+    "action": {
+     "action": [
+      0.15228396070460015,
+      0.017971842750249496,
+      -0.002558021543054485,
+      0.0,
+      0.0,
+      -0.07395246706756892,
+      0.0
+     ],
+     "normalized": [
+      0.12549019607843137,
+      0.47058823529411764,
+      -0.40784313725490196,
+      0.0,
+      0.0,
+      -0.36078431372549025,
+      0.0
+     ]
+    },
+    "reason": null,
+    "tokens": [
+     31856,
+     31812,
+     31924,
+     31872,
+     31872,
+     31918,
+     31872
+    ],
+    "unnorm_key": "drone_set6_all",
+    "text": "31856 31812 31924 31872 31872 31918 31872",
+    "tokens_outside_action_bins": 0,
+    "command": "fly to the red car",
+    "history": null,
+    "history_reset": null,
+    "camera_aux": null,
+    "image": {
+     "src_size": [
+      224,
+      224
+     ],
+     "model_size": [
+      224,
+      224
+     ],
+     "gray": true
+    },
+    "ignored": {
+     "phrase": "straight ahead ",
+     "hint_source": "detector",
+     "down_jpg": "sent, ignored (bottom_tile 'none')"
+    }
+   },
+   "mapping": {
+    "rule": "racevla_velocity/1",
+    "kind": "velocity",
+    "requested": {
+     "fwd_m": 0.2855324263211253,
+     "down_m": 0.0012790107715272424,
+     "dpsi_rad": 0.11092870060135337
+    },
+    "clipped": [],
+    "bins": [
+     6,
+     49,
+     54
+    ],
+    "flown": {
+     "fwd_m": 0.30612244897959184,
+     "down_m": 0.0,
+     "dpsi_rad": 0.11224489795918347
+    },
+    "land": false,
+    "quantize": "nearest bin, round((v - lo) / (hi - lo) * 98), after clipping to the codec's range; the client decodes the bin's lower edge, so the flown step is within half a bin of the requested one",
+    "geometry": {
+     "vx": 0.15228396070460015,
+     "vy": 0.017971842750249496,
+     "vz": -0.002558021543054485,
+     "delta_yaw": -0.07395246706756892,
+     "unused": {
+      "3": 0.0,
+      "4": 0.0,
+      "6": 0.0
+     },
+     "gains": {
+      "xy": 1.875,
+      "z": 0.5,
+      "yaw": 1.5
+     },
+     "forward_mps": 0.2855324263211253,
+     "left_mps": 0.033697205156717806,
+     "climb_mps": -0.0012790107715272424,
+     "yaw_rate_ccw_rad_s": -0.11092870060135337,
+     "horizon_s": 1.0,
+     "lateral_left_m_dropped": 0.033697205156717806
+    },
+    "camera": {
+     "camera": "VLAFront",
+     "hfov_deg": 90.0,
+     "pitch_deg": 0.0
+    },
+    "horizon_s": 1.0,
+    "gains": {
+     "xy": 1.875,
+     "z": 0.5,
+     "yaw": 1.5
+    }
+   }
+  },
+  {
+   "frame": "present_+00.png",
+   "rtt_s": 0.8368628639727831,
+   "ok": true,
+   "error": null,
+   "kind": "velocity",
+   "raw_text": "03 49 48</s>",
+   "parse_ok": true,
+   "latency_s": 0.833327,
+   "server_s": 0.835126,
+   "native": {
+    "family": "racevla",
+    "ok": true,
+    "action": {
+     "action": [
+      0.09042985254222986,
+      -0.0034352850048419703,
+      0.0004787967964896885,
+      0.0,
+      0.0,
+      0.00808283417832617,
+      0.0
+     ],
+     "normalized": [
+      -0.3137254901960784,
+      0.039215686274509776,
+      -0.1568627450980392,
+      0.0,
+      0.0,
+      0.2431372549019608,
+      0.0
+     ]
+    },
+    "reason": null,
+    "tokens": [
+     31912,
+     31867,
+     31892,
+     31872,
+     31872,
+     31841,
+     31872
+    ],
+    "unnorm_key": "drone_set6_all",
+    "text": "31912 31867 31892 31872 31872 31841 31872",
+    "tokens_outside_action_bins": 0,
+    "command": "fly to the red car",
+    "history": null,
+    "history_reset": null,
+    "camera_aux": null,
+    "image": {
+     "src_size": [
+      224,
+      224
+     ],
+     "model_size": [
+      224,
+      224
+     ],
+     "gray": true
+    },
+    "ignored": {
+     "phrase": "straight ahead ",
+     "hint_source": "detector",
+     "down_jpg": "sent, ignored (bottom_tile 'none')"
+    }
+   },
+   "mapping": {
+    "rule": "racevla_velocity/1",
+    "kind": "velocity",
+    "requested": {
+     "fwd_m": 0.169555973516681,
+     "down_m": -0.00023939839824484426,
+     "dpsi_rad": -0.012124251267489256
+    },
+    "clipped": [],
+    "bins": [
+     3,
+     49,
+     48
+    ],
+    "flown": {
+     "fwd_m": 0.15306122448979592,
+     "down_m": 0.0,
+     "dpsi_rad": -0.022448979591836782
+    },
+    "land": false,
+    "quantize": "nearest bin, round((v - lo) / (hi - lo) * 98), after clipping to the codec's range; the client decodes the bin's lower edge, so the flown step is within half a bin of the requested one",
+    "geometry": {
+     "vx": 0.09042985254222986,
+     "vy": -0.0034352850048419703,
+     "vz": 0.0004787967964896885,
+     "delta_yaw": 0.00808283417832617,
+     "unused": {
+      "3": 0.0,
+      "4": 0.0,
+      "6": 0.0
+     },
+     "gains": {
+      "xy": 1.875,
+      "z": 0.5,
+      "yaw": 1.5
+     },
+     "forward_mps": 0.169555973516681,
+     "left_mps": -0.006441159384078694,
+     "climb_mps": 0.00023939839824484426,
+     "yaw_rate_ccw_rad_s": 0.012124251267489256,
+     "horizon_s": 1.0,
+     "lateral_left_m_dropped": -0.006441159384078694
+    },
+    "camera": {
+     "camera": "VLAFront",
+     "hfov_deg": 90.0,
+     "pitch_deg": 0.0
+    },
+    "horizon_s": 1.0,
+    "gains": {
+     "xy": 1.875,
+     "z": 0.5,
+     "yaw": 1.5
+    }
+   }
+  },
+  {
+   "frame": "absent_+00.png",
+   "rtt_s": 0.8385028089978732,
+   "ok": true,
+   "error": null,
+   "kind": "velocity",
+   "raw_text": "06 49 54</s>",
+   "parse_ok": true,
+   "latency_s": 0.834951,
+   "server_s": 0.836798,
+   "native": {
+    "family": "racevla",
+    "ok": true,
+    "action": {
+     "action": [
+      0.15228396070460015,
+      0.017971842750249496,
+      -0.002558021543054485,
+      0.0,
+      0.0,
+      -0.07395246706756892,
+      0.0
+     ],
+     "normalized": [
+      0.12549019607843137,
+      0.47058823529411764,
+      -0.40784313725490196,
+      0.0,
+      0.0,
+      -0.36078431372549025,
+      0.0
+     ]
+    },
+    "reason": null,
+    "tokens": [
+     31856,
+     31812,
+     31924,
+     31872,
+     31872,
+     31918,
+     31872
+    ],
+    "unnorm_key": "drone_set6_all",
+    "text": "31856 31812 31924 31872 31872 31918 31872",
+    "tokens_outside_action_bins": 0,
+    "command": "fly to the red car",
+    "history": null,
+    "history_reset": null,
+    "camera_aux": null,
+    "image": {
+     "src_size": [
+      224,
+      224
+     ],
+     "model_size": [
+      224,
+      224
+     ],
+     "gray": true
+    },
+    "ignored": {
+     "phrase": "straight ahead ",
+     "hint_source": "detector",
+     "down_jpg": "sent, ignored (bottom_tile 'none')"
+    }
+   },
+   "mapping": {
+    "rule": "racevla_velocity/1",
+    "kind": "velocity",
+    "requested": {
+     "fwd_m": 0.2855324263211253,
+     "down_m": 0.0012790107715272424,
+     "dpsi_rad": 0.11092870060135337
+    },
+    "clipped": [],
+    "bins": [
+     6,
+     49,
+     54
+    ],
+    "flown": {
+     "fwd_m": 0.30612244897959184,
+     "down_m": 0.0,
+     "dpsi_rad": 0.11224489795918347
+    },
+    "land": false,
+    "quantize": "nearest bin, round((v - lo) / (hi - lo) * 98), after clipping to the codec's range; the client decodes the bin's lower edge, so the flown step is within half a bin of the requested one",
+    "geometry": {
+     "vx": 0.15228396070460015,
+     "vy": 0.017971842750249496,
+     "vz": -0.002558021543054485,
+     "delta_yaw": -0.07395246706756892,
+     "unused": {
+      "3": 0.0,
+      "4": 0.0,
+      "6": 0.0
+     },
+     "gains": {
+      "xy": 1.875,
+      "z": 0.5,
+      "yaw": 1.5
+     },
+     "forward_mps": 0.2855324263211253,
+     "left_mps": 0.033697205156717806,
+     "climb_mps": -0.0012790107715272424,
+     "yaw_rate_ccw_rad_s": -0.11092870060135337,
+     "horizon_s": 1.0,
+     "lateral_left_m_dropped": 0.033697205156717806
+    },
+    "camera": {
+     "camera": "VLAFront",
+     "hfov_deg": 90.0,
+     "pitch_deg": 0.0
+    },
+    "horizon_s": 1.0,
+    "gains": {
+     "xy": 1.875,
+     "z": 0.5,
+     "yaw": 1.5
+    }
+   }
+  },
+  {
+   "frame": "present_+00.png",
+   "rtt_s": 0.8431945479824208,
+   "ok": true,
+   "error": null,
+   "kind": "velocity",
+   "raw_text": "03 49 48</s>",
+   "parse_ok": true,
+   "latency_s": 0.839719,
+   "server_s": 0.841516,
+   "native": {
+    "family": "racevla",
+    "ok": true,
+    "action": {
+     "action": [
+      0.09042985254222986,
+      -0.0034352850048419703,
+      0.0004787967964896885,
+      0.0,
+      0.0,
+      0.00808283417832617,
+      0.0
+     ],
+     "normalized": [
+      -0.3137254901960784,
+      0.039215686274509776,
+      -0.1568627450980392,
+      0.0,
+      0.0,
+      0.2431372549019608,
+      0.0
+     ]
+    },
+    "reason": null,
+    "tokens": [
+     31912,
+     31867,
+     31892,
+     31872,
+     31872,
+     31841,
+     31872
+    ],
+    "unnorm_key": "drone_set6_all",
+    "text": "31912 31867 31892 31872 31872 31841 31872",
+    "tokens_outside_action_bins": 0,
+    "command": "fly to the red car",
+    "history": null,
+    "history_reset": null,
+    "camera_aux": null,
+    "image": {
+     "src_size": [
+      224,
+      224
+     ],
+     "model_size": [
+      224,
+      224
+     ],
+     "gray": true
+    },
+    "ignored": {
+     "phrase": "straight ahead ",
+     "hint_source": "detector",
+     "down_jpg": "sent, ignored (bottom_tile 'none')"
+    }
+   },
+   "mapping": {
+    "rule": "racevla_velocity/1",
+    "kind": "velocity",
+    "requested": {
+     "fwd_m": 0.169555973516681,
+     "down_m": -0.00023939839824484426,
+     "dpsi_rad": -0.012124251267489256
+    },
+    "clipped": [],
+    "bins": [
+     3,
+     49,
+     48
+    ],
+    "flown": {
+     "fwd_m": 0.15306122448979592,
+     "down_m": 0.0,
+     "dpsi_rad": -0.022448979591836782
+    },
+    "land": false,
+    "quantize": "nearest bin, round((v - lo) / (hi - lo) * 98), after clipping to the codec's range; the client decodes the bin's lower edge, so the flown step is within half a bin of the requested one",
+    "geometry": {
+     "vx": 0.09042985254222986,
+     "vy": -0.0034352850048419703,
+     "vz": 0.0004787967964896885,
+     "delta_yaw": 0.00808283417832617,
+     "unused": {
+      "3": 0.0,
+      "4": 0.0,
+      "6": 0.0
+     },
+     "gains": {
+      "xy": 1.875,
+      "z": 0.5,
+      "yaw": 1.5
+     },
+     "forward_mps": 0.169555973516681,
+     "left_mps": -0.006441159384078694,
+     "climb_mps": 0.00023939839824484426,
+     "yaw_rate_ccw_rad_s": 0.012124251267489256,
+     "horizon_s": 1.0,
+     "lateral_left_m_dropped": -0.006441159384078694
+    },
+    "camera": {
+     "camera": "VLAFront",
+     "hfov_deg": 90.0,
+     "pitch_deg": 0.0
+    },
+    "horizon_s": 1.0,
+    "gains": {
+     "xy": 1.875,
+     "z": 0.5,
+     "yaw": 1.5
+    }
+   }
+  },
+  {
+   "frame": "absent_+00.png",
+   "rtt_s": 0.8349225650308654,
+   "ok": true,
+   "error": null,
+   "kind": "velocity",
+   "raw_text": "06 49 54</s>",
+   "parse_ok": true,
+   "latency_s": 0.831397,
+   "server_s": 0.833167,
+   "native": {
+    "family": "racevla",
+    "ok": true,
+    "action": {
+     "action": [
+      0.15228396070460015,
+      0.017971842750249496,
+      -0.002558021543054485,
+      0.0,
+      0.0,
+      -0.07395246706756892,
+      0.0
+     ],
+     "normalized": [
+      0.12549019607843137,
+      0.47058823529411764,
+      -0.40784313725490196,
+      0.0,
+      0.0,
+      -0.36078431372549025,
+      0.0
+     ]
+    },
+    "reason": null,
+    "tokens": [
+     31856,
+     31812,
+     31924,
+     31872,
+     31872,
+     31918,
+     31872
+    ],
+    "unnorm_key": "drone_set6_all",
+    "text": "31856 31812 31924 31872 31872 31918 31872",
+    "tokens_outside_action_bins": 0,
+    "command": "fly to the red car",
+    "history": null,
+    "history_reset": null,
+    "camera_aux": null,
+    "image": {
+     "src_size": [
+      224,
+      224
+     ],
+     "model_size": [
+      224,
+      224
+     ],
+     "gray": true
+    },
+    "ignored": {
+     "phrase": "straight ahead ",
+     "hint_source": "detector",
+     "down_jpg": "sent, ignored (bottom_tile 'none')"
+    }
+   },
+   "mapping": {
+    "rule": "racevla_velocity/1",
+    "kind": "velocity",
+    "requested": {
+     "fwd_m": 0.2855324263211253,
+     "down_m": 0.0012790107715272424,
+     "dpsi_rad": 0.11092870060135337
+    },
+    "clipped": [],
+    "bins": [
+     6,
+     49,
+     54
+    ],
+    "flown": {
+     "fwd_m": 0.30612244897959184,
+     "down_m": 0.0,
+     "dpsi_rad": 0.11224489795918347
+    },
+    "land": false,
+    "quantize": "nearest bin, round((v - lo) / (hi - lo) * 98), after clipping to the codec's range; the client decodes the bin's lower edge, so the flown step is within half a bin of the requested one",
+    "geometry": {
+     "vx": 0.15228396070460015,
+     "vy": 0.017971842750249496,
+     "vz": -0.002558021543054485,
+     "delta_yaw": -0.07395246706756892,
+     "unused": {
+      "3": 0.0,
+      "4": 0.0,
+      "6": 0.0
+     },
+     "gains": {
+      "xy": 1.875,
+      "z": 0.5,
+      "yaw": 1.5
+     },
+     "forward_mps": 0.2855324263211253,
+     "left_mps": 0.033697205156717806,
+     "climb_mps": -0.0012790107715272424,
+     "yaw_rate_ccw_rad_s": -0.11092870060135337,
+     "horizon_s": 1.0,
+     "lateral_left_m_dropped": 0.033697205156717806
+    },
+    "camera": {
+     "camera": "VLAFront",
+     "hfov_deg": 90.0,
+     "pitch_deg": 0.0
+    },
+    "horizon_s": 1.0,
+    "gains": {
+     "xy": 1.875,
+     "z": 0.5,
+     "yaw": 1.5
+    }
+   }
+  },
+  {
+   "frame": "present_+00.png",
+   "rtt_s": 0.8364464770420454,
+   "ok": true,
+   "error": null,
+   "kind": "velocity",
+   "raw_text": "03 49 48</s>",
+   "parse_ok": true,
+   "latency_s": 0.832978,
+   "server_s": 0.834764,
+   "native": {
+    "family": "racevla",
+    "ok": true,
+    "action": {
+     "action": [
+      0.09042985254222986,
+      -0.0034352850048419703,
+      0.0004787967964896885,
+      0.0,
+      0.0,
+      0.00808283417832617,
+      0.0
+     ],
+     "normalized": [
+      -0.3137254901960784,
+      0.039215686274509776,
+      -0.1568627450980392,
+      0.0,
+      0.0,
+      0.2431372549019608,
+      0.0
+     ]
+    },
+    "reason": null,
+    "tokens": [
+     31912,
+     31867,
+     31892,
+     31872,
+     31872,
+     31841,
+     31872
+    ],
+    "unnorm_key": "drone_set6_all",
+    "text": "31912 31867 31892 31872 31872 31841 31872",
+    "tokens_outside_action_bins": 0,
+    "command": "fly to the red car",
+    "history": null,
+    "history_reset": null,
+    "camera_aux": null,
+    "image": {
+     "src_size": [
+      224,
+      224
+     ],
+     "model_size": [
+      224,
+      224
+     ],
+     "gray": true
+    },
+    "ignored": {
+     "phrase": "straight ahead ",
+     "hint_source": "detector",
+     "down_jpg": "sent, ignored (bottom_tile 'none')"
+    }
+   },
+   "mapping": {
+    "rule": "racevla_velocity/1",
+    "kind": "velocity",
+    "requested": {
+     "fwd_m": 0.169555973516681,
+     "down_m": -0.00023939839824484426,
+     "dpsi_rad": -0.012124251267489256
+    },
+    "clipped": [],
+    "bins": [
+     3,
+     49,
+     48
+    ],
+    "flown": {
+     "fwd_m": 0.15306122448979592,
+     "down_m": 0.0,
+     "dpsi_rad": -0.022448979591836782
+    },
+    "land": false,
+    "quantize": "nearest bin, round((v - lo) / (hi - lo) * 98), after clipping to the codec's range; the client decodes the bin's lower edge, so the flown step is within half a bin of the requested one",
+    "geometry": {
+     "vx": 0.09042985254222986,
+     "vy": -0.0034352850048419703,
+     "vz": 0.0004787967964896885,
+     "delta_yaw": 0.00808283417832617,
+     "unused": {
+      "3": 0.0,
+      "4": 0.0,
+      "6": 0.0
+     },
+     "gains": {
+      "xy": 1.875,
+      "z": 0.5,
+      "yaw": 1.5
+     },
+     "forward_mps": 0.169555973516681,
+     "left_mps": -0.006441159384078694,
+     "climb_mps": 0.00023939839824484426,
+     "yaw_rate_ccw_rad_s": 0.012124251267489256,
+     "horizon_s": 1.0,
+     "lateral_left_m_dropped": -0.006441159384078694
+    },
+    "camera": {
+     "camera": "VLAFront",
+     "hfov_deg": 90.0,
+     "pitch_deg": 0.0
+    },
+    "horizon_s": 1.0,
+    "gains": {
+     "xy": 1.875,
+     "z": 0.5,
+     "yaw": 1.5
+    }
+   }
+  },
+  {
+   "frame": "absent_+00.png",
+   "rtt_s": 0.8445016269688495,
+   "ok": true,
+   "error": null,
+   "kind": "velocity",
+   "raw_text": "06 49 54</s>",
+   "parse_ok": true,
+   "latency_s": 0.841067,
+   "server_s": 0.842895,
+   "native": {
+    "family": "racevla",
+    "ok": true,
+    "action": {
+     "action": [
+      0.15228396070460015,
+      0.017971842750249496,
+      -0.002558021543054485,
+      0.0,
+      0.0,
+      -0.07395246706756892,
+      0.0
+     ],
+     "normalized": [
+      0.12549019607843137,
+      0.47058823529411764,
+      -0.40784313725490196,
+      0.0,
+      0.0,
+      -0.36078431372549025,
+      0.0
+     ]
+    },
+    "reason": null,
+    "tokens": [
+     31856,
+     31812,
+     31924,
+     31872,
+     31872,
+     31918,
+     31872
+    ],
+    "unnorm_key": "drone_set6_all",
+    "text": "31856 31812 31924 31872 31872 31918 31872",
+    "tokens_outside_action_bins": 0,
+    "command": "fly to the red car",
+    "history": null,
+    "history_reset": null,
+    "camera_aux": null,
+    "image": {
+     "src_size": [
+      224,
+      224
+     ],
+     "model_size": [
+      224,
+      224
+     ],
+     "gray": true
+    },
+    "ignored": {
+     "phrase": "straight ahead ",
+     "hint_source": "detector",
+     "down_jpg": "sent, ignored (bottom_tile 'none')"
+    }
+   },
+   "mapping": {
+    "rule": "racevla_velocity/1",
+    "kind": "velocity",
+    "requested": {
+     "fwd_m": 0.2855324263211253,
+     "down_m": 0.0012790107715272424,
+     "dpsi_rad": 0.11092870060135337
+    },
+    "clipped": [],
+    "bins": [
+     6,
+     49,
+     54
+    ],
+    "flown": {
+     "fwd_m": 0.30612244897959184,
+     "down_m": 0.0,
+     "dpsi_rad": 0.11224489795918347
+    },
+    "land": false,
+    "quantize": "nearest bin, round((v - lo) / (hi - lo) * 98), after clipping to the codec's range; the client decodes the bin's lower edge, so the flown step is within half a bin of the requested one",
+    "geometry": {
+     "vx": 0.15228396070460015,
+     "vy": 0.017971842750249496,
+     "vz": -0.002558021543054485,
+     "delta_yaw": -0.07395246706756892,
+     "unused": {
+      "3": 0.0,
+      "4": 0.0,
+      "6": 0.0
+     },
+     "gains": {
+      "xy": 1.875,
+      "z": 0.5,
+      "yaw": 1.5
+     },
+     "forward_mps": 0.2855324263211253,
+     "left_mps": 0.033697205156717806,
+     "climb_mps": -0.0012790107715272424,
+     "yaw_rate_ccw_rad_s": -0.11092870060135337,
+     "horizon_s": 1.0,
+     "lateral_left_m_dropped": 0.033697205156717806
+    },
+    "camera": {
+     "camera": "VLAFront",
+     "hfov_deg": 90.0,
+     "pitch_deg": 0.0
+    },
+    "horizon_s": 1.0,
+    "gains": {
+     "xy": 1.875,
+     "z": 0.5,
+     "yaw": 1.5
+    }
+   }
+  },
+  {
+   "frame": "present_+00.png",
+   "rtt_s": 0.840799685975071,
+   "ok": true,
+   "error": null,
+   "kind": "velocity",
+   "raw_text": "03 49 48</s>",
+   "parse_ok": true,
+   "latency_s": 0.837026,
+   "server_s": 0.838806,
+   "native": {
+    "family": "racevla",
+    "ok": true,
+    "action": {
+     "action": [
+      0.09042985254222986,
+      -0.0034352850048419703,
+      0.0004787967964896885,
+      0.0,
+      0.0,
+      0.00808283417832617,
+      0.0
+     ],
+     "normalized": [
+      -0.3137254901960784,
+      0.039215686274509776,
+      -0.1568627450980392,
+      0.0,
+      0.0,
+      0.2431372549019608,
+      0.0
+     ]
+    },
+    "reason": null,
+    "tokens": [
+     31912,
+     31867,
+     31892,
+     31872,
+     31872,
+     31841,
+     31872
+    ],
+    "unnorm_key": "drone_set6_all",
+    "text": "31912 31867 31892 31872 31872 31841 31872",
+    "tokens_outside_action_bins": 0,
+    "command": "fly to the red car",
+    "history": null,
+    "history_reset": null,
+    "camera_aux": null,
+    "image": {
+     "src_size": [
+      224,
+      224
+     ],
+     "model_size": [
+      224,
+      224
+     ],
+     "gray": true
+    },
+    "ignored": {
+     "phrase": "straight ahead ",
+     "hint_source": "detector",
+     "down_jpg": "sent, ignored (bottom_tile 'none')"
+    }
+   },
+   "mapping": {
+    "rule": "racevla_velocity/1",
+    "kind": "velocity",
+    "requested": {
+     "fwd_m": 0.169555973516681,
+     "down_m": -0.00023939839824484426,
+     "dpsi_rad": -0.012124251267489256
+    },
+    "clipped": [],
+    "bins": [
+     3,
+     49,
+     48
+    ],
+    "flown": {
+     "fwd_m": 0.15306122448979592,
+     "down_m": 0.0,
+     "dpsi_rad": -0.022448979591836782
+    },
+    "land": false,
+    "quantize": "nearest bin, round((v - lo) / (hi - lo) * 98), after clipping to the codec's range; the client decodes the bin's lower edge, so the flown step is within half a bin of the requested one",
+    "geometry": {
+     "vx": 0.09042985254222986,
+     "vy": -0.0034352850048419703,
+     "vz": 0.0004787967964896885,
+     "delta_yaw": 0.00808283417832617,
+     "unused": {
+      "3": 0.0,
+      "4": 0.0,
+      "6": 0.0
+     },
+     "gains": {
+      "xy": 1.875,
+      "z": 0.5,
+      "yaw": 1.5
+     },
+     "forward_mps": 0.169555973516681,
+     "left_mps": -0.006441159384078694,
+     "climb_mps": 0.00023939839824484426,
+     "yaw_rate_ccw_rad_s": 0.012124251267489256,
+     "horizon_s": 1.0,
+     "lateral_left_m_dropped": -0.006441159384078694
+    },
+    "camera": {
+     "camera": "VLAFront",
+     "hfov_deg": 90.0,
+     "pitch_deg": 0.0
+    },
+    "horizon_s": 1.0,
+    "gains": {
+     "xy": 1.875,
+     "z": 0.5,
+     "yaw": 1.5
+    }
+   }
+  },
+  {
+   "frame": "absent_+00.png",
+   "rtt_s": 0.838000341958832,
+   "ok": true,
+   "error": null,
+   "kind": "velocity",
+   "raw_text": "06 49 54</s>",
+   "parse_ok": true,
+   "latency_s": 0.834531,
+   "server_s": 0.836316,
+   "native": {
+    "family": "racevla",
+    "ok": true,
+    "action": {
+     "action": [
+      0.15228396070460015,
+      0.017971842750249496,
+      -0.002558021543054485,
+      0.0,
+      0.0,
+      -0.07395246706756892,
+      0.0
+     ],
+     "normalized": [
+      0.12549019607843137,
+      0.47058823529411764,
+      -0.40784313725490196,
+      0.0,
+      0.0,
+      -0.36078431372549025,
+      0.0
+     ]
+    },
+    "reason": null,
+    "tokens": [
+     31856,
+     31812,
+     31924,
+     31872,
+     31872,
+     31918,
+     31872
+    ],
+    "unnorm_key": "drone_set6_all",
+    "text": "31856 31812 31924 31872 31872 31918 31872",
+    "tokens_outside_action_bins": 0,
+    "command": "fly to the red car",
+    "history": null,
+    "history_reset": null,
+    "camera_aux": null,
+    "image": {
+     "src_size": [
+      224,
+      224
+     ],
+     "model_size": [
+      224,
+      224
+     ],
+     "gray": true
+    },
+    "ignored": {
+     "phrase": "straight ahead ",
+     "hint_source": "detector",
+     "down_jpg": "sent, ignored (bottom_tile 'none')"
+    }
+   },
+   "mapping": {
+    "rule": "racevla_velocity/1",
+    "kind": "velocity",
+    "requested": {
+     "fwd_m": 0.2855324263211253,
+     "down_m": 0.0012790107715272424,
+     "dpsi_rad": 0.11092870060135337
+    },
+    "clipped": [],
+    "bins": [
+     6,
+     49,
+     54
+    ],
+    "flown": {
+     "fwd_m": 0.30612244897959184,
+     "down_m": 0.0,
+     "dpsi_rad": 0.11224489795918347
+    },
+    "land": false,
+    "quantize": "nearest bin, round((v - lo) / (hi - lo) * 98), after clipping to the codec's range; the client decodes the bin's lower edge, so the flown step is within half a bin of the requested one",
+    "geometry": {
+     "vx": 0.15228396070460015,
+     "vy": 0.017971842750249496,
+     "vz": -0.002558021543054485,
+     "delta_yaw": -0.07395246706756892,
+     "unused": {
+      "3": 0.0,
+      "4": 0.0,
+      "6": 0.0
+     },
+     "gains": {
+      "xy": 1.875,
+      "z": 0.5,
+      "yaw": 1.5
+     },
+     "forward_mps": 0.2855324263211253,
+     "left_mps": 0.033697205156717806,
+     "climb_mps": -0.0012790107715272424,
+     "yaw_rate_ccw_rad_s": -0.11092870060135337,
+     "horizon_s": 1.0,
+     "lateral_left_m_dropped": 0.033697205156717806
+    },
+    "camera": {
+     "camera": "VLAFront",
+     "hfov_deg": 90.0,
+     "pitch_deg": 0.0
+    },
+    "horizon_s": 1.0,
+    "gains": {
+     "xy": 1.875,
+     "z": 0.5,
+     "yaw": 1.5
+    }
+   }
+  },
+  {
+   "frame": "present_+00.png",
+   "rtt_s": 0.837391667009797,
+   "ok": true,
+   "error": null,
+   "kind": "velocity",
+   "raw_text": "03 49 48</s>",
+   "parse_ok": true,
+   "latency_s": 0.833933,
+   "server_s": 0.835726,
+   "native": {
+    "family": "racevla",
+    "ok": true,
+    "action": {
+     "action": [
+      0.09042985254222986,
+      -0.0034352850048419703,
+      0.0004787967964896885,
+      0.0,
+      0.0,
+      0.00808283417832617,
+      0.0
+     ],
+     "normalized": [
+      -0.3137254901960784,
+      0.039215686274509776,
+      -0.1568627450980392,
+      0.0,
+      0.0,
+      0.2431372549019608,
+      0.0
+     ]
+    },
+    "reason": null,
+    "tokens": [
+     31912,
+     31867,
+     31892,
+     31872,
+     31872,
+     31841,
+     31872
+    ],
+    "unnorm_key": "drone_set6_all",
+    "text": "31912 31867 31892 31872 31872 31841 31872",
+    "tokens_outside_action_bins": 0,
+    "command": "fly to the red car",
+    "history": null,
+    "history_reset": null,
+    "camera_aux": null,
+    "image": {
+     "src_size": [
+      224,
+      224
+     ],
+     "model_size": [
+      224,
+      224
+     ],
+     "gray": true
+    },
+    "ignored": {
+     "phrase": "straight ahead ",
+     "hint_source": "detector",
+     "down_jpg": "sent, ignored (bottom_tile 'none')"
+    }
+   },
+   "mapping": {
+    "rule": "racevla_velocity/1",
+    "kind": "velocity",
+    "requested": {
+     "fwd_m": 0.169555973516681,
+     "down_m": -0.00023939839824484426,
+     "dpsi_rad": -0.012124251267489256
+    },
+    "clipped": [],
+    "bins": [
+     3,
+     49,
+     48
+    ],
+    "flown": {
+     "fwd_m": 0.15306122448979592,
+     "down_m": 0.0,
+     "dpsi_rad": -0.022448979591836782
+    },
+    "land": false,
+    "quantize": "nearest bin, round((v - lo) / (hi - lo) * 98), after clipping to the codec's range; the client decodes the bin's lower edge, so the flown step is within half a bin of the requested one",
+    "geometry": {
+     "vx": 0.09042985254222986,
+     "vy": -0.0034352850048419703,
+     "vz": 0.0004787967964896885,
+     "delta_yaw": 0.00808283417832617,
+     "unused": {
+      "3": 0.0,
+      "4": 0.0,
+      "6": 0.0
+     },
+     "gains": {
+      "xy": 1.875,
+      "z": 0.5,
+      "yaw": 1.5
+     },
+     "forward_mps": 0.169555973516681,
+     "left_mps": -0.006441159384078694,
+     "climb_mps": 0.00023939839824484426,
+     "yaw_rate_ccw_rad_s": 0.012124251267489256,
+     "horizon_s": 1.0,
+     "lateral_left_m_dropped": -0.006441159384078694
+    },
+    "camera": {
+     "camera": "VLAFront",
+     "hfov_deg": 90.0,
+     "pitch_deg": 0.0
+    },
+    "horizon_s": 1.0,
+    "gains": {
+     "xy": 1.875,
+     "z": 0.5,
+     "yaw": 1.5
+    }
+   }
+  },
+  {
+   "frame": "absent_+00.png",
+   "rtt_s": 0.8366549900383689,
+   "ok": true,
+   "error": null,
+   "kind": "velocity",
+   "raw_text": "06 49 54</s>",
+   "parse_ok": true,
+   "latency_s": 0.832915,
+   "server_s": 0.834961,
+   "native": {
+    "family": "racevla",
+    "ok": true,
+    "action": {
+     "action": [
+      0.15228396070460015,
+      0.017971842750249496,
+      -0.002558021543054485,
+      0.0,
+      0.0,
+      -0.07395246706756892,
+      0.0
+     ],
+     "normalized": [
+      0.12549019607843137,
+      0.47058823529411764,
+      -0.40784313725490196,
+      0.0,
+      0.0,
+      -0.36078431372549025,
+      0.0
+     ]
+    },
+    "reason": null,
+    "tokens": [
+     31856,
+     31812,
+     31924,
+     31872,
+     31872,
+     31918,
+     31872
+    ],
+    "unnorm_key": "drone_set6_all",
+    "text": "31856 31812 31924 31872 31872 31918 31872",
+    "tokens_outside_action_bins": 0,
+    "command": "fly to the red car",
+    "history": null,
+    "history_reset": null,
+    "camera_aux": null,
+    "image": {
+     "src_size": [
+      224,
+      224
+     ],
+     "model_size": [
+      224,
+      224
+     ],
+     "gray": true
+    },
+    "ignored": {
+     "phrase": "straight ahead ",
+     "hint_source": "detector",
+     "down_jpg": "sent, ignored (bottom_tile 'none')"
+    }
+   },
+   "mapping": {
+    "rule": "racevla_velocity/1",
+    "kind": "velocity",
+    "requested": {
+     "fwd_m": 0.2855324263211253,
+     "down_m": 0.0012790107715272424,
+     "dpsi_rad": 0.11092870060135337
+    },
+    "clipped": [],
+    "bins": [
+     6,
+     49,
+     54
+    ],
+    "flown": {
+     "fwd_m": 0.30612244897959184,
+     "down_m": 0.0,
+     "dpsi_rad": 0.11224489795918347
+    },
+    "land": false,
+    "quantize": "nearest bin, round((v - lo) / (hi - lo) * 98), after clipping to the codec's range; the client decodes the bin's lower edge, so the flown step is within half a bin of the requested one",
+    "geometry": {
+     "vx": 0.15228396070460015,
+     "vy": 0.017971842750249496,
+     "vz": -0.002558021543054485,
+     "delta_yaw": -0.07395246706756892,
+     "unused": {
+      "3": 0.0,
+      "4": 0.0,
+      "6": 0.0
+     },
+     "gains": {
+      "xy": 1.875,
+      "z": 0.5,
+      "yaw": 1.5
+     },
+     "forward_mps": 0.2855324263211253,
+     "left_mps": 0.033697205156717806,
+     "climb_mps": -0.0012790107715272424,
+     "yaw_rate_ccw_rad_s": -0.11092870060135337,
+     "horizon_s": 1.0,
+     "lateral_left_m_dropped": 0.033697205156717806
+    },
+    "camera": {
+     "camera": "VLAFront",
+     "hfov_deg": 90.0,
+     "pitch_deg": 0.0
+    },
+    "horizon_s": 1.0,
+    "gains": {
+     "xy": 1.875,
+     "z": 0.5,
+     "yaw": 1.5
+    }
+   }
+  },
+  {
+   "frame": "present_+00.png",
+   "rtt_s": 0.835657799965702,
+   "ok": true,
+   "error": null,
+   "kind": "velocity",
+   "raw_text": "03 49 48</s>",
+   "parse_ok": true,
+   "latency_s": 0.832212,
+   "server_s": 0.833979,
+   "native": {
+    "family": "racevla",
+    "ok": true,
+    "action": {
+     "action": [
+      0.09042985254222986,
+      -0.0034352850048419703,
+      0.0004787967964896885,
+      0.0,
+      0.0,
+      0.00808283417832617,
+      0.0
+     ],
+     "normalized": [
+      -0.3137254901960784,
+      0.039215686274509776,
+      -0.1568627450980392,
+      0.0,
+      0.0,
+      0.2431372549019608,
+      0.0
+     ]
+    },
+    "reason": null,
+    "tokens": [
+     31912,
+     31867,
+     31892,
+     31872,
+     31872,
+     31841,
+     31872
+    ],
+    "unnorm_key": "drone_set6_all",
+    "text": "31912 31867 31892 31872 31872 31841 31872",
+    "tokens_outside_action_bins": 0,
+    "command": "fly to the red car",
+    "history": null,
+    "history_reset": null,
+    "camera_aux": null,
+    "image": {
+     "src_size": [
+      224,
+      224
+     ],
+     "model_size": [
+      224,
+      224
+     ],
+     "gray": true
+    },
+    "ignored": {
+     "phrase": "straight ahead ",
+     "hint_source": "detector",
+     "down_jpg": "sent, ignored (bottom_tile 'none')"
+    }
+   },
+   "mapping": {
+    "rule": "racevla_velocity/1",
+    "kind": "velocity",
+    "requested": {
+     "fwd_m": 0.169555973516681,
+     "down_m": -0.00023939839824484426,
+     "dpsi_rad": -0.012124251267489256
+    },
+    "clipped": [],
+    "bins": [
+     3,
+     49,
+     48
+    ],
+    "flown": {
+     "fwd_m": 0.15306122448979592,
+     "down_m": 0.0,
+     "dpsi_rad": -0.022448979591836782
+    },
+    "land": false,
+    "quantize": "nearest bin, round((v - lo) / (hi - lo) * 98), after clipping to the codec's range; the client decodes the bin's lower edge, so the flown step is within half a bin of the requested one",
+    "geometry": {
+     "vx": 0.09042985254222986,
+     "vy": -0.0034352850048419703,
+     "vz": 0.0004787967964896885,
+     "delta_yaw": 0.00808283417832617,
+     "unused": {
+      "3": 0.0,
+      "4": 0.0,
+      "6": 0.0
+     },
+     "gains": {
+      "xy": 1.875,
+      "z": 0.5,
+      "yaw": 1.5
+     },
+     "forward_mps": 0.169555973516681,
+     "left_mps": -0.006441159384078694,
+     "climb_mps": 0.00023939839824484426,
+     "yaw_rate_ccw_rad_s": 0.012124251267489256,
+     "horizon_s": 1.0,
+     "lateral_left_m_dropped": -0.006441159384078694
+    },
+    "camera": {
+     "camera": "VLAFront",
+     "hfov_deg": 90.0,
+     "pitch_deg": 0.0
+    },
+    "horizon_s": 1.0,
+    "gains": {
+     "xy": 1.875,
+     "z": 0.5,
+     "yaw": 1.5
+    }
+   }
+  },
+  {
+   "frame": "absent_+00.png",
+   "rtt_s": 0.8349209649604745,
+   "ok": true,
+   "error": null,
+   "kind": "velocity",
+   "raw_text": "06 49 54</s>",
+   "parse_ok": true,
+   "latency_s": 0.831471,
+   "server_s": 0.833242,
+   "native": {
+    "family": "racevla",
+    "ok": true,
+    "action": {
+     "action": [
+      0.15228396070460015,
+      0.017971842750249496,
+      -0.002558021543054485,
+      0.0,
+      0.0,
+      -0.07395246706756892,
+      0.0
+     ],
+     "normalized": [
+      0.12549019607843137,
+      0.47058823529411764,
+      -0.40784313725490196,
+      0.0,
+      0.0,
+      -0.36078431372549025,
+      0.0
+     ]
+    },
+    "reason": null,
+    "tokens": [
+     31856,
+     31812,
+     31924,
+     31872,
+     31872,
+     31918,
+     31872
+    ],
+    "unnorm_key": "drone_set6_all",
+    "text": "31856 31812 31924 31872 31872 31918 31872",
+    "tokens_outside_action_bins": 0,
+    "command": "fly to the red car",
+    "history": null,
+    "history_reset": null,
+    "camera_aux": null,
+    "image": {
+     "src_size": [
+      224,
+      224
+     ],
+     "model_size": [
+      224,
+      224
+     ],
+     "gray": true
+    },
+    "ignored": {
+     "phrase": "straight ahead ",
+     "hint_source": "detector",
+     "down_jpg": "sent, ignored (bottom_tile 'none')"
+    }
+   },
+   "mapping": {
+    "rule": "racevla_velocity/1",
+    "kind": "velocity",
+    "requested": {
+     "fwd_m": 0.2855324263211253,
+     "down_m": 0.0012790107715272424,
+     "dpsi_rad": 0.11092870060135337
+    },
+    "clipped": [],
+    "bins": [
+     6,
+     49,
+     54
+    ],
+    "flown": {
+     "fwd_m": 0.30612244897959184,
+     "down_m": 0.0,
+     "dpsi_rad": 0.11224489795918347
+    },
+    "land": false,
+    "quantize": "nearest bin, round((v - lo) / (hi - lo) * 98), after clipping to the codec's range; the client decodes the bin's lower edge, so the flown step is within half a bin of the requested one",
+    "geometry": {
+     "vx": 0.15228396070460015,
+     "vy": 0.017971842750249496,
+     "vz": -0.002558021543054485,
+     "delta_yaw": -0.07395246706756892,
+     "unused": {
+      "3": 0.0,
+      "4": 0.0,
+      "6": 0.0
+     },
+     "gains": {
+      "xy": 1.875,
+      "z": 0.5,
+      "yaw": 1.5
+     },
+     "forward_mps": 0.2855324263211253,
+     "left_mps": 0.033697205156717806,
+     "climb_mps": -0.0012790107715272424,
+     "yaw_rate_ccw_rad_s": -0.11092870060135337,
+     "horizon_s": 1.0,
+     "lateral_left_m_dropped": 0.033697205156717806
+    },
+    "camera": {
+     "camera": "VLAFront",
+     "hfov_deg": 90.0,
+     "pitch_deg": 0.0
+    },
+    "horizon_s": 1.0,
+    "gains": {
+     "xy": 1.875,
+     "z": 0.5,
+     "yaw": 1.5
+    }
+   }
+  },
+  {
+   "frame": "present_+00.png",
+   "rtt_s": 0.8365736459963955,
+   "ok": true,
+   "error": null,
+   "kind": "velocity",
+   "raw_text": "03 49 48</s>",
+   "parse_ok": true,
+   "latency_s": 0.83329,
+   "server_s": 0.835039,
+   "native": {
+    "family": "racevla",
+    "ok": true,
+    "action": {
+     "action": [
+      0.09042985254222986,
+      -0.0034352850048419703,
+      0.0004787967964896885,
+      0.0,
+      0.0,
+      0.00808283417832617,
+      0.0
+     ],
+     "normalized": [
+      -0.3137254901960784,
+      0.039215686274509776,
+      -0.1568627450980392,
+      0.0,
+      0.0,
+      0.2431372549019608,
+      0.0
+     ]
+    },
+    "reason": null,
+    "tokens": [
+     31912,
+     31867,
+     31892,
+     31872,
+     31872,
+     31841,
+     31872
+    ],
+    "unnorm_key": "drone_set6_all",
+    "text": "31912 31867 31892 31872 31872 31841 31872",
+    "tokens_outside_action_bins": 0,
+    "command": "fly to the red car",
+    "history": null,
+    "history_reset": null,
+    "camera_aux": null,
+    "image": {
+     "src_size": [
+      224,
+      224
+     ],
+     "model_size": [
+      224,
+      224
+     ],
+     "gray": true
+    },
+    "ignored": {
+     "phrase": "straight ahead ",
+     "hint_source": "detector",
+     "down_jpg": "sent, ignored (bottom_tile 'none')"
+    }
+   },
+   "mapping": {
+    "rule": "racevla_velocity/1",
+    "kind": "velocity",
+    "requested": {
+     "fwd_m": 0.169555973516681,
+     "down_m": -0.00023939839824484426,
+     "dpsi_rad": -0.012124251267489256
+    },
+    "clipped": [],
+    "bins": [
+     3,
+     49,
+     48
+    ],
+    "flown": {
+     "fwd_m": 0.15306122448979592,
+     "down_m": 0.0,
+     "dpsi_rad": -0.022448979591836782
+    },
+    "land": false,
+    "quantize": "nearest bin, round((v - lo) / (hi - lo) * 98), after clipping to the codec's range; the client decodes the bin's lower edge, so the flown step is within half a bin of the requested one",
+    "geometry": {
+     "vx": 0.09042985254222986,
+     "vy": -0.0034352850048419703,
+     "vz": 0.0004787967964896885,
+     "delta_yaw": 0.00808283417832617,
+     "unused": {
+      "3": 0.0,
+      "4": 0.0,
+      "6": 0.0
+     },
+     "gains": {
+      "xy": 1.875,
+      "z": 0.5,
+      "yaw": 1.5
+     },
+     "forward_mps": 0.169555973516681,
+     "left_mps": -0.006441159384078694,
+     "climb_mps": 0.00023939839824484426,
+     "yaw_rate_ccw_rad_s": 0.012124251267489256,
+     "horizon_s": 1.0,
+     "lateral_left_m_dropped": -0.006441159384078694
+    },
+    "camera": {
+     "camera": "VLAFront",
+     "hfov_deg": 90.0,
+     "pitch_deg": 0.0
+    },
+    "horizon_s": 1.0,
+    "gains": {
+     "xy": 1.875,
+     "z": 0.5,
+     "yaw": 1.5
+    }
+   }
+  },
+  {
+   "frame": "absent_+00.png",
+   "rtt_s": 0.8387043150141835,
+   "ok": true,
+   "error": null,
+   "kind": "velocity",
+   "raw_text": "06 49 54</s>",
+   "parse_ok": true,
+   "latency_s": 0.835247,
+   "server_s": 0.837017,
+   "native": {
+    "family": "racevla",
+    "ok": true,
+    "action": {
+     "action": [
+      0.15228396070460015,
+      0.017971842750249496,
+      -0.002558021543054485,
+      0.0,
+      0.0,
+      -0.07395246706756892,
+      0.0
+     ],
+     "normalized": [
+      0.12549019607843137,
+      0.47058823529411764,
+      -0.40784313725490196,
+      0.0,
+      0.0,
+      -0.36078431372549025,
+      0.0
+     ]
+    },
+    "reason": null,
+    "tokens": [
+     31856,
+     31812,
+     31924,
+     31872,
+     31872,
+     31918,
+     31872
+    ],
+    "unnorm_key": "drone_set6_all",
+    "text": "31856 31812 31924 31872 31872 31918 31872",
+    "tokens_outside_action_bins": 0,
+    "command": "fly to the red car",
+    "history": null,
+    "history_reset": null,
+    "camera_aux": null,
+    "image": {
+     "src_size": [
+      224,
+      224
+     ],
+     "model_size": [
+      224,
+      224
+     ],
+     "gray": true
+    },
+    "ignored": {
+     "phrase": "straight ahead ",
+     "hint_source": "detector",
+     "down_jpg": "sent, ignored (bottom_tile 'none')"
+    }
+   },
+   "mapping": {
+    "rule": "racevla_velocity/1",
+    "kind": "velocity",
+    "requested": {
+     "fwd_m": 0.2855324263211253,
+     "down_m": 0.0012790107715272424,
+     "dpsi_rad": 0.11092870060135337
+    },
+    "clipped": [],
+    "bins": [
+     6,
+     49,
+     54
+    ],
+    "flown": {
+     "fwd_m": 0.30612244897959184,
+     "down_m": 0.0,
+     "dpsi_rad": 0.11224489795918347
+    },
+    "land": false,
+    "quantize": "nearest bin, round((v - lo) / (hi - lo) * 98), after clipping to the codec's range; the client decodes the bin's lower edge, so the flown step is within half a bin of the requested one",
+    "geometry": {
+     "vx": 0.15228396070460015,
+     "vy": 0.017971842750249496,
+     "vz": -0.002558021543054485,
+     "delta_yaw": -0.07395246706756892,
+     "unused": {
+      "3": 0.0,
+      "4": 0.0,
+      "6": 0.0
+     },
+     "gains": {
+      "xy": 1.875,
+      "z": 0.5,
+      "yaw": 1.5
+     },
+     "forward_mps": 0.2855324263211253,
+     "left_mps": 0.033697205156717806,
+     "climb_mps": -0.0012790107715272424,
+     "yaw_rate_ccw_rad_s": -0.11092870060135337,
+     "horizon_s": 1.0,
+     "lateral_left_m_dropped": 0.033697205156717806
+    },
+    "camera": {
+     "camera": "VLAFront",
+     "hfov_deg": 90.0,
+     "pitch_deg": 0.0
+    },
+    "horizon_s": 1.0,
+    "gains": {
+     "xy": 1.875,
+     "z": 0.5,
+     "yaw": 1.5
+    }
+   }
+  },
+  {
+   "frame": "present_+00.png",
+   "rtt_s": 0.8354894149815664,
+   "ok": true,
+   "error": null,
+   "kind": "velocity",
+   "raw_text": "03 49 48</s>",
+   "parse_ok": true,
+   "latency_s": 0.831993,
+   "server_s": 0.83381,
+   "native": {
+    "family": "racevla",
+    "ok": true,
+    "action": {
+     "action": [
+      0.09042985254222986,
+      -0.0034352850048419703,
+      0.0004787967964896885,
+      0.0,
+      0.0,
+      0.00808283417832617,
+      0.0
+     ],
+     "normalized": [
+      -0.3137254901960784,
+      0.039215686274509776,
+      -0.1568627450980392,
+      0.0,
+      0.0,
+      0.2431372549019608,
+      0.0
+     ]
+    },
+    "reason": null,
+    "tokens": [
+     31912,
+     31867,
+     31892,
+     31872,
+     31872,
+     31841,
+     31872
+    ],
+    "unnorm_key": "drone_set6_all",
+    "text": "31912 31867 31892 31872 31872 31841 31872",
+    "tokens_outside_action_bins": 0,
+    "command": "fly to the red car",
+    "history": null,
+    "history_reset": null,
+    "camera_aux": null,
+    "image": {
+     "src_size": [
+      224,
+      224
+     ],
+     "model_size": [
+      224,
+      224
+     ],
+     "gray": true
+    },
+    "ignored": {
+     "phrase": "straight ahead ",
+     "hint_source": "detector",
+     "down_jpg": "sent, ignored (bottom_tile 'none')"
+    }
+   },
+   "mapping": {
+    "rule": "racevla_velocity/1",
+    "kind": "velocity",
+    "requested": {
+     "fwd_m": 0.169555973516681,
+     "down_m": -0.00023939839824484426,
+     "dpsi_rad": -0.012124251267489256
+    },
+    "clipped": [],
+    "bins": [
+     3,
+     49,
+     48
+    ],
+    "flown": {
+     "fwd_m": 0.15306122448979592,
+     "down_m": 0.0,
+     "dpsi_rad": -0.022448979591836782
+    },
+    "land": false,
+    "quantize": "nearest bin, round((v - lo) / (hi - lo) * 98), after clipping to the codec's range; the client decodes the bin's lower edge, so the flown step is within half a bin of the requested one",
+    "geometry": {
+     "vx": 0.09042985254222986,
+     "vy": -0.0034352850048419703,
+     "vz": 0.0004787967964896885,
+     "delta_yaw": 0.00808283417832617,
+     "unused": {
+      "3": 0.0,
+      "4": 0.0,
+      "6": 0.0
+     },
+     "gains": {
+      "xy": 1.875,
+      "z": 0.5,
+      "yaw": 1.5
+     },
+     "forward_mps": 0.169555973516681,
+     "left_mps": -0.006441159384078694,
+     "climb_mps": 0.00023939839824484426,
+     "yaw_rate_ccw_rad_s": 0.012124251267489256,
+     "horizon_s": 1.0,
+     "lateral_left_m_dropped": -0.006441159384078694
+    },
+    "camera": {
+     "camera": "VLAFront",
+     "hfov_deg": 90.0,
+     "pitch_deg": 0.0
+    },
+    "horizon_s": 1.0,
+    "gains": {
+     "xy": 1.875,
+     "z": 0.5,
+     "yaw": 1.5
+    }
+   }
+  },
+  {
+   "frame": "absent_+00.png",
+   "rtt_s": 0.840239075012505,
+   "ok": true,
+   "error": null,
+   "kind": "velocity",
+   "raw_text": "06 49 54</s>",
+   "parse_ok": true,
+   "latency_s": 0.836829,
+   "server_s": 0.838676,
+   "native": {
+    "family": "racevla",
+    "ok": true,
+    "action": {
+     "action": [
+      0.15228396070460015,
+      0.017971842750249496,
+      -0.002558021543054485,
+      0.0,
+      0.0,
+      -0.07395246706756892,
+      0.0
+     ],
+     "normalized": [
+      0.12549019607843137,
+      0.47058823529411764,
+      -0.40784313725490196,
+      0.0,
+      0.0,
+      -0.36078431372549025,
+      0.0
+     ]
+    },
+    "reason": null,
+    "tokens": [
+     31856,
+     31812,
+     31924,
+     31872,
+     31872,
+     31918,
+     31872
+    ],
+    "unnorm_key": "drone_set6_all",
+    "text": "31856 31812 31924 31872 31872 31918 31872",
+    "tokens_outside_action_bins": 0,
+    "command": "fly to the red car",
+    "history": null,
+    "history_reset": null,
+    "camera_aux": null,
+    "image": {
+     "src_size": [
+      224,
+      224
+     ],
+     "model_size": [
+      224,
+      224
+     ],
+     "gray": true
+    },
+    "ignored": {
+     "phrase": "straight ahead ",
+     "hint_source": "detector",
+     "down_jpg": "sent, ignored (bottom_tile 'none')"
+    }
+   },
+   "mapping": {
+    "rule": "racevla_velocity/1",
+    "kind": "velocity",
+    "requested": {
+     "fwd_m": 0.2855324263211253,
+     "down_m": 0.0012790107715272424,
+     "dpsi_rad": 0.11092870060135337
+    },
+    "clipped": [],
+    "bins": [
+     6,
+     49,
+     54
+    ],
+    "flown": {
+     "fwd_m": 0.30612244897959184,
+     "down_m": 0.0,
+     "dpsi_rad": 0.11224489795918347
+    },
+    "land": false,
+    "quantize": "nearest bin, round((v - lo) / (hi - lo) * 98), after clipping to the codec's range; the client decodes the bin's lower edge, so the flown step is within half a bin of the requested one",
+    "geometry": {
+     "vx": 0.15228396070460015,
+     "vy": 0.017971842750249496,
+     "vz": -0.002558021543054485,
+     "delta_yaw": -0.07395246706756892,
+     "unused": {
+      "3": 0.0,
+      "4": 0.0,
+      "6": 0.0
+     },
+     "gains": {
+      "xy": 1.875,
+      "z": 0.5,
+      "yaw": 1.5
+     },
+     "forward_mps": 0.2855324263211253,
+     "left_mps": 0.033697205156717806,
+     "climb_mps": -0.0012790107715272424,
+     "yaw_rate_ccw_rad_s": -0.11092870060135337,
+     "horizon_s": 1.0,
+     "lateral_left_m_dropped": 0.033697205156717806
+    },
+    "camera": {
+     "camera": "VLAFront",
+     "hfov_deg": 90.0,
+     "pitch_deg": 0.0
+    },
+    "horizon_s": 1.0,
+    "gains": {
+     "xy": 1.875,
+     "z": 0.5,
+     "yaw": 1.5
+    }
+   }
+  },
+  {
+   "frame": "present_+00.png",
+   "rtt_s": 0.8373034420073964,
+   "ok": true,
+   "error": null,
+   "kind": "velocity",
+   "raw_text": "03 49 48</s>",
+   "parse_ok": true,
+   "latency_s": 0.833992,
+   "server_s": 0.835792,
+   "native": {
+    "family": "racevla",
+    "ok": true,
+    "action": {
+     "action": [
+      0.09042985254222986,
+      -0.0034352850048419703,
+      0.0004787967964896885,
+      0.0,
+      0.0,
+      0.00808283417832617,
+      0.0
+     ],
+     "normalized": [
+      -0.3137254901960784,
+      0.039215686274509776,
+      -0.1568627450980392,
+      0.0,
+      0.0,
+      0.2431372549019608,
+      0.0
+     ]
+    },
+    "reason": null,
+    "tokens": [
+     31912,
+     31867,
+     31892,
+     31872,
+     31872,
+     31841,
+     31872
+    ],
+    "unnorm_key": "drone_set6_all",
+    "text": "31912 31867 31892 31872 31872 31841 31872",
+    "tokens_outside_action_bins": 0,
+    "command": "fly to the red car",
+    "history": null,
+    "history_reset": null,
+    "camera_aux": null,
+    "image": {
+     "src_size": [
+      224,
+      224
+     ],
+     "model_size": [
+      224,
+      224
+     ],
+     "gray": true
+    },
+    "ignored": {
+     "phrase": "straight ahead ",
+     "hint_source": "detector",
+     "down_jpg": "sent, ignored (bottom_tile 'none')"
+    }
+   },
+   "mapping": {
+    "rule": "racevla_velocity/1",
+    "kind": "velocity",
+    "requested": {
+     "fwd_m": 0.169555973516681,
+     "down_m": -0.00023939839824484426,
+     "dpsi_rad": -0.012124251267489256
+    },
+    "clipped": [],
+    "bins": [
+     3,
+     49,
+     48
+    ],
+    "flown": {
+     "fwd_m": 0.15306122448979592,
+     "down_m": 0.0,
+     "dpsi_rad": -0.022448979591836782
+    },
+    "land": false,
+    "quantize": "nearest bin, round((v - lo) / (hi - lo) * 98), after clipping to the codec's range; the client decodes the bin's lower edge, so the flown step is within half a bin of the requested one",
+    "geometry": {
+     "vx": 0.09042985254222986,
+     "vy": -0.0034352850048419703,
+     "vz": 0.0004787967964896885,
+     "delta_yaw": 0.00808283417832617,
+     "unused": {
+      "3": 0.0,
+      "4": 0.0,
+      "6": 0.0
+     },
+     "gains": {
+      "xy": 1.875,
+      "z": 0.5,
+      "yaw": 1.5
+     },
+     "forward_mps": 0.169555973516681,
+     "left_mps": -0.006441159384078694,
+     "climb_mps": 0.00023939839824484426,
+     "yaw_rate_ccw_rad_s": 0.012124251267489256,
+     "horizon_s": 1.0,
+     "lateral_left_m_dropped": -0.006441159384078694
+    },
+    "camera": {
+     "camera": "VLAFront",
+     "hfov_deg": 90.0,
+     "pitch_deg": 0.0
+    },
+    "horizon_s": 1.0,
+    "gains": {
+     "xy": 1.875,
+     "z": 0.5,
+     "yaw": 1.5
+    }
+   }
+  },
+  {
+   "frame": "absent_+00.png",
+   "rtt_s": 0.8402000029454939,
+   "ok": true,
+   "error": null,
+   "kind": "velocity",
+   "raw_text": "06 49 54</s>",
+   "parse_ok": true,
+   "latency_s": 0.836904,
+   "server_s": 0.838688,
+   "native": {
+    "family": "racevla",
+    "ok": true,
+    "action": {
+     "action": [
+      0.15228396070460015,
+      0.017971842750249496,
+      -0.002558021543054485,
+      0.0,
+      0.0,
+      -0.07395246706756892,
+      0.0
+     ],
+     "normalized": [
+      0.12549019607843137,
+      0.47058823529411764,
+      -0.40784313725490196,
+      0.0,
+      0.0,
+      -0.36078431372549025,
+      0.0
+     ]
+    },
+    "reason": null,
+    "tokens": [
+     31856,
+     31812,
+     31924,
+     31872,
+     31872,
+     31918,
+     31872
+    ],
+    "unnorm_key": "drone_set6_all",
+    "text": "31856 31812 31924 31872 31872 31918 31872",
+    "tokens_outside_action_bins": 0,
+    "command": "fly to the red car",
+    "history": null,
+    "history_reset": null,
+    "camera_aux": null,
+    "image": {
+     "src_size": [
+      224,
+      224
+     ],
+     "model_size": [
+      224,
+      224
+     ],
+     "gray": true
+    },
+    "ignored": {
+     "phrase": "straight ahead ",
+     "hint_source": "detector",
+     "down_jpg": "sent, ignored (bottom_tile 'none')"
+    }
+   },
+   "mapping": {
+    "rule": "racevla_velocity/1",
+    "kind": "velocity",
+    "requested": {
+     "fwd_m": 0.2855324263211253,
+     "down_m": 0.0012790107715272424,
+     "dpsi_rad": 0.11092870060135337
+    },
+    "clipped": [],
+    "bins": [
+     6,
+     49,
+     54
+    ],
+    "flown": {
+     "fwd_m": 0.30612244897959184,
+     "down_m": 0.0,
+     "dpsi_rad": 0.11224489795918347
+    },
+    "land": false,
+    "quantize": "nearest bin, round((v - lo) / (hi - lo) * 98), after clipping to the codec's range; the client decodes the bin's lower edge, so the flown step is within half a bin of the requested one",
+    "geometry": {
+     "vx": 0.15228396070460015,
+     "vy": 0.017971842750249496,
+     "vz": -0.002558021543054485,
+     "delta_yaw": -0.07395246706756892,
+     "unused": {
+      "3": 0.0,
+      "4": 0.0,
+      "6": 0.0
+     },
+     "gains": {
+      "xy": 1.875,
+      "z": 0.5,
+      "yaw": 1.5
+     },
+     "forward_mps": 0.2855324263211253,
+     "left_mps": 0.033697205156717806,
+     "climb_mps": -0.0012790107715272424,
+     "yaw_rate_ccw_rad_s": -0.11092870060135337,
+     "horizon_s": 1.0,
+     "lateral_left_m_dropped": 0.033697205156717806
+    },
+    "camera": {
+     "camera": "VLAFront",
+     "hfov_deg": 90.0,
+     "pitch_deg": 0.0
+    },
+    "horizon_s": 1.0,
+    "gains": {
+     "xy": 1.875,
+     "z": 0.5,
+     "yaw": 1.5
+    }
+   }
+  },
+  {
+   "frame": "present_+00.png",
+   "rtt_s": 0.8387533380300738,
+   "ok": true,
+   "error": null,
+   "kind": "velocity",
+   "raw_text": "03 49 48</s>",
+   "parse_ok": true,
+   "latency_s": 0.835465,
+   "server_s": 0.837245,
+   "native": {
+    "family": "racevla",
+    "ok": true,
+    "action": {
+     "action": [
+      0.09042985254222986,
+      -0.0034352850048419703,
+      0.0004787967964896885,
+      0.0,
+      0.0,
+      0.00808283417832617,
+      0.0
+     ],
+     "normalized": [
+      -0.3137254901960784,
+      0.039215686274509776,
+      -0.1568627450980392,
+      0.0,
+      0.0,
+      0.2431372549019608,
+      0.0
+     ]
+    },
+    "reason": null,
+    "tokens": [
+     31912,
+     31867,
+     31892,
+     31872,
+     31872,
+     31841,
+     31872
+    ],
+    "unnorm_key": "drone_set6_all",
+    "text": "31912 31867 31892 31872 31872 31841 31872",
+    "tokens_outside_action_bins": 0,
+    "command": "fly to the red car",
+    "history": null,
+    "history_reset": null,
+    "camera_aux": null,
+    "image": {
+     "src_size": [
+      224,
+      224
+     ],
+     "model_size": [
+      224,
+      224
+     ],
+     "gray": true
+    },
+    "ignored": {
+     "phrase": "straight ahead ",
+     "hint_source": "detector",
+     "down_jpg": "sent, ignored (bottom_tile 'none')"
+    }
+   },
+   "mapping": {
+    "rule": "racevla_velocity/1",
+    "kind": "velocity",
+    "requested": {
+     "fwd_m": 0.169555973516681,
+     "down_m": -0.00023939839824484426,
+     "dpsi_rad": -0.012124251267489256
+    },
+    "clipped": [],
+    "bins": [
+     3,
+     49,
+     48
+    ],
+    "flown": {
+     "fwd_m": 0.15306122448979592,
+     "down_m": 0.0,
+     "dpsi_rad": -0.022448979591836782
+    },
+    "land": false,
+    "quantize": "nearest bin, round((v - lo) / (hi - lo) * 98), after clipping to the codec's range; the client decodes the bin's lower edge, so the flown step is within half a bin of the requested one",
+    "geometry": {
+     "vx": 0.09042985254222986,
+     "vy": -0.0034352850048419703,
+     "vz": 0.0004787967964896885,
+     "delta_yaw": 0.00808283417832617,
+     "unused": {
+      "3": 0.0,
+      "4": 0.0,
+      "6": 0.0
+     },
+     "gains": {
+      "xy": 1.875,
+      "z": 0.5,
+      "yaw": 1.5
+     },
+     "forward_mps": 0.169555973516681,
+     "left_mps": -0.006441159384078694,
+     "climb_mps": 0.00023939839824484426,
+     "yaw_rate_ccw_rad_s": 0.012124251267489256,
+     "horizon_s": 1.0,
+     "lateral_left_m_dropped": -0.006441159384078694
+    },
+    "camera": {
+     "camera": "VLAFront",
+     "hfov_deg": 90.0,
+     "pitch_deg": 0.0
+    },
+    "horizon_s": 1.0,
+    "gains": {
+     "xy": 1.875,
+     "z": 0.5,
+     "yaw": 1.5
+    }
+   }
+  }
+ ],
+ "command": "python tools/bench_foreign_vla.py --server 127.0.0.1:8791 --n 50 --warmup 5 --out deploy/evidence/incoming/hil/racevla_7b_bench_agx.json --shutdown"
+}

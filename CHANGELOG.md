@@ -16,6 +16,83 @@ shipped change and recorded as one.
 
 ## [Unreleased]
 
+### 2026-11-16 (engineering for eight open rows) — the backend measurement set to protocol 2, the bundle signer under the lab CA, a replay check from the rosbag2 capture, and a pilot that consumes the CSP for the prefix A/B; no row changes status until the rig steps are run
+
+Four branches built from the verified plans of the contract re-read
+(backend-table, bundle-ca, replay-from-bag, prefix-ab), each implemented,
+reviewed by a second engineer who tried to refute it, and fixed.
+
+#### Added
+- **VLA backend measurement set, protocol 2** (ARCH-30, X-04, ARCH-03,
+  ARCH-06; tools/vla_backend_table.py, deploy/evidence/vla_backend_table.md
+  regenerated). New rows for AIoT-VLA v10b, DroneCATS-2B, RaceVLA-7B,
+  AerialVLA bf16 and OpenVLA-7B bf16; the AGX Orin benches already on disk
+  folded into the Orin column, each labelled with its own inputs; closed-loop
+  test C2 (the Project AirSim follow on `hil`, read from each run's own
+  metrics, params and kpi.json, including the run's own KPI verdict); the
+  27-28 Oct and 3-4 Nov matrices folded in as non-ArduPilot records. The
+  table says C2 was written on 16 Nov, after the lab's choice of 15 Nov. It
+  still reads "Default backend: none": `table --default` is refused until
+  every backend that can fly C2 has an Orin timing and 3 C2 flights and the
+  stub has R1 on an Orin. Measured on the AGX Orin on 16 Nov (MAXN, the
+  AIoT-VLA server stopped for the run; deploy/evidence/hil/vla_rate_*.json,
+  *_bench_agx.json): R1 stub p95 0.00419 ms, bc_v3 p95 4.52 ms, OpenVLA-7B
+  bf16 p50 956 ms / p95 969 ms (n=50, under 10 Hz by a factor of about ten:
+  the case the grant's gate G3 names); the int8 weight-only attempt refused at
+  import (torchao is not installed there); server benches, not R1: DroneCATS-2B
+  round trip p50 1348 ms (model p95 17526 ms), RaceVLA-7B p50 839 ms. What the
+  set still lacks is C2 flights (AIoT-VLA 2 of 3; AerialVLA, DroneCATS,
+  RaceVLA 0 of 3). Both C2 flights of AIoT-VLA so far
+  (pas_hil_feed_07 / _08) have 0 P0 escapes and a KPI outcome of fail
+  (unsafe_position_entered: 3 and 21 ticks in a P0-unsafe position); the table
+  prints both. `measure` gains openvla_7b_bf16 (no bitsandbytes, loads like
+  deploy/orin/vla_bf16_check.py) and an int8 weight-only attempt that records
+  its refusal. deploy/orin/run_pas_perception.sh gains `FAMILY=` (aiotvla,
+  the default, gives the same argv as before; aerialvla, dronecats, racevla
+  are parser-checked only).
+- **The bundle signer under the lab root CA** (WP1-04, X-10;
+  guardrail/bundle.py, guardrail/harness_service.py issue_policy_signer,
+  tools/build_flight_bundles.py --issue-cert, tools/bundle_ca_evidence.py).
+  A certified signer writes signed_by = lab-ca:<CA fingerprint>:ed25519:<key
+  id> and a `signer` record under the signature; the chain is checked with
+  `cryptography` where it is installed and recorded as not-checked-here where
+  it is not; the swap drill (a second CA: one entry and a re-sign, no code
+  change) and forged, wrong-CA and mismatched leaves are tested. The real keys
+  are not certified yet and no real bundle was re-signed: trusted_signers.json
+  is unchanged, so every stored bundle and run verifies as before (read-only
+  check on this disk: 41 policy bundles verified, 231 replay bundles verified,
+  94 replay bundles unsigned as before, 0 refused). Requiring the chain on a
+  `hil` loader is opt-in (VLAGUARD_REQUIRE_CHAIN, shipped 0).
+- **Replay check from the rosbag2 capture** (ARCH-22; tools/replay_from_bag.py,
+  `python -m guardrail.replay verify --from-bag`). From a run's bag alone it
+  rebuilds each tick's pose, VLA action, Shield setpoint, executed setpoint
+  and mode, re-derives the trajectory and 13 KPI fields (5 more with the
+  policy's rule priorities) and compares them with the run's log and
+  kpi.json; 43 KPI fields, among them the P0 escape rate and fail-safe
+  correctness, are not re-derivable from the bag and are reported so. It is
+  a check against the capture, not a re-flight. Run over every run the KPI-grade nightly accepted (ntFIN2 + ntFIN2s, 591 runs; docs/data/replay_from_bag_ntFIN2/): 571 identical, 18 incomplete (all dyn-nfz-spawn-ahead, whose log rows do not record the FSM state), 2 differ (ntFIN2_175: a setpoint the log says was streamed is not in the bag at tick 82; ntFIN2_511: the bag holds one VLA action more than the log), trajectory identical on all 591 (0 of 285,707 pose points different); no bag carries the episode manifest.
+  sitl/bag_custom_data.py writes the manifest fields known at launch into the
+  bag's metadata, off by default (BAG_MANIFEST / VLAGUARD_BAG_MANIFEST); not
+  yet run on the Jazzy recorder.
+- **A pilot that consumes the CSP, for the prefix A/B** (WP4-15;
+  guardrail/prefix_consumer.py, sitl/ros2_vla_stub_node.py --prefix on|off,
+  the harness's arm record `pilot_reads_prefix`, tools/kpi_report.py's A/B
+  section with an A/A noise floor, experiments/profiles/prefix_ab.yaml). The
+  stub node's default is unchanged. Headless run of the profile (functional,
+  not KPI-grade; 15 on/off pairs that are 5 distinct flights, 3 A/A pairs all
+  identical): mission success 1.000 on / 0.600 off, P0 escapes 0 / 0, repairs
+  per episode 4.2 / 184.2. The pilot is a hand-written adapter, not a learned
+  VLA, and part of the delta holds by construction; the report prints that and
+  the one learned-VLA A/B (OpenVLA-7B, 7 Nov), which is adverse.
+
+#### Limits
+- The rig steps that would close rows are not run: R1 and the DroneCATS /
+  RaceVLA benches on the AGX Orin, the C2 flights, certifying the two real
+  keys and re-signing, a `hil` mission with the chain required, the prefix
+  A/B campaign on `hil`, the bag manifest on the Jazzy recorder.
+- The prefix A/B runs in its own profile, not in the nightly stress run, so
+  the grant's "always-on A/B during stress runs" is not shown.
+
 ### 2026-11-16 (contract map re-read) — the 39 open rows read against the grant by five readers and five adversarial second readers: ARCH-02 to DONE (98 / 32 / 5 / 1), row texts and report sentences that had gone out of date corrected, the reference repository's 5 July history recorded for the mid-term rows
 
 Each of the 39 rows that was not DONE (33 PARTIAL, 5 DRIFT, 1 MISSING) was

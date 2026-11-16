@@ -1,0 +1,224 @@
+{
+ "schema": "vlaguard.vla_rate/2",
+ "protocol": "vla-backend-protocol/2",
+ "test": "R1",
+ "backend": "stub",
+ "topology": "hil",
+ "created_utc": "2026-11-16T05:48:22Z",
+ "host": {
+  "os": "Linux",
+  "os_release": "6.8.12-1021-tegra",
+  "machine": "aarch64",
+  "cpu_model": "ARM CPU part 0xd42",
+  "cpu_count": 12,
+  "python": "3.12.3",
+  "in_container": false,
+  "ros_distro": null,
+  "topology_env": null,
+  "libs": {
+   "numpy": "1.26.4",
+   "shapely": "2.1.2",
+   "pydantic": "2.13.4",
+   "yaml": "6.0.3",
+   "geos": "3.13.1"
+  },
+  "perf_counter_resolution_s": 1e-09,
+  "jetson": {
+   "is_orin": true,
+   "missing": [],
+   "host_arch": "aarch64",
+   "device_model": "NVIDIA Jetson AGX Orin Developer Kit",
+   "l4t_release": "R39.2.1",
+   "jetpack": null,
+   "nvpmodel": "NV Power Mode: MAXN | 0"
+  },
+  "power": {
+   "nvpmodel": {
+    "source": "/var/lib/nvpmodel/status",
+    "raw": "pmode:0000",
+    "mode_id": 0,
+    "mode_name": "MAXN",
+    "why": null
+   },
+   "cpufreq": {
+    "source": "/sys/devices/system/cpu/cpu<N>/cpufreq",
+    "online": "0-11",
+    "cpus": {
+     "0": {
+      "governor": "schedutil",
+      "scaling_min_khz": 729600,
+      "scaling_max_khz": 2201600,
+      "cpuinfo_min_khz": 115200,
+      "cpuinfo_max_khz": 2201600,
+      "cur_khz": 729600
+     },
+     "1": {
+      "governor": "schedutil",
+      "scaling_min_khz": 729600,
+      "scaling_max_khz": 2201600,
+      "cpuinfo_min_khz": 115200,
+      "cpuinfo_max_khz": 2201600,
+      "cur_khz": 729600
+     },
+     "2": {
+      "governor": "schedutil",
+      "scaling_min_khz": 729600,
+      "scaling_max_khz": 2201600,
+      "cpuinfo_min_khz": 115200,
+      "cpuinfo_max_khz": 2201600,
+      "cur_khz": 729600
+     },
+     "3": {
+      "governor": "schedutil",
+      "scaling_min_khz": 729600,
+      "scaling_max_khz": 2201600,
+      "cpuinfo_min_khz": 115200,
+      "cpuinfo_max_khz": 2201600,
+      "cur_khz": 729600
+     },
+     "4": {
+      "governor": "schedutil",
+      "scaling_min_khz": 729600,
+      "scaling_max_khz": 2201600,
+      "cpuinfo_min_khz": 115200,
+      "cpuinfo_max_khz": 2201600,
+      "cur_khz": 960000
+     },
+     "5": {
+      "governor": "schedutil",
+      "scaling_min_khz": 729600,
+      "scaling_max_khz": 2201600,
+      "cpuinfo_min_khz": 115200,
+      "cpuinfo_max_khz": 2201600,
+      "cur_khz": 1958400
+     },
+     "6": {
+      "governor": "schedutil",
+      "scaling_min_khz": 729600,
+      "scaling_max_khz": 2201600,
+      "cpuinfo_min_khz": 115200,
+      "cpuinfo_max_khz": 2201600,
+      "cur_khz": 1958400
+     },
+     "7": {
+      "governor": "schedutil",
+      "scaling_min_khz": 729600,
+      "scaling_max_khz": 2201600,
+      "cpuinfo_min_khz": 115200,
+      "cpuinfo_max_khz": 2201600,
+      "cur_khz": 1958400
+     },
+     "8": {
+      "governor": "schedutil",
+      "scaling_min_khz": 729600,
+      "scaling_max_khz": 2201600,
+      "cpuinfo_min_khz": 115200,
+      "cpuinfo_max_khz": 2201600,
+      "cur_khz": 2201600
+     },
+     "9": {
+      "governor": "schedutil",
+      "scaling_min_khz": 729600,
+      "scaling_max_khz": 2201600,
+      "cpuinfo_min_khz": 115200,
+      "cpuinfo_max_khz": 2201600,
+      "cur_khz": 2201600
+     },
+     "10": {
+      "governor": "schedutil",
+      "scaling_min_khz": 729600,
+      "scaling_max_khz": 2201600,
+      "cpuinfo_min_khz": 115200,
+      "cpuinfo_max_khz": 2201600,
+      "cur_khz": 2201600
+     },
+     "11": {
+      "governor": "schedutil",
+      "scaling_min_khz": 729600,
+      "scaling_max_khz": 2201600,
+      "cpuinfo_min_khz": 115200,
+      "cpuinfo_max_khz": 2201600,
+      "cur_khz": 2201600
+     }
+    },
+    "why": null
+   }
+  }
+ },
+ "warmup": 5,
+ "timed": 50,
+ "stats": {
+  "n": 50,
+  "p50_ms": 0.00340802944265306,
+  "p95_ms": 0.004191999323666096,
+  "max_ms": 0.005184032488614321,
+  "mean_ms": 0.00350527698174119,
+  "hz_at_p50": 293424.69506998354,
+  "meets_contract_p95": true
+ },
+ "weights": [],
+ "load_s": 0.028298017976339906,
+ "inputs": {
+  "file": "deploy/evidence/shield_tick_pack.json",
+  "flight": "ros2_shield_on",
+  "rows": 55
+ },
+ "undecodable_outputs": 0,
+ "device": "cpu",
+ "status": "measured",
+ "latency_s": [
+  5.184032488614321e-06,
+  4.447996616363525e-06,
+  3.6159763112664223e-06,
+  3.3919932320713997e-06,
+  3.4879776649177074e-06,
+  3.4879776649177074e-06,
+  3.775989171117544e-06,
+  3.5520060919225216e-06,
+  3.5520060919225216e-06,
+  3.456021659076214e-06,
+  3.6479905247688293e-06,
+  3.6479905247688293e-06,
+  3.5199918784201145e-06,
+  3.7120189517736435e-06,
+  3.263994585722685e-06,
+  3.4559634514153004e-06,
+  3.328023012727499e-06,
+  3.6159763112664223e-06,
+  3.4240074455738068e-06,
+  3.5520060919225216e-06,
+  3.2319803722202778e-06,
+  3.456021659076214e-06,
+  3.2959505915641785e-06,
+  3.488035872578621e-06,
+  3.3599790185689926e-06,
+  3.5840203054249287e-06,
+  4.191999323666096e-06,
+  3.3599790185689926e-06,
+  3.263994585722685e-06,
+  3.263994585722685e-06,
+  3.263994585722685e-06,
+  3.328023012727499e-06,
+  3.3919932320713997e-06,
+  3.968016244471073e-06,
+  3.488035872578621e-06,
+  3.4879776649177074e-06,
+  3.2319803722202778e-06,
+  3.3919932320713997e-06,
+  3.2959505915641785e-06,
+  3.3919932320713997e-06,
+  3.3279648050665855e-06,
+  3.3919932320713997e-06,
+  3.2319803722202778e-06,
+  3.3919932320713997e-06,
+  3.4240074455738068e-06,
+  3.328023012727499e-06,
+  3.296008799225092e-06,
+  3.296008799225092e-06,
+  3.3279648050665855e-06,
+  3.392051439732313e-06
+ ],
+ "cpu_affinity": null,
+ "note": "NV Power Mode: MAXN 0 ; jetson_clocks state not changed by this session",
+ "command": "python tools/vla_backend_table.py measure --backend stub --topology hil --note 'NV Power Mode: MAXN 0 ; jetson_clocks state not changed by this session'"
+}

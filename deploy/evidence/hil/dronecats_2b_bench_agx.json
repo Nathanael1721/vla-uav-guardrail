@@ -1,0 +1,4350 @@
+{
+ "schema": "vlaguard.foreign_vla_bench/1",
+ "created_utc": "2026-11-16T05:55:18Z",
+ "server": "127.0.0.1:8791",
+ "identity": {
+  "id": "dronecats/DroneCATS-Cosmos3-Edge-2B@5080e727",
+  "base": "DroneCATS-Cosmos3-Edge-2B@e9004010",
+  "weights_sha256": "5080e7275eef1ce9ed5fd8380b432a9f85711d077edd7da86de7f2b6146ea2ff",
+  "precision": "bf16",
+  "attn": "sdpa",
+  "merged": false,
+  "agreement": null,
+  "variant": "foreign",
+  "foreign": {
+   "family": "dronecats",
+   "model": "DroneCATS-Cosmos3-Edge-2B",
+   "upstream": {
+    "model": "naver-ai/DroneCATS-Cosmos3-Edge-2B",
+    "revision": "e9004010f3a56060b72259f8c1eb966bc2cc8a22",
+    "base_model": "nvidia/Cosmos3-Edge",
+    "license": "OpenMDW-1.1",
+    "paper": "arXiv 2609.01404 (Sec. 2, Appendix A.2, C)",
+    "code": "github.com/naver-ai/DroneCATS (benchmark code not released)"
+   },
+   "bottom_tile": "none",
+   "speed_words": null,
+   "front_source": "detector",
+   "camera": {
+    "camera": "FrontCamera",
+    "hfov_deg": 90.0,
+    "pitch_deg": -20.0
+   },
+   "native_output": "one JSON object: {\"action\":\"go\",\"point\":[x,y] (0..1000 grid),\"depth_m\":d (canonical)}, {\"action\":\"rotate\",\"angle_deg\":a (+ right)}, {\"action\":\"think\"}, {\"action\":\"finished\"}",
+   "mapping": "dronecats_go_rotate/1",
+   "config": {
+    "command": "go to {target}",
+    "executor": {
+     "name": "paper",
+     "step_cap_m": 3.0,
+     "near_m": 5.0,
+     "near_scale": 0.6,
+     "stop_m": 2.0,
+     "hold_frac": 0.15
+    },
+    "max_width": 640,
+    "max_new_tokens": 128,
+    "plan_max_new_tokens": 1024,
+    "history_max": 5,
+    "prompt_files_sha256": {
+     "system_prompt.txt": "19f591de09cfebbd7986dff45405d9a62dcf14e573960b40c065ea58ce8e7af1",
+     "user_prompt.txt": "6f3a9cb0b7f45752d2680a6e475e0f6d9163ba284d56e1c6c413fc82a1aa7d91"
+    },
+    "history_gap_s": 5.0
+   }
+  },
+  "load": {
+   "load_total_s": 7.499884919030592
+  },
+  "digest": {
+   "source": "sidecar",
+   "sidecar": "/home/nathan-agxiot/.cache/guardrail/vla_server_weights.json",
+   "key": "f38d1e87420a88b3ceb3504c81df4a4fc1d98ab0894917afdcf6d353e47973cb",
+   "computed_utc": "2026-11-03T15:21:06Z"
+  },
+  "weight_files": [
+   "/home/nathan-agxiot/models/dronecats/DroneCATS-Cosmos3-Edge-2B/transformer/model.safetensors"
+  ],
+  "libraries": {
+   "python": "3.12.3",
+   "torch": "2.14.1+cu132",
+   "transformers": "5.21.0",
+   "peft": null,
+   "bitsandbytes": null,
+   "torchao": null,
+   "accelerate": "1.15.0",
+   "PIL": "12.3.0",
+   "cuda": "13.2",
+   "gpu": "Orin"
+  },
+  "protocol": 2,
+  "server": "demo/vla_server_foreign.py",
+  "host": {
+   "host_arch": "aarch64",
+   "device_model": "NVIDIA Jetson AGX Orin Developer Kit",
+   "l4t_release": "R39.2.1",
+   "jetpack": null,
+   "hostname": "localhost.localdomain"
+  }
+ },
+ "warmup": 5,
+ "frames": "/home/nathan-agxiot/vla-drone/deploy/evidence/vla_protocol_frames",
+ "object": "a red car",
+ "n": 50,
+ "roundtrip": {
+  "n": 50,
+  "p50_ms": 1348.4,
+  "p95_ms": 17529.1,
+  "max_ms": 17599.6,
+  "mean_ms": 5380.8,
+  "hz_at_p50": 0.742
+ },
+ "server_latency": {
+  "n": 50,
+  "p50_ms": 1345.2,
+  "p95_ms": 17525.9,
+  "max_ms": 17596.4,
+  "mean_ms": 5377.5,
+  "hz_at_p50": 0.743
+ },
+ "server_time": {
+  "n": 50,
+  "p50_ms": 1346.8,
+  "p95_ms": 17527.4,
+  "max_ms": 17598.0,
+  "mean_ms": 5379.1,
+  "hz_at_p50": 0.743
+ },
+ "native_kinds": {
+  "rotate": 38,
+  "think": 12
+ },
+ "step_texts": {
+  "00 49 00</s>": 38,
+  "00 49 49</s>": 12
+ },
+ "parse_fail": 0,
+ "refused": 0,
+ "errors": [],
+ "rows": [
+  {
+   "frame": "absent_+00.png",
+   "rtt_s": 17.424604915024247,
+   "ok": true,
+   "error": null,
+   "kind": "rotate",
+   "raw_text": "00 49 00</s>",
+   "parse_ok": true,
+   "latency_s": 17.421435,
+   "server_s": 17.422971,
+   "native": {
+    "family": "dronecats",
+    "ok": true,
+    "action": {
+     "action": "rotate",
+     "angle_deg": -90
+    },
+    "reason": null,
+    "plan": {
+     "target_in_view": "no",
+     "target_match": "unsure",
+     "closing_in": "unknown",
+     "current_frame": "(1) Nothing in this view is a candidate for the red car - there is no object here whose colour and kind I could read as the target.\n(2) The command asks for the red car, and what I can see does not match those words, so the target is not in this frame.\n(3) What I do see is a wide city street with buildings and road, and none of it occupies the place the target should.",
+     "action_planning": "(1) Can't tell - my last actions were only rotations and a think, so there is no earlier approach to compare against.\n(2) I ROTATE left in place by -90 deg to keep searching: GO is wrong because there is nothing here that matches the command to fly toward, and FINISHED is wrong because I have not even seen the target yet. I rotate left in place to keep searching for the red car.\n(3) If this rotation works, the next view should bring the red car into frame, or at least a part of the scene I have not searched yet."
+    },
+    "clamped": [],
+    "unknown_keys": [],
+    "text": "{\"target_in_view\": \"no\", \"target_match\": \"unsure\", \"closing_in\": \"unknown\", \"current_frame\": \"(1) Nothing in this view is a candidate for the red car - there is no object here whose colour and kind I could read as the target.\\n(2) The command asks for the red car, and what I can see does not match those words, so the target is not in this frame.\\n(3) What I do see is a wide city street with buildings and road, and none of it occupies the place the target should.\", \"action_planning\": \"(1) Can't tell - my last actions were only rotations and a think, so there is no earlier approach to compare against.\\n(2) I ROTATE left in place by -90 deg to keep searching: GO is wrong because there is nothing here that matches the command to fly toward, and FINISHED is wrong because I have not even seen the target yet. I rotate left in place to keep searching for the red car.\\n(3) If this rotation works, the next view should bring the red car into frame, or at least a part of the scene I have not searched yet.\", \"action\": \"rotate\", \"angle_deg\": -90}",
+    "command": "go to the red car",
+    "history": "  step 1 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 2 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 3 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 4 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 5 of 5: THINK  [in progress]  <- latest",
+    "history_reset": null,
+    "camera_aux": "{\"width\": 224, \"height\": 224, \"fx\": 112.0, \"fy\": 112.0}",
+    "image": {
+     "src_size": [
+      224,
+      224
+     ],
+     "model_size": [
+      224,
+      224
+     ],
+     "resized": false
+    },
+    "ignored": {
+     "phrase": "straight ahead ",
+     "hint_source": "detector",
+     "down_jpg": "sent, ignored (bottom_tile 'none')"
+    }
+   },
+   "mapping": {
+    "rule": "dronecats_go_rotate/1",
+    "kind": "rotate",
+    "requested": {
+     "fwd_m": 0.0,
+     "down_m": 0.0,
+     "dpsi_rad": -1.5707963267948966
+    },
+    "clipped": [
+     "dpsi_rad"
+    ],
+    "bins": [
+     0,
+     49,
+     0
+    ],
+    "flown": {
+     "fwd_m": 0.0,
+     "down_m": 0.0,
+     "dpsi_rad": -1.1
+    },
+    "land": false,
+    "quantize": "nearest bin, round((v - lo) / (hi - lo) * 98), after clipping to the codec's range; the client decodes the bin's lower edge, so the flown step is within half a bin of the requested one",
+    "geometry": {
+     "angle_deg": -90
+    },
+    "camera": {
+     "camera": "FrontCamera",
+     "hfov_deg": 90.0,
+     "pitch_deg": -20.0
+    },
+    "executor": {
+     "name": "paper",
+     "step_cap_m": 3.0,
+     "near_m": 5.0,
+     "near_scale": 0.6,
+     "stop_m": 2.0,
+     "hold_frac": 0.15
+    }
+   }
+  },
+  {
+   "frame": "present_+00.png",
+   "rtt_s": 1.351951727992855,
+   "ok": true,
+   "error": null,
+   "kind": "rotate",
+   "raw_text": "00 49 00</s>",
+   "parse_ok": true,
+   "latency_s": 1.348739,
+   "server_s": 1.350283,
+   "native": {
+    "family": "dronecats",
+    "ok": true,
+    "action": {
+     "action": "rotate",
+     "angle_deg": -90
+    },
+    "reason": null,
+    "plan": null,
+    "clamped": [],
+    "unknown_keys": [],
+    "text": "{\"action\": \"rotate\", \"angle_deg\": -90}",
+    "command": "go to the red car",
+    "history": "  step 1 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 2 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 3 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 4 of 5: THINK  [done, 1.0s]\n  step 5 of 5: ROTATE angle=-90deg  [in progress]  <- latest",
+    "history_reset": null,
+    "camera_aux": "{\"width\": 224, \"height\": 224, \"fx\": 112.0, \"fy\": 112.0}",
+    "image": {
+     "src_size": [
+      224,
+      224
+     ],
+     "model_size": [
+      224,
+      224
+     ],
+     "resized": false
+    },
+    "ignored": {
+     "phrase": "straight ahead ",
+     "hint_source": "detector",
+     "down_jpg": "sent, ignored (bottom_tile 'none')"
+    }
+   },
+   "mapping": {
+    "rule": "dronecats_go_rotate/1",
+    "kind": "rotate",
+    "requested": {
+     "fwd_m": 0.0,
+     "down_m": 0.0,
+     "dpsi_rad": -1.5707963267948966
+    },
+    "clipped": [
+     "dpsi_rad"
+    ],
+    "bins": [
+     0,
+     49,
+     0
+    ],
+    "flown": {
+     "fwd_m": 0.0,
+     "down_m": 0.0,
+     "dpsi_rad": -1.1
+    },
+    "land": false,
+    "quantize": "nearest bin, round((v - lo) / (hi - lo) * 98), after clipping to the codec's range; the client decodes the bin's lower edge, so the flown step is within half a bin of the requested one",
+    "geometry": {
+     "angle_deg": -90
+    },
+    "camera": {
+     "camera": "FrontCamera",
+     "hfov_deg": 90.0,
+     "pitch_deg": -20.0
+    },
+    "executor": {
+     "name": "paper",
+     "step_cap_m": 3.0,
+     "near_m": 5.0,
+     "near_scale": 0.6,
+     "stop_m": 2.0,
+     "hold_frac": 0.15
+    }
+   }
+  },
+  {
+   "frame": "absent_+00.png",
+   "rtt_s": 1.352719796996098,
+   "ok": true,
+   "error": null,
+   "kind": "rotate",
+   "raw_text": "00 49 00</s>",
+   "parse_ok": true,
+   "latency_s": 1.349156,
+   "server_s": 1.350711,
+   "native": {
+    "family": "dronecats",
+    "ok": true,
+    "action": {
+     "action": "rotate",
+     "angle_deg": -90
+    },
+    "reason": null,
+    "plan": null,
+    "clamped": [],
+    "unknown_keys": [],
+    "text": "{\"action\": \"rotate\", \"angle_deg\": -90}",
+    "command": "go to the red car",
+    "history": "  step 1 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 2 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 3 of 5: THINK  [done, 1.0s]\n  step 4 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 5 of 5: ROTATE angle=-90deg  [in progress]  <- latest",
+    "history_reset": null,
+    "camera_aux": "{\"width\": 224, \"height\": 224, \"fx\": 112.0, \"fy\": 112.0}",
+    "image": {
+     "src_size": [
+      224,
+      224
+     ],
+     "model_size": [
+      224,
+      224
+     ],
+     "resized": false
+    },
+    "ignored": {
+     "phrase": "straight ahead ",
+     "hint_source": "detector",
+     "down_jpg": "sent, ignored (bottom_tile 'none')"
+    }
+   },
+   "mapping": {
+    "rule": "dronecats_go_rotate/1",
+    "kind": "rotate",
+    "requested": {
+     "fwd_m": 0.0,
+     "down_m": 0.0,
+     "dpsi_rad": -1.5707963267948966
+    },
+    "clipped": [
+     "dpsi_rad"
+    ],
+    "bins": [
+     0,
+     49,
+     0
+    ],
+    "flown": {
+     "fwd_m": 0.0,
+     "down_m": 0.0,
+     "dpsi_rad": -1.1
+    },
+    "land": false,
+    "quantize": "nearest bin, round((v - lo) / (hi - lo) * 98), after clipping to the codec's range; the client decodes the bin's lower edge, so the flown step is within half a bin of the requested one",
+    "geometry": {
+     "angle_deg": -90
+    },
+    "camera": {
+     "camera": "FrontCamera",
+     "hfov_deg": 90.0,
+     "pitch_deg": -20.0
+    },
+    "executor": {
+     "name": "paper",
+     "step_cap_m": 3.0,
+     "near_m": 5.0,
+     "near_scale": 0.6,
+     "stop_m": 2.0,
+     "hold_frac": 0.15
+    }
+   }
+  },
+  {
+   "frame": "present_+00.png",
+   "rtt_s": 0.7722819819464348,
+   "ok": true,
+   "error": null,
+   "kind": "think",
+   "raw_text": "00 49 49</s>",
+   "parse_ok": true,
+   "latency_s": 0.7691,
+   "server_s": 0.770694,
+   "native": {
+    "family": "dronecats",
+    "ok": true,
+    "action": {
+     "action": "think"
+    },
+    "reason": null,
+    "plan": null,
+    "clamped": [],
+    "unknown_keys": [],
+    "text": "{\"action\": \"think\"}",
+    "command": "go to the red car",
+    "history": "  step 1 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 2 of 5: THINK  [done, 1.0s]\n  step 3 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 4 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 5 of 5: ROTATE angle=-90deg  [in progress]  <- latest",
+    "history_reset": null,
+    "camera_aux": "{\"width\": 224, \"height\": 224, \"fx\": 112.0, \"fy\": 112.0}",
+    "image": {
+     "src_size": [
+      224,
+      224
+     ],
+     "model_size": [
+      224,
+      224
+     ],
+     "resized": false
+    },
+    "ignored": {
+     "phrase": "straight ahead ",
+     "hint_source": "detector",
+     "down_jpg": "sent, ignored (bottom_tile 'none')"
+    }
+   },
+   "mapping": {
+    "rule": "dronecats_go_rotate/1",
+    "kind": "think",
+    "requested": {
+     "fwd_m": 0.0,
+     "down_m": 0.0,
+     "dpsi_rad": 0.0
+    },
+    "clipped": [],
+    "bins": [
+     0,
+     49,
+     49
+    ],
+    "flown": {
+     "fwd_m": 0.0,
+     "down_m": 0.0,
+     "dpsi_rad": 0.0
+    },
+    "land": false,
+    "quantize": "nearest bin, round((v - lo) / (hi - lo) * 98), after clipping to the codec's range; the client decodes the bin's lower edge, so the flown step is within half a bin of the requested one",
+    "geometry": null,
+    "camera": {
+     "camera": "FrontCamera",
+     "hfov_deg": 90.0,
+     "pitch_deg": -20.0
+    },
+    "executor": {
+     "name": "paper",
+     "step_cap_m": 3.0,
+     "near_m": 5.0,
+     "near_scale": 0.6,
+     "stop_m": 2.0,
+     "hold_frac": 0.15
+    }
+   }
+  },
+  {
+   "frame": "absent_+00.png",
+   "rtt_s": 17.599640794971492,
+   "ok": true,
+   "error": null,
+   "kind": "rotate",
+   "raw_text": "00 49 00</s>",
+   "parse_ok": true,
+   "latency_s": 17.596408,
+   "server_s": 17.597985,
+   "native": {
+    "family": "dronecats",
+    "ok": true,
+    "action": {
+     "action": "rotate",
+     "angle_deg": -90
+    },
+    "reason": null,
+    "plan": {
+     "target_in_view": "no",
+     "target_match": "unsure",
+     "closing_in": "unknown",
+     "current_frame": "(1) Nothing in this view is a candidate for the red car - there is no object here whose colour and kind I could read as the target.\n(2) The command asks for the red car, and what I can see does not match those words, so the target is not in this frame.\n(3) What I do see is a wide city street with buildings and road, and none of it occupies the place the target should.",
+     "action_planning": "(1) Can't tell - my last actions were only rotations and a think, so there is no earlier approach to compare against.\n(2) I ROTATE left in place by -90 deg to keep searching: GO is wrong because there is nothing here that matches the command to fly toward, and FINISHED is wrong because I have not even seen the target yet. I rotate left in place to keep searching for the red car.\n(3) If this rotation works, the next view should bring the red car into frame, or at least a part of the scene I have not searched yet."
+    },
+    "clamped": [],
+    "unknown_keys": [],
+    "text": "{\"target_in_view\": \"no\", \"target_match\": \"unsure\", \"closing_in\": \"unknown\", \"current_frame\": \"(1) Nothing in this view is a candidate for the red car - there is no object here whose colour and kind I could read as the target.\\n(2) The command asks for the red car, and what I can see does not match those words, so the target is not in this frame.\\n(3) What I do see is a wide city street with buildings and road, and none of it occupies the place the target should.\", \"action_planning\": \"(1) Can't tell - my last actions were only rotations and a think, so there is no earlier approach to compare against.\\n(2) I ROTATE left in place by -90 deg to keep searching: GO is wrong because there is nothing here that matches the command to fly toward, and FINISHED is wrong because I have not even seen the target yet. I rotate left in place to keep searching for the red car.\\n(3) If this rotation works, the next view should bring the red car into frame, or at least a part of the scene I have not searched yet.\", \"action\": \"rotate\", \"angle_deg\": -90}",
+    "command": "go to the red car",
+    "history": "  step 1 of 5: THINK  [done, 1.0s]\n  step 2 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 3 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 4 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 5 of 5: THINK  [in progress]  <- latest",
+    "history_reset": null,
+    "camera_aux": "{\"width\": 224, \"height\": 224, \"fx\": 112.0, \"fy\": 112.0}",
+    "image": {
+     "src_size": [
+      224,
+      224
+     ],
+     "model_size": [
+      224,
+      224
+     ],
+     "resized": false
+    },
+    "ignored": {
+     "phrase": "straight ahead ",
+     "hint_source": "detector",
+     "down_jpg": "sent, ignored (bottom_tile 'none')"
+    }
+   },
+   "mapping": {
+    "rule": "dronecats_go_rotate/1",
+    "kind": "rotate",
+    "requested": {
+     "fwd_m": 0.0,
+     "down_m": 0.0,
+     "dpsi_rad": -1.5707963267948966
+    },
+    "clipped": [
+     "dpsi_rad"
+    ],
+    "bins": [
+     0,
+     49,
+     0
+    ],
+    "flown": {
+     "fwd_m": 0.0,
+     "down_m": 0.0,
+     "dpsi_rad": -1.1
+    },
+    "land": false,
+    "quantize": "nearest bin, round((v - lo) / (hi - lo) * 98), after clipping to the codec's range; the client decodes the bin's lower edge, so the flown step is within half a bin of the requested one",
+    "geometry": {
+     "angle_deg": -90
+    },
+    "camera": {
+     "camera": "FrontCamera",
+     "hfov_deg": 90.0,
+     "pitch_deg": -20.0
+    },
+    "executor": {
+     "name": "paper",
+     "step_cap_m": 3.0,
+     "near_m": 5.0,
+     "near_scale": 0.6,
+     "stop_m": 2.0,
+     "hold_frac": 0.15
+    }
+   }
+  },
+  {
+   "frame": "present_+00.png",
+   "rtt_s": 1.3636756989872083,
+   "ok": true,
+   "error": null,
+   "kind": "rotate",
+   "raw_text": "00 49 00</s>",
+   "parse_ok": true,
+   "latency_s": 1.360497,
+   "server_s": 1.362062,
+   "native": {
+    "family": "dronecats",
+    "ok": true,
+    "action": {
+     "action": "rotate",
+     "angle_deg": -90
+    },
+    "reason": null,
+    "plan": null,
+    "clamped": [],
+    "unknown_keys": [],
+    "text": "{\"action\": \"rotate\", \"angle_deg\": -90}",
+    "command": "go to the red car",
+    "history": "  step 1 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 2 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 3 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 4 of 5: THINK  [done, 1.0s]\n  step 5 of 5: ROTATE angle=-90deg  [in progress]  <- latest",
+    "history_reset": null,
+    "camera_aux": "{\"width\": 224, \"height\": 224, \"fx\": 112.0, \"fy\": 112.0}",
+    "image": {
+     "src_size": [
+      224,
+      224
+     ],
+     "model_size": [
+      224,
+      224
+     ],
+     "resized": false
+    },
+    "ignored": {
+     "phrase": "straight ahead ",
+     "hint_source": "detector",
+     "down_jpg": "sent, ignored (bottom_tile 'none')"
+    }
+   },
+   "mapping": {
+    "rule": "dronecats_go_rotate/1",
+    "kind": "rotate",
+    "requested": {
+     "fwd_m": 0.0,
+     "down_m": 0.0,
+     "dpsi_rad": -1.5707963267948966
+    },
+    "clipped": [
+     "dpsi_rad"
+    ],
+    "bins": [
+     0,
+     49,
+     0
+    ],
+    "flown": {
+     "fwd_m": 0.0,
+     "down_m": 0.0,
+     "dpsi_rad": -1.1
+    },
+    "land": false,
+    "quantize": "nearest bin, round((v - lo) / (hi - lo) * 98), after clipping to the codec's range; the client decodes the bin's lower edge, so the flown step is within half a bin of the requested one",
+    "geometry": {
+     "angle_deg": -90
+    },
+    "camera": {
+     "camera": "FrontCamera",
+     "hfov_deg": 90.0,
+     "pitch_deg": -20.0
+    },
+    "executor": {
+     "name": "paper",
+     "step_cap_m": 3.0,
+     "near_m": 5.0,
+     "near_scale": 0.6,
+     "stop_m": 2.0,
+     "hold_frac": 0.15
+    }
+   }
+  },
+  {
+   "frame": "absent_+00.png",
+   "rtt_s": 1.3363943910226226,
+   "ok": true,
+   "error": null,
+   "kind": "rotate",
+   "raw_text": "00 49 00</s>",
+   "parse_ok": true,
+   "latency_s": 1.333078,
+   "server_s": 1.334664,
+   "native": {
+    "family": "dronecats",
+    "ok": true,
+    "action": {
+     "action": "rotate",
+     "angle_deg": -90
+    },
+    "reason": null,
+    "plan": null,
+    "clamped": [],
+    "unknown_keys": [],
+    "text": "{\"action\": \"rotate\", \"angle_deg\": -90}",
+    "command": "go to the red car",
+    "history": "  step 1 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 2 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 3 of 5: THINK  [done, 1.0s]\n  step 4 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 5 of 5: ROTATE angle=-90deg  [in progress]  <- latest",
+    "history_reset": null,
+    "camera_aux": "{\"width\": 224, \"height\": 224, \"fx\": 112.0, \"fy\": 112.0}",
+    "image": {
+     "src_size": [
+      224,
+      224
+     ],
+     "model_size": [
+      224,
+      224
+     ],
+     "resized": false
+    },
+    "ignored": {
+     "phrase": "straight ahead ",
+     "hint_source": "detector",
+     "down_jpg": "sent, ignored (bottom_tile 'none')"
+    }
+   },
+   "mapping": {
+    "rule": "dronecats_go_rotate/1",
+    "kind": "rotate",
+    "requested": {
+     "fwd_m": 0.0,
+     "down_m": 0.0,
+     "dpsi_rad": -1.5707963267948966
+    },
+    "clipped": [
+     "dpsi_rad"
+    ],
+    "bins": [
+     0,
+     49,
+     0
+    ],
+    "flown": {
+     "fwd_m": 0.0,
+     "down_m": 0.0,
+     "dpsi_rad": -1.1
+    },
+    "land": false,
+    "quantize": "nearest bin, round((v - lo) / (hi - lo) * 98), after clipping to the codec's range; the client decodes the bin's lower edge, so the flown step is within half a bin of the requested one",
+    "geometry": {
+     "angle_deg": -90
+    },
+    "camera": {
+     "camera": "FrontCamera",
+     "hfov_deg": 90.0,
+     "pitch_deg": -20.0
+    },
+    "executor": {
+     "name": "paper",
+     "step_cap_m": 3.0,
+     "near_m": 5.0,
+     "near_scale": 0.6,
+     "stop_m": 2.0,
+     "hold_frac": 0.15
+    }
+   }
+  },
+  {
+   "frame": "present_+00.png",
+   "rtt_s": 0.7751130390097387,
+   "ok": true,
+   "error": null,
+   "kind": "think",
+   "raw_text": "00 49 49</s>",
+   "parse_ok": true,
+   "latency_s": 0.772027,
+   "server_s": 0.773559,
+   "native": {
+    "family": "dronecats",
+    "ok": true,
+    "action": {
+     "action": "think"
+    },
+    "reason": null,
+    "plan": null,
+    "clamped": [],
+    "unknown_keys": [],
+    "text": "{\"action\": \"think\"}",
+    "command": "go to the red car",
+    "history": "  step 1 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 2 of 5: THINK  [done, 1.0s]\n  step 3 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 4 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 5 of 5: ROTATE angle=-90deg  [in progress]  <- latest",
+    "history_reset": null,
+    "camera_aux": "{\"width\": 224, \"height\": 224, \"fx\": 112.0, \"fy\": 112.0}",
+    "image": {
+     "src_size": [
+      224,
+      224
+     ],
+     "model_size": [
+      224,
+      224
+     ],
+     "resized": false
+    },
+    "ignored": {
+     "phrase": "straight ahead ",
+     "hint_source": "detector",
+     "down_jpg": "sent, ignored (bottom_tile 'none')"
+    }
+   },
+   "mapping": {
+    "rule": "dronecats_go_rotate/1",
+    "kind": "think",
+    "requested": {
+     "fwd_m": 0.0,
+     "down_m": 0.0,
+     "dpsi_rad": 0.0
+    },
+    "clipped": [],
+    "bins": [
+     0,
+     49,
+     49
+    ],
+    "flown": {
+     "fwd_m": 0.0,
+     "down_m": 0.0,
+     "dpsi_rad": 0.0
+    },
+    "land": false,
+    "quantize": "nearest bin, round((v - lo) / (hi - lo) * 98), after clipping to the codec's range; the client decodes the bin's lower edge, so the flown step is within half a bin of the requested one",
+    "geometry": null,
+    "camera": {
+     "camera": "FrontCamera",
+     "hfov_deg": 90.0,
+     "pitch_deg": -20.0
+    },
+    "executor": {
+     "name": "paper",
+     "step_cap_m": 3.0,
+     "near_m": 5.0,
+     "near_scale": 0.6,
+     "stop_m": 2.0,
+     "hold_frac": 0.15
+    }
+   }
+  },
+  {
+   "frame": "absent_+00.png",
+   "rtt_s": 17.51776877499651,
+   "ok": true,
+   "error": null,
+   "kind": "rotate",
+   "raw_text": "00 49 00</s>",
+   "parse_ok": true,
+   "latency_s": 17.514625,
+   "server_s": 17.516167,
+   "native": {
+    "family": "dronecats",
+    "ok": true,
+    "action": {
+     "action": "rotate",
+     "angle_deg": -90
+    },
+    "reason": null,
+    "plan": {
+     "target_in_view": "no",
+     "target_match": "unsure",
+     "closing_in": "unknown",
+     "current_frame": "(1) Nothing in this view is a candidate for the red car - there is no object here whose colour and kind I could read as the target.\n(2) The command asks for the red car, and what I can see does not match those words, so the target is not in this frame.\n(3) What I do see is a wide city street with buildings and road, and none of it occupies the place the target should.",
+     "action_planning": "(1) Can't tell - my last actions were only rotations and a think, so there is no earlier approach to compare against.\n(2) I ROTATE left in place by -90 deg to keep searching: GO is wrong because there is nothing here that matches the command to fly toward, and FINISHED is wrong because I have not even seen the target yet. I rotate left in place to keep searching for the red car.\n(3) If this rotation works, the next view should bring the red car into frame, or at least a part of the scene I have not searched yet."
+    },
+    "clamped": [],
+    "unknown_keys": [],
+    "text": "{\"target_in_view\": \"no\", \"target_match\": \"unsure\", \"closing_in\": \"unknown\", \"current_frame\": \"(1) Nothing in this view is a candidate for the red car - there is no object here whose colour and kind I could read as the target.\\n(2) The command asks for the red car, and what I can see does not match those words, so the target is not in this frame.\\n(3) What I do see is a wide city street with buildings and road, and none of it occupies the place the target should.\", \"action_planning\": \"(1) Can't tell - my last actions were only rotations and a think, so there is no earlier approach to compare against.\\n(2) I ROTATE left in place by -90 deg to keep searching: GO is wrong because there is nothing here that matches the command to fly toward, and FINISHED is wrong because I have not even seen the target yet. I rotate left in place to keep searching for the red car.\\n(3) If this rotation works, the next view should bring the red car into frame, or at least a part of the scene I have not searched yet.\", \"action\": \"rotate\", \"angle_deg\": -90}",
+    "command": "go to the red car",
+    "history": "  step 1 of 5: THINK  [done, 1.0s]\n  step 2 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 3 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 4 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 5 of 5: THINK  [in progress]  <- latest",
+    "history_reset": null,
+    "camera_aux": "{\"width\": 224, \"height\": 224, \"fx\": 112.0, \"fy\": 112.0}",
+    "image": {
+     "src_size": [
+      224,
+      224
+     ],
+     "model_size": [
+      224,
+      224
+     ],
+     "resized": false
+    },
+    "ignored": {
+     "phrase": "straight ahead ",
+     "hint_source": "detector",
+     "down_jpg": "sent, ignored (bottom_tile 'none')"
+    }
+   },
+   "mapping": {
+    "rule": "dronecats_go_rotate/1",
+    "kind": "rotate",
+    "requested": {
+     "fwd_m": 0.0,
+     "down_m": 0.0,
+     "dpsi_rad": -1.5707963267948966
+    },
+    "clipped": [
+     "dpsi_rad"
+    ],
+    "bins": [
+     0,
+     49,
+     0
+    ],
+    "flown": {
+     "fwd_m": 0.0,
+     "down_m": 0.0,
+     "dpsi_rad": -1.1
+    },
+    "land": false,
+    "quantize": "nearest bin, round((v - lo) / (hi - lo) * 98), after clipping to the codec's range; the client decodes the bin's lower edge, so the flown step is within half a bin of the requested one",
+    "geometry": {
+     "angle_deg": -90
+    },
+    "camera": {
+     "camera": "FrontCamera",
+     "hfov_deg": 90.0,
+     "pitch_deg": -20.0
+    },
+    "executor": {
+     "name": "paper",
+     "step_cap_m": 3.0,
+     "near_m": 5.0,
+     "near_scale": 0.6,
+     "stop_m": 2.0,
+     "hold_frac": 0.15
+    }
+   }
+  },
+  {
+   "frame": "present_+00.png",
+   "rtt_s": 1.3585602140519768,
+   "ok": true,
+   "error": null,
+   "kind": "rotate",
+   "raw_text": "00 49 00</s>",
+   "parse_ok": true,
+   "latency_s": 1.355378,
+   "server_s": 1.35695,
+   "native": {
+    "family": "dronecats",
+    "ok": true,
+    "action": {
+     "action": "rotate",
+     "angle_deg": -90
+    },
+    "reason": null,
+    "plan": null,
+    "clamped": [],
+    "unknown_keys": [],
+    "text": "{\"action\": \"rotate\", \"angle_deg\": -90}",
+    "command": "go to the red car",
+    "history": "  step 1 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 2 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 3 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 4 of 5: THINK  [done, 1.0s]\n  step 5 of 5: ROTATE angle=-90deg  [in progress]  <- latest",
+    "history_reset": null,
+    "camera_aux": "{\"width\": 224, \"height\": 224, \"fx\": 112.0, \"fy\": 112.0}",
+    "image": {
+     "src_size": [
+      224,
+      224
+     ],
+     "model_size": [
+      224,
+      224
+     ],
+     "resized": false
+    },
+    "ignored": {
+     "phrase": "straight ahead ",
+     "hint_source": "detector",
+     "down_jpg": "sent, ignored (bottom_tile 'none')"
+    }
+   },
+   "mapping": {
+    "rule": "dronecats_go_rotate/1",
+    "kind": "rotate",
+    "requested": {
+     "fwd_m": 0.0,
+     "down_m": 0.0,
+     "dpsi_rad": -1.5707963267948966
+    },
+    "clipped": [
+     "dpsi_rad"
+    ],
+    "bins": [
+     0,
+     49,
+     0
+    ],
+    "flown": {
+     "fwd_m": 0.0,
+     "down_m": 0.0,
+     "dpsi_rad": -1.1
+    },
+    "land": false,
+    "quantize": "nearest bin, round((v - lo) / (hi - lo) * 98), after clipping to the codec's range; the client decodes the bin's lower edge, so the flown step is within half a bin of the requested one",
+    "geometry": {
+     "angle_deg": -90
+    },
+    "camera": {
+     "camera": "FrontCamera",
+     "hfov_deg": 90.0,
+     "pitch_deg": -20.0
+    },
+    "executor": {
+     "name": "paper",
+     "step_cap_m": 3.0,
+     "near_m": 5.0,
+     "near_scale": 0.6,
+     "stop_m": 2.0,
+     "hold_frac": 0.15
+    }
+   }
+  },
+  {
+   "frame": "absent_+00.png",
+   "rtt_s": 1.3458054209477268,
+   "ok": true,
+   "error": null,
+   "kind": "rotate",
+   "raw_text": "00 49 00</s>",
+   "parse_ok": true,
+   "latency_s": 1.342641,
+   "server_s": 1.344202,
+   "native": {
+    "family": "dronecats",
+    "ok": true,
+    "action": {
+     "action": "rotate",
+     "angle_deg": -90
+    },
+    "reason": null,
+    "plan": null,
+    "clamped": [],
+    "unknown_keys": [],
+    "text": "{\"action\": \"rotate\", \"angle_deg\": -90}",
+    "command": "go to the red car",
+    "history": "  step 1 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 2 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 3 of 5: THINK  [done, 1.0s]\n  step 4 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 5 of 5: ROTATE angle=-90deg  [in progress]  <- latest",
+    "history_reset": null,
+    "camera_aux": "{\"width\": 224, \"height\": 224, \"fx\": 112.0, \"fy\": 112.0}",
+    "image": {
+     "src_size": [
+      224,
+      224
+     ],
+     "model_size": [
+      224,
+      224
+     ],
+     "resized": false
+    },
+    "ignored": {
+     "phrase": "straight ahead ",
+     "hint_source": "detector",
+     "down_jpg": "sent, ignored (bottom_tile 'none')"
+    }
+   },
+   "mapping": {
+    "rule": "dronecats_go_rotate/1",
+    "kind": "rotate",
+    "requested": {
+     "fwd_m": 0.0,
+     "down_m": 0.0,
+     "dpsi_rad": -1.5707963267948966
+    },
+    "clipped": [
+     "dpsi_rad"
+    ],
+    "bins": [
+     0,
+     49,
+     0
+    ],
+    "flown": {
+     "fwd_m": 0.0,
+     "down_m": 0.0,
+     "dpsi_rad": -1.1
+    },
+    "land": false,
+    "quantize": "nearest bin, round((v - lo) / (hi - lo) * 98), after clipping to the codec's range; the client decodes the bin's lower edge, so the flown step is within half a bin of the requested one",
+    "geometry": {
+     "angle_deg": -90
+    },
+    "camera": {
+     "camera": "FrontCamera",
+     "hfov_deg": 90.0,
+     "pitch_deg": -20.0
+    },
+    "executor": {
+     "name": "paper",
+     "step_cap_m": 3.0,
+     "near_m": 5.0,
+     "near_scale": 0.6,
+     "stop_m": 2.0,
+     "hold_frac": 0.15
+    }
+   }
+  },
+  {
+   "frame": "present_+00.png",
+   "rtt_s": 0.7720256929751486,
+   "ok": true,
+   "error": null,
+   "kind": "think",
+   "raw_text": "00 49 49</s>",
+   "parse_ok": true,
+   "latency_s": 0.768804,
+   "server_s": 0.770396,
+   "native": {
+    "family": "dronecats",
+    "ok": true,
+    "action": {
+     "action": "think"
+    },
+    "reason": null,
+    "plan": null,
+    "clamped": [],
+    "unknown_keys": [],
+    "text": "{\"action\": \"think\"}",
+    "command": "go to the red car",
+    "history": "  step 1 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 2 of 5: THINK  [done, 1.0s]\n  step 3 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 4 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 5 of 5: ROTATE angle=-90deg  [in progress]  <- latest",
+    "history_reset": null,
+    "camera_aux": "{\"width\": 224, \"height\": 224, \"fx\": 112.0, \"fy\": 112.0}",
+    "image": {
+     "src_size": [
+      224,
+      224
+     ],
+     "model_size": [
+      224,
+      224
+     ],
+     "resized": false
+    },
+    "ignored": {
+     "phrase": "straight ahead ",
+     "hint_source": "detector",
+     "down_jpg": "sent, ignored (bottom_tile 'none')"
+    }
+   },
+   "mapping": {
+    "rule": "dronecats_go_rotate/1",
+    "kind": "think",
+    "requested": {
+     "fwd_m": 0.0,
+     "down_m": 0.0,
+     "dpsi_rad": 0.0
+    },
+    "clipped": [],
+    "bins": [
+     0,
+     49,
+     49
+    ],
+    "flown": {
+     "fwd_m": 0.0,
+     "down_m": 0.0,
+     "dpsi_rad": 0.0
+    },
+    "land": false,
+    "quantize": "nearest bin, round((v - lo) / (hi - lo) * 98), after clipping to the codec's range; the client decodes the bin's lower edge, so the flown step is within half a bin of the requested one",
+    "geometry": null,
+    "camera": {
+     "camera": "FrontCamera",
+     "hfov_deg": 90.0,
+     "pitch_deg": -20.0
+    },
+    "executor": {
+     "name": "paper",
+     "step_cap_m": 3.0,
+     "near_m": 5.0,
+     "near_scale": 0.6,
+     "stop_m": 2.0,
+     "hold_frac": 0.15
+    }
+   }
+  },
+  {
+   "frame": "absent_+00.png",
+   "rtt_s": 17.506065188033972,
+   "ok": true,
+   "error": null,
+   "kind": "rotate",
+   "raw_text": "00 49 00</s>",
+   "parse_ok": true,
+   "latency_s": 17.50279,
+   "server_s": 17.504365,
+   "native": {
+    "family": "dronecats",
+    "ok": true,
+    "action": {
+     "action": "rotate",
+     "angle_deg": -90
+    },
+    "reason": null,
+    "plan": {
+     "target_in_view": "no",
+     "target_match": "unsure",
+     "closing_in": "unknown",
+     "current_frame": "(1) Nothing in this view is a candidate for the red car - there is no object here whose colour and kind I could read as the target.\n(2) The command asks for the red car, and what I can see does not match those words, so the target is not in this frame.\n(3) What I do see is a wide city street with buildings and road, and none of it occupies the place the target should.",
+     "action_planning": "(1) Can't tell - my last actions were only rotations and a think, so there is no earlier approach to compare against.\n(2) I ROTATE left in place by -90 deg to keep searching: GO is wrong because there is nothing here that matches the command to fly toward, and FINISHED is wrong because I have not even seen the target yet. I rotate left in place to keep searching for the red car.\n(3) If this rotation works, the next view should bring the red car into frame, or at least a part of the scene I have not searched yet."
+    },
+    "clamped": [],
+    "unknown_keys": [],
+    "text": "{\"target_in_view\": \"no\", \"target_match\": \"unsure\", \"closing_in\": \"unknown\", \"current_frame\": \"(1) Nothing in this view is a candidate for the red car - there is no object here whose colour and kind I could read as the target.\\n(2) The command asks for the red car, and what I can see does not match those words, so the target is not in this frame.\\n(3) What I do see is a wide city street with buildings and road, and none of it occupies the place the target should.\", \"action_planning\": \"(1) Can't tell - my last actions were only rotations and a think, so there is no earlier approach to compare against.\\n(2) I ROTATE left in place by -90 deg to keep searching: GO is wrong because there is nothing here that matches the command to fly toward, and FINISHED is wrong because I have not even seen the target yet. I rotate left in place to keep searching for the red car.\\n(3) If this rotation works, the next view should bring the red car into frame, or at least a part of the scene I have not searched yet.\", \"action\": \"rotate\", \"angle_deg\": -90}",
+    "command": "go to the red car",
+    "history": "  step 1 of 5: THINK  [done, 1.0s]\n  step 2 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 3 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 4 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 5 of 5: THINK  [in progress]  <- latest",
+    "history_reset": null,
+    "camera_aux": "{\"width\": 224, \"height\": 224, \"fx\": 112.0, \"fy\": 112.0}",
+    "image": {
+     "src_size": [
+      224,
+      224
+     ],
+     "model_size": [
+      224,
+      224
+     ],
+     "resized": false
+    },
+    "ignored": {
+     "phrase": "straight ahead ",
+     "hint_source": "detector",
+     "down_jpg": "sent, ignored (bottom_tile 'none')"
+    }
+   },
+   "mapping": {
+    "rule": "dronecats_go_rotate/1",
+    "kind": "rotate",
+    "requested": {
+     "fwd_m": 0.0,
+     "down_m": 0.0,
+     "dpsi_rad": -1.5707963267948966
+    },
+    "clipped": [
+     "dpsi_rad"
+    ],
+    "bins": [
+     0,
+     49,
+     0
+    ],
+    "flown": {
+     "fwd_m": 0.0,
+     "down_m": 0.0,
+     "dpsi_rad": -1.1
+    },
+    "land": false,
+    "quantize": "nearest bin, round((v - lo) / (hi - lo) * 98), after clipping to the codec's range; the client decodes the bin's lower edge, so the flown step is within half a bin of the requested one",
+    "geometry": {
+     "angle_deg": -90
+    },
+    "camera": {
+     "camera": "FrontCamera",
+     "hfov_deg": 90.0,
+     "pitch_deg": -20.0
+    },
+    "executor": {
+     "name": "paper",
+     "step_cap_m": 3.0,
+     "near_m": 5.0,
+     "near_scale": 0.6,
+     "stop_m": 2.0,
+     "hold_frac": 0.15
+    }
+   }
+  },
+  {
+   "frame": "present_+00.png",
+   "rtt_s": 1.3519166560145095,
+   "ok": true,
+   "error": null,
+   "kind": "rotate",
+   "raw_text": "00 49 00</s>",
+   "parse_ok": true,
+   "latency_s": 1.348787,
+   "server_s": 1.350326,
+   "native": {
+    "family": "dronecats",
+    "ok": true,
+    "action": {
+     "action": "rotate",
+     "angle_deg": -90
+    },
+    "reason": null,
+    "plan": null,
+    "clamped": [],
+    "unknown_keys": [],
+    "text": "{\"action\": \"rotate\", \"angle_deg\": -90}",
+    "command": "go to the red car",
+    "history": "  step 1 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 2 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 3 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 4 of 5: THINK  [done, 1.0s]\n  step 5 of 5: ROTATE angle=-90deg  [in progress]  <- latest",
+    "history_reset": null,
+    "camera_aux": "{\"width\": 224, \"height\": 224, \"fx\": 112.0, \"fy\": 112.0}",
+    "image": {
+     "src_size": [
+      224,
+      224
+     ],
+     "model_size": [
+      224,
+      224
+     ],
+     "resized": false
+    },
+    "ignored": {
+     "phrase": "straight ahead ",
+     "hint_source": "detector",
+     "down_jpg": "sent, ignored (bottom_tile 'none')"
+    }
+   },
+   "mapping": {
+    "rule": "dronecats_go_rotate/1",
+    "kind": "rotate",
+    "requested": {
+     "fwd_m": 0.0,
+     "down_m": 0.0,
+     "dpsi_rad": -1.5707963267948966
+    },
+    "clipped": [
+     "dpsi_rad"
+    ],
+    "bins": [
+     0,
+     49,
+     0
+    ],
+    "flown": {
+     "fwd_m": 0.0,
+     "down_m": 0.0,
+     "dpsi_rad": -1.1
+    },
+    "land": false,
+    "quantize": "nearest bin, round((v - lo) / (hi - lo) * 98), after clipping to the codec's range; the client decodes the bin's lower edge, so the flown step is within half a bin of the requested one",
+    "geometry": {
+     "angle_deg": -90
+    },
+    "camera": {
+     "camera": "FrontCamera",
+     "hfov_deg": 90.0,
+     "pitch_deg": -20.0
+    },
+    "executor": {
+     "name": "paper",
+     "step_cap_m": 3.0,
+     "near_m": 5.0,
+     "near_scale": 0.6,
+     "stop_m": 2.0,
+     "hold_frac": 0.15
+    }
+   }
+  },
+  {
+   "frame": "absent_+00.png",
+   "rtt_s": 1.3350880799698643,
+   "ok": true,
+   "error": null,
+   "kind": "rotate",
+   "raw_text": "00 49 00</s>",
+   "parse_ok": true,
+   "latency_s": 1.331762,
+   "server_s": 1.33334,
+   "native": {
+    "family": "dronecats",
+    "ok": true,
+    "action": {
+     "action": "rotate",
+     "angle_deg": -90
+    },
+    "reason": null,
+    "plan": null,
+    "clamped": [],
+    "unknown_keys": [],
+    "text": "{\"action\": \"rotate\", \"angle_deg\": -90}",
+    "command": "go to the red car",
+    "history": "  step 1 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 2 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 3 of 5: THINK  [done, 1.0s]\n  step 4 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 5 of 5: ROTATE angle=-90deg  [in progress]  <- latest",
+    "history_reset": null,
+    "camera_aux": "{\"width\": 224, \"height\": 224, \"fx\": 112.0, \"fy\": 112.0}",
+    "image": {
+     "src_size": [
+      224,
+      224
+     ],
+     "model_size": [
+      224,
+      224
+     ],
+     "resized": false
+    },
+    "ignored": {
+     "phrase": "straight ahead ",
+     "hint_source": "detector",
+     "down_jpg": "sent, ignored (bottom_tile 'none')"
+    }
+   },
+   "mapping": {
+    "rule": "dronecats_go_rotate/1",
+    "kind": "rotate",
+    "requested": {
+     "fwd_m": 0.0,
+     "down_m": 0.0,
+     "dpsi_rad": -1.5707963267948966
+    },
+    "clipped": [
+     "dpsi_rad"
+    ],
+    "bins": [
+     0,
+     49,
+     0
+    ],
+    "flown": {
+     "fwd_m": 0.0,
+     "down_m": 0.0,
+     "dpsi_rad": -1.1
+    },
+    "land": false,
+    "quantize": "nearest bin, round((v - lo) / (hi - lo) * 98), after clipping to the codec's range; the client decodes the bin's lower edge, so the flown step is within half a bin of the requested one",
+    "geometry": {
+     "angle_deg": -90
+    },
+    "camera": {
+     "camera": "FrontCamera",
+     "hfov_deg": 90.0,
+     "pitch_deg": -20.0
+    },
+    "executor": {
+     "name": "paper",
+     "step_cap_m": 3.0,
+     "near_m": 5.0,
+     "near_scale": 0.6,
+     "stop_m": 2.0,
+     "hold_frac": 0.15
+    }
+   }
+  },
+  {
+   "frame": "present_+00.png",
+   "rtt_s": 0.7669763520243578,
+   "ok": true,
+   "error": null,
+   "kind": "think",
+   "raw_text": "00 49 49</s>",
+   "parse_ok": true,
+   "latency_s": 0.763706,
+   "server_s": 0.76524,
+   "native": {
+    "family": "dronecats",
+    "ok": true,
+    "action": {
+     "action": "think"
+    },
+    "reason": null,
+    "plan": null,
+    "clamped": [],
+    "unknown_keys": [],
+    "text": "{\"action\": \"think\"}",
+    "command": "go to the red car",
+    "history": "  step 1 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 2 of 5: THINK  [done, 1.0s]\n  step 3 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 4 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 5 of 5: ROTATE angle=-90deg  [in progress]  <- latest",
+    "history_reset": null,
+    "camera_aux": "{\"width\": 224, \"height\": 224, \"fx\": 112.0, \"fy\": 112.0}",
+    "image": {
+     "src_size": [
+      224,
+      224
+     ],
+     "model_size": [
+      224,
+      224
+     ],
+     "resized": false
+    },
+    "ignored": {
+     "phrase": "straight ahead ",
+     "hint_source": "detector",
+     "down_jpg": "sent, ignored (bottom_tile 'none')"
+    }
+   },
+   "mapping": {
+    "rule": "dronecats_go_rotate/1",
+    "kind": "think",
+    "requested": {
+     "fwd_m": 0.0,
+     "down_m": 0.0,
+     "dpsi_rad": 0.0
+    },
+    "clipped": [],
+    "bins": [
+     0,
+     49,
+     49
+    ],
+    "flown": {
+     "fwd_m": 0.0,
+     "down_m": 0.0,
+     "dpsi_rad": 0.0
+    },
+    "land": false,
+    "quantize": "nearest bin, round((v - lo) / (hi - lo) * 98), after clipping to the codec's range; the client decodes the bin's lower edge, so the flown step is within half a bin of the requested one",
+    "geometry": null,
+    "camera": {
+     "camera": "FrontCamera",
+     "hfov_deg": 90.0,
+     "pitch_deg": -20.0
+    },
+    "executor": {
+     "name": "paper",
+     "step_cap_m": 3.0,
+     "near_m": 5.0,
+     "near_scale": 0.6,
+     "stop_m": 2.0,
+     "hold_frac": 0.15
+    }
+   }
+  },
+  {
+   "frame": "absent_+00.png",
+   "rtt_s": 17.239934514975175,
+   "ok": true,
+   "error": null,
+   "kind": "rotate",
+   "raw_text": "00 49 00</s>",
+   "parse_ok": true,
+   "latency_s": 17.236603,
+   "server_s": 17.238156,
+   "native": {
+    "family": "dronecats",
+    "ok": true,
+    "action": {
+     "action": "rotate",
+     "angle_deg": -90
+    },
+    "reason": null,
+    "plan": {
+     "target_in_view": "no",
+     "target_match": "unsure",
+     "closing_in": "unknown",
+     "current_frame": "(1) Nothing in this view is a candidate for the red car - there is no object here whose colour and kind I could read as the target.\n(2) The command asks for the red car, and what I can see does not match those words, so the target is not in this frame.\n(3) What I do see is a wide city street with buildings and road, and none of it occupies the place the target should.",
+     "action_planning": "(1) Can't tell - my last actions were only rotations and a think, so there is no earlier approach to compare against.\n(2) I ROTATE left in place by -90 deg to keep searching: GO is wrong because there is nothing here that matches the command to fly toward, and FINISHED is wrong because I have not even seen the target yet. I rotate left in place to keep searching for the red car.\n(3) If this rotation works, the next view should bring the red car into frame, or at least a part of the scene I have not searched yet."
+    },
+    "clamped": [],
+    "unknown_keys": [],
+    "text": "{\"target_in_view\": \"no\", \"target_match\": \"unsure\", \"closing_in\": \"unknown\", \"current_frame\": \"(1) Nothing in this view is a candidate for the red car - there is no object here whose colour and kind I could read as the target.\\n(2) The command asks for the red car, and what I can see does not match those words, so the target is not in this frame.\\n(3) What I do see is a wide city street with buildings and road, and none of it occupies the place the target should.\", \"action_planning\": \"(1) Can't tell - my last actions were only rotations and a think, so there is no earlier approach to compare against.\\n(2) I ROTATE left in place by -90 deg to keep searching: GO is wrong because there is nothing here that matches the command to fly toward, and FINISHED is wrong because I have not even seen the target yet. I rotate left in place to keep searching for the red car.\\n(3) If this rotation works, the next view should bring the red car into frame, or at least a part of the scene I have not searched yet.\", \"action\": \"rotate\", \"angle_deg\": -90}",
+    "command": "go to the red car",
+    "history": "  step 1 of 5: THINK  [done, 1.0s]\n  step 2 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 3 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 4 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 5 of 5: THINK  [in progress]  <- latest",
+    "history_reset": null,
+    "camera_aux": "{\"width\": 224, \"height\": 224, \"fx\": 112.0, \"fy\": 112.0}",
+    "image": {
+     "src_size": [
+      224,
+      224
+     ],
+     "model_size": [
+      224,
+      224
+     ],
+     "resized": false
+    },
+    "ignored": {
+     "phrase": "straight ahead ",
+     "hint_source": "detector",
+     "down_jpg": "sent, ignored (bottom_tile 'none')"
+    }
+   },
+   "mapping": {
+    "rule": "dronecats_go_rotate/1",
+    "kind": "rotate",
+    "requested": {
+     "fwd_m": 0.0,
+     "down_m": 0.0,
+     "dpsi_rad": -1.5707963267948966
+    },
+    "clipped": [
+     "dpsi_rad"
+    ],
+    "bins": [
+     0,
+     49,
+     0
+    ],
+    "flown": {
+     "fwd_m": 0.0,
+     "down_m": 0.0,
+     "dpsi_rad": -1.1
+    },
+    "land": false,
+    "quantize": "nearest bin, round((v - lo) / (hi - lo) * 98), after clipping to the codec's range; the client decodes the bin's lower edge, so the flown step is within half a bin of the requested one",
+    "geometry": {
+     "angle_deg": -90
+    },
+    "camera": {
+     "camera": "FrontCamera",
+     "hfov_deg": 90.0,
+     "pitch_deg": -20.0
+    },
+    "executor": {
+     "name": "paper",
+     "step_cap_m": 3.0,
+     "near_m": 5.0,
+     "near_scale": 0.6,
+     "stop_m": 2.0,
+     "hold_frac": 0.15
+    }
+   }
+  },
+  {
+   "frame": "present_+00.png",
+   "rtt_s": 1.3428371800109744,
+   "ok": true,
+   "error": null,
+   "kind": "rotate",
+   "raw_text": "00 49 00</s>",
+   "parse_ok": true,
+   "latency_s": 1.339546,
+   "server_s": 1.341112,
+   "native": {
+    "family": "dronecats",
+    "ok": true,
+    "action": {
+     "action": "rotate",
+     "angle_deg": -90
+    },
+    "reason": null,
+    "plan": null,
+    "clamped": [],
+    "unknown_keys": [],
+    "text": "{\"action\": \"rotate\", \"angle_deg\": -90}",
+    "command": "go to the red car",
+    "history": "  step 1 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 2 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 3 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 4 of 5: THINK  [done, 1.0s]\n  step 5 of 5: ROTATE angle=-90deg  [in progress]  <- latest",
+    "history_reset": null,
+    "camera_aux": "{\"width\": 224, \"height\": 224, \"fx\": 112.0, \"fy\": 112.0}",
+    "image": {
+     "src_size": [
+      224,
+      224
+     ],
+     "model_size": [
+      224,
+      224
+     ],
+     "resized": false
+    },
+    "ignored": {
+     "phrase": "straight ahead ",
+     "hint_source": "detector",
+     "down_jpg": "sent, ignored (bottom_tile 'none')"
+    }
+   },
+   "mapping": {
+    "rule": "dronecats_go_rotate/1",
+    "kind": "rotate",
+    "requested": {
+     "fwd_m": 0.0,
+     "down_m": 0.0,
+     "dpsi_rad": -1.5707963267948966
+    },
+    "clipped": [
+     "dpsi_rad"
+    ],
+    "bins": [
+     0,
+     49,
+     0
+    ],
+    "flown": {
+     "fwd_m": 0.0,
+     "down_m": 0.0,
+     "dpsi_rad": -1.1
+    },
+    "land": false,
+    "quantize": "nearest bin, round((v - lo) / (hi - lo) * 98), after clipping to the codec's range; the client decodes the bin's lower edge, so the flown step is within half a bin of the requested one",
+    "geometry": {
+     "angle_deg": -90
+    },
+    "camera": {
+     "camera": "FrontCamera",
+     "hfov_deg": 90.0,
+     "pitch_deg": -20.0
+    },
+    "executor": {
+     "name": "paper",
+     "step_cap_m": 3.0,
+     "near_m": 5.0,
+     "near_scale": 0.6,
+     "stop_m": 2.0,
+     "hold_frac": 0.15
+    }
+   }
+  },
+  {
+   "frame": "absent_+00.png",
+   "rtt_s": 1.3365703279851004,
+   "ok": true,
+   "error": null,
+   "kind": "rotate",
+   "raw_text": "00 49 00</s>",
+   "parse_ok": true,
+   "latency_s": 1.333318,
+   "server_s": 1.334857,
+   "native": {
+    "family": "dronecats",
+    "ok": true,
+    "action": {
+     "action": "rotate",
+     "angle_deg": -90
+    },
+    "reason": null,
+    "plan": null,
+    "clamped": [],
+    "unknown_keys": [],
+    "text": "{\"action\": \"rotate\", \"angle_deg\": -90}",
+    "command": "go to the red car",
+    "history": "  step 1 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 2 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 3 of 5: THINK  [done, 1.0s]\n  step 4 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 5 of 5: ROTATE angle=-90deg  [in progress]  <- latest",
+    "history_reset": null,
+    "camera_aux": "{\"width\": 224, \"height\": 224, \"fx\": 112.0, \"fy\": 112.0}",
+    "image": {
+     "src_size": [
+      224,
+      224
+     ],
+     "model_size": [
+      224,
+      224
+     ],
+     "resized": false
+    },
+    "ignored": {
+     "phrase": "straight ahead ",
+     "hint_source": "detector",
+     "down_jpg": "sent, ignored (bottom_tile 'none')"
+    }
+   },
+   "mapping": {
+    "rule": "dronecats_go_rotate/1",
+    "kind": "rotate",
+    "requested": {
+     "fwd_m": 0.0,
+     "down_m": 0.0,
+     "dpsi_rad": -1.5707963267948966
+    },
+    "clipped": [
+     "dpsi_rad"
+    ],
+    "bins": [
+     0,
+     49,
+     0
+    ],
+    "flown": {
+     "fwd_m": 0.0,
+     "down_m": 0.0,
+     "dpsi_rad": -1.1
+    },
+    "land": false,
+    "quantize": "nearest bin, round((v - lo) / (hi - lo) * 98), after clipping to the codec's range; the client decodes the bin's lower edge, so the flown step is within half a bin of the requested one",
+    "geometry": {
+     "angle_deg": -90
+    },
+    "camera": {
+     "camera": "FrontCamera",
+     "hfov_deg": 90.0,
+     "pitch_deg": -20.0
+    },
+    "executor": {
+     "name": "paper",
+     "step_cap_m": 3.0,
+     "near_m": 5.0,
+     "near_scale": 0.6,
+     "stop_m": 2.0,
+     "hold_frac": 0.15
+    }
+   }
+  },
+  {
+   "frame": "present_+00.png",
+   "rtt_s": 0.763636525021866,
+   "ok": true,
+   "error": null,
+   "kind": "think",
+   "raw_text": "00 49 49</s>",
+   "parse_ok": true,
+   "latency_s": 0.760412,
+   "server_s": 0.761951,
+   "native": {
+    "family": "dronecats",
+    "ok": true,
+    "action": {
+     "action": "think"
+    },
+    "reason": null,
+    "plan": null,
+    "clamped": [],
+    "unknown_keys": [],
+    "text": "{\"action\": \"think\"}",
+    "command": "go to the red car",
+    "history": "  step 1 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 2 of 5: THINK  [done, 1.0s]\n  step 3 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 4 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 5 of 5: ROTATE angle=-90deg  [in progress]  <- latest",
+    "history_reset": null,
+    "camera_aux": "{\"width\": 224, \"height\": 224, \"fx\": 112.0, \"fy\": 112.0}",
+    "image": {
+     "src_size": [
+      224,
+      224
+     ],
+     "model_size": [
+      224,
+      224
+     ],
+     "resized": false
+    },
+    "ignored": {
+     "phrase": "straight ahead ",
+     "hint_source": "detector",
+     "down_jpg": "sent, ignored (bottom_tile 'none')"
+    }
+   },
+   "mapping": {
+    "rule": "dronecats_go_rotate/1",
+    "kind": "think",
+    "requested": {
+     "fwd_m": 0.0,
+     "down_m": 0.0,
+     "dpsi_rad": 0.0
+    },
+    "clipped": [],
+    "bins": [
+     0,
+     49,
+     49
+    ],
+    "flown": {
+     "fwd_m": 0.0,
+     "down_m": 0.0,
+     "dpsi_rad": 0.0
+    },
+    "land": false,
+    "quantize": "nearest bin, round((v - lo) / (hi - lo) * 98), after clipping to the codec's range; the client decodes the bin's lower edge, so the flown step is within half a bin of the requested one",
+    "geometry": null,
+    "camera": {
+     "camera": "FrontCamera",
+     "hfov_deg": 90.0,
+     "pitch_deg": -20.0
+    },
+    "executor": {
+     "name": "paper",
+     "step_cap_m": 3.0,
+     "near_m": 5.0,
+     "near_scale": 0.6,
+     "stop_m": 2.0,
+     "hold_frac": 0.15
+    }
+   }
+  },
+  {
+   "frame": "absent_+00.png",
+   "rtt_s": 17.210962317010853,
+   "ok": true,
+   "error": null,
+   "kind": "rotate",
+   "raw_text": "00 49 00</s>",
+   "parse_ok": true,
+   "latency_s": 17.207609,
+   "server_s": 17.209142,
+   "native": {
+    "family": "dronecats",
+    "ok": true,
+    "action": {
+     "action": "rotate",
+     "angle_deg": -90
+    },
+    "reason": null,
+    "plan": {
+     "target_in_view": "no",
+     "target_match": "unsure",
+     "closing_in": "unknown",
+     "current_frame": "(1) Nothing in this view is a candidate for the red car - there is no object here whose colour and kind I could read as the target.\n(2) The command asks for the red car, and what I can see does not match those words, so the target is not in this frame.\n(3) What I do see is a wide city street with buildings and road, and none of it occupies the place the target should.",
+     "action_planning": "(1) Can't tell - my last actions were only rotations and a think, so there is no earlier approach to compare against.\n(2) I ROTATE left in place by -90 deg to keep searching: GO is wrong because there is nothing here that matches the command to fly toward, and FINISHED is wrong because I have not even seen the target yet. I rotate left in place to keep searching for the red car.\n(3) If this rotation works, the next view should bring the red car into frame, or at least a part of the scene I have not searched yet."
+    },
+    "clamped": [],
+    "unknown_keys": [],
+    "text": "{\"target_in_view\": \"no\", \"target_match\": \"unsure\", \"closing_in\": \"unknown\", \"current_frame\": \"(1) Nothing in this view is a candidate for the red car - there is no object here whose colour and kind I could read as the target.\\n(2) The command asks for the red car, and what I can see does not match those words, so the target is not in this frame.\\n(3) What I do see is a wide city street with buildings and road, and none of it occupies the place the target should.\", \"action_planning\": \"(1) Can't tell - my last actions were only rotations and a think, so there is no earlier approach to compare against.\\n(2) I ROTATE left in place by -90 deg to keep searching: GO is wrong because there is nothing here that matches the command to fly toward, and FINISHED is wrong because I have not even seen the target yet. I rotate left in place to keep searching for the red car.\\n(3) If this rotation works, the next view should bring the red car into frame, or at least a part of the scene I have not searched yet.\", \"action\": \"rotate\", \"angle_deg\": -90}",
+    "command": "go to the red car",
+    "history": "  step 1 of 5: THINK  [done, 1.0s]\n  step 2 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 3 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 4 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 5 of 5: THINK  [in progress]  <- latest",
+    "history_reset": null,
+    "camera_aux": "{\"width\": 224, \"height\": 224, \"fx\": 112.0, \"fy\": 112.0}",
+    "image": {
+     "src_size": [
+      224,
+      224
+     ],
+     "model_size": [
+      224,
+      224
+     ],
+     "resized": false
+    },
+    "ignored": {
+     "phrase": "straight ahead ",
+     "hint_source": "detector",
+     "down_jpg": "sent, ignored (bottom_tile 'none')"
+    }
+   },
+   "mapping": {
+    "rule": "dronecats_go_rotate/1",
+    "kind": "rotate",
+    "requested": {
+     "fwd_m": 0.0,
+     "down_m": 0.0,
+     "dpsi_rad": -1.5707963267948966
+    },
+    "clipped": [
+     "dpsi_rad"
+    ],
+    "bins": [
+     0,
+     49,
+     0
+    ],
+    "flown": {
+     "fwd_m": 0.0,
+     "down_m": 0.0,
+     "dpsi_rad": -1.1
+    },
+    "land": false,
+    "quantize": "nearest bin, round((v - lo) / (hi - lo) * 98), after clipping to the codec's range; the client decodes the bin's lower edge, so the flown step is within half a bin of the requested one",
+    "geometry": {
+     "angle_deg": -90
+    },
+    "camera": {
+     "camera": "FrontCamera",
+     "hfov_deg": 90.0,
+     "pitch_deg": -20.0
+    },
+    "executor": {
+     "name": "paper",
+     "step_cap_m": 3.0,
+     "near_m": 5.0,
+     "near_scale": 0.6,
+     "stop_m": 2.0,
+     "hold_frac": 0.15
+    }
+   }
+  },
+  {
+   "frame": "present_+00.png",
+   "rtt_s": 1.3519869919982739,
+   "ok": true,
+   "error": null,
+   "kind": "rotate",
+   "raw_text": "00 49 00</s>",
+   "parse_ok": true,
+   "latency_s": 1.348692,
+   "server_s": 1.350251,
+   "native": {
+    "family": "dronecats",
+    "ok": true,
+    "action": {
+     "action": "rotate",
+     "angle_deg": -90
+    },
+    "reason": null,
+    "plan": null,
+    "clamped": [],
+    "unknown_keys": [],
+    "text": "{\"action\": \"rotate\", \"angle_deg\": -90}",
+    "command": "go to the red car",
+    "history": "  step 1 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 2 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 3 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 4 of 5: THINK  [done, 1.0s]\n  step 5 of 5: ROTATE angle=-90deg  [in progress]  <- latest",
+    "history_reset": null,
+    "camera_aux": "{\"width\": 224, \"height\": 224, \"fx\": 112.0, \"fy\": 112.0}",
+    "image": {
+     "src_size": [
+      224,
+      224
+     ],
+     "model_size": [
+      224,
+      224
+     ],
+     "resized": false
+    },
+    "ignored": {
+     "phrase": "straight ahead ",
+     "hint_source": "detector",
+     "down_jpg": "sent, ignored (bottom_tile 'none')"
+    }
+   },
+   "mapping": {
+    "rule": "dronecats_go_rotate/1",
+    "kind": "rotate",
+    "requested": {
+     "fwd_m": 0.0,
+     "down_m": 0.0,
+     "dpsi_rad": -1.5707963267948966
+    },
+    "clipped": [
+     "dpsi_rad"
+    ],
+    "bins": [
+     0,
+     49,
+     0
+    ],
+    "flown": {
+     "fwd_m": 0.0,
+     "down_m": 0.0,
+     "dpsi_rad": -1.1
+    },
+    "land": false,
+    "quantize": "nearest bin, round((v - lo) / (hi - lo) * 98), after clipping to the codec's range; the client decodes the bin's lower edge, so the flown step is within half a bin of the requested one",
+    "geometry": {
+     "angle_deg": -90
+    },
+    "camera": {
+     "camera": "FrontCamera",
+     "hfov_deg": 90.0,
+     "pitch_deg": -20.0
+    },
+    "executor": {
+     "name": "paper",
+     "step_cap_m": 3.0,
+     "near_m": 5.0,
+     "near_scale": 0.6,
+     "stop_m": 2.0,
+     "hold_frac": 0.15
+    }
+   }
+  },
+  {
+   "frame": "absent_+00.png",
+   "rtt_s": 1.3528846299741417,
+   "ok": true,
+   "error": null,
+   "kind": "rotate",
+   "raw_text": "00 49 00</s>",
+   "parse_ok": true,
+   "latency_s": 1.34963,
+   "server_s": 1.351186,
+   "native": {
+    "family": "dronecats",
+    "ok": true,
+    "action": {
+     "action": "rotate",
+     "angle_deg": -90
+    },
+    "reason": null,
+    "plan": null,
+    "clamped": [],
+    "unknown_keys": [],
+    "text": "{\"action\": \"rotate\", \"angle_deg\": -90}",
+    "command": "go to the red car",
+    "history": "  step 1 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 2 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 3 of 5: THINK  [done, 1.0s]\n  step 4 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 5 of 5: ROTATE angle=-90deg  [in progress]  <- latest",
+    "history_reset": null,
+    "camera_aux": "{\"width\": 224, \"height\": 224, \"fx\": 112.0, \"fy\": 112.0}",
+    "image": {
+     "src_size": [
+      224,
+      224
+     ],
+     "model_size": [
+      224,
+      224
+     ],
+     "resized": false
+    },
+    "ignored": {
+     "phrase": "straight ahead ",
+     "hint_source": "detector",
+     "down_jpg": "sent, ignored (bottom_tile 'none')"
+    }
+   },
+   "mapping": {
+    "rule": "dronecats_go_rotate/1",
+    "kind": "rotate",
+    "requested": {
+     "fwd_m": 0.0,
+     "down_m": 0.0,
+     "dpsi_rad": -1.5707963267948966
+    },
+    "clipped": [
+     "dpsi_rad"
+    ],
+    "bins": [
+     0,
+     49,
+     0
+    ],
+    "flown": {
+     "fwd_m": 0.0,
+     "down_m": 0.0,
+     "dpsi_rad": -1.1
+    },
+    "land": false,
+    "quantize": "nearest bin, round((v - lo) / (hi - lo) * 98), after clipping to the codec's range; the client decodes the bin's lower edge, so the flown step is within half a bin of the requested one",
+    "geometry": {
+     "angle_deg": -90
+    },
+    "camera": {
+     "camera": "FrontCamera",
+     "hfov_deg": 90.0,
+     "pitch_deg": -20.0
+    },
+    "executor": {
+     "name": "paper",
+     "step_cap_m": 3.0,
+     "near_m": 5.0,
+     "near_scale": 0.6,
+     "stop_m": 2.0,
+     "hold_frac": 0.15
+    }
+   }
+  },
+  {
+   "frame": "present_+00.png",
+   "rtt_s": 0.7655923119746149,
+   "ok": true,
+   "error": null,
+   "kind": "think",
+   "raw_text": "00 49 49</s>",
+   "parse_ok": true,
+   "latency_s": 0.762325,
+   "server_s": 0.76387,
+   "native": {
+    "family": "dronecats",
+    "ok": true,
+    "action": {
+     "action": "think"
+    },
+    "reason": null,
+    "plan": null,
+    "clamped": [],
+    "unknown_keys": [],
+    "text": "{\"action\": \"think\"}",
+    "command": "go to the red car",
+    "history": "  step 1 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 2 of 5: THINK  [done, 1.0s]\n  step 3 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 4 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 5 of 5: ROTATE angle=-90deg  [in progress]  <- latest",
+    "history_reset": null,
+    "camera_aux": "{\"width\": 224, \"height\": 224, \"fx\": 112.0, \"fy\": 112.0}",
+    "image": {
+     "src_size": [
+      224,
+      224
+     ],
+     "model_size": [
+      224,
+      224
+     ],
+     "resized": false
+    },
+    "ignored": {
+     "phrase": "straight ahead ",
+     "hint_source": "detector",
+     "down_jpg": "sent, ignored (bottom_tile 'none')"
+    }
+   },
+   "mapping": {
+    "rule": "dronecats_go_rotate/1",
+    "kind": "think",
+    "requested": {
+     "fwd_m": 0.0,
+     "down_m": 0.0,
+     "dpsi_rad": 0.0
+    },
+    "clipped": [],
+    "bins": [
+     0,
+     49,
+     49
+    ],
+    "flown": {
+     "fwd_m": 0.0,
+     "down_m": 0.0,
+     "dpsi_rad": 0.0
+    },
+    "land": false,
+    "quantize": "nearest bin, round((v - lo) / (hi - lo) * 98), after clipping to the codec's range; the client decodes the bin's lower edge, so the flown step is within half a bin of the requested one",
+    "geometry": null,
+    "camera": {
+     "camera": "FrontCamera",
+     "hfov_deg": 90.0,
+     "pitch_deg": -20.0
+    },
+    "executor": {
+     "name": "paper",
+     "step_cap_m": 3.0,
+     "near_m": 5.0,
+     "near_scale": 0.6,
+     "stop_m": 2.0,
+     "hold_frac": 0.15
+    }
+   }
+  },
+  {
+   "frame": "absent_+00.png",
+   "rtt_s": 17.260974603006616,
+   "ok": true,
+   "error": null,
+   "kind": "rotate",
+   "raw_text": "00 49 00</s>",
+   "parse_ok": true,
+   "latency_s": 17.257793,
+   "server_s": 17.25933,
+   "native": {
+    "family": "dronecats",
+    "ok": true,
+    "action": {
+     "action": "rotate",
+     "angle_deg": -90
+    },
+    "reason": null,
+    "plan": {
+     "target_in_view": "no",
+     "target_match": "unsure",
+     "closing_in": "unknown",
+     "current_frame": "(1) Nothing in this view is a candidate for the red car - there is no object here whose colour and kind I could read as the target.\n(2) The command asks for the red car, and what I can see does not match those words, so the target is not in this frame.\n(3) What I do see is a wide city street with buildings and road, and none of it occupies the place the target should.",
+     "action_planning": "(1) Can't tell - my last actions were only rotations and a think, so there is no earlier approach to compare against.\n(2) I ROTATE left in place by -90 deg to keep searching: GO is wrong because there is nothing here that matches the command to fly toward, and FINISHED is wrong because I have not even seen the target yet. I rotate left in place to keep searching for the red car.\n(3) If this rotation works, the next view should bring the red car into frame, or at least a part of the scene I have not searched yet."
+    },
+    "clamped": [],
+    "unknown_keys": [],
+    "text": "{\"target_in_view\": \"no\", \"target_match\": \"unsure\", \"closing_in\": \"unknown\", \"current_frame\": \"(1) Nothing in this view is a candidate for the red car - there is no object here whose colour and kind I could read as the target.\\n(2) The command asks for the red car, and what I can see does not match those words, so the target is not in this frame.\\n(3) What I do see is a wide city street with buildings and road, and none of it occupies the place the target should.\", \"action_planning\": \"(1) Can't tell - my last actions were only rotations and a think, so there is no earlier approach to compare against.\\n(2) I ROTATE left in place by -90 deg to keep searching: GO is wrong because there is nothing here that matches the command to fly toward, and FINISHED is wrong because I have not even seen the target yet. I rotate left in place to keep searching for the red car.\\n(3) If this rotation works, the next view should bring the red car into frame, or at least a part of the scene I have not searched yet.\", \"action\": \"rotate\", \"angle_deg\": -90}",
+    "command": "go to the red car",
+    "history": "  step 1 of 5: THINK  [done, 1.0s]\n  step 2 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 3 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 4 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 5 of 5: THINK  [in progress]  <- latest",
+    "history_reset": null,
+    "camera_aux": "{\"width\": 224, \"height\": 224, \"fx\": 112.0, \"fy\": 112.0}",
+    "image": {
+     "src_size": [
+      224,
+      224
+     ],
+     "model_size": [
+      224,
+      224
+     ],
+     "resized": false
+    },
+    "ignored": {
+     "phrase": "straight ahead ",
+     "hint_source": "detector",
+     "down_jpg": "sent, ignored (bottom_tile 'none')"
+    }
+   },
+   "mapping": {
+    "rule": "dronecats_go_rotate/1",
+    "kind": "rotate",
+    "requested": {
+     "fwd_m": 0.0,
+     "down_m": 0.0,
+     "dpsi_rad": -1.5707963267948966
+    },
+    "clipped": [
+     "dpsi_rad"
+    ],
+    "bins": [
+     0,
+     49,
+     0
+    ],
+    "flown": {
+     "fwd_m": 0.0,
+     "down_m": 0.0,
+     "dpsi_rad": -1.1
+    },
+    "land": false,
+    "quantize": "nearest bin, round((v - lo) / (hi - lo) * 98), after clipping to the codec's range; the client decodes the bin's lower edge, so the flown step is within half a bin of the requested one",
+    "geometry": {
+     "angle_deg": -90
+    },
+    "camera": {
+     "camera": "FrontCamera",
+     "hfov_deg": 90.0,
+     "pitch_deg": -20.0
+    },
+    "executor": {
+     "name": "paper",
+     "step_cap_m": 3.0,
+     "near_m": 5.0,
+     "near_scale": 0.6,
+     "stop_m": 2.0,
+     "hold_frac": 0.15
+    }
+   }
+  },
+  {
+   "frame": "present_+00.png",
+   "rtt_s": 1.341199635004159,
+   "ok": true,
+   "error": null,
+   "kind": "rotate",
+   "raw_text": "00 49 00</s>",
+   "parse_ok": true,
+   "latency_s": 1.33807,
+   "server_s": 1.339625,
+   "native": {
+    "family": "dronecats",
+    "ok": true,
+    "action": {
+     "action": "rotate",
+     "angle_deg": -90
+    },
+    "reason": null,
+    "plan": null,
+    "clamped": [],
+    "unknown_keys": [],
+    "text": "{\"action\": \"rotate\", \"angle_deg\": -90}",
+    "command": "go to the red car",
+    "history": "  step 1 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 2 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 3 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 4 of 5: THINK  [done, 1.0s]\n  step 5 of 5: ROTATE angle=-90deg  [in progress]  <- latest",
+    "history_reset": null,
+    "camera_aux": "{\"width\": 224, \"height\": 224, \"fx\": 112.0, \"fy\": 112.0}",
+    "image": {
+     "src_size": [
+      224,
+      224
+     ],
+     "model_size": [
+      224,
+      224
+     ],
+     "resized": false
+    },
+    "ignored": {
+     "phrase": "straight ahead ",
+     "hint_source": "detector",
+     "down_jpg": "sent, ignored (bottom_tile 'none')"
+    }
+   },
+   "mapping": {
+    "rule": "dronecats_go_rotate/1",
+    "kind": "rotate",
+    "requested": {
+     "fwd_m": 0.0,
+     "down_m": 0.0,
+     "dpsi_rad": -1.5707963267948966
+    },
+    "clipped": [
+     "dpsi_rad"
+    ],
+    "bins": [
+     0,
+     49,
+     0
+    ],
+    "flown": {
+     "fwd_m": 0.0,
+     "down_m": 0.0,
+     "dpsi_rad": -1.1
+    },
+    "land": false,
+    "quantize": "nearest bin, round((v - lo) / (hi - lo) * 98), after clipping to the codec's range; the client decodes the bin's lower edge, so the flown step is within half a bin of the requested one",
+    "geometry": {
+     "angle_deg": -90
+    },
+    "camera": {
+     "camera": "FrontCamera",
+     "hfov_deg": 90.0,
+     "pitch_deg": -20.0
+    },
+    "executor": {
+     "name": "paper",
+     "step_cap_m": 3.0,
+     "near_m": 5.0,
+     "near_scale": 0.6,
+     "stop_m": 2.0,
+     "hold_frac": 0.15
+    }
+   }
+  },
+  {
+   "frame": "absent_+00.png",
+   "rtt_s": 1.3360497169778682,
+   "ok": true,
+   "error": null,
+   "kind": "rotate",
+   "raw_text": "00 49 00</s>",
+   "parse_ok": true,
+   "latency_s": 1.332791,
+   "server_s": 1.334346,
+   "native": {
+    "family": "dronecats",
+    "ok": true,
+    "action": {
+     "action": "rotate",
+     "angle_deg": -90
+    },
+    "reason": null,
+    "plan": null,
+    "clamped": [],
+    "unknown_keys": [],
+    "text": "{\"action\": \"rotate\", \"angle_deg\": -90}",
+    "command": "go to the red car",
+    "history": "  step 1 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 2 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 3 of 5: THINK  [done, 1.0s]\n  step 4 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 5 of 5: ROTATE angle=-90deg  [in progress]  <- latest",
+    "history_reset": null,
+    "camera_aux": "{\"width\": 224, \"height\": 224, \"fx\": 112.0, \"fy\": 112.0}",
+    "image": {
+     "src_size": [
+      224,
+      224
+     ],
+     "model_size": [
+      224,
+      224
+     ],
+     "resized": false
+    },
+    "ignored": {
+     "phrase": "straight ahead ",
+     "hint_source": "detector",
+     "down_jpg": "sent, ignored (bottom_tile 'none')"
+    }
+   },
+   "mapping": {
+    "rule": "dronecats_go_rotate/1",
+    "kind": "rotate",
+    "requested": {
+     "fwd_m": 0.0,
+     "down_m": 0.0,
+     "dpsi_rad": -1.5707963267948966
+    },
+    "clipped": [
+     "dpsi_rad"
+    ],
+    "bins": [
+     0,
+     49,
+     0
+    ],
+    "flown": {
+     "fwd_m": 0.0,
+     "down_m": 0.0,
+     "dpsi_rad": -1.1
+    },
+    "land": false,
+    "quantize": "nearest bin, round((v - lo) / (hi - lo) * 98), after clipping to the codec's range; the client decodes the bin's lower edge, so the flown step is within half a bin of the requested one",
+    "geometry": {
+     "angle_deg": -90
+    },
+    "camera": {
+     "camera": "FrontCamera",
+     "hfov_deg": 90.0,
+     "pitch_deg": -20.0
+    },
+    "executor": {
+     "name": "paper",
+     "step_cap_m": 3.0,
+     "near_m": 5.0,
+     "near_scale": 0.6,
+     "stop_m": 2.0,
+     "hold_frac": 0.15
+    }
+   }
+  },
+  {
+   "frame": "present_+00.png",
+   "rtt_s": 0.7699111209949479,
+   "ok": true,
+   "error": null,
+   "kind": "think",
+   "raw_text": "00 49 49</s>",
+   "parse_ok": true,
+   "latency_s": 0.766812,
+   "server_s": 0.76835,
+   "native": {
+    "family": "dronecats",
+    "ok": true,
+    "action": {
+     "action": "think"
+    },
+    "reason": null,
+    "plan": null,
+    "clamped": [],
+    "unknown_keys": [],
+    "text": "{\"action\": \"think\"}",
+    "command": "go to the red car",
+    "history": "  step 1 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 2 of 5: THINK  [done, 1.0s]\n  step 3 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 4 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 5 of 5: ROTATE angle=-90deg  [in progress]  <- latest",
+    "history_reset": null,
+    "camera_aux": "{\"width\": 224, \"height\": 224, \"fx\": 112.0, \"fy\": 112.0}",
+    "image": {
+     "src_size": [
+      224,
+      224
+     ],
+     "model_size": [
+      224,
+      224
+     ],
+     "resized": false
+    },
+    "ignored": {
+     "phrase": "straight ahead ",
+     "hint_source": "detector",
+     "down_jpg": "sent, ignored (bottom_tile 'none')"
+    }
+   },
+   "mapping": {
+    "rule": "dronecats_go_rotate/1",
+    "kind": "think",
+    "requested": {
+     "fwd_m": 0.0,
+     "down_m": 0.0,
+     "dpsi_rad": 0.0
+    },
+    "clipped": [],
+    "bins": [
+     0,
+     49,
+     49
+    ],
+    "flown": {
+     "fwd_m": 0.0,
+     "down_m": 0.0,
+     "dpsi_rad": 0.0
+    },
+    "land": false,
+    "quantize": "nearest bin, round((v - lo) / (hi - lo) * 98), after clipping to the codec's range; the client decodes the bin's lower edge, so the flown step is within half a bin of the requested one",
+    "geometry": null,
+    "camera": {
+     "camera": "FrontCamera",
+     "hfov_deg": 90.0,
+     "pitch_deg": -20.0
+    },
+    "executor": {
+     "name": "paper",
+     "step_cap_m": 3.0,
+     "near_m": 5.0,
+     "near_scale": 0.6,
+     "stop_m": 2.0,
+     "hold_frac": 0.15
+    }
+   }
+  },
+  {
+   "frame": "absent_+00.png",
+   "rtt_s": 17.278309551009443,
+   "ok": true,
+   "error": null,
+   "kind": "rotate",
+   "raw_text": "00 49 00</s>",
+   "parse_ok": true,
+   "latency_s": 17.27491,
+   "server_s": 17.276458,
+   "native": {
+    "family": "dronecats",
+    "ok": true,
+    "action": {
+     "action": "rotate",
+     "angle_deg": -90
+    },
+    "reason": null,
+    "plan": {
+     "target_in_view": "no",
+     "target_match": "unsure",
+     "closing_in": "unknown",
+     "current_frame": "(1) Nothing in this view is a candidate for the red car - there is no object here whose colour and kind I could read as the target.\n(2) The command asks for the red car, and what I can see does not match those words, so the target is not in this frame.\n(3) What I do see is a wide city street with buildings and road, and none of it occupies the place the target should.",
+     "action_planning": "(1) Can't tell - my last actions were only rotations and a think, so there is no earlier approach to compare against.\n(2) I ROTATE left in place by -90 deg to keep searching: GO is wrong because there is nothing here that matches the command to fly toward, and FINISHED is wrong because I have not even seen the target yet. I rotate left in place to keep searching for the red car.\n(3) If this rotation works, the next view should bring the red car into frame, or at least a part of the scene I have not searched yet."
+    },
+    "clamped": [],
+    "unknown_keys": [],
+    "text": "{\"target_in_view\": \"no\", \"target_match\": \"unsure\", \"closing_in\": \"unknown\", \"current_frame\": \"(1) Nothing in this view is a candidate for the red car - there is no object here whose colour and kind I could read as the target.\\n(2) The command asks for the red car, and what I can see does not match those words, so the target is not in this frame.\\n(3) What I do see is a wide city street with buildings and road, and none of it occupies the place the target should.\", \"action_planning\": \"(1) Can't tell - my last actions were only rotations and a think, so there is no earlier approach to compare against.\\n(2) I ROTATE left in place by -90 deg to keep searching: GO is wrong because there is nothing here that matches the command to fly toward, and FINISHED is wrong because I have not even seen the target yet. I rotate left in place to keep searching for the red car.\\n(3) If this rotation works, the next view should bring the red car into frame, or at least a part of the scene I have not searched yet.\", \"action\": \"rotate\", \"angle_deg\": -90}",
+    "command": "go to the red car",
+    "history": "  step 1 of 5: THINK  [done, 1.0s]\n  step 2 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 3 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 4 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 5 of 5: THINK  [in progress]  <- latest",
+    "history_reset": null,
+    "camera_aux": "{\"width\": 224, \"height\": 224, \"fx\": 112.0, \"fy\": 112.0}",
+    "image": {
+     "src_size": [
+      224,
+      224
+     ],
+     "model_size": [
+      224,
+      224
+     ],
+     "resized": false
+    },
+    "ignored": {
+     "phrase": "straight ahead ",
+     "hint_source": "detector",
+     "down_jpg": "sent, ignored (bottom_tile 'none')"
+    }
+   },
+   "mapping": {
+    "rule": "dronecats_go_rotate/1",
+    "kind": "rotate",
+    "requested": {
+     "fwd_m": 0.0,
+     "down_m": 0.0,
+     "dpsi_rad": -1.5707963267948966
+    },
+    "clipped": [
+     "dpsi_rad"
+    ],
+    "bins": [
+     0,
+     49,
+     0
+    ],
+    "flown": {
+     "fwd_m": 0.0,
+     "down_m": 0.0,
+     "dpsi_rad": -1.1
+    },
+    "land": false,
+    "quantize": "nearest bin, round((v - lo) / (hi - lo) * 98), after clipping to the codec's range; the client decodes the bin's lower edge, so the flown step is within half a bin of the requested one",
+    "geometry": {
+     "angle_deg": -90
+    },
+    "camera": {
+     "camera": "FrontCamera",
+     "hfov_deg": 90.0,
+     "pitch_deg": -20.0
+    },
+    "executor": {
+     "name": "paper",
+     "step_cap_m": 3.0,
+     "near_m": 5.0,
+     "near_scale": 0.6,
+     "stop_m": 2.0,
+     "hold_frac": 0.15
+    }
+   }
+  },
+  {
+   "frame": "present_+00.png",
+   "rtt_s": 1.361206341010984,
+   "ok": true,
+   "error": null,
+   "kind": "rotate",
+   "raw_text": "00 49 00</s>",
+   "parse_ok": true,
+   "latency_s": 1.357899,
+   "server_s": 1.359459,
+   "native": {
+    "family": "dronecats",
+    "ok": true,
+    "action": {
+     "action": "rotate",
+     "angle_deg": -90
+    },
+    "reason": null,
+    "plan": null,
+    "clamped": [],
+    "unknown_keys": [],
+    "text": "{\"action\": \"rotate\", \"angle_deg\": -90}",
+    "command": "go to the red car",
+    "history": "  step 1 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 2 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 3 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 4 of 5: THINK  [done, 1.0s]\n  step 5 of 5: ROTATE angle=-90deg  [in progress]  <- latest",
+    "history_reset": null,
+    "camera_aux": "{\"width\": 224, \"height\": 224, \"fx\": 112.0, \"fy\": 112.0}",
+    "image": {
+     "src_size": [
+      224,
+      224
+     ],
+     "model_size": [
+      224,
+      224
+     ],
+     "resized": false
+    },
+    "ignored": {
+     "phrase": "straight ahead ",
+     "hint_source": "detector",
+     "down_jpg": "sent, ignored (bottom_tile 'none')"
+    }
+   },
+   "mapping": {
+    "rule": "dronecats_go_rotate/1",
+    "kind": "rotate",
+    "requested": {
+     "fwd_m": 0.0,
+     "down_m": 0.0,
+     "dpsi_rad": -1.5707963267948966
+    },
+    "clipped": [
+     "dpsi_rad"
+    ],
+    "bins": [
+     0,
+     49,
+     0
+    ],
+    "flown": {
+     "fwd_m": 0.0,
+     "down_m": 0.0,
+     "dpsi_rad": -1.1
+    },
+    "land": false,
+    "quantize": "nearest bin, round((v - lo) / (hi - lo) * 98), after clipping to the codec's range; the client decodes the bin's lower edge, so the flown step is within half a bin of the requested one",
+    "geometry": {
+     "angle_deg": -90
+    },
+    "camera": {
+     "camera": "FrontCamera",
+     "hfov_deg": 90.0,
+     "pitch_deg": -20.0
+    },
+    "executor": {
+     "name": "paper",
+     "step_cap_m": 3.0,
+     "near_m": 5.0,
+     "near_scale": 0.6,
+     "stop_m": 2.0,
+     "hold_frac": 0.15
+    }
+   }
+  },
+  {
+   "frame": "absent_+00.png",
+   "rtt_s": 1.3417148370062932,
+   "ok": true,
+   "error": null,
+   "kind": "rotate",
+   "raw_text": "00 49 00</s>",
+   "parse_ok": true,
+   "latency_s": 1.338551,
+   "server_s": 1.340142,
+   "native": {
+    "family": "dronecats",
+    "ok": true,
+    "action": {
+     "action": "rotate",
+     "angle_deg": -90
+    },
+    "reason": null,
+    "plan": null,
+    "clamped": [],
+    "unknown_keys": [],
+    "text": "{\"action\": \"rotate\", \"angle_deg\": -90}",
+    "command": "go to the red car",
+    "history": "  step 1 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 2 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 3 of 5: THINK  [done, 1.0s]\n  step 4 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 5 of 5: ROTATE angle=-90deg  [in progress]  <- latest",
+    "history_reset": null,
+    "camera_aux": "{\"width\": 224, \"height\": 224, \"fx\": 112.0, \"fy\": 112.0}",
+    "image": {
+     "src_size": [
+      224,
+      224
+     ],
+     "model_size": [
+      224,
+      224
+     ],
+     "resized": false
+    },
+    "ignored": {
+     "phrase": "straight ahead ",
+     "hint_source": "detector",
+     "down_jpg": "sent, ignored (bottom_tile 'none')"
+    }
+   },
+   "mapping": {
+    "rule": "dronecats_go_rotate/1",
+    "kind": "rotate",
+    "requested": {
+     "fwd_m": 0.0,
+     "down_m": 0.0,
+     "dpsi_rad": -1.5707963267948966
+    },
+    "clipped": [
+     "dpsi_rad"
+    ],
+    "bins": [
+     0,
+     49,
+     0
+    ],
+    "flown": {
+     "fwd_m": 0.0,
+     "down_m": 0.0,
+     "dpsi_rad": -1.1
+    },
+    "land": false,
+    "quantize": "nearest bin, round((v - lo) / (hi - lo) * 98), after clipping to the codec's range; the client decodes the bin's lower edge, so the flown step is within half a bin of the requested one",
+    "geometry": {
+     "angle_deg": -90
+    },
+    "camera": {
+     "camera": "FrontCamera",
+     "hfov_deg": 90.0,
+     "pitch_deg": -20.0
+    },
+    "executor": {
+     "name": "paper",
+     "step_cap_m": 3.0,
+     "near_m": 5.0,
+     "near_scale": 0.6,
+     "stop_m": 2.0,
+     "hold_frac": 0.15
+    }
+   }
+  },
+  {
+   "frame": "present_+00.png",
+   "rtt_s": 0.7633570680045523,
+   "ok": true,
+   "error": null,
+   "kind": "think",
+   "raw_text": "00 49 49</s>",
+   "parse_ok": true,
+   "latency_s": 0.760146,
+   "server_s": 0.761697,
+   "native": {
+    "family": "dronecats",
+    "ok": true,
+    "action": {
+     "action": "think"
+    },
+    "reason": null,
+    "plan": null,
+    "clamped": [],
+    "unknown_keys": [],
+    "text": "{\"action\": \"think\"}",
+    "command": "go to the red car",
+    "history": "  step 1 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 2 of 5: THINK  [done, 1.0s]\n  step 3 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 4 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 5 of 5: ROTATE angle=-90deg  [in progress]  <- latest",
+    "history_reset": null,
+    "camera_aux": "{\"width\": 224, \"height\": 224, \"fx\": 112.0, \"fy\": 112.0}",
+    "image": {
+     "src_size": [
+      224,
+      224
+     ],
+     "model_size": [
+      224,
+      224
+     ],
+     "resized": false
+    },
+    "ignored": {
+     "phrase": "straight ahead ",
+     "hint_source": "detector",
+     "down_jpg": "sent, ignored (bottom_tile 'none')"
+    }
+   },
+   "mapping": {
+    "rule": "dronecats_go_rotate/1",
+    "kind": "think",
+    "requested": {
+     "fwd_m": 0.0,
+     "down_m": 0.0,
+     "dpsi_rad": 0.0
+    },
+    "clipped": [],
+    "bins": [
+     0,
+     49,
+     49
+    ],
+    "flown": {
+     "fwd_m": 0.0,
+     "down_m": 0.0,
+     "dpsi_rad": 0.0
+    },
+    "land": false,
+    "quantize": "nearest bin, round((v - lo) / (hi - lo) * 98), after clipping to the codec's range; the client decodes the bin's lower edge, so the flown step is within half a bin of the requested one",
+    "geometry": null,
+    "camera": {
+     "camera": "FrontCamera",
+     "hfov_deg": 90.0,
+     "pitch_deg": -20.0
+    },
+    "executor": {
+     "name": "paper",
+     "step_cap_m": 3.0,
+     "near_m": 5.0,
+     "near_scale": 0.6,
+     "stop_m": 2.0,
+     "hold_frac": 0.15
+    }
+   }
+  },
+  {
+   "frame": "absent_+00.png",
+   "rtt_s": 17.27920350700151,
+   "ok": true,
+   "error": null,
+   "kind": "rotate",
+   "raw_text": "00 49 00</s>",
+   "parse_ok": true,
+   "latency_s": 17.275813,
+   "server_s": 17.277376,
+   "native": {
+    "family": "dronecats",
+    "ok": true,
+    "action": {
+     "action": "rotate",
+     "angle_deg": -90
+    },
+    "reason": null,
+    "plan": {
+     "target_in_view": "no",
+     "target_match": "unsure",
+     "closing_in": "unknown",
+     "current_frame": "(1) Nothing in this view is a candidate for the red car - there is no object here whose colour and kind I could read as the target.\n(2) The command asks for the red car, and what I can see does not match those words, so the target is not in this frame.\n(3) What I do see is a wide city street with buildings and road, and none of it occupies the place the target should.",
+     "action_planning": "(1) Can't tell - my last actions were only rotations and a think, so there is no earlier approach to compare against.\n(2) I ROTATE left in place by -90 deg to keep searching: GO is wrong because there is nothing here that matches the command to fly toward, and FINISHED is wrong because I have not even seen the target yet. I rotate left in place to keep searching for the red car.\n(3) If this rotation works, the next view should bring the red car into frame, or at least a part of the scene I have not searched yet."
+    },
+    "clamped": [],
+    "unknown_keys": [],
+    "text": "{\"target_in_view\": \"no\", \"target_match\": \"unsure\", \"closing_in\": \"unknown\", \"current_frame\": \"(1) Nothing in this view is a candidate for the red car - there is no object here whose colour and kind I could read as the target.\\n(2) The command asks for the red car, and what I can see does not match those words, so the target is not in this frame.\\n(3) What I do see is a wide city street with buildings and road, and none of it occupies the place the target should.\", \"action_planning\": \"(1) Can't tell - my last actions were only rotations and a think, so there is no earlier approach to compare against.\\n(2) I ROTATE left in place by -90 deg to keep searching: GO is wrong because there is nothing here that matches the command to fly toward, and FINISHED is wrong because I have not even seen the target yet. I rotate left in place to keep searching for the red car.\\n(3) If this rotation works, the next view should bring the red car into frame, or at least a part of the scene I have not searched yet.\", \"action\": \"rotate\", \"angle_deg\": -90}",
+    "command": "go to the red car",
+    "history": "  step 1 of 5: THINK  [done, 1.0s]\n  step 2 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 3 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 4 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 5 of 5: THINK  [in progress]  <- latest",
+    "history_reset": null,
+    "camera_aux": "{\"width\": 224, \"height\": 224, \"fx\": 112.0, \"fy\": 112.0}",
+    "image": {
+     "src_size": [
+      224,
+      224
+     ],
+     "model_size": [
+      224,
+      224
+     ],
+     "resized": false
+    },
+    "ignored": {
+     "phrase": "straight ahead ",
+     "hint_source": "detector",
+     "down_jpg": "sent, ignored (bottom_tile 'none')"
+    }
+   },
+   "mapping": {
+    "rule": "dronecats_go_rotate/1",
+    "kind": "rotate",
+    "requested": {
+     "fwd_m": 0.0,
+     "down_m": 0.0,
+     "dpsi_rad": -1.5707963267948966
+    },
+    "clipped": [
+     "dpsi_rad"
+    ],
+    "bins": [
+     0,
+     49,
+     0
+    ],
+    "flown": {
+     "fwd_m": 0.0,
+     "down_m": 0.0,
+     "dpsi_rad": -1.1
+    },
+    "land": false,
+    "quantize": "nearest bin, round((v - lo) / (hi - lo) * 98), after clipping to the codec's range; the client decodes the bin's lower edge, so the flown step is within half a bin of the requested one",
+    "geometry": {
+     "angle_deg": -90
+    },
+    "camera": {
+     "camera": "FrontCamera",
+     "hfov_deg": 90.0,
+     "pitch_deg": -20.0
+    },
+    "executor": {
+     "name": "paper",
+     "step_cap_m": 3.0,
+     "near_m": 5.0,
+     "near_scale": 0.6,
+     "stop_m": 2.0,
+     "hold_frac": 0.15
+    }
+   }
+  },
+  {
+   "frame": "present_+00.png",
+   "rtt_s": 1.338551972003188,
+   "ok": true,
+   "error": null,
+   "kind": "rotate",
+   "raw_text": "00 49 00</s>",
+   "parse_ok": true,
+   "latency_s": 1.335252,
+   "server_s": 1.336809,
+   "native": {
+    "family": "dronecats",
+    "ok": true,
+    "action": {
+     "action": "rotate",
+     "angle_deg": -90
+    },
+    "reason": null,
+    "plan": null,
+    "clamped": [],
+    "unknown_keys": [],
+    "text": "{\"action\": \"rotate\", \"angle_deg\": -90}",
+    "command": "go to the red car",
+    "history": "  step 1 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 2 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 3 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 4 of 5: THINK  [done, 1.0s]\n  step 5 of 5: ROTATE angle=-90deg  [in progress]  <- latest",
+    "history_reset": null,
+    "camera_aux": "{\"width\": 224, \"height\": 224, \"fx\": 112.0, \"fy\": 112.0}",
+    "image": {
+     "src_size": [
+      224,
+      224
+     ],
+     "model_size": [
+      224,
+      224
+     ],
+     "resized": false
+    },
+    "ignored": {
+     "phrase": "straight ahead ",
+     "hint_source": "detector",
+     "down_jpg": "sent, ignored (bottom_tile 'none')"
+    }
+   },
+   "mapping": {
+    "rule": "dronecats_go_rotate/1",
+    "kind": "rotate",
+    "requested": {
+     "fwd_m": 0.0,
+     "down_m": 0.0,
+     "dpsi_rad": -1.5707963267948966
+    },
+    "clipped": [
+     "dpsi_rad"
+    ],
+    "bins": [
+     0,
+     49,
+     0
+    ],
+    "flown": {
+     "fwd_m": 0.0,
+     "down_m": 0.0,
+     "dpsi_rad": -1.1
+    },
+    "land": false,
+    "quantize": "nearest bin, round((v - lo) / (hi - lo) * 98), after clipping to the codec's range; the client decodes the bin's lower edge, so the flown step is within half a bin of the requested one",
+    "geometry": {
+     "angle_deg": -90
+    },
+    "camera": {
+     "camera": "FrontCamera",
+     "hfov_deg": 90.0,
+     "pitch_deg": -20.0
+    },
+    "executor": {
+     "name": "paper",
+     "step_cap_m": 3.0,
+     "near_m": 5.0,
+     "near_scale": 0.6,
+     "stop_m": 2.0,
+     "hold_frac": 0.15
+    }
+   }
+  },
+  {
+   "frame": "absent_+00.png",
+   "rtt_s": 1.3381325770169497,
+   "ok": true,
+   "error": null,
+   "kind": "rotate",
+   "raw_text": "00 49 00</s>",
+   "parse_ok": true,
+   "latency_s": 1.334856,
+   "server_s": 1.336411,
+   "native": {
+    "family": "dronecats",
+    "ok": true,
+    "action": {
+     "action": "rotate",
+     "angle_deg": -90
+    },
+    "reason": null,
+    "plan": null,
+    "clamped": [],
+    "unknown_keys": [],
+    "text": "{\"action\": \"rotate\", \"angle_deg\": -90}",
+    "command": "go to the red car",
+    "history": "  step 1 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 2 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 3 of 5: THINK  [done, 1.0s]\n  step 4 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 5 of 5: ROTATE angle=-90deg  [in progress]  <- latest",
+    "history_reset": null,
+    "camera_aux": "{\"width\": 224, \"height\": 224, \"fx\": 112.0, \"fy\": 112.0}",
+    "image": {
+     "src_size": [
+      224,
+      224
+     ],
+     "model_size": [
+      224,
+      224
+     ],
+     "resized": false
+    },
+    "ignored": {
+     "phrase": "straight ahead ",
+     "hint_source": "detector",
+     "down_jpg": "sent, ignored (bottom_tile 'none')"
+    }
+   },
+   "mapping": {
+    "rule": "dronecats_go_rotate/1",
+    "kind": "rotate",
+    "requested": {
+     "fwd_m": 0.0,
+     "down_m": 0.0,
+     "dpsi_rad": -1.5707963267948966
+    },
+    "clipped": [
+     "dpsi_rad"
+    ],
+    "bins": [
+     0,
+     49,
+     0
+    ],
+    "flown": {
+     "fwd_m": 0.0,
+     "down_m": 0.0,
+     "dpsi_rad": -1.1
+    },
+    "land": false,
+    "quantize": "nearest bin, round((v - lo) / (hi - lo) * 98), after clipping to the codec's range; the client decodes the bin's lower edge, so the flown step is within half a bin of the requested one",
+    "geometry": {
+     "angle_deg": -90
+    },
+    "camera": {
+     "camera": "FrontCamera",
+     "hfov_deg": 90.0,
+     "pitch_deg": -20.0
+    },
+    "executor": {
+     "name": "paper",
+     "step_cap_m": 3.0,
+     "near_m": 5.0,
+     "near_scale": 0.6,
+     "stop_m": 2.0,
+     "hold_frac": 0.15
+    }
+   }
+  },
+  {
+   "frame": "present_+00.png",
+   "rtt_s": 0.7718522840295918,
+   "ok": true,
+   "error": null,
+   "kind": "think",
+   "raw_text": "00 49 49</s>",
+   "parse_ok": true,
+   "latency_s": 0.768748,
+   "server_s": 0.770281,
+   "native": {
+    "family": "dronecats",
+    "ok": true,
+    "action": {
+     "action": "think"
+    },
+    "reason": null,
+    "plan": null,
+    "clamped": [],
+    "unknown_keys": [],
+    "text": "{\"action\": \"think\"}",
+    "command": "go to the red car",
+    "history": "  step 1 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 2 of 5: THINK  [done, 1.0s]\n  step 3 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 4 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 5 of 5: ROTATE angle=-90deg  [in progress]  <- latest",
+    "history_reset": null,
+    "camera_aux": "{\"width\": 224, \"height\": 224, \"fx\": 112.0, \"fy\": 112.0}",
+    "image": {
+     "src_size": [
+      224,
+      224
+     ],
+     "model_size": [
+      224,
+      224
+     ],
+     "resized": false
+    },
+    "ignored": {
+     "phrase": "straight ahead ",
+     "hint_source": "detector",
+     "down_jpg": "sent, ignored (bottom_tile 'none')"
+    }
+   },
+   "mapping": {
+    "rule": "dronecats_go_rotate/1",
+    "kind": "think",
+    "requested": {
+     "fwd_m": 0.0,
+     "down_m": 0.0,
+     "dpsi_rad": 0.0
+    },
+    "clipped": [],
+    "bins": [
+     0,
+     49,
+     49
+    ],
+    "flown": {
+     "fwd_m": 0.0,
+     "down_m": 0.0,
+     "dpsi_rad": 0.0
+    },
+    "land": false,
+    "quantize": "nearest bin, round((v - lo) / (hi - lo) * 98), after clipping to the codec's range; the client decodes the bin's lower edge, so the flown step is within half a bin of the requested one",
+    "geometry": null,
+    "camera": {
+     "camera": "FrontCamera",
+     "hfov_deg": 90.0,
+     "pitch_deg": -20.0
+    },
+    "executor": {
+     "name": "paper",
+     "step_cap_m": 3.0,
+     "near_m": 5.0,
+     "near_scale": 0.6,
+     "stop_m": 2.0,
+     "hold_frac": 0.15
+    }
+   }
+  },
+  {
+   "frame": "absent_+00.png",
+   "rtt_s": 17.276685828983318,
+   "ok": true,
+   "error": null,
+   "kind": "rotate",
+   "raw_text": "00 49 00</s>",
+   "parse_ok": true,
+   "latency_s": 17.27345,
+   "server_s": 17.274988,
+   "native": {
+    "family": "dronecats",
+    "ok": true,
+    "action": {
+     "action": "rotate",
+     "angle_deg": -90
+    },
+    "reason": null,
+    "plan": {
+     "target_in_view": "no",
+     "target_match": "unsure",
+     "closing_in": "unknown",
+     "current_frame": "(1) Nothing in this view is a candidate for the red car - there is no object here whose colour and kind I could read as the target.\n(2) The command asks for the red car, and what I can see does not match those words, so the target is not in this frame.\n(3) What I do see is a wide city street with buildings and road, and none of it occupies the place the target should.",
+     "action_planning": "(1) Can't tell - my last actions were only rotations and a think, so there is no earlier approach to compare against.\n(2) I ROTATE left in place by -90 deg to keep searching: GO is wrong because there is nothing here that matches the command to fly toward, and FINISHED is wrong because I have not even seen the target yet. I rotate left in place to keep searching for the red car.\n(3) If this rotation works, the next view should bring the red car into frame, or at least a part of the scene I have not searched yet."
+    },
+    "clamped": [],
+    "unknown_keys": [],
+    "text": "{\"target_in_view\": \"no\", \"target_match\": \"unsure\", \"closing_in\": \"unknown\", \"current_frame\": \"(1) Nothing in this view is a candidate for the red car - there is no object here whose colour and kind I could read as the target.\\n(2) The command asks for the red car, and what I can see does not match those words, so the target is not in this frame.\\n(3) What I do see is a wide city street with buildings and road, and none of it occupies the place the target should.\", \"action_planning\": \"(1) Can't tell - my last actions were only rotations and a think, so there is no earlier approach to compare against.\\n(2) I ROTATE left in place by -90 deg to keep searching: GO is wrong because there is nothing here that matches the command to fly toward, and FINISHED is wrong because I have not even seen the target yet. I rotate left in place to keep searching for the red car.\\n(3) If this rotation works, the next view should bring the red car into frame, or at least a part of the scene I have not searched yet.\", \"action\": \"rotate\", \"angle_deg\": -90}",
+    "command": "go to the red car",
+    "history": "  step 1 of 5: THINK  [done, 1.0s]\n  step 2 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 3 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 4 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 5 of 5: THINK  [in progress]  <- latest",
+    "history_reset": null,
+    "camera_aux": "{\"width\": 224, \"height\": 224, \"fx\": 112.0, \"fy\": 112.0}",
+    "image": {
+     "src_size": [
+      224,
+      224
+     ],
+     "model_size": [
+      224,
+      224
+     ],
+     "resized": false
+    },
+    "ignored": {
+     "phrase": "straight ahead ",
+     "hint_source": "detector",
+     "down_jpg": "sent, ignored (bottom_tile 'none')"
+    }
+   },
+   "mapping": {
+    "rule": "dronecats_go_rotate/1",
+    "kind": "rotate",
+    "requested": {
+     "fwd_m": 0.0,
+     "down_m": 0.0,
+     "dpsi_rad": -1.5707963267948966
+    },
+    "clipped": [
+     "dpsi_rad"
+    ],
+    "bins": [
+     0,
+     49,
+     0
+    ],
+    "flown": {
+     "fwd_m": 0.0,
+     "down_m": 0.0,
+     "dpsi_rad": -1.1
+    },
+    "land": false,
+    "quantize": "nearest bin, round((v - lo) / (hi - lo) * 98), after clipping to the codec's range; the client decodes the bin's lower edge, so the flown step is within half a bin of the requested one",
+    "geometry": {
+     "angle_deg": -90
+    },
+    "camera": {
+     "camera": "FrontCamera",
+     "hfov_deg": 90.0,
+     "pitch_deg": -20.0
+    },
+    "executor": {
+     "name": "paper",
+     "step_cap_m": 3.0,
+     "near_m": 5.0,
+     "near_scale": 0.6,
+     "stop_m": 2.0,
+     "hold_frac": 0.15
+    }
+   }
+  },
+  {
+   "frame": "present_+00.png",
+   "rtt_s": 1.348355068010278,
+   "ok": true,
+   "error": null,
+   "kind": "rotate",
+   "raw_text": "00 49 00</s>",
+   "parse_ok": true,
+   "latency_s": 1.345115,
+   "server_s": 1.34671,
+   "native": {
+    "family": "dronecats",
+    "ok": true,
+    "action": {
+     "action": "rotate",
+     "angle_deg": -90
+    },
+    "reason": null,
+    "plan": null,
+    "clamped": [],
+    "unknown_keys": [],
+    "text": "{\"action\": \"rotate\", \"angle_deg\": -90}",
+    "command": "go to the red car",
+    "history": "  step 1 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 2 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 3 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 4 of 5: THINK  [done, 1.0s]\n  step 5 of 5: ROTATE angle=-90deg  [in progress]  <- latest",
+    "history_reset": null,
+    "camera_aux": "{\"width\": 224, \"height\": 224, \"fx\": 112.0, \"fy\": 112.0}",
+    "image": {
+     "src_size": [
+      224,
+      224
+     ],
+     "model_size": [
+      224,
+      224
+     ],
+     "resized": false
+    },
+    "ignored": {
+     "phrase": "straight ahead ",
+     "hint_source": "detector",
+     "down_jpg": "sent, ignored (bottom_tile 'none')"
+    }
+   },
+   "mapping": {
+    "rule": "dronecats_go_rotate/1",
+    "kind": "rotate",
+    "requested": {
+     "fwd_m": 0.0,
+     "down_m": 0.0,
+     "dpsi_rad": -1.5707963267948966
+    },
+    "clipped": [
+     "dpsi_rad"
+    ],
+    "bins": [
+     0,
+     49,
+     0
+    ],
+    "flown": {
+     "fwd_m": 0.0,
+     "down_m": 0.0,
+     "dpsi_rad": -1.1
+    },
+    "land": false,
+    "quantize": "nearest bin, round((v - lo) / (hi - lo) * 98), after clipping to the codec's range; the client decodes the bin's lower edge, so the flown step is within half a bin of the requested one",
+    "geometry": {
+     "angle_deg": -90
+    },
+    "camera": {
+     "camera": "FrontCamera",
+     "hfov_deg": 90.0,
+     "pitch_deg": -20.0
+    },
+    "executor": {
+     "name": "paper",
+     "step_cap_m": 3.0,
+     "near_m": 5.0,
+     "near_scale": 0.6,
+     "stop_m": 2.0,
+     "hold_frac": 0.15
+    }
+   }
+  },
+  {
+   "frame": "absent_+00.png",
+   "rtt_s": 1.3443995249690488,
+   "ok": true,
+   "error": null,
+   "kind": "rotate",
+   "raw_text": "00 49 00</s>",
+   "parse_ok": true,
+   "latency_s": 1.341177,
+   "server_s": 1.342768,
+   "native": {
+    "family": "dronecats",
+    "ok": true,
+    "action": {
+     "action": "rotate",
+     "angle_deg": -90
+    },
+    "reason": null,
+    "plan": null,
+    "clamped": [],
+    "unknown_keys": [],
+    "text": "{\"action\": \"rotate\", \"angle_deg\": -90}",
+    "command": "go to the red car",
+    "history": "  step 1 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 2 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 3 of 5: THINK  [done, 1.0s]\n  step 4 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 5 of 5: ROTATE angle=-90deg  [in progress]  <- latest",
+    "history_reset": null,
+    "camera_aux": "{\"width\": 224, \"height\": 224, \"fx\": 112.0, \"fy\": 112.0}",
+    "image": {
+     "src_size": [
+      224,
+      224
+     ],
+     "model_size": [
+      224,
+      224
+     ],
+     "resized": false
+    },
+    "ignored": {
+     "phrase": "straight ahead ",
+     "hint_source": "detector",
+     "down_jpg": "sent, ignored (bottom_tile 'none')"
+    }
+   },
+   "mapping": {
+    "rule": "dronecats_go_rotate/1",
+    "kind": "rotate",
+    "requested": {
+     "fwd_m": 0.0,
+     "down_m": 0.0,
+     "dpsi_rad": -1.5707963267948966
+    },
+    "clipped": [
+     "dpsi_rad"
+    ],
+    "bins": [
+     0,
+     49,
+     0
+    ],
+    "flown": {
+     "fwd_m": 0.0,
+     "down_m": 0.0,
+     "dpsi_rad": -1.1
+    },
+    "land": false,
+    "quantize": "nearest bin, round((v - lo) / (hi - lo) * 98), after clipping to the codec's range; the client decodes the bin's lower edge, so the flown step is within half a bin of the requested one",
+    "geometry": {
+     "angle_deg": -90
+    },
+    "camera": {
+     "camera": "FrontCamera",
+     "hfov_deg": 90.0,
+     "pitch_deg": -20.0
+    },
+    "executor": {
+     "name": "paper",
+     "step_cap_m": 3.0,
+     "near_m": 5.0,
+     "near_scale": 0.6,
+     "stop_m": 2.0,
+     "hold_frac": 0.15
+    }
+   }
+  },
+  {
+   "frame": "present_+00.png",
+   "rtt_s": 0.7699592170538381,
+   "ok": true,
+   "error": null,
+   "kind": "think",
+   "raw_text": "00 49 49</s>",
+   "parse_ok": true,
+   "latency_s": 0.766896,
+   "server_s": 0.768427,
+   "native": {
+    "family": "dronecats",
+    "ok": true,
+    "action": {
+     "action": "think"
+    },
+    "reason": null,
+    "plan": null,
+    "clamped": [],
+    "unknown_keys": [],
+    "text": "{\"action\": \"think\"}",
+    "command": "go to the red car",
+    "history": "  step 1 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 2 of 5: THINK  [done, 1.0s]\n  step 3 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 4 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 5 of 5: ROTATE angle=-90deg  [in progress]  <- latest",
+    "history_reset": null,
+    "camera_aux": "{\"width\": 224, \"height\": 224, \"fx\": 112.0, \"fy\": 112.0}",
+    "image": {
+     "src_size": [
+      224,
+      224
+     ],
+     "model_size": [
+      224,
+      224
+     ],
+     "resized": false
+    },
+    "ignored": {
+     "phrase": "straight ahead ",
+     "hint_source": "detector",
+     "down_jpg": "sent, ignored (bottom_tile 'none')"
+    }
+   },
+   "mapping": {
+    "rule": "dronecats_go_rotate/1",
+    "kind": "think",
+    "requested": {
+     "fwd_m": 0.0,
+     "down_m": 0.0,
+     "dpsi_rad": 0.0
+    },
+    "clipped": [],
+    "bins": [
+     0,
+     49,
+     49
+    ],
+    "flown": {
+     "fwd_m": 0.0,
+     "down_m": 0.0,
+     "dpsi_rad": 0.0
+    },
+    "land": false,
+    "quantize": "nearest bin, round((v - lo) / (hi - lo) * 98), after clipping to the codec's range; the client decodes the bin's lower edge, so the flown step is within half a bin of the requested one",
+    "geometry": null,
+    "camera": {
+     "camera": "FrontCamera",
+     "hfov_deg": 90.0,
+     "pitch_deg": -20.0
+    },
+    "executor": {
+     "name": "paper",
+     "step_cap_m": 3.0,
+     "near_m": 5.0,
+     "near_scale": 0.6,
+     "stop_m": 2.0,
+     "hold_frac": 0.15
+    }
+   }
+  },
+  {
+   "frame": "absent_+00.png",
+   "rtt_s": 17.401576238975395,
+   "ok": true,
+   "error": null,
+   "kind": "rotate",
+   "raw_text": "00 49 00</s>",
+   "parse_ok": true,
+   "latency_s": 17.398382,
+   "server_s": 17.399929,
+   "native": {
+    "family": "dronecats",
+    "ok": true,
+    "action": {
+     "action": "rotate",
+     "angle_deg": -90
+    },
+    "reason": null,
+    "plan": {
+     "target_in_view": "no",
+     "target_match": "unsure",
+     "closing_in": "unknown",
+     "current_frame": "(1) Nothing in this view is a candidate for the red car - there is no object here whose colour and kind I could read as the target.\n(2) The command asks for the red car, and what I can see does not match those words, so the target is not in this frame.\n(3) What I do see is a wide city street with buildings and road, and none of it occupies the place the target should.",
+     "action_planning": "(1) Can't tell - my last actions were only rotations and a think, so there is no earlier approach to compare against.\n(2) I ROTATE left in place by -90 deg to keep searching: GO is wrong because there is nothing here that matches the command to fly toward, and FINISHED is wrong because I have not even seen the target yet. I rotate left in place to keep searching for the red car.\n(3) If this rotation works, the next view should bring the red car into frame, or at least a part of the scene I have not searched yet."
+    },
+    "clamped": [],
+    "unknown_keys": [],
+    "text": "{\"target_in_view\": \"no\", \"target_match\": \"unsure\", \"closing_in\": \"unknown\", \"current_frame\": \"(1) Nothing in this view is a candidate for the red car - there is no object here whose colour and kind I could read as the target.\\n(2) The command asks for the red car, and what I can see does not match those words, so the target is not in this frame.\\n(3) What I do see is a wide city street with buildings and road, and none of it occupies the place the target should.\", \"action_planning\": \"(1) Can't tell - my last actions were only rotations and a think, so there is no earlier approach to compare against.\\n(2) I ROTATE left in place by -90 deg to keep searching: GO is wrong because there is nothing here that matches the command to fly toward, and FINISHED is wrong because I have not even seen the target yet. I rotate left in place to keep searching for the red car.\\n(3) If this rotation works, the next view should bring the red car into frame, or at least a part of the scene I have not searched yet.\", \"action\": \"rotate\", \"angle_deg\": -90}",
+    "command": "go to the red car",
+    "history": "  step 1 of 5: THINK  [done, 1.0s]\n  step 2 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 3 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 4 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 5 of 5: THINK  [in progress]  <- latest",
+    "history_reset": null,
+    "camera_aux": "{\"width\": 224, \"height\": 224, \"fx\": 112.0, \"fy\": 112.0}",
+    "image": {
+     "src_size": [
+      224,
+      224
+     ],
+     "model_size": [
+      224,
+      224
+     ],
+     "resized": false
+    },
+    "ignored": {
+     "phrase": "straight ahead ",
+     "hint_source": "detector",
+     "down_jpg": "sent, ignored (bottom_tile 'none')"
+    }
+   },
+   "mapping": {
+    "rule": "dronecats_go_rotate/1",
+    "kind": "rotate",
+    "requested": {
+     "fwd_m": 0.0,
+     "down_m": 0.0,
+     "dpsi_rad": -1.5707963267948966
+    },
+    "clipped": [
+     "dpsi_rad"
+    ],
+    "bins": [
+     0,
+     49,
+     0
+    ],
+    "flown": {
+     "fwd_m": 0.0,
+     "down_m": 0.0,
+     "dpsi_rad": -1.1
+    },
+    "land": false,
+    "quantize": "nearest bin, round((v - lo) / (hi - lo) * 98), after clipping to the codec's range; the client decodes the bin's lower edge, so the flown step is within half a bin of the requested one",
+    "geometry": {
+     "angle_deg": -90
+    },
+    "camera": {
+     "camera": "FrontCamera",
+     "hfov_deg": 90.0,
+     "pitch_deg": -20.0
+    },
+    "executor": {
+     "name": "paper",
+     "step_cap_m": 3.0,
+     "near_m": 5.0,
+     "near_scale": 0.6,
+     "stop_m": 2.0,
+     "hold_frac": 0.15
+    }
+   }
+  },
+  {
+   "frame": "present_+00.png",
+   "rtt_s": 1.3484268439933658,
+   "ok": true,
+   "error": null,
+   "kind": "rotate",
+   "raw_text": "00 49 00</s>",
+   "parse_ok": true,
+   "latency_s": 1.34531,
+   "server_s": 1.346864,
+   "native": {
+    "family": "dronecats",
+    "ok": true,
+    "action": {
+     "action": "rotate",
+     "angle_deg": -90
+    },
+    "reason": null,
+    "plan": null,
+    "clamped": [],
+    "unknown_keys": [],
+    "text": "{\"action\": \"rotate\", \"angle_deg\": -90}",
+    "command": "go to the red car",
+    "history": "  step 1 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 2 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 3 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 4 of 5: THINK  [done, 1.0s]\n  step 5 of 5: ROTATE angle=-90deg  [in progress]  <- latest",
+    "history_reset": null,
+    "camera_aux": "{\"width\": 224, \"height\": 224, \"fx\": 112.0, \"fy\": 112.0}",
+    "image": {
+     "src_size": [
+      224,
+      224
+     ],
+     "model_size": [
+      224,
+      224
+     ],
+     "resized": false
+    },
+    "ignored": {
+     "phrase": "straight ahead ",
+     "hint_source": "detector",
+     "down_jpg": "sent, ignored (bottom_tile 'none')"
+    }
+   },
+   "mapping": {
+    "rule": "dronecats_go_rotate/1",
+    "kind": "rotate",
+    "requested": {
+     "fwd_m": 0.0,
+     "down_m": 0.0,
+     "dpsi_rad": -1.5707963267948966
+    },
+    "clipped": [
+     "dpsi_rad"
+    ],
+    "bins": [
+     0,
+     49,
+     0
+    ],
+    "flown": {
+     "fwd_m": 0.0,
+     "down_m": 0.0,
+     "dpsi_rad": -1.1
+    },
+    "land": false,
+    "quantize": "nearest bin, round((v - lo) / (hi - lo) * 98), after clipping to the codec's range; the client decodes the bin's lower edge, so the flown step is within half a bin of the requested one",
+    "geometry": {
+     "angle_deg": -90
+    },
+    "camera": {
+     "camera": "FrontCamera",
+     "hfov_deg": 90.0,
+     "pitch_deg": -20.0
+    },
+    "executor": {
+     "name": "paper",
+     "step_cap_m": 3.0,
+     "near_m": 5.0,
+     "near_scale": 0.6,
+     "stop_m": 2.0,
+     "hold_frac": 0.15
+    }
+   }
+  },
+  {
+   "frame": "absent_+00.png",
+   "rtt_s": 1.3478083770023659,
+   "ok": true,
+   "error": null,
+   "kind": "rotate",
+   "raw_text": "00 49 00</s>",
+   "parse_ok": true,
+   "latency_s": 1.344686,
+   "server_s": 1.346235,
+   "native": {
+    "family": "dronecats",
+    "ok": true,
+    "action": {
+     "action": "rotate",
+     "angle_deg": -90
+    },
+    "reason": null,
+    "plan": null,
+    "clamped": [],
+    "unknown_keys": [],
+    "text": "{\"action\": \"rotate\", \"angle_deg\": -90}",
+    "command": "go to the red car",
+    "history": "  step 1 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 2 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 3 of 5: THINK  [done, 1.0s]\n  step 4 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 5 of 5: ROTATE angle=-90deg  [in progress]  <- latest",
+    "history_reset": null,
+    "camera_aux": "{\"width\": 224, \"height\": 224, \"fx\": 112.0, \"fy\": 112.0}",
+    "image": {
+     "src_size": [
+      224,
+      224
+     ],
+     "model_size": [
+      224,
+      224
+     ],
+     "resized": false
+    },
+    "ignored": {
+     "phrase": "straight ahead ",
+     "hint_source": "detector",
+     "down_jpg": "sent, ignored (bottom_tile 'none')"
+    }
+   },
+   "mapping": {
+    "rule": "dronecats_go_rotate/1",
+    "kind": "rotate",
+    "requested": {
+     "fwd_m": 0.0,
+     "down_m": 0.0,
+     "dpsi_rad": -1.5707963267948966
+    },
+    "clipped": [
+     "dpsi_rad"
+    ],
+    "bins": [
+     0,
+     49,
+     0
+    ],
+    "flown": {
+     "fwd_m": 0.0,
+     "down_m": 0.0,
+     "dpsi_rad": -1.1
+    },
+    "land": false,
+    "quantize": "nearest bin, round((v - lo) / (hi - lo) * 98), after clipping to the codec's range; the client decodes the bin's lower edge, so the flown step is within half a bin of the requested one",
+    "geometry": {
+     "angle_deg": -90
+    },
+    "camera": {
+     "camera": "FrontCamera",
+     "hfov_deg": 90.0,
+     "pitch_deg": -20.0
+    },
+    "executor": {
+     "name": "paper",
+     "step_cap_m": 3.0,
+     "near_m": 5.0,
+     "near_scale": 0.6,
+     "stop_m": 2.0,
+     "hold_frac": 0.15
+    }
+   }
+  },
+  {
+   "frame": "present_+00.png",
+   "rtt_s": 0.770418836036697,
+   "ok": true,
+   "error": null,
+   "kind": "think",
+   "raw_text": "00 49 49</s>",
+   "parse_ok": true,
+   "latency_s": 0.767317,
+   "server_s": 0.768858,
+   "native": {
+    "family": "dronecats",
+    "ok": true,
+    "action": {
+     "action": "think"
+    },
+    "reason": null,
+    "plan": null,
+    "clamped": [],
+    "unknown_keys": [],
+    "text": "{\"action\": \"think\"}",
+    "command": "go to the red car",
+    "history": "  step 1 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 2 of 5: THINK  [done, 1.0s]\n  step 3 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 4 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 5 of 5: ROTATE angle=-90deg  [in progress]  <- latest",
+    "history_reset": null,
+    "camera_aux": "{\"width\": 224, \"height\": 224, \"fx\": 112.0, \"fy\": 112.0}",
+    "image": {
+     "src_size": [
+      224,
+      224
+     ],
+     "model_size": [
+      224,
+      224
+     ],
+     "resized": false
+    },
+    "ignored": {
+     "phrase": "straight ahead ",
+     "hint_source": "detector",
+     "down_jpg": "sent, ignored (bottom_tile 'none')"
+    }
+   },
+   "mapping": {
+    "rule": "dronecats_go_rotate/1",
+    "kind": "think",
+    "requested": {
+     "fwd_m": 0.0,
+     "down_m": 0.0,
+     "dpsi_rad": 0.0
+    },
+    "clipped": [],
+    "bins": [
+     0,
+     49,
+     49
+    ],
+    "flown": {
+     "fwd_m": 0.0,
+     "down_m": 0.0,
+     "dpsi_rad": 0.0
+    },
+    "land": false,
+    "quantize": "nearest bin, round((v - lo) / (hi - lo) * 98), after clipping to the codec's range; the client decodes the bin's lower edge, so the flown step is within half a bin of the requested one",
+    "geometry": null,
+    "camera": {
+     "camera": "FrontCamera",
+     "hfov_deg": 90.0,
+     "pitch_deg": -20.0
+    },
+    "executor": {
+     "name": "paper",
+     "step_cap_m": 3.0,
+     "near_m": 5.0,
+     "near_scale": 0.6,
+     "stop_m": 2.0,
+     "hold_frac": 0.15
+    }
+   }
+  },
+  {
+   "frame": "absent_+00.png",
+   "rtt_s": 17.587050482979976,
+   "ok": true,
+   "error": null,
+   "kind": "rotate",
+   "raw_text": "00 49 00</s>",
+   "parse_ok": true,
+   "latency_s": 17.583646,
+   "server_s": 17.585192,
+   "native": {
+    "family": "dronecats",
+    "ok": true,
+    "action": {
+     "action": "rotate",
+     "angle_deg": -90
+    },
+    "reason": null,
+    "plan": {
+     "target_in_view": "no",
+     "target_match": "unsure",
+     "closing_in": "unknown",
+     "current_frame": "(1) Nothing in this view is a candidate for the red car - there is no object here whose colour and kind I could read as the target.\n(2) The command asks for the red car, and what I can see does not match those words, so the target is not in this frame.\n(3) What I do see is a wide city street with buildings and road, and none of it occupies the place the target should.",
+     "action_planning": "(1) Can't tell - my last actions were only rotations and a think, so there is no earlier approach to compare against.\n(2) I ROTATE left in place by -90 deg to keep searching: GO is wrong because there is nothing here that matches the command to fly toward, and FINISHED is wrong because I have not even seen the target yet. I rotate left in place to keep searching for the red car.\n(3) If this rotation works, the next view should bring the red car into frame, or at least a part of the scene I have not searched yet."
+    },
+    "clamped": [],
+    "unknown_keys": [],
+    "text": "{\"target_in_view\": \"no\", \"target_match\": \"unsure\", \"closing_in\": \"unknown\", \"current_frame\": \"(1) Nothing in this view is a candidate for the red car - there is no object here whose colour and kind I could read as the target.\\n(2) The command asks for the red car, and what I can see does not match those words, so the target is not in this frame.\\n(3) What I do see is a wide city street with buildings and road, and none of it occupies the place the target should.\", \"action_planning\": \"(1) Can't tell - my last actions were only rotations and a think, so there is no earlier approach to compare against.\\n(2) I ROTATE left in place by -90 deg to keep searching: GO is wrong because there is nothing here that matches the command to fly toward, and FINISHED is wrong because I have not even seen the target yet. I rotate left in place to keep searching for the red car.\\n(3) If this rotation works, the next view should bring the red car into frame, or at least a part of the scene I have not searched yet.\", \"action\": \"rotate\", \"angle_deg\": -90}",
+    "command": "go to the red car",
+    "history": "  step 1 of 5: THINK  [done, 1.0s]\n  step 2 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 3 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 4 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 5 of 5: THINK  [in progress]  <- latest",
+    "history_reset": null,
+    "camera_aux": "{\"width\": 224, \"height\": 224, \"fx\": 112.0, \"fy\": 112.0}",
+    "image": {
+     "src_size": [
+      224,
+      224
+     ],
+     "model_size": [
+      224,
+      224
+     ],
+     "resized": false
+    },
+    "ignored": {
+     "phrase": "straight ahead ",
+     "hint_source": "detector",
+     "down_jpg": "sent, ignored (bottom_tile 'none')"
+    }
+   },
+   "mapping": {
+    "rule": "dronecats_go_rotate/1",
+    "kind": "rotate",
+    "requested": {
+     "fwd_m": 0.0,
+     "down_m": 0.0,
+     "dpsi_rad": -1.5707963267948966
+    },
+    "clipped": [
+     "dpsi_rad"
+    ],
+    "bins": [
+     0,
+     49,
+     0
+    ],
+    "flown": {
+     "fwd_m": 0.0,
+     "down_m": 0.0,
+     "dpsi_rad": -1.1
+    },
+    "land": false,
+    "quantize": "nearest bin, round((v - lo) / (hi - lo) * 98), after clipping to the codec's range; the client decodes the bin's lower edge, so the flown step is within half a bin of the requested one",
+    "geometry": {
+     "angle_deg": -90
+    },
+    "camera": {
+     "camera": "FrontCamera",
+     "hfov_deg": 90.0,
+     "pitch_deg": -20.0
+    },
+    "executor": {
+     "name": "paper",
+     "step_cap_m": 3.0,
+     "near_m": 5.0,
+     "near_scale": 0.6,
+     "stop_m": 2.0,
+     "hold_frac": 0.15
+    }
+   }
+  },
+  {
+   "frame": "present_+00.png",
+   "rtt_s": 1.3492660169722512,
+   "ok": true,
+   "error": null,
+   "kind": "rotate",
+   "raw_text": "00 49 00</s>",
+   "parse_ok": true,
+   "latency_s": 1.346013,
+   "server_s": 1.3476,
+   "native": {
+    "family": "dronecats",
+    "ok": true,
+    "action": {
+     "action": "rotate",
+     "angle_deg": -90
+    },
+    "reason": null,
+    "plan": null,
+    "clamped": [],
+    "unknown_keys": [],
+    "text": "{\"action\": \"rotate\", \"angle_deg\": -90}",
+    "command": "go to the red car",
+    "history": "  step 1 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 2 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 3 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 4 of 5: THINK  [done, 1.0s]\n  step 5 of 5: ROTATE angle=-90deg  [in progress]  <- latest",
+    "history_reset": null,
+    "camera_aux": "{\"width\": 224, \"height\": 224, \"fx\": 112.0, \"fy\": 112.0}",
+    "image": {
+     "src_size": [
+      224,
+      224
+     ],
+     "model_size": [
+      224,
+      224
+     ],
+     "resized": false
+    },
+    "ignored": {
+     "phrase": "straight ahead ",
+     "hint_source": "detector",
+     "down_jpg": "sent, ignored (bottom_tile 'none')"
+    }
+   },
+   "mapping": {
+    "rule": "dronecats_go_rotate/1",
+    "kind": "rotate",
+    "requested": {
+     "fwd_m": 0.0,
+     "down_m": 0.0,
+     "dpsi_rad": -1.5707963267948966
+    },
+    "clipped": [
+     "dpsi_rad"
+    ],
+    "bins": [
+     0,
+     49,
+     0
+    ],
+    "flown": {
+     "fwd_m": 0.0,
+     "down_m": 0.0,
+     "dpsi_rad": -1.1
+    },
+    "land": false,
+    "quantize": "nearest bin, round((v - lo) / (hi - lo) * 98), after clipping to the codec's range; the client decodes the bin's lower edge, so the flown step is within half a bin of the requested one",
+    "geometry": {
+     "angle_deg": -90
+    },
+    "camera": {
+     "camera": "FrontCamera",
+     "hfov_deg": 90.0,
+     "pitch_deg": -20.0
+    },
+    "executor": {
+     "name": "paper",
+     "step_cap_m": 3.0,
+     "near_m": 5.0,
+     "near_scale": 0.6,
+     "stop_m": 2.0,
+     "hold_frac": 0.15
+    }
+   }
+  },
+  {
+   "frame": "absent_+00.png",
+   "rtt_s": 1.3509008099790663,
+   "ok": true,
+   "error": null,
+   "kind": "rotate",
+   "raw_text": "00 49 00</s>",
+   "parse_ok": true,
+   "latency_s": 1.347698,
+   "server_s": 1.349282,
+   "native": {
+    "family": "dronecats",
+    "ok": true,
+    "action": {
+     "action": "rotate",
+     "angle_deg": -90
+    },
+    "reason": null,
+    "plan": null,
+    "clamped": [],
+    "unknown_keys": [],
+    "text": "{\"action\": \"rotate\", \"angle_deg\": -90}",
+    "command": "go to the red car",
+    "history": "  step 1 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 2 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 3 of 5: THINK  [done, 1.0s]\n  step 4 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 5 of 5: ROTATE angle=-90deg  [in progress]  <- latest",
+    "history_reset": null,
+    "camera_aux": "{\"width\": 224, \"height\": 224, \"fx\": 112.0, \"fy\": 112.0}",
+    "image": {
+     "src_size": [
+      224,
+      224
+     ],
+     "model_size": [
+      224,
+      224
+     ],
+     "resized": false
+    },
+    "ignored": {
+     "phrase": "straight ahead ",
+     "hint_source": "detector",
+     "down_jpg": "sent, ignored (bottom_tile 'none')"
+    }
+   },
+   "mapping": {
+    "rule": "dronecats_go_rotate/1",
+    "kind": "rotate",
+    "requested": {
+     "fwd_m": 0.0,
+     "down_m": 0.0,
+     "dpsi_rad": -1.5707963267948966
+    },
+    "clipped": [
+     "dpsi_rad"
+    ],
+    "bins": [
+     0,
+     49,
+     0
+    ],
+    "flown": {
+     "fwd_m": 0.0,
+     "down_m": 0.0,
+     "dpsi_rad": -1.1
+    },
+    "land": false,
+    "quantize": "nearest bin, round((v - lo) / (hi - lo) * 98), after clipping to the codec's range; the client decodes the bin's lower edge, so the flown step is within half a bin of the requested one",
+    "geometry": {
+     "angle_deg": -90
+    },
+    "camera": {
+     "camera": "FrontCamera",
+     "hfov_deg": 90.0,
+     "pitch_deg": -20.0
+    },
+    "executor": {
+     "name": "paper",
+     "step_cap_m": 3.0,
+     "near_m": 5.0,
+     "near_scale": 0.6,
+     "stop_m": 2.0,
+     "hold_frac": 0.15
+    }
+   }
+  },
+  {
+   "frame": "present_+00.png",
+   "rtt_s": 0.7775475480011664,
+   "ok": true,
+   "error": null,
+   "kind": "think",
+   "raw_text": "00 49 49</s>",
+   "parse_ok": true,
+   "latency_s": 0.7744,
+   "server_s": 0.775956,
+   "native": {
+    "family": "dronecats",
+    "ok": true,
+    "action": {
+     "action": "think"
+    },
+    "reason": null,
+    "plan": null,
+    "clamped": [],
+    "unknown_keys": [],
+    "text": "{\"action\": \"think\"}",
+    "command": "go to the red car",
+    "history": "  step 1 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 2 of 5: THINK  [done, 1.0s]\n  step 3 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 4 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 5 of 5: ROTATE angle=-90deg  [in progress]  <- latest",
+    "history_reset": null,
+    "camera_aux": "{\"width\": 224, \"height\": 224, \"fx\": 112.0, \"fy\": 112.0}",
+    "image": {
+     "src_size": [
+      224,
+      224
+     ],
+     "model_size": [
+      224,
+      224
+     ],
+     "resized": false
+    },
+    "ignored": {
+     "phrase": "straight ahead ",
+     "hint_source": "detector",
+     "down_jpg": "sent, ignored (bottom_tile 'none')"
+    }
+   },
+   "mapping": {
+    "rule": "dronecats_go_rotate/1",
+    "kind": "think",
+    "requested": {
+     "fwd_m": 0.0,
+     "down_m": 0.0,
+     "dpsi_rad": 0.0
+    },
+    "clipped": [],
+    "bins": [
+     0,
+     49,
+     49
+    ],
+    "flown": {
+     "fwd_m": 0.0,
+     "down_m": 0.0,
+     "dpsi_rad": 0.0
+    },
+    "land": false,
+    "quantize": "nearest bin, round((v - lo) / (hi - lo) * 98), after clipping to the codec's range; the client decodes the bin's lower edge, so the flown step is within half a bin of the requested one",
+    "geometry": null,
+    "camera": {
+     "camera": "FrontCamera",
+     "hfov_deg": 90.0,
+     "pitch_deg": -20.0
+    },
+    "executor": {
+     "name": "paper",
+     "step_cap_m": 3.0,
+     "near_m": 5.0,
+     "near_scale": 0.6,
+     "stop_m": 2.0,
+     "hold_frac": 0.15
+    }
+   }
+  },
+  {
+   "frame": "absent_+00.png",
+   "rtt_s": 17.52905146300327,
+   "ok": true,
+   "error": null,
+   "kind": "rotate",
+   "raw_text": "00 49 00</s>",
+   "parse_ok": true,
+   "latency_s": 17.525854,
+   "server_s": 17.52743,
+   "native": {
+    "family": "dronecats",
+    "ok": true,
+    "action": {
+     "action": "rotate",
+     "angle_deg": -90
+    },
+    "reason": null,
+    "plan": {
+     "target_in_view": "no",
+     "target_match": "unsure",
+     "closing_in": "unknown",
+     "current_frame": "(1) Nothing in this view is a candidate for the red car - there is no object here whose colour and kind I could read as the target.\n(2) The command asks for the red car, and what I can see does not match those words, so the target is not in this frame.\n(3) What I do see is a wide city street with buildings and road, and none of it occupies the place the target should.",
+     "action_planning": "(1) Can't tell - my last actions were only rotations and a think, so there is no earlier approach to compare against.\n(2) I ROTATE left in place by -90 deg to keep searching: GO is wrong because there is nothing here that matches the command to fly toward, and FINISHED is wrong because I have not even seen the target yet. I rotate left in place to keep searching for the red car.\n(3) If this rotation works, the next view should bring the red car into frame, or at least a part of the scene I have not searched yet."
+    },
+    "clamped": [],
+    "unknown_keys": [],
+    "text": "{\"target_in_view\": \"no\", \"target_match\": \"unsure\", \"closing_in\": \"unknown\", \"current_frame\": \"(1) Nothing in this view is a candidate for the red car - there is no object here whose colour and kind I could read as the target.\\n(2) The command asks for the red car, and what I can see does not match those words, so the target is not in this frame.\\n(3) What I do see is a wide city street with buildings and road, and none of it occupies the place the target should.\", \"action_planning\": \"(1) Can't tell - my last actions were only rotations and a think, so there is no earlier approach to compare against.\\n(2) I ROTATE left in place by -90 deg to keep searching: GO is wrong because there is nothing here that matches the command to fly toward, and FINISHED is wrong because I have not even seen the target yet. I rotate left in place to keep searching for the red car.\\n(3) If this rotation works, the next view should bring the red car into frame, or at least a part of the scene I have not searched yet.\", \"action\": \"rotate\", \"angle_deg\": -90}",
+    "command": "go to the red car",
+    "history": "  step 1 of 5: THINK  [done, 1.0s]\n  step 2 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 3 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 4 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 5 of 5: THINK  [in progress]  <- latest",
+    "history_reset": null,
+    "camera_aux": "{\"width\": 224, \"height\": 224, \"fx\": 112.0, \"fy\": 112.0}",
+    "image": {
+     "src_size": [
+      224,
+      224
+     ],
+     "model_size": [
+      224,
+      224
+     ],
+     "resized": false
+    },
+    "ignored": {
+     "phrase": "straight ahead ",
+     "hint_source": "detector",
+     "down_jpg": "sent, ignored (bottom_tile 'none')"
+    }
+   },
+   "mapping": {
+    "rule": "dronecats_go_rotate/1",
+    "kind": "rotate",
+    "requested": {
+     "fwd_m": 0.0,
+     "down_m": 0.0,
+     "dpsi_rad": -1.5707963267948966
+    },
+    "clipped": [
+     "dpsi_rad"
+    ],
+    "bins": [
+     0,
+     49,
+     0
+    ],
+    "flown": {
+     "fwd_m": 0.0,
+     "down_m": 0.0,
+     "dpsi_rad": -1.1
+    },
+    "land": false,
+    "quantize": "nearest bin, round((v - lo) / (hi - lo) * 98), after clipping to the codec's range; the client decodes the bin's lower edge, so the flown step is within half a bin of the requested one",
+    "geometry": {
+     "angle_deg": -90
+    },
+    "camera": {
+     "camera": "FrontCamera",
+     "hfov_deg": 90.0,
+     "pitch_deg": -20.0
+    },
+    "executor": {
+     "name": "paper",
+     "step_cap_m": 3.0,
+     "near_m": 5.0,
+     "near_scale": 0.6,
+     "stop_m": 2.0,
+     "hold_frac": 0.15
+    }
+   }
+  },
+  {
+   "frame": "present_+00.png",
+   "rtt_s": 1.3611496689845808,
+   "ok": true,
+   "error": null,
+   "kind": "rotate",
+   "raw_text": "00 49 00</s>",
+   "parse_ok": true,
+   "latency_s": 1.358049,
+   "server_s": 1.359593,
+   "native": {
+    "family": "dronecats",
+    "ok": true,
+    "action": {
+     "action": "rotate",
+     "angle_deg": -90
+    },
+    "reason": null,
+    "plan": null,
+    "clamped": [],
+    "unknown_keys": [],
+    "text": "{\"action\": \"rotate\", \"angle_deg\": -90}",
+    "command": "go to the red car",
+    "history": "  step 1 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 2 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 3 of 5: ROTATE angle=-90deg  [done, 1.0s]\n  step 4 of 5: THINK  [done, 1.0s]\n  step 5 of 5: ROTATE angle=-90deg  [in progress]  <- latest",
+    "history_reset": null,
+    "camera_aux": "{\"width\": 224, \"height\": 224, \"fx\": 112.0, \"fy\": 112.0}",
+    "image": {
+     "src_size": [
+      224,
+      224
+     ],
+     "model_size": [
+      224,
+      224
+     ],
+     "resized": false
+    },
+    "ignored": {
+     "phrase": "straight ahead ",
+     "hint_source": "detector",
+     "down_jpg": "sent, ignored (bottom_tile 'none')"
+    }
+   },
+   "mapping": {
+    "rule": "dronecats_go_rotate/1",
+    "kind": "rotate",
+    "requested": {
+     "fwd_m": 0.0,
+     "down_m": 0.0,
+     "dpsi_rad": -1.5707963267948966
+    },
+    "clipped": [
+     "dpsi_rad"
+    ],
+    "bins": [
+     0,
+     49,
+     0
+    ],
+    "flown": {
+     "fwd_m": 0.0,
+     "down_m": 0.0,
+     "dpsi_rad": -1.1
+    },
+    "land": false,
+    "quantize": "nearest bin, round((v - lo) / (hi - lo) * 98), after clipping to the codec's range; the client decodes the bin's lower edge, so the flown step is within half a bin of the requested one",
+    "geometry": {
+     "angle_deg": -90
+    },
+    "camera": {
+     "camera": "FrontCamera",
+     "hfov_deg": 90.0,
+     "pitch_deg": -20.0
+    },
+    "executor": {
+     "name": "paper",
+     "step_cap_m": 3.0,
+     "near_m": 5.0,
+     "near_scale": 0.6,
+     "stop_m": 2.0,
+     "hold_frac": 0.15
+    }
+   }
+  }
+ ],
+ "command": "python tools/bench_foreign_vla.py --server 127.0.0.1:8791 --n 50 --warmup 5 --out deploy/evidence/incoming/hil/dronecats_2b_bench_agx.json --shutdown"
+}

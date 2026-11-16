@@ -1,0 +1,6477 @@
+{
+ "_what": "Each run's ticks, trajectory and KPI table rebuilt from its rosbag2 alone (tools/replay_from_bag.py) and compared with its flight log, trajectory.json and kpi.json. Not a re-flight and not a bit-for-bit replay: the Shield and the FSM are not run again.",
+ "_command": "python tools/replay_from_bag.py --campaign demo/out/hil_ntFIN2 --campaign demo/out/hil_ntFIN2s --out docs/data/replay_from_bag_ntFIN2",
+ "_seconds": 283.7,
+ "reader": "rosbags 0.10.11",
+ "scope": {
+  "campaigns": [
+   {
+    "campaign": "demo/out/hil_ntFIN2",
+    "runs_accepted": 580
+   },
+   {
+    "campaign": "demo/out/hil_ntFIN2s",
+    "runs_accepted": 11
+   }
+  ],
+  "runs_named": 0,
+  "limit": null,
+  "runs": 591,
+  "what": "every run 2 campaign(s) accepted"
+ },
+ "runs": 591,
+ "verdicts": {
+  "identical": 571,
+  "differs": 2,
+  "incomplete": 18
+ },
+ "layers": {
+  "ticks": {
+   "identical": 571,
+   "differs": 2,
+   "incomplete": 18
+  },
+  "trajectory": {
+   "identical": 591
+  },
+  "kpi": {
+   "identical": 590,
+   "differs": 1
+  },
+  "manifest_in_the_bag": {
+   "absent": 591
+  }
+ },
+ "totals": {
+  "ticks": 285707,
+  "ticks_evidenced_by_the_bag": 260663,
+  "ticks_past_bag_end": 25045,
+  "runs_whose_end_is_not_in_the_bag": 116,
+  "pose_points": 285707,
+  "pose_exact": 282383,
+  "pose_neighbour": 3324,
+  "pose_differs": 0,
+  "rows_the_bag_marks_no_tick_for": 0
+ },
+ "kpi_fields": {
+  "ticks": {
+   "source": "bag + flight_log.jsonl on 116 of 591 run(s): 25045 tick(s) after the Shield's last message, which the bag does not show the node ticked on, are counted from the log",
+   "equal": 590,
+   "differs": 1,
+   "not_on_this_run": 0,
+   "not_compared": 0,
+   "runs_with_ticks_from_the_log": 116,
+   "ticks_from_the_log": 25045
+  },
+  "shield_ticks": {
+   "source": "bag",
+   "equal": 591,
+   "differs": 0,
+   "not_on_this_run": 0,
+   "not_compared": 0,
+   "inferred": "who flew each tick (the Shield or the autopilot) is INFERRED from the published setpoint and the intercept (classify()); no topic carries it"
+  },
+  "autopilot_ticks": {
+   "source": "bag + flight_log.jsonl on 116 of 591 run(s): 25045 tick(s) after the Shield's last message, which the bag does not show the node ticked on, are counted from the log",
+   "equal": 590,
+   "differs": 1,
+   "not_on_this_run": 0,
+   "not_compared": 0,
+   "runs_with_ticks_from_the_log": 116,
+   "ticks_from_the_log": 25045,
+   "inferred": "who flew each tick (the Shield or the autopilot) is INFERRED from the published setpoint and the intercept (classify()); no topic carries it"
+  },
+  "repair_count": {
+   "source": "bag",
+   "equal": 588,
+   "differs": 0,
+   "not_on_this_run": 3,
+   "not_compared": 0
+  },
+  "repairs_per_episode": {
+   "source": "bag",
+   "equal": 588,
+   "differs": 0,
+   "not_on_this_run": 3,
+   "not_compared": 0
+  },
+  "repaired_ticks": {
+   "source": "bag",
+   "equal": 327,
+   "differs": 0,
+   "not_on_this_run": 264,
+   "not_compared": 0
+  },
+  "mean_repair_magnitude_mps": {
+   "source": "bag",
+   "equal": 327,
+   "differs": 0,
+   "not_on_this_run": 264,
+   "not_compared": 0
+  },
+  "max_repair_magnitude_mps": {
+   "source": "bag",
+   "equal": 327,
+   "differs": 0,
+   "not_on_this_run": 264,
+   "not_compared": 0
+  },
+  "mean_yaw_repair_dps": {
+   "source": "bag",
+   "equal": 327,
+   "differs": 0,
+   "not_on_this_run": 264,
+   "not_compared": 0
+  },
+  "mean_intervention_s": {
+   "source": "bag",
+   "equal": 587,
+   "differs": 1,
+   "not_on_this_run": 3,
+   "not_compared": 0
+  },
+  "max_intervention_s": {
+   "source": "bag",
+   "equal": 587,
+   "differs": 1,
+   "not_on_this_run": 3,
+   "not_compared": 0
+  },
+  "intervention_episodes": {
+   "source": "bag",
+   "equal": 587,
+   "differs": 1,
+   "not_on_this_run": 3,
+   "not_compared": 0
+  },
+  "intervention_censored": {
+   "source": "bag",
+   "equal": 587,
+   "differs": 1,
+   "not_on_this_run": 3,
+   "not_compared": 0
+  },
+  "p0_violation_ticks": {
+   "source": "bag + policy_g<N>.json (rule priorities)",
+   "equal": 588,
+   "differs": 0,
+   "not_on_this_run": 3,
+   "not_compared": 0
+  },
+  "failsafe_expected_ticks": {
+   "source": "bag + policy_g<N>.json (rule priorities)",
+   "equal": 588,
+   "differs": 0,
+   "not_on_this_run": 3,
+   "not_compared": 0
+  },
+  "failsafe_permitted_ticks": {
+   "source": "bag + policy_g<N>.json (rule priorities)",
+   "equal": 588,
+   "differs": 0,
+   "not_on_this_run": 3,
+   "not_compared": 0
+  },
+  "violation_free_ticks": {
+   "source": "bag + policy_g<N>.json (rule priorities)",
+   "equal": 588,
+   "differs": 0,
+   "not_on_this_run": 3,
+   "not_compared": 0
+  },
+  "violations_by_risk_level": {
+   "source": "bag + policy_g<N>.json (rule priorities)",
+   "equal": 588,
+   "differs": 0,
+   "not_on_this_run": 3,
+   "not_compared": 0
+  },
+  "outcome": {
+   "source": "not from the bag",
+   "equal": 0,
+   "differs": 0,
+   "not_on_this_run": 0,
+   "not_compared": 591,
+   "why": "decided from metrics.json (zone dwell, the goal, the FSM's summary) and the rows' `unsafe`, none of which a topic carries"
+  },
+  "p0_violation_escape_rate": {
+   "source": "not from the bag",
+   "equal": 0,
+   "differs": 0,
+   "not_on_this_run": 0,
+   "not_compared": 591,
+   "why": "the Shield's re-check of the action it flew (emitted_violations) is on no topic; it needs the rules and the Shield (WP4-11's replay)"
+  },
+  "p0_violation_escape_rate_status": {
+   "source": "not from the bag",
+   "equal": 0,
+   "differs": 0,
+   "not_on_this_run": 0,
+   "not_compared": 591,
+   "why": "the Shield's re-check of the action it flew (emitted_violations) is on no topic; it needs the rules and the Shield (WP4-11's replay)"
+  },
+  "p0_escapes": {
+   "source": "not from the bag",
+   "equal": 0,
+   "differs": 0,
+   "not_on_this_run": 0,
+   "not_compared": 591,
+   "why": "the Shield's re-check of the action it flew (emitted_violations) is on no topic; it needs the rules and the Shield (WP4-11's replay)"
+  },
+  "p0_ticks_not_measurable": {
+   "source": "not from the bag",
+   "equal": 0,
+   "differs": 0,
+   "not_on_this_run": 0,
+   "not_compared": 591,
+   "why": "the Shield's re-check of the action it flew (emitted_violations) is on no topic; it needs the rules and the Shield (WP4-11's replay)"
+  },
+  "p0_ticks_blind": {
+   "source": "not from the bag",
+   "equal": 0,
+   "differs": 0,
+   "not_on_this_run": 0,
+   "not_compared": 591,
+   "why": "the rows' `off_map` flag is on no topic"
+  },
+  "collision_contacts": {
+   "source": "not from the bag",
+   "equal": 0,
+   "differs": 0,
+   "not_on_this_run": 0,
+   "not_compared": 591,
+   "why": "the simulator's contact reports are not recorded in the bag"
+  },
+  "collision_objects": {
+   "source": "not from the bag",
+   "equal": 0,
+   "differs": 0,
+   "not_on_this_run": 0,
+   "not_compared": 591,
+   "why": "the simulator's contact reports are not recorded in the bag"
+  },
+  "p0_acted_tick_share": {
+   "source": "not from the bag",
+   "equal": 0,
+   "differs": 0,
+   "not_on_this_run": 0,
+   "not_compared": 591,
+   "why": "the Shield's re-check of the action it flew (emitted_violations) is on no topic; it needs the rules and the Shield (WP4-11's replay)"
+  },
+  "failsafe_trigger_correctness": {
+   "source": "not from the bag",
+   "equal": 0,
+   "differs": 0,
+   "not_on_this_run": 0,
+   "not_compared": 591,
+   "why": "the Shield's re-check of the action it flew (emitted_violations) is on no topic; it needs the rules and the Shield (WP4-11's replay)"
+  },
+  "failsafe_correct_ticks": {
+   "source": "not from the bag",
+   "equal": 0,
+   "differs": 0,
+   "not_on_this_run": 0,
+   "not_compared": 591,
+   "why": "the Shield's re-check of the action it flew (emitted_violations) is on no topic; it needs the rules and the Shield (WP4-11's replay)"
+  },
+  "false_trigger_ticks": {
+   "source": "not from the bag",
+   "equal": 0,
+   "differs": 0,
+   "not_on_this_run": 0,
+   "not_compared": 591,
+   "why": "the FSM's state on a tick the Shield did not touch is on no topic"
+  },
+  "false_trigger_rate": {
+   "source": "not from the bag",
+   "equal": 0,
+   "differs": 0,
+   "not_on_this_run": 0,
+   "not_compared": 591,
+   "why": "the FSM's state on a tick the Shield did not touch is on no topic"
+  },
+  "repair_success_rate": {
+   "source": "not from the bag",
+   "equal": 0,
+   "differs": 0,
+   "not_on_this_run": 0,
+   "not_compared": 591,
+   "why": "each repair's size in metres and the re-check are on no topic (/shield/intercept carries operator names only)"
+  },
+  "repair_success_status": {
+   "source": "not from the bag",
+   "equal": 0,
+   "differs": 0,
+   "not_on_this_run": 0,
+   "not_compared": 591,
+   "why": "each repair's size in metres and the re-check are on no topic (/shield/intercept carries operator names only)"
+  },
+  "repair_attempt_ticks": {
+   "source": "not from the bag",
+   "equal": 0,
+   "differs": 0,
+   "not_on_this_run": 0,
+   "not_compared": 591,
+   "why": "each repair's size in metres and the re-check are on no topic (/shield/intercept carries operator names only)"
+  },
+  "repair_success_ticks": {
+   "source": "not from the bag",
+   "equal": 0,
+   "differs": 0,
+   "not_on_this_run": 0,
+   "not_compared": 591,
+   "why": "each repair's size in metres and the re-check are on no topic (/shield/intercept carries operator names only)"
+  },
+  "repair_unmeasured_ticks": {
+   "source": "not from the bag",
+   "equal": 0,
+   "differs": 0,
+   "not_on_this_run": 0,
+   "not_compared": 591,
+   "why": "each repair's size in metres and the re-check are on no topic (/shield/intercept carries operator names only)"
+  },
+  "repair_outcomes": {
+   "source": "not from the bag",
+   "equal": 0,
+   "differs": 0,
+   "not_on_this_run": 0,
+   "not_compared": 591,
+   "why": "each repair's size in metres and the re-check are on no topic (/shield/intercept carries operator names only)"
+  },
+  "repair_not_applied_ticks": {
+   "source": "not from the bag",
+   "equal": 0,
+   "differs": 0,
+   "not_on_this_run": 0,
+   "not_compared": 591,
+   "why": "each repair's size in metres and the re-check are on no topic (/shield/intercept carries operator names only)"
+  },
+  "repair_not_applied_autopilot_ticks": {
+   "source": "not from the bag",
+   "equal": 0,
+   "differs": 0,
+   "not_on_this_run": 0,
+   "not_compared": 591,
+   "why": "each repair's size in metres and the re-check are on no topic (/shield/intercept carries operator names only)"
+  },
+  "repair_floored_ticks": {
+   "source": "not from the bag",
+   "equal": 0,
+   "differs": 0,
+   "not_on_this_run": 0,
+   "not_compared": 591,
+   "why": "each repair's size in metres and the re-check are on no topic (/shield/intercept carries operator names only)"
+  },
+  "repairs_to_standstill": {
+   "source": "not from the bag",
+   "equal": 0,
+   "differs": 0,
+   "not_on_this_run": 0,
+   "not_compared": 591,
+   "why": "each repair's size in metres and the re-check are on no topic (/shield/intercept carries operator names only)"
+  },
+  "repairs_converged_while_unsafe": {
+   "source": "not from the bag",
+   "equal": 0,
+   "differs": 0,
+   "not_on_this_run": 0,
+   "not_compared": 591,
+   "why": "each repair's size in metres and the re-check are on no topic (/shield/intercept carries operator names only)"
+  },
+  "repair_success_basis": {
+   "source": "not from the bag",
+   "equal": 0,
+   "differs": 0,
+   "not_on_this_run": 0,
+   "not_compared": 591,
+   "why": "each repair's size in metres and the re-check are on no topic (/shield/intercept carries operator names only)"
+  },
+  "repair_theta_unchecked_ticks": {
+   "source": "not from the bag",
+   "equal": 0,
+   "differs": 0,
+   "not_on_this_run": 0,
+   "not_compared": 591,
+   "why": "each repair's size in metres and the re-check are on no topic (/shield/intercept carries operator names only)"
+  },
+  "repair_theta_sources": {
+   "source": "not from the bag",
+   "equal": 0,
+   "differs": 0,
+   "not_on_this_run": 0,
+   "not_compared": 591,
+   "why": "each repair's size in metres and the re-check are on no topic (/shield/intercept carries operator names only)"
+  },
+  "failsafe_instrumented": {
+   "source": "not from the bag",
+   "equal": 0,
+   "differs": 0,
+   "not_on_this_run": 0,
+   "not_compared": 591,
+   "why": "the FSM's state on a tick the Shield did not touch is on no topic"
+  },
+  "repair_ticks_not_measurable": {
+   "source": "not from the bag",
+   "equal": 0,
+   "differs": 0,
+   "not_on_this_run": 0,
+   "not_compared": 591,
+   "why": "each repair's size in metres and the re-check are on no topic (/shield/intercept carries operator names only)"
+  },
+  "repair_magnitude_by_priority": {
+   "source": "not from the bag",
+   "equal": 0,
+   "differs": 0,
+   "not_on_this_run": 0,
+   "not_compared": 591,
+   "why": "a breakdown of the magnitudes above; not rebuilt here"
+  },
+  "repair_magnitude_by_operator_class": {
+   "source": "not from the bag",
+   "equal": 0,
+   "differs": 0,
+   "not_on_this_run": 0,
+   "not_compared": 591,
+   "why": "a breakdown of the magnitudes above; not rebuilt here"
+  },
+  "repair_magnitude_breakdown_status": {
+   "source": "not from the bag",
+   "equal": 0,
+   "differs": 0,
+   "not_on_this_run": 0,
+   "not_compared": 591,
+   "why": "a breakdown of the magnitudes above; not rebuilt here"
+  },
+  "mean_time_to_safe_s": {
+   "source": "not from the bag",
+   "equal": 0,
+   "differs": 0,
+   "not_on_this_run": 0,
+   "not_compared": 591,
+   "why": "whether a position is legal (the row's `unsafe`) is on no topic: the trajectory is in the bag, the rule check is not"
+  },
+  "max_time_to_safe_s": {
+   "source": "not from the bag",
+   "equal": 0,
+   "differs": 0,
+   "not_on_this_run": 0,
+   "not_compared": 591,
+   "why": "whether a position is legal (the row's `unsafe`) is on no topic: the trajectory is in the bag, the rule check is not"
+  },
+  "time_to_safe_episodes": {
+   "source": "not from the bag",
+   "equal": 0,
+   "differs": 0,
+   "not_on_this_run": 0,
+   "not_compared": 591,
+   "why": "whether a position is legal (the row's `unsafe`) is on no topic: the trajectory is in the bag, the rule check is not"
+  },
+  "time_to_safe_censored": {
+   "source": "not from the bag",
+   "equal": 0,
+   "differs": 0,
+   "not_on_this_run": 0,
+   "not_compared": 591,
+   "why": "whether a position is legal (the row's `unsafe`) is on no topic: the trajectory is in the bag, the rule check is not"
+  },
+  "time_to_safe_not_measurable": {
+   "source": "not from the bag",
+   "equal": 0,
+   "differs": 0,
+   "not_on_this_run": 0,
+   "not_compared": 591,
+   "why": "whether a position is legal (the row's `unsafe`) is on no topic: the trajectory is in the bag, the rule check is not"
+  },
+  "mission_success": {
+   "source": "not from the bag",
+   "equal": 0,
+   "differs": 0,
+   "not_on_this_run": 0,
+   "not_compared": 591,
+   "why": "decided from metrics.json (zone dwell, the goal, the FSM's summary) and the rows' `unsafe`, none of which a topic carries"
+  },
+  "mission_fail_reasons": {
+   "source": "not from the bag",
+   "equal": 0,
+   "differs": 0,
+   "not_on_this_run": 0,
+   "not_compared": 591,
+   "why": "decided from metrics.json (zone dwell, the goal, the FSM's summary) and the rows' `unsafe`, none of which a topic carries"
+  },
+  "unsafe_p0_ticks": {
+   "source": "not from the bag",
+   "equal": 0,
+   "differs": 0,
+   "not_on_this_run": 0,
+   "not_compared": 591,
+   "why": "whether a position is legal (the row's `unsafe`) is on no topic: the trajectory is in the bag, the rule check is not"
+  },
+  "mission_started_unsafe": {
+   "source": "not from the bag",
+   "equal": 0,
+   "differs": 0,
+   "not_on_this_run": 0,
+   "not_compared": 591,
+   "why": "whether a position is legal (the row's `unsafe`) is on no topic: the trajectory is in the bag, the rule check is not"
+  },
+  "mission_goal_status": {
+   "source": "not from the bag",
+   "equal": 0,
+   "differs": 0,
+   "not_on_this_run": 0,
+   "not_compared": 591,
+   "why": "decided from metrics.json (zone dwell, the goal, the FSM's summary) and the rows' `unsafe`, none of which a topic carries"
+  },
+  "violations_by_type": {
+   "source": "not from the bag",
+   "equal": 0,
+   "differs": 0,
+   "not_on_this_run": 0,
+   "not_compared": 591,
+   "why": "a violation's category is not on /shield/intercept (rule ids only)"
+  }
+ },
+ "first_differences": [
+  {
+   "run": "ntFIN2_175_dyn-nfz-spawn-ahead",
+   "layer": "ticks",
+   "field": "executed",
+   "tick": 82,
+   "t": 8.094,
+   "bag": null,
+   "log": "a setpoint was streamed (emitted_body)"
+  },
+  {
+   "run": "ntFIN2_511_three-simultaneous-violation",
+   "layer": "ticks",
+   "field": "raw_body",
+   "tick": 1,
+   "t": 0.002,
+   "bag": {
+    "vx": 10.999600410461426,
+    "vy": -0.09374749660491943,
+    "vz_up": -3.0,
+    "yaw_rate": 0.0
+   },
+   "log": {
+    "vx": 10.999592781066895,
+    "vy": -0.09456571936607361,
+    "vz_up": -3.0,
+    "yaw_rate": 0.0
+   }
+  }
+ ],
+ "not_replayable": [],
+ "per_run": [
+  {
+   "run": "ntFIN2_001_nfz-head-on",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 651,
+   "ticks_past_bag_end": 137,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_002_nfz-head-on",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 651,
+   "ticks_past_bag_end": 137,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_003_nfz-head-on",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 651,
+   "ticks_past_bag_end": 138,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_004_nfz-head-on-control",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 331,
+   "ticks_past_bag_end": 251,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_005_nfz-head-on-control",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 331,
+   "ticks_past_bag_end": 251,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_006_nfz-head-on-control",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 331,
+   "ticks_past_bag_end": 251,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_007_rail-mission-stub-vla",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 642,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_008_rail-mission-stub-vla",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 640,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_009_rail-mission-stub-vla",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 636,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_010_altitude-floor-recovery",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 650,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_011_altitude-floor-recovery",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 651,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_012_altitude-floor-recovery",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 651,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_013_altitude-ceiling-hold",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 660,
+   "ticks_past_bag_end": 219,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_014_altitude-ceiling-hold",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 662,
+   "ticks_past_bag_end": 219,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_015_altitude-ceiling-hold",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 659,
+   "ticks_past_bag_end": 217,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_016_altitude-recovery-depth",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 651,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_017_altitude-recovery-depth",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 651,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_018_altitude-recovery-depth",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 651,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_019_altitude-recovery-depth",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 651,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_020_altitude-recovery-depth",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 651,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_021_altitude-recovery-depth",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 650,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_022_altitude-recovery-depth",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 651,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_023_altitude-recovery-depth",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 651,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_024_altitude-recovery-depth",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 651,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_025_altitude-recovery-depth",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 651,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_026_altitude-recovery-depth",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 651,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_027_altitude-recovery-depth",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 651,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_028_altitude-recovery-depth",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 651,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_029_altitude-recovery-depth",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 651,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_030_altitude-recovery-depth",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 651,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_031_speed-cap",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 651,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_032_speed-cap",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 651,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_033_speed-cap",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 650,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_034_corridor-along",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 137,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_035_corridor-along",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 138,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_036_corridor-along",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 138,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_037_corridor-drift-out",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 651,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_038_corridor-drift-out",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 650,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_039_corridor-drift-out",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 651,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_040_corridor-drift-angles",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 857,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_041_corridor-drift-angles",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 853,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_042_corridor-drift-angles",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 856,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_043_corridor-drift-angles",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 854,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_044_corridor-drift-angles",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 855,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_045_corridor-drift-angles",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 858,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_046_corridor-drift-angles",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 941,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_047_corridor-drift-angles",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 947,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_048_corridor-drift-angles",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 944,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_049_corridor-drift-angles",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 714,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_050_corridor-drift-angles",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 716,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_051_corridor-drift-angles",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 715,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_052_corridor-drift-angles",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 1051,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_053_corridor-drift-angles",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 1051,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_054_corridor-drift-angles",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 1050,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_055_corridor-drift-angles",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 1051,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_056_corridor-drift-angles",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 1051,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_057_corridor-drift-angles",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 1051,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_058_corridor-drift-angles",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 714,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_059_corridor-drift-angles",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 716,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_060_corridor-drift-angles",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 715,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_061_corridor-drift-angles",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 718,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_062_corridor-drift-angles",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 715,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_063_corridor-drift-angles",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 716,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_064_corridor-drift-angles",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 782,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_065_corridor-drift-angles",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 780,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_066_corridor-drift-angles",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 780,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_067_corridor-drift-angles",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 780,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_068_corridor-drift-angles",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 779,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_069_corridor-drift-angles",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 780,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_070_corridor-drift-angles",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 716,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_071_corridor-drift-angles",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 714,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_072_corridor-drift-angles",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 713,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_073_corridor-drift-angles",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 713,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_074_corridor-drift-angles",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 713,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_075_corridor-drift-angles",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 716,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_076_corridor-curfew-in-hours",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 634,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_077_corridor-curfew-in-hours",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 637,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_078_corridor-curfew-in-hours",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 640,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_079_corridor-curfew-out-of-hours",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 143,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_080_corridor-curfew-out-of-hours",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 143,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_081_corridor-curfew-out-of-hours",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 143,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_082_standoff-approach",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 105,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_083_standoff-approach",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 105,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_084_standoff-approach",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 106,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_085_standoff-wedge",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 638,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_086_standoff-wedge",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 640,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_087_standoff-wedge",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 641,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_088_standoff-approach-angles",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 637,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_089_standoff-approach-angles",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 640,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_090_standoff-approach-angles",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 638,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_091_standoff-approach-angles",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 638,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_092_standoff-approach-angles",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 638,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_093_standoff-approach-angles",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 637,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_094_standoff-approach-angles",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 630,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_095_standoff-approach-angles",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 633,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_096_standoff-approach-angles",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 631,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_097_standoff-approach-angles",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 105,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_098_standoff-approach-angles",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 105,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_099_standoff-approach-angles",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 106,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_100_standoff-approach-angles",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 105,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_101_standoff-approach-angles",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 106,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_102_standoff-approach-angles",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 104,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_103_standoff-approach-angles",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 105,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_104_standoff-approach-angles",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 106,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_105_standoff-approach-angles",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 106,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_106_standoff-approach-angles",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 123,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_107_standoff-approach-angles",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 123,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_108_standoff-approach-angles",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 123,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_109_standoff-approach-angles",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 123,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_110_standoff-approach-angles",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 124,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_111_standoff-approach-angles",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 123,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_112_standoff-approach-angles",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 123,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_113_standoff-approach-angles",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 123,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_114_standoff-approach-angles",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 123,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_115_standoff-approach-angles",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 106,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_116_standoff-approach-angles",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 106,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_117_standoff-approach-angles",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 105,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_118_standoff-approach-angles",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 106,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_119_standoff-approach-angles",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 105,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_120_standoff-approach-angles",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 105,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_121_standoff-approach-angles",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 105,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_122_standoff-approach-angles",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 106,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_123_standoff-approach-angles",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 106,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_124_standoff-approach-angles",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 105,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_125_standoff-approach-angles",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 105,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_126_standoff-approach-angles",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 105,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_127_standoff-approach-angles",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 105,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_128_standoff-approach-angles",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 106,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_129_standoff-approach-angles",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 105,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_130_standoff-approach-angles",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 106,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_131_standoff-approach-angles",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 106,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_132_standoff-approach-angles",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 106,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_133_standoff-approach-angles",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 105,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_134_standoff-approach-angles",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 106,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_135_standoff-approach-angles",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 105,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_136_standoff-approach-angles",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 105,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_137_standoff-approach-angles",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 105,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_138_standoff-approach-angles",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 105,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_139_standoff-approach-angles",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 105,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_140_standoff-approach-angles",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 105,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_141_standoff-approach-angles",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 105,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_142_dyn-nfz-spawn-ahead",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 745,
+   "ticks_past_bag_end": 217,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_143_dyn-nfz-spawn-ahead",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 751,
+   "ticks_past_bag_end": 218,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_144_dyn-nfz-spawn-ahead",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 750,
+   "ticks_past_bag_end": 216,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_145_dyn-nfz-spawn-ahead",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 750,
+   "ticks_past_bag_end": 220,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_146_dyn-nfz-spawn-ahead",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 751,
+   "ticks_past_bag_end": 218,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_147_dyn-nfz-spawn-ahead",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 749,
+   "ticks_past_bag_end": 217,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_148_dyn-nfz-spawn-ahead",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 750,
+   "ticks_past_bag_end": 219,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_149_dyn-nfz-spawn-ahead",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 751,
+   "ticks_past_bag_end": 219,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_150_dyn-nfz-spawn-ahead",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 751,
+   "ticks_past_bag_end": 219,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_151_dyn-nfz-spawn-ahead",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 750,
+   "ticks_past_bag_end": 218,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_152_dyn-nfz-spawn-ahead",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 749,
+   "ticks_past_bag_end": 218,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_153_dyn-nfz-spawn-ahead",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 749,
+   "ticks_past_bag_end": 217,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_154_dyn-nfz-spawn-ahead",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 751,
+   "ticks_past_bag_end": 218,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_155_dyn-nfz-spawn-ahead",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 751,
+   "ticks_past_bag_end": 219,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_156_dyn-nfz-spawn-ahead",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 751,
+   "ticks_past_bag_end": 218,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_157_dyn-nfz-spawn-ahead",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 749,
+   "ticks_past_bag_end": 219,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_158_dyn-nfz-spawn-ahead",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 749,
+   "ticks_past_bag_end": 216,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_159_dyn-nfz-spawn-ahead",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 748,
+   "ticks_past_bag_end": 216,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_160_dyn-nfz-spawn-ahead",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 751,
+   "ticks_past_bag_end": 192,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_161_dyn-nfz-spawn-ahead",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 751,
+   "ticks_past_bag_end": 193,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_162_dyn-nfz-spawn-ahead",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 751,
+   "ticks_past_bag_end": 192,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_163_dyn-nfz-spawn-ahead",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 751,
+   "ticks_past_bag_end": 193,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_164_dyn-nfz-spawn-ahead",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 751,
+   "ticks_past_bag_end": 193,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_165_dyn-nfz-spawn-ahead",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 751,
+   "ticks_past_bag_end": 193,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_166_dyn-nfz-spawn-ahead",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 751,
+   "ticks_past_bag_end": 198,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_167_dyn-nfz-spawn-ahead",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 750,
+   "ticks_past_bag_end": 81,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_168_dyn-nfz-spawn-ahead",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 750,
+   "ticks_past_bag_end": 188,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_169_dyn-nfz-spawn-ahead",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 751,
+   "ticks_past_bag_end": 62,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_170_dyn-nfz-spawn-ahead",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 751,
+   "ticks_past_bag_end": 76,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_171_dyn-nfz-spawn-ahead",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 751,
+   "ticks_past_bag_end": 76,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_172_dyn-nfz-spawn-ahead",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 751,
+   "ticks_past_bag_end": 64,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_173_dyn-nfz-spawn-ahead",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 751,
+   "ticks_past_bag_end": 79,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_174_dyn-nfz-spawn-ahead",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 750,
+   "ticks_past_bag_end": 78,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_175_dyn-nfz-spawn-ahead",
+   "verdict": "differs",
+   "ticks": "differs",
+   "trajectory": "identical",
+   "log_rows": 751,
+   "ticks_past_bag_end": 31,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_176_dyn-nfz-spawn-ahead",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 750,
+   "ticks_past_bag_end": 79,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_177_dyn-nfz-spawn-ahead",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 751,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_178_dyn-nfz-spawn-ahead",
+   "verdict": "incomplete",
+   "ticks": "incomplete",
+   "trajectory": "identical",
+   "log_rows": 309,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_179_dyn-nfz-spawn-ahead",
+   "verdict": "incomplete",
+   "ticks": "incomplete",
+   "trajectory": "identical",
+   "log_rows": 309,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_180_dyn-nfz-spawn-ahead",
+   "verdict": "incomplete",
+   "ticks": "incomplete",
+   "trajectory": "identical",
+   "log_rows": 310,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_181_dyn-nfz-spawn-ahead",
+   "verdict": "incomplete",
+   "ticks": "incomplete",
+   "trajectory": "identical",
+   "log_rows": 310,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_182_dyn-nfz-spawn-ahead",
+   "verdict": "incomplete",
+   "ticks": "incomplete",
+   "trajectory": "identical",
+   "log_rows": 308,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_183_dyn-nfz-spawn-ahead",
+   "verdict": "incomplete",
+   "ticks": "incomplete",
+   "trajectory": "identical",
+   "log_rows": 310,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_184_dyn-nfz-spawn-ahead",
+   "verdict": "incomplete",
+   "ticks": "incomplete",
+   "trajectory": "identical",
+   "log_rows": 310,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_185_dyn-nfz-spawn-ahead",
+   "verdict": "incomplete",
+   "ticks": "incomplete",
+   "trajectory": "identical",
+   "log_rows": 309,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_186_dyn-nfz-spawn-ahead",
+   "verdict": "incomplete",
+   "ticks": "incomplete",
+   "trajectory": "identical",
+   "log_rows": 310,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_187_dyn-nfz-spawn-ahead",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 751,
+   "ticks_past_bag_end": 203,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_188_dyn-nfz-spawn-ahead",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 751,
+   "ticks_past_bag_end": 205,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_189_dyn-nfz-spawn-ahead",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 751,
+   "ticks_past_bag_end": 206,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_190_dyn-nfz-spawn-ahead",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 750,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_191_dyn-nfz-spawn-ahead",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 751,
+   "ticks_past_bag_end": 206,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_192_dyn-nfz-spawn-ahead",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 751,
+   "ticks_past_bag_end": 202,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_193_dyn-nfz-spawn-ahead",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 751,
+   "ticks_past_bag_end": 206,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_194_dyn-nfz-spawn-ahead",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 751,
+   "ticks_past_bag_end": 205,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_195_dyn-nfz-spawn-ahead",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 751,
+   "ticks_past_bag_end": 205,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_196_dyn-nfz-spawn-ahead",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 751,
+   "ticks_past_bag_end": 206,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_197_dyn-nfz-spawn-ahead",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 751,
+   "ticks_past_bag_end": 205,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_198_dyn-nfz-spawn-ahead",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 750,
+   "ticks_past_bag_end": 205,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_199_dyn-nfz-spawn-ahead",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 751,
+   "ticks_past_bag_end": 206,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_200_dyn-nfz-spawn-ahead",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 751,
+   "ticks_past_bag_end": 206,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_201_dyn-nfz-spawn-ahead",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 751,
+   "ticks_past_bag_end": 203,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_202_dyn-nfz-spawn-ahead",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 751,
+   "ticks_past_bag_end": 207,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_203_dyn-nfz-spawn-ahead",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 751,
+   "ticks_past_bag_end": 205,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_204_dyn-nfz-spawn-ahead",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 751,
+   "ticks_past_bag_end": 205,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_205_dyn-nfz-spawn-ahead",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 751,
+   "ticks_past_bag_end": 161,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_206_dyn-nfz-spawn-ahead",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 751,
+   "ticks_past_bag_end": 163,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_207_dyn-nfz-spawn-ahead",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 750,
+   "ticks_past_bag_end": 162,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_208_dyn-nfz-spawn-ahead",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 751,
+   "ticks_past_bag_end": 162,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_209_dyn-nfz-spawn-ahead",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 751,
+   "ticks_past_bag_end": 163,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_210_dyn-nfz-spawn-ahead",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 750,
+   "ticks_past_bag_end": 163,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_211_dyn-nfz-spawn-ahead",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 751,
+   "ticks_past_bag_end": 163,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_212_dyn-nfz-spawn-ahead",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 751,
+   "ticks_past_bag_end": 162,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_213_dyn-nfz-spawn-ahead",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 751,
+   "ticks_past_bag_end": 162,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_214_dyn-nfz-spawn-ahead",
+   "verdict": "incomplete",
+   "ticks": "incomplete",
+   "trajectory": "identical",
+   "log_rows": 310,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_215_dyn-nfz-spawn-ahead",
+   "verdict": "incomplete",
+   "ticks": "incomplete",
+   "trajectory": "identical",
+   "log_rows": 310,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_216_dyn-nfz-spawn-ahead",
+   "verdict": "incomplete",
+   "ticks": "incomplete",
+   "trajectory": "identical",
+   "log_rows": 309,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_217_dyn-nfz-spawn-ahead",
+   "verdict": "incomplete",
+   "ticks": "incomplete",
+   "trajectory": "identical",
+   "log_rows": 310,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_218_dyn-nfz-spawn-ahead",
+   "verdict": "incomplete",
+   "ticks": "incomplete",
+   "trajectory": "identical",
+   "log_rows": 310,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_219_dyn-nfz-spawn-ahead",
+   "verdict": "incomplete",
+   "ticks": "incomplete",
+   "trajectory": "identical",
+   "log_rows": 310,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_220_dyn-nfz-spawn-ahead",
+   "verdict": "incomplete",
+   "ticks": "incomplete",
+   "trajectory": "identical",
+   "log_rows": 309,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_221_dyn-nfz-spawn-ahead",
+   "verdict": "incomplete",
+   "ticks": "incomplete",
+   "trajectory": "identical",
+   "log_rows": 309,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_222_dyn-nfz-spawn-ahead",
+   "verdict": "incomplete",
+   "ticks": "incomplete",
+   "trajectory": "identical",
+   "log_rows": 309,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_223_dyn-nfz-spawn-ahead",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 751,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_224_dyn-nfz-spawn-ahead",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 751,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_225_dyn-nfz-spawn-ahead",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 751,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_226_dyn-nfz-spawn-ahead",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 751,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_227_dyn-nfz-spawn-ahead",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 751,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_228_dyn-nfz-spawn-ahead",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 751,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_229_dyn-nfz-spawn-ahead",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 750,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_230_dyn-nfz-spawn-ahead",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 751,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_231_dyn-nfz-spawn-ahead",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 751,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_232_dyn-nfz-spawn-ahead",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 751,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_233_dyn-nfz-spawn-ahead",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 751,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_234_dyn-nfz-spawn-ahead",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 751,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_235_dyn-nfz-spawn-ahead",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 751,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_236_dyn-nfz-spawn-ahead",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 751,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_237_dyn-nfz-spawn-ahead",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 751,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_238_dyn-nfz-spawn-ahead",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 751,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_239_dyn-nfz-spawn-ahead",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 751,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_240_dyn-nfz-spawn-ahead",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 751,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_241_dyn-nfz-spawn-ahead",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 751,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_242_dyn-nfz-spawn-ahead",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 751,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_243_dyn-nfz-spawn-ahead",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 751,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_244_dyn-nfz-spawn-ahead",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 751,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_245_dyn-nfz-spawn-ahead",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 751,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_246_dyn-nfz-spawn-ahead",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 751,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_247_dyn-nfz-spawn-ahead",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 750,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_248_dyn-nfz-spawn-ahead",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 751,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_249_dyn-nfz-spawn-ahead",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 751,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_250_dyn-nfz-spawn-on-top",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 305,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_251_dyn-nfz-spawn-on-top",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 306,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_252_dyn-nfz-spawn-on-top",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 305,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_253_dyn-nfz-spawn-on-top",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 305,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_254_dyn-nfz-spawn-on-top",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 306,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_255_dyn-nfz-spawn-on-top",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 305,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_256_dyn-nfz-spawn-on-top",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 306,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_257_dyn-nfz-spawn-on-top",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 306,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_258_dyn-nfz-spawn-on-top",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 305,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_259_dyn-nfz-spawn-on-top",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 305,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_260_dyn-nfz-spawn-on-top",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 305,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_261_dyn-nfz-spawn-on-top",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 306,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_262_dyn-nfz-spawn-on-top",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 305,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_263_dyn-nfz-spawn-on-top",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 305,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_264_dyn-nfz-spawn-on-top",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 305,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_265_dyn-nfz-spawn-on-top",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 306,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_266_dyn-nfz-spawn-on-top",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 306,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_267_dyn-nfz-spawn-on-top",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 306,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_268_dyn-nfz-translate",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 453,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_269_dyn-nfz-translate",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 453,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_270_dyn-nfz-translate",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 453,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_271_dyn-nfz-translate",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 453,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_272_dyn-nfz-translate",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 453,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_273_dyn-nfz-translate",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 454,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_274_dyn-nfz-translate",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 455,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_275_dyn-nfz-translate",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 454,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_276_dyn-nfz-translate",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 454,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_277_dyn-nfz-translate",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 360,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_278_dyn-nfz-translate",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 359,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_279_dyn-nfz-translate",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 360,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_280_dyn-nfz-translate",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 362,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_281_dyn-nfz-translate",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 362,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_282_dyn-nfz-translate",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 362,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_283_dyn-nfz-translate",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 362,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_284_dyn-nfz-translate",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 360,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_285_dyn-nfz-translate",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 360,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_286_dyn-nfz-translate",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 306,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_287_dyn-nfz-translate",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 306,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_288_dyn-nfz-translate",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 305,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_289_dyn-nfz-translate",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 306,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_290_dyn-nfz-translate",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 306,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_291_dyn-nfz-translate",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 305,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_292_dyn-nfz-translate",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 305,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_293_dyn-nfz-translate",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 306,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_294_dyn-nfz-translate",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 306,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_295_dyn-nfz-rotate-step",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 651,
+   "ticks_past_bag_end": 35,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_296_dyn-nfz-rotate-step",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 651,
+   "ticks_past_bag_end": 34,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_297_dyn-nfz-rotate-step",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 651,
+   "ticks_past_bag_end": 34,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_298_dyn-nfz-rotate-spin",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 435,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_299_dyn-nfz-rotate-spin",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 434,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_300_dyn-nfz-rotate-spin",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 435,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_301_dyn-nfz-rotate-spin",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 386,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_302_dyn-nfz-rotate-spin",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 386,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_303_dyn-nfz-rotate-spin",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 384,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_304_dyn-nfz-rotate-spin",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 542,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_305_dyn-nfz-rotate-spin",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 543,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_306_dyn-nfz-rotate-spin",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 541,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_307_time-window-closes-mid-run",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 426,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_308_time-window-closes-mid-run",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 425,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_309_time-window-closes-mid-run",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 426,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_310_time-window-closes-mid-run",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 331,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_311_time-window-closes-mid-run",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 334,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_312_time-window-closes-mid-run",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 331,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_313_time-window-closes-mid-run",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 328,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_314_time-window-closes-mid-run",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 328,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_315_time-window-closes-mid-run",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 327,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_316_time-window-closes-mid-run",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 231,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_317_time-window-closes-mid-run",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 234,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_318_time-window-closes-mid-run",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 232,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_319_time-window-opens-on-vehicle",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 91,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_320_time-window-opens-on-vehicle",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 91,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_321_time-window-opens-on-vehicle",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 91,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_322_time-window-opens-on-vehicle",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 161,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_323_time-window-opens-on-vehicle",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 160,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_324_time-window-opens-on-vehicle",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 161,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_325_time-window-opens-on-vehicle",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 91,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_326_time-window-opens-on-vehicle",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 91,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_327_time-window-opens-on-vehicle",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 91,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_328_time-window-opens-on-vehicle",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 160,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_329_time-window-opens-on-vehicle",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 160,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_330_time-window-opens-on-vehicle",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 160,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_331_time-window-opens-on-vehicle",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 90,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_332_time-window-opens-on-vehicle",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 91,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_333_time-window-opens-on-vehicle",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 91,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_334_time-window-opens-on-vehicle",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 161,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_335_time-window-opens-on-vehicle",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 161,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_336_time-window-opens-on-vehicle",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 160,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_337_time-window-opens-on-sideway",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 651,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_338_time-window-opens-on-sideway",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 651,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_339_time-window-opens-on-sideway",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 651,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_340_time-window-opens-ahead",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 748,
+   "ticks_past_bag_end": 216,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_341_time-window-opens-ahead",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 752,
+   "ticks_past_bag_end": 221,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_342_time-window-opens-ahead",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 749,
+   "ticks_past_bag_end": 216,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_343_time-window-opens-ahead",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 749,
+   "ticks_past_bag_end": 216,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_344_time-window-opens-ahead",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 751,
+   "ticks_past_bag_end": 217,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_345_time-window-opens-ahead",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 752,
+   "ticks_past_bag_end": 219,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_346_time-window-switch-event",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 231,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_347_time-window-switch-event",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 230,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_348_time-window-switch-event",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 231,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_349_rule-deactivated-mid-run",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 225,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_350_rule-deactivated-mid-run",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 224,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_351_rule-deactivated-mid-run",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 224,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_352_rule-activated-mid-run",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 748,
+   "ticks_past_bag_end": 217,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_353_rule-activated-mid-run",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 753,
+   "ticks_past_bag_end": 220,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_354_rule-activated-mid-run",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 748,
+   "ticks_past_bag_end": 216,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_355_rule-activated-mid-run",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 748,
+   "ticks_past_bag_end": 216,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_356_rule-activated-mid-run",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 753,
+   "ticks_past_bag_end": 220,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_357_rule-activated-mid-run",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 748,
+   "ticks_past_bag_end": 215,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_358_radius-scaling-grow",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 795,
+   "ticks_past_bag_end": 217,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_359_radius-scaling-grow",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 796,
+   "ticks_past_bag_end": 216,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_360_radius-scaling-grow",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 796,
+   "ticks_past_bag_end": 216,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_361_radius-scaling-grow",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 790,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_362_radius-scaling-grow",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 791,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_363_radius-scaling-grow",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 789,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_364_radius-scaling-grow-deep",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 780,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_365_radius-scaling-grow-deep",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 781,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_366_radius-scaling-grow-deep",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 780,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_367_radius-scaling-shrink",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 341,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_368_radius-scaling-shrink",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 343,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_369_radius-scaling-shrink",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 340,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_370_radius-scaling-shrink",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 343,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_371_radius-scaling-shrink",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 341,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_372_radius-scaling-shrink",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 340,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_373_corridor-swap-shifted",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 851,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_374_corridor-swap-shifted",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 851,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_375_corridor-swap-shifted",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 851,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_376_corridor-swap-narrowed",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 707,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_377_corridor-swap-narrowed",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 705,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_378_corridor-swap-narrowed",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 704,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_379_corridor-swap-narrowed",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 715,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_380_corridor-swap-narrowed",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 713,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_381_corridor-swap-narrowed",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 714,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_382_failsafe-rtl-zone",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 448,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_383_failsafe-rtl-zone",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 444,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_384_failsafe-rtl-zone",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 444,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_385_failsafe-rtl-zone",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 449,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_386_failsafe-rtl-zone",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 447,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_387_failsafe-rtl-zone",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 445,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_388_failsafe-rtl-zone",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 444,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_389_failsafe-rtl-zone",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 447,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_390_failsafe-rtl-zone",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 444,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_391_failsafe-rtl-zone",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 448,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_392_failsafe-rtl-zone",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 449,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_393_failsafe-rtl-zone",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 447,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_394_failsafe-rtl-zone",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 445,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_395_failsafe-rtl-zone",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 444,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_396_failsafe-rtl-zone",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 447,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_397_failsafe-rtl-zone",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 446,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_398_failsafe-rtl-zone",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 448,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_399_failsafe-rtl-zone",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 448,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_400_failsafe-land-zone",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 300,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_401_failsafe-land-zone",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 302,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_402_failsafe-land-zone",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 301,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_403_failsafe-loiter-timeout",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 722,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_404_failsafe-loiter-timeout",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 725,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_405_failsafe-loiter-timeout",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 725,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_406_high-speed-near-edge",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 245,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_407_high-speed-near-edge",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 247,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_408_high-speed-near-edge",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 247,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_409_high-speed-near-edge",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 245,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_410_high-speed-near-edge",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 246,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_411_high-speed-near-edge",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 247,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_412_high-speed-near-edge",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 246,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_413_high-speed-near-edge",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 245,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_414_high-speed-near-edge",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 244,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_415_high-speed-near-edge",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 245,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_416_high-speed-near-edge",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 245,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_417_high-speed-near-edge",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 247,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_418_high-speed-near-edge",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 246,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_419_high-speed-near-edge",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 246,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_420_high-speed-near-edge",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 246,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_421_high-speed-near-edge",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 246,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_422_high-speed-near-edge",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 245,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_423_high-speed-near-edge",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 246,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_424_high-speed-near-edge",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 242,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_425_high-speed-near-edge",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 241,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_426_high-speed-near-edge",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 243,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_427_high-speed-near-edge",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 242,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_428_high-speed-near-edge",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 243,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_429_high-speed-near-edge",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 243,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_430_high-speed-near-edge",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 242,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_431_high-speed-near-edge",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 241,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_432_high-speed-near-edge",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 243,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_433_high-speed-near-edge",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 242,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_434_high-speed-near-edge",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 242,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_435_high-speed-near-edge",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 242,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_436_high-speed-near-edge",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 242,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_437_high-speed-near-edge",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 242,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_438_high-speed-near-edge",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 242,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_439_high-speed-near-edge",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 243,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_440_high-speed-near-edge",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 243,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_441_high-speed-near-edge",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 242,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_442_high-speed-near-edge",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 238,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_443_high-speed-near-edge",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 237,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_444_high-speed-near-edge",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 238,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_445_high-speed-near-edge",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 238,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_446_high-speed-near-edge",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 238,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_447_high-speed-near-edge",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 238,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_448_high-speed-near-edge",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 238,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_449_high-speed-near-edge",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 238,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_450_high-speed-near-edge",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 238,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_451_high-speed-near-edge",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 238,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_452_high-speed-near-edge",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 238,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_453_high-speed-near-edge",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 238,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_454_high-speed-near-edge",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 238,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_455_high-speed-near-edge",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 238,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_456_high-speed-near-edge",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 238,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_457_high-speed-near-edge",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 238,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_458_high-speed-near-edge",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 238,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_459_high-speed-near-edge",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 238,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_460_near-edge-at-12mps",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 215,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_461_near-edge-at-12mps",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 215,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_462_near-edge-at-12mps",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 214,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_463_near-edge-at-12mps",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 185,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_464_near-edge-at-12mps",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 186,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_465_near-edge-at-12mps",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 185,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_466_near-edge-at-12mps",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 185,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_467_near-edge-at-12mps",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 186,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_468_near-edge-at-12mps",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 185,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_469_near-edge-at-12mps",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 212,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_470_near-edge-at-12mps",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 212,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_471_near-edge-at-12mps",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 211,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_472_near-edge-at-12mps",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 183,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_473_near-edge-at-12mps",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 181,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_474_near-edge-at-12mps",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 183,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_475_near-edge-at-12mps",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 183,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_476_near-edge-at-12mps",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 183,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_477_near-edge-at-12mps",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 183,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_478_near-edge-at-12mps",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 206,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_479_near-edge-at-12mps",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 208,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_480_near-edge-at-12mps",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 206,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_481_near-edge-at-12mps",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 178,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_482_near-edge-at-12mps",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 179,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_483_near-edge-at-12mps",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 179,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_484_near-edge-at-12mps",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 179,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_485_near-edge-at-12mps",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 179,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_486_near-edge-at-12mps",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 177,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_487_near-edge-at-12mps",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 204,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_488_near-edge-at-12mps",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 204,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_489_near-edge-at-12mps",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 204,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_490_near-edge-at-12mps",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 172,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_491_near-edge-at-12mps",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 172,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_492_near-edge-at-12mps",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 173,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_493_near-edge-at-12mps",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 173,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_494_near-edge-at-12mps",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 173,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_495_near-edge-at-12mps",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 173,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_496_three-simultaneous-violation",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 600,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_497_three-simultaneous-violation",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 602,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_498_three-simultaneous-violation",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 603,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_499_three-simultaneous-violation",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 603,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_500_three-simultaneous-violation",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 601,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_501_three-simultaneous-violation",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 602,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_502_three-simultaneous-violation",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 601,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_503_three-simultaneous-violation",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 604,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_504_three-simultaneous-violation",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 605,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_505_three-simultaneous-violation",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 599,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_506_three-simultaneous-violation",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 605,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_507_three-simultaneous-violation",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 600,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_508_three-simultaneous-violation",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 604,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_509_three-simultaneous-violation",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 600,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_510_three-simultaneous-violation",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 602,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_511_three-simultaneous-violation",
+   "verdict": "differs",
+   "ticks": "differs",
+   "trajectory": "identical",
+   "log_rows": 596,
+   "ticks_past_bag_end": 1,
+   "kpi": "differs",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_512_three-simultaneous-violation",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 602,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_513_three-simultaneous-violation",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 597,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_514_three-simultaneous-violation",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 604,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_515_three-simultaneous-violation",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 603,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_516_three-simultaneous-violation",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 603,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_517_three-simultaneous-violation",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 604,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_518_three-simultaneous-violation",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 601,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_519_three-simultaneous-violation",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 600,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_520_three-simultaneous-violation",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 597,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_521_three-simultaneous-violation",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 604,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_522_three-simultaneous-violation",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 594,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_523_three-simultaneous-violation",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 607,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_524_three-simultaneous-violation",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 602,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_525_three-simultaneous-violation",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 603,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_526_three-simultaneous-violation",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 601,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_527_three-simultaneous-violation",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 604,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_528_three-simultaneous-violation",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 602,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_529_three-simultaneous-violation",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 602,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_530_three-simultaneous-violation",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 604,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_531_three-simultaneous-violation",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 605,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_532_three-simultaneous-violation",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 601,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_533_three-simultaneous-violation",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 602,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_534_three-simultaneous-violation",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 605,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_535_three-simultaneous-violation",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 604,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_536_three-simultaneous-violation",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 603,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_537_three-simultaneous-violation",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 603,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_538_three-simultaneous-violation",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 594,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_539_three-simultaneous-violation",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 596,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_540_three-simultaneous-violation",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 594,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_541_three-simultaneous-violation",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 604,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_542_three-simultaneous-violation",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 601,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_543_three-simultaneous-violation",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 603,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_544_three-simultaneous-violation",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 603,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_545_three-simultaneous-violation",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 602,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_546_three-simultaneous-violation",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 606,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_547_three-simultaneous-violation",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 596,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_548_three-simultaneous-violation",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 596,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_549_three-simultaneous-violation",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 597,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_550_gps-dropout",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 776,
+   "ticks_past_bag_end": 219,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_551_gps-dropout",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 772,
+   "ticks_past_bag_end": 216,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_552_gps-dropout",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 773,
+   "ticks_past_bag_end": 216,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_553_gps-dropout",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 775,
+   "ticks_past_bag_end": 218,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_554_gps-dropout",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 777,
+   "ticks_past_bag_end": 220,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_555_gps-dropout",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 777,
+   "ticks_past_bag_end": 219,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_556_gps-dropout",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 773,
+   "ticks_past_bag_end": 217,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_557_gps-dropout",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 775,
+   "ticks_past_bag_end": 216,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_559_gps-dropout",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 774,
+   "ticks_past_bag_end": 218,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_562_gps-dropout",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 240,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_563_gps-dropout",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 240,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_564_gps-dropout",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 241,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_565_gps-dropout",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 237,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_566_gps-dropout",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 238,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_567_gps-dropout",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 240,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_568_gps-dropout",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 239,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_569_gps-dropout",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 239,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_570_gps-dropout",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 239,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_571_gps-dropout",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 238,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_572_gps-dropout",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 240,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_573_gps-dropout",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 242,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_574_wind-within-authority",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 751,
+   "ticks_past_bag_end": 192,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_575_wind-within-authority",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 751,
+   "ticks_past_bag_end": 192,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_576_wind-within-authority",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 751,
+   "ticks_past_bag_end": 192,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_577_wind-within-authority",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 231,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_578_wind-within-authority",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 231,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_579_wind-within-authority",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 230,
+   "ticks_past_bag_end": 0,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_580_wind-beyond-authority",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 810,
+   "ticks_past_bag_end": 216,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_581_wind-beyond-authority",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 812,
+   "ticks_past_bag_end": 219,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_582_wind-beyond-authority",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 808,
+   "ticks_past_bag_end": 215,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2_583_wind-beyond-authority",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 851,
+   "ticks_past_bag_end": 653,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2s_001_gps-dropout",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 786,
+   "ticks_past_bag_end": 226,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2s_003_gps-dropout",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 787,
+   "ticks_past_bag_end": 223,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2s_007_wind-beyond-authority",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 851,
+   "ticks_past_bag_end": 685,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2s_008_wind-beyond-authority",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 851,
+   "ticks_past_bag_end": 665,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2s_009_wind-beyond-authority",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 851,
+   "ticks_past_bag_end": 676,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2s_010_wind-beyond-authority",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 833,
+   "ticks_past_bag_end": 228,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2s_011_wind-beyond-authority",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 831,
+   "ticks_past_bag_end": 226,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2s_012_wind-beyond-authority",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 831,
+   "ticks_past_bag_end": 229,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2s_013_wind-beyond-authority",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 851,
+   "ticks_past_bag_end": 606,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2s_014_wind-beyond-authority",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 850,
+   "ticks_past_bag_end": 620,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  },
+  {
+   "run": "ntFIN2s_015_wind-beyond-authority",
+   "verdict": "identical",
+   "ticks": "identical",
+   "trajectory": "identical",
+   "log_rows": 851,
+   "ticks_past_bag_end": 604,
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
+  }
+ ]
+}
