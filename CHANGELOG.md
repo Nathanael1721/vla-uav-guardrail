@@ -16,6 +16,77 @@ shipped change and recorded as one.
 
 ## [Unreleased]
 
+### 2026-11-17 (C2 top-up and what it showed) — RaceVLA's fourth C2 flight and the C2 null flown on hil; the null and the start gate read for what they are; ci_local made to run what CI runs
+
+#### Added
+- **C2 top-up on hil at 63fffcf** (ARCH-30, X-04, ARCH-06;
+  deploy/evidence/vla_backend_table.md regenerated). RaceVLA c2_04 flew 916
+  ticks and lost the car (within 30 m 0.168); c2_05 never started (start
+  gate timed out). The C2 null, the hand-written follow (FAMILY=servo), flew
+  3 flights of 420 s after a shakedown whose start gate timed out: each ran
+  to max_s, P0 escapes 0, within 30 m 0.105 / 0.065 / 0.111. RaceVLA now
+  has 2 C2 flights (0.060-0.168) and 3 gate timeouts; 1 more is owed.
+  Videos of the 12 flown C2 flights (and copies under 30 MB) are kept off
+  the repository, in the offload folder videos_c2_20261116.
+- **The C2 null in the table as flown** (tools/vla_backend_table.py). It is
+  the perception node's FollowPilot: a box-width P-servo (want_width 0.10,
+  speed_max 4.0) with no target estimator, no lock and no lost end. It
+  commands at most about 2.5-3.0 m/s against a car at about 3.2 m/s, falls
+  to about 45 m by 60 s, loses the box, and hovers; most of its later
+  within-30 m ticks come from the car looping back past it. It is not the
+  follow_vlm estimator follow behind the older 0.95-0.98 hand-written
+  numbers. The table lists it in a C2 table of its own, with its share also
+  under the VLAs' own end rule (90 s after the last fresh box): 0.105 /
+  0.030 / 0.099, shown because a replay of that rule ends every C2 VLA
+  flight within 2.2 s of its recorded end. As flown it sits about level with
+  AerialVLA and RaceVLA; only AIoT-VLA is clearly ahead.
+- **Start-gate timeouts counted as censored** (tools/vla_backend_table.py).
+  A flight that would be C2 but whose start gate timed out is listed per
+  backend and not counted toward the 3, so no backend's n shrinks
+  silently: RaceVLA 3, every other backend 0.
+- **`drops` on every detections.jsonl row** (demo/follow_vlm.py
+  screen_candidates): what the threshold, the jump gate and the colour gate
+  removed: a count for each, and the best score and box of what the
+  threshold and the colour gate removed.
+  It cannot say whether a dropped box was the car. The passing boxes are
+  unchanged (tested against the old loop).
+
+#### Fixed
+- **The start gate stated a rule it does not decide by**
+  (demo/pas_ardupilot/perception_node.py StartGate). With --identity the
+  decision is the Reacquirer's: 10 identity-ok boxes in a row of one object
+  within 30 m and seen moving; one inference with none acceptable restarts
+  the streak. The node printed the pixel counter's streak and "5 inferences
+  in a row". It now states and records the rule it decides by, the identity
+  gate's streak, its step outcomes and how often the moving test refused.
+  Each RaceVLA timeout was one inference with an empty box list mid-crossing
+  at the same image position; that pattern is in 4 of 6 RaceVLA gates and 0
+  of 13 others (16 Nov). Its cause is not known; `drops` records the next
+  occurrence. No gate decision changed.
+- **TARGET LOCKED with no lock.** The HUD said TARGET LOCKED for the servo
+  null, which holds no lock. It now says TRACKING BOX (NO LOCK) there, and
+  TARGET LOCKED only when a lock is held (perception node and
+  tools/rerender_policy_hud.py).
+- **ci_local did not run what CI runs** (tools/ci_local.py). It ran only
+  the workflow's standalone loop, so test_policy_hud (the Pillow step) and
+  the desktop-runnable files the loop leaves out never ran locally, and with
+  nothing pushed they never ran at all. Two real failures went unseen:
+  test_policy_hud pinned the NFZ policy at 0.1.2 (0.1.3 since 4ae620a), and
+  test_two_view asserted an import line 63f9072 had changed. ci_local now
+  runs the Pillow step (its env included) and those files as desktop extras,
+  each once; an extra does not gate only when every failure in it is the
+  missing package its exclusion names. The loop is split as bash splits it:
+  tests.yml had a literal "\n" twice in the loop, which bash would run as a
+  file named "n" (fixed). Both stale tests are fixed.
+
+#### Found, not fixed
+- **RaceVLA's gate misses.** One empty inference mid-crossing, RaceVLA only
+  (see above); cause unknown.
+- **The null is weaker than the lab's hand-written follow.** A fair null
+  would be the estimator follow on the PAS rail (the node refuses
+  --target-estimator for the servo today); C2's null stays as flown and
+  labelled until then.
+
 ### 2026-11-16 (evening: prefix A/B and C2 flown on hil) — the prefix A/B campaign pab1 and the backend table's C2 flights, a corner cut found and fixed in the CSP-consuming pilot, and the C2 null made flyable
 
 #### Added
