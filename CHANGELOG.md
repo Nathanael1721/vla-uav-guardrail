@@ -16,6 +16,38 @@ shipped change and recorded as one.
 
 ## [Unreleased]
 
+### 2026-11-17 (RaceVLA's third C2 flight) — every backend that can fly C2 now has its 3 flights on hil
+
+#### Added
+- **RaceVLA c2_06 on hil at 89d2dc2** (ARCH-30, X-04;
+  deploy/evidence/vla_backend_table.md regenerated). It passed the start
+  gate on the first attempt, flew 899 ticks and lost the car (target_lost):
+  within 30 m 0.063, 0.0223 decisions/s over the mission, P0 escapes 0,
+  KPI outcome success. RaceVLA now has 3 C2 flights (within 30 m
+  0.060-0.168, median 0.063); its 3 start-gate timeouts stay censored, not
+  counted. Its 90 s video (and a copy under 30 MB) is in the offload folder
+  videos_c2_20261116 with the other C2 videos.
+- With it, AIoT-VLA v10b, AerialVLA bf16, DroneCATS-2B and RaceVLA each have
+  the 3 C2 flights the protocol asks for, every one with P0 escapes 0, and
+  the table no longer lists anything the set lacks before `table --default`
+  can name a default. The end-rule replay behind the null's second column
+  now ends each of the 12 C2 VLA flights within 2.2 s of where its own
+  monitor did.
+
+#### Fixed
+- tests/test_vla_backend_table.py no longer pins the old state of the
+  committed table ("the set lacks something"): it checks that the listed
+  gaps are the ones the tool computes, that the md names them exactly when
+  there are any, that there are none now, and that no default is named.
+
+#### Not changed
+- **Default backend: still none.** The lab's 15 Nov choice (AIoT-VLA v10b
+  for the follow task) was made before this set landed; the grant asks for
+  the choice on the set, so it is named with `table --default` only when
+  the lab confirms it on a day after 17 Nov (the tool refuses a
+  --default-date not after the set's newest measurement). The null flown in C2 is still the
+  box-servo, not the lab's estimator follow.
+
 ### 2026-11-17 (C2 top-up and what it showed) — RaceVLA's fourth C2 flight and the C2 null flown on hil; the null and the start gate read for what they are; ci_local made to run what CI runs
 
 #### Added

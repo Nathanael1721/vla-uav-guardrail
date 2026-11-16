@@ -102,7 +102,7 @@
    "not_separated": "the detector supplies the hint, and while it has no box the model is not asked: a C2 score is the model's and the detector's together"
   }
  },
- "created_utc": "2026-11-16T17:48:21Z",
+ "created_utc": "2026-11-16T19:48:40Z",
  "model_root": "D:/models",
  "rows": [
   {
@@ -6553,7 +6553,7 @@
     "rate_orin": "not R1 - round trip through its server: p50 838.9 ms (1.19 Hz), p95 843.4 ms, n=50; the model alone p50 835.5 ms, p95 839.9 ms [deploy/evidence/hil/racevla_7b_bench_agx.json]; R1 does not cover a model served over protocol v2 (`measure` refuses it): its Orin timing is its server's bench (python tools/bench_foreign_vla.py --server 127.0.0.1:<port> against demo/vla_server_foreign.py serve --model racevla)",
     "closed_loop_desktop": "not C1 - see records",
     "closed_loop_hil_c1": "not flown: its instruction is 'fly to <the object>' on a camera frame, not a goal coordinate; it has been flown as a follow only",
-    "closed_loop_hil_c2": "C2, 2 flights (2 target_lost): within 30 m 0.060-0.168 (median 0.114); decisions/s over the mission 0.0222-0.0328 (median 0.0275); interventions per 100 ticks 0; P0 escapes 0; KPI outcome 2 success; ticks in a P0-unsafe position 0, 0; P0 ticks not measurable / blind 0/-, 0/-; the protocol asks for 3: 1 more to fly; gate timed out 3: censored, not scored, not counted toward the 3; 4 more hil follows outside C2 (the 3 censored among them) (see the C2 section)"
+    "closed_loop_hil_c2": "C2, 3 flights (3 target_lost): within 30 m 0.060-0.168 (median 0.063); decisions/s over the mission 0.0222-0.0328 (median 0.0223); interventions per 100 ticks 0; P0 escapes 0; KPI outcome 3 success; ticks in a P0-unsafe position 0, 0, 0; P0 ticks not measurable / blind 0/-, 0/-, 0/-; gate timed out 3: censored, not scored, not counted toward the 3; 4 more hil follows outside C2 (the 3 censored among them) (see the C2 section)"
    },
    "records": [
     {
@@ -7073,6 +7073,120 @@
      "protocol": "not C2",
      "c2_censored": true,
      "end_rule_replay": null
+    },
+    {
+     "backend": "racevla_7b",
+     "family": "racevla",
+     "metric": "hil_follow",
+     "tag": "pas_hil_racevla_c2_06_20261117",
+     "model_id": "racevla/drone6_all@03f3bb48",
+     "topology": "hil",
+     "kpi_grade": true,
+     "code_revision": "89d2dc2df766",
+     "date": "2026-11-17",
+     "ticks": 899,
+     "end_reason": "target_lost",
+     "mission_s": 90.21,
+     "frac_within_30m": 0.0634,
+     "decision_hz_mission": 0.022251884476387856,
+     "decision_hz_asked": 0.625,
+     "asking_s": 3.2,
+     "interventions": 0,
+     "interventions_per_100_ticks": 0.0,
+     "p0_escapes": 0,
+     "p0_violation_escape_rate": 0.0,
+     "kpi_outcome": "success",
+     "mission_fail_reasons": [],
+     "unsafe_p0_ticks": 0,
+     "p0_ticks_not_measurable": 0,
+     "p0_ticks_blind": null,
+     "detector_hz": 2.383,
+     "stress": null,
+     "hot_apply": false,
+     "identity": true,
+     "target_estimator": true,
+     "vla_feed": "tick",
+     "vla_feed_max_hz": 0.0,
+     "negative_query": [
+      "a traffic light"
+     ],
+     "front_capture_interval_s": null,
+     "bundle": "follow-car-citylife-v0.1.3.tar.gz",
+     "max_s_given": 420.0,
+     "start_gate_reached": true,
+     "gate_outcome": "reached",
+     "gate_identity_best_streak": 28,
+     "gate_identity_refused": {
+      "too far": 54,
+      "static": 23,
+      "not ok": 13
+     },
+     "gate_needed": 5.0,
+     "gate_identity_need_in_a_row": 10.0,
+     "gate_identity_outcomes": {
+      "no candidate": 353,
+      "none acceptable": 41,
+      "streak": 10,
+      "short pass": 10,
+      "not moving": 18,
+      "static": 1,
+      "committed": 1
+     },
+     "gate_identity_moving_test_refused": 19,
+     "gate_identity_static_unjudged": 0,
+     "start_when_seen": 5.0,
+     "start_max_range_m": 30.0,
+     "gate_identity_closest_not_moving": {
+      "moved_m": 2.23,
+      "bar_m": 2.56,
+      "streak": 11
+     },
+     "gate_identity_last_not_moving": {
+      "moved_m": 0.19,
+      "bar_m": 2.25,
+      "streak": 27
+     },
+     "gate_rule": "10 identity-ok boxes in a row within 30 m, of one object (each within 3 m + 3 m/s x the time since the last, else the streak restarts) and seen moving",
+     "grant_topology": "hil",
+     "kpi_grade_reasons": [],
+     "pilot_param": "vla",
+     "identity_param": true,
+     "target_estimator_param": true,
+     "want_width": 0.1,
+     "speed_max": 4.0,
+     "lock": {
+      "kind": "TargetLock",
+      "strict": true,
+      "gate_frac": 0.12,
+      "prior": "the target estimator (--target-estimator: demo/subject_track.SubjectTrack)"
+     },
+     "monitor_end_rule": {
+      "lost_timeout_s": 90.0,
+      "det_fresh_s": 1.0
+     },
+     "summary_only": false,
+     "source": {
+      "file": "F:/vla_drone_offload/jetson_runs/pas_hil_racevla_c2_06_20261117/metrics.json",
+      "sha256": "60631855b1bb94db4e0f45202fafb9378b4ffcf052e5070616e6b870fe3fb468",
+      "file_date": "2026-11-17"
+     },
+     "not_c2": [],
+     "protocol": "C2",
+     "c2_censored": false,
+     "end_rule_replay": {
+      "ends": false,
+      "end_tick": 899,
+      "end_t_s": 90.07,
+      "last_t_s": 90.07,
+      "ticks": 899,
+      "max_gap_s": 89.8,
+      "final_gap_s": 89.8,
+      "frac_within_30m": 0.06340378197997776,
+      "within_30m": 57,
+      "ticks_read": 899,
+      "lost_timeout_s": 90.0,
+      "det_fresh_s": 1.0
+     }
     },
     {
      "backend": "racevla_7b",
@@ -9085,7 +9199,5 @@
  },
  "default_backend": null,
  "decision": "The grant defers the choice to this measurement set, and the Orin rate column holds R1 for 3 of the 7 backends `measure` can time, and a bench that is not R1, labelled as such, for 4 backends; a recorded attempt with no timing for 1 more (R1 does not cover the 4 backends served over protocol v2: their Orin timing is their server's bench). On hil, C1 has been flown by no backend and C2 by 4 (the protocol asks for 3 flights of each). The stored dev-rail runs (demo/out/ros2_*, not KPI-bearing: the grant takes KPI figures from hil) were flown by the stub.",
- "comparison_gaps": [
-  "racevla_7b: 2 of 3 C2 flights"
- ]
+ "comparison_gaps": []
 }

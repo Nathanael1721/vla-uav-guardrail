@@ -2140,8 +2140,15 @@ def test_the_committed_table_is_protocol_2_with_real_cells_only():
     assert all(rec["protocol"] == "not C1, not C2"
                for rec in sum((r["records"] for r in t["rows"]), []) + t["other_records"]
                if rec.get("metric") == "follow_matrix" and not rec.get("status"))
-    # no default is named while the set does not compare the backends
-    assert t["comparison_gaps"] and "What the set lacks before" in md
+    # The gaps the table lists are the ones the tool computes from the rows, and
+    # the md says what the set lacks exactly when it lacks something. Since
+    # RaceVLA's c2_06 (17 Nov) every backend that can fly C2 has its 3, so the
+    # set lacks nothing; the default is still none until the lab names it with
+    # `table --default` on a day after the set (name_default).
+    assert t["comparison_gaps"] == V.comparison_gaps(t), t["comparison_gaps"]
+    assert bool(t["comparison_gaps"]) == ("What the set lacks before" in md)
+    assert t["comparison_gaps"] == [], t["comparison_gaps"]
+    assert t["default_backend"] is None and "**Default backend:** none." in md
 
 
 def test_a_rate_result_under_another_protocol_is_listed_not_shown_as_r1():
