@@ -1711,6 +1711,15 @@ def verify_from_bag(bundle: str | Path) -> tuple[bool, list[str]]:
     lines.append(f"KPI table {kp['verdict']}: {kp['equal']} field(s) from the bag equal, "
                  f"{kp['differs']} differ, {kp['not_on_this_run']} out of reach on this "
                  f"run, {kp['not_from_the_bag']} not on any topic (not re-derived)")
+    man = rec.get("manifest_in_the_bag") or {}
+    if man.get("verdict") == "absent":
+        lines.append("manifest: no field of it is in this bag's metadata (recorded "
+                     "without --custom-data)")
+    elif man:
+        lines.append(f"manifest fields in the bag's metadata {man['verdict']}: "
+                     f"{man['equal']} equal, {man['differs']} differ, "
+                     f"{man['not_compared']} not compared; "
+                     f"{', '.join(sorted(man['not_known_at_launch']))} are in no bag")
     fd = rec.get("first_difference")
     if fd:
         lines.append(f"first difference: {fd['layer']}.{fd['field']} at tick "

@@ -22,7 +22,12 @@ What is pinned here:
   * the topic names are the ones the two record commands list;
   * the CLI writes its records to --out and nothing into a run folder, and
     its exit codes; a campaign's runs are its sweep.json's accepted ones;
-  * a replay bundle's bag is unpacked from the verified archive.
+  * a replay bundle's bag is unpacked from the verified archive;
+  * the manifest fields a launch passes into the bag's metadata
+    (sitl/bag_custom_data.py: only what is known before the recorder starts,
+    as the node itself would compute it) are read back from metadata.yaml
+    and compared with manifest.json and generation 0 of the policy; a bag
+    recorded without them reads `absent`, which is said and is no difference.
 
 The bag is a stand-in for `read_streams` in most tests, so they run without
 `rosbags`. The round trip through a real rosbag2 written and read with
@@ -48,6 +53,7 @@ sys.path.insert(0, str(ROOT / "tools"))
 sys.path.insert(0, str(ROOT / "tests"))
 
 import replay_from_bag as R                                        # noqa: E402
+CD = R.CD                               # sitl/bag_custom_data.py, as the tool loads it
 from guardrail import kpi as K                                     # noqa: E402
 from guardrail.frames import from_body                             # noqa: E402
 
@@ -746,6 +752,16 @@ def test_the_replay_cli_checks_a_bundle_against_its_bag_only_when_asked():
     assert "ticks identical: 4 of 4 log rows have their tick in the bag" in text, text
     assert "trajectory identical: 4 of 4 points are the bag's pose message" in text, text
     assert f"{len(R.FROM_BAG)} field(s) from the bag equal, 0 differ" in text, text
+    assert "manifest: no field of it is in this bag's metadata" in text, text
+    with_fields = dict(good, manifest_in_the_bag=R.compare_manifest(
+        _custom(), _manifest(), "sha256:" + "a" * 64, "policy_g0.json"))
+    R.replay_path = lambda p: (with_fields, None)
+    try:
+        rc, text = _replay_cli("verify", out, "--from-bag")
+    finally:
+        R.replay_path = real
+    assert rc == 0 and "manifest fields in the bag's metadata identical: 3 equal, 0 differ, " \
+        "0 not compared; sim_speedup, topology, vla_model_hash are in no bag" in text, text
     # a bundle that fails the usual verification is not taken further
     idx_forged = root / "f.replay.tar.gz"
     idx_forged.write_bytes(out.read_bytes()[:200])
@@ -758,10 +774,198 @@ def test_the_replay_cli_checks_a_bundle_against_its_bag_only_when_asked():
 
 
 # --------------------------------------------------------------------------- #
+# the manifest fields the launch puts into the bag's metadata
+# --------------------------------------------------------------------------- #
+
+GRANT_MANIFEST = ("code_revision", "vla_model_hash", "policy_hash", "random_seed",
+                  "sim_speedup", "topology")
+_METADATA = ("rosbag2_bagfile_information:\n  version: 9\n  storage_identifier: mcap\n"
+             "  message_count: 0\n  compression_format: \"\"\n  custom_data: {custom}\n"
+             "  ros_distro: jazzy\n")
+
+
+def _manifest(**over) -> dict:
+    return dict({"code_revision": "116214f3e6ee", "vla_model_hash": "stub@src:ab",
+                 "policy_hash": "sha256:" + "b" * 64, "random_seed": 1001,
+                 "sim_speedup": 1.0, "topology": "hil"}, **over)
+
+
+def _custom(**over) -> dict:
+    return dict({CD.CODE_REVISION_KEY: "116214f3e6ee", CD.RANDOM_SEED_KEY: "1001",
+                 CD.POLICY_HASH_KEY: "sha256:" + "a" * 64,
+                 CD.TOPOLOGY_DECLARED_KEY: "hil"}, **over)
+
+
+def _replay_with_manifest(custom, manifest, *, g0="sha256:" + "a" * 64, change=None):
+    s, rows, traj, kpi = _episode(["pass"] * 4)
+    s.custom_data = custom
+    if change:
+        change(rows)
+    ep = R.Episode(name="synthetic", source="memory", bag_dir=Path("stand-in"), rows=rows,
+                   trajectory=traj, kpi=kpi, priorities=PRIORITIES, arm="on",
+                   manifest=manifest, launch_policy_hash=g0,
+                   launch_policy_source="policy_g0.json" if g0 else None)
+    with _bag_is(s):
+        return R.replay(ep)[0]
+
+
+def test_a_bag_recorded_without_custom_data_holds_no_manifest_field_and_says_so():
+    """Every bag up to ntFIN2: `custom_data: ~`. That is `absent`, a limit of
+    the record, not a difference, and never filled in from manifest.json."""
+    rec = _replay_with_manifest(None, _manifest())
+    man = rec["manifest_in_the_bag"]
+    assert rec["verdict"] == "identical" and man["verdict"] == "absent", rec
+    assert man["fields"] == {} and "without BAG_MANIFEST=1" in man["why"]
+    assert "116214f3e6ee" not in json.dumps(man), "a manifest value was copied into the record"
+    assert any("no manifest field is in this bag" in x for x in rec["limits"]), rec["limits"]
+    # custom data of somebody else's is not this tool's either
+    assert _replay_with_manifest({"operator": "lab"}, _manifest())[
+        "manifest_in_the_bag"]["verdict"] == "absent"
+    # the three fields no launch can know are named with the reason, and with
+    # the three the launch passes they are the grant's six
+    assert set(man["not_known_at_launch"]) == {"vla_model_hash", "sim_speedup", "topology"}
+    assert all(man["not_known_at_launch"].values())
+    assert set(R.MANIFEST_KEYS.values()) | {"policy_hash"} | set(CD.NOT_KNOWN_AT_LAUNCH) \
+        == set(GRANT_MANIFEST)
+    from guardrail.manifest import TOPOLOGY_ARDUPILOT_SITL, build_manifest
+    built = build_manifest("sha256:" + "a" * 64, "m", 3, topology=TOPOLOGY_ARDUPILOT_SITL,
+                           sim_speedup=1.0)
+    assert tuple(built) == GRANT_MANIFEST, tuple(built)
+
+
+def test_the_launchs_manifest_fields_in_the_bag_are_compared_with_the_runs():
+    # the revision and the seed against manifest.json, the policy against
+    # generation 0 (manifest.json names the last generation, another hash here)
+    rec = _replay_with_manifest(_custom(), _manifest())
+    man = rec["manifest_in_the_bag"]
+    assert rec["verdict"] == "identical" and man["verdict"] == "identical", rec
+    assert (man["equal"], man["differs"], man["not_compared"]) == (3, 0, 0), man
+    f = man["fields"]
+    assert f[CD.RANDOM_SEED_KEY] == {"bag": "1001", "against": "manifest.json `random_seed`",
+                                     "theirs": 1001, "equal": True}
+    assert f[CD.POLICY_HASH_KEY]["against"] == "policy_g0.json" and \
+        f[CD.POLICY_HASH_KEY]["manifest_json_policy_hash"] == "sha256:" + "b" * 64
+    assert "metadata of the bag, not its first frame" in man["where"]
+    assert any("known at launch only" in x and "vla_model_hash" in x for x in rec["limits"])
+    assert any("manifest.json" in x for x in rec["not_from_the_bag"])
+    # the declared topology is reported beside the evidenced one, never judged
+    assert man["topology_declared"]["agrees"] is True
+    rec = _replay_with_manifest(_custom(), _manifest(topology="dev"))
+    assert rec["verdict"] == "identical"
+    assert rec["manifest_in_the_bag"]["topology_declared"] == dict(
+        man["topology_declared"], manifest_json_topology="dev", agrees=False)
+    # one field the run contradicts: differs, named
+    for key, custom, log in (
+            (CD.RANDOM_SEED_KEY, _custom(**{CD.RANDOM_SEED_KEY: "1002"}), 1001),
+            (CD.CODE_REVISION_KEY, _custom(**{CD.CODE_REVISION_KEY: "116214f3e6ee-dirty"}),
+             "116214f3e6ee"),
+            (CD.POLICY_HASH_KEY, _custom(**{CD.POLICY_HASH_KEY: "sha256:" + "c" * 64}),
+             "sha256:" + "a" * 64)):
+        rec = _replay_with_manifest(custom, _manifest())
+        assert rec["verdict"] == "differs" and rec["first_difference"] == {
+            "layer": "manifest", "field": key, "tick": None, "bag": custom[key],
+            "log": log}, (key, rec["first_difference"])
+        assert rec["compared_with_the_log"]["ticks"]["verdict"] == "identical"
+    # an earlier layer's difference stays the first
+
+    def other_action(rows):
+        rows[1]["raw_body"]["vy"] = 0.5
+    rec = _replay_with_manifest(_custom(**{CD.RANDOM_SEED_KEY: "1002"}), _manifest(),
+                                change=other_action)
+    assert rec["first_difference"]["layer"] == "ticks" and \
+        rec["manifest_in_the_bag"]["verdict"] == "differs", rec["first_difference"]
+    # nothing to compare a field with: said, and not a pass of that field
+    rec = _replay_with_manifest(_custom(), None, g0=None)
+    man = rec["manifest_in_the_bag"]
+    assert rec["verdict"] == "identical" and man["verdict"] == "not_compared", man
+    assert man["not_compared"] == 3 and "is not there" in man["fields"][
+        CD.CODE_REVISION_KEY]["not_compared"]
+    # the summary counts the layer
+    summary = R.summarise([_replay_with_manifest(None, _manifest()),
+                           _replay_with_manifest(_custom(), _manifest())], "cmd", 0.0)
+    assert summary["layers"]["manifest_in_the_bag"] == {"absent": 1, "identical": 1}
+    assert [r["manifest_in_the_bag"] for r in summary["per_run"]] == ["absent", "identical"]
+
+
+def test_custom_data_is_read_from_metadata_yaml_as_text():
+    d = _tmp("rfb_meta_")
+    meta = d / "metadata.yaml"
+    # as every flown bag has it
+    meta.write_text(_METADATA.format(custom="~"), encoding="utf-8")
+    assert R.read_custom_data(d) == (None, None)
+    # as rosbag2 writes pairs: a seed stays its text, and a revision of digits
+    # with a leading zero is not read as an octal number
+    meta.write_text(_METADATA.format(
+        custom="\n    manifest.random_seed: 7\n    manifest.code_revision: 012345670123\n"
+               "    launch.policy_hash: sha256:ab\n    operator: lab"), encoding="utf-8")
+    got, problem = R.read_custom_data(d)
+    assert problem is None and got == {
+        "manifest.random_seed": "7", "manifest.code_revision": "012345670123",
+        "launch.policy_hash": "sha256:ab", "operator": "lab"}, got
+    assert R.compare_manifest(got, {"code_revision": "012345670123", "random_seed": 7},
+                              None, None)["other_custom_data"] == ["operator"]
+    # a metadata.yaml older than the field, one that is not a mapping, none
+    meta.write_text("rosbag2_bagfile_information:\n  version: 5\n", encoding="utf-8")
+    assert R.read_custom_data(d) == (None, None)
+    meta.write_text(_METADATA.format(custom="[a, b]"), encoding="utf-8")
+    got, problem = R.read_custom_data(d)
+    assert got is None and "not a mapping" in problem
+    meta.unlink()
+    got, problem = R.read_custom_data(d)
+    assert got is None and "could not be read" in problem
+
+
+def test_the_launch_passes_only_what_it_knows_and_nothing_rosbag2_would_cut():
+    """sitl/bag_custom_data.py: the fields as the node itself would compute
+    them, a field that cannot be computed left out and said, the lines in
+    the form `ros2 bag record --custom-data` takes."""
+    import ros2_shield_node as N
+    from guardrail.bundle import load_for_flight
+    from guardrail.manifest import code_revision
+    argv = ["--shield", "on", "--seed", "7", "--tag", "t", "--dev-yaml", "--not-a-flag", "x"]
+    fields, notes = CD.launch_fields(argv, "hil")
+    assert notes == [] and tuple(fields) == CD.KEYS, (fields, notes)
+    assert fields[CD.CODE_REVISION_KEY] == code_revision()
+    assert fields[CD.RANDOM_SEED_KEY] == "7" and fields[CD.TOPOLOGY_DECLARED_KEY] == "hil"
+    args, _ = N.make_parser().parse_known_args(argv)
+    bundle, yaml_path, _ = N.resolve_policy(args)
+    assert fields[CD.POLICY_HASH_KEY] == load_for_flight(
+        bundle, yaml_path, allow_unverified=False)[0].policy_hash
+    assert all(CD.recordable(v) for v in fields.values())
+    # the node's own default seed; no topology declared, none recorded
+    fields, _ = CD.launch_fields(["--dev-yaml"])
+    assert fields[CD.RANDOM_SEED_KEY] == str(N.make_parser().parse_args([]).seed) == "0"
+    assert CD.TOPOLOGY_DECLARED_KEY not in fields
+    # a policy the node would refuse: that field is left out, the rest stays
+    fields, notes = CD.launch_fields(["--bundle", str(_tmp("rfb_cd_") / "none.tar.gz"),
+                                      "--seed", "3"], "dev")
+    assert CD.POLICY_HASH_KEY not in fields and fields[CD.RANDOM_SEED_KEY] == "3", fields
+    assert len(notes) == 1 and notes[0].startswith(CD.POLICY_HASH_KEY), notes
+    # arguments the node's parser refuses: the seed and the policy are unknown
+    fields, notes = CD.launch_fields(["--seed", "seven"])
+    assert set(fields) == {CD.CODE_REVISION_KEY} and len(notes) == 1, (fields, notes)
+    assert "invalid int value: 'seven'" in notes[0], notes
+    # rosbag2 splits a pair on every "=" and the shell on white space
+    assert not CD.recordable("a=b") and not CD.recordable("a b") and not CD.recordable("")
+    fields, notes = CD.launch_fields(["--dev-yaml"], "hil =1")
+    assert CD.TOPOLOGY_DECLARED_KEY not in fields and "cannot be stored whole" in notes[-1]
+    # the CLI: one KEY=VALUE a line, in order, the notes on stderr, exit 0
+    out, err = io.StringIO(), io.StringIO()
+    with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+        rc = CD.main(["--topology", "hil", "--", "--shield", "on", "--seed", "9",
+                      "--bundle", "none.tar.gz"])
+    lines = out.getvalue().splitlines()
+    assert rc == 0 and [x.split("=", 1)[0] for x in lines] == [
+        CD.CODE_REVISION_KEY, CD.RANDOM_SEED_KEY, CD.TOPOLOGY_DECLARED_KEY], lines
+    assert all(x.count("=") == 1 for x in lines) and "manifest.random_seed=9" in lines
+    assert "not recorded: launch.policy_hash" in err.getvalue()
+
+
+# --------------------------------------------------------------------------- #
 # a real rosbag2, written and read with rosbags
 # --------------------------------------------------------------------------- #
 
-def _write_bag(bag_dir: Path, s) -> None:
+def _write_bag(bag_dir: Path, s, custom: dict | None = None) -> None:
     """The stand-in's topics as a real rosbag2, with the message types the
     rail records (std_msgs, geometry_msgs, mavros_msgs)."""
     import numpy as np
@@ -788,6 +992,9 @@ def _write_bag(bag_dir: Path, s) -> None:
     def header(ts):
         return Header(stamp=Time(sec=ts // 10 ** 9, nanosec=ts % 10 ** 9), frame_id="")
     with writer as w:
+        for k, v in (custom or {}).items():
+            w.set_custom_data(k, v)
+
         def put(topic, typ, items, build):
             try:
                 c = w.add_connection(topic, typ, typestore=store)
@@ -881,6 +1088,26 @@ def test_a_real_rosbag2_is_read_and_replayed_with_rosbags():
                                           encoding="utf-8")
     rc, text = _main(run)
     assert rc == 1 and "first at ticks.raw_body, tick 8" in text, text
+    # a bag recorded with the launch's manifest fields: read back from its
+    # metadata.yaml, compared with manifest.json, a contradicted seed named
+    s, rows, traj, kpi = _episode()
+    run = _run_folder(root, "real_003", rows, traj, kpi, bag=False)
+    custom = {CD.CODE_REVISION_KEY: "012345670123", CD.RANDOM_SEED_KEY: "1001",
+              CD.POLICY_HASH_KEY: "sha256:" + "a" * 64, CD.TOPOLOGY_DECLARED_KEY: "hil"}
+    _write_bag(run / "bag", s, custom)
+    assert R.read_streams(run / "bag").custom_data == custom
+    assert R.read_streams(root / "real_001" / "bag").custom_data is None
+    (run / "manifest.json").write_text(json.dumps(_manifest(code_revision="012345670123")),
+                                       encoding="utf-8")
+    rec, _ = R.replay_path(run)
+    man = rec["manifest_in_the_bag"]
+    assert rec["verdict"] == "identical" and man["verdict"] == "identical", rec
+    assert (man["equal"], man["not_compared"]) == (2, 1), man     # no policy_g0.json here
+    (run / "manifest.json").write_text(json.dumps(_manifest(
+        code_revision="012345670123", random_seed=1002)), encoding="utf-8")
+    rc, text = _main(run)
+    assert rc == 1 and f"first at manifest.{CD.RANDOM_SEED_KEY}" in text, text
+    assert "manifest_in_the_bag: 1 differs" in text, text
     # a folder that is not a rosbag2
     junk = _run_folder(root, "junk_002", rows, traj, kpi)
     (junk / "bag" / "bag_0.mcap").write_bytes(b"not a bag")

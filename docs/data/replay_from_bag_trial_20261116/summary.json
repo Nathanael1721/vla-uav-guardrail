@@ -1,7 +1,7 @@
 {
  "_what": "Each run's ticks, trajectory and KPI table rebuilt from its rosbag2 alone (tools/replay_from_bag.py) and compared with its flight log, trajectory.json and kpi.json. Not a re-flight and not a bit-for-bit replay: the Shield and the FSM are not run again.",
  "_command": "python tools/replay_from_bag.py demo/out/hil_smoke/ntFIN2_034_corridor-along demo/out/hil_smoke/ntFIN2_010_altitude-floor-recovery demo/out/hil_smoke/ntFIN2_001_nfz-head-on --out docs/data/replay_from_bag_trial_20261116",
- "_seconds": 0.6,
+ "_seconds": 1.2,
  "reader": "rosbags 0.10.11",
  "runs": 3,
  "verdicts": {
@@ -16,6 +16,9 @@
   },
   "kpi": {
    "identical": 3
+  },
+  "manifest_in_the_bag": {
+   "absent": 3
   }
  },
  "totals": {
@@ -511,7 +514,8 @@
    "trajectory": "identical",
    "log_rows": 137,
    "ticks_past_bag_end": 0,
-   "kpi": "identical"
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
   },
   {
    "run": "ntFIN2_010_altitude-floor-recovery",
@@ -520,7 +524,8 @@
    "trajectory": "identical",
    "log_rows": 650,
    "ticks_past_bag_end": 0,
-   "kpi": "identical"
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
   },
   {
    "run": "ntFIN2_001_nfz-head-on",
@@ -529,7 +534,8 @@
    "trajectory": "identical",
    "log_rows": 651,
    "ticks_past_bag_end": 137,
-   "kpi": "identical"
+   "kpi": "identical",
+   "manifest_in_the_bag": "absent"
   }
  ]
 }

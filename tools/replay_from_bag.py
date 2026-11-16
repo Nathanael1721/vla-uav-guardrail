@@ -96,6 +96,22 @@ A field that is from the bag in general can still be out of reach on one
 run (a Shield-off arm publishes no intercept; a tick the FSM stopped has no
 repaired action on any topic): the run's record says which and why.
 
+THE MANIFEST FIELDS IN THE BAG (2026-11-16)
+
+The grant's data-flow page says the six manifest fields are "stored as the
+first frame of every rosbag". No bag flown up to ntFIN2 holds any of them
+(metadata.yaml `custom_data: ~`): manifest.json is a file beside the bag. A
+run recorded with BAG_MANIFEST=1 / VLAGUARD_BAG_MANIFEST=1 carries, in the
+bag's metadata.yaml `custom_data`, what the launch knew before the recorder
+started (sitl/bag_custom_data.py): the code revision, the seed and the hash
+of the policy the launch named, plus the topology it was configured for.
+Each run's record says which of these the bag holds (`manifest_in_the_bag`)
+and compares them: the revision and the seed with manifest.json, the policy
+hash with generation 0 of the run's policy generations. vla_model_hash,
+sim_speedup and the topology the evidence supports are not known at launch
+and are in no bag; a bag recorded without the switch is `absent`, which is
+said, not counted as a difference. It is metadata, not a first frame.
+
 WHAT "IDENTICAL" MEANS
 
 Every tick of the flight log has a tick in the bag with the same action
@@ -104,7 +120,8 @@ flew it, mode, violated rules, operators and FSM state, with what MAVROS was
 sent agreeing with what the log says was streamed; every logged point is a
 pose message of the bag; and every KPI field the bag can carry on that run
 equals kpi.json (counts exactly, a magnitude to kpi.json's fourth decimal,
-a duration to T_JITTER_S). Otherwise the verdict is `differs` with the first differing layer,
+a duration to T_JITTER_S); and every manifest field the bag's metadata
+carries equals the run's. Otherwise the verdict is `differs` with the first differing layer,
 field and tick. `not_replayable` is a run with no bag, no action or no
 Shield message.
 
@@ -139,6 +156,7 @@ for _p in (ROOT, ROOT / "tools", ROOT / "sitl"):
     if str(_p) not in sys.path:
         sys.path.insert(0, str(_p))
 
+import bag_custom_data as CD                                     # noqa: E402
 import export_episodes as X                                      # noqa: E402
 from guardrail import kpi as K                                   # noqa: E402
 from sitl_stressors import parse_marker                          # noqa: E402
@@ -213,6 +231,7 @@ class BagStreams:
     states: list = field(default_factory=list)        # {mode, armed, connected}
     markers: list = field(default_factory=list)       # (nonce8, mission seconds)
     problems: list = field(default_factory=list)
+    custom_data: dict | None = None                   # metadata.yaml custom_data (None: none)
 
 
 def f32(v: Any) -> float | None:
@@ -272,6 +291,37 @@ def _deserialize(reader, raw: bytes, msgtype: str):
         return reader.deserialize(raw, msgtype)
 
 
+def read_custom_data(bag_dir: Path) -> tuple[dict | None, str | None]:
+    """(metadata.yaml's `custom_data` as {key: text}, a problem or None).
+    None for a bag recorded without --custom-data (`custom_data: ~`, every
+    bag up to ntFIN2) and for a metadata.yaml older than the field."""
+    path = Path(bag_dir) / "metadata.yaml"
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError as e:
+        return None, f"metadata.yaml could not be read ({type(e).__name__})"
+    # Every scalar as its text: a seed stays "7", and a revision that happens
+    # to be all digits is not read as a number (a leading 0 would make it
+    # octal and another value).
+    try:
+        try:
+            import yaml
+            doc = yaml.load(text, Loader=yaml.BaseLoader)
+        except ImportError:
+            from ruamel.yaml import YAML          # rosbags' own YAML reader
+            doc = YAML(typ="base").load(text)
+    except Exception as e:                                       # noqa: BLE001
+        return None, f"metadata.yaml custom_data not read ({type(e).__name__}: {e})"
+    info = doc.get("rosbag2_bagfile_information") if isinstance(doc, dict) else None
+    custom = info.get("custom_data") if isinstance(info, dict) else None
+    if custom is None or (isinstance(custom, str)
+                          and custom.strip() in ("", "~", "null", "Null", "NULL")):
+        return None, None
+    if not isinstance(custom, dict):
+        return None, f"metadata.yaml custom_data is not a mapping ({type(custom).__name__})"
+    return {str(k): str(v) for k, v in custom.items()}, None
+
+
 def read_streams(bag_dir: Path) -> BagStreams:
     """The topics this tool reads, from a rosbag2 directory, with `rosbags`.
     Raises ReplayError when the package is missing or the bag cannot be read."""
@@ -309,6 +359,9 @@ def read_streams(bag_dir: Path) -> BagStreams:
     for name in ("actions", "setpoints", "intercepts", "fences", "mode_requests",
                  "executed", "poses", "states", "markers"):
         getattr(s, name).sort(key=lambda x: x[0])
+    s.custom_data, problem = read_custom_data(bag_dir)
+    if problem:
+        s.problems.append(problem)
     return s
 
 
@@ -674,6 +727,81 @@ def compare_kpis(rows: list[dict], stored: dict | None, priorities: dict[str, st
 
 
 # --------------------------------------------------------------------------- #
+# the manifest fields in the bag's metadata
+# --------------------------------------------------------------------------- #
+
+MANIFEST_WHERE = ("metadata.yaml `custom_data` (ros2 bag record --custom-data, "
+                  "sitl/bag_custom_data.py): what the launch knew before the recorder "
+                  "started; metadata of the bag, not its first frame")
+# custom_data key -> the manifest.json field it is the launch-time value of
+MANIFEST_KEYS = {CD.CODE_REVISION_KEY: "code_revision", CD.RANDOM_SEED_KEY: "random_seed"}
+
+
+def compare_manifest(custom: dict | None, manifest: dict | None,
+                     launch_policy_hash: str | None, launch_policy_source: str | None
+                     ) -> dict:
+    """What the bag's metadata holds of the manifest, against the run's own
+    records. `absent` (no custom_data: recorded without the switch) is not a
+    difference; a field the bag does carry and the run contradicts is."""
+    not_known = dict(CD.NOT_KNOWN_AT_LAUNCH)
+    held = {k: v for k, v in (custom or {}).items() if k in CD.KEYS}
+    if not held:
+        return {"verdict": "absent", "where": MANIFEST_WHERE,
+                "why": ("custom_data holds none of this tool's keys: the bag was recorded "
+                        "without BAG_MANIFEST=1 / VLAGUARD_BAG_MANIFEST=1 (every bag up "
+                        "to the ntFIN2 campaigns), so no manifest field is in it"),
+                "first_difference": None, "fields": {}, "not_known_at_launch": not_known}
+    fields: dict[str, dict] = {}
+    first = None
+    counts = {"equal": 0, "differs": 0, "not_compared": 0}
+
+    def put(key: str, against: str, theirs: Any, have: bool) -> None:
+        nonlocal first
+        rec: dict[str, Any] = {"bag": held[key], "against": against}
+        if not have:
+            rec["not_compared"] = f"{against} is not there"
+            counts["not_compared"] += 1
+        else:
+            rec["theirs"] = theirs
+            rec["equal"] = held[key] == str(theirs)
+            counts["equal" if rec["equal"] else "differs"] += 1
+            if not rec["equal"] and first is None:
+                first = {"layer": "manifest", "field": key, "tick": None,
+                         "bag": held[key], "log": theirs}
+        fields[key] = rec
+
+    for key, name in MANIFEST_KEYS.items():
+        if key in held:
+            put(key, f"manifest.json `{name}`", (manifest or {}).get(name),
+                isinstance(manifest, dict) and name in manifest)
+    if CD.POLICY_HASH_KEY in held:
+        put(CD.POLICY_HASH_KEY,
+            launch_policy_source or "generation 0 of the run's policy generations",
+            launch_policy_hash, launch_policy_hash is not None)
+        last = (manifest or {}).get("policy_hash")
+        if last is not None:
+            fields[CD.POLICY_HASH_KEY]["manifest_json_policy_hash"] = last
+            fields[CD.POLICY_HASH_KEY]["note"] = (
+                "manifest.json names the LAST generation: the launch's only when "
+                "nothing was hot-applied")
+    declared = None
+    if CD.TOPOLOGY_DECLARED_KEY in held:
+        evidenced = (manifest or {}).get("topology")
+        declared = {"bag": held[CD.TOPOLOGY_DECLARED_KEY], "manifest_json_topology": evidenced,
+                    "agrees": None if evidenced is None
+                    else held[CD.TOPOLOGY_DECLARED_KEY] == evidenced,
+                    "note": ("a declaration by the launch; the manifest's topology is "
+                             "decided from the evidence of the flight, so this is "
+                             "reported beside it and is not part of the verdict")}
+    verdict = ("differs" if counts["differs"] else
+               "identical" if counts["equal"] else "not_compared")
+    return {"verdict": verdict, "where": MANIFEST_WHERE, **counts,
+            "first_difference": first, "fields": fields, "topology_declared": declared,
+            "other_custom_data": sorted(k for k in (custom or {}) if k not in CD.KEYS),
+            "not_known_at_launch": not_known}
+
+
+# --------------------------------------------------------------------------- #
 # against the flight log
 # --------------------------------------------------------------------------- #
 
@@ -863,6 +991,9 @@ class Episode:
     priorities: dict | None = None
     priority_source: str | None = None
     arm: str | None = None
+    manifest: dict | None = None        # manifest.json, compared with the bag's metadata
+    launch_policy_hash: str | None = None       # generation 0's
+    launch_policy_source: str | None = None
     not_from_bag: list = field(default_factory=list)
 
 
@@ -899,6 +1030,16 @@ def _last_generation_priorities(policies: dict) -> dict | None:
     return K.rule_priorities(policies[max(policies)]) if policies else None
 
 
+def _launch_policy(ep: Episode, policies: dict, source: str) -> None:
+    """The hash of the first generation: what a launch's policy hash in the
+    bag's metadata is compared with."""
+    try:
+        ep.launch_policy_hash = str(policies[min(policies)].policy_hash)
+        ep.launch_policy_source = source
+    except Exception:                                            # noqa: BLE001
+        pass
+
+
 def load_run(run: Path) -> Episode:
     """A run folder: its bag/ (or episode.bag2/) and the records beside it."""
     from guardrail.replay import _generation_files, generation_table
@@ -923,6 +1064,11 @@ def load_run(run: Path) -> Episode:
         ep.priorities = _last_generation_priorities(policies)
         ep.priority_source = f"policy_g{max(policies)}.json (the last generation)"
         ep.not_from_bag.append(f"{ep.priority_source}: rule priorities")
+        _launch_policy(ep, policies, f"policy_g{min(policies)}.json (generation "
+                                     f"{min(policies)}: the policy the flight began with)")
+    man = _json_file(run / "manifest.json")
+    if isinstance(man, dict):
+        ep.manifest = man
     metrics = _json_file(run / "metrics.json")
     if isinstance(metrics, dict) and metrics.get("shield") in ("on", "off"):
         ep.arm = metrics["shield"]
@@ -959,6 +1105,9 @@ def load_bundle(path: Path, into: Path) -> Episode:
     ep.priorities = _last_generation_priorities(pols)
     ep.priority_source = "the bundle's last policy generation"
     ep.not_from_bag.append(f"{ep.priority_source}: rule priorities")
+    _launch_policy(ep, pols, "the bundle's first policy generation")
+    if isinstance(got.get("manifest"), dict):
+        ep.manifest = got["manifest"]
     arm = (got["metrics"] or {}).get("shield")
     if arm in ("on", "off"):
         ep.arm = arm
@@ -1033,6 +1182,22 @@ def replay(ep: Episode) -> tuple[dict, list[dict] | None]:
     if first is None:
         first = kp["first_difference"]
     kp.pop("first_difference")
+    man = compare_manifest(s.custom_data, ep.manifest, ep.launch_policy_hash,
+                           ep.launch_policy_source)
+    if first is None:
+        first = man["first_difference"]
+    man.pop("first_difference")
+    rec["manifest_in_the_bag"] = man
+    if man["verdict"] == "absent":
+        limits.append("no manifest field is in this bag (recorded without --custom-data); "
+                      "manifest.json beside it is the only record of the six fields")
+    else:
+        rec["not_from_the_bag"] = ep.not_from_bag + [
+            "manifest.json and generation 0 of the policy (compared with the bag's "
+            "custom_data)"]
+        limits.append("the bag's metadata holds the manifest fields known at launch only: "
+                      + ", ".join(sorted(man["not_known_at_launch"]))
+                      + " are in no bag")
     rec["limits"] = limits
     rec["first_difference"] = first
     rec["verdict"] = "differs" if first is not None else "identical"
@@ -1090,7 +1255,7 @@ def summarise(records: list[dict], command: str, seconds: float) -> dict:
     """The campaign summary: the count per verdict and per layer, each KPI
     field's account over the runs, the limits, and every first difference."""
     by: dict[str, int] = {}
-    layers = {"ticks": {}, "trajectory": {}, "kpi": {}}
+    layers = {"ticks": {}, "trajectory": {}, "kpi": {}, "manifest_in_the_bag": {}}
     fields: dict[str, dict] = {}
     totals = {"ticks": 0, "ticks_evidenced_by_the_bag": 0, "ticks_past_bag_end": 0,
               "runs_whose_end_is_not_in_the_bag": 0, "pose_points": 0, "pose_exact": 0,
@@ -1127,6 +1292,10 @@ def summarise(records: list[dict], command: str, seconds: float) -> dict:
         kp = rec["kpi"]
         layers["kpi"][kp["verdict"]] = layers["kpi"].get(kp["verdict"], 0) + 1
         row["kpi"] = kp["verdict"]
+        mv = (rec.get("manifest_in_the_bag") or {}).get("verdict")
+        if mv:
+            layers["manifest_in_the_bag"][mv] = layers["manifest_in_the_bag"].get(mv, 0) + 1
+            row["manifest_in_the_bag"] = mv
         for name, f in kp["fields"].items():
             acc = fields.setdefault(name, {"source": f["source"].split(" + flight_log")[0],
                                            "equal": 0, "differs": 0, "not_on_this_run": 0,

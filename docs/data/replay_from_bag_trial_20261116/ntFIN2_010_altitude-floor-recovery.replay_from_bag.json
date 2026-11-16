@@ -578,7 +578,19 @@
    }
   }
  },
+ "manifest_in_the_bag": {
+  "verdict": "absent",
+  "where": "metadata.yaml `custom_data` (ros2 bag record --custom-data, sitl/bag_custom_data.py): what the launch knew before the recorder started; metadata of the bag, not its first frame",
+  "why": "custom_data holds none of this tool's keys: the bag was recorded without BAG_MANIFEST=1 / VLAGUARD_BAG_MANIFEST=1 (every bag up to the ntFIN2 campaigns), so no manifest field is in it",
+  "fields": {},
+  "not_known_at_launch": {
+   "vla_model_hash": "resolved from /vla/identity once the pilot is up",
+   "sim_speedup": "read from the autopilot at take-off",
+   "topology": "decided from the evidence of the flight at its end (guardrail.manifest.detect_topology), never from a flag"
+  }
+ },
  "limits": [
-  "56 of 650 logged points are the bag's next or previous pose message, not the last logged before the tick's action: the bag does not say which message a tick consumed"
+  "56 of 650 logged points are the bag's next or previous pose message, not the last logged before the tick's action: the bag does not say which message a tick consumed",
+  "no manifest field is in this bag (recorded without --custom-data); manifest.json beside it is the only record of the six fields"
  ]
 }
