@@ -1032,6 +1032,52 @@ def test_kpi_evidence_can_demand_a_signature():
     shutil.rmtree(d, ignore_errors=True)
 
 
+def test_a_replay_bundle_follows_its_signers_standing_under_a_ca():
+    """2026-11-16 (WP1-04): the index is checked with verify_signer, so a
+    replay bundle obeys the same authority rules as a policy bundle. Signed
+    before the key was certified, it still verifies once the bare identity is
+    retired (the index states no issue time, and the detail says the date
+    could not be applied); signed under the CA, it verifies through the
+    certificate the trust store pins (it ships none); and it is refused when
+    that authority leaves the trust store. The CA is made here, in a temp
+    folder."""
+    if not B.HAVE_CRYPTO:
+        return SKIP
+    import guardrail.harness_service as H
+    d = _tmp()
+    run, policy, _, _ = _episode(d)
+    bare, trust = _test_key()
+    before = write_replay(run, policy, d / "before.tar.gz", signer=bare)
+    assert read_replay(before, trust)["signature"]["status"] == B.SIG_VERIFIED
+
+    H.generate_pki(d / "pki")
+    rows = B.issue_signer_certificates(d / "pki", trust)
+    signer = B.load_signer(trust.parent / "k.pem", trust)
+    assert signer.identity == rows[0]["identity"] and signer.identity.startswith("lab-ca:")
+    sig = read_replay(before, trust)["signature"]
+    assert sig["status"] == B.SIG_VERIFIED and "could not be applied" in sig["detail"], sig
+    ok, why = verify_replay(before, trust, require_signature=True)
+    assert ok, why
+
+    after = write_replay(run, policy, d / "after.tar.gz", signer=signer)
+    assert not any(n.endswith(".pem") for n in tarfile.open(after).getnames())
+    sig = read_replay(after, trust)["signature"]
+    assert sig["signed_by"] == signer.identity and sig["status"] == B.SIG_VERIFIED, sig
+    assert "chains to authority 'lab-ca'" in sig["detail"], sig["detail"]
+    ok, why = verify_replay(after, trust, require_signature=True)
+    assert ok, why
+
+    doc = json.loads(trust.read_text(encoding="utf-8"))
+    del doc["authorities"]["lab-ca"]
+    gone = d / "no_authority.json"
+    gone.write_text(json.dumps(doc), encoding="utf-8")
+    sig = read_replay(after, gone)["signature"]
+    assert sig["status"] == B.SIG_UNTRUSTED and "is not listed" in sig["detail"], sig
+    ok, why = verify_replay(after, gone, require_signature=True)
+    assert not ok, why
+    shutil.rmtree(d, ignore_errors=True)
+
+
 def test_the_pack_cli_rebuilds_a_bundle_from_the_episode_alone():
     """run_ros2_demo.sh re-packs after the rosbag is closed. The CLI has no
     policy in memory; it reads the last generation the episode wrote."""

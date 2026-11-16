@@ -885,7 +885,10 @@ def register_certificate(public_raw: bytes, certificate_pem, authority: str,
     certificate the verifier itself would refuse is refused here, so the
     store never holds one. `retire_legacy`: the bare-key identities of the
     SAME key get `retired_on` (default: now) and `superseded_by`, and are from
-    then on accepted only for what says it was issued before that instant."""
+    then on accepted only for what says it was issued before that instant.
+    Their note is rewritten to say so - the old one ("replace before final
+    delivery") is what this step answers - and kept as
+    `note_before_retirement`, since it may say whose key it is."""
     _require_crypto("registering a certified key")
     pem = _pem_text(certificate_pem)
     p, data = _store_for_write(trust_store)
@@ -917,6 +920,12 @@ def register_certificate(public_raw: bytes, certificate_pem, authority: str,
                     and e.get("public_key_hex") == public_raw.hex():
                 e["retired_on"] = when
                 e["superseded_by"] = ident
+                if e.get("note"):
+                    e["note_before_retirement"] = e["note"]
+                e["note"] = (f"RETIRED {when}: this key is certified by authority "
+                             f"{authority!r} and signs as {ident} from then on. "
+                             f"The bare identity stays listed only so that what "
+                             f"it signed before that instant still verifies.")
     _write_store(p, data)
     return ident
 
@@ -1076,16 +1085,21 @@ def _retirement(entry: dict, issued_at) -> tuple[bool, str]:
     return False, f"; issued {issued_at}, before this identity was retired ({retired})"
 
 
-def verify_signer(signed_by: str, sig_hex: str | None, data: bytes,
-                  trust_store: str | Path | dict | None = None, *,
-                  certificate=None, issued_at: str | None = None) -> SignatureCheck:
-    """One detached signature, checked: its status, the reason, and what was
-    established about the signer's certificate chain. Never raises for a bad
-    one; the caller decides, and the status says exactly what happened.
+def verify_signature(signed_by: str, sig_hex: str | None, data: bytes,
+                     trust_store: str | Path | dict | None = None
+                     ) -> tuple[str, str]:
+    """(status, detail) for one detached signature against the key the trust
+    store PINS for its signer. Never raises for a bad one; the caller decides,
+    and the status says exactly what happened.
 
-    `certificate`: the signer's certificate the document ships (a policy
-    bundle's signer.cert.pem), if any. `issued_at`: the issue time the signed
-    document states, if any (used only for a retired identity).
+    This answers one question - did the pinned key sign these bytes - and is
+    the check as it was before 2026-11-16, call and result unchanged. Whether
+    the signer is in good standing (its authority listed, its certificate
+    chained, its identity not retired) is verify_signer's question, and every
+    reader in this repository asks through verify_signer, which comes here
+    for the signature itself. So a reader that stops verifying is one function
+    to break, and tests/test_wp1_roundtrip_kpi.py breaks exactly this one to
+    show the cold-start KPI notices.
 
     The order matters, and each step is a finding from the 2026-10-06 review:
 
@@ -1095,159 +1109,240 @@ def verify_signer(signed_by: str, sig_hex: str | None, data: bytes,
        signer's name attached, and then flew under --allow-unverified-bundle.
        It is "bad-signature" now, which every reader refuses.
     2. The trust store is consulted before any cryptography, so an unknown
-       signer is "untrusted-signer" in every environment. Since 2026-11-16
-       that includes everything about an authority that needs no
-       cryptography: an identity whose authority is not listed (or is another
-       CA under the same name), a retired identity on a document issued
-       since, and a shipped certificate that is not the pinned one.
-    3. Where `cryptography` is installed the certificate is chained to its
-       authority (_chain_problem); a chain that fails is "untrusted-signer".
-       A key the store does not pin is accepted through its certificate
-       alone, so without `cryptography` it is "unverifiable-here".
-    4. Then the signature is checked - by `cryptography` where installed, else
+       signer is "untrusted-signer" in every environment.
+    3. Then the signature is checked - by `cryptography` where installed, else
        by the RFC 8032 fallback above.
     """
-    def out(status, detail, chain=CHAIN_NONE, authority=None):
-        return SignatureCheck(status, detail, chain, authority)
-
     if signed_by in (LEGACY_PLACEHOLDER_SIGNER, UNSIGNED):
         if sig_hex:
-            return out(SIG_BAD, f"a signature is attached but the signer "
-                                f"{signed_by!r} names no key; no tool here writes "
-                                f"that layout")
-        return out(SIG_UNSIGNED, f"no signature: signer is {signed_by!r}, which "
-                                 f"names no key")
+            return SIG_BAD, (f"a signature is attached but the signer "
+                             f"{signed_by!r} names no key; no tool here writes "
+                             f"that layout")
+        return SIG_UNSIGNED, (f"no signature: signer is {signed_by!r}, which "
+                              f"names no key")
     if not signed_by:
-        return out(SIG_BAD, "the signature line names no signer at all")
+        return SIG_BAD, "the signature line names no signer at all"
     if not sig_hex:
-        return out(SIG_BAD, f"signer {signed_by!r} names a key, but the bundle "
-                            f"carries no signature: the Ed25519 line was "
-                            f"stripped (no tool here writes a keyed identity "
-                            f"without one)")
-    signers, authorities, where = _trust(trust_store)
-    entry = signers.get(signed_by)
-    name, fp16, kid = _split_identity(signed_by)
-    chain, authority, tail, ca_pem, leaf_pem = CHAIN_NONE, None, "", None, None
-
+        return SIG_BAD, (f"signer {signed_by!r} names a key, but the bundle "
+                         f"carries no signature: the Ed25519 line was "
+                         f"stripped (no tool here writes a keyed identity "
+                         f"without one)")
+    trust, _, where = _trust(trust_store)
+    entry = trust.get(signed_by)
     if entry is None:
-        unknown = f"{signed_by!r} is not in the trust store ({where})"
-        if certificate is None or fp16 is None:
-            return out(SIG_UNTRUSTED, unknown)
-        # Not pinned, but it ships a certificate and names a CA: accepted if
-        # that CA is listed and certified exactly this key.
-        ca, sha = _listed_authority(authorities, name, fp16)
-        if ca is None:
-            return out(SIG_UNTRUSTED, f"{unknown}, and {sha}")
-        authority, ca_pem, leaf_pem = name, ca["certificate_pem"], certificate
-        if not HAVE_CRYPTO:
-            return out(SIG_UNVERIFIABLE,
-                       f"signature present but NOT checked: {signed_by!r} is not "
-                       f"pinned in the trust store, and chaining its certificate "
-                       f"to authority {name!r} needs 'cryptography', which this "
-                       f"interpreter does not have", CHAIN_NOT_CHECKED, authority)
-        try:
-            public = _leaf_public_raw(_load_cert(leaf_pem))
-        except ValueError:
-            public = None
-        if public is None or _key_id(public) != kid:
-            return out(SIG_UNTRUSTED,
-                       f"{signed_by!r} is not certified: the certificate shipped "
-                       f"with it "
-                       + ("is not a readable certificate of an Ed25519 key"
-                          if public is None else
-                          f"certifies {_key_id(public)}, not the key this "
-                          f"identity names"), authority=authority)
-    else:
-        refused, words = _retirement(entry, issued_at)
-        if refused:
-            return out(SIG_UNTRUSTED, f"{signed_by!r} is no longer accepted: {words}")
-        tail = words
-        issuer = entry.get("issuer")
-        if issuer:
-            if fp16 is None or name != issuer:
-                return out(SIG_UNTRUSTED,
-                           f"the trust store ({where}) gives {signed_by!r} the "
-                           f"issuer {issuer!r}, which is not the authority the "
-                           f"identity names")
-            ca, sha = _listed_authority(authorities, issuer, fp16)
-            if ca is None:
-                return out(SIG_UNTRUSTED,
-                           f"{signed_by!r} is certified by an authority this "
-                           f"trust store ({where}) does not accept: {sha}")
-            authority, ca_pem, leaf_pem = issuer, ca["certificate_pem"], \
-                entry.get("certificate_pem")
-            try:
-                pinned = _pem_der(leaf_pem)
-            except ValueError:
-                return out(SIG_UNTRUSTED,
-                           f"the trust store ({where}) names issuer {issuer!r} for "
-                           f"{signed_by!r} but pins no readable certificate",
-                           authority=authority)
-            if certificate is not None:
-                try:
-                    same = _pem_der(certificate) == pinned
-                except ValueError:
-                    same = False
-                if not same:
-                    return out(SIG_UNTRUSTED,
-                               f"the certificate shipped with {signed_by!r} is not "
-                               f"the one the trust store ({where}) pins for it",
-                               authority=authority)
-        elif certificate is not None:
-            return out(SIG_UNTRUSTED,
-                       f"a certificate is shipped with {signed_by!r}, which the "
-                       f"trust store ({where}) pins as a bare key under no "
-                       f"authority")
-        public = None
-
+        return SIG_UNTRUSTED, f"{signed_by!r} is not in the trust store ({where})"
     engine = verifier_name()
     if engine is None:
-        return out(SIG_UNVERIFIABLE,
-                   "signature present but NOT checked: this interpreter has "
-                   "neither 'cryptography' nor the pure-Python verifier enabled",
-                   CHAIN_NOT_CHECKED if authority else CHAIN_NONE, authority)
+        return SIG_UNVERIFIABLE, ("signature present but NOT checked: this "
+                                  "interpreter has neither 'cryptography' nor "
+                                  "the pure-Python verifier enabled")
     try:
-        if public is None:
-            public = bytes.fromhex(entry["public_key_hex"])
+        public = bytes.fromhex(entry["public_key_hex"])
         signature = bytes.fromhex(sig_hex)
     except (KeyError, TypeError, ValueError) as exc:
-        return out(SIG_BAD, f"Ed25519 verification failed for {signed_by!r}: "
-                            f"unreadable key or signature ({type(exc).__name__})",
-                   authority=authority)
-    if authority is not None:
-        if HAVE_CRYPTO:
-            why = _chain_problem(leaf_pem, ca_pem, public)
-            if why:
-                return out(SIG_UNTRUSTED,
-                           f"{signed_by!r} is not certified by authority "
-                           f"{authority!r}: {why}", authority=authority)
-            chain = CHAIN_VERIFIED
-            tail = (f"; its certificate chains to authority {authority!r} "
-                    f"(CA sha256 {certificate_sha256(ca_pem)[:16]}...)" + tail)
-        else:
-            chain = CHAIN_NOT_CHECKED
-            tail = (f"; its certificate chain to authority {authority!r} was NOT "
-                    f"checked here (no 'cryptography'): the key is the one the "
-                    f"trust store pins" + tail)
+        return SIG_BAD, (f"Ed25519 verification failed for {signed_by!r}: "
+                         f"unreadable key or signature ({type(exc).__name__})")
     if not _ed25519_ok(engine, public, signature, data):
-        return out(SIG_BAD, f"Ed25519 verification failed for {signed_by!r} ({engine})",
-                   authority=authority)
-    return out(SIG_VERIFIED,
-               f"Ed25519 signature by {signed_by!r} verified ({engine}){tail}",
-               chain, authority)
+        return SIG_BAD, f"Ed25519 verification failed for {signed_by!r} ({engine})"
+    return SIG_VERIFIED, f"Ed25519 signature by {signed_by!r} verified ({engine})"
 
 
-def verify_signature(signed_by: str, sig_hex: str | None, data: bytes,
-                     trust_store: str | Path | dict | None = None, *,
-                     certificate=None, issued_at: str | None = None
-                     ) -> tuple[str, str]:
-    """(status, detail) for one detached signature: verify_signer without the
-    chain status, for the callers that record the two (a replay bundle's
-    index; it ships no certificate and states no issue time, so a certified
-    signer is checked against the certificate the trust store pins)."""
-    res = verify_signer(signed_by, sig_hex, data, trust_store,
-                        certificate=certificate, issued_at=issued_at)
-    return res.status, res.detail
+def _verify_unpinned(signed_by: str, sig_hex: str, data: bytes, authorities: dict,
+                     where: str, certificate) -> SignatureCheck:
+    """A signer the trust store does NOT pin, which names a certificate
+    authority and ships a certificate: accepted if that authority is listed
+    and certified exactly the key that signed. The certificate is all that
+    vouches for the key, so this needs `cryptography`; without it the answer
+    is "unverifiable-here", never a pass."""
+    name, fp16, kid = _split_identity(signed_by)
+    unknown = f"{signed_by!r} is not in the trust store ({where})"
+    ca, sha = _listed_authority(authorities, name, fp16)
+    if ca is None:
+        return SignatureCheck(SIG_UNTRUSTED, f"{unknown}, and {sha}")
+    if not HAVE_CRYPTO:
+        return SignatureCheck(
+            SIG_UNVERIFIABLE,
+            f"signature present but NOT checked: {signed_by!r} is not pinned in "
+            f"the trust store, and chaining its certificate to authority "
+            f"{name!r} needs 'cryptography', which this interpreter does not "
+            f"have", CHAIN_NOT_CHECKED, name)
+    try:
+        public = _leaf_public_raw(_load_cert(certificate))
+    except ValueError:
+        public = None
+    if public is None or _key_id(public) != kid:
+        return SignatureCheck(
+            SIG_UNTRUSTED,
+            f"{signed_by!r} is not certified: the certificate shipped with it "
+            + ("is not a readable certificate of an Ed25519 key" if public is None
+               else f"certifies {_key_id(public)}, not the key this identity names"),
+            authority=name)
+    why = _chain_problem(certificate, ca["certificate_pem"], public)
+    if why:
+        return SignatureCheck(SIG_UNTRUSTED,
+                              f"{signed_by!r} is not certified by authority "
+                              f"{name!r}: {why}", authority=name)
+    try:
+        signature = bytes.fromhex(sig_hex)
+    except (TypeError, ValueError) as exc:
+        return SignatureCheck(SIG_BAD,
+                              f"Ed25519 verification failed for {signed_by!r}: "
+                              f"unreadable key or signature ({type(exc).__name__})",
+                              authority=name)
+    engine = verifier_name()
+    if not _ed25519_ok(engine, public, signature, data):
+        return SignatureCheck(SIG_BAD, f"Ed25519 verification failed for "
+                                       f"{signed_by!r} ({engine})", authority=name)
+    return SignatureCheck(
+        SIG_VERIFIED,
+        f"Ed25519 signature by {signed_by!r} verified ({engine}); its certificate "
+        f"chains to authority {name!r} (CA sha256 {sha[:16]}...)",
+        CHAIN_VERIFIED, name)
+
+
+@dataclass(frozen=True)
+class Standing:
+    """What the trust store, and where possible the certificate chain, say of
+    an identity the store pins - with no signature looked at."""
+    ok: bool
+    # Why it is refused; or, when ok, the words a verified signature's detail
+    # ends with (possibly none).
+    detail: str
+    chain: str = CHAIN_NONE
+    authority: str | None = None        # the listed authority, when certified
+
+
+def _standing(signed_by: str, entry: dict, authorities: dict, where: str,
+              certificate, issued_at) -> Standing:
+    refused, tail = _retirement(entry, issued_at)
+    if refused:
+        return Standing(False, f"{signed_by!r} is no longer accepted: {tail}")
+    issuer = entry.get("issuer")
+    if not issuer:
+        if certificate is not None:
+            return Standing(False,
+                            f"a certificate is shipped with {signed_by!r}, which the "
+                            f"trust store ({where}) pins as a bare key under no "
+                            f"authority")
+        return Standing(True, tail)
+    name, fp16, _ = _split_identity(signed_by)
+    if fp16 is None or name != issuer:
+        return Standing(False,
+                        f"the trust store ({where}) gives {signed_by!r} the issuer "
+                        f"{issuer!r}, which is not the authority the identity names")
+    ca, sha = _listed_authority(authorities, issuer, fp16)
+    if ca is None:
+        return Standing(False,
+                        f"{signed_by!r} is certified by an authority this trust "
+                        f"store ({where}) does not accept: {sha}")
+    leaf_pem = entry.get("certificate_pem")
+    try:
+        pinned = _pem_der(leaf_pem)
+    except ValueError:
+        return Standing(False,
+                        f"the trust store ({where}) names issuer {issuer!r} for "
+                        f"{signed_by!r} but pins no readable certificate",
+                        authority=issuer)
+    if certificate is not None:
+        try:
+            same = _pem_der(certificate) == pinned
+        except ValueError:
+            same = False
+        if not same:
+            return Standing(False,
+                            f"the certificate shipped with {signed_by!r} is not the "
+                            f"one the trust store ({where}) pins for it",
+                            authority=issuer)
+    try:
+        public = bytes.fromhex(entry["public_key_hex"])
+    except (KeyError, TypeError, ValueError):
+        return Standing(False,
+                        f"the trust store ({where}) pins no readable Ed25519 key "
+                        f"for {signed_by!r}", authority=issuer)
+    if not HAVE_CRYPTO:
+        return Standing(True,
+                        f"; its certificate chain to authority {issuer!r} was NOT "
+                        f"checked here (no 'cryptography'): the key is the one the "
+                        f"trust store pins" + tail, CHAIN_NOT_CHECKED, issuer)
+    why = _chain_problem(leaf_pem, ca["certificate_pem"], public)
+    if why:
+        return Standing(False,
+                        f"{signed_by!r} is not certified by authority {issuer!r}: "
+                        f"{why}", authority=issuer)
+    return Standing(True,
+                    f"; its certificate chains to authority {issuer!r} (CA sha256 "
+                    f"{sha[:16]}...)" + tail, CHAIN_VERIFIED, issuer)
+
+
+def signer_standing(signed_by: str, trust_store: str | Path | dict | None = None, *,
+                    certificate=None, issued_at: str | None = None) -> Standing:
+    """The standing of an identity the trust store pins, as THIS machine
+    establishes it, with no signature at hand: is it retired (for a document
+    issued `issued_at`), is its authority listed and the CA its reference
+    names, is the shipped `certificate` the pinned one, and - where
+    `cryptography` is installed - does the pinned certificate chain to that
+    authority for exactly the pinned key. What verify_signer applies before
+    it checks a signature, and what an evidence record reports per signer
+    (tools/bundle_ca_evidence.py). An identity the store does not pin has no
+    standing here: only a certificate shipped with a signed document can
+    vouch for it (_verify_unpinned)."""
+    signers, authorities, where = _trust(trust_store)
+    entry = signers.get(signed_by)
+    if entry is None:
+        return Standing(False, f"{signed_by!r} is not in the trust store ({where})")
+    return _standing(signed_by, entry, authorities, where, certificate, issued_at)
+
+
+def verify_signer(signed_by: str, sig_hex: str | None, data: bytes,
+                  trust_store: str | Path | dict | None = None, *,
+                  certificate=None, issued_at: str | None = None) -> SignatureCheck:
+    """One detached signature and its signer's standing: the SIG_* status, the
+    reason, and what was established about the signer's certificate chain.
+    Never raises for a bad one; the caller decides. What every reader calls
+    (check_bundle, a replay bundle's index).
+
+    `certificate`: the signer's certificate the document ships (a policy
+    bundle's signer.cert.pem), if any; a replay bundle ships none, and a
+    certified signer is then checked against the certificate the trust store
+    pins. `issued_at`: the issue time the signed document states, if any
+    (used only for a retired identity).
+
+    In this order (verify_signature's three steps are the first, the second
+    and the last):
+
+    1. A signature line that names no key, or names one and carries no
+       signature: verify_signature's answer, unchanged.
+    2. The trust store, before any cryptography, so the answer is the same in
+       every environment: an unknown signer, an identity whose authority is
+       not listed (or is another CA under the same name), a retired identity
+       on a document issued since, and a shipped certificate that is not the
+       pinned one are all "untrusted-signer" (_standing).
+    3. Where `cryptography` is installed the certificate is chained to its
+       authority (_chain_problem); a chain that fails is "untrusted-signer".
+       Without it the chain is "not-checked-here". A key the store does not
+       pin is accepted through its certificate alone (_verify_unpinned).
+    4. Then the Ed25519 signature against the pinned key: verify_signature,
+       looked up by name at call time.
+    """
+    if signed_by in (LEGACY_PLACEHOLDER_SIGNER, UNSIGNED) or not signed_by or not sig_hex:
+        return SignatureCheck(*verify_signature(signed_by, sig_hex, data, trust_store))
+    signers, authorities, where = _trust(trust_store)
+    entry = signers.get(signed_by)
+    if entry is None:
+        if certificate is None or _split_identity(signed_by)[1] is None:
+            return SignatureCheck(*verify_signature(signed_by, sig_hex, data, trust_store))
+        return _verify_unpinned(signed_by, sig_hex, data, authorities, where, certificate)
+    st = _standing(signed_by, entry, authorities, where, certificate, issued_at)
+    if not st.ok:
+        return SignatureCheck(SIG_UNTRUSTED, st.detail, authority=st.authority)
+    status, detail = verify_signature(signed_by, sig_hex, data, trust_store)
+    if status == SIG_VERIFIED:
+        return SignatureCheck(status, detail + st.detail, st.chain, st.authority)
+    if status == SIG_UNVERIFIABLE:
+        return SignatureCheck(status, detail,
+                              CHAIN_NOT_CHECKED if st.authority else CHAIN_NONE,
+                              st.authority)
+    return SignatureCheck(status, detail, authority=st.authority)
 
 
 def signature_text(digest: str, signer: Signer | None, data: bytes) -> bytes:

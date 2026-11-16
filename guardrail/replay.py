@@ -149,7 +149,7 @@ from typing import Any, Callable
 
 from .bundle import (LEGACY_PLACEHOLDER_SIGNER, SIG_BAD, SIG_VERIFIED,
                      _resolve_signer, manifest_for, parse_signature,
-                     signature_text, verify_signature)
+                     signature_text, verify_signer)
 from .kpi import compute, rule_priorities
 from .models import Policy, era_context
 
@@ -761,8 +761,13 @@ def read_replay(path: str | Path,
             raise ValueError(
                 f"{path}: signature does not match the index; the bundle has "
                 f"been modified or truncated.")
-        status, detail = verify_signature(signed_by, sig_hex, index_bytes,
-                                          trust_store)
+        # verify_signer: the signature AND the signer's standing (its authority
+        # listed, its certificate chained where `cryptography` is). A replay
+        # bundle ships no certificate and its index states no issue time, so
+        # a certified signer is held to the certificate the trust store pins
+        # and a retired identity is accepted with the detail saying so.
+        res = verify_signer(signed_by, sig_hex, index_bytes, trust_store)
+        status, detail = res.status, res.detail
         if status == SIG_BAD:
             raise ValueError(
                 f"{path}: signature check failed - {detail}. The index was "

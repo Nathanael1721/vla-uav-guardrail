@@ -1149,6 +1149,10 @@ def test_swapping_the_authority_is_one_registry_entry_and_a_re_sign():
             assert "'lab-ca' is not listed" in gone.detail, gone.detail
             _refused_as(lambda: load_bundle(b1, trust_store=trust), "untrusted-signer")
             _refused_as(lambda: B.load_for_flight(b1, trust_store=trust), "untrusted-signer")
+            # the same for a document that ships no certificate (a replay
+            # bundle's index): the key is still pinned, its authority is gone
+            idx = B.verify_signer(signer.identity, signer.sign(b"index"), b"index", trust)
+            assert idx.status == B.SIG_UNTRUSTED and "is not listed" in idx.detail, idx
     assert check_bundle(b2, trust).chain == B.CHAIN_VERIFIED
 
     # Another CA may not take a listed name: its bundles name another
@@ -1341,6 +1345,11 @@ def test_a_retired_bare_key_is_accepted_only_for_what_was_issued_before():
     entry = _store(trust)["signers"][bare.identity]
     assert entry["retired_on"] == "2026-11-16T00:00:00Z" and \
         entry["superseded_by"].startswith("lab-ca:"), entry
+    # The entry no longer says "put it under a CA": it says that happened,
+    # and keeps what it said before.
+    assert entry["note"].startswith("RETIRED 2026-11-16T00:00:00Z") and \
+        entry["superseded_by"] in entry["note"], entry["note"]
+    assert "issue-cert" in entry["note_before_retirement"], entry
     at = write_bundle(pol, _tmp("at.tar.gz"), signer=bare, issued_at="2026-11-16T00:00:00Z")
     late = write_bundle(pol, _tmp("late.tar.gz"), signer=bare, issued_at="2026-12-01T08:00:00Z")
     for ctx in (contextlib.nullcontext(), _no_crypto()):
@@ -1366,10 +1375,15 @@ def test_a_retired_bare_key_is_accepted_only_for_what_was_issued_before():
     # date cannot be applied, the signature still verifies, and the detail
     # says which of the two happened.
     sig = bare.sign(b"index")
-    status, detail = B.verify_signature(bare.identity, sig, b"index", trust)
-    assert status == B.SIG_VERIFIED and "could not be applied" in detail, detail
-    status, detail = B.verify_signature(now.identity, now.sign(b"index"), b"index", trust)
-    assert status == B.SIG_VERIFIED and "chains to authority 'lab-ca'" in detail, detail
+    res = B.verify_signer(bare.identity, sig, b"index", trust)
+    assert res.status == B.SIG_VERIFIED and "could not be applied" in res.detail, res
+    res = B.verify_signer(now.identity, now.sign(b"index"), b"index", trust)
+    assert (res.status, res.chain) == (B.SIG_VERIFIED, B.CHAIN_VERIFIED) and \
+        "chains to authority 'lab-ca'" in res.detail, res
+    # verify_signature is the pinned-key check alone, its call and its two
+    # words as before: it knows nothing of authorities or retirement.
+    assert B.verify_signature(bare.identity, sig, b"index", trust) == \
+        (B.SIG_VERIFIED, f"Ed25519 signature by {bare.identity!r} verified (cryptography)")
     # An entry whose date cannot be read is refused, not waved through.
     doc = _store(trust)
     doc["signers"][bare.identity]["retired_on"] = "soon"
