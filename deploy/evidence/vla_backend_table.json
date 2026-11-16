@@ -99,7 +99,7 @@
    "not_separated": "the detector supplies the hint, and while it has no box the model is not asked: a C2 score is the model's and the detector's together"
   }
  },
- "created_utc": "2026-11-16T05:58:24Z",
+ "created_utc": "2026-11-16T12:07:20Z",
  "model_root": "D:/models",
  "rows": [
   {
@@ -443,14 +443,14 @@
     {
      "path": "models/vla_policy_v2.pt",
      "where": "repository",
-     "present": true,
-     "bytes": 2173407
+     "present": false,
+     "bytes": null
     },
     {
      "path": "models/vla_policy_v2.onnx",
      "where": "repository",
-     "present": true,
-     "bytes": 2163646
+     "present": false,
+     "bytes": null
     }
    ],
    "cells": {
@@ -1666,7 +1666,7 @@
     "rate_orin": "not R1 - bf16/sdpa/unmerged through demo/vla_server_v2.py bench, the R1 frames, 5 + 50, power mode not in the file: p50 1520 ms (0.658 Hz), p95 1538 ms, n=50 [deploy/evidence/hil/aerialvla_serving_bench_agx.json]; not R1 - bf16/sdpa/merged through demo/vla_server_v2.py bench, the R1 frames, 5 + 50, power mode not in the file: p50 1074 ms (0.931 Hz), p95 1100 ms, n=50 [deploy/evidence/hil/aerialvla_serving_bench_agx_merged.json]; R1 does not cover a model served over protocol v2 (`measure` refuses it): its Orin timing is its server's bench (python demo/vla_server_v2.py bench --precision bf16 --attn sdpa with --merge or --no-merge (the R1 frames, 5 + 50, through the server's protocol core))",
     "closed_loop_desktop": "not C1 - see records",
     "closed_loop_hil_c1": "not flown on hil: AerialVLA has flown a GOTO on ArduPilot at dev only (pas_vla_goto_01 / _02, CHANGELOG 2026-10-29, another goal and policy); on hil the perception node could fly it (--pilot vla --mission goto), but no signed bundle of policies/urban_demo_policy.yaml is placed in its scene",
-    "closed_loop_hil_c2": "to fly on hil (C2)"
+    "closed_loop_hil_c2": "C2, 3 flights (3 target_lost): within 30 m 0.052-0.163 (median 0.102); decisions/s over the mission 0.0111-0.322 (median 0.0223); interventions per 100 ticks 1.78-4.83 (median 1.78); P0 escapes 0; KPI outcome 2 fail, 1 success (unsafe_position_entered 2); ticks in a P0-unsafe position 0, 1, 4; P0 ticks not measurable / blind 0/-, 0/-, 0/-; 1 more hil follow outside C2 (see the C2 section)"
    },
    "records": [
     {
@@ -1742,6 +1742,211 @@
       "sha256": "97265fad42709b293185edf4797d55e3db0aafb7b81b1a0717f431a495105cc1",
       "file_date": "2026-11-16"
      }
+    },
+    {
+     "backend": "aerialvla_bf16",
+     "family": "aerialvla",
+     "metric": "hil_follow",
+     "tag": "pas_hil_aerialvla_c2_01_20261116",
+     "model_id": "aerialvla-lora/aero_vla@unknown",
+     "topology": "hil",
+     "kpi_grade": true,
+     "code_revision": "c7257f130a17",
+     "date": "2026-11-16",
+     "ticks": 1552,
+     "end_reason": "target_lost",
+     "mission_s": 155.52,
+     "frac_within_30m": 0.1627,
+     "decision_hz_mission": 0.3222213849648697,
+     "decision_hz_asked": 0.7106418618816781,
+     "asking_s": 78.802,
+     "interventions": 75,
+     "interventions_per_100_ticks": 4.832474226804123,
+     "p0_escapes": 0,
+     "p0_violation_escape_rate": 0.0,
+     "kpi_outcome": "success",
+     "mission_fail_reasons": [],
+     "unsafe_p0_ticks": 0,
+     "p0_ticks_not_measurable": 0,
+     "p0_ticks_blind": null,
+     "detector_hz": 3.016,
+     "stress": null,
+     "hot_apply": false,
+     "identity": true,
+     "target_estimator": true,
+     "vla_feed": "tick",
+     "vla_feed_max_hz": 0.0,
+     "negative_query": [
+      "a traffic light"
+     ],
+     "front_capture_interval_s": null,
+     "bundle": "follow-car-citylife-v0.1.3.tar.gz",
+     "max_s_given": 420.0,
+     "start_gate_reached": true,
+     "summary_only": false,
+     "source": {
+      "file": "F:/vla_drone_offload/jetson_runs/pas_hil_aerialvla_c2_01_20261116/metrics.json",
+      "sha256": "31f59c367007b96bf28de35dbbb14b3793d4abb6d2409dc03bf54c570ac76ab4",
+      "file_date": "2026-11-16"
+     },
+     "not_c2": [],
+     "protocol": "C2"
+    },
+    {
+     "backend": "aerialvla_bf16",
+     "family": "aerialvla",
+     "metric": "hil_follow",
+     "tag": "pas_hil_aerialvla_c2_02_20261116",
+     "model_id": "aerialvla-lora/aero_vla@unknown",
+     "topology": "hil",
+     "kpi_grade": true,
+     "code_revision": "c7257f130a17",
+     "date": "2026-11-16",
+     "ticks": 899,
+     "end_reason": "target_lost",
+     "mission_s": 90.16,
+     "frac_within_30m": 0.1023,
+     "decision_hz_mission": 0.02225573240033849,
+     "decision_hz_asked": 0.625,
+     "asking_s": 3.2,
+     "interventions": 16,
+     "interventions_per_100_ticks": 1.7797552836484982,
+     "p0_escapes": 0,
+     "p0_violation_escape_rate": 0.0,
+     "kpi_outcome": "fail",
+     "mission_fail_reasons": [
+      "unsafe_position_entered"
+     ],
+     "unsafe_p0_ticks": 1,
+     "p0_ticks_not_measurable": 0,
+     "p0_ticks_blind": null,
+     "detector_hz": 2.263,
+     "stress": null,
+     "hot_apply": false,
+     "identity": true,
+     "target_estimator": true,
+     "vla_feed": "tick",
+     "vla_feed_max_hz": 0.0,
+     "negative_query": [
+      "a traffic light"
+     ],
+     "front_capture_interval_s": null,
+     "bundle": "follow-car-citylife-v0.1.3.tar.gz",
+     "max_s_given": 420.0,
+     "start_gate_reached": true,
+     "summary_only": false,
+     "source": {
+      "file": "F:/vla_drone_offload/jetson_runs/pas_hil_aerialvla_c2_02_20261116/metrics.json",
+      "sha256": "74c999ba556a95662b07681813274075d74b3d4594d7564b6e1378c8345ed61e",
+      "file_date": "2026-11-16"
+     },
+     "not_c2": [],
+     "protocol": "C2"
+    },
+    {
+     "backend": "aerialvla_bf16",
+     "family": "aerialvla",
+     "metric": "hil_follow",
+     "tag": "pas_hil_aerialvla_c2_03_20261116",
+     "model_id": "aerialvla-lora/aero_vla@unknown",
+     "topology": "hil",
+     "kpi_grade": true,
+     "code_revision": "c7257f130a17",
+     "date": "2026-11-16",
+     "ticks": 899,
+     "end_reason": "target_lost",
+     "mission_s": 90.15,
+     "frac_within_30m": 0.0523,
+     "decision_hz_mission": 0.011129580671642951,
+     "decision_hz_asked": 0.4166666666666667,
+     "asking_s": 2.4,
+     "interventions": 16,
+     "interventions_per_100_ticks": 1.7797552836484982,
+     "p0_escapes": 0,
+     "p0_violation_escape_rate": 0.0,
+     "kpi_outcome": "fail",
+     "mission_fail_reasons": [
+      "unsafe_position_entered"
+     ],
+     "unsafe_p0_ticks": 4,
+     "p0_ticks_not_measurable": 0,
+     "p0_ticks_blind": null,
+     "detector_hz": 2.274,
+     "stress": null,
+     "hot_apply": false,
+     "identity": true,
+     "target_estimator": true,
+     "vla_feed": "tick",
+     "vla_feed_max_hz": 0.0,
+     "negative_query": [
+      "a traffic light"
+     ],
+     "front_capture_interval_s": null,
+     "bundle": "follow-car-citylife-v0.1.3.tar.gz",
+     "max_s_given": 420.0,
+     "start_gate_reached": true,
+     "summary_only": false,
+     "source": {
+      "file": "F:/vla_drone_offload/jetson_runs/pas_hil_aerialvla_c2_03_20261116/metrics.json",
+      "sha256": "f40249d5e5dbededf284a9307afb6812255ac9184401a8d7e64f1e61ba75303c",
+      "file_date": "2026-11-16"
+     },
+     "not_c2": [],
+     "protocol": "C2"
+    },
+    {
+     "backend": "aerialvla_bf16",
+     "family": "aerialvla",
+     "metric": "hil_follow",
+     "tag": "pas_hil_aerialvla_shake_01_20261116",
+     "model_id": "aerialvla-lora/aero_vla@unknown",
+     "topology": "hil",
+     "kpi_grade": true,
+     "code_revision": "c7257f130a17",
+     "date": "2026-11-16",
+     "ticks": 598,
+     "end_reason": "max_s reached",
+     "mission_s": 60.22,
+     "frac_within_30m": 0.5803,
+     "decision_hz_mission": 0.4346085572584107,
+     "decision_hz_asked": 0.6881720430107527,
+     "asking_s": 46.5,
+     "interventions": 53,
+     "interventions_per_100_ticks": 8.862876254180602,
+     "p0_escapes": 0,
+     "p0_violation_escape_rate": 0.0,
+     "kpi_outcome": "fail",
+     "mission_fail_reasons": [
+      "unsafe_position_entered"
+     ],
+     "unsafe_p0_ticks": 2,
+     "p0_ticks_not_measurable": 0,
+     "p0_ticks_blind": null,
+     "detector_hz": 2.972,
+     "stress": null,
+     "hot_apply": false,
+     "identity": true,
+     "target_estimator": true,
+     "vla_feed": "tick",
+     "vla_feed_max_hz": 0.0,
+     "negative_query": [
+      "a traffic light"
+     ],
+     "front_capture_interval_s": null,
+     "bundle": "follow-car-citylife-v0.1.3.tar.gz",
+     "max_s_given": 60.0,
+     "start_gate_reached": true,
+     "summary_only": false,
+     "source": {
+      "file": "F:/vla_drone_offload/jetson_runs/pas_hil_aerialvla_shake_01_20261116/metrics.json",
+      "sha256": "e9709fc92fdd2ad0302b1b251e3b0fe849feb7d5f9ba5fb17a2e1adf06d587a0",
+      "file_date": "2026-11-16"
+     },
+     "not_c2": [
+      "a shakedown by its tag ('_shake')",
+      "given a time limit of 60 s, not C2's 420 s"
+     ],
+     "protocol": "not C2"
     },
     {
      "backend": "aerialvla_bf16",
@@ -1959,7 +2164,7 @@
     "rate_orin": "not R1 - own inputs (aiot_frames), round trip through its server: p50 39.6 ms (25.3 Hz), p95 41.7 ms, n=300; the model alone p50 32.6 ms, p95 33.9 ms [deploy/evidence/hil/aiotvla_v10b_bench_agx.json]; R1 does not cover a model served over protocol v2 (`measure` refuses it): its Orin timing is its server's bench (python tools/bench_foreign_vla.py --server 127.0.0.1:<port> against demo/vla_server_foreign.py serve --model aiotvla)",
     "closed_loop_desktop": "not measured",
     "closed_loop_hil_c1": "cannot fly C1: a follow-only model. Its input is a camera frame and object words, the request's direction phrase is ignored (recorded under native.ignored), and it is given no goal coordinate. Its closed-loop test is C2",
-    "closed_loop_hil_c2": "C2, 2 flights (2 max_s reached): within 30 m 0.269-0.352 (median 0.311); decisions/s over the mission 10.6-10.9 (median 10.8); interventions per 100 ticks 6.77-7.91 (median 7.34); P0 escapes 0; KPI outcome 2 fail (unsafe_position_entered 2); ticks in a P0-unsafe position 3, 21; P0 ticks not measurable / blind 0/-, 0/-; the protocol asks for 3: 1 more to fly; 36 more hil follows outside C2 (see the C2 section)"
+    "closed_loop_hil_c2": "C2, 3 flights (2 max_s reached, 1 target_lost): within 30 m 0.211-0.352 (median 0.269); decisions/s over the mission 7.45-10.9 (median 10.6); interventions per 100 ticks 4.13-7.91 (median 6.77); P0 escapes 0; KPI outcome 3 fail (unsafe_position_entered 3); ticks in a P0-unsafe position 3, 4, 21; P0 ticks not measurable / blind 0/-, 0/-, 0/-; 36 more hil follows outside C2 (see the C2 section)"
    },
    "records": [
     {
@@ -3716,6 +3921,57 @@
      "backend": "aiotvla_v10b",
      "family": "aiotvla",
      "metric": "hil_follow",
+     "tag": "pas_hil_aiot_c2_01_20261116",
+     "model_id": "aiotvla/v10b@35259bd1",
+     "topology": "hil",
+     "kpi_grade": true,
+     "code_revision": "c7257f130a17",
+     "date": "2026-11-16",
+     "ticks": 2080,
+     "end_reason": "target_lost",
+     "mission_s": 208.26,
+     "frac_within_30m": 0.2111,
+     "decision_hz_mission": 7.45333951989699,
+     "decision_hz_asked": 13.209549965459724,
+     "asking_s": 118.702,
+     "interventions": 86,
+     "interventions_per_100_ticks": 4.134615384615385,
+     "p0_escapes": 0,
+     "p0_violation_escape_rate": 0.0,
+     "kpi_outcome": "fail",
+     "mission_fail_reasons": [
+      "unsafe_position_entered"
+     ],
+     "unsafe_p0_ticks": 4,
+     "p0_ticks_not_measurable": 0,
+     "p0_ticks_blind": null,
+     "detector_hz": 2.838,
+     "stress": null,
+     "hot_apply": false,
+     "identity": true,
+     "target_estimator": true,
+     "vla_feed": "stream",
+     "vla_feed_max_hz": 0.0,
+     "negative_query": [
+      "a traffic light"
+     ],
+     "front_capture_interval_s": 0.05,
+     "bundle": "follow-car-citylife-v0.1.3.tar.gz",
+     "max_s_given": 420.0,
+     "start_gate_reached": true,
+     "summary_only": false,
+     "source": {
+      "file": "F:/vla_drone_offload/jetson_runs/pas_hil_aiot_c2_01_20261116/metrics.json",
+      "sha256": "118c3897a3ca58c1194494baa6f20b0e74f8f339d6c57caf34666b91c6624f81",
+      "file_date": "2026-11-16"
+     },
+     "not_c2": [],
+     "protocol": "C2"
+    },
+    {
+     "backend": "aiotvla_v10b",
+     "family": "aiotvla",
+     "metric": "hil_follow",
      "tag": "pas_hil_feed_01",
      "model_id": "aiotvla/v10b@35259bd1",
      "topology": "hil",
@@ -4112,7 +4368,7 @@
     "rate_orin": "not R1 - round trip through its server: p50 1348 ms (0.742 Hz), p95 1.753e+04 ms, n=50; the model alone p50 1345 ms, p95 1.753e+04 ms [deploy/evidence/hil/dronecats_2b_bench_agx.json]; R1 does not cover a model served over protocol v2 (`measure` refuses it): its Orin timing is its server's bench (python tools/bench_foreign_vla.py --server 127.0.0.1:<port> against demo/vla_server_foreign.py serve --model dronecats)",
     "closed_loop_desktop": "not C1 - see records",
     "closed_loop_hil_c1": "not flown: its command is 'go to <the object>' on a camera frame, not a goal coordinate; it has been flown as a follow only",
-    "closed_loop_hil_c2": "to fly on hil (C2)"
+    "closed_loop_hil_c2": "C2, 3 flights (3 target_lost): within 30 m 0.132-0.189 (median 0.168); decisions/s over the mission 0.052-0.181 (median 0.178); interventions per 100 ticks 0.312-1.65 (median 0.487); P0 escapes 0; KPI outcome 1 fail, 2 success (unsafe_position_entered 1); ticks in a P0-unsafe position 6, 0, 0; P0 ticks not measurable / blind 0/-, 0/-, 0/-; 1 more hil follow outside C2 (see the C2 section)"
    },
    "records": [
     {
@@ -4159,6 +4415,207 @@
       "sha256": "547f86644a7fe97eb1cd1c2cc9f4950e69c2a7713b6cd380137f6653f5c42a85",
       "file_date": "2026-11-16"
      }
+    },
+    {
+     "backend": "dronecats_2b",
+     "family": "dronecats",
+     "metric": "hil_follow",
+     "tag": "pas_hil_dronecats_c2_01_20261116",
+     "model_id": "dronecats/DroneCATS-Cosmos3-Edge-2B@5080e727",
+     "topology": "hil",
+     "kpi_grade": true,
+     "code_revision": "c7257f130a17",
+     "date": "2026-11-16",
+     "ticks": 1457,
+     "end_reason": "target_lost",
+     "mission_s": 145.99,
+     "frac_within_30m": 0.1318,
+     "decision_hz_mission": 0.17846516504099932,
+     "decision_hz_asked": 0.3444097200076536,
+     "asking_s": 78.395,
+     "interventions": 24,
+     "interventions_per_100_ticks": 1.6472203157172272,
+     "p0_escapes": 0,
+     "p0_violation_escape_rate": 0.0,
+     "kpi_outcome": "fail",
+     "mission_fail_reasons": [
+      "unsafe_position_entered"
+     ],
+     "unsafe_p0_ticks": 6,
+     "p0_ticks_not_measurable": 0,
+     "p0_ticks_blind": null,
+     "detector_hz": 2.767,
+     "stress": null,
+     "hot_apply": false,
+     "identity": true,
+     "target_estimator": true,
+     "vla_feed": "tick",
+     "vla_feed_max_hz": 0.0,
+     "negative_query": [
+      "a traffic light"
+     ],
+     "front_capture_interval_s": null,
+     "bundle": "follow-car-citylife-v0.1.3.tar.gz",
+     "max_s_given": 420.0,
+     "start_gate_reached": true,
+     "summary_only": false,
+     "source": {
+      "file": "F:/vla_drone_offload/jetson_runs/pas_hil_dronecats_c2_01_20261116/metrics.json",
+      "sha256": "5c0fa2e58938e383ba7ef155c3c62b68940267e35cb36067b0014574f5e03127",
+      "file_date": "2026-11-16"
+     },
+     "not_c2": [],
+     "protocol": "C2"
+    },
+    {
+     "backend": "dronecats_2b",
+     "family": "dronecats",
+     "metric": "hil_follow",
+     "tag": "pas_hil_dronecats_c2_02_20261116",
+     "model_id": "dronecats/DroneCATS-Cosmos3-Edge-2B@5080e727",
+     "topology": "hil",
+     "kpi_grade": true,
+     "code_revision": "c7257f130a17",
+     "date": "2026-11-16",
+     "ticks": 1438,
+     "end_reason": "target_lost",
+     "mission_s": 144.06,
+     "frac_within_30m": 0.1885,
+     "decision_hz_mission": 0.1808645529277389,
+     "decision_hz_asked": 0.3660130718954248,
+     "asking_s": 76.5,
+     "interventions": 7,
+     "interventions_per_100_ticks": 0.48678720445062584,
+     "p0_escapes": 0,
+     "p0_violation_escape_rate": 0.0,
+     "kpi_outcome": "success",
+     "mission_fail_reasons": [],
+     "unsafe_p0_ticks": 0,
+     "p0_ticks_not_measurable": 0,
+     "p0_ticks_blind": null,
+     "detector_hz": 2.791,
+     "stress": null,
+     "hot_apply": false,
+     "identity": true,
+     "target_estimator": true,
+     "vla_feed": "tick",
+     "vla_feed_max_hz": 0.0,
+     "negative_query": [
+      "a traffic light"
+     ],
+     "front_capture_interval_s": null,
+     "bundle": "follow-car-citylife-v0.1.3.tar.gz",
+     "max_s_given": 420.0,
+     "start_gate_reached": true,
+     "summary_only": false,
+     "source": {
+      "file": "F:/vla_drone_offload/jetson_runs/pas_hil_dronecats_c2_02_20261116/metrics.json",
+      "sha256": "8d6b6569e5564a0e744520f47d3f12d7efa428b377e04d973b33ce5fbc739cd4",
+      "file_date": "2026-11-16"
+     },
+     "not_c2": [],
+     "protocol": "C2"
+    },
+    {
+     "backend": "dronecats_2b",
+     "family": "dronecats",
+     "metric": "hil_follow",
+     "tag": "pas_hil_dronecats_c2_03_20261116",
+     "model_id": "dronecats/DroneCATS-Cosmos3-Edge-2B@5080e727",
+     "topology": "hil",
+     "kpi_grade": true,
+     "code_revision": "c7257f130a17",
+     "date": "2026-11-16",
+     "ticks": 962,
+     "end_reason": "target_lost",
+     "mission_s": 96.5,
+     "frac_within_30m": 0.1684,
+     "decision_hz_mission": 0.05197932528800773,
+     "decision_hz_asked": 0.5825242718446602,
+     "asking_s": 10.3,
+     "interventions": 3,
+     "interventions_per_100_ticks": 0.31185031185031187,
+     "p0_escapes": 0,
+     "p0_violation_escape_rate": 0.0,
+     "kpi_outcome": "success",
+     "mission_fail_reasons": [],
+     "unsafe_p0_ticks": 0,
+     "p0_ticks_not_measurable": 0,
+     "p0_ticks_blind": null,
+     "detector_hz": 2.311,
+     "stress": null,
+     "hot_apply": false,
+     "identity": true,
+     "target_estimator": true,
+     "vla_feed": "tick",
+     "vla_feed_max_hz": 0.0,
+     "negative_query": [
+      "a traffic light"
+     ],
+     "front_capture_interval_s": null,
+     "bundle": "follow-car-citylife-v0.1.3.tar.gz",
+     "max_s_given": 420.0,
+     "start_gate_reached": true,
+     "summary_only": false,
+     "source": {
+      "file": "F:/vla_drone_offload/jetson_runs/pas_hil_dronecats_c2_03_20261116/metrics.json",
+      "sha256": "fc6a79bbcdfdc34b2e132d0fbeec9851a93883a6504c37aef284c3106eee7151",
+      "file_date": "2026-11-16"
+     },
+     "not_c2": [],
+     "protocol": "C2"
+    },
+    {
+     "backend": "dronecats_2b",
+     "family": "dronecats",
+     "metric": "hil_follow",
+     "tag": "pas_hil_dronecats_shake_01_20261116",
+     "model_id": "dronecats/DroneCATS-Cosmos3-Edge-2B@5080e727",
+     "topology": "hil",
+     "kpi_grade": true,
+     "code_revision": "c7257f130a17",
+     "date": "2026-11-16",
+     "ticks": 598,
+     "end_reason": "max_s reached",
+     "mission_s": 60.19,
+     "frac_within_30m": 0.2508,
+     "decision_hz_mission": 0.01671389640629852,
+     "decision_hz_asked": 0.3846153846153846,
+     "asking_s": 5.2,
+     "interventions": 10,
+     "interventions_per_100_ticks": 1.6722408026755853,
+     "p0_escapes": 0,
+     "p0_violation_escape_rate": 0.0,
+     "kpi_outcome": "success",
+     "mission_fail_reasons": [],
+     "unsafe_p0_ticks": 0,
+     "p0_ticks_not_measurable": 0,
+     "p0_ticks_blind": null,
+     "detector_hz": 2.907,
+     "stress": null,
+     "hot_apply": false,
+     "identity": true,
+     "target_estimator": true,
+     "vla_feed": "tick",
+     "vla_feed_max_hz": 0.0,
+     "negative_query": [
+      "a traffic light"
+     ],
+     "front_capture_interval_s": null,
+     "bundle": "follow-car-citylife-v0.1.3.tar.gz",
+     "max_s_given": 60.0,
+     "start_gate_reached": true,
+     "summary_only": false,
+     "source": {
+      "file": "F:/vla_drone_offload/jetson_runs/pas_hil_dronecats_shake_01_20261116/metrics.json",
+      "sha256": "a4abab670e9207680ba642c9deebc2f75aabdbb70f5537fd204ee17b8a1e2f71",
+      "file_date": "2026-11-16"
+     },
+     "not_c2": [
+      "a shakedown by its tag ('_shake')",
+      "given a time limit of 60 s, not C2's 420 s"
+     ],
+     "protocol": "not C2"
     },
     {
      "backend": "dronecats_2b",
@@ -4333,7 +4790,7 @@
     "rate_orin": "not R1 - round trip through its server: p50 838.9 ms (1.19 Hz), p95 843.4 ms, n=50; the model alone p50 835.5 ms, p95 839.9 ms [deploy/evidence/hil/racevla_7b_bench_agx.json]; R1 does not cover a model served over protocol v2 (`measure` refuses it): its Orin timing is its server's bench (python tools/bench_foreign_vla.py --server 127.0.0.1:<port> against demo/vla_server_foreign.py serve --model racevla)",
     "closed_loop_desktop": "not C1 - see records",
     "closed_loop_hil_c1": "not flown: its instruction is 'fly to <the object>' on a camera frame, not a goal coordinate; it has been flown as a follow only",
-    "closed_loop_hil_c2": "to fly on hil (C2)"
+    "closed_loop_hil_c2": "C2, 1 flight (1 target_lost): within 30 m 0.060; decisions/s over the mission 0.0222; interventions per 100 ticks 0; P0 escapes 0; KPI outcome 1 success; ticks in a P0-unsafe position 0; P0 ticks not measurable / blind 0/-; the protocol asks for 3: 2 more to fly; 3 more hil follows outside C2 (see the C2 section)"
    },
    "records": [
     {
@@ -4380,6 +4837,219 @@
       "sha256": "a3076dee1c7d79ab253f4d360143d990433ee6623bff3d58989c699ca38d8615",
       "file_date": "2026-11-16"
      }
+    },
+    {
+     "backend": "racevla_7b",
+     "family": "racevla",
+     "metric": "hil_follow",
+     "tag": "pas_hil_racevla_c2_01_20261116",
+     "model_id": "racevla/drone6_all@03f3bb48",
+     "topology": "projectairsim-ardupilot-mavros",
+     "kpi_grade": false,
+     "code_revision": "c7257f130a17",
+     "date": "2026-11-16",
+     "ticks": 0,
+     "end_reason": "no mission: start gate timed out after 330.1 s: no plausible 'a red car' within 30 m on 5 inferences in a row",
+     "mission_s": 0.01,
+     "frac_within_30m": null,
+     "decision_hz_mission": null,
+     "decision_hz_asked": null,
+     "asking_s": 0.0,
+     "interventions": null,
+     "interventions_per_100_ticks": null,
+     "p0_escapes": 0,
+     "p0_violation_escape_rate": null,
+     "kpi_outcome": "fail",
+     "mission_fail_reasons": [
+      "no_rows",
+      "follow_not_scored"
+     ],
+     "unsafe_p0_ticks": 0,
+     "p0_ticks_not_measurable": 0,
+     "p0_ticks_blind": null,
+     "detector_hz": null,
+     "stress": null,
+     "hot_apply": false,
+     "identity": true,
+     "target_estimator": true,
+     "vla_feed": "tick",
+     "vla_feed_max_hz": 0.0,
+     "negative_query": [
+      "a traffic light"
+     ],
+     "front_capture_interval_s": null,
+     "bundle": "follow-car-citylife-v0.1.3.tar.gz",
+     "max_s_given": null,
+     "start_gate_reached": false,
+     "summary_only": false,
+     "source": {
+      "file": "F:/vla_drone_offload/jetson_runs/pas_hil_racevla_c2_01_20261116/metrics.json",
+      "sha256": "fe84cb48ca5f2ac4760a22e373ccc7ba8b563e1da2c664994a1dfb358ff74c25",
+      "file_date": "2026-11-16"
+     },
+     "not_c2": [
+      "topology 'projectairsim-ardupilot-mavros', not hil",
+      "not KPI-grade by its kpi.json",
+      "the start gate never passed: no mission"
+     ],
+     "protocol": "not C2"
+    },
+    {
+     "backend": "racevla_7b",
+     "family": "racevla",
+     "metric": "hil_follow",
+     "tag": "pas_hil_racevla_c2_02_20261116",
+     "model_id": "racevla/drone6_all@03f3bb48",
+     "topology": "projectairsim-ardupilot-mavros",
+     "kpi_grade": false,
+     "code_revision": "c7257f130a17",
+     "date": "2026-11-16",
+     "ticks": 0,
+     "end_reason": "no mission: start gate timed out after 330.1 s: no plausible 'a red car' within 30 m on 5 inferences in a row",
+     "mission_s": 0.01,
+     "frac_within_30m": null,
+     "decision_hz_mission": null,
+     "decision_hz_asked": null,
+     "asking_s": 0.0,
+     "interventions": null,
+     "interventions_per_100_ticks": null,
+     "p0_escapes": 0,
+     "p0_violation_escape_rate": null,
+     "kpi_outcome": "fail",
+     "mission_fail_reasons": [
+      "no_rows",
+      "follow_not_scored"
+     ],
+     "unsafe_p0_ticks": 0,
+     "p0_ticks_not_measurable": 0,
+     "p0_ticks_blind": null,
+     "detector_hz": null,
+     "stress": null,
+     "hot_apply": false,
+     "identity": true,
+     "target_estimator": true,
+     "vla_feed": "tick",
+     "vla_feed_max_hz": 0.0,
+     "negative_query": [
+      "a traffic light"
+     ],
+     "front_capture_interval_s": null,
+     "bundle": "follow-car-citylife-v0.1.3.tar.gz",
+     "max_s_given": null,
+     "start_gate_reached": false,
+     "summary_only": false,
+     "source": {
+      "file": "F:/vla_drone_offload/jetson_runs/pas_hil_racevla_c2_02_20261116/metrics.json",
+      "sha256": "e3f3c2dd7576c1939e810dcd7c2b84c4bd879e9aa085a9e63a82ddc56d90819b",
+      "file_date": "2026-11-16"
+     },
+     "not_c2": [
+      "topology 'projectairsim-ardupilot-mavros', not hil",
+      "not KPI-grade by its kpi.json",
+      "the start gate never passed: no mission"
+     ],
+     "protocol": "not C2"
+    },
+    {
+     "backend": "racevla_7b",
+     "family": "racevla",
+     "metric": "hil_follow",
+     "tag": "pas_hil_racevla_c2_03_20261116",
+     "model_id": "racevla/drone6_all@03f3bb48",
+     "topology": "hil",
+     "kpi_grade": true,
+     "code_revision": "c7257f130a17",
+     "date": "2026-11-16",
+     "ticks": 899,
+     "end_reason": "target_lost",
+     "mission_s": 90.2,
+     "frac_within_30m": 0.0601,
+     "decision_hz_mission": 0.022249382112496264,
+     "decision_hz_asked": 0.5714285714285714,
+     "asking_s": 3.5,
+     "interventions": 0,
+     "interventions_per_100_ticks": 0.0,
+     "p0_escapes": 0,
+     "p0_violation_escape_rate": 0.0,
+     "kpi_outcome": "success",
+     "mission_fail_reasons": [],
+     "unsafe_p0_ticks": 0,
+     "p0_ticks_not_measurable": 0,
+     "p0_ticks_blind": null,
+     "detector_hz": 2.228,
+     "stress": null,
+     "hot_apply": false,
+     "identity": true,
+     "target_estimator": true,
+     "vla_feed": "tick",
+     "vla_feed_max_hz": 0.0,
+     "negative_query": [
+      "a traffic light"
+     ],
+     "front_capture_interval_s": null,
+     "bundle": "follow-car-citylife-v0.1.3.tar.gz",
+     "max_s_given": 420.0,
+     "start_gate_reached": true,
+     "summary_only": false,
+     "source": {
+      "file": "F:/vla_drone_offload/jetson_runs/pas_hil_racevla_c2_03_20261116/metrics.json",
+      "sha256": "fe2c187655901fd2176efba964e75bc1dad1a02ab475ec969341b2502d6300ed",
+      "file_date": "2026-11-16"
+     },
+     "not_c2": [],
+     "protocol": "C2"
+    },
+    {
+     "backend": "racevla_7b",
+     "family": "racevla",
+     "metric": "hil_follow",
+     "tag": "pas_hil_racevla_shake_01_20261116",
+     "model_id": "racevla/drone6_all@03f3bb48",
+     "topology": "hil",
+     "kpi_grade": true,
+     "code_revision": "c7257f130a17",
+     "date": "2026-11-16",
+     "ticks": 598,
+     "end_reason": "max_s reached",
+     "mission_s": 60.14,
+     "frac_within_30m": 0.087,
+     "decision_hz_mission": 0.01671395341888626,
+     "decision_hz_asked": 0.4166666666666667,
+     "asking_s": 2.4,
+     "interventions": 0,
+     "interventions_per_100_ticks": 0.0,
+     "p0_escapes": 0,
+     "p0_violation_escape_rate": 0.0,
+     "kpi_outcome": "success",
+     "mission_fail_reasons": [],
+     "unsafe_p0_ticks": 0,
+     "p0_ticks_not_measurable": 0,
+     "p0_ticks_blind": null,
+     "detector_hz": 2.378,
+     "stress": null,
+     "hot_apply": false,
+     "identity": true,
+     "target_estimator": true,
+     "vla_feed": "tick",
+     "vla_feed_max_hz": 0.0,
+     "negative_query": [
+      "a traffic light"
+     ],
+     "front_capture_interval_s": null,
+     "bundle": "follow-car-citylife-v0.1.3.tar.gz",
+     "max_s_given": 60.0,
+     "start_gate_reached": true,
+     "summary_only": false,
+     "source": {
+      "file": "F:/vla_drone_offload/jetson_runs/pas_hil_racevla_shake_01_20261116/metrics.json",
+      "sha256": "749a3a6ca5d6fb0d2a5a30ff6e83627589f2e61a6aa637db8284a3153ac3f562",
+      "file_date": "2026-11-16"
+     },
+     "not_c2": [
+      "a shakedown by its tag ('_shake')",
+      "given a time limit of 60 s, not C2's 420 s"
+     ],
+     "protocol": "not C2"
     },
     {
      "backend": "racevla_7b",
@@ -5935,11 +6605,8 @@
   "decision": "not recorded by this tool"
  },
  "default_backend": null,
- "decision": "The grant defers the choice to this measurement set, and the Orin rate column holds R1 for 3 of the 7 backends `measure` can time, and a bench that is not R1, labelled as such, for 4 backends; a recorded attempt with no timing for 1 more (R1 does not cover the 4 backends served over protocol v2: their Orin timing is their server's bench). On hil, C1 has been flown by no backend and C2 by 1 (the protocol asks for 3 flights of each). The stored dev-rail runs (demo/out/ros2_*, not KPI-bearing: the grant takes KPI figures from hil) were flown by the stub.",
+ "decision": "The grant defers the choice to this measurement set, and the Orin rate column holds R1 for 3 of the 7 backends `measure` can time, and a bench that is not R1, labelled as such, for 4 backends; a recorded attempt with no timing for 1 more (R1 does not cover the 4 backends served over protocol v2: their Orin timing is their server's bench). On hil, C1 has been flown by no backend and C2 by 4 (the protocol asks for 3 flights of each). The stored dev-rail runs (demo/out/ros2_*, not KPI-bearing: the grant takes KPI figures from hil) were flown by the stub.",
  "comparison_gaps": [
-  "aerialvla_bf16: 0 of 3 C2 flights",
-  "aiotvla_v10b: 2 of 3 C2 flights",
-  "dronecats_2b: 0 of 3 C2 flights",
-  "racevla_7b: 0 of 3 C2 flights"
+  "racevla_7b: 1 of 3 C2 flights"
  ]
 }
