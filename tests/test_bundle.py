@@ -1538,6 +1538,71 @@ def test_the_issue_cert_command_certifies_every_pinned_key_from_public_keys_only
     assert trust.read_bytes() == was
 
 
+def test_one_command_issues_the_certificates_and_re_signs_the_flight_bundles():
+    """`python tools/build_flight_bundles.py --issue-cert`: the integrator's
+    single step. Run here against a throw-away CA, key, trust store and
+    output folder (the tool's own defaults are the lab's, which this test
+    never touches): the flight bundle that was signed under the bare label is
+    re-signed under the CA and flies with the chain required, the other
+    machine's key is certified from its public half in the same step, and a
+    folder with no CA stops the command before anything is signed."""
+    if not B.HAVE_CRYPTO:
+        return SKIP
+    import importlib.util
+    from guardrail.manifest import flight_bundle_path
+    spec = importlib.util.spec_from_file_location(
+        "build_flight_bundles_ca", ROOT / "tools" / "build_flight_bundles.py")
+    T = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(T)
+    desktop, trust = _test_key()
+    orin = B.Signer(authority="test-lab", private_key=B._PyEd25519TestKey(os.urandom(32)))
+    B.register_public_key(orin, trust, note="the other machine's key: public half only")
+    pki, ca_pem = _ca()
+    out = Path(tempfile.mkdtemp())
+    key = str(trust.parent / "k.pem")
+    bundle = flight_bundle_path(load_policy(DEMO, runtime=False), out)
+    lab_store = B.DEFAULT_TRUST_STORE.read_bytes()
+    saved = os.environ.get("VLAGUARD_TRUST_STORE")
+    os.environ["VLAGUARD_TRUST_STORE"] = str(trust)
+    try:
+        args = ["sim_demo_policy", "--key", key, "--out-dir", str(out)]
+        assert T.main(args) == 0
+        was = check_bundle(bundle)
+        assert (was.signed_by, was.signature, was.chain) == \
+            (desktop.identity, B.SIG_VERIFIED, B.CHAIN_NONE), was.detail
+        old_bytes = bundle.read_bytes()
+
+        # No CA in the folder: refused, and the bundle on disk is not touched.
+        assert T.main(args + ["--issue-cert", "--pki", str(Path(tempfile.mkdtemp()))]) == 2
+        assert bundle.read_bytes() == old_bytes and not _store(trust).get("authorities")
+
+        assert T.main(args + ["--issue-cert", "--pki", str(pki)]) == 0
+        ref = "lab-ca:" + _der_sha256(ca_pem)[:16]
+        now = check_bundle(bundle)
+        assert (now.signed_by, now.signature, now.chain, now.authority) == \
+            (f"{ref}:{desktop.key_id}", B.SIG_VERIFIED, B.CHAIN_VERIFIED, "lab-ca"), now.detail
+        assert now.policy.policy_hash == was.policy.policy_hash, "the re-sign changed the policy"
+        assert B.load_for_flight(bundle, require_chain=True)[1]["chain"] == "verified"
+        signers = _store(trust)["signers"]
+        assert signers[f"{ref}:{orin.key_id}"]["issuer"] == "lab-ca", sorted(signers)
+        assert signers[orin.identity]["retired_on"] and signers[desktop.identity]["retired_on"]
+        # Again: nothing is re-issued, and the bundle is the same bytes when
+        # the issue time is pinned.
+        store_bytes = trust.read_bytes()
+        pinned = args + ["--issued-at", ISSUED]
+        assert T.main(pinned) == 0
+        first = bundle.read_bytes()
+        assert T.main(pinned + ["--issue-cert", "--pki", str(pki)]) == 0
+        assert trust.read_bytes() == store_bytes and bundle.read_bytes() == first
+        assert T.main(["sim_demo_policy", "--check", "--out-dir", str(out)]) == 0
+    finally:
+        if saved is None:
+            os.environ.pop("VLAGUARD_TRUST_STORE", None)
+        else:
+            os.environ["VLAGUARD_TRUST_STORE"] = saved
+    assert B.DEFAULT_TRUST_STORE.read_bytes() == lab_store, "the lab's trust store changed"
+
+
 def _legacy_bundle(pol, ir_obj=None) -> Path:
     """The pre-2026-10-06 format: 16-hex hash over model_dump() with nulls, IR
     with nulls, placeholder signer."""
