@@ -730,6 +730,9 @@ def test_the_committed_table_still_matches_the_files_it_cites():
         for res in r.get("r1_results") or []:
             assert res["schema"] == V.RATE_SCHEMA, (r["backend"], res["schema"])
             col = "rate_orin" if res["host"]["jetson"]["is_orin"] else "rate_desktop"
+            if res.get("status") == "refused":
+                assert r["cells"][col].startswith("attempted"), (r["backend"], col, r["cells"])
+                continue
             assert r["cells"][col].startswith("R1"), (r["backend"], col, r["cells"])
     assert checked > 0 or not (ROOT / "training" / "eval_ft2_deploy.json").is_file()
 
@@ -900,7 +903,7 @@ def test_the_agx_benches_reach_the_orin_column_each_with_its_label():
     # can time the model, and said not to cover a served model, which it cannot
     t = _build(evidence=V.EVIDENCE)
     cell = _row(t, "openvla_7b_bf16")["cells"]["rate_orin"]
-    assert cell.startswith("not R1 - ") and cell.endswith("R1: to measure on the Orin"), cell
+    assert cell.startswith("R1: ") and "vla_rate_openvla_7b_bf16.json" in cell, cell
     for bid in ("aiotvla_v10b", "aerialvla_bf16"):
         cell = _row(t, bid)["cells"]["rate_orin"]
         assert cell.startswith("not R1 - ") and "to measure" not in cell, cell
@@ -908,14 +911,17 @@ def test_the_agx_benches_reach_the_orin_column_each_with_its_label():
                "its Orin timing is its server's bench (" in cell, cell
     assert "bf16/sdpa/unmerged" in _row(t, "aerialvla_bf16")["cells"]["rate_orin"]
     assert "bf16/sdpa/merged" in _row(t, "aerialvla_bf16")["cells"]["rate_orin"]
-    assert "holds R1 for 0 of the 7 backends `measure` can time" in t["decision"], t["decision"]
-    assert "not R1, labelled as such, for 3 backends" in t["decision"], t["decision"]
+    # 16 Nov on the AGX: R1 for stub, bc_v3 and OpenVLA bf16; the int8 attempt
+    # refused; the DroneCATS and RaceVLA server benches
+    assert "holds R1 for 3 of the 7 backends `measure` can time" in t["decision"], t["decision"]
+    assert "not R1, labelled as such, for 4 backends" in t["decision"], t["decision"]
+    assert "a recorded attempt with no timing for 1 more" in t["decision"], t["decision"]
     assert "R1 does not cover the 4 backends served over protocol v2" in t["decision"]
-    assert "recorded attempt" not in t["decision"], t["decision"]
-    # rows with no Orin measurement still say so, with what the board lacks
-    assert _row(t, "dronecats_2b")["cells"]["rate_orin"].startswith(
-        "no Orin bench yet; R1 does not cover a model served over protocol v2")
-    assert _row(t, "stub")["cells"]["rate_orin"] == "to measure on the Orin (R1)"
+    for bid in ("dronecats_2b", "racevla_7b"):
+        cell = _row(t, bid)["cells"]["rate_orin"]
+        assert cell.startswith("not R1 - round trip through its server") and             f"{bid}_bench_agx.json" in cell, cell
+    for bid in ("stub", "bc_v3"):
+        assert _row(t, bid)["cells"]["rate_orin"].startswith("R1: "), bid
     assert _row(t, "openvla_7b_4bit")["cells"]["rate_orin"].startswith(
         "to measure on the Orin (R1); needs bitsandbytes")
     assert "torchao" in _row(t, "openvla_7b_int8wo")["cells"]["rate_orin"]
@@ -1407,13 +1413,22 @@ def test_g3_is_reported_as_measurements_and_never_as_a_decision():
     assert "100 ms p95 by 2026-08-01" in g["gate"] and "could be added" in g["gate"]
     assert g["threshold_ms"] == 100.0 and g["decision"] == "not recorded by this tool"
     seven = {b["backend"]: b["orin"] for b in g["seven_b"]}
-    assert {o["p95_ms"] for o in seven["aerialvla_bf16"]} == {1537.8, 1099.6}
+    benches = [o for o in seven["aerialvla_bf16"] if o["p95_ms"] is not None]
+    assert {o["p95_ms"] for o in benches} == {1537.8, 1099.6}
     assert all(o["what"].startswith("not R1") for o in seven["aerialvla_bf16"])
-    assert seven["openvla_7b_bf16"][0]["p95_ms"] is None      # eight answers have no p95
-    assert seven["racevla_7b"] == [] and "aiotvla_v10b" not in seven
+    assert "aiotvla_v10b" not in seven
     small = {b["backend"]: b["orin"] for b in g["smaller"]}
     assert small["aiotvla_v10b"][0]["p95_ms"] == 41.7
-    assert g["int8_on_orin"] == "not attempted"
+    # what the board measured on 16 Nov, each from its own committed file
+    r1 = json.loads((HIL_EVIDENCE / "vla_rate_openvla_7b_bf16.json").read_text(encoding="utf-8"))
+    bf16 = seven["openvla_7b_bf16"]
+    assert bf16[0]["what"] == "R1" and bf16[0]["p95_ms"] > g["threshold_ms"]
+    assert abs(bf16[0]["p95_ms"] - r1["stats"]["p95_ms"]) < 1e-6, (bf16[0], r1["stats"])
+    assert any(o["what"].startswith("not R1") and o["p95_ms"] is None for o in bf16)  # the 8-answer gate check
+    rv = [o for o in seven["racevla_7b"] if o["p95_ms"] is not None]
+    assert len(rv) == 1 and rv[0]["what"].startswith("not R1") and rv[0]["p95_ms"] > g["threshold_ms"]
+    i8 = json.loads((HIL_EVIDENCE / "vla_rate_openvla_7b_int8wo.json").read_text(encoding="utf-8"))
+    assert i8["status"] == "refused" and g["int8_on_orin"] == "refused"
     md = V.render_markdown(t)
     assert "Whether the gate is added and applied is not recorded by this tool." in md
     for claim in ("gate applied", "gate is applied", "the PI"):
@@ -1663,7 +1678,8 @@ def test_the_committed_table_is_protocol_2_with_real_cells_only():
         for rec in r["records"]:
             if rec.get("metric") == "bench" and rec.get("host_is_orin"):
                 now = benches[rec["source"]["file"]]
-                assert V.bench_cell(now) in cell, (r["backend"], V.bench_cell(now))
+                if not has_r1:      # an R1 on an Orin is the cell; the bench stays a record
+                    assert V.bench_cell(now) in cell, (r["backend"], V.bench_cell(now))
                 assert now["source"]["sha256"] == rec["source"]["sha256"], rec["source"]["file"]
         if not has_r1 and not r.get("unavailable"):
             if r["backend"] in V.SERVED_BACKENDS:
