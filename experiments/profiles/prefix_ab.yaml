@@ -1,0 +1,69 @@
+# Prefix A/B profile: prefix on / off on one seed, flown by a pilot that consumes the CSP.
+#
+# WHY THIS PROFILE EXISTS (2026-11-16, contract item WP4-15)
+#
+# "Always-on A/B during stress runs. A scenario can be flagged for A/B; the
+# harness runs it twice (Prefix on / off) with the same seed, and the KPI
+# report shows the delta." (Prefix Compiler page.) The harness had the flag
+# and the report had the section, but the library's pilots are rule-ignorant
+# on purpose, so the two arms were one flight and the section read n/m. Under
+# `prefix_consumer: action_set` every pilot law is flown through
+# guardrail/prefix_consumer.py PrefixConsumer, the grant's default action-set
+# adapter: the prefix-on arm with the Prefix Compiler's CSP for the cell, the
+# prefix-off arm without it - the same pilot with and without its Prefix.
+#
+# WHAT IT FLIES
+#
+# Five cells of the four static templates (no mid-flight event: the consumer
+# flies the CSP compiled before take-off; generation N's CSP reaching the
+# pilot is contract item WP4-19), three seeds each, prefix on and off: 15
+# (cell, seed) pairs, 30 flights. Plus the A/A pairs: the prefix-on arm of
+# three cells flown a second time on seed 1001 (3 flights), the noise a
+# same-seed pair carries with nothing changed. 33 flights in all.
+#
+#   nfz-head-on              static_nfz          goto law aimed through the zone:
+#                                                off, held at its edge, the goal
+#                                                never reached; on, round it
+#   corridor-drift-out       corridor_keep_in    a constant drift out of the side
+#   altitude-ceiling-hold    altitude_envelope   a constant climb into the ceiling
+#   altitude-floor-recovery  altitude_envelope   starts 7 m below the floor: the
+#                                                one cell with a time to safe
+#   speed-cap                kinematic_envelope  20 m/s asked against a 4 m/s cap
+#
+# WHAT IT IS NOT
+#
+# Not a grant scheduling row and not part of the KPI campaign's figure
+# (`grant_kpi_bearing: false`): it flies ANOTHER PILOT than the nightly
+# profile's, and prefix-off arms. Its runs are reported on their own
+# (tools/kpi_report.py --campaign <its store>), never merged into ntFIN2's.
+# The pilot is a hand-written adapter, not a learned VLA: it reads the
+# polygons the Shield enforces, so part of the delta holds by construction,
+# and a report that quotes it says so. The cells' outcome and fail-safe
+# labels were derived for their rule-ignorant pilots and are not applied to
+# the prefix-on arm (experiments/sweep_scenarios.py scoring_spec); the gates,
+# the safety invariants, are.
+#
+# Headless, the cells are deterministic: the three seeds of a cell are three
+# copies of one flight and every A/A pair is identical (the sweep checks it).
+# The seeds and the A/A pairs are for the rails, where a same-seed pair is two
+# real-time flights.
+#
+#   python experiments/sweep_scenarios.py --profile prefix_ab --keep-logs
+#   python experiments/sweep_scenarios.py --profile prefix_ab --backend hil --hil-dry-run
+
+profile: prefix_ab
+cadence: on demand (WP4-15, the Prefix A/B through a pilot that consumes the CSP)
+grant_scope: "not a grant row: the Prefix Compiler's A/B (prefix on / off, same seed) on five static cells"
+grant_sim_speedup: "1.0 on the hil rail - NOT met headless (measured speedup >> 1)"
+grant_kpi_bearing: false
+library: experiments/scenarios.yaml
+seeds: [1001, 1002, 1003]
+samples_per_family: 1
+families: [nfz-head-on, corridor-drift-out, altitude-ceiling-hold,
+           altitude-floor-recovery, speed-cap]
+expected_cells: [5, 5]
+paraphrase_k: 0
+prefix_ab: true
+prefix_consumer: action_set
+prefix_aa: [nfz-head-on, corridor-drift-out, altitude-floor-recovery]
+prefix_aa_seeds: [1001]

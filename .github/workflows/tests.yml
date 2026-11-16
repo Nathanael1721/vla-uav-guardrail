@@ -26,7 +26,14 @@
 #          gRPC service; the gRPC / mTLS tests SKIP without grpcio,
 #          grpcio-tools and cryptography, so it is in the two harness jobs'
 #          `no_skip`), test_real_vla_prompt,
-#          test_city_episode (the city follow's episode record and CSP).
+#          test_city_episode (the city follow's episode record and CSP),
+#          test_prefix_consumer (2026-11-16: the pilot that consumes the
+#          CSP's action sets and the prefix on / off A/B it makes measurable:
+#          the adapter, the VLA stub's --prefix arm, the harness's arms and
+#          refusals, a hil campaign on test_sweep's fake rig, the KPI
+#          report's A/B section. It imports no optional package and prints
+#          no SKIP; run before listing on the lab machine's Python 3.10.20
+#          only, not on a clean copy in the jobs' WSL venvs).
 #        WP3, the Shield and the escalation FSM: test_shield,
 #          test_shield_events, test_corridor, test_clearance,
 #          test_check_contract, test_guardrail_coverage, test_frame_contract,
@@ -693,6 +700,7 @@ jobs:
               tests/test_vla_backends.py \
               tests/test_vla_link.py \
               tests/test_prefix_eval.py \
+              tests/test_prefix_consumer.py \
               tests/test_fenceguard.py \
               tests/test_follow_motion.py \
               tests/test_identity.py \
