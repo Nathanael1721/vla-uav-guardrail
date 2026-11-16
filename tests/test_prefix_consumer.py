@@ -833,6 +833,19 @@ class _PrefixRig(TS._FakeRig):
         return out
 
 
+class _HotAppliedRig(_PrefixRig):
+    """_PrefixRig whose Shield also moved to generation 1 in flight (a
+    hot-apply that reached the mission's REST listener from a client the
+    harness does not control): the run folder holds policy_g1.json beside
+    policy_g0.json, while the node still announces the generation-0 CSP."""
+
+    def run_mission(self, args, tag, shield, timeout_s):
+        out = super().run_mission(args, tag, shield, timeout_s)
+        run = self.remote / "demo" / "out" / tag
+        (run / "policy_g1.json").write_bytes((run / "policy_g0.json").read_bytes())
+        return out
+
+
 def _hil(td: Path, rig, argv):
     saved = TS._FakeRig
     TS._FakeRig = rig
@@ -840,6 +853,106 @@ def _hil(td: Path, rig, argv):
         return TS._hil_campaign(argv, td)
     finally:
         TS._FakeRig = saved
+
+
+def test_a_rail_flight_whose_rules_changed_in_flight_is_not_the_arms_flight():
+    """prefix_generation_problems: a consumer flight whose Shield flew a
+    generation above 0 (a policy_g<N>.json, or a row's `generation`) is not
+    its arm's flight - the node announces the CSP it took off with, so
+    prefix_flight_problems cannot see it. Every other flight has no such
+    problem. On the fake rig whose Shield moved to generation 1, every
+    mission of the campaign is an ERROR, never a scored arm."""
+    arms = _arms("nfz-head-on")
+    spec = arms["prefix-on"].cell.spec
+    meta = S.rail_meta(spec, arms["prefix-on"], 1001, "hil", "t_001", "n", None, "c", DEFAULTS)
+    plain = S.rail_meta(spec, None, 1001, "hil", "t_002", "n", None, "c", DEFAULTS)
+    g0 = {0: POL}
+    assert S.prefix_generation_problems(meta, g0, [{"generation": 0}]) == []
+    assert S.prefix_generation_problems(meta, {}, []) == []
+    for gens, rows in (({0: POL, 1: POL}, []), (g0, [{"generation": 0}, {"generation": 2}])):
+        got = S.prefix_generation_problems(meta, gens, rows)
+        assert len(got) == 1 and "WP4-19" in got[0] and "generation" in got[0], got
+    assert "[1, 2]" in S.prefix_generation_problems(meta, {1: POL}, [{"generation": 2}])[0]
+    # (a bool is not a generation)
+    assert S.prefix_generation_problems(meta, g0, [{"generation": True}]) == []
+    # no consumer: nothing to check, whatever the generations
+    assert S.prefix_generation_problems(plain, {0: POL, 1: POL}, [{"generation": 1}]) == []
+    argv = ["--profile", "prefix_ab", "--only", "nfz-head-on", "--hil-campaign", "tstpa"]
+    with tempfile.TemporaryDirectory() as td:
+        rc, doc, _ = _hil(Path(td), _HotAppliedRig, argv)
+        assert rc == 1 and len(doc["results"]) == 3, (rc, doc["results"])
+        assert all(r["status"] == "error" and "rules changed in flight" in r["error"]
+                   and "WP4-19" in r["error"] for r in doc["results"]), doc["results"]
+        assert not doc.get("_arms")
+
+
+def test_a_consumer_episode_takes_no_mid_flight_rule_change():
+    """guardrail/harness_service.py: a HotApply or an EmitEvent to an episode
+    of a pilot that consumes the CSP is FAILED_PRECONDITION (WP4-19) before
+    anything is queued, acked or forwarded - headless, on a rail (refused
+    before the rail's forward), and a session HotApply while such an episode
+    flies a rail - and the episode then flies and scores as its arm. THE
+    NULL: the same cell under no profile takes the same HotApply and the
+    Shield validates generation 1."""
+    from types import SimpleNamespace
+    from guardrail import harness_service as H
+    zone = {"type": "dynamic_nfz", "constraint_type": "hard", "scope": "mission",
+            "priority": "P0", "violation_action": "project_fix", "id": "late-zone",
+            "vertices": [{"x": 210, "y": 230}, {"x": 220, "y": 230},
+                         {"x": 220, "y": 250}, {"x": 210, "y": 250}]}
+    fence = {"id": "late", "vertices": [{"x": 200, "y": 200}, {"x": 210, "y": 200},
+                                        {"x": 210, "y": 210}, {"x": 200, "y": 210}]}
+
+    def refused(fn, *a, **kw):
+        try:
+            fn(*a, **kw)
+        except H.HarnessError as err:
+            return err.code, err.message
+        raise AssertionError(f"{fn.__name__} was accepted")
+
+    def never(*a, **kw):
+        raise AssertionError("a consumer episode's event reached the rail or the endpoint")
+
+    d = Path(tempfile.mkdtemp(prefix="prefix_events_"))
+    try:
+        h = H.Harness(runs_dir=d)
+        for arm in ("prefix-on", "prefix-off"):
+            for live in (False, True):
+                eid = h.start_episode(scenario_id="nfz-head-on", profile="prefix_ab",
+                                      seed=1001, arm=arm, live=live)["episode_id"]
+                code, why = refused(h.hot_apply, eid, 1.0, zone)
+                assert code == "FAILED_PRECONDITION" and "WP4-19" in why, (code, why)
+                assert arm in why and "HotApply" in why, why
+                code, why = refused(h.emit_event, eid, 1.0, "spawn_polygon_fence", fence)
+                assert code == "FAILED_PRECONDITION" and "WP4-19" in why, (code, why)
+                assert h._get(eid).queued == [] and h.status(eid)["events"] == []
+                res = h.end_episode(eid)
+                assert res["status"] == "pass", res
+        # On a rail: refused before the rail's own forward is reached.
+        eid = h.start_episode(scenario_id="nfz-head-on", profile="prefix_ab", seed=1001,
+                              arm="prefix-on")["episode_id"]
+        e = h._get(eid)
+        e.rail = SimpleNamespace(phase="flying")
+        h._rail_hot_apply = never
+        h._rail_emit_event = never
+        assert refused(h.hot_apply, eid, 5.0, zone)[0] == "FAILED_PRECONDITION"
+        assert refused(h.emit_event, eid, 5.0, "spawn_polygon_fence", fence)[0] == \
+            "FAILED_PRECONDITION"
+        # A session HotApply while that episode flies its rail: refused, not
+        # forwarded to the mission's Shield.
+        sess = SimpleNamespace(session_id="s1", rest_endpoint="http://127.0.0.1:9")
+        h._open_session = lambda sid: sess
+        h._rail_episode_of = lambda s: e
+        h._forward = never
+        code, why = refused(h.hot_apply, "", 0.0, zone, session_id="s1")
+        assert code == "FAILED_PRECONDITION" and "WP4-19" in why and "session" in why, why
+        # The null: the cell's own pilot takes it.
+        h2 = H.Harness(runs_dir=d / "plain")
+        eid = h2.start_episode(scenario_id="nfz-head-on", seed=1001)["episode_id"]
+        ack = h2.hot_apply(eid, 1.0, zone)
+        assert ack["validated_generation"] == 1 and ack["rule_id"] == "late-zone", ack
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
 
 
 def test_a_hil_campaign_flies_both_arms_and_fails_closed_on_a_rig_that_does_not():

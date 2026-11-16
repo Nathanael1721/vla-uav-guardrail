@@ -2785,6 +2785,34 @@ def prefix_flight_problems(metrics: dict, meta: dict) -> list[str]:
     return out
 
 
+def prefix_generation_problems(meta: dict, generations: dict | None,
+                               rows=()) -> list[str]:
+    """Why a rail flight of a prefix-consumer arm is not that arm's flight
+    because its rules changed in flight: the Shield flew a generation above
+    0 (a policy_g<N>.json of the run, `generations`, or a log row's
+    `generation`) while the consumer flew generation 0's CSP, which
+    prefix_flight_problems alone cannot see - the node announces the CSP it
+    took off with. The harness refuses such a change up front
+    (guardrail/harness_service.py _consumer_takes_no_events, and
+    prefix_consumer_refusal for a scenario's own events); this is the
+    backstop for one that reached the Shield anyway (a client of the
+    mission's REST endpoint, an old harness). [] for every flight without a
+    prefix consumer."""
+    want = meta.get("arm_record") if isinstance(meta.get("arm_record"), dict) else {}
+    if not want.get("pilot_reads_prefix"):
+        return []
+    above = {int(g) for g in (generations or {}) if isinstance(g, int) and g > 0}
+    above |= {int(r["generation"]) for r in rows
+              if isinstance(r, dict) and isinstance(r.get("generation"), int)
+              and not isinstance(r.get("generation"), bool) and r["generation"] > 0}
+    if not above:
+        return []
+    return [f"the Shield's rules changed in flight (generation(s) {sorted(above)}) while "
+            f"the prefix consumer flew generation 0's CSP: a prefix-consumer arm takes no "
+            f"mid-flight rule change (generation N's CSP at the pilot is audit card "
+            f"WP4-19, not built)"]
+
+
 def prefix_flight_record(metrics: dict, meta: dict) -> dict | None:
     """What a rail flight's VLA node announced of its prefix arm beside what
     the harness expected (None without a prefix consumer): the node's record,
@@ -5031,10 +5059,12 @@ def run_sitl(sc, tag: str, seed: int = 0, defaults=None,
     if problems:
         raise RuntimeError(f"{tag}: the cell's stress was not realised: "
                            + "; ".join(problems))
-    not_the_arm = prefix_flight_problems(metrics, meta)
+    gens = run_generations(out_dir)
+    not_the_arm = (prefix_flight_problems(metrics, meta)
+                   + prefix_generation_problems(meta, gens, rows))
     if not_the_arm:
         raise RuntimeError(f"{tag}: not the prefix arm's flight: " + "; ".join(not_the_arm))
-    extra = sitl_extra(spec, rows, metrics, pol, run_generations(out_dir),
+    extra = sitl_extra(spec, rows, metrics, pol, gens,
                        max_s=meta["max_s"], dt=spec.dt or _as_defaults(defaults).dt,
                        autopilot_texts=run_autopilot_texts(out_dir))
     extra["sim_stressors"] = stress["entries"]
@@ -5400,14 +5430,15 @@ def run_hil(spec: ScenarioSpec, ep, seed: int, defaults, cfg: HilConfig, transpo
     problems = hil_flight_problems(metrics)
     if stress_problems:
         problems.append("the cell's stress was not realised: " + "; ".join(stress_problems))
-    not_the_arm = prefix_flight_problems(metrics, meta)
+    gens = run_generations(run_dir)
+    not_the_arm = (prefix_flight_problems(metrics, meta)
+                   + prefix_generation_problems(meta, gens, rows))
     if not_the_arm:
         # Fail closed: a mission that did not fly the arm it is named for is
         # an error, never a scored episode of that arm.
         problems.append("not the prefix arm's flight: " + "; ".join(not_the_arm))
     if problems:
         raise RuntimeError(f"mission {tag}: " + "; ".join(problems))
-    gens = run_generations(run_dir)
     extra = sitl_extra(spec, rows, metrics, pol, gens, max_s=meta["max_s"],
                        dt=spec.dt or _as_defaults(defaults).dt,
                        autopilot_texts=run_autopilot_texts(run_dir))

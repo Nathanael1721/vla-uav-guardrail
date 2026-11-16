@@ -1917,17 +1917,40 @@ class Harness:
             raise HarnessError("FAILED_PRECONDITION", f"live episode {e.episode_id}: "
                                                       f"{err}") from None
 
+    @staticmethod
+    def _consumer_takes_no_events(e: _Episode, rpc: str) -> None:
+        """Refuse a mid-flight rule change (HotApply, EmitEvent, a session
+        HotApply forwarded while it flies) to an episode whose pilot consumes
+        the CSP (2026-11-16, profile `prefix_consumer`), before anything is
+        queued, forwarded or acked: the pilot flies the CSP compiled before
+        take-off, so a Shield that moved to generation N while the pilot kept
+        generation 0's CSP would be scored and bundled as the arm's flight -
+        the reason a scenario with mid-flight events is refused for the
+        consumer (experiments/sweep_scenarios.py prefix_consumer_refusal).
+        Both arms are refused alike, so the pair stays one scenario."""
+        if getattr(e.ep, "prefix_consumer", None):
+            raise HarnessError(
+                "FAILED_PRECONDITION",
+                f"{rpc} refused: episode {e.episode_id} is arm {e.ep.arm_tag} of a pilot "
+                f"that consumes the CSP (guardrail.prefix_consumer, profile "
+                f"{e.profile or '?'}), which flies the CSP compiled before take-off; a "
+                f"mid-flight rule change needs generation N's CSP at the pilot, which is "
+                f"not built (audit card WP4-19). Its rules cannot change in flight")
+
     def hot_apply(self, episode_id: str = "", at_sim_t: float = 0.0,
                   body: dict | None = None, *, session_id: str = "",
                   now: bool = False) -> dict:
         """A REST hot-apply body for an episode (scheduled or live), or, with
-        `session_id` instead, forwarded to the session's REST endpoint."""
+        `session_id` instead, forwarded to the session's REST endpoint. An
+        episode of a pilot that consumes the CSP takes none
+        (_consumer_takes_no_events)."""
         if session_id and episode_id:
             raise HarnessError("INVALID_ARGUMENT", "address a HotApply to an episode_id or "
                                                    "to a session_id, not both")
         if session_id:
             return self._forward_hot_apply(session_id, body)
         e = self._get(episode_id)
+        self._consumer_takes_no_events(e, "HotApply")
         if e.rail is not None:
             return self._rail_hot_apply(e, at_sim_t, body, now)
         with e.lock:
@@ -1974,6 +1997,7 @@ class Harness:
     def emit_event(self, episode_id: str, at_sim_t: float, type_: str,
                    payload: dict, *, now: bool = False) -> dict:
         e = self._get(episode_id)
+        self._consumer_takes_no_events(e, "EmitEvent")
         if e.rail is not None:
             return self._rail_emit_event(e, at_sim_t, type_, payload, now)
         with e.lock:
@@ -2658,7 +2682,12 @@ class Harness:
                                f"address the HotApply to an episode_id instead")
         # A rail episode of this session that is flying: the forward is also
         # recorded in ITS bundle (harness_events.jsonl), at its mission time.
-        return self._forward(s, body, episode=self._rail_episode_of(s))[0]
+        # Its endpoint is that mission's flying Shield, so an episode of a
+        # pilot that consumes the CSP refuses it as it refuses its own.
+        flying = self._rail_episode_of(s)
+        if flying is not None:
+            self._consumer_takes_no_events(flying, "HotApply to the session")
+        return self._forward(s, body, episode=flying)[0]
 
     def _rail_episode_of(self, s: _Session) -> "_Episode | None":
         with self._lock:
