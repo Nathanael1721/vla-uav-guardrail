@@ -106,6 +106,18 @@
   "ticks": {
    "verdict": "identical",
    "differences": {},
+   "fields_compared": [
+    "raw_body",
+    "emitted_body",
+    "setpoint",
+    "mode",
+    "touched",
+    "executed",
+    "violations, repairs, fsm_state_after (a tick with an intercept)",
+    "violations, repairs (a tick with no intercept: none logged with the Shield on, no repair with it off)"
+   ],
+   "log_fields_absent": {},
+   "rows_with_a_logged_violation_or_repair_and_no_intercept_unchecked": 0,
    "t_offset_ms": 0.0,
    "t_jitter_ms": 2.0,
    "first_action_logged_before_its_tick_ms": -1.0
@@ -153,12 +165,14 @@
    "shield_ticks": {
     "source": "bag",
     "bag": 650,
+    "inferred": "who flew each tick (the Shield or the autopilot) is INFERRED from the published setpoint and the intercept (classify()); no topic carries it",
     "kpi_json": 650,
     "equal": true
    },
    "autopilot_ticks": {
     "source": "bag",
     "bag": 0,
+    "inferred": "who flew each tick (the Shield or the autopilot) is INFERRED from the published setpoint and the intercept (classify()); no topic carries it",
     "kpi_json": 0,
     "equal": true
    },

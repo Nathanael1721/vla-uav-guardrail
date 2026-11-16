@@ -1,8 +1,15 @@
 {
  "_what": "Each run's ticks, trajectory and KPI table rebuilt from its rosbag2 alone (tools/replay_from_bag.py) and compared with its flight log, trajectory.json and kpi.json. Not a re-flight and not a bit-for-bit replay: the Shield and the FSM are not run again.",
  "_command": "python tools/replay_from_bag.py demo/out/hil_smoke/ntFIN2_034_corridor-along demo/out/hil_smoke/ntFIN2_010_altitude-floor-recovery demo/out/hil_smoke/ntFIN2_001_nfz-head-on --out docs/data/replay_from_bag_trial_20261116",
- "_seconds": 1.2,
+ "_seconds": 0.7,
  "reader": "rosbags 0.10.11",
+ "scope": {
+  "campaigns": [],
+  "runs_named": 3,
+  "limit": null,
+  "runs": 3,
+  "what": "3 run(s), not every run of a campaign: a trial, not a campaign's count"
+ },
  "runs": 3,
  "verdicts": {
   "identical": 3
@@ -34,25 +41,31 @@
  },
  "kpi_fields": {
   "ticks": {
-   "source": "bag",
+   "source": "bag + flight_log.jsonl on 1 of 3 run(s): 137 tick(s) after the Shield's last message, which the bag does not show the node ticked on, are counted from the log",
    "equal": 3,
    "differs": 0,
    "not_on_this_run": 0,
-   "not_compared": 0
+   "not_compared": 0,
+   "runs_with_ticks_from_the_log": 1,
+   "ticks_from_the_log": 137
   },
   "shield_ticks": {
    "source": "bag",
    "equal": 3,
    "differs": 0,
    "not_on_this_run": 0,
-   "not_compared": 0
+   "not_compared": 0,
+   "inferred": "who flew each tick (the Shield or the autopilot) is INFERRED from the published setpoint and the intercept (classify()); no topic carries it"
   },
   "autopilot_ticks": {
-   "source": "bag",
+   "source": "bag + flight_log.jsonl on 1 of 3 run(s): 137 tick(s) after the Shield's last message, which the bag does not show the node ticked on, are counted from the log",
    "equal": 3,
    "differs": 0,
    "not_on_this_run": 0,
-   "not_compared": 0
+   "not_compared": 0,
+   "inferred": "who flew each tick (the Shield or the autopilot) is INFERRED from the published setpoint and the intercept (classify()); no topic carries it",
+   "runs_with_ticks_from_the_log": 1,
+   "ticks_from_the_log": 137
   },
   "repair_count": {
    "source": "bag",
