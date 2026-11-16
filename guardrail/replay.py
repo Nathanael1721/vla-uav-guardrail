@@ -1662,9 +1662,13 @@ def last_generation_policy(run_dir: str | Path) -> Policy:
     return policies[max(policies)]
 
 
-def verify_from_bag(bundle: str | Path) -> tuple[bool, list[str]]:
+def verify_from_bag(bundle: str | Path,
+                    trust_store: str | Path | dict | None = None,
+                    *, require_signature: bool = False) -> tuple[bool, list[str]]:
     """`verify --from-bag` (2026-11-16, ARCH-22): the bundle's rosbag2 against
-    the bundle's own log and KPI table. `(identical, lines)`.
+    the bundle's own log and KPI table. `(identical, lines)`. The bundle is
+    read with the same `trust_store` and `require_signature` as verify_replay,
+    and the signature's status is one of the lines.
 
     verify_replay re-scores the log, a file the Shield node wrote about
     itself. This rebuilds each tick, the trajectory and the KPI fields the
@@ -1692,10 +1696,17 @@ def verify_from_bag(bundle: str | Path) -> tuple[bool, list[str]]:
         except BaseException:
             sys.modules.pop("replay_from_bag", None)
             raise
-    rec, _ = mod.replay_path(Path(bundle))
+    rec, _ = mod.replay_path(Path(bundle), trust_store=trust_store,
+                             require_signature=require_signature)
     if rec["verdict"] == "not_replayable":
         return False, [f"not replayable from its bag: {rec.get('why')}"]
     lines = []
+    sig = (rec.get("bag") or {}).get("bundle_signature")
+    if sig:
+        lines.append(f"bag read from the bundle with its signature {sig.get('status')}"
+                     + ("" if sig.get("status") == SIG_VERIFIED else
+                        ": the digests cannot rule out a consistent rewrite of log, "
+                        "KPI table and bag"))
     cmp_ = rec.get("compared_with_the_log") or {}
     if cmp_:
         tr = cmp_["trajectory"]
@@ -1704,6 +1715,10 @@ def verify_from_bag(bundle: str | Path) -> tuple[bool, list[str]]:
                      + (f", {cmp_['ticks_past_bag_end']} of them after the Shield's last "
                         f"message (their number is the log's)"
                         if cmp_["ticks_past_bag_end"] else ""))
+        absent = cmp_["ticks"].get("log_fields_absent") or {}
+        if absent:
+            lines.append("not compared, the log row lacks the key: " + ", ".join(
+                f"{k} on {n} row(s)" for k, n in sorted(absent.items())))
         lines.append(f"trajectory {tr['verdict']}: {tr['exact']} of {tr['points']} points "
                      f"are the bag's pose message, {tr['next'] + tr['previous']} its "
                      f"neighbour, {tr['differs']} neither")
@@ -1780,17 +1795,36 @@ def _main(argv: list[str] | None = None) -> int:
         for w in why:
             print(f"[replay]   - {w}")
         return 0 if ok else 1
-    ok, why = verify_replay(args.bundle, require_signature=args.require_signature)
-    print(f"{'OK' if ok else 'FAILED'}: {args.bundle}")
-    for w in why:
-        print(f"  - {w}")
-    if ok and args.from_bag:
-        same, lines = verify_from_bag(args.bundle)
+    if not args.from_bag:
+        ok, why = verify_replay(args.bundle, require_signature=args.require_signature)
+        print(f"{'OK' if ok else 'FAILED'}: {args.bundle}")
+        for w in why:
+            print(f"  - {w}")
+        return 0 if ok else 1
+    # --from-bag reads the bundle twice (verify_replay, then the bag). Both
+    # read one copy taken once, so the file cannot change between them, and
+    # the second read checks the signature as the first did.
+    with tempfile.TemporaryDirectory(prefix="verify-from-bag-") as td:
+        snap = Path(td) / Path(args.bundle).name
+        try:
+            shutil.copyfile(args.bundle, snap)
+        except OSError as exc:
+            print(f"FAILED: {args.bundle}\n  - {exc}")
+            return 1
+
+        def named(text: str) -> str:
+            return text.replace(str(snap), str(args.bundle))
+        ok, why = verify_replay(snap, require_signature=args.require_signature)
+        print(f"{'OK' if ok else 'FAILED'}: {args.bundle}")
+        for w in why:
+            print(f"  - {named(w)}")
+        if not ok:
+            return 1
+        same, lines = verify_from_bag(snap, require_signature=args.require_signature)
         print(f"{'OK' if same else 'FAILED'} from the bag: {args.bundle}")
         for w in lines:
-            print(f"  - {w}")
+            print(f"  - {named(w)}")
         return 0 if same else 1
-    return 0 if ok else 1
 
 
 if __name__ == "__main__":

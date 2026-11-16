@@ -121,9 +121,24 @@ sent agreeing with what the log says was streamed; every logged point is a
 pose message of the bag; and every KPI field the bag can carry on that run
 equals kpi.json (counts exactly, a magnitude to kpi.json's fourth decimal,
 a duration to T_JITTER_S); and every manifest field the bag's metadata
-carries equals the run's. Otherwise the verdict is `differs` with the first differing layer,
-field and tick. `not_replayable` is a run with no bag, no action or no
-Shield message.
+carries equals the run's. The violated rules, operators and FSM state are on
+a topic only on a tick with an intercept; on a tick with none, a log row
+that names a violation or a repair on a Shield-on arm (the node publishes an
+intercept on every tick it touched), or a repair on a Shield-off arm, is a
+difference. Otherwise the verdict is `differs` with the first differing
+layer, field and tick. A log row that lacks a key the comparison reads
+(`raw_body`, `emitted_body`, `setpoint`, `mode`, `touched`, and on a tick
+with an intercept `violations`, `repairs`, `fsm_state_after`) is not
+compared on it and is counted (`log_fields_absent`): with no difference
+elsewhere the verdict is then `incomplete`, never `identical`. So is a
+logged violation on a tick with no intercept when the arm is not known.
+`not_replayable` is a run with no bag, no action or no Shield message.
+
+A replay bundle's members are checked against the digests of the index it
+carries, which a consistent rewrite of log, KPI table and bag would also
+pass: the record says the bundle's signature status, and an unsigned or
+unverified bundle is a limit of its verdict (`guardrail.replay verify
+--require-signature --from-bag` refuses it).
 
 WHAT THIS IS NOT. It is not a re-flight and not the grant's bit-for-bit
 replay of an episode (WP4-11): the Shield and the FSM are not run again, and
@@ -132,8 +147,9 @@ input each tick consumed. It shows that the recording and the node's own
 log describe one flight.
 
 Needs `rosbags` >= 0.10 (pure Python, no ROS). Exit code: 0 every run
-identical, 1 a run differs, 2 a run could not be replayed or the arguments
-are wrong, 3 `rosbags` is not installed.
+identical, 1 a run differs, 2 a run could not be replayed or was compared
+only in part (`incomplete`), or the arguments are wrong, 3 `rosbags` is not
+installed.
 """
 from __future__ import annotations
 
@@ -655,6 +671,13 @@ _INTERCEPT_FIELDS = ("repair_count", "repairs_per_episode", "mean_intervention_s
                      "max_intervention_s", "intervention_episodes", "intervention_censored",
                      *_MAGNITUDES, *(f for f, src in FROM_BAG.items() if src == BAG_POLICY))
 _SECONDS = ("mean_intervention_s", "max_intervention_s")
+# Fields whose count takes the ticks after the Shield's last message from the
+# flight log (the bag holds no sign the node ticked on them).
+FROM_THE_LOG_PAST_END = ("ticks", "autopilot_ticks")
+# Fields that rest on who flew each tick, which classify() infers.
+_WHO_FLEW = ("who flew each tick (the Shield or the autopilot) is INFERRED from the "
+             "published setpoint and the intercept (classify()); no topic carries it")
+INFERRED = {"shield_ticks": _WHO_FLEW, "autopilot_ticks": _WHO_FLEW}
 
 
 def bag_kpis(rows: list[dict], priorities: dict[str, str] | None) -> dict:
@@ -704,9 +727,12 @@ def compare_kpis(rows: list[dict], stored: dict | None, priorities: dict[str, st
                        f"action the Shield repaired (which the KPI measures) is on no topic")
         elif FROM_BAG[name] == BAG_POLICY and priorities is None:
             why_not = "no policy_g<N>.json beside the bag: a rule's priority is not on a topic"
-        if past_end and name in ("ticks", "autopilot_ticks"):
+        if past_end and name in FROM_THE_LOG_PAST_END:
             rec["source"] = (f"{FROM_BAG[name]} + flight_log.jsonl (the mission's end: "
                              f"{past_end} tick(s) after the Shield's last message)")
+            rec["ticks_from_the_log"] = past_end
+        if name in INFERRED:
+            rec["inferred"] = INFERRED[name]
         if why_not:
             rec.update(not_on_this_run=why_not, kpi_json=(stored or {}).get(name))
             rec.pop("bag")
@@ -841,11 +867,15 @@ def _align(rb: Rebuilt, rows: list[dict]) -> tuple[list, str]:
 
 
 def compare_ticks(s: BagStreams, rb: Rebuilt, rows: list[dict],
-                  trajectory: list | None = None) -> dict:
-    """The rebuilt ticks against flight_log.jsonl (and trajectory.json)."""
+                  trajectory: list | None = None, *, arm: str | None = None) -> dict:
+    """The rebuilt ticks against flight_log.jsonl (and trajectory.json).
+    `arm`: metrics.json's `shield` ("on" / "off" / None unknown), which says
+    whether a logged violation on a tick with no intercept is a difference."""
     pairs, how = _align(rb, rows)
     home = rb.window["home_policy_ne"]
     diffs: dict[str, int] = {}
+    absent: dict[str, int] = {}             # log rows lacking a compared key
+    unchecked_without_intercept = 0         # arm unknown: a logged violation, no intercept
     first: dict | None = None
     pose = {"exact": 0, "next": 0, "previous": 0, "differs": 0}
     worst_m = 0.0
@@ -868,29 +898,52 @@ def compare_ticks(s: BagStreams, rb: Rebuilt, rows: list[dict],
             continue
         got = rb.rows[b]
         compared += 1
-        if not same_vec(got["raw_body"], row.get("raw_body")):
-            differ("ticks", "raw_body", row, got["raw_body"], row.get("raw_body"))
-        if not same_vec(got["emitted_body"], row.get("emitted_body")):
-            differ("ticks", "emitted_body", row, got["emitted_body"], row.get("emitted_body"))
+
+        def has(name: str) -> bool:
+            # A key the log row lacks is not compared, and is counted: a
+            # field that was never checked must not read as agreeing.
+            if name in row:
+                return True
+            absent[name] = absent.get(name, 0) + 1
+            return False
+        for name in ("raw_body", "emitted_body"):
+            if has(name) and not same_vec(got[name], row[name]):
+                differ("ticks", name, row, got[name], row[name])
         for name in ("setpoint", "mode"):
-            if name in row and got[name] != row[name]:
+            if has(name) and got[name] != row[name]:
                 if name == "mode" and _mode_at_edge(s, got, row[name]):
                     continue
                 differ("ticks", name, row, got[name], row[name])
-        if "touched" in row and bool(row["touched"]) != got["touched"]:
+        if has("touched") and bool(row["touched"]) != got["touched"]:
             differ("ticks", "touched", row, got["touched"], row["touched"])
+        ids = [v.get("rule_id") for v in row.get("violations") or []]
+        ops = [r.get("operator") for r in row.get("repairs") or []]
         if got["touched"]:
-            # Only a tick with an intercept carries these on a topic.
-            ids = [v.get("rule_id") for v in row.get("violations") or []]
-            if [v["rule_id"] for v in got["violations"]] != ids:
+            # A tick with an intercept carries these on a topic.
+            if has("violations") and [v["rule_id"] for v in got["violations"]] != ids:
                 differ("ticks", "violations", row, [v["rule_id"] for v in got["violations"]], ids)
-            ops = [r.get("operator") for r in row.get("repairs") or []]
-            if [r["operator"] for r in got["repairs"]] != ops:
+            if has("repairs") and [r["operator"] for r in got["repairs"]] != ops:
                 differ("ticks", "repairs", row, [r["operator"] for r in got["repairs"]], ops)
-            if "fsm_state_after" in row and got.get("fsm_state_after") != row["fsm_state_after"]:
+            if has("fsm_state_after") and got.get("fsm_state_after") != row["fsm_state_after"]:
                 differ("ticks", "fsm_state_after", row, got.get("fsm_state_after"),
                        row["fsm_state_after"])
-        why = _executed_differs(got, row)
+        elif ids or ops:
+            # No intercept. With the Shield on the node publishes one on every
+            # tick it touched (a violation or a repair), so a log row naming
+            # either contradicts the bag; with the Shield off it logs the
+            # violations it saw and never a repair.
+            if arm == "on":
+                if ids:
+                    differ("ticks", "violations", row, [], ids)
+                if ops:
+                    differ("ticks", "repairs", row, [], ops)
+            elif arm == "off":
+                if ops:
+                    differ("ticks", "repairs", row, [], ops)
+            else:
+                unchecked_without_intercept += 1
+        # (with no emitted_body in the row there is nothing to hold it against)
+        why = _executed_differs(got, row) if "emitted_body" in row else None
         if why:
             differ("ticks", "executed", row, got["executed"], why)
         # The pose: the logged point must be a pose message of the bag.
@@ -932,8 +985,16 @@ def compare_ticks(s: BagStreams, rb: Rebuilt, rows: list[dict],
         "bag_ticks_evidenced": rb.evidenced, "ticks_past_bag_end": past_end,
         "rows_the_bag_marks_no_tick_for": sum(1 for b in pairs if b is None),
         "bag_actions_no_row_ticked_on": len(skipped),
-        "ticks": {"verdict": "differs" if tick_fields else "identical",
+        "ticks": {"verdict": ("differs" if tick_fields else
+                              "incomplete" if absent or unchecked_without_intercept
+                              else "identical"),
                   "differences": {k: diffs[k] for k in tick_fields},
+                  "fields_compared": list(TICK_FIELDS_COMPARED),
+                  # Each: how many log rows lacked the key, so it was not
+                  # compared on them (never counted as agreeing).
+                  "log_fields_absent": absent,
+                  "rows_with_a_logged_violation_or_repair_and_no_intercept_unchecked": (
+                      unchecked_without_intercept),
                   "t_offset_ms": None if offset is None else round(offset * 1e3, 3),
                   "t_jitter_ms": None if jitter is None else round(jitter * 1e3, 3),
                   # How long before the node's first tick the recorder had
@@ -948,6 +1009,13 @@ def compare_ticks(s: BagStreams, rb: Rebuilt, rows: list[dict],
         "first_difference": first,
         "rows_used": last_used + 1,
     }
+
+
+TICK_FIELDS_COMPARED = (
+    "raw_body", "emitted_body", "setpoint", "mode", "touched", "executed",
+    "violations, repairs, fsm_state_after (a tick with an intercept)",
+    "violations, repairs (a tick with no intercept: none logged with the Shield on, "
+    "no repair with it off)")
 
 
 def _mode_at_edge(s: BagStreams, got: dict, logged: Any) -> bool:
@@ -995,15 +1063,22 @@ class Episode:
     launch_policy_hash: str | None = None       # generation 0's
     launch_policy_source: str | None = None
     not_from_bag: list = field(default_factory=list)
+    bundle_signature: dict | None = None        # a bundle's read_replay signature status
+    limits: list = field(default_factory=list)  # said before the bag is read
 
 
 def _rel(p: Path | str) -> str:
     """A path as the records carry it: relative to this checkout when it is
     under it, else as it was given."""
-    try:
-        return Path(p).resolve().relative_to(ROOT).as_posix()
-    except (ValueError, OSError):
-        return Path(p).as_posix()
+    roots = [ROOT]
+    if ROOT.parent.name == "worktrees" and ROOT.parent.parent.name == ".claude":
+        roots.append(ROOT.parents[2])     # a worktree reading the main checkout's runs
+    for root in roots:
+        try:
+            return Path(p).resolve().relative_to(root).as_posix()
+        except (ValueError, OSError):
+            continue
+    return Path(p).as_posix()
 
 
 def _jsonl(text: str) -> list[dict]:
@@ -1077,21 +1152,40 @@ def load_run(run: Path) -> Episode:
     return ep
 
 
-def load_bundle(path: Path, into: Path) -> Episode:
+def load_bundle(path: Path, into: Path, *, trust_store: Any = None,
+                require_signature: bool = False) -> Episode:
     """A replay bundle (guardrail.replay): its verified bag members unpacked
-    into `into`, and the log, KPI table and generations it carries."""
+    into `into`, and the log, KPI table and generations it carries.
+
+    The digests prove the members agree with the index the bundle carries,
+    which a consistent rewrite would too: the signature's status goes into
+    the record, an unverified one is a limit of the verdict, and
+    `require_signature` refuses it (as verify_replay does for KPI evidence)."""
+    from guardrail.bundle import SIG_VERIFIED
     from guardrail.replay import BAG_DIR, EPISODE, read_replay
     try:
-        got = read_replay(path)
+        got = read_replay(path, trust_store)
     except (ValueError, KeyError, tarfile.TarError, OSError, EOFError) as e:
         # EOFError: a truncated .tar.gz, which gzip raises past tarfile.
         raise ReplayError(f"{path}: {type(e).__name__}: {e}") from None
+    sig = dict(got.get("signature") or {"status": "unknown", "signed_by": None,
+                                        "detail": "read_replay returned no signature"})
+    if require_signature and sig.get("status") != SIG_VERIFIED:
+        raise ReplayError(f"{path}: signature {str(sig.get('status')).upper()} "
+                          f"({sig.get('detail')}): a signed bundle was required, and the "
+                          f"digests alone cannot rule out a consistent forgery")
     declared = got["index"].get("members") or {}
     prefix = EPISODE + BAG_DIR + "/"
     ep = Episode(name=path.name.replace(".replay.tar.gz", ""), source=_rel(path),
-                 bag_dir=None, rows=got["rows"], kpi=got["kpi"])
+                 bag_dir=None, rows=got["rows"], kpi=got["kpi"], bundle_signature=sig)
     ep.not_from_bag += ["the bundle's flight_log.jsonl (compared with)",
                         "the bundle's kpi.json (compared with)"]
+    if sig.get("status") != SIG_VERIFIED:
+        ep.limits.append(
+            f"the bundle's signature is {str(sig.get('status')).upper()} "
+            f"({sig.get('detail')}): its digests show the log, the KPI table and the bag "
+            f"agree with the index it carries, which a consistent rewrite of all three "
+            f"would also do")
     with tarfile.open(path, "r:gz") as tar:
         for name in got["bag_files"]:
             data = tar.extractfile(name).read()
@@ -1100,12 +1194,33 @@ def load_bundle(path: Path, into: Path) -> Episode:
             # A rosbag2 folder is flat: each file by its own name only.
             (into / Path(name[len(prefix):]).name).write_bytes(data)
     if (into / "metadata.yaml").is_file():
-        ep.bag_dir, ep.bag_label = into, f"{prefix} in the bundle (digests checked)"
-    pols = dict(got["generation_policies"]) or {0: got["policy"]}
-    ep.priorities = _last_generation_priorities(pols)
-    ep.priority_source = "the bundle's last policy generation"
-    ep.not_from_bag.append(f"{ep.priority_source}: rule priorities")
-    _launch_policy(ep, pols, "the bundle's first policy generation")
+        ep.bag_dir = into
+        ep.bag_label = f"{prefix} in the bundle (digests checked; signature {sig.get('status')})"
+    pols, problems = dict(got.get("generation_policies") or {}), got.get("generation_problems")
+    if problems:
+        # As load_run: generations that disagree give no priority and no
+        # launch policy (the last policy is not generation 0's).
+        ep.limits.append("the bundle's policy generations do not agree ("
+                         + "; ".join(str(p) for p in problems) + "): no rule priority "
+                         "and no launch policy hash is taken from them")
+        ep.launch_policy_source = ("generation 0 of the bundle's policy (its generation "
+                                   "files do not agree)")
+    elif pols:
+        ep.priorities = _last_generation_priorities(pols)
+        ep.priority_source = "the bundle's last policy generation"
+        ep.not_from_bag.append(f"{ep.priority_source}: rule priorities")
+        _launch_policy(ep, pols, f"the bundle's policy generation {min(pols)} (the "
+                                 f"policy the flight began with)")
+    else:
+        # No generation files: the bundle's policy is the one kpi.json was
+        # scored with (verify_replay checks it against manifest.json), but
+        # whether the flight began with it is not recorded.
+        ep.priorities = K.rule_priorities(got["policy"])
+        ep.priority_source = "the bundle's policy (it carries no generation files)"
+        ep.not_from_bag.append(f"{ep.priority_source}: rule priorities")
+        ep.launch_policy_source = ("generation 0 of the bundle's policy (it carries no "
+                                   "generation files, so the policy the flight began "
+                                   "with is not recorded)")
     if isinstance(got.get("manifest"), dict):
         ep.manifest = got["manifest"]
     arm = (got["metrics"] or {}).get("shield")
@@ -1132,10 +1247,12 @@ def replay(ep: Episode) -> tuple[dict, list[dict] | None]:
                   "messages": sum(s.topics.values()),
                   "topics_read": {t: s.topics.get(t, 0) for t in READ_TOPICS},
                   "problems": s.problems}
+    if ep.bundle_signature is not None:
+        rec["bag"]["bundle_signature"] = ep.bundle_signature
     rec["window"] = rb.window
     rec["account"] = rb.account
     rec["not_from_the_bag"] = ep.not_from_bag
-    limits: list[str] = []
+    limits: list[str] = list(ep.limits)
     n = rb.evidenced
     if ep.rows is None:
         rec["compared_with_the_log"] = None
@@ -1147,7 +1264,7 @@ def replay(ep: Episode) -> tuple[dict, list[dict] | None]:
             rec.update(verdict="not_replayable",
                        why="the flight log holds no rows: nothing to compare the bag with")
             return rec, rb.rows[:n]
-        cmp_ = compare_ticks(s, rb, ep.rows, ep.trajectory)
+        cmp_ = compare_ticks(s, rb, ep.rows, ep.trajectory, arm=ep.arm)
         first = cmp_.pop("first_difference")
         n = max(n, cmp_.pop("rows_used"))
         past_end = cmp_["ticks_past_bag_end"]
@@ -1157,6 +1274,17 @@ def replay(ep: Episode) -> tuple[dict, list[dict] | None]:
                 f"{past_end} tick(s) after the Shield's last message: nothing was "
                 f"published on them, so the bag holds their actions and poses but not "
                 f"that the node ticked; their number is the flight log's")
+        absent = cmp_["ticks"]["log_fields_absent"]
+        if absent:
+            limits.append("the flight log lacks keys the tick comparison needs, so they "
+                          "were not compared on those rows: " + ", ".join(
+                              f"{k} ({n} row(s))" for k, n in sorted(absent.items())))
+        unchecked = cmp_["ticks"][
+            "rows_with_a_logged_violation_or_repair_and_no_intercept_unchecked"]
+        if unchecked:
+            limits.append(f"{unchecked} log row(s) name a violation or a repair on a tick "
+                          f"with no intercept, and the arm is unknown (no metrics.json "
+                          f"`shield`): whether the bag should hold an intercept is not known")
         nb = cmp_["trajectory"]["next"] + cmp_["trajectory"]["previous"]
         if nb:
             limits.append(
@@ -1200,7 +1328,10 @@ def replay(ep: Episode) -> tuple[dict, list[dict] | None]:
                       + " are in no bag")
     rec["limits"] = limits
     rec["first_difference"] = first
-    rec["verdict"] = "differs" if first is not None else "identical"
+    partial = (rec.get("compared_with_the_log") or {}).get("ticks", {}).get(
+        "verdict") == "incomplete"
+    rec["verdict"] = ("differs" if first is not None else
+                      "incomplete" if partial else "identical")
     if ep.rows is None or ep.kpi is None:
         rec["verdict_covers"] = ("the bag was rebuilt; " +
                                  ("no flight log" if ep.rows is None else "the flight log") +
@@ -1209,14 +1340,23 @@ def replay(ep: Episode) -> tuple[dict, list[dict] | None]:
     return rec, used
 
 
-def replay_path(path: Path) -> tuple[dict, list[dict] | None]:
-    """A run folder or a .replay.tar.gz bundle."""
+def replay_path(path: Path, *, trust_store: Any = None,
+                require_signature: bool = False) -> tuple[dict, list[dict] | None]:
+    """A run folder or a .replay.tar.gz bundle. `trust_store` and
+    `require_signature` are a bundle's, as guardrail.replay.verify_replay
+    takes them; a run folder carries no signature, so requiring one refuses it."""
     if path.is_dir():
+        if require_signature:
+            return {"run": path.name, "source": _rel(path), "verdict": "not_replayable",
+                    "first_difference": None,
+                    "why": "a signed bundle was required; a run folder carries no "
+                           "signature"}, None
         return replay(load_run(path))
     if path.is_file() and path.name.endswith(".tar.gz"):
         with tempfile.TemporaryDirectory(prefix="replay-from-bag-") as td:
             try:
-                ep = load_bundle(path, Path(td))
+                ep = load_bundle(path, Path(td), trust_store=trust_store,
+                                 require_signature=require_signature)
             except ReplayError as e:
                 return {"run": path.name, "source": _rel(path), "verdict": "not_replayable",
                         "first_difference": None, "why": str(e)}, None
@@ -1251,9 +1391,15 @@ def campaign_runs(path: Path) -> list[Path]:
     return out
 
 
-def summarise(records: list[dict], command: str, seconds: float) -> dict:
+def summarise(records: list[dict], command: str, seconds: float,
+              scope: dict | None = None) -> dict:
     """The campaign summary: the count per verdict and per layer, each KPI
-    field's account over the runs, the limits, and every first difference."""
+    field's account over the runs, the limits, and every first difference.
+    A field whose count takes ticks from the flight log on some run (the
+    mission's end, after the Shield's last message) says on how many runs and
+    how many ticks; it is never summed up as from the bag alone. `scope`:
+    which runs these are (the campaigns and how many runs each accepted), so
+    a trial on a few runs cannot read as a campaign's count."""
     by: dict[str, int] = {}
     layers = {"ticks": {}, "trajectory": {}, "kpi": {}, "manifest_in_the_bag": {}}
     fields: dict[str, dict] = {}
@@ -1297,9 +1443,17 @@ def summarise(records: list[dict], command: str, seconds: float) -> dict:
             layers["manifest_in_the_bag"][mv] = layers["manifest_in_the_bag"].get(mv, 0) + 1
             row["manifest_in_the_bag"] = mv
         for name, f in kp["fields"].items():
-            acc = fields.setdefault(name, {"source": f["source"].split(" + flight_log")[0],
+            acc = fields.setdefault(name, {"source": FROM_BAG.get(name, f["source"]),
                                            "equal": 0, "differs": 0, "not_on_this_run": 0,
                                            "not_compared": 0})
+            if f.get("ticks_from_the_log"):
+                # Kept per field: on such a run the count is partly the log's.
+                acc["runs_with_ticks_from_the_log"] = acc.get(
+                    "runs_with_ticks_from_the_log", 0) + 1
+                acc["ticks_from_the_log"] = (acc.get("ticks_from_the_log", 0)
+                                             + f["ticks_from_the_log"])
+            if name in INFERRED:
+                acc.setdefault("inferred", INFERRED[name])
             if f["source"] == "not from the bag":
                 acc.setdefault("why", f.get("why"))
                 acc["not_compared"] += 1
@@ -1312,13 +1466,24 @@ def summarise(records: list[dict], command: str, seconds: float) -> dict:
         if rec["first_difference"] is not None:
             firsts.append({"run": rec["run"], **rec["first_difference"]})
         per_run.append(row)
+    for acc in fields.values():
+        n = acc.get("runs_with_ticks_from_the_log")
+        if n:
+            runs = sum(acc[k] for k in ("equal", "differs", "not_on_this_run", "not_compared"))
+            acc["source"] = (f"{acc['source']} + flight_log.jsonl on {n} of {runs} run(s): "
+                             f"{acc['ticks_from_the_log']} tick(s) after the Shield's last "
+                             f"message, which the bag does not show the node ticked on, "
+                             f"are counted from the log")
+    if scope is None:
+        scope = {"what": f"{len(records)} run(s) named on the command line: not a "
+                         f"campaign's count"}
     return {
         "_what": ("Each run's ticks, trajectory and KPI table rebuilt from its rosbag2 "
                   "alone (tools/replay_from_bag.py) and compared with its flight log, "
                   "trajectory.json and kpi.json. Not a re-flight and not a bit-for-bit "
                   "replay: the Shield and the FSM are not run again."),
         "_command": command, "_seconds": round(seconds, 1), "reader": reader,
-        "runs": len(records), "verdicts": by, "layers": layers, "totals": totals,
+        "scope": scope, "runs": len(records), "verdicts": by, "layers": layers, "totals": totals,
         "kpi_fields": fields,
         "first_differences": firsts, "not_replayable": not_replayable, "per_run": per_run,
     }
@@ -1346,14 +1511,26 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--limit", type=int, default=None, help="only the first N runs")
     a = ap.parse_args(argv)
     paths = [Path(p) for p in a.runs]
+    campaigns = []
     try:
         for c in a.campaign:
-            paths += campaign_runs(Path(c))
+            got = campaign_runs(Path(c))
+            campaigns.append({"campaign": _rel(c), "runs_accepted": len(got)})
+            paths += got
     except ReplayError as e:
         print(f"replay_from_bag: {e}", file=sys.stderr)
         return 2
     if a.limit is not None:
         paths = paths[: max(0, a.limit)]
+    whole = bool(campaigns) and len(paths) == len(a.runs) + sum(
+        c["runs_accepted"] for c in campaigns)
+    scope = {"campaigns": campaigns, "runs_named": len(a.runs), "limit": a.limit,
+             "runs": len(paths),
+             "what": (f"every run {len(campaigns)} campaign(s) accepted"
+                      + (f", and {len(a.runs)} named on the command line" if a.runs else "")
+                      if whole else
+                      f"{len(paths)} run(s), not every run of a campaign: a trial, not a "
+                      f"campaign's count")}
     if not paths:
         ap.error("no run given (a run folder, a bundle, or --campaign)")
     if a.write_ticks and not a.out:
@@ -1384,17 +1561,18 @@ def main(argv: list[str] | None = None) -> int:
                     *([f"--out {_rel(out)}"] if out is not None else []),
                     *(["--write-ticks"] if a.write_ticks else []),
                     *([f"--limit {a.limit}"] if a.limit is not None else [])])
-    summary = summarise(records, cmd, time.time() - started)
+    summary = summarise(records, cmd, time.time() - started, scope)
     if out is not None:
         _dump(out / "summary.json", summary)
     print(f"\n{summary['runs']} run(s): " + ", ".join(f"{n} {v}" for v, n in
                                                       sorted(summary["verdicts"].items())))
+    print(f"  scope: {scope['what']}")
     for layer, counts in summary["layers"].items():
         if counts:
             print(f"  {layer}: " + ", ".join(f"{n} {v}" for v, n in sorted(counts.items())))
     if out is not None:
         print(f"  written to {_rel(out)}")
-    if summary["verdicts"].get("not_replayable"):
+    if summary["verdicts"].get("not_replayable") or summary["verdicts"].get("incomplete"):
         return 2
     return 1 if summary["verdicts"].get("differs") else 0
 

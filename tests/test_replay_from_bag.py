@@ -343,6 +343,82 @@ def test_one_changed_value_reads_differs_with_the_layer_field_and_tick():
         "differences"]
 
 
+def test_a_logged_violation_the_bag_has_no_intercept_for_differs():
+    """With the Shield on the node publishes /shield/intercept on every tick
+    it touched (a violation or a repair): a log row naming either on a tick
+    with no intercept contradicts the bag, whatever its `touched` says."""
+    s, rows, traj, kpi = _episode()
+    plain = 2                                    # a pass tick: no intercept in the bag
+
+    def ghost(r2):
+        r2[plain]["violations"] = [{"rule_id": "nfz-ghost", "category": "geofence"}]
+        return r2
+    for arm in ("on", None, "off"):
+        r2 = ghost(json.loads(json.dumps(rows)))
+        assert r2[plain]["touched"] is False
+        rec, _ = _replay(s, r2, traj, kpi, arm=arm)
+        if arm == "on":
+            f = rec["first_difference"]
+            assert rec["verdict"] == "differs" and (f["layer"], f["field"], f["tick"]) == (
+                "ticks", "violations", plain + 1), f
+            assert f["bag"] == [] and f["log"] == ["nfz-ghost"]
+        elif arm is None:
+            # the arm unknown: whether an intercept was due is not known, so
+            # the run is not identical, and says why
+            c = rec["compared_with_the_log"]["ticks"]
+            assert rec["verdict"] == "incomplete" and c["verdict"] == "incomplete", rec["verdict"]
+            assert c["rows_with_a_logged_violation_or_repair_and_no_intercept_unchecked"] == 1
+            assert any("arm is unknown" in x for x in rec["limits"]), rec["limits"]
+        else:
+            # a Shield-off arm logs the violations it saw, with no intercept
+            assert "violations" not in rec["compared_with_the_log"]["ticks"]["differences"]
+            assert rec["compared_with_the_log"]["ticks"]["verdict"] == "identical"
+    # a repair on a tick with no intercept differs on either arm
+    r2 = json.loads(json.dumps(rows))
+    r2[plain]["repairs"] = [{"operator": "SpeedClamp"}]
+    for arm in ("on", "off"):
+        rec, _ = _replay(s, r2, traj, kpi, arm=arm)
+        assert rec["compared_with_the_log"]["ticks"]["differences"].get("repairs") == 1, arm
+    # the log's own `touched` removed everywhere does not hide it
+    r2 = ghost([{k: v for k, v in r.items() if k != "touched"} for r in rows])
+    rec, _ = _replay(s, r2, traj, kpi)
+    assert rec["verdict"] == "differs" and rec["first_difference"]["field"] == "violations"
+
+
+def test_a_log_row_lacking_a_compared_key_is_not_compared_and_never_identical():
+    s, rows, traj, kpi = _episode()
+    rec, _ = _replay(s, rows, traj, kpi)
+    c = rec["compared_with_the_log"]["ticks"]
+    assert rec["verdict"] == "identical" and c["log_fields_absent"] == {}
+    assert "mode" in c["fields_compared"] and "touched" in c["fields_compared"]
+    for gone in (("mode", "setpoint"), ("touched",), ("emitted_body",), ("fsm_state_after",)):
+        r2 = [{k: v for k, v in r.items() if k not in gone} for r in rows]
+        rec, _ = _replay(s, r2, traj, kpi)
+        c = rec["compared_with_the_log"]["ticks"]
+        assert rec["verdict"] == "incomplete" and c["verdict"] == "incomplete", (gone, rec[
+            "verdict"], rec["first_difference"])
+        want = len(rows) if gone != ("fsm_state_after",) else sum(1 for r in rows if r["touched"])
+        assert c["log_fields_absent"] == {k: want for k in gone}, (gone, c["log_fields_absent"])
+        assert any("lacks keys the tick comparison needs" in x for x in rec["limits"])
+    # a difference elsewhere is still the verdict
+    r2 = [{k: v for k, v in r.items() if k != "mode"} for r in json.loads(json.dumps(rows))]
+    r2[3]["raw_body"]["vx"] = 9.0
+    rec, _ = _replay(s, r2, traj, kpi)
+    assert rec["verdict"] == "differs" and rec["first_difference"]["field"] == "raw_body"
+    # the CLI: incomplete is not a pass (exit 2)
+    root = _tmp("rfb_absent_")
+    r2 = [{k: v for k, v in r.items() if k != "mode"} for r in rows]
+    run = _run_folder(root, "absent_001", r2, traj, kpi)
+    real = R.X.have_rosbags
+    R.X.have_rosbags = lambda: True
+    try:
+        with _bag_is(s):
+            rc, text = _main(run)
+    finally:
+        R.X.have_rosbags = real
+    assert rc == 2 and "incomplete" in text, text
+
+
 def test_a_tick_the_timer_ran_has_no_message_and_is_said_not_rebuilt():
     s, rows, traj, kpi = _episode()
     extra = dict(rows[3], tick=99, t=rows[3]["t"] + 0.05, tick_trigger="timer")
@@ -382,6 +458,41 @@ def test_ticks_after_the_shields_last_message_are_counted_from_the_log_and_said(
     assert len(ticks) == len(PLAN) - 5 and rec["compared_with_the_log"] is None
     assert rec["kpi"]["verdict"] == "no_kpi_json" and "no flight log" in rec["verdict_covers"]
     assert _field(rec, "ticks") == {"source": "bag", "bag": len(PLAN) - 5, "kpi_json": "absent"}
+
+
+def test_the_summary_keeps_the_ticks_the_log_counted_past_the_bags_end():
+    """The campaign summary must not fold a count that is partly the flight
+    log's into "from the bag": one run with a tail after the Shield's last
+    message, one whose end is in the bag."""
+    s, rows, traj, kpi = _episode()                  # 5 clean autopilot ticks at the end
+    tail, _ = _replay(s, rows, traj, kpi)
+    s2, rows2, traj2, kpi2 = _episode(["pass"] * 4 + ["repair"] * 2)
+    clean, _ = _replay(s2, rows2, traj2, kpi2)
+    assert tail["verdict"] == clean["verdict"] == "identical"
+    assert clean["compared_with_the_log"]["ticks_past_bag_end"] == 0
+    assert _field(tail, "ticks")["ticks_from_the_log"] == 5
+    assert "ticks_from_the_log" not in _field(clean, "ticks")
+    sm = R.summarise([dict(tail, run="tail"), dict(clean, run="clean")], "cmd", 0.0)
+    for name in ("ticks", "autopilot_ticks"):
+        f = sm["kpi_fields"][name]
+        assert f["equal"] == 2 and f["runs_with_ticks_from_the_log"] == 1, f
+        assert f["ticks_from_the_log"] == 5, f
+        assert f["source"].startswith("bag + flight_log.jsonl on 1 of 2 run(s): 5 tick(s)"), f
+    f = sm["kpi_fields"]["shield_ticks"]
+    assert f["source"] == "bag" and "runs_with_ticks_from_the_log" not in f, f
+    # who flew a tick is inferred, and the fields that rest on it say so
+    for name in ("shield_ticks", "autopilot_ticks"):
+        assert "INFERRED" in sm["kpi_fields"][name]["inferred"], name
+        assert "INFERRED" in _field(tail, name)["inferred"], name
+    assert "inferred" not in sm["kpi_fields"]["repair_count"]
+    assert sm["totals"]["ticks_past_bag_end"] == 5
+    assert sm["totals"]["runs_whose_end_is_not_in_the_bag"] == 1
+    # with no scope given, the summary says it is not a campaign's count
+    assert "not a campaign's count" in sm["scope"]["what"], sm["scope"]
+    # every run's end in the bag: the source is the bag's, as before
+    sm = R.summarise([dict(clean, run="clean")], "cmd", 0.0)
+    assert sm["kpi_fields"]["ticks"]["source"] == "bag"
+    assert "runs_with_ticks_from_the_log" not in sm["kpi_fields"]["ticks"]
 
 
 def test_a_tick_the_fsm_stopped_carries_no_repaired_action():
@@ -675,6 +786,23 @@ def test_a_campaigns_runs_are_the_ones_its_sweep_json_accepted():
         assert "no `results`" in str(e)
     rc, text = _main("--campaign", camp / "other.json")
     assert rc == 2 and "no `results`" in text
+    # the summary says which runs it covers: a whole campaign, or a trial
+    real = R.X.have_rosbags
+    R.X.have_rosbags = lambda: True
+    try:
+        out = root / "out"
+        rc, text = _main("--campaign", camp, "--out", out)
+        sm = json.loads((out / "summary.json").read_text(encoding="utf-8"))
+        assert rc == 2 and sm["runs"] == 3, text            # the folders hold no bag
+        assert sm["scope"]["what"] == "every run 1 campaign(s) accepted", sm["scope"]
+        assert [c["runs_accepted"] for c in sm["scope"]["campaigns"]] == [3]
+        assert "scope: every run 1 campaign(s) accepted" in text, text
+        rc, text = _main("--campaign", camp, "--out", out, "--limit", 2)
+        sm = json.loads((out / "summary.json").read_text(encoding="utf-8"))
+        assert sm["scope"]["what"].startswith("2 run(s), not every run of a campaign"), sm
+        assert sm["scope"]["limit"] == 2
+    finally:
+        R.X.have_rosbags = real
 
 
 def test_a_replay_bundles_bag_is_unpacked_from_the_verified_archive():
@@ -693,10 +821,47 @@ def test_a_replay_bundles_bag_is_unpacked_from_the_verified_archive():
         rec, ticks = R.replay_path(out)
     assert seen == [["bag_0.mcap", "metadata.yaml"]], seen
     assert rec["run"] == "r" and rec["verdict"] in ("identical", "differs")
-    assert rec["bag"]["dir"] == "episode/bag/ in the bundle (digests checked)"
+    # the digests are checked; the signature's status is said, and an
+    # unsigned bundle is a limit (a consistent rewrite passes the digests)
+    assert rec["bag"]["dir"] == "episode/bag/ in the bundle (digests checked; signature unsigned)"
+    assert rec["bag"]["bundle_signature"]["status"] == "unsigned", rec["bag"]
+    assert any("signature is UNSIGNED" in x and "consistent rewrite" in x
+               for x in rec["limits"]), rec["limits"]
     assert rec["source"].endswith("r.replay.tar.gz")
     assert rec["compared_with_the_log"]["log_rows"] == len(rows)
     assert any("bundle's last policy generation" in x for x in rec["not_from_the_bag"])
+    # a signed bundle required: this one is refused before its bag is read
+    with _bag_is(s) as seen:
+        rec, ticks = R.replay_path(out, require_signature=True)
+    assert rec["verdict"] == "not_replayable" and ticks is None and seen == [], rec
+    assert "signature UNSIGNED" in rec["why"] and "consistent forgery" in rec["why"], rec
+    run_dir = R.replay_path(run, require_signature=True)[0]
+    assert run_dir["verdict"] == "not_replayable" and "carries no signature" in run_dir["why"]
+    # the generations: ones that disagree give no priority and no launch hash
+    # (as load_run); none at all is said, and the launch hash is not compared
+    import guardrail.replay as GR
+    real_read = GR.read_replay
+
+    def reading(**over):
+        def fake(path, trust_store=None):
+            return dict(real_read(path, trust_store), **over)
+        return fake
+    try:
+        GR.read_replay = reading(generation_problems=["g1 names a parent no g0 has"])
+        ep = R.load_bundle(out, _tmp("rfb_gen_"))
+        assert ep.priorities is None and ep.launch_policy_hash is None, ep
+        assert any("do not agree" in x and "g1 names a parent" in x for x in ep.limits)
+        GR.read_replay = reading(generation_policies={}, generation_problems=[])
+        ep = R.load_bundle(out, _tmp("rfb_gen_"))
+        assert ep.priorities == K.rule_priorities(policy) and ep.launch_policy_hash is None
+        assert ep.priority_source == "the bundle's policy (it carries no generation files)"
+        assert "not recorded" in ep.launch_policy_source
+        man = R.compare_manifest(_custom(), _manifest(), ep.launch_policy_hash,
+                                 ep.launch_policy_source)
+        f = man["fields"][CD.POLICY_HASH_KEY]
+        assert "equal" not in f and "no generation files" in f["not_compared"], f
+    finally:
+        GR.read_replay = real_read
     # a bundle that does not verify is not replayed
     bad = root / "bad.replay.tar.gz"
     bad.write_bytes(out.read_bytes()[:-200])
@@ -734,8 +899,23 @@ def test_the_replay_cli_checks_a_bundle_against_its_bag_only_when_asked():
         # asked: the stand-in bag is another flight's, and the check says so
         rc, text = _replay_cli("verify", out, "--from-bag")
         assert rc == 1 and text.startswith(plain) and "FAILED from the bag" in text, text
-        assert "first difference: ticks." in text and "not on any topic" in text, text
+        # (that log's rows carry none of raw_body, setpoint, mode: not
+        # compared, said; the trajectory is the first difference)
+        assert "first difference: trajectory.pose" in text, text
+        assert "not compared, the log row lacks the key: emitted_body" in text, text
+        assert "not on any topic" in text, text
+        assert "bag read from the bundle with its signature unsigned" in text, text
         assert seen == [["bag_0.mcap", "metadata.yaml"]], seen
+        # the bag's read checks the signature as verify_replay's does: one
+        # read of an unsigned bundle cannot pass where the other refused
+        same, lines = verify_from_bag(out, require_signature=True)
+        assert same is False and "signature UNSIGNED" in lines[0], lines
+        assert seen == [["bag_0.mcap", "metadata.yaml"]], seen
+        rc, text = _replay_cli("verify", out, "--from-bag", "--require-signature")
+        assert rc == 1 and "from the bag" not in text and "signature UNSIGNED" in text, text
+        # the two reads are of one copy of the file, and the lines name the
+        # bundle the caller gave, not the copy
+        assert "verify-from-bag-" not in text, text
     # a bag with no action: not replayable, which is not a pass
     with _bag_is(R.BagStreams(reader="stand-in")):
         same, lines = verify_from_bag(out)
@@ -743,7 +923,7 @@ def test_the_replay_cli_checks_a_bundle_against_its_bag_only_when_asked():
     # identical: the lines say what was compared and what was not re-derived
     good, _ = _replay(s, srows, straj, skpi)
     real = R.replay_path
-    R.replay_path = lambda p: (good, None)
+    R.replay_path = lambda p, **kw: (good, None)
     try:
         rc, text = _replay_cli("verify", out, "--from-bag")
     finally:
@@ -755,7 +935,7 @@ def test_the_replay_cli_checks_a_bundle_against_its_bag_only_when_asked():
     assert "manifest: no field of it is in this bag's metadata" in text, text
     with_fields = dict(good, manifest_in_the_bag=R.compare_manifest(
         _custom(), _manifest(), "sha256:" + "a" * 64, "policy_g0.json"))
-    R.replay_path = lambda p: (with_fields, None)
+    R.replay_path = lambda p, **kw: (with_fields, None)
     try:
         rc, text = _replay_cli("verify", out, "--from-bag")
     finally:
