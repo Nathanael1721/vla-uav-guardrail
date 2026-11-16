@@ -16,6 +16,46 @@ shipped change and recorded as one.
 
 ## [Unreleased]
 
+### 2026-11-16 (contract map re-read) — the 39 open rows read against the grant by five readers and five adversarial second readers: ARCH-02 to DONE (98 / 32 / 5 / 1), row texts and report sentences that had gone out of date corrected, the reference repository's 5 July history recorded for the mid-term rows
+
+Each of the 39 rows that was not DONE (33 PARTIAL, 5 DRIFT, 1 MISSING) was
+read against its grant line, the code and the evidence files, then a second
+reader tried to refute the first one's conclusion. This entry holds what
+that reading changes in the documents; the engineering it ranked is separate.
+
+#### Changed
+- **ARCH-02 to DONE.** "ArduPilot is the inner loop on every rail" was
+  PARTIAL on evidence that stopped at 29 Oct. Every rail of the grant flies
+  ArduPilot: the KPI rail (ntFIN2 + ntFIN2s, 589 episodes), Gazebo Harmonic
+  (2 Nov) and the Project AirSim perception rail, with a learned VLA on `hil`
+  since 14 Nov. The simple_flight follow comparisons are a bench outside the
+  delivery, labelled so. Counts: 98 DONE / 32 PARTIAL / 5 DRIFT / 1 MISSING.
+- **Row texts brought up to date** (no status change): WP1-05 (32/32, not
+  29/29), ARCH-19, WP4-17 (the 15 Nov reading; its A/B and per-paraphrase
+  sections read n/m), X-01 (the report exists), ARCH-23, WP2-13 (the harness
+  draws paraphrases from the service), WP3-07 (the flicker scenario is
+  labelled E6; line references), ARCH-08, ARCH-17.
+
+#### Fixed
+- **Report sentences that were no longer true** (docs/FINAL-REPORT.md): "No
+  learned VLA has emitted the 10 Hz setpoint stream into ArduPilot", "A
+  learned VLA on this rail: not flown", "it has not flown on `hil`", "has not
+  flown. Flown 14 Nov", and simple_flight listed among the rails. The outline
+  still said Gazebo Harmonic was "not built".
+- **Section 7.1 said git dates nothing before 2026-08-24.** True of this
+  repository only. The PI's reference repository has a Policy DSL with a
+  typed IR, a Shield package with two repair operators and a ROS 2 Shield
+  node at its first commit, 9e039b0 of 2026-07-05, and the developer's fork
+  commits of 8-10 July (docs/data/midterm_gate_evidence/evidence.md). WP1-21,
+  WP3-01 and ARCH-15 cite it and stay DRIFT: those are the reference
+  implementation's dates, and whether they count for the gate is the PI's to
+  say.
+
+#### Limits
+- When 9e039b0 was pushed to its origin was not checked.
+- ARCH-02's DONE is this project's reading, checked by a second reader; the
+  PI has not reviewed it.
+
 ### 2026-11-15 (10 Hz observation) — a new camera frame goes to the VLA between the loop's ticks: 12.4-13.2 frames/s reach AIoT-VLA on the AGX Orin while it is asked (9.58 before) and it decides 10.6-10.9 times a second over two full missions; X-05, ARCH-25, ARCH-01, ARCH-21 to DONE; the perception node's collector paced out of the tick
 
 The grant asks for camera observations into the VLA at 10 Hz or faster. The
