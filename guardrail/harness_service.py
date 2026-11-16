@@ -4288,7 +4288,9 @@ def issue_policy_signer(pki_dir: str | Path, ed25519_public, *,
     (the bundle's key id; `name` overrides it), basicConstraints CA:FALSE,
     keyUsage digitalSignature, extendedKeyUsage codeSigning only (it is not a
     TLS identity: the harness allow-list never sees it, and a TLS leaf is not
-    accepted as a bundle signer). notAfter is the CA's own notAfter, not 365
+    accepted as a bundle signer). notBefore is the CA's own notBefore (a
+    verifier with a clock behind the issuer's still accepts it), and notAfter
+    is the CA's own notAfter, not 365
     days: a bundle and the KPI runs flown under it are evidence that has to
     verify for as long as its authority does, and a replay bundle states no
     issue time against which an expired leaf could be excused. When the CA is
@@ -4323,7 +4325,12 @@ def issue_policy_signer(pki_dir: str | Path, ed25519_public, *,
     cert = (C.x509.CertificateBuilder()
             .subject_name(_name(C, cn)).issuer_name(ca_cert.subject)
             .public_key(pub).serial_number(C.x509.random_serial_number())
-            .not_valid_before(max(now - _dt.timedelta(minutes=5), ca_from))
+            # From the CA's own notBefore, not "now minus 5 minutes": a
+            # verifier whose clock runs behind the desktop's (the Orin, a
+            # container) would otherwise refuse a freshly re-signed bundle as
+            # "not valid now", which a bare pinned key never was. The leaf
+            # claims nothing the CA did not already: same window, end to end.
+            .not_valid_before(ca_from)
             .not_valid_after(ca_until)
             .add_extension(C.x509.BasicConstraints(ca=False, path_length=None), critical=True)
             .add_extension(_key_usage(C, ca=False), critical=True)
