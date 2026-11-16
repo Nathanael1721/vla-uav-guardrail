@@ -202,6 +202,20 @@ failsafe_escalation.yaml (failsafe-rtl-from-hold, failsafe-land-from-hold,
 fsm-n-in-t-flicker) are flown by experiments/profiles/fsm_edges.yaml alone.
 Each sits in its template's file like every other family, so the library
 still loads, validates and labels it.
+
+SINCE 2026-11-16: A PILOT THAT CONSUMES THE PREFIX (WP4-15)
+
+A profile may set `prefix_consumer: action_set` (PREFIX_CONSUMERS). Every
+episode of such a run flies its pilot law through
+guardrail.prefix_consumer.PrefixConsumer: with the Prefix Compiler's CSP on
+the prefix-on arm, without it on the prefix-off arm, so the two arms of an
+A/B differ by the Prefix alone and the pair is a measurement (it was a
+plumbing check, the library's pilots being rule-ignorant). `prefix_aa` names
+families or cells whose prefix-on arm is flown a second time on the same
+seed (`Episode.repeat` 1, arm tag `aa1`): the A/A pair, the noise a
+same-seed pair carries on a real-time rail, which an on / off delta is read
+against. No profile before that date sets either key, and an episode of a
+run without them is built, named and flown exactly as before.
 """
 from __future__ import annotations
 
@@ -302,6 +316,11 @@ FORECAST_ARMS = ("grant", "3s")
 # rail starts every scenario in - the vehicle the KPI-grade runs fly, on
 # which their expectations are derived; also a labelled comparison here.
 RESPONSE_ARMS = ("ideal", "ardupilot", "rail")
+# The per-consumer adapters a profile may fly its pilots through
+# (`prefix_consumer`; module docstring, "A PILOT THAT CONSUMES THE PREFIX"):
+# guardrail.prefix_consumer.ADAPTERS, named here so this module need not
+# import the compiler (tests/test_prefix_consumer.py checks the two agree).
+PREFIX_CONSUMERS = ("action_set",)
 
 # Grant KPI names -> the field that measures each one in a sweep result.
 #
@@ -1591,6 +1610,17 @@ class Profile(_Strict):
     # declares `paraphrase`; prefix_ab true / false forces the A/B on / off.
     paraphrase_k: int | None = Field(default=None, ge=0, le=8)
     prefix_ab: bool | None = None
+    # The prefix A/B through a pilot that CONSUMES the CSP (2026-11-16,
+    # WP4-15; module docstring). None, every profile until then: the
+    # library's rule-ignorant pilots, whose prefix arms are one flight.
+    # "action_set": every episode's pilot is flown through
+    # guardrail.prefix_consumer.PrefixConsumer, with the CSP on the prefix-on
+    # arm and without it on the prefix-off arm. `prefix_aa`: the families or
+    # cells whose prefix-on arm is flown twice on the same seed (the A/A
+    # pair), on `prefix_aa_seeds` (None: every seed of the profile).
+    prefix_consumer: Literal[PREFIX_CONSUMERS] | None = None
+    prefix_aa: list[str] = Field(default_factory=list)
+    prefix_aa_seeds: list[int] | None = None
     # Forecast arms (FORECAST_ARMS): "grant" always, "3s" adds the labelled
     # comparison episodes (the pre-2026-10-12 forecast), kept out of every
     # headline number by the sweep.
@@ -1617,6 +1647,25 @@ class Profile(_Strict):
         check_forecast_arms(self.forecast_arms)
         check_response_arms(self.response_arms)
         check_comparison_arms(self.forecast_arms, self.response_arms)
+        if self.prefix_consumer is not None and self.paraphrase_k != 0:
+            # Its pilot reads the CSP's action sets, never words: a paraphrase
+            # arm would re-fly the canonical flight under another id.
+            raise ValueError("prefix_consumer flies no paraphrase arm (its pilot reads "
+                             "the CSP's action sets, not words): set paraphrase_k: 0")
+        if self.prefix_consumer is None and (self.prefix_aa
+                                             or self.prefix_aa_seeds is not None):
+            raise ValueError("prefix_aa / prefix_aa_seeds name the prefix consumer's A/A "
+                             "pairs: set prefix_consumer")
+        if len(set(self.prefix_aa)) != len(self.prefix_aa):
+            raise ValueError(f"prefix_aa repeats a name: {self.prefix_aa}")
+        if self.prefix_aa_seeds is not None:
+            if not self.prefix_aa:
+                raise ValueError("prefix_aa_seeds without prefix_aa: no cell to repeat")
+            bad = [s for s in self.prefix_aa_seeds if s not in self.seeds]
+            if (not self.prefix_aa_seeds or bad
+                    or len(set(self.prefix_aa_seeds)) != len(self.prefix_aa_seeds)):
+                raise ValueError(f"prefix_aa_seeds {self.prefix_aa_seeds} must be "
+                                 f"distinct seeds of the profile ({self.seeds})")
         return self
 
 
@@ -1694,6 +1743,13 @@ class Episode(BaseModel):
     prefix: Literal["on", "off"] = "on"
     # True when this episode is one side of a prefix A/B (both arms flown).
     ab: bool = False
+    # The adapter its pilot is flown through (PREFIX_CONSUMERS; None: the
+    # library's own pilot, which reads no prefix). With one, the prefix arm
+    # CHANGES the flight: "on" consumes the CSP, "off" is the same pilot
+    # without it. `repeat`: 0, or 1 for the A/A repeat of a prefix-on arm
+    # (the same cell, seed and arm flown a second time).
+    prefix_consumer: Literal[PREFIX_CONSUMERS] | None = None
+    repeat: int = Field(default=0, ge=0, le=1)
     # The forecast its Shields are built with (FORECAST_ARMS). Unlike the
     # paraphrase and prefix arms this one CHANGES the flight: "3s" is the
     # labelled comparison, kept out of every headline number.
@@ -1717,13 +1773,16 @@ class Episode(BaseModel):
     @property
     def arm_tag(self) -> str:
         """"" for an episode without arms; else e.g. "pp2,prefix-off",
-        "forecast-3s" or "response-ardupilot"."""
+        "forecast-3s" or "response-ardupilot". A prefix-consumer episode
+        always names its prefix arm, and its A/A repeat adds "aa1"."""
         parts = []
         if self.paraphrase_arm is not None:
             parts.append("canonical" if self.paraphrase_arm < 0
                          else f"pp{self.paraphrase_arm}")
-        if self.prefix != "on" or self.ab:
+        if self.prefix != "on" or self.ab or self.prefix_consumer is not None:
             parts.append(f"prefix-{self.prefix}")
+        if self.repeat:
+            parts.append(f"aa{self.repeat}")
         if self.forecast != "grant":
             parts.append(f"forecast-{self.forecast}")
         if self.response != "ideal":
@@ -1762,6 +1821,39 @@ def episode_arms(spec: ScenarioSpec, profile: Profile | None = None
         pp = [None]
     ab = spec.ab if (profile is None or profile.prefix_ab is None) else profile.prefix_ab
     return pp, (["on", "off"] if ab else [spec.prefix])
+
+
+def aa_repeat(cell: Cell, seed: int, profile: Profile | None) -> bool:
+    """Is (cell, seed) one of the profile's A/A pairs (`prefix_aa`, by family
+    or cell id, on `prefix_aa_seeds`)? Never without a prefix consumer."""
+    if profile is None or profile.prefix_consumer is None or not profile.prefix_aa:
+        return False
+    if not {cell.scenario_id, cell.episode_id} & set(profile.prefix_aa):
+        return False
+    return profile.prefix_aa_seeds is None or int(seed) in profile.prefix_aa_seeds
+
+
+def arm_episodes(cell: Cell, seed: int, profile: Profile | None = None, *,
+                 forecast: str = "grant", response: str = "ideal") -> list[Episode]:
+    """The episodes one (cell, seed) is flown in on one forecast and vehicle:
+    one per prefix arm and paraphrase arm (episode_arms, prefix arms outer),
+    then, for an A/A pair of a prefix-consumer profile (aa_repeat), the
+    prefix-on arm once more (`repeat` 1). expand() and the gRPC harness
+    (guardrail/harness_service.py) both build a cell's arms here."""
+    pp_arms, prefixes = episode_arms(cell.spec, profile)
+    consumer = profile.prefix_consumer if profile is not None else None
+    ab = len(prefixes) > 1
+    out = [Episode(cell=cell, seed=seed, paraphrase_arm=pa, prefix=pfx, ab=ab,
+                   prefix_consumer=consumer, forecast=forecast, response=response)
+           for pfx in prefixes for pa in pp_arms]
+    if aa_repeat(cell, seed, profile):
+        if "on" not in prefixes:
+            raise ValueError(f"profile {profile.profile}: prefix_aa names "
+                             f"{cell.episode_id}, which flies no prefix-on arm to repeat")
+        out += [Episode(cell=cell, seed=seed, paraphrase_arm=pa, prefix="on", ab=ab,
+                        prefix_consumer=consumer, repeat=1, forecast=forecast,
+                        response=response) for pa in pp_arms]
+    return out
 
 
 def flown_by(spec: ScenarioSpec, profile: Profile | None) -> bool:
@@ -1842,6 +1934,10 @@ def expand(lib: Library, profile: Profile | None = None, seed: int | None = None
                              f"not in the run: {sorted(unknown)}")
     only_set = set(only or [])
     matched: set[str] = set()
+    # The profile's A/A names, matched against every cell of the run before
+    # `only` narrows it (a name no cell answers to is refused below).
+    aa_names = set(profile.prefix_aa) if profile is not None else set()
+    aa_matched: set[str] = set()
 
     episodes: list[Episode] = []
     all_cells: list[Cell] = []
@@ -1852,6 +1948,8 @@ def expand(lib: Library, profile: Profile | None = None, seed: int | None = None
         overrides = profile.sweep_overrides.get(fam.scenario_id) if profile else None
         samples = profile.samples_per_family if profile else 1
         cells = fam.cells(overrides, samples)
+        for c in cells:
+            aa_matched |= {fam.scenario_id, c.episode_id} & aa_names
         if only_set:
             keep = []
             for c in cells:
@@ -1872,19 +1970,17 @@ def expand(lib: Library, profile: Profile | None = None, seed: int | None = None
                 seeds = list(profile.seeds)
             else:
                 seeds = c.spec.declared_seeds or [0]
-            pp_arms, prefixes = episode_arms(c.spec, profile)
             for s in seeds:
                 n_seed_slots += 1
                 for fc in arms_fc:
                     # One of arms_fc / arms_rsp is a single arm
                     # (check_comparison_arms), so this is never a product.
                     for rsp in arms_rsp:
-                        for pfx in prefixes:
-                            for pa in pp_arms:
-                                episodes.append(Episode(cell=c, seed=s,
-                                                        paraphrase_arm=pa, prefix=pfx,
-                                                        ab=len(prefixes) > 1,
-                                                        forecast=fc, response=rsp))
+                        episodes.extend(arm_episodes(c, s, profile, forecast=fc,
+                                                     response=rsp))
+    if aa_names - aa_matched:
+        raise ValueError(f"profile {profile.profile}: prefix_aa names no cell of the "
+                         f"run: {sorted(aa_names - aa_matched)}")
 
     # The headline episodes: the grant forecast on the ideal vehicle. Until
     # 2026-10-19 this counted `forecast == "grant"`, which is the same set
@@ -1916,6 +2012,12 @@ def expand(lib: Library, profile: Profile | None = None, seed: int | None = None
                             "only_unmatched": sorted(only_set - matched),
                             "duplicate_cells": [list(p) for p in
                                                 duplicate_cells(all_cells, lib.defaults)]}
+    if profile is not None and profile.prefix_consumer is not None:
+        # A prefix-consumer run only, so every other run's record is the one
+        # it always was: the adapter, and how many episodes are A/A repeats.
+        info["arms"].update(prefix_consumer=profile.prefix_consumer,
+                            prefix_aa_episodes=sum(1 for e in episodes if e.repeat
+                                                   and not e.comparison))
     if profile is not None:
         lo, hi = profile.expected_cells
         info.update({"profile": profile.profile, "grant_scope": profile.grant_scope,
