@@ -44,11 +44,27 @@ needs none (constant). The entrypoint's mission role hands this node every
 argument it hands the Shield node, so both read one --start, --target and
 --speed; each ignores the other's flags (parse_known_args).
 
+THE PREFIX ARM (2026-11-16, audit card WP4-15). `--prefix on|off` flies the
+chosen law through guardrail.prefix_consumer.PrefixConsumer, the grant's
+default action-set adapter: `on` with the Prefix Compiler's CSP - compiled
+ONCE, before ROS starts, from this node's own policy (its bundle), for the
+mission its arguments name (--start, --target, --speed) at --clock-start,
+and refused unless its action sets hold for the whole flight (--max-s):
+static policies only - and `off` with none, the same pilot without its
+Prefix. Either way the node announces the consumer's own model id
+(guardrail.prefix_consumer.MODEL_ID) and, under `prefix` on /vla/identity,
+the arm, the law it wraps and the identity of the CSP it flies (its policy
+hash, its action sets' SHA-256, its content hash); the CSP is written to
+demo/out/<--tag>/vla_prefix/csp_g0.json. Without `--prefix` - every mission
+flown until this date - nothing here runs: the law is published as it
+always was and the identity record is the one it was, key for key.
+
 Run (after `source /opt/ros/jazzy/setup.bash`):
 
     ~/venv-ros/bin/python sitl/ros2_vla_stub_node.py [--bundle B | --policy P] [--yaw-rate 0.2]
     ~/venv-ros/bin/python sitl/ros2_vla_stub_node.py --pilot goto --start=-200,0,15 --target=-80,0,15 --speed 4
     ~/venv-ros/bin/python sitl/ros2_vla_stub_node.py --pilot constant --action=3,0,0,0 --no-target
+    ~/venv-ros/bin/python sitl/ros2_vla_stub_node.py --pilot goto --start=-20,15,15 --target=40,15,15 --speed 4 --prefix on --tag t1
 """
 from __future__ import annotations
 
@@ -56,6 +72,7 @@ import argparse
 import json
 import math
 import sys
+from datetime import datetime
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -64,6 +81,7 @@ for _p in (ROOT, ROOT / "sitl"):
         sys.path.insert(0, str(_p))
 
 from guardrail import Action4D, State                          # noqa: E402
+from guardrail import prefix_consumer as PC                    # noqa: E402
 from guardrail.bundle import load_for_flight                   # noqa: E402
 from guardrail.compiler import ConstraintCompiler              # noqa: E402
 from guardrail.frames import to_body                           # noqa: E402
@@ -160,6 +178,65 @@ def pilot_from_args(args, mission, target) -> tuple[object, dict]:
     return pilot, dict(rec, action=pilot.action, frame="world, turned to body")
 
 
+def clock_start_from(text: str | None) -> datetime | None:
+    """--clock-start (the Shield node's scripted rule clock) as the instant
+    the prefix arm's CSP is compiled at, read by the Shield node's own parser
+    (guardrail.replay.parse_clock_start), so both nodes read one instant;
+    None for none (no clock: every rule is read as in force). Raises
+    ValueError for text that is not a time."""
+    if text is None or text == "":
+        return None
+    from guardrail.replay import parse_clock_start
+    return parse_clock_start(text)
+
+
+def flight_length_from(text) -> float | None:
+    """--max-s (the Shield node's flight length, seconds) as the time the
+    prefix arm's CSP must hold over; None for none. Raises ValueError for
+    anything but a positive finite number."""
+    if text is None or text == "":
+        return None
+    try:
+        s = float(text)
+    except (TypeError, ValueError):
+        raise ValueError(f"--max-s must be a positive number, got {text!r}") from None
+    if not (math.isfinite(s) and s > 0):
+        raise ValueError(f"--max-s must be a positive number, got {text!r}")
+    return s
+
+
+def prefix_pilot(args, policy, mission, pilot, pilot_rec: dict, start=None
+                 ) -> tuple[object, dict, dict | None, object]:
+    """(pilot, its record, the /vla/identity `prefix` record, the CSP) for
+    --prefix. None: the pilot and its record as they are, no prefix record,
+    no CSP - the node as it always flew. `on`: the pilot inside
+    guardrail.prefix_consumer.PrefixConsumer with the CSP compiled here from
+    `policy` for the mission (the start, target, speed and cruise altitude
+    the arguments gave it; a pilot with --no-target has its start as its
+    target) at --clock-start, static over --max-s. `off`: the same consumer
+    with no CSP. The record names the consumer's model id and the law it
+    wraps. Raises ValueError (and the compiler's own refusals) when no such
+    CSP exists, before anything flies."""
+    arm = getattr(args, "prefix", None)
+    if arm is None:
+        return pilot, pilot_rec, None, None
+    wraps = pilot_rec["model_id"]
+    csp = None
+    if arm == "on":
+        s = ((mission.start_x, mission.start_y) if start is None
+             else (float(start[0]), float(start[1])))
+        target = (None if getattr(args, "no_target", False)
+                  else (mission.target_x, mission.target_y))
+        cm = PC.consumer_mission(s, target, mission.speed_pref_mps,
+                                 cruise_alt_m=mission.cruise_alt_m)
+        csp = PC.static_csp(policy, cm,
+                            now=clock_start_from(getattr(args, "clock_start", None)),
+                            duration_s=flight_length_from(getattr(args, "max_s", None)))
+    flown = PC.PrefixConsumer(pilot, csp, policy if csp is not None else None, wraps=wraps)
+    rec = dict(pilot_rec, model_id=PC.MODEL_ID, wraps=wraps, prefix=arm)
+    return flown, rec, flown.record(), csp
+
+
 def body_action(vla, state: State, yaw_rate: float | None) -> list[float]:
     """The pilot's world-frame plan as the grant's body-frame 4-vector, with
     `yaw_rate` (rad/s clockwise) - None keeps the pilot's own (the constant
@@ -172,7 +249,8 @@ def body_action(vla, state: State, yaw_rate: float | None) -> list[float]:
 
 def identity_record(policy, source: dict, mission, *, yaw_rate: float,
                     seed: int, host: dict | None = None, pilot: dict | None = None,
-                    start=None, has_target: bool = True) -> dict:
+                    start=None, has_target: bool = True,
+                    prefix: dict | None = None) -> dict:
     """What this node announces on /vla/identity.
 
     `host` is the machine the VLA runs on (guardrail.manifest.
@@ -180,7 +258,9 @@ def identity_record(policy, source: dict, mission, *, yaw_rate: float,
     the VLA on the Jetson Orin with the Shield, and only this node's own
     host can show it is. The Shield node copies it into hil_evidence.vla_host.
     `pilot` (pilot_from_args's record) names the law and its model id; the
-    stub's StubVLA when none is given, as before."""
+    stub's StubVLA when none is given, as before. `prefix` (prefix_pilot's
+    record, a --prefix mission only) is announced under its own key, with
+    the file the CSP was written to; without it the record has no such key."""
     pilot = pilot or {"type": "stub_vla", "model_id": MODEL_ID}
     rec = {"model_id": pilot.get("model_id", MODEL_ID), "kind": "stub", "frame": "body",
            "yaw_rate": float(yaw_rate), "seed": seed,
@@ -194,6 +274,8 @@ def identity_record(policy, source: dict, mission, *, yaw_rate: float,
         rec["pilot"] = pilot
     if start is not None:
         rec["start"] = [float(v) for v in start]
+    if prefix is not None:
+        rec["prefix"] = prefix
     return rec
 
 
@@ -227,6 +309,26 @@ def make_parser() -> argparse.ArgumentParser:
     ap.add_argument("--yaw-rate", type=float, default=0.0,
                     help="constant yaw rate, rad/s clockwise (0 = hold heading)")
     ap.add_argument("--seed", type=int, default=0)
+    # THE PREFIX ARM (module docstring). --clock-start, --max-s and --tag are
+    # the Shield node's flags too (both nodes get every argument); this node
+    # reads them only for a prefix arm: without --prefix their values are
+    # neither converted nor checked here, as when this parser did not know
+    # them.
+    ap.add_argument("--prefix", choices=("on", "off"), default=None,
+                    help="fly the law through the prefix consumer (guardrail."
+                         "prefix_consumer): on, with the Prefix Compiler's CSP for this "
+                         "mission, compiled once from this node's policy; off, without "
+                         "it. Default: no consumer, the law as it always flew")
+    ap.add_argument("--clock-start", default=None,
+                    help="--prefix on: the instant the CSP is compiled at (the Shield "
+                         "node's scripted rule clock, ISO local time); none: no clock, "
+                         "every rule in force")
+    ap.add_argument("--max-s", default=None,
+                    help="--prefix on: the flight length the CSP's action sets must "
+                         "hold over (refused otherwise: static policies only)")
+    ap.add_argument("--tag", default=None,
+                    help="--prefix on: the run directory demo/out/<tag>, where the CSP "
+                         "is written (vla_prefix/csp_g0.json)")
     return ap
 
 
@@ -253,6 +355,14 @@ if HAVE_ROS:
             mission = ConstraintCompiler(policy).parse_command(args.command)
             mission, target, start = mission_from_args(args, mission)
             self.vla, pilot = pilot_from_args(args, mission, target)
+            # THE PREFIX ARM (module docstring): nothing changes without
+            # --prefix. main() has compiled the same CSP once already
+            # (prefix_preflight), so a refusal never reaches this point.
+            self.vla, pilot, prefix, csp = prefix_pilot(args, policy, mission, self.vla,
+                                                        pilot, start)
+            if csp is not None:
+                prefix = dict(prefix, csp_file=write_prefix_csp(args, csp))
+            self._prefix = prefix
             self.start = start
             # The constant pilot flies its own yaw rate; the others --yaw-rate.
             self.yaw_rate = None if pilot["type"] == "constant" else float(args.yaw_rate)
@@ -268,9 +378,15 @@ if HAVE_ROS:
             ident = identity_record(policy, source, mission,
                                     yaw_rate=self.yaw_rate or 0.0, seed=args.seed,
                                     pilot=pilot, start=start,
-                                    has_target=not args.no_target)
+                                    has_target=not args.no_target, prefix=prefix)
             self.pub_id.publish(String(data=json.dumps(ident)))
             self.create_timer(0.1, self._tick)                 # 10 Hz - the contract
+            if prefix is not None:
+                self.create_timer(10.0, self._prefix_stats)
+                self.get_logger().info(
+                    f"prefix arm {prefix['arm']}: {prefix['id']} around {prefix['wraps']}, "
+                    f"CSP action sets {prefix['action_set_sha256']} "
+                    f"(file {prefix.get('csp_file')})")
             self.get_logger().info(
                 f"VLA stub up: pilot {pilot['type']} ({pilot['model_id']}), policy "
                 f"{policy.policy_id} {policy.policy_hash} "
@@ -292,24 +408,77 @@ if HAVE_ROS:
             self.pub.publish(Float32MultiArray(
                 data=body_action(self.vla, self.state, self.yaw_rate)))
 
+        def _prefix_stats(self) -> None:
+            # What the consumer did so far (its tick counts), for the console
+            # log of a prefix mission.
+            self.get_logger().info(f"prefix arm {self._prefix['arm']}: {self.vla.stats}")
+
 
 def check_args(args) -> None:
     """Raise ValueError, before ROS starts and before any policy is read, for
     arguments no law can fly: a --start / --target / --action that does not
-    parse, a law that lacks what it flies on (pilot_from_args)."""
+    parse, a law that lacks what it flies on (pilot_from_args) and, for a
+    prefix arm only, a --clock-start that is no time, a --max-s that is no
+    flight length, a --tag that is a path."""
     from guardrail.compiler import Mission
     probe = Mission(task_text="", target_x=0.0, target_y=0.0, cruise_alt_m=15.0,
                     speed_pref_mps=6.0)
     mission, target, _ = mission_from_args(args, probe)
     pilot_from_args(args, mission, target)
+    if getattr(args, "prefix", None) is None:
+        return
+    # A prefix arm only: the three flags it reads besides the mission's.
+    clock_start_from(getattr(args, "clock_start", None))
+    flight_length_from(getattr(args, "max_s", None))
+    tag = getattr(args, "tag", None)
+    if tag is not None and (not tag or "/" in tag or "\\" in tag or tag.startswith(".")):
+        raise ValueError(f"--tag {tag!r} must be a plain directory name")
+
+
+def write_prefix_csp(args, csp) -> str | None:
+    """The prefix-on arm's CSP written under the run directory the mission's
+    --tag names (demo/out/<tag>/vla_prefix/csp_g0.json), as a repo-relative
+    path; None without a --tag (nothing is written: the CSP is still
+    announced by its hashes)."""
+    tag = getattr(args, "tag", None)
+    if not tag:
+        return None
+    return PC.write_csp(ROOT / "demo" / "out" / tag, csp).relative_to(ROOT).as_posix()
+
+
+def prefix_preflight(args) -> dict | None:
+    """The --prefix arm's record, built once before ROS starts from the
+    policy and mission the node will build again (the same calls, in the
+    same order), so a CSP that cannot be compiled - a rule switching in
+    flight, the P0 rules over the token budget - refuses the mission here
+    instead of killing the node after launch. None without --prefix: no
+    policy is read."""
+    if getattr(args, "prefix", None) is None:
+        return None
+    policy, _ = load_for_flight(
+        args.bundle,
+        args.policy or (None if args.bundle else ROOT / "policies" / "sim_demo_policy.yaml"),
+        allow_unverified=args.allow_unverified_bundle)
+    mission = ConstraintCompiler(policy).parse_command(args.command)
+    mission, target, start = mission_from_args(args, mission)
+    pilot, rec = pilot_from_args(args, mission, target)
+    return prefix_pilot(args, policy, mission, pilot, rec, start)[2]
 
 
 def main(argv: list[str] | None = None) -> None:
     args, ros_args = make_parser().parse_known_args(argv)
     try:
         check_args(args)
+        prefix_preflight(args)
     except ValueError as exc:
         raise SystemExit(f"[vla_stub] REFUSED: {exc}")
+    except Exception as exc:                                     # noqa: BLE001
+        if getattr(args, "prefix", None) is None:
+            raise
+        # The compiler's own refusals of a prefix arm's CSP (CSPBudgetExceeded
+        # and CSPUnenforcedRules are deliberately not ValueErrors).
+        raise SystemExit(f"[vla_stub] REFUSED: --prefix {args.prefix}: "
+                         f"{type(exc).__name__}: {exc}")
     if not HAVE_ROS:
         raise SystemExit("ros2_vla_stub_node needs rclpy: source "
                          "/opt/ros/jazzy/setup.bash and use ~/venv-ros/bin/python")
