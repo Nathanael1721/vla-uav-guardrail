@@ -43,10 +43,22 @@
 # the prefix-on arm (experiments/sweep_scenarios.py scoring_spec); the gates,
 # the safety invariants, are.
 #
+# Not the grant's "always-on A/B during stress runs" either, and a report must
+# not call it that. The A/B is flown here, on demand, in its own campaign; the
+# nightly KPI campaign (ntFIN2) is unchanged, its pilots read nothing, and its
+# KPI report still prints the A/B as n/m - the two cannot share one report
+# (tools/kpi_report.py mixed_pilots_refusal: two pilots of one cell). And
+# `prefix_ab: true` below forces the A/B on all five cells, so a scenario's own
+# `ab: true` flag ("a scenario can be flagged for A/B") plays no part in which
+# cells are flown. What it shows is that the delta is measurable through the
+# harness with a pilot that consumes the CSP, not that every stress run
+# carries it.
+#
 # Headless, the cells are deterministic: the three seeds of a cell are three
-# copies of one flight and every A/A pair is identical (the sweep checks it).
-# The seeds and the A/A pairs are for the rails, where a same-seed pair is two
-# real-time flights.
+# copies of one flight and every A/A pair is identical (the sweep checks it),
+# so the 15 headless pairs are 5 distinct flight pairs (the summary and the
+# report print both counts). The seeds and the A/A pairs are for the rails,
+# where a same-seed pair is two real-time flights.
 #
 #   python experiments/sweep_scenarios.py --profile prefix_ab --keep-logs
 #   python experiments/sweep_scenarios.py --profile prefix_ab --backend hil --hil-dry-run

@@ -14,7 +14,10 @@ WHAT IT IS, AND WHAT IT IS NOT
 
 `PrefixConsumer` wraps a pilot law (anything with `act(state) -> Action4D`,
 or a callable) and a CSP. With a CSP it changes the law's candidate in two
-steps, both read from the CSP's action sets and nothing else:
+steps. The ranges and the band come from the CSP's action sets; the polygon
+and corridor test resolves the CSP's rule ids to the POLICY's compiled
+geometry, the Shield's own margin rings included - the CSP carries the ids,
+not the shapes:
 
   1. CLAMP to `allowed_action_set`: the horizontal speed cap (and the vx / vy
      box), the climb range, the yaw-rate cap (the CSP states deg/s, Action4D
@@ -32,9 +35,13 @@ steps, both read from the CSP's action sets and nothing else:
      recover, not this adapter's.
 
 The admissibility test is `guardrail.compiler.action_violations` - the
-Shield's own point verdicts over the CSP's rule ids - at the lookahead and at
-every HORIZON_STEP_S before it (an end-point test alone steps over a zone
-narrower than speed x lookahead). No geometry is written here.
+Shield's own point verdicts over the CSP's rule ids, against
+compiled_ir(policy): the zones and corridors with the Shield's buffered
+margins - at the lookahead and at every HORIZON_STEP_S before it (an
+end-point test alone steps over a zone narrower than speed x lookahead). No
+geometry is written here, but the turn reads the Shield's geometry, so the
+action-set adapter's ids and ranges alone would not steer this pilot: that
+is part of why its on / off delta holds by construction.
 
 Without a CSP (`csp=None`, the A/B's prefix-off arm) the law's action is
 returned untouched: the two arms are the same pilot, with and without its

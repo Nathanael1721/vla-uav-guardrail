@@ -14,8 +14,9 @@ MAVROS or the Orin.
 
 What these guard:
 
-  * the adapter reads the CSP's action sets and nothing else: it clamps to
-    the ranges and the band (the yaw cap in deg/s against rad/s), turns to
+  * the adapter clamps to the CSP's ranges and band (the yaw cap in deg/s
+    against rad/s), and, with the CSP's rule ids resolved to the policy's
+    compiled geometry (the Shield's margin rings included), turns to
     the nearest admissible heading of a fixed fan, stops when no heading is
     admissible, hands on what it cannot repair, and without a CSP returns
     the law's action untouched;
@@ -312,6 +313,10 @@ def test_the_consumer_is_its_own_model_and_the_stubs_keep_theirs():
     assert PC.PrefixConsumer(_Law(Action4D()), wraps=VS.MODEL_IDS["goto"]).record()[
         "wraps_model_hash"] == pins["goto"]
     assert PC.consumer_record("off", None)["wraps_model_hash"] is None
+    # It is not a CSP-only consumer, and its docstring does not say it is:
+    # the turn reads the policy's geometry with the Shield's margins.
+    assert "nothing else" not in PC.__doc__ and "margin" in PC.__doc__
+    assert "compiled_ir(policy)" in PC.__doc__
 
 
 def test_the_csp_file_is_the_csp_that_is_consumed():
