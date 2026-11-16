@@ -189,6 +189,14 @@ C2_NODE_ARGS = ("--identity", "--negative-query", "a traffic light", "--target-e
 C2_FEED = {"aiotvla": "stream", "aerialvla": "tick", "dronecats": "tick", "racevla": "tick"}
 C2_FLIGHTS_PER_BACKEND = 3
 C2_RANGE_M = 30.0
+# C2's mission limit (the launch script's default). The node does not write
+# the limit it was given, so a shorter one shows only in a flight that ran to
+# it: "max_s reached" with a mission shorter than this by more than the slack.
+# A shakedown that ended sooner for another reason cannot be told from its
+# folder; it is told by its tag, which the operator gives it (the mark below).
+C2_MAX_S = 420
+C2_MAX_S_SLACK_S = 5.0
+C2_SHAKEDOWN_MARK = "_shake"
 # Flights known NOT to have flown alone: something else of the lab's ran on the
 # rig beside them. No run folder records that, so it is kept here, by hand,
 # with the committed note that says so (tests/test_vla_backend_table.py checks
@@ -260,7 +268,7 @@ PROTOCOL = {
                 "follow), the Shield and the VLA server on the Jetson Orin",
         "launch": {"script": f"{PAS_LAUNCHER} FAMILY=<family>",
                    "node_args": list(C2_NODE_ARGS), "feed": dict(C2_FEED),
-                   "max_s": 420},
+                   "max_s": C2_MAX_S},
         "counts_as_c2": [
             "KPI-grade by the run's own kpi.json (hil, sim_speedup 1, signed bundle, clean "
             "commit)",
@@ -270,7 +278,10 @@ PROTOCOL = {
             "flown alone: nothing else of the lab's running on the desktop or the Orin "
             "(no run folder records this; the flights known not to be are listed by hand "
             "in tools/vla_backend_table.py C2_NOT_ALONE)",
-            "the start gate passed (a flight that never started has no mission to score)"],
+            "the start gate passed (a flight that never started has no mission to score)",
+            f"the {C2_MAX_S} s limit: a flight that ran to a shorter limit is not C2, and a "
+            f"shakedown is not C2 (the operator marks it '{C2_SHAKEDOWN_MARK}' in its tag: "
+            f"the run folder does not record the limit it was given)"],
         "flights_per_backend": C2_FLIGHTS_PER_BACKEND,
         "outputs": [
             f"frac_within_30m: share of the mission's ticks with the aircraft within "
@@ -1037,8 +1048,10 @@ def _foreign_bench_record(p: Path, d: dict) -> dict:
     if own:
         why.append(f"own inputs: {d.get('n')} frames of '{frames}' sent as the model's front "
                    f"camera, object '{d.get('object')}' (not the R1 frames)")
-    why += [f"{d.get('warmup')} warm-up + {d.get('n')} timed, not R1's 5 + 50",
-            "a round trip over TCP on 127.0.0.1 through demo/vla_server_foreign.py "
+    if (d.get("warmup"), d.get("n")) != (PROTOCOL["R1_rate"]["warmup"],
+                                         PROTOCOL["R1_rate"]["timed"]):
+        why.append(f"{d.get('warmup')} warm-up + {d.get('n')} timed, not R1's 5 + 50")
+    why += ["a round trip over TCP on 127.0.0.1 through demo/vla_server_foreign.py "
             "(tools/bench_foreign_vla.py), not `measure`", _POWER_MODE_UNKNOWN]
     return {
         "backend": backend, "metric": "bench", "protocol": "not R1",
@@ -1186,6 +1199,12 @@ def c2_exclusions(f: dict, paraphrases: dict[str, str] | None = None) -> list[st
         why.append(f"not flown alone: {C2_NOT_ALONE[f['tag']]}")
     if not f.get("start_gate_reached") or not f.get("ticks"):
         why.append("the start gate never passed: no mission")
+    if C2_SHAKEDOWN_MARK in str(f.get("tag") or ""):
+        why.append(f"a shakedown by its tag ('{C2_SHAKEDOWN_MARK}')")
+    ran = f.get("mission_s")
+    if f.get("end_reason") == "max_s reached" and ran is not None \
+            and ran < C2_MAX_S - C2_MAX_S_SLACK_S:
+        why.append(f"ran to a time limit of about {ran:.0f} s, under C2's {C2_MAX_S} s")
     if f.get("backend") != HAND_WRITTEN:
         if not (f.get("identity") and f.get("target_estimator")):
             why.append("flown without --identity and --target-estimator")
@@ -1232,6 +1251,7 @@ def hil_follow_flight(run_dir: Path, paraphrases: dict[str, str] | None = None) 
         "date": (datetime.fromtimestamp(t0, timezone.utc).strftime("%Y-%m-%d")
                  if t0 else None),
         "ticks": ticks, "end_reason": m.get("end_reason"),
+        "mission_s": _num(m.get("mission_s")),
         "frac_within_30m": _num(m.get("frac_within_30m")),
         "decision_hz_mission": _num(summary.get("decision_hz")),
         "decision_hz_asked": (parsed / asking_s if parsed is not None and asking_s else None),
@@ -1299,7 +1319,7 @@ def extract_hil_follow_summaries(docs_data: Path, have: set[str]) -> list[dict]:
                               else str(grade).lower() == "yes" if grade is not None else None),
                 "code_revision": r.get("code_revision"), "date": None,
                 "ticks": ticks, "end_reason": r.get("end_reason", r.get("ended")),
-                "frac_within_30m": None,
+                "mission_s": None, "frac_within_30m": None,
                 "decision_hz_mission": _num(r.get("decision_hz_mission", r.get("vla_hz"))),
                 "decision_hz_asked": _num(r.get("decision_hz_while_asking")),
                 "asking_s": _num(r.get("asking_s")),

@@ -69,7 +69,9 @@
 #   racevla    has never been driven through this node either. Its forward
 #              commands stayed under 0.3 m/s on simple_flight (CHANGELOG
 #              2026-10-27), so a car at 4.5 m/s is expected to pull away.
-# A first flight of each needs a shakedown (SECONDS_=60) before a 420 s one.
+# A first flight of each needs a shakedown (SECONDS_=60) before a 420 s one,
+# with _shake in its TAG (TAG=pas_hil_<family>_shake_01): the backend table
+# (tools/vla_backend_table.py, C2) does not count a flight so marked.
 #
 # The ROS 2 graph is hil.env's, read from it here and never copied: the domain,
 # the RMW, the Cyclone DDS peers (deploy/dds/cyclonedds.xml expands them), and

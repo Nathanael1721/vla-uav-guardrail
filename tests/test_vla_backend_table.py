@@ -758,14 +758,15 @@ def _pas_run(root: Path, tag: str, *, model="aiotvla/v10b@35259bd1", feed="strea
              kpi_grade=True, topology="hil", stress=None, hot=False, identity=True,
              estimator=True, reached=True, ticks=4198, end="max_s reached", w30=0.3523,
              dec_hz=10.93, interventions=284, p0=0, pilot_kind="vla",
-             rail="projectairsim-ardupilot") -> Path:
+             rail="projectairsim-ardupilot", mission_s=420.17) -> Path:
     """A perception-rail follow's run folder with the fields the C2 reader
     reads, shaped as the node writes them (metrics.json, kpi.json)."""
     d = root / tag
     d.mkdir(parents=True)
     feed_params = {} if feed is None else {"vla_feed": feed, "vla_feed_max_hz": cap}
     m = {"tag": tag, "rail": rail, "topology": topology, "grant_topology": "hil",
-         "ticks": ticks, "end_reason": end, "frac_within_30m": w30 if ticks else None,
+         "ticks": ticks, "end_reason": end, "mission_s": mission_s if ticks else 0.0,
+         "frac_within_30m": w30 if ticks else None,
          "interventions": interventions if ticks else None, "det_hz": 2.49,
          "perception_stress": {"name": stress} if stress else None,
          "hot_apply": {"n_applied": 2} if hot else None,
@@ -920,6 +921,14 @@ def test_a_bench_from_another_host_or_on_the_r1_frames_is_labelled_as_what_it_is
     rec = V.extract_orin_benches(ev)[0]
     assert rec["own_inputs"] is False and rec["protocol"] == "not R1"
     assert "own inputs" not in V.bench_cell(rec) and V.bench_cell(rec).startswith("not R1 - ")
+    assert any("3 warm-up + 300 timed, not R1's 5 + 50" in w for w in rec["why_not_r1"])
+    # ... and at R1's own counts it is still not R1 (the server is in the path),
+    # but it is no longer said to differ in its counts
+    r1f["warmup"], r1f["n"] = 5, 50
+    (ev / "hil" / "desk.json").write_text(json.dumps(r1f), encoding="utf-8")
+    rec = V.extract_orin_benches(ev)[0]
+    assert rec["protocol"] == "not R1" and not any("5 + 50" in w for w in rec["why_not_r1"])
+    assert any("round trip over TCP" in w for w in rec["why_not_r1"]), rec["why_not_r1"]
     # an R1 result from an Orin takes the cell; the bench stays in the records
     (ev / "hil" / "vla_rate_aiotvla_v10b.json").write_text(
         json.dumps(_rate(True, "aiotvla_v10b")), encoding="utf-8")
@@ -934,7 +943,10 @@ def test_c2_scores_only_the_flights_that_meet_it_and_lists_the_rest_with_the_rea
     _pas_run(out, "pas_hil_c2_01")
     _pas_run(out, "pas_hil_c2_02", w30=0.2694, dec_hz=10.62, interventions=332)
     _pas_run(out, "pas_hil_lost_01", ticks=980, end="target_lost", w30=0.1378, dec_hz=3.45,
-             interventions=39)                                  # lost the car: still C2
+             interventions=39, mission_s=98.1)                  # lost the car: still C2
+    # a shakedown: one that ran to its 60 s limit, one that the tag marks
+    _pas_run(out, "pas_hil_short_01", ticks=600, mission_s=60.1, w30=0.9)
+    _pas_run(out, "pas_hil_shake_01", ticks=300, end="target_lost", mission_s=30.2, w30=0.9)
     _pas_run(out, "pas_hil_rain_01", stress="rain", kpi_grade=False)
     _pas_run(out, "pas_hil_hot_01", hot=True)
     _pas_run(out, "pas_hil_tick_01", feed="tick")
@@ -988,6 +1000,8 @@ def test_c2_scores_only_the_flights_that_meet_it_and_lists_the_rest_with_the_rea
                       ("pas_hil_para_01", "paraphrased instruction ('track a red car')"),
                       ("pas_hil_feed_05", "not flown alone"),
                       ("pas_hil_dirty_01", "not KPI-grade"),
+                      ("pas_hil_short_01", "ran to a time limit of about 60 s, under C2's 420 s"),
+                      ("pas_hil_shake_01", "a shakedown by its tag ('_shake')"),
                       ("pas_hil_summary_01", "only its committed summary")):
         assert said in why[tag], (tag, why[tag])
     assert "not KPI-grade" in why["pas_hil_rain_01"] and "not hil" in why["pas_hil_gate_01"]
