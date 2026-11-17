@@ -150,7 +150,9 @@ def test_git_describe_names_a_repository_that_holds_the_shield():
 
 # ------------------------------------------------------- the record on disk
 
-def test_the_node_writes_the_record_beside_an_unchanged_manifest():
+def test_write_stack_revisions_puts_the_record_beside_an_unchanged_manifest():
+    """The library call every wired rail makes (the Shield node's own call
+    site is pinned by test_the_shield_node_writes_the_record_right_after_its_manifest)."""
     man = _manifest()
     d = _run(man)
     try:
@@ -158,15 +160,115 @@ def test_the_node_writes_the_record_beside_an_unchanged_manifest():
         on_disk = json.loads((d / M.STACK_FILE).read_text(encoding="utf-8"))
         assert on_disk == doc and doc["schema"] == M.STACK_SCHEMA
         assert doc["run_manifest_schema"] == 2 and doc["code_revision"] == REV
+        assert doc["topology"] == "hil" and doc["required_hosts"] == ["companion", "desktop"]
         assert list(doc["hosts"]) == ["companion"], doc["hosts"]
         comp = doc["hosts"]["companion"]
         assert comp["code_revision"] == REV and comp["hostname"] == "agx"
         assert comp["device_model"].startswith("NVIDIA Jetson")
+        assert comp["role"] == "companion" and "device tree model" in comp["role_basis"]
         assert doc["autopilot"]["git_hash"] == "2a3dc4b7"
         assert doc["simulator"]["name"] == "ArduPilot SITL"
-        assert doc["single_sha"] is True and doc["problems"] == [], doc["problems"]
         man_disk = json.loads((d / "manifest.json").read_text(encoding="utf-8"))
         assert list(man_disk) == GRANT_FIELDS and man_disk == man
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+
+def test_a_companion_only_record_never_claims_one_sha_across_the_stack():
+    """The Orin's own write on hil (and the copy its signed replay bundle
+    carries, or the one left behind when the desktop's add fails or the run
+    was launched outside run_hil) saw one host of two: single_sha stays None
+    (pending), and problems say the desktop has not reported."""
+    for topo in ("hil", "flight"):
+        man = {**_manifest(), "topology": topo}
+        d = _run(man)
+        try:
+            doc = M.write_stack_revisions(d, man, MAVROS_EV, describe=_no_describe)
+            assert doc["single_sha"] is None, (topo, doc)
+            assert doc["single_sha"] is not True and doc["problems"] != []
+            assert any(p.startswith("desktop has not reported its revision")
+                       for p in doc["problems"]), doc["problems"]
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+    # What one host CAN rule out it still does: a dirty companion is False.
+    man = _manifest(REV + "-dirty")
+    d = _run(man)
+    try:
+        doc = M.write_stack_revisions(d, man, MAVROS_EV, describe=_no_describe)
+        assert doc["single_sha"] is False, doc
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+
+def test_the_real_hil_smoke_run_replayed_reads_pending_not_true():
+    """The reviewer's replay, kept: the Orin-side write on the real
+    ntFIN2_001 hil_evidence and manifest (lab checkout, read only)."""
+    src = ROOT.parents[2] / "demo" / "out" / "hil_smoke" / "ntFIN2_001_nfz-head-on"
+    if not (src / "manifest.json").is_file():
+        src = ROOT / "demo" / "out" / "hil_smoke" / "ntFIN2_001_nfz-head-on"
+    if not (src / "manifest.json").is_file() or not (src / "metrics.json").is_file():
+        print("      SKIP: the ntFIN2_001 hil run is not in this checkout")
+        return SKIP
+    man = json.loads((src / "manifest.json").read_text(encoding="utf-8"))
+    ev = json.loads((src / "metrics.json").read_text(encoding="utf-8")).get("hil_evidence")
+    d = _run(man)
+    try:
+        doc = M.write_stack_revisions(d, man, ev, describe=_no_describe)
+        assert man["topology"] == "hil" and list(doc["hosts"]) == ["companion"], doc["hosts"]
+        assert doc["single_sha"] is not True and doc["problems"] != [], doc
+        assert any("desktop has not reported" in p for p in doc["problems"]), doc["problems"]
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+
+def test_dev_needs_only_the_desktop_and_an_unknown_topology_stays_pending():
+    man = {**_manifest(), "topology": "dev"}
+    d = _run(man)
+    try:
+        doc = M.write_stack_revisions(d, man, {**DESKTOP, "ardupilot_version":
+                                               MAVROS_EV["ardupilot_version"],
+                                               "autopilot_kind": "sitl"},
+                                      describe=_no_describe)
+        assert doc["required_hosts"] == ["desktop"] and list(doc["hosts"]) == ["desktop"]
+        assert doc["single_sha"] is True and doc["problems"] == [], doc["problems"]
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+    # The legacy label reads as dev.
+    assert M.stack_required_roles("canonical-hil") == ("desktop",)
+    for topo in ("some-new-rail", None):
+        doc = M.stack_document(code_revision=REV, hosts={"desktop": M.host_revision(
+            host=DESKTOP, revision=REV, describe=_no_describe)},
+            autopilot=M.autopilot_revision(MAVROS_EV), simulator=None, topology=topo)
+        assert doc["single_sha"] is None and doc["required_hosts"] is None, doc
+        assert any("are not known" in p for p in doc["problems"]), doc["problems"]
+
+
+def test_a_companion_that_misread_its_role_is_not_overwritten_by_the_desktop():
+    """An Orin container without the device-tree mount reads as desktop; the
+    harness's own desktop entry goes beside it, never over it, and the
+    record stays pending with the clash named."""
+    blind_orin = {**ORIN, "device_model": None, "l4t_release": None}
+    role, why = M.host_role_basis(blind_orin)
+    assert role == "desktop" and "aarch64" in why and "device-tree mount" in why
+    man = _manifest()
+    d = _run(man)
+    try:
+        first = M.write_stack_revisions(d, man, {**MAVROS_EV, **blind_orin},
+                                        describe=_no_describe)
+        assert list(first["hosts"]) == ["desktop"] and first["single_sha"] is None
+        desk = M.host_revision(host=DESKTOP, revision=REV, describe=_no_describe)
+        doc = M.add_host_revision(d, M.ROLE_DESKTOP, desk)
+        assert set(doc["hosts"]) == {"desktop", "desktop#2"}, doc["hosts"]
+        assert doc["hosts"]["desktop"]["hostname"] == "agx"
+        assert doc["hosts"]["desktop#2"]["hostname"] == "desktop"
+        assert doc["single_sha"] is None, doc
+        assert any("desktop#2: a second host reported as desktop" in p
+                   for p in doc["problems"]), doc["problems"]
+        assert any(p.startswith("companion has not reported") for p in doc["problems"])
+        # The same machine adding itself again replaces its own entry.
+        again = M.add_host_revision(d, M.ROLE_DESKTOP, {**desk, "git_describe": "again"})
+        assert set(again["hosts"]) == {"desktop", "desktop#2"}
+        assert again["hosts"]["desktop#2"]["git_describe"] == "again"
     finally:
         shutil.rmtree(d, ignore_errors=True)
 
@@ -208,6 +310,9 @@ def test_a_run_written_before_the_record_loads_as_schema_1():
             host=DESKTOP, revision="116214f3e6ee", describe=_no_describe))
         assert list(doc["hosts"]) == ["desktop"] and doc["code_revision"] == "116214f3e6ee"
         assert doc["autopilot"]["firmware"] == "ArduCopter V4.5.7 (2a3dc4b7)"
+        # hil needs the companion too, and it never reported: pending.
+        assert doc["single_sha"] is None and doc["topology"] == "hil"
+        assert any(p.startswith("companion has not reported") for p in doc["problems"])
         assert M.load_run_manifest(d)["run_manifest_schema"] == 2
     finally:
         shutil.rmtree(d, ignore_errors=True)
@@ -269,6 +374,92 @@ def test_the_grade_does_not_read_the_record():
 
 
 # ------------------------------------------------------------ the rails
+
+def test_the_shield_node_writes_the_record_right_after_its_manifest():
+    """The KPI rail's call site sits inside `if HAVE_ROS` and no desktop test
+    runs it, so its shape is pinned from the source: in the method that
+    writes manifest.json, the statement right after that write is
+    write_stack_revisions(self.out, manifest, self.hil_evidence, warn=...),
+    and it comes before kpi.json is computed."""
+    import ast
+    src = (ROOT / "sitl" / "ros2_shield_node.py").read_text(encoding="utf-8")
+    tree = ast.parse(src)
+
+    def writes_manifest(stmt) -> bool:
+        return any(isinstance(n, ast.Constant) and n.value == "manifest.json"
+                   for n in ast.walk(stmt)) and "write_text" in ast.unparse(stmt)
+    found = []
+    for fn in ast.walk(tree):
+        if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        for body in [n.body for n in ast.walk(fn) if hasattr(n, "body")
+                     and isinstance(n.body, list)]:
+            for i, stmt in enumerate(body):
+                if not writes_manifest(stmt):
+                    continue
+                nxt = body[i + 1] if i + 1 < len(body) else None
+                found.append((fn.name, nxt, body[i + 2:]))
+    assert found, "no manifest.json write found in the Shield node"
+    for name, nxt, rest in found:
+        assert isinstance(nxt, ast.Expr) and isinstance(nxt.value, ast.Call), (
+            name, ast.unparse(nxt) if nxt else None)
+        call = nxt.value
+        assert ast.unparse(call.func) == "write_stack_revisions", ast.unparse(call)
+        assert [ast.unparse(a) for a in call.args] == ["self.out", "manifest",
+                                                       "self.hil_evidence"], ast.unparse(call)
+        assert [k.arg for k in call.keywords] == ["warn"], ast.unparse(call)
+        later = "\n".join(ast.unparse(s) for s in rest)
+        assert "compute_from_dir" in later, name
+    # And the name it calls is the library's, through mavros_evidence.
+    sys.path.insert(0, str(ROOT / "sitl"))
+    import mavros_evidence as E
+    assert E.write_stack_revisions is M.write_stack_revisions
+
+
+def test_the_wsl_helper_checkout_is_recorded_when_it_is_another_one():
+    sys.path.insert(0, str(ROOT / "experiments"))
+    import sweep_scenarios as S
+
+    class _Done:
+        def __init__(self, rc, out):
+            self.returncode, self.stdout = rc, out
+    calls = []
+
+    def run_as(head, status):
+        def run(cmd, **kw):
+            calls.append(cmd)
+            return _Done(0, head + "\n") if "rev-parse" in cmd else _Done(0, status)
+        return run
+    # This checkout as WSL sees it: nothing more to read, no wsl.exe call.
+    same = S.HilConfig(wsl_repo=S._wsl_path(S.ROOT))
+    assert S.wsl_helper_revision(same, run=run_as(REV, "")) is None and not calls
+    assert S.wsl_helper_revision(S.HilConfig(), run=run_as(REV, "")) is None and not calls
+    saved = (dict(S._WSL_HELPER_REVISIONS), S._DESKTOP_REVISION)
+    S._DESKTOP_REVISION = M.host_revision(host=DESKTOP, revision=REV, describe=_no_describe)
+    try:
+        for repo, head, status, single in (("/home/u/other", REV + "0000", "", True),
+                                           ("/home/u/stale", "0123456789ab0000", "", False),
+                                           ("/home/u/dirty", REV + "0000", " M x.py\n", False)):
+            S._WSL_HELPER_REVISIONS.clear()
+            cfg = S.HilConfig(wsl_repo=repo)
+            man = _manifest()
+            d = _run(man)
+            try:
+                M.write_stack_revisions(d, man, MAVROS_EV, describe=_no_describe)
+                doc = S.record_desktop_revision(d, cfg, run=run_as(head, status))
+                helper = doc["hosts"]["desktop"]["components"]["wsl_helper"]
+                assert helper["repo"] == repo and helper["wsl_distro"] == "Ubuntu"
+                assert calls[-1][:6] == ["wsl.exe", "-d", "Ubuntu", "--", "git", "-C"]
+                assert doc["single_sha"] is single, (repo, doc)
+                if not single:
+                    assert any(p.startswith("desktop/wsl_helper") for p in doc["problems"])
+            finally:
+                shutil.rmtree(d, ignore_errors=True)
+    finally:
+        S._WSL_HELPER_REVISIONS.clear()
+        S._WSL_HELPER_REVISIONS.update(saved[0])
+        S._DESKTOP_REVISION = saved[1]
+
 
 def test_the_mission_node_writes_the_record_with_its_manifest():
     sys.path.insert(0, str(ROOT / "sitl"))

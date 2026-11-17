@@ -3100,6 +3100,12 @@ def test_the_hil_backend_flies_each_scenario_through_its_rig_and_scores_it():
         stack = json.loads((run_dir / "stack_revisions.json").read_text(encoding="utf-8"))
         assert list(stack["hosts"]) == ["desktop"], stack
         assert stack["hosts"]["desktop"]["code_revision"] == S.desktop_revision()["code_revision"]
+        # A run the harness rejected (the gps-dropout missions: stress not
+        # realised) is never joined to this launch's desktop.
+        rejected = [d for d in (td / "store").iterdir()
+                    if d.is_dir() and "gps-dropout" in d.name]
+        assert rejected and not any((d / "stack_revisions.json").exists() for d in rejected), (
+            [d.name for d in rejected])
         assert res["speed-cap"]["mission_tag"] == "tst1_002_speed-cap"
         assert doc["_backend"] == "hil" and doc["_scope"]["hil"]["campaign"] == "tst1"
         assert rc in (0, 1), rc

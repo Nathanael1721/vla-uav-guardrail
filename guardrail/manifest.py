@@ -1493,10 +1493,19 @@ def is_kpi_grade(manifest: dict, metrics: dict,
 #
 #   stack_revisions.json   schema "vlaguard-stack-revisions/1"
 #     code_revision    manifest.json's own field, repeated for the reader
+#     topology         manifest.json's topology, which decides the hosts the
+#                      stack needs (required_hosts: hil and flight need the
+#                      companion AND the desktop, dev and the single-host
+#                      rails the desktop)
 #     hosts            {role: host_revision()}: "companion" (a Jetson, by its
 #                      device tree) or "desktop", each with its code_revision
 #                      (git rev-parse + the porcelain dirty flag, the rule
-#                      code_revision() applies), `git describe`, hostname
+#                      code_revision() applies), `git describe`, hostname,
+#                      the role the writer read and why (role_basis), and
+#                      optional `components` (another checkout on that host,
+#                      e.g. the WSL helper's) checked like hosts. A second
+#                      host claiming a role already held is kept beside it
+#                      ("desktop#2"), never written over it
 #     autopilot        the firmware as the autopilot names itself
 #                      (AUTOPILOT_VERSION: "ArduCopter V4.5.7 (2a3dc4b7)" on
 #                      the pinned SITL), its version and 8-hex git hash, or
@@ -1504,9 +1513,15 @@ def is_kpi_grade(manifest: dict, metrics: dict,
 #     simulator        what is known of the simulator build (ArduPilot SITL:
 #                      the autopilot's own binary; Project AirSim: the client
 #                      package and the scene file's digest), or None
-#     single_sha       True when every host that reported a revision runs
-#                      the manifest's commit on a clean tree
-#     problems         why it is not, in words (stack_problems)
+#     single_sha       True only when every host the topology needs has
+#                      reported, no role is claimed twice, and every host
+#                      and component runs the manifest's commit on a clean
+#                      tree; False when one that reported does not; None
+#                      (pending) while a needed host has not reported or
+#                      the topology's hosts are not known. The Orin's own
+#                      write on hil is therefore None until the desktop
+#                      joins: one host never speaks for the stack
+#     problems         why it is not True, in words (stack_problems)
 #
 # RUN MANIFEST SCHEMA (load_run_manifest)
 #   1  manifest.json alone: every run written before 2026-11-17, and any run
@@ -1522,6 +1537,21 @@ STACK_SCHEMA = "vlaguard-stack-revisions/1"
 RUN_MANIFEST_SCHEMA = 2
 ROLE_DESKTOP = "desktop"
 ROLE_COMPANION = "companion"
+# The hosts each topology's stack runs our code on, so the hosts whose
+# revisions one SHA across the stack must cover. hil and flight: the Shield
+# and the VLA on the companion, the harness / SITL's helper / the stressors
+# (or the ground side) on the desktop. dev and the single-host rails: the
+# desktop alone. The remote-sim Project AirSim rail: the controller on the
+# companion, the simulator and its scene on the desktop. A topology not
+# listed here has no known host set, and single_sha stays None for it.
+STACK_REQUIRED_ROLES: dict[str, tuple[str, ...]] = {
+    TOPOLOGY_HIL: (ROLE_COMPANION, ROLE_DESKTOP),
+    TOPOLOGY_FLIGHT: (ROLE_COMPANION, ROLE_DESKTOP),
+    TOPOLOGY_DEV: (ROLE_DESKTOP,),
+    TOPOLOGY_PROJECTAIRSIM: (ROLE_DESKTOP,),
+    TOPOLOGY_PROJECTAIRSIM_REMOTE: (ROLE_COMPANION, ROLE_DESKTOP),
+    TOPOLOGY_ARDUPILOT_SITL: (ROLE_DESKTOP,),
+}
 # "ArduCopter V4.5.7 (2a3dc4b7)" / "ArduCopter V4.8.0-dev (5f119834)"
 _FIRMWARE_RE = re.compile(r"V(\d+\.\d+\.\d+[^\s(]*)(?:\s*\(([0-9a-f]{8})\))?")
 
@@ -1563,13 +1593,40 @@ def _revision_base(rev: str | None) -> str | None:
     return rev
 
 
+def stack_required_roles(topology: str | None) -> tuple[str, ...] | None:
+    """The host roles a run of `topology` must hear from before one SHA
+    across the stack can be claimed (STACK_REQUIRED_ROLES), or None when
+    the topology's hosts are not known. A legacy label reads as its
+    current one (LEGACY_TOPOLOGY_LABELS)."""
+    t = LEGACY_TOPOLOGY_LABELS.get(str(topology), topology)
+    return STACK_REQUIRED_ROLES.get(t) if t else None
+
+
+def host_role_basis(host: dict | None) -> tuple[str, str]:
+    """(role, why): "companion" on a Jetson (its device tree or L4T release
+    says so), else "desktop", with the evidence that decided it. Read from
+    the host's evidence, never declared."""
+    host = host or {}
+    raw_model = host.get("device_model")
+    model = str(raw_model or "").lower()
+    if "jetson" in model:
+        return ROLE_COMPANION, f"device tree model {raw_model!r}"
+    if host.get("l4t_release"):
+        return ROLE_COMPANION, f"L4T release {host.get('l4t_release')!r}"
+    why = "no Jetson device tree model and no L4T release in the host evidence"
+    if str(host.get("host_arch") or "").lower() in ("aarch64", "arm64"):
+        # The Orin's container without the /run/vlaguard/host mount (which
+        # docker-compose.orin.yml adds because AppArmor blocks /proc's path)
+        # reads exactly like this.
+        why += (f" (host_arch {host.get('host_arch')!r}: possibly a companion "
+                f"whose device-tree mount is missing)")
+    return ROLE_DESKTOP, why
+
+
 def host_role(host: dict | None) -> str:
     """"companion" on a Jetson (its device tree or L4T release says so),
-    else "desktop". Read from the host's evidence, never declared."""
-    host = host or {}
-    model = str(host.get("device_model") or "").lower()
-    return ROLE_COMPANION if ("jetson" in model or host.get("l4t_release")) \
-        else ROLE_DESKTOP
+    else "desktop" (host_role_basis says why)."""
+    return host_role_basis(host)[0]
 
 
 def host_revision(*, host: dict | None = None, revision: str | None = None,
@@ -1578,12 +1635,16 @@ def host_revision(*, host: dict | None = None, revision: str | None = None,
                   ) -> dict[str, Any]:
     """This host's own revision: code_revision (rev-parse + dirty flag; pass
     `revision` to reuse one already read, such as the manifest's), `git
-    describe`, and which machine it is (collect_host_evidence's fields)."""
+    describe`, which machine it is (collect_host_evidence's fields), and
+    the role it read itself as, with why (host_role_basis)."""
     host = collect_host_evidence() if host is None else host
     rev = code_revision(repo) if revision is None else revision
+    role, why = host_role_basis(host)
     return {"hostname": host.get("hostname"),
             "device_model": host.get("device_model"),
             "host_arch": host.get("host_arch"),
+            "role": role,
+            "role_basis": why,
             "code_revision": rev,
             "dirty": _dirty_flag(rev),
             "git_describe": describe(repo),
@@ -1657,53 +1718,114 @@ def projectairsim_simulator(scene_path: str | Path,
                                 "for its build"}
 
 
+def _base_role(key: str) -> str:
+    """"desktop#2" -> "desktop": the role a duplicate entry claimed."""
+    return str(key).split("#", 1)[0]
+
+
+def _revision_checks(doc: dict) -> list[tuple[str, str | None]]:
+    """(label, code_revision) of every host and every component on a host
+    (another checkout of ours that host runs, e.g. the WSL helper's)."""
+    out: list[tuple[str, str | None]] = []
+    for key, rec in sorted((doc.get("hosts") or {}).items()):
+        rec = rec or {}
+        out.append((key, rec.get("code_revision")))
+        for name, comp in sorted((rec.get("components") or {}).items()):
+            out.append((f"{key}/{name}", (comp or {}).get("code_revision")))
+    return out
+
+
+def _sha_mismatch(doc: dict) -> bool:
+    """True when what DID report already rules one clean SHA out: the
+    manifest named no revision, or a host or component runs another
+    commit, a dirty tree, or one git could not resolve."""
+    want = _revision_base(doc.get("code_revision"))
+    if want is None:
+        return True
+    return any(_revision_base(rev) != want or _dirty_flag(rev) is not False
+               for _, rev in _revision_checks(doc))
+
+
 def stack_problems(doc: dict) -> list[str]:
     """Why a stack record does not show one clean commit across the stack.
-    Empty = every host that reported runs the manifest's commit on a clean
-    tree and the autopilot named its firmware."""
+    Empty = every host the topology needs reported, each once, every host
+    and component runs the manifest's commit on a clean tree, and the
+    autopilot named its firmware."""
     out: list[str] = []
     want = _revision_base(doc.get("code_revision"))
     if want is None:
         out.append(f"the manifest's code_revision did not resolve "
                    f"({doc.get('code_revision')!r})")
-    for role, rec in sorted((doc.get("hosts") or {}).items()):
-        rev = (rec or {}).get("code_revision")
+    for label, rev in _revision_checks(doc):
         base = _revision_base(rev)
         if base is None:
-            out.append(f"{role}: code_revision did not resolve ({rev!r})")
+            out.append(f"{label}: code_revision did not resolve ({rev!r})")
             continue
         if want is not None and base != want:
-            out.append(f"{role} runs {rev!r}, the manifest names "
+            out.append(f"{label} runs {rev!r}, the manifest names "
                        f"{doc.get('code_revision')!r}")
         if _dirty_flag(rev) is not False:
-            out.append(f"{role}: {rev!r} is not a clean tree")
-    if not doc.get("hosts"):
+            out.append(f"{label}: {rev!r} is not a clean tree")
+    hosts = doc.get("hosts") or {}
+    if not hosts:
         out.append("no host reported its revision")
+    topology = doc.get("topology")
+    required = stack_required_roles(topology)
+    if required is None:
+        out.append(f"topology {topology!r}: the hosts its stack runs on are not "
+                   f"known, so one SHA across the stack cannot be shown")
+    else:
+        present = {_base_role(k) for k in hosts}
+        for role in required:
+            if role not in present:
+                out.append(f"{role} has not reported its revision (topology "
+                           f"{topology!r} needs {', '.join(required)})")
+    for key, rec in sorted(hosts.items()):
+        if "#" not in key:
+            continue
+        first = hosts.get(_base_role(key)) or {}
+        out.append(f"{key}: a second host reported as {_base_role(key)} "
+                   f"({(rec or {}).get('hostname')!r}, "
+                   f"{(rec or {}).get('device_model')!r}) beside "
+                   f"{first.get('hostname')!r} ({first.get('device_model')!r}); "
+                   f"one of them misread its role")
     if not doc.get("autopilot"):
         out.append("the autopilot did not name its firmware")
     return out
 
 
 def _finish_stack(doc: dict) -> dict:
-    problems = stack_problems(doc)
-    revs = {_revision_base((r or {}).get("code_revision"))
-            for r in (doc.get("hosts") or {}).values()}
-    revs.add(_revision_base(doc.get("code_revision")))
-    doc["single_sha"] = (bool(doc.get("hosts")) and None not in revs
-                         and len(revs) == 1
-                         and all(_dirty_flag((r or {}).get("code_revision")) is False
-                                 for r in doc["hosts"].values()))
-    doc["problems"] = problems
+    """single_sha and problems, from the record as it stands. False when what
+    reported rules one SHA out; None (pending) while a host the topology
+    needs has not reported, a role is claimed twice, or the topology's hosts
+    are not known; True only when none of that holds. A single host's write
+    on a multi-host topology is never True on its own."""
+    hosts = doc.get("hosts") or {}
+    required = stack_required_roles(doc.get("topology"))
+    present = {_base_role(k) for k in hosts}
+    doc["required_hosts"] = list(required) if required is not None else None
+    if _sha_mismatch(doc):
+        doc["single_sha"] = False
+    elif (not hosts or required is None
+          or any(r not in present for r in required)
+          or any("#" in k for k in hosts)):
+        doc["single_sha"] = None
+    else:
+        doc["single_sha"] = True
+    doc["problems"] = stack_problems(doc)
     return doc
 
 
 def stack_document(*, code_revision: str, hosts: dict[str, dict],
                    autopilot: dict | None,
-                   simulator: dict | None) -> dict[str, Any]:
-    """The stack_revisions.json document (schema STACK_SCHEMA)."""
+                   simulator: dict | None,
+                   topology: str | None = None) -> dict[str, Any]:
+    """The stack_revisions.json document (schema STACK_SCHEMA). `topology`
+    is the manifest's: it names the hosts the stack needs."""
     return _finish_stack({"schema": STACK_SCHEMA,
                           "run_manifest_schema": RUN_MANIFEST_SCHEMA,
                           "code_revision": code_revision,
+                          "topology": topology,
                           "hosts": dict(hosts),
                           "autopilot": autopilot,
                           "simulator": simulator})
@@ -1737,7 +1859,8 @@ def write_stack_revisions(out_dir: str | Path, manifest: dict, evidence: dict | 
             hosts={host_role(host): host_revision(
                 host=host, revision=manifest["code_revision"], describe=describe)},
             autopilot=auto,
-            simulator=simulator if simulator is not None else sitl_simulator(auto))
+            simulator=simulator if simulator is not None else sitl_simulator(auto),
+            topology=manifest.get("topology"))
         _write_stack(Path(out_dir), doc)
         return doc
     except Exception as e:                                # noqa: BLE001
@@ -1752,7 +1875,14 @@ def add_host_revision(run_dir: str | Path, role: str, record: dict) -> dict[str,
     A run whose writer predates the record (no stack_revisions.json) gets
     one, from its manifest's code_revision and its metrics' hil_evidence;
     the writing host is then not listed, because only it could say which it
-    was."""
+    was.
+
+    A role already held by ANOTHER machine (a different hostname or device
+    model) is never written over: the new record goes beside it as
+    "<role>#2" (#3, ...), and the record's problems name the clash, so a
+    companion that misread itself as the desktop cannot be replaced by the
+    real desktop and leave one host speaking for the stack. The same
+    machine adding itself again replaces its own entry."""
     run_dir = Path(run_dir)
     p = run_dir / STACK_FILE
     if p.is_file():
@@ -1770,8 +1900,18 @@ def add_host_revision(run_dir: str | Path, role: str, record: dict) -> dict[str,
         man, met = _read("manifest.json"), _read("metrics.json")
         auto = autopilot_revision(met.get("hil_evidence"))
         doc = stack_document(code_revision=man.get("code_revision"), hosts={},
-                             autopilot=auto, simulator=sitl_simulator(auto))
-    doc.setdefault("hosts", {})[role] = record
+                             autopilot=auto, simulator=sitl_simulator(auto),
+                             topology=man.get("topology"))
+    hosts = doc.setdefault("hosts", {})
+    key, n = role, 1
+
+    def _machine(rec: dict | None) -> tuple:
+        rec = rec or {}
+        return (rec.get("hostname"), rec.get("device_model"))
+    while key in hosts and _machine(hosts[key]) != _machine(record):
+        n += 1
+        key = f"{role}#{n}"
+    hosts[key] = record
     _finish_stack(doc)
     _write_stack(run_dir, doc)
     return doc

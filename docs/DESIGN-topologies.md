@@ -248,10 +248,16 @@ ignored. Reviewed files are copied to the desktop and committed there.
 
 "The desktop and the Orin must be on the same commit" was a runbook check
 only until 2026-11-17: `manifest.json` carries one `code_revision`, the
-revision of the host that wrote it. Since then every rail that writes a
-manifest (the ROS 2 Shield and mission nodes, the Project AirSim rail) also
-writes `stack_revisions.json` beside it (`guardrail.manifest.STACK_FILE`,
-schema `vlaguard-stack-revisions/1`): the writing host's revision under its
+revision of the host that wrote it. Since then three rails also write
+`stack_revisions.json` beside their manifest: the ROS 2 Shield node
+(`sitl/ros2_shield_node.py`, the KPI rail), the ROS 2 mission node
+(`sitl/ros2_mission_node.py`) and the Project AirSim + ArduPilot node
+(`demo/pas_ardupilot/perception_node.py`). The other manifest writers do
+not yet: the pymavlink SITL rail (`sitl/run_sitl_demo.py`), the follow
+rails (`demo/follow_vlm.py`, `demo/vla_fly.py`, `demo/vla_mission.py`) and
+the headless sweep each still record one `code_revision` only. The record
+(`guardrail.manifest.STACK_FILE`, schema `vlaguard-stack-revisions/1`)
+holds the writing host's revision under its
 role (`companion` on a Jetson, by its device tree, else `desktop`), with the
 dirty flag and `git describe`; the autopilot's firmware as AUTOPILOT_VERSION
 names it (`ArduCopter V4.5.7 (2a3dc4b7)` on the pinned SITL: version and
@@ -259,14 +265,28 @@ names it (`ArduCopter V4.5.7 (2a3dc4b7)` on the pinned SITL: version and
 autopilot's own binary; Project AirSim records its client package version
 and the scene file's SHA-256, the simulator binary's build unresolved). The
 hil harness (`experiments/sweep_scenarios.py run_hil`) adds the desktop's own
-revision after it fetches the run, and the record says whether one clean SHA
-held across the hosts (`single_sha`, `problems`).
+revision once it has accepted the fetched run (and, when `wsl_repo` points
+the WSL helper at another checkout, that checkout's revision as the desktop
+entry's `components.wsl_helper`). The record says whether one clean SHA held
+across the hosts (`single_sha`, `problems`), against the hosts the
+manifest's topology needs (`required_hosts`: hil and flight need the
+companion and the desktop, dev the desktop): `true` only once every needed
+host has reported on the manifest's clean commit, `false` when one that
+reported differs, `null` (pending) while a needed host is missing. The
+Orin's own write on hil, and so the copy in its signed replay bundle, is
+therefore `null` with "desktop has not reported its revision"; only the
+harness's accepted copy in the desktop's run store can read `true`. A role
+claimed by two machines (an Orin container without the device-tree mount
+reads as `desktop`) is kept as `desktop#2` beside the first and named in
+`problems`, never written over.
 
 `manifest.json` itself stays the grant's six fields. A run is read with
 `guardrail.manifest.load_run_manifest`: run manifest schema 1 is
 `manifest.json` alone (every run before 2026-11-17, unchanged), schema 2 is
 `manifest.json` plus `stack_revisions.json`. The record is evidence, not a
-gate: `is_kpi_grade()` does not read it, so no stored run's grade moves.
+gate: `is_kpi_grade()` does not read it, so no stored run's grade moves, and
+a run whose hosts ran different commits still counts toward its KPI; the
+mismatch is recorded, not enforced.
 
 ### 7. The label comes from evidence; the topology file only selects configuration
 
