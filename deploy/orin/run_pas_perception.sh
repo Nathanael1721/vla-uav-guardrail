@@ -56,9 +56,19 @@
 #   servo      NO VLA: the node's hand-written detector follow (--pilot servo
 #              --mission follow), the backend table's C2 null
 #              (tools/vla_backend_table.py). No VLA option is passed, no VLA
-#              server is needed or checked, and --target-estimator (the VLA
-#              follow's) is refused by the node; --identity and
+#              server is needed or checked; without --target-estimator the node
+#              flies the box servo (with it, estimator below); --identity and
 #              --negative-query are the follow's own and pass through.
+#   estimator  NO VLA: the lab's hand-written follow WITH its target estimator
+#              (--pilot servo --mission follow --identity --target-estimator:
+#              the node's EstimatorFollowPilot, follow_vlm.fly()'s servo on the
+#              estimate over demo/subject_track.SubjectTrack's estimator, strict
+#              lock and Reacquirer, forward along the subject's trail as
+#              fly()'s --trail-follow; not all of fly(): no FenceGuard, slew
+#              limiter or search planner), at --want-width 0.16 and --speed-max 5, the
+#              values agx_manual_20261103 (follow_vlm.py on simple_flight, 0.952
+#              within 30 m) flew with: the backend table's C2 estimator null, kept
+#              apart from servo's. No VLA server is needed or checked.
 #   racevla    VLAFront, each step flown as a rate over 1.0 s (the server's
 #              --horizon-s default), pipelined, one request per tick.
 #              Server: demo/vla_server_foreign.py serve --model racevla
@@ -85,6 +95,9 @@
 #              30 m in 330 s. Its forward commands stayed under 0.3 m/s on
 #              simple_flight (CHANGELOG 2026-10-27).
 #   servo      the C2 null: not yet flown through this script.
+#   estimator  the C2 estimator null (added 2026-11-17): not yet flown at all;
+#              its law has run only on the desktop's stand-ins
+#              (tests/test_pas_estimator_follow.py).
 # A first flight of each needs a shakedown (SECONDS_=60) before a 420 s one,
 # with _shake in its TAG (TAG=pas_hil_<family>_shake_01): the backend table
 # (tools/vla_backend_table.py, C2) does not count a flight so marked.
@@ -98,8 +111,8 @@
 # --scene-mode / --scene-only, --sim-host, --camera), in any abbreviation
 # argparse would take. Environment knobs:
 #   G1_VERDICT  the desktop's demo/out/g1_*/g1_verdict.json, copied here (required)
-#   FAMILY      aiotvla (default), aerialvla, dronecats, racevla, or servo (no VLA,
-#               the C2 null): above
+#   FAMILY      aiotvla (default), aerialvla, dronecats, racevla, servo or estimator
+#               (no VLA: the C2 nulls): above
 #   TAG         the run folder under demo/out/ (default pas_hil_aiot_<date>,
 #               pas_hil_aiot_<stress>_<date> with STRESS; pas_hil_<family>_...
 #               for another family)
@@ -191,8 +204,11 @@ case "$FAMILY" in
   servo)
     tag_family=servo
     family_args=() ;;
+  estimator)
+    tag_family=estimator
+    family_args=(--identity --target-estimator --want-width 0.16 --speed-max 5) ;;
   *)
-    die 64 "FAMILY '$FAMILY' is none of aiotvla aerialvla dronecats racevla servo" ;;
+    die 64 "FAMILY '$FAMILY' is none of aiotvla aerialvla dronecats racevla servo estimator" ;;
 esac
 TAG="${TAG:-pas_hil_${tag_family}_${STRESS:+${STRESS}_}$(date +%Y%m%d_%H%M%S)}"
 case "$TAG" in
@@ -226,12 +242,13 @@ args=(demo/pas_ardupilot/perception_node.py
       --g1-verdict "$G1_VERDICT" --tag "$TAG" --max-s "$SECONDS_"
       --pilot vla --mission follow --vla-server "127.0.0.1:$VLA_PORT"
       ${family_args[@]+"${family_args[@]}"})
-# The C2 null flies the hand-written follow: no VLA pilot, no server.
-if [ "$FAMILY" = servo ]; then
+# The C2 nulls fly the hand-written follow: no VLA pilot, no server.
+if [ "$FAMILY" = servo ] || [ "$FAMILY" = estimator ]; then
   args=(demo/pas_ardupilot/perception_node.py
         --link mavros --scene-mode attach --sim-host "$DESKTOP_IP"
         --g1-verdict "$G1_VERDICT" --tag "$TAG" --max-s "$SECONDS_"
-        --pilot servo --mission follow)
+        --pilot servo --mission follow
+        ${family_args[@]+"${family_args[@]}"})
 fi
 if [ -n "${BUNDLE:-}" ]; then
   args+=(--bundle "$BUNDLE")
@@ -294,8 +311,9 @@ python - "$DESKTOP_IP" "$VLA_PORT" "$FAMILY" <<'EOF'
 import socket
 import sys
 desk, vla_port, family = sys.argv[1], int(sys.argv[2]), sys.argv[3]
+no_vla = family in ("servo", "estimator")
 ends = [(desk, 8989, "Project AirSim (topics)"), (desk, 8990, "Project AirSim (services)")]
-if family != "servo":
+if not no_vla:
     ends.append(("127.0.0.1", vla_port, f"the VLA server (FAMILY={family})"))
 for host, port, what in ends:
     s = socket.socket()
@@ -308,7 +326,7 @@ for host, port, what in ends:
     finally:
         s.close()
 print(f"==> Project AirSim {desk} (8989, 8990)"
-      + ("" if family == "servo" else f" and the VLA server 127.0.0.1:{vla_port}")
+      + ("" if no_vla else f" and the VLA server 127.0.0.1:{vla_port}")
       + " reachable")
 EOF
 

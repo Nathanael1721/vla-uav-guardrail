@@ -2664,6 +2664,26 @@ def test_the_family_switch_leaves_aiotvla_as_it_flew_and_gives_each_family_its_o
     null_args = [a for a in c2_args if a != "--target-estimator"]
     assert _node_reads(av[2:] + null_args)[:2] == ["servo", "follow"]
     assert _node_reads(av[2:] + null_args)[8] is True, "--identity is the follow's own"
+    # FAMILY=estimator (2026-11-17): the C2 estimator null - the servo pilot
+    # with --identity and --target-estimator at agx_manual_20261103's width
+    # target and speed cap, no VLA option, no server; C2's own node arguments
+    # (the campaign passes them all) repeat flags it already sets, harmlessly
+    r = _pas_perception([], FAMILY="estimator", TAG=None)
+    assert r.returncode == 0, r.stderr
+    av = printed(r)
+    o = options(av)
+    assert av[:9] == fixed and (o["--pilot"], o["--mission"]) == ("servo", "follow"), av
+    assert o["--tag"].startswith("pas_hil_estimator_2"), o["--tag"]
+    assert not [a for a in av if a.startswith("--vla")], av
+    assert "--identity" in av and "--target-estimator" in av, av
+    assert (o["--want-width"], o["--speed-max"]) == ("0.16", "5"), o
+    reads = _node_reads(av[2:] + c2_args)       # the node's own checks accept it
+    assert (reads[0], reads[1], reads[8], reads[9]) == ("servo", "follow", True, True), reads
+    # servo's command line is unchanged by it: no estimator, the node's defaults
+    o_s = options(printed(_pas_perception([], FAMILY="servo", TAG="t")))
+    assert not {"--target-estimator", "--want-width", "--speed-max", "--identity"} & set(o_s)
+    text_ = RUN_PAS_PERCEPTION.read_text(encoding="utf-8")
+    assert text_.count("#   estimator ") >= 2, "estimator: its options and its gaps"
     for bad in ("openvla", "AIOTVLA", "aiotvla "):
         r = _pas_perception([], FAMILY=bad)
         assert r.returncode == 64 and "FAMILY" in r.stderr and "EXEC:" not in r.stdout, \

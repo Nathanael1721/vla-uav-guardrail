@@ -96,6 +96,11 @@ def status_lines(r: dict, locked: bool | None = None) -> list[str]:
         mode = "TRACKING BOX (NO LOCK)"
     if r.get("mode") == "track" and r.get("tier") == "soft":
         mode = "TRACKING (PARTLY HIDDEN)"
+    # The perception node's estimator follow (follow_law; its rows only): a
+    # tick flown on the estimate with no fresh box (subject None) is
+    # predicted, as follow_vlm.hud_target words it, never TARGET LOCKED.
+    if r.get("follow_law") == "estimate" and r.get("subject", 0) is None:
+        mode = "TRACKING (PREDICTED)"
     return [f"t {r['t']:5.1f}s   alt {r['up']:4.1f} m",
             f"bearing {r.get('bearing_deg', 0.0):+6.1f}deg   "
             f"speed {math.hypot(r['emitted']['vx'], r['emitted']['vy']):4.1f} m/s",

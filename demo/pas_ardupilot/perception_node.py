@@ -299,12 +299,26 @@ THE TARGET ESTIMATOR (--target-estimator, with --identity, for --pilot vla
     truth). The Shield's subject is unchanged: the fresh box placed from its
     own capture, as before.
 
-WHAT THIS IS NOT. follow_vlm.fly()'s control law - its servo on the estimate,
-the stand-off speed, trail FOLLOWING, the fence guard, the landing site -
-lives inside that function and is not reused here: this node's pilots are
-the servo law on the detector's box and the VLA. Its numbers are not
-comparable with the simple_flight CityLife flights. Its tracking score comes
-from the subject truth above when the scene provides it (None otherwise).
+THE ESTIMATOR FOLLOW (--pilot servo --mission follow --identity
+--target-estimator; 2026-11-17; EstimatorFollowPilot)
+
+  The lab's hand-written follow WITH its target estimator, as the backend
+  table's second C2 null (FAMILY=estimator in deploy/orin/
+  run_pas_perception.sh): the same SubjectTrack as the VLA follow's, and
+  follow_vlm.fly()'s two track branches on it - the servo on the estimate
+  (yaw_command with the line-of-sight feed-forward, standoff_speed with the
+  range feed-forward and the catch-up, the stopped-subject floor) and the
+  box servo at servo_want_width - then a coast toward the subject's memory
+  and the servo pilot's sweep. Without --target-estimator the servo pilot is
+  the box servo above, unchanged. NOT FLOWN: tests/test_pas_estimator_follow.py
+  drives it on a scripted subject and Grounder.
+
+WHAT THIS IS NOT. The rest of follow_vlm.fly()'s control law - trail
+FOLLOWING and the trail approach, the search creep and planner, the fence
+guard, the slew limiter, the landing site - lives inside that function and
+is not reused here. Its numbers are not comparable with the simple_flight
+CityLife flights. Its tracking score comes from the subject truth above when
+the scene provides it (None otherwise).
 
 TOPOLOGY. topology.classify() decides the label the evidence supports. The
 grant label is OFFERED to build_manifest only when the rail is qualified: gate
@@ -857,6 +871,310 @@ class FollowPilot:
                  "bearing": None if bearing is None else float(bearing),
                  "sweep_side": None if fresh else self.sweep_side,
                  "det": det, "cap": lat.get("cap"), "t_det": t_det})
+
+
+# THE ESTIMATOR FOLLOW's control numbers (EstimatorFollowPilot): follow_vlm's
+# own parser defaults, read there (build_arg_parser), never copied here.
+ESTIMATOR_FOLLOW_KEYS = ("range_gain", "range_feedforward", "catchup_mps", "yaw_los_ff",
+                         "yaw_los_ff_cap", "yaw_los_ff_min_range", "coast_s",
+                         "trail_lookahead_m")
+ESTIMATOR_FOLLOW_LAWS = ("estimate", "box", "memory", "sweep")
+ESTIMATOR_FOLLOW_SOURCE = (
+    "follow_vlm.fly()'s track branches (the servo on the target estimate: yaw_command "
+    "with the line-of-sight feed-forward, standoff_speed with the range feed-forward and "
+    "the catch-up, the stopped-subject floor; else the box servo at servo_want_width) "
+    "and its forward direction (--trail-follow: toward a carrot on the subject's trail, "
+    "trail.direction, never away from the estimate), on demo/subject_track.SubjectTrack "
+    "(the estimator, the strict lock's prior, the Reacquirer, the trail), by "
+    "perception_node.EstimatorFollowPilot")
+
+
+class EstimatorFollowPilot(FollowPilot):
+    """THE ESTIMATOR FOLLOW (--pilot servo --mission follow --identity
+    --target-estimator; FAMILY=estimator in deploy/orin/run_pas_perception.sh):
+    the lab's hand-written follow WITH its target estimator, as a null of the
+    VLA backend table's C2 (tools/vla_backend_table.py) on the same rail, the
+    same detector feed, the same start gate and the same Shield as the C2 VLA
+    flights. The plain FollowPilot (no --target-estimator) is unchanged.
+
+    WHY. C2's first null (FollowPilot) is a box-width P-servo with no
+    estimate and no lock (within 30 m 0.065-0.111 on hil, 16 Nov), while the
+    lab's own hand-written follow, follow_vlm.fly() with its target estimator,
+    held 0.952 within 30 m on the AGX's simple_flight rail
+    (agx_manual_20261103). This pilot puts that follow's control law on this
+    rail, from follow_vlm's own functions, imported, not copied:
+
+      * the subject: demo/subject_track.SubjectTrack, stepped once per tick
+        on the Grounder's answer BEFORE the law reads it (the estimator fed
+        identity's range and bearing at each box's capture, the strict lock
+        leaning on its prior, the lapse and the anchored Reacquirer, the
+        trail), as the VLA follow's --target-estimator steps it;
+      * "estimate" (fly()'s first track branch, "SERVO ON THE ESTIMATE"):
+        while the estimator serves one (TargetState.observe, up to its 3 s
+        coast) the yaw is follow_vlm.yaw_command on the estimate's bearing
+        plus yaw_los_ff x follow_vlm.los_rate (only on an estimate updated
+        under 1 s ago, capped, ranged at least yaw_los_ff_min_range), and
+        the forward speed follow_vlm.standoff_speed on the estimate's range
+        against the stand-off (target_state.want_range_from_width of
+        --want-width and the subject's width), with the subject's own
+        opening rate fed forward and the catch-up saturated at catchup_mps,
+        times cos(bearing); a subject MEASURED stopped (under 1 m/s) whose
+        estimate is over 0.5 s old is not closed nearer than the camera's
+        blind range plus 2 m (follow_vlm.camera_blind_m);
+      * "box" (fly()'s second track branch): a fresh box and no
+        re-acquisition open - follow_vlm.servo at the box fraction that
+        holds the same metric stand-off (follow_vlm.servo_want_width);
+      * "memory" (fly()'s coast, without its trail approach): no estimate
+        and no box, the subject still held in memory (SubjectTrack.
+        memory_bearing: the trail's lookout) - the yaw toward it, the last
+        track forward speed decaying to 0 over coast_s, then 0 (fly()'s
+        last_cmd[1] x k: a pilot that was backing off keeps backing);
+      * "sweep": nothing to go on - FollowPilot's search (forward 0, the
+        sweep's first swing toward the side the subject was last on).
+
+    WHICH WAY FORWARD IS (fly()'s --trail-follow, on by default here, as
+    agx_manual_20261103 flew it): on an "estimate", "box" or "memory" tick
+    with a forward speed over 0 the speed above is flown toward a carrot
+    trail_lookahead_m along the subject's trail (trail.direction on the
+    SubjectTrack's trail), not along the nose - a body forward AND right
+    component, the yaw still on the subject. While an estimate is served a
+    trail direction more than 90 deg off the line of sight to it is refused
+    (fly()'s NEVER AWAY FROM THE SUBJECT) and the nose wins; backing off (a
+    forward speed under 0) stays along the nose. trail_follow=False flies
+    along the nose only.
+
+    The aircraft's own velocity for the line-of-sight rate is the link's
+    measured one when given (`vel`, North / East / up), else the pilot's
+    last commanded horizontal velocity (fly()'s last_emit_v, which is what
+    the guard emitted; here it is the pilot's own command, before the
+    Shield).
+
+    WHAT THIS IS NOT. fly()'s whole controller: its trail approach in the
+    coast (the coast flies the trail's direction, not the approach's stop
+    short of the trail's end), its search sweep closed on the lookout
+    bearing, the search creep and the search planner, FenceGuard (its gate
+    and smoothing, and clear_aim, which keeps fly()'s aim out of the zones'
+    bands), the slew limiter (VecSlewLimiter) and the orbit are not ported;
+    on this rail the Shield and ArduPilot's own velocity controller stand
+    where FenceGuard and the slew limiter did. It has no lost end: like
+    FollowPilot it flies to max_s (the table replays it under the VLAs' end
+    rule, as it does the servo null). Its numbers are a null on THIS rail,
+    not a re-flight of the simple_flight follow.
+
+    step(now, up, pose=(x, y, yaw rad), vel=None) -> (body action, info) in
+    FollowPilot's shape, with info's "law" and "track_src"; row_fields(now,
+    st) the tick's est_* fields (SubjectTrack.row) and the law; summary()
+    metrics.json's `estimator_follow`. info's "mode" is "track" on an
+    "estimate" tick too (the start gate's and the records' sense); the HUD
+    reads the law (track_words' `law`) and claims TARGET LOCKED only on a
+    fresh box. A fault in the SubjectTrack is counted
+    (`track_errors`, the first kept), never raised: the law falls back on
+    the box and the sweep, and the 10 Hz loop and the Shield go on."""
+
+    def __init__(self, detections, hfov_deg: float, track, *, object_width_m: float,
+                 yaw_gain: float = 1.2, want_w_frac: float = 0.16, speed_max: float = 5.0,
+                 cruise_alt: float = 8.0, alt_gain: float = 0.6, climb_max: float = 1.8,
+                 stale_s: float = DETECTION_STALE_S, sweep_deg: float = 25.0,
+                 sweep_period_s: float = 4.0, trail_follow: bool = True, fv=None):
+        fv = fv or _fv()
+        super().__init__(detections, hfov_deg, yaw_gain=yaw_gain, want_w_frac=want_w_frac,
+                         speed_max=speed_max, cruise_alt=cruise_alt, alt_gain=alt_gain,
+                         climb_max=climb_max, stale_s=stale_s, sweep_deg=sweep_deg,
+                         sweep_period_s=sweep_period_s, servo=fv.servo,
+                         sweep=fv.search_sweep_rate)
+        if not (object_width_m and object_width_m > 0):
+            raise ValueError("the estimator follow needs the subject's width (its stand-off)")
+        self.fv = fv
+        self.track = track
+        ap = fv.build_arg_parser()
+        self.law = {k: ap.get_default(k) for k in ESTIMATOR_FOLLOW_KEYS}
+        self.object_width_m = float(object_width_m)
+        # fly()'s _stand_off() with --want-range 0: the metric stand-off the
+        # width fraction asks for, and the box fraction that holds it on the
+        # pinhole camera (servo_want_width), so both branches fly one set-point.
+        self.want_range_m = float(fv.want_range_from_width(want_w_frac, self.object_width_m))
+        self.box_want_w_frac = float(fv.servo_want_width(self.want_range_m,
+                                                         self.object_width_m, hfov_deg))
+        self.track_errors = 0
+        self.track_error: str | None = None
+        self.n_by_law: collections.Counter = collections.Counter()
+        self.n_coast = 0
+        self.n_los_ff = 0
+        self.n_floor = 0
+        self.trail_follow = bool(trail_follow)
+        self.n_trail = 0
+        self.n_trail_against = 0
+        self.last_law: str | None = None
+        self._t_seen: float | None = None
+        self._last_fwd = 0.0
+        self._last_v = (0.0, 0.0)      # the last commanded horizontal velocity (N, E)
+
+    def config(self) -> dict:
+        return {"source": ESTIMATOR_FOLLOW_SOURCE, "law_defaults_from":
+                "follow_vlm.build_arg_parser()", **self.law,
+                "trail_follow": self.trail_follow,
+                "yaw_gain": self.yaw_gain, "want_width": self.want_w_frac,
+                "want_range_m": round(self.want_range_m, 3),
+                "box_want_width": round(self.box_want_w_frac, 4),
+                "object_width_m": self.object_width_m, "speed_max": self.speed_max,
+                "stale_s": self.stale_s}
+
+    def _track_call(self, fn, *a):
+        """A SubjectTrack call, its fault counted and never raised (class
+        docstring); None on a fault."""
+        try:
+            return fn(*a)
+        except Exception as exc:                                  # noqa: BLE001
+            self.track_errors += 1
+            if self.track_error is None:
+                self.track_error = f"{type(exc).__name__}: {exc}"
+                print(f"[track]  *** {self.track_error} (counted; the loop goes on)")
+            return None
+
+    def step(self, now: float, up: float, pose=None, vel=None) -> tuple[tuple, dict]:
+        if pose is None:
+            raise ValueError("the estimator follow steps on the aircraft's pose (x, y, yaw)")
+        fv, tr = self.fv, self.track
+        x, y, yaw = (float(v) for v in pose)
+        lat = self.detections.latest()
+        lat = lat if isinstance(lat, dict) else {}
+        # The estimate first, on this tick's answer (SubjectTrack.step's order).
+        self._track_call(tr.step, lat, now, (x, y, yaw))
+        det, t_det = lat.get("det"), lat.get("t_det") or 0.0
+        fresh = det is not None and t_det > 0 and (now - t_det) <= self.stale_s
+        vz = float(np.clip((self.cruise_alt - up) * self.alt_gain,
+                           -self.climb_max, self.climb_max))
+        reacq_open = getattr(tr, "reacq", None) is not None
+        est = None if reacq_open else self._track_call(tr.estimator.observe, now, x, y, yaw)
+        bearing, track_src = None, None
+        if est is not None:
+            # SERVO ON THE ESTIMATE (fly()).
+            bearing, rng_est = (float(v) for v in est)
+            e = tr.estimator
+            ff_yaw = 0.0
+            if (self.law["yaw_los_ff"] > 0.0 and e.x is not None
+                    and e.t_last_update is not None and now - e.t_last_update < 1.0):
+                if vel is not None:
+                    vax, vay = float(vel[0]), float(vel[1])
+                else:
+                    vax, vay = self._last_v
+                ff_yaw = float(np.clip(
+                    self.law["yaw_los_ff"] * fv.los_rate(
+                        float(e.x[0]), float(e.x[1]), float(e.x[2]), float(e.x[3]),
+                        x, y, vax, vay, r_min=self.law["yaw_los_ff_min_range"]),
+                    -self.law["yaw_los_ff_cap"], self.law["yaw_los_ff_cap"]))
+                self.n_los_ff += int(ff_yaw != 0.0)
+            yaw_rate = fv.yaw_command(self.yaw_gain, bearing, ff=ff_yaw)
+            ff = e.range_rate(x, y) if self.law["range_feedforward"] else 0.0
+            fwd = fv.standoff_speed(rng_est, self.want_range_m, self.law["range_gain"], ff,
+                                    self.speed_max, self.law["catchup_mps"])
+            fwd *= max(0.0, math.cos(bearing))
+            # PREDICTION IS NOT EVIDENCE (fly()): a subject measured stopped.
+            if (tr.last_acc is not None and e.t_last_update is not None
+                    and tr.last_meas_speed is not None and tr.last_meas_speed < 1.0
+                    and now - e.t_last_update > 0.5):
+                r_last = math.hypot(tr.last_acc[0] - x, tr.last_acc[1] - y)
+                floor = fv.camera_blind_m(up) + 2.0
+                capped = min(fwd, max(0.0, 0.5 * (r_last - floor)))
+                self.n_floor += int(capped < fwd)
+                fwd = capped
+            law, mode = "estimate", "track"
+        elif fresh and not reacq_open:
+            yaw_rate, fwd, bearing = self.servo(det, int(det[5]), self.yaw_gain,
+                                                self.box_want_w_frac, self.speed_max,
+                                                self.hfov)
+            law, mode = "box", "track"
+        else:
+            law, mode, fwd, yaw_rate = None, None, 0.0, 0.0
+            mem = self._track_call(tr.memory_bearing, now, x, y, yaw)
+            lost = 0.0 if self._t_seen is None else now - self._t_seen
+            if mem is not None:
+                rel = (float(mem[0]) - yaw + math.pi) % (2.0 * math.pi) - math.pi
+                yaw_rate = fv.yaw_command(self.yaw_gain, rel)
+                cs = float(self.law["coast_s"])
+                k = max(0.0, 1.0 - lost / cs) if cs > 0 else 0.0
+                fwd = self._last_fwd * k                # fly()'s last_cmd[1] * k
+                law, mode, track_src = "memory", "coast", mem[1]
+                self._t_lost = None
+                self.n_coast += 1
+            else:
+                # FollowPilot's search: forward 0, the sweep signed by the
+                # side the subject was last tracked on.
+                if self._t_lost is None:
+                    self._t_lost = now
+                    self.sweep_side = (-1.0 if self._last_bearing is not None
+                                       and self._last_bearing < 0.0 else 1.0)
+                yaw_rate = self.sweep_side * self.sweep(now - self._t_lost, self.sweep_deg,
+                                                        self.sweep_period_s)
+                law, mode = "sweep", "search"
+                self.n_search += 1
+        if mode == "track":
+            self._t_lost = None
+            self._t_seen = now
+            self._last_bearing = float(bearing)
+            self._last_fwd = float(fwd)
+            self.n_track += 1
+        # WHICH WAY "FORWARD" IS (fly()'s --trail-follow; class docstring).
+        ux, uy = math.cos(yaw), math.sin(yaw)
+        trail_dir = None
+        trail = getattr(tr, "trail", None)
+        if self.trail_follow and trail is not None and fwd > 0.0 and mode in ("track",
+                                                                              "coast"):
+            tdir = self._track_call(fv.trail_mod.direction, trail, x, y,
+                                    float(self.law["trail_lookahead_m"]))
+            e = getattr(tr, "estimator", None)
+            if (tdir is not None and est is not None and e is not None
+                    and e.x is not None):
+                # NEVER AWAY FROM THE SUBJECT (fly()): the nose wins.
+                if (float(e.x[0]) - x) * tdir[0] + (float(e.x[1]) - y) * tdir[1] < 0.0:
+                    tdir = None
+                    self.n_trail_against += 1
+            if tdir is not None:
+                ux, uy = float(tdir[0]), float(tdir[1])
+                trail_dir = math.atan2(uy, ux)
+                self.n_trail += 1
+        # The horizontal command (North, East) as the body action: forward
+        # and right of the nose (guardrail.frames.from_body's inverse).
+        vn, ve = float(fwd) * ux, float(fwd) * uy
+        self._last_v = (vn, ve)
+        body_fwd = vn * math.cos(yaw) + ve * math.sin(yaw)
+        body_right = -vn * math.sin(yaw) + ve * math.cos(yaw)
+        if trail_dir is None:                     # along the nose: exactly fwd, right 0
+            body_fwd, body_right = float(fwd), 0.0
+        self.n_by_law[law] += 1
+        self.last_law = law
+        return ((float(body_fwd), float(body_right), vz, float(yaw_rate)),
+                {"mode": mode, "fresh": bool(fresh), "seq": lat.get("seq"),
+                 "bearing": None if bearing is None else float(bearing),
+                 "sweep_side": self.sweep_side if law == "sweep" else None,
+                 "law": law, "track_src": track_src, "fwd_speed": float(fwd),
+                 "trail_dir": trail_dir,
+                 "det": det, "cap": lat.get("cap"), "t_det": t_det})
+
+    def row_fields(self, now: float, st) -> dict:
+        """The tick's flight-log fields: SubjectTrack.row (est_*, lock_why,
+        reacq_streak) and the law that flew it (`follow_law`)."""
+        row = self._track_call(self.track.row, now, float(st.x), float(st.y),
+                               math.radians(float(st.yaw_deg))) or {"est_state": None}
+        row["follow_law"] = self.last_law
+        return row
+
+    def summary(self) -> dict:
+        """metrics.json `estimator_follow`: the law's configuration, the ticks
+        each law flew, the line-of-sight feed-forward and the stopped-subject
+        floor's ticks, the ticks whose forward followed the subject's trail
+        (and those whose trail direction was refused as pointing away from
+        the estimate), and the SubjectTrack's faults."""
+        n = sum(self.n_by_law.values())
+        return {"on": True, "config": self.config(),
+                "ticks": n, "ticks_by_law": {k: int(self.n_by_law.get(k, 0))
+                                             for k in ESTIMATOR_FOLLOW_LAWS},
+                "estimate_frac": (round(self.n_by_law.get("estimate", 0) / n, 4)
+                                  if n else None),
+                "los_ff_ticks": self.n_los_ff, "stopped_floor_ticks": self.n_floor,
+                "trail_ticks": self.n_trail,
+                "trail_refused_away_from_subject": self.n_trail_against,
+                "track_errors": self.track_errors, "first_track_error": self.track_error}
 
 
 class NoDetector:
@@ -3945,9 +4263,20 @@ TRACK_WORDS = {"track": "TARGET LOCKED", "search": "SEARCHING ..."}
 TRACK_NO_LOCK = "TRACKING BOX (NO LOCK)"
 
 
-def track_words(mode, locked: bool) -> str:
+# The estimator follow's (EstimatorFollowPilot) ticks flown on no fresh box,
+# in follow_vlm.fly()'s HUD words (hud_target, its coast label): TARGET
+# LOCKED is claimed only where a fresh box is held, as fly() claims it.
+LAW_WORDS = {"estimate": "TRACKING (PREDICTED)", "memory": "COASTING on last motion"}
+
+
+def track_words(mode, locked: bool, law=None, fresh=None) -> str:
     """The HUD's words for the pilot's mode: TRACK_WORDS, except a track
-    tick with no lock held (TRACK_NO_LOCK); anything else is scanning."""
+    tick with no lock held (TRACK_NO_LOCK); anything else is scanning. The
+    estimator follow's `law` (info["law"]; None for every other pilot) words
+    a tick flown on the estimate with no fresh box, or on the memory, by
+    LAW_WORDS instead."""
+    if law == "memory" or (law == "estimate" and not fresh):
+        return LAW_WORDS[law]
     if mode == "track" and not locked:
         return TRACK_NO_LOCK
     return TRACK_WORDS.get(mode, "SCANNING for target")
@@ -4091,6 +4420,8 @@ class RailHud:
         self.locked = bool(locked)
         self.track_ticks = 0        # track ticks labelled by tick()
         self.track_replaced = 0     # ... whose words the VLA panel replaced
+        # the estimator follow's ticks labelled by its law instead (LAW_WORDS)
+        self.law_label_ticks: collections.Counter = collections.Counter()
         self.hold_s = float(getattr(indicator, "hold_s", 1.5) or 1.5)
         self.error: str | None = None
         self._latch: tuple[dict, str, float] | None = None
@@ -4156,13 +4487,16 @@ class RailHud:
         bearing = info.get("bearing")
         fwd = (0.0 if flown is None else
                float(flown.vx) * math.cos(yaw_rad) + float(flown.vy) * math.sin(yaw_rad))
-        if info.get("mode") == "track":
+        words = track_words(info.get("mode"), self.locked, info.get("law"), info.get("fresh"))
+        if words in LAW_WORDS.values():         # the estimator follow, on no fresh box
+            self.law_label_ticks[words] += 1
+        elif info.get("mode") == "track":
             self.track_ticks += 1
         return {"t": float(now), "sep": sep_m,
                 "brg": 0.0 if bearing is None else math.degrees(bearing),
                 "fwd": fwd, "alt": float(state.up), "shield": bool(touched),
                 "query": self.query, "mode": info.get("mode"),
-                "mode_label": f"{track_words(info.get('mode'), self.locked)} | {arm}",
+                "mode_label": f"{words} | {arm}",
                 "tier": None, "fence_d": None, "fence_hold": False, "fence_mode": None,
                 "fence_kind": None, "policy": pol}
 
@@ -4181,6 +4515,7 @@ class RailHud:
                 # was a track tick, or the VLA panel replaced every one
                 "track_label": track_words("track", self.locked) if drawn > 0 else None,
                 "track_label_ticks": drawn,
+                "law_label_ticks": dict(self.law_label_ticks),
                 "banners_shown": dict(self.shown),
                 "counts": None if ind is None else dict(ind.counts),
                 "banner_ticks": None if ind is None else dict(ind.banner_ticks)}
@@ -4534,7 +4869,12 @@ def build_parser() -> argparse.ArgumentParser:
                          "between boxes, the VLA's memory hint toward where it is "
                          "predicted, a lost subject taken back where it was predicted "
                          "on identity-OK evidence; est_* fields in the flight log, "
-                         "metrics.json subject_track. Off: as before 2026-11-15")
+                         "metrics.json subject_track. Off: as before 2026-11-15. With "
+                         "--pilot servo (since 2026-11-17): the estimator follow "
+                         "(EstimatorFollowPilot, follow_vlm.fly()'s servo on the "
+                         "estimate; metrics.json estimator_follow), the backend table's "
+                         "C2 estimator null; without it the servo pilot is the box servo, "
+                         "unchanged")
     ap.add_argument("--dry-run", action="store_true",
                     help="render configs, print the plan and the commands, exit")
     # the demo video, as follow_vlm records it (demo/recorder.py)
@@ -4601,17 +4941,17 @@ def check_args(args) -> None:
 
 def check_estimator_args(args) -> None:
     """--target-estimator (THE TARGET ESTIMATOR, module docstring) only where
-    it can run as follow_vlm runs it: the VLA follow (the servo pilot steers
-    on the box, and the estimate is the VLA's memory hint), with --identity
-    (the estimator is fed identity's range and bearing at each box's own
-    capture, and the strict lock and the Reacquirer judge identity tiers),
-    and with its strict lock (not --no-lock-target)."""
+    it can run as follow_vlm runs it: a follow - the VLA's (the estimate is
+    its memory hint) or the servo pilot's (EstimatorFollowPilot: follow_vlm.
+    fly()'s servo on the estimate) - with --identity (the estimator is fed
+    identity's range and bearing at each box's own capture, and the strict
+    lock and the Reacquirer judge identity tiers), and with its strict lock
+    (not --no-lock-target)."""
     if not getattr(args, "target_estimator", False):
         return
-    if getattr(args, "pilot", "servo") != "vla" or getattr(args, "mission", None) != "follow":
-        raise SystemExit("--target-estimator is the VLA follow's (--pilot vla --mission "
-                         "follow): its estimate is the VLA's memory hint, and the servo "
-                         "pilot steers on the detector's box")
+    if getattr(args, "mission", None) != "follow":
+        raise SystemExit("--target-estimator is a follow's (--mission follow): the VLA's "
+                         "memory hint, or the servo pilot's estimator follow")
     if not getattr(args, "identity", False):
         raise SystemExit("--target-estimator needs --identity: the estimator is fed "
                          "identity's range and bearing at each box's own capture, and the "
@@ -4856,6 +5196,35 @@ def make_subject_track(args, grounder, fv=None):
     from subject_track import SubjectTrack
     width_m, subject_class = fv.subject_width(args.object)
     return SubjectTrack(grounder, subject_class, object_width_m=width_m, fv=fv)
+
+
+def make_estimator_follow_pilot(args, grounder, hfov_deg: float, width_m, fv=None):
+    """THE ESTIMATOR FOLLOW (--pilot servo --target-estimator):
+    EstimatorFollowPilot over this run's Grounder and a SubjectTrack of it
+    (make_subject_track), at this run's yaw gain, width target, speed cap and
+    altitude hold."""
+    fv = fv or _fv()
+    track = make_subject_track(args, grounder, fv)
+    return EstimatorFollowPilot(grounder, hfov_deg, track, object_width_m=width_m,
+                                yaw_gain=args.yaw_gain, want_w_frac=args.want_width,
+                                speed_max=args.speed_max, cruise_alt=args.cruise_alt,
+                                alt_gain=args.alt_gain, climb_max=args.climb_max, fv=fv)
+
+
+def start_subject_track(track, gate, gate_rec: dict, t0: float) -> None:
+    """THE TARGET ESTIMATOR starts with the mission: committed to the start
+    gate's pick (its identity features at its own capture), else - no gate,
+    or none confirmed - looking for the subject by the Reacquirer with no
+    anchor."""
+    picked = bool(gate_rec.get("reached")) and gate is not None \
+        and gate.pick_feat is not None
+    track.start(gate.pick_feat if picked else None,
+                gate.pick_cap if picked else None, now=t0, t0=t0)
+    print("[track]  " + ("committed to the start gate's pick"
+                         + (" (estimate seeded)" if track.estimator._xu is not None
+                            else " (no range: not seeded)")
+                         if picked else
+                         "no confirmed pick: re-acquiring with no anchor"))
 
 
 def subject_track_record(track, rows: list[dict]) -> dict:
@@ -6430,12 +6799,20 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
                   f"width range assumes {width_m:.2f} m, a car - a subject that is "
                   f"not car-sized is ranged wrong by the ratio")
         # The detector pilot; the VLA's (VLAPilot) is built at the mission's
-        # start, with the mission's clock.
-        pilot = (None if vla_on else
-                 FollowPilot(grounder, hfov, yaw_gain=args.yaw_gain,
-                             want_w_frac=args.want_width, speed_max=args.speed_max,
-                             cruise_alt=args.cruise_alt, alt_gain=args.alt_gain,
-                             climb_max=args.climb_max))
+        # start, with the mission's clock. With --target-estimator the servo
+        # pilot is the estimator follow (EstimatorFollowPilot), its
+        # SubjectTrack started at the mission's start like the VLA's.
+        if not vla_on and getattr(args, "target_estimator", False):
+            pilot = make_estimator_follow_pilot(args, grounder, hfov, width_m, fv or _fv())
+            print(f"[track]  estimator follow ON: stand-off "
+                  f"{pilot.want_range_m:.1f} m, speed_max {pilot.speed_max:g} m/s "
+                  f"(follow_vlm.fly()'s servo on the estimate)")
+        else:
+            pilot = (None if vla_on else
+                     FollowPilot(grounder, hfov, yaw_gain=args.yaw_gain,
+                                 want_w_frac=args.want_width, speed_max=args.speed_max,
+                                 cruise_alt=args.cruise_alt, alt_gain=args.alt_gain,
+                                 climb_max=args.climb_max))
         # The subject's simulator pose, for EVALUATION only (SubjectTruth): the
         # Shield below is given the estimate, never this.
         actor, actor_why = ((None, "--pilot vla --mission goto: a GOTO has no subject")
@@ -6690,22 +7067,16 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
         rec.event("mission_start", t=0.0, autopilot_mode=prev_mode,
                   fsm=None if fsm is None else fsm.config.to_dict(),
                   rule_clock_reading=rule_now().isoformat(timespec="seconds"))
+        if (not vla_on and no_mission is None
+                and getattr(pilot, "track", None) is not None):
+            # THE ESTIMATOR FOLLOW's SubjectTrack, started as the VLA's is.
+            start_subject_track(pilot.track, gate, gate_rec, t0)
         if vla_on and no_mission is None:
             track = vla_rec.get("track")
             if track is not None:
-                # THE TARGET ESTIMATOR starts with the mission: committed to
-                # the start gate's pick (its identity features at its own
-                # capture), else - no gate, or none confirmed - looking for
-                # the subject by the Reacquirer with no anchor.
-                picked = bool(gate_rec.get("reached")) and gate is not None \
-                    and gate.pick_feat is not None
-                track.start(gate.pick_feat if picked else None,
-                            gate.pick_cap if picked else None, now=t0, t0=t0)
-                print("[track]  " + ("committed to the start gate's pick"
-                                     + (" (estimate seeded)" if track.estimator._xu is not None
-                                        else " (no range: not seeded)")
-                                     if picked else
-                                     "no confirmed pick: re-acquiring with no anchor"))
+                # THE TARGET ESTIMATOR starts with the mission
+                # (start_subject_track).
+                start_subject_track(track, gate, gate_rec, t0)
             # THE VLA PILOT, on the mission's clock: its stop rules
             # (vla_mission.MissionMonitor) start now.
             vla = VLAPilot(vla_backend, VM.MissionMonitor(args.vla_monitor, t0),
@@ -6872,7 +7243,15 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
                 prev_mode = mode
                 yaw = math.radians(st.yaw_deg)
                 obs.put_pose_full(t_tick, st.x, st.y, st.up, yaw, s.pitch or 0.0, s.roll or 0.0)
-                if vla is None:
+                if vla is None and getattr(pilot, "track", None) is not None:
+                    # THE ESTIMATOR FOLLOW: it steps on the aircraft's pose,
+                    # and the link's measured velocity feeds its line-of-
+                    # sight rate (None: the last commanded forward speed).
+                    vel_p = (link.velocity()[0] if callable(getattr(link, "velocity", None))
+                             else None)
+                    body, info = pilot.step(t_tick, st.up, pose=(st.x, st.y, yaw), vel=vel_p)
+                    raw = body_to_world(*body, yaw)
+                elif vla is None:
                     body, info = pilot.step(t_tick, st.up)
                     raw = body_to_world(*body, yaw)
                 else:
@@ -7265,6 +7644,11 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
                                            and not stop_advised),
                         touched=touched, shield_on=shield_on, t_mission=now,
                         fsm_stepped=fsm_out is not None, t_pub=t_pub_abs)
+                elif getattr(pilot, "track", None) is not None:
+                    # THE ESTIMATOR FOLLOW's est_* fields and the law that
+                    # flew the tick (EstimatorFollowPilot.row_fields), with
+                    # est_gap_m against the truth below, as the VLA follow's.
+                    vla_row = pilot.row_fields(t_tick, st)
                 row = {
                     "t": round(now, 3), "tick": tick,
                     # When this tick's setpoint went out, on the loop clock
@@ -7922,6 +8306,18 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
             "start_timeout_action", "negative_query", "identity", "lock_gate",
             "no_lock_target", "pilot", "mission", "front_capture_interval_s", "stress",
             "target_estimator")})
+        if not vla_on and getattr(pilot, "track", None) is not None:
+            # THE ESTIMATOR FOLLOW's records: its law (EstimatorFollowPilot.
+            # summary) and its SubjectTrack's, as the VLA follow's
+            # subject_track. A fault here is recorded, never raised.
+            try:
+                metrics["estimator_follow"] = pilot.summary()
+                st_rec = subject_track_record(pilot.track, rows)
+            except Exception as exc:                              # noqa: BLE001
+                st_rec = {"on": True, "record_error": f"{type(exc).__name__}: {exc}"}
+            st_rec["errors"] = pilot.track_errors
+            st_rec["first_error"] = pilot.track_error
+            metrics["subject_track"] = st_rec
         if vla_on:
             metrics["params"].update({k: getattr(args, k, None) for k in VLA_PARAMS})
             # THE OBSERVATION RATE (the grant's 10 Hz observation, X-05 /
@@ -8245,18 +8641,25 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
                   f"frame age at every setpoint p50 {a_.get('p50')} / max {a_.get('max')} ms, "
                   f"{a_.get('over_budget')} of {a_.get('n')} over 100 ms"
                   + (f"; *** {c_['error']}" if c_.get("error") else ""))
-            st_ = metrics.get("subject_track")
-            if st_ and st_.get("on"):
-                tt_ = st_.get("truth") or {}
-                print(f"[report] target estimator: served on {st_.get('ticks_served')} of "
-                      f"{st_.get('ticks')} ticks (age p50 "
-                      f"{(st_.get('est_age_s') or {}).get('p50')} s); ticks by state "
-                      f"{st_.get('ticks_by_state')}; lapses {st_.get('lapses')}, "
-                      f"re-acquisitions {st_.get('reacquisitions')}; memory "
-                      f"{st_.get('memory_ticks')}; estimate within {tt_.get('near_m')} m of "
-                      f"the truth on {tt_.get('est_lock_frac')} of the ticks read"
-                      + (f"; *** {st_['errors']} fault(s): {st_.get('first_error')}"
-                         if st_.get("errors") else ""))
+        ef_ = metrics.get("estimator_follow")
+        if ef_:
+            print(f"[report] estimator follow: ticks by law {ef_.get('ticks_by_law')} "
+                  f"(on the estimate {ef_.get('estimate_frac')}); stand-off "
+                  f"{(ef_.get('config') or {}).get('want_range_m')} m; line-of-sight "
+                  f"feed-forward on {ef_.get('los_ff_ticks')} tick(s)")
+        # The target estimator's line: the VLA follow's or the estimator follow's.
+        st_ = metrics.get("subject_track")
+        if st_ and st_.get("on"):
+            tt_ = st_.get("truth") or {}
+            print(f"[report] target estimator: served on {st_.get('ticks_served')} of "
+                  f"{st_.get('ticks')} ticks (age p50 "
+                  f"{(st_.get('est_age_s') or {}).get('p50')} s); ticks by state "
+                  f"{st_.get('ticks_by_state')}; lapses {st_.get('lapses')}, "
+                  f"re-acquisitions {st_.get('reacquisitions')}; memory "
+                  f"{st_.get('memory_ticks')}; estimate within {tt_.get('near_m')} m of "
+                  f"the truth on {tt_.get('est_lock_frac')} of the ticks read"
+                  + (f"; *** {st_['errors']} fault(s): {st_.get('first_error')}"
+                     if st_.get("errors") else ""))
         # A hover that crashed was landed and recorded above, and is still a
         # failed run: the launchers count a non-zero exit as one; so is a VLA
         # mission that ended on a VLA failure (exit 3, as demo/vla_fly.py).
