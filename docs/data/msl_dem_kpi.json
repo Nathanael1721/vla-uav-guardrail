@@ -1,5 +1,9 @@
 {
  "command": "python tools/msl_dem_kpi.py ",
+ "caveats": {
+  "failsafe_labels": "labels set after a first run that used other labels, matched to the library's altitude-ceiling-hold labelling (E5); the 35/35 fail-safe figure is not pre-registered and is not an independent fail-safe KPI result",
+  "scope": "headless only: no rail passes a ground; a DEM Shield requires up_ref='terrain' and the rails' State.up is height above home; the DEM is synthetic and metre-framed (origin null); no SITL, hil or PAS flight has carried an MSL rule"
+ },
  "dem": {
   "kind": "grid",
   "x0": -300.0,
@@ -13,6 +17,7 @@
   "max_msl_m": 114.0,
   "reach_m": 20.0,
   "quantum_m": 0.5,
+  "origin": null,
   "sha256": "4b6092edd769028312455c91853aad72399d5da8553424be4347219ab985c454",
   "source": "synthetic ridge (tools/msl_dem_kpi.py ridge_elevation)"
  },
@@ -2136,54 +2141,62 @@
  },
  "dsl_kpis": {
   "policy": "bench_shield_50rules.fifty_rule_policy, 49 banded rules MSL",
+  "query_check_msl_corridor_local_runtime_cold": {
+   "n": 400,
+   "median_ms": 1.2673,
+   "p95_ms": 1.4172,
+   "p99_ms": 1.9174,
+   "max_ms": 2.6353
+  },
+  "msl_corridor_tubes_buffered": 1,
   "cold_start_fresh_process": {
    "n": 10,
-   "median_ms": 468.3801,
-   "p95_ms": 506.3481,
-   "p99_ms": 506.3481,
-   "max_ms": 506.3481
+   "median_ms": 478.8509,
+   "p95_ms": 509.4909,
+   "p99_ms": 509.4909,
+   "max_ms": 509.4909
   },
   "cold_start_warm_interpreter": {
    "n": 30,
-   "median_ms": 11.5334,
-   "p95_ms": 12.5915,
-   "p99_ms": 17.5674,
-   "max_ms": 17.5674
+   "median_ms": 13.9469,
+   "p95_ms": 14.9035,
+   "p99_ms": 20.2226,
+   "max_ms": 20.2226
   },
   "query_check_local_runtime_cold": {
    "n": 400,
-   "median_ms": 1.1497,
-   "p95_ms": 1.7709,
-   "p99_ms": 2.0782,
-   "max_ms": 2.2551
+   "median_ms": 1.1721,
+   "p95_ms": 1.8421,
+   "p99_ms": 2.135,
+   "max_ms": 2.2889
   },
   "query_check_local_runtime_warm": {
    "n": 400,
-   "median_ms": 0.7637,
-   "p95_ms": 1.3787,
-   "p99_ms": 1.5914,
-   "max_ms": 1.6986
+   "median_ms": 0.7814,
+   "p95_ms": 1.3965,
+   "p99_ms": 1.6861,
+   "max_ms": 2.0517
   },
   "filter_tick_local_runtime_cold": {
    "n": 100,
-   "median_ms": 2.8182,
-   "p95_ms": 5.4539,
-   "p99_ms": 5.8058,
-   "max_ms": 6.4603
+   "median_ms": 2.8557,
+   "p95_ms": 5.736,
+   "p99_ms": 6.2909,
+   "max_ms": 6.5117
   },
   "hot_apply_msl_dynamic_nfz": {
    "n": 100,
-   "median_ms": 7.244,
-   "p95_ms": 7.988,
-   "p99_ms": 9.288,
-   "max_ms": 11.1569
+   "median_ms": 9.4501,
+   "p95_ms": 10.1927,
+   "p99_ms": 13.898,
+   "max_ms": 16.2764
   },
   "hot_apply_plus_first_tick": {
    "n": 100,
-   "median_ms": 8.8342,
-   "p95_ms": 9.729,
-   "p99_ms": 11.2729,
-   "max_ms": 12.9386
+   "median_ms": 11.0278,
+   "p95_ms": 11.805,
+   "p99_ms": 15.5399,
+   "max_ms": 17.8404
   },
   "budgets_ms": {
    "cold_start": 1000.0,
@@ -2199,6 +2212,7 @@
   "untouched_flights_unhindered": true,
   "cold_start_p95_le_1s": true,
   "hot_apply_p99_le_50ms": true,
-  "query_p99_le_5ms": true
+  "query_p99_le_5ms": true,
+  "msl_corridor_query_p99_le_5ms": true
  }
 }

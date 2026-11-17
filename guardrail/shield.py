@@ -1712,7 +1712,8 @@ class Shield:
                  velocity_response: "_response.VelocityResponse | None" = _response.ARDUCOPTER_GUIDED,
                  pipe_clock=None, recovery_law: str = DEFAULT_RECOVERY_LAW,
                  road_map: dict | None = None, ground=None, require_maps: bool = True,
-                 dr_drift_mps: float = DR_DRIFT_MPS, arc_forecast: bool = False):
+                 dr_drift_mps: float = DR_DRIFT_MPS, arc_forecast: bool = False,
+                 up_ref: str | None = None):
         """obstacle_map: None, or {"occ": uint8 NxN (1 = blocked), "res": float,
         "ox": float, "oy": float} — the same occupancy grid the global planner
         uses. A policy YAML cannot carry an 80x80 grid, so obstacle_clearance
@@ -1734,6 +1735,16 @@ class Shield:
         the Shield enforce an MSL band as the AGL band it is over that ground;
         a GridGround (a gridded DEM, since 2026-11-17) converts it at each
         query point over the ground within the DEM's reach (_local_runtime).
+        A GridGround is right only when State.up is the height above the DEM
+        surface under the aircraft, so it is refused unless `up_ref` is
+        "terrain" (the caller declares that; the rails' up is height above
+        home / the EKF origin and must be converted first, terrain.
+        terrain_relative_up), and unless its WGS84 origin is the policy's
+        frame origin (terrain.origin_problem).
+
+        up_ref: what State.up is measured from, declared by the caller; read
+        only with a DEM ground (None is fine for a flat one, every caller
+        before 2026-11-17).
 
         now: a zero-argument callable returning the current datetime, used only
         to evaluate `valid_time` windows. INJECTED rather than called inline so
@@ -1914,7 +1925,14 @@ class Shield:
         self._flown: deque = deque(maxlen=64)
         self._tubes: dict = {}
         # The ground under an MSL rule (X-11, 2026-11-03); None = no MSL rule.
+        if _terrain.is_dem(ground) and up_ref != "terrain":
+            raise ValueError(
+                f"a DEM ground ({ground!r}) converts MSL heights correctly only if "
+                f"State.up is the height above that ground under the aircraft; "
+                f"declare it with up_ref='terrain' (a rail measuring above home "
+                f"converts first: terrain.terrain_relative_up), got up_ref={up_ref!r}")
         self._ground = ground
+        self._up_ref = up_ref
         why = self.unenforceable(policy, ground)
         if why:
             raise ValueError("the Shield does not enforce every rule of "
@@ -2050,6 +2068,12 @@ class Shield:
                 why = _terrain.ground_problem(ground)
                 if why:
                     out.append(f"{c.id}: altitude_ref MSL - {why}")
+        # A DEM is placed in one frame (X-11 review, 2026-11-17): a policy in
+        # another frame - or a hot-apply that would move a derived one - would
+        # read it at the wrong place.
+        why = _terrain.origin_problem(ground, policy.frame_origin)
+        if why:
+            out.append(f"ground: {why}")
         return out
 
     def _field_for(self, c):
@@ -3857,14 +3881,24 @@ class Shield:
         half / cos(pi/64) (16 segments a quadrant) moves every chord outside.
         A segment it does not cover leaves the true tube; one that leaves the
         true tube by less than 0.12 % of the half-width is not seen. Built
-        once per rule object."""
-        key = id(c)
-        hit = self._tubes.get(key)
-        if hit is None or hit[0] is not c:
+        once per rule object, and shared by every copy of a rule with the
+        same id and geometry: the tube does not depend on the altitude band,
+        so an MSL corridor converted at each query point over a DEM (X-11,
+        _localised) reuses its tube instead of re-buffering it per band. The
+        cache is bounded (cleared at 512 geometries)."""
+        hit = self._tubes.get(id(c))
+        if hit is not None and hit[0] is c:
+            return hit[1]
+        gkey = (c.id, float(c.half_width_m), tuple(c.points()))
+        tube = self._tubes.get(gkey)
+        if tube is None:
             tube = LineString(c.points()).buffer(c.half_width_m / math.cos(math.pi / 64.0),
                                                  quad_segs=16)
-            hit = self._tubes[key] = (c, tube)
-        return hit[1]
+            if len(self._tubes) >= 512:
+                self._tubes.clear()
+            self._tubes[gkey] = tube
+        self._tubes[id(c)] = (c, tube)
+        return tube
 
     def _corridor_segment_exit(self, c, poses, alive):
         """The first pair of consecutive forecast poses (the rule in force at

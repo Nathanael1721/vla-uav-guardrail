@@ -29,7 +29,11 @@ WHAT THIS MEASURES
    the true MSL height against the DECLARED MSL rules, every tick
    (`true_p0_ticks`), beside the Shield's own re-check of what it emitted.
    Fail-safe labels: the FSM entering RTL or Land (docs/RUBRIC-failsafe.md
-   section 1), against the label each scenario carries (E1 or N1).
+   section 1), against the label each scenario carries (E5, E1 or N1).
+   CAVEAT: the labels were set after a first run that used other labels,
+   matched to how the library labels its AGL twin altitude-ceiling-hold
+   (E5). The fail-safe figure is therefore not pre-registered and is NOT an
+   independent fail-safe KPI result; the P0 figure (oracle) is.
    Two nulls fly the same episodes: the Shield OFF (the pilot flown raw:
    the oracle must see the violations) and MSL READ AS AGL (the same
    numbers with altitude_ref dropped, what the DSL did before an MSL height
@@ -41,7 +45,15 @@ WHAT THIS MEASURES
    query <= 5 ms (Shield._check at 50 rules at the query point, the local
    runtime built from cold for every sample - the worst case - and warm).
    The 50 rules are experiments/bench_shield_50rules.py's, every banded rule
-   made MSL (heights + 40 m, the ridge's foot).
+   made MSL (heights + 40 m, the ridge's foot). That set has no corridor, so
+   the MSL corridor path (its tube reused across bands, review 2026-11-17)
+   is timed on its own: an MSL corridor + envelope over the ridge, _check
+   at points across many bands, the local runtime built from cold, on a
+   Shield with segment_check=True (the only path that reads the tube).
+
+SCOPE (what this does NOT show): no rail passes a ground yet; the rails'
+State.up is height above home, which a DEM Shield refuses (up_ref); the DEM
+is synthetic; no SITL, hil or PAS flight has carried an MSL rule.
 """
 from __future__ import annotations
 
@@ -152,7 +164,7 @@ def run_episode(dem, name: str, x0: float, arm: str = "on", seconds: float = 40.
         sh = Shield(pol)
     else:
         pol = policy_from_raw(family_policy(action), ground=dem)
-        sh = Shield(pol, ground=dem)
+        sh = Shield(pol, ground=dem, up_ref="terrain")
     x, y, z = x0, y0, z0
     if truth_p0(x, y, z):
         raise ValueError(f"{name} x0={x0}: starts in violation of a declared rule")
@@ -261,7 +273,7 @@ from guardrail.shield import Shield
 g = terrain.GridGround.load(sys.argv[2])
 raw = json.loads(open(sys.argv[3], encoding="utf-8").read())
 pol = policy_from_raw(raw, ground=g)
-sh = Shield(pol, ground=g)
+sh = Shield(pol, ground=g, up_ref="terrain")
 d = sh.filter(State(x=20.0, y=20.0, up=20.0), Action4D(vx=1.0))
 print(json.dumps({"ms": (time.perf_counter() - t0) * 1e3, "rules": len(pol.constraints),
                   "msl": len(sh._rt.msl)}))
@@ -293,12 +305,12 @@ def dsl_kpis(dem, fresh_runs: int, warm_runs: int, n_query: int, n_hot: int,
         t0 = time.perf_counter()
         g = terrain.GridGround.load(dem_file)
         pol = policy_from_raw(json.loads(pol_file.read_text(encoding="utf-8")), ground=g)
-        sh = Shield(pol, ground=g)
+        sh = Shield(pol, ground=g, up_ref="terrain")
         sh.filter(State(x=20.0, y=20.0, up=20.0), Action4D(vx=1.0))
         warm.append((time.perf_counter() - t0) * 1e3)
     # query: _check at the query point, local runtime from cold and warm
     pol = policy_from_raw(raw, ground=dem)
-    sh = Shield(pol, ground=dem)
+    sh = Shield(pol, ground=dem, up_ref="terrain")
     pairs = []
     for scen in ("grid", "near"):
         pairs += bench.samples(scen, n_query // 2, 0)
@@ -325,7 +337,7 @@ def dsl_kpis(dem, fresh_runs: int, warm_runs: int, n_query: int, n_hot: int,
     hot, hot_tick = [], []
     rng = random.Random(0)
     for i in range(n_hot):
-        sh = Shield(policy_from_raw(raw, ground=dem), ground=dem)
+        sh = Shield(policy_from_raw(raw, ground=dem), ground=dem, up_ref="terrain")
         cx, cy = rng.uniform(-150.0, -60.0), rng.uniform(0.0, 200.0)
         zone = DynamicNFZ(id=f"hot-{i}", type="dynamic_nfz", **H, altitude_ref="MSL",
                           vertices=[{"x": cx, "y": cy}, {"x": cx + 10, "y": cy},
@@ -338,8 +350,38 @@ def dsl_kpis(dem, fresh_runs: int, warm_runs: int, n_query: int, n_hot: int,
         t2 = time.perf_counter()
         hot.append((t1 - t0) * 1e3)
         hot_tick.append((t2 - t0) * 1e3)
+    # the MSL corridor path: an MSL corridor across the ridge + an MSL
+    # envelope, _check at points spread over many bands, each from cold
+    cor_raw = {"policy_id": "msl-corridor-bench", "constraints": [
+        {"id": "cor-msl", "type": "corridor", **H, "altitude_ref": "MSL",
+         "centerline": [{"x": -250.0, "y": 20.0}, {"x": 0.0, "y": 40.0},
+                        {"x": 250.0, "y": 20.0}],
+         "width_m": 30.0, "altitude_floor_m": 110.0, "altitude_ceiling_m": 220.0},
+        {"id": "env-msl", "type": "altitude_envelope", **H, "altitude_ref": "MSL",
+         "alt_min_m": 100.0, "alt_max_m": 240.0}]}
+    # segment_check=True: the only path that reads the corridor's tube
+    # (Shield._corridor_segment_exit), so the tube cache is exercised.
+    sh = Shield(policy_from_raw(cor_raw, ground=dem), ground=dem, up_ref="terrain",
+                segment_check=True)
+    rng = random.Random(1)
+    cor_q = []
+    for _ in range(n_query):
+        x = rng.uniform(-240.0, 240.0)
+        y = 20.0 + 20.0 * (1.0 - abs(x) / 250.0) + rng.uniform(-10.0, 10.0)
+        st = State(x=x, y=y, up=170.0 - dem.elevation_at(x, y))
+        a = Action4D(vx=rng.uniform(-3.0, 3.0), vy=rng.uniform(-1.0, 1.0),
+                     vz_up=rng.uniform(-1.0, 1.0))
+        sh.__dict__.pop("_msl_rts", None)
+        dem._cache.clear()
+        t0 = time.perf_counter()
+        with sh._at(st):
+            sh._check(st, a)
+        cor_q.append((time.perf_counter() - t0) * 1e3)
+    n_tubes = len({id(v) for k, v in sh._tubes.items() if isinstance(k, tuple)})
     return {
         "policy": "bench_shield_50rules.fifty_rule_policy, 49 banded rules MSL",
+        "query_check_msl_corridor_local_runtime_cold": _stats(cor_q),
+        "msl_corridor_tubes_buffered": n_tubes,
         "cold_start_fresh_process": _stats(fresh) if fresh else None,
         "cold_start_warm_interpreter": _stats(warm),
         "query_check_local_runtime_cold": _stats(cold_q),
@@ -364,7 +406,21 @@ def verdict(fam: dict, kp: dict) -> dict:
         "cold_start_p95_le_1s": cold <= 1000.0,
         "hot_apply_p99_le_50ms": kp["hot_apply_msl_dynamic_nfz"]["p99_ms"] <= 50.0,
         "query_p99_le_5ms": kp["query_check_local_runtime_cold"]["p99_ms"] <= 5.0,
+        "msl_corridor_query_p99_le_5ms":
+            kp["query_check_msl_corridor_local_runtime_cold"]["p99_ms"] <= 5.0,
     }
+
+
+CAVEATS = {
+    "failsafe_labels": "labels set after a first run that used other labels, matched to "
+                       "the library's altitude-ceiling-hold labelling (E5); the 35/35 "
+                       "fail-safe figure is not pre-registered and is not an independent "
+                       "fail-safe KPI result",
+    "scope": "headless only: no rail passes a ground; a DEM Shield requires "
+             "up_ref='terrain' and the rails' State.up is height above home; the DEM is "
+             "synthetic and metre-framed (origin null); no SITL, hil or PAS flight has "
+             "carried an MSL rule",
+}
 
 
 def main(argv=None) -> int:
@@ -386,7 +442,7 @@ def main(argv=None) -> int:
     fam = family(dem)
     print(json.dumps(fam["summary"], indent=1))
     out = {"command": "python tools/msl_dem_kpi.py " + " ".join(argv or sys.argv[1:]),
-           "dem": dem.record(), "family": fam}
+           "caveats": CAVEATS, "dem": dem.record(), "family": fam}
     if not args.no_kpis:
         import tempfile
         tmp = Path(tempfile.mkdtemp(prefix="msl_dem_"))

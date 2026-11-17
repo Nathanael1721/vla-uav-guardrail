@@ -2140,6 +2140,13 @@ class Policy(BaseModel):
                 why = ground_problem(ground)
                 if why:
                     out.append(f"{c.id}: altitude_ref MSL - {why}")
+        if ground is not None:
+            # A DEM is placed in one frame: refused under a policy whose
+            # frame origin differs (terrain.origin_problem, 2026-11-17).
+            from .terrain import origin_problem
+            why = origin_problem(ground, self.frame_origin)
+            if why:
+                out.append(f"ground: {why}")
         return out
 
     def frame_problem(self) -> str | None:
