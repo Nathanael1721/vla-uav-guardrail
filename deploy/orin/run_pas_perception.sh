@@ -95,6 +95,12 @@
 #              30 m in 330 s. Its forward commands stayed under 0.3 m/s on
 #              simple_flight (CHANGELOG 2026-10-27).
 #   servo      the C2 null: not yet flown through this script.
+#   cognitivedrone, bitvla  (added 2026-11-17) no weights on either host:
+#              CognitiveDrone has published none; BitVLA's are LIBERO arm
+#              fine-tunes (demo/vla_server_foreign.py, COGNITIVEDRONE AND
+#              BITVLA). Server: demo/vla_server_foreign.py serve --model
+#              cognitivedrone|bitvla --weights <folder> --port <VLA_PORT>
+#              --horizon-s 1.0 (refuses until the folder holds the download).
 #   estimator  the C2 estimator null (added 2026-11-17): not yet flown at all;
 #              its law has run only on the desktop's stand-ins
 #              (tests/test_pas_estimator_follow.py).
@@ -111,7 +117,8 @@
 # --scene-mode / --scene-only, --sim-host, --camera), in any abbreviation
 # argparse would take. Environment knobs:
 #   G1_VERDICT  the desktop's demo/out/g1_*/g1_verdict.json, copied here (required)
-#   FAMILY      aiotvla (default), aerialvla, dronecats, racevla, servo or estimator
+#   FAMILY      aiotvla (default), aerialvla, dronecats, racevla, cognitivedrone,
+#               bitvla, servo or estimator
 #               (no VLA: the C2 nulls): above
 #   TAG         the run folder under demo/out/ (default pas_hil_aiot_<date>,
 #               pas_hil_aiot_<stress>_<date> with STRESS; pas_hil_<family>_...
@@ -201,6 +208,15 @@ case "$FAMILY" in
                  --cadence pipelined --allow-unstamped-pipelined
                  --vla-feed "${VLA_FEED:-tick}"
                  --vla-cruise-mps 4.5 --vla-speed-cap-mps 5) ;;
+  cognitivedrone|bitvla)
+    # 2026-11-17 (ARCH-06): RaceVLA's option set - both answer a velocity,
+    # flown as a rate over the server's --horizon-s 1.0. Neither has flown:
+    # no weights on either host yet (header, WHAT EACH FAMILY STILL LACKS).
+    tag_family=$FAMILY
+    family_args=(--vla-front-source vla --vla-step-as-rate 1.0
+                 --cadence pipelined --allow-unstamped-pipelined
+                 --vla-feed "${VLA_FEED:-tick}"
+                 --vla-cruise-mps 4.5 --vla-speed-cap-mps 5) ;;
   servo)
     tag_family=servo
     family_args=() ;;
@@ -208,7 +224,7 @@ case "$FAMILY" in
     tag_family=estimator
     family_args=(--identity --target-estimator --want-width 0.16 --speed-max 5) ;;
   *)
-    die 64 "FAMILY '$FAMILY' is none of aiotvla aerialvla dronecats racevla servo estimator" ;;
+    die 64 "FAMILY '$FAMILY' is none of aiotvla aerialvla dronecats racevla cognitivedrone bitvla servo estimator" ;;
 esac
 TAG="${TAG:-pas_hil_${tag_family}_${STRESS:+${STRESS}_}$(date +%Y%m%d_%H%M%S)}"
 case "$TAG" in

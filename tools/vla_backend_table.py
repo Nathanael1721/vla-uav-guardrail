@@ -654,20 +654,26 @@ BACKENDS = {
         "label": "CognitiveDrone (the grant's action-space reference)",
         "kind": "camera + language VLA (OpenVLA-7B fine-tune, 4-D actions)",
         "inputs": "FPV image + instruction",
-        "weights_repo": [], "weights_root": [], "code": None,
-        "unavailable": ("no checkpoint on this machine. The saved project page "
-                        "(source/pages/cognitivedrone.html) links a dataset "
+        "weights_repo": [], "weights_root": [],
+        "code": "demo/vla_server_foreign.py (family cognitivedrone; adapter only, 2026-11-17)",
+        "unavailable": ("no checkpoint on this machine, and none published: the saved project "
+                        "page (source/pages/cognitivedrone.html) links a dataset "
                         "(huggingface ArtemLykov/cognitiveDrone_dataset) and a data-collector "
-                        "repository, no model weights; the paper is "
-                        "source/papers/2503.02572-CognitiveDrone.pdf"),
+                        "repository, no model weights, and Hugging Face lists no CognitiveDrone "
+                        "model (checked 2026-11-17); the paper is arXiv 2503.01378. The "
+                        "adapter (serve --model cognitivedrone) refuses until weights exist"),
         "c1": "not flown: weights not obtained", "c2": "weights not obtained",
     },
     "bitvla": {
         "label": "BitVLA (named by the grant among the switchable backends)",
         "kind": "quantised / bit-efficient camera + language VLA",
         "inputs": "image + instruction",
-        "weights_repo": [], "weights_root": [], "code": None,
-        "unavailable": ("no checkpoint and no loader in this repository. The grant lists it "
+        "weights_repo": [], "weights_root": [],
+        "code": "demo/vla_server_foreign.py (family bitvla; adapter only, 2026-11-17)",
+        "unavailable": ("no checkpoint on this machine; the published ones are LIBERO arm "
+                        "fine-tunes (hongyuw/ft-bitvla-bitsiglipL-224px-<suite>-bf16, MIT), "
+                        "none for a drone, and the adapter (serve --model bitvla) refuses "
+                        "until one is downloaded. The grant lists it "
                         "with CognitiveDrone, OpenVLA and in-house stubs as backends the "
                         "slot must accept (Architecture constraints p.2-3); the reference "
                         "design names it as a smaller backend to swap in if a 7 B model "
