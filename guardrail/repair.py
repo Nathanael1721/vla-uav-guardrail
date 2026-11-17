@@ -106,7 +106,7 @@ from typing import Any, Protocol, runtime_checkable
 from shapely.geometry import LineString, Polygon
 
 from .frames import to_body
-from .geometry import boundary_depth, enters_interior, ring_contains
+from .geometry import boundary_depth, edge_distance, enters_interior, ring_contains
 from .ir import coarse_ring
 from .models import Action4D, State
 
@@ -512,8 +512,8 @@ class PathRepair:
             return True
         ring = rec.buffered
         for _, p in sh._predict(st, cand):
-            q = Point(p.x, p.y)
-            if ring.contains(q) or ring.exterior.distance(q) < self.CLEARANCE_M - 1e-6:
+            if (ring_contains(ring, p.x, p.y)
+                    or edge_distance(ring, p.x, p.y) < self.CLEARANCE_M - 1e-6):
                 return False
         return True
 

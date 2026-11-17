@@ -759,13 +759,14 @@ def arch_shield() -> Fig:
           step=4, **stage)
     f.name_in("guardrail/fsm.py", '"hard >> soft, P0 > P1 > P2"', "monitor_only")
     f.box(xs[1], yb, w, h, "Repair chain",
-          ["• KinematicClamp, AltitudeClamp,", "  then up to 3 passes: Clearance,",
-           "  Standoff, Corridor, Lateral", "• opt-in: first-feasible, PathRepair"],
+          ["• KinematicClamp, AltitudeClamp,", "  up to 3 passes: Clearance,",
+           "  Standoff, Corridor, Lateral,", "  PathRepair; opt-in: first-feasible"],
           step=5, **stage)
     f.fact("3", "guardrail/repair.py", r"up to 3 passes of\s+Clearance, Standoff, Corridor, Lateral")
     f.name_in("guardrail/repair.py", "KinematicClamp", "AltitudeClamp", "ClearanceProjection",
               "StandoffProjection", "CorridorProjection", "LateralProjection", "PathRepair",
-              '"first_feasible"', "Both new behaviours are off by default")
+              '"first_feasible"', "(default since 2026-11-17) PathRepair joins",
+              "First-feasible stays off by default")
     f.box(xs[2], yb, w, h, "Re-check",
           ["• the repaired action is checked", "  again; still illegal: a recovery",
            "• soft rules given up, lowest first", "• else BRAKE, only where legal"],

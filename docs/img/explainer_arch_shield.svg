@@ -36,9 +36,9 @@
 <rect x="555" y="260" width="490" height="164" rx="12" fill="#EAF6F8" stroke="#249DB2" stroke-width="2.2"/>
 <text x="573" y="302.5" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="25" font-weight="600" fill="#1A1A1A" text-anchor="start">Repair chain</text>
 <text x="573" y="334.5" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="22" font-weight="400" fill="#3F4A54" text-anchor="start">• KinematicClamp, AltitudeClamp,</text>
-<text x="587" y="360.5" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="22" font-weight="400" fill="#3F4A54" text-anchor="start">then up to 3 passes: Clearance,</text>
-<text x="587" y="386.5" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="22" font-weight="400" fill="#3F4A54" text-anchor="start">Standoff, Corridor, Lateral</text>
-<text x="573" y="412.5" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="22" font-weight="400" fill="#3F4A54" text-anchor="start">• opt-in: first-feasible, PathRepair</text>
+<text x="587" y="360.5" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="22" font-weight="400" fill="#3F4A54" text-anchor="start">up to 3 passes: Clearance,</text>
+<text x="587" y="386.5" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="22" font-weight="400" fill="#3F4A54" text-anchor="start">Standoff, Corridor, Lateral,</text>
+<text x="587" y="412.5" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="22" font-weight="400" fill="#3F4A54" text-anchor="start">PathRepair; opt-in: first-feasible</text>
 <circle cx="559" cy="262" r="19" fill="#12545F" stroke="#FFFFFF" stroke-width="2.5"/>
 <text x="559" y="269.5" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="21" font-weight="700" fill="#FFFFFF" text-anchor="middle" class="ordinal">5</text>
 <rect x="1070" y="260" width="490" height="164" rx="12" fill="#EAF6F8" stroke="#249DB2" stroke-width="2.2"/>

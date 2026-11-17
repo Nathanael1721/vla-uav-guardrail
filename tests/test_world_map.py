@@ -430,7 +430,7 @@ def test_the_real_citylife_street_mask_serves_as_a_road_map():
 def test_vla_fly_and_the_pas_rail_pass_the_road_map_to_their_shield():
     vf = (ROOT / "demo" / "vla_fly.py").read_text(encoding="utf-8")
     assert "rmap, road_note = road_map_for(policy, Path(args.citymap).parent)" in vf
-    assert "obstacle_map=smap,\n                         road_map=rmap)" in vf
+    assert "obstacle_map=smap,\n                         road_map=rmap," in vf
     assert 'c.object_class == "buildings" for c in policy.by_type(DistanceEnvelope)' in vf
     pn = (ROOT / "demo" / "pas_ardupilot" / "perception_node.py").read_text(encoding="utf-8")
     assert "rmap, road_note = road_map_for(policy, Path(args.citymap).parent)" in pn
