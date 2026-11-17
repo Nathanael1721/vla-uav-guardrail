@@ -57,6 +57,8 @@
             <topic>/vla/action_4d</topic>
             <topic>/vla/identity</topic>
             <topic>/mavlink_adapter/status</topic>
+            <!-- what the adapter sent, for the delivery monitor (2026-11-17) -->
+            <topic>/mavlink_adapter/sent</topic>
             <topic>/mavros/local_position/pose</topic>
             <topic>/mavros/local_position/velocity_local</topic>
             <topic>/mavros/state</topic>
@@ -127,6 +129,7 @@
           <topics publish="ALLOW">
             <topic>/mavros/setpoint_raw/local</topic>
             <topic>/mavlink_adapter/status</topic>
+            <topic>/mavlink_adapter/sent</topic>
             <topic>/rosout</topic>
             <topic>/parameter_events</topic>
           </topics>
@@ -232,6 +235,7 @@
             <topic>/vla/*</topic>
             <topic>/shield/*</topic>
             <topic>/mavlink_adapter/status</topic>
+            <topic>/mavlink_adapter/sent</topic>
             <topic>/mavros/*</topic>
             <topic>/uas1/*</topic>
             <topic>/camera/*</topic>

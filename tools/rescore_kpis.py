@@ -523,8 +523,11 @@ def rescore(run: Path, by_hash: dict, by_id: dict | None = None) -> dict | None:
     # Today's KPI-grade verdict beside the one the flight wrote, when they
     # differ (module docstring). Added once; a later disagreement is reported.
     if isinstance(stored.get("kpi_grade"), bool) and manifest:
+        from guardrail.delivery import with_stored_delivery
         from guardrail.manifest import is_kpi_grade
-        today, why = is_kpi_grade(manifest, metrics)
+        # With the setpoint delivery record its logs give, for a run flown
+        # before the Shield wrote one (guardrail.delivery.stored_record).
+        today, why = is_kpi_grade(manifest, with_stored_delivery(metrics, run))
         if today != stored["kpi_grade"] and "kpi_grade_rechecked" not in stored:
             added["kpi_grade_rechecked"] = {
                 "kpi_grade": today, "reasons": why,

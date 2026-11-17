@@ -88,6 +88,11 @@ WHAT ELSE GOES THROUGH HERE (the MAVROS-facing side, WP3-09)
     topics.
   * /mavlink_adapter/status (std_msgs/String JSON, latched): every upload and
     mode request result, which the Shield node writes into events.jsonl.
+  * /mavlink_adapter/sent (std_msgs/String JSON): one report per setpoint
+    handed to MAVROS (n_sent, n_in = setpoint callbacks run, t_sent on this
+    host's monotonic clock) and a beat once a second from a timer, so the
+    Shield can compare what it published with what went out (SETPOINT
+    DELIVERY below; guardrail/delivery.py). Since 2026-11-17.
   * <out>/adapter_log.jsonl: every setpoint in, the heading used, the NED
     setpoint and the ENU message out.
 
@@ -104,6 +109,37 @@ the single publisher on /shield/setpoint: a second publisher (a VLA backend
 configured to publish there) would fly unshielded actions, so its arrival
 stops forwarding and is reported (`extra_setpoint_publisher`); ArduPilot then
 stops in GUIDED for want of setpoints, which is the safe side.
+
+SETPOINT DELIVERY (2026-11-17). In hil run ntFIN2_175_dyn-nfz-spawn-ahead
+(12 Nov) this node's setpoint callback did not run for 25.6 s (adapter_log
+.jsonl: 441 sent, a gap from 7.99 s; its shutdown line: 441 sent, 0
+dropped) while the Shield published 245 setpoints and ticked on time. The
+node spins one single-threaded executor (rclpy.spin), and none of its
+callbacks blocks: every service call is call_async, nothing sleeps or spins
+inside a callback; per setpoint it runs a graph query (count_publishers) and
+appends one line to adapter_log.jsonl. When the callback ran again it took
+ten setpoints within 18 ms - the subscription's KEEP_LAST depth - so either
+the executor did not run for 25.6 s or the subscription delivered nothing
+for that long; that run's logs cannot tell which (the beat below can). The
+executor model is unchanged: no cause in this node's code is shown, and a
+threaded executor would change what flies on a guess. What changed is that
+the stall is now seen: every send is reported on /mavlink_adapter/sent and
+a 1 Hz timer beats there, the Shield records any publication no send
+followed for over 0.5 s as a delivery gap and compares its publication
+count with the reports (a shortfall: setpoints lost while other sends
+continued), in metrics.json `setpoint_delivery`, and a run with either is
+not KPI-grade. Beats during a gap: the executor ran and the setpoints did
+not arrive; none: this process was stopped. What is checked is this node's
+publish() to /mavros/setpoint_raw/local, not that MAVROS forwarded it to the
+autopilot (guardrail/delivery.py, WHAT IS CHECKED).
+
+SROS 2: under ROS_SECURITY_STRATEGY=Enforce a keystore whose permissions
+were signed before 2026-11-17 does not grant /mavlink_adapter/sent, so
+creating its publisher here (and the Shield's subscription) fails at node
+construction (rclpy RCLError, docs/DESIGN-sros2.md): both nodes refuse to
+start and nothing flies. Re-sign first (tools/sros2_setup.sh
+--permissions-only, then tools/sros2_check.sh); sitl/run_ros2_demo.sh with
+SROS2=1 checks the enclaves' permissions name the topic before launching.
 
 Run (after `source /opt/ros/jazzy/setup.bash`):
 
@@ -123,6 +159,8 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from guardrail.delivery import (BEAT_PERIOD_S, SENT_QOS_DEPTH,          # noqa: E402
+                                sent_report)
 from guardrail.frames import from_body, to_local_ned                     # noqa: E402
 # time_controls and zone_clearance_m are re-exported: this module's callers
 # and tests read them here, where they lived until 2026-10-12.
@@ -314,6 +352,9 @@ TOPIC_SETPOINT = "/shield/setpoint"
 TOPIC_MODE_REQUEST = "/shield/mode_request"
 TOPIC_FENCES = "/shield/fences"
 TOPIC_STATUS = "/mavlink_adapter/status"
+# What this node actually sent (guardrail/delivery.py): a report per setpoint
+# handed to MAVROS, and a beat once a second, for the Shield's delivery monitor.
+TOPIC_SENT = "/mavlink_adapter/sent"
 TOPIC_RAW_LOCAL = "/mavros/setpoint_raw/local"
 TOPIC_MISSION = "/shield/mission"
 TOPIC_MISSION_UPDATE = "/shield/mission_update"
@@ -853,6 +894,7 @@ if HAVE_ROS:
             self.home = None            # (lat, lon, (north, east))
             self.pending_fences: dict | None = None
             self.n_sent = self.n_dropped = 0
+            self.n_in = 0                # setpoint callbacks run (SETPOINT DELIVERY)
             self.n_foreign_dropped = 0
             self._publishers_seen: int | None = None
             self._log_fh = None
@@ -868,6 +910,10 @@ if HAVE_ROS:
                                      LATCHED)
             self.pub = self.create_publisher(PositionTarget, TOPIC_RAW_LOCAL, 10)
             self.status = self.create_publisher(String, TOPIC_STATUS, LATCHED)
+            # What went out, for the Shield's delivery monitor: a report per
+            # send (_on_setpoint) and a beat from this timer.
+            self.sent_pub = self.create_publisher(String, TOPIC_SENT, SENT_QOS_DEPTH)
+            self.create_timer(BEAT_PERIOD_S, self._beat)
             self.cli_mode = self.create_client(SetMode, "/mavros/set_mode")
             self.cli_push = self.create_client(WaypointPush,
                                                "/mavros/geofence/push")
@@ -912,6 +958,7 @@ if HAVE_ROS:
                 self._push_mission(pend)
 
         def _on_setpoint(self, msg: Float32MultiArray) -> None:
+            self.n_in += 1
             body = list(msg.data)
             # Only the Shield flies: with a second publisher on the topic, a
             # message may be an unshielded action, so nothing is forwarded.
@@ -957,7 +1004,10 @@ if HAVE_ROS:
             pt.yaw_rate = float(f["yaw_rate"])
             self.pub.publish(pt)
             self.n_sent += 1
-            self._log({"t": round(time.monotonic(), 4), "body": body,
+            t_sent = time.monotonic()
+            self.sent_pub.publish(String(data=sent_report(self.n_sent, self.n_in,
+                                                          t_sent)))
+            self._log({"t": round(t_sent, 4), "body": body,
                        "heading_deg": round(self.heading_deg, 3),
                        "ned": [round(v, 4) for v in sp["ned"]],
                        "msg_enu": [round(float(v), 4) for v in f["velocity"]]
@@ -978,6 +1028,12 @@ if HAVE_ROS:
 
         def _status(self, rec: dict) -> None:
             self.status.publish(String(data=json.dumps(rec)))
+
+        def _beat(self) -> None:
+            """The 1 Hz beat on /mavlink_adapter/sent: this executor is running
+            (SETPOINT DELIVERY), with the counters as they stand."""
+            self.sent_pub.publish(String(data=sent_report(
+                self.n_sent, self.n_in, time.monotonic(), beat=True)))
 
         # ---------------- mode requests ---------------- #
 

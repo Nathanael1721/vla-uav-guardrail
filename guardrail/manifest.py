@@ -46,6 +46,8 @@ from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import urlparse
 
+from guardrail.delivery import grade_reasons as delivery_grade_reasons
+
 UNRESOLVED = "unresolved"
 
 # THE GRANT'S THREE TOPOLOGIES, BY THE GRANT'S NAMES (Architecture constraints;
@@ -1485,6 +1487,17 @@ def is_kpi_grade(manifest: dict, metrics: dict,
             f"tracked as functional evidence, never KPI-grade - the lab's choice to "
             f"take KPI-grade runs from hil only (2026-11-17, WP4-04), not the grant's "
             f"wording")
+
+    # Setpoints the Shield published that the MAVLink adapter did not hand to
+    # MAVROS (2026-11-17; guardrail/delivery.py): the run's KPIs are computed
+    # on what the Shield published, so a stall (a gap) or a shortfall would
+    # count commands that never left the rail (hil ntFIN2_175: 245 of them,
+    # graded KPI-grade until this date). The ROS 2 rail's metrics.json
+    # `setpoint_delivery` carries it since 2026-11-17; for a stored run flown
+    # before, the regrading tools fill the key from the run folder's logs
+    # (guardrail.delivery.with_stored_delivery). No other rail has an
+    # adapter, so its verdicts do not move.
+    reasons.extend(delivery_grade_reasons(metrics.get("setpoint_delivery")))
 
     return (not reasons), reasons
 

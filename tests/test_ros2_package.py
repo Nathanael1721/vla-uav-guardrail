@@ -438,6 +438,14 @@ def test_sros2_env_refuses_a_keystore_missing_an_enclave_and_is_inert_when_off()
         for f in ("cert.pem", "key.pem", "permissions.p7s", "governance.p7s",
                   "identity_ca.cert.pem", "permissions_ca.cert.pem"):
             (d / f).write_text("x")
+    # The two delivery-monitor nodes' permissions must grant
+    # /mavlink_adapter/sent (2026-11-17): one by name, one by sros2's
+    # allow-all default.
+    perm = "<topics><topic>{}</topic></topics>"
+    adp = ks / "enclaves" / "guardrail" / "mavlink_adapter" / "permissions.p7s"
+    shd = ks / "enclaves" / "guardrail" / "safety_shield" / "permissions.p7s"
+    adp.write_text(perm.format("rt/mavlink_adapter/sent"))
+    shd.write_text(perm.format("rt/*"))
     show = ('sros2_prepare; rc=$?; echo "rc=$rc"; env | grep "^ROS_SECURITY" | sort; '
             'sros2_prefix A safety_shield; echo "A=${A[*]}"; '
             'sros2_launch_args L; echo "L=${L[*]}"')
@@ -447,6 +455,17 @@ def test_sros2_env_refuses_a_keystore_missing_an_enclave_and_is_inert_when_off()
     assert "ROS_SECURITY_ENABLE=true" in out and "ROS_SECURITY_STRATEGY=Enforce" in out, out
     assert "A=env ROS_SECURITY_ENCLAVE_OVERRIDE=/guardrail/safety_shield" in out, out
     assert "L=enclave_root:=/guardrail" in out, out
+    # A keystore signed before the grant: refused by name, nothing exported
+    # (under Enforce both nodes would die at construction instead).
+    shd.write_text(perm.format("rt/mavlink_adapter/status"))
+    rc, out, err = _sros2_env(show, {"SROS2": "1", "SROS2_KEYSTORE": ks.as_posix()})
+    assert "rc=2" in out and "signed before" in err, (out, err)
+    assert "/guardrail/safety_shield /mavlink_adapter/sent" in err, err
+    assert "--permissions-only" in err, err
+    assert "ROS_SECURITY" not in out.split("A=")[0], f"refused, yet exported: {out}"
+    shd.write_text(perm.format("rt/mavlink_adapter/*"))
+    rc, out, err = _sros2_env(show, {"SROS2": "1", "SROS2_KEYSTORE": ks.as_posix()})
+    assert "rc=0" in out, (out, err)
     (ks / "enclaves" / "guardrail" / "mavros" / "permissions.p7s").unlink()
     rc, out, err = _sros2_env(show, {"SROS2": "1", "SROS2_KEYSTORE": ks.as_posix()})
     assert "rc=2" in out and "REFUSED" in err, (out, err)

@@ -487,6 +487,7 @@ if [ "${BAG:-1}" = "1" ]; then
   nohup "${ENC_BAG[@]}" ros2 bag record -s mcap -o "$OUT/bag" \
     /vla/action_4d /vla/identity /shield/setpoint /shield/intercept \
     /shield/mode_request /shield/fences /mavlink_adapter/status \
+    /mavlink_adapter/sent \
     /mavros/setpoint_raw/local /mavros/setpoint_raw/target_local \
     /mavros/state /mavros/local_position/pose \
     /mavros/extended_state /mavros/statustext/recv \
