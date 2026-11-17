@@ -1,18 +1,27 @@
-"""Q3 replayed for reproducibility: the Shield re-run on the logged raw actions.
+"""Today's Shield re-run, open loop, on the Q3 runs' logged inputs (WP4-11).
 
     python tools/replay_q3.py --root demo/out --out docs/data/replay_q3_20261117
     python tools/replay_q3.py --root demo/out --only ros2_hotapply --json
     python tools/replay_q3.py demo/out/ros2fix2_on_fsm          # one run folder
 
-WHAT THE GRANT ASKS FOR (WP4-11)
+WHAT THE GRANT ASKS FOR (WP4-11), AND WHAT THIS IS
 
 02-implementation/stress-testing.md: "Every episode produces a self-contained
 bundle that can be replayed bit-for-bit", and the Q4 report is to say that the
 Q3 runs (August - October 2026) were "replayed for reproducibility". The
-headless harness re-flies its own episodes (tools/rerun_episode.py) and the
-flown hil episodes are checked against their rosbag2 capture
-(tools/replay_from_bag.py); neither re-runs the Safety Shield of a stored
-SITL / simulator flight. This does, open loop.
+grant's determinism contract (03-simulation/data-flow.md, six fields with
+code_revision first; layer-requirements.md L5, "a single git SHA + seed +
+policy hash") defines reproducibility AT THE REVISION THE RUN FLEW. This tool
+does not do that: it runs the Shield code of the checkout it is run from
+(`code_revision_now` in the summary) on each run's logged inputs. It is a
+regression and coverage check of today's Shield against stored flights, not
+a reproducibility replay in the contract's sense. Every record names the
+revision the run was flown at (`code_revision_flown`) and whether that is a
+clean commit (`flown_revision_clean`): a '-dirty', '-unknown' or
+'unversioned' revision cannot be checked out to replay the run as flown, and
+the contract keeps such a run out of the KPI report. The headless harness
+re-flies its own episodes (tools/rerun_episode.py) and the flown hil episodes
+are checked against their rosbag2 capture (tools/replay_from_bag.py).
 
 WHAT IS REPLAYED
 
@@ -27,8 +36,14 @@ on the state the tick logged, in the tick order of the log:
                  else from its signed replay bundle (<run>.replay.tar.gz);
                  a later generation is installed before the first row that
                  flew it, as the Shield commits a hot-apply (on its own
-                 counted clock, the rails' `shield_t=None`), and its hash must
-                 be the stored generation's;
+                 counted clock, the rails' `shield_t=None`: a new or edited
+                 dynamic_nfz anchored at that time, an expired one's anchor
+                 dropped), and its hash must be the stored generation's; a
+                 generation today's Shield.hot_apply would refuse at that
+                 point (a fence added after the first tick, any change to a
+                 rule class locked at mission start) makes the run
+                 not_replayable, since today's Shield cannot reach the state
+                 the run flew;
   the Shield     guardrail.replay.rail_shield (no FSM inside: every flight
                  rail runs its own), with the forecast metrics.json recorded
                  (`shield_lookahead`: horizon_s, dt_s); a run that ran the
@@ -38,14 +53,18 @@ on the state the tick logged, in the tick order of the log:
   the state      x, y, up, yaw_deg of the row; the position's own doubles
                  from trajectory.json when it has one point per row (the ROS 2
                  rail writes the pose message's doubles there; the flight log
-                 rounds to 1 mm); the measured velocity only on a row that
-                 says the Shield flew on it (`shield_velocity`);
+                 rounds to 1 mm); no measured velocity and no fix flag (a run
+                 whose Shield read either is refused, below);
   the rule clock the reading each point of trajectory.json (or the row)
                  carries, pinned per tick; none (every scheduled rule in
                  force) when the run logged none, as every rail flew until
-                 2026-10-12;
-  the pipe       Shield.note_flown with the row's `flown_action`, where the
-                 rail logged one.
+                 2026-10-12.
+
+The pipe (Shield.note_flown: what the rail SENT each tick, on a real-time
+pipe clock) is NOT replayed: no rail logs the sent action with its pipe time
+per tick. The Shield reads it only for the own-velocity forecast (a row with
+`shield_velocity`) and for dead reckoning while the fix is lost (a row with
+`fix_ok` false); a run with either row is refused.
 
 WHAT IS COMPARED, PER TICK
 
@@ -56,6 +75,10 @@ WHAT IS COMPARED, PER TICK
   repairs      the operator names, in order        (Shield-on arm only)
   touched, braked                                   (Shield-on arm only)
   emitted      the four floats, bit for bit         (Shield-on arm only)
+
+A row that does not log touched or braked cannot be compared on it; such
+ticks are counted per field (`ticks_field_not_logged`) and named in the
+record's limits, never passed silently.
 
 `identical`: every field on every tick, emitted bit for bit. `differs`: the
 first tick and field that do not, with the logged and the replayed value; the
@@ -80,15 +103,25 @@ WHAT MAKES A RUN NOT REPLAYABLE (each is the record's `why`)
   * a subject_standoff rule with a subject on some row, and no record of the
     subject's class the rail gave set_subject;
   * a policy with scheduled rules (valid_time) and no clock reading per tick;
-  * the Shield flown on a measured velocity the log does not hold per tick.
+  * the Shield flown on a measured velocity the log does not hold per tick;
+  * a row where the Shield read the pipe (`shield_velocity`, or `fix_ok`
+    false): the pipe is not logged per tick;
+  * a generation today's Shield.hot_apply would refuse where the run
+    installed it.
 
 WHAT THIS IS NOT. It is open loop: the aircraft's path is the logged one, so
 a tick after a difference is judged where the flown aircraft was, not where
-the replayed Shield would have sent it. It runs TODAY's Shield code: a run
-flown at another revision (the record names both) that differs may differ
-because the code changed, which is what a reproducibility replay is for, not
-a fault of the run. Rail calls between ticks that may touch the Shield's state
-(the hold planner's queries, the FSM's legality checks) are not replayed.
+the replayed Shield would have sent it. It runs TODAY's Shield code, not the
+revision each run was flown at: `identical` means today's Shield decides
+every logged tick as the flight did, and `differs` means it does not, which
+may be a code change since the flight, a fault of the flight, or an input
+the log does not carry; this tool does not tell them apart. Rail calls
+between ticks that may touch the Shield's state (the hold planner's queries,
+the FSM's legality checks) are not replayed. A mode that checks out each
+run's clean code_revision in a git worktree and replays there would be the
+contract's replay; it is not built, and no Q3 run it could have replayed
+has a clean revision (17 Nov 2026: all 18 runs replayed here were flown from
+a '-dirty' or 'unversioned' tree).
 
 Exit code: 0 every replayed run identical, 1 a run differs, 2 no run could be
 replayed or the arguments are wrong.
@@ -100,7 +133,6 @@ import gzip
 import json
 import math
 import os
-import subprocess
 import sys
 import time
 from dataclasses import dataclass, field
@@ -123,6 +155,10 @@ Q3_TO = date(2026, 10, 31)
 SKIP_DIRS = {"bag", "episode.bag2", "vla_frames", "vla_captures", "vla_record", "view",
              "frames", "gate", "_previous", "policy_bundle"}
 MAP_RULES = ("obstacle_clearance", "distance_envelope")
+# What Shield.hot_apply (and the zone edits) may add, remove or change after
+# the first tick; a fence may be added only before it.
+HOT_EVENTS = ("dynamic_nfz", "time_window_switch", "corridor_swap")
+PRE_START_ONLY = ("polygon_fence", "circle_fence")
 SUBJECT_RULES = ("subject_standoff",)
 VEC = ("vx", "vy", "vz_up", "yaw_rate")
 POS_MATCH_M = 6e-4          # a trajectory.json point is the row's when it rounds to it
@@ -331,6 +367,18 @@ def check_world(inp: Inputs) -> None:
             f"the Shield flew on a measured velocity "
             f"({inp.metrics['shield_velocity_source']}) that the log does not hold "
             f"per tick")
+    sv = sum(1 for r in inp.rows if r.get("shield_velocity"))
+    nofix = sum(1 for r in inp.rows if r.get("fix_ok") is False)
+    if sv or nofix:
+        why = []
+        if sv:
+            why.append(f"{sv} row(s) flew the own-velocity forecast (`shield_velocity`)")
+        if nofix:
+            why.append(f"{nofix} row(s) had no valid fix (`fix_ok` false: dead reckoning)")
+        raise NotReplayable(
+            "the pipe the Shield read is not logged per tick: "
+            + " and ".join(why) + "; both read what the rail sent (Shield.note_flown) "
+            "on a real-time pipe clock, which no rail logs")
 
 
 def _clock_readings(inp: Inputs) -> list | None:
@@ -365,16 +413,60 @@ def _positions(inp: Inputs) -> tuple[list, str]:
             "flight_log.jsonl (rounded as logged)")
 
 
+def _same_rule(a, b) -> bool:
+    return a.model_dump(mode="json") == b.model_dump(mode="json")
+
+
+def refused_today(shield, target: Policy) -> list[str]:
+    """What in the step from the Shield's policy to `target` today's
+    Shield.hot_apply (and its zone edits) would refuse at this point of the
+    flight: [] when every difference is an event it accepts. After the first
+    tick it accepts a dynamic_nfz added, edited or expired, and a
+    time_window_switch / corridor_swap added (an earlier unscheduled one on
+    the same target superseded); before it, also a polygon/circle fence
+    added. Anything else is locked at mission start (LockedRuleClass)."""
+    cur = {c.id: c for c in shield.policy.constraints}
+    new = {c.id: c for c in target.constraints}
+    started = bool(shield.mission_started)
+    out = []
+    for i in sorted(new.keys() - cur.keys()):
+        t = new[i].type
+        if t in HOT_EVENTS or (t in PRE_START_ONLY and not started):
+            continue
+        out.append(f"adds {t} {i!r}" + (" after the first tick" if t in PRE_START_ONLY
+                                        else ""))
+    for i in sorted(cur.keys() - new.keys()):
+        if cur[i].type not in HOT_EVENTS:
+            out.append(f"removes {cur[i].type} {i!r}")
+    for i in sorted(cur.keys() & new.keys()):
+        a, b = cur[i], new[i]
+        if a.type == b.type == "dynamic_nfz" or _same_rule(a, b):
+            continue
+        out.append(f"changes {b.type} {i!r}")
+    return out
+
+
 def install(shield, target: Policy) -> None:
     """Make `target` the Shield's policy the way a hot-apply commits one: the
-    rules replaced in place, a zone new to the policy anchored on the Shield's
-    counted clock (the rails apply events with shield_t=None). Its hash must
-    then be the stored generation's."""
-    anchors = dict(shield._anchors)
-    old = {c.id for c in shield.policy.constraints}
+    rules replaced in place; a dynamic_nfz that is new, or whose definition
+    changed (an edit: Shield._edit_zone re-anchors the zone at the event
+    time), anchored on the Shield's counted clock (the rails apply events
+    with shield_t=None); the anchor of a zone that is gone dropped (expire).
+    Refused (NotReplayable) when today's hot_apply would not take this step.
+    Its hash must then be the stored generation's."""
+    bad = refused_today(shield, target)
+    if bad:
+        raise NotReplayable(
+            f"generation {target.generation} " + "; ".join(bad) + ", which today's "
+            f"Shield.hot_apply refuses at that point of the flight (LockedRuleClass: "
+            f"the class is locked at mission start), so today's Shield cannot reach "
+            f"the state the run flew")
+    cur = {c.id: c for c in shield.policy.constraints}
+    keep = {c.id for c in target.constraints}
+    anchors = {k: v for k, v in shield._anchors.items() if k in keep}
     te = shield._event_time(None)
     for c in target.constraints:
-        if c.id not in old and c.type == "dynamic_nfz":
+        if c.type == "dynamic_nfz" and (c.id not in cur or not _same_rule(cur[c.id], c)):
             anchors[c.id] = te
     shield.policy.generation = target.generation - 1     # _commit adds one
     shield._commit(list(target.constraints), "replay_generation", "-", "-", None, anchors)
@@ -397,8 +489,10 @@ def _vec(d: Any) -> list | None:
         return None
 
 
-def compare(row: dict, dec, shield_on: bool) -> list[tuple[str, Any, Any]]:
-    """The fields of one tick that differ: (field, logged, replayed)."""
+def compare(row: dict, dec, shield_on: bool,
+            not_logged: dict | None = None) -> list[tuple[str, Any, Any]]:
+    """The fields of one tick that differ: (field, logged, replayed). A field
+    the row does not log (touched, braked) is counted in `not_logged`."""
     out = []
     got_raw = [float(getattr(dec.raw, k)) for k in VEC]
     if _vec(row.get("raw")) != got_raw:
@@ -413,7 +507,10 @@ def compare(row: dict, dec, shield_on: bool) -> list[tuple[str, Any, Any]]:
         if ops != logged:
             out.append(("repairs", logged, ops))
         for name in ("touched", "braked"):
-            if name in row and bool(row[name]) != bool(getattr(dec, name)):
+            if name not in row:
+                if not_logged is not None:
+                    not_logged[name] = not_logged.get(name, 0) + 1
+            elif bool(row[name]) != bool(getattr(dec, name)):
                 out.append((name, row[name], bool(getattr(dec, name))))
         em = [float(getattr(dec.emitted, k)) for k in VEC]
         if _vec(row.get("emitted")) != em:
@@ -422,12 +519,20 @@ def compare(row: dict, dec, shield_on: bool) -> list[tuple[str, Any, Any]]:
 
 
 def _code_revision_now() -> str | None:
+    """The revision of the code this replay runs, as a run's manifest records
+    one: '-dirty' when the tree had uncommitted changes or untracked files
+    (the tool itself uncommitted, for one), '-unknown' when git could not say."""
     try:
-        r = subprocess.run(["git", "-C", str(ROOT), "rev-parse", "--short=12", "HEAD"],
-                           capture_output=True, text=True, timeout=10)
-        return r.stdout.strip() or None
-    except (OSError, subprocess.SubprocessError):
+        from guardrail.manifest import code_revision
+        return code_revision(ROOT)
+    except Exception:                                            # noqa: BLE001
         return None
+
+
+def revision_clean(rev: Any) -> bool:
+    """A code_revision a checkout reproduces: a commit, no dirty/unknown flag."""
+    return (isinstance(rev, str) and bool(rev) and rev != "unversioned"
+            and not rev.endswith(("-dirty", "-unknown")) and "unresolved" not in rev)
 
 
 def replay_run(run: Path, *, root: Path | None = None) -> dict:
@@ -443,6 +548,7 @@ def replay_run(run: Path, *, root: Path | None = None) -> dict:
     try:
         inp = load_inputs(run)
         rec["code_revision_flown"] = inp.manifest.get("code_revision")
+        rec["flown_revision_clean"] = revision_clean(rec["code_revision_flown"])
         cfg = shield_config(inp.metrics)
         check_world(inp)
         gens = [row_generation(r, inp.policies) for r in inp.rows]
@@ -467,9 +573,10 @@ def replay_run(run: Path, *, root: Path | None = None) -> dict:
         limits.append("positions are the flight log's, rounded to 1 mm (no "
                       "trajectory.json with one point per row): a repair's size can "
                       "differ in its last digits for that alone")
-    if any(r.get("shield_velocity") for r in inp.rows):
-        limits.append("the measured velocity is the row's `state_v`, rounded to "
-                      "1 mm/s as logged")
+    if not revision_clean(inp.manifest.get("code_revision")):
+        limits.append(f"flown at {inp.manifest.get('code_revision')!r}: not a clean "
+                      f"commit, so the run cannot be replayed at the code it flew; "
+                      f"this is today's Shield on its inputs")
     pin: list = [None]
     gen0 = gens[0]
     try:
@@ -487,6 +594,7 @@ def replay_run(run: Path, *, root: Path | None = None) -> dict:
     first = first_decision = None
     touched = repaired = 0
     counts: dict[str, int] = {}
+    not_logged: dict[str, int] = {}
     decisions_identical = True
     worst = 0.0
     t0 = time.perf_counter()
@@ -505,12 +613,12 @@ def replay_run(run: Path, *, root: Path | None = None) -> dict:
             current = gens[i]
         if clocks:
             pin[0] = clocks[i]
-        v = row.get("state_v") if row.get("shield_velocity") else None
+        # No velocity, no fix flag: check_world refused every run whose
+        # Shield read either (and with them the pipe, which is not logged).
         st = State(x=pos[i][0], y=pos[i][1], up=pos[i][2],
-                   yaw_deg=float(row.get("yaw_deg") or 0.0),
-                   velocity=tuple(float(c) for c in v) if v else None)
+                   yaw_deg=float(row.get("yaw_deg") or 0.0))
         dec = shield.filter(st, Action4D(**{k: float(row["raw"][k]) for k in VEC}))
-        diffs = compare(row, dec, shield_on)
+        diffs = compare(row, dec, shield_on, not_logged)
         for f_, logged, got in diffs:
             counts[f_] = counts.get(f_, 0) + 1
             if f_ != "emitted":
@@ -527,14 +635,15 @@ def replay_run(run: Path, *, root: Path | None = None) -> dict:
                 first_decision = here
         touched += bool(row.get("touched"))
         repaired += bool(row.get("repairs"))
-        fa = row.get("flown_action")
-        if "flown_action" in row:
-            shield.note_flown(None if fa is None else Action4D(**fa))
+    if not_logged:
+        limits.append("not compared, the row does not log it: " + ", ".join(
+            f"{k} on {n} tick(s)" for k, n in sorted(not_logged.items())))
     rec.update({
         "verdict": "differs" if first else "identical",
         "first_difference": first,
         "ticks": len(inp.rows),
         "ticks_differing_by_field": counts,
+        "ticks_field_not_logged": not_logged,
         "decisions_identical": decisions_identical,
         "first_decision_difference": first_decision,
         # What the run had for the Shield to do: an identical run whose log
@@ -550,6 +659,7 @@ def replay_run(run: Path, *, root: Path | None = None) -> dict:
         "state_source": pos_source,
         "sources": inp.sources,
         "code_revision_flown": inp.manifest.get("code_revision"),
+        "flown_revision_clean": revision_clean(inp.manifest.get("code_revision")),
         "replay_s": round(time.perf_counter() - t0, 2),
         "limits": limits,
     })
@@ -571,18 +681,24 @@ def summarise(records: list[dict], *, command: str, seconds: float, window: tupl
     replayed = [r for r in records if r["verdict"] in ("identical", "differs")]
     return {
         "command": command, "seconds": round(seconds, 1),
+        "what": ("today's Shield (code_revision_now) re-run open loop on each run's "
+                 "logged inputs: a regression check, not a replay at the revision "
+                 "each run was flown at"),
         "window": {"from": window[0].isoformat(), "to": window[1].isoformat(),
                    "by": "manifest.json modification date (local)"},
         "code_revision_now": code_now,
         "runs_in_window": scanned,
         "verdicts": by,
+        "replayed_flown_at_a_clean_revision": sum(
+            1 for r in replayed if r.get("flown_revision_clean")),
         "decisions_identical_on_replayed": sum(1 for r in replayed if r["decisions_identical"]),
         "not_replayable_by_reason": dict(sorted(reasons.items(), key=lambda kv: -kv[1])),
         "replayed": [{k: r.get(k) for k in (
             "run", "manifest_date", "verdict", "ticks", "logged_touched_ticks",
             "logged_repaired_ticks", "decisions_identical", "emitted_max_abs_diff",
             "first_difference", "first_decision_difference", "ticks_differing_by_field",
-            "generations", "arm", "state_source", "code_revision_flown")}
+            "ticks_field_not_logged", "generations", "arm", "state_source",
+            "code_revision_flown", "flown_revision_clean")}
             for r in replayed],
     }
 
@@ -592,6 +708,7 @@ def _reason_key(why: str) -> str:
     for stem in ("a headless-kinematic episode", "no flight log", "no policy IR stored",
                  "the Shield's forecast is not recorded", "the policy has",
                  "a subject_standoff rule", "the Shield flew on a measured velocity",
+                 "the pipe the Shield read is not logged per tick",
                  "the stored policy generations", "today's Shield refuses"):
         if why.startswith(stem):
             if stem == "the policy has":
@@ -599,6 +716,8 @@ def _reason_key(why: str) -> str:
                         if "scheduled" in why else
                         "a map rule, and the map flown is not recorded")
             return stem
+    if why.startswith("generation ") and "today's Shield.hot_apply refuses" in why:
+        return "a generation today's Shield.hot_apply refuses where the run installed it"
     if why.startswith("tick ") and "generation" in why:
         return "a generation's policy is not stored"
     if why.startswith("tick "):
