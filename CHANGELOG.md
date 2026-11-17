@@ -16,6 +16,82 @@ shipped change and recorded as one.
 
 ## [Unreleased]
 
+### 2026-11-17 (wave 3 and the FC bench) — gate G3 judged on the AGX Orin, PathRepair in the default chain, MSL over a DEM, one geometry library, CognitiveDrone/BitVLA adapters, an AP_DDS path, the report's dated rows, and the real flight controller on the bench
+
+#### Added
+- **Gate G3 judged from the stored hil flights** (ARCH-03 → DONE;
+  tools/g3_gate.py, docs/data/g3_gate_20261117/).
+  - **Passes:** AIoT-VLA v10b, with its server on the AGX Orin, on three C2
+    hil flights:
+    - round trip p95 84.7 / 84.2 / 84.0 ms;
+    - 13.15-13.22 decisions/s while asked;
+    - 0 failed requests.
+  - **Fail:** the 7B backends that were measured. OpenVLA-7B bf16 is 969 ms
+    p95 on the AGX Orin.
+  - **Not measured:** int8 7B on the Orin.
+  - The rate needs the stream feed with a 0.05 s capture.
+- **PathRepair in the default repair chain** (WP3-06; guardrail/repair.py;
+  docs/data/pathrepair_default_20261117/).
+  - **Order:** the grant's, AltitudeClamp → LateralProjection → PathRepair.
+  - **Magnitude:** on theta's depth basis.
+  - **Where it acts:** in chain mode it detours round declared stand-off
+    rings; boundary and zone detours are opt-in.
+  - **Headless, before vs after** (smoke, library, nightly seed 1001):
+    - P0 escapes 0;
+    - fail-safe 63/63, 179/179 and 247/247, unchanged;
+    - mission success unchanged.
+  - **Flown behaviour changes:** the ROS 2 node takes `--path-repair`, on by
+    default, so the next hil campaign flies it. The follow and perception
+    rails keep it off.
+- **MSL over a gridded DEM** (X-11; guardrail/terrain.py GridGround;
+  tools/msl_dem_kpi.py, docs/data/msl_dem_kpi.json).
+  - **Shield and CSP:** the Shield converts an MSL rule at the query point,
+    and the CSP compiles MSL over the mission's ground instead of refusing
+    it.
+  - **Headless family:** 0 P0 true-escape ticks of 4,025 requested.
+  - **50-rule MSL policy:**
+    - cold start p95 509 ms;
+    - hot-apply p99 13.9 ms;
+    - query p99 2.14 ms.
+  - **Opt-in:** no rail passes a ground yet.
+- **One geometry library for the rule tests** (WP3-22, X-13;
+  tests/test_shieldcore_onepath.py 17/17).
+  - Every shapely, ray-cast and segment-distance rule test calls
+    guardrail/{geometry,planar,shield,ir}.py.
+  - Four clearance measures outside it are named in the test.
+  - FenceGuard can read the Shield's distance field, opt-in and unflown
+    (`--guard-field shield`). Open loop over stored AGX follows, its decision
+    differs on 1.12 % of ticks.
+- **CognitiveDrone and BitVLA adapters** (ARCH-06;
+  demo/vla_server_foreign.py, `FAMILY=cognitivedrone|bitvla`).
+  - Without weights, the server refuses to start.
+  - **4-D conformance:** shown on scripted outputs only, in
+    tests/test_vla_backends_cd_bitvla.py.
+  - **Weights:**
+    - CognitiveDrone has published none.
+    - BitVLA has only robot-arm checkpoints, not downloaded.
+- **An opt-in AP_DDS path** (ARCH-08 → PARTIAL; sitl/ap_dds/,
+  sitl/ap_dds_adapter_node.py, docs/RUNBOOK-ap-dds.md). Not yet run on
+  SITL.
+- **The real flight controller on the bench** (WP3-07, WP3-10, ARCH-14
+  evidence; docs/data/fc_bench_20261117/).
+  - Setup: CUAV V5 Nano, ArduCopter 4.7.1, over USB, never armed.
+  - **GCS backstop procedure:** fence parameters set and read back, and the
+    keep-out zone uploaded as 4 items and read back matching.
+  - **Mode requests:** GUIDED, BRAKE, LOITER, RTL, LAND and STABILIZE, each
+    accepted.
+  - **Restore:** parameters, fence and mission restored.
+
+#### Changed
+- **Final report and outline (WP1-21, WP3-01, ARCH-16, ARCH-17, ARCH-23,
+  ARCH-24).**
+  - These dated deliverables are reported on what was delivered and where
+    it is.
+  - The team is stated as in the grant: 1 PI + 4 Master students, one team.
+  - ARCH-15 stays DRIFT on its transport.
+  - tests/test_final_report_counts.py recounts both appendices.
+- **Appendix A: 105 DONE, 30 PARTIAL, 1 DRIFT, 0 MISSING.**
+
 ### 2026-11-17 (pab2 and twelve branches) — the prefix A/B re-flown on hil after the path-test fix; replay, frames, ingest, null, envelopes, rails and sweeps made ready for their flights
 
 #### Added

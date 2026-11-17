@@ -1,0 +1,207 @@
+{
+ "role": "gcs",
+ "tool": "sitl/gcs_backstop.py",
+ "pid": 27160,
+ "link": "COM8",
+ "gcs_sysid": 255,
+ "gcs_compid": 190,
+ "router_endpoint": "USB (CUAV V5 Nano, bench)",
+ "t_start": "2026-11-17T20:08:19+0800",
+ "ok": true,
+ "bundle": {
+  "path": "bundles/fase3-sim-demo-v0.1.4.tar.gz",
+  "policy_id": "fase3-sim-demo",
+  "version": "0.1.4",
+  "policy_hash": "sha256:b665adbaac29186240d5a74a8fa36a94b69adae2db6035ca69d45c8e93e7f358",
+  "signature": "verified"
+ },
+ "fence_file": {
+  "path": "sitl\\fence\\guardrail_fence.parm",
+  "values": {
+   "FENCE_TYPE": 5.0,
+   "FENCE_ACTION": 1.0,
+   "FENCE_ALT_MAX": 30.0,
+   "FENCE_MARGIN": 2.0,
+   "AVOID_ENABLE": 0.0,
+   "FENCE_ENABLE": 1.0
+  }
+ },
+ "fence_alt_plan": {
+  "ok": true,
+  "raise_to": null,
+  "why": null,
+  "policy_ceiling_m": 20.0,
+  "policy_ceiling_source": "altitude_envelope",
+  "file_value": 30.0
+ },
+ "autopilot": {
+  "sysid": 1,
+  "compid": 1,
+  "mav_type": 2,
+  "autopilot": 3,
+  "mavlink_version": 3,
+  "system_status": 3
+ },
+ "params": {
+  "FENCE_TYPE": {
+   "before": 7.0,
+   "set": 5.0,
+   "echo": 5.0,
+   "read_back": 5.0,
+   "ok": true,
+   "grant_named": true
+  },
+  "FENCE_ACTION": {
+   "before": 1.0,
+   "set": 1.0,
+   "echo": 1.0,
+   "read_back": 1.0,
+   "ok": true,
+   "grant_named": true
+  },
+  "FENCE_ALT_MAX": {
+   "before": 100.0,
+   "set": 30.0,
+   "echo": 30.0,
+   "read_back": 30.0,
+   "ok": true,
+   "grant_named": false
+  },
+  "FENCE_MARGIN": {
+   "before": 2.0,
+   "set": 2.0,
+   "echo": 2.0,
+   "read_back": 2.0,
+   "ok": true,
+   "grant_named": false
+  },
+  "AVOID_ENABLE": {
+   "before": 3.0,
+   "set": 0.0,
+   "echo": 0.0,
+   "read_back": 0.0,
+   "ok": true,
+   "grant_named": false
+  },
+  "FENCE_ENABLE": {
+   "before": 0.0,
+   "set": 1.0,
+   "echo": 1.0,
+   "read_back": 1.0,
+   "ok": true,
+   "grant_named": true
+  }
+ },
+ "home": {
+  "lat": -35.363261,
+  "lon": 149.16523,
+  "alt_m": 584.0,
+  "local_ne": [
+   0.0,
+   0.0
+  ]
+ },
+ "fence": {
+  "origin_offset_m": [
+   0.0,
+   0.0
+  ],
+  "zones": [
+   "nfz-square"
+  ],
+  "skipped": [],
+  "items_sent": 4,
+  "items": [
+   {
+    "seq": 0,
+    "frame": 3,
+    "command": 5002,
+    "param1": 4.0,
+    "x": -353631981,
+    "y": 1491653071,
+    "z": 0.0,
+    "id": "nfz-square"
+   },
+   {
+    "seq": 1,
+    "frame": 3,
+    "command": 5002,
+    "param1": 4.0,
+    "x": -353630544,
+    "y": 1491653071,
+    "z": 0.0,
+    "id": "nfz-square"
+   },
+   {
+    "seq": 2,
+    "frame": 3,
+    "command": 5002,
+    "param1": 4.0,
+    "x": -353630544,
+    "y": 1491654834,
+    "z": 0.0,
+    "id": "nfz-square"
+   },
+   {
+    "seq": 3,
+    "frame": 3,
+    "command": 5002,
+    "param1": 4.0,
+    "x": -353631981,
+    "y": 1491654834,
+    "z": 0.0,
+    "id": "nfz-square"
+   }
+  ],
+  "upload": {
+   "ack": 0,
+   "accepted": true,
+   "items_requested": 4,
+   "request_kind": [
+    "MISSION_REQUEST"
+   ]
+  },
+  "items_read_back": 4,
+  "read_back": [
+   {
+    "seq": 0,
+    "frame": 0,
+    "command": 5002,
+    "param1": 4.0,
+    "x": -353631981,
+    "y": 1491653071,
+    "z": 0.0
+   },
+   {
+    "seq": 1,
+    "frame": 0,
+    "command": 5002,
+    "param1": 4.0,
+    "x": -353630544,
+    "y": 1491653071,
+    "z": 0.0
+   },
+   {
+    "seq": 2,
+    "frame": 0,
+    "command": 5002,
+    "param1": 4.0,
+    "x": -353630544,
+    "y": 1491654834,
+    "z": 0.0
+   },
+   {
+    "seq": 3,
+    "frame": 0,
+    "command": 5002,
+    "param1": 4.0,
+    "x": -353631981,
+    "y": 1491654834,
+    "z": 0.0
+   }
+  ],
+  "match": true,
+  "problems": []
+ },
+ "t_end": "2026-11-17T20:08:24+0800"
+}

@@ -1,0 +1,46 @@
+{
+ "date": "2026-11-17",
+ "fc": "CUAV V5 Nano (fmuv5), ArduCopter 4.7.1, on the desk over USB (COM8), disarmed, no GPS fix",
+ "gcs_backstop": "sitl/gcs_backstop.py procedure on the FC: FENCE_* set and read back, nfz-square uploaded as 4 exclusion items and read back, match true (gcs_backstop.json)",
+ "origin_home": "EKF origin and home set to the bundle's frame origin (-35.363261, 149.16523) by SET_GPS_GLOBAL_ORIGIN + DO_SET_HOME (ack 0); cleared by reboot",
+ "modes_part2_observed": {
+  "BRAKE": {
+   "ack": 0,
+   "mode_after": 17
+  },
+  "LOITER": {
+   "ack": 0,
+   "mode_after": 5
+  },
+  "RTL": {
+   "ack": 0,
+   "mode_after": 6
+  },
+  "LAND": {
+   "ack": 0,
+   "mode_after": 9
+  },
+  "STABILIZE": {
+   "ack": 0,
+   "mode_after": 0
+  }
+ },
+ "modes_recheck": {
+  "GUIDED": {
+   "custom_mode": 4,
+   "ack": 0,
+   "mode_after": 4,
+   "statustext": [],
+   "armed": false
+  },
+  "STABILIZE": {
+   "custom_mode": 0,
+   "ack": 0,
+   "mode_after": 0,
+   "statustext": [],
+   "armed": false
+  }
+ },
+ "restore": "changed params restored from params_before.param, fence cleared (0 items), mission cleared (MIS_TOTAL 0), FC rebooted; fc_verify.json lists the remaining differences: boot-time gyro/baro calibration, STAT_BOOTCNT, and the MAV1_* stream rates (4 in the backup, 0 after reboot)",
+ "never_armed": true
+}
