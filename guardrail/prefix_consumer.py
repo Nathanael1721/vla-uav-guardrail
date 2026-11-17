@@ -58,6 +58,38 @@ geometry is written here, but the turn reads the Shield's geometry, so the
 action-set adapter's ids and ranges alone would not steer this pilot: that
 is part of why its on / off delta holds by construction.
 
+THE CORRIDOR MARGIN (since 2026-11-17). On a rail the consumer decides on
+the pose it last received, and the Shield judges that action from the pose
+of its own tick, which is newer: the aircraft has flown on. The fan's
+nearest admissible heading is by construction the one whose path grazes the
+wall, so the action could already leave the tube from the Shield's pose.
+On a straight leg CorridorReturn repairs that (a Brake on G1). Where the
+exit is through the round cap at the corridor's END, it cannot: the
+aircraft's radial rate toward the nearest centerline point (the end vertex)
+is still inward, so the operator leaves the action unchanged, and the Shield
+brakes on X1, "no operator converged". The hil prefix A/B pab2 (2026-11-17)
+did this on 34 ticks of its 4 corridor-drift-out prefix-on flights, every
+one an exit through the end cap 0.005 to 0.30 m deep at t+5 s, and
+pab2_011 ended in RTL (N-in-T in Loiter); the logged actions are
+reproduced from the pose of the same 0.1 s tick or the one before
+(docs/data/kpi_prefix_ab_20261117/corridor_finding.md). So a path that
+starts inside the tube must also stay the margin (corridor_margin_m)
+inside its wall: then the same commanded straight path, from any pose up to
+that far away, stays inside the tube. That is geometry alone: the Shield
+also forecasts from the aircraft's measured velocity (its own-velocity
+branch), which this does not cover. A path that starts in the margin band
+(inside the tube, within the margin of the wall) must end back inside the
+margin. The margin also closes a smaller gap: the wall test reads the
+Shield's own tube, which CONTAINS the true one (20.024 m for a 20 m
+half-width - the right side for the Shield's exit test, the wrong one for
+admissibility), and pab2_010 flew a corner pass 20.021 m out that the
+Shield's distance check flagged (X1, "repair over theta"). Both branches
+close it: from inside the margin the path stays in the inner tube, and from
+the band it must stay in the true tube as well (buffered by the plain
+half-width, whose chords cut inside the circle), so a band start at a
+dog-leg's inner corner cannot pass the corner 20.0-20.024 m out either. The
+Shield is not changed by this.
+
 Without a CSP (`csp=None`, the A/B's prefix-off arm) the law's action is
 returned untouched: the two arms are the same pilot, with and without its
 Prefix.
@@ -116,9 +148,23 @@ FAN_DEG = tuple(FAN_STEP_DEG * k for k in range(1, 13))
 HORIZON_STEP_S = 0.5
 # Zones and corridors are tested along the whole straight path to the
 # lookahead as well (module docstring): the run's consumer record says which
-# test it flew ("segment" since 2026-11-16; a record without the key is the
-# 0.5 s samples alone).
-CORRIDOR_PATH_TEST = "segment"
+# test it flew ("segment_margin" since 2026-11-17: the path also keeps
+# CORRIDOR_MARGIN_M inside a corridor's wall; "segment" 2026-11-16, the wall
+# itself; a record without the key is the 0.5 s samples alone).
+CORRIDOR_PATH_TEST = "segment_margin"
+# How far inside a corridor's wall a path from inside the tube must stay
+# (module docstring, THE CORRIDOR MARGIN). The Shield judges the action from
+# a pose newer than the one the consumer decided on; a path that keeps this
+# distance from the wall stays inside the tube from any pose up to this far
+# away. It is the larger of CORRIDOR_MARGIN_M and the CSP's horizontal speed
+# cap times CORRIDOR_LAG_BUDGET_S (corridor_margin_m), so a faster cell keeps
+# the same lag cover; the consumer record carries the value flown
+# (`corridor_margin_m`). 1.0 m is the 4 m/s cap of the cells flown for a
+# quarter second (the hil prefix A/B pab2 exceeded the wall within one 0.1 s
+# tick; corridor_finding.md's headless lag sweep repaired nothing up to
+# 0.2 s of lag and repaired at 0.3 s).
+CORRIDOR_MARGIN_M = 1.0
+CORRIDOR_LAG_BUDGET_S = 0.25
 # The file the pilot's node writes its CSP to, under <run dir>/PREFIX_DIR/:
 # apart from the Shield node's own csp_g<N>.json in the run directory (the
 # episode record's, compiled at the Shield's clock with the spatial filter).
@@ -231,6 +277,18 @@ def csp_record(csp: CSP | None) -> dict[str, Any]:
             "csp_content_hash": csp_content_hash(csp)}
 
 
+def corridor_margin_m(csp: CSP | None) -> float | None:
+    """The corridor margin a consumer of `csp` keeps (module docstring, THE
+    CORRIDOR MARGIN): CORRIDOR_MARGIN_M, or the CSP's horizontal speed cap
+    times CORRIDOR_LAG_BUDGET_S where that is larger. None for no CSP."""
+    if csp is None:
+        return None
+    cap = csp.allowed_action_set.horizontal_speed_max_mps
+    if cap is None or not math.isfinite(float(cap)):
+        return float(CORRIDOR_MARGIN_M)
+    return max(float(CORRIDOR_MARGIN_M), float(cap) * CORRIDOR_LAG_BUDGET_S)
+
+
 def consumer_record(arm: str, csp: CSP | None, wraps: str | None = None) -> dict[str, Any]:
     """What a prefix arm's pilot is, as the harness's arm record and the
     node's /vla/identity both write it: this module's id and adapter, the arm
@@ -255,6 +313,7 @@ def consumer_record(arm: str, csp: CSP | None, wraps: str | None = None) -> dict
             "wraps_model_hash": model_hash(wraps) if wraps else None,
             "fan_deg": list(FAN_DEG), "horizon_step_s": HORIZON_STEP_S,
             "corridor_path_test": CORRIDOR_PATH_TEST,
+            "corridor_margin_m": corridor_margin_m(csp),
             **csp_record(csp)}
 
 
@@ -327,15 +386,29 @@ class PrefixConsumer:
             n = max(1, int(math.ceil(look / HORIZON_STEP_S - 1e-9)))
             self._horizons = tuple(look * (k + 1) / n for k in range(n))
             by_id = {c.id: c for c in policy.constraints}
+            margin = corridor_margin_m(csp)
             tubes = []
             for cid in csp.forbidden_action_set.no_translate_out_of_corridors:
                 c = by_id[cid]
                 # The Shield's tube (Shield._corridor_tube), which contains
                 # every point its distance check accepts.
-                tube = LineString(c.points()).buffer(
-                    c.half_width_m / math.cos(math.pi / 64.0), quad_segs=16)
+                line = LineString(c.points())
+                tube = line.buffer(c.half_width_m / math.cos(math.pi / 64.0), quad_segs=16)
                 shapely.prepare(tube)
-                tubes.append((cid, tube))
+                # The margin's inner tube and the true tube: buffered by the
+                # plain distance, so their chords cut INSIDE the circle and
+                # every point of the inner one is at most half - margin from
+                # the centerline, of the true one at most half (module
+                # docstring, THE CORRIDOR MARGIN). Both None for a tube no
+                # wider than twice the margin: the Shield's tube alone is
+                # tested there (the "segment" test as pab2 flew it).
+                inner = true = None
+                if c.half_width_m - margin > 0.0:
+                    inner = line.buffer(c.half_width_m - margin, quad_segs=16)
+                    true = line.buffer(c.half_width_m, quad_segs=16)
+                    shapely.prepare(inner)
+                    shapely.prepare(true)
+                tubes.append((cid, tube, inner, true))
             self._tubes = tuple(tubes)
             rings = {r.rule.id: r.buffered for r in self._ir.fences}
             zones = []
@@ -420,8 +493,28 @@ class PrefixConsumer:
         out = [f"polygon:{fid}" for fid, ring, floor, ceil in self._zones
                if lo <= ceil and hi >= floor
                and not ring.covers(start) and path.intersects(ring)]
-        out += [f"corridor:{cid}" for cid, tube in self._tubes
-                if tube.covers(start) and not tube.covers(path)]
+        for cid, tube, inner, true in self._tubes:
+            if not tube.covers(start):
+                continue                    # outside: the Shield's to recover
+            if not tube.covers(path):
+                out.append(f"corridor:{cid}")
+            elif inner is None:
+                continue
+            elif inner.covers(start):
+                # Inside the margin: the path keeps it.
+                if not inner.covers(path):
+                    out.append(f"corridor:{cid}")
+            elif not inner.covers(Point(x1, y1)):
+                # Already in the margin band: the path ends back inside it...
+                out.append(f"corridor:{cid}")
+            elif true.covers(start) and not true.covers(path):
+                # ...and on the way never passes the true wall, which the
+                # Shield's tube (a superset) would let it do at a dog-leg's
+                # inner corner (module docstring). A start already past the
+                # true wall (in the sliver between it and the Shield's
+                # tube, 20.0-20.024 m for a 20 m half-width) cannot
+                # keep it and is judged by the end point alone.
+                out.append(f"corridor:{cid}")
         return out
 
     def act(self, state: State) -> Action4D:
