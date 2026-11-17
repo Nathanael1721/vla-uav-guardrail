@@ -43,7 +43,8 @@ from guardrail.manifest import (TOPOLOGY_ARDUPILOT_SITL, build_manifest,
                                 collect_host_evidence, decode_custom_version,
                                 describe_autopilot_version, detect_topology,
                                 mavros_location, network_link_evidence,
-                                ros2_security_evidence, scan_local_processes)
+                                ros2_security_evidence, scan_local_processes,
+                                write_stack_revisions)
 
 # How long a reader polls MAVROS before it gives up and records what it has.
 SPEEDUP_WAIT_S = 20.0

@@ -5452,6 +5452,87 @@ def hil_chain_problems(metrics: dict, required: bool | None) -> list[str]:
     return out
 
 
+_DESKTOP_REVISION: dict | None = None
+
+
+def desktop_revision() -> dict:
+    """This desktop's own revision record (guardrail.manifest.host_revision:
+    code_revision with its dirty flag, git describe, the machine), read ONCE
+    per process as manifest_base reads the sweep's: git status costs seconds
+    on this tree, and a campaign runs from one checkout."""
+    global _DESKTOP_REVISION
+    if _DESKTOP_REVISION is None:
+        from guardrail.manifest import host_revision
+        _DESKTOP_REVISION = host_revision(repo=ROOT)
+    return _DESKTOP_REVISION
+
+
+_WSL_HELPER_REVISIONS: dict[tuple, dict] = {}
+
+
+def wsl_helper_revision(cfg: HilConfig, run=None) -> dict | None:
+    """The revision of the checkout the WSL helper runs from (sitl/
+    hil_desktop.sh, start_sitl, sitl/sitl_stressors.py), when `cfg.wsl_repo`
+    points at a checkout other than this one as WSL mounts it; None when it
+    is this checkout (desktop_revision already covers it). Read through
+    `wsl.exe -d <distro> -- git -C <repo>` with code_revision's rule (12-hex
+    HEAD, "-dirty" by porcelain status, "-unknown" when status cannot
+    tell, "unversioned" when HEAD does not resolve), once per process."""
+    repo = (cfg.wsl_repo or "").rstrip("/")
+    if not repo or repo == _wsl_path(ROOT).rstrip("/"):
+        return None
+    key = (cfg.wsl_distro, repo)
+    if key in _WSL_HELPER_REVISIONS:
+        return _WSL_HELPER_REVISIONS[key]
+    run = run or subprocess.run
+    from guardrail.manifest import _dirty_flag
+    git = ["wsl.exe", "-d", cfg.wsl_distro, "--", "git", "-C", repo]
+    rev = "unversioned"
+    try:
+        head = run(git + ["rev-parse", "HEAD"], capture_output=True, text=True,
+                   timeout=60)
+        if head.returncode == 0 and head.stdout.strip():
+            rev = head.stdout.strip()[:12]
+            try:
+                st = run(git + ["status", "--porcelain"], capture_output=True,
+                         text=True, timeout=120)
+                ok = st.returncode == 0
+                rev += ("-dirty" if st.stdout.strip() else "") if ok else "-unknown"
+            except (OSError, subprocess.SubprocessError):
+                rev += "-unknown"
+    except (OSError, subprocess.SubprocessError):
+        pass
+    rec = {"repo": repo, "wsl_distro": cfg.wsl_distro, "code_revision": rev,
+           "dirty": _dirty_flag(rev),
+           "runs": "sitl/hil_desktop.sh, SITL's start script, sitl/sitl_stressors.py",
+           "source": "git in the WSL helper's checkout (HilConfig.wsl_repo)"}
+    _WSL_HELPER_REVISIONS[key] = rec
+    return rec
+
+
+def record_desktop_revision(run_dir: Path, cfg: HilConfig | None = None, *,
+                            run=None) -> dict | None:
+    """Add this desktop to a fetched hil run's stack record (guardrail.
+    manifest.add_host_revision, ARCH-31), beside the Orin's own. The entry's
+    code_revision is the harness's checkout (ROOT). SITL's helper and the
+    stressors run from the same checkout unless `cfg.wsl_repo` names
+    another: that checkout's revision is then the entry's `components.
+    wsl_helper` (wsl_helper_revision), which the record checks like a host.
+    Called only for a run the harness accepted. Evidence only: a failure is
+    printed and the run is scored as before."""
+    from guardrail.manifest import ROLE_DESKTOP, add_host_revision
+    try:
+        rec = dict(desktop_revision())
+        helper = wsl_helper_revision(cfg, run=run) if cfg is not None else None
+        if helper is not None:
+            rec["components"] = {"wsl_helper": helper}
+        return add_host_revision(run_dir, ROLE_DESKTOP, rec)
+    except Exception as e:                                   # noqa: BLE001
+        print(f"  [hil] stack_revisions.json: the desktop's revision not added "
+              f"({type(e).__name__}: {e})")
+        return None
+
+
 def run_hil(spec: ScenarioSpec, ep, seed: int, defaults, cfg: HilConfig, transport,
             campaign: str, k: int, store: Path, *, extra_args=None,
             max_s_add: float = 0.0) -> dict:
@@ -5535,6 +5616,11 @@ def run_hil(spec: ScenarioSpec, ep, seed: int, defaults, cfg: HilConfig, transpo
         problems.append("not the prefix arm's flight: " + "; ".join(not_the_arm))
     if problems:
         raise RuntimeError(f"mission {tag}: " + "; ".join(problems))
+    # Only now, the run accepted (its nonce, its mission_end, its stress and
+    # chain): this launch's desktop joins that run's stack record. A folder
+    # rejected above - a stale one from a reused tag, a wrong nonce - keeps
+    # its record as fetched, never joined to this launch's desktop.
+    record_desktop_revision(run_dir, cfg)
     extra = sitl_extra(spec, rows, metrics, pol, gens, max_s=meta["max_s"],
                        dt=spec.dt or _as_defaults(defaults).dt,
                        autopilot_texts=run_autopilot_texts(run_dir))
