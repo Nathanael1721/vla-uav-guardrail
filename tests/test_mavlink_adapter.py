@@ -1083,14 +1083,15 @@ def _adapter_module():
 
 def _settle(node):
     """Complete every outstanding MAVROS call and run the read-back timers,
-    until nothing is left."""
+    until nothing is left. The 1 Hz delivery beat (`_beat`, 2026-11-17)
+    never ends, so it is not one of them."""
     for _ in range(200):
         moved = False
         while node.mav.pending:
             node.mav.pending.pop(0).complete()
             moved = True
         for t in list(node.timers):
-            if not t.cancelled:
+            if not t.cancelled and getattr(t.cb, "__name__", "") != "_beat":
                 t.cb()
                 moved = True
         if not moved:

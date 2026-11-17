@@ -65,6 +65,7 @@ LAUNCH_FILE="sitl/ros2_ws/src/safety_shield/launch/guardrail_rail.launch.py"
 # the last two since 2026-11-02); a test keeps the two lists equal.
 BAG_TOPICS=(/vla/action_4d /vla/identity /shield/setpoint /shield/intercept
             /shield/mode_request /shield/fences /mavlink_adapter/status
+            /mavlink_adapter/sent
             /mavros/setpoint_raw/local /mavros/setpoint_raw/target_local
             /mavros/state /mavros/local_position/pose
             /mavros/extended_state /mavros/statustext/recv

@@ -118,7 +118,7 @@ creates:
 |---|---|---|
 | `/guardrail/safety_shield` | `/shield/setpoint`, `/shield/mode_request`, `/shield/fences`, `/shield/intercept`; for the mission-style node also `/shield/mission`, `/shield/mission_update` | the only publisher of `/shield/setpoint`; calls only the MAVROS services it uses (set_mode, arming, takeoff, stream rate, the parameter get/set, vehicle_info_get) |
 | `/guardrail/vla_stub` | `/vla/action_4d`, `/vla/identity` | the only publisher of `/vla/action_4d`; the stub and the AerialVLA bridge share it |
-| `/guardrail/mavlink_adapter` | `/mavros/setpoint_raw/local`, `/mavlink_adapter/status` | calls set_mode, geofence push / pull, mission push / pull |
+| `/guardrail/mavlink_adapter` | `/mavros/setpoint_raw/local`, `/mavlink_adapter/status`, `/mavlink_adapter/sent` (2026-11-17, the Shield's delivery monitor subscribes) | calls set_mode, geofence push / pull, mission push / pull |
 | `/guardrail/mavros` | `/mavros/*`, `/uas1/*`, `/tf`, `/tf_static`, `/diagnostics` | wildcards over MAVROS's own namespaces (and its services `/mavros/*`, `/mavros_node/*`, `/mavros_router/*`) |
 | `/guardrail/bag_recorder` | `/events/write_split` | subscribes the recorded topics and `/parameter_events` (an rclcpp node's time source subscribes to it: without it the recorder died at start on the first flight, `sros2_policy_on_20261103`) |
 

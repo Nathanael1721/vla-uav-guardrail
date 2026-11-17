@@ -28,6 +28,7 @@ vla node   --/vla/identity (latched JSON: model id, kind, frame, policy hash, ho
 safety_shield --/shield/mode_request (String)----> mavlink_adapter --> /mavros/set_mode
 safety_shield --/shield/fences (latched JSON)----> mavlink_adapter --> /mavros/geofence/push
 mavlink_adapter --/mavlink_adapter/status (latched JSON)--> safety_shield (events.jsonl)
+mavlink_adapter --/mavlink_adapter/sent (JSON per send + 1 Hz beat)--> safety_shield (metrics.json setpoint_delivery)
 safety_shield --/shield/intercept (String JSON)--> rosbag2
 
 ArduPilot SITL --SERIAL2 udp--> mavlink-router --+--> MAVROS 2 (udp 14555)

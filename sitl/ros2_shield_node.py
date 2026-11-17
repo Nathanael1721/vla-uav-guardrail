@@ -327,6 +327,25 @@ the perception rail. Once the autopilot or a pilot has the aircraft the node
 sends no mode request at all: no GUIDED when actions resume, and no
 mission-end LAND whatever the mode.
 
+SETPOINT DELIVERY (2026-11-17). Until this date nothing compared what this
+node published on /shield/setpoint with what the MAVLink adapter sent to
+MAVROS: in hil run ntFIN2_175_dyn-nfz-spawn-ahead the adapter sent none of
+245 setpoints (25.6 s) and the run was graded on them. The adapter now
+reports every send and beats once a second on /mavlink_adapter/sent; every
+publication and report goes into a guardrail.delivery.DeliveryMonitor. Rows
+carry `delivery_wait_ms` (how long the oldest publication no send has
+followed has waited at this tick; None when none waits) and
+`adapter_n_sent`; metrics.json `setpoint_delivery` lists every publication
+left unsent for over DELIVERY_GAP_S (0.5 s) as a gap with its span, the
+setpoints published in it and the adapter beats that arrived in it, and a run
+with a gap is not KPI-grade (guardrail.manifest.is_kpi_grade). The node does
+not react in flight: when setpoints stop, ArduCopter's own GUIDED setpoint
+timeout stops the aircraft (ntFIN2_175: the velocity fell to about zero
+4-5 s into the gap), and this node's mode requests go through the same
+adapter, so a BRAKE asked for there would wait on the stalled node; asking
+MAVROS directly would bypass the adapter's single mode path (WP3-09) on
+evidence from one run. The record makes the next occurrence measurable.
+
 TICK LATENCY (2026-10-12). Each row records `e2e_ms` (an action's receipt to
 the publication of the first setpoint flown from it), `action_age_ms` (the
 age of the action a published setpoint came from) and `tick_ms` (the tick
@@ -455,6 +474,7 @@ from guardrail import scenario_events as SE                               # noqa
 from guardrail.audit import AUDIT_FILE                                    # noqa: E402
 from guardrail.bundle import load_for_flight                              # noqa: E402
 from guardrail.compiler import ConstraintCompiler                         # noqa: E402
+from guardrail.delivery import DeliveryMonitor, parse_report             # noqa: E402
 from guardrail import holdpoint                                           # noqa: E402
 from guardrail.fsm import (DEFAULT_THETA_HORIZON_S, FAILSAFE_STATES,     # noqa: E402
                            MODE_FOR, THETA_HORIZON_S, EscalationFSM, FSMConfig,
@@ -487,7 +507,8 @@ from sitl_stressors import (MARKER_TIMES_S, WATCHED_SIM_PARAMS,          # noqa:
 from mavlink_adapter_node import (ADAPTER_NODE_NAME, DEFAULT_HOLD_MODE,   # noqa: E402
                                   FENCE_MARGIN_M, ORIGIN_TOLERANCE_M,
                                   HOLD_MODES, TOPIC_FENCES, TOPIC_MODE_REQUEST,
-                                  TOPIC_SETPOINT, TOPIC_STATUS, ModeRequests,
+                                  TOPIC_SENT, TOPIC_SETPOINT, TOPIC_STATUS,
+                                  ModeRequests,
                                   XYArgumentParser, fence_alt_plan,
                                   heading_deg_from_enu_quaternion,
                                   policy_ceiling_m, policy_fences, read_parm,
@@ -2907,6 +2928,9 @@ if HAVE_ROS:
                                      LATCHED)
             self.create_subscription(String, TOPIC_STATUS, self._on_adapter,
                                      LATCHED)
+            # What the adapter sent (SETPOINT DELIVERY).
+            self.delivery = DeliveryMonitor()
+            self.create_subscription(String, TOPIC_SENT, self._on_adapter_sent, 10)
             self.pub = self.create_publisher(Float32MultiArray, TOPIC_SETPOINT, 10)
             self.pub_mode = self.create_publisher(String, TOPIC_MODE_REQUEST, 10)
             self.pub_fences = self.create_publisher(String, TOPIC_FENCES, LATCHED)
@@ -3284,6 +3308,11 @@ if HAVE_ROS:
                         self.fences_enforced = {f["id"]: f for f in sent["fences"]}
             self.rec.event(f"adapter_{rec.get('kind', 'status')}", t=self._t(),
                            **{k: v for k, v in rec.items() if k not in ("kind", "t")})
+
+        def _on_adapter_sent(self, msg: String) -> None:
+            """/mavlink_adapter/sent: a setpoint the adapter handed to MAVROS,
+            or its beat (SETPOINT DELIVERY). Counted, never raises."""
+            self.delivery.report(parse_report(msg.data), time.monotonic())
 
         # ---------------- outputs ---------------- #
 
@@ -4748,6 +4777,7 @@ if HAVE_ROS:
                 self._publish_body(flown)
                 pub_ns = time.monotonic_ns()
                 self._last_pub_ns = pub_ns
+                self.delivery.published(pub_ns / 1e9)
             # What was sent, in the Shield's world frame, for the own-velocity
             # forecast's pipe (read only for a State with a velocity).
             self.shield.note_flown(flown_w)
@@ -4814,7 +4844,13 @@ if HAVE_ROS:
                 shield=self.shield, unsafe_depth=unsafe_depth))
             # pose_age_ms: how old the position this tick checked was (on the
             # node's clock, from its receipt); pose_stale: past the timeout.
+            # delivery_wait_ms: how long the oldest setpoint no adapter send
+            # has followed has waited (SETPOINT DELIVERY; None: none waits).
+            d_wait = self.delivery.wait_s(time.monotonic())
             self.rows[-1].update(lat, action_seq=seq, action_stale=stale,
+                                 delivery_wait_ms=(None if d_wait is None
+                                                   else round(d_wait * 1000.0, 1)),
+                                 adapter_n_sent=self.delivery.last_n_sent,
                                  pose_age_ms=(None if pose_age is None
                                               else round(pose_age * 1000.0, 1)),
                                  pose_stale=pose_stale,
@@ -5020,6 +5056,14 @@ if HAVE_ROS:
             # crossed a zone: the verdict says how much went unobserved.
             n_pose_stale = sum(1 for r in self.rows if r.get("pose_stale"))
             pose_stale_s = round(n_pose_stale * TICK, 2)
+            # A setpoint still unsent at the end is an open delivery gap.
+            self.delivery.close(time.monotonic())
+            if self.delivery.n_gaps:
+                self.get_logger().error(
+                    f"setpoint delivery: {self.delivery.n_gaps} gap(s), "
+                    f"{self.delivery.gap_s_total:.1f} s in all, in which the "
+                    f"adapter sent none of the Shield's setpoints (metrics.json "
+                    f"setpoint_delivery)")
             if n_pose_stale:
                 kpi += (f" over fresh-pose ticks only ({pose_stale_s:.1f} s on a "
                         f"stale pose, not observed)")
@@ -5247,6 +5291,12 @@ if HAVE_ROS:
                     lambda v: v - self.mission_t0),
                     "stale_ticks": n_pose_stale,
                     "stale_s": pose_stale_s},
+                # Setpoints published against setpoints the adapter sent
+                # (SETPOINT DELIVERY): a gap here keeps the run from KPI grade
+                # (guardrail.manifest.is_kpi_grade reads this key).
+                "setpoint_delivery": {
+                    "topic": TOPIC_SENT,
+                    **self.delivery.summary(lambda v: v - (self.mission_t0 or 0.0))},
                 "tick_latency": latency_summary(self.rows, trigger=self.tick_trigger),
                 # What ran the ticks and how often (THE TICK SCHEDULE).
                 "tick_schedule": tick_schedule_summary(self.rows, self.tick_trigger,
