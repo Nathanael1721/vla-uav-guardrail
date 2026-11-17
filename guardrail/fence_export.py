@@ -230,7 +230,18 @@ def _segment_distance(px, py, ax, ay, bx, by) -> float:
 
 def zone_clearance_m(fence: dict, x: float, y: float) -> float:
     """Signed horizontal distance from (x, y) to an exported zone's edge:
-    positive outside, negative inside (the depth)."""
+    positive outside, negative inside (the depth).
+
+    This measures the EXPORTED fence - what the autopilot will enforce - not
+    the Shield's ring, and so answers a different question from the Shield's
+    verdicts (WP3-22 / X-13 review): the autopilot's circle fence is a true
+    circle (MAV_CMD_NAV_FENCE_CIRCLE_EXCLUSION carries centre and radius), so
+    the exact circle is right here where the Shield's 32-gon (guardrail/ir.py)
+    would be wrong by up to 0.5 % of the radius; and an exported polygon is
+    tested with the library's even-odd containment (planar.py), the
+    shapely-free convention, where the Shield uses shapely's open interior.
+    The library therefore holds two documented containment conventions; the
+    two differ only for a point exactly on an edge."""
     if fence["kind"] == "circle":
         cx, cy = fence["center"]
         return math.hypot(x - cx, y - cy) - fence["radius_m"]

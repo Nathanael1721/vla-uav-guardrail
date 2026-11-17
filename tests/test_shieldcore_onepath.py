@@ -503,6 +503,10 @@ _NOT_A_RULE = {
         "CityLife level authoring: car route geometry",
     ("tools/citylife_traffic_model.py", "update_eff"):
         "the scenery traffic model's car-following (a projection along a lane)",
+    ("tools/profile_shield_tick.py", "calibrate"):
+        "host-speed benchmark (a fixed shapely workload profiles are normalised "
+        "against); no rule verdict, and changing its workload would break "
+        "comparison with earlier calibrations",
 }
 
 _ORDER = (ast.Gt, ast.Lt, ast.GtE, ast.LtE)
@@ -832,12 +836,14 @@ def test_the_rtl_leg_and_the_harness_measures_ask_the_library():
 
 
 def test_fenceguards_building_half_reads_the_shields_clearance_field():
-    """FenceGuard's building half (gate's obstacle brake, slide's clearance
-    test) measures on the Shield's distance field - Shield.clearance_at when
-    the flight's Shield holds the map, else the same field read by the same
-    function (ClearanceField) - not on a grid scan of its own. A Shield whose
-    field is patched moves the guard's answer; the guard's clearance is
-    min(cap, the Shield's)."""
+    """With guard_field="shield" (opt-in, --guard-field shield; not yet
+    flown) FenceGuard's building half (gate's obstacle brake, slide's
+    clearance test) measures on the Shield's distance field -
+    Shield.clearance_at when the flight's Shield holds the map, else the same
+    field read by the same function (ClearanceField) - not on a grid scan of
+    its own. A Shield whose field is patched moves the guard's answer; the
+    guard's clearance is min(cap, the Shield's). The default stays the grid
+    scan every stored follow flight flew (follow_vlm.grid_scan_clearance)."""
     import numpy as np
     sys.path.insert(0, str(ROOT / "demo"))
     import follow_vlm as F
@@ -850,13 +856,19 @@ def test_fenceguards_building_half_reads_the_shields_clearance_field():
     pol = load_policy(ROOT / "policies" / "follow_car.yaml")   # has obstacle_clearance
     sh = Shield(pol, obstacle_map=omap, escalation=False)
     assert sh.has_obstacle_map
-    g = F.FenceGuard(pol, obstacle_map=omap, min_clearance_m=5.0, shield=sh)
+    dflt = F.FenceGuard(pol, obstacle_map=omap, min_clearance_m=5.0, shield=sh)
+    assert dflt.guard_field == "grid"
+    g = F.FenceGuard(pol, obstacle_map=omap, min_clearance_m=5.0, shield=sh,
+                     guard_field="shield")
     rng = __import__("random").Random(3)
+    for _ in range(100):
+        x, y = rng.uniform(-15, 15), rng.uniform(-15, 15)
+        assert dflt.clearance(x, y, 12.0) == F.grid_scan_clearance(omap, x, y, 12.0)
     for _ in range(200):
         x, y = rng.uniform(-15, 15), rng.uniform(-15, 15)
         assert g.clearance(x, y, 12.0) == min(12.0, sh.clearance_at(x, y))
     # without the flight's Shield: the same field, the same reader
-    g2 = F.FenceGuard(pol, obstacle_map=omap, min_clearance_m=5.0)
+    g2 = F.FenceGuard(pol, obstacle_map=omap, min_clearance_m=5.0, guard_field="shield")
     cf = ClearanceField(omap)
     for _ in range(50):
         x, y = rng.uniform(-15, 15), rng.uniform(-15, 15)
@@ -868,11 +880,112 @@ def test_fenceguards_building_half_reads_the_shields_clearance_field():
     orig = Shield.clearance_at
     Shield.clearance_at = lambda self, x, y: 50.0
     try:
-        g3 = F.FenceGuard(pol, obstacle_map=omap, min_clearance_m=5.0, shield=sh)
+        g3 = F.FenceGuard(pol, obstacle_map=omap, min_clearance_m=5.0, shield=sh,
+                          guard_field="shield")
         s1, _, _ = g3.gate(0.0, 2.0, 4.0, 0.0)
         assert s1 == 1.0 and g3.last_cause is None, "the building half scans the grid itself"
+        # ...and the default does not read the Shield's field at all
+        g4 = F.FenceGuard(pol, obstacle_map=omap, min_clearance_m=5.0, shield=sh)
+        assert g4.gate(0.0, 2.0, 4.0, 0.0)[0] == s0
     finally:
         Shield.clearance_at = orig
+
+
+# CLEARANCE MEASURED OUTSIDE THE LIBRARY, BY NAME (review of a38ac6c).
+#
+# The by-behaviour scan above sees shapely calls, ray casts and clamped
+# projections; it cannot see a clearance measured on a distance transform or
+# a grid scan. These do that: every function outside the library that calls
+# city_planner.distance_field (a 5x5 chamfer, read by nearest-cell rounding)
+# or scans occupancy cells with hypot. Each is listed with what it is; the
+# ones marked RULE evaluate the obstacle_clearance rule on a measure that is
+# NOT the Shield's (guardrail/shield.py field_distance) and are the rows'
+# remaining work, stated here rather than hidden. A new one fails, and so
+# does a stale entry.
+_CLEARANCE_OUTSIDE = {
+    ("demo/city_planner.py", "inflate"):
+        "planning: inflates the planner's grid by a clearance (route cost, no verdict)",
+    ("demo/city_planner.py", "_penalty_flat"):
+        "planning: the route planner's clearance cost",
+    ("demo/identity.py", "__init__"):
+        "target identity: distance to the street cells, not a rule",
+    ("demo/follow_vlm.py", "grid_scan_clearance"):
+        "RULE (controller side): FenceGuard's building half by default; the "
+        "Shield-field read is opt-in (--guard-field shield) until flown on the AGX",
+    ("demo/semantic_demo.py", "fly"):
+        "RULE (analysis side): min_building_dist_m reported by the semantic demo",
+    ("demo/semantic_seek.py", "fly"):
+        "RULE (analysis side): min_building_dist_m reported by semantic seek",
+    ("experiments/analyze_semantic_ab.py", "actual_violations"):
+        "RULE (analysis side): the semantic A/B P0 counter's obstacle_clearance "
+        "check (and its inline fence band and altitude envelope tests); not "
+        "folded: re-scoring would change stored A/B results",
+}
+
+
+def _grid_scan(nodes) -> bool:
+    """A nested loop whose inner body indexes an occupancy grid (`occ[i, j]`)
+    and measures with hypot/sqrt: the nearest-blocked-cell scan. (A nested
+    loop that stamps or plots cells without measuring is not one.)"""
+    for f1 in nodes:
+        if not isinstance(f1, ast.For):
+            continue
+        for f2 in ast.walk(f1):
+            if f2 is f1 or not isinstance(f2, ast.For):
+                continue
+            inner = list(ast.walk(f2))
+            if (any(isinstance(n, ast.Subscript) and isinstance(n.value, ast.Name)
+                    and n.value.id == "occ" and isinstance(n.slice, ast.Tuple)
+                    for n in inner) and _measures(inner)):
+                return True
+    return False
+
+
+def clearance_of_their_own(tree_list=None) -> dict:
+    found = {}
+    for rel, tree in (tree_list if tree_list is not None else trees()):
+        if rel in _LIBRARY or rel.startswith("tests/"):
+            continue
+        for fn in ast.walk(tree):
+            if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            if fn.name == "distance_field":
+                continue
+            nodes = _own_nodes(fn)
+            what = set()
+            for n in nodes:
+                if isinstance(n, ast.Call) and _called_name(n) == "distance_field":
+                    what.add("distance_field")
+            if _grid_scan(nodes):
+                what.add("grid scan")
+            if what:
+                found[(rel, fn.name)] = (fn.lineno, sorted(what))
+    return found
+
+
+def test_every_clearance_measure_outside_the_library_is_named():
+    """No clearance measure outside the library but the listed ones; the
+    RULE ones are the known remaining evaluators of WP3-22 / X-13. The null:
+    a planted grid scan and a planted distance_field reader are found."""
+    found = clearance_of_their_own()
+    new = sorted(f"{rel}:{line} {name}() {', '.join(w)}"
+                 for (rel, name), (line, w) in found.items()
+                 if (rel, name) not in _CLEARANCE_OUTSIDE)
+    assert not new, "clearance measured outside the library:\n      " + "\n      ".join(new)
+    stale = sorted(k for k in _CLEARANCE_OUTSIDE if k not in found)
+    assert not stale, f"_CLEARANCE_OUTSIDE names functions that no longer measure: {stale}"
+    src = ("import math, city_planner\n"
+           "def scan(occ, px, py):\n"
+           "    best = 9.0\n"
+           "    for i in range(3):\n"
+           "        for j in range(3):\n"
+           "            if occ[i, j]:\n"
+           "                best = min(best, math.hypot(i - px, j - py))\n"
+           "    return best\n"
+           "def df(m):\n    return city_planner.distance_field(m['occ'], 1.0)\n"
+           "def fine(sh, x, y):\n    return sh.clearance_at(x, y)\n")
+    got = clearance_of_their_own([("tools/mine.py", ast.parse(src))])
+    assert set(got) == {("tools/mine.py", "scan"), ("tools/mine.py", "df")}, got
 
 
 if __name__ == "__main__":

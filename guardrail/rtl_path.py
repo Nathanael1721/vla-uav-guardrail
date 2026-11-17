@@ -172,16 +172,19 @@ def _is_exit(piece, shape, p, home) -> bool:
     `_EXIT_STEP_M` apart."""
     from shapely.geometry import Point
 
-    from .geometry import boundary_depth, point_distance
+    from .geometry import point_distance
     a, b = Point(piece.coords[0]), Point(piece.coords[-1])
     if point_distance(a, p.x, p.y) > point_distance(b, p.x, p.y):
         a, b = b, a
     if point_distance(b, home[0], home[1]) <= 1e-6:
         return False                       # home itself is inside the zone
     n = min(4000, max(2, int(math.ceil(piece.length / _EXIT_STEP_M))))
-    prev = boundary_depth(shape, a.x, a.y)
+    # The ring's boundary, built once (geometry.boundary_depth would rebuild
+    # it per sample: up to 4000 here); the depth is the library's point_distance.
+    edge = shape.boundary
+    prev = point_distance(edge, a.x, a.y)
     for k in range(1, n + 1):
-        d = boundary_depth(shape, a.x + (b.x - a.x) * k / n, a.y + (b.y - a.y) * k / n)
+        d = point_distance(edge, a.x + (b.x - a.x) * k / n, a.y + (b.y - a.y) * k / n)
         if d > prev + _EXIT_TOL_M:
             return False
         prev = d

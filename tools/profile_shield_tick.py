@@ -476,8 +476,6 @@ def calibrate(repeats: int = 5, clock=time.perf_counter) -> dict:
     a property of the Shield. A large before/after change means the host's
     speed changed during the run."""
     from shapely.geometry import Point, Polygon
-
-    from guardrail.geometry import ring_contains
     poly = Polygon([(0, 0), (12, 0), (12, 12), (0, 12)]).buffer(2.0)
     pts = [Point((k * 0.37) % 20 - 4, (k * 0.61) % 20 - 4) for k in range(2000)]
     times = []
@@ -486,7 +484,7 @@ def calibrate(repeats: int = 5, clock=time.perf_counter) -> dict:
         acc = 0.0
         for k in range(200_000):
             acc += math.sqrt(k * 0.5 + 1.0) * 1e-6
-        hits = sum(1 for p in pts if ring_contains(poly, p.x, p.y))
+        hits = sum(1 for p in pts if poly.contains(p))
         times.append((clock() - t0) * 1e3)
     return {"workload": "200k sqrt-adds + 2000 shapely contains",
             "median_ms": statistics.median(times), "min_ms": min(times),
