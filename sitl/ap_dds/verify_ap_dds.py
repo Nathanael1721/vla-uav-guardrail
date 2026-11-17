@@ -6,9 +6,10 @@ flown. docs/RUNBOOK-ap-dds.md has the commands around it.
     1. topics   wait for /ap/time, /ap/pose/filtered, /ap/navsat (4.5:
                 /ap/navsat/navsat0) and /ap/geopose/filtered, then count each
                 for --window s: a rate per topic.
-    2. GUIDED   /ap/mode_switch (ardupilot_msgs/srv/ModeSwitch, mode 4).
-    3. arm      /ap/arm_motors (ardupilot_msgs/srv/ArmMotors), retried while
-                the pre-arm checks settle.
+    2. GUIDED   /ap/mode_switch (ardupilot_msgs/srv/ModeSwitch, mode 4),
+    3. arm      then /ap/arm_motors (ardupilot_msgs/srv/ArmMotors); both are
+                retried in one --arm-timeout window while the EKF and pre-arm
+                checks settle (GUIDED is refused before a position).
     4. takeoff  /ap/experimental/takeoff when the firmware has it (4.6+), else
                 MAV_CMD_NAV_TAKEOFF over MAVLink (--mavlink, pymavlink): 4.5.7
                 has no DDS takeoff and GUIDED velocity does not lift off.
@@ -18,9 +19,12 @@ flown. docs/RUNBOOK-ap-dds.md has the commands around it.
                 forward, flown along the vehicle's heading).
     6. measure  the mean of /ap/twist/filtered over the second half of the
                 command, and the pose displacement's bearing, against what was
-                commanded; then a zero setpoint and LAND (mode 9).
+                commanded; then a zero setpoint and LAND (mode 9). The LAND
+                runs in a finally block once the copter is armed, so a failed
+                takeoff or an exception still lands it.
 
-Writes <out>/ap_dds_verify.json; exit 0 only when every check passes.
+Writes <out>/ap_dds_verify.json (also on an error); exit 0 only when the
+topics, the climb (z >= 0.9 * --alt) and the velocity all pass.
 
     ~/venv-ros/bin/python sitl/ap_dds/verify_ap_dds.py --out demo/out/ap_dds_verify_01
 """
@@ -159,17 +163,39 @@ def expected_enu(via_adapter: bool, vel: float, heading_deg: float | None) -> tu
 # The ROS 2 run (WSL, beside the DDS SITL and the micro-ROS agent)
 # --------------------------------------------------------------------------- #
 
-def _mavlink_takeoff(url: str, alt: float) -> str:
-    from pymavlink import mavutil
-    m = mavutil.mavlink_connection(url)
-    if m.wait_heartbeat(timeout=10) is None:
-        return "no MAVLink heartbeat"
-    m.mav.command_long_send(m.target_system, m.target_component,
-                            mavutil.mavlink.MAV_CMD_NAV_TAKEOFF, 0,
-                            0, 0, 0, 0, 0, 0, float(alt))
-    ack = m.recv_match(type="COMMAND_ACK", blocking=True, timeout=5)
-    m.close()
-    return f"COMMAND_ACK result {ack.result}" if ack else "no COMMAND_ACK"
+def _mavlink_takeoff(url: str, alt: float) -> dict:
+    """MAV_CMD_NAV_TAKEOFF over MAVLink. Never raises: a refused connection
+    (port not up, or another client such as MAVProxy / Mission Planner
+    already holding SITL's single tcp serial) comes back as {"ok": False,
+    "error": ...} so the caller still lands and writes its report."""
+    m = None
+    try:
+        from pymavlink import mavutil
+        m = mavutil.mavlink_connection(url)
+        if m.wait_heartbeat(timeout=10) is None:
+            return {"ok": False, "error": "no MAVLink heartbeat", "url": url}
+        m.mav.command_long_send(m.target_system, m.target_component,
+                                mavutil.mavlink.MAV_CMD_NAV_TAKEOFF, 0,
+                                0, 0, 0, 0, 0, 0, float(alt))
+        ack = m.recv_match(type="COMMAND_ACK", blocking=True, timeout=5)
+        if ack is None:
+            return {"ok": False, "error": "no COMMAND_ACK", "url": url}
+        return {"ok": int(ack.result) == 0, "result": int(ack.result), "url": url}
+    except Exception as e:                       # noqa: BLE001 - reported, not raised
+        return {"ok": False, "error": f"{type(e).__name__}: {e}", "url": url}
+    finally:
+        if m is not None:
+            try:
+                m.close()
+            except Exception:                    # noqa: BLE001
+                pass
+
+
+def climb_verdict(z_m: float | None, alt: float, frac: float = 0.9) -> dict:
+    """The takeoff reached frac * alt (pose z, ENU up). A missing pose fails."""
+    ok = z_m is not None and z_m >= frac * alt
+    return {"z_m": None if z_m is None else round(z_m, 2), "need_m": round(frac * alt, 2),
+            "ok": ok}
 
 
 def run(args) -> dict:
@@ -235,83 +261,111 @@ def run(args) -> dict:
             rclpy.spin_once(node, timeout_sec=0.05)
         return fut.result() if fut.done() else None
 
-    # 2. GUIDED
-    r = call(SRV_MODE, "ardupilot_msgs/srv/ModeSwitch", mode=COPTER_MODE_NUMBER["GUIDED"])
-    report["guided"] = {"status": bool(r and r.status),
-                        "curr_mode": int(r.curr_mode) if r else None}
-    # 3. arm, retried while pre-arm checks settle (EKF, GPS)
-    armed, t0 = False, time.monotonic()
-    while not armed and time.monotonic() - t0 < args.arm_timeout:
-        r = call(SRV_ARM, "ardupilot_msgs/srv/ArmMotors", arm=True)
-        armed = bool(r and r.result)
-        if not armed:
+    report["ok"] = False
+    armed = False
+    send = None
+    try:
+        # 2-3. GUIDED, then arm, both retried inside one --arm-timeout window:
+        # shortly after boot ArduCopter refuses GUIDED until the EKF has a
+        # position, and /ap/navsat and /ap/geopose publish before a fix, so
+        # the topic check can pass before GUIDED is possible.
+        guided = {"status": False, "curr_mode": None, "tries": 0}
+        t0 = time.monotonic()
+        while time.monotonic() - t0 < args.arm_timeout:
+            if not (guided["status"] and guided["curr_mode"] == COPTER_MODE_NUMBER["GUIDED"]):
+                r = call(SRV_MODE, "ardupilot_msgs/srv/ModeSwitch",
+                         mode=COPTER_MODE_NUMBER["GUIDED"])
+                guided["tries"] += 1
+                guided["status"] = bool(r and r.status)
+                guided["curr_mode"] = int(r.curr_mode) if r else None
+                guided["s"] = round(time.monotonic() - t0, 1)
+            if guided["status"] and guided["curr_mode"] == COPTER_MODE_NUMBER["GUIDED"]:
+                r = call(SRV_ARM, "ardupilot_msgs/srv/ArmMotors", arm=True)
+                armed = bool(r and r.result)
+                if armed:
+                    break
             spin_for(2.0)
-    report["armed"] = armed
-    report["arm_s"] = round(time.monotonic() - t0, 1)
-    if not (report["guided"]["status"] and armed):
+        report["guided"] = guided
+        report["armed"] = armed
+        report["arm_s"] = round(time.monotonic() - t0, 1)
+        if not (guided["status"] and armed):
+            return report
+        # 4. takeoff
+        srvs = dict(node.get_service_names_and_types())
+        if SRV_TAKEOFF in srvs:
+            r = call(SRV_TAKEOFF, "ardupilot_msgs/srv/Takeoff", alt=float(args.alt))
+            report["takeoff"] = {"via": "ap_dds", "ok": bool(r and r.status)}
+        else:
+            report["takeoff"] = {"via": "mavlink",
+                                 **_mavlink_takeoff(args.mavlink, args.alt)}
+        t0 = time.monotonic()
+        while report["takeoff"]["ok"] and time.monotonic() - t0 < args.climb_timeout:
+            spin_for(0.5)
+            p = state["pose"]
+            if p is not None and p.pose.position.z >= 0.9 * args.alt:
+                break
+        p = state["pose"]
+        report["climb"] = {**climb_verdict(p.pose.position.z if p else None, args.alt),
+                           "s": round(time.monotonic() - t0, 1)}
+        if not report["climb"]["ok"]:
+            return report
+        # 5. command
+        q = p.pose.orientation
+        heading = heading_deg_from_enu_quaternion(q.x, q.y, q.z, q.w)
+        cmd = expected_enu(args.via_adapter, args.vel, heading)
+        report["heading_deg"] = round(heading, 1)
+        if args.via_adapter:
+            pub = node.create_publisher(Float32MultiArray, "/shield/setpoint", 10)
+
+            def send(v):
+                pub.publish(Float32MultiArray(data=[float(v), 0.0, 0.0, 0.0]))
+        else:
+            pub = node.create_publisher(TwistStamped, TOPIC_CMD_VEL, 10)
+
+            def send(v):
+                tw = TwistStamped()
+                tw.header.stamp = node.get_clock().now().to_msg()
+                tw.header.frame_id = FRAME_MAP
+                tw.twist.linear.x = float(v)          # ENU: x = east
+                pub.publish(tw)
+        p0 = (p.pose.position.x, p.pose.position.y)
+        n_ticks = int(args.secs * 10)
+        for i in range(n_ticks):
+            state["collect"] = i >= n_ticks // 2
+            send(args.vel)
+            spin_for(0.1)
+        state["collect"] = False
+        p1 = state["pose"]
+        disp = (p1.pose.position.x - p0[0], p1.pose.position.y - p0[1])
+        tw = state["twist"]
+        meas = ((sum(t[0] for t in tw) / len(tw), sum(t[1] for t in tw) / len(tw))
+                if tw else None)
+        report["velocity"] = velocity_verdict(cmd, meas, disp)
+        report["velocity"]["twist_samples"] = len(tw)
+        report["ok"] = bool(report["topics"]["ok"] and report["climb"]["ok"]
+                            and report["velocity"]["ok"])
+    except Exception as e:                       # noqa: BLE001 - reported, then landed
+        report["error"] = f"{type(e).__name__}: {e}"
         report["ok"] = False
+    finally:
+        # 6. stop and land, whatever happened above, once the copter is armed:
+        # a zero setpoint, then LAND (mode 9), which disarms by itself after
+        # touchdown. No disarm request: the in-flight disarm refusal is in
+        # ArduPilot's MAVLink handler, so a DDS disarm in the air could drop
+        # the copter.
+        if armed:
+            try:
+                if send is not None:
+                    for _ in range(10):
+                        send(0.0)
+                        spin_for(0.1)
+                r = call(SRV_MODE, "ardupilot_msgs/srv/ModeSwitch",
+                         mode=COPTER_MODE_NUMBER["LAND"])
+                report["land"] = {"status": bool(r and r.status)}
+            except Exception as e:               # noqa: BLE001
+                report["land"] = {"status": False, "error": f"{type(e).__name__}: {e}"}
         node.destroy_node()
         rclpy.shutdown()
-        return report
-    # 4. takeoff
-    srvs = dict(node.get_service_names_and_types())
-    if SRV_TAKEOFF in srvs:
-        r = call(SRV_TAKEOFF, "ardupilot_msgs/srv/Takeoff", alt=float(args.alt))
-        report["takeoff"] = {"via": "ap_dds", "status": bool(r and r.status)}
-    else:
-        report["takeoff"] = {"via": "mavlink", "result": _mavlink_takeoff(args.mavlink,
-                                                                           args.alt)}
-    t0 = time.monotonic()
-    while time.monotonic() - t0 < args.climb_timeout:
-        spin_for(0.5)
-        p = state["pose"]
-        if p is not None and p.pose.position.z >= 0.9 * args.alt:
-            break
-    p = state["pose"]
-    report["climb"] = {"z_m": round(p.pose.position.z, 2) if p else None,
-                       "s": round(time.monotonic() - t0, 1)}
-    # 5. command
-    q = p.pose.orientation
-    heading = heading_deg_from_enu_quaternion(q.x, q.y, q.z, q.w)
-    cmd = expected_enu(args.via_adapter, args.vel, heading)
-    report["heading_deg"] = round(heading, 1)
-    if args.via_adapter:
-        pub = node.create_publisher(Float32MultiArray, "/shield/setpoint", 10)
-
-        def send(v):
-            pub.publish(Float32MultiArray(data=[float(v), 0.0, 0.0, 0.0]))
-    else:
-        pub = node.create_publisher(TwistStamped, TOPIC_CMD_VEL, 10)
-
-        def send(v):
-            tw = TwistStamped()
-            tw.header.stamp = node.get_clock().now().to_msg()
-            tw.header.frame_id = FRAME_MAP
-            tw.twist.linear.x = float(v)          # ENU: x = east
-            pub.publish(tw)
-    p0 = (p.pose.position.x, p.pose.position.y)
-    n_ticks = int(args.secs * 10)
-    for i in range(n_ticks):
-        state["collect"] = i >= n_ticks // 2
-        send(args.vel)
-        spin_for(0.1)
-    state["collect"] = False
-    p1 = state["pose"]
-    disp = (p1.pose.position.x - p0[0], p1.pose.position.y - p0[1])
-    tw = state["twist"]
-    meas = ((sum(t[0] for t in tw) / len(tw), sum(t[1] for t in tw) / len(tw))
-            if tw else None)
-    report["velocity"] = velocity_verdict(cmd, meas, disp)
-    report["velocity"]["twist_samples"] = len(tw)
-    # 6. stop and land
-    for _ in range(10):
-        send(0.0)
-        spin_for(0.1)
-    r = call(SRV_MODE, "ardupilot_msgs/srv/ModeSwitch", mode=COPTER_MODE_NUMBER["LAND"])
-    report["land"] = {"status": bool(r and r.status)}
-    report["ok"] = bool(report["topics"]["ok"] and report["velocity"]["ok"])
-    node.destroy_node()
-    rclpy.shutdown()
     return report
 
 
@@ -338,7 +392,11 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     out = Path(args.out)
-    report = run(args)
+    try:
+        report = run(args)
+    except Exception as e:                       # noqa: BLE001 - written, never lost
+        report = {"ok": False, "error": f"{type(e).__name__}: {e}",
+                  "via_adapter": bool(args.via_adapter)}
     out.mkdir(parents=True, exist_ok=True)
     path = out / "ap_dds_verify.json"
     with open(path, "w", encoding="utf-8", newline="\n") as fh:

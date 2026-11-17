@@ -23,6 +23,10 @@ set -eo pipefail
 AP_URL="${ARDUPILOT_URL:-https://github.com/ArduPilot/ardupilot.git}"
 AP_DDS_DIR="${AP_DDS_DIR:-$HOME/ardupilot-dds}"
 AP_DDS_REF="${AP_DDS_REF:-Copter-4.5.7}"
+# The rig's pin (sitl/setup_sitl.sh ARDUPILOT_REF / ARDUPILOT_SHA);
+# tests/test_ap_dds_adapter.py checks the two files agree.
+RIG_REF="Copter-4.5.7"
+RIG_SHA="2a3dc4b7bf2507120f7378a7b2fde73185e0c325"
 GEN_DIR="${GEN_DIR:-$HOME/Micro-XRCE-DDS-Gen}"
 WS="${AP_DDS_WS:-$HOME/ap_dds_ws}"
 ROS_DISTRO="${ROS_DISTRO:-jazzy}"
@@ -38,10 +42,15 @@ check() {
   if [ -x "$bin" ]; then
     echo "binary   : $bin"
     echo "banner   : $(strings "$bin" | grep -m1 -E '^ArduCopter V[0-9]' || echo '?')"
-    if strings "$bin" | grep -q 'DDS_ENABLE'; then
-      echo "DDS      : compiled in (DDS_ENABLE parameter present)"
+    # Parameter names are stored split by group ("DDS" + "_ENABLE"), so the
+    # literal DDS_ENABLE need not be in the binary. Look for the client class
+    # (SITL binaries keep their symbols) or the configure-time define.
+    if nm -C "$bin" 2>/dev/null | grep -q 'AP_DDS_Client'; then
+      echo "DDS      : compiled in (AP_DDS_Client symbols present)"
+    elif grep -qs 'AP_DDS_ENABLED 1' "$AP_DDS_DIR/build/sitl/ap_config.h"; then
+      echo "DDS      : compiled in (AP_DDS_ENABLED 1 in build/sitl/ap_config.h)"
     else
-      echo "DDS      : NOT compiled in"
+      echo "DDS      : NOT compiled in (no AP_DDS_Client symbol, no AP_DDS_ENABLED 1)"
     fi
   else
     echo "binary   : missing"
@@ -90,8 +99,19 @@ if [ ! -d "$AP_DDS_DIR/.git" ]; then
 fi
 git -C "$AP_DDS_DIR" fetch --tags --quiet origin
 git -C "$AP_DDS_DIR" checkout --quiet "$AP_DDS_REF"
-git -C "$AP_DDS_DIR" submodule update --init --recursive --quiet
 echo "AP_DDS checkout: $(git -C "$AP_DDS_DIR" describe --tags --always) = $(git -C "$AP_DDS_DIR" rev-parse HEAD)"
+# The default ref is the rig's firmware: hold it to the same commit
+# sitl/setup_sitl.sh pins (ARDUPILOT_SHA there), so "the same autopilot as the
+# MAVROS path" is checked, not assumed. A moved tag stops the build.
+if [ "$AP_DDS_REF" = "$RIG_REF" ]; then
+  head="$(git -C "$AP_DDS_DIR" rev-parse HEAD)"
+  if [ "$head" != "$RIG_SHA" ]; then
+    echo "PIN FAIL: $AP_DDS_REF resolved to $head, expected $RIG_SHA (sitl/setup_sitl.sh)"
+    exit 3
+  fi
+  echo "pin      : $AP_DDS_REF = $RIG_SHA (same commit as sitl/setup_sitl.sh)"
+fi
+git -C "$AP_DDS_DIR" submodule update --init --recursive --quiet
 # ArduPilot's waf needs its Python modules (empy, pexpect, future); the rig's
 # ~/venv-ap from sitl/setup_sitl.sh has them, so it is read, not changed.
 PYBIN=python3

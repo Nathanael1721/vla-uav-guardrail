@@ -12,7 +12,13 @@ still flies sitl/mavlink_adapter_node.py). What is checked here:
     by ap_dds_receives) equals the NED command MAVROS sends for the same
     setpoint on the MAVLink path (mavlink_adapter_node.mavros_sends) and the
     single body -> NED crossing (body_to_ned). The sweep prints its count and
-    the largest difference;
+    the largest difference. It is a model consistency check, not a
+    measurement: both sides share setpoint_from_body and our ENU <-> NED
+    model, so only the SITL run can show ArduPilot's own handling;
+  * the SITL check fails a short climb, reports a refused MAVLink link
+    instead of raising, and writes its JSON when the run raises; the DDS
+    build holds the rig's ArduPilot commit; the DDS SITL runs on its own ROS
+    domain and adds the MAVROS endpoint only on request;
   * forward at heading 90 is east; a short or non-finite setpoint is refused;
   * the FSM's modes as ArduCopter mode numbers (LOITER -> BRAKE 17);
   * the node on a stand-in ROS stack: nothing is sent before a heading, a
@@ -63,8 +69,13 @@ def test_ap_dds_and_mavros_paths_command_the_same_ned_for_every_heading():
             for a, b, c in zip(dds, mav, ned):
                 worst = max(worst, abs(a - b), abs(a - c))
             n += 1
-    print(f"      equivalence sweep: {n} setpoints (360 headings x {len(GRID)}), "
-          f"max |NED(AP_DDS) - NED(MAVROS)| = {worst:.3g}")
+    # A model consistency check, not a measurement: both paths share
+    # setpoint_from_body, and ap_dds_receives is our model of ArduPilot's
+    # ENU -> NED, so this cannot catch an error in that model. Only the SITL
+    # run (ap_dds_verify.json: velocity_error, bearing_error_deg) can.
+    print(f"      model consistency check (not a measurement): {n} setpoints "
+          f"(360 headings x {len(GRID)}), max |NED(AP_DDS model) - NED(MAVROS)| "
+          f"= {worst:.3g}")
     assert n == 360 * len(GRID)
     assert worst <= 1e-12, worst
 
@@ -311,6 +322,69 @@ def test_velocity_verdict():
     e, n = V.expected_enu(True, 1.0, 180.0)
     assert abs(e) < 1e-12 and abs(n + 1.0) < 1e-12
     assert V.expected_enu(False, 1.0, None) == (1.0, 0.0)
+
+
+def test_climb_verdict_fails_short_or_missing():
+    assert V.climb_verdict(9.5, 10.0)["ok"]
+    assert not V.climb_verdict(4.0, 10.0)["ok"]
+    assert not V.climb_verdict(None, 10.0)["ok"]
+
+
+def test_mavlink_takeoff_reports_a_refused_link_instead_of_raising():
+    """A taken or closed tcp:5760 comes back as ok False with the error, so
+    run() still lands the copter and writes ap_dds_verify.json."""
+    fake = types.ModuleType("pymavlink")
+    mu = types.ModuleType("pymavlink.mavutil")
+
+    def refuse(url):
+        raise ConnectionRefusedError(111, "Connection refused")
+    mu.mavlink_connection = refuse
+    fake.mavutil = mu
+    saved = {k: sys.modules.get(k) for k in ("pymavlink", "pymavlink.mavutil")}
+    sys.modules["pymavlink"], sys.modules["pymavlink.mavutil"] = fake, mu
+    try:
+        r = V._mavlink_takeoff("tcp:127.0.0.1:5760", 10.0)
+    finally:
+        for k, v in saved.items():
+            if v is None:
+                sys.modules.pop(k, None)
+            else:
+                sys.modules[k] = v
+    assert r["ok"] is False and "ConnectionRefusedError" in r["error"], r
+
+
+def test_verify_writes_its_report_when_the_run_raises():
+    orig = V.run
+    V.run = lambda args: (_ for _ in ()).throw(RuntimeError("rclpy missing"))
+    try:
+        with tempfile.TemporaryDirectory() as d:
+            rc = V.main(["--out", d])
+            rep = json.loads((Path(d) / "ap_dds_verify.json").read_text("utf-8"))
+    finally:
+        V.run = orig
+    assert rc == 1 and rep["ok"] is False and "rclpy missing" in rep["error"], rep
+
+
+def test_ap_dds_build_pins_the_rigs_ardupilot_commit():
+    """setup_ap_dds.sh's default ref and SHA are sitl/setup_sitl.sh's pin."""
+    import re
+    rig = (ROOT / "sitl" / "setup_sitl.sh").read_text("utf-8")
+    dds = (ROOT / "sitl" / "ap_dds" / "setup_ap_dds.sh").read_text("utf-8")
+    rig_ref = re.search(r'ARDUPILOT_REF="\$\{ARDUPILOT_REF:-([^}]+)\}"', rig).group(1)
+    rig_sha = re.search(r'ARDUPILOT_SHA="\$\{ARDUPILOT_SHA:-([0-9a-f]{40})\}"', rig).group(1)
+    assert f'RIG_REF="{rig_ref}"' in dds and f'RIG_SHA="{rig_sha}"' in dds
+    assert f'AP_DDS_REF="${{AP_DDS_REF:-{rig_ref}}}"' in dds
+    assert "PIN FAIL" in dds
+
+
+def test_ap_dds_sitl_is_isolated_and_mavros_endpoint_is_opt_in():
+    s = (ROOT / "sitl" / "ap_dds" / "start_ap_dds_sitl.sh").read_text("utf-8")
+    assert 'if [ "${AP_DDS_MAVROS:-0}" = "1" ]' in s
+    assert 'udpclient:127.0.0.1:${SITL_ROUTER_PORT:-14550}' in s
+    assert 'DOMAIN="${AP_DDS_DOMAIN_ID:-42}"' in s and "DDS_DOMAIN_ID" in s
+    assert 'export ROS_DOMAIN_ID="$DOMAIN"' in s
+    assert "ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST" in s
+    assert "AP_DDS_Client" in (ROOT / "sitl" / "ap_dds" / "setup_ap_dds.sh").read_text("utf-8")
 
 
 def test_nothing_on_the_kpi_rail_launches_the_ap_dds_adapter():
