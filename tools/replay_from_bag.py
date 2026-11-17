@@ -59,7 +59,13 @@ WHAT THE BAG DOES NOT HOLD (each is reported per run, never filled in)
     in each record), so a tick's time is compared to within T_JITTER_S, not
     to the millisecond. The t = 0 marker the node sends through MAVROS is in
     the bag (/uas1/mavlink_sink) but is logged late by MAVROS's relay; it
-    is recorded beside the first tick, not used to place it.
+    is recorded beside the first tick, not used to place it. Nor can the bag
+    tell a first tick on an action that waited out the node's start-up from
+    one on the action after it: where the flight log's first action_seq is
+    up to MAX_START_SHIFT actions earlier than the bag's placement and its
+    raw action is the bag's action at that count, bit for bit, the first
+    tick is the log's, and an action no tick ran on is left out and listed
+    (`log_start`; ntFIN2_511, 2026-11-17).
   * The mission's end. After the last message the Shield published, a tick
     that streamed nothing and touched nothing (the autopilot flying an RTL
     with a clean request) leaves no message at all. The bag holds the
@@ -130,8 +136,18 @@ layer, field and tick. A log row that lacks a key the comparison reads
 (`raw_body`, `emitted_body`, `setpoint`, `mode`, `touched`, and on a tick
 with an intercept `violations`, `repairs`, `fsm_state_after`) is not
 compared on it and is counted (`log_fields_absent`): with no difference
-elsewhere the verdict is then `incomplete`, never `identical`. So is a
-logged violation on a tick with no intercept when the arm is not known.
+elsewhere the verdict is then `incomplete`, never `identical`. One absence
+is the node's own encoding, not a gap: on a Shield-on tick its FSM did not
+step (after a GeoFence takeover, in a stale hold) build_row writes none of
+the FSM keys and the intercept carries `fsm: null`; such a row agrees with
+such an intercept (`fsm_not_stepped_rows`; a row without the keys against
+an intercept naming a state is still `log_fields_absent`). A logged
+violation on a tick with no intercept when the arm is not known makes the
+verdict `incomplete` too. A tick the log says streamed a setpoint and the
+bag holds no /mavros/setpoint_raw/local for is a difference; its runs are
+listed (`executed_gaps`), with the adapter's own count of what it sent
+(adapter_log.jsonl) beside the bag's (ntFIN2_175, 2026-11-17: 245 ticks,
+the adapter's log and the bag agree that nothing was sent).
 `not_replayable` is a run with no bag, no action or no Shield message.
 
 A replay bundle's members are checked against the digests of the index it
@@ -490,8 +506,12 @@ class Rebuilt:
     account: dict
 
 
-def rebuild(s: BagStreams) -> Rebuilt:
-    """The episode's ticks from the bag's topics and nothing else."""
+def rebuild(s: BagStreams, start: tuple[int, frozenset] | None = None) -> Rebuilt:
+    """The episode's ticks from the bag's topics and nothing else - or, with
+    `start` (the 0-based index of the first tick's action, and the actions
+    after it no tick ran on), from where the flight log says the node's
+    first tick was (`log_start`): the bag alone cannot tell a first tick on a
+    backlogged action from one on the action after it."""
     if not s.actions:
         raise ReplayError(f"the bag holds no {ACTION_TOPIC} message: nothing marks a tick")
     outs = sorted([ns for ns, _ in s.setpoints] + [ns for ns, _ in s.intercepts])
@@ -504,16 +524,24 @@ def rebuild(s: BagStreams) -> Rebuilt:
         raise ReplayError("the Shield's first message is logged before any action: the "
                           "first tick has no /vla/action_4d message (a timer tick)")
     last = bisect_right(a_ns, outs[-1]) - 1
-    # The node can run behind the recorder at the start (it ticks on an
-    # action the recorder logged up to a period earlier), so its first
-    # message may be logged after the SECOND action. The order of its
-    # messages says so: one that has to go before the first tick.
-    behind = -min([0] + place(a_ns[first:], s.setpoints) + place(a_ns[first:], s.intercepts))
-    if behind > MAX_START_SHIFT or behind > first:
-        raise ReplayError(f"the Shield's messages do not fit one a tick from the first "
-                          f"action before them ({behind} too many at the start)")
-    first -= behind
-    ticks_ns = a_ns[first:]
+    skip: frozenset = frozenset()
+    behind = 0
+    if start is not None:
+        first, skip = start
+    else:
+        # The node can run behind the recorder at the start (it ticks on an
+        # action the recorder logged up to a period earlier), so its first
+        # message may be logged after the SECOND action. The order of its
+        # messages says so: one that has to go before the first tick.
+        behind = -min([0] + place(a_ns[first:], s.setpoints)
+                      + place(a_ns[first:], s.intercepts))
+        if behind > MAX_START_SHIFT or behind > first:
+            raise ReplayError(f"the Shield's messages do not fit one a tick from the first "
+                              f"action before them ({behind} too many at the start)")
+        first -= behind
+    idx = [i for i in range(first, len(a_ns)) if i not in skip]
+    ticks_ns = [a_ns[i] for i in idx]
+    evidenced = bisect_right(idx, last)
     sp, acct_sp = assign(ticks_ns, s.setpoints)
     ic, acct_ic = assign(ticks_ns, s.intercepts)
     ex, acct_ex = assign(ticks_ns, s.executed)
@@ -543,7 +571,7 @@ def rebuild(s: BagStreams) -> Rebuilt:
 
     rows, holding = [], False
     for k, ns in enumerate(ticks_ns):
-        raw = s.actions[first + k][1]
+        raw = s.actions[idx[k]][1]
         pub = sp[k][1] if sp[k] is not None else None
         icpt = ic[k][1] if ic[k] is not None else None
         kind, holding = classify(raw, pub, icpt, holding)
@@ -566,7 +594,7 @@ def rebuild(s: BagStreams) -> Rebuilt:
             if icpt else [],
             "repairs": [{"operator": o} for o in ops],
             "executed": None,
-            "_bag": {"action_ns": ns, "action_index": first + k + 1, "pose_index": j,
+            "_bag": {"action_ns": ns, "action_index": idx[k] + 1, "pose_index": j,
                      "state_index": m},
         }
         if icpt is not None:
@@ -585,7 +613,8 @@ def rebuild(s: BagStreams) -> Rebuilt:
     window = {
         "tick_source": f"{ACTION_TOPIC} messages",
         "first_tick": {"action_index": first + 1, "log_time_ns": ticks_ns[0],
-                       "source": ("the action the Shield's first message answers" + (
+                       "source": (LOG_START_SOURCE if start is not None else
+                                  "the action the Shield's first message answers" + (
                            f" ({behind} before the last one logged ahead of it: the "
                            f"order of the Shield's messages needs the room)" if behind else ""))},
         "last_evidenced_tick": {"action_index": last + 1, "log_time_ns": a_ns[last],
@@ -600,10 +629,50 @@ def rebuild(s: BagStreams) -> Rebuilt:
                   / 1e6, 3)),
         "home_policy_ne": home, "home_source": home_source,
     }
+    if start is not None:
+        window["actions_no_tick_ran_on_at_the_start"] = sorted(i + 1 for i in skip)
     account = {"setpoints": acct_sp, "intercepts": acct_ic, "executed": acct_ex,
-               "ticks_without_a_pose": sum(1 for r in rows[: last - first + 1]
+               "ticks_without_a_pose": sum(1 for r in rows[:evidenced]
                                            if r["x"] is None)}
-    return Rebuilt(rows=rows, evidenced=last - first + 1, window=window, account=account)
+    return Rebuilt(rows=rows, evidenced=evidenced, window=window, account=account)
+
+
+LOG_START_SOURCE = ("the flight log's first action_seq (the node's count of the actions "
+                    "it received; the log's first raw action is the bag's action at that "
+                    "count, bit for bit): the bag alone placed the first tick later")
+
+
+def log_start(s: BagStreams, rb: Rebuilt, rows: list[dict] | None
+              ) -> tuple[int, frozenset] | None:
+    """Where the flight log says the first tick was, when the bag alone placed
+    it up to MAX_START_SHIFT actions later; else None.
+
+    The node's `action_seq` counts the /vla/action_4d messages it received,
+    and on 590 of the 591 runs of ntFIN2 + ntFIN2s it equals the recorder's
+    count at the first tick. The one where it did not (ntFIN2_511, flown
+    before THE START-UP TICK of 2026-11-13 in sitl/ros2_shield_node.py): its
+    first row ticked at t 0.002 s on action 115, which the recorder had
+    logged 111 ms before t = 0 (a message that waited out start_mission's
+    work without a spin), and its second at t 0.101 s on action 117; no row
+    ran on 116, which the recorder logged 11 ms before t = 0, so before the
+    Shield's first message. The bag alone put the first tick on 116 and
+    every later one an action late. Taken from the log
+    only when the log's first row's raw action is the bag's action at that
+    count, bit for bit; the actions the log skips up to the bag's own first
+    tick are left out of the ticks and listed in the window."""
+    if not rows:
+        return None
+    seqs = [r.get("action_seq") for r in rows]
+    if not all(isinstance(q, int) and not isinstance(q, bool) for q in seqs):
+        return None
+    q0 = seqs[0] - 1
+    bag_first = rb.window["first_tick"]["action_index"] - 1
+    if not 0 < bag_first - q0 <= MAX_START_SHIFT or q0 < 0 or q0 >= len(s.actions):
+        return None
+    if not same_vec(s.actions[q0][1], rows[0].get("raw_body")):
+        return None
+    ticked = {q - 1 for q in seqs}
+    return q0, frozenset(i for i in range(q0 + 1, bag_first + 1) if i not in ticked)
 
 
 # --------------------------------------------------------------------------- #
@@ -857,11 +926,15 @@ def _align(rb: Rebuilt, rows: list[dict]) -> tuple[list, str]:
     every row the log's own count of actions pairs them; else by position."""
     seqs = [r.get("action_seq") for r in rows]
     if rows and all(isinstance(q, int) and not isinstance(q, bool) for q in seqs):
+        # By the bag's action index, counted from the first tick's: the same
+        # as the position when every action from the first is a tick, and
+        # right when `log_start` left out actions no tick ran on.
+        at = {r["_bag"]["action_index"]: k for k, r in enumerate(rb.rows)}
+        base = rb.rows[0]["_bag"]["action_index"] if rb.rows else 0
         out: list = []
         for i, q in enumerate(seqs):
-            b = q - seqs[0]
             repeat = i > 0 and q == seqs[i - 1]      # no new action: a timer tick
-            out.append(b if 0 <= b < len(rb.rows) and not repeat else None)
+            out.append(None if repeat else at.get(base + q - seqs[0]))
         return out, "the log's action_seq against the bag's action count"
     return [i if i < len(rb.rows) else None for i in range(len(rows))], "position"
 
@@ -876,6 +949,8 @@ def compare_ticks(s: BagStreams, rb: Rebuilt, rows: list[dict],
     diffs: dict[str, int] = {}
     absent: dict[str, int] = {}             # log rows lacking a compared key
     unchecked_without_intercept = 0         # arm unknown: a logged violation, no intercept
+    fsm_unstepped = 0                       # intercept fsm null, row without FSM keys
+    unsent: list[dict] = []                 # logged as streamed, MAVROS sent nothing
     first: dict | None = None
     pose = {"exact": 0, "next": 0, "previous": 0, "differs": 0}
     worst_m = 0.0
@@ -924,9 +999,15 @@ def compare_ticks(s: BagStreams, rb: Rebuilt, rows: list[dict],
                 differ("ticks", "violations", row, [v["rule_id"] for v in got["violations"]], ids)
             if has("repairs") and [r["operator"] for r in got["repairs"]] != ops:
                 differ("ticks", "repairs", row, [r["operator"] for r in got["repairs"]], ops)
-            if has("fsm_state_after") and got.get("fsm_state_after") != row["fsm_state_after"]:
-                differ("ticks", "fsm_state_after", row, got.get("fsm_state_after"),
-                       row["fsm_state_after"])
+            bag_fsm = got.get("fsm_state_after")
+            if fsm_not_stepped(row, arm) and bag_fsm is None:
+                # The node writes no FSM key on a tick its FSM did not step
+                # (build_row with no fsm_out: after a GeoFence takeover, in a
+                # stale hold) and publishes `fsm: null` on that tick's
+                # intercept: both say the FSM did not step.
+                fsm_unstepped += 1
+            elif has("fsm_state_after") and bag_fsm != row["fsm_state_after"]:
+                differ("ticks", "fsm_state_after", row, bag_fsm, row["fsm_state_after"])
         elif ids or ops:
             # No intercept. With the Shield on the node publishes one on every
             # tick it touched (a violation or a repair), so a log row naming
@@ -946,6 +1027,8 @@ def compare_ticks(s: BagStreams, rb: Rebuilt, rows: list[dict],
         why = _executed_differs(got, row) if "emitted_body" in row else None
         if why:
             differ("ticks", "executed", row, got["executed"], why)
+            if got["executed"] is None:
+                unsent.append(row)
         # The pose: the logged point must be a pose message of the bag.
         if exact_traj:
             p = trajectory[i]
@@ -995,6 +1078,9 @@ def compare_ticks(s: BagStreams, rb: Rebuilt, rows: list[dict],
                   "log_fields_absent": absent,
                   "rows_with_a_logged_violation_or_repair_and_no_intercept_unchecked": (
                       unchecked_without_intercept),
+                  # Ticks with an intercept on which the FSM did not step: the
+                  # row has no FSM key and the intercept's `fsm` is null.
+                  "fsm_not_stepped_rows": fsm_unstepped,
                   "t_offset_ms": None if offset is None else round(offset * 1e3, 3),
                   "t_jitter_ms": None if jitter is None else round(jitter * 1e3, 3),
                   # How long before the node's first tick the recorder had
@@ -1008,7 +1094,23 @@ def compare_ticks(s: BagStreams, rb: Rebuilt, rows: list[dict],
                        "bag_order_max_error_m": round(worst_m, 4)},
         "first_difference": first,
         "rows_used": last_used + 1,
+        # Runs of ticks the log says streamed a setpoint and the bag holds no
+        # /mavros/setpoint_raw/local message for (the adapter sent nothing).
+        "executed_gaps": _spans(unsent),
     }
+
+
+# The keys sitl/ros2_shield_node.py build_row writes together when its FSM
+# stepped on the tick (fsm_out), and leaves out together when it did not.
+FSM_ROW_KEYS = ("fsm_state_before", "fsm_state_after", "fsm_edge", "set_mode",
+                "stop_illegal", "failsafe")
+
+
+def fsm_not_stepped(row: dict, arm: str | None) -> bool:
+    """A Shield-on row on which the node's FSM did not step: none of the keys
+    build_row writes with an FSM output (the Shield-off arm writes
+    `fsm_state_after: null` instead, so its rows are never this)."""
+    return arm == "on" and not any(k in row for k in FSM_ROW_KEYS)
 
 
 TICK_FIELDS_COMPARED = (
@@ -1016,6 +1118,20 @@ TICK_FIELDS_COMPARED = (
     "violations, repairs, fsm_state_after (a tick with an intercept)",
     "violations, repairs (a tick with no intercept: none logged with the Shield on, "
     "no repair with it off)")
+
+
+def _spans(rows: list[dict]) -> list[dict]:
+    """Consecutive log rows (by tick number) as spans: first and last tick,
+    their mission times, and how many ticks."""
+    out: list[dict] = []
+    for r in rows:
+        k = r.get("tick")
+        if out and isinstance(k, int) and k == out[-1]["to_tick"] + 1:
+            out[-1].update(to_tick=k, t_to=r.get("t"), ticks=out[-1]["ticks"] + 1)
+        else:
+            out.append({"from_tick": k, "to_tick": k, "t_from": r.get("t"),
+                        "t_to": r.get("t"), "ticks": 1})
+    return out
 
 
 def _mode_at_edge(s: BagStreams, got: dict, logged: Any) -> bool:
@@ -1065,6 +1181,7 @@ class Episode:
     not_from_bag: list = field(default_factory=list)
     bundle_signature: dict | None = None        # a bundle's read_replay signature status
     limits: list = field(default_factory=list)  # said before the bag is read
+    adapter_log_lines: int | None = None        # adapter_log.jsonl: one line a setpoint sent
 
 
 def _rel(p: Path | str) -> str:
@@ -1144,6 +1261,15 @@ def load_run(run: Path) -> Episode:
     man = _json_file(run / "manifest.json")
     if isinstance(man, dict):
         ep.manifest = man
+    adapter = run / "adapter_log.jsonl"
+    if adapter.is_file():
+        # The MAVLink adapter writes one line per setpoint it sent MAVROS
+        # (sitl/mavlink_adapter_node.py _on_setpoint): its own count, beside
+        # the recorder's of /mavros/setpoint_raw/local.
+        with adapter.open(encoding="utf-8") as fh:
+            ep.adapter_log_lines = sum(1 for line in fh if line.strip())
+        ep.not_from_bag.append("adapter_log.jsonl (its line count, beside the bag's "
+                               "executed setpoints)")
     metrics = _json_file(run / "metrics.json")
     if isinstance(metrics, dict) and metrics.get("shield") in ("on", "off"):
         ep.arm = metrics["shield"]
@@ -1240,6 +1366,10 @@ def replay(ep: Episode) -> tuple[dict, list[dict] | None]:
                               f"with a metadata.yaml)")
         s = read_streams(ep.bag_dir)
         rb = rebuild(s)
+        start = log_start(s, rb, ep.rows)
+        bag_first = rb.window["first_tick"]["action_index"]
+        if start is not None:
+            rb = rebuild(s, start)
     except ReplayError as e:
         rec.update(verdict="not_replayable", why=str(e))
         return rec, None
@@ -1249,10 +1379,22 @@ def replay(ep: Episode) -> tuple[dict, list[dict] | None]:
                   "problems": s.problems}
     if ep.bundle_signature is not None:
         rec["bag"]["bundle_signature"] = ep.bundle_signature
+    if ep.adapter_log_lines is not None:
+        rec["adapter_log"] = {"setpoints_sent": ep.adapter_log_lines,
+                              "executed_in_bag": len(s.executed),
+                              "agree": ep.adapter_log_lines == len(s.executed)}
     rec["window"] = rb.window
     rec["account"] = rb.account
     rec["not_from_the_bag"] = ep.not_from_bag
     limits: list[str] = list(ep.limits)
+    if start is not None:
+        skipped = rb.window["actions_no_tick_ran_on_at_the_start"]
+        limits.append(
+            f"the first tick is the flight log's (action {start[0] + 1}, its first "
+            f"action_seq), not the bag's own placement (action {bag_first}): the node's "
+            f"first tick ran on an action the recorder logged before the one ahead of "
+            f"the Shield's first message"
+            + (f", and no tick ran on action(s) {skipped}" if skipped else ""))
     n = rb.evidenced
     if ep.rows is None:
         rec["compared_with_the_log"] = None
@@ -1279,6 +1421,21 @@ def replay(ep: Episode) -> tuple[dict, list[dict] | None]:
             limits.append("the flight log lacks keys the tick comparison needs, so they "
                           "were not compared on those rows: " + ", ".join(
                               f"{k} ({n} row(s))" for k, n in sorted(absent.items())))
+        gaps = cmp_["executed_gaps"]
+        if gaps:
+            sent = ep.adapter_log_lines
+            limits.append(
+                f"{sum(g['ticks'] for g in gaps)} tick(s) in {len(gaps)} span(s) "
+                f"(the first: ticks {gaps[0]['from_tick']}-{gaps[0]['to_tick']}, "
+                f"t {gaps[0]['t_from']}-{gaps[0]['t_to']} s) published a setpoint on "
+                f"{SETPOINT_TOPIC} that MAVROS was never sent: the flight log's "
+                f"emitted_body is what the Shield published, not what reached the "
+                f"autopilot"
+                + ("" if sent is None else
+                   f"; the adapter's own log holds {sent} sent setpoint(s), the bag "
+                   f"{len(s.executed)} executed message(s)"
+                   + (" (they agree: the adapter did not send them)"
+                      if sent == len(s.executed) else " (they disagree)")))
         unchecked = cmp_["ticks"][
             "rows_with_a_logged_violation_or_repair_and_no_intercept_unchecked"]
         if unchecked:
