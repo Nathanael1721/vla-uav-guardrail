@@ -338,7 +338,9 @@ def reconstruct_unsafe(rows: list[dict], pol, metrics: dict) -> dict:
     subject came from, and the seconds spent unsafe per rule category - the
     last so the result can be checked against the rail's own dwell figures.
     """
-    sh = Shield(pol, lookahead_s=3.0, dt=0.5)
+    # PathRepair off: the chain of every flight rescored here (it joined the
+    # Shield's default chain on 2026-11-17).
+    sh = Shield(pol, lookahead_s=3.0, dt=0.5, path_repair=False)
     declared = declared_subject(metrics)
     sources: dict[str, int] = {}
     cat_ticks: dict[str, int] = {}

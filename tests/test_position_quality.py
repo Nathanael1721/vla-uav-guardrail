@@ -54,7 +54,25 @@ from guardrail import kpi as K                                       # noqa: E40
 from guardrail.models import Action4D, Policy, State                 # noqa: E402
 from guardrail.scenario_spec import Library, ScenarioSpec            # noqa: E402
 from guardrail.shield import (DEFAULT_RECOVERY_LAW, DR_DRIFT_MPS,    # noqa: E402
-                              RECOVERY_LAWS, Shield)
+                              RECOVERY_LAWS)
+from guardrail.shield import Shield as _Shield                       # noqa: E402
+
+
+class Shield(_Shield):
+    """The Shield with PathRepair OFF. Every flight this file pins (the
+    rig's lane-23.6 / lane-15 timelines, X8 against E3's first tick) was
+    flown before PathRepair joined the default chain (2026-11-17): a detour
+    taken while the fix is still good moves the aircraft, and so every later
+    edge time. What PathRepair changes in these cells is measured in
+    docs/data/pathrepair_default_20261117/ (gps-dropout, gps-noise rows);
+    its no-detour-without-a-fix gate is pinned in tests/
+    test_shieldcore_repair.py."""
+
+    def __init__(self, *a, path_repair=False, **kw):
+        super().__init__(*a, path_repair=path_repair, **kw)
+
+
+SW.Shield = Shield
 
 LIBRARY = Library(ROOT / "experiments" / "scenarios.yaml")
 DEFAULTS = LIBRARY.defaults

@@ -52,6 +52,11 @@ POLICY = ROOT / "policies" / "follow_car_citylife_nfz.yaml"
 VARIANTS = {"g_still": (5.0, 0.1, False), "g_vel": (5.0, 0.1, True),
             "c_still": (3.0, 0.5, False), "c_vel": (3.0, 0.5, True)}
 SO_OPS = {"StandoffHold", "StandoffRecover"}
+# --path-repair on: PathRepair (the Shield's default chain since 2026-11-17)
+# supersedes StandoffHold's record where it detours round the ring, so its
+# ticks count as stand-off repairs too. Off (default): the chain every
+# replayed flight flew, so the published figures reproduce.
+SO_OPS_PR = SO_OPS | {"PathRepair"}
 
 
 def _jl(p: Path) -> list[dict]:
@@ -82,7 +87,8 @@ def follow_runs(out_root: Path) -> list[tuple[str, bool]]:
     return found
 
 
-def replay(run_dir: str, citymap_dir: str, jump_gate: bool = True) -> dict:
+def replay(run_dir: str, citymap_dir: str, jump_gate: bool = True,
+           path_repair: bool = False) -> dict:
     import occ_bands
     import vla_fly as VF
     from guardrail.models import Action4D, State, load_policy
@@ -123,9 +129,12 @@ def replay(run_dir: str, citymap_dir: str, jump_gate: bool = True) -> dict:
     held.sort()
 
     box = VF.new_acquisition(None)
-    shields = {k: rail_shield(pol, lookahead_s=a, dt=b, obstacle_map=smap)
+    shields = {k: rail_shield(pol, lookahead_s=a, dt=b, obstacle_map=smap,
+                              path_repair=path_repair)
                for k, (a, b, _) in VARIANTS.items()}
-    res = {k: {"so_rep": 0, "cut": [], "truth_lt10": 0, "other_rep": 0, "p0_escapes": 0}
+    so_ops = SO_OPS_PR if path_repair else SO_OPS
+    res = {k: {"so_rep": 0, "cut": [], "truth_lt10": 0, "other_rep": 0, "p0_escapes": 0,
+               "pr": 0}
            for k in VARIANTS}
     prio = {c.id: c.priority for c in pol.constraints}
     n = fed = t5 = t5_fed = t5_seen = 0
@@ -193,17 +202,19 @@ def replay(run_dir: str, citymap_dir: str, jump_gate: bool = True) -> dict:
                 continue
             ops = {p.operator for p in dec.repairs}
             rr = res[k]
-            if ops & SO_OPS:
+            rr["pr"] += "PathRepair" in ops
+            if ops & so_ops:
                 rr["so_rep"] += 1
                 rr["cut"].append(math.hypot(a.vx, a.vy)
                                  - math.hypot(dec.emitted.vx, dec.emitted.vy))
                 rr["truth_lt10"] += td is not None and td < 10.0
-            rr["other_rep"] += bool(ops - SO_OPS)
+            rr["other_rep"] += bool(ops - so_ops)
             # The Shield's own re-check of what it emitted (kpi.py's escape):
             # a P0 rule still broken after the repair.
             rr["p0_escapes"] += any(prio.get(v.rule_id, "P0") == "P0" for v in dec.violations) \
                 and any(prio.get(v.rule_id, "P0") == "P0" for v in dec.emitted_violations)
     return {"run": d.name, "ticks": n, "fed": fed, "jump_gate": jump_gate,
+            "path_repair": path_repair,
             "held_jumps_refused": box.get("jumps", 0),
             "truth_lt5": t5, "truth_lt5_fed": t5_fed,
             "truth_lt5_perceived_lt5": t5_seen,
@@ -214,6 +225,7 @@ def replay(run_dir: str, citymap_dir: str, jump_gate: bool = True) -> dict:
                                                 if rr["cut"] else None),
                              "so_rep_truth_lt10": rr["truth_lt10"],
                              "other_rep": rr["other_rep"],
+                             "path_repair_ticks": rr["pr"],
                              "p0_escapes": rr["p0_escapes"]} for k, rr in res.items()}}
 
 
@@ -242,7 +254,9 @@ def summary(results: list[dict], label: str) -> list[str]:
                    f"{max(fl):6.3f}  {(st.median(cuts) if cuts else float('nan')):7.2f} m/s"
                    f"  {sum(r['variants'][k]['so_rep_truth_lt10'] for r in ok):>11}"
                    f"  {sum(r['variants'][k]['other_rep'] for r in ok):>13}"
-                   f"  {sum(r['variants'][k].get('p0_escapes', 0) for r in ok):>10}")
+                   f"  {sum(r['variants'][k].get('p0_escapes', 0) for r in ok):>10}"
+                   + (f"  PathRepair {sum(r['variants'][k].get('path_repair_ticks', 0) for r in ok)}"
+                      if any(r.get("path_repair") for r in ok) else ""))
     return out
 
 
@@ -254,6 +268,11 @@ def main(argv=None) -> int:
     ap.add_argument("--no-jump-gate", action="store_true",
                     help="take every held box, as vla_fly did until 2026-11-04 "
                          "(take_held_box's jump gate off)")
+    ap.add_argument("--path-repair", choices=["on", "off"], default="off",
+                    help="off (default): the chain every replayed flight flew; on: "
+                         "PathRepair in the chain (the Shield's default since "
+                         "2026-11-17), its ticks counted as stand-off repairs - the "
+                         "open-loop A/B of WP3-06 on the follow flights")
     a = ap.parse_args(argv)
     out_root = Path(a.out_root)
     citymap = out_root / "citymap_citylife"
@@ -261,7 +280,8 @@ def main(argv=None) -> int:
     runs = a.runs or list(known)
     with ProcessPoolExecutor(max_workers=max(1, a.jobs)) as ex:
         results = list(ex.map(replay, [str(out_root / r) for r in runs],
-                              [str(citymap)] * len(runs), [not a.no_jump_gate] * len(runs)))
+                              [str(citymap)] * len(runs), [not a.no_jump_gate] * len(runs),
+                              [a.path_repair == "on"] * len(runs)))
     for r in results:
         print(json.dumps(r))
     for err in (r for r in results if "error" in r):

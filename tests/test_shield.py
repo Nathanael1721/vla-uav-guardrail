@@ -721,7 +721,9 @@ def test_a_stand_off_holds_magnitude_is_a_depth_the_ring_can_have():
     201 of the flight: 8.3 m out, closing at 2.27 m/s with a tangential
     component, closest forecast pose 4.2 m from the car - 0.8 m deep (the
     old code said 8.08 m)."""
-    sh = Shield(_follow_car_policy(), escalation=False)
+    # PathRepair off: the detour supersedes the hold here (default chain
+    # since 2026-11-17); this test is the hold's own magnitude.
+    sh = Shield(_follow_car_policy(), escalation=False, path_repair=False)
     st = State(x=35.11, y=-19.674, up=8.001, yaw_deg=2.14)
     sh.set_subject(42.38, -23.63, "vehicle")
     a = Action4D(vx=2.639389733893821, vy=0.09851453808726945, vz_up=-0.0006,
@@ -733,6 +735,37 @@ def test_a_stand_off_holds_magnitude_is_a_depth_the_ring_can_have():
     assert abs(closest - 4.22) < 0.01, closest
     assert abs(hold[0].magnitude_m - (5.0 - closest)) < 1e-9, (hold[0], closest)
     assert hold[0].magnitude_m < 2.0, "the old code reported 8.08 m here"
+
+
+def test_tick_201_with_the_default_chain_flies_a_stand_off_detour():
+    """The same tick on the DEFAULT chain (PathRepair on since 2026-11-17, at
+    the default theta 2.0 m): PathRepair supersedes StandoffHold and flies a
+    2.64 m/s detour (+5.5 m forward, +1.5 m right) in place of the hold's
+    slowdown to 1.35 m/s. Its magnitude_m is on theta's decided depth basis
+    (reading A): the 0.78 m the raw forecast went into the ring, the hold's
+    own figure, so theta reads this tick as it read it before. This is why
+    the follow rails keep PathRepair off (guardrail.replay
+    FOLLOW_RAIL_PATH_REPAIR) until a follow figure is re-measured with it."""
+    from guardrail.replay import FOLLOW_RAIL_PATH_REPAIR
+    assert FOLLOW_RAIL_PATH_REPAIR is False
+    st = State(x=35.11, y=-19.674, up=8.001, yaw_deg=2.14)
+    a = Action4D(vx=2.639389733893821, vy=0.09851453808726945, vz_up=-0.0006,
+                 yaw_rate=-0.6427205700542464)
+    out = {}
+    for pr in (False, True):
+        sh = Shield(_follow_car_policy(), escalation=False, path_repair=pr)
+        sh.set_subject(42.38, -23.63, "vehicle")
+        out[pr] = sh.filter(st, a)
+    hold, det = out[False], out[True]
+    assert abs(hold.emitted.vx - 0.6443) < 1e-3 and abs(hold.emitted.vy - 1.1841) < 1e-3
+    assert [r.operator for r in det.repairs] == ["PathRepair"], det.repairs
+    rep = det.repairs[0]
+    assert "supersedes StandoffHold" in rep.detail and "+5.5 m forward" in rep.detail, rep
+    assert abs(det.emitted.vx - 2.5132) < 1e-3 and abs(det.emitted.vy - 0.8122) < 1e-3
+    assert abs(math.hypot(det.emitted.vx, det.emitted.vy) - 2.64) < 0.01
+    assert abs(rep.magnitude_m - hold.repairs[0].magnitude_m) < 1e-9     # 0.78 m, depth
+    assert abs(rep.magnitude_m - 0.7756) < 1e-3
+    assert not det.emitted_violations, det.emitted_violations
 
 
 def test_unsafe_depth_measures_how_far_the_position_is_from_legal():
@@ -1227,15 +1260,22 @@ def test_a_50_rule_tick_never_rebuilds_a_margin_ring():
     fence, at compile time, so a whole filter() near the fences builds none."""
     from shapely.geometry.base import BaseGeometry
     B = _fifty()
-    sh = Shield(B.fifty_rule_policy(), lookahead_s=3.0, dt=0.5)
     pairs = B.samples("near", 40, seed=1)
-    box, restore = _count_calls(BaseGeometry, "buffer")
-    try:
-        for st, a in pairs:
-            sh.filter(st, a)
-    finally:
-        restore()
-    assert box["n"] == 0, f"{box['n']} margin rings rebuilt during 40 ticks"
+    for flags in ({"path_repair": False}, {}):
+        sh = Shield(B.fifty_rule_policy(), lookahead_s=3.0, dt=0.5, **flags)
+        if flags == {}:
+            # PathRepair (default since 2026-11-17) builds each zone's detour
+            # corners once (repair.PathRepair._zone_corners, cached on the
+            # Shield): the first round builds them, the second none.
+            for st, a in pairs:
+                sh.filter(st, a)
+        box, restore = _count_calls(BaseGeometry, "buffer")
+        try:
+            for st, a in pairs:
+                sh.filter(st, a)
+        finally:
+            restore()
+        assert box["n"] == 0, f"{flags}: {box['n']} margin rings rebuilt during 40 ticks"
 
 
 def test_fences_out_of_the_forecasts_reach_are_not_tested():

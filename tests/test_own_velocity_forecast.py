@@ -135,11 +135,12 @@ def _identity_lines(name: str, n: int, *, escalation: bool, velocity: str = "non
         kw["velocity_response"] = None
     # recovery_law "lookahead": the altitude recovery c77c77d flew. Since
     # 2026-10-29 the default recovers at the climb cap (WP3-17), a change of
-    # the Shield's own, not of the velocity this proof is about.
+    # the Shield's own, not of the velocity this proof is about. PathRepair
+    # off for the same reason: c77c77d had none (default chain 2026-11-17).
     from guardrail.fsm import FSMConfig
     sh = Shield(pol, lookahead_s=5.0, dt=0.1, obstacle_map=smap,
                 escalation=FSMConfig(**C77_LOITER_LAW) if escalation else False,
-                recovery_law="lookahead", **kw)
+                recovery_law="lookahead", path_repair=False, **kw)
     rng = random.Random(f"{IDENTITY_SEED}:{name}:{escalation}")
     out = []
     t = 0.0

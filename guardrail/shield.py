@@ -95,7 +95,8 @@ ENFORCEMENT (2026-10-07; docs/DESIGN-shield-enforcement.md has the whole story)
     library: the chain above, decision for decision, each call recorded
     (`ShieldDecision.trace`, the audit record's `repair_passes`), with the
     grant's first-feasible selection, PathRepair and a forecast segment check
-    behind constructor flags, all off by default. A moving zone's polygon is
+    behind constructor flags (PathRepair on by default since 2026-11-17, the
+    other two off). A moving zone's polygon is
     built only when its anchor box meets the forecast (guardrail/ir.py
     `anchor_reach`).
   * ONE RULE-EVALUATION CODE PATH and the grant's node architecture
@@ -1785,7 +1786,7 @@ class Shield:
                  dt: float = LOOKAHEAD_DT_S, obstacle_map: dict | None = None,
                  now=None, escalation: "_fsm.FSMConfig | bool | None" = True,
                  theta_horizon_s: float | None = _fsm.DEFAULT_THETA_HORIZON_S, *,
-                 repair_mode: str = "chain", path_repair: bool = False,
+                 repair_mode: str = "chain", path_repair: bool = True,
                  segment_check: bool = False, repair_order: tuple | None = None,
                  hold_points: bool = True, land_site_ok=None,
                  velocity_response: "_response.VelocityResponse | None" = _response.ARDUCOPTER_GUIDED,
@@ -1852,12 +1853,13 @@ class Shield:
         over that horizon.
 
         repair_mode / path_repair / segment_check: the repair library's modes
-        (guardrail/repair.py), all off by default, where the decisions are
-        the chain's as they have always been. "first_feasible" is the
+        (guardrail/repair.py). "first_feasible" (off by default) is the
         grant's selection (the first operator whose action clears the
-        earliest violation within theta wins); `path_repair` adds the grant's
-        PathRepair (a body-frame detour waypoint) after the lateral
-        projection; `segment_check` also judges the straight segment between
+        earliest violation within theta wins); `path_repair` (ON by default
+        since 2026-11-17, the grant's priority order; False is the chain as
+        flown before) adds the grant's PathRepair (a body-frame detour
+        waypoint) after the lateral projection; `segment_check` (off by
+        default) also judges the straight segment between
         each pair of consecutive forecast poses against every zone's margin
         ring and every corridor's boundary, so a zone thinner than one
         forecast step is not stepped over. `repair_operators` is this
@@ -1954,6 +1956,11 @@ class Shield:
                              f"got {repair_mode!r}")
         self.repair_mode = repair_mode
         self.path_repair = bool(path_repair)
+        # The theta PathRepair defers to on a Shield without an FSM of its
+        # own (a rail's: the ROS 2 node sets its FSM's config here). None:
+        # the grant's defaults, fsm.FSMConfig() (guardrail/repair.py
+        # PathRepair._projection_over_theta).
+        self.theta_config = None
         self.segment_check = bool(segment_check)
         self.repair_operators: dict = dict(_repair.REGISTRY)
         if repair_order is not None:

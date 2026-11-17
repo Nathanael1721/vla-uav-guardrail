@@ -1,0 +1,427 @@
+{
+ "_what": "Before / after figures for PathRepair joining the default repair chain",
+ "runs": {
+  "smoke": {
+   "before": {
+    "episodes": 63,
+    "p0_escapes": 0,
+    "p0_escape_rate": 0.0,
+    "repair_success_rate": 0.993384,
+    "repair_attempt_ticks": 5744,
+    "repair_success_ticks": 5706,
+    "mean_repair_magnitude_mps": 6.95,
+    "mission_success_rate": 0.460317,
+    "mission_successes": 29,
+    "episodes_mission_scored": 63,
+    "failsafe_trigger_correctness": 1.0,
+    "failsafe_scored": 63,
+    "false_triggers": 0,
+    "missed_triggers": 0,
+    "path_repair_class": {
+     "ticks": 0,
+     "mean_mps": null,
+     "sole_ticks": 0,
+     "sole_mean_mps": null
+    },
+    "repair_outcomes": {
+     "converged": 5706,
+     "converged_via_rescue": 0,
+     "converged_over_theta": 2,
+     "braked": 32,
+     "failsafe": 4,
+     "residual_p0": 0,
+     "residual_other": 0,
+     "not_measurable": 0
+    }
+   },
+   "after": {
+    "episodes": 63,
+    "p0_escapes": 0,
+    "p0_escape_rate": 0.0,
+    "repair_success_rate": 0.993384,
+    "repair_attempt_ticks": 5744,
+    "repair_success_ticks": 5706,
+    "mean_repair_magnitude_mps": 6.95,
+    "mission_success_rate": 0.460317,
+    "mission_successes": 29,
+    "episodes_mission_scored": 63,
+    "failsafe_trigger_correctness": 1.0,
+    "failsafe_scored": 63,
+    "false_triggers": 0,
+    "missed_triggers": 0,
+    "path_repair_class": {
+     "ticks": 0,
+     "mean_mps": null,
+     "sole_ticks": 0,
+     "sole_mean_mps": null
+    },
+    "repair_outcomes": {
+     "converged": 5706,
+     "converged_via_rescue": 0,
+     "converged_over_theta": 2,
+     "braked": 32,
+     "failsafe": 4,
+     "residual_p0": 0,
+     "residual_other": 0,
+     "not_measurable": 0
+    }
+   },
+   "headline_identical": true,
+   "headline_fields_differing": [],
+   "episodes_compared": 64,
+   "episodes_differing": 0,
+   "episodes_fsm_outcome_status_or_hold_changed": [],
+   "episodes": []
+  },
+  "library": {
+   "before": {
+    "episodes": 179,
+    "p0_escapes": 0,
+    "p0_escape_rate": 0.0,
+    "repair_success_rate": 0.99426,
+    "repair_attempt_ticks": 16202,
+    "repair_success_ticks": 16109,
+    "mean_repair_magnitude_mps": 7.0141,
+    "mission_success_rate": 0.536313,
+    "mission_successes": 96,
+    "episodes_mission_scored": 179,
+    "failsafe_trigger_correctness": 1.0,
+    "failsafe_scored": 179,
+    "false_triggers": 0,
+    "missed_triggers": 0,
+    "path_repair_class": {
+     "ticks": 0,
+     "mean_mps": null,
+     "sole_ticks": 0,
+     "sole_mean_mps": null
+    },
+    "repair_outcomes": {
+     "converged": 16109,
+     "converged_via_rescue": 0,
+     "converged_over_theta": 12,
+     "braked": 76,
+     "failsafe": 5,
+     "residual_p0": 0,
+     "residual_other": 0,
+     "not_measurable": 0
+    }
+   },
+   "after": {
+    "episodes": 179,
+    "p0_escapes": 0,
+    "p0_escape_rate": 0.0,
+    "repair_success_rate": 0.994264,
+    "repair_attempt_ticks": 16214,
+    "repair_success_ticks": 16121,
+    "mean_repair_magnitude_mps": 7.0071,
+    "mission_success_rate": 0.536313,
+    "mission_successes": 96,
+    "episodes_mission_scored": 179,
+    "failsafe_trigger_correctness": 1.0,
+    "failsafe_scored": 179,
+    "false_triggers": 0,
+    "missed_triggers": 0,
+    "path_repair_class": {
+     "ticks": 25,
+     "mean_mps": 0.7128,
+     "sole_ticks": 25,
+     "sole_mean_mps": 0.7128
+    },
+    "repair_outcomes": {
+     "converged": 16121,
+     "converged_via_rescue": 0,
+     "converged_over_theta": 12,
+     "braked": 76,
+     "failsafe": 5,
+     "residual_p0": 0,
+     "residual_other": 0,
+     "not_measurable": 0
+    }
+   },
+   "headline_identical": true,
+   "headline_fields_differing": [],
+   "episodes_compared": 180,
+   "episodes_differing": 1,
+   "episodes_fsm_outcome_status_or_hold_changed": [],
+   "episodes": [
+    {
+     "id": "standoff-approach-angles@offset_m=9,subject_class=pedestrian,variant=0",
+     "mission_outcome": [
+      "success",
+      "success"
+     ],
+     "mission_outcome_changed": false,
+     "status_changed": false,
+     "fsm_edges_changed": false,
+     "fsm_edges_before": [
+      [
+       "G1",
+       "Normal",
+       "Brake",
+       0.0
+      ],
+      [
+       "G7",
+       "Brake",
+       "Normal",
+       3.3
+      ]
+     ],
+     "fsm_edges_after": [
+      [
+       "G1",
+       "Normal",
+       "Brake",
+       0.0
+      ],
+      [
+       "G7",
+       "Brake",
+       "Normal",
+       4.5
+      ]
+     ],
+     "final_position_moved_m": 0.323109888428068,
+     "repair_magnitude_by_operator_class.PathRepair.ticks": [
+      0,
+      25
+     ],
+     "mean_repair_magnitude_mps": [
+      3.6084,
+      0.7128
+     ],
+     "p0_violation_ticks": [
+      13,
+      25
+     ]
+    }
+   ]
+  },
+  "nightly_seed1001": {
+   "before": {
+    "episodes": 247,
+    "p0_escapes": 0,
+    "p0_escape_rate": 0.0,
+    "repair_success_rate": 0.992012,
+    "repair_attempt_ticks": 18904,
+    "repair_success_ticks": 18753,
+    "mean_repair_magnitude_mps": 6.3486,
+    "mission_success_rate": 0.469636,
+    "mission_successes": 116,
+    "episodes_mission_scored": 247,
+    "failsafe_trigger_correctness": 1.0,
+    "failsafe_scored": 247,
+    "false_triggers": 0,
+    "missed_triggers": 0,
+    "path_repair_class": {
+     "ticks": 0,
+     "mean_mps": null,
+     "sole_ticks": 0,
+     "sole_mean_mps": null
+    },
+    "repair_outcomes": {
+     "converged": 18753,
+     "converged_via_rescue": 0,
+     "converged_over_theta": 36,
+     "braked": 106,
+     "failsafe": 9,
+     "residual_p0": 0,
+     "residual_other": 0,
+     "not_measurable": 0
+    }
+   },
+   "after": {
+    "episodes": 247,
+    "p0_escapes": 0,
+    "p0_escape_rate": 0.0,
+    "repair_success_rate": 0.992027,
+    "repair_attempt_ticks": 18940,
+    "repair_success_ticks": 18789,
+    "mean_repair_magnitude_mps": 6.3319,
+    "mission_success_rate": 0.469636,
+    "mission_successes": 116,
+    "episodes_mission_scored": 247,
+    "failsafe_trigger_correctness": 1.0,
+    "failsafe_scored": 247,
+    "false_triggers": 0,
+    "missed_triggers": 0,
+    "path_repair_class": {
+     "ticks": 75,
+     "mean_mps": 0.7128,
+     "sole_ticks": 75,
+     "sole_mean_mps": 0.7128
+    },
+    "repair_outcomes": {
+     "converged": 18789,
+     "converged_via_rescue": 0,
+     "converged_over_theta": 36,
+     "braked": 106,
+     "failsafe": 9,
+     "residual_p0": 0,
+     "residual_other": 0,
+     "not_measurable": 0
+    }
+   },
+   "headline_identical": true,
+   "headline_fields_differing": [],
+   "episodes_compared": 248,
+   "episodes_differing": 3,
+   "episodes_fsm_outcome_status_or_hold_changed": [],
+   "episodes": [
+    {
+     "id": "standoff-approach-angles@offset_m=9,subject_class=pedestrian,variant=0",
+     "mission_outcome": [
+      "success",
+      "success"
+     ],
+     "mission_outcome_changed": false,
+     "status_changed": false,
+     "fsm_edges_changed": false,
+     "fsm_edges_before": [
+      [
+       "G1",
+       "Normal",
+       "Brake",
+       0.0
+      ],
+      [
+       "G7",
+       "Brake",
+       "Normal",
+       3.3
+      ]
+     ],
+     "fsm_edges_after": [
+      [
+       "G1",
+       "Normal",
+       "Brake",
+       0.0
+      ],
+      [
+       "G7",
+       "Brake",
+       "Normal",
+       4.5
+      ]
+     ],
+     "final_position_moved_m": 0.323109888428068,
+     "repair_magnitude_by_operator_class.PathRepair.ticks": [
+      0,
+      25
+     ],
+     "mean_repair_magnitude_mps": [
+      3.6084,
+      0.7128
+     ],
+     "p0_violation_ticks": [
+      13,
+      25
+     ]
+    },
+    {
+     "id": "standoff-approach-angles@offset_m=9,subject_class=pedestrian,variant=1",
+     "mission_outcome": [
+      "success",
+      "success"
+     ],
+     "mission_outcome_changed": false,
+     "status_changed": false,
+     "fsm_edges_changed": false,
+     "fsm_edges_before": [
+      [
+       "G1",
+       "Normal",
+       "Brake",
+       0.0
+      ],
+      [
+       "G7",
+       "Brake",
+       "Normal",
+       3.3
+      ]
+     ],
+     "fsm_edges_after": [
+      [
+       "G1",
+       "Normal",
+       "Brake",
+       0.0
+      ],
+      [
+       "G7",
+       "Brake",
+       "Normal",
+       4.5
+      ]
+     ],
+     "final_position_moved_m": 0.3162277660168361,
+     "repair_magnitude_by_operator_class.PathRepair.ticks": [
+      0,
+      25
+     ],
+     "mean_repair_magnitude_mps": [
+      3.6084,
+      0.7128
+     ],
+     "p0_violation_ticks": [
+      13,
+      25
+     ]
+    },
+    {
+     "id": "standoff-approach-angles@offset_m=9,subject_class=pedestrian,variant=2",
+     "mission_outcome": [
+      "success",
+      "success"
+     ],
+     "mission_outcome_changed": false,
+     "status_changed": false,
+     "fsm_edges_changed": false,
+     "fsm_edges_before": [
+      [
+       "G1",
+       "Normal",
+       "Brake",
+       0.0
+      ],
+      [
+       "G7",
+       "Brake",
+       "Normal",
+       3.3
+      ]
+     ],
+     "fsm_edges_after": [
+      [
+       "G1",
+       "Normal",
+       "Brake",
+       0.0
+      ],
+      [
+       "G7",
+       "Brake",
+       "Normal",
+       4.5
+      ]
+     ],
+     "final_position_moved_m": 0.33241540277188664,
+     "repair_magnitude_by_operator_class.PathRepair.ticks": [
+      0,
+      25
+     ],
+     "mean_repair_magnitude_mps": [
+      3.6084,
+      0.7128
+     ],
+     "p0_violation_ticks": [
+      13,
+      25
+     ]
+    }
+   ]
+  }
+ }
+}

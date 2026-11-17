@@ -178,6 +178,7 @@ def test_a_stored_rail_run_replays_bit_for_bit_with_its_hot_applied_generation()
     assert rec["logged_touched_ticks"] == sum(r["touched"] for r in rows)
     assert rec["state_source"].startswith("trajectory.json")
     assert rec["shield"] == {"lookahead_s": 5.0, "dt": 0.1, "escalation": False,
+                             "path_repair": False,
                              "clock": "none"}
     # the moving zone is anchored where the flight anchored it: the repairs
     # after the spawn are compared, and agree

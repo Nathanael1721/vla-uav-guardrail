@@ -251,6 +251,9 @@ def shield_kwargs(rec: dict) -> dict:
               "hold_points", "recovery_law"):
         if k in rec:
             kw[k] = rec[k]
+    # PathRepair joined the Shield's default chain on 2026-11-17; a record
+    # without the key was written by a Shield that had it off.
+    kw.setdefault("path_repair", False)
     if rec.get("repair_order") is not None:
         kw["repair_order"] = tuple(rec["repair_order"])
     if "velocity_response" in rec:
@@ -301,7 +304,9 @@ def flight_shield_settings(meta: dict, *, allow_mismatch: bool = False) -> dict:
                 "fsm_law": (None if law is None
                             else {k: v for k, v in law.items() if k != "config"}),
                 "note": "; ".join(notes) or None}
-    kw = {"lookahead_s": LOOKAHEAD_S, "dt": LOOKAHEAD_DT_S}
+    # No record: the demo's Shield of the time, PathRepair off (it joined the
+    # default chain on 2026-11-17, after every run that records no Shield).
+    kw = {"lookahead_s": LOOKAHEAD_S, "dt": LOOKAHEAD_DT_S, "path_repair": False}
     before = _started_before_constants(meta.get("started_utc"))
     if before:
         why = (f"the run records no Shield and started {meta.get('started_utc')}, before "

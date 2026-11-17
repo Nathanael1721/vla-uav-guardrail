@@ -243,6 +243,8 @@ def test_repair_results_keep_the_old_keys_and_repair_attempts_are_the_operators(
     pol = load_policy(DEMO)
     sh = Shield(pol)
     r = _log([sh.filter(State(x=0, y=15, up=4), Action4D(vx=1.3))], pol)[0]
+    # Eight operator calls since 2026-11-17: PathRepair joined the default
+    # loop (it skips here: the slide keeps the progress).
     for k in ("ts", "policy_hash", "generation", "monitor_tick", "raw_action",
               "violations", "repair_attempts", "emitted_action",
               "fsm_state_before", "fsm_state_after", "repairs", "emitted_violations",
@@ -255,11 +257,12 @@ def test_repair_results_keep_the_old_keys_and_repair_attempts_are_the_operators(
         ("GeofenceSlide", "ok", "lateral", 1), att
     assert r["iterations"] == 1 and r["chain_runs"] == 1 and r["repair_mode"] == "chain"
     ops = [(x["operator"], x["result"]) for p in r["repair_passes"] for x in p["attempts"]]
-    assert ("LateralProjection", "ok") in ops and len(ops) == 7, ops
-    # The grant's repair_attempts: the same seven operator calls, flat, in order.
+    assert ("LateralProjection", "ok") in ops and ("PathRepair", "skip") in ops, ops
+    assert len(ops) == 8, ops
+    # The grant's repair_attempts: the same eight operator calls, flat, in order.
     flat = [(a["operator"], a["result"]) for a in r["repair_attempts"]]
     assert flat == ops, (flat, ops)
-    assert [a["run"] for a in r["repair_attempts"]] == [1] * 7
+    assert [a["run"] for a in r["repair_attempts"]] == [1] * 8
     lp = next(a for a in r["repair_attempts"] if a["operator"] == "LateralProjection")
     assert lp["repairs"] == ["GeofenceSlide"] and lp["magnitude_m"] == att["magnitude_m"]
     assert all(a["reason"] for a in r["repair_attempts"] if a["result"] == "skip")

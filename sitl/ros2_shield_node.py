@@ -2697,9 +2697,15 @@ if HAVE_ROS:
             # default, so every flight flies as before): filter_body
             # forecasts a body action with a yaw rate along its arc.
             self.arc = getattr(args, "arc_forecast", "off") == "on"
+            # --path-repair (2026-11-17, WP3-06): on (default) the Shield's
+            # default chain with PathRepair after LateralProjection (in chain
+            # mode it detours round a --subject's stand-off ring only); off is
+            # the chain every run before 2026-11-17 flew.
+            self.path_repair = getattr(args, "path_repair", "on") == "on"
             self.shield = rail_shield(self.policy, lookahead_s=LOOKAHEAD_S,
                                       dt=LOOKAHEAD_DT_S, clock=self.clock,
                                       pipe_clock=time.monotonic, **self.world_kw,
+                                      path_repair=self.path_repair,
                                       **({"arc_forecast": True} if self.arc else {}))
             self._ev_state = SE.EventState(shields=[self.shield])
             # The own-velocity forecast (OWN_VELOCITY_DEFAULT: off here), the
@@ -2742,6 +2748,9 @@ if HAVE_ROS:
             cfg, self.decision_period = fsm_config_for_pilot(
                 cfg, getattr(args, "decision_period_s", None))
             self.fsm = EscalationFSM(cfg) if self.shield_on else None
+            # PathRepair (default chain since 2026-11-17) stands aside where
+            # the projection is over THIS FSM's theta; the Shield has no FSM.
+            self.shield.theta_config = cfg
             self.fsm_fault: str | None = None
             self.hold_mode = getattr(args, "hold_mode", DEFAULT_HOLD_MODE)
             # What was asked of the autopilot, in the FSM's words and
@@ -5169,7 +5178,9 @@ if HAVE_ROS:
                     "velocity_nonfinite": self.shield.n_velocity_nonfinite,
                     # --arc-forecast: a body action with a yaw rate
                     # forecast along its arc (Shield.filter_body).
-                    "arc": bool(getattr(self.shield, "arc_forecast", False))},
+                    "arc": bool(getattr(self.shield, "arc_forecast", False)),
+                    # --path-repair (WP3-06, 2026-11-17).
+                    "path_repair": bool(getattr(self.shield, "path_repair", False))},
                 # None with no target (--no-target): no goal was declared,
                 # so none was missed either.
                 "reached": self.reached if self.has_target else None,
@@ -5620,6 +5631,11 @@ def make_parser() -> argparse.ArgumentParser:
                          "that response was measured on the Project AirSim quad, not "
                          "on ArduPilot's own SITL physics; the velocity is logged "
                          "either way)")
+    ap.add_argument("--path-repair", choices=["on", "off"], default="on",
+                    help="on (default since 2026-11-17, WP3-06): the Shield's chain "
+                         "runs PathRepair after LateralProjection, the grant's order; "
+                         "in chain mode it detours round a --subject's stand-off ring "
+                         "only. off: the chain every run before 2026-11-17 flew")
     ap.add_argument("--arc-forecast", choices=["on", "off"], default="off",
                     help="on: the Shield forecasts a body action with a yaw rate along "
                          "the arc it flies (velocity held in the body frame while the "

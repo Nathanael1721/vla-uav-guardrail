@@ -346,6 +346,37 @@ def test_the_ros2_node_publishes_the_grants_setpoint_not_a_twist():
     assert A.TOPIC_RAW_LOCAL == "/mavros/setpoint_raw/local"
 
 
+def test_the_node_gives_its_shield_the_theta_of_its_own_fsm():
+    """WP3-06 (2026-11-17): PathRepair stands aside where the projection is
+    over theta, and a rail Shield has no FSM, so the node must hand it the
+    config its FSM runs on - the one AFTER --fsm-config and
+    --decision-period-s (fsm_config_for_pilot) - or the rail's theta gate
+    falls back to FSMConfig(). And --path-repair reaches the Shield and the
+    metrics record (replay tools read it to rebuild the chain flown)."""
+    src = (SITL / "ros2_shield_node.py").read_text(encoding="utf-8")
+    i_pilot = src.index("cfg, self.decision_period = fsm_config_for_pilot(")
+    i_fsm = src.index("self.fsm = EscalationFSM(cfg)", i_pilot)
+    i_theta = src.index("self.shield.theta_config = cfg", i_pilot)
+    assert i_pilot < i_fsm and i_pilot < i_theta
+    between = src[i_pilot:i_theta]
+    assert "cfg =" not in between.split("\n", 2)[-1], "cfg rebound before theta_config"
+    assert "path_repair=self.path_repair" in src
+    assert '"path_repair": bool(getattr(self.shield, "path_repair"' in src
+    assert 'ap.add_argument("--path-repair", choices=["on", "off"], default="on"' in src
+    # The Shield side: a rail Shield reads theta_config for PathRepair's gate.
+    from guardrail import fsm as F
+    from guardrail import repair as R
+    import ros2_shield_node as N
+    cfg, _ = N.fsm_config_for_pilot(F.FSMConfig(theta_lateral_m=0.5), 1.0)
+    sh = Shield(load_policy(POLICY), escalation=False)
+    assert R.PathRepair._projection_over_theta(sh, []) is None
+    sh.theta_config = cfg
+
+    class _Lat:
+        magnitude_m, axis, recovery, operator = 0.7, "lateral", False, "GeofenceSlide"
+    assert abs(R.PathRepair._projection_over_theta(sh, [_Lat()]) - 0.2) < 1e-9
+
+
 def test_the_node_names_the_pilot_it_was_told_not_a_constant():
     """ARCH-06: a real VLA node would have been filed as StubVLA, because the
     Shield node wrote that string into every manifest."""

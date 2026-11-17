@@ -334,8 +334,14 @@ def shield_config(metrics: dict) -> dict:
             isinstance(la.get(k), (int, float)) for k in ("horizon_s", "dt_s")):
         raise NotReplayable("the Shield's forecast is not recorded (no metrics.json "
                             "`shield_lookahead` with horizon_s and dt_s)")
+    # PathRepair joined the Shield's default chain on 2026-11-17; the ROS 2
+    # node records it from then on (shield_forecast.path_repair). A run that
+    # does not record it flew without it.
+    fc = metrics.get("shield_forecast")
     return {"lookahead_s": float(la["horizon_s"]), "dt": float(la["dt_s"]),
-            "escalation": bool(la.get("escalation_fsm", False))}
+            "escalation": bool(la.get("escalation_fsm", False)),
+            "path_repair": bool(fc.get("path_repair", False)) if isinstance(fc, dict)
+            else False}
 
 
 def check_world(inp: Inputs) -> None:
@@ -581,11 +587,13 @@ def replay_run(run: Path, *, root: Path | None = None) -> dict:
     gen0 = gens[0]
     try:
         shield = rail_shield(inp.policies[gen0], lookahead_s=cfg["lookahead_s"],
-                             dt=cfg["dt"], clock=(lambda: pin[0]) if clocks else None)
+                             dt=cfg["dt"], clock=(lambda: pin[0]) if clocks else None,
+                             path_repair=cfg["path_repair"])
         if cfg["escalation"]:
             from guardrail.shield import Shield
             shield = Shield(inp.policies[gen0], lookahead_s=cfg["lookahead_s"],
-                            dt=cfg["dt"], now=(lambda: pin[0]) if clocks else None)
+                            dt=cfg["dt"], now=(lambda: pin[0]) if clocks else None,
+                            path_repair=cfg["path_repair"])
     except Exception as e:                                       # noqa: BLE001
         rec.update(verdict="not_replayable",
                    why=f"today's Shield refuses the stored policy: {type(e).__name__}: {e}")
