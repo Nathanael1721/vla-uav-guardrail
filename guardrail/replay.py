@@ -1653,6 +1653,15 @@ class EpisodeRecord:
             rule = as_dynamic_nfz(fence)
         shield.hot_apply(rule)
         self.hot_applied(rule.id, t=t)
+        # The rule AS STORED in the live policy: since 2026-11-17 (WP1-14) a
+        # Shield over a policy with a frame writes the metre points as WGS84
+        # (Shield._in_frame), so the rule handed in is not what was applied.
+        find = getattr(shield, "_find", None)
+        if find is not None:
+            try:
+                return find(rule.id)[1]
+            except Exception:                            # noqa: BLE001
+                pass
         return rule
 
 

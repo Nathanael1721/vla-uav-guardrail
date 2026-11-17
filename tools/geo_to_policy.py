@@ -75,7 +75,12 @@ position in that frame is unknown, and guessing it would misplace every zone.
 Since 2026-11-17 (WP1-14) metre points appended to a base WITH a frame are
 written as WGS84 about its frame origin, as the API's hot-apply writes them
 (Shield._in_frame), so the result is stored and hashed in WGS84 and has the
-hash the live policy has.
+hash the live policy has (tests/test_wgs84_writes.py). Also since that date,
+rules that would MOVE a base's derived frame origin (a base with a frame but
+no stated `origin`, whose frame comes from its first polygon_fence) are
+refused - metre or lat/lon alike, so a GeoJSON / KML zone that master
+accepted onto such a base is now refused - because every WGS84 point of the
+result would land elsewhere. No stored policy has a derived origin.
 """
 from __future__ import annotations
 

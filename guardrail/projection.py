@@ -20,9 +20,13 @@ authored policies are untouched: they are the legacy form and still load and
 hash exactly as before; since 2026-11-03 no shipped policy is written in it
 (tools/convert_policies_wgs84.py), and since 2026-11-17 a metre point an
 event writes into a policy with a frame (REST hot-apply, the Shield's zone
-edits, the harness's spawned zones) is converted at ingest
-(`metres_to_wgs84`, models.rule_in_wgs84), so in a policy with a frame the
-metre form is read, never written.
+edits, the harness's spawned zones, a lock recipe rebuilt by bundle.derive,
+tools/geo_to_policy.py ingest) is converted at ingest (`metres_to_wgs84`,
+models.rule_in_wgs84, `raw_points_in_wgs84`), so in a policy with a frame the
+metre form is not STORED. By default the live Shield still enforces the
+metres it was given for such a point, not the view of its lat/lon (a
+declared deviation, up to 0.6 um; see models.rule_in_wgs84 and
+Shield.wgs84_bind_frame).
 
 THE LOCAL VIEW IS ROUNDED TO THE MICROMETRE
 

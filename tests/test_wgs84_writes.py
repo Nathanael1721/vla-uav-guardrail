@@ -25,7 +25,19 @@ rule an event adds or rewrites in WGS84 about the policy's frame origin
     and the same metres (exact on the micrometre grid, else within 0.6 um);
   * a policy written only in metres (the legacy form) keeps metre writes, and
     no stored policy's hash moves;
-  * a derived frame (no stated origin) is never moved by an event.
+  * a derived frame (no stated origin) is never moved by an event;
+  * the declared deviation of the default mode (live view = the metres
+    given, snapshot view = the micrometre view of the stored lat/lon, up to
+    0.6 um apart under one hash) and the opt-in that closes it
+    (Shield.wgs84_bind_frame, default off: live view = snapshot view, bit
+    for bit);
+  * bundle.derive, tools/geo_to_policy.py ingest and EpisodeRecord.apply_zone
+    agree with the Shield's writes; the 1-um consistency guard fires.
+
+The REST checks call the guardrail.api functions the routes call
+(api.apply_dynamic_nfz, apply_nfz_edit, apply_corridor_swap); the FastAPI
+routes themselves are exercised by tests/test_api.py where FastAPI is
+installed.
 """
 from __future__ import annotations
 
@@ -61,9 +73,12 @@ ZONE = {"id": "nfz-landslide-007", **RULE,
 
 def _pair(path=SITL):
     """Two Shields over the same stored policy: the WGS84 writes (default)
-    and the metre writes of before 2026-11-17."""
+    and the metre writes of before 2026-11-17. Both in the default
+    (unbound) mode whatever VLAGUARD_WGS84_BIND says: these tests are about
+    that mode; the bound mode has its own below."""
     new = Shield(load_policy(path))
     old = Shield(load_policy(path))
+    new.wgs84_bind_frame = old.wgs84_bind_frame = False
     old.wgs84_writes = False
     return new, old
 
@@ -277,8 +292,10 @@ def test_harness_swap_corridor_stores_wgs84():
 # ------------------------------------------------- enforcement is unchanged
 
 def test_csp_and_decisions_unchanged():
-    """The same CSP (but for the hashes that name the new IR) and the same
-    Shield decisions, tick for tick, past a spawned and edited zone."""
+    """The same CSP (but for the hashes that name the new IR, and issued_at:
+    the wall clock to the second, which made this test flaky when the two
+    compiles straddled a second) and the same Shield decisions, tick for
+    tick, past a spawned and edited zone."""
     new, old = _pair()
     for sh in (new, old):
         api.apply_dynamic_nfz(sh, copy.deepcopy(ZONE))
@@ -289,7 +306,8 @@ def test_csp_and_decisions_unchanged():
     def scrub(node):
         if isinstance(node, dict):
             return {k: scrub(v) for k, v in node.items()
-                    if "hash" not in k and k not in ("csp_id", "lat", "lon")}
+                    if "hash" not in k
+                    and k not in ("csp_id", "lat", "lon", "issued_at")}
         if isinstance(node, list):
             return [scrub(v) for v in node]
         return node
@@ -374,8 +392,11 @@ def test_derived_frame_is_never_moved():
     _reload_same(sh.policy)
 
 
-def test_refuses_what_it_cannot_place():
-    """A metre point too far out for the projection is refused, never stored."""
+def test_a_point_beyond_the_lat_lon_range_is_refused():
+    """A metre point 20 000 km out converts to a latitude of about 144 deg,
+    which XY's own lat/lon range check (le=90) refuses: a 422, never stored.
+    (This is the range check, not rule_in_wgs84's 1-um consistency guard;
+    that guard has its own test below.)"""
     sh = Shield(load_policy(SITL))
     far = {**ZONE, "id": "far", "vertices": [{"x": 2e7, "y": 0}, {"x": 2e7 + 8, "y": 0},
                                              {"x": 2e7 + 8, "y": 8}]}
@@ -386,6 +407,201 @@ def test_refuses_what_it_cannot_place():
     else:
         raise AssertionError("a zone 20 000 km out was stored")
     assert sh.policy.generation == 0
+
+
+
+def test_the_consistency_guard_refuses_a_bad_conversion():
+    """rule_in_wgs84 refuses lat/lon that do not project back within 1 um of
+    the metres given. metres_to_wgs84 cannot produce such a pair for a point
+    inside the lat/lon range (the 12-decimal round trip is far inside the
+    tolerance), so the guard is exercised with a conversion broken on
+    purpose: about 1 mm of latitude too far north."""
+    import guardrail.models as M
+    good = M.metres_to_wgs84
+    M.metres_to_wgs84 = lambda o, x, y: (good(o, x, y)[0] + 1e-8, good(o, x, y)[1])
+    try:
+        sh = Shield(load_policy(SITL))
+        try:
+            api.apply_dynamic_nfz(sh, copy.deepcopy(ZONE))
+        except api.ApiError as e:
+            assert e.status == 422 and "projects back" in str(e), e
+        else:
+            raise AssertionError("a conversion 1 mm off was stored")
+        assert sh.policy.generation == 0
+    finally:
+        M.metres_to_wgs84 = good
+
+
+# -------------------------------------- opt-in: the frame binds the live view
+
+def _bound_pair(path=SITL):
+    """The default Shield (given metres enforced live) and one with
+    wgs84_bind_frame (the live view is the projection of the stored lat/lon)."""
+    dflt = Shield(load_policy(path))
+    bound = Shield(load_policy(path))
+    dflt.wgs84_bind_frame = False
+    bound.wgs84_bind_frame = True
+    return dflt, bound
+
+
+def _snapshot(policy: Policy) -> Policy:
+    return Policy.model_validate(json.loads(policy.model_dump_json()))
+
+
+def _views(policy: Policy) -> list:
+    return [[(v.x, v.y) for v in pts] for pts in _rule_points(policy, all_points=True)]
+
+
+def test_the_bind_flag_is_off_by_default():
+    """Default-off: it moves computed rings by up to 0.6 um, a flown change,
+    so it waits for a declared re-baseline (VLAGUARD_WGS84_BIND=1)."""
+    import os
+    if os.environ.get("VLAGUARD_WGS84_BIND", "").strip() != "1":
+        assert Shield.wgs84_bind_frame is False
+        assert Shield(load_policy(SITL)).wgs84_bind_frame is False
+
+
+def test_bound_live_view_is_the_snapshot_view_bit_for_bit():
+    """With wgs84_bind_frame the geometry the live Shield enforces is the
+    projection of what is stored: the signed snapshot, reloaded, reads the
+    same floats for every point - computed off-grid rings included - and the
+    same compiled rings. A FIRST write stores and hashes the same in both
+    modes; an edit computes its new ring from the current view, so after one
+    the modes part by up to 0.6 um (that is the flown change). In the
+    default mode the same events leave at least one point where live and
+    snapshot differ (the declared deviation, at most 0.6 um), which shows
+    the flag matters."""
+    dflt, bound = _bound_pair()
+    for sh in (dflt, bound):
+        api.apply_dynamic_nfz(sh, copy.deepcopy(ZONE))
+    assert bound.policy.policy_hash == dflt.policy.policy_hash
+    assert _stored(bound.policy) == _stored(dflt.policy)
+    for sh in (dflt, bound):
+        api.apply_nfz_edit(sh, ZONE["id"], {"op": "rotate", "angle_deg": 30})
+    es_d, es_b = EventState(shields=[dflt]), EventState(shields=[bound])
+    st = State(x=3.141592653, y=-2.718281828, up=20.0)
+    heading = (math.cos(0.3), math.sin(0.3))
+    for ev in _events():
+        apply_event(ev, es_d, st, heading, ev.at_sim_t)
+        apply_event(ev, es_b, st, heading, ev.at_sim_t)
+        _all_wgs84(bound.policy)
+        back = _snapshot(bound.policy)
+        assert back.policy_hash == bound.policy.policy_hash
+        assert _views(back) == _views(bound.policy), ev.type
+        # the bound live rings are the rings a Shield over the snapshot compiles
+        assert _rings(bound) == _rings(Shield(back)), ev.type
+    live_d, snap_d = _views(dflt.policy), _views(_snapshot(dflt.policy))
+    assert live_d != snap_d, "the default mode showed no live/snapshot gap here"
+    for a, b in zip(live_d, snap_d):
+        for (p, q), (u, v) in zip(a, b):
+            assert abs(p - u) <= 0.6e-6 and abs(q - v) <= 0.6e-6, ((p, q), (u, v))
+
+
+def test_bound_mode_binds_a_lat_lon_body_too():
+    """A REST body in lat/lon with metres beside them: bound, the metres are
+    checked against the frame and dropped, so the live view is the frame's."""
+    _, bound = _bound_pair()
+    o = bound.policy.frame_origin
+    verts = []
+    for x, y in ((10.1234567, 10), (18, 10.7654321), (18, 17)):
+        lat, lon = metres_to_wgs84(o, x, y)
+        verts.append({"lat": lat, "lon": lon, "x": x, "y": y})
+    api.apply_dynamic_nfz(bound, {**ZONE, "id": "ll", "vertices": verts})
+    z = bound.policy.constraints[-1]
+    assert [(v.x, v.y) for v in z.vertices] == \
+        [local_metres(o, v.lat, v.lon) for v in z.vertices]
+    assert _views(_snapshot(bound.policy)) == _views(bound.policy)
+
+
+# ---------------------------------------------- the other write paths agree
+
+OFF_GRID = [{"x": 23.1234567, "y": 6}, {"x": 31, "y": 6.7654321}, {"x": 31, "y": 14}]
+
+
+def test_derive_on_a_framed_base_matches_hot_apply():
+    """bundle.derive rebuilds a lock recipe as Shield.hot_apply applies it: on
+    a base with a frame, metre points are written as WGS84, so the derived
+    hash is the live hash. `wgs84_writes=False` (a recipe for a run flown on
+    a framed base before 2026-11-17) gives the metre-write hash."""
+    from guardrail.bundle import derive
+    rule = {**ZONE, "type": "dynamic_nfz", "vertices": OFF_GRID}
+    new, old = _pair()
+    api.apply_dynamic_nfz(new, copy.deepcopy(rule))
+    api.apply_dynamic_nfz(old, copy.deepcopy(rule))
+    got = derive(load_policy(SITL), [copy.deepcopy(rule)], 1, ir_schema_version="4.0.0")
+    assert got.policy_hash == new.policy.policy_hash
+    _all_wgs84(got)
+    was = derive(load_policy(SITL), [copy.deepcopy(rule)], 1, ir_schema_version="4.0.0",
+                 wgs84_writes=False)
+    assert was.policy_hash == old.policy.policy_hash != got.policy_hash
+
+
+def _geo_tool():
+    sys.path.insert(0, str(ROOT / "tools"))
+    import geo_to_policy
+    return geo_to_policy
+
+
+def test_geo_to_policy_ingest_matches_the_live_hash():
+    """tools/geo_to_policy.py ingest of a POST /dynamic_nfz metre body onto
+    a framed base: stored in WGS84 (no x/y in the canonical IR) and the same
+    hash as api.apply_dynamic_nfz gives the live policy - off-grid metres
+    included."""
+    G = _geo_tool()
+    body = {**ZONE, "vertices": OFF_GRID}
+    pol = G.ingest(copy.deepcopy(body), load_policy(SITL))
+    live = Shield(load_policy(SITL))
+    api.apply_dynamic_nfz(live, copy.deepcopy(body))
+    assert pol.policy_hash == live.policy.policy_hash
+    assert not _has_xy(pol.canonical_ir()["constraints"])
+    _all_wgs84(pol)
+
+
+def test_geo_to_policy_refuses_to_move_a_derived_origin():
+    """A base with no stated origin derives its frame from its first
+    polygon_fence. Appending one that would become that fence would move
+    every WGS84 point: refused, for a metre rule and - a change from master
+    47b3fde, which accepted it - for a pure lat/lon GeoJSON zone."""
+    G = _geo_tool()
+    o = (35.6895, 139.6917)
+    cl = [dict(zip(("lat", "lon"), metres_to_wgs84(o, x, y))) for x, y in ((0, 0), (80, 0))]
+    base = Policy.model_validate(
+        {"policy_id": "derived", "version": "0.1.0",
+         "constraints": [{"id": "route", "type": "corridor", **RULE, "centerline": cl,
+                          "width_m": 20}]})
+    assert base.origin is None and base.frame_origin is not None
+    fence = {"id": "pre", "type": "polygon_fence", **RULE,
+             "vertices": [{"x": 30, "y": 15}, {"x": 40, "y": 15}, {"x": 40, "y": 25}]}
+    ring = [list(reversed(metres_to_wgs84(o, x, y)))
+            for x, y in ((30, 15), (40, 15), (40, 25), (30, 15))]
+    geo = {"type": "FeatureCollection", "features": [
+        {"type": "Feature", "properties": {"name": "yard", **RULE},
+         "geometry": {"type": "Polygon", "coordinates": [ring]}}]}
+    for src in (fence, geo):
+        try:
+            G.ingest(copy.deepcopy(src), base)
+        except G.ConversionError as e:
+            assert "derived frame origin" in str(e), e
+        else:
+            raise AssertionError(f"moved the derived origin: {src}")
+
+
+def test_apply_zone_returns_the_rule_as_stored():
+    """EpisodeRecord.apply_zone returns the rule the live policy holds: on a
+    framed policy that is the WGS84 rule, not the metre fence handed in."""
+    import tempfile
+    from guardrail.models import XY, PolygonFence
+    from guardrail.replay import EpisodeRecord
+    policy = load_policy(SITL)
+    rec = EpisodeRecord(Path(tempfile.mkdtemp(prefix="wgs84_")) / "ep", policy, None)
+    sh = Shield(policy)
+    sh.filter(State(x=0.0, y=0.0, up=15.0), Action4D(vx=1.0))     # mission started
+    fence = PolygonFence(id="nfz-late", type="polygon_fence", **RULE, margin_m=1.0,
+                         vertices=[XY(x=40, y=-5), XY(x=50, y=-5),
+                                   XY(x=50, y=5), XY(x=40, y=5)])
+    got = rec.apply_zone(sh, fence, t=1.0)
+    assert got is sh.policy.constraints[-1]
+    assert all(v.geographic for v in got.vertices)
 
 
 if __name__ == "__main__":
