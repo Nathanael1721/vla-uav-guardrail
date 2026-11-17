@@ -99,7 +99,10 @@
 #          the rails, X-14, 2026-11-07), test_mavlink_adapter,
 #          test_setpoint_delivery (2026-11-17: what the Shield published
 #          against what the adapter sent, both nodes on stand-ins, and the
-#          KPI grade that reads it), test_ros2_vla_bridge (the
+#          KPI grade that reads it), test_ap_dds_adapter (2026-11-17,
+#          ARCH-08: the opt-in AP_DDS adapter's /ap/cmd_vel against the
+#          MAVROS path for every heading, the node on a stand-in rclpy, the
+#          SITL check's verdicts), test_ros2_vla_bridge (the
 #          ROS 2 rail's AerialVLA node and the Shield node's side of it, on
 #          tests/vla_fake_server.py and a stand-in rclpy), test_fenceguard,
 #          test_follow_motion, test_identity, test_identity_lock,
@@ -757,6 +760,7 @@ jobs:
               tests/test_sitl_stressors.py \
               tests/test_mavlink_adapter.py \
               tests/test_setpoint_delivery.py \
+              tests/test_ap_dds_adapter.py \
               tests/test_ros2_vla_bridge.py \
               tests/test_deploy_configs.py \
               tests/test_public_docs.py \
