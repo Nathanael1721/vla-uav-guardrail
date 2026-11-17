@@ -4232,10 +4232,11 @@ def _rail_dirs() -> set:
 def test_the_gazebo_profile_dry_run_lists_every_mission_without_wsl_or_gazebo():
     """--profile gazebo_functional --backend sitl --sitl-dry-run: the eight
     smoke cells as missions on the Gazebo rail - "gzsweep_" tags, PHYSICS=
-    gazebo in the environment, the grant's episode bundle name and the run
-    folder and replay bundle each will leave - and the wall-time estimate;
-    nothing launched (neither WSL nor subprocess is touched), nothing written,
-    exit 0."""
+    gazebo in the environment, the run folder and replay bundle each will
+    leave, the grant's episode name as a label that names no file - and the
+    wall-time estimate from the caps in wall seconds; nothing launched
+    (neither WSL nor subprocess is touched), nothing written, exit 0. A
+    speedup other than 1 is refused (the Shield node runs on wall time)."""
     from guardrail.scenario_spec import load_profile
     prof = load_profile(GAZEBO_PROFILE)
     assert (prof.rail_physics, prof.rail_sim_speedup, prof.grant_kpi_bearing) == (
@@ -4261,17 +4262,32 @@ def test_the_gazebo_profile_dry_run_lists_every_mission_without_wsl_or_gazebo():
     for cell in ("nfz-head-on", "nfz-head-on-control", "speed-cap", "altitude-floor-recovery",
                  "corridor-along", "time-window-switch-event"):
         assert f"FLY  gzsweep_{cell}--seed1001  {cell}  seed=1001" in out, cell
-        assert re.search(rf"bundle     episode-\S+Z--{re.escape(cell)}--seed1001\n", out), cell
+        assert re.search(rf"grant name episode-\S+Z--{re.escape(cell)}--seed1001  \(a name "
+                         rf"only: no file of this name is written\)\n", out), cell
         assert (f"run folder demo/out/gzsweep_{cell}--seed1001  (replay demo/out/gzsweep_"
                 f"{cell}--seed1001/gzsweep_{cell}--seed1001.replay.tar.gz)") in out, cell
     assert "wsl bash sitl/run_ros2_demo.sh off '' --tag gzsweep_nfz-head-on-control" in out
-    assert "estimate: at most" in out and "an estimate, not a measurement" in out
-    # Twice the speed: SITL_SPEEDUP on every mission, half the flight time.
-    buf = io.StringIO()
-    with contextlib.redirect_stdout(buf):
-        assert _sweep(["--profile", "gazebo_functional", "--backend", "sitl",
-                       "--sitl-dry-run", "--rail-sim-speedup", "2"]) == 0
-    assert buf.getvalue().count("PHYSICS=gazebo SITL_SPEEDUP=2") == 8
+    assert "grant names: " + S.GRANT_EPISODE_NAME_NOTE in out
+    assert "WP4-11's per-episode bundle naming stays open" in out
+    assert "bundle     " not in out
+    # The estimate: the caps are wall seconds (the node's clock), summed
+    # as they are, plus the overhead per mission.
+    plan = S.sitl_plan(S.expand(LIBRARY, prof)[0], DEFAULTS, "gazebo")
+    caps = sum(p["rail_max_s"] for p in plan if p["fly"])
+    est = (caps + S.RAIL_MISSION_OVERHEAD_S * 8) / 60
+    assert (f"estimate: at most {est:.0f} min wall ({caps / 60:.1f} min of flight caps, "
+            in out), out[-400:]
+    assert "an estimate, not a measurement" in out and "caps at x" not in out
+    # Twice the speed (or half) is refused, before anything is listed.
+    for argv in (["--profile", "gazebo_functional", "--backend", "sitl", "--sitl-dry-run",
+                  "--rail-sim-speedup", "2"],
+                 ["--profile", "gazebo_functional", "--backend", "sitl", "--sitl-dry-run",
+                  "--rail-sim-speedup", "0.5"]):
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            assert _sweep(argv) == 2, argv
+        assert "REFUSED" in buf.getvalue() and "wall time" in buf.getvalue(), buf.getvalue()
+        assert "FLY  " not in buf.getvalue()
 
 
 def test_the_gazebo_rail_refuses_what_it_cannot_fly_and_the_sitl_plan_is_unchanged():
@@ -4304,7 +4320,7 @@ def test_the_gazebo_rail_refuses_what_it_cannot_fly_and_the_sitl_plan_is_unchang
             # The same mission, under its own tag.
             assert p["cmd"] == [c.replace(sitl[pid]["tag"], p["tag"])
                                 for c in sitl[pid]["cmd"]], pid
-            assert p["bundle_name"] == sitl[pid]["bundle_name"]
+            assert p["grant_episode_name"] == sitl[pid]["grant_episode_name"]
 
 
 def test_a_gazebo_mission_is_marked_functional_and_never_kpi_grade():
@@ -4312,7 +4328,9 @@ def test_a_gazebo_mission_is_marked_functional_and_never_kpi_grade():
     speedup asked for, a "gazebo-stress/" family (tools/kpi_report.py files
     it so); on SITL's own physics the record is the one it always was. The
     node's metrics carry the record, and is_kpi_grade refuses it whatever
-    the manifest reads - even under a dev waiver at speedup 1.0."""
+    the manifest reads - even under a dev waiver at speedup 1.0 - saying it
+    is the lab's choice, not the grant's wording. Any speedup but 1.0 is
+    refused, on Gazebo too: the Shield node runs on wall time."""
     sys.path.insert(0, str(ROOT / "tools"))
     import kpi_report
     from guardrail.manifest import is_kpi_grade
@@ -4325,11 +4343,16 @@ def test_a_gazebo_mission_is_marked_functional_and_never_kpi_grade():
     assert plain["family"].startswith("sitl-stress/")
     assert plain["harness"] == "experiments/sweep_scenarios.py --backend sitl"
     gz = S.rail_meta(spec, None, 1001, "sitl", "t1", "n", None, None, DEFAULTS,
-                     physics="gazebo", sim_speedup=2.0)
+                     physics="gazebo", sim_speedup=1.0)
     assert gz["functional_only"] is True and gz["rail"] == "gazebo"
-    assert gz["sim_speedup_requested"] == 2.0 and gz["physics"] == "gazebo-harmonic"
+    assert gz["sim_speedup_requested"] == 1.0 and gz["physics"] == "gazebo-harmonic"
     assert gz["family"] == plain["family"].replace("sitl-stress/", "gazebo-stress/", 1)
-    assert "--rail-physics gazebo --rail-sim-speedup 2" in gz["harness"]
+    assert "--rail-physics gazebo --rail-sim-speedup 1" in gz["harness"]
+    # The reason says whose choice it is and does not lean on the broad
+    # sweep's sentence (which covers speed > 1 only).
+    for text in (gz["functional_only_why"], S.GAZEBO_FUNCTIONAL_WHY):
+        assert "the lab's choice" in text and "not the grant's wording" in text, text
+        assert "dual-rail.md" in text and "Test scheduling" not in text, text
     assert kpi_report.scenario_family(gz, "on") == kpi_report.scenario_family(
         plain, "on").replace("sitl-stress/", "gazebo-stress/", 1)
     assert kpi_report.scenario_family(plain, "on").startswith("sitl-stress/")
@@ -4340,8 +4363,12 @@ def test_a_gazebo_mission_is_marked_functional_and_never_kpi_grade():
     assert ok, why
     ok, why = is_kpi_grade(man, {"scenario": gz}, dev_waiver="test waiver")
     assert not ok and len(why) == 1 and "functional rail" in why[0], why
+    assert "the lab's choice" in why[0] and "not the grant's wording" in why[0], why
+    assert "Test scheduling" not in why[0], why
     for bad in (("hil", "gazebo", 1.0), ("sitl", "sitl", 2.0), ("sitl", "gazebo", 0.0),
-                ("sitl", "gazebo", 5.0), ("sitl", "ode", 1.0)):
+                ("sitl", "gazebo", 2.0), ("sitl", "gazebo", 1.5), ("sitl", "gazebo", 0.5),
+                ("sitl", "gazebo", 1e-05), ("sitl", "gazebo", float("nan")),
+                ("sitl", "gazebo", "x"), ("sitl", "gazebo", 5.0), ("sitl", "ode", 1.0)):
         try:
             S.check_rail_physics(*bad)
         except ValueError:
@@ -4350,11 +4377,13 @@ def test_a_gazebo_mission_is_marked_functional_and_never_kpi_grade():
 
 
 def test_run_sitl_on_gazebo_launches_with_physics_and_checks_what_the_rail_wrote():
-    """run_sitl on Gazebo with the rail's launch replaced: PHYSICS (and
-    SITL_SPEEDUP when not 1) go to WSL through WSLENV; the run is accepted
-    only when THIS launch wrote physics.json saying gazebo-harmonic at the
-    speedup asked for and the node's metrics carry the functional record. On
-    SITL's own physics neither variable is set, as before."""
+    """run_sitl on Gazebo with the rail's launch replaced: PHYSICS goes to
+    WSL through WSLENV, SITL_SPEEDUP never; the run is accepted only when
+    THIS launch wrote physics.json saying gazebo-harmonic at the speedup
+    asked for and the node's metrics carry the functional record - a stale
+    physics.json or a scenario record not marked functional is an error. A
+    speedup other than 1 is refused before anything launches. On SITL's own
+    physics neither variable is set, as before."""
     spec = BY_ID["rail-mission-stub-vla"]
     run = S.run_episode(spec, DEFAULTS, 0)
     rows = _as_rail_rows(run.rows)
@@ -4363,7 +4392,8 @@ def test_run_sitl_on_gazebo_launches_with_physics_and_checks_what_the_rail_wrote
         root = Path(td)
         shutil.copytree(ROOT / "policies", root / "policies")
         seen: dict = {}
-        physics = {"write": {"physics": "gazebo-harmonic", "sim_speedup_requested": 2}}
+        physics = {"write": {"physics": "gazebo-harmonic", "sim_speedup_requested": 1},
+                   "functional": True, "age_s": 0.0}
 
         def fake_run(cmd, **kw):
             seen.clear()
@@ -4375,6 +4405,8 @@ def test_run_sitl_on_gazebo_launches_with_physics_and_checks_what_the_rail_wrote
                 "".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")
             meta = json.loads((root / S.CAMPAIGN_DIR / tag / "scenario.json").read_text(
                 encoding="utf-8"))
+            if not physics["functional"]:
+                meta = {k: v for k, v in meta.items() if k != "functional_only"}
             (out / "metrics.json").write_text(json.dumps(
                 {"reached": run.extra["reached_goal"], "fsm": run.extra["fsm"],
                  "scenario": meta}), encoding="utf-8")
@@ -4383,29 +4415,49 @@ def test_run_sitl_on_gazebo_launches_with_physics_and_checks_what_the_rail_wrote
                 p.unlink()
             if physics["write"] is not None:
                 p.write_text(json.dumps(physics["write"]), encoding="utf-8")
+                if physics["age_s"]:
+                    old = time.time() - physics["age_s"]
+                    os.utime(p, (old, old))
             return subprocess.CompletedProcess(cmd, 0, "", "")
         try:
             S.ROOT, S.sitl_available = root, (lambda: True)
             S.build_sitl_cmd = lambda spec_, tag, *a, **k: ["fake", tag]
             S.subprocess.run = fake_run
-            _, extra = S.run_sitl(spec, "gzsweep_t", 0, DEFAULTS, physics="gazebo",
-                                  sim_speedup=2.0)
-            assert seen["PHYSICS"] == "gazebo" and seen["SITL_SPEEDUP"] == "2"
-            assert {"PHYSICS/u", "SITL_SPEEDUP/u"} <= set(seen["WSLENV"].split(":"))
+            _, extra = S.run_sitl(spec, "gzsweep_t", 0, DEFAULTS, physics="gazebo")
+            assert seen["PHYSICS"] == "gazebo" and "SITL_SPEEDUP" not in seen
+            assert "PHYSICS/u" in seen["WSLENV"].split(":")
+            assert "SITL_SPEEDUP/u" not in seen["WSLENV"].split(":")
             assert extra["rail_physics"]["physics"] == "gazebo-harmonic"
-            for wrong, says in (({"physics": "ardupilot-sitl-builtin",
-                                  "sim_speedup_requested": 2}, "not 'gazebo-harmonic'"),
-                                ({"physics": "gazebo-harmonic",
-                                  "sim_speedup_requested": 1}, "sim_speedup_requested"),
-                                (None, "no physics.json")):
-                physics["write"] = wrong
+            good = physics["write"]
+            for change, says in (({"write": {"physics": "ardupilot-sitl-builtin",
+                                             "sim_speedup_requested": 1}},
+                                  "not 'gazebo-harmonic'"),
+                                 ({"write": {"physics": "gazebo-harmonic",
+                                             "sim_speedup_requested": 2}},
+                                  "sim_speedup_requested"),
+                                 ({"write": None}, "no physics.json"),
+                                 ({"age_s": 600.0}, "physics.json predates this launch"),
+                                 ({"functional": False},
+                                  "metrics.json's scenario record is not marked "
+                                  "functional_only")):
+                physics.update({"write": good, "functional": True, "age_s": 0.0})
+                physics.update(change)
                 try:
-                    S.run_sitl(spec, "gzsweep_t", 0, DEFAULTS, physics="gazebo",
-                               sim_speedup=2.0)
+                    S.run_sitl(spec, "gzsweep_t", 0, DEFAULTS, physics="gazebo")
                 except RuntimeError as e:
                     assert "not a Gazebo functional-rail flight" in str(e) and says in str(e), e
                 else:
-                    raise AssertionError(f"accepted {wrong}")
+                    raise AssertionError(f"accepted {change}")
+            physics.update({"write": good, "functional": True, "age_s": 0.0})
+            # Faster than real time: refused before the launch, on any physics.
+            for phys in ("gazebo", "sitl"):
+                seen.clear()
+                try:
+                    S.run_sitl(spec, "gzsweep_t", 0, DEFAULTS, physics=phys, sim_speedup=2.0)
+                except ValueError as e:
+                    assert "wall time" in str(e) and not seen, e
+                else:
+                    raise AssertionError(f"flew at 2x on {phys}")
             physics["write"] = None
             _, extra = S.run_sitl(spec, "sweep_t", 0, DEFAULTS)
             assert "PHYSICS" not in seen and "SITL_SPEEDUP" not in seen
@@ -4428,9 +4480,10 @@ def test_run_sitl_on_gazebo_launches_with_physics_and_checks_what_the_rail_wrote
 def test_a_gazebo_sweep_records_each_missions_run_and_says_it_is_not_kpi():
     """main() on the Gazebo rail, with the flight replaced: the results say
     functional, not KPI (`_not_kpi_grade`, `kpi_bearing_this_run` false,
-    `_scope.rail`), and each episode names its mission tag, run folder and
-    the grant's episode bundle name. The profile refuses every backend but
-    sitl, and the rail options refuse a speedup off Gazebo."""
+    `_scope.rail`), and each episode names its mission tag, run folder,
+    replay bundle and - as a label, with the note that no file carries it -
+    the grant's episode name. The profile refuses every backend but sitl,
+    and the rail options refuse any speedup but 1."""
     calls = []
     saved = S.run_sitl
 
@@ -4457,7 +4510,12 @@ def test_a_gazebo_sweep_records_each_missions_run_and_says_it_is_not_kpi():
     assert doc["_scope"]["rail"]["functional_only"] is True
     (ep,) = [r for r in doc["results"] if r["id"] == "speed-cap"]
     assert ep["run"] == "demo/out/gzsweep_speed-cap--seed1001" and ep["functional_only"]
-    assert re.fullmatch(r"episode-\S+Z--speed-cap--seed1001", ep["episode_bundle_name"]), ep
+    assert re.fullmatch(r"episode-\S+Z--speed-cap--seed1001", ep["grant_episode_name"]), ep
+    assert ep["grant_episode_name_note"] == S.GRANT_EPISODE_NAME_NOTE
+    assert "no file of this name is written" in ep["grant_episode_name_note"]
+    assert ep["replay_bundle"] == ("demo/out/gzsweep_speed-cap--seed1001/"
+                                   "gzsweep_speed-cap--seed1001.replay.tar.gz")
+    assert "episode_bundle_name" not in ep
     with contextlib.redirect_stdout(io.StringIO()):
         assert _sweep(["--profile", "gazebo_functional", "--only", "speed-cap"]) == 2
         assert _sweep(["--profile", "gazebo_functional", "--backend", "hil",
@@ -4465,16 +4523,21 @@ def test_a_gazebo_sweep_records_each_missions_run_and_says_it_is_not_kpi():
         assert _sweep(["--only", "speed-cap", "--backend", "sitl", "--rail-sim-speedup",
                        "2", "--sitl-dry-run"]) == 2
         assert _sweep(["--only", "speed-cap", "--sitl-dry-run"]) == 2
+        assert _sweep(["--profile", "gazebo_functional", "--backend", "sitl", "--only",
+                       "speed-cap", "--rail-sim-speedup", "2", "--sitl-dry-run"]) == 2
 
 
-def test_a_profile_asks_for_speed_only_on_the_functional_rail():
-    """Profile: rail_sim_speedup other than 1.0 needs rail_physics gazebo;
-    rail_physics gazebo needs grant_kpi_bearing false; every shipped profile
-    but gazebo_functional names no rail and flies at 1.0."""
+def test_a_profile_flies_at_speedup_1_and_only_gazebo_names_a_rail():
+    """Profile: rail_sim_speedup 1.0 only, on the functional rail too (the
+    Shield node runs on wall time); rail_physics gazebo needs
+    grant_kpi_bearing false; every shipped profile but gazebo_functional
+    names no rail, and every one flies at 1.0."""
     from guardrail.scenario_spec import Profile, load_profile
     base = yaml.safe_load(GAZEBO_PROFILE.read_text(encoding="utf-8"))
-    Profile.model_validate(dict(base, rail_sim_speedup=2.0))
+    Profile.model_validate(base)
+    Profile.model_validate(dict(base, rail_sim_speedup=1))
     for bad in (dict(base, rail_physics=None, rail_sim_speedup=2.0),
+                dict(base, rail_sim_speedup=2.0), dict(base, rail_sim_speedup=0.5),
                 dict(base, grant_kpi_bearing=True),
                 dict(base, rail_sim_speedup=4.5), dict(base, rail_physics="ode")):
         try:
@@ -4484,8 +4547,9 @@ def test_a_profile_asks_for_speed_only_on_the_functional_rail():
         raise AssertionError(f"accepted {bad}")
     for p in sorted((ROOT / "experiments" / "profiles").glob("*.yaml")):
         prof = load_profile(p)
+        assert prof.rail_sim_speedup == 1.0, p.name
         if p.stem != "gazebo_functional":
-            assert prof.rail_physics is None and prof.rail_sim_speedup == 1.0, p.name
+            assert prof.rail_physics is None, p.name
 
 
 if __name__ == "__main__":

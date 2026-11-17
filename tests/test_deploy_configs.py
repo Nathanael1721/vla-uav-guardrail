@@ -84,6 +84,7 @@ SKIP without a Docker CLI whose `docker compose version` runs, and the
 from __future__ import annotations
 
 import ipaddress
+import json
 import os
 import re
 import shlex
@@ -1259,19 +1260,25 @@ def test_sitl_quad_starts_like_start_sitl_sh():
     assert gone.returncode == 66 and "GeoFence backstop" in gone.stderr, gone.stderr
 
 
-def _speedup_block(text: str) -> str:
-    """start_sitl.sh's SITL_SPEEDUP check, between its two marker lines."""
+def _marked_block(text: str, name: str) -> str:
+    """A script's block between its "# <name> begin" / "# <name> end" lines."""
     lines = text.splitlines()
-    i = lines.index("# speedup-check begin")
-    j = lines.index("# speedup-check end")
+    i = lines.index(f"# {name} begin")
+    j = lines.index(f"# {name} end")
     return "\n".join(lines[i + 1:j])
+
+
+def _speedup_block(text: str) -> str:
+    """The SITL_SPEEDUP check, between its two marker lines."""
+    return _marked_block(text, "speedup-check")
 
 
 def test_the_native_sitl_flies_at_speedup_1_unless_the_functional_rail_asks():
     """start_sitl.sh (2026-11-17, WP4-04): --speedup 1 unless SITL_SPEEDUP is
     set, as every run before; another factor only behind Gazebo's physics
     (SITL_MODEL=JSON, the functional rail), refused on SITL's own quad - the
-    KPI campaigns' rail - and refused when it is not a number in (0, 4]."""
+    KPI campaigns' rail - and refused when it is not a number in [1, 4].
+    (run_ros2_demo.sh, the one caller with JSON, refuses anything but 1.)"""
     native = START_SITL.read_text(encoding="utf-8")
     assert '--speedup "$SPEEDUP"' in native and "--speedup 1 " not in native
     if not find_bash():
@@ -1294,40 +1301,68 @@ def test_the_native_sitl_flies_at_speedup_1_unless_the_functional_rail_asks():
     assert r.returncode == 0 and r.stdout.strip() == "2", (r.stdout, r.stderr)
     r = run("quad", "2")
     assert r.returncode == 64 and "functional rail" in r.stdout, (r.returncode, r.stdout)
-    for bad in ("0", "5", "abc", "-1", "2x"):
+    for bad in ("0", "0.5", "5", "abc", "-1", "2x", "1e-05", "4.5"):
         assert run("JSON", bad).returncode == 64, bad
 
 
-def test_the_ros2_rail_runs_gz_sim_at_the_speedup_and_records_it():
-    """run_ros2_demo.sh (2026-11-17): SITL_SPEEDUP other than 1 is refused
-    unless PHYSICS=gazebo; with it gz sim gets -z, the world's
-    max_step_size SPEEDUP times per wall second, and physics.json records
-    what was asked. Unset, the gz sim line is the one flown on 2026-11-02."""
+def test_the_ros2_rail_flies_at_speedup_1_only_and_records_it():
+    """run_ros2_demo.sh (2026-11-17, WP4-04): SITL_SPEEDUP unset or 1 (1.0),
+    every run as before; anything else is refused with exit 2 before anything
+    starts, on either physics - the Shield node ticks, caps the mission, fires
+    its events and clocks its rules on wall time, so a faster simulator would
+    fly another scenario than the one recorded. The gz sim line is the one
+    flown on 2026-11-02, and physics.json, rendered for real, parses."""
     demo = RUN_ROS2_DEMO.read_text(encoding="utf-8")
-    assert 'nohup gz sim -s -r "${GZ_RATE_ARGS[@]}" "$GZ_WORLD"' in demo
-    assert "GZ_RATE_ARGS=()" in demo and 'GZ_RATE_ARGS=(-z "$GZ_RATE_HZ")' in demo
-    assert "SITL_SPEEDUP=$SPEEDUP is for the functional rail (PHYSICS=gazebo) only" in demo
-    assert '"sim_speedup_requested": %s, "gz_update_rate_hz": %s' in demo
+    assert 'nohup gz sim -s -r "$GZ_WORLD" > ~/sitl-run/gz.log' in demo
+    assert "GZ_RATE" not in demo and "gz sim -s -r -z" not in demo
     # The refusal comes before anything starts.
-    assert demo.index("is for the functional rail (PHYSICS=gazebo) only") < demo.index(
-        'nohup bash "$DIR/start_sitl.sh"')
+    assert demo.index("# speedup-check end") < demo.index('nohup bash "$DIR/start_sitl.sh"')
+    assert demo.index("# speedup-check end") < demo.index('nohup gz sim')
     if not find_bash():
         return SKIP
-    lines = [l.strip() for l in demo.splitlines()
-             if l.strip().startswith(("GZ_STEP=\"$(", "GZ_RATE_HZ=\"$("))]
-    assert len(lines) == 2, lines
+    block = _speedup_block(demo)
+
+    def run(physics: str, speedup: str | None) -> subprocess.CompletedProcess:
+        env = dict(os.environ)
+        env.pop("SITL_SPEEDUP", None)
+        if speedup is not None:
+            env["SITL_SPEEDUP"] = speedup
+        return subprocess.run([find_bash(), "-c",
+                               f'PHYSICS={physics}\n{block}\necho "ok $SPEEDUP"'],
+                              env=env, capture_output=True, text=True, timeout=30)
+
+    for physics in ("sitl", "gazebo"):
+        for ok, want in ((None, "1"), ("1", "1"), ("1.0", "1.0")):
+            r = run(physics, ok)
+            assert r.returncode == 0 and r.stdout.strip() == f"ok {want}", (
+                physics, ok, r.stdout, r.stderr)
+        # Faster or slower than real time, and what Python's :g could print.
+        for bad in ("2", "1.5", "4", "0.5", "1e-05", "0", "abc", "-1", "", "01", "1."):
+            if bad == "":
+                continue                      # unset and empty both read as 1
+            r = run(physics, bad)
+            assert r.returncode == 2 and "REFUSED" in r.stdout, (physics, bad, r.stdout)
+            assert "wall time" in r.stdout and "ok " not in r.stdout, (physics, bad)
+    # physics.json, rendered by the script's own printf with a stub gz.
+    record = _marked_block(demo, "physics-record")
     with tempfile.TemporaryDirectory() as td:
-        world = Path(td) / "w.sdf"
-        world.write_text('<sdf><world><physics name="1ms" type="ignore">\n'
-                         "  <max_step_size>0.001</max_step_size>\n"
-                         "  <real_time_factor>1.0</real_time_factor>\n"
-                         "</physics></world></sdf>\n", encoding="utf-8")
-        for speedup, want in (("2", "2000"), ("1.5", "1500"), ("4", "4000")):
-            script = (f"GZ_WORLD='{world.as_posix()}'; SPEEDUP={speedup}; "
-                      + "; ".join(lines) + '; echo "$GZ_RATE_HZ"')
+        for physics, speedup in (("gazebo", "1"), ("gazebo", "1.0"), ("sitl", "1")):
+            out = Path(td) / f"{physics}{speedup}"
+            out.mkdir()
+            script = ("gz() { echo 'Gazebo Sim, version 8.14.0'; }\n"
+                      f"PHYSICS={physics}; SPEEDUP={speedup}; OUT='{out.as_posix()}'\n"
+                      "GZ_WORLD=/home/u/ardupilot_gazebo/worlds/iris_runway.sdf\n"
+                      "GZ_IRIS_PARM=/home/u/gazebo-iris.parm\n" + record)
             r = subprocess.run([find_bash(), "-c", script], capture_output=True, text=True,
                                timeout=30)
-            assert r.stdout.strip() == want, (speedup, r.stdout, r.stderr)
+            assert r.returncode == 0, r.stderr
+            rec = json.loads((out / "physics.json").read_text(encoding="utf-8"))
+            if physics == "gazebo":
+                assert rec["physics"] == "gazebo-harmonic" and rec["gz_sim"] == "8.14.0", rec
+                assert rec["sim_speedup_requested"] == 1.0, rec
+                assert "gz_update_rate_hz" not in rec, rec
+            else:
+                assert rec == {"physics": "ardupilot-sitl-builtin", "sitl_model": "quad"}, rec
 
 
 def test_sitl_airsim_copter_refuses_the_cmac_home_and_a_missing_airframe():

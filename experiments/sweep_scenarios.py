@@ -365,7 +365,7 @@ from guardrail.models import (Action4D, CorridorSwap, DynamicNFZ,  # noqa: E402,
                               State, TimeWindowSwitch)
 from guardrail.scenario_spec import (FORECAST_ARMS,                # noqa: E402
                                      GRANT_EVENT_TYPES, RAIL_PHYSICS,
-                                     RAIL_SIM_SPEEDUP_MAX, RESPONSE_ARMS, Defaults,
+                                     RAIL_SIM_SPEEDUP_WHY, RESPONSE_ARMS, Defaults,
                                      Library, ScenarioEvent, ScenarioSpec,
                                      check_comparison_arms, check_forecast_arms,
                                      check_response_arms, expand,
@@ -5045,25 +5045,46 @@ def rail_meta(spec: ScenarioSpec, ep, seed: int, backend: str, run_id: str,
 # --------------------------------------------------------------------------- #
 # The grant's functional rail is Gazebo Harmonic (03-simulation/dual-rail.md;
 # 02-implementation/stress-testing.md: "Gazebo Harmonic for functional
-# sweeps"; the broad sweep "> 1.0 (functional rail only)"). It first flew end
-# to end on 2026-11-02 (ARCH-16): sitl/run_ros2_demo.sh with PHYSICS=gazebo,
-# the desktop's ROS 2 rail with Gazebo's physics behind SITL's JSON backend.
-# `--backend sitl --rail-physics gazebo` (or a profile's `rail_physics:
-# gazebo`, experiments/profiles/gazebo_functional.yaml) flies the sweep's
-# missions on it: PHYSICS=gazebo and, above 1, SITL_SPEEDUP through WSLENV;
-# tags "gzsweep_..." so its run folders never overwrite the SITL rail's;
-# every mission's scenario record marked functional_only (rail_meta), which
-# guardrail.manifest.is_kpi_grade refuses. A cell with a simulator stressor
-# (wind, GPS dropout: SITL's SIM_* parameters) is refused there: they were
-# checked on SITL's own physics only, and SITL's wind does not act on a
-# vehicle whose dynamics Gazebo computes. `--sitl-dry-run` lists every
-# mission - tag, SITL_HOME, environment, command, the grant's episode bundle
-# name and the run folder the rail will write - with nothing flown or written.
+# sweeps"). It first flew end to end on 2026-11-02 (ARCH-16):
+# sitl/run_ros2_demo.sh with PHYSICS=gazebo, the desktop's ROS 2 rail with
+# Gazebo's physics behind SITL's JSON backend. `--backend sitl --rail-physics
+# gazebo` (or a profile's `rail_physics: gazebo`,
+# experiments/profiles/gazebo_functional.yaml) flies the sweep's missions on
+# it: PHYSICS=gazebo through WSLENV; tags "gzsweep_..." so its run folders
+# never overwrite the SITL rail's; every mission's scenario record marked
+# functional_only (rail_meta), which guardrail.manifest.is_kpi_grade refuses.
+# A cell with a simulator stressor (wind, GPS dropout: SITL's SIM_*
+# parameters) is refused there: they were checked on SITL's own physics
+# only, and SITL's wind does not act on a vehicle whose dynamics Gazebo
+# computes. Every mission flies at sim_speedup 1.0
+# (scenario_spec.RAIL_SIM_SPEEDUP_WHY: the Shield node runs on wall time).
+# `--sitl-dry-run` lists every mission - tag, SITL_HOME, environment,
+# command and the run folder the rail will write - with nothing flown or
+# written.
 GAZEBO_TAG_PREFIX = "gzsweep_"
+# Why a functional-rail mission is never KPI-grade. The lab's choice, not the
+# grant's wording: the grant reports every KPI from a run "executed in the
+# canonical HIL topology" (02-implementation/stress-testing.md, Purpose), and
+# this rail runs the Shield on the desktop (`dev`); but its
+# 03-simulation/dual-rail.md also gives the functional rail the "determinism
+# contract for KPI runs" at sim_speedup=1, and the sentence that keeps a
+# sweep's results out of the KPI numbers ("tracked but not part of the final
+# KPI numbers") covers only the broad sweep at speed > 1, which is not flown.
 GAZEBO_FUNCTIONAL_WHY = (
-    "flown on the Gazebo Harmonic functional rail: the grant tracks a functional "
-    "sweep's results but keeps them out of the final KPI numbers (Stress Testing, "
-    "\"Test scheduling\"); never KPI-grade, whatever its speedup and topology read")
+    "flown on the Gazebo Harmonic functional rail (dev topology, sim_speedup 1.0): "
+    "tracked as functional evidence, never KPI-grade - the lab's choice to take "
+    "KPI-grade runs from hil only (2026-11-17, WP4-04), not the grant's wording, "
+    "whose 03-simulation/dual-rail.md gives the functional rail KPI runs at "
+    "sim_speedup=1")
+# The grant's per-episode bundle name (`episode-<UTC>--<cell>--seed<n>`,
+# Episode.dir_name) is written by the headless backend only (write_bundle).
+# A rail mission's bundle is demo/out/<tag>/<tag>.replay.tar.gz; the sweep
+# records the grant's name beside it as a label, which names no file (WP4-11
+# stays open), and its <UTC> is the sweep's start, not the episode's.
+GRANT_EPISODE_NAME_NOTE = (
+    "a name only: no file of this name is written on the rail (its bundle is "
+    "the run folder's <tag>.replay.tar.gz); <UTC> is the sweep's start stamp; "
+    "WP4-11's per-episode bundle naming stays open")
 # Wall seconds a desktop mission spends outside its flight, for the dry run's
 # estimate only: gz sim 6, SITL 8, router 3, MAVROS 10, bag 2 (the sleeps in
 # sitl/run_ros2_demo.sh), plus take-off, the home check, the replay pack and
@@ -5077,8 +5098,8 @@ GAZEBO_YAW_TOL_DEG = 2.0
 def check_rail_physics(backend: str, physics: str, sim_speedup: float) -> None:
     """Refuse a physics or speedup the rail cannot honestly fly: physics one
     of RAIL_PHYSICS, Gazebo on the desktop rail (`sitl`) only - the hil rig's
-    SITL runs its own quad - and a speedup other than 1 on Gazebo only,
-    above 0 and at most RAIL_SIM_SPEEDUP_MAX. Raises ValueError."""
+    SITL runs its own quad - and any speedup but 1.0, on every rail
+    (RAIL_SIM_SPEEDUP_WHY). Raises ValueError."""
     if physics not in RAIL_PHYSICS:
         raise ValueError(f"rail physics {physics!r}: one of {list(RAIL_PHYSICS)}")
     if physics == "gazebo" and backend != "sitl":
@@ -5088,12 +5109,8 @@ def check_rail_physics(backend: str, physics: str, sim_speedup: float) -> None:
         s = float(sim_speedup)
     except (TypeError, ValueError):
         raise ValueError(f"sim_speedup {sim_speedup!r}: not a number") from None
-    if not (math.isfinite(s) and 0.0 < s <= RAIL_SIM_SPEEDUP_MAX):
-        raise ValueError(f"sim_speedup {sim_speedup!r}: above 0 and at most "
-                         f"{RAIL_SIM_SPEEDUP_MAX:g}")
-    if s != 1.0 and physics != "gazebo":
-        raise ValueError(f"sim_speedup {s:g}: a speedup other than 1.0 is for the "
-                         f"functional rail only (--rail-physics gazebo)")
+    if s != 1.0:
+        raise ValueError(f"sim_speedup {sim_speedup!r}: {RAIL_SIM_SPEEDUP_WHY}")
 
 
 def gazebo_meta(sim_speedup: float) -> dict:
@@ -5103,17 +5120,12 @@ def gazebo_meta(sim_speedup: float) -> dict:
             "functional_only": True, "functional_only_why": GAZEBO_FUNCTIONAL_WHY}
 
 
-def rail_physics_env(physics: str, sim_speedup: float) -> dict[str, str]:
+def rail_physics_env(physics: str) -> dict[str, str]:
     """The variables sitl/run_ros2_demo.sh reads for the rail's physics,
     passed through WSLENV: none on SITL's own physics (the launch is then
-    exactly what it was), PHYSICS=gazebo on the functional rail, and
-    SITL_SPEEDUP there when it is not 1."""
-    if physics != "gazebo":
-        return {}
-    env = {"PHYSICS": "gazebo"}
-    if float(sim_speedup) != 1.0:
-        env["SITL_SPEEDUP"] = f"{float(sim_speedup):g}"
-    return env
+    exactly what it was), PHYSICS=gazebo on the functional rail. Never
+    SITL_SPEEDUP: every rail flies at 1.0 (RAIL_SIM_SPEEDUP_WHY)."""
+    return {"PHYSICS": "gazebo"} if physics == "gazebo" else {}
 
 
 def sitl_tag(ep, physics: str = "sitl") -> str:
@@ -5155,16 +5167,17 @@ def sitl_plan(episodes, defaults, physics: str = "sitl", sim_speedup: float = 1.
               stamp: str = "<UTC>") -> list[dict]:
     """The desktop rail's sweep before anything flies (--sitl-dry-run): per
     episode, the mission it would be - tag, SITL_HOME, the environment and
-    command run_sitl would launch, the grant's episode bundle name
-    (`episode-<UTC>--<cell>--seed<n>`, Episode.dir_name) and the run folder
-    and replay bundle the rail writes - or why it is refused. Needs neither
-    WSL nor Gazebo; writes nothing."""
+    command run_sitl would launch and the run folder and replay bundle the
+    rail writes - or why it is refused. `grant_episode_name` is the grant's
+    per-episode name (`episode-<UTC>--<cell>--seed<n>`, Episode.dir_name), a
+    label only: the rail writes no file of that name (GRANT_EPISODE_NAME_NOTE).
+    Needs neither WSL nor Gazebo; writes nothing."""
     check_rail_physics("sitl", physics, sim_speedup)
     plan = []
     for ep in episodes:
         spec = ep.cell.spec
         item = {"id": ep.run_id, "seed": ep.seed, "template": spec.template,
-                "cell": ep.episode_id, "bundle_name": ep.dir_name(stamp)}
+                "cell": ep.episode_id, "grant_episode_name": ep.dir_name(stamp)}
         why = rail_refusal(spec, "sitl", episode=ep, defaults=defaults)
         if why is None and physics == "gazebo":
             why = gazebo_refusal(spec, ep.seed, defaults)
@@ -5177,7 +5190,7 @@ def sitl_plan(episodes, defaults, physics: str = "sitl", sim_speedup: float = 1.
                                      events=(f"{rel}/events.json" if spec.events else None),
                                      meta=f"{rel}/scenario.json", episode=ep)
                 home = sitl_home(spec, pol, defaults, ep.seed)
-                env = dict(rail_physics_env(physics, sim_speedup))
+                env = dict(rail_physics_env(physics))
                 if home is not None:
                     env["SITL_HOME"] = home
                 stress = rail_stress_plan(spec, ep.seed, defaults, run_id=tag)
@@ -5202,9 +5215,10 @@ def sitl_plan(episodes, defaults, physics: str = "sitl", sim_speedup: float = 1.
 def print_sitl_plan(plan: list[dict], physics: str = "sitl",
                     sim_speedup: float = 1.0) -> None:
     """The dry run's listing: every mission with its environment, command,
-    episode bundle name and run folder, every refusal with its reason, the
-    counts and an estimate of the wall time (the flights' caps at the
-    speedup plus RAIL_MISSION_OVERHEAD_S each: an upper estimate, not a
+    run folder and the grant's episode name (a label, no file), every
+    refusal with its reason, the counts and an estimate of the wall time
+    (the flights' caps - the Shield node's mission cap is in wall seconds -
+    plus RAIL_MISSION_OVERHEAD_S each: an upper estimate, not a
     measurement)."""
     fly = [p for p in plan if p["fly"]]
     rail = ("the Gazebo Harmonic functional rail (PHYSICS=gazebo)" if physics == "gazebo"
@@ -5220,18 +5234,23 @@ def print_sitl_plan(plan: list[dict], physics: str = "sitl",
         print(f"       env        " + (" ".join(f"{k}={v}" for k, v in p["env"].items())
                                        or "(none)"))
         print(f"       command    {shlex.join(p['cmd'])}")
-        print(f"       bundle     {p['bundle_name']}")
         print(f"       run folder {p['run_folder']}  (replay {p['replay_bundle']})")
+        print(f"       grant name {p['grant_episode_name']}  (a name only: no file of "
+              f"this name is written)")
     refused = [p for p in plan if not p["fly"]]
     if refused:
         print("\n  refused:")
         for p in refused:
             print(f"  REF  {p['id']}  seed={p['seed']}\n       {p['refused']}")
-    flight = sum(p["rail_max_s"] for p in fly) / float(sim_speedup)
+    if fly:
+        print(f"\n  grant names: {GRANT_EPISODE_NAME_NOTE}")
+    # The cap is wall seconds (the node's time.monotonic), whatever the
+    # simulator's speed: never divided by a speedup.
+    flight = sum(p["rail_max_s"] for p in fly)
     est = flight + RAIL_MISSION_OVERHEAD_S * len(fly)
     print(f"\n  estimate: at most {est / 60:.0f} min wall ({flight / 60:.1f} min of flight "
-          f"caps at x{float(sim_speedup):g}, {RAIL_MISSION_OVERHEAD_S:g} s bring-up and "
-          f"teardown per mission); an estimate, not a measurement")
+          f"caps, {RAIL_MISSION_OVERHEAD_S:g} s bring-up and teardown per mission); an "
+          f"estimate, not a measurement")
 
 
 def run_sitl(sc, tag: str, seed: int = 0, defaults=None,
@@ -5250,9 +5269,9 @@ def run_sitl(sc, tag: str, seed: int = 0, defaults=None,
     beside the run (sitl_stress.json) and rail_stress_check must find the
     stress realised, or the flight is an error, not a scored episode."""
     spec = _as_spec(sc)
+    check_rail_physics("sitl", physics, sim_speedup)
     if not sitl_available():
         return None
-    check_rail_physics("sitl", physics, sim_speedup)
     why = rail_refusal(spec, "sitl", episode=episode, defaults=defaults)
     if why is None and physics == "gazebo":
         why = gazebo_refusal(spec, seed, defaults)
@@ -5273,7 +5292,7 @@ def run_sitl(sc, tag: str, seed: int = 0, defaults=None,
         wslenv.append("SITL_HOME/u")
     # The functional rail's physics (2026-11-17): none on SITL's own, so
     # that launch is exactly what it was.
-    for k, v in rail_physics_env(physics, sim_speedup).items():
+    for k, v in rail_physics_env(physics).items():
         env[k] = v
         wslenv.append(f"{k}/u")
     plan = rail_stress_plan(spec, seed, defaults, run_id=tag, nonce=nonce)
@@ -8168,14 +8187,13 @@ def main(argv: list[str] | None = None) -> int:
                          "mission marked functional, never KPI-grade). Default: the "
                          "profile's rail_physics, else sitl")
     ap.add_argument("--rail-sim-speedup", type=float, default=None, metavar="N",
-                    help="--backend sitl --rail-physics gazebo: run SITL and gz sim N "
-                         f"times faster than real time (above 0, at most "
-                         f"{RAIL_SIM_SPEEDUP_MAX:g}; the functional rail only). Default: "
-                         "the profile's rail_sim_speedup, else 1")
+                    help="--backend sitl: the simulator's speed. Only 1 is accepted, "
+                         "on every rail: " + RAIL_SIM_SPEEDUP_WHY.replace("%", "%%")
+                         + ". Default: the profile's rail_sim_speedup, else 1")
     ap.add_argument("--sitl-dry-run", action="store_true",
                     help="--backend sitl: list every episode - the mission it would fly "
-                         "(tag, SITL_HOME, environment, command, the grant's episode "
-                         "bundle name, the run folder the rail writes) or why it is "
+                         "(tag, SITL_HOME, environment, command, the run folder the "
+                         "rail writes, the grant's episode name as a label) or why it is "
                          "refused - with a wall-time estimate, and stop; needs neither "
                          "WSL nor Gazebo, flies and writes nothing")
     args = ap.parse_args(argv)
@@ -8247,7 +8265,7 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     # THE RAIL'S PHYSICS (2026-11-17, WP4-04): the flag, else the profile's,
     # else SITL's own; the Gazebo functional rail is flown with --backend
-    # sitl only, and a speedup other than 1 on it only.
+    # sitl only, and every rail at sim_speedup 1 (RAIL_SIM_SPEEDUP_WHY).
     rail_physics = args.rail_physics or ((profile.rail_physics if profile else None)
                                          or "sitl")
     rail_speedup = (args.rail_sim_speedup if args.rail_sim_speedup is not None
@@ -8486,11 +8504,15 @@ def main(argv: list[str] | None = None) -> int:
                     continue
                 rows, extra = got
                 # Where the rail wrote this episode (its manifest, bag, audit,
-                # kpi.json and signed replay bundle) and the grant's name for
-                # it (2026-11-17), as the dry run listed them.
+                # kpi.json and signed replay bundle, <tag>.replay.tar.gz) and,
+                # as a label only, the grant's per-episode name, which no file
+                # on the rail carries (GRANT_EPISODE_NAME_NOTE; 2026-11-17).
                 common["run"] = f"demo/out/{sitl_run_tag}"
                 common["mission_tag"] = sitl_run_tag
-                common["episode_bundle_name"] = ep.dir_name(stamp)
+                common["replay_bundle"] = (f"demo/out/{sitl_run_tag}/"
+                                           f"{sitl_run_tag}.replay.tar.gz")
+                common["grant_episode_name"] = ep.dir_name(stamp)
+                common["grant_episode_name_note"] = GRANT_EPISODE_NAME_NOTE
                 if rail_physics == "gazebo":
                     common["functional_only"] = True
                 policy = spec.policy.load(ROOT)

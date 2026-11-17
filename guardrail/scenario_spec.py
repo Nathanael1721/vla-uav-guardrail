@@ -325,11 +325,22 @@ PREFIX_CONSUMERS = ("action_set",)
 # SITL's built-in quad, every rail run until then; "gazebo", Gazebo
 # Harmonic's physics behind SITL's JSON backend (sitl/run_ros2_demo.sh
 # PHYSICS=gazebo), the grant's functional rail. A profile that names
-# "gazebo" is a functional sweep: never KPI-bearing, and the only kind that
-# may ask for a sim_speedup above 1 (grant, Stress Testing, "Test
-# scheduling": "> 1.0 (functional rail only)").
+# "gazebo" is a functional sweep, never KPI-bearing (the lab's choice: KPI-
+# grade runs come from hil).
 RAIL_PHYSICS = ("sitl", "gazebo")
-RAIL_SIM_SPEEDUP_MAX = 4.0
+# Why every rail flies at sim_speedup 1.0, the functional rail included,
+# although the grant lets the broad sweep run "> 1.0 (functional rail only)"
+# (Stress Testing, "Test scheduling"). Speeding up SITL and gz sim speeds up
+# the simulator only: the Shield node (sitl/ros2_shield_node.py) ticks, caps
+# the mission, fires its scheduled events and clocks its rules on wall time
+# (time.monotonic, create_timer), so at 2x it would decide at half the sim
+# rate, with half its lookahead margin, and switch events at twice their
+# declared sim time - another scenario than the one its record names.
+# Refused until the node runs on the autopilot's clock.
+RAIL_SIM_SPEEDUP_WHY = (
+    "only 1.0 is flown: the Shield node's tick, mission cap, event schedule and "
+    "rule clock run on wall time, so a faster simulator would fly another scenario "
+    "than the one recorded (until the node runs on sim time)")
 
 # Grant KPI names -> the field that measures each one in a sweep result.
 #
@@ -1648,24 +1659,25 @@ class Profile(_Strict):
     # The rail a profile is flown on (2026-11-17, WP4-04; RAIL_PHYSICS).
     # None, every profile until then: whichever --backend is asked for, on
     # SITL's own physics. "gazebo": the Gazebo Harmonic functional rail -
-    # experiments/sweep_scenarios.py flies it with --backend sitl only, marks
-    # every mission functional (never KPI-grade) and, at `rail_sim_speedup`
-    # above 1, boots SITL and gz sim that much faster than real time.
+    # experiments/sweep_scenarios.py flies it with --backend sitl only and
+    # marks every mission functional (never KPI-grade). `rail_sim_speedup`
+    # records the speed the profile flies at: 1.0, the only value accepted
+    # (RAIL_SIM_SPEEDUP_WHY).
     rail_physics: Literal[RAIL_PHYSICS] | None = None
-    rail_sim_speedup: float = Field(default=1.0, gt=0.0, le=RAIL_SIM_SPEEDUP_MAX)
+    rail_sim_speedup: float = 1.0
 
     @model_validator(mode="after")
     def _range(self) -> "Profile":
         lo, hi = self.expected_cells
         if not 0 < lo <= hi:
             raise ValueError("expected_cells must be [lo, hi] with 0 < lo <= hi")
-        if self.rail_sim_speedup != 1.0 and self.rail_physics != "gazebo":
-            raise ValueError(f"rail_sim_speedup {self.rail_sim_speedup:g}: a sim_speedup "
-                             f"other than 1.0 is for the functional rail only "
-                             f"(rail_physics: gazebo)")
+        if self.rail_sim_speedup != 1.0:
+            raise ValueError(f"rail_sim_speedup {self.rail_sim_speedup:g}: "
+                             f"{RAIL_SIM_SPEEDUP_WHY}")
         if self.rail_physics == "gazebo" and self.grant_kpi_bearing:
             raise ValueError("rail_physics: gazebo is the functional rail, whose results "
-                             "are never KPI numbers: set grant_kpi_bearing: false")
+                             "the lab never counts as KPI numbers (KPI-grade runs come "
+                             "from hil): set grant_kpi_bearing: false")
         if len(set(self.seeds)) != len(self.seeds):
             raise ValueError("seeds must be distinct")
         check_forecast_arms(self.forecast_arms)

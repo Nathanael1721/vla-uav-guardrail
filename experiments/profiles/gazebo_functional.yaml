@@ -13,9 +13,12 @@
 #
 #   python experiments/sweep_scenarios.py --profile gazebo_functional --backend sitl
 #
-# (`--sitl-dry-run` lists every mission, its tag, environment, command, the
-# grant's episode bundle name and the run folder, with nothing flown or
-# written; it needs neither WSL nor Gazebo).
+# (`--sitl-dry-run` lists every mission, its tag, environment, command and
+# run folder, with nothing flown or written; it needs neither WSL nor
+# Gazebo). It also prints the grant's per-episode name
+# (`episode-<UTC>--<cell>--seed<n>`) beside each mission as a label: the
+# rail writes no file of that name (its bundle is the run folder's
+# <tag>.replay.tar.gz), so WP4-11's bundle naming stays open.
 #
 # WHAT IT IS NOT
 #
@@ -24,6 +27,12 @@
 # guardrail.manifest.is_kpi_grade refuses whatever the manifest reads, and
 # tools/kpi_report.py files it under "gazebo-stress/..." rows, apart from the
 # SITL and hil rails' rows. The rail is the desktop's (`dev` topology).
+# That exclusion is the lab's choice (KPI-grade runs come from hil), not the
+# grant's wording: the grant reports its KPIs from the canonical HIL topology
+# (Stress Testing, Purpose), but 03-simulation/dual-rail.md also gives the
+# functional rail the "determinism contract for KPI runs" at sim_speedup=1,
+# and the grant's "tracked but not part of the final KPI numbers" covers only
+# the broad sweep at speed > 1.
 #
 # THE CELLS
 #
@@ -38,16 +47,19 @@
 #
 # SPEED
 #
-# `rail_sim_speedup: 1.0`: the first sweep on a new rail is flown at real
-# time. The grant allows more on the functional rail; `--rail-sim-speedup 2`
-# (at most 4) boots SITL with --speedup 2 and runs gz sim at twice real time
-# (the world's step, twice per wall step). The manifest's sim_speedup is the
-# one the autopilot reports.
+# `rail_sim_speedup: 1.0`, the only value accepted. The grant lets the broad
+# sweep run "> 1.0 (functional rail only)", but speeding up SITL and gz sim
+# speeds up the simulator only: the Shield node (sitl/ros2_shield_node.py)
+# ticks, caps the mission, fires its scheduled events and clocks its rules on
+# wall time, so a faster run would fly another scenario than the one its
+# record names. Refused (here, in experiments/sweep_scenarios.py and in
+# sitl/run_ros2_demo.sh) until the node runs on the autopilot's clock. The
+# manifest's sim_speedup is the one the autopilot reports.
 
 profile: gazebo_functional
 cadence: on demand (functional rail shakedown)
 grant_scope: "functional sweeps on Gazebo Harmonic (a handful of smoke cells x 1 seed)"
-grant_sim_speedup: "> 1.0 allowed (functional rail only); flown at 1.0 unless --rail-sim-speedup"
+grant_sim_speedup: "> 1.0 allowed for the broad sweep (functional rail only); flown at 1.0: the Shield node runs on wall time"
 grant_kpi_bearing: false
 rail_physics: gazebo
 rail_sim_speedup: 1.0
