@@ -16,6 +16,130 @@ shipped change and recorded as one.
 
 ## [Unreleased]
 
+### 2026-11-17 (pab2 and twelve branches) — the prefix A/B re-flown on hil after the path-test fix; replay, frames, ingest, null, envelopes, rails and sweeps made ready for their flights
+
+#### Added
+- **pab2, the prefix A/B re-flown on hil at 47b3fde** (WP4-15;
+  docs/data/kpi_prefix_ab_20261117/). It is the re-fly that pab1 owed: 33
+  missions of the `prefix_ab` profile, all KPI-grade. The pilot is the
+  hand-written CSP-consuming adapter (guardrail.prefix_consumer), not a
+  learned VLA.
+  - **KPIs:**
+    - P0 escapes 0 on 2172 P0 ticks.
+    - Tick max 26.29 ms and end-to-end max 39.45 ms; 0 of 15464 ticks over 100 ms.
+    - Fail-safe 15/15 under the adopted reading r2 (Wilson 95 % low 0.796); 12/15 as flown (the 3 nfz-head-on prefix-off runs).
+  - **A/B, on vs off:**
+    - Mission success 0.733 vs 0.600.
+    - Repairs per episode 3.133 vs 130.600 (A/A largest pair 3).
+    - Mean repair magnitude 0.505 vs 9.370 m/s.
+  - **Against pab1:**
+    - nfz-head-on prefix-on: now 4/4 with 0 repairs.
+    - corridor-drift-out prefix-on: from RTL 3/3 to success 3/4.
+  - Track videos are in each run folder.
+- **The corridor finding behind pab2_011's RTL** (branch wf17-corridor;
+  docs/data/kpi_prefix_ab_20261117/corridor_finding.md). Reproduced headless from the logs: all 34
+  Brake-fallback ticks of the four prefix-on corridor flights were paths
+  leaving the corridor's end cap by 0.005-0.30 m at t+5 s.
+  - **Consumer side:**
+    - Its admissibility test used the Shield's tube, which contains the true tube (the wrong side for an admissibility test).
+    - It decided on a pose up to one tick older than the Shield's.
+    - Fix: PrefixConsumer now keeps a margin of 1.0 m inside the wall (at least the speed cap times 0.25 s), and a path starting in the band must never pass the true wall.
+    - The record announces `corridor_path_test: segment_margin` and `corridor_margin_m`. The harness refuses a prefix-on flight whose announced margin differs from the arm's.
+  - **Shield side (not changed, pinned by a test):** CorridorReturn reads "returning" when a path closes on the end vertex before it leaves the cap.
+  - **Owed:** unflown; pab3 re-flies the prefix-on arms after the 18 Nov demo.
+- **Q3 runs re-run through today's Shield** (WP4-11; tools/replay_q3.py,
+  docs/data/replay_q3_20261117/). Every run whose manifest is dated
+  1 Aug-31 Oct 2026, 5509 folders:
+  - **Re-run, open loop on the logged inputs with every policy generation:** 15 runs, 10 identical bit for bit and 5 differ.
+  - **Not replayable, each with its reason:** 5494, most of them headless episodes that keep no per-tick log.
+  - **What this is not:** the grant's reproducibility replay, because none of the 15 was flown from a clean revision.
+- **Estimator null for C2** (ARCH-30, X-04; FAMILY=estimator in
+  deploy/orin/run_pas_perception.sh, EstimatorFollowPilot in
+  demo/pas_ardupilot/perception_node.py).
+  - **What it is:** the lab's hand-written follow law with its target estimator, strict lock, re-acquisition and trail-following forward direction, on the same detector feed, start gate and end rule as the C2 VLA flights.
+  - **What it is not:** equal to the lab's follow. It lacks the search planner, FenceGuard and the orbit, and the protocol says so.
+  - **Status:** not flown. The backend table records it as a second, separate null.
+- **Arc forecast and body-frame paths, opt-in** (WP3-04, ARCH-04).
+  - **Arc forecast:** with `arc_forecast` on, the Shield also forecasts a body action with a yaw rate along its arc, beside the straight forecast. It can only add caution: the straight poses are bit-identical to the forecast with the arc off.
+  - **Where it can be switched on:**
+    - the PAS rail (`--action-frame body`);
+    - the ROS 2 rail and the campaign launcher (`--arc-forecast` / `--rail-arc-forecast`);
+    - the headless API.
+  - **Default:** off, so no existing flight changes.
+- **Metre writes stored as WGS84** (WP1-14). Every write path into a framed policy now stores and hashes WGS84 only: REST hot-apply, the Shield's zone edits, the harness's spawned zones and `bundle.derive`.
+  - **Enforcement:** by default it uses the metres given. The snapshot reproduces them to within 0.6 um under the same hash.
+  - **Opt-in `VLAGUARD_WGS84_BIND`:** enforces from the WGS84 view; off until the smoke profile is re-baselined.
+  - **Stored policies:** their hashes are unchanged.
+- **distance_envelope on the ROS 2 hil rail** (WP1-07; `--world` with
+  experiments/worlds/de_block.yaml, profile distance_envelope, signed
+  bundle distance-envelope-sitl-v0.1.0).
+  - **What is judged:** buildings and roads rules, against a declared world of rectangles. Nothing physical stands there in SITL.
+  - **City rails:** roads are judged against the real CityLife street mask.
+  - **Not flown yet.**
+- **Gazebo functional sweep plumbing** (WP4-04; profile gazebo_functional,
+  `--rail-physics gazebo`, `--sitl-dry-run`).
+  - **Dry run:** lists 8 of 8 missions.
+  - **Marking:** every mission is marked functional, never KPI-grade.
+  - **Speed:** only sim_speedup 1 is accepted, because the Shield node runs on wall time. The grant's broad-sweep speed > 1 is not delivered.
+  - **Not swept yet.**
+- **G6's battery reason flyable on the rails, opt-in** (WP3-07; `rail_battery`, profile fsm_edges only). The simulator side sets the simulated vehicle's BATT_* fail-safe and restores it afterwards. KPI-bearing profiles refuse the cell as before. The ROS 2 node now applies `for_decision_period` when a pilot declares one.
+- **Per-host revisions** (ARCH-31; stack_revisions.json beside an
+  unchanged six-field manifest).
+  - **What it records:** the revision of each host (desktop, companion), the autopilot firmware as AUTOPILOT_VERSION names it, and the simulator build where it is known.
+  - **`single_sha`:** true only when every host the topology needs has reported on one clean commit.
+  - **Writers:** the ROS 2 Shield node, the ROS 2 mission node and the Project AirSim + ArduPilot node.
+- **Broad sweep runnable unattended** (WP4-06; `--resume DIR`, `--shard I/N`,
+  `--merge-only`).
+  - **How:** checkpoints are written per episode and resumed after a kill; four shards cover every family.
+  - **Report:** it says the broad results are outside the KPI numbers.
+  - **Run so far:** a 250-episode slice only; the full sweep (14,950 episodes) has not run.
+
+#### Fixed
+- **tools/replay_from_bag.py over ntFIN2 + ntFIN2s: 590 identical, 1 differs** (16 Nov: 571 / 18 incomplete / 2 differ). Two causes were in the replay itself:
+  - **The 18 dyn-nfz-spawn-ahead runs:** after the GeoFence takeover the FSM does not step, and a row without FSM keys now agrees with an intercept carrying `fsm: null`.
+  - **ntFIN2_511:** the first tick is placed on the flight log's first action.
+
+- **Setpoint delivery check** (guardrail/delivery.py, sitl/mavlink_adapter_node.py, sitl/ros2_shield_node.py; docs/data/delivery_gaps_hil_smoke_20261117/).
+  - **Finding:** in ntFIN2_175 the Shield published setpoints that the MAVLink adapter did not hand to MAVROS for 25.5 s. That is 686 published and 441 sent; 245 never went out. Speed held about 2 m/s for the GUIDED timeout, then fell to about zero. The run was KPI-grade.
+  - **What is added:**
+    - The adapter now reports each send, plus a 1 Hz beat, on /mavlink_adapter/sent.
+    - The Shield node compares those reports with what it published and records `setpoint_delivery` in metrics.json.
+  - **Grading:** a gap over 0.5 s, or a shortfall over 2, makes a run not KPI-grade. Stored runs are graded from their two logs.
+  - **Scan of 1837 stored hil folders:** one gap (ntFIN2_175) and 1835 clean.
+  - **Not known:** the gap's cause; the logs show only that the adapter's setpoint callback did not run.
+  - **Not monitored:** the MAVROS-to-autopilot hop.
+- **ntFIN2 KPI report regraded for delivery** (docs/data/kpi_ntFIN2_20261117_delivery/). Nothing was re-flown, and only ntFIN2_175 moves:
+
+  | Figure | Before | After |
+  |---|---|---|
+  | KPI-grade episodes | 589 | 588 |
+  | Fail-safe (r2) | 584/585 | 583/584 = 0.998, Wilson low 0.990 |
+  | P0 escapes | – | 0, on 16,746 P0 ticks |
+  | Tick max | – | 74.06 ms |
+
+  The 15 Nov report stays as it was; this is the one to cite.
+
+#### Changed
+- **The Shield enforces what is stored: hot-applied geometry is bound to the WGS84 frame** (WP1-14, WP4-11; docs/data/wgs84_bind_default_20261117/).
+  - **The problem:** every write path already stored WGS84. The Shield, however, enforced the metres an event gave, so a hot-applied generation replayed from its stored snapshot was off by up to 0.6 um.
+  - **The change:** binding is now the only mode, so a generation replays bit for bit (tests/test_replay_q3.py by default).
+  - **Exact ties:** an exact tie on a bound dynamic zone is judged at the geometry's resolution, 2e-6 m. Static fences keep 1e-9 m.
+  - **Headless check, three sets:**
+
+    | Set | Episodes that differ | What differs |
+    |---|---|---|
+    | Smoke | 8 of 64 | sub-micrometre actions, recovery records, anti-stall slide side |
+    | Library | 14 of 180 | same |
+    | Nightly cells, seed 1001 | 29 of 248 | same; in 5 episodes FSM edges come 0.1-0.2 s apart |
+
+    - Every outcome, status, fail-safe label, P0 figure and FSM edge sequence is unchanged.
+    - End positions move by up to 0.8 m.
+  - **REST:** a body whose lat/lon and x/y disagree by more than 1 um is refused with HTTP 422.
+
+#### Not changed
+- Apart from the WGS84 binding above, no branch changes what an existing KPI scenario flies or the headless smoke result: every other new behaviour is opt-in and off by default, and the delivery check changes grading, not flight.
+- The AGX stays at 47b3fde for the 18 Nov demo. The flights these branches prepare (pab3, the estimator null, distance_envelope, the battery cell, the Gazebo sweep, a delivery and stack-revision shakedown after the companion image is rebuilt) are flown after it.
+
 ### 2026-11-17 (RaceVLA's third C2 flight) — every backend that can fly C2 now has its 3 flights on hil
 
 #### Added
