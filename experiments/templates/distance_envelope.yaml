@@ -1,0 +1,83 @@
+# Scenario library - template `distance_envelope`: the grant's "Min distance
+# to typed object class (people, buildings, roads)" (WP1-07).
+# An extension template (guardrail/scenario_spec.py, EXTENSION_TEMPLATES).
+#
+# One file per template, as the grant asks (Stress Testing, Outputs:
+# "Scenario library - YAML files (one per template)"). Listed by
+# experiments/scenarios.yaml and validated at load by
+# guardrail/scenario_spec.py (ScenarioSpec); a family here must carry this
+# file's template. The schema and the conventions (gates, labels,
+# known_failures, tracked) are described in experiments/scenarios.yaml.
+#
+# THE WORLD IS DECLARED. A distance_envelope over buildings or roads is
+# measured on a map (models.DistanceEnvelope), and the SITL rails fly an
+# empty world, so each family here names a world file (`world`,
+# guardrail/world_map.py): rectangles in the policy's frame that every Shield
+# of the episode - and the rails' Shield node, as --world - judges the rule
+# against, as a no-fly polygon is judged against its vertices. Nothing
+# physical is at those rectangles in SITL. The people class is not flown
+# here: it binds the tracked subject only (subject_standoff.yaml flies the
+# stand-off runtime; models.DistanceEnvelope says what it does not see).
+#
+# FLOWN BY ONE PROFILE. The family carries `profiles: [distance_envelope]`
+# (scenario_spec, "A FAMILY FOR ONE PROFILE"): the library run, smoke,
+# nightly and broad leave it out, so adding it moves no published number.
+#
+#   python experiments/sweep_scenarios.py --profile distance_envelope
+#   python experiments/sweep_scenarios.py --profile distance_envelope --backend hil --hil-dry-run
+
+template: distance_envelope
+
+scenarios:
+  - scenario_id: distance-envelope-lanes
+    template: distance_envelope
+    profiles: [distance_envelope]
+    world: experiments/worlds/de_block.yaml
+    description: >
+      A goto pilot flies north up a lane at 4 m/s and 15 m, from x = -20 to
+      x = 70, past one building and one stretch of road of the declared world
+      experiments/worlds/de_block.yaml (policies/distance_envelope_sitl.yaml:
+      buildings 5 m P0, roads 3 m P1, the 10-20 m band, 4 m/s). lane_y -1
+      passes 3 m from the building's west face (y = 2), inside the buildings
+      envelope; lane_y -11 passes 1 m from the road's east edge (y = -12),
+      inside the roads envelope. The pilot never asks to keep away: the
+      Shield must hold the aircraft out of each envelope while it passes and
+      let it back onto the lane after. The gates are the requirement: no P0
+      escape, the target reached and the flight ended safe. Not swept: lane
+      0 (2 m from the face). Measured headless on 2026-11-17 (seed 1001,
+      ideal vehicle) the goto pilot, aiming back at y = 0 the whole way,
+      keeps pressing into the envelope after the Shield has pushed the
+      aircraft to y = -3.2, and the FSM holds it in Loiter at x = 16.3 from
+      10.4 s to the end: a safe hold, not a pass, and a different scenario
+      (a pilot that presses), which this family is not. ON THE RIG'S
+      VEHICLE the family is not yet shown to hold: on the headless
+      comparison arm (--response-arms ideal rail --autopilot-hold in_place,
+      the hil rig's fitted response, 2026-11-17, seed 1001) both cells count
+      one breach - the aircraft is carried into the rounded corner of the
+      envelope where it begins (lane -1 at x = 15.9, lane -11 at x = 7.3),
+      the commanded forecast not modelling the vehicle's lag (the
+      own-velocity forecast is off on the rails) - and lane -11 ends in RTL
+      short of its target. A likely mechanism, not yet measured in flight:
+      the clearance forecast looks only dt + v / (2 x 3 m/s^2) ahead
+      (Shield._clear_horizon_s: 0.1 + 4/6 = about 0.77 s at 4 m/s),
+      against the rig's lag. The labels below are the requirement and stay
+      as written whatever the hil flights show: a cell that fails there is
+      pinned under known_failures with its measured mechanism and the gates
+      it fails (experiments/scenarios.yaml, "Gates hold the REQUIREMENT"),
+      never re-labelled to the outcome.
+    mission:
+      task_prompt: "fly north up the lane past the building and the road"
+      start_pose: { x: -20.0, y: "$lane_y", up: 15.0 }
+      target: { x: 70.0, y: "$lane_y", up: 15.0 }
+      pilot: { type: goto, speed: 4.0 }
+    policy: { path: policies/distance_envelope_sitl.yaml }
+    parameter_sweep:
+      lane_y: [-1.0, -11.0]
+    ticks: 400
+    expected_kpis:
+      P0_escape_rate: 0
+      reached_goal: { equals: true }
+      ended_safe: { equals: true }
+    expected_outcome: success
+    expected_failsafe: false
+    failsafe_clause: N4

@@ -203,6 +203,16 @@ fsm-n-in-t-flicker) are flown by experiments/profiles/fsm_edges.yaml alone.
 Each sits in its template's file like every other family, so the library
 still loads, validates and labels it.
 
+SINCE 2026-11-17: A DECLARED WORLD (WP1-07)
+
+`world` names a world file (guardrail/world_map.py: buildings and roads as
+rectangles in the policy's frame). The harness gives every Shield of the
+episode its maps, and the SITL rails' Shield node gets it as --world, so a
+policy with a distance_envelope over buildings or roads can be flown at all
+(the Shield refuses one without its map). The world does not turn with the
+mission, so a rotated mission with a world is refused. A scenario without
+`world` - every one before that date - builds its Shields as before.
+
 SINCE 2026-11-16: A PILOT THAT CONSUMES THE PREFIX (WP4-15)
 
 A profile may set `prefix_consumer: action_set` (PREFIX_CONSUMERS). Every
@@ -264,6 +274,9 @@ EXTENSION_TEMPLATES = (
     # RTL, land), through the escalation FSM: the fail-safe trigger KPI's
     # "expected" side, which no other family exercises on purpose.
     "failsafe_escalation",
+    # The grant's "Min distance to typed object class" (WP1-07): buildings
+    # and roads of a declared world (ScenarioSpec.world), since 2026-11-17.
+    "distance_envelope",
 )
 TEMPLATES = GRANT_TEMPLATES + EXTENSION_TEMPLATES
 
@@ -1133,12 +1146,21 @@ class ScenarioSpec(_Strict):
     # PROFILE"; flown_by). None: the library run and every profile, as every
     # family was flown until 2026-11-07. Never part of the flight.
     profiles: list[str] | None = Field(default=None, min_length=1)
+    # The declared world (module docstring, "SINCE 2026-11-17: A DECLARED
+    # WORLD"): a world file's repo-relative path, whose buildings and roads
+    # every Shield of the episode measures a distance_envelope on. None: no
+    # map, as every scenario before that date flew.
+    world: str | None = Field(default=None, pattern=r"^[A-Za-z0-9_./-]+\.ya?ml$")
 
     @model_validator(mode="after")
     def _coherent(self) -> "ScenarioSpec":
         if not self.expected_kpis:
             raise ValueError(f"{self.scenario_id}: no expected_kpis - a scenario "
                              f"with no gate is a demonstration, not a test")
+        if self.world is not None and (self.mission.rotate_deg
+                                       or self.mission.rotate_about is not None):
+            raise ValueError(f"{self.scenario_id}: a world and a rotated mission - the "
+                             f"world's buildings and roads would not turn with it")
         if self.profiles is not None and (
                 len(set(self.profiles)) != len(self.profiles)
                 or not all(re.match(_ID, p) for p in self.profiles)):

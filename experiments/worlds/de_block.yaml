@@ -1,0 +1,22 @@
+# A declared world for the distance_envelope scenarios on the SITL rails
+# (guardrail/world_map.py; experiments/templates/distance_envelope.yaml).
+# Policy frame (policies/distance_envelope_sitl.yaml): metres, x North,
+# y East about the CMAC home. SITL's world is empty: these are the rectangles
+# the Shield judges its buildings and roads rules against, nothing physical.
+#
+#   block-a  a 20 m x 20 m building, its west face at y = 2 m: a flight up
+#            the lane y = -1 passes 3 m from it, inside the 5 m buildings
+#            envelope;
+#   road-w   a 50 m stretch of road, its east edge at y = -12 m: a flight up
+#            the lane y = -11 passes 1 m from it, inside the 3 m roads
+#            envelope.
+# Between the two (x 20-40) the legal band is about y in [-9, -3] (the
+# Shield's distance field is a chamfer distance on the 1 m grid).
+world: de-block-v1
+description: one building and one stretch of road beside the lanes x 0..70
+res_m: 1.0
+extent: {x: [-60.0, 120.0], y: [-50.0, 50.0]}
+buildings:
+  - {id: block-a, x: [20.0, 40.0], y: [2.0, 22.0]}
+roads:
+  - {id: road-w, x: [10.0, 60.0], y: [-18.0, -12.0]}

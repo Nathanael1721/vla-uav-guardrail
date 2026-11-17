@@ -84,7 +84,10 @@ POLICIES_DIR = ROOT / "policies"
 # (demo/vla_fly.py flies its signed bundle by default, as the SITL rails do).
 FLIGHT_POLICIES = ("sim_demo_policy", "corridor_survey", "follow_car_citylife",
                    "follow_car_citylife_nfz", "wgs84_taipei", "follow_car",
-                   "follow_car_nfz", "follow_pedestrian", "vla_goto_citylife")
+                   "follow_car_nfz", "follow_pedestrian", "vla_goto_citylife",
+                   # The distance_envelope family on the SITL rails (WP1-07,
+                   # 2026-11-17; experiments/profiles/distance_envelope.yaml).
+                   "distance_envelope_sitl")
 
 
 def _policy_file(name: str) -> Path:
