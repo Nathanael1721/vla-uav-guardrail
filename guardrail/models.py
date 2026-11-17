@@ -892,28 +892,19 @@ class _CanonicalRing:
 
 
 def _point_in_ring(x: float, y: float, ring) -> bool:
-    """Even-odd containment of (x, y) in a simple ring (boundary counts)."""
-    inside = False
+    """Even-odd containment of (x, y) in a simple ring (boundary counts):
+    on an edge, else the library's even-odd test (guardrail/planar.py; a copy
+    of its own until 2026-11-17, WP3-22)."""
+    from .planar import point_in_ring_xy
     n = len(ring)
-    for i in range(n):
-        (ax, ay), (bx, by) = ring[i], ring[(i + 1) % n]
-        if _segments_meet((ax, ay), (bx, by), (x, y), (x, y)):
-            return True
-        if (ay > y) != (by > y) and x < ax + (y - ay) * (bx - ax) / (by - ay):
-            inside = not inside
-    return inside
+    if any(_segments_meet(ring[i], ring[(i + 1) % n], (x, y), (x, y)) for i in range(n)):
+        return True
+    return point_in_ring_xy(x, y, ring)
 
 
 def _dist_to_ring(x: float, y: float, ring) -> float:
-    best = float("inf")
-    n = len(ring)
-    for i in range(n):
-        (ax, ay), (bx, by) = ring[i], ring[(i + 1) % n]
-        vx, vy = bx - ax, by - ay
-        l2 = vx * vx + vy * vy
-        t = 0.0 if l2 == 0 else max(0.0, min(1.0, ((x - ax) * vx + (y - ay) * vy) / l2))
-        best = min(best, math.hypot(x - (ax + t * vx), y - (ay + t * vy)))
-    return best
+    from .planar import ring_edge_distance
+    return ring_edge_distance(x, y, ring)
 
 
 class Origin(BaseModel):
@@ -2631,7 +2622,7 @@ def _geometry_conflicts(policy: Policy) -> list[str]:
         return []
     from shapely.geometry import LineString
     from shapely.ops import unary_union
-    from .geometry import keepout_area
+    from .geometry import area_holds_inside, area_meets, keepout_area
 
     def ref(c) -> str:
         return getattr(c, "altitude_ref", None) or "AGL"
@@ -2649,7 +2640,7 @@ def _geometry_conflicts(policy: Policy) -> list[str]:
                  and z.altitude_floor_m <= lo and z.altitude_ceiling_m >= hi]
         named = False
         for z in cover:
-            if _times_overlap(t, z) and keepout_area(z).contains_properly(tube_area[t.id]):
+            if _times_overlap(t, z) and area_holds_inside(keepout_area(z), tube_area[t.id]):
                 out.append(f"hard corridor {t.id} ({lo:g}-{hi:g} m) lies wholly inside "
                            f"hard keep-out zone {z.id} at every height of its band: "
                            f"no point the corridor allows is outside the zone, so "
@@ -2658,7 +2649,7 @@ def _geometry_conflicts(policy: Policy) -> list[str]:
         always = [z for z in cover if z.valid_time is None]
         if not named and len(always) > 1:
             union = unary_union([keepout_area(z) for z in always])
-            if union.contains_properly(tube_area[t.id]):
+            if area_holds_inside(union, tube_area[t.id]):
                 out.append(f"hard corridor {t.id} ({lo:g}-{hi:g} m) lies wholly inside "
                            f"the hard keep-out zones {', '.join(z.id for z in always)} "
                            f"at every height of its band: no point the corridor "
@@ -2671,7 +2662,7 @@ def _geometry_conflicts(policy: Policy) -> list[str]:
             if isinstance(a, CorridorSwap) and a.target_id == b.id or \
                     isinstance(b, CorridorSwap) and b.target_id == a.id:
                 continue
-            if not tube_area[a.id].intersects(tube_area[b.id]):
+            if not area_meets(tube_area[a.id], tube_area[b.id]):
                 out.append(f"hard corridors {a.id} and {b.id} have no point in "
                            f"common: the Shield holds the vehicle inside every "
                            f"active corridor, so no flight can satisfy both")
@@ -2930,11 +2921,11 @@ def _not_looser(hi, lo) -> str | None:
             if hi.altitude_floor_m < lo.altitude_floor_m or \
                     hi.altitude_ceiling_m > lo.altitude_ceiling_m:
                 return "widens the corridor's altitude band"
-        from .geometry import corridor_tube, keepout_area    # lazy: shapely
+        from .geometry import area_covers, corridor_tube, keepout_area    # lazy: shapely
         if isinstance(hi, PolygonFence):
-            if not keepout_area(hi).buffer(1e-6).covers(keepout_area(lo)):
+            if not area_covers(keepout_area(hi).buffer(1e-6), keepout_area(lo)):
                 return "shrinks the keep-out area (the new zone does not cover the old)"
-        elif not corridor_tube(lo).buffer(1e-6).covers(corridor_tube(hi)):
+        elif not area_covers(corridor_tube(lo).buffer(1e-6), corridor_tube(hi)):
             return "widens the corridor (the new tube is not inside the old)"
         return None
     # dynamic_nfz, time_window_switch, corridor_swap: only an identical rule

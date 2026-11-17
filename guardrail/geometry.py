@@ -16,9 +16,136 @@ unchanged.
 """
 from __future__ import annotations
 
+import shapely
 from shapely.geometry import LineString, Point, Polygon
 
 from .models import PolygonFence
+from .planar import point_in_ring_xy, ring_edge_distance, segment_distance  # noqa: F401  (re-exported)
+
+# --------------------------------------------------------------------------- #
+# The point and segment measures every reader shares (2026-11-17, WP3-22/X-13)
+# --------------------------------------------------------------------------- #
+#
+# "Is this point inside this ring?", "how far is it from it?", "which part of
+# this segment lies inside it?" - the Shield's verdicts (guardrail/shield.py
+# zone_breached, ZoneRuler, the segment test) and every reader outside it (the
+# RTL leg, the stress harness's polygon measures, the BC pilots' input
+# features, the compiler's lint and cost map, the analysis tools) call these
+# functions instead of asking shapely themselves.
+# tests/test_shieldcore_onepath.py fails when a function outside the library
+# (this file, planar.py, shield.py, ir.py) calls a shapely predicate or
+# distance, or carries the shape of a hand-written containment or
+# point-to-segment test - whatever the function is called.
+#
+# Each one is the shapely call it wraps, unchanged: the open interior for
+# `ring_contains` (a point on the edge is outside, as the Shield has always
+# read a zone), the closed set for `area_covers` / `area_meets`.
+
+
+def ring_contains(ring, x: float, y: float) -> bool:
+    """Is (x, y) in the open interior of `ring` (a shapely polygon)? The
+    footprint half of a keep-out verdict (point_in_fence adds the band)."""
+    return ring.contains(Point(x, y))
+
+
+def ring_distance(ring, x: float, y: float) -> float:
+    """Metres from (x, y) to `ring`: 0 inside it, else to its edge (the
+    measure Shield.fence_distance reports)."""
+    return ring.distance(Point(x, y))
+
+
+def boundary_depth(ring, x: float, y: float) -> float:
+    """Metres from (x, y) to the boundary of `ring` (every ring, holes
+    included): how deep a point inside it is."""
+    return ring.boundary.distance(Point(x, y))
+
+
+def edge_distance(poly, x: float, y: float) -> float:
+    """Metres from (x, y) to the OUTER edge of `poly` (its exterior ring),
+    inside or out."""
+    return poly.exterior.distance(Point(x, y))
+
+
+def edge_gap(poly, geom) -> float:
+    """Metres from the OUTER edge of `poly` to `geom` (a line, a path)."""
+    return poly.exterior.distance(geom)
+
+
+def signed_edge_distance(poly, x: float, y: float) -> float:
+    """`edge_distance`, negative inside `poly` (its open interior): the stress
+    harness's polygon measure (experiments/sweep_scenarios.py)."""
+    p = Point(x, y)
+    d = poly.exterior.distance(p)
+    return -d if poly.contains(p) else d
+
+
+def nearest_edge_point(poly, x: float, y: float) -> tuple[float, float]:
+    """The point of `poly`'s outer edge nearest (x, y)."""
+    p = Point(x, y)
+    q = poly.exterior.interpolate(poly.exterior.project(p))
+    return q.x, q.y
+
+
+def nearest_boundary_point(area, x: float, y: float) -> tuple[float, float]:
+    """The point of `area`'s boundary (every ring of every part) nearest
+    (x, y)."""
+    from shapely.ops import nearest_points
+    q = nearest_points(area.boundary, Point(x, y))[0]
+    return q.x, q.y
+
+
+def segment_in_ring(ring, x0: float, y0: float, x1: float, y1: float):
+    """The part of the straight segment (x0, y0)-(x1, y1) that lies in the
+    CLOSED `ring` (shapely geometry; empty when it misses)."""
+    return LineString([(x0, y0), (x1, y1)]).intersection(ring)
+
+
+def enters_interior(ring, geom) -> bool:
+    """Does `geom` (a segment, a path) pass through the open interior of
+    `ring`? A path that only runs along the edge does not."""
+    return ring.relate_pattern(geom, "T********")
+
+
+def area_covers(area, geom) -> bool:
+    """Does the closed `area` hold every point of `geom`?"""
+    return area.covers(geom)
+
+
+def area_meets(area, geom) -> bool:
+    """Do the closed `area` and `geom` share at least one point?"""
+    return area.intersects(geom)
+
+
+def area_holds_inside(area, geom) -> bool:
+    """Does the open interior of `area` hold `geom` (none of it on the
+    edge)?"""
+    return area.contains_properly(geom)
+
+
+def contains_many(area, points):
+    """`ring_contains` for a shapely point array (numpy bool array)."""
+    return shapely.contains(area, points)
+
+
+def covers_many(area, geoms):
+    """`area_covers` for an array of geometries (numpy bool array)."""
+    return shapely.covers(area, geoms)
+
+
+def meets_many(area, geoms):
+    """`area_meets` for an array of geometries (numpy bool array)."""
+    return shapely.intersects(area, geoms)
+
+
+def distance_many(geom, points):
+    """Metres from `geom` to each of an array of points (numpy array)."""
+    return shapely.distance(geom, points)
+
+
+def point_distance(geom, x: float, y: float) -> float:
+    """Metres from (x, y) to any shapely geometry (a line, a point, a
+    union of edges)."""
+    return geom.distance(Point(x, y))
 
 
 def fence_polygon(fence: PolygonFence) -> Polygon:
@@ -57,7 +184,7 @@ def point_in_fence(x: float, y: float, up: float, fence: PolygonFence,
     if buffered is None:
         poly = poly if poly is not None else fence_polygon(fence)
         buffered = poly.buffer(fence.margin_m)
-    return buffered.contains(Point(x, y))
+    return ring_contains(buffered, x, y)
 
 
 def nearest_on_polyline(x: float, y: float,

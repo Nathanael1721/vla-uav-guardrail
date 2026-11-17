@@ -200,11 +200,11 @@ def _grown(c, proj, policy) -> tuple[list[tuple[float, float]], str]:
     how much larger it is. Checked: the grown polygon covers the round margin
     ring the Shield enforces (geometry.keepout_area)."""
     from shapely.geometry import Polygon             # lazy, as models.py does
-    from .geometry import keepout_area
+    from .geometry import area_covers, keepout_area
     poly = Polygon([(v.x, v.y) for v in c.vertices])
     grown = poly.buffer(c.margin_m, join_style="mitre", mitre_limit=10.0)
     enforced = keepout_area(c)
-    if not grown.buffer(1e-9).covers(enforced):      # pragma: no cover - a GEOS defect
+    if not area_covers(grown.buffer(1e-9), enforced):      # pragma: no cover - a GEOS defect
         raise ValueError(f"{c.id}: the mitred ring does not cover the enforced one")
     if proj is None:
         proj = policy.projection()

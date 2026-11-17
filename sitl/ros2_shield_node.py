@@ -940,15 +940,13 @@ def zones_at(shield, st: State) -> tuple[list[str], float | None]:
     polygon measures (sweep_scenarios._signed_dist), on the zones as the
     Shield places them now (Shield.zones_now: moving zones where they are,
     a zone a clock has switched off left out)."""
-    from shapely.geometry import Point
-    p = Point(st.x, st.y)
+    from guardrail.geometry import ring_contains, signed_edge_distance
     ids: list[str] = []
     best = None
     for zr in shield.zones_now(st.up):
         poly = zr.polygon
-        inside = poly.contains(p)
-        d = poly.exterior.distance(p)
-        sd = -d if inside else d
+        inside = ring_contains(poly, st.x, st.y)
+        sd = signed_edge_distance(poly, st.x, st.y)
         best = sd if best is None else min(best, sd)
         if inside:
             ids.append(zr.rule.id)

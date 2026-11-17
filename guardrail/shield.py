@@ -136,7 +136,8 @@ from . import repair as _repair
 from . import response as _response
 from . import terrain as _terrain
 from .frames import from_body as _from_body, to_body as _to_body
-from .geometry import nearest_on_polyline, point_in_fence, push_out_direction
+from .geometry import (area_covers, boundary_depth, enters_interior, nearest_on_polyline,
+                       point_in_fence, push_out_direction, ring_contains, ring_distance)
 from .ir import FENCE_TYPES, FenceRecord, PolicyIR, anchor_reach, compile_fence, is_fence
 from .projection import derive_frame_origin, ring_order
 from .models import (
@@ -633,7 +634,7 @@ def escape_direction(x: float, y: float, poly, vx: float = 0.0,
             best = d
     if best < 1e-9:
         return base                       # on the boundary: push_out_direction's own fallback
-    inside = poly.contains(Point(x, y))
+    inside = ring_contains(poly, x, y)
     dirs: list[tuple[float, float]] = []
     for d, nx, ny in near:
         if d > best + tie_m:
@@ -750,8 +751,7 @@ class ZoneRuler:
         return len(self._rings)
 
     def distance(self, x: float, y: float) -> float:
-        p = Point(x, y)
-        return min((g.distance(p) for g in self._rings), default=math.inf)
+        return min((ring_distance(g, x, y) for g in self._rings), default=math.inf)
 
 
 def _sanitise(a: Action4D) -> tuple[Action4D, list[str]]:
@@ -966,6 +966,79 @@ def _build_signed_distance_field(occ, res: float):
     outside = _build_distance_field(occ, res)
     inside = _build_distance_field(1 - occ, res) / _CHAMFER_CORR
     return outside - inside
+
+
+def field_distance(d, res: float, ox: float, oy: float, x: float, y: float) -> float:
+    """Signed metres from world point (x, y) to the nearest obstacle on the
+    distance field `d` (`_build_signed_distance_field`, cell size `res`,
+    origin (ox, oy)); inf when `d` is None. The ONE reader of a clearance
+    field: Shield._distance_at (the clearance rule, the distance
+    envelope) and `ClearanceField` (the city controller's building half,
+    demo/follow_vlm.py FenceGuard, since 2026-11-17) both call it. Bilinear
+    inside the grid; outside it, the bound described below."""
+    if d is None:
+        return float("inf")
+    n, m = d.shape
+    fi = (x - ox) / res
+    fj = (y - oy) / res
+    ci = min(max(fi, 0.0), n - 1.0)
+    cj = min(max(fj, 0.0), m - 1.0)
+    off = math.hypot((fi - ci) * res, (fj - cj) * res)
+
+    i0 = int(math.floor(ci)); i1 = min(i0 + 1, n - 1); ti = ci - i0
+    j0 = int(math.floor(cj)); j1 = min(j0 + 1, m - 1); tj = cj - j0
+    v = (float(d[i0, j0]) * (1 - ti) * (1 - tj)
+         + float(d[i1, j0]) * ti * (1 - tj)
+         + float(d[i0, j1]) * (1 - ti) * tj
+         + float(d[i1, j1]) * ti * tj)
+    if off > 0.0:
+        # |d(q) - d(edge)| <= off (1-Lipschitz), so d(q) lies in
+        # [v - off, v + off]. Within that band take the value of a map
+        # whose border obstacles extend past the edge exactly as far as
+        # they reach into it, and no further: off - res/2 once past a
+        # built-on border (the cell's own half-width), v + off while still
+        # inside its overhang. Continuous with the inside at off = 0, so
+        # the half cell between the last cell centre and the map's edge
+        # reads as the building it is part of.
+        #
+        # It used to apply only where the edge value was positive, and
+        # return `v - off` otherwise - so a building on the map BORDER
+        # became a wall reaching out to infinity, deeper the further one
+        # flew. On CityLife, whose loops run 30-120 m past this 160 m
+        # map, that read the entrance of a junction as 35 m inside a
+        # building, and the clearance repair - its push sized from that
+        # 35 m "depth", so at the 5 m/s cap - replaced a +3 m/s follow
+        # with a 5 m/s reversal for up to 187 s (citylife_redcar_ground,
+        # _carpolicy); at 12 m those reversals pitched the airframe
+        # through its 14 m ceiling (_high). Off the map is UNKNOWN, not
+        # solid; `off_map()` reports it, and the cure is a map that
+        # covers the flight.
+        #
+        # The first fix, max(v - off, off), ended the infinite wall but
+        # jumped from v (inside a border building) to +off at the last
+        # cell centre, so the half cell of building beyond it read as
+        # clear and a push "out" through it counted as receding (found in
+        # review, 2026-09-24).
+        return max(v - off, min(v + off, off - 0.5 * res))
+    return v
+
+
+class ClearanceField:
+    """A clearance field over an obstacle map, read exactly as the Shield
+    reads its own (`field_distance` on `_build_signed_distance_field`).
+    For a reader that holds an obstacle map but no Shield with one
+    (FenceGuard built over a policy without an obstacle_clearance rule).
+    `distance` is Shield.clearance_at over the same map."""
+    __slots__ = ("d", "res", "ox", "oy")
+
+    def __init__(self, obstacle_map: dict):
+        self.res = float(obstacle_map["res"])
+        self.ox = float(obstacle_map["ox"])
+        self.oy = float(obstacle_map["oy"])
+        self.d = _build_signed_distance_field(obstacle_map["occ"], self.res)
+
+    def distance(self, x: float, y: float) -> float:
+        return field_distance(self.d, self.res, self.ox, self.oy, x, y)
 
 
 def _field_lipschitz(d, res: float) -> float:
@@ -1687,6 +1760,12 @@ class _Tick:
                 lambda r: self._age(r.rule), horizon)
         p = _INDEX_PAD_M
         return index.query(box[0] - p, box[1] - p, box[2] + p, box[3] + p)
+
+
+def _mid(line) -> tuple[float, float]:
+    """The midpoint of a shapely line, as (x, y)."""
+    q = line.interpolate(0.5, normalized=True)
+    return q.x, q.y
 
 
 def _to_zone_frame(p: State, tau: float, mv) -> tuple[float, float]:
@@ -2483,51 +2562,7 @@ class Shield:
             d, res, ox, oy = self._dist, self._res, self._ox, self._oy
         else:
             d, res, ox, oy = f[0], f[1], f[2], f[3]
-        if d is None:
-            return float("inf")
-        n, m = d.shape
-        fi = (x - ox) / res
-        fj = (y - oy) / res
-        ci = min(max(fi, 0.0), n - 1.0)
-        cj = min(max(fj, 0.0), m - 1.0)
-        off = math.hypot((fi - ci) * res, (fj - cj) * res)
-
-        i0 = int(math.floor(ci)); i1 = min(i0 + 1, n - 1); ti = ci - i0
-        j0 = int(math.floor(cj)); j1 = min(j0 + 1, m - 1); tj = cj - j0
-        v = (float(d[i0, j0]) * (1 - ti) * (1 - tj)
-             + float(d[i1, j0]) * ti * (1 - tj)
-             + float(d[i0, j1]) * (1 - ti) * tj
-             + float(d[i1, j1]) * ti * tj)
-        if off > 0.0:
-            # |d(q) - d(edge)| <= off (1-Lipschitz), so d(q) lies in
-            # [v - off, v + off]. Within that band take the value of a map
-            # whose border obstacles extend past the edge exactly as far as
-            # they reach into it, and no further: off - res/2 once past a
-            # built-on border (the cell's own half-width), v + off while still
-            # inside its overhang. Continuous with the inside at off = 0, so
-            # the half cell between the last cell centre and the map's edge
-            # reads as the building it is part of.
-            #
-            # It used to apply only where the edge value was positive, and
-            # return `v - off` otherwise - so a building on the map BORDER
-            # became a wall reaching out to infinity, deeper the further one
-            # flew. On CityLife, whose loops run 30-120 m past this 160 m
-            # map, that read the entrance of a junction as 35 m inside a
-            # building, and the clearance repair - its push sized from that
-            # 35 m "depth", so at the 5 m/s cap - replaced a +3 m/s follow
-            # with a 5 m/s reversal for up to 187 s (citylife_redcar_ground,
-            # _carpolicy); at 12 m those reversals pitched the airframe
-            # through its 14 m ceiling (_high). Off the map is UNKNOWN, not
-            # solid; `off_map()` reports it, and the cure is a map that
-            # covers the flight.
-            #
-            # The first fix, max(v - off, off), ended the infinite wall but
-            # jumped from v (inside a border building) to +off at the last
-            # cell centre, so the half cell of building beyond it read as
-            # clear and a push "out" through it counted as receding (found in
-            # review, 2026-09-24).
-            return max(v - off, min(v + off, off - 0.5 * res))
-        return v
+        return field_distance(d, res, ox, oy, x, y)
 
     @property
     def has_obstacle_map(self) -> bool:
@@ -3863,10 +3898,10 @@ class Shield:
                         and max(x0, px) >= rx0 and min(x0, px) <= rx1
                         and max(y0, py) >= ry0 and min(y0, py) <= ry1):
                     seg = LineString([(x0, y0), (px, py)])
-                    if seg.length > 0.0 and ring.relate_pattern(seg, "T********"):
+                    if seg.length > 0.0 and enters_interior(ring, seg):
                         inside = ring.intersection(seg)
                         s = min(seg.project(Point(c)) for c in shapely.get_coordinates(inside))
-                        depth = max((ring.boundary.distance(part.interpolate(0.5, normalized=True))
+                        depth = max((boundary_depth(ring, *_mid(part))
                                      for part in shapely.get_parts(inside)
                                      if part.geom_type == "LineString"), default=0.0)
                         t_in = t0 + (t - t0) * s / seg.length
@@ -3913,7 +3948,7 @@ class Shield:
             if prev is not None and (prev[3] or on):
                 t0, x0, y0, _ = prev
                 seg = LineString([(x0, y0), (p.x, p.y)])
-                if seg.length > 0.0 and not tube.covers(seg):
+                if seg.length > 0.0 and not area_covers(tube, seg):
                     out = seg.difference(tube)
                     s = min(seg.project(Point(q)) for q in shapely.get_coordinates(out))
                     return t0 + (t - t0) * s / seg.length, (x0, y0, t0), (p.x, p.y, t)

@@ -385,6 +385,7 @@ from guardrail import rtl_path as RP                               # noqa: E402
 from guardrail import scenario_events as SE                        # noqa: E402
 from guardrail import vla_stub as VS                               # noqa: E402
 from guardrail.frames import from_body, to_body                   # noqa: E402
+from guardrail.geometry import ring_contains                     # noqa: E402
 from guardrail.models import (Action4D, CorridorSwap, DynamicNFZ,  # noqa: E402,F401
                               State, TimeWindowSwitch)
 from guardrail.scenario_spec import (FORECAST_ARMS,                # noqa: E402
@@ -1253,11 +1254,10 @@ def _point(x: float, y: float):
 def _signed_dist(poly, x: float, y: float) -> float:
     """Metres from (x, y) to the polygon itself (NOT its margin ring); negative
     inside. The margin is the buffer that disturbance and sensor error are
-    allowed to eat; the polygon is the line that must hold."""
-    from shapely.geometry import Point
-    p = Point(x, y)
-    d = poly.exterior.distance(p)
-    return -d if poly.contains(p) else d
+    allowed to eat; the polygon is the line that must hold. The library's
+    measure (guardrail/geometry.py signed_edge_distance, WP3-22)."""
+    from guardrail.geometry import signed_edge_distance
+    return signed_edge_distance(poly, x, y)
 
 
 def _timed(policy) -> bool:
@@ -2437,7 +2437,7 @@ def _episode(sc, defaults, seed: int, arm: dict | None, box: dict,
         # tick's events advance: was it already unsafe / inside a zone? (See
         # the breach and polygon-entry tests above.)
         moved_into_unsafe = bool(truth.state_is_unsafe(st))
-        moved_into_polygon = any(zr.polygon.contains(_point(st.x, st.y))
+        moved_into_polygon = any(ring_contains(zr.polygon, st.x, st.y)
                                  for zr in truth.zones_now(st.up))
 
     wall_s = time.perf_counter() - wall0
@@ -4574,7 +4574,7 @@ def _judged_steps(rows: list[dict], policy, generations: dict | None):
             pin["now"] = _dt.fromisoformat(prev["clock"])
         st = State(x=float(r["x"]), y=float(r["y"]), up=float(r["up"]))
         unsafe = bool(sh.state_is_unsafe(st))
-        inside = any(zr.polygon.contains(_point(st.x, st.y)) for zr in sh.zones_now(st.up))
+        inside = any(ring_contains(zr.polygon, st.x, st.y) for zr in sh.zones_now(st.up))
         out.append((unsafe, inside))
     return out, None
 

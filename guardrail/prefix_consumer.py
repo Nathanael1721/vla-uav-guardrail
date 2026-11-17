@@ -131,6 +131,7 @@ from shapely.geometry import LineString, Point
 from .compiler import (DEFAULT_LOOKAHEAD_S, ConstraintCompiler, Mission,
                        action_set_adapter, action_violations, compiled_ir)
 from .csp import CSP, csp_content_hash
+from .geometry import area_covers, area_meets
 from .models import Action4D, State
 
 # The id this pilot announces (/vla/identity `model_id`, the manifest's
@@ -492,22 +493,22 @@ class PrefixConsumer:
         lo, hi = min(up0, up1), max(up0, up1)
         out = [f"polygon:{fid}" for fid, ring, floor, ceil in self._zones
                if lo <= ceil and hi >= floor
-               and not ring.covers(start) and path.intersects(ring)]
+               and not area_covers(ring, start) and area_meets(path, ring)]
         for cid, tube, inner, true in self._tubes:
-            if not tube.covers(start):
+            if not area_covers(tube, start):
                 continue                    # outside: the Shield's to recover
-            if not tube.covers(path):
+            if not area_covers(tube, path):
                 out.append(f"corridor:{cid}")
             elif inner is None:
                 continue
-            elif inner.covers(start):
+            elif area_covers(inner, start):
                 # Inside the margin: the path keeps it.
-                if not inner.covers(path):
+                if not area_covers(inner, path):
                     out.append(f"corridor:{cid}")
-            elif not inner.covers(Point(x1, y1)):
+            elif not area_covers(inner, Point(x1, y1)):
                 # Already in the margin band: the path ends back inside it...
                 out.append(f"corridor:{cid}")
-            elif true.covers(start) and not true.covers(path):
+            elif area_covers(true, start) and not area_covers(true, path):
                 # ...and on the way never passes the true wall, which the
                 # Shield's tube (a superset) would let it do at a dog-leg's
                 # inner corner (module docstring). A start already past the

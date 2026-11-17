@@ -169,12 +169,11 @@ def e3_facts(spec, run, dt: float) -> dict:
     fences = _fences(run.policy)
     if not fences or not st.degrades_perception:
         return {"holds": False, "why": "no degraded perception" if fences else "no P0 fence"}
-    from shapely.geometry import Point
+    from guardrail.geometry import area_meets, edge_gap, signed_edge_distance
     margin = min(m for _, m in fences)
 
     def dist(x, y):
-        return min(poly.exterior.distance(Point(x, y)) if not poly.contains(Point(x, y))
-                   else 0.0 for poly, _ in fences)
+        return min(max(0.0, signed_edge_distance(poly, x, y)) for poly, _ in fences)
 
     caps = F.KinematicCaps.from_policy(run.policy)
     speed = float(spec.mission.pilot.speed or 4.0)
@@ -211,7 +210,7 @@ def e3_facts(spec, run, dt: float) -> dict:
     route_d = None
     if m.target is not None:
         route = LineString([(m.start.x, m.start.y), (m.target[0], m.target[1])])
-        route_d = min(poly.exterior.distance(route) if not poly.intersects(route) else 0.0
+        route_d = min(edge_gap(poly, route) if not area_meets(poly, route) else 0.0
                       for poly, _ in fences)
     err = max(3.0 * st.gps_noise_m, st.latency_ticks * dt * speed)
     near = route_d if route_d is not None else closest

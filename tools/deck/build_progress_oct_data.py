@@ -826,31 +826,16 @@ def paraphraser_facts() -> dict:
 # --------------------------------------------------------------------------- #
 
 def point_in_poly(x: float, y: float, verts: list[tuple[float, float]]) -> bool:
-    inside = False
-    n = len(verts)
-    for i in range(n):
-        x1, y1 = verts[i]
-        x2, y2 = verts[(i + 1) % n]
-        if (y1 > y) != (y2 > y):
-            xc = x1 + (y - y1) * (x2 - x1) / (y2 - y1)
-            if x < xc:
-                inside = not inside
-    return inside
+    from guardrail.planar import point_in_ring_xy       # the library's (WP3-22)
+    return point_in_ring_xy(x, y, verts)
 
 
 def dist_to_poly(x: float, y: float, verts: list[tuple[float, float]]) -> float:
     """Distance to the polygon's boundary; 0 inside it."""
+    from guardrail.planar import ring_edge_distance
     if point_in_poly(x, y, verts):
         return 0.0
-    best = math.inf
-    n = len(verts)
-    for i in range(n):
-        (x1, y1), (x2, y2) = verts[i], verts[(i + 1) % n]
-        dx, dy = x2 - x1, y2 - y1
-        L2 = dx * dx + dy * dy
-        t = 0.0 if L2 == 0 else max(0.0, min(1.0, ((x - x1) * dx + (y - y1) * dy) / L2))
-        best = min(best, math.hypot(x - (x1 + t * dx), y - (y1 + t * dy)))
-    return best
+    return ring_edge_distance(x, y, verts)
 
 
 def zone_summary(track: list[tuple[float, float]], verts: list[tuple[float, float]]) -> dict:

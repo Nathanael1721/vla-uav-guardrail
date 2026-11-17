@@ -55,7 +55,7 @@ def _missing(what):
     return SKIP
 
 
-def _guard(path, brake_m=12.0, stand_off_m=3.0, with_map=False):
+def _guard(path, brake_m=12.0, stand_off_m=3.0, with_map=False, guard_field="grid"):
     smap = street = None
     if with_map and CITYMAP.exists():
         import city_planner
@@ -74,7 +74,8 @@ def _guard(path, brake_m=12.0, stand_off_m=3.0, with_map=False):
     clr = pol.by_type(ObstacleClearance)
     return FenceGuard(pol, brake_m=brake_m, stand_off_m=stand_off_m,
                       obstacle_map=smap, street_mask=street,
-                      min_clearance_m=(clr[0].min_clearance_m if clr else 5.0))
+                      min_clearance_m=(clr[0].min_clearance_m if clr else 5.0),
+                      guard_field=guard_field)
 
 
 # The car drives north up lane x = 38, so the aircraft approaches heading +y.
@@ -276,6 +277,25 @@ def test_the_gap_policy_gap_is_out_of_search_range_once_the_map_is_honest():
     sx2, sy2, cost2 = g.slide(38.0, -6.0, *NORTH, reach_m=20.0)
     assert sx2 > 0.5 and 14.0 < cost2 < 20.0, (
         f"the gap should still exist at a longer reach; got ({sx2},{sy2}) {cost2}")
+
+
+def test_on_the_shield_field_the_gap_detour_is_26_m_not_15():
+    """The opt-in --guard-field shield (WP3-22 / X-13, not yet flown) moves
+    slide(), not only gate()'s brake: measured on the Shield's own distance
+    field (bilinear, chamfer-scaled, so nearer than the grid scan beside the
+    street furniture) the first column it also accepts lies further east, and
+    the gap detour that the default grid scan finds at reach 20 (cost 15.0)
+    needs reach 30 (cost 26.0). Pinned so the size of the change is on record
+    before anyone flies it; the default stays the grid scan."""
+    if not CITYMAP.exists():
+        return _missing(CITYMAP.relative_to(ROOT))
+    g = _guard(GAP, with_map=True)
+    assert g.guard_field == "grid"
+    assert g.slide(38.0, -6.0, *NORTH, reach_m=20.0) == (1.0, -0.0, 15.0)
+    s = _guard(GAP, with_map=True, guard_field="shield")
+    sx, sy, cost = s.slide(38.0, -6.0, *NORTH, reach_m=20.0)
+    assert (sx, sy) == (0.0, 0.0) and not math.isfinite(cost), (sx, sy, cost)
+    assert s.slide(38.0, -6.0, *NORTH, reach_m=30.0) == (1.0, -0.0, 26.0)
 
 
 def test_flying_along_the_gap_is_not_braked():

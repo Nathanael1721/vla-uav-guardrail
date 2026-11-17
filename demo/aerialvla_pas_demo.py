@@ -33,12 +33,12 @@ from guardrail import AuditLogger, Shield, State, load_policy       # noqa: E402
 from guardrail.shield import LOOKAHEAD_DT_S, LOOKAHEAD_S            # noqa: E402
 from guardrail.audit import AUDIT_FILE                             # noqa: E402
 from guardrail.compiler import ConstraintCompiler                   # noqa: E402
-from guardrail.geometry import fence_polygon                        # noqa: E402
+from guardrail.geometry import (edge_distance, fence_polygon, ring_contains,  # noqa: E402
+                                ring_distance)
 from guardrail.models import (                                      # noqa: E402
     Action4D, ObstacleClearance,
 )
 from guardrail.replay import DWELL_ZONE_TYPES, zone_dwell           # noqa: E402
-from shapely.geometry import Point                                  # noqa: E402
 
 from aerialvla_demo import AerialVLABackend, RateLimiter            # noqa: E402
 import city_planner                                                 # noqa: E402
@@ -311,7 +311,7 @@ async def fly(args) -> int:
             j0 = max(0, int((miny - oy) / res)); j1 = min(occ.shape[1], int((maxy - oy) / res) + 1)
             for i in range(i0, i1):
                 for j in range(j0, j1):
-                    if occ[i, j] == 0 and buf.contains(Point(ox + i * res, oy + j * res)):
+                    if occ[i, j] == 0 and ring_contains(buf, ox + i * res, oy + j * res):
                         occ[i, j] = 1
                         n_fence_cells += 1
         if fences:
@@ -538,9 +538,9 @@ async def fly(args) -> int:
                 # planned path clears NFZs, but pure-pursuit + momentum could
                 # otherwise clip a corner at speed).
                 if nfz_polys:
-                    pt = Point(state.x, state.y)
-                    dmin = min(p.exterior.distance(pt) if p.contains(pt)
-                               else p.distance(pt) for p in nfz_polys)
+                    dmin = min(edge_distance(p, state.x, state.y)
+                               if ring_contains(p, state.x, state.y)
+                               else ring_distance(p, state.x, state.y) for p in nfz_polys)
                     if dmin < 8.0:
                         sc = max(0.2, dmin / 8.0)
                         vx, vy = vx * sc, vy * sc
@@ -665,12 +665,8 @@ async def fly(args) -> int:
 
     # ---- path-quality metrics: how tightly the flown path hugs the plan ----
     def _seg_dist(px, py, a, b):
-        vx, vy = b[0] - a[0], b[1] - a[1]
-        L2 = vx * vx + vy * vy
-        if L2 < 1e-9:
-            return math.hypot(px - a[0], py - a[1])
-        t = max(0.0, min(1.0, ((px - a[0]) * vx + (py - a[1]) * vy) / L2))
-        return math.hypot(px - (a[0] + vx * t), py - (a[1] + vy * t))
+        from guardrail.planar import segment_distance       # the library's (WP3-22)
+        return segment_distance(px, py, a[0], a[1], b[0], b[1], eps2=1e-9)
 
     devs = []
     for pt in traj:

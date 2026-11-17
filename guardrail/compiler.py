@@ -131,6 +131,7 @@ from .csp import (CSP, CSP_VERSION, AllowedActionSet, CSPBudgetExceeded,
                   RuleDecision, Selection, TokenCounter)
 from .fsm import cap_exceeded
 from .ir import PolicyIR, is_moving
+from .planar import point_in_ring_xy, segment_distance
 from .models import (DAYS, RUNTIME_TYPES, AltitudeEnvelope, CircleFence, Corridor,
                      CorridorSwap, DistanceEnvelope, DynamicNFZ, KinematicEnvelope,
                      ObstacleClearance, Policy, PolygonFence, SubjectStandoff,
@@ -478,23 +479,15 @@ def _cross(o: Pt, a: Pt, b: Pt) -> float:
     return (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0])
 
 
+# The containment and point-to-segment measures are the library's
+# (guardrail/planar.py, re-exported by guardrail/geometry.py; until
+# 2026-11-17 this module kept its own copies, WP3-22).
 def _point_in_poly(x: float, y: float, poly: list[Pt]) -> bool:
-    inside = False
-    n = len(poly)
-    for i in range(n):
-        (x1, y1), (x2, y2) = poly[i], poly[(i + 1) % n]
-        if (y1 > y) != (y2 > y):
-            xc = x1 + (y - y1) * (x2 - x1) / (y2 - y1)
-            if x < xc:
-                inside = not inside
-    return inside
+    return point_in_ring_xy(x, y, poly)
 
 
 def _pt_seg(px: float, py: float, a: Pt, b: Pt) -> float:
-    vx, vy = b[0] - a[0], b[1] - a[1]
-    L2 = vx * vx + vy * vy
-    t = 0.0 if L2 < 1e-18 else max(0.0, min(1.0, ((px - a[0]) * vx + (py - a[1]) * vy) / L2))
-    return math.hypot(px - (a[0] + t * vx), py - (a[1] + t * vy))
+    return segment_distance(px, py, a[0], a[1], b[0], b[1], eps2=1e-18)
 
 
 def _segs_cross(a: Pt, b: Pt, c: Pt, d: Pt) -> bool:
@@ -1495,7 +1488,7 @@ def rasterise_cost_map(policy: Policy, *, now: datetime | None = None,
     under `not_drawn` with why, never dropped in silence.
     """
     import shapely
-    from .geometry import corridor_tube
+    from .geometry import corridor_tube, covers_many, meets_many
     from .ir import compile_fence
     from .models import State
     from .shield import Shield
@@ -1663,7 +1656,7 @@ def rasterise_cost_map(policy: Policy, *, now: datetime | None = None,
 
     for name, source, geom, value in drawn:
         shapely.prepare(geom)
-        add(name, source, shapely.intersects(geom, cells), value)
+        add(name, source, meets_many(geom, cells), value)
     for c in clear:
         hard = c.constraint_type == "hard"
         add("clearance_hard" if hard else "clearance_soft", c.id,
@@ -1676,7 +1669,7 @@ def rasterise_cost_map(policy: Policy, *, now: datetime | None = None,
                 inside = np.zeros((nx, ny), dtype=bool)
             else:
                 shapely.prepare(geom)
-                inside = shapely.covers(geom, cells)
+                inside = covers_many(geom, cells)
             inside_all &= inside
             add("corridor_pref", c.id, inside, COST_CORRIDOR_PREF)
         add("corridor_outside", None, ~inside_all, COST_CORRIDOR_OUTSIDE)
@@ -2166,6 +2159,8 @@ def _deepest(region, exits) -> tuple[float, float, float] | None:
     there is no exit at all."""
     import numpy as np
     import shapely
+
+    from .geometry import contains_many, distance_many
     if region.is_empty:
         return None
     minx, miny, maxx, maxy = region.bounds
@@ -2177,7 +2172,7 @@ def _deepest(region, exits) -> tuple[float, float, float] | None:
         xs, ys = np.array([c.x]), np.array([c.y])
     gx, gy = np.meshgrid(xs, ys)
     pts = shapely.points(gx.ravel(), gy.ravel())
-    inside = shapely.contains(region, pts)
+    inside = contains_many(region, pts)
     pts = pts[inside]
     if len(pts) == 0:
         c = region.representative_point()
@@ -2185,7 +2180,7 @@ def _deepest(region, exits) -> tuple[float, float, float] | None:
     if exits.is_empty:
         p = pts[0]
         return math.inf, float(shapely.get_x(p)), float(shapely.get_y(p))
-    d = shapely.distance(exits, pts)
+    d = distance_many(exits, pts)
     i = int(np.argmax(d))
     bx, by = float(shapely.get_x(pts[i])), float(shapely.get_y(pts[i]))
     # A second, ten times finer pass around the best grid point: the depth
@@ -2195,9 +2190,9 @@ def _deepest(region, exits) -> tuple[float, float, float] | None:
     fy = np.linspace(by - step, by + step, 21)
     gx, gy = np.meshgrid(fx, fy)
     fine = shapely.points(gx.ravel(), gy.ravel())
-    fine = fine[shapely.contains(region, fine)]
+    fine = fine[contains_many(region, fine)]
     if len(fine):
-        fd = shapely.distance(exits, fine)
+        fd = distance_many(exits, fine)
         j = int(np.argmax(fd))
         if fd[j] > d[i]:
             return (float(fd[j]), float(shapely.get_x(fine[j])),
@@ -2254,7 +2249,7 @@ def time_window_lead_warnings(policy: Policy, *, lookahead_s: float = DEFAULT_LO
     needed). A dynamic_nfz is judged at its declared position."""
     if not (math.isfinite(float(lookahead_s)) and lookahead_s > 0):
         raise ValueError(f"lookahead_s must be a finite number > 0, got {lookahead_s!r}")
-    from shapely.geometry import Point
+    from .geometry import point_distance
     speed, why = _lint_speed(policy, speed_mps)
     clock = _RuleClock(policy)
     out: list[str] = []
@@ -2292,7 +2287,7 @@ def time_window_lead_warnings(policy: Policy, *, lookahead_s: float = DEFAULT_LO
             continue
         if clock.on(z, now):
             continue        # already in force at the start: start_conflicts' case
-        d_out = exits.distance(Point(sx, sy)) if not exits.is_empty else math.inf
+        d_out = point_distance(exits, sx, sy) if not exits.is_empty else math.inf
         if math.isinf(d_out):
             # Nowhere to go at all (a keep-in corridor wholly inside the ring,
             # walls of always-on zones round it): whenever the window opens,

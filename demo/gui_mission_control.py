@@ -96,17 +96,10 @@ FALLBACK_KEEP = [
 
 
 def _point_in_poly(px, py, poly):
-    """Ray-casting point-in-polygon test on (x_north, y_east) vertices."""
-    inside = False
-    n = len(poly)
-    for k in range(n):
-        x1, y1 = poly[k]
-        x2, y2 = poly[(k + 1) % n]
-        if (y1 > py) != (y2 > py):
-            xint = x1 + (py - y1) * (x2 - x1) / ((y2 - y1) or 1e-12)
-            if px < xint:
-                inside = not inside
-    return inside
+    """Ray-casting point-in-polygon test on (x_north, y_east) vertices: the
+    library's (guardrail/planar.py; a copy of its own until 2026-11-17)."""
+    from guardrail.planar import point_in_ring_xy
+    return point_in_ring_xy(px, py, poly)
 
 
 class MissionControl:

@@ -64,7 +64,10 @@ def expert_pilot(state, tx, ty, cruise, fences, speed=4.0):
     way every time. Single-mode labels -> learnable. Shield still filters
     every action, so labels stay provably safe.
     """
-    from shapely.geometry import LineString, Point
+    from shapely.geometry import LineString
+
+    from guardrail.geometry import (area_meets, edge_distance, nearest_edge_point,
+                                    ring_contains)
     dx, dy = tx - state.x, ty - state.y
     dist = (dx * dx + dy * dy) ** 0.5
     if dist < 1e-6:
@@ -73,12 +76,11 @@ def expert_pilot(state, tx, ty, cruise, fences, speed=4.0):
     ray = LineString([(state.x, state.y), (tx, ty)])
 
     rx = ry = cx_ = cy_ = 0.0
-    p = Point(state.x, state.y)
     for f, poly in fences:
-        d = poly.exterior.distance(p)
-        inside = poly.contains(p)
-        nearest = poly.exterior.interpolate(poly.exterior.project(p))
-        ax, ay = state.x - nearest.x, state.y - nearest.y
+        d = edge_distance(poly, state.x, state.y)
+        inside = ring_contains(poly, state.x, state.y)
+        nx_, ny_ = nearest_edge_point(poly, state.x, state.y)
+        ax, ay = state.x - nx_, state.y - ny_
         n = (ax * ax + ay * ay) ** 0.5 or 1.0
         ax, ay = ax / n, ay / n
         if inside:
@@ -92,7 +94,7 @@ def expert_pilot(state, tx, ty, cruise, fences, speed=4.0):
         ry += ay * w * 2.0
         # clockwise circulation ONLY while this zone actually blocks the
         # straight ray to the target — enough to route around, no orbiting.
-        if inside or ray.intersects(poly.buffer(1.5)):
+        if inside or area_meets(ray, poly.buffer(1.5)):
             cx_ += ay * w * 1.4
             cy_ += -ax * w * 1.4
 

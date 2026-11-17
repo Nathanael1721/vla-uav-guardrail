@@ -53,9 +53,8 @@ def spawn_clear(fence: PolygonFence, state: State, clearance: float = 6.0) -> bo
 
 def _clear_of(fence: PolygonFence, x: float, y: float, clearance: float) -> bool:
     """Point at least `clearance` outside the fence's margin ring?"""
-    from shapely.geometry import Point
-    from guardrail.geometry import fence_polygon
-    return fence_polygon(fence).distance(Point(x, y)) >= fence.margin_m + clearance
+    from guardrail.geometry import fence_polygon, ring_distance
+    return ring_distance(fence_polygon(fence), x, y) >= fence.margin_m + clearance
 
 
 def make_scenario(rng: random.Random, margin: float = 2.5, hard: bool = False):
