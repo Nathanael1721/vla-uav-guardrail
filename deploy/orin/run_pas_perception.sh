@@ -63,7 +63,9 @@
 #              (--pilot servo --mission follow --identity --target-estimator:
 #              the node's EstimatorFollowPilot, follow_vlm.fly()'s servo on the
 #              estimate over demo/subject_track.SubjectTrack's estimator, strict
-#              lock and Reacquirer), at --want-width 0.16 and --speed-max 5, the
+#              lock and Reacquirer, forward along the subject's trail as
+#              fly()'s --trail-follow; not all of fly(): no FenceGuard, slew
+#              limiter or search planner), at --want-width 0.16 and --speed-max 5, the
 #              values agx_manual_20261103 (follow_vlm.py on simple_flight, 0.952
 #              within 30 m) flew with: the backend table's C2 estimator null, kept
 #              apart from servo's. No VLA server is needed or checked.

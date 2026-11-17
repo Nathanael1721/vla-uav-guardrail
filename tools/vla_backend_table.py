@@ -250,6 +250,12 @@ C2_ESTIMATOR_NULL_WHY = ("the hand-written estimator follow: C2's estimator null
 # the follow_vlm.py flight on simple_flight it stands in for; shown as the
 # runs record them, never a condition of C2.
 C2_ESTIMATOR_FAMILY = "estimator"
+C2_ESTIMATOR_NULL_AMENDED = (
+    "2026-11-17, after the C2 flights of 16 November: a second null, the hand-written "
+    "estimator follow (FAMILY=" + C2_ESTIMATOR_FAMILY + "), and its words "
+    "(estimator_null_as_flown); nothing else in C2 changed, and the protocol id "
+    "vla-backend-protocol/2 is unchanged, so a table built before this date carries "
+    "C2 without it")
 # A flight that would be C2 but for a start gate that timed out is CENSORED:
 # shown beside its backend's C2 flights ("gate timed out N: censored, not
 # scored, not counted toward the 3"), never scored, never dropped; the
@@ -346,6 +352,10 @@ PROTOCOL = {
     },
     "C2_follow_closed_loop": {
         "added": PROTOCOL_DATE,
+        # Recorded in the protocol itself (the id is unchanged; whether to
+        # bump it is the lab's call): the table JSON built on 16 November
+        # carries the protocol without this amendment.
+        "amended": C2_ESTIMATOR_NULL_AMENDED,
         "added_after_the_choice": (
             "C2 was added on 16 November 2026, after the lab named AIoT-VLA v10b for the "
             "follow task on 15 November 2026. It was added because that choice rests on a "
@@ -426,8 +436,9 @@ PROTOCOL = {
                   "--target-estimator, FAMILY=" + C2_ESTIMATOR_FAMILY + "; added 2026-11-17, "
                   "after the C2 flights of 16 November): the lab's own no-learning follow - "
                   "the perception node's EstimatorFollowPilot, follow_vlm.fly()'s servo on "
-                  "the target estimate with its strict lock and re-acquisition - kept apart "
-                  "from the box-servo null, with no lost end"],
+                  "the target estimate with its strict lock and re-acquisition and its "
+                  "trail-following forward direction - kept apart from the box-servo null, "
+                  "with no lost end; not all of fly(), so not equal to the lab's follow"],
         "estimator_null_as_flown": (
             "The estimator null is the perception node's EstimatorFollowPilot (demo/"
             "pas_ardupilot/perception_node.py, --pilot servo --mission follow --identity "
@@ -436,13 +447,23 @@ PROTOCOL = {
             "fly()'s two track branches on them (the servo on the estimate, with the "
             "line-of-sight and range feed-forwards, the catch-up and the stopped-subject "
             "floor; else the box servo at the same metric stand-off), then a coast toward "
-            "the subject's memory and the servo pilot's sweep. The launcher gives it "
-            "--want-width 0.16 and --speed-max 5, the values of agx_manual_20261103 "
-            "(follow_vlm.py on simple_flight, 0.952 within 30 m). It is NOT all of fly(): "
-            "the trail approach, the search creep and planner, FenceGuard and the slew "
-            "limiter are not ported (the Shield and ArduPilot stand there). It has no lost "
-            "end: it flies to max_s and is replayed under the VLAs' end rule as the "
-            "box-servo null is"),
+            "the subject's memory (the last track speed decaying, a backing-off aircraft "
+            "still backing) and the servo pilot's sweep. Its forward speed is flown as "
+            "fly()'s --trail-follow flies it, on by default as agx_manual_20261103 flew it "
+            "(trail ticks 3570 of its 4197): toward a carrot trail_lookahead_m (10 m) along "
+            "the subject's trail (trail.direction), never away from the served estimate, "
+            "else along the nose; the run records its trail ticks (metrics.json "
+            "estimator_follow.trail_ticks). The launcher gives it --want-width 0.16 and "
+            "--speed-max 5, the values of agx_manual_20261103 (follow_vlm.py on "
+            "simple_flight, 0.952 within 30 m). It is NOT all of fly(), so not equal to "
+            "the lab's follow: the trail approach in the coast and the search, the search "
+            "sweep closed on the lookout, the search creep and planner, FenceGuard (its "
+            "gate and smoothing, and clear_aim, which keeps fly()'s aim out of the zones' "
+            "bands), the slew limiter and the orbit are not ported (the Shield and "
+            "ArduPilot stand there), and its line-of-sight rate without a measured "
+            "velocity uses its own last command where fly() used the guard's emitted one. "
+            "It has no lost end: it flies to max_s and is replayed under the VLAs' end "
+            "rule as the box-servo null is"),
         "null_as_flown": (
             "The null is the perception node's FollowPilot (demo/pas_ardupilot/"
             "perception_node.py, --pilot servo --mission follow --identity, no "
@@ -3786,7 +3807,9 @@ def render_markdown(t: dict) -> str:
             f"{t['protocol']['C1_closed_loop']['reached_radius_m']} m. "
             f"{t['protocol']['C1_closed_loop']['assist']} Nulls: "
             + "; ".join(t["protocol"]["C1_closed_loop"]["nulls"]) + ".",
-            f"- **C2 (closed-loop follow, added {c2p['added']}):** {c2p['scenario']}; "
+            f"- **C2 (closed-loop follow, added {c2p['added']}"
+            + (f"; amended {c2p['amended']}" if c2p.get("amended") else "")
+            + f"):** {c2p['scenario']}; "
             f"{c2p['rail']}. Reported: " + "; ".join(c2p["outputs"])
             + (". Null: " if len(c2p["nulls"]) == 1 else ". Nulls: ")
             + "; ".join(c2p["nulls"]) + f". {c2p['added_after_the_choice']}.",

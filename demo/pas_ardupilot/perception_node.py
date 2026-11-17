@@ -875,14 +875,17 @@ class FollowPilot:
 # THE ESTIMATOR FOLLOW's control numbers (EstimatorFollowPilot): follow_vlm's
 # own parser defaults, read there (build_arg_parser), never copied here.
 ESTIMATOR_FOLLOW_KEYS = ("range_gain", "range_feedforward", "catchup_mps", "yaw_los_ff",
-                         "yaw_los_ff_cap", "yaw_los_ff_min_range", "coast_s")
+                         "yaw_los_ff_cap", "yaw_los_ff_min_range", "coast_s",
+                         "trail_lookahead_m")
 ESTIMATOR_FOLLOW_LAWS = ("estimate", "box", "memory", "sweep")
 ESTIMATOR_FOLLOW_SOURCE = (
     "follow_vlm.fly()'s track branches (the servo on the target estimate: yaw_command "
     "with the line-of-sight feed-forward, standoff_speed with the range feed-forward and "
-    "the catch-up, the stopped-subject floor; else the box servo at servo_want_width), "
-    "on demo/subject_track.SubjectTrack (the estimator, the strict lock's prior, the "
-    "Reacquirer, the trail), by perception_node.EstimatorFollowPilot")
+    "the catch-up, the stopped-subject floor; else the box servo at servo_want_width) "
+    "and its forward direction (--trail-follow: toward a carrot on the subject's trail, "
+    "trail.direction, never away from the estimate), on demo/subject_track.SubjectTrack "
+    "(the estimator, the strict lock's prior, the Reacquirer, the trail), by "
+    "perception_node.EstimatorFollowPilot")
 
 
 class EstimatorFollowPilot(FollowPilot):
@@ -923,28 +926,47 @@ class EstimatorFollowPilot(FollowPilot):
       * "memory" (fly()'s coast, without its trail approach): no estimate
         and no box, the subject still held in memory (SubjectTrack.
         memory_bearing: the trail's lookout) - the yaw toward it, the last
-        track forward speed decaying to 0 over coast_s, then 0;
+        track forward speed decaying to 0 over coast_s, then 0 (fly()'s
+        last_cmd[1] x k: a pilot that was backing off keeps backing);
       * "sweep": nothing to go on - FollowPilot's search (forward 0, the
         sweep's first swing toward the side the subject was last on).
 
+    WHICH WAY FORWARD IS (fly()'s --trail-follow, on by default here, as
+    agx_manual_20261103 flew it): on an "estimate", "box" or "memory" tick
+    with a forward speed over 0 the speed above is flown toward a carrot
+    trail_lookahead_m along the subject's trail (trail.direction on the
+    SubjectTrack's trail), not along the nose - a body forward AND right
+    component, the yaw still on the subject. While an estimate is served a
+    trail direction more than 90 deg off the line of sight to it is refused
+    (fly()'s NEVER AWAY FROM THE SUBJECT) and the nose wins; backing off (a
+    forward speed under 0) stays along the nose. trail_follow=False flies
+    along the nose only.
+
     The aircraft's own velocity for the line-of-sight rate is the link's
-    measured one when given (`vel`, North / East / up), else the last
-    commanded forward speed along the heading (fly()'s last_emit_v).
+    measured one when given (`vel`, North / East / up), else the pilot's
+    last commanded horizontal velocity (fly()'s last_emit_v, which is what
+    the guard emitted; here it is the pilot's own command, before the
+    Shield).
 
     WHAT THIS IS NOT. fly()'s whole controller: its trail approach in the
-    coast, its search sweep closed on the lookout bearing, the search creep
-    and the search planner, FenceGuard and its smoothing, the slew limiter
-    (VecSlewLimiter) and the orbit are not ported; on this rail the Shield
-    and ArduPilot's own velocity controller stand where FenceGuard and the
-    slew limiter did. It has no lost end: like FollowPilot it flies to max_s
-    (the table replays it under the VLAs' end rule, as it does the servo
-    null). Its numbers are a null on THIS rail, not a re-flight of the
-    simple_flight follow.
+    coast (the coast flies the trail's direction, not the approach's stop
+    short of the trail's end), its search sweep closed on the lookout
+    bearing, the search creep and the search planner, FenceGuard (its gate
+    and smoothing, and clear_aim, which keeps fly()'s aim out of the zones'
+    bands), the slew limiter (VecSlewLimiter) and the orbit are not ported;
+    on this rail the Shield and ArduPilot's own velocity controller stand
+    where FenceGuard and the slew limiter did. It has no lost end: like
+    FollowPilot it flies to max_s (the table replays it under the VLAs' end
+    rule, as it does the servo null). Its numbers are a null on THIS rail,
+    not a re-flight of the simple_flight follow.
 
     step(now, up, pose=(x, y, yaw rad), vel=None) -> (body action, info) in
     FollowPilot's shape, with info's "law" and "track_src"; row_fields(now,
     st) the tick's est_* fields (SubjectTrack.row) and the law; summary()
-    metrics.json's `estimator_follow`. A fault in the SubjectTrack is counted
+    metrics.json's `estimator_follow`. info's "mode" is "track" on an
+    "estimate" tick too (the start gate's and the records' sense); the HUD
+    reads the law (track_words' `law`) and claims TARGET LOCKED only on a
+    fresh box. A fault in the SubjectTrack is counted
     (`track_errors`, the first kept), never raised: the law falls back on
     the box and the sweep, and the 10 Hz loop and the Shield go on."""
 
@@ -952,7 +974,7 @@ class EstimatorFollowPilot(FollowPilot):
                  yaw_gain: float = 1.2, want_w_frac: float = 0.16, speed_max: float = 5.0,
                  cruise_alt: float = 8.0, alt_gain: float = 0.6, climb_max: float = 1.8,
                  stale_s: float = DETECTION_STALE_S, sweep_deg: float = 25.0,
-                 sweep_period_s: float = 4.0, fv=None):
+                 sweep_period_s: float = 4.0, trail_follow: bool = True, fv=None):
         fv = fv or _fv()
         super().__init__(detections, hfov_deg, yaw_gain=yaw_gain, want_w_frac=want_w_frac,
                          speed_max=speed_max, cruise_alt=cruise_alt, alt_gain=alt_gain,
@@ -978,13 +1000,18 @@ class EstimatorFollowPilot(FollowPilot):
         self.n_coast = 0
         self.n_los_ff = 0
         self.n_floor = 0
+        self.trail_follow = bool(trail_follow)
+        self.n_trail = 0
+        self.n_trail_against = 0
         self.last_law: str | None = None
         self._t_seen: float | None = None
         self._last_fwd = 0.0
+        self._last_v = (0.0, 0.0)      # the last commanded horizontal velocity (N, E)
 
     def config(self) -> dict:
         return {"source": ESTIMATOR_FOLLOW_SOURCE, "law_defaults_from":
                 "follow_vlm.build_arg_parser()", **self.law,
+                "trail_follow": self.trail_follow,
                 "yaw_gain": self.yaw_gain, "want_width": self.want_w_frac,
                 "want_range_m": round(self.want_range_m, 3),
                 "box_want_width": round(self.box_want_w_frac, 4),
@@ -1029,7 +1056,7 @@ class EstimatorFollowPilot(FollowPilot):
                 if vel is not None:
                     vax, vay = float(vel[0]), float(vel[1])
                 else:
-                    vax, vay = (self._last_fwd * math.cos(yaw), self._last_fwd * math.sin(yaw))
+                    vax, vay = self._last_v
                 ff_yaw = float(np.clip(
                     self.law["yaw_los_ff"] * fv.los_rate(
                         float(e.x[0]), float(e.x[1]), float(e.x[2]), float(e.x[3]),
@@ -1065,7 +1092,7 @@ class EstimatorFollowPilot(FollowPilot):
                 yaw_rate = fv.yaw_command(self.yaw_gain, rel)
                 cs = float(self.law["coast_s"])
                 k = max(0.0, 1.0 - lost / cs) if cs > 0 else 0.0
-                fwd = max(0.0, self._last_fwd) * k
+                fwd = self._last_fwd * k                # fly()'s last_cmd[1] * k
                 law, mode, track_src = "memory", "coast", mem[1]
                 self._t_lost = None
                 self.n_coast += 1
@@ -1086,13 +1113,41 @@ class EstimatorFollowPilot(FollowPilot):
             self._last_bearing = float(bearing)
             self._last_fwd = float(fwd)
             self.n_track += 1
+        # WHICH WAY "FORWARD" IS (fly()'s --trail-follow; class docstring).
+        ux, uy = math.cos(yaw), math.sin(yaw)
+        trail_dir = None
+        trail = getattr(tr, "trail", None)
+        if self.trail_follow and trail is not None and fwd > 0.0 and mode in ("track",
+                                                                              "coast"):
+            tdir = self._track_call(fv.trail_mod.direction, trail, x, y,
+                                    float(self.law["trail_lookahead_m"]))
+            e = getattr(tr, "estimator", None)
+            if (tdir is not None and est is not None and e is not None
+                    and e.x is not None):
+                # NEVER AWAY FROM THE SUBJECT (fly()): the nose wins.
+                if (float(e.x[0]) - x) * tdir[0] + (float(e.x[1]) - y) * tdir[1] < 0.0:
+                    tdir = None
+                    self.n_trail_against += 1
+            if tdir is not None:
+                ux, uy = float(tdir[0]), float(tdir[1])
+                trail_dir = math.atan2(uy, ux)
+                self.n_trail += 1
+        # The horizontal command (North, East) as the body action: forward
+        # and right of the nose (guardrail.frames.from_body's inverse).
+        vn, ve = float(fwd) * ux, float(fwd) * uy
+        self._last_v = (vn, ve)
+        body_fwd = vn * math.cos(yaw) + ve * math.sin(yaw)
+        body_right = -vn * math.sin(yaw) + ve * math.cos(yaw)
+        if trail_dir is None:                     # along the nose: exactly fwd, right 0
+            body_fwd, body_right = float(fwd), 0.0
         self.n_by_law[law] += 1
         self.last_law = law
-        return ((float(fwd), 0.0, vz, float(yaw_rate)),
+        return ((float(body_fwd), float(body_right), vz, float(yaw_rate)),
                 {"mode": mode, "fresh": bool(fresh), "seq": lat.get("seq"),
                  "bearing": None if bearing is None else float(bearing),
                  "sweep_side": self.sweep_side if law == "sweep" else None,
-                 "law": law, "track_src": track_src,
+                 "law": law, "track_src": track_src, "fwd_speed": float(fwd),
+                 "trail_dir": trail_dir,
                  "det": det, "cap": lat.get("cap"), "t_det": t_det})
 
     def row_fields(self, now: float, st) -> dict:
@@ -1106,7 +1161,9 @@ class EstimatorFollowPilot(FollowPilot):
     def summary(self) -> dict:
         """metrics.json `estimator_follow`: the law's configuration, the ticks
         each law flew, the line-of-sight feed-forward and the stopped-subject
-        floor's ticks, and the SubjectTrack's faults."""
+        floor's ticks, the ticks whose forward followed the subject's trail
+        (and those whose trail direction was refused as pointing away from
+        the estimate), and the SubjectTrack's faults."""
         n = sum(self.n_by_law.values())
         return {"on": True, "config": self.config(),
                 "ticks": n, "ticks_by_law": {k: int(self.n_by_law.get(k, 0))
@@ -1114,6 +1171,8 @@ class EstimatorFollowPilot(FollowPilot):
                 "estimate_frac": (round(self.n_by_law.get("estimate", 0) / n, 4)
                                   if n else None),
                 "los_ff_ticks": self.n_los_ff, "stopped_floor_ticks": self.n_floor,
+                "trail_ticks": self.n_trail,
+                "trail_refused_away_from_subject": self.n_trail_against,
                 "track_errors": self.track_errors, "first_track_error": self.track_error}
 
 
@@ -4203,9 +4262,20 @@ TRACK_WORDS = {"track": "TARGET LOCKED", "search": "SEARCHING ..."}
 TRACK_NO_LOCK = "TRACKING BOX (NO LOCK)"
 
 
-def track_words(mode, locked: bool) -> str:
+# The estimator follow's (EstimatorFollowPilot) ticks flown on no fresh box,
+# in follow_vlm.fly()'s HUD words (hud_target, its coast label): TARGET
+# LOCKED is claimed only where a fresh box is held, as fly() claims it.
+LAW_WORDS = {"estimate": "TRACKING (PREDICTED)", "memory": "COASTING on last motion"}
+
+
+def track_words(mode, locked: bool, law=None, fresh=None) -> str:
     """The HUD's words for the pilot's mode: TRACK_WORDS, except a track
-    tick with no lock held (TRACK_NO_LOCK); anything else is scanning."""
+    tick with no lock held (TRACK_NO_LOCK); anything else is scanning. The
+    estimator follow's `law` (info["law"]; None for every other pilot) words
+    a tick flown on the estimate with no fresh box, or on the memory, by
+    LAW_WORDS instead."""
+    if law == "memory" or (law == "estimate" and not fresh):
+        return LAW_WORDS[law]
     if mode == "track" and not locked:
         return TRACK_NO_LOCK
     return TRACK_WORDS.get(mode, "SCANNING for target")
@@ -4349,6 +4419,8 @@ class RailHud:
         self.locked = bool(locked)
         self.track_ticks = 0        # track ticks labelled by tick()
         self.track_replaced = 0     # ... whose words the VLA panel replaced
+        # the estimator follow's ticks labelled by its law instead (LAW_WORDS)
+        self.law_label_ticks: collections.Counter = collections.Counter()
         self.hold_s = float(getattr(indicator, "hold_s", 1.5) or 1.5)
         self.error: str | None = None
         self._latch: tuple[dict, str, float] | None = None
@@ -4414,13 +4486,16 @@ class RailHud:
         bearing = info.get("bearing")
         fwd = (0.0 if flown is None else
                float(flown.vx) * math.cos(yaw_rad) + float(flown.vy) * math.sin(yaw_rad))
-        if info.get("mode") == "track":
+        words = track_words(info.get("mode"), self.locked, info.get("law"), info.get("fresh"))
+        if words in LAW_WORDS.values():         # the estimator follow, on no fresh box
+            self.law_label_ticks[words] += 1
+        elif info.get("mode") == "track":
             self.track_ticks += 1
         return {"t": float(now), "sep": sep_m,
                 "brg": 0.0 if bearing is None else math.degrees(bearing),
                 "fwd": fwd, "alt": float(state.up), "shield": bool(touched),
                 "query": self.query, "mode": info.get("mode"),
-                "mode_label": f"{track_words(info.get('mode'), self.locked)} | {arm}",
+                "mode_label": f"{words} | {arm}",
                 "tier": None, "fence_d": None, "fence_hold": False, "fence_mode": None,
                 "fence_kind": None, "policy": pol}
 
@@ -4439,6 +4514,7 @@ class RailHud:
                 # was a track tick, or the VLA panel replaced every one
                 "track_label": track_words("track", self.locked) if drawn > 0 else None,
                 "track_label_ticks": drawn,
+                "law_label_ticks": dict(self.law_label_ticks),
                 "banners_shown": dict(self.shown),
                 "counts": None if ind is None else dict(ind.counts),
                 "banner_ticks": None if ind is None else dict(ind.banner_ticks)}

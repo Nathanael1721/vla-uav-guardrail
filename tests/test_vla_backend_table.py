@@ -1475,8 +1475,19 @@ def test_c2_keeps_the_estimator_null_apart_from_the_servo_null_and_from_every_ba
     said = c2p["estimator_null_as_flown"]
     for needed in ("EstimatorFollowPilot", "SubjectTrack", "servo on the estimate",
                    "--want-width 0.16", "--speed-max 5", "agx_manual_20261103", "NOT all of",
-                   "no lost end"):
+                   "no lost end",
+                   # the forward direction agx_manual_20261103 flew on most ticks
+                   "--trail-follow", "trail ticks 3570", "never away from the served "
+                   "estimate", "estimator_follow.trail_ticks",
+                   # what is still not fly()'s, and so not equal to the lab's follow
+                   "not equal to the lab's follow", "FenceGuard", "clear_aim",
+                   "slew limiter", "search creep and planner"):
         assert needed in said, needed
+    assert "trail-following forward direction" in c2p["nulls"][1]
+    assert "not equal to the lab's follow" in c2p["nulls"][1]
+    # the amendment is recorded in the protocol under the unchanged id
+    assert V.PROTOCOL["id"] == "vla-backend-protocol/2"
+    assert c2p["amended"].startswith("2026-11-17") and "FAMILY=estimator" in c2p["amended"]
     out = _tmp()
     _pas_run(out, "pas_hil_c2_01")
     _pas_run(out, "pas_hil_c2_02", w30=0.2694)
@@ -1536,6 +1547,7 @@ def test_c2_keeps_the_estimator_null_apart_from_the_servo_null_and_from_every_ba
     assert "| pas_hil_estimator_shake_01 |" in not_c2
     assert "| pas_hil_estimator_c2_01 |" not in not_c2
     assert "Nulls: " in md and "FAMILY=estimator" in md
+    assert f"; amended {c2p['amended']}):**" in md
     # replayed under the VLAs' end rule, from its own files, as the servo null
     d1 = out / "pas_hil_estimator_c2_01"
     _follow_logs(d1, seconds=60.0, box_until_s=1e9, range_m=lambda t: 20.0)
@@ -1552,8 +1564,10 @@ def test_a_table_built_before_the_estimator_null_renders_as_it_was_built():
     t = json.loads(json.dumps(_build()))       # a copy: the protocol is the module's
     c2p = t["protocol"]["C2_follow_closed_loop"]
     c2p["nulls"] = c2p["nulls"][:1]
+    c2p.pop("amended")
     md = V.render_markdown(t)
     assert "C2's estimator null" not in md and ". Null: the hand-written follow" in md, md
+    assert "amended" not in md.split("**C2 (closed-loop follow")[1].split("\n")[0]
 
 
 def test_a_flight_that_would_be_c2_but_for_a_timed_out_gate_is_censored_not_dropped():

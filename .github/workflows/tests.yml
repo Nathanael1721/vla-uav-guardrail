@@ -234,8 +234,9 @@
 #          the Shield's subject unchanged; nothing SKIPs).
 #          test_pas_estimator_follow (2026-11-17: the node's estimator follow,
 #          --pilot servo --target-estimator, the backend table's C2
-#          estimator null: fly()'s estimate branch on follow_vlm's own
-#          functions, closed loop on a scripted car, the node's records;
+#          estimator null: fly()'s estimate branch and trail direction on
+#          follow_vlm's own functions, closed loop on scripted cars (one
+#          turning), the HUD's words, the node's records;
 #          the box servo unchanged without it; nothing SKIPs).
 #        The CityLife level, checked offline (the level itself is
 #          gitignored): test_citylife_*, test_car_speed, test_drive_signals_dsl,
@@ -781,7 +782,8 @@ jobs:
               tests/test_follow_teacher.py \
               tests/test_vla_standoff_feed.py \
               tests/test_held_box_gate.py \
-              tests/test_subject_track.py               tests/test_pas_estimator_follow.py \
+              tests/test_subject_track.py \
+              tests/test_pas_estimator_follow.py \
               tests/test_citylife_peds.py \
               tests/test_citylife_routes.py \
               tests/test_citylife_signal_lamps.py \
