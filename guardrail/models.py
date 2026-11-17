@@ -2342,12 +2342,12 @@ def _rule_points(policy: Policy, all_points: bool = False):
                 yield v.geographic
 
 
-def rule_in_wgs84(rule, origin: tuple[float, float] | None, *, bind: bool = False):
+def rule_in_wgs84(rule, origin: tuple[float, float] | None):
     """`rule` with every metre point written in WGS84 about `origin` ((lat,
-    lon), the frame origin of the policy the rule goes into); `rule` itself
-    when there is no frame (`origin` None: a policy written only in metres,
-    the legacy form, which has no WGS84 position for a metre point), or when
-    it has no metre point and `bind` is False.
+    lon), the frame origin of the policy the rule goes into) and every point
+    bound to that frame; `rule` itself when there is no frame (`origin`
+    None: a policy written only in metres, the legacy form, which has no
+    WGS84 position for a metre point).
 
     WHY (WP1-14, 2026-11-17). Since 2026-11-03 every stored policy is WGS84
     with a stated origin, but the REST hot-apply endpoint, the Shield's own
@@ -2361,36 +2361,36 @@ def rule_in_wgs84(rule, origin: tuple[float, float] | None, *, bind: bool = Fals
     tools/geo_to_policy.py ingest (projection.raw_points_in_wgs84).
 
     WHAT IS STORED: lat/lon only (the canonical IR drops any metre view), so
-    the snapshot and its hash carry no projected coordinate in either mode.
+    the snapshot and its hash carry no projected coordinate.
 
-    WHAT IS ENFORCED depends on `bind`; the two modes store and hash the same.
+    WHAT IS ENFORCED is the projection of what is stored: every point of the
+    rule, converted or already lat/lon, is bound to the frame here, so its
+    metres are computed lazily from its lat/lon (the micrometre view,
+    projection.local_metres) - the same floats a reload of the generation's
+    snapshot reads, bit for bit, under the same hash. That removes one
+    obstacle to replaying a hot-applied run bit for bit from its stored
+    policy_g<N>.json (WP4-11 is still PARTIAL: no flown run has been
+    replayed at its revision). Metres given beside lat/lon are checked
+    against the frame (1 um) and dropped, as at any load (XY._bind): a rule
+    whose x/y disagree with its lat/lon by more than that raises ValueError
+    (Shield._in_frame: HotApplyRefused), where until 2026-11-17 evening a
+    rule given wholly in lat/lon came back unchanged and its given x/y were
+    the live view. For a point on the
+    micrometre grid (any value with at most six decimals: every REST body
+    and hand-written scenario) the view is exactly the metres given; for a
+    computed one (a spawn at an off-grid vehicle position, rotate, scale) it
+    is within 0.6 um of them (the micrometre rounding plus the 12th decimal
+    of a degree).
 
-      bind=False (the Shield's default, Shield.wgs84_bind_frame): each
-        converted point keeps the metres it was GIVEN as its view, beside its
-        lat/lon (XY: a WGS84 point no policy has bound yet), so the live
-        Shield enforces the floats it enforced before this date and no flown
-        ring moves. This is NOT the grant's "projection computed lazily ...
-        from the WGS84 + AGL fields": for a rule an event writes, the lat/lon
-        are computed from the metres, not the other way round. The snapshot,
-        reloaded, binds the points to the frame and enforces the micrometre
-        view of the lat/lon (projection.local_metres): the given metres for a
-        point on the micrometre grid (any value with at most six decimals:
-        every REST body and hand-written scenario), else up to 0.6 um away
-        (the micrometre rounding plus the 12th decimal of a degree) - UNDER
-        THE SAME HASH. For computed rings (a spawn at an off-grid vehicle
-        position, rotate, scale) a re-decision from the signed snapshot is
-        therefore not bit-for-bit the flown episode. A declared deviation of
-        WP1-14 (2026-11-17), kept until the flag below is re-baselined.
-
-      bind=True (opt-in): every point of the rule, converted or already
-        lat/lon, is bound to the frame here, so the live view IS the
-        projection of the stored lat/lon - the same floats a reload of the
-        snapshot reads, bit for bit, under the same hash. Metres given
-        beside lat/lon are checked against the frame (1 um) and dropped, as
-        at any load (XY._bind). It moves computed rings by up to 0.6 um
-        against bind=False, which the Shield reacts to (micro-repairs, tick
-        counts), so it is a flown change and stays off until the smoke
-        profile and the pinned digests are re-baselined with it.
+    Until the evening of 2026-11-17 the Shield's default (integrate/1117
+    only) left converted points UNBOUND, keeping the metres given as their
+    live view, so the snapshot, reloaded, enforced up to 0.6 um elsewhere
+    under the same hash; binding was opt-in. Making it the only mode moved
+    computed rings by up to 0.6 um, which the Shield reacts to at boundary
+    ties (an exact tie between a dynamic zone's edges is judged at that
+    resolution: shield._TIE_BOUND_M); what that moved in the smoke profile,
+    the library and the sampled variants is
+    docs/data/wgs84_bind_default_20261117/.
 
     Each converted point is also checked against the frame: written lat/lon
     that do not project back within CONSISTENCY_TOL_M (1 um) of the metres
@@ -2416,8 +2416,6 @@ def rule_in_wgs84(rule, origin: tuple[float, float] | None, *, bind: bool = Fals
         fields = {"centerline": list(rule.centerline)}
     else:
         return rule
-    if not bind and all(v.geographic for pts in fields.values() for v in pts):
-        return rule
     proj = projection_for(*fo)
     data = rule.model_dump(mode="json", exclude_none=True)
     for name, pts in fields.items():
@@ -2425,7 +2423,7 @@ def rule_in_wgs84(rule, origin: tuple[float, float] | None, *, bind: bool = Fals
         for v in pts:
             if v.geographic:
                 # (a rule is all lat/lon or all metres: check_ring refuses a
-                # mix; such a point is kept as it was, and bound if `bind`)
+                # mix; such a point is kept as it was, and bound below)
                 out.append(v.model_dump(mode="json", exclude_none=True))
                 continue
             x, y = v.x, v.y
@@ -2439,9 +2437,8 @@ def rule_in_wgs84(rule, origin: tuple[float, float] | None, *, bind: bool = Fals
             out.append({"lat": lat, "lon": lon, "x": x, "y": y})
         data[name] = out[0] if name == "center" else out
     ctx = dict(era_context(None)) if getattr(rule, "scope", None) is None else {}
-    if bind:
-        ctx["frame"] = fo                # XY._pair binds every point: XY._bind
-    return type(rule).model_validate(data, context=ctx or None)
+    ctx["frame"] = fo                    # XY._pair binds every point: XY._bind
+    return type(rule).model_validate(data, context=ctx)
 
 
 def _geo_canonical(node):

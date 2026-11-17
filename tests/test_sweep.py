@@ -2422,7 +2422,12 @@ def test_what_the_autopilot_flew_through_is_counted_apart_and_reported():
     Re-pinned 2026-11-06: on the default recovery law ("cap_all") that side
     exit flies at the 4 m/s cap and is out in 2.6 s, inside X6's T, so no
     RTL happens at all; the RTL this test is about is flown on the law it
-    was written on ("cap": the 2.0 m/s floor), which stays selectable."""
+    was written on ("cap": the 2.0 m/s floor), which stays selectable.
+    Since 2026-11-17 the spawned zone is enforced at the micrometre view of
+    its stored WGS84 (Shield._in_frame binds it to the frame), its edge
+    distances up to about 1.7 um apart; the tie is judged at that
+    resolution (shield._TIE_BOUND_M, 2e-6 m, for a dynamic_nfz stored in
+    WGS84), so the centred spawn is still a tie and the premise holds."""
     from guardrail.fsm import FSMConfig
 
     class NoProgressTest(S.Shield):

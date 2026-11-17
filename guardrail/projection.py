@@ -23,10 +23,10 @@ event writes into a policy with a frame (REST hot-apply, the Shield's zone
 edits, the harness's spawned zones, a lock recipe rebuilt by bundle.derive,
 tools/geo_to_policy.py ingest) is converted at ingest (`metres_to_wgs84`,
 models.rule_in_wgs84, `raw_points_in_wgs84`), so in a policy with a frame the
-metre form is not STORED. By default the live Shield still enforces the
-metres it was given for such a point, not the view of its lat/lon (a
-declared deviation, up to 0.6 um; see models.rule_in_wgs84 and
-Shield.wgs84_bind_frame).
+metre form is not STORED, and the converted point is bound to the frame,
+so the live Shield enforces the micrometre view of its stored lat/lon (the
+metres given, on the micrometre grid; else within 0.6 um), the same floats
+a reload of the snapshot reads (models.rule_in_wgs84).
 
 THE LOCAL VIEW IS ROUNDED TO THE MICROMETRE
 

@@ -27,12 +27,11 @@ with a frame; the DSL's own field names). Since 2026-11-17 (WP1-14) metres
 sent to a policy with a frame - every stored policy - are written into it as
 WGS84 about its frame origin (Shield._in_frame, models.rule_in_wgs84), as is
 the ring a PATCH computes, so /policy, the generation's hash and its snapshot
-carry no projected coordinate. A declared deviation (2026-11-17): by
-default the zone enforced LIVE is still the metres sent, while the snapshot,
-reloaded, enforces the micrometre view of the stored lat/lon - the same on
-the micrometre grid (every value with at most six decimals), else up to
-0.6 um away, under the same hash (Shield.wgs84_bind_frame, off until
-re-baselined, closes that gap). Only a policy written wholly in metres, the
+carry no projected coordinate. The zone enforced LIVE is the lazy
+projection of the stored lat/lon (the rule is bound to the policy's frame
+as it is written), bit for bit what the snapshot, reloaded, enforces: the
+metres sent, for values on the micrometre grid (at most six decimals),
+else within 0.6 um of them. Only a policy written wholly in metres, the
 legacy form, keeps metre writes:
 
     {"id": "nfz-landslide-007", "scope": "mission",
