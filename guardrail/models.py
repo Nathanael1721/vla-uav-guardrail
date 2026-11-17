@@ -2127,8 +2127,9 @@ class Policy(BaseModel):
 
         An MSL height (X-11) is an OPT-IN: enforced since 2026-11-03 when the
         caller names the ground it flies over (`ground`, guardrail/terrain.py
-        FlatGround - the rail's stated elevation) and passes the same to the
-        Shield; refused, as before, when it names none."""
+        FlatGround - the rail's stated elevation, or since 2026-11-17 a
+        GridGround DEM) and passes the same to the Shield; refused, as
+        before, when it names none."""
         out: list[str] = []
         for c in self.constraints:
             if c.type not in RUNTIME_TYPES:

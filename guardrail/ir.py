@@ -422,6 +422,21 @@ class PolicyIR:
                           if getattr(c, "type", None) in TUBE_TYPES],
                    shipped=shipped)
 
+    def with_rules(self, swap: dict) -> "PolicyIR":
+        """This IR with some rule objects replaced (`swap`: id(old rule) ->
+        new rule) where only their altitude band differs - the Shield's MSL
+        bands converted at a query point (X-11, shield._localised). Every
+        polygon, margin ring, scale and the spatial index are shared: the
+        tree's positions are the records' and the order is kept."""
+        import copy
+        out = copy.copy(self)
+        out.fences = [replace(r, rule=swap[id(r.rule)]) if id(r.rule) in swap else r
+                      for r in self.fences]
+        out._static = [r for r in out.fences if not r.moving]
+        out._moving = [r for r in out.fences if r.moving]
+        out.tubes = tuple(swap.get(id(c), c) for c in self.tubes)
+        return out
+
     @classmethod
     def from_fences(cls, fences: Iterable[PolygonFence]) -> "PolicyIR":
         return cls([compile_fence(i, f) for i, f in enumerate(fences)])

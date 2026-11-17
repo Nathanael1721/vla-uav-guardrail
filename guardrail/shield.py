@@ -120,6 +120,7 @@ import math
 import threading
 import time
 from collections import Counter, deque
+from contextlib import nullcontext as _nullcontext
 from dataclasses import dataclass, replace
 from datetime import timedelta
 from functools import lru_cache
@@ -1332,6 +1333,11 @@ class _Runtime:
     recurrences: tuple          # every weekly schedule in the policy
     anchors: dict               # moving dynamic_nfz id -> anchor time (s), None = first tick
     moving_ids: frozenset
+    # Over a ground that varies with position (a DEM, guardrail/terrain.py
+    # GridGround; X-11, 2026-11-17): (index, declared rule) of every MSL rule,
+    # converted again at each query point (Shield._local_runtime). Empty for
+    # a flat ground or no MSL rule - every runtime before 2026-11-17.
+    msl: tuple = ()
 
 
 def _runtime_rule(c, ground):
@@ -1352,6 +1358,11 @@ def _runtime_rule(c, ground):
 def _build_runtime(policy: Policy, prev: "_Runtime | None", anchors: dict,
                    ground=None) -> _Runtime:
     rules = [_runtime_rule(c, ground) for c in policy.constraints]
+    msl = ()
+    if _terrain.is_dem(ground):
+        decl = [c.runtime_rule() if isinstance(c, DistanceEnvelope) else c
+                for c in policy.constraints]
+        msl = tuple((i, d) for i, d in enumerate(decl) if _terrain.is_msl(d))
     cons = tuple(rules)
     clock = RuleClock(cons)
     ir = PolicyIR.from_policy(policy, reuse=prev.ir if prev is not None else None,
@@ -1368,7 +1379,31 @@ def _build_runtime(policy: Policy, prev: "_Runtime | None", anchors: dict,
         eff={c.id: _effective_action(c) for c in cons},
         hard={c.id: c.constraint_type == "hard" for c in cons},
         timed=clock.timed, recurrences=clock.recurrences,
-        anchors={k: v for k, v in anchors.items() if k in moving}, moving_ids=moving)
+        anchors={k: v for k, v in anchors.items() if k in moving}, moving_ids=moving,
+        msl=msl)
+
+
+def _localised(base: _Runtime, ground, band: tuple[float, float]) -> _Runtime:
+    """`base` with every MSL rule converted over the ground band `band` (the
+    lowest and highest ground within reach of a query point) instead of the
+    whole DEM's. Only the band changes: the zone polygons, their margin rings
+    and the rule clock are `base`'s (a FenceRecord keeps its geometry and
+    takes the converted rule), so nothing is re-buffered."""
+    cons = list(base.constraints)
+    swap = {}
+    for i, d in base.msl:
+        new = _terrain.agl_rule(d, ground, band)
+        swap[id(cons[i])] = new
+        cons[i] = new
+    ir = base.ir.with_rules(swap)
+    cons = tuple(cons)
+    return replace(
+        base, ir=ir, constraints=cons,
+        kins=tuple(c for c in cons if isinstance(c, KinematicEnvelope)),
+        alts=tuple(c for c in cons if isinstance(c, AltitudeEnvelope)),
+        clear=tuple(c for c in cons if isinstance(c, ObstacleClearance)),
+        standoffs=tuple(c for c in cons if isinstance(c, SubjectStandoff)),
+        corridors=tuple(c for c in cons if isinstance(c, (Corridor, CorridorSwap))))
 
 
 class _Schedule:
@@ -1696,7 +1731,9 @@ class Shield:
         ground: the ground-elevation source of an MSL rule (guardrail/
         terrain.py, X-11): None refuses every rule with altitude_ref MSL, as
         before 2026-11-03; a FlatGround (a stated elevation, per rail) lets
-        the Shield enforce an MSL band as the AGL band it is over that ground.
+        the Shield enforce an MSL band as the AGL band it is over that ground;
+        a GridGround (a gridded DEM, since 2026-11-17) converts it at each
+        query point over the ground within the DEM's reach (_local_runtime).
 
         now: a zero-argument callable returning the current datetime, used only
         to evaluate `valid_time` windows. INJECTED rather than called inline so
@@ -2031,6 +2068,40 @@ class Shield:
         """The ground-elevation source MSL rules are enforced over (None:
         no MSL rule can be enforced)."""
         return self._ground
+
+    def _local_runtime(self, base: _Runtime, x: float, y: float) -> _Runtime:
+        """The runtime a query at (x, y) reads (X-11, 2026-11-17): `base`
+        itself unless the ground is a DEM and the policy has an MSL rule;
+        then `base` with each MSL band converted over the ground within the
+        DEM's reach of (x, y) (terrain.GridGround.band_at), cached per
+        (runtime, band) - pure: the same point and policy give the same
+        runtime. Without a query point (a read between ticks) `base` is
+        read, which converts over the whole DEM: stricter, never looser."""
+        if not base.msl:
+            return base
+        g = self._ground
+        try:
+            band = g.band_at(float(x), float(y))
+        except (TypeError, ValueError):
+            return base                      # a non-finite position: the whole DEM
+        cache = self.__dict__.setdefault("_msl_rts", {})
+        key = (id(base), band)
+        hit = cache.get(key)
+        if hit is not None and hit[0] is base:
+            return hit[1]
+        if len(cache) >= 256:
+            cache.clear()
+        rt = _localised(base, g, band)
+        cache[key] = (base, rt)
+        return rt
+
+    def _at(self, state):
+        """A scope pinning the runtime local to `state` when there is an MSL
+        rule over a DEM and no tick is open; otherwise nothing changes."""
+        if not self._rt.msl or self._tick_ctx() is not None:
+            return _nullcontext()
+        return self._scope(self._new_tick(
+            None, self._local_runtime(self._rt, state.x, state.y)))
 
     # ---------------- which rules are in force right now ---------------- #
     #
@@ -5262,10 +5333,11 @@ class Shield:
         "where would a stop from this speed end", which the own-velocity
         forecast asks inside the decision instead (`_committed`).
         """
-        if ahead_s:
-            with self.looking_ahead(ahead_s):
-                return self._check_in(self._positional(state), BRAKE)
-        return self._check(self._positional(state), BRAKE)
+        with self._at(state):
+            if ahead_s:
+                with self.looking_ahead(ahead_s):
+                    return self._check_in(self._positional(state), BRAKE)
+            return self._check(self._positional(state), BRAKE)
 
     def recheck_commanded(self, state: State, action: Action4D) -> list[Violation]:
         """`action` re-checked from the POSITION on the COMMANDED forecast -
@@ -5278,7 +5350,8 @@ class Shield:
         with the velocity re-checks clean here too (the measured velocity
         only adds; the property test in tests/test_own_velocity_forecast.py),
         so this count is never above the velocity re-check's."""
-        return self._check(self._positional(state), action)
+        with self._at(state):
+            return self._check(self._positional(state), action)
 
     def stop_breaks(self, state: State) -> list[str]:
         """The HARD, enforced rules a stop at this POSITION breaks, by id: the
@@ -6148,7 +6221,8 @@ class Shield:
                                             subject_class, use_live_subject, clearance_m)
         tick = self._tick_ctx()
         if tick is None:
-            with self._scope(self._new_tick(None)) as tick:
+            rt = self._local_runtime(self._rt, state.x, state.y)
+            with self._scope(self._new_tick(None, rt)) as tick:
                 return self._rule_status_in(tick, state, action, subject,
                                             subject_class, use_live_subject, clearance_m)
         return self._rule_status_in(tick, state, action, subject, subject_class,
@@ -6311,7 +6385,7 @@ class Shield:
         2026-11-11; guardrail/hold_flight.py HoldWatch), from the caller that
         flies the hold; None: not judged."""
         t0 = time.perf_counter()
-        tick = self._begin_tick(t)
+        tick = self._begin_tick(t, state)
         if (getattr(state, "velocity", None) is not None and self.velocity_response is not None
                 and self._velocity_of(state) is None):
             self.n_velocity_nonfinite += 1
@@ -6514,12 +6588,13 @@ class Shield:
         where the aircraft's momentum carries it into a rule."""
         n_refused = self.n_floor_refused
         try:
-            with self._scope(self._new_tick(None)) as tick:
+            rt = self._local_runtime(self._rt, state.x, state.y)
+            with self._scope(self._new_tick(None, rt)) as tick:
                 return self._decide(self._decision_state(tick, state), raw)
         finally:
             self.n_floor_refused = n_refused
 
-    def _begin_tick(self, t: float | None) -> _Tick:
+    def _begin_tick(self, t: float | None, state=None) -> _Tick:
         if t is None:
             t = 0.0 if self._t_last is None else self._t_last + MONITOR_PERIOD_S
         t = float(t)
@@ -6529,6 +6604,9 @@ class Shield:
                 self._resume_moving_zones(t)
         self._ticks += 1
         self._t_last = t
+        if state is not None and self._rt.msl:
+            # MSL over a DEM: this tick's bands over the ground near `state`.
+            return self._new_tick(t, self._local_runtime(self._rt, state.x, state.y))
         return self._new_tick(t)
 
     def reset_episode(self) -> None:

@@ -21,6 +21,8 @@
 #          test_policy_hash, test_policy_dsl_grant_form, test_replay_identity,
 #          test_replay, test_geo_to_policy, test_wp1_roundtrip_kpi,
 #          test_distance_envelope_msl (distance_envelope and MSL, 2026-11-03),
+#          test_msl_dem (2026-11-17, X-11: MSL over a gridded DEM at the query
+#          point, MSL in the CSP over a ground, the headless MSL family),
 #          test_world_map (2026-11-17: the declared world that lets the SITL
 #          rails fly a distance_envelope, the city rails' road map, the
 #          people limit; one SKIP where the CityLife street mask is absent).
@@ -737,7 +739,7 @@ jobs:
               tests/test_policy_hash.py \
               tests/test_csp.py \
               tests/test_policy_dsl_grant_form.py \
-              tests/test_distance_envelope_msl.py \
+              tests/test_distance_envelope_msl.py               tests/test_msl_dem.py \
               tests/test_world_map.py \
               tests/test_replay_identity.py \
               tests/test_vla_backends.py \
