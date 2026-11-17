@@ -120,8 +120,8 @@ between ticks that may touch the Shield's state (the hold planner's queries,
 the FSM's legality checks) are not replayed. A mode that checks out each
 run's clean code_revision in a git worktree and replays there would be the
 contract's replay; it is not built, and no Q3 run it could have replayed
-has a clean revision (17 Nov 2026: all 18 runs replayed here were flown from
-a '-dirty' or 'unversioned' tree).
+has a clean revision (17 Nov 2026: the 15 runs re-run here and the 3 refused
+for a hot-apply were all flown from a '-dirty' or 'unversioned' tree).
 
 Exit code: 0 every replayed run identical, 1 a run differs, 2 no run could be
 replayed or the arguments are wrong.

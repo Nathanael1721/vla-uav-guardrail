@@ -33,18 +33,31 @@ What the 20 were, and what changed:
   On the other 590 runs the log's first action_seq is the bag's own
   placement, so nothing changes there.
 - **ntFIN2_175_dyn-nfz-spawn-ahead still differs, correctly: the flight log
-  does not record that the adapter stalled.** Ticks 82-326 (t 8.094-32.494 s, 245 ticks) published a
-  setpoint on /shield/setpoint that the MAVLink adapter never sent to MAVROS:
-  the bag holds 686 Shield setpoints and 441 /mavros/setpoint_raw/local
-  messages, and the adapter's own adapter_log.jsonl holds 441 sent setpoints
-  and a 25.6 s gap from t 7.994 s (its shutdown line in mission_console.log:
-  441 sent, 0 dropped, so its setpoint callback completed 441 times and
-  dropped none: the 245 never reached it). The logged velocity falls to
-  about zero 4-5 s into the gap while the Shield kept streaming 2 m/s. The
-  flight log's `emitted_body` records what the Shield published, not what
-  reached the autopilot, and no field of the log says the adapter
-  stalled. The record now lists the span (`executed_gaps`) and the adapter's
-  count beside the bag's (`adapter_log`).
+  does not record that the Shield's setpoints stopped reaching MAVROS.**
+  Ticks 82-326 (t 8.094-32.494 s, 245 ticks) each published a setpoint on
+  /shield/setpoint, and the MAVLink adapter sent none of them to MAVROS. The
+  bag holds 686 Shield setpoints and 441 /mavros/setpoint_raw/local
+  messages. The adapter's own adapter_log.jsonl holds 441 sent setpoints
+  and a 25.6 s gap from t 7.994 s. Its shutdown line in mission_console.log
+  says 441 sent, 0 dropped, so the adapter's setpoint callback did not run
+  for those 25.6 s. Why is not known: the evidence shows only that
+  `_on_setpoint` did not run. A subscription that stopped delivering and an
+  adapter executor blocked elsewhere would leave the same trace. The logged
+  velocity falls to about zero 4-5 s into the gap while the Shield kept
+  streaming 2 m/s. The flight log's `emitted_body` records what the Shield
+  published, not what reached the autopilot, and no field of the log says
+  delivery stopped. The record now lists the span (`executed_gaps`) and the
+  adapter's count beside the bag's (`adapter_log`).
+
+  **This is an open rig/safety item, not only a replay note.** The run is
+  KPI-grade (kpi.json `kpi_grade` true; scenario expect pass, outcome
+  RTL_triggered, P0 escapes 0). Its kpi.json repair and fail-safe figures
+  are computed on what the Shield published, including the 245 setpoints
+  that never went out. Setpoint delivery is not checked in flight: neither
+  sitl/ros2_shield_node.py nor sitl/mavlink_adapter_node.py compares what
+  the Shield published with what the adapter sent, or raises when the
+  adapter stops sending while the Shield keeps publishing. Until something
+  does, a run's KPIs can count commands that never reached the autopilot.
 
 Unchanged limits: 25,044 ticks of 115 runs are past the Shield's last
 message (counted from the flight log); no bag carries the episode manifest.
