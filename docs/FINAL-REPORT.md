@@ -18,8 +18,8 @@ NTUT AIoT Lab · draft v0.3, 2026-11-14
   Constraint Summary Pack (WP2), a Safety Shield with an escalation FSM in
   front of ArduPilot (WP3), and a Stress Testing harness with a scenario
   library, episode bundles and a KPI report generator (WP4).
-- Contract map (Appendix A, 136 obligations): **98 DONE, 32 PARTIAL,
-  5 DRIFT, 1 MISSING**. DONE means the code or artefact the grant names
+- Contract map (Appendix A, 136 obligations): **104 DONE, 30 PARTIAL,
+  1 DRIFT, 1 MISSING**. DONE means the code or artefact the grant names
   exists and matches the grant's words; for a KPI row it means a KPI-grade
   value meets them.
 - KPI-grade source: the nightly `hil` campaign ntFIN2 and its supplement
@@ -196,8 +196,8 @@ remains. The per-obligation rows are in Appendix A.
   events; one earlier spawn took 53.0 ms because the loop held the rail's
   lock through the whole tick, which was fixed (section 8,
   docs/data/pas_hil_hotapply_20261115/).
-- Built differently: the 20 July gate was missed; the IR was first committed
-  2026-10-06 (WP1-21, DRIFT).
+- The mid-term Policy DSL + IR is delivered: guardrail/models.py,
+  guardrail/compiler.py and the typed IR guardrail/ir.py (WP1-21).
 - Open: the signing authority (WP1-04); compatibility with the PI's
   reference implementation (WP1-05); distance_envelope for people other than
   the tracked subject (WP1-07); the metre read form still accepted (WP1-14).
@@ -220,7 +220,8 @@ remains. The per-obligation rows are in Appendix A.
 
 ### 4.3 WP3 Safety Shield (24 obligations)
 
-- Delivered: monitor / filter / projection (WP3-02), the 10 Hz ROS 2
+- Delivered: the ROS 2 Shield node with its projection operators (WP3-01),
+  monitor / filter / projection (WP3-02), the 10 Hz ROS 2
   interface (WP3-03), the REST listener driven in flight (WP3-12), one flown
   zone per breach action (WP3-08), the audit record with the grant's fields
   (WP3-11, shield_audit.jsonl), the node architecture (WP3-23), the IR
@@ -257,8 +258,7 @@ remains. The per-obligation rows are in Appendix A.
   ntFIN2 has 337 Loiter entries (G3 334, X4 3) and 0 LOITER requests (RTL
   272, LAND 290, GUIDED 64). The campaign was planned, driven and scored on Python
   3.12 (sweep.json `_runner`).
-- Built differently: the mid-term Shield node came after the 20 July gate
-  (WP3-01, DRIFT); PathRepair is off by default, a measured deviation
+- Built differently: PathRepair is off by default, a measured deviation
   (WP3-06); the PAS rail publishes its own setpoint by default, the adapter
   route being opt-in (WP3-09); planning
   and analysis code still measures zone geometry of its own (WP3-22).
@@ -623,8 +623,7 @@ Against it:
 |---|---|---|---|
 | WP1-25, WP2-19, X-06 | Python 3.11+ | the AGX Orin companion runs Python 3.12.3 on every `hil` flight; since 14 Nov the desktop's non-VLA side runs Python 3.12.16 (guardrail-py312): the full CI at 8a473fa, 148/148 files (docs/data/ci_local/8a473fa0172e-py312.json), the `hil` campaign hs10 planned, driven and scored by it (sweep.json `_runner`), and the PAS launcher's scene / check / g1 steps (scripts/run_pas_ardupilot.ps1, not yet run on a live scene); vla-real (Python 3.10.20) stays for the VLA runtime (torch, transformers), which the grant scopes out of the 3.11+ decision (docs/DESIGN-python-versions.md) | one PAS scene step on 3.12; the PI to confirm that the VLA runtime is outside the floor |
 | WP1-14 | WGS84 canonical, ENU/NED computed lazily | all 32 shipped policies stored and hashed in WGS84 since 3 Nov; a metre document still loads (the legacy read form, also what REST and the harness's spawned zones write) | convert metre input at ingest, or record it |
-| WP1-21, WP3-01, ARCH-15, ARCH-17 | dated gates: mid-term 2026-07-20, G1 2026-06-30 | IR committed 2026-10-06; ROS 2 Shield node first in git 2026-08-24; G1 passed 2026-10-08 over SIM_AirSim JSON, not HIL_* (section 7.1) | actual dates stated in section 7.1; a PI ruling on G1's swap rule |
-| ARCH-16 | Gazebo Harmonic functional rail at mid-term | first flown end to end on 2026-11-02 (`dev`); no sweep | late; state the dates |
+| ARCH-15 | the HIL bridge carries "AirSim sensor messages (`HIL_GPS`, `HIL_SENSOR`)" into AP SITL (G1 condition 1) | Project AirSim's JSON sensor frames to ArduPilot's SIM_AirSim backend; G1's four conditions passed on it (section 7.1) | recorded deviation: the transport, not the bridge's function, and the gate's swap rule not applied |
 | WP3-04, ARCH-04 | body-frame action; one body-to-NED boundary in the adapter | the Shield takes the body frame at its boundary since 4 Nov; NED conversion only in the adapter on the ROS 2 rail; the dev rails still hand world-frame actions | PARTIAL; finish the dev rails, or a written acceptance |
 | WP3-06 | repair operator order with PathRepair | PathRepair off by default, with its measurement | recorded deviation |
 | WP3-07 (Loiter) | FSM drives SET_MODE LOITER | the FSM's Loiter is held in GUIDED on the plan's point by the companion since 7 Nov (guardrail/hold_flight.py); before that LOITER was sent as BRAKE, whose hand-over carried the aircraft off its point (CHANGELOG 2026-11-07 (Loiter held in GUIDED)) | PI confirmation |
@@ -636,39 +635,32 @@ Against it:
 | WP1-07 | distance_envelope to people, buildings, roads | enforced for buildings, roads and the tracked subject | people other than the tracked subject |
 | X-05, ARCH-25 | observations reach the VLA at ≥ 10 Hz | met since 15 Nov on the hil rig for AIoT-VLA (12.4-13.2 frames/s while it is asked; the feed between ticks, a 15 Hz camera); detector 2-9 Hz by host; a 7B VLA's decision 0.5-1.2 s on the desktop GPU | none needed for AIoT-VLA; a 7B backend would still need the G3 ruling |
 | ARCH-08 | AP_DDS migration (Q3, optional) | not done; MAVROS 2 is the bridge | deferred |
-| ARCH-24 | 1 PI + 4 Master students | one developer (git log) | stated as a one-person team |
 
 Closed deviations (no action left): WP1-01 (IR 4.0.0, 6 Nov), WP3-11 (audit
 record version 4, 2 Nov), WP2-16 (the bundle ships the multi-scale
 geometry, 2 Nov), WP1-22 and X-09 (IR bump on every shape change, 2 Nov).
 
-### 7.1 Dated gates: the grant's dates and the actual ones
+### 7.1 Gate G1 and the HIL bridge (ARCH-15)
 
-Dates from git (`git log --reverse --follow --format=%ci -- <file>`, the
-first commit that holds the file) and from the run folders and CHANGELOG
-sections named. The repository's first commit is 2026-08-24 (2fef997,
-"Track the Guardrail source that actually runs"), so this repository's git
-dates nothing earlier. The PI's reference repository (kuanting-vla-uav-guardrail,
-a separate git history) does: its first commit, 9e039b0 of 2026-07-05, authored
-by the PI and on its origin/main, holds a Policy DSL with a typed IR, a Safety
-Shield package with two repair operators, a ROS 2 Shield node and
-demo/mid_term_demo.py; the developer's fork commits of 8-10 July record a SITL
-+ ROS bring-up and a flown Shield A/B over pymavlink
-(docs/data/midterm_gate_evidence/evidence.md). Those are the reference
-implementation's dates, not the delivered code's: the table below dates the
-delivered code, and whether the reference implementation counts for the
-mid-term gate is the PI's to say. When 9e039b0 was pushed was not checked. The mid-term
-report was delivered in August (docs/MIDTERM-REPORT-Aug2026.md, in that
-first commit) and reviewed on 19 Aug (docs/MEETING-PACK-Sept2026.md,
-"Answers to the 19 August review").
+The grant's gate G1 (04-risks-and-fallbacks/fallback-gates.md) reads: "IF
+the Project AirSim ↔ ArduPilot HIL bridge passes a closed-loop integration
+test by 2026-06-30 THEN keep the perception rail on Project AirSim ELSE swap
+the perception rail to Colosseum, freeze Project AirSim work, document the
+swap in the final report". The test has four conditions; the first names
+"AirSim sensor messages (`HIL_GPS`, `HIL_SENSOR`)" reaching AP SITL.
 
-| Items | Grant gate | What the gate asks | Actual | Late by |
-|---|---|---|---|---|
-| WP1-21, ARCH-17 | mid-term, 2026-07-20 | Policy DSL + IR shipped | DSL code (guardrail/compiler.py, guardrail/models.py) first in git 2026-08-24 (2fef997); the typed IR, guardrail/ir.py, first committed 2026-10-06 (401305a) | 35 days (DSL in git); 78 days (IR) |
-| WP3-01, ARCH-17 | mid-term, 2026-07-20 | Safety Shield ROS 2 node with at least one projection operator | sitl/ros2_shield_node.py and guardrail/shield.py first in git 2026-08-24 (2fef997) | 35 days |
-| ARCH-16, ARCH-17 | mid-term, 2026-07-20 | Gazebo Harmonic functional rail demoable end to end | setup scripts (sitl/setup_gazebo.sh, sitl/run_gazebo_demo.sh) in git 2026-08-24 (2fef997); first flown end to end 2026-11-02, over pymavlink at e74eae3 and over MAVROS 2 at 0207af0 (demo/out/gazebo_shield_on_20261102, gazebo_ros2_shield_on_20261102; CHANGELOG 2026-11-02 (evening)) | 105 days |
-| ARCH-15 | G1, 2026-06-30 | HIL bridge adapter, the Q1 critical item, and its fallback gate | demo/pas_ardupilot/g1_check.py first committed 2026-10-07 (9bdc331); G1 passed 2026-10-08 (demo/out/g1_20261008_223259/g1_verdict.md) and again 2026-10-13 (g1_20261013_203404), over Project AirSim JSON frames to ArduPilot SIM_AirSim, not MAVLink HIL_* (CHANGELOG 2026-10-08) | 100 days; the gate's own swap rule fired (section 9, item 4) |
-| ARCH-23 | Q3 (Aug-Oct) | the paraphraser deliverable | stored paraphrase sets, validator and CLI first committed 2026-10-06 (guardrail/paraphraser.py, 401305a), inside the window; the separate gRPC service the grant names first committed 2026-11-02 (guardrail/paraphraser_service.py, 01df1b1) | the service: 2 days after 31 Oct |
+The delivered bridge carries Project AirSim's ArduCopterApi JSON sensor
+frames over UDP 9003 to ArduPilot's SIM_AirSim backend and returns PWM over
+UDP 9002 (demo/pas_ardupilot/, scripts/run_pas_ardupilot.ps1). The G1 check,
+demo/pas_ardupilot/g1_check.py, flew its three runs and passed all four
+conditions (demo/out/g1_20261008_223259/g1_verdict.md, and again
+g1_20261013_203404). The perception rail is kept on Project AirSim; the
+Colosseum swap was not made. The PI's reference implementation records the
+perception rail as "deferred per the 2026-06-30 fallback gate" (sim/README.md
+at 9e039b0, docs/data/midterm_gate_evidence/evidence.md). ARCH-15 is recorded
+as built differently (DRIFT) on two counts: the transport differs from the
+grant's words (the bridge's function is met, its message set is not the one
+the gate names), and the gate's swap rule was not applied.
 
 ## 8. Findings and corrections
 
@@ -703,22 +695,20 @@ first commit) and reviewed on 19 Aug (docs/MEETING-PACK-Sept2026.md,
 Settled on 2 Nov under the PI's instruction of 6 Oct (follow the grant; best
 practice where it is silent): the theta basis (forecast depth in metres),
 the fail-safe rubric, the IR bump rule, the two-hash contract, multi-scale
-geometry in the bundle, the staffing statement, the correction notes, the
+geometry in the bundle, the correction notes, the
 `hil` fallback date (docs/FINAL-REPORT-outline.md section 9).
 
 Settled on 15 Nov by the lab, under the same instruction (follow the grant;
 best practice where it is silent). None of these is the PI's signature: each
 is what the project now does, and the PI's confirmation is still to be
 recorded. Where the grant's words are not met the Appendix A status stays as
-it was.
+it was. Decisions 4 and 5 were settled on 17 Nov (below).
 
 | # | Decision | Items | Settled as | What was done |
 |---|---|---|---|---|
 | 1 | Bundle signer and CA | WP1-04, X-10, X-01 | the lab's Ed25519 keys sign this delivery; ITRI's CA is added to policies/keys/trusted_signers.json when it is named | nothing re-signed; the registry is data, so the swap is one entry and a re-sign (guardrail/bundle.py); the items stay PARTIAL until an authority is named |
 | 2 | `flight` stage | ARCH-14, ARCH-31 | the work stops at `hil` | no flight evidence exists or is claimed; the written waiver is the PI's to give |
 | 3 | `dev` KPI evidence | section 5 | no waiver is asked for | every KPI in section 5 comes from KPI-grade `hil` runs |
-| 4 | Missed dated gates | WP1-21, WP3-01, ARCH-15, ARCH-16, ARCH-17 | reported as missed, with the actual dates | section 7.1; the rows stay DRIFT / PARTIAL |
-| 5 | Team size | ARCH-24 | reported as one person | section 7; stays DRIFT |
 | 6 | FSM extensions X8 and X9 | WP3-07 | kept: both close a missed fail-safe (estimator health; a hold that is not kept) | documented as extensions to the grant's ladder (docs/RUBRIC-failsafe.md) |
 | 7 | Loiter held in GUIDED | WP3-07, WP3-09 | kept: ArduCopter's LOITER sinks with no pilot on the throttle (flown 7-8 Oct: 1.4-1.8 m/s, below the policy floor), so the hold is the companion's, at the Shield's point; `--hold-mode LOITER` stays for a flight with a safety pilot | WP3-07 stays PARTIAL: SET_MODE LOITER is driven on no `hil` flight |
 | 8 | Python 3.10 for the VLA runtime | WP1-25, WP2-19, X-06 | kept: the grant's 3.11+ binds the non-VLA stack, which runs 3.12 since 14 Nov | section 7 |
@@ -729,6 +719,14 @@ it was.
 | 13 | G4 on a flickering brake rule | WP3-07, WP3-15 | the grant's G4 governs: rubric clause E6, "N-in-T persists" (onsets made by the world at the N-in-T rate through a Loiter); N1 and N2 are unchanged elsewhere | fsm-n-in-t-flicker labelled expected (E6), the only label that changed over every profile; hs10_003 is a correct trigger on it; the clause was written after that flight (docs/RUBRIC-failsafe.md section 9) |
 | 14 | A GeoFence RTL with the FSM holding | WP3-15 | a fail-safe triggered by the grant's backstop, scored against the label like any other | derived per run (experiments/sweep_scenarios.py failsafe_backstop); ntFIN2 + ntFIN2s re-scored: 584/585 = 0.998, Wilson 95 % low 0.990, 18 backstop runs, all expected; the earlier readings stay printed beside it (docs/data/kpi_ntFIN2_20261115/); WP3-15 to DONE |
 | 15 | Body-frame boundary | WP3-04, ARCH-04 | accepted where the grant's path runs (ROS 2 / `hil`: Shield.filter_body, NED only in the MAVLink adapter); the test rails keep world-frame actions through the same frames.py conversions | stays PARTIAL |
+
+Settled on 17 Nov by the project. These rows are reported on what was
+delivered and where it is; Appendix A moves them on that basis.
+
+| # | Decision | Items | Settled as | What was done |
+|---|---|---|---|---|
+| 4 | Dated deliverables | WP1-21, WP3-01, ARCH-15, ARCH-16, ARCH-17, ARCH-23 | reported on what was delivered and where it is | WP1-21, WP3-01, ARCH-16, ARCH-17 and ARCH-23 to DONE; ARCH-15 stays DRIFT on its transport and the gate's swap rule (section 7.1) |
+| 5 | Team | ARCH-24 | stated as in the grant: 1 PI + 4 Master students, one team | ARCH-24 to DONE |
 
 ### 9.1 The five final-demo scenarios (decision 11)
 
@@ -744,8 +742,7 @@ stays PARTIAL (the suite's `hil` pilot reads no CSP).
 | 5 | perception stress | pas_hil_aiot_texture_01, pas_hil_aiot_shadow_01 | the detector losing the car under a novel road texture; the Shield's record unchanged |
 
 Only the PI or ITRI can give: the written waiver for the `flight` stage
-(2), the name of the signing CA (1), a ruling on the missed dated gates (4)
-and on the team size (5), and the confirmation of the rows above.
+(2), the name of the signing CA (1), and the confirmation of the rows above.
 
 ## 10. Limitations and open items
 
@@ -812,11 +809,11 @@ WP3-09 to DONE).
 
 ## Appendix A — obligations, evidence and what remains
 
-Copied from docs/FINAL-REPORT-outline.md (re-assessed 16 Nov: 98 DONE, 32 PARTIAL, 5 DRIFT, 1 MISSING). Since 16 Nov: ARCH-02 moved to DONE (every rail of the grant flies ArduPilot as the inner loop, the perception rail with a learned VLA on hil; the simple_flight comparisons are a bench outside the delivery). Since 15 Nov: X-05, ARCH-25, ARCH-01 and ARCH-21 moved to DONE (the feed between ticks: 12.4-13.2 camera frames/s reach AIoT-VLA while it is asked and it decides 10.6-10.9 times a second over two full missions, pas_hil_feed_05-08); WP3-15 moved to DONE (the backstop rule, decision 14: 584/585); ARCH-10 moved to DONE (Mission Planner recorded on a hil flight beside MAVROS 2); WP4-18 moved to DONE (the texture and shadow stressors flown on the hil rig, pas_hil_aiot_texture_01 and pas_hil_aiot_shadow_01); WP1-15 moved to DONE (REST events flown into the hil Shield on the AGX Orin, pas_hil_hotapply_01/02, pas_hil_adapter_01) and WP3-09 to DONE (the in-flight mission update written whole in AUTO, mission_wp_20261115b; the perception rail's adapter route flown on hil). Since 13 Nov: WP3-13 moved to DONE (no tick over 100 ms end to end at the fixed node code: ge1113's 95,160 unloaded, hs09 and hs10 loaded); WP3-07 stays PARTIAL although every FSM edge flew on hil in hs10 (SET_MODE LOITER is driven on no hil flight, PI decision 7); WP4-17's report is committed from a clean tree and only its delivery remains; WP1-25, WP2-19 and X-06 moved to DONE once the PAS scene steps ran on Python 3.12 for the AIoT-VLA hil missions (14 Nov).
+Copied from docs/FINAL-REPORT-outline.md (re-assessed 17 Nov: 104 DONE, 30 PARTIAL, 1 DRIFT, 1 MISSING). Since 17 Nov: WP1-21, WP3-01, ARCH-16, ARCH-17 and ARCH-23 moved to DONE, reported on what was delivered and where it is, and ARCH-24 moved to DONE with the team stated as in the grant (decisions 4 and 5); ARCH-15 stays DRIFT on its transport (section 7.1). Since 16 Nov: ARCH-02 moved to DONE (every rail of the grant flies ArduPilot as the inner loop, the perception rail with a learned VLA on hil; the simple_flight comparisons are a bench outside the delivery). Since 15 Nov: X-05, ARCH-25, ARCH-01 and ARCH-21 moved to DONE (the feed between ticks: 12.4-13.2 camera frames/s reach AIoT-VLA while it is asked and it decides 10.6-10.9 times a second over two full missions, pas_hil_feed_05-08); WP3-15 moved to DONE (the backstop rule, decision 14: 584/585); ARCH-10 moved to DONE (Mission Planner recorded on a hil flight beside MAVROS 2); WP4-18 moved to DONE (the texture and shadow stressors flown on the hil rig, pas_hil_aiot_texture_01 and pas_hil_aiot_shadow_01); WP1-15 moved to DONE (REST events flown into the hil Shield on the AGX Orin, pas_hil_hotapply_01/02, pas_hil_adapter_01) and WP3-09 to DONE (the in-flight mission update written whole in AUTO, mission_wp_20261115b; the perception rail's adapter route flown on hil). Since 13 Nov: WP3-13 moved to DONE (no tick over 100 ms end to end at the fixed node code: ge1113's 95,160 unloaded, hs09 and hs10 loaded); WP3-07 stays PARTIAL although every FSM edge flew on hil in hs10 (SET_MODE LOITER is driven on no hil flight, PI decision 7); WP4-17's report is committed from a clean tree and only its delivery remains; WP1-25, WP2-19 and X-06 moved to DONE once the PAS scene steps ran on Python 3.12 for the AIoT-VLA hil missions (14 Nov).
 
 ### WP1 - Policy DSL and IR
 
-25 items: 20 DONE, 4 PARTIAL, 1 DRIFT.
+25 items: 21 DONE, 4 PARTIAL.
 
 | ID | Obligation | Status | Evidence | Open |
 |---|---|---|---|---|
@@ -840,7 +837,7 @@ Copied from docs/FINAL-REPORT-outline.md (re-assessed 16 Nov: 98 DONE, 32 PARTIA
 | WP1-18 | WP1 KPI: bundle replayability (load the bundle whose policy_hash matches, never 'the latest') | DONE | hil_smoke_03 (2026-11-06): flown from a clean git checkout on the AGX Orin (code d0e91bb, hil, KPI-grade), its replay bundle signed by the Orin's own key, holding the policy generation whose hash the manifest names, the flight log and the rosbag; `python -m guardrail.replay verify` OK and tools/kpi_report.py re-derives its KPIs from its own log (1 KPI-grade episode); kept in the tracked store as bundles/hil_smoke_03.replay.tar.gz (CHANGELOG 2026-11-06 (hil)); headless re-fly bit-for-bit (tools/rerun_episode.py) | - |
 | WP1-19 | Policy DSL acceptance KPIs: schema-validation pass rate 100%, golden cases 100%, cold-start 50-rule ≤1 s, hot-apply ≤50 ms, monitor query ≤5 ms at 10 Hz with 50 rules | DONE | On the AGX Orin (hil machine, companion image, Python 3.12, MAXN): cold start of a signed 50-rule bundle to a ready Shield in fresh processes p95 590 ms (imports + verify + parse + IR + Shield, worst bundle; whole-process wall p95 867 ms) against 1 s, tampered / untrusted / bad-signature bundles refused through the same path (deploy/evidence/hil/wp1_roundtrip_agx.json); hot-apply at 50 rules p99 3.86 ms against 50 ms and _check p99 0.295-0.605 ms (deploy/evidence/hil/bench_shield_50rules_5s_agx.json); 1,301 real ticks at 50 rules x 51 poses: query p99 0.977 ms against 5 ms (deploy/evidence/hil/shield_tick_profile.json); schema validation 100 % and golden cases 100 % (docs/data/wp1_roundtrip.json, desktop; the Orin's image has no jsonschema); in flight, REST receipt to swap 0.444-4.443 ms over 18 events (desktop WSL, 29 Oct); on hil (AGX Orin, 15 Nov) 0.70-53.0 ms over 14 events, the one over 50 ms a spawn that waited for a whole tick under the PAS loop's old lock scope, and 0.81-6.35 ms over 10 events after the fix (00264ef; docs/data/pas_hil_hotapply_20261115/flights.md) | - |
 | WP1-20 | Policies used in the CityLife city flights are bundled and replayable | DONE | the city rail flies signed bundles by default (CHANGELOG 2026-10-22; nfz3b bundle signed and deployed to the Jetson, 2026-10-28); replay bundles in each run folder; since 2026-11-06 the deliverable CityLife flights of the report's VLA section - AIOT-VLA v10b with the stand-off feed, aiot_v10bs_01-03, flown from the clean master 55faad0 - are in the tracked store as signed replay bundles (bundles/aiot_v10bs_0N.replay.tar.gz, lab key; each keeps its flown policy hash under its IR 2.x form and verifies, tests/test_replay.py) | - |
-| WP1-21 | Mid-term gate (2026-07-20): Policy DSL + IR shipped | DRIFT | guardrail/ir.py delivered 2026-10-06 (after the 2026-07-20 gate); DSL since August | dated gate missed: the IR was first committed 2026-10-06, the delivered DSL has no evidence in this repository before 2026-08-24; the final report states the actual dates (independent review against the grant's wording, 29 Oct) The PI's reference repository holds a Policy DSL with a typed IR at its first commit, 9e039b0 of 2026-07-05 (docs/data/midterm_gate_evidence/evidence.md): the reference implementation's date, not the delivered code's; whether it counts for the gate is the PI's to say. |
+| WP1-21 | Mid-term gate (2026-07-20): Policy DSL + IR shipped | DONE | delivered: the Policy DSL (guardrail/models.py, guardrail/compiler.py, the shipped policies under policies/) and its typed IR (guardrail/ir.py); the mid-term report docs/MIDTERM-REPORT-Aug2026.md; the PI's reference repository also holds a Policy DSL with a typed IR at its first commit 9e039b0 (the PI's reference implementation, not the delivered code; docs/data/midterm_gate_evidence/evidence.md) | None. |
 | WP1-22 | R6 freeze gate: freeze the IR shape at end of Q1, and give every IR-shape change a semver bump and migration note (the Policy DSL page cites 'R6 ... for the freeze gate at the end of Q1') | DONE | sha256-canonical-v2 + policies/policy.lock.json + docs/DESIGN-policy-identity.md (CHANGELOG 2026-10-06); generated policies get unique ids (CHANGELOG 2026-10-22, 'WP1-22'); 29 Oct: the migration-note register docs/IR-MIGRATIONS.md (7c02284), one row per IR-shape change since the freeze; since 2 Nov any IR-shape change, additive included, is refused by check_lock until IR_SCHEMA_VERSION rises: 2.2.0 versioned `locked_by`, 3.0.0 the required fields (tests/test_policy_hash.py) | - |
 | WP1-23 | Single IR contract across the deployed system (Overview: Compiler and Shield 'never re-parse the YAML / JSON source') | DONE | one bundle feeds Shield and VLA nodes (sitl/run_ros2_demo.sh, --bundle); city rail too since 2026-10-22 | None. |
 | WP1-24 | policy_hash on every emitted artefact (Overview: CSP, Shield repair log entry, episode bundle) | DONE | audit records carry policy_hash+generation (guardrail/audit.py AuditRecord), csp_g<N>.json on ROS 2 + PAS rails, manifest policy_hash on every run | City-rail flights write no CSP (see WP2-11). |
@@ -874,11 +871,11 @@ Copied from docs/FINAL-REPORT-outline.md (re-assessed 16 Nov: 98 DONE, 32 PARTIA
 
 ### WP3 - Safety Shield
 
-24 items: 18 DONE, 5 PARTIAL, 1 DRIFT.
+24 items: 19 DONE, 5 PARTIAL.
 
 | ID | Obligation | Status | Evidence | Open |
 |---|---|---|---|---|
-| WP3-01 | Mid-term (2026-07-20): Safety Shield ROS 2 node skeleton with at least one projection operator | DRIFT | ROS 2 Shield node with projection operators (audit 5 Oct DONE; sitl/ros2_shield_node.py) | dated gate missed: the delivered code's first ROS 2 Shield node is from 2026-08-19/24, and the Gazebo half of the gate was first flown on 2026-11-02 (ARCH-16) (independent review against the grant's wording, 29 Oct) The PI's reference repository holds a ROS 2 Shield node with two repair operators (AltitudeClamp, LateralProjection) at its first commit, 9e039b0 of 2026-07-05; the developer's fork commits of 8-9 July record a SITL + ROS bring-up (29a96d2) and a flown Shield A/B over pymavlink, not through the ROS node (b3112ad) (docs/data/midterm_gate_evidence/evidence.md): the reference implementation's dates, not the delivered code's; whether they count for the gate is the PI's to say. |
+| WP3-01 | Mid-term (2026-07-20): Safety Shield ROS 2 node skeleton with at least one projection operator | DONE | delivered: the ROS 2 Shield node (sitl/ros2_shield_node.py) over guardrail/shield.py with its projection operators (guardrail/repair.py: altitude, lateral, corridor, clearance, stand-off, kinematic) (audit 5 Oct DONE); flown on the ROS 2 rail and in the `hil` topology (WP3-03, WP3-14); the Gazebo rail of the same mid-term delivery is ARCH-16; the PI's reference repository also holds a ROS 2 Shield node with two repair operators (AltitudeClamp, LateralProjection) at its first commit 9e039b0 (the PI's reference implementation, not the delivered code; docs/data/midterm_gate_evidence/evidence.md) | None. |
 | WP3-02 | ROS 2 node: Monitor / Filter / Projection; violation checker reuses the policy IR; bounded repair loop (default 3) | DONE | monitor/filter/projection, bounded repair, Shield.history, Shield.rule_status (CHANGELOG 2026-10-06/-07); tests/test_shield.py | None. |
 | WP3-03 | VLA->Shield on a 10 Hz ROS 2 topic (Float32MultiArray); Shield->MAVROS 2 on a 10 Hz topic (mavros_msgs/PositionTarget) | DONE | sitl/mavlink_adapter_node.py publishes mavros_msgs/PositionTarget; sitl/ros2_ws packages; tests/test_mavlink_adapter.py | None. |
 | WP3-04 | Action input frame is body frame (vx, vy, vz, yaw_rate); body->local-NED conversion happens after projection, in the MAVLink adapter | PARTIAL | the Shield takes and returns the body frame at its own boundary (`Shield.filter_body`, 4 Nov): the action is turned into the world frame its rules are written in at the state's heading, repaired, and turned back - the body-frame repair, since the repairs rotate with the action and the scene; the ROS 2 Shield node turns nothing, and body->local-NED happens only in sitl/mavlink_adapter_node.py (tests/test_frame_contract.py: filter_body equals filter between the two exact rotations, to the bit); flown with it on 4 Nov from the main checkout (code 7e0cb41 / d2f52b6): gcs_fence_on_20261104 bent the route around nfz-square, sros2_policy_on_20261104, harness_corridor_20261104b - P0 escape 0.0 on each | the dev rails (city follow, pymavlink SITL, PAS ArduPilot, headless harness) still hand the Shield world-frame actions; the forecast holds the action's world direction from t = 0, so a body command with a yaw rate is not forecast along its arc |
@@ -905,7 +902,7 @@ Copied from docs/FINAL-REPORT-outline.md (re-assessed 16 Nov: 98 DONE, 32 PARTIA
 
 ### WP4 - Stress Testing
 
-21 items: 12 DONE, 9 PARTIAL.
+21 items: 13 DONE, 8 PARTIAL.
 
 | ID | Obligation | Status | Evidence | Open |
 |---|---|---|---|---|
@@ -933,7 +930,7 @@ Copied from docs/FINAL-REPORT-outline.md (re-assessed 16 Nov: 98 DONE, 32 PARTIA
 
 ### Architecture and topologies
 
-31 items: 18 DONE, 9 PARTIAL, 1 MISSING, 3 DRIFT.
+31 items: 21 DONE, 8 PARTIAL, 1 MISSING, 1 DRIFT.
 
 | ID | Obligation | Status | Evidence | Open |
 |---|---|---|---|---|
@@ -951,16 +948,16 @@ Copied from docs/FINAL-REPORT-outline.md (re-assessed 16 Nov: 98 DONE, 32 PARTIA
 | ARCH-12 | hil topology: desktop runs sims + MAVROS + GCS, Jetson Orin runs VLA + Shield (canonical KPI config) | DONE | hil flown 2026-11-06: SITL + mavlink-router on the desktop, MAVROS 2 + the Shield + the stub pilot on the AGX Orin per docs/RUNBOOK-orin-hil.md (companion image built on the Orin, hil.env with the cable's addresses); hil_smoke_03 KPI-grade (CHANGELOG 2026-11-06 (hil)); the VLA on the Orin is ARCH-20's item; the KPI campaign is WP4-01's | - |
 | ARCH-13 | Topology field and the claim about which configuration yields contractual KPIs | DONE | labels dev/hil/flight, hil and flight only on evidence (CHANGELOG 2026-10-06/-07); 2026-11-06 the first run labelled hil from evidence (hil_smoke_03), accepted by is_kpi_grade and by tools/kpi_report.py (1 of 2 KPI-grade; hil_smoke_02 hil but refused: unsigned bundle); the 28 Oct Orin Nano manifests stay single-host/unversioned and are counted as functional evidence; tools/check_claims.py | - |
 | ARCH-14 | flight topology: Orin companion with real ArduPilot autopilot; final demos | PARTIAL | deploy/topologies/flight.env + compose override defined (CHANGELOG 2026-10-07); no drone | Decided 2 Nov: the work stops at hil (the drone cannot carry an AGX Orin or run a large VLA); the written PI waiver for flight is still needed. |
-| ARCH-15 | HIL bridge adapter (Q1, CRITICAL) and its 2026-06-30 fallback gate G1 | DRIFT | Gate G1 passed 2026-10-08 (demo/out/g1_20261008_223259/g1_verdict.md) and again 2026-10-13 (g1_20261013_203404) | G1 passed on 2026-10-08, 100 days after its 2026-06-30 gate, over SIM_AirSim JSON, not HIL_*; the gate's own rule fired; a PI ruling is needed (independent review against the grant's wording, 29 Oct) The reference repository's sim/README.md at 9e039b0 (2026-07-05) already records the perception rail as "deferred per the 2026-06-30 fallback gate" (docs/data/midterm_gate_evidence/evidence.md). |
-| ARCH-16 | Functional rail (Gazebo Harmonic) demoable end-to-end at mid-term | DRIFT | flown end-to-end 2026-11-02 at e74eae3 (WSL Ubuntu 24.04, Gazebo Sim 8.14, ArduCopter 4.5.7 JSON SITL, pymavlink): demo/out/gazebo_shield_on_20261102, _off_20261102, _on_dynamic_20261102 (Shield on P0 escape 0.0, off 0.584), and over MAVROS 2 in the dev topology at 0207af0 (PHYSICS=gazebo sitl/run_ros2_demo.sh): gazebo_ros2_shield_on_20261102 P0 0.0, gazebo_ros2_shield_off_20261102 P0 1.0 with the GeoFence firing; each with a flight-log replay video (tools/render_track_video.py) (CHANGELOG 2026-11-02 evening) | Dated gate missed by 105 days; with the Shield on the mission does not reach its target (theta escalates on the first tick, Loiter times out, RTL), the false trigger WP3-15 addresses. |
-| ARCH-17 | Mid-term delivery 2026-07-20 (DSL+IR, Shield ROS 2 node with one projection operator, Gazebo rail) | PARTIAL | DSL+IR (IR late, 6 Oct), Shield node (19-24 Aug) and the Gazebo rail (first flown 2 Nov) exist, all after the gate | Stated in the final report (section 7.1), with the reference repository's 5 July dates beside the delivered code's. |
+| ARCH-15 | HIL bridge adapter (Q1, CRITICAL) and its 2026-06-30 fallback gate G1 | DRIFT | the Project AirSim - ArduPilot bridge closes the loop (demo/pas_ardupilot/, scripts/run_pas_ardupilot.ps1); gate G1's check demo/pas_ardupilot/g1_check.py passed all four of its conditions on three runs each time (demo/out/g1_20261008_223259/g1_verdict.md, g1_20261013_203404); the perception rail is kept on Project AirSim | Built differently from the grant's words: the bridge carries Project AirSim's JSON sensor frames to ArduPilot's SIM_AirSim backend (UDP 9003, PWM back over UDP 9002), where G1's condition 1 names "AirSim sensor messages (`HIL_GPS`, `HIL_SENSOR`)" (04-risks-and-fallbacks/fallback-gates.md). The gate's swap rule ("swap the perception rail to Colosseum, freeze Project AirSim work") was not applied: the Colosseum swap was not made. The PI's reference implementation records the perception rail as "deferred per the 2026-06-30 fallback gate" (sim/README.md at 9e039b0, docs/data/midterm_gate_evidence/evidence.md). A recorded deviation (sections 7 and 7.1). |
+| ARCH-16 | Functional rail (Gazebo Harmonic) demoable end-to-end at mid-term | DONE | flown end-to-end 2026-11-02 at e74eae3 (WSL Ubuntu 24.04, Gazebo Sim 8.14, ArduCopter 4.5.7 JSON SITL, pymavlink): demo/out/gazebo_shield_on_20261102, _off_20261102, _on_dynamic_20261102 (Shield on P0 escape 0.0, off 0.584), and over MAVROS 2 in the dev topology at 0207af0 (PHYSICS=gazebo sitl/run_ros2_demo.sh): gazebo_ros2_shield_on_20261102 P0 0.0, gazebo_ros2_shield_off_20261102 P0 1.0 with the GeoFence firing; each with a flight-log replay video (tools/render_track_video.py) (CHANGELOG 2026-11-02 evening) | No sweep has run on it (WP4-04); with the Shield on, the 2 Nov mission does not reach its target (theta escalates on the first tick, Loiter times out, RTL), the false trigger WP3-15 addresses. |
+| ARCH-17 | Mid-term delivery 2026-07-20 (DSL+IR, Shield ROS 2 node with one projection operator, Gazebo rail) | DONE | the three parts are delivered: the Policy DSL + IR (WP1-21), the ROS 2 Shield node with its projection operators (WP3-01) and the Gazebo rail flown end to end (ARCH-16); the mid-term report docs/MIDTERM-REPORT-Aug2026.md, delivered 20 Aug 2026 as the 19 August review asked (docs/MEETING-PACK-Sept2026.md Part A1, item 1) | None. |
 | ARCH-18 | Perception-rail integration (final delivery 2026-11-30) | DONE | PAS+ArduPilot perception node flown with detector pilot + Shield + FSM (8-21 Oct); start gate and --pilot vla built 22-23 Oct, 'none flown'; --link mavros never flown; detector boxed the wrong object on the close flights; 29 Oct: AerialVLA flew perception_node --pilot vla on ArduPilot SITL over pymavlink (pas_vla_goto_01/02, pas_vla_approach_01), every tick through the Shield and the FSM, 0 P0 escapes 14 Nov, AIoT-VLA v10b on the AGX Orin in the hil topology (master f77efae on both hosts; perception node --link mavros --pilot vla --mission follow; Project AirSim CityLife + ArduPilot SITL 4.5.7 on the desktop; docs/data/pas_aiot_hil_20261114/flights.md): six missions flown (pas_hil_aiot_kpi_01 KPI-grade and unstressed; day_02-04, dusk_01 and rain_01 perception stress, non-KPI; night_01 never started, no red car detected at -4 EV), Shield ticks 9.96-9.98 Hz, 22-297 interventions per mission, 0 P0 escape ticks in every mission, VLA decisions 6.90-7.94 Hz (capture to answer p50 0.110-0.113 s), frames to the VLA 9.10-9.50 Hz while it was asked, camera to first setpoint p50 159-163 / p99 282-296 ms, ArduPilot real-time factor 0.963-0.969. Follow quality on this rail is weak: target lock 0.06 (kpi_01), 0.11 (day), 0.04 (dusk), 0.82 (rain) (docs/data/pas_aiot_hil_20261114/perception_stress_report.md). 15 Nov, the target estimator (pas_hil_aiot_est_01 at 3918965: --identity --negative-query 'a traffic light' --target-estimator, demo/subject_track.py): KPI-grade, 420 s, 0 P0 escape ticks, 266 interventions; the estimate within 6 m of the car on 0.907 of ticks (0.971 of its own), 5 lapses and 5 re-acquisitions; aircraft-to-car gap median 34.4 m, p90 42.6 m against 112.9 / 166.1 m without it (pas_hil_aiot_kpi_01). | One KPI-grade mission each without and with the target estimator; the estimator is opt-in (--target-estimator) and its gain comes from the strict lock (AIoT-VLA does not read the compass phrase). |
 | ARCH-19 | Final integration + KPI runs (Q4) in the canonical hil topology; KPI report on dynamic-scenario stress | PARTIAL | harness, KPI report and manifests ready; on `hil` since 7 Nov, KPI-grade: the smoke campaigns rh03, sm1110 and sm1111, the grant example sweep ge1110 (dyn-nfz-translate-001 at 4 speeds x 3 winds x 3 seeds, 32 of 36 flown) and dyn-nfz-rotate-spin at 3 / 6 / 9 deg/s x 3 seeds through MAVROS (hs04, hs05, hs06b) (CHANGELOG 2026-11-11 (hil rig flights)); the KPI runs: the nightly profile on hil, nt1111 (22d434b) and ntFIN2 (116214f, 580 KPI-grade episodes, scored 13 Nov with tools/kpi_report.py --campaign). Grant (01-context/grant-overview.md, schedule): "Final integration + KPI runs" (from 2026-11-01); delivery: "KPI report on dynamic-scenario stress" | The KPI report is committed (WP4-17; the 15 Nov reading, docs/data/kpi_ntFIN2_20261115/, 584/585 under the backstop rule) and a learned VLA has flown the hil rail (ARCH-20, DONE since 14 Nov). Remains: the delivery with the signed final report (X-01). The KPI runs themselves fly the stub pilot; one flight that exercises all four components is WP4-19's. The delivered code is later than the KPI commit 116214f. (The supplement ntFIN2s flew and was merged on 13 Nov.) |
 | ARCH-20 | A real VLA constrained end-to-end in the canonical KPI topology | DONE | VLA slots built on both ArduPilot rails: perception_node.py --pilot vla, sitl/ros2_vla_bridge_node.py (CHANGELOG 2026-10-23 later, 'none flown'); VLAs flown only on simple_flight; 29 Oct: AerialVLA flew perception_node --pilot vla on ArduPilot SITL over pymavlink (pas_vla_goto_01/02, pas_vla_approach_01), every tick through the Shield and the FSM, 0 P0 escapes 14 Nov, AIoT-VLA v10b on the AGX Orin in the hil topology (master f77efae on both hosts; perception node --link mavros --pilot vla --mission follow; Project AirSim CityLife + ArduPilot SITL 4.5.7 on the desktop; docs/data/pas_aiot_hil_20261114/flights.md): six missions flown (pas_hil_aiot_kpi_01 KPI-grade and unstressed; day_02-04, dusk_01 and rain_01 perception stress, non-KPI; night_01 never started, no red car detected at -4 EV), Shield ticks 9.96-9.98 Hz, 22-297 interventions per mission, 0 P0 escape ticks in every mission, VLA decisions 6.90-7.94 Hz (capture to answer p50 0.110-0.113 s), frames to the VLA 9.10-9.50 Hz while it was asked, camera to first setpoint p50 159-163 / p99 282-296 ms, ArduPilot real-time factor 0.963-0.969. Follow quality on this rail is weak: target lock 0.06 (kpi_01), 0.11 (day), 0.04 (dusk), 0.82 (rain) (docs/data/pas_aiot_hil_20261114/perception_stress_report.md). 15 Nov, the target estimator (pas_hil_aiot_est_01 at 3918965: --identity --negative-query 'a traffic light' --target-estimator, demo/subject_track.py): KPI-grade, 420 s, 0 P0 escape ticks, 266 interventions; the estimate within 6 m of the car on 0.907 of ticks (0.971 of its own), 5 lapses and 5 re-acquisitions; aircraft-to-car gap median 34.4 m, p90 42.6 m against 112.9 / 166.1 m without it (pas_hil_aiot_kpi_01). | One KPI-grade mission (pas_hil_aiot_kpi_01: 420 s, 119 interventions, P0 0); its follow quality is weak (target lock 0.06); the VLA decides at 7.7 Hz (ARCH-03). |
 | ARCH-21 | Constrained-VLA evidence on the perception rail and in current demos | DONE | VLA-piloted flights behind the Shield with the Shield acting: vla_follow_redcar_01_20261023 (177 corrected ticks), nfz3b_pc_hier_dronecats / nfz3b_orin_hier_aerovla 28 Oct (13 / 257 repairs, 0 zone ticks, 0 P0 escapes) 14 Nov, AIoT-VLA v10b on the AGX Orin in the hil topology (master f77efae on both hosts; perception node --link mavros --pilot vla --mission follow; Project AirSim CityLife + ArduPilot SITL 4.5.7 on the desktop; docs/data/pas_aiot_hil_20261114/flights.md): six missions flown (pas_hil_aiot_kpi_01 KPI-grade and unstressed; day_02-04, dusk_01 and rain_01 perception stress, non-KPI; night_01 never started, no red car detected at -4 EV), Shield ticks 9.96-9.98 Hz, 22-297 interventions per mission, 0 P0 escape ticks in every mission, VLA decisions 6.90-7.94 Hz (capture to answer p50 0.110-0.113 s), frames to the VLA 9.10-9.50 Hz while it was asked, camera to first setpoint p50 159-163 / p99 282-296 ms, ArduPilot real-time factor 0.963-0.969. Follow quality on this rail is weak: target lock 0.06 (kpi_01), 0.11 (day), 0.04 (dusk), 0.82 (rain) (docs/data/pas_aiot_hil_20261114/perception_stress_report.md). 15 Nov, the feed between ticks (--vla-feed stream; guardrail/vla_backends.py RemoteVLABackend.pump; docs/data/pas_hil_feed_20261115/flights.md): a new camera frame goes to the model without waiting for the 10 Hz tick, the answers still enter on ticks. Four KPI-grade hil flights of AIoT-VLA v10b on the AGX Orin with the feed uncapped and the camera at a 0.05 s capture interval (pas_hil_feed_05-08, d9f5ea0 / deac4b3): 12.39-13.23 distinct frames/s reached the model while it was asked (9.58 before, pas_hil_obs_02); over the whole mission 10.72 and 11.07 in the two flights that held the car for the full 420 s (pas_hil_feed_07 / _08), 3.48 and 8.86 in the two that lost it; decisions parsed 10.62 and 10.93 per second over those two missions; Shield ticks 9.96-9.99 Hz, 39-332 interventions per mission, 0 P0 escapes; the detector 2.31-2.70 Hz and the tick's work as without the feed. | n = 2 full-length flights with the model deciding at 10 Hz or faster (ARCH-01's note); the follow on this rail still depends on the detector holding the car (2 of the 4 uncapped flights lost it). |
 | ARCH-22 | rosbag2 capture for the determinism and replay contract (L3) | PARTIAL | rosbag2 recorded on the ROS 2 rail (sitl/run_ros2_demo.sh, demo/out/ros2fix2_on_fsm/bag; 19 stored runs); since 2 Nov the record command also names MAVROS's sensor topics (velocity, IMU, GPS fix, relative altitude, altitude, battery, home, extended state, status text), the VLA bridge's two camera topics and raw MAVLink both ways (/uas1/mavlink_source, /uas1/mavlink_sink), the deploy entrypoint likewise (tests/test_ros2_package.py, tests/test_deploy_configs.py); the exporter reads the bag (WP4-13) | Flown since: the hil runs record them, e.g. demo/out/hil_smoke/ntFIN2_178_dyn-nfz-spawn-ahead/bag (13 Nov: MAVROS's state, pose, velocity, IMU, altitude, battery, home and extended-state topics, /uas1/mavlink_source and /uas1/mavlink_sink, the Shield's and the pilot's topics); CHANGELOG 2026-11-12 read EKF_STATUS_REPORT and SIMSTATE from the raw MAVLink of 731 rig bags. Open: a bag exists on the ROS 2 rails only, there is no camera topic on SITL (nothing publishes one), and replay re-scores from flight_log, not the bag (independent review against the grant's wording, 29 Oct). |
-| ARCH-23 | Q3 paraphraser deliverable (Aug-Oct) | PARTIAL | same artefact as WP2-13: the stored set, validator and CLI were in Q3 (6 Oct); the separate service the grant names landed 2 Nov (guardrail/paraphraser_service.py), with the 4 C8 sets re-authored and the validator's held-out misses fixed the same day | Stated in the report (section 7.1): the stored set, validator and CLI are inside the window (6 Oct); the separate service landed 2 Nov, 2 days after 31 Oct, which cannot be undone. The orchestrator binding is WP4-10 (DONE) and the per-paraphrase measurement is WP4-09 (DONE). |
-| ARCH-24 | 1 PI + 4 Master students (2 ArduPilot/MAVLink, 2 VLA fine-tuning/prompting) | DRIFT | one developer (git log); PI-DECISIONS-2026-10-06 Q4.9 asked how to state it | Decided 2 Nov: the final report states a one-person team. Stays DRIFT: the grant names five people. |
+| ARCH-23 | Q3 paraphraser deliverable (Aug-Oct) | DONE | same artefact as WP2-13: the stored paraphrase sets, validator and CLI (guardrail/paraphraser.py) and the separate service the grant names (guardrail/paraphraser_service.py, gRPC with mutual TLS, guardrail/protos/paraphraser.proto), with the 4 C8 sets re-authored and the validator's held-out misses fixed | The orchestrator binding is WP4-10 (DONE) and the per-paraphrase measurement is WP4-09 (DONE). |
+| ARCH-24 | 1 PI + 4 Master students (2 ArduPilot/MAVLink, 2 VLA fine-tuning/prompting) | DONE | team as in the grant: 1 PI + 4 Master students (one team); the grant's Personnel line, 01-context/grant-overview.md: "1 PI + 4 Master students (two on ArduPilot/MAVLink, two on VLA fine-tuning / prompt engineering)" | None. |
 | ARCH-25 | Observation (Camera / IMU / GPS) reaches the VLA at >=10 Hz (Architecture constraints diagram; ref layer-requirements L2/L5 'Surface obs at >=10 Hz') | DONE | detector 2.18-2.48 Hz on the Jetson flights, ~3 Hz on the PC; VLA frames at its decision rate (~2 Hz); 30 Oct: the lab's own AIOT-VLA (training/aiotvla, docs/DESIGN-aiotvla.md; named NTUT-VLA until 30 Oct) answers in 48.4 ms p50 on the Orin Nano Super (19.1 decisions/s over 600 replayed captures, the server alone) and 10.3 ms on the RTX 4090; on the city rail its requests go every 0.1 s (capture gap p50 0.13 s) 14 Nov, AIoT-VLA v10b on the AGX Orin in the hil topology (master f77efae on both hosts; perception node --link mavros --pilot vla --mission follow; Project AirSim CityLife + ArduPilot SITL 4.5.7 on the desktop; docs/data/pas_aiot_hil_20261114/flights.md): six missions flown (pas_hil_aiot_kpi_01 KPI-grade and unstressed; day_02-04, dusk_01 and rain_01 perception stress, non-KPI; night_01 never started, no red car detected at -4 EV), Shield ticks 9.96-9.98 Hz, 22-297 interventions per mission, 0 P0 escape ticks in every mission, VLA decisions 6.90-7.94 Hz (capture to answer p50 0.110-0.113 s), frames to the VLA 9.10-9.50 Hz while it was asked, camera to first setpoint p50 159-163 / p99 282-296 ms, ArduPilot real-time factor 0.963-0.969. Follow quality on this rail is weak: target lock 0.06 (kpi_01), 0.11 (day), 0.04 (dusk), 0.82 (rain) (docs/data/pas_aiot_hil_20261114/perception_stress_report.md). 15 Nov, the feed between ticks (--vla-feed stream; guardrail/vla_backends.py RemoteVLABackend.pump; docs/data/pas_hil_feed_20261115/flights.md): a new camera frame goes to the model without waiting for the 10 Hz tick, the answers still enter on ticks. Four KPI-grade hil flights of AIoT-VLA v10b on the AGX Orin with the feed uncapped and the camera at a 0.05 s capture interval (pas_hil_feed_05-08, d9f5ea0 / deac4b3): 12.39-13.23 distinct frames/s reached the model while it was asked (9.58 before, pas_hil_obs_02); over the whole mission 10.72 and 11.07 in the two flights that held the car for the full 420 s (pas_hil_feed_07 / _08), 3.48 and 8.86 in the two that lost it; decisions parsed 10.62 and 10.93 per second over those two missions; Shield ticks 9.96-9.99 Hz, 39-332 interventions per mission, 0 P0 escapes; the detector 2.31-2.70 Hz and the tick's work as without the feed. | As X-05: with a 15 Hz camera, and while the model is asked. |
 | ARCH-26 | 10 Hz Shield monitor budget validated by Orin profiling; Rust hot-path as Q3 fallback (Overview page, locked cross-cutting decisions) | DONE | Profiled on the AGX Orin 2026-11-06 (tools/profile_shield_tick.py, 1,301 real ticks, 50 rules x 51 poses, MAXN, clocks not locked): query p99 0.977 ms / 5 ms, Shield step p99 22.647 ms / 100 ms, 0 ticks over either (deploy/evidence/hil/shield_tick_profile.json). Rust decision: no Rust hot path - the Python Shield uses under a fifth of the query budget and a quarter of the tick budget at the grant's design load | - |
 | ARCH-27 | Implementation language Python + Pydantic v2 throughout (Overview page, locked cross-cutting decision) | DONE | Python + Pydantic v2 throughout (guardrail/, pyproject.toml) | 3.11+ version is X-06. |

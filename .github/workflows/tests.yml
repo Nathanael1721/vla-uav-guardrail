@@ -261,7 +261,8 @@
 #        Deployment and environments: test_deploy_configs, test_env_pins.
 #        Documents and the tools that build them: test_public_docs,
 #          test_ft_report, test_explainer_figures, test_explainer_deck,
-#          test_check_claims, test_build_* (the public site, the
+#          test_check_claims, test_final_report_counts (the report's
+#          printed totals against its Appendix A), test_build_* (the public site, the
 #          mid-evaluation report, the deck and evaluation numbers, the
 #          October deck, the tracker's Dashboard data), test_tracker_*,
 #          test_add_update, test_encode_deliverable, test_make_demo_video.
@@ -818,6 +819,7 @@ jobs:
               tests/test_ped_walk_plan.py \
               tests/test_parked_cars.py \
               tests/test_check_claims.py \
+              tests/test_final_report_counts.py \
               tests/test_build_public_site.py \
               tests/test_build_mideval_report.py \
               tests/test_build_deck_data.py \
