@@ -18,7 +18,15 @@ computed the first time the Shield or the compiler reads `point.x` / `point.y`
 (models.XY), by `local_metres` below, which caches them per origin. Metre-
 authored policies are untouched: they are the legacy form and still load and
 hash exactly as before; since 2026-11-03 no shipped policy is written in it
-(tools/convert_policies_wgs84.py).
+(tools/convert_policies_wgs84.py), and since 2026-11-17 a metre point an
+event writes into a policy with a frame (REST hot-apply, the Shield's zone
+edits, the harness's spawned zones, a lock recipe rebuilt by bundle.derive,
+tools/geo_to_policy.py ingest) is converted at ingest (`metres_to_wgs84`,
+models.rule_in_wgs84, `raw_points_in_wgs84`), so in a policy with a frame the
+metre form is not STORED. By default the live Shield still enforces the
+metres it was given for such a point, not the view of its lat/lon (a
+declared deviation, up to 0.6 um; see models.rule_in_wgs84 and
+Shield.wgs84_bind_frame).
 
 THE LOCAL VIEW IS ROUNDED TO THE MICROMETRE
 
@@ -134,6 +142,26 @@ def local_metres(origin: tuple[float, float], lat: float,
     grant asks for (models.XY reads it for `x` / `y`)."""
     n, e = projection_for(origin[0], origin[1]).to_local(lat, lon)
     return (quantize_m(n), quantize_m(e))
+
+
+# A metre point converted to WGS84 at ingest (metres_to_wgs84) is written to
+# 12 decimal places of a degree (~0.1 um of latitude), as
+# tools/convert_policies_wgs84.py writes the stored policies.
+WGS84_DECIMALS = 12
+
+
+def metres_to_wgs84(origin: tuple[float, float], x_north_m: float,
+                    y_east_m: float) -> tuple[float, float]:
+    """(lat, lon) of the point (x North, y East) metres from `origin` ((lat,
+    lon)), rounded to WGS84_DECIMALS: the inverse of `local_metres`. For a
+    point on the micrometre grid (every metre value written with at most six
+    decimals) `local_metres` gives back exactly (x, y); for any other the
+    view is within 0.6 um of (x, y): half the micrometre, plus at most
+    0.06 um from writing lat/lon to 12 decimals. Since 2026-11-17 (WP1-14) the
+    Shield writes every metre point an event adds this way (models.
+    rule_in_wgs84), so a policy with a frame is stored in WGS84 only."""
+    lat, lon = projection_for(origin[0], origin[1]).to_latlon(x_north_m, y_east_m)
+    return (round(lat, WGS84_DECIMALS), round(lon, WGS84_DECIMALS))
 
 
 def check_ring(points) -> list[tuple[float, float]]:
@@ -294,6 +322,22 @@ def raw_point_metres(point: dict, origin) -> tuple[float, float]:
         raise ValueError(f"a point with neither x/y nor a placeable lat/lon: {point}")
     return local_metres((float(origin[0]), float(origin[1])),
                         _num(point["lat"], "lat"), _num(point["lon"], "lon"))
+
+
+def raw_points_in_wgs84(node, origin: tuple[float, float]):
+    """A copy of raw rule(s) `node` with every metre point {x, y} written as
+    {lat, lon} about `origin` (metres_to_wgs84); everything else as it was.
+    The raw-dict twin of models.rule_in_wgs84, for a tool that appends rules
+    to a policy with a frame (tools/geo_to_policy.py ingest, 2026-11-17)."""
+    if isinstance(node, list):
+        return [raw_points_in_wgs84(v, origin) for v in node]
+    if not isinstance(node, dict):
+        return node
+    if _is_metric_point(node):
+        lat, lon = metres_to_wgs84(origin, _num(node["x"], "x"), _num(node["y"], "y"))
+        return {**{k: v for k, v in node.items() if k not in ("x", "y", "lat", "lon")},
+                "lat": lat, "lon": lon}
+    return {k: raw_points_in_wgs84(v, origin) for k, v in node.items()}
 
 
 def _num(v, what: str) -> float:

@@ -2947,9 +2947,19 @@ def update_lock(policies_dir: str | Path | None = None,
 
 
 def derive(base: Policy, hot_apply: list[dict], generations: int | None = None,
-           *, ir_schema_version: str | None = None) -> Policy:
+           *, ir_schema_version: str | None = None,
+           wgs84_writes: bool = True) -> Policy:
     """Rebuild a hot-applied policy exactly as Shield.hot_apply produces it:
     each rule appended, generation bumped once per rule.
+
+    On a base with a frame (every stored policy since 2026-11-03), a rule's
+    metre points are written as WGS84 about the base's frame origin, as
+    Shield._in_frame writes them since 2026-11-17 (WP1-14,
+    models.rule_in_wgs84), so the rebuilt policy hashes as the live one did.
+    A recipe for a run flown on a base with a frame BEFORE that date, when
+    the Shield still wrote metres, records `wgs84_writes: false` in its lock
+    entry (policy_candidates passes it here). On a metre base (no frame)
+    nothing is converted, either way.
 
     `ir_schema_version` is the IR schema the recipe was recorded under; None
     (every recipe in the lock before 2026-11-02) means 2.x. A 2.x recipe may
@@ -2959,7 +2969,7 @@ def derive(base: Policy, hot_apply: list[dict], generations: int | None = None,
     Before 4.0.0 a recipe may leave `scope` out, and it stays absent, as it
     flew (models.era_context); under 4.0.0 a recipe states it."""
     from pydantic import TypeAdapter
-    from .models import IR2_RULE_DEFAULTS, Constraint
+    from .models import IR2_RULE_DEFAULTS, Constraint, rule_in_wgs84
     ir2 = _semver_key(ir_schema_version or "2.0.0") < (3, 0, 0)
     pol = base.model_copy(deep=True)
     ta = TypeAdapter(Constraint)
@@ -2967,7 +2977,10 @@ def derive(base: Policy, hot_apply: list[dict], generations: int | None = None,
     for raw in hot_apply:
         if ir2 and isinstance(raw, dict):
             raw = {**IR2_RULE_DEFAULTS, **raw}
-        pol.constraints.append(ta.validate_python(raw, context=era))
+        rule = ta.validate_python(raw, context=era)
+        if wgs84_writes:
+            rule = rule_in_wgs84(rule, base.frame_origin)
+        pol.constraints.append(rule)
         pol.generation += 1
     if generations is not None and pol.generation != base.generation + generations:
         raise ValueError(f"derivation expected {generations} generation(s), "
@@ -3021,7 +3034,8 @@ def policy_candidates(policies_dir: str | Path | None = None,
             continue
         out.append((d["name"], derive(base, d.get("hot_apply") or [],
                                       d.get("generations"),
-                                      ir_schema_version=d.get("ir_schema_version"))))
+                                      ir_schema_version=d.get("ir_schema_version"),
+                                      wgs84_writes=d.get("wgs84_writes", True))))
     return out
 
 
