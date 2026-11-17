@@ -3857,10 +3857,40 @@ def render_sweep_markdown(doc: dict, top_k: int = 10) -> str:
          f"`{man.get('code_revision')}`. Reproduce with:", "",
          "```", str(doc.get("_command") or "python experiments/sweep_scenarios.py"),
          "```", ""]
-    if doc.get("_not_kpi_grade"):
+    not_bearing = scope.get("grant_profile_kpi_bearing") is False
+    if doc.get("_not_kpi_grade") and not_bearing and scope.get("profile") == "broad":
+        # The broad sweep (2026-11-17): its grant row is outside the KPIs on
+        # any rail, so "reproduces their scope, not their rail" would mislead.
+        L += [f"**Not KPI-grade:** {doc['_not_kpi_grade']}. This profile's row in the "
+              f"grant's schedule is not KPI-bearing on any rail: the broad sweep is "
+              f"tracked for coverage, and its results are not part of the final KPI "
+              f"numbers.", ""]
+    elif doc.get("_not_kpi_grade") and not_bearing:
+        # Another profile with `grant_kpi_bearing: false` (prefix_ab,
+        # fsm_edges): not a smoke or nightly reproduction, and not the broad
+        # sweep either; its own scope line says what it is.
+        gs = scope.get("grant_scope")
+        L += [f"**Not KPI-grade:** {doc['_not_kpi_grade']}. This profile is not one of "
+              f"the grant's KPI-bearing rows"
+              + (f" (its scope: {gs})" if gs else "")
+              + "; keep its runs out of the KPI figures.", ""]
+    elif doc.get("_not_kpi_grade"):
         L += [f"**Not KPI-grade:** {doc['_not_kpi_grade']}. The grant's smoke and "
               f"nightly rows ask for sim_speedup 1.0 in the hil topology; this run "
               f"reproduces their scope, not their rail.", ""]
+    if doc.get("_resume"):
+        r = doc["_resume"]
+        L += [f"Merged from per-episode checkpoints (`{r.get('checkpoints')}`): "
+              f"{r.get('episodes_replayed')} replayed, "
+              f"{r.get('episodes_flown_by_this_process')} flown by the merging run; "
+              f"{r.get('episode_wall_s_total')} s of episode time "
+              f"({r.get('s_per_episode')} s per episode)"
+              + (f"; the sweep's wall span {r.get('sweep_wall_span_s')} s, from "
+                 f"{r.get('sweep_started_utc')} to {r.get('last_checkpoint_utc')} "
+                 f"(pauses between runs included)"
+                 if r.get("sweep_wall_span_s") is not None else "")
+              + (f". The invocation that wrote this file: `{r.get('command_as_run')}`"
+                 if r.get("command_as_run") else "") + ".", ""]
     add = max_s_add(scope.get("hil") if isinstance(scope.get("hil"), dict) else None)
     if add:
         L += [f"**LENGTHENED campaign:** every mission flew {add:g} s past the rail's cap "
@@ -3879,7 +3909,9 @@ def render_sweep_markdown(doc: dict, top_k: int = 10) -> str:
              else ""),
           f"- Status: {c.get('pass', 0)} pass, {c.get('tracked', 0)} tracked, "
           f"{c.get('fail', 0)} fail, {c.get('known_failure', 0)} known failure, "
-          f"{c.get('skipped', 0)} skipped; runtime {doc.get('_runtime_s')} s",
+          f"{c.get('skipped', 0)} skipped; runtime {doc.get('_runtime_s')} s"
+          + (" (this process; the episodes' time is in the merge line above)"
+             if doc.get("_resume") else ""),
           "- `n/m` = not measurable (an empty denominator, or a log that cannot "
           "answer); never a zero.", ""]
     L += ["## Per-scenario-family stats", "",

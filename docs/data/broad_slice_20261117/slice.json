@@ -1,0 +1,70 @@
+{
+  "_what": "WP4-06: a slice of the broad profile flown headless on the desktop with experiments/sweep_scenarios.py --resume / --shard, to prove resume and to measure seconds per episode. Not the broad sweep (14 950 episodes), not KPI-grade (headless-kinematic topology).",
+  "date_utc": "2026-11-17",
+  "code_revision": "e084773964ef",
+  "profile": "broad",
+  "episodes_in_profile": 14950,
+  "checkpoint_header_dirty_tree": false,
+  "coverage": {
+    "cells": 50,
+    "families_flown": 7,
+    "families_in_profile": 16,
+    "seeds": [1001, 1002, 1003, 1004, 1005],
+    "families_not_flown": ["sensor_degradation", "wind_disturbance", "corridor_keep_in", "altitude_envelope", "radius_scaling", "corridor_swap", "time_window_static", "kinematic_envelope", "action_contract"],
+    "episodes_in_families_not_flown": 355,
+    "note": "Corrected 2026-11-17 after review. The profile lists a cell's 5 seeds one after another and 300 is a multiple of 5, so shards 1/300 to 5/300 are the same 50 cells, one seed each; shards 2-5 re-fly shard 1's cells on seeds 1002-1005. The four big families are in about the profile's proportions, so the timing estimate rests on them; 9 small families were not flown. Earlier text in this file's first version, in broad.yaml and in commit 28dbac3 said each shard's family mix was the profile's: it was not. --shard I/4 (the rig command) splits every cell's seeds across the four shards, so each of those shards flies every family."
+  },
+  "resume_proof": {
+    "command": "python experiments/sweep_scenarios.py --profile broad --shard 1/300 --resume CK --runs RUNS --out OUT/sweep.json",
+    "first_run": "killed by `timeout 45` (exit 124) after 45 s of wall time",
+    "checkpoints_after_kill": 23,
+    "second_run_log": [
+      "checkpoints in CK: 23 of shard 1/300's 50 episodes done, 27 to fly",
+      "episodes: 27 flown in 56 s (2.06 s/episode), 23 replayed from CK",
+      "shard 1/300: 48 passed, 0 tracked, 0 failed, 2 known failures, 0 skipped"
+    ],
+    "shard_1_episodes_total": 50,
+    "statuses": {
+      "pass": 48,
+      "known_failure": 2
+    },
+    "second_run_exit": 0
+  },
+  "timing": {
+    "shard_1_single_process": {
+      "episodes": 50,
+      "mean_s": 1.946,
+      "median_s": 1.646,
+      "max_s": 4.729,
+      "note": "per-episode wall time from the checkpoints (episode, scoring, bundle write)"
+    },
+    "shards_2_to_5_four_processes": {
+      "episodes": 200,
+      "cells": "the same 50 cells as shard 1, on seeds 1002-1005",
+      "wall_s": 109,
+      "per_process_logs": [
+        "episodes: 50 flown in 1.8 min (2.15 s/episode), 0 replayed",
+        "episodes: 50 flown in 1.8 min (2.14 s/episode), 0 replayed",
+        "episodes: 50 flown in 1.8 min (2.15 s/episode), 0 replayed",
+        "episodes: 50 flown in 1.8 min (2.13 s/episode), 0 replayed"
+      ],
+      "aggregate_s_per_episode": 0.545
+    },
+    "families_in_shard_1": {
+      "dynamic_nfz_movement": 26,
+      "failsafe_escalation": 3,
+      "subject_standoff": 9,
+      "three_simultaneous_violations": 9,
+      "high_speed_near_edge": 1,
+      "static_nfz": 1,
+      "time_window_switch": 1
+    },
+    "estimate_full_profile": "14 950 episodes x 1.95 s = about 8.1 h in one process; x 0.545 s = about 2.3 h as four parallel shards (scaled, not measured on the whole profile)"
+  },
+  "sizes": {
+    "bundle_mb_per_episode": 1.1,
+    "checkpoint_kb_per_episode": 17,
+    "checkpoint_load_s_per_1000": 6.7,
+    "checkpoint_load_mb_ram_per_1000": 61
+  }
+}
