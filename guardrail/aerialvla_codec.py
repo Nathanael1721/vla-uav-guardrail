@@ -1236,8 +1236,13 @@ def adapter_variant(model_id: Any) -> str | None:
 # "ntutvla" is the same model's name until 30 Oct: no server announces it any
 # more (demo/vla_server_foreign.FAMILIES), and it stays here so the flights of
 # 29-30 Oct (demo/out/ntut_*) still classify as that model's.
+# "cognitivedrone" and "bitvla" (2026-11-17, ARCH-06: the grant's switchable
+# backends): adapters written and tested on scripted native outputs before
+# any weights were obtained (demo/vla_server_foreign.py, CognitiveDrone and
+# BitVLA; tests/test_vla_backends_cd_bitvla.py); neither has flown.
 FOREIGN_VARIANT = "foreign"
-FOREIGN_FAMILIES = ("dronecats", "racevla", "aiotvla", "ntutvla")
+FOREIGN_FAMILIES = ("dronecats", "racevla", "aiotvla", "ntutvla", "cognitivedrone",
+                    "bitvla")
 LEGACY_FOREIGN_FAMILIES = ("ntutvla",)
 FOREIGN_TILE_NONE = "none"
 # The front cameras a flight can send (demo/pas_config/robot_vla_quad_det.

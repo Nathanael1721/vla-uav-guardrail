@@ -205,6 +205,11 @@
 #          on a stub client with a fake clock and on the loopback fake
 #          server with the real protocol-v2 client and threads; nothing
 #          SKIPs).
+#          test_vla_backends_cd_bitvla (ARCH-06, 2026-11-17: the
+#          CognitiveDrone and BitVLA adapters on scripted native outputs -
+#          the 4-D velocity mapping, a 500-output sweep per family to a
+#          finite Action4D, TCP through RemoteVLABackend, the --model and
+#          FAMILY= switches, the refusal without the download).
 #          test_vla_foreign (foreign drone VLAs behind protocol v2,
 #          2026-10-27: demo/vla_server_foreign.py serving DroneCATS and
 #          RaceVLA to the same clients - both native-to-step mappings on
@@ -809,6 +814,7 @@ jobs:
               tests/test_vla_follow_reacquire.py \
               tests/test_vla_hierarchy.py \
               tests/test_vla_foreign.py \
+              tests/test_vla_backends_cd_bitvla.py \
               tests/test_aiotvla.py \
               tests/test_vla_lateral_step.py \
               tests/test_follow_teacher.py \

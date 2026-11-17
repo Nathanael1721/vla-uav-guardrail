@@ -2051,7 +2051,7 @@ def model_words(identity: dict | None) -> str:
 
 # How the video panel names a foreign family (aerialvla_codec.FOREIGN_FAMILIES).
 FAMILY_LABEL = {"dronecats": "DroneCATS", "racevla": "RaceVLA", "aiotvla": "AIOT-VLA",
-                "ntutvla": "NTUT-VLA"}
+                "ntutvla": "NTUT-VLA", "cognitivedrone": "CognitiveDrone", "bitvla": "BitVLA"}
 
 
 def model_label(identity: dict | None) -> str:

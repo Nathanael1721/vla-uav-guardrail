@@ -178,6 +178,49 @@ lm_head in bf16. attn sdpa or eager (RaceVLA's server.py:19 uses
 flash_attention_2, not installed here). The scripted stand-in is
 "fake:<family>-scripted" with no digest: never a VLA.
 
+COGNITIVEDRONE AND BITVLA (2026-11-17, ARCH-06; written before any weights)
+--------------------------------------------------------------------------
+The grant's switchable backends (architecture-constraints.md: "CognitiveDrone,
+OpenVLA generic, BitVLA, in-house stubs"). Both adapters are tested on
+scripted native outputs only; neither model has run here and neither has
+flown. Without the download, serve refuses before anything loads, naming
+the files that are missing (REQUIRED_FILES).
+  CognitiveDrone (Skoltech, arXiv 2503.01378): an OpenVLA-7B fine-tune that
+answers "a four-component control signal (Vx, Vy, Vz, omega)" at 10 Hz.
+Checked on 2026-11-17: Hugging Face has no model repository for it (no
+model under ArtemLykov or SerValera other than RaceVLA_models), and
+cognitivedrone.github.io links the dataset (ArtemLykov/cognitiveDrone_dataset)
+and a data collector only. The paper gives no prompt, units, frame or bin
+count; the adapter uses the same OpenVLA token reader and body-FLU reading
+as its sibling RaceVLA (same lab, same OpenVLA code): OpenVLA's prompt, the
+action tokens un-normalised with its dataset_statistics.json, the
+velocities body FLU (x forward, y LEFT, z up, omega + counter-clockwise).
+Unit gains and colour frames are ASSUMPTIONS, not RaceVLA's values (RaceVLA
+uses RACEVLA_GAINS and grey frames); so are the frame, the units and the
+sign of omega, since CognitiveDrone publishes no code. A 4-D statistics file is read
+(vx, vy, vz, omega) = a[0..3]; a 7-D one RaceVLA's way, a[0, 1, 2, 5].
+Rule cognitivedrone_velocity4/1: over the horizon T, fwd = vx T, right =
+-vy T (the lateral step, kept: the 4-D contract has vy), down = -vz T,
+dpsi = -omega T. To re-check against its code once released.
+  THE SLOT IS LOSSY (both families): the step goes through AerialVLA's step
+codec (RANGES), which cannot carry a backward step - fwd_m is 0..5 m, so
+vx < 0 is flown as vx = 0 - and caps a heading change at 1.1 rad per
+horizon (|omega T| > 1.1 rad is clipped); right_m is +-2.5 m and down_m
++-5 m. encode_step records each clip ("clipped", per axis); the shape
+conforms, the backward half of vx does not reach the Shield.
+  BitVLA (ICT-CAS, arXiv 2506.07530; github.com/ustcwhy/BitVLA, MIT): a
+ternary (1.58-bit) 3 B VLA on the OpenVLA-OFT recipe: parallel decoding of
+an action CHUNK (NUM_ACTIONS_CHUNK x ACTION_DIM, un-normalised by the
+model's own predict_action with its dataset_statistics.json and an L1
+regression action head). Its published checkpoints are LIBERO manipulation
+fine-tunes (7-D end-effector deltas + gripper): no drone checkpoint exists.
+Rule bitvla_chunk_velocity4/1: the chunk's first row a, read as body FLU
+(a[0], a[1], a[2]) and a yaw rate a[5], through the same velocity-4 mapping;
+a[3], a[4], a[6] and the other rows are recorded, not flown. With a LIBERO
+checkpoint that is a conformance shell (an arm's delta flown as a velocity),
+not a drone pilot: a drone fine-tune of BitVLA (its released fine-tuning
+code) is what would make it one.
+
 IMPORTS. No torch, transformers or Pillow at module level. The dronecats
 env has no pydantic or shapely, which guardrail/__init__ (the Shield)
 needs: the codec and guardrail.manifest are stdlib-only, so when the
@@ -230,7 +273,8 @@ import vla_server_v2 as S                                            # noqa: E40
 # the families this server serves: not a legacy name (aerialvla_codec)
 FAMILIES = tuple(f for f in C.FOREIGN_FAMILIES if f not in C.LEGACY_FOREIGN_FAMILIES)
 MAPPING_RULES = {"dronecats": "dronecats_go_rotate/1", "racevla": "racevla_velocity/1",
-                 "aiotvla": "aiotvla_step/1"}
+                 "aiotvla": "aiotvla_step/1", "cognitivedrone": "cognitivedrone_velocity4/1",
+                 "bitvla": "bitvla_chunk_velocity4/1"}
 QUANTIZE_RULE = ("nearest bin, round((v - lo) / (hi - lo) * 98), after clipping to the codec's "
                  "range; the client decodes the bin's lower edge, so the flown step is within "
                  "half a bin of the requested one")
@@ -243,6 +287,10 @@ NATIVE_OUTPUT = {
     "aiotvla": ("three distributions over its own grids (training/aiotvla/core.GRIDS), "
                 "decoded to fwd_m, down_m, dpsi_rad over the label horizon (core.decode), "
                 "plus visible_p and bearing_rad (training signals, not flown)"),
+    "cognitivedrone": ("4 (or 7) OpenVLA action tokens -> un-normalised floats; vx, vy, vz, "
+                       "omega = a[0..3] (a[0, 1, 2, 5] for 7-D statistics)"),
+    "bitvla": ("an action chunk, NUM_ACTIONS_CHUNK rows of 7 un-normalised floats "
+               "(predict_action with its L1 action head); row 0 flown: a[0..2], a[5]"),
 }
 # The upstream sources this server's input and mapping were written from
 # (module docstring), as read on 2026-10-27. The weights that run are pinned
@@ -262,7 +310,52 @@ UPSTREAM = {
     "aiotvla": {"model": "AIOT-VLA (this repository: training/aiotvla)", "revision": None,
                 "base_model": "google/owlvit-base-patch32 (frozen) + a trained head",
                 "license": None, "paper": None, "code": "training/aiotvla"},
+    "cognitivedrone": {"model": None, "revision": None,
+                       "base_model": "openvla/openvla-7b (fine-tune)", "license": None,
+                       "paper": "arXiv 2503.01378",
+                       "code": ("cognitivedrone.github.io: dataset huggingface "
+                                "ArtemLykov/cognitiveDrone_dataset, github.com/SerValera/"
+                                "docker_CognitiveDrone_DataCollector; no model weights "
+                                "published (checked 2026-11-17)")},
+    "bitvla": {"model": "hongyuw/ft-bitvla-bitsiglipL-224px-<libero suite>-bf16",
+               "revision": None, "base_model": "hongyuw/bitvla-bitsiglipL-224px-bf16 "
+               "(BitNet b1.58 2B4T + ternary SigLIP-L)", "license": "MIT",
+               "paper": "arXiv 2506.07530",
+               "code": "github.com/ustcwhy/BitVLA (openvla-oft fork, bitvla_for_action_"
+                       "prediction.py in the checkpoint)"},
 }
+# What a family's download must hold before serve loads anything (module
+# docstring, COGNITIVEDRONE AND BITVLA): its absence is "weights not
+# obtained", said by name. A trailing * is a glob that must match a file.
+REQUIRED_FILES = {
+    "cognitivedrone": ("config.json", "model.safetensors.index.json",
+                       "dataset_statistics.json"),
+    "bitvla": ("config.json", "model.safetensors.index.json", "dataset_statistics.json",
+               "bitvla_for_action_prediction.py", "action_head--*.pt"),
+}
+# BitVLA's code and config, run via trust_remote_code: in its identity digest
+# (weight_files) so the identity pins the code that runs, not only the weights
+BITVLA_CODE_FILES = ("config.json", "bitvla_for_action_prediction.py")
+# --fake-native (a scripted stand-in, no GPU) needs only the statistics the
+# family's reader is built from, as RaceVLA's stand-in does
+FAKE_REQUIRED_FILES = ("dataset_statistics.json",)
+
+
+def missing_files(family: str, weights_dir: str | Path, fake: bool = False) -> list[str]:
+    """The REQUIRED_FILES of `family` not in `weights_dir` (all of them when
+    the folder does not exist); [] for a family with no list. fake (the
+    --fake-native stand-in): only FAKE_REQUIRED_FILES of that list."""
+    d = Path(weights_dir)
+    out = []
+    names = REQUIRED_FILES.get(family, ())
+    if fake:
+        names = tuple(n for n in names if n in FAKE_REQUIRED_FILES)
+    for name in names:
+        ok = (any(d.glob(name)) if "*" in name else (d / name).is_file()) if d.is_dir() \
+            else False
+        if not ok:
+            out.append(name)
+    return out
 HISTORY_GAP_S = 5.0
 MAX_HISTORY = 5                  # the user prompt: "Your last 5 actions"
 MAX_SESSIONS = 64                # connections whose history is kept
@@ -695,10 +788,12 @@ def unnormalize(normalized, stats: dict) -> list[float]:
             for n, lo, hi, m in zip(normalized, q01, q99, mask)]
 
 
-def load_action_stats(path: str | Path, key: str | None = None) -> tuple[str, dict]:
+def load_action_stats(path: str | Path, key: str | None = None,
+                      dims: tuple[int, ...] = (ACTION_DIM,)) -> tuple[str, dict]:
     """(the unnorm key, its action statistics {"q01", "q99", "mask"}) from a
     dataset_statistics.json: the file's only key, or `key`, which must be in
-    it (predict_action's _check_unnorm_key). ValueError otherwise."""
+    it (predict_action's _check_unnorm_key), of one of the dimensions `dims`
+    (RaceVLA's 7; CognitiveDrone's 4 or 7). ValueError otherwise."""
     p = Path(path)
     doc = json.loads(p.read_text(encoding="utf-8"))
     keys = sorted(doc) if isinstance(doc, dict) else []
@@ -715,8 +810,9 @@ def load_action_stats(path: str | Path, key: str | None = None) -> tuple[str, di
         mask = [bool(v) for v in act.get("mask") or [True] * len(q01)]
     except (TypeError, KeyError, ValueError):
         raise ValueError(f"{p}[{key!r}].action has no q01 / q99 lists") from None
-    if not len(q01) == len(q99) == len(mask) == ACTION_DIM:
-        raise ValueError(f"{p}[{key!r}].action is not {ACTION_DIM}-dimensional")
+    if not (len(q01) == len(q99) == len(mask) and len(q01) in dims):
+        raise ValueError(f"{p}[{key!r}].action is not {' or '.join(map(str, dims))}"
+                         f"-dimensional")
     return key, {"q01": q01, "q99": q99, "mask": mask}
 
 
@@ -846,6 +942,139 @@ class AIOTVLAFamily:
 
     def describe(self) -> dict:
         return {"horizon_s": self.horizon_s, "input": "VLAFront frame + object words + pose"}
+
+
+# --------------------------------------------------------------------------- #
+# CognitiveDrone and BitVLA: the 4-D velocity reading (module docstring,
+# COGNITIVEDRONE AND BITVLA)
+# --------------------------------------------------------------------------- #
+COGNITIVEDRONE_INSTRUCTION = "navigate to {target}"   # the paper's "Navigate to the gate ..."
+BITVLA_INSTRUCTION = "fly to {target}"
+VELOCITY4_GAINS = {"xy": 1.0, "z": 1.0, "yaw": 1.0}
+COGNITIVEDRONE_DIMS = (4, ACTION_DIM)
+# the action-vector slots read as (vx, vy, vz, omega), by the statistics' dimension
+VELOCITY4_SLOTS = {4: (0, 1, 2, 3), ACTION_DIM: (0, 1, 2, 5)}
+
+
+def map_velocity4(vx: float, vy: float, vz: float, omega: float, horizon_s: float = 1.0,
+                  gains: dict = VELOCITY4_GAINS, extra: dict | None = None) -> dict:
+    """The grant's 4-D action (vx, vy, vz, yaw rate), body FLU (x forward, y
+    LEFT, z up, omega + counter-clockwise, rad/s), held over the horizon ->
+    a LATERAL step {"kind": "velocity4", "fwd_m", "right_m", "down_m",
+    "dpsi_rad", "land", "geometry"}: fwd = gx vx T, right = -gx vy T, down =
+    -gz vz T, dpsi = -gyaw omega T (+ clockwise). Nothing is dropped; the
+    codec's ranges clip it afterwards, recorded (encode_step)."""
+    vx, vy, vz, omega = (float(v) for v in (vx, vy, vz, omega))
+    t = float(horizon_s)
+    fwd_v, left_v = gains["xy"] * vx, gains["xy"] * vy
+    climb, rate = gains["z"] * vz, gains["yaw"] * omega
+    geo = {"vx": vx, "vy": vy, "vz": vz, "omega": omega, "gains": dict(gains),
+           "forward_mps": fwd_v, "left_mps": left_v, "climb_mps": climb,
+           "yaw_rate_ccw_rad_s": rate, "horizon_s": t, **(extra or {})}
+    return {"kind": "velocity4", "fwd_m": fwd_v * t, "right_m": -left_v * t,
+            "down_m": -climb * t, "dpsi_rad": -rate * t, "land": False, "geometry": geo}
+
+
+class CognitiveDroneFamily(RaceVLAFamily):
+    """CognitiveDrone: OpenVLA's prompt and action tokens (RaceVLA's reader,
+    with its own dimension), the 4-D velocity reading (rule
+    cognitivedrone_velocity4/1). Colour by default: its camera is an RGB
+    FPV one, not RaceVLA's monochrome T265."""
+    name = "cognitivedrone"
+
+    def __init__(self, stats: dict, unnorm_key: str, *,
+                 instruction: str = COGNITIVEDRONE_INSTRUCTION, horizon_s: float = 1.0,
+                 gains: dict = VELOCITY4_GAINS, gray: bool = False, **kw):
+        super().__init__(stats, unnorm_key, instruction=instruction, horizon_s=horizon_s,
+                         gains=gains, gray=gray, **kw)
+        self.action_dim = len(stats["q01"])
+        if self.action_dim not in VELOCITY4_SLOTS:
+            raise ValueError(f"CognitiveDrone statistics of dimension {self.action_dim}: "
+                             f"not one of {sorted(VELOCITY4_SLOTS)}")
+
+    def inputs(self, req: dict, intr: dict, history: list[dict]) -> dict:
+        return {**super().inputs(req, intr, history), "max_new_tokens": self.action_dim}
+
+    def parse(self, g: dict) -> dict:
+        raw = g.get("raw")
+        if isinstance(raw, list) and len(raw) != self.action_dim:
+            return {"ok": False, "action": None, "tokens": raw, "unnorm_key": self.unnorm_key,
+                    "text": " ".join(str(t) for t in raw),
+                    "reason": f"not {self.action_dim} integer action tokens: {raw!r}"}
+        if not (isinstance(raw, list) and all(type(t) is int for t in raw)):
+            return {"ok": False, "action": None, "tokens": None, "unnorm_key": self.unnorm_key,
+                    "text": repr(raw),
+                    "reason": f"not {self.action_dim} integer action tokens: {raw!r}"}
+        lo = self.vocab_size - self.n_bins
+        n = tokens_to_normalized(raw, self.vocab_size, self.n_bins)
+        return {"ok": True, "reason": None, "tokens": raw, "unnorm_key": self.unnorm_key,
+                "text": " ".join(str(t) for t in raw),
+                "action": {"action": unnormalize(n, self.stats), "normalized": n},
+                "tokens_outside_action_bins": sum(1 for t in raw
+                                                  if not lo <= t < self.vocab_size)}
+
+    def map(self, action: dict, intr: dict, pitch_deg: float = 0.0) -> dict:
+        a = [float(v) for v in action["action"]]
+        slots = VELOCITY4_SLOTS[len(a)]
+        unused = {str(i): a[i] for i in range(len(a)) if i not in slots}
+        return map_velocity4(*(a[i] for i in slots), horizon_s=self.horizon_s,
+                             gains=self.gains, extra={"slots": list(slots), "unused": unused})
+
+    def describe(self) -> dict:
+        return {**super().describe(), "action_dim": self.action_dim,
+                "slots": list(VELOCITY4_SLOTS[self.action_dim])}
+
+
+class BitVLAFamily:
+    """BitVLA: OpenVLA's prompt, an action chunk out of its own predict_action
+    (already un-normalised), row 0 read as the 4-D velocity (rule
+    bitvla_chunk_velocity4/1)."""
+    name = "bitvla"
+    history = False
+
+    def __init__(self, unnorm_key: str, *, instruction: str = BITVLA_INSTRUCTION,
+                 horizon_s: float = 1.0, gains: dict = VELOCITY4_GAINS):
+        command_text("a car", instruction, allow_fixed=True)
+        if not (C._finite_number(horizon_s) and float(horizon_s) > 0):
+            raise ValueError(f"horizon_s {horizon_s!r} must be a positive number of seconds")
+        self.unnorm_key, self.instruction = unnorm_key, instruction
+        self.horizon_s, self.gains = float(horizon_s), dict(gains)
+
+    def prepare(self, img) -> tuple[Any, dict]:
+        return img.convert("RGB"), {"gray": False}
+
+    def inputs(self, req: dict, intr: dict, history: list[dict]) -> dict:
+        ins = command_text(req["object"], self.instruction, allow_fixed=True)
+        return {"prompt": RACEVLA_PROMPT.format(instruction=ins), "instruction": ins,
+                "unnorm_key": self.unnorm_key}
+
+    def parse(self, g: dict) -> dict:
+        raw = g.get("raw")
+        out: dict[str, Any] = {"ok": False, "action": None, "reason": None,
+                               "unnorm_key": self.unnorm_key,
+                               "text": json.dumps(raw, default=repr)}
+        if not (isinstance(raw, list) and raw and all(
+                isinstance(r, list) and len(r) == ACTION_DIM
+                and all(C._finite_number(v) for v in r) for r in raw)):
+            out["reason"] = f"not an action chunk of rows of {ACTION_DIM} finite numbers"
+            return out
+        out.update({"ok": True, "action": {"chunk": [[float(v) for v in r] for r in raw]},
+                    "chunk_len": len(raw)})
+        return out
+
+    def map(self, action: dict, intr: dict, pitch_deg: float = 0.0) -> dict:
+        a = action["chunk"][0]
+        return map_velocity4(a[0], a[1], a[2], a[5], horizon_s=self.horizon_s, gains=self.gains,
+                             extra={"row": 0, "unused": {"3": a[3], "4": a[4], "6": a[6]},
+                                    "rows_not_flown": len(action["chunk"]) - 1})
+
+    def mapping_params(self) -> dict:
+        return {"horizon_s": self.horizon_s, "gains": dict(self.gains)}
+
+    def describe(self) -> dict:
+        return {"instruction": self.instruction, "prompt": RACEVLA_PROMPT,
+                "unnorm_key": self.unnorm_key, "horizon_s": self.horizon_s,
+                "gains": dict(self.gains), "row_flown": 0}
 
 
 # --------------------------------------------------------------------------- #
@@ -1000,16 +1229,73 @@ class RaceVLAModel:
         if int(ids[0, -1]) != OPENVLA_EMPTY_TOKEN:
             ids = torch.cat((ids, torch.tensor([[OPENVLA_EMPTY_TOKEN]], dtype=ids.dtype)), dim=1)
         pv = enc["pixel_values"].to(self.device, dtype=torch.bfloat16)
+        # RaceVLA's 7; CognitiveDrone's family asks for its own dimension
+        n = int(inputs.get("max_new_tokens", ACTION_DIM))
         t1 = time.perf_counter()
         with torch.inference_mode():
             out = self.model.generate(ids.to(self.device), pixel_values=pv,
-                                      max_new_tokens=ACTION_DIM, do_sample=False)
+                                      max_new_tokens=n, do_sample=False)
         _sync(torch, self.device)
         t2 = time.perf_counter()
-        toks = [int(t) for t in out[0, -ACTION_DIM:].tolist()]
-        return {"raw": toks, "prompt_text": inputs["prompt"], "new_tokens": ACTION_DIM,
+        toks = [int(t) for t in out[0, -n:].tolist()]
+        return {"raw": toks, "prompt_text": inputs["prompt"], "new_tokens": n,
                 "prompt_tokens": int(ids.shape[1]), "pre_s": t1 - t0, "gen_s": t2 - t1,
                 "model_s": time.perf_counter() - t0}
+
+
+class BitVLAModel:
+    """BitVLA's checkpoint (trust_remote_code: bitvla_for_action_prediction.py)
+    with its L1 regression action head, in the environment its repository
+    builds (github.com/ustcwhy/BitVLA: torch 2.5, its transformers fork and
+    openvla-oft's `prismatic`, whose constants fix ACTION_DIM and
+    NUM_ACTIONS_CHUNK). NOT YET RUN: written on 2026-11-17 from the remote
+    code's predict_action and openvla-oft's loader before any download; the
+    first serve on the AGX is its test. No proprio is given (a drone has no
+    gripper state; the LIBERO checkpoints were trained with one, which is one
+    more reason their output is a conformance shell, module docstring)."""
+
+    def __init__(self, weights_dir: str | Path, *, device: str = "cuda:0"):
+        import torch
+        from transformers import AutoModelForVision2Seq, AutoProcessor
+        try:
+            from prismatic.models.action_heads import L1RegressionActionHead
+        except ImportError as exc:
+            raise ImportError("BitVLA needs openvla-oft's `prismatic` (pip install -e "
+                              "openvla-oft in BitVLA's repository)") from exc
+        self.torch, self.device = torch, device
+        t0 = time.perf_counter()
+        d = Path(weights_dir)
+        self.processor = AutoProcessor.from_pretrained(str(d), trust_remote_code=True)
+        self.model = AutoModelForVision2Seq.from_pretrained(
+            str(d), torch_dtype=torch.bfloat16, low_cpu_mem_usage=True, trust_remote_code=True,
+            device_map={"": device}).eval()
+        hidden = int(getattr(self.model, "llm_dim", 0) or
+                     self.model.config.text_config.hidden_size)
+        head_pt = sorted(d.glob("action_head--*.pt"))[-1]
+        self.head = L1RegressionActionHead(input_dim=hidden, hidden_dim=hidden,
+                                           action_dim=ACTION_DIM)
+        sd = torch.load(str(head_pt), map_location="cpu")
+        self.head.load_state_dict({k.removeprefix("module."): v for k, v in sd.items()})
+        self.head = self.head.to(device, dtype=torch.bfloat16).eval()
+        self.checkpoint = head_pt.name
+        self.timing = {"load_total_s": time.perf_counter() - t0}
+
+    def generate(self, image, inputs: dict) -> dict:
+        torch = self.torch
+        t0 = time.perf_counter()
+        enc = self.processor(inputs["prompt"], image, return_tensors="pt").to(
+            self.device, dtype=torch.bfloat16)
+        t1 = time.perf_counter()
+        with torch.inference_mode():
+            actions, _ = self.model.predict_action(**enc, unnorm_key=inputs["unnorm_key"],
+                                                   action_head=self.head, proprio=None,
+                                                   proprio_projector=None)
+        _sync(torch, self.device)
+        t2 = time.perf_counter()
+        return {"raw": [[float(v) for v in row] for row in actions.tolist()],
+                "prompt_text": inputs["prompt"], "new_tokens": None,
+                "prompt_tokens": int(enc["input_ids"].shape[1]), "pre_s": t1 - t0,
+                "gen_s": t2 - t1, "model_s": time.perf_counter() - t0}
 
 
 class AIOTVLAModel:
@@ -1145,12 +1431,17 @@ class AIOTVLAModel:
 def weight_files(family: str, weights_dir: str | Path) -> list[Path]:
     """What weights_sha256 covers: the shards model.safetensors.index.json
     names (vla_server_v2.base_weight_files), and for RaceVLA its
-    dataset_statistics.json, which changes every action."""
+    dataset_statistics.json, which changes every action. For BitVLA also the
+    code that runs (trust_remote_code: bitvla_for_action_prediction.py), its
+    config.json and the action head."""
     if family == "aiotvla":
         return [Path(weights_dir) / "head.pt"]
     files = S.base_weight_files(weights_dir)
-    if family == "racevla":
+    if family in ("racevla", "cognitivedrone", "bitvla"):
         files.append(Path(weights_dir) / "dataset_statistics.json")
+    if family == "bitvla":
+        files.extend(sorted(Path(weights_dir).glob("action_head--*.pt")))
+        files.extend(Path(weights_dir) / n for n in BITVLA_CODE_FILES)
     return files
 
 
@@ -1369,6 +1660,28 @@ def _name_of(family: str, weights_dir: Path) -> str:
 
 
 def build_family(args, weights: Path):
+    fake = bool(getattr(args, "fake_native", None))
+    missing = missing_files(args.model, weights, fake=fake)
+    if missing and fake:
+        raise OSError(f"--fake-native for {args.model}: {missing} not in {weights} (the "
+                      f"stand-in reads only the statistics)")
+    if missing:
+        raise OSError(f"weights not obtained: {missing} not in {weights} (the {args.model} "
+                      f"download: {UPSTREAM[args.model]['model'] or 'none published'}; "
+                      f"downloading it needs the user's approval)")
+    if args.model == "cognitivedrone":
+        key, stats = load_action_stats(weights / "dataset_statistics.json", args.unnorm_key,
+                                       dims=COGNITIVEDRONE_DIMS)
+        return CognitiveDroneFamily(stats, key,
+                                    instruction=args.command or COGNITIVEDRONE_INSTRUCTION,
+                                    horizon_s=args.horizon_s)
+    if args.model == "bitvla":
+        # its chunk rows are ACTION_DIM wide (BitVLAFamily.parse): statistics
+        # of any other dimension are not this checkpoint's
+        key, _ = load_action_stats(weights / "dataset_statistics.json", args.unnorm_key,
+                                   dims=(ACTION_DIM,))
+        return BitVLAFamily(key, instruction=args.command or BITVLA_INSTRUCTION,
+                            horizon_s=args.horizon_s)
     if args.model == "aiotvla":
         if not (weights / "head.pt").is_file():
             raise OSError(f"no head.pt in {weights} (python -m training.aiotvla.train --out)")
@@ -1405,7 +1718,10 @@ def build_real(args, family, weights: Path):
             raise SystemExit(f"--horizon-s {family.horizon_s:g}: the checkpoint's label horizon "
                              f"is {model.horizon_s:g} s (fly with --step-as-rate "
                              f"{model.horizon_s:g})")
+    elif args.model == "bitvla":
+        model = BitVLAModel(weights, device=args.device)
     else:
+        # RaceVLA and CognitiveDrone: OpenVLA-7B checkpoints, the same loader
         model = RaceVLAModel(weights, precision=args.precision, attn=args.attn,
                              device=args.device)
         if (model.vocab_size, model.n_bins) != (family.vocab_size, family.n_bins):
@@ -1413,9 +1729,14 @@ def build_real(args, family, weights: Path):
                              f"{model.n_bins} bins) is not OpenVLA's ({family.vocab_size}, "
                              f"{family.n_bins}): the token reading would be wrong")
     cfg = {**family.describe(), "history_gap_s": args.history_gap_s}
+    if args.model == "bitvla":
+        # BitVLAModel never passes --attn on (its remote code picks its own);
+        # the identity's attn field stays (the protocol allows eager / sdpa
+        # only, vla_link.ATTN_IMPLS), and this says it was not applied
+        cfg["attn"] = "n/a (not applied: BitVLA's remote code picks its own attention)"
     if getattr(model, "checkpoint", None) is not None:
         cfg["checkpoint"] = model.checkpoint
-    if getattr(model, "norm_stats", None) is not None:
+    if getattr(model, "norm_stats", None) is not None and hasattr(family, "stats"):
         ms = (model.norm_stats.get(family.unnorm_key) or {}).get("action") or {}
         cfg["model_norm_stats_agree"] = (
             [float(v) for v in ms.get("q01", [])] == family.stats["q01"]
@@ -1443,8 +1764,8 @@ def _fake_outputs(family: str, texts: list[str]) -> list:
         try:
             out.append(json.loads(t))
         except ValueError:
-            raise SystemExit(f"--fake-native for racevla: {t!r} is not a JSON list of 7 action "
-                             f"token ids") from None
+            raise SystemExit(f"--fake-native for {family}: {t!r} is not JSON (a list of action "
+                             f"token ids; bitvla: a list of rows of 7 numbers)") from None
     return out
 
 
@@ -1455,7 +1776,8 @@ def build_arg_parser() -> tuple[argparse.ArgumentParser, argparse.ArgumentParser
     p = sub.add_parser("serve", help="serve one foreign model over TCP")
     p.add_argument("--model", choices=FAMILIES, required=True)
     p.add_argument("--weights", required=True, metavar="DIR",
-                   help="the download: DroneCATS's repo folder, RaceVLA's run folder")
+                   help="the download: DroneCATS's repo folder, RaceVLA's run folder, the "
+                        "CognitiveDrone / BitVLA checkpoint folder (REQUIRED_FILES)")
     p.add_argument("--port", type=int, required=True,
                    help="required: AerialVLA's server owns 8790 by default")
     p.add_argument("--host", default=C.DEFAULT_HOST)
@@ -1482,9 +1804,11 @@ def build_arg_parser() -> tuple[argparse.ArgumentParser, argparse.ArgumentParser
     p.add_argument("--plan-max-new-tokens", type=int, default=1024)
     p.add_argument("--history-gap-s", type=float, default=HISTORY_GAP_S)
     p.add_argument("--unnorm-key", default=None,
-                   help="RaceVLA: the dataset_statistics.json key (default its only one)")
+                   help="RaceVLA, CognitiveDrone, BitVLA: the dataset_statistics.json key "
+                        "(default its only one)")
     p.add_argument("--horizon-s", type=float, default=1.0,
-                   help="RaceVLA: the velocities' step horizon (fly with --step-as-rate H); "
+                   help="RaceVLA, CognitiveDrone, BitVLA: the velocities' step horizon (fly "
+                        "with --step-as-rate H); "
                         "aiotvla: must be its checkpoint's label horizon (0.5)")
     p.add_argument("--keep-color", action="store_true",
                    help="RaceVLA: send the frame in colour (default grey, as its T265)")
@@ -1492,7 +1816,8 @@ def build_arg_parser() -> tuple[argparse.ArgumentParser, argparse.ArgumentParser
     p.add_argument("--rehash", action="store_true")
     p.add_argument("--fake-native", nargs="+", default=None,
                    help="serve a scripted stand-in of these native outputs (DroneCATS JSON "
-                        "texts; RaceVLA JSON lists of 7 token ids): identity fake:, no GPU")
+                        "texts; RaceVLA / CognitiveDrone JSON lists of action token ids; "
+                        "BitVLA a JSON list of rows of 7 numbers): identity fake:, no GPU")
     p.add_argument("--fake-delay-s", type=float, default=0.0)
     return ap, p
 
@@ -1506,6 +1831,9 @@ def main(argv=None) -> int:
         p.error(f"--precision {args.precision}: aiotvla runs fp16 only, and fp16 is aiotvla's only")
     if args.fake_native and args.model == "aiotvla":
         p.error("--fake-native: no scripted stand-in for aiotvla (use vla_server_v2 --fake-output)")
+    if args.model == "bitvla" and args.precision != "bf16":
+        p.error(f"--precision {args.precision}: bitvla loads its bf16 master weights, ternary "
+                f"by its own online quantisation (its repository)")
     if args.precision == "int4" and args.model != "dronecats":
         p.error("--precision int4 (torchao) is DroneCATS's only: RaceVLA's OpenVLA loader "
                 "takes bf16 or nf4")
@@ -1522,7 +1850,8 @@ def main(argv=None) -> int:
             p.error(f"--{k.replace('_', '-')} must be a positive number of seconds")
     if args.command is not None:
         try:
-            command_text("a car", args.command, allow_fixed=args.model == "racevla")
+            command_text("a car", args.command,
+                         allow_fixed=args.model in ("racevla", "cognitivedrone", "bitvla"))
         except ValueError as exc:
             p.error(str(exc))
     weights = Path(args.weights)
