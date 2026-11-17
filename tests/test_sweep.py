@@ -4567,7 +4567,9 @@ def test_a_gazebo_sweep_records_each_missions_run_and_says_it_is_not_kpi():
     finally:
         S.run_sitl = saved
     assert rc in (0, 1) and calls == [("gzsweep_speed-cap--seed1001",
-                                       {"physics": "gazebo", "sim_speedup": 1.0})], calls
+                                       {"physics": "gazebo", "sim_speedup": 1.0,
+                                        "rail_battery": False,
+                                        "extra_args": None})], calls
     assert doc["_not_kpi_grade"] == S.GAZEBO_FUNCTIONAL_WHY
     assert doc["_scope"]["kpi_bearing_this_run"] is False
     assert doc["_scope"]["rail"]["physics"] == "gazebo"
