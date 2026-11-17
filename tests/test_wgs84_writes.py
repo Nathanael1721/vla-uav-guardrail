@@ -844,6 +844,14 @@ def test_the_bind_evidence_matches_its_readme():
     want = {"smoke_diff.json": (64, 8), "library_diff.json": (180, 14),
             "nightly_seed1001_diff.json": (248, 29)}
     times = {"smoke_diff.json": 0, "library_diff.json": 0, "nightly_seed1001_diff.json": 5}
+    success = {"smoke_diff.json": (0.460317, 29, 63), "library_diff.json": (0.536313, 96, 179),
+               "nightly_seed1001_diff.json": (0.469636, 116, 247)}
+    for name, (rate, n, of) in success.items():
+        got = json.loads((d / name).read_text(encoding="utf-8"))
+        for side in ("headline_before", "headline_after"):
+            m = got[side]["mission_shield_on"]
+            assert (m["mission_success_rate"], m["mission_successes"],
+                    m["episodes_mission_scored"]) == (rate, n, of), (name, side, m)
     for name, counts in want.items():
         got = json.loads((d / name).read_text(encoding="utf-8"))
         assert got["headline_identical"], (name, got["headline_fields_differing"])
