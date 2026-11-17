@@ -442,13 +442,13 @@ def test_the_rails_fly_wind_dropout_and_jitter_and_refuse_the_rest_with_why():
         noise = why(_cell("gps-noise-within-margin", pass_y=23.2, sigma=0.3, latency=2))
         assert "gps_noise_m" in noise and "SIM_GPS_NOISE" in noise and "latency_ticks" in noise
         assert "gust_mps" in why(BY_ID["wind-gusts"]) and "SIM_WIND_TURB" in why(BY_ID["wind-gusts"])
-        assert "battery_critical_at_s" in why(BY_ID["failsafe-low-battery"])
         # 2026-11-14: the node's RTL watch reads ArduPilot's battery verdict,
-        # but no SIM_* stressor makes ArduPilot declare it at the cell's
-        # time (the firmware's BATT_CRT_*), so the battery hook stays
-        # refused for that reason; the blocked return home now flies.
-        assert "BATT_CRT_VOLT" in why(BY_ID["failsafe-low-battery"])
-        assert "no RTL watch" not in why(BY_ID["failsafe-low-battery"])
+        # and the blocked return home flies. Until 2026-11-17 the battery
+        # hook stayed refused (no SIM_* stressor makes ArduPilot declare
+        # CRITICAL with BATT_CRT_* at 0); since then the simulator side
+        # gives the simulated vehicle its battery fail-safe setup.
+        assert not why(BY_ID["failsafe-low-battery"]), why(BY_ID["failsafe-low-battery"])
+        assert "battery_critical_at_s" not in S.RAIL_STRESS_REFUSALS
         assert not why(BY_ID["failsafe-rtl-blocked"]), why(BY_ID["failsafe-rtl-blocked"])
         blind = _with(BY_ID["gps-dropout"], **{"stress.fix_quality_reported": False})
         assert "fix_quality_reported false" in why(blind)
@@ -1142,6 +1142,252 @@ def test_a_rail_run_counts_the_rtl_failed_ticks_its_node_wrote():
     assert none["rtl_failed_ticks"] == 0
     assert ("rtl_failed_ticks", "rtl_failed_ticks=0 < min 1") in S.check_gates_keyed(
         spec.gates, none)
+
+
+# --------------------------------------------------------------------------- #
+# the battery cell (2026-11-17, WP3-07 G6): the simulated vehicle's battery
+# fail-safe setup and its pack, set from the simulator's side, restored after
+# --------------------------------------------------------------------------- #
+
+# What SITL holds before the simulator side touches it (the copter's
+# defaults: BATT_CRT_VOLT 0 never declares CRITICAL, BATT_LOW_TIMER 10 s).
+SITL_BEFORE = {"SIM_BATT_VOLTAGE": 12.6, "BATT_LOW_VOLT": 10.5, "BATT_CRT_VOLT": 0.0,
+               "BATT_LOW_TIMER": 10.0, "BATT_FS_LOW_ACT": 0.0, "BATT_FS_CRT_ACT": 0.0}
+
+
+class _SitlLink(_Link):
+    """_Link on a loopback link to an autopilot that holds SITL_BEFORE, every
+    read and set in one log (`ops`)."""
+
+    def __init__(self, markers=(), reject=(), link="tcp:127.0.0.1:5760", params=None,
+                 stop_after=None):
+        super().__init__(markers=markers, reject=reject)
+        self.link = link
+        self.params = dict(SITL_BEFORE if params is None else params)
+        self.ops: list[tuple] = []
+        self.stop_after = stop_after
+
+    def read_param(self, name, timeout=2.0, tries=3):
+        self.ops.append(("read", name))
+        return self.params.get(name)
+
+    def set_param(self, name, value, timeout=0.4, tries=3):
+        self.ops.append(("set", name, float(value)))
+        return super().set_param(name, value, timeout, tries)
+
+    def pump(self, timeout):
+        super().pump(timeout)
+        if self.stop_after is not None and self.t > self.stop_after:
+            raise SST._Stop()
+
+
+def test_a_battery_cell_drops_the_pack_after_giving_the_simulated_vehicle_its_failsafe():
+    """failsafe-low-battery (battery_critical_at_s 14 s): SIM_BATT_VOLTAGE a
+    full 12.6 V at boot and 10.0 V at t0 + 14 - BATT_LOW_TIMER, under the
+    critical 10.1 V; the simulated vehicle's battery fail-safe the values
+    ArduCopter's autotest BatteryFailsafe flies, with no action of the
+    autopilot's own (the FSM's G6 lands the return); all restored after."""
+    spec = BY_ID["failsafe-low-battery"]
+    plan = _plan(spec)
+    b = S.RAIL_BATTERY
+    assert [(x["param"], x["value"], x.get("restore_after")) for x in plan["boot"]] == \
+        [("SIM_BATT_VOLTAGE", 12.6, True)]
+    assert [(x["t"], x["param"], x["value"]) for x in plan["schedule"]] == \
+        [(14.0 - b["low_timer_s"], "SIM_BATT_VOLTAGE", 10.0)]
+    fw = {x["param"]: x["value"] for x in plan["firmware"]}
+    assert fw == {"BATT_LOW_VOLT": 10.5, "BATT_CRT_VOLT": 10.1, "BATT_LOW_TIMER": 1,
+                  "BATT_FS_LOW_ACT": 0, "BATT_FS_CRT_ACT": 0}, fw
+    # Critical below the pack's drop, low above critical (ArduPilot's arming
+    # check refuses critical >= low), the full pack above both.
+    assert b["drop_v"] < b["crit_v"] < b["low_v"] < b["full_v"]
+    assert plan["battery_critical_at_s"] == 14.0
+    assert SST.load_plan(plan) is plan
+    assert [x["param"] for x in SST.restore_entries(plan)] == list(fw) + ["SIM_BATT_VOLTAGE"]
+    assert set(fw) == set(SST.FIRMWARE_SITL_PARAMS)
+    assert "SIM_BATT_VOLTAGE" in SST.WATCHED_SIM_PARAMS
+    # A cell without a battery hook sets no firmware and restores nothing.
+    wind = _plan(_cell("wind-within-authority", lane_y=15.0, wind_speed_mps=5))
+    assert wind["firmware"] == [] and SST.restore_entries(wind) == []
+    assert S.rail_stress_plan(BY_ID["nfz-head-on"], 0, DEFAULTS) is None
+    # The plan's rules: firmware names the battery fail-safe only, a
+    # stressor never names a firmware parameter, nothing is set twice.
+    for bad in ({"firmware": [{"param": "ARMING_CHECK", "value": 0}]},
+                {"firmware": [{"param": "SIM_WIND_SPD", "value": 1}]},
+                {"firmware": [{"param": "BATT_CRT_VOLT", "value": float("nan")}]},
+                {"firmware": [{"param": "BATT_CRT_VOLT", "value": 10.1}] * 2},
+                {"firmware": "BATT_CRT_VOLT=10.1"},
+                {"boot": [{"param": "BATT_CRT_VOLT", "value": 10.1}]}):
+        try:
+            SST.load_plan({**plan, **bad})
+        except ValueError:
+            continue
+        raise AssertionError(f"accepted {bad}")
+
+
+def test_firmware_parameters_go_only_over_a_loopback_link():
+    for ok in ("tcp:127.0.0.1:5760", "udp:127.0.0.1:14550", "udpin:localhost:14551"):
+        assert SST.firmware_link_ok(ok), ok
+    for bad in ("COM8", "/dev/ttyACM0", "serial:COM8:115200", "tcp:10.42.0.3:5760",
+                "tcp:0.0.0.0:5760", "", None, "tcp:127.0.0.1:5760 COM8"):
+        assert not SST.firmware_link_ok(bad), bad
+    assert SST.firmware_link_ok(SST.DEFAULT_LINK)
+
+
+def test_the_battery_setup_is_read_first_then_set_then_dropped_and_restored():
+    plan = _plan(BY_ID["failsafe-low-battery"])
+    n8 = plan["run_nonce"][:8]
+    t0 = 200.0
+    link = _SitlLink(markers=[(t0 + 0.003, n8, 0.0)])
+    said: list[str] = []
+    with tempfile.TemporaryDirectory() as td:
+        rec_path = Path(td) / "rec.json"
+        rc = SST.run(plan, rec_path, link, t0_timeout_s=600.0, say=said.append)
+        rec = json.loads(rec_path.read_text(encoding="utf-8"))
+        assert rc == 0 and rec["boot"]["ok"] and rec["firmware"]["ok"], (rc, rec)
+        assert rec["firmware"]["guard"]["probe_value"] == 12.6
+        # The SITL probe first, then every value to restore, before any set.
+        first_set = next(i for i, o in enumerate(link.ops) if o[0] == "set")
+        assert link.ops[0] == ("read", "SIM_BATT_VOLTAGE")
+        assert {o[1] for o in link.ops[1:first_set]} == {
+            x["param"] for x in SST.restore_entries(plan)}
+        assert {p["param"]: p["restore_to"] for p in rec["restore"]["params"]} == {
+            k: SITL_BEFORE[k] for k in SITL_BEFORE}
+        assert link.params["BATT_CRT_VOLT"] == 10.1 and link.params["BATT_LOW_TIMER"] == 1
+        # The drop on the node's clock, never early.
+        drop = [s for s in link.sent if s[0] == "SIM_BATT_VOLTAGE" and s[1] == 10.0]
+        assert len(drop) == 1 and 0 <= drop[0][2] - (t0 + 13.0) < 0.04, drop
+        assert link.params["SIM_BATT_VOLTAGE"] == 10.0 and not rec["restore"]["done"]
+        assert said[0].startswith("SITL_STRESS BOOT OK") and "BATT_CRT_VOLT=10.1" in said[0]
+        # After the mission: every parameter back as it was, recorded, once.
+        out = SST.restore(link, rec_path, say=said.append)
+        rec = json.loads(rec_path.read_text(encoding="utf-8"))
+        assert {k: link.params[k] for k in SITL_BEFORE} == SITL_BEFORE, link.params
+        assert rec["restore"]["done"] and all(p["restored"] for p in rec["restore"]["params"])
+        assert len(out) == 6 and said[-1].startswith("SITL_STRESS RESTORED")
+        assert SST.restore(link, rec_path, say=said.append) == []
+
+
+def test_no_firmware_parameter_is_set_off_sitl_or_without_its_value_to_restore():
+    plan = _plan(BY_ID["failsafe-low-battery"])
+
+    def boot(link):
+        said: list[str] = []
+        with tempfile.TemporaryDirectory() as td:
+            rec_path = Path(td) / "rec.json"
+            rc = SST.run(plan, rec_path, link, t0_timeout_s=60.0, say=said.append)
+            rec = json.loads(rec_path.read_text(encoding="utf-8"))
+        assert rc == 1 and rec["state"] == "failed" and said[-1].startswith(
+            "SITL_STRESS BOOT FAILED"), (rc, rec, said)
+        assert not [o for o in link.ops if o[0] == "set"], link.ops
+        return rec["error"]
+
+    # A serial port (a real flight controller) or another host: not even read.
+    for where in ("COM8", "/dev/ttyACM0", "tcp:10.42.0.3:5760"):
+        link = _SitlLink(link=where)
+        assert "not a loopback" in boot(link) and link.ops == [], where
+    # An autopilot with no SIM_* parameter: hardware, never touched.
+    hw = {k: v for k, v in SITL_BEFORE.items() if not k.startswith("SIM_")}
+    assert "not SITL" in boot(_SitlLink(params=hw))
+    # A value it held before that does not read: nothing changed.
+    no_timer = {k: v for k, v in SITL_BEFORE.items() if k != "BATT_LOW_TIMER"}
+    assert "BATT_LOW_TIMER" in boot(_SitlLink(params=no_timer))
+
+
+def test_the_process_holds_after_the_schedule_and_restores_at_stop():
+    """main(): with parameters to restore it holds after the schedule (the
+    heartbeat going) until `stop` sends SIGTERM, then sets them back; a
+    boot that fails after the firmware was set restores it at once."""
+    import signal
+    plan = _plan(BY_ID["failsafe-low-battery"])
+    n8 = plan["run_nonce"][:8]
+    saved_link, saved_term = SST.SitlLink, signal.getsignal(signal.SIGTERM)
+    try:
+        with tempfile.TemporaryDirectory() as td:
+            plan_path, rec_path = Path(td) / "plan.json", Path(td) / "rec.json"
+            plan_path.write_text(json.dumps(plan), encoding="utf-8")
+            # Stopped 30 s after the drop, holding.
+            link = _SitlLink(markers=[(200.003, n8, 0.0)], stop_after=243.0)
+            SST.SitlLink = lambda where: link
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                rc = SST.main(["--plan", str(plan_path), "--record", str(rec_path)])
+            out = buf.getvalue()
+            rec = json.loads(rec_path.read_text(encoding="utf-8"))
+            assert rc == 0 and "SITL_STRESS HOLDING" in out and "SITL_STRESS RESTORED" in out, out
+            assert rec["state"] == "done" and rec["restore"]["done"], rec
+            assert {k: link.params[k] for k in SITL_BEFORE} == SITL_BEFORE, link.params
+            # BATT_CRT_VOLT does not take, after the rest of the setup and
+            # the pack were set: they go back before the process exits 1.
+            link = _SitlLink(reject={"BATT_CRT_VOLT"}, stop_after=1000.0)
+            SST.SitlLink = lambda where: link
+            signal.signal(signal.SIGTERM, saved_term)
+            with contextlib.redirect_stdout(io.StringIO()) as buf:
+                rc = SST.main(["--plan", str(plan_path), "--record", str(rec_path)])
+            rec = json.loads(rec_path.read_text(encoding="utf-8"))
+            assert rc == 1 and not rec["boot"]["ok"] and rec["restore"]["done"], rec
+            assert "BATT_CRT_VOLT set 10.1 read 0" in rec["error"], rec["error"]
+            assert ("set", "BATT_LOW_TIMER", 1.0) in link.ops
+            assert {k: link.params[k] for k in SITL_BEFORE} == SITL_BEFORE, link.params
+            assert "SITL_STRESS RESTORED" in buf.getvalue() and "NOT restored: BATT_CRT_VOLT" \
+                in buf.getvalue(), buf.getvalue()
+    finally:
+        SST.SitlLink = saved_link
+        signal.signal(signal.SIGTERM, saved_term)
+
+
+def _battery_flight(plan, *, onset=0.2, last_t=40.0, node_params=None, sim_fw_ok=True):
+    """A battery cell's flight: _flight's record and metrics plus the
+    simulator side's firmware record and the node's RTL watch, ArduPilot's
+    CRITICAL reaching it `onset` s after the cell's time."""
+    rec, met, rows = _flight(plan, last_t=last_t)
+    rec["firmware"] = {"ok": sim_fw_ok, "guard": {"refused": None if sim_fw_ok else "x"},
+                       "params": [SST.stressor_entry(f["param"], f["value"], f["value"])
+                                  for f in plan["firmware"]]}
+    at = plan["battery_critical_at_s"]
+    vals = {"RTL_ALT": 1500.0, "RTL_CONE_SLOPE": 3.0, "BATT_FS_CRT_ACT": 0.0,
+            "BATT_CRT_VOLT": 10.1, "BATT_CRT_MAH": 0.0}
+    vals.update(node_params or {})
+    spells = ([{"t_start": at + onset, "t_end": None, "id": 0, "state": "CRITICAL"}]
+              if onset is not None and at + onset <= last_t else [])
+    met["rtl_watch"] = {"params": vals, "battery": {
+        "failed_spells": spells, "charge_states_seen": {"OK": 120, "CRITICAL": 40}}}
+    return rec, met, rows
+
+
+def test_a_battery_cell_is_scored_only_once_its_critical_reached_the_node():
+    spec = BY_ID["failsafe-low-battery"]
+    plan = _plan(spec)
+
+    def check(**kw):
+        rec, met, rows = _battery_flight(plan, **kw)
+        return S.rail_stress_check(spec, plan, rec, met, rows)
+
+    problems, s = check()
+    assert problems == [], problems
+    assert s["battery"]["onset_s"] == 0.2 and s["battery"]["first_critical_t"] == 14.2
+    assert {e["param"]: e["node_read_back"] for e in s["battery"]["firmware"]} == {
+        "BATT_LOW_VOLT": "not read by the node", "BATT_CRT_VOLT": 10.1,
+        "BATT_LOW_TIMER": "not read by the node", "BATT_FS_LOW_ACT": "not read by the node",
+        "BATT_FS_CRT_ACT": 0.0}
+    drop = [e for e in s["entries"] if e.get("field") == "battery_critical_at_s"]
+    assert len(drop) == 1 and drop[0]["error_s"] == 0.03
+
+    def why(**kw):
+        return " | ".join(check(**kw)[0])
+
+    assert "BATT_CRT_VOLT at take-off is 0.0" in why(node_params={"BATT_CRT_VOLT": 0.0})
+    assert "BATT_FS_CRT_ACT at take-off is 1.0" in why(node_params={"BATT_FS_CRT_ACT": 1.0})
+    assert "did not set and read back the simulated vehicle's battery" in why(sim_fw_ok=False)
+    assert "did not reach the Shield node's RTL watch" in why(onset=None)
+    assert "did not reach the Shield node's RTL watch" in why(onset=2.5)
+    rec, met, rows = _battery_flight(plan)
+    del met["rtl_watch"]
+    assert "recorded no RTL watch parameters" in " ".join(
+        S.rail_stress_check(spec, plan, rec, met, rows)[0])
+    # The episode ended before the CRITICAL could arrive: the cell's own
+    # gate (rtl_failed_ticks >= 1) fails that flight, as for a dropout.
+    problems, s = check(onset=None, last_t=14.5)
+    assert problems == [] and "episode ended" in s["battery"]["note"], (problems, s["battery"])
 
 
 # --------------------------------------------------------------------------- #

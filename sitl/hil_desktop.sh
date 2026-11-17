@@ -79,10 +79,12 @@ fi
 
 stop_all() {
   # The stressor process first, with TERM: it writes its record's last
-  # state (sitl/sitl_stressors.py; the record is rewritten at every step).
+  # state (sitl/sitl_stressors.py; the record is rewritten at every step)
+  # and sets back what it must restore (a battery cell's BATT_*), while SITL
+  # still runs: up to 5 s.
   if pgrep -f "[s]itl_stressors.py" > /dev/null 2>&1; then
     pkill -TERM -f "[s]itl_stressors.py" 2> /dev/null || true
-    for _ in $(seq 1 10); do
+    for _ in $(seq 1 25); do
       pgrep -f "[s]itl_stressors.py" > /dev/null 2>&1 || break
       sleep 0.2
     done

@@ -11,8 +11,11 @@
 #       hil campaign refused the two cells that take it (failsafe-rtl-blocked,
 #       failsafe-low-battery). The node's RTL watch gives it a real input
 #       now (sitl/ros2_shield_node.py, THE RTL WATCH): failsafe-rtl-blocked
-#       (blocked path) flies; failsafe-low-battery stays refused
-#       (sweep_scenarios.RAIL_STRESS_REFUSALS says why); wind-beyond-authority
+#       (blocked path) flies; failsafe-low-battery stayed refused until
+#       2026-11-17 (SITL's battery reaches CRITICAL only through BATT_CRT_*,
+#       which the rig left at 0) and flies since: the simulator side gives the
+#       simulated vehicle its battery fail-safe setup and drops its pack
+#       (sweep_scenarios.RAIL_BATTERY, restored after); wind-beyond-authority
 #       at 12 m/s on lane 15 returns into a wind it cannot beat and takes G6
 #       for no progress home on the rail vehicle (X7 at 7.0 s, G6 at 12.1 s).
 #   X2  no library cell violates an RTL / land rule while the FSM is in Brake
@@ -38,7 +41,9 @@
 # it is silent), the PI's confirmation still to be recorded, and AFTER the
 # flown run hs10_003 (docs/RUBRIC-failsafe.md, section 9; the cell's
 # description). The profile is still no KPI set: keep its runs out of a KPI
-# report's campaigns.
+# report's campaigns. failsafe-low-battery (2026-11-17) is a library cell that
+# smoke, nightly and broad already list: their headless numbers do not move,
+# but a hil campaign of any of them now flies it instead of refusing it.
 #
 #   python experiments/sweep_scenarios.py --profile fsm_edges
 #   python experiments/sweep_scenarios.py --profile fsm_edges --response-arms ideal rail
@@ -52,6 +57,8 @@
 #   failsafe-rtl-blocked     G11 G6 G10        / G11 G6 G10
 #   wind-beyond-authority (lane 15, 12 m/s)
 #                            G1 G3 X9 G6       / G1 G3 X7 G6 G10
+# and on 2026-11-17, the sixth cell (its label and rubric unchanged):
+#   failsafe-low-battery     G11 G6 G10        / G11 G6 G10
 
 profile: fsm_edges
 cadence: on demand (WP3-07, the FSM's edges on the rails)
@@ -62,9 +69,9 @@ library: experiments/scenarios.yaml
 seeds: [1001]
 samples_per_family: 1
 families: [failsafe-rtl-from-hold, failsafe-land-from-hold, fsm-n-in-t-flicker,
-           failsafe-rtl-blocked, wind-beyond-authority]
+           failsafe-rtl-blocked, wind-beyond-authority, failsafe-low-battery]
 sweep_overrides:
   wind-beyond-authority:
     lane_y: [15.0]
     wind_speed_mps: [12.0]
-expected_cells: [5, 5]
+expected_cells: [6, 6]

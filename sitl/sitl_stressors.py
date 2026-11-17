@@ -43,14 +43,37 @@ WHAT IT DOES
      alignment the harness checks against the plan.
   5. RECORD (RECORD_SCHEMA): rewritten after every step, so a mission that
      ends early, or a `stop` that kills this process, leaves what happened.
-     It exits 0 once the schedule is done (or on SIGTERM), 1 on a failure.
+     It exits 0 once the schedule is done (or on SIGTERM), 1 on a failure;
+     with parameters to restore it holds after the schedule until SIGTERM,
+     restores them, then exits (THE BATTERY CELL'S FAIL-SAFE SETUP).
 
 WHICH PARAMETERS (ArduCopter 4.5.7, libraries/SITL/SITL.cpp; the harness's
 mapping and its source lines are in experiments/sweep_scenarios.py, "THE
 SIMULATOR'S STRESSORS"): SIM_WIND_SPD, SIM_WIND_DIR (the direction the wind
-comes FROM), SIM_WIND_T (1: no altitude profile), SIM_WIND_TURB and
-SIM_GPS_DISABLE. Only SIM_* parameters are accepted (load_plan): a stressor
-changes the simulated world, never the firmware under test.
+comes FROM), SIM_WIND_T (1: no altitude profile), SIM_WIND_TURB,
+SIM_GPS_DISABLE and SIM_BATT_VOLTAGE (since 2026-11-17). Only SIM_*
+parameters are accepted as stressors (load_plan): a stressor changes the
+simulated world, never the firmware under test.
+
+THE BATTERY CELL'S FAIL-SAFE SETUP (2026-11-17, WP3-07 G6). A falling
+SIM_BATT_VOLTAGE alone makes ArduPilot declare nothing: its battery monitor
+reaches CRITICAL only below BATT_CRT_VOLT (or BATT_CRT_MAH), and for a
+voltage only after BATT_LOW_TIMER seconds (AP_BattMonitor_Backend::
+update_failsafes) - and the copter's defaults leave BATT_CRT_VOLT and
+BATT_CRT_MAH at 0, disabled. So a plan may also carry `firmware`: the battery
+fail-safe configuration of the SIMULATED vehicle (FIRMWARE_SITL_PARAMS
+only, the setup a real vehicle's battery would be given; ArduCopter's own
+autotest BatteryFailsafe sets the same ones), set at boot before the
+stressors and restored when this process is stopped. Guarded three ways,
+because these names exist on a real flight controller too: the link must be
+a loopback tcp/udp one (firmware_link_ok: never a serial port), the
+autopilot must answer SIM_BATT_VOLTAGE (a hardware autopilot has no SIM_*
+parameter) before any of them is set, and the value each held before is
+read first - one that does not read is never changed (the boot fails). Every
+parameter of `firmware`, and every boot SIM_* parameter marked
+`restore_after`, is set back to that value on SIGTERM (`stop`), after the
+schedule is done (the process then holds until stopped) or after a failed
+boot, and the record says what was restored.
 
 ONE MECHANISM WITH THE PYMAVLINK RAIL'S (sitl/run_sitl_demo.py --sim-param,
 since 2026-11-02). That rail is the Shield's own pymavlink process, so it sets
@@ -108,7 +131,18 @@ MARKER_TIMES_S = (0.0, 1.0, 2.0, 3.0, 4.0)
 # take-off and records when the autopilot broadcasts a change
 # (sitl/ros2_shield_node.py, metrics.json `sim_params`).
 WATCHED_SIM_PARAMS = ("SIM_WIND_SPD", "SIM_WIND_DIR", "SIM_WIND_T", "SIM_WIND_TURB",
-                      "SIM_GPS_DISABLE")
+                      "SIM_GPS_DISABLE", "SIM_BATT_VOLTAGE")
+# The simulated vehicle's battery fail-safe configuration a plan may set at
+# boot (`firmware`; module docstring, THE BATTERY CELL'S FAIL-SAFE SETUP):
+# never a stressor, never on anything but SITL, always restored.
+FIRMWARE_SITL_PARAMS = ("BATT_LOW_VOLT", "BATT_CRT_VOLT", "BATT_LOW_TIMER",
+                        "BATT_FS_LOW_ACT", "BATT_FS_CRT_ACT")
+# Answers only on SITL: read before any firmware parameter is set.
+SITL_PROBE_PARAM = "SIM_BATT_VOLTAGE"
+# A restore at SIGTERM must fit the helpers' wait before they kill SITL
+# (sitl/hil_desktop.sh stop_all, sitl/run_ros2_demo.sh cleanup: 5 s).
+RESTORE_ECHO_TIMEOUT_S = 0.25
+RESTORE_TRIES = 2
 # How long a scheduled change may wait for its echo before it is sent again.
 ECHO_TIMEOUT_S = 0.4
 SET_TRIES = 3
@@ -240,7 +274,39 @@ def load_plan(source) -> dict:
     ts = [float(it["t"]) for it in plan["schedule"]]
     if ts != sorted(ts):
         raise ValueError("schedule: not in time order")
+    fw = plan.get("firmware", [])
+    if not isinstance(fw, list):
+        raise ValueError("firmware: expected a list")
+    for it in fw:
+        if not isinstance(it, dict):
+            raise ValueError("firmware: an entry is not an object")
+        name = it.get("param")
+        if name not in FIRMWARE_SITL_PARAMS:
+            raise ValueError(f"firmware: {name!r} is not a battery fail-safe parameter of "
+                             f"the simulated vehicle ({', '.join(FIRMWARE_SITL_PARAMS)})")
+        if not _finite_number(it.get("value")):
+            raise ValueError(f"firmware: {name} = {it.get('value')!r} is not a finite number")
+    names = [it["param"] for it in fw] + [it["param"] for it in plan["boot"]]
+    if len(names) != len(set(names)):
+        raise ValueError("boot / firmware: a parameter is named twice")
     return plan
+
+
+def firmware_link_ok(link: str) -> bool:
+    """May a firmware parameter be set over `link`? Only a loopback tcp/udp
+    link (SITL beside this process, tcp:127.0.0.1:5760 by default): never a
+    serial device (COM8, /dev/ttyACM0 - a real flight controller) nor another
+    host."""
+    m = re.fullmatch(r"(tcp|udp|udpin|udpout):(127\.0\.0\.1|localhost):(\d{1,5})",
+                     str(link or "").strip())
+    return m is not None
+
+
+def restore_entries(plan: dict) -> list[dict]:
+    """The plan's parameters to set back after the mission: every
+    `firmware` entry, then every boot entry marked `restore_after`."""
+    return ([it for it in plan.get("firmware") or []]
+            + [it for it in plan["boot"] if it.get("restore_after")])
 
 
 def due(schedule: list[dict], done: set[int], t0: float | None, now: float) -> list[int]:
@@ -394,6 +460,48 @@ class _Stop(Exception):
     pass
 
 
+def _boot_failed(rec: dict, record_path: Path, why: str, say) -> int:
+    rec["state"] = "failed"
+    rec["error"] = why
+    write_record(record_path, rec)
+    say(f"SITL_STRESS BOOT FAILED {why}")
+    return 1
+
+
+def restore(link, record_path: Path, say=print) -> list[dict]:
+    """Set back every parameter the record says is to be restored (`restore`:
+    the value each held before boot), once, and record each as stressor_entry
+    plus `restored`. Returns the entries; [] when there is nothing (left) to
+    restore. Never raises: it runs on the way out."""
+    try:
+        rec = json.loads(Path(record_path).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    res = rec.get("restore") if isinstance(rec.get("restore"), dict) else None
+    if not res or res.get("done"):
+        return []
+    out = []
+    for p in res.get("params") or []:
+        want = p.get("restore_to")
+        if want is None:
+            continue
+        try:
+            echo, _, _ = link.set_param(p["param"], float(want),
+                                        timeout=RESTORE_ECHO_TIMEOUT_S, tries=RESTORE_TRIES)
+        except Exception as e:                             # noqa: BLE001
+            echo = None
+            p["error"] = f"{type(e).__name__}: {e}"
+        p.update(stressor_entry(p["param"], float(want), echo), restored=echo is not None)
+        out.append(p)
+    res["done"] = True
+    res["wall"] = time.strftime("%Y-%m-%dT%H:%M:%S%z")
+    write_record(record_path, rec)
+    bad = [p["param"] for p in out if not p["restored"]]
+    say("SITL_STRESS RESTORED " + " ".join(f"{p['param']}={p['set']:g}" for p in out)
+        + (f" (NOT restored: {', '.join(bad)})" if bad else ""))
+    return out
+
+
 def run(plan: dict, record_path: Path, link: SitlLink, *, t0_timeout_s: float,
         say=print) -> int:
     nonce8 = plan["run_nonce"][:8]
@@ -411,6 +519,44 @@ def run(plan: dict, record_path: Path, link: SitlLink, *, t0_timeout_s: float,
                  "schedule": [{**it, "applied": False} for it in plan["schedule"]]}
     write_record(record_path, rec)
     rec["autopilot"] = link.wait_autopilot(60.0)
+    # THE BATTERY CELL'S FAIL-SAFE SETUP (module docstring): guarded, and
+    # every value to restore read before anything is set.
+    firmware = plan.get("firmware") or []
+    to_restore = restore_entries(plan)
+    if to_restore:
+        rec["restore"] = {"done": False, "params": []}
+    if firmware:
+        rec["firmware"] = {"ok": False, "params": [], "guard": None}
+        if not firmware_link_ok(link.link):
+            refused = (f"the link {link.link!r} is not a loopback tcp/udp link to SITL: "
+                       f"no firmware parameter is set over it")
+            probe = None
+        else:
+            probe = link.read_param(SITL_PROBE_PARAM)
+            refused = (None if probe is not None else
+                       f"the autopilot does not answer {SITL_PROBE_PARAM}: not SITL, so no "
+                       f"firmware parameter is set")
+        rec["firmware"]["guard"] = {"link": link.link, "probe": SITL_PROBE_PARAM,
+                                    "probe_value": probe, "refused": refused}
+        if refused:
+            return _boot_failed(rec, record_path, refused, say)
+    for it in to_restore:
+        before = link.read_param(it["param"])
+        rec["restore"]["params"].append({"param": it["param"], "restore_to": before,
+                                         "restored": False})
+    unread = [p["param"] for p in (rec.get("restore") or {}).get("params", [])
+              if p["restore_to"] is None]
+    if unread:
+        return _boot_failed(rec, record_path, "the value(s) to restore after the mission "
+                            "could not be read, so none is changed: " + ", ".join(unread), say)
+    for it in firmware:
+        name, want = it["param"], float(it["value"])
+        echo, _, _ = link.set_param(name, want, timeout=2.0)
+        back = link.read_param(name)
+        rec["firmware"]["params"].append(stressor_entry(name, want, back, echo=echo,
+                                                        why=it.get("why")))
+    if firmware:
+        rec["firmware"]["ok"] = all(p["applied"] for p in rec["firmware"]["params"])
     # BOOT: every boot parameter set, echoed and read back (stressor_entry,
     # the pymavlink rail's record of a stressor).
     for it in plan["boot"]:
@@ -419,21 +565,21 @@ def run(plan: dict, record_path: Path, link: SitlLink, *, t0_timeout_s: float,
         back = link.read_param(name)
         rec["boot"]["params"].append(stressor_entry(name, want, back, echo=echo,
                                                     why=it.get("why")))
-    ok = all(p["applied"] for p in rec["boot"]["params"])
+    ok = (all(p["applied"] for p in rec["boot"]["params"])
+          and (rec.get("firmware") or {}).get("ok", True))
     rec["boot"]["ok"] = ok
     rec["boot"]["wall"] = time.strftime("%Y-%m-%dT%H:%M:%S%z")
     if not ok:
-        bad = [p for p in rec["boot"]["params"] if not p["applied"]]
-        rec["state"] = "failed"
-        rec["error"] = "boot parameter(s) did not read back: " + ", ".join(
-            f"{p['param']} set {p['set']:g} read {p['read_back']}" for p in bad)
-        write_record(record_path, rec)
-        say(f"SITL_STRESS BOOT FAILED {rec['error']}")
-        return 1
+        bad = [p for p in ((rec.get("firmware") or {}).get("params") or [])
+               + rec["boot"]["params"] if not p["applied"]]
+        return _boot_failed(rec, record_path, "boot parameter(s) did not read back: "
+                            + ", ".join(f"{p['param']} set {p['set']:g} read {p['read_back']}"
+                                        for p in bad), say)
     rec["state"] = "waiting_t0" if plan["schedule"] else "done"
     write_record(record_path, rec)
-    say("SITL_STRESS BOOT OK " + " ".join(f"{p['param']}={p['read_back']:g}"
-                                          for p in rec["boot"]["params"]))
+    say("SITL_STRESS BOOT OK " + " ".join(
+        f"{p['param']}={p['read_back']:g}"
+        for p in ((rec.get("firmware") or {}).get("params") or []) + rec["boot"]["params"]))
     if not plan["schedule"]:
         say("SITL_STRESS DONE (no scheduled change)")
         return 0
@@ -511,11 +657,33 @@ def main(argv: list[str] | None = None) -> int:
     def say(line: str) -> None:
         print(line, flush=True)
 
+    def restore_once() -> None:
+        # Never interrupted by a second TERM while it sets parameters back.
+        signal.signal(signal.SIGTERM, signal.SIG_IGN)
+        if link is not None:
+            restore(link, record, say)
+
     link = None
     try:
         link = SitlLink(args.link)
-        return run(plan, record, link, t0_timeout_s=args.t0_timeout_s, say=say)
+        rc = run(plan, record, link, t0_timeout_s=args.t0_timeout_s, say=say)
+        if restore_entries(plan):
+            if rc == 0:
+                # Parameters to set back once the mission is over: hold, with
+                # the heartbeat, until `stop` (SIGTERM), then restore.
+                say("SITL_STRESS HOLDING until stop (parameters to restore after the "
+                    "mission)")
+                while True:
+                    try:
+                        link.pump(0.5)
+                    except _Stop:
+                        raise
+                    except Exception:                      # noqa: BLE001
+                        break          # the link is gone: the restore below says so
+            restore_once()
+        return rc
     except _Stop:
+        restore_once()
         try:
             rec = json.loads(record.read_text(encoding="utf-8"))
         except (OSError, ValueError):
@@ -537,6 +705,10 @@ def main(argv: list[str] | None = None) -> int:
         write_record(record, rec)
         say(f"SITL_STRESS BOOT FAILED {rec['error']}" if not (rec.get("boot") or {}).get("ok")
             else f"SITL_STRESS FAILED {rec['error']}")
+        try:
+            restore_once()
+        except Exception:                                  # noqa: BLE001
+            pass
         return 1
 
 

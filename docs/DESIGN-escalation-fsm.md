@@ -190,8 +190,9 @@ episode. The next section says why each edge never fired and what flies it.
   bar sweeping across it (dyn-nfz-rotate-spin). The nightly profile flies
   those families and ntFIN2, on the rig's own response, took no G2. A steady
   pilot makes one onset and holds it. (For a pilot slower than 1.1 s a decision, N-in-T needs
-  `FSMConfig.for_decision_period`, which the node does not apply yet; the
-  stub and the VLA at 1 s are not affected: T stays 5 s.)
+  `FSMConfig.for_decision_period`, which the node applies since 2026-11-17
+  when the pilot's period is declared, `--decision-period-s` above 1.1 s;
+  the stub and the VLA at 1 s are not affected: T stays 5 s.)
 
 ### G6's input on the ROS 2 node: the RTL watch
 
@@ -212,17 +213,25 @@ BATT_* failsafe parameters are read at take-off and recorded. Rows carry
 `rtl_failed` / `rtl_confirmed` on every judged RTL tick, and
 `sweep_scenarios.sitl_extra` counts `rtl_failed_ticks` from them when the
 node's metrics carry `rtl_watch`, so `rail_refusal` no longer refuses a
-gate on it: failsafe-rtl-blocked flies. failsafe-low-battery stays
-refused: the node reads the battery, but SITL's battery reaches CRITICAL
-only through the firmware's BATT_CRT_* (0, disabled, by default), which the
-simulator side, setting SIM_* parameters only, never sets. Flying it needs a
-decision: give the rig's autopilot a critical threshold (with
-BATT_FS_CRT_ACT 0, so the FSM and not ArduPilot acts) and schedule
-SIM_BATT_VOLTAGE below it BATT_LOW_TIMER before the cell's time.
+gate on it: failsafe-rtl-blocked flies. failsafe-low-battery stayed
+refused until 2026-11-17: the node reads the battery, but SITL's battery
+reaches CRITICAL only through the firmware's BATT_CRT_* (0, disabled, by
+default), which the simulator side, setting SIM_* parameters only, never
+set. Since then the simulator side gives the SIMULATED vehicle, for that
+cell alone, the battery fail-safe setup ArduCopter's autotest
+BatteryFailsafe flies (BATT_LOW_VOLT 10.5, BATT_CRT_VOLT 10.1,
+BATT_LOW_TIMER 1, BATT_FS_LOW_ACT and BATT_FS_CRT_ACT 0, so the FSM and not
+ArduPilot acts), drops SIM_BATT_VOLTAGE from 12.6 V to 10.0 V
+BATT_LOW_TIMER before the cell's time, and restores every value after the
+mission (`sitl/sitl_stressors.py`, THE BATTERY CELL'S FAIL-SAFE SETUP: only
+over a loopback link, only to an autopilot that answers SIM_BATT_VOLTAGE).
+`rail_stress_check` scores the flight only if ArduPilot's CRITICAL reached
+the node's RTL watch within 1.5 s of the cell's time. Not yet flown.
 
 ### What flies them: experiments/profiles/fsm_edges.yaml
 
-Five cells, seed 1001; three new families flown by this profile alone
+Five cells, seed 1001 (six since 2026-11-17: failsafe-low-battery, G11 G6
+G10 on both vehicles); three new families flown by this profile alone
 (`profiles: [fsm_edges]`: no library, smoke, nightly or broad number
 moves), measured headless on the ideal and the rail vehicle
 (RAIL_VEHICLE):
@@ -976,8 +985,9 @@ its KPIs on the hil topology).
      sticks.
    - **N-in-T for a pilot slower than 10 Hz:** `FSMConfig.for_decision_period(p)`
      sets T = max(T, N x p x 1.5). It is option b of the 21 Oct questions,
-     and every 10 Hz pilot keeps exactly the grant's thresholds. No VLA
-     rail calls it yet.
+     and every 10 Hz pilot keeps exactly the grant's thresholds. Since
+     2026-11-17 the ROS 2 node applies it for a pilot declared slower than
+     1.1 s (`--decision-period-s`); no campaign has flown it yet.
 4. **PathRepair on by default: measured, kept off.**
    - **Cost.** The library flown with `path_repair=True` scores 150/171 =
      0.877 (19 false, 2 missed, 8 censored), against 175/179 with it off.

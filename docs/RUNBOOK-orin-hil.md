@@ -756,8 +756,8 @@ held `ssh ... mkdir -p` open into its 60 s timeout (shk02).
 
 What the rail cannot fly is refused before anything flies, with the reason,
 and listed: the stressors SITL has no honest equivalent for (GPS noise,
-state latency, gusts, the battery hook; next section), an RTL that must fail
-(`rtl_failed_ticks`), a non-finite pilot action, a relabel schedule, start
+state latency, gusts; the battery hook until 2026-11-17; next section), an
+RTL that must fail (`rtl_failed_ticks`, until 2026-11-14), a non-finite pilot action, a relabel schedule, start
 altitudes below 1 m or at the GeoFence ceiling (the 0.5 m and 30 m cells),
 and the paraphrase and prefix-off arms (the stub reads no text). Shield-off
 control arms fly only with `--hil-controls`. Until 2026-11-07 every stressor
@@ -791,15 +791,30 @@ recorded per row; `SIM_GPS_LAG_MS` delays the GPS into the EKF, which
 compensates it), `gust_mps` (`SIM_WIND_TURB` redraws its azimuth every
 physics step and low-passes SITL's own random speed, `SIM_Aircraft.cpp:785-
 800`: neither the process nor the seed's draw of the harness's per-tick
-gust), `battery_critical_at_s` (since 2026-11-14 the node's RTL watch reads
-ArduPilot's own battery verdict, BATTERY_STATUS charge_state CRITICAL, but
-SITL's battery reaches it only through the firmware's BATT_CRT_VOLT /
-BATT_CRT_MAH - 0, disabled, by default - which the simulator side never
-sets), and a dropout flown blind (`fix_quality_reported: false`: the rail
+gust), and a dropout flown blind (`fix_quality_reported: false`: the rail
 reports its fix). A gate on `rtl_failed_ticks` is no longer refused: the
 node writes `rtl_failed` on every RTL row (failsafe-rtl-blocked flies; the
 FSM edges G2, G4, G6, X2 and X3 have a profile of their own,
 `--profile fsm_edges`, experiments/profiles/fsm_edges.yaml).
+
+`battery_critical_at_s` flies since 2026-11-17 (until then refused: SITL's
+battery reaches CRITICAL only through the firmware's BATT_CRT_VOLT /
+BATT_CRT_MAH, 0 by default). For that cell alone the simulator side first
+reads, then sets, the SIMULATED vehicle's battery fail-safe setup
+(BATT_LOW_VOLT 10.5, BATT_CRT_VOLT 10.1, BATT_LOW_TIMER 1, BATT_FS_LOW_ACT 0,
+BATT_FS_CRT_ACT 0: ArduCopter's autotest values, no action of the
+autopilot's own), boots SIM_BATT_VOLTAGE at 12.6 V and drops it to 10.0 V at
+t0 + battery_critical_at_s - 1 s; ArduPilot declares CRITICAL once the
+voltage has stayed under 10.1 V for more than BATT_LOW_TIMER
+(`AP_BattMonitor/AP_BattMonitor_Backend.cpp:135-139`, armed only,
+`AP_BattMonitor.cpp:791`). The dry run prints the setup on a `SITL setup`
+line. Only over a loopback link and only to an autopilot that answers
+SIM_BATT_VOLTAGE: never the CUAV on COM8. `stress.log` then says
+`SITL_STRESS HOLDING` after the drop; `hil_desktop.sh stop` (TERM, up to
+5 s) has it restore every value (`SITL_STRESS RESTORED ...`, the record's
+`restore`) before SITL is killed. The flight is scored only if the
+CRITICAL reached the node's RTL watch within 1.5 s of the cell's time
+(`sitl_stress.json` `battery`).
 
 **The episode's clock.** The node announces its mission clock on every
 scenario mission: a STATUSTEXT `GRDL T0 <nonce8> t=<s>` through MAVROS at
