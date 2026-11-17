@@ -334,8 +334,8 @@ PRIORITY_LEVELS = ("P0", "P1", "P2")
 # does not name (the kinematic clamps, the recoveries, Brake, Sanitise,
 # SoftRelax); they are classed here as this project's extensions, under names
 # of our own, never folded into a grant class. PathRepair is the operator of
-# guardrail/repair.py (the detour around a zone; off unless the Shield is
-# built with path_repair=True), so on a flight without it the class reads
+# guardrail/repair.py (the detour around a zone; on by default since
+# 2026-11-17, off on every flight before), so on a flight without it the class reads
 # "never acted" - a class that did not run, not a zero. An operator this
 # table does not list lands in UNCLASSIFIED, which the report shows as a
 # column of its own whenever it is not empty.

@@ -275,14 +275,16 @@ def _shields(pol: Policy, smap, cls_new=Shield, now_new=None, now_old=None,
     # distance_envelope_sitl.yaml, 2026-11-17) is refused without its map:
     # both sides get the same grid as its buildings and its roads (the road
     # map is read only by a roads envelope, so no other policy changes).
+    # PathRepair (default since 2026-11-17) is off on both sides: the copy
+    # predates it, and its supersede reads the axis the copy's repairs lack.
     m = smap if (pol.by_type(ObstacleClearance) or pol.by_type(DistanceEnvelope)) else None
     r = m if pol.by_type(DistanceEnvelope) else None
     return (cls_new(pol.model_copy(deep=True), lookahead_s=lookahead_s, dt=dt,
                     obstacle_map=m, now=now_new, escalation=False, recovery_law="cap",
-                    road_map=r),
+                    road_map=r, path_repair=False),
             LegacyFenceShield(pol.model_copy(deep=True), lookahead_s=lookahead_s,
                               dt=dt, obstacle_map=m, now=now_old, escalation=False,
-                              recovery_law="cap", road_map=r))
+                              recovery_law="cap", road_map=r, path_repair=False))
 
 
 class _TickClock:

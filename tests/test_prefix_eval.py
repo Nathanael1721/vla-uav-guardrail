@@ -454,7 +454,9 @@ def test_a_shield_record_the_replay_cannot_rebuild_is_refused():
     cfg = PE.flight_shield_settings({"shield": base})
     PE._check_replay_shield(PE.Shield(load_policy(URBAN), **cfg["kwargs"]), cfg)
     # ...and a rebuild that drops a recorded setting is refused.
-    rec = _shield_rec(lookahead_s=PE.LOOKAHEAD_S, dt=PE.LOOKAHEAD_DT_S, path_repair=True)
+    # path_repair=False: since 2026-11-17 True is the default, which a
+    # rebuild that drops the setting would match by accident.
+    rec = _shield_rec(lookahead_s=PE.LOOKAHEAD_S, dt=PE.LOOKAHEAD_DT_S, path_repair=False)
     real = PE.shield_kwargs
     PE.shield_kwargs = lambda r: {k: v for k, v in real(r).items() if k != "path_repair"}
     try:

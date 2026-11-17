@@ -58,7 +58,7 @@ THE OPERATORS
     StandoffProjection   Shield._repair_standoff           StandoffHold StandoffRecover
     CorridorProjection   Shield._repair_corridor           CorridorReturn CorridorAltitudeFix
     LateralProjection    Shield._repair_geofence           GeofenceEscape GeofenceSlide
-    PathRepair           a body-frame detour waypoint      PathRepair      (flag, default off)
+    PathRepair           a body-frame detour waypoint      PathRepair      (default on since 2026-11-17)
 
 In the audit record (version 4, 2026-11-02) `repair_attempts` lists these
 operators flat, in the order they ran, as the grant's example does, and
@@ -70,8 +70,8 @@ THE MODES (guardrail/shield.py, Shield(...) keyword arguments)
 
   repair_mode="chain"           (default) the iterated chain: KinematicClamp,
                                 AltitudeClamp, then up to 3 passes of
-                                Clearance, Standoff, Corridor, Lateral
-                                (, PathRepair), KinematicClamp, until the
+                                Clearance, Standoff, Corridor, Lateral,
+                                PathRepair, KinematicClamp, until the
                                 monitor finds nothing.
   repair_mode="first_feasible"  the grant's selection: per iteration (up to 3)
                                 the earliest open violation is the target;
@@ -82,13 +82,19 @@ THE MODES (guardrail/shield.py, Shield(...) keyword arguments)
                                 every iteration's, recoveries exempt) wins.
                                 No winner ends the loop, and the Shield's
                                 rescue / brake fallback decides.
-  path_repair=True              PathRepair joins either mode (after
-                                LateralProjection).
+  path_repair=True              (default since 2026-11-17) PathRepair joins
+                                either mode, right after LateralProjection:
+                                the grant's priority order AltitudeClamp ->
+                                LateralProjection -> PathRepair.
+                                path_repair=False is the chain as flown
+                                before 2026-11-17.
   repair_order=(name, ...)      the caller's stack for either mode, in
                                 place of CHAIN_LOOP / FIRST_FEASIBLE.
 
-Both new behaviours are off by default; tests/test_shieldcore_repair.py pins
-that the default chain's decisions do not move.
+First-feasible stays off by default. tests/test_shieldcore_repair.py pins
+that the chain with path_repair=False decides as the old chain did, and
+docs/data/pathrepair_default_20261117/ measures what turning PathRepair on
+by default changed (every changed episode explained).
 """
 from __future__ import annotations
 
@@ -277,15 +283,64 @@ class PathRepair:
     with the vertical speed and yaw rate already repaired. It is taken only
     if the monitor finds NOTHING wrong with it, under every rule the chain is
     enforcing, so it cannot add an escape. The waypoint is logged in body
-    frame (forward / right of the heading, frames.to_body). Its magnitude_m
-    is the depth the forecast it replaced reached into the ring, the same
-    "forecast it corrected" basis every lateral operator reports."""
+    frame (forward / right of the heading, frames.to_body).
+
+    Its magnitude_m (since 2026-11-17) is the correction of the action it
+    EMITS: |emitted - raw| (horizontal, m/s; the raw command taken at the
+    emitted speed, since SpeedClamp reports the speed change) over one
+    control period (`PERIOD_S`, fsm.THETA_HORIZON_S, 0.1 s), in metres -
+    the grant's "||action_repaired - action_original||" (Safety Shield p4)
+    on the one-period reading the FSM already offers (theta_horizon_s=0.1).
+    The lateral projections logged before it on the tick are SUPERSEDED
+    (`supersede`): removed from the decision's repairs (the pass ledger
+    keeps them, and the detour's detail names them), because their action
+    is not the one flown. The first version reported the depth the RAW
+    forecast reached into the ring and kept the projection's record beside
+    it: theta's per-axis sum counted that depth twice, and judged the
+    detour - whose own forecast enters nothing, it re-checks clean - by a
+    correction it did not make. Measured with that magnitude and PathRepair
+    on, the library's fail-safe trigger correctness fell from 175/179 to
+    150/171 (docs/DESIGN-escalation-fsm.md, decision 4). Theta reads this
+    value as it reads every other repair's (summed per axis): at a 4 m/s
+    cap a detour's correction is at most 0.8 m, so on a tick a detour is
+    flown theta abandons it for the fail-safe only above about 10 m/s (a
+    full reversal at 10 m/s is 2.0 m); the detour's safety rests on its
+    full re-check, which is what lets it be taken at all."""
 
     name = "PathRepair"
     categories = ("geofence", "standoff")
     MIN_PROGRESS = 0.5        # of the commanded horizontal speed, chain mode
     CLEARANCE_M = 1.0         # waypoint clearance outside the ring
     MIN_SPEED_MPS = 0.5       # below this there is no progress to keep
+    PERIOD_S = 0.1            # fsm.THETA_HORIZON_S: one control period
+
+    @classmethod
+    def magnitude(cls, emitted: Action4D, raw: Action4D) -> float:
+        """The correction of the emitted action, in metres: the horizontal
+        |emitted - raw| over one control period, net of the speed clamp
+        (the raw command is taken at the emitted speed: SpeedClamp reports
+        its own change and carries no position magnitude, as everywhere)."""
+        spd, out = math.hypot(raw.vx, raw.vy), math.hypot(emitted.vx, emitted.vy)
+        if spd < 1e-9:
+            return out * cls.PERIOD_S
+        rx, ry = raw.vx / spd * out, raw.vy / spd * out
+        return math.hypot(emitted.vx - rx, emitted.vy - ry) * cls.PERIOD_S
+
+    @staticmethod
+    def supersede(repairs: list) -> list:
+        """Remove, and return, the lateral position corrections the detour
+        replaces. The detour's velocity is built afresh from the aircraft's
+        position (only the repaired vertical speed and yaw rate are kept) and
+        re-checks clean under every rule, so no projection logged before it
+        on this tick is flown: their records would make theta judge a
+        correction that is not made (the projection's depth grows as the
+        detour approaches the zone the pilot still points at). Recoveries
+        stay: they are exempt from theta and say the aircraft was already
+        outside a rule."""
+        gone = [r for r in repairs if getattr(r, "axis", None) == "lateral"
+                and not getattr(r, "recovery", False)]
+        repairs[:] = [r for r in repairs if not any(r is g for g in gone)]
+        return gone
 
     def __repr__(self) -> str:
         return "PathRepair()"
@@ -311,9 +366,28 @@ class PathRepair:
                              key=lambda v: v.predicted_at_s)
         if not targets:
             return skip("the raw forecast crosses no keep-out zone or stand-off ring")
+        if violation is None and getattr(st, "fix_ok", None) is False:
+            # No current position fix (a GPS denial: frozen, or the autopilot
+            # dead-reckoning): a detour keeps the aircraft moving along the
+            # ring on a position that drifts, where projection's push away
+            # keeps the margin for the drift. Measured 2026-11-17 on the rail
+            # vehicle's gps-dropout lane 23.6: the closest true approach to
+            # the fence fell from 2.9 m to 1.1 m (margin 1.0 m) with it.
+            return skip("no current position fix (fix_ok False): no detour on a "
+                        "drifting position")
+        if violation is None:
+            rec = [r.operator for r in ctx.repairs if getattr(r, "recovery", False)]
+            if rec:
+                return skip(f"a recovery is under way ({', '.join(rec)}): the aircraft is "
+                            f"already inside a rule, and the recovery brings it back")
+            over = self._projection_over_theta(sh, ctx.repairs)
+            if over is not None:
+                return skip(f"the projection is {over:.2f} m over theta: abandoning it for "
+                            f"the fail-safe is theta's call, not a detour's")
         cap = min((k.speed_max_mps for k in sh._kins), default=4.0)
         speed = min(spd, cap)
         from .shield import Repair                    # shield imports this module
+        deeper = hugs = 0
         for v in targets:
             if v.category == "standoff":
                 wps, depth = self._standoff_waypoints(sh, st, raw)
@@ -328,6 +402,13 @@ class PathRepair:
                                 vz_up=action.vz_up, yaw_rate=action.yaw_rate)
                 if violation is None and cand.vx * ux + cand.vy * uy <= prog + 1e-9:
                     continue                          # no better than projection
+                if violation is None and self._depth_after(sh, st, raw, cand, v) > depth + 1e-6:
+                    deeper += 1                       # leads where the request goes deeper
+                    continue
+                if (v.category != "standoff" and violation is None
+                        and not self._keeps_clearance(sh, st, cand, v.rule_id)):
+                    hugs += 1                         # runs closer than CLEARANCE_M
+                    continue
                 if sh._check(st, cand):
                     continue                          # never trade one breach for another
                 fwd, right, _, _ = to_body(Action4D(vx=dx, vy=dy, vz_up=0.0, yaw_rate=0.0),
@@ -336,11 +417,76 @@ class PathRepair:
                           f"{right:+.1f} m right (body frame) at {speed:.2f} m/s; "
                           f"the action handed in kept {max(0.0, prog) / spd:.0%} of the "
                           f"commanded progress")
-                rep = Repair(operator="PathRepair", detail=detail, magnitude_m=depth,
+                detail += f"; the raw forecast went {depth:.2f} m into the ring"
+                gone = self.supersede(ctx.repairs)
+                if gone:
+                    detail += "; supersedes " + ", ".join(
+                        f"{r.operator} ({r.magnitude_m or 0.0:.2f} m)" for r in gone)
+                rep = Repair(operator="PathRepair", detail=detail,
+                             magnitude_m=self.magnitude(cand, raw),
                              axis="lateral", recovery=False)
                 ctx.repairs.append(rep)
                 return RepairAttempt(self.name, "ok", cand, detail, (rep,), ctx.pass_no)
+        if deeper or hugs:
+            return skip(f"{deeper} detour waypoint(s) would take the aircraft where the "
+                        f"request's forecast goes deeper into the ring, {hugs} would run "
+                        f"closer than {self.CLEARANCE_M:g} m to it; no other re-checks clean")
         return skip("no detour waypoint re-checks clean")
+
+    @staticmethod
+    def _projection_over_theta(sh, repairs) -> float | None:
+        """By how much the lateral repairs logged so far on this tick are over
+        theta as the FSM reads them (summed, recoveries and clamps exempt), or
+        None when they are within it. Chain mode only: a detour does not
+        overrule the cap's call to abandon projection for the fail-safe.
+        Theta is the Shield's own FSM's; a Shield without one (a flight
+        rail's, guardrail/replay.py rail_shield: the rail runs THE FSM) reads
+        `Shield.theta_config`, which the ROS 2 node sets to its FSM's
+        config, else the grant's defaults (fsm.FSMConfig())."""
+        from . import fsm as _fsm                     # fsm is imported by shield
+        cfg = (sh.fsm.config if getattr(sh, "fsm", None) is not None
+               else getattr(sh, "theta_config", None) or _fsm.FSMConfig())
+        tot = sum(r.magnitude_m for r in repairs
+                  if r.magnitude_m is not None and r.axis == "lateral"
+                  and _fsm.theta_governs(r))
+        return tot - cfg.theta_lateral_m if tot > cfg.theta_lateral_m + _fsm.EPS else None
+
+    def _keeps_clearance(self, sh, st, cand, rule_id) -> bool:
+        """Does the detour's forecast stay CLEARANCE_M (the clearance its
+        corners are placed at) outside the zone's margin ring at every pose?
+        A leg must only not CROSS the ring (`_zone_waypoints`), so from beside
+        the ring a leg to a corner runs along it; the slide it replaces
+        pushes the aircraft away. Chain mode does not hug: measured
+        2026-11-17 on gps-dropout lane 23.6 at 6-13 s (ideal vehicle), a
+        detour along the ring in the 2 s before the fix froze left the
+        aircraft at the ring when it did, the frozen slide chattered in place
+        and X8 (position lost -> RTL), which the cell's label expects, never
+        came."""
+        anchors, _ = sh._fence_anchors(sh._ir)
+        rec = next((r for r in anchors if r.rule.id == rule_id), None)
+        if rec is None or rec.moving or rec.buffered.is_empty:
+            return True
+        ring = rec.buffered
+        for _, p in sh._predict(st, cand):
+            q = Point(p.x, p.y)
+            if ring.contains(q) or ring.exterior.distance(q) < self.CLEARANCE_M - 1e-6:
+                return False
+        return True
+
+    def _depth_after(self, sh, st, raw, cand, v) -> float:
+        """How deep the REQUEST's forecast goes into the ring `v` names from
+        where one control period of `cand` takes the aircraft. Chain mode
+        takes a detour only where this does not grow: flying toward a zone's
+        corner while the pilot still points at the zone brings the aircraft
+        where the projection (and theta, which reads its depth) must correct
+        more, and a 5 s forecast of the straight leg can leave it where no
+        detour re-checks clean (measured 2026-11-17 on nfz-head-on: the slide
+        reached 3.59 m, over theta, and the FSM held in Loiter)."""
+        st2 = st.model_copy(update={"x": st.x + cand.vx * self.PERIOD_S,
+                                    "y": st.y + cand.vy * self.PERIOD_S})
+        if v.category == "standoff":
+            return self._standoff_waypoints(sh, st2, raw)[1]
+        return self._zone_waypoints(sh, st2, raw, v.rule_id)[1]
 
     @staticmethod
     def _by_preference(st, wps, ux, uy):

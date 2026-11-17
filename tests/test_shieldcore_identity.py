@@ -80,9 +80,11 @@ def _replay_decisions():
         return None
     pol, rows, smap, src = got
     # 4418ae0 recovered on the one-lookahead law (WP3-17 made the climb cap
-    # the default on 2026-10-29), so the identity is flown on that law.
+    # the default on 2026-10-29), so the identity is flown on that law, and
+    # without PathRepair (in the default chain since 2026-11-17; the 8 Oct
+    # flight and 4418ae0 had none).
     sh = FL.rail_shield(pol, lookahead_s=FL.LOOKAHEAD_S, dt=FL.LOOKAHEAD_DT_S,
-                        obstacle_map=smap, recovery_law="lookahead")
+                        obstacle_map=smap, recovery_law="lookahead", path_repair=False)
     touched, clean = {}, []
     for r in rows:
         st = State(x=r["x"], y=r["y"], up=r["up"], yaw_deg=r["yaw_deg"])

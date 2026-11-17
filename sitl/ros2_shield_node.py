@@ -2744,6 +2744,9 @@ if HAVE_ROS:
             cfg, self.decision_period = fsm_config_for_pilot(
                 cfg, getattr(args, "decision_period_s", None))
             self.fsm = EscalationFSM(cfg) if self.shield_on else None
+            # PathRepair (default chain since 2026-11-17) stands aside where
+            # the projection is over THIS FSM's theta; the Shield has no FSM.
+            self.shield.theta_config = cfg
             self.fsm_fault: str | None = None
             self.hold_mode = getattr(args, "hold_mode", DEFAULT_HOLD_MODE)
             # What was asked of the autopilot, in the FSM's words and
