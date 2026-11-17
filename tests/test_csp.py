@@ -1527,10 +1527,15 @@ def test_sentences_without_a_window_are_byte_identical_to_the_old_ones():
     (models.SubjectStandoff.binds), so it now says "the pedestrian you are
     following". The oracle stays the 445bdbe text; the exception is applied
     here, by rule, so any other change to the sentence still fails."""
-    from guardrail.models import SubjectStandoff
+    from guardrail.models import DistanceEnvelope, SubjectStandoff
     n_same = n_win = n_soft = n_c8 = 0
     for path in POLICIES:
         pol = load_policy(path)
+        if pol.by_type(DistanceEnvelope):
+            # No 2026-09-01 text exists for this type (enforced and rendered
+            # since 2026-11-03); its sentence is pinned by
+            # tests/test_distance_envelope_msl.py.
+            continue
         new = ConstraintCompiler(pol)._sentences()
         old = _legacy_sentences(pol)
         assert len(new) == len(old), path.name

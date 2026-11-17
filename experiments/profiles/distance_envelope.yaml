@@ -1,0 +1,38 @@
+# Distance envelope profile: the grant's distance_envelope flown on a rail
+# (WP1-07, 2026-11-17).
+#
+# WHY THIS PROFILE EXISTS
+#
+# distance_envelope is enforced since 2026-11-03 (models.DistanceEnvelope:
+# buildings and roads on the Shield's maps, people as a stand-off from the
+# tracked subject), but no flight had carried one: the ArduPilot SITL rails
+# gave the Shield no map, so a buildings or roads envelope was refused there.
+# Since 2026-11-17 a scenario can name a declared world (ScenarioSpec.world,
+# guardrail/world_map.py) that the harness gives every Shield and the rails'
+# Shield node takes as --world. This profile flies the one family that does
+# (experiments/templates/distance_envelope.yaml): two lanes, one past a
+# building (buildings envelope, P0), one past a road (roads envelope, P1).
+#
+# WHAT IT IS NOT
+#
+# Not a grant scheduling row and not a KPI set (`grant_kpi_bearing: false`):
+# the family is flown by this profile alone (its `profiles` field), so no
+# library, smoke, nightly or broad number moves. Headless it is not
+# KPI-grade (headless-kinematic, sim_speedup >> 1); on the hil rail each
+# episode is one mission at sim_speedup 1.0, flying the policy's SIGNED
+# bundle (bundles/distance-envelope-sitl-v0.1.0.tar.gz: python
+# tools/build_flight_bundles.py on both hosts first).
+#
+#   python experiments/sweep_scenarios.py --profile distance_envelope
+#   python experiments/sweep_scenarios.py --profile distance_envelope --backend hil --hil-dry-run
+
+profile: distance_envelope
+cadence: on demand (WP1-07, the distance_envelope on a rail)
+grant_scope: "not a grant row: the distance_envelope (buildings, roads) flown on a rail"
+grant_sim_speedup: "1.0 on the hil rail - NOT met headless (measured speedup >> 1)"
+grant_kpi_bearing: false
+library: experiments/scenarios.yaml
+seeds: [1001]
+samples_per_family: 1
+families: [distance-envelope-lanes]
+expected_cells: [2, 2]

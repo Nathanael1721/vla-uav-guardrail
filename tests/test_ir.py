@@ -52,7 +52,8 @@ from guardrail import load_policy                                   # noqa: E402
 from guardrail.geometry import fence_polygon                        # noqa: E402
 from guardrail.ir import FenceRecord, PolicyIR, compile_fence       # noqa: E402
 from guardrail.models import (Action4D, AltitudeEnvelope,            # noqa: E402
-                              KinematicEnvelope, ObstacleClearance,
+                              DistanceEnvelope, KinematicEnvelope,
+                              ObstacleClearance,
                               Policy, PolygonFence, State,
                               SubjectStandoff)
 from guardrail.shield import Shield, as_dynamic_nfz                 # noqa: E402
@@ -270,12 +271,18 @@ def _shields(pol: Policy, smap, cls_new=Shield, now_new=None, now_old=None,
     # recovery at its cap"; pinned in tests/test_position_quality.py). The
     # index is the question here, so it is asked on the law the copy records;
     # "cap_all"'s zone set walks every fence, no index (Shield._cap_zones).
-    m = smap if pol.by_type(ObstacleClearance) else None
+    # A distance_envelope over buildings or roads (policies/
+    # distance_envelope_sitl.yaml, 2026-11-17) is refused without its map:
+    # both sides get the same grid as its buildings and its roads (the road
+    # map is read only by a roads envelope, so no other policy changes).
+    m = smap if (pol.by_type(ObstacleClearance) or pol.by_type(DistanceEnvelope)) else None
+    r = m if pol.by_type(DistanceEnvelope) else None
     return (cls_new(pol.model_copy(deep=True), lookahead_s=lookahead_s, dt=dt,
-                    obstacle_map=m, now=now_new, escalation=False, recovery_law="cap"),
+                    obstacle_map=m, now=now_new, escalation=False, recovery_law="cap",
+                    road_map=r),
             LegacyFenceShield(pol.model_copy(deep=True), lookahead_s=lookahead_s,
                               dt=dt, obstacle_map=m, now=now_old, escalation=False,
-                              recovery_law="cap"))
+                              recovery_law="cap", road_map=r))
 
 
 class _TickClock:

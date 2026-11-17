@@ -131,3 +131,4 @@ templates:
   - templates/three_simultaneous_violations.yaml
   - templates/sensor_degradation.yaml
   - templates/wind_disturbance.yaml
+  - templates/distance_envelope.yaml

@@ -108,6 +108,27 @@ def load_street(path: str | Path = None) -> dict:
             "ox": float(d["origin_x"]), "oy": float(d["origin_y"])}
 
 
+def road_map_for(policy, citymap_dir: str | Path) -> tuple[dict | None, str]:
+    """(road_map, note): the map a distance_envelope over `roads` (WP1-07) is
+    measured on - this mask, street.npz beside the CityLife occupancy map in
+    `citymap_dir`, as Shield(road_map=...) takes it ({"occ", "res", "ox",
+    "oy"}, 1 = road) - or None with the reason. None when the policy has no
+    such rule (nothing changes for it); None for a policy that has one and no
+    mask, which the Shield then refuses at construction (a distance_envelope
+    is never inert). One helper for every city rail (vla_fly, the PAS rail),
+    as follow_vlm builds it."""
+    from guardrail.models import DistanceEnvelope
+    if not any(c.object_class == "roads" for c in policy.by_type(DistanceEnvelope)):
+        return None, "policy has no distance_envelope over roads"
+    p = Path(citymap_dir) / "street.npz"
+    if not p.is_file():
+        return None, (f"no street mask at {p}: a distance_envelope over roads cannot "
+                      f"be judged (python demo/build_street_mask.py)")
+    st = load_street(p)
+    return ({"occ": st["street"], "res": st["res"], "ox": st["ox"], "oy": st["oy"]},
+            f"road map {p} ({int(st['street'].sum())} road cells)")
+
+
 def is_street(mask: dict, x: float, y: float) -> bool:
     """Is the world point (x North, y East) on a road?
 

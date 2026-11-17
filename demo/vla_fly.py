@@ -1576,7 +1576,8 @@ async def _fly(args, holder: dict) -> int:
     from guardrail.audit import AUDIT_FILE
     from guardrail.bundle import load_for_flight
     from guardrail.manifest import flight_bundle_path, flight_policy_choice
-    from guardrail.models import Action4D, AltitudeEnvelope, ObstacleClearance, SubjectStandoff
+    from guardrail.models import (Action4D, AltitudeEnvelope, DistanceEnvelope,
+                                  ObstacleClearance, SubjectStandoff)
     from guardrail.replay import rail_shield, verify_replay, write_replay
     from guardrail.shield import LOOKAHEAD_DT_S, LOOKAHEAD_S
     from guardrail.vla_backends import make_backend
@@ -1609,15 +1610,26 @@ async def _fly(args, holder: dict) -> int:
     cmap = city_planner.load_occ(args.citymap)
     alt = policy.by_type(AltitudeEnvelope)
     occ_report = []
-    if policy.by_type(ObstacleClearance) and alt:
+    # The obstacle map serves an obstacle_clearance rule and, since
+    # 2026-11-17, a distance_envelope over buildings (WP1-07): the same map.
+    # Neither: no map, as before.
+    needs_occ = bool(policy.by_type(ObstacleClearance)) or any(
+        c.object_class == "buildings" for c in policy.by_type(DistanceEnvelope))
+    if needs_occ and alt:
         sel = occ_bands.select_for_band(Path(args.citymap).parent, alt[0].alt_min_m,
                                         alt[0].alt_max_m)
         occ_report = list(sel["report"])
         for ln in occ_report:
             print(ln)
         cmap = sel["map"]
-    smap = (None if cmap is None or not policy.by_type(ObstacleClearance) else
+    smap = (None if cmap is None or not needs_occ else
             {"occ": cmap["occ"], "res": cmap["res"], "ox": cmap["ox"], "oy": cmap["oy"]})
+    # The road map of a distance_envelope over roads (WP1-07): the street mask
+    # beside --citymap (build_street_mask.road_map_for). None for a policy
+    # without one, so the Shield every other policy flies is the one it was.
+    from build_street_mask import road_map_for
+    rmap, road_note = road_map_for(policy, Path(args.citymap).parent)
+    print(f"[map] {road_note}")
     if policy.by_type(ObstacleClearance) and smap is None:
         print("[occ] *** no obstacle map for the policy band: ObstacleClearance is INERT")
     # The grant's 5 s / 0.1 s forecast, no escalation FSM inside the Shield
@@ -1629,7 +1641,8 @@ async def _fly(args, holder: dict) -> int:
     # from 9.1 % of ticks to 1.1 %; 3 s / 0.5 s would change every rule's
     # forecast to save the rest (on the same replay the other rules' repairs
     # rose by half), so the grant's stays (CHANGELOG 2026-11-01 "late").
-    shield = rail_shield(policy, lookahead_s=LOOKAHEAD_S, dt=LOOKAHEAD_DT_S, obstacle_map=smap)
+    shield = rail_shield(policy, lookahead_s=LOOKAHEAD_S, dt=LOOKAHEAD_DT_S, obstacle_map=smap,
+                         road_map=rmap)
     # The subject stand-off: who the subject is (the object words' policy
     # class, follow_vlm.subject_width) and whether its position can be fed
     # (subject_feed; decided again once the identity is set up).
@@ -2431,6 +2444,7 @@ async def _fly(args, holder: dict) -> int:
         "off_map_ticks": (sum(1 for r in rows if r.get("off_map")) if shield.has_obstacle_map
                           else None),
         "obstacle_map_loaded": bool(shield.has_obstacle_map), "occ_band_report": occ_report,
+        "road_map": road_note,
         "collisions": guard("collisions", lambda: FV.collisions_summary(
             collisions, collisions_subscribed,
             None if t0 is None or t_connect is None else t0 - t_connect,

@@ -455,6 +455,18 @@
       },
       "policy_hash": "sha256:ddb43893eea8b015098dd735b74914497c4d0ec8490b4834e8d623310ee61df7"
     },
+    "distance-envelope-sitl@0.1.0": {
+      "file": "distance_envelope_sitl.yaml",
+      "hash_scheme": "sha256-canonical-v3",
+      "ir_schema_version": "4.0.0",
+      "legacy_hashes": {
+        "legacy16-exclude-none": "sha256:7f6cc3204da35cec",
+        "legacy16-include-defaults": "sha256:78d00e4966e17940",
+        "legacy16-valid-time": "sha256:78d00e4966e17940"
+      },
+      "locked_on": "2026-11-17",
+      "policy_hash": "sha256:400817312863a117e2026277507da6a38950591f2465bc0e3e4af1cca86dbd17"
+    },
     "edge-nfz-patrol@0.1.0": {
       "file": "edge_patrol.yaml",
       "legacy_hashes": {

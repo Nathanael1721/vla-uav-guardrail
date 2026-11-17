@@ -110,8 +110,10 @@ def test_the_tool_builds_signs_and_verifies_every_flight_bundle():
     rows = T.build(T.FLIGHT_POLICIES, out, signer=signer, trust_store=trust,
                    issued_at="2026-10-12T00:00:00Z")
     # Nine since the merge of 2026-10-23: master's eight and the AerialVLA
-    # pilot's vla_goto_citylife.
-    assert len(rows) == len(T.FLIGHT_POLICIES) == 9 and all(r["ok"] for r in rows), rows
+    # pilot's vla_goto_citylife; ten since 2026-11-17, the distance_envelope
+    # family's distance_envelope_sitl (WP1-07).
+    assert len(rows) == len(T.FLIGHT_POLICIES) == 10 and all(r["ok"] for r in rows), rows
+    assert "distance-envelope-sitl-v0.1.0.tar.gz" in {Path(r["bundle"]).name for r in rows}
     for r in rows:
         pol, src = B.load_for_flight(r["bundle"], trust_store=trust)
         assert src["signature"] == B.SIG_VERIFIED, src

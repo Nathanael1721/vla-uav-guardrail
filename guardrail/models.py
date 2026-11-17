@@ -1255,7 +1255,25 @@ class DistanceEnvelope(ConstraintBase):
     is outside this rule; and buildings and roads exist only where the maps
     cover (off the map is unknown, Shield.off_map). A Shield is never built
     over a buildings or roads envelope without its map (refused at
-    construction), so the rule is never inert where it claims to hold."""
+    construction), so the rule is never inert where it claims to hold.
+
+    PEOPLE: THE RECORDED LIMIT (2026-11-17, WP1-07). The grant's class is
+    every person; this rule holds min_distance_m from ONE: the position a
+    rail passes to Shield.set_subject, and only on ticks where it passes it
+    with a class in PEOPLE_CLASSES. Per rail: the city and PAS rails pass
+    their target estimate (demo/follow_vlm.py, demo/vla_fly.py,
+    demo/pas_ardupilot/perception_node.py), so the rule binds only when the
+    followed object IS a person; the SITL rails pass the declared --subject
+    (no perception). No rail passes any other person: the detectors are
+    prompted for the target alone, so the 40 pedestrians walking CityLife
+    are not seen by the Shield and not inside this rule, and a car follow
+    under a people envelope never binds it. Closing it needs a perception
+    feed of every detected person and a Shield that judges several subjects
+    (set_subject holds one, and its repairs, StandoffHold and
+    StandoffRecover, are built around one); neither exists. The rendered
+    rule says so ("the person you are following", guardrail/templates/
+    sentence/distance_envelope.j2), and tests/test_world_map.py pins it: a
+    person beside a tracked car is outside the rule."""
     type: Literal["distance_envelope"]
     object_class: Literal["people", "buildings", "roads"]
     min_distance_m: float = Field(gt=0)

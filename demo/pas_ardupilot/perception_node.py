@@ -420,7 +420,7 @@ from guardrail.manifest import (DEV_YAML_FLAG, MAX_HEADING_ERR_DEG,   # noqa: E4
                                 flight_bundle_path, flight_policy_choice,
                                 is_kpi_grade)
 from guardrail.models import (Action4D, AltitudeEnvelope,             # noqa: E402
-                              ObstacleClearance, SubjectStandoff)
+                              DistanceEnvelope, ObstacleClearance, SubjectStandoff)
 from guardrail.projection import LocalProjection                      # noqa: E402
 from guardrail.replay import (EpisodeRecord, audit_tick,               # noqa: E402
                               episode_row_fields, flown_fields,
@@ -2627,8 +2627,12 @@ class ProjectAirSimCamera:
 
 def load_obstacle_map(policy, citymap: Path):
     """The CityLife occupancy map for the policy's altitude band, as follow_vlm
-    loads it; None (ObstacleClearance INERT, said out loud) when unavailable."""
-    if not policy.by_type(ObstacleClearance):
+    loads it; None (ObstacleClearance INERT, said out loud) when unavailable.
+    Loaded for an obstacle_clearance rule and, since 2026-11-17, for a
+    distance_envelope over buildings (WP1-07), which is measured on the same
+    map; without it the Shield refuses such a policy (never inert)."""
+    if not (policy.by_type(ObstacleClearance)
+            or any(c.object_class == "buildings" for c in policy.by_type(DistanceEnvelope))):
         return None, "policy has no obstacle_clearance rule"
     if not Path(citymap).is_file():
         return None, f"no map at {citymap}: obstacle_clearance is INERT this flight"
@@ -5946,10 +5950,16 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
         bundle, yaml_path, allow_unverified=args.allow_unverified_bundle)
     policy_source.update(choice)
     smap, map_note = load_obstacle_map(policy, Path(args.citymap))
+    # The road map of a distance_envelope over roads (WP1-07, 2026-11-17):
+    # the street mask beside --citymap. None for a policy without one, so
+    # every policy flown before that date builds the Shield it built.
+    from build_street_mask import road_map_for
+    rmap, road_note = road_map_for(policy, Path(args.citymap).parent)
     print(f"[policy] {policy.policy_id} {policy.policy_hash} from "
           f"{policy_source['kind']} - signature {policy_source['signature']}"
           + (f" ({DEV_YAML_FLAG})" if policy_source.get("dev_yaml") else ""))
     print(f"[map]    {map_note}")
+    print(f"[map]    {road_note}")
     # The rule clock: one callable for the Shield and every generation's CSP
     # (guardrail.replay.rule_clock), refused here if --clock-start or
     # --clock-tz cannot be read. Mission time is None until the loop starts.
@@ -5970,7 +5980,7 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
     # counts at the nominal 0.1 s here; the recorded pas_ap ticks are 0.109 s
     # median and up to 0.73 s (14 Oct). Read only with a measured velocity.
     shield = rail_shield(policy, lookahead_s=LOOKAHEAD_S, dt=LOOKAHEAD_DT_S,
-                         obstacle_map=smap, clock=rule_now,
+                         obstacle_map=smap, road_map=rmap, clock=rule_now,
                          velocity_response=vresp.ARDUCOPTER_GUIDED,
                          pipe_clock=clock)
     shield_on = args.shield == "on"
@@ -7858,6 +7868,7 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
             "sim_speedup_param": speedup,
             "frame_anchor": anchor.to_dict(),
             "obstacle_map": map_note,
+            "road_map": road_note,
             "sim_config": sim_cfg,
             "policy_source": policy_source,
             "seed": args.seed,

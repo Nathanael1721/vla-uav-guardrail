@@ -45,7 +45,7 @@ from guardrail.bundle import (LOCK_PATH, SCHEMA_PATH, check_lock,   # noqa: E402
 from guardrail.manifest import resolve_run_generation_chain, resolve_run_policy  # noqa: E402
 from guardrail.models import (HASH_SCHEME, PRIOR_SCHEME_V2,         # noqa: E402
                               AltitudeEnvelope, Constraint, Corridor,
-                              KinematicEnvelope, ObstacleClearance, Policy,
+                              DistanceEnvelope, KinematicEnvelope, ObstacleClearance, Policy,
                               PolygonFence, SubjectStandoff, canonical_json,
                               ir_schema_defaults, load_policy)
 
@@ -134,7 +134,10 @@ def test_adding_an_optional_field_does_not_move_any_hash():
         added_later_too: str | None = None
         constraints: list[Annotated[
             Union[PolygonFenceLater, AltitudeEnvelope, KinematicEnvelope,
-                  ObstacleClearance, SubjectStandoff, Corridor],
+                  ObstacleClearance, SubjectStandoff, Corridor,
+                  # since 2026-11-17 a shipped policy carries one
+                  # (policies/distance_envelope_sitl.yaml)
+                  DistanceEnvelope],
             Field(discriminator="type")]]
 
     import yaml

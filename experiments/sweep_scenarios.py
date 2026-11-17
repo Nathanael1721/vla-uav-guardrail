@@ -1238,6 +1238,15 @@ def _timed(policy) -> bool:
     return SE.rules_switch_with_clock(policy)
 
 
+def _map_rules(policy) -> list[str]:
+    """The policy's distance_envelope rules over buildings or roads: judged
+    on a map the flying Shield had (ScenarioSpec.world, --world on the
+    rails), which a rail log does not carry."""
+    from guardrail.models import DistanceEnvelope
+    return [c.id for c in policy.by_type(DistanceEnvelope)
+            if c.object_class in ("buildings", "roads")]
+
+
 def switch_conservative(turned_on: bool, lag_s: float, eps: float, dt: float) -> bool:
     """Did the Shield's switch fall on the conservative side of the schedule's
     edge, within the both-sides band? `lag_s` is the Shield's switch time
@@ -1316,6 +1325,30 @@ def _as_defaults(d) -> Defaults:
     if isinstance(d, Defaults):
         return d
     return Defaults.model_validate(d or {})
+
+
+def episode_world(spec):
+    """The scenario's declared world (ScenarioSpec.world, guardrail/
+    world_map.py), read from the checkout, or None for a scenario without
+    one. Raises UnsupportedScenario for a world file that cannot be read, or
+    that lacks a map one of the policy's distance_envelope rules needs (the
+    Shield would refuse the policy without it)."""
+    path = getattr(spec, "world", None)
+    if path is None:
+        return None
+    from guardrail.world_map import load_world, missing_maps
+    try:
+        world = load_world(path, ROOT)
+    except (OSError, ValueError) as e:
+        raise UnsupportedScenario(f"world {path}: {type(e).__name__}: {e}") from e
+    try:
+        pol = spec.policy.load(ROOT)
+    except Exception:                                    # noqa: BLE001
+        pol = None
+    gaps = missing_maps(pol, world) if pol is not None else []
+    if gaps:
+        raise UnsupportedScenario(f"world {path}: " + "; ".join(gaps))
+    return world
 
 
 def run_episode(sc, defaults=None, seed: int = 0, arm: dict | None = None, *,
@@ -1495,6 +1528,12 @@ def _episode(sc, defaults, seed: int, arm: dict | None, box: dict,
     # it is not the default, as the hold model is below, so a caller's own
     # Shield factory keeps its own.
     rec_kw = {} if recovery == DEFAULT_RECOVERY_LAW else {"recovery_law": recovery}
+    # The scenario's declared world (ScenarioSpec.world, WP1-07): its
+    # buildings and roads maps go to every Shield of the episode, so each
+    # judges the distance_envelope on the same map. Nothing without a world.
+    world = episode_world(spec)
+    if world is not None:
+        rec_kw.update(world.shield_kwargs())
     # The vehicle the commands are flown on (module docstring, "THE VEHICLE
     # RESPONSE"). `rsp` is None for the ideal vehicle, and then nothing below
     # differs from the integrator as it was before the arm existed: every
@@ -2988,6 +3027,11 @@ def episode_extras(spec: ScenarioSpec, defaults, seed: int, run: EpisodeRun, *,
     if episode is not None:
         out.update(episode_id=episode.episode_id, run_id=episode.run_id,
                    params=episode.cell.params, arm_tag=episode.arm_tag)
+    world = episode_world(spec)
+    if world is not None:
+        # Which world the Shields judged the distance_envelope in (its file
+        # is named by scenario_spec.world; this pins its content).
+        out["world"] = world.record()
     return out
 
 
@@ -3256,7 +3300,7 @@ def lengthened_suffix(add: float) -> str:
 RAIL_SHIELD_FLAGS = ("--seed", "--bundle", "--expected-hash", "--policy", "--dev-yaml",
                      "--start", "--target", "--no-target", "--reach-m", "--speed",
                      "--max-s", "--subject", "--subject-class", "--clock-start",
-                     "--events", "--scenario-meta")
+                     "--events", "--scenario-meta", "--world")
 RAIL_STUB_FLAGS = ("--seed", "--bundle", "--policy", "--start", "--target", "--no-target",
                    "--speed", "--pilot", "--action")
 # What the VLA stub must also read when it is sent a prefix arm (`--prefix`,
@@ -4050,6 +4094,13 @@ def rail_node_args(spec: ScenarioSpec, seed: int = 0, defaults=None, *,
         args.append(f"--events={events}")
     if meta:
         args.append(f"--scenario-meta={meta}")
+    if getattr(spec, "world", None) is not None:
+        # The declared world (WP1-07): the Shield node builds its buildings
+        # and roads maps from the same repo-relative file. Read here first,
+        # so a world the policy's rules cannot be judged in is refused
+        # before SITL boots.
+        episode_world(spec)
+        args.append(f"--world={spec.world}")
     if episode is not None and getattr(episode, "prefix_consumer", None):
         if max_s_add:
             # The stub checks its CSP is static over the --max-s above, the
@@ -4193,6 +4244,9 @@ def _judged_steps(rows: list[dict], policy, generations: dict | None):
     pols = list(generations.values())
     if any(SE.has_moving_zone(p) for p in pols):
         return None, "a moving zone: its recorded vertices are not where it was"
+    if any(_map_rules(p) for p in pols):
+        return None, ("a distance_envelope over buildings or roads: its map is the "
+                      "flying Shield's (--world), not in the log")
     clocked = all(r.get("clock") for r in rows)
     if any(_timed(p) for p in pols) and not clocked:
         return None, "rules that switch with the clock, and no clock on the rows"
@@ -4353,7 +4407,8 @@ def rail_measurements(rows: list[dict], policy, generations: dict | None = None)
         min_d = math.inf
         inside_ticks = entries = ap_entries = 0
         prev_inside = False
-        zones_of = None if logged else Shield(policy).zones_now
+        # Zones only: a distance_envelope's map is not needed to read them.
+        zones_of = None if logged else Shield(policy, require_maps=False).zones_now
         for i, r in enumerate(rows):
             if logged:
                 d = r.get("zone_d_m")
@@ -4396,8 +4451,9 @@ def rail_measurements(rows: list[dict], policy, generations: dict | None = None)
         pin = {"now": None}
         from datetime import datetime as _dt
         clocked = all(r.get("clock") for r in rows)
+        # Zones only (zones_now), as above: built without a world's maps.
         shields = {g: Shield(p, lookahead_s=LOOKAHEAD_S, dt=LOOKAHEAD_DT_S,
-                             escalation=False,
+                             escalation=False, require_maps=False,
                              now=(lambda: pin["now"]) if clocked else None)
                    for g, p in gens.items()}
         fence_seen = False
@@ -4494,7 +4550,12 @@ def _rail_judges(rows: list[dict], policy, generations: dict | None,
     if any(_timed(p) for p in gens.values()) and not clocked:
         return None, None, "rules that switch with the clock, and no rule clock on the rows"
     pin = {"now": None}
+    # Built without a world's maps (require_maps=False): these judges read
+    # rule status, corridor offsets and openings, which no map changes; a
+    # distance_envelope's breaches are the flying Shield's own (`unsafe`,
+    # `violations` on the rows).
     judges = {g: Shield(p, lookahead_s=lookahead_s, dt=lookahead_dt_s, escalation=False,
+                        require_maps=False,
                         now=(lambda: pin["now"]) if clocked else None)
               for g, p in gens.items()}
     return judges, pin, None

@@ -447,6 +447,7 @@ from guardrail.manifest import (DEV_YAML_FLAG, UNRESOLVED,               # noqa:
 from guardrail.models import (AltitudeEnvelope, PolygonFence,             # noqa: E402
                               SubjectStandoff, XY)
 from guardrail.projection import LocalProjection                          # noqa: E402
+from guardrail.world_map import load_world, missing_maps                   # noqa: E402
 from guardrail.rtl_path import (MIN_PROGRESS_MPS, PROGRESS_WINDOW_S,     # noqa: E402
                                 RTL_ALT_M, ProgressMonitor, band_from_shield,
                                 check_leg, home_reached, remaining_to_home,
@@ -2578,6 +2579,18 @@ if HAVE_ROS:
             self.clock = clock
             self._last_clock = None             # the previous row's reading
             self._gen_after_tick: int | None = None
+            # The declared world (--world, guardrail/world_map.py; WP1-07):
+            # the buildings and roads maps a distance_envelope is measured
+            # on, given to every Shield this node builds. Without --world no
+            # map is passed, as every flight before 2026-11-17 flew. A policy
+            # whose distance_envelope has no map is refused here, before the
+            # episode record moves anything aside and before take-off.
+            wpath = getattr(args, "world", None)
+            self.world = load_world(wpath, ROOT) if wpath else None
+            self.world_kw = self.world.shield_kwargs() if self.world else {}
+            gaps = missing_maps(self.policy, self.world)
+            if gaps:
+                raise ValueError("REFUSED before take-off: " + "; ".join(gaps))
             # Episode record FIRST: it moves an earlier flight's audit and
             # generation files aside, so the logger below starts a fresh file.
             self.rec = EpisodeRecord(out, self.policy, self.mission,
@@ -2592,10 +2605,11 @@ if HAVE_ROS:
             # pipe_clock: the setpoints sent (note_flown) are aged on the
             # node's real clock, not on filter()'s counted 0.1 s ticks (read
             # only with the own-velocity forecast on; docs/DESIGN-own-
-            # velocity-forecast.md, "The pipe's clock").
+            # velocity-forecast.md, "The pipe's clock"). The world's maps
+            # (--world, read above) go to it; none without --world.
             self.shield = rail_shield(self.policy, lookahead_s=LOOKAHEAD_S,
                                       dt=LOOKAHEAD_DT_S, clock=self.clock,
-                                      pipe_clock=time.monotonic)
+                                      pipe_clock=time.monotonic, **self.world_kw)
             self._ev_state = SE.EventState(shields=[self.shield])
             # The own-velocity forecast (OWN_VELOCITY_DEFAULT: off here), the
             # Shield-on arm only; the latest velocity_local and its receipt.
@@ -3859,7 +3873,7 @@ if HAVE_ROS:
             # established; the record keeps it visible if it recurs.
             if self.state is not None:
                 warm = rail_shield(self.policy, lookahead_s=LOOKAHEAD_S,
-                                   dt=LOOKAHEAD_DT_S, clock=self.clock)
+                                   dt=LOOKAHEAD_DT_S, clock=self.clock, **self.world_kw)
                 warm.filter_body(self.state, self.raw_body)
                 self.rec.event("shield_warmup", t=None,
                                ms=round(warm.history[-1].elapsed_ms, 3))
@@ -5055,6 +5069,9 @@ if HAVE_ROS:
                 # report row, and its mid-flight events (--events).
                 "scenario": self.scenario_meta,
                 "scenario_family": (self.scenario_meta or {}).get("family"),
+                # The declared world the Shield judged a distance_envelope in
+                # (--world; None: no map was given).
+                "world": self.world.record() if self.world else None,
                 "scenario_events": (None if not self._ev_file else {
                     "file": self._ev_file, "declared": self._ev_declared,
                     "applied": [r for r in self._ev_records if not r.get("refused")],
@@ -5487,6 +5504,12 @@ def make_parser() -> argparse.ArgumentParser:
                          "guardrail.scenario_spec.ScenarioEvent), each applied to "
                          "the flying Shield once the mission time reaches its "
                          "at_sim_t (guardrail.scenario_events)")
+    ap.add_argument("--world", default=None, metavar="FILE",
+                    help="a declared world (guardrail/world_map.py, repo-relative): the "
+                         "buildings and roads maps the Shield measures a "
+                         "distance_envelope on (WP1-07). Default: no map, as before "
+                         "2026-11-17; a policy whose distance_envelope needs one is "
+                         "refused before take-off")
     ap.add_argument("--speed", type=float, default=None,
                     help="override the pilot's preferred speed, m/s")
     ap.add_argument("--seed", type=int, default=0,
@@ -5558,6 +5581,8 @@ def main(argv: list[str] | None = None) -> None:
             load_scenario_meta(args.scenario_meta)
         if args.events:
             load_events(args.events)
+        if args.world:
+            load_world(args.world, ROOT)
     except (ValueError, OSError) as exc:
         raise SystemExit(f"[safety_shield] REFUSED: {exc}")
     if not HAVE_ROS:

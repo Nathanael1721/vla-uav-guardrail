@@ -1,0 +1,55 @@
+# Distance-envelope policy for the ArduPilot SITL rails (WP1-07, 2026-11-17):
+# sim_demo_policy's altitude band and kinematic caps, and the grant's
+# "Min distance to typed object class" for buildings and roads. The
+# buildings and roads are a DECLARED world (guardrail/world_map.py), given to
+# the Shield by the scenario that flies this policy
+# (experiments/worlds/de_block.yaml; ros2_shield_node.py --world): SITL's
+# world is empty, so the rule is judged against the rectangles that file
+# names, as a no-fly polygon is judged against its vertices. Without a world
+# the Shield refuses this policy at construction (models.DistanceEnvelope:
+# never inert).
+policy_id: distance-envelope-sitl
+version: 0.1.0
+# Frame origin: ArduPilot SITL --home (CMAC, sitl/start_sitl.sh), as
+# sim_demo_policy. x North / y East metres about it are the world file's.
+origin:
+  lat: -35.363261
+  lon: 149.16523
+
+constraints:
+  - id: de-buildings
+    type: distance_envelope
+    constraint_type: hard
+    scope: mission
+    priority: P0
+    violation_action: project_fix
+    object_class: buildings
+    min_distance_m: 5.0
+
+  - id: de-roads
+    type: distance_envelope
+    constraint_type: hard
+    scope: mission
+    priority: P1
+    violation_action: project_fix
+    object_class: roads
+    min_distance_m: 3.0
+
+  - id: alt-band
+    type: altitude_envelope
+    constraint_type: hard
+    scope: mission
+    priority: P0
+    violation_action: project_fix
+    alt_min_m: 10
+    alt_max_m: 20
+
+  - id: kin-caps
+    type: kinematic_envelope
+    constraint_type: hard
+    scope: mission
+    priority: P1
+    violation_action: project_fix
+    speed_max_mps: 4.0
+    climb_rate_max_mps: 2.0
+    yaw_rate_max_dps: 45.0
