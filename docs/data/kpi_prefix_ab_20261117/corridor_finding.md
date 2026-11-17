@@ -16,7 +16,8 @@ Everything below is a headless reproduction from the run folders in `demo/out/hi
   - A path can close on the vertex first and leave the cap later. The operator then sees "returning" and leaves the action unchanged, so the chain falls through to Brake.
 - **Fix:**
   - A path that starts inside the tube must also stay `CORRIDOR_MARGIN_M = 1.0` m inside the wall. The inner tube is buffered by `half - 1.0` with plain chords, so it lies inside the true tube.
-  - A path that starts in the 1 m band next to the wall must end back inside the margin.
+  - A path that starts in the 1 m band next to the wall must end back inside the margin, and must never pass the true wall on the way (a tube buffered by the plain half-width, plain chords). Without that second rule a band start at the dog-leg's inner corner could pass the corner up to 0.024 m past the true wall (added after review, see below).
+  - The margin is the larger of 1.0 m and the CSP's horizontal speed cap times 0.25 s (`corridor_margin_m`; 1.0 m for the 4 m/s cells flown). The consumer record carries it as `corridor_margin_m`, and the harness refuses a flight whose announced margin differs from the arm's.
   - The consumer record's `corridor_path_test` is now `"segment_margin"` (was `"segment"`).
 
 ## pab2_011 as logged
@@ -71,19 +72,22 @@ The corridor is `(0,0) -> (60,0) -> (60,60)`, half-width 20 m, so its cap reache
 
 ## The fix and its evidence (headless only)
 
-`guardrail/prefix_consumer.py`: `CORRIDOR_MARGIN_M = 1.0`, `CORRIDOR_PATH_TEST = "segment_margin"`, and the band rule. Zone rings are unchanged. Of the five prefix_ab cells, only corridor-drift-out has a corridor, so the other cells fly the same as before.
+`guardrail/prefix_consumer.py`: `CORRIDOR_MARGIN_M = 1.0`, `CORRIDOR_LAG_BUDGET_S = 0.25`, `corridor_margin_m`, `CORRIDOR_PATH_TEST = "segment_margin"`, and the band rule. `experiments/sweep_scenarios.py`: `prefix_flight_problems` also compares `corridor_margin_m`. Zone rings are unchanged. Of the five prefix_ab cells, only corridor-drift-out has a corridor, so the other cells fly the same as before.
 
-### Tests (`tests/test_prefix_consumer.py`, 41/41 pass)
+### Tests (`tests/test_prefix_consumer.py`, 43/43 pass)
 
 - `test_the_turn_keeps_a_margin_off_the_corridors_end_cap`: pab2_011 tick 248.
   - **Null:** the wall-only consumer flies the logged action, and the Shield brakes on it from tick 248's pose.
-  - **With the margin:** the consumer refuses that action and flies a 105-degree turn instead. The Shield leaves the new action alone from both poses and from 24 poses 0.5 m and 1.0 m away.
+  - **With the margin:** the consumer refuses that action and flies a 105-degree turn instead. The Shield leaves the new action alone from both poses and from 24 poses 0.5 m and 1.0 m away, each tested with no velocity and with tick 248's measured velocity (the Shield's own-velocity forecast). That is one measured velocity, not every one: the margin's guarantee is geometric, for the commanded straight path.
+- `test_from_the_band_at_the_inner_corner_the_path_keeps_the_true_wall` (added after review): from (39.5, 19.4) the 52-degree heading starts in the band, stays in the Shield's tube, ends inside the margin, and passes the inner corner (40, 20) 20.017 m out. The end-point rule alone admitted it. The Shield flags the corridor (its only violation) and CorridorReturn sizes it 15.16 m, over theta 2.0. The band rule now refuses it.
+  - The review's own probes, (39.5, 19.8) at 24 degrees, (37.5, 19.2) at 18 and (39.0, 19.8) at 12, are the same geometry and are refused now too. But there the Shield's violation is `nfz-school` (a zone this cell's CSP does not list), and its 0.1 s-sampled corridor check stays under 20.0 m. Their CorridorReturn repairs belong to the zone's repair chain, not to the corridor.
+- `test_the_margin_follows_the_speed_cap_and_is_recorded`: 1.0 m at the 4 m/s cap, 2.0 m at 8 m/s, never under 1.0 m, and in the record.
 - `test_the_wall_test_admitted_what_the_shields_distance_check_flags`: pab2_010 tick 67.
 - `test_from_the_margin_band_the_path_ends_back_inside_it`: the band rule.
   - A path parallel to the wall is refused.
   - A path heading back inside is admitted.
   - Stopping stays admissible.
-  - The inner tube's vertices are no further than `half - margin` from the centerline.
+  - The inner tube's vertices are no further than `half - margin` from the centerline, and the true tube's no further than `half`.
 - `test_closed_loop_a_late_pose_holds_no_loiter`: the corridor arm closed loop with the consumer fed a pose 1 or 2 ticks old.
   - **Null:** the wall-only consumer at 1 tick of lag hits X1 and repairs.
   - **With the margin:** no repair and no FSM edge.
@@ -122,13 +126,15 @@ The corridor is `(0,0) -> (60,0) -> (60,60)`, half-width 20 m, so its cap reache
 ## What this does not show
 
 - **No flight:** nothing here was flown. The hil result of the fix is unknown until the re-fly below.
+- **The tables above predate the band's true-wall rule:** the lag sweep and the open-loop replay were run with the end-point band rule alone. They were not re-run; `test_closed_loop_a_late_pose_holds_no_loiter` (1 and 2 ticks of lag, no repair, no FSM edge) passes with the final rule.
+- **The Shield's own-velocity forecast:** the margin is a guarantee for the commanded straight path only. The end-cap test checks one measured velocity (tick 248's); the open-loop replay's remaining CorridorReturn repairs come from that branch.
 - **Pose lag above 0.25 s:** pose lag longer than that at 4 m/s, or a response lag that carries the aircraft further than 1 m off the commanded path, can still reach the Shield's blind spot. The 0.3 s column above shows it.
 - **The rig checkout:** the AGX checkout must carry this commit. A rig still on 47b3fde announces `corridor_path_test: "segment"`, and the harness refuses its flights (`prefix_flight_problems`, "path test").
 
 ## Rig steps owed (integrator)
 
 1. **Sync the AGX checkout** (git bundle, as for pab2) to the merged commit.
-2. **Check the record:** `python experiments/sweep_scenarios.py --profile prefix_ab --backend hil --hil-dry-run --only corridor-drift-out`. Confirm the prefix-on arm's record says `corridor_path_test: segment_margin`.
+2. **Check the record:** `python experiments/sweep_scenarios.py --profile prefix_ab --backend hil --hil-dry-run --only corridor-drift-out`. Confirm the prefix-on arm's record says `corridor_path_test: segment_margin` and `corridor_margin_m: 1.0`.
 3. **Re-fly:** `python experiments/sweep_scenarios.py --profile prefix_ab --backend hil --hil-campaign pab3`.
    - The full profile is preferred: the consumer's source pin changed for every prefix-on arm.
    - The minimum is `--only corridor-drift-out`.

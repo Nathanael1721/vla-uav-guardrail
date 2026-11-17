@@ -339,7 +339,8 @@ def test_the_turn_keeps_a_margin_off_the_corridors_end_cap():
     leaves the tube (20.28 m off the centerline at t+5 s) and the Shield
     braked: X1, then G3 Loiter and G4 RTL. With the margin the consumer does
     not ask for it, and what it flies instead the Shield leaves alone from
-    both poses and from every pose up to the margin away."""
+    both poses and from 24 poses 0.5 and 1.0 m away, each with no velocity
+    and with tick 248's measured one (the Shield's own-velocity forecast)."""
     from guardrail.replay import rail_shield
     from guardrail.shield import corridor_offset
     spec, pol, csp, _ = _corridor_cell()
@@ -367,9 +368,14 @@ def test_the_turn_keeps_a_margin_off_the_corridors_end_cap():
     m = PC.CORRIDOR_MARGIN_M
     poses = [PAB2_011_DECIDED, PAB2_011_SHIELD, State(x=PAB2_011_SHIELD.x,
                                                       y=PAB2_011_SHIELD.y, up=14.982)]
+    # the offset poses with and without the measured velocity of tick 248, so
+    # the Shield's own-velocity forecast is exercised at each (this pose's
+    # velocity only: the claim is not that it holds for every velocity)
     poses += [State(x=PAB2_011_DECIDED.x + r * math.cos(math.radians(k)),
-                    y=PAB2_011_DECIDED.y + r * math.sin(math.radians(k)), up=14.982)
-              for r in (0.5 * m, m) for k in range(0, 360, 30)]
+                    y=PAB2_011_DECIDED.y + r * math.sin(math.radians(k)), up=14.982,
+                    **({"velocity": PAB2_011_SHIELD.velocity} if v else {}))
+              for r in (0.5 * m, m) for k in range(0, 360, 30) for v in (False, True)]
+    assert len(poses) == 51
     for st in poses:
         r2 = rail_shield(pol, lookahead_s=look, dt=0.1).filter(st, out)
         assert not r2.violations and not r2.repairs, (st, out, r2.violations, r2.repairs)
@@ -426,6 +432,93 @@ def test_from_the_margin_band_the_path_ends_back_inside_it():
     inner = next(t[2] for t in c._tubes if t[0] == corr.id)
     worst = max(corridor_offset(corr, x, y) for x, y in inner.exterior.coords)
     assert worst <= corr.half_width_m - PC.CORRIDOR_MARGIN_M + 1e-6, worst
+    # and the true tube the band is held to never reaches past the wall
+    true = next(t[3] for t in c._tubes if t[0] == corr.id)
+    worst = max(corridor_offset(corr, x, y) for x, y in true.exterior.coords)
+    assert worst <= corr.half_width_m + 1e-6, worst
+
+
+def test_from_the_band_at_the_inner_corner_the_path_keeps_the_true_wall():
+    """The band rule at the dog-leg's inner corner (40, 20) (review of the
+    margin fix, 2026-11-17). A band start (inside the tube, within the margin
+    of the wall) whose path ends back inside the margin and stays inside the
+    Shield's tube (a superset of the true one) was admitted by the end-point
+    rule alone, as by the wall-only test, though it can pass the corner up
+    to 0.024 m past the true wall. From (39.5, 19.4) the 52-degree heading
+    passes it 20.017 m out; the Shield's distance check flags the corridor
+    (its only violation) and CorridorReturn sizes 15.16 m, over theta 2.0:
+    the "repair over theta" of pab2_010 tick 67, from a band start. The band
+    rule now also holds the path to the true tube and refuses it.
+
+    The review's own probes, (39.5, 19.8) at 24 degrees, (37.5, 19.2) at 18
+    and (39.0, 19.8) at 12, are the same geometry (past the true wall,
+    admitted by the end-point rule, refused now), but there the Shield's
+    violation is nfz-school, which this cell's CSP does not list, and its
+    sampled corridor check stays under 20.0 m: their CorridorReturn repairs
+    belong to the zone's repair chain, not to the corridor. Headless
+    geometry: not seen in a flight."""
+    from shapely.geometry import LineString, Point
+    from guardrail.replay import rail_shield
+    from guardrail.shield import corridor_offset
+    spec, pol, csp, _ = _corridor_cell()
+    look = float(csp.lookahead_s)
+    corr = next(c for c in pol.constraints if c.id == "corridor-survey-route")
+    shield_half = corr.half_width_m / math.cos(math.pi / 64.0)
+    law = _Law(Action4D(vx=0.0, vy=4.0))
+    c = PC.PrefixConsumer(law, csp, pol)
+    old = _wall_only(law, csp, pol)
+    _, tube, inner, true = next(t for t in c._tubes if t[0] == corr.id)
+
+    def heading(deg):
+        return Action4D(vx=4.0 * math.cos(math.radians(deg)), vy=4.0 * math.sin(math.radians(deg)))
+
+    for (x, y, deg) in ((39.5, 19.4, 52.0), (39.5, 19.8, 24.0), (37.5, 19.2, 18.0),
+                        (39.0, 19.8, 12.0)):
+        st, a = State(x=x, y=y, up=14.98), heading(deg)
+        x1, y1 = x + a.vx * look, y + a.vy * look
+        # a band start whose path stays in the Shield's tube and ends inside
+        # the margin: what the end-point rule alone admitted
+        d0 = corridor_offset(corr, x, y)
+        assert corr.half_width_m - PC.CORRIDOR_MARGIN_M < d0 < corr.half_width_m, d0
+        assert tube.covers(LineString([(x, y), (x1, y1)])) and inner.covers(Point(x1, y1))
+        worst = max(corridor_offset(corr, x + a.vx * look * t / 5000.0,
+                                    y + a.vy * look * t / 5000.0) for t in range(5001))
+        assert corr.half_width_m < worst < shield_half, (x, y, deg, worst)
+        assert old.inadmissible(a, st) == []
+        assert c.inadmissible(a, st) == ["corridor:corridor-survey-route"], (x, y, deg)
+    # the Shield's side of the clean case: the corridor is its only violation
+    st, a = State(x=39.5, y=19.4, up=14.98), heading(52.0)
+    res = rail_shield(pol, lookahead_s=look, dt=0.1).filter(st, a)
+    assert [v.rule_id for v in res.violations] == [corr.id], res.violations
+    cr = [r for r in res.repairs if r.operator == "CorridorReturn"]
+    assert cr and abs(cr[0].magnitude_m - 15.16) < 0.01 and cr[0].magnitude_m > 2.0, res.repairs
+    # what the consumer flies there instead (the nearest fan heading) keeps
+    # the true wall; the Shield still flags nfz-school on it, a zone this
+    # cell's CSP does not list (the consumer cannot see it)
+    out = PC.PrefixConsumer(_Law(a), csp, pol).act(st)
+    assert true.covers(LineString([(st.x, st.y), (st.x + out.vx * look, st.y + out.vy * look)]))
+    res = rail_shield(pol, lookahead_s=look, dt=0.1).filter(st, out)
+    assert corr.id not in [v.rule_id for v in res.violations], (out, res.violations)
+    assert "nfz-school" not in csp.forbidden_action_set.no_translate_into_polygons
+
+
+def test_the_margin_follows_the_speed_cap_and_is_recorded():
+    """The margin covers CORRIDOR_LAG_BUDGET_S of pose lag at the CSP's speed
+    cap, never less than CORRIDOR_MARGIN_M, and the record carries it, so a
+    flight's announced identity names the margin it flew."""
+    spec, pol, csp, _ = _corridor_cell()
+    assert csp.allowed_action_set.horizontal_speed_max_mps == 4.0
+    assert PC.corridor_margin_m(csp) == 1.0 == PC.CORRIDOR_MARGIN_M
+    assert PC.corridor_margin_m(None) is None
+    fast = csp.model_copy(deep=True)
+    fast.allowed_action_set.horizontal_speed_max_mps = 8.0
+    assert PC.corridor_margin_m(fast) == 8.0 * PC.CORRIDOR_LAG_BUDGET_S == 2.0
+    slow = csp.model_copy(deep=True)
+    slow.allowed_action_set.horizontal_speed_max_mps = 1.0
+    assert PC.corridor_margin_m(slow) == PC.CORRIDOR_MARGIN_M
+    assert PC.consumer_record("on", csp)["corridor_margin_m"] == 1.0
+    assert PC.consumer_record("off", None)["corridor_margin_m"] is None
+    assert PC.PrefixConsumer(_Law(Action4D()), csp, pol).record()["corridor_margin_m"] == 1.0
 
 
 def _lagged_corridor_run(lag_ticks: int, wall_only: bool = False):
@@ -1139,6 +1232,8 @@ def test_a_rail_flight_that_did_not_fly_its_arm_is_not_that_arms_flight():
                          ({"wraps_model_hash": None}, "source pin"),
                          # a rig checkout from before the path test
                          ({"corridor_path_test": None}, "path test"),
+                         # a rig checkout whose margin differs (or announces none)
+                         ({"corridor_margin_m": 0.5}, "corridor margin"),
                          ({"policy_hash": "sha256:" + "2" * 64}, "policy")):
         got = S.prefix_flight_problems(ident(**change), meta)
         assert len(got) == 1 and word in got[0], (change, got)
