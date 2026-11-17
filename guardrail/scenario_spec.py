@@ -321,6 +321,15 @@ RESPONSE_ARMS = ("ideal", "ardupilot", "rail")
 # guardrail.prefix_consumer.ADAPTERS, named here so this module need not
 # import the compiler (tests/test_prefix_consumer.py checks the two agree).
 PREFIX_CONSUMERS = ("action_set",)
+# The physics a desktop rail flies (2026-11-17, WP4-04): "sitl", ArduPilot
+# SITL's built-in quad, every rail run until then; "gazebo", Gazebo
+# Harmonic's physics behind SITL's JSON backend (sitl/run_ros2_demo.sh
+# PHYSICS=gazebo), the grant's functional rail. A profile that names
+# "gazebo" is a functional sweep: never KPI-bearing, and the only kind that
+# may ask for a sim_speedup above 1 (grant, Stress Testing, "Test
+# scheduling": "> 1.0 (functional rail only)").
+RAIL_PHYSICS = ("sitl", "gazebo")
+RAIL_SIM_SPEEDUP_MAX = 4.0
 
 # Grant KPI names -> the field that measures each one in a sweep result.
 #
@@ -1636,12 +1645,27 @@ class Profile(_Strict):
     # the broad sweep's results "are tracked but not part of the final KPI
     # numbers". Recorded in every run of the profile.
     grant_kpi_bearing: bool = True
+    # The rail a profile is flown on (2026-11-17, WP4-04; RAIL_PHYSICS).
+    # None, every profile until then: whichever --backend is asked for, on
+    # SITL's own physics. "gazebo": the Gazebo Harmonic functional rail -
+    # experiments/sweep_scenarios.py flies it with --backend sitl only, marks
+    # every mission functional (never KPI-grade) and, at `rail_sim_speedup`
+    # above 1, boots SITL and gz sim that much faster than real time.
+    rail_physics: Literal[RAIL_PHYSICS] | None = None
+    rail_sim_speedup: float = Field(default=1.0, gt=0.0, le=RAIL_SIM_SPEEDUP_MAX)
 
     @model_validator(mode="after")
     def _range(self) -> "Profile":
         lo, hi = self.expected_cells
         if not 0 < lo <= hi:
             raise ValueError("expected_cells must be [lo, hi] with 0 < lo <= hi")
+        if self.rail_sim_speedup != 1.0 and self.rail_physics != "gazebo":
+            raise ValueError(f"rail_sim_speedup {self.rail_sim_speedup:g}: a sim_speedup "
+                             f"other than 1.0 is for the functional rail only "
+                             f"(rail_physics: gazebo)")
+        if self.rail_physics == "gazebo" and self.grant_kpi_bearing:
+            raise ValueError("rail_physics: gazebo is the functional rail, whose results "
+                             "are never KPI numbers: set grant_kpi_bearing: false")
         if len(set(self.seeds)) != len(self.seeds):
             raise ValueError("seeds must be distinct")
         check_forecast_arms(self.forecast_arms)

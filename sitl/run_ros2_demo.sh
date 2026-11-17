@@ -64,6 +64,9 @@
 #                      server, iris_runway) behind SITL's JSON backend: the
 #                      grant's functional Gazebo rail (ARCH-16) over MAVROS 2.
 #                      The run writes physics.json beside its records.
+#   SITL_SPEEDUP=1     with PHYSICS=gazebo only: SITL and gz sim run that many
+#                      times faster than real time (a functional sweep; at
+#                      most 4). Any other value with PHYSICS=sitl is refused.
 #   GCS_HOST           Mission Planner's address (default: the Windows host)
 #   VLA=stub           bridge = AerialVLA in the VLA slot (THE VLA SLOT above);
 #                      it runs in the slot's SROS 2 enclave, vla_stub
@@ -328,6 +331,25 @@ printf '%s\n' "$VERIFY" | grep -qx 'PIN OK' && ARDUPILOT_PIN_OK=1
 export ARDUPILOT_VERSION ARDUPILOT_PIN_OK
 
 PHYSICS="${PHYSICS:-sitl}"
+# SITL_SPEEDUP (2026-11-17, WP4-04; experiments/sweep_scenarios.py sets it
+# through WSLENV for a functional sweep): unset or 1, every run as before.
+# Other than 1 only with PHYSICS=gazebo: SITL boots with --speedup N
+# (start_sitl.sh, which refuses it on its own quad) and gz sim steps its world
+# N times faster than real time (-z: the world's max_step_size, read from the
+# SDF, N times per wall second). Refused here, before anything starts.
+GZ_RATE_ARGS=()
+GZ_RATE_HZ=""
+SPEEDUP="${SITL_SPEEDUP:-1}"
+if ! [[ "$SPEEDUP" =~ ^[0-9]+(\.[0-9]+)?$ ]] || ! awk -v s="$SPEEDUP" 'BEGIN { exit !(s > 0 && s <= 4) }'; then
+  echo "[speedup] REFUSED: SITL_SPEEDUP must be a number above 0 and at most 4, not '$SPEEDUP'"
+  exit 2
+fi
+if ! awk -v s="$SPEEDUP" 'BEGIN { exit !(s == 1) }'; then
+  if [ "$PHYSICS" != "gazebo" ]; then
+    echo "[speedup] REFUSED: SITL_SPEEDUP=$SPEEDUP is for the functional rail (PHYSICS=gazebo) only"
+    exit 2
+  fi
+fi
 case "$PHYSICS" in
   sitl) ;;
   gazebo)
@@ -336,8 +358,16 @@ case "$PHYSICS" in
     [ -f "$GZ_WORLD" ] || { echo "PHYSICS=gazebo: $GZ_WORLD missing (sitl/setup_gazebo.sh)"; exit 1; }
     export GZ_SIM_SYSTEM_PLUGIN_PATH="$HOME/ardupilot_gazebo/build:${GZ_SIM_SYSTEM_PLUGIN_PATH:-}"
     export GZ_SIM_RESOURCE_PATH="$HOME/ardupilot_gazebo/models:$HOME/ardupilot_gazebo/worlds:${GZ_SIM_RESOURCE_PATH:-}"
+    if ! awk -v s="$SPEEDUP" 'BEGIN { exit !(s == 1) }'; then
+      GZ_STEP="$(sed -n 's:.*<max_step_size>\([0-9.eE+-]*\)</max_step_size>.*:\1:p' "$GZ_WORLD" | head -1)"
+      GZ_RATE_HZ="$(awk -v s="$SPEEDUP" -v d="$GZ_STEP" 'BEGIN { if (d > 0) printf "%.0f", s / d }')"
+      [ -n "$GZ_RATE_HZ" ] || {
+        echo "[speedup] REFUSED: no <max_step_size> in $GZ_WORLD to set gz sim's rate from"; exit 2; }
+      GZ_RATE_ARGS=(-z "$GZ_RATE_HZ")
+      echo "[speedup] SITL --speedup $SPEEDUP, gz sim -z $GZ_RATE_HZ (step $GZ_STEP s)"
+    fi
     echo "=== gz sim (headless server, $GZ_WORLD) ==="
-    nohup gz sim -s -r "$GZ_WORLD" > ~/sitl-run/gz.log 2>&1 &
+    nohup gz sim -s -r "${GZ_RATE_ARGS[@]}" "$GZ_WORLD" > ~/sitl-run/gz.log 2>&1 &
     sleep 6
     export SITL_MODEL=JSON SITL_EXTRA_DEFAULTS="$GZ_IRIS_PARM"
     ;;
@@ -518,9 +548,11 @@ fi
 echo "=== close the bag, re-pack the replay bundle with it ==="
 stop_bag
 if [ "$PHYSICS" = "gazebo" ]; then
-  printf '{"physics": "gazebo-harmonic", "gz_sim": "%s", "world": "%s", "sitl_model": "JSON", "extra_defaults": "%s"}\n' \
+  # sim_speedup_requested / gz_update_rate_hz (2026-11-17): what the run was
+  # asked to fly at; the manifest's sim_speedup is what the autopilot read.
+  printf '{"physics": "gazebo-harmonic", "gz_sim": "%s", "world": "%s", "sitl_model": "JSON", "extra_defaults": "%s", "sim_speedup_requested": %s, "gz_update_rate_hz": %s}\n' \
     "$(gz sim --version 2> /dev/null | head -1 | sed 's/.*version //')" "$GZ_WORLD" "$GZ_IRIS_PARM" \
-    > "$OUT/physics.json"
+    "$SPEEDUP" "${GZ_RATE_HZ:-null}" > "$OUT/physics.json"
 else
   printf '{"physics": "ardupilot-sitl-builtin", "sitl_model": "quad"}\n' > "$OUT/physics.json"
 fi

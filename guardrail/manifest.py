@@ -1466,6 +1466,18 @@ def is_kpi_grade(manifest: dict, metrics: dict,
             f"start heading was {err:.1f} deg off; whether the subject was in "
             f"frame at all is then luck, and the run is not comparable")
 
+    # A mission of a functional sweep (2026-11-17, WP4-04): the stress
+    # harness's scenario record (metrics.json `scenario`) says it was flown on
+    # the Gazebo functional rail, whose results the grant tracks but keeps out
+    # of the KPI numbers - whatever its speedup and topology read. No record
+    # before that date carries the key, so no earlier verdict moves.
+    scen = metrics.get("scenario")
+    if isinstance(scen, dict) and scen.get("functional_only"):
+        reasons.append(
+            f"flown on the functional rail ({scen.get('physics') or 'functional'}): "
+            f"its results are tracked, never contractual KPI numbers (grant, Stress "
+            f"Testing, \"Test scheduling\")")
+
     return (not reasons), reasons
 
 
