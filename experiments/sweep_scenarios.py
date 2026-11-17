@@ -26,8 +26,12 @@ after another or side by side into one DIR. `--merge-only` flies nothing:
 refused (exit 2) while any episode has no checkpoint, otherwise it writes the
 one results JSON and kpi_report.md exactly as a single run would (the replay
 is pinned by tests/test_sweep_resume.py), with a `_resume` record of how many
-episodes were replayed and their summed episode time. A resumed run prints a
-progress line every minute.
+episodes were replayed, their summed episode time, the sweep's wall span
+(the folder's first run to its newest checkpoint) and the invocation; its
+`_command` is the one uninterrupted run it equals (no --resume, --shard or
+--merge-only). DIR/checkpoint.json is created exclusively, so shards started
+together into a fresh DIR fly under one bundle stamp; a shard reads only its
+own checkpoints. A resumed run prints a progress line every minute.
 
 Results go to demo/out/sweep/ (or demo/out/stress_<profile>/): the results
 JSON, one episode bundle per episode, and `kpi_report.md`, the grant's KPI
@@ -7675,6 +7679,28 @@ def in_shard(k: int, shard: tuple[int, int] | None) -> bool:
     return shard is None or k % shard[1] == shard[0] - 1
 
 
+_RESUME_OPTS = {"--resume": True, "--shard": True, "--merge-only": False}   # takes a value
+
+
+def strip_resume_args(argv: list[str]) -> list[str]:
+    """`argv` less --resume DIR, --shard I/N and --merge-only (spelled in full,
+    with '=', or abbreviated as argparse allows): the one uninterrupted run
+    that a resumed, sharded or merged run equals."""
+    out: list[str] = []
+    i = 0
+    while i < len(argv):
+        tok = argv[i]
+        opt, eq, _ = tok.partition("=")
+        name = next((n for n in _RESUME_OPTS
+                     if opt.startswith("--") and len(opt) > 2 and n.startswith(opt)), None)
+        if name is None:
+            out.append(tok)
+            i += 1
+            continue
+        i += 1 + (1 if _RESUME_OPTS[name] and not eq else 0)
+    return out
+
+
 def episode_key(ep) -> str:
     """An episode's checkpoint name: its run id (cell and arm) and seed,
     hashed short so a long cell id never meets Windows' path-length limit.
@@ -7700,6 +7726,43 @@ def atomic_write_text(path: Path, text: str) -> None:
             if attempt == 5:
                 raise
             time.sleep(0.25 * (attempt + 1))
+
+
+def create_exclusive_text(path: Path, text: str) -> bool:
+    """Create `path` holding `text` only if nothing is there yet: True if this
+    process created it, False if another one did (now or earlier). Shards
+    started side by side into a fresh folder all try at once, and exactly one
+    wins. A hard link of a complete, fsynced temporary file is the create, so
+    a reader never sees a half-written file; on a disk without hard links
+    (FAT, exFAT) the file is created with O_EXCL and then written, and a
+    reader that finds it empty or torn retries (CheckpointStore.open)."""
+    tmp = path.with_name(f"{path.name}.{os.getpid()}.{uuid.uuid4().hex[:8]}.tmp")
+    with open(tmp, "w", encoding="utf-8", newline="\n") as fh:
+        fh.write(text)
+        fh.flush()
+        os.fsync(fh.fileno())
+    try:
+        try:
+            os.link(tmp, path)
+            return True
+        except FileExistsError:
+            return False
+        except OSError:
+            pass                                    # no hard links on this disk
+        try:
+            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
+        except FileExistsError:
+            return False
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as fh:
+            fh.write(text)
+            fh.flush()
+            os.fsync(fh.fileno())
+        return True
+    finally:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
 
 
 def _sha256_file(p: Path | None) -> str | None:
@@ -7731,48 +7794,65 @@ class CheckpointStore:
         self.folder = Path(folder)
         self.episodes_dir = self.folder / "episodes"
         self.header: dict = {}
+        # When the newest checkpoint this process knows of was written (the
+        # files it loaded, the ones it saved): the end of the sweep's span.
+        self.last_checkpoint_epoch: float | None = None
 
     def open(self, fingerprint: dict, stamp: str) -> str | None:
         """Create the header, or check an existing one against `fingerprint`.
         Returns a refusal, or None. The header's bundle stamp is reused, so a
         resumed run's bundles are one run's (an episode killed mid-bundle is
-        rewritten in the same folder, not left beside a second copy)."""
+        rewritten in the same folder, not left beside a second copy). The
+        header is created exclusively (create_exclusive_text): of shards
+        started together into a fresh folder one writes it, and every other
+        reads it back and flies under its stamp."""
         hp = self.folder / CHECKPOINT_HEADER
-        if hp.is_file():
-            try:
-                old = json.loads(hp.read_text(encoding="utf-8"))
-            except (OSError, ValueError) as e:
-                return f"{_show(hp)} is unreadable ({e}); move the folder aside"
-            have = old.get("fingerprint") or {}
-            diff = sorted(k for k in set(have) | set(fingerprint)
-                          if have.get(k) != fingerprint.get(k))
-            if diff:
-                return (f"{_show(self.folder)} holds checkpoints of another sweep (differs "
-                        f"in: {', '.join(diff)}); use a new --resume folder")
-            self.header = old
-            return None
         self.episodes_dir.mkdir(parents=True, exist_ok=True)
-        self.header = {
+        mine = {
             "fingerprint": fingerprint, "stamp": stamp,
             "created_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
             "dirty_tree": str(fingerprint.get("code_revision", "")).endswith("-dirty"),
             "note": "per-episode checkpoints of one sweep (experiments/sweep_scenarios.py "
                     "--resume); each file is one finished episode, written atomically"}
-        atomic_write_text(hp, json.dumps(self.header, indent=2) + "\n")
+        if create_exclusive_text(hp, json.dumps(mine, indent=2) + "\n"):
+            self.header = mine
+            return None
+        old, err = None, None
+        for attempt in range(20):           # a winner without hard links may be mid-write
+            try:
+                old = json.loads(hp.read_text(encoding="utf-8"))
+                break
+            except (OSError, ValueError) as e:
+                err = e
+                time.sleep(0.25)
+        if not isinstance(old, dict):
+            return f"{_show(hp)} is unreadable ({err}); move the folder aside"
+        have = old.get("fingerprint") or {}
+        diff = sorted(k for k in set(have) | set(fingerprint)
+                      if have.get(k) != fingerprint.get(k))
+        if diff:
+            return (f"{_show(self.folder)} holds checkpoints of another sweep (differs "
+                    f"in: {', '.join(diff)}); use a new --resume folder")
+        self.header = old
         return None
 
     @property
     def stamp(self) -> str:
         return self.header["stamp"]
 
-    def load(self) -> tuple[dict[str, dict], list[str]]:
+    def load(self, keys: set[str] | None = None) -> tuple[dict[str, dict], list[str]]:
         """{key: record} of every readable checkpoint, and the names of the
-        unreadable ones (re-flown, never trusted)."""
+        unreadable ones (re-flown, never trusted). With `keys`, only those
+        checkpoints are read: a shard leaves the other shards' records on
+        disk (about 61 MB of memory and 7 s per 1000 records it would never
+        use, measured on the broad profile 2026-11-17)."""
         done: dict[str, dict] = {}
         bad: list[str] = []
         if not self.episodes_dir.is_dir():
             return done, bad
         for p in self.episodes_dir.glob("*.json"):
+            if keys is not None and p.stem not in keys:
+                continue
             try:
                 rec = json.loads(p.read_text(encoding="utf-8"))
                 if rec.get("format") != CHECKPOINT_FORMAT or rec.get("key") != p.stem:
@@ -7781,13 +7861,38 @@ class CheckpointStore:
                 bad.append(f"{p.name} ({type(e).__name__})")
                 continue
             done[p.stem] = rec
+            try:
+                self._saw(p.stat().st_mtime)
+            except OSError:
+                pass
         return done, bad
+
+    def _saw(self, epoch: float) -> None:
+        if self.last_checkpoint_epoch is None or epoch > self.last_checkpoint_epoch:
+            self.last_checkpoint_epoch = epoch
 
     def save(self, rec: dict) -> None:
         # Plain json (NaN allowed): the record must replay exactly; the
         # results JSON written from it is made safe as it always was.
         self.episodes_dir.mkdir(parents=True, exist_ok=True)
         atomic_write_text(self.episodes_dir / f"{rec['key']}.json", json.dumps(rec) + "\n")
+        self._saw(time.time())
+
+    def wall_span(self) -> dict:
+        """The sweep's wall span: from the header's creation (the folder's
+        first run) to the newest checkpoint, pauses between runs included."""
+        out = {"sweep_started_utc": self.header.get("created_utc"),
+               "last_checkpoint_utc": None, "sweep_wall_span_s": None}
+        if self.last_checkpoint_epoch is None:
+            return out
+        last = datetime.fromtimestamp(self.last_checkpoint_epoch, timezone.utc)
+        out["last_checkpoint_utc"] = last.isoformat(timespec="seconds")
+        try:
+            start = datetime.fromisoformat(str(self.header.get("created_utc")))
+            out["sweep_wall_span_s"] = round(max(0.0, (last - start).total_seconds()), 1)
+        except ValueError:
+            pass
+        return out
 
 
 def _fmt_s(s: float) -> str:
@@ -8294,10 +8399,10 @@ def main(argv: list[str] | None = None) -> int:
             print(f"REFUSED: {why}")
             return 2
         stamp = store.stamp
-        done, unreadable = store.load()
+        mine = [e for k, e in enumerate(episodes) if in_shard(k, shard)]
+        done, unreadable = store.load({episode_key(e) for e in mine})
         for name in unreadable[:5]:
             print(f"  note: unreadable checkpoint {name} - that episode is flown again")
-        mine = [e for k, e in enumerate(episodes) if in_shard(k, shard)]
         missing = [e for e in mine if episode_key(e) not in done]
         print(f"checkpoints in {_show(store.folder)}: {len(mine) - len(missing)} of "
               + (f"shard {shard[0]}/{shard[1]}'s {len(mine)}" if shard
@@ -8359,7 +8464,9 @@ def main(argv: list[str] | None = None) -> int:
                       f"replayed, {n_ran} flown in {_fmt_s(now - t_loop)}"
                       + (f", {spe:.2f} s/episode, about {_fmt_s(spe * left)} left"
                          if spe else "") + ")", flush=True)
-            rec = done.get(episode_key(ep))
+            # Popped: the record's item and table now live in the sinks, and
+            # the dict does not hold a second reference for the rest of the run.
+            rec = done.pop(episode_key(ep), None)
             if rec is not None:
                 # REPLAY: the checkpoint's item and KPI table, counted exactly
                 # as the loop below counts a flown episode.
@@ -8713,9 +8820,17 @@ def main(argv: list[str] | None = None) -> int:
         "judged per run by guardrail.manifest.is_kpi_grade on the node's manifest")
     fsl = failsafe_summary(scored)
     arms_doc = arms_summary(scored)
+    argv_l = list(argv if argv is not None else sys.argv[1:])
     command = "python experiments/sweep_scenarios.py" + (
-        " " + " ".join(argv if argv is not None else sys.argv[1:])
-        if (argv if argv is not None else sys.argv[1:]) else "")
+        " " + " ".join(argv_l) if argv_l else "")
+    command_as_run = command
+    if store is not None:
+        # The reproduce command of a resumed or merged run is the one
+        # uninterrupted run it equals (tests/test_sweep_resume.py): a
+        # --merge-only line reproduces nothing without the checkpoint folder.
+        plain = strip_resume_args(argv_l)
+        command = "python experiments/sweep_scenarios.py" + (
+            " " + " ".join(plain) if plain else "")
     doc = {
         "_what": ("Every episode of " + (f"profile {tag!r} over " if tag else "")
                   + f"{_show(lib_path)}, scored with guardrail.kpi.compute - the "
@@ -8774,9 +8889,11 @@ def main(argv: list[str] | None = None) -> int:
         ep_wall = wall_ckpt + (time.perf_counter() - t_loop if n_ran else 0.0)
         doc["_resume"] = {
             "checkpoints": _show(store.folder), "bundle_stamp": stamp,
+            "command_as_run": command_as_run,
             "episodes_replayed": n_resumed, "episodes_flown_by_this_process": n_ran,
             "episode_wall_s_total": round(ep_wall, 1),
             "s_per_episode": round(ep_wall / n_eps, 3) if n_eps else None,
+            **store.wall_span(),
             "dirty_tree": bool(store.header.get("dirty_tree")),
             "note": "results replayed from per-episode checkpoints are the records "
                     "the flying process wrote; the summaries are computed over all "

@@ -171,6 +171,82 @@ def test_two_shards_merge_into_the_one_run():
         fresh, merged = _doc(td / "fresh.json"), _doc(td / "m.json")
     assert calls == SUBSET_EPISODES and cnt.calls == 0, (calls, cnt.calls)
     assert rc_m == rc0 and _norm(fresh) == _norm(merged)
+    # The reproduce command is the one run the merge equals; the merge's own
+    # invocation and the sweep's wall span are in the _resume record.
+    cmd, r = merged["_command"], merged["_resume"]
+    assert "--merge-only" not in cmd and "--resume" not in cmd and "--shard" not in cmd, cmd
+    assert cmd.replace(str(td / "m.json"), str(td / "fresh.json")) == fresh["_command"], \
+        (cmd, fresh["_command"])
+    assert "--merge-only" in r["command_as_run"], r
+    assert r["sweep_wall_span_s"] is not None and r["sweep_wall_span_s"] >= 0, r
+    assert r["sweep_started_utc"] and r["last_checkpoint_utc"], r
+
+
+def test_the_reproduce_command_drops_only_the_resume_flags():
+    argv = ["--profile", "broad", "--resume", "D:/ck", "--shard=2/4", "--runs", "R",
+            "--merge-only", "--out", "O/s.json", "--resu", "x", "--sh", "1/4", "--m",
+            "--seed", "7"]
+    assert S.strip_resume_args(argv) == ["--profile", "broad", "--runs", "R", "--out",
+                                         "O/s.json", "--seed", "7"]
+    assert S.strip_resume_args(["--resume=ck", "--only", "a", "b"]) == ["--only", "a", "b"]
+
+
+def test_shards_started_together_share_one_header():
+    """Every shard of a fresh folder tries to create checkpoint.json at once:
+    exactly one wins, and every other flies under the winner's stamp (with
+    hard links, and on a disk without them)."""
+    import threading
+
+    def race(ck: Path, n: int = 8) -> tuple[list, list]:
+        fp = {"format": S.CHECKPOINT_FORMAT, "episodes": 3}
+        stores = [S.CheckpointStore(ck) for _ in range(n)]
+        gate = threading.Barrier(n)
+        why: list = [None] * n
+
+        def go(i):
+            gate.wait()
+            why[i] = stores[i].open(fp, f"stamp-{i}")
+        ts = [threading.Thread(target=go, args=(i,)) for i in range(n)]
+        for t in ts:
+            t.start()
+        for t in ts:
+            t.join()
+        return why, [s.stamp for s in stores]
+
+    with tempfile.TemporaryDirectory() as td:
+        why, stamps = race(Path(td) / "ck")
+        on_disk = json.loads((Path(td) / "ck" / S.CHECKPOINT_HEADER).read_text("utf-8"))
+        assert why == [None] * 8 and set(stamps) == {on_disk["stamp"]}, (why, stamps)
+        assert not list((Path(td) / "ck").glob("*.tmp")), "temporary header left behind"
+    real_link = S.os.link
+
+    def no_links(*a, **k):
+        raise OSError("hard links not supported")
+    S.os.link = no_links
+    try:
+        with tempfile.TemporaryDirectory() as td:
+            why, stamps = race(Path(td) / "ck")
+            assert why == [None] * 8 and len(set(stamps)) == 1, (why, stamps)
+    finally:
+        S.os.link = real_link
+    with tempfile.TemporaryDirectory() as td:
+        p = Path(td) / "h.json"
+        assert S.create_exclusive_text(p, "a") is True
+        assert S.create_exclusive_text(p, "b") is False and p.read_text() == "a"
+
+
+def test_a_shard_reads_only_its_own_checkpoints():
+    with tempfile.TemporaryDirectory() as td:
+        st = S.CheckpointStore(Path(td) / "ck")
+        assert st.open({"format": S.CHECKPOINT_FORMAT}, "s") is None
+        for k in ("a1", "b2", "c3"):
+            st.save({"format": S.CHECKPOINT_FORMAT, "key": k, "status": "pass"})
+        done, bad = st.load({"a1", "c3", "zz"})
+        assert sorted(done) == ["a1", "c3"] and bad == [], (done, bad)
+        done, _ = st.load()
+        assert sorted(done) == ["a1", "b2", "c3"]
+        span = st.wall_span()
+        assert span["sweep_wall_span_s"] is not None and span["sweep_wall_span_s"] >= 0
 
 
 def test_another_sweeps_checkpoints_are_refused():
@@ -238,9 +314,23 @@ def test_the_broad_report_says_it_is_outside_the_kpis():
     md = kpi_report.render_sweep_markdown(doc)
     assert "not part of the final KPI" in md and "reproduces their scope" not in md
     assert "5 replayed" in md
+    assert "this process; the episodes' time" in md
     doc["_scope"]["grant_profile_kpi_bearing"] = True
     md = kpi_report.render_sweep_markdown(doc)
     assert "reproduces their scope" in md
+    # Other profiles with grant_kpi_bearing: false are not the broad sweep
+    # (review of 2026-11-17): neither "the broad sweep" nor "their scope".
+    for prof, scope in (("prefix_ab", "not a grant row: the Prefix Compiler's A/B"),
+                        ("fsm_edges", "not a grant row: the escalation FSM's edges")):
+        md = kpi_report.render_sweep_markdown(
+            {"_not_kpi_grade": "headless",
+             "_scope": {"profile": prof, "grant_profile_kpi_bearing": False,
+                        "grant_scope": scope}})
+        assert "broad sweep" not in md and "reproduces their scope" not in md, (prof, md)
+        assert "not one of the grant's KPI-bearing rows" in md and scope in md, (prof, md)
+    # The real profile files carry the flag the wording keys on.
+    for prof in ("prefix_ab", "fsm_edges", "broad"):
+        assert S.load_profile(S._profile_path(prof)).grant_kpi_bearing is False, prof
 
 
 if __name__ == "__main__":

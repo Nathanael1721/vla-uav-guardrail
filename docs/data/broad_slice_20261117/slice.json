@@ -5,6 +5,15 @@
   "profile": "broad",
   "episodes_in_profile": 14950,
   "checkpoint_header_dirty_tree": false,
+  "coverage": {
+    "cells": 50,
+    "families_flown": 7,
+    "families_in_profile": 16,
+    "seeds": [1001, 1002, 1003, 1004, 1005],
+    "families_not_flown": ["sensor_degradation", "wind_disturbance", "corridor_keep_in", "altitude_envelope", "radius_scaling", "corridor_swap", "time_window_static", "kinematic_envelope", "action_contract"],
+    "episodes_in_families_not_flown": 355,
+    "note": "Corrected 2026-11-17 after review. The profile lists a cell's 5 seeds one after another and 300 is a multiple of 5, so shards 1/300 to 5/300 are the same 50 cells, one seed each; shards 2-5 re-fly shard 1's cells on seeds 1002-1005. The four big families are in about the profile's proportions, so the timing estimate rests on them; 9 small families were not flown. Earlier text in this file's first version, in broad.yaml and in commit 28dbac3 said each shard's family mix was the profile's: it was not. --shard I/4 (the rig command) splits every cell's seeds across the four shards, so each of those shards flies every family."
+  },
   "resume_proof": {
     "command": "python experiments/sweep_scenarios.py --profile broad --shard 1/300 --resume CK --runs RUNS --out OUT/sweep.json",
     "first_run": "killed by `timeout 45` (exit 124) after 45 s of wall time",
@@ -31,6 +40,7 @@
     },
     "shards_2_to_5_four_processes": {
       "episodes": 200,
+      "cells": "the same 50 cells as shard 1, on seeds 1002-1005",
       "wall_s": 109,
       "per_process_logs": [
         "episodes: 50 flown in 1.8 min (2.15 s/episode), 0 replayed",
