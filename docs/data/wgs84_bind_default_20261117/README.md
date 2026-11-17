@@ -94,6 +94,11 @@ Produced on the desktop, 17 Nov 2026, from scratch copies of the trees
         --before-runs BEFORE/X/episodes --after-runs AFTER/X/episodes --out X_diff.json
     python tools/wgs84_bind_compare.py tick-cost --ticks 400 --rounds 9 --out tick_cost.json
 
+Re-run at the clean commit: the smoke profile flown from the worktree at
+d6881c6 (`code_revision: d6881c65c2f4`, clean) and diffed against the same
+before run gives a `smoke_diff.json` identical to the committed one, field
+for field.
+
 The episode folders are scratch data and are not kept; every number below is
 in the JSON files. The comparison tool was corrected in the same commit (see
 "Corrections" below), and every diff here was made with the corrected tool.
