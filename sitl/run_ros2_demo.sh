@@ -185,8 +185,14 @@ stop_vla() {
 cleanup() {
   stop_bag
   stop_vla
-  # The stressor process with TERM, so its record says how far it got.
+  # The stressor process with TERM, so its record says how far it got and
+  # it sets back what it must restore (a battery cell's BATT_*) while SITL
+  # still runs: up to 5 s.
   pkill -TERM -f "[s]itl_stressors.py" 2> /dev/null || true
+  for _ in $(seq 1 25); do
+    pgrep -f "[s]itl_stressors.py" > /dev/null 2>&1 || break
+    sleep 0.2
+  done
   pkill -TERM -f "[r]os2 bag record -s mcap" 2> /dev/null || true
   pkill -9 -f "[g]uardrail_rail.launch.py"     2> /dev/null || true
   pkill -9 -f "[r]os2_vla_stub_node"           2> /dev/null || true

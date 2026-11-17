@@ -3360,6 +3360,39 @@ def _fence_ceiling(policy) -> tuple[float | None, float]:
 #                   harness does (_resolve_mission with random.Random(
 #                   f"{seed}:jitter")), so SITL_HOME and --start carry the
 #                   same offset as the headless episode of the same seed.
+#   battery_critical_at_s (2026-11-17, WP3-07 G6; RAIL_BATTERY) ArduPilot's
+#                   own battery monitor declares CRITICAL at the cell's time,
+#                   and the Shield node's RTL watch reads it (BATTERY_STATUS
+#                   charge_state). SITL's pack is SIM_BATT_VOLTAGE (SITL.cpp:94;
+#                   SIM_Frame.cpp:519 defaults it to the frame's maxVoltage,
+#                   12.6 V for the rig's quad, and :608 makes a change the
+#                   battery's voltage at once): set to that at boot, and to
+#                   drop_v at t0 + battery_critical_at_s - low_timer_s. The
+#                   monitor declares CRITICAL once the voltage has stayed
+#                   below BATT_CRT_VOLT for more than BATT_LOW_TIMER s
+#                   (AP_BattMonitor_Backend.cpp:135-139), only while armed
+#                   (AP_BattMonitor.cpp:791), and keeps it (the failsafe
+#                   level only rises): so the onset lands on the cell's time
+#                   plus a monitor update. The copter's BATT_CRT_VOLT is 0
+#                   (disabled), so the cell gives the SIMULATED vehicle its
+#                   battery fail-safe setup (the plan's `firmware`:
+#                   BATT_CRT_VOLT 10.1, the 10.0 V drop and no low or
+#                   critical action of the autopilot's own as in ArduCopter's
+#                   autotest BatteryFailsafe, so the FSM's G6 is what lands
+#                   the return; BATT_LOW_VOLT 10.5 is the copter default;
+#                   BATT_LOW_TIMER 1 s is this cell's choice, a lab
+#                   vehicle-setup choice of 2026-11-17 - the default is
+#                   10 s), restored after the mission
+#                   (sitl/sitl_stressors.py, THE BATTERY CELL'S FAIL-SAFE
+#                   SETUP: set only over a loopback link to an autopilot that
+#                   answers SIM_BATT_VOLTAGE). At 10 V the quad's motors give
+#                   (10 / 12.6)^2 = 0.63 of their full thrust (SIM_Motor.cpp:
+#                   voltage_scale); whether the rig's vehicle holds its
+#                   return on that is for the shakedown flight to show.
+#                   OPT-IN (RAIL_BATTERY_OPT_IN): unflown on the rig, so a
+#                   campaign flies it only from a profile with
+#                   `rail_battery: true` (fsm_edges alone); every other
+#                   campaign, smoke and nightly included, refuses it.
 #
 # What a rail flight of such a cell is NOT: the harness's `--wind-model`. The
 # wind acts through ArduPilot's own physics - its drag model, its position
@@ -3372,8 +3405,10 @@ def _fence_ceiling(policy) -> tuple[float | None, float]:
 # FS_EKF_ACTION 1) lands the aircraft. docs/RUNBOOK-orin-hil.md step 14 lists
 # the cells whose labels SITL's physics may not reach.
 #
-# Refused (RAIL_STRESS_REFUSALS): gps_noise_m, latency_ticks, gust_mps,
-# battery_critical_at_s, and a dropout with fix_quality_reported false.
+# Refused (RAIL_STRESS_REFUSALS): gps_noise_m, latency_ticks, gust_mps, and a
+# dropout with fix_quality_reported false. battery_critical_at_s is refused
+# too unless the campaign opted in (RAIL_BATTERY_OPT_IN; until 2026-11-17 it
+# was refused outright).
 #
 # Fail closed (rail_stress_check, after the mission): the simulator side's
 # record (this launch's nonce; every boot parameter set and read back), the
@@ -3421,14 +3456,33 @@ RAIL_STRESS_REFUSALS = {
         "the harness's gust is a per-tick Gaussian ground-velocity disturbance on each "
         "axis drawn from the episode's seed - neither the process nor the draw is the "
         "cell's"),
-    "battery_critical_at_s": (
-        "the Shield node's RTL watch reads ArduPilot's own battery verdict (BATTERY_STATUS "
-        "charge_state CRITICAL, since 2026-11-14), but nothing on the simulator side makes "
-        "ArduPilot declare it at the cell's time: SITL's battery (SIM_BATT_VOLTAGE) reaches "
-        "CRITICAL only through the firmware's BATT_CRT_VOLT / BATT_CRT_MAH (0, disabled, "
-        "by default) and, for a voltage, BATT_LOW_TIMER (10 s) - parameters of the "
-        "firmware under test, which the simulator side never sets"),
 }
+# battery_critical_at_s on the rails (2026-11-17; the mapping above): the
+# simulated vehicle's battery fail-safe setup and its pack. Until this date the
+# hook was refused: SITL's battery reaches CRITICAL only through BATT_CRT_VOLT /
+# BATT_CRT_MAH (0, disabled, by default) and BATT_LOW_TIMER (10 s), which the
+# simulator side never set. low_timer_s 1 is the cell's own choice (a lab
+# vehicle-setup choice of 2026-11-17; ArduPilot's default is 10 s), low_v the
+# copter default, crit_v and drop_v ArduCopter's autotest BatteryFailsafe's.
+RAIL_BATTERY = {"full_v": 12.6, "drop_v": 10.0, "low_v": 10.5, "crit_v": 10.1,
+                "low_timer_s": 1}
+# OPT-IN (2026-11-17): the battery cell has never flown on the rig, and it
+# writes BATT_* parameters to the simulated autopilot, so a rail campaign
+# flies it only when its profile says `rail_battery: true` (fsm_edges, which
+# bears no KPI). smoke, nightly and broad list failsafe-low-battery too:
+# without the opt-in their rail campaigns refuse it as before, so a KPI
+# campaign never gains a cell that has not flown. Lift this for the KPI
+# profiles only after a shakedown flight (docs/RUNBOOK-orin-hil.md, fe_batt01)
+# shows CRITICAL reaching the RTL watch, G11 > G6 > G10 and the restore.
+RAIL_BATTERY_OPT_IN = (
+    "the battery cell is opt-in on the rails (RAIL_BATTERY_OPT_IN): it is unflown on "
+    "the rig and sets the simulated vehicle's BATT_* fail-safe parameters, so only a "
+    "profile with `rail_battery: true` (experiments/profiles/fsm_edges.yaml) flies it")
+# The battery's CRITICAL must reach the Shield node (its RTL watch's first
+# CRITICAL report, metrics.json rtl_watch.battery.failed_spells) within this
+# of the cell's time: the monitor's update after BATT_LOW_TIMER, BATTERY_STATUS
+# on the node's stream, the marker's delay.
+RAIL_BATTERY_ONSET_MAX_S = 1.5
 
 
 def _sitl_stressors():
@@ -3475,12 +3529,17 @@ def start_jitter(spec: ScenarioSpec, seed: int = 0) -> tuple[float, float]:
     return rng.uniform(-j, j), rng.uniform(-j, j)
 
 
-def rail_stress_refusals(spec: ScenarioSpec, defaults=None) -> list[str]:
+def rail_stress_refusals(spec: ScenarioSpec, defaults=None, *,
+                         rail_battery: bool = False) -> list[str]:
     """The stressors of `spec` neither rail realises, each with its reason
-    (RAIL_STRESS_REFUSALS); [] when every stressor it declares is realised."""
+    (RAIL_STRESS_REFUSALS); [] when every stressor it declares is realised.
+    The battery hook is realised only with `rail_battery` (the campaign's
+    opt-in, RAIL_BATTERY_OPT_IN); refused otherwise."""
     s = spec.stress
     out = [f"{k} {getattr(s, k)}: {why}" for k, why in RAIL_STRESS_REFUSALS.items()
            if getattr(s, k) not in (None, 0, 0.0)]
+    if s.battery_critical_at_s is not None and not rail_battery:
+        out.append(f"battery_critical_at_s {s.battery_critical_at_s}: {RAIL_BATTERY_OPT_IN}")
     if s.gps_dropout_s is not None and not s.fix_quality_reported:
         out.append("fix_quality_reported false: the rail reports its fix "
                    "(/mavros/global_position/raw/fix), so the blind arm stays headless")
@@ -3498,17 +3557,21 @@ def rail_stress_plan(spec: ScenarioSpec, seed: int = 0, defaults=None, *,
     """What the simulator side sets for one episode (sitl/sitl_stressors.py,
     its PLAN_SCHEMA): the boot parameters (set and read back before READY)
     and the changes at the episode's t = 0 plus their time. None when the
-    cell needs nothing set in SITL (no wind, no dropout; a jittered start is
-    in SITL_HOME alone). The wind's boot values are the pymavlink rail's
-    rule too (sitl_stressors.with_uniform_wind: SIM_WIND_T = 1 with a
-    speed)."""
+    cell needs nothing set in SITL (no wind, no dropout, no battery; a
+    jittered start is in SITL_HOME alone). The wind's boot values are the
+    pymavlink rail's rule too (sitl_stressors.with_uniform_wind: SIM_WIND_T
+    = 1 with a speed). A battery cell (since 2026-11-17) also carries
+    `firmware`: the simulated vehicle's battery fail-safe setup
+    (RAIL_BATTERY), set at boot and restored after the mission."""
     SST = _sitl_stressors()
     wind = rail_wind(spec, seed)
     drop = spec.stress.gps_dropout_s
-    if wind is None and drop is None:
+    batt = spec.stress.battery_critical_at_s
+    if wind is None and drop is None and batt is None:
         return None
     boot: list[dict] = []
     sched: list[dict] = []
+    firmware: list[dict] = []
     if wind is not None:
         # The profile by the rule the pymavlink rail applies too (one meaning
         # of a wind speed on both).
@@ -3533,10 +3596,32 @@ def rail_stress_plan(spec: ScenarioSpec, seed: int = 0, defaults=None, *,
                    "field": "gps_dropout_s start"},
                   {"t": float(drop[1]), "param": "SIM_GPS_DISABLE", "value": 0,
                    "field": "gps_dropout_s end", "restore": True}]
+    if batt is not None:
+        b = RAIL_BATTERY
+        firmware += [
+            {"param": "BATT_LOW_VOLT", "value": b["low_v"],
+             "why": "above the critical voltage, as ArduPilot's arming check requires"},
+            {"param": "BATT_CRT_VOLT", "value": b["crit_v"],
+             "why": "the copter default 0 never declares CRITICAL"},
+            {"param": "BATT_LOW_TIMER", "value": b["low_timer_s"],
+             "why": f"CRITICAL {b['low_timer_s']} s after the voltage falls below "
+                    f"BATT_CRT_VOLT (the default 10 s; 0 disables it)"},
+            {"param": "BATT_FS_LOW_ACT", "value": 0,
+             "why": "no action of the autopilot's own at LOW"},
+            {"param": "BATT_FS_CRT_ACT", "value": 0,
+             "why": "no action of the autopilot's own at CRITICAL: the FSM's G6 lands "
+                    "the return"}]
+        boot.append({"param": "SIM_BATT_VOLTAGE", "value": b["full_v"],
+                     "why": "a full pack until the drop (the quad model's maxVoltage)",
+                     "restore_after": True})
+        sched.append({"t": max(0.0, float(batt) - b["low_timer_s"]),
+                      "param": "SIM_BATT_VOLTAGE", "value": b["drop_v"],
+                      "field": "battery_critical_at_s"})
     sched.sort(key=lambda it: it["t"])
     return {"schema": SST.PLAN_SCHEMA, "run_id": run_id, "run_nonce": nonce,
             "scenario_id": spec.scenario_id, "seed": int(seed),
-            "boot": boot, "schedule": sched,
+            "boot": boot, "schedule": sched, "firmware": firmware,
+            "battery_critical_at_s": None if batt is None else float(batt),
             "wind": wind, "gps_dropout_s": None if drop is None else list(drop),
             "align_tol_s": RAIL_STRESS_TOL_S,
             "written_by": "experiments/sweep_scenarios.py rail_stress_plan"}
@@ -3575,6 +3660,94 @@ def _num_close(a, b, tol: float = SIM_PARAM_TOL) -> bool:
         return False
 
 
+def _rail_battery_check(plan: dict, record: dict | None, metrics: dict,
+                       last_t: float | None, summary: dict,
+                       rows: list[dict] | None = None) -> list[str]:
+    """A battery cell's part of rail_stress_check (2026-11-17): the
+    simulated vehicle's battery fail-safe setup set and read back by the
+    simulator side, the ones the Shield node reads at take-off (its RTL
+    watch's BATT_CRT_VOLT and BATT_FS_CRT_ACT, metrics.json
+    rtl_watch.params) as planned, ArduPilot's CRITICAL reaching the
+    node's RTL watch within RAIL_BATTERY_ONSET_MAX_S of the cell's time (its
+    first CRITICAL-or-worse report, rtl_watch.battery.failed_spells), and
+    the FSM in RTL on the node's last row before that report (`rows`'
+    fsm_state_after): a CRITICAL that met no RTL is the stress not realised,
+    and the flight errors rather than fail the cell's G6 gate. Fills
+    summary["battery"]; returns the problems."""
+    SST = _sitl_stressors()
+    problems: list[str] = []
+    fw = (record or {}).get("firmware") if isinstance((record or {}).get("firmware"),
+                                                      dict) else None
+    rw = metrics.get("rtl_watch") if isinstance(metrics.get("rtl_watch"), dict) else {}
+    node_params = rw.get("params") if isinstance(rw.get("params"), dict) else None
+    out: dict[str, Any] = {"firmware": [], "onset_max_s": RAIL_BATTERY_ONSET_MAX_S,
+                           "restored": ((record or {}).get("restore") or {}).get("params")}
+    if record is not None and (fw is None or not fw.get("ok")):
+        guard = (fw or {}).get("guard") or {}
+        problems.append("the simulator side did not set and read back the simulated "
+                        "vehicle's battery fail-safe setup"
+                        + (f" ({guard['refused']})" if guard.get("refused") else ""))
+    sim_fw = {p.get("param"): p.get("read_back") for p in (fw or {}).get("params") or []
+              if isinstance(p, dict)}
+    for it in plan.get("firmware") or []:
+        name, want = it["param"], it["value"]
+        node_v = None if node_params is None else node_params.get(name)
+        out["firmware"].append(SST.stressor_entry(
+            name, want, sim_fw.get(name), t=None,
+            when="boot (the simulated vehicle's battery fail-safe setup)",
+            node_read_back=node_v if node_params is not None and name in node_params
+            else "not read by the node"))
+        if node_params is not None and name in node_params \
+                and not SST.read_back_ok(want, node_v):
+            problems.append(f"the autopilot's {name} at take-off is {node_v}, not the plan's "
+                            f"{want:g}")
+    if node_params is None:
+        problems.append("the Shield node recorded no RTL watch parameters (metrics.json "
+                        "rtl_watch.params): the battery fail-safe setup is unconfirmed")
+    at = plan.get("battery_critical_at_s")
+    if at is not None:
+        bat = rw.get("battery") if isinstance(rw.get("battery"), dict) else {}
+        spells = sorted(float(s["t_start"]) for s in bat.get("failed_spells") or []
+                        if isinstance(s, dict) and s.get("t_start") is not None
+                        and float(s["t_start"]) >= float(at) - RAIL_STRESS_EARLY_S)
+        onset = spells[0] if spells else None
+        out.update(battery_critical_at_s=at, first_critical_t=onset,
+                   onset_s=None if onset is None else round(onset - float(at), 4),
+                   charge_states_seen=bat.get("charge_states_seen"))
+        if onset is None or onset - float(at) > RAIL_BATTERY_ONSET_MAX_S:
+            if last_t is not None and last_t < float(at) + RAIL_BATTERY_ONSET_MAX_S \
+                    and onset is None:
+                out["note"] = (f"the episode ended at {last_t:g} s, within "
+                               f"{RAIL_BATTERY_ONSET_MAX_S:g} s of the battery's time")
+            else:
+                problems.append(f"battery_critical_at_s: ArduPilot's CRITICAL from t={at:g} s "
+                                f"did not reach the Shield node's RTL watch within "
+                                f"{RAIL_BATTERY_ONSET_MAX_S:g} s (first CRITICAL report: "
+                                f"{onset})")
+        if onset is not None:
+            # The stress is G6's only while the FSM is returning: the node's
+            # battery watch records CRITICAL whatever the FSM's state, and
+            # ArduPilot keeps checking its failsafes while armed (an RTL that
+            # already reached home and is descending, say). A CRITICAL that
+            # did not meet an RTL is not the cell's flight, never a failed
+            # gate.
+            before = [r for r in rows or []
+                      if r.get("t") is not None and float(r["t"]) < onset
+                      and "fsm_state_after" in r]
+            state = before[-1]["fsm_state_after"] if before else None
+            out["fsm_state_at_critical"] = state
+            if not before:
+                problems.append("battery_critical_at_s: no row before ArduPilot's first "
+                                "CRITICAL report carries the FSM's state (fsm_state_after): "
+                                "the stress is not shown to have met an RTL")
+            elif state != "RTL":
+                problems.append(f"battery_critical_at_s: stress not realised on an RTL - the "
+                                f"FSM was in {state} at ArduPilot's first CRITICAL report "
+                                f"(t={onset:g} s)")
+    summary["battery"] = out
+    return problems
+
+
 def rail_stress_check(spec: ScenarioSpec, plan: dict | None, record: dict | None,
                       metrics: dict, rows: list[dict], seed: int = 0
                       ) -> tuple[list[str], dict]:
@@ -3592,7 +3765,10 @@ def rail_stress_check(spec: ScenarioSpec, plan: dict | None, record: dict | None
     in-flight parameter event at all, on the simulator side's own t0 - and a
     dropout reaching the node's fix_ok within RAIL_DROPOUT_ONSET_MAX_S. A
     window's end that falls after the episode's last row may go unapplied
-    (the episode ended in the dropout, as a headless one can).
+    (the episode ended in the dropout, as a headless one can). A battery
+    cell (since 2026-11-17): its fail-safe setup read back and ArduPilot's
+    CRITICAL reaching the node within RAIL_BATTERY_ONSET_MAX_S
+    (_rail_battery_check, summary["battery"]).
 
     summary["entries"] is every SIM_* parameter the simulator side set, in
     the record the pymavlink rail writes into metrics.json `sim_stressors`
@@ -3607,7 +3783,10 @@ def rail_stress_check(spec: ScenarioSpec, plan: dict | None, record: dict | None
     node_vals = at.get("values") if at.get("sitl") else None
     summary: dict[str, Any] = {"plan": None if plan is None else {
         "boot": plan["boot"], "schedule": plan["schedule"], "wind": plan.get("wind"),
-        "gps_dropout_s": plan.get("gps_dropout_s")},
+        "gps_dropout_s": plan.get("gps_dropout_s"),
+        **({"firmware": plan["firmware"],
+            "battery_critical_at_s": plan.get("battery_critical_at_s")}
+           if plan.get("firmware") else {})},
         "node_at_takeoff": node_vals, "align_tol_s": RAIL_STRESS_TOL_S, "entries": []}
     dx, dy = start_jitter(spec, seed)
     if dx or dy:
@@ -3705,6 +3884,8 @@ def rail_stress_check(spec: ScenarioSpec, plan: dict | None, record: dict | None
                                 f"measured by the {source})")
         applied_out.append(entry)
     summary["entries"] += applied_out
+    if plan.get("firmware") or plan.get("battery_critical_at_s") is not None:
+        problems += _rail_battery_check(plan, record, metrics, last_t, summary, rows)
     drop = plan.get("gps_dropout_s")
     if drop is not None:
         start = float(drop[0])
@@ -3739,7 +3920,7 @@ def rail_stress_check(spec: ScenarioSpec, plan: dict | None, record: dict | None
 
 
 def rail_refusal(spec: ScenarioSpec, backend: str = "sitl", *, episode=None,
-                 policy=None, defaults=None) -> str | None:
+                 policy=None, defaults=None, rail_battery: bool = False) -> str | None:
     """Why a flight rail cannot fly this scenario AS WRITTEN, or None. One
     function for both rails (2026-11-06): the desktop's (`sitl`,
     sitl/run_ros2_demo.sh) and the hil rig's (`hil`, the Orin's mission
@@ -3751,11 +3932,13 @@ def rail_refusal(spec: ScenarioSpec, backend: str = "sitl", *, episode=None,
     (--clock-start) and mid-flight events (--events), and since 2026-11-07
     the simulator's stressors SITL realises (module comment, "THE
     SIMULATOR'S STRESSORS ON THE RAILS": wind and its direction, GPS denial,
-    start jitter), so a scenario is refused only for what neither rail can
-    realise:
+    start jitter; since 2026-11-17 the battery hook, opt-in), so a scenario
+    is refused only for what neither rail can realise:
       * the stressors SITL has no honest equivalent for (RAIL_STRESS_
-        REFUSALS: GPS noise, state latency, gusts, the battery hook), and a
-        dropout flown blind (fix_quality_reported false);
+        REFUSALS: GPS noise, state latency, gusts), and a dropout flown
+        blind (fix_quality_reported false);
+      * the battery hook unless `rail_battery` (the campaign's profile has
+        `rail_battery: true`; RAIL_BATTERY_OPT_IN);
       * a relabel schedule (the node declares one subject class);
       * a non-finite pilot action (the node refuses to fly or count one:
         the action-contract family stays headless);
@@ -3781,11 +3964,14 @@ def rail_refusal(spec: ScenarioSpec, backend: str = "sitl", *, episode=None,
     FSM no RTL watch, so G6 could not fire there); the node's RTL watch
     (sitl/ros2_shield_node.py, THE RTL WATCH) now writes `rtl_failed` on
     every RTL row and sitl_extra counts them, so failsafe-rtl-blocked flies.
-    The battery hook stays refused (RAIL_STRESS_REFUSALS says why)."""
+    The battery hook stayed refused until 2026-11-17, when the simulator
+    side began to give the simulated vehicle its battery fail-safe setup
+    (RAIL_BATTERY): failsafe-low-battery flies, on an opted-in campaign
+    only (RAIL_BATTERY_OPT_IN)."""
     if backend not in RAIL_BACKENDS:
         raise ValueError(f"backend {backend!r} is not a flight rail ({RAIL_BACKENDS})")
     why: list[str] = []
-    stressors = rail_stress_refusals(spec, defaults)
+    stressors = rail_stress_refusals(spec, defaults, rail_battery=rail_battery)
     if stressors:
         why.append("stressors the rail cannot realise (" + "; ".join(stressors) + ")")
     m = spec.mission
@@ -5279,14 +5465,17 @@ def print_sitl_plan(plan: list[dict], physics: str = "sitl",
 
 def run_sitl(sc, tag: str, seed: int = 0, defaults=None,
              episode=None, *, extra_args=None, physics: str = "sitl",
-             sim_speedup: float = 1.0) -> tuple[list[dict], dict] | None:
+             sim_speedup: float = 1.0,
+             rail_battery: bool = False) -> tuple[list[dict], dict] | None:
     """One scenario on the desktop's rail (sitl/run_ros2_demo.sh, which boots
     a fresh SITL per run): SITL_HOME at the scenario's start, through WSLENV
     so the WSL script sees it; its events and scenario record written under
     CAMPAIGN_DIR first. None when the rail is not on this host.
 
-    THE SIMULATOR'S STRESSORS (2026-11-07): a cell with wind or a GPS
-    dropout gets its plan (rail_stress_plan) under RAIL_STRESS_DIR, and
+    THE SIMULATOR'S STRESSORS (2026-11-07): a cell with wind, a GPS
+    dropout or (since 2026-11-17, with `rail_battery`, the campaign's
+    opt-in) a battery hook gets its plan (rail_stress_plan) under
+    RAIL_STRESS_DIR, and
     run_ros2_demo.sh (SITL_STRESS_PLAN / SITL_STRESS_RECORD through WSLENV)
     starts sitl/sitl_stressors.py beside SITL before MAVROS, refusing the run
     unless its boot parameters read back. After the flight the record goes
@@ -5296,7 +5485,8 @@ def run_sitl(sc, tag: str, seed: int = 0, defaults=None,
     check_rail_physics("sitl", physics, sim_speedup)
     if not sitl_available():
         return None
-    why = rail_refusal(spec, "sitl", episode=episode, defaults=defaults)
+    why = rail_refusal(spec, "sitl", episode=episode, defaults=defaults,
+                       rail_battery=rail_battery)
     if why is None and physics == "gazebo":
         why = gazebo_refusal(spec, seed, defaults)
     if why:
@@ -5823,7 +6013,7 @@ def record_desktop_revision(run_dir: Path, cfg: HilConfig | None = None, *,
 
 def run_hil(spec: ScenarioSpec, ep, seed: int, defaults, cfg: HilConfig, transport,
             campaign: str, k: int, store: Path, *, extra_args=None,
-            max_s_add: float = 0.0) -> dict:
+            max_s_add: float = 0.0, rail_battery: bool = False) -> dict:
     """One scenario on the hil rail: boot SITL at its start, copy its files
     to the Orin, restart MAVROS, fly the mission container, fetch the run
     folder into `store`, accept it by its own records and score it with the
@@ -5832,8 +6022,9 @@ def run_hil(spec: ScenarioSpec, ep, seed: int, defaults, cfg: HilConfig, transpo
     Returns {rows, extra, policy, prios, run_dir, tag}; raises
     UnsupportedScenario (refused) or RuntimeError (the flight failed).
 
-    THE SIMULATOR'S STRESSORS (2026-11-07): a cell with wind or a GPS
-    dropout gets its plan (rail_stress_plan, kept on this desktop under
+    THE SIMULATOR'S STRESSORS (2026-11-07): a cell with wind, a GPS
+    dropout or (since 2026-11-17, opt-in: `rail_battery`) a battery hook
+    gets its plan (rail_stress_plan, kept on this desktop under
     RAIL_STRESS_DIR - nothing of it goes to the Orin), which the WSL helper
     hands sitl/sitl_stressors.py; the helper is ready only once the plan's
     boot parameters read back. After the flight the simulator side's record
@@ -5848,8 +6039,11 @@ def run_hil(spec: ScenarioSpec, ep, seed: int, defaults, cfg: HilConfig, transpo
 
     `max_s_add` (2026-11-14): a lengthened campaign's seconds past the rail
     cap (--hil-max-s-add), on the node's --max-s, in the scenario record
-    (rail_meta) and on the mission's timeout; 0 is the profile's length."""
-    why = rail_refusal(spec, "hil", episode=ep, defaults=defaults)
+    (rail_meta) and on the mission's timeout; 0 is the profile's length.
+    `rail_battery`: the campaign's opt-in to the battery cell
+    (RAIL_BATTERY_OPT_IN)."""
+    why = rail_refusal(spec, "hil", episode=ep, defaults=defaults,
+                       rail_battery=rail_battery)
     if why:
         raise UnsupportedScenario(why)
     pol = spec.policy.load(ROOT)
@@ -6442,7 +6636,8 @@ def rescore_rail_main(globs: list[str], episodes, defaults, rail_gates: str,
 
 
 def hil_plan(episodes, defaults, cfg: HilConfig, campaign: str,
-             controls: bool = False, max_s_add: float = 0.0) -> list[dict]:
+             controls: bool = False, max_s_add: float = 0.0,
+             rail_battery: bool = False) -> list[dict]:
     """The hil campaign before anything flies: per episode, the mission it
     would be (its tag, SITL_HOME and the arguments both nodes get) or why
     it is refused. The dry run prints this and stops. `max_s_add`: a
@@ -6455,7 +6650,8 @@ def hil_plan(episodes, defaults, cfg: HilConfig, campaign: str,
         spec = ep.cell.spec
         item = {"id": ep.run_id, "seed": ep.seed, "template": spec.template,
                 "cell": ep.episode_id}
-        why = rail_refusal(spec, "hil", episode=ep, defaults=defaults)
+        why = rail_refusal(spec, "hil", episode=ep, defaults=defaults,
+                           rail_battery=rail_battery)
         if why is None and not spec.shield and not controls:
             why = ("a Shield-off control arm: flown only with --hil-controls (it flies "
                    "the raw pilot into the zones, and the GeoFence backstop may take "
@@ -6481,6 +6677,7 @@ def hil_plan(episodes, defaults, cfg: HilConfig, campaign: str,
                             shield="on" if spec.shield else "off", args=args,
                             stress=None if stress is None else {
                                 "boot": stress["boot"], "schedule": stress["schedule"],
+                                "firmware": stress.get("firmware") or [],
                                 "plan": f"{RAIL_STRESS_DIR}/{tag}/plan.json"},
                             start_jitter_m=[jx, jy] if (jx or jy) else None)
             except UnsupportedScenario as e:
@@ -6530,6 +6727,10 @@ def print_hil_plan(plan: list[dict], cfg: HilConfig, max_s_add: float = 0.0) -> 
         st = p.get("stress")
         sargs = []
         if st:
+            if st.get("firmware"):
+                print("       SITL setup " + ", ".join(f"{b['param']}={b['value']:g}"
+                                                        for b in st["firmware"])
+                      + " (the simulated vehicle's battery fail-safe; restored after)")
             print("       SITL boot  " + ", ".join(f"{b['param']}={b['value']:g}"
                                                     for b in st["boot"]))
             print("       SITL t=0+  " + ", ".join(f"{s['param']}={s['value']:g} at "
@@ -8607,6 +8808,9 @@ def main(argv: list[str] | None = None) -> int:
     if not lib_path.is_absolute():
         lib_path = ROOT / lib_path
     lib = Library(lib_path)
+    # The battery cell on the rails is the profile's opt-in alone
+    # (RAIL_BATTERY_OPT_IN): False for every profile but fsm_edges.
+    rail_battery = bool(profile is not None and profile.rail_battery)
     fc_arms = list(PUBLISH_FORECAST_ARMS) if args.publish else args.forecast_arms
     rsp_arms = args.response_arms
     # The arms this run will fly: the flags, else the profile's, else the
@@ -8782,7 +8986,7 @@ def main(argv: list[str] | None = None) -> int:
                   f"(letters, digits, - and _; it prefixes every mission tag)")
             return 2
         plan = hil_plan(episodes, lib.defaults, hil_cfg, hil_campaign, args.hil_controls,
-                        max_s_add=hil_max_s_add)
+                        max_s_add=hil_max_s_add, rail_battery=rail_battery)
         info["hil"] = {"campaign": hil_campaign, "config": hil_config_record(hil_cfg),
                        "flyable": sum(1 for p in plan if p["fly"]),
                        "refused": {p["id"]: p["refused"] for p in plan if not p["fly"]},
@@ -8791,6 +8995,9 @@ def main(argv: list[str] | None = None) -> int:
                        # it and never merges a lengthened campaign with another.
                        "max_s_add": hil_max_s_add,
                        "flight_length": hil_flight_length(hil_max_s_add)}
+        if rail_battery:
+            # Only an opted-in campaign carries the key (RAIL_BATTERY_OPT_IN).
+            info["hil"]["rail_battery"] = True
         if args.hil_dry_run:
             print_hil_plan(plan, hil_cfg, hil_max_s_add)
             return 0
@@ -8955,7 +9162,8 @@ def main(argv: list[str] | None = None) -> int:
             if args.backend == "hil":
                 # Refused before a mission number is spent, so the tags match
                 # the dry run's (hil_plan).
-                why = rail_refusal(spec, "hil", episode=ep, defaults=lib.defaults)
+                why = rail_refusal(spec, "hil", episode=ep, defaults=lib.defaults,
+                                   rail_battery=rail_battery)
                 if why is None and not spec.shield and not args.hil_controls:
                     why = ("a Shield-off control arm: flown only with --hil-controls (it "
                            "flies the raw pilot into the zones, and the GeoFence backstop "
@@ -8966,7 +9174,7 @@ def main(argv: list[str] | None = None) -> int:
                 try:
                     hil_run = run_hil(spec, ep, ep.seed, lib.defaults, hil_cfg,
                                       hil_transport, hil_campaign, hil_k, hil_store,
-                                      max_s_add=hil_max_s_add)
+                                      max_s_add=hil_max_s_add, rail_battery=rail_battery)
                 except UnsupportedScenario:
                     hil_k -= 1
                     raise
@@ -8979,7 +9187,8 @@ def main(argv: list[str] | None = None) -> int:
             elif args.backend == "sitl":
                 sitl_run_tag = sitl_tag(ep, rail_physics)
                 got = run_sitl(spec, sitl_run_tag, ep.seed, lib.defaults, episode=ep,
-                               physics=rail_physics, sim_speedup=rail_speedup)
+                               physics=rail_physics, sim_speedup=rail_speedup,
+                               rail_battery=rail_battery)
                 if got is None:
                     n_skip += 1
                     print(f"  SKIP  {label:<34} ArduPilot rail not available here")

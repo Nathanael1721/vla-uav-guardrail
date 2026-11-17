@@ -215,7 +215,11 @@ which any of these holds:
     older than BATTERY_STALE_S is not a report). LOW does not fail an RTL:
     it is ArduPilot's reason to start one. With BATT_CRT_VOLT and
     BATT_CRT_MAH at 0 (the copter default) ArduPilot never declares
-    CRITICAL and this reason cannot fire.
+    CRITICAL and this reason cannot fire; since 2026-11-17 the battery cell
+    (failsafe-low-battery) gives the SIMULATED vehicle a battery fail-safe
+    setup and drops SIM_BATT_VOLTAGE from the simulator's side
+    (sitl/sitl_stressors.py; experiments/sweep_scenarios.py RAIL_BATTERY),
+    never from this node.
   * RTL not entered - the autopilot has not reported RTL
     RTL_ENTRY_TIMEOUT_S (5 s, five heartbeats) after the FSM entered it.
 Every threshold errs toward NOT failing a return: the progress test waits
@@ -229,6 +233,21 @@ rtl_confirmed (and the reasons when it failed, also an `rtl_failed`
 event); metrics.json `rtl_watch` has the configuration, the failures and
 the battery reports. G6's own reason in the FSM record names them ("RTL
 failed: ...").
+
+THE PILOT'S DECISION PERIOD (2026-11-17, WP3-07). guardrail/fsm.py's
+FSMConfig.for_decision_period (decided 2026-11-02, best practice) scales
+N-in-T's window for a pilot that decides less often than 10 Hz: T = max(T,
+N x period x 1.5), so a pilot deciding every 3 s can still reach N onsets in
+T. Until this date no rail applied it. `--decision-period-s S` declares the
+pilot's period; the FSM is built with for_decision_period(S) over the
+--fsm-config thresholds whenever that widens T (S > T / (1.5 x N): 1.11 s
+for the grant's N = 3, T = 5 s, 0.83 s for N = 4), and otherwise, or with
+the option left out (the default: the 10 Hz stub every KPI campaign flies),
+with the thresholds and their hash exactly as before (fsm_config_for_pilot).
+metrics.json `fsm.decision_period` says which. Only a hand-launched node
+takes it (sitl/run_ros2_demo.sh EXTRA): no campaign path passes it - the
+harness's rail_node_args never adds it and rail_extra_args accepts only the
+hot-apply flags.
 
 ZONE DWELL AND COST MAP (2026-10-11). `nfz_s` is the count every rail shares
 (guardrail.replay.zone_dwell, read from the Shield's rule checker): polygon
@@ -738,6 +757,40 @@ RTL_WATCH_PARAMS = ("RTL_ALT", "RTL_CONE_SLOPE", "BATT_FS_CRT_ACT", "BATT_CRT_VO
                     "BATT_CRT_MAH")
 # RTL failures kept with their reasons in metrics.json (the rest counted).
 RTL_FAILURES_KEPT = 20
+def slow_pilot_above_s(cfg: FSMConfig) -> float:
+    """THE PILOT'S DECISION PERIOD (module docstring): the period above which
+    FSMConfig.for_decision_period widens `cfg`'s N-in-T window, T / (1.5 x
+    N) - 1.11 s for the grant's N = 3, T = 5 s, 0.83 s for N = 4."""
+    return cfg.window_s / (1.5 * cfg.n_violations)
+
+
+def fsm_config_for_pilot(cfg: FSMConfig, period_s: float | None) -> tuple[FSMConfig, dict]:
+    """(the FSM's config, the record for metrics.json `fsm.decision_period`)
+    for a pilot deciding every `period_s` seconds (--decision-period-s; None:
+    not declared). FSMConfig.for_decision_period(period_s, cfg) whenever it
+    changes `cfg` (a pilot slower than slow_pilot_above_s(cfg), whatever N
+    and T the --fsm-config sets); otherwise `cfg` itself, the same object,
+    so its thresholds and digest are unchanged. Raises ValueError for a
+    period that is not a finite number > 0."""
+    rec = {"declared_s": period_s, "slow_above_s": round(slow_pilot_above_s(cfg), 4),
+           "window_s_base": cfg.window_s, "n_violations": cfg.n_violations}
+    if period_s is None:
+        return cfg, {**rec, "applied": False, "window_s": cfg.window_s,
+                     "why": "no decision period declared (--decision-period-s): the "
+                            "thresholds as configured"}
+    if isinstance(period_s, bool) or not isinstance(period_s, (int, float)) \
+            or not math.isfinite(period_s) or period_s <= 0:
+        raise ValueError(f"--decision-period-s must be a finite number of seconds > 0, "
+                         f"got {period_s!r}")
+    slow = FSMConfig.for_decision_period(float(period_s), cfg)
+    if slow == cfg:
+        return cfg, {**rec, "applied": False, "window_s": cfg.window_s,
+                     "why": f"a pilot deciding every {period_s:g} s (at most "
+                            f"{slow_pilot_above_s(cfg):.4g} s for N = {cfg.n_violations}, "
+                            f"T = {cfg.window_s:g} s) keeps the thresholds as configured"}
+    return slow, {**rec, "applied": True, "window_s": slow.window_s,
+                  "why": f"a pilot deciding every {period_s:g} s: N-in-T's T = max(T, N x "
+                         f"period x 1.5) (FSMConfig.for_decision_period)"}
 
 
 # --------------------------------------------------------------------------- #
@@ -2634,6 +2687,9 @@ if HAVE_ROS:
                                     else (None if args.theta_horizon_s == "none"
                                           else float(args.theta_horizon_s)))
             cfg = FSMConfig.from_yaml(args.fsm_config) if args.fsm_config else FSMConfig()
+            # A slow pilot's N-in-T window (THE PILOT'S DECISION PERIOD).
+            cfg, self.decision_period = fsm_config_for_pilot(
+                cfg, getattr(args, "decision_period_s", None))
             self.fsm = EscalationFSM(cfg) if self.shield_on else None
             self.fsm_fault: str | None = None
             self.hold_mode = getattr(args, "hold_mode", DEFAULT_HOLD_MODE)
@@ -5105,6 +5161,7 @@ if HAVE_ROS:
                 "shield_ms_max": (round(max(shield_ms), 3) if shield_ms else None),
                 "fsm": ({**self.fsm.summary(),
                          "theta_basis": theta_basis(self.theta_horizon_s),
+                         "decision_period": self.decision_period,
                          "fault": self.fsm_fault,
                          # Where the holds were flown (--hold-points) and how
                          # many moved points were flown as a GUIDED transit.
@@ -5506,6 +5563,12 @@ def make_parser() -> argparse.ArgumentParser:
     ap.add_argument("--subject-class", default="pedestrian")
     ap.add_argument("--fsm-config", default=None,
                     help="escalation FSM thresholds YAML (guardrail.fsm.FSMConfig)")
+    ap.add_argument("--decision-period-s", type=float, default=None,
+                    help="the pilot's decision period, seconds: above T / (1.5 x N) "
+                         "(1.11 s for the grant's N = 3, T = 5 s) the FSM's N-in-T window "
+                         "is scaled to it (FSMConfig.for_decision_period); left out (the "
+                         "default, the 10 Hz stub) or at most that, the thresholds are "
+                         "unchanged")
     ap.add_argument("--theta-horizon-s", default="auto",
                     help="'auto' (the default basis, guardrail.fsm."
                          "DEFAULT_THETA_HORIZON_S: per-operator magnitude_m, the "
@@ -5545,6 +5608,7 @@ def main(argv: list[str] | None = None) -> None:
         ActionWatchdog(args.action_timeout_s)
         ActionWatchdog(args.pose_timeout_s, what="pose")
         DecisionWatchdog(args.decision_timeout_s)
+        fsm_config_for_pilot(FSMConfig(), args.decision_period_s)
         if not (math.isfinite(args.decision_hold_max_s) and args.decision_hold_max_s > 0):
             raise ValueError(f"--decision-hold-max-s must be a positive number of seconds, "
                              f"got {args.decision_hold_max_s!r}")

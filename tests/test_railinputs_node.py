@@ -472,6 +472,66 @@ def _fly(N, node, clk, n: int, act: bool = True) -> None:
         node._tick()
 
 
+def test_a_slow_pilot_gets_its_decision_period_and_the_10hz_stub_keeps_its_fsm():
+    """THE PILOT'S DECISION PERIOD (2026-11-17, WP3-07): the node builds its
+    FSM with FSMConfig.for_decision_period (decided 2026-11-02) for a pilot
+    declared slower than T / (1.5 x N) of the configured thresholds (1.11 s
+    for the grant's N = 3, T = 5 s), and leaves every other one - the
+    default, the 10 Hz stub every KPI campaign flies - with the very config
+    (same thresholds, same fsm_config_hash) it had before, so its flights
+    replay unchanged."""
+    from guardrail.fsm import EscalationFSM, FSMConfig, RepairMagnitude, RuleHit
+    N, node, clk, out = _build([])
+    assert node.fsm.config == FSMConfig() and node.fsm.config.digest == FSMConfig().digest
+    assert node.decision_period["applied"] is False
+    assert node.decision_period["declared_s"] is None
+    node.start_mission()
+    _fly(N, node, clk, 20)
+    assert node.fsm.config.digest == FSMConfig().digest
+    for fast in ("0.1", "1.0", "1.1"):
+        _, n2, _, _ = _build(["--decision-period-s", fast])
+        assert n2.fsm.config == FSMConfig() and n2.fsm.config.digest == FSMConfig().digest
+        assert n2.decision_period["applied"] is False, n2.decision_period
+    _, slow, _, _ = _build(["--decision-period-s", "3.0"])
+    cfg = slow.fsm.config
+    assert cfg == FSMConfig.for_decision_period(3.0) and cfg.window_s == 13.5
+    assert cfg.n_violations == FSMConfig().n_violations and cfg.digest != FSMConfig().digest
+    assert slow.decision_period["applied"] is True
+    assert (slow.decision_period["window_s"], slow.decision_period["window_s_base"]) == (13.5, 5.0)
+    # What it is for: a pilot re-violating on each 3 s decision reaches
+    # N-in-T (G2) on the third onset with the node's config, never without.
+
+    def edges(c):
+        f, seen = EscalationFSM(c), []
+        for i in range(100):
+            t = round(i * 0.1, 3)
+            o = (f.tick(t, "repaired", [RuleHit("nfz", "project_fix", "hard", "P0")],
+                        RepairMagnitude(0.5, 0.0)) if (i % 30) < 10 else f.tick(t))
+            if o.edge:
+                seen.append(o.edge)
+        return seen
+    assert "G2" in edges(cfg) and "G2" not in edges(node.fsm.config)
+    # A period that is not one is refused before anything flies.
+    for bad in (0.0, -1.0, float("nan"), float("inf")):
+        try:
+            N.fsm_config_for_pilot(FSMConfig(), bad)
+        except ValueError:
+            continue
+        raise AssertionError(f"accepted {bad}")
+    assert N.fsm_config_for_pilot(FSMConfig(), None)[0] == FSMConfig()
+    # The break-even follows the configured N and T, not the grant's: with
+    # N = 4 and T = 5 s a 1.0 s pilot (above 5 / 6 = 0.83 s) needs T = 6 s,
+    # and a 0.8 s one keeps the config itself.
+    n4 = FSMConfig(n_violations=4)
+    got, rec = N.fsm_config_for_pilot(n4, 1.0)
+    assert got.window_s == 6.0 and got.n_violations == 4 and rec["applied"] is True, rec
+    assert abs(rec["slow_above_s"] - 5.0 / 6.0) < 1e-3, rec
+    same, rec = N.fsm_config_for_pilot(n4, 0.8)
+    assert same is n4 and rec["applied"] is False, rec
+    same, rec = N.fsm_config_for_pilot(FSMConfig(), 1.1)
+    assert same.digest == FSMConfig().digest and rec["applied"] is False, rec
+
+
 def test_a_pilot_taking_the_aircraft_out_of_the_nodes_hold_is_a_takeover():
     """ros2-takeover-only-from-guided: only GUIDED -> X counted, so with the
     node holding (a quiet action stream, LOITER flown as BRAKE) a pilot's or
