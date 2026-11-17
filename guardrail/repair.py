@@ -305,10 +305,25 @@ class PathRepair:
     cap a detour's correction is at most 0.8 m, so on a tick a detour is
     flown theta abandons it for the fail-safe only above about 10 m/s (a
     full reversal at 10 m/s is 2.0 m); the detour's safety rests on its
-    full re-check, which is what lets it be taken at all."""
+    full re-check, which is what lets it be taken at all.
+
+    In chain mode (the default) it detours round STAND-OFF rings only
+    (`chain_categories`); a keep-out zone is left to the projection, whose
+    anti-stall slide already keeps moving along the zone. Measured on
+    2026-11-17 with zone detours on as well, every changed library episode
+    with a worse figure was a zone's: nfz-head-on ended held in Loiter (the
+    detour toward a corner deepened the request's forecast until the slide
+    was over theta), gps-noise cells flew more true-state margin ticks, and
+    gps-dropout lane 23.6 at 6-13 s - a detour along the ring in the 2 s
+    before the fix froze - lost the RTL its label expects (fail-safe trigger
+    correctness 179/179 -> 178/179). `PathRepair(chain_categories=
+    ("geofence", "standoff"))` registered in a Shield's `repair_operators`
+    puts zone detours back in chain mode; first-feasible mode, where it
+    runs only after the projection failed, detours round both."""
 
     name = "PathRepair"
     categories = ("geofence", "standoff")
+    CHAIN_CATEGORIES = ("standoff",)
     MIN_PROGRESS = 0.5        # of the commanded horizontal speed, chain mode
     CLEARANCE_M = 1.0         # waypoint clearance outside the ring
     MIN_SPEED_MPS = 0.5       # below this there is no progress to keep
@@ -342,8 +357,14 @@ class PathRepair:
         repairs[:] = [r for r in repairs if not any(r is g for g in gone)]
         return gone
 
+    def __init__(self, chain_categories: tuple | None = None):
+        self.chain_categories = tuple(chain_categories if chain_categories is not None
+                                      else self.CHAIN_CATEGORIES)
+
     def __repr__(self) -> str:
-        return "PathRepair()"
+        if self.chain_categories == self.CHAIN_CATEGORIES:
+            return "PathRepair()"
+        return f"PathRepair(chain_categories={self.chain_categories!r})"
 
     def repair(self, action, violation, ir, *, ctx: RepairContext) -> RepairAttempt:
         sh, st, raw = ctx.shield, ctx.state, ctx.raw
@@ -362,9 +383,14 @@ class PathRepair:
         if violation is not None:
             targets = [violation] if violation.category in self.categories else []
         else:
-            targets = sorted((v for v in ctx.raw_violations if v.category in self.categories),
+            targets = sorted((v for v in ctx.raw_violations
+                              if v.category in self.chain_categories),
                              key=lambda v: v.predicted_at_s)
         if not targets:
+            if violation is None and any(v.category in self.categories
+                                         for v in ctx.raw_violations):
+                return skip(f"chain mode detours round {'/'.join(self.chain_categories)} "
+                            f"only: the projection keeps this one")
             return skip("the raw forecast crosses no keep-out zone or stand-off ring")
         if violation is None and getattr(st, "fix_ok", None) is False:
             # No current position fix (a GPS denial: frozen, or the autopilot
@@ -456,12 +482,13 @@ class PathRepair:
         corners are placed at) outside the zone's margin ring at every pose?
         A leg must only not CROSS the ring (`_zone_waypoints`), so from beside
         the ring a leg to a corner runs along it; the slide it replaces
-        pushes the aircraft away. Chain mode does not hug: measured
-        2026-11-17 on gps-dropout lane 23.6 at 6-13 s (ideal vehicle), a
-        detour along the ring in the 2 s before the fix froze left the
-        aircraft at the ring when it did, the frozen slide chattered in place
-        and X8 (position lost -> RTL), which the cell's label expects, never
-        came."""
+        pushes the aircraft away. Read in chain mode only where zone detours
+        are switched on (`chain_categories`). It is not enough to make them
+        safe to switch on by default: with it, gps-dropout lane 23.6 at
+        6-13 s (ideal vehicle) still flew a detour in the 2 s before the fix
+        froze, the frozen slide then chattered in place and X8 (position
+        lost -> RTL), which the cell's label expects, never came (measured
+        2026-11-17)."""
         anchors, _ = sh._fence_anchors(sh._ir)
         rec = next((r for r in anchors if r.rule.id == rule_id), None)
         if rec is None or rec.moving or rec.buffered.is_empty:

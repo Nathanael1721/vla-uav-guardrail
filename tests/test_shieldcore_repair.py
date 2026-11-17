@@ -208,6 +208,13 @@ def test_a_hook_that_changes_the_action_without_logging_is_ok():
     assert lat[0]["result"] == "ok" and d.emitted.vx == 0.0, lat
 
 
+
+def _zones(sh):
+    """`sh` with zone detours in chain mode as well (PathRepair detours round
+    stand-off rings only by default, since 2026-11-17)."""
+    sh.repair_operators["PathRepair"] = R.PathRepair(chain_categories=("geofence", "standoff"))
+    return sh
+
 def test_path_repair_sits_right_after_the_lateral_projection():
     assert R.with_path_repair(R.CHAIN_LOOP) == (
         "ClearanceProjection", "StandoffProjection", "CorridorProjection",
@@ -237,6 +244,14 @@ def test_path_repair_is_in_the_default_chain_in_the_grants_order():
         State(x=3.0, y=0.5, up=10.0), Action4D(vx=2.0))
     assert "PathRepair" not in [a["operator"] for a in off.trace["passes"][1]["attempts"]]
     assert isinstance(R.REGISTRY["PathRepair"], R.RepairOperator)   # the Protocol
+    # In chain mode it detours round stand-off rings only; a zone is left to
+    # the projection (zone detours: PathRepair(chain_categories=...)).
+    assert R.REGISTRY["PathRepair"].chain_categories == ("standoff",)
+    d = Shield(_square_policy(), escalation=False).filter(
+        State(x=5.0, y=9.0, up=10.0), Action4D(vx=2.0))
+    pr = [x for p in d.trace["passes"] for x in p["attempts"] if x["operator"] == "PathRepair"]
+    assert pr and "standoff only" in pr[0]["reason"], pr
+    assert [r.operator for r in d.repairs] == ["GeofenceSlide"], d.repairs
 
 
 def test_path_repair_magnitude_is_the_correction_of_the_action_it_emits():
@@ -254,7 +269,7 @@ def test_path_repair_magnitude_is_the_correction_of_the_action_it_emits():
     assert abs(R.PathRepair.magnitude(em, raw) - math.sqrt(20.0) * 0.1) < 1e-12
     assert R.PathRepair.magnitude(Action4D(vx=2.0), Action4D(vx=2.0)) == 0.0
     st, a = State(x=5.0, y=9.0, up=10.0, yaw_deg=0.0), Action4D(vx=2.0)
-    d = Shield(_square_policy(), escalation=False).filter(st, a)
+    d = _zones(Shield(_square_policy(), escalation=False)).filter(st, a)
     pr = [r for r in d.repairs if r.operator == "PathRepair"]
     assert len(pr) == 1, d.repairs
     assert abs(pr[0].magnitude_m - R.PathRepair.magnitude(d.emitted, a)) < 1e-12
@@ -275,16 +290,16 @@ def test_path_repair_takes_no_detour_without_a_position_fix_or_during_a_recovery
     way (the aircraft already inside a rule)."""
     st, a = State(x=5.0, y=9.0, up=10.0, yaw_deg=0.0), Action4D(vx=2.0)
     base = Shield(_square_policy(), escalation=False, path_repair=False)
-    on = Shield(_square_policy(), escalation=False)
+    on = _zones(Shield(_square_policy(), escalation=False))
     assert "PathRepair" in [r.operator for r in on.filter(st, a).repairs]
     lost = st.model_copy(update={"fix_ok": False})
-    d = Shield(_square_policy(), escalation=False).filter(lost, a)
+    d = _zones(Shield(_square_policy(), escalation=False)).filter(lost, a)
     pr = [x for p in d.trace["passes"] for x in p["attempts"] if x["operator"] == "PathRepair"]
     assert pr and pr[0]["result"] == "skip" and "position fix" in pr[0]["reason"], pr
     assert d.emitted == base.filter(lost, a).emitted
     # Inside the square's margin ring: GeofenceEscape is a recovery.
     inside = State(x=9.5, y=0.0, up=10.0)
-    d = Shield(_square_policy(), escalation=False).filter(inside, Action4D(vx=2.0))
+    d = _zones(Shield(_square_policy(), escalation=False)).filter(inside, Action4D(vx=2.0))
     pr = [x for p in d.trace["passes"] for x in p["attempts"] if x["operator"] == "PathRepair"]
     assert all(x["result"] == "skip" for x in pr), pr
     assert "PathRepair" not in [r.operator for r in d.repairs], d.repairs
@@ -303,7 +318,7 @@ def test_path_repair_does_not_overrule_theta_or_lead_deeper():
     from guardrail import fsm as F
     st, a = State(x=3.0, y=0.5, up=10.0, yaw_deg=0.0), Action4D(vx=2.0)
     base = Shield(_square_policy(), escalation=False, path_repair=False).filter(st, a)
-    rail = Shield(_square_policy(), escalation=False)
+    rail = _zones(Shield(_square_policy(), escalation=False))
     d = rail.filter(st, a)
     pr = [x for p in d.trace["passes"] for x in p["attempts"] if x["operator"] == "PathRepair"]
     assert pr and "2.00 m over theta" in pr[0]["reason"], pr       # 4.0 m vs 2.0 m
@@ -317,7 +332,7 @@ def test_path_repair_does_not_overrule_theta_or_lead_deeper():
     pol = Policy.model_validate({"policy_id": "so", "constraints": [
         {"id": "so", "type": "subject_standoff", **HARD_P0, "min_range_m": 10.0,
          "soft_margin_m": 2.0, "subject_class": "*"}]})
-    sh = Shield(pol)
+    sh = _zones(Shield(pol))
     sh.set_subject(20.0, 0.0, "car")
     d = sh.filter(State(x=0.0, y=0.0, up=10.0), Action4D(vx=4.0))
     pr = [x for p in d.trace["passes"] for x in p["attempts"] if x["operator"] == "PathRepair"]
@@ -616,7 +631,7 @@ def test_path_repair_detours_round_a_zone_projection_slides_along():
     base = Shield(_square_policy(), escalation=False, path_repair=False).filter(st, a)
     assert [r.operator for r in base.repairs] == ["GeofenceSlide"]
     assert base.emitted.vx < 1e-9                       # no progress north
-    d = Shield(_square_policy(), escalation=False, path_repair=True).filter(st, a)
+    d = _zones(Shield(_square_policy(), escalation=False, path_repair=True)).filter(st, a)
     pr = [r for r in d.repairs if r.operator == "PathRepair"]
     assert pr and "body frame" in pr[0].detail and pr[0].axis == "lateral"
     assert d.emitted.vx > 0.7 and not d.emitted_violations, d
@@ -650,7 +665,8 @@ def test_path_repair_never_takes_a_detour_that_breaks_another_rule():
     st, a = State(x=5.0, y=9.0, up=10.0), Action4D(vx=2.0)
     base = Shield(_square_policy(extra=flank), escalation=False,
                   path_repair=False).filter(st, a)
-    d = Shield(_square_policy(extra=flank), escalation=False, path_repair=True).filter(st, a)
+    d = _zones(Shield(_square_policy(extra=flank), escalation=False,
+                      path_repair=True)).filter(st, a)
     pr = [x for p in d.trace["passes"] for x in p["attempts"] if x["operator"] == "PathRepair"]
     assert pr and all(x["result"] == "skip" for x in pr), pr
     # (8, -12) would also lead deeper (2.0 -> 2.20 m); (8, 12) re-checks into
