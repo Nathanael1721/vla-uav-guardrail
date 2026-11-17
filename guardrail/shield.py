@@ -84,6 +84,12 @@ ENFORCEMENT (2026-10-07; docs/DESIGN-shield-enforcement.md has the whole story)
     questions (state_is_unsafe, unsafe_depth, the FSM's stop_illegal) ignore
     the velocity. Without one, every decision is byte-identical (18,000
     seeded decisions against c77c77d, tests/test_own_velocity_forecast.py).
+  * A BODY-frame action (`filter_body`, the grant's WP3-04 / ARCH-04 input
+    frame) can be forecast along its ARC (2026-11-17, `arc=True` or the
+    constructor's `arc_forecast`; off by default): its forward / right
+    velocity is held while the heading turns at its yaw rate, instead of
+    its world direction being held from t = 0. A zero yaw rate is forecast
+    bit-identically either way (tests/test_body_arc_forecast.py).
   * Since 2026-10-12 the repair stack runs as guardrail/repair.py's operator
     library: the chain above, decision for decision, each call recorded
     (`ShieldDecision.trace`, the audit record's `repair_passes`), with the
@@ -152,6 +158,22 @@ from .models import (
 )
 
 BRAKE =Action4D(vx=0.0, vy=0.0, vz_up=0.0, yaw_rate=0.0)
+
+
+def _arc_offset(vx: float, vy: float, w: float, t: float) -> tuple[float, float]:
+    """(dNorth, dEast) after `t` seconds of a body-frame velocity whose world
+    value at t = 0 is (vx, vy), while the heading turns at `w` rad/s
+    (clockwise positive, as State.yaw_deg and Action4D.yaw_rate are): the
+    velocity at time s is (vx, vy) rotated by w*s, and this is its integral,
+    exactly. `w` must be non-zero; w -> 0 is the straight (vx*t, vy*t).
+
+    Forward is (cos psi, sin psi) in (North, East) (frames.from_body), so a
+    rotation by theta maps (n, e) to (n cos - e sin, n sin + e cos); its
+    integral over [0, t] is ((n sin wt + e (cos wt - 1)) / w,
+    (n (1 - cos wt) + e sin wt) / w). Turning right (w > 0) from North
+    drifts East."""
+    s, c = math.sin(w * t), math.cos(w * t)
+    return (vx * s + vy * (c - 1.0)) / w, (vx * (1.0 - c) + vy * s) / w
 
 
 def _field_name(c) -> str:
@@ -1576,7 +1598,7 @@ class Shield:
                  velocity_response: "_response.VelocityResponse | None" = _response.ARDUCOPTER_GUIDED,
                  pipe_clock=None, recovery_law: str = DEFAULT_RECOVERY_LAW,
                  road_map: dict | None = None, ground=None, require_maps: bool = True,
-                 dr_drift_mps: float = DR_DRIFT_MPS):
+                 dr_drift_mps: float = DR_DRIFT_MPS, arc_forecast: bool = False):
         """obstacle_map: None, or {"occ": uint8 NxN (1 = blocked), "res": float,
         "ox": float, "oy": float} — the same occupancy grid the global planner
         uses. A policy YAML cannot carry an 80x80 grid, so obstacle_clearance
@@ -1702,7 +1724,16 @@ class Shield:
         Shield lets the aircraft's true position wander from the estimate it
         dead-reckons on its own streamed commands. Read only for such a state
         (`_position_verdict`, the FSM's X8), recorded in every X8 reason and
-        by the harness per episode. DR_DRIFT_MPS says why its default."""
+        by the harness per episode. DR_DRIFT_MPS says why its default.
+
+        arc_forecast: the default of `filter_body`'s `arc` (since
+        2026-11-17, WP3-04 / ARCH-04; off by default, so every rail flies as
+        before until it asks): a BODY-frame action with a non-zero yaw rate
+        is forecast along the arc it flies - its velocity held in the body
+        frame while the heading turns at the yaw rate (`_arc_offset`) -
+        instead of along its world direction at t = 0. `filter()` (a
+        world-frame action, flown as a LOCAL_NED velocity that does not
+        turn with the heading) is never arced."""
         if recovery_law not in RECOVERY_LAWS:
             raise ValueError(f"recovery_law must be one of {RECOVERY_LAWS}, "
                              f"got {recovery_law!r}")
@@ -1711,6 +1742,7 @@ class Shield:
                 and math.isfinite(dr_drift_mps) and dr_drift_mps >= 0):
             raise ValueError(f"dr_drift_mps must be a finite number >= 0, got {dr_drift_mps!r}")
         self.dr_drift_mps = float(dr_drift_mps)
+        self.arc_forecast = bool(arc_forecast)
         if repair_mode not in _repair.REPAIR_MODES:
             raise ValueError(f"repair_mode must be one of {_repair.REPAIR_MODES}, "
                              f"got {repair_mode!r}")
@@ -2157,7 +2189,7 @@ class Shield:
         return sx0 <= bx1 and sx1 >= bx0 and sy0 <= by1 and sy1 >= by0
 
     def forecast(self, state: State, action: Action4D, *,
-                 pipe=None) -> list[tuple[float, State]]:
+                 pipe=None, arc: bool = False) -> list[tuple[float, State]]:
         """The predicted trajectory the fence and altitude rules judge: (t, pose)
         pairs over the lookahead. Public so the sliding window's "predicted
         trajectory" can be rebuilt for any entry - see TickRecord.
@@ -2173,7 +2205,19 @@ class Shield:
         `pipe`: the reaction segments to fly instead of the live ones
         (`Shield.pipe`) - a TickRecord's `pipe`, so the entry's forecast is
         rebuilt exactly whatever was sent since. Ignored without a measured
-        velocity."""
+        velocity.
+
+        `arc`: forecast `action` as `filter_body(..., arc=True)` does - a
+        world-frame action that was a body-frame command, turned along the
+        arc of its yaw rate (`_arc_rate`). False: the straight forecast."""
+        prev_arc = getattr(self._local, "arc", False)
+        self._local.arc = bool(arc)
+        try:
+            return self._forecast(state, action, pipe)
+        finally:
+            self._local.arc = prev_arc
+
+    def _forecast(self, state: State, action: Action4D, pipe) -> list[tuple[float, State]]:
         kw = {"own_only": True} if self._velocity_of(state) is not None else {}
         if pipe is None or not kw:
             return [(t, State(x=p.x, y=p.y, up=p.up, yaw_deg=p.yaw_deg))
@@ -2381,13 +2425,22 @@ class Shield:
         computed again, so every rule that judges the action walks the
         poses the buffer holds. Any other forecast (a repair candidate, a
         stop, another horizon, the own-velocity path alone, a look-ahead
-        view) is computed as before."""
+        view) is computed as before.
+
+        THE ARC (2026-11-17, WP3-04 / ARCH-04). Inside `filter_body(...,
+        arc=True)` (`_arc_rate`), an action with a non-zero yaw rate is a
+        body-frame command whose velocity turns with the heading, and its
+        horizontal displacement is the arc's (`_arc_offset`) instead of the
+        straight `v * t`. With the arc off, or a zero yaw rate, every pose is
+        computed by the very expressions it always was (bit-identical:
+        tests/test_body_arc_forecast.py)."""
         if horizon_s is None and not own_only:
             held = self._buffer.trajectory_for(self._tick_ctx(), state, action)
             if held is not None:
                 yield from held
                 return
         horizon = self.lookahead_s if horizon_s is None else horizon_s
+        w = self._arc_rate(action)
         t = 0.0
         # UNITS. State.yaw_deg is degrees; Action4D.yaw_rate is RADIANS per
         # second (models.py, docs/FINDING-the-contract-disagreed-with-itself-
@@ -2443,7 +2496,7 @@ class Shield:
             if tick is not None:
                 key = ("poses", state.x, state.y, state.up, state.yaw_deg, v,
                        action.vx, action.vy, action.vz_up, action.yaw_rate,
-                       horizon, bool(own_only), id(pre))
+                       horizon, bool(own_only), id(pre), w)
                 hit = tick.committed.get(key)
                 if hit is not None:
                     yield from hit
@@ -2458,6 +2511,14 @@ class Shield:
                 else:
                     ex, ey, _, _ = _response._approach(vxl, vyl, cx, cy, acc, t - lag)
                     dx, dy = dxl + ex, dyl + ey
+                    if w:
+                        # The arc, from when the command starts to act: the
+                        # response approaches the command, which turns from
+                        # then on; added as the arc's lead over the straight
+                        # command (exact once the response has converged).
+                        ax, ay = _arc_offset(cx, cy, w, t - lag)
+                        dx += ax - cx * (t - lag)
+                        dy += ay - cy * (t - lag)
                 out.append((t, _Pose(
                     x=state.x + dx,
                     y=state.y + dy,
@@ -2465,12 +2526,21 @@ class Shield:
                     yaw_deg=state.yaw_deg + yaw_dps * t,
                 )))
                 if not own_only:
-                    out.append((t, _Pose(
-                        x=state.x + action.vx * t,
-                        y=state.y + action.vy * t,
-                        up=state.up + action.vz_up * t,
-                        yaw_deg=state.yaw_deg + yaw_dps * t,
-                    )))
+                    if w:
+                        ax, ay = _arc_offset(action.vx, action.vy, w, t)
+                        out.append((t, _Pose(
+                            x=state.x + ax,
+                            y=state.y + ay,
+                            up=state.up + action.vz_up * t,
+                            yaw_deg=state.yaw_deg + yaw_dps * t,
+                        )))
+                    else:
+                        out.append((t, _Pose(
+                            x=state.x + action.vx * t,
+                            y=state.y + action.vy * t,
+                            up=state.up + action.vz_up * t,
+                            yaw_deg=state.yaw_deg + yaw_dps * t,
+                        )))
                 if t >= horizon - 1e-9:
                     break
                 t = min(t + self.dt, horizon)
@@ -2478,6 +2548,18 @@ class Shield:
                 tick.committed[key] = out
             yield from out
             return
+        if w:
+            while True:
+                ax, ay = _arc_offset(action.vx, action.vy, w, t)
+                yield t, _Pose(
+                    x=state.x + ax,
+                    y=state.y + ay,
+                    up=state.up + action.vz_up * t,
+                    yaw_deg=state.yaw_deg + yaw_dps * t,
+                )
+                if t >= horizon - 1e-9:
+                    return
+                t = min(t + self.dt, horizon)
         while True:
             yield t, _Pose(
                 x=state.x + action.vx * t,
@@ -2488,6 +2570,16 @@ class Shield:
             if t >= horizon - 1e-9:
                 return
             t = min(t + self.dt, horizon)
+
+    def _arc_rate(self, action: Action4D) -> float:
+        """The yaw rate (rad/s) the forecast of `action` turns its velocity
+        at: the action's own, inside `filter_body(..., arc=True)` (or a
+        `forecast(..., arc=True)`), when finite and non-zero; else 0.0, the
+        straight forecast every other call gets."""
+        if not getattr(self._local, "arc", False):
+            return 0.0
+        w = action.yaw_rate
+        return float(w) if (math.isfinite(w) and w != 0.0) else 0.0
 
     # ---------------- the own-velocity forecast's helpers ---------------- #
 
@@ -3246,8 +3338,12 @@ class Shield:
         subject too, nor by the clearance rule, whose forecast is already a
         stop, nor by the altitude band (the climb is unchanged). Not
         `forecast()`, the public rebuild of the straight forecast. Cached
-        per tick."""
-        if self._velocity_of(state) is not None:
+        per tick.
+
+        Not for an arced action (`_arc_rate`, filter_body with arc): this
+        shaping is a straight exit, and the arc forecast (`_predict`) is
+        what such an action flies, so every rule walks that instead."""
+        if self._velocity_of(state) is not None or self._arc_rate(action):
             return None
         h = math.hypot(action.vx, action.vy)
         if not (math.isfinite(h) and h > 0.1):
@@ -6022,7 +6118,7 @@ class Shield:
         return decision
 
     def filter_body(self, state: State, body: Action4D, t: float | None = None,
-                    **kw) -> tuple[ShieldDecision, Action4D]:
+                    *, arc: bool | None = None, **kw) -> tuple[ShieldDecision, Action4D]:
         """One monitor tick with the action in the grant's BODY frame.
 
         The grant (WP3-04, ARCH-04): "Action input frame is body frame (vx,
@@ -6051,13 +6147,32 @@ class Shield:
         rotated, without rotating every rule's geometry on every tick. One
         choice is not of that kind: a tie between equally near edges with no
         heading to break it goes to the first along the ring's stored
-        (world) order (`escape_direction`). The forecast holds the action's
-        world direction from t = 0, as before: a body-frame command with a
-        yaw rate is not forecast along the arc it would fly.
+        (world) order (`escape_direction`).
 
-        `t` and the keyword arguments are `filter`'s."""
+        THE ARC (`arc`, 2026-11-17; None: the Shield's `arc_forecast`, off
+        by default). A body-frame command holds its forward / right velocity
+        while the heading turns at its yaw rate, so it flies an ARC; with
+        `arc` on, every forecast of this tick - the admitted action's, each
+        repair candidate's, the re-checks' - integrates the heading over the
+        lookahead (`_predict`, `_arc_offset`), and a zone the arc reaches
+        but the straight line misses is caught. With it off the forecast
+        holds the action's world direction from t = 0, as it did before:
+        such a command is not forecast along its arc. A zero yaw rate is
+        forecast exactly as before either way (the arc IS the line). Every
+        repair's yaw rate is the action's own except the kinematic cap's,
+        which clamps it; each candidate is forecast on its own yaw rate.
+        The Shield's queries outside this call (state_is_unsafe,
+        recheck_commanded, advise, handback_unsafe) stay straight.
+
+        `t` and the other keyword arguments are `filter`'s."""
         raw = _from_body(body.vx, body.vy, body.vz_up, body.yaw_rate, state.yaw_deg)
-        decision = self.filter(state, raw, t, **kw)
+        on = self.arc_forecast if arc is None else bool(arc)
+        prev_arc = getattr(self._local, "arc", False)
+        self._local.arc = on
+        try:
+            decision = self.filter(state, raw, t, **kw)
+        finally:
+            self._local.arc = prev_arc
         fwd, right, up, yaw_rate = _to_body(decision.emitted, state.yaw_deg)
         return decision, Action4D(vx=fwd, vy=right, vz_up=up, yaw_rate=yaw_rate)
 

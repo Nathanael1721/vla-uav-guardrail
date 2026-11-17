@@ -15,6 +15,9 @@ action it returns on /shield/setpoint. Since 2026-11-04 the Shield takes the
 body frame at its own boundary; until then this node rotated the action into
 the world frame (guardrail.frames.from_body) before Shield.filter() and back
 (frames.to_body) after - the same exact rotation, now inside the Shield.
+With --arc-forecast on (2026-11-17; off by default) the Shield forecasts a
+body action with a yaw rate along the arc it flies, not along its world
+direction at t = 0; a zero yaw rate (the stub pilot) is forecast the same.
 sitl/mavlink_adapter_node.py turns /shield/setpoint into NED - the single
 body -> local-NED crossing - and owns every MAVROS command after take-off
 (SET_MODE, fence upload). Until 2026-10-06 this node published a Twist on
@@ -2593,9 +2596,14 @@ if HAVE_ROS:
             # node's real clock, not on filter()'s counted 0.1 s ticks (read
             # only with the own-velocity forecast on; docs/DESIGN-own-
             # velocity-forecast.md, "The pipe's clock").
+            # --arc-forecast on (2026-11-17, WP3-04 / ARCH-04; off by
+            # default, so every flight flies as before): filter_body
+            # forecasts a body action with a yaw rate along its arc.
+            self.arc = getattr(args, "arc_forecast", "off") == "on"
             self.shield = rail_shield(self.policy, lookahead_s=LOOKAHEAD_S,
                                       dt=LOOKAHEAD_DT_S, clock=self.clock,
-                                      pipe_clock=time.monotonic)
+                                      pipe_clock=time.monotonic,
+                                      **({"arc_forecast": True} if self.arc else {}))
             self._ev_state = SE.EventState(shields=[self.shield])
             # The own-velocity forecast (OWN_VELOCITY_DEFAULT: off here), the
             # Shield-on arm only; the latest velocity_local and its receipt.
@@ -5022,7 +5030,10 @@ if HAVE_ROS:
                     "velocity_ticks_seen": self.n_vel_seen,
                     "velocity_ticks": self.n_vel_used,
                     "shield_velocity_ticks": self.shield.n_velocity_ticks,
-                    "velocity_nonfinite": self.shield.n_velocity_nonfinite},
+                    "velocity_nonfinite": self.shield.n_velocity_nonfinite,
+                    # --arc-forecast: a body action with a yaw rate
+                    # forecast along its arc (Shield.filter_body).
+                    "arc": bool(getattr(self.shield, "arc_forecast", False))},
                 # None with no target (--no-target): no goal was declared,
                 # so none was missed either.
                 "reached": self.reached if self.has_target else None,
@@ -5458,6 +5469,13 @@ def make_parser() -> argparse.ArgumentParser:
                          "that response was measured on the Project AirSim quad, not "
                          "on ArduPilot's own SITL physics; the velocity is logged "
                          "either way)")
+    ap.add_argument("--arc-forecast", choices=["on", "off"], default="off",
+                    help="on: the Shield forecasts a body action with a yaw rate along "
+                         "the arc it flies (velocity held in the body frame while the "
+                         "heading turns; Shield.filter_body, WP3-04 / ARCH-04); off "
+                         "(default, every flight before 2026-11-17): along its world "
+                         "direction at t = 0. A zero yaw rate (the stub pilot) is "
+                         "forecast identically either way")
     ap.add_argument("--command", default=None,
                     help="mission text (default: fly to the northeast pad at 6 m/s)")
     ap.add_argument("--target", default=None, metavar="X,Y[,UP]",

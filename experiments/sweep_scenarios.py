@@ -361,6 +361,7 @@ from guardrail import prefix_consumer as PC                        # noqa: E402
 from guardrail import rtl_path as RP                               # noqa: E402
 from guardrail import scenario_events as SE                        # noqa: E402
 from guardrail import vla_stub as VS                               # noqa: E402
+from guardrail.frames import from_body, to_body                   # noqa: E402
 from guardrail.models import (Action4D, CorridorSwap, DynamicNFZ,  # noqa: E402,F401
                               State, TimeWindowSwitch)
 from guardrail.scenario_spec import (FORECAST_ARMS,                # noqa: E402
@@ -868,6 +869,11 @@ RAIL_VEHICLE = {"response": "rail", "autopilot_hold": "moved_points",
 # (docs/RUBRIC-failsafe.md, section 8, "2026-11-12").
 GPS_DROPOUT_MODELS = ("frozen", "dead_reckoned")
 DEFAULT_GPS_DROPOUT = "frozen"
+# The action frame at the Shield's boundary (run_episode `action_frame`,
+# 2026-11-17, WP3-04 / ARCH-04): "world" (every episode before it) or "body"
+# (Shield.filter_body with the arc forecast, the conversion back to the
+# integrator's world frame after the projection).
+ACTION_FRAMES = ("world", "body")
 # EKF3's dead-reckoning drift on the hil rig, m/s: the upper envelope of
 # |EKF3 - truth| / time since the loss (>= 2 s) over every GPS denial the rig
 # has flown (nt1111_550-573, rh03_039/040, sm1110_043/044, sm1111_043/044:
@@ -1324,7 +1330,8 @@ def run_episode(sc, defaults=None, seed: int = 0, arm: dict | None = None, *,
                 response: str = DEFAULT_RESPONSE_ARM,
                 recovery: str = DEFAULT_RECOVERY_LAW,
                 entry: str | None = None,
-                gps_dropout: str = DEFAULT_GPS_DROPOUT) -> EpisodeRun:
+                gps_dropout: str = DEFAULT_GPS_DROPOUT,
+                action_frame: str = "world") -> EpisodeRun:
     """One headless episode. `arm` (paraphrase / prefix record) is RECORDED in
     the episode_start event and changes nothing else: no headless pilot reads
     text - unless it names a prefix consumer (`pilot_reads_prefix`, module
@@ -1335,11 +1342,23 @@ def run_episode(sc, defaults=None, seed: int = 0, arm: dict | None = None, *,
     response arm `entry` (ENTRY_STATES; None: the arm's own, RESPONSE_ENTRY),
     and `gps_dropout` (GPS_DROPOUT_MODELS: how a declared GPS denial reaches
     the Shield) DO change the flight. Flown by EpisodeRunner without a
-    pause, so a stepped episode and this one share one integrator."""
+    pause, so a stepped episode and this one share one integrator.
+
+    `action_frame` (ACTION_FRAMES, 2026-11-17, WP3-04 / ARCH-04): "world"
+    (the default, every episode before it) hands the Shield the pilot's
+    world-frame action (Shield.filter). "body" hands it the BODY-frame
+    action (frames.to_body at the heading the Shield is given), through
+    Shield.filter_body with the arc forecast, and the Shield's emitted body
+    action is turned back into the world frame the integrator flies only
+    AFTER the projection, as the rails' MAVLink adapter does (from_body at
+    the aircraft's heading). The headless vehicle does not model yaw, so
+    the heading stays the start's and every pilot here commands no yaw
+    rate: the arm differs from "world" by the rotations' rounding only, and
+    is recorded in the episode_start event."""
     return EpisodeRunner(sc, defaults, seed, arm, forecast=forecast,
                          wind_model=wind_model, autopilot_hold=autopilot_hold,
                          response=response, recovery=recovery, entry=entry,
-                         gps_dropout=gps_dropout).finish()
+                         gps_dropout=gps_dropout, action_frame=action_frame).finish()
 
 
 class EpisodeRunner:
@@ -1380,10 +1399,12 @@ class EpisodeRunner:
                  response: str = DEFAULT_RESPONSE_ARM,
                  recovery: str = DEFAULT_RECOVERY_LAW,
                  entry: str | None = None,
-                 gps_dropout: str = DEFAULT_GPS_DROPOUT):
+                 gps_dropout: str = DEFAULT_GPS_DROPOUT,
+                 action_frame: str = "world"):
         self._box: dict[str, Any] = {}
         self._gen = _episode(sc, defaults, seed, arm, self._box, forecast, wind_model,
-                             autopilot_hold, response, recovery, entry, gps_dropout)
+                             autopilot_hold, response, recovery, entry, gps_dropout,
+                             action_frame)
         self.result: EpisodeRun | None = None
         self.error: BaseException | None = None
         self._failed_t: float | None = None     # the tick that raised
@@ -1472,7 +1493,8 @@ def _episode(sc, defaults, seed: int, arm: dict | None, box: dict,
              response: str = DEFAULT_RESPONSE_ARM,
              recovery: str = DEFAULT_RECOVERY_LAW,
              entry: str | None = None,
-             gps_dropout: str = DEFAULT_GPS_DROPOUT):
+             gps_dropout: str = DEFAULT_GPS_DROPOUT,
+             action_frame: str = "world"):
     """The integrator behind run_episode and EpisodeRunner: a generator that
     yields (tick, t) at the start of every tick, before that tick's scheduled
     events are applied, and returns the EpisodeRun. `box` receives the
@@ -1491,6 +1513,9 @@ def _episode(sc, defaults, seed: int, arm: dict | None, box: dict,
                          f"{list(AUTOPILOT_HOLD_MODELS)}")
     if recovery not in RECOVERY_LAWS:
         raise ValueError(f"recovery law {recovery!r}: one of {list(RECOVERY_LAWS)}")
+    if action_frame not in ACTION_FRAMES:
+        raise ValueError(f"action frame {action_frame!r}: one of {list(ACTION_FRAMES)}")
+    body_frame = action_frame == "body"
     # Every Shield of the episode on the same recovery law; passed only when
     # it is not the default, as the hold model is below, so a caller's own
     # Shield factory keeps its own.
@@ -1677,6 +1702,10 @@ def _episode(sc, defaults, seed: int, arm: dict | None, box: dict,
         # only off the default model, so every frozen-fix episode's events
         # are as they were.
         events[0]["gps_dropout"] = gps_dropout_for(gps_dropout)
+    if body_frame:
+        # Only off the default frame, so every world-frame episode's events
+        # are as they were.
+        events[0]["action_frame"] = action_frame
     es = _EventState(shields=shields)
     generation_irs: dict[int, bytes] = {int(policy.generation): policy.canonical_bytes()}
     st = m.start
@@ -1928,7 +1957,17 @@ def _episode(sc, defaults, seed: int, arm: dict | None, box: dict,
                 None if ground_v is None else math.hypot(ground_v[0], ground_v[1]))
             if off is not None:
                 flags["hold_off_m"], flags["hold_reach_m"] = off, reach
-        d = shield.filter(seen, raw, t=t_now, **flags)
+        emitted_body = None
+        if body_frame:
+            # The pilot's action in the BODY frame at the heading the Shield
+            # is given; the Shield turns it, forecasts it along its arc and
+            # hands back the emitted body action (run_episode `action_frame`).
+            fwd, right, up_b, yr_b = to_body(raw, seen.yaw_deg)
+            d, emitted_body = shield.filter_body(
+                seen, Action4D(vx=fwd, vy=right, vz_up=up_b, yaw_rate=yr_b),
+                t=t_now, arc=True, **flags)
+        else:
+            d = shield.filter(seen, raw, t=t_now, **flags)
         a_rec = auditor.record(i, d)
         if a_rec is not None:
             audit.append(auditor.line(a_rec))
@@ -2015,6 +2054,17 @@ def _episode(sc, defaults, seed: int, arm: dict | None, box: dict,
                 flown = _autopilot(ap_mode, st, m.home, dt, rsp, rtl_alt,
                                    hold=None if hold_done else hold)
             flown_vios = checker.filter(seen, flown, t=t_now).violations
+        if body_frame and owner == "shield":
+            # THE ADAPTER (action_frame "body"): what the Shield streams is a
+            # BODY action - its own emitted one, or the FSM's command / stop
+            # at the heading it judged - turned into the world frame the
+            # vehicle flies only here, after the projection, at the
+            # aircraft's own heading (frames.from_body, as
+            # sitl/mavlink_adapter_node.py turns /shield/setpoint into NED).
+            fb = ((emitted_body.vx, emitted_body.vy, emitted_body.vz_up,
+                   emitted_body.yaw_rate) if flown is d.emitted
+                  else to_body(flown, seen.yaw_deg))
+            flown = from_body(*fb, st.yaw_deg)
         owner_ticks[owner] += 1
         if owner == "autopilot":
             ap_mode_ticks[ap_mode or "none"] = ap_mode_ticks.get(ap_mode or "none", 0) + 1

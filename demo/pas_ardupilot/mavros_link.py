@@ -87,7 +87,7 @@ from guardrail.manifest import (collect_host_evidence,               # noqa: E40
                                 describe_autopilot_version,
                                 mavros_location, network_link_evidence,
                                 scan_local_processes)
-from guardrail.frames import to_body                                 # noqa: E402
+from guardrail.frames import from_body, to_body                      # noqa: E402
 from guardrail.models import Action4D, State                         # noqa: E402
 
 from autopilot import (COPTER_MODES, FENCE_PARAMS, RC_OVERRIDE_IGNORE,  # noqa: E402
@@ -553,13 +553,27 @@ class MavrosLink:
                     f"-> {TOPIC_SETPOINT}")
         return f"{TOPIC_SETPOINT} (PositionTarget, this node)"
 
-    def send(self, a: Action4D, raw_body: tuple | None = None) -> dict:
-        f = enu_position_target(a)
+    def send(self, a: Action4D, raw_body: tuple | None = None,
+             body: tuple | None = None) -> dict:
+        """Send the Shield's emitted action `a` (world frame). `body`
+        (--action-frame body, 2026-11-17, WP3-04 / ARCH-04): the emitted
+        action in the BODY frame, the Shield's projection's output; it is
+        then what is sent - as it is on the adapter route, for
+        sitl/mavlink_adapter_node.py to turn into local NED after the
+        projection, or turned into the PositionTarget here at the heading
+        this link last read on the default route - and `a` is the record
+        copy on /pas/safe_action_4d. None: `a` is sent as it always was."""
+        if body is not None and self.pub_body is None:
+            f = enu_position_target(from_body(*body, math.degrees(self.snap.yaw or 0.0)))
+        else:
+            f = enu_position_target(a)
         if self.pub_body is not None:
             # SETPOINT_VIA "adapter": the world action back to the body frame
             # at the heading this tick rotated the pilot's action with (the
-            # snapshot state() read it from), for the adapter to rotate to NED.
-            body = to_body(a, math.degrees(self.snap.yaw or 0.0))
+            # snapshot state() read it from), for the adapter to rotate to NED
+            # - or, given, the Shield's body-frame output as it is.
+            if body is None:
+                body = to_body(a, math.degrees(self.snap.yaw or 0.0))
             out = self.msgs.Float32MultiArray()
             out.data = [float(v) for v in body]
             self.pub_body.publish(out)
