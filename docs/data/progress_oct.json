@@ -1,13 +1,69 @@
 {
  "generated_by": "tools/deck/build_progress_oct_data.py",
- "generated": "2026-11-06T20:25:28Z",
- "code_revision": "65c7e4f83e4c-dirty",
- "status_date": "2026-11-06",
+ "generated": "2026-11-17T10:45:03Z",
+ "code_revision": "3901c02b2924",
+ "status_date": "2026-11-17",
  "release": {
   "source": "CHANGELOG.md",
-  "status_date": "2026-11-06",
-  "section": "2026-11-06 (IR 4.0.0) — `scope` required on every rule: WP1-01 closed the grant's way, all 154 shipped rules state `scope: mission`, and every stored document of an earlier era still reads and re-derives its recorded hash",
+  "status_date": "2026-11-17",
+  "section": "2026-11-17 (pab2 and twelve branches) — the prefix A/B re-flown on hil after the path-test fix; replay, frames, ingest, null, envelopes, rails and sweeps made ready for their flights",
   "sections": [
+   "2026-11-17",
+   "2026-11-17",
+   "2026-11-17",
+   "2026-11-16",
+   "2026-11-16",
+   "2026-11-16",
+   "2026-11-15",
+   "2026-11-15",
+   "2026-11-15",
+   "2026-11-15",
+   "2026-11-15",
+   "2026-11-15",
+   "2026-11-15",
+   "2026-11-15",
+   "2026-11-15",
+   "2026-11-15",
+   "2026-11-14",
+   "2026-11-14",
+   "2026-11-14",
+   "2026-11-14",
+   "2026-11-14",
+   "2026-11-14",
+   "2026-11-14",
+   "2026-11-14",
+   "2026-11-14",
+   "2026-11-14",
+   "2026-11-14",
+   "2026-11-14",
+   "2026-11-14",
+   "2026-11-14",
+   "2026-11-13",
+   "2026-11-13",
+   "2026-11-13",
+   "2026-11-12",
+   "2026-11-12",
+   "2026-11-11",
+   "2026-11-11",
+   "2026-11-11",
+   "2026-11-11",
+   "2026-11-11",
+   "2026-11-10",
+   "2026-11-10",
+   "2026-11-10",
+   "2026-11-07",
+   "2026-11-07",
+   "2026-11-07",
+   "2026-11-07",
+   "2026-11-07",
+   "2026-11-07",
+   "2026-11-07",
+   "2026-11-07",
+   "2026-11-07",
+   "2026-11-07",
+   "2026-11-07",
+   "2026-11-07",
+   "2026-11-07",
    "2026-11-06",
    "2026-11-06",
    "2026-11-06",
@@ -107,24 +163,24 @@
   "negative_run": 39,
   "null_negative_refused": 0,
   "null_why": "a reader that verifies nothing passes every round trip; only the refusal columns separate it from a real one",
-  "lock_entries": 127
+  "lock_entries": 128
  },
  "wp2": {
   "command": "python -m guardrail.compiler report --policies policies --budget 256 --exact",
-  "code_revision": "65c7e4f83e4c-dirty",
+  "code_revision": "3901c02b2924",
   "budget_tokens": 256,
   "exact_counter": "openvla-llama2-sp@8f5e2869e180",
   "table_counter": "openvla-table-v1",
-  "policies": 32,
-  "compiled": 32,
-  "p0_in_scope": 122,
-  "p0_covered": 122,
+  "policies": 33,
+  "compiled": 33,
+  "p0_in_scope": 124,
+  "p0_covered": 124,
   "null_p0_covered": 0,
-  "baseline_p0_covered": 122,
-  "rules_in_scope": 154,
-  "rules_in_text": 154,
-  "rules_in_csp": 154,
-  "rules_explained": 154,
+  "baseline_p0_covered": 124,
+  "rules_in_scope": 158,
+  "rules_in_text": 158,
+  "rules_in_csp": 158,
+  "rules_explained": 158,
   "dropped_for_budget": 0,
   "kpi_discriminates": false,
   "tokens_exact_range": [
@@ -163,7 +219,7 @@
    "poses_per_check": 50,
    "machine": "Intel64 Family 6 Model 183 Stepping 1, GenuineIntel",
    "git": {
-    "rev": "65c7e4f",
+    "rev": "3901c02",
     "dirty_guardrail": false
    },
    "command": "python experiments/bench_shield_50rules.py --horizon 5 --dt 0.1 --legacy-cap 40",
@@ -178,73 +234,73 @@
    "clear/_check": {
     "current": {
      "n": 1000,
-     "median_ms": 0.148,
-     "p99_ms": 0.2
+     "median_ms": 0.144,
+     "p99_ms": 0.223
     },
     "legacy": {
      "n": 40,
-     "median_ms": 200.471,
-     "p99_ms": 242.155
+     "median_ms": 82.645,
+     "p99_ms": 87.043
     },
     "floor": {
      "n": 1000,
-     "median_ms": 0.092,
-     "p99_ms": 0.164
+     "median_ms": 0.054,
+     "p99_ms": 0.105
     }
    },
    "near/_check": {
     "current": {
      "n": 1000,
-     "median_ms": 0.349,
-     "p99_ms": 0.802
+     "median_ms": 0.186,
+     "p99_ms": 0.336
     },
     "legacy": {
      "n": 40,
-     "median_ms": 206.517,
-     "p99_ms": 232.648
+     "median_ms": 82.889,
+     "p99_ms": 87.896
     },
     "floor": {
      "n": 1000,
-     "median_ms": 0.093,
-     "p99_ms": 0.156
+     "median_ms": 0.054,
+     "p99_ms": 0.077
     }
    },
    "near/filter": {
     "current": {
      "n": 300,
-     "median_ms": 5.282,
-     "p99_ms": 8.87
+     "median_ms": 2.371,
+     "p99_ms": 2.904
     },
     "legacy": {
      "n": 40,
-     "median_ms": 1024.731,
-     "p99_ms": 1069.878
+     "median_ms": 409.757,
+     "p99_ms": 428.289
     },
     "floor": {
      "n": 300,
-     "median_ms": 0.236,
-     "p99_ms": 0.59
+     "median_ms": 0.144,
+     "p99_ms": 0.353
     }
    },
    "grid/_check": {
     "current": {
      "n": 1000,
-     "median_ms": 0.293,
-     "p99_ms": 0.757
+     "median_ms": 0.163,
+     "p99_ms": 0.396
     },
     "legacy": {
      "n": 40,
-     "median_ms": 209.649,
-     "p99_ms": 250.248
+     "median_ms": 82.948,
+     "p99_ms": 86.492
     },
     "floor": {
      "n": 1000,
-     "median_ms": 0.091,
-     "p99_ms": 0.259
+     "median_ms": 0.054,
+     "p99_ms": 0.101
     }
    },
-   "code_sha": "b3b3d1e3e960c577",
-   "measured": "2026-11-06T20:24:34Z"
+   "code_sha": "40f295de8470197a",
+   "measured": "2026-11-17T10:44:39Z"
   },
   "default_3s": {
    "horizon_s": 3.0,
@@ -258,7 +314,7 @@
    "poses_per_check": 6,
    "machine": "Intel64 Family 6 Model 183 Stepping 1, GenuineIntel",
    "git": {
-    "rev": "65c7e4f",
+    "rev": "3901c02",
     "dirty_guardrail": false
    },
    "command": "python experiments/bench_shield_50rules.py --horizon 3 --dt 0.5 --legacy-cap 100",
@@ -274,72 +330,72 @@
     "current": {
      "n": 1000,
      "median_ms": 0.056,
-     "p99_ms": 0.089
+     "p99_ms": 0.114
     },
     "legacy": {
      "n": 100,
-     "median_ms": 13.489,
-     "p99_ms": 18.19
+     "median_ms": 12.587,
+     "p99_ms": 13.749
     },
     "floor": {
      "n": 1000,
-     "median_ms": 0.018,
-     "p99_ms": 0.041
+     "median_ms": 0.016,
+     "p99_ms": 0.036
     }
    },
    "near/_check": {
     "current": {
      "n": 1000,
-     "median_ms": 0.192,
-     "p99_ms": 0.422
+     "median_ms": 0.092,
+     "p99_ms": 0.166
     },
     "legacy": {
      "n": 100,
-     "median_ms": 32.064,
-     "p99_ms": 43.434
+     "median_ms": 12.635,
+     "p99_ms": 14.066
     },
     "floor": {
      "n": 1000,
-     "median_ms": 0.029,
-     "p99_ms": 0.041
+     "median_ms": 0.016,
+     "p99_ms": 0.027
     }
    },
    "near/filter": {
     "current": {
      "n": 300,
-     "median_ms": 2.703,
-     "p99_ms": 5.315
+     "median_ms": 1.188,
+     "p99_ms": 1.722
     },
     "legacy": {
      "n": 100,
-     "median_ms": 162.102,
-     "p99_ms": 181.363
+     "median_ms": 64.266,
+     "p99_ms": 72.552
     },
     "floor": {
      "n": 300,
-     "median_ms": 0.102,
-     "p99_ms": 0.26
+     "median_ms": 0.065,
+     "p99_ms": 0.216
     }
    },
    "grid/_check": {
     "current": {
      "n": 1000,
-     "median_ms": 0.112,
-     "p99_ms": 0.393
+     "median_ms": 0.06,
+     "p99_ms": 0.283
     },
     "legacy": {
      "n": 100,
-     "median_ms": 31.911,
-     "p99_ms": 42.768
+     "median_ms": 12.625,
+     "p99_ms": 13.715
     },
     "floor": {
      "n": 1000,
-     "median_ms": 0.029,
-     "p99_ms": 0.047
+     "median_ms": 0.016,
+     "p99_ms": 0.026
     }
    },
-   "code_sha": "b3b3d1e3e960c577",
-   "measured": "2026-11-06T20:25:25Z"
+   "code_sha": "40f295de8470197a",
+   "measured": "2026-11-17T10:45:01Z"
   }
  },
  "bench_pick_rule": {
