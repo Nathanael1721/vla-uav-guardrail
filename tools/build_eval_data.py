@@ -60,6 +60,7 @@ sys.path.insert(0, str(ROOT))
 
 import track_truth as T  # noqa: E402
 from guardrail.bundle import policy_candidates  # noqa: E402
+from guardrail.delivery import with_stored_delivery  # noqa: E402
 from guardrail.manifest import (is_kpi_grade, normalize_topology,  # noqa: E402
                                 resolve_run_policy)
 
@@ -164,7 +165,11 @@ def kpi_rail():
             # As written at flight time, and under today's gate (which refuses
             # `dev` without a recorded PI waiver). Both, so neither hides.
             "kpi_grade": k.get("kpi_grade"),
-            "kpi_grade_now": is_kpi_grade(man, m)[0],
+            # With the setpoint delivery record the run's logs give
+            # (guardrail.delivery.stored_record; none on these runs' rail
+            # changes the verdict unless its adapter dropped setpoints).
+            "kpi_grade_now": is_kpi_grade(
+                man, with_stored_delivery(m, ROOT / "demo" / "out" / tag))[0],
             "shield": m.get("shield"),
             "ticks": k.get("ticks"),
             "mission_success": k.get("mission_success"),
@@ -206,7 +211,8 @@ def kpi_rail():
         if mp.is_file():
             n_grade_now += int(is_kpi_grade(
                 json.loads(mp.read_text(encoding="utf-8")),
-                json.loads(Path(f).read_text(encoding="utf-8")))[0])
+                with_stored_delivery(json.loads(Path(f).read_text(encoding="utf-8")),
+                                     Path(f).parent))[0])
     say("flights with kpi.json / kpi_grade as stored / under today's gate",
         f"{n_all} / {n_grade} / {n_grade_now}")
     # Retracted (0.4.x): "0.0 on every flight". It is false: the unshielded control

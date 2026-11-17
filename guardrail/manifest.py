@@ -1488,12 +1488,15 @@ def is_kpi_grade(manifest: dict, metrics: dict,
             f"take KPI-grade runs from hil only (2026-11-17, WP4-04), not the grant's "
             f"wording")
 
-    # Setpoints the Shield published that the MAVLink adapter did not send
-    # (2026-11-17; guardrail/delivery.py): the run's KPIs are computed on what
-    # the Shield published, so a gap would count commands that never reached
-    # the autopilot (hil ntFIN2_175: 245 of them, graded KPI-grade). The ROS 2
-    # rail's metrics.json `setpoint_delivery` carries it; no earlier record
-    # and no other rail has the key, so no earlier verdict moves.
+    # Setpoints the Shield published that the MAVLink adapter did not hand to
+    # MAVROS (2026-11-17; guardrail/delivery.py): the run's KPIs are computed
+    # on what the Shield published, so a stall (a gap) or a shortfall would
+    # count commands that never left the rail (hil ntFIN2_175: 245 of them,
+    # graded KPI-grade until this date). The ROS 2 rail's metrics.json
+    # `setpoint_delivery` carries it since 2026-11-17; for a stored run flown
+    # before, the regrading tools fill the key from the run folder's logs
+    # (guardrail.delivery.with_stored_delivery). No other rail has an
+    # adapter, so its verdicts do not move.
     reasons.extend(delivery_grade_reasons(metrics.get("setpoint_delivery")))
 
     return (not reasons), reasons

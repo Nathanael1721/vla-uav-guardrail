@@ -124,10 +124,22 @@ for that long; that run's logs cannot tell which (the beat below can). The
 executor model is unchanged: no cause in this node's code is shown, and a
 threaded executor would change what flies on a guess. What changed is that
 the stall is now seen: every send is reported on /mavlink_adapter/sent and
-a 1 Hz timer beats there, the Shield records any publication left unsent
-for over 0.5 s as a delivery gap (metrics.json `setpoint_delivery`), and a
-run with a gap is not KPI-grade. Beats during a gap: the executor ran and
-the setpoints did not arrive; none: this process was stopped.
+a 1 Hz timer beats there, the Shield records any publication no send
+followed for over 0.5 s as a delivery gap and compares its publication
+count with the reports (a shortfall: setpoints lost while other sends
+continued), in metrics.json `setpoint_delivery`, and a run with either is
+not KPI-grade. Beats during a gap: the executor ran and the setpoints did
+not arrive; none: this process was stopped. What is checked is this node's
+publish() to /mavros/setpoint_raw/local, not that MAVROS forwarded it to the
+autopilot (guardrail/delivery.py, WHAT IS CHECKED).
+
+SROS 2: under ROS_SECURITY_STRATEGY=Enforce a keystore whose permissions
+were signed before 2026-11-17 does not grant /mavlink_adapter/sent, so
+creating its publisher here (and the Shield's subscription) fails at node
+construction (rclpy RCLError, docs/DESIGN-sros2.md): both nodes refuse to
+start and nothing flies. Re-sign first (tools/sros2_setup.sh
+--permissions-only, then tools/sros2_check.sh); sitl/run_ros2_demo.sh with
+SROS2=1 checks the enclaves' permissions name the topic before launching.
 
 Run (after `source /opt/ros/jazzy/setup.bash`):
 
@@ -147,7 +159,8 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from guardrail.delivery import BEAT_PERIOD_S, sent_report               # noqa: E402
+from guardrail.delivery import (BEAT_PERIOD_S, SENT_QOS_DEPTH,          # noqa: E402
+                                sent_report)
 from guardrail.frames import from_body, to_local_ned                     # noqa: E402
 # time_controls and zone_clearance_m are re-exported: this module's callers
 # and tests read them here, where they lived until 2026-10-12.
@@ -899,7 +912,7 @@ if HAVE_ROS:
             self.status = self.create_publisher(String, TOPIC_STATUS, LATCHED)
             # What went out, for the Shield's delivery monitor: a report per
             # send (_on_setpoint) and a beat from this timer.
-            self.sent_pub = self.create_publisher(String, TOPIC_SENT, 10)
+            self.sent_pub = self.create_publisher(String, TOPIC_SENT, SENT_QOS_DEPTH)
             self.create_timer(BEAT_PERIOD_S, self._beat)
             self.cli_mode = self.create_client(SetMode, "/mavros/set_mode")
             self.cli_push = self.create_client(WaypointPush,

@@ -161,7 +161,12 @@ process's `permissions_scope` (`per_topic` or `allow_all`) and the SHA-256 of it
 
 A node that adds a publisher, subscription or service client must be added to the
 policy and the keystore re-signed, or Enforce refuses it when it creates the
-interface.
+interface. `/mavlink_adapter/sent` (2026-11-17) is such an addition: both the adapter
+(publisher) and the Shield (subscription) create it in their constructors, so on a
+keystore signed before that date both would die at start-up with `RCLError` and
+nothing would fly. `sitl/sros2_env.sh` (SROS2=1, and `tools/sros2_check.sh` check 1)
+refuses such a keystore before anything starts (`SROS2_REQUIRED_GRANTS`); re-sign with
+`tools/sros2_setup.sh --permissions-only`, then run `tools/sros2_check.sh`.
 
 ## The live check, run 2026-10-19 (`tools/sros2_check.sh`)
 

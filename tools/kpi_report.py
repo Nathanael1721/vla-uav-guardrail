@@ -206,6 +206,7 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "tools"))
 
 from guardrail import kpi as K                                     # noqa: E402
+from guardrail.delivery import with_stored_delivery                # noqa: E402
 from guardrail.manifest import code_revision, is_kpi_grade         # noqa: E402
 import rescore_kpis as R                                           # noqa: E402
 
@@ -742,7 +743,11 @@ def load_run(run: Path, by_hash: dict, by_id: dict, trust_store=None) -> dict:
         wt["priorities_unresolved"] = True
     k["worst_tick"] = wt
 
-    graded, reasons = (is_kpi_grade(manifest, metrics) if manifest
+    # A run flown before the Shield recorded setpoint delivery (2026-11-17)
+    # is graded on the record its two logs give (guardrail.delivery
+    # .stored_record): ntFIN2_175's 245 unsent setpoints are not KPI-grade.
+    graded, reasons = (is_kpi_grade(manifest, with_stored_delivery(metrics, run))
+                       if manifest
                        else (False, ["no manifest.json"]))
     manifest_grade = graded
     graded, reasons, ev_bundle = evidence_grade(run, graded, reasons, trust_store)

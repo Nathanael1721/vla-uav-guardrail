@@ -336,12 +336,21 @@ publication and report goes into a guardrail.delivery.DeliveryMonitor. Rows
 carry `delivery_wait_ms` (how long the oldest publication no send has
 followed has waited at this tick; None when none waits) and
 `adapter_n_sent`; metrics.json `setpoint_delivery` lists every publication
-left unsent for over DELIVERY_GAP_S (0.5 s) as a gap with its span, the
-setpoints published in it and the adapter beats that arrived in it, and a run
-with a gap is not KPI-grade (guardrail.manifest.is_kpi_grade). The node does
+no adapter send followed for over DELIVERY_GAP_S (0.5 s) as a gap with its
+span, the setpoints published in it and the adapter beats that arrived in
+it, and counts the publications no send report answered (`shortfall`: drops
+while other sends continued). A run with a gap or a shortfall over
+DELIVERY_SHORTFALL_MAX is not KPI-grade (guardrail.manifest.is_kpi_grade).
+What is checked is the hop to the adapter's publish() on
+/mavros/setpoint_raw/local, not MAVROS-to-autopilot (guardrail/delivery.py,
+WHAT IS CHECKED). Each publication's monitor time is read just before its
+publish(). Under SROS 2 the topic needs a keystore signed since this date
+(sitl/sros2_env.sh refuses an older one; under Enforce this node would die
+at construction). The node does
 not react in flight: when setpoints stop, ArduCopter's own GUIDED setpoint
-timeout stops the aircraft (ntFIN2_175: the velocity fell to about zero
-4-5 s into the gap), and this node's mode requests go through the same
+timeout stops the aircraft (ntFIN2_175: the speed held about 2 m/s for about
+3 s into the gap, the GUIDED timeout, then fell, to about zero roughly 5 s
+into it), and this node's mode requests go through the same
 adapter, so a BRAKE asked for there would wait on the stalled node; asking
 MAVROS directly would bypass the adapter's single mode path (WP3-09) on
 evidence from one run. The record makes the next occurrence measurable.
@@ -474,7 +483,8 @@ from guardrail import scenario_events as SE                               # noqa
 from guardrail.audit import AUDIT_FILE                                    # noqa: E402
 from guardrail.bundle import load_for_flight                              # noqa: E402
 from guardrail.compiler import ConstraintCompiler                         # noqa: E402
-from guardrail.delivery import DeliveryMonitor, parse_report             # noqa: E402
+from guardrail.delivery import (DELIVERY_SHORTFALL_MAX, DeliveryMonitor,  # noqa: E402
+                                SENT_QOS_DEPTH, parse_report)
 from guardrail import holdpoint                                           # noqa: E402
 from guardrail.fsm import (DEFAULT_THETA_HORIZON_S, FAILSAFE_STATES,     # noqa: E402
                            MODE_FOR, THETA_HORIZON_S, EscalationFSM, FSMConfig,
@@ -2930,7 +2940,8 @@ if HAVE_ROS:
                                      LATCHED)
             # What the adapter sent (SETPOINT DELIVERY).
             self.delivery = DeliveryMonitor()
-            self.create_subscription(String, TOPIC_SENT, self._on_adapter_sent, 10)
+            self.create_subscription(String, TOPIC_SENT, self._on_adapter_sent,
+                                     SENT_QOS_DEPTH)
             self.pub = self.create_publisher(Float32MultiArray, TOPIC_SETPOINT, 10)
             self.pub_mode = self.create_publisher(String, TOPIC_MODE_REQUEST, 10)
             self.pub_fences = self.create_publisher(String, TOPIC_FENCES, LATCHED)
@@ -4774,10 +4785,16 @@ if HAVE_ROS:
                 flown = body_command(transit, st.yaw_deg)
             pub_ns = None
             if flown is not None:
+                # The delivery monitor's time is read BEFORE the publish, so
+                # the adapter's send of this setpoint can never be stamped
+                # before it (read after, it could be, were this thread
+                # preempted between the two, and the setpoint would then wait
+                # for the next send - across a hold, a false gap).
+                t_pub = time.monotonic()
                 self._publish_body(flown)
                 pub_ns = time.monotonic_ns()
                 self._last_pub_ns = pub_ns
-                self.delivery.published(pub_ns / 1e9)
+                self.delivery.published(t_pub)
             # What was sent, in the Shield's world frame, for the own-velocity
             # forecast's pipe (read only for a State with a velocity).
             self.shield.note_flown(flown_w)
@@ -5064,6 +5081,12 @@ if HAVE_ROS:
                     f"{self.delivery.gap_s_total:.1f} s in all, in which the "
                     f"adapter sent none of the Shield's setpoints (metrics.json "
                     f"setpoint_delivery)")
+            d_short = self.delivery.n_published - self.delivery.n_reports
+            if d_short > DELIVERY_SHORTFALL_MAX:
+                self.get_logger().error(
+                    f"setpoint delivery: {d_short} of {self.delivery.n_published} "
+                    f"published setpoints had no adapter send report (metrics.json "
+                    f"setpoint_delivery.shortfall)")
             if n_pose_stale:
                 kpi += (f" over fresh-pose ticks only ({pose_stale_s:.1f} s on a "
                         f"stale pose, not observed)")

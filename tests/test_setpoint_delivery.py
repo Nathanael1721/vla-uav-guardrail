@@ -29,6 +29,14 @@ stored runs.
 Shown failing first against integrate/1117 (4afd2a1): no guardrail.delivery,
 the adapter had no TOPIC_SENT, and the Shield's metrics.json had no
 `setpoint_delivery`.
+
+Added after review (17 Nov), each shown failing against 7adcbaa: the
+SHORTFALL count (every other setpoint dropped with no 0.5 s silence was
+KPI-grade), the publication stamped before publish() (a send stamped inside
+it left the setpoint waiting across a hold), the scan's placement at t +
+tick_ms (a 508 ms tick read as a gap) and its sends read from `body` lines
+only, and stored runs graded on the record their logs give
+(guardrail.delivery.stored_record: ntFIN2_175 stayed KPI-grade).
 """
 from __future__ import annotations
 
@@ -44,8 +52,10 @@ for _p in (ROOT, ROOT / "sitl", ROOT / "tests", ROOT / "tools"):
     if str(_p) not in sys.path:
         sys.path.insert(0, str(_p))
 
-from guardrail.delivery import (DELIVERY_GAP_S, DeliveryMonitor,      # noqa: E402
-                                grade_reasons, parse_report, sent_report)
+from guardrail.delivery import (DELIVERY_GAP_S, DELIVERY_SHORTFALL_MAX,  # noqa: E402
+                                DeliveryMonitor, grade_reasons, parse_report,
+                                scan_logs, sent_report, stored_record,
+                                with_stored_delivery)
 from guardrail.manifest import is_kpi_grade                          # noqa: E402
 
 SKIP = "SKIP"
@@ -109,7 +119,9 @@ def test_a_stalled_adapter_is_one_gap_with_its_span():
     assert g["published"] == 255 and g["beats"] == 0 and g["open"] is False, g
     assert abs(s["gaps_s_total"] - 25.46) < 1e-3, s
     why = grade_reasons(s)
-    assert len(why) == 1 and "1 gap(s) over 0.5 s" in why[0] and "t 8.1-33.56 s" in why[0], why
+    assert len(why) == 2 and "1 gap(s) over 0.5 s" in why[0] and "t 8.1-33.56 s" in why[0], why
+    # 245 of the 255 published in it never sent (the last ten went in a burst).
+    assert "published 400" in why[1] and "handing 155" in why[1], why
 
 
 def test_beats_during_a_gap_say_the_adapters_executor_was_running():
@@ -170,6 +182,93 @@ def test_a_report_on_another_clock_is_placed_at_its_receipt():
     assert mon.n_gaps == 1 and abs(mon.gaps[0]["dur_s"] - 0.8) < 1e-9, mon.gaps
 
 
+def test_setpoints_dropped_while_other_sends_continue_are_a_shortfall():
+    """SHORTFALL (review, 17 Nov): every other setpoint dropped, the rest sent
+    90 ms late. Coverage by any later send sees no gap; the counts do."""
+    mon = DeliveryMonitor()
+    n = 0
+    for k in range(100):
+        t = k * 0.1
+        mon.published(t)
+        if k % 2:
+            n += 1
+            mon.report(_report(n, t + 0.09), t + 0.091)
+    mon.close(10.0)
+    s = mon.summary()
+    assert s["n_gaps"] == 0 and s["published"] == 100 and s["reports"] == 50, s
+    assert s["shortfall"] == 50, s
+    why = grade_reasons(s)
+    assert len(why) == 1 and why[0].startswith("setpoint delivery shortfall"), why
+    assert "published 100" in why[0] and "handing 50" in why[0], why
+    ok, _ = is_kpi_grade(_GRADED, {"det_hz": None, "start_heading_err_deg": None,
+                                   "setpoint_delivery": s}, dev_waiver="test waiver")
+    assert not ok
+
+
+def test_the_last_setpoints_in_flight_at_close_are_not_a_shortfall():
+    mon = DeliveryMonitor()
+    for k in range(50):
+        mon.published(k * 0.1)
+        if k < 48:                                     # the last two not yet answered
+            mon.report(_report(k + 1, k * 0.1 + 0.002), k * 0.1 + 0.003)
+    mon.close(4.95)
+    s = mon.summary()
+    assert s["shortfall"] == 2 == DELIVERY_SHORTFALL_MAX and s["n_gaps"] == 0, s
+    assert grade_reasons(s) == []
+    mon.published(5.0)
+    assert grade_reasons(mon.summary())[0].startswith("setpoint delivery shortfall")
+
+
+def test_a_send_stamped_before_its_publication_time_waits_across_a_hold():
+    """Why the node reads the publication's time BEFORE publish(): a send
+    stamped before the time the monitor was given does not cover it, and with
+    no publication during a hold that setpoint waits for the next send - a
+    3 s false gap (review probe, 17 Nov). Stamped before, it is covered."""
+    late = DeliveryMonitor()
+    late.published(1.0003)                             # time read after publish()
+    late.report(_report(1, 1.0001), 1.0002)            # the adapter's send of it
+    for k in range(3):                                 # a hold: beats only
+        late.report(_report(1, 2.0 + k, beat=True), 2.0 + k + 0.001)
+    late.published(4.0)
+    late.report(_report(2, 4.002), 4.003)
+    assert late.n_gaps == 1 and abs(late.gaps[0]["dur_s"] - 3.0017) < 1e-6, late.gaps
+    early = DeliveryMonitor()
+    early.published(0.9999)                            # time read before publish()
+    early.report(_report(1, 1.0001), 1.0002)
+    for k in range(3):
+        early.report(_report(1, 2.0 + k, beat=True), 2.0 + k + 0.001)
+    early.published(4.0)
+    early.report(_report(2, 4.002), 4.003)
+    assert early.n_gaps == 0 and early.wait_s(5.0) is None
+
+
+def test_the_node_stamps_a_publication_before_publishing_it():
+    """The Shield node on the stand-in stack: the adapter's send happens
+    inside publish() and this thread is preempted before reading its clock
+    again; the send still covers the publication."""
+    import test_railinputs_node as TR
+    N, node, clk, out = TR._build([])
+    node.start_mission()
+    stamps = []
+    orig = node._publish_body
+
+    def publish(a):
+        orig(a)
+        clk.t += 0.0002                                # the adapter sends it ...
+        stamps.append(clk.t)
+        clk.t += 0.0005                                # ... before this thread runs on
+
+    node._publish_body = publish
+    TR._act(N, node)
+    clk.t += 0.1
+    node._tick()
+    assert len(stamps) == 1 and node.delivery.n_published == 1
+    clk.t += 0.001
+    node._on_adapter_sent(types.SimpleNamespace(data=sent_report(1, 1, stamps[0])))
+    assert node.delivery.wait_s(clk.t) is None, "the send did not cover its own publication"
+    node._finish("test over")
+
+
 def test_junk_on_the_topic_is_counted_not_fatal():
     mon = DeliveryMonitor()
     for junk in ("", "[1]", "{}", '{"n_sent": "x", "t_sent": 1}', "nan"):
@@ -204,7 +303,11 @@ def test_a_gap_takes_an_otherwise_kpi_grade_run_out_and_nothing_else_moves():
     _stream(stalled, 0.0, 10.0, stalled=(3.0, 6.0))
     ok, why = is_kpi_grade(_GRADED, {**base, "setpoint_delivery": stalled.summary()},
                            dev_waiver="test waiver")
-    assert not ok and len(why) == 1 and why[0].startswith("setpoint delivery: 1 gap"), why
+    # The stall, and the shortfall it left (30 published in it, the last 10
+    # sent when the adapter ran again).
+    assert not ok and len(why) == 2 and why[0].startswith("setpoint delivery: 1 gap"), why
+    assert why[1].startswith("setpoint delivery shortfall: the Shield published 100 "
+                             "setpoints and the MAVLink adapter reported handing 80"), why
     # Not a record: no verdict moves (every run before 2026-11-17).
     for junk in (None, "x", [], {}):
         assert is_kpi_grade(_GRADED, {**base, "setpoint_delivery": junk},
@@ -291,8 +394,11 @@ def test_a_stalled_adapter_callback_is_a_delivery_gap_and_not_kpi_grade():
     # kept for when the callback ran again.
     assert sd["published"] == 60 and sd["adapter_n_sent"] == ad.n_sent \
         == 60 - g["published"] + 10, (sd, ad.n_sent)
+    assert sd["shortfall"] == g["published"] - 10, sd
     kpi = _json(out, "kpi.json")
     assert kpi["kpi_grade"] is False
+    assert any(r.startswith("setpoint delivery shortfall") for r in kpi["kpi_grade_reasons"]), \
+        kpi["kpi_grade_reasons"]
     assert any(r.startswith("setpoint delivery: 1 gap") for r in kpi["kpi_grade_reasons"]), \
         kpi["kpi_grade_reasons"]
     rows = node.rows
@@ -307,6 +413,7 @@ def test_the_same_flight_unstalled_has_no_delivery_gap():
     sd = _json(out, "metrics.json")["setpoint_delivery"]
     assert sd["n_gaps"] == 0 and sd["delivery_gaps"] == [], sd
     assert sd["published"] == sd["reports"] == ad.n_sent == 60 and sd["beats"] >= 5, sd
+    assert sd["shortfall"] == 0, sd
     kpi = _json(out, "kpi.json")
     assert not any("setpoint delivery" in r for r in kpi["kpi_grade_reasons"]), \
         kpi["kpi_grade_reasons"]
@@ -346,12 +453,92 @@ def test_the_scan_finds_the_gap_in_stored_logs_and_none_in_a_healthy_run():
         _write_run(bad, (3.0, 5.0))
         r_ok, r_bad = S.scan_run(ok), S.scan_run(bad)
     assert r_ok["status"] == "ok" and r_ok["published"] == r_ok["sent"] == 80, r_ok
-    assert abs(r_ok["clock_offset_s"] - 5000.004) < 1e-6, r_ok
+    # Adapter time minus the PLACED publication time of the shortest hop:
+    # rows without tick_ms are placed 50 ms before their t.
+    assert abs(r_ok["clock_offset_s"] - 5000.054) < 1e-6, r_ok
     assert r_bad["status"] == "gap", r_bad
     g = r_bad["setpoint_delivery"]["delivery_gaps"]
     assert len(g) == 1 and abs(g[0]["t_start"] - 3.0) < 1e-3 and abs(g[0]["t_end"] - 5.0) < 1e-3, g
     assert g[0]["published"] == 21, g                  # 3.0 .. 5.0 s inclusive
+    assert r_bad["setpoint_delivery"]["shortfall"] == 20, r_bad
     assert DELIVERY_GAP_S == 0.5
+
+
+def _write_rows(d: Path, rows: list[dict], lines: list[dict]) -> None:
+    (d / "flight_log.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows),
+                                        encoding="utf-8")
+    (d / "adapter_log.jsonl").write_text("".join(json.dumps(x) + "\n" for x in lines),
+                                         encoding="utf-8")
+
+
+def test_the_scan_places_a_slow_ticks_publication_at_its_tick_ms():
+    """A tick that took 508 ms published its setpoint 508 ms after the row's
+    t; every setpoint was sent (dev run harness_corridor_20261104: the scan
+    read a 0.558 s gap that was not there when it placed it at t)."""
+    rows, lines = [], []
+    t = 0.0
+    for k in range(60):
+        tick_ms = 508.6 if k == 30 else 4.0
+        body = [2.0, 0.01 * (k % 7), 0.0, 0.0]
+        rows.append({"t": round(t, 3), "tick": k + 1, "tick_ms": tick_ms,
+                     "emitted_body": dict(zip(("vx", "vy", "vz_up", "yaw_rate"), body))})
+        lines.append({"t": 7000.0 + t + tick_ms / 1000.0 + 0.0015, "body": body})
+        t += 0.1 + (tick_ms - 4.0) / 1000.0            # the next tick waits on this one
+    with tempfile.TemporaryDirectory() as tmp:
+        _write_rows(Path(tmp), rows, lines)
+        r = scan_logs(Path(tmp))
+    assert r["status"] == "ok" and r["published"] == r["sent"] == 60, r
+    assert r["setpoint_delivery"]["max_wait_s"] < 0.05, r
+
+
+def test_the_scan_counts_drops_without_a_stall_and_only_body_lines_as_sends():
+    rows, lines = [], [{"t": 6999.0, "mission_push": {"items": []}},
+                       {"t": 6999.5, "mission_status": {"kind": "mission_upload"}}]
+    for k in range(80):
+        t = round(0.1 * k, 3)
+        body = [2.0, 0.01 * (k % 7), 0.0, 0.0]
+        rows.append({"t": t, "tick": k + 1, "tick_ms": 3.0,
+                     "emitted_body": dict(zip(("vx", "vy", "vz_up", "yaw_rate"), body))})
+        if k % 4:                                      # every fourth one dropped
+            lines.append({"t": 7000.0 + t + 0.005, "body": body})
+    with tempfile.TemporaryDirectory() as tmp:
+        _write_rows(Path(tmp), rows, lines)
+        r = scan_logs(Path(tmp))
+    assert r["sent"] == 60 and r["published"] == 80, r
+    assert r["status"] == "shortfall" and r["setpoint_delivery"]["n_gaps"] == 0, r
+    why = grade_reasons(r["setpoint_delivery"])
+    assert len(why) == 1 and "shortfall" in why[0] and "derived after the flight" in why[0], why
+
+
+def test_a_stored_run_is_graded_on_the_record_its_logs_give():
+    """WP4-01 (review, 17 Nov): a run flown before the Shield wrote
+    `setpoint_delivery` (ntFIN2_175) is graded by the regrading tools on the
+    scan of its logs; the Shield's own record wins when there is one; a run
+    without an adapter log keeps its verdict."""
+    base = {"det_hz": None, "start_heading_err_deg": None}
+    with tempfile.TemporaryDirectory() as tmp:
+        ok, bad, none = Path(tmp) / "ok", Path(tmp) / "bad", Path(tmp) / "none"
+        for d in (ok, bad, none):
+            d.mkdir()
+        _write_run(ok, None)
+        _write_run(bad, (3.0, 5.0))
+        (none / "flight_log.jsonl").write_text('{"t": 0.0, "emitted_body": [1, 0, 0, 0]}\n',
+                                               encoding="utf-8")
+        assert stored_record(ok, base)["n_gaps"] == 0
+        assert is_kpi_grade(_GRADED, with_stored_delivery(base, ok), dev_waiver="w")[0]
+        g, why = is_kpi_grade(_GRADED, with_stored_delivery(base, bad), dev_waiver="w")
+        assert not g and any(w.startswith("setpoint delivery: 1 gap") for w in why), why
+        assert stored_record(none, base) is None
+        assert with_stored_delivery(base, none) == base
+        assert is_kpi_grade(_GRADED, with_stored_delivery(base, none), dev_waiver="w")[0]
+        # The Shield's own record (in the metrics, or in the folder's
+        # metrics.json) is used as it is, never re-derived.
+        own = {"n_gaps": 0, "published": 5, "reports": 5, "gap_s": 0.5}
+        assert stored_record(bad, {**base, "setpoint_delivery": own}) is own
+        (bad / "metrics.json").write_text(json.dumps({"setpoint_delivery": own}),
+                                          encoding="utf-8")
+        assert stored_record(bad, base) == own
+        assert with_stored_delivery(None, None) == {}
 
 
 if __name__ == "__main__":

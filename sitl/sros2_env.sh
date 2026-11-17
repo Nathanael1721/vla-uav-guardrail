@@ -18,6 +18,9 @@
 #      holds the signed governance file and, for every enclave in
 #      sitl/sros2_enclaves.txt, its certificate, key, signed permissions and
 #      the two CA certificates. A missing file is named; nothing is guessed.
+#      It also refuses a keystore whose permissions were signed before a
+#      grant in SROS2_REQUIRED_GRANTS (under Enforce such a node would die
+#      at construction instead).
 #      Then it exports ROS_SECURITY_KEYSTORE, ROS_SECURITY_ENABLE=true and
 #      ROS_SECURITY_STRATEGY=Enforce: under Enforce a process with no enclave,
 #      or one the keystore's CA did not sign, cannot join the graph at all
@@ -39,6 +42,11 @@ SROS2_ENCLAVES_FILE="${SROS2_ENCLAVES_FILE:-$(cd "$(dirname "${BASH_SOURCE[0]}")
 # permissions.p7s, not read by the DDS security plugins).
 SROS2_ENCLAVE_FILES=(cert.pem key.pem permissions.p7s governance.p7s
                      identity_ca.cert.pem permissions_ca.cert.pem)
+# Grants (enclave:topic) a keystore signed earlier may lack; sros2_prepare
+# refuses one that does. /mavlink_adapter/sent: 2026-11-17, the Shield's
+# setpoint delivery monitor (guardrail/delivery.py).
+SROS2_REQUIRED_GRANTS=(/guardrail/mavlink_adapter:/mavlink_adapter/sent
+                       /guardrail/safety_shield:/mavlink_adapter/sent)
 
 sros2_enclaves() {
   grep -v -e '^[[:space:]]*#' -e '^[[:space:]]*$' "$SROS2_ENCLAVES_FILE"
@@ -71,6 +79,26 @@ sros2_prepare() {
     echo "[sros2] REFUSED: keystore $ks lacks ${#missing[@]} file(s), first:" \
          "${missing[*]:0:4}" >&2
     echo "        build it on this host: bash tools/sros2_setup.sh --pki <harness_pki> --keystore $ks" >&2
+    return 2
+  fi
+  # Grants added to sitl/sros2_policy.xml after a keystore may have been
+  # signed. Under Enforce a node that creates a publisher or subscription its
+  # permissions do not grant dies at construction (rclpy RCLError,
+  # docs/DESIGN-sros2.md), so a stale keystore is refused here, by name,
+  # rather than at launch. A grant is its own topic, or a wildcard over it
+  # (sros2's allow-all default `rt/*`).
+  local stale=() g p topic
+  for g in "${SROS2_REQUIRED_GRANTS[@]}"; do
+    enc="${g%%:*}"; topic="${g#*:}"
+    p="$ks/enclaves$enc/permissions.p7s"
+    grep -qF -e "rt$topic<" -e "rt/*<" -e "rt${topic%/*}/*<" "$p" 2>/dev/null \
+      || stale+=("$enc $topic")
+  done
+  if [ "${#stale[@]}" -gt 0 ]; then
+    echo "[sros2] REFUSED: keystore $ks was signed before ${#stale[@]} grant(s) the nodes" \
+         "need, first: ${stale[*]:0:2}" >&2
+    echo "        re-sign: bash tools/sros2_setup.sh --pki <harness_pki> --permissions-only --keystore $ks;" \
+         "then bash tools/sros2_check.sh" >&2
     return 2
   fi
   export ROS_SECURITY_KEYSTORE="$ks"
