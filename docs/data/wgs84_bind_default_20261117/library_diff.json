@@ -6,6 +6,286 @@
    "pass": 155,
    "tracked": 22
   },
+  "mission_shield_on": {
+   "mission_success_rate": 0.536313,
+   "mission_successes": 96,
+   "episodes_mission_scored": 179,
+   "mission_goal": {
+    "reached": 82,
+    "missed": 64,
+    "undeclared": 33
+   },
+   "outcomes": {
+    "success": 96,
+    "fail": 20,
+    "RTL_triggered": 58,
+    "Land_triggered": 5
+   }
+  },
+  "mission_by_family": {
+   "action_contract": {
+    "mission_success_rate": 1.0,
+    "mission_successes": 1,
+    "episodes_mission_scored": 1,
+    "mission_goal": {
+     "reached": 0,
+     "missed": 0,
+     "undeclared": 1
+    },
+    "outcomes": {
+     "success": 1,
+     "fail": 0,
+     "RTL_triggered": 0,
+     "Land_triggered": 0
+    }
+   },
+   "altitude_envelope": {
+    "mission_success_rate": 0.888889,
+    "mission_successes": 8,
+    "episodes_mission_scored": 9,
+    "mission_goal": {
+     "reached": 0,
+     "missed": 0,
+     "undeclared": 9
+    },
+    "outcomes": {
+     "success": 8,
+     "fail": 0,
+     "RTL_triggered": 1,
+     "Land_triggered": 0
+    }
+   },
+   "corridor_keep_in": {
+    "mission_success_rate": 0.285714,
+    "mission_successes": 4,
+    "episodes_mission_scored": 14,
+    "mission_goal": {
+     "reached": 1,
+     "missed": 0,
+     "undeclared": 13
+    },
+    "outcomes": {
+     "success": 4,
+     "fail": 0,
+     "RTL_triggered": 10,
+     "Land_triggered": 0
+    }
+   },
+   "corridor_swap": {
+    "mission_success_rate": 0.0,
+    "mission_successes": 0,
+    "episodes_mission_scored": 3,
+    "mission_goal": {
+     "reached": 0,
+     "missed": 1,
+     "undeclared": 2
+    },
+    "outcomes": {
+     "success": 0,
+     "fail": 0,
+     "RTL_triggered": 3,
+     "Land_triggered": 0
+    }
+   },
+   "dynamic_nfz_movement": {
+    "mission_success_rate": 0.333333,
+    "mission_successes": 9,
+    "episodes_mission_scored": 27,
+    "mission_goal": {
+     "reached": 9,
+     "missed": 18,
+     "undeclared": 0
+    },
+    "outcomes": {
+     "success": 9,
+     "fail": 10,
+     "RTL_triggered": 8,
+     "Land_triggered": 0
+    }
+   },
+   "failsafe_escalation": {
+    "mission_success_rate": 0.0,
+    "mission_successes": 0,
+    "episodes_mission_scored": 6,
+    "mission_goal": {
+     "reached": 0,
+     "missed": 6,
+     "undeclared": 0
+    },
+    "outcomes": {
+     "success": 0,
+     "fail": 0,
+     "RTL_triggered": 3,
+     "Land_triggered": 3
+    }
+   },
+   "high_speed_near_edge": {
+    "mission_success_rate": 1.0,
+    "mission_successes": 36,
+    "episodes_mission_scored": 36,
+    "mission_goal": {
+     "reached": 36,
+     "missed": 0,
+     "undeclared": 0
+    },
+    "outcomes": {
+     "success": 36,
+     "fail": 0,
+     "RTL_triggered": 0,
+     "Land_triggered": 0
+    }
+   },
+   "kinematic_envelope": {
+    "mission_success_rate": 1.0,
+    "mission_successes": 1,
+    "episodes_mission_scored": 1,
+    "mission_goal": {
+     "reached": 0,
+     "missed": 0,
+     "undeclared": 1
+    },
+    "outcomes": {
+     "success": 1,
+     "fail": 0,
+     "RTL_triggered": 0,
+     "Land_triggered": 0
+    }
+   },
+   "radius_scaling": {
+    "mission_success_rate": 0.4,
+    "mission_successes": 2,
+    "episodes_mission_scored": 5,
+    "mission_goal": {
+     "reached": 2,
+     "missed": 3,
+     "undeclared": 0
+    },
+    "outcomes": {
+     "success": 2,
+     "fail": 0,
+     "RTL_triggered": 3,
+     "Land_triggered": 0
+    }
+   },
+   "sensor_degradation": {
+    "mission_success_rate": 0.464286,
+    "mission_successes": 13,
+    "episodes_mission_scored": 28,
+    "mission_goal": {
+     "reached": 13,
+     "missed": 15,
+     "undeclared": 0
+    },
+    "outcomes": {
+     "success": 13,
+     "fail": 2,
+     "RTL_triggered": 13,
+     "Land_triggered": 0
+    }
+   },
+   "static_nfz": {
+    "mission_success_rate": 0.0,
+    "mission_successes": 0,
+    "episodes_mission_scored": 7,
+    "mission_goal": {
+     "reached": 0,
+     "missed": 7,
+     "undeclared": 0
+    },
+    "outcomes": {
+     "success": 0,
+     "fail": 6,
+     "RTL_triggered": 1,
+     "Land_triggered": 0
+    }
+   },
+   "subject_standoff": {
+    "mission_success_rate": 0.666667,
+    "mission_successes": 6,
+    "episodes_mission_scored": 9,
+    "mission_goal": {
+     "reached": 6,
+     "missed": 3,
+     "undeclared": 0
+    },
+    "outcomes": {
+     "success": 6,
+     "fail": 0,
+     "RTL_triggered": 3,
+     "Land_triggered": 0
+    }
+   },
+   "three_simultaneous_violations": {
+    "mission_success_rate": 0.0,
+    "mission_successes": 0,
+    "episodes_mission_scored": 6,
+    "mission_goal": {
+     "reached": 0,
+     "missed": 0,
+     "undeclared": 6
+    },
+    "outcomes": {
+     "success": 0,
+     "fail": 0,
+     "RTL_triggered": 6,
+     "Land_triggered": 0
+    }
+   },
+   "time_window_static": {
+    "mission_success_rate": 0.5,
+    "mission_successes": 1,
+    "episodes_mission_scored": 2,
+    "mission_goal": {
+     "reached": 1,
+     "missed": 1,
+     "undeclared": 0
+    },
+    "outcomes": {
+     "success": 1,
+     "fail": 0,
+     "RTL_triggered": 1,
+     "Land_triggered": 0
+    }
+   },
+   "time_window_switch": {
+    "mission_success_rate": 0.764706,
+    "mission_successes": 13,
+    "episodes_mission_scored": 17,
+    "mission_goal": {
+     "reached": 12,
+     "missed": 4,
+     "undeclared": 1
+    },
+    "outcomes": {
+     "success": 13,
+     "fail": 0,
+     "RTL_triggered": 4,
+     "Land_triggered": 0
+    }
+   },
+   "wind_disturbance": {
+    "mission_success_rate": 0.25,
+    "mission_successes": 2,
+    "episodes_mission_scored": 8,
+    "mission_goal": {
+     "reached": 2,
+     "missed": 6,
+     "undeclared": 0
+    },
+    "outcomes": {
+     "success": 2,
+     "fail": 2,
+     "RTL_triggered": 2,
+     "Land_triggered": 2
+    }
+   }
+  },
+  "outcome_label_counts": {
+   "success": 96,
+   "fail": 21,
+   "RTL_triggered": 58,
+   "Land_triggered": 5
+  },
   "p0_escapes_sum": 72,
   "fail_safe_correctness": 1.0,
   "failsafe_correct_of_labelled": [
@@ -28,6 +308,286 @@
    "pass": 155,
    "tracked": 22
   },
+  "mission_shield_on": {
+   "mission_success_rate": 0.536313,
+   "mission_successes": 96,
+   "episodes_mission_scored": 179,
+   "mission_goal": {
+    "reached": 82,
+    "missed": 64,
+    "undeclared": 33
+   },
+   "outcomes": {
+    "success": 96,
+    "fail": 20,
+    "RTL_triggered": 58,
+    "Land_triggered": 5
+   }
+  },
+  "mission_by_family": {
+   "action_contract": {
+    "mission_success_rate": 1.0,
+    "mission_successes": 1,
+    "episodes_mission_scored": 1,
+    "mission_goal": {
+     "reached": 0,
+     "missed": 0,
+     "undeclared": 1
+    },
+    "outcomes": {
+     "success": 1,
+     "fail": 0,
+     "RTL_triggered": 0,
+     "Land_triggered": 0
+    }
+   },
+   "altitude_envelope": {
+    "mission_success_rate": 0.888889,
+    "mission_successes": 8,
+    "episodes_mission_scored": 9,
+    "mission_goal": {
+     "reached": 0,
+     "missed": 0,
+     "undeclared": 9
+    },
+    "outcomes": {
+     "success": 8,
+     "fail": 0,
+     "RTL_triggered": 1,
+     "Land_triggered": 0
+    }
+   },
+   "corridor_keep_in": {
+    "mission_success_rate": 0.285714,
+    "mission_successes": 4,
+    "episodes_mission_scored": 14,
+    "mission_goal": {
+     "reached": 1,
+     "missed": 0,
+     "undeclared": 13
+    },
+    "outcomes": {
+     "success": 4,
+     "fail": 0,
+     "RTL_triggered": 10,
+     "Land_triggered": 0
+    }
+   },
+   "corridor_swap": {
+    "mission_success_rate": 0.0,
+    "mission_successes": 0,
+    "episodes_mission_scored": 3,
+    "mission_goal": {
+     "reached": 0,
+     "missed": 1,
+     "undeclared": 2
+    },
+    "outcomes": {
+     "success": 0,
+     "fail": 0,
+     "RTL_triggered": 3,
+     "Land_triggered": 0
+    }
+   },
+   "dynamic_nfz_movement": {
+    "mission_success_rate": 0.333333,
+    "mission_successes": 9,
+    "episodes_mission_scored": 27,
+    "mission_goal": {
+     "reached": 9,
+     "missed": 18,
+     "undeclared": 0
+    },
+    "outcomes": {
+     "success": 9,
+     "fail": 10,
+     "RTL_triggered": 8,
+     "Land_triggered": 0
+    }
+   },
+   "failsafe_escalation": {
+    "mission_success_rate": 0.0,
+    "mission_successes": 0,
+    "episodes_mission_scored": 6,
+    "mission_goal": {
+     "reached": 0,
+     "missed": 6,
+     "undeclared": 0
+    },
+    "outcomes": {
+     "success": 0,
+     "fail": 0,
+     "RTL_triggered": 3,
+     "Land_triggered": 3
+    }
+   },
+   "high_speed_near_edge": {
+    "mission_success_rate": 1.0,
+    "mission_successes": 36,
+    "episodes_mission_scored": 36,
+    "mission_goal": {
+     "reached": 36,
+     "missed": 0,
+     "undeclared": 0
+    },
+    "outcomes": {
+     "success": 36,
+     "fail": 0,
+     "RTL_triggered": 0,
+     "Land_triggered": 0
+    }
+   },
+   "kinematic_envelope": {
+    "mission_success_rate": 1.0,
+    "mission_successes": 1,
+    "episodes_mission_scored": 1,
+    "mission_goal": {
+     "reached": 0,
+     "missed": 0,
+     "undeclared": 1
+    },
+    "outcomes": {
+     "success": 1,
+     "fail": 0,
+     "RTL_triggered": 0,
+     "Land_triggered": 0
+    }
+   },
+   "radius_scaling": {
+    "mission_success_rate": 0.4,
+    "mission_successes": 2,
+    "episodes_mission_scored": 5,
+    "mission_goal": {
+     "reached": 2,
+     "missed": 3,
+     "undeclared": 0
+    },
+    "outcomes": {
+     "success": 2,
+     "fail": 0,
+     "RTL_triggered": 3,
+     "Land_triggered": 0
+    }
+   },
+   "sensor_degradation": {
+    "mission_success_rate": 0.464286,
+    "mission_successes": 13,
+    "episodes_mission_scored": 28,
+    "mission_goal": {
+     "reached": 13,
+     "missed": 15,
+     "undeclared": 0
+    },
+    "outcomes": {
+     "success": 13,
+     "fail": 2,
+     "RTL_triggered": 13,
+     "Land_triggered": 0
+    }
+   },
+   "static_nfz": {
+    "mission_success_rate": 0.0,
+    "mission_successes": 0,
+    "episodes_mission_scored": 7,
+    "mission_goal": {
+     "reached": 0,
+     "missed": 7,
+     "undeclared": 0
+    },
+    "outcomes": {
+     "success": 0,
+     "fail": 6,
+     "RTL_triggered": 1,
+     "Land_triggered": 0
+    }
+   },
+   "subject_standoff": {
+    "mission_success_rate": 0.666667,
+    "mission_successes": 6,
+    "episodes_mission_scored": 9,
+    "mission_goal": {
+     "reached": 6,
+     "missed": 3,
+     "undeclared": 0
+    },
+    "outcomes": {
+     "success": 6,
+     "fail": 0,
+     "RTL_triggered": 3,
+     "Land_triggered": 0
+    }
+   },
+   "three_simultaneous_violations": {
+    "mission_success_rate": 0.0,
+    "mission_successes": 0,
+    "episodes_mission_scored": 6,
+    "mission_goal": {
+     "reached": 0,
+     "missed": 0,
+     "undeclared": 6
+    },
+    "outcomes": {
+     "success": 0,
+     "fail": 0,
+     "RTL_triggered": 6,
+     "Land_triggered": 0
+    }
+   },
+   "time_window_static": {
+    "mission_success_rate": 0.5,
+    "mission_successes": 1,
+    "episodes_mission_scored": 2,
+    "mission_goal": {
+     "reached": 1,
+     "missed": 1,
+     "undeclared": 0
+    },
+    "outcomes": {
+     "success": 1,
+     "fail": 0,
+     "RTL_triggered": 1,
+     "Land_triggered": 0
+    }
+   },
+   "time_window_switch": {
+    "mission_success_rate": 0.764706,
+    "mission_successes": 13,
+    "episodes_mission_scored": 17,
+    "mission_goal": {
+     "reached": 12,
+     "missed": 4,
+     "undeclared": 1
+    },
+    "outcomes": {
+     "success": 13,
+     "fail": 0,
+     "RTL_triggered": 4,
+     "Land_triggered": 0
+    }
+   },
+   "wind_disturbance": {
+    "mission_success_rate": 0.25,
+    "mission_successes": 2,
+    "episodes_mission_scored": 8,
+    "mission_goal": {
+     "reached": 2,
+     "missed": 6,
+     "undeclared": 0
+    },
+    "outcomes": {
+     "success": 2,
+     "fail": 2,
+     "RTL_triggered": 2,
+     "Land_triggered": 2
+    }
+   }
+  },
+  "outcome_label_counts": {
+   "success": 96,
+   "fail": 21,
+   "RTL_triggered": 58,
+   "Land_triggered": 5
+  },
   "p0_escapes_sum": 72,
   "fail_safe_correctness": 1.0,
   "failsafe_correct_of_labelled": [
@@ -44,6 +604,9 @@
   "autopilot_p0_flown_ticks": 1237
  },
  "headline_identical": true,
+ "headline_fields_differing": [],
+ "episodes_fsm_outcome_status_or_hold_changed": [],
+ "episodes_fsm_edge_times_moved": [],
  "episodes_compared": 180,
  "episodes_differing": 14,
  "episodes": [
@@ -81,6 +644,74 @@
      "abs_diff": 1.0
     }
    ],
+   "flown": {
+    "status_changed": false,
+    "fsm_edges_changed": false,
+    "fsm_edge_times_moved": false,
+    "fsm_edges_before": [
+     [
+      "X1",
+      "Normal",
+      "Brake",
+      5.0
+     ],
+     [
+      "G3",
+      "Brake",
+      "Loiter",
+      5.1
+     ],
+     [
+      "G5",
+      "Loiter",
+      "RTL",
+      35.1
+     ],
+     [
+      "G9",
+      "RTL",
+      "[*]",
+      38.8
+     ]
+    ],
+    "fsm_edges_after": [
+     [
+      "X1",
+      "Normal",
+      "Brake",
+      5.0
+     ],
+     [
+      "G3",
+      "Brake",
+      "Loiter",
+      5.1
+     ],
+     [
+      "G5",
+      "Loiter",
+      "RTL",
+      35.1
+     ],
+     [
+      "G9",
+      "RTL",
+      "[*]",
+      38.8
+     ]
+    ],
+    "mission_outcome_changed": false,
+    "mission_outcome": [
+     "RTL_triggered",
+     "RTL_triggered"
+    ],
+    "hold_points_changed": false,
+    "harness_events": [
+     2,
+     2
+    ],
+    "final_position_moved_m": 0.0
+   },
    "audit": {
     "audited_ticks_before": 320,
     "audited_ticks_after": 321,
@@ -148,6 +779,38 @@
      "abs_diff": 0.6099999999999994
     }
    ],
+   "flown": {
+    "status_changed": false,
+    "fsm_edges_changed": false,
+    "fsm_edge_times_moved": false,
+    "fsm_edges_before": [
+     [
+      "G1",
+      "Normal",
+      "Brake",
+      7.3
+     ]
+    ],
+    "fsm_edges_after": [
+     [
+      "G1",
+      "Normal",
+      "Brake",
+      7.3
+     ]
+    ],
+    "mission_outcome_changed": false,
+    "mission_outcome": [
+     "fail",
+     "fail"
+    ],
+    "hold_points_changed": false,
+    "harness_events": [
+     1,
+     1
+    ],
+    "final_position_moved_m": 0.801560977094076
+   },
    "audit": {
     "audited_ticks_before": 327,
     "audited_ticks_after": 327,
@@ -2953,6 +3616,38 @@
      "abs_diff": 0.6099999999999994
     }
    ],
+   "flown": {
+    "status_changed": false,
+    "fsm_edges_changed": false,
+    "fsm_edge_times_moved": false,
+    "fsm_edges_before": [
+     [
+      "G1",
+      "Normal",
+      "Brake",
+      0.0
+     ]
+    ],
+    "fsm_edges_after": [
+     [
+      "G1",
+      "Normal",
+      "Brake",
+      0.0
+     ]
+    ],
+    "mission_outcome_changed": false,
+    "mission_outcome": [
+     "fail",
+     "fail"
+    ],
+    "hold_points_changed": false,
+    "harness_events": [
+     1,
+     1
+    ],
+    "final_position_moved_m": 0.801560977094076
+   },
    "audit": {
     "audited_ticks_before": 400,
     "audited_ticks_after": 400,
@@ -5744,139 +6439,15 @@
    "seed": 0,
    "fields": [
     {
-     "field": "kpi.failsafe_correct_ticks",
-     "before": 0,
-     "after": 49,
-     "kind": "count",
-     "abs_diff": 49.0
-    },
-    {
-     "field": "kpi.failsafe_expected_ticks",
-     "before": 0,
-     "after": 49,
-     "kind": "count",
-     "abs_diff": 49.0
-    },
-    {
-     "field": "kpi.failsafe_trigger_correctness",
-     "before": null,
-     "after": 1.0,
-     "kind": "changed"
-    },
-    {
-     "field": "kpi.final.x",
-     "before": -129.97,
-     "after": -136.54,
-     "kind": "magnitude",
-     "abs_diff": 6.569999999999993
-    },
-    {
-     "field": "kpi.final.y",
-     "before": 93.98,
-     "after": 87.59,
-     "kind": "magnitude",
-     "abs_diff": 6.390000000000001
-    },
-    {
-     "field": "kpi.fsm.max_state",
-     "before": "Normal",
-     "after": "Brake",
-     "kind": "changed"
-    },
-    {
-     "field": "kpi.fsm.transitions",
-     "before": [],
-     "after": "<absent>",
-     "kind": "changed"
-    },
-    {
-     "field": "kpi.fsm.transitions[0].edge",
-     "before": "<absent>",
-     "after": "G1",
-     "kind": "changed"
-    },
-    {
-     "field": "kpi.fsm.transitions[0].from",
-     "before": "<absent>",
-     "after": "Normal",
-     "kind": "changed"
-    },
-    {
-     "field": "kpi.fsm.transitions[0].t_s",
-     "before": "<absent>",
-     "after": 5.0,
-     "kind": "changed"
-    },
-    {
-     "field": "kpi.fsm.transitions[0].to",
-     "before": "<absent>",
-     "after": "Brake",
-     "kind": "changed"
-    },
-    {
-     "field": "kpi.fsm.transitions[1].edge",
-     "before": "<absent>",
-     "after": "G7",
-     "kind": "changed"
-    },
-    {
-     "field": "kpi.fsm.transitions[1].from",
-     "before": "<absent>",
-     "after": "Brake",
-     "kind": "changed"
-    },
-    {
-     "field": "kpi.fsm.transitions[1].t_s",
-     "before": "<absent>",
-     "after": 11.9,
-     "kind": "changed"
-    },
-    {
-     "field": "kpi.fsm.transitions[1].to",
-     "before": "<absent>",
-     "after": "Normal",
-     "kind": "changed"
-    },
-    {
-     "field": "kpi.fsm.visited",
-     "before": [
-      "Normal"
-     ],
-     "after": [
-      "Normal",
-      "Brake"
-     ],
-     "kind": "changed"
-    },
-    {
-     "field": "kpi.intervention_episodes",
-     "before": 0,
-     "after": 1,
-     "kind": "count",
-     "abs_diff": 1.0
-    },
-    {
-     "field": "kpi.max_intervention_s",
-     "before": null,
-     "after": 4.9,
-     "kind": "changed"
-    },
-    {
      "field": "kpi.max_repair_magnitude_mps",
      "before": null,
-     "after": 5.9528,
-     "kind": "changed"
-    },
-    {
-     "field": "kpi.mean_intervention_s",
-     "before": null,
-     "after": 4.9,
+     "after": 0.0,
      "kind": "changed"
     },
     {
      "field": "kpi.mean_repair_magnitude_mps",
      "before": null,
-     "after": 3.5167,
+     "after": 0.0,
      "kind": "changed"
     },
     {
@@ -5886,76 +6457,18 @@
      "kind": "changed"
     },
     {
-     "field": "kpi.mission_fail_reasons",
-     "before": [],
-     "after": [
-      "goal_missed"
-     ],
-     "kind": "changed"
-    },
-    {
-     "field": "kpi.mission_goal_status",
-     "before": "reached",
-     "after": "missed",
-     "kind": "changed"
-    },
-    {
-     "field": "kpi.mission_outcome",
-     "before": "success",
-     "after": "fail",
-     "kind": "changed"
-    },
-    {
-     "field": "kpi.mission_success",
-     "before": true,
-     "after": false,
-     "kind": "changed"
-    },
-    {
-     "field": "kpi.outcome",
-     "before": "success",
-     "after": "fail",
-     "kind": "changed"
-    },
-    {
-     "field": "kpi.p0_acted_tick_share",
-     "before": null,
-     "after": 1.0,
-     "kind": "changed"
-    },
-    {
-     "field": "kpi.p0_violation_ticks",
-     "before": 0,
-     "after": 49,
-     "kind": "count",
-     "abs_diff": 49.0
-    },
-    {
-     "field": "kpi.phase1_violation_ticks_dyn-nfz",
-     "before": 0,
-     "after": 49,
-     "kind": "count",
-     "abs_diff": 49.0
-    },
-    {
-     "field": "kpi.reached_goal",
-     "before": true,
-     "after": false,
-     "kind": "changed"
-    },
-    {
-     "field": "kpi.repair_attempt_ticks",
-     "before": 0,
-     "after": 49,
-     "kind": "count",
-     "abs_diff": 49.0
-    },
-    {
      "field": "kpi.repair_count",
      "before": 0,
-     "after": 49,
+     "after": 28,
      "kind": "count",
-     "abs_diff": 49.0
+     "abs_diff": 28.0
+    },
+    {
+     "field": "kpi.repair_floored_ticks",
+     "before": 0,
+     "after": 28,
+     "kind": "count",
+     "abs_diff": 28.0
     },
     {
      "field": "kpi.repair_magnitude_breakdown_status",
@@ -5964,63 +6477,23 @@
      "kind": "changed"
     },
     {
-     "field": "kpi.repair_magnitude_by_operator_class.LateralProjection.mean_mps",
-     "before": null,
-     "after": 0.4637,
-     "kind": "changed"
-    },
-    {
-     "field": "kpi.repair_magnitude_by_operator_class.LateralProjection.sole_mean_mps",
-     "before": null,
-     "after": 0.4637,
-     "kind": "changed"
-    },
-    {
-     "field": "kpi.repair_magnitude_by_operator_class.LateralProjection.sole_sum_mps",
-     "before": 0.0,
-     "after": 9.737274,
-     "kind": "magnitude",
-     "abs_diff": 9.737274
-    },
-    {
-     "field": "kpi.repair_magnitude_by_operator_class.LateralProjection.sole_ticks",
-     "before": 0,
-     "after": 21,
-     "kind": "count",
-     "abs_diff": 21.0
-    },
-    {
-     "field": "kpi.repair_magnitude_by_operator_class.LateralProjection.sum_mps",
-     "before": 0.0,
-     "after": 9.737274,
-     "kind": "magnitude",
-     "abs_diff": 9.737274
-    },
-    {
-     "field": "kpi.repair_magnitude_by_operator_class.LateralProjection.ticks",
-     "before": 0,
-     "after": 21,
-     "kind": "count",
-     "abs_diff": 21.0
-    },
-    {
      "field": "kpi.repair_magnitude_by_operator_class.Recovery.mean_mps",
      "before": null,
-     "after": 5.8065,
+     "after": 0.0,
      "kind": "changed"
     },
     {
      "field": "kpi.repair_magnitude_by_operator_class.Recovery.sole_mean_mps",
      "before": null,
-     "after": 5.8065,
+     "after": 0.0,
      "kind": "changed"
     },
     {
      "field": "kpi.repair_magnitude_by_operator_class.Recovery.sole_sum_mps",
      "before": 0.0,
-     "after": 162.580837,
+     "after": 3e-06,
      "kind": "magnitude",
-     "abs_diff": 162.580837
+     "abs_diff": 3e-06
     },
     {
      "field": "kpi.repair_magnitude_by_operator_class.Recovery.sole_ticks",
@@ -6032,9 +6505,9 @@
     {
      "field": "kpi.repair_magnitude_by_operator_class.Recovery.sum_mps",
      "before": 0.0,
-     "after": 162.580837,
+     "after": 3e-06,
      "kind": "magnitude",
-     "abs_diff": 162.580837
+     "abs_diff": 3e-06
     },
     {
      "field": "kpi.repair_magnitude_by_operator_class.Recovery.ticks",
@@ -6044,73 +6517,25 @@
      "abs_diff": 28.0
     },
     {
-     "field": "kpi.repair_magnitude_by_priority.P0.mean_mps",
-     "before": null,
-     "after": 3.5167,
+     "field": "kpi.repair_magnitude_by_priority.floored.mean_mps",
+     "before": "<absent>",
+     "after": 0.0,
      "kind": "changed"
     },
     {
-     "field": "kpi.repair_magnitude_by_priority.P0.sum_mps",
-     "before": 0.0,
-     "after": 172.31811,
-     "kind": "magnitude",
-     "abs_diff": 172.31811
-    },
-    {
-     "field": "kpi.repair_magnitude_by_priority.P0.ticks",
-     "before": 0,
-     "after": 49,
-     "kind": "count",
-     "abs_diff": 49.0
-    },
-    {
-     "field": "kpi.repair_outcomes.converged",
-     "before": 0,
-     "after": 49,
-     "kind": "count",
-     "abs_diff": 49.0
-    },
-    {
-     "field": "kpi.repair_success_basis",
-     "before": null,
-     "after": "recheck_and_theta",
+     "field": "kpi.repair_magnitude_by_priority.floored.sum_mps",
+     "before": "<absent>",
+     "after": 3e-06,
      "kind": "changed"
     },
     {
-     "field": "kpi.repair_success_rate",
-     "before": null,
-     "after": 1.0,
+     "field": "kpi.repair_magnitude_by_priority.floored.ticks",
+     "before": "<absent>",
+     "after": 28,
      "kind": "changed"
-    },
-    {
-     "field": "kpi.repair_success_status",
-     "before": "no_repairs_attempted",
-     "after": "measured",
-     "kind": "changed"
-    },
-    {
-     "field": "kpi.repair_success_ticks",
-     "before": 0,
-     "after": 49,
-     "kind": "count",
-     "abs_diff": 49.0
-    },
-    {
-     "field": "kpi.repair_theta_sources.fsm_record",
-     "before": 0,
-     "after": 49,
-     "kind": "count",
-     "abs_diff": 49.0
     },
     {
      "field": "kpi.repaired_ticks",
-     "before": 0,
-     "after": 49,
-     "kind": "count",
-     "abs_diff": 49.0
-    },
-    {
-     "field": "kpi.repairs_converged_while_unsafe",
      "before": 0,
      "after": 28,
      "kind": "count",
@@ -6119,33 +6544,32 @@
     {
      "field": "kpi.repairs_per_episode",
      "before": 0,
-     "after": 49,
+     "after": 28,
      "kind": "count",
-     "abs_diff": 49.0
-    },
-    {
-     "field": "kpi.violation_free_ticks",
-     "before": 300,
-     "after": 251,
-     "kind": "count",
-     "abs_diff": 49.0
-    },
-    {
-     "field": "kpi.violations_by_risk_level.P0",
-     "before": "<absent>",
-     "after": 49,
-     "kind": "changed"
-    },
-    {
-     "field": "kpi.violations_by_type.geofence",
-     "before": "<absent>",
-     "after": 49,
-     "kind": "changed"
+     "abs_diff": 28.0
     }
    ],
+   "flown": {
+    "status_changed": false,
+    "fsm_edges_changed": false,
+    "fsm_edge_times_moved": false,
+    "fsm_edges_before": [],
+    "fsm_edges_after": [],
+    "mission_outcome_changed": false,
+    "mission_outcome": [
+     "success",
+     "success"
+    ],
+    "hold_points_changed": false,
+    "harness_events": [
+     1,
+     1
+    ],
+    "final_position_moved_m": 0.0
+   },
    "audit": {
     "audited_ticks_before": 0,
-    "audited_ticks_after": 50,
+    "audited_ticks_after": 28,
     "first_differing_tick": 50,
     "ticks_emitted_differs_um_level": 0,
     "emitted_um_level_max_abs_diff_mps": 0.0,
@@ -6159,741 +6583,249 @@
       "audited_in": "after",
       "fsm": [
        "Normal",
-       "Brake"
+       "Normal"
       ],
-      "violations": [
-       {
-        "rule_id": "dyn-nfz",
-        "detail": "currently INSIDE zone and not escaping",
-        "predicted_at_s": 0.0
-       }
-      ]
+      "violations": []
      },
      {
       "tick": 51,
       "audited_in": "after",
       "fsm": [
-       "Brake",
-       "Brake"
+       "Normal",
+       "Normal"
       ],
-      "violations": [
-       {
-        "rule_id": "dyn-nfz",
-        "detail": "currently INSIDE zone and not escaping",
-        "predicted_at_s": 0.0
-       }
-      ]
+      "violations": []
      },
      {
       "tick": 52,
       "audited_in": "after",
       "fsm": [
-       "Brake",
-       "Brake"
+       "Normal",
+       "Normal"
       ],
-      "violations": [
-       {
-        "rule_id": "dyn-nfz",
-        "detail": "currently INSIDE zone and not escaping",
-        "predicted_at_s": 0.0
-       }
-      ]
+      "violations": []
      },
      {
       "tick": 53,
       "audited_in": "after",
       "fsm": [
-       "Brake",
-       "Brake"
+       "Normal",
+       "Normal"
       ],
-      "violations": [
-       {
-        "rule_id": "dyn-nfz",
-        "detail": "currently INSIDE zone and not escaping",
-        "predicted_at_s": 0.0
-       }
-      ]
+      "violations": []
      },
      {
       "tick": 54,
       "audited_in": "after",
       "fsm": [
-       "Brake",
-       "Brake"
+       "Normal",
+       "Normal"
       ],
-      "violations": [
-       {
-        "rule_id": "dyn-nfz",
-        "detail": "currently INSIDE zone and not escaping",
-        "predicted_at_s": 0.0
-       }
-      ]
+      "violations": []
      },
      {
       "tick": 55,
       "audited_in": "after",
       "fsm": [
-       "Brake",
-       "Brake"
+       "Normal",
+       "Normal"
       ],
-      "violations": [
-       {
-        "rule_id": "dyn-nfz",
-        "detail": "currently INSIDE zone and not escaping",
-        "predicted_at_s": 0.0
-       }
-      ]
+      "violations": []
      },
      {
       "tick": 56,
       "audited_in": "after",
       "fsm": [
-       "Brake",
-       "Brake"
+       "Normal",
+       "Normal"
       ],
-      "violations": [
-       {
-        "rule_id": "dyn-nfz",
-        "detail": "currently INSIDE zone and not escaping",
-        "predicted_at_s": 0.0
-       }
-      ]
+      "violations": []
      },
      {
       "tick": 57,
       "audited_in": "after",
       "fsm": [
-       "Brake",
-       "Brake"
+       "Normal",
+       "Normal"
       ],
-      "violations": [
-       {
-        "rule_id": "dyn-nfz",
-        "detail": "currently INSIDE zone and not escaping",
-        "predicted_at_s": 0.0
-       }
-      ]
+      "violations": []
      },
      {
       "tick": 58,
       "audited_in": "after",
       "fsm": [
-       "Brake",
-       "Brake"
+       "Normal",
+       "Normal"
       ],
-      "violations": [
-       {
-        "rule_id": "dyn-nfz",
-        "detail": "currently INSIDE zone and not escaping",
-        "predicted_at_s": 0.0
-       }
-      ]
+      "violations": []
      },
      {
       "tick": 59,
       "audited_in": "after",
       "fsm": [
-       "Brake",
-       "Brake"
+       "Normal",
+       "Normal"
       ],
-      "violations": [
-       {
-        "rule_id": "dyn-nfz",
-        "detail": "currently INSIDE zone and not escaping",
-        "predicted_at_s": 0.0
-       }
-      ]
+      "violations": []
      },
      {
       "tick": 60,
       "audited_in": "after",
       "fsm": [
-       "Brake",
-       "Brake"
+       "Normal",
+       "Normal"
       ],
-      "violations": [
-       {
-        "rule_id": "dyn-nfz",
-        "detail": "currently INSIDE zone and not escaping",
-        "predicted_at_s": 0.0
-       }
-      ]
+      "violations": []
      },
      {
       "tick": 61,
       "audited_in": "after",
       "fsm": [
-       "Brake",
-       "Brake"
+       "Normal",
+       "Normal"
       ],
-      "violations": [
-       {
-        "rule_id": "dyn-nfz",
-        "detail": "currently INSIDE zone and not escaping",
-        "predicted_at_s": 0.0
-       }
-      ]
+      "violations": []
      },
      {
       "tick": 62,
       "audited_in": "after",
       "fsm": [
-       "Brake",
-       "Brake"
+       "Normal",
+       "Normal"
       ],
-      "violations": [
-       {
-        "rule_id": "dyn-nfz",
-        "detail": "currently INSIDE zone and not escaping",
-        "predicted_at_s": 0.0
-       }
-      ]
+      "violations": []
      },
      {
       "tick": 63,
       "audited_in": "after",
       "fsm": [
-       "Brake",
-       "Brake"
+       "Normal",
+       "Normal"
       ],
-      "violations": [
-       {
-        "rule_id": "dyn-nfz",
-        "detail": "currently INSIDE zone and not escaping",
-        "predicted_at_s": 0.0
-       }
-      ]
+      "violations": []
      },
      {
       "tick": 64,
       "audited_in": "after",
       "fsm": [
-       "Brake",
-       "Brake"
+       "Normal",
+       "Normal"
       ],
-      "violations": [
-       {
-        "rule_id": "dyn-nfz",
-        "detail": "currently INSIDE zone and not escaping",
-        "predicted_at_s": 0.0
-       }
-      ]
+      "violations": []
      },
      {
       "tick": 65,
       "audited_in": "after",
       "fsm": [
-       "Brake",
-       "Brake"
+       "Normal",
+       "Normal"
       ],
-      "violations": [
-       {
-        "rule_id": "dyn-nfz",
-        "detail": "currently INSIDE zone and not escaping",
-        "predicted_at_s": 0.0
-       }
-      ]
+      "violations": []
      },
      {
       "tick": 66,
       "audited_in": "after",
       "fsm": [
-       "Brake",
-       "Brake"
+       "Normal",
+       "Normal"
       ],
-      "violations": [
-       {
-        "rule_id": "dyn-nfz",
-        "detail": "currently INSIDE zone and not escaping",
-        "predicted_at_s": 0.0
-       }
-      ]
+      "violations": []
      },
      {
       "tick": 67,
       "audited_in": "after",
       "fsm": [
-       "Brake",
-       "Brake"
+       "Normal",
+       "Normal"
       ],
-      "violations": [
-       {
-        "rule_id": "dyn-nfz",
-        "detail": "currently INSIDE zone and not escaping",
-        "predicted_at_s": 0.0
-       }
-      ]
+      "violations": []
      },
      {
       "tick": 68,
       "audited_in": "after",
       "fsm": [
-       "Brake",
-       "Brake"
+       "Normal",
+       "Normal"
       ],
-      "violations": [
-       {
-        "rule_id": "dyn-nfz",
-        "detail": "currently INSIDE zone and not escaping",
-        "predicted_at_s": 0.0
-       }
-      ]
+      "violations": []
      },
      {
       "tick": 69,
       "audited_in": "after",
       "fsm": [
-       "Brake",
-       "Brake"
+       "Normal",
+       "Normal"
       ],
-      "violations": [
-       {
-        "rule_id": "dyn-nfz",
-        "detail": "currently INSIDE zone and not escaping",
-        "predicted_at_s": 0.0
-       }
-      ]
+      "violations": []
      },
      {
       "tick": 70,
       "audited_in": "after",
       "fsm": [
-       "Brake",
-       "Brake"
+       "Normal",
+       "Normal"
       ],
-      "violations": [
-       {
-        "rule_id": "dyn-nfz",
-        "detail": "currently INSIDE zone and not escaping",
-        "predicted_at_s": 0.0
-       }
-      ]
+      "violations": []
      },
      {
       "tick": 71,
       "audited_in": "after",
       "fsm": [
-       "Brake",
-       "Brake"
+       "Normal",
+       "Normal"
       ],
-      "violations": [
-       {
-        "rule_id": "dyn-nfz",
-        "detail": "currently INSIDE zone and not escaping",
-        "predicted_at_s": 0.0
-       }
-      ]
+      "violations": []
      },
      {
       "tick": 72,
       "audited_in": "after",
       "fsm": [
-       "Brake",
-       "Brake"
+       "Normal",
+       "Normal"
       ],
-      "violations": [
-       {
-        "rule_id": "dyn-nfz",
-        "detail": "currently INSIDE zone and not escaping",
-        "predicted_at_s": 0.0
-       }
-      ]
+      "violations": []
      },
      {
       "tick": 73,
       "audited_in": "after",
       "fsm": [
-       "Brake",
-       "Brake"
+       "Normal",
+       "Normal"
       ],
-      "violations": [
-       {
-        "rule_id": "dyn-nfz",
-        "detail": "currently INSIDE zone and not escaping",
-        "predicted_at_s": 0.0
-       }
-      ]
+      "violations": []
      },
      {
       "tick": 74,
       "audited_in": "after",
       "fsm": [
-       "Brake",
-       "Brake"
+       "Normal",
+       "Normal"
       ],
-      "violations": [
-       {
-        "rule_id": "dyn-nfz",
-        "detail": "currently INSIDE zone and not escaping",
-        "predicted_at_s": 0.0
-       }
-      ]
+      "violations": []
      },
      {
       "tick": 75,
       "audited_in": "after",
       "fsm": [
-       "Brake",
-       "Brake"
+       "Normal",
+       "Normal"
       ],
-      "violations": [
-       {
-        "rule_id": "dyn-nfz",
-        "detail": "currently INSIDE zone and not escaping",
-        "predicted_at_s": 0.0
-       }
-      ]
+      "violations": []
      },
      {
       "tick": 76,
       "audited_in": "after",
       "fsm": [
-       "Brake",
-       "Brake"
+       "Normal",
+       "Normal"
       ],
-      "violations": [
-       {
-        "rule_id": "dyn-nfz",
-        "detail": "currently INSIDE zone and not escaping",
-        "predicted_at_s": 0.0
-       }
-      ]
+      "violations": []
      },
      {
       "tick": 77,
       "audited_in": "after",
       "fsm": [
-       "Brake",
-       "Brake"
-      ],
-      "violations": [
-       {
-        "rule_id": "dyn-nfz",
-        "detail": "currently INSIDE zone and not escaping",
-        "predicted_at_s": 0.0
-       }
-      ]
-     },
-     {
-      "tick": 78,
-      "audited_in": "after",
-      "fsm": [
-       "Brake",
-       "Brake"
-      ],
-      "violations": [
-       {
-        "rule_id": "dyn-nfz",
-        "detail": "predicted pos (-195.7,24.2) inside NFZ at t+0.5s",
-        "predicted_at_s": 0.5
-       }
-      ]
-     },
-     {
-      "tick": 79,
-      "audited_in": "after",
-      "fsm": [
-       "Brake",
-       "Brake"
-      ],
-      "violations": [
-       {
-        "rule_id": "dyn-nfz",
-        "detail": "predicted pos (-195.4,24.5) inside NFZ at t+0.5s",
-        "predicted_at_s": 0.5
-       }
-      ]
-     },
-     {
-      "tick": 80,
-      "audited_in": "after",
-      "fsm": [
-       "Brake",
-       "Brake"
-      ],
-      "violations": [
-       {
-        "rule_id": "dyn-nfz",
-        "detail": "predicted pos (-195.2,24.8) inside NFZ at t+0.5s",
-        "predicted_at_s": 0.5
-       }
-      ]
-     },
-     {
-      "tick": 81,
-      "audited_in": "after",
-      "fsm": [
-       "Brake",
-       "Brake"
-      ],
-      "violations": [
-       {
-        "rule_id": "dyn-nfz",
-        "detail": "predicted pos (-195.0,25.1) inside NFZ at t+0.5s",
-        "predicted_at_s": 0.5
-       }
-      ]
-     },
-     {
-      "tick": 82,
-      "audited_in": "after",
-      "fsm": [
-       "Brake",
-       "Brake"
-      ],
-      "violations": [
-       {
-        "rule_id": "dyn-nfz",
-        "detail": "predicted pos (-194.7,25.5) inside NFZ at t+0.5s",
-        "predicted_at_s": 0.5
-       }
-      ]
-     },
-     {
-      "tick": 83,
-      "audited_in": "after",
-      "fsm": [
-       "Brake",
-       "Brake"
-      ],
-      "violations": [
-       {
-        "rule_id": "dyn-nfz",
-        "detail": "predicted pos (-194.5,25.8) inside NFZ at t+0.5s",
-        "predicted_at_s": 0.5
-       }
-      ]
-     },
-     {
-      "tick": 84,
-      "audited_in": "after",
-      "fsm": [
-       "Brake",
-       "Brake"
-      ],
-      "violations": [
-       {
-        "rule_id": "dyn-nfz",
-        "detail": "predicted pos (-194.2,26.1) inside NFZ at t+0.5s",
-        "predicted_at_s": 0.5
-       }
-      ]
-     },
-     {
-      "tick": 85,
-      "audited_in": "after",
-      "fsm": [
-       "Brake",
-       "Brake"
-      ],
-      "violations": [
-       {
-        "rule_id": "dyn-nfz",
-        "detail": "predicted pos (-194.0,26.4) inside NFZ at t+0.5s",
-        "predicted_at_s": 0.5
-       }
-      ]
-     },
-     {
-      "tick": 86,
-      "audited_in": "after",
-      "fsm": [
-       "Brake",
-       "Brake"
-      ],
-      "violations": [
-       {
-        "rule_id": "dyn-nfz",
-        "detail": "predicted pos (-193.8,26.7) inside NFZ at t+0.5s",
-        "predicted_at_s": 0.5
-       }
-      ]
-     },
-     {
-      "tick": 87,
-      "audited_in": "after",
-      "fsm": [
-       "Brake",
-       "Brake"
-      ],
-      "violations": [
-       {
-        "rule_id": "dyn-nfz",
-        "detail": "predicted pos (-193.5,27.1) inside NFZ at t+0.5s",
-        "predicted_at_s": 0.5
-       }
-      ]
-     },
-     {
-      "tick": 88,
-      "audited_in": "after",
-      "fsm": [
-       "Brake",
-       "Brake"
-      ],
-      "violations": [
-       {
-        "rule_id": "dyn-nfz",
-        "detail": "predicted pos (-193.3,27.4) inside NFZ at t+0.5s",
-        "predicted_at_s": 0.5
-       }
-      ]
-     },
-     {
-      "tick": 89,
-      "audited_in": "after",
-      "fsm": [
-       "Brake",
-       "Brake"
-      ],
-      "violations": [
-       {
-        "rule_id": "dyn-nfz",
-        "detail": "predicted pos (-193.0,27.7) inside NFZ at t+0.5s",
-        "predicted_at_s": 0.5
-       }
-      ]
-     },
-     {
-      "tick": 90,
-      "audited_in": "after",
-      "fsm": [
-       "Brake",
-       "Brake"
-      ],
-      "violations": [
-       {
-        "rule_id": "dyn-nfz",
-        "detail": "predicted pos (-192.8,28.0) inside NFZ at t+0.5s",
-        "predicted_at_s": 0.5
-       }
-      ]
-     },
-     {
-      "tick": 91,
-      "audited_in": "after",
-      "fsm": [
-       "Brake",
-       "Brake"
-      ],
-      "violations": [
-       {
-        "rule_id": "dyn-nfz",
-        "detail": "predicted pos (-192.6,28.3) inside NFZ at t+0.5s",
-        "predicted_at_s": 0.5
-       }
-      ]
-     },
-     {
-      "tick": 92,
-      "audited_in": "after",
-      "fsm": [
-       "Brake",
-       "Brake"
-      ],
-      "violations": [
-       {
-        "rule_id": "dyn-nfz",
-        "detail": "predicted pos (-192.3,28.6) inside NFZ at t+0.5s",
-        "predicted_at_s": 0.5
-       }
-      ]
-     },
-     {
-      "tick": 93,
-      "audited_in": "after",
-      "fsm": [
-       "Brake",
-       "Brake"
-      ],
-      "violations": [
-       {
-        "rule_id": "dyn-nfz",
-        "detail": "predicted pos (-192.1,29.0) inside NFZ at t+0.5s",
-        "predicted_at_s": 0.5
-       }
-      ]
-     },
-     {
-      "tick": 94,
-      "audited_in": "after",
-      "fsm": [
-       "Brake",
-       "Brake"
-      ],
-      "violations": [
-       {
-        "rule_id": "dyn-nfz",
-        "detail": "predicted pos (-191.9,29.3) inside NFZ at t+0.5s",
-        "predicted_at_s": 0.5
-       }
-      ]
-     },
-     {
-      "tick": 95,
-      "audited_in": "after",
-      "fsm": [
-       "Brake",
-       "Brake"
-      ],
-      "violations": [
-       {
-        "rule_id": "dyn-nfz",
-        "detail": "predicted pos (-191.6,29.6) inside NFZ at t+0.5s",
-        "predicted_at_s": 0.5
-       }
-      ]
-     },
-     {
-      "tick": 96,
-      "audited_in": "after",
-      "fsm": [
-       "Brake",
-       "Brake"
-      ],
-      "violations": [
-       {
-        "rule_id": "dyn-nfz",
-        "detail": "predicted pos (-191.4,29.9) inside NFZ at t+0.5s",
-        "predicted_at_s": 0.5
-       }
-      ]
-     },
-     {
-      "tick": 97,
-      "audited_in": "after",
-      "fsm": [
-       "Brake",
-       "Brake"
-      ],
-      "violations": [
-       {
-        "rule_id": "dyn-nfz",
-        "detail": "predicted pos (-191.1,30.2) inside NFZ at t+0.5s",
-        "predicted_at_s": 0.5
-       }
-      ]
-     },
-     {
-      "tick": 98,
-      "audited_in": "after",
-      "fsm": [
-       "Brake",
-       "Brake"
-      ],
-      "violations": [
-       {
-        "rule_id": "dyn-nfz",
-        "detail": "predicted pos (-190.9,30.5) inside NFZ at t+0.5s",
-        "predicted_at_s": 0.5
-       }
-      ]
-     },
-     {
-      "tick": 119,
-      "audited_in": "after",
-      "fsm": [
-       "Brake",
+       "Normal",
        "Normal"
       ],
       "violations": []
@@ -7017,6 +6949,24 @@
      "abs_diff": 53.0
     }
    ],
+   "flown": {
+    "status_changed": false,
+    "fsm_edges_changed": false,
+    "fsm_edge_times_moved": false,
+    "fsm_edges_before": [],
+    "fsm_edges_after": [],
+    "mission_outcome_changed": false,
+    "mission_outcome": [
+     "success",
+     "success"
+    ],
+    "hold_points_changed": false,
+    "harness_events": [
+     1,
+     1
+    ],
+    "final_position_moved_m": 0.0
+   },
    "audit": {
     "audited_ticks_before": 0,
     "audited_ticks_after": 53,
@@ -7535,6 +7485,50 @@
      "abs_diff": 9.999999974752427e-07
     }
    ],
+   "flown": {
+    "status_changed": false,
+    "fsm_edges_changed": false,
+    "fsm_edge_times_moved": false,
+    "fsm_edges_before": [
+     [
+      "G1",
+      "Normal",
+      "Brake",
+      7.3
+     ],
+     [
+      "G7",
+      "Brake",
+      "Normal",
+      22.7
+     ]
+    ],
+    "fsm_edges_after": [
+     [
+      "G1",
+      "Normal",
+      "Brake",
+      7.3
+     ],
+     [
+      "G7",
+      "Brake",
+      "Normal",
+      22.7
+     ]
+    ],
+    "mission_outcome_changed": false,
+    "mission_outcome": [
+     "fail",
+     "fail"
+    ],
+    "hold_points_changed": false,
+    "harness_events": [
+     2,
+     2
+    ],
+    "final_position_moved_m": 0.0
+   },
    "audit": {
     "audited_ticks_before": 134,
     "audited_ticks_after": 134,
@@ -8664,6 +8658,50 @@
      "abs_diff": 9.999999974752427e-07
     }
    ],
+   "flown": {
+    "status_changed": false,
+    "fsm_edges_changed": false,
+    "fsm_edge_times_moved": false,
+    "fsm_edges_before": [
+     [
+      "G1",
+      "Normal",
+      "Brake",
+      7.3
+     ],
+     [
+      "G7",
+      "Brake",
+      "Normal",
+      22.7
+     ]
+    ],
+    "fsm_edges_after": [
+     [
+      "G1",
+      "Normal",
+      "Brake",
+      7.3
+     ],
+     [
+      "G7",
+      "Brake",
+      "Normal",
+      22.7
+     ]
+    ],
+    "mission_outcome_changed": false,
+    "mission_outcome": [
+     "fail",
+     "fail"
+    ],
+    "hold_points_changed": false,
+    "harness_events": [
+     2,
+     2
+    ],
+    "final_position_moved_m": 0.0
+   },
    "audit": {
     "audited_ticks_before": 134,
     "audited_ticks_after": 134,
@@ -9793,6 +9831,50 @@
      "abs_diff": 9.999999974752427e-07
     }
    ],
+   "flown": {
+    "status_changed": false,
+    "fsm_edges_changed": false,
+    "fsm_edge_times_moved": false,
+    "fsm_edges_before": [
+     [
+      "G1",
+      "Normal",
+      "Brake",
+      7.3
+     ],
+     [
+      "G7",
+      "Brake",
+      "Normal",
+      22.7
+     ]
+    ],
+    "fsm_edges_after": [
+     [
+      "G1",
+      "Normal",
+      "Brake",
+      7.3
+     ],
+     [
+      "G7",
+      "Brake",
+      "Normal",
+      22.7
+     ]
+    ],
+    "mission_outcome_changed": false,
+    "mission_outcome": [
+     "fail",
+     "fail"
+    ],
+    "hold_points_changed": false,
+    "harness_events": [
+     2,
+     2
+    ],
+    "final_position_moved_m": 0.0
+   },
    "audit": {
     "audited_ticks_before": 134,
     "audited_ticks_after": 134,
@@ -10936,6 +11018,50 @@
      "abs_diff": 5.5000000003246896e-05
     }
    ],
+   "flown": {
+    "status_changed": false,
+    "fsm_edges_changed": false,
+    "fsm_edge_times_moved": false,
+    "fsm_edges_before": [
+     [
+      "G1",
+      "Normal",
+      "Brake",
+      7.3
+     ],
+     [
+      "G7",
+      "Brake",
+      "Normal",
+      12.5
+     ]
+    ],
+    "fsm_edges_after": [
+     [
+      "G1",
+      "Normal",
+      "Brake",
+      7.3
+     ],
+     [
+      "G7",
+      "Brake",
+      "Normal",
+      12.5
+     ]
+    ],
+    "mission_outcome_changed": false,
+    "mission_outcome": [
+     "success",
+     "success"
+    ],
+    "hold_points_changed": false,
+    "harness_events": [
+     2,
+     2
+    ],
+    "final_position_moved_m": 0.0
+   },
    "audit": {
     "audited_ticks_before": 32,
     "audited_ticks_after": 32,
@@ -11260,6 +11386,50 @@
      "abs_diff": 5.5000000003246896e-05
     }
    ],
+   "flown": {
+    "status_changed": false,
+    "fsm_edges_changed": false,
+    "fsm_edge_times_moved": false,
+    "fsm_edges_before": [
+     [
+      "G1",
+      "Normal",
+      "Brake",
+      7.3
+     ],
+     [
+      "G7",
+      "Brake",
+      "Normal",
+      12.5
+     ]
+    ],
+    "fsm_edges_after": [
+     [
+      "G1",
+      "Normal",
+      "Brake",
+      7.3
+     ],
+     [
+      "G7",
+      "Brake",
+      "Normal",
+      12.5
+     ]
+    ],
+    "mission_outcome_changed": false,
+    "mission_outcome": [
+     "success",
+     "success"
+    ],
+    "hold_points_changed": false,
+    "harness_events": [
+     2,
+     2
+    ],
+    "final_position_moved_m": 0.0
+   },
    "audit": {
     "audited_ticks_before": 32,
     "audited_ticks_after": 32,
@@ -11584,6 +11754,50 @@
      "abs_diff": 5.5000000003246896e-05
     }
    ],
+   "flown": {
+    "status_changed": false,
+    "fsm_edges_changed": false,
+    "fsm_edge_times_moved": false,
+    "fsm_edges_before": [
+     [
+      "G1",
+      "Normal",
+      "Brake",
+      7.3
+     ],
+     [
+      "G7",
+      "Brake",
+      "Normal",
+      12.5
+     ]
+    ],
+    "fsm_edges_after": [
+     [
+      "G1",
+      "Normal",
+      "Brake",
+      7.3
+     ],
+     [
+      "G7",
+      "Brake",
+      "Normal",
+      12.5
+     ]
+    ],
+    "mission_outcome_changed": false,
+    "mission_outcome": [
+     "success",
+     "success"
+    ],
+    "hold_points_changed": false,
+    "harness_events": [
+     2,
+     2
+    ],
+    "final_position_moved_m": 0.0
+   },
    "audit": {
     "audited_ticks_before": 32,
     "audited_ticks_after": 32,
@@ -11901,6 +12115,62 @@
      "abs_diff": 1.0
     }
    ],
+   "flown": {
+    "status_changed": false,
+    "fsm_edges_changed": false,
+    "fsm_edge_times_moved": false,
+    "fsm_edges_before": [
+     [
+      "X4",
+      "Normal",
+      "Loiter",
+      3.0
+     ],
+     [
+      "G5",
+      "Loiter",
+      "RTL",
+      33.0
+     ],
+     [
+      "G9",
+      "RTL",
+      "[*]",
+      35.1
+     ]
+    ],
+    "fsm_edges_after": [
+     [
+      "X4",
+      "Normal",
+      "Loiter",
+      3.0
+     ],
+     [
+      "G5",
+      "Loiter",
+      "RTL",
+      33.0
+     ],
+     [
+      "G9",
+      "RTL",
+      "[*]",
+      35.1
+     ]
+    ],
+    "mission_outcome_changed": false,
+    "mission_outcome": [
+     "RTL_triggered",
+     "RTL_triggered"
+    ],
+    "hold_points_changed": false,
+    "harness_events": [
+     2,
+     2
+    ],
+    "final_position_moved_m": 0.0
+   },
    "audit": {
     "audited_ticks_before": 319,
     "audited_ticks_after": 320,
@@ -11957,6 +12227,62 @@
      "abs_diff": 1.0
     }
    ],
+   "flown": {
+    "status_changed": false,
+    "fsm_edges_changed": false,
+    "fsm_edge_times_moved": false,
+    "fsm_edges_before": [
+     [
+      "G11",
+      "Normal",
+      "RTL",
+      10.0
+     ],
+     [
+      "G6",
+      "RTL",
+      "Land",
+      14.0
+     ],
+     [
+      "G10",
+      "Land",
+      "[*]",
+      43.9
+     ]
+    ],
+    "fsm_edges_after": [
+     [
+      "G11",
+      "Normal",
+      "RTL",
+      10.0
+     ],
+     [
+      "G6",
+      "RTL",
+      "Land",
+      14.0
+     ],
+     [
+      "G10",
+      "Land",
+      "[*]",
+      43.9
+     ]
+    ],
+    "mission_outcome_changed": false,
+    "mission_outcome": [
+     "Land_triggered",
+     "Land_triggered"
+    ],
+    "hold_points_changed": false,
+    "harness_events": [
+     2,
+     2
+    ],
+    "final_position_moved_m": 0.0
+   },
    "audit": {
     "audited_ticks_before": 95,
     "audited_ticks_after": 96,
@@ -12020,6 +12346,50 @@
      "abs_diff": 1.0
     }
    ],
+   "flown": {
+    "status_changed": false,
+    "fsm_edges_changed": false,
+    "fsm_edge_times_moved": false,
+    "fsm_edges_before": [
+     [
+      "G11",
+      "Normal",
+      "RTL",
+      3.0
+     ],
+     [
+      "G9",
+      "RTL",
+      "[*]",
+      5.1
+     ]
+    ],
+    "fsm_edges_after": [
+     [
+      "G11",
+      "Normal",
+      "RTL",
+      3.0
+     ],
+     [
+      "G9",
+      "RTL",
+      "[*]",
+      5.1
+     ]
+    ],
+    "mission_outcome_changed": false,
+    "mission_outcome": [
+     "RTL_triggered",
+     "RTL_triggered"
+    ],
+    "hold_points_changed": false,
+    "harness_events": [
+     1,
+     1
+    ],
+    "final_position_moved_m": 0.0
+   },
    "audit": {
     "audited_ticks_before": 21,
     "audited_ticks_after": 20,
@@ -12052,68 +12422,28 @@
  ],
  "aggregates_differing": [
   {
-   "field": "_cell_rollup.dynamic_nfz_movement/dyn-nfz-spawn-on-top@size_m=20,variant=0/shield-on.failsafe_expected_ticks",
-   "before": 0,
-   "after": 49,
-   "kind": "count",
-   "abs_diff": 49.0
-  },
-  {
    "field": "_cell_rollup.dynamic_nfz_movement/dyn-nfz-spawn-on-top@size_m=20,variant=0/shield-on.max_repair_magnitude_mps",
    "before": null,
-   "after": 5.9528,
+   "after": 0.0,
    "kind": "changed"
-  },
-  {
-   "field": "_cell_rollup.dynamic_nfz_movement/dyn-nfz-spawn-on-top@size_m=20,variant=0/shield-on.mean_repair_attempt_ticks_per_episode",
-   "before": 0.0,
-   "after": 49.0,
-   "kind": "magnitude",
-   "abs_diff": 49.0
   },
   {
    "field": "_cell_rollup.dynamic_nfz_movement/dyn-nfz-spawn-on-top@size_m=20,variant=0/shield-on.mean_repair_count_per_episode",
    "before": 0.0,
-   "after": 49.0,
+   "after": 28.0,
    "kind": "magnitude",
-   "abs_diff": 49.0
-  },
-  {
-   "field": "_cell_rollup.dynamic_nfz_movement/dyn-nfz-spawn-on-top@size_m=20,variant=0/shield-on.mean_repair_magnitude_by_operator_class.LateralProjection.mean_mps",
-   "before": null,
-   "after": 0.4637,
-   "kind": "changed"
-  },
-  {
-   "field": "_cell_rollup.dynamic_nfz_movement/dyn-nfz-spawn-on-top@size_m=20,variant=0/shield-on.mean_repair_magnitude_by_operator_class.LateralProjection.sole_mean_mps",
-   "before": null,
-   "after": 0.4637,
-   "kind": "changed"
-  },
-  {
-   "field": "_cell_rollup.dynamic_nfz_movement/dyn-nfz-spawn-on-top@size_m=20,variant=0/shield-on.mean_repair_magnitude_by_operator_class.LateralProjection.sole_ticks",
-   "before": 0,
-   "after": 21,
-   "kind": "count",
-   "abs_diff": 21.0
-  },
-  {
-   "field": "_cell_rollup.dynamic_nfz_movement/dyn-nfz-spawn-on-top@size_m=20,variant=0/shield-on.mean_repair_magnitude_by_operator_class.LateralProjection.ticks",
-   "before": 0,
-   "after": 21,
-   "kind": "count",
-   "abs_diff": 21.0
+   "abs_diff": 28.0
   },
   {
    "field": "_cell_rollup.dynamic_nfz_movement/dyn-nfz-spawn-on-top@size_m=20,variant=0/shield-on.mean_repair_magnitude_by_operator_class.Recovery.mean_mps",
    "before": null,
-   "after": 5.8065,
+   "after": 0.0,
    "kind": "changed"
   },
   {
    "field": "_cell_rollup.dynamic_nfz_movement/dyn-nfz-spawn-on-top@size_m=20,variant=0/shield-on.mean_repair_magnitude_by_operator_class.Recovery.sole_mean_mps",
    "before": null,
-   "after": 5.8065,
+   "after": 0.0,
    "kind": "changed"
   },
   {
@@ -12131,156 +12461,29 @@
    "abs_diff": 28.0
   },
   {
-   "field": "_cell_rollup.dynamic_nfz_movement/dyn-nfz-spawn-on-top@size_m=20,variant=0/shield-on.mean_repair_magnitude_by_priority.P0.mean_mps",
-   "before": null,
-   "after": 3.5167,
+   "field": "_cell_rollup.dynamic_nfz_movement/dyn-nfz-spawn-on-top@size_m=20,variant=0/shield-on.mean_repair_magnitude_by_priority.floored.mean_mps",
+   "before": "<absent>",
+   "after": 0.0,
    "kind": "changed"
   },
   {
-   "field": "_cell_rollup.dynamic_nfz_movement/dyn-nfz-spawn-on-top@size_m=20,variant=0/shield-on.mean_repair_magnitude_by_priority.P0.ticks",
-   "before": 0,
-   "after": 49,
-   "kind": "count",
-   "abs_diff": 49.0
+   "field": "_cell_rollup.dynamic_nfz_movement/dyn-nfz-spawn-on-top@size_m=20,variant=0/shield-on.mean_repair_magnitude_by_priority.floored.ticks",
+   "before": "<absent>",
+   "after": 28,
+   "kind": "changed"
   },
   {
    "field": "_cell_rollup.dynamic_nfz_movement/dyn-nfz-spawn-on-top@size_m=20,variant=0/shield-on.mean_repair_magnitude_mps",
    "before": null,
-   "after": 3.5167,
-   "kind": "changed"
-  },
-  {
-   "field": "_cell_rollup.dynamic_nfz_movement/dyn-nfz-spawn-on-top@size_m=20,variant=0/shield-on.mission_goal.missed",
-   "before": 0,
-   "after": 1,
-   "kind": "count",
-   "abs_diff": 1.0
-  },
-  {
-   "field": "_cell_rollup.dynamic_nfz_movement/dyn-nfz-spawn-on-top@size_m=20,variant=0/shield-on.mission_goal.reached",
-   "before": 1,
-   "after": 0,
-   "kind": "count",
-   "abs_diff": 1.0
-  },
-  {
-   "field": "_cell_rollup.dynamic_nfz_movement/dyn-nfz-spawn-on-top@size_m=20,variant=0/shield-on.mission_success_rate",
-   "before": 1.0,
-   "after": 0.0,
-   "kind": "magnitude",
-   "abs_diff": 1.0
-  },
-  {
-   "field": "_cell_rollup.dynamic_nfz_movement/dyn-nfz-spawn-on-top@size_m=20,variant=0/shield-on.mission_successes",
-   "before": 1,
-   "after": 0,
-   "kind": "count",
-   "abs_diff": 1.0
-  },
-  {
-   "field": "_cell_rollup.dynamic_nfz_movement/dyn-nfz-spawn-on-top@size_m=20,variant=0/shield-on.null_always_brake_repair_success_rate",
-   "before": null,
    "after": 0.0,
    "kind": "changed"
   },
   {
-   "field": "_cell_rollup.dynamic_nfz_movement/dyn-nfz-spawn-on-top@size_m=20,variant=0/shield-on.null_passthrough_p0_escape_rate",
-   "before": 0.0,
-   "after": 0.163333,
-   "kind": "magnitude",
-   "abs_diff": 0.163333
-  },
-  {
-   "field": "_cell_rollup.dynamic_nfz_movement/dyn-nfz-spawn-on-top@size_m=20,variant=0/shield-on.outcomes.fail",
-   "before": 0,
-   "after": 1,
-   "kind": "count",
-   "abs_diff": 1.0
-  },
-  {
-   "field": "_cell_rollup.dynamic_nfz_movement/dyn-nfz-spawn-on-top@size_m=20,variant=0/shield-on.outcomes.success",
-   "before": 1,
-   "after": 0,
-   "kind": "count",
-   "abs_diff": 1.0
-  },
-  {
-   "field": "_cell_rollup.dynamic_nfz_movement/dyn-nfz-spawn-on-top@size_m=20,variant=0/shield-on.p0_acted_tick_share",
-   "before": null,
-   "after": 1.0,
-   "kind": "changed"
-  },
-  {
-   "field": "_cell_rollup.dynamic_nfz_movement/dyn-nfz-spawn-on-top@size_m=20,variant=0/shield-on.p0_violation_ticks",
-   "before": 0,
-   "after": 49,
-   "kind": "count",
-   "abs_diff": 49.0
-  },
-  {
-   "field": "_cell_rollup.dynamic_nfz_movement/dyn-nfz-spawn-on-top@size_m=20,variant=0/shield-on.repair_attempt_ticks",
-   "before": 0,
-   "after": 49,
-   "kind": "count",
-   "abs_diff": 49.0
-  },
-  {
-   "field": "_cell_rollup.dynamic_nfz_movement/dyn-nfz-spawn-on-top@size_m=20,variant=0/shield-on.repair_outcomes.converged",
-   "before": 0,
-   "after": 49,
-   "kind": "count",
-   "abs_diff": 49.0
-  },
-  {
-   "field": "_cell_rollup.dynamic_nfz_movement/dyn-nfz-spawn-on-top@size_m=20,variant=0/shield-on.repair_success_basis",
-   "before": null,
-   "after": "recheck_and_theta",
-   "kind": "changed"
-  },
-  {
-   "field": "_cell_rollup.dynamic_nfz_movement/dyn-nfz-spawn-on-top@size_m=20,variant=0/shield-on.repair_success_rate",
-   "before": null,
-   "after": 1.0,
-   "kind": "changed"
-  },
-  {
-   "field": "_cell_rollup.dynamic_nfz_movement/dyn-nfz-spawn-on-top@size_m=20,variant=0/shield-on.repair_success_status",
-   "before": "no_repairs_attempted",
-   "after": "measured",
-   "kind": "changed"
-  },
-  {
-   "field": "_cell_rollup.dynamic_nfz_movement/dyn-nfz-spawn-on-top@size_m=20,variant=0/shield-on.repair_success_ticks",
-   "before": 0,
-   "after": 49,
-   "kind": "count",
-   "abs_diff": 49.0
-  },
-  {
-   "field": "_cell_rollup.dynamic_nfz_movement/dyn-nfz-spawn-on-top@size_m=20,variant=0/shield-on.repairs_converged_while_unsafe",
+   "field": "_cell_rollup.dynamic_nfz_movement/dyn-nfz-spawn-on-top@size_m=20,variant=0/shield-on.repair_floored_ticks",
    "before": 0,
    "after": 28,
    "kind": "count",
    "abs_diff": 28.0
-  },
-  {
-   "field": "_cell_rollup.dynamic_nfz_movement/dyn-nfz-spawn-on-top@size_m=20,variant=0/shield-on.vacuous_zeros.null_passthrough_p0_escape_rate",
-   "before": "no P0 violation in the raw commands: there was nothing to escape, so 0 says nothing about the Shield",
-   "after": "<absent>",
-   "kind": "changed"
-  },
-  {
-   "field": "_cell_rollup.dynamic_nfz_movement/dyn-nfz-spawn-on-top@size_m=20,variant=0/shield-on.vacuous_zeros.p0_escape_rate",
-   "before": "no P0 violation in the raw commands: there was nothing to escape, so 0 says nothing about the Shield",
-   "after": "<absent>",
-   "kind": "changed"
-  },
-  {
-   "field": "_cell_rollup.dynamic_nfz_movement/dyn-nfz-spawn-on-top@size_m=20,variant=0/shield-on.violation_free_ticks",
-   "before": 300,
-   "after": 251,
-   "kind": "count",
-   "abs_diff": 49.0
   },
   {
    "field": "_cell_rollup.dynamic_nfz_movement/dyn-nfz-spawn-on-top@size_m=40,variant=0/shield-on.max_repair_magnitude_mps",
@@ -12347,95 +12550,25 @@
    "abs_diff": 53.0
   },
   {
-   "field": "_families.dynamic_nfz_movement.fsm_outcomes.fail",
-   "before": 10,
-   "after": 11,
-   "kind": "count",
-   "abs_diff": 1.0
-  },
-  {
-   "field": "_families.dynamic_nfz_movement.fsm_outcomes.success",
-   "before": 9,
-   "after": 8,
-   "kind": "count",
-   "abs_diff": 1.0
-  },
-  {
-   "field": "_outcome_labels.outcomes.fail",
-   "before": 21,
-   "after": 22,
-   "kind": "count",
-   "abs_diff": 1.0
-  },
-  {
-   "field": "_outcome_labels.outcomes.success",
-   "before": 96,
-   "after": 95,
-   "kind": "count",
-   "abs_diff": 1.0
-  },
-  {
-   "field": "_rollup._all_shield_on.failsafe_expected_ticks",
-   "before": 11375,
-   "after": 11424,
-   "kind": "count",
-   "abs_diff": 49.0
-  },
-  {
-   "field": "_rollup._all_shield_on.mean_repair_attempt_ticks_per_episode",
-   "before": 90.514,
-   "after": 90.788,
-   "kind": "magnitude",
-   "abs_diff": 0.2740000000000009
-  },
-  {
    "field": "_rollup._all_shield_on.mean_repair_count_per_episode",
    "before": 100.698,
-   "after": 101.268,
+   "after": 101.151,
    "kind": "magnitude",
-   "abs_diff": 0.5700000000000074
-  },
-  {
-   "field": "_rollup._all_shield_on.mean_repair_magnitude_by_operator_class.LateralProjection.mean_mps",
-   "before": 5.3514,
-   "after": 5.3404,
-   "kind": "magnitude",
-   "abs_diff": 0.01100000000000012
-  },
-  {
-   "field": "_rollup._all_shield_on.mean_repair_magnitude_by_operator_class.LateralProjection.sole_mean_mps",
-   "before": 4.7128,
-   "after": 4.7011,
-   "kind": "magnitude",
-   "abs_diff": 0.011699999999999378
-  },
-  {
-   "field": "_rollup._all_shield_on.mean_repair_magnitude_by_operator_class.LateralProjection.sole_ticks",
-   "before": 7622,
-   "after": 7643,
-   "kind": "count",
-   "abs_diff": 21.0
-  },
-  {
-   "field": "_rollup._all_shield_on.mean_repair_magnitude_by_operator_class.LateralProjection.ticks",
-   "before": 9302,
-   "after": 9323,
-   "kind": "count",
-   "abs_diff": 21.0
+   "abs_diff": 0.45300000000000296
   },
   {
    "field": "_rollup._all_shield_on.mean_repair_magnitude_by_operator_class.Recovery.mean_mps",
    "before": 4.6026,
-   "after": 3.7971,
+   "after": 3.1742,
    "kind": "magnitude",
-   "abs_diff": 0.8054999999999999
+   "abs_diff": 1.4284
   },
   {
    "field": "_rollup._all_shield_on.mean_repair_magnitude_by_operator_class.Recovery.sole_mean_mps",
    "before": 4.6026,
-   "after": 3.7971,
+   "after": 3.1742,
    "kind": "magnitude",
-   "abs_diff": 0.8054999999999999
+   "abs_diff": 1.4284
   },
   {
    "field": "_rollup._all_shield_on.mean_repair_magnitude_by_operator_class.Recovery.sole_ticks",
@@ -12452,204 +12585,50 @@
    "abs_diff": 81.0
   },
   {
-   "field": "_rollup._all_shield_on.mean_repair_magnitude_by_priority.P0.mean_mps",
-   "before": 5.8184,
-   "after": 5.8083,
-   "kind": "magnitude",
-   "abs_diff": 0.010099999999999554
-  },
-  {
-   "field": "_rollup._all_shield_on.mean_repair_magnitude_by_priority.P0.ticks",
-   "before": 11075,
-   "after": 11124,
-   "kind": "count",
-   "abs_diff": 49.0
-  },
-  {
    "field": "_rollup._all_shield_on.mean_repair_magnitude_by_priority.floored.mean_mps",
    "before": 2.3916,
-   "after": 1.5994,
+   "after": 1.3611,
    "kind": "magnitude",
-   "abs_diff": 0.7922
+   "abs_diff": 1.0305
   },
   {
    "field": "_rollup._all_shield_on.mean_repair_magnitude_by_priority.floored.ticks",
    "before": 107,
-   "after": 160,
+   "after": 188,
    "kind": "count",
-   "abs_diff": 53.0
+   "abs_diff": 81.0
   },
   {
    "field": "_rollup._all_shield_on.mean_repair_magnitude_mps",
    "before": 7.0496,
-   "after": 7.0156,
+   "after": 7.0141,
    "kind": "magnitude",
-   "abs_diff": 0.03399999999999981
-  },
-  {
-   "field": "_rollup._all_shield_on.mission_goal.missed",
-   "before": 64,
-   "after": 65,
-   "kind": "count",
-   "abs_diff": 1.0
-  },
-  {
-   "field": "_rollup._all_shield_on.mission_goal.reached",
-   "before": 82,
-   "after": 81,
-   "kind": "count",
-   "abs_diff": 1.0
-  },
-  {
-   "field": "_rollup._all_shield_on.mission_success_rate",
-   "before": 0.536313,
-   "after": 0.530726,
-   "kind": "magnitude",
-   "abs_diff": 0.005587000000000009
-  },
-  {
-   "field": "_rollup._all_shield_on.mission_successes",
-   "before": 96,
-   "after": 95,
-   "kind": "count",
-   "abs_diff": 1.0
-  },
-  {
-   "field": "_rollup._all_shield_on.null_passthrough_p0_escape_rate",
-   "before": 0.241282,
-   "after": 0.242321,
-   "kind": "magnitude",
-   "abs_diff": 0.0010390000000000121
-  },
-  {
-   "field": "_rollup._all_shield_on.outcomes.fail",
-   "before": 20,
-   "after": 21,
-   "kind": "count",
-   "abs_diff": 1.0
-  },
-  {
-   "field": "_rollup._all_shield_on.outcomes.success",
-   "before": 96,
-   "after": 95,
-   "kind": "count",
-   "abs_diff": 1.0
-  },
-  {
-   "field": "_rollup._all_shield_on.p0_violation_ticks",
-   "before": 11375,
-   "after": 11424,
-   "kind": "count",
-   "abs_diff": 49.0
-  },
-  {
-   "field": "_rollup._all_shield_on.repair_attempt_ticks",
-   "before": 16202,
-   "after": 16251,
-   "kind": "count",
-   "abs_diff": 49.0
+   "abs_diff": 0.035499999999999865
   },
   {
    "field": "_rollup._all_shield_on.repair_floored_ticks",
    "before": 107,
-   "after": 160,
+   "after": 188,
    "kind": "count",
-   "abs_diff": 53.0
-  },
-  {
-   "field": "_rollup._all_shield_on.repair_outcomes.converged",
-   "before": 16109,
-   "after": 16158,
-   "kind": "count",
-   "abs_diff": 49.0
-  },
-  {
-   "field": "_rollup._all_shield_on.repair_success_rate",
-   "before": 0.99426,
-   "after": 0.994277,
-   "kind": "magnitude",
-   "abs_diff": 1.6999999999933735e-05
-  },
-  {
-   "field": "_rollup._all_shield_on.repair_success_ticks",
-   "before": 16109,
-   "after": 16158,
-   "kind": "count",
-   "abs_diff": 49.0
-  },
-  {
-   "field": "_rollup._all_shield_on.repairs_converged_while_unsafe",
-   "before": 309,
-   "after": 337,
-   "kind": "count",
-   "abs_diff": 28.0
-  },
-  {
-   "field": "_rollup._all_shield_on.violation_free_ticks",
-   "before": 30942,
-   "after": 30893,
-   "kind": "count",
-   "abs_diff": 49.0
-  },
-  {
-   "field": "_rollup.dynamic_nfz_movement.failsafe_expected_ticks",
-   "before": 2151,
-   "after": 2200,
-   "kind": "count",
-   "abs_diff": 49.0
-  },
-  {
-   "field": "_rollup.dynamic_nfz_movement.mean_repair_attempt_ticks_per_episode",
-   "before": 87.074,
-   "after": 88.889,
-   "kind": "magnitude",
-   "abs_diff": 1.8149999999999977
+   "abs_diff": 81.0
   },
   {
    "field": "_rollup.dynamic_nfz_movement.mean_repair_count_per_episode",
    "before": 99.296,
-   "after": 103.074,
+   "after": 102.296,
    "kind": "magnitude",
-   "abs_diff": 3.7779999999999916
-  },
-  {
-   "field": "_rollup.dynamic_nfz_movement.mean_repair_magnitude_by_operator_class.LateralProjection.mean_mps",
-   "before": 5.2409,
-   "after": 5.1942,
-   "kind": "magnitude",
-   "abs_diff": 0.04669999999999952
-  },
-  {
-   "field": "_rollup.dynamic_nfz_movement.mean_repair_magnitude_by_operator_class.LateralProjection.sole_mean_mps",
-   "before": 4.5642,
-   "after": 4.5168,
-   "kind": "magnitude",
-   "abs_diff": 0.047399999999999665
-  },
-  {
-   "field": "_rollup.dynamic_nfz_movement.mean_repair_magnitude_by_operator_class.LateralProjection.sole_ticks",
-   "before": 1798,
-   "after": 1819,
-   "kind": "count",
-   "abs_diff": 21.0
-  },
-  {
-   "field": "_rollup.dynamic_nfz_movement.mean_repair_magnitude_by_operator_class.LateralProjection.ticks",
-   "before": 2128,
-   "after": 2149,
-   "kind": "count",
-   "abs_diff": 21.0
+   "abs_diff": 3.0
   },
   {
    "field": "_rollup.dynamic_nfz_movement.mean_repair_magnitude_by_operator_class.Recovery.mean_mps",
    "before": null,
-   "after": 2.0072,
+   "after": 0.0,
    "kind": "changed"
   },
   {
    "field": "_rollup.dynamic_nfz_movement.mean_repair_magnitude_by_operator_class.Recovery.sole_mean_mps",
    "before": null,
-   "after": 2.0072,
+   "after": 0.0,
    "kind": "changed"
   },
   {
@@ -12667,20 +12646,6 @@
    "abs_diff": 81.0
   },
   {
-   "field": "_rollup.dynamic_nfz_movement.mean_repair_magnitude_by_priority.P0.mean_mps",
-   "before": 5.2276,
-   "after": 5.1895,
-   "kind": "magnitude",
-   "abs_diff": 0.03810000000000002
-  },
-  {
-   "field": "_rollup.dynamic_nfz_movement.mean_repair_magnitude_by_priority.P0.ticks",
-   "before": 2151,
-   "after": 2200,
-   "kind": "count",
-   "abs_diff": 49.0
-  },
-  {
    "field": "_rollup.dynamic_nfz_movement.mean_repair_magnitude_by_priority.floored.mean_mps",
    "before": "<absent>",
    "after": 0.0,
@@ -12689,134 +12654,36 @@
   {
    "field": "_rollup.dynamic_nfz_movement.mean_repair_magnitude_by_priority.floored.ticks",
    "before": "<absent>",
-   "after": 53,
+   "after": 81,
    "kind": "changed"
   },
   {
    "field": "_rollup.dynamic_nfz_movement.mean_repair_magnitude_mps",
    "before": 5.1232,
-   "after": 4.9804,
+   "after": 4.9525,
    "kind": "magnitude",
-   "abs_diff": 0.14279999999999937
-  },
-  {
-   "field": "_rollup.dynamic_nfz_movement.mission_goal.missed",
-   "before": 18,
-   "after": 19,
-   "kind": "count",
-   "abs_diff": 1.0
-  },
-  {
-   "field": "_rollup.dynamic_nfz_movement.mission_goal.reached",
-   "before": 9,
-   "after": 8,
-   "kind": "count",
-   "abs_diff": 1.0
-  },
-  {
-   "field": "_rollup.dynamic_nfz_movement.mission_success_rate",
-   "before": 0.333333,
-   "after": 0.296296,
-   "kind": "magnitude",
-   "abs_diff": 0.03703699999999999
-  },
-  {
-   "field": "_rollup.dynamic_nfz_movement.mission_successes",
-   "before": 9,
-   "after": 8,
-   "kind": "count",
-   "abs_diff": 1.0
-  },
-  {
-   "field": "_rollup.dynamic_nfz_movement.null_passthrough_p0_escape_rate",
-   "before": 0.289307,
-   "after": 0.295898,
-   "kind": "magnitude",
-   "abs_diff": 0.0065910000000000135
-  },
-  {
-   "field": "_rollup.dynamic_nfz_movement.outcomes.fail",
-   "before": 10,
-   "after": 11,
-   "kind": "count",
-   "abs_diff": 1.0
-  },
-  {
-   "field": "_rollup.dynamic_nfz_movement.outcomes.success",
-   "before": 9,
-   "after": 8,
-   "kind": "count",
-   "abs_diff": 1.0
-  },
-  {
-   "field": "_rollup.dynamic_nfz_movement.p0_violation_ticks",
-   "before": 2151,
-   "after": 2200,
-   "kind": "count",
-   "abs_diff": 49.0
-  },
-  {
-   "field": "_rollup.dynamic_nfz_movement.repair_attempt_ticks",
-   "before": 2351,
-   "after": 2400,
-   "kind": "count",
-   "abs_diff": 49.0
+   "abs_diff": 0.17070000000000007
   },
   {
    "field": "_rollup.dynamic_nfz_movement.repair_floored_ticks",
    "before": 0,
-   "after": 53,
+   "after": 81,
    "kind": "count",
-   "abs_diff": 53.0
-  },
-  {
-   "field": "_rollup.dynamic_nfz_movement.repair_outcomes.converged",
-   "before": 2332,
-   "after": 2381,
-   "kind": "count",
-   "abs_diff": 49.0
-  },
-  {
-   "field": "_rollup.dynamic_nfz_movement.repair_success_rate",
-   "before": 0.991918,
-   "after": 0.992083,
-   "kind": "magnitude",
-   "abs_diff": 0.00016500000000008175
-  },
-  {
-   "field": "_rollup.dynamic_nfz_movement.repair_success_ticks",
-   "before": 2332,
-   "after": 2381,
-   "kind": "count",
-   "abs_diff": 49.0
-  },
-  {
-   "field": "_rollup.dynamic_nfz_movement.repairs_converged_while_unsafe",
-   "before": 0,
-   "after": 28,
-   "kind": "count",
-   "abs_diff": 28.0
-  },
-  {
-   "field": "_rollup.dynamic_nfz_movement.violation_free_ticks",
-   "before": 5084,
-   "after": 5035,
-   "kind": "count",
-   "abs_diff": 49.0
+   "abs_diff": 81.0
   },
   {
    "field": "_top_failures[5].repaired_action.vx",
    "before": 2.3899408065013343,
-   "after": 2.389940842276592,
+   "after": 2.3899408422765913,
    "kind": "um_level",
-   "abs_diff": 3.5775257867243226e-08
+   "abs_diff": 3.577525697906481e-08
   },
   {
    "field": "_top_failures[5].repaired_action.vy",
    "before": 3.207519749186239,
-   "after": 3.207519722529895,
+   "after": 3.2075197225298955,
    "kind": "um_level",
-   "abs_diff": 2.6656343798947546e-08
+   "abs_diff": 2.6656343354858336e-08
   }
  ]
 }

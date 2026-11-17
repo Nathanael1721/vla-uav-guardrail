@@ -32,7 +32,14 @@ rule an event adds or rewrites in WGS84 about the policy's frame origin
     no stored policy's hash moves;
   * a derived frame (no stated origin) is never moved by an event;
   * no unbound mode is left (no Shield.wgs84_bind_frame, no
-    VLAGUARD_WGS84_BIND);
+    VLAGUARD_WGS84_BIND); a lat/lon body whose x/y disagree with the frame
+    is refused;
+  * an exact tie between a bound dynamic zone's edges (a zone spawned
+    centred on the aircraft) is judged at the geometry's resolution
+    (shield.tie_tolerance_m), from what is stored, and every sampled
+    dyn-nfz-spawn-on-top cell flies as the metre writes flew it;
+  * the evidence in docs/data/wgs84_bind_default_20261117 says what its
+    README says, and its diff tool drops only wall-clock keys;
   * bundle.derive, tools/geo_to_policy.py ingest and EpisodeRecord.apply_zone
     agree with the Shield's writes; the 1-um consistency guard fires.
 
@@ -461,21 +468,17 @@ def _views(policy: Policy) -> list:
 def test_no_unbound_mode_is_left():
     """Until the evening of 2026-11-17 (integrate/1117) the Shield by default
     enforced the metres an event gave, not the projection of the lat/lon it
-    stored (opt-in Shield.wgs84_bind_frame / VLAGUARD_WGS84_BIND=1 closed the
-    gap). Binding is now the only mode: no flag, no environment switch."""
-    import os
+    stored (opt-in Shield.wgs84_bind_frame / VLAGUARD_WGS84_BIND=1, read once
+    when guardrail.shield was imported, closed the gap). Binding is now the
+    only mode: the flag is gone (nothing reads the variable any more, so
+    setting it here could prove nothing), rule_in_wgs84 takes no `bind`, and
+    an off-grid spawn's live view is its snapshot's."""
+    import inspect
     assert not hasattr(Shield, "wgs84_bind_frame")
-    old = os.environ.get("VLAGUARD_WGS84_BIND")
-    os.environ["VLAGUARD_WGS84_BIND"] = "0"
-    try:
-        sh = Shield(load_policy(SITL))
-        api.apply_dynamic_nfz(sh, {**ZONE, "vertices": OFF_GRID})
-        assert _views(_snapshot(sh.policy)) == _views(sh.policy)
-    finally:
-        if old is None:
-            os.environ.pop("VLAGUARD_WGS84_BIND", None)
-        else:
-            os.environ["VLAGUARD_WGS84_BIND"] = old
+    assert "bind" not in inspect.signature(rule_in_wgs84).parameters
+    sh = Shield(load_policy(SITL))
+    api.apply_dynamic_nfz(sh, {**ZONE, "vertices": OFF_GRID})
+    assert _views(_snapshot(sh.policy)) == _views(sh.policy)
 
 
 def test_live_view_is_the_snapshot_view_bit_for_bit():
@@ -517,22 +520,25 @@ def test_live_view_is_the_snapshot_view_bit_for_bit():
                 ((p, q), (u, v))
 
 
-def test_a_zone_centred_on_the_aircraft_escapes_straight_out_once_bound():
+def test_a_zone_centred_on_the_aircraft_escapes_toward_the_heading_once_bound():
     """A square zone written centred on an off-grid aircraft position is an
     exact tie between its edges as written (the escape then follows the
     heading: shield.escape_direction). Bound to the frame, its vertices move
-    by up to 0.6 um and the edge distances by up to 1.2 um, above
-    shield._TIE_M (1e-9 m), so the tie can break by geometry. Pinned here:
-    the escape is still straight out through one edge (a valid escape, never
-    a diagonal); the metre writes of before follow the heading every time;
-    and the bound zone breaks at least one of these ties away from the
-    heading - the known consequence (library cell
-    dyn-nfz-spawn-on-top@size_m=20, docs/data/wgs84_bind_default_20261117/)."""
+    by up to 0.6 um and the edge distances by up to about 1.2 um - above
+    shield._TIE_M (1e-9 m), at which the tie broke by geometry (library cells
+    dyn-nfz-spawn-on-top@size_m=20 x3 and @size_m=40 variants 1, 2;
+    docs/data/wgs84_bind_default_20261117/). A dynamic_nfz stored in WGS84
+    is therefore judged at the geometry's resolution
+    (shield.tie_tolerance_m: _TIE_BOUND_M, 2e-6 m). Pinned: with it the
+    bound zone follows the heading every time, as the metre writes of before
+    do, and the escape is straight out through one edge (never a diagonal).
+    How many of these ties 1e-9 m would break away from the heading is
+    printed, not asserted: it is the reason for the tolerance, not a spec."""
     from shapely.geometry import Polygon as _Poly
     from guardrail import shield as SH
     sh = Shield(load_policy(SITL))
     rng = random.Random(20261117)
-    off_heading = 0
+    off_heading = at_1e9 = 0
     for _ in range(40):
         cx, cy = rng.uniform(-200, 200), rng.uniform(-200, 200)
         h = rng.uniform(5, 25)
@@ -542,17 +548,109 @@ def test_a_zone_centred_on_the_aircraft_escapes_straight_out_once_bound():
                    for u, v in ((-h, -h), (h, -h), (h, h), (-h, h))]
         z = DynamicNFZ.model_validate({**ZONE, "id": "on-top", "type": "dynamic_nfz",
                                        "vertices": [{"x": x, "y": y} for x, y in corners]})
-        bound = _Poly([(v.x, v.y) for v in rule_in_wgs84(z, sh.policy.frame_origin).vertices])
+        bz = rule_in_wgs84(z, sh.policy.frame_origin)
+        assert SH.tie_tolerance_m(bz) == SH._TIE_BOUND_M == 2e-6
+        assert SH.tie_tolerance_m(z) == SH._TIE_M          # metres: no frame, no rounding
+        bound = _Poly([(v.x, v.y) for v in bz.vertices])
         metres = _Poly(corners)
         normals = [(math.cos(ang + k * math.pi / 2), math.sin(ang + k * math.pi / 2))
                    for k in range(4)]
         for hx, hy in normals:             # heading straight at each edge
             ux, uy = SH.escape_direction(cx, cy, metres, hx, hy)
             assert ux * hx + uy * hy > 0.999999, ("metres", (ux, uy), (hx, hy))
-            ux, uy = SH.escape_direction(cx, cy, bound, hx, hy)
+            ux, uy = SH.escape_direction(cx, cy, bound, hx, hy, SH.tie_tolerance_m(bz))
             assert max(ux * nx + uy * ny for nx, ny in normals) > 0.999999, (ux, uy)
             off_heading += ux * hx + uy * hy < 0.999
-    assert off_heading, "no bound tie broke away from the heading; re-check _TIE_M"
+            ux, uy = SH.escape_direction(cx, cy, bound, hx, hy)        # 1e-9 m
+            at_1e9 += ux * hx + uy * hy < 0.999
+    assert off_heading == 0, f"{off_heading} of 160 bound ties broke away from the heading"
+    print(f"      (at 1e-9 m, {at_1e9} of 160 bound ties would break away from the heading)")
+
+
+def test_the_tie_tolerance_is_a_property_of_what_is_stored():
+    """_TIE_BOUND_M applies to a dynamic_nfz stored in WGS84 and to nothing
+    else, and a snapshot reloaded (as tools/replay_q3.py installs a
+    generation, without Shield._in_frame) gives the same answer: every fence
+    - the static zones of gps-noise-within-margin and wind-beyond-authority,
+    which a global 2e-6 m changed - keeps 1e-9 m, as does a dynamic_nfz in a
+    policy written only in metres."""
+    from guardrail import shield as SH
+    sh = Shield(load_policy(SITL))
+    api.apply_dynamic_nfz(sh, {**ZONE, "vertices": OFF_GRID})
+    live = {c.id: SH.tie_tolerance_m(c) for c in sh.policy.constraints}
+    assert live[ZONE["id"]] == SH._TIE_BOUND_M
+    assert all(v == SH._TIE_M for k, v in live.items() if k != ZONE["id"]), live
+    assert any(c.type == "polygon_fence" for c in sh.policy.constraints)
+    back = _snapshot(sh.policy)
+    assert {c.id: SH.tie_tolerance_m(c) for c in back.constraints} == live
+    legacy = Shield(Policy.model_validate(
+        {"policy_id": "metres", "version": "0.1.0",
+         "constraints": [{"id": "f", "type": "polygon_fence", **RULE,
+                          "vertices": [{"x": 0, "y": 0}, {"x": 9, "y": 0}, {"x": 9, "y": 9}],
+                          "altitude_floor_m": 0, "altitude_ceiling_m": 100}]}))
+    assert legacy.policy.frame_origin is None
+    api.apply_dynamic_nfz(legacy, {**ZONE, "vertices": OFF_GRID})
+    assert all(SH.tie_tolerance_m(c) == SH._TIE_M for c in legacy.policy.constraints)
+
+
+def _harness():
+    sys.path.insert(0, str(ROOT / "experiments"))
+    import sweep_scenarios as S
+    from guardrail.scenario_spec import Library
+    return S, Library(ROOT / "experiments" / "scenarios.yaml")
+
+
+def _end(ep) -> tuple[float, float]:
+    r = ep.rows[-1]
+    return float(r["x"]), float(r["y"])
+
+
+def test_centred_spawns_fly_as_the_metre_writes_did():
+    """Every sampled cell of dyn-nfz-spawn-on-top (size 20 and 40 m, the
+    three approach variants the nightly profile flies): bound to the frame
+    the zone is flown as the metre writes of before flew it (no FSM edge,
+    the same end position to 1 mm). At _TIE_M (1e-9 m) for every zone five
+    of these six cells changed: size 20 x3 went G1 Brake 5.0 s -> G7 11.9 s
+    and missed the goal, size 40 variants 1 and 2 went G1 Brake -> G3
+    Loiter and ended holding at the zone edge (review of wf17b-bind,
+    2026-11-17)."""
+    from guardrail import shield as SH
+    S, L = _harness()
+    cells = L.by_id()["dyn-nfz-spawn-on-top"].cells(samples=3)
+    assert len(cells) == 6, [c.params for c in cells]
+    for c in cells:
+        bound = S.run_episode(c.spec, L.defaults, 0)
+        SH.Shield.wgs84_writes = False
+        try:
+            metres = S.run_episode(c.spec, L.defaults, 0)
+        finally:
+            SH.Shield.wgs84_writes = True
+        for ep in (bound, metres):
+            tr = (ep.extra.get("fsm") or {}).get("transitions") or []
+            assert tr == [], (c.params, tr)
+        (bx, by), (mx, my) = _end(bound), _end(metres)
+        assert math.hypot(bx - mx, by - my) < 1e-3, (c.params, (bx, by), (mx, my))
+
+
+def test_a_lat_lon_body_with_inconsistent_metres_is_refused():
+    """Since binding is the only mode, x/y given beside lat/lon are checked
+    against the frame: more than 1 um off and the body is refused (422 on
+    the REST endpoint). Before (integrate/1117 default) such a rule came back
+    unchanged and the live Shield enforced the given x/y under the lat/lon's
+    hash."""
+    sh = Shield(load_policy(SITL))
+    o = sh.policy.frame_origin
+    verts = []
+    for x, y in ((10.0, 10.0), (18.0, 10.0), (18.0, 17.0)):
+        lat, lon = metres_to_wgs84(o, x, y)
+        verts.append({"lat": lat, "lon": lon, "x": x + 5e-6, "y": y})
+    try:
+        api.apply_dynamic_nfz(sh, {**ZONE, "id": "ll-off", "vertices": verts})
+    except (api.ApiError, HotApplyRefused) as e:
+        assert getattr(e, "status", 422) == 422, e
+    else:
+        raise AssertionError("x/y 5 um off their lat/lon were accepted")
+    assert sh.policy.generation == 0
 
 
 def test_a_lat_lon_body_is_bound_too():
@@ -682,6 +780,37 @@ def test_the_compare_tool_classifies_and_aligns():
         {"a": 1.0000004, "n": 4, "runtime_s": 9, "same": 2})}
     assert set(rows) == {"a", "n"}, rows
     assert rows["a"]["kind"] == "um_level" and rows["n"]["kind"] == "count"
+    # Only wall-clock / path / revision keys are dropped, matched on the whole
+    # key: until 2026-11-17 evening an endswith() on 'ts', 'dir', 'path' and
+    # 'wall' also dropped these flown-behaviour fields (review of wf17b-bind).
+    flown = {"kpi": {"hold_points": [1], "harness_events": 1, "collision_contacts": 0,
+                     "collision_objects": [], "p0_escapes": 0},
+             "_failsafe_labels": {"fail_safe_correctness_distinct_flights": 1.0,
+                                  "correct_distinct_flights": 3,
+                                  "labelled_distinct_flights": 3, "cell_seed_slots": 3},
+             "_rollup": {"wind-gusts": 1},
+             "wall": 1, "ts": 1, "bundle": "x", "dir": "d", "path": "p", "runtime_s": 1,
+             "flight_s_wall": 1, "code_revision": "a", "issued_at": "t"}
+    moved = json.loads(json.dumps(flown).replace(": 1", ": 2").replace(": 3", ": 4")
+                       .replace("[1]", "[2]").replace(": 0", ": 5").replace("[]", "[0]")
+                       .replace('"x"', '"y"').replace('"d"', '"e"').replace('"p"', '"q"')
+                       .replace('"a"', '"b"').replace('"t"', '"u"'))
+    got = {f["field"] for f in W.diff_dicts(flown, moved)}
+    assert got == {"kpi.hold_points", "kpi.harness_events", "kpi.collision_contacts",
+                   "kpi.collision_objects", "kpi.p0_escapes",
+                   "_failsafe_labels.fail_safe_correctness_distinct_flights",
+                   "_failsafe_labels.correct_distinct_flights",
+                   "_failsafe_labels.labelled_distinct_flights",
+                   "_failsafe_labels.cell_seed_slots", "_rollup.wind-gusts"}, got
+    # The headline carries the grant's KPI 1, mission success, Shield-on and
+    # per family: a fallen success rate is not "headline identical".
+    sw = {"results": [], "_rollup": {"_all_shield_on": {"mission_success_rate": 0.5},
+                                     "fam": {"mission_success_rate": 0.4}},
+          "_outcome_labels": {"outcomes": {"success": 1}}}
+    sw2 = json.loads(json.dumps(sw).replace("0.4", "0.3"))
+    h1, h2 = W.headline(sw), W.headline(sw2)
+    assert h1["mission_shield_on"]["mission_success_rate"] == 0.5
+    assert h1 != h2 and h1["mission_by_family"]["fam"]["mission_success_rate"] == 0.4
     tmp = Path(tempfile.mkdtemp(prefix="bindcmp_"))
 
     def log(d, recs):
@@ -705,14 +834,32 @@ def test_the_compare_tool_classifies_and_aligns():
 
 
 def test_the_bind_evidence_matches_its_readme():
-    """The committed diffs say what the README says: headline identical,
-    8 of 64 smoke episodes and 14 of 180 library episodes differ."""
+    """The committed diffs say what the README says (the numbers are read
+    from the JSON, the README quotes them): the headline, mission success
+    included, is the same before and after in the smoke profile, the library
+    and the nightly profile's sampled cells on one seed; no episode's FSM
+    edge sequence, mission outcome, status or hold points changed; the
+    episodes that differ are counted."""
     d = ROOT / "docs" / "data" / "wgs84_bind_default_20261117"
+    want = {"smoke_diff.json": (64, 8), "library_diff.json": (180, 14),
+            "nightly_seed1001_diff.json": (248, 29)}
+    times = {"smoke_diff.json": 0, "library_diff.json": 0, "nightly_seed1001_diff.json": 5}
+    for name, counts in want.items():
+        got = json.loads((d / name).read_text(encoding="utf-8"))
+        assert got["headline_identical"], (name, got["headline_fields_differing"])
+        assert got["headline_fields_differing"] == [], name
+        hb = got["headline_before"]
+        assert hb["mission_shield_on"]["mission_success_rate"] is not None, name
+        assert got["episodes_fsm_outcome_status_or_hold_changed"] == [], name
+        for e in got["episodes"]:
+            f = e["flown"]
+            assert [x[:3] for x in f["fsm_edges_before"]] == \
+                [x[:3] for x in f["fsm_edges_after"]], (name, e["id"])
+        assert (got["episodes_compared"], got["episodes_differing"]) == counts, \
+            (name, got["episodes_compared"], got["episodes_differing"])
+        # the same edges, some 0.1-0.2 s apart (tangent-phase swaps, README)
+        assert len(got["episodes_fsm_edge_times_moved"]) == times[name], name
     smoke = json.loads((d / "smoke_diff.json").read_text(encoding="utf-8"))
-    lib = json.loads((d / "library_diff.json").read_text(encoding="utf-8"))
-    assert smoke["headline_identical"] and lib["headline_identical"]
-    assert (smoke["episodes_compared"], smoke["episodes_differing"]) == (64, 8)
-    assert (lib["episodes_compared"], lib["episodes_differing"]) == (180, 14)
     assert smoke["headline_after"]["fail_safe_correctness"] == 1.0
     cost = json.loads((d / "tick_cost.json").read_text(encoding="utf-8"))
     assert all(v["view_reads"] == 0 for v in cost["projection_reads_during_ticks"].values())

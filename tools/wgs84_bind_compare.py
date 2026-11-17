@@ -14,10 +14,13 @@ apart under one hash, so a replay from the stored policy_g<N>.json was not
 bit-for-bit the flight. Binding moves computed (off-grid) rings by up to
 0.6 um, which the Shield reacts to; this tool documents what that moved.
 
-`diff` compares two smoke-profile sweeps (experiments/sweep_scenarios.py
---profile smoke) field by field: every KPI field of every episode, the
-episode status and failed gates, and the sweep's aggregates (wall-clock and
-revision fields left out). For each episode that differs it also aligns the
+`diff` compares two sweeps of the same profile (experiments/
+sweep_scenarios.py: smoke, the library, nightly) field by field: every KPI
+field of every episode, the episode status and failed gates, and the sweep's
+aggregates (only whole wall-clock, path and revision keys left out). Its
+headline includes mission success (grant KPI 1, Shield-on and per family),
+and each differing episode carries a `flown` summary: FSM edge sequence or
+only edge times moved, mission outcome, status, hold points, end position. For each episode that differs it also aligns the
 two shield_audit.jsonl logs by monitor tick and names the first tick whose
 emitted action or violation set differs, the largest emitted-action
 difference, and every tick where the set of violated rules changed.
@@ -46,15 +49,21 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 # Sweep fields that are wall clock, paths or revision, not flown behaviour.
+# Matched on the WHOLE last key (and two wall-clock suffixes), never on any
+# ending: until 2026-11-17 evening a bare endswith() on 'ts', 'dir', 'path'
+# and 'wall' also dropped kpi.hold_points, kpi.harness_events,
+# kpi.collision_contacts / _objects, the *_distinct_flights fail-safe figures,
+# cell_seed_slots and the wind-gusts family row (review of wf17b-bind).
 IGNORED_TOP = {"_runtime_s", "_command", "_runner", "_manifest_common", "results"}
-IGNORED_LEAF = ("runtime", "runtime_s", "wall", "_s_wall", "seconds", "code_revision", "ts",
-                "path", "dir", "bundle", "issued_at")
+IGNORED_EXACT = frozenset({"_runtime_s", "runtime", "runtime_s", "seconds", "code_revision",
+                           "ts", "path", "dir", "bundle", "issued_at", "wall"})
+IGNORED_SUFFIX = ("_s_wall", "_wall_s")
 UM = 1e-6
 
 
 def _ignored(path: str) -> bool:
-    last = path.rsplit(".", 1)[-1]
-    return any(last == k or last.endswith(k) for k in IGNORED_LEAF)
+    last = path.rsplit(".", 1)[-1].split("[", 1)[0]
+    return last in IGNORED_EXACT or last.endswith(IGNORED_SUFFIX)
 
 
 def flatten(node, prefix: str = "") -> dict:
@@ -183,17 +192,32 @@ def audit_diff(d0: Path, d1: Path) -> dict:
             "ticks_audited_in_one_only": one_side}
 
 
+def _mission(row: dict | None) -> dict:
+    row = row or {}
+    return {k: row.get(k) for k in ("mission_success_rate", "mission_successes",
+                                    "episodes_mission_scored", "mission_goal", "outcomes")}
+
+
 def headline(sweep: dict) -> dict:
     """The figures the smoke profile is read for: what tools/ci_local.py
-    prints, the status counts, P0 escapes summed over episodes and the
-    true-state P0 figures."""
+    prints, the status counts, P0 escapes summed over episodes, the
+    true-state P0 figures, and the grant's KPI 1, mission success
+    (grant-overview.md; stress-testing.md's table): the Shield-on rate, its
+    goal and outcome counts, per family too, and the outcome labels' counts.
+    Until 2026-11-17 evening mission success was left out, so a library diff
+    whose success rate fell read `headline_identical: true`."""
     fl = sweep.get("_failsafe_labels") or {}
     ts = sweep.get("_true_state") or {}
+    ro = sweep.get("_rollup") or {}
     res = sweep.get("results") or []
     status: dict = {}
     for r in res:
         status[r.get("status")] = status.get(r.get("status"), 0) + 1
     return {"episodes": len(res), "status": dict(sorted(status.items(), key=str)),
+            "mission_shield_on": _mission(ro.get("_all_shield_on")),
+            "mission_by_family": {k: _mission(v) for k, v in sorted(ro.items())
+                                  if not k.startswith("_") and isinstance(v, dict)},
+            "outcome_label_counts": (sweep.get("_outcome_labels") or {}).get("outcomes"),
             "p0_escapes_sum": sum(int((r.get("kpi") or {}).get("p0_escapes") or 0) for r in res),
             "fail_safe_correctness": fl.get("fail_safe_correctness"),
             "failsafe_correct_of_labelled": [fl.get("correct"), fl.get("labelled")],
@@ -205,6 +229,32 @@ def headline(sweep: dict) -> dict:
             "episodes_entering_polygon": ts.get("episodes_entering_polygon"),
             "episodes_with_breach": ts.get("episodes_with_breach"),
             "autopilot_p0_flown_ticks": ts.get("autopilot_p0_flown_ticks")}
+
+
+def _edges(kpi: dict) -> list:
+    fsm = (kpi or {}).get("fsm") or {}
+    return [(t.get("edge"), t.get("from"), t.get("to"), t.get("t_s"))
+            for t in fsm.get("transitions") or []]
+
+
+def flown_change(x: dict, y: dict) -> dict:
+    """What a reader of the episode needs first: did its FSM edge SEQUENCE
+    (edge, from, to) change, or only the times of the same edges; its
+    mission outcome, its status, its hold points; and where did it end."""
+    kx, ky = x.get("kpi") or {}, y.get("kpi") or {}
+    fx, fy = (kx.get("final") or {}), (ky.get("final") or {})
+    end = None
+    if all(isinstance(d.get(k), (int, float)) for d in (fx, fy) for k in ("x", "y")):
+        end = math.hypot(fy["x"] - fx["x"], fy["y"] - fx["y"])
+    return {"status_changed": x.get("status") != y.get("status"),
+            "fsm_edges_changed": [e[:3] for e in _edges(kx)] != [e[:3] for e in _edges(ky)],
+            "fsm_edge_times_moved": _edges(kx) != _edges(ky),
+            "fsm_edges_before": _edges(kx), "fsm_edges_after": _edges(ky),
+            "mission_outcome_changed": kx.get("mission_outcome") != ky.get("mission_outcome"),
+            "mission_outcome": [kx.get("mission_outcome"), ky.get("mission_outcome")],
+            "hold_points_changed": kx.get("hold_points") != ky.get("hold_points"),
+            "harness_events": [kx.get("harness_events"), ky.get("harness_events")],
+            "final_position_moved_m": end}
 
 
 def diff_sweeps(before: dict, after: dict, before_runs: Path | None,
@@ -224,7 +274,7 @@ def diff_sweeps(before: dict, after: dict, before_runs: Path | None,
         if not fields:
             continue
         row = {"id": eid, "scenario_id": x.get("scenario_id"), "seed": x.get("seed"),
-               "fields": fields}
+               "fields": fields, "flown": flown_change(x, y)}
         d0 = _episode_dir(before_runs, x)
         d1 = _episode_dir(after_runs, y)
         if d0 and d1:
@@ -233,7 +283,16 @@ def diff_sweeps(before: dict, after: dict, before_runs: Path | None,
     top = diff_dicts({k: v for k, v in before.items() if k not in IGNORED_TOP},
                      {k: v for k, v in after.items() if k not in IGNORED_TOP})
     hb, ha = headline(before), headline(after)
+    fsm_or_outcome = [e["id"] for e in episodes
+                      if e.get("flown") and (e["flown"]["fsm_edges_changed"]
+                                             or e["flown"]["mission_outcome_changed"]
+                                             or e["flown"]["status_changed"]
+                                             or e["flown"]["hold_points_changed"])]
     return {"headline_before": hb, "headline_after": ha, "headline_identical": hb == ha,
+            "headline_fields_differing": diff_dicts(hb, ha),
+            "episodes_fsm_outcome_status_or_hold_changed": fsm_or_outcome,
+            "episodes_fsm_edge_times_moved": [e["id"] for e in episodes if e.get("flown")
+                                             and e["flown"]["fsm_edge_times_moved"]],
             "episodes_compared": len(set(ra) & set(rb)),
             "episodes_differing": len(episodes), "episodes": episodes,
             "aggregates_differing": top}

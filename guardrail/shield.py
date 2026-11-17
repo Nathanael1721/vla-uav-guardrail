@@ -539,7 +539,7 @@ class RuleClock:
 # every escape direction the Shield uses comes from `escape_direction`: the
 # same direction as push_out_direction wherever the nearest boundary point is
 # unique (bit for bit: push_out_direction's own result is returned), and in an
-# exact tie (nearest points within _TIE_M of each other in distance, in
+# exact tie (nearest points within tie_tolerance_m of the zone in distance, in
 # different directions) the tied direction most aligned with the heading the
 # caller judges - the commanded velocity, relative to a moving zone - so a
 # command already leaving through one of the equally near edges is escaping.
@@ -555,29 +555,64 @@ class RuleClock:
 # Two boundary points whose distances differ by less than this are a tie: far
 # above the rounding of the distances (about 1e-14 m at the library's 200 m
 # coordinates), far below anything a position can be measured to.
-#
-# It is below the resolution of a zone an event writes into a policy with a
-# frame: since 2026-11-17 that zone is enforced at the micrometre view of its
-# stored lat/lon (Shield._in_frame), each vertex within 0.6 um of the metres
-# the event computed, so two edges equally near as computed can be up to
-# 1.2 um apart as enforced and no longer tie. Library cell
-# dyn-nfz-spawn-on-top@size_m=20 (a zone spawned exactly centred on the
-# aircraft) now escapes through a side edge: the FSM brakes, every repair
-# converges, P0 escapes stay 0, but the detour leaves its goal unreached
-# when the episode ends. Raising
-# this to 2e-6 m restores that cell but changes static-zone cells too
-# (gps-noise-within-margin x3, wind-beyond-authority lane 15 at 12 m/s), so it
-# is left for a decision of its own: docs/data/wgs84_bind_default_20261117/.
 _TIE_M = 1e-9
+
+# ...except on a dynamic_nfz stored in WGS84 (2026-11-17, WP1-14): the zone
+# class events compute. Since Shield._in_frame binds every rule an event
+# writes to the policy's frame, such a zone is enforced at the micrometre view
+# of its stored lat/lon, each vertex within 0.6 um of the metres the event
+# computed (0.87 um over a chain of edits), so two edges equally near as
+# computed - a zone spawned centred on the aircraft, its four edges tied by
+# construction - are up to about 1.7 um apart as enforced. At 1e-9 m that
+# tie was broken by the rounding (the side edge nearer by a micrometre)
+# instead of by the heading: dyn-nfz-spawn-on-top@size_m=20 went G1 Brake ->
+# G7 and missed its goal, and @size_m=40 variants 1 and 2 ended holding in
+# Loiter. So the tie on such a zone is judged at the geometry's resolution,
+# 2e-6 m. It is a property of what is stored (the class and the WGS84
+# points), so a reload of the generation's snapshot judges the same
+# (tools/replay_q3.py installs generations without _in_frame). Every fence,
+# and a dynamic_nfz written in metres (a policy with no frame), keeps 1e-9 m:
+# a global 2e-6 m also changed static-zone cells (gps-noise-within-margin x3,
+# wind-beyond-authority lane 15 at 12 m/s; docs/data/wgs84_bind_default_20261117/
+# alternative_tie_2e-6/), which this item does not touch.
+_TIE_BOUND_M = 2e-6
+#
+# NOT made resolution-aware: the anti-stall slide's side (GeofenceSlide, "keep
+# the raw action's turn side"). For a command head-on to a bound zone's edge
+# its sign is the sign of the edge's sub-micrometre rotation, so the slide can
+# run in the other phase of its tangent alternation (mirrored actions) for a
+# stretch of ticks, as it ran by the 1e-14 m rounding of the computed ring
+# before. A tolerance there (tried, 1e-5 rad: head-on keeps the first tangent)
+# did not give back the unbound choice - against the unbound runs it changed
+# 13 more episodes of the sampled dyn-nfz families (38 of 69, not 25) and
+# moved FSM edge times in 14, not 5 - so the side is decided as before
+# and the changed paths are listed in docs/data/wgs84_bind_default_20261117/.
+
+
+def _bound_dynamic(rule) -> bool:
+    """A dynamic_nfz whose geometry is stored in WGS84 (bound to its policy's
+    frame), the zones `_TIE_BOUND_M` is for."""
+    if getattr(rule, "type", None) != "dynamic_nfz":
+        return False
+    pts = getattr(rule, "vertices", None) or ()
+    return bool(pts) and all(getattr(v, "geographic", False) for v in pts)
+
+
+def tie_tolerance_m(rule) -> float:
+    """The distance under which `escape_direction` reads two boundary points
+    of `rule`'s ring as a tie: `_TIE_BOUND_M` for a dynamic_nfz stored in
+    WGS84, else `_TIE_M`."""
+    return _TIE_BOUND_M if _bound_dynamic(rule) else _TIE_M
 
 
 def escape_direction(x: float, y: float, poly, vx: float = 0.0,
-                     vy: float = 0.0) -> tuple[float, float]:
+                     vy: float = 0.0, tie_m: float = _TIE_M) -> tuple[float, float]:
     """The unit vector from (x, y) towards the nearest way OUT of `poly`
     (inside it) or away from it (outside), as geometry.push_out_direction,
     with an exact tie between equally near boundary points broken by the
     heading (vx, vy) and then by the ring's canonical order - never by the
-    order the ring is stored in (block comment above)."""
+    order the ring is stored in (block comment above). `tie_m`: how near in
+    distance two points must be to tie (`tie_tolerance_m` of the zone)."""
     base = push_out_direction(x, y, poly)
     pts = [(float(px), float(py)) for px, py in list(poly.exterior.coords)[:-1]]
     if len(pts) < 3:
@@ -600,7 +635,7 @@ def escape_direction(x: float, y: float, poly, vx: float = 0.0,
     inside = poly.contains(Point(x, y))
     dirs: list[tuple[float, float]] = []
     for d, nx, ny in near:
-        if d > best + _TIE_M:
+        if d > best + tie_m:
             continue
         ux, uy = (nx - x) / d, (ny - y) / d
         if not inside:
@@ -3060,7 +3095,8 @@ class Shield:
                 continue
             mv = self._motion_of(f)
             ex, ey = (a.vx - mv[0], a.vy - mv[1]) if mv else (a.vx, a.vy)
-            ox, oy = escape_direction(state.x, state.y, rec.polygon, a.vx, a.vy)
+            ox, oy = escape_direction(state.x, state.y, rec.polygon, a.vx, a.vy,
+                                      tie_tolerance_m(f))
             n += int(ex * ox + ey * oy < -1e-9)
         return n
 
@@ -3482,7 +3518,8 @@ class Shield:
             if alive is True or alive(0.0):
                 if f.id not in self._opened_on and f.id not in self._cap_zones_at(tick, state):
                     return None               # inside a zone in force it flew into
-                ox, oy = escape_direction(state.x, state.y, poly, action.vx, action.vy)
+                ox, oy = escape_direction(state.x, state.y, poly, action.vx, action.vy,
+                                          tie_tolerance_m(f))
             else:
                 t_open = self._opening_imposed(f, ring, state)
                 if t_open is None:
@@ -3490,7 +3527,8 @@ class Shield:
                 px, py = state.x + action.vx * t_open, state.y + action.vy * t_open
                 if not point_in_fence(px, py, state.up + action.vz_up * t_open, f, poly, ring):
                     return None               # over the cap: walked as before
-                ox, oy = escape_direction(px, py, poly, action.vx, action.vy)
+                ox, oy = escape_direction(px, py, poly, action.vx, action.vy,
+                                          tie_tolerance_m(f))
             if action.vx * ox + action.vy * oy <= 0.1:
                 return None                   # not leaving it: that zone's violation
             t_exit = self._ring_exit_time(ring, state, action, h)
@@ -3571,7 +3609,8 @@ class Shield:
             # ring's vertex order lists first.
             ex, ey = ((action.vx - mv[0], action.vy - mv[1]) if mv
                       else (action.vx, action.vy))
-            ox, oy = escape_direction(state.x, state.y, poly, action.vx, action.vy)
+            ox, oy = escape_direction(state.x, state.y, poly, action.vx, action.vy,
+                                      tie_tolerance_m(f))
             escaping = (ex * ox + ey * oy) > 0.1
             if not escaping:
                 return [Violation(
@@ -3598,7 +3637,8 @@ class Shield:
             p_open = next((p for t, p in poses if abs(t - t_open) < 1e-9), None)
             if p_open is not None and point_in_fence(p_open.x, p_open.y, p_open.up,
                                                      f, poly, buffered):
-                ox, oy = escape_direction(p_open.x, p_open.y, poly, action.vx, action.vy)
+                ox, oy = escape_direction(p_open.x, p_open.y, poly, action.vx, action.vy,
+                                          tie_tolerance_m(f))
                 if action.vx * ox + action.vy * oy > 0.1:
                     return []      # leaving, as the inside rule asks once it opens
                 return [Violation(
@@ -4459,7 +4499,8 @@ class Shield:
                 # The way out the check reads (_check_fence): an exact tie
                 # between equally near edges goes to the one the current
                 # command is heading for (escape_direction).
-                ox, oy = escape_direction(state.x, state.y, poly, vx, vy)
+                ox, oy = escape_direction(state.x, state.y, poly, vx, vy,
+                                          tie_tolerance_m(f))
                 # A window opening on the aircraft sooner than it can leave
                 # (_opening_imposed): the way out is read where the current
                 # velocity puts it when the zone comes into force, as
@@ -4470,7 +4511,8 @@ class Shield:
                 t_open = None if mv else self._opening_imposed(f, ring, state)
                 if t_open is not None:
                     ox, oy = escape_direction(state.x + vx * t_open,
-                                              state.y + vy * t_open, poly, vx, vy)
+                                              state.y + vy * t_open, poly, vx, vy,
+                                              tie_tolerance_m(f))
                 # ... and its escape leaves at the CAP, not the in-force 2.0
                 # m/s floor below: before the opening (t_open) and after it,
                 # until the aircraft is out of the ring (`_opened_on`, kept by
@@ -4629,7 +4671,7 @@ class Shield:
 
             # unit "away from zone"; a tie between equally near edges is
             # broken by the commanded heading (escape_direction)
-            ox, oy = escape_direction(state.x, state.y, poly, vx, vy)
+            ox, oy = escape_direction(state.x, state.y, poly, vx, vy, tie_tolerance_m(f))
             into = -((vx - zx) * ox + (vy - zy) * oy)             # speed INTO the zone
             if into > 0:
                 vx += ox * into                                   # cancel it
@@ -5583,12 +5625,20 @@ class Shield:
     # every point of the rule to the policy's frame as it writes it
     # (models.rule_in_wgs84), so the live Shield computes its metres lazily
     # from the stored lat/lon (projection.local_metres) - bit for bit what a
-    # reload of the generation's signed snapshot reads, which is what makes a
-    # hot-applied run replayable bit for bit from its policy_g<N>.json
-    # (WP4-11). Metres on the micrometre grid (every REST body, every
-    # hand-written scenario) are enforced as given; a computed off-grid ring
-    # (rotate, scale, a spawn at an off-grid vehicle position) is enforced up
-    # to 0.6 um from the metres the edit computed. Until the evening of
+    # reload of the generation's signed snapshot reads. That removes one
+    # obstacle to replaying a hot-applied run bit for bit from its stored
+    # policy_g<N>.json; it does not make the run replayed (WP4-11 is still
+    # PARTIAL: tools/replay_q3.py re-runs today's Shield, open loop, and no
+    # flown run has been replayed at the revision it flew). Metres on the
+    # micrometre grid (every REST body, every hand-written scenario) are
+    # enforced as given; a computed off-grid ring (rotate, scale, a spawn at
+    # an off-grid vehicle position) is enforced up to 0.6 um from the metres
+    # the edit computed, so a tie the event built into it (a zone spawned
+    # centred on the aircraft) is judged at that resolution (_TIE_BOUND_M).
+    # A rule given in lat/lon WITH x/y beside them is bound too, so x/y that
+    # disagree with the frame by more than 1 um are refused (HotApplyRefused,
+    # an HTTP error on the REST endpoint), where the unbound default enforced
+    # the given x/y under the lat/lon's hash. Until the evening of
     # 2026-11-17 (integrate/1117 only, never on master) the default
     # enforced the given metres instead, with binding opt-in
     # (Shield.wgs84_bind_frame / VLAGUARD_WGS84_BIND=1); that mode is gone,
@@ -7121,7 +7171,7 @@ class Shield:
             t_open = self._opening_imposed(f, r.buffered, st)
             dt = t_open or 0.0
             ox, oy = escape_direction(st.x + raw.vx * dt, st.y + raw.vy * dt, r.polygon,
-                                      raw.vx, raw.vy)
+                                      raw.vx, raw.vy, tie_tolerance_m(f))
             leaving = raw.vx * ox + raw.vy * oy
             if leaving >= floor - 1e-9:
                 continue
@@ -7191,7 +7241,7 @@ class Shield:
         r, st = inside[0]
         dt = self._opening_imposed(r.rule, r.buffered, st) or 0.0
         ox, oy = escape_direction(st.x + raw.vx * dt, st.y + raw.vy * dt, r.polygon,
-                                  raw.vx, raw.vy)
+                                  raw.vx, raw.vy, tie_tolerance_m(r.rule))
         out_now = raw.vx * ox + raw.vy * oy
         if out_now <= 0.1:
             return None                     # not escaping that zone (the check agrees)

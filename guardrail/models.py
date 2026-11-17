@@ -2367,10 +2367,15 @@ def rule_in_wgs84(rule, origin: tuple[float, float] | None):
     rule, converted or already lat/lon, is bound to the frame here, so its
     metres are computed lazily from its lat/lon (the micrometre view,
     projection.local_metres) - the same floats a reload of the generation's
-    snapshot reads, bit for bit, under the same hash, which is what lets a
-    hot-applied run replay bit for bit from its stored policy_g<N>.json
-    (WP4-11). Metres given beside lat/lon are checked against the frame
-    (1 um) and dropped, as at any load (XY._bind). For a point on the
+    snapshot reads, bit for bit, under the same hash. That removes one
+    obstacle to replaying a hot-applied run bit for bit from its stored
+    policy_g<N>.json (WP4-11 is still PARTIAL: no flown run has been
+    replayed at its revision). Metres given beside lat/lon are checked
+    against the frame (1 um) and dropped, as at any load (XY._bind): a rule
+    whose x/y disagree with its lat/lon by more than that raises ValueError
+    (Shield._in_frame: HotApplyRefused), where until 2026-11-17 evening a
+    rule given wholly in lat/lon came back unchanged and its given x/y were
+    the live view. For a point on the
     micrometre grid (any value with at most six decimals: every REST body
     and hand-written scenario) the view is exactly the metres given; for a
     computed one (a spawn at an off-grid vehicle position, rotate, scale) it
@@ -2382,7 +2387,9 @@ def rule_in_wgs84(rule, origin: tuple[float, float] | None):
     live view, so the snapshot, reloaded, enforced up to 0.6 um elsewhere
     under the same hash; binding was opt-in. Making it the only mode moved
     computed rings by up to 0.6 um, which the Shield reacts to at boundary
-    ties; what that moved in the smoke profile is
+    ties (an exact tie between a dynamic zone's edges is judged at that
+    resolution: shield._TIE_BOUND_M); what that moved in the smoke profile,
+    the library and the sampled variants is
     docs/data/wgs84_bind_default_20261117/.
 
     Each converted point is also checked against the frame: written lat/lon
