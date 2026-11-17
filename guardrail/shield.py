@@ -130,7 +130,7 @@ from . import terrain as _terrain
 from .frames import from_body as _from_body, to_body as _to_body
 from .geometry import nearest_on_polyline, point_in_fence, push_out_direction
 from .ir import FENCE_TYPES, FenceRecord, PolicyIR, anchor_reach, compile_fence, is_fence
-from .projection import ring_order
+from .projection import derive_frame_origin, ring_order
 from .models import (
     DAYS,
     DEFAULT_LAYER,
@@ -149,6 +149,7 @@ from .models import (
     SubjectStandoff,
     TimeWindowSwitch,
     _not_looser,
+    rule_in_wgs84,
 )
 
 BRAKE =Action4D(vx=0.0, vy=0.0, vz_up=0.0, yaw_rate=0.0)
@@ -5349,6 +5350,34 @@ class Shield:
             return float(t)
         return self._t_last                    # None before the first tick
 
+    # WP1-14 (2026-11-17): what an event WRITES into a policy with a frame is
+    # WGS84. Every rule an event adds or rewrites (a spawn, a swap, a pre-start
+    # fence, the ring a move / translate / rotate / scale computes) passes
+    # through `_in_frame`, which writes its metre points as lat/lon about the
+    # policy's frame origin (models.rule_in_wgs84). These are the only ways
+    # into the live policy after construction - the REST endpoint
+    # (guardrail/api.py), the harness's scenario events (guardrail/
+    # scenario_events.py) and the hil rail all call them - so a generation's
+    # snapshot, its hash and its signature hold no projected coordinate. The
+    # live Shield still enforces exactly the metres it was given (each point
+    # keeps them as its view until a policy binds it), so no flown ring moves;
+    # the snapshot, reloaded, reads the micrometre view of the same lat/lon
+    # (exact for metres on the micrometre grid, else within 0.6 um) under
+    # the same hash. A policy written only in metres (the
+    # legacy form: old bundles, runs and their replays) has no WGS84 position
+    # for a metre point, and its events keep writing metres.
+    # `wgs84_writes = False` (an instance attribute) restores the metre writes
+    # of before this date; tests/test_wgs84_writes.py compares the two with it.
+    wgs84_writes: bool = True
+
+    def _in_frame(self, rule, op: str):
+        if not self.wgs84_writes:
+            return rule
+        try:
+            return rule_in_wgs84(rule, self.policy.frame_origin)
+        except ValueError as e:                     # pydantic ValidationError too
+            raise HotApplyRefused(f"{op} {getattr(rule, 'id', '?')!r}: {e}") from None
+
     def _commit(self, constraints: list, op: str, rule_id: str, rule_type: str,
                 t: float | None, anchors: dict | None = None) -> dict:
         ids = Counter(c.id for c in constraints)
@@ -5385,6 +5414,20 @@ class Shield:
         if bad:
             raise HotApplyRefused(f"{op} {rule_id!r} refused: the Shield would not "
                                   f"enforce it: " + "; ".join(bad))
+        # A frame DERIVED from the geometry (no stated `origin`) must not move:
+        # the live rules stay bound to the old one, but the generation's
+        # snapshot, reloaded, would derive the new one and put every WGS84
+        # point elsewhere (2026-11-17, with the WGS84 writes of `_in_frame`: a
+        # converted pre-start fence can become the first polygon_fence).
+        if self.policy.origin is None and self.policy.is_geographic:
+            fo = derive_frame_origin([c.model_dump(mode="json",
+                                                   context={"points": "stored"})
+                                      for c in constraints])
+            if fo != self.policy.frame_origin:
+                raise HotApplyRefused(
+                    f"{op} {rule_id!r} refused: it would move the policy's derived "
+                    f"frame origin {self.policy.frame_origin} to {fo}; state "
+                    f"`origin: {{lat, lon}}` in the policy to add it")
         # Build first, commit after. Until 2026-10-19 the live Policy took the
         # new list and generation + 1 BEFORE the runtime was built, with no
         # rollback: a build that raised (a dynamic_nfz with margin_m 1e308
@@ -5500,6 +5543,7 @@ class Shield:
             if kind == "corridor_swap":
                 return self._swap(rule, t)
             if kind in ("polygon_fence", "circle_fence") and not self.mission_started:
+                rule = self._in_frame(rule, "add_before_start")
                 return self._commit(list(self.policy.constraints) + [rule], "add_before_start",
                                     rule.id, kind, self._event_time(t))
             what = f"{kind} {getattr(rule, 'id', '?')!r}"
@@ -5523,6 +5567,7 @@ class Shield:
         if any(c.id == zone.id for c in self.policy.constraints):
             raise RuleIdConflict(f"dynamic_nfz {zone.id!r}: the id already exists; "
                                  f"move/translate/rotate/scale/expire edit a zone")
+        zone = self._in_frame(zone, "spawn")
         te = self._event_time(t)
         anchors = dict(self._anchors)
         anchors[zone.id] = te
@@ -5564,6 +5609,7 @@ class Shield:
                 nz = DynamicNFZ.model_validate(data)
             except Exception as e:                       # pydantic ValidationError
                 raise HotApplyRefused(f"{op} {zone_id!r}: {e}") from None
+            nz = self._in_frame(nz, op)
             cons = list(self.policy.constraints)
             cons[i] = nz
             anchors = dict(self._anchors)
@@ -5733,6 +5779,7 @@ class Shield:
             raise HotApplyRefused(f"corridor_swap event must be a CorridorSwap, got "
                                   f"{type(sp).__name__}")
         _, tgt = self._find(sp.target_id)
+        sp = self._in_frame(sp, "swap")
         if not isinstance(tgt, Corridor):
             raise HotApplyRefused(f"{sp.id}: corridor_swap targets {tgt.id!r}, a "
                                   f"{tgt.type}, not a corridor (to swap again, target "

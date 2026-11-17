@@ -72,6 +72,10 @@ MOVING dynamic_nfz is a declaration (guardrail/models.py, FLIGHT_HELD_TYPES);
 one whose zones do not move flies since 2026-11-15 (C-16). Geographic zones
 cannot be appended to a base written in local metres without an origin: their
 position in that frame is unknown, and guessing it would misplace every zone.
+Since 2026-11-17 (WP1-14) metre points appended to a base WITH a frame are
+written as WGS84 about its frame origin, as the API's hot-apply writes them
+(Shield._in_frame), so the result is stored and hashed in WGS84 and has the
+hash the live policy has.
 """
 from __future__ import annotations
 
@@ -89,7 +93,7 @@ import yaml                                                         # noqa: E402
 
 from guardrail.models import (IR2_RULE_DEFAULTS, DynamicNFZ, Policy,  # noqa: E402
                               load_policy, parse_policy_text, policy_from_raw)
-from guardrail.projection import geo_points                         # noqa: E402
+from guardrail.projection import geo_points, raw_points_in_wgs84     # noqa: E402
 
 DSL_PROPERTIES = ("priority", "constraint_type", "violation_action", "layer",
                   "scope", "margin_m", "altitude_floor_m", "altitude_ceiling_m",
@@ -421,10 +425,20 @@ def ingest(source, base: Policy | None = None, defaults: dict | None = None,
             f"{where}: geographic zones cannot be placed in {base.policy_id}'s "
             f"frame - it is written in local metres and states no origin. Add "
             f"`origin: {{lat, lon}}` to the base policy first")
+    if base.frame_origin is not None:
+        # WP1-14: what is appended to a policy with a frame is WGS84, as the
+        # live hot-apply writes it (Shield._in_frame).
+        new = raw_points_in_wgs84(new, base.frame_origin)
     raw = base.canonical_ir()
     raw["constraints"] = raw["constraints"] + new
     raw["generation"] = base.generation + len(new)      # one bump per rule, as hot_apply
-    return policy_from_raw(raw, source=f"{base.policy_id} + {where}", runtime=runtime)
+    pol = policy_from_raw(raw, source=f"{base.policy_id} + {where}", runtime=runtime)
+    if base.frame_origin is not None and pol.frame_origin != base.frame_origin:
+        raise ConversionError(
+            f"{where}: the rule(s) would move {base.policy_id}'s derived frame "
+            f"origin {base.frame_origin} to {pol.frame_origin}; state `origin: "
+            f"{{lat, lon}}` in the base policy first")
+    return pol
 
 
 # --------------------------------------------------------------------------- #

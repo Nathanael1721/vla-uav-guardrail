@@ -23,7 +23,13 @@ update model"); every route below is one of them:
                                     now spawns a dynamic_nfz (see below)
 
 POST /dynamic_nfz body (metres in the policy frame, or lat/lon for a policy
-with a frame; the DSL's own field names):
+with a frame; the DSL's own field names). Since 2026-11-17 (WP1-14) metres
+sent to a policy with a frame - every stored policy - are written into it as
+WGS84 about its frame origin (Shield._in_frame, models.rule_in_wgs84), as is
+the ring a PATCH computes, so /policy, the generation's hash and its snapshot
+carry no projected coordinate; the zone enforced live is the same metres,
+float for float. Only a policy written wholly in metres, the legacy form, keeps
+metre writes:
 
     {"id": "nfz-landslide-007", "scope": "mission",
      "constraint_type": "hard", "priority": "P0", "violation_action": "project_fix",
