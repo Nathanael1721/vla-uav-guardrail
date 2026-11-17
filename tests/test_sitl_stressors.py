@@ -446,8 +446,12 @@ def test_the_rails_fly_wind_dropout_and_jitter_and_refuse_the_rest_with_why():
         # and the blocked return home flies. Until 2026-11-17 the battery
         # hook stayed refused (no SIM_* stressor makes ArduPilot declare
         # CRITICAL with BATT_CRT_* at 0); since then the simulator side
-        # gives the simulated vehicle its battery fail-safe setup.
-        assert not why(BY_ID["failsafe-low-battery"]), why(BY_ID["failsafe-low-battery"])
+        # gives the simulated vehicle its battery fail-safe setup - on an
+        # opted-in campaign only (RAIL_BATTERY_OPT_IN): refused by default.
+        batt = why(BY_ID["failsafe-low-battery"])
+        assert "battery_critical_at_s" in batt and "rail_battery: true" in batt, batt
+        assert not S.rail_refusal(BY_ID["failsafe-low-battery"], backend, defaults=DEFAULTS,
+                                  rail_battery=True)
         assert "battery_critical_at_s" not in S.RAIL_STRESS_REFUSALS
         assert not why(BY_ID["failsafe-rtl-blocked"]), why(BY_ID["failsafe-rtl-blocked"])
         blind = _with(BY_ID["gps-dropout"], **{"stress.fix_quality_reported": False})
@@ -1184,9 +1188,11 @@ class _SitlLink(_Link):
 def test_a_battery_cell_drops_the_pack_after_giving_the_simulated_vehicle_its_failsafe():
     """failsafe-low-battery (battery_critical_at_s 14 s): SIM_BATT_VOLTAGE a
     full 12.6 V at boot and 10.0 V at t0 + 14 - BATT_LOW_TIMER, under the
-    critical 10.1 V; the simulated vehicle's battery fail-safe the values
-    ArduCopter's autotest BatteryFailsafe flies, with no action of the
-    autopilot's own (the FSM's G6 lands the return); all restored after."""
+    critical 10.1 V; the simulated vehicle's battery fail-safe BATT_CRT_VOLT
+    10.1 and no action of the autopilot's own as in ArduCopter's autotest
+    BatteryFailsafe (the FSM's G6 lands the return), BATT_LOW_VOLT the
+    copter default 10.5, BATT_LOW_TIMER the cell's own 1 s (default 10 s);
+    all restored after."""
     spec = BY_ID["failsafe-low-battery"]
     plan = _plan(spec)
     b = S.RAIL_BATTERY
@@ -1335,15 +1341,66 @@ def test_the_process_holds_after_the_schedule_and_restores_at_stop():
         signal.signal(signal.SIGTERM, saved_term)
 
 
-def _battery_flight(plan, *, onset=0.2, last_t=40.0, node_params=None, sim_fw_ok=True):
+class _StopMidSet(_SitlLink):
+    """A SIGTERM (`stop`, as hil_desktop.sh stop_all sends on its READY
+    timeout) arriving while the firmware parameter `at` is being set, after
+    the ones before it took."""
+
+    def __init__(self, at, **kw):
+        super().__init__(**kw)
+        self.at, self.fired = at, False
+
+    def set_param(self, name, value, timeout=0.4, tries=3):
+        if name == self.at and not self.fired:
+            self.fired = True
+            raise SST._Stop()
+        return super().set_param(name, value, timeout, tries)
+
+
+def test_a_stop_in_the_middle_of_the_firmware_sets_still_restores_them():
+    """The values to restore reach the record before the first firmware set,
+    so restore() (which reads the record) sets back what was already set
+    when the stop lands between two sets."""
+    import signal
+    plan = _plan(BY_ID["failsafe-low-battery"])
+    saved_link, saved_term = SST.SitlLink, signal.getsignal(signal.SIGTERM)
+    try:
+        with tempfile.TemporaryDirectory() as td:
+            plan_path, rec_path = Path(td) / "plan.json", Path(td) / "rec.json"
+            plan_path.write_text(json.dumps(plan), encoding="utf-8")
+            link = _StopMidSet("BATT_LOW_TIMER")
+            SST.SitlLink = lambda where: link
+            with contextlib.redirect_stdout(io.StringIO()) as buf:
+                rc = SST.main(["--plan", str(plan_path), "--record", str(rec_path)])
+            rec = json.loads(rec_path.read_text(encoding="utf-8"))
+            assert link.fired and rc == 0 and rec["state"] == "stopped", (rc, rec)
+            # Two of the setup took before the stop (BATT_LOW_VOLT, BATT_CRT_VOLT).
+            assert ("set", "BATT_CRT_VOLT", 10.1) in link.ops, link.ops
+            assert rec["restore"]["done"] and all(p["restored"]
+                                                  for p in rec["restore"]["params"]), rec
+            assert {k: link.params[k] for k in SITL_BEFORE} == SITL_BEFORE, link.params
+            assert "SITL_STRESS RESTORED" in buf.getvalue(), buf.getvalue()
+    finally:
+        SST.SitlLink = saved_link
+        signal.signal(signal.SIGTERM, saved_term)
+
+
+def _battery_flight(plan, *, onset=0.2, last_t=40.0, node_params=None, sim_fw_ok=True,
+                    rtl_from=8.0, fsm_rows=True):
     """A battery cell's flight: _flight's record and metrics plus the
     simulator side's firmware record and the node's RTL watch, ArduPilot's
-    CRITICAL reaching it `onset` s after the cell's time."""
+    CRITICAL reaching it `onset` s after the cell's time; the node's rows in
+    RTL from `rtl_from` (G11) and in Land after the CRITICAL (G6)."""
     rec, met, rows = _flight(plan, last_t=last_t)
+    at = plan["battery_critical_at_s"]
+    crit = None if onset is None else at + onset
+    for r in rows if fsm_rows else []:
+        r["fsm_state_after"] = ("Land" if crit is not None and r["t"] >= crit
+                                else "RTL" if rtl_from is not None and r["t"] >= rtl_from
+                                else "Normal")
     rec["firmware"] = {"ok": sim_fw_ok, "guard": {"refused": None if sim_fw_ok else "x"},
                        "params": [SST.stressor_entry(f["param"], f["value"], f["value"])
                                   for f in plan["firmware"]]}
-    at = plan["battery_critical_at_s"]
     vals = {"RTL_ALT": 1500.0, "RTL_CONE_SLOPE": 3.0, "BATT_FS_CRT_ACT": 0.0,
             "BATT_CRT_VOLT": 10.1, "BATT_CRT_MAH": 0.0}
     vals.update(node_params or {})
@@ -1388,6 +1445,15 @@ def test_a_battery_cell_is_scored_only_once_its_critical_reached_the_node():
     # gate (rtl_failed_ticks >= 1) fails that flight, as for a dropout.
     problems, s = check(onset=None, last_t=14.5)
     assert problems == [] and "episode ended" in s["battery"]["note"], (problems, s["battery"])
+    assert "fsm_state_at_critical" not in s["battery"]
+    # The CRITICAL must meet an RTL: the node records it whatever the FSM's
+    # state, and ArduPilot keeps checking while armed - a return that had
+    # already reached home (the FSM out of RTL), or one never started, is the
+    # stress not realised, an error, never the cell's failed G6 gate.
+    assert check()[1]["battery"]["fsm_state_at_critical"] == "RTL"
+    assert "stress not realised on an RTL - the FSM was in Normal" in why(rtl_from=None)
+    assert "stress not realised on an RTL - the FSM was in Normal" in why(rtl_from=20.0)
+    assert "carries the FSM's state" in why(fsm_rows=False)
 
 
 # --------------------------------------------------------------------------- #

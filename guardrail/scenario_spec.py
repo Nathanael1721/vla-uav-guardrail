@@ -1636,12 +1636,24 @@ class Profile(_Strict):
     # the broad sweep's results "are tracked but not part of the final KPI
     # numbers". Recorded in every run of the profile.
     grant_kpi_bearing: bool = True
+    # The battery cell on the flight rails (2026-11-17, WP3-07;
+    # experiments/sweep_scenarios.py RAIL_BATTERY_OPT_IN): False, every
+    # profile's default, keeps battery_critical_at_s refused on the sitl and
+    # hil rails; true flies it (the simulated vehicle's BATT_* fail-safe set
+    # and restored by the simulator side). Not on a KPI-bearing profile until
+    # a shakedown flight has shown the cell realised on the rig.
+    rail_battery: bool = False
 
     @model_validator(mode="after")
     def _range(self) -> "Profile":
         lo, hi = self.expected_cells
         if not 0 < lo <= hi:
             raise ValueError("expected_cells must be [lo, hi] with 0 < lo <= hi")
+        if self.rail_battery and self.grant_kpi_bearing:
+            raise ValueError("rail_battery: true on a KPI-bearing profile: the battery cell "
+                             "has not flown on the rig, so it may not join a KPI campaign "
+                             "before a shakedown flight shows it realised (set "
+                             "grant_kpi_bearing: false, or fly it from fsm_edges)")
         if len(set(self.seeds)) != len(self.seeds):
             raise ValueError("seeds must be distinct")
         check_forecast_arms(self.forecast_arms)

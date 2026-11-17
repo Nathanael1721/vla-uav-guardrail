@@ -283,9 +283,12 @@ def test_the_rails_refuse_only_what_they_cannot_realise():
         # Since 2026-11-14 the node's RTL watch feeds G6 and writes
         # rtl_failed per RTL row, so a gate on rtl_failed_ticks is flown;
         # since 2026-11-17 the battery hook too (the simulator side gives
-        # the simulated vehicle its battery fail-safe setup).
+        # the simulated vehicle its battery fail-safe setup), on an
+        # opted-in campaign only (RAIL_BATTERY_OPT_IN).
         assert not why(BY_ID["failsafe-rtl-blocked"]), why(BY_ID["failsafe-rtl-blocked"])
-        assert not why(BY_ID["failsafe-low-battery"]), why(BY_ID["failsafe-low-battery"])
+        assert "battery_critical_at_s" in why(BY_ID["failsafe-low-battery"])
+        assert not why(BY_ID["failsafe-low-battery"], rail_battery=True), \
+            why(BY_ID["failsafe-low-battery"], rail_battery=True)
         assert "relabel" in why(BY_ID["standoff-reclassified"])
         assert "non-finite pilot action" in why(BY_ID["nonfinite-action"])
         low = _cell("altitude-recovery-depth", start_up=0.5)
@@ -3151,6 +3154,47 @@ def test_a_hil_run_is_accepted_by_its_own_records_not_by_file_times():
             raise AssertionError("another episode's metrics were accepted")
 
 
+def test_only_the_fsm_edges_profile_opts_in_to_the_battery_cell_on_the_rails():
+    """RAIL_BATTERY_OPT_IN (2026-11-17, WP3-07): failsafe-low-battery has
+    never flown on the rig and writes BATT_* to the simulated autopilot, so
+    it flies on a rail campaign only from a profile with `rail_battery:
+    true` - fsm_edges, which bears no KPI. Every KPI profile leaves it off
+    (and may not set it), so their campaigns refuse it as before."""
+    from guardrail.scenario_spec import Profile, load_profile
+    profs = {p.stem: load_profile(p) for p in (ROOT / "experiments" / "profiles").glob("*.yaml")}
+    assert [n for n, p in profs.items() if p.rail_battery] == ["fsm_edges"], profs.keys()
+    assert profs["fsm_edges"].grant_kpi_bearing is False
+    raw = yaml.safe_load((ROOT / "experiments" / "profiles" / "smoke.yaml").read_text(
+        encoding="utf-8"))
+    try:
+        Profile.model_validate({**raw, "rail_battery": True})
+    except ValueError as e:
+        assert "KPI-bearing" in str(e), e
+    else:
+        raise AssertionError("a KPI-bearing profile opted in to the battery cell")
+    made = []
+    saved = S.make_hil_transport
+    S.make_hil_transport = lambda c: made.append(c)
+    buf = io.StringIO()
+    try:
+        with tempfile.TemporaryDirectory() as td:
+            cfg = Path(td) / "hil.yaml"
+            cfg.write_text(yaml.safe_dump({"bundles_dir": str(_signed_like_bundles(Path(td)))}),
+                           encoding="utf-8")
+            with contextlib.redirect_stdout(buf):
+                rc = _sweep(["--profile", "fsm_edges", "--backend", "hil", "--hil-dry-run",
+                             "--hil-config", str(cfg), "--hil-campaign", "fe"])
+    finally:
+        S.make_hil_transport = saved
+    out = buf.getvalue()
+    assert rc == 0 and not made, (rc, made)
+    flown, _, refused = out.partition("\n  refused:")
+    assert "_failsafe-low-battery  failsafe-low-battery" in flown, out[:600]
+    assert "failsafe-low-battery" not in refused
+    assert "SITL setup BATT_LOW_VOLT=10.5, BATT_CRT_VOLT=10.1, BATT_LOW_TIMER=1" in flown
+    assert "SIM_BATT_VOLTAGE=10 at 13 s" in flown
+
+
 def test_the_hil_dry_run_lists_every_mission_and_flies_nothing():
     """--hil-dry-run: every episode with its tag, SITL_HOME and commands, or
     why it is refused, and the counts; no transport is made, no file
@@ -3177,22 +3221,20 @@ def test_the_hil_dry_run_lists_every_mission_and_flies_nothing():
     # 41 / 23 until 2026-11-07, when the two GPS-dropout, two wind-within-
     # authority and two wind-beyond-authority cells began to fly; 47 / 17
     # until 2026-11-14, when failsafe-rtl-blocked did (the node's RTL watch
-    # feeds G6 and writes the rtl_failed its gate counts); 48 / 16 until
-    # 2026-11-17, when failsafe-low-battery did (the simulated vehicle's
-    # battery fail-safe setup, set and restored by the simulator side).
-    assert "49 mission(s) to fly, 15 refused" in out, out[:300]
+    # feeds G6 and writes the rtl_failed its gate counts). The battery cell
+    # (2026-11-17) is opt-in on the rails (RAIL_BATTERY_OPT_IN): the smoke
+    # profile does not opt in, so its campaign stays 48 / 16.
+    assert "48 mission(s) to fly, 16 refused" in out, out[:300]
     flown, _, refused = out.partition("\n  refused:")
     assert "_failsafe-rtl-blocked  failsafe-rtl-blocked" in flown, "the blocked return flies"
-    assert "_failsafe-low-battery  failsafe-low-battery" in flown, "the battery cell flies"
-    assert "failsafe-low-battery" not in refused
-    assert "SITL setup BATT_LOW_VOLT=10.5, BATT_CRT_VOLT=10.1, BATT_LOW_TIMER=1" in flown
-    assert "SIM_BATT_VOLTAGE=10 at 13 s" in flown
+    assert "failsafe-low-battery" not in flown and "SITL setup" not in flown
+    assert "REF  failsafe-low-battery" in refused and "rail_battery: true" in refused
     assert "dry_001_nfz-head-on" in out and "SITL_HOME  -35.36344066,149.16539523,584,0.00" in out
     assert "--start=-20,15,15" in out and "hil_desktop.sh" in out
     # The simulator's stressors, as the desktop side will set them.
     assert "SIM_GPS_DISABLE=1 at 4 s" in out and "SIM_WIND_DIR=180" in out
     assert "--stress-plan" in out and "--stress-record" in out
-    for why in ("gps_noise_m", "gust_mps", "non-finite",
+    for why in ("gps_noise_m", "gust_mps", "battery_critical_at_s", "non-finite",
                 "start altitude 30 m", "relabel", "paraphrase / prefix arm",
                 "Shield-off control arm"):
         assert why in out, why
@@ -4202,7 +4244,9 @@ def test_the_fsm_edges_profile_flies_the_edges_no_rail_had_taken():
     for e in eps:
         spec = e.cell.spec
         for backend in S.RAIL_BACKENDS:
-            assert S.rail_refusal(spec, backend) is None, (e.cell.episode_id, backend)
+            # The profile opts in to the battery cell (rail_battery: true).
+            assert S.rail_refusal(spec, backend, rail_battery=prof.rail_battery) is None, (
+                e.cell.episode_id, backend)
         sid = e.cell.episode_id.split("@")[0]
         if sid not in want:
             assert sid == "wind-beyond-authority" and (

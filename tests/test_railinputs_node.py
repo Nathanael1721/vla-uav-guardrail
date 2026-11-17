@@ -475,10 +475,11 @@ def _fly(N, node, clk, n: int, act: bool = True) -> None:
 def test_a_slow_pilot_gets_its_decision_period_and_the_10hz_stub_keeps_its_fsm():
     """THE PILOT'S DECISION PERIOD (2026-11-17, WP3-07): the node builds its
     FSM with FSMConfig.for_decision_period (decided 2026-11-02) for a pilot
-    declared slower than SLOW_PILOT_PERIOD_S (1.1 s), and leaves every other
-    one - the default, the 10 Hz stub every KPI campaign flies - with the
-    very config (same thresholds, same fsm_config_hash) it had before, so
-    its flights replay unchanged."""
+    declared slower than T / (1.5 x N) of the configured thresholds (1.11 s
+    for the grant's N = 3, T = 5 s), and leaves every other one - the
+    default, the 10 Hz stub every KPI campaign flies - with the very config
+    (same thresholds, same fsm_config_hash) it had before, so its flights
+    replay unchanged."""
     from guardrail.fsm import EscalationFSM, FSMConfig, RepairMagnitude, RuleHit
     N, node, clk, out = _build([])
     assert node.fsm.config == FSMConfig() and node.fsm.config.digest == FSMConfig().digest
@@ -518,6 +519,17 @@ def test_a_slow_pilot_gets_its_decision_period_and_the_10hz_stub_keeps_its_fsm()
             continue
         raise AssertionError(f"accepted {bad}")
     assert N.fsm_config_for_pilot(FSMConfig(), None)[0] == FSMConfig()
+    # The break-even follows the configured N and T, not the grant's: with
+    # N = 4 and T = 5 s a 1.0 s pilot (above 5 / 6 = 0.83 s) needs T = 6 s,
+    # and a 0.8 s one keeps the config itself.
+    n4 = FSMConfig(n_violations=4)
+    got, rec = N.fsm_config_for_pilot(n4, 1.0)
+    assert got.window_s == 6.0 and got.n_violations == 4 and rec["applied"] is True, rec
+    assert abs(rec["slow_above_s"] - 5.0 / 6.0) < 1e-3, rec
+    same, rec = N.fsm_config_for_pilot(n4, 0.8)
+    assert same is n4 and rec["applied"] is False, rec
+    same, rec = N.fsm_config_for_pilot(FSMConfig(), 1.1)
+    assert same.digest == FSMConfig().digest and rec["applied"] is False, rec
 
 
 def test_a_pilot_taking_the_aircraft_out_of_the_nodes_hold_is_a_takeover():

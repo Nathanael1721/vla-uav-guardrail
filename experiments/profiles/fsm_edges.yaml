@@ -13,8 +13,9 @@
 #       now (sitl/ros2_shield_node.py, THE RTL WATCH): failsafe-rtl-blocked
 #       (blocked path) flies; failsafe-low-battery stayed refused until
 #       2026-11-17 (SITL's battery reaches CRITICAL only through BATT_CRT_*,
-#       which the rig left at 0) and flies since: the simulator side gives the
-#       simulated vehicle its battery fail-safe setup and drops its pack
+#       which the rig left at 0) and flies since from THIS profile alone
+#       (`rail_battery: true` below): the simulator side gives the simulated
+#       vehicle its battery fail-safe setup and drops its pack
 #       (sweep_scenarios.RAIL_BATTERY, restored after); wind-beyond-authority
 #       at 12 m/s on lane 15 returns into a wind it cannot beat and takes G6
 #       for no progress home on the rail vehicle (X7 at 7.0 s, G6 at 12.1 s).
@@ -43,7 +44,13 @@
 # description). The profile is still no KPI set: keep its runs out of a KPI
 # report's campaigns. failsafe-low-battery (2026-11-17) is a library cell that
 # smoke, nightly and broad already list: their headless numbers do not move,
-# but a hil campaign of any of them now flies it instead of refusing it.
+# and their rail campaigns still refuse it. The battery cell is opt-in on the
+# rails (sweep_scenarios.RAIL_BATTERY_OPT_IN): it has never flown on the rig
+# and it writes BATT_* parameters to the simulated autopilot, so only a
+# profile with `rail_battery: true` - this one, which bears no KPI - flies it.
+# The KPI profiles take it only after a shakedown flight (fe_batt01,
+# docs/RUNBOOK-orin-hil.md) shows CRITICAL reaching the RTL watch, G11 > G6 >
+# G10 and the restore.
 #
 #   python experiments/sweep_scenarios.py --profile fsm_edges
 #   python experiments/sweep_scenarios.py --profile fsm_edges --response-arms ideal rail
@@ -65,6 +72,8 @@ cadence: on demand (WP3-07, the FSM's edges on the rails)
 grant_scope: "not a grant row: the escalation FSM's G2, G4, G6, X2 and X3 flown on a rail"
 grant_sim_speedup: "1.0 on the hil rail - NOT met headless (measured speedup >> 1)"
 grant_kpi_bearing: false
+# The battery cell flies on the rails from this profile alone (2026-11-17).
+rail_battery: true
 library: experiments/scenarios.yaml
 seeds: [1001]
 samples_per_family: 1

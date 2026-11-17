@@ -756,7 +756,8 @@ held `ssh ... mkdir -p` open into its 60 s timeout (shk02).
 
 What the rail cannot fly is refused before anything flies, with the reason,
 and listed: the stressors SITL has no honest equivalent for (GPS noise,
-state latency, gusts; the battery hook until 2026-11-17; next section), an
+state latency, gusts; the battery hook unless the profile opts in,
+`rail_battery: true`, since 2026-11-17; next section), an
 RTL that must fail (`rtl_failed_ticks`, until 2026-11-14), a non-finite pilot action, a relabel schedule, start
 altitudes below 1 m or at the GeoFence ceiling (the 0.5 m and 30 m cells),
 and the paraphrase and prefix-off arms (the stub reads no text). Shield-off
@@ -797,24 +798,48 @@ node writes `rtl_failed` on every RTL row (failsafe-rtl-blocked flies; the
 FSM edges G2, G4, G6, X2 and X3 have a profile of their own,
 `--profile fsm_edges`, experiments/profiles/fsm_edges.yaml).
 
-`battery_critical_at_s` flies since 2026-11-17 (until then refused: SITL's
-battery reaches CRITICAL only through the firmware's BATT_CRT_VOLT /
-BATT_CRT_MAH, 0 by default). For that cell alone the simulator side first
-reads, then sets, the SIMULATED vehicle's battery fail-safe setup
-(BATT_LOW_VOLT 10.5, BATT_CRT_VOLT 10.1, BATT_LOW_TIMER 1, BATT_FS_LOW_ACT 0,
-BATT_FS_CRT_ACT 0: ArduCopter's autotest values, no action of the
-autopilot's own), boots SIM_BATT_VOLTAGE at 12.6 V and drops it to 10.0 V at
-t0 + battery_critical_at_s - 1 s; ArduPilot declares CRITICAL once the
-voltage has stayed under 10.1 V for more than BATT_LOW_TIMER
-(`AP_BattMonitor/AP_BattMonitor_Backend.cpp:135-139`, armed only,
-`AP_BattMonitor.cpp:791`). The dry run prints the setup on a `SITL setup`
-line. Only over a loopback link and only to an autopilot that answers
-SIM_BATT_VOLTAGE: never the CUAV on COM8. `stress.log` then says
+`battery_critical_at_s` can fly since 2026-11-17 (until then refused:
+SITL's battery reaches CRITICAL only through the firmware's BATT_CRT_VOLT /
+BATT_CRT_MAH, 0 by default), OPT-IN: only a profile with `rail_battery:
+true` flies it - fsm_edges alone, which bears no KPI. smoke, nightly and
+broad list failsafe-low-battery too, and their campaigns still refuse it
+(the smoke dry run stays 48 missions, 16 refused). For that cell the
+simulator side first reads, then sets, the SIMULATED vehicle's battery
+fail-safe setup: BATT_CRT_VOLT 10.1 and no action of the autopilot's own
+(BATT_FS_LOW_ACT 0, BATT_FS_CRT_ACT 0), as in ArduCopter's autotest
+BatteryFailsafe; BATT_LOW_VOLT 10.5, the copter default; BATT_LOW_TIMER 1,
+the cell's own choice (a lab vehicle-setup choice of 2026-11-17; the default
+is 10 s). It boots SIM_BATT_VOLTAGE at 12.6 V and drops it to 10.0 V (the
+autotest's drop) at t0 + battery_critical_at_s - 1 s; ArduPilot declares
+CRITICAL once the voltage has stayed under 10.1 V for more than
+BATT_LOW_TIMER (`AP_BattMonitor/AP_BattMonitor_Backend.cpp:135-139`, armed
+only, `AP_BattMonitor.cpp:791`). The dry run prints the setup on a `SITL
+setup` line. Only over a loopback link and only to an autopilot that
+answers SIM_BATT_VOLTAGE: never the CUAV on COM8. `stress.log` then says
 `SITL_STRESS HOLDING` after the drop; `hil_desktop.sh stop` (TERM, up to
 5 s) has it restore every value (`SITL_STRESS RESTORED ...`, the record's
-`restore`) before SITL is killed. The flight is scored only if the
-CRITICAL reached the node's RTL watch within 1.5 s of the cell's time
-(`sitl_stress.json` `battery`).
+`restore`, on disk before the first BATT_* is set) before SITL is killed.
+The flight is scored only if the CRITICAL reached the node's RTL watch
+within 1.5 s of the cell's time AND the FSM was in RTL on the node's last
+row before it (`sitl_stress.json` `battery`, `fsm_state_at_critical`).
+ArduPilot keeps checking its battery while armed and the node records a
+CRITICAL whatever the FSM's state, so a return that had already left RTL
+(home and landing) when the CRITICAL came is refused as the stress not
+realised, an error, rather than scored as a failed G6 gate.
+
+The shakedown (not yet flown), before any KPI profile may take the cell:
+
+```bash
+python experiments/sweep_scenarios.py --profile fsm_edges --backend hil --hil-dry-run \
+    --only failsafe-low-battery
+python experiments/sweep_scenarios.py --profile fsm_edges --backend hil \
+    --hil-campaign fe_batt01 --only failsafe-low-battery
+```
+
+It passes when the run's `sitl_stress.json` `battery` has `onset_s` at most
+1.5 and `fsm_state_at_critical` RTL, the FSM record takes G11, then G6, then
+G10, and `stress.log` ends with `SITL_STRESS RESTORED` with every BATT_*
+and SIM_BATT_VOLTAGE restored.
 
 **The episode's clock.** The node announces its mission clock on every
 scenario mission: a STATUSTEXT `GRDL T0 <nonce8> t=<s>` through MAVROS at

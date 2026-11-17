@@ -62,9 +62,13 @@ voltage only after BATT_LOW_TIMER seconds (AP_BattMonitor_Backend::
 update_failsafes) - and the copter's defaults leave BATT_CRT_VOLT and
 BATT_CRT_MAH at 0, disabled. So a plan may also carry `firmware`: the battery
 fail-safe configuration of the SIMULATED vehicle (FIRMWARE_SITL_PARAMS
-only, the setup a real vehicle's battery would be given; ArduCopter's own
-autotest BatteryFailsafe sets the same ones), set at boot before the
-stressors and restored when this process is stopped. Guarded three ways,
+only, the setup a real vehicle's battery would be given: BATT_CRT_VOLT
+10.1, the 10.0 V drop and no low or critical action of the autopilot's own
+as in ArduCopter's autotest BatteryFailsafe; BATT_LOW_VOLT 10.5 is the
+copter default; BATT_LOW_TIMER 1 s is the cell's own choice, a lab
+vehicle-setup choice of 2026-11-17, where the default is 10 s and the
+autotest leaves it there), set at boot before the stressors and restored
+when this process is stopped. Guarded three ways,
 because these names exist on a real flight controller too: the link must be
 a loopback tcp/udp one (firmware_link_ok: never a serial port), the
 autopilot must answer SIM_BATT_VOLTAGE (a hardware autopilot has no SIM_*
@@ -549,6 +553,10 @@ def run(plan: dict, record_path: Path, link: SitlLink, *, t0_timeout_s: float,
     if unread:
         return _boot_failed(rec, record_path, "the value(s) to restore after the mission "
                             "could not be read, so none is changed: " + ", ".join(unread), say)
+    # On disk before the first set: restore() reads the record, so a SIGTERM
+    # in the middle of the sets below still finds every value to set back.
+    if to_restore:
+        write_record(record_path, rec)
     for it in firmware:
         name, want = it["param"], float(it["value"])
         echo, _, _ = link.set_param(name, want, timeout=2.0)
