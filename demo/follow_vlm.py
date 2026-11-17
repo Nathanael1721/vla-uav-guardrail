@@ -4173,13 +4173,16 @@ def flight_shield(policy, obstacle_map, grant_forecast: bool = False,
     if legacy_forecast and grant_forecast:
         raise ValueError("--legacy-forecast and --grant-forecast are two different "
                          "Shields; give one")
+    # PathRepair off on this follow rail (guardrail.replay
+    # FOLLOW_RAIL_PATH_REPAIR): the chain it flew before 2026-11-17.
+    from guardrail.replay import FOLLOW_RAIL_PATH_REPAIR as pr
     if legacy_forecast:
         return Shield(policy, lookahead_s=3.0, dt=0.5, obstacle_map=obstacle_map,
-                      road_map=road_map)
+                      road_map=road_map, path_repair=pr)
     if grant_forecast:
         return Shield(policy, obstacle_map=obstacle_map, escalation=False,
-                      road_map=road_map)
-    return Shield(policy, obstacle_map=obstacle_map, road_map=road_map)
+                      road_map=road_map, path_repair=pr)
+    return Shield(policy, obstacle_map=obstacle_map, road_map=road_map, path_repair=pr)
 
 
 def shield_lookahead_record(shield) -> dict:

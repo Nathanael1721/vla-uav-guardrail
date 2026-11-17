@@ -1400,6 +1400,22 @@ def rule_clock(start: str | datetime | None = None, *,
                 "on the wall clock in this zone, read as naive local time"}
 
 
+# PathRepair on the FOLLOW / perception rails (demo/vla_fly.py,
+# demo/follow_vlm.py, demo/pas_ardupilot/perception_node.py,
+# sitl/run_sitl_demo.py): OFF, the chain each of them flew before
+# 2026-11-17. PathRepair joined the Shield's default chain that day (WP3-06),
+# and in chain mode it acts only round a subject's stand-off ring - which is
+# exactly what these rails feed. On the 8 Oct follow-car flight's tick 201 it
+# supersedes StandoffHold and flies a 2.64 m/s detour in place of the hold's
+# slowdown (tests/test_shield.py). No follow figure (the stand-off feed's,
+# agx_follow's, the follow scoring) has been re-measured closed-loop with it,
+# so these rails keep it off until one is. The KPI rail
+# (sitl/ros2_shield_node.py, --path-repair on by default) and the headless
+# library fly it. tools/replay_standoff_feed.py --path-repair on is the
+# open-loop A/B.
+FOLLOW_RAIL_PATH_REPAIR = False
+
+
 def rail_shield(policy: Policy, *, lookahead_s: float, dt: float,
                 clock: Callable[[], datetime] | None = None, **kw):
     """A flight rail's Shield, without an escalation FSM of its own.

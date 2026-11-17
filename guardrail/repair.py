@@ -285,27 +285,26 @@ class PathRepair:
     enforcing, so it cannot add an escape. The waypoint is logged in body
     frame (forward / right of the heading, frames.to_body).
 
-    Its magnitude_m (since 2026-11-17) is the correction of the action it
-    EMITS: |emitted - raw| (horizontal, m/s; the raw command taken at the
-    emitted speed, since SpeedClamp reports the speed change) over one
-    control period (`PERIOD_S`, fsm.THETA_HORIZON_S, 0.1 s), in metres -
-    the grant's "||action_repaired - action_original||" (Safety Shield p4)
-    on the one-period reading the FSM already offers (theta_horizon_s=0.1).
+    Its magnitude_m is on theta's DECIDED basis, reading A (2026-11-02,
+    docs/DESIGN-escalation-fsm.md decision 1; fsm.DEFAULT_THETA_HORIZON_S):
+    a forecast depth in metres - the depth the raw forecast reached into
+    the ring the detour avoids, or, if larger, the sum of the lateral
+    projections it supersedes (so theta never reads less for a tick a
+    detour is flown than it read for the projection it replaced). Theta
+    therefore caps a detour exactly as it caps a projection: a raw forecast
+    more than theta_lateral_m (2.0 m) deep is escalated, not detoured.
     The lateral projections logged before it on the tick are SUPERSEDED
     (`supersede`): removed from the decision's repairs (the pass ledger
     keeps them, and the detour's detail names them), because their action
-    is not the one flown. The first version reported the depth the RAW
-    forecast reached into the ring and kept the projection's record beside
-    it: theta's per-axis sum counted that depth twice, and judged the
-    detour - whose own forecast enters nothing, it re-checks clean - by a
-    correction it did not make. Measured with that magnitude and PathRepair
-    on, the library's fail-safe trigger correctness fell from 175/179 to
-    150/171 (docs/DESIGN-escalation-fsm.md, decision 4). Theta reads this
-    value as it reads every other repair's (summed per axis): at a 4 m/s
-    cap a detour's correction is at most 0.8 m, so on a tick a detour is
-    flown theta abandons it for the fail-safe only above about 10 m/s (a
-    full reversal at 10 m/s is 2.0 m); the detour's safety rests on its
-    full re-check, which is what lets it be taken at all.
+    is not the one flown. The first version (2 Nov) reported the same
+    depth but kept the projection's record beside it: theta's per-axis sum
+    counted that depth twice; measured that way, with zone detours on, the
+    library's fail-safe trigger correctness fell from 175/179 to 150/171
+    (docs/DESIGN-escalation-fsm.md, decision 4). A 17 Nov draft of this
+    branch used the one-period |emitted - raw| x 0.1 s instead; that is
+    the reading guardrail/fsm.py rejects as the default (at the 4-5 m/s
+    caps it can never reach theta, so it would waive the cap), and it is
+    not used. `magnitude` still computes it, for the detour's detail.
 
     In chain mode (the default) it detours round STAND-OFF rings only
     (`chain_categories`); a keep-out zone is left to the projection, whose
@@ -319,7 +318,14 @@ class PathRepair:
     correctness 179/179 -> 178/179). `PathRepair(chain_categories=
     ("geofence", "standoff"))` registered in a Shield's `repair_operators`
     puts zone detours back in chain mode; first-feasible mode, where it
-    runs only after the projection failed, detours round both."""
+    runs only after the projection failed, detours round both.
+
+    First-feasible mode (off by default) is UNGATED: none of the chain-mode
+    gates below (no fix, a recovery under way, the projection over theta,
+    a detour that deepens the request's forecast, the zone clearance) runs
+    there, and it has not been measured since this redesign. Its theta sum
+    reads this magnitude (depth basis) in place of the superseded
+    projections, as in chain mode."""
 
     name = "PathRepair"
     categories = ("geofence", "standoff")
@@ -331,15 +337,24 @@ class PathRepair:
 
     @classmethod
     def magnitude(cls, emitted: Action4D, raw: Action4D) -> float:
-        """The correction of the emitted action, in metres: the horizontal
-        |emitted - raw| over one control period, net of the speed clamp
-        (the raw command is taken at the emitted speed: SpeedClamp reports
-        its own change and carries no position magnitude, as everywhere)."""
+        """The ONE-PERIOD change of the emitted action, in metres: the
+        horizontal |emitted - raw| over one control period, net of the speed
+        clamp (the raw command is taken at the emitted speed). Reported in
+        the detour's detail only; it is NOT magnitude_m, which is on theta's
+        decided depth basis (`depth_magnitude`)."""
         spd, out = math.hypot(raw.vx, raw.vy), math.hypot(emitted.vx, emitted.vy)
         if spd < 1e-9:
             return out * cls.PERIOD_S
         rx, ry = raw.vx / spd * out, raw.vy / spd * out
         return math.hypot(emitted.vx - rx, emitted.vy - ry) * cls.PERIOD_S
+
+    @staticmethod
+    def depth_magnitude(depth: float, superseded) -> float:
+        """magnitude_m on theta's decided basis (reading A): the depth the raw
+        forecast reached into the ring the detour avoids, or the summed
+        magnitudes of the lateral projections it supersedes, whichever is
+        larger."""
+        return max(float(depth), sum(r.magnitude_m or 0.0 for r in superseded))
 
     @staticmethod
     def supersede(repairs: list) -> list:
@@ -443,13 +458,14 @@ class PathRepair:
                           f"{right:+.1f} m right (body frame) at {speed:.2f} m/s; "
                           f"the action handed in kept {max(0.0, prog) / spd:.0%} of the "
                           f"commanded progress")
-                detail += f"; the raw forecast went {depth:.2f} m into the ring"
+                detail += (f"; the raw forecast went {depth:.2f} m into the ring; "
+                           f"one-period change {self.magnitude(cand, raw):.2f} m")
                 gone = self.supersede(ctx.repairs)
                 if gone:
                     detail += "; supersedes " + ", ".join(
                         f"{r.operator} ({r.magnitude_m or 0.0:.2f} m)" for r in gone)
                 rep = Repair(operator="PathRepair", detail=detail,
-                             magnitude_m=self.magnitude(cand, raw),
+                             magnitude_m=self.depth_magnitude(depth, gone),
                              axis="lateral", recovery=False)
                 ctx.repairs.append(rep)
                 return RepairAttempt(self.name, "ok", cand, detail, (rep,), ctx.pass_no)

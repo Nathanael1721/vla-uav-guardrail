@@ -557,8 +557,12 @@ def main() -> int:
     # loop clock (time.time, read late so a simulated clock is followed), not
     # on filter()'s counted 0.1 s ticks (read only with the own-velocity
     # forecast on; docs/DESIGN-own-velocity-forecast.md).
+    # PathRepair off on this rail (guardrail.replay FOLLOW_RAIL_PATH_REPAIR):
+    # the chain it flew before 2026-11-17; the ROS 2 node flies it.
+    from guardrail.replay import FOLLOW_RAIL_PATH_REPAIR
     shield = rail_shield(policy, lookahead_s=LOOKAHEAD_S, dt=LOOKAHEAD_DT_S,
-                         clock=clock, pipe_clock=lambda: time.time())
+                         clock=clock, pipe_clock=lambda: time.time(),
+                         path_repair=FOLLOW_RAIL_PATH_REPAIR)
     # The own-velocity forecast, Shield-on arm only (OWN_VELOCITY_DEFAULT).
     own_v = getattr(args, "own_velocity_forecast", OWN_VELOCITY_DEFAULT) == "on" and shield_on
     n_vel_used = 0

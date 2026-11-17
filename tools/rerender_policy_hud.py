@@ -120,7 +120,9 @@ def snapshots(rows, policy, citymap: Path | None):
         if sm.is_file():
             zs = np.load(sm)
             street = {"street": zs["street"]}
-    shield = Shield(policy, lookahead_s=3.0, dt=0.5, obstacle_map=smap)
+    # PathRepair off: the chain of the old flights this re-renders (it joined
+    # the Shield's default chain on 2026-11-17).
+    shield = Shield(policy, lookahead_s=3.0, dt=0.5, obstacle_map=smap, path_repair=False)
     has_fence = any(getattr(c, "type", "") == "polygon_fence" for c in policy.constraints)
     if has_fence:
         print("[rerender] policy has a fence and the log may not say which hazard "

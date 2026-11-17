@@ -1130,8 +1130,9 @@ class ObstacleClearance(ConstraintBase):
 #   * guardrail/repair.py PathRepair._standoff_waypoints - the stand-off detour
 #     waypoint sits on a circle of radius min_range_m + max(1.0, soft_margin_m),
 #     so it DOES change the Shield's commands, on a Shield built with
-#     path_repair=True (the default since 2026-11-17; before that no flying
-#     rail set it - every run flown before then had PathRepair off);
+#     path_repair=True (the default since 2026-11-17, flown by the ROS 2 KPI
+#     rail; the follow rails pin it off, guardrail/replay.py
+#     FOLLOW_RAIL_PATH_REPAIR; every run flown before then had it off);
 #   * demo/policy_hud.py - the on-screen NEAR status;
 #   * _not_looser below - lowering it counts as loosening when layers merge.
 # StandoffHold / StandoffRecover do not read it (the speed taper in

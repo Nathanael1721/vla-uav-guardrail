@@ -6387,10 +6387,13 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
     # loop's REAL clock, not on the Shield's monitor clock, which filter()
     # counts at the nominal 0.1 s here; the recorded pas_ap ticks are 0.109 s
     # median and up to 0.73 s (14 Oct). Read only with a measured velocity.
+    # PathRepair off on this perception rail (guardrail.replay
+    # FOLLOW_RAIL_PATH_REPAIR): the chain it flew before 2026-11-17.
+    from guardrail.replay import FOLLOW_RAIL_PATH_REPAIR
     shield = rail_shield(policy, lookahead_s=LOOKAHEAD_S, dt=LOOKAHEAD_DT_S,
                          obstacle_map=smap, road_map=rmap, clock=rule_now,
                          velocity_response=vresp.ARDUCOPTER_GUIDED,
-                         pipe_clock=clock)
+                         pipe_clock=clock, path_repair=FOLLOW_RAIL_PATH_REPAIR)
     shield_on = args.shield == "on"
     # The own-velocity forecast and the hold that stops clear (OWN_VELOCITY_
     # DEFAULT). Off: the Shield's State carries no velocity, so its decisions

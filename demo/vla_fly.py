@@ -1647,8 +1647,11 @@ async def _fly(args, holder: dict) -> int:
     # from 9.1 % of ticks to 1.1 %; 3 s / 0.5 s would change every rule's
     # forecast to save the rest (on the same replay the other rules' repairs
     # rose by half), so the grant's stays (CHANGELOG 2026-11-01 "late").
+    # PathRepair off on this follow rail (guardrail.replay
+    # FOLLOW_RAIL_PATH_REPAIR): the chain it flew before 2026-11-17.
+    from guardrail.replay import FOLLOW_RAIL_PATH_REPAIR
     shield = rail_shield(policy, lookahead_s=LOOKAHEAD_S, dt=LOOKAHEAD_DT_S, obstacle_map=smap,
-                         road_map=rmap)
+                         road_map=rmap, path_repair=FOLLOW_RAIL_PATH_REPAIR)
     # The subject stand-off: who the subject is (the object words' policy
     # class, follow_vlm.subject_width) and whether its position can be fed
     # (subject_feed; decided again once the identity is set up).

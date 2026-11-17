@@ -254,26 +254,42 @@ def test_path_repair_is_in_the_default_chain_in_the_grants_order():
     assert [r.operator for r in d.repairs] == ["GeofenceSlide"], d.repairs
 
 
-def test_path_repair_magnitude_is_the_correction_of_the_action_it_emits():
-    """magnitude_m = |emitted - raw| (horizontal; the raw taken at the
-    emitted speed, SpeedClamp owns the speed change) x one control period
-    (fsm.THETA_HORIZON_S): the grant's ||action_repaired - action_original||
-    on the one-period reading. Not the raw forecast's depth (the
-    projection's correction): that is named in the detail, and the
-    projection records the detour replaces are superseded, so theta's sum
-    holds only the correction flown."""
+def test_path_repair_magnitude_is_on_thetas_decided_depth_basis():
+    """magnitude_m is on theta's DECIDED basis, reading A (2026-11-02,
+    fsm.DEFAULT_THETA_HORIZON_S None): a forecast depth in metres - the depth
+    the raw forecast reached into the ring the detour avoids, or the summed
+    magnitudes of the projections it supersedes, whichever is larger. So
+    theta never reads less on a detour tick than on the projection tick it
+    replaces, and a raw forecast deeper than theta is capped as a projection
+    would be. The one-period |emitted - raw| x 0.1 s (the reading fsm.py
+    rejects as the default: at the shipped caps it never reaches theta) is
+    only reported in the detail."""
     from guardrail import fsm as F
+    assert F.DEFAULT_THETA_HORIZON_S is None
     assert R.PathRepair.PERIOD_S == F.THETA_HORIZON_S
     raw, em = Action4D(vx=20.0), Action4D(vx=3.0, vy=4.0)       # cap 5 m/s
-    # raw at 5 m/s is (5, 0): |(3, 4) - (5, 0)| = sqrt(20) m/s, x 0.1 s
+    # the one-period helper: raw at 5 m/s is (5, 0), |(3, 4) - (5, 0)| x 0.1 s
     assert abs(R.PathRepair.magnitude(em, raw) - math.sqrt(20.0) * 0.1) < 1e-12
     assert R.PathRepair.magnitude(Action4D(vx=2.0), Action4D(vx=2.0)) == 0.0
+
+    class _R:
+        def __init__(self, m):
+            self.magnitude_m = m
+    assert R.PathRepair.depth_magnitude(0.8, [_R(0.5)]) == 0.8
+    assert R.PathRepair.depth_magnitude(0.3, [_R(0.5), _R(0.4)]) == 0.9
+    assert R.PathRepair.depth_magnitude(2.5, []) == 2.5          # over theta: capped
     st, a = State(x=5.0, y=9.0, up=10.0, yaw_deg=0.0), Action4D(vx=2.0)
-    d = _zones(Shield(_square_policy(), escalation=False)).filter(st, a)
+    sh = _zones(Shield(_square_policy(), escalation=False))
+    d = sh.filter(st, a)
     pr = [r for r in d.repairs if r.operator == "PathRepair"]
     assert len(pr) == 1, d.repairs
-    assert abs(pr[0].magnitude_m - R.PathRepair.magnitude(d.emitted, a)) < 1e-12
-    assert pr[0].magnitude_m <= 2.0 * 2.0 * 0.1 + 1e-12          # <= 2 x speed x period
+    base = Shield(_square_policy(), escalation=False, path_repair=False).filter(st, a)
+    slide = sum(r.magnitude_m for r in base.repairs if r.operator == "GeofenceSlide")
+    zone = next(v.rule_id for v in base.violations if v.category == "geofence")
+    depth = R.PathRepair()._zone_waypoints(sh, st, a, zone)[1]
+    assert abs(pr[0].magnitude_m - max(depth, slide)) < 1e-9, (pr[0], depth, slide)
+    assert pr[0].magnitude_m >= slide - 1e-12                    # theta reads no less
+    assert "one-period change" in pr[0].detail, pr[0].detail
     assert "supersedes GeofenceSlide" in pr[0].detail, pr[0].detail
     assert [r.operator for r in d.repairs] == ["PathRepair"], d.repairs
     led = [x for p in d.trace["passes"] for x in p["attempts"]

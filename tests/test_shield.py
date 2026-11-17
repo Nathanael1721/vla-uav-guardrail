@@ -737,6 +737,37 @@ def test_a_stand_off_holds_magnitude_is_a_depth_the_ring_can_have():
     assert hold[0].magnitude_m < 2.0, "the old code reported 8.08 m here"
 
 
+def test_tick_201_with_the_default_chain_flies_a_stand_off_detour():
+    """The same tick on the DEFAULT chain (PathRepair on since 2026-11-17, at
+    the default theta 2.0 m): PathRepair supersedes StandoffHold and flies a
+    2.64 m/s detour (+5.5 m forward, +1.5 m right) in place of the hold's
+    slowdown to 1.35 m/s. Its magnitude_m is on theta's decided depth basis
+    (reading A): the 0.78 m the raw forecast went into the ring, the hold's
+    own figure, so theta reads this tick as it read it before. This is why
+    the follow rails keep PathRepair off (guardrail.replay
+    FOLLOW_RAIL_PATH_REPAIR) until a follow figure is re-measured with it."""
+    from guardrail.replay import FOLLOW_RAIL_PATH_REPAIR
+    assert FOLLOW_RAIL_PATH_REPAIR is False
+    st = State(x=35.11, y=-19.674, up=8.001, yaw_deg=2.14)
+    a = Action4D(vx=2.639389733893821, vy=0.09851453808726945, vz_up=-0.0006,
+                 yaw_rate=-0.6427205700542464)
+    out = {}
+    for pr in (False, True):
+        sh = Shield(_follow_car_policy(), escalation=False, path_repair=pr)
+        sh.set_subject(42.38, -23.63, "vehicle")
+        out[pr] = sh.filter(st, a)
+    hold, det = out[False], out[True]
+    assert abs(hold.emitted.vx - 0.6443) < 1e-3 and abs(hold.emitted.vy - 1.1841) < 1e-3
+    assert [r.operator for r in det.repairs] == ["PathRepair"], det.repairs
+    rep = det.repairs[0]
+    assert "supersedes StandoffHold" in rep.detail and "+5.5 m forward" in rep.detail, rep
+    assert abs(det.emitted.vx - 2.5132) < 1e-3 and abs(det.emitted.vy - 0.8122) < 1e-3
+    assert abs(math.hypot(det.emitted.vx, det.emitted.vy) - 2.64) < 0.01
+    assert abs(rep.magnitude_m - hold.repairs[0].magnitude_m) < 1e-9     # 0.78 m, depth
+    assert abs(rep.magnitude_m - 0.7756) < 1e-3
+    assert not det.emitted_violations, det.emitted_violations
+
+
 def test_unsafe_depth_measures_how_far_the_position_is_from_legal():
     """The escalation FSM's X6 / X7 read this trend. Each hard rule a stop
     here breaks, measured its own way and summed; 0 where a stop is legal;

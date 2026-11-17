@@ -1016,24 +1016,34 @@ its KPIs on the hil topology).
      proposes is over theta and escalates.
    - **What did not change:** P0 escapes (0) and polygon entries.
    - It stays selectable (`Shield(path_repair=True)`).
-   - **Superseded 2026-11-17 (WP3-06): PathRepair is ON by default**, in
-     the grant's order (after LateralProjection), redesigned so it no
-     longer escalates by itself: its `magnitude_m` is the correction of the
-     action it emits (|emitted - raw| net of the speed clamp, x 0.1 s), the
+   - **Superseded 2026-11-17 (WP3-06): PathRepair is ON by default** in
+     the library Shield and the KPI rail (sitl/ros2_shield_node.py
+     `--path-repair on`), in the grant's order (after LateralProjection),
+     redesigned so it no longer double-counts: its `magnitude_m` stays on
+     decision 1's basis (reading A, a forecast depth: the raw forecast's
+     depth into the ring, or the superseded projections' sum if larger), the
      projection records it replaces are superseded (removed from the
-     decision's repairs, kept on the pass ledger), and in chain mode it
-     detours round stand-off rings only (zones stay with the projection:
-     zone detours cost a labelled RTL and true-state margin, measured), and
-     stands aside where the tick's projection is already over theta, during
-     a recovery, without a position fix, or where one control period of the
-     detour would take the request's forecast deeper into the ring.
-     Measured on smoke, the library and the nightly cells (seed 1001): P0
-     escapes 0, fail-safe trigger correctness 63/63, 179/179, 247/247
-     (unchanged), mission success unchanged; 0, 1 and 3 episodes fly
-     differently (standoff-approach-angles offset 9, same outcome).
+     decision's repairs, kept on the pass ledger), so theta reads a detour
+     tick as it read the projection tick. In chain mode it detours round
+     stand-off rings only (zones stay with the projection: zone detours cost
+     a labelled RTL and true-state margin, measured; a stated deviation
+     from the grant's boundary wording), and stands aside where the tick's
+     projection is already over theta, during a recovery, without a
+     position fix, or where one control period of the detour would take the
+     request's forecast deeper into the ring. First-feasible mode runs it
+     ungated (not measured since). Measured on smoke, the library and the
+     nightly cells (seed 1001): P0 escapes 0, fail-safe trigger correctness
+     63/63, 179/179, 247/247 (unchanged), mission success unchanged; 0, 1
+     and 3 episodes fly differently (standoff-approach-angles offset 9, same
+     outcome; Brake 1.2 s longer, raw-forecast P0 ticks 13 -> 25).
      docs/data/pathrepair_default_20261117/README.md. Every run flown
-     before 2026-11-17 had PathRepair off; the next hil campaign flies it
-     (`path_repair=False` restores the old chain).
+     before 2026-11-17 had PathRepair off; the follow / perception rails
+     keep it off (guardrail/replay.py `FOLLOW_RAIL_PATH_REPAIR`) until a
+     closed-loop follow A/B is flown; the next hil campaign on the ROS 2
+     rail flies it (`--path-repair off` restores the old chain).
+     Decision 1 is unchanged: no operator's magnitude uses the one-period
+     reading (a 17 Nov draft did, for PathRepair; it was rejected in
+     review because under it theta could never cap a detour).
 
 ### FSM behaviour that was wrong (fixed, `guardrail/fsm.py`)
 
