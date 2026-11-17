@@ -171,17 +171,17 @@ def _is_exit(piece, shape, p, home) -> bool:
     zone instead of leaving it; for a non-convex one the samples are
     `_EXIT_STEP_M` apart."""
     from shapely.geometry import Point
+
+    from .geometry import boundary_depth, point_distance
     a, b = Point(piece.coords[0]), Point(piece.coords[-1])
-    if a.distance(p) > b.distance(p):
+    if point_distance(a, p.x, p.y) > point_distance(b, p.x, p.y):
         a, b = b, a
-    if b.distance(Point(home)) <= 1e-6:
+    if point_distance(b, home[0], home[1]) <= 1e-6:
         return False                       # home itself is inside the zone
     n = min(4000, max(2, int(math.ceil(piece.length / _EXIT_STEP_M))))
-    edge = shape.boundary
-    prev = edge.distance(a)
+    prev = boundary_depth(shape, a.x, a.y)
     for k in range(1, n + 1):
-        q = Point(a.x + (b.x - a.x) * k / n, a.y + (b.y - a.y) * k / n)
-        d = edge.distance(q)
+        d = boundary_depth(shape, a.x + (b.x - a.x) * k / n, a.y + (b.y - a.y) * k / n)
         if d > prev + _EXIT_TOL_M:
             return False
         prev = d
@@ -193,18 +193,22 @@ def check_leg(x: float, y: float, up: float, home: tuple[float, float],
               rtl_alt_m: float = RTL_ALT_M) -> LegCheck:
     """Is the straight RTL path from (x, y, up) to `home` clear of every zone
     in `zones` and inside `band`? (Module docstring.)"""
-    from shapely.geometry import LineString, Point
+    from shapely.geometry import Point
 
+    from .geometry import point_distance, ring_contains, segment_in_ring
     from .shield import Shield, band_holds, zone_breached
     h = rtl_altitude(up, rtl_alt_m)
     p = Point(x, y)
     blocking: list[str] = []
     reasons: list[str] = []
     inside: list[str] = []
-    seg = (LineString([(x, y), (home[0], home[1])])
-           if math.hypot(home[0] - x, home[1] - y) > _EPS_M else None)
+    seg = math.hypot(home[0] - x, home[1] - y) > _EPS_M
     for z in zones:
-        in_footprint = z.shape.contains(p)
+        # The footprint and the leg's crossing are the library's measures
+        # (guardrail/geometry.py: ring_contains, segment_in_ring,
+        # boundary_depth - the same calls the Shield's verdicts make), since
+        # 2026-11-17 (WP3-22); the leg's question is asked here.
+        in_footprint = ring_contains(z.shape, x, y)
         # Already inside: the Shield's own test on its ring (zone_breached:
         # the footprint AND the band), for a zone that carries its rule.
         if (zone_breached(z.rule, x, y, up, buffered=z.shape) if z.rule is not None
@@ -219,21 +223,21 @@ def check_leg(x: float, y: float, up: float, home: tuple[float, float],
                            f"({z.floor_m:g}-{z.ceiling_m:g} m)")
             continue
         # The return leg at h.
-        if seg is None or not band_holds(z.floor_m, z.ceiling_m, h):
+        if not seg or not band_holds(z.floor_m, z.ceiling_m, h):
             continue
-        parts = _pieces(seg.intersection(z.shape))
+        parts = _pieces(segment_in_ring(z.shape, x, y, home[0], home[1]))
         if already:
             # Leaving a zone it is inside is the exit, not a block - but only
             # the piece that starts at the aircraft can be the exit, and only
             # if it leaves (_is_exit); any other piece re-enters the zone.
             parts = [g for g in parts
-                     if not ((Point(g.coords[0]).distance(p) <= 1e-6
-                              or Point(g.coords[-1]).distance(p) <= 1e-6)
+                     if not ((point_distance(Point(g.coords[0]), x, y) <= 1e-6
+                              or point_distance(Point(g.coords[-1]), x, y) <= 1e-6)
                              and _is_exit(g, z.shape, p, home))]
         if parts:
             blocking.append(z.rule_id)
-            ends = " and ends there: home is inside it" if z.shape.contains(
-                Point(home[0], home[1])) else ""
+            ends = (" and ends there: home is inside it"
+                    if ring_contains(z.shape, home[0], home[1]) else "")
             reasons.append(f"the leg home at {h:g} m crosses {z.rule_id} "
                            f"({sum(g.length for g in parts):.1f} m inside its ring{ends})")
     # The altitude envelope's own test (Shield._alt_outside: 1e-9 m of slack).

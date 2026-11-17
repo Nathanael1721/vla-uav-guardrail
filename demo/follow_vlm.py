@@ -2333,6 +2333,7 @@ class FenceGuard:
         # The Shield caught every one of those, which is the system working. But
         # the controller should not be proposing them.
         self.occ = obstacle_map
+        self._clear_fn = None
         self.min_clearance_m = min_clearance_m
         # ...and "on the road" has to be ASKED, not inferred from the absence of
         # obstacles. That inference held only while the obstacle map was built
@@ -2417,42 +2418,57 @@ class FenceGuard:
         keepout = self._aim_keepout
         if keepout is None:
             return None
-        from shapely.geometry import Point
-        from shapely.ops import nearest_points
-        a = Point(x + ux * ahead_m, y + uy * ahead_m)
-        if not keepout.contains(a):
+        from guardrail.geometry import nearest_boundary_point, ring_contains
+        ax, ay = x + ux * ahead_m, y + uy * ahead_m
+        if not ring_contains(keepout, ax, ay):
             return None
-        q = nearest_points(keepout.boundary, a)[0]
-        dx, dy = q.x - x, q.y - y
+        qx, qy = nearest_boundary_point(keepout, ax, ay)
+        dx, dy = qx - x, qy - y
         n = math.hypot(dx, dy)
         if n < 1e-6:
             return None
         return dx / n, dy / n
 
+    def _clearance_fn(self):
+        """What the building half measures with: the Shield's clearance
+        field (Shield.clearance_at), when the guard's Shield holds this
+        obstacle map; else the same field built over the guard's map and
+        read by the same function (guardrail/shield.py ClearanceField,
+        field_distance)."""
+        fn = self._clear_fn
+        if fn is None:
+            sh, occ = self.shield, self.occ
+            same = (sh.has_obstacle_map and sh._dist.shape == np.asarray(occ["occ"]).shape
+                    and sh._res == float(occ["res"]) and sh._ox == float(occ["ox"])
+                    and sh._oy == float(occ["oy"]))
+            if same:
+                fn = sh.clearance_at
+            else:
+                from guardrail.shield import ClearanceField
+                fn = ClearanceField(occ).distance
+            self._clear_fn = fn
+        return fn
+
     def clearance(self, px: float, py: float, cap_m: float) -> float:
-        """Distance to the nearest mapped obstacle, searched no further than `cap_m`.
+        """Distance to the nearest mapped obstacle, no more than `cap_m`.
 
         Returns `cap_m` when nothing is within it, so callers can treat the cap
-        as "far enough to be uninteresting" without a special case. A local
-        scan rather than a distance transform, for the same reason
-        `_clear_of_obstacles` uses one: this runs inside the control loop.
+        as "far enough to be uninteresting" without a special case.
+
+        THE SHIELD'S FIELD (2026-11-17, WP3-22 / X-13). This used to scan the
+        occupancy grid itself (the nearest blocked cell centre within the
+        cap, rounded to the nearest cell): a second measure of the clearance
+        rule beside the Shield's distance field, which reads the field
+        bilinearly and so up to 1.4 m nearer beside a building face. It now
+        reads the Shield's own field (`_clearance_fn`): the controller stops
+        at the line the Shield defends, measured the same way. Replayed on
+        stored CityLife follow flights (tools/onepath_guard_replay.py) the
+        building half's verdict differs on about 1 % of ticks; the flights
+        before this change flew the grid scan.
         """
         if not self.occ:
             return cap_m
-        occ, res = self.occ["occ"], self.occ["res"]
-        ox, oy = self.occ["ox"], self.occ["oy"]
-        n, m = occ.shape
-        r = int(math.ceil(cap_m / res))
-        i0 = int(round((px - ox) / res))
-        j0 = int(round((py - oy) / res))
-        best = cap_m
-        for i in range(max(0, i0 - r), min(n, i0 + r + 1)):
-            for j in range(max(0, j0 - r), min(m, j0 + r + 1)):
-                if occ[i, j]:
-                    d = math.hypot(ox + i * res - px, oy + j * res - py)
-                    if d < best:
-                        best = d
-        return best
+        return min(cap_m, self._clearance_fn()(px, py))
 
     def _obstacle_gate(self, x: float, y: float, vx: float, vy: float):
         """The building half of `gate`, shaped exactly like the fence half.
@@ -2658,23 +2674,12 @@ class FenceGuard:
             return bool(st[i, j])
 
         def _clear_of_obstacles(px: float, py: float) -> bool:
-            """Far enough from every MAPPED obstacle. Cheap Chebyshev scan of the
-            occupancy grid rather than a distance transform, because slide() runs
-            inside the 10 Hz control loop."""
+            """Far enough from every MAPPED obstacle: the Shield's clearance
+            field at least min_clearance_m here (`clearance`; a grid scan of
+            its own until 2026-11-17)."""
             if not self.occ:
                 return True
-            occ, res = self.occ["occ"], self.occ["res"]
-            ox, oy = self.occ["ox"], self.occ["oy"]
-            r = int(math.ceil(self.min_clearance_m / res))
-            i0 = int(round((px - ox) / res))
-            j0 = int(round((py - oy) / res))
-            n, m = occ.shape
-            for i in range(max(0, i0 - r), min(n, i0 + r + 1)):
-                for j in range(max(0, j0 - r), min(m, j0 + r + 1)):
-                    if occ[i, j] and math.hypot(ox + i * res - px,
-                                                oy + j * res - py) < self.min_clearance_m:
-                        return False
-            return True
+            return self.clearance(px, py, self.min_clearance_m) >= self.min_clearance_m
 
         def _ahead_clear(px: float, py: float) -> bool:
             pts = [(px + ux * a, py + uy * a)

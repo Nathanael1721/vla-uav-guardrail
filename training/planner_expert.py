@@ -49,8 +49,9 @@ class PlannerExpert:
     # ---------------- graph planning ---------------- #
 
     def _clear(self, a, b) -> bool:
+        from guardrail.geometry import area_meets
         seg = LineString([a, b])
-        return not any(seg.intersects(p) for p in self._test_polys)
+        return not any(area_meets(seg, p) for p in self._test_polys)
 
     def _dijkstra(self, sx, sy, tx, ty):
         nodes = [(sx, sy), (tx, ty)]

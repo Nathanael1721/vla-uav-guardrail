@@ -41,6 +41,16 @@ import follow_vlm as F                                        # noqa: E402
 from aerialvla_demo import RateLimiter                        # noqa: E402
 from guardrail import load_policy                             # noqa: E402
 from guardrail.models import Action4D                         # noqa: E402
+from guardrail.shield import _CHAMFER_CORR                     # noqa: E402
+
+# Where the synthetic walls below stand. Since 2026-11-17 (WP3-22) the
+# guard's building half reads the Shield's distance field, which scales every
+# distance by _CHAMFER_CORR (a lower bound, guardrail/shield.py); a straight
+# wall at 5.2 / _CHAMFER_CORR m reads 5.2 m from y = 0 there, as the wall at
+# 5.2 m read to the guard's own grid scan before - so the setups keep their
+# numbers. The cell row sits exactly on the wall line (35 m from the map's
+# origin, a whole number of 0.5 m cells).
+_WALL_Y = 5.2 / _CHAMFER_CORR
 
 SKIP = "skip"
 TICK = F.TICK
@@ -234,10 +244,10 @@ def test_the_yaw_rate_is_slewed():
 def _wall_guard():
     """follow_car.yaml (no fence) and a synthetic wall: every cell with
     y >= 5.2 is occupied, a 5 m clearance ring - the verifier's setup."""
-    res, ox, oy = 0.5, -60.0, -29.8
+    res, ox, oy = 0.5, -60.0, _WALL_Y - 35.0
     occ = np.zeros((400, 120), dtype=bool)
     ys = oy + np.arange(120) * res
-    occ[:, ys >= 5.2 - 1e-9] = True
+    occ[:, ys >= _WALL_Y - 1e-9] = True
     pol = load_policy(ROOT / "policies" / "follow_car.yaml")
     return F.FenceGuard(pol, brake_m=12.0, stand_off_m=3.0,
                         obstacle_map={"occ": occ, "res": res, "ox": ox, "oy": oy},
@@ -290,15 +300,16 @@ class _ZonesGuard(F.FenceGuard):
 
 
 def _jutting_guard(zones=()):
-    """The wall of _wall_guard plus a building jutting out ahead (x 7.5-12,
-    y >= 4): from (0, 0.5) flying east the aircraft is 4.70 m from it,
-    inside the 5 m ring, and the building half brakes without blocking."""
-    res, ox, oy = 0.5, -60.0, -29.8
+    """The wall of _wall_guard plus a building jutting out ahead (x 9-13.5,
+    y >= 4; x 7.5-12 until the guard read the Shield's field, 2026-11-17):
+    from (0, 0.5) flying east the aircraft is 4.74 m from the wall, inside
+    the 5 m ring, and the building half brakes without blocking."""
+    res, ox, oy = 0.5, -60.0, _WALL_Y - 35.0
     occ = np.zeros((400, 120), dtype=bool)
     xs, ys = ox + np.arange(400) * res, oy + np.arange(120) * res
-    occ[:, ys >= 5.2 - 1e-9] = True
+    occ[:, ys >= _WALL_Y - 1e-9] = True
     X, Y = np.meshgrid(xs, ys, indexing="ij")
-    occ[(X >= 7.5) & (X <= 12.0) & (Y >= 4.0)] = True
+    occ[(X >= 9.0) & (X <= 13.5) & (Y >= 4.0)] = True
     g = _ZonesGuard(load_policy(ROOT / "policies" / "follow_car.yaml"),
                     brake_m=12.0, stand_off_m=3.0, min_clearance_m=5.0,
                     obstacle_map={"occ": occ, "res": res, "ox": ox, "oy": oy})
@@ -317,7 +328,7 @@ def test_inside_the_building_ring_the_brake_bites_at_once_with_or_without_a_fenc
         g = _jutting_guard(zones)
         s, fd, fb = g.gate(0.0, 0.5, 5.0, 0.0)
         assert g.last_cause == "obstacle" and s < 1.0 and not fb, (zones, s, fd, fb)
-        assert abs(g.last_obstacle_d - 4.70) < 0.05, g.last_obstacle_d
+        assert abs(g.last_obstacle_d - 4.74) < 0.05, g.last_obstacle_d
         assert F.guard_urgent(g, fb), (zones, s, fd, g.last_obstacle_d, g.last_fence_d)
         # and through the smoother it bites in the same tick
         gs = F.GuardSmoother()
@@ -349,10 +360,10 @@ def test_a_building_hit_that_does_not_brake_is_not_urgent():
     against the 5 m ring and flagged an urgent hold on a tick with no brake
     at all - the limiter then applied the legacy braking floor for nothing
     (review of f7611f9, 2026-10-19). Fails with last_obstacle_d = o_d."""
-    res, ox, oy = 0.5, -60.0, -29.8
+    res, ox, oy = 0.5, -60.0, _WALL_Y - 35.0
     occ = np.zeros((400, 120), dtype=bool)
     xs, ys = ox + np.arange(400) * res, oy + np.arange(120) * res
-    occ[:, ys >= 5.2 - 1e-9] = True                  # the wall 4.70 m abeam
+    occ[:, ys >= _WALL_Y - 1e-9] = True                  # the wall 4.70 m abeam
     X, Y = np.meshgrid(xs, ys, indexing="ij")
     occ[(X >= 18.0) & (X <= 21.0) & (Y >= 2.0)] = True   # a building 18 m ahead
     g = _ZonesGuard(load_policy(ROOT / "policies" / "follow_car.yaml"),

@@ -255,8 +255,12 @@ def test_the_gap_policy_gap_is_out_of_search_range_once_the_map_is_honest():
     further east and the detour grows to 15.0 m. slide() searches 14 m, so it
     reports no gap at all.
 
-    The gap is real: at reach_m=20 it is found, eastward, at cost 15.0. What
-    stops that being the fix is that raising the reach lets a guard with NO
+    The gap is real: at reach_m=20 it was found, eastward, at cost 15.0. Since
+    2026-11-17 (WP3-22) the guard measures the clearance on the Shield's own
+    distance field (bilinear and chamfer-scaled, so nearer than its old grid
+    scan beside the street furniture), and the first column the Shield would
+    also accept lies further east: found at reach_m=30, cost 26.0. What
+    stops raising the reach being the fix is that raising the reach lets a guard with NO
     street mask find a way around a corridor-spanning fence's END, which is
     exactly the off-road regression test_a_detour_must_stay_on_the_road guards.
     The reach cannot move until every caller supplies the mask.
@@ -273,8 +277,8 @@ def test_the_gap_policy_gap_is_out_of_search_range_once_the_map_is_honest():
         f"slide() found the gap at the default 14 m reach, returning "
         f"({sx},{sy}) cost {cost}. If the reach was raised, check that every "
         f"FenceGuard caller now passes street_mask first.")
-    sx2, sy2, cost2 = g.slide(38.0, -6.0, *NORTH, reach_m=20.0)
-    assert sx2 > 0.5 and 14.0 < cost2 < 20.0, (
+    sx2, sy2, cost2 = g.slide(38.0, -6.0, *NORTH, reach_m=30.0)
+    assert sx2 > 0.5 and 14.0 < cost2 < 30.0, (
         f"the gap should still exist at a longer reach; got ({sx2},{sy2}) {cost2}")
 
 

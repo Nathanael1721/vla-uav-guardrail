@@ -72,6 +72,8 @@ from __future__ import annotations
 import math
 from typing import Any, Iterator
 
+from .planar import point_in_ring_xy, segment_distance
+
 # The keep-out zone types an autopilot exclusion fence can represent.
 ZONE_TYPES = ("polygon_fence", "circle_fence", "dynamic_nfz")
 
@@ -215,23 +217,15 @@ def policy_zones(policy, now=None, column_m: float | None = None
 # Where the aircraft is: hold back a zone it is in or near
 # --------------------------------------------------------------------------- #
 
+# The containment and point-to-segment measures are the library's
+# (guardrail/planar.py: shapely-free, so this module still imports without
+# it); until 2026-11-17 it kept its own copies (WP3-22).
 def _point_in_polygon(x: float, y: float, verts: list) -> bool:
-    inside = False
-    n = len(verts)
-    for i in range(n):
-        (x1, y1), (x2, y2) = verts[i], verts[(i + 1) % n]
-        if (y1 > y) != (y2 > y):
-            xc = x1 + (y - y1) * (x2 - x1) / (y2 - y1)
-            if x < xc:
-                inside = not inside
-    return inside
+    return point_in_ring_xy(x, y, verts)
 
 
 def _segment_distance(px, py, ax, ay, bx, by) -> float:
-    dx, dy = bx - ax, by - ay
-    L2 = dx * dx + dy * dy
-    t = 0.0 if L2 == 0 else max(0.0, min(1.0, ((px - ax) * dx + (py - ay) * dy) / L2))
-    return math.hypot(px - (ax + t * dx), py - (ay + t * dy))
+    return segment_distance(px, py, ax, ay, bx, by)
 
 
 def zone_clearance_m(fence: dict, x: float, y: float) -> float:

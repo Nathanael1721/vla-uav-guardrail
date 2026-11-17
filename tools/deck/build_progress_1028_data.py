@@ -27,11 +27,12 @@ import sys
 from pathlib import Path
 
 import yaml
-from shapely.geometry import Point, Polygon
+from shapely.geometry import Polygon
 
 REPO = Path(__file__).resolve().parents[2]
 if str(REPO) not in sys.path:          # guardrail.projection when run as a script
     sys.path.insert(0, str(REPO))
+from guardrail.geometry import edge_distance, signed_edge_distance   # noqa: E402
 from guardrail.projection import raw_frame_origin, raw_point_metres   # noqa: E402
 OUT = REPO / "demo" / "out"
 DATA = REPO / "docs" / "data" / "progress_1028.json"
@@ -130,9 +131,8 @@ def zone_report(run: str, policy: Path = NFZ3B) -> dict:
     rows = [json.loads(l) for l in (OUT / run / "flight_log.jsonl").open(encoding="utf-8")]
     out = {}
     for zid, poly, margin in zones:
-        def sd(x, y):
-            p = Point(x, y)
-            return -poly.exterior.distance(p) if poly.contains(p) else poly.exterior.distance(p)
+        def sd(x, y, poly=poly):
+            return signed_edge_distance(poly, x, y)
         d = [sd(r["x"], r["y"]) for r in rows]
         car = [r["truth"]["pts"][0] for r in rows if r.get("truth") and r["truth"].get("pts")]
         cd = [sd(*p) for p in car]
@@ -254,7 +254,7 @@ def figures(nfz_res: dict) -> dict:
         ft = json.loads(rec.read_text(encoding="utf-8")).get("frame_t") or []
         rows = [json.loads(l) for l in (run / "flight_log.jsonl").open(encoding="utf-8")]
         poly = Polygon([(100, 122), (124, 122), (124, 134), (100, 134)])
-        near = min(rows, key=lambda q: poly.exterior.distance(Point(q["x"], q["y"])) + (0 if 98 <= q["x"] <= 126 else 99))
+        near = min(rows, key=lambda q: edge_distance(poly, q["x"], q["y"]) + (0 if 98 <= q["x"] <= 126 else 99))
         idx = min(range(len(ft)), key=lambda i: abs(ft[i] - near["t"])) if ft else None
         fpv = run / "view" / "fpv" / f"{idx:05d}.jpg" if idx is not None else None
         if fpv and fpv.exists():

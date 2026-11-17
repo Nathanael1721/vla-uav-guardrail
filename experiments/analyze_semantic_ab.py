@@ -333,8 +333,7 @@ def legal_approach(rows: list[dict], tx: float, ty: float, policy_path: Path,
     target-inside-the-fence variant, where geometry bounds d_min from below.
     """
     from guardrail import load_policy
-    from guardrail.geometry import fence_polygon
-    from shapely.geometry import Point
+    from guardrail.geometry import fence_polygon, ring_contains
 
     x = np.array([r["x"] for r in rows], float)
     y = np.array([r["y"] for r in rows], float)
@@ -349,13 +348,13 @@ def legal_approach(rows: list[dict], tx: float, ty: float, policy_path: Path,
         polys = [fence_polygon(f).buffer(f.margin_m) for f in pol.static_keepout_zones()]
     except Exception:
         pass
-    if any(p.contains(Point(tx, ty)) for p in polys):
+    if any(ring_contains(p, tx, ty) for p in polys):
         # sample the legal exterior for the closest point the rules permit
         best = 1e9
         for r_ in np.arange(1.0, 40.0, 0.5):
             for a in np.arange(0, 2 * np.pi, np.pi / 60):
                 px, py = tx + r_ * math.cos(a), ty + r_ * math.sin(a)
-                if not any(p.contains(Point(px, py)) for p in polys):
+                if not any(ring_contains(p, px, py) for p in polys):
                     best = min(best, r_)
             if best < 1e9:
                 break
@@ -383,9 +382,8 @@ def actual_violations(rows: list[dict], policy_path: Path, citymap: Path,
     fence-only measure that flight looked clean. It was not.
     """
     from guardrail import load_policy
-    from guardrail.geometry import fence_polygon
+    from guardrail.geometry import fence_polygon, ring_contains
     from guardrail.models import AltitudeEnvelope, ObstacleClearance
-    from shapely.geometry import Point
     import city_planner
 
     pol = load_policy(str(policy_path))
@@ -401,7 +399,7 @@ def actual_violations(rows: list[dict], policy_path: Path, citymap: Path,
     for r in rows:
         x, y, up = r["x"], r["y"], r["up"]
         if any(f.altitude_floor_m <= up <= f.altitude_ceiling_m
-               and poly.contains(Point(x, y)) for f, poly in fences):
+               and ring_contains(poly, x, y) for f, poly in fences):
             n_fence += 1
         for b in bands:
             if up < b.alt_min_m or up > b.alt_max_m:

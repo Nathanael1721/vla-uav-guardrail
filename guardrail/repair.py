@@ -97,9 +97,10 @@ import math
 from dataclasses import dataclass, replace
 from typing import Any, Protocol, runtime_checkable
 
-from shapely.geometry import LineString, Point, Polygon
+from shapely.geometry import LineString, Polygon
 
 from .frames import to_body
+from .geometry import boundary_depth, enters_interior, ring_contains
 from .ir import coarse_ring
 from .models import Action4D, State
 
@@ -392,13 +393,12 @@ class PathRepair:
         ring = rec.buffered
         depth = 0.0
         for _, p in sh._predict(st, raw):
-            q = Point(p.x, p.y)
-            if ring.contains(q):
-                depth = max(depth, ring.boundary.distance(q))
+            if ring_contains(ring, p.x, p.y):
+                depth = max(depth, boundary_depth(ring, p.x, p.y))
         out = []
         for wx, wy in self._zone_corners(sh, rec):
             seg = LineString([(st.x, st.y), (wx, wy)])
-            if seg.length < 1e-6 or ring.relate_pattern(seg, "T********"):
+            if seg.length < 1e-6 or enters_interior(ring, seg):
                 continue                           # the leg itself would cross the zone
             out.append((wx, wy))
         return out, depth

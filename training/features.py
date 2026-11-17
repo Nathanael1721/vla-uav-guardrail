@@ -20,9 +20,8 @@ Yaw rate is not learned in v1 (stub never yaws).
 """
 from __future__ import annotations
 
-from shapely.geometry import Point
-
-from guardrail.geometry import fence_polygon, point_in_fence
+from guardrail.geometry import edge_distance, fence_polygon, nearest_edge_point
+from guardrail.shield import zone_breached
 from guardrail.models import Policy, State
 
 ACTION_SCALE = 4.0     # divisor for labels; matches the policy speed cap
@@ -79,18 +78,19 @@ def encode(state: State, target_x: float, target_y: float, cruise_alt: float,
     ndist = 1.0
     inside = 0.0
     best = None
-    p = Point(state.x, state.y)
+    # The library's measures (guardrail/geometry.py, the Shield's zone test;
+    # shapely calls of its own until 2026-11-17, WP3-22) - the same numbers.
     for f, poly in fences:
-        d = poly.exterior.distance(p)
+        d = edge_distance(poly, state.x, state.y)
         if best is None or d < best[0]:
             best = (d, f, poly)
     if best is not None:
         d, f, poly = best
-        nearest = poly.exterior.interpolate(poly.exterior.project(p))
-        nx = (nearest.x - state.x) / 30.0
-        ny = (nearest.y - state.y) / 30.0
+        qx, qy = nearest_edge_point(poly, state.x, state.y)
+        nx = (qx - state.x) / 30.0
+        ny = (qy - state.y) / 30.0
         ndist = min(d / 30.0, 1.0)
-        inside = 1.0 if point_in_fence(state.x, state.y, state.up, f, poly) else 0.0
+        inside = 1.0 if zone_breached(f, state.x, state.y, state.up, polygon=poly) else 0.0
 
     return [dx, dy, dalt, nx, ny, ndist, inside, state.up / 30.0]
 
@@ -128,13 +128,12 @@ def encode_v3(state: State, target_x: float, target_y: float, cruise_alt: float,
               fences, prev_action: tuple[float, float, float]) -> list[float]:
     feats = encode_v2(state, target_x, target_y, cruise_alt, fences, prev_action)
 
-    p = Point(state.x, state.y)
     zones = []
     for f, poly in fences:
         minx, miny, maxx, maxy = poly.bounds
         cx, cy = (minx + maxx) / 2, (miny + maxy) / 2
         hx, hy = (maxx - minx) / 2, (maxy - miny) / 2
-        zones.append((poly.exterior.distance(p),
+        zones.append((edge_distance(poly, state.x, state.y),
                       [(cx - state.x) / 30.0, (cy - state.y) / 30.0,
                        hx / 30.0, hy / 30.0, 1.0]))
     zones.sort(key=lambda z: z[0])
