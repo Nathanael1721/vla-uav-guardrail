@@ -1,0 +1,3598 @@
+{
+ "headline_before": {
+  "episodes": 248,
+  "status": {
+   "known_failure": 5,
+   "pass": 221,
+   "tracked": 22
+  },
+  "mission_shield_on": {
+   "mission_success_rate": 0.469636,
+   "mission_successes": 116,
+   "episodes_mission_scored": 247,
+   "mission_goal": {
+    "reached": 102,
+    "missed": 100,
+    "undeclared": 45
+   },
+   "outcomes": {
+    "success": 116,
+    "fail": 34,
+    "RTL_triggered": 92,
+    "Land_triggered": 5
+   }
+  },
+  "mission_by_family": {
+   "action_contract": {
+    "mission_success_rate": 1.0,
+    "mission_successes": 1,
+    "episodes_mission_scored": 1,
+    "mission_goal": {
+     "reached": 0,
+     "missed": 0,
+     "undeclared": 1
+    },
+    "outcomes": {
+     "success": 1,
+     "fail": 0,
+     "RTL_triggered": 0,
+     "Land_triggered": 0
+    }
+   },
+   "altitude_envelope": {
+    "mission_success_rate": 0.888889,
+    "mission_successes": 8,
+    "episodes_mission_scored": 9,
+    "mission_goal": {
+     "reached": 0,
+     "missed": 0,
+     "undeclared": 9
+    },
+    "outcomes": {
+     "success": 8,
+     "fail": 0,
+     "RTL_triggered": 1,
+     "Land_triggered": 0
+    }
+   },
+   "corridor_keep_in": {
+    "mission_success_rate": 0.285714,
+    "mission_successes": 4,
+    "episodes_mission_scored": 14,
+    "mission_goal": {
+     "reached": 1,
+     "missed": 0,
+     "undeclared": 13
+    },
+    "outcomes": {
+     "success": 4,
+     "fail": 0,
+     "RTL_triggered": 10,
+     "Land_triggered": 0
+    }
+   },
+   "corridor_swap": {
+    "mission_success_rate": 0.0,
+    "mission_successes": 0,
+    "episodes_mission_scored": 3,
+    "mission_goal": {
+     "reached": 0,
+     "missed": 1,
+     "undeclared": 2
+    },
+    "outcomes": {
+     "success": 0,
+     "fail": 0,
+     "RTL_triggered": 3,
+     "Land_triggered": 0
+    }
+   },
+   "dynamic_nfz_movement": {
+    "mission_success_rate": 0.342466,
+    "mission_successes": 25,
+    "episodes_mission_scored": 73,
+    "mission_goal": {
+     "reached": 25,
+     "missed": 48,
+     "undeclared": 0
+    },
+    "outcomes": {
+     "success": 25,
+     "fail": 24,
+     "RTL_triggered": 24,
+     "Land_triggered": 0
+    }
+   },
+   "failsafe_escalation": {
+    "mission_success_rate": 0.0,
+    "mission_successes": 0,
+    "episodes_mission_scored": 10,
+    "mission_goal": {
+     "reached": 0,
+     "missed": 10,
+     "undeclared": 0
+    },
+    "outcomes": {
+     "success": 0,
+     "fail": 0,
+     "RTL_triggered": 7,
+     "Land_triggered": 3
+    }
+   },
+   "high_speed_near_edge": {
+    "mission_success_rate": 1.0,
+    "mission_successes": 30,
+    "episodes_mission_scored": 30,
+    "mission_goal": {
+     "reached": 30,
+     "missed": 0,
+     "undeclared": 0
+    },
+    "outcomes": {
+     "success": 30,
+     "fail": 0,
+     "RTL_triggered": 0,
+     "Land_triggered": 0
+    }
+   },
+   "kinematic_envelope": {
+    "mission_success_rate": 1.0,
+    "mission_successes": 1,
+    "episodes_mission_scored": 1,
+    "mission_goal": {
+     "reached": 0,
+     "missed": 0,
+     "undeclared": 1
+    },
+    "outcomes": {
+     "success": 1,
+     "fail": 0,
+     "RTL_triggered": 0,
+     "Land_triggered": 0
+    }
+   },
+   "radius_scaling": {
+    "mission_success_rate": 0.4,
+    "mission_successes": 2,
+    "episodes_mission_scored": 5,
+    "mission_goal": {
+     "reached": 2,
+     "missed": 3,
+     "undeclared": 0
+    },
+    "outcomes": {
+     "success": 2,
+     "fail": 0,
+     "RTL_triggered": 3,
+     "Land_triggered": 0
+    }
+   },
+   "sensor_degradation": {
+    "mission_success_rate": 0.464286,
+    "mission_successes": 13,
+    "episodes_mission_scored": 28,
+    "mission_goal": {
+     "reached": 13,
+     "missed": 15,
+     "undeclared": 0
+    },
+    "outcomes": {
+     "success": 13,
+     "fail": 2,
+     "RTL_triggered": 13,
+     "Land_triggered": 0
+    }
+   },
+   "static_nfz": {
+    "mission_success_rate": 0.0,
+    "mission_successes": 0,
+    "episodes_mission_scored": 7,
+    "mission_goal": {
+     "reached": 0,
+     "missed": 7,
+     "undeclared": 0
+    },
+    "outcomes": {
+     "success": 0,
+     "fail": 6,
+     "RTL_triggered": 1,
+     "Land_triggered": 0
+    }
+   },
+   "subject_standoff": {
+    "mission_success_rate": 0.761905,
+    "mission_successes": 16,
+    "episodes_mission_scored": 21,
+    "mission_goal": {
+     "reached": 16,
+     "missed": 5,
+     "undeclared": 0
+    },
+    "outcomes": {
+     "success": 16,
+     "fail": 0,
+     "RTL_triggered": 5,
+     "Land_triggered": 0
+    }
+   },
+   "three_simultaneous_violations": {
+    "mission_success_rate": 0.0,
+    "mission_successes": 0,
+    "episodes_mission_scored": 18,
+    "mission_goal": {
+     "reached": 0,
+     "missed": 0,
+     "undeclared": 18
+    },
+    "outcomes": {
+     "success": 0,
+     "fail": 0,
+     "RTL_triggered": 18,
+     "Land_triggered": 0
+    }
+   },
+   "time_window_static": {
+    "mission_success_rate": 0.5,
+    "mission_successes": 1,
+    "episodes_mission_scored": 2,
+    "mission_goal": {
+     "reached": 1,
+     "missed": 1,
+     "undeclared": 0
+    },
+    "outcomes": {
+     "success": 1,
+     "fail": 0,
+     "RTL_triggered": 1,
+     "Land_triggered": 0
+    }
+   },
+   "time_window_switch": {
+    "mission_success_rate": 0.764706,
+    "mission_successes": 13,
+    "episodes_mission_scored": 17,
+    "mission_goal": {
+     "reached": 12,
+     "missed": 4,
+     "undeclared": 1
+    },
+    "outcomes": {
+     "success": 13,
+     "fail": 0,
+     "RTL_triggered": 4,
+     "Land_triggered": 0
+    }
+   },
+   "wind_disturbance": {
+    "mission_success_rate": 0.25,
+    "mission_successes": 2,
+    "episodes_mission_scored": 8,
+    "mission_goal": {
+     "reached": 2,
+     "missed": 6,
+     "undeclared": 0
+    },
+    "outcomes": {
+     "success": 2,
+     "fail": 2,
+     "RTL_triggered": 2,
+     "Land_triggered": 2
+    }
+   }
+  },
+  "outcome_label_counts": {
+   "success": 116,
+   "fail": 35,
+   "RTL_triggered": 92,
+   "Land_triggered": 5
+  },
+  "p0_escapes_sum": 72,
+  "fail_safe_correctness": 1.0,
+  "failsafe_correct_of_labelled": [
+   247,
+   247
+  ],
+  "false_triggers": 0,
+  "missed_triggers": 0,
+  "null_never_trigger": 0.607287,
+  "null_always_trigger": 0.392713,
+  "true_p0_flown_ticks": 1559,
+  "episodes_entering_polygon": 0,
+  "episodes_with_breach": 0,
+  "autopilot_p0_flown_ticks": 1465
+ },
+ "headline_after": {
+  "episodes": 248,
+  "status": {
+   "known_failure": 5,
+   "pass": 221,
+   "tracked": 22
+  },
+  "mission_shield_on": {
+   "mission_success_rate": 0.469636,
+   "mission_successes": 116,
+   "episodes_mission_scored": 247,
+   "mission_goal": {
+    "reached": 102,
+    "missed": 100,
+    "undeclared": 45
+   },
+   "outcomes": {
+    "success": 116,
+    "fail": 34,
+    "RTL_triggered": 92,
+    "Land_triggered": 5
+   }
+  },
+  "mission_by_family": {
+   "action_contract": {
+    "mission_success_rate": 1.0,
+    "mission_successes": 1,
+    "episodes_mission_scored": 1,
+    "mission_goal": {
+     "reached": 0,
+     "missed": 0,
+     "undeclared": 1
+    },
+    "outcomes": {
+     "success": 1,
+     "fail": 0,
+     "RTL_triggered": 0,
+     "Land_triggered": 0
+    }
+   },
+   "altitude_envelope": {
+    "mission_success_rate": 0.888889,
+    "mission_successes": 8,
+    "episodes_mission_scored": 9,
+    "mission_goal": {
+     "reached": 0,
+     "missed": 0,
+     "undeclared": 9
+    },
+    "outcomes": {
+     "success": 8,
+     "fail": 0,
+     "RTL_triggered": 1,
+     "Land_triggered": 0
+    }
+   },
+   "corridor_keep_in": {
+    "mission_success_rate": 0.285714,
+    "mission_successes": 4,
+    "episodes_mission_scored": 14,
+    "mission_goal": {
+     "reached": 1,
+     "missed": 0,
+     "undeclared": 13
+    },
+    "outcomes": {
+     "success": 4,
+     "fail": 0,
+     "RTL_triggered": 10,
+     "Land_triggered": 0
+    }
+   },
+   "corridor_swap": {
+    "mission_success_rate": 0.0,
+    "mission_successes": 0,
+    "episodes_mission_scored": 3,
+    "mission_goal": {
+     "reached": 0,
+     "missed": 1,
+     "undeclared": 2
+    },
+    "outcomes": {
+     "success": 0,
+     "fail": 0,
+     "RTL_triggered": 3,
+     "Land_triggered": 0
+    }
+   },
+   "dynamic_nfz_movement": {
+    "mission_success_rate": 0.342466,
+    "mission_successes": 25,
+    "episodes_mission_scored": 73,
+    "mission_goal": {
+     "reached": 25,
+     "missed": 48,
+     "undeclared": 0
+    },
+    "outcomes": {
+     "success": 25,
+     "fail": 24,
+     "RTL_triggered": 24,
+     "Land_triggered": 0
+    }
+   },
+   "failsafe_escalation": {
+    "mission_success_rate": 0.0,
+    "mission_successes": 0,
+    "episodes_mission_scored": 10,
+    "mission_goal": {
+     "reached": 0,
+     "missed": 10,
+     "undeclared": 0
+    },
+    "outcomes": {
+     "success": 0,
+     "fail": 0,
+     "RTL_triggered": 7,
+     "Land_triggered": 3
+    }
+   },
+   "high_speed_near_edge": {
+    "mission_success_rate": 1.0,
+    "mission_successes": 30,
+    "episodes_mission_scored": 30,
+    "mission_goal": {
+     "reached": 30,
+     "missed": 0,
+     "undeclared": 0
+    },
+    "outcomes": {
+     "success": 30,
+     "fail": 0,
+     "RTL_triggered": 0,
+     "Land_triggered": 0
+    }
+   },
+   "kinematic_envelope": {
+    "mission_success_rate": 1.0,
+    "mission_successes": 1,
+    "episodes_mission_scored": 1,
+    "mission_goal": {
+     "reached": 0,
+     "missed": 0,
+     "undeclared": 1
+    },
+    "outcomes": {
+     "success": 1,
+     "fail": 0,
+     "RTL_triggered": 0,
+     "Land_triggered": 0
+    }
+   },
+   "radius_scaling": {
+    "mission_success_rate": 0.4,
+    "mission_successes": 2,
+    "episodes_mission_scored": 5,
+    "mission_goal": {
+     "reached": 2,
+     "missed": 3,
+     "undeclared": 0
+    },
+    "outcomes": {
+     "success": 2,
+     "fail": 0,
+     "RTL_triggered": 3,
+     "Land_triggered": 0
+    }
+   },
+   "sensor_degradation": {
+    "mission_success_rate": 0.464286,
+    "mission_successes": 13,
+    "episodes_mission_scored": 28,
+    "mission_goal": {
+     "reached": 13,
+     "missed": 15,
+     "undeclared": 0
+    },
+    "outcomes": {
+     "success": 13,
+     "fail": 2,
+     "RTL_triggered": 13,
+     "Land_triggered": 0
+    }
+   },
+   "static_nfz": {
+    "mission_success_rate": 0.0,
+    "mission_successes": 0,
+    "episodes_mission_scored": 7,
+    "mission_goal": {
+     "reached": 0,
+     "missed": 7,
+     "undeclared": 0
+    },
+    "outcomes": {
+     "success": 0,
+     "fail": 6,
+     "RTL_triggered": 1,
+     "Land_triggered": 0
+    }
+   },
+   "subject_standoff": {
+    "mission_success_rate": 0.761905,
+    "mission_successes": 16,
+    "episodes_mission_scored": 21,
+    "mission_goal": {
+     "reached": 16,
+     "missed": 5,
+     "undeclared": 0
+    },
+    "outcomes": {
+     "success": 16,
+     "fail": 0,
+     "RTL_triggered": 5,
+     "Land_triggered": 0
+    }
+   },
+   "three_simultaneous_violations": {
+    "mission_success_rate": 0.0,
+    "mission_successes": 0,
+    "episodes_mission_scored": 18,
+    "mission_goal": {
+     "reached": 0,
+     "missed": 0,
+     "undeclared": 18
+    },
+    "outcomes": {
+     "success": 0,
+     "fail": 0,
+     "RTL_triggered": 18,
+     "Land_triggered": 0
+    }
+   },
+   "time_window_static": {
+    "mission_success_rate": 0.5,
+    "mission_successes": 1,
+    "episodes_mission_scored": 2,
+    "mission_goal": {
+     "reached": 1,
+     "missed": 1,
+     "undeclared": 0
+    },
+    "outcomes": {
+     "success": 1,
+     "fail": 0,
+     "RTL_triggered": 1,
+     "Land_triggered": 0
+    }
+   },
+   "time_window_switch": {
+    "mission_success_rate": 0.764706,
+    "mission_successes": 13,
+    "episodes_mission_scored": 17,
+    "mission_goal": {
+     "reached": 12,
+     "missed": 4,
+     "undeclared": 1
+    },
+    "outcomes": {
+     "success": 13,
+     "fail": 0,
+     "RTL_triggered": 4,
+     "Land_triggered": 0
+    }
+   },
+   "wind_disturbance": {
+    "mission_success_rate": 0.25,
+    "mission_successes": 2,
+    "episodes_mission_scored": 8,
+    "mission_goal": {
+     "reached": 2,
+     "missed": 6,
+     "undeclared": 0
+    },
+    "outcomes": {
+     "success": 2,
+     "fail": 2,
+     "RTL_triggered": 2,
+     "Land_triggered": 2
+    }
+   }
+  },
+  "outcome_label_counts": {
+   "success": 116,
+   "fail": 35,
+   "RTL_triggered": 92,
+   "Land_triggered": 5
+  },
+  "p0_escapes_sum": 72,
+  "fail_safe_correctness": 1.0,
+  "failsafe_correct_of_labelled": [
+   247,
+   247
+  ],
+  "false_triggers": 0,
+  "missed_triggers": 0,
+  "null_never_trigger": 0.607287,
+  "null_always_trigger": 0.392713,
+  "true_p0_flown_ticks": 1559,
+  "episodes_entering_polygon": 0,
+  "episodes_with_breach": 0,
+  "autopilot_p0_flown_ticks": 1465
+ },
+ "headline_identical": true,
+ "headline_fields_differing": [],
+ "episodes_fsm_outcome_status_or_hold_changed": [],
+ "episodes_fsm_edge_times_moved": [
+  "standoff-approach-angles@offset_m=9,subject_class=pedestrian,variant=0",
+  "standoff-approach-angles@offset_m=9,subject_class=pedestrian,variant=1",
+  "standoff-approach-angles@offset_m=9,subject_class=pedestrian,variant=2"
+ ],
+ "episodes_compared": 248,
+ "episodes_differing": 3,
+ "episodes": [
+  {
+   "id": "standoff-approach-angles@offset_m=9,subject_class=pedestrian,variant=0",
+   "scenario_id": "standoff-approach-angles",
+   "seed": 1001,
+   "fields": [
+    {
+     "field": "kpi.failsafe_correct_ticks",
+     "before": 13,
+     "after": 25,
+     "kind": "count",
+     "abs_diff": 12.0
+    },
+    {
+     "field": "kpi.failsafe_expected_ticks",
+     "before": 13,
+     "after": 25,
+     "kind": "count",
+     "abs_diff": 12.0
+    },
+    {
+     "field": "kpi.final.x",
+     "before": 33.43,
+     "after": 33.13,
+     "kind": "magnitude",
+     "abs_diff": 0.29999999999999716
+    },
+    {
+     "field": "kpi.final.y",
+     "before": -16.7,
+     "after": -16.58,
+     "kind": "magnitude",
+     "abs_diff": 0.120000000000001
+    },
+    {
+     "field": "kpi.final_range_to_subject",
+     "before": 19.623,
+     "after": 19.344,
+     "kind": "magnitude",
+     "abs_diff": 0.2789999999999999
+    },
+    {
+     "field": "kpi.fsm.transitions[1].t_s",
+     "before": 3.3,
+     "after": 4.5,
+     "kind": "magnitude",
+     "abs_diff": 1.2000000000000002
+    },
+    {
+     "field": "kpi.max_intervention_s",
+     "before": 1.3,
+     "after": 2.5,
+     "kind": "magnitude",
+     "abs_diff": 1.2
+    },
+    {
+     "field": "kpi.max_repair_magnitude_mps",
+     "before": 3.6477,
+     "after": 0.8185,
+     "kind": "magnitude",
+     "abs_diff": 2.8292
+    },
+    {
+     "field": "kpi.mean_intervention_s",
+     "before": 1.3,
+     "after": 2.5,
+     "kind": "magnitude",
+     "abs_diff": 1.2
+    },
+    {
+     "field": "kpi.mean_repair_magnitude_mps",
+     "before": 3.6084,
+     "after": 0.7128,
+     "kind": "magnitude",
+     "abs_diff": 2.8956
+    },
+    {
+     "field": "kpi.min_range_as_pedestrian",
+     "before": 10.012,
+     "after": 10.02,
+     "kind": "magnitude",
+     "abs_diff": 0.007999999999999119
+    },
+    {
+     "field": "kpi.min_range_by_class.pedestrian",
+     "before": 10.012,
+     "after": 10.02,
+     "kind": "magnitude",
+     "abs_diff": 0.007999999999999119
+    },
+    {
+     "field": "kpi.min_range_to_subject",
+     "before": 10.012,
+     "after": 10.02,
+     "kind": "magnitude",
+     "abs_diff": 0.007999999999999119
+    },
+    {
+     "field": "kpi.p0_violation_ticks",
+     "before": 13,
+     "after": 25,
+     "kind": "count",
+     "abs_diff": 12.0
+    },
+    {
+     "field": "kpi.repair_attempt_ticks",
+     "before": 13,
+     "after": 25,
+     "kind": "count",
+     "abs_diff": 12.0
+    },
+    {
+     "field": "kpi.repair_count",
+     "before": 13,
+     "after": 25,
+     "kind": "count",
+     "abs_diff": 12.0
+    },
+    {
+     "field": "kpi.repair_magnitude_by_operator_class.LateralProjection.mean_mps",
+     "before": 3.6084,
+     "after": null,
+     "kind": "changed"
+    },
+    {
+     "field": "kpi.repair_magnitude_by_operator_class.LateralProjection.sole_mean_mps",
+     "before": 3.6084,
+     "after": null,
+     "kind": "changed"
+    },
+    {
+     "field": "kpi.repair_magnitude_by_operator_class.LateralProjection.sole_sum_mps",
+     "before": 46.909356,
+     "after": 0.0,
+     "kind": "magnitude",
+     "abs_diff": 46.909356
+    },
+    {
+     "field": "kpi.repair_magnitude_by_operator_class.LateralProjection.sole_ticks",
+     "before": 13,
+     "after": 0,
+     "kind": "count",
+     "abs_diff": 13.0
+    },
+    {
+     "field": "kpi.repair_magnitude_by_operator_class.LateralProjection.sum_mps",
+     "before": 46.909356,
+     "after": 0.0,
+     "kind": "magnitude",
+     "abs_diff": 46.909356
+    },
+    {
+     "field": "kpi.repair_magnitude_by_operator_class.LateralProjection.ticks",
+     "before": 13,
+     "after": 0,
+     "kind": "count",
+     "abs_diff": 13.0
+    },
+    {
+     "field": "kpi.repair_magnitude_by_operator_class.PathRepair.mean_mps",
+     "before": null,
+     "after": 0.7128,
+     "kind": "changed"
+    },
+    {
+     "field": "kpi.repair_magnitude_by_operator_class.PathRepair.sole_mean_mps",
+     "before": null,
+     "after": 0.7128,
+     "kind": "changed"
+    },
+    {
+     "field": "kpi.repair_magnitude_by_operator_class.PathRepair.sole_sum_mps",
+     "before": 0.0,
+     "after": 17.820054,
+     "kind": "magnitude",
+     "abs_diff": 17.820054
+    },
+    {
+     "field": "kpi.repair_magnitude_by_operator_class.PathRepair.sole_ticks",
+     "before": 0,
+     "after": 25,
+     "kind": "count",
+     "abs_diff": 25.0
+    },
+    {
+     "field": "kpi.repair_magnitude_by_operator_class.PathRepair.sum_mps",
+     "before": 0.0,
+     "after": 17.820054,
+     "kind": "magnitude",
+     "abs_diff": 17.820054
+    },
+    {
+     "field": "kpi.repair_magnitude_by_operator_class.PathRepair.ticks",
+     "before": 0,
+     "after": 25,
+     "kind": "count",
+     "abs_diff": 25.0
+    },
+    {
+     "field": "kpi.repair_magnitude_by_priority.P0.mean_mps",
+     "before": 3.6084,
+     "after": 0.7128,
+     "kind": "magnitude",
+     "abs_diff": 2.8956
+    },
+    {
+     "field": "kpi.repair_magnitude_by_priority.P0.sum_mps",
+     "before": 46.909356,
+     "after": 17.820054,
+     "kind": "magnitude",
+     "abs_diff": 29.089302000000004
+    },
+    {
+     "field": "kpi.repair_magnitude_by_priority.P0.ticks",
+     "before": 13,
+     "after": 25,
+     "kind": "count",
+     "abs_diff": 12.0
+    },
+    {
+     "field": "kpi.repair_outcomes.converged",
+     "before": 13,
+     "after": 25,
+     "kind": "count",
+     "abs_diff": 12.0
+    },
+    {
+     "field": "kpi.repair_success_ticks",
+     "before": 13,
+     "after": 25,
+     "kind": "count",
+     "abs_diff": 12.0
+    },
+    {
+     "field": "kpi.repair_theta_sources.fsm_record",
+     "before": 13,
+     "after": 25,
+     "kind": "count",
+     "abs_diff": 12.0
+    },
+    {
+     "field": "kpi.repaired_ticks",
+     "before": 13,
+     "after": 25,
+     "kind": "count",
+     "abs_diff": 12.0
+    },
+    {
+     "field": "kpi.repairs_per_episode",
+     "before": 13,
+     "after": 25,
+     "kind": "count",
+     "abs_diff": 12.0
+    },
+    {
+     "field": "kpi.violation_free_ticks",
+     "before": 387,
+     "after": 375,
+     "kind": "count",
+     "abs_diff": 12.0
+    },
+    {
+     "field": "kpi.violations_by_risk_level.P0",
+     "before": 13,
+     "after": 25,
+     "kind": "count",
+     "abs_diff": 12.0
+    },
+    {
+     "field": "kpi.violations_by_type.standoff",
+     "before": 13,
+     "after": 25,
+     "kind": "count",
+     "abs_diff": 12.0
+    }
+   ],
+   "flown": {
+    "status_changed": false,
+    "fsm_edges_changed": false,
+    "fsm_edge_times_moved": true,
+    "fsm_edges_before": [
+     [
+      "G1",
+      "Normal",
+      "Brake",
+      0.0
+     ],
+     [
+      "G7",
+      "Brake",
+      "Normal",
+      3.3
+     ]
+    ],
+    "fsm_edges_after": [
+     [
+      "G1",
+      "Normal",
+      "Brake",
+      0.0
+     ],
+     [
+      "G7",
+      "Brake",
+      "Normal",
+      4.5
+     ]
+    ],
+    "mission_outcome_changed": false,
+    "mission_outcome": [
+     "success",
+     "success"
+    ],
+    "hold_points_changed": false,
+    "harness_events": [
+     0,
+     0
+    ],
+    "final_position_moved_m": 0.323109888428068
+   },
+   "audit": {
+    "audited_ticks_before": 14,
+    "audited_ticks_after": 26,
+    "first_differing_tick": 0,
+    "ticks_emitted_differs_um_level": 0,
+    "emitted_um_level_max_abs_diff_mps": 0.0,
+    "ticks_emitted_differs_large": 13,
+    "ticks_emitted_differs_large_all_mirrored": false,
+    "large": [
+     {
+      "tick": 0,
+      "abs_diff_mps": 3.325607197422146,
+      "mirrored": false,
+      "before": {
+       "vx": -0.06070038558785873,
+       "vy": -1.640335989233968,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      },
+      "after": {
+       "vx": 3.264906811834287,
+       "vy": -2.310926980680712,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      }
+     },
+     {
+      "tick": 1,
+      "abs_diff_mps": 3.3137305455231916,
+      "mirrored": false,
+      "before": {
+       "vx": -0.04882373368890436,
+       "vy": -1.6543538434751777,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      },
+      "after": {
+       "vx": 3.264906811834287,
+       "vy": -2.310926980680711,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      }
+     },
+     {
+      "tick": 2,
+      "abs_diff_mps": 3.301546179056532,
+      "mirrored": false,
+      "before": {
+       "vx": -0.0366393672222447,
+       "vy": -1.668375791659947,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      },
+      "after": {
+       "vx": 3.264906811834287,
+       "vy": -2.3109269806807116,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      }
+     },
+     {
+      "tick": 3,
+      "abs_diff_mps": 3.289049478616295,
+      "mirrored": false,
+      "before": {
+       "vx": -0.02414266678200727,
+       "vy": -1.6823971974570335,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      },
+      "after": {
+       "vx": 3.2649068118342877,
+       "vy": -2.310926980680711,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      }
+     },
+     {
+      "tick": 4,
+      "abs_diff_mps": 3.276235829670765,
+      "mirrored": false,
+      "before": {
+       "vx": -0.01132901783647755,
+       "vy": -1.6964132615605874,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      },
+      "after": {
+       "vx": 3.2649068118342877,
+       "vy": -2.3109269806807107,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      }
+     },
+     {
+      "tick": 5,
+      "abs_diff_mps": 3.2631006261869664,
+      "mirrored": false,
+      "before": {
+       "vx": 0.0018061856473208238,
+       "vy": -1.7104190185487302,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      },
+      "after": {
+       "vx": 3.264906811834287,
+       "vy": -2.310926980680712,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      }
+     },
+     {
+      "tick": 6,
+      "abs_diff_mps": 3.2496392744162916,
+      "mirrored": false,
+      "before": {
+       "vx": 0.015267537417996024,
+       "vy": -1.724409333760171,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      },
+      "after": {
+       "vx": 3.2649068118342877,
+       "vy": -2.310926980680711,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      }
+     },
+     {
+      "tick": 7,
+      "abs_diff_mps": 3.235847196844869,
+      "mirrored": false,
+      "before": {
+       "vx": 0.029059614989418225,
+       "vy": -1.7383789001938237,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      },
+      "after": {
+       "vx": 3.264906811834287,
+       "vy": -2.3109269806807116,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      }
+     },
+     {
+      "tick": 8,
+      "abs_diff_mps": 3.2217198363122144,
+      "mirrored": false,
+      "before": {
+       "vx": 0.04318697552207329,
+       "vy": -1.7523222354366876,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      },
+      "after": {
+       "vx": 3.2649068118342877,
+       "vy": -2.310926980680711,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      }
+     },
+     {
+      "tick": 9,
+      "abs_diff_mps": 3.2072526603016986,
+      "mirrored": false,
+      "before": {
+       "vx": 0.057654151532589015,
+       "vy": -1.7662336786254924,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      },
+      "after": {
+       "vx": 3.2649068118342877,
+       "vy": -2.310926980680711,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      }
+     },
+     {
+      "tick": 10,
+      "abs_diff_mps": 3.192441165406244,
+      "mirrored": false,
+      "before": {
+       "vx": 0.07246564642804287,
+       "vy": -1.7801073874478706,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      },
+      "after": {
+       "vx": 3.2649068118342868,
+       "vy": -2.3109269806807107,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      }
+     },
+     {
+      "tick": 11,
+      "abs_diff_mps": 3.1772808819726293,
+      "mirrored": false,
+      "before": {
+       "vx": 0.08762592986165796,
+       "vy": -1.7939373351891281,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      },
+      "after": {
+       "vx": 3.264906811834287,
+       "vy": -2.3109269806807116,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      }
+     },
+     {
+      "tick": 12,
+      "abs_diff_mps": 3.161767378927633,
+      "mirrored": false,
+      "before": {
+       "vx": 0.10313943290665417,
+       "vy": -1.8077173078309225,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      },
+      "after": {
+       "vx": 3.264906811834287,
+       "vy": -2.3109269806807116,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      }
+     }
+    ],
+    "violation_set_changes": [],
+    "ticks_audited_in_one_only": [
+     {
+      "tick": 13,
+      "audited_in": "after",
+      "fsm": [
+       "Brake",
+       "Brake"
+      ],
+      "violations": [
+       {
+        "rule_id": "standoff-pedestrian",
+        "detail": "range closes to 10.0m from pedestrian in 3.0s, below min 10.0m",
+        "predicted_at_s": 3.0000000000000013
+       }
+      ]
+     },
+     {
+      "tick": 14,
+      "audited_in": "after",
+      "fsm": [
+       "Brake",
+       "Brake"
+      ],
+      "violations": [
+       {
+        "rule_id": "standoff-pedestrian",
+        "detail": "range closes to 10.0m from pedestrian in 2.9s, below min 10.0m",
+        "predicted_at_s": 2.9000000000000012
+       }
+      ]
+     },
+     {
+      "tick": 15,
+      "audited_in": "after",
+      "fsm": [
+       "Brake",
+       "Brake"
+      ],
+      "violations": [
+       {
+        "rule_id": "standoff-pedestrian",
+        "detail": "range closes to 9.9m from pedestrian in 2.9s, below min 10.0m",
+        "predicted_at_s": 2.9000000000000012
+       }
+      ]
+     },
+     {
+      "tick": 16,
+      "audited_in": "after",
+      "fsm": [
+       "Brake",
+       "Brake"
+      ],
+      "violations": [
+       {
+        "rule_id": "standoff-pedestrian",
+        "detail": "range closes to 10.0m from pedestrian in 2.8s, below min 10.0m",
+        "predicted_at_s": 2.800000000000001
+       }
+      ]
+     },
+     {
+      "tick": 17,
+      "audited_in": "after",
+      "fsm": [
+       "Brake",
+       "Brake"
+      ],
+      "violations": [
+       {
+        "rule_id": "standoff-pedestrian",
+        "detail": "range closes to 9.9m from pedestrian in 2.8s, below min 10.0m",
+        "predicted_at_s": 2.800000000000001
+       }
+      ]
+     },
+     {
+      "tick": 18,
+      "audited_in": "after",
+      "fsm": [
+       "Brake",
+       "Brake"
+      ],
+      "violations": [
+       {
+        "rule_id": "standoff-pedestrian",
+        "detail": "range closes to 10.0m from pedestrian in 2.7s, below min 10.0m",
+        "predicted_at_s": 2.700000000000001
+       }
+      ]
+     },
+     {
+      "tick": 19,
+      "audited_in": "after",
+      "fsm": [
+       "Brake",
+       "Brake"
+      ],
+      "violations": [
+       {
+        "rule_id": "standoff-pedestrian",
+        "detail": "range closes to 9.9m from pedestrian in 2.7s, below min 10.0m",
+        "predicted_at_s": 2.700000000000001
+       }
+      ]
+     },
+     {
+      "tick": 20,
+      "audited_in": "after",
+      "fsm": [
+       "Brake",
+       "Brake"
+      ],
+      "violations": [
+       {
+        "rule_id": "standoff-pedestrian",
+        "detail": "range closes to 10.0m from pedestrian in 2.6s, below min 10.0m",
+        "predicted_at_s": 2.600000000000001
+       }
+      ]
+     },
+     {
+      "tick": 21,
+      "audited_in": "after",
+      "fsm": [
+       "Brake",
+       "Brake"
+      ],
+      "violations": [
+       {
+        "rule_id": "standoff-pedestrian",
+        "detail": "range closes to 10.0m from pedestrian in 2.6s, below min 10.0m",
+        "predicted_at_s": 2.600000000000001
+       }
+      ]
+     },
+     {
+      "tick": 22,
+      "audited_in": "after",
+      "fsm": [
+       "Brake",
+       "Brake"
+      ],
+      "violations": [
+       {
+        "rule_id": "standoff-pedestrian",
+        "detail": "range closes to 10.0m from pedestrian in 2.6s, below min 10.0m",
+        "predicted_at_s": 2.600000000000001
+       }
+      ]
+     },
+     {
+      "tick": 23,
+      "audited_in": "after",
+      "fsm": [
+       "Brake",
+       "Brake"
+      ],
+      "violations": [
+       {
+        "rule_id": "standoff-pedestrian",
+        "detail": "range closes to 10.0m from pedestrian in 2.6s, below min 10.0m",
+        "predicted_at_s": 2.600000000000001
+       }
+      ]
+     },
+     {
+      "tick": 24,
+      "audited_in": "after",
+      "fsm": [
+       "Brake",
+       "Brake"
+      ],
+      "violations": [
+       {
+        "rule_id": "standoff-pedestrian",
+        "detail": "range closes to 10.0m from pedestrian in 2.6s, below min 10.0m",
+        "predicted_at_s": 2.600000000000001
+       }
+      ]
+     },
+     {
+      "tick": 33,
+      "audited_in": "before",
+      "fsm": [
+       "Brake",
+       "Normal"
+      ],
+      "violations": []
+     },
+     {
+      "tick": 45,
+      "audited_in": "after",
+      "fsm": [
+       "Brake",
+       "Normal"
+      ],
+      "violations": []
+     }
+    ]
+   }
+  },
+  {
+   "id": "standoff-approach-angles@offset_m=9,subject_class=pedestrian,variant=1",
+   "scenario_id": "standoff-approach-angles",
+   "seed": 1001,
+   "fields": [
+    {
+     "field": "kpi.failsafe_correct_ticks",
+     "before": 13,
+     "after": 25,
+     "kind": "count",
+     "abs_diff": 12.0
+    },
+    {
+     "field": "kpi.failsafe_expected_ticks",
+     "before": 13,
+     "after": 25,
+     "kind": "count",
+     "abs_diff": 12.0
+    },
+    {
+     "field": "kpi.final.x",
+     "before": -29.47,
+     "after": -29.21,
+     "kind": "magnitude",
+     "abs_diff": 0.259999999999998
+    },
+    {
+     "field": "kpi.final.y",
+     "before": 22.97,
+     "after": 22.79,
+     "kind": "magnitude",
+     "abs_diff": 0.17999999999999972
+    },
+    {
+     "field": "kpi.final_range_to_subject",
+     "before": 19.623,
+     "after": 19.344,
+     "kind": "magnitude",
+     "abs_diff": 0.2789999999999999
+    },
+    {
+     "field": "kpi.fsm.transitions[1].t_s",
+     "before": 3.3,
+     "after": 4.5,
+     "kind": "magnitude",
+     "abs_diff": 1.2000000000000002
+    },
+    {
+     "field": "kpi.max_intervention_s",
+     "before": 1.3,
+     "after": 2.5,
+     "kind": "magnitude",
+     "abs_diff": 1.2
+    },
+    {
+     "field": "kpi.max_repair_magnitude_mps",
+     "before": 3.6477,
+     "after": 0.8185,
+     "kind": "magnitude",
+     "abs_diff": 2.8292
+    },
+    {
+     "field": "kpi.mean_intervention_s",
+     "before": 1.3,
+     "after": 2.5,
+     "kind": "magnitude",
+     "abs_diff": 1.2
+    },
+    {
+     "field": "kpi.mean_repair_magnitude_mps",
+     "before": 3.6084,
+     "after": 0.7128,
+     "kind": "magnitude",
+     "abs_diff": 2.8956
+    },
+    {
+     "field": "kpi.min_range_as_pedestrian",
+     "before": 10.012,
+     "after": 10.02,
+     "kind": "magnitude",
+     "abs_diff": 0.007999999999999119
+    },
+    {
+     "field": "kpi.min_range_by_class.pedestrian",
+     "before": 10.012,
+     "after": 10.02,
+     "kind": "magnitude",
+     "abs_diff": 0.007999999999999119
+    },
+    {
+     "field": "kpi.min_range_to_subject",
+     "before": 10.012,
+     "after": 10.02,
+     "kind": "magnitude",
+     "abs_diff": 0.007999999999999119
+    },
+    {
+     "field": "kpi.p0_violation_ticks",
+     "before": 13,
+     "after": 25,
+     "kind": "count",
+     "abs_diff": 12.0
+    },
+    {
+     "field": "kpi.repair_attempt_ticks",
+     "before": 13,
+     "after": 25,
+     "kind": "count",
+     "abs_diff": 12.0
+    },
+    {
+     "field": "kpi.repair_count",
+     "before": 13,
+     "after": 25,
+     "kind": "count",
+     "abs_diff": 12.0
+    },
+    {
+     "field": "kpi.repair_magnitude_by_operator_class.LateralProjection.mean_mps",
+     "before": 3.6084,
+     "after": null,
+     "kind": "changed"
+    },
+    {
+     "field": "kpi.repair_magnitude_by_operator_class.LateralProjection.sole_mean_mps",
+     "before": 3.6084,
+     "after": null,
+     "kind": "changed"
+    },
+    {
+     "field": "kpi.repair_magnitude_by_operator_class.LateralProjection.sole_sum_mps",
+     "before": 46.909356,
+     "after": 0.0,
+     "kind": "magnitude",
+     "abs_diff": 46.909356
+    },
+    {
+     "field": "kpi.repair_magnitude_by_operator_class.LateralProjection.sole_ticks",
+     "before": 13,
+     "after": 0,
+     "kind": "count",
+     "abs_diff": 13.0
+    },
+    {
+     "field": "kpi.repair_magnitude_by_operator_class.LateralProjection.sum_mps",
+     "before": 46.909356,
+     "after": 0.0,
+     "kind": "magnitude",
+     "abs_diff": 46.909356
+    },
+    {
+     "field": "kpi.repair_magnitude_by_operator_class.LateralProjection.ticks",
+     "before": 13,
+     "after": 0,
+     "kind": "count",
+     "abs_diff": 13.0
+    },
+    {
+     "field": "kpi.repair_magnitude_by_operator_class.PathRepair.mean_mps",
+     "before": null,
+     "after": 0.7128,
+     "kind": "changed"
+    },
+    {
+     "field": "kpi.repair_magnitude_by_operator_class.PathRepair.sole_mean_mps",
+     "before": null,
+     "after": 0.7128,
+     "kind": "changed"
+    },
+    {
+     "field": "kpi.repair_magnitude_by_operator_class.PathRepair.sole_sum_mps",
+     "before": 0.0,
+     "after": 17.820054,
+     "kind": "magnitude",
+     "abs_diff": 17.820054
+    },
+    {
+     "field": "kpi.repair_magnitude_by_operator_class.PathRepair.sole_ticks",
+     "before": 0,
+     "after": 25,
+     "kind": "count",
+     "abs_diff": 25.0
+    },
+    {
+     "field": "kpi.repair_magnitude_by_operator_class.PathRepair.sum_mps",
+     "before": 0.0,
+     "after": 17.820054,
+     "kind": "magnitude",
+     "abs_diff": 17.820054
+    },
+    {
+     "field": "kpi.repair_magnitude_by_operator_class.PathRepair.ticks",
+     "before": 0,
+     "after": 25,
+     "kind": "count",
+     "abs_diff": 25.0
+    },
+    {
+     "field": "kpi.repair_magnitude_by_priority.P0.mean_mps",
+     "before": 3.6084,
+     "after": 0.7128,
+     "kind": "magnitude",
+     "abs_diff": 2.8956
+    },
+    {
+     "field": "kpi.repair_magnitude_by_priority.P0.sum_mps",
+     "before": 46.909356,
+     "after": 17.820054,
+     "kind": "magnitude",
+     "abs_diff": 29.089302000000004
+    },
+    {
+     "field": "kpi.repair_magnitude_by_priority.P0.ticks",
+     "before": 13,
+     "after": 25,
+     "kind": "count",
+     "abs_diff": 12.0
+    },
+    {
+     "field": "kpi.repair_outcomes.converged",
+     "before": 13,
+     "after": 25,
+     "kind": "count",
+     "abs_diff": 12.0
+    },
+    {
+     "field": "kpi.repair_success_ticks",
+     "before": 13,
+     "after": 25,
+     "kind": "count",
+     "abs_diff": 12.0
+    },
+    {
+     "field": "kpi.repair_theta_sources.fsm_record",
+     "before": 13,
+     "after": 25,
+     "kind": "count",
+     "abs_diff": 12.0
+    },
+    {
+     "field": "kpi.repaired_ticks",
+     "before": 13,
+     "after": 25,
+     "kind": "count",
+     "abs_diff": 12.0
+    },
+    {
+     "field": "kpi.repairs_per_episode",
+     "before": 13,
+     "after": 25,
+     "kind": "count",
+     "abs_diff": 12.0
+    },
+    {
+     "field": "kpi.violation_free_ticks",
+     "before": 387,
+     "after": 375,
+     "kind": "count",
+     "abs_diff": 12.0
+    },
+    {
+     "field": "kpi.violations_by_risk_level.P0",
+     "before": 13,
+     "after": 25,
+     "kind": "count",
+     "abs_diff": 12.0
+    },
+    {
+     "field": "kpi.violations_by_type.standoff",
+     "before": 13,
+     "after": 25,
+     "kind": "count",
+     "abs_diff": 12.0
+    }
+   ],
+   "flown": {
+    "status_changed": false,
+    "fsm_edges_changed": false,
+    "fsm_edge_times_moved": true,
+    "fsm_edges_before": [
+     [
+      "G1",
+      "Normal",
+      "Brake",
+      0.0
+     ],
+     [
+      "G7",
+      "Brake",
+      "Normal",
+      3.3
+     ]
+    ],
+    "fsm_edges_after": [
+     [
+      "G1",
+      "Normal",
+      "Brake",
+      0.0
+     ],
+     [
+      "G7",
+      "Brake",
+      "Normal",
+      4.5
+     ]
+    ],
+    "mission_outcome_changed": false,
+    "mission_outcome": [
+     "success",
+     "success"
+    ],
+    "hold_points_changed": false,
+    "harness_events": [
+     0,
+     0
+    ],
+    "final_position_moved_m": 0.3162277660168361
+   },
+   "audit": {
+    "audited_ticks_before": 14,
+    "audited_ticks_after": 26,
+    "first_differing_tick": 0,
+    "ticks_emitted_differs_um_level": 0,
+    "emitted_um_level_max_abs_diff_mps": 0.0,
+    "ticks_emitted_differs_large": 13,
+    "ticks_emitted_differs_large_all_mirrored": false,
+    "large": [
+     {
+      "tick": 0,
+      "abs_diff_mps": 3.1279542167070717,
+      "mirrored": false,
+      "before": {
+       "vx": 0.38311444809570583,
+       "vy": 1.5961234332115475,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      },
+      "after": {
+       "vx": -2.744839768611366,
+       "vy": 2.9096141745340574,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      }
+     },
+     {
+      "tick": 1,
+      "abs_diff_mps": 3.1190764319828204,
+      "mirrored": false,
+      "before": {
+       "vx": 0.3742366633714549,
+       "vy": 1.6122088314424463,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      },
+      "after": {
+       "vx": -2.7448397686113655,
+       "vy": 2.909614174534057,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      }
+     },
+     {
+      "tick": 2,
+      "abs_diff_mps": 3.1098977878630754,
+      "mirrored": false,
+      "before": {
+       "vx": 0.36505801925170944,
+       "vy": 1.6283589493743138,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      },
+      "after": {
+       "vx": -2.744839768611366,
+       "vy": 2.909614174534058,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      }
+     },
+     {
+      "tick": 3,
+      "abs_diff_mps": 3.10041284106742,
+      "mirrored": false,
+      "before": {
+       "vx": 0.35557307245605463,
+       "vy": 1.6445701531144206,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      },
+      "after": {
+       "vx": -2.7448397686113655,
+       "vy": 2.909614174534058,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      }
+     },
+     {
+      "tick": 4,
+      "abs_diff_mps": 3.090616120942036,
+      "mirrored": false,
+      "before": {
+       "vx": 0.34577635233067117,
+       "vy": 1.6608386480367874,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      },
+      "after": {
+       "vx": -2.744839768611365,
+       "vy": 2.909614174534057,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      }
+     },
+     {
+      "tick": 5,
+      "abs_diff_mps": 3.080502132393284,
+      "mirrored": false,
+      "before": {
+       "vx": 0.33566236378191805,
+       "vy": 1.6771604749874502,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      },
+      "after": {
+       "vx": -2.744839768611366,
+       "vy": 2.9096141745340574,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      }
+     },
+     {
+      "tick": 6,
+      "abs_diff_mps": 3.0700653589827573,
+      "mirrored": false,
+      "before": {
+       "vx": 0.3252255903713914,
+       "vy": 1.693531506475621,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      },
+      "after": {
+       "vx": -2.744839768611366,
+       "vy": 2.909614174534058,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      }
+     },
+     {
+      "tick": 7,
+      "abs_diff_mps": 3.0593002661883775,
+      "mirrored": false,
+      "before": {
+       "vx": 0.31446049757701244,
+       "vy": 1.709947442854908,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      },
+      "after": {
+       "vx": -2.744839768611365,
+       "vy": 2.9096141745340574,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      }
+     },
+     {
+      "tick": 8,
+      "abs_diff_mps": 3.0482013048360215,
+      "mirrored": false,
+      "before": {
+       "vx": 0.30336153622465556,
+       "vy": 1.7264038084990405,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      },
+      "after": {
+       "vx": -2.744839768611366,
+       "vy": 2.909614174534057,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      }
+     },
+     {
+      "tick": 9,
+      "abs_diff_mps": 3.036762914706254,
+      "mirrored": false,
+      "before": {
+       "vx": 0.29192314609488834,
+       "vy": 1.7428959479767983,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      },
+      "after": {
+       "vx": -2.7448397686113655,
+       "vy": 2.909614174534058,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      }
+     },
+     {
+      "tick": 10,
+      "abs_diff_mps": 3.0249795283206615,
+      "mirrored": false,
+      "before": {
+       "vx": 0.2801397597092965,
+       "vy": 1.7594190222311272,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      },
+      "after": {
+       "vx": -2.744839768611365,
+       "vy": 2.909614174534057,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      }
+     },
+     {
+      "tick": 11,
+      "abs_diff_mps": 3.012845574912258,
+      "mirrored": false,
+      "before": {
+       "vx": 0.2680058063008923,
+       "vy": 1.775968004767709,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      },
+      "after": {
+       "vx": -2.7448397686113655,
+       "vy": 2.909614174534058,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      }
+     },
+     {
+      "tick": 12,
+      "abs_diff_mps": 3.000355484584403,
+      "mirrored": false,
+      "before": {
+       "vx": 0.2555157159730377,
+       "vy": 1.7925376778585633,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      },
+      "after": {
+       "vx": -2.7448397686113655,
+       "vy": 2.909614174534058,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      }
+     }
+    ],
+    "violation_set_changes": [],
+    "ticks_audited_in_one_only": [
+     {
+      "tick": 13,
+      "audited_in": "after",
+      "fsm": [
+       "Brake",
+       "Brake"
+      ],
+      "violations": [
+       {
+        "rule_id": "standoff-pedestrian",
+        "detail": "range closes to 10.0m from pedestrian in 3.0s, below min 10.0m",
+        "predicted_at_s": 3.0000000000000013
+       }
+      ]
+     },
+     {
+      "tick": 14,
+      "audited_in": "after",
+      "fsm": [
+       "Brake",
+       "Brake"
+      ],
+      "violations": [
+       {
+        "rule_id": "standoff-pedestrian",
+        "detail": "range closes to 10.0m from pedestrian in 2.9s, below min 10.0m",
+        "predicted_at_s": 2.9000000000000012
+       }
+      ]
+     },
+     {
+      "tick": 15,
+      "audited_in": "after",
+      "fsm": [
+       "Brake",
+       "Brake"
+      ],
+      "violations": [
+       {
+        "rule_id": "standoff-pedestrian",
+        "detail": "range closes to 9.9m from pedestrian in 2.9s, below min 10.0m",
+        "predicted_at_s": 2.9000000000000012
+       }
+      ]
+     },
+     {
+      "tick": 16,
+      "audited_in": "after",
+      "fsm": [
+       "Brake",
+       "Brake"
+      ],
+      "violations": [
+       {
+        "rule_id": "standoff-pedestrian",
+        "detail": "range closes to 10.0m from pedestrian in 2.8s, below min 10.0m",
+        "predicted_at_s": 2.800000000000001
+       }
+      ]
+     },
+     {
+      "tick": 17,
+      "audited_in": "after",
+      "fsm": [
+       "Brake",
+       "Brake"
+      ],
+      "violations": [
+       {
+        "rule_id": "standoff-pedestrian",
+        "detail": "range closes to 9.9m from pedestrian in 2.8s, below min 10.0m",
+        "predicted_at_s": 2.800000000000001
+       }
+      ]
+     },
+     {
+      "tick": 18,
+      "audited_in": "after",
+      "fsm": [
+       "Brake",
+       "Brake"
+      ],
+      "violations": [
+       {
+        "rule_id": "standoff-pedestrian",
+        "detail": "range closes to 10.0m from pedestrian in 2.7s, below min 10.0m",
+        "predicted_at_s": 2.700000000000001
+       }
+      ]
+     },
+     {
+      "tick": 19,
+      "audited_in": "after",
+      "fsm": [
+       "Brake",
+       "Brake"
+      ],
+      "violations": [
+       {
+        "rule_id": "standoff-pedestrian",
+        "detail": "range closes to 9.9m from pedestrian in 2.7s, below min 10.0m",
+        "predicted_at_s": 2.700000000000001
+       }
+      ]
+     },
+     {
+      "tick": 20,
+      "audited_in": "after",
+      "fsm": [
+       "Brake",
+       "Brake"
+      ],
+      "violations": [
+       {
+        "rule_id": "standoff-pedestrian",
+        "detail": "range closes to 10.0m from pedestrian in 2.6s, below min 10.0m",
+        "predicted_at_s": 2.600000000000001
+       }
+      ]
+     },
+     {
+      "tick": 21,
+      "audited_in": "after",
+      "fsm": [
+       "Brake",
+       "Brake"
+      ],
+      "violations": [
+       {
+        "rule_id": "standoff-pedestrian",
+        "detail": "range closes to 10.0m from pedestrian in 2.6s, below min 10.0m",
+        "predicted_at_s": 2.600000000000001
+       }
+      ]
+     },
+     {
+      "tick": 22,
+      "audited_in": "after",
+      "fsm": [
+       "Brake",
+       "Brake"
+      ],
+      "violations": [
+       {
+        "rule_id": "standoff-pedestrian",
+        "detail": "range closes to 10.0m from pedestrian in 2.6s, below min 10.0m",
+        "predicted_at_s": 2.600000000000001
+       }
+      ]
+     },
+     {
+      "tick": 23,
+      "audited_in": "after",
+      "fsm": [
+       "Brake",
+       "Brake"
+      ],
+      "violations": [
+       {
+        "rule_id": "standoff-pedestrian",
+        "detail": "range closes to 10.0m from pedestrian in 2.6s, below min 10.0m",
+        "predicted_at_s": 2.600000000000001
+       }
+      ]
+     },
+     {
+      "tick": 24,
+      "audited_in": "after",
+      "fsm": [
+       "Brake",
+       "Brake"
+      ],
+      "violations": [
+       {
+        "rule_id": "standoff-pedestrian",
+        "detail": "range closes to 10.0m from pedestrian in 2.6s, below min 10.0m",
+        "predicted_at_s": 2.600000000000001
+       }
+      ]
+     },
+     {
+      "tick": 33,
+      "audited_in": "before",
+      "fsm": [
+       "Brake",
+       "Normal"
+      ],
+      "violations": []
+     },
+     {
+      "tick": 45,
+      "audited_in": "after",
+      "fsm": [
+       "Brake",
+       "Normal"
+      ],
+      "violations": []
+     }
+    ]
+   }
+  },
+  {
+   "id": "standoff-approach-angles@offset_m=9,subject_class=pedestrian,variant=2",
+   "scenario_id": "standoff-approach-angles",
+   "seed": 1001,
+   "fields": [
+    {
+     "field": "kpi.failsafe_correct_ticks",
+     "before": 13,
+     "after": 25,
+     "kind": "count",
+     "abs_diff": 12.0
+    },
+    {
+     "field": "kpi.failsafe_expected_ticks",
+     "before": 13,
+     "after": 25,
+     "kind": "count",
+     "abs_diff": 12.0
+    },
+    {
+     "field": "kpi.final.x",
+     "before": -11.95,
+     "after": -11.86,
+     "kind": "magnitude",
+     "abs_diff": 0.08999999999999986
+    },
+    {
+     "field": "kpi.final.y",
+     "before": -35.41,
+     "after": -35.09,
+     "kind": "magnitude",
+     "abs_diff": 0.3199999999999932
+    },
+    {
+     "field": "kpi.final_range_to_subject",
+     "before": 19.623,
+     "after": 19.344,
+     "kind": "magnitude",
+     "abs_diff": 0.2789999999999999
+    },
+    {
+     "field": "kpi.fsm.transitions[1].t_s",
+     "before": 3.3,
+     "after": 4.5,
+     "kind": "magnitude",
+     "abs_diff": 1.2000000000000002
+    },
+    {
+     "field": "kpi.max_intervention_s",
+     "before": 1.3,
+     "after": 2.5,
+     "kind": "magnitude",
+     "abs_diff": 1.2
+    },
+    {
+     "field": "kpi.max_repair_magnitude_mps",
+     "before": 3.6477,
+     "after": 0.8185,
+     "kind": "magnitude",
+     "abs_diff": 2.8292
+    },
+    {
+     "field": "kpi.mean_intervention_s",
+     "before": 1.3,
+     "after": 2.5,
+     "kind": "magnitude",
+     "abs_diff": 1.2
+    },
+    {
+     "field": "kpi.mean_repair_magnitude_mps",
+     "before": 3.6084,
+     "after": 0.7128,
+     "kind": "magnitude",
+     "abs_diff": 2.8956
+    },
+    {
+     "field": "kpi.min_range_as_pedestrian",
+     "before": 10.012,
+     "after": 10.02,
+     "kind": "magnitude",
+     "abs_diff": 0.007999999999999119
+    },
+    {
+     "field": "kpi.min_range_by_class.pedestrian",
+     "before": 10.012,
+     "after": 10.02,
+     "kind": "magnitude",
+     "abs_diff": 0.007999999999999119
+    },
+    {
+     "field": "kpi.min_range_to_subject",
+     "before": 10.012,
+     "after": 10.02,
+     "kind": "magnitude",
+     "abs_diff": 0.007999999999999119
+    },
+    {
+     "field": "kpi.p0_violation_ticks",
+     "before": 13,
+     "after": 25,
+     "kind": "count",
+     "abs_diff": 12.0
+    },
+    {
+     "field": "kpi.repair_attempt_ticks",
+     "before": 13,
+     "after": 25,
+     "kind": "count",
+     "abs_diff": 12.0
+    },
+    {
+     "field": "kpi.repair_count",
+     "before": 13,
+     "after": 25,
+     "kind": "count",
+     "abs_diff": 12.0
+    },
+    {
+     "field": "kpi.repair_magnitude_by_operator_class.LateralProjection.mean_mps",
+     "before": 3.6084,
+     "after": null,
+     "kind": "changed"
+    },
+    {
+     "field": "kpi.repair_magnitude_by_operator_class.LateralProjection.sole_mean_mps",
+     "before": 3.6084,
+     "after": null,
+     "kind": "changed"
+    },
+    {
+     "field": "kpi.repair_magnitude_by_operator_class.LateralProjection.sole_sum_mps",
+     "before": 46.909356,
+     "after": 0.0,
+     "kind": "magnitude",
+     "abs_diff": 46.909356
+    },
+    {
+     "field": "kpi.repair_magnitude_by_operator_class.LateralProjection.sole_ticks",
+     "before": 13,
+     "after": 0,
+     "kind": "count",
+     "abs_diff": 13.0
+    },
+    {
+     "field": "kpi.repair_magnitude_by_operator_class.LateralProjection.sum_mps",
+     "before": 46.909356,
+     "after": 0.0,
+     "kind": "magnitude",
+     "abs_diff": 46.909356
+    },
+    {
+     "field": "kpi.repair_magnitude_by_operator_class.LateralProjection.ticks",
+     "before": 13,
+     "after": 0,
+     "kind": "count",
+     "abs_diff": 13.0
+    },
+    {
+     "field": "kpi.repair_magnitude_by_operator_class.PathRepair.mean_mps",
+     "before": null,
+     "after": 0.7128,
+     "kind": "changed"
+    },
+    {
+     "field": "kpi.repair_magnitude_by_operator_class.PathRepair.sole_mean_mps",
+     "before": null,
+     "after": 0.7128,
+     "kind": "changed"
+    },
+    {
+     "field": "kpi.repair_magnitude_by_operator_class.PathRepair.sole_sum_mps",
+     "before": 0.0,
+     "after": 17.820054,
+     "kind": "magnitude",
+     "abs_diff": 17.820054
+    },
+    {
+     "field": "kpi.repair_magnitude_by_operator_class.PathRepair.sole_ticks",
+     "before": 0,
+     "after": 25,
+     "kind": "count",
+     "abs_diff": 25.0
+    },
+    {
+     "field": "kpi.repair_magnitude_by_operator_class.PathRepair.sum_mps",
+     "before": 0.0,
+     "after": 17.820054,
+     "kind": "magnitude",
+     "abs_diff": 17.820054
+    },
+    {
+     "field": "kpi.repair_magnitude_by_operator_class.PathRepair.ticks",
+     "before": 0,
+     "after": 25,
+     "kind": "count",
+     "abs_diff": 25.0
+    },
+    {
+     "field": "kpi.repair_magnitude_by_priority.P0.mean_mps",
+     "before": 3.6084,
+     "after": 0.7128,
+     "kind": "magnitude",
+     "abs_diff": 2.8956
+    },
+    {
+     "field": "kpi.repair_magnitude_by_priority.P0.sum_mps",
+     "before": 46.909356,
+     "after": 17.820054,
+     "kind": "magnitude",
+     "abs_diff": 29.089302000000004
+    },
+    {
+     "field": "kpi.repair_magnitude_by_priority.P0.ticks",
+     "before": 13,
+     "after": 25,
+     "kind": "count",
+     "abs_diff": 12.0
+    },
+    {
+     "field": "kpi.repair_outcomes.converged",
+     "before": 13,
+     "after": 25,
+     "kind": "count",
+     "abs_diff": 12.0
+    },
+    {
+     "field": "kpi.repair_success_ticks",
+     "before": 13,
+     "after": 25,
+     "kind": "count",
+     "abs_diff": 12.0
+    },
+    {
+     "field": "kpi.repair_theta_sources.fsm_record",
+     "before": 13,
+     "after": 25,
+     "kind": "count",
+     "abs_diff": 12.0
+    },
+    {
+     "field": "kpi.repaired_ticks",
+     "before": 13,
+     "after": 25,
+     "kind": "count",
+     "abs_diff": 12.0
+    },
+    {
+     "field": "kpi.repairs_per_episode",
+     "before": 13,
+     "after": 25,
+     "kind": "count",
+     "abs_diff": 12.0
+    },
+    {
+     "field": "kpi.violation_free_ticks",
+     "before": 387,
+     "after": 375,
+     "kind": "count",
+     "abs_diff": 12.0
+    },
+    {
+     "field": "kpi.violations_by_risk_level.P0",
+     "before": 13,
+     "after": 25,
+     "kind": "count",
+     "abs_diff": 12.0
+    },
+    {
+     "field": "kpi.violations_by_type.standoff",
+     "before": 13,
+     "after": 25,
+     "kind": "count",
+     "abs_diff": 12.0
+    }
+   ],
+   "flown": {
+    "status_changed": false,
+    "fsm_edges_changed": false,
+    "fsm_edge_times_moved": true,
+    "fsm_edges_before": [
+     [
+      "G1",
+      "Normal",
+      "Brake",
+      0.0
+     ],
+     [
+      "G7",
+      "Brake",
+      "Normal",
+      3.3
+     ]
+    ],
+    "fsm_edges_after": [
+     [
+      "G1",
+      "Normal",
+      "Brake",
+      0.0
+     ],
+     [
+      "G7",
+      "Brake",
+      "Normal",
+      4.5
+     ]
+    ],
+    "mission_outcome_changed": false,
+    "mission_outcome": [
+     "success",
+     "success"
+    ],
+    "hold_points_changed": false,
+    "harness_events": [
+     0,
+     0
+    ],
+    "final_position_moved_m": 0.33241540277188664
+   },
+   "audit": {
+    "audited_ticks_before": 14,
+    "audited_ticks_after": 26,
+    "first_differing_tick": 0,
+    "ticks_emitted_differs_um_level": 0,
+    "emitted_um_level_max_abs_diff_mps": 0.0,
+    "ticks_emitted_differs_large": 13,
+    "ticks_emitted_differs_large_all_mirrored": false,
+    "large": [
+     {
+      "tick": 0,
+      "abs_diff_mps": 3.386228927314676,
+      "mirrored": false,
+      "before": {
+       "vx": -1.6330997109119685,
+       "vy": -0.1654449413126291,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      },
+      "after": {
+       "vx": -1.8400034594831483,
+       "vy": -3.5516738686273053,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      }
+     },
+     {
+      "tick": 1,
+      "abs_diff_mps": 3.3725374582565246,
+      "mirrored": false,
+      "before": {
+       "vx": -1.6453511913484877,
+       "vy": -0.17913641037078065,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      },
+      "after": {
+       "vx": -1.8400034594831483,
+       "vy": -3.5516738686273053,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      }
+     },
+     {
+      "tick": 2,
+      "abs_diff_mps": 3.358540634987174,
+      "mirrored": false,
+      "before": {
+       "vx": -1.6575644118679391,
+       "vy": -0.1931332336401308,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      },
+      "after": {
+       "vx": -1.8400034594831478,
+       "vy": -3.551673868627305,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      }
+     },
+     {
+      "tick": 3,
+      "abs_diff_mps": 3.3442345195447714,
+      "mirrored": false,
+      "before": {
+       "vx": -1.6697341449532743,
+       "vy": -0.20743934908253392,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      },
+      "after": {
+       "vx": -1.8400034594831483,
+       "vy": -3.5516738686273053,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      }
+     },
+     {
+      "tick": 4,
+      "abs_diff_mps": 3.329615201206568,
+      "mirrored": false,
+      "before": {
+       "vx": -1.6818550023313823,
+       "vy": -0.222058667420737,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      },
+      "after": {
+       "vx": -1.8400034594831476,
+       "vy": -3.551673868627305,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      }
+     },
+     {
+      "tick": 5,
+      "abs_diff_mps": 3.314678800511032,
+      "mirrored": false,
+      "before": {
+       "vx": -1.693921432359942,
+       "vy": -0.23699506811627247,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      },
+      "after": {
+       "vx": -1.8400034594831483,
+       "vy": -3.5516738686273044,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      }
+     },
+     {
+      "tick": 6,
+      "abs_diff_mps": 3.299421473437042,
+      "mirrored": false,
+      "before": {
+       "vx": -1.7059277174542835,
+       "vy": -0.25225239519026266,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      },
+      "after": {
+       "vx": -1.840003459483148,
+       "vy": -3.551673868627305,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      }
+     },
+     {
+      "tick": 7,
+      "abs_diff_mps": 3.2838394157430586,
+      "mirrored": false,
+      "before": {
+       "vx": -1.7178679715596932,
+       "vy": -0.2678344528842471,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      },
+      "after": {
+       "vx": -1.8400034594831471,
+       "vy": -3.5516738686273057,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      }
+     },
+     {
+      "tick": 8,
+      "abs_diff_mps": 3.267928867469114,
+      "mirrored": false,
+      "before": {
+       "vx": -1.7297361376748517,
+       "vy": -0.283745001158191,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      },
+      "after": {
+       "vx": -1.840003459483148,
+       "vy": -3.551673868627305,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      }
+     },
+     {
+      "tick": 9,
+      "abs_diff_mps": 3.251686117604328,
+      "mirrored": false,
+      "before": {
+       "vx": -1.7415259854323328,
+       "vy": -0.2999877510229765,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      },
+      "after": {
+       "vx": -1.840003459483149,
+       "vy": -3.5516738686273044,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      }
+     },
+     {
+      "tick": 10,
+      "abs_diff_mps": 3.235107508922567,
+      "mirrored": false,
+      "before": {
+       "vx": -1.753231108742372,
+       "vy": -0.31656635970473834,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      },
+      "after": {
+       "vx": -1.8400034594831478,
+       "vy": -3.5516738686273053,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      }
+     },
+     {
+      "tick": 11,
+      "abs_diff_mps": 3.2181894429887286,
+      "mirrored": false,
+      "before": {
+       "vx": -1.7648449235063397,
+       "vy": -0.3334844256385763,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      },
+      "after": {
+       "vx": -1.8400034594831487,
+       "vy": -3.551673868627305,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      }
+     },
+     {
+      "tick": 12,
+      "abs_diff_mps": 3.200928385338017,
+      "mirrored": false,
+      "before": {
+       "vx": -1.776360665406647,
+       "vy": -0.35074548328928845,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      },
+      "after": {
+       "vx": -1.8400034594831478,
+       "vy": -3.5516738686273053,
+       "vz_up": 0.0,
+       "yaw_rate": 0.0
+      }
+     }
+    ],
+    "violation_set_changes": [],
+    "ticks_audited_in_one_only": [
+     {
+      "tick": 13,
+      "audited_in": "after",
+      "fsm": [
+       "Brake",
+       "Brake"
+      ],
+      "violations": [
+       {
+        "rule_id": "standoff-pedestrian",
+        "detail": "range closes to 10.0m from pedestrian in 3.0s, below min 10.0m",
+        "predicted_at_s": 3.0000000000000013
+       }
+      ]
+     },
+     {
+      "tick": 14,
+      "audited_in": "after",
+      "fsm": [
+       "Brake",
+       "Brake"
+      ],
+      "violations": [
+       {
+        "rule_id": "standoff-pedestrian",
+        "detail": "range closes to 10.0m from pedestrian in 2.9s, below min 10.0m",
+        "predicted_at_s": 2.9000000000000012
+       }
+      ]
+     },
+     {
+      "tick": 15,
+      "audited_in": "after",
+      "fsm": [
+       "Brake",
+       "Brake"
+      ],
+      "violations": [
+       {
+        "rule_id": "standoff-pedestrian",
+        "detail": "range closes to 9.9m from pedestrian in 2.9s, below min 10.0m",
+        "predicted_at_s": 2.9000000000000012
+       }
+      ]
+     },
+     {
+      "tick": 16,
+      "audited_in": "after",
+      "fsm": [
+       "Brake",
+       "Brake"
+      ],
+      "violations": [
+       {
+        "rule_id": "standoff-pedestrian",
+        "detail": "range closes to 10.0m from pedestrian in 2.8s, below min 10.0m",
+        "predicted_at_s": 2.800000000000001
+       }
+      ]
+     },
+     {
+      "tick": 17,
+      "audited_in": "after",
+      "fsm": [
+       "Brake",
+       "Brake"
+      ],
+      "violations": [
+       {
+        "rule_id": "standoff-pedestrian",
+        "detail": "range closes to 9.9m from pedestrian in 2.8s, below min 10.0m",
+        "predicted_at_s": 2.800000000000001
+       }
+      ]
+     },
+     {
+      "tick": 18,
+      "audited_in": "after",
+      "fsm": [
+       "Brake",
+       "Brake"
+      ],
+      "violations": [
+       {
+        "rule_id": "standoff-pedestrian",
+        "detail": "range closes to 10.0m from pedestrian in 2.7s, below min 10.0m",
+        "predicted_at_s": 2.700000000000001
+       }
+      ]
+     },
+     {
+      "tick": 19,
+      "audited_in": "after",
+      "fsm": [
+       "Brake",
+       "Brake"
+      ],
+      "violations": [
+       {
+        "rule_id": "standoff-pedestrian",
+        "detail": "range closes to 9.9m from pedestrian in 2.7s, below min 10.0m",
+        "predicted_at_s": 2.700000000000001
+       }
+      ]
+     },
+     {
+      "tick": 20,
+      "audited_in": "after",
+      "fsm": [
+       "Brake",
+       "Brake"
+      ],
+      "violations": [
+       {
+        "rule_id": "standoff-pedestrian",
+        "detail": "range closes to 10.0m from pedestrian in 2.6s, below min 10.0m",
+        "predicted_at_s": 2.600000000000001
+       }
+      ]
+     },
+     {
+      "tick": 21,
+      "audited_in": "after",
+      "fsm": [
+       "Brake",
+       "Brake"
+      ],
+      "violations": [
+       {
+        "rule_id": "standoff-pedestrian",
+        "detail": "range closes to 10.0m from pedestrian in 2.6s, below min 10.0m",
+        "predicted_at_s": 2.600000000000001
+       }
+      ]
+     },
+     {
+      "tick": 22,
+      "audited_in": "after",
+      "fsm": [
+       "Brake",
+       "Brake"
+      ],
+      "violations": [
+       {
+        "rule_id": "standoff-pedestrian",
+        "detail": "range closes to 10.0m from pedestrian in 2.6s, below min 10.0m",
+        "predicted_at_s": 2.600000000000001
+       }
+      ]
+     },
+     {
+      "tick": 23,
+      "audited_in": "after",
+      "fsm": [
+       "Brake",
+       "Brake"
+      ],
+      "violations": [
+       {
+        "rule_id": "standoff-pedestrian",
+        "detail": "range closes to 10.0m from pedestrian in 2.6s, below min 10.0m",
+        "predicted_at_s": 2.600000000000001
+       }
+      ]
+     },
+     {
+      "tick": 24,
+      "audited_in": "after",
+      "fsm": [
+       "Brake",
+       "Brake"
+      ],
+      "violations": [
+       {
+        "rule_id": "standoff-pedestrian",
+        "detail": "range closes to 10.0m from pedestrian in 2.6s, below min 10.0m",
+        "predicted_at_s": 2.600000000000001
+       }
+      ]
+     },
+     {
+      "tick": 33,
+      "audited_in": "before",
+      "fsm": [
+       "Brake",
+       "Normal"
+      ],
+      "violations": []
+     },
+     {
+      "tick": 45,
+      "audited_in": "after",
+      "fsm": [
+       "Brake",
+       "Normal"
+      ],
+      "violations": []
+     }
+    ]
+   }
+  }
+ ],
+ "aggregates_differing": [
+  {
+   "field": "_cell_rollup.subject_standoff/standoff-approach-angles@offset_m=9,subject_class=pedestrian,variant=0/shield-on.failsafe_expected_ticks",
+   "before": 13,
+   "after": 25,
+   "kind": "count",
+   "abs_diff": 12.0
+  },
+  {
+   "field": "_cell_rollup.subject_standoff/standoff-approach-angles@offset_m=9,subject_class=pedestrian,variant=0/shield-on.max_repair_magnitude_mps",
+   "before": 3.6477,
+   "after": 0.8185,
+   "kind": "magnitude",
+   "abs_diff": 2.8292
+  },
+  {
+   "field": "_cell_rollup.subject_standoff/standoff-approach-angles@offset_m=9,subject_class=pedestrian,variant=0/shield-on.mean_repair_attempt_ticks_per_episode",
+   "before": 13.0,
+   "after": 25.0,
+   "kind": "magnitude",
+   "abs_diff": 12.0
+  },
+  {
+   "field": "_cell_rollup.subject_standoff/standoff-approach-angles@offset_m=9,subject_class=pedestrian,variant=0/shield-on.mean_repair_count_per_episode",
+   "before": 13.0,
+   "after": 25.0,
+   "kind": "magnitude",
+   "abs_diff": 12.0
+  },
+  {
+   "field": "_cell_rollup.subject_standoff/standoff-approach-angles@offset_m=9,subject_class=pedestrian,variant=0/shield-on.mean_repair_magnitude_by_operator_class.LateralProjection.mean_mps",
+   "before": 3.6084,
+   "after": null,
+   "kind": "changed"
+  },
+  {
+   "field": "_cell_rollup.subject_standoff/standoff-approach-angles@offset_m=9,subject_class=pedestrian,variant=0/shield-on.mean_repair_magnitude_by_operator_class.LateralProjection.sole_mean_mps",
+   "before": 3.6084,
+   "after": null,
+   "kind": "changed"
+  },
+  {
+   "field": "_cell_rollup.subject_standoff/standoff-approach-angles@offset_m=9,subject_class=pedestrian,variant=0/shield-on.mean_repair_magnitude_by_operator_class.LateralProjection.sole_ticks",
+   "before": 13,
+   "after": 0,
+   "kind": "count",
+   "abs_diff": 13.0
+  },
+  {
+   "field": "_cell_rollup.subject_standoff/standoff-approach-angles@offset_m=9,subject_class=pedestrian,variant=0/shield-on.mean_repair_magnitude_by_operator_class.LateralProjection.ticks",
+   "before": 13,
+   "after": 0,
+   "kind": "count",
+   "abs_diff": 13.0
+  },
+  {
+   "field": "_cell_rollup.subject_standoff/standoff-approach-angles@offset_m=9,subject_class=pedestrian,variant=0/shield-on.mean_repair_magnitude_by_operator_class.PathRepair.mean_mps",
+   "before": null,
+   "after": 0.7128,
+   "kind": "changed"
+  },
+  {
+   "field": "_cell_rollup.subject_standoff/standoff-approach-angles@offset_m=9,subject_class=pedestrian,variant=0/shield-on.mean_repair_magnitude_by_operator_class.PathRepair.sole_mean_mps",
+   "before": null,
+   "after": 0.7128,
+   "kind": "changed"
+  },
+  {
+   "field": "_cell_rollup.subject_standoff/standoff-approach-angles@offset_m=9,subject_class=pedestrian,variant=0/shield-on.mean_repair_magnitude_by_operator_class.PathRepair.sole_ticks",
+   "before": 0,
+   "after": 25,
+   "kind": "count",
+   "abs_diff": 25.0
+  },
+  {
+   "field": "_cell_rollup.subject_standoff/standoff-approach-angles@offset_m=9,subject_class=pedestrian,variant=0/shield-on.mean_repair_magnitude_by_operator_class.PathRepair.ticks",
+   "before": 0,
+   "after": 25,
+   "kind": "count",
+   "abs_diff": 25.0
+  },
+  {
+   "field": "_cell_rollup.subject_standoff/standoff-approach-angles@offset_m=9,subject_class=pedestrian,variant=0/shield-on.mean_repair_magnitude_by_priority.P0.mean_mps",
+   "before": 3.6084,
+   "after": 0.7128,
+   "kind": "magnitude",
+   "abs_diff": 2.8956
+  },
+  {
+   "field": "_cell_rollup.subject_standoff/standoff-approach-angles@offset_m=9,subject_class=pedestrian,variant=0/shield-on.mean_repair_magnitude_by_priority.P0.ticks",
+   "before": 13,
+   "after": 25,
+   "kind": "count",
+   "abs_diff": 12.0
+  },
+  {
+   "field": "_cell_rollup.subject_standoff/standoff-approach-angles@offset_m=9,subject_class=pedestrian,variant=0/shield-on.mean_repair_magnitude_mps",
+   "before": 3.6084,
+   "after": 0.7128,
+   "kind": "magnitude",
+   "abs_diff": 2.8956
+  },
+  {
+   "field": "_cell_rollup.subject_standoff/standoff-approach-angles@offset_m=9,subject_class=pedestrian,variant=0/shield-on.null_passthrough_p0_escape_rate",
+   "before": 0.0325,
+   "after": 0.0625,
+   "kind": "magnitude",
+   "abs_diff": 0.03
+  },
+  {
+   "field": "_cell_rollup.subject_standoff/standoff-approach-angles@offset_m=9,subject_class=pedestrian,variant=0/shield-on.p0_violation_ticks",
+   "before": 13,
+   "after": 25,
+   "kind": "count",
+   "abs_diff": 12.0
+  },
+  {
+   "field": "_cell_rollup.subject_standoff/standoff-approach-angles@offset_m=9,subject_class=pedestrian,variant=0/shield-on.repair_attempt_ticks",
+   "before": 13,
+   "after": 25,
+   "kind": "count",
+   "abs_diff": 12.0
+  },
+  {
+   "field": "_cell_rollup.subject_standoff/standoff-approach-angles@offset_m=9,subject_class=pedestrian,variant=0/shield-on.repair_outcomes.converged",
+   "before": 13,
+   "after": 25,
+   "kind": "count",
+   "abs_diff": 12.0
+  },
+  {
+   "field": "_cell_rollup.subject_standoff/standoff-approach-angles@offset_m=9,subject_class=pedestrian,variant=0/shield-on.repair_success_ticks",
+   "before": 13,
+   "after": 25,
+   "kind": "count",
+   "abs_diff": 12.0
+  },
+  {
+   "field": "_cell_rollup.subject_standoff/standoff-approach-angles@offset_m=9,subject_class=pedestrian,variant=0/shield-on.violation_free_ticks",
+   "before": 387,
+   "after": 375,
+   "kind": "count",
+   "abs_diff": 12.0
+  },
+  {
+   "field": "_cell_rollup.subject_standoff/standoff-approach-angles@offset_m=9,subject_class=pedestrian,variant=1/shield-on.failsafe_expected_ticks",
+   "before": 13,
+   "after": 25,
+   "kind": "count",
+   "abs_diff": 12.0
+  },
+  {
+   "field": "_cell_rollup.subject_standoff/standoff-approach-angles@offset_m=9,subject_class=pedestrian,variant=1/shield-on.max_repair_magnitude_mps",
+   "before": 3.6477,
+   "after": 0.8185,
+   "kind": "magnitude",
+   "abs_diff": 2.8292
+  },
+  {
+   "field": "_cell_rollup.subject_standoff/standoff-approach-angles@offset_m=9,subject_class=pedestrian,variant=1/shield-on.mean_repair_attempt_ticks_per_episode",
+   "before": 13.0,
+   "after": 25.0,
+   "kind": "magnitude",
+   "abs_diff": 12.0
+  },
+  {
+   "field": "_cell_rollup.subject_standoff/standoff-approach-angles@offset_m=9,subject_class=pedestrian,variant=1/shield-on.mean_repair_count_per_episode",
+   "before": 13.0,
+   "after": 25.0,
+   "kind": "magnitude",
+   "abs_diff": 12.0
+  },
+  {
+   "field": "_cell_rollup.subject_standoff/standoff-approach-angles@offset_m=9,subject_class=pedestrian,variant=1/shield-on.mean_repair_magnitude_by_operator_class.LateralProjection.mean_mps",
+   "before": 3.6084,
+   "after": null,
+   "kind": "changed"
+  },
+  {
+   "field": "_cell_rollup.subject_standoff/standoff-approach-angles@offset_m=9,subject_class=pedestrian,variant=1/shield-on.mean_repair_magnitude_by_operator_class.LateralProjection.sole_mean_mps",
+   "before": 3.6084,
+   "after": null,
+   "kind": "changed"
+  },
+  {
+   "field": "_cell_rollup.subject_standoff/standoff-approach-angles@offset_m=9,subject_class=pedestrian,variant=1/shield-on.mean_repair_magnitude_by_operator_class.LateralProjection.sole_ticks",
+   "before": 13,
+   "after": 0,
+   "kind": "count",
+   "abs_diff": 13.0
+  },
+  {
+   "field": "_cell_rollup.subject_standoff/standoff-approach-angles@offset_m=9,subject_class=pedestrian,variant=1/shield-on.mean_repair_magnitude_by_operator_class.LateralProjection.ticks",
+   "before": 13,
+   "after": 0,
+   "kind": "count",
+   "abs_diff": 13.0
+  },
+  {
+   "field": "_cell_rollup.subject_standoff/standoff-approach-angles@offset_m=9,subject_class=pedestrian,variant=1/shield-on.mean_repair_magnitude_by_operator_class.PathRepair.mean_mps",
+   "before": null,
+   "after": 0.7128,
+   "kind": "changed"
+  },
+  {
+   "field": "_cell_rollup.subject_standoff/standoff-approach-angles@offset_m=9,subject_class=pedestrian,variant=1/shield-on.mean_repair_magnitude_by_operator_class.PathRepair.sole_mean_mps",
+   "before": null,
+   "after": 0.7128,
+   "kind": "changed"
+  },
+  {
+   "field": "_cell_rollup.subject_standoff/standoff-approach-angles@offset_m=9,subject_class=pedestrian,variant=1/shield-on.mean_repair_magnitude_by_operator_class.PathRepair.sole_ticks",
+   "before": 0,
+   "after": 25,
+   "kind": "count",
+   "abs_diff": 25.0
+  },
+  {
+   "field": "_cell_rollup.subject_standoff/standoff-approach-angles@offset_m=9,subject_class=pedestrian,variant=1/shield-on.mean_repair_magnitude_by_operator_class.PathRepair.ticks",
+   "before": 0,
+   "after": 25,
+   "kind": "count",
+   "abs_diff": 25.0
+  },
+  {
+   "field": "_cell_rollup.subject_standoff/standoff-approach-angles@offset_m=9,subject_class=pedestrian,variant=1/shield-on.mean_repair_magnitude_by_priority.P0.mean_mps",
+   "before": 3.6084,
+   "after": 0.7128,
+   "kind": "magnitude",
+   "abs_diff": 2.8956
+  },
+  {
+   "field": "_cell_rollup.subject_standoff/standoff-approach-angles@offset_m=9,subject_class=pedestrian,variant=1/shield-on.mean_repair_magnitude_by_priority.P0.ticks",
+   "before": 13,
+   "after": 25,
+   "kind": "count",
+   "abs_diff": 12.0
+  },
+  {
+   "field": "_cell_rollup.subject_standoff/standoff-approach-angles@offset_m=9,subject_class=pedestrian,variant=1/shield-on.mean_repair_magnitude_mps",
+   "before": 3.6084,
+   "after": 0.7128,
+   "kind": "magnitude",
+   "abs_diff": 2.8956
+  },
+  {
+   "field": "_cell_rollup.subject_standoff/standoff-approach-angles@offset_m=9,subject_class=pedestrian,variant=1/shield-on.null_passthrough_p0_escape_rate",
+   "before": 0.0325,
+   "after": 0.0625,
+   "kind": "magnitude",
+   "abs_diff": 0.03
+  },
+  {
+   "field": "_cell_rollup.subject_standoff/standoff-approach-angles@offset_m=9,subject_class=pedestrian,variant=1/shield-on.p0_violation_ticks",
+   "before": 13,
+   "after": 25,
+   "kind": "count",
+   "abs_diff": 12.0
+  },
+  {
+   "field": "_cell_rollup.subject_standoff/standoff-approach-angles@offset_m=9,subject_class=pedestrian,variant=1/shield-on.repair_attempt_ticks",
+   "before": 13,
+   "after": 25,
+   "kind": "count",
+   "abs_diff": 12.0
+  },
+  {
+   "field": "_cell_rollup.subject_standoff/standoff-approach-angles@offset_m=9,subject_class=pedestrian,variant=1/shield-on.repair_outcomes.converged",
+   "before": 13,
+   "after": 25,
+   "kind": "count",
+   "abs_diff": 12.0
+  },
+  {
+   "field": "_cell_rollup.subject_standoff/standoff-approach-angles@offset_m=9,subject_class=pedestrian,variant=1/shield-on.repair_success_ticks",
+   "before": 13,
+   "after": 25,
+   "kind": "count",
+   "abs_diff": 12.0
+  },
+  {
+   "field": "_cell_rollup.subject_standoff/standoff-approach-angles@offset_m=9,subject_class=pedestrian,variant=1/shield-on.violation_free_ticks",
+   "before": 387,
+   "after": 375,
+   "kind": "count",
+   "abs_diff": 12.0
+  },
+  {
+   "field": "_cell_rollup.subject_standoff/standoff-approach-angles@offset_m=9,subject_class=pedestrian,variant=2/shield-on.failsafe_expected_ticks",
+   "before": 13,
+   "after": 25,
+   "kind": "count",
+   "abs_diff": 12.0
+  },
+  {
+   "field": "_cell_rollup.subject_standoff/standoff-approach-angles@offset_m=9,subject_class=pedestrian,variant=2/shield-on.max_repair_magnitude_mps",
+   "before": 3.6477,
+   "after": 0.8185,
+   "kind": "magnitude",
+   "abs_diff": 2.8292
+  },
+  {
+   "field": "_cell_rollup.subject_standoff/standoff-approach-angles@offset_m=9,subject_class=pedestrian,variant=2/shield-on.mean_repair_attempt_ticks_per_episode",
+   "before": 13.0,
+   "after": 25.0,
+   "kind": "magnitude",
+   "abs_diff": 12.0
+  },
+  {
+   "field": "_cell_rollup.subject_standoff/standoff-approach-angles@offset_m=9,subject_class=pedestrian,variant=2/shield-on.mean_repair_count_per_episode",
+   "before": 13.0,
+   "after": 25.0,
+   "kind": "magnitude",
+   "abs_diff": 12.0
+  },
+  {
+   "field": "_cell_rollup.subject_standoff/standoff-approach-angles@offset_m=9,subject_class=pedestrian,variant=2/shield-on.mean_repair_magnitude_by_operator_class.LateralProjection.mean_mps",
+   "before": 3.6084,
+   "after": null,
+   "kind": "changed"
+  },
+  {
+   "field": "_cell_rollup.subject_standoff/standoff-approach-angles@offset_m=9,subject_class=pedestrian,variant=2/shield-on.mean_repair_magnitude_by_operator_class.LateralProjection.sole_mean_mps",
+   "before": 3.6084,
+   "after": null,
+   "kind": "changed"
+  },
+  {
+   "field": "_cell_rollup.subject_standoff/standoff-approach-angles@offset_m=9,subject_class=pedestrian,variant=2/shield-on.mean_repair_magnitude_by_operator_class.LateralProjection.sole_ticks",
+   "before": 13,
+   "after": 0,
+   "kind": "count",
+   "abs_diff": 13.0
+  },
+  {
+   "field": "_cell_rollup.subject_standoff/standoff-approach-angles@offset_m=9,subject_class=pedestrian,variant=2/shield-on.mean_repair_magnitude_by_operator_class.LateralProjection.ticks",
+   "before": 13,
+   "after": 0,
+   "kind": "count",
+   "abs_diff": 13.0
+  },
+  {
+   "field": "_cell_rollup.subject_standoff/standoff-approach-angles@offset_m=9,subject_class=pedestrian,variant=2/shield-on.mean_repair_magnitude_by_operator_class.PathRepair.mean_mps",
+   "before": null,
+   "after": 0.7128,
+   "kind": "changed"
+  },
+  {
+   "field": "_cell_rollup.subject_standoff/standoff-approach-angles@offset_m=9,subject_class=pedestrian,variant=2/shield-on.mean_repair_magnitude_by_operator_class.PathRepair.sole_mean_mps",
+   "before": null,
+   "after": 0.7128,
+   "kind": "changed"
+  },
+  {
+   "field": "_cell_rollup.subject_standoff/standoff-approach-angles@offset_m=9,subject_class=pedestrian,variant=2/shield-on.mean_repair_magnitude_by_operator_class.PathRepair.sole_ticks",
+   "before": 0,
+   "after": 25,
+   "kind": "count",
+   "abs_diff": 25.0
+  },
+  {
+   "field": "_cell_rollup.subject_standoff/standoff-approach-angles@offset_m=9,subject_class=pedestrian,variant=2/shield-on.mean_repair_magnitude_by_operator_class.PathRepair.ticks",
+   "before": 0,
+   "after": 25,
+   "kind": "count",
+   "abs_diff": 25.0
+  },
+  {
+   "field": "_cell_rollup.subject_standoff/standoff-approach-angles@offset_m=9,subject_class=pedestrian,variant=2/shield-on.mean_repair_magnitude_by_priority.P0.mean_mps",
+   "before": 3.6084,
+   "after": 0.7128,
+   "kind": "magnitude",
+   "abs_diff": 2.8956
+  },
+  {
+   "field": "_cell_rollup.subject_standoff/standoff-approach-angles@offset_m=9,subject_class=pedestrian,variant=2/shield-on.mean_repair_magnitude_by_priority.P0.ticks",
+   "before": 13,
+   "after": 25,
+   "kind": "count",
+   "abs_diff": 12.0
+  },
+  {
+   "field": "_cell_rollup.subject_standoff/standoff-approach-angles@offset_m=9,subject_class=pedestrian,variant=2/shield-on.mean_repair_magnitude_mps",
+   "before": 3.6084,
+   "after": 0.7128,
+   "kind": "magnitude",
+   "abs_diff": 2.8956
+  },
+  {
+   "field": "_cell_rollup.subject_standoff/standoff-approach-angles@offset_m=9,subject_class=pedestrian,variant=2/shield-on.null_passthrough_p0_escape_rate",
+   "before": 0.0325,
+   "after": 0.0625,
+   "kind": "magnitude",
+   "abs_diff": 0.03
+  },
+  {
+   "field": "_cell_rollup.subject_standoff/standoff-approach-angles@offset_m=9,subject_class=pedestrian,variant=2/shield-on.p0_violation_ticks",
+   "before": 13,
+   "after": 25,
+   "kind": "count",
+   "abs_diff": 12.0
+  },
+  {
+   "field": "_cell_rollup.subject_standoff/standoff-approach-angles@offset_m=9,subject_class=pedestrian,variant=2/shield-on.repair_attempt_ticks",
+   "before": 13,
+   "after": 25,
+   "kind": "count",
+   "abs_diff": 12.0
+  },
+  {
+   "field": "_cell_rollup.subject_standoff/standoff-approach-angles@offset_m=9,subject_class=pedestrian,variant=2/shield-on.repair_outcomes.converged",
+   "before": 13,
+   "after": 25,
+   "kind": "count",
+   "abs_diff": 12.0
+  },
+  {
+   "field": "_cell_rollup.subject_standoff/standoff-approach-angles@offset_m=9,subject_class=pedestrian,variant=2/shield-on.repair_success_ticks",
+   "before": 13,
+   "after": 25,
+   "kind": "count",
+   "abs_diff": 12.0
+  },
+  {
+   "field": "_cell_rollup.subject_standoff/standoff-approach-angles@offset_m=9,subject_class=pedestrian,variant=2/shield-on.violation_free_ticks",
+   "before": 387,
+   "after": 375,
+   "kind": "count",
+   "abs_diff": 12.0
+  },
+  {
+   "field": "_rollup._all_shield_on.failsafe_expected_ticks",
+   "before": 14675,
+   "after": 14711,
+   "kind": "count",
+   "abs_diff": 36.0
+  },
+  {
+   "field": "_rollup._all_shield_on.mean_repair_attempt_ticks_per_episode",
+   "before": 76.534,
+   "after": 76.68,
+   "kind": "magnitude",
+   "abs_diff": 0.1460000000000008
+  },
+  {
+   "field": "_rollup._all_shield_on.mean_repair_count_per_episode",
+   "before": 87.794,
+   "after": 87.939,
+   "kind": "magnitude",
+   "abs_diff": 0.14499999999999602
+  },
+  {
+   "field": "_rollup._all_shield_on.mean_repair_magnitude_by_operator_class.LateralProjection.mean_mps",
+   "before": 5.3281,
+   "after": 5.3333,
+   "kind": "magnitude",
+   "abs_diff": 0.0052000000000003155
+  },
+  {
+   "field": "_rollup._all_shield_on.mean_repair_magnitude_by_operator_class.LateralProjection.sole_mean_mps",
+   "before": 4.6372,
+   "after": 4.6411,
+   "kind": "magnitude",
+   "abs_diff": 0.0038999999999997925
+  },
+  {
+   "field": "_rollup._all_shield_on.mean_repair_magnitude_by_operator_class.LateralProjection.sole_ticks",
+   "before": 10511,
+   "after": 10472,
+   "kind": "count",
+   "abs_diff": 39.0
+  },
+  {
+   "field": "_rollup._all_shield_on.mean_repair_magnitude_by_operator_class.LateralProjection.ticks",
+   "before": 12859,
+   "after": 12820,
+   "kind": "count",
+   "abs_diff": 39.0
+  },
+  {
+   "field": "_rollup._all_shield_on.mean_repair_magnitude_by_operator_class.PathRepair.mean_mps",
+   "before": null,
+   "after": 0.7128,
+   "kind": "changed"
+  },
+  {
+   "field": "_rollup._all_shield_on.mean_repair_magnitude_by_operator_class.PathRepair.sole_mean_mps",
+   "before": null,
+   "after": 0.7128,
+   "kind": "changed"
+  },
+  {
+   "field": "_rollup._all_shield_on.mean_repair_magnitude_by_operator_class.PathRepair.sole_ticks",
+   "before": 0,
+   "after": 75,
+   "kind": "count",
+   "abs_diff": 75.0
+  },
+  {
+   "field": "_rollup._all_shield_on.mean_repair_magnitude_by_operator_class.PathRepair.ticks",
+   "before": 0,
+   "after": 75,
+   "kind": "count",
+   "abs_diff": 75.0
+  },
+  {
+   "field": "_rollup._all_shield_on.mean_repair_magnitude_by_priority.P0.mean_mps",
+   "before": 5.5855,
+   "after": 5.5655,
+   "kind": "magnitude",
+   "abs_diff": 0.019999999999999574
+  },
+  {
+   "field": "_rollup._all_shield_on.mean_repair_magnitude_by_priority.P0.ticks",
+   "before": 14375,
+   "after": 14411,
+   "kind": "count",
+   "abs_diff": 36.0
+  },
+  {
+   "field": "_rollup._all_shield_on.mean_repair_magnitude_mps",
+   "before": 6.3486,
+   "after": 6.3319,
+   "kind": "magnitude",
+   "abs_diff": 0.01670000000000016
+  },
+  {
+   "field": "_rollup._all_shield_on.null_passthrough_p0_escape_rate",
+   "before": 0.239221,
+   "after": 0.239808,
+   "kind": "magnitude",
+   "abs_diff": 0.0005870000000000042
+  },
+  {
+   "field": "_rollup._all_shield_on.p0_violation_ticks",
+   "before": 14675,
+   "after": 14711,
+   "kind": "count",
+   "abs_diff": 36.0
+  },
+  {
+   "field": "_rollup._all_shield_on.repair_attempt_ticks",
+   "before": 18904,
+   "after": 18940,
+   "kind": "count",
+   "abs_diff": 36.0
+  },
+  {
+   "field": "_rollup._all_shield_on.repair_outcomes.converged",
+   "before": 18753,
+   "after": 18789,
+   "kind": "count",
+   "abs_diff": 36.0
+  },
+  {
+   "field": "_rollup._all_shield_on.repair_success_rate",
+   "before": 0.992012,
+   "after": 0.992027,
+   "kind": "magnitude",
+   "abs_diff": 1.4999999999987246e-05
+  },
+  {
+   "field": "_rollup._all_shield_on.repair_success_ticks",
+   "before": 18753,
+   "after": 18789,
+   "kind": "count",
+   "abs_diff": 36.0
+  },
+  {
+   "field": "_rollup._all_shield_on.violation_free_ticks",
+   "before": 42441,
+   "after": 42405,
+   "kind": "count",
+   "abs_diff": 36.0
+  },
+  {
+   "field": "_rollup.subject_standoff.failsafe_expected_ticks",
+   "before": 57,
+   "after": 93,
+   "kind": "count",
+   "abs_diff": 36.0
+  },
+  {
+   "field": "_rollup.subject_standoff.mean_repair_attempt_ticks_per_episode",
+   "before": 2.714,
+   "after": 4.429,
+   "kind": "magnitude",
+   "abs_diff": 1.7150000000000003
+  },
+  {
+   "field": "_rollup.subject_standoff.mean_repair_count_per_episode",
+   "before": 2.714,
+   "after": 4.429,
+   "kind": "magnitude",
+   "abs_diff": 1.7150000000000003
+  },
+  {
+   "field": "_rollup.subject_standoff.mean_repair_magnitude_by_operator_class.LateralProjection.mean_mps",
+   "before": 3.6818,
+   "after": 4.0,
+   "kind": "magnitude",
+   "abs_diff": 0.31820000000000004
+  },
+  {
+   "field": "_rollup.subject_standoff.mean_repair_magnitude_by_operator_class.LateralProjection.sole_mean_mps",
+   "before": 3.6818,
+   "after": 4.0,
+   "kind": "magnitude",
+   "abs_diff": 0.31820000000000004
+  },
+  {
+   "field": "_rollup.subject_standoff.mean_repair_magnitude_by_operator_class.LateralProjection.sole_ticks",
+   "before": 48,
+   "after": 9,
+   "kind": "count",
+   "abs_diff": 39.0
+  },
+  {
+   "field": "_rollup.subject_standoff.mean_repair_magnitude_by_operator_class.LateralProjection.ticks",
+   "before": 48,
+   "after": 9,
+   "kind": "count",
+   "abs_diff": 39.0
+  },
+  {
+   "field": "_rollup.subject_standoff.mean_repair_magnitude_by_operator_class.PathRepair.mean_mps",
+   "before": null,
+   "after": 0.7128,
+   "kind": "changed"
+  },
+  {
+   "field": "_rollup.subject_standoff.mean_repair_magnitude_by_operator_class.PathRepair.sole_mean_mps",
+   "before": null,
+   "after": 0.7128,
+   "kind": "changed"
+  },
+  {
+   "field": "_rollup.subject_standoff.mean_repair_magnitude_by_operator_class.PathRepair.sole_ticks",
+   "before": 0,
+   "after": 75,
+   "kind": "count",
+   "abs_diff": 75.0
+  },
+  {
+   "field": "_rollup.subject_standoff.mean_repair_magnitude_by_operator_class.PathRepair.ticks",
+   "before": 0,
+   "after": 75,
+   "kind": "count",
+   "abs_diff": 75.0
+  },
+  {
+   "field": "_rollup.subject_standoff.mean_repair_magnitude_by_priority.P0.mean_mps",
+   "before": 4.1632,
+   "after": 1.6133,
+   "kind": "magnitude",
+   "abs_diff": 2.5499
+  },
+  {
+   "field": "_rollup.subject_standoff.mean_repair_magnitude_by_priority.P0.ticks",
+   "before": 57,
+   "after": 93,
+   "kind": "count",
+   "abs_diff": 36.0
+  },
+  {
+   "field": "_rollup.subject_standoff.mean_repair_magnitude_mps",
+   "before": 4.1632,
+   "after": 1.6133,
+   "kind": "magnitude",
+   "abs_diff": 2.5499
+  },
+  {
+   "field": "_rollup.subject_standoff.null_passthrough_p0_escape_rate",
+   "before": 0.008881,
+   "after": 0.01449,
+   "kind": "magnitude",
+   "abs_diff": 0.005608999999999999
+  },
+  {
+   "field": "_rollup.subject_standoff.p0_violation_ticks",
+   "before": 57,
+   "after": 93,
+   "kind": "count",
+   "abs_diff": 36.0
+  },
+  {
+   "field": "_rollup.subject_standoff.repair_attempt_ticks",
+   "before": 57,
+   "after": 93,
+   "kind": "count",
+   "abs_diff": 36.0
+  },
+  {
+   "field": "_rollup.subject_standoff.repair_outcomes.converged",
+   "before": 48,
+   "after": 84,
+   "kind": "count",
+   "abs_diff": 36.0
+  },
+  {
+   "field": "_rollup.subject_standoff.repair_success_rate",
+   "before": 0.842105,
+   "after": 0.903226,
+   "kind": "magnitude",
+   "abs_diff": 0.06112099999999998
+  },
+  {
+   "field": "_rollup.subject_standoff.repair_success_ticks",
+   "before": 48,
+   "after": 84,
+   "kind": "count",
+   "abs_diff": 36.0
+  },
+  {
+   "field": "_rollup.subject_standoff.violation_free_ticks",
+   "before": 6361,
+   "after": 6325,
+   "kind": "count",
+   "abs_diff": 36.0
+  }
+ ]
+}

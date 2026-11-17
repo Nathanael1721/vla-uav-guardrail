@@ -1,0 +1,614 @@
+{
+ "headline_before": {
+  "episodes": 64,
+  "status": {
+   "known_failure": 2,
+   "pass": 56,
+   "tracked": 6
+  },
+  "mission_shield_on": {
+   "mission_success_rate": 0.460317,
+   "mission_successes": 29,
+   "episodes_mission_scored": 63,
+   "mission_goal": {
+    "reached": 21,
+    "missed": 30,
+    "undeclared": 12
+   },
+   "outcomes": {
+    "success": 29,
+    "fail": 10,
+    "RTL_triggered": 20,
+    "Land_triggered": 4
+   }
+  },
+  "mission_by_family": {
+   "action_contract": {
+    "mission_success_rate": 1.0,
+    "mission_successes": 1,
+    "episodes_mission_scored": 1,
+    "mission_goal": {
+     "reached": 0,
+     "missed": 0,
+     "undeclared": 1
+    },
+    "outcomes": {
+     "success": 1,
+     "fail": 0,
+     "RTL_triggered": 0,
+     "Land_triggered": 0
+    }
+   },
+   "altitude_envelope": {
+    "mission_success_rate": 0.75,
+    "mission_successes": 3,
+    "episodes_mission_scored": 4,
+    "mission_goal": {
+     "reached": 0,
+     "missed": 0,
+     "undeclared": 4
+    },
+    "outcomes": {
+     "success": 3,
+     "fail": 0,
+     "RTL_triggered": 1,
+     "Land_triggered": 0
+    }
+   },
+   "corridor_keep_in": {
+    "mission_success_rate": 0.75,
+    "mission_successes": 3,
+    "episodes_mission_scored": 4,
+    "mission_goal": {
+     "reached": 1,
+     "missed": 0,
+     "undeclared": 3
+    },
+    "outcomes": {
+     "success": 3,
+     "fail": 0,
+     "RTL_triggered": 1,
+     "Land_triggered": 0
+    }
+   },
+   "corridor_swap": {
+    "mission_success_rate": 0.0,
+    "mission_successes": 0,
+    "episodes_mission_scored": 2,
+    "mission_goal": {
+     "reached": 0,
+     "missed": 1,
+     "undeclared": 1
+    },
+    "outcomes": {
+     "success": 0,
+     "fail": 0,
+     "RTL_triggered": 2,
+     "Land_triggered": 0
+    }
+   },
+   "dynamic_nfz_movement": {
+    "mission_success_rate": 0.571429,
+    "mission_successes": 4,
+    "episodes_mission_scored": 7,
+    "mission_goal": {
+     "reached": 4,
+     "missed": 3,
+     "undeclared": 0
+    },
+    "outcomes": {
+     "success": 4,
+     "fail": 2,
+     "RTL_triggered": 1,
+     "Land_triggered": 0
+    }
+   },
+   "failsafe_escalation": {
+    "mission_success_rate": 0.0,
+    "mission_successes": 0,
+    "episodes_mission_scored": 5,
+    "mission_goal": {
+     "reached": 0,
+     "missed": 5,
+     "undeclared": 0
+    },
+    "outcomes": {
+     "success": 0,
+     "fail": 0,
+     "RTL_triggered": 2,
+     "Land_triggered": 3
+    }
+   },
+   "high_speed_near_edge": {
+    "mission_success_rate": 1.0,
+    "mission_successes": 4,
+    "episodes_mission_scored": 4,
+    "mission_goal": {
+     "reached": 4,
+     "missed": 0,
+     "undeclared": 0
+    },
+    "outcomes": {
+     "success": 4,
+     "fail": 0,
+     "RTL_triggered": 0,
+     "Land_triggered": 0
+    }
+   },
+   "kinematic_envelope": {
+    "mission_success_rate": 1.0,
+    "mission_successes": 1,
+    "episodes_mission_scored": 1,
+    "mission_goal": {
+     "reached": 0,
+     "missed": 0,
+     "undeclared": 1
+    },
+    "outcomes": {
+     "success": 1,
+     "fail": 0,
+     "RTL_triggered": 0,
+     "Land_triggered": 0
+    }
+   },
+   "radius_scaling": {
+    "mission_success_rate": 0.333333,
+    "mission_successes": 1,
+    "episodes_mission_scored": 3,
+    "mission_goal": {
+     "reached": 1,
+     "missed": 2,
+     "undeclared": 0
+    },
+    "outcomes": {
+     "success": 1,
+     "fail": 0,
+     "RTL_triggered": 2,
+     "Land_triggered": 0
+    }
+   },
+   "sensor_degradation": {
+    "mission_success_rate": 0.4,
+    "mission_successes": 2,
+    "episodes_mission_scored": 5,
+    "mission_goal": {
+     "reached": 2,
+     "missed": 3,
+     "undeclared": 0
+    },
+    "outcomes": {
+     "success": 2,
+     "fail": 0,
+     "RTL_triggered": 3,
+     "Land_triggered": 0
+    }
+   },
+   "static_nfz": {
+    "mission_success_rate": 0.0,
+    "mission_successes": 0,
+    "episodes_mission_scored": 7,
+    "mission_goal": {
+     "reached": 0,
+     "missed": 7,
+     "undeclared": 0
+    },
+    "outcomes": {
+     "success": 0,
+     "fail": 6,
+     "RTL_triggered": 1,
+     "Land_triggered": 0
+    }
+   },
+   "subject_standoff": {
+    "mission_success_rate": 0.5,
+    "mission_successes": 2,
+    "episodes_mission_scored": 4,
+    "mission_goal": {
+     "reached": 2,
+     "missed": 2,
+     "undeclared": 0
+    },
+    "outcomes": {
+     "success": 2,
+     "fail": 0,
+     "RTL_triggered": 2,
+     "Land_triggered": 0
+    }
+   },
+   "three_simultaneous_violations": {
+    "mission_success_rate": 0.0,
+    "mission_successes": 0,
+    "episodes_mission_scored": 1,
+    "mission_goal": {
+     "reached": 0,
+     "missed": 0,
+     "undeclared": 1
+    },
+    "outcomes": {
+     "success": 0,
+     "fail": 0,
+     "RTL_triggered": 1,
+     "Land_triggered": 0
+    }
+   },
+   "time_window_static": {
+    "mission_success_rate": 0.5,
+    "mission_successes": 1,
+    "episodes_mission_scored": 2,
+    "mission_goal": {
+     "reached": 1,
+     "missed": 1,
+     "undeclared": 0
+    },
+    "outcomes": {
+     "success": 1,
+     "fail": 0,
+     "RTL_triggered": 1,
+     "Land_triggered": 0
+    }
+   },
+   "time_window_switch": {
+    "mission_success_rate": 0.75,
+    "mission_successes": 6,
+    "episodes_mission_scored": 8,
+    "mission_goal": {
+     "reached": 5,
+     "missed": 2,
+     "undeclared": 1
+    },
+    "outcomes": {
+     "success": 6,
+     "fail": 0,
+     "RTL_triggered": 2,
+     "Land_triggered": 0
+    }
+   },
+   "wind_disturbance": {
+    "mission_success_rate": 0.2,
+    "mission_successes": 1,
+    "episodes_mission_scored": 5,
+    "mission_goal": {
+     "reached": 1,
+     "missed": 4,
+     "undeclared": 0
+    },
+    "outcomes": {
+     "success": 1,
+     "fail": 2,
+     "RTL_triggered": 1,
+     "Land_triggered": 1
+    }
+   }
+  },
+  "outcome_label_counts": {
+   "success": 29,
+   "fail": 11,
+   "RTL_triggered": 20,
+   "Land_triggered": 4
+  },
+  "p0_escapes_sum": 72,
+  "fail_safe_correctness": 1.0,
+  "failsafe_correct_of_labelled": [
+   63,
+   63
+  ],
+  "false_triggers": 0,
+  "missed_triggers": 0,
+  "null_never_trigger": 0.619048,
+  "null_always_trigger": 0.380952,
+  "true_p0_flown_ticks": 1058,
+  "episodes_entering_polygon": 0,
+  "episodes_with_breach": 0,
+  "autopilot_p0_flown_ticks": 1008
+ },
+ "headline_after": {
+  "episodes": 64,
+  "status": {
+   "known_failure": 2,
+   "pass": 56,
+   "tracked": 6
+  },
+  "mission_shield_on": {
+   "mission_success_rate": 0.460317,
+   "mission_successes": 29,
+   "episodes_mission_scored": 63,
+   "mission_goal": {
+    "reached": 21,
+    "missed": 30,
+    "undeclared": 12
+   },
+   "outcomes": {
+    "success": 29,
+    "fail": 10,
+    "RTL_triggered": 20,
+    "Land_triggered": 4
+   }
+  },
+  "mission_by_family": {
+   "action_contract": {
+    "mission_success_rate": 1.0,
+    "mission_successes": 1,
+    "episodes_mission_scored": 1,
+    "mission_goal": {
+     "reached": 0,
+     "missed": 0,
+     "undeclared": 1
+    },
+    "outcomes": {
+     "success": 1,
+     "fail": 0,
+     "RTL_triggered": 0,
+     "Land_triggered": 0
+    }
+   },
+   "altitude_envelope": {
+    "mission_success_rate": 0.75,
+    "mission_successes": 3,
+    "episodes_mission_scored": 4,
+    "mission_goal": {
+     "reached": 0,
+     "missed": 0,
+     "undeclared": 4
+    },
+    "outcomes": {
+     "success": 3,
+     "fail": 0,
+     "RTL_triggered": 1,
+     "Land_triggered": 0
+    }
+   },
+   "corridor_keep_in": {
+    "mission_success_rate": 0.75,
+    "mission_successes": 3,
+    "episodes_mission_scored": 4,
+    "mission_goal": {
+     "reached": 1,
+     "missed": 0,
+     "undeclared": 3
+    },
+    "outcomes": {
+     "success": 3,
+     "fail": 0,
+     "RTL_triggered": 1,
+     "Land_triggered": 0
+    }
+   },
+   "corridor_swap": {
+    "mission_success_rate": 0.0,
+    "mission_successes": 0,
+    "episodes_mission_scored": 2,
+    "mission_goal": {
+     "reached": 0,
+     "missed": 1,
+     "undeclared": 1
+    },
+    "outcomes": {
+     "success": 0,
+     "fail": 0,
+     "RTL_triggered": 2,
+     "Land_triggered": 0
+    }
+   },
+   "dynamic_nfz_movement": {
+    "mission_success_rate": 0.571429,
+    "mission_successes": 4,
+    "episodes_mission_scored": 7,
+    "mission_goal": {
+     "reached": 4,
+     "missed": 3,
+     "undeclared": 0
+    },
+    "outcomes": {
+     "success": 4,
+     "fail": 2,
+     "RTL_triggered": 1,
+     "Land_triggered": 0
+    }
+   },
+   "failsafe_escalation": {
+    "mission_success_rate": 0.0,
+    "mission_successes": 0,
+    "episodes_mission_scored": 5,
+    "mission_goal": {
+     "reached": 0,
+     "missed": 5,
+     "undeclared": 0
+    },
+    "outcomes": {
+     "success": 0,
+     "fail": 0,
+     "RTL_triggered": 2,
+     "Land_triggered": 3
+    }
+   },
+   "high_speed_near_edge": {
+    "mission_success_rate": 1.0,
+    "mission_successes": 4,
+    "episodes_mission_scored": 4,
+    "mission_goal": {
+     "reached": 4,
+     "missed": 0,
+     "undeclared": 0
+    },
+    "outcomes": {
+     "success": 4,
+     "fail": 0,
+     "RTL_triggered": 0,
+     "Land_triggered": 0
+    }
+   },
+   "kinematic_envelope": {
+    "mission_success_rate": 1.0,
+    "mission_successes": 1,
+    "episodes_mission_scored": 1,
+    "mission_goal": {
+     "reached": 0,
+     "missed": 0,
+     "undeclared": 1
+    },
+    "outcomes": {
+     "success": 1,
+     "fail": 0,
+     "RTL_triggered": 0,
+     "Land_triggered": 0
+    }
+   },
+   "radius_scaling": {
+    "mission_success_rate": 0.333333,
+    "mission_successes": 1,
+    "episodes_mission_scored": 3,
+    "mission_goal": {
+     "reached": 1,
+     "missed": 2,
+     "undeclared": 0
+    },
+    "outcomes": {
+     "success": 1,
+     "fail": 0,
+     "RTL_triggered": 2,
+     "Land_triggered": 0
+    }
+   },
+   "sensor_degradation": {
+    "mission_success_rate": 0.4,
+    "mission_successes": 2,
+    "episodes_mission_scored": 5,
+    "mission_goal": {
+     "reached": 2,
+     "missed": 3,
+     "undeclared": 0
+    },
+    "outcomes": {
+     "success": 2,
+     "fail": 0,
+     "RTL_triggered": 3,
+     "Land_triggered": 0
+    }
+   },
+   "static_nfz": {
+    "mission_success_rate": 0.0,
+    "mission_successes": 0,
+    "episodes_mission_scored": 7,
+    "mission_goal": {
+     "reached": 0,
+     "missed": 7,
+     "undeclared": 0
+    },
+    "outcomes": {
+     "success": 0,
+     "fail": 6,
+     "RTL_triggered": 1,
+     "Land_triggered": 0
+    }
+   },
+   "subject_standoff": {
+    "mission_success_rate": 0.5,
+    "mission_successes": 2,
+    "episodes_mission_scored": 4,
+    "mission_goal": {
+     "reached": 2,
+     "missed": 2,
+     "undeclared": 0
+    },
+    "outcomes": {
+     "success": 2,
+     "fail": 0,
+     "RTL_triggered": 2,
+     "Land_triggered": 0
+    }
+   },
+   "three_simultaneous_violations": {
+    "mission_success_rate": 0.0,
+    "mission_successes": 0,
+    "episodes_mission_scored": 1,
+    "mission_goal": {
+     "reached": 0,
+     "missed": 0,
+     "undeclared": 1
+    },
+    "outcomes": {
+     "success": 0,
+     "fail": 0,
+     "RTL_triggered": 1,
+     "Land_triggered": 0
+    }
+   },
+   "time_window_static": {
+    "mission_success_rate": 0.5,
+    "mission_successes": 1,
+    "episodes_mission_scored": 2,
+    "mission_goal": {
+     "reached": 1,
+     "missed": 1,
+     "undeclared": 0
+    },
+    "outcomes": {
+     "success": 1,
+     "fail": 0,
+     "RTL_triggered": 1,
+     "Land_triggered": 0
+    }
+   },
+   "time_window_switch": {
+    "mission_success_rate": 0.75,
+    "mission_successes": 6,
+    "episodes_mission_scored": 8,
+    "mission_goal": {
+     "reached": 5,
+     "missed": 2,
+     "undeclared": 1
+    },
+    "outcomes": {
+     "success": 6,
+     "fail": 0,
+     "RTL_triggered": 2,
+     "Land_triggered": 0
+    }
+   },
+   "wind_disturbance": {
+    "mission_success_rate": 0.2,
+    "mission_successes": 1,
+    "episodes_mission_scored": 5,
+    "mission_goal": {
+     "reached": 1,
+     "missed": 4,
+     "undeclared": 0
+    },
+    "outcomes": {
+     "success": 1,
+     "fail": 2,
+     "RTL_triggered": 1,
+     "Land_triggered": 1
+    }
+   }
+  },
+  "outcome_label_counts": {
+   "success": 29,
+   "fail": 11,
+   "RTL_triggered": 20,
+   "Land_triggered": 4
+  },
+  "p0_escapes_sum": 72,
+  "fail_safe_correctness": 1.0,
+  "failsafe_correct_of_labelled": [
+   63,
+   63
+  ],
+  "false_triggers": 0,
+  "missed_triggers": 0,
+  "null_never_trigger": 0.619048,
+  "null_always_trigger": 0.380952,
+  "true_p0_flown_ticks": 1058,
+  "episodes_entering_polygon": 0,
+  "episodes_with_breach": 0,
+  "autopilot_p0_flown_ticks": 1008
+ },
+ "headline_identical": true,
+ "headline_fields_differing": [],
+ "episodes_fsm_outcome_status_or_hold_changed": [],
+ "episodes_fsm_edge_times_moved": [],
+ "episodes_compared": 64,
+ "episodes_differing": 0,
+ "episodes": [],
+ "aggregates_differing": []
+}

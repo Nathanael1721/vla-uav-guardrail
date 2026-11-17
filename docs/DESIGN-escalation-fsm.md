@@ -1016,6 +1016,24 @@ its KPIs on the hil topology).
      proposes is over theta and escalates.
    - **What did not change:** P0 escapes (0) and polygon entries.
    - It stays selectable (`Shield(path_repair=True)`).
+   - **Superseded 2026-11-17 (WP3-06): PathRepair is ON by default**, in
+     the grant's order (after LateralProjection), redesigned so it no
+     longer escalates by itself: its `magnitude_m` is the correction of the
+     action it emits (|emitted - raw| net of the speed clamp, x 0.1 s), the
+     projection records it replaces are superseded (removed from the
+     decision's repairs, kept on the pass ledger), and in chain mode it
+     detours round stand-off rings only (zones stay with the projection:
+     zone detours cost a labelled RTL and true-state margin, measured), and
+     stands aside where the tick's projection is already over theta, during
+     a recovery, without a position fix, or where one control period of the
+     detour would take the request's forecast deeper into the ring.
+     Measured on smoke, the library and the nightly cells (seed 1001): P0
+     escapes 0, fail-safe trigger correctness 63/63, 179/179, 247/247
+     (unchanged), mission success unchanged; 0, 1 and 3 episodes fly
+     differently (standoff-approach-angles offset 9, same outcome).
+     docs/data/pathrepair_default_20261117/README.md. Every run flown
+     before 2026-11-17 had PathRepair off; the next hil campaign flies it
+     (`path_repair=False` restores the old chain).
 
 ### FSM behaviour that was wrong (fixed, `guardrail/fsm.py`)
 
