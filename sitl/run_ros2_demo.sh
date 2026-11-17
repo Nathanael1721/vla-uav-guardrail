@@ -64,6 +64,11 @@
 #                      server, iris_runway) behind SITL's JSON backend: the
 #                      grant's functional Gazebo rail (ARCH-16) over MAVROS 2.
 #                      The run writes physics.json beside its records.
+#   SITL_SPEEDUP=1     only 1 is accepted, on every physics: the Shield node
+#                      ticks, caps the mission, fires its events and clocks
+#                      its rules on wall time, so a faster simulator would fly
+#                      another scenario than the one recorded. Refused until
+#                      the node runs on the autopilot's clock.
 #   GCS_HOST           Mission Planner's address (default: the Windows host)
 #   VLA=stub           bridge = AerialVLA in the VLA slot (THE VLA SLOT above);
 #                      it runs in the slot's SROS 2 enclave, vla_stub
@@ -328,6 +333,21 @@ printf '%s\n' "$VERIFY" | grep -qx 'PIN OK' && ARDUPILOT_PIN_OK=1
 export ARDUPILOT_VERSION ARDUPILOT_PIN_OK
 
 PHYSICS="${PHYSICS:-sitl}"
+# SITL_SPEEDUP (2026-11-17, WP4-04): unset or 1, every run as before, and
+# nothing else. The grant lets the broad sweep run faster than real time on
+# the functional rail, but SITL's --speedup (and gz sim's rate) would speed up
+# the simulator only: ros2_shield_node.py's tick (create_timer), its mission
+# cap, its event schedule and its rule clock run on time.monotonic, so at 2x
+# the Shield would decide at half the sim rate with half its lookahead margin
+# and switch events at twice their declared sim time. Refused here, before
+# anything starts, until the node runs on the autopilot's clock.
+# speedup-check begin
+SPEEDUP="${SITL_SPEEDUP:-1}"
+if ! [[ "$SPEEDUP" =~ ^1(\.0+)?$ ]]; then
+  echo "[speedup] REFUSED: SITL_SPEEDUP='$SPEEDUP': only 1 is flown - the Shield node's tick, mission cap, event schedule and rule clock run on wall time"
+  exit 2
+fi
+# speedup-check end
 case "$PHYSICS" in
   sitl) ;;
   gazebo)
@@ -517,13 +537,17 @@ fi
 
 echo "=== close the bag, re-pack the replay bundle with it ==="
 stop_bag
+# physics-record begin
 if [ "$PHYSICS" = "gazebo" ]; then
-  printf '{"physics": "gazebo-harmonic", "gz_sim": "%s", "world": "%s", "sitl_model": "JSON", "extra_defaults": "%s"}\n' \
+  # sim_speedup_requested (2026-11-17): what the run was asked to fly at (1,
+  # speedup-check); the manifest's sim_speedup is what the autopilot read.
+  printf '{"physics": "gazebo-harmonic", "gz_sim": "%s", "world": "%s", "sitl_model": "JSON", "extra_defaults": "%s", "sim_speedup_requested": %s}\n' \
     "$(gz sim --version 2> /dev/null | head -1 | sed 's/.*version //')" "$GZ_WORLD" "$GZ_IRIS_PARM" \
-    > "$OUT/physics.json"
+    "$SPEEDUP" > "$OUT/physics.json"
 else
   printf '{"physics": "ardupilot-sitl-builtin", "sitl_model": "quad"}\n' > "$OUT/physics.json"
 fi
+# physics-record end
 cd "$ROOT"
 "$PY" -m guardrail.replay pack "$OUT" || echo "[replay] re-pack FAILED (see above)"
 

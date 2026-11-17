@@ -613,8 +613,11 @@ def scenario_family(scenario: dict, arm: str) -> str:
     harness's "stress-bundle" stands. A run of a LENGTHENED hil campaign
     (2026-11-14, `max_s_add` in its scenario record) gets a row of its own,
     "/flown-longer-<S>s" after the arm (sweep_scenarios.lengthened_suffix):
-    it flew another flight than the profile's, so it never pools with it."""
-    backend = scenario.get("backend") or "hil"
+    it flew another flight than the profile's, so it never pools with it.
+    A mission of the Gazebo functional rail (2026-11-17, `rail` "gazebo" in
+    its scenario record) is filed "gazebo-stress/...": another physics than
+    the SITL rail's, so it never pools with it either."""
+    backend = scenario.get("rail") or scenario.get("backend") or "hil"
     add = max_s_add(scenario)
     return (f"{backend}-stress/{scenario.get('template')}/"
             f"{scenario.get('cell') or scenario.get('scenario_id')}/shield-{arm}"

@@ -50,10 +50,28 @@ echo "home: $HOME_LOC"
 WIPE=()
 [ "${SITL_WIPE:-1}" = "1" ] && WIPE=(-w)
 
+# SITL_SPEEDUP (2026-11-17, WP4-04): 1 unless set, as every run before. Other
+# than 1 (at most 4) only behind an external physics (SITL_MODEL=JSON, the
+# Gazebo functional rail); on SITL's own quad - the rail of the KPI campaigns
+# - it is refused. sitl/run_ros2_demo.sh refuses anything but 1 before it
+# gets here: its Shield node runs on wall time (see its speedup-check). The
+# Shield node writes the autopilot's own SIM_SPEEDUP into the manifest, not
+# this value.
+# speedup-check begin
+SPEEDUP="${SITL_SPEEDUP:-1}"
+[[ "$SPEEDUP" =~ ^[0-9]+(\.[0-9]+)?$ ]] && awk -v s="$SPEEDUP" 'BEGIN { exit !(s >= 1 && s <= 4) }' || {
+  echo "SITL_SPEEDUP must be a number from 1 to 4 - got '$SPEEDUP'"; exit 64; }
+if ! awk -v s="$SPEEDUP" 'BEGIN { exit !(s == 1) }' && [ "$MODEL" != "JSON" ]; then
+  echo "SITL_SPEEDUP=$SPEEDUP refused: a speedup other than 1 is for the functional rail (SITL_MODEL=JSON behind gz sim), not SITL's $MODEL"
+  exit 64
+fi
+# speedup-check end
+echo "speedup: $SPEEDUP"
+
 mkdir -p "$HOME/sitl-run"
 cd "$HOME/sitl-run"          # eeprom.bin / logs live here, not in the repo
 # tail -f /dev/null keeps stdin open forever: SITL's console exits on stdin
 # EOF, which kills headless/background runs otherwise (learned the hard way).
-tail -f /dev/null | "$BIN" --model "$MODEL" --speedup 1 --defaults "$DEFAULTS" \
+tail -f /dev/null | "$BIN" --model "$MODEL" --speedup "$SPEEDUP" --defaults "$DEFAULTS" \
      --home "$HOME_LOC" -I0 "${WIPE[@]}" \
      --serial0 tcp:0 --serial2 "udpclient:127.0.0.1:${SITL_ROUTER_PORT:-14550}"

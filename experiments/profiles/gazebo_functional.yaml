@@ -1,0 +1,85 @@
+# Gazebo functional profile: a small functional sweep on the Gazebo Harmonic rail.
+#
+# WHY THIS PROFILE EXISTS (2026-11-17, contract item WP4-04)
+#
+# Grant, Stress Testing: "Where it runs (Gazebo Harmonic for functional
+# sweeps, Project AirSim for perception stress)", and "Test scheduling":
+#   Broad sweep | nightly | ~3000 scenarios x 5 seeds | > 1.0 (functional rail only)
+# The Gazebo rail first flew end to end on 2026-11-02 (ARCH-16:
+# sitl/run_ros2_demo.sh with PHYSICS=gazebo, Gazebo's physics behind SITL's
+# JSON backend, the stub pilot through the ROS 2 Shield node and MAVROS 2).
+# No sweep had run on it. This profile is the first one: a handful of smoke
+# cells, one seed, flown one mission per cell by
+#
+#   python experiments/sweep_scenarios.py --profile gazebo_functional --backend sitl
+#
+# (`--sitl-dry-run` lists every mission, its tag, environment, command and
+# run folder, with nothing flown or written; it needs neither WSL nor
+# Gazebo). It also prints the grant's per-episode name
+# (`episode-<UTC>--<cell>--seed<n>`) beside each mission as a label: the
+# rail writes no file of that name (its bundle is the run folder's
+# <tag>.replay.tar.gz), so WP4-11's bundle naming stays open.
+#
+# WHAT IT IS NOT
+#
+# Not a KPI set (`grant_kpi_bearing: false`). Every mission's scenario record
+# says `functional_only` (experiments/sweep_scenarios.py rail_meta), which
+# guardrail.manifest.is_kpi_grade refuses whatever the manifest reads, and
+# tools/kpi_report.py files it under "gazebo-stress/..." rows, apart from the
+# SITL and hil rails' rows. The rail is the desktop's (`dev` topology).
+# That exclusion is the lab's choice (KPI-grade runs come from hil), not the
+# grant's wording: the grant reports its KPIs from the canonical HIL topology
+# (Stress Testing, Purpose), but 03-simulation/dual-rail.md also gives the
+# functional rail the "determinism contract for KPI runs" at sim_speedup=1,
+# and the grant's "tracked but not part of the final KPI numbers" covers only
+# the broad sweep at speed > 1.
+#
+# THE CELLS
+#
+# One family per row of the Safety Shield's test matrix the rail can fly
+# without the simulator's stressors: a static zone head-on with its Shield-off
+# control, the speed cap, the altitude floor, a corridor, a zone moving into
+# the path, a time-window switch and a fail-safe (RTL) cell. Cells that need
+# SITL's SIM_* stressors (wind, GPS dropout) are refused on this rail
+# (sweep_scenarios.gazebo_refusal): SITL's wind does not act on a vehicle
+# whose dynamics Gazebo computes. Arms are off (`paraphrase_k: 0`,
+# `prefix_ab: false`): the rails fly the canonical arm only.
+#
+# SPEED
+#
+# `rail_sim_speedup: 1.0`, the only value accepted. The grant lets the broad
+# sweep run "> 1.0 (functional rail only)", but speeding up SITL and gz sim
+# speeds up the simulator only: the Shield node (sitl/ros2_shield_node.py)
+# ticks, caps the mission, fires its scheduled events and clocks its rules on
+# wall time, so a faster run would fly another scenario than the one its
+# record names. Refused (here, in experiments/sweep_scenarios.py and in
+# sitl/run_ros2_demo.sh) until the node runs on the autopilot's clock. The
+# manifest's sim_speedup is the one the autopilot reports.
+
+profile: gazebo_functional
+cadence: on demand (functional rail shakedown)
+grant_scope: "functional sweeps on Gazebo Harmonic (a handful of smoke cells x 1 seed)"
+grant_sim_speedup: "> 1.0 allowed for the broad sweep (functional rail only); flown at 1.0: the Shield node runs on wall time"
+grant_kpi_bearing: false
+rail_physics: gazebo
+rail_sim_speedup: 1.0
+library: experiments/scenarios.yaml
+seeds: [1001]
+samples_per_family: 1
+paraphrase_k: 0
+prefix_ab: false
+families:
+  - nfz-head-on
+  - nfz-head-on-control
+  - speed-cap
+  - altitude-floor-recovery
+  - corridor-along
+  - dyn-nfz-translate
+  - time-window-switch-event
+  - failsafe-rtl-zone
+expected_cells: [8, 8]
+sweep_overrides:
+  dyn-nfz-translate:
+    zone_mps: [2]
+  failsafe-rtl-zone:
+    ahead_m: [12]
