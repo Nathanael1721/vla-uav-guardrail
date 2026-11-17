@@ -31,9 +31,12 @@ tools/vla_backend_table.py selects; at least C2_FLIGHTS of them) meets both:
     mission is shown beside it.
 
 and its vla_steps.jsonl was written in a run whose metrics.json hil_evidence
-names an AGX Orin as the VLA's host (`vla_host.device_model`). A flight
-whose folder is not found, or whose VLA host is not an Orin, is listed and
-does not count.
+names an AGX Orin as the VLA's host (`vla_host.device_model`; the top-level
+`device_model` is the Shield's host and is never used for this), with no
+failed request (ok false or no rtt_s). A flight whose folder is not found,
+whose VLA host is null/absent ("not shown") or not an AGX Orin (an Orin Nano
+does not count), is listed and does not count. A backend with no flight read
+and no timed Orin bench is "not measured", not "fails".
 
 The open-loop benches the backend table holds for the Orin (its `g3`
 section) are carried into the table as the second column set: they are not
@@ -108,9 +111,13 @@ def find_run(tag: str, roots: list[Path]) -> Path | None:
 
 
 def flight_latency(run: Path) -> dict:
-    """Per-decision latencies of one flight, from its vla_steps.jsonl."""
+    """Per-decision latencies of one flight, from its vla_steps.jsonl.
+
+    A request that failed (ok false, or no rtt_s: timed out, errored) has no
+    latency to pool; it is counted in `failed_requests` and fails the flight
+    (judge_flight), so a timeout can never lower the p95."""
     rtt, srv, cap, wait = [], [], [], []
-    rows = parsed = 0
+    rows = parsed = failed = 0
     with open(run / "vla_steps.jsonl", encoding="utf-8") as fh:
         for line in fh:
             line = line.strip()
@@ -119,6 +126,7 @@ def flight_latency(run: Path) -> dict:
             s = json.loads(line)
             rows += 1
             if not s.get("ok") or s.get("rtt_s") is None:
+                failed += 1
                 continue
             if s.get("parse_ok"):
                 parsed += 1
@@ -132,8 +140,11 @@ def flight_latency(run: Path) -> dict:
     metrics = json.loads((run / "metrics.json").read_text(encoding="utf-8")) \
         if (run / "metrics.json").is_file() else {}
     ev = metrics.get("hil_evidence") or {}
-    vla_host = (ev.get("vla_host") or {}).get("device_model") or ev.get("device_model")
-    return {"answers": rows, "parsed": parsed,
+    # Only the VLA server's own report counts. hil_evidence.device_model is the
+    # Shield/perception host; a run with vla_host null or absent cannot be shown
+    # to have run the VLA on the Orin (guardrail/manifest._vla_host_missing).
+    vla_host = (ev.get("vla_host") or {}).get("device_model")
+    return {"answers": rows, "parsed": parsed, "failed_requests": failed,
             "round_trip_ms": spread(rtt), "server_ms": spread(srv),
             "capture_to_answer_ms": spread(cap), "capture_to_send_ms": spread(wait),
             "vla_host": vla_host,
@@ -141,7 +152,8 @@ def flight_latency(run: Path) -> dict:
 
 
 def is_orin(model: str | None) -> bool:
-    return bool(model) and "orin" in model.lower()
+    """The grant's hil topology names the Jetson AGX Orin; an Orin Nano does not count."""
+    return bool(model) and "agx orin" in model.lower()
 
 
 def judge_flight(f: dict) -> list[str]:
@@ -149,8 +161,12 @@ def judge_flight(f: dict) -> list[str]:
     why = []
     if f.get("missing"):
         return [f["missing"]]
-    if not is_orin(f.get("vla_host")):
-        why.append(f"VLA host {f.get('vla_host')!r} is not an Orin")
+    if not f.get("vla_host"):
+        why.append("VLA host not shown (metrics.json hil_evidence.vla_host missing or null)")
+    elif not is_orin(f.get("vla_host")):
+        why.append(f"VLA host {f.get('vla_host')!r} is not an AGX Orin")
+    if f.get("failed_requests"):
+        why.append(f"{f['failed_requests']} requests failed (no answer, no round trip)")
     p95 = (f.get("round_trip_ms") or {}).get("p95")
     if p95 is None or p95 > THRESHOLD_P95_MS:
         why.append(f"round trip p95 {p95} ms > {THRESHOLD_P95_MS:g} ms")
@@ -173,7 +189,30 @@ def judge_backend(b: dict) -> dict:
             why.append(f"{f['tag']}: " + "; ".join(f["misses"]))
     b["passes"] = not why
     b["why_not"] = why
+    # "fails" always means measured and failed: a backend with no flight read on
+    # the Orin and no timed bench there is "not measured" instead.
+    timed = any(o.get("p95_ms") is not None or o.get("slowest_ms") is not None
+                or o.get("in_flight_p50_ms") for o in b.get("orin_bench_open_loop") or [])
+    read = any(not f.get("missing") for f in flights)
+    b["status"] = "passes" if b["passes"] else ("fails" if (read or timed) else "not measured")
     return b
+
+
+def power_mode(file: str | None) -> str:
+    """The AGX Orin's nvpmodel mode a bench file recorded, or 'not recorded'."""
+    p = ROOT / file if file else None
+    if p is None or p.suffix != ".json" or not p.is_file():
+        return "not recorded"
+    try:
+        d = json.loads(p.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return "not recorded"
+    for h in (d.get("host") or {}, d):           # R1 benches nest it under "host"
+        name = ((h.get("power") or {}).get("nvpmodel") or {}).get("mode_name") \
+            or (h.get("jetson") or {}).get("nvpmodel")
+        if name:
+            return name
+    return "not recorded"
 
 
 def build(table: dict, roots: list[Path]) -> dict:
@@ -182,7 +221,8 @@ def build(table: dict, roots: list[Path]) -> dict:
     benches = {}
     for grp in ("seven_b", "smaller"):
         for b in (table.get("g3") or {}).get(grp) or []:
-            benches[b["backend"]] = b.get("orin") or []
+            benches[b["backend"]] = [dict(o, power_mode=power_mode(o.get("file")))
+                                     for o in b.get("orin") or []]
     order = [r["backend"] for r in table.get("rows") or []
              if r["backend"] not in NOT_LEARNED_VLA]
     backends = []
@@ -235,6 +275,8 @@ def finish(out: dict) -> dict:
     out["verdict"] = {
         "passing": passing,
         "seven_b_passing": [b["backend"] for b in seven if b["passes"]],
+        "seven_b_failing": [b["backend"] for b in seven if b["status"] == "fails"],
+        "seven_b_not_measured": [b["backend"] for b in seven if b["status"] == "not measured"],
         "gate_met_by_a_learned_backend": bool(passing),
     }
     return out
@@ -249,10 +291,11 @@ def _cell(s: dict | None) -> str:
 def _bench(rows: list[dict]) -> str:
     parts = []
     for o in rows:
+        pm = f", power mode {o.get('power_mode') or 'not recorded'}"
         if o.get("p95_ms") is not None:
-            parts.append(f"p95 {o['p95_ms']:.1f} ms, n={o.get('n')} ({o['what']})")
+            parts.append(f"p95 {o['p95_ms']:.1f} ms, n={o.get('n')} ({o['what']}{pm})")
         elif o.get("slowest_ms") is not None:
-            parts.append(f"slowest {o['slowest_ms']:g} ms, n={o.get('n')} ({o['what']})")
+            parts.append(f"slowest {o['slowest_ms']:g} ms, n={o.get('n')} ({o['what']}{pm})")
         elif o.get("in_flight_p50_ms"):
             parts.append("in flight 3-4 Nov, server p50 "
                          + "-".join(f"{x:.0f}" for x in o["in_flight_p50_ms"]) + " ms")
@@ -269,33 +312,36 @@ def render(out: dict) -> str:
         f"Generated by `python tools/g3_gate.py`; schema `{out['schema']}`. Do not edit by hand.",
         "",
         f"Gate: p95 <= {g['threshold_p95_ms']:g} ms and >= {g['min_decisions_hz']:g} decisions/s, "
-        f"on every one of >= {g['c2_flights']} C2 hil flights with the VLA on the AGX Orin. "
+        f"on every one of >= {g['c2_flights']} C2 hil flights whose metrics.json names an AGX Orin "
+        f"as the VLA server's host (hil_evidence.vla_host), with no failed request. "
         f"Latency: {g['latency_measure']}. Rate: {g['rate_measure']}.",
         "",
-        "## Per flight (in flight, hil, VLA server on the AGX Orin)",
+        "## Per flight (in flight, hil; VLA host as each run recorded it)",
         "",
-        "| Backend | Class | Flight | VLA host | Answers | Round trip p50 / p95 / p99 ms "
+        "| Backend | Class | Flight | VLA host | Answers | Failed requests "
+        "| Round trip p50 / p95 / p99 ms "
         "| Server (model) p50 / p95 / p99 ms | Capture to answer p50 / p95 / p99 ms "
         "| Decisions/s asked | Decisions/s mission | Meets gate |",
-        "|---|---|---|---|---|---|---|---|---|---|---|",
+        "|---|---|---|---|---|---|---|---|---|---|---|---|",
     ]
     for b in out["backends"]:
         for f in b["in_flight"]["flights"]:
             if f.get("missing"):
-                lines.append(f"| {b['label']} | {b['class']} | {f['tag']} | - | - | - | - | - "
+                lines.append(f"| {b['label']} | {b['class']} | {f['tag']} | - | - | - | - | - | - "
                              f"| {f['decision_hz_asked']} | {f['decision_hz_mission']} "
                              f"| no: {f['missing']} |")
                 continue
             ok = "yes" if not f["misses"] else "no: " + "; ".join(f["misses"])
             lines.append(
-                f"| {b['label']} | {b['class']} | {f['tag']} | {f.get('vla_host') or '-'} "
-                f"| {f['answers']} | {_cell(f['round_trip_ms'])} | {_cell(f['server_ms'])} "
+                f"| {b['label']} | {b['class']} | {f['tag']} | {f.get('vla_host') or 'not shown'} "
+                f"| {f['answers']} | {f.get('failed_requests', '-')} "
+                f"| {_cell(f['round_trip_ms'])} | {_cell(f['server_ms'])} "
                 f"| {_cell(f['capture_to_answer_ms'])} | {f['decision_hz_asked']} "
                 f"| {f['decision_hz_mission']} | {ok} |")
     lines += ["", "## Per backend", "",
               "| Backend | Class | C2 flights | Pooled round trip p50 / p95 / p99 ms "
               "| Pooled server p50 / p95 / p99 ms | Decisions/s asked (range) "
-              "| Open-loop bench on the AGX Orin (not in flight) | Passes G3 |",
+              "| Open-loop bench on the AGX Orin (not in flight) | G3 |",
               "|---|---|---|---|---|---|---|---|"]
     for b in out["backends"]:
         fl = b["in_flight"]["flights"]
@@ -304,12 +350,16 @@ def render(out: dict) -> str:
         p = b["in_flight"]["pooled"]
         lines.append(f"| {b['label']} | {b['class']} | {len(fl)} | {_cell(p['round_trip_ms'])} "
                      f"| {_cell(p['server_ms'])} | {rng} | {_bench(b['orin_bench_open_loop'])} "
-                     f"| {'yes' if b['passes'] else 'no'} |")
+                     f"| {b['status']} |")
     v = out["verdict"]
     lines += ["", "## Verdict", "",
               f"- Learned backends that pass G3 on the AGX Orin in flight: "
               f"{', '.join(v['passing']) or 'none'}.",
               f"- 7B-class backends that pass: {', '.join(v['seven_b_passing']) or 'none'}.",
+              f"- 7B-class backends measured on the AGX Orin that fail: "
+              f"{', '.join(v['seven_b_failing']) or 'none'}.",
+              f"- 7B-class backends not measured on the AGX Orin (no flight, no timed bench): "
+              f"{', '.join(v['seven_b_not_measured']) or 'none'}.",
               f"- int8 on the Orin: {out.get('int8_on_orin')} ({out.get('int8_note') or 'no note'}).",
               ""]
     return "\n".join(lines)

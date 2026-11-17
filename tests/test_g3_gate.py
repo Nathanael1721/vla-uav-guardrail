@@ -38,7 +38,11 @@ def _tmp() -> Path:
     return d
 
 
-def _run(root: Path, tag: str, rtts_s: list[float], host: str = ORIN) -> None:
+_KEEP = object()
+
+
+def _run(root: Path, tag: str, rtts_s: list[float], host: str = ORIN,
+         evidence=_KEEP, failed: int = 0) -> None:
     d = root / tag
     d.mkdir(parents=True)
     with open(d / "vla_steps.jsonl", "w", encoding="utf-8") as fh:
@@ -46,8 +50,11 @@ def _run(root: Path, tag: str, rtts_s: list[float], host: str = ORIN) -> None:
             fh.write(json.dumps({"kind": "step", "ok": True, "parse_ok": True, "rtt_s": r,
                                  "latency_server_s": r * 0.8, "latency_client_s": r + 0.03,
                                  "t_capture": 100.0 + i, "t_sent": 100.02 + i}) + "\n")
-    (d / "metrics.json").write_text(json.dumps(
-        {"hil_evidence": {"vla_host": {"device_model": host}}}), encoding="utf-8")
+        for _ in range(failed):
+            fh.write(json.dumps({"kind": "step", "ok": False, "parse_ok": False,
+                                 "rtt_s": None, "error": "timeout"}) + "\n")
+    ev = {"vla_host": {"device_model": host}} if evidence is _KEEP else evidence
+    (d / "metrics.json").write_text(json.dumps({"hil_evidence": ev}), encoding="utf-8")
 
 
 def _table(flights: dict[str, list[tuple[str, float]]]) -> dict:
@@ -112,8 +119,60 @@ def test_a_flight_off_the_orin_or_missing_does_not_count():
     b = _by(G.build(t, [root]))["b"]
     assert not b["passes"]
     text = " ".join(b["why_not"])
-    assert "not an Orin" in text and "not found" in text
+    assert "not an AGX Orin" in text and "not found" in text
     assert "2 C2 flights on the Orin read" in text
+
+
+def test_null_vla_host_never_falls_back_to_the_shield_host():
+    # The Shield host is an Orin, the VLA server reported no host: not counted.
+    for i, ev in enumerate(({"vla_host": None, "device_model": ORIN},
+                            {"device_model": ORIN})):
+        root = _tmp()
+        _run(root, "f_0", [0.05] * 20)
+        _run(root, "f_1", [0.05] * 20)
+        _run(root, "f_2", [0.05] * 20, evidence=ev)
+        t = _table({"b": [("f_0", 13.0), ("f_1", 13.0), ("f_2", 13.0)]})
+        b = _by(G.build(t, [root]))["b"]
+        assert not b["passes"], (i, b["why_not"])
+        f2 = [f for f in b["in_flight"]["flights"] if f["tag"] == "f_2"][0]
+        assert f2["vla_host"] is None
+        assert any("VLA host not shown" in w for w in b["why_not"]), b["why_not"]
+
+
+def test_an_orin_nano_is_not_the_agx_orin():
+    root = _tmp()
+    for i in range(3):
+        _run(root, f"f_{i}", [0.05] * 20, host="NVIDIA Jetson Orin Nano Developer Kit")
+    b = _by(G.build(_table({"b": [(f"f_{i}", 13.0) for i in range(3)]}), [root]))["b"]
+    assert not b["passes"]
+    assert any("not an AGX Orin" in w for w in b["why_not"])
+
+
+def test_failed_requests_fail_the_flight_and_are_counted():
+    root = _tmp()
+    for i in range(3):
+        _run(root, f"f_{i}", [0.05] * 20, failed=2 if i == 1 else 0)
+    b = _by(G.build(_table({"b": [(f"f_{i}", 13.0) for i in range(3)]}), [root]))["b"]
+    assert not b["passes"]
+    f1 = [f for f in b["in_flight"]["flights"] if f["tag"] == "f_1"][0]
+    assert f1["failed_requests"] == 2 and f1["answers"] == 22
+    assert f1["round_trip_ms"]["n"] == 20
+    assert any("2 requests failed" in w for w in b["why_not"])
+
+
+def test_no_flight_and_no_timed_bench_is_not_measured():
+    root = _tmp()
+    _run(root, "f_0", [1.5] * 5)
+    t = _table({"flown": [("f_0", 0.6)]})
+    t["rows"].append({"backend": "unflown", "label": "unflown", "records": []})
+    t["rows"].append({"backend": "benched", "label": "benched", "records": []})
+    t["g3"] = {"seven_b": [{"backend": "unflown", "orin": []},
+                           {"backend": "benched", "orin": [{"what": "R1", "p95_ms": 969.0}]}],
+               "smaller": []}
+    out = _by(G.build(t, [root]))
+    assert out["unflown"]["status"] == "not measured"
+    assert out["benched"]["status"] == "fails"
+    assert out["flown"]["status"] == "fails"
 
 
 def test_fewer_than_three_flights_cannot_pass():
@@ -156,11 +215,16 @@ def test_committed_table_passes_aiotvla_only_and_no_7b():
     v = G.finish(out)["verdict"]
     assert v["passing"] == ["aiotvla_v10b"], v
     assert v["seven_b_passing"] == []
+    assert "openvla_7b_int8wo" in v["seven_b_not_measured"], v
+    assert "openvla_7b_bf16" in v["seven_b_failing"], v
     b = _by(out)["aiotvla_v10b"]
     assert len(b["in_flight"]["flights"]) == 3
     for f in b["in_flight"]["flights"]:
         assert f["vla_host"] == ORIN
+        assert f["failed_requests"] == 0
         assert f["round_trip_ms"]["p95"] <= 100.0 and f["decision_hz_asked"] >= 10.0
+    r1 = [o for o in _by(out)["openvla_7b_bf16"]["orin_bench_open_loop"] if o["what"] == "R1"]
+    assert r1 and r1[0]["power_mode"] == "MAXN"
 
 
 def test_readme_states_the_committed_numbers():
@@ -174,6 +238,8 @@ def test_readme_states_the_committed_numbers():
         assert f"{f['tag']} " in text and f"{r['p50']} / {r['p95']} / {r['p99']}" in text
     assert "No new flight or measurement was made" in text
     assert "claims no int8 7B number" in text
+    assert "--vla-feed stream" in text and "0.05 s" in text
+    assert "power mode is not recorded in those files" not in text
 
 
 if __name__ == "__main__":

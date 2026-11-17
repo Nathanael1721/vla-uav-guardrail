@@ -35,7 +35,8 @@
    "passes": false,
    "why_not": [
     "0 C2 flights on the Orin read, the gate asks for 3"
-   ]
+   ],
+   "status": "not measured"
   },
   {
    "backend": "openvla_7b_bf16",
@@ -72,20 +73,23 @@
      "what": "R1",
      "p95_ms": 969.0432669594884,
      "n": 50,
-     "file": "deploy/evidence/hil/vla_rate_openvla_7b_bf16.json"
+     "file": "deploy/evidence/hil/vla_rate_openvla_7b_bf16.json",
+     "power_mode": "MAXN"
     },
     {
      "what": "not R1: gate check, slowest answer after the first",
      "p95_ms": null,
      "slowest_ms": 999.4,
      "n": 8,
-     "file": "deploy/evidence/hil/vla_bf16_check.json"
+     "file": "deploy/evidence/hil/vla_bf16_check.json",
+     "power_mode": "not recorded"
     }
    ],
    "passes": false,
    "why_not": [
     "0 C2 flights on the Orin read, the gate asks for 3"
-   ]
+   ],
+   "status": "fails"
   },
   {
    "backend": "openvla_7b_int8wo",
@@ -123,13 +127,15 @@
      "p95_ms": null,
      "stage": "import",
      "cause": "torchao is not installed in this environment",
-     "file": "deploy/evidence/hil/vla_rate_openvla_7b_int8wo.json"
+     "file": "deploy/evidence/hil/vla_rate_openvla_7b_int8wo.json",
+     "power_mode": "MAXN"
     }
    ],
    "passes": false,
    "why_not": [
     "0 C2 flights on the Orin read, the gate asks for 3"
-   ]
+   ],
+   "status": "not measured"
   },
   {
    "backend": "aerialvla_lora",
@@ -165,7 +171,8 @@
    "passes": false,
    "why_not": [
     "0 C2 flights on the Orin read, the gate asks for 3"
-   ]
+   ],
+   "status": "not measured"
   },
   {
    "backend": "aerialvla_ft_run2",
@@ -201,7 +208,8 @@
    "passes": false,
    "why_not": [
     "0 C2 flights on the Orin read, the gate asks for 3"
-   ]
+   ],
+   "status": "not measured"
   },
   {
    "backend": "aerialvla_bf16",
@@ -217,6 +225,7 @@
       "decision_hz_mission": 0.32,
       "answers": 58,
       "parsed": 56,
+      "failed_requests": 0,
       "round_trip_ms": {
        "n": 58,
        "p50": 1372.3,
@@ -259,6 +268,7 @@
       "decision_hz_mission": 0.02,
       "answers": 2,
       "parsed": 2,
+      "failed_requests": 0,
       "round_trip_ms": {
        "n": 2,
        "p50": 1558.4,
@@ -301,6 +311,7 @@
       "decision_hz_mission": 0.01,
       "answers": 1,
       "parsed": 1,
+      "failed_requests": 0,
       "round_trip_ms": {
        "n": 1,
        "p50": 2388.0,
@@ -365,13 +376,15 @@
      "what": "not R1: bf16/sdpa/unmerged",
      "p95_ms": 1537.8,
      "n": 50,
-     "file": "deploy/evidence/hil/aerialvla_serving_bench_agx.json"
+     "file": "deploy/evidence/hil/aerialvla_serving_bench_agx.json",
+     "power_mode": "not recorded"
     },
     {
      "what": "not R1: bf16/sdpa/merged",
      "p95_ms": 1099.6,
      "n": 50,
-     "file": "deploy/evidence/hil/aerialvla_serving_bench_agx_merged.json"
+     "file": "deploy/evidence/hil/aerialvla_serving_bench_agx_merged.json",
+     "power_mode": "not recorded"
     },
     {
      "what": "not R1: in flight, 3-4 November 2026, the server's latency p50 per flight",
@@ -381,7 +394,8 @@
       1880.4
      ],
      "n": 6,
-     "file": "demo/out/*agx_*/metrics.json (tags *_2026110[34] and *_01)"
+     "file": "demo/out/*agx_*/metrics.json (tags *_2026110[34] and *_01)",
+     "power_mode": "not recorded"
     }
    ],
    "passes": false,
@@ -389,7 +403,8 @@
     "pas_hil_aerialvla_c2_01_20261116: round trip p95 1547.9 ms > 100 ms; 0.71 decisions/s while asked < 10",
     "pas_hil_aerialvla_c2_02_20261116: round trip p95 1773.9 ms > 100 ms; 0.62 decisions/s while asked < 10",
     "pas_hil_aerialvla_c2_03_20261116: round trip p95 2388.0 ms > 100 ms; 0.42 decisions/s while asked < 10"
-   ]
+   ],
+   "status": "fails"
   },
   {
    "backend": "aiotvla_v10b",
@@ -405,6 +420,7 @@
       "decision_hz_mission": 10.93,
       "answers": 4648,
       "parsed": 4648,
+      "failed_requests": 0,
       "round_trip_ms": {
        "n": 4648,
        "p50": 51.9,
@@ -444,6 +460,7 @@
       "decision_hz_mission": 7.45,
       "answers": 1568,
       "parsed": 1568,
+      "failed_requests": 0,
       "round_trip_ms": {
        "n": 1568,
        "p50": 51.7,
@@ -483,6 +500,7 @@
       "decision_hz_mission": 10.62,
       "answers": 4500,
       "parsed": 4500,
+      "failed_requests": 0,
       "round_trip_ms": {
        "n": 4500,
        "p50": 51.6,
@@ -544,11 +562,13 @@
      "what": "not R1: fp16/sdpa, own inputs",
      "p95_ms": 41.7,
      "n": 300,
-     "file": "deploy/evidence/hil/aiotvla_v10b_bench_agx.json"
+     "file": "deploy/evidence/hil/aiotvla_v10b_bench_agx.json",
+     "power_mode": "not recorded"
     }
    ],
    "passes": true,
-   "why_not": []
+   "why_not": [],
+   "status": "passes"
   },
   {
    "backend": "dronecats_2b",
@@ -564,6 +584,7 @@
       "decision_hz_mission": 0.18,
       "answers": 27,
       "parsed": 27,
+      "failed_requests": 0,
       "round_trip_ms": {
        "n": 27,
        "p50": 2508.1,
@@ -606,6 +627,7 @@
       "decision_hz_mission": 0.18,
       "answers": 28,
       "parsed": 28,
+      "failed_requests": 0,
       "round_trip_ms": {
        "n": 28,
        "p50": 2445.4,
@@ -648,6 +670,7 @@
       "decision_hz_mission": 0.05,
       "answers": 6,
       "parsed": 6,
+      "failed_requests": 0,
       "round_trip_ms": {
        "n": 6,
        "p50": 1995.4,
@@ -712,7 +735,8 @@
      "what": "not R1: bf16/sdpa",
      "p95_ms": 17529.1,
      "n": 50,
-     "file": "deploy/evidence/hil/dronecats_2b_bench_agx.json"
+     "file": "deploy/evidence/hil/dronecats_2b_bench_agx.json",
+     "power_mode": "not recorded"
     },
     {
      "what": "not R1: in flight, 3-4 November 2026, the server's latency p50 per flight",
@@ -722,7 +746,8 @@
       2638.1
      ],
      "n": 3,
-     "file": "demo/out/*agx_*/metrics.json (tags *_2026110[34] and *_01)"
+     "file": "demo/out/*agx_*/metrics.json (tags *_2026110[34] and *_01)",
+     "power_mode": "not recorded"
     }
    ],
    "passes": false,
@@ -730,7 +755,8 @@
     "pas_hil_dronecats_c2_01_20261116: round trip p95 2895.7 ms > 100 ms; 0.34 decisions/s while asked < 10",
     "pas_hil_dronecats_c2_02_20261116: round trip p95 2746.4 ms > 100 ms; 0.37 decisions/s while asked < 10",
     "pas_hil_dronecats_c2_03_20261116: round trip p95 3115.9 ms > 100 ms; 0.58 decisions/s while asked < 10"
-   ]
+   ],
+   "status": "fails"
   },
   {
    "backend": "racevla_7b",
@@ -746,6 +772,7 @@
       "decision_hz_mission": 0.02,
       "answers": 2,
       "parsed": 2,
+      "failed_requests": 0,
       "round_trip_ms": {
        "n": 2,
        "p50": 1700.9,
@@ -788,6 +815,7 @@
       "decision_hz_mission": 0.03,
       "answers": 3,
       "parsed": 3,
+      "failed_requests": 0,
       "round_trip_ms": {
        "n": 3,
        "p50": 1375.5,
@@ -830,6 +858,7 @@
       "decision_hz_mission": 0.02,
       "answers": 2,
       "parsed": 2,
+      "failed_requests": 0,
       "round_trip_ms": {
        "n": 2,
        "p50": 1547.0,
@@ -894,7 +923,8 @@
      "what": "not R1: bf16/sdpa",
      "p95_ms": 843.4,
      "n": 50,
-     "file": "deploy/evidence/hil/racevla_7b_bench_agx.json"
+     "file": "deploy/evidence/hil/racevla_7b_bench_agx.json",
+     "power_mode": "not recorded"
     },
     {
      "what": "not R1: in flight, 3-4 November 2026, the server's latency p50 per flight",
@@ -904,7 +934,8 @@
       1216.9
      ],
      "n": 3,
-     "file": "demo/out/*agx_*/metrics.json (tags *_2026110[34] and *_01)"
+     "file": "demo/out/*agx_*/metrics.json (tags *_2026110[34] and *_01)",
+     "power_mode": "not recorded"
     }
    ],
    "passes": false,
@@ -912,7 +943,8 @@
     "pas_hil_racevla_c2_03_20261116: round trip p95 2070.1 ms > 100 ms; 0.57 decisions/s while asked < 10",
     "pas_hil_racevla_c2_04_20261116: round trip p95 2096.3 ms > 100 ms; 0.62 decisions/s while asked < 10",
     "pas_hil_racevla_c2_06_20261117: round trip p95 1879.0 ms > 100 ms; 0.62 decisions/s while asked < 10"
-   ]
+   ],
+   "status": "fails"
   }
  ],
  "int8_on_orin": "refused",
@@ -935,6 +967,17 @@
    "aiotvla_v10b"
   ],
   "seven_b_passing": [],
+  "seven_b_failing": [
+   "openvla_7b_bf16",
+   "aerialvla_bf16",
+   "racevla_7b"
+  ],
+  "seven_b_not_measured": [
+   "openvla_7b_4bit",
+   "openvla_7b_int8wo",
+   "aerialvla_lora",
+   "aerialvla_ft_run2"
+  ],
   "gate_met_by_a_learned_backend": true
  }
 }

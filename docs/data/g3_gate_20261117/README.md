@@ -29,7 +29,11 @@ and 1 when none does. `g3_gate.md` is the table the first command printed.
   the perception node, the Shield and the VLA server ran on the AGX Orin: each run's
   `metrics.json` `hil_evidence.vla_host.device_model` reads "NVIDIA Jetson AGX Orin
   Developer Kit" (L4T R39.2.1). ArduPilot SITL 4.5.7 and Project AirSim ran on the desktop.
-  The tool refuses a flight whose VLA host is not an Orin.
+  The tool reads only `hil_evidence.vla_host.device_model` (never the Shield host's
+  `device_model`): a flight whose VLA host is null or absent is "VLA host not shown", one
+  whose VLA host is not an AGX Orin (an Orin Nano included) is refused, and a flight with any
+  failed request (`ok` false or no `rtt_s`) fails. All twelve flights here have 0 failed
+  requests.
   - *Latency* is the round trip of one request (`rtt_s`: the node sends the frame, the
     server answers; both on the Orin). Beside it: the server's own model time
     (`latency_server_s`) and the time from the frame reaching the node to the parsed answer
@@ -37,9 +41,21 @@ and 1 when none does. `g3_gate.md` is the table the first command printed.
   - *Rate* is answers parsed per second while the model was being asked (the backend table's
     `decision_hz_asked`: not held by the rail, not withheld because the detector had no box).
     The rate over the whole mission is shown beside it.
+  - *Configuration the rate depends on.* AIoT-VLA's 13.15-13.22 decisions/s while asked holds
+    with the stream feed (`--vla-feed stream`, no cap) and a 0.05 s FrontCamera capture
+    interval (`-FrontCaptureIntervalS 0.05`), the C2 configuration the backend table's C2
+    filter selects. `deploy/orin/run_pas_perception.sh` makes stream the AIoT-VLA default, but
+    `perception_node.py`'s own default is `--vla-feed tick`; with the tick feed the same
+    backend decided 6.3-9.6 times a second while asked (pas_hil_aiot_kpi_01, est_01, para_*,
+    obs_02 in the backend table). pas_hil_aiot_c2_01 itself records
+    `vla_observation.below_grant.per_wall_s = true` (7.5 Hz over the wall clock: the flight
+    that lost the car, below).
 - **Open loop on the AGX Orin (shown, not judged).** R1 and the servers' benches from the
-  backend table. The AGX Orin's power mode is not recorded in those files or in the run
-  folders.
+  backend table. The R1 benches record the power mode: `vla_rate_openvla_7b_bf16.json` (the
+  969 ms p95 below), the other `vla_rate_*.json` files and `host_facts.json` hold nvpmodel
+  "MAXN" (`/var/lib/nvpmodel/status`); `g3_gate.json` carries it as `power_mode` on each
+  bench entry. The servers' benches (`*_bench_agx.json`, `vla_bf16_check.json`) and the hil
+  run folders do not record the power mode or jetson_clocks.
 
 A backend passes when every one of at least 3 C2 flights has a round-trip p95 <= 100 ms and
 >= 10 decisions/s while asked.
@@ -48,7 +64,7 @@ A backend passes when every one of at least 3 C2 flights has a round-trip p95 <=
 
 | Backend | Class | In flight on the AGX Orin: round trip p50 / p95 / p99 ms (pooled) | Decisions/s while asked | Open loop on the AGX Orin, p95 | G3 |
 |---|---|---|---|---|---|
-| OpenVLA-7B bf16 | 7B | not flown on hil (base OpenVLA is given no target) | - | 969 ms (R1, n=50): about 1.05 Hz | fails |
+| OpenVLA-7B bf16 | 7B | not flown on hil (base OpenVLA is given no target) | - | 969 ms (R1, n=50, MAXN): about 1.05 Hz | fails |
 | OpenVLA-7B int8 weight-only | 7B | - | - | no timing: the 16 Nov attempt was refused at import (torchao not installed in the AGX Orin's environment) | not measured |
 | OpenVLA-7B 4-bit, AerialVLA 4-bit, AerialVLA + our fine-tune 4-bit | 7B | - | - | no timing: bitsandbytes is not installed in the AGX Orin's environment | not measured |
 | AerialVLA LoRA, bf16 | 7B | 1374.5 / 1608.5 / 2385.0 (61 answers) | 0.42-0.71 | 1100 ms merged, 1538 ms unmerged (server bench, n=50) | fails |
@@ -84,7 +100,8 @@ is not asked while the detector has no box, and the mission ran 90 s more before
    in the backend set). The smaller backend the lab built and named for the follow task on 15 Nov 2026 is
    AIoT-VLA v10b. **It passes the gate on the AGX Orin in flight**: round-trip p95 84.0-84.7 ms
    on each of its three C2 flights (84.5 ms pooled over 10716 answers), and 13.15-13.22
-   decisions/s while asked. Its model time alone is 70.7-71.4 ms p95. Another smaller
+   decisions/s while asked (stream feed, 0.05 s capture; see above). Its model time alone is
+   70.7-71.4 ms p95. Another smaller
    backend, DroneCATS 2B, does not pass (2.7-3.1 s p95).
 4. **The 4-D action at 10 Hz.** AIoT-VLA answers with a step (forward, down, heading change,
    right). The rail's step tracker (guardrail/vla_link.py) turns the newest step into the
@@ -109,7 +126,8 @@ is not asked while the detector has no box, and the mission ran 90 s more before
   - shorten the model's 71 ms p95: build an ONNX/TensorRT fp16 engine for the OWL-ViT
     backbone, or use a smaller input;
   - fix the AGX Orin's clocks (MAXN power mode with jetson_clocks) and record the power mode
-    in the run folder. No run records it today.
+    in the run folder. The R1 benches record MAXN; no hil run folder records the power mode
+    today.
 - **Follow quality is a separate question.** These flights score 0.21-0.35 of ticks within
   30 m of the car, and each fails its KPI on `unsafe_position_entered` with 0 P0 escapes
   (backend table, C2). G3 is about latency and rate only.
