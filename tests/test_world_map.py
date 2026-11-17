@@ -83,6 +83,15 @@ def test_the_world_is_rasterised_on_the_city_maps_cell_convention():
     assert rec["classes"] == {"buildings": ["block-a"], "roads": ["road-w"]}
     assert len(rec["sha256"]) == 64
     assert set(w.shield_kwargs()) == {"obstacle_map", "road_map"}
+    # The module docstring's example IS the shipped world (it once gave road-w
+    # 2 m off, which put lane -11 inside the road; review of wf17-distenv).
+    import yaml
+    import guardrail.world_map as W
+    blk = W.__doc__.split("left out):\n\n", 1)[1].split("\n\n", 1)[0]
+    example = yaml.safe_load("\n".join(ln[4:] for ln in blk.splitlines()))
+    shipped = yaml.safe_load((ROOT / WORLD).read_text(encoding="utf-8"))
+    shipped.pop("description", None)
+    assert example == shipped, (example, shipped)
 
 
 def test_a_bad_world_file_is_refused():
@@ -214,6 +223,16 @@ def test_without_its_world_the_family_cannot_fly():
         pass
     else:
         raise AssertionError("a missing world file was accepted")
+    # A policy that cannot be loaded is refused up front too (review of
+    # wf17-distenv: it was swallowed, and the world check skipped).
+    bad = eps[0].cell.spec.model_copy(update={"policy": eps[0].cell.spec.policy.model_copy(
+        update={"path": "policies/nope_distance_envelope.yaml"})})
+    try:
+        S.episode_world(bad)
+    except S.UnsupportedScenario as e:
+        assert "policy cannot be loaded" in str(e), e
+    else:
+        raise AssertionError("a world was accepted against a policy that cannot be loaded")
 
 
 def test_the_rail_sends_the_world_and_the_node_declares_it():
@@ -228,15 +247,79 @@ def test_the_rail_sends_the_world_and_the_node_declares_it():
     other, _ = expand(LIBRARY, None, 0, ["nfz-head-on"])
     assert not any(a.startswith("--world") for a in
                    S.rail_node_args(other[0].cell.spec, 0, LIBRARY.defaults))
-    # The node builds BOTH its Shields (the flight's and the warm-up) with the
-    # world's maps, refuses a policy whose map is missing before take-off,
-    # checks the file before ROS starts and records the world in metrics.
+    # main() reads the file before ROS starts (a bad path is refused with no
+    # node built); what the node does with it is flown below
+    # (test_the_ros2_node_flies_the_world_it_is_given).
     src = (ROOT / "sitl" / "ros2_shield_node.py").read_text(encoding="utf-8")
-    assert src.count("**self.world_kw)") == 2
-    assert "load_world(wpath, ROOT) if wpath else None" in src
-    assert "missing_maps(self.policy, self.world)" in src
     assert "load_world(args.world, ROOT)" in src
-    assert '"world": self.world.record() if self.world else None' in src
+
+
+def _de_node(argv, policy=POLICY):
+    """sitl/ros2_shield_node.py's ShieldNode on the stand-in ROS stack
+    (tests/test_railinputs_node.py, as tests/test_sitl_rails.py's
+    _scenario_node), built from its own parser with `policy` and `argv` on a
+    hand-moved clock: (RN, N, node, clk, out)."""
+    if str(ROOT / "tests") not in sys.path:
+        sys.path.insert(0, str(ROOT / "tests"))
+    import test_railinputs_node as RN
+    N = RN._node_module()
+    clk = RN._Clock()
+    N.time = clk
+    args, _ = N.make_parser().parse_known_args(
+        ["--policy", str(policy), "--dev-yaml"] + RN.HAND_TICKED + list(argv))
+    out = Path(tempfile.mkdtemp(prefix="de_node_"))
+    return RN, N, N.ShieldNode(args, out), clk, out
+
+
+def test_the_ros2_node_flies_the_world_it_is_given():
+    """The hil rail's own node, built and ticked (review of wf17-distenv:
+    the wiring was pinned by source strings only). With --world the flying
+    Shield has both maps and names each rule where the world puts it; the
+    warm-up Shield (start_mission) is built with them too, or it would raise;
+    metrics.json pins the world by its hash. Without --world the node refuses
+    the policy before take-off, naming both rules. The null: a policy with no
+    distance_envelope gets no map from the same --world."""
+    world = load_world(WORLD, ROOT)
+    RN, N, node, clk, out = _de_node([f"--world={WORLD}", "--start=0,-6,15",
+                                      "--no-target", "--max-s", "0.35"])
+    sh = node.shield
+    assert node.world is not None and node.world.sha256 == world.sha256
+    assert sh.has_obstacle_map and sh._road is not None
+    named = lambda y: {v.rule_id for v in sh.state_is_unsafe(State(x=30.0, y=y, up=15.0))}
+    assert named(-1.0) == {"de-buildings"}, named(-1.0)     # 3 m from block-a's face
+    assert named(-11.0) == {"de-roads"}, named(-11.0)       # 1 m from road-w's edge
+    assert named(-6.0) == set(), named(-6.0)                # the legal band
+    # One short hand-ticked mission in the legal band: the warm-up and every
+    # tick run on the world's Shield, and the record names the world.
+    pose = State(x=0.0, y=0.0, up=15.0)                     # EKF frame: the --start
+    node._on_pose(RN._pose_msg(N, pose))
+    node.start_mission()
+    assert any(e["kind"] == "shield_warmup" for e in RN._events(out))
+    for _ in range(6):
+        node._on_pose(RN._pose_msg(N, pose))
+        RN._act(N, node, vx=0.0)
+        clk.t += 0.1
+        node._tick()
+    assert node.done and node.rows, (node.done, len(node.rows))
+    assert not any(r.get("unsafe") for r in node.rows)
+    import json
+    m = json.loads((out / "metrics.json").read_text(encoding="utf-8"))
+    assert m["world"]["sha256"] == world.sha256 and m["world"]["path"] == WORLD, m["world"]
+    assert m["world"]["classes"] == {"buildings": ["block-a"], "roads": ["road-w"]}
+    # Without --world: refused before take-off, both rules named.
+    try:
+        _de_node([])
+    except ValueError as e:
+        msg = str(e)
+        assert msg.startswith("REFUSED before take-off"), msg
+        assert "de-buildings" in msg and "de-roads" in msg, msg
+    else:
+        raise AssertionError("the node built a Shield over distance_envelope_sitl with no world")
+    # The null: sim_demo_policy (no distance_envelope) with the same --world
+    # flies the Shield it flew before: no map at all.
+    _, _, plain, _, _ = _de_node([f"--world={WORLD}"],
+                                 policy=ROOT / "policies" / "sim_demo_policy.yaml")
+    assert not plain.shield.has_obstacle_map and plain.shield._road is None
 
 
 def test_the_hil_dry_run_plans_both_missions_and_refuses_none():
@@ -372,6 +455,17 @@ def test_the_pas_rail_loads_the_obstacle_map_for_a_buildings_envelope():
     smap, note = pn.load_obstacle_map(pol, d / "occ_day.npz")
     assert smap is not None and int(smap["occ"].sum()) == 16, note
     Shield(pol, obstacle_map=smap)
+    # Without the file the note says what the Shield will do with a buildings
+    # envelope (refuse it), not "INERT" (review of wf17-distenv)...
+    none, why = pn.load_obstacle_map(pol, d / "missing.npz")
+    assert none is None and "INERT" not in why, why
+    assert "de-b" in why and "Shield refuses this policy" in why, why
+    # ...and an obstacle_clearance-only policy still runs inert, said so.
+    oc = policy_from_raw({"policy_id": "oc", "version": "0.1.0", "constraints": [
+        {"id": "oc", "type": "obstacle_clearance", "constraint_type": "hard",
+         "scope": "mission", "priority": "P0", "violation_action": "project_fix",
+         "min_clearance_m": 4.0}]})
+    assert "obstacle_clearance is INERT" in pn.load_obstacle_map(oc, d / "missing.npz")[1]
     # A policy with neither rule: no map, as before.
     plain = policy_from_raw({"policy_id": "p", "version": "0.1.0", "constraints": [
         {"id": "a", "type": "altitude_envelope", "constraint_type": "hard",

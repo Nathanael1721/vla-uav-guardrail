@@ -2630,24 +2630,31 @@ def load_obstacle_map(policy, citymap: Path):
     loads it; None (ObstacleClearance INERT, said out loud) when unavailable.
     Loaded for an obstacle_clearance rule and, since 2026-11-17, for a
     distance_envelope over buildings (WP1-07), which is measured on the same
-    map; without it the Shield refuses such a policy (never inert)."""
-    if not (policy.by_type(ObstacleClearance)
-            or any(c.object_class == "buildings" for c in policy.by_type(DistanceEnvelope))):
+    map; without it the Shield refuses such a policy (never inert), and the
+    note says so instead of "INERT"."""
+    de_b = [c.id for c in policy.by_type(DistanceEnvelope) if c.object_class == "buildings"]
+    if not (policy.by_type(ObstacleClearance) or de_b):
         return None, "policy has no obstacle_clearance rule"
+    # What a missing map means, by the rule that needs it: a distance_envelope
+    # over buildings is refused by the Shield; obstacle_clearance alone runs
+    # inert.
+    without = (f"the distance_envelope over buildings ({', '.join(de_b)}) cannot be "
+               f"judged: the Shield refuses this policy" if de_b
+               else "obstacle_clearance is INERT this flight")
     if not Path(citymap).is_file():
-        return None, f"no map at {citymap}: obstacle_clearance is INERT this flight"
+        return None, f"no map at {citymap}: {without}"
     try:
         import city_planner
         import occ_bands
     except Exception as exc:                                  # noqa: BLE001
-        return None, f"map loaders unavailable ({exc}): obstacle_clearance is INERT"
+        return None, f"map loaders unavailable ({exc}): {without}"
     cmap = city_planner.load_occ(str(citymap))
     alt = policy.by_type(AltitudeEnvelope)
     if alt:
         sel = occ_bands.select_for_band(Path(citymap).parent, alt[0].alt_min_m,
                                         alt[0].alt_max_m)
         if sel["map"] is None:
-            return None, "no map covers the policy's altitude band: obstacle_clearance is INERT"
+            return None, f"no map covers the policy's altitude band: {without}"
         cmap = sel["map"]
     return ({"occ": cmap["occ"], "res": cmap["res"], "ox": cmap["ox"], "oy": cmap["oy"]},
             f"loaded {citymap}")

@@ -1330,9 +1330,10 @@ def _as_defaults(d) -> Defaults:
 def episode_world(spec):
     """The scenario's declared world (ScenarioSpec.world, guardrail/
     world_map.py), read from the checkout, or None for a scenario without
-    one. Raises UnsupportedScenario for a world file that cannot be read, or
-    that lacks a map one of the policy's distance_envelope rules needs (the
-    Shield would refuse the policy without it)."""
+    one. Raises UnsupportedScenario for a world file that cannot be read, for
+    a scenario policy that cannot be loaded to check against it, or for a
+    world that lacks a map one of the policy's distance_envelope rules needs
+    (the Shield would refuse the policy without it)."""
     path = getattr(spec, "world", None)
     if path is None:
         return None
@@ -1341,11 +1342,16 @@ def episode_world(spec):
         world = load_world(path, ROOT)
     except (OSError, ValueError) as e:
         raise UnsupportedScenario(f"world {path}: {type(e).__name__}: {e}") from e
+    # A policy that cannot be loaded is refused here too, with its reason:
+    # the world/policy check below cannot be skipped, so a mismatch is never
+    # first met by the Shield mid-episode or by the node after SITL boots.
     try:
         pol = spec.policy.load(ROOT)
-    except Exception:                                    # noqa: BLE001
-        pol = None
-    gaps = missing_maps(pol, world) if pol is not None else []
+    except Exception as e:                               # noqa: BLE001
+        raise UnsupportedScenario(f"world {path}: the scenario's policy cannot be "
+                                  f"loaded to check it against the world: "
+                                  f"{type(e).__name__}: {e}") from e
+    gaps = missing_maps(pol, world)
     if gaps:
         raise UnsupportedScenario(f"world {path}: " + "; ".join(gaps))
     return world

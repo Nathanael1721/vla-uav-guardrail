@@ -712,7 +712,8 @@ jobs:
               tests/test_policy_hash.py \
               tests/test_csp.py \
               tests/test_policy_dsl_grant_form.py \
-              tests/test_distance_envelope_msl.py               tests/test_world_map.py \
+              tests/test_distance_envelope_msl.py \
+              tests/test_world_map.py \
               tests/test_replay_identity.py \
               tests/test_vla_backends.py \
               tests/test_vla_link.py \

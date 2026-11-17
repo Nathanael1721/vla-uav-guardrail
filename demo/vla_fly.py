@@ -1630,7 +1630,13 @@ async def _fly(args, holder: dict) -> int:
     from build_street_mask import road_map_for
     rmap, road_note = road_map_for(policy, Path(args.citymap).parent)
     print(f"[map] {road_note}")
-    if policy.by_type(ObstacleClearance) and smap is None:
+    de_b = [c.id for c in policy.by_type(DistanceEnvelope) if c.object_class == "buildings"]
+    if de_b and smap is None:
+        # Never inert (models.DistanceEnvelope): the Shield below refuses the
+        # policy; said here first, by the rule that needs the map.
+        print(f"[occ] *** no obstacle map for the policy band: the distance_envelope over "
+              f"buildings ({', '.join(de_b)}) cannot be judged, the Shield refuses this policy")
+    elif policy.by_type(ObstacleClearance) and smap is None:
         print("[occ] *** no obstacle map for the policy band: ObstacleClearance is INERT")
     # The grant's 5 s / 0.1 s forecast, no escalation FSM inside the Shield
     # (guardrail/replay.rail_shield, docs/DESIGN-shield-enforcement.md): this

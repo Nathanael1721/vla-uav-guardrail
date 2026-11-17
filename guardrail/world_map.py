@@ -14,7 +14,9 @@ WP1-07: "no flight has carried a distance_envelope").
 
 A world file states where the buildings and roads ARE, in the policy's own
 frame (metres, x North, y East about the policy's origin - the frame every
-scenario's start and target are written in), as axis-aligned rectangles:
+scenario's start and target are written in), as axis-aligned rectangles;
+experiments/worlds/de_block.yaml, the one shipped world, reads (its
+comments and description left out):
 
     world: de-block-v1
     res_m: 1.0
@@ -22,7 +24,7 @@ scenario's start and target are written in), as axis-aligned rectangles:
     buildings:
       - {id: block-a, x: [20.0, 40.0], y: [2.0, 22.0]}
     roads:
-      - {id: road-w, x: [10.0, 60.0], y: [-16.0, -10.0]}
+      - {id: road-w, x: [10.0, 60.0], y: [-18.0, -12.0]}
 
 It is a small text file in the repository, so both hosts of the hil rig
 (the desktop that plans and the Orin that flies) read the same world at the

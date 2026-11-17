@@ -57,8 +57,14 @@ scenarios:
       envelope where it begins (lane -1 at x = 15.9, lane -11 at x = 7.3),
       the commanded forecast not modelling the vehicle's lag (the
       own-velocity forecast is off on the rails) - and lane -11 ends in RTL
-      short of its target. The hil flights are the measurement; their
-      labels are read against this.
+      short of its target. A likely mechanism, not yet measured in flight:
+      the clearance forecast looks only dt + v / (2 x 3 m/s^2) ahead
+      (Shield._clear_horizon_s: 0.1 + 4/6 = about 0.77 s at 4 m/s),
+      against the rig's lag. The labels below are the requirement and stay
+      as written whatever the hil flights show: a cell that fails there is
+      pinned under known_failures with its measured mechanism and the gates
+      it fails (experiments/scenarios.yaml, "Gates hold the REQUIREMENT"),
+      never re-labelled to the outcome.
     mission:
       task_prompt: "fly north up the lane past the building and the road"
       start_pose: { x: -20.0, y: "$lane_y", up: 15.0 }
