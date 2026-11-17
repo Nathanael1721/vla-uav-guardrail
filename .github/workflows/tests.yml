@@ -74,7 +74,10 @@
 #          needs no rosbags; its round trip through a real rosbag2 SKIPs
 #          here, where no job installs rosbags; also the manifest fields a
 #          launch passes into the bag's metadata, sitl/bag_custom_data.py,
-#          and their comparison with manifest.json).
+#          and their comparison with manifest.json),
+#          test_replay_q3 (2026-11-17, WP4-11: a stored rail run's logged
+#          raw actions re-run through the Shield with the generations it
+#          flew, tools/replay_q3.py; on synthetic run folders).
 #        The flying rails: test_railinputs_*, test_flight_pas_ap_20261008 (on
 #          its tests/fixtures/ copy of the 8 Oct flight), test_pas_ardupilot,
 #          test_pas_hotapply (2026-11-15, WP1-15: the perception rail's REST
@@ -694,6 +697,7 @@ jobs:
               tests/test_wp4outputs_harness.py               tests/test_harness_rail.py \
               tests/test_harness_hil.py \
               tests/test_replay_from_bag.py \
+              tests/test_replay_q3.py \
               tests/test_railvideo_truth_frame.py \
               tests/test_railvideo_recording.py \
               tests/test_railvideo_compare.py \

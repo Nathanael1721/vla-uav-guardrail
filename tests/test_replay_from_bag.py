@@ -594,6 +594,93 @@ def test_the_node_running_behind_the_recorder_at_the_start_is_still_aligned():
         assert "do not fit one a tick" in str(e)
 
 
+def _backlogged_start():
+    """ntFIN2_511's start: the node's first tick ran on an action the recorder
+    logged a period before t = 0; the next action was logged before the
+    Shield's first message and no tick ran on it."""
+    s, rows, traj, kpi = _episode()
+    k = next(i for i, (ns, _) in enumerate(s.actions) if ns == T0)
+    s.actions.insert(k + 1, (T0 + 2_000_000, _vec(5.0, 0.5, 0.0, 0.0)))   # before +4 ms
+    for r in rows[1:]:
+        r["action_seq"] += 1
+    return s, rows, traj, kpi
+
+
+def test_a_first_tick_on_a_backlogged_action_is_placed_by_the_logs_action_seq():
+    s, rows, traj, kpi = _backlogged_start()
+    # the bag alone puts the first tick on the inserted action
+    assert R.rebuild(s).window["first_tick"]["action_index"] == 5
+    rec, ticks = _replay(s, rows, traj, kpi)
+    assert rec["verdict"] == "identical", rec["first_difference"]
+    w = rec["window"]
+    assert w["first_tick"]["action_index"] == 4 and "action_seq" in w["first_tick"]["source"]
+    assert w["actions_no_tick_ran_on_at_the_start"] == [5]
+    assert [t["_bag"]["action_index"] for t in ticks[:3]] == [4, 6, 7]
+    assert any("no tick ran on action(s) [5]" in x for x in rec["limits"]), rec["limits"]
+    c = rec["compared_with_the_log"]
+    assert c["bag_actions_no_row_ticked_on"] == 0 and c["compared"] == len(rows)
+    # taken from the log only when its first raw action is the bag's at that
+    # count: a log that names another action is not re-anchored, and differs
+    r2 = json.loads(json.dumps(rows))
+    r2[0]["raw_body"]["vx"] = 9.0
+    assert R.log_start(s, R.rebuild(s), r2) is None
+    rec, _ = _replay(s, r2, traj, kpi)
+    assert rec["verdict"] == "differs" and rec["window"]["first_tick"]["action_index"] == 5
+    # a log that agrees with the bag's own placement changes nothing
+    s0, rows0, *_ = _episode()
+    assert R.log_start(s0, R.rebuild(s0), rows0) is None
+
+
+def test_a_touched_tick_the_fsm_did_not_step_on_is_compared_not_missing():
+    # After a GeoFence takeover the node's FSM does not step: build_row
+    # writes no FSM key and the intercept carries fsm null (ntFIN2's 18
+    # dyn-nfz-spawn-ahead runs, `incomplete` until 2026-11-17).
+    s, rows, traj, kpi = _episode()
+    auto = {r["t"] for r in rows if r["setpoint"] == "none" and r["mode"] == "RTL"
+            and r["touched"]}
+    assert auto
+    s.intercepts = [(ns, dict(d, fsm=None) if d["t"] in auto else d) for ns, d in s.intercepts]
+    for r in rows:
+        if r["t"] in auto:
+            del r["fsm_state_after"]
+    rec, _ = _replay(s, rows, traj, kpi)
+    c = rec["compared_with_the_log"]["ticks"]
+    assert rec["verdict"] == "identical", (rec["verdict"], rec["first_difference"])
+    assert c["log_fields_absent"] == {} and c["fsm_not_stepped_rows"] == len(auto)
+    # the intercept naming a state the row does not: not compared, counted
+    s.intercepts = [(ns, dict(d, fsm="RTL") if d["t"] in auto else d) for ns, d in s.intercepts]
+    rec, _ = _replay(s, rows, traj, kpi)
+    assert rec["verdict"] == "incomplete"
+    assert rec["compared_with_the_log"]["ticks"]["log_fields_absent"] == {
+        "fsm_state_after": len(auto)}
+    # an unknown arm never reads a missing key as "did not step"
+    s.intercepts = [(ns, dict(d, fsm=None) if d["t"] in auto else d) for ns, d in s.intercepts]
+    rec, _ = _replay(s, rows, traj, kpi, arm=None)
+    assert rec["verdict"] == "incomplete"
+    assert not R.fsm_not_stepped({"touched": True}, "off")
+
+
+def test_setpoints_the_adapter_never_sent_differ_and_are_said_as_a_span():
+    # ntFIN2_175: the Shield published, the bag holds no executed setpoint
+    # for 245 ticks, and the adapter's own log agrees with the bag.
+    s, rows, traj, kpi = _episode()
+    gone = {T0 + 5_000_000 + i * TICK for i in (1, 2)}
+    s.executed = [(ns, m) for ns, m in s.executed if ns not in gone]
+    ep = R.Episode(name="synthetic", source="memory", bag_dir=Path("stand-in"), rows=rows,
+                   trajectory=traj, kpi=kpi, priorities=PRIORITIES, arm="on",
+                   adapter_log_lines=len(s.executed))
+    with _bag_is(s):
+        rec, _ = R.replay(ep)
+    fd = rec["first_difference"]
+    assert rec["verdict"] == "differs" and (fd["field"], fd["tick"]) == ("executed", 2), fd
+    assert rec["compared_with_the_log"]["executed_gaps"] == [
+        {"from_tick": 2, "to_tick": 3, "t_from": rows[1]["t"], "t_to": rows[2]["t"],
+         "ticks": 2}]
+    assert rec["adapter_log"] == {"setpoints_sent": len(s.executed),
+                                  "executed_in_bag": len(s.executed), "agree": True}
+    assert any("the adapter did not send them" in x for x in rec["limits"]), rec["limits"]
+
+
 def test_who_flew_a_tick_is_inferred_from_the_setpoint_and_the_intercept():
     raw, other = _vec(4.0, 0.0, 0.0, 0.0), _vec(0.3, 0.1, 0.0, 0.0)
 

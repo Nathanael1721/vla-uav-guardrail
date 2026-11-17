@@ -1,0 +1,504 @@
+{
+ "command": "python tools/replay_q3.py --root demo/out --out <out>/replay_q3_20261117",
+ "seconds": 76.3,
+ "what": "today's Shield (code_revision_now) re-run open loop on each run's logged inputs: a regression check, not a replay at the revision each run was flown at",
+ "window": {
+  "from": "2026-08-01",
+  "to": "2026-10-31",
+  "by": "manifest.json modification date (local)"
+ },
+ "code_revision_now": "d9175e44aca7",
+ "runs_in_window": 5509,
+ "verdicts": {
+  "identical": 10,
+  "differs": 5,
+  "not_replayable": 5494
+ },
+ "replayed_flown_at_a_clean_revision": 0,
+ "decisions_identical_on_replayed": 12,
+ "not_replayable_by_reason": {
+  "a headless-kinematic episode": 5195,
+  "a map rule, and the map flown is not recorded": 213,
+  "the Shield's forecast is not recorded": 82,
+  "a generation today's Shield.hot_apply refuses where the run installed it": 3,
+  "no flight log": 1
+ },
+ "replayed": [
+  {
+   "run": "_hot_apply_not_in_lock/ros2fix_on_dyn_nfz",
+   "manifest_date": "2026-10-07",
+   "verdict": "differs",
+   "ticks": 83,
+   "logged_touched_ticks": 83,
+   "logged_repaired_ticks": 83,
+   "decisions_identical": false,
+   "emitted_max_abs_diff": 0.0,
+   "first_difference": {
+    "tick": 67,
+    "row": 66,
+    "t": 6.708,
+    "field": "repairs",
+    "logged": [
+     "SpeedClamp",
+     "ClimbClamp",
+     "GeofenceSlide"
+    ],
+    "replayed": [
+     "SpeedClamp",
+     "ClimbClamp",
+     "AltitudeFix",
+     "GeofenceSlide",
+     "ClimbClamp"
+    ]
+   },
+   "first_decision_difference": {
+    "tick": 67,
+    "row": 66,
+    "t": 6.708,
+    "field": "repairs",
+    "logged": [
+     "SpeedClamp",
+     "ClimbClamp",
+     "GeofenceSlide"
+    ],
+    "replayed": [
+     "SpeedClamp",
+     "ClimbClamp",
+     "AltitudeFix",
+     "GeofenceSlide",
+     "ClimbClamp"
+    ]
+   },
+   "ticks_differing_by_field": {
+    "repairs": 17
+   },
+   "ticks_field_not_logged": {},
+   "generations": [
+    0,
+    1
+   ],
+   "arm": "on",
+   "state_source": "trajectory.json (the position's own doubles)",
+   "code_revision_flown": "401305abd019-dirty",
+   "flown_revision_clean": false
+  },
+  {
+   "run": "ros2_action_brake_01",
+   "manifest_date": "2026-10-29",
+   "verdict": "identical",
+   "ticks": 899,
+   "logged_touched_ticks": 889,
+   "logged_repaired_ticks": 889,
+   "decisions_identical": true,
+   "emitted_max_abs_diff": 0.0,
+   "first_difference": null,
+   "first_decision_difference": null,
+   "ticks_differing_by_field": {},
+   "ticks_field_not_logged": {},
+   "generations": [
+    0,
+    1
+   ],
+   "arm": "on",
+   "state_source": "trajectory.json (the position's own doubles)",
+   "code_revision_flown": "e5b2e51492ec-dirty",
+   "flown_revision_clean": false
+  },
+  {
+   "run": "ros2_action_land_01",
+   "manifest_date": "2026-10-29",
+   "verdict": "identical",
+   "ticks": 413,
+   "logged_touched_ticks": 403,
+   "logged_repaired_ticks": 403,
+   "decisions_identical": true,
+   "emitted_max_abs_diff": 0.0,
+   "first_difference": null,
+   "first_decision_difference": null,
+   "ticks_differing_by_field": {},
+   "ticks_field_not_logged": {},
+   "generations": [
+    0,
+    1
+   ],
+   "arm": "on",
+   "state_source": "trajectory.json (the position's own doubles)",
+   "code_revision_flown": "e5b2e51492ec-dirty",
+   "flown_revision_clean": false
+  },
+  {
+   "run": "ros2_action_loiter_01",
+   "manifest_date": "2026-10-29",
+   "verdict": "identical",
+   "ticks": 337,
+   "logged_touched_ticks": 326,
+   "logged_repaired_ticks": 326,
+   "decisions_identical": true,
+   "emitted_max_abs_diff": 0.0,
+   "first_difference": null,
+   "first_decision_difference": null,
+   "ticks_differing_by_field": {},
+   "ticks_field_not_logged": {},
+   "generations": [
+    0,
+    1
+   ],
+   "arm": "on",
+   "state_source": "trajectory.json (the position's own doubles)",
+   "code_revision_flown": "e5b2e51492ec-dirty",
+   "flown_revision_clean": false
+  },
+  {
+   "run": "ros2_action_monitor_only_01",
+   "manifest_date": "2026-10-29",
+   "verdict": "identical",
+   "ticks": 91,
+   "logged_touched_ticks": 53,
+   "logged_repaired_ticks": 0,
+   "decisions_identical": true,
+   "emitted_max_abs_diff": 0.0,
+   "first_difference": null,
+   "first_decision_difference": null,
+   "ticks_differing_by_field": {},
+   "ticks_field_not_logged": {},
+   "generations": [
+    0,
+    1
+   ],
+   "arm": "on",
+   "state_source": "trajectory.json (the position's own doubles)",
+   "code_revision_flown": "e5b2e51492ec-dirty",
+   "flown_revision_clean": false
+  },
+  {
+   "run": "ros2_action_monitor_only_soft_01",
+   "manifest_date": "2026-10-29",
+   "verdict": "identical",
+   "ticks": 91,
+   "logged_touched_ticks": 53,
+   "logged_repaired_ticks": 0,
+   "decisions_identical": true,
+   "emitted_max_abs_diff": 0.0,
+   "first_difference": null,
+   "first_decision_difference": null,
+   "ticks_differing_by_field": {},
+   "ticks_field_not_logged": {},
+   "generations": [
+    0,
+    1
+   ],
+   "arm": "on",
+   "state_source": "trajectory.json (the position's own doubles)",
+   "code_revision_flown": "e5b2e51492ec-dirty",
+   "flown_revision_clean": false
+  },
+  {
+   "run": "ros2_action_rtl_01",
+   "manifest_date": "2026-10-29",
+   "verdict": "identical",
+   "ticks": 12,
+   "logged_touched_ticks": 2,
+   "logged_repaired_ticks": 2,
+   "decisions_identical": true,
+   "emitted_max_abs_diff": 0.0,
+   "first_difference": null,
+   "first_decision_difference": null,
+   "ticks_differing_by_field": {},
+   "ticks_field_not_logged": {},
+   "generations": [
+    0,
+    1
+   ],
+   "arm": "on",
+   "state_source": "trajectory.json (the position's own doubles)",
+   "code_revision_flown": "e5b2e51492ec-dirty",
+   "flown_revision_clean": false
+  },
+  {
+   "run": "ros2_hotapply_01",
+   "manifest_date": "2026-10-29",
+   "verdict": "identical",
+   "ticks": 301,
+   "logged_touched_ticks": 301,
+   "logged_repaired_ticks": 301,
+   "decisions_identical": true,
+   "emitted_max_abs_diff": 0.0,
+   "first_difference": null,
+   "first_decision_difference": null,
+   "ticks_differing_by_field": {},
+   "ticks_field_not_logged": {},
+   "generations": [
+    0,
+    1,
+    2,
+    3,
+    4
+   ],
+   "arm": "on",
+   "state_source": "trajectory.json (the position's own doubles)",
+   "code_revision_flown": "e5b2e51492ec-dirty",
+   "flown_revision_clean": false
+  },
+  {
+   "run": "ros2_hotapply_02",
+   "manifest_date": "2026-10-29",
+   "verdict": "differs",
+   "ticks": 346,
+   "logged_touched_ticks": 346,
+   "logged_repaired_ticks": 346,
+   "decisions_identical": true,
+   "emitted_max_abs_diff": 8.88e-16,
+   "first_difference": {
+    "tick": 201,
+    "row": 200,
+    "t": 20.105,
+    "field": "emitted",
+    "logged": {
+     "vx": -0.0029634276870026018,
+     "vy": 3.999998902261893,
+     "vz_up": -0.172016903758049,
+     "yaw_rate": 0.0
+    },
+    "replayed": {
+     "vx": -0.0029634276870026013,
+     "vy": 3.999998902261892,
+     "vz_up": -0.172016903758049,
+     "yaw_rate": 0.0
+    }
+   },
+   "first_decision_difference": null,
+   "ticks_differing_by_field": {
+    "emitted": 1
+   },
+   "ticks_field_not_logged": {},
+   "generations": [
+    0,
+    1,
+    2,
+    3,
+    4
+   ],
+   "arm": "on",
+   "state_source": "trajectory.json (the position's own doubles)",
+   "code_revision_flown": "e5b2e51492ec-dirty",
+   "flown_revision_clean": false
+  },
+  {
+   "run": "ros2_hotapply_03",
+   "manifest_date": "2026-10-29",
+   "verdict": "identical",
+   "ticks": 219,
+   "logged_touched_ticks": 110,
+   "logged_repaired_ticks": 110,
+   "decisions_identical": true,
+   "emitted_max_abs_diff": 0.0,
+   "first_difference": null,
+   "first_decision_difference": null,
+   "ticks_differing_by_field": {},
+   "ticks_field_not_logged": {},
+   "generations": [
+    0,
+    1,
+    2,
+    3,
+    4
+   ],
+   "arm": "on",
+   "state_source": "trajectory.json (the position's own doubles)",
+   "code_revision_flown": "e5b2e51492ec-dirty",
+   "flown_revision_clean": false
+  },
+  {
+   "run": "ros2fix2_off_fence",
+   "manifest_date": "2026-10-07",
+   "verdict": "identical",
+   "ticks": 283,
+   "logged_touched_ticks": 0,
+   "logged_repaired_ticks": 0,
+   "decisions_identical": true,
+   "emitted_max_abs_diff": null,
+   "first_difference": null,
+   "first_decision_difference": null,
+   "ticks_differing_by_field": {},
+   "ticks_field_not_logged": {},
+   "generations": [
+    0
+   ],
+   "arm": "off",
+   "state_source": "trajectory.json (the position's own doubles)",
+   "code_revision_flown": "401305abd019-dirty",
+   "flown_revision_clean": false
+  },
+  {
+   "run": "ros2fix2_on_fsm",
+   "manifest_date": "2026-10-07",
+   "verdict": "differs",
+   "ticks": 82,
+   "logged_touched_ticks": 82,
+   "logged_repaired_ticks": 82,
+   "decisions_identical": false,
+   "emitted_max_abs_diff": 0.0,
+   "first_difference": {
+    "tick": 68,
+    "row": 67,
+    "t": 6.809,
+    "field": "repairs",
+    "logged": [
+     "SpeedClamp",
+     "ClimbClamp",
+     "GeofenceSlide"
+    ],
+    "replayed": [
+     "SpeedClamp",
+     "ClimbClamp",
+     "AltitudeFix",
+     "GeofenceSlide",
+     "ClimbClamp"
+    ]
+   },
+   "first_decision_difference": {
+    "tick": 68,
+    "row": 67,
+    "t": 6.809,
+    "field": "repairs",
+    "logged": [
+     "SpeedClamp",
+     "ClimbClamp",
+     "GeofenceSlide"
+    ],
+    "replayed": [
+     "SpeedClamp",
+     "ClimbClamp",
+     "AltitudeFix",
+     "GeofenceSlide",
+     "ClimbClamp"
+    ]
+   },
+   "ticks_differing_by_field": {
+    "repairs": 14
+   },
+   "ticks_field_not_logged": {},
+   "generations": [
+    0
+   ],
+   "arm": "on",
+   "state_source": "trajectory.json (the position's own doubles)",
+   "code_revision_flown": "401305abd019-dirty",
+   "flown_revision_clean": false
+  },
+  {
+   "run": "ros2fix2_on_proxy",
+   "manifest_date": "2026-10-07",
+   "verdict": "differs",
+   "ticks": 222,
+   "logged_touched_ticks": 217,
+   "logged_repaired_ticks": 217,
+   "decisions_identical": false,
+   "emitted_max_abs_diff": 8.88e-16,
+   "first_difference": {
+    "tick": 86,
+    "row": 85,
+    "t": 8.707,
+    "field": "emitted",
+    "logged": {
+     "vx": 1.5516967359809504,
+     "vy": 0.0,
+     "vz_up": -0.0031410218216478825,
+     "yaw_rate": 0.0
+    },
+    "replayed": {
+     "vx": 1.5516967359809501,
+     "vy": 0.0,
+     "vz_up": -0.0031410218216478825,
+     "yaw_rate": 0.0
+    }
+   },
+   "first_decision_difference": {
+    "tick": 170,
+    "row": 169,
+    "t": 17.107,
+    "field": "repairs",
+    "logged": [
+     "SpeedClamp",
+     "SpeedClamp"
+    ],
+    "replayed": [
+     "SpeedClamp"
+    ]
+   },
+   "ticks_differing_by_field": {
+    "emitted": 2,
+    "repairs": 1
+   },
+   "ticks_field_not_logged": {},
+   "generations": [
+    0
+   ],
+   "arm": "on",
+   "state_source": "trajectory.json (the position's own doubles)",
+   "code_revision_flown": "401305abd019-dirty",
+   "flown_revision_clean": false
+  },
+  {
+   "run": "ros2fix_off_fence",
+   "manifest_date": "2026-10-07",
+   "verdict": "identical",
+   "ticks": 284,
+   "logged_touched_ticks": 0,
+   "logged_repaired_ticks": 0,
+   "decisions_identical": true,
+   "emitted_max_abs_diff": null,
+   "first_difference": null,
+   "first_decision_difference": null,
+   "ticks_differing_by_field": {},
+   "ticks_field_not_logged": {},
+   "generations": [
+    0
+   ],
+   "arm": "off",
+   "state_source": "trajectory.json (the position's own doubles)",
+   "code_revision_flown": "unversioned",
+   "flown_revision_clean": false
+  },
+  {
+   "run": "ros2fix_on_policy55",
+   "manifest_date": "2026-10-07",
+   "verdict": "differs",
+   "ticks": 102,
+   "logged_touched_ticks": 102,
+   "logged_repaired_ticks": 102,
+   "decisions_identical": true,
+   "emitted_max_abs_diff": 2.0,
+   "first_difference": {
+    "tick": 1,
+    "row": 0,
+    "t": 0.108,
+    "field": "emitted",
+    "logged": {
+     "vx": 0.0,
+     "vy": -2.0,
+     "vz_up": 2.0,
+     "yaw_rate": 0.0
+    },
+    "replayed": {
+     "vx": 0.0,
+     "vy": -4.0,
+     "vz_up": 2.0,
+     "yaw_rate": 0.0
+    }
+   },
+   "first_decision_difference": null,
+   "ticks_differing_by_field": {
+    "emitted": 13
+   },
+   "ticks_field_not_logged": {},
+   "generations": [
+    0
+   ],
+   "arm": "on",
+   "state_source": "trajectory.json (the position's own doubles)",
+   "code_revision_flown": "401305abd019-dirty",
+   "flown_revision_clean": false
+  }
+ ]
+}
